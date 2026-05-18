@@ -43,7 +43,11 @@ interface Props {
 /** FAA AC 120-71B Stable-Approach-Kriterien:
  *  - Bank ≤ 5°
  *  - V/S in [-1100, -300] fpm (auch zu langsame Sinkrate ist suspekt)
- *  - Gear & Flaps konfiguriert (gear ≥ 0.95, flaps > 0.2)
+ *  - Gear & Flaps konfiguriert (gear ≥ 0.99, flaps ≥ 0.70)
+ *
+ *  v0.8.5: Thresholds an Backend (lib.rs compute_approach_stability_v2)
+ *  angeglichen. Vorher 0.95/0.2, das war zu lax — siehe Item 4 im
+ *  Landing-Analyse-Bundle.
  */
 function evaluateApproach(snap: SimSnapshot, phase: string): Advisory | null {
   const isApproachPhase =
@@ -100,12 +104,21 @@ function evaluateApproach(snap: SimSnapshot, phase: string): Advisory | null {
   if (agl < 1100 && agl >= 600) {
     const vsBad = vs < -1100 || vs > -300;
     const bankBad = bank > 5;
-    const configBad = gear < 0.95 || flaps < 0.2;
+    // v0.8.5: Thresholds an Backend (lib.rs compute_approach_stability_v2)
+    // angeglichen — vorher 0.95/0.2, Backend nutzt 0.99/0.70 (FAA-strikter).
+    // Inkonsistenz fuehrte zu Cockpit-Banner „Config OK" + PIREP-Card
+    // „Landing-Config NICHT GESETZT" beim gleichen Flug.
+    const configBad = gear < 0.99 || flaps < 0.7;
     if (vsBad || bankBad || configBad) {
       const reasons: string[] = [];
       if (bankBad) reasons.push(`Bank ${bank.toFixed(0)}°`);
       if (vsBad) reasons.push(`V/S ${Math.round(vs)} fpm`);
-      if (configBad) reasons.push("Config nicht gesetzt");
+      if (configBad) {
+        const parts: string[] = [];
+        if (gear < 0.99) parts.push(`Gear ${(gear * 100).toFixed(0)}%`);
+        if (flaps < 0.7) parts.push(`Flaps ${(flaps * 100).toFixed(0)}%`);
+        reasons.push(`Config: ${parts.join("/")}`);
+      }
       return {
         key: "gate1000_unstable",
         severity: "warn",

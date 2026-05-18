@@ -18353,6 +18353,8 @@ fn build_pirep_notes(flight: &ActiveFlight, stats: &FlightStats) -> String {
         _ => None,
     };
     let mut crate_input = landing_scoring::LandingScoringInput {
+        // v0.7.1 Phase 0 Schatten-Validation muss identische Inputs nutzen
+        // wie der echte PIREP-Pfad (build_landing_record + PirepPayload).
         // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang — siehe
         // `score_basis_vs_fpm()` Doc.
         vs_fpm: score_basis_vs_fpm(stats),
@@ -18366,6 +18368,11 @@ fn build_pirep_notes(flight: &ActiveFlight, stats: &FlightStats) -> String {
         actual_trip_burn_kg: actual_burn,
         planned_zfw_kg: stats.planned_zfw_kg,
         planned_tow_kg: stats.planned_tow_kg,
+        // v0.10.0 QS-Code-R1 P2-1 Fix: ohne aircraft_icao rechnete die
+        // Shadow-Validation für A388/A320 mit Light-Default-Schwellen
+        // (Heavy-Allowance fehlte) → Drift gegen die echten Pfade
+        // → falsche Audit-Logs. Identisch zu den anderen 3 Sites.
+        aircraft_icao: Some(flight.aircraft_icao.clone()),
         ..Default::default()
     };
     // v0.10.0 (#runway-utilization-score): Shadow-Validation muss den

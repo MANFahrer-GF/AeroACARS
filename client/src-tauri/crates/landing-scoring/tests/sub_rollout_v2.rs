@@ -227,6 +227,44 @@ fn skip_off_airport_landing() {
 }
 
 #[test]
+fn off_airport_priority_over_missing_data_fields() {
+    // QS-Code-R1 P1-2: realer Off-Airport-Pfad (= kein runway_match)
+    // propagiert im fill_v2_rollout_fields-Helper natürlich auch zu
+    // td_distance=None und runway_length=None (beide kommen aus dem
+    // runway_match). Skip-Gate-Reihenfolge MUSS off_airport_landing
+    // zuerst returnen — sonst sieht der Pilot „missing_td_distance"
+    // bei einem Crash auf dem Acker, was Quatsch ist.
+    let mut input = ok_input(0.0, 0.0, 0.0, 0, "C172");
+    input.airport_source = Some("nearest_25nm"); // = off-airport
+    input.td_distance_from_threshold_m = None;
+    input.rollout_distance_m = None;
+    input.runway_length_m = None;
+    let r = sub_rollout_v2(&input);
+    assert!(r.skipped);
+    assert_eq!(
+        r.reason.as_deref(),
+        Some("off_airport_landing"),
+        "Off-Airport-Reason MUSS vor missing_* gewinnen \
+         (sonst sieht Pilot 'TD-Distanz fehlt' statt 'Off-Airport-Landung')"
+    );
+}
+
+#[test]
+fn untrusted_geometry_priority_over_missing_data_fields() {
+    // Gleiches Argument für untrusted geometry: wenn die Geometrie
+    // nicht vertrauenswürdig ist, sind die abgeleiteten Felder (td_distance,
+    // runway_length) auch nicht vertrauenswürdig — Preconditions-Reason
+    // muss zuerst kommen.
+    let mut input = ok_input(0.0, 0.0, 0.0, 0, "C172");
+    input.runway_geometry_trusted = Some(false);
+    input.td_distance_from_threshold_m = None;
+    input.rollout_distance_m = None;
+    let r = sub_rollout_v2(&input);
+    assert!(r.skipped);
+    assert_eq!(r.reason.as_deref(), Some("untrusted_geometry"));
+}
+
+#[test]
 fn skip_invalid_lda() {
     // 100 m Bahn, 500 ft displaced (≈152 m) → LDA < 0 → invalid_lda
     let input = ok_input(50.0, 50.0, 100.0, 500, "C172");

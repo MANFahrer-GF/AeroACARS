@@ -66,11 +66,31 @@ fn is_heavy(icao: Option<&str>) -> bool {
     category_for_icao(icao) == Category::Heavy
 }
 
-/// Spec LE6 — Skip-Gate. Reihenfolge: required-data, geometry-trust,
-/// airport-source, LDA-Sanity. None aus required-Feldern → konkreter
-/// Reason. KEIN Default-Fallback (sonst Datenmangel wird zu falschen
-/// 100 PTS — R2-P0-1 Fix).
+/// Spec LE6 — Skip-Gate. Reihenfolge (v0.10.0 QS-Code-R1-Fix P1-2):
+/// 1. Preconditions: Geometry-Trust + Airport-Source ZUERST
+/// 2. Required data: Rollout / TD / Length
+/// 3. LDA-Sanity am Schluss
+///
+/// **Warum diese Reihenfolge:** Off-Airport-Landungen (= kein
+/// runway_match) propagieren im fill_v2_rollout_fields-Helper natürlich
+/// auch zu `td_distance=None` und `runway_length=None` (weil beide aus
+/// dem runway_match abgeleitet werden). Die alte Reihenfolge (data zuerst)
+/// hätte off-airport-Touchdowns dann als „missing_td_distance" geskippt
+/// statt als „off_airport_landing" — semantisch falsch und für den Piloten
+/// verwirrend. Voraussetzungs-Checks gehören vor Datenmangel-Checks.
+///
+/// KEIN Default-Fallback (sonst Datenmangel wird zu falschen 100 PTS —
+/// R2-P0-1 Fix).
 fn skip_reason(input: &RolloutInput) -> Option<&'static str> {
+    // ── 1. Preconditions ─────────────────────────────────────────────
+    // None ist NICHT trusted (R2-P1-2 Fix). Only Some(true) passes.
+    if input.runway_geometry_trusted != Some(true) {
+        return Some("untrusted_geometry");
+    }
+    if input.airport_source != Some("runway_match") {
+        return Some("off_airport_landing");
+    }
+    // ── 2. Required-Data-Felder ──────────────────────────────────────
     if input.rollout_distance_m.is_none() {
         return Some("missing_rollout_distance");
     }
@@ -80,13 +100,7 @@ fn skip_reason(input: &RolloutInput) -> Option<&'static str> {
     if input.runway_length_m.is_none() {
         return Some("missing_length");
     }
-    // None ist NICHT trusted (R2-P1-2 Fix). Only Some(true) passes.
-    if input.runway_geometry_trusted != Some(true) {
-        return Some("untrusted_geometry");
-    }
-    if input.airport_source != Some("runway_match") {
-        return Some("off_airport_landing");
-    }
+    // ── 3. LDA-Sanity ────────────────────────────────────────────────
     let displaced_m = input.runway_displaced_threshold_ft.unwrap_or(0) as f32 * 0.3048;
     let lda = input.runway_length_m.unwrap() - displaced_m;
     if lda <= 0.0 {
