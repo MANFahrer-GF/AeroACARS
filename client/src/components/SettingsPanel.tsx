@@ -456,7 +456,112 @@ export function SettingsPanel({
           Funktion ist und nicht im Cockpit-Tab gehoert (der ist fuer
           den aktiven Flug). */}
       <OrphanFlightsPanel />
+
+      {/* v0.9.3 (#GlitchTip-Emit-Sites C1) — DEV-Trigger-Panel fuer
+          die 9 Custom-Event-Sites. NUR in DEV-Builds sichtbar
+          (`import.meta.env.DEV` ist Vite-Konstante, in production
+          tree-shaked → ganze Section verschwindet aus dem Bundle).
+          Backend-Command ist zusaetzlich `#[cfg(debug_assertions)]`-
+          gated → doppelter Schutz. */}
+      {import.meta.env.DEV && <GlitchTipDevTriggerPanel />}
     </section>
+  );
+}
+
+/**
+ * v0.9.3 (#GlitchTip-Emit-Sites C1) — DEV-only Test-Panel mit 9 Buttons
+ * fuer jede Emit-Site. In C1 sind alle Buttons noch „leer" (Backend-
+ * Command returnt unknown_site-Error). Ab C2..C8 wird pro Slice ein
+ * Match-Arm in `dev_trigger_glitchtip_event` aktiviert → Buttons werden
+ * inkrementell „echt".
+ *
+ * Spec: docs/spec/v0.9.3-glitchtip-emit-sites.md LE6 + R2-Frage-10
+ * (unknown-site-Errors sauber als <small> anzeigen, nicht crashen).
+ */
+const GLITCHTIP_SITES: Array<{ key: string; label: string }> = [
+  { key: "s1_pirep_fail_transient", label: "S1 PIREP-Fail (transient)" },
+  { key: "s2_pirep_fail_hard", label: "S2 PIREP-Fail (hard)" },
+  { key: "s3_sim_disconnect", label: "S3 SimConnect-Disconnect" },
+  { key: "s4_aircraft_mismatch", label: "S4 Aircraft-Mismatch" },
+  { key: "s5_not_at_departure", label: "S5 not_at_departure" },
+  { key: "s6_hard_landing", label: "S6 Hard Landing" },
+  { key: "s7_update_check_failed", label: "S7 Update-Check-Fail" },
+  { key: "s8_recorder_upload_failed", label: "S8 Recorder-Upload-Fail" },
+  { key: "s9_dds_violation", label: "S9 DDS-Violation" },
+];
+
+function GlitchTipDevTriggerPanel() {
+  // Pro Site letzter Status-Text (success / dropped / error).
+  // Map<site.key, status-message>.
+  const [statuses, setStatuses] = useState<Record<string, string>>({});
+
+  const triggerSite = async (siteKey: string) => {
+    try {
+      const result = await invoke<string>("dev_trigger_glitchtip_event", {
+        site: siteKey,
+      });
+      setStatuses((prev) => ({ ...prev, [siteKey]: `✓ ${result}` }));
+    } catch (err) {
+      // Tauri-Command-Error kommt als { code, message }-Objekt zurück
+      // (UiError-Format aus lib.rs). Fallback fuer plain-string-errors
+      // (z.B. wenn der Command in Production-Build gar nicht existiert).
+      const msg =
+        typeof err === "object" && err !== null && "message" in err
+          ? String((err as { message: unknown }).message)
+          : String(err);
+      setStatuses((prev) => ({ ...prev, [siteKey]: `✗ ${msg}` }));
+    }
+  };
+
+  return (
+    <div className="settings__section" style={{ borderTop: "2px dashed #555" }}>
+      <h3>🛠 DEV — GlitchTip Site-Triggers</h3>
+      <p className="settings__row-hint">
+        Nur in DEV-Builds sichtbar. Löst Custom-Events an{" "}
+        <code>tip.kant.ovh</code> aus. In C1 returnen die meisten Sites
+        „unknown_site"-Error — sie werden in C2..C8 freigeschaltet.
+      </p>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr",
+          gap: 6,
+          marginTop: 8,
+        }}
+      >
+        {GLITCHTIP_SITES.map((site) => (
+          <div
+            key={site.key}
+            style={{ display: "flex", alignItems: "center", gap: 8 }}
+          >
+            <button
+              type="button"
+              className="button"
+              onClick={() => void triggerSite(site.key)}
+              style={{ flex: "0 0 280px", textAlign: "left" }}
+            >
+              ⚡ {site.label}
+            </button>
+            {statuses[site.key] && (
+              <small
+                style={{
+                  fontFamily: "var(--font-mono, monospace)",
+                  fontSize: "0.7rem",
+                  color: statuses[site.key].startsWith("✓")
+                    ? "#22c55e"
+                    : "#f59e0b",
+                  flex: "1 1 auto",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {statuses[site.key]}
+              </small>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

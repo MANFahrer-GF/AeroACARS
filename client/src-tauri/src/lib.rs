@@ -5013,6 +5013,42 @@ fn error_reporting_set_consent(enabled: bool) -> Result<(), UiError> {
 // MUSS er als atomarer Commit (Rust-Fn + Tauri-Command + invoke_handler-
 // Registrierung + Frontend-Aufruf) reingebracht werden, nicht halbgar.
 
+/// v0.9.3 (#GlitchTip-Emit-Sites C1) — DEV-Trigger fuer die 9 Custom-
+/// Event-Sites. Nur in DEV-Builds verfuegbar (`#[cfg(debug_assertions)]`)
+/// damit kein Release-Build den Command versehentlich exposed.
+///
+/// In C1 hat der Match nur den Catch-All-Arm; ab C2 wird pro Site ein
+/// `"s{N}_..."`-Arm hinzugefügt der `sentry_init::emit()` mit dummy-
+/// Daten füttert. Frontend (SettingsPanel.tsx DEV-Panel) ruft das via
+/// `invoke("dev_trigger_glitchtip_event", { site })`.
+///
+/// Spec: docs/spec/v0.9.3-glitchtip-emit-sites.md LE6 Slice C1.
+#[cfg(debug_assertions)]
+#[tauri::command]
+fn dev_trigger_glitchtip_event(site: String) -> Result<String, UiError> {
+    let _sent: bool = match site.as_str() {
+        // C2..C8 fuegen hier Match-Arms hinzu — pro Site ein
+        // `sentry_init::emit(...)`-Aufruf mit Dummy-Daten. C1 hat nur
+        // den Catch-All damit der Command + das Frontend-Panel von
+        // Anfang an existieren.
+        _ => {
+            return Err(UiError::new(
+                "unknown_site",
+                &format!("unknown site '{site}' — wird in C2..C8 freigeschaltet"),
+            ));
+        }
+    };
+    // Wenn _sent=false: Event wurde von emit() verworfen (Consent aus,
+    // kein Client gebunden, oder rate-limited). UI zeigt das als
+    // „dropped"-Hinweis statt als Fehler.
+    #[allow(unreachable_code)]
+    Ok(if _sent {
+        format!("event for '{site}' sent")
+    } else {
+        format!("event for '{site}' dropped (consent? client? rate-limit?)")
+    })
+}
+
 // v0.7.13 Discord-Webhook-File-Commands entfernt + v0.7.14 Migration:
 // die alte Pilot-Local-Datei `<app_data_dir>/discord-webhook.txt` wird beim
 // App-Start geloescht (siehe `migrate_remove_discord_webhook_file` weiter
@@ -21498,6 +21534,11 @@ pub fn run() {
             set_minimize_to_tray,
             // v0.9.0 (#GlitchTip): Opt-In fuer anonyme Fehler-Telemetrie.
             error_reporting_set_consent,
+            // v0.9.3 (#GlitchTip-Emit-Sites C1) — DEV-Trigger nur in DEV-Builds.
+            // Production-Build (release-Profile, debug_assertions=false) hat den
+            // Command NICHT im Tauri-Binary — nicht von außen aufrufbar.
+            #[cfg(debug_assertions)]
+            dev_trigger_glitchtip_event,
             // v0.9.0 (#Discord-RPC): Settings + Status + Push-State + Test.
             discord_rpc::discord_rpc_get_settings,
             discord_rpc::discord_rpc_set_settings,
