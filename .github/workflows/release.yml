@@ -80,6 +80,27 @@ jobs:
           echo "Release-Notes vorhanden: $NOTES"
           wc -l "$NOTES"
 
+      - name: Install Tauri Linux deps (libwebkit2gtk etc.)
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+        # v0.10.0 hotfix-2: `cargo check` weiter unten kompiliert den
+        # `aeroacars-app`-Crate (Tauri-App), der auf Linux libwebkit2gtk-
+        # 4.1, glib-2.0 etc. als System-Lib braucht. Ohne diesen Step
+        # failt cargo check auf Ubuntu mit „pkg-config: glib-2.0 not
+        # found" (siehe Run 26045741380). Platform-Build-Jobs laufen auf
+        # Windows + macOS (= keine apt-Logik), deshalb fiel das dort nie
+        # auf — nur unser Ubuntu-preflight braucht die Liste.
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
