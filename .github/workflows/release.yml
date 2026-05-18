@@ -80,6 +80,27 @@ jobs:
           echo "Release-Notes vorhanden: $NOTES"
           wc -l "$NOTES"
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri -> target
+
+      - name: cargo check (Rust workspace — catches "lokal grun remote rot" durch ungestagete Files)
+        working-directory: client/src-tauri
+        run: cargo check --all-targets
+        # v0.10.0 hotfix: dieser Step ist NEU weil der erste v0.10.0
+        # Build-Versuch (Mac DMG, Run 26045269464) am `error_reporting_
+        # send_test_event`-Aufruf in src/lib.rs gefailed ist — die
+        # referenzierte `sentry_init::send_test_event`-Funktion war nur
+        # im lokalen Working-Tree des Devs, nie ans Repo committed.
+        # Lokal kompilierte alles, im sauberen CI-Checkout broke der
+        # aeroacars-app crate. Mit diesem cargo-check-Step im preflight
+        # wird die Klasse von Bug VOR den eigentlichen platform-Builds
+        # gefangen — spart 4+ Minuten Mac-Runner-Zeit pro broken Tag.
+
       - name: Install frontend deps
         working-directory: client
         run: npm ci

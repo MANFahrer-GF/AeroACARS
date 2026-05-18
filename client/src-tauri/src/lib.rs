@@ -5004,16 +5004,14 @@ fn error_reporting_set_consent(enabled: bool) -> Result<(), UiError> {
     Ok(())
 }
 
-/// v0.9.3 (#GlitchTip-DevTest): Tauri-Command für den „Test-Event senden"-
-/// Button in den Settings. Schickt ein deterministisches Test-Event an
-/// GlitchTip um die End-to-End-Pipeline live zu verifizieren. Returns
-/// die event_id (UUID) damit das Frontend dem Pilot zeigen kann
-/// „check in GlitchTip-Dashboard: Event id=xxx".
-#[tauri::command]
-fn error_reporting_send_test_event() -> Result<String, UiError> {
-    sentry_init::send_test_event()
-        .map_err(|msg| UiError::new("sentry_test_failed", &msg))
-}
+// v0.10.0 hotfix: der `error_reporting_send_test_event`-Tauri-Command
+// (war für eine v0.9.3 GlitchTip-Pipeline-DevTest-Funktion gedacht) ist
+// hier rausgeflogen weil seine Implementation `sentry_init::send_test_event`
+// nie ans Repo committed wurde (nur lokal im Working-Tree existiert) —
+// CI-Build failed beim aeroacars-app Compile (cannot find function in
+// module). Falls wir den Test-Button später wirklich shippen wollen,
+// MUSS er als atomarer Commit (Rust-Fn + Tauri-Command + invoke_handler-
+// Registrierung + Frontend-Aufruf) reingebracht werden, nicht halbgar.
 
 // v0.7.13 Discord-Webhook-File-Commands entfernt + v0.7.14 Migration:
 // die alte Pilot-Local-Datei `<app_data_dir>/discord-webhook.txt` wird beim
@@ -21500,8 +21498,6 @@ pub fn run() {
             set_minimize_to_tray,
             // v0.9.0 (#GlitchTip): Opt-In fuer anonyme Fehler-Telemetrie.
             error_reporting_set_consent,
-            // v0.9.3 (#GlitchTip-DevTest): „Test-Event senden"-Button
-            error_reporting_send_test_event,
             // v0.9.0 (#Discord-RPC): Settings + Status + Push-State + Test.
             discord_rpc::discord_rpc_get_settings,
             discord_rpc::discord_rpc_set_settings,
