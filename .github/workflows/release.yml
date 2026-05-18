@@ -6,12 +6,99 @@ on:
   workflow_dispatch:
 
 jobs:
+  # ─── Pre-flight gate ─────────────────────────────────────────────────
+  #
+  # v0.10.0 (#release-checklist): vor jedem signed Build muessen drei
+  # Voraussetzungen erfuellt sein — sonst wird gar nicht erst gebaut.
+  # Hintergrund: v0.9.0/v0.9.1/v0.9.2 wurden mit kaputtem Update-Modal
+  # released weil niemand vor Tag-Push gegenpruefte. Mit diesem Job
+  # gibt's einen automatischen Gate gegen dieselbe Klasse von Bug:
+  #
+  #   1. Tag entspricht der Version in package.json / Cargo.toml /
+  #      tauri.conf.json — verhindert „v0.10.0 Tag aber package.json
+  #      sagt 0.9.2"-Drift
+  #   2. Release-Notes-File `docs/release-notes/v{TAG}.md` existiert
+  #      — Pilot muss im Update-Modal lesbare Notes sehen
+  #   3. Vitest laeuft sauber (insbesondere UpdateButton.test.tsx der
+  #      die Modal-Struktur-Regression verhindert)
+  #
+  # Wenn EINER der Checks failt, wird der Build NICHT gestartet.
+  # Tag bleibt, aber GitHub-Release entsteht nicht. Fixed werden muss
+  # auf dem Branch, neuer Tag, neuer Push.
+  release-preflight:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Verify tag matches package.json / Cargo.toml / tauri.conf.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "Tag (sans v): $TAG"
+
+          PKG_VERSION=$(node -p "require('./client/package.json').version")
+          CARGO_VERSION=$(grep -E '^version = "' client/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+          TAURI_VERSION=$(node -p "require('./client/src-tauri/tauri.conf.json').version")
+
+          echo "package.json:      $PKG_VERSION"
+          echo "Cargo.toml:        $CARGO_VERSION"
+          echo "tauri.conf.json:   $TAURI_VERSION"
+
+          fail=0
+          [[ "$PKG_VERSION" == "$TAG" ]] || { echo "::error::package.json version ($PKG_VERSION) != tag ($TAG)"; fail=1; }
+          [[ "$CARGO_VERSION" == "$TAG" ]] || { echo "::error::Cargo.toml version ($CARGO_VERSION) != tag ($TAG)"; fail=1; }
+          [[ "$TAURI_VERSION" == "$TAG" ]] || { echo "::error::tauri.conf.json version ($TAURI_VERSION) != tag ($TAG)"; fail=1; }
+          [[ $fail -eq 0 ]] || exit 1
+
+      - name: Verify release-notes file exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"  # mit "v"-Prefix
+          NOTES="docs/release-notes/${TAG}.md"
+          if [[ ! -f "$NOTES" ]]; then
+            echo "::error::Release-Notes-Datei fehlt: $NOTES"
+            echo "::error::Bitte vor dem Tag eine bilinguale Release-Notes-Datei (🇩🇪 + 🇬🇧) anlegen."
+            echo "::error::Siehe docs/release-checklist.md Stufe 2."
+            exit 1
+          fi
+          # Bonus: pruefen ob bilingual (= 🇩🇪 + 🇬🇧 vorhanden)
+          if ! grep -q "🇩🇪" "$NOTES"; then
+            echo "::warning::Release-Notes ohne 🇩🇪 Deutsch-Block — bilingual gewuenscht (siehe MEMORY.md)"
+          fi
+          if ! grep -q "🇬🇧" "$NOTES"; then
+            echo "::warning::Release-Notes ohne 🇬🇧 English-Block — bilingual gewuenscht (siehe MEMORY.md)"
+          fi
+          echo "Release-Notes vorhanden: $NOTES"
+          wc -l "$NOTES"
+
+      - name: Install frontend deps
+        working-directory: client
+        run: npm ci
+
+      - name: Run vitest (incl. UpdateButton-Regression-Guards)
+        working-directory: client
+        run: npm test
+        # Wenn DIESER Step rot wird, ist mit hoher Wahrscheinlichkeit
+        # entweder UpdateButton.tsx oder App.css (.update-modal*-Regeln)
+        # so geaendert dass die Svenny-Bug-Regression wieder reinkommen
+        # koennte. Vor dem Release fixen, nicht Tests anpassen.
+
   # ---- Per-platform build job ----
   # Each runner builds the installer for its OS, signs it with our
   # Ed25519 updater key, and uploads the artifacts (.exe / .dmg /
   # .app.tar.gz, plus the matching .sig) to the GitHub release that
   # `tauri-action` creates / updates for this tag.
   build:
+    needs: release-preflight
     permissions:
       contents: write
     strategy:

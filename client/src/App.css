@@ -288,6 +288,24 @@ body {
   z-index: 1000;
   padding: 24px;
 }
+/* ⚠ REGRESSION-GUARD: NICHT die nachfolgenden 3 CSS-Properties entfernen
+ *   ohne den UpdateButton.test.tsx mit-anzupassen UND einen manuellen
+ *   Modal-Smoke-Test gegen einen langen Release-Body durchzuführen.
+ *
+ *   - max-height: calc(100vh - 48px)
+ *   - display: flex
+ *   - flex-direction: column
+ *
+ *   Diese drei zusammen garantieren dass das Modal NIE den Viewport
+ *   sprengt und der Install-Button immer am unteren Rand sichtbar bleibt
+ *   (Notes-Bereich darunter scrollt mit flex: 1 1 auto + overflow-y).
+ *
+ *   Vor v0.10.0 fehlte alles drei → bei langen bilingualen Release-Notes
+ *   (v0.9.0/v0.9.1/v0.9.2) ist der Install-Button unter den unteren
+ *   Bildschirmrand gerutscht und war für Piloten nicht klickbar (Discord-
+ *   Befund Svenny1974 2026-05-18). Siehe docs/release-checklist.md
+ *   Stufe 4 + docs/release-notes/v0.10.0.md.
+ */
 .update-modal {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -296,12 +314,6 @@ body {
   width: 100%;
   max-width: 560px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
-  /* v0.10.0 Hotfix: lange Release-Notes (v0.9.x hatten mehrere Bildschirm-
-   * laengen) haben das Modal ueber den Viewport gesprengt — Install-Button
-   * lag unter dem Fold und war fuer den Piloten nicht klickbar (Discord-
-   * Befund Svenny1974 2026-05-18). Fix: max-height auf Viewport - Backdrop-
-   * Padding, Flex-Column damit Title + Notes + Actions als Bereiche
-   * gestapelt sind, Notes-Bereich allein scrollt. */
   max-height: calc(100vh - 48px);
   display: flex;
   flex-direction: column;
@@ -312,14 +324,25 @@ body {
   font-weight: 600;
   flex: 0 0 auto;
 }
+/* ⚠ REGRESSION-GUARD (Teil 2): die nachfolgenden 3 Properties sind
+ *   die zweite Hälfte der Modal-Scroll-Garantie:
+ *     - flex: 1 1 auto    → Notes nehmen verfügbaren Platz, schrumpfen
+ *     - overflow-y: auto  → Notes scrollen wenn Inhalt zu lang
+ *     - min-height: 0     → erlaubt Flex-Item zu schrumpfen (sonst greift
+ *                            min-content-Height und Notes wachsen über
+ *                            Container hinaus)
+ *
+ *   Ohne diese drei: Notes wachsen unbegrenzt, drücken Action-Buttons
+ *   nach unten, sprengen Modal — der Svenny-Bug. Siehe Test
+ *   `Install-Button bleibt im DOM` + `Modal-Container hat die CSS-Klasse`
+ *   in UpdateButton.test.tsx.
+ */
 .update-modal__notes {
   margin: 0 0 16px 0;
   color: var(--text-muted);
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-line;
-  /* v0.10.0 Hotfix: Notes-Bereich allein scrollt — Title + Actions
-   * bleiben sichtbar (= Install-Button immer erreichbar). */
   flex: 1 1 auto;
   overflow-y: auto;
   min-height: 0;

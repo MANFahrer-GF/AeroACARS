@@ -1,3 +1,25 @@
+// ⚠ REGRESSION-GUARD — vor Modifikationen an diesem File bitte lesen:
+//
+//   1. `<RenderedReleaseNotes>` MUSS den `update.body` parsen, NICHT
+//      als rohen String in `<p>` schreiben. Der body kommt vom GitHub-
+//      Release-Body und ist IMMER Markdown (Headings, Tabellen, Bold).
+//      Wenn jemand das durch `<p>{update.body}</p>` ersetzt, sieht der
+//      Pilot `### Tracker`, `**bold**`, `| col | col |` als Roh-Text.
+//
+//   2. Modal-CSS-Constraints (`.update-modal` max-height + flex-column,
+//      `.update-modal__notes` overflow-y + flex 1 1 auto) sind nötig
+//      damit der Install-Button bei langen Release-Notes nicht unter
+//      den Bildschirmrand rutscht. Siehe Warn-Block oberhalb beider
+//      CSS-Regeln in App.css.
+//
+//   3. UpdateButton.test.tsx fängt beide Regressionen — wenn die Tests
+//      bei einem Refactor rot werden, bitte VOR dem Release fixen, nicht
+//      die Tests anpassen. Siehe docs/release-checklist.md Stufe 3 + 4.
+//
+//   Background: Discord-Befund Svenny1974 2026-05-18 — v0.9.x Update-
+//   Modal kaputt, Pilot konnte nicht updaten. Spec docs/release-notes/
+//   v0.10.0.md.
+
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { UseUpdateCheckerResult } from "../hooks/useUpdateChecker";
