@@ -4,6 +4,16 @@ Alle nennenswerten Änderungen an AeroACARS. Format: lose an [Keep a Changelog](
 
 ---
 
+## [v0.11.2] — 2026-05-18 · Pilotenwunsch · Touchdown-Chart auch 3 s nach TD
+
+**Pilotenwunsch (ViolonC im Discord):** das Sinkrate-Chart im Landing-Detail soll nicht hart am TD-Punkt enden, sondern auch die ersten 3 Sekunden nach dem Aufsetzen zeigen (Strut-Compression + Rebound + Stabilisierung).
+
+Fix: `build_landing_record` hängt jetzt zusätzlich zu den Pre-TD-Samples (aus `snapshot_buffer`) auch die ersten 3000 ms aus `post_touchdown_buffer` an das `touchdown_profile`-Array. Backend sampled post-TD bereits seit v0.5.39 mit 50 Hz — die Daten lagen bisher nur als lokale JSONL-Forensik-Datei vor, jetzt erscheinen sie im sichtbaren Chart.
+
+Chart-Code unverändert (`VsCurveChart` in `LandingPanel.tsx` rendert dynamisch die gesamte Profile-Range — sobald das Array t_ms > 0 enthält, wird die x-Achse automatisch erweitert).
+
+---
+
 ## [v0.11.1] — 2026-05-18 · Hotfix · client_version im Touchdown-/PIREP-Payload
 
 **Hotfix für v0.11.0.** UI-Render-Code für die Pilot-Client-Version-Pill war korrekt, aber das `client_version`-Feld wurde nie im Touchdown-Payload oder PIREP-Payload mit-gesendet — es lag nur im `FlightMeta` der Connect-Message und landete deshalb nie in der DB-Row. Resultat: leere Pill für alle Flüge.

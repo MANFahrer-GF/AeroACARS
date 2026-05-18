@@ -9339,7 +9339,18 @@ where
         }
     });
 
-    let touchdown_profile = stats
+    // v0.11.2 (Pilotenwunsch ViolonC): touchdown_profile umfasst jetzt
+    // Pre-TD (5 s Snapshot-Buffer, schon in stats.touchdown_profile) PLUS
+    // bis zu 3 s Post-TD aus stats.post_touchdown_buffer. Pilot sieht im
+    // Touchdown-Chart damit auch die Sinkrate-Kurve direkt nach dem
+    // Aufsetzen (Strut-Compression / Rebound). Vorher endete das Chart
+    // hart am TD-Punkt, was den fachlichen Wunsch „wie schnell hat sich
+    // die V/S nach TD beruhigt?" nicht beantwortete.
+    //
+    // Post-TD-Samples bekommen positive t_ms (TD-Edge ist t_ms = 0),
+    // gleicher Berechnungs-Schema wie Pre-TD (siehe lib.rs:16539).
+    const POST_TD_PROFILE_MS: i32 = 3000;
+    let mut touchdown_profile: Vec<LandingProfilePoint> = stats
         .touchdown_profile
         .iter()
         .map(|p| LandingProfilePoint {
@@ -9355,6 +9366,23 @@ where
             bank_deg: p.bank_deg,
         })
         .collect();
+    for s in stats.post_touchdown_buffer.iter() {
+        let t_ms = (s.at - touchdown_at).num_milliseconds() as i32;
+        if t_ms > 0 && t_ms <= POST_TD_PROFILE_MS {
+            touchdown_profile.push(LandingProfilePoint {
+                t_ms,
+                vs_fpm: s.vs_fpm,
+                g_force: s.g_force,
+                agl_ft: s.agl_ft,
+                on_ground: s.on_ground,
+                heading_true_deg: s.heading_true_deg,
+                groundspeed_kt: s.groundspeed_kt,
+                indicated_airspeed_kt: s.indicated_airspeed_kt,
+                pitch_deg: s.pitch_deg,
+                bank_deg: s.bank_deg,
+            });
+        }
+    }
 
     // v0.7.1 Phase 1 (P1.1-D + P1.3-C): erweitert um t_ms, agl_ft,
     // is_scored_gate, is_flare. Werte aus dem ApproachBufferSample +
