@@ -509,39 +509,83 @@ pub(crate) fn emit(
     true
 }
 
+// ─── v0.9.3 C1 Test-Infrastructure (Code-QS-R1-P2-Fix) ──────────────
+//
+// **Problem das wir lösen:** Sentry-Init-Tests teilen drei globale
+// Statics: CONSENT (Atomic), BUCKETS (Static-Mutex), und den globalen
+// Sentry-Hub (sentry::Hub::current().bind_client(...)). In R1-PR12
+// hatte JEDES Test-Modul (c1_rate_limit_tests + c1_mock_transport_smoke)
+// nur einen LOKALEN TEST_LOCK — der schützt nur Tests INNERHALB
+// desselben Moduls. Ein Test aus Modul A konnte parallel zu einem Test
+// aus Modul B laufen → CONSENT-Read/Write-Race → flaky CI.
+//
+// **Lösung:** EIN gemeinsamer Lock + Drop-Guard. Jeder Sentry-Test
+// holt am Anfang `let _env = SentryTestEnv::lock()` → serialisiert
+// ALLE Sentry-Tests modul-übergreifend, und der Drop des Guards
+// resetted CONSENT, BUCKETS und Hub auf einen sauberen Zustand
+// (Default = aus). Kein Test muss mehr Cleanup selber machen.
+//
+// `#[cfg(test)]` damit kein Bit in den Production-Build leakt.
+#[cfg(test)]
+static SENTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+struct SentryTestEnv {
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl SentryTestEnv {
+    /// Locked Test-Env mit Pre-Clean. Drop macht Post-Clean.
+    /// Recover-from-poisoned-Mutex damit ein Panic in einem Test nicht
+    /// alle folgenden Sentry-Tests blockiert.
+    fn lock() -> Self {
+        let guard = SENTRY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        // Pre-Clean: Default-State herstellen unabhängig was der
+        // vorherige Test-Lauf hinterlassen hat (Drop SOLLTE das schon
+        // gemacht haben, aber falls jemand panic'd: doppelt hält besser).
+        CONSENT.store(false, std::sync::atomic::Ordering::Relaxed);
+        sentry::Hub::current().bind_client(None);
+        if let Some(buckets) = BUCKETS.get() {
+            if let Ok(mut map) = buckets.lock() {
+                map.clear();
+            }
+        }
+        Self { _guard: guard }
+    }
+}
+
+#[cfg(test)]
+impl Drop for SentryTestEnv {
+    fn drop(&mut self) {
+        // Post-Clean: nächster Test bekommt sauberen Default-Zustand.
+        CONSENT.store(false, std::sync::atomic::Ordering::Relaxed);
+        sentry::Hub::current().bind_client(None);
+        if let Some(buckets) = BUCKETS.get() {
+            if let Ok(mut map) = buckets.lock() {
+                map.clear();
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod c1_rate_limit_tests {
     //! v0.9.3 C1 Schicht-1-Tests: Mechanik des Token-Buckets +
     //! Consent-Gate. KEINE echten Sleep-Waits — Clock wird via
     //! `try_consume_token(code, now)` injiziert.
     //!
-    //! **Test-Serialisierung:** alle Tests in diesem Modul teilen den
-    //! globalen `BUCKETS`-Static. Rust-Tests laufen by-default parallel
-    //! → würde fresh_buckets() in einem Test den Bucket eines anderen
-    //! Tests mitten in dessen 10-Token-Konsum löschen, und dann
-    //! re-fresh erstellen → der andere Test sieht plötzlich wieder 10
-    //! Tokens. Resultat: flaky Tests. Lösung: TEST_LOCK-Mutex, jeder
-    //! Test hält den für seine Dauer → serielle Ausführung in diesem
-    //! Modul. Keine Dependency (kein `serial_test`-Crate), keine
-    //! `--test-threads=1`-CLI-Flag-Zwang.
+    //! Test-Serialisierung via shared `SentryTestEnv::lock()` —
+    //! schützt alle Sentry-Init-Tests modul-übergreifend gegen
+    //! Races auf CONSENT/BUCKETS/Hub.
     use super::*;
-    use std::sync::Mutex as StdMutex;
     use std::time::{Duration, Instant};
-
-    static TEST_LOCK: StdMutex<()> = StdMutex::new(());
-
-    fn fresh_buckets() {
-        BUCKETS
-            .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-            .lock()
-            .unwrap()
-            .clear();
-    }
 
     #[test]
     fn token_bucket_lets_first_n_through() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        fresh_buckets();
+        let _env = super::SentryTestEnv::lock();
         let t0 = Instant::now();
         // Default-Limit für unbekannten Code = (max=10, secs=60)
         for _ in 0..10 {
@@ -554,8 +598,7 @@ mod c1_rate_limit_tests {
 
     #[test]
     fn token_bucket_drops_after_limit() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        fresh_buckets();
+        let _env = super::SentryTestEnv::lock();
         let t0 = Instant::now();
         for _ in 0..10 {
             try_consume_token("c1_test_drop_code", t0);
@@ -570,8 +613,7 @@ mod c1_rate_limit_tests {
     fn token_bucket_resets_after_window_without_sleep() {
         // R1-P2-2-Fix: Clock-Injection statt sleep(60s). Test laeuft
         // in <1ms statt 61s.
-        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        fresh_buckets();
+        let _env = super::SentryTestEnv::lock();
         let t0 = Instant::now();
         for _ in 0..10 {
             try_consume_token("c1_test_reset_code", t0);
@@ -586,8 +628,7 @@ mod c1_rate_limit_tests {
 
     #[test]
     fn known_error_code_uses_specific_limit() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        fresh_buckets();
+        let _env = super::SentryTestEnv::lock();
         let t0 = Instant::now();
         // sim_disconnect ist (max=1, secs=60) per RATE_LIMIT_DEFAULTS
         assert!(try_consume_token("sim_disconnect", t0));
@@ -610,8 +651,7 @@ mod c1_rate_limit_tests {
         // R2-P1-1-Fix: emit() darf KEINEN Token verbrauchen wenn kein
         // Client gebunden ist (= Build ohne DSN oder nach Opt-Out vor
         // dem nächsten create_and_bind).
-        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        fresh_buckets();
+        let _env = super::SentryTestEnv::lock();
         CONSENT.store(true, Ordering::Relaxed);
         // Sicherstellen dass kein Client gebunden ist (Test-Isolation).
         sentry::Hub::current().bind_client(None);
@@ -637,8 +677,7 @@ mod c1_rate_limit_tests {
         // ist eine Ebene drueber). Aber wenn emit() mit Consent=false
         // gerufen wird, darf es NICHT in try_consume_token reingehen.
         // Dieser Test verifiziert das Verhalten von emit() selbst.
-        let _g = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        fresh_buckets();
+        let _env = super::SentryTestEnv::lock();
         CONSENT.store(false, Ordering::Relaxed);
         // Sentry-Hub ohne Client — emit() returnt eh false durch Gate 2,
         // aber Consent-Gate sollte schon vorher abbrechen.
@@ -686,17 +725,12 @@ mod c1_mock_transport_smoke {
         }
     }
 
-    static SMOKE_LOCK: StdMutex<()> = StdMutex::new(());
-
     #[test]
     fn smoke_emit_passes_all_gates_and_lands_in_mock_transport() {
-        // Test-Isolation: SMOKE_LOCK + frischer Bucket + frischer Hub.
-        let _g = SMOKE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        BUCKETS
-            .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-            .lock()
-            .unwrap()
-            .clear();
+        // Code-QS-R1-P2-Fix: shared SentryTestEnv statt lokalem SMOKE_LOCK.
+        // Schützt jetzt auch gegen Races mit c1_rate_limit_tests-Tests.
+        // Drop am Ende des Tests setzt CONSENT + Hub + BUCKETS zurück.
+        let _env = super::SentryTestEnv::lock();
 
         let captured = Arc::new(StdMutex::new(Vec::<String>::new()));
         let captured_for_transport = captured.clone();
@@ -770,7 +804,10 @@ mod c1_mock_transport_smoke {
             "fingerprint[0] = 'aeroacars' muss im Envelope sein"
         );
 
-        // Cleanup für nachfolgende Tests in anderen Modulen
-        sentry::Hub::current().bind_client(None);
+        // Cleanup ist automatisch via SentryTestEnv::drop() oben.
+        // Code-QS-R1-P2-Fix: ersetzt das früher hier manuelle
+        // `sentry::Hub::current().bind_client(None);` — wäre nicht
+        // genug gewesen weil es nur Hub aber nicht CONSENT/BUCKETS
+        // resettet hat.
     }
 }
