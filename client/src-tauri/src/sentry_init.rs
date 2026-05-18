@@ -324,14 +324,490 @@ pub fn redact_event(mut event: Event<'static>) -> Event<'static> {
     event
 }
 
-/// Convenience-Wrapper. No-Op wenn Sentry nicht init oder Consent aus.
+// ─── v0.9.3 (#GlitchTip-Emit-Sites) — Custom-Event-Pfad ─────────────
+//
+// Spec: docs/spec/v0.9.3-glitchtip-emit-sites.md (SPEC ACCEPTED R2).
+//
+// `emit()` ist die EINZIGE öffentliche Schnittstelle für Custom-Events
+// aus dem Pilot-Client. Aufrufer in lib.rs Site-Stellen benutzen nur
+// diese Funktion + die `tag_keys::*`-Konstanten. Direkte
+// `sentry::capture_message`-Calls sind ab v0.9.3 verboten (kein Gate,
+// keine Allowlist-Compliance, kein Fingerprint).
+//
+// Die alten `capture_message`/`capture_error`-Wrappers (v0.9.0,
+// #[allow(dead_code)]-geflaggt weil nie aufgerufen) sind entfernt — die
+// fehlende Verwendung war Teil des „GlitchTip ist Theorie"-Problems das
+// v0.9.3 löst.
+
+/// Allowlist-konforme Tag-Keys. Identisch zu `allowed_tag_keys()`.
+/// Wer eine Konstante ergänzt MUSS auch die Allowlist erweitern —
+/// 2-Stellen-Bewusstseinszwang dass dieser neue Tag privacy-konform ist.
+///
+/// `#[allow(dead_code)]` weil in C1 nur das Plumbing liegt — die ersten
+/// Konstanten werden ab C2 verwendet (S1+S2 nutzen ERROR_KIND,
+/// ERROR_STATUS_CODE, PIREP_ID). Bis C8 sind alle gebraucht.
 #[allow(dead_code)]
-pub fn capture_message(message: &str, level: sentry::Level) {
-    sentry::capture_message(message, level);
+pub(crate) mod tag_keys {
+    pub(crate) const ERROR_CODE: &str = "error.code";
+    pub(crate) const ERROR_KIND: &str = "error.kind";
+    pub(crate) const ERROR_STATUS_CODE: &str = "error.status_code";
+    pub(crate) const SIMULATOR: &str = "simulator";
+    pub(crate) const AIRCRAFT: &str = "aircraft";
+    pub(crate) const AIRPORT: &str = "airport";
+    pub(crate) const RUNWAY: &str = "runway";
+    pub(crate) const PIREP_ID: &str = "pirep.id";
+    pub(crate) const CALLSIGN: &str = "callsign";
+    pub(crate) const PHASE: &str = "phase";
+    pub(crate) const FORENSICS_VERSION: &str = "forensics.version";
+    pub(crate) const DISTANCE_BUCKET: &str = "distance.bucket";
+    pub(crate) const FEATURE_FLAG: &str = "feature.flag";
+    // `app.component`, `app.version`, `os`, `os.version`, `pilot.hash`
+    // werden vom Init-Scope (create_and_bind) gesetzt, NICHT per emit().
 }
 
-/// Convenience-Wrapper. No-Op wenn Sentry nicht init oder Consent aus.
+#[derive(Debug, Clone, Copy)]
+struct RateLimit {
+    max: u32,
+    secs: u64,
+}
+
+#[derive(Debug)]
+struct BucketState {
+    tokens_remaining: u32,
+    window_started_at: std::time::Instant,
+    limit: RateLimit,
+}
+
+/// Per-`error.code` Rate-Limits. Verhindert dass MQTT-Reconnect-Storms
+/// oder ähnliche „Storm"-Pattern das tip.kant.ovh-Daily-Quota in 30
+/// Sekunden verbrennen. Werte aus Spec LE2.
+const RATE_LIMIT_DEFAULTS: &[(&str, RateLimit)] = &[
+    ("pirep_file_failed_transient", RateLimit { max: 3, secs: 300 }),
+    ("pirep_file_failed_hard", RateLimit { max: 5, secs: 60 }),
+    ("sim_disconnect", RateLimit { max: 1, secs: 60 }),
+    ("aircraft_mismatch", RateLimit { max: 5, secs: 60 }),
+    ("not_at_departure", RateLimit { max: 5, secs: 60 }),
+    ("hard_landing", RateLimit { max: 10, secs: 60 }),
+    ("update_check_failed", RateLimit { max: 1, secs: 600 }),
+    ("recorder_upload_failed", RateLimit { max: 3, secs: 60 }),
+    ("dds_violation", RateLimit { max: 10, secs: 60 }),
+];
+
+/// Fallback für unbekannte error_codes (= jemand hat eine neue Site
+/// gebaut ohne RATE_LIMIT_DEFAULTS zu erweitern). Großzügig genug damit
+/// nichts versehentlich gedrosselt wird, aber nicht offen.
+const DEFAULT_LIMIT: RateLimit = RateLimit { max: 10, secs: 60 };
+
+fn lookup_limit(error_code: &str) -> RateLimit {
+    RATE_LIMIT_DEFAULTS
+        .iter()
+        .find(|(k, _)| *k == error_code)
+        .map(|(_, l)| *l)
+        .unwrap_or(DEFAULT_LIMIT)
+}
+
+/// Token-Bucket-Map pro error.code. HashMap<String, _> statt
+/// HashMap<&'static str, _> — siehe Spec R1-P1-2-Fix (Lifetime-Gründe).
+static BUCKETS: OnceLock<Mutex<std::collections::HashMap<String, BucketState>>> = OnceLock::new();
+
+/// Token-Bucket-Konsum. Clock-Injection (`now: Instant`) macht Tests
+/// deterministisch (Spec R1-P2-2-Fix) — keine echten Sleep-Waits.
+fn try_consume_token(error_code: &str, now: std::time::Instant) -> bool {
+    let mut buckets = BUCKETS
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("rate-limit bucket mutex poisoned");
+    let limit = lookup_limit(error_code);
+    let entry = buckets
+        .entry(error_code.to_string())
+        .or_insert(BucketState {
+            tokens_remaining: limit.max,
+            window_started_at: now,
+            limit,
+        });
+    if now.duration_since(entry.window_started_at) >= std::time::Duration::from_secs(limit.secs) {
+        // Window expired → reset
+        entry.tokens_remaining = limit.max;
+        entry.window_started_at = now;
+        entry.limit = limit;
+    }
+    if entry.tokens_remaining > 0 {
+        entry.tokens_remaining -= 1;
+        true
+    } else {
+        false
+    }
+}
+
+/// Sentry-Event mit Rate-Limit + Allowlist-typed Tags + expliziter
+/// Fingerprint-Gruppierung senden. EINZIGE öffentliche Schnittstelle
+/// für Custom-Events aus dem Pilot-Client (v0.9.3 #GlitchTip-Emit-Sites).
+///
+/// Returns `true` wenn an Transport übergeben, `false` wenn verworfen.
+/// **Gate-Reihenfolge** (Spec R2-P1-1-Fix):
+///   1. Consent — `CONSENT.load()`. Atomic = `false` → skip.
+///   2. Client-bound — `hub.client().map(|c| c.is_enabled()).unwrap_or(false)`.
+///      Verhindert Token-Verbrauch wenn DSN fehlt oder nach Opt-Out
+///      noch nicht wieder gebunden.
+///   3. Rate-Limit — `try_consume_token()`.
+///   4. Send — `sentry::capture_message` mit Fingerprint + Tags.
+///
+/// **Privacy:** `tags` MÜSSEN aus `tag_keys::*`-Konstanten kommen — die
+/// sind 1:1 mit der `allowed_tag_keys()`-Allowlist gespiegelt. Defense-
+/// in-Depth: selbst wenn jemand einen rohen String reinpasst der nicht
+/// erlaubt ist, strippt `before_send` → `redact_event` ihn wieder weg.
+///
+/// **Grouping:** Fingerprint ist hart auf `["aeroacars", error_code]`
+/// gesetzt — verhindert dass eine variierende Message (z.B. mit retry-
+/// counter) pro Variation einen neuen Issue im GlitchTip-Dashboard
+/// erzeugt. Gruppierungs-Vertrag: genau 1 Issue pro `error_code`.
+///
+/// `#[allow(dead_code)]`: in C1 ruft nur der DEV-Trigger-Skeleton diese
+/// Funktion (über Match-Catch-All läuft sie nie). Ab C2 (S1+S2) wird
+/// `emit()` von echten Site-Aufrufern in `lib.rs` gerufen — dann
+/// kaskadiert die "use"-Markierung auf alle internen Helper
+/// (try_consume_token, lookup_limit, BUCKETS, RATE_LIMIT_DEFAULTS,
+/// DEFAULT_LIMIT, RateLimit, BucketState) automatisch. Das `#[allow]`
+/// darf in C2 bleiben — schadet nicht und macht das Modul tolerant
+/// gegen kurze Phasen wo nur Tests rufen.
 #[allow(dead_code)]
-pub fn capture_error<E: std::error::Error + ?Sized>(err: &E) {
-    sentry::capture_error(err);
+pub(crate) fn emit(
+    level: sentry::Level,
+    error_code: &'static str,
+    message: &str,
+    tags: &[(&'static str, String)],
+) -> bool {
+    // Gate 1: Consent
+    if !CONSENT.load(Ordering::Relaxed) {
+        return false;
+    }
+    // Gate 2: Client bound + enabled (R2-P1-1-Fix)
+    let hub = sentry::Hub::current();
+    let client_active = hub.client().map(|c| c.is_enabled()).unwrap_or(false);
+    if !client_active {
+        tracing::debug!(error_code, "[sentry] no client bound — event dropped");
+        return false;
+    }
+    // Gate 3: Rate-Limit
+    if !try_consume_token(error_code, std::time::Instant::now()) {
+        tracing::debug!(error_code, "[sentry] rate-limited — event dropped");
+        return false;
+    }
+    // Gate 4: Send
+    sentry::with_scope(
+        |scope| {
+            scope.set_fingerprint(Some(["aeroacars", error_code].as_slice()));
+            scope.set_tag(tag_keys::ERROR_CODE, error_code);
+            for (k, v) in tags {
+                scope.set_tag(*k, v);
+            }
+        },
+        || {
+            sentry::capture_message(message, level);
+        },
+    );
+    true
+}
+
+// ─── v0.9.3 C1 Test-Infrastructure (Code-QS-R1-P2-Fix) ──────────────
+//
+// **Problem das wir lösen:** Sentry-Init-Tests teilen drei globale
+// Statics: CONSENT (Atomic), BUCKETS (Static-Mutex), und den globalen
+// Sentry-Hub (sentry::Hub::current().bind_client(...)). In R1-PR12
+// hatte JEDES Test-Modul (c1_rate_limit_tests + c1_mock_transport_smoke)
+// nur einen LOKALEN TEST_LOCK — der schützt nur Tests INNERHALB
+// desselben Moduls. Ein Test aus Modul A konnte parallel zu einem Test
+// aus Modul B laufen → CONSENT-Read/Write-Race → flaky CI.
+//
+// **Lösung:** EIN gemeinsamer Lock + Drop-Guard. Jeder Sentry-Test
+// holt am Anfang `let _env = SentryTestEnv::lock()` → serialisiert
+// ALLE Sentry-Tests modul-übergreifend, und der Drop des Guards
+// resetted CONSENT, BUCKETS und Hub auf einen sauberen Zustand
+// (Default = aus). Kein Test muss mehr Cleanup selber machen.
+//
+// `#[cfg(test)]` damit kein Bit in den Production-Build leakt.
+#[cfg(test)]
+static SENTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+struct SentryTestEnv {
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl SentryTestEnv {
+    /// Locked Test-Env mit Pre-Clean. Drop macht Post-Clean.
+    /// Recover-from-poisoned-Mutex damit ein Panic in einem Test nicht
+    /// alle folgenden Sentry-Tests blockiert.
+    fn lock() -> Self {
+        let guard = SENTRY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        // Pre-Clean: Default-State herstellen unabhängig was der
+        // vorherige Test-Lauf hinterlassen hat (Drop SOLLTE das schon
+        // gemacht haben, aber falls jemand panic'd: doppelt hält besser).
+        CONSENT.store(false, std::sync::atomic::Ordering::Relaxed);
+        sentry::Hub::current().bind_client(None);
+        if let Some(buckets) = BUCKETS.get() {
+            if let Ok(mut map) = buckets.lock() {
+                map.clear();
+            }
+        }
+        Self { _guard: guard }
+    }
+}
+
+#[cfg(test)]
+impl Drop for SentryTestEnv {
+    fn drop(&mut self) {
+        // Post-Clean: nächster Test bekommt sauberen Default-Zustand.
+        CONSENT.store(false, std::sync::atomic::Ordering::Relaxed);
+        sentry::Hub::current().bind_client(None);
+        if let Some(buckets) = BUCKETS.get() {
+            if let Ok(mut map) = buckets.lock() {
+                map.clear();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod c1_rate_limit_tests {
+    //! v0.9.3 C1 Schicht-1-Tests: Mechanik des Token-Buckets +
+    //! Consent-Gate. KEINE echten Sleep-Waits — Clock wird via
+    //! `try_consume_token(code, now)` injiziert.
+    //!
+    //! Test-Serialisierung via shared `SentryTestEnv::lock()` —
+    //! schützt alle Sentry-Init-Tests modul-übergreifend gegen
+    //! Races auf CONSENT/BUCKETS/Hub.
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn token_bucket_lets_first_n_through() {
+        let _env = super::SentryTestEnv::lock();
+        let t0 = Instant::now();
+        // Default-Limit für unbekannten Code = (max=10, secs=60)
+        for _ in 0..10 {
+            assert!(
+                try_consume_token("c1_test_unknown_code", t0),
+                "first 10 should pass"
+            );
+        }
+    }
+
+    #[test]
+    fn token_bucket_drops_after_limit() {
+        let _env = super::SentryTestEnv::lock();
+        let t0 = Instant::now();
+        for _ in 0..10 {
+            try_consume_token("c1_test_drop_code", t0);
+        }
+        assert!(
+            !try_consume_token("c1_test_drop_code", t0),
+            "11th should drop"
+        );
+    }
+
+    #[test]
+    fn token_bucket_resets_after_window_without_sleep() {
+        // R1-P2-2-Fix: Clock-Injection statt sleep(60s). Test laeuft
+        // in <1ms statt 61s.
+        let _env = super::SentryTestEnv::lock();
+        let t0 = Instant::now();
+        for _ in 0..10 {
+            try_consume_token("c1_test_reset_code", t0);
+        }
+        assert!(!try_consume_token("c1_test_reset_code", t0));
+        let t_later = t0 + Duration::from_secs(61);
+        assert!(
+            try_consume_token("c1_test_reset_code", t_later),
+            "after window expires, token should be available again"
+        );
+    }
+
+    #[test]
+    fn known_error_code_uses_specific_limit() {
+        let _env = super::SentryTestEnv::lock();
+        let t0 = Instant::now();
+        // sim_disconnect ist (max=1, secs=60) per RATE_LIMIT_DEFAULTS
+        assert!(try_consume_token("sim_disconnect", t0));
+        assert!(
+            !try_consume_token("sim_disconnect", t0),
+            "sim_disconnect Limit ist 1 — der zweite muss droppen"
+        );
+    }
+
+    #[test]
+    fn unknown_error_code_gets_default_limit() {
+        // Reiner lookup-Test — kein State-Zugriff, kein Lock nötig.
+        let limit = lookup_limit("never_seen_before_code");
+        assert_eq!(limit.max, DEFAULT_LIMIT.max);
+        assert_eq!(limit.secs, DEFAULT_LIMIT.secs);
+    }
+
+    #[test]
+    fn emit_returns_false_when_no_client_bound() {
+        // R2-P1-1-Fix: emit() darf KEINEN Token verbrauchen wenn kein
+        // Client gebunden ist (= Build ohne DSN oder nach Opt-Out vor
+        // dem nächsten create_and_bind).
+        let _env = super::SentryTestEnv::lock();
+        CONSENT.store(true, Ordering::Relaxed);
+        // Sicherstellen dass kein Client gebunden ist (Test-Isolation).
+        sentry::Hub::current().bind_client(None);
+        let result = emit(
+            sentry::Level::Warning,
+            "c1_test_no_client_code",
+            "should not be sent",
+            &[],
+        );
+        assert!(!result, "emit() ohne gebundenen Client muss false returnen");
+        let buckets = BUCKETS.get().unwrap().lock().unwrap();
+        assert!(
+            !buckets.contains_key("c1_test_no_client_code"),
+            "kein Client darf KEINEN Token-Bucket-Eintrag erzeugen"
+        );
+    }
+
+    #[test]
+    fn consent_off_returns_false_without_consuming_token() {
+        // emit() ist die Stelle wo Consent + Token zusammenkommen.
+        // Direkte try_consume_token-Calls hier verbrauchen Tokens
+        // unabhängig von Consent (das ist auch richtig — Consent-Gate
+        // ist eine Ebene drueber). Aber wenn emit() mit Consent=false
+        // gerufen wird, darf es NICHT in try_consume_token reingehen.
+        // Dieser Test verifiziert das Verhalten von emit() selbst.
+        let _env = super::SentryTestEnv::lock();
+        CONSENT.store(false, Ordering::Relaxed);
+        // Sentry-Hub ohne Client — emit() returnt eh false durch Gate 2,
+        // aber Consent-Gate sollte schon vorher abbrechen.
+        let result = emit(
+            sentry::Level::Warning,
+            "c1_test_consent_off_code",
+            "should not be sent",
+            &[],
+        );
+        assert!(!result, "emit() mit Consent=false muss false returnen");
+        // Bucket darf NICHT angerührt worden sein:
+        let buckets = BUCKETS.get().unwrap().lock().unwrap();
+        assert!(
+            !buckets.contains_key("c1_test_consent_off_code"),
+            "Consent=false darf KEINEN Token-Bucket-Eintrag erzeugen"
+        );
+    }
+}
+
+#[cfg(test)]
+mod c1_mock_transport_smoke {
+    //! v0.9.3 C1 Schicht-2-Smoke: MockTransport-Helper + ein Smoke-Test
+    //! der beweist dass `emit()` durch alle 4 Gates kommt + ein Envelope
+    //! im Mock landet + die Tags die Allowlist überleben.
+    //!
+    //! Ab C2 wachsen hier pro Site eigene `s{N}_*_event_survives_redact`-
+    //! Tests. C1 hat nur den 1 Smoke-Test um die Helper-Infrastruktur
+    //! zu verifizieren.
+    use super::*;
+    use sentry::{Client, ClientOptions, Hub, Transport};
+    use std::sync::{Arc, Mutex as StdMutex};
+
+    /// Sentry-Envelope-Type ist intern in sentry 0.34. Wir capturen
+    /// als raw Bytes (= serialisierte Envelope) und parsen für Asserts.
+    struct MockTransport {
+        captured: Arc<StdMutex<Vec<String>>>,
+    }
+    impl Transport for MockTransport {
+        fn send_envelope(&self, envelope: sentry::Envelope) {
+            // Envelope serialisieren — sentry 0.34 hat to_writer
+            let mut buf = Vec::new();
+            envelope.to_writer(&mut buf).ok();
+            let s = String::from_utf8_lossy(&buf).to_string();
+            self.captured.lock().unwrap().push(s);
+        }
+    }
+
+    #[test]
+    fn smoke_emit_passes_all_gates_and_lands_in_mock_transport() {
+        // Code-QS-R1-P2-Fix: shared SentryTestEnv statt lokalem SMOKE_LOCK.
+        // Schützt jetzt auch gegen Races mit c1_rate_limit_tests-Tests.
+        // Drop am Ende des Tests setzt CONSENT + Hub + BUCKETS zurück.
+        let _env = super::SentryTestEnv::lock();
+
+        let captured = Arc::new(StdMutex::new(Vec::<String>::new()));
+        let captured_for_transport = captured.clone();
+
+        let options = ClientOptions {
+            // DSN-String muss valid sein damit Client::from erfolgreich
+            // einen Client baut. Inhalt ist egal — der MockTransport
+            // ignoriert die Network-Layer.
+            dsn: "https://test@example.invalid/1".parse().ok(),
+            release: Some("aeroacars-app@c1-smoke".into()),
+            before_send: Some(std::sync::Arc::new(|event| {
+                Some(redact_event(event))
+            })),
+            transport: Some(Arc::new(move |_opts: &ClientOptions| {
+                Arc::new(MockTransport {
+                    captured: captured_for_transport.clone(),
+                }) as Arc<dyn Transport>
+            })),
+            ..Default::default()
+        };
+        let opts_with_defaults = sentry::apply_defaults(options);
+        let client = Arc::new(Client::from(opts_with_defaults));
+        // Hub-scoped run damit unser MockTransport-Client nur in diesem
+        // Test gebunden ist — keine globale Verschmutzung.
+        Hub::run(
+            Arc::new(Hub::new(Some(client), Default::default())),
+            || {
+                CONSENT.store(true, Ordering::Relaxed);
+                let sent = emit(
+                    sentry::Level::Warning,
+                    "c1_smoke_test_code",
+                    "smoke message",
+                    &[
+                        (tag_keys::ERROR_KIND, "smoke".to_string()),
+                        (tag_keys::AIRCRAFT, "A320".to_string()),
+                    ],
+                );
+                assert!(sent, "emit() muss true returnen wenn alle Gates passieren");
+            },
+        );
+
+        let envelopes = captured.lock().unwrap();
+        assert_eq!(
+            envelopes.len(),
+            1,
+            "Genau ein Envelope muss im MockTransport sein"
+        );
+        let body = &envelopes[0];
+        // Allowlist-Compliance + Tag-Survives-Redact: die drei Tags
+        // (error.code als Pflicht-Tag + die zwei aus tag_keys::*) MÜSSEN
+        // im serialisierten Envelope auftauchen.
+        assert!(
+            body.contains("\"error.code\""),
+            "error.code muss im Envelope sein (gesetzt von emit() selbst)"
+        );
+        assert!(
+            body.contains("c1_smoke_test_code"),
+            "error.code-Wert muss durch redact_event durchkommen"
+        );
+        assert!(
+            body.contains("\"error.kind\""),
+            "error.kind muss im Envelope sein"
+        );
+        assert!(
+            body.contains("\"aircraft\""),
+            "aircraft muss im Envelope sein"
+        );
+        // Fingerprint-Vertrag: ["aeroacars", error_code]
+        assert!(
+            body.contains("\"aeroacars\""),
+            "fingerprint[0] = 'aeroacars' muss im Envelope sein"
+        );
+
+        // Cleanup ist automatisch via SentryTestEnv::drop() oben.
+        // Code-QS-R1-P2-Fix: ersetzt das früher hier manuelle
+        // `sentry::Hub::current().bind_client(None);` — wäre nicht
+        // genug gewesen weil es nur Hub aber nicht CONSENT/BUCKETS
+        // resettet hat.
+    }
 }
