@@ -280,7 +280,8 @@
       "fallback": "Nicht bewertet."
     },
     "warn": {
-      "pre_displaced_threshold": "⚠ Vor Displaced-Threshold aufgesetzt — Anflugprofil prüfen"
+      "pre_displaced_threshold": "⚠ Vor Displaced-Threshold aufgesetzt — Anflugprofil prüfen",
+      "planned_burn_may_be_off": "⚠ Verdacht: geplanter Trip-Burn könnte zu hoch sein — OFP-Burn prüfen"
     },
     "confidence": {
       "high": "Confidence: Hoch",

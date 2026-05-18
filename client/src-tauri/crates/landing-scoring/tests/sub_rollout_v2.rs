@@ -228,14 +228,19 @@ fn skip_off_airport_landing() {
 
 #[test]
 fn off_airport_priority_over_missing_data_fields() {
-    // QS-Code-R1 P1-2: realer Off-Airport-Pfad (= kein runway_match)
-    // propagiert im fill_v2_rollout_fields-Helper natürlich auch zu
-    // td_distance=None und runway_length=None (beide kommen aus dem
-    // runway_match). Skip-Gate-Reihenfolge MUSS off_airport_landing
-    // zuerst returnen — sonst sieht der Pilot „missing_td_distance"
-    // bei einem Crash auf dem Acker, was Quatsch ist.
+    // QS-Code-R1 P1-2 + R2-P1-1: realer Off-Airport-Pfad (= kein
+    // runway_match) propagiert im fill_v2_rollout_fields-Helper
+    // FAKTISCH zu:
+    //   airport_source            = None  (rm.map(|_| "runway_match"))
+    //   runway_geometry_trusted   = Some(false)  (runway_geometry_trust_check
+    //                                returnt no_runway_match → trusted=false)
+    //   td_distance/length/rollout = None  (alle aus rm abgeleitet)
+    // Mit Geometry-zuerst-Reihenfolge wäre der Reason „untrusted_geometry"
+    // — semantisch falsch („untrusted" impliziert: es gibt eine, sie ist
+    // nur fragwürdig). „off_airport_landing" ist spezifischer.
     let mut input = ok_input(0.0, 0.0, 0.0, 0, "C172");
-    input.airport_source = Some("nearest_25nm"); // = off-airport
+    input.airport_source = None;
+    input.runway_geometry_trusted = Some(false);
     input.td_distance_from_threshold_m = None;
     input.rollout_distance_m = None;
     input.runway_length_m = None;
@@ -244,21 +249,37 @@ fn off_airport_priority_over_missing_data_fields() {
     assert_eq!(
         r.reason.as_deref(),
         Some("off_airport_landing"),
-        "Off-Airport-Reason MUSS vor missing_* gewinnen \
-         (sonst sieht Pilot 'TD-Distanz fehlt' statt 'Off-Airport-Landung')"
+        "Production-shaped Off-Airport-Case MUSS off_airport_landing \
+         liefern, NICHT untrusted_geometry oder missing_*."
     );
 }
 
 #[test]
-fn untrusted_geometry_priority_over_missing_data_fields() {
-    // Gleiches Argument für untrusted geometry: wenn die Geometrie
-    // nicht vertrauenswürdig ist, sind die abgeleiteten Felder (td_distance,
-    // runway_length) auch nicht vertrauenswürdig — Preconditions-Reason
-    // muss zuerst kommen.
+fn off_airport_with_nearest_25nm_still_wins_over_data_missing() {
+    // Variant des obigen Tests: airport_source ist gesetzt auf
+    // "nearest_25nm" (= Touchdown nahe einem Airport, aber NICHT auf
+    // einer korrelierten Runway). Hier ist die Geometrie meist trusted=true
+    // (kein no_runway_match), aber die Datenfelder fehlen.
     let mut input = ok_input(0.0, 0.0, 0.0, 0, "C172");
-    input.runway_geometry_trusted = Some(false);
+    input.airport_source = Some("nearest_25nm");
+    input.runway_geometry_trusted = Some(true);
     input.td_distance_from_threshold_m = None;
     input.rollout_distance_m = None;
+    input.runway_length_m = None;
+    let r = sub_rollout_v2(&input);
+    assert!(r.skipped);
+    assert_eq!(r.reason.as_deref(), Some("off_airport_landing"));
+}
+
+#[test]
+fn untrusted_geometry_with_runway_match_but_geometry_check_failed() {
+    // untrusted_geometry trifft nur noch wenn AIRPORT-SOURCE OK ist
+    // aber Geometry-Check failed (z.B. centerline_offset > 200m,
+    // negative float_distance). Dann hat man EINE Bahn, aber ihrer
+    // Geometrie ist nicht zu trauen.
+    let mut input = ok_input(516.93, 583.55, 3657.0, 0, "A388");
+    input.airport_source = Some("runway_match"); // runway WAR korreliert
+    input.runway_geometry_trusted = Some(false); // aber geometry-check failed
     let r = sub_rollout_v2(&input);
     assert!(r.skipped);
     assert_eq!(r.reason.as_deref(), Some("untrusted_geometry"));

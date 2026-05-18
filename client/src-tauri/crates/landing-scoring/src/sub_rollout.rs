@@ -66,29 +66,37 @@ fn is_heavy(icao: Option<&str>) -> bool {
     category_for_icao(icao) == Category::Heavy
 }
 
-/// Spec LE6 — Skip-Gate. Reihenfolge (v0.10.0 QS-Code-R1-Fix P1-2):
-/// 1. Preconditions: Geometry-Trust + Airport-Source ZUERST
+/// Spec LE6 — Skip-Gate. Reihenfolge (v0.10.0 Code-QS-R2-Fix P1-1):
+/// 1. Preconditions: Airport-Source ZUERST, dann Geometry-Trust
 /// 2. Required data: Rollout / TD / Length
 /// 3. LDA-Sanity am Schluss
 ///
-/// **Warum diese Reihenfolge:** Off-Airport-Landungen (= kein
-/// runway_match) propagieren im fill_v2_rollout_fields-Helper natürlich
-/// auch zu `td_distance=None` und `runway_length=None` (weil beide aus
-/// dem runway_match abgeleitet werden). Die alte Reihenfolge (data zuerst)
-/// hätte off-airport-Touchdowns dann als „missing_td_distance" geskippt
-/// statt als „off_airport_landing" — semantisch falsch und für den Piloten
-/// verwirrend. Voraussetzungs-Checks gehören vor Datenmangel-Checks.
+/// **Warum airport_source vor geometry_trust:** In der Realität setzt
+/// `runway_geometry_trust_check` bei fehlendem `runway_match` automatisch
+/// `(false, "no_runway_match")` zurück — d. h. ein Off-Airport-Touchdown
+/// (= Crash auf dem Acker) hat IMMER `runway_geometry_trusted=Some(false)`.
+/// Mit Geometry-zuerst-Reihenfolge wäre der Reason dann „untrusted_geometry"
+/// — semantisch falsch („untrusted geometry" impliziert: es gibt eine
+/// Geometrie, aber ihr ist nicht zu trauen). „off_airport_landing" ist
+/// die spezifischere und ehrlichere Aussage.
+///
+/// **Warum Preconditions vor Data:** Off-Airport propagiert im
+/// fill_v2_rollout_fields-Helper auch zu `td_distance=None` und
+/// `runway_length=None` (beide werden aus dem runway_match abgeleitet).
+/// Data-zuerst hätte als „missing_td_distance" gerendert — Quatsch bei
+/// einem Acker-Crash.
 ///
 /// KEIN Default-Fallback (sonst Datenmangel wird zu falschen 100 PTS —
 /// R2-P0-1 Fix).
 fn skip_reason(input: &RolloutInput) -> Option<&'static str> {
     // ── 1. Preconditions ─────────────────────────────────────────────
-    // None ist NICHT trusted (R2-P1-2 Fix). Only Some(true) passes.
-    if input.runway_geometry_trusted != Some(true) {
-        return Some("untrusted_geometry");
-    }
+    // airport_source ZUERST — off-airport ist die spezifischste Aussage.
     if input.airport_source != Some("runway_match") {
         return Some("off_airport_landing");
+    }
+    // Dann geometry_trust. None ist NICHT trusted (R2-P1-2 Fix).
+    if input.runway_geometry_trusted != Some(true) {
+        return Some("untrusted_geometry");
     }
     // ── 2. Required-Data-Felder ──────────────────────────────────────
     if input.rollout_distance_m.is_none() {

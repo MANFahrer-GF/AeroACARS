@@ -280,7 +280,8 @@
       "fallback": "Non valutato."
     },
     "warn": {
-      "pre_displaced_threshold": "⚠ Touchdown prima del displaced threshold — rivedere approach"
+      "pre_displaced_threshold": "⚠ Touchdown prima del displaced threshold — rivedere approach",
+      "planned_burn_may_be_off": "⚠ Sospetto: trip-burn pianificato potrebbe essere troppo alto — verificare OFP burn"
     },
     "confidence": {
       "high": "Confidenza: Alta",

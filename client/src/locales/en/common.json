@@ -280,7 +280,8 @@
       "fallback": "Not scored."
     },
     "warn": {
-      "pre_displaced_threshold": "⚠ Touched down before displaced threshold — review approach"
+      "pre_displaced_threshold": "⚠ Touched down before displaced threshold — review approach",
+      "planned_burn_may_be_off": "⚠ Suspected: planned trip-burn may be too high — verify OFP burn"
     },
     "confidence": {
       "high": "Confidence: High",
