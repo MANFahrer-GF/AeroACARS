@@ -10845,6 +10845,10 @@ async fn flight_end(
                             .or_else(|| stats.landing_score.map(|s| s.numeric()));
                         aeroacars_mqtt::PirepPayload {
                             ts: Utc::now().timestamp_millis(),
+                            // v0.11.1: Pilot-Client-Version mitsenden
+                            // damit Reports-Uebersicht die Pill ohne
+                            // Touchdown-Join zeigen kann.
+                            client_version: Some(env!("CARGO_PKG_VERSION")),
                             pirep_id: flight.pirep_id.clone(),
                             flight_number: format_callsign(
                                 &flight.airline_icao,
@@ -14356,6 +14360,13 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         let payload_assessed = assess_touchdown(&stats);
                         aeroacars_mqtt::TouchdownPayload {
                             ts: landing_at.timestamp_millis(),
+                            // v0.11.1: Pilot-Client-Version aus dem Cargo-
+                            // Manifest in jeden Touchdown mitsenden, damit
+                            // die Webapp-Reports-Liste + LandingAnalysis-
+                            // Header die Version direkt anzeigen koennen
+                            // (vorher war client_version nur in FlightMeta,
+                            // landete also nie in der Touchdown-DB-Row).
+                            client_version: Some(env!("CARGO_PKG_VERSION")),
                             // v0.7.19 (QS-R2 Finding 1): Recorder/Webapp
                             // targeted Korrektur-Events per pirep_id auf
                             // den exakten Touchdown-Row.

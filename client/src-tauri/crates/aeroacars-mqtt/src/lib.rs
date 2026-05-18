@@ -277,6 +277,15 @@ pub struct TouchdownPayload {
     /// hypothetische Schema-Migrationen tolerant bleiben.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pirep_id: Option<String>,
+    /// v0.11.1: Pilot-Client-Version aus `CARGO_PKG_VERSION`. Mirror
+    /// vom FlightMeta-Feld, hier zusaetzlich im Touchdown-Payload damit
+    /// die Webapp-Reports-Liste + Landing-Analysis-Header die Version
+    /// direkt aus jeder Touchdown-Row anzeigen koennen (statt sie ueber
+    /// die separate FlightMeta-Connect-Message zu joinen). Schlankerer
+    /// Datenfluss + sichtbar auch fuer historische PIREPs sobald ein
+    /// Pilot mit v0.11.1+ einen neuen Flug einreicht.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_version: Option<&'static str>,
     pub vs_fpm: i32,
     pub ias_kt: i32,
     pub gs_kt: Option<i32>,
@@ -721,6 +730,11 @@ pub struct PirepPayload {
     pub flight_number: String,
     pub dep: String,
     pub arr: String,
+    /// v0.11.1: Pilot-Client-Version. Siehe TouchdownPayload.client_version
+    /// fuer Begruendung — Webapp liest die Pill aus dem PirepPayload damit
+    /// die Reports-Uebersicht ohne Touchdown-Join die Version zeigen kann.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_version: Option<&'static str>,
     pub block_time_min: Option<i32>,
     pub flight_time_min: Option<i32>,
     pub distance_nm: Option<f32>,

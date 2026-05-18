@@ -4,6 +4,16 @@ Alle nennenswerten Änderungen an AeroACARS. Format: lose an [Keep a Changelog](
 
 ---
 
+## [v0.11.1] — 2026-05-18 · Hotfix · client_version im Touchdown-/PIREP-Payload
+
+**Hotfix für v0.11.0.** UI-Render-Code für die Pilot-Client-Version-Pill war korrekt, aber das `client_version`-Feld wurde nie im Touchdown-Payload oder PIREP-Payload mit-gesendet — es lag nur im `FlightMeta` der Connect-Message und landete deshalb nie in der DB-Row. Resultat: leere Pill für alle Flüge.
+
+Fix: `client_version: Some(env!("CARGO_PKG_VERSION"))` zu `TouchdownPayload` und `PirepPayload` hinzugefügt + an den jeweiligen Build-Stellen gesetzt. Pill wird für alle Flüge die **nach** dem v0.11.1-Update eingereicht werden korrekt befüllt.
+
+Plus: Webapp zeigt die Pill jetzt auch in der **Reports-Übersicht** auf jeder PIREP-Karte (vorher nur im Detail-Modal beim Klick auf eine Karte) — VA-Owner kann die Version-Verteilung der Piloten direkt aus der Liste scannen.
+
+---
+
 ## [v0.11.0] — 2026-05-18 · Pilot-Hilfen, Approach-Stability-Card, Loadsheet-Polish, Settings-Tabs
 
 **Public Release** für alle Piloten. Stable-Updater greift das automatisch. Sammelt drei größere UI-Erweiterungen, einen wichtigen Bug-Fix und eine neue VPS-Diagnose-Anzeige in einer Release.
