@@ -1,0 +1,15 @@
+{
+  "key": "rollout",
+  "score": 100,
+  "points": 100,
+  "band": "good",
+  "label_key": "landing.sub.rollout",
+  "value": "1100 m / 3657 m  ·  30 %",
+  "rationale_key": "landing.rat.excellent_margin",
+  "tip_key": "landing.tip.excellent_margin",
+  "skipped": false,
+  "extra": [
+    "davon ~517 m Float vor Aufsetzen",
+    "Bahn: YMML 16, LDA 3657 m"
+  ]
+}

@@ -93,6 +93,13 @@ pub struct SubScoreEntry {
     /// implausibel-hohem Minderverbrauch — Phase 2/F3)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
+    /// v0.10.0 (#runway-utilization-score): Zusatz-Display-Zeilen für die
+    /// UI-Card (z.B. „davon ~520 m Float vor Aufsetzen", „Bahn: YMML 16,
+    /// LDA 3657 m"). Renderer alter Versionen ignorieren das Feld
+    /// schweigend (forward-compat). Renderer v0.10+ die ein Payload ohne
+    /// `extra` bekommen, behandeln es als leere Liste (`#[serde(default)]`).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub extra: Vec<String>,
 }
 
 impl SubScoreEntry {
@@ -110,6 +117,7 @@ impl SubScoreEntry {
             skipped: true,
             reason: Some(reason.to_string()),
             warning: None,
+            extra: Vec::new(),
         }
     }
 
@@ -136,7 +144,25 @@ impl SubScoreEntry {
             skipped: false,
             reason: None,
             warning: None,
+            extra: Vec::new(),
         }
+    }
+
+    /// v0.10.0 Builder: hängt Display-Extra-Zeilen an (LE12). Wird vom
+    /// `sub_rollout_v2` genutzt um Float-/Bahn-Info unter die Rationale
+    /// zu setzen. No-op wenn `extra` leer ist.
+    pub fn with_extra(mut self, extra: Vec<String>) -> Self {
+        self.extra = extra;
+        self
+    }
+
+    /// v0.10.0 Builder: setzt das Warning-Feld (existiert bereits im
+    /// Wire-Format, kriegt in v0.10.0 nur einen neuen Wert
+    /// `pre_displaced_threshold`). `None` löscht eine evtl. vorher
+    /// gesetzte Warning.
+    pub fn with_warning(mut self, warning: Option<String>) -> Self {
+        self.warning = warning;
+        self
     }
 }
 
@@ -172,6 +198,27 @@ pub struct LandingScoringInput {
     /// 2 km auf einer 3 km Bahn. None heisst „unbekannt" → konservative
     /// (medium-light) Schwellen werden genutzt.
     pub aircraft_icao: Option<String>,
+    // ─── v0.10.0 Runway-Utilization-Score (Spec docs/spec/v0.10.0-
+    // runway-utilization-score.md) ──────────────────────────────────
+    //
+    // Wenn ALLE folgenden Felder Some sind UND alle Skip-Gates pass
+    // (siehe sub_rollout::sub_rollout_v2), wird der NEUE Algorithmus
+    // (LDA-basiert, td+rollout/lda) verwendet und im PIREP/Touchdown
+    // mit `score_algorithm_version = Some(2)` markiert. Wenn eines
+    // fehlt → Skip mit konkretem Reason (KEIN Fallback auf v1).
+    //
+    // Backward-Compat: Wenn aufrufender Code die Felder None lässt,
+    // ruft `compute_sub_scores` weiterhin den alten `sub_rollout` als
+    // Fallback (= identisch zu v0.9.x-Verhalten).
+    pub td_distance_from_threshold_m: Option<f64>,
+    pub landing_float_distance_m: Option<f32>,
+    pub runway_length_m: Option<f32>,
+    pub runway_displaced_threshold_ft: Option<i32>,
+    pub pre_displaced_threshold: Option<bool>,
+    pub runway_geometry_trusted: Option<bool>,
+    pub airport_source: Option<String>,
+    pub runway_match_icao: Option<String>,
+    pub runway_match_ident: Option<String>,
 }
 
 /// Berechnet alle Sub-Scores.
@@ -180,6 +227,21 @@ pub struct LandingScoringInput {
 /// Asymmetrie) und `sub_loadsheet` (F1 VFR-Skip). Stability bleibt
 /// im 2-Faktor-Modus bis Phase 3 F7-B aktiviert (siehe Spec §5.5
 /// Backward-Compat-Test 7.2.1).
+/// v0.10.0 — Sentinel: ist mindestens ein v2-Feld gesetzt? Wenn ja
+/// laufen wir den neuen `sub_rollout_v2`-Pfad (auch wenn der dann
+/// skipped). Wenn nein → alter `sub_rollout` (Backward-Compat für
+/// pre-v0.10-Caller wie Bin-Tools oder Tests).
+///
+/// Wir prüfen die DENOMINATOR-Bezogenen Felder (Bahn-Länge / Geometry-
+/// Trust / Airport-Source) — die sind erst ab v0.8.x überhaupt da. Wenn
+/// hier nichts steht, ist der Caller definitiv pre-v0.10.
+fn scoring_input_has_v2_fields(input: &LandingScoringInput) -> bool {
+    input.runway_length_m.is_some()
+        || input.runway_geometry_trusted.is_some()
+        || input.airport_source.is_some()
+        || input.td_distance_from_threshold_m.is_some()
+}
+
 pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
     let mut out = Vec::with_capacity(8);
 
@@ -197,10 +259,32 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
     ) {
         out.push(stab);
     }
-    if let Some(ro) = sub_rollout::sub_rollout(
-        input.rollout_distance_m,
-        input.aircraft_icao.as_deref(),
-    ) {
+    // v0.10.0 (#runway-utilization-score): Wenn die v2-Datenlage da ist,
+    // wird der neue LDA-basierte Sub-Score gerechnet (auch bei
+    // Skip-Outcomes wie `missing_td_distance`). Der Caller markiert die
+    // Records dann mit `score_algorithm_version = Some(2)`.
+    //
+    // Wenn keines der v2-Felder gesetzt ist (= Caller ist nicht-migriert
+    // oder Test-Fixture ohne Touchdown-Forensik), fallen wir auf den
+    // alten meter-only `sub_rollout` zurück damit pre-v0.10 Code-Pfade
+    // (Bin-Tools, alte Tests) unverändert weiterlaufen.
+    if scoring_input_has_v2_fields(input) {
+        out.push(sub_rollout::sub_rollout_v2(&sub_rollout::RolloutInput {
+            td_distance_from_threshold_m: input.td_distance_from_threshold_m,
+            rollout_distance_m: input.rollout_distance_m,
+            landing_float_distance_m: input.landing_float_distance_m,
+            runway_length_m: input.runway_length_m,
+            runway_displaced_threshold_ft: input.runway_displaced_threshold_ft,
+            pre_displaced_threshold: input.pre_displaced_threshold,
+            runway_geometry_trusted: input.runway_geometry_trusted,
+            airport_source: input.airport_source.as_deref(),
+            runway_match_icao: input.runway_match_icao.as_deref(),
+            runway_match_ident: input.runway_match_ident.as_deref(),
+            aircraft_icao: input.aircraft_icao.as_deref(),
+        }));
+    } else if let Some(ro) =
+        sub_rollout::sub_rollout(input.rollout_distance_m, input.aircraft_icao.as_deref())
+    {
         out.push(ro);
     }
 

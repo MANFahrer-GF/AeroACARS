@@ -185,6 +185,13 @@ export interface LandingRecord {
   /// Bei alten PIREPs (ux_version < 1) leer/fehlt → LegacyPirepNotice.
   sub_scores?: SubScoreEntry[];
 
+  /** v0.10.0 (#runway-utilization-score) — Algorithmus-Version des
+   *  sub_scores-Arrays. Spec docs/spec/v0.10.0-runway-utilization-score.md
+   *  LE11. None/0/1 = pre-v0.10 (meter-only Bahn-Auslastung); 2 = v0.10
+   *  (LDA-basierter Score). UI rendert die neuen extra-Lines + erweiterten
+   *  Rationale-/Warning-Keys nur wenn `>= 2`. */
+  score_algorithm_version?: number | null;
+
   // ─── v0.7.6 P1-3: Runway-Geometry-Trust ──────────────────────────────
   // Spec docs/spec/v0.7.6-landing-payload-consistency.md §3 P1-3.
   // Bei trusted=false werden Centerline-Offset, Past-Threshold (= Float-
@@ -264,12 +271,17 @@ export interface SubScoreEntry {
   points: number;          // Alias fuer score (bestehende UI nutzt .points)
   band: 'good' | 'ok' | 'bad' | 'skipped';
   label_key: string;       // i18n key z.B. "landing.sub.fuel"
-  value?: string;          // formatiert: "-191 fpm"
+  value?: string;          // formatiert: "-191 fpm" — v0.10.0 rollout: "1100 m / 3657 m  ·  30 %"
   rationale_key?: string;
   tip_key?: string;
   skipped: boolean;
   reason?: string;
   warning?: string;
+  /** v0.10.0 (#runway-utilization-score) — Zusatz-Display-Zeilen (LE9),
+   *  z.B. „davon ~520 m Float vor Aufsetzen", „Bahn: YMML 16, LDA 3657 m".
+   *  Renderer alter Versionen ignorieren das Feld schweigend. Default
+   *  bei pre-v0.10-Records: leeres Array. */
+  extra?: string[];
 }
 
 export interface ApproachSample {
@@ -314,6 +326,14 @@ export interface SubScore {
   skipped?: boolean;
   /** Skip-Reason fuer i18n-Key landing.skipped_reason.* */
   skipReason?: string;
+  /** v0.10.0 (#runway-utilization-score) — Extra-Display-Zeilen unter
+   *  der Rationale. Wird vom Card-Renderer als Bullet-Liste gezeigt.
+   *  Leeres Array → nichts gerendert (= forward-compat mit pre-v0.10
+   *  Records ohne `extra`-Feld). */
+  extra?: string[];
+  /** v0.10.0 — Warning-Wert (z.B. "pre_displaced_threshold") für die
+   *  Warning-Pill. UI lookup: `landing.warn.<warning>`. */
+  warning?: string;
 }
 
 // v0.5.47 — Sub-Score-Berechnung delegiert an die zentrale Lib.
@@ -332,6 +352,8 @@ function getSubScores(r: LandingRecord): SubScore[] {
   const ux = r.ux_version ?? 0;
   if (ux >= 1 && r.sub_scores && r.sub_scores.length > 0) {
     // Phase 3 (P1.2-Fix): skipped sind sichtbar als "nicht bewertet"
+    // v0.10.0 (#runway-utilization-score): extra-Lines + warning werden
+    // 1:1 vom Rust-Crate durchgereicht (SSoT — kein Recompute in TS).
     return r.sub_scores.map((s) => {
       const band: SubScore["band"] =
         s.band === "good" || s.band === "ok" || s.band === "bad"
@@ -346,6 +368,8 @@ function getSubScores(r: LandingRecord): SubScore[] {
         rationale: (s.rationale_key ?? "").replace(/^landing\.rat\./, ""),
         skipped: s.skipped,
         skipReason: s.reason,
+        extra: s.extra ?? [],
+        warning: s.warning,
       };
     });
   }
@@ -1262,6 +1286,14 @@ function ScoreBreakdown({ subs }: { subs: SubScore[] }) {
             </div>
           );
         }
+        // v0.10.0 (#runway-utilization-score) — Warning-Pill (z.B.
+        // pre_displaced_threshold) + extra-Lines (Float-Distance,
+        // Bahn-Info). Beides Vorhanden NUR wenn das Rust-Crate sie
+        // gefüllt hat — pre-v0.10 SubScoreEntries kommen ohne diese
+        // Felder durch (undefined) und das Rendering ist No-op.
+        const hasWarning =
+          typeof s.warning === "string" && s.warning.length > 0;
+        const extraLines = s.extra ?? [];
         return (
           <div
             key={s.key}
@@ -1284,6 +1316,36 @@ function ScoreBreakdown({ subs }: { subs: SubScore[] }) {
             <div className="landing-subscore__rationale">
               {t(`landing.rat.${s.rationale}`)}
             </div>
+            {hasWarning && (
+              <div
+                className="landing-subscore__warning"
+                style={{
+                  marginTop: 4,
+                  fontSize: "0.75rem",
+                  color: "#fbbf24",
+                  fontWeight: 600,
+                }}
+              >
+                {t(`landing.warn.${s.warning}`)}
+              </div>
+            )}
+            {extraLines.length > 0 && (
+              <ul
+                className="landing-subscore__extra"
+                style={{
+                  marginTop: 4,
+                  marginBottom: 0,
+                  paddingLeft: 14,
+                  fontSize: "0.72rem",
+                  color: "rgba(255,255,255,0.6)",
+                  listStyle: "'▸ '",
+                }}
+              >
+                {extraLines.map((line, idx) => (
+                  <li key={idx}>{line}</li>
+                ))}
+              </ul>
+            )}
           </div>
         );
       })}

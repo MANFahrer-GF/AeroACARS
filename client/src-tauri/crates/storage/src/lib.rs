@@ -564,6 +564,17 @@ pub struct LandingRecord {
     /// Heuristik-Pfad gleich `touchdown_at`. None wenn kein Accident.
     #[serde(default)]
     pub accident_at: Option<chrono::DateTime<chrono::Utc>>,
+
+    /// v0.10.0 (#runway-utilization-score) — Algorithmus-Version des
+    /// `sub_scores`-Arrays. None/Some(1) = pre-v0.10 (meter-only Bahn-
+    /// Auslastung); Some(2) = v0.10 (LDA-basierter Runway-Utilization-
+    /// Score). UI nutzt diesen Marker um zu entscheiden ob die neuen
+    /// Felder (`extra`, neue Rationale-Keys, neue Warning-Werte)
+    /// gerendert werden. Spec docs/spec/v0.10.0-runway-utilization-
+    /// score.md LE11. Backward-compat: alte landing_history.json-
+    /// Eintraege ohne diese Feld bleiben deserialisierbar (None).
+    #[serde(default)]
+    pub score_algorithm_version: Option<u8>,
 }
 
 /// v0.7.1: Stability-Gate-Window-Metadaten (Spec §5.4).

@@ -686,6 +686,15 @@ pub struct TouchdownPayload {
     /// F6 Displaced-Threshold-Warning: Touchdown im Pre-Threshold-Paint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pre_displaced_threshold: Option<bool>,
+
+    /// v0.10.0 (#runway-utilization-score) — Algorithmus-Version des im
+    /// PIREP gespeicherten `sub_scores`-Arrays. None/Some(1) = pre-v0.10
+    /// (meter-only Bahn-Auslastung); Some(2) = v0.10 (LDA-basierter
+    /// Runway-Utilization-Score). Renderer rendert die neuen Felder
+    /// (`extra`, neue Rationale-Keys, neue Warning-Werte) nur für v2.
+    /// Spec: docs/spec/v0.10.0-runway-utilization-score.md LE11.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score_algorithm_version: Option<u8>,
 }
 
 fn is_false(b: &bool) -> bool { !*b }
@@ -871,6 +880,13 @@ pub struct PirepPayload {
     pub accident_reasons: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accident_at: Option<i64>,
+
+    /// v0.10.0 (#runway-utilization-score) — Algorithmus-Version des
+    /// `sub_scores`-Arrays. None/Some(1) = pre-v0.10 (meter-only Bahn-
+    /// Auslastung); Some(2) = v0.10 (LDA-basierter Runway-Utilization-
+    /// Score). Spec: docs/spec/v0.10.0-runway-utilization-score.md LE11.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score_algorithm_version: Option<u8>,
 }
 
 /// Default fuer pre-v0.7.0 PIREPs ohne den marker. Wird von serde

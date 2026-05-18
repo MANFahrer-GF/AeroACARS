@@ -5004,6 +5004,17 @@ fn error_reporting_set_consent(enabled: bool) -> Result<(), UiError> {
     Ok(())
 }
 
+/// v0.9.3 (#GlitchTip-DevTest): Tauri-Command für den „Test-Event senden"-
+/// Button in den Settings. Schickt ein deterministisches Test-Event an
+/// GlitchTip um die End-to-End-Pipeline live zu verifizieren. Returns
+/// die event_id (UUID) damit das Frontend dem Pilot zeigen kann
+/// „check in GlitchTip-Dashboard: Event id=xxx".
+#[tauri::command]
+fn error_reporting_send_test_event() -> Result<String, UiError> {
+    sentry_init::send_test_event()
+        .map_err(|msg| UiError::new("sentry_test_failed", &msg))
+}
+
 // v0.7.13 Discord-Webhook-File-Commands entfernt + v0.7.14 Migration:
 // die alte Pilot-Local-Datei `<app_data_dir>/discord-webhook.txt` wird beim
 // App-Start geloescht (siehe `migrate_remove_discord_webhook_file` weiter
@@ -9011,6 +9022,52 @@ fn actual_burn_for_record(stats: &FlightStats) -> Option<f32> {
     }
 }
 
+/// v0.10.0 (#runway-utilization-score) — Helper: populiert die für den
+/// neuen `sub_rollout_v2`-Algorithmus benötigten Felder am
+/// `LandingScoringInput`. Wird von allen 4 Compute-Sites (build_landing_
+/// record, build PirepPayload, compute_aggregate_master_score, shadow-
+/// validation) konsistent gerufen, damit Pilot-Client, PIREP-Notes,
+/// Webapp + Recorder denselben Score sehen.
+///
+/// `airport_source` proxy: wenn `stats.runway_match` Some ist, wurde
+/// der Touchdown via runway-match aufgelöst → setzt `Some("runway_match")`.
+/// Bei None bleibt's None → `sub_rollout_v2` skipped mit
+/// `off_airport_landing` (was korrekt ist).
+///
+/// Geometry-Trust + pre-displaced kommen aus dem zentralen
+/// `runway_geometry_trust_check` resp. `assess_touchdown` damit die
+/// Logik 1:1 mit dem ist was im PIREP-Payload landet.
+fn fill_v2_rollout_fields(
+    input: &mut landing_scoring::LandingScoringInput,
+    stats: &FlightStats,
+    arr_airport: &str,
+) {
+    let rm = stats.runway_match.as_ref();
+    input.td_distance_from_threshold_m = rm
+        .map(|m| (m.touchdown_distance_from_threshold_ft as f64) * 0.3048);
+    input.landing_float_distance_m = stats.landing_float_distance_m;
+    input.runway_length_m = rm.map(|m| (m.length_ft as f32) * 0.3048);
+    input.runway_displaced_threshold_ft = stats
+        .runway_nav_geometry
+        .as_ref()
+        .map(|g| g.displaced_threshold_ft);
+    // assess_touchdown(stats).dds.in_pre_threshold_zone — identisch zu
+    // dem was im TouchdownPayload + LandingRecord landet (single source).
+    let assessed = assess_touchdown(stats);
+    input.pre_displaced_threshold = assessed.dds.map(|d| d.in_pre_threshold_zone);
+    let (trusted, _) = runway_geometry_trust_check(
+        rm.map(|m| m.airport_ident.as_str()),
+        arr_airport,
+        stats.divert_hint.as_ref().and_then(|h| h.actual_icao.as_deref()),
+        rm.map(|m| m.centerline_distance_m as f32),
+        stats.landing_float_distance_m,
+    );
+    input.runway_geometry_trusted = Some(trusted);
+    input.airport_source = rm.map(|_| "runway_match".to_string());
+    input.runway_match_icao = rm.map(|m| m.airport_ident.clone());
+    input.runway_match_ident = rm.map(|m| m.runway_ident.clone());
+}
+
 /// v0.7.1 Round-2 Helper: berechnet den gewichteten Aggregate-Master-
 /// Score aus stats. Single-Source-of-Truth fuer alle phpVMS-/PIREP-/
 /// MQTT-/UI-Pfade — vermeidet die Inkonsistenz dass App/Web "77/100"
@@ -9022,9 +9079,10 @@ fn actual_burn_for_record(stats: &FlightStats) -> Option<f32> {
 fn compute_aggregate_master_score(
     stats: &FlightStats,
     aircraft_icao: Option<&str>,
+    arr_airport: &str,
 ) -> Option<u8> {
     let actual_burn = actual_burn_for_record(stats);
-    let scoring_input = landing_scoring::LandingScoringInput {
+    let mut scoring_input = landing_scoring::LandingScoringInput {
         // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang — siehe
         // `score_basis_vs_fpm()` Doc.
         vs_fpm: score_basis_vs_fpm(stats),
@@ -9044,6 +9102,10 @@ fn compute_aggregate_master_score(
         aircraft_icao: aircraft_icao.map(str::to_string),
         ..Default::default()
     };
+    // v0.10.0: v2-RolloutInput-Felder mit-füllen damit der LDA-basierte
+    // Sub-Score gerechnet wird (siehe spec docs/spec/v0.10.0-runway-
+    // utilization-score.md).
+    fill_v2_rollout_fields(&mut scoring_input, stats, arr_airport);
     let subs = landing_scoring::compute_sub_scores(&scoring_input);
     landing_scoring::aggregate_master_score(&subs)
 }
@@ -9205,7 +9267,7 @@ where
     // Zahl aus Aggregate) — fuer Pilot verwirrend.
     // Fallback auf Touchdown-Klassifikation wenn keine Sub-Scores
     // berechnet werden konnten (Edge-Case Schutz).
-    let scoring_input = landing_scoring::LandingScoringInput {
+    let mut scoring_input = landing_scoring::LandingScoringInput {
         // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang — siehe
         // `score_basis_vs_fpm()` Doc.
         vs_fpm: score_basis_vs_fpm(stats),
@@ -9223,6 +9285,11 @@ where
         aircraft_icao: aircraft_icao.map(str::to_string),
         ..Default::default()
     };
+    // v0.10.0 (#runway-utilization-score): LDA-basierten Bahn-Auslastungs-
+    // Score aktivieren. Wenn alle benötigten Felder vorhanden → neuer
+    // Algorithmus, sonst skipped mit konkretem Reason (KEIN Rollback auf
+    // meter-only).
+    fill_v2_rollout_fields(&mut scoring_input, stats, &flight.arr_airport);
     let computed_sub_scores = landing_scoring::compute_sub_scores(&scoring_input);
     let aggregate_master =
         landing_scoring::aggregate_master_score(&computed_sub_scores);
@@ -9537,6 +9604,11 @@ where
             .as_ref()
             .map(|t| tch_class_wire(t.class).to_string()),
         pre_displaced_threshold: assessed.dds.map(|d| d.in_pre_threshold_zone),
+        // v0.10.0 (#runway-utilization-score): markiert dass dieses
+        // Record mit dem LDA-basierten Bahn-Auslastungs-Score gebaut
+        // wurde. UI (LandingPanel.tsx) gated darauf das Rendering der
+        // neuen `extra`-Lines + erweiterten Rationale-/Warning-Keys.
+        score_algorithm_version: Some(2),
     })
 }
 
@@ -10449,7 +10521,7 @@ async fn flight_end(
         // "60/100" — Score-Vertragsbruch.
         // Fallback: stats.landing_score.numeric() wenn Crate keinen
         // Aggregate liefert (z.B. komplett leerer Sub-Score-Vec).
-        let score = compute_aggregate_master_score(&stats, Some(&flight.aircraft_icao))
+        let score = compute_aggregate_master_score(&stats, Some(&flight.aircraft_icao), &flight.arr_airport)
             .map(|m| m as i32)
             .or_else(|| stats.landing_score.map(|s| s.numeric()));
         let distance_nm = stats.distance_nm;
@@ -10733,7 +10805,7 @@ async fn flight_end(
                         // dann sowohl als sub_scores ins Payload als auch
                         // als landing_score (gewichteter Aggregate) nutzen.
                         let actual_burn = actual_burn_for_record(&stats);
-                        let scoring_input = landing_scoring::LandingScoringInput {
+                        let mut scoring_input = landing_scoring::LandingScoringInput {
                             // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang.
                             vs_fpm: score_basis_vs_fpm(&stats),
                             peak_g_load: stats.landing_peak_g_force,
@@ -10752,6 +10824,10 @@ async fn flight_end(
                             aircraft_icao: Some(flight.aircraft_icao.clone()),
                             ..Default::default()
                         };
+                        // v0.10.0 (#runway-utilization-score): LDA-basierter
+                        // Bahn-Auslastungs-Score. Markiert weiter unten am
+                        // PirepPayload via score_algorithm_version: Some(2).
+                        fill_v2_rollout_fields(&mut scoring_input, &stats, &flight.arr_airport);
                         let payload_sub_scores =
                             landing_scoring::compute_sub_scores(&scoring_input);
                         let aggregate_master =
@@ -10909,6 +10985,12 @@ async fn flight_end(
                             accident_at: stats
                                 .accident_at
                                 .map(|t| t.timestamp_millis()),
+                            // v0.10.0 (#runway-utilization-score): markiert
+                            // dass die sub_scores oben vom LDA-basierten
+                            // Bahn-Auslastungs-Algorithmus stammen. Webapp
+                            // (LandingAnalysis.tsx) gated darauf das
+                            // Rendering der neuen extra-Lines.
+                            score_algorithm_version: Some(2),
                         }
                     };
                     // v0.5.34: PIREP-Forensik ins JSONL — Block/Flight-Time,
@@ -14588,6 +14670,11 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             pre_displaced_threshold: payload_assessed
                                 .dds
                                 .map(|d| d.in_pre_threshold_zone),
+                            // v0.10.0 (#runway-utilization-score): Marker
+                            // dass das nachgelagert berechnete sub_scores-
+                            // Array via sub_rollout_v2 (LDA-basiert)
+                            // entstanden ist.
+                            score_algorithm_version: Some(2),
                         }
                     })
                 };
@@ -17609,7 +17696,7 @@ fn build_pirep_fields(
     // 100/100" unten). Fallback auf Touchdown-Klassifikation wenn
     // Crate keinen Aggregate liefert.
     if let Some(touchdown_class) = stats.landing_score {
-        let aggregate = compute_aggregate_master_score(stats, Some(&flight.aircraft_icao));
+        let aggregate = compute_aggregate_master_score(stats, Some(&flight.aircraft_icao), &flight.arr_airport);
         let (label, numeric) = match aggregate {
             Some(m) => (aggregate_score_label(m), m as i32),
             None => (touchdown_class.label(), touchdown_class.numeric()),
@@ -18265,7 +18352,7 @@ fn build_pirep_notes(flight: &ActiveFlight, stats: &FlightStats) -> String {
         }
         _ => None,
     };
-    let crate_input = landing_scoring::LandingScoringInput {
+    let mut crate_input = landing_scoring::LandingScoringInput {
         // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang — siehe
         // `score_basis_vs_fpm()` Doc.
         vs_fpm: score_basis_vs_fpm(stats),
@@ -18281,6 +18368,10 @@ fn build_pirep_notes(flight: &ActiveFlight, stats: &FlightStats) -> String {
         planned_tow_kg: stats.planned_tow_kg,
         ..Default::default()
     };
+    // v0.10.0 (#runway-utilization-score): Shadow-Validation muss den
+    // gleichen Algorithmus rechnen wie der echte PIREP-Pfad — sonst
+    // hätten wir Drift gegen uns selbst.
+    fill_v2_rollout_fields(&mut crate_input, stats, &flight.arr_airport);
     let crate_subs = landing_scoring::compute_sub_scores(&crate_input);
     if let Some(crate_master) = landing_scoring::aggregate_master_score(&crate_subs) {
         // v0.7.1 P2.6-Fix: Drift-Vergleich gegen den ECHTEN
@@ -18493,7 +18584,7 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     // Master-Score (das was App/Web/phpVMS jetzt anzeigen). Damit
     // ist klar dass "Touchdown: smooth" nicht das gleiche ist wie
     // "Master 77/100" — Pilot sieht beide Begriffe ohne Verwechslung.
-    let aggregate_master = compute_aggregate_master_score(&stats, Some(&flight.aircraft_icao));
+    let aggregate_master = compute_aggregate_master_score(&stats, Some(&flight.aircraft_icao), &flight.arr_airport);
     // v0.8.0: Per-Touchdown Navdata-Source + DDS-Warnung sammeln,
     // bevor wir `stats` droppen.
     let nav_source_msg: Option<(ActivityLevel, String)> = stats
@@ -21402,6 +21493,8 @@ pub fn run() {
             set_minimize_to_tray,
             // v0.9.0 (#GlitchTip): Opt-In fuer anonyme Fehler-Telemetrie.
             error_reporting_set_consent,
+            // v0.9.3 (#GlitchTip-DevTest): „Test-Event senden"-Button
+            error_reporting_send_test_event,
             // v0.9.0 (#Discord-RPC): Settings + Status + Push-State + Test.
             discord_rpc::discord_rpc_get_settings,
             discord_rpc::discord_rpc_set_settings,

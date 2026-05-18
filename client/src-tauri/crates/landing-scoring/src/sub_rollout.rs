@@ -16,6 +16,190 @@
 
 use crate::{Band, SubScoreEntry};
 
+// ═════════════════════════════════════════════════════════════════════
+// v0.10.0 — Runway-Utilization-Score (Bahn-Auslastung neu)
+// Spec: docs/spec/v0.10.0-runway-utilization-score.md (SPEC ACCEPTED)
+//
+// Vorher (v0.9.x): nur `rollout_distance_m` + ICAO-Kategorie. Sagt nichts
+// über die genutzte Landing-Distance auf der TATSÄCHLICHEN Bahn —
+// 1500 m Rollout auf einer 1800-m-Stoßbahn ist gefährlich, 1500 m auf
+// einer 4000-m-Bahn ist banal, beide kriegen denselben Score.
+//
+// v0.10.0: `(td_distance_from_threshold_m + rollout_distance_m) / LDA`,
+// LDA = `runway_length_m - displaced_m`. Score-Bänder auf den effective_pct
+// nach Heavy-Allowance (-5 pp). Skip-Gates wenn Datenlage unvollständig
+// (KEIN Fallback auf rollout-only, KEIN Meter-Backup).
+// ═════════════════════════════════════════════════════════════════════
+
+/// Eingabe für den v0.10.0-Algorithmus. Wenn eines der **Required**-Felder
+/// None ist, returnt `sub_rollout_v2` einen `skipped`-Entry mit konkretem
+/// Reason (siehe Spec LE6). Allowance-Heavy + Display nutzt ICAO.
+#[derive(Debug, Clone, Default)]
+pub struct RolloutInput<'a> {
+    /// Spec LE1 (required) — TD-Distance Threshold→Touchdown in Metern.
+    /// Negativ = Touchdown vor Schwelle (= regelwidrig).
+    pub td_distance_from_threshold_m: Option<f64>,
+    /// Spec LE1 (required) — Rollout-Distance Touchdown→Stop in Metern.
+    pub rollout_distance_m: Option<f32>,
+    /// Spec LE9 — Reine Display-Info (Float-Distance vor Aufsetzen).
+    /// None → entfällt aus der Extra-Zeile.
+    pub landing_float_distance_m: Option<f32>,
+    /// Spec LE2 (required) — physische Bahnlänge in Metern.
+    pub runway_length_m: Option<f32>,
+    /// Spec LE2 — Displaced-Threshold in ft. None → 0 angenommen.
+    pub runway_displaced_threshold_ft: Option<i32>,
+    /// Spec LE3 — Touchdown im pre-displaced Paint. true → Cap auf 55.
+    pub pre_displaced_threshold: Option<bool>,
+    /// Spec LE6 — `Some(true)` required. `Some(false)` UND `None` → Skip.
+    pub runway_geometry_trusted: Option<bool>,
+    /// Spec LE6 — muss `"runway_match"` sein. Sonst Skip
+    /// (`off_airport_landing`).
+    pub airport_source: Option<&'a str>,
+    /// Spec LE9 — Display-Info "Bahn: XXXX 16L".
+    pub runway_match_icao: Option<&'a str>,
+    pub runway_match_ident: Option<&'a str>,
+    /// Spec LE5 — Heavy bekommt -5 pp Allowance vor dem Banding.
+    pub aircraft_icao: Option<&'a str>,
+}
+
+fn is_heavy(icao: Option<&str>) -> bool {
+    category_for_icao(icao) == Category::Heavy
+}
+
+/// Spec LE6 — Skip-Gate. Reihenfolge: required-data, geometry-trust,
+/// airport-source, LDA-Sanity. None aus required-Feldern → konkreter
+/// Reason. KEIN Default-Fallback (sonst Datenmangel wird zu falschen
+/// 100 PTS — R2-P0-1 Fix).
+fn skip_reason(input: &RolloutInput) -> Option<&'static str> {
+    if input.rollout_distance_m.is_none() {
+        return Some("missing_rollout_distance");
+    }
+    if input.td_distance_from_threshold_m.is_none() {
+        return Some("missing_td_distance");
+    }
+    if input.runway_length_m.is_none() {
+        return Some("missing_length");
+    }
+    // None ist NICHT trusted (R2-P1-2 Fix). Only Some(true) passes.
+    if input.runway_geometry_trusted != Some(true) {
+        return Some("untrusted_geometry");
+    }
+    if input.airport_source != Some("runway_match") {
+        return Some("off_airport_landing");
+    }
+    let displaced_m = input.runway_displaced_threshold_ft.unwrap_or(0) as f32 * 0.3048;
+    let lda = input.runway_length_m.unwrap() - displaced_m;
+    if lda <= 0.0 {
+        return Some("invalid_lda");
+    }
+    None
+}
+
+/// Spec LE1..LE9 (R5-SPEC-ACCEPTED). Einzige Compute-Stelle (SSoT) für
+/// den v0.10.0-Bahn-Auslastungs-Sub-Score. UI rendert NUR.
+pub fn sub_rollout_v2(input: &RolloutInput) -> SubScoreEntry {
+    // ── Skip-Gate (LE6) ──────────────────────────────────────────────
+    if let Some(reason) = skip_reason(input) {
+        return SubScoreEntry::skipped("rollout", "landing.sub.rollout", reason);
+    }
+
+    // Skip-Gate hat alle None-Fälle gefiltert → unwrap safe.
+    let td_dist = input.td_distance_from_threshold_m.unwrap() as f32;
+    let rollout = input.rollout_distance_m.unwrap();
+    let runway_m = input.runway_length_m.unwrap();
+    let displaced_m = input.runway_displaced_threshold_ft.unwrap_or(0) as f32 * 0.3048;
+    let lda_m = runway_m - displaced_m;
+
+    // ── Numerator + Negativ-Schutz (LE1 + LE3 Halb-1) ────────────────
+    // Pre-displaced + neg TD-Distance → raw_used könnte < rollout sein
+    // (Pilot hat „virtuell" weniger Bahn genutzt als der reine Rollout).
+    // Wir clampen auf max(rollout) damit niemand mit Aufsetzen-vor-
+    // Schwelle einen kürzeren Distance-Used als sein eigener Rollout
+    // bekommt (würde Score künstlich verbessern).
+    let raw_used = td_dist + rollout;
+    let distance_used = raw_used.max(rollout);
+
+    // ── Raw-Ratio als Float (KEINE Pre-Rundung — R2-P2-1) ────────────
+    let raw_ratio_pct: f32 = (distance_used / lda_m) * 100.0;
+
+    // ── Overrun-Check ZUERST auf RAW (LE4 Step 2, R2-P0-2) ───────────
+    // Wichtig: VOR Heavy-Allowance. Sonst würde 103 % Heavy → 98 %
+    // effective → marginal_runway und der Overrun verschwindet.
+    let (points, rationale, band) = if raw_ratio_pct > 100.0 {
+        (0u8, "overrun_risk", Band::Bad)
+    } else {
+        let allowance_pp: f32 = if is_heavy(input.aircraft_icao) { 5.0 } else { 0.0 };
+        let effective_pct: f32 = raw_ratio_pct - allowance_pp;
+
+        match effective_pct {
+            e if e < 30.0 => (100, "excellent_margin", Band::Good),
+            e if e < 50.0 => (80, "good_stop", Band::Good),
+            e if e < 70.0 => (55, "ok_stop", Band::Ok),
+            e if e < 90.0 => (25, "long_rollout", Band::Bad),
+            _ => (5, "marginal_runway", Band::Bad),
+        }
+    };
+
+    // ── pre_displaced-Cap (LE3 Halb-2, R2-P1-4, R4-P1-3) ─────────────
+    // Bei Cap wird Rationale-Key auf "pre_displaced_capped" überschrieben
+    // (sonst UI „Viel Bahn-Reserve" bei 55 PTS = unehrlich).
+    let pre_displaced = input.pre_displaced_threshold.unwrap_or(false);
+    let (final_points, final_rationale, final_band) = if pre_displaced {
+        let pts = points.min(55);
+        let band = if pts >= 75 {
+            Band::Good
+        } else if pts >= 45 {
+            Band::Ok
+        } else {
+            Band::Bad
+        };
+        (pts, "pre_displaced_capped", band)
+    } else {
+        (points, rationale, band)
+    };
+
+    let warning = if pre_displaced {
+        Some("pre_displaced_threshold".to_string())
+    } else {
+        None
+    };
+
+    // ── Display-Strings (LE9) ────────────────────────────────────────
+    let display_pct = raw_ratio_pct.round() as i32;
+    let value = format!(
+        "{} m / {} m  ·  {} %",
+        distance_used.round() as i32,
+        lda_m.round() as i32,
+        display_pct
+    );
+
+    let mut extra: Vec<String> = Vec::new();
+    if let Some(float) = input.landing_float_distance_m {
+        if float > 0.0 {
+            extra.push(format!("davon ~{} m Float vor Aufsetzen", float.round() as i32));
+        }
+    }
+    if let (Some(icao), Some(ident)) = (input.runway_match_icao, input.runway_match_ident) {
+        extra.push(format!(
+            "Bahn: {} {}, LDA {} m",
+            icao,
+            ident,
+            lda_m.round() as i32
+        ));
+    }
+
+    SubScoreEntry::scored(
+        "rollout",
+        "landing.sub.rollout",
+        final_points,
+        value,
+        final_rationale,
+        final_band,
+    )
+    .with_extra(extra)
+    .with_warning(warning)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Category {
     Light,
