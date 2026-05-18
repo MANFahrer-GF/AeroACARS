@@ -9539,6 +9539,16 @@ where
         // approach_samples — UI-Tooltip kann jetzt die echten
         // Boundaries zeigen statt nur die Crate-Konstanten.
         gate_window,
+        // v0.11.0-dev: 3 weitere Stability-Werte ins Storage durchreichen.
+        // Werden vom Stability-v2-Compute schon gefuellt (lib.rs:16699-16708)
+        // und im PIREP/MQTT mitgeschickt — Storage-LandingRecord hatte sie
+        // bisher nicht, die neue ApproachStabilityCard im Pilot-Client
+        // braucht sie aber. Alte landing_history.json bleibt via
+        // serde(default) lesbar.
+        approach_vs_deviation_fpm: stats.approach_vs_deviation_fpm,
+        approach_max_vs_deviation_below_500_fpm: stats
+            .approach_max_vs_deviation_below_500_fpm,
+        approach_used_hat: Some(stats.approach_used_hat),
         // P1.5 + Phase 2 F1/F2/F3 + P1.3-Fix: sub_scores wurden oben
         // schon berechnet damit aggregate_master_score → score_numeric
         // gehen kann. Hier nur noch durchreichen, NICHT erneut rechnen.

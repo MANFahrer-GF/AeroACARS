@@ -123,15 +123,75 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
   }, [aircraftList, search]);
 
   // Stage 2 — Manual-Plan-Form
+  //
+  // v0.11.0 (VFR-Resize-Bug): alle Form-Felder werden in localStorage
+  // persistiert, sodass selbst ein React-Remount (z.B. wenn der parent
+  // bei Window-Resize kurz das Modal aus dem Tree nimmt, oder wenn der
+  // 15-s-Bids-Polling-Tick zu einem Re-Render mit neuen Object-Refs
+  // führt) die Eingaben nicht verliert. Pilot kann mitten in der
+  // Eingabe das Fenster verkleinern/vergrößern und macht ohne
+  // Datenverlust weiter. Storage-Key ist bid-spezifisch, damit zwei
+  // verschiedene Bids unabhängige Form-States haben.
+  const storageKey = `aeroacars.vfr.${bid.id}`;
+  const persisted: Partial<{
+    blockFuelKg: string;
+    flightTimeMin: string;
+    cruiseLevel: string;
+    route: string;
+    altAirport: string;
+    zfwKg: string;
+  }> = (() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  })();
+
   const [blockFuelKg, setBlockFuelKg] = useState<string>(() => {
-    // Sim-Default: aktueller Sim-Fuel-Wert wenn verfuegbar
+    // Reihenfolge: persistierter Wert > Sim-Default > leer
+    if (persisted.blockFuelKg != null) return persisted.blockFuelKg;
     return simHint?.fuel_total_kg ? Math.round(simHint.fuel_total_kg).toString() : "";
   });
-  const [flightTimeMin, setFlightTimeMin] = useState<string>("");
-  const [cruiseLevel, setCruiseLevel] = useState<string>("");
-  const [route, setRoute] = useState<string>("");
-  const [altAirport, setAltAirport] = useState<string>("");
-  const [zfwKg, setZfwKg] = useState<string>("");
+  const [flightTimeMin, setFlightTimeMin] = useState<string>(persisted.flightTimeMin ?? "");
+  const [cruiseLevel, setCruiseLevel] = useState<string>(persisted.cruiseLevel ?? "");
+  const [route, setRoute] = useState<string>(persisted.route ?? "");
+  const [altAirport, setAltAirport] = useState<string>(persisted.altAirport ?? "");
+  const [zfwKg, setZfwKg] = useState<string>(persisted.zfwKg ?? "");
+
+  // Persistiere alle Form-Felder bei jeder Änderung in localStorage —
+  // synchron, damit auch ein sofortiges Unmount (Resize-Crash) den
+  // letzten Stand erfasst.
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          blockFuelKg,
+          flightTimeMin,
+          cruiseLevel,
+          route,
+          altAirport,
+          zfwKg,
+        }),
+      );
+    } catch {
+      /* localStorage voll oder disabled → noop */
+    }
+  }, [storageKey, blockFuelKg, flightTimeMin, cruiseLevel, route, altAirport, zfwKg]);
+
+  // Cleanup: wenn der Pilot den Flug erfolgreich startet ODER explizit
+  // schließt, ist der persisted-Stand nicht mehr relevant. Wir geben
+  // dem caller via Hook eine clear()-Funktion (siehe unten in onFlight-
+  // Started / explicitClose-Pfaden).
+  const clearPersistedForm = () => {
+    try {
+      localStorage.removeItem(storageKey);
+    } catch {
+      /* noop */
+    }
+  };
 
   function proceedToPlan() {
     if (!selected) return;
@@ -187,6 +247,9 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
         bidId: bid.id,
         plan,
       });
+      // v0.11.0: persistierten Form-State löschen — Flug ist gestartet,
+      // alte VFR-Eingaben sind nicht mehr relevant.
+      clearPersistedForm();
       onFlightStarted(result);
     } catch (err: unknown) {
       const ui = asUiError(err);
@@ -229,7 +292,22 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
   }
 
   return (
-    <div className="manual-modal__backdrop" onClick={() => stage !== "submitting" && onClose()}>
+    <div
+      className="manual-modal__backdrop"
+      onClick={() => {
+        // v0.11.0 (VFR-Resize-Bug): Backdrop-Click schließt das Modal
+        // NUR wenn der Pilot noch nichts ausgewählt/eingegeben hat
+        // (stage "aircraft" + nichts selected). Im plan-stage bleibt
+        // das Modal hartnäckig offen — Pilot hat Werte getippt, ein
+        // versehentlicher Touch/Klick auf den Rand bei Resize darf das
+        // nicht wegnehmen. Zum Schließen gibts den expliziten Cancel-
+        // Button unten. Submitting-stage bleibt ohnehin offen.
+        if (stage === "submitting") return;
+        if (stage === "plan") return;
+        if (selected) return;
+        onClose();
+      }}
+    >
       <div
         className="manual-modal"
         role="dialog"
@@ -331,7 +409,18 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
             )}
             {error && <div className="manual-modal__error">{error}</div>}
             <div className="manual-modal__actions">
-              <button type="button" className="button" onClick={onClose}>
+              <button
+                type="button"
+                className="button"
+                onClick={() => {
+                  // v0.11.0: expliziter Cancel räumt persistierten
+                  // Form-State auf — Pilot hat sich gegen den Flug
+                  // entschieden, alte Werte sollen nicht beim nächsten
+                  // VFR-Start als „Vorschlag" wieder auftauchen.
+                  clearPersistedForm();
+                  onClose();
+                }}
+              >
                 {t("manual_flight.cancel")}
               </button>
               <button

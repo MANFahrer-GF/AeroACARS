@@ -132,10 +132,11 @@
     "ldw": "LDW",
     "fuel_table": "Fuel",
     "weight_table": "Weight",
+    "loadsheet_section_title": "Loadsheet",
     "trip_burn": "Trip burn",
     "zfw": "ZFW",
     "no_plan_hint": "No plan values available — no SimBrief OFP was loaded for this flight. On your next flight, watch the activity log for a \"SimBrief OFP fetched\" entry at start; if it's missing, the bid had no plan or the fetch failed silently.",
-    "loadsheet_score": "Loadsheet score",
+    "loadsheet_score": "Plan accuracy",
     "score_breakdown": "Score breakdown",
     "coach_title": "What to focus on next time",
     "trend": "Trend",
@@ -165,13 +166,13 @@
       "landing_rate": "Vertical speed (V/S) at the moment of touchdown, in feet per minute. Negative = sinking. Boeing/Airbus FCOM thresholds: clean up to -240 fpm; hard-landing inspection at -600 fpm.",
       "g_force": "Peak G load in the 1.5-second window around touchdown. 1.0 G is smooth, above 1.4 G is clearly noticeable, above 1.7 G triggers a hard-landing inspection (Boeing 737 FCOM).",
       "bounces": "How many times the aircraft climbed back above 35 ft AGL after the first touchdown and re-landed (BeatMyLanding algorithm). 0 = clean set; each bounce drops the score.",
-      "stability": "Standard deviation (σ) of vertical speed over the last ~10 minutes of approach. Low = smooth, constant flying. < 100 fpm σ is 'very stable'; > 300 fpm σ warrants a stabilized-approach review.",
-      "rollout": "Percent of available runway length used from touchdown until clearing the runway (high-speed exit below 40 kt or > 30° heading deviation). < 70 % is normal; > 85 % is tight, especially on wet runway.",
-      "fuel": "Compliance with the SimBrief OFP plan. Overburn counts (cost index, altitude or wind not matching), underburn is NOT penalised. >15% under plan flags a possible OFP/measurement/route mismatch.",
-      "loadsheet": "Presence of loadsheet data (ZFW + TOW). VFR/manual flights without dispatch data skip this sub-score — no 0-penalty.",
-      "score_section": "Six sub-scores rated 0-100 each. Every card shows value, points, and a coloured bar (green/yellow/red). The weakest category becomes the focus of the coach tip below.",
-      "runway_section": "Visualisation of your touchdown on the runway. The cyan dot marks the touchdown point; the green band shows the rollout distance until you cleared the runway (high-speed exit or stop). Values below: total length, centerline offset, distance past threshold, runway used as a percentage.",
-      "fuel_section": "Block = fuel at chocks-off; TO Fuel = at takeoff position; LDG Fuel = at touchdown; TOW = takeoff weight (empty + payload + TO fuel); LDW = landing weight. Plan values come from the SimBrief OFP if available. Plan-vs-actual delta drives the fuel-efficiency score."
+      "stability": "Stability evaluation over the stable-approach gate (0–1000 ft HAT, flare-cutoff last 3 s before TD). Backend computes seven factors: V/S jerk, bank σ (vector-filtered), IAS σ, sink-rate violation, landing config, V/S vs. 3° ILS, max V/S dev <500 ft. Details and thresholds are in the approach-stability card further down.",
+      "rollout": "Runway utilization in percent: (TD distance past threshold + rollout) ÷ LDA × 100. Five bands: <30 % excellent, 30–50 % good, 50–70 % ok, 70–90 % long, 90–100 % tight, >100 % overrun risk. Heavy bonus −5 pp for wide-bodies. Click „🛬 How is this calculated?\" for full explanation.",
+      "fuel": "Compliance with the SimBrief OFP trip burn. Compares actual burn (block − landing fuel) against planned trip burn. Overburn counts (cost index, altitude or wind not matching); underburn is NOT penalised. >15 % under plan flags a possible OFP/measurement/route mismatch.",
+      "loadsheet": "Presence of loadsheet data (ZFW + TOW in the plan). VFR/manual flights without dispatch data skip this sub-score — no 0-penalty. The detailed plan-vs-actual evaluation (block fuel, TOW, LDW, ZFW) appears in the fuel area as the „Plan accuracy\" score.",
+      "score_section": "Seven sub-scores rated 0–100 each (landing rate, G force, bounces, approach stability, runway utilization, OFP compliance, loadsheet). Every card shows value, points, and a coloured bar (green/yellow/red). The weakest category becomes the focus of the coach tip below.",
+      "runway_section": "Visualisation of your touchdown on the runway. The cyan dot marks the touchdown point; the green band shows the rollout distance until you cleared the runway (high-speed exit < 40 kt or stop). Values below: total length, centerline offset, distance past threshold, runway utilization as a percentage.",
+      "fuel_section": "Block = fuel at chocks-off; TO Fuel = at takeoff position; LDG Fuel = at touchdown; TOW = takeoff weight (empty + payload + TO fuel); LDW = landing weight; ZFW = zero fuel weight. Plan values come from the SimBrief OFP if available. The „Plan accuracy\" score below evaluates the Block/TOW/LDW/ZFW deltas (penalty above >5 %, heavier above >10 %)."
     },
     "rat": {
       "smooth_touchdown": "Butter-smooth touchdown",
@@ -393,6 +394,279 @@
         "airborne_spike": "G peak without a corresponding gear-force spike — looks like sim-frame stutter or sample noise, not a real impact.",
         "outlier_filtered": "Single G spike detected — median and 95th percentile show calm values. The peak was likely caused by a sim-frame spike (strut rebound or numerical anomaly)."
       }
+    },
+    "glossary": {
+      "title": "🛬 Terms used in the landing analysis",
+      "intro": "Short explanation of every term and abbreviation that appears in the diagram and the detail cards — in plain language.",
+      "close_label": "Close ✕",
+      "close_aria": "Close glossary",
+      "entries": {
+        "threshold": {
+          "abbr": "Threshold (THR)",
+          "full": "Runway threshold",
+          "explanation": "The large white transverse stripes at the runway start. Landing is allowed from this line on."
+        },
+        "touchdown": {
+          "abbr": "Touchdown (TD)",
+          "full": "Touchdown",
+          "explanation": "The moment the wheels touch the runway surface."
+        },
+        "centerline": {
+          "abbr": "Centerline (CL)",
+          "full": "Centerline",
+          "explanation": "The dashed white line running down the middle of the runway."
+        },
+        "xtd": {
+          "abbr": "Centerline offset / XTD",
+          "full": "Lateral deviation",
+          "explanation": "How far left or right of the centerline did you touch down? Ideal value: 0 m."
+        },
+        "tdz": {
+          "abbr": "TDZ — Touchdown Zone",
+          "full": "Touchdown zone",
+          "explanation": "The target area for touchdown — proportional to runway length, capped at 900 m. Formula: TDZ length = min(runway length ÷ 3, 900 m). So: a 1500 m runway has a 500 m TDZ, 2100 m → 700 m, and from 2700 m on the 900 m cap kicks in — no matter how much longer the runway gets. On real runways the TDZ shows as groups of white transverse stripes along the centerline (ICAO Annex 14). Example: LIEE 2803 m → 900 m TDZ (cap), EDDR 1320 m → 440 m TDZ."
+        },
+        "aim": {
+          "abbr": "AIM — Aim Point",
+          "full": "Aim point",
+          "explanation": "TWO wide white stripes on the runway — one directly above, one directly below the centerline, symmetric (ICAO Annex 14 §5.2.6). On a stabilised approach your eye aims EXACTLY there because the 3° glideslope would take you precisely to that point if you didn't flare. During the flare you raise the nose, reduce thrust — and typically touch down 50–150 m BEYOND the aim point (= start of the TDZ). POSITION (AeroACARS 2-bucket logic, FAA AIM 8-9-1): runway ≥ 2400 m → aim point at 400 m past threshold; runway < 2400 m → 300 m. Example: LIEE 2803 m → 400 m, EDDR 1320 m → 300 m. ICAO Annex 14 would stagger this more finely (150/250/300/400 m by LDA), but the FAA 300/400 simplification is enough for scoring. Stripe length on a real runway: 30–60 m."
+        },
+        "tch": {
+          "abbr": "TCH — Threshold Crossing Height",
+          "full": "Threshold crossing height",
+          "explanation": "How high were you above the ground when you crossed the threshold? ILS approach typically 49 ft (≈ 15 m). Too low: tail-strike risk. Too high: long landing."
+        },
+        "dds": {
+          "abbr": "DDS — Displaced Threshold",
+          "full": "Displaced threshold",
+          "explanation": "Some runways have an area BEFORE the actual landing threshold that is forbidden for landing (arrows on the runway). Touching down before it = illegal. Example: OLBA RWY 35, 820 m DDS."
+        },
+        "glideslope": {
+          "abbr": "Glide slope",
+          "full": "Approach angle",
+          "explanation": "ILS standard 3°. You descend 1 m for every 19 m forward."
+        },
+        "brake_point": {
+          "abbr": "Brake point (orange in diagram)",
+          "full": "40 kt point",
+          "explanation": "The orange dot in the diagram marks where groundspeed during rollout dropped below ~40 kt (= ROLLOUT_STOP_GS_KT). This is NOT a specific point where the pilot turns off — the real turn happens later at a concrete taxiway. Rather: from this point you're slow enough for a normal high-speed exit, and from here the diagram marks the unused runway as 'remaining'."
+        },
+        "rollout": {
+          "abbr": "Rollout",
+          "full": "Rollout distance",
+          "explanation": "How many meters you roll after touchdown until you've braked to ~40 kt — the typical high-speed exit speed at which you leave the runway via the next taxiway turn-off. Almost nobody rolls to a full stop on the runway (that would waste runway)."
+        },
+        "runway_util": {
+          "abbr": "Runway utilization",
+          "full": "",
+          "explanation": "Used runway (TD distance + rollout) ÷ LDA × 100 %. < 30 % = excellent, > 90 % = close to overrun. Detail explanation with all bands: see the info modal on the runway-utilization card."
+        },
+        "airac": {
+          "abbr": "AIRAC cycle",
+          "full": "",
+          "explanation": "Official aviation data is updated every 28 days. „Cycle 2604\" = 4th update of 2026."
+        },
+        "vps_navdata": {
+          "abbr": "VPS Navdata",
+          "full": "",
+          "explanation": "Central AIRAC data maintained by the VA admin on the VPS. The pilot client pulls it at flight start. Technical source behind it: Aerosoft DFD (license: VA admin subscription)."
+        },
+        "ourairports": {
+          "abbr": "OurAirports",
+          "full": "",
+          "explanation": "Community-wiki data source used as a fallback when the VPS is unreachable. Threshold positions may differ."
+        },
+        "agl": {
+          "abbr": "AGL",
+          "full": "Above Ground Level",
+          "explanation": "Height above the ground (not above sea level)."
+        },
+        "fpm": {
+          "abbr": "fpm",
+          "full": "Feet per Minute",
+          "explanation": "Sink-rate unit. Negative = descending."
+        },
+        "kt": {
+          "abbr": "kt",
+          "full": "Knots",
+          "explanation": "Speed unit, ≈ 1.852 km/h."
+        }
+      }
+    },
+    "runway_utilization_help": {
+      "open_button": "🛬 How is this calculated?",
+      "title": "Runway utilization — how the score is built",
+      "close_label": "Close ✕",
+      "close_aria": "Close runway-utilization help",
+      "intro": "The „runway utilization\" sub-score measures what percentage of the usable runway (LDA) you've consumed from crossing the threshold to standstill — fair across aircraft types and runway lengths.",
+      "formula_heading": "The formula",
+      "formula": "Utilization % = (TD distance past threshold + rollout distance) ÷ LDA × 100",
+      "terms_heading": "What the terms mean",
+      "terms": {
+        "td_distance": "TD distance past threshold — how many meters AFTER the threshold your wheels touch the surface.",
+        "rollout": "Rollout — from touchdown to standstill (or until you brake to high-speed exit speed < 40 kt).",
+        "lda": "LDA (Landing Distance Available) = physical runway length − displaced threshold."
+      },
+      "example_heading": "Example EK406 (A388 at YMML)",
+      "example": "517 m past threshold + 584 m rollout = 1,100 m used out of 3,657 m LDA = 30 % → 100 PTS (excellent).",
+      "bands_heading": "The five point bands",
+      "bands_intro": "Scoring runs on the effective percentage (= raw % minus heavy bonus). Edges are exclusive at the top: 30.0 % falls into the next band.",
+      "bands_header": {
+        "pct": "Effective %",
+        "pts": "Points",
+        "label": "Rating"
+      },
+      "bands": {
+        "excellent": {
+          "pct": "< 30 %",
+          "pts": "100",
+          "label": "Plenty of margin"
+        },
+        "good": {
+          "pct": "30 – < 50 %",
+          "pts": "80",
+          "label": "Solid stop"
+        },
+        "ok": {
+          "pct": "50 – < 70 %",
+          "pts": "55",
+          "label": "OK, sporty"
+        },
+        "long": {
+          "pct": "70 – < 90 %",
+          "pts": "25",
+          "label": "Long rollout"
+        },
+        "marginal": {
+          "pct": "90 – 100 %",
+          "pts": "5",
+          "label": "⚠ Marginal — close to overrun"
+        },
+        "overrun": {
+          "pct": "> 100 %",
+          "pts": "0",
+          "label": "⚠ Beyond runway end — overrun risk"
+        }
+      },
+      "heavy_heading": "Heavy bonus (5 percentage points)",
+      "heavy_body": "Wide-bodies need more runway — that's expected. So heavy types (wide-bodies, B747, MD11, IL96, Antonov) get 5 pp shaved off the effective value. Light/Medium get nothing. Important: the overrun check (> 100 %) runs on the RAW value BEFORE the allowance — the heavy bonus doesn't save you over the runway edge.",
+      "pre_displaced_heading": "Special case: touched down before the displaced threshold",
+      "pre_displaced_body": "If the recorder detects that you touched down BEFORE the usable threshold (illegal — wake-turbulence/noise-abatement violation), the score is capped at a maximum of 55 PTS, the rationale switches to „Stopping ok, but touched down too early\", and a warning pill „⚠ Touched down before displaced threshold — review approach\" appears. So the score deliberately does NOT show „plenty of margin\" at 55 PTS — that would be dishonest.",
+      "skip_heading": "When is it NOT scored?",
+      "skip_intro": "Six skip reasons. The card then shows „not scored\" + reason. No fallback, no estimated meters — better no score than misleading.",
+      "skip_items": {
+        "missing_td": "TD distance missing — recorder didn't capture the threshold distance.",
+        "missing_rollout": "Rollout distance missing.",
+        "missing_length": "Runway length from navdata missing.",
+        "untrusted_geometry": "Runway geometry not trusted (e.g. Navigraph mismatch).",
+        "off_airport": "Touchdown not on a recognised runway (off-airport landing).",
+        "invalid_lda": "LDA ≤ 0 m (e.g. displaced threshold > runway length — data error)."
+      },
+      "card_heading": "What the card shows",
+      "card_body": "Value row „1100 m / 3657 m · 30 %\" = used / LDA / percentage. Below it the rating („Solid stop\" etc.) and small info lines with float distance (distance between threshold crossing and actual TD — NOT part of the score; TD distance contains it implicitly) and the runway info (e.g. „Runway: YMML 16, LDA 3657 m\")."
+    },
+    "approach_stability_card": {
+      "title": "🛬 Approach stability",
+      "help_button": "ⓘ What do the values mean?",
+      "pill_stable": "✓ STABLE GATE",
+      "pill_partial": "⚠ PARTIAL",
+      "pill_unstable": "✗ UNSTABLE",
+      "subline_hat": "Stable-approach gate evaluated over HAT (Height Above Touchdown) ≤ 1000 ft · {{count}} samples",
+      "subline_agl": "Stable-approach gate evaluated over AGL ≤ 1000 ft · {{count}} samples",
+      "subline_no_samples": "No approach samples available in the stability gate.",
+      "data_source": "Data source: {{sim}}",
+      "data_source_unknown": "Data source: unknown",
+      "missing_value": "—",
+      "legacy_notice": "This landing was recorded with an older AeroACARS version. The extended stability tiles are only available for PIREPs from v0.11.0 on.",
+      "tiles": {
+        "vs_jerk": {
+          "label": "V/S jerk",
+          "unit": "fpm/tick"
+        },
+        "bank_sigma": {
+          "label": "Bank σ (filtered)",
+          "unit": "°"
+        },
+        "ias_sigma": {
+          "label": "IAS σ",
+          "unit": "kt"
+        },
+        "sink_rate": {
+          "label": "Sink rate",
+          "value_ok": "OK",
+          "value_excessive": "EXCESSIVE"
+        },
+        "landing_config": {
+          "label": "Landing config",
+          "value_ok": "GEAR/FLAPS ✓",
+          "value_partial": "INCOMPLETE",
+          "value_unknown": "—"
+        },
+        "vs_vs_ils": {
+          "label": "V/S vs. 3° ILS",
+          "unit": "fpm"
+        },
+        "max_vs_dev": {
+          "label": "Max V/S dev < 500 ft",
+          "unit": "fpm"
+        }
+      },
+      "coach": {
+        "stable": "✨ Clean stabilised approach — all parameters within tolerance at 1000 ft. Keep it like this.",
+        "partial": "Approach basically OK, but some parameters out of tolerance — see the tiles, and review the stabilized-approach criteria as needed.",
+        "unstable": "Unstable approach — would be a real-world go-around candidate. Set up the approach earlier, keep config + speed + V/S stable by 1000 ft AAL."
+      }
+    },
+    "approach_stability_help": {
+      "title": "Approach stability — what do the values mean?",
+      "close_label": "Close ✕",
+      "close_aria": "Close approach-stability help",
+      "intro": "Stable-approach concept per FAA AC 120-71B: from 1000 ft above the touchdown point all approach parameters (sink rate, bank, speed, configuration) should be within tight tolerances and stay there. AeroACARS measures this stability sample by sample across the entire gate window and shows seven values.",
+      "gate": {
+        "heading": "The stability gate",
+        "body": "The gate window contains all approach samples between 0 and 1000 ft above the touchdown point (HAT). The last 3 seconds before TD (flare manoeuvre) are excluded. If the airport elevation isn't known, the system falls back to AGL filtering (the card shows which one)."
+      },
+      "pill": {
+        "heading": "The STABLE-GATE pill",
+        "body": "✓ STABLE = all seven values in the green band. ⚠ PARTIAL = 1–2 values out (yellow or red). ✗ UNSTABLE = 3 or more values out. In real life an UNSTABLE approach would be a go-around candidate."
+      },
+      "tiles": {
+        "vs_jerk": {
+          "label": "V/S jerk",
+          "body": "Mean |ΔV/S| sample to sample. Measures how smooth your descent rate is — sim/aircraft agnostic (jet, turboprop, GA all the same). High = you're chasing the descent rate with big stick inputs.",
+          "thresholds": "< 100 fpm/tick very stable · 100–200 fpm/tick okay · > 200 fpm/tick choppy"
+        },
+        "bank_sigma": {
+          "label": "Bank σ (filtered)",
+          "body": "Standard deviation of bank angle over the gate. Samples during active vector/runway change (5 s window) are filtered out so ATC vectors don't artificially hurt the score.",
+          "thresholds": "< 3° very stable · 3–6° okay · > 6° choppy"
+        },
+        "ias_sigma": {
+          "label": "IAS σ",
+          "body": "Standard deviation of indicated airspeed in the gate. Measures speed discipline — high means you're chasing Vapp.",
+          "thresholds": "< 5 kt very stable · 5–8 kt okay · > 8 kt choppy"
+        },
+        "sink_rate": {
+          "label": "Sink rate",
+          "body": "EXCESSIVE when ANY sample in the gate had V/S < −1000 fpm. Counts as an FAA stable-approach violation.",
+          "thresholds": "OK = never below −1000 fpm · EXCESSIVE = once or more below −1000 fpm"
+        },
+        "landing_config": {
+          "label": "Landing config",
+          "body": "Gear and flaps position at the OLDEST sample in the gate (= the one with the highest altitude, ~1000 ft). FAA requires: configuration complete at the stable gate.",
+          "thresholds": "GEAR/FLAPS ✓ = gear ≥ 99 %, flaps ≥ 70 % at 1000 ft · INCOMPLETE = one missing"
+        },
+        "vs_vs_ils": {
+          "label": "V/S vs. 3° ILS",
+          "body": "Mean deviation of your V/S from the theoretical 3° ILS profile (based on groundspeed: target V/S = −GS · 5.31 fpm/kt). High means: you're not on the glideslope but shallower or steeper.",
+          "thresholds": "< 100 fpm very close to profile · 100–200 fpm okay · > 200 fpm clearly off"
+        },
+        "max_vs_dev": {
+          "label": "Max V/S dev < 500 ft",
+          "body": "Maximum single deviation from the 3° ILS below 500 ft HAT — this phase is safety critical. Even a single big spike shows up.",
+          "thresholds": "< 200 fpm very close to profile · 200–400 fpm okay · > 400 fpm single spike below 500 ft"
+        }
+      }
     }
   },
   "about": {
@@ -474,22 +748,6 @@
     "vs": "V/S",
     "heading": "Heading"
   },
-  "phase_timeline": {
-    "title": "Flight phases",
-    "nodes": {
-      "boarding": "Boarding",
-      "pushback": "Pushback",
-      "taxi": "Taxi",
-      "takeoff": "Takeoff",
-      "climb": "Climb",
-      "cruise": "Cruise",
-      "holding": "Holding",
-      "descent": "Descent",
-      "approach": "Approach",
-      "landing": "Landing",
-      "gate": "Gate"
-    }
-  },
   "briefing": {
     "active_flight_hint": "{{callsign}} is in progress — switch to the Cockpit tab to manage it."
   },
@@ -517,6 +775,18 @@
   "settings": {
     "title": "Settings",
     "description": "General AeroACARS preferences.",
+    "tabs": {
+      "simulator": "🎮 Simulator",
+      "required": "🛫 Required",
+      "extras": "🎨 Comfort",
+      "plugins": "✈️ Plugins",
+      "tech": "🛠 Technical",
+      "simulator_hint": "Which flight sim is installed? AeroACARS connects to the chosen sim for live data, touchdown forensics and loadsheet comparison.",
+      "required_hint": "SimBrief account + flight recording behaviour — the basis for flight-plan data and automatic tracking.",
+      "extras_hint": "Optional comfort settings — appearance, behaviour, Discord presence.",
+      "plugins_hint": "Aircraft-specific add-ons: PMDG SDK (Boeing) and the AeroACARS X-Plane plugin. Detected automatically once the matching aircraft loads.",
+      "tech_hint": "Diagnostics, debug tools and rarely used maintenance features."
+    },
     "appearance_section": "Language & appearance",
     "language_label": "Language",
     "theme_label": "Theme",
@@ -698,6 +968,7 @@
     "toggle_theme_light": "Switch to light mode",
     "language_de": "Deutsch",
     "language_en": "English",
+    "language_it": "Italiano",
     "show_app_info": "Show app info",
     "logout": "Sign out"
   },
@@ -740,6 +1011,7 @@
     "off_hint": "Simulator integration is disabled.",
     "idle_hint": "Waiting for the simulator…",
     "connecting_hint": "Waiting for the simulator… the adapter will connect automatically once it starts.",
+    "xplane_phase2": "X-Plane support runs via the AeroACARS plugin (Settings → Plugins). Once installed and X-Plane is started, live data flows automatically.",
     "kinds": {
       "off": "Off",
       "msfs2024": "MSFS 2024",

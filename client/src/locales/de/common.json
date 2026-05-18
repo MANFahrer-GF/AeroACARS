@@ -132,10 +132,11 @@
     "ldw": "LDW",
     "fuel_table": "Treibstoff",
     "weight_table": "Gewicht",
+    "loadsheet_section_title": "Loadsheet",
     "trip_burn": "Trip Burn",
     "zfw": "ZFW",
     "no_plan_hint": "Keine SOLL-Werte verfügbar — für diesen Flug wurde kein SimBrief-OFP geladen. Achte beim nächsten Flug auf den Activity-Log-Eintrag „SimBrief OFP geladen“ beim Start; fehlt der, hatte der Bid keinen Plan oder der Fetch schlug fehl.",
-    "loadsheet_score": "Loadsheet-Bewertung",
+    "loadsheet_score": "Plan-Treue",
     "score_breakdown": "Score-Aufschlüsselung",
     "coach_title": "Worauf du beim nächsten Anflug achten kannst",
     "trend": "Trend",
@@ -165,13 +166,13 @@
       "landing_rate": "Vertikalgeschwindigkeit (V/S) im Moment des Aufsetzens, in Fuß pro Minute. Negativ = sinkend. Boeing-/Airbus-FCOM-Schwellen: bis −240 fpm gilt als sauber, ab −600 fpm als Hard-Landing-Inspektion fällig.",
       "g_force": "Maximale G-Belastung im 1,5-Sekunden-Fenster um den Touchdown. 1,0 G = ruhig, ab 1,4 G deutlich spürbar, ab 1,7 G strukturkritisch (Boeing 737 FCOM Hard-Landing-Schwelle).",
       "bounces": "Wie oft das Flugzeug nach dem ersten Aufsetzen wieder über 35 ft AGL gestiegen und erneut gelandet ist (BeatMyLanding-Algorithmus). 0 = sauber gesetzt; jeder Bounce drückt den Score.",
-      "stability": "Standardabweichung (σ) der Sinkrate über die letzten ~10 Minuten Anflug. Niedrig = ruhig und konstant geflogen, hoch = wackelig. < 100 fpm σ gilt als sehr stabil; > 300 fpm σ ist Anlass für Stabilized-Approach-Review.",
-      "rollout": "Prozent der verfügbaren Bahnlänge die du vom Touchdown bis zum Verlassen (Highspeed-Exit < 40 kt oder > 30° Heading-Abweichung) genutzt hast. < 70 % ist normal; > 85 % heißt knapp — bei nasser Bahn riskant.",
-      "fuel": "Treue zum SimBrief-OFP-Plan. Mehrverbrauch zählt (Cost-Index, Höhe oder Wind nicht passend), Minderverbrauch wird NICHT bestraft. Bei >15% unter Plan: Hinweis auf möglichen OFP-/Mess-/Routenfehler.",
-      "loadsheet": "Vorhandensein von Loadsheet-Daten (ZFW + TOW). Im VFR-/Manual-Mode ohne Dispatch-Daten wird dieser Sub-Score übersprungen — kein 0-Penalty.",
-      "score_section": "Sechs Sub-Scores à 0-100 Punkte. Jede Kachel zeigt Wert, Punktzahl und farbigen Balken (grün/gelb/rot). Die schwächste Kategorie wird als nächstes Verbesserungs-Ziel im Coach-Tipp aufgegriffen.",
-      "runway_section": "Visualisierung deines Touchdowns auf der Bahn. Das blaue Symbol markiert den Aufsetzpunkt, das grüne Band zeigt die Ausrollstrecke bis zum Verlassen der Bahn (Highspeed-Exit oder Stopp). Werte unten: Gesamtlänge, Centerline-Abweichung, Distanz hinter der Schwelle, genutzte Bahnlänge in Prozent.",
-      "fuel_section": "Block = Spritmenge beim Abblock; TO Fuel = nach dem Rollen am Startpunkt; LDG Fuel = bei Touchdown; TOW = Takeoff Weight (= Leergewicht + Last + TO Fuel); LDW = Landing Weight. Plan-Werte stammen aus dem SimBrief-OFP, falls vorhanden. Differenzen Plan-vs-Real ergeben den Fuel-Efficiency-Score."
+      "stability": "Stabilitäts-Auswertung über das Stable-Approach-Gate (0–1000 ft HAT, Flare-Cutoff letzte 3 s vor TD). Backend rechnet sieben Faktoren: V/S-Jerk, Bank σ (vector-filtered), IAS σ, Sink-Rate-Verletzung, Landing-Config, V/S vs. 3°-ILS, Max V/S-Dev <500 ft. Details + Schwellwerte stehen in der Approach-Stability-Card weiter unten.",
+      "rollout": "Bahn-Auslastung in Prozent: (TD-Distanz hinter Schwelle + Rollout) ÷ LDA × 100. Fünf Bänder: <30 % excellent, 30–50 % gut, 50–70 % ok, 70–90 % lang, 90–100 % knapp, >100 % Overrun-Risiko. Heavy-Bonus −5 pp für Wide-Bodies. Klick „🛬 Wie wird das berechnet?\" für volle Erklärung.",
+      "fuel": "Treue zum SimBrief-OFP-Trip-Burn. Vergleicht den tatsächlichen Verbrauch (Block − Landing-Fuel) gegen den geplanten Trip-Burn. Mehrverbrauch zählt (Cost-Index, Höhe oder Wind nicht passend); Minderverbrauch wird NICHT bestraft. Bei >15 % unter Plan: Hinweis auf möglichen OFP-/Mess-/Routenfehler.",
+      "loadsheet": "Vorhandensein von Loadsheet-Daten (ZFW + TOW im Plan). Im VFR-/Manual-Mode ohne Dispatch-Daten wird dieser Sub-Score übersprungen — kein 0-Penalty. Die detaillierte Plan-vs-Real-Bewertung (Block-Fuel, TOW, LDW, ZFW) siehst du im Treibstoff-Bereich als „Plan-Treue\"-Score.",
+      "score_section": "Sieben Sub-Scores à 0–100 Punkte (Sinkrate, G-Kraft, Bounces, Anflug-Stabilität, Bahn-Auslastung, OFP-Treue, Loadsheet). Jede Kachel zeigt Wert, Punktzahl und farbigen Balken (grün/gelb/rot). Die schwächste Kategorie wird als nächstes Verbesserungs-Ziel im Coach-Tipp aufgegriffen.",
+      "runway_section": "Visualisierung deines Touchdowns auf der Bahn. Das blaue Symbol markiert den Aufsetzpunkt, das grüne Band zeigt die Ausrollstrecke bis zum Verlassen der Bahn (Highspeed-Exit < 40 kt oder Stopp). Werte unten: Gesamtlänge, Centerline-Abweichung, Distanz hinter der Schwelle, Bahn-Auslastung in Prozent.",
+      "fuel_section": "Block = Spritmenge beim Abblock; TO Fuel = nach dem Rollen am Startpunkt; LDG Fuel = bei Touchdown; TOW = Takeoff Weight (Leergewicht + Last + TO Fuel); LDW = Landing Weight; ZFW = Zero Fuel Weight. Plan-Werte stammen aus dem SimBrief-OFP, falls vorhanden. Der „Plan-Treue\"-Score unten bewertet die Abweichungen Block/TOW/LDW/ZFW (Penalty ab >5 %, schwerer ab >10 %)."
     },
     "rat": {
       "smooth_touchdown": "Butterweich aufgesetzt",
@@ -393,6 +394,279 @@
         "airborne_spike": "G-Peak ohne signifikanten Fahrwerks-Force-Anstieg — sieht nach Sim-Frame-Stutter oder Sample-Noise aus, kein echter Impact.",
         "outlier_filtered": "Einzelner G-Spike erkannt — Median und 95-Percentile zeigen unauffällige Werte. Der Peak wurde wahrscheinlich von einem Sim-Frame-Spike verursacht (Strut-Rebound oder numerische Anomalie)."
       }
+    },
+    "glossary": {
+      "title": "🛬 Begriffe in der Landebahn-Analyse",
+      "intro": "Kurzerklärung aller Begriffe und Abkürzungen, die im Diagramm und in den Detail-Karten auftauchen — in einfacher Sprache.",
+      "close_label": "Schließen ✕",
+      "close_aria": "Glossar schließen",
+      "entries": {
+        "threshold": {
+          "abbr": "Threshold (THR)",
+          "full": "Bahnschwelle",
+          "explanation": "Die großen weißen Querstreifen am Bahnanfang. Ab dieser Linie darfst du landen."
+        },
+        "touchdown": {
+          "abbr": "Touchdown (TD)",
+          "full": "Aufsetzen",
+          "explanation": "Der Moment, in dem die Räder den Bahnbelag berühren."
+        },
+        "centerline": {
+          "abbr": "Centerline (CL)",
+          "full": "Mittellinie",
+          "explanation": "Die gestrichelte weiße Linie genau in der Mitte der Bahn."
+        },
+        "xtd": {
+          "abbr": "Centerline-Offset / XTD",
+          "full": "Seitenabweichung",
+          "explanation": "Wie weit links oder rechts von der Mittellinie bist du aufgesetzt? Idealwert: 0 m."
+        },
+        "tdz": {
+          "abbr": "TDZ — Touchdown Zone",
+          "full": "Aufsetzzone",
+          "explanation": "Der Soll-Bereich zum Aufsetzen — proportional zur Bahnlänge, gedeckelt bei 900 m. Formel im Code: TDZ-Länge = min(Bahnlänge ÷ 3, 900 m). Heißt: bei einer 1500-m-Bahn ist die TDZ 500 m lang, bei 2100 m sind es 700 m, ab 2700 m Bahnlänge greift der 900-m-Cap — egal wie lang die Bahn dann noch wird. Auf echten Bahnen siehst du die TDZ als Gruppen weißer Querstreifen entlang der Centerline (ICAO Annex 14). Beispiel: LIEE 2803 m → 900 m TDZ (Cap), EDDR 1320 m → 440 m TDZ."
+        },
+        "aim": {
+          "abbr": "AIM — Aim Point",
+          "full": "Ziel-Markierung",
+          "explanation": "ZWEI breite weiße Streifen auf der Bahn — einer direkt OBERHALB, einer direkt UNTERHALB der Mittellinie, symmetrisch (ICAO Annex 14 §5.2.6). Im stabilisierten Anflug zielt dein Blick GENAU dort hin, weil der 3°-Glideslope dich exakt zu diesem Punkt führen würde, wenn du nicht abfangen (flaren) würdest. Beim Flare hebst du die Nase, drosselst — und setzt typisch 50–150 m HINTER dem Aim-Point auf (= Anfang der TDZ). POSITION (AeroACARS 2-Bucket-Logik, FAA AIM 8-9-1): Bahn ≥ 2400 m → Aim-Point bei 400 m hinter der Schwelle; Bahn < 2400 m → Aim-Point bei 300 m hinter der Schwelle. Beispiel: LIEE 2803 m → 400 m, EDDR 1320 m → 300 m. ICAO Annex 14 hätte feiner gestaffelt (150/250/300/400 m je nach LDA), die FAA-Vereinfachung mit 300/400 reicht aber für die Bewertung. Streifen-Länge auf der echten Bahn: 30–60 m."
+        },
+        "tch": {
+          "abbr": "TCH — Threshold Crossing Height",
+          "full": "Schwellen-Überflug-Höhe",
+          "explanation": "Wie hoch warst du über dem Boden, als du die Schwelle überflogen hast? ILS-Anflug typisch 49 ft (≈ 15 m). Zu niedrig: Tail-Strike-Risiko. Zu hoch: Long-Landing."
+        },
+        "dds": {
+          "abbr": "DDS — Displaced Threshold",
+          "full": "Versetzte Schwelle",
+          "explanation": "Manche Bahnen haben einen Bereich VOR der echten Landeschwelle, der für die Landung verboten ist (Pfeile auf der Bahn). Aufsetzen davor = illegal. Beispiel: OLBA RWY 35, 820 m DDS."
+        },
+        "glideslope": {
+          "abbr": "Glide Slope",
+          "full": "Anflug-Winkel",
+          "explanation": "ILS-Standard 3°. Du sinkst 1 m für je 19 m vorwärts."
+        },
+        "brake_point": {
+          "abbr": "Bremspunkt (im Diagramm orange)",
+          "full": "40-kt-Punkt",
+          "explanation": "Der orange Kreis im Diagramm markiert die Stelle, an der die Groundspeed während des Ausrollens unter ~40 kt gefallen ist (= ROLLOUT_STOP_GS_KT). Das ist KEINE konkrete Stelle wo der Pilot abbiegt — die echte Abzweigung passiert später an einem konkreten Taxiway. Sondern: ab diesem Punkt bist du langsam genug für einen normalen High-Speed-Exit, und ab hier wird auch das Diagramm das nicht mehr genutzte Bahn-Stück als 'verbleibend' markieren."
+        },
+        "rollout": {
+          "abbr": "Rollout",
+          "full": "Ausrollstrecke",
+          "explanation": "Wie viele Meter rollst du nach dem Aufsetzen, bis du auf ~40 kt abgebremst hast — das ist die typische High-Speed-Exit-Geschwindigkeit, mit der du am nächsten Rollwege-Abzweig die Bahn verlässt. Bis zum vollen Stand auf der Bahn rollt fast niemand aus (das wäre verschwendete Bahn)."
+        },
+        "runway_util": {
+          "abbr": "Bahn-Auslastung",
+          "full": "",
+          "explanation": "Verbrauchte Bahn (TD-Distanz + Rollout) ÷ LDA × 100 %. < 30 % = excellent, > 90 % = knapp am Overrun. Detail-Erklärung mit allen Bändern: siehe Info-Modal an der Bahn-Auslastung-Card."
+        },
+        "airac": {
+          "abbr": "AIRAC-Cycle",
+          "full": "",
+          "explanation": "Offizielle Aviation-Daten werden alle 28 Tage aktualisiert. „Cycle 2604\" = 4. Update 2026."
+        },
+        "vps_navdata": {
+          "abbr": "VPS Navdata",
+          "full": "",
+          "explanation": "Zentrale, vom VA-Admin gepflegte AIRAC-Daten auf dem VPS. Pilot-Client zieht sie pro Flugstart. Technische Quelle dahinter: Aerosoft DFD (Lizenz: VA-Admin-Subscription)."
+        },
+        "ourairports": {
+          "abbr": "OurAirports",
+          "full": "",
+          "explanation": "Community-Wiki-Datenquelle als Fallback wenn der VPS nicht erreichbar ist. Schwellen-Positionen können abweichen."
+        },
+        "agl": {
+          "abbr": "AGL",
+          "full": "Above Ground Level",
+          "explanation": "Höhe über Grund (nicht über Meer)."
+        },
+        "fpm": {
+          "abbr": "fpm",
+          "full": "Feet per Minute",
+          "explanation": "Sinkrate-Einheit. Negativ = Sinkflug."
+        },
+        "kt": {
+          "abbr": "kt",
+          "full": "Knots / Knoten",
+          "explanation": "Geschwindigkeitseinheit, ≈ 1.852 km/h."
+        }
+      }
+    },
+    "runway_utilization_help": {
+      "open_button": "🛬 Wie wird das berechnet?",
+      "title": "Bahn-Auslastung — wie der Score entsteht",
+      "close_label": "Schließen ✕",
+      "close_aria": "Bahn-Auslastung-Hilfe schließen",
+      "intro": "Der Sub-Score „Bahn-Auslastung\" misst, wie viel Prozent der nutzbaren Landebahn (LDA) du vom Schwellenüberflug bis zum Stillstand verbraucht hast — flugzeug- und bahnlängen-fair.",
+      "formula_heading": "Die Formel",
+      "formula": "Auslastung % = (TD-Distanz zur Schwelle + Rollout-Distanz) ÷ LDA × 100",
+      "terms_heading": "Was die Begriffe bedeuten",
+      "terms": {
+        "td_distance": "TD-Distanz zur Schwelle — wie viele Meter NACH der Schwelle deine Räder den Belag berühren.",
+        "rollout": "Rollout — vom Aufsetzen bis Stillstand (oder bis du auf High-Speed-Exit-Speed < 40 kt abbremst).",
+        "lda": "LDA (Landing Distance Available) = physische Bahnlänge − Displaced Threshold."
+      },
+      "example_heading": "Beispiel EK406 (A388 in YMML)",
+      "example": "517 m hinter Schwelle aufgesetzt + 584 m Rollout = 1 100 m verbraucht von 3 657 m LDA = 30 % → 100 PTS (excellent).",
+      "bands_heading": "Die fünf Punkte-Bänder",
+      "bands_intro": "Bewertet wird auf den effektiven Prozentwert (= Raw % minus Heavy-Bonus). Grenzen sind exklusiv-oben: 30,0 % gehört schon ins nächste Band.",
+      "bands_header": {
+        "pct": "Effektiv %",
+        "pts": "Punkte",
+        "label": "Bewertung"
+      },
+      "bands": {
+        "excellent": {
+          "pct": "< 30 %",
+          "pts": "100",
+          "label": "Viel Bahn-Reserve"
+        },
+        "good": {
+          "pct": "30 – < 50 %",
+          "pts": "80",
+          "label": "Solider Bremsweg"
+        },
+        "ok": {
+          "pct": "50 – < 70 %",
+          "pts": "55",
+          "label": "OK — sportlich"
+        },
+        "long": {
+          "pct": "70 – < 90 %",
+          "pts": "25",
+          "label": "Lang ausgerollt"
+        },
+        "marginal": {
+          "pct": "90 – 100 %",
+          "pts": "5",
+          "label": "⚠ Knapp — fast Overrun"
+        },
+        "overrun": {
+          "pct": "> 100 %",
+          "pts": "0",
+          "label": "⚠ Über Bahnende — Overrun-Risiko"
+        }
+      },
+      "heavy_heading": "Heavy-Bonus (5 Prozentpunkte)",
+      "heavy_body": "Wide-Bodies brauchen mehr Bahn — das ist erwartet. Deshalb wird bei Heavy-Mustern (Wide-Bodies, B747, MD11, IL96, Antonov) der Effektiv-Wert um 5 pp reduziert. Light/Medium kriegen nichts. Wichtig: der Overrun-Check (> 100 %) läuft auf dem Raw-Wert VOR Allowance — der Heavy-Bonus rettet dich nicht über die Bahnkante.",
+      "pre_displaced_heading": "Sonderfall: vor dem Displaced Threshold aufgesetzt",
+      "pre_displaced_body": "Wenn der Recorder erkennt, dass du VOR der nutzbaren Schwelle aufgesetzt hast (regelwidrig — Wirbelschleppen-/Lärmschutz-Verletzung), wird der Score auf maximal 55 PTS gekappt, die Begründung wechselt auf „Bremsweg ok, aber zu früh aufgesetzt\" und du siehst eine Warning-Pill „⚠ Vor Displaced-Threshold aufgesetzt — Anflugprofil prüfen\". Der Score zeigt also bewusst nicht „Viel Reserve\" mit 55 PTS — sonst wäre es unehrlich.",
+      "skip_heading": "Wann wird NICHT bewertet?",
+      "skip_intro": "Sechs Skip-Reasons. Die Card zeigt dann „nicht bewertet\" + Grund. Kein Fallback, keine geschätzten Meter — lieber kein Score als irreführend.",
+      "skip_items": {
+        "missing_td": "TD-Punkt-Distanz fehlt — Recorder hat die Schwellen-Distanz nicht erfasst.",
+        "missing_rollout": "Rollout-Distanz fehlt.",
+        "missing_length": "Bahnlänge aus Navdata fehlt.",
+        "untrusted_geometry": "Bahn-Geometrie nicht vertrauenswürdig (z.B. Navigraph-Mismatch).",
+        "off_airport": "Touchdown nicht auf einer erkannten Bahn (Off-Airport-Landung).",
+        "invalid_lda": "LDA ≤ 0 m (z.B. Displaced Threshold > Bahnlänge — Datenfehler)."
+      },
+      "card_heading": "Was die Card zeigt",
+      "card_body": "Wert-Zeile „1100 m / 3657 m · 30 %\" = verbraucht / LDA / Prozent. Darunter die Bewertung („Solider Bremsweg\" etc.) und kleine Info-Zeilen mit Float-Distanz (Strecke zwischen Threshold-Überflug und tatsächlichem TD, NICHT im Score — TD-Distanz enthält sie implizit) und der Bahn-Info (z.B. „Bahn: YMML 16, LDA 3657 m\")."
+    },
+    "approach_stability_card": {
+      "title": "🛬 Approach-Stability",
+      "help_button": "ⓘ Was bedeuten die Werte?",
+      "pill_stable": "✓ STABLE GATE",
+      "pill_partial": "⚠ PARTIAL",
+      "pill_unstable": "✗ UNSTABLE",
+      "subline_hat": "Stable-Approach-Gate-Auswertung über HAT (Height Above Touchdown) ≤ 1000 ft · {{count}} Samples",
+      "subline_agl": "Stable-Approach-Gate-Auswertung über AGL ≤ 1000 ft · {{count}} Samples",
+      "subline_no_samples": "Keine Approach-Samples im Stability-Gate verfügbar.",
+      "data_source": "Datenquelle: {{sim}}",
+      "data_source_unknown": "Datenquelle: unbekannt",
+      "missing_value": "—",
+      "legacy_notice": "Diese Landung wurde mit einer älteren AeroACARS-Version aufgezeichnet. Die erweiterten Stability-Kacheln sind erst für PIREPs ab v0.11.0 verfügbar.",
+      "tiles": {
+        "vs_jerk": {
+          "label": "V/S-Jerk",
+          "unit": "fpm/tick"
+        },
+        "bank_sigma": {
+          "label": "Bank σ (gefiltert)",
+          "unit": "°"
+        },
+        "ias_sigma": {
+          "label": "IAS σ",
+          "unit": "kt"
+        },
+        "sink_rate": {
+          "label": "Sink Rate",
+          "value_ok": "OK",
+          "value_excessive": "EXCESSIVE"
+        },
+        "landing_config": {
+          "label": "Landing-Config",
+          "value_ok": "GEAR/FLAPS ✓",
+          "value_partial": "INCOMPLETE",
+          "value_unknown": "—"
+        },
+        "vs_vs_ils": {
+          "label": "V/S vs. 3°-ILS",
+          "unit": "fpm"
+        },
+        "max_vs_dev": {
+          "label": "Max V/S-Dev < 500 ft",
+          "unit": "fpm"
+        }
+      },
+      "coach": {
+        "stable": "✨ Sauberer stabilisierter Anflug — alle Parameter im Toleranzband bei 1000 ft. So bleiben.",
+        "partial": "Anflug grundsätzlich ok, aber einzelne Parameter außerhalb der Toleranz — siehe Kacheln, ggf. Stabilized-Approach-Kriterien nochmal durchgehen.",
+        "unstable": "Unstabiler Anflug — in der Realität Go-Around-Kandidat. Approach-Setup früher fertig haben, Konfig + Speed + V/S bis 1000 ft AAL stabil halten."
+      }
+    },
+    "approach_stability_help": {
+      "title": "Approach-Stability — was bedeuten die Kennzahlen?",
+      "close_label": "Schließen ✕",
+      "close_aria": "Approach-Stability-Hilfe schließen",
+      "intro": "Stable-Approach-Konzept nach FAA AC 120-71B: ab 1000 ft über dem Aufsetzpunkt sollen alle Anflug-Parameter (Sinkrate, Bank, Speed, Konfiguration) in engen Toleranzen sein und bleiben. AeroACARS misst diese Stabilität sample-basiert über das gesamte Gate-Window und zeigt sieben Kennzahlen.",
+      "gate": {
+        "heading": "Das Stability-Gate",
+        "body": "Das Gate-Window umfasst alle Approach-Samples von 0 bis 1000 ft Höhe über dem Aufsetzpunkt (HAT) — die letzten 3 Sekunden vor TD (Flare-Manöver) sind ausgeschlossen. Wenn die Airport-Elevation nicht bekannt ist, wird auf AGL als Fallback gewechselt (Pill in der Card zeigt es)."
+      },
+      "pill": {
+        "heading": "Die STABLE-GATE-Pill",
+        "body": "✓ STABLE = alle sieben Kennzahlen im grünen Band. ⚠ PARTIAL = 1–2 Werte außerhalb (gelb oder rot). ✗ UNSTABLE = 3+ Werte außerhalb. In der Realität wäre ein UNSTABLE-Approach ein Go-Around-Kandidat."
+      },
+      "tiles": {
+        "vs_jerk": {
+          "label": "V/S-Jerk",
+          "body": "Mittlere |ΔV/S| Sample-zu-Sample. Misst wie ruhig deine Sinkrate ist — Sim/Aircraft-agnostisch (Jet, Turboprop, GA gleichermaßen). Hoch = du korrigierst die Sinkrate mit großen Stick-Inputs.",
+          "thresholds": "< 100 fpm/tick sehr stabil · 100–200 fpm/tick okay · > 200 fpm/tick unruhig"
+        },
+        "bank_sigma": {
+          "label": "Bank σ (gefiltert)",
+          "body": "Standardabweichung des Bankwinkels über das Gate. Samples während aktiver Vector/Runway-Change (5 s-Fenster) werden herausgefiltert, damit ATC-Vektoren den Score nicht künstlich drücken.",
+          "thresholds": "< 3° sehr stabil · 3–6° okay · > 6° unruhig"
+        },
+        "ias_sigma": {
+          "label": "IAS σ",
+          "body": "Standardabweichung der Indicated Airspeed im Gate. Misst Speed-Disziplin — Hoch bedeutet, du jagst der Vapp hinterher.",
+          "thresholds": "< 5 kt sehr stabil · 5–8 kt okay · > 8 kt unruhig"
+        },
+        "sink_rate": {
+          "label": "Sink Rate",
+          "body": "EXCESSIVE wenn IRGENDEIN Sample im Gate eine V/S < −1000 fpm hatte. Das gilt als FAA-Stable-Approach-Verletzung.",
+          "thresholds": "OK = nie unter −1000 fpm · EXCESSIVE = einmal oder mehr unter −1000 fpm"
+        },
+        "landing_config": {
+          "label": "Landing-Config",
+          "body": "Gear- und Flaps-Position am ÄLTESTEN Sample im Gate (= dem mit der höchsten Höhe ~1000 ft). FAA verlangt: Konfiguration bei Stable-Gate komplett.",
+          "thresholds": "GEAR/FLAPS ✓ = Gear ≥ 99 %, Flaps ≥ 70 % bei 1000 ft · INCOMPLETE = einer fehlt"
+        },
+        "vs_vs_ils": {
+          "label": "V/S vs. 3°-ILS",
+          "body": "Mittlere Abweichung deiner V/S vom theoretischen 3°-ILS-Profil (basierend auf Groundspeed: Target-V/S = −GS · 5,31 fpm/kt). Hoch heißt: du fliegst nicht auf dem Glideslope sondern flacher/steiler.",
+          "thresholds": "< 100 fpm sehr nah am Profil · 100–200 fpm okay · > 200 fpm deutlich ab"
+        },
+        "max_vs_dev": {
+          "label": "Max V/S-Dev < 500 ft",
+          "body": "Maximale Einzel-Abweichung von 3°-ILS unter 500 ft HAT — diese Phase ist sicherheitskritisch. Selbst ein einzelner großer Spike wird sichtbar.",
+          "thresholds": "< 200 fpm sehr nah am Profil · 200–400 fpm okay · > 400 fpm Einzel-Spike unter 500 ft"
+        }
+      }
     }
   },
   "about": {
@@ -474,22 +748,6 @@
     "vs": "V/S",
     "heading": "Kurs"
   },
-  "phase_timeline": {
-    "title": "Flug-Phasen",
-    "nodes": {
-      "boarding": "Boarding",
-      "pushback": "Pushback",
-      "taxi": "Taxi",
-      "takeoff": "Takeoff",
-      "climb": "Climb",
-      "cruise": "Cruise",
-      "holding": "Holding",
-      "descent": "Descent",
-      "approach": "Approach",
-      "landing": "Landing",
-      "gate": "Gate"
-    }
-  },
   "briefing": {
     "active_flight_hint": "{{callsign}} ist gerade aktiv — wechseln Sie in den Cockpit-Tab, um ihn zu beenden."
   },
@@ -517,6 +775,18 @@
   "settings": {
     "title": "Einstellungen",
     "description": "Allgemeine Einstellungen für AeroACARS.",
+    "tabs": {
+      "simulator": "🎮 Simulator",
+      "required": "🛫 Benötigt",
+      "extras": "🎨 Komfort",
+      "plugins": "✈️ Plugins",
+      "tech": "🛠 Technik",
+      "simulator_hint": "Welcher Flugsim ist installiert? AeroACARS verbindet sich mit dem gewählten Sim für Live-Daten, Touchdown-Forensik und Loadsheet-Vergleich.",
+      "required_hint": "SimBrief-Konto + Flug-Aufzeichnungs-Verhalten — Basis für Flugplan-Daten und automatisches Tracking.",
+      "extras_hint": "Optionale Komfort-Einstellungen — Darstellung, Verhalten, Discord-Status.",
+      "plugins_hint": "Flugzeug-spezifische Add-ons: PMDG-SDK (Boeing) und AeroACARS-X-Plane-Plugin. Werden automatisch erkannt sobald das passende Flugzeug geladen ist.",
+      "tech_hint": "Diagnose, Debug-Werkzeuge und seltene Maintenance-Funktionen."
+    },
     "appearance_section": "Sprache & Darstellung",
     "language_label": "Sprache",
     "theme_label": "Design",
@@ -698,6 +968,7 @@
     "toggle_theme_light": "Helles Design",
     "language_de": "Deutsch",
     "language_en": "English",
+    "language_it": "Italiano",
     "show_app_info": "App-Info anzeigen",
     "logout": "Abmelden"
   },
@@ -740,6 +1011,7 @@
     "off_hint": "Simulator-Anbindung ist deaktiviert.",
     "idle_hint": "Warte auf den Simulator…",
     "connecting_hint": "Warte auf den Simulator… der Adapter verbindet sich automatisch, sobald er läuft.",
+    "xplane_phase2": "X-Plane-Unterstützung läuft über den AeroACARS-Plugin (Einstellungen → Plugins). Sobald installiert und X-Plane gestartet ist, kommen die Live-Daten automatisch.",
     "kinds": {
       "off": "Aus",
       "msfs2024": "MSFS 2024",

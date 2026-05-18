@@ -202,6 +202,48 @@ export function SettingsPanel({
 
   const language = i18n.resolvedLanguage ?? "en";
 
+  // v0.11.0-dev: Tab-Navigation für die Settings, weil das alles auf
+  // einer endlos langen Liste „zu durcheinander" war (Pilot-Feedback).
+  // Drei Gruppen:
+  //   - required: SimBrief + Simulator + Filing → was AeroACARS zwingend
+  //     braucht damit Flight-Tracking funktioniert
+  //   - extras: Sprache/Theme + Verhalten + Discord-RPC + Speicher +
+  //     Fehler-Reporting → optionale Komfort/Privacy-Einstellungen
+  //   - tech: Entwickler-Debug + Orphan-Flights-Cleanup → selten
+  //     gebraucht, primär für Troubleshooting
+  // Tab-Wahl wird in localStorage gemerkt, damit der Pilot beim nächsten
+  // Settings-Öffnen wieder dort landet wo er war.
+  type SettingsTab = "simulator" | "required" | "extras" | "plugins" | "tech";
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
+    try {
+      const saved = localStorage.getItem("aeroacars.settings.activeTab");
+      if (
+        saved === "simulator" ||
+        saved === "required" ||
+        saved === "extras" ||
+        saved === "plugins" ||
+        saved === "tech"
+      ) {
+        return saved;
+      }
+    } catch {
+      /* noop */
+    }
+    // Default für Erst-Nutzer: Simulator-Tab, weil das die allerwichtigste
+    // erste Einstellung ist (ohne Sim funktioniert nichts).
+    return "simulator";
+  });
+  const switchTab = (next: SettingsTab) => {
+    setActiveTab(next);
+    try {
+      localStorage.setItem("aeroacars.settings.activeTab", next);
+    } catch {
+      /* noop */
+    }
+  };
+
+  const tabHintKey = `settings.tabs.${activeTab}_hint` as const;
+
   return (
     <section className="settings">
       <header className="settings__header">
@@ -209,253 +251,346 @@ export function SettingsPanel({
         <p className="settings__hint">{t("settings.description")}</p>
       </header>
 
-      <div className="settings__section">
-        <h3>{t("settings.appearance_section")}</h3>
-
-        <label className="settings__field">
-          <span className="settings__field-label">
-            {t("settings.language_label")}
-          </span>
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value as SupportedLanguage)}
-          >
-            {SUPPORTED_LANGUAGES.map((lng) => (
-              <option key={lng} value={lng}>{LANGUAGE_LABELS[lng]}</option>
-            ))}
-          </select>
-        </label>
-
-        <label className="settings__field">
-          <span className="settings__field-label">
-            {t("settings.theme_label")}
-          </span>
-          <select
-            value={theme}
-            onChange={(e) => onThemeChange(e.target.value as Theme)}
-          >
-            <option value="dark">{t("settings.theme_dark")}</option>
-            <option value="light">{t("settings.theme_light")}</option>
-          </select>
-        </label>
-      </div>
-
-      {/* v0.7.8: SimBrief Integration — fuer Direct-OFP-Refresh
-          ohne phpVMS-Bid-Pointer (W5-Workaround). Eigene Section,
-          NICHT unter "Allgemein" (Spec §4.4 v1.1-Entscheidung). */}
-      <div className="settings__section">
-        <h3>{t("settings.simbrief.title")}</h3>
-        <p className="settings__row-hint">{t("settings.simbrief.intro")}</p>
-
-        <label className="settings__field">
-          <span className="settings__field-label">
-            {t("settings.simbrief.username_label")}
-          </span>
-          <input
-            type="text"
-            value={simbriefUsername}
-            onChange={(e) => setSimbriefUsername(e.target.value)}
-            onBlur={() => persistSimbriefSettings(simbriefUsername, simbriefUserId)}
-            placeholder="z.B. thomaskant"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <small>{t("settings.simbrief.username_hint")}</small>
-        </label>
-
-        <label className="settings__field">
-          <span className="settings__field-label">
-            {t("settings.simbrief.userid_label")}
-          </span>
-          <input
-            type="text"
-            inputMode="numeric"
-            value={simbriefUserId}
-            onChange={(e) =>
-              setSimbriefUserId(e.target.value.replace(/[^0-9]/g, ""))
-            }
-            onBlur={() => persistSimbriefSettings(simbriefUsername, simbriefUserId)}
-            placeholder="z.B. 612345"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <small>{t("settings.simbrief.userid_hint")}</small>
-        </label>
-
-        <div className="settings__field" style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
-          <button
-            type="button"
-            onClick={handleVerifySimbrief}
-            disabled={
-              verifying ||
-              (!simbriefUsername.trim() && !simbriefUserId.trim())
-            }
-          >
-            {verifying ? "…" : t("settings.simbrief.verify_button")}
-          </button>
-          {verifyStatus && (
-            <span
+      {/* Tab-Bar — drei Pills, aktive in Akzent-Farbe */}
+      <div
+        role="tablist"
+        aria-label={t("settings.title") ?? "Settings"}
+        style={{
+          display: "flex",
+          gap: 6,
+          marginBottom: 8,
+          padding: 4,
+          background: "rgba(255,255,255,0.04)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 10,
+        }}
+      >
+        {(["simulator", "required", "extras", "plugins", "tech"] as SettingsTab[]).map((tab) => {
+          const isActive = activeTab === tab;
+          return (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => switchTab(tab)}
               style={{
-                fontSize: "0.85rem",
-                color: verifyStatus.tone === "ok" ? "#4ade80" : "#f87171",
+                flex: 1,
+                padding: "8px 14px",
+                background: isActive
+                  ? "rgba(59,130,246,0.18)"
+                  : "transparent",
+                border: isActive
+                  ? "1px solid rgba(59,130,246,0.45)"
+                  : "1px solid transparent",
+                borderRadius: 7,
+                color: isActive
+                  ? "rgba(255,255,255,0.96)"
+                  : "rgba(255,255,255,0.65)",
+                fontSize: "0.88rem",
+                fontWeight: isActive ? 600 : 500,
+                cursor: "pointer",
+                transition: "all 0.15s ease",
               }}
             >
-              {verifyStatus.tone === "ok" ? "✓ " : "⚠ "}
-              {verifyStatus.text}
+              {t(`settings.tabs.${tab}`)}
+            </button>
+          );
+        })}
+      </div>
+      <p
+        className="settings__hint"
+        style={{
+          marginTop: 0,
+          marginBottom: 14,
+          fontSize: "0.82rem",
+          opacity: 0.7,
+        }}
+      >
+        {t(tabHintKey)}
+      </p>
+
+      {/* ─── Tab: Simulator ────────────────────────────────────────
+          v0.11.0-dev: eigener Tab nur für die Sim-Auswahl. Das ist die
+          allererste Einstellung die ein neuer Pilot braucht — wenn
+          falsch oder nicht gesetzt, hilft AeroACARS nicht. Default-
+          Tab für Erst-Nutzer, damit der Sim sofort ins Auge sticht.
+      */}
+      {activeTab === "simulator" && (
+        <div className="settings__section">
+          <h3>{t("settings.simulator_section")}</h3>
+          <p className="settings__row-hint">{t("settings.simulator_hint")}</p>
+          <label className="settings__field">
+            <span className="settings__field-label">
+              {t("settings.simulator_label")}
             </span>
-          )}
+            <select
+              value={kind ?? "off"}
+              onChange={(e) => handleKindChange(e.target.value as SimKind)}
+              disabled={busy || kind === null}
+            >
+              {ALL_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {t(`sim.kinds.${k}`)}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
-      </div>
+      )}
 
-      {/* v0.7.14: Discord-Webhook-Sektion entfernt. Pilot-Client postet
-          ab v0.7.14 nichts mehr in Discord — der Recorder auf
-          live.kant.ovh macht das zentral. VA-Owner setzt die URL einmal
-          im Webapp-Admin-Settings. Audit C1. */}
+      {/* ─── Tab: Benötigt ────────────────────────────────────────
+          SimBrief + Flug-Aufzeichnungs-Verhalten. Simulator-Auswahl
+          ist in einen eigenen Tab umgezogen (v0.11.0-dev).
+      */}
+      {activeTab === "required" && (
+        <>
+          {/* v0.7.8: SimBrief Integration — fuer Direct-OFP-Refresh
+              ohne phpVMS-Bid-Pointer (W5-Workaround). */}
+          <div className="settings__section">
+            <h3>{t("settings.simbrief.title")}</h3>
+            <p className="settings__row-hint">{t("settings.simbrief.intro")}</p>
 
-      <div className="settings__section">
-        <h3>{t("settings.simulator_section")}</h3>
-        <p className="settings__row-hint">{t("settings.simulator_hint")}</p>
-        <label className="settings__field">
-          <span className="settings__field-label">
-            {t("settings.simulator_label")}
-          </span>
-          <select
-            value={kind ?? "off"}
-            onChange={(e) => handleKindChange(e.target.value as SimKind)}
-            disabled={busy || kind === null}
-          >
-            {ALL_KINDS.map((k) => (
-              <option key={k} value={k}>
-                {t(`sim.kinds.${k}`)}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+            <label className="settings__field">
+              <span className="settings__field-label">
+                {t("settings.simbrief.username_label")}
+              </span>
+              <input
+                type="text"
+                value={simbriefUsername}
+                onChange={(e) => setSimbriefUsername(e.target.value)}
+                onBlur={() => persistSimbriefSettings(simbriefUsername, simbriefUserId)}
+                placeholder="z.B. thomaskant"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <small>{t("settings.simbrief.username_hint")}</small>
+            </label>
 
-      <div className="settings__section">
-        <h3>{t("settings.filing_section")}</h3>
-        <label className="settings__checkbox">
-          <input
-            type="checkbox"
-            checked={autoFile}
-            onChange={(e) => onAutoFileChange(e.target.checked)}
-          />
-          <span>
-            <strong>{t("settings.auto_file_label")}</strong>
-            <span className="settings__row-hint">
-              {t("settings.auto_file_hint")}
-            </span>
-          </span>
-        </label>
-        <label className="settings__checkbox">
-          <input
-            type="checkbox"
-            checked={autoStart}
-            onChange={(e) => onAutoStartChange(e.target.checked)}
-          />
-          <span>
-            <strong>Auto-Start aufzeichnen</strong>
-            <span className="settings__row-hint">
-              Startet einen Flug automatisch, sobald das Flugzeug am
-              Departure-Airport eines deiner Bids steht (≤ 5 km, On-Ground,
-              Engines aus). Watcher tickt alle 3 s.
-            </span>
-          </span>
-        </label>
-        <label className="settings__checkbox">
-          <input
-            type="checkbox"
-            checked={approachAdvisoriesEnabled}
-            onChange={(e) => onApproachAdvisoriesEnabledChange(e.target.checked)}
-          />
-          <span>
-            <strong>{t("approach_advisory.settings_label")}</strong>
-            <span className="settings__row-hint">
-              {t("approach_advisory.settings_hint")}
-            </span>
-          </span>
-        </label>
-      </div>
+            <label className="settings__field">
+              <span className="settings__field-label">
+                {t("settings.simbrief.userid_label")}
+              </span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={simbriefUserId}
+                onChange={(e) =>
+                  setSimbriefUserId(e.target.value.replace(/[^0-9]/g, ""))
+                }
+                onBlur={() => persistSimbriefSettings(simbriefUsername, simbriefUserId)}
+                placeholder="z.B. 612345"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <small>{t("settings.simbrief.userid_hint")}</small>
+            </label>
 
-      <div className="settings__section">
-        <h3>{t("settings.storage_section")}</h3>
-        <FlightLogsManager
-          autoDelete={autoDeleteFlightLogs}
-          onAutoDeleteChange={onAutoDeleteFlightLogsChange}
-        />
-      </div>
+            <div className="settings__field" style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
+              <button
+                type="button"
+                onClick={handleVerifySimbrief}
+                disabled={
+                  verifying ||
+                  (!simbriefUsername.trim() && !simbriefUserId.trim())
+                }
+              >
+                {verifying ? "…" : t("settings.simbrief.verify_button")}
+              </button>
+              {verifyStatus && (
+                <span
+                  style={{
+                    fontSize: "0.85rem",
+                    color: verifyStatus.tone === "ok" ? "#4ade80" : "#f87171",
+                  }}
+                >
+                  {verifyStatus.tone === "ok" ? "✓ " : "⚠ "}
+                  {verifyStatus.text}
+                </span>
+              )}
+            </div>
+          </div>
 
-      <div className="settings__section">
-        <h3>{t("behaviour.section_title")}</h3>
-        <label className="settings__checkbox">
-          <input
-            type="checkbox"
-            checked={minimizeToTray}
-            onChange={(e) => onMinimizeToTrayChange(e.target.checked)}
-          />
-          <span>
-            <strong>{t("behaviour.minimize_to_tray_label")}</strong>
-            <span
-              className="settings__row-hint"
-              dangerouslySetInnerHTML={{
-                __html: t("behaviour.minimize_to_tray_hint"),
-              }}
-            />
-          </span>
-        </label>
-      </div>
+          <div className="settings__section">
+            <h3>{t("settings.filing_section")}</h3>
+            <label className="settings__checkbox">
+              <input
+                type="checkbox"
+                checked={autoFile}
+                onChange={(e) => onAutoFileChange(e.target.checked)}
+              />
+              <span>
+                <strong>{t("settings.auto_file_label")}</strong>
+                <span className="settings__row-hint">
+                  {t("settings.auto_file_hint")}
+                </span>
+              </span>
+            </label>
+            <label className="settings__checkbox">
+              <input
+                type="checkbox"
+                checked={autoStart}
+                onChange={(e) => onAutoStartChange(e.target.checked)}
+              />
+              <span>
+                <strong>Auto-Start aufzeichnen</strong>
+                <span className="settings__row-hint">
+                  Startet einen Flug automatisch, sobald das Flugzeug am
+                  Departure-Airport eines deiner Bids steht (≤ 5 km, On-Ground,
+                  Engines aus). Watcher tickt alle 3 s.
+                </span>
+              </span>
+            </label>
+            <label className="settings__checkbox">
+              <input
+                type="checkbox"
+                checked={approachAdvisoriesEnabled}
+                onChange={(e) => onApproachAdvisoriesEnabledChange(e.target.checked)}
+              />
+              <span>
+                <strong>{t("approach_advisory.settings_label")}</strong>
+                <span className="settings__row-hint">
+                  {t("approach_advisory.settings_hint")}
+                </span>
+              </span>
+            </label>
+          </div>
+        </>
+      )}
 
-      {/* v0.9.0 (#GlitchTip): Anonyme Fehler-Telemetrie.
-          Opt-In, Default = aus. Pflicht laut DSGVO Art. 6 (1) a. */}
-      <ErrorReportingPanel />
+      {/* ─── Tab: Komfort ─────────────────────────────────────────
+          Sprache/Theme, Verhalten, Speicher, Discord-RPC, Fehler-
+          Reporting — optionale Qualität-Verbesserungen.
+      */}
+      {activeTab === "extras" && (
+        <>
+          <div className="settings__section">
+            <h3>{t("settings.appearance_section")}</h3>
 
-      {/* v0.9.0 (#Discord-RPC): Rich-Presence im Discord-Profil.
-          Opt-In, Default = aus. Eigener Panel-Komponente. */}
-      <DiscordRpcPanel />
+            <label className="settings__field">
+              <span className="settings__field-label">
+                {t("settings.language_label")}
+              </span>
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value as SupportedLanguage)}
+              >
+                {SUPPORTED_LANGUAGES.map((lng) => (
+                  <option key={lng} value={lng}>{LANGUAGE_LABELS[lng]}</option>
+                ))}
+              </select>
+            </label>
 
-      {/* v0.7.17 (F-001): Beta-Toggle entfernt. Fenix A32x wird jetzt
-       *  automatisch erkannt (AircraftProfile::is_fenix()), die LVAR-
-       *  Overrides laufen ohne weiteres Zutun des Piloten. Settings →
-       *  Beta-Section verschwindet damit komplett.
-       */}
+            <label className="settings__field">
+              <span className="settings__field-label">
+                {t("settings.theme_label")}
+              </span>
+              <select
+                value={theme}
+                onChange={(e) => onThemeChange(e.target.value as Theme)}
+              >
+                <option value="dark">{t("settings.theme_dark")}</option>
+                <option value="light">{t("settings.theme_light")}</option>
+              </select>
+            </label>
+          </div>
 
-      <div className="settings__section">
-        <h3>{t("settings.developer_section")}</h3>
-        <label className="settings__checkbox">
-          <input
-            type="checkbox"
-            checked={debugMode}
-            onChange={(e) => onDebugModeChange(e.target.checked)}
-          />
-          <span>
-            <strong>{t("settings.debug_mode_label")}</strong>
-            <span className="settings__row-hint">
-              {t("settings.debug_mode_hint")}
-            </span>
-          </span>
-        </label>
+          <div className="settings__section">
+            <h3>{t("behaviour.section_title")}</h3>
+            <label className="settings__checkbox">
+              <input
+                type="checkbox"
+                checked={minimizeToTray}
+                onChange={(e) => onMinimizeToTrayChange(e.target.checked)}
+              />
+              <span>
+                <strong>{t("behaviour.minimize_to_tray_label")}</strong>
+                <span
+                  className="settings__row-hint"
+                  dangerouslySetInnerHTML={{
+                    __html: t("behaviour.minimize_to_tray_hint"),
+                  }}
+                />
+              </span>
+            </label>
+          </div>
 
-        {debugMode && (
-          <div className="settings__debug-panel">
-            <SimDebugPanel status={simStatus} />
-            <PhpvmsHeartbeatDebug activeFlight={activeFlight} />
-            <PmdgPremiumPanel
-              simState={simStatus?.state ?? "disconnected"}
-              simSnapshot={simStatus?.snapshot ?? null}
-            />
-            <XPlanePremiumPanel
-              simState={simStatus?.state ?? "disconnected"}
+          <div className="settings__section">
+            <h3>{t("settings.storage_section")}</h3>
+            <FlightLogsManager
+              autoDelete={autoDeleteFlightLogs}
+              onAutoDeleteChange={onAutoDeleteFlightLogsChange}
             />
           </div>
-        )}
-      </div>
 
-      {/* v0.7.18 (B-011) — Orphan-Flight-Cleanup. Eigener Bereich unten
-          im Settings-Tab, weil das eine selten gebrauchte Notnagel-
-          Funktion ist und nicht im Cockpit-Tab gehoert (der ist fuer
-          den aktiven Flug). */}
-      <OrphanFlightsPanel />
+          {/* v0.9.0 (#GlitchTip): Anonyme Fehler-Telemetrie.
+              Opt-In, Default = aus. Pflicht laut DSGVO Art. 6 (1) a. */}
+          <ErrorReportingPanel />
+
+          {/* v0.9.0 (#Discord-RPC): Rich-Presence im Discord-Profil.
+              Opt-In, Default = aus. */}
+          <DiscordRpcPanel />
+        </>
+      )}
+
+      {/* ─── Tab: Plugins ─────────────────────────────────────────
+          Flugzeug-spezifische Add-ons (PMDG SDK, AeroACARS-X-Plane-
+          Plugin). v0.11.0-dev: in eigenen Tab gezogen — vorher
+          waren die unter „Developer → Debug" versteckt, obwohl sie
+          für PMDG-/X-Plane-Piloten ein normaler Settings-Bereich
+          sind. Beide Panels rendern jetzt unabhängig vom Debug-Mode
+          (die Sichtbarkeit der Karten selbst hängt nur am Sim-
+          State und ob das passende Plugin/Aircraft erkannt wird).
+      */}
+      {activeTab === "plugins" && (
+        <>
+          <PmdgPremiumPanel
+            simState={simStatus?.state ?? "disconnected"}
+            simSnapshot={simStatus?.snapshot ?? null}
+          />
+          <XPlanePremiumPanel
+            simState={simStatus?.state ?? "disconnected"}
+          />
+        </>
+      )}
+
+      {/* ─── Tab: Technik ─────────────────────────────────────────
+          Debug-Mode + Sim-Debug + phpVMS-Heartbeat und Orphan-Flight-
+          Cleanup — selten gebraucht, primär für Dev/Troubleshooting.
+          PMDG-/X-Plane-Premium-Panels sind nicht mehr hier (siehe
+          „Plugins"-Tab).
+      */}
+      {activeTab === "tech" && (
+        <>
+          <div className="settings__section">
+            <h3>{t("settings.developer_section")}</h3>
+            <label className="settings__checkbox">
+              <input
+                type="checkbox"
+                checked={debugMode}
+                onChange={(e) => onDebugModeChange(e.target.checked)}
+              />
+              <span>
+                <strong>{t("settings.debug_mode_label")}</strong>
+                <span className="settings__row-hint">
+                  {t("settings.debug_mode_hint")}
+                </span>
+              </span>
+            </label>
+
+            {debugMode && (
+              <div className="settings__debug-panel">
+                <SimDebugPanel status={simStatus} />
+                <PhpvmsHeartbeatDebug activeFlight={activeFlight} />
+              </div>
+            )}
+          </div>
+
+          {/* v0.7.18 (B-011) — Orphan-Flight-Cleanup. Notnagel-
+              Funktion, deshalb im Tech-Tab. */}
+          <OrphanFlightsPanel />
+        </>
+      )}
     </section>
   );
 }
@@ -687,14 +822,13 @@ function FlightLogsManager({
     try {
       const res = await invoke<{ deleted: number }>("flight_logs_delete_all");
       await refresh();
+      // v0.11.0-dev (QS-Audit): direkt i18next-Plural-Resolution nutzen.
+      // i18next-V4 mappt `count` automatisch auf `_one`/`_other` —
+      // der vorherige defaultValue-Hack mit manuellem Branching war ein
+      // Code-Smell und triggerte den Audit-„missing-in-EN"-False-Positive
+      // weil der Base-Key `delete_all_logs_done` nie existieren musste.
       setDoneMsg(
-        t("settings.delete_all_logs_done", {
-          count: res.deleted,
-          defaultValue:
-            res.deleted === 1
-              ? t("settings.delete_all_logs_done_one", { count: res.deleted })
-              : t("settings.delete_all_logs_done_other", { count: res.deleted }),
-        }),
+        t("settings.delete_all_logs_done", { count: res.deleted }),
       );
     } catch (e) {
       setError(String(e));

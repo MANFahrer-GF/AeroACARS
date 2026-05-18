@@ -4,6 +4,69 @@ Alle nennenswerten Änderungen an AeroACARS. Format: lose an [Keep a Changelog](
 
 ---
 
+## [v0.11.0] — 2026-05-18 · Pilot-Hilfen, Approach-Stability-Card, Loadsheet-Polish, Settings-Tabs
+
+**Public Release** für alle Piloten. Stable-Updater greift das automatisch. Sammelt drei größere UI-Erweiterungen, einen wichtigen Bug-Fix und eine neue VPS-Diagnose-Anzeige in einer Release.
+
+### Neu — Pilot-Hilfen für die Landeauswertung
+
+- **🛬 Bahn-Auslastung — In-App-Erklärung.** Neuer "🛬 Wie wird das berechnet?"-Button am Boden der rollout-Sub-Score-Card öffnet ein Modal mit Formel, allen fünf Punkte-Bändern (excellent_margin … overrun_risk) inkl. Punktzahlen + Farben, Heavy-Bonus (5 pp für Wide-Bodies), Pre-Displaced-Cap (max 55 PTS bei zu frühem Touchdown), sechs Skip-Reasons und der Erklärung was die Card-Felder bedeuten. Pilot kann selbständig nachvollziehen warum sein Score so ist — kein Discord-Nachfragen mehr. (`client/src/components/RunwayUtilizationHelpModal.tsx`)
+- **🛬 Glossar-Modal jetzt mehrsprachig (DE/EN/IT).** Bislang war das Glossar im Runway-Diagramm hartcodiert deutsch. Jetzt komplett über i18n — 18 Begriffe (Threshold, TDZ, Aim Point, TCH, DDS, Glideslope, Rollout, AIRAC, AGL/fpm/kt etc.) in allen drei Sprachen. (`client/src/components/RunwayGlossaryModal.tsx`)
+
+### Neu — Approach-Stability-Card (analog zur aeroacars-live-Webapp)
+
+- **7-Kacheln-Approach-Stability statt schmaler 2-Wert-Indicator.** Im LandingPanel wird der bisherige `StabilityIndicator` (nur σ-V/S + σ-Bank) durch eine vollwertige Card abgelöst:
+  - **STABLE-GATE-Pill** rechts oben (✓ STABLE / ⚠ PARTIAL / ✗ UNSTABLE — Schwellen: 0 Verletzungen = stable, ≥2 hart oder ≥3 gesamt = unstable, sonst partial)
+  - Sub-Line mit HAT/AGL-Filter + Sample-Count
+  - Datenquellen-Zeile (MSFS / X-Plane)
+  - **7 Kacheln**: V/S-Jerk · Bank σ (filtered) · IAS σ · Sink Rate · Landing-Config · V/S vs. 3°-ILS · Max V/S-Dev <500ft — jede Kachel hat farbiges Band (good/ok/bad/missing) basierend auf den FAA-AC-120-71B-Toleranzen aus dem Backend (`compute_approach_stability_v2`)
+  - **Coaching-Banner** am Boden, dynamisch (sauber / partial / unstable)
+  - **ⓘ Hilfe-Modal** "Was bedeuten die Werte?" erklärt das Stable-Gate-Konzept, die Pill-Logik und jede einzelne Kennzahl mit Schwellwert-Bändern (DE/EN/IT). (`client/src/components/ApproachStabilityCard.tsx`, `ApproachStabilityHelpModal.tsx`)
+- **Backend-Storage erweitert (forward-only).** Drei bereits gerechnete Werte (`approach_vs_deviation_fpm`, `approach_max_vs_deviation_below_500_fpm`, `approach_used_hat`) waren bisher nur im MQTT-Payload — jetzt auch im lokal persistierten `LandingRecord`. Alte `landing_history.json`-Einträge bleiben via `serde(default)` lesbar; ihre Stability-Card zeigt einen Legacy-Hinweis statt der Kacheln. (`client/src-tauri/crates/storage/src/lib.rs`, `client/src-tauri/src/lib.rs`)
+
+### Neu — Loadsheet-Bereich modernisiert ("Plan-Treue"-Score)
+
+- **Treibstoff- und Gewichts-Tabellen nebeneinander** als 2-Spalten-Grid (auto-fit, stapelt auf schmalen Screens). Pro Zeile: IST groß und prominent, Plan-Wert als dezente Sub-Zeile darunter (`"Plan 13884 kg"`), Δ als runde Pill mit Trend-Icon (`✓` / `≈` / `▲` / `▼`).
+- **Loadsheet-Score-Footer wurde zu einer Hero-Card** mit SVG-Donut-Ring (Mount-Animation, Gradient, Glow), die fünf Plan-vs-Real-Pills (Block-Fuel · TOW · LDW · ZFW) rechts daneben.
+- **Section-Naming aufgeräumt** — die übergeordnete Sektion heißt jetzt **"Loadsheet"** (statt zwei mal "TREIBSTOFF" verschachtelt), die Sub-Cards bleiben "⛽ TREIBSTOFF" und "⚖️ GEWICHT", die Footer-Card "📋 PLAN-TREUE" (vorher "Loadsheet-Bewertung").
+- **Plan/Real-Treibstoff-Balken** bekommt eine echte farbige Δ-Pill statt des bisherigen Mini-Texts.
+
+### Neu — Settings in 5 Tabs sortiert (statt einer endlos langen Liste)
+
+Settings-Panel wurde komplett reorganisiert in:
+- **🎮 Simulator** — nur die Sim-Auswahl, prominent und isoliert (Default-Tab für Erst-Nutzer)
+- **🛫 Benötigt** — SimBrief Integration, Flug-Aufzeichnungs-Verhalten (Auto-File, Auto-Start, Approach-Advisories)
+- **🎨 Komfort** — Sprache & Darstellung, Verhalten (Minimize-to-Tray), Speicher (Flight-Logs), Fehler-Reporting, Discord-RPC
+- **✈️ Plugins** — PMDG Premium Telemetry, X-Plane Premium Plugin (vorher unter Debug-Mode versteckt, sind aber keine Debug-Tools)
+- **🛠 Technik** — Debug-Mode + Sim-Debug-Panel + phpVMS-Heartbeat + Orphan-Flights-Cleanup
+
+Tab-Wahl wird in localStorage gemerkt. UI bekommt Hint-Text unter der Tab-Bar der jeweils erklärt was der Tab umfasst. Alle Labels in DE/EN/IT.
+
+### Bug-Fix — VFR-Eingabe-Maske verschwindet bei Resize
+
+VFR-Modal (ManualFlightModal) verlor alle eingetippten Werte (Block-Fuel, Flight-Time, Cruise-Level, Route, ZFW etc.) wenn der Pilot mitten in der Eingabe das Fenster verkleinerte/vergrößerte. Zwei defensive Fixes:
+- **Form-State wird in localStorage persistiert** (Key `aeroacars.vfr.<bid_id>`) — überlebt jeden React-Remount, Resize, oder kurzen App-Reload. Werte werden nach erfolgreichem Flug-Start oder explizitem Cancel gelöscht.
+- **Backdrop-Click härter** — schließt das Modal nur noch im `aircraft`-Stage (vor Aircraft-Auswahl). Im `plan`-Stage (Pilot tippt Werte) wird ein versehentlicher Backdrop-Touch/Klick ignoriert; nur der explizite Cancel-Button schließt. (`client/src/components/ManualFlightModal.tsx`)
+
+### Neu — Pilot-Client-Version im VPS-PIREP-Report
+
+- `client_version` aus dem MQTT-Payload (= `CARGO_PKG_VERSION` des Pilot-Clients, schon seit v0.7.x mitgesendet) wird jetzt im Webapp-PIREP-Detail-Header als kleine Pill angezeigt — `📱 AeroACARS v0.11.0`. VA-Owner sieht auf einen Blick mit welcher Client-Version ein PIREP produziert wurde — wichtig wenn Anomalien diagnostiziert werden müssen. (`aeroacars-live/webapp/src/components/LandingAnalysis.tsx`)
+
+### Tools / QS
+
+- **Neues i18n-Audit-Script `scripts/i18n-audit.mjs`.** Drei Checks: (1) PARITY zwischen DE/EN/IT, (2) alle im Code referenzierten `t("…")`-Keys existieren im EN-Master, (3) DEAD-Keys-Warnung. Plural-aware (`_one`/`_other`), Template-aware (`\`prefix.${...}\``), String-Literal-aware (`"foo.bar.baz"` als Konstante), Underscore-Suffix-aware (`\`prefix_${...}\``). Aufruf: `node scripts/i18n-audit.mjs [--strict]`.
+- **3 i18n-Bugs gefunden + gefixt:** `sim.xplane_phase2` fehlte in allen Locales (Pilot sah rohen Key auf X-Plane-Panel); `settings.delete_all_logs_done` nutzte einen `defaultValue`-Hack statt sauberer i18next-V4-Plural-Resolution; `actions.language_it` war nur in IT vorhanden (Orphan).
+- **12 echte Altlasten gelöscht:** `phase_timeline.*` (Feature seit Längerem entfernt, Locale-Keys standen noch da).
+
+### Nicht in dieser Release — folgt in v0.12.0
+
+- **Push-Nachrichten-System** (Admin-zu-Pilot-Inbox mit Bestätigung + Targeting) — bekommt eigene Spec-Runde, ist scope-mäßig ein eigenständiges Feature mit Recorder-DB-Schema, Webapp-Admin-UI und Client-Polling + Inbox-Component.
+- **Loadsheet-Score-Algorithmus-Politur** (z.B. Penalty-Schwellen-Refinement) — der Score selbst ist v0.3.0-Stand; nur die Visualisierung wurde modernisiert.
+
+---
+
+---
+
 ## [v0.9.2] — 2026-05-18 · GlitchTip + Discord Rich Presence (Public-Release)
 
 **Inhaltlich identisch mit v0.9.1.** Nochmal versioniert weil v0.9.1 selbst nach 6 QS-Runden noch einen Bug hatte (F18, siehe Runde 7 unten) und v0.9.0/v0.9.1 schon mehrfach als Draft existierten. Sauberer Cut.

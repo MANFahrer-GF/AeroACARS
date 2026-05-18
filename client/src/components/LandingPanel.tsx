@@ -6,6 +6,8 @@ import { ForensicsBadge } from "./ForensicsBadge";
 import { SinkrateForensik, scoreBasisVs } from "./SinkrateForensik";
 import { GForceForensik } from "./GForceForensik";
 import { RunwayDiagramV2 } from "./RunwayDiagramV2";
+import { RunwayUtilizationHelpModal } from "./RunwayUtilizationHelpModal";
+import { ApproachStabilityCard } from "./ApproachStabilityCard";
 import { mapLandingRecordToV2Props } from "../dev/runwayDiagramV2Mapper";
 // v0.5.47 — Score-Modul ist jetzt zentral, identisch zu webapp/src/
 // components/landingScoring.ts. Dieselben Schwellen, Bands, Coach-Tipps
@@ -180,6 +182,17 @@ export interface LandingRecord {
   /// `approach_excessive_sink` ist bool (NICHT count).
   approach_excessive_sink?: boolean | null;
   gate_window?: GateWindow | null;
+  // v0.11.0-dev: 3 weitere Stability-v2-Felder. Backend rechnet sie schon
+  // (lib.rs::compute_approach_stability_v2), persistiert sie seit dieser
+  // Version auch ins LandingRecord. Alte PIREPs (vor v0.11) haben die
+  // Werte nicht — ApproachStabilityCard zeigt dann "—" pro Kachel.
+  /// Mean |V/S − Target_V/S(3°-ILS, GS)|, fpm, über Stability-Gate.
+  approach_vs_deviation_fpm?: number | null;
+  /// Max |V/S − Target_V/S(3°-ILS, GS)|, fpm, für Samples unter 500 ft HAT.
+  approach_max_vs_deviation_below_500_fpm?: number | null;
+  /// True wenn Gate auf Height-Above-Touchdown gefiltert wurde
+  /// (Airport-Elevation bekannt). False = AGL-Fallback.
+  approach_used_hat?: boolean | null;
   /// Sub-Score-Breakdown aus der landing-scoring Crate (Spec §3.1
   /// SSoT). UI rendert direkt aus diesen Felder, KEIN Recompute.
   /// Bei alten PIREPs (ux_version < 1) leer/fehlt → LegacyPirepNotice.
@@ -1249,9 +1262,21 @@ function InfoBadge({ explanation }: { explanation: string }) {
 
 function ScoreBreakdown({ subs }: { subs: SubScore[] }) {
   const { t } = useTranslation();
+  // v0.11.0-dev: Pilot-Hilfe-Modal für den "Bahn-Auslastung"-Sub-Score.
+  // Wird über den "🛬 Wie wird das berechnet?"-Button am Boden der
+  // rollout-Card geöffnet. Andere Sub-Scores behalten ihren bestehenden
+  // InfoBadge-Tooltip — nur Bahn-Auslastung bekommt das tiefe Erklärungs-
+  // Modal, weil sie mit Bändern + Heavy-Bonus + Pre-Displaced-Cap die
+  // komplexeste Score-Logik hat.
+  const [runwayUtilHelpOpen, setRunwayUtilHelpOpen] = useState(false);
   if (subs.length === 0) return null;
   return (
     <div className="landing-subscores">
+      {runwayUtilHelpOpen && (
+        <RunwayUtilizationHelpModal
+          onClose={() => setRunwayUtilHelpOpen(false)}
+        />
+      )}
       {subs.map((s) => {
         // v0.7.1 P1.2-Fix: skipped wird sichtbar als "nicht bewertet"
         // (graue Variante, keine Punkte/Wert/Rationale).
@@ -1268,7 +1293,13 @@ function ScoreBreakdown({ subs }: { subs: SubScore[] }) {
               <div className="landing-subscore__head">
                 <span className="landing-subscore__label">
                   {t(`landing.sub.${s.key}`)}
-                  <InfoBadge explanation={t(`landing.info.${s.key}`)} />
+                  {/* v0.11.0-dev: kein i-Tooltip für rollout — der
+                      "🛬 Wie wird das berechnet?"-Button am Boden öffnet
+                      bereits das ausführliche Modal. Zwei Erklärungen
+                      auf der gleichen Card wären redundant. */}
+                  {s.key !== "rollout" && (
+                    <InfoBadge explanation={t(`landing.info.${s.key}`)} />
+                  )}
                 </span>
                 <span
                   className="landing-subscore__points"
@@ -1302,7 +1333,12 @@ function ScoreBreakdown({ subs }: { subs: SubScore[] }) {
             <div className="landing-subscore__head">
               <span className="landing-subscore__label">
                 {t(`landing.sub.${s.key}`)}
-                <InfoBadge explanation={t(`landing.info.${s.key}`)} />
+                {/* v0.11.0-dev: kein i-Tooltip für rollout — der
+                    "🛬 Wie wird das berechnet?"-Button am Boden öffnet
+                    bereits das ausführliche Modal. */}
+                {s.key !== "rollout" && (
+                  <InfoBadge explanation={t(`landing.info.${s.key}`)} />
+                )}
               </span>
               <span className="landing-subscore__points">{s.points} PTS</span>
             </div>
@@ -1345,6 +1381,28 @@ function ScoreBreakdown({ subs }: { subs: SubScore[] }) {
                   <li key={idx}>{line}</li>
                 ))}
               </ul>
+            )}
+            {/* v0.11.0-dev: Pilot-Hilfe-Button nur auf der rollout-Card.
+                Öffnet RunwayUtilizationHelpModal mit Formel, allen Bändern,
+                Heavy-Bonus, Pre-Displaced-Cap und Skip-Reasons. */}
+            {s.key === "rollout" && (
+              <button
+                type="button"
+                onClick={() => setRunwayUtilHelpOpen(true)}
+                style={{
+                  marginTop: 8,
+                  padding: "4px 10px",
+                  background: "rgba(34,197,94,0.10)",
+                  border: "1px solid rgba(34,197,94,0.35)",
+                  borderRadius: 4,
+                  color: "#bbf7d0",
+                  fontSize: "0.72rem",
+                  cursor: "pointer",
+                  alignSelf: "flex-start",
+                }}
+              >
+                {t("landing.runway_utilization_help.open_button")}
+              </button>
             )}
           </div>
         );
@@ -1756,47 +1814,52 @@ function FuelComparisonBar({
         </div>
         <span className="landing-fuelbar__value">{actual.toFixed(0)} kg</span>
       </div>
-      <div
-        className={`landing-fuelbar__delta ${diff > 0 ? "landing-fuelbar__delta--over" : ""}`}
-      >
-        {sign}
-        {diff.toFixed(0)} kg ({sign}
-        {pct.toFixed(1)}%)
-      </div>
-    </div>
-  );
-}
-
-// ---- Stability gauge ----------------------------------------------------
-
-function StabilityIndicator({
-  vsStd,
-  bankStd,
-}: {
-  vsStd: number | null;
-  bankStd: number | null;
-}) {
-  const { t } = useTranslation();
-  if (vsStd == null && bankStd == null) return null;
-
-  function band(v: number, good: number, ok: number): string {
-    if (v <= good) return "good";
-    if (v <= ok) return "ok";
-    return "bad";
-  }
-  const vsBand = vsStd != null ? band(vsStd, 100, 200) : "n/a";
-  const bankBand = bankStd != null ? band(bankStd, 3, 6) : "n/a";
-
-  return (
-    <div className="landing-stability">
-      <div className={`landing-stability__row landing-stability__row--${vsBand}`}>
-        <span>{t("landing.vs_stddev")}</span>
-        <strong>{vsStd != null ? `${vsStd.toFixed(0)} fpm` : "—"}</strong>
-      </div>
-      <div className={`landing-stability__row landing-stability__row--${bankBand}`}>
-        <span>{t("landing.bank_stddev")}</span>
-        <strong>{bankStd != null ? `${bankStd.toFixed(1)}°` : "—"}</strong>
-      </div>
+      {/* v0.11.0-dev: Delta-Pill statt versteckter Mini-Text. Farbcode:
+          ±1% grün (im Rahmen) · 1–5% gelb · >5% rot — Symbolik klar
+          unterscheidbar zwischen ok/warn/alert ohne nur auf Farbe zu
+          setzen (auch für Color-Blind-Piloten lesbar). */}
+      {(() => {
+        const absPct = Math.abs(pct);
+        const deltaColor =
+          absPct < 1 ? "#22c55e" : absPct < 5 ? "#eab308" : "#ef4444";
+        const deltaIcon =
+          absPct < 1 ? "✓" : absPct < 5 ? "≈" : diff > 0 ? "▲" : "▼";
+        return (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              marginTop: 4,
+            }}
+          >
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "3px 10px",
+                borderRadius: 4,
+                background: `${deltaColor}1a`,
+                border: `1px solid ${deltaColor}55`,
+                color: deltaColor,
+                fontSize: "0.82rem",
+                fontWeight: 600,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              <span>{deltaIcon}</span>
+              <span>
+                {sign}
+                {diff.toFixed(0)} kg
+              </span>
+              <span style={{ opacity: 0.75 }}>
+                ({sign}
+                {pct.toFixed(1)}%)
+              </span>
+            </span>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -2010,21 +2073,37 @@ function LandingDetail({
         </div>
       </section>
 
-      {/* Approach stability — full-width, with chart underneath the bands */}
-      <section className="landing-section">
-        <h3>{t("landing.approach_stability")}</h3>
-        <div className="landing-stability-row">
-          <StabilityIndicator
-            vsStd={record.approach_vs_stddev_fpm}
-            bankStd={record.approach_bank_stddev_deg}
-          />
-        </div>
-        {record.approach_samples.length >= 3 && (
+      {/* Approach stability — v0.11.0-dev: 7-Kacheln-Card analog zur
+          aeroacars-live-Webapp (V/S-Jerk, Bank σ, IAS σ, Sink Rate,
+          Landing-Config, V/S vs. 3°-ILS, Max V/S-Dev <500ft) plus
+          STABLE-GATE-Pill und Coaching. Der alte schmale Stability-
+          Indicator (nur σ-V/S und σ-Bank) ist abgelöst — alle Werte
+          kommen direkt aus dem Backend (compute_approach_stability_v2),
+          die Card rendert nur. Der Approach-Chart darunter bleibt. */}
+      <ApproachStabilityCard
+        vsJerkFpm={record.approach_vs_jerk_fpm}
+        bankStddevDeg={record.approach_bank_stddev_deg}
+        iasStddevKt={record.approach_ias_stddev_kt}
+        excessiveSink={record.approach_excessive_sink}
+        stableConfig={record.approach_stable_config}
+        vsDeviationFpm={record.approach_vs_deviation_fpm}
+        maxVsDeviationBelow500Fpm={
+          record.approach_max_vs_deviation_below_500_fpm
+        }
+        usedHat={record.approach_used_hat}
+        sampleCount={
+          record.gate_window?.sample_count ?? record.approach_samples.length
+        }
+        simKind={record.sim_kind}
+      />
+      {record.approach_samples.length >= 3 && (
+        <section className="landing-section">
+          <h3>{t("landing.approach_stability")}</h3>
           <div className="landing-stability-chart">
             <ApproachChart samples={record.approach_samples} />
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
       {/* v0.7.8: Sinkrate-Forensik — erklaert dem Piloten warum die
           Landerate so ist wie sie ist. Spec docs/spec/v0.7.8-landing-rate-
@@ -2177,7 +2256,7 @@ function LandingDetail({
         record.landing_weight_kg != null) && (
         <section className="landing-section">
           <h3>
-            {t("landing.fuel")}
+            {t("landing.loadsheet_section_title")}
             <InfoBadge explanation={t("landing.info.fuel_section")} />
           </h3>
           {/* v0.4.2: Hinweis wenn der Flug keinen SimBrief-OFP hatte —
@@ -2198,55 +2277,75 @@ function LandingDetail({
               actual={record.actual_trip_burn_kg}
             />
           )}
-          <ComparisonTable
-            title={t("landing.fuel_table")}
-            rows={[
-              {
-                label: t("landing.block_fuel"),
-                ist: record.block_fuel_kg,
-                soll: record.planned_block_fuel_kg,
-              },
-              {
-                label: t("landing.takeoff_fuel"),
-                ist: record.takeoff_fuel_kg,
-                soll: null, // SimBrief OFP hat nur Block + Burn, kein TO-Fuel separat
-              },
-              {
-                label: t("landing.landing_fuel"),
-                ist: record.landing_fuel_kg,
-                soll: record.planned_block_fuel_kg != null && record.planned_burn_kg != null
-                  ? record.planned_block_fuel_kg - record.planned_burn_kg
-                  : null,
-              },
-              {
-                label: t("landing.trip_burn"),
-                ist: record.actual_trip_burn_kg,
-                soll: record.planned_burn_kg,
-              },
-            ]}
-          />
-          <ComparisonTable
-            title={t("landing.weight_table")}
-            rows={[
-              {
-                label: t("landing.tow"),
-                ist: record.takeoff_weight_kg,
-                soll: record.planned_tow_kg,
-              },
-              {
-                label: t("landing.ldw"),
-                ist: record.landing_weight_kg,
-                soll: record.planned_ldw_kg,
-              },
-              {
-                label: t("landing.zfw"),
-                ist: record.takeoff_weight_kg != null && record.takeoff_fuel_kg != null
-                  ? record.takeoff_weight_kg - record.takeoff_fuel_kg
-                  : null,
-                soll: record.planned_zfw_kg,
-              },
-            ]}
-          />
+          {/* v0.11.0-dev Pass 5: Treibstoff + Gewicht nebeneinander als
+              2-Spalten-Grid auf breiten Screens (≥ 720 px Card-Breite,
+              CSS minmax sorgt für auto-fit). Auf schmalen Screens
+              stapeln sich die zwei Cards automatisch untereinander. So
+              entsteht klarer Rhythmus: 2 kompakte Cards oben, 1 Hero-
+              Score-Card (LoadsheetScore) unten — keine endlose vertikale
+              Liste mehr, kein „Klotz"-Effekt. */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))",
+              gap: 14,
+              marginTop: "1rem",
+            }}
+          >
+            <ComparisonTable
+              title={t("landing.fuel_table")}
+              icon="⛽"
+              rows={[
+                {
+                  label: t("landing.block_fuel"),
+                  ist: record.block_fuel_kg,
+                  soll: record.planned_block_fuel_kg,
+                },
+                {
+                  label: t("landing.takeoff_fuel"),
+                  ist: record.takeoff_fuel_kg,
+                  soll: null, // SimBrief OFP hat nur Block + Burn, kein TO-Fuel separat
+                },
+                {
+                  label: t("landing.landing_fuel"),
+                  ist: record.landing_fuel_kg,
+                  soll:
+                    record.planned_block_fuel_kg != null && record.planned_burn_kg != null
+                      ? record.planned_block_fuel_kg - record.planned_burn_kg
+                      : null,
+                },
+                {
+                  label: t("landing.trip_burn"),
+                  ist: record.actual_trip_burn_kg,
+                  soll: record.planned_burn_kg,
+                },
+              ]}
+            />
+            <ComparisonTable
+              title={t("landing.weight_table")}
+              icon="⚖️"
+              rows={[
+                {
+                  label: t("landing.tow"),
+                  ist: record.takeoff_weight_kg,
+                  soll: record.planned_tow_kg,
+                },
+                {
+                  label: t("landing.ldw"),
+                  ist: record.landing_weight_kg,
+                  soll: record.planned_ldw_kg,
+                },
+                {
+                  label: t("landing.zfw"),
+                  ist:
+                    record.takeoff_weight_kg != null && record.takeoff_fuel_kg != null
+                      ? record.takeoff_weight_kg - record.takeoff_fuel_kg
+                      : null,
+                  soll: record.planned_zfw_kg,
+                },
+              ]}
+            />
+          </div>
           <LoadsheetScore record={record} />
         </section>
       )}
@@ -2330,41 +2429,192 @@ function LoadsheetScore({ record }: { record: LoadsheetScoreInput }) {
   }
   score = Math.max(0, score);
 
-  // Score-Farbe.
-  let scoreClass = "loadsheet-score__value--ok";
-  if (score < 70) scoreClass = "loadsheet-score__value--alert";
-  else if (score < 90) scoreClass = "loadsheet-score__value--warn";
+  // v0.11.0-dev: Score-Farbe als hex statt CSS-Klasse — wird sowohl im
+  // Donut-Ring (SVG-stroke) als auch im Center-Label gebraucht.
+  const scoreColor =
+    score >= 90 ? "#22c55e" : score >= 70 ? "#eab308" : "#ef4444";
+  const ringBg = "rgba(255,255,255,0.08)";
+
+  // Donut-Ring-Geometrie. Radius 36 in einem 80×80-Viewport (= 8 PX margin)
+  // mit 8 PX stroke-width. Circumference = 2π·r.
+  const RING_R = 36;
+  const RING_CIRC = 2 * Math.PI * RING_R;
+  const ringFilled = (score / 100) * RING_CIRC;
 
   return (
-    <div className="loadsheet-score">
-      <div className="loadsheet-score__header">
-        <span className="loadsheet-score__title">
-          {t("landing.loadsheet_score")}
-        </span>
-        <span className={`loadsheet-score__value ${scoreClass}`}>
-          {score}/100
-        </span>
-      </div>
-      <ul className="loadsheet-score__breakdown">
-        {breakdown.map((b) => (
-          <li key={b.label}>
-            <span>{b.label}</span>
-            <span
-              className={
-                b.pct < 5
-                  ? "loadsheet-score__pct--ok"
-                  : b.pct < 10
-                  ? "loadsheet-score__pct--warn"
-                  : "loadsheet-score__pct--alert"
-              }
+    <div
+      className="loadsheet-score loadsheet-score--hero"
+      style={{
+        marginTop: "1rem",
+        // Gradient-Background statt Flat-Color, plus subtler farbiger Glow
+        // im Score-Band — gibt der Hero-Card mehr „Premium"-Anmutung ohne
+        // aus dem Dark-Theme zu fallen.
+        background: `linear-gradient(135deg, ${scoreColor}12, ${scoreColor}04 60%, transparent), var(--surface-2)`,
+        border: `1px solid ${scoreColor}3a`,
+        borderLeft: `4px solid ${scoreColor}`,
+        borderRadius: 12,
+        padding: "16px 18px",
+        display: "grid",
+        gridTemplateColumns: "auto 1fr",
+        gap: 18,
+        alignItems: "center",
+        boxShadow: `0 0 24px ${scoreColor}14, inset 0 1px 0 rgba(255,255,255,0.04)`,
+      }}
+    >
+      {/* SVG-Donut mit Score in der Mitte. Mount-Animation via
+          stroke-dashoffset: Start vom leeren Ring, animiert in 0.7 s
+          auf den finalen Score-Wert — sieht modern aus, kostet nichts. */}
+      <div
+        style={{
+          position: "relative",
+          width: 92,
+          height: 92,
+          flexShrink: 0,
+          filter: `drop-shadow(0 0 8px ${scoreColor}40)`,
+        }}
+      >
+        <svg
+          width={92}
+          height={92}
+          viewBox="0 0 92 92"
+          style={{ transform: "rotate(-90deg)" }}
+        >
+          <defs>
+            <linearGradient
+              id={`donut-grad-${score}`}
+              x1="0%"
+              y1="0%"
+              x2="100%"
+              y2="100%"
             >
-              {b.pct < 5 ? "✓" : b.pct < 10 ? "⚠" : "✕"}{" "}
-              {b.pct >= 0.05 ? `${b.pct.toFixed(1)}%` : "0%"}
-              {b.penalty > 0 && ` (-${b.penalty})`}
-            </span>
-          </li>
-        ))}
-      </ul>
+              <stop offset="0%" stopColor={scoreColor} stopOpacity={1} />
+              <stop offset="100%" stopColor={scoreColor} stopOpacity={0.7} />
+            </linearGradient>
+          </defs>
+          <circle
+            cx={46}
+            cy={46}
+            r={RING_R}
+            fill="none"
+            stroke={ringBg}
+            strokeWidth={8}
+          />
+          <circle
+            cx={46}
+            cy={46}
+            r={RING_R}
+            fill="none"
+            stroke={`url(#donut-grad-${score})`}
+            strokeWidth={8}
+            strokeLinecap="round"
+            strokeDasharray={RING_CIRC}
+            strokeDashoffset={RING_CIRC - ringFilled}
+            style={{
+              transition:
+                "stroke-dashoffset 0.7s cubic-bezier(0.22, 1, 0.36, 1)",
+            }}
+          />
+        </svg>
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            color: scoreColor,
+            fontWeight: 700,
+            lineHeight: 1,
+          }}
+        >
+          <span
+            style={{
+              fontSize: "1.65rem",
+              fontVariantNumeric: "tabular-nums",
+              letterSpacing: "-0.02em",
+            }}
+          >
+            {score}
+          </span>
+          <span
+            style={{
+              fontSize: "0.62rem",
+              fontWeight: 500,
+              opacity: 0.7,
+              marginTop: 3,
+              letterSpacing: "0.04em",
+            }}
+          >
+            / 100
+          </span>
+        </div>
+      </div>
+
+      {/* Title + Breakdown-Pills */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: "0.74rem",
+            fontWeight: 700,
+            color: "var(--text-muted)",
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+          }}
+        >
+          <span>📋</span>
+          <span>{t("landing.loadsheet_score")}</span>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 6,
+          }}
+        >
+          {breakdown.map((b) => {
+            const pillColor =
+              b.pct < 5 ? "#22c55e" : b.pct < 10 ? "#eab308" : "#ef4444";
+            const pillIcon = b.pct < 5 ? "✓" : b.pct < 10 ? "⚠" : "✕";
+            const pctText =
+              b.pct >= 0.05 ? `${b.pct.toFixed(1)}%` : "0%";
+            return (
+              <span
+                key={b.label}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 7,
+                  padding: "4px 11px",
+                  borderRadius: 999,
+                  background: `${pillColor}1c`,
+                  border: `1px solid ${pillColor}50`,
+                  fontSize: "0.78rem",
+                  fontVariantNumeric: "tabular-nums",
+                  color: "rgba(255,255,255,0.95)",
+                  boxShadow: `0 0 0 1px ${pillColor}10`,
+                }}
+              >
+                <span style={{ color: pillColor, fontWeight: 700, fontSize: "0.72rem" }}>
+                  {pillIcon}
+                </span>
+                <span style={{ fontWeight: 600 }}>{b.label}</span>
+                <span style={{ opacity: 0.72, fontSize: "0.74rem" }}>
+                  {pctText}
+                </span>
+                {b.penalty > 0 && (
+                  <span style={{ color: pillColor, fontWeight: 700 }}>
+                    −{b.penalty}
+                  </span>
+                )}
+              </span>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -2383,54 +2633,206 @@ interface ComparisonRow {
   soll: number | null;
 }
 
-function ComparisonTable({ title, rows }: { title: string; rows: ComparisonRow[] }) {
-  // Filter Zeilen die weder IST noch SOLL haben.
+function ComparisonTable({
+  title,
+  icon,
+  rows,
+}: {
+  title: string;
+  /** Optional Emoji/Icon das vor dem Section-Titel rendert (z.B. ⛽ ⚖) */
+  icon?: string;
+  rows: ComparisonRow[];
+}) {
+  // v0.11.0-dev Polish-Pass 4: kompletter Re-Design weg von der „Card-im-
+  // Card-Klotz"-Optik hin zu einer schlanken Liste. Pilot-Feedback Pass 3:
+  // „wirkt nicht modern, das ist ein großer Klotz". Ursache war: doppelte
+  // Borders (parent landing-section + eigene Card), redundante SOLL-Spalte,
+  // viele schwere Elemente nebeneinander.
+  //
+  // Neuer Look:
+  // - KEINE eigene Card-Hülle mehr (transparent, fließt in die parent-
+  //   landing-section ein — keine doppelten Borders)
+  // - SOLL-Spalte aufgelöst → wird zur dezenten Sub-Zeile unter dem IST-
+  //   Wert wenn Δ != 0 ("vs 13.884 kg"); spart eine ganze Spalte
+  // - Mehr vertikales Spacing pro Zeile (Werte atmen)
+  // - Δ-Pill bleibt rechts als visueller Anker, sonst alles ruhig
+  // - Dünne Trenn-Linie zwischen Zeilen statt Zebra-Stripe-Background
+  // v0.11.0-dev (Polish-Pass 2, Pass 3 fix): modernerer Look ohne Bruch
+  // mit dem dark-Theme. Änderungen ggü. Pass 1:
+  // - Section-Header bekommt optionales Icon (⛽ Treibstoff, ⚖ Gewicht)
+  // - Δ-Pills sind rounded-full (rounded-999) statt rechteckig
+  // - IST-Wert eine Stufe größer (1 rem statt 0,95)
+  // - Hover-State auf den Zeilen (subtle Brightness-Heben)
+  //
+  // Pass-3-Fix: die Mini-Δ-Progress-Bar am unteren Rand der Zeile war
+  // ein Pass-2-Experiment — der Pilot fand sie verwirrend („grüner Balken
+  // lang heißt was?"), weil die Bar das Δ-Ausmaß codierte aber farblich
+  // mit der ok/warn/alert-Pill kollidierte. Pill rechts sagt schon alles —
+  // Mini-Bar wieder entfernt.
   const visible = rows.filter((r) => r.ist != null || r.soll != null);
   if (visible.length === 0) return null;
   return (
-    <div className="landing-comparison">
-      <div className="landing-comparison__title">{title}</div>
-      <table className="landing-comparison__table">
-        <thead>
-          <tr>
-            <th />
-            <th>IST</th>
-            <th>SOLL</th>
-            <th>Δ</th>
-          </tr>
-        </thead>
-        <tbody>
-          {visible.map((r) => {
-            const delta = r.ist != null && r.soll != null ? r.ist - r.soll : null;
-            const deltaPct =
-              delta != null && r.soll != null && r.soll !== 0
-                ? Math.abs(delta / r.soll) * 100
-                : null;
-            // Farbcode (v0.3.0 Schwellen, praxisnah für Flugbetrieb):
-            //   < 5 %   → grün  (im Rahmen normaler Operations)
-            //   5-10 %  → gelb  (erkennbare Abweichung, normal)
-            //   > 10 %  → rot   (substantiell, sollte begründet werden)
-            let deltaClass = "";
-            if (deltaPct != null) {
-              if (deltaPct < 5) deltaClass = "landing-comparison__delta--ok";
-              else if (deltaPct < 10) deltaClass = "landing-comparison__delta--warn";
-              else deltaClass = "landing-comparison__delta--alert";
-            }
-            return (
-              <tr key={r.label}>
-                <td>{r.label}</td>
-                <td>{r.ist != null ? fmtNumber(r.ist, 0, "kg") : "—"}</td>
-                <td>{r.soll != null ? fmtNumber(r.soll, 0, "kg") : "—"}</td>
-                <td className={deltaClass}>
-                  {delta != null
-                    ? `${delta >= 0 ? "+" : ""}${delta.toFixed(0)} kg`
-                    : "—"}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div
+      style={{
+        background: "rgba(255,255,255,0.02)",
+        border: "1px solid rgba(255,255,255,0.06)",
+        borderRadius: 12,
+        padding: "14px 16px 8px 16px",
+      }}
+    >
+      {/* Section-Header — schlank, im Card-Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          fontSize: "0.72rem",
+          fontWeight: 700,
+          color: "var(--text-muted)",
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          paddingBottom: 8,
+          marginBottom: 2,
+          borderBottom: "1px solid rgba(255,255,255,0.05)",
+        }}
+      >
+        {icon && (
+          <span style={{ fontSize: "0.85rem", opacity: 0.7 }}>{icon}</span>
+        )}
+        <span>{title}</span>
+      </div>
+
+      {/* Datenliste — jede Zeile mit dünner Trennlinie nach oben.
+          Großzügiges padding für Atemraum. */}
+      <div>
+        {visible.map((r, idx) => {
+          const delta =
+            r.ist != null && r.soll != null ? r.ist - r.soll : null;
+          const deltaPct =
+            delta != null && r.soll != null && r.soll !== 0
+              ? Math.abs(delta / r.soll) * 100
+              : null;
+
+          const deltaColor =
+            deltaPct == null
+              ? "rgba(255,255,255,0.35)"
+              : deltaPct < 5
+                ? "#22c55e"
+                : deltaPct < 10
+                  ? "#eab308"
+                  : "#ef4444";
+
+          const deltaIcon =
+            delta == null
+              ? ""
+              : deltaPct! < 1
+                ? "✓"
+                : deltaPct! < 5
+                  ? "≈"
+                  : delta > 0
+                    ? "▲"
+                    : "▼";
+
+          // SOLL als Sub-Zeile nur zeigen wenn IST ≠ SOLL (= Δ exists und
+          // != 0). Bei exaktem Match (oder fehlendem SOLL) keine Sub-Zeile,
+          // damit die Liste ruhig bleibt.
+          const showSollSubline =
+            r.soll != null && delta != null && delta !== 0;
+
+          return (
+            <div
+              key={r.label}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr auto auto",
+                columnGap: 16,
+                rowGap: 2,
+                alignItems: "baseline",
+                padding: "12px 4px",
+                borderTop:
+                  idx === 0 ? "none" : "1px solid rgba(255,255,255,0.06)",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {/* Label */}
+              <span
+                style={{
+                  color: "rgba(255,255,255,0.78)",
+                  fontSize: "0.86rem",
+                  fontWeight: 500,
+                  gridRow: "1 / 2",
+                }}
+              >
+                {r.label}
+              </span>
+
+              {/* IST-Wert (primary, prominent) */}
+              <span
+                style={{
+                  textAlign: "right",
+                  fontSize: "1.02rem",
+                  fontWeight: 600,
+                  color: "rgba(255,255,255,0.96)",
+                  letterSpacing: "-0.01em",
+                  gridRow: "1 / 2",
+                }}
+              >
+                {r.ist != null ? fmtNumber(r.ist, 0, "kg") : "—"}
+              </span>
+
+              {/* Δ-Pill (oder em-dash bei fehlenden Daten) */}
+              <span style={{ textAlign: "right", gridRow: "1 / 2" }}>
+                {delta != null ? (
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      padding: "2px 9px",
+                      borderRadius: 999,
+                      background: `${deltaColor}18`,
+                      color: deltaColor,
+                      fontSize: "0.76rem",
+                      fontWeight: 600,
+                    }}
+                  >
+                    <span style={{ fontSize: "0.7rem" }}>{deltaIcon}</span>
+                    <span>
+                      {delta >= 0 ? "+" : ""}
+                      {delta.toFixed(0)} kg
+                    </span>
+                  </span>
+                ) : (
+                  <span style={{ opacity: 0.3, fontSize: "0.86rem" }}>—</span>
+                )}
+              </span>
+
+              {/* SOLL-Sub-Zeile (nur wenn signifikant) — direkt unter dem
+                  IST-Wert. v0.11.0-dev Polish-Pass 6: Kontrast deutlich
+                  hoch (Pilot-Feedback „vs ist schwer zu erkennen"). „vs"
+                  bleibt blass als Label, der Zahlenwert ist gut lesbar. */}
+              {showSollSubline && (
+                <span
+                  style={{
+                    gridColumn: "2 / 3",
+                    textAlign: "right",
+                    fontSize: "0.78rem",
+                    gridRow: "2 / 3",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  <span style={{ color: "rgba(255,255,255,0.45)", marginRight: 4 }}>
+                    Plan
+                  </span>
+                  <span style={{ color: "rgba(255,255,255,0.72)", fontWeight: 500 }}>
+                    {fmtNumber(r.soll!, 0, "kg")}
+                  </span>
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

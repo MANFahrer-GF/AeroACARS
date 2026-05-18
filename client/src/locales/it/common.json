@@ -132,10 +132,11 @@
     "ldw": "LDW",
     "fuel_table": "Carburante",
     "weight_table": "Peso",
+    "loadsheet_section_title": "Loadsheet",
     "trip_burn": "Consumo viaggio",
     "zfw": "ZFW",
     "no_plan_hint": "Nessun valore pianificato disponibile — per questo volo non è stato caricato alcun OFP SimBrief. Al prossimo volo controlla il log delle attività per la voce „SimBrief OFP caricato\" all'avvio; se manca, il bid non aveva un piano o il fetch è fallito.",
-    "loadsheet_score": "Valutazione loadsheet",
+    "loadsheet_score": "Precisione del piano",
     "score_breakdown": "Dettaglio punteggio",
     "coach_title": "Cosa migliorare al prossimo avvicinamento",
     "trend": "Trend",
@@ -165,13 +166,13 @@
       "landing_rate": "Velocità verticale (V/S) al momento del touchdown, in piedi al minuto. Negativa = in discesa. Soglie FCOM Boeing/Airbus: fino a −240 fpm è pulito, da −600 fpm in poi è dovuta un'ispezione hard-landing.",
       "g_force": "Carico G massimo nella finestra di 1,5 secondi attorno al touchdown. 1,0 G = morbido, da 1,4 G chiaramente percepibile, da 1,7 G strutturalmente critico (soglia hard-landing FCOM Boeing 737).",
       "bounces": "Quante volte l'aereo è risalito sopra i 35 ft AGL dopo il primo touchdown e poi è atterrato di nuovo (algoritmo BeatMyLanding). 0 = atterraggio pulito; ogni rimbalzo riduce il punteggio.",
-      "stability": "Deviazione standard (σ) del rateo di discesa negli ultimi ~10 minuti di avvicinamento. Bassa = volo costante, alta = instabile. < 100 fpm σ è molto stabile; > 300 fpm σ richiede una review di stabilized-approach.",
-      "rollout": "Percentuale della pista utilizzata dal touchdown all'uscita (highspeed-exit < 40 kt o > 30° di deviazione di heading). < 70 % è normale; > 85 % è al limite — rischioso su pista bagnata.",
-      "fuel": "Aderenza al piano OFP SimBrief. Il consumo eccessivo conta (cost-index, quota o vento non corretti), il consumo ridotto NON viene penalizzato. >15% sotto piano segnala possibile errore OFP/misurazione/rotta.",
-      "loadsheet": "Presenza dei dati di loadsheet (ZFW + TOW). Voli VFR/manuali senza dati dispatch saltano questo sub-score — nessuna penalità.",
-      "score_section": "Sei sotto-punteggi da 0-100 punti. Ogni riquadro mostra valore, punti e barra colorata (verde/giallo/rosso). La categoria più debole viene presa come prossimo obiettivo nel suggerimento del coach.",
-      "runway_section": "Visualizzazione del touchdown sulla pista. Il simbolo blu indica il punto di tocco, la banda verde mostra la distanza di arresto fino all'uscita (highspeed-exit o stop). Valori sotto: lunghezza totale, scostamento dall'asse, distanza dalla soglia, percentuale di pista utilizzata.",
-      "fuel_section": "Block = carburante al pushback; TO Fuel = dopo il rullaggio al punto di decollo; LDG Fuel = al touchdown; TOW = peso al decollo (= peso a vuoto + carico + carburante TO); LDW = peso all'atterraggio. I valori pianificati provengono dall'OFP SimBrief, se disponibile. Le differenze piano-vs-reale generano il punteggio Fuel-Efficiency."
+      "stability": "Valutazione di stabilità sullo stable-approach gate (0–1000 ft HAT, flare-cutoff ultimi 3 s prima del TD). Il backend calcola sette fattori: V/S jerk, bank σ (vector-filtered), IAS σ, violazione sink rate, landing config, V/S vs. 3° ILS, max V/S dev <500 ft. Dettagli e soglie nella scheda Stabilità avvicinamento più in basso.",
+      "rollout": "Utilizzo pista in percentuale: (distanza TD dalla soglia + rollout) ÷ LDA × 100. Cinque fasce: <30 % eccellente, 30–50 % buono, 50–70 % ok, 70–90 % lungo, 90–100 % al limite, >100 % rischio overrun. Bonus heavy −5 pp per wide-body. Clicca „🛬 Come viene calcolato?\" per la spiegazione completa.",
+      "fuel": "Aderenza al trip burn dell'OFP SimBrief. Confronta il consumo reale (block − landing fuel) con il trip burn pianificato. Il consumo eccessivo conta (cost-index, quota o vento non corretti); il consumo ridotto NON viene penalizzato. >15 % sotto piano segnala possibile errore OFP/misurazione/rotta.",
+      "loadsheet": "Presenza dei dati di loadsheet (ZFW + TOW nel piano). Voli VFR/manuali senza dati dispatch saltano questo sub-score — nessuna penalità. La valutazione dettagliata piano-vs-reale (block fuel, TOW, LDW, ZFW) appare nell'area carburante come punteggio „Precisione del piano\".",
+      "score_section": "Sette sotto-punteggi da 0–100 punti (rateo discesa, forza G, rimbalzi, stabilità avvicinamento, utilizzo pista, aderenza OFP, loadsheet). Ogni riquadro mostra valore, punti e barra colorata (verde/giallo/rosso). La categoria più debole viene presa come prossimo obiettivo nel suggerimento del coach.",
+      "runway_section": "Visualizzazione del touchdown sulla pista. Il simbolo blu indica il punto di tocco, la banda verde mostra la distanza di arresto fino all'uscita (highspeed-exit < 40 kt o stop). Valori sotto: lunghezza totale, scostamento dall'asse, distanza dalla soglia, utilizzo pista in percentuale.",
+      "fuel_section": "Block = carburante al pushback; TO Fuel = dopo il rullaggio al punto di decollo; LDG Fuel = al touchdown; TOW = peso al decollo (peso a vuoto + carico + carburante TO); LDW = peso all'atterraggio; ZFW = zero fuel weight. I valori pianificati provengono dall'OFP SimBrief, se disponibile. Il punteggio „Precisione del piano\" sotto valuta le deviazioni Block/TOW/LDW/ZFW (penalty sopra >5 %, più pesante sopra >10 %)."
     },
     "rat": {
       "smooth_touchdown": "Atterraggio morbidissimo",
@@ -393,6 +394,279 @@
         "airborne_spike": "Picco G senza corrispondente forza carrello — sembra stuttering del frame del sim o rumore di campionamento, non un impatto reale.",
         "outlier_filtered": "Spike G singolo rilevato — mediana e 95° percentile mostrano valori tranquilli. Il picco è stato probabilmente causato da uno spike di frame (rimbalzo del carrello o anomalia numerica)."
       }
+    },
+    "glossary": {
+      "title": "🛬 Termini nell'analisi dell'atterraggio",
+      "intro": "Breve spiegazione di tutti i termini e le abbreviazioni che compaiono nel diagramma e nelle schede di dettaglio — in linguaggio semplice.",
+      "close_label": "Chiudi ✕",
+      "close_aria": "Chiudi glossario",
+      "entries": {
+        "threshold": {
+          "abbr": "Threshold (THR)",
+          "full": "Soglia pista",
+          "explanation": "Le grandi strisce bianche trasversali all'inizio della pista. Da questa linea in poi è permesso atterrare."
+        },
+        "touchdown": {
+          "abbr": "Touchdown (TD)",
+          "full": "Touchdown",
+          "explanation": "Il momento in cui le ruote toccano la superficie della pista."
+        },
+        "centerline": {
+          "abbr": "Centerline (CL)",
+          "full": "Asse centrale",
+          "explanation": "La linea bianca tratteggiata esattamente al centro della pista."
+        },
+        "xtd": {
+          "abbr": "Centerline offset / XTD",
+          "full": "Deviazione laterale",
+          "explanation": "Quanto a sinistra o destra dell'asse centrale sei atterrato? Valore ideale: 0 m."
+        },
+        "tdz": {
+          "abbr": "TDZ — Touchdown Zone",
+          "full": "Zona di touchdown",
+          "explanation": "L'area target per l'atterraggio — proporzionale alla lunghezza della pista, limitata a 900 m. Formula: lunghezza TDZ = min(lunghezza pista ÷ 3, 900 m). Quindi: pista 1500 m → TDZ 500 m, 2100 m → 700 m, da 2700 m in poi scatta il cap di 900 m — indipendentemente da quanto si allunghi la pista. Sulle piste reali la TDZ si vede come gruppi di strisce bianche trasversali lungo l'asse (ICAO Annex 14). Esempio: LIEE 2803 m → 900 m TDZ (cap), EDDR 1320 m → 440 m TDZ."
+        },
+        "aim": {
+          "abbr": "AIM — Aim Point",
+          "full": "Punto di mira",
+          "explanation": "DUE strisce bianche larghe sulla pista — una direttamente SOPRA, una direttamente SOTTO l'asse, simmetriche (ICAO Annex 14 §5.2.6). In un avvicinamento stabilizzato il tuo sguardo mira ESATTAMENTE lì, perché il glideslope 3° ti porterebbe esattamente in quel punto se non facessi il flare. Durante il flare alzi il muso, riduci la spinta — e tipicamente atterri 50–150 m DOPO l'aim point (= inizio della TDZ). POSIZIONE (logica AeroACARS a 2 bucket, FAA AIM 8-9-1): pista ≥ 2400 m → aim point a 400 m dopo soglia; pista < 2400 m → 300 m. Esempio: LIEE 2803 m → 400 m, EDDR 1320 m → 300 m. ICAO Annex 14 la scaglionerebbe più finemente (150/250/300/400 m per LDA), ma la semplificazione FAA 300/400 basta per la valutazione. Lunghezza strisce su pista reale: 30–60 m."
+        },
+        "tch": {
+          "abbr": "TCH — Threshold Crossing Height",
+          "full": "Altezza di attraversamento soglia",
+          "explanation": "Quanto eri in alto rispetto al suolo quando hai sorvolato la soglia? Avvicinamento ILS tipico 49 ft (≈ 15 m). Troppo basso: rischio tail-strike. Troppo alto: long landing."
+        },
+        "dds": {
+          "abbr": "DDS — Displaced Threshold",
+          "full": "Soglia spostata",
+          "explanation": "Alcune piste hanno un'area PRIMA della vera soglia di atterraggio in cui è vietato atterrare (frecce sulla pista). Toccare prima = illegale. Esempio: OLBA RWY 35, 820 m DDS."
+        },
+        "glideslope": {
+          "abbr": "Glide slope",
+          "full": "Angolo di avvicinamento",
+          "explanation": "Standard ILS 3°. Scendi 1 m ogni 19 m in avanti."
+        },
+        "brake_point": {
+          "abbr": "Punto di frenata (arancione nel diagramma)",
+          "full": "Punto 40 kt",
+          "explanation": "Il cerchio arancione nel diagramma indica dove la groundspeed durante il rollout è scesa sotto ~40 kt (= ROLLOUT_STOP_GS_KT). NON è un punto specifico in cui il pilota esce — la vera uscita avviene più tardi a un taxiway concreto. Piuttosto: da questo punto sei abbastanza lento per un normale high-speed exit, e da qui il diagramma marca la pista non utilizzata come 'restante'."
+        },
+        "rollout": {
+          "abbr": "Rollout",
+          "full": "Distanza di rollout",
+          "explanation": "Quanti metri rotoli dopo il touchdown finché freni a ~40 kt — la velocità tipica di high-speed exit alla quale lasci la pista al prossimo taxiway. Quasi nessuno rotola fino all'arresto completo sulla pista (sarebbe pista sprecata)."
+        },
+        "runway_util": {
+          "abbr": "Utilizzo pista",
+          "full": "",
+          "explanation": "Pista utilizzata (distanza TD + rollout) ÷ LDA × 100 %. < 30 % = eccellente, > 90 % = vicino all'overrun. Spiegazione dettagliata con tutte le fasce: vedi il modal info sulla scheda Utilizzo pista."
+        },
+        "airac": {
+          "abbr": "Ciclo AIRAC",
+          "full": "",
+          "explanation": "I dati aeronautici ufficiali vengono aggiornati ogni 28 giorni. „Cycle 2604\" = 4° aggiornamento del 2026."
+        },
+        "vps_navdata": {
+          "abbr": "VPS Navdata",
+          "full": "",
+          "explanation": "Dati AIRAC centrali mantenuti dall'admin VA sul VPS. Il client pilota li scarica all'avvio di ogni volo. Fonte tecnica dietro: Aerosoft DFD (licenza: abbonamento admin VA)."
+        },
+        "ourairports": {
+          "abbr": "OurAirports",
+          "full": "",
+          "explanation": "Fonte dati community-wiki usata come fallback quando il VPS non è raggiungibile. Le posizioni delle soglie possono differire."
+        },
+        "agl": {
+          "abbr": "AGL",
+          "full": "Above Ground Level",
+          "explanation": "Altezza sopra il suolo (non sopra il mare)."
+        },
+        "fpm": {
+          "abbr": "fpm",
+          "full": "Feet per Minute",
+          "explanation": "Unità di rateo di discesa. Negativa = in discesa."
+        },
+        "kt": {
+          "abbr": "kt",
+          "full": "Nodi",
+          "explanation": "Unità di velocità, ≈ 1.852 km/h."
+        }
+      }
+    },
+    "runway_utilization_help": {
+      "open_button": "🛬 Come viene calcolato?",
+      "title": "Utilizzo pista — come nasce il punteggio",
+      "close_label": "Chiudi ✕",
+      "close_aria": "Chiudi aiuto Utilizzo pista",
+      "intro": "Il sotto-punteggio „Utilizzo pista\" misura quale percentuale della pista utilizzabile (LDA) hai consumato dal sorvolo soglia all'arresto — equo tra tipi di aereo e lunghezze pista.",
+      "formula_heading": "La formula",
+      "formula": "Utilizzo % = (distanza TD dalla soglia + distanza rollout) ÷ LDA × 100",
+      "terms_heading": "Cosa significano i termini",
+      "terms": {
+        "td_distance": "Distanza TD dalla soglia — quanti metri DOPO la soglia le ruote toccano la superficie.",
+        "rollout": "Rollout — dal touchdown all'arresto (o finché freni alla high-speed exit speed < 40 kt).",
+        "lda": "LDA (Landing Distance Available) = lunghezza fisica pista − displaced threshold."
+      },
+      "example_heading": "Esempio EK406 (A388 a YMML)",
+      "example": "517 m dopo soglia + 584 m rollout = 1.100 m usati su 3.657 m LDA = 30 % → 100 PTS (eccellente).",
+      "bands_heading": "Le cinque fasce di punteggio",
+      "bands_intro": "Il punteggio si calcola sulla percentuale effettiva (= raw % meno bonus heavy). I limiti sono esclusivi in alto: 30,0 % cade nella fascia successiva.",
+      "bands_header": {
+        "pct": "Effettivo %",
+        "pts": "Punti",
+        "label": "Valutazione"
+      },
+      "bands": {
+        "excellent": {
+          "pct": "< 30 %",
+          "pts": "100",
+          "label": "Molto margine"
+        },
+        "good": {
+          "pct": "30 – < 50 %",
+          "pts": "80",
+          "label": "Frenata solida"
+        },
+        "ok": {
+          "pct": "50 – < 70 %",
+          "pts": "55",
+          "label": "OK, sportivo"
+        },
+        "long": {
+          "pct": "70 – < 90 %",
+          "pts": "25",
+          "label": "Rollout lungo"
+        },
+        "marginal": {
+          "pct": "90 – 100 %",
+          "pts": "5",
+          "label": "⚠ Limite — quasi overrun"
+        },
+        "overrun": {
+          "pct": "> 100 %",
+          "pts": "0",
+          "label": "⚠ Oltre fine pista — rischio overrun"
+        }
+      },
+      "heavy_heading": "Bonus heavy (5 punti percentuali)",
+      "heavy_body": "I wide-body necessitano di più pista — è atteso. Per i tipi heavy (wide-body, B747, MD11, IL96, Antonov) si sottraggono 5 pp al valore effettivo. Light/Medium non hanno bonus. Importante: il check overrun (> 100 %) si applica sul valore RAW PRIMA del bonus — il bonus heavy non ti salva oltre il bordo pista.",
+      "pre_displaced_heading": "Caso speciale: touchdown prima della displaced threshold",
+      "pre_displaced_body": "Se il recorder rileva che hai toccato PRIMA della soglia utilizzabile (illegale — violazione scia turbolenta/anti-rumore), il punteggio viene limitato a massimo 55 PTS, la motivazione cambia in „Frenata ok, ma touchdown troppo presto\" e appare una pill warning „⚠ Touchdown prima della displaced threshold — rivedere profilo approach\". Quindi il punteggio non mostra deliberatamente „molto margine\" a 55 PTS — sarebbe disonesto.",
+      "skip_heading": "Quando NON viene valutato?",
+      "skip_intro": "Sei skip reasons. La scheda mostra allora „non valutato\" + motivo. Nessun fallback, nessun metro stimato — meglio nessun punteggio che fuorviante.",
+      "skip_items": {
+        "missing_td": "Distanza TD mancante — il recorder non ha catturato la distanza dalla soglia.",
+        "missing_rollout": "Distanza rollout mancante.",
+        "missing_length": "Lunghezza pista da navdata mancante.",
+        "untrusted_geometry": "Geometria pista non affidabile (es. mismatch Navigraph).",
+        "off_airport": "Touchdown non su pista riconosciuta (atterraggio off-airport).",
+        "invalid_lda": "LDA ≤ 0 m (es. displaced threshold > lunghezza pista — errore dati)."
+      },
+      "card_heading": "Cosa mostra la scheda",
+      "card_body": "Riga valore „1100 m / 3657 m · 30 %\" = usata / LDA / percentuale. Sotto la valutazione („Frenata solida\" ecc.) e piccole righe info con distanza di float (distanza tra sorvolo soglia e TD effettivo — NON parte del punteggio; la distanza TD la contiene implicitamente) e info pista (es. „Pista: YMML 16, LDA 3657 m\")."
+    },
+    "approach_stability_card": {
+      "title": "🛬 Stabilità avvicinamento",
+      "help_button": "ⓘ Cosa significano i valori?",
+      "pill_stable": "✓ STABLE GATE",
+      "pill_partial": "⚠ PARTIAL",
+      "pill_unstable": "✗ UNSTABLE",
+      "subline_hat": "Valutazione stable-approach gate su HAT (Height Above Touchdown) ≤ 1000 ft · {{count}} campioni",
+      "subline_agl": "Valutazione stable-approach gate su AGL ≤ 1000 ft · {{count}} campioni",
+      "subline_no_samples": "Nessun campione di avvicinamento disponibile nel gate di stabilità.",
+      "data_source": "Fonte dati: {{sim}}",
+      "data_source_unknown": "Fonte dati: sconosciuta",
+      "missing_value": "—",
+      "legacy_notice": "Questo atterraggio è stato registrato con una versione AeroACARS precedente. Le tile estese di stabilità sono disponibili solo per PIREP da v0.11.0 in poi.",
+      "tiles": {
+        "vs_jerk": {
+          "label": "V/S jerk",
+          "unit": "fpm/tick"
+        },
+        "bank_sigma": {
+          "label": "Bank σ (filtrato)",
+          "unit": "°"
+        },
+        "ias_sigma": {
+          "label": "IAS σ",
+          "unit": "kt"
+        },
+        "sink_rate": {
+          "label": "Sink rate",
+          "value_ok": "OK",
+          "value_excessive": "EXCESSIVE"
+        },
+        "landing_config": {
+          "label": "Landing config",
+          "value_ok": "GEAR/FLAPS ✓",
+          "value_partial": "INCOMPLETE",
+          "value_unknown": "—"
+        },
+        "vs_vs_ils": {
+          "label": "V/S vs. 3° ILS",
+          "unit": "fpm"
+        },
+        "max_vs_dev": {
+          "label": "Max V/S dev < 500 ft",
+          "unit": "fpm"
+        }
+      },
+      "coach": {
+        "stable": "✨ Avvicinamento stabilizzato pulito — tutti i parametri nella fascia di tolleranza a 1000 ft. Mantieni così.",
+        "partial": "Avvicinamento sostanzialmente ok, ma alcuni parametri fuori tolleranza — vedi le tile e rivedi i criteri di stabilized-approach se serve.",
+        "unstable": "Avvicinamento instabile — in realtà candidato a go-around. Completa il setup di approach prima, mantieni config + speed + V/S stabili entro 1000 ft AAL."
+      }
+    },
+    "approach_stability_help": {
+      "title": "Stabilità avvicinamento — cosa significano i valori?",
+      "close_label": "Chiudi ✕",
+      "close_aria": "Chiudi aiuto stabilità avvicinamento",
+      "intro": "Concetto stable-approach secondo FAA AC 120-71B: da 1000 ft sopra il punto di touchdown tutti i parametri di avvicinamento (rateo di discesa, bank, velocità, configurazione) devono essere in tolleranze strette e rimanervi. AeroACARS misura questa stabilità sample-per-sample sull'intero gate window e mostra sette valori.",
+      "gate": {
+        "heading": "Il gate di stabilità",
+        "body": "Il gate window contiene tutti i campioni di avvicinamento da 0 a 1000 ft sopra il punto di touchdown (HAT). Gli ultimi 3 secondi prima del TD (manovra di flare) sono esclusi. Se la quota dell'aeroporto non è nota, si passa al filtro AGL come fallback (la scheda lo indica)."
+      },
+      "pill": {
+        "heading": "La pill STABLE GATE",
+        "body": "✓ STABLE = tutti e sette i valori nella fascia verde. ⚠ PARTIAL = 1–2 valori fuori (giallo o rosso). ✗ UNSTABLE = 3 o più valori fuori. In realtà un avvicinamento UNSTABLE sarebbe un candidato a go-around."
+      },
+      "tiles": {
+        "vs_jerk": {
+          "label": "V/S jerk",
+          "body": "|ΔV/S| medio sample-a-sample. Misura quanto è dolce il tuo rateo di discesa — agnostico per sim/aereo (jet, turbo, GA uguale). Alto = correggi il rateo di discesa con grandi input.",
+          "thresholds": "< 100 fpm/tick molto stabile · 100–200 fpm/tick ok · > 200 fpm/tick irregolare"
+        },
+        "bank_sigma": {
+          "label": "Bank σ (filtrato)",
+          "body": "Deviazione standard dell'angolo di bank sul gate. I campioni durante un vector/cambio pista attivo (finestra 5 s) vengono filtrati così i vector ATC non penalizzano artificialmente il punteggio.",
+          "thresholds": "< 3° molto stabile · 3–6° ok · > 6° irregolare"
+        },
+        "ias_sigma": {
+          "label": "IAS σ",
+          "body": "Deviazione standard dell'indicated airspeed nel gate. Misura la disciplina di speed — alto significa che insegui la Vapp.",
+          "thresholds": "< 5 kt molto stabile · 5–8 kt ok · > 8 kt irregolare"
+        },
+        "sink_rate": {
+          "label": "Sink rate",
+          "body": "EXCESSIVE quando QUALSIASI campione nel gate aveva V/S < −1000 fpm. Conta come violazione stable-approach FAA.",
+          "thresholds": "OK = mai sotto −1000 fpm · EXCESSIVE = una o più volte sotto −1000 fpm"
+        },
+        "landing_config": {
+          "label": "Landing config",
+          "body": "Posizione gear e flaps al campione PIÙ VECCHIO del gate (= quello con altezza più alta, ~1000 ft). FAA richiede: configurazione completa allo stable gate.",
+          "thresholds": "GEAR/FLAPS ✓ = gear ≥ 99 %, flaps ≥ 70 % a 1000 ft · INCOMPLETE = uno manca"
+        },
+        "vs_vs_ils": {
+          "label": "V/S vs. 3° ILS",
+          "body": "Deviazione media della tua V/S dal profilo teorico ILS 3° (basato su groundspeed: target V/S = −GS · 5,31 fpm/kt). Alto significa: non sei sul glideslope ma più basso/alto.",
+          "thresholds": "< 100 fpm molto vicino al profilo · 100–200 fpm ok · > 200 fpm chiaramente fuori"
+        },
+        "max_vs_dev": {
+          "label": "Max V/S dev < 500 ft",
+          "body": "Deviazione massima singola dal 3° ILS sotto 500 ft HAT — questa fase è critica per la sicurezza. Anche un singolo spike grande appare.",
+          "thresholds": "< 200 fpm molto vicino al profilo · 200–400 fpm ok · > 400 fpm spike singolo sotto 500 ft"
+        }
+      }
     }
   },
   "about": {
@@ -474,22 +748,6 @@
     "vs": "V/S",
     "heading": "Rotta"
   },
-  "phase_timeline": {
-    "title": "Fasi di volo",
-    "nodes": {
-      "boarding": "Boarding",
-      "pushback": "Pushback",
-      "taxi": "Taxi",
-      "takeoff": "Decollo",
-      "climb": "Salita",
-      "cruise": "Crociera",
-      "holding": "Holding",
-      "descent": "Discesa",
-      "approach": "Avvicinamento",
-      "landing": "Atterraggio",
-      "gate": "Gate"
-    }
-  },
   "briefing": {
     "active_flight_hint": "{{callsign}} è attivo — vai alla tab Cockpit per concluderlo."
   },
@@ -517,6 +775,18 @@
   "settings": {
     "title": "Impostazioni",
     "description": "Impostazioni generali per AeroACARS.",
+    "tabs": {
+      "simulator": "🎮 Simulatore",
+      "required": "🛫 Necessario",
+      "extras": "🎨 Comfort",
+      "plugins": "✈️ Plugin",
+      "tech": "🛠 Tecnico",
+      "simulator_hint": "Quale flight sim è installato? AeroACARS si connette al sim scelto per dati live, forense del touchdown e confronto loadsheet.",
+      "required_hint": "Account SimBrief + comportamento di registrazione volo — la base per i dati del piano di volo e il tracking automatico.",
+      "extras_hint": "Impostazioni opzionali di comfort — aspetto, comportamento, Discord presence.",
+      "plugins_hint": "Add-on specifici per aereo: PMDG SDK (Boeing) e plugin AeroACARS X-Plane. Rilevati automaticamente al caricamento dell'aereo corrispondente.",
+      "tech_hint": "Diagnostica, strumenti di debug e funzioni di manutenzione rare."
+    },
     "appearance_section": "Lingua e aspetto",
     "language_label": "Lingua",
     "theme_label": "Tema",
@@ -741,6 +1011,7 @@
     "off_hint": "Connessione simulatore disabilitata.",
     "idle_hint": "In attesa del simulatore…",
     "connecting_hint": "In attesa del simulatore… l'adapter si connette automaticamente non appena è in esecuzione.",
+    "xplane_phase2": "Il supporto X-Plane funziona tramite il plugin AeroACARS (Impostazioni → Plugin). Una volta installato e X-Plane avviato, i dati live arrivano automaticamente.",
     "kinds": {
       "off": "Off",
       "msfs2024": "MSFS 2024",

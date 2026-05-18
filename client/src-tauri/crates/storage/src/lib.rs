@@ -453,6 +453,24 @@ pub struct LandingRecord {
     #[serde(default)]
     pub gate_window: Option<GateWindow>,
 
+    // v0.11.0-dev: Approach-Stability-Card im LandingPanel zeigt 7 Kacheln
+    // analog zur Webapp. 5 Werte sind oben bereits persistiert; diese 3
+    // hier waren bisher nur im MQTT-Payload, im lokalen LandingRecord aber
+    // nicht. Backend (lib.rs:14441) füllt die Werte schon — wir reichen
+    // sie nur ins Storage durch. Alte landing_history.json bleibt mit
+    // serde(default) lesbar.
+    /// Mean |V/S − target_vs_for_3deg_ils|, fpm, über das Stability-Gate.
+    #[serde(default)]
+    pub approach_vs_deviation_fpm: Option<f32>,
+    /// Max |V/S − target_vs_for_3deg_ils|, fpm, für Samples unter 500 ft HAT.
+    #[serde(default)]
+    pub approach_max_vs_deviation_below_500_fpm: Option<f32>,
+    /// True wenn das Gate-Window auf Height-Above-Touchdown gefiltert wurde
+    /// (Airport-Elevation bekannt). False = AGL-Fallback. Wichtig für die
+    /// Quellen-Zeile in der Approach-Stability-Card.
+    #[serde(default)]
+    pub approach_used_hat: Option<bool>,
+
     /// Sub-Score-Breakdown aus der landing-scoring Crate (Spec §3.1
     /// SSoT). UI liest diese Werte direkt — KEIN Recompute. Bei alten
     /// PIREPs (ux_version < 1) ist der Vec leer; UI zeigt dann
