@@ -294,13 +294,23 @@ body {
   border-radius: 8px;
   padding: 20px 22px;
   width: 100%;
-  max-width: 480px;
+  max-width: 560px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  /* v0.10.0 Hotfix: lange Release-Notes (v0.9.x hatten mehrere Bildschirm-
+   * laengen) haben das Modal ueber den Viewport gesprengt — Install-Button
+   * lag unter dem Fold und war fuer den Piloten nicht klickbar (Discord-
+   * Befund Svenny1974 2026-05-18). Fix: max-height auf Viewport - Backdrop-
+   * Padding, Flex-Column damit Title + Notes + Actions als Bereiche
+   * gestapelt sind, Notes-Bereich allein scrollt. */
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
 }
 .update-modal__title {
   margin: 0 0 12px 0;
   font-size: 15px;
   font-weight: 600;
+  flex: 0 0 auto;
 }
 .update-modal__notes {
   margin: 0 0 16px 0;
@@ -308,6 +318,48 @@ body {
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-line;
+  /* v0.10.0 Hotfix: Notes-Bereich allein scrollt — Title + Actions
+   * bleiben sichtbar (= Install-Button immer erreichbar). */
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  /* Lesbarkeit der gerenderten Release-Notes */
+  padding-right: 4px;
+}
+.update-modal__notes-h2 {
+  margin: 12px 0 4px 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+.update-modal__notes-h3 {
+  margin: 10px 0 2px 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.update-modal__notes-h3:first-child,
+.update-modal__notes-h2:first-child {
+  margin-top: 0;
+}
+.update-modal__notes strong {
+  color: var(--text);
+}
+.update-modal__notes code {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.update-modal__notes hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+.update-modal__notes ul {
+  margin: 4px 0 8px 0;
+  padding-left: 18px;
 }
 .update-modal__progress {
   margin: 12px 0;
@@ -320,6 +372,9 @@ body {
   gap: 8px;
   justify-content: flex-end;
   margin-top: 16px;
+  /* v0.10.0 Hotfix: Action-Buttons bleiben am unteren Rand verankert
+   * — sind unabhaengig vom Scroll-Status der Notes immer sichtbar. */
+  flex: 0 0 auto;
 }
 
 .status-pill {
