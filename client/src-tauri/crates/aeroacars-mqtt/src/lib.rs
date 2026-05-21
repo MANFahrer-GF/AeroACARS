@@ -377,21 +377,16 @@ pub struct TouchdownPayload {
     /// sub-score (rollout / length × 100) so the live monitor can show
     /// the same breakdown the AeroACARS app shows pilots in-flight.
     pub runway_length_m: Option<f32>,
-    /// v0.5.22: (actual_burn − planned_burn) / planned_burn × 100. Same
-    /// computation as `LandingRecord.fuel_efficiency_pct` in the client
-    /// — drives the "Spritverbrauch" sub-score. None when the bid had
-    /// no SimBrief OFP attached (planned-burn unavailable).
+    /// Prozentuale Abweichung des **tatsächlichen Trip-Burn**
+    /// (`takeoff_fuel − landing_fuel`) vom geplanten OFP-Trip-Burn
+    /// (`planned_burn_kg`). Positiv = Mehrverbrauch, negativ =
+    /// Minderverbrauch. **Nicht** block-fuel-basiert (kein Taxi-out-Sprit).
+    /// None, wenn der Bid kein SimBrief-OFP hatte (planned-burn fehlt).
     ///
-    /// **@deprecated since v0.7.6** — Berechnungsbasis (`block_fuel -
-    /// landing_fuel`, inkl. Taxi-Out) weicht vom v0.7.1 Sub-Score ab,
-    /// der `actual_trip_burn = takeoff - landing` nutzt. Resultat:
-    /// zwei Prozent-Werte fuers gleiche Konzept im selben Payload
-    /// (SAS9987 v0.7.5: -2.28% hier, -5.0% in `sub_scores[fuel].value`).
-    /// Single Source of Truth ist `sub_scores[fuel]`. Web rendert das
-    /// Feld ab v0.7.6 nicht mehr; Feld bleibt fuer Backward-Compat
-    /// (externe Discord-Embeds, Custom-Dashboards) und wird in einer
-    /// spaeteren Major-Version entfernt. Spec docs/spec/v0.7.6-landing-
-    /// payload-consistency.md §4 P2-3.
+    /// v0.12.4 (Spec docs/spec/v0.12.4-score-consistency.md, LE5): die
+    /// Berechnungsbasis wurde von `block_fuel − landing_fuel` (inkl. Taxi-
+    /// out, bis v0.12.3) auf den Trip-Burn korrigiert — jetzt identisch zu
+    /// `LandingRecord.fuel_efficiency_pct` und `sub_scores[fuel]`.
     pub fuel_efficiency_pct: Option<f32>,
     // v0.7.17 (B-015d): OFP-Plan-Werte mitschicken damit die Webapp
     // den Loadsheet-Sub-Score genauso berechnen kann wie der Pilot-
@@ -954,6 +949,30 @@ pub struct TouchdownAccidentOverridePayload {
     pub previous_confidence: Option<String>,
 }
 
+/// v0.12.4 (Spec docs/spec/v0.12.4-score-consistency.md, LE4): nachgelagertes
+/// Finalisierungs-Event. `touchdown_complete` geht ~9 s nach dem Aufsetzen
+/// raus, `rollout_distance_m` ist dort ein Mitten-im-Ausrollen-Snapshot.
+/// Sobald der Rollout finalisiert ist (~40 kt / Heading-Turn-off), schickt
+/// der Client dieses Event mit dem FINALEN Wert nach; der Recorder patcht
+/// damit nur das Rohfeld der Touchdown-Zeile — KEIN Score-Recompute, KEINE
+/// Verzögerung von `touchdown_complete`/Live-Pushes.
+#[derive(Clone, Debug, Serialize)]
+pub struct TouchdownRolloutFinalizedPayload {
+    /// Event-Zeitstempel (Finalisierungs-Moment), ms seit Epoch.
+    pub ts: i64,
+    /// PIREP-ID — der Recorder matcht die Touchdown-Zeile darüber (gleiche
+    /// Strategie wie `TouchdownAccidentOverridePayload`).
+    pub pirep_id: String,
+    /// Finale Ausrollstrecke Touchdown→Rollout-Ende in Metern.
+    pub rollout_distance_m: f64,
+    /// Welcher Trigger die Finalisierung ausgelöst hat — Diagnose.
+    /// `"exit_speed"` | `"full_stop"` | `"turned_off_runway"`. Optional:
+    /// nach einem Client-Neustart mitten im Finalisierungs-Fenster ist der
+    /// Grund nicht mehr bekannt (transient) — das Event geht trotzdem raus.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finalize_reason: Option<String>,
+}
+
 enum Cmd {
     Position(Box<PositionPayload>),
     Phase(PhasePayload),
@@ -962,6 +981,7 @@ enum Cmd {
     Touchdown(Box<TouchdownPayload>),
     Pirep(Box<PirepPayload>),
     TouchdownAccidentOverride(Box<TouchdownAccidentOverridePayload>),
+    TouchdownRolloutFinalized(Box<TouchdownRolloutFinalizedPayload>),
     Shutdown,
 }
 
@@ -1141,6 +1161,26 @@ impl Handle {
         });
     }
 
+    /// v0.12.4 (Spec LE4): Publish des FINALEN `rollout_distance_m` nach
+    /// Rollout-Finalisierung (~40 kt / Heading-Turn-off). Der Recorder patcht
+    /// damit nur das Anzeige-/Forensik-Rohfeld der Touchdown-Zeile.
+    pub fn touchdown_rollout_finalized(
+        &self,
+        payload: TouchdownRolloutFinalizedPayload,
+    ) {
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = tokio::time::timeout(
+                Duration::from_millis(500),
+                tx.send(Cmd::TouchdownRolloutFinalized(Box::new(payload))),
+            )
+            .await
+            {
+                warn!("dropping touchdown_rollout_finalized publish: {e}");
+            }
+        });
+    }
+
     pub fn shutdown(&self) {
         let _ = self.tx.try_send(Cmd::Shutdown);
     }
@@ -1269,6 +1309,13 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                 Cmd::TouchdownAccidentOverride(p) => publish_json(
                     &pub_client,
                     &cfg_for_pub.topic("touchdown_accident_override"),
+                    &p,
+                    QoS::AtLeastOnce,
+                    false,
+                ).await,
+                Cmd::TouchdownRolloutFinalized(p) => publish_json(
+                    &pub_client,
+                    &cfg_for_pub.topic("touchdown_rollout_finalized"),
                     &p,
                     QoS::AtLeastOnce,
                     false,

@@ -2405,15 +2405,22 @@ struct FlightStats {
     /// window. Lower = smoother flying.
     approach_bank_stddev_deg: Option<f32>,
     /// Rollout distance in meters: accumulated great-circle distance
-    /// from the touchdown point until groundspeed first drops below
-    /// 5 kt. None until first touchdown; finalised once GS<5 kt is
-    /// observed. Resumed flights mid-rollout finalise on next
-    /// stop or never (we accept the imprecision).
+    /// from the touchdown point until the rollout finalises — whichever
+    /// of ~40 kt exit speed, a >30° heading turn-off, or a 5 kt full-stop
+    /// fires first (see the `ROLLOUT_*` consts + the `step_flight`
+    /// Landing arm). None until first touchdown. Resumed flights mid-
+    /// rollout finalise on the next trigger or never (accepted imprecision).
     rollout_distance_m: Option<f64>,
     /// True once `rollout_distance_m` has been finalised. Stops the
     /// per-tick accumulation in step_flight from continuing past
     /// the actual stop.
     rollout_finalized: bool,
+    /// v0.12.4 (Spec LE4): which trigger finalised the rollout —
+    /// `"exit_speed"` / `"full_stop"` / `"turned_off_runway"`. The
+    /// streamer loop copies it into the `touchdown_rollout_finalized`
+    /// MQTT event. Transient (not persisted): after a restart mid-window
+    /// the event is published without a reason.
+    rollout_finalize_reason: Option<String>,
     /// Last (lat, lon) we accumulated into the rollout distance.
     /// Used to compute the great-circle delta to the next position.
     rollout_last_lat: Option<f64>,
@@ -9269,6 +9276,74 @@ fn actual_burn_for_record(stats: &FlightStats) -> Option<f32> {
     }
 }
 
+/// v0.12.4 (Spec docs/spec/v0.12.4-score-consistency.md, LE5): OFP-Trip-
+/// Burn-Abweichung in Prozent — `(trip_burn − planned) / planned × 100`,
+/// mit `trip_burn = takeoff_fuel − landing_fuel`. Positiv = Mehrverbrauch.
+/// `None`, wenn `planned <= 0` oder ein Input fehlt.
+///
+/// **Bewusst Trip-Burn, nicht Block-Fuel:** Block-Fuel enthält den Taxi-out-
+/// Sprit und ergäbe einen anderen Prozent-Wert als der v0.7.1-Sub-Score
+/// (`sub_scores[fuel]`). Diese Funktion hält das MQTT-`TouchdownPayload`-Feld
+/// `fuel_efficiency_pct` auf derselben Basis wie `LandingRecord`.
+fn trip_burn_efficiency_pct(
+    takeoff_fuel_kg: Option<f32>,
+    landing_fuel_kg: Option<f32>,
+    planned_burn_kg: Option<f32>,
+) -> Option<f32> {
+    match (takeoff_fuel_kg, landing_fuel_kg, planned_burn_kg) {
+        (Some(takeoff), Some(landing), Some(plan)) if plan > 0.0 => {
+            let trip_burn = takeoff - landing;
+            Some(((trip_burn - plan) / plan) * 100.0)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod trip_burn_efficiency_tests {
+    use super::trip_burn_efficiency_pct;
+
+    /// v0.12.4 (Spec LE5): Golden-Case DLH 1386 (PIREP jJ0kojW7kD9kK0ke).
+    /// Trip-Burn = takeoff 7341.383 − landing 3862.3726 = 3479.01 kg,
+    /// planned 3340 → +4.16 %. Der alte block-fuel-basierte Wert wäre
+    /// +9.47 % gewesen (block 7518.789 − landing 3862.3726 = 3656.42) —
+    /// diese Regression darf NICHT zurückkommen.
+    #[test]
+    fn dlh1386_uses_trip_burn_not_block_fuel() {
+        let pct = trip_burn_efficiency_pct(
+            Some(7341.383),
+            Some(3862.3726),
+            Some(3340.0),
+        )
+        .expect("alle Inputs vorhanden");
+        assert!(
+            (pct - 4.16).abs() < 0.15,
+            "erwartet ~+4.2 %, war {pct}"
+        );
+        assert!(
+            pct < 6.0,
+            "block-fuel-Regression (+9.5 %) zurück: {pct}"
+        );
+    }
+
+    #[test]
+    fn none_when_input_missing_or_planned_non_positive() {
+        assert!(trip_burn_efficiency_pct(Some(7000.0), Some(3000.0), None).is_none());
+        assert!(trip_burn_efficiency_pct(Some(7000.0), Some(3000.0), Some(0.0)).is_none());
+        assert!(trip_burn_efficiency_pct(None, Some(3000.0), Some(3000.0)).is_none());
+        assert!(trip_burn_efficiency_pct(Some(7000.0), None, Some(3000.0)).is_none());
+    }
+
+    /// Minderverbrauch ergibt einen negativen Prozent-Wert.
+    #[test]
+    fn under_burn_is_negative() {
+        // Trip-Burn 2900 vs planned 3000 → −3.33 %.
+        let pct = trip_burn_efficiency_pct(Some(6000.0), Some(3100.0), Some(3000.0))
+            .unwrap();
+        assert!((pct - (-3.333)).abs() < 0.05, "war {pct}");
+    }
+}
+
 /// v0.10.0 (#runway-utilization-score) — Helper: populiert die für den
 /// neuen `sub_rollout_v2`-Algorithmus benötigten Felder am
 /// `LandingScoringInput`. Wird von allen 4 Compute-Sites (build_landing_
@@ -14242,6 +14317,13 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // v0.6.0: `last_phpvms_post_at` ist entfallen — der Streamer-Tick
         // postet nicht mehr selber an phpVMS (push to outbox only).
         // Die Cadence-Steuerung sitzt jetzt im phpVMS-Worker.
+        //
+        // v0.12.4 (Spec docs/spec/v0.12.4-score-consistency.md, LE4):
+        // Edge-Detektor für das touchdown_rollout_finalized-Event. Loop-
+        // lokal — übersteht keinen App-Neustart, was OK ist: nach einem
+        // Neustart re-published der erste Tick einmal idempotent (Recorder-
+        // Patch ist idempotent), siehe LE7 Punkt 5.
+        let mut rollout_finalized_published = false;
         loop {
             let current_phase = {
                 let stats = flight.stats.lock().expect("flight stats");
@@ -14554,6 +14636,47 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 }
             }
             let phase_change = step_flight(&flight, &snap);
+
+            // v0.12.4 (Spec docs/spec/v0.12.4-score-consistency.md, LE4):
+            // Sobald `step_flight` den Rollout finalisiert hat (~40 kt /
+            // Heading-Turn-off), das touchdown_rollout_finalized-Event mit
+            // dem FINALEN rollout_distance_m nachschicken. `touchdown_complete`
+            // bleibt davon unberührt (Live-Event, schon vorher gesendet) —
+            // dieses Event patcht beim Recorder nur das Anzeige-Rohfeld.
+            if !rollout_finalized_published {
+                let finalized = {
+                    let stats = flight.stats.lock().expect("flight stats");
+                    if stats.rollout_finalized {
+                        Some((
+                            stats.rollout_distance_m.unwrap_or(0.0),
+                            stats.rollout_finalize_reason.clone(),
+                        ))
+                    } else {
+                        None
+                    }
+                };
+                if let Some((rollout_m, reason)) = finalized {
+                    let app_state = app.state::<AppState>();
+                    let mqtt = app_state.mqtt.lock().await;
+                    if let Some(handle) = mqtt.as_ref() {
+                        handle.touchdown_rollout_finalized(
+                            aeroacars_mqtt::TouchdownRolloutFinalizedPayload {
+                                ts: Utc::now().timestamp_millis(),
+                                pirep_id: flight.pirep_id.clone(),
+                                rollout_distance_m: rollout_m,
+                                finalize_reason: reason,
+                            },
+                        );
+                    }
+                    rollout_finalized_published = true;
+                    tracing::info!(
+                        pirep_id = %flight.pirep_id,
+                        rollout_m,
+                        "touchdown_rollout_finalized published"
+                    );
+                }
+            }
+
             // v0.7.14: Pilot-Client-Discord-Posts fuer Takeoff + Landing
             // entfernt — Recorder postet das jetzt zentral via MQTT-Trigger
             // (`takeoff` + `touchdown` Events publishen sowieso, Recorder
@@ -14846,38 +14969,24 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             // in-app PIREP value 1:1.
                             runway_length_m: rwy_match
                                 .map(|m| m.length_ft * 0.3048),
-                            // v0.5.22: actual_burn − planned_burn over
-                            // planned_burn × 100. Mirrors the client's
-                            // `LandingRecord.fuel_efficiency_pct`.
-                            // actual_burn = block_fuel − landing_fuel.
+                            // v0.12.4 (Spec docs/spec/v0.12.4-score-
+                            // consistency.md, LE5): prozentuale Abweichung
+                            // des **tatsächlichen Trip-Burn** (takeoff_fuel −
+                            // landing_fuel) vom geplanten OFP-Trip-Burn
+                            // (planned_burn_kg). Positiv = Mehrverbrauch.
                             //
-                            // **@deprecated since v0.7.6** — Spec docs/spec/
-                            // v0.7.6-landing-payload-consistency.md §4 P2-3.
-                            // Berechnungs-Basis weicht ab vom v0.7.1
-                            // Sub-Score (`actual_trip_burn = takeoff -
-                            // landing`, ohne Taxi-Out). Resultat: zwei
-                            // verschiedene Prozent-Werte fuers gleiche
-                            // Konzept im selben Payload (SAS9987 v0.7.5:
-                            // -2.28% hier, -5.0% im sub_scores).
-                            // Single Source of Truth ist `sub_scores[].fuel`.
-                            // Web rendert `fuel_efficiency_pct` ab v0.7.6
-                            // nicht mehr. Feld bleibt im Payload fuer
-                            // Backward-Compat (externe Discord-Embeds /
-                            // Custom-Dashboards), Entfernung in spaeterer
-                            // Major-Version.
-                            fuel_efficiency_pct: match (
-                                stats.block_fuel_kg,
+                            // Vorher (bis v0.12.3) fälschlich block-fuel-basiert
+                            // (block_fuel − landing_fuel) — das zählt den Taxi-
+                            // out-Sprit mit und wich daher vom v0.7.1-Sub-Score
+                            // ab (SAS9987: -2.28% hier vs -5.0% im sub_scores;
+                            // DLH 1386: +9.5% statt korrekt +4.2%). Jetzt
+                            // identische Basis wie `LandingRecord.
+                            // fuel_efficiency_pct` und `sub_scores[].fuel`.
+                            fuel_efficiency_pct: trip_burn_efficiency_pct(
+                                stats.takeoff_fuel_kg,
                                 stats.landing_fuel_kg,
                                 stats.planned_burn_kg,
-                            ) {
-                                (Some(block), Some(landing), Some(plan))
-                                    if plan > 0.0 =>
-                                {
-                                    let actual = block - landing;
-                                    Some(((actual - plan) / plan) * 100.0)
-                                }
-                                _ => None,
-                            },
+                            ),
                             // v0.5.39: 50-Hz-Forensik aus dem Sampler-Buffer.
                             // landing_analysis ist ein serde_json::Value das
                             // von compute_landing_analysis() im Sampler-Loop
@@ -17241,8 +17350,9 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
 
                 // Reset rollout tracking. The Landing-phase arm below
                 // accumulates haversine distance from `(landing_lat,
-                // landing_lon)` until groundspeed drops below
-                // ROLLOUT_STOP_GS_KT, then sets `rollout_finalized`.
+                // landing_lon)` until the rollout finalises (~40 kt exit
+                // speed / >30° heading turn-off / 5 kt full-stop), then
+                // sets `rollout_finalized`.
                 stats.rollout_distance_m = Some(0.0);
                 stats.rollout_finalized = false;
                 stats.rollout_last_lat = Some(snap.lat);
@@ -17264,9 +17374,10 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
             }
         }
         FlightPhase::Landing => {
-            // Rollout-distance accumulator: from `landing_lat/lon`
-            // until groundspeed drops below ROLLOUT_STOP_GS_KT, sum
-            // haversine deltas tick-by-tick. Survives a Tauri restart
+            // Rollout-distance accumulator: from `landing_lat/lon` until
+            // the rollout finalises (~40 kt exit speed / >30° heading
+            // turn-off / 5 kt full-stop — see the three triggers below).
+            // Sums haversine deltas tick-by-tick. Survives a Tauri restart
             // because we persist (last_lat, last_lon, distance,
             // finalized) in PersistedFlightStats.
             if !stats.rollout_finalized {
@@ -17303,13 +17414,17 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
 
                 if exit_speed_reached || full_stop || turned_off_runway {
                     stats.rollout_finalized = true;
+                    // v0.12.4 (Spec LE4): wire-form reason — the streamer
+                    // loop copies it into the `touchdown_rollout_finalized`
+                    // MQTT event.
                     let reason = if turned_off_runway {
-                        "turned off centerline"
+                        "turned_off_runway"
                     } else if full_stop {
-                        "full stop"
+                        "full_stop"
                     } else {
-                        "exit speed reached"
+                        "exit_speed"
                     };
+                    stats.rollout_finalize_reason = Some(reason.to_string());
                     tracing::info!(
                         meters = stats.rollout_distance_m.unwrap_or(0.0),
                         gs_kt = snap.groundspeed_kt,
