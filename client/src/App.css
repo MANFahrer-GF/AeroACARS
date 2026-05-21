@@ -5452,7 +5452,11 @@ input:disabled {
 
 .landing-chart {
   width: 100%;
-  height: 200px;
+  /* v0.12.7-fix: Höhe folgt dem viewBox-Seitenverhältnis (1120×320),
+     vorher fixe 200px → die Kurve wurde bei preserveAspectRatio="meet"
+     mittig klein gequetscht mit toten Rändern. Jetzt volle Box-Breite. */
+  height: auto;
+  display: block;
   color: var(--text-muted);
 }
 
