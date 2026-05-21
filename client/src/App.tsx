@@ -169,6 +169,15 @@ function App() {
   useEffect(() => {
     void invoke("set_minimize_to_tray", { enabled: minimizeToTray }).catch(() => {});
   }, [minimizeToTray]);
+
+  // v0.12.6: Auto-File-Flag in den Rust-Backend-State spiegeln — bei
+  // Mount UND bei jedem Toggle. Der Position-Streamer im Backend filet
+  // den PIREP beim Latch auf `Arrived` selbst, sobald dieses Flag an
+  // ist (fenster-unabhängig). localStorage ist die Source of Truth;
+  // das Backend defaultet auf `true` bis dieser Sync läuft.
+  useEffect(() => {
+    void invoke("set_auto_file_enabled", { enabled: autoFile }).catch(() => {});
+  }, [autoFile]);
   /** Version we should pop the release-notes modal for. Set on first
    *  mount when the running version differs from the lastSeen
    *  localStorage entry, AND when the user manually triggers it via
@@ -585,7 +594,6 @@ function App() {
           setActiveFlight={setActiveFlight}
           simSnapshot={simSnapshot}
           onSwitchToBriefing={() => setTab("briefing")}
-          autoFile={autoFile}
           approachAdvisoriesEnabled={approachAdvisoriesEnabled}
         />
       )}

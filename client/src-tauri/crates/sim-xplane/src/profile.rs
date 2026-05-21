@@ -27,6 +27,12 @@ pub enum ValueMapping {
     /// Map an integer detent index → internal `f32` via a lookup table.
     /// Out-of-range / non-integer / non-finite → no value (LE7).
     DetentTable(&'static [f32]),
+    /// v0.12.6: Map a raw value in **degrees** onto the internal field
+    /// via a nearest-degree lookup `(degrees, ratio)`. For add-ons whose
+    /// flaps dataref reports the commanded angle directly (Rotate MD-11:
+    /// `flaps_cmd_pos_deg` = 0/15/28/35/50) instead of a lever index or
+    /// a 0..1 ratio. Non-finite → no value; empty table → no value.
+    DegreeTable(&'static [(f32, f32)]),
 }
 
 impl ValueMapping {
@@ -53,6 +59,24 @@ impl ValueMapping {
                     return None;
                 }
                 Some(table[idx as usize])
+            }
+            ValueMapping::DegreeTable(table) => {
+                if !raw.is_finite() {
+                    tracing::warn!(raw, "profile DegreeTable: non-finite value ignored");
+                    return None;
+                }
+                // Nearest documented detent — `flaps_cmd_pos_deg` is the
+                // commanded angle, so it sits on a detent value; this
+                // also tolerates a tiny float wobble.
+                table
+                    .iter()
+                    .min_by(|a, b| {
+                        (raw - a.0)
+                            .abs()
+                            .partial_cmp(&(raw - b.0).abs())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|&(_, ratio)| ratio)
             }
         }
     }
@@ -103,6 +127,21 @@ impl XplaneAircraftProfile {
 /// (Flaps 45) count as landing config, lever 0/1 (Flaps 0/20) do not.
 pub const CL650_FLAP_DETENTS: &[f32] = &[0.0, 0.45, 0.80, 1.0];
 
+/// v0.12.6: Rotate MD-11 flap detents → internal `flaps_position` ratio.
+/// `Rotate/aircraft/systems/flaps_cmd_pos_deg` reports the commanded
+/// flap angle in degrees (0/15/28/35/50). Die MD-11 treibt — wie der
+/// CL650 — die Standard-Flaps-DataRef nicht; ohne dieses Mapping bleibt
+/// `flaps_position` den ganzen Flug 0.0 → LANDING-CONFIG „INCOMPLETE".
+/// Der interne Check ist `flaps_position >= 0.70`: Flaps 35 + 50 (die
+/// MD-11-Landeklappen) zählen als Landing-Config, 0/15/28 nicht.
+pub const MD11_FLAP_DEGREES: &[(f32, f32)] = &[
+    (0.0, 0.0),
+    (15.0, 0.30),
+    (28.0, 0.55),
+    (35.0, 0.80),
+    (50.0, 1.0),
+];
+
 /// All known aircraft profiles (LE2). The first one whose detection
 /// matches wins.
 pub const PROFILES: &[XplaneAircraftProfile] = &[
@@ -132,6 +171,21 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
                 field: FieldId::LightTaxi,
                 dataref: "CL650/overhead/land_lts/recog_taxi",
                 mapping: ValueMapping::Passthrough,
+            },
+        ],
+    },
+    // v0.12.6 — Rotate MD-11 (X-Plane 12). Pilot-Befund (Michel/GSG):
+    // treibt die Standard-Flaps-DataRef nicht → `flaps_position` blieb
+    // den ganzen Flug 0.0. Eigene DataRef in Grad statt Hebel-Index.
+    XplaneAircraftProfile {
+        name: "Rotate MD-11",
+        title_match: &["rotate", "md-11"],
+        probe_dataref: "Rotate/aircraft/systems/flaps_cmd_pos_deg",
+        overrides: &[
+            DatarefOverride {
+                field: FieldId::FlapsHandle,
+                dataref: "Rotate/aircraft/systems/flaps_cmd_pos_deg",
+                mapping: ValueMapping::DegreeTable(MD11_FLAP_DEGREES),
             },
         ],
     },
@@ -263,6 +317,77 @@ mod tests {
     fn passthrough_keeps_raw_value() {
         assert_eq!(ValueMapping::Passthrough.map(1.0), Some(1.0));
         assert_eq!(ValueMapping::Passthrough.map(0.0), Some(0.0));
+    }
+
+    // ── v0.12.6 — Rotate MD-11 flaps (DegreeTable) ──────────────────
+
+    #[test]
+    fn md11_degree_table_maps_each_detent() {
+        let m = ValueMapping::DegreeTable(MD11_FLAP_DEGREES);
+        assert_eq!(m.map(0.0), Some(0.0));
+        assert_eq!(m.map(15.0), Some(0.30));
+        assert_eq!(m.map(28.0), Some(0.55));
+        assert_eq!(m.map(35.0), Some(0.80));
+        assert_eq!(m.map(50.0), Some(1.0));
+    }
+
+    #[test]
+    fn md11_flaps_35_and_50_are_landing_config() {
+        // LANDING-CONFIG-Check ist `flaps_position >= 0.70`.
+        let m = ValueMapping::DegreeTable(MD11_FLAP_DEGREES);
+        assert!(m.map(35.0).unwrap() >= 0.70);
+        assert!(m.map(50.0).unwrap() >= 0.70);
+    }
+
+    #[test]
+    fn md11_flaps_0_15_28_are_not_landing_config() {
+        let m = ValueMapping::DegreeTable(MD11_FLAP_DEGREES);
+        assert!(m.map(0.0).unwrap() < 0.70);
+        assert!(m.map(15.0).unwrap() < 0.70);
+        assert!(m.map(28.0).unwrap() < 0.70);
+    }
+
+    #[test]
+    fn md11_degree_table_snaps_to_nearest_detent() {
+        // Ein leichter Float-Wackler um eine Raste herum snappt sauber.
+        let m = ValueMapping::DegreeTable(MD11_FLAP_DEGREES);
+        assert_eq!(m.map(34.6), Some(0.80));
+        assert_eq!(m.map(15.4), Some(0.30));
+        // Mitten zwischen 28 und 35 → näher an 28.
+        assert_eq!(m.map(30.0), Some(0.55));
+    }
+
+    #[test]
+    fn degree_table_nonfinite_yields_no_value() {
+        let m = ValueMapping::DegreeTable(MD11_FLAP_DEGREES);
+        assert_eq!(m.map(f32::NAN), None);
+        assert_eq!(m.map(f32::INFINITY), None);
+    }
+
+    #[test]
+    fn md11_profile_matches_title() {
+        let md11 = PROFILES
+            .iter()
+            .find(|p| p.name == "Rotate MD-11")
+            .expect("MD-11 profile present");
+        // Echter Title aus Michels Log: "MD11 Rotate MD-11P".
+        assert!(md11.matches_title("MD11 Rotate MD-11P"));
+        assert!(!md11.matches_title("Boeing 737-800"));
+    }
+
+    #[test]
+    fn md11_active_catalog_overrides_flaps() {
+        let md11 = PROFILES
+            .iter()
+            .find(|p| p.name == "Rotate MD-11")
+            .expect("MD-11 profile present");
+        let active = build_active_catalog(Some(md11));
+        let flaps = active
+            .iter()
+            .find(|e| e.field == FieldId::FlapsHandle)
+            .expect("FlapsHandle in catalog");
+        assert_eq!(flaps.name, "Rotate/aircraft/systems/flaps_cmd_pos_deg");
+        assert!(matches!(flaps.mapping, ValueMapping::DegreeTable(_)));
     }
 
     #[test]

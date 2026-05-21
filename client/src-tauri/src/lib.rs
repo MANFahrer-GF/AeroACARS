@@ -833,6 +833,14 @@ struct AppState {
     /// `flight_start` for that bid. Persisted via the same
     /// `aeroacars.autoStart` localStorage key the React side reads.
     auto_start_enabled: AtomicBool,
+    /// v0.12.6: Auto-File-Setting, vom Frontend (localStorage) bei Mount
+    /// + Toggle via `set_auto_file_enabled` in den Backend-State
+    /// gespiegelt. Der Position-Streamer filet den PIREP beim Latch auf
+    /// `Arrived` selbst, wenn dieses Flag an ist — fenster-unabhängig.
+    /// Vorher lief Auto-File nur als Frontend-`useEffect`, der bei
+    /// Hintergrund-Fenster / nicht-aktivem Cockpit-Tab nicht feuerte.
+    /// Default `true` (in `.setup()` gesetzt) — passend zum Frontend.
+    auto_file_enabled: AtomicBool,
     /// Marker so the watcher doesn't re-trigger after a successful
     /// auto-start while the resulting flight is still active. Set to
     /// the Bid ID we last fired for; cleared when the flight ends.
@@ -15867,6 +15875,78 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // weather. Spawned async so a flaky aviationweather.gov
                 // doesn't stall the streamer.
                 maybe_spawn_metar_fetch(&app, &flight, new_phase);
+
+                // v0.12.6: Backend-Auto-File. Latcht der FSM auf
+                // `Arrived` und hat der Pilot Auto-File aktiviert, filet
+                // das Backend den PIREP selbst — fenster-unabhängig.
+                // Vorher lief Auto-File nur als Frontend-`useEffect`, der
+                // bei Hintergrund-Fenster / nicht-aktivem Cockpit-Tab
+                // nicht feuerte (Pilot-Befund: PIREP ging erst raus,
+                // nachdem der Pilot AeroACARS in den Vordergrund holte).
+                // Divert wird ausgelassen — den Ausweich-Airport muss der
+                // Pilot über das Divert-Banner bestätigen (LE2).
+                if new_phase == FlightPhase::Arrived
+                    && app
+                        .state::<AppState>()
+                        .auto_file_enabled
+                        .load(Ordering::Relaxed)
+                {
+                    let is_divert = flight
+                        .stats
+                        .lock()
+                        .expect("flight stats")
+                        .divert_hint
+                        .is_some();
+                    if is_divert {
+                        tracing::info!(
+                            pirep_id = %flight.pirep_id,
+                            "backend auto-file skipped — divert detected, \
+                             pilot confirms via banner"
+                        );
+                    } else {
+                        tracing::info!(
+                            pirep_id = %flight.pirep_id,
+                            "Arrived — backend auto-file"
+                        );
+                        let app_af = app.clone();
+                        let flight_af = Arc::clone(&flight);
+                        tauri::async_runtime::spawn(async move {
+                            let st = app_af.state::<AppState>();
+                            match flight_end(app_af.clone(), st, None, None, None)
+                                .await
+                            {
+                                Ok(()) => {
+                                    // LE7-Erfolgs-Banner: das Frontend
+                                    // hört auf dieses Event und zeigt das
+                                    // grüne ✅ — sonst verschwände der Flug
+                                    // beim Backend-Auto-File kommentarlos.
+                                    let _ = tauri::Emitter::emit(
+                                        &app_af,
+                                        "pirep_auto_filed",
+                                        serde_json::json!({
+                                            "callsign": format_callsign(
+                                                &flight_af.airline_icao,
+                                                &flight_af.flight_number,
+                                            ),
+                                            "dpt": flight_af.dpt_airport,
+                                            "arr": flight_af.arr_airport,
+                                        }),
+                                    );
+                                }
+                                Err(e) => {
+                                    log_activity_handle(
+                                        &app_af,
+                                        ActivityLevel::Warn,
+                                        "Auto-File fehlgeschlagen — bitte \
+                                         manuell „Flug beenden\" klicken"
+                                            .to_string(),
+                                        Some(format!("{}: {}", e.code, e.message)),
+                                    );
+                                }
+                            }
+                        });
+                    }
+                }
             }
 
             // Unified heartbeat-and-phase-update: POST `/pireps/{id}/update`
@@ -21611,6 +21691,15 @@ fn auto_start_set_enabled(
     Ok(())
 }
 
+/// v0.12.6: Spiegelt das Frontend-Auto-File-Setting (localStorage) in
+/// den Backend-State. Das Frontend ruft das bei Mount + bei jedem
+/// Toggle. Der Position-Streamer liest das Flag beim Latch auf
+/// `Arrived` und filet den PIREP dann selbst — fenster-unabhängig.
+#[tauri::command]
+fn set_auto_file_enabled(enabled: bool, state: tauri::State<'_, AppState>) {
+    state.auto_file_enabled.store(enabled, Ordering::Relaxed);
+}
+
 /// Spawn the auto-start watcher task. Idempotent in practice:
 /// the body checks `auto_start_enabled` on every tick and returns
 /// when false, so spawning twice just means one drops out quickly.
@@ -22436,6 +22525,10 @@ pub fn run() {
                 if persisted {
                     tracing::info!("auto-start restored from persisted settings");
                 }
+                // v0.12.6: Auto-File default-on, passend zum Frontend-
+                // Default. Das Frontend überschreibt das beim Mount mit
+                // dem echten localStorage-Wert via `set_auto_file_enabled`.
+                state.auto_file_enabled.store(true, Ordering::Relaxed);
             }
             spawn_auto_start_watcher(app.handle().clone());
             // Build the system-tray icon + menu. On Windows this lands
@@ -22487,6 +22580,7 @@ pub fn run() {
             divert_nearest_airports,
             fetch_release_notes,
             set_minimize_to_tray,
+            set_auto_file_enabled,
             // v0.9.0 (#GlitchTip): Opt-In fuer anonyme Fehler-Telemetrie.
             error_reporting_set_consent,
             // v0.9.0 (#Discord-RPC): Settings + Status + Push-State + Test.
