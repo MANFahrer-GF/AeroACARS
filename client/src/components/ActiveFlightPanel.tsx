@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
-import type { ActiveFlightInfo, SimSnapshot } from "../types";
+import type { ActiveFlightInfo, FlightEndOutcome, SimSnapshot } from "../types";
 import { formatRefreshError } from "../lib/refreshErrorFormatter";
 import { useConfirm } from "./ConfirmDialog";
 import { InfoStrip } from "./InfoStrip";
@@ -16,8 +16,17 @@ interface Props {
   info: ActiveFlightInfo | null;
   /** Live sim telemetry — fed into the live-tapes strip. */
   simSnapshot?: SimSnapshot | null;
-  /** Notify parent when the flight ends so it can refresh bids etc. */
-  onEnded?: () => void;
+  /**
+   * v0.12.5 (LE7): a real PIREP was concluded — normal flight-end, manual
+   * file, or a cancel that resolved to filed/queued/cancelled. The parent
+   * shows the matching banner. Replaces the overloaded `onEnded`.
+   */
+  onFiledSuccess: (outcome: FlightEndOutcome) => void;
+  /**
+   * v0.12.5 (LE7): just reload the active flight — used for `flight_forget`
+   * and the disconnect-resume. No PIREP was filed → no success banner.
+   */
+  onRefreshActiveFlight: () => void;
 }
 
 function fmtDistance(nm: number, locale: string): string {
@@ -26,7 +35,12 @@ function fmtDistance(nm: number, locale: string): string {
   )} nmi`;
 }
 
-export function ActiveFlightPanel({ info, simSnapshot, onEnded }: Props) {
+export function ActiveFlightPanel({
+  info,
+  simSnapshot,
+  onFiledSuccess,
+  onRefreshActiveFlight,
+}: Props) {
   const { t, i18n } = useTranslation();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [busy, setBusy] = useState<"end" | "cancel" | "forget" | "refresh" | null>(null);
@@ -73,13 +87,25 @@ export function ActiveFlightPanel({ info, simSnapshot, onEnded }: Props) {
       || info.accident_confidence === "medium";
   }
 
+  /** v0.12.5 (LE7): build the "filed" outcome from the current flight. */
+  function filedOutcome(): FlightEndOutcome {
+    return {
+      kind: "filed",
+      callsign: info!.airline_icao
+        ? `${info!.airline_icao} ${info!.flight_number}`
+        : info!.flight_number,
+      dpt: info!.dpt_airport,
+      arr: info!.arr_airport,
+    };
+  }
+
   async function handleEndConfirmed(decision: "as_accident" | "as_hard_landing" | null) {
     setBusy("end");
     setError(null);
     try {
       const payload = decision ? { accident_decision: decision } : undefined;
       await invoke("flight_end", payload);
-      onEnded?.();
+      onFiledSuccess(filedOutcome());
     } catch (err: unknown) {
       const e = err as {
         code?: string;
@@ -157,7 +183,7 @@ export function ActiveFlightPanel({ info, simSnapshot, onEnded }: Props) {
     setError(null);
     try {
       await invoke("flight_end");
-      onEnded?.();
+      onFiledSuccess(filedOutcome());
     } catch (err: unknown) {
       // Backend's UiError shape: { code, message, details? }. The validation
       // path puts `{ missing: ["distance", ...] }` into details so we can
@@ -216,20 +242,18 @@ export function ActiveFlightPanel({ info, simSnapshot, onEnded }: Props) {
         | { kind: "filed_instead"; pirep_id: string }
         | { kind: "queued"; pirep_id: string }
         | { kind: "cancelled"; pirep_id: string };
-      // Outcome-spezifisches Feedback je nach v0.7.18 (B-014)-Variante:
-      //   - FiledInstead: PIREP direkt eingereicht, alles fertig.
-      //   - Queued:        Transient-Fehler, PIREP wartet in Queue. Cancel hat NICHT stattgefunden.
-      //   - Cancelled:     regulärer Cancel-Pfad, PIREP ist CANCELLED auf phpVMS.
+      // v0.12.5 (LE7): Outcome an den Parent durchreichen — CockpitView
+      // entscheidet, welches Banner es zeigt:
+      //   - filed_instead: PIREP direkt eingereicht (Erfolg).
+      //   - queued:        Transient-Fehler, PIREP wartet in der Queue.
+      //   - cancelled:     regulärer Cancel — KEIN Erfolgs-Banner.
       if (outcome.kind === "filed_instead") {
-        setRefreshMsg(
-          t("active_flight.cancel_filed_instead", { pirep_id: outcome.pirep_id }),
-        );
+        onFiledSuccess({ kind: "filed_instead", pirep_id: outcome.pirep_id });
       } else if (outcome.kind === "queued") {
-        setRefreshMsg(
-          t("active_flight.cancel_queued", { pirep_id: outcome.pirep_id }),
-        );
+        onFiledSuccess({ kind: "queued", pirep_id: outcome.pirep_id });
+      } else {
+        onFiledSuccess({ kind: "cancelled" });
       }
-      onEnded?.();
     } catch (err: unknown) {
       const code =
         typeof err === "object" && err !== null && "code" in err
@@ -368,7 +392,7 @@ export function ActiveFlightPanel({ info, simSnapshot, onEnded }: Props) {
     setError(null);
     try {
       await invoke("flight_forget");
-      onEnded?.();
+      onRefreshActiveFlight();
     } catch (err: unknown) {
       const msg =
         typeof err === "object" && err !== null && "message" in err
@@ -393,8 +417,9 @@ export function ActiveFlightPanel({ info, simSnapshot, onEnded }: Props) {
           pausedSince={info.paused_since}
           lastKnown={info.paused_last_known}
           onResumed={() => {
-            // Trigger a status refresh by notifying the parent.
-            onEnded?.();
+            // v0.12.5 (LE7): nur den aktiven Flug neu laden — der Flug
+            // läuft weiter, es wurde nichts gefilt → kein Banner.
+            onRefreshActiveFlight();
           }}
         />
       )}
@@ -528,7 +553,7 @@ export function ActiveFlightPanel({ info, simSnapshot, onEnded }: Props) {
           missing={validationMissing}
           onFiled={() => {
             setValidationMissing(null);
-            onEnded?.();
+            onFiledSuccess(filedOutcome());
           }}
           onCancelFlight={() => void handleCancelFromDialog()}
           onClose={() => setValidationMissing(null)}
