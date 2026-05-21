@@ -985,6 +985,12 @@ enum Cmd {
     Takeoff(Box<TakeoffPayload>),
     Touchdown(Box<TouchdownPayload>),
     Pirep(Box<PirepPayload>),
+    /// v0.12.5 (Spec v0.12.5-divert-and-manual-pirep.md, LE1): vorab-
+    /// serialisiertes PIREP-Payload. Der Filing-Refactor baut das
+    /// Payload einmal als JSON (`build_pirep_payload` → `serde_json::Value`)
+    /// und nutzt diesen Pfad für ALLE 4 Filing-Wege — inkl. dem Queue-
+    /// Worker, der nur die persistierte JSON-Form besitzt.
+    PirepJson(Box<serde_json::Value>),
     TouchdownAccidentOverride(Box<TouchdownAccidentOverridePayload>),
     TouchdownRolloutFinalized(Box<TouchdownRolloutFinalizedPayload>),
     Shutdown,
@@ -1142,6 +1148,24 @@ impl Handle {
                 tokio::time::timeout(Duration::from_millis(500), tx.send(Cmd::Pirep(Box::new(payload)))).await
             {
                 warn!("dropping pirep publish: {e}");
+            }
+        });
+    }
+
+    /// v0.12.5 (LE1): publisht ein bereits als JSON serialisiertes
+    /// PIREP-Payload aufs `pirep`-Topic. Gleiches Wire-Format wie
+    /// `pirep()` — der Recorder sieht keinen Unterschied. Genutzt vom
+    /// Filing-Refactor (`finalize_filed_pirep`) für alle Filing-Pfade.
+    pub fn pirep_json(&self, payload: serde_json::Value) {
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = tokio::time::timeout(
+                Duration::from_millis(500),
+                tx.send(Cmd::PirepJson(Box::new(payload))),
+            )
+            .await
+            {
+                warn!("dropping pirep_json publish: {e}");
             }
         });
     }
@@ -1311,6 +1335,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                 Cmd::Takeoff(p) => publish_json(&pub_client, &cfg_for_pub.topic("takeoff"), &p, QoS::AtLeastOnce, true).await,
                 Cmd::Touchdown(p) => publish_json(&pub_client, &cfg_for_pub.topic("touchdown"), &p, QoS::AtLeastOnce, false).await,
                 Cmd::Pirep(p) => publish_json(&pub_client, &cfg_for_pub.topic("pirep"), &p, QoS::AtLeastOnce, false).await,
+                Cmd::PirepJson(p) => publish_json(&pub_client, &cfg_for_pub.topic("pirep"), &p, QoS::AtLeastOnce, false).await,
                 Cmd::TouchdownAccidentOverride(p) => publish_json(
                     &pub_client,
                     &cfg_for_pub.topic("touchdown_accident_override"),
