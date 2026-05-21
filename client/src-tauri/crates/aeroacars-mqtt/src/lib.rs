@@ -960,9 +960,14 @@ pub struct TouchdownAccidentOverridePayload {
 pub struct TouchdownRolloutFinalizedPayload {
     /// Event-Zeitstempel (Finalisierungs-Moment), ms seit Epoch.
     pub ts: i64,
-    /// PIREP-ID — der Recorder matcht die Touchdown-Zeile darüber (gleiche
-    /// Strategie wie `TouchdownAccidentOverridePayload`).
+    /// PIREP-ID — grenzt die Touchdown-Zeile(n) auf den Flug ein.
     pub pirep_id: String,
+    /// Touchdown-Zeitstempel (`landing_at`, ms seit Epoch) — identisch
+    /// zum `ts`-Feld des `TouchdownPayload` dieses Touchdowns. Der Recorder
+    /// patcht damit GENAU die zugehörige Touchdown-Zeile, nicht alle Zeilen
+    /// des PIREPs (wichtig bei Touch-and-Go / Stop-and-Go — jeder Touchdown
+    /// hat seinen eigenen Rollout).
+    pub touchdown_at: i64,
     /// Finale Ausrollstrecke Touchdown→Rollout-Ende in Metern.
     pub rollout_distance_m: f64,
     /// Welcher Trigger die Finalisierung ausgelöst hat — Diagnose.

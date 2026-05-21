@@ -9291,7 +9291,13 @@ fn trip_burn_efficiency_pct(
     planned_burn_kg: Option<f32>,
 ) -> Option<f32> {
     match (takeoff_fuel_kg, landing_fuel_kg, planned_burn_kg) {
-        (Some(takeoff), Some(landing), Some(plan)) if plan > 0.0 => {
+        // Guard identisch zu `actual_burn_for_record` — bei Refuel /
+        // Sim-Anomalie (`takeoff <= landing`) liefern wir None statt eines
+        // negativen Phantom-Trip-Burns, sonst driftet das MQTT-Feld wieder
+        // vom LandingRecord + sub_scores[fuel] weg.
+        (Some(takeoff), Some(landing), Some(plan))
+            if plan > 0.0 && takeoff > landing && takeoff > 0.0 && landing >= 0.0 =>
+        {
             let trip_burn = takeoff - landing;
             Some(((trip_burn - plan) / plan) * 100.0)
         }
@@ -9332,6 +9338,17 @@ mod trip_burn_efficiency_tests {
         assert!(trip_burn_efficiency_pct(Some(7000.0), Some(3000.0), Some(0.0)).is_none());
         assert!(trip_burn_efficiency_pct(None, Some(3000.0), Some(3000.0)).is_none());
         assert!(trip_burn_efficiency_pct(Some(7000.0), None, Some(3000.0)).is_none());
+    }
+
+    /// v0.12.4 P2: Guard identisch zu `actual_burn_for_record` — bei
+    /// Refuel / Sim-Anomalie (`takeoff <= landing`) → None statt negativem
+    /// Phantom-Trip-Burn.
+    #[test]
+    fn none_when_takeoff_not_greater_than_landing() {
+        // Refuel mid-flight: mehr Sprit bei Landung als bei Takeoff.
+        assert!(trip_burn_efficiency_pct(Some(3000.0), Some(3500.0), Some(2000.0)).is_none());
+        // Gleichstand zählt auch nicht (takeoff > landing strikt gefordert).
+        assert!(trip_burn_efficiency_pct(Some(3000.0), Some(3000.0), Some(2000.0)).is_none());
     }
 
     /// Minderverbrauch ergibt einen negativen Prozent-Wert.
@@ -14319,11 +14336,14 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // Die Cadence-Steuerung sitzt jetzt im phpVMS-Worker.
         //
         // v0.12.4 (Spec docs/spec/v0.12.4-score-consistency.md, LE4):
-        // Edge-Detektor für das touchdown_rollout_finalized-Event. Loop-
-        // lokal — übersteht keinen App-Neustart, was OK ist: nach einem
-        // Neustart re-published der erste Tick einmal idempotent (Recorder-
-        // Patch ist idempotent), siehe LE7 Punkt 5.
-        let mut rollout_finalized_published = false;
+        // Edge-Detektor für das touchdown_rollout_finalized-Event. Hält den
+        // `landing_at`-Zeitstempel des zuletzt gepublishten Touchdowns —
+        // so wird bei Touch-and-Go / Stop-and-Go JEDER Touchdown mit seinem
+        // EIGENEN Rollout gepublisht (nicht nur der erste). Loop-lokal —
+        // übersteht keinen App-Neustart, was OK ist: nach einem Neustart
+        // re-published der erste Tick einmal idempotent (Recorder-Patch ist
+        // idempotent + touchdown-scharf), siehe LE7 Punkt 5.
+        let mut last_published_rollout_ts: Option<i64> = None;
         loop {
             let current_phase = {
                 let stats = flight.stats.lock().expect("flight stats");
@@ -14643,37 +14663,51 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // dem FINALEN rollout_distance_m nachschicken. `touchdown_complete`
             // bleibt davon unberührt (Live-Event, schon vorher gesendet) —
             // dieses Event patcht beim Recorder nur das Anzeige-Rohfeld.
-            if !rollout_finalized_published {
+            //
+            // Touchdown-scharf: `touchdown_at` = `landing_at` (= ts des
+            // zugehörigen TouchdownPayloads). Wir publishen einmal pro
+            // distinktem `landing_at` — bei Touch-and-Go bekommt also jeder
+            // Touchdown sein eigenes Event statt nur der erste.
+            {
                 let finalized = {
                     let stats = flight.stats.lock().expect("flight stats");
                     if stats.rollout_finalized {
-                        Some((
-                            stats.rollout_distance_m.unwrap_or(0.0),
-                            stats.rollout_finalize_reason.clone(),
-                        ))
+                        // `landing_at` None (z.B. direkt nach einem T&G) →
+                        // kein Publish; der nächste Touchdown setzt es neu.
+                        stats.landing_at.map(|td| {
+                            (
+                                td.timestamp_millis(),
+                                stats.rollout_distance_m.unwrap_or(0.0),
+                                stats.rollout_finalize_reason.clone(),
+                            )
+                        })
                     } else {
                         None
                     }
                 };
-                if let Some((rollout_m, reason)) = finalized {
-                    let app_state = app.state::<AppState>();
-                    let mqtt = app_state.mqtt.lock().await;
-                    if let Some(handle) = mqtt.as_ref() {
-                        handle.touchdown_rollout_finalized(
-                            aeroacars_mqtt::TouchdownRolloutFinalizedPayload {
-                                ts: Utc::now().timestamp_millis(),
-                                pirep_id: flight.pirep_id.clone(),
-                                rollout_distance_m: rollout_m,
-                                finalize_reason: reason,
-                            },
+                if let Some((touchdown_at, rollout_m, reason)) = finalized {
+                    if last_published_rollout_ts != Some(touchdown_at) {
+                        let app_state = app.state::<AppState>();
+                        let mqtt = app_state.mqtt.lock().await;
+                        if let Some(handle) = mqtt.as_ref() {
+                            handle.touchdown_rollout_finalized(
+                                aeroacars_mqtt::TouchdownRolloutFinalizedPayload {
+                                    ts: Utc::now().timestamp_millis(),
+                                    pirep_id: flight.pirep_id.clone(),
+                                    touchdown_at,
+                                    rollout_distance_m: rollout_m,
+                                    finalize_reason: reason,
+                                },
+                            );
+                        }
+                        last_published_rollout_ts = Some(touchdown_at);
+                        tracing::info!(
+                            pirep_id = %flight.pirep_id,
+                            touchdown_at,
+                            rollout_m,
+                            "touchdown_rollout_finalized published"
                         );
                     }
-                    rollout_finalized_published = true;
-                    tracing::info!(
-                        pirep_id = %flight.pirep_id,
-                        rollout_m,
-                        "touchdown_rollout_finalized published"
-                    );
                 }
             }
 
