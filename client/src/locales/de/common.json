@@ -145,6 +145,13 @@
     "personal_best": "Bestwert",
     "approach_chart": "Anflug-Sinkrate",
     "approach_start": "Anflug-Start",
+    "vs_chart": {
+      "axis": "Sinkrate (fpm)",
+      "band": "Soll-Sinkrate −600…−900",
+      "limit": "Stabilitätsgrenze −1000 fpm",
+      "before_td": "{{s}} s vor TD",
+      "after_td": "+{{s}} s nach TD"
+    },
     "wind_from_front": "Wind aus vorn",
     "wind_from_front_right": "Wind aus vorn rechts",
     "wind_from_right": "Wind aus rechts",
@@ -314,6 +321,7 @@
     "flare_section": "Flare-Qualität",
     "flare_score": "Flare-Score",
     "flare_score_hint": "Endpoint-Sinkrate dominiert + Bonus für Sinkraten-Reduktion. 100 = sanfter Touchdown.",
+    "flare_breakdown": "Endsink {{vs}} fpm → {{ep}} Pkt · Reduktion {{red}} fpm → +{{bonus}} Pkt",
     "flare_reduction": "Sinkraten-Reduktion",
     "flare_reduction_hint": "Wieviel der Pilot die Sinkrate vor TD reduziert hat (positiv = Flare hat geholfen)",
     "flare_dvs_dt": "dSinkrate/dt",
@@ -323,7 +331,7 @@
     "flare_end_vs": "Sinkrate kurz vor TD",
     "flare_end_vs_hint": "Sinkrate unmittelbar vor dem Bodenkontakt",
     "flare_detected": "Flare erkannt",
-    "flare_not_detected": "Kein Flare erkannt",
+    "flare_not_detected": "Kein Flare · Reduktion < 50 fpm",
     "sinkrate_forensik": {
       "title": "🎯 Sinkrate-Forensik",
       "intro_header": "Welche Sinkrate ist die „richtige“?",

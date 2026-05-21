@@ -320,6 +320,22 @@ export interface ApproachSample {
   is_flare?: boolean | null;
 }
 
+/** v0.12.7: Flare-Score-Aufschlüsselung — der „Flare-Score" ist
+ *  Endsink-Eimer + Flare-Bonus (1:1 lib.rs:13727-13745). Offengelegt,
+ *  damit der Pilot nachvollziehen kann, woher die Punkte kommen
+ *  (Pilot-Befund Michel/GSG: Score 40 neben „kein Flare" wirkte wirr). */
+function flareSubScores(
+  vsEnd?: number | null,
+  reduction?: number | null,
+): { endpoint: number; bonus: number; total: number } | null {
+  if (vsEnd == null || reduction == null) return null;
+  const endpoint =
+    vsEnd > -75 ? 100 : vsEnd > -150 ? 80 : vsEnd > -300 ? 60 : vsEnd > -500 ? 40 : 20;
+  const bonus =
+    reduction > 400 ? 20 : reduction > 200 ? 15 : reduction > 100 ? 10 : reduction > 50 ? 5 : 0;
+  return { endpoint, bonus, total: Math.max(0, Math.min(100, endpoint + bonus)) };
+}
+
 // ---- Score breakdown ---------------------------------------------------
 //
 // We split the overall touchdown score into 6 sub-categories so the pilot
@@ -1188,78 +1204,72 @@ function WindCompass({
 
 // ---- Approach stability time-series chart ------------------------------
 
+// v0.12.7: Anflug-V/S-Profil — Redesign. Auto-Zoom-Y (Kurve füllt die
+// Fläche statt im festen −1500…+100-Band zu verschwinden), Gridlines +
+// 0-Linie, Soll-Band −600…−900, gestrichelte Stabilitätsgrenze −1000,
+// Hover-Tooltip. Spec: Pilot-Befund Michel/GSG.
 function ApproachChart({ samples }: { samples: ApproachSample[] }) {
   const { t } = useTranslation();
+  const [hover, setHover] = useState<number | null>(null);
   if (samples.length < 3) return null;
-  const w = 600;
-  const h = 160;
-  const pad = { top: 12, right: 12, bottom: 38, left: 40 };
+
+  const w = 1120;
+  const h = 320;
+  const pad = { top: 20, right: 20, bottom: 52, left: 64 };
   const innerW = w - pad.left - pad.right;
   const innerH = h - pad.top - pad.bottom;
-  const vss = samples.map((s) => s.vs_fpm);
-  const vMin = Math.min(0, ...vss, -1500);
-  const vMax = Math.max(0, ...vss, 100);
-  const vRange = Math.max(1, vMax - vMin);
-  const xStep = innerW / Math.max(1, samples.length - 1);
-  const y = (vs: number) => pad.top + innerH - ((vs - vMin) / vRange) * innerH;
-  const path = samples
-    .map((s, i) => `${i === 0 ? "M" : "L"} ${(pad.left + i * xStep).toFixed(1)} ${y(s.vs_fpm).toFixed(1)}`)
-    .join(" ");
-  // Stable-target band: -1000 to -500 fpm is the typical glide-slope V/S range
-  const bandTop = y(-500);
-  const bandBottom = y(-1000);
 
-  // v0.7.1 F5/F6 (P2.5-Fix): Zonen-Annotation. Wenn die neuen
-  // is_scored_gate/is_flare-Flags vorhanden sind (v0.7.1+ PIREPs),
-  // farbige Hintergrund-Bands rendern damit Pilot sieht welche Samples
-  // wirklich in den sub_stability-Score eingehen. Spec §3.4: Gate =
-  // 0-1000 ft AGL minus letzte 3s vor TD.
+  // Auto-Zoom-Y auf den echten Wertebereich (+12 % Polster), auf 100er
+  // gerundet. 0-Linie bleibt immer sichtbar.
+  const vss = samples.map((s) => s.vs_fpm);
+  let lo = Math.min(...vss);
+  let hi = Math.max(...vss);
+  const padv = Math.max(60, (hi - lo) * 0.12);
+  lo = Math.floor((lo - padv) / 100) * 100;
+  hi = Math.ceil((hi + padv) / 100) * 100;
+  if (hi < 0) hi = 0;
+  const range = Math.max(1, hi - lo);
+
+  const xStep = innerW / Math.max(1, samples.length - 1);
+  const x = (i: number) => pad.left + i * xStep;
+  const y = (vs: number) => pad.top + innerH - ((vs - lo) / range) * innerH;
+  const clampY = (v: number) => Math.min(Math.max(y(v), pad.top), pad.top + innerH);
+
+  const path = samples
+    .map((s, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)} ${y(s.vs_fpm).toFixed(1)}`)
+    .join(" ");
+
+  const zoneOf = (s: ApproachSample): "vorlauf" | "gate" | "flare" =>
+    s.is_flare ? "flare" : s.is_scored_gate ? "gate" : "vorlauf";
   const hasZones = samples.some((s) => s.is_scored_gate != null);
-  const buildZones = () => {
-    if (!hasZones) return null;
-    type Zone = { start: number; end: number; kind: "vorlauf" | "gate" | "flare" };
-    const zones: Zone[] = [];
+  const zones: { start: number; end: number; kind: "vorlauf" | "gate" | "flare" }[] = [];
+  if (hasZones) {
     let i = 0;
     while (i < samples.length) {
-      const s = samples[i]!;
-      const kind: Zone["kind"] = s.is_flare
-        ? "flare"
-        : s.is_scored_gate
-          ? "gate"
-          : "vorlauf";
+      const kind = zoneOf(samples[i]!);
       let j = i;
-      while (
-        j + 1 < samples.length &&
-        ((samples[j + 1]!.is_flare ? "flare"
-          : samples[j + 1]!.is_scored_gate ? "gate"
-          : "vorlauf") === kind)
-      ) {
-        j++;
-      }
+      while (j + 1 < samples.length && zoneOf(samples[j + 1]!) === kind) j++;
       zones.push({ start: i, end: j, kind });
       i = j + 1;
     }
-    return zones.map((z, idx) => {
-      const x = pad.left + z.start * xStep;
-      const wWidth = (z.end - z.start + 1) * xStep;
-      const fill =
-        z.kind === "gate"
-          ? "rgba(56, 189, 248, 0.12)" // blau = bewertet
-          : z.kind === "flare"
-            ? "rgba(234, 179, 8, 0.15)" // gelb = Flare
-            : "rgba(120, 120, 120, 0.07)"; // grau = Vorlauf
-      return (
-        <rect
-          key={`zone-${idx}`}
-          x={x}
-          y={pad.top}
-          width={wWidth}
-          height={innerH}
-          fill={fill}
-        />
-      );
-    });
-  };
+  }
+  const zoneFill = (k: string) =>
+    k === "gate" ? "rgba(56,189,248,0.10)"
+    : k === "flare" ? "rgba(234,179,8,0.16)"
+    : "rgba(120,120,120,0.10)";
+
+  const step = range > 1400 ? 400 : 200;
+  const gridVals: number[] = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) gridVals.push(v);
+
+  let tdIdx = samples.findIndex((s) => (s.t_ms ?? -1) >= 0);
+  if (tdIdx < 0) tdIdx = samples.length - 1;
+  const tdX = x(tdIdx);
+  const tdNearRight = tdX > pad.left + innerW - 70;
+
+  const bandTop = clampY(-600);
+  const bandBottom = clampY(-900);
+  const limitVisible = -1000 > lo && -1000 < hi;
 
   return (
     <svg
@@ -1268,52 +1278,121 @@ function ApproachChart({ samples }: { samples: ApproachSample[] }) {
       preserveAspectRatio="xMidYMid meet"
       role="img"
       aria-label={t("landing.approach_chart")}
+      onMouseMove={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const sx = (e.clientX - rect.left) * (w / rect.width);
+        let k = Math.round((sx - pad.left) / xStep);
+        k = Math.max(0, Math.min(samples.length - 1, k));
+        setHover(k);
+      }}
+      onMouseLeave={() => setHover(null)}
     >
-      <rect
-        x={pad.left}
-        y={pad.top}
-        width={innerW}
-        height={innerH}
-        fill="rgba(255,255,255,0.02)"
-        stroke="rgba(255,255,255,0.15)"
-      />
-      {/* v0.7.1 F5: Vorlauf/Gate/Flare-Zonen-Highlight */}
-      {buildZones()}
-      {/* Stable target band */}
-      <rect
-        x={pad.left}
-        y={bandTop}
-        width={innerW}
-        height={Math.max(0, bandBottom - bandTop)}
-        fill="rgba(34,197,94,0.08)"
-      />
-      <path d={path} fill="none" stroke="#38bdf8" strokeWidth="1.6" />
-      <text x={pad.left - 4} y={y(vMax) + 4} textAnchor="end" fontSize="10" fill="currentColor">
-        {vMax.toFixed(0)}
-      </text>
-      <text x={pad.left - 4} y={y(vMin) + 4} textAnchor="end" fontSize="10" fill="currentColor">
-        {vMin.toFixed(0)}
-      </text>
-      <text x={pad.left} y={h - 22} fontSize="10" fill="currentColor">
-        {t("landing.approach_start")}
-      </text>
-      <text x={pad.left + innerW} y={h - 22} textAnchor="end" fontSize="10" fill="currentColor">
-        {t("landing.touchdown")}
-      </text>
-      {/* v0.7.1 F5: Legende fuer Zonen — nur wenn v0.7.1+ Daten da sind */}
-      {hasZones && (
-        <g fontSize="9" fill="currentColor">
-          <rect x={pad.left} y={h - 13} width={8} height={8} fill="rgba(120,120,120,0.4)" />
-          <text x={pad.left + 11} y={h - 6}>{t("landing.chart_zone.vorlauf")}</text>
-          <rect x={pad.left + 70} y={h - 13} width={8} height={8} fill="rgba(56,189,248,0.4)" />
-          <text x={pad.left + 81} y={h - 6}>{t("landing.chart_zone.gate")}</text>
-          <rect x={pad.left + 140} y={h - 13} width={8} height={8} fill="rgba(234,179,8,0.4)" />
-          <text x={pad.left + 151} y={h - 6}>{t("landing.chart_zone.flare")}</text>
+      <rect x={pad.left} y={pad.top} width={innerW} height={innerH}
+            fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.15)" />
+
+      {zones.map((z, idx) => {
+        const x0 = z.start > 0 ? (x(z.start - 1) + x(z.start)) / 2 : x(z.start) - 2;
+        const x1 = z.end < samples.length - 1 ? (x(z.end) + x(z.end + 1)) / 2 : x(z.end) + 2;
+        return <rect key={idx} x={x0} y={pad.top} width={Math.max(0, x1 - x0)}
+                     height={innerH} fill={zoneFill(z.kind)} />;
+      })}
+
+      {bandBottom > bandTop && (
+        <rect x={pad.left} y={bandTop} width={innerW} height={bandBottom - bandTop}
+              fill="rgba(34,197,94,0.16)" />
+      )}
+
+      {gridVals.map((v) => {
+        const gy = y(v);
+        const zero = v === 0;
+        return (
+          <g key={v}>
+            <line x1={pad.left} y1={gy} x2={pad.left + innerW} y2={gy}
+                  stroke={zero ? "#475569" : "rgba(255,255,255,0.07)"}
+                  strokeWidth={zero ? 1.6 : 1} />
+            <text x={pad.left - 8} y={gy + 4} textAnchor="end" fontSize="12"
+                  fill={zero ? "#94a3b8" : "#64748b"}>{v}</text>
+          </g>
+        );
+      })}
+
+      {limitVisible && (
+        <g>
+          <line x1={pad.left} y1={y(-1000)} x2={pad.left + innerW} y2={y(-1000)}
+                stroke="#f87171" strokeWidth="1.2" strokeDasharray="6 4" opacity="0.7" />
+          <text x={pad.left + innerW - 6} y={y(-1000) - 5} textAnchor="end"
+                fontSize="10" fill="#f87171" opacity="0.85">
+            {t("landing.vs_chart.limit")}
+          </text>
         </g>
       )}
+
+      <line x1={tdX} y1={pad.top} x2={tdX} y2={pad.top + innerH}
+            stroke="#f87171" strokeWidth="1.4" strokeDasharray="4 3" />
+      <text x={tdNearRight ? tdX - 6 : tdX} y={pad.top - 6}
+            textAnchor={tdNearRight ? "end" : "middle"} fontSize="11" fill="#f87171">
+        {t("landing.touchdown")}
+      </text>
+
+      <path d={path} fill="none" stroke="#38bdf8" strokeWidth="2" />
+
+      <text x={pad.left} y={h - 28} fontSize="12" fill="#94a3b8">
+        {t("landing.approach_start")}
+      </text>
+      <text x={pad.left + innerW} y={h - 28} textAnchor="end" fontSize="12" fill="#94a3b8">
+        {t("landing.touchdown")}
+      </text>
+      <text x={16} y={pad.top + innerH / 2} fontSize="11" fill="#64748b" textAnchor="middle"
+            transform={`rotate(-90 16 ${pad.top + innerH / 2})`}>
+        {t("landing.vs_chart.axis")}
+      </text>
+
       {hasZones && (
-        <title>{t("landing.chart_zone.tooltip")}</title>
+        <g fontSize="11" fill="currentColor">
+          <rect x={pad.left} y={h - 14} width={9} height={9} fill="rgba(120,120,120,0.4)" />
+          <text x={pad.left + 13} y={h - 6}>{t("landing.chart_zone.vorlauf")}</text>
+          <rect x={pad.left + 78} y={h - 14} width={9} height={9} fill="rgba(56,189,248,0.4)" />
+          <text x={pad.left + 91} y={h - 6}>{t("landing.chart_zone.gate")}</text>
+          <rect x={pad.left + 160} y={h - 14} width={9} height={9} fill="rgba(234,179,8,0.4)" />
+          <text x={pad.left + 173} y={h - 6}>{t("landing.chart_zone.flare")}</text>
+          <rect x={pad.left + 230} y={h - 14} width={9} height={9} fill="rgba(34,197,94,0.4)" />
+          <text x={pad.left + 243} y={h - 6}>{t("landing.vs_chart.band")}</text>
+        </g>
       )}
+
+      {hover != null && samples[hover] && (() => {
+        const s = samples[hover]!;
+        const hx = x(hover);
+        const hy = y(s.vs_fpm);
+        const tRel = (s.t_ms ?? 0) / 1000;
+        const tLabel = tRel <= 0
+          ? t("landing.vs_chart.before_td", { s: Math.abs(tRel).toFixed(1) })
+          : t("landing.vs_chart.after_td", { s: tRel.toFixed(1) });
+        const zoneLabel = s.is_flare
+          ? t("landing.chart_zone.flare")
+          : s.is_scored_gate
+            ? t("landing.chart_zone.gate")
+            : t("landing.chart_zone.vorlauf");
+        const boxW = 188;
+        const boxX = Math.min(Math.max(hx + 12, pad.left), pad.left + innerW - boxW);
+        const boxY = Math.max(hy - 46, pad.top + 2);
+        return (
+          <g pointerEvents="none">
+            <line x1={hx} y1={pad.top} x2={hx} y2={pad.top + innerH}
+                  stroke="#38bdf8" strokeWidth="1" strokeDasharray="3 3" />
+            <circle cx={hx} cy={hy} r="4" fill="#38bdf8" stroke="#0e1420" strokeWidth="1.5" />
+            <rect x={boxX} y={boxY} width={boxW} height={40} rx="5"
+                  fill="#1e293b" stroke="#334155" />
+            <text x={boxX + 9} y={boxY + 17} fontSize="12.5" fill="#38bdf8" fontWeight="700">
+              {Math.round(s.vs_fpm)} fpm
+              <tspan fill="#cbd5e1" fontWeight="400">{`  ·  ${tLabel}`}</tspan>
+            </text>
+            <text x={boxX + 9} y={boxY + 32} fontSize="11" fill="#94a3b8">
+              {s.agl_ft != null ? `AGL ${Math.round(s.agl_ft)} ft  ·  ` : ""}{zoneLabel}
+            </text>
+          </g>
+        );
+      })()}
     </svg>
   );
 }
@@ -2293,7 +2372,20 @@ function LandingDetail({
                 {t("landing.flare_score")}
               </div>
               <div className="landing-flare__score-hint">
-                {t("landing.flare_score_hint")}
+                {(() => {
+                  const bd = flareSubScores(
+                    record.vs_at_flare_end_fpm,
+                    record.flare_reduction_fpm,
+                  );
+                  if (!bd) return t("landing.flare_score_hint");
+                  // v0.12.7: Aufschlüsselung statt statischem Hinweis.
+                  return t("landing.flare_breakdown", {
+                    vs: Math.round(record.vs_at_flare_end_fpm ?? 0),
+                    ep: bd.endpoint,
+                    red: Math.round(record.flare_reduction_fpm ?? 0),
+                    bonus: bd.bonus,
+                  });
+                })()}
               </div>
             </div>
             <dl className="landing-keyvals landing-flare__metrics">

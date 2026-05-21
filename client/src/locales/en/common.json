@@ -145,6 +145,13 @@
     "personal_best": "Personal best",
     "approach_chart": "Approach V/S",
     "approach_start": "Approach start",
+    "vs_chart": {
+      "axis": "Vertical speed (fpm)",
+      "band": "Target sink −600…−900",
+      "limit": "Stability limit −1000 fpm",
+      "before_td": "{{s}} s before TD",
+      "after_td": "+{{s}} s after TD"
+    },
     "wind_from_front": "Wind from front",
     "wind_from_front_right": "Wind from front-right",
     "wind_from_right": "Wind from right",
@@ -314,6 +321,7 @@
     "flare_section": "Flare quality",
     "flare_score": "Flare score",
     "flare_score_hint": "Endpoint V/S dominates + bonus for V/S reduction. 100 = gentle touchdown.",
+    "flare_breakdown": "End sink {{vs}} fpm → {{ep}} pts · reduction {{red}} fpm → +{{bonus}} pts",
     "flare_reduction": "Sink-rate reduction",
     "flare_reduction_hint": "How much the pilot reduced the sink rate before TD (positive = flare helped)",
     "flare_dvs_dt": "dSink/dt",
@@ -323,7 +331,7 @@
     "flare_end_vs": "Sink rate just before TD",
     "flare_end_vs_hint": "Sink rate immediately before ground contact",
     "flare_detected": "Flare detected",
-    "flare_not_detected": "No flare detected",
+    "flare_not_detected": "No flare · reduction < 50 fpm",
     "sinkrate_forensik": {
       "title": "🎯 Sink-Rate Forensics",
       "intro_header": "Which sink-rate is the right one?",

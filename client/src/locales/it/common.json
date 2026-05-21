@@ -145,6 +145,13 @@
     "personal_best": "Record personale",
     "approach_chart": "Rateo discesa avvicinamento",
     "approach_start": "Inizio avvicinamento",
+    "vs_chart": {
+      "axis": "Rateo di discesa (fpm)",
+      "band": "Rateo target −600…−900",
+      "limit": "Limite di stabilità −1000 fpm",
+      "before_td": "{{s}} s prima del TD",
+      "after_td": "+{{s}} s dopo il TD"
+    },
     "wind_from_front": "Vento di faccia",
     "wind_from_front_right": "Vento da prua destra",
     "wind_from_right": "Vento da destra",
@@ -314,6 +321,7 @@
     "flare_section": "Qualità del flare",
     "flare_score": "Punteggio flare",
     "flare_score_hint": "Endpoint del rateo di discesa domina + bonus per riduzione. 100 = touchdown morbido.",
+    "flare_breakdown": "Sink finale {{vs}} fpm → {{ep}} pti · riduzione {{red}} fpm → +{{bonus}} pti",
     "flare_reduction": "Riduzione rateo di discesa",
     "flare_reduction_hint": "Di quanto il pilota ha ridotto il rateo di discesa prima del TD",
     "flare_dvs_dt": "dRateo/dt",
@@ -323,7 +331,7 @@
     "flare_end_vs": "Rateo discesa subito prima del TD",
     "flare_end_vs_hint": "Rateo di discesa immediatamente prima del contatto al suolo",
     "flare_detected": "Flare rilevato",
-    "flare_not_detected": "Nessun flare rilevato",
+    "flare_not_detected": "Nessun flare · riduzione < 50 fpm",
     "sinkrate_forensik": {
       "title": "🎯 Forense del rateo di discesa",
       "intro_header": "Qual è il valore „giusto“?",
