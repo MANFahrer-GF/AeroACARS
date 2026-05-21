@@ -699,6 +699,12 @@
     "pirep_filed_title": "PIREP filed successfully",
     "pirep_filed_detail": "{{callsign}} · {{dpt}} → {{arr}} — flight submitted to phpVMS. It's now in the Landing tab and on the phpVMS website.",
     "pirep_filed_dismiss": "Dismiss",
+    "cancelled_title": "Flight discarded",
+    "cancelled_detail": "The flight was discarded — no PIREP was filed.",
+    "filed_instead_title": "Flight filed instead of discarded",
+    "filed_instead_detail": "You chose to cancel, but the flight was already complete — it was submitted as PIREP {{pirep_id}} instead.",
+    "queued_title": "PIREP queued",
+    "queued_detail": "Connection unavailable — PIREP {{pirep_id}} will be submitted automatically once the connection is back.",
     "loadsheet": {
       "title": "Live loadsheet",
       "label": "Loadsheet",
@@ -1311,6 +1317,8 @@
       "block_fuel_hint": "Ramp fuel before pushback",
       "fuel_used_label": "Fuel used (kg)",
       "fuel_used_hint": "Block − remaining. Blank = computed",
+      "remaining_fuel_label": "Fuel still in tank (kg)",
+      "remaining_fuel_hint": "Fuel left after landing. AeroACARS computes used = block − remaining",
       "notes_placeholder": "e.g. weather, anomalies, technical issues …"
     }
   },

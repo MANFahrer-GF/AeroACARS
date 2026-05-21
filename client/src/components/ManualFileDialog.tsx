@@ -47,6 +47,25 @@ function localToUtcIso(v: string): string | null {
   return d.toISOString();
 }
 
+/** v0.12.5 (LE3): Convert an RFC-3339 UTC string back to a
+ *  `<input type="datetime-local">` value (LOCAL time, "YYYY-MM-DDTHH:MM").
+ *  Used to pre-fill the block-off/on fields from FSM-captured times. */
+function utcIsoToLocal(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
+
+/** Format an optional number to a string for an input value (rounded). */
+function numToInput(v: number | null): string {
+  return v != null && Number.isFinite(v) ? String(Math.round(v)) : "";
+}
+
 export function ManualFileDialog({
   info,
   missing,
@@ -57,22 +76,42 @@ export function ManualFileDialog({
   const { t } = useTranslation();
   const [stage, setStage] = useState<Stage>("options");
 
+  // v0.12.5 (LE3): die Felder werden aus den FSM-Defaults vorbefüllt —
+  // der Pilot korrigiert nur Abweichungen statt alles blank einzutippen.
+  const d = info.manual_filing_defaults;
+  const ftMin = d.flight_time_minutes;
+
   // Routing
-  const [divert, setDivert] = useState("");
+  const [divert, setDivert] = useState(d.divert_to ?? "");
   const [reason, setReason] = useState("");
 
   // Performance overrides
-  const [distanceNm, setDistanceNm] = useState("");
-  const [cruiseLevelFt, setCruiseLevelFt] = useState("");
-  const [flightHours, setFlightHours] = useState("");
-  const [flightMinutes, setFlightMinutes] = useState("");
-  const [landingRate, setLandingRate] = useState("");
-  const [blockOffLocal, setBlockOffLocal] = useState("");
-  const [blockOnLocal, setBlockOnLocal] = useState("");
+  const [distanceNm, setDistanceNm] = useState(numToInput(d.distance_nm));
+  const [cruiseLevelFt, setCruiseLevelFt] = useState(
+    numToInput(d.cruise_level_ft),
+  );
+  const [flightHours, setFlightHours] = useState(
+    ftMin != null ? String(Math.floor(ftMin / 60)) : "",
+  );
+  const [flightMinutes, setFlightMinutes] = useState(
+    ftMin != null ? String(ftMin % 60) : "",
+  );
+  const [landingRate, setLandingRate] = useState(
+    numToInput(d.landing_rate_fpm),
+  );
+  const [blockOffLocal, setBlockOffLocal] = useState(
+    utcIsoToLocal(d.block_off_at),
+  );
+  const [blockOnLocal, setBlockOnLocal] = useState(
+    utcIsoToLocal(d.block_on_at),
+  );
 
-  // Fuel
-  const [blockFuelKg, setBlockFuelKg] = useState("");
-  const [fuelUsedKg, setFuelUsedKg] = useState("");
+  // Fuel — LE4: der Pilot gibt die Restmenge im Tank ein, nicht den
+  // Verbrauch. Das Backend rechnet used = block − remaining.
+  const [blockFuelKg, setBlockFuelKg] = useState(numToInput(d.block_fuel_kg));
+  const [remainingFuelKg, setRemainingFuelKg] = useState(
+    numToInput(d.remaining_fuel_kg),
+  );
 
   // Notes
   const [notes, setNotes] = useState("");
@@ -103,7 +142,7 @@ export function ManualFileDialog({
         reason: trimmedReason || null,
         flightTimeMinutes,
         blockFuelKg: numOrNull(blockFuelKg),
-        fuelUsedKg: numOrNull(fuelUsedKg),
+        remainingFuelKg: numOrNull(remainingFuelKg),
         distanceNm: numOrNull(distanceNm),
         cruiseLevelFt:
           numOrNull(cruiseLevelFt) != null
@@ -355,16 +394,20 @@ export function ManualFileDialog({
                 <small>{t("active_flight.validation.block_fuel_hint")}</small>
               </label>
               <label className="manual-form__field">
-                <span>{t("active_flight.validation.fuel_used_label")}</span>
+                <span>
+                  {t("active_flight.validation.remaining_fuel_label")}
+                </span>
                 <input
                   type="text"
                   inputMode="decimal"
-                  value={fuelUsedKg}
-                  onChange={(e) => setFuelUsedKg(e.target.value)}
+                  value={remainingFuelKg}
+                  onChange={(e) => setRemainingFuelKg(e.target.value)}
                   placeholder="0"
                   disabled={busy}
                 />
-                <small>{t("active_flight.validation.fuel_used_hint")}</small>
+                <small>
+                  {t("active_flight.validation.remaining_fuel_hint")}
+                </small>
               </label>
             </div>
 

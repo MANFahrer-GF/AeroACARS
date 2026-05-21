@@ -699,6 +699,12 @@
     "pirep_filed_title": "PIREP inviato con successo",
     "pirep_filed_detail": "{{callsign}} · {{dpt}} → {{arr}} — Volo trasmesso a phpVMS. Lo trovi ora nella tab Atterraggio e sul sito phpVMS.",
     "pirep_filed_dismiss": "Chiudi",
+    "cancelled_title": "Volo scartato",
+    "cancelled_detail": "Il volo è stato scartato — nessun PIREP è stato inviato.",
+    "filed_instead_title": "Volo inviato invece di scartato",
+    "filed_instead_detail": "Volevi annullare, ma il volo era già completo — è stato inviato come PIREP {{pirep_id}}.",
+    "queued_title": "PIREP in coda",
+    "queued_detail": "Connessione non disponibile — il PIREP {{pirep_id}} sarà inviato automaticamente al ripristino della connessione.",
     "loadsheet": {
       "title": "Loadsheet Live",
       "label": "Loadsheet",
@@ -1311,6 +1317,8 @@
       "block_fuel_hint": "Carburante ramp prima del pushback",
       "fuel_used_label": "Carburante consumato (kg)",
       "fuel_used_hint": "Block − residuo. Vuoto = calcolato automaticamente",
+      "remaining_fuel_label": "Ancora nel serbatoio (kg)",
+      "remaining_fuel_hint": "Carburante dopo l'atterraggio. AeroACARS calcola consumo = block − residuo",
       "notes_placeholder": "es. meteo, particolarità, problemi tecnici…"
     }
   },

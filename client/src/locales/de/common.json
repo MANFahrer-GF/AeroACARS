@@ -699,6 +699,12 @@
     "pirep_filed_title": "PIREP erfolgreich eingereicht",
     "pirep_filed_detail": "{{callsign}} · {{dpt}} → {{arr}} — Flug wurde an phpVMS übermittelt. Du findest ihn jetzt im Landung-Tab und auf der phpVMS-Webseite.",
     "pirep_filed_dismiss": "Schließen",
+    "cancelled_title": "Flug verworfen",
+    "cancelled_detail": "Der Flug wurde verworfen — es wurde kein PIREP eingereicht.",
+    "filed_instead_title": "Flug eingereicht statt verworfen",
+    "filed_instead_detail": "Du wolltest abbrechen — der Flug war aber bereits abgeschlossen und wurde stattdessen als PIREP {{pirep_id}} eingereicht.",
+    "queued_title": "PIREP in Warteschlange",
+    "queued_detail": "Keine Verbindung — PIREP {{pirep_id}} wird automatisch eingereicht, sobald die Verbindung wieder steht.",
     "loadsheet": {
       "title": "Loadsheet Live",
       "label": "Loadsheet",
@@ -1311,6 +1317,8 @@
       "block_fuel_hint": "Ramp-Treibstoff vor Pushback",
       "fuel_used_label": "Verbrauchter Treibstoff (kg)",
       "fuel_used_hint": "Block − Rest. Leer = automatisch berechnet",
+      "remaining_fuel_label": "Noch im Tank (kg)",
+      "remaining_fuel_hint": "Treibstoff nach der Landung. AeroACARS rechnet Verbrauch = Block − Rest",
       "notes_placeholder": "z. B. Wetter, Besonderheiten, technische Probleme …"
     }
   },

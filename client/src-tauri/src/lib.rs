@@ -3100,6 +3100,38 @@ pub struct DivertHint {
     pub kind: &'static str,
 }
 
+/// v0.12.5 (Spec v0.12.5-divert-and-manual-pirep.md, LE3): Vorbefüll-
+/// Werte für das manuelle Filing-Formular (`ManualFileDialog`). Alle aus
+/// FSM-Stats bzw. `DivertHint` — der Pilot korrigiert nur Abweichungen,
+/// statt jedes Feld blank einzutippen. Alle Werte optional; `null` =
+/// FSM hat den Wert (noch) nicht.
+#[derive(Serialize)]
+pub struct ManualFilingDefaults {
+    /// FSM-gemessene Distanz in NM.
+    distance_nm: Option<f64>,
+    /// FSM Peak-Altitude, auf 100 ft gerundet.
+    cruise_level_ft: Option<i32>,
+    /// Flugzeit Takeoff→Landing in Minuten.
+    flight_time_minutes: Option<i32>,
+    /// FSM Touchdown-Rate (canonical edge value).
+    landing_rate_fpm: Option<f32>,
+    /// FSM Block-Off-Zeit (RFC-3339).
+    block_off_at: Option<String>,
+    /// FSM Block-On-Zeit (RFC-3339).
+    block_on_at: Option<String>,
+    /// FSM Block-Fuel in kg.
+    block_fuel_kg: Option<f32>,
+    /// Resttreibstoff im Tank (kg) — letzter beobachteter Sim-Fuel.
+    /// LE4: das UI-Feld fragt „noch im Tank", nicht „verbraucht".
+    remaining_fuel_kg: Option<f32>,
+    /// Erkanntes Ausweich-ICAO aus dem `DivertHint`. None = kein Divert.
+    divert_to: Option<String>,
+    /// Der ursprünglich geplante Zielflughafen (Bid/Flugplan).
+    planned_arr_icao: String,
+    /// true wenn ein Divert erkannt wurde → Begründung ist Pflicht.
+    requires_reason: bool,
+}
+
 #[derive(Serialize)]
 pub struct ActiveFlightInfo {
     pirep_id: String,
@@ -3235,6 +3267,9 @@ pub struct ActiveFlightInfo {
     accident_confidence: Option<String>,
     accident_reasons: Vec<String>,
     accident_at: Option<String>,
+
+    /// v0.12.5 (LE3): Vorbefüll-Werte fürs manuelle Filing-Formular.
+    manual_filing_defaults: ManualFilingDefaults,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -6654,6 +6689,33 @@ fn flight_info(flight: &ActiveFlight, resume_position_suspect: bool) -> ActiveFl
         accident_confidence: stats.accident_confidence.clone(),
         accident_reasons: stats.accident_reasons.clone(),
         accident_at: stats.accident_at.map(|t| t.to_rfc3339()),
+
+        // v0.12.5 (LE3): Manual-Filing-Vorbefüllung aus den FSM-Stats.
+        manual_filing_defaults: ManualFilingDefaults {
+            distance_nm: if stats.distance_nm > 0.0 {
+                Some(stats.distance_nm)
+            } else {
+                None
+            },
+            cruise_level_ft: stats.peak_altitude_ft.map(|ft| {
+                (((ft / 100.0).round() * 100.0) as i32).max(0)
+            }),
+            flight_time_minutes: match (stats.takeoff_at, stats.landing_at) {
+                (Some(t), Some(l)) if l > t => Some((l - t).num_minutes() as i32),
+                _ => None,
+            },
+            landing_rate_fpm: stats.canonical_landing_rate_fpm(),
+            block_off_at: stats.block_off_at.map(|t| t.to_rfc3339()),
+            block_on_at: stats.block_on_at.map(|t| t.to_rfc3339()),
+            block_fuel_kg: stats.block_fuel_kg.filter(|kg| *kg > 0.0),
+            remaining_fuel_kg: stats.last_fuel_kg.filter(|kg| *kg >= 0.0),
+            divert_to: stats
+                .divert_hint
+                .as_ref()
+                .and_then(|h| h.actual_icao.clone()),
+            planned_arr_icao: flight.arr_airport.clone(),
+            requires_reason: stats.divert_hint.is_some(),
+        },
     }
 }
 
@@ -9402,7 +9464,11 @@ fn build_pirep_payload(
         block_time_min: body.flight_time,
         flight_time_min: body.flight_time,
         distance_nm: body.distance.map(|d| d as f32),
-        fuel_used_kg: body.fuel_used.map(|kg| kg as f32),
+        // v0.12.5 (LE4, QS-R2-P2): `body.fuel_used` ist die phpVMS-Site-
+        // Unit = POUND. Das MQTT-Feld heißt `fuel_used_kg` — also explizit
+        // lb→kg zurückrechnen. Vorher floss der lb-Wert ungewandelt in ein
+        // `_kg`-Feld (Recorder/Web sah ~2,2× zu viel „kg").
+        fuel_used_kg: body.fuel_used.map(|lb| (lb / KG_TO_LB) as f32),
         planned_burn_kg: stats.planned_burn_kg,
         block_fuel_kg: stats.block_fuel_kg,
         takeoff_fuel_kg: stats.takeoff_fuel_kg,
@@ -11931,7 +11997,9 @@ async fn flight_end_manual(
     reason: Option<String>,
     flight_time_minutes: Option<i32>,
     block_fuel_kg: Option<f32>,
-    fuel_used_kg: Option<f32>,
+    // v0.12.5 (LE4): Resttreibstoff im Tank in kg — NICHT der Verbrauch.
+    // Das Backend rechnet `fuel_used_kg = block_fuel_kg − remaining_fuel_kg`.
+    remaining_fuel_kg: Option<f32>,
     distance_nm: Option<f64>,
     cruise_level_ft: Option<i32>,
     landing_rate_fpm: Option<f32>,
@@ -12027,16 +12095,27 @@ async fn flight_end_manual(
                     .collect(),
             )
         };
-        // Block→remaining diff in kg, rounded to whole kg before lb
-        // conversion (see flight_end for the cleanup rationale).
-        // Manual override (kg) wins over the FSM-derived diff.
-        let fuel_used = fuel_used_kg
-            .filter(|v| *v > 0.0)
-            .map(|kg| (kg as f64).round() * KG_TO_LB)
-            .or_else(|| match (stats.block_fuel_kg, stats.last_fuel_kg) {
-                (Some(b), Some(c)) if b > c => Some(((b - c) as f64).round() * KG_TO_LB),
+        // v0.12.5 (LE4): Der Pilot gibt die Restmenge im Tank (kg) ein,
+        // nicht den Verbrauch. fuel_used_kg = block_fuel_kg − remaining.
+        // Guard: block_fuel_kg > remaining_fuel_kg >= 0, sonst greift der
+        // FSM-Fallback (block − last_fuel). Gerechnet wird in kg, ERST am
+        // Ende nach lb konvertiert (phpVMS-Site-Unit = lb) — QS-R2-P2.
+        // `stats.block_fuel_kg` trägt hier schon den Manual-Override
+        // (oben gesetzt falls `block_fuel_kg`-Param > 0).
+        let fuel_used = {
+            let from_remaining = match (stats.block_fuel_kg, remaining_fuel_kg) {
+                (Some(block), Some(rem)) if rem >= 0.0 && block > rem => {
+                    Some((block - rem) as f64)
+                }
                 _ => None,
-            });
+            };
+            from_remaining
+                .or_else(|| match (stats.block_fuel_kg, stats.last_fuel_kg) {
+                    (Some(b), Some(c)) if b > c => Some((b - c) as f64),
+                    _ => None,
+                })
+                .map(|kg| kg.round() * KG_TO_LB)
+        };
         let block_fuel = stats
             .block_fuel_kg
             .filter(|kg| *kg > 0.0)
@@ -12088,7 +12167,7 @@ async fn flight_end_manual(
         if block_fuel_kg.is_some() {
             overrides.push("block_fuel");
         }
-        if fuel_used_kg.is_some() {
+        if remaining_fuel_kg.is_some() {
             overrides.push("fuel_used");
         }
         if distance_nm.is_some() {
