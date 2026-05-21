@@ -436,6 +436,15 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 /// bevor phpVMS' Live-Tracking-Cron (default ~2h) den PIREP killt.
 const SIM_DISCONNECT_THRESHOLD_S: i64 = 30;
 
+/// v0.12.5 (Spec docs/spec/v0.12.5-divert-and-manual-pirep.md, LE9):
+/// Maximales Alter eines Sim-Snapshots, ab dem das Resume-Sim-Gate den
+/// Flug scharfschaltet. Bewusst ENGER als `SIM_DISCONNECT_THRESHOLD_S` —
+/// letzteres ist Disconnect-Erkennung im laufenden Flug, hier geht es ums
+/// Scharfschalten NACH Resume: ein alter, vor dem Neustart persistierter
+/// Snapshot darf nicht zählen. ≤ 5 s ⇒ frisch genug, dass der Sim jetzt
+/// gerade Daten liefert.
+const SIM_GATE_FRESH_SECS: i64 = 5;
+
 /// Spec sim-disconnect-auto-resume F2 (Drift-Stufen):
 ///
 /// Schwellen fuer die Activity-Log-Eskalation beim Resume. Drift NM
@@ -12302,15 +12311,96 @@ async fn flight_resume_confirm(
             .cloned()
             .ok_or_else(|| UiError::new("no_active_flight", "no flight to resume"))?
     };
-    // Resume confirmed → clear the banner flag.
-    flight.was_just_resumed.store(false, Ordering::Relaxed);
     let client = current_client(&state)?;
-    // v0.6.0 — neuer phpVMS-Worker, eigenstaendig vom Streamer-Tick.
-    // (Geclonted vor dem move in spawn_position_streamer.)
-    spawn_phpvms_position_worker(app.clone(), Arc::clone(&flight), client.clone());
-    spawn_position_streamer(app.clone(), Arc::clone(&flight), client);
-    spawn_touchdown_sampler(app, flight);
+    // v0.12.5 (Spec docs/spec/v0.12.5-divert-and-manual-pirep.md, LE9):
+    // NICHT mehr bedingungslos scharfschalten. Bisher spawnte
+    // flight_resume_confirm Streamer/phpVMS-Worker/Sampler sofort — nach
+    // einem App-/Mac-Neustart mitten im Flug lief der Flug damit OHNE
+    // Simulator (eingefrorene Stats wurden an phpVMS gepostet). Stattdessen
+    // wartet ein Sim-Gate-Task auf einen FRISCHEN Sim-Snapshot und schaltet
+    // erst dann scharf. `was_just_resumed` bleibt true bis dahin → die UI
+    // zeigt weiter den Resume-/Warte-Zustand statt einen scheinbar laufenden
+    // Flug. Sim-agnostisch (X-Plane + MSFS via `current_snapshot`).
+    spawn_resume_sim_gate(app, Arc::clone(&flight), client);
     Ok(())
+}
+
+/// v0.12.5 (LE9): Resume-Sim-Gate. Wartet nach einem Flight-Resume auf
+/// einen frischen Sim-Snapshot (≤ `SIM_GATE_FRESH_SECS`) und schaltet den
+/// Flug erst dann scharf — Streamer + phpVMS-Worker + Touchdown-Sampler.
+/// Bis dahin: kein Streaming, kein phpVMS-Post. Bricht ab, wenn der Flug
+/// nicht mehr aktiv ist (Cancel/Forget/End) oder `stop` gesetzt wurde.
+fn spawn_resume_sim_gate(app: AppHandle, flight: Arc<ActiveFlight>, client: Client) {
+    tauri::async_runtime::spawn(async move {
+        log_activity_handle(
+            &app,
+            ActivityLevel::Warn,
+            "Warte auf Simulator — Flug wird scharfgeschaltet, sobald der Sim Daten liefert"
+                .to_string(),
+            Some(
+                "Resume nach App-/Sim-Neustart: kein Streaming und kein phpVMS-Post, \
+                 bis ein frischer Sim-Snapshot vorliegt."
+                    .to_string(),
+            ),
+        );
+        loop {
+            // Flug abgebrochen / beendet / vergessen → Gate beenden.
+            if flight.stop.load(Ordering::Relaxed) {
+                tracing::info!(
+                    pirep_id = %flight.pirep_id,
+                    "resume sim-gate: flight stopped — exiting without arming"
+                );
+                return;
+            }
+            let still_active = {
+                let st = app.state::<AppState>();
+                let guard = st.active_flight.lock().expect("active_flight lock");
+                guard
+                    .as_ref()
+                    .map(|f| f.pirep_id == flight.pirep_id)
+                    .unwrap_or(false)
+            };
+            if !still_active {
+                tracing::info!(
+                    pirep_id = %flight.pirep_id,
+                    "resume sim-gate: flight no longer active — exiting"
+                );
+                return;
+            }
+            // Frischer Snapshot vom aktuell gewählten Simulator?
+            if let Some(snap) = current_snapshot(&app) {
+                let age_secs = (Utc::now() - snap.timestamp).num_seconds();
+                if age_secs.abs() <= SIM_GATE_FRESH_SECS {
+                    // Sim liefert frische Daten → jetzt scharfschalten.
+                    flight.was_just_resumed.store(false, Ordering::Relaxed);
+                    spawn_phpvms_position_worker(
+                        app.clone(),
+                        Arc::clone(&flight),
+                        client.clone(),
+                    );
+                    spawn_position_streamer(
+                        app.clone(),
+                        Arc::clone(&flight),
+                        client.clone(),
+                    );
+                    spawn_touchdown_sampler(app.clone(), Arc::clone(&flight));
+                    tracing::info!(
+                        pirep_id = %flight.pirep_id,
+                        age_secs,
+                        "resume sim-gate: fresh sim snapshot — flight armed"
+                    );
+                    log_activity_handle(
+                        &app,
+                        ActivityLevel::Info,
+                        "Simulator verbunden — Flug scharfgeschaltet".to_string(),
+                        None,
+                    );
+                    return;
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    });
 }
 
 /// Drop local active-flight state without contacting phpVMS. Useful when the
