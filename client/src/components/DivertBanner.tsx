@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
-import type { ActiveFlightInfo } from "../types";
+import type { ActiveFlightInfo, FlightEndOutcome } from "../types";
 
 interface Props {
   activeFlight: ActiveFlightInfo;
-  /** Called once a divert decision has been made and the file/cancel
-   *  command has resolved. Parent uses this to clear `activeFlight`
-   *  in the React tree so the cockpit collapses to the empty state. */
-  onResolved: () => void;
+  /**
+   * v0.12.5 (LE7-QS-P2): a real PIREP was filed via the divert banner
+   * (submit-as-planned or submit-as-divert). The parent shows the green
+   * success banner and clears `activeFlight` — same contract as
+   * `ActiveFlightPanel.onFiledSuccess`.
+   */
+  onFiledSuccess: (outcome: FlightEndOutcome) => void;
 }
 
 /**
@@ -30,7 +33,7 @@ interface Props {
  * — we want the resume choice to settle first before piling another
  * decision on the pilot.
  */
-export function DivertBanner({ activeFlight, onResolved }: Props) {
+export function DivertBanner({ activeFlight, onFiledSuccess }: Props) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +44,16 @@ export function DivertBanner({ activeFlight, onResolved }: Props) {
   const hint = activeFlight.divert_hint;
   if (!hint) return null;
   if (activeFlight.was_just_resumed) return null;
+
+  /** v0.12.5 (LE7-QS-P2): build the "filed" outcome for the success banner. */
+  const filedOutcome = (arr: string): FlightEndOutcome => ({
+    kind: "filed",
+    callsign: activeFlight.airline_icao
+      ? `${activeFlight.airline_icao} ${activeFlight.flight_number}`
+      : activeFlight.flight_number,
+    dpt: activeFlight.dpt_airport,
+    arr,
+  });
 
   // Skip the banner during early phases — only meaningful once the
   // FSM has actually settled at Arrived (or the universal fallback
@@ -68,7 +81,7 @@ export function DivertBanner({ activeFlight, onResolved }: Props) {
     setError(null);
     try {
       await invoke("flight_end", {});
-      onResolved();
+      onFiledSuccess(filedOutcome(hint.planned_arr_icao));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -145,7 +158,7 @@ export function DivertBanner({ activeFlight, onResolved }: Props) {
           divertTo={confirmDivertTo}
           plannedIcao={hint.planned_arr_icao}
           onClose={() => setConfirmDivertTo(null)}
-          onResolved={onResolved}
+          onFiled={() => onFiledSuccess(filedOutcome(confirmDivertTo))}
         />
       )}
     </>
@@ -158,7 +171,8 @@ interface ConfirmProps {
   /** The originally planned arrival ICAO — shown for context. */
   plannedIcao: string;
   onClose: () => void;
-  onResolved: () => void;
+  /** Called after the divert PIREP was filed successfully. */
+  onFiled: () => void;
 }
 
 /**
@@ -173,7 +187,7 @@ function DivertConfirmModal({
   divertTo,
   plannedIcao,
   onClose,
-  onResolved,
+  onFiled,
 }: ConfirmProps) {
   const { t } = useTranslation();
   const [reason, setReason] = useState("");
@@ -192,7 +206,7 @@ function DivertConfirmModal({
         divertTo,
         divertReason: trimmedReason,
       });
-      onResolved();
+      onFiled();
       onClose();
     } catch (e) {
       setError(String(e));

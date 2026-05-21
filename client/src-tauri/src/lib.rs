@@ -8706,22 +8706,21 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                         ).await;
                         // Selber Tick: Pending-Bid-Cleanup-Queue drainen
                         drain_pending_bid_cleanup(&app, &client).await;
-                        // v0.12.5 (LE1b): MQTT-PIREP nachträglich publishen
-                        // + JSONL-PirepFiled-Event — sonst fehlt der
-                        // gequeuete Flug dauerhaft in den VPS-Reports.
-                        // Null = altes queued-File ohne das Feld → kein
-                        // Publish (kein Crash, Recorder kennt den PIREP
-                        // dann nur via phpVMS).
+                        // v0.12.5 (LE1b): JSONL-PirepFiled-Event schreiben
+                        // + MQTT-PIREP nachträglich publishen — sonst fehlt
+                        // der gequeuete Flug dauerhaft in den VPS-Reports.
+                        // QS-P1: `finalize_filed_pirep` schreibt das JSONL-
+                        // Event IMMER (auch ohne MQTT-Handle) — Voraussetzung
+                        // für den Recorder-seitigen JSONL-Gap-Fill.
+                        // Null = altes queued-File ohne das Feld → skip.
                         if !q.pirep_payload_json.is_null() {
                             let mqtt = state.mqtt.lock().await;
-                            if let Some(handle) = mqtt.as_ref() {
-                                finalize_filed_pirep(
-                                    &app,
-                                    handle,
-                                    &q.pirep_id,
-                                    q.pirep_payload_json.clone(),
-                                );
-                            }
+                            finalize_filed_pirep(
+                                &app,
+                                mqtt.as_ref(),
+                                &q.pirep_id,
+                                q.pirep_payload_json.clone(),
+                            );
                         }
                         // Best-effort: JSONL-Upload (wenn das Recorder-File noch da ist)
                         spawn_flight_log_upload(&app, q.pirep_id.clone());
@@ -9603,14 +9602,21 @@ fn build_pirep_payload(
 /// Abschluss-Pfad nutzt wie die Live-Pfade. Vorher publizierten der
 /// Divert-, der Manual- und der Queue-Pfad GAR KEIN MQTT-PIREP →
 /// Reports/Logfile verschluckt (Bug A/B/C der Spec).
+///
+/// QS-P1: `handle` ist **`Option`**. Das `PirepFiled`-JSONL-Event MUSS
+/// immer geschrieben werden — auch ohne MQTT-Verbindung — sonst kann der
+/// Recorder-Importer den PIREP nicht aus dem hochgeladenen JSONL nachlegen
+/// (`importer.ts` legt `pireps` nur bei `pirep_filed` an). MQTT-Publish ist
+/// best-effort und entfällt sauber, wenn kein Handle da ist.
 fn finalize_filed_pirep(
     app: &AppHandle,
-    handle: &aeroacars_mqtt::Handle,
+    handle: Option<&aeroacars_mqtt::Handle>,
     pirep_id: &str,
     pirep_payload_json: serde_json::Value,
 ) {
     // v0.5.34: PIREP-Forensik ins JSONL — damit das Recovery-Tool
-    // Pireps + abhaengige Stats rekonstruieren kann.
+    // Pireps + abhaengige Stats rekonstruieren kann. IMMER, unabhängig
+    // vom MQTT-Status (QS-P1: JSONL-Gap-Fill-Durabilität).
     record_event(
         app,
         pirep_id,
@@ -9619,7 +9625,10 @@ fn finalize_filed_pirep(
             payload: pirep_payload_json.clone(),
         },
     );
-    handle.pirep_json(pirep_payload_json);
+    // MQTT-Publish nur wenn eine Verbindung steht — best-effort.
+    if let Some(handle) = handle {
+        handle.pirep_json(pirep_payload_json);
+    }
 }
 
 /// v0.12.5 (LE7-QS): emittiert das `LandingFinalized`-JSONL-Event mit dem
@@ -11512,29 +11521,29 @@ async fn flight_end(
         // ICAO, `planned_arr_icao` = das ursprüngliche Ziel → der
         // Helper setzt `divert`/`diverted_to` korrekt.
         {
+            let effective_arr = divert_to
+                .as_deref()
+                .unwrap_or(&flight.arr_airport);
+            let mut pirep_payload = build_pirep_payload(
+                &flight,
+                &body,
+                effective_arr,
+                &flight.arr_airport,
+            );
+            // v0.12.5 (LE2): Divert-Begründung auch ins MQTT-Payload
+            // (Audit) — der Recorder/JSONL hält damit den Grund.
+            pirep_payload.notes = divert_reason.clone();
+            let pirep_payload_json = serde_json::to_value(&pirep_payload)
+                .unwrap_or(serde_json::Value::Null);
+            // QS-P1: JSONL-PirepFiled IMMER schreiben, MQTT-Publish nur
+            // wenn ein Handle da ist.
             let mqtt = state.mqtt.lock().await;
-            if let Some(handle) = mqtt.as_ref() {
-                let effective_arr = divert_to
-                    .as_deref()
-                    .unwrap_or(&flight.arr_airport);
-                let mut pirep_payload = build_pirep_payload(
-                    &flight,
-                    &body,
-                    effective_arr,
-                    &flight.arr_airport,
-                );
-                // v0.12.5 (LE2): Divert-Begründung auch ins MQTT-Payload
-                // (Audit) — der Recorder/JSONL hält damit den Grund.
-                pirep_payload.notes = divert_reason.clone();
-                let pirep_payload_json = serde_json::to_value(&pirep_payload)
-                    .unwrap_or(serde_json::Value::Null);
-                finalize_filed_pirep(
-                    &app,
-                    handle,
-                    &flight.pirep_id,
-                    pirep_payload_json,
-                );
-            }
+            finalize_filed_pirep(
+                &app,
+                mqtt.as_ref(),
+                &flight.pirep_id,
+                pirep_payload_json,
+            );
         }
         // v0.12.5 (LE7-QS): LandingFinalized-JSONL-Event auch beim Divert
         // — vor dem Upload, damit es im hochgeladenen Logfile steht.
@@ -11625,32 +11634,28 @@ async fn flight_end(
             // fire-and-forget. Monitor uses this to mark a flight
             // as completed in the live history.
             {
+                // v0.12.5 (Spec v0.12.5-divert-and-manual-pirep.md, LE1):
+                // Der MQTT-PirepPayload-Build ist in `build_pirep_payload`
+                // ausgelagert — eine Stelle für alle Filing-Pfade. Normaler
+                // /file-Pfad: effective == planned == flight.arr_airport.
+                let pirep_payload = build_pirep_payload(
+                    &flight,
+                    &body,
+                    &flight.arr_airport,
+                    &flight.arr_airport,
+                );
+                // v0.12.5 (LE1): JSONL-Forensik + MQTT-Publish über den
+                // zentralen Finalizer — gleicher Pfad wie Divert/Manual/Queue.
+                // QS-P1: JSONL-PirepFiled IMMER, MQTT nur bei Handle.
+                let pirep_payload_json = serde_json::to_value(&pirep_payload)
+                    .unwrap_or(serde_json::Value::Null);
                 let mqtt = state.mqtt.lock().await;
-                if let Some(handle) = mqtt.as_ref() {
-                    // Snapshot the rich stats inside a short-lived scope so
-                    // the std::sync::MutexGuard doesn't span any later
-                    // .await — same pattern as the touchdown publish.
-                    // v0.12.5 (Spec v0.12.5-divert-and-manual-pirep.md, LE1):
-                    // Der MQTT-PirepPayload-Build ist in `build_pirep_payload`
-                    // ausgelagert — eine Stelle für alle Filing-Pfade. Normaler
-                    // /file-Pfad: effective == planned == flight.arr_airport.
-                    let pirep_payload = build_pirep_payload(
-                        &flight,
-                        &body,
-                        &flight.arr_airport,
-                        &flight.arr_airport,
-                    );
-                    // v0.12.5 (LE1): JSONL-Forensik + MQTT-Publish über den
-                    // zentralen Finalizer — gleicher Pfad wie Divert/Manual/Queue.
-                    let pirep_payload_json = serde_json::to_value(&pirep_payload)
-                        .unwrap_or(serde_json::Value::Null);
-                    finalize_filed_pirep(
-                        &app,
-                        handle,
-                        &flight.pirep_id,
-                        pirep_payload_json,
-                    );
-                }
+                finalize_filed_pirep(
+                    &app,
+                    mqtt.as_ref(),
+                    &flight.pirep_id,
+                    pirep_payload_json,
+                );
             }
             // v0.7.0 — emit landing_finalized mit dem finalen Score
             // (Spec docs/spec/touchdown-forensics-v2.md Sektion 7.2).
@@ -12315,36 +12320,35 @@ async fn flight_end_manual(
             // schon uppercase im `body.arr_airport_id`), sonst das
             // geplante Ziel.
             {
+                let effective_arr = body
+                    .arr_airport_id
+                    .as_deref()
+                    .unwrap_or(&flight.arr_airport);
+                let mut pirep_payload = build_pirep_payload(
+                    &flight,
+                    &body,
+                    effective_arr,
+                    &flight.arr_airport,
+                );
+                // v0.12.5 (LE2-QS): die manuelle Begründung auch ins
+                // MQTT-Payload (notes) — konsistent mit dem
+                // `flight_end`-Divert-Pfad, damit Recorder/JSONL den
+                // Grund im Audit haben.
+                pirep_payload.notes = reason
+                    .as_deref()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                let pirep_payload_json =
+                    serde_json::to_value(&pirep_payload)
+                        .unwrap_or(serde_json::Value::Null);
+                // QS-P1: JSONL-PirepFiled IMMER, MQTT nur bei Handle.
                 let mqtt = state.mqtt.lock().await;
-                if let Some(handle) = mqtt.as_ref() {
-                    let effective_arr = body
-                        .arr_airport_id
-                        .as_deref()
-                        .unwrap_or(&flight.arr_airport);
-                    let mut pirep_payload = build_pirep_payload(
-                        &flight,
-                        &body,
-                        effective_arr,
-                        &flight.arr_airport,
-                    );
-                    // v0.12.5 (LE2-QS): die manuelle Begründung auch ins
-                    // MQTT-Payload (notes) — konsistent mit dem
-                    // `flight_end`-Divert-Pfad, damit Recorder/JSONL den
-                    // Grund im Audit haben.
-                    pirep_payload.notes = reason
-                        .as_deref()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty());
-                    let pirep_payload_json =
-                        serde_json::to_value(&pirep_payload)
-                            .unwrap_or(serde_json::Value::Null);
-                    finalize_filed_pirep(
-                        &app,
-                        handle,
-                        &flight.pirep_id,
-                        pirep_payload_json,
-                    );
-                }
+                finalize_filed_pirep(
+                    &app,
+                    mqtt.as_ref(),
+                    &flight.pirep_id,
+                    pirep_payload_json,
+                );
             }
             // v0.12.5 (LE7-QS): LandingFinalized-JSONL-Event auch beim
             // manuellen File — vor dem Upload.

@@ -71,6 +71,13 @@ export function CockpitView({
       .catch(() => {});
   };
 
+  /** v0.12.5 (LE7): a real PIREP concluded — show the outcome banner and
+   *  clear the flight. Shared by `ActiveFlightPanel` and `DivertBanner`. */
+  const handleFiledSuccess = (outcome: FlightEndOutcome) => {
+    setEndNotice(outcome);
+    setActiveFlight(null);
+  };
+
   // Auto-file the PIREP once the FSM marks the flight as Arrived
   // (BlocksOn + 30 s + engines off + parking brake set). Most pilots
   // wouldn't manually click "Flug beenden" if the app could just
@@ -248,7 +255,7 @@ export function CockpitView({
       {!activeFlight.was_just_resumed && (
         <DivertBanner
           activeFlight={activeFlight}
-          onResolved={() => setActiveFlight(null)}
+          onFiledSuccess={handleFiledSuccess}
         />
       )}
 
@@ -266,13 +273,7 @@ export function CockpitView({
         <ActiveFlightPanel
           info={activeFlight}
           simSnapshot={simSnapshot}
-          onFiledSuccess={(outcome) => {
-            // v0.12.5 (LE7): ein PIREP wurde wirklich abgeschlossen
-            // (gefilt / filed_instead / queued) ODER der Flug verworfen.
-            // Banner-Typ entscheidet `noticeBanner` anhand des Outcome.
-            setEndNotice(outcome);
-            setActiveFlight(null);
-          }}
+          onFiledSuccess={handleFiledSuccess}
           onRefreshActiveFlight={refreshActiveFlight}
         />
       )}
