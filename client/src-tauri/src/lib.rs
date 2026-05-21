@@ -9622,6 +9622,33 @@ fn finalize_filed_pirep(
     handle.pirep_json(pirep_payload_json);
 }
 
+/// v0.12.5 (LE7-QS): emittiert das `LandingFinalized`-JSONL-Event mit dem
+/// finalen V/S + Score (Spec touchdown-forensics-v2 §7.2). Gerufen vom
+/// Normal-, Divert- UND Manual-Filing-Pfad — alle drei haben eine lebende
+/// `ActiveFlight`. Der PIREP-Queue-Worker kann es nicht: dort ist die
+/// `ActiveFlight` beim Queueing bereits verworfen.
+fn emit_landing_finalized(app: &AppHandle, flight: &ActiveFlight) {
+    // Aktuell: nimmt den letzten validated TD-Score (single-shot, bis
+    // Multi-TD-Episodes voll integriert sind).
+    let (final_vs, final_score_label) = {
+        let s = flight.stats.lock().expect("flight stats");
+        (
+            s.landing_rate_fpm,
+            s.landing_score.map(|sc| format!("{:?}", sc)),
+        )
+    };
+    record_event(
+        app,
+        &flight.pirep_id,
+        &FlightLogEvent::LandingFinalized {
+            timestamp: Utc::now(),
+            forensics_version: touchdown_v2::FORENSICS_VERSION,
+            final_vs_fpm: final_vs,
+            final_score: final_score_label,
+        },
+    );
+}
+
 /// v0.7.1 Helper: actual_trip_burn = takeoff_fuel - landing_fuel
 /// (1:1 wie in build_landing_record line 6527-6530). Damit sub_scores
 /// + aggregate_master_score den gleichen Wert nutzen.
@@ -11509,6 +11536,9 @@ async fn flight_end(
                 );
             }
         }
+        // v0.12.5 (LE7-QS): LandingFinalized-JSONL-Event auch beim Divert
+        // — vor dem Upload, damit es im hochgeladenen Logfile steht.
+        emit_landing_finalized(&app, &flight);
         // v0.12.5 (Bug A): Forensik-Upload auch beim Divert — gzip +
         // POST des kompletten JSONL-Logfiles an aeroacars-live.
         spawn_flight_log_upload(&app, flight.pirep_id.clone());
@@ -11624,22 +11654,9 @@ async fn flight_end(
             }
             // v0.7.0 — emit landing_finalized mit dem finalen Score
             // (Spec docs/spec/touchdown-forensics-v2.md Sektion 7.2).
-            // Aktuell: nimmt den letzten validated TD-Score (single-shot
-            // bis Multi-TD-Episodes voll integriert sind in v0.7.1+).
-            let (final_vs, final_score_label) = {
-                let s = flight.stats.lock().expect("flight stats");
-                (s.landing_rate_fpm, s.landing_score.map(|sc| format!("{:?}", sc)))
-            };
-            record_event(
-                &app,
-                &flight.pirep_id,
-                &FlightLogEvent::LandingFinalized {
-                    timestamp: Utc::now(),
-                    forensics_version: touchdown_v2::FORENSICS_VERSION,
-                    final_vs_fpm: final_vs,
-                    final_score: final_score_label,
-                },
-            );
+            // v0.12.5 (LE7-QS): in `emit_landing_finalized` ausgelagert —
+            // Divert- und Manual-Pfad rufen denselben Helper.
+            emit_landing_finalized(&app, &flight);
             // v0.5.23 Forensik-Upload: gzip + POST des kompletten JSONL-
             // Logfiles an aeroacars-live damit der VA-Owner ohne den
             // Piloten zu kontaktieren das vollstaendige SimSnapshot-Log
@@ -12304,12 +12321,20 @@ async fn flight_end_manual(
                         .arr_airport_id
                         .as_deref()
                         .unwrap_or(&flight.arr_airport);
-                    let pirep_payload = build_pirep_payload(
+                    let mut pirep_payload = build_pirep_payload(
                         &flight,
                         &body,
                         effective_arr,
                         &flight.arr_airport,
                     );
+                    // v0.12.5 (LE2-QS): die manuelle Begründung auch ins
+                    // MQTT-Payload (notes) — konsistent mit dem
+                    // `flight_end`-Divert-Pfad, damit Recorder/JSONL den
+                    // Grund im Audit haben.
+                    pirep_payload.notes = reason
+                        .as_deref()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty());
                     let pirep_payload_json =
                         serde_json::to_value(&pirep_payload)
                             .unwrap_or(serde_json::Value::Null);
@@ -12321,6 +12346,9 @@ async fn flight_end_manual(
                     );
                 }
             }
+            // v0.12.5 (LE7-QS): LandingFinalized-JSONL-Event auch beim
+            // manuellen File — vor dem Upload.
+            emit_landing_finalized(&app, &flight);
             // v0.12.5 (Bug B): Forensik-Upload auch beim manuellen File.
             spawn_flight_log_upload(&app, flight.pirep_id.clone());
             // v0.7.19 (QS-R1 Finding 1) + QS-R2 Finding 2 (flight_id fallback).
