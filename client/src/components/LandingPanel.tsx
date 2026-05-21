@@ -661,6 +661,23 @@ function VsCurveChart({ profile }: { profile: LandingProfilePoint[] }) {
         fill="rgba(255,255,255,0.02)"
         stroke="rgba(255,255,255,0.15)"
       />
+      {/* v0.12.7: Gridlines (alle ~200 fpm) damit der Pilot die
+          Sinkrate ablesen kann — vorher nur vMax/vMin/0-Label. */}
+      {(() => {
+        const step = vRange > 1400 ? 400 : 200;
+        const lines: number[] = [];
+        for (let v = Math.ceil(vMin / step) * step; v <= vMax; v += step) {
+          if (v !== 0) lines.push(v);
+        }
+        return lines.map((v) => (
+          <g key={v}>
+            <line x1={pad.left} x2={pad.left + innerW} y1={y(v)} y2={y(v)}
+                  stroke="rgba(255,255,255,0.07)" strokeWidth="1" />
+            <text x={pad.left - 4} y={y(v) + 3} textAnchor="end" fontSize="9"
+                  fill="#64748b">{v}</text>
+          </g>
+        ));
+      })()}
       {/* Zero line */}
       <line
         x1={pad.left}
