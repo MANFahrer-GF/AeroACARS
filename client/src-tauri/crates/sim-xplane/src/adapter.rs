@@ -624,11 +624,19 @@ fn run_listener(shared: Arc<AdapterShared>) {
 /// we back off further so we don't spam.
 fn run_web_api_poller(shared: Arc<AdapterShared>) {
     let client = WebApiClient::new();
-    let mut id_cache = DrefIdCache::default();
     let mut consecutive_failures: u32 = 0;
     let mut last_logged_path: Option<String> = None;
     tracing::info!("X-Plane Web API poller started");
     while !shared.stop.load(Ordering::SeqCst) {
+        // Dataref-IDs JEDEN Poll frisch auflösen. X-Plane baut beim
+        // Flugzeugwechsel seine Dataref-Registry neu auf — eine prozess-
+        // weit gecachte numerische ID wird dann stale: `read_string`
+        // liefert dann den alten Flieger oder schlägt fehl, sodass der
+        // Poller die alte `AircraftInfo` behält und der Fliegerwechsel
+        // unbemerkt bleibt. Re-Discovery = 6 Loopback-GETs alle 30 s,
+        // vernachlässigbar; dafür wird ein Aircraft-Swap zuverlässig
+        // erkannt. (Pilot-Befund Michel, X-Plane 12.)
+        let mut id_cache = DrefIdCache::default();
         match client.fetch_aircraft_info(&mut id_cache) {
             Ok(info) => {
                 if consecutive_failures > 0 {
