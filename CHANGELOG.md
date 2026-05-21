@@ -4,6 +4,14 @@ Alle nennenswerten Änderungen an AeroACARS. Format: lose an [Keep a Changelog](
 
 ---
 
+## [v0.12.4] — 2026-05-21 · Score-Konsistenz Pilot-App ↔ VPS-Web
+
+Spec: `docs/spec/v0.12.4-score-consistency.md` (QS R0→R10).
+
+Derselbe Flug zeigte im VPS-Web unter „Reports" und in der „Landung-Analyse" **unterschiedliche Landungs-Scores**. Ursache: die Webapp rechnete die Sub-Scores server-seitig aus den Touchdown-Roh-Feldern **neu**, statt die vom Pilot-Client gelieferten PIREP-Werte zu nutzen — und einige dieser Roh-Felder waren stale oder falsch berechnet. Ab v0.12.4 ist der Pilot-Client die **einzige Score-Wahrheit**: er scort beim Flug, der Recorder propagiert `landing_score` + `sub_scores` von der PIREP- auf die verknüpfte Touchdown-Zeile, und die Webapp **rendert nur noch** — kein Recompute mehr in fünf Ansichten. Damit zeigen Pilot-App und VA-Web garantiert denselben Score.
+
+Begleitend zwei Touchdown-Roh-Feld-Bugs gefixt: (1) `rollout_distance_m` wurde im `touchdown_complete`-Event ~9 s nach dem Aufsetzen als Mitten-im-Ausrollen-Snapshot eingefroren — der Client schickt jetzt nach der Rollout-Finalisierung (~40 kt / Heading-Turn-off) ein nachgelagertes `touchdown_rollout_finalized`-Event mit dem finalen Wert; (2) `fuel_efficiency_pct` im MQTT-Touchdown-Payload rechnete fälschlich aus Block-Fuel (inkl. Taxi-out) statt aus dem Trip-Burn (`takeoff − landing`). Die Rollout-Finalisierungs-Logik selbst (40 kt / 30° Turn-off / 5 kt Floor) war bereits korrekt — nur veraltete Code-Kommentare wurden mitkorrigiert. Neu außerdem: die diskrete Landungs-Kategorie (Smooth/Acceptable/Firm/Hard/Severe) erscheint in den Webapp-Listen wieder als kleine Wort-Pill. Für Piloten ändert sich an der Bewertung **nichts** — der Score-Algorithmus ist unverändert; v0.12.4 stellt nur die Konsistenz zwischen Pilot-App und VA-Web her.
+
 ## [v0.12.3] — 2026-05-21 · Landing-G FOQA-konforme Messung
 
 Spec: `docs/spec/v0.12.3-landing-g-foqa-measurement.md` (SPEC ACCEPTED, QS R0→R5).
