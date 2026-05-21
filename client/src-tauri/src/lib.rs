@@ -10958,12 +10958,27 @@ async fn flight_end(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     divert_to: Option<String>,
+    divert_reason: Option<String>,
     accident_decision: Option<String>,
 ) -> Result<(), UiError> {
     let divert_to = divert_to
         .as_deref()
         .map(|s| s.trim().to_uppercase())
         .filter(|s| !s.is_empty());
+    // v0.12.5 (Spec v0.12.5-divert-and-manual-pirep.md, LE2): die
+    // Divert-Begründung. Pflichtfeld sobald `divert_to` gesetzt ist —
+    // das Bestätigungs-Modal validiert frontend-seitig, dieser Guard
+    // schließt den API-Contract serverseitig ab.
+    let divert_reason = divert_reason
+        .as_deref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if divert_to.is_some() && divert_reason.is_none() {
+        return Err(UiError::new(
+            "divert_reason_required",
+            "a divert PIREP requires a reason",
+        ));
+    }
 
     // v0.7.19 GAF-707 (QS-R1 Finding 3): Pilot-Override-Pfad. Werte:
     // - None / "auto"        → Stats-Werte bleiben unveraendert.
@@ -11210,10 +11225,16 @@ async fn flight_end(
         // immediately on the PIREP page that this wasn't a normal
         // arrival. Format mirrors what most ACARS clients write
         // ("DIVERT: <planned> → <actual>") so admins can grep.
+        // v0.12.5 (LE2): die Pflicht-Begründung steht direkt unter dem
+        // Banner — ein Audit-Eintrag pro Divert für den VA-Admin.
         if let Some(actual) = divert_to.as_deref() {
+            let reason_line = divert_reason
+                .as_deref()
+                .map(|r| format!("Reason: {r}\n\n"))
+                .unwrap_or_default();
             notes = format!(
-                "DIVERT: {} → {} (planned destination not reached)\n\n{}",
-                arr_icao, actual, notes
+                "DIVERT: {} → {} (planned destination not reached)\n{}\n{}",
+                arr_icao, actual, reason_line, notes
             );
         }
 
@@ -11403,12 +11424,15 @@ async fn flight_end(
                 let effective_arr = divert_to
                     .as_deref()
                     .unwrap_or(&flight.arr_airport);
-                let pirep_payload = build_pirep_payload(
+                let mut pirep_payload = build_pirep_payload(
                     &flight,
                     &body,
                     effective_arr,
                     &flight.arr_airport,
                 );
+                // v0.12.5 (LE2): Divert-Begründung auch ins MQTT-Payload
+                // (Audit) — der Recorder/JSONL hält damit den Grund.
+                pirep_payload.notes = divert_reason.clone();
                 let pirep_payload_json = serde_json::to_value(&pirep_payload)
                     .unwrap_or(serde_json::Value::Null);
                 finalize_filed_pirep(
@@ -12300,7 +12324,7 @@ async fn flight_cancel(
         //                             Kein Auto-Cancel mehr (R2-1 UX-Fix).
         //                             active_flight bleibt erhalten, Pilot
         //                             entscheidet im Frontend nochmal.
-        match flight_end(app.clone(), state.clone(), None, None).await {
+        match flight_end(app.clone(), state.clone(), None, None, None).await {
             Ok(()) => {
                 // flight_end hat erfolgreich gefilt ODER gequeued. In
                 // beiden Faellen ist active_flight geleert, der PIREP

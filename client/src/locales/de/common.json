@@ -912,7 +912,14 @@
     "manual_modal_submit": "Mit diesem Ziel einreichen",
     "manual_modal_cancel": "Abbrechen",
     "submitting": "Sende…",
-    "filed_ok": "PIREP eingereicht — {{from}} → {{to}}"
+    "filed_ok": "PIREP eingereicht — {{from}} → {{to}}",
+    "confirm_title": "Divert bestätigen",
+    "confirm_body": "Du reichst diesen Flug als Divert nach <strong>{{actual}}</strong> ein — statt zum geplanten Ziel <strong>{{planned}}</strong>.",
+    "confirm_reason_label": "Grund für den Divert (Pflichtfeld)",
+    "confirm_reason_placeholder": "z.B. Wetter am Ziel unter Minimum, technisches Problem, ATC-Umleitung…",
+    "confirm_reason_required": "Bitte gib einen Grund an, bevor du den Divert einreichst.",
+    "confirm_submit": "Divert einreichen",
+    "confirm_cancel": "Abbrechen"
   },
   "phpvms_status": {
     "title": "phpVMS API",

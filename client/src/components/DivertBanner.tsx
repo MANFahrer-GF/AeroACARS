@@ -16,9 +16,14 @@ interface Props {
  * landed somewhere other than the planned `arr_airport`. Three
  * actions:
  *
- *   1. Submit as divert to <actual>     → flight_end({ divert_to: actual })
+ *   1. Submit as divert to <actual>     → divert-confirm modal (LE2)
  *   2. Submit as planned (no override)  → flight_end()
- *   3. Override: pick another airport   → opens manual modal w/ ICAO entry
+ *   3. Override: pick another airport   → manual modal → divert-confirm
+ *
+ * v0.12.5 (LE2): filing as a divert never calls `flight_end` directly
+ * anymore — it always routes through `DivertConfirmModal`, which makes
+ * the pilot enter a mandatory reason. Only "submit as planned" (= not a
+ * divert) still files straight away.
  *
  * Hidden when `activeFlight.divert_hint` is null. Hidden also when
  * the flight is still in resume-banner-pending state (was_just_resumed)
@@ -30,6 +35,8 @@ export function DivertBanner({ activeFlight, onResolved }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showOverride, setShowOverride] = useState(false);
+  /** ICAO the pilot chose to file as a divert — drives the confirm modal. */
+  const [confirmDivertTo, setConfirmDivertTo] = useState<string | null>(null);
 
   const hint = activeFlight.divert_hint;
   if (!hint) return null;
@@ -55,11 +62,12 @@ export function DivertBanner({ activeFlight, onResolved }: Props) {
       ? "divert.body_nearest"
       : "divert.body_unknown";
 
-  const fileWith = async (divertTo: string | null) => {
+  /** "Submit as planned" — NOT a divert, files immediately. */
+  const fileAsPlanned = async () => {
     setBusy(true);
     setError(null);
     try {
-      await invoke("flight_end", divertTo ? { divertTo } : {});
+      await invoke("flight_end", {});
       onResolved();
     } catch (e) {
       setError(String(e));
@@ -97,20 +105,20 @@ export function DivertBanner({ activeFlight, onResolved }: Props) {
               type="button"
               className="button button--primary"
               disabled={busy}
-              onClick={() => void fileWith(hint.actual_icao)}
+              onClick={() => setConfirmDivertTo(hint.actual_icao)}
             >
-              {busy
-                ? t("divert.submitting")
-                : t("divert.submit_as_divert", { actual: hint.actual_icao })}
+              {t("divert.submit_as_divert", { actual: hint.actual_icao })}
             </button>
           )}
           <button
             type="button"
             className="button"
             disabled={busy}
-            onClick={() => void fileWith(null)}
+            onClick={() => void fileAsPlanned()}
           >
-            {t("divert.submit_as_planned", { planned: hint.planned_arr_icao })}
+            {busy
+              ? t("divert.submitting")
+              : t("divert.submit_as_planned", { planned: hint.planned_arr_icao })}
           </button>
           <button
             type="button"
@@ -126,10 +134,132 @@ export function DivertBanner({ activeFlight, onResolved }: Props) {
         <ManualDivertModal
           activeFlight={activeFlight}
           onClose={() => setShowOverride(false)}
+          onPicked={(icao) => {
+            setShowOverride(false);
+            setConfirmDivertTo(icao);
+          }}
+        />
+      )}
+      {confirmDivertTo && (
+        <DivertConfirmModal
+          divertTo={confirmDivertTo}
+          plannedIcao={hint.planned_arr_icao}
+          onClose={() => setConfirmDivertTo(null)}
           onResolved={onResolved}
         />
       )}
     </>
+  );
+}
+
+interface ConfirmProps {
+  /** Actual landing ICAO the flight will be filed as a divert to. */
+  divertTo: string;
+  /** The originally planned arrival ICAO — shown for context. */
+  plannedIcao: string;
+  onClose: () => void;
+  onResolved: () => void;
+}
+
+/**
+ * v0.12.5 (LE2): confirmation modal for filing a flight as a divert.
+ * Pre-fills the actual landing airport and forces the pilot to enter a
+ * mandatory reason — without a reason the divert cannot be filed
+ * (frontend guard here, backend guard in `flight_end`). The reason is
+ * passed to `flight_end` as `divertReason` and ends up both in the
+ * phpVMS notes and the MQTT PIREP payload for audit.
+ */
+function DivertConfirmModal({
+  divertTo,
+  plannedIcao,
+  onClose,
+  onResolved,
+}: ConfirmProps) {
+  const { t } = useTranslation();
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const trimmedReason = reason.trim();
+  const canSubmit = trimmedReason.length > 0 && !busy;
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await invoke("flight_end", {
+        divertTo,
+        divertReason: trimmedReason,
+      });
+      onResolved();
+      onClose();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h2 className="modal__title">{t("divert.confirm_title")}</h2>
+        <p className="modal__hint">
+          <Trans
+            i18nKey="divert.confirm_body"
+            values={{ actual: divertTo, planned: plannedIcao }}
+            components={{ strong: <strong /> }}
+          />
+        </p>
+
+        <div className="divert-confirm__reason">
+          <label htmlFor="divert-reason">
+            {t("divert.confirm_reason_label")}
+          </label>
+          <textarea
+            id="divert-reason"
+            rows={3}
+            placeholder={t("divert.confirm_reason_placeholder")}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            disabled={busy}
+            autoFocus
+          />
+          {trimmedReason.length === 0 && (
+            <p className="modal__hint modal__hint--muted">
+              {t("divert.confirm_reason_required")}
+            </p>
+          )}
+        </div>
+
+        {error && <p className="modal__error">{error}</p>}
+
+        <div className="modal__footer">
+          <button
+            type="button"
+            className="button"
+            onClick={onClose}
+            disabled={busy}
+          >
+            {t("divert.confirm_cancel")}
+          </button>
+          <button
+            type="button"
+            className="button button--primary"
+            disabled={!canSubmit}
+            onClick={() => void submit()}
+          >
+            {busy ? t("divert.submitting") : t("divert.confirm_submit")}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -144,7 +274,8 @@ interface NearestAirport {
 interface ManualProps {
   activeFlight: ActiveFlightInfo;
   onClose: () => void;
-  onResolved: () => void;
+  /** Called with the chosen ICAO — parent opens the divert-confirm modal. */
+  onPicked: (icao: string) => void;
 }
 
 /**
@@ -154,12 +285,15 @@ interface ManualProps {
  * runway::find_nearest_airports against the touchdown coords) and
  * lets the pilot pick one — or type a custom ICAO if their actual
  * landing field isn't in the runways table.
+ *
+ * v0.12.5 (LE2): picking an airport no longer files directly — it
+ * hands the ICAO back to `DivertBanner`, which then opens the
+ * mandatory-reason confirmation modal.
  */
-function ManualDivertModal({ activeFlight, onClose, onResolved }: ManualProps) {
+function ManualDivertModal({ activeFlight, onClose, onPicked }: ManualProps) {
   const { t } = useTranslation();
   const [nearby, setNearby] = useState<NearestAirport[] | null>(null);
   const [custom, setCustom] = useState("");
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -177,18 +311,8 @@ function ManualDivertModal({ activeFlight, onClose, onResolved }: ManualProps) {
     })();
   }, []);
 
-  const file = async (icao: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await invoke("flight_end", { divertTo: icao.trim().toUpperCase() });
-      onResolved();
-      onClose();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
+  const pick = (icao: string) => {
+    onPicked(icao.trim().toUpperCase());
   };
 
   const fmtKm = (m: number): string => `${(m / 1000).toFixed(1)} km`;
@@ -219,8 +343,7 @@ function ManualDivertModal({ activeFlight, onClose, onResolved }: ManualProps) {
                   <button
                     type="button"
                     className="divert-modal__candidate"
-                    disabled={busy}
-                    onClick={() => void file(a.icao)}
+                    onClick={() => pick(a.icao)}
                   >
                     <span className="divert-modal__icao">{a.icao}</span>
                     <span className="divert-modal__meta">
@@ -245,22 +368,21 @@ function ManualDivertModal({ activeFlight, onClose, onResolved }: ManualProps) {
             placeholder={t("divert.manual_modal_custom_placeholder")}
             value={custom}
             onChange={(e) => setCustom(e.target.value)}
-            disabled={busy}
           />
           <button
             type="button"
             className="button button--primary"
-            disabled={busy || custom.trim().length < 3}
-            onClick={() => void file(custom)}
+            disabled={custom.trim().length < 3}
+            onClick={() => pick(custom)}
           >
-            {busy ? t("divert.submitting") : t("divert.manual_modal_submit")}
+            {t("divert.manual_modal_submit")}
           </button>
         </div>
 
         {error && <p className="modal__error">{error}</p>}
 
         <div className="modal__footer">
-          <button type="button" className="button" onClick={onClose} disabled={busy}>
+          <button type="button" className="button" onClick={onClose}>
             {t("divert.manual_modal_cancel")}
           </button>
         </div>

@@ -3776,6 +3776,34 @@ input:disabled {
   text-transform: uppercase;
 }
 
+/* v0.12.5 (LE2): Divert-Bestätigungs-Modal — Pflicht-Begründungsfeld. */
+.divert-confirm__reason {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.divert-confirm__reason label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.divert-confirm__reason textarea {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 6px;
+  font: inherit;
+  resize: vertical;
+  min-height: 56px;
+}
+
+.modal__hint--muted {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
 /* ===== Active flight ===== */
 
 .active-flight {

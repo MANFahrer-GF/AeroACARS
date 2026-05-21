@@ -912,7 +912,14 @@
     "manual_modal_submit": "Invia con questa destinazione",
     "manual_modal_cancel": "Annulla",
     "submitting": "Invio…",
-    "filed_ok": "PIREP inviato — {{from}} → {{to}}"
+    "filed_ok": "PIREP inviato — {{from}} → {{to}}",
+    "confirm_title": "Conferma dirottamento",
+    "confirm_body": "Stai inviando questo volo come dirottamento su <strong>{{actual}}</strong> invece della destinazione prevista <strong>{{planned}}</strong>.",
+    "confirm_reason_label": "Motivo del dirottamento (obbligatorio)",
+    "confirm_reason_placeholder": "es. meteo a destinazione sotto i minimi, problema tecnico, rerouting ATC…",
+    "confirm_reason_required": "Inserisci un motivo prima di inviare il dirottamento.",
+    "confirm_submit": "Invia dirottamento",
+    "confirm_cancel": "Annulla"
   },
   "phpvms_status": {
     "title": "API phpVMS",
