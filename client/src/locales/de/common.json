@@ -58,7 +58,7 @@
     "col_score": "Score",
     "touchdown": "Touchdown",
     "vs_curve": "Sinkraten-Kurve",
-    "vs_curve_section": "Touchdown-Nahaufnahme (50 Hz) — inkl. 3 s nach TD",
+    "vs_curve_section": "Touchdown-Nahaufnahme (50 Hz) — inkl. 10 s nach TD",
     "on_ground": "am Boden",
     "airborne": "in der Luft",
     "landing_rate": "Sinkrate",

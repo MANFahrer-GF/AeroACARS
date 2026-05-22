@@ -610,7 +610,9 @@ function VsCurveChart({ profile }: { profile: LandingProfilePoint[] }) {
   const [hover, setHover] = useState<number | null>(null);
 
   // Auf das vereinbarte Fenster −4 s … +3 s beschneiden.
-  const data = profile.filter((p) => p.t_ms >= -4000 && p.t_ms <= 3000);
+  // v0.12.8: Fenster −4 s … +10 s nach TD (zeigt, was der 50-Hz-Buffer
+  // hergibt — typischerweise ~8 s post-TD).
+  const data = profile.filter((p) => p.t_ms >= -4000 && p.t_ms <= 10000);
   if (data.length < 5) {
     return (
       <div className="landing-chart landing-chart--empty">

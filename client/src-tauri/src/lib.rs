@@ -10098,7 +10098,10 @@ where
     //
     // Post-TD-Samples bekommen positive t_ms (TD-Edge ist t_ms = 0),
     // gleicher Berechnungs-Schema wie Pre-TD (siehe lib.rs:16539).
-    const POST_TD_PROFILE_MS: i32 = 3000;
+    // v0.12.8: Post-TD-Fenster fürs V/S-Profil auf 10 s erweitert
+    // (Pilot-Wunsch). Filtert den `post_touchdown_buffer`; ist der
+    // kürzer, werden eben nur die vorhandenen Sekunden gezeigt.
+    const POST_TD_PROFILE_MS: i32 = 10_000;
     let mut touchdown_profile: Vec<LandingProfilePoint> = stats
         .touchdown_profile
         .iter()
