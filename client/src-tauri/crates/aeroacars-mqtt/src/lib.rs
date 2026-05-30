@@ -18,7 +18,11 @@
 //!
 //! `position`/`phase`/`status` are published with `retain=true` so a fresh
 //! Monitor subscriber sees the latest known state immediately on connect.
-//! `touchdown`/`pirep` are events, not state, and use `retain=false`.
+//! `touchdown`/`pirep` are end-of-flight events; they are ALSO published with
+//! `retain=true` so a recorder that is briefly offline at the moment of publish
+//! still picks up the last one on reconnect. Re-delivery is safe because ingest
+//! is idempotent (pireps UNIQUE(pirep_id); touchdown ts-window dedup); the next
+//! flight on the pilot topic overwrites the retained value.
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -1391,9 +1395,20 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                 Cmd::Phase(p) => publish_json(&pub_client, &cfg_for_pub.topic("phase"), &p, QoS::AtLeastOnce, true).await,
                 Cmd::Block(p) => publish_json(&pub_client, &cfg_for_pub.topic("block"), &p, QoS::AtLeastOnce, true).await,
                 Cmd::Takeoff(p) => publish_json(&pub_client, &cfg_for_pub.topic("takeoff"), &p, QoS::AtLeastOnce, true).await,
-                Cmd::Touchdown(p) => publish_json(&pub_client, &cfg_for_pub.topic("touchdown"), &p, QoS::AtLeastOnce, false).await,
-                Cmd::Pirep(p) => publish_json(&pub_client, &cfg_for_pub.topic("pirep"), &p, QoS::AtLeastOnce, false).await,
-                Cmd::PirepJson(p) => publish_json(&pub_client, &cfg_for_pub.topic("pirep"), &p, QoS::AtLeastOnce, false).await,
+                // retain=true (was false): the end-of-flight touchdown + pirep
+                // are each published exactly once. If the recorder is offline at
+                // that instant (restart, mosquitto reload, network blip) a
+                // non-retained QoS-1 message is lost for good — that is how ~7
+                // historical flights ended up with a touchdown but no linked
+                // PIREP (→ empty score breakdown). Retaining the last one per
+                // pilot lets a reconnecting recorder pick it up. Re-delivery is
+                // safe: ingest is idempotent (pireps UNIQUE(pirep_id); touchdown
+                // dedups on va/pilot/ts±2s/vs±5fpm with a stable ts), so a
+                // retained replay matches the existing row instead of
+                // duplicating. The next flight on the topic overwrites it.
+                Cmd::Touchdown(p) => publish_json(&pub_client, &cfg_for_pub.topic("touchdown"), &p, QoS::AtLeastOnce, true).await,
+                Cmd::Pirep(p) => publish_json(&pub_client, &cfg_for_pub.topic("pirep"), &p, QoS::AtLeastOnce, true).await,
+                Cmd::PirepJson(p) => publish_json(&pub_client, &cfg_for_pub.topic("pirep"), &p, QoS::AtLeastOnce, true).await,
                 Cmd::TouchdownAccidentOverride(p) => publish_json(
                     &pub_client,
                     &cfg_for_pub.topic("touchdown_accident_override"),
