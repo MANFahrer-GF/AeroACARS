@@ -1211,6 +1211,28 @@ function WindCompass({
 // Fläche statt im festen −1500…+100-Band zu verschwinden), Gridlines +
 // 0-Linie, Soll-Band −600…−900, gestrichelte Stabilitätsgrenze −1000,
 // Hover-Tooltip. Spec: Pilot-Befund Michel/GSG.
+// v0.13.15: Fractional sample-index for the touchdown line (t_ms = 0).
+// Approach samples carry the (up to ~0.5 s late) streamer-tick timestamp,
+// so the first sample with t_ms >= 0 frequently sat ~0.5 s AFTER the real
+// touchdown — the old `findIndex(t_ms >= 0)` placed the red line there,
+// right of the curve's end. We instead interpolate between the last pre-TD
+// and the first post-TD sample by time, returning a fractional index that
+// the (index-linear) x() maps to the exact t = 0 position. Falls back to
+// the last sample when no post-TD sample exists. Exported for unit tests.
+export function approachTdLineIndex(
+  samples: { t_ms?: number | null }[],
+): number {
+  if (samples.length === 0) return 0;
+  const firstPos = samples.findIndex((s) => s.t_ms != null && s.t_ms >= 0);
+  if (firstPos < 0) return samples.length - 1; // kein Post-TD-Sample
+  if (firstPos === 0) return 0;
+  const tPrev = samples[firstPos - 1]!.t_ms ?? 0;
+  const tCur = samples[firstPos]!.t_ms ?? 0;
+  const span = tCur - tPrev;
+  const frac = span > 0 ? Math.min(1, Math.max(0, (0 - tPrev) / span)) : 0;
+  return firstPos - 1 + frac;
+}
+
 function ApproachChart({ samples }: { samples: ApproachSample[] }) {
   const { t } = useTranslation();
   const [hover, setHover] = useState<number | null>(null);
@@ -1269,9 +1291,10 @@ function ApproachChart({ samples }: { samples: ApproachSample[] }) {
   const gridVals: number[] = [];
   for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) gridVals.push(v);
 
-  let tdIdx = samples.findIndex((s) => (s.t_ms ?? -1) >= 0);
-  if (tdIdx < 0) tdIdx = samples.length - 1;
-  const tdX = x(tdIdx);
+  // v0.13.15 (Pilot-Befund ViolonC 2026-05-31): TD-Linie EXAKT bei
+  // t_ms = 0 setzen. x() ist linear im Sample-Index, also liefert der
+  // (ggf. gebrochene) Index aus approachTdLineIndex die korrekte X-Position.
+  const tdX = x(approachTdLineIndex(samples));
   const tdNearRight = tdX > pad.left + innerW - 70;
 
   const bandTop = clampY(-600);
@@ -1593,7 +1616,7 @@ function ScoreBreakdown({
                   marginBottom: 0,
                   paddingLeft: 14,
                   fontSize: "0.72rem",
-                  color: "rgba(255,255,255,0.6)",
+                  color: "var(--text-muted)",
                   listStyle: "'▸ '",
                 }}
               >
@@ -3526,7 +3549,7 @@ function LoadsheetScore({ record }: { record: LoadsheetScoreInput }) {
                   border: `1px solid ${pillColor}50`,
                   fontSize: "0.78rem",
                   fontVariantNumeric: "tabular-nums",
-                  color: "rgba(255,255,255,0.95)",
+                  color: "var(--text)",
                   boxShadow: `0 0 0 1px ${pillColor}10`,
                 }}
               >
@@ -3606,8 +3629,8 @@ function ComparisonTable({
   return (
     <div
       style={{
-        background: "rgba(255,255,255,0.02)",
-        border: "1px solid rgba(255,255,255,0.06)",
+        background: "color-mix(in srgb, var(--text) 2%, transparent)",
+        border: "1px solid color-mix(in srgb, var(--text) 8%, transparent)",
         borderRadius: 12,
         padding: "14px 16px 8px 16px",
       }}
@@ -3682,14 +3705,16 @@ function ComparisonTable({
                 alignItems: "baseline",
                 padding: "12px 4px",
                 borderTop:
-                  idx === 0 ? "none" : "1px solid rgba(255,255,255,0.06)",
+                  idx === 0
+                    ? "none"
+                    : "1px solid color-mix(in srgb, var(--text) 8%, transparent)",
                 fontVariantNumeric: "tabular-nums",
               }}
             >
               {/* Label */}
               <span
                 style={{
-                  color: "rgba(255,255,255,0.78)",
+                  color: "var(--text-muted)",
                   fontSize: "0.86rem",
                   fontWeight: 500,
                   gridRow: "1 / 2",
@@ -3704,7 +3729,7 @@ function ComparisonTable({
                   textAlign: "right",
                   fontSize: "1.02rem",
                   fontWeight: 600,
-                  color: "rgba(255,255,255,0.96)",
+                  color: "var(--text)",
                   letterSpacing: "-0.01em",
                   gridRow: "1 / 2",
                 }}
@@ -3753,10 +3778,10 @@ function ComparisonTable({
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  <span style={{ color: "rgba(255,255,255,0.45)", marginRight: 4 }}>
+                  <span style={{ color: "var(--text-muted)", marginRight: 4 }}>
                     Plan
                   </span>
-                  <span style={{ color: "rgba(255,255,255,0.72)", fontWeight: 500 }}>
+                  <span style={{ color: "var(--text)", fontWeight: 500 }}>
                     {fmtNumber(r.soll!, 0, "kg")}
                   </span>
                 </span>

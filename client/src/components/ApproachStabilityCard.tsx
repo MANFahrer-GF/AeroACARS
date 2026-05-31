@@ -326,10 +326,10 @@ export function ApproachStabilityCard(props: Props) {
         style={{
           marginTop: 10,
           padding: "4px 10px",
-          background: "rgba(255,255,255,0.06)",
-          border: "1px solid rgba(255,255,255,0.18)",
+          background: "color-mix(in srgb, var(--text) 6%, transparent)",
+          border: "1px solid color-mix(in srgb, var(--text) 18%, transparent)",
           borderRadius: 4,
-          color: "rgba(255,255,255,0.85)",
+          color: "var(--text)",
           fontSize: "0.74rem",
           cursor: "pointer",
           alignSelf: "flex-start",

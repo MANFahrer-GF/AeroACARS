@@ -251,19 +251,13 @@ export function SettingsPanel({
         <p className="settings__hint">{t("settings.description")}</p>
       </header>
 
-      {/* Tab-Bar — drei Pills, aktive in Akzent-Farbe */}
+      {/* Tab-Bar — Pills, aktive in Akzent-Farbe. v0.13.15: theme-aware
+          CSS-Klassen statt hart verdrahteter Dark-Mode-Inline-Farben (waren
+          im Light-Mode weiß-auf-weiß = unlesbar, Pilot-Befund). */}
       <div
+        className="settings__tabs"
         role="tablist"
         aria-label={t("settings.title") ?? "Settings"}
-        style={{
-          display: "flex",
-          gap: 6,
-          marginBottom: 8,
-          padding: 4,
-          background: "rgba(255,255,255,0.04)",
-          border: "1px solid rgba(255,255,255,0.08)",
-          borderRadius: 10,
-        }}
       >
         {(["simulator", "required", "extras", "plugins", "tech"] as SettingsTab[]).map((tab) => {
           const isActive = activeTab === tab;
@@ -274,24 +268,7 @@ export function SettingsPanel({
               role="tab"
               aria-selected={isActive}
               onClick={() => switchTab(tab)}
-              style={{
-                flex: 1,
-                padding: "8px 14px",
-                background: isActive
-                  ? "rgba(59,130,246,0.18)"
-                  : "transparent",
-                border: isActive
-                  ? "1px solid rgba(59,130,246,0.45)"
-                  : "1px solid transparent",
-                borderRadius: 7,
-                color: isActive
-                  ? "rgba(255,255,255,0.96)"
-                  : "rgba(255,255,255,0.65)",
-                fontSize: "0.88rem",
-                fontWeight: isActive ? 600 : 500,
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-              }}
+              className={`settings__tab${isActive ? " settings__tab--active" : ""}`}
             >
               {t(`settings.tabs.${tab}`)}
             </button>

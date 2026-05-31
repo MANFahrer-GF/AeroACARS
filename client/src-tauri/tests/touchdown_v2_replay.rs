@@ -627,3 +627,28 @@ fn pto705_msfs_touch_and_go_two_low_level() {
         ep0.low_level_touch_count
     );
 }
+
+// ---- v0.13.15: Post-TD-Capture-Spanne (Real-Daten-Guard) ----------------
+//
+// Discord-Befund ViolonC (WFL1505, 2026-05-31): Touchdown-Nahaufnahme zeigt
+// "inkl. 10 s nach TD", aber nur ~0.5 s. Ursache lag NICHT in der Erfassung
+// (das touchdown_window-Event enthaelt die vollen ~10 s), sondern im Anzeige-
+// Pfad. Dieser Test fixiert die Erfassung an echten Flugdaten: das
+// touchdown_window des realen DLH304-Fluges (10.05.26) muss ~10 s ueber den
+// TD-Edge hinausreichen. Bricht das, ist die 10-s-Erfassung selbst kaputt.
+#[test]
+fn dlh304_touchdown_window_captures_full_post_td_span() {
+    let fx = load_fixture("dlh304.jsonl.gz");
+    let edge = fx.edge_at.expect("dlh304 hat ein edge_at");
+    let post_span_s = fx
+        .samples
+        .iter()
+        .map(|s| (s.at - edge).num_milliseconds())
+        .max()
+        .expect("samples vorhanden") as f64
+        / 1000.0;
+    assert!(
+        post_span_s >= 8.0,
+        "Post-TD-Window sollte ~10 s erfassen, war nur +{post_span_s:.2} s"
+    );
+}

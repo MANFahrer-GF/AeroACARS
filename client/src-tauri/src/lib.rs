@@ -10069,6 +10069,61 @@ fn finalize_landing_rate(
 /// when there's no usable touchdown captured (e.g. PIREP filed before
 /// landing — synthetic / bug). The record is the immutable snapshot we
 /// show in the Landing tab; once written it never changes.
+/// v0.13.15: maximales Post-TD-Fenster fuer das angezeigte V/S-Profil.
+const POST_TD_PROFILE_MS: i32 = 10_000;
+
+/// v0.13.15 (Pilot-Befund ViolonC 2026-05-31): Baut das anzuzeigende V/S-
+/// Touchdown-Profil. `snapshot_profile` ist der aus dem 5-s-snapshot_buffer
+/// eingefrorene Teil (Pre-TD + die paar 100 ms, die der ggf. verspaetete
+/// Streamer-Tick noch mitnahm). `post_buffer` enthaelt dieselben Samples PLUS
+/// bis zu 10 s Post-TD (vom 50-Hz-Sampler). Wir uebernehmen den snapshot-Teil
+/// 1:1 und haengen aus dem post_buffer nur die Samples NACH dem bereits
+/// vorhandenen Maximum an (bis `post_td_profile_ms`), damit es im Overlap
+/// keine Doppel-Punkte gibt. Vorher wurde der post_buffer beim Dump geleert
+/// → der Record sah nur die ~0.5 s aus dem snapshot, obwohl der Chart
+/// "inkl. 10 s nach TD" anzeigt (Discord-Befund WFL1505, 2026-05-31).
+fn merge_touchdown_profile(
+    snapshot_profile: &[TouchdownProfilePoint],
+    post_buffer: &std::collections::VecDeque<TelemetrySample>,
+    touchdown_at: DateTime<Utc>,
+    post_td_profile_ms: i32,
+) -> Vec<LandingProfilePoint> {
+    let mut profile: Vec<LandingProfilePoint> = snapshot_profile
+        .iter()
+        .map(|p| LandingProfilePoint {
+            t_ms: p.t_ms,
+            vs_fpm: p.vs_fpm,
+            g_force: p.g_force,
+            agl_ft: p.agl_ft,
+            on_ground: p.on_ground,
+            heading_true_deg: p.heading_true_deg,
+            groundspeed_kt: p.groundspeed_kt,
+            indicated_airspeed_kt: p.indicated_airspeed_kt,
+            pitch_deg: p.pitch_deg,
+            bank_deg: p.bank_deg,
+        })
+        .collect();
+    let existing_max_t_ms = profile.iter().map(|p| p.t_ms).max().unwrap_or(0);
+    for s in post_buffer.iter() {
+        let t_ms = (s.at - touchdown_at).num_milliseconds() as i32;
+        if t_ms > existing_max_t_ms && t_ms <= post_td_profile_ms {
+            profile.push(LandingProfilePoint {
+                t_ms,
+                vs_fpm: s.vs_fpm,
+                g_force: s.g_force,
+                agl_ft: s.agl_ft,
+                on_ground: s.on_ground,
+                heading_true_deg: s.heading_true_deg,
+                groundspeed_kt: s.groundspeed_kt,
+                indicated_airspeed_kt: s.indicated_airspeed_kt,
+                pitch_deg: s.pitch_deg,
+                bank_deg: s.bank_deg,
+            });
+        }
+    }
+    profile
+}
+
 fn build_landing_record<F>(
     flight: &ActiveFlight,
     stats: &FlightStats,
@@ -10183,40 +10238,12 @@ where
     // v0.12.8: Post-TD-Fenster fürs V/S-Profil auf 10 s erweitert
     // (Pilot-Wunsch). Filtert den `post_touchdown_buffer`; ist der
     // kürzer, werden eben nur die vorhandenen Sekunden gezeigt.
-    const POST_TD_PROFILE_MS: i32 = 10_000;
-    let mut touchdown_profile: Vec<LandingProfilePoint> = stats
-        .touchdown_profile
-        .iter()
-        .map(|p| LandingProfilePoint {
-            t_ms: p.t_ms,
-            vs_fpm: p.vs_fpm,
-            g_force: p.g_force,
-            agl_ft: p.agl_ft,
-            on_ground: p.on_ground,
-            heading_true_deg: p.heading_true_deg,
-            groundspeed_kt: p.groundspeed_kt,
-            indicated_airspeed_kt: p.indicated_airspeed_kt,
-            pitch_deg: p.pitch_deg,
-            bank_deg: p.bank_deg,
-        })
-        .collect();
-    for s in stats.post_touchdown_buffer.iter() {
-        let t_ms = (s.at - touchdown_at).num_milliseconds() as i32;
-        if t_ms > 0 && t_ms <= POST_TD_PROFILE_MS {
-            touchdown_profile.push(LandingProfilePoint {
-                t_ms,
-                vs_fpm: s.vs_fpm,
-                g_force: s.g_force,
-                agl_ft: s.agl_ft,
-                on_ground: s.on_ground,
-                heading_true_deg: s.heading_true_deg,
-                groundspeed_kt: s.groundspeed_kt,
-                indicated_airspeed_kt: s.indicated_airspeed_kt,
-                pitch_deg: s.pitch_deg,
-                bank_deg: s.bank_deg,
-            });
-        }
-    }
+    let touchdown_profile = merge_touchdown_profile(
+        &stats.touchdown_profile,
+        &stats.post_touchdown_buffer,
+        touchdown_at,
+        POST_TD_PROFILE_MS,
+    );
 
     // v0.7.1 Phase 1 (P1.1-D + P1.3-C): erweitert um t_ms, agl_ft,
     // is_scored_gate, is_flare. Werte aus dem ApproachBufferSample +
@@ -14694,9 +14721,21 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     }
                     let elapsed_ms = (now - td_at).num_milliseconds();
                     if elapsed_ms >= TOUCHDOWN_POST_WINDOW_MS {
+                        // v0.13.15 (Pilot-Befund ViolonC 2026-05-31): NICHT
+                        // mehr `drain(..)` — der Buffer muss erhalten bleiben,
+                        // damit der spaeter beim PIREP-Filing gebaute
+                        // LandingRecord (build_landing_record) die vollen 10 s
+                        // Post-TD ins touchdown_profile uebernehmen kann. Vorher
+                        // war der Buffer hier geleert → der Record sah nur die
+                        // ~0.5 s aus dem 5-s-snapshot_buffer, obwohl der Chart
+                        // "inkl. 10 s nach TD" verspricht. Der `already_dumped`-
+                        // Guard oben verhindert weiteres Anhaengen; geleert wird
+                        // der Buffer erst beim Flug-Reset (open_touchdown_capture
+                        // _window / End-of-Flight).
                         let samples: Vec<TouchdownWindowSample> = stats
                             .post_touchdown_buffer
-                            .drain(..)
+                            .iter()
+                            .copied()
                             .map(TouchdownWindowSample::from)
                             .collect();
                         stats.touchdown_window_dumped_at = Some(now);
@@ -25598,6 +25637,108 @@ mod v0_12_5_divert_marker_tests {
             divert_payload_markers("EDDF", "EDDF", Some(&h));
         assert_eq!(divert, Some(true));
         assert_eq!(to, None);
+    }
+}
+
+// ---- v0.13.15: touchdown-profile merge regression tests -----------------
+//
+// Discord-Befund ViolonC (WFL1505, 2026-05-31): der Touchdown-Nahaufnahme-
+// Chart zeigt "inkl. 10 s nach TD", aber nur ~0.5 s. Ursache: das angezeigte
+// Profil kam nur aus dem 5-s-snapshot_buffer (Streamer-Tick, endete ~0.5 s
+// nach TD); der post_touchdown_buffer mit den vollen 10 s wurde beim Dump
+// geleert, bevor build_landing_record ihn las. Fix: Buffer behalten +
+// merge_touchdown_profile haengt die Post-TD-Samples dedupliziert an.
+#[cfg(test)]
+mod merge_touchdown_profile_tests {
+    use super::*;
+    use chrono::TimeZone;
+    use std::collections::VecDeque;
+
+    fn td() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 5, 31, 10, 40, 1).unwrap()
+    }
+
+    fn pp(t_ms: i32, vs_fpm: f32) -> TouchdownProfilePoint {
+        TouchdownProfilePoint {
+            t_ms,
+            vs_fpm,
+            g_force: 1.0,
+            agl_ft: 0.0,
+            on_ground: t_ms >= 0,
+            heading_true_deg: 0.0,
+            groundspeed_kt: 120.0,
+            indicated_airspeed_kt: 120.0,
+            pitch_deg: 0.0,
+            bank_deg: 0.0,
+        }
+    }
+
+    fn tel(t_ms: i64, vs_fpm: f32) -> TelemetrySample {
+        TelemetrySample {
+            at: td() + chrono::Duration::milliseconds(t_ms),
+            vs_fpm,
+            g_force: 1.0,
+            on_ground: t_ms >= 0,
+            agl_ft: 0.0,
+            heading_true_deg: 0.0,
+            groundspeed_kt: 120.0,
+            indicated_airspeed_kt: 120.0,
+            lat: 0.0,
+            lon: 0.0,
+            pitch_deg: 0.0,
+            bank_deg: 0.0,
+            gear_normal_force_n: None,
+            total_weight_kg: None,
+        }
+    }
+
+    /// Der Kern-Fix: snapshot endet bei +500 ms, post_buffer haelt -5000..+10000.
+    /// Ergebnis muss bis ~10 s reichen — und im Overlap (≤ +500) KEINE Dubletten.
+    #[test]
+    fn extends_to_ten_seconds_without_overlap_duplicates() {
+        // Snapshot: -4000..+500 in 500-ms-Schritten (Streamer-Tick-Slice).
+        let snapshot: Vec<TouchdownProfilePoint> =
+            (-8..=1).map(|i| pp(i * 500, -200.0)).collect();
+        assert_eq!(snapshot.last().unwrap().t_ms, 500);
+
+        // Post-Buffer: -5000..+10000 in 200-ms-Schritten (50-Hz-Sampler, hier
+        // grob), enthaelt also den Overlap-Bereich UND die vollen 10 s.
+        let mut post: VecDeque<TelemetrySample> = VecDeque::new();
+        let mut t = -5000_i64;
+        while t <= 10_000 {
+            post.push_back(tel(t, -150.0));
+            t += 200;
+        }
+
+        let merged = merge_touchdown_profile(&snapshot, &post, td(), POST_TD_PROFILE_MS);
+
+        // Reicht jetzt bis ~10 s statt nur +500 ms.
+        let max_t = merged.iter().map(|p| p.t_ms).max().unwrap();
+        assert!(max_t >= 9_800, "profile should extend to ~10 s, got {max_t} ms");
+
+        // Nichts ueber dem 10-s-Fenster.
+        assert!(merged.iter().all(|p| p.t_ms <= POST_TD_PROFILE_MS));
+
+        // Keine doppelten Zeitstempel (Overlap sauber dedupliziert).
+        let mut ts: Vec<i32> = merged.iter().map(|p| p.t_ms).collect();
+        let len_before = ts.len();
+        ts.sort_unstable();
+        ts.dedup();
+        assert_eq!(ts.len(), len_before, "no duplicate t_ms allowed in the overlap");
+
+        // Monoton steigend (Pre-TD-snapshot, dann angehaengte Post-TD-Samples).
+        assert!(merged.windows(2).all(|w| w[0].t_ms < w[1].t_ms));
+    }
+
+    /// Ohne post_buffer bleibt es beim snapshot — kein Absturz, keine Aenderung.
+    #[test]
+    fn empty_post_buffer_keeps_snapshot_only() {
+        let snapshot: Vec<TouchdownProfilePoint> =
+            (-8..=0).map(|i| pp(i * 500, -200.0)).collect();
+        let merged =
+            merge_touchdown_profile(&snapshot, &VecDeque::new(), td(), POST_TD_PROFILE_MS);
+        assert_eq!(merged.len(), snapshot.len());
+        assert_eq!(merged.last().unwrap().t_ms, 0);
     }
 }
 
