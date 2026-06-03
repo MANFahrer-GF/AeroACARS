@@ -15091,6 +15091,30 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
     });
 }
 
+/// v0.13.18: reine FOB-Ableitung des Fuel-Flow (testbar). Genutzt vom
+/// Position-Streamer als Fallback, wenn die Standard-SimVar `ENG FUEL FLOW PPH`
+/// nichts liefert (iniBuilds/Aerosoft A340-600 / ToLiss). `fuel_flow ≈ ΔFOB/Δt`.
+///
+/// - `None`, wenn `dt_secs` unter dem Glättungs-Fenster liegt → Aufrufer hält
+///   den letzten Wert (kein Flackern bei kurzen Ticks).
+/// - sonst die Rate in kg/h, geclampt auf `[0, FF_MAX]`: Tankung (negativ) oder
+///   ein FOB-Sprung (Dump/Reset) ergeben `0` statt eines unsinnigen Werts.
+fn derive_fuel_flow_kg_per_h(prev_fob_kg: f32, cur_fob_kg: f32, dt_secs: f32) -> Option<f32> {
+    const FF_DERIVE_WINDOW_S: f32 = 60.0;
+    // 4-Mot-Heavy verbrennt grob 5–8 t/h; > 30 t/h ist physikalisch unplausibel.
+    const FF_MAX_KG_PER_H: f32 = 30_000.0;
+    if dt_secs < FF_DERIVE_WINDOW_S {
+        return None;
+    }
+    let dt_h = dt_secs / 3600.0;
+    let rate = (prev_fob_kg - cur_fob_kg) / dt_h;
+    Some(if rate.is_finite() && (0.0..=FF_MAX_KG_PER_H).contains(&rate) {
+        rate
+    } else {
+        0.0
+    })
+}
+
 fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Client) {
     if flight
         .streamer_spawned
@@ -15135,6 +15159,19 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // re-published der erste Tick einmal idempotent (Recorder-Patch ist
         // idempotent + touchdown-scharf), siehe LE7 Punkt 5.
         let mut last_published_rollout_ts: Option<i64> = None;
+        // v0.13.18: FOB-abgeleiteter Fuel-Flow-Fallback. Manche Addons
+        // (iniBuilds/Aerosoft A340-600, ToLiss-Engine-Modell) treiben die
+        // Standard-SimVar `ENG FUEL FLOW PPH` NICHT → `fuel_flow_kg_per_h`
+        // bleibt None, obwohl Sprit verbrannt wird (Live IRM1140/IBE778). Der
+        // Tankinhalt (FOB) läuft aber korrekt runter, also leiten wir die Rate
+        // daraus ab: fuel_flow ≈ ΔFOB / Δt, neu berechnet über ein ~60-s-
+        // Fenster (glättet FOB-Rauschen) und dazwischen gehalten. Loop-lokal,
+        // kein FlightStats/Resume-Touch. Greift NUR wenn die direkte SimVar
+        // fehlt → kein Regress. Reine Live-Map-/Telemetrie-Anzeige (der
+        // Gesamt-Verbrauch wird ohnehin aus dem FOB-Delta gerechnet).
+        let mut ff_last_fob_kg: Option<f32> = None;
+        let mut ff_last_fob_at: Option<std::time::Instant> = None;
+        let mut ff_derived_kg_per_h: Option<f32> = None;
         loop {
             let current_phase = {
                 let stats = flight.stats.lock().expect("flight stats");
@@ -15533,7 +15570,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
 
             // Wenn weder pausiert noch frischer Snapshot da, einfach weiter
             // warten — bis zum Threshold poll'n wir geduldig.
-            let Some(snap) = snapshot else {
+            let Some(mut snap) = snapshot else {
                 tracing::debug!(
                     pirep_id = %flight.pirep_id,
                     "no sim snapshot yet — waiting (will pause after {}s)",
@@ -15541,6 +15578,39 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 );
                 continue;
             };
+
+            // v0.13.18: Fuel-Flow-Fallback aus dem FOB-Verlauf (siehe loop-
+            // lokale ff_*-Deklaration oben). Direkt nach dem snap-Binding, damit
+            // ALLE nachgelagerten Verbraucher (phpVMS-Position-Payload, MQTT-
+            // Live-Map) den abgeleiteten Wert sehen.
+            if snap.fuel_flow_kg_per_h.is_none() {
+                let now_i = std::time::Instant::now();
+                match (ff_last_fob_kg, ff_last_fob_at) {
+                    (Some(prev_fob), Some(prev_at)) => {
+                        let dt_secs = now_i.duration_since(prev_at).as_secs_f32();
+                        // Nur über ein volles Fenster neu rechnen (None = noch
+                        // zu kurz → letzten abgeleiteten Wert weiter halten).
+                        if let Some(rate) =
+                            derive_fuel_flow_kg_per_h(prev_fob, snap.fuel_total_kg, dt_secs)
+                        {
+                            ff_derived_kg_per_h = Some(rate);
+                            ff_last_fob_kg = Some(snap.fuel_total_kg);
+                            ff_last_fob_at = Some(now_i);
+                        }
+                    }
+                    _ => {
+                        // Erste Baseline setzen (noch kein abgeleiteter Wert).
+                        ff_last_fob_kg = Some(snap.fuel_total_kg);
+                        ff_last_fob_at = Some(now_i);
+                    }
+                }
+                snap.fuel_flow_kg_per_h = ff_derived_kg_per_h;
+            } else {
+                // Direkte SimVar liefert → Baseline frischhalten, NICHT ableiten.
+                ff_last_fob_kg = Some(snap.fuel_total_kg);
+                ff_last_fob_at = Some(std::time::Instant::now());
+                ff_derived_kg_per_h = None;
+            }
 
             // Snapshot the current phase BEFORE stepping so we can pass
             // the from→to pair to the recorder when it changes.
@@ -24436,6 +24506,24 @@ mod aircraft_alias_tests {
         assert!(!rescue(P::Climb, false, 5000.0, false));
         assert!(!rescue(P::Cruise, false, 38000.0, false));
         assert!(!rescue(P::Approach, false, 2000.0, false));
+    }
+
+    /// v0.13.18: FOB-abgeleiteter Fuel-Flow-Fallback (Aerosoft/iniBuilds
+    /// A340-600 — `ENG FUEL FLOW PPH`-SimVar tot, FOB läuft aber runter).
+    #[test]
+    fn fuel_flow_derived_from_fob_delta() {
+        use super::derive_fuel_flow_kg_per_h as ff;
+        // Fenster zu kurz → None (Aufrufer hält den letzten Wert, kein Flackern).
+        assert_eq!(ff(30_000.0, 29_950.0, 30.0), None);
+        // 100 kg in 60 s → 6000 kg/h.
+        let r = ff(30_000.0, 29_900.0, 60.0).unwrap();
+        assert!((r - 6000.0).abs() < 1.0, "erwartete ~6000, war {r}");
+        // Tankung (FOB steigt) → 0, NICHT negativ.
+        assert_eq!(ff(29_900.0, 30_500.0, 60.0), Some(0.0));
+        // Unplausibler Sprung (Dump/Reset) → 0 (geclampt auf FF_MAX).
+        assert_eq!(ff(50_000.0, 0.0, 60.0), Some(0.0));
+        // Triebwerke aus (kein Burn) → 0.
+        assert_eq!(ff(20_000.0, 20_000.0, 90.0), Some(0.0));
     }
 
     // ─── v0.7.3 Cargo-Aliases (Spec §4 HOHE-Prio Arbeitsliste) ──────
