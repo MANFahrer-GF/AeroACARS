@@ -782,6 +782,31 @@ fn aircraft_types_match_with_extra(
     false
 }
 
+/// v0.13.16: zentraler, alias-bewusster Aircraft-Typ-Vergleich. Genutzt
+/// sowohl vom `flight_start`/`flight_start_manual`-Mismatch-Gate ALS AUCH
+/// vom Auto-Start-Watcher (Option C), damit beide identisch entscheiden —
+/// inklusive VPS-Aliase und Title-Substring-Fallback.
+///
+/// **Permissiv, wenn eine Seite unbekannt ist** (analog zum Gate, das nur
+/// bei beidseitig bekanntem Typ blockt): kann der erwartete oder der Sim-
+/// Typ nicht aufgelöst werden ⇒ kein Block (`true`). So verhindert ein
+/// fehlgeschlagener `get_aircraft` im Watcher-Vorabcheck nie einen
+/// legitimen Start.
+fn aircraft_type_matches_sim(
+    expected_icao: Option<&str>,
+    sim_icao: Option<&str>,
+    sim_title: &str,
+    vps_aliases: &HashMap<String, Vec<String>>,
+) -> bool {
+    match (expected_icao, sim_icao) {
+        (Some(expected), Some(actual)) => {
+            aircraft_types_match_with_extra(expected, actual, vps_aliases)
+                || title_mentions_icao_with_extra(sim_title, expected, vps_aliases)
+        }
+        _ => true,
+    }
+}
+
 /// Shared application state — wraps the currently-authenticated client (if any)
 /// and (on Windows) the MSFS adapter.
 /// Cap on retained activity-log entries. The frontend displays the most
@@ -7230,6 +7255,26 @@ async fn flight_start(
         }
     }
 
+    // v0.13.16: VPS-Aircraft-Aliase JETZT auffrischen — nebenläufig, damit
+    // ein vom VA-Admin frisch eingetragener Alias (z.B. E55P→PHENOM 300)
+    // schon auf DIESEN Startversuch wirkt statt erst nächste Session. Vorher
+    // wurden die Aliase nur lazy in `spawn_navdata_fetch` NACH dem Mismatch-
+    // Gate gezogen (und bei bereits gecachten Airports ganz übersprungen).
+    // Der Fetch überlappt mit get_bids/get_airport/get_aircraft unten → quasi
+    // keine Mehrlatenz; awaited direkt vor dem Gate. Best-effort + 5 s-Timeout:
+    // hängt den Start nie, bei Fehler/Timeout bleibt der vorhandene Cache gültig.
+    let alias_refresh = {
+        let app_aliases = app.clone();
+        let token = secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten();
+        tokio::spawn(async move {
+            let _ = tokio::time::timeout(
+                Duration::from_secs(5),
+                fetch_aircraft_aliases_into_state(app_aliases, None, token),
+            )
+            .await;
+        })
+    };
+
     let client = current_client(&state)?;
     let bids = client.get_bids().await?;
     let bid = bids
@@ -7324,6 +7369,10 @@ async fn flight_start(
         .unwrap_or("")
         .to_string();
     if let (Some(expected), Some(actual)) = (expected_icao.as_ref(), sim_icao.as_ref()) {
+        // v0.13.16: sicherstellen, dass der frische VPS-Alias-Pull (oben
+        // nebenläufig gestartet) abgeschlossen ist, BEVOR das Gate
+        // `aircraft_aliases_vps` liest.
+        let _ = alias_refresh.await;
         // v0.8.0: VPS-Aliases-Snapshot fuer alias-aware compare —
         // erlaubt VA-Admin pro Recorder neue Bid↔Sim-Alias-Paare zu
         // pflegen ohne Pilot-Client-Release.
@@ -7332,15 +7381,17 @@ async fn flight_start(
             .lock()
             .expect("aircraft_aliases_vps lock")
             .clone();
-        let title_supports_expected =
-            title_mentions_icao_with_extra(&sim_title, expected, &vps_aliases);
-        // Use alias-aware comparison so e.g. "A359" (ICAO) matches
-        // "A350-900" (sim long-form). See `aircraft_types_match`.
-        // Live bug 2026-05-04: Emirates UAE770 A359 bid blocked
-        // because sim loaded "A350-900 (No Cabin)" — same aircraft.
-        let types_match_loose =
-            aircraft_types_match_with_extra(expected, actual, &vps_aliases);
-        if !types_match_loose && !title_supports_expected {
+        // v0.13.16: alias-bewusster Vergleich über den gemeinsamen Helper
+        // (identisch zum Auto-Start-Watcher). Matcht z.B. "A359" (ICAO)
+        // gegen "A350-900" (Sim-Langform) und nutzt VPS-Aliase + Title-
+        // Substring-Fallback. Live bug 2026-05-04: Emirates UAE770 A359-Bid
+        // geblockt weil Sim "A350-900 (No Cabin)" lud — gleicher Flieger.
+        if !aircraft_type_matches_sim(
+            Some(expected.as_str()),
+            Some(actual.as_str()),
+            &sim_title,
+            &vps_aliases,
+        ) {
             let registration = expected_aircraft
                 .registration
                 .as_deref()
@@ -8188,6 +8239,22 @@ async fn flight_start_manual(
         }
     }
 
+    // v0.13.16: VPS-Aircraft-Aliase nebenläufig auffrischen (analog
+    // flight_start), damit ein frisch eingetragener Alias auf DIESEN
+    // VFR/Manual-Startversuch wirkt. Best-effort + 5 s-Timeout, awaited
+    // direkt vor dem Mismatch-Gate.
+    let alias_refresh = {
+        let app_aliases = app.clone();
+        let token = secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten();
+        tokio::spawn(async move {
+            let _ = tokio::time::timeout(
+                Duration::from_secs(5),
+                fetch_aircraft_aliases_into_state(app_aliases, None, token),
+            )
+            .await;
+        })
+    };
+
     let client = current_client(&state)?;
     let bids = client.get_bids().await?;
     let bid = bids
@@ -8261,16 +8328,20 @@ async fn flight_start_manual(
     // Frontend ein gelbes Banner mit "Trotzdem starten"-Button zeigt.
     // Beim zweiten Versuch mit acknowledge=true wird der Check übersprungen.
     if let (Some(expected), Some(actual)) = (expected_icao.as_ref(), sim_icao.as_ref()) {
+        // v0.13.16: frischen VPS-Alias-Pull abwarten, bevor das Gate liest.
+        let _ = alias_refresh.await;
         let vps_aliases = state
             .aircraft_aliases_vps
             .lock()
             .expect("aircraft_aliases_vps lock")
             .clone();
-        let title_supports_expected =
-            title_mentions_icao_with_extra(&sim_title, expected, &vps_aliases);
-        let types_match_loose =
-            aircraft_types_match_with_extra(expected, actual, &vps_aliases);
-        if !types_match_loose && !title_supports_expected {
+        // v0.13.16: alias-bewusster Vergleich über den gemeinsamen Helper.
+        if !aircraft_type_matches_sim(
+            Some(expected.as_str()),
+            Some(actual.as_str()),
+            &sim_title,
+            &vps_aliases,
+        ) {
             if !plan.acknowledge_aircraft_mismatch {
                 let registration = expected_aircraft
                     .registration
@@ -22121,6 +22192,13 @@ fn set_auto_file_enabled(enabled: bool, state: tauri::State<'_, AppState>) {
 fn spawn_auto_start_watcher(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         tracing::info!("auto-start watcher started");
+        // v0.13.16 (Option C): Cache der erwarteten Aircraft-ICAO pro
+        // phpVMS-aircraft_id. Der Typ eines Aircraft-Datensatzes ist
+        // immutabel, also genügt EIN get_aircraft je Flieger — kein
+        // API-Spam pro 3-s-Tick. Wird für den alias-bewussten Typ-
+        // Vorabcheck genutzt (nur wenn ein Bid in Reichweite + warm ist).
+        let mut expected_icao_cache: std::collections::HashMap<i64, Option<String>> =
+            std::collections::HashMap::new();
         loop {
             tokio::time::sleep(Duration::from_secs(AUTO_START_INTERVAL_SECS)).await;
             let state = app.state::<AppState>();
@@ -22296,6 +22374,11 @@ fn spawn_auto_start_watcher(app: AppHandle) {
             let mut any_match_attempt = false;
             let mut closest_nm: Option<f64> = None;
             let mut fired = false;
+            // v0.13.16 (Option C): falls ein Bid in Reichweite + warm ist,
+            // aber der Flugzeug-TYP nicht passt, merken wir das hier für den
+            // Post-Loop-Hint (statt blind flight_start zu feuern). Tuple =
+            // (flight_number, erwartete ICAO, Sim-ICAO).
+            let mut mismatch_info: Option<(String, String, String)> = None;
             for bid in &bids {
                 if Some(bid.id) == last_bid {
                     continue;
@@ -22311,6 +22394,78 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     closest_nm = Some(closest_nm.map_or(dist_nm, |c| c.min(dist_nm)));
                 }
                 if !bid_matches_current_state(bid, &snap) {
+                    continue;
+                }
+                // v0.13.16 (Option C): alias-bewusster Aircraft-Typ-Vorabcheck
+                // BEVOR wir feuern. Vorher feuerte der Watcher blind
+                // flight_start; bei Aircraft-Mismatch (z.B. Bid E55P vs Sim
+                // „PHENOM 300E", oder fehlender Alias) lief er in einen
+                // 3-s-Dauer-Retry, der den `flight_setup_in_progress`-Lock
+                // hielt und das manuelle „Trotzdem starten" des Piloten
+                // blockierte (Live-Report Michael K / DWW306, 2026-06-03).
+                // Jetzt prüfen wir den Typ vorab mit DERSELBEN Logik wie das
+                // flight_start-Gate (`aircraft_type_matches_sim`, inkl. VPS-
+                // Aliase) und feuern nur, wenn es matchen würde — selbst-
+                // korrigierend: lädt der Pilot das passende Flugzeug ODER
+                // wird der VPS-Alias ergänzt, matcht der nächste Tick und der
+                // Auto-Start greift automatisch. Echter Wetlease: Watcher
+                // überspringt korrekt, Lock bleibt frei fürs manuelle
+                // Override. get_aircraft nur hier (Bid in Reichweite + warm)
+                // und pro aircraft_id gecacht → kein Per-Tick-API-Spam.
+                let expected_icao: Option<String> = match bid
+                    .flight
+                    .simbrief
+                    .as_ref()
+                    .and_then(|sb| sb.aircraft_id)
+                {
+                    Some(ac_id) => match expected_icao_cache.get(&ac_id) {
+                        Some(cached) => cached.clone(),
+                        None => match client.get_aircraft(ac_id).await {
+                            Ok(ac) => {
+                                let v = ac
+                                    .icao
+                                    .as_ref()
+                                    .map(|s| s.trim().to_uppercase())
+                                    .filter(|s| !s.is_empty());
+                                expected_icao_cache.insert(ac_id, v.clone());
+                                v
+                            }
+                            // Auflösung fehlgeschlagen → NICHT cachen (nächster
+                            // Tick versucht's erneut), für jetzt permissiv.
+                            Err(e) => {
+                                tracing::debug!(
+                                    ?e,
+                                    ac_id,
+                                    "auto-start: get_aircraft für Typ-Vorabcheck fehlgeschlagen — permissiv"
+                                );
+                                None
+                            }
+                        },
+                    },
+                    None => None,
+                };
+                let sim_icao = snap.aircraft_icao.as_deref().and_then(clean_atc_model);
+                let sim_title = snap.aircraft_title.as_deref().unwrap_or("");
+                let aliases_snapshot = state
+                    .aircraft_aliases_vps
+                    .lock()
+                    .expect("aircraft_aliases_vps lock")
+                    .clone();
+                if !aircraft_type_matches_sim(
+                    expected_icao.as_deref(),
+                    sim_icao.as_deref(),
+                    sim_title,
+                    &aliases_snapshot,
+                ) {
+                    // Typ passt nicht → NICHT feuern, NICHT claimen. Der
+                    // Post-Loop-Hint meldet es (gedrosselt). Pilot übersteuert
+                    // manuell („Trotzdem starten") oder lädt das richtige
+                    // Flugzeug → nächster Tick matcht.
+                    mismatch_info = Some((
+                        bid.flight.flight_number.clone(),
+                        expected_icao.clone().unwrap_or_else(|| "?".to_string()),
+                        sim_icao.clone().unwrap_or_else(|| "?".to_string()),
+                    ));
                     continue;
                 }
                 // Match — fire flight_start.
@@ -22342,10 +22497,15 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 let bid_id = bid.id;
                 tauri::async_runtime::spawn(async move {
                     let state_ref = app_for_call.state::<AppState>();
-                    // v0.8.3 (#7): Auto-Start liefert kein acknowledge mit.
-                    // Bei Aircraft-Mismatch endet der Spawn mit
-                    // "aircraft_mismatch_warning" Error — Pilot muss im
-                    // Cockpit-UI manuell „Trotzdem starten" klicken.
+                    // v0.8.3 (#7): Auto-Start liefert kein acknowledge mit —
+                    // ein Aircraft-Mismatch ergäbe "aircraft_mismatch_warning"
+                    // und der Pilot müsste manuell „Trotzdem starten" klicken.
+                    // v0.13.16 (Option C): das fängt jetzt der Typ-Vorabcheck
+                    // oben ab — wir feuern nur bei passendem (oder nicht
+                    // auflösbarem) Typ. Ein Mismatch hier ist damit nur noch
+                    // ein Race-Edge (Sim-Flugzeug zwischen Vorabcheck und
+                    // flight_start gewechselt) → der Fehler-Pfad cleart
+                    // last_bid_id, der nächste Tick prüft erneut vorab.
                     if let Err(e) =
                         flight_start(app_for_call.clone(), state_ref, bid_id, None).await
                     {
@@ -22382,11 +22542,30 @@ fn spawn_auto_start_watcher(app: AppHandle) {
             // Departure-Airport. Vorher silent.
             if !fired {
                 let now = Utc::now();
-                let (reason_code, reason_msg) = if !any_match_attempt {
+                // v0.13.16 (Option C): ein Typ-Mismatch (Bid in Reichweite +
+                // warm, aber Flugzeug passt nicht) hat Vorrang vor dem
+                // generischen „kein Match"-Hint — sonst stünde irreführend
+                // „Kein Bid passt zur Position", obwohl die Position passt.
+                let (reason_code, title, reason_msg) = if let Some((flight_no, exp, act)) =
+                    &mismatch_info
+                {
+                    (
+                        "aircraft_mismatch",
+                        "Auto-Start: Flugzeug passt nicht",
+                        format!(
+                            "Bid {flight_no} erwartet {exp}, im Sim ist {act} geladen. \
+                             Auto-Start greift hier nicht — bitte manuell „Trotzdem starten\" \
+                             (Wetlease) oder das passende Flugzeug laden. Tipp: passt der Typ \
+                             eigentlich (nur anderer Name)? Dann fehlt ein Aircraft-Type-Alias \
+                             auf dem VPS.",
+                        ),
+                    )
+                } else if !any_match_attempt {
                     // Bid-Liste war zwar nicht leer, aber das einzige Bid
                     // ist bereits durchs last_bid_id-Lock blockiert.
                     (
                         "bid_already_started",
+                        "Auto-Start: kein Match",
                         format!(
                             "Bid {} wurde diese Session schon mal auto-gestartet. \
                              Neu-Starten via Manual-Toggle oder anderem Bid.",
@@ -22399,6 +22578,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                         .unwrap_or_else(|| "kein Departure-Airport in Reichweite".to_string());
                     (
                         "no_bid_match",
+                        "Auto-Start: kein Match",
                         format!(
                             "Kein Bid passt zur aktuellen Position ({}). Auto-Start \
                              greift nur am Stand des Departure-Airports.",
@@ -22420,7 +22600,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     log_activity_handle(
                         &app,
                         ActivityLevel::Info,
-                        "Auto-Start: kein Match".to_string(),
+                        title.to_string(),
                         Some(reason_msg),
                     );
                 }
@@ -24122,6 +24302,56 @@ mod aircraft_alias_tests {
         // hardcoded-only-Variante:
         let empty = std::collections::HashMap::new();
         assert!(!aircraft_types_match_with_extra("TBM9", "TBM-930", &empty));
+    }
+
+    /// v0.13.16: der gemeinsame `aircraft_type_matches_sim`-Helper, den
+    /// BEIDE — das flight_start-Gate UND der Auto-Start-Watcher (Option C)
+    /// — nutzen. Deckt den Live-Case 2026-06-03 ab (Michael K / DWW306,
+    /// D-CFHZ): Bid-ICAO "E55P" (Embraer Phenom 300) vs MSFS-ATC-Model
+    /// "PHENOM 300E". Ohne Alias ein Mismatch (Phenom fehlt in der
+    /// hardcoded Embraer-Sektion); mit einem VPS-Alias E55P→["PHENOM 300"]
+    /// muss es matchen — und zwar im Gate wie im Watcher identisch.
+    #[test]
+    fn aircraft_type_matches_sim_e55p_phenom_via_vps_alias() {
+        use super::aircraft_type_matches_sim;
+        let empty = std::collections::HashMap::new();
+        // Ohne Alias: echter Mismatch → Block (Gate zeigt Warnung,
+        // Watcher feuert nicht).
+        assert!(!aircraft_type_matches_sim(
+            Some("E55P"),
+            Some("PHENOM 300E"),
+            "Asobo Phenom 300E",
+            &empty,
+        ));
+        // Mit VPS-Alias E55P→"PHENOM 300": matcht (Substring greift auch
+        // für "PHENOM 300E").
+        let mut vps: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        vps.insert("E55P".to_string(), vec!["PHENOM 300".to_string()]);
+        assert!(aircraft_type_matches_sim(
+            Some("E55P"),
+            Some("PHENOM 300E"),
+            "Asobo Phenom 300E",
+            &vps,
+        ));
+    }
+
+    /// Permissiv, wenn eine Seite unbekannt ist (analog zum Gate, das nur
+    /// bei beidseitig bekanntem Typ blockt). Wichtig fürs Option-C-Watcher-
+    /// Verhalten: ein fehlgeschlagener get_aircraft (expected = None) darf
+    /// NIE einen legitimen Auto-Start blocken.
+    #[test]
+    fn aircraft_type_matches_sim_permissive_when_unknown() {
+        use super::aircraft_type_matches_sim;
+        let empty = std::collections::HashMap::new();
+        // expected unbekannt (get_aircraft fehlgeschlagen) → permissiv.
+        assert!(aircraft_type_matches_sim(None, Some("PHENOM 300E"), "x", &empty));
+        // sim-icao unbekannt (clean_atc_model lieferte None) → permissiv.
+        assert!(aircraft_type_matches_sim(Some("E55P"), None, "x", &empty));
+        // beide unbekannt → permissiv.
+        assert!(aircraft_type_matches_sim(None, None, "", &empty));
+        // Echter, beidseitig bekannter Mismatch bleibt blockiert.
+        assert!(!aircraft_type_matches_sim(Some("B738"), Some("A320"), "", &empty));
     }
 
     // ─── v0.7.3 Cargo-Aliases (Spec §4 HOHE-Prio Arbeitsliste) ──────
