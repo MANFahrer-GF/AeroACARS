@@ -16786,6 +16786,29 @@ fn engines_effectively_running(stats: &FlightStats, snap: &SimSnapshot, now: Dat
         .unwrap_or(false)
 }
 
+/// v0.13.17 Airborne-Rescue-Bedingung (rein, testbar). True, wenn die FSM in
+/// einer Boden-/Pre-Takeoff-Phase steht, das Flugzeug aber klar in der Luft
+/// ist (nicht am Boden + AGL > 500 ft) und der Tick kein Reload-/Slew-Glitch
+/// ist. Dann zwingt `step_flight` die Phase auf Climb — damit ein Addon mit
+/// kaputten Engine-SimVars (engines_running bleibt 0 → Pushback→Takeoff feuert
+/// nie) nicht den ganzen Flug in einer Boden-Phase festhaengt.
+fn phase_stuck_on_ground_while_airborne(
+    phase: FlightPhase,
+    on_ground: bool,
+    altitude_agl_ft: f64,
+    reload_gap_suspect: bool,
+) -> bool {
+    let ground_phase = matches!(
+        phase,
+        FlightPhase::Preflight
+            | FlightPhase::Boarding
+            | FlightPhase::Pushback
+            | FlightPhase::TaxiOut
+            | FlightPhase::TakeoffRoll
+    );
+    ground_phase && !on_ground && altitude_agl_ft > 500.0 && !reload_gap_suspect
+}
+
 fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase> {
     let mut stats = flight.stats.lock().expect("flight stats");
     let _now_for_state_update = Utc::now();
@@ -16998,6 +17021,43 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
         })
         .unwrap_or(false);
     stats.last_step_at = Some(now);
+
+    // v0.13.17: Airborne-Rescue-Sicherheitsnetz. Wenn die FSM in einer
+    // Boden-/Pre-Takeoff-Phase festhaengt, das Flugzeug aber nachweislich in
+    // der Luft ist (on_ground=false + AGL deutlich ueber Boden), zwingen wir
+    // die Phase auf Climb. Hintergrund: bei Addons mit kaputten Engine-
+    // SimVars (iniBuilds/Aerosoft A340-600 / MSFS 2024 — GENERAL ENG
+    // COMBUSTION konstant 0) feuerte der engines-abhaengige Pushback→TaxiOut
+    // →Takeoff-Pfad nie → die Phase blieb den GANZEN Flug auf Pushback →
+    // kein Approach/Landing → kein Touchdown/Score, PIREP ohne Landedaten
+    // (Live IRM1140/IBE778, 2026-06-03). Der N1-Fallback im Adapter behebt
+    // die Ursache; dieses Netz ist die addon-agnostische Garantie, dass NIE
+    // wieder ein ganzer Flug an einer stuck-on-ground-Phase scheitert.
+    // Greift NICHT im Normalfall: dort ist die Phase laengst Climb, bevor
+    // AGL 500 ft ueberschreitet. reload_gap_suspect schuetzt vor einem
+    // Slew-/Reload-Glitch-Tick.
+    if phase_stuck_on_ground_while_airborne(
+        prev_phase,
+        snap.on_ground,
+        snap.altitude_agl_ft,
+        reload_gap_suspect,
+    ) {
+        tracing::warn!(
+            ?prev_phase,
+            agl_ft = snap.altitude_agl_ft,
+            gs_kt = snap.groundspeed_kt,
+            "v0.13.17 airborne-rescue: phase stuck on ground while airborne — forcing Climb"
+        );
+        // Commit identisch zum normalen Ende von step_flight (siehe unten).
+        if should_reset_holding_pending(prev_phase, FlightPhase::Climb) {
+            stats.holding_pending_since = None;
+        }
+        stats.phase = FlightPhase::Climb;
+        stats.transitions.push((now, FlightPhase::Climb));
+        stats.was_on_ground = Some(snap.on_ground);
+        stats.was_parking_brake = Some(snap.parking_brake);
+        return Some(FlightPhase::Climb);
+    }
 
     // Match on a local Copy so the rest of the body is free to mutate `stats`.
     match prev_phase {
@@ -24352,6 +24412,30 @@ mod aircraft_alias_tests {
         assert!(aircraft_type_matches_sim(None, None, "", &empty));
         // Echter, beidseitig bekannter Mismatch bleibt blockiert.
         assert!(!aircraft_type_matches_sim(Some("B738"), Some("A320"), "", &empty));
+    }
+
+    /// v0.13.17: Airborne-Rescue-Bedingung. Greift NUR in Boden-/Pre-Takeoff-
+    /// Phasen + klar luftig + kein Reload-Glitch. Schuetzt vor dem „ganzer
+    /// Flug haengt in Pushback"-Bug (Live IRM1140/IBE778).
+    #[test]
+    fn airborne_rescue_fires_only_when_stuck_on_ground_and_airborne() {
+        use super::phase_stuck_on_ground_while_airborne as rescue;
+        use sim_core::FlightPhase as P;
+        // Stuck in Pushback aber bei FL (on_ground=false, AGL hoch) → rescue.
+        assert!(rescue(P::Pushback, false, 38000.0, false));
+        assert!(rescue(P::TaxiOut, false, 1200.0, false));
+        assert!(rescue(P::TakeoffRoll, false, 600.0, false));
+        // Am Boden → nie rescue.
+        assert!(!rescue(P::Pushback, true, 0.0, false));
+        // Niedrige AGL (Bounce/Glitch) → kein rescue.
+        assert!(!rescue(P::Pushback, false, 50.0, false));
+        // Reload-/Slew-Glitch-Tick → kein rescue, selbst wenn „luftig".
+        assert!(!rescue(P::Pushback, false, 38000.0, true));
+        // Normale Luft-Phasen sind keine Boden-Phasen → nie rescue
+        // (verhindert Eingriff in den Normalfluss).
+        assert!(!rescue(P::Climb, false, 5000.0, false));
+        assert!(!rescue(P::Cruise, false, 38000.0, false));
+        assert!(!rescue(P::Approach, false, 2000.0, false));
     }
 
     // ─── v0.7.3 Cargo-Aliases (Spec §4 HOHE-Prio Arbeitsliste) ──────

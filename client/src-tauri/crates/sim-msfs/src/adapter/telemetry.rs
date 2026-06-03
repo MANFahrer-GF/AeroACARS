@@ -100,6 +100,19 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::bool("GENERAL ENG COMBUSTION:2"),
     F::bool("GENERAL ENG COMBUSTION:3"),
     F::bool("GENERAL ENG COMBUSTION:4"),
+    // v0.13.17: N1 je Triebwerk als Fallback-Signal fuer engines_running.
+    // Hintergrund: manche Addons (iniBuilds/Aerosoft A340-600, MSFS 2024)
+    // liefern `GENERAL ENG COMBUSTION:N` konstant 0 obwohl die Triebwerke
+    // laufen — die Phase-FSM blieb dadurch den ganzen Flug in Pushback
+    // haengen (kein Touchdown/Score, PIREP ohne Landedaten — Live-Befund
+    // IRM1140/IBE778, 2026-06-03). N1 ist eine Standard-SimVar und bleibt
+    // bei diesen Addons gueltig (per Inspektor verifiziert: laufend ~0.66,
+    // aus 0). Wirkt addon-agnostisch. Reihenfolge MUSS mit dem pull_f64!-
+    // Block in `from_block` uebereinstimmen (Lockstep).
+    F::f64("TURB ENG N1:1", "Percent"),
+    F::f64("TURB ENG N1:2", "Percent"),
+    F::f64("TURB ENG N1:3", "Percent"),
+    F::f64("TURB ENG N1:4", "Percent"),
     // ---- Fuel & weight (SU2 EX1 + legacy fallback) ----
     F::f64("FUEL TOTAL QUANTITY WEIGHT EX1", "pounds"),
     F::f64("FUEL TOTAL QUANTITY WEIGHT", "pounds"),
@@ -394,6 +407,14 @@ pub struct Telemetry {
     pub eng2_firing: bool,
     pub eng3_firing: bool,
     pub eng4_firing: bool,
+    /// v0.13.17: N1 je Triebwerk (TURB ENG N1:1..4). Fallback-Signal fuer
+    /// `engines_running`, wenn `GENERAL ENG COMBUSTION` konstant 0 liefert
+    /// (siehe TELEMETRY_FIELDS-Kommentar). Skala je Addon 0-1 ODER 0-100;
+    /// die Auswertung normalisiert.
+    pub n1_pct_1: f64,
+    pub n1_pct_2: f64,
+    pub n1_pct_3: f64,
+    pub n1_pct_4: f64,
 
     pub fuel_total_lb_ex1: f64,
     pub fuel_total_lb_legacy: f64,
@@ -760,6 +781,12 @@ impl Telemetry {
         pull_i32!(t.eng2_firing);
         pull_i32!(t.eng3_firing);
         pull_i32!(t.eng4_firing);
+        // v0.13.17: N1 je Triebwerk — MUSS direkt nach den COMBUSTION-
+        // Feldern stehen (Lockstep mit TELEMETRY_FIELDS).
+        pull_f64!(t.n1_pct_1);
+        pull_f64!(t.n1_pct_2);
+        pull_f64!(t.n1_pct_3);
+        pull_f64!(t.n1_pct_4);
 
         pull_f64!(t.fuel_total_lb_ex1);
         pull_f64!(t.fuel_total_lb_legacy);
@@ -941,10 +968,35 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         (if t.fsr_phenom_eng1_knob > 0.5 { 1u8 } else { 0 })
             + (if t.fsr_phenom_eng2_knob > 0.5 { 1u8 } else { 0 })
     } else {
-        (t.eng1_firing as u8)
+        let combustion = (t.eng1_firing as u8)
             + (t.eng2_firing as u8)
             + (t.eng3_firing as u8)
-            + (t.eng4_firing as u8)
+            + (t.eng4_firing as u8);
+        if combustion > 0 {
+            combustion
+        } else {
+            // v0.13.17: `GENERAL ENG COMBUSTION` ist bei manchen Addons
+            // (iniBuilds/Aerosoft A340-600, MSFS 2024) konstant 0 obwohl
+            // die Triebwerke laufen → Phase-FSM blieb in Pushback haengen
+            // (Live IRM1140/IBE778). Fallback: N1 ueber Idle/Windmill-
+            // Schwelle = Triebwerk laeuft. N1 kommt je nach Addon als
+            // 0-1-Ratio ODER 0-100 % → auf Prozent normalisieren. Greift
+            // NUR wenn COMBUSTION komplett 0 ist → kein Regress fuer
+            // Flieger, deren COMBUSTION-Flag funktioniert (dort ist N1
+            // ohnehin 0 wenn aus). Schwelle bewusst ueber reinem
+            // Windmilling (~15 %); am Boden (wo die FSM das Signal
+            // braucht) gibt es kein Windmilling, also trennt es dort
+            // sauber aus(0) vs laufend.
+            const N1_RUNNING_PCT: f64 = 15.0;
+            let n1_on = |raw: f64| {
+                let pct = if raw <= 1.5 { raw * 100.0 } else { raw };
+                pct > N1_RUNNING_PCT
+            };
+            (n1_on(t.n1_pct_1) as u8)
+                + (n1_on(t.n1_pct_2) as u8)
+                + (n1_on(t.n1_pct_3) as u8)
+                + (n1_on(t.n1_pct_4) as u8)
+        }
     };
 
     // Fuel pick order: FBW LVar (already in kg) > EX1 SimVar (SU2+,
@@ -1673,5 +1725,60 @@ mod tests {
         // And the new beta extension fields too.
         assert_eq!(t.fnx_ext_lt_wing, 0.0);
         assert_eq!(t.fnx_fc_flaps_lever, 0.0);
+    }
+
+    // ---- v0.13.17: N1-Fallback fuer engines_running ----
+    // Live-Befund IRM1140/IBE778 (iniBuilds/Aerosoft A340-600, MSFS 2024):
+    // GENERAL ENG COMBUSTION konstant 0 trotz laufender Triebwerke → Phase
+    // blieb in Pushback haengen. N1 (Standard-SimVar) bleibt gueltig.
+
+    #[test]
+    fn n1_fallback_counts_running_when_combustion_zero() {
+        // COMBUSTION alle false (Addon-Bug), N1 ~0.66 (0-1-Skala, wie im
+        // Inspektor gemessen) → alle 4 als laufend erkannt.
+        let mut t = Telemetry::default();
+        t.title = "Aerosoft A346-MahanAir".into();
+        t.atc_model = "A346".into();
+        t.n1_pct_1 = 0.6648;
+        t.n1_pct_2 = 0.6643;
+        t.n1_pct_3 = 0.6645;
+        t.n1_pct_4 = 0.6649;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.engines_running, 4);
+    }
+
+    #[test]
+    fn n1_fallback_zero_when_all_off() {
+        // Alles aus (COMBUSTION 0 + N1 0) → 0. Kein False-Positive.
+        let t = Telemetry::default();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.engines_running, 0);
+    }
+
+    #[test]
+    fn combustion_wins_when_it_works_no_regression() {
+        // COMBUSTION funktioniert (2 Engines an) → Ergebnis 2, der
+        // N1-Fallback wird NICHT genutzt (kein Doppelzaehlen/Regress),
+        // auch wenn N1 fuer alle 4 hoch ist.
+        let mut t = Telemetry::default();
+        t.eng1_firing = true;
+        t.eng2_firing = true;
+        t.n1_pct_1 = 0.9;
+        t.n1_pct_2 = 0.9;
+        t.n1_pct_3 = 0.9;
+        t.n1_pct_4 = 0.9;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.engines_running, 2);
+    }
+
+    #[test]
+    fn n1_fallback_normalizes_percent_scale_and_rejects_windmill() {
+        // Anderes Addon liefert N1 auf 0-100-Skala: 72.9 % laufend,
+        // 10 % Windmill → nur das laufende zaehlt.
+        let mut t = Telemetry::default();
+        t.n1_pct_1 = 72.9;
+        t.n1_pct_2 = 10.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.engines_running, 1);
     }
 }
