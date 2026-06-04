@@ -6885,25 +6885,13 @@ fn flight_get_route_fixes(state: tauri::State<'_, AppState>) -> Vec<api_client::
 /// Tauri-Webview zu umgehen. Best-effort: bei Fehler `{ "flights": [] }`.
 #[tauri::command]
 async fn va_live_flights(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, UiError> {
-    let base = current_client(&state)
-        .ok()
-        .map(|c| c.connection().base_url().to_string());
-    let Some(base) = base else {
-        return Ok(serde_json::json!({ "flights": [] }));
-    };
-    let url = format!("{}/api/acars", base.trim_end_matches('/'));
-    let resp = reqwest::Client::new()
-        .get(&url)
-        .header(reqwest::header::ACCEPT, "application/json")
-        .timeout(std::time::Duration::from_secs(8))
-        .send()
-        .await
-        .map_err(|e| UiError::new("va_acars_network", e.to_string()))?;
-    let val = resp
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|e| UiError::new("va_acars_parse", e.to_string()))?;
-    Ok(val)
+    // Über den bereits konfigurierten api-client-HTTP-Client (gleicher TLS-Pfad
+    // wie alle anderen Calls) — NICHT über einen frisch gebauten reqwest::Client,
+    // der auf manchen Builds am rustls-CryptoProvider scheitern würde.
+    match current_client(&state) {
+        Ok(c) => c.get_acars_live().await.map_err(UiError::from),
+        Err(_) => Ok(serde_json::json!({ "flights": [] })),
+    }
 }
 
 #[tauri::command]

@@ -1128,6 +1128,27 @@ impl Client {
         self.get_data(&path).await
     }
 
+    /// v0.13.x (In-App-Live-Map, VA-Übersicht): öffentlicher Live-ACARS-Feed
+    /// (alle aktiven Flüge der VA mit Position) als rohe JSON. Nutzt den
+    /// konfigurierten HTTP-Client (gleicher TLS-Pfad wie alle anderen Calls) —
+    /// vermeidet den rustls-CryptoProvider-Stolperstein eines frisch gebauten
+    /// reqwest::Client. `/api/acars` ist public (kein API-Key nötig).
+    pub async fn get_acars_live(&self) -> Result<serde_json::Value, ApiError> {
+        let url = self.endpoint("/api/acars")?;
+        let response = self
+            .http
+            .get(url)
+            .header(header::ACCEPT, "application/json")
+            .send()
+            .await
+            .map_err(ApiError::from)?;
+        let response = check_status(response, "/api/acars").await?;
+        response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| ApiError::BadResponse(format!("read /api/acars: {e}")))
+    }
+
     /// POST a JSON body and decode the response envelope `{ data: T }`.
     async fn post_data<B: Serialize, T: DeserializeOwned>(
         &self,

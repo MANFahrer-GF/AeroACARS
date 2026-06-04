@@ -620,7 +620,7 @@ function App() {
               onClick={() => setTab("map")}
               title="Beta/Dev: In-App Live-Map"
             >
-              🗺️ Karte
+              Karte
             </button>
           )}
           {import.meta.env.DEV && (
