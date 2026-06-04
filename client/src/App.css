@@ -8051,6 +8051,12 @@ input:disabled {
 .aa-livemap__log .activity-log__title {
   font-size: 14px;
 }
+/* In der Karte nur das aufgezeichnete Log zeigen — kein Zähler/Leeren-Button
+   (die gehören in den dedizierten ACARS-Log-Tab). */
+.aa-livemap__log .activity-log__count,
+.aa-livemap__log .activity-log__clear {
+  display: none;
+}
 .aa-livemap__empty {
   position: absolute;
   inset: 0;

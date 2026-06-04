@@ -26,10 +26,6 @@ import { getTrack } from "../lib/trackStore";
 const BASEMAP_DARK = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 const BASEMAP_LIGHT = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
 
-// Mindest-Zoom beim Folgen des eigenen Flugs — nah genug für Details
-// (Flieger, naheliegende Wegpunkte, Track), statt der weiten Routensicht.
-const FOLLOW_ZOOM = 8.5;
-
 interface RouteFix {
   ident: string;
   lat: number;
@@ -129,6 +125,60 @@ function bearing(a: [number, number], b: [number, number]): number {
 }
 const DEMO_LINE = densify(DEMO_FIXES, 240);
 
+// Demo-Zeitleiste: demoT (0..1) → { Phase, Routen-Fortschritt 0..1 }.
+// Wichtig: an den Bodenphasen bleibt der Flieger nahe am Flughafen
+// (prog ~0 bzw. ~1), damit Boden-Zoom realistisch testbar ist.
+const DEMO_TL: { untilT: number; phase: string; prog: number }[] = [
+  { untilT: 0.05, phase: "Boarding", prog: 0.0 },
+  { untilT: 0.1, phase: "Taxi", prog: 0.004 },
+  { untilT: 0.14, phase: "Takeoff", prog: 0.012 },
+  { untilT: 0.22, phase: "Climb", prog: 0.06 },
+  { untilT: 0.74, phase: "Cruise", prog: 0.9 },
+  { untilT: 0.86, phase: "Descent", prog: 0.965 },
+  { untilT: 0.93, phase: "Approach", prog: 0.992 },
+  { untilT: 0.98, phase: "Landing", prog: 0.999 },
+  { untilT: 2, phase: "Taxi In", prog: 1.0 },
+];
+function demoTimeline(t: number): { phase: string; prog: number } {
+  let prevT = 0;
+  let prevProg = 0;
+  for (const seg of DEMO_TL) {
+    if (t < seg.untilT) {
+      const span = seg.untilT - prevT || 1;
+      const f = (t - prevT) / span;
+      return { phase: seg.phase, prog: prevProg + (seg.prog - prevProg) * f };
+    }
+    prevT = seg.untilT;
+    prevProg = seg.prog;
+  }
+  return { phase: "Taxi In", prog: 1 };
+}
+
+// Phasenabhängiger Folge-Zoom: am Boden nah dran, im Reiseflug weit.
+// Gibt null zurück, wenn die Phase unbekannt ist → Höhen-Fallback.
+function zoomForPhase(phase: string): number | null {
+  const p = phase.toLowerCase();
+  if (/board|park|gate|pushback|gestartet|stand/.test(p)) return 14;
+  if (/taxi/.test(p)) return 13;
+  if (/takeoff|take-off|departure|rejected|abflug/.test(p)) return 11;
+  if (/climb|steig/.test(p)) return 9.2;
+  if (/cruise|en.?route|level|reise/.test(p)) return 6.8;
+  if (/descent|descend|sink/.test(p)) return 8.5;
+  if (/approach|final|anflug/.test(p)) return 10.5;
+  if (/land|flare|rollout|touch|arrived|angekommen/.test(p)) return 12.5;
+  return null;
+}
+// Folge-Zoom für echte Flüge: Phase zuerst, sonst nach Höhe (MSL ft).
+function targetFollowZoom(phase: string, altMslFt?: number | null): number {
+  const z = zoomForPhase(phase);
+  if (z != null) return z;
+  if (altMslFt == null || Number.isNaN(altMslFt)) return 8;
+  if (altMslFt < 1500) return 13;
+  if (altMslFt < 8000) return 10;
+  if (altMslFt < 20000) return 8.5;
+  return 6.8;
+}
+
 // Synthetische VA-Flüge, damit man die VA-Übersicht im Demo OHNE echten
 // Live-Flug ansehen kann.
 const DEMO_VA: VaFlight[] = [
@@ -192,7 +242,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const vaMarkersRef = useRef<maplibregl.Marker[]>([]);
   const vaPopupRef = useRef<maplibregl.Popup | null>(null);
   const vaFittedRef = useRef(false);
-  const followZoomRef = useRef(false);
+  const zoomTargetRef = useRef<number | null>(null);
   const dataRef = useRef<{
     fixes: RouteFix[];
     track: [number, number][];
@@ -224,7 +274,8 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   }, [demo, demoPlaying]);
 
   // ---- effektive Daten: Demo ODER echt ----
-  const demoIdx = Math.min(DEMO_LINE.length - 1, Math.floor(demoT * (DEMO_LINE.length - 1)));
+  const demoSt = demoTimeline(demoT);
+  const demoIdx = Math.min(DEMO_LINE.length - 1, Math.max(0, Math.floor(demoSt.prog * (DEMO_LINE.length - 1))));
   const effFixes = demo ? DEMO_FIXES : routeFixes;
   const effTrack: [number, number][] = demo
     ? DEMO_LINE.slice(0, Math.max(2, demoIdx + 1))
@@ -249,15 +300,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const effDepIcao = demo ? "EDDH" : activeFlight?.dpt_airport;
   const effArrIcao = demo ? "LEMD" : activeFlight?.arr_airport;
 
-  const demoPhase = (() => {
-    if (demoT < 0.03) return "Boarding";
-    if (demoT < 0.06) return "TakeoffRoll";
-    if (demoT < 0.16) return "Climb";
-    if (demoT < 0.78) return "Cruise";
-    if (demoT < 0.96) return "Descent";
-    if (demoT < 0.99) return "Approach";
-    return "Landing";
-  })();
+  const demoPhase = demoSt.phase;
   const phaseLabel = demo ? demoPhase : (activeFlight?.phase ?? "—");
 
   // dataRef für die styledata-Re-Adds aktuell halten
@@ -431,7 +474,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       acMarkerRef.current = null;
       pinMarkersRef.current.forEach((m) => m.remove());
       pinMarkersRef.current = [];
-      followZoomRef.current = false; // beim Zurückkehren wieder nah heranzoomen
+      zoomTargetRef.current = null; // beim Zurückkehren Zoom neu setzen
       return;
     }
     pushSources(map, { fixes: effFixes, track: effTrack, dep: effDep, arr: effArr });
@@ -447,16 +490,18 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       }
       acMarkerRef.current.setLngLat(lngLat).setRotation(effAircraft.hdg);
       if (follow) {
-        if (!followZoomRef.current) {
-          // Beim Aktivieren von Follow einmal näher heranzoomen; danach den
-          // vom Nutzer gewählten Zoom respektieren (nur mitschwenken).
-          map.easeTo({ center: lngLat, zoom: Math.max(map.getZoom(), FOLLOW_ZOOM), duration: 600 });
-          followZoomRef.current = true;
+        // Phasenabhängiger Zoom (Boden nah, Reiseflug weit). Nur neu zoomen,
+        // wenn sich das Ziel wirklich ändert (Phasenwechsel) — sonst nur schwenken.
+        const effPhase = demo ? demoPhase : (activeFlight?.phase ?? "");
+        const tz = targetFollowZoom(effPhase, demo ? null : simSnapshot?.altitude_msl_ft);
+        if (zoomTargetRef.current == null || Math.abs(zoomTargetRef.current - tz) > 0.25) {
+          zoomTargetRef.current = tz;
+          map.easeTo({ center: lngLat, zoom: tz, duration: 700 });
         } else {
           map.easeTo({ center: lngLat, duration: 380 });
         }
       } else {
-        followZoomRef.current = false;
+        zoomTargetRef.current = null;
       }
     } else {
       acMarkerRef.current?.remove();
@@ -572,15 +617,27 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     const fmt = (v: number | null | undefined, suffix: string) =>
       v == null || Number.isNaN(v) ? "—" : `${Math.round(v)}${suffix}`;
     if (demo) {
-      // Synthetische Höhe/Speed je nach Phase fürs Look-and-Feel.
-      const alt = demoT < 0.16 ? Math.round(demoT * 230000) : demoT > 0.78 ? Math.round((1 - demoT) * 168000) : 37000;
-      const flLabel = alt >= 18000 ? `FL${Math.round(alt / 100)}` : `${alt} ft`;
+      // Synthetische Höhe/Speed je Phase — am Boden konsequent 0 ft / langsam.
+      const byPhase: Record<string, { altFt: number; ias: number; gs: number }> = {
+        Boarding: { altFt: 0, ias: 0, gs: 0 },
+        Taxi: { altFt: 0, ias: 0, gs: 14 },
+        Takeoff: { altFt: 500, ias: 165, gs: 170 },
+        Climb: { altFt: 18000, ias: 290, gs: 340 },
+        Cruise: { altFt: 37000, ias: 280, gs: 452 },
+        Descent: { altFt: 14000, ias: 280, gs: 410 },
+        Approach: { altFt: 3000, ias: 180, gs: 190 },
+        Landing: { altFt: 50, ias: 140, gs: 145 },
+        "Taxi In": { altFt: 0, ias: 0, gs: 12 },
+      };
+      const st = demoTimeline(demoT);
+      const d = byPhase[st.phase] ?? byPhase.Cruise;
+      const flLabel = d.altFt >= 18000 ? `FL${Math.round(d.altFt / 100)}` : `${d.altFt} ft`;
       return {
         alt: flLabel,
-        spd: demoT < 0.1 || demoT > 0.95 ? "180 kts" : "290 kts",
+        spd: `${d.ias} kts`,
         hdg: effAircraft ? `${Math.round(effAircraft.hdg)}°` : "—",
-        gs: demoT < 0.1 || demoT > 0.95 ? "200 kts" : "450 kts",
-        dtg: `${Math.round((1 - demoT) * 980)} nm`,
+        gs: `${d.gs} kts`,
+        dtg: `${Math.round((1 - st.prog) * 980)} nm`,
       };
     }
     const s = simSnapshot;
