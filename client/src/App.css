@@ -7925,3 +7925,126 @@ input:disabled {
   color: var(--accent);
   font-weight: 600;
 }
+
+/* ===== v0.13.x In-App Live-Map ===== */
+.aa-livemap {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 130px);
+  min-height: 480px;
+  gap: 8px;
+}
+.aa-livemap__topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 4px 2px;
+}
+.aa-livemap__viewtoggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.aa-seg {
+  background: var(--surface);
+  color: var(--text-muted);
+  border: none;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.aa-seg--active {
+  background: var(--accent);
+  color: #fff;
+}
+.aa-livemap__stats {
+  display: flex;
+  gap: 18px;
+  margin-left: auto;
+}
+.aa-stat {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+.aa-stat__label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.aa-stat__value {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.aa-livemap__follow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.aa-livemap__body {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+.aa-livemap__map {
+  position: relative;
+  flex: 1;
+  min-height: 360px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.aa-livemap__map .maplibregl-map {
+  position: absolute;
+  inset: 0;
+}
+.aa-livemap__log {
+  width: 320px;
+  flex-shrink: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.aa-livemap__empty {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+}
+.aa-ac-marker {
+  color: var(--accent);
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.5));
+  display: flex;
+}
+.aa-ac-marker--va {
+  color: var(--warning);
+  cursor: pointer;
+}
+.aa-pin {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: #fff;
+  white-space: nowrap;
+  transform: translateY(-4px);
+}
+.aa-pin--dep {
+  background: var(--success);
+}
+.aa-pin--arr {
+  background: var(--danger);
+}

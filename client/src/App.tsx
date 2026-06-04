@@ -16,6 +16,11 @@ import RunwayDiagramPreview from "./dev/RunwayDiagramPreview";
 // SVG-Builder + scoring-Logik fuer LandingPanel) und werden erst nach dem
 // initialen Login angezeigt. Senkt die Main-Chunk-Size unter 700 KB und
 // beschleunigt den Cold-Start.
+// v0.13.x: LiveMapView lazy — MapLibre (~1.7 MB) landet so in einem eigenen
+// Chunk und nur beim Öffnen des Karten-Tabs geladen (Haupt-Bundle bleibt schlank).
+const LiveMapView = lazy(() =>
+  import("./components/LiveMapView").then((m) => ({ default: m.LiveMapView })),
+);
 const LandingPanel = lazy(() =>
   import("./components/LandingPanel").then((m) => ({ default: m.LandingPanel })),
 );
@@ -39,7 +44,7 @@ type SessionStatus =
   | { kind: "loggedOut"; restoreError?: UiError }
   | { kind: "loggedIn"; session: LoginResult };
 
-type Tab = "cockpit" | "briefing" | "landing" | "news" | "log" | "settings" | "about" | "devpreview";
+type Tab = "cockpit" | "briefing" | "landing" | "news" | "log" | "map" | "settings" | "about" | "devpreview";
 
 const DEBUG_STORAGE_KEY = "aeroacars.debug";
 const AUTO_FILE_STORAGE_KEY = "aeroacars.autoFile";
@@ -600,6 +605,18 @@ function App() {
             <button
               type="button"
               role="tab"
+              aria-selected={tab === "map"}
+              className={`tab ${tab === "map" ? "tab--active" : ""}`}
+              onClick={() => setTab("map")}
+              title="Beta/Dev: In-App Live-Map"
+            >
+              🗺️ Karte
+            </button>
+          )}
+          {import.meta.env.DEV && (
+            <button
+              type="button"
+              role="tab"
               aria-selected={tab === "devpreview"}
               className={`tab ${tab === "devpreview" ? "tab--active" : ""}`}
               onClick={() => setTab("devpreview")}
@@ -686,6 +703,14 @@ function App() {
       {status.kind === "loggedIn" && tab === "news" && <NewsPanel />}
 
       {status.kind === "loggedIn" && tab === "log" && <ActivityLogPanel />}
+
+      {import.meta.env.DEV &&
+        status.kind === "loggedIn" &&
+        tab === "map" && (
+          <Suspense fallback={<div className="lazy-fallback">…</div>}>
+            <LiveMapView activeFlight={activeFlight} simSnapshot={simSnapshot} />
+          </Suspense>
+        )}
 
       {status.kind === "loggedIn" && tab === "settings" && (
         <SettingsPanel

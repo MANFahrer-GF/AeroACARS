@@ -2589,6 +2589,11 @@ struct FlightStats {
     planned_ldw_kg: Option<f32>,
     /// Planned route string from the OFP.
     planned_route: Option<String>,
+    /// v0.13.x (In-App-Live-Map): geplante Navlog-Fixes aus dem SimBrief-OFP
+    /// (ident + lat/lon + kind, inkl. TOC/TOD falls im Navlog). Beim Flugstart
+    /// gesetzt, von der Map-Ansicht via `flight_get_route_fixes` gelesen.
+    /// Leer bei VFR/Manual/Resume (kein OFP) → Map faellt auf Great-Circle.
+    planned_waypoints: Vec<api_client::RouteFix>,
     /// Planned alternate ICAO from the OFP.
     planned_alternate: Option<String>,
     // ---- v0.3.0: MAX-Werte aus dem OFP für Overweight-Detection ----
@@ -6856,6 +6861,51 @@ fn phase_to_snake(phase: FlightPhase) -> &'static str {
     }
 }
 
+/// v0.13.x (In-App-Live-Map): geplante Navlog-Fixes des aktiven Flugs für die
+/// Karten-Ansicht (Dots der geplanten Route + TOC/TOD). Leer, wenn kein
+/// aktiver Flug / kein OFP (VFR/Manual/Resume) — die Map fällt dann auf eine
+/// Great-Circle-Linie Dep→Arr zurück.
+#[tauri::command]
+fn flight_get_route_fixes(state: tauri::State<'_, AppState>) -> Vec<api_client::RouteFix> {
+    let guard = state.active_flight.lock().expect("active_flight lock");
+    match guard.as_ref() {
+        Some(flight) => flight
+            .stats
+            .lock()
+            .expect("flight stats lock")
+            .planned_waypoints
+            .clone(),
+        None => Vec::new(),
+    }
+}
+
+/// v0.13.x (In-App-Live-Map, VA-Übersicht): proxyt den öffentlichen phpVMS-
+/// Endpoint `GET {base}/api/acars` (alle aktiven Flüge der VA mit Position) und
+/// gibt das JSON 1:1 zurück. Backend-Proxy statt Frontend-fetch, um CSP/CORS im
+/// Tauri-Webview zu umgehen. Best-effort: bei Fehler `{ "flights": [] }`.
+#[tauri::command]
+async fn va_live_flights(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, UiError> {
+    let base = current_client(&state)
+        .ok()
+        .map(|c| c.connection().base_url().to_string());
+    let Some(base) = base else {
+        return Ok(serde_json::json!({ "flights": [] }));
+    };
+    let url = format!("{}/api/acars", base.trim_end_matches('/'));
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await
+        .map_err(|e| UiError::new("va_acars_network", e.to_string()))?;
+    let val = resp
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| UiError::new("va_acars_parse", e.to_string()))?;
+    Ok(val)
+}
+
 #[tauri::command]
 fn flight_status(
     app: AppHandle,
@@ -7854,6 +7904,8 @@ async fn flight_start(
         // we can post it to phpVMS without holding a lock across an await.
         let waypoints = ofp.waypoints.clone();
         let mut stats = flight.stats.lock().expect("flight stats lock");
+        // v0.13.x: Navlog-Fixes für die In-App-Live-Map vorhalten (Dots + TOC/TOD).
+        stats.planned_waypoints = waypoints.clone();
         stats.planned_block_fuel_kg = Some(ofp.planned_block_fuel_kg).filter(|&v| v > 0.0);
         stats.planned_burn_kg = Some(ofp.planned_burn_kg).filter(|&v| v > 0.0);
         stats.planned_reserve_kg = Some(ofp.planned_reserve_kg).filter(|&v| v > 0.0);
@@ -23335,6 +23387,8 @@ pub fn run() {
             pmdg_status,
             airport_get,
             flight_status,
+            flight_get_route_fixes,
+            va_live_flights,
             flight_start,
             flight_start_manual,
             fleet_list_at_airport,
