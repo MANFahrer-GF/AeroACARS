@@ -110,6 +110,15 @@ function bearing(a: [number, number], b: [number, number]): number {
 }
 const DEMO_LINE = densify(DEMO_FIXES, 240);
 
+// Synthetische VA-Flüge, damit man die VA-Übersicht im Demo OHNE echten
+// Live-Flug ansehen kann.
+const DEMO_VA: VaFlight[] = [
+  { ident: "GSG18", flight_number: "778", aircraft: { icao: "A346" }, dpt_airport_id: "EDDH", arr_airport_id: "LEMD", position: { lat: 47.2, lon: 3.1, heading: 220 } },
+  { ident: "DLH4PY", flight_number: "1102", aircraft: { icao: "A320" }, dpt_airport_id: "EDDF", arr_airport_id: "LEPA", position: { lat: 45.0, lon: 7.5, heading: 200 } },
+  { ident: "BAW9", flight_number: "9", aircraft: { icao: "B77W" }, dpt_airport_id: "EGLL", arr_airport_id: "KJFK", position: { lat: 51.0, lon: -8.0, heading: 290 } },
+  { ident: "EJA41", flight_number: "2041", aircraft: { icao: "E55P" }, dpt_airport_id: "KEYW", arr_airport_id: "MMCZ", position: { lat: 23.5, lon: -84.0, heading: 240 } },
+];
+
 const SRC_ROUTE = "aa-planned-route";
 const SRC_WPTS = "aa-planned-wpts";
 const SRC_TRACK = "aa-flown-track";
@@ -355,7 +364,19 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   // ---- Redraw: Quellen + Flugzeug-Marker + Pins ----
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady || view !== "own") return;
+    if (!map || !mapReady) return;
+    if (view !== "own") {
+      // Eigen-Flug-Layer leeren, damit Route/Track/Marker nicht unter der VA-Übersicht durchscheinen.
+      const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
+      (map.getSource(SRC_ROUTE) as maplibregl.GeoJSONSource | undefined)?.setData(empty);
+      (map.getSource(SRC_WPTS) as maplibregl.GeoJSONSource | undefined)?.setData(empty);
+      (map.getSource(SRC_TRACK) as maplibregl.GeoJSONSource | undefined)?.setData(empty);
+      acMarkerRef.current?.remove();
+      acMarkerRef.current = null;
+      pinMarkersRef.current.forEach((m) => m.remove());
+      pinMarkersRef.current = [];
+      return;
+    }
     pushSources(map, { fixes: effFixes, track: effTrack, dep: effDep, arr: effArr });
 
     // Flugzeug-Marker
@@ -409,16 +430,22 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
 
   // ---- VA-Übersicht ----
   useEffect(() => {
-    if (view !== "va" || demo) {
+    if (view !== "va") {
       vaMarkersRef.current.forEach((m) => m.remove());
       vaMarkersRef.current = [];
+      return;
+    }
+    if (demo) {
+      // Im Demo synthetische VA-Flüge zeigen, kein echter Poll.
+      setVaFlights(DEMO_VA);
       return;
     }
     let cancelled = false;
     const poll = async () => {
       try {
-        const data = await invoke<{ flights?: VaFlight[] } | VaFlight[]>("va_live_flights");
-        const flights = Array.isArray(data) ? data : data?.flights ?? [];
+        // /api/acars liefert { data: [...] } — defensiv auch flights / Array.
+        const data = await invoke<{ data?: VaFlight[]; flights?: VaFlight[] } | VaFlight[]>("va_live_flights");
+        const flights = Array.isArray(data) ? data : data?.data ?? data?.flights ?? [];
         if (!cancelled) setVaFlights(flights);
       } catch {
         if (!cancelled) setVaFlights([]);
@@ -501,10 +528,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
           <button
             type="button"
             className={`aa-seg ${view === "va" ? "aa-seg--active" : ""}`}
-            onClick={() => {
-              setDemo(false);
-              setView("va");
-            }}
+            onClick={() => setView("va")}
           >
             VA-Übersicht
           </button>
@@ -528,7 +552,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
               Follow
             </label>
           )}
-          {isDev && view === "own" && (
+          {isDev && (
             <div className="aa-livemap__demo">
               <label className="aa-livemap__follow">
                 <input
@@ -543,7 +567,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
                 />
                 Demo
               </label>
-              {demo && (
+              {demo && view === "own" && (
                 <>
                   <button type="button" className="aa-seg" onClick={() => setDemoPlaying((p) => !p)}>
                     {demoPlaying ? "⏸" : "▶"}
