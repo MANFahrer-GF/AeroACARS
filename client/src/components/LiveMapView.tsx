@@ -125,33 +125,65 @@ function bearing(a: [number, number], b: [number, number]): number {
 }
 const DEMO_LINE = densify(DEMO_FIXES, 240);
 
-// Demo-Zeitleiste: demoT (0..1) → { Phase, Routen-Fortschritt 0..1 }.
-// Wichtig: an den Bodenphasen bleibt der Flieger nahe am Flughafen
-// (prog ~0 bzw. ~1), damit Boden-Zoom realistisch testbar ist.
-const DEMO_TL: { untilT: number; phase: string; prog: number }[] = [
-  { untilT: 0.05, phase: "Boarding", prog: 0.0 },
-  { untilT: 0.1, phase: "Taxi", prog: 0.004 },
-  { untilT: 0.14, phase: "Takeoff", prog: 0.012 },
-  { untilT: 0.22, phase: "Climb", prog: 0.06 },
-  { untilT: 0.74, phase: "Cruise", prog: 0.9 },
-  { untilT: 0.86, phase: "Descent", prog: 0.965 },
-  { untilT: 0.93, phase: "Approach", prog: 0.992 },
-  { untilT: 0.98, phase: "Landing", prog: 0.999 },
-  { untilT: 2, phase: "Taxi In", prog: 1.0 },
+// Demo-Phasensequenz mit echten Verweildauern (Sekunden). An den Bodenphasen
+// bleibt der Flieger am Flughafen (prog0≈prog1), in der Luft läuft er die Route
+// entlang. Bewusst langsam, damit jede Phase (inkl. Zoom) sichtbar wird.
+const DEMO_PHASES: { phase: string; dur: number; prog0: number; prog1: number }[] = [
+  { phase: "Boarding", dur: 7, prog0: 0.0, prog1: 0.0 },
+  { phase: "Pushback", dur: 5, prog0: 0.0, prog1: 0.002 },
+  { phase: "Taxi", dur: 8, prog0: 0.002, prog1: 0.008 },
+  { phase: "Takeoff", dur: 5, prog0: 0.008, prog1: 0.02 },
+  { phase: "Climb", dur: 12, prog0: 0.02, prog1: 0.1 },
+  { phase: "Cruise", dur: 16, prog0: 0.1, prog1: 0.86 },
+  { phase: "Descent", dur: 12, prog0: 0.86, prog1: 0.95 },
+  { phase: "Approach", dur: 9, prog0: 0.95, prog1: 0.99 },
+  { phase: "Landing", dur: 5, prog0: 0.99, prog1: 0.998 },
+  { phase: "Taxi In", dur: 7, prog0: 0.998, prog1: 1.0 },
+  { phase: "Deboarding", dur: 6, prog0: 1.0, prog1: 1.0 },
 ];
-function demoTimeline(t: number): { phase: string; prog: number } {
-  let prevT = 0;
-  let prevProg = 0;
-  for (const seg of DEMO_TL) {
-    if (t < seg.untilT) {
-      const span = seg.untilT - prevT || 1;
-      const f = (t - prevT) / span;
-      return { phase: seg.phase, prog: prevProg + (seg.prog - prevProg) * f };
+const DEMO_TOTAL_SEC = DEMO_PHASES.reduce((a, p) => a + p.dur, 0);
+
+// demoT (0..1) ist die normierte Position auf der Gesamtdauer.
+function demoTimeline(t: number): { phase: string; prog: number; f: number } {
+  const elapsed = Math.max(0, Math.min(1, t)) * DEMO_TOTAL_SEC;
+  let acc = 0;
+  for (const seg of DEMO_PHASES) {
+    if (elapsed < acc + seg.dur) {
+      const f = seg.dur > 0 ? (elapsed - acc) / seg.dur : 1;
+      return { phase: seg.phase, prog: seg.prog0 + (seg.prog1 - seg.prog0) * f, f };
     }
-    prevT = seg.untilT;
-    prevProg = seg.prog;
+    acc += seg.dur;
   }
-  return { phase: "Taxi In", prog: 1 };
+  const last = DEMO_PHASES[DEMO_PHASES.length - 1];
+  return { phase: last.phase, prog: last.prog1, f: 1 };
+}
+
+// Weiche synthetische Werte (Höhe/Speed) je Phase + Phasen-Fortschritt f.
+function lerp(a: number, b: number, f: number): number {
+  return a + (b - a) * f;
+}
+function demoMetrics(phase: string, f: number): { altFt: number; ias: number; gs: number } {
+  switch (phase) {
+    case "Takeoff":
+      return { altFt: Math.round(lerp(0, 1800, f)), ias: Math.round(lerp(150, 185, f)), gs: Math.round(lerp(150, 190, f)) };
+    case "Climb":
+      return { altFt: Math.round(lerp(1800, 37000, f)), ias: 290, gs: Math.round(lerp(190, 452, f)) };
+    case "Cruise":
+      return { altFt: 37000, ias: 280, gs: 452 };
+    case "Descent":
+      return { altFt: Math.round(lerp(37000, 9000, f)), ias: 280, gs: Math.round(lerp(452, 300, f)) };
+    case "Approach":
+      return { altFt: Math.round(lerp(9000, 1200, f)), ias: Math.round(lerp(250, 160, f)), gs: Math.round(lerp(300, 175, f)) };
+    case "Landing":
+      return { altFt: Math.round(lerp(1200, 0, f)), ias: Math.round(lerp(160, 130, f)), gs: Math.round(lerp(175, 135, f)) };
+    case "Pushback":
+      return { altFt: 0, ias: 0, gs: 3 };
+    case "Taxi":
+    case "Taxi In":
+      return { altFt: 0, ias: 0, gs: 14 };
+    default: // Boarding, Deboarding
+      return { altFt: 0, ias: 0, gs: 0 };
+  }
 }
 
 // Phasenabhängiger Folge-Zoom: am Boden nah dran, im Reiseflug weit.
@@ -264,12 +296,14 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const isDev = import.meta.env.DEV;
   const pirepId = activeFlight?.pirep_id ?? null;
 
-  // ---- Demo-Animation ----
+  // ---- Demo-Animation (zeitbasiert: Wanduhr ≈ DEMO_TOTAL_SEC) ----
   useEffect(() => {
     if (!demo || !demoPlaying) return;
+    const TICK_MS = 100;
+    const step = TICK_MS / 1000 / DEMO_TOTAL_SEC;
     const id = setInterval(() => {
-      setDemoT((t) => (t >= 1 ? 0 : Math.min(1, t + 0.0025)));
-    }, 80);
+      setDemoT((t) => (t >= 1 ? 0 : Math.min(1, t + step)));
+    }, TICK_MS);
     return () => clearInterval(id);
   }, [demo, demoPlaying]);
 
@@ -494,7 +528,13 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
         // wenn sich das Ziel wirklich ändert (Phasenwechsel) — sonst nur schwenken.
         const effPhase = demo ? demoPhase : (activeFlight?.phase ?? "");
         const tz = targetFollowZoom(effPhase, demo ? null : simSnapshot?.altitude_msl_ft);
-        if (zoomTargetRef.current == null || Math.abs(zoomTargetRef.current - tz) > 0.25) {
+        const c = map.getCenter();
+        const farJump = Math.abs(c.lng - lngLat[0]) > 3 || Math.abs(c.lat - lngLat[1]) > 3;
+        if (farJump) {
+          // großer Sprung (z. B. Demo-Loop LEMD→EDDH oder erster Frame): hart setzen.
+          map.jumpTo({ center: lngLat, zoom: tz });
+          zoomTargetRef.current = tz;
+        } else if (zoomTargetRef.current == null || Math.abs(zoomTargetRef.current - tz) > 0.25) {
           zoomTargetRef.current = tz;
           map.easeTo({ center: lngLat, zoom: tz, duration: 700 });
         } else {
@@ -617,20 +657,9 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     const fmt = (v: number | null | undefined, suffix: string) =>
       v == null || Number.isNaN(v) ? "—" : `${Math.round(v)}${suffix}`;
     if (demo) {
-      // Synthetische Höhe/Speed je Phase — am Boden konsequent 0 ft / langsam.
-      const byPhase: Record<string, { altFt: number; ias: number; gs: number }> = {
-        Boarding: { altFt: 0, ias: 0, gs: 0 },
-        Taxi: { altFt: 0, ias: 0, gs: 14 },
-        Takeoff: { altFt: 500, ias: 165, gs: 170 },
-        Climb: { altFt: 18000, ias: 290, gs: 340 },
-        Cruise: { altFt: 37000, ias: 280, gs: 452 },
-        Descent: { altFt: 14000, ias: 280, gs: 410 },
-        Approach: { altFt: 3000, ias: 180, gs: 190 },
-        Landing: { altFt: 50, ias: 140, gs: 145 },
-        "Taxi In": { altFt: 0, ias: 0, gs: 12 },
-      };
+      // Synthetische Höhe/Speed je Phase (weich interpoliert) — Boden = 0 ft.
       const st = demoTimeline(demoT);
-      const d = byPhase[st.phase] ?? byPhase.Cruise;
+      const d = demoMetrics(st.phase, st.f);
       const flLabel = d.altFt >= 18000 ? `FL${Math.round(d.altFt / 100)}` : `${d.altFt} ft`;
       return {
         alt: flLabel,
