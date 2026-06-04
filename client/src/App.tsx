@@ -466,6 +466,18 @@ function App() {
   const simConnecting = simState === "connecting";
   const showTabs = status.kind === "loggedIn";
 
+  // Dev-only Direkt-Vorschau der Live-Map ohne Backend/Login:
+  // http://localhost:1420/#mapdemo  → rendert nur die Karte (Demo-tauglich).
+  if (import.meta.env.DEV && typeof location !== "undefined" && location.hash === "#mapdemo") {
+    return (
+      <main className="app">
+        <Suspense fallback={null}>
+          <LiveMapView activeFlight={null} simSnapshot={null} />
+        </Suspense>
+      </main>
+    );
+  }
+
   return (
     <main className="app">
       {/* v0.5.48 — großes Update-Banner ÜBER dem Header. Wird vom

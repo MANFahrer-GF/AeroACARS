@@ -275,6 +275,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const vaPopupRef = useRef<maplibregl.Popup | null>(null);
   const vaFittedRef = useRef(false);
   const zoomTargetRef = useRef<number | null>(null);
+  const zoomingRef = useRef(false);
   const dataRef = useRef<{
     fixes: RouteFix[];
     track: [number, number][];
@@ -352,6 +353,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     mapRef.current = map;
+    if (import.meta.env.DEV) (window as unknown as { __aaMap?: maplibregl.Map }).__aaMap = map;
     map.on("load", () => {
       addOverlays(map);
       setMapReady(true);
@@ -509,6 +511,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       pinMarkersRef.current.forEach((m) => m.remove());
       pinMarkersRef.current = [];
       zoomTargetRef.current = null; // beim Zurückkehren Zoom neu setzen
+      zoomingRef.current = false;
       return;
     }
     pushSources(map, { fixes: effFixes, track: effTrack, dep: effDep, arr: effArr });
@@ -524,8 +527,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       }
       acMarkerRef.current.setLngLat(lngLat).setRotation(effAircraft.hdg);
       if (follow) {
-        // Phasenabhängiger Zoom (Boden nah, Reiseflug weit). Nur neu zoomen,
-        // wenn sich das Ziel wirklich ändert (Phasenwechsel) — sonst nur schwenken.
+        // Phasenabhängiger Zoom (Boden nah, Reiseflug weit).
         const effPhase = demo ? demoPhase : (activeFlight?.phase ?? "");
         const tz = targetFollowZoom(effPhase, demo ? null : simSnapshot?.altitude_msl_ft);
         const c = map.getCenter();
@@ -534,14 +536,26 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
           // großer Sprung (z. B. Demo-Loop LEMD→EDDH oder erster Frame): hart setzen.
           map.jumpTo({ center: lngLat, zoom: tz });
           zoomTargetRef.current = tz;
-        } else if (zoomTargetRef.current == null || Math.abs(zoomTargetRef.current - tz) > 0.25) {
-          zoomTargetRef.current = tz;
-          map.easeTo({ center: lngLat, zoom: tz, duration: 700 });
+          zoomingRef.current = false;
         } else {
-          map.easeTo({ center: lngLat, duration: 380 });
+          // Phasenwechsel → neues Zoomziel ansteuern, bis es erreicht ist.
+          if (zoomTargetRef.current == null || Math.abs(zoomTargetRef.current - tz) > 0.25) {
+            zoomTargetRef.current = tz;
+            zoomingRef.current = true;
+          }
+          if (zoomingRef.current) {
+            // WICHTIG: Zoom MIT ansteuern, sonst bricht das 100-ms-Folge-easeTo
+            // die Zoomfahrt ab und sie bleibt auf halbem Weg stecken.
+            map.easeTo({ center: lngLat, zoom: tz, duration: 250 });
+            if (Math.abs(map.getZoom() - tz) < 0.1) zoomingRef.current = false;
+          } else {
+            // Ziel erreicht → nur noch schwenken (manuelles +/- bleibt erhalten).
+            map.easeTo({ center: lngLat, duration: 380 });
+          }
         }
       } else {
         zoomTargetRef.current = null;
+        zoomingRef.current = false;
       }
     } else {
       acMarkerRef.current?.remove();
