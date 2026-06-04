@@ -134,7 +134,7 @@ const DEMO_PHASES: { phase: string; dur: number; prog0: number; prog1: number }[
   { phase: "Taxi", dur: 8, prog0: 0.002, prog1: 0.008 },
   { phase: "Takeoff", dur: 5, prog0: 0.008, prog1: 0.02 },
   { phase: "Climb", dur: 12, prog0: 0.02, prog1: 0.1 },
-  { phase: "Cruise", dur: 16, prog0: 0.1, prog1: 0.86 },
+  { phase: "Cruise", dur: 20, prog0: 0.1, prog1: 0.86 },
   { phase: "Descent", dur: 12, prog0: 0.86, prog1: 0.95 },
   { phase: "Approach", dur: 9, prog0: 0.95, prog1: 0.99 },
   { phase: "Landing", dur: 5, prog0: 0.99, prog1: 0.998 },
@@ -193,10 +193,10 @@ function zoomForPhase(phase: string): number | null {
   if (/board|park|gate|pushback|gestartet|stand/.test(p)) return 14;
   if (/taxi/.test(p)) return 13;
   if (/takeoff|take-off|departure|rejected|abflug/.test(p)) return 11;
-  if (/climb|steig/.test(p)) return 9.2;
-  if (/cruise|en.?route|level|reise/.test(p)) return 6.8;
-  if (/descent|descend|sink/.test(p)) return 8.5;
-  if (/approach|final|anflug/.test(p)) return 10.5;
+  if (/climb|steig/.test(p)) return 7.5;
+  if (/cruise|en.?route|level|reise/.test(p)) return 5;
+  if (/descent|descend|sink/.test(p)) return 7.5;
+  if (/approach|final|anflug/.test(p)) return 9;
   if (/land|flare|rollout|touch|arrived|angekommen/.test(p)) return 12.5;
   return null;
 }
@@ -204,11 +204,11 @@ function zoomForPhase(phase: string): number | null {
 function targetFollowZoom(phase: string, altMslFt?: number | null): number {
   const z = zoomForPhase(phase);
   if (z != null) return z;
-  if (altMslFt == null || Number.isNaN(altMslFt)) return 8;
-  if (altMslFt < 1500) return 13;
-  if (altMslFt < 8000) return 10;
-  if (altMslFt < 20000) return 8.5;
-  return 6.8;
+  if (altMslFt == null || Number.isNaN(altMslFt)) return 6.5;
+  if (altMslFt < 1500) return 12.5;
+  if (altMslFt < 10000) return 9;
+  if (altMslFt < 22000) return 7.5;
+  return 5;
 }
 
 // Synthetische VA-Flüge, damit man die VA-Übersicht im Demo OHNE echten
