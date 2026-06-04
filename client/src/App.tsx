@@ -466,18 +466,6 @@ function App() {
   const simConnecting = simState === "connecting";
   const showTabs = status.kind === "loggedIn";
 
-  // Dev-only Direkt-Vorschau der Live-Map ohne Backend/Login:
-  // http://localhost:1420/#mapdemo  → rendert nur die Karte (Demo-tauglich).
-  if (import.meta.env.DEV && typeof location !== "undefined" && location.hash === "#mapdemo") {
-    return (
-      <main className="app">
-        <Suspense fallback={null}>
-          <LiveMapView activeFlight={null} simSnapshot={null} />
-        </Suspense>
-      </main>
-    );
-  }
-
   return (
     <main className="app">
       {/* v0.5.48 — großes Update-Banner ÜBER dem Header. Wird vom
@@ -564,18 +552,15 @@ function App() {
             {t("tabs.cockpit")}
             {activeFlight && <span className="tab__badge" aria-hidden="true" />}
           </button>
-          {import.meta.env.DEV && (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === "map"}
-              className={`tab ${tab === "map" ? "tab--active" : ""}`}
-              onClick={() => setTab("map")}
-              title="Beta/Dev: In-App Live-Map"
-            >
-              {t("tabs.map")}
-            </button>
-          )}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "map"}
+            className={`tab ${tab === "map" ? "tab--active" : ""}`}
+            onClick={() => setTab("map")}
+          >
+            {t("tabs.map")}
+          </button>
           <button
             type="button"
             role="tab"
@@ -726,13 +711,11 @@ function App() {
 
       {status.kind === "loggedIn" && tab === "log" && <ActivityLogPanel />}
 
-      {import.meta.env.DEV &&
-        status.kind === "loggedIn" &&
-        tab === "map" && (
-          <Suspense fallback={<div className="lazy-fallback">…</div>}>
-            <LiveMapView activeFlight={activeFlight} simSnapshot={simSnapshot} />
-          </Suspense>
-        )}
+      {status.kind === "loggedIn" && tab === "map" && (
+        <Suspense fallback={<div className="lazy-fallback">…</div>}>
+          <LiveMapView activeFlight={activeFlight} simSnapshot={simSnapshot} />
+        </Suspense>
+      )}
 
       {status.kind === "loggedIn" && tab === "settings" && (
         <SettingsPanel

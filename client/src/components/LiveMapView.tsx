@@ -7,13 +7,9 @@
 //     Stats-Leiste, Log-Panel, Follow-Zoom.
 //   • "va"  — VA-Übersicht: alle aktiven Piloten (Proxy auf phpVMS /api/acars).
 //
-// DEMO-Modus (dev-only): synthetischer Flug, der durch die Phasen läuft — zum
-// Ansehen des Looks OHNE echten Flug/Sim (funktioniert auch im reinen
-// `npm run dev`-Browser, da er keine Tauri-Commands braucht).
-//
 // Theme-aware: dunkle (dark-matter) bzw. helle (positron) CARTO-Basemap, die mit
 // dem App-Theme (data-theme) umschaltet; Overlay-Farben aus CSS-Vars.
-// Dev/Beta-only (Tab hinter import.meta.env.DEV). Rein Anzeige — keine Wertung.
+// Rein Anzeige — keine Wertung.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
@@ -70,134 +66,20 @@ function cssVar(name: string, fallback: string): string {
   return v || fallback;
 }
 
-// ---- Demo-Flug (EDDH → LEMD), inkl. TOC/TOD ----
-const DEMO_FIXES: RouteFix[] = [
-  { ident: "EDDH", lat: 53.63, lon: 9.99, kind: "apt" },
-  { ident: "TOC", lat: 52.0, lon: 8.4, kind: "wpt" },
-  { ident: "OSN", lat: 50.4, lon: 6.9, kind: "vor" },
-  { ident: "DIK", lat: 48.6, lon: 4.9, kind: "vor" },
-  { ident: "NTS", lat: 46.5, lon: 1.6, kind: "vor" },
-  { ident: "PPN", lat: 43.6, lon: -1.4, kind: "vor" },
-  { ident: "TOD", lat: 41.7, lon: -2.6, kind: "wpt" },
-  { ident: "LEMD", lat: 40.49, lon: -3.57, kind: "apt" },
-];
-
-/** Densify a fix polyline into N evenly-spaced points (planar approx). */
-function densify(fixes: RouteFix[], n: number): [number, number][] {
-  const pts = fixes.map((f) => [f.lon, f.lat] as [number, number]);
-  const segLen: number[] = [];
-  let total = 0;
-  for (let i = 1; i < pts.length; i++) {
-    const dx = (pts[i][0] - pts[i - 1][0]) * Math.cos((pts[i][1] * Math.PI) / 180);
-    const dy = pts[i][1] - pts[i - 1][1];
-    const d = Math.hypot(dx, dy);
-    segLen.push(d);
-    total += d;
-  }
-  const out: [number, number][] = [];
-  for (let k = 0; k <= n; k++) {
-    const target = (k / n) * total;
-    let acc = 0;
-    let i = 0;
-    while (i < segLen.length && acc + segLen[i] < target) {
-      acc += segLen[i];
-      i++;
-    }
-    if (i >= segLen.length) {
-      out.push(pts[pts.length - 1]);
-      continue;
-    }
-    const t = segLen[i] > 0 ? (target - acc) / segLen[i] : 0;
-    out.push([
-      pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t,
-      pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t,
-    ]);
-  }
-  return out;
-}
-function bearing(a: [number, number], b: [number, number]): number {
-  const dLon = ((b[0] - a[0]) * Math.PI) / 180;
-  const y = Math.sin(dLon) * Math.cos((b[1] * Math.PI) / 180);
-  const x =
-    Math.cos((a[1] * Math.PI) / 180) * Math.sin((b[1] * Math.PI) / 180) -
-    Math.sin((a[1] * Math.PI) / 180) * Math.cos((b[1] * Math.PI) / 180) * Math.cos(dLon);
-  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
-}
-const DEMO_LINE = densify(DEMO_FIXES, 240);
-
-// Demo-Phasensequenz mit echten Verweildauern (Sekunden). An den Bodenphasen
-// bleibt der Flieger am Flughafen (prog0≈prog1), in der Luft läuft er die Route
-// entlang. Bewusst langsam, damit jede Phase (inkl. Zoom) sichtbar wird.
-const DEMO_PHASES: { phase: string; dur: number; prog0: number; prog1: number }[] = [
-  { phase: "Boarding", dur: 7, prog0: 0.0, prog1: 0.0 },
-  { phase: "Pushback", dur: 5, prog0: 0.0, prog1: 0.002 },
-  { phase: "Taxi", dur: 8, prog0: 0.002, prog1: 0.008 },
-  { phase: "Takeoff", dur: 5, prog0: 0.008, prog1: 0.02 },
-  { phase: "Climb", dur: 12, prog0: 0.02, prog1: 0.1 },
-  { phase: "Cruise", dur: 20, prog0: 0.1, prog1: 0.86 },
-  { phase: "Descent", dur: 12, prog0: 0.86, prog1: 0.95 },
-  { phase: "Approach", dur: 9, prog0: 0.95, prog1: 0.99 },
-  { phase: "Landing", dur: 5, prog0: 0.99, prog1: 0.998 },
-  { phase: "Taxi In", dur: 7, prog0: 0.998, prog1: 1.0 },
-  { phase: "Deboarding", dur: 6, prog0: 1.0, prog1: 1.0 },
-];
-const DEMO_TOTAL_SEC = DEMO_PHASES.reduce((a, p) => a + p.dur, 0);
-
-// demoT (0..1) ist die normierte Position auf der Gesamtdauer.
-function demoTimeline(t: number): { phase: string; prog: number; f: number } {
-  const elapsed = Math.max(0, Math.min(1, t)) * DEMO_TOTAL_SEC;
-  let acc = 0;
-  for (const seg of DEMO_PHASES) {
-    if (elapsed < acc + seg.dur) {
-      const f = seg.dur > 0 ? (elapsed - acc) / seg.dur : 1;
-      return { phase: seg.phase, prog: seg.prog0 + (seg.prog1 - seg.prog0) * f, f };
-    }
-    acc += seg.dur;
-  }
-  const last = DEMO_PHASES[DEMO_PHASES.length - 1];
-  return { phase: last.phase, prog: last.prog1, f: 1 };
-}
-
-// Weiche synthetische Werte (Höhe/Speed) je Phase + Phasen-Fortschritt f.
-function lerp(a: number, b: number, f: number): number {
-  return a + (b - a) * f;
-}
-function demoMetrics(phase: string, f: number): { altFt: number; ias: number; gs: number } {
-  switch (phase) {
-    case "Takeoff":
-      return { altFt: Math.round(lerp(0, 1800, f)), ias: Math.round(lerp(150, 185, f)), gs: Math.round(lerp(150, 190, f)) };
-    case "Climb":
-      return { altFt: Math.round(lerp(1800, 37000, f)), ias: 290, gs: Math.round(lerp(190, 452, f)) };
-    case "Cruise":
-      return { altFt: 37000, ias: 280, gs: 452 };
-    case "Descent":
-      return { altFt: Math.round(lerp(37000, 9000, f)), ias: 280, gs: Math.round(lerp(452, 300, f)) };
-    case "Approach":
-      return { altFt: Math.round(lerp(9000, 1200, f)), ias: Math.round(lerp(250, 160, f)), gs: Math.round(lerp(300, 175, f)) };
-    case "Landing":
-      return { altFt: Math.round(lerp(1200, 0, f)), ias: Math.round(lerp(160, 130, f)), gs: Math.round(lerp(175, 135, f)) };
-    case "Pushback":
-      return { altFt: 0, ias: 0, gs: 3 };
-    case "Taxi":
-    case "Taxi In":
-      return { altFt: 0, ias: 0, gs: 14 };
-    default: // Boarding, Deboarding
-      return { altFt: 0, ias: 0, gs: 0 };
-  }
-}
-
 // Phasenabhängiger Folge-Zoom: am Boden nah dran, im Reiseflug weit.
+// Abgestimmt auf die FlightPhase-Strings (snake_case) aus dem Backend.
 // Gibt null zurück, wenn die Phase unbekannt ist → Höhen-Fallback.
 function zoomForPhase(phase: string): number | null {
   const p = phase.toLowerCase();
-  if (/board|park|gate|pushback|gestartet|stand/.test(p)) return 14;
+  if (/preflight|boarding|board|pushback|blocks_on|arrived|pirep|gate|park|stand/.test(p)) return 14;
   if (/taxi/.test(p)) return 13;
-  if (/takeoff|take-off|departure|rejected|abflug/.test(p)) return 11;
-  if (/climb|steig/.test(p)) return 7.5;
-  if (/cruise|en.?route|level|reise/.test(p)) return 5;
-  if (/descent|descend|sink/.test(p)) return 7.5;
-  if (/approach|final|anflug/.test(p)) return 9;
-  if (/land|flare|rollout|touch|arrived|angekommen/.test(p)) return 12.5;
+  if (/takeoff|take-off|departure/.test(p)) return 11;
+  if (/climb/.test(p)) return 7.5;
+  if (/cruise/.test(p)) return 5;
+  if (/descent|descend/.test(p)) return 7.5;
+  if (/approach|final/.test(p)) return 9;
+  if (/landing|flare|rollout|touch/.test(p)) return 12.5;
+  // holding & alles andere → Höhen-Fallback (richtet sich nach der Flughöhe)
   return null;
 }
 // Folge-Zoom für echte Flüge: Phase zuerst, sonst nach Höhe (MSL ft).
@@ -210,15 +92,6 @@ function targetFollowZoom(phase: string, altMslFt?: number | null): number {
   if (altMslFt < 22000) return 7.5;
   return 5;
 }
-
-// Synthetische VA-Flüge, damit man die VA-Übersicht im Demo OHNE echten
-// Live-Flug ansehen kann.
-const DEMO_VA: VaFlight[] = [
-  { id: "d1", ident: "GSG18", flight_number: "778", airline: { icao: "GSG" }, aircraft: { icao: "A346", registration: "D-AGSG" }, user: { name: "Thomas K", ident: "GSG001" }, status_text: "En Route", dpt_airport_id: "EDDH", arr_airport_id: "LEMD", position: { lat: 47.2, lon: 3.1, heading: 220, altitude_msl: 37000, gs: 452, ias: 286, vs: 0 } },
-  { id: "d2", ident: "GSG412", flight_number: "412", airline: { icao: "GSG" }, aircraft: { icao: "A320", registration: "D-AIQK" }, user: { name: "Patrick M", ident: "GSG014" }, status_text: "Climb", dpt_airport_id: "EDDF", arr_airport_id: "LEPA", position: { lat: 45.0, lon: 7.5, heading: 200, altitude_msl: 24800, gs: 388, ias: 301, vs: 1850 } },
-  { id: "d3", ident: "GSG9", flight_number: "9", airline: { icao: "GSG" }, aircraft: { icao: "B77W", registration: "D-AGWA" }, user: { name: "Sven R", ident: "GSG003" }, status_text: "Cruise", dpt_airport_id: "EGLL", arr_airport_id: "KJFK", position: { lat: 51.0, lon: -8.0, heading: 290, altitude_msl: 38000, gs: 506, ias: 274, vs: 0 } },
-  { id: "d4", ident: "GSG241", flight_number: "241", airline: { icao: "GSG" }, aircraft: { icao: "E55P", registration: "D-CGSG" }, user: { name: "Lena B", ident: "GSG022" }, status_text: "Descent", dpt_airport_id: "EDDM", arr_airport_id: "LIPZ", position: { lat: 46.4, lon: 11.3, heading: 195, altitude_msl: 16500, gs: 332, ias: 268, vs: -1700 } },
-];
 
 function escHtml(s: unknown): string {
   return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
@@ -290,53 +163,26 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const [routeFixes, setRouteFixes] = useState<RouteFix[]>([]);
   const [depArr, setDepArr] = useState<{ dep?: [number, number]; arr?: [number, number] }>({});
   const [vaFlights, setVaFlights] = useState<VaFlight[]>([]);
-  const [demo, setDemo] = useState(false);
-  const [demoPlaying, setDemoPlaying] = useState(true);
-  const [demoT, setDemoT] = useState(0); // 0..1 entlang der Demo-Route
 
-  const isDev = import.meta.env.DEV;
   const pirepId = activeFlight?.pirep_id ?? null;
 
-  // ---- Demo-Animation (zeitbasiert: Wanduhr ≈ DEMO_TOTAL_SEC) ----
-  useEffect(() => {
-    if (!demo || !demoPlaying) return;
-    const TICK_MS = 100;
-    const step = TICK_MS / 1000 / DEMO_TOTAL_SEC;
-    const id = setInterval(() => {
-      setDemoT((t) => (t >= 1 ? 0 : Math.min(1, t + step)));
-    }, TICK_MS);
-    return () => clearInterval(id);
-  }, [demo, demoPlaying]);
-
-  // ---- effektive Daten: Demo ODER echt ----
-  const demoSt = demoTimeline(demoT);
-  const demoIdx = Math.min(DEMO_LINE.length - 1, Math.max(0, Math.floor(demoSt.prog * (DEMO_LINE.length - 1))));
-  const effFixes = demo ? DEMO_FIXES : routeFixes;
-  const effTrack: [number, number][] = demo
-    ? DEMO_LINE.slice(0, Math.max(2, demoIdx + 1))
-    : getTrack(pirepId);
-  const effDep = demo ? ([DEMO_FIXES[0].lon, DEMO_FIXES[0].lat] as [number, number]) : depArr.dep;
-  const effArr = demo
-    ? ([DEMO_FIXES[DEMO_FIXES.length - 1].lon, DEMO_FIXES[DEMO_FIXES.length - 1].lat] as [number, number])
-    : depArr.arr;
-  const effAircraft: Aircraft | null = demo
-    ? {
-        lon: DEMO_LINE[demoIdx][0],
-        lat: DEMO_LINE[demoIdx][1],
-        hdg: bearing(DEMO_LINE[Math.max(0, demoIdx - 1)], DEMO_LINE[Math.min(DEMO_LINE.length - 1, demoIdx + 1)]),
-      }
-    : simSnapshot && typeof simSnapshot.lat === "number"
+  // ---- effektive Daten (aktiver Flug) ----
+  const effFixes = routeFixes;
+  const effTrack: [number, number][] = getTrack(pirepId);
+  const effDep = depArr.dep;
+  const effArr = depArr.arr;
+  const effAircraft: Aircraft | null =
+    simSnapshot && typeof simSnapshot.lat === "number"
       ? {
           lon: simSnapshot.lon,
           lat: simSnapshot.lat,
           hdg: simSnapshot.heading_deg_true ?? simSnapshot.heading_deg_magnetic ?? 0,
         }
       : null;
-  const effDepIcao = demo ? "EDDH" : activeFlight?.dpt_airport;
-  const effArrIcao = demo ? "LEMD" : activeFlight?.arr_airport;
+  const effDepIcao = activeFlight?.dpt_airport;
+  const effArrIcao = activeFlight?.arr_airport;
 
-  const demoPhase = demoSt.phase;
-  const phaseLabel = demo ? demoPhase : (activeFlight?.phase ?? "—");
+  const phaseLabel = activeFlight?.phase ?? "—";
 
   // dataRef für die styledata-Re-Adds aktuell halten
   dataRef.current = { fixes: effFixes, track: effTrack, dep: effDep, arr: effArr };
@@ -353,7 +199,6 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     mapRef.current = map;
-    if (import.meta.env.DEV) (window as unknown as { __aaMap?: maplibregl.Map }).__aaMap = map;
     map.on("load", () => {
       addOverlays(map);
       setMapReady(true);
@@ -456,10 +301,10 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     });
   }
 
-  // ---- Routen-Fixes / Dep-Arr laden (nur echt, nicht im Demo) ----
+  // ---- Routen-Fixes / Dep-Arr laden ----
   useEffect(() => {
     let cancelled = false;
-    if (demo || !pirepId) {
+    if (!pirepId) {
       setRouteFixes([]);
       return;
     }
@@ -469,11 +314,11 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [pirepId, demo]);
+  }, [pirepId]);
 
   useEffect(() => {
     let cancelled = false;
-    if (demo || !activeFlight) {
+    if (!activeFlight) {
       setDepArr({});
       return;
     }
@@ -494,7 +339,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [activeFlight?.dpt_airport, activeFlight?.arr_airport, activeFlight, demo]);
+  }, [activeFlight?.dpt_airport, activeFlight?.arr_airport, activeFlight]);
 
   // ---- Redraw: Quellen + Flugzeug-Marker + Pins ----
   useEffect(() => {
@@ -528,12 +373,11 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       acMarkerRef.current.setLngLat(lngLat).setRotation(effAircraft.hdg);
       if (follow) {
         // Phasenabhängiger Zoom (Boden nah, Reiseflug weit).
-        const effPhase = demo ? demoPhase : (activeFlight?.phase ?? "");
-        const tz = targetFollowZoom(effPhase, demo ? null : simSnapshot?.altitude_msl_ft);
+        const tz = targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft);
         const c = map.getCenter();
         const farJump = Math.abs(c.lng - lngLat[0]) > 3 || Math.abs(c.lat - lngLat[1]) > 3;
         if (farJump) {
-          // großer Sprung (z. B. Demo-Loop LEMD→EDDH oder erster Frame): hart setzen.
+          // großer Sprung (erster Frame / Teleport): hart setzen.
           map.jumpTo({ center: lngLat, zoom: tz });
           zoomTargetRef.current = tz;
           zoomingRef.current = false;
@@ -574,7 +418,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     if (effDep && effDepIcao) mk(effDep, effDepIcao, "dep");
     if (effArr && effArrIcao) mk(effArr, effArrIcao, "arr");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapReady, view, demoT, demo, follow, simSnapshot, routeFixes, depArr.dep, depArr.arr]);
+  }, [mapReady, view, follow, simSnapshot, routeFixes, depArr.dep, depArr.arr]);
 
   // einmal auf die Route fitten, wenn nicht Follow
   const fittedRef = useRef<string | null>(null);
@@ -586,14 +430,14 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       ...(effDep ? [effDep] : []),
       ...(effArr ? [effArr] : []),
     ];
-    const key = `${demo}-${effFixes.length}-${effDepIcao}-${effArrIcao}`;
+    const key = `${effFixes.length}-${effDepIcao}-${effArrIcao}`;
     if (pts.length >= 2 && fittedRef.current !== key) {
       fittedRef.current = key;
       const b = pts.reduce((acc, p) => acc.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0]));
       map.fitBounds(b, { padding: 80, duration: 600, maxZoom: 8 });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapReady, view, follow, effFixes, effDepIcao, effArrIcao, demo]);
+  }, [mapReady, view, follow, effFixes, effDepIcao, effArrIcao]);
 
   // ---- VA-Übersicht ----
   useEffect(() => {
@@ -603,11 +447,6 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       vaPopupRef.current?.remove();
       vaPopupRef.current = null;
       vaFittedRef.current = false;
-      return;
-    }
-    if (demo) {
-      // Im Demo synthetische VA-Flüge zeigen, kein echter Poll.
-      setVaFlights(DEMO_VA);
       return;
     }
     let cancelled = false;
@@ -627,7 +466,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [view, demo]);
+  }, [view]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -670,19 +509,6 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const stats = useMemo(() => {
     const fmt = (v: number | null | undefined, suffix: string) =>
       v == null || Number.isNaN(v) ? "—" : `${Math.round(v)}${suffix}`;
-    if (demo) {
-      // Synthetische Höhe/Speed je Phase (weich interpoliert) — Boden = 0 ft.
-      const st = demoTimeline(demoT);
-      const d = demoMetrics(st.phase, st.f);
-      const flLabel = d.altFt >= 18000 ? `FL${Math.round(d.altFt / 100)}` : `${d.altFt} ft`;
-      return {
-        alt: flLabel,
-        spd: `${d.ias} kts`,
-        hdg: effAircraft ? `${Math.round(effAircraft.hdg)}°` : "—",
-        gs: `${d.gs} kts`,
-        dtg: `${Math.round((1 - st.prog) * 980)} nm`,
-      };
-    }
     const s = simSnapshot;
     const flLabel =
       s?.altitude_msl_ft != null
@@ -697,9 +523,9 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       gs: fmt(s?.groundspeed_kt, " kts"),
       dtg: activeFlight?.distance_nm != null ? `${Math.round(activeFlight.distance_nm)} nm` : "—",
     };
-  }, [demo, demoT, simSnapshot, activeFlight, effAircraft]);
+  }, [simSnapshot, activeFlight]);
 
-  const showOwnContent = view === "own" && (demo || activeFlight);
+  const showOwnContent = view === "own" && !!activeFlight;
 
   return (
     <section className="aa-livemap">
@@ -735,49 +561,14 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
               Follow
             </label>
           )}
-          {isDev && (
-            <div className="aa-livemap__demo">
-              <label className="aa-livemap__follow">
-                <input
-                  type="checkbox"
-                  checked={demo}
-                  onChange={(e) => {
-                    setDemo(e.target.checked);
-                    setDemoT(0);
-                    setDemoPlaying(true);
-                    setFollow(true);
-                  }}
-                />
-                Demo
-              </label>
-              {demo && view === "own" && (
-                <>
-                  <button type="button" className="aa-seg" onClick={() => setDemoPlaying((p) => !p)}>
-                    {demoPlaying ? "⏸" : "▶"}
-                  </button>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1000}
-                    value={Math.round(demoT * 1000)}
-                    onChange={(e) => {
-                      setDemoPlaying(false);
-                      setDemoT(Number(e.target.value) / 1000);
-                    }}
-                  />
-                </>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
       <div className="aa-livemap__body">
         <div className="aa-livemap__map" ref={containerRef}>
-          {view === "own" && !demo && !activeFlight && (
+          {view === "own" && !activeFlight && (
             <div className="aa-livemap__empty">
               Kein aktiver Flug — starte einen Flug, um ihn live zu verfolgen.
-              {isDev && <div style={{ marginTop: 8, fontSize: 13 }}>(Tipp: „Demo" oben zeigt den Look ohne Flug.)</div>}
             </div>
           )}
         </div>

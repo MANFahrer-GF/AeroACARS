@@ -7945,15 +7945,6 @@ input:disabled {
   gap: 14px;
   margin-left: 12px;
 }
-.aa-livemap__demo {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.aa-livemap__demo input[type="range"] {
-  width: 120px;
-  accent-color: var(--accent);
-}
 .aa-livemap__topbar {
   display: flex;
   align-items: center;
