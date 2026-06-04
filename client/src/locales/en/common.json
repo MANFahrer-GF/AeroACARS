@@ -5,6 +5,7 @@
   },
   "tabs": {
     "cockpit": "Cockpit",
+    "map": "Map",
     "briefing": "My Flights",
     "landing": "Landing",
     "news": "News",

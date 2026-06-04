@@ -552,6 +552,18 @@ function App() {
             {t("tabs.cockpit")}
             {activeFlight && <span className="tab__badge" aria-hidden="true" />}
           </button>
+          {import.meta.env.DEV && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "map"}
+              className={`tab ${tab === "map" ? "tab--active" : ""}`}
+              onClick={() => setTab("map")}
+              title="Beta/Dev: In-App Live-Map"
+            >
+              {t("tabs.map")}
+            </button>
+          )}
           <button
             type="button"
             role="tab"
@@ -611,18 +623,6 @@ function App() {
           >
             {t("tabs.about")}
           </button>
-          {import.meta.env.DEV && (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === "map"}
-              className={`tab ${tab === "map" ? "tab--active" : ""}`}
-              onClick={() => setTab("map")}
-              title="Beta/Dev: In-App Live-Map"
-            >
-              Karte
-            </button>
-          )}
           {import.meta.env.DEV && (
             <button
               type="button"

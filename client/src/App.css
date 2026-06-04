@@ -8026,11 +8026,30 @@ input:disabled {
   inset: 0;
 }
 .aa-livemap__log {
-  width: 320px;
+  width: 300px;
   flex-shrink: 0;
-  overflow: auto;
+  display: flex;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 10px;
+  background: var(--surface);
+}
+/* Im Karten-Kontext die innere Card auflösen — sonst Card-in-Card ("Sprechblase"). */
+.aa-livemap__log .activity-log {
+  flex: 1;
+  min-height: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 12px 14px;
+  gap: 10px;
+}
+.aa-livemap__log .activity-log__list {
+  max-height: none;
+  flex: 1;
+}
+.aa-livemap__log .activity-log__title {
+  font-size: 14px;
 }
 .aa-livemap__empty {
   position: absolute;
@@ -8067,4 +8086,58 @@ input:disabled {
 }
 .aa-pin--arr {
   background: var(--danger);
+}
+
+/* ===== VA-Flug-Popup (theme-fähig, dark + light) ===== */
+.aa-vapop .maplibregl-popup-content {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+}
+.aa-vapop .maplibregl-popup-close-button {
+  color: var(--text-muted);
+  font-size: 16px;
+  padding: 0 6px;
+}
+.aa-vapop.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.aa-vapop.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.aa-vapop.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+  border-bottom-color: var(--surface);
+}
+.aa-vapop.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.aa-vapop.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.aa-vapop.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+  border-top-color: var(--surface);
+}
+.aa-vapop.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--surface);
+}
+.aa-vapop.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--surface);
+}
+.aa-vapop__title {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--accent);
+}
+.aa-vapop__sub {
+  color: var(--text-muted);
+  margin: 1px 0 7px;
+}
+.aa-vapop__grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 14px;
+}
+.aa-vapop__k {
+  color: var(--text-muted);
+}
+.aa-vapop__v {
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }

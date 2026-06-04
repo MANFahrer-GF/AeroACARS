@@ -26,6 +26,10 @@ import { getTrack } from "../lib/trackStore";
 const BASEMAP_DARK = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 const BASEMAP_LIGHT = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
 
+// Mindest-Zoom beim Folgen des eigenen Flugs — nah genug für Details
+// (Flieger, naheliegende Wegpunkte, Track), statt der weiten Routensicht.
+const FOLLOW_ZOOM = 8.5;
+
 interface RouteFix {
   ident: string;
   lat: number;
@@ -33,12 +37,27 @@ interface RouteFix {
   kind: string;
 }
 interface VaFlight {
+  id?: number | string;
   ident?: string;
   flight_number?: string;
-  aircraft?: { icao?: string; registration?: string } | null;
+  status_text?: string;
+  phase?: number | string;
+  airline?: { icao?: string; iata?: string } | null;
+  aircraft?: { icao?: string; registration?: string; name?: string } | null;
   dpt_airport_id?: string;
   arr_airport_id?: string;
-  position?: { lat?: number; lon?: number; heading?: number } | null;
+  user?: { name?: string; ident?: string; pilot_id?: string } | null;
+  position?: {
+    lat?: number;
+    lon?: number;
+    heading?: number;
+    altitude?: number;
+    altitude_msl?: number;
+    altitude_agl?: number;
+    gs?: number;
+    ias?: number;
+    vs?: number;
+  } | null;
 }
 type View = "own" | "va";
 interface Aircraft {
@@ -113,11 +132,45 @@ const DEMO_LINE = densify(DEMO_FIXES, 240);
 // Synthetische VA-Flüge, damit man die VA-Übersicht im Demo OHNE echten
 // Live-Flug ansehen kann.
 const DEMO_VA: VaFlight[] = [
-  { ident: "GSG18", flight_number: "778", aircraft: { icao: "A346" }, dpt_airport_id: "EDDH", arr_airport_id: "LEMD", position: { lat: 47.2, lon: 3.1, heading: 220 } },
-  { ident: "DLH4PY", flight_number: "1102", aircraft: { icao: "A320" }, dpt_airport_id: "EDDF", arr_airport_id: "LEPA", position: { lat: 45.0, lon: 7.5, heading: 200 } },
-  { ident: "BAW9", flight_number: "9", aircraft: { icao: "B77W" }, dpt_airport_id: "EGLL", arr_airport_id: "KJFK", position: { lat: 51.0, lon: -8.0, heading: 290 } },
-  { ident: "EJA41", flight_number: "2041", aircraft: { icao: "E55P" }, dpt_airport_id: "KEYW", arr_airport_id: "MMCZ", position: { lat: 23.5, lon: -84.0, heading: 240 } },
+  { id: "d1", ident: "GSG18", flight_number: "778", airline: { icao: "GSG" }, aircraft: { icao: "A346", registration: "D-AGSG" }, user: { name: "Thomas K", ident: "GSG001" }, status_text: "En Route", dpt_airport_id: "EDDH", arr_airport_id: "LEMD", position: { lat: 47.2, lon: 3.1, heading: 220, altitude_msl: 37000, gs: 452, ias: 286, vs: 0 } },
+  { id: "d2", ident: "GSG412", flight_number: "412", airline: { icao: "GSG" }, aircraft: { icao: "A320", registration: "D-AIQK" }, user: { name: "Patrick M", ident: "GSG014" }, status_text: "Climb", dpt_airport_id: "EDDF", arr_airport_id: "LEPA", position: { lat: 45.0, lon: 7.5, heading: 200, altitude_msl: 24800, gs: 388, ias: 301, vs: 1850 } },
+  { id: "d3", ident: "GSG9", flight_number: "9", airline: { icao: "GSG" }, aircraft: { icao: "B77W", registration: "D-AGWA" }, user: { name: "Sven R", ident: "GSG003" }, status_text: "Cruise", dpt_airport_id: "EGLL", arr_airport_id: "KJFK", position: { lat: 51.0, lon: -8.0, heading: 290, altitude_msl: 38000, gs: 506, ias: 274, vs: 0 } },
+  { id: "d4", ident: "GSG241", flight_number: "241", airline: { icao: "GSG" }, aircraft: { icao: "E55P", registration: "D-CGSG" }, user: { name: "Lena B", ident: "GSG022" }, status_text: "Descent", dpt_airport_id: "EDDM", arr_airport_id: "LIPZ", position: { lat: 46.4, lon: 11.3, heading: 195, altitude_msl: 16500, gs: 332, ias: 268, vs: -1700 } },
 ];
+
+function escHtml(s: unknown): string {
+  return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
+}
+function flLabel(msl?: number | null): string {
+  if (msl == null || Number.isNaN(msl)) return "—";
+  return msl >= 18000 ? `FL${Math.round(msl / 100)}` : `${Math.round(msl)} ft`;
+}
+/** Theme-fähiges Popup-HTML mit den Flugdaten aus /api/acars. */
+function vaPopupHtml(f: VaFlight): string {
+  const cs = f.ident || [f.airline?.icao, f.flight_number].filter(Boolean).join("") || f.flight_number || "—";
+  const ac = [f.aircraft?.icao, f.aircraft?.registration].filter(Boolean).join(" · ") || "—";
+  const route = `${f.dpt_airport_id ?? "—"} → ${f.arr_airport_id ?? "—"}`;
+  const pos = f.position ?? {};
+  const gs = pos.gs != null ? `${Math.round(pos.gs)} kt` : "—";
+  const ias = pos.ias != null ? `${Math.round(pos.ias)} kt` : "—";
+  const hdg = pos.heading != null ? `${Math.round(pos.heading)}°` : "—";
+  const vs = pos.vs != null ? `${Math.round(pos.vs)} fpm` : "—";
+  const pilot = f.user?.name ?? "";
+  const row = (k: string, v: string) => `<span class="aa-vapop__k">${k}</span><span class="aa-vapop__v">${escHtml(v)}</span>`;
+  return (
+    `<div class="aa-vapop__title">${escHtml(cs)}</div>` +
+    `<div class="aa-vapop__sub">${escHtml(ac)}${pilot ? ` · ${escHtml(pilot)}` : ""}</div>` +
+    `<div class="aa-vapop__grid">` +
+    row("Route", route) +
+    row("Phase", f.status_text ?? "—") +
+    row("ALT", flLabel(pos.altitude_msl ?? pos.altitude)) +
+    row("HDG", hdg) +
+    row("GS", gs) +
+    row("IAS", ias) +
+    row("V/S", vs) +
+    `</div>`
+  );
+}
 
 const SRC_ROUTE = "aa-planned-route";
 const SRC_WPTS = "aa-planned-wpts";
@@ -137,6 +190,9 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const acMarkerRef = useRef<maplibregl.Marker | null>(null);
   const pinMarkersRef = useRef<maplibregl.Marker[]>([]);
   const vaMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const vaPopupRef = useRef<maplibregl.Popup | null>(null);
+  const vaFittedRef = useRef(false);
+  const followZoomRef = useRef(false);
   const dataRef = useRef<{
     fixes: RouteFix[];
     track: [number, number][];
@@ -375,6 +431,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       acMarkerRef.current = null;
       pinMarkersRef.current.forEach((m) => m.remove());
       pinMarkersRef.current = [];
+      followZoomRef.current = false; // beim Zurückkehren wieder nah heranzoomen
       return;
     }
     pushSources(map, { fixes: effFixes, track: effTrack, dep: effDep, arr: effArr });
@@ -389,7 +446,18 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
         acMarkerRef.current = new maplibregl.Marker({ element: el, rotationAlignment: "map" }).setLngLat(lngLat).addTo(map);
       }
       acMarkerRef.current.setLngLat(lngLat).setRotation(effAircraft.hdg);
-      if (follow) map.easeTo({ center: lngLat, duration: 380 });
+      if (follow) {
+        if (!followZoomRef.current) {
+          // Beim Aktivieren von Follow einmal näher heranzoomen; danach den
+          // vom Nutzer gewählten Zoom respektieren (nur mitschwenken).
+          map.easeTo({ center: lngLat, zoom: Math.max(map.getZoom(), FOLLOW_ZOOM), duration: 600 });
+          followZoomRef.current = true;
+        } else {
+          map.easeTo({ center: lngLat, duration: 380 });
+        }
+      } else {
+        followZoomRef.current = false;
+      }
     } else {
       acMarkerRef.current?.remove();
       acMarkerRef.current = null;
@@ -433,6 +501,9 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     if (view !== "va") {
       vaMarkersRef.current.forEach((m) => m.remove());
       vaMarkersRef.current = [];
+      vaPopupRef.current?.remove();
+      vaPopupRef.current = null;
+      vaFittedRef.current = false;
       return;
     }
     if (demo) {
@@ -469,16 +540,28 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       const lat = f.position?.lat;
       const lon = f.position?.lon;
       if (typeof lat !== "number" || typeof lon !== "number") continue;
+      const lngLat: [number, number] = [lon, lat];
       const el = document.createElement("div");
       el.className = "aa-ac-marker aa-ac-marker--va";
       el.innerHTML = planeSvg();
       el.title = `${f.ident ?? f.flight_number ?? "?"} · ${f.aircraft?.icao ?? ""} · ${f.dpt_airport_id ?? ""}→${f.arr_airport_id ?? ""}`;
+      // Klick → Popup mit Flugdaten (ersetzt ein evtl. offenes Popup).
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        vaPopupRef.current?.remove();
+        vaPopupRef.current = new maplibregl.Popup({ offset: 16, closeButton: true, className: "aa-vapop", maxWidth: "260px" })
+          .setLngLat(lngLat)
+          .setHTML(vaPopupHtml(f))
+          .addTo(map);
+      });
       vaMarkersRef.current.push(
-        new maplibregl.Marker({ element: el, rotationAlignment: "map" }).setLngLat([lon, lat]).setRotation(f.position?.heading ?? 0).addTo(map),
+        new maplibregl.Marker({ element: el, rotationAlignment: "map" }).setLngLat(lngLat).setRotation(f.position?.heading ?? 0).addTo(map),
       );
-      pts.push([lon, lat]);
+      pts.push(lngLat);
     }
-    if (pts.length >= 1) {
+    // Nur einmal je VA-Sitzung einpassen, sonst zuckt die Karte alle 12 s.
+    if (pts.length >= 1 && !vaFittedRef.current) {
+      vaFittedRef.current = true;
       const b = pts.reduce((acc, p) => acc.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0]));
       map.fitBounds(b, { padding: 60, duration: 600, maxZoom: 6 });
     }
