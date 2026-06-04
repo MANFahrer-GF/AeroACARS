@@ -34,6 +34,7 @@ import { IntegrityBanner } from "./components/IntegrityBanner";
 import { useDiscordRpcPush } from "./hooks/useDiscordRpcPush";
 import { LiveRecordingIndicator } from "./components/LiveRecordingIndicator";
 import { useSimSession } from "./hooks/useSimSession";
+import { recordTrackPoint } from "./lib/trackStore";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import type { ActiveFlightInfo, LoginResult, Profile, UiError } from "./types";
 
@@ -293,6 +294,15 @@ function App() {
   const [activeFlight, setActiveFlight] = useState<ActiveFlightInfo | null>(
     null,
   );
+
+  // v0.13.x: Track app-weit ab Flugstart sammeln (für die In-App-Live-Map).
+  // Läuft unabhängig davon, ob der Karten-Tab offen ist — so ist der Track
+  // ab Flugstart da, nicht erst ab Tab-Öffnen.
+  useEffect(() => {
+    if (activeFlight?.pirep_id && simSnapshot) {
+      recordTrackPoint(activeFlight.pirep_id, simSnapshot.lon, simSnapshot.lat);
+    }
+  }, [simSnapshot, activeFlight?.pirep_id]);
 
   // v0.5.48: Zentraler Update-Checker. Beide UI-Komponenten — der
   // Header-Button und das große Banner — konsumieren denselben State,

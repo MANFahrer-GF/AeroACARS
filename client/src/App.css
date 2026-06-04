@@ -90,6 +90,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* volle Höhe als Floor, damit flex:1-Kinder (z.B. die Live-Map) den
+     verbleibenden Platz füllen; kürzere Tabs fließen unverändert oben. */
+  min-height: 100%;
+  box-sizing: border-box;
 }
 
 .app__header {
@@ -7930,9 +7934,25 @@ input:disabled {
 .aa-livemap {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 130px);
-  min-height: 480px;
+  /* füllt den verbleibenden Platz der .app-Flex-Column (kein Magie-Pixel) */
+  flex: 1;
+  min-height: 0;
   gap: 8px;
+}
+.aa-livemap__right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-left: 12px;
+}
+.aa-livemap__demo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.aa-livemap__demo input[type="range"] {
+  width: 120px;
+  accent-color: var(--accent);
 }
 .aa-livemap__topbar {
   display: flex;
