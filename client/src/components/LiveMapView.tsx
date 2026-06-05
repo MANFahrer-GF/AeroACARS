@@ -165,6 +165,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const pinMarkersRef = useRef<maplibregl.Marker[]>([]);
   const vaMarkersRef = useRef<maplibregl.Marker[]>([]);
   const vaPopupRef = useRef<maplibregl.Popup | null>(null);
+  const vaPopupIdRef = useRef<string | null>(null); // welcher VA-Flug das offene Popup zeigt
   const vaFittedRef = useRef(false);
   // Dead-Reckoning: VA-Marker zwischen den 12-s-Polls flüssig weiterrechnen.
   const vaDrRef = useRef<{ marker: maplibregl.Marker; lat: number; lon: number; hdg: number; gs: number }[]>([]);
@@ -177,6 +178,10 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   // Ersetzt das alte unsichtbare „15 s pausieren"-Fenster, das Follow heimlich
   // tot hielt (Karte folgte nicht, obwohl der Haken gesetzt war).
   const followCamRef = useRef(true);
+  // v0.15.6: verhindert, dass ein Nutzer-Pan (der Follow ausschaltet) die
+  // „auf-die-ganze-Route-zoomen"-Logik auslöst. Nur BEWUSSTES Abhaken von Follow
+  // soll auf die Route fitten — ein Pan lässt die Ansicht einfach stehen.
+  const suppressRouteFitRef = useRef(false);
   const dataRef = useRef<{
     fixes: RouteFix[];
     track: [number, number][];
@@ -270,6 +275,8 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     map.on("dragstart", (e: { originalEvent?: unknown }) => {
       if (e.originalEvent) {
         followCamRef.current = false;
+        // Pan = bewusst woanders hinschauen → NICHT auf die ganze Route fitten.
+        suppressRouteFitRef.current = true;
         setFollow(false);
       }
     });
@@ -543,19 +550,38 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     // was_just_resumed in den Deps: sobald die Resume-Warte-Phase endet, läuft
     // der Redraw erneut und zentriert (bei Follow) auf die frische Sim-Position.
-  }, [mapReady, follow, simSnapshot, routeFixes, depArr.dep, depArr.arr, activeFlight?.was_just_resumed]);
+    // v0.15.6: phase/dep/arr/nextIdent mit in die Deps — sonst frieren Phasen-
+    // Zoom + Marker-Farbe + Pins/Highlight ein, falls simSnapshot mal stehen
+    // bleibt (Sim-Pause/Resume), während sich die Phase noch ändert.
+  }, [
+    mapReady,
+    follow,
+    simSnapshot,
+    routeFixes,
+    depArr.dep,
+    depArr.arr,
+    activeFlight?.was_just_resumed,
+    activeFlight?.phase,
+    activeFlight?.dpt_airport,
+    activeFlight?.arr_airport,
+    nav.nextIdent,
+  ]);
 
-  // einmal auf die eigene Route fitten, wenn Follow aus (und ein Flug aktiv ist)
+  // einmal auf die eigene Route fitten, wenn Follow BEWUSST abgehakt wurde
+  // (nicht, wenn ein Pan Follow ausgeschaltet hat — dann bleibt die Ansicht stehen).
   const fittedRef = useRef<string | null>(null);
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || !activeFlight || follow) return;
+    if (suppressRouteFitRef.current) return;
     const pts: [number, number][] = [
       ...effFixes.map((f) => [f.lon, f.lat] as [number, number]),
       ...(effDep ? [effDep] : []),
       ...(effArr ? [effArr] : []),
     ];
-    const key = `${effFixes.length}-${effDepIcao}-${effArrIcao}`;
+    // pirepId mit im Key: ein neuer Flug derselben Strecke (gleiche Fix-Anzahl +
+    // gleiche Dep/Arr) soll wieder gefittet werden, nicht als „schon erledigt" gelten.
+    const key = `${pirepId}-${effFixes.length}-${effDepIcao}-${effArrIcao}`;
     if (pts.length >= 2 && fittedRef.current !== key) {
       fittedRef.current = key;
       const b = pts.reduce((acc, p) => acc.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0]));
@@ -602,11 +628,13 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     }
     const pts: [number, number][] = [];
     const dr: { marker: maplibregl.Marker; lat: number; lon: number; hdg: number; gs: number }[] = [];
+    const popupTargets = new Map<string, { lngLat: [number, number]; f: VaFlight }>();
     for (const f of vaVisible) {
       const lat = f.position?.lat;
       const lon = f.position?.lon;
       if (typeof lat !== "number" || typeof lon !== "number") continue;
       const lngLat: [number, number] = [lon, lat];
+      popupTargets.set(String(f.id ?? f.ident ?? f.flight_number ?? ""), { lngLat, f });
       const el = document.createElement("div");
       el.className = "aa-ac-marker aa-ac-marker--va";
       el.innerHTML = aircraftSvg(f.aircraft?.icao);
@@ -616,10 +644,19 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       el.addEventListener("click", (ev) => {
         ev.stopPropagation();
         vaPopupRef.current?.remove();
-        vaPopupRef.current = new maplibregl.Popup({ offset: 16, closeButton: true, className: "aa-vapop", maxWidth: "260px" })
+        vaPopupIdRef.current = String(f.id ?? f.ident ?? f.flight_number ?? "");
+        const popup = new maplibregl.Popup({ offset: 16, closeButton: true, className: "aa-vapop", maxWidth: "260px" })
           .setLngLat(lngLat)
           .setHTML(vaPopupHtml(f))
           .addTo(map);
+        // manuelles Schließen (X) → Refs aufräumen, sonst zeigt der Rebuild ins Leere.
+        popup.on("close", () => {
+          if (vaPopupRef.current === popup) {
+            vaPopupRef.current = null;
+            vaPopupIdRef.current = null;
+          }
+        });
+        vaPopupRef.current = popup;
       });
       const marker = new maplibregl.Marker({ element: el, rotationAlignment: "map" }).setLngLat(lngLat).setRotation(f.position?.heading ?? 0).addTo(map);
       vaMarkersRef.current.push(marker);
@@ -628,6 +665,19 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     }
     vaDrRef.current = dr;
     vaDrT0Ref.current = Date.now();
+    // v0.15.6: offenes VA-Popup beim Rebuild an den passenden Flug nachführen
+    // (frische Position + Daten) statt es an einem gerade entfernten Marker
+    // verwaisen zu lassen; ist der Flug weg, Popup schließen.
+    if (vaPopupRef.current && vaPopupIdRef.current) {
+      const t = popupTargets.get(vaPopupIdRef.current);
+      if (t) {
+        vaPopupRef.current.setLngLat(t.lngLat).setHTML(vaPopupHtml(t.f));
+      } else {
+        vaPopupRef.current.remove();
+        vaPopupRef.current = null;
+        vaPopupIdRef.current = null;
+      }
+    }
     // Nur auf die VA-Flieger einpassen, wenn KEIN eigener Flug die Kamera führt
     // (sonst würde es dich vom eigenen Flug wegziehen). Und nur einmal.
     if (pts.length >= 1 && !vaFittedRef.current && !activeFlight) {
@@ -717,6 +767,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
                 // bewusster Re-Center: Follow an, Kamera-Tracking sofort scharf,
                 // direkt zur aktuellen Sim-Position springen.
                 followCamRef.current = true;
+                suppressRouteFitRef.current = true;
                 setFollow(true);
                 const tz = targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft);
                 map.easeTo({ center: [effAircraft.lon, effAircraft.lat], zoom: tz, duration: 500 });
@@ -733,6 +784,8 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
                 onChange={(e) => {
                   setFollow(e.target.checked);
                   followCamRef.current = e.target.checked; // bewusst an → sofort folgen; aus → nicht tracken
+                  // bewusst abgehakt → Route-Fit erlauben; angehakt → Sperre zurücksetzen.
+                  suppressRouteFitRef.current = e.target.checked;
                 }}
               />
               Follow
