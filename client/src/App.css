@@ -7949,6 +7949,27 @@ input:disabled {
   gap: 14px;
   margin-left: 12px;
 }
+/* v0.15.6: „Auf mein Flugzeug zentrieren" — holt die Karte zurück zum Flieger,
+   wenn man sich verschaut hat oder nach einem Resume die Ansicht woanders steht. */
+.aa-livemap__recenter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 4px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.aa-livemap__recenter:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
 .aa-livemap__topbar {
   display: flex;
   align-items: center;

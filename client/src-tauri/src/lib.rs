@@ -6157,6 +6157,15 @@ async fn flight_refresh_simbrief(
         stats.planned_tow_kg = Some(ofp.planned_tow_kg).filter(|&v| v > 0.0);
         stats.planned_ldw_kg = Some(ofp.planned_ldw_kg).filter(|&v| v > 0.0);
         stats.planned_route = ofp.route.clone();
+        // v0.15.6: Bugfix — der Refresh-Pfad hat `planned_waypoints` NIE
+        // gesetzt (nur `flight_start` tat das). Folge: wer den SimBrief-Plan
+        // erst nach dem Bid generierte/aktualisierte (OFP kam per Refresh,
+        // nicht beim Start), hatte nie Wegpunkte/Route auf der In-App-Map.
+        // Nur überschreiben, wenn der neue OFP welche hat — sonst behalten
+        // wir die schon vorhandenen (Refresh ohne navlog = selten).
+        if !ofp.waypoints.is_empty() {
+            stats.planned_waypoints = ofp.waypoints.clone();
+        }
         stats.planned_alternate = ofp.alternate.clone();
         stats.planned_max_zfw_kg = Some(ofp.max_zfw_kg).filter(|&v| v > 0.0);
         stats.planned_max_tow_kg = Some(ofp.max_tow_kg).filter(|&v| v > 0.0);

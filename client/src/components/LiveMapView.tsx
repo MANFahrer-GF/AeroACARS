@@ -408,18 +408,33 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     });
   }
 
-  // ---- Routen-Fixes / Dep-Arr laden ----
+  // ---- Routen-Fixes laden ----
+  // v0.15.6: Wegpunkte können VERSPÄTET reinkommen — z.B. wenn die SimBrief-OFP
+  // erst nach dem Flugstart per „OFP aktualisieren" geladen wird. Darum POLLEN
+  // wir statt one-shot und setzen nur bei echter Änderung (kein Re-Render-Spam).
+  // Fetch-Fehler lassen die zuletzt geladene Route stehen (nicht löschen).
   useEffect(() => {
-    let cancelled = false;
     if (!pirepId) {
       setRouteFixes([]);
       return;
     }
-    invoke<RouteFix[]>("flight_get_route_fixes")
-      .then((fx) => !cancelled && setRouteFixes(fx ?? []))
-      .catch(() => !cancelled && setRouteFixes([]));
+    let cancelled = false;
+    const sig = (fx: RouteFix[]) => fx.map((f) => `${f.ident}@${f.lat.toFixed(3)},${f.lon.toFixed(3)}`).join("|");
+    const load = () =>
+      invoke<RouteFix[]>("flight_get_route_fixes")
+        .then((fx) => {
+          if (cancelled) return;
+          const next = fx ?? [];
+          setRouteFixes((prev) => (sig(prev) === sig(next) ? prev : next));
+        })
+        .catch(() => {
+          /* transienter Fehler → letzte Route behalten */
+        });
+    load();
+    const id = window.setInterval(load, 5000);
     return () => {
       cancelled = true;
+      window.clearInterval(id);
     };
   }, [pirepId]);
 
@@ -523,7 +538,9 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     if (effDep && effDepIcao) mk(effDep, effDepIcao, "dep");
     if (effArr && effArrIcao) mk(effArr, effArrIcao, "arr");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapReady, follow, simSnapshot, routeFixes, depArr.dep, depArr.arr]);
+    // was_just_resumed in den Deps: sobald die Resume-Warte-Phase endet, läuft
+    // der Redraw erneut und zentriert (bei Follow) auf die frische Sim-Position.
+  }, [mapReady, follow, simSnapshot, routeFixes, depArr.dep, depArr.arr, activeFlight?.was_just_resumed]);
 
   // einmal auf die eigene Route fitten, wenn Follow aus (und ein Flug aktiv ist)
   const fittedRef = useRef<string | null>(null);
@@ -686,6 +703,25 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
         )}
 
         <div className="aa-livemap__right">
+          {activeFlight && effAircraft && (
+            <button
+              type="button"
+              className="aa-livemap__recenter"
+              title="Karte auf mein Flugzeug zentrieren"
+              onClick={() => {
+                const map = mapRef.current;
+                if (!map || !effAircraft) return;
+                // bewusster Re-Center: Follow an, Interaktions-Sperre lösen,
+                // sofort zur aktuellen Sim-Position springen.
+                userInteractUntilRef.current = 0;
+                setFollow(true);
+                const tz = targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft);
+                map.easeTo({ center: [effAircraft.lon, effAircraft.lat], zoom: tz, duration: 500 });
+              }}
+            >
+              🎯 Flugzeug
+            </button>
+          )}
           {activeFlight && (
             <label className="aa-livemap__follow">
               <input
