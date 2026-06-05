@@ -156,6 +156,27 @@ describe("LiveMapView Follow-Kamera", () => {
     const c1 = h.easeTo.at(-1)!.center!;
     expect(c1[0]).toBeCloseTo(28.6, 1);
     expect(c1[1]).toBeCloseTo(41.4, 1);
+    // laufendes Folgen darf den ZOOM NICHT mehr anfassen (dein manueller
+    // Rauszoom bleibt erhalten — das war der zweite Teil des Bugs).
+    expect(h.easeTo.at(-1)!.zoom).toBeUndefined();
+  });
+
+  it("zentriert auch aus weit entfernter/rausgezoomter Ansicht (Follow-Bug)", () => {
+    const { rerender } = render(
+      <LiveMapView activeFlight={flight as never} simSnapshot={snap(41.2, 28.7) as never} />,
+    );
+    fireLoad();
+    // Erst-Lock erfolgt (jumpTo). Jetzt eine Position WEIT weg melden, so als
+    // hätte man weit rausgezoomt und der Flieger ist quer über der Karte.
+    h.jumpTo.length = 0;
+    act(() => {
+      rerender(<LiveMapView activeFlight={flight as never} simSnapshot={snap(60.0, 5.0) as never} />);
+    });
+    // Follow MUSS hart auf den Flieger zentrieren — egal wie weit weg.
+    expect(h.jumpTo.length).toBeGreaterThan(0);
+    const c = h.jumpTo.at(-1)!.center!;
+    expect(c[0]).toBeCloseTo(5.0, 1);
+    expect(c[1]).toBeCloseTo(60.0, 1);
   });
 
   it("ein Nutzer-Pan schaltet Follow sichtbar AUS und stoppt das Zentrieren", () => {

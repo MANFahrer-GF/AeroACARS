@@ -150,6 +150,7 @@ const SRC_TRACK = "aa-flown-track";
 const SRC_TRACK_DOTS = "aa-flown-track-dots";
 const LYR_ROUTE = "aa-planned-route-line";
 const LYR_WPTS = "aa-planned-wpts-circles";
+const LYR_WPT_LABELS = "aa-planned-wpts-labels";
 const LYR_TRACK = "aa-flown-track-line";
 const LYR_TRACK_DOTS = "aa-flown-track-dots-circles";
 
@@ -170,14 +171,11 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   // Dead-Reckoning: VA-Marker zwischen den 12-s-Polls flüssig weiterrechnen.
   const vaDrRef = useRef<{ marker: maplibregl.Marker; lat: number; lon: number; hdg: number; gs: number }[]>([]);
   const vaDrT0Ref = useRef(0);
-  const zoomTargetRef = useRef<number | null>(null);
-  const zoomingRef = useRef(false);
   const acCatRef = useRef<string | null>(null); // zuletzt gerendertes Eigen-Flieger-Icon (ICAO)
-  // v0.15.6: synchroner Follow-Zustand. Ein echter Pan vom Nutzer schaltet Follow
-  // SOFORT (vor dem React-Re-Render) ab, damit der nächste Redraw nicht zurückzieht.
-  // Ersetzt das alte unsichtbare „15 s pausieren"-Fenster, das Follow heimlich
-  // tot hielt (Karte folgte nicht, obwohl der Haken gesetzt war).
-  const followCamRef = useRef(true);
+  // v0.15.8: „beim bewussten Einschalten von Follow EINMAL den phasen-passenden
+  // Zoom setzen" — danach bleibt der manuelle Zoom des Nutzers erhalten (laufendes
+  // Folgen schwenkt nur noch). Startet true, damit die erste Aktivierung greift.
+  const followEngageRef = useRef(true);
   // v0.15.6: verhindert, dass ein Nutzer-Pan (der Follow ausschaltet) die
   // „auf-die-ganze-Route-zoomen"-Logik auslöst. Nur BEWUSSTES Abhaken von Follow
   // soll auf die Route fitten — ein Pan lässt die Ansicht einfach stehen.
@@ -274,8 +272,8 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     // zoomen, ohne den Flieger zu verlieren.
     map.on("dragstart", (e: { originalEvent?: unknown }) => {
       if (e.originalEvent) {
-        followCamRef.current = false;
-        // Pan = bewusst woanders hinschauen → NICHT auf die ganze Route fitten.
+        // Pan = bewusst woanders hinschauen → Follow sichtbar aus + NICHT auf die
+        // ganze Route fitten.
         suppressRouteFitRef.current = true;
         setFollow(false);
       }
@@ -314,6 +312,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     const trackColor = cssVar("--map-track", "#e8e8e8"); // theme-aware (hell/dunkel)
     const surface = cssVar("--surface", "#ffffff");
     const warning = cssVar("--warning", "#ff9f0a");
+    const textColor = cssVar("--text", "#e8edf2"); // theme-aware Label-Text
     const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
     if (!map.getSource(SRC_ROUTE)) map.addSource(SRC_ROUTE, { type: "geojson", data: empty });
     if (!map.getSource(SRC_WPTS)) map.addSource(SRC_WPTS, { type: "geojson", data: empty });
@@ -375,6 +374,34 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
           ],
           "circle-stroke-width": ["case", ["==", ["get", "isNext"], true], 2, 1],
           "circle-stroke-color": surface,
+        },
+      });
+    }
+    // v0.15.8: Wegpunkt-NAMEN (Ident) — aber erst ab mittlerer Zoomstufe. Bei
+    // rausgezoomt (Kontinent/Land) würden die Namen die Karte zukleistern, darum
+    // minzoom + Kollisions-Vermeidung (allow-overlap=false). text-optional:
+    // wenn kein Platz, bleibt wenigstens der Punkt.
+    if (!map.getLayer(LYR_WPT_LABELS)) {
+      map.addLayer({
+        id: LYR_WPT_LABELS,
+        type: "symbol",
+        source: SRC_WPTS,
+        minzoom: 6.5,
+        layout: {
+          "text-field": ["get", "ident"],
+          "text-font": ["Open Sans Regular"],
+          "text-size": 11,
+          "text-offset": [0, 1.1],
+          "text-anchor": "top",
+          "text-allow-overlap": false,
+          "text-optional": true,
+          "text-padding": 4,
+        },
+        paint: {
+          "text-color": textColor,
+          "text-halo-color": surface,
+          "text-halo-width": 1.4,
+          "text-halo-blur": 0.4,
         },
       });
     }
@@ -503,35 +530,35 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       // was_just_resumed = der Resume-Gate wartet noch auf einen frischen
       // Sim-Snapshot. In dem Zustand kann X-Plane kurz eine Reload-/Lade-
       // position melden (z.B. Nordeuropa) → NICHT blind dorthin folgen.
-      if (follow && followCamRef.current && !activeFlight?.was_just_resumed) {
-        // Phasenabhängiger Zoom (Boden nah, Reiseflug weit).
-        const tz = targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft);
+      // Follow: bei gesetztem Haken IMMER auf den Flieger zentrieren — egal wie
+      // weit man rausgezoomt hat. Gate NUR am `follow`-State (ein einziger Zustand,
+      // nichts kann mehr desyncen). was_just_resumed unterdrückt das Folgen der
+      // evtl. falschen Reload-Position direkt nach einem Resume.
+      if (follow && !activeFlight?.was_just_resumed) {
         const c = map.getCenter();
-        const farJump = Math.abs(c.lng - lngLat[0]) > 3 || Math.abs(c.lat - lngLat[1]) > 3;
-        if (farJump) {
-          // großer Sprung (erster Frame / Teleport): hart setzen.
-          map.jumpTo({ center: lngLat, zoom: tz });
-          zoomTargetRef.current = tz;
-          zoomingRef.current = false;
+        const far = Math.abs(c.lng - lngLat[0]) > 2 || Math.abs(c.lat - lngLat[1]) > 2;
+        if (far) {
+          // großer Versatz (Erst-Lock / weit draußen) → hart auf den Flieger,
+          // phasen-passender Zoom (Boden nah, Reiseflug weit).
+          map.jumpTo({
+            center: lngLat,
+            zoom: targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft),
+          });
+          followEngageRef.current = false;
+        } else if (followEngageRef.current) {
+          // bewusst (wieder) eingeschaltet und Flieger schon nah → sanft zentrieren
+          // und EINMAL den phasen-Zoom setzen.
+          map.easeTo({
+            center: lngLat,
+            zoom: targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft),
+            duration: 350,
+          });
+          followEngageRef.current = false;
         } else {
-          // Phasenwechsel → neues Zoomziel ansteuern, bis es erreicht ist.
-          if (zoomTargetRef.current == null || Math.abs(zoomTargetRef.current - tz) > 0.25) {
-            zoomTargetRef.current = tz;
-            zoomingRef.current = true;
-          }
-          if (zoomingRef.current) {
-            // WICHTIG: Zoom MIT ansteuern, sonst bricht das 100-ms-Folge-easeTo
-            // die Zoomfahrt ab und sie bleibt auf halbem Weg stecken.
-            map.easeTo({ center: lngLat, zoom: tz, duration: 250 });
-            if (Math.abs(map.getZoom() - tz) < 0.1) zoomingRef.current = false;
-          } else {
-            // Ziel erreicht → nur noch schwenken (manuelles +/- bleibt erhalten).
-            map.easeTo({ center: lngLat, duration: 380 });
-          }
+          // laufendes Folgen → NUR schwenken. Dein manueller Zoom bleibt erhalten
+          // (kein Zurückziehen mehr auf den Phasen-Zoom — genau das war der Bug).
+          map.easeTo({ center: lngLat, duration: 400 });
         }
-      } else {
-        zoomTargetRef.current = null;
-        zoomingRef.current = false;
       }
     } else {
       acMarkerRef.current?.remove();
@@ -768,7 +795,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
                 if (!map || !effAircraft) return;
                 // bewusster Re-Center: Follow an, Kamera-Tracking sofort scharf,
                 // direkt zur aktuellen Sim-Position springen.
-                followCamRef.current = true;
+                followEngageRef.current = true;
                 suppressRouteFitRef.current = true;
                 setFollow(true);
                 const tz = targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft);
@@ -785,8 +812,8 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
                 checked={follow}
                 onChange={(e) => {
                   setFollow(e.target.checked);
-                  followCamRef.current = e.target.checked; // bewusst an → sofort folgen; aus → nicht tracken
-                  // bewusst abgehakt → Route-Fit erlauben; angehakt → Sperre zurücksetzen.
+                  // bewusst eingeschaltet → einmal phasen-Zoom setzen; abgehakt → Route-Fit erlauben.
+                  followEngageRef.current = e.target.checked;
                   suppressRouteFitRef.current = e.target.checked;
                 }}
               />
@@ -795,7 +822,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
           )}
           <label className="aa-livemap__follow">
             <input type="checkbox" checked={showVa} onChange={(e) => setShowVa(e.target.checked)} />
-            VA-Verkehr
+            VA-Verkehr{showVa ? ` (${vaVisible.length})` : ""}
           </label>
         </div>
       </div>
