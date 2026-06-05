@@ -8076,30 +8076,30 @@ input:disabled {
 .aa-ac-marker--va {
   cursor: pointer;
 }
-/* Radar-Pulse-Ring — NUR am eigenen Flieger (nicht an jedem VA-Flieger, sonst
-   pulst die ganze Karte) und eng am Flugzeug statt großer Blase. */
-.aa-ac-marker:not(.aa-ac-marker--va)::before {
+/* Radar-Pulse-Ring an allen Fliegern (eigener + VA) — wie auf der VPS-Live-Map
+   (pilot-pulse: scale 0.55→1.7, 2.4s, Phasenfarbe). */
+.aa-ac-marker::before {
   content: "";
   position: absolute;
-  inset: 6px;
+  inset: 4px;
   border-radius: 50%;
   border: 1.5px solid var(--ac-color, var(--accent));
-  opacity: 0.5;
+  opacity: 0.55;
   pointer-events: none;
-  animation: aa-ac-pulse 2.2s ease-out infinite;
+  animation: aa-ac-pulse 2.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 @keyframes aa-ac-pulse {
   0% {
-    transform: scale(0.7);
-    opacity: 0.6;
+    transform: scale(0.55);
+    opacity: 0.75;
   }
   100% {
-    transform: scale(1.45);
+    transform: scale(1.7);
     opacity: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .aa-ac-marker:not(.aa-ac-marker--va)::before {
+  .aa-ac-marker::before {
     animation: none;
     opacity: 0.35;
   }
