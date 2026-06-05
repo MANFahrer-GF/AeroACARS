@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AeroACARS",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "identifier": "com.aeroacars.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost https: wss://live.kant.ovh https://www.simbrief.com https://*.simbrief.com; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:"
+      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost https: wss://live.kant.ovh https://www.simbrief.com https://*.simbrief.com; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; script-src 'self' blob:; worker-src 'self' blob:; child-src 'self' blob:; font-src 'self' data:"
     }
   },
   "bundle": {
