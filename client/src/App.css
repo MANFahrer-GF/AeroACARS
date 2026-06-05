@@ -100,6 +100,19 @@ body {
   box-sizing: border-box;
 }
 
+/* v0.15.9: Auf dem KARTEN-Tab .app auf feste Viewport-Höhe nageln. Erst dadurch
+   bekommt die ganze Flex-Kette ein DEFINITES Maß — sonst (min-height:100% =
+   darf wachsen) bläht ein langes Aktivitätslog die Seite auf, Header/Tabs/
+   Follow-Leiste scrollen oben raus, und MapLibre frisst das Hochscrollen → man
+   kommt nicht mehr nach oben (und Follow zentriert in einen abgeschnittenen,
+   unsichtbaren Kartenbereich). Mit fester Höhe scrollt das Log INTERN und die
+   Karte passt exakt ins Fenster. Nur wenn die Live-Map im DOM ist (:has) —
+   alle anderen Tabs bleiben unverändert (Seite scrollt wie gehabt). */
+.app:has(.aa-livemap) {
+  height: 100%;
+  overflow: hidden;
+}
+
 .app__header {
   display: flex;
   flex-direction: row;
