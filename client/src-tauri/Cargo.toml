@@ -18,7 +18,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.15.9"
+version = "0.15.10"
 edition = "2021"
 license = "MIT"
 authors = ["Thomas Kant <github@MANFahrer-GF>", "AeroACARS contributors"]
@@ -148,6 +148,13 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # nicht ins Repo). Wenn leer = kein Init = No-Op.
 # Wir nutzen rustls-tls (kein OpenSSL) konsistent mit reqwest.
 sentry = { version = "0.42", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
+
+# v0.15.10 (#GlitchTip-Panic): Im Dependency-Tree sind BEIDE rustls-Crypto-
+# Provider (aws-lc-rs via sentry/tauri-updater + ring via reqwest). rustls 0.23
+# kann den Process-Default dann nicht automatisch wählen → Panic auf TLS-Pfaden,
+# die den Default nutzen (GlitchTip aeroacars-client, 2026-06-01). Wir ziehen
+# rustls direkt rein, um in run() EINMAL den Default explizit zu installieren.
+rustls = { version = "0.23", features = ["aws_lc_rs"] }
 
 # Internal crates — wired up for use as the project grows
 api-client.workspace = true

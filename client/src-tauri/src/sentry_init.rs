@@ -335,3 +335,24 @@ pub fn capture_message(message: &str, level: sentry::Level) {
 pub fn capture_error<E: std::error::Error + ?Sized>(err: &E) {
     sentry::capture_error(err);
 }
+
+/// v0.15.10: Schickt ein ACARS-Aktivitätsprotokoll-Event (Warn/Error) an
+/// GlitchTip — so sehen wir PROBLEME im Feld (gescheiterte POSTs, OFP-/PIREP-
+/// Fehler, Verbindungsabbrüche …), nicht nur Abstürze. No-Op ohne DSN/Consent.
+/// Die `message` ist der STABILE Titel (sauberes Grouping in GlitchTip), das
+/// `detail` (variable Werte) landet als Extra-Kontext. Tag `source=acars`
+/// trennt diese Events von Rust-Panics.
+#[allow(dead_code)]
+pub fn capture_activity(message: &str, detail: Option<&str>, level: sentry::Level) {
+    sentry::with_scope(
+        |scope| {
+            scope.set_tag("source", "acars");
+            if let Some(d) = detail {
+                scope.set_extra("detail", d.to_owned().into());
+            }
+        },
+        || {
+            sentry::capture_message(message, level);
+        },
+    );
+}

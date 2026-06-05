@@ -4642,10 +4642,12 @@ fn log_activity(
             tracing::info!(message = %entry.message, detail = ?entry.detail, "activity")
         }
         ActivityLevel::Warn => {
-            tracing::warn!(message = %entry.message, detail = ?entry.detail, "activity")
+            tracing::warn!(message = %entry.message, detail = ?entry.detail, "activity");
+            sentry_init::capture_activity(&entry.message, entry.detail.as_deref(), sentry::Level::Warning);
         }
         ActivityLevel::Error => {
-            tracing::error!(message = %entry.message, detail = ?entry.detail, "activity")
+            tracing::error!(message = %entry.message, detail = ?entry.detail, "activity");
+            sentry_init::capture_activity(&entry.message, entry.detail.as_deref(), sentry::Level::Error);
         }
     }
     let mut log = state.activity_log.lock().expect("activity_log lock");
@@ -4684,10 +4686,12 @@ fn log_activity_handle(
             tracing::info!(message = %entry.message, detail = ?entry.detail, "activity")
         }
         ActivityLevel::Warn => {
-            tracing::warn!(message = %entry.message, detail = ?entry.detail, "activity")
+            tracing::warn!(message = %entry.message, detail = ?entry.detail, "activity");
+            sentry_init::capture_activity(&entry.message, entry.detail.as_deref(), sentry::Level::Warning);
         }
         ActivityLevel::Error => {
-            tracing::error!(message = %entry.message, detail = ?entry.detail, "activity")
+            tracing::error!(message = %entry.message, detail = ?entry.detail, "activity");
+            sentry_init::capture_activity(&entry.message, entry.detail.as_deref(), sentry::Level::Error);
         }
     }
     let mut log = state.activity_log.lock().expect("activity_log lock");
@@ -23201,6 +23205,14 @@ fn init_tracing() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // v0.15.10: rustls-Crypto-Provider EINMAL explizit als Process-Default
+    // setzen, GANZ am Anfang vor jedem TLS-Use. Im Dep-Tree sind aws-lc-rs UND
+    // ring verlinkt → rustls 0.23 würde sonst beim Auto-Wählen paniken
+    // („Could not automatically determine the process-level CryptoProvider …",
+    // GlitchTip aeroacars-client). install_default ist idempotent → Err = schon
+    // gesetzt, das ignorieren wir.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     init_tracing();
     // v0.9.0 (#GlitchTip): Sentry-Init MUSS vor allem anderen passieren, damit
     // Bootstrap-Panics gefangen werden. No-Op wenn DSN nicht in build-time env.
