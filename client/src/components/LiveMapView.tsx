@@ -324,9 +324,11 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
         id: LYR_ROUTE,
         type: "line",
         source: SRC_ROUTE,
-        layout: { "line-cap": "round", "line-join": "round" },
-        // Stratos-Look: durchgezogene geplante Route.
-        paint: { "line-color": accent, "line-width": 2.5, "line-opacity": 0.55 },
+        // butt-Caps statt round, damit die Striche sauber abgesetzt sind.
+        layout: { "line-cap": "butt", "line-join": "round" },
+        // Stratos-Look: GEPLANTE Route gestrichelt (die tatsächlich GEFLOGENE
+        // Spur ist durchgezogen — so unterscheidet man Plan vs. Ist auf einen Blick).
+        paint: { "line-color": accent, "line-width": 2.5, "line-opacity": 0.7, "line-dasharray": [2, 2] },
       });
     }
     if (!map.getLayer(LYR_TRACK)) {
