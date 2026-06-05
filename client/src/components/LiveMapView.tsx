@@ -115,26 +115,31 @@ function flLabel(msl?: number | null): string {
 /** Theme-fähiges Popup-HTML mit den Flugdaten aus /api/acars. */
 function vaPopupHtml(f: VaFlight): string {
   const cs = f.ident || [f.airline?.icao, f.flight_number].filter(Boolean).join("") || f.flight_number || "—";
-  const ac = [f.aircraft?.icao, f.aircraft?.registration].filter(Boolean).join(" · ") || "—";
-  const route = `${f.dpt_airport_id ?? "—"} → ${f.arr_airport_id ?? "—"}`;
-  const pos = f.position ?? {};
-  const gs = pos.gs != null ? `${Math.round(pos.gs)} kt` : "—";
-  const ias = pos.ias != null ? `${Math.round(pos.ias)} kt` : "—";
-  const hdg = pos.heading != null ? `${Math.round(pos.heading)}°` : "—";
-  const vs = pos.vs != null ? `${Math.round(pos.vs)} fpm` : "—";
+  const ac = [f.aircraft?.icao, f.aircraft?.registration].filter(Boolean).join(" · ");
   const pilot = f.user?.name ?? "";
-  const row = (k: string, v: string) => `<span class="aa-vapop__k">${k}</span><span class="aa-vapop__v">${escHtml(v)}</span>`;
+  const phaseTxt = f.status_text ?? "";
+  const pcol = phaseColor(f.status_text ?? (f.phase != null ? String(f.phase) : null));
+  const pos = f.position ?? {};
+  const gs = pos.gs != null ? `${Math.round(pos.gs)}` : "—";
+  const ias = pos.ias != null ? `${Math.round(pos.ias)}` : "—";
+  const hdg = pos.heading != null ? `${Math.round(pos.heading)}°` : "—";
+  const vs = pos.vs != null ? `${pos.vs > 0 ? "+" : ""}${Math.round(pos.vs)}` : "—";
+  const cell = (k: string, v: string, u = "") =>
+    `<div class="aa-vapop__cell"><span class="aa-vapop__k">${k}</span><span class="aa-vapop__v">${escHtml(v)}${u ? `<i>${u}</i>` : ""}</span></div>`;
   return (
-    `<div class="aa-vapop__title">${escHtml(cs)}</div>` +
-    `<div class="aa-vapop__sub">${escHtml(ac)}${pilot ? ` · ${escHtml(pilot)}` : ""}</div>` +
+    `<div class="aa-vapop__head">` +
+    `<span class="aa-vapop__cs">${escHtml(cs)}</span>` +
+    (phaseTxt ? `<span class="aa-vapop__badge" style="--p:${pcol}">${escHtml(phaseTxt)}</span>` : "") +
+    `</div>` +
+    (ac ? `<div class="aa-vapop__sub">${escHtml(ac)}</div>` : "") +
+    (pilot ? `<div class="aa-vapop__pilot">${escHtml(pilot)}</div>` : "") +
+    `<div class="aa-vapop__route">${escHtml(f.dpt_airport_id ?? "—")}<span class="aa-vapop__arrow">→</span>${escHtml(f.arr_airport_id ?? "—")}</div>` +
     `<div class="aa-vapop__grid">` +
-    row("Route", route) +
-    row("Phase", f.status_text ?? "—") +
-    row("ALT", flLabel(pos.altitude_msl ?? pos.altitude)) +
-    row("HDG", hdg) +
-    row("GS", gs) +
-    row("IAS", ias) +
-    row("V/S", vs) +
+    cell("ALT", flLabel(pos.altitude_msl ?? pos.altitude)) +
+    cell("GS", gs, " kt") +
+    cell("IAS", ias, " kt") +
+    cell("HDG", hdg) +
+    cell("V/S", vs, " fpm") +
     `</div>`
   );
 }
