@@ -172,7 +172,11 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const zoomTargetRef = useRef<number | null>(null);
   const zoomingRef = useRef(false);
   const acCatRef = useRef<string | null>(null); // zuletzt gerendertes Eigen-Flieger-Icon (ICAO)
-  const userInteractUntilRef = useRef(0); // bis wann der Nutzer manuell pannt/zoomt → Auto-Follow pausiert
+  // v0.15.6: synchroner Follow-Zustand. Ein echter Pan vom Nutzer schaltet Follow
+  // SOFORT (vor dem React-Re-Render) ab, damit der nächste Redraw nicht zurückzieht.
+  // Ersetzt das alte unsichtbare „15 s pausieren"-Fenster, das Follow heimlich
+  // tot hielt (Karte folgte nicht, obwohl der Haken gesetzt war).
+  const followCamRef = useRef(true);
   const dataRef = useRef<{
     fixes: RouteFix[];
     track: [number, number][];
@@ -258,17 +262,16 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     mapRef.current = map;
-    // Follow nicht „einsperren": sobald der Nutzer selbst pannt/zoomt/dreht
-    // (originalEvent gesetzt = echte Geste, nicht unser easeTo/jumpTo),
-    // Auto-Zentrieren für 15 s pausieren, damit man frei schauen kann.
-    const onUserMove = (e: { originalEvent?: unknown }) => {
-      if (e.originalEvent) userInteractUntilRef.current = Date.now() + 15000;
-    };
-    map.on("dragstart", onUserMove);
-    map.on("zoomstart", onUserMove);
-    map.on("rotatestart", onUserMove);
-    map.on("wheel", () => {
-      userInteractUntilRef.current = Date.now() + 15000;
+    // Follow nicht „einsperren", aber ehrlich: zieht der Nutzer die Karte selbst
+    // weg (echter Pan = originalEvent gesetzt; unser easeTo/jumpTo löst KEIN
+    // „dragstart" aus), schalten wir Follow sichtbar AUS (Haken weg) statt es
+    // heimlich zu pausieren. Zoomen/Scrollen/+- lässt Follow an — man darf immer
+    // zoomen, ohne den Flieger zu verlieren.
+    map.on("dragstart", (e: { originalEvent?: unknown }) => {
+      if (e.originalEvent) {
+        followCamRef.current = false;
+        setFollow(false);
+      }
     });
     map.on("load", () => {
       addOverlays(map);
@@ -491,7 +494,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       // was_just_resumed = der Resume-Gate wartet noch auf einen frischen
       // Sim-Snapshot. In dem Zustand kann X-Plane kurz eine Reload-/Lade-
       // position melden (z.B. Nordeuropa) → NICHT blind dorthin folgen.
-      if (follow && Date.now() >= userInteractUntilRef.current && !activeFlight?.was_just_resumed) {
+      if (follow && followCamRef.current && !activeFlight?.was_just_resumed) {
         // Phasenabhängiger Zoom (Boden nah, Reiseflug weit).
         const tz = targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft);
         const c = map.getCenter();
@@ -711,9 +714,9 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
               onClick={() => {
                 const map = mapRef.current;
                 if (!map || !effAircraft) return;
-                // bewusster Re-Center: Follow an, Interaktions-Sperre lösen,
-                // sofort zur aktuellen Sim-Position springen.
-                userInteractUntilRef.current = 0;
+                // bewusster Re-Center: Follow an, Kamera-Tracking sofort scharf,
+                // direkt zur aktuellen Sim-Position springen.
+                followCamRef.current = true;
                 setFollow(true);
                 const tz = targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft);
                 map.easeTo({ center: [effAircraft.lon, effAircraft.lat], zoom: tz, duration: 500 });
@@ -729,7 +732,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
                 checked={follow}
                 onChange={(e) => {
                   setFollow(e.target.checked);
-                  if (e.target.checked) userInteractUntilRef.current = 0; // bewusst eingeschaltet → sofort folgen
+                  followCamRef.current = e.target.checked; // bewusst an → sofort folgen; aus → nicht tracken
                 }}
               />
               Follow
