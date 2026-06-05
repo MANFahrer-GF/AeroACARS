@@ -53,7 +53,6 @@ interface VaFlight {
     vs?: number;
   } | null;
 }
-type View = "own" | "va";
 interface Aircraft {
   lon: number;
   lat: number;
@@ -174,14 +173,19 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   }>({ fixes: [], track: [] });
 
   const [mapReady, setMapReady] = useState(false);
-  const [view, setView] = useState<View>("own");
   const [follow, setFollow] = useState(true);
+  const [showVa, setShowVa] = useState(true); // VA-Verkehr ein-/ausblenden
   const [theme, setTheme] = useState<"dark" | "light">(readTheme());
   const [routeFixes, setRouteFixes] = useState<RouteFix[]>([]);
   const [depArr, setDepArr] = useState<{ dep?: [number, number]; arr?: [number, number] }>({});
   const [vaFlights, setVaFlights] = useState<VaFlight[]>([]);
 
   const pirepId = activeFlight?.pirep_id ?? null;
+  // VA-Flieger ohne den eigenen Flug (steckt auch in /api/acars).
+  const vaVisible = useMemo(
+    () => (showVa ? vaFlights.filter((f) => !activeFlight || String(f.id ?? "") !== activeFlight.pirep_id) : []),
+    [showVa, vaFlights, activeFlight],
+  );
 
   // ---- effektive Daten (aktiver Flug) ----
   const effFixes = routeFixes;
@@ -423,26 +427,11 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     };
   }, [activeFlight?.dpt_airport, activeFlight?.arr_airport, activeFlight]);
 
-  // ---- Redraw: Quellen + Flugzeug-Marker + Pins ----
+  // ---- Redraw: eigener Flug (Quellen + Flugzeug-Marker + Pins) ----
+  // Läuft immer; VA-Flieger liegen als zusätzliche Marker mit drauf (eigene Effekte).
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    if (view !== "own") {
-      // Eigen-Flug-Layer leeren, damit Route/Track/Marker nicht unter der VA-Übersicht durchscheinen.
-      const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
-      (map.getSource(SRC_ROUTE) as maplibregl.GeoJSONSource | undefined)?.setData(empty);
-      (map.getSource(SRC_WPTS) as maplibregl.GeoJSONSource | undefined)?.setData(empty);
-      (map.getSource(SRC_TRACK) as maplibregl.GeoJSONSource | undefined)?.setData(empty);
-      (map.getSource(SRC_TRACK_DOTS) as maplibregl.GeoJSONSource | undefined)?.setData(empty);
-      acMarkerRef.current?.remove();
-      acMarkerRef.current = null;
-      acCatRef.current = null;
-      pinMarkersRef.current.forEach((m) => m.remove());
-      pinMarkersRef.current = [];
-      zoomTargetRef.current = null; // beim Zurückkehren Zoom neu setzen
-      zoomingRef.current = false;
-      return;
-    }
     pushSources(map, { fixes: effFixes, track: effTrack, dep: effDep, arr: effArr, nextIdent: nav.nextIdent });
 
     // Flugzeug-Marker (kategorieabhängiges Icon wie VPS/Stratos)
@@ -510,13 +499,13 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     if (effDep && effDepIcao) mk(effDep, effDepIcao, "dep");
     if (effArr && effArrIcao) mk(effArr, effArrIcao, "arr");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapReady, view, follow, simSnapshot, routeFixes, depArr.dep, depArr.arr]);
+  }, [mapReady, follow, simSnapshot, routeFixes, depArr.dep, depArr.arr]);
 
-  // einmal auf die Route fitten, wenn nicht Follow
+  // einmal auf die eigene Route fitten, wenn Follow aus (und ein Flug aktiv ist)
   const fittedRef = useRef<string | null>(null);
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady || view !== "own" || follow) return;
+    if (!map || !mapReady || !activeFlight || follow) return;
     const pts: [number, number][] = [
       ...effFixes.map((f) => [f.lon, f.lat] as [number, number]),
       ...(effDep ? [effDep] : []),
@@ -529,16 +518,12 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       map.fitBounds(b, { padding: 80, duration: 600, maxZoom: 8 });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapReady, view, follow, effFixes, effDepIcao, effArrIcao]);
+  }, [mapReady, follow, effFixes, effDepIcao, effArrIcao, activeFlight]);
 
-  // ---- VA-Übersicht ----
+  // ---- VA-Verkehr: pollt /api/acars (wenn eingeblendet) ----
   useEffect(() => {
-    if (view !== "va") {
-      vaMarkersRef.current.forEach((m) => m.remove());
-      vaMarkersRef.current = [];
-      vaPopupRef.current?.remove();
-      vaPopupRef.current = null;
-      vaFittedRef.current = false;
+    if (!showVa) {
+      setVaFlights([]);
       return;
     }
     let cancelled = false;
@@ -558,15 +543,21 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [view]);
+  }, [showVa]);
 
+  // ---- VA-Marker rendern (liegen mit auf der einen Karte) ----
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady || view !== "va") return;
+    if (!map || !mapReady) return;
     vaMarkersRef.current.forEach((m) => m.remove());
     vaMarkersRef.current = [];
+    if (vaVisible.length === 0) {
+      vaPopupRef.current?.remove();
+      vaPopupRef.current = null;
+      vaFittedRef.current = false;
+    }
     const pts: [number, number][] = [];
-    for (const f of vaFlights) {
+    for (const f of vaVisible) {
       const lat = f.position?.lat;
       const lon = f.position?.lon;
       if (typeof lat !== "number" || typeof lon !== "number") continue;
@@ -590,13 +581,14 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       );
       pts.push(lngLat);
     }
-    // Nur einmal je VA-Sitzung einpassen, sonst zuckt die Karte alle 12 s.
-    if (pts.length >= 1 && !vaFittedRef.current) {
+    // Nur auf die VA-Flieger einpassen, wenn KEIN eigener Flug die Kamera führt
+    // (sonst würde es dich vom eigenen Flug wegziehen). Und nur einmal.
+    if (pts.length >= 1 && !vaFittedRef.current && !activeFlight) {
       vaFittedRef.current = true;
       const b = pts.reduce((acc, p) => acc.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0]));
       map.fitBounds(b, { padding: 60, duration: 600, maxZoom: 6 });
     }
-  }, [vaFlights, view, mapReady]);
+  }, [vaVisible, mapReady, activeFlight]);
 
   // ---- Stats ----
   const stats = useMemo(() => {
@@ -618,22 +610,15 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     };
   }, [simSnapshot, activeFlight]);
 
-  const showOwnContent = view === "own" && !!activeFlight;
+  const showOwnContent = !!activeFlight;
 
   return (
     <section className="aa-livemap">
       <div className="aa-livemap__topbar">
-        <div className="aa-livemap__viewtoggle">
-          <button type="button" className={`aa-seg ${view === "own" ? "aa-seg--active" : ""}`} onClick={() => setView("own")}>
-            Mein Flug
-          </button>
-          <button
-            type="button"
-            className={`aa-seg ${view === "va" ? "aa-seg--active" : ""}`}
-            onClick={() => setView("va")}
-          >
-            VA-Übersicht
-          </button>
+        <div className="aa-livemap__title">
+          {activeFlight
+            ? `${activeFlight.airline_icao}${activeFlight.flight_number} · ${activeFlight.dpt_airport}→${activeFlight.arr_airport}`
+            : "Live-Karte"}
         </div>
 
         {showOwnContent && (
@@ -650,20 +635,26 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
         )}
 
         <div className="aa-livemap__right">
-          {view === "own" && (
+          {activeFlight && (
             <label className="aa-livemap__follow">
               <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
               Follow
             </label>
           )}
+          <label className="aa-livemap__follow">
+            <input type="checkbox" checked={showVa} onChange={(e) => setShowVa(e.target.checked)} />
+            VA-Verkehr
+          </label>
         </div>
       </div>
 
       <div className="aa-livemap__body">
         <div className="aa-livemap__map" ref={containerRef}>
-          {view === "own" && !activeFlight && (
+          {!effAircraft && vaVisible.length === 0 && (
             <div className="aa-livemap__empty">
-              Kein aktiver Flug — starte einen Flug, um ihn live zu verfolgen.
+              {showVa
+                ? "Kein aktiver Flug und gerade kein VA-Verkehr."
+                : "Kein aktiver Flug — starte einen Flug, um ihn live zu verfolgen."}
             </div>
           )}
         </div>

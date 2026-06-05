@@ -7956,23 +7956,12 @@ input:disabled {
   flex-wrap: wrap;
   padding: 4px 2px;
 }
-.aa-livemap__viewtoggle {
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.aa-seg {
-  background: var(--surface);
-  color: var(--text-muted);
-  border: none;
-  padding: 6px 14px;
+.aa-livemap__title {
   font-size: 13px;
-  cursor: pointer;
-}
-.aa-seg--active {
-  background: var(--accent);
-  color: #fff;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 .aa-livemap__stats {
   display: flex;
