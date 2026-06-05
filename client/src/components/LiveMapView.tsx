@@ -19,6 +19,7 @@ import type { ActiveFlightInfo, SimSnapshot } from "../types";
 import { ActivityLogPanel } from "./ActivityLogPanel";
 import { getTrack } from "../lib/trackStore";
 import { aircraftSvg } from "../lib/aircraftIcon";
+import { phaseColor, phaseLabel as formatPhase } from "../lib/phaseColors";
 
 const BASEMAP_DARK = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 const BASEMAP_LIGHT = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
@@ -198,7 +199,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const effDepIcao = activeFlight?.dpt_airport;
   const effArrIcao = activeFlight?.arr_airport;
 
-  const phaseLabel = activeFlight?.phase ?? "—";
+  const phaseLabel = formatPhase(activeFlight?.phase);
 
   // ---- Nächster Wegpunkt + ETA ----
   const nav = useMemo(() => {
@@ -459,6 +460,8 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
         acMarkerRef.current.getElement().innerHTML = aircraftSvg(icao);
         acCatRef.current = icao;
       }
+      // Phasenabhängige Farbe (Fill + Glow + Pulse) wie auf dem VPS.
+      acMarkerRef.current.getElement().style.setProperty("--ac-color", phaseColor(activeFlight?.phase));
       acMarkerRef.current.setLngLat(lngLat).setRotation(effAircraft.hdg);
       if (follow) {
         // Phasenabhängiger Zoom (Boden nah, Reiseflug weit).
@@ -571,6 +574,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       const el = document.createElement("div");
       el.className = "aa-ac-marker aa-ac-marker--va";
       el.innerHTML = aircraftSvg(f.aircraft?.icao);
+      el.style.setProperty("--ac-color", phaseColor(f.status_text ?? (f.phase != null ? String(f.phase) : null)));
       el.title = `${f.ident ?? f.flight_number ?? "?"} · ${f.aircraft?.icao ?? ""} · ${f.dpt_airport_id ?? ""}→${f.arr_airport_id ?? ""}`;
       // Klick → Popup mit Flugdaten (ersetzt ein evtl. offenes Popup).
       el.addEventListener("click", (ev) => {
