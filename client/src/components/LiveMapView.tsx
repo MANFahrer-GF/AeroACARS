@@ -762,12 +762,18 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     <section className="aa-livemap">
       <div className="aa-livemap__topbar">
         <div className="aa-livemap__title">
-          {activeFlight
-            ? `${activeFlight.airline_icao}${activeFlight.flight_number} · ${activeFlight.dpt_airport}→${activeFlight.arr_airport}`
-            : "Live-Karte"}
-          {activeFlight?.was_just_resumed && (
-            <span className="aa-livemap__resume-hint"> · ⏳ warte auf Sim-Position</span>
-          )}
+          <span className="aa-stat__label">FLUG</span>
+          <span className="aa-livemap__title-value">
+            {activeFlight
+              ? `${activeFlight.airline_icao}${activeFlight.flight_number} · ${activeFlight.dpt_airport}→${activeFlight.arr_airport}`
+              : "Live-Karte"}
+            {activeFlight?.was_just_resumed && (
+              <span className="aa-livemap__resume-hint" title="warte auf Sim-Position">
+                {" "}
+                ⏳
+              </span>
+            )}
+          </span>
         </div>
 
         {showOwnContent && (
@@ -788,13 +794,12 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
           {activeFlight && effAircraft && (
             <button
               type="button"
-              className="aa-livemap__recenter"
-              title="Karte auf mein Flugzeug zentrieren"
+              className="aa-livemap__iconbtn"
+              data-tip="Karte aufs Flugzeug zentrieren"
+              aria-label="Auf mein Flugzeug zentrieren"
               onClick={() => {
                 const map = mapRef.current;
                 if (!map || !effAircraft) return;
-                // bewusster Re-Center: Follow an, Kamera-Tracking sofort scharf,
-                // direkt zur aktuellen Sim-Position springen.
                 followEngageRef.current = true;
                 suppressRouteFitRef.current = true;
                 setFollow(true);
@@ -802,28 +807,61 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
                 map.easeTo({ center: [effAircraft.lon, effAircraft.lat], zoom: tz, duration: 500 });
               }}
             >
-              🎯 Flugzeug
+              {/* Fadenkreuz = „jetzt zentrieren" */}
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="7" />
+                <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+                <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+              </svg>
             </button>
           )}
           {activeFlight && (
-            <label className="aa-livemap__follow">
-              <input
-                type="checkbox"
-                checked={follow}
-                onChange={(e) => {
-                  setFollow(e.target.checked);
-                  // bewusst eingeschaltet → einmal phasen-Zoom setzen; abgehakt → Route-Fit erlauben.
-                  followEngageRef.current = e.target.checked;
-                  suppressRouteFitRef.current = e.target.checked;
-                }}
-              />
-              Follow
-            </label>
+            <button
+              type="button"
+              className="aa-livemap__iconbtn aa-livemap__iconbtn--toggle"
+              data-active={follow}
+              aria-pressed={follow}
+              data-tip={
+                follow
+                  ? "Folgen: AN — Karte bleibt am Flugzeug (klicken zum Ausschalten)"
+                  : "Folgen: AUS — klicken, damit die Karte dem Flugzeug folgt"
+              }
+              aria-label="Folgen"
+              onClick={() => {
+                const next = !follow;
+                setFollow(next);
+                followEngageRef.current = next;
+                suppressRouteFitRef.current = next;
+              }}
+            >
+              {/* Flugzeug = „dem eigenen Flieger folgen" */}
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
+                <path d="M21 15.5v-1.7l-7.5-4.6V4.2a1.5 1.5 0 0 0-3 0v5L3 13.8v1.7l7.5-2.2v4.3l-2 1.4v1.3l3.5-1 3.5 1v-1.3l-2-1.4v-4.3z" />
+              </svg>
+            </button>
           )}
-          <label className="aa-livemap__follow">
-            <input type="checkbox" checked={showVa} onChange={(e) => setShowVa(e.target.checked)} />
-            VA-Verkehr{showVa ? ` (${vaVisible.length})` : ""}
-          </label>
+          <button
+            type="button"
+            className="aa-livemap__iconbtn aa-livemap__iconbtn--toggle"
+            data-active={showVa}
+            aria-pressed={showVa}
+            data-tip={
+              showVa
+                ? `VA-Verkehr: AN — ${vaVisible.length} online (klicken zum Ausblenden)`
+                : "VA-Verkehr: AUS — klicken zum Anzeigen anderer Piloten"
+            }
+            aria-label="VA-Verkehr anzeigen"
+            onClick={() => setShowVa(!showVa)}
+          >
+            {/* Radar = „anderer VA-Verkehr live" */}
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+              <path d="M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7M6 18a9 9 0 0 1 0-12M18 6a9 9 0 0 1 0 12" />
+            </svg>
+            {/* Zähler-Slot IMMER da (feste Breite) → Ein-/Ausschalten oder
+                1-↔2-stellige Zahl verschiebt die Nachbar-Buttons nicht mehr. */}
+            <span className="aa-livemap__vacount">{showVa ? vaVisible.length : ""}</span>
+          </button>
         </div>
       </div>
 

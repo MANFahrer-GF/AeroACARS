@@ -184,14 +184,14 @@ describe("LiveMapView Follow-Kamera", () => {
       <LiveMapView activeFlight={flight as never} simSnapshot={snap(41.2, 28.7) as never} />,
     );
     fireLoad();
-    const follow = screen.getByRole("checkbox", { name: "Follow" }) as HTMLInputElement;
-    expect(follow.checked).toBe(true);
+    const follow = screen.getByRole("button", { name: "Folgen" });
+    expect(follow.getAttribute("aria-pressed")).toBe("true");
 
     // echter Pan (originalEvent gesetzt = Nutzergeste)
     act(() => {
       (h.mapHandlers["dragstart"] ?? []).forEach((cb) => cb({ originalEvent: {} }));
     });
-    expect(follow.checked).toBe(false);
+    expect(follow.getAttribute("aria-pressed")).toBe("false");
 
     // weiteres Positions-Update darf NICHT mehr zentrieren
     h.easeTo.length = 0;
@@ -210,14 +210,14 @@ describe("LiveMapView Follow-Kamera", () => {
     act(() => {
       (h.mapHandlers["dragstart"] ?? []).forEach((cb) => cb({ originalEvent: {} }));
     });
-    const follow = screen.getByRole("checkbox", { name: "Follow" }) as HTMLInputElement;
-    expect(follow.checked).toBe(false);
+    const follow = screen.getByRole("button", { name: "Folgen" });
+    expect(follow.getAttribute("aria-pressed")).toBe("false");
 
     h.easeTo.length = 0;
     const btn = screen.getByRole("button", { name: /Flugzeug/ });
     act(() => fireEvent.click(btn));
 
-    expect(follow.checked).toBe(true);
+    expect(follow.getAttribute("aria-pressed")).toBe("true");
     const c = h.easeTo.at(-1)!.center!;
     expect(c[0]).toBeCloseTo(28.7, 1);
     expect(c[1]).toBeCloseTo(41.2, 1);

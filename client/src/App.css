@@ -7959,8 +7959,12 @@ input:disabled {
 .aa-livemap__right {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin-left: 12px;
+  gap: 10px;
+  /* v0.15.9: FEST und immer ganz rechts — wandert nie wieder in eine neue Zeile
+     (Topbar ist jetzt nowrap, die Stats in der Mitte schrumpfen/scrollen). */
+  flex: 0 0 auto;
+  margin-left: auto;
+  white-space: nowrap;
 }
 /* v0.15.6: „Auf mein Flugzeug zentrieren" — holt die Karte zurück zum Flieger,
    wenn man sich verschaut hat oder nach einem Resume die Ansicht woanders steht. */
@@ -7983,19 +7987,83 @@ input:disabled {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));
 }
+/* v0.15.9: kompakte Icon-Buttons (🎯 zentrieren, Folgen-Toggle, VA-Verkehr-
+   Toggle) statt Text — spart viel Platz. Erklärung steckt im title-Tooltip.
+   Aktive Toggles leuchten in Akzentfarbe. */
+.aa-livemap__iconbtn {
+  position: relative; /* Anker für den Tooltip */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.aa-livemap__iconbtn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+/* v0.15.9: eigener gestylter Tooltip (native title-Tooltips zeigt der WebView
+   zickig/verzögert). Erscheint beim Hovern direkt unter dem Button, rechtsbündig
+   (bleibt so im Fenster), über der Karte. */
+.aa-livemap__iconbtn[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 1000;
+  white-space: nowrap;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.aa-livemap__iconbtn--toggle[data-active="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface));
+}
 .aa-livemap__topbar {
   display: flex;
   align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
+  gap: 14px;
+  /* v0.15.9: KEIN Umbruch mehr (war flex-wrap:wrap) — sonst klappte die
+     Button-Gruppe bei zu wenig Platz in die nächste Zeile = „springt von
+     rechts nach links". Stattdessen: Titel kürzt, Stats schrumpfen/scrollen. */
+  flex-wrap: nowrap;
+  min-width: 0;
   padding: 4px 2px;
 }
 .aa-livemap__title {
-  font-size: 13px;
+  /* 2-zeilig wie die Stats (Label + Wert) → gleiche Höhe/Ausrichtung. */
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.aa-livemap__title-value {
+  font-size: 14px;
   font-weight: 700;
   color: var(--text);
   letter-spacing: 0.01em;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis; /* lange Flugnummer → … statt alles zu schieben */
 }
 .aa-livemap__resume-hint {
   font-weight: 600;
@@ -8003,8 +8071,31 @@ input:disabled {
 }
 .aa-livemap__stats {
   display: flex;
-  gap: 18px;
-  margin-left: auto;
+  gap: 14px;
+  /* v0.15.9: Mitte — nimmt den Restplatz, schrumpft und scrollt notfalls
+     horizontal, statt die Button-Gruppe zu schieben. Scrollbar versteckt. */
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.aa-livemap__stats::-webkit-scrollbar {
+  display: none;
+}
+.aa-stat {
+  flex: 0 0 auto;
+}
+/* v0.15.9: VA-Zähler in FESTER Breite → Ein-/Ausschalten und 1- vs. 2-stellige
+   Zahlen verschieben die Leiste nicht mehr. */
+.aa-livemap__vacount {
+  display: inline-block;
+  min-width: 2ch; /* fest reserviert (fasst 1–2 Stellen) → kein Versatz */
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: currentColor; /* erbt Button-Farbe: gedämpft aus, Akzent an */
+  font-variant-numeric: tabular-nums;
 }
 .aa-stat {
   display: flex;
