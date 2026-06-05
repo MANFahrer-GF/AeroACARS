@@ -21,6 +21,10 @@ import RunwayDiagramPreview from "./dev/RunwayDiagramPreview";
 const LiveMapView = lazy(() =>
   import("./components/LiveMapView").then((m) => ({ default: m.LiveMapView })),
 );
+// Logbuch lazy (nutzt MapLibre fürs Detail) → eigener Chunk, nur bei Bedarf.
+const LogbookView = lazy(() =>
+  import("./components/LogbookView").then((m) => ({ default: m.LogbookView })),
+);
 const LandingPanel = lazy(() =>
   import("./components/LandingPanel").then((m) => ({ default: m.LandingPanel })),
 );
@@ -45,7 +49,7 @@ type SessionStatus =
   | { kind: "loggedOut"; restoreError?: UiError }
   | { kind: "loggedIn"; session: LoginResult };
 
-type Tab = "cockpit" | "briefing" | "landing" | "news" | "log" | "map" | "settings" | "about" | "devpreview";
+type Tab = "cockpit" | "briefing" | "logbook" | "landing" | "news" | "log" | "map" | "settings" | "about" | "devpreview";
 
 const DEBUG_STORAGE_KEY = "aeroacars.debug";
 const AUTO_FILE_STORAGE_KEY = "aeroacars.autoFile";
@@ -573,6 +577,15 @@ function App() {
           <button
             type="button"
             role="tab"
+            aria-selected={tab === "logbook"}
+            className={`tab ${tab === "logbook" ? "tab--active" : ""}`}
+            onClick={() => setTab("logbook")}
+          >
+            {t("tabs.logbook")}
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={tab === "landing"}
             className={`tab ${tab === "landing" ? "tab--active" : ""}`}
             onClick={() => setTab("landing")}
@@ -699,6 +712,12 @@ function App() {
             );
           }}
         />
+      )}
+
+      {status.kind === "loggedIn" && tab === "logbook" && (
+        <Suspense fallback={<div className="lazy-fallback">…</div>}>
+          <LogbookView />
+        </Suspense>
       )}
 
       {status.kind === "loggedIn" && tab === "landing" && (

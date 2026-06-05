@@ -1577,6 +1577,10 @@ struct PersistedFlightStats {
     planned_ldw_kg: Option<f32>,
     #[serde(default)]
     planned_route: Option<String>,
+    /// v0.15.x: Navlog-Fixes mit-persistieren, damit ein Resume die
+    /// Map-Strecke (Wegpunkte) behält statt auf die Great-Circle-Linie zu fallen.
+    #[serde(default)]
+    planned_waypoints: Vec<api_client::RouteFix>,
     #[serde(default)]
     planned_alternate: Option<String>,
     // v0.3.0: MAX-Werte aus dem OFP für Overweight-Detection.
@@ -1716,6 +1720,7 @@ impl PersistedFlightStats {
             planned_tow_kg: stats.planned_tow_kg,
             planned_ldw_kg: stats.planned_ldw_kg,
             planned_route: stats.planned_route.clone(),
+            planned_waypoints: stats.planned_waypoints.clone(),
             planned_alternate: stats.planned_alternate.clone(),
             planned_max_zfw_kg: stats.planned_max_zfw_kg,
             planned_max_tow_kg: stats.planned_max_tow_kg,
@@ -1808,6 +1813,7 @@ impl PersistedFlightStats {
         stats.planned_tow_kg = self.planned_tow_kg;
         stats.planned_ldw_kg = self.planned_ldw_kg;
         stats.planned_route = self.planned_route;
+        stats.planned_waypoints = self.planned_waypoints;
         stats.planned_alternate = self.planned_alternate;
         stats.planned_max_zfw_kg = self.planned_max_zfw_kg;
         stats.planned_max_tow_kg = self.planned_max_tow_kg;
@@ -6892,6 +6898,41 @@ async fn va_live_flights(state: tauri::State<'_, AppState>) -> Result<serde_json
         Ok(c) => c.get_acars_live().await.map_err(UiError::from),
         Err(_) => Ok(serde_json::json!({ "flights": [] })),
     }
+}
+
+/// Logbuch: Flugliste (paginiert) — LIVE aus dem StratosLogbook-Modul, nichts
+/// gespeichert. Auth über den phpVMS-api_key (Bearer) im api-client.
+#[tauri::command]
+async fn logbook_pireps(
+    state: tauri::State<'_, AppState>,
+    limit: u32,
+    offset: u32,
+) -> Result<serde_json::Value, UiError> {
+    current_client(&state)?
+        .get_logbook_pireps(limit, offset)
+        .await
+        .map_err(UiError::from)
+}
+
+/// Logbuch: Summen (Flüge/Stunden/Distanz/Ø-Landung/Rang).
+#[tauri::command]
+async fn logbook_stats(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, UiError> {
+    current_client(&state)?
+        .get_logbook_stats()
+        .await
+        .map_err(UiError::from)
+}
+
+/// Logbuch: Detail eines PIREP (inkl. Track `route` + Fluglogbuch `log`).
+#[tauri::command]
+async fn logbook_pirep(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<serde_json::Value, UiError> {
+    current_client(&state)?
+        .get_logbook_pirep(&id)
+        .await
+        .map_err(UiError::from)
 }
 
 #[tauri::command]
@@ -23377,6 +23418,9 @@ pub fn run() {
             flight_status,
             flight_get_route_fixes,
             va_live_flights,
+            logbook_pireps,
+            logbook_stats,
+            logbook_pirep,
             flight_start,
             flight_start_manual,
             fleet_list_at_airport,

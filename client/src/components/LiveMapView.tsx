@@ -166,9 +166,13 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const vaMarkersRef = useRef<maplibregl.Marker[]>([]);
   const vaPopupRef = useRef<maplibregl.Popup | null>(null);
   const vaFittedRef = useRef(false);
+  // Dead-Reckoning: VA-Marker zwischen den 12-s-Polls flüssig weiterrechnen.
+  const vaDrRef = useRef<{ marker: maplibregl.Marker; lat: number; lon: number; hdg: number; gs: number }[]>([]);
+  const vaDrT0Ref = useRef(0);
   const zoomTargetRef = useRef<number | null>(null);
   const zoomingRef = useRef(false);
   const acCatRef = useRef<string | null>(null); // zuletzt gerendertes Eigen-Flieger-Icon (ICAO)
+  const userInteractUntilRef = useRef(0); // bis wann der Nutzer manuell pannt/zoomt → Auto-Follow pausiert
   const dataRef = useRef<{
     fixes: RouteFix[];
     track: [number, number][];
@@ -254,6 +258,18 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     mapRef.current = map;
+    // Follow nicht „einsperren": sobald der Nutzer selbst pannt/zoomt/dreht
+    // (originalEvent gesetzt = echte Geste, nicht unser easeTo/jumpTo),
+    // Auto-Zentrieren für 15 s pausieren, damit man frei schauen kann.
+    const onUserMove = (e: { originalEvent?: unknown }) => {
+      if (e.originalEvent) userInteractUntilRef.current = Date.now() + 15000;
+    };
+    map.on("dragstart", onUserMove);
+    map.on("zoomstart", onUserMove);
+    map.on("rotatestart", onUserMove);
+    map.on("wheel", () => {
+      userInteractUntilRef.current = Date.now() + 15000;
+    });
     map.on("load", () => {
       addOverlays(map);
       setMapReady(true);
@@ -457,7 +473,10 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       // Phasenabhängige Farbe (Fill + Glow + Pulse) wie auf dem VPS.
       acMarkerRef.current.getElement().style.setProperty("--ac-color", phaseColor(activeFlight?.phase));
       acMarkerRef.current.setLngLat(lngLat).setRotation(effAircraft.hdg);
-      if (follow) {
+      // was_just_resumed = der Resume-Gate wartet noch auf einen frischen
+      // Sim-Snapshot. In dem Zustand kann X-Plane kurz eine Reload-/Lade-
+      // position melden (z.B. Nordeuropa) → NICHT blind dorthin folgen.
+      if (follow && Date.now() >= userInteractUntilRef.current && !activeFlight?.was_just_resumed) {
         // Phasenabhängiger Zoom (Boden nah, Reiseflug weit).
         const tz = targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft);
         const c = map.getCenter();
@@ -562,6 +581,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       vaFittedRef.current = false;
     }
     const pts: [number, number][] = [];
+    const dr: { marker: maplibregl.Marker; lat: number; lon: number; hdg: number; gs: number }[] = [];
     for (const f of vaVisible) {
       const lat = f.position?.lat;
       const lon = f.position?.lon;
@@ -581,11 +601,13 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
           .setHTML(vaPopupHtml(f))
           .addTo(map);
       });
-      vaMarkersRef.current.push(
-        new maplibregl.Marker({ element: el, rotationAlignment: "map" }).setLngLat(lngLat).setRotation(f.position?.heading ?? 0).addTo(map),
-      );
+      const marker = new maplibregl.Marker({ element: el, rotationAlignment: "map" }).setLngLat(lngLat).setRotation(f.position?.heading ?? 0).addTo(map);
+      vaMarkersRef.current.push(marker);
+      dr.push({ marker, lat, lon, hdg: f.position?.heading ?? 0, gs: f.position?.gs ?? 0 });
       pts.push(lngLat);
     }
+    vaDrRef.current = dr;
+    vaDrT0Ref.current = Date.now();
     // Nur auf die VA-Flieger einpassen, wenn KEIN eigener Flug die Kamera führt
     // (sonst würde es dich vom eigenen Flug wegziehen). Und nur einmal.
     if (pts.length >= 1 && !vaFittedRef.current && !activeFlight) {
@@ -594,6 +616,26 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       map.fitBounds(b, { padding: 60, duration: 600, maxZoom: 6 });
     }
   }, [vaVisible, mapReady, activeFlight]);
+
+  // Dead-Reckoning: VA-Marker zwischen den 12-s-Polls flüssig entlang
+  // Heading+Groundspeed weiterbewegen (snappen beim nächsten Poll auf die
+  // echte Position). Gibt den Live-Eindruck ohne separaten Live-Endpoint.
+  useEffect(() => {
+    if (!mapReady) return;
+    const id = setInterval(() => {
+      const dtH = (Date.now() - vaDrT0Ref.current) / 3600000; // Stunden seit Poll
+      if (dtH <= 0) return;
+      for (const e of vaDrRef.current) {
+        if (e.gs < 30) continue; // am Boden/langsam → nicht extrapolieren
+        const distNm = e.gs * dtH;
+        const th = (e.hdg * Math.PI) / 180;
+        const dLat = (distNm * Math.cos(th)) / 60;
+        const dLon = (distNm * Math.sin(th)) / (60 * Math.max(0.2, Math.cos((e.lat * Math.PI) / 180)));
+        e.marker.setLngLat([e.lon + dLon, e.lat + dLat]);
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, [mapReady]);
 
   // ---- Stats ----
   const stats = useMemo(() => {
@@ -624,6 +666,9 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
           {activeFlight
             ? `${activeFlight.airline_icao}${activeFlight.flight_number} · ${activeFlight.dpt_airport}→${activeFlight.arr_airport}`
             : "Live-Karte"}
+          {activeFlight?.was_just_resumed && (
+            <span className="aa-livemap__resume-hint"> · ⏳ warte auf Sim-Position</span>
+          )}
         </div>
 
         {showOwnContent && (
@@ -636,13 +681,21 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
             <Stat label="NEXT" value={nav.nextLabel} />
             <Stat label="ETA" value={nav.eta} />
             <Stat label="PHASE" value={phaseLabel} />
+            <Stat label="POS" value={effAircraft ? `${effAircraft.lat.toFixed(2)}/${effAircraft.lon.toFixed(2)}` : "—"} />
           </div>
         )}
 
         <div className="aa-livemap__right">
           {activeFlight && (
             <label className="aa-livemap__follow">
-              <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={follow}
+                onChange={(e) => {
+                  setFollow(e.target.checked);
+                  if (e.target.checked) userInteractUntilRef.current = 0; // bewusst eingeschaltet → sofort folgen
+                }}
+              />
               Follow
             </label>
           )}

@@ -6,7 +6,8 @@
   "tabs": {
     "cockpit": "Cockpit",
     "map": "Map",
-    "briefing": "My Flights",
+    "briefing": "Briefing",
+    "logbook": "Logbook",
     "landing": "Landing",
     "news": "News",
     "log": "ACARS log",

@@ -514,7 +514,7 @@ pub struct SimBriefOfp {
 /// Single navlog fix from a SimBrief OFP. `kind` carries the SimBrief
 /// fix type ("apt", "wpt", "vor", "ndb"); we map it to phpVMS's
 /// numeric `nav_type` at the boundary.
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RouteFix {
     pub ident: String,
     pub lat: f64,
@@ -1147,6 +1147,44 @@ impl Client {
             .json::<serde_json::Value>()
             .await
             .map_err(|e| ApiError::BadResponse(format!("read /api/acars: {e}")))
+    }
+
+    /// StratosLogbook-Modul (GSG phpVMS): liest das Pilot-Logbuch LIVE über die
+    /// API — nichts gespeichert. Auth läuft über den phpVMS-`api_key` als
+    /// Bearer-Token (StratosAuth prüft `User::where('api_key', bearerToken)`).
+    /// Wir senden zusätzlich X-API-Key, schadet nicht.
+    async fn get_logbook_json(&self, path: &str) -> Result<serde_json::Value, ApiError> {
+        let url = self.endpoint(path)?;
+        let response = self
+            .http
+            .get(url)
+            .bearer_auth(&self.conn.api_key)
+            .header("X-API-Key", &self.conn.api_key)
+            .header(header::ACCEPT, "application/json")
+            .send()
+            .await
+            .map_err(ApiError::from)?;
+        let response = check_status(response, path).await?;
+        response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| ApiError::BadResponse(format!("read {path}: {e}")))
+    }
+
+    /// Logbuch-Flugliste (paginiert): `{ items, total, limit, offset }`.
+    pub async fn get_logbook_pireps(&self, limit: u32, offset: u32) -> Result<serde_json::Value, ApiError> {
+        self.get_logbook_json(&format!("/api/stratos/logbook/pireps?limit={limit}&offset={offset}"))
+            .await
+    }
+
+    /// Logbuch-Summen (Flüge, Stunden, Distanz, Ø-Landung, Rang).
+    pub async fn get_logbook_stats(&self) -> Result<serde_json::Value, ApiError> {
+        self.get_logbook_json("/api/stratos/logbook/stats").await
+    }
+
+    /// Logbuch-Detail eines PIREP inkl. `route` (Track) + `log` (Fluglogbuch).
+    pub async fn get_logbook_pirep(&self, id: &str) -> Result<serde_json::Value, ApiError> {
+        self.get_logbook_json(&format!("/api/stratos/logbook/pireps/{id}")).await
     }
 
     /// POST a JSON body and decode the response envelope `{ data: T }`.
