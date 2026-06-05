@@ -10,6 +10,8 @@
   --warning: #ff9f0a;
   --danger: #ff453a;
   --offline: #8e8e93;
+  /* Live-Map: geflogener Track / Breadcrumbs — kontrastreich auf heller Basemap */
+  --map-track: #334155;
 
   /* v0.3.0: Akzent-Farb-Tokens für Bid-Card Chips + Plan-Cards.
      Light-Theme-Werte hier — gesättigter & dunkler damit sie auf
@@ -45,6 +47,8 @@
   --accent: #0a84ff;
   --border: #3a3a3c;
   --offline: #636366;
+  /* Live-Map: Track / Breadcrumbs — hell auf dunkler Basemap (Stratos-Look) */
+  --map-track: #e8edf2;
 
   /* Dark-Theme: hellere/blassere Akzent-Tokens — auf dunkler Surface
      wirken zu satte Farben hart. */
@@ -8061,13 +8065,27 @@ input:disabled {
   background: color-mix(in srgb, var(--bg) 70%, transparent);
 }
 .aa-ac-marker {
-  color: var(--accent);
-  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.5));
+  width: 26px;
+  height: 26px;
   display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent); /* heli-Rotor nutzt currentColor */
+}
+/* Kategorie-Silhouette (portiert vom VPS) — Heading-Rotation macht der maplibre-Marker. */
+.aa-ac-marker .aircraft-svg {
+  width: 26px;
+  height: 26px;
+  display: block;
+  fill: var(--accent);
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.9)) drop-shadow(0 0 3px rgba(0, 0, 0, 0.55));
 }
 .aa-ac-marker--va {
   color: var(--warning);
   cursor: pointer;
+}
+.aa-ac-marker--va .aircraft-svg {
+  fill: var(--warning);
 }
 .aa-pin {
   font-size: 11px;
