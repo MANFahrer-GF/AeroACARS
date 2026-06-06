@@ -17,8 +17,19 @@ const hydrated = new Set<string>();
 const LS_PREFIX = "aa-track-";
 /** Sicherheitskappe pro Flug, damit localStorage bei Langstrecke nicht platzt. */
 const MAX_POINTS = 5000;
-/** Schwelle (Grad) fürs Ausdünnen — lange Flüge überladen die Linie sonst. */
-const MIN_DELTA_DEG = 0.002;
+/**
+ * Schwelle (Grad) fürs Ausdünnen in der LUFT — lange Flüge überladen die
+ * Linie sonst (~0,002° ≈ 220 m).
+ */
+const AIR_MIN_DELTA_DEG = 0.002;
+/**
+ * v0.15.13: deutlich feinere Schwelle am BODEN (~0,00015° ≈ 16 m). Mit der
+ * groben Luft-Schwelle fielen beim Taxi (Bewegungen ≪ 220 m) fast alle Punkte
+ * weg → der Rollweg am Flughafen war nicht nachvollziehbar (Live-Report Thomas,
+ * BTX2222). Am Boden brauchen wir die Auflösung für Kurven/Rollwege; in der
+ * Luft bleibt es grob, damit Langstrecken die Linie nicht überladen.
+ */
+const GROUND_MIN_DELTA_DEG = 0.00015;
 
 function persist(pirepId: string, arr: [number, number][]): void {
   try {
@@ -60,20 +71,28 @@ function ensure(pirepId: string): [number, number][] {
   return arr;
 }
 
-/** Einen Track-Punkt aufnehmen (lon/lat). No-op bei ungültigen Werten. */
+/**
+ * Einen Track-Punkt aufnehmen (lon/lat). No-op bei ungültigen Werten.
+ *
+ * `onGround` steuert die Ausdünn-Schwelle: am Boden fein (Taxi-Weg sichtbar),
+ * in der Luft grob (Langstrecke bleibt leicht). Default `false` = Luft-Schwelle,
+ * damit bestehende Aufrufer ohne Flag das alte Verhalten behalten.
+ */
 export function recordTrackPoint(
   pirepId: string,
   lon: number | null | undefined,
   lat: number | null | undefined,
+  onGround: boolean = false,
 ): void {
   if (typeof lon !== "number" || typeof lat !== "number") return;
   if (Number.isNaN(lon) || Number.isNaN(lat)) return;
   const arr = ensure(pirepId);
   const last = arr[arr.length - 1];
+  const minDelta = onGround ? GROUND_MIN_DELTA_DEG : AIR_MIN_DELTA_DEG;
   if (
     !last ||
-    Math.abs(last[0] - lon) > MIN_DELTA_DEG ||
-    Math.abs(last[1] - lat) > MIN_DELTA_DEG
+    Math.abs(last[0] - lon) > minDelta ||
+    Math.abs(last[1] - lat) > minDelta
   ) {
     arr.push([lon, lat]);
     if (arr.length > MAX_POINTS) arr.splice(0, arr.length - MAX_POINTS);

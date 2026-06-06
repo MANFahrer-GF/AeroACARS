@@ -1446,9 +1446,17 @@
     "no_ofp_open": "Generate on simbrief.com",
     "auto_start_skip": {
       "title": "Auto-start active, but currently not possible",
+      "generic": "Auto-start can't fire right now.",
       "engines_on": "Engines are running — auto-start only works on a cold-and-dark aircraft. Use 'Start flight' manually.",
       "moving": "Aircraft is already taxiing — auto-start only fires while parked. Use 'Start flight' manually.",
-      "airborne": "You're airborne — auto-start only works on the ground."
+      "airborne": "You're airborne — auto-start only works on the ground.",
+      "title_missing": "Auto-start is waiting for sim data: aircraft title missing. The sim is still booting or the aircraft isn't fully loaded.",
+      "title_missing_xplane": "Auto-start is waiting for sim data: aircraft title missing. Enable X-Plane Settings → Network → Web API so AeroACARS can read the aircraft name.",
+      "fuel_zero": "Auto-start is waiting for sim data: fuel = 0. Tanks empty (cold & dark) or the sim is still booting.",
+      "no_bids": "No booked bids found. Book a flight on the website first.",
+      "no_bid_match": "No bid matches your current position. Auto-start only fires at the departure airport stand.",
+      "aircraft_mismatch": "The loaded aircraft doesn't match the bid. Load the correct aircraft — or add an aircraft alias if it's the same type under a different name.",
+      "bid_already_started": "This bid was already auto-started this session. Restart via the manual toggle or pick another bid."
     },
     "open_flight_page": "Open flight page",
     "open_ofp": "Open OFP / briefing",

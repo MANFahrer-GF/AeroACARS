@@ -1446,9 +1446,17 @@
     "no_ofp_open": "Crea su simbrief.com",
     "auto_start_skip": {
       "title": "Auto-start attivo, ma al momento non possibile",
+      "generic": "L'auto-start non può partire ora.",
       "engines_on": "Motori accesi — l'auto-start parte solo a freddo/aereo fermo. Usa „Avvia volo\" manuale.",
       "moving": "L'aereo sta già rullando — l'auto-start parte solo da fermo. Usa „Avvia volo\" manuale.",
-      "airborne": "Sei in volo — l'auto-start funziona solo a terra."
+      "airborne": "Sei in volo — l'auto-start funziona solo a terra.",
+      "title_missing": "L'auto-start attende i dati del sim: nome aereo mancante. Il sim è ancora in avvio o l'aereo non è del tutto caricato.",
+      "title_missing_xplane": "L'auto-start attende i dati del sim: nome aereo mancante. Attiva X-Plane Settings → Network → Web API così AeroACARS può leggere il nome dell'aereo.",
+      "fuel_zero": "L'auto-start attende i dati del sim: carburante = 0. Serbatoi vuoti (cold & dark) o sim ancora in avvio.",
+      "no_bids": "Nessun bid prenotato trovato. Prenota prima un volo sul sito.",
+      "no_bid_match": "Nessun bid corrisponde alla posizione attuale. L'auto-start parte solo allo stand dell'aeroporto di partenza.",
+      "aircraft_mismatch": "L'aereo caricato non corrisponde al bid. Carica l'aereo corretto — o aggiungi un alias aeromobile se è lo stesso tipo con un altro nome.",
+      "bid_already_started": "Questo bid è già stato avviato automaticamente in questa sessione. Riavvia col toggle manuale o scegli un altro bid."
     },
     "open_flight_page": "Apri pagina volo",
     "open_ofp": "Apri OFP / briefing",

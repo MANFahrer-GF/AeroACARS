@@ -219,6 +219,16 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const effDepIcao = activeFlight?.dpt_airport;
   const effArrIcao = activeFlight?.arr_airport;
 
+  // v0.15.13: die gerenderte Track-Linie immer bis zur LIVE-Position des
+  // Flugzeugs ziehen. `effTrack` (aus dem trackStore) wird ausgedünnt, der
+  // letzte aufgezeichnete Punkt liegt also bis zu ~220 m hinter dem Marker
+  // → die weiße Linie „hinkte" sichtbar hinterher (Live-Report Thomas, BTX2222).
+  // Wir hängen den aktuellen Sim-Punkt als zusätzliches Linienende an (nur
+  // fürs Rendern; trackStore bleibt ausgedünnt persistiert).
+  const effTrackLive: [number, number][] = effAircraft
+    ? [...effTrack, [effAircraft.lon, effAircraft.lat]]
+    : effTrack;
+
   const phaseLabel = formatPhase(activeFlight?.phase);
 
   // ---- Nächster Wegpunkt + ETA ----
@@ -251,7 +261,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   }, [effFixes, effAircraft, effArr, activeFlight?.distance_nm, simSnapshot?.groundspeed_kt]);
 
   // dataRef für die styledata-Re-Adds aktuell halten
-  dataRef.current = { fixes: effFixes, track: effTrack, dep: effDep, arr: effArr, nextIdent: nav.nextIdent };
+  dataRef.current = { fixes: effFixes, track: effTrackLive, dep: effDep, arr: effArr, nextIdent: nav.nextIdent };
 
   // ---- Map einmalig erstellen ----
   useEffect(() => {
@@ -507,7 +517,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    pushSources(map, { fixes: effFixes, track: effTrack, dep: effDep, arr: effArr, nextIdent: nav.nextIdent });
+    pushSources(map, { fixes: effFixes, track: effTrackLive, dep: effDep, arr: effArr, nextIdent: nav.nextIdent });
 
     // Flugzeug-Marker (kategorieabhängiges Icon wie VPS/Stratos)
     if (effAircraft) {

@@ -1534,10 +1534,17 @@ function AutoStartSkipBanner() {
 
   if (!skip) return null;
 
-  // Reason-Code → lokalisiertes Label + Erklärung. Backend liefert
-  // den Code (engines_on / moving / airborne); Frontend macht die
-  // Übersetzung selbst damit Theme/Sprache greift.
+  // Reason-Code → lokalisiertes Label + Erklärung. Backend liefert nur
+  // den Code (no_bid_match / missing_aircraft / engines_on / …); Frontend
+  // macht die Übersetzung selbst, damit Theme/Sprache greift.
+  // v0.15.13: defaultValue-Fallback, falls das Backend mal einen reason-Code
+  // ohne i18n-Key liefert — vorher wurde dann der rohe Key angezeigt
+  // (Live-Report Thomas: „bids.auto_start_skip.no_bid_match"). Jetzt erscheint
+  // im Worst Case ein generischer Text statt des Schlüssels.
   const reasonKey = `bids.auto_start_skip.${skip.reason}`;
+  const reasonText = t(reasonKey, {
+    defaultValue: t("bids.auto_start_skip.generic"),
+  });
   return (
     <div
       className="bids__auto-start-skip"
@@ -1547,7 +1554,7 @@ function AutoStartSkipBanner() {
       <span className="bids__auto-start-skip-icon">🤖</span>
       <div className="bids__auto-start-skip-text">
         <strong>{t("bids.auto_start_skip.title")}</strong>
-        <span>{t(reasonKey)}</span>
+        <span>{reasonText}</span>
       </div>
     </div>
   );

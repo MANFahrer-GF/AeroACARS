@@ -38,6 +38,22 @@ describe("trackStore", () => {
     ]);
   });
 
+  it("nimmt am Boden feiner auf als in der Luft (Taxi-Auflösung)", async () => {
+    const { recordTrackPoint, getTrack } = await import("./trackStore");
+    // Eine kleine Bewegung (~0,0005° ≈ 55 m): in der LUFT verworfen
+    // (< 0,002°), am BODEN aufgenommen (> 0,00015°).
+    recordTrackPoint("AIR", 10.0, 50.0, false);
+    recordTrackPoint("AIR", 10.0005, 50.0005, false); // Luft → verworfen
+    expect(getTrack("AIR")).toEqual([[10.0, 50.0]]);
+
+    recordTrackPoint("GND", 10.0, 50.0, true);
+    recordTrackPoint("GND", 10.0005, 50.0005, true); // Boden → aufgenommen
+    expect(getTrack("GND")).toEqual([
+      [10.0, 50.0],
+      [10.0005, 50.0005],
+    ]);
+  });
+
   it("übersteht einen App-Neustart via localStorage", async () => {
     const m1 = await import("./trackStore");
     m1.recordTrackPoint("P2", 8.0, 48.0);

@@ -304,7 +304,14 @@ function App() {
   // ab Flugstart da, nicht erst ab Tab-Öffnen.
   useEffect(() => {
     if (activeFlight?.pirep_id && simSnapshot) {
-      recordTrackPoint(activeFlight.pirep_id, simSnapshot.lon, simSnapshot.lat);
+      // v0.15.13: on_ground steuert die Ausdünnung — am Boden feiner, damit
+      // der Taxi-Weg nachvollziehbar bleibt.
+      recordTrackPoint(
+        activeFlight.pirep_id,
+        simSnapshot.lon,
+        simSnapshot.lat,
+        simSnapshot.on_ground,
+      );
     }
   }, [simSnapshot, activeFlight?.pirep_id]);
 

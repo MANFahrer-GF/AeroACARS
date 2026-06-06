@@ -217,13 +217,26 @@ fn is_reload_gap(gap_secs: f64, interval_secs: f64) -> bool {
 /// Gated by `!reload_gap_suspect` so a sim-reload glitch tick (which can
 /// spike `groundspeed_kt`) cannot drive the velocity-derived TaxiOut
 /// transition — same rule the Boarding branch already applies.
+///
+/// v0.15.13: zusätzlich VORWÄRTS-Bedingung (`velocity_body_z_fps`). Beim
+/// Pushback startet der Pilot häufig die Triebwerke MITTEN im Schieben — die
+/// alte Bedingung (Triebwerk + gs>3) flippte dann sofort auf TaxiOut, obwohl
+/// der Tug noch RÜCKWÄRTS schob (Live-Log BTX2222: Pushback nur 7 s statt
+/// ~78 s, weil das Triebwerk bei vbz=−6,5 ansprang). Solange vbz rückwärts/≈0
+/// ist, bleibt es Pushback. Liefert der Sim kein vbz (`None`), gilt das alte
+/// Verhalten (sonst blieben solche Aircraft für immer in Pushback hängen).
 fn powered_taxi_move(
     reload_gap_suspect: bool,
     on_ground: bool,
     engines_running: bool,
     groundspeed_kt: f32,
+    velocity_body_z_fps: Option<f32>,
 ) -> bool {
-    !reload_gap_suspect && on_ground && engines_running && groundspeed_kt > 3.0
+    !reload_gap_suspect
+        && on_ground
+        && engines_running
+        && groundspeed_kt > 3.0
+        && moving_forward(velocity_body_z_fps)
 }
 
 /// v0.12.1 (Stream A LE1): pure decision for the Boarding→Pushback/TaxiOut
@@ -241,6 +254,73 @@ fn boarding_real_movement(
         && gs_over_threshold
         && prev_gs_over_threshold
         && moved_m > MIN_BOARDING_MOVEMENT_M
+}
+
+/// v0.15.13: Schwelle (fps) ab der die körperfeste Längs-Geschwindigkeit
+/// `velocity_body_z_fps` als klare Vorwärts-/Rückwärtsbewegung zählt (Rauschen
+/// am Stand liegt darunter). >0 = vorwärts, <0 = rückwärts. Bestätigt am Live-
+/// Log BTX2222 (X-Plane/ToLiss): −6,5 fps beim Tug-Push, +9..+14 fps beim
+/// Vorwärts-Taxi, |vbz| ≈ Groundspeed über ALLE Heading-Werte (= körperfest,
+/// nicht erdfest). MSFS „VELOCITY BODY Z" ist ohnehin körperfest, vorwärts +.
+const TAXI_DIRECTION_FPS: f32 = 1.0;
+
+/// Bewegt sich das Flugzeug RÜCKWÄRTS (Tug-Pushback)? `None` (Sim liefert kein
+/// vbz) → `false` (unbekannt nicht als Rückwärts werten).
+fn moving_backward(velocity_body_z_fps: Option<f32>) -> bool {
+    matches!(velocity_body_z_fps, Some(v) if v < -TAXI_DIRECTION_FPS)
+}
+
+/// Bewegt sich das Flugzeug klar VORWÄRTS? `None` → `true` (kein vbz → altes
+/// Verhalten beibehalten, damit Sims/Aircraft ohne diesen Wert nicht in
+/// Pushback hängen bleiben).
+fn moving_forward(velocity_body_z_fps: Option<f32>) -> bool {
+    match velocity_body_z_fps {
+        Some(v) => v > TAXI_DIRECTION_FPS,
+        None => true,
+    }
+}
+
+#[cfg(test)]
+mod v0_15_13_pushback_direction_tests {
+    use super::{moving_backward, moving_forward, powered_taxi_move};
+
+    #[test]
+    fn vbz_direction_classification() {
+        assert!(moving_backward(Some(-6.5))); // Tug schiebt rückwärts
+        assert!(!moving_backward(Some(9.4))); // Vorwärts-Taxi
+        assert!(!moving_backward(Some(0.0))); // Stand
+        assert!(!moving_backward(None)); // unbekannt → nicht rückwärts
+        assert!(moving_forward(Some(9.4)));
+        assert!(!moving_forward(Some(-6.5)));
+        assert!(!moving_forward(Some(0.0)));
+        assert!(moving_forward(None)); // Fallback: altes Verhalten
+    }
+
+    #[test]
+    fn powered_taxi_stays_pushback_while_rolling_backward() {
+        // BTX2222: Triebwerk startet beim Schieben, gs=3.9, vbz=-6.52 → KEIN Taxi.
+        assert!(!powered_taxi_move(false, true, true, 3.9, Some(-6.52)));
+    }
+
+    #[test]
+    fn powered_taxi_fires_on_genuine_forward_roll() {
+        // echtes Vorwärts-Taxi: gs=5.6, vbz=+9.44, Triebwerke an → TaxiOut.
+        assert!(powered_taxi_move(false, true, true, 5.6, Some(9.44)));
+    }
+
+    #[test]
+    fn powered_taxi_falls_back_when_no_vbz() {
+        // Sim ohne vbz → altes Verhalten (Triebwerk + gs>3 reicht).
+        assert!(powered_taxi_move(false, true, true, 5.0, None));
+    }
+
+    #[test]
+    fn powered_taxi_needs_engines_speed_and_ground() {
+        assert!(!powered_taxi_move(false, true, false, 5.0, Some(9.0))); // Triebwerke aus
+        assert!(!powered_taxi_move(false, true, true, 2.0, Some(9.0))); // zu langsam
+        assert!(!powered_taxi_move(true, true, true, 5.0, Some(9.0))); // reload glitch
+        assert!(!powered_taxi_move(false, false, true, 5.0, Some(9.0))); // nicht am Boden
+    }
 }
 
 /// v0.12.1 (Stream E LE14): does the first post-resume sim position look
@@ -901,6 +981,16 @@ struct AppState {
     /// "no_matching_bid" / "no_bids" — mit Timestamp damit die UI
     /// erkennen kann ob's gerade aktuell ist oder uralt.
     auto_start_skip_reason: Mutex<Option<(DateTime<Utc>, String)>>,
+    /// v0.15.13: letzter fehlgeschlagener Auto-Start-Versuch
+    /// `(Zeitpunkt, bid_id, error_code)`. Verhindert den Retry-Sturm: nach
+    /// einem `flight_start`-Fehler feuert der Watcher denselben Bid erst nach
+    /// `AUTO_START_FAIL_COOLDOWN_SECS` wieder (vorher: 3-s-Dauer-Retry, der
+    /// GlitchTip mit `missing_aircraft` / `flight_already_active` flutete —
+    /// #10, 189×). Drosselt zugleich das Activity-/GlitchTip-Log, da der
+    /// Fehler-Pfad nur noch ~1×/Cooldown durchlaufen wird. Selbst-korrigierend:
+    /// nach dem Cooldown versucht der Watcher erneut (Pilot kann inzwischen das
+    /// Flugzeug zuweisen / Sim fertig laden).
+    auto_start_fail: Mutex<Option<(DateTime<Utc>, i64, String)>>,
     /// When `true`, intercept the main window's CloseRequested event
     /// and `hide()` the window instead of letting it close. The user
     /// gets to it again via the system-tray icon (Win) / menubar
@@ -17371,7 +17461,16 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
                     }
                     stats.loadsheet_logged_at_blockoff = true;
                 }
-                next_phase = if snap.engines_running == 0 {
+                // v0.15.13: Pushback wird jetzt AUCH erkannt, wenn die
+                // Triebwerke bereits laufen — entscheidend ist RÜCKWÄRTS-
+                // Bewegung (Tug schiebt; vbz < 0), nicht der Motorstatus. Vorher
+                // sprang ein Pushback mit bereits gestarteten Triebwerken direkt
+                // auf TaxiOut. Liefert der Sim kein vbz, bleibt es beim alten
+                // engines==0-Kriterium. Block-Off-Zeit ist davon UNBERÜHRT (oben
+                // bereits gesetzt) — es geht nur ums Phasen-Label.
+                next_phase = if snap.engines_running == 0
+                    || moving_backward(snap.velocity_body_z_fps)
+                {
                     FlightPhase::Pushback
                 } else {
                     FlightPhase::TaxiOut
@@ -17469,6 +17568,7 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
                 snap.on_ground,
                 engines_running,
                 snap.groundspeed_kt,
+                snap.velocity_body_z_fps,
             );
             // tug_done greift nur wenn der State MAL aktiv (≠3) war
             let tug_done = snap.pushback_state == Some(3)
@@ -22317,6 +22417,10 @@ async fn try_resume_flight(
 // same bid until the resulting flight ends (tracked via
 // `AppState::auto_start_last_bid_id`).
 const AUTO_START_INTERVAL_SECS: u64 = 3;
+/// v0.15.13: Cooldown nach einem fehlgeschlagenen Auto-Start-`flight_start`.
+/// Bevor derselbe Bid erneut gefeuert wird, müssen so viele Sekunden vergehen.
+/// Stoppt den 3-s-Retry-Sturm (GlitchTip #10), bleibt aber selbst-korrigierend.
+const AUTO_START_FAIL_COOLDOWN_SECS: i64 = 120;
 /// How close to the departure airport (in meters) the aircraft must
 /// be to trigger auto-start. 5 km is generous enough for any major
 /// airport's stand area; tighter and we'd miss bids where the pilot
@@ -22636,6 +22740,23 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 if Some(bid.id) == last_bid {
                     continue;
                 }
+                // v0.15.13: Fehler-Cooldown. Ist dieser Bid kürzlich an
+                // flight_start gescheitert (missing_aircraft / flight_already_active
+                // / …), feuern wir ihn AUTO_START_FAIL_COOLDOWN_SECS lang nicht
+                // erneut — sonst Retry-Sturm alle 3 s (GlitchTip #10). Wie das
+                // last_bid-Skip behandelt: zählt nicht als Match-Versuch, damit
+                // der Post-Loop-Hint nicht fälschlich „kein Match" meldet.
+                {
+                    let g = state.auto_start_fail.lock().unwrap();
+                    if let Some((at, fbid, _code)) = g.as_ref() {
+                        if *fbid == bid.id
+                            && (Utc::now() - *at).num_seconds()
+                                < AUTO_START_FAIL_COOLDOWN_SECS
+                        {
+                            continue;
+                        }
+                    }
+                }
                 any_match_attempt = true;
                 // v0.7.17 (N-003): Track nearest-bid distance fuer
                 // den Aktivity-Log-Hint, wenn am Ende KEIN Bid matcht.
@@ -22767,11 +22888,20 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                             bid_id,
                             "auto-start: flight_start command failed"
                         );
-                        // v0.7.17 (N-003): bisher silent (nur tracing::warn).
-                        // Jetzt auch im Activity-Log, damit der Pilot sieht
-                        // warum sein automatisch erkannter Flug nicht
-                        // gestartet wurde (z.B. „not_at_departure",
-                        // „not_on_ground", „bid_not_found" wegen W5).
+                        let s = app_for_call.state::<AppState>();
+                        // v0.15.13: Fehler-Cooldown setzen, BEVOR last_bid_id
+                        // gecleart wird. Der Loop-Cooldown-Check verhindert
+                        // damit ab dem nächsten Tick das sofortige Re-Fire
+                        // (3-s-Retry-Sturm, GlitchTip #10). Das Log läuft dadurch
+                        // nur noch ~1×/Cooldown statt ~20×/min.
+                        {
+                            let mut f = s.auto_start_fail.lock().unwrap();
+                            *f = Some((Utc::now(), bid_id, e.code.clone()));
+                        }
+                        // v0.7.17 (N-003): nicht mehr silent — im Activity-Log,
+                        // damit der Pilot sieht warum sein automatisch erkannter
+                        // Flug nicht startete (z.B. „missing_aircraft",
+                        // „not_at_departure", „flight_already_active").
                         let app_log = app_for_call.clone();
                         log_activity_handle(
                             &app_log,
@@ -22779,10 +22909,10 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                             "Auto-Start: flight_start fehlgeschlagen".to_string(),
                             Some(format!("Bid {} – Fehler: {}", bid_id, e.code)),
                         );
-                        // Clear the last_bid_id so the user can retry
-                        // by toggling auto-start off/on or fixing the
-                        // condition (e.g. wrong aircraft).
-                        let s = app_for_call.state::<AppState>();
+                        // Clear the last_bid_id so the user can retry after the
+                        // cooldown (or immediately by fixing the condition +
+                        // toggling auto-start). The fail-cooldown above now gates
+                        // the re-fire cadence, not this clear.
                         let mut g = s.auto_start_last_bid_id.lock().unwrap();
                         *g = None;
                     }
@@ -25820,11 +25950,13 @@ mod sim_pause_tests {
     fn pushback_reload_gap_does_not_taxiout() {
         // QS-P2: a reload-suspect tick must not drive Pushback→TaxiOut
         // either — even with engines on and groundspeed over threshold.
-        assert!(!powered_taxi_move(true, true, true, 12.0));
+        // (v0.15.13: vbz=forward mitgegeben — der reload-/gs-Gate macht die
+        // ersten/letzten Fälle ohnehin false.)
+        assert!(!powered_taxi_move(true, true, true, 12.0, Some(20.0)));
         // Without the reload gap, the same inputs DO mean powered taxi.
-        assert!(powered_taxi_move(false, true, true, 12.0));
+        assert!(powered_taxi_move(false, true, true, 12.0, Some(20.0)));
         // Below the 3 kt threshold it is never powered taxi.
-        assert!(!powered_taxi_move(false, true, true, 2.0));
+        assert!(!powered_taxi_move(false, true, true, 2.0, Some(20.0)));
     }
 
     // ---- v0.12.1 Stream E — resume position check (LE14) ----

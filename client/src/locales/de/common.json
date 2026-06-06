@@ -1446,9 +1446,17 @@
     "no_ofp_open": "Auf simbrief.com erstellen",
     "auto_start_skip": {
       "title": "Auto-Start aktiv, aber gerade nicht möglich",
+      "generic": "Auto-Start greift gerade nicht.",
       "engines_on": "Triebwerke sind an — Auto-Start greift nur bei kalt/stehendem Flugzeug. Manuell „Flug starten\" nutzen.",
       "moving": "Flugzeug rollt schon — Auto-Start greift nur am Stand. Manuell „Flug starten\" nutzen.",
-      "airborne": "Du bist in der Luft — Auto-Start funktioniert nur am Boden."
+      "airborne": "Du bist in der Luft — Auto-Start funktioniert nur am Boden.",
+      "title_missing": "Auto-Start wartet auf Sim-Daten: Flugzeug-Titel fehlt. Sim startet noch oder das Flugzeug ist nicht voll geladen.",
+      "title_missing_xplane": "Auto-Start wartet auf Sim-Daten: Flugzeug-Titel fehlt. In X-Plane Settings → Network → Web API einschalten, damit AeroACARS den Flugzeug-Namen lesen kann.",
+      "fuel_zero": "Auto-Start wartet auf Sim-Daten: Sprit = 0. Tank leer (Cold & Dark) oder Sim startet noch.",
+      "no_bids": "Keine gebuchten Bids gefunden. Buche zuerst einen Flug auf der Webseite.",
+      "no_bid_match": "Kein Bid passt zur aktuellen Position. Auto-Start greift nur am Stand des Abflughafens.",
+      "aircraft_mismatch": "Das geladene Flugzeug passt nicht zum Bid. Lade das passende Flugzeug — oder pflege einen Aircraft-Alias, falls es derselbe Typ mit anderem Namen ist.",
+      "bid_already_started": "Dieser Bid wurde diese Session schon automatisch gestartet. Über Manuell-Umschalten oder ein anderes Bid neu starten."
     },
     "open_flight_page": "Flugseite öffnen",
     "open_ofp": "OFP / Briefing öffnen",
