@@ -13670,27 +13670,56 @@ fn apply_pause_resume(
     //     der Pilot die Web-API NICHT in X-Plane → Settings → Network
     //     aktiviert hat, ist `aircraft_icao=None` und F7 ueberspringt
     //     die Pruefung still (= keine falsch-positiven Warnungen).
+    //
+    // v0.15.12: alias-BEWUSSTER Check. Vorher war das ein stumpfer
+    // `snap_icao != bid_icao` Direktvergleich, der WEDER die hardcoded
+    // `aircraft_aliases()`-Tabelle NOCH die VPS-gepflegten Aliase las.
+    // Folge: Falsch-Warnungen nach Resume trotz passendem Alias (Sim
+    // „PHENOM30" vs Bid „E55P"; „B738" vs „B737" — Letzteres feuerte
+    // sogar obwohl es in der hardcoded Tabelle steht). Jetzt nutzt der
+    // Resume-Check denselben gemeinsamen Helper wie der flight_start-
+    // Gate + der Auto-Start-Watcher (`aircraft_type_matches_sim` mit
+    // `clean_atc_model`-Normalisierung + Title-Substring-Fallback + VPS-
+    // Aliasen), sodass „Alias im Recorder-Admin pflegen → überall ruhig"
+    // konsistent gilt. Bleibt eine reine WARNUNG (Prinzip P2: informieren
+    // statt blockieren). Sync-Pfad: kein Alias-Refresh nötig — die Aliase
+    // wurden beim flight_start (vor jeder Pause) bereits in den State
+    // geladen; wir lesen nur den aktuellen Snapshot.
     if let Some(cur) = current_snap {
-        if let Some(snap_icao) = cur.aircraft_icao.as_deref().and_then(extract_icao_code) {
-            let bid_icao = flight.aircraft_icao.trim().to_uppercase();
-            if !bid_icao.is_empty() && snap_icao != bid_icao {
+        let bid_icao = flight.aircraft_icao.trim().to_uppercase();
+        let sim_icao = cur.aircraft_icao.as_deref().and_then(clean_atc_model);
+        if let (false, Some(actual)) = (bid_icao.is_empty(), sim_icao.as_deref()) {
+            let vps_aliases = app
+                .state::<AppState>()
+                .aircraft_aliases_vps
+                .lock()
+                .expect("aircraft_aliases_vps lock")
+                .clone();
+            let sim_title = cur.aircraft_title.as_deref().unwrap_or("");
+            if !aircraft_type_matches_sim(
+                Some(bid_icao.as_str()),
+                Some(actual),
+                sim_title,
+                &vps_aliases,
+            ) {
                 log_activity_handle(
                     app,
                     ActivityLevel::Warn,
                     format!(
                         "⚠ Aircraft-Mismatch nach Resume: Sim meldet {}, Bid erwartet {}",
-                        snap_icao, bid_icao
+                        actual, bid_icao
                     ),
                     Some(format!(
                         "Falls du wirklich ein anderes Flugzeug laedst, cancel den aktuellen PIREP \
-                         und starte einen neuen Flug mit dem passenden Bid. Andernfalls lade in MSFS \
-                         das richtige Flugzeug nach (Bid-ICAO: {}).",
-                        bid_icao
+                         und starte einen neuen Flug mit dem passenden Bid. Andernfalls lade im Sim \
+                         das richtige Flugzeug nach (Bid-ICAO: {bid_icao}). Ist es derselbe Flieger \
+                         und der Sim meldet nur einen anderen Typ-String, pflege im Recorder-Admin \
+                         einen Aircraft-Alias {bid_icao} → {actual}."
                     )),
                 );
                 tracing::warn!(
                     pirep_id = %flight.pirep_id,
-                    snap_icao = %snap_icao,
+                    snap_icao = %actual,
                     bid_icao = %bid_icao,
                     "aircraft mismatch detected after pause-resume"
                 );
@@ -24570,6 +24599,58 @@ mod aircraft_alias_tests {
             Some("PHENOM 300E"),
             "Asobo Phenom 300E",
             &vps,
+        ));
+    }
+
+    /// v0.15.12: der Resume-Mismatch-Check (`apply_pause_resume`, F7) nutzt
+    /// jetzt denselben `aircraft_type_matches_sim`-Helper wie Gate + Watcher.
+    /// Vorher war das ein stumpfer `snap_icao != bid_icao` Direktvergleich,
+    /// der WEDER VPS- NOCH hardcoded-Aliase las → Falsch-Warnungen nach
+    /// Resume. Dieser Test fixiert die zwei Klassen, die der alte Pfad
+    /// fälschlich anmeckerte:
+    ///   (a) VPS-Alias-Fall (Live 2026-06-06, tip.kant.ovh): X-Plane-Phenom
+    ///       meldet acf_ICAO "PHENOM30" (OHNE Leerzeichen) vs Bid "E55P".
+    ///       Der ältere Alias "PHENOM 300" deckt das NICHT ab (Substring
+    ///       greift nicht); der neue "PHENOM30" schon.
+    ///   (b) hardcoded-Fall: Bid "A359" vs Sim-Langform "A350-900" matcht
+    ///       schon über die eingebaute Tabelle — ganz ohne VPS-Alias.
+    #[test]
+    fn aircraft_type_matches_sim_resume_v01512_aliases_apply() {
+        use super::aircraft_type_matches_sim;
+
+        // (a) Älterer Alias "PHENOM 300" deckt "PHENOM30" NICHT ab → Mismatch.
+        let mut vps_old: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        vps_old.insert("E55P".to_string(), vec!["PHENOM 300".to_string()]);
+        assert!(!aircraft_type_matches_sim(
+            Some("E55P"),
+            Some("PHENOM30"),
+            "",
+            &vps_old,
+        ));
+
+        // (a) Neuer Alias "PHENOM30" greift exakt → keine Resume-Warnung mehr.
+        let mut vps_new: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        vps_new.insert(
+            "E55P".to_string(),
+            vec!["PHENOM 300".to_string(), "PHENOM30".to_string()],
+        );
+        assert!(aircraft_type_matches_sim(
+            Some("E55P"),
+            Some("PHENOM30"),
+            "",
+            &vps_new,
+        ));
+
+        // (b) Hardcoded-Tabelle greift auf dem Resume-Pfad jetzt ebenfalls:
+        // A359-Bid vs A350-900-Langform → Match, ganz ohne VPS-Alias.
+        let empty = std::collections::HashMap::new();
+        assert!(aircraft_type_matches_sim(
+            Some("A359"),
+            Some("A350-900"),
+            "",
+            &empty,
         ));
     }
 
