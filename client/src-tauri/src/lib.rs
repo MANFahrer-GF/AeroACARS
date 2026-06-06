@@ -19639,16 +19639,23 @@ fn build_pirep_fields(
     if let Some(rate) = stats.canonical_landing_rate_fpm() {
         // SIGNED — negative on descent. Matches both LandingToast and
         // the latched SimVar reading. Pilots want to see the minus.
-        // The peak (post-touchdown refinement) overrides this when
-        // available since it's the worse of the two.
+        //
+        // v0.15.14: KEIN Peak-Override mehr. Vorher überschrieb hier
+        // `landing_peak_vs_fpm` (= Peak-Sinkrate, z.B. -444) den kanonischen
+        // Wert (`rate`, z.B. -264). Folge: das PIREP-Feld "Landing Rate" zeigte
+        // -444, während Score + phpVMS-`landing_rate`-Spalte + Live-Map den
+        // kanonischen FAR-25.473-Aufsetzwert (-264) nutzten → ZWEI verschiedene
+        // Lande-Raten auf derselben PIREP (Live-Report Thomas, GLG2/MGGT mit
+        // ausgeprägtem Flare: Edge -264 vs Peak -444). Jetzt durchgängig die
+        // kanonische Quelle (= dieselbe wie der Score). Der Peak bleibt als
+        // klar beschriftetes Forensik-Detail in der Live-Map sichtbar.
         //
         // v0.5.16: NUMERIC value only (no " fpm" suffix). The
         // FatihKoz/DisposableSpecial dmaintenance plugin reads this
         // field and runs `is_numeric()` against it; "-1641 fpm"
         // returns false there → hard-landing penalty silently
         // skipped. Pure numeric makes the maintenance check work.
-        let value = stats.landing_peak_vs_fpm.unwrap_or(rate);
-        f.insert("Landing Rate".into(), format!("{:.0}", value));
+        f.insert("Landing Rate".into(), format!("{:.0}", rate));
     }
     if stats.landing_peak_g_force.or(stats.landing_g_force).is_some() {
         // v0.5.16: pure numeric (no " G" suffix). Some maintenance
