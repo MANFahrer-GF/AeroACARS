@@ -346,7 +346,7 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
                   className="manual-modal__search"
                   autoFocus
                 />
-                <div style={{ fontSize: "0.78rem", color: "var(--text-dim)", marginBottom: 8 }}>
+                <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: 8 }}>
                   {t("manual_flight.list_total", {
                     count: aircraftList?.length ?? 0,
                     airport: bid.flight.dpt_airport_id,

@@ -13,6 +13,19 @@
   /* Live-Map: geflogener Track / Breadcrumbs — kontrastreich auf heller Basemap */
   --map-track: #334155;
 
+  /* v0.15.11 (#hell-mode-fix): Legacy-Alias-Variablen — wurden in mehreren
+     Komponenten (Sinkrate/Landung-Forensik `.sinkrate-*`, Plan-Karten,
+     VFR/Manual-Modal) benutzt, aber NIE definiert → im Hell-Mode unsichtbarer
+     Text bzw. fehlende Flächen (Dark klappte nur zufällig). Als Alias auf die
+     echten theme-aware Vars → tracken automatisch Hell/Dunkel, in BEIDEN Themes
+     korrekt (nur hier in :root nötig, da sie auf bereits theme-overridete Vars
+     zeigen). */
+  --fg: var(--text);
+  --fg-dim: var(--text-muted);
+  --surface-1: var(--surface);
+  --r-sm: 6px;
+  --font-mono: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
+
   /* v0.3.0: Akzent-Farb-Tokens für Bid-Card Chips + Plan-Cards.
      Light-Theme-Werte hier — gesättigter & dunkler damit sie auf
      weißem Surface lesbar sind. Werden im Dark-Theme überschrieben. */
@@ -6694,7 +6707,7 @@ input:disabled {
   padding: 24px;
 }
 .manual-modal {
-  background: var(--bg-elev);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
   width: 100%;
@@ -6709,7 +6722,7 @@ input:disabled {
   border-bottom: 1px solid var(--border);
 }
 .manual-modal__head h3 { margin: 0 0 4px; font-size: 1.1rem; }
-.manual-modal__sub { font-size: 0.85rem; color: var(--text-dim); font-family: var(--font-mono, monospace); }
+.manual-modal__sub { font-size: 0.85rem; color: var(--text-muted); font-family: var(--font-mono, monospace); }
 .manual-modal__body {
   padding: 16px 24px;
   overflow-y: auto;
@@ -6718,14 +6731,14 @@ input:disabled {
   font-size: 0.78rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-dim);
+  color: var(--text-muted);
   margin-bottom: 12px;
 }
 .manual-modal__loading,
 .manual-modal__empty {
   padding: 24px;
   text-align: center;
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-size: 0.9rem;
 }
 .manual-modal__search {
@@ -6770,7 +6783,7 @@ input:disabled {
 }
 .manual-modal__list-icao { font-weight: 700; color: #67e8f9; min-width: 60px; }
 .manual-modal__list-reg { color: var(--text); min-width: 80px; }
-.manual-modal__list-name { color: var(--text-dim); font-size: 0.85em; }
+.manual-modal__list-name { color: var(--text-muted); font-size: 0.85em; }
 .manual-modal__form {
   display: flex;
   flex-direction: column;
@@ -6788,7 +6801,7 @@ input:disabled {
 }
 .manual-modal__form label > small {
   font-size: 0.75rem;
-  color: var(--text-dim);
+  color: var(--text-muted);
 }
 .manual-modal__form input[type="text"],
 .manual-modal__form input[type="number"] {
@@ -6814,10 +6827,10 @@ input:disabled {
   display: inline-flex;
   align-items: center;
   padding: 0 12px;
-  background: var(--bg-dim, #0a0a0a);
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 0 6px 6px 0;
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-family: var(--font-mono, monospace);
   font-size: 0.85rem;
   min-width: 40px;
