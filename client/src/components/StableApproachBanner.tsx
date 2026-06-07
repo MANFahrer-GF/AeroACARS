@@ -48,6 +48,16 @@ interface Props {
  *  v0.8.5: Thresholds an Backend (lib.rs compute_approach_stability_v2)
  *  angeglichen. Vorher 0.95/0.2, das war zu lax — siehe Item 4 im
  *  Landing-Analyse-Bundle.
+ *
+ *  v0.15.18 — Gleitwinkel-Caveat (bewusst NICHT skaliert): die V/S-Schwellen
+ *  hier sind fix. Das POST-FLIGHT-Scoring (excessive_sink, Stability-Card,
+ *  V/S-Chart-Linie) skaliert die Sink-Grenze seit v0.15.17/.18 mit dem echten
+ *  publizierten Gleitweg (≈ −1334 fpm @4°, ≈ −1834 fpm @5,5°). Dieser LIVE-
+ *  Banner kennt den Gleitweg in Echtzeit nicht (SimSnapshot hat keinen GP-
+ *  Winkel) und bleibt daher ein bewusst konservativer Sicherheits-Nudge — auf
+ *  einem Steilanflug kann er kurz aufblinken, ohne dass der Flug am Ende
+ *  „instabil" gescort wird. Die Bewertungs-Wahrheit ist das Post-Flight-Gate.
+ *  TODO(optional): GP-Winkel aus den Navdaten live durchreichen → mitskalieren.
  */
 function evaluateApproach(snap: SimSnapshot, phase: string): Advisory | null {
   const isApproachPhase =

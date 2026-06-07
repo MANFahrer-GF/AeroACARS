@@ -2399,8 +2399,11 @@ struct FlightStats {
     /// IAS-Stddev im Gate-Window. Speed-Stability-Indikator.
     /// < 5 kt = on-target, > 15 kt = unstabil.
     approach_ias_stddev_kt: Option<f32>,
-    /// Excessive Sink Flag: True wenn IRGENDEIN Sample im Gate
-    /// V/S < -1000 fpm hatte. FAA Sink-Rate-Limit-Verletzung.
+    /// Excessive Sink Flag: True wenn IRGENDEIN Sample im Gate die
+    /// Stable-Approach-Sinkrate verletzte. Schwelle = −1000 fpm auf 3°,
+    /// mit dem ECHTEN Gleitwinkel skaliert (tan-basiert, z.B. ~−1834 fpm
+    /// auf 5,5°), sodass korrekt geflogene Steilanflüge nicht fälschlich
+    /// geflaggt werden. FSF-ALAR/FAA-AC-120-71B Stable-Approach-Kriterium.
     approach_excessive_sink: bool,
     /// Stable-Configuration-Flag: Gear voll runter (≥99%) AND Flaps
     /// in Landing-Position (≥70%) am Gate. None bei Konfig-Sample fehlt.
@@ -4397,7 +4400,16 @@ fn compute_approach_stability_v2(
             .map(|s| (s.ias_kt as f64 - da_ias_mean).powi(2))
             .sum::<f64>() / n_da;
         let da_ias_sd = da_ias_var.sqrt() as f32;
-        let da_excess_sink = da_samples.iter().any(|s| s.vs_fpm < -1000.0);
+        // v0.15.18: dieselbe Gleitwinkel-Skalierung wie das 1000-ft-Gate
+        // (excessive_sink_threshold oben). Der v0.15.17-London-Fix skalierte
+        // NUR das 1000-ft-Gate — das 200-ft-DA-Gate blieb fix bei −1000 fpm.
+        // Auf einem korrekt geflogenen Steilanflug (z.B. ENTC/4°, EGLC/5,5°)
+        // liegt die Soll-Sinkrate am DA-Gate physikalisch schon über −1000 fpm
+        // (4° @143 kt ≈ −1013 fpm), sodass `stable_at_da` dort mathematisch NIE
+        // erreichbar war. Jetzt winkel-korrekt → identisch zum 1000-ft-Gate.
+        let da_excess_sink = da_samples
+            .iter()
+            .any(|s| f64::from(s.vs_fpm) < excessive_sink_threshold);
         // Strenger Cutoff bei DA: jerk < 80, bank < 3°, ias < 8 kt
         let da_stable = da_jerk < 80.0
             && da_bank_sd < 3.0
@@ -26397,6 +26409,43 @@ mod sim_pause_tests {
             out_3deg.excessive_sink, out_garbage.excessive_sink,
             "Müll-Gleitwinkel → 3°-Fallback"
         );
+    }
+
+    #[test]
+    fn steep_glideslope_v01518_da_gate_scaled() {
+        // Regression für den DA-Gate-Bug, den der v0.15.17-London-Fix offen
+        // ließ: das 200-ft-DA-Gate (stable_at_da) prüfte excessive-sink fix
+        // gegen −1000 fpm. Auf einem korrekt geflogenen Steilanflug liegt die
+        // Soll-Sinkrate dort schon über −1000 fpm → stable_at_da war IMMER
+        // false. Samples ≤200 ft AGL, ruhig (kleiner Jerk), nur die Sinkrate
+        // ist steilanflug-typisch hoch.
+        let buf: std::collections::VecDeque<ApproachBufferSample> = [
+            approach_sample(180.0, 120.0, 132.0, -1150.0, 1.0, 0.85),
+            approach_sample(120.0, 119.0, 131.0, -1140.0, 1.0, 0.85),
+            approach_sample(60.0, 118.0, 130.0, -1120.0, 1.0, 0.85),
+        ]
+        .into_iter()
+        .collect();
+
+        // 3°-Fallback (None): DA-Gate gegen fix −1000 → fälschlich instabil.
+        let out_3 = compute_approach_stability_v2(&buf, None, None, None);
+        assert_eq!(
+            out_3.stable_at_da,
+            Some(false),
+            "gegen 3° ist der Steilanflug am DA-Gate fälschlich instabil"
+        );
+
+        // 5,5°-Gleitwinkel: Schwelle ~−1834 fpm → die −1120…−1150 sind sauber.
+        let out_55 = compute_approach_stability_v2(&buf, None, None, Some(5.5));
+        assert_eq!(
+            out_55.stable_at_da,
+            Some(true),
+            "mit echtem 5,5°-Gleitwinkel ist der DA-Gate-Anflug stabil"
+        );
+
+        // AUDIT-Invariante: bei exakt 3,0° identisch zum None-Fallback.
+        let out_3_explicit = compute_approach_stability_v2(&buf, None, None, Some(3.0));
+        assert_eq!(out_3.stable_at_da, out_3_explicit.stable_at_da);
     }
 
     // ---- v0.12.1 Stream B — pilot-status gate (LE6) ----

@@ -1233,10 +1233,38 @@ export function approachTdLineIndex(
   return firstPos - 1 + frac;
 }
 
-function ApproachChart({ samples }: { samples: ApproachSample[] }) {
+function ApproachChart({
+  samples,
+  glideslopeAngleDeg,
+}: {
+  samples: ApproachSample[];
+  /** v0.15.18: echter Gleitpfad-Winkel (Navdaten). Skaliert Soll-Band +
+   *  Stabilitätsgrenze 1:1 wie das Backend. null/3° → unverändert. */
+  glideslopeAngleDeg?: number | null;
+}) {
   const { t } = useTranslation();
   const [hover, setHover] = useState<number | null>(null);
   if (samples.length < 3) return null;
+
+  // v0.15.18: Soll-Band + Stabilitätsgrenze mit dem ECHTEN Gleitwinkel
+  // skalieren — identisch zum Backend (compute_approach_stability_v2:
+  // gs_factor = tan(g)/tan(3°), Plausibilitäts-Clamp 2–7,5°, sonst ×1,0).
+  // Bei 3°/unbekannt bleibt alles bei −600…−900 / −1000 (bit-identisch zu
+  // vorher). Steilanflüge (ENTC 4°, EGLC 5,5°) bekommen die korrekte, tiefere
+  // Linie — sonst „stürzt" die V/S-Spur scheinbar unter eine falsche −1000-
+  // Marke, obwohl das Backend (korrekt skaliert) den Anflug gar nicht flaggt.
+  const gsFactor =
+    glideslopeAngleDeg != null &&
+    glideslopeAngleDeg >= 2 &&
+    glideslopeAngleDeg <= 7.5
+      ? Math.tan((glideslopeAngleDeg * Math.PI) / 180) /
+        Math.tan((3 * Math.PI) / 180)
+      : 1;
+  const bandHi = -600 * gsFactor;
+  const bandLo = -900 * gsFactor;
+  const limitFpm = -1000 * gsFactor;
+  const isScaledGp = gsFactor !== 1;
+  const fmtFpm = (v: number) => `−${Math.abs(Math.round(v / 10) * 10)}`;
 
   const w = 1120;
   const h = 320;
@@ -1254,9 +1282,10 @@ function ApproachChart({ samples }: { samples: ApproachSample[] }) {
   hi = Math.ceil((hi + padv) / 100) * 100;
   if (hi < 0) hi = 0;
   // v0.12.8: Achse IMMER mindestens 0 … −1100 — sonst klebt bei einem
-  // ruhigen Anflug das Soll-Band unten und die −1000-Stabilitätslinie
-  // fällt raus. Auto-Zoom greift weiter für tiefere Ausschläge.
-  lo = Math.min(lo, -1100);
+  // ruhigen Anflug das Soll-Band unten und die Stabilitätslinie fällt raus.
+  // v0.15.18: mit dem Gleitwinkel mit-skaliert, damit die (ggf. tiefere)
+  // Grenze + Band auch bei Steilanflügen im Bild bleiben.
+  lo = Math.min(lo, Math.floor((limitFpm - 100) / 100) * 100);
   const range = Math.max(1, hi - lo);
 
   const xStep = innerW / Math.max(1, samples.length - 1);
@@ -1297,9 +1326,9 @@ function ApproachChart({ samples }: { samples: ApproachSample[] }) {
   const tdX = x(approachTdLineIndex(samples));
   const tdNearRight = tdX > pad.left + innerW - 70;
 
-  const bandTop = clampY(-600);
-  const bandBottom = clampY(-900);
-  const limitVisible = -1000 > lo && -1000 < hi;
+  const bandTop = clampY(bandHi);
+  const bandBottom = clampY(bandLo);
+  const limitVisible = limitFpm > lo && limitFpm < hi;
 
   return (
     <svg
@@ -1348,11 +1377,16 @@ function ApproachChart({ samples }: { samples: ApproachSample[] }) {
 
       {limitVisible && (
         <g>
-          <line x1={pad.left} y1={y(-1000)} x2={pad.left + innerW} y2={y(-1000)}
+          <line x1={pad.left} y1={y(limitFpm)} x2={pad.left + innerW} y2={y(limitFpm)}
                 stroke="#f87171" strokeWidth="1.2" strokeDasharray="6 4" opacity="0.7" />
-          <text x={pad.left + innerW - 6} y={y(-1000) - 5} textAnchor="end"
+          <text x={pad.left + innerW - 6} y={y(limitFpm) - 5} textAnchor="end"
                 fontSize="10" fill="#f87171" opacity="0.85">
-            {t("landing.vs_chart.limit")}
+            {isScaledGp
+              ? t("landing.vs_chart.limit_custom", {
+                  fpm: fmtFpm(limitFpm),
+                  angle: String(glideslopeAngleDeg),
+                })
+              : t("landing.vs_chart.limit", { fpm: fmtFpm(limitFpm) })}
           </text>
         </g>
       )}
@@ -1386,7 +1420,12 @@ function ApproachChart({ samples }: { samples: ApproachSample[] }) {
           <rect x={pad.left + 160} y={h - 14} width={9} height={9} fill="rgba(234,179,8,0.4)" />
           <text x={pad.left + 173} y={h - 6}>{t("landing.chart_zone.flare")}</text>
           <rect x={pad.left + 230} y={h - 14} width={9} height={9} fill="rgba(34,197,94,0.4)" />
-          <text x={pad.left + 243} y={h - 6}>{t("landing.vs_chart.band")}</text>
+          <text x={pad.left + 243} y={h - 6}>
+            {t("landing.vs_chart.band", {
+              hi: fmtFpm(bandHi),
+              lo: fmtFpm(bandLo),
+            })}
+          </text>
         </g>
       )}
 
@@ -2743,7 +2782,10 @@ function LandingReport({ record }: { record: LandingRecord }) {
                 <ReportChartCard
                   caption={t("landing.report.approach_chart")}
                 >
-                  <ApproachChart samples={record.approach_samples} />
+                  <ApproachChart
+                    samples={record.approach_samples}
+                    glideslopeAngleDeg={record.runway_match?.glideslope_angle_deg}
+                  />
                 </ReportChartCard>
               )}
               {hasCloseup && (
@@ -3103,7 +3145,10 @@ function LandingDetail({
         <section className="landing-section">
           <h3>{t("landing.approach_stability")}</h3>
           <div className="landing-stability-chart">
-            <ApproachChart samples={record.approach_samples} />
+            <ApproachChart
+                    samples={record.approach_samples}
+                    glideslopeAngleDeg={record.runway_match?.glideslope_angle_deg}
+                  />
           </div>
           {/* v0.12.8: Touchdown-Nahaufnahme (50 Hz, −4…+3 s) direkt unter
               dem Anflug-Profil — gleiche Anordnung wie auf dem VPS. */}

@@ -165,8 +165,9 @@
     "approach_start": "Anflug-Start",
     "vs_chart": {
       "axis": "Sinkrate (fpm)",
-      "band": "Soll-Sinkrate −600…−900",
-      "limit": "Stabilitätsgrenze −1000 fpm",
+      "band": "Soll-Sinkrate {{hi}}…{{lo}}",
+      "limit": "Stabilitätsgrenze {{fpm}} fpm",
+      "limit_custom": "Stabilitätsgrenze {{fpm}} fpm ({{angle}}° GP)",
       "before_td": "{{s}} s vor TD",
       "after_td": "+{{s}} s nach TD"
     },
@@ -689,8 +690,8 @@
         },
         "sink_rate": {
           "label": "Sink Rate",
-          "body": "EXCESSIVE wenn IRGENDEIN Sample im Gate eine V/S < −1000 fpm hatte. Das gilt als FAA-Stable-Approach-Verletzung.",
-          "thresholds": "OK = nie unter −1000 fpm · EXCESSIVE = einmal oder mehr unter −1000 fpm"
+          "body": "EXCESSIVE wenn IRGENDEIN Sample im Gate steiler sank als die Stable-Approach-Grenze. Die Grenze ist −1000 fpm auf 3° und skaliert mit dem ECHTEN publizierten Gleitweg (≈ −1334 fpm auf 4° wie Tromsø, ≈ −1834 fpm auf London Citys 5,5°) — ein korrekt geflogener Steilanflug wird also NICHT fälschlich geflaggt. FSF-ALAR / FAA-AC-120-71B Sink-Rate-Kriterium.",
+          "thresholds": "OK = nie unter der Grenze · EXCESSIVE = einmal oder mehr darunter (−1000 fpm bei 3°, mit dem echten Gleitweg skaliert)"
         },
         "landing_config": {
           "label": "Landing-Config",
@@ -699,7 +700,7 @@
         },
         "vs_vs_ils": {
           "label": "V/S vs. 3°-ILS",
-          "body": "Mittlere Abweichung deiner V/S vom theoretischen 3°-ILS-Profil (basierend auf Groundspeed: Target-V/S = −GS · 5,31 fpm/kt). Hoch heißt: du fliegst nicht auf dem Glideslope sondern flacher/steiler.",
+          "body": "Mittlere Abweichung deiner V/S vom theoretischen Gleitweg-Profil (basierend auf Groundspeed: Target-V/S = −GS · 5,31 fpm/kt auf 3°, auf den echten publizierten Gleitweg skaliert — der Kachel-Titel zeigt den Winkel). Hoch heißt: du fliegst nicht auf dem Glideslope sondern flacher/steiler.",
           "thresholds": "< 100 fpm sehr nah am Profil · 100–200 fpm okay · > 200 fpm deutlich ab"
         },
         "max_vs_dev": {

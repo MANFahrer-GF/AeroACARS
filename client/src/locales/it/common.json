@@ -165,8 +165,9 @@
     "approach_start": "Inizio avvicinamento",
     "vs_chart": {
       "axis": "Rateo di discesa (fpm)",
-      "band": "Rateo target −600…−900",
-      "limit": "Limite di stabilità −1000 fpm",
+      "band": "Rateo target {{hi}}…{{lo}}",
+      "limit": "Limite di stabilità {{fpm}} fpm",
+      "limit_custom": "Limite di stabilità {{fpm}} fpm ({{angle}}° GP)",
       "before_td": "{{s}} s prima del TD",
       "after_td": "+{{s}} s dopo il TD"
     },
@@ -689,8 +690,8 @@
         },
         "sink_rate": {
           "label": "Sink rate",
-          "body": "EXCESSIVE quando QUALSIASI campione nel gate aveva V/S < −1000 fpm. Conta come violazione stable-approach FAA.",
-          "thresholds": "OK = mai sotto −1000 fpm · EXCESSIVE = una o più volte sotto −1000 fpm"
+          "body": "EXCESSIVE quando QUALSIASI campione nel gate scendeva più veloce del limite stable-approach. Il limite è −1000 fpm su 3° e scala con il sentiero di planata reale pubblicato (≈ −1334 fpm su un avvicinamento a 4° come Tromsø, ≈ −1834 fpm sui 5,5° di London City) — un avvicinamento ripido volato correttamente NON viene quindi segnalato erroneamente. Criterio sink-rate FSF ALAR / FAA AC 120-71B.",
+          "thresholds": "OK = mai sotto il limite · EXCESSIVE = una o più volte sotto (−1000 fpm a 3°, scalato sul sentiero di planata reale)"
         },
         "landing_config": {
           "label": "Landing config",
@@ -699,7 +700,7 @@
         },
         "vs_vs_ils": {
           "label": "V/S vs. 3° ILS",
-          "body": "Deviazione media della tua V/S dal profilo teorico ILS 3° (basato su groundspeed: target V/S = −GS · 5,31 fpm/kt). Alto significa: non sei sul glideslope ma più basso/alto.",
+          "body": "Deviazione media della tua V/S dal profilo teorico del glideslope (basato su groundspeed: target V/S = −GS · 5,31 fpm/kt su 3°, scalato sul sentiero di planata reale pubblicato — l'intestazione della tile mostra l'angolo). Alto significa: non sei sul glideslope ma più basso/alto.",
           "thresholds": "< 100 fpm molto vicino al profilo · 100–200 fpm ok · > 200 fpm chiaramente fuori"
         },
         "max_vs_dev": {

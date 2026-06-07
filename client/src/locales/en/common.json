@@ -165,8 +165,9 @@
     "approach_start": "Approach start",
     "vs_chart": {
       "axis": "Vertical speed (fpm)",
-      "band": "Target sink −600…−900",
-      "limit": "Stability limit −1000 fpm",
+      "band": "Target sink {{hi}}…{{lo}}",
+      "limit": "Stability limit {{fpm}} fpm",
+      "limit_custom": "Stability limit {{fpm}} fpm ({{angle}}° GP)",
       "before_td": "{{s}} s before TD",
       "after_td": "+{{s}} s after TD"
     },
@@ -689,8 +690,8 @@
         },
         "sink_rate": {
           "label": "Sink rate",
-          "body": "EXCESSIVE when ANY sample in the gate had V/S < −1000 fpm. Counts as an FAA stable-approach violation.",
-          "thresholds": "OK = never below −1000 fpm · EXCESSIVE = once or more below −1000 fpm"
+          "body": "EXCESSIVE when ANY sample in the gate sank faster than the stable-approach limit. The limit is −1000 fpm on a 3° glidepath and scales with the real published glidepath (≈ −1334 fpm on a 4° approach like Tromsø, ≈ −1834 fpm on London City's 5.5°) — a correctly-flown steep approach is therefore NOT falsely flagged. FSF ALAR / FAA AC 120-71B sink-rate criterion.",
+          "thresholds": "OK = never below the limit · EXCESSIVE = once or more below it (−1000 fpm at 3°, scaled by the real glidepath)"
         },
         "landing_config": {
           "label": "Landing config",
@@ -699,7 +700,7 @@
         },
         "vs_vs_ils": {
           "label": "V/S vs. 3° ILS",
-          "body": "Mean deviation of your V/S from the theoretical 3° ILS profile (based on groundspeed: target V/S = −GS · 5.31 fpm/kt). High means: you're not on the glideslope but shallower or steeper.",
+          "body": "Mean deviation of your V/S from the theoretical glideslope profile (based on groundspeed: target V/S = −GS · 5.31 fpm/kt on 3°, scaled to the real published glidepath — the tile header shows the angle). High means: you're not on the glideslope but shallower or steeper.",
           "thresholds": "< 100 fpm very close to profile · 100–200 fpm okay · > 200 fpm clearly off"
         },
         "max_vs_dev": {
