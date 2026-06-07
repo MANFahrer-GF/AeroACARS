@@ -45,6 +45,10 @@ interface Props {
   sampleCount: number | null;
   /** "msfs" | "xplane" | null — wird als „MSFS\" / „X-Plane\" gerendert. */
   simKind?: string | null;
+  /** v0.15.17: echter Gleitpfad-Winkel (Navdaten). Bei ≠3° (z.B. EGLC 5,5°)
+   *  wird die V/S-vs-ILS-Kachel mit dem echten Winkel beschriftet — der Wert
+   *  selbst kommt schon winkel-korrekt aus dem Backend. null → Standard 3°. */
+  glideslopeAngleDeg?: number | null;
 }
 
 function bandForRange(
@@ -281,9 +285,17 @@ export function ApproachStabilityCard(props: Props) {
               band={bands[4]}
             />
             <Tile
-              label={t(
-                "landing.approach_stability_card.tiles.vs_vs_ils.label",
-              )}
+              label={
+                props.glideslopeAngleDeg != null &&
+                props.glideslopeAngleDeg >= 2 &&
+                props.glideslopeAngleDeg <= 7.5 &&
+                Math.abs(props.glideslopeAngleDeg - 3) > 0.05
+                  ? t(
+                      "landing.approach_stability_card.tiles.vs_vs_ils.label_custom",
+                      { angle: String(props.glideslopeAngleDeg) },
+                    )
+                  : t("landing.approach_stability_card.tiles.vs_vs_ils.label")
+              }
               value={fmtNumOrDash(props.vsDeviationFpm, 0)}
               unit={t(
                 "landing.approach_stability_card.tiles.vs_vs_ils.unit",

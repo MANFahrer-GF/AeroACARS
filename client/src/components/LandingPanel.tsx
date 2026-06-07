@@ -2481,9 +2481,18 @@ function LandingReport({ record }: { record: LandingRecord }) {
               )}
               {record.approach_vs_deviation_fpm != null && (
                 <ReportTile
-                  label={t(
-                    "landing.approach_stability_card.tiles.vs_vs_ils.label",
-                  )}
+                  label={(() => {
+                    const gs = record.runway_match?.glideslope_angle_deg;
+                    return gs != null &&
+                      gs >= 2 &&
+                      gs <= 7.5 &&
+                      Math.abs(gs - 3) > 0.05
+                      ? t(
+                          "landing.approach_stability_card.tiles.vs_vs_ils.label_custom",
+                          { angle: String(gs) },
+                        )
+                      : t("landing.approach_stability_card.tiles.vs_vs_ils.label");
+                  })()}
                   value={fmtNumber(record.approach_vs_deviation_fpm, 0, "fpm")}
                 />
               )}
@@ -3088,6 +3097,7 @@ function LandingDetail({
           record.gate_window?.sample_count ?? record.approach_samples.length
         }
         simKind={record.sim_kind}
+        glideslopeAngleDeg={record.runway_match?.glideslope_angle_deg}
       />
       {record.approach_samples.length >= 3 && (
         <section className="landing-section">

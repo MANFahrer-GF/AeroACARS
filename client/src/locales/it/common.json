@@ -644,6 +644,7 @@
         },
         "vs_vs_ils": {
           "label": "V/S vs. 3° ILS",
+          "label_custom": "V/S vs. {{angle}}° ILS",
           "unit": "fpm"
         },
         "max_vs_dev": {

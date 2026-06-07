@@ -4188,8 +4188,24 @@ fn compute_approach_stability_v2(
     buf: &std::collections::VecDeque<ApproachBufferSample>,
     arr_elevation_ft: Option<f32>,
     td_ts: Option<DateTime<Utc>>,
+    // v0.15.17: echter Gleitpfad-Winkel aus den Navdaten (Navigraph). Steile
+    // Anflüge (z.B. EGLC 5,5°) haben physikalisch höhere Sink-Raten — ein fixer
+    // 3°-Vergleich wertet sie sonst fälschlich als „excessive/unstable" (Live-
+    // Report Michael, London City). `None` (Runway nicht aufgelöst / nur
+    // OurAirports-Fallback / kein ILS) → Faktor 1,0 → IDENTISCH zum bisherigen
+    // 3°-Verhalten (Audit-Invariante: keine Regression ohne Daten).
+    glideslope_angle_deg: Option<f64>,
 ) -> ApproachStabilityV2 {
     let mut out = ApproachStabilityV2::default();
+
+    // Skalierungsfaktor relativ zum 3°-Standard. tan-basiert (physikalisch
+    // korrekt: V/S ∝ tan(Gleitwinkel)). Plausibilitäts-Clamp 2,0–7,5° — alles
+    // außerhalb gilt als unzuverlässige Navdaten → Fallback 3° (Faktor 1,0).
+    // Bei exakt 3,0° ist der Faktor exakt 1,0 → bit-identisch zur alten Logik.
+    let gs_factor: f64 = glideslope_angle_deg
+        .filter(|g| (2.0..=7.5).contains(g))
+        .map(|g| g.to_radians().tan() / 3.0_f64.to_radians().tan())
+        .unwrap_or(1.0);
 
     // 1) Window-Filter: HAT bevorzugt, AGL als Fallback.
     let use_hat = arr_elevation_ft.is_some();
@@ -4264,8 +4280,13 @@ fn compute_approach_stability_v2(
         .sum::<f64>() / n;
     out.ias_stddev_kt = Some(var_ias.sqrt() as f32);
 
-    // 5) Excessive-Sink-Flag.
-    out.excessive_sink = gate_samples.iter().any(|s| s.vs_fpm < -1000.0);
+    // 5) Excessive-Sink-Flag. v0.15.17: Schwelle mit dem Gleitwinkel skaliert —
+    // bei 3° bleibt's −1000 fpm, bei 5,5° (z.B. EGLC) ~−1834 fpm, sodass ein
+    // korrekt geflogener Steilanflug nicht fälschlich „excessive" ist.
+    let excessive_sink_threshold = -1000.0 * gs_factor;
+    out.excessive_sink = gate_samples
+        .iter()
+        .any(|s| f64::from(s.vs_fpm) < excessive_sink_threshold);
 
     // 6) Stable-Config: Gear+Flaps am 1000-ft-Sample (= aeltester
     //    Sample im Gate, = der mit hoechster Hoehe).
@@ -4297,7 +4318,8 @@ fn compute_approach_stability_v2(
     let mut sum_dev = 0.0_f64;
     let mut max_dev_below_500 = 0.0_f32;
     for s in &gate_samples {
-        let target_vs = -(s.gs_kt as f64) * 5.31;
+        // v0.15.17: Ziel-V/S am ECHTEN Gleitwinkel (gs_factor); bei 3° = ×1,0.
+        let target_vs = -(s.gs_kt as f64) * 5.31 * gs_factor;
         let dev = (s.vs_fpm as f64 - target_vs).abs();
         sum_dev += dev;
         // v0.12.1 (Stream C LE12): the "< 500 ft" band excludes the
@@ -18660,6 +18682,13 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
                     &stats.approach_buffer,
                     stats.arr_airport_elevation_ft,
                     td_ts,
+                    // v0.15.17: echter Gleitwinkel der aufgelösten Bahn (oben bei
+                    // 18597 gesetzt, also vor diesem Aufruf). None bei OurAirports-
+                    // Fallback / keinem Match → Faktor 1,0 (3°-Verhalten).
+                    stats
+                        .runway_nav_geometry
+                        .as_ref()
+                        .map(|g| g.glideslope_angle),
                 );
                 stats.approach_vs_deviation_fpm = stab_v2.vs_deviation_fpm;
                 stats.approach_max_vs_deviation_below_500_fpm = stab_v2.max_vs_deviation_below_500_fpm;
@@ -26273,7 +26302,7 @@ mod sim_pause_tests {
         ]
         .into_iter()
         .collect();
-        let out = compute_approach_stability_v2(&buf, None, None);
+        let out = compute_approach_stability_v2(&buf, None, None, None);
         assert_eq!(out.stable_config, None, "flaps unreadable → not assessable");
     }
 
@@ -26288,7 +26317,7 @@ mod sim_pause_tests {
         ]
         .into_iter()
         .collect();
-        let out = compute_approach_stability_v2(&buf, None, None);
+        let out = compute_approach_stability_v2(&buf, None, None, None);
         assert_eq!(out.stable_config, Some(false), "genuine no-flaps → fail");
     }
 
@@ -26301,7 +26330,7 @@ mod sim_pause_tests {
         ]
         .into_iter()
         .collect();
-        let out = compute_approach_stability_v2(&buf, None, None);
+        let out = compute_approach_stability_v2(&buf, None, None, None);
         assert_eq!(out.stable_config, Some(true));
     }
 
@@ -26318,7 +26347,7 @@ mod sim_pause_tests {
         ]
         .into_iter()
         .collect();
-        let out = compute_approach_stability_v2(&buf, None, None);
+        let out = compute_approach_stability_v2(&buf, None, None, None);
         let max_dev = out
             .max_vs_deviation_below_500_fpm
             .expect("a sub-500 ft sample exists");
@@ -26326,6 +26355,48 @@ mod sim_pause_tests {
         // 9 ft balloon dev ≈ 837 — the balloon must be excluded.
         assert!(max_dev < 500.0, "flare balloon excluded, got {max_dev}");
         assert!(max_dev > 200.0, "real 200 ft excursion kept, got {max_dev}");
+    }
+
+    #[test]
+    fn steep_glideslope_v01517_not_flagged_excessive() {
+        // EGLC 5,5° (Live-Report Michael, London City): ein KORREKT geflogener
+        // Steilanflug bei ~120 kt hat ~−1170 fpm. Gegen den fixen 3°-Standard
+        // wäre das fälschlich „excessive" + große Abweichung; mit dem echten
+        // Gleitwinkel ist es sauber. Der Score ist nicht betroffen (sub_stability
+        // nutzt σ, nicht diese Felder) — reine Anzeige/„stable"-Korrektur.
+        let buf: std::collections::VecDeque<ApproachBufferSample> = [
+            approach_sample(900.0, 120.0, 132.0, -1170.0, 1.0, 0.85),
+            approach_sample(600.0, 118.0, 130.0, -1150.0, 1.0, 0.85),
+            approach_sample(300.0, 115.0, 128.0, -1120.0, 1.0, 0.85),
+        ]
+        .into_iter()
+        .collect();
+
+        // Ohne Gleitwinkel (3°-Fallback): fälschlich „excessive".
+        let out_3deg = compute_approach_stability_v2(&buf, None, None, None);
+        assert!(out_3deg.excessive_sink, "gegen 3° gilt der Steilanflug als excessive");
+
+        // Mit echtem 5,5°-Gleitwinkel: NICHT excessive + kleine V/S-Abweichung.
+        let out_55 = compute_approach_stability_v2(&buf, None, None, Some(5.5));
+        assert!(!out_55.excessive_sink, "5,5°-Steilanflug ist nicht excessive");
+        let dev = out_55.vs_deviation_fpm.expect("deviation vorhanden");
+        assert!(dev < 200.0, "Abweichung vs 5,5°-Profil klein, war {dev}");
+
+        // AUDIT-Invariante 1: None == exakt 3,0° (bit-identisch, keine Regression).
+        let out_explicit_3 = compute_approach_stability_v2(&buf, None, None, Some(3.0));
+        assert_eq!(
+            out_3deg.excessive_sink, out_explicit_3.excessive_sink,
+            "None und 3,0° müssen identisch sein"
+        );
+        assert_eq!(out_3deg.vs_deviation_fpm, out_explicit_3.vs_deviation_fpm);
+
+        // AUDIT-Invariante 2: unplausibler Gleitwinkel (außerhalb 2–7,5°) →
+        // Fallback 3° (= None-Verhalten), kein Müll-Scaling.
+        let out_garbage = compute_approach_stability_v2(&buf, None, None, Some(15.0));
+        assert_eq!(
+            out_3deg.excessive_sink, out_garbage.excessive_sink,
+            "Müll-Gleitwinkel → 3°-Fallback"
+        );
     }
 
     // ---- v0.12.1 Stream B — pilot-status gate (LE6) ----
