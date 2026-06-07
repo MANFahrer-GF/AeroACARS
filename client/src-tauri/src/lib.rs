@@ -4890,6 +4890,10 @@ fn landing_get_current(
         sim_label,
         aircraft_icao,
         aircraft_title,
+        // Live-Vorschau: ein manueller Divert ist noch nicht deklariert →
+        // geplantes Ziel. Ein mid-flight erkannter Divert greift weiterhin
+        // über stats.divert_hint im Trust-Check.
+        &flight.arr_airport,
         airport_lookup,
     )
 }
@@ -10385,6 +10389,15 @@ fn build_landing_record<F>(
     sim_kind_label: Option<&str>,
     aircraft_icao: Option<&str>,
     aircraft_title: Option<&str>,
+    // v0.15.x: der EFFEKTIVE (tatsächliche) Landeflughafen. Bei einem Divert
+    // != flight.arr_airport (= geplant). Wird NUR für den Runway-Geometrie-
+    // Trust-Check genutzt, damit eine Divert-Landung am ECHTEN Flughafen
+    // (z.B. MGGT statt geplant MZBE) nicht als `icao_mismatch` verworfen wird
+    // → Rollout/Runway werden korrekt gewertet (Live-Report Thomas, GLG2).
+    // Das Anzeige-`arr_airport` im Record bleibt das geplante Ziel (+ Divert-
+    // Banner). Für Nicht-Diverts ist effective == geplant (kein Verhaltens-
+    // unterschied).
+    effective_arr_icao: &str,
     airport_lookup: F,
 ) -> Option<LandingRecord>
 where
@@ -10428,7 +10441,8 @@ where
     // Score aktivieren. Wenn alle benötigten Felder vorhanden → neuer
     // Algorithmus, sonst skipped mit konkretem Reason (KEIN Rollback auf
     // meter-only).
-    fill_v2_rollout_fields(&mut scoring_input, stats, &flight.arr_airport);
+    // v0.15.x: effektiven Landeflughafen (Divert-aware) statt geplantes Ziel.
+    fill_v2_rollout_fields(&mut scoring_input, stats, effective_arr_icao);
     let computed_sub_scores = landing_scoring::compute_sub_scores(&scoring_input);
     let aggregate_master =
         landing_scoring::aggregate_master_score(&computed_sub_scores);
@@ -10709,7 +10723,7 @@ where
         runway_geometry_trusted: {
             let (trusted, _) = runway_geometry_trust_check(
                 stats.runway_match.as_ref().map(|m| m.airport_ident.as_str()),
-                &flight.arr_airport,
+                effective_arr_icao,
                 stats.divert_hint.as_ref().and_then(|h| h.actual_icao.as_deref()),
                 stats.runway_match.as_ref().map(|m| m.centerline_distance_m as f32),
                 stats.landing_float_distance_m,
@@ -10719,7 +10733,7 @@ where
         runway_geometry_reason: {
             let (_, reason) = runway_geometry_trust_check(
                 stats.runway_match.as_ref().map(|m| m.airport_ident.as_str()),
-                &flight.arr_airport,
+                effective_arr_icao,
                 stats.divert_hint.as_ref().and_then(|h| h.actual_icao.as_deref()),
                 stats.runway_match.as_ref().map(|m| m.centerline_distance_m as f32),
                 stats.landing_float_distance_m,
@@ -10775,6 +10789,9 @@ fn record_landing_for_filed_flight(
     app: &AppHandle,
     flight: &ActiveFlight,
     stats: &FlightStats,
+    // v0.15.x: tatsächlicher Landeflughafen (Divert-aware) — siehe
+    // build_landing_record. Für Nicht-Diverts == flight.arr_airport.
+    effective_arr_icao: &str,
 ) {
     let snapshot = current_snapshot(app);
     let sim_kind_label = read_sim_config(app).kind;
@@ -10824,6 +10841,7 @@ fn record_landing_for_filed_flight(
         sim_label,
         aircraft_icao,
         aircraft_title,
+        effective_arr_icao,
         airport_lookup,
     ) else {
         tracing::debug!(
@@ -11854,7 +11872,13 @@ async fn flight_end(
         // sees the same state for divert and normal arrivals.
         {
             let stats = flight.stats.lock().expect("flight stats");
-            record_landing_for_filed_flight(&app, &flight, &stats);
+            // v0.15.x: Divert → effektiver Landeflughafen für den Geometrie-Trust.
+            record_landing_for_filed_flight(
+                &app,
+                &flight,
+                &stats,
+                divert_to.as_deref().unwrap_or(&flight.arr_airport),
+            );
         }
         clear_persisted_flight(&app);
         log_activity(
@@ -11971,7 +11995,13 @@ async fn flight_end(
             // and the in-memory FlightStats goes out of scope.
             {
                 let stats = flight.stats.lock().expect("flight stats");
-                record_landing_for_filed_flight(&app, &flight, &stats);
+                // v0.15.x: tatsächlicher Landeflughafen (= gefilte arr) für Trust.
+                record_landing_for_filed_flight(
+                    &app,
+                    &flight,
+                    &stats,
+                    body.arr_airport_id.as_deref().unwrap_or(&flight.arr_airport),
+                );
             }
             clear_persisted_flight(&app);
             log_activity(
@@ -12121,7 +12151,13 @@ async fn flight_end(
                 // Erfolgreich gequeued → Landing-Snapshot, clear, Activity-Log
                 {
                     let stats = flight.stats.lock().expect("flight stats");
-                    record_landing_for_filed_flight(&app, &flight, &stats);
+                    // v0.15.x: tatsächlicher Landeflughafen (= gefilte arr) für Trust.
+                    record_landing_for_filed_flight(
+                        &app,
+                        &flight,
+                        &stats,
+                        body.arr_airport_id.as_deref().unwrap_or(&flight.arr_airport),
+                    );
                 }
                 clear_persisted_flight(&app);
                 log_activity(
@@ -12653,7 +12689,13 @@ async fn flight_end_manual(
             // Same landing-history snapshot as the regular file path.
             {
                 let stats = flight.stats.lock().expect("flight stats");
-                record_landing_for_filed_flight(&app, &flight, &stats);
+                // v0.15.x: manueller Divert → effektiver Landeflughafen für Trust.
+                record_landing_for_filed_flight(
+                    &app,
+                    &flight,
+                    &stats,
+                    divert_to.as_deref().unwrap_or(&flight.arr_airport),
+                );
             }
             clear_persisted_flight(&app);
             log_activity(
@@ -25018,6 +25060,35 @@ mod v0_7_6_payload_consistency_tests {
         );
         assert!(trusted);
         assert!(reason.is_none());
+    }
+
+    #[test]
+    fn runway_trust_accepts_divert_via_effective_arr() {
+        // v0.15.x (Live-Report Thomas, GLG2): build_landing_record reicht bei
+        // einem Divert jetzt den EFFEKTIVEN Landeflughafen als `arr_airport`
+        // durch (statt des geplanten). Geplant MZBE, gelandet + gematcht MGGT
+        // → trusted, Rollout/Runway werden gewertet.
+        let (trusted, reason) = runway_geometry_trust_check(
+            Some("MGGT"),
+            "MGGT", // effektiver (tatsächlicher) Landeflughafen
+            None,
+            Some(-10.0),
+            Some(450.0),
+        );
+        assert!(trusted);
+        assert!(reason.is_none());
+
+        // Gegenprobe — der ALTE Bug: geplantes Ziel (MZBE) durchgereicht,
+        // kein divert_to → icao_mismatch → Rollout fälschlich „untrusted".
+        let (trusted_old, reason_old) = runway_geometry_trust_check(
+            Some("MGGT"),
+            "MZBE", // geplant (alt, falsch)
+            None,
+            Some(-10.0),
+            Some(450.0),
+        );
+        assert!(!trusted_old);
+        assert_eq!(reason_old, Some("icao_mismatch"));
     }
 
     #[test]
