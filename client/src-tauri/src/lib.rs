@@ -945,9 +945,12 @@ struct AppState {
     /// In-process airport-coords cache. Keyed by ICAO uppercase. Populated on
     /// first lookup so we don't re-fetch on every snapshot tick.
     airports: Mutex<HashMap<String, Airport>>,
-    /// v0.8.0 — VPS-managed aircraft-type-aliases. Pulled once per
-    /// app-start (and refreshed on each flight_start, so a freshly-
-    /// added alias takes effect at the next Flight without app-restart).
+    /// v0.8.0 — VPS-managed aircraft-type-aliases. Refreshed on each
+    /// flight_start (so a freshly-added alias takes effect at the next
+    /// Flight without app-restart) AND lazily warmed by the auto-start
+    /// watcher when empty (v0.15.16 — vorher war der Cache vor dem ersten
+    /// Flug leer, sodass der Auto-Start-Typcheck aliased Flugzeuge wie
+    /// E55P↔"PHENOM 300" nie matchte).
     /// Merged additively with the hardcoded `aircraft_aliases` table —
     /// VPS-Liste wins on conflict (= VA-Admin kann fehlerhaft hardcoded
     /// Aliases übersteuern). Empty when VPS unreachable or pre-fetch
@@ -22605,6 +22608,12 @@ fn spawn_auto_start_watcher(app: AppHandle) {
         // Vorabcheck genutzt (nur wenn ein Bid in Reichweite + warm ist).
         let mut expected_icao_cache: std::collections::HashMap<i64, Option<String>> =
             std::collections::HashMap::new();
+        // v0.15.16: Zeitpunkt des letzten VPS-Alias-Warm-Versuchs. Der Watcher
+        // prüft den Aircraft-Typ alias-bewusst (Option C), der Alias-Cache wurde
+        // bisher aber NUR bei flight_start/spawn_navdata_fetch geladen — vor dem
+        // ersten Flug war er leer → ein aliased Flugzeug (z.B. E55P↔"PHENOM 300")
+        // konnte NIE auto-starten (Henne-Ei). Wir wärmen den Cache jetzt lazy.
+        let mut alias_warm_attempt_at: Option<DateTime<Utc>> = None;
         loop {
             tokio::time::sleep(Duration::from_secs(AUTO_START_INTERVAL_SECS)).await;
             let state = app.state::<AppState>();
@@ -22620,6 +22629,35 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 let guard = state.active_flight.lock().expect("active_flight lock");
                 if guard.is_some() {
                     continue;
+                }
+            }
+            // v0.15.16: VPS-Alias-Cache lazy warm halten. Ohne das wäre er vor
+            // dem ersten Flug leer → der alias-bewusste Typ-Vorabcheck unten
+            // verwirft ein aliased Flugzeug (E55P↔"PHENOM 300E") fälschlich als
+            // Mismatch und Auto-Start griffe NIE (Henne-Ei: Auto-Start braucht
+            // den Alias, der Alias kam bisher erst bei flight_start). Nur wenn
+            // der Cache leer ist + gedrosselt auf 60 s (Token evtl. erst nach
+            // Provisioning verfügbar; bei Fehler/Timeout bleibt er leer und wird
+            // in 60 s erneut versucht). Best-effort, 5 s-Timeout — hängt den
+            // Watcher nie.
+            {
+                let cache_empty = state
+                    .aircraft_aliases_vps
+                    .lock()
+                    .expect("aircraft_aliases_vps lock")
+                    .is_empty();
+                let now = Utc::now();
+                let due = alias_warm_attempt_at
+                    .is_none_or(|at| (now - at).num_seconds() >= 60);
+                if cache_empty && due {
+                    alias_warm_attempt_at = Some(now);
+                    let token =
+                        secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten();
+                    let _ = tokio::time::timeout(
+                        Duration::from_secs(5),
+                        fetch_aircraft_aliases_into_state(app.clone(), None, token),
+                    )
+                    .await;
                 }
             }
             // Skip if no sim snapshot yet, or the aircraft is moving /
