@@ -369,6 +369,11 @@ export interface ActiveFlightInfo {
   arr_gate: string | null;
   /** Approach runway from `ATC RUNWAY SELECTED` at Final. */
   approach_runway: string | null;
+  /** v0.15.19: published glideslope angle (deg) of the approach runway from
+   *  live navdata, plausibility-clamped 2–7.5°. Lets the live stable-approach
+   *  banner scale its V/S thresholds (gs_factor = tan(g)/tan(3°)) like the
+   *  post-flight scorer. null → unknown/implausible → banner uses 3° default. */
+  approach_glideslope_angle: number | null;
   /** ISO-8601 UTC timestamp of the most recent successful
    *  position-post, or null if none has succeeded yet. */
   last_position_at: string | null;

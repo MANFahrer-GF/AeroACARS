@@ -3352,6 +3352,13 @@ pub struct ActiveFlightInfo {
     arr_gate: Option<String>,
     /// `ATC RUNWAY SELECTED` snapshotted while on Final.
     approach_runway: Option<String>,
+    /// v0.15.19: Plausibilitäts-geclampter (2–7,5°) Gleitwinkel der Approach-
+    /// Runway aus den Live-Navdaten. Füttert das Stable-Approach-Banner, damit
+    /// es seine V/S-Schwellen mit demselben `gs_factor = tan(g)/tan(3°)`
+    /// skaliert wie das Post-Flight-Scoring (`compute_approach_stability_v2`).
+    /// None → Runway/Winkel unbekannt oder unplausibel → Banner bleibt beim
+    /// 3°-Default (unverändert für normale Anflüge).
+    approach_glideslope_angle: Option<f64>,
     /// ISO-8601 UTC timestamp of the last successful position-post.
     /// Powers the cockpit's LIVE recording indicator — "X seconds
     /// ago" derived client-side.
@@ -6858,7 +6865,58 @@ async fn airport_get(
 
 // ---- Flight workflow ----
 
+/// v0.15.19: Gleitwinkel der Approach-Runway aus einer NavRunway-Liste, mit
+/// derselben Plausibilitäts-Clamp (2–7,5°) wie der Scorer. Matcht den
+/// Runway-Designator exakt, sonst über die numerische Bahn-Nummer (Parallel-
+/// bahnen wie 27L/27R teilen den publizierten Gleitweg). Pure → unit-testbar.
+fn runway_glideslope_for(
+    runways: &[aeroacars_mqtt::navdata::NavRunway],
+    approach_runway: &str,
+) -> Option<f64> {
+    let want = approach_runway.trim().trim_start_matches("RW").to_uppercase();
+    if want.is_empty() {
+        return None;
+    }
+    let want_num: String = want.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let nr = runways
+        .iter()
+        .find(|nr| nr.designator.trim().to_uppercase() == want)
+        .or_else(|| {
+            if want_num.is_empty() {
+                return None;
+            }
+            runways.iter().find(|nr| {
+                let dn: String = nr
+                    .designator
+                    .trim()
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect();
+                dn == want_num
+            })
+        })?;
+    Some(nr.glideslope_angle).filter(|g| (2.0..=7.5).contains(g))
+}
+
+/// v0.15.19: Live-Lookup des Approach-Gleitwinkels aus dem per-Flug-Navdata-
+/// Cache (beim Flugstart befüllt, daher im Anflug ohne Netz verfügbar). Sperrt
+/// NUR `navdata` — der Aufrufer hält dabei KEINE andere Sperre (siehe
+/// `flight_info`), um Lock-Order-Probleme zu vermeiden.
+fn resolve_approach_glideslope_deg(flight: &ActiveFlight, approach_runway: Option<&str>) -> Option<f64> {
+    let rw = approach_runway?;
+    let cache = flight.navdata.lock().ok()?;
+    let apt = cache.get(&flight.arr_airport)?;
+    runway_glideslope_for(&apt.runways, rw)
+}
+
 fn flight_info(flight: &ActiveFlight, resume_position_suspect: bool) -> ActiveFlightInfo {
+    // v0.15.19: Approach-Gleitwinkel zuerst auflösen — kurzer stats-Lock nur für
+    // den Runway-String, dann navdata-Lock. So werden stats + navdata NIE
+    // gleichzeitig gehalten (keine Lock-Order-Inversion ggü. step_flight).
+    let approach_glideslope_angle = {
+        let rw = flight.stats.lock().ok().and_then(|s| s.approach_runway.clone());
+        resolve_approach_glideslope_deg(flight, rw.as_deref())
+    };
     let stats = flight.stats.lock().expect("flight stats");
     // Don't consume here — the flag stays true until the resume banner has
     // run its course (flight_resume_confirm or flight_cancel clears it).
@@ -6912,6 +6970,7 @@ fn flight_info(flight: &ActiveFlight, resume_position_suspect: bool) -> ActiveFl
         dep_gate: stats.dep_gate.clone(),
         arr_gate: stats.arr_gate.clone(),
         approach_runway: stats.approach_runway.clone(),
+        approach_glideslope_angle,
         last_position_at: stats.last_position_at.map(|t| t.to_rfc3339()),
         last_heartbeat_at: stats.last_heartbeat_at.map(|t| t.to_rfc3339()),
         queued_position_count: stats.queued_position_count,
@@ -26446,6 +26505,38 @@ mod sim_pause_tests {
         // AUDIT-Invariante: bei exakt 3,0° identisch zum None-Fallback.
         let out_3_explicit = compute_approach_stability_v2(&buf, None, None, Some(3.0));
         assert_eq!(out_3.stable_at_da, out_3_explicit.stable_at_da);
+    }
+
+    #[test]
+    fn runway_glideslope_lookup_v01519() {
+        // v0.15.19: Live-Lookup des Approach-Gleitwinkels für das Stable-
+        // Approach-Banner — Designator-Match (exakt + numerischer Fallback für
+        // Parallelbahnen) + Plausibilitäts-Clamp (2–7,5°).
+        let runways: Vec<aeroacars_mqtt::navdata::NavRunway> = serde_json::from_str(
+            r#"[
+              {"designator":"09","magnetic_course":90.0,"true_course":90.0,"length_ft":4900,
+               "threshold":{"lat":51.50,"lon":0.05},"end":{"lat":51.50,"lon":0.10},"glideslope_angle":3.0},
+              {"designator":"27","magnetic_course":270.0,"true_course":270.0,"length_ft":4900,
+               "threshold":{"lat":51.50,"lon":0.10},"end":{"lat":51.50,"lon":0.05},"glideslope_angle":5.5},
+              {"designator":"13L","magnetic_course":130.0,"true_course":130.0,"length_ft":9000,
+               "threshold":{"lat":40.0,"lon":-74.0},"end":{"lat":40.1,"lon":-74.1},"glideslope_angle":1.0}
+            ]"#,
+        )
+        .expect("parse runways");
+
+        // Exakter Designator-Match → echter Steilanflug-Winkel (EGLC-artig)
+        assert_eq!(runway_glideslope_for(&runways, "27"), Some(5.5));
+        // 3°-Bahn → Some(3.0) (im Band; Banner skaliert dann ×1,0 = unverändert)
+        assert_eq!(runway_glideslope_for(&runways, "09"), Some(3.0));
+        // L/R-Suffix → numerischer Fallback (Parallelbahnen teilen den Gleitweg)
+        assert_eq!(runway_glideslope_for(&runways, "27R"), Some(5.5));
+        // "RW"-Präfix wird gestrippt (manche Sims liefern "RW27")
+        assert_eq!(runway_glideslope_for(&runways, "RW27"), Some(5.5));
+        // Unplausibel (<2°) → None → Banner bleibt beim 3°-Default
+        assert_eq!(runway_glideslope_for(&runways, "13L"), None);
+        // Unbekannte Bahn / leer → None
+        assert_eq!(runway_glideslope_for(&runways, "18"), None);
+        assert_eq!(runway_glideslope_for(&runways, ""), None);
     }
 
     // ---- v0.12.1 Stream B — pilot-status gate (LE6) ----

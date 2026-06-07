@@ -49,17 +49,22 @@ interface Props {
  *  angeglichen. Vorher 0.95/0.2, das war zu lax — siehe Item 4 im
  *  Landing-Analyse-Bundle.
  *
- *  v0.15.18 — Gleitwinkel-Caveat (bewusst NICHT skaliert): die V/S-Schwellen
- *  hier sind fix. Das POST-FLIGHT-Scoring (excessive_sink, Stability-Card,
- *  V/S-Chart-Linie) skaliert die Sink-Grenze seit v0.15.17/.18 mit dem echten
- *  publizierten Gleitweg (≈ −1334 fpm @4°, ≈ −1834 fpm @5,5°). Dieser LIVE-
- *  Banner kennt den Gleitweg in Echtzeit nicht (SimSnapshot hat keinen GP-
- *  Winkel) und bleibt daher ein bewusst konservativer Sicherheits-Nudge — auf
- *  einem Steilanflug kann er kurz aufblinken, ohne dass der Flug am Ende
- *  „instabil" gescort wird. Die Bewertungs-Wahrheit ist das Post-Flight-Gate.
- *  TODO(optional): GP-Winkel aus den Navdaten live durchreichen → mitskalieren.
+ *  v0.15.19 — Gleitwinkel-aware (vorher fix): die V/S-Sink-Schwellen skalieren
+ *  jetzt mit dem echten publizierten Gleitweg (`gs_factor = tan(g)/tan(3°)`),
+ *  identisch zum Post-Flight-Scorer (`compute_approach_stability_v2`). Der
+ *  Winkel kommt live aus den Navdaten via
+ *  `ActiveFlightInfo.approach_glideslope_angle` (beim Flugstart gecacht). So
+ *  blinkt der Banner auf einem korrekt geflogenen Steilanflug (EGLC 5,5°,
+ *  ENTC 4°) nicht mehr fälschlich „instabil". Bei 3°/unbekanntem Winkel ist
+ *  `gsFactor=1` → bit-identisch zu vorher. Bank/Config UND die −600-Hard-
+ *  Landing-Schwelle (strukturell, am Boden) bleiben bewusst fix — die sind
+ *  gleitwinkel-unabhängig.
  */
-function evaluateApproach(snap: SimSnapshot, phase: string): Advisory | null {
+export function evaluateApproach(
+  snap: SimSnapshot,
+  phase: string,
+  gsFactor = 1,
+): Advisory | null {
   const isApproachPhase =
     phase === "approach" ||
     phase === "final" ||
@@ -73,8 +78,16 @@ function evaluateApproach(snap: SimSnapshot, phase: string): Advisory | null {
   const gear = snap.gear_position ?? 0;
   const flaps = snap.flaps_position ?? 0;
 
+  // v0.15.19: Sink-Schwellen mit dem echten Gleitwinkel skalieren (gsFactor).
+  // gsFactor=1 (3°/unbekannt) → bit-identisch zu den alten Festwerten.
+  const sink100 = -700 * gsFactor;
+  const sink200 = -800 * gsFactor;
+  const sink500 = -1000 * gsFactor;
+  const sink1000Lo = -1100 * gsFactor;
+  const sink1000Hi = -300 * gsFactor;
+
   // Sub-100 ft mit excessive sink → höchste Priorität
-  if (agl < 100 && agl > 5 && vs < -700) {
+  if (agl < 100 && agl > 5 && vs < sink100) {
     return {
       key: "sink_rate_pull_up",
       severity: "crit",
@@ -84,10 +97,10 @@ function evaluateApproach(snap: SimSnapshot, phase: string): Advisory | null {
 
   // 200 ft AAL — Go-Around-Schwelle
   if (agl < 250 && agl > 100) {
-    if (bank > 5 || vs < -800) {
+    if (bank > 5 || vs < sink200) {
       const reasons: string[] = [];
       if (bank > 5) reasons.push(`Bank ${bank.toFixed(0)}°`);
-      if (vs < -800) reasons.push(`V/S ${Math.round(vs)} fpm`);
+      if (vs < sink200) reasons.push(`V/S ${Math.round(vs)} fpm`);
       return {
         key: "da200_go_around",
         severity: "crit",
@@ -98,10 +111,10 @@ function evaluateApproach(snap: SimSnapshot, phase: string): Advisory | null {
 
   // 500 ft AAL — Stable Approach Failed
   if (agl < 600 && agl >= 250) {
-    if (bank > 5 || vs < -1000) {
+    if (bank > 5 || vs < sink500) {
       const reasons: string[] = [];
       if (bank > 5) reasons.push(`Bank ${bank.toFixed(0)}°`);
-      if (vs < -1000) reasons.push(`V/S ${Math.round(vs)} fpm`);
+      if (vs < sink500) reasons.push(`V/S ${Math.round(vs)} fpm`);
       return {
         key: "gate500_unstable",
         severity: "alert",
@@ -112,7 +125,7 @@ function evaluateApproach(snap: SimSnapshot, phase: string): Advisory | null {
 
   // 1000 ft AAL Stable-Approach-Gate
   if (agl < 1100 && agl >= 600) {
-    const vsBad = vs < -1100 || vs > -300;
+    const vsBad = vs < sink1000Lo || vs > sink1000Hi;
     const bankBad = bank > 5;
     // v0.8.5: Thresholds an Backend (lib.rs compute_approach_stability_v2)
     // angeglichen — vorher 0.95/0.2, Backend nutzt 0.99/0.70 (FAA-strikter).
@@ -140,6 +153,15 @@ function evaluateApproach(snap: SimSnapshot, phase: string): Advisory | null {
   return null;
 }
 
+/** v0.15.19: gs_factor = tan(g)/tan(3°), plausibilitäts-geclampt auf 2–7,5°
+ *  (identisch zum Backend `compute_approach_stability_v2`). Unbekannt/außerhalb
+ *  → 1 (keine Skalierung = unverändertes 3°-Verhalten). */
+export function glideslopeScaleFactor(angleDeg: number | null | undefined): number {
+  return angleDeg != null && angleDeg >= 2 && angleDeg <= 7.5
+    ? Math.tan((angleDeg * Math.PI) / 180) / Math.tan((3 * Math.PI) / 180)
+    : 1;
+}
+
 export function StableApproachBanner({ activeFlight, simSnapshot, enabled }: Props) {
   const { t } = useTranslation();
   const [hardLandingHint, setHardLandingHint] = useState<{ vs: number; until: number } | null>(null);
@@ -160,10 +182,17 @@ export function StableApproachBanner({ activeFlight, simSnapshot, enabled }: Pro
     return () => window.clearTimeout(id);
   }, [hardLandingHint]);
 
+  // v0.15.19: Gleitwinkel-Skalierungsfaktor (identisch zum Backend-Scorer),
+  // aus dem live aufgelösten Approach-Gleitweg. Unbekannt/außerhalb 2–7,5° → 1.
+  const gsFactor = useMemo(
+    () => glideslopeScaleFactor(activeFlight.approach_glideslope_angle),
+    [activeFlight.approach_glideslope_angle],
+  );
+
   const advisory = useMemo<Advisory | null>(() => {
     if (!enabled || !simSnapshot) return null;
-    return evaluateApproach(simSnapshot, activeFlight.phase);
-  }, [enabled, simSnapshot, activeFlight.phase]);
+    return evaluateApproach(simSnapshot, activeFlight.phase, gsFactor);
+  }, [enabled, simSnapshot, activeFlight.phase, gsFactor]);
 
   if (!enabled) return null;
 
