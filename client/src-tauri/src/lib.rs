@@ -14840,13 +14840,16 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // genaue Plugin-Wert bei fehl-phasierter FSM (Go-Around →
                 // „Climb", OWx9) verloren. Phantom-Schutz via is_flight_phase
                 // (Boden-/Taxi-Phasen bleiben ausgeschlossen).
-                let in_flight_phase = is_flight_phase(stats.phase);
-                if !in_flight_phase || stats.sampler_touchdown_at.is_some() {
+                // v0.15.23: also capturable in Takeoff once airborne (short/low
+                // bush hops that land before the 500 ft Takeoff→Climb gate).
+                let capturable_phase =
+                    is_touchdown_capturable_phase(stats.phase, stats.was_airborne);
+                if !capturable_phase || stats.sampler_touchdown_at.is_some() {
                     // Out-of-phase (Boden/Taxi) oder TD schon abgeschlossen → drop.
                     tracing::debug!(
                         pirep_id = %flight.pirep_id,
                         captured_vs_fpm = td.captured_vs_fpm,
-                        in_flight_phase = in_flight_phase,
+                        capturable_phase = capturable_phase,
                         td_already_captured = stats.sampler_touchdown_at.is_some(),
                         "premium TD event dropped (out of phase or TD already finalised)"
                     );
@@ -14926,14 +14929,19 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // Landing-relevanten Phase ist. Approach-Ausloeser AGL>1500ft
             // ist OK (lange Endanflug-Bahnen), aber Taxi/Boarding/Cruise
             // sind explizit ausgeschlossen.
-            // v0.15.20: Touchdown-Edge in JEDER Flug-Phase akzeptieren (s.
-            // is_flight_phase) statt nur Approach/Final/Landing — sonst geht ein
-            // realer Touchdown bei fehl-phasierter FSM (Go-Around → „Climb",
-            // OWx9 GSG544) verloren. Der Phantom-Schutz (Gear-Bump beim Taxi auf
-            // Bush-Strips, v0.5.45) bleibt: in einer Flug-Phase ist die
-            // Gear-Force durchgehend entlastet → es kann gar kein Edge entstehen;
-            // die Wackler passieren nur am Boden, dessen Phasen ausgeschlossen sind.
-            let in_flight_phase = is_flight_phase(stats.phase);
+            // v0.15.20: accept the touchdown edge in any FLIGHT phase (not just
+            // Approach/Final/Landing) so a real touchdown isn't lost when the FSM
+            // is mis-phased (go-around → "Climb", OWx9 GSG544).
+            // v0.15.23: ALSO accept it in Takeoff once airborne — short/low VFR
+            // bush hops land before the 500 ft Takeoff→Climb gate, so they're
+            // still in Takeoff at touchdown (GSG309 OR72→OR35, peaked 357 ft).
+            // Phantom-safe: ground/taxi phases stay excluded (taxi gear-bumps
+            // v0.5.45); the FIRST air→ground edge in Takeoff is the real landing
+            // and the once-guard blocks rollout bumps after it; a mid-air
+            // on_ground glitch is rejected by validate_candidate (low-AGL +
+            // sustained-ground fail at altitude / on a single tick).
+            let capturable_phase =
+                is_touchdown_capturable_phase(stats.phase, stats.was_airborne);
             // v0.7.0 — P0 Fix: Edge-Detection setzt jetzt nur `pending_td_at`.
             // Die echte Validation (touchdown_v2::validate_candidate) folgt 1.1 sec
             // spaeter wenn genug post-edge samples im Buffer sind. False-edges
@@ -14944,7 +14952,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // Float-Streifschuss mit vs=+104 fpm wurde gescort, der echte TD
             // 4 sec spaeter wurde ignoriert (single-shot is_none() Guard).
             if edge_detected && stats.sampler_touchdown_at.is_none()
-                && stats.pending_td_at.is_none() && in_flight_phase {
+                && stats.pending_td_at.is_none() && capturable_phase {
                 stats.pending_td_at = Some(now);
                 tracing::info!(
                     pirep_id = %flight.pirep_id,
@@ -16213,7 +16221,17 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 };
                 let payload_opt: Option<aeroacars_mqtt::TouchdownPayload> = {
                     let stats = flight.stats.lock().expect("flight stats");
-                    stats.landing_at.map(|landing_at| {
+                    // v0.15.23: derive the touchdown timestamp from the sampler's
+                    // validated touchdown, falling back to the FSM `landing_at`.
+                    // On the short/low VFR path the sampler finalizes the score
+                    // BEFORE the FSM stamps `landing_at` (which only happens at
+                    // Arrived via the fallback, ~70-215 s later) — gating this live
+                    // MQTT touchdown publish on `landing_at` meant the touchdown
+                    // was scored but NEVER published, so the recorder saw
+                    // no_touchdown → INT hold (GSG308/GSG301). `sampler_touchdown_at`
+                    // is set the instant the touchdown validates, in any phase, so
+                    // the publish now fires on the same tick the score is announced.
+                    stats.sampler_touchdown_at.or(stats.landing_at).map(|td_ts| {
                         let rwy_match = stats.runway_match.as_ref();
                         // B-012: Touchdown-Airport via Cascade aufloesen.
                         let td_resolution = resolve_touchdown_airport(
@@ -16231,7 +16249,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         // im LandingRecord (single source: assess_touchdown).
                         let payload_assessed = assess_touchdown(&stats);
                         aeroacars_mqtt::TouchdownPayload {
-                            ts: landing_at.timestamp_millis(),
+                            ts: td_ts.timestamp_millis(),
                             // v0.11.1: Pilot-Client-Version aus dem Cargo-
                             // Manifest in jeden Touchdown mitsenden, damit
                             // die Webapp-Reports-Liste + LandingAnalysis-
@@ -17295,6 +17313,25 @@ fn is_flight_phase(phase: FlightPhase) -> bool {
             | FlightPhase::Final
             | FlightPhase::Landing
     )
+}
+
+/// Whether the 50 Hz touchdown sampler may accept an air→ground edge in this
+/// phase. Flight phases (Climb…Landing) always qualify. `Takeoff` ALSO
+/// qualifies once the aircraft has genuinely flown (`was_airborne`, armed at
+/// 50 ft AGL): this is the durable fix for short / low VFR bush hops that land
+/// before climbing through the 500 ft Takeoff→Climb gate and so are still in
+/// `Takeoff` phase at touchdown (real case GSG309 OR72→OR35, peaked 357 ft,
+/// phase arc Takeoff→Arrived → the edge was previously blocked → no touchdown).
+///
+/// Phantom safety: ground/taxi phases (Boarding/TaxiOut/TaxiIn/Arrived) stay
+/// excluded, so a taxi gear-bump is never a candidate. Within `Takeoff` the
+/// aircraft cannot be on the ground until it lands, so the FIRST air→ground
+/// edge is the real touchdown; the once-per-landing guard
+/// (`sampler_touchdown_at.is_none()`) then blocks any rollout bump after it.
+/// A spurious mid-air on_ground glitch is still rejected by `validate_candidate`
+/// (low-AGL-persistence + sustained-ground fail at altitude / on a single tick).
+fn is_touchdown_capturable_phase(phase: FlightPhase, was_airborne: bool) -> bool {
+    is_flight_phase(phase) || (matches!(phase, FlightPhase::Takeoff) && was_airborne)
 }
 
 /// Takeoff → Climb AGL gate. A rotorcraft routinely flies an entire leg below
@@ -26712,6 +26749,26 @@ mod sim_pause_tests {
         // Seaplane / amphibian are not rotorcraft → fixed-wing gate unchanged.
         assert_eq!(takeoff_climb_gate_ft(AircraftCategory::Seaplane), 500.0);
         assert_eq!(takeoff_climb_gate_ft(AircraftCategory::Amphibian), 500.0);
+    }
+
+    #[test]
+    fn touchdown_capturable_in_takeoff_only_when_airborne() {
+        // Flight phases are always capturable (airborne flag irrelevant).
+        assert!(is_touchdown_capturable_phase(FlightPhase::Climb, false));
+        assert!(is_touchdown_capturable_phase(FlightPhase::Final, false));
+        assert!(is_touchdown_capturable_phase(FlightPhase::Landing, false));
+        // Takeoff: capturable ONLY once the aircraft has genuinely flown — the
+        // short/low bush hop that lands before reaching Climb (GSG309). Before
+        // airborne (initial takeoff roll) it is NOT capturable.
+        assert!(is_touchdown_capturable_phase(FlightPhase::Takeoff, true));
+        assert!(!is_touchdown_capturable_phase(FlightPhase::Takeoff, false));
+        // Ground / taxi phases are NEVER capturable (taxi gear-bump phantom
+        // protection) — even with was_airborne set (post-landing rollout/taxi).
+        assert!(!is_touchdown_capturable_phase(FlightPhase::TaxiOut, true));
+        assert!(!is_touchdown_capturable_phase(FlightPhase::TaxiIn, true));
+        assert!(!is_touchdown_capturable_phase(FlightPhase::Boarding, true));
+        assert!(!is_touchdown_capturable_phase(FlightPhase::Arrived, true));
+        assert!(!is_touchdown_capturable_phase(FlightPhase::TakeoffRoll, true));
     }
 
     #[test]
