@@ -17230,6 +17230,37 @@ fn phase_stuck_on_ground_while_airborne(
     ground_phase && !on_ground && altitude_agl_ft > 500.0 && !reload_gap_suspect
 }
 
+/// v0.15.20: Entscheidung des phasen-unabhängigen Touchdown-Sicherheitsnetzes.
+///
+/// Die Touchdown-Erfassung (sim-spezifische V/S-Ketten, Landing-Score-Anker)
+/// lebt historisch NUR im `FlightPhase::Final`-Arm von [`step_flight`]. Setzt
+/// das Flugzeug aus einer anderen Luftphase auf, geht der reale Touchdown
+/// verloren und der Flug endet über den Arrived-Fallback ohne Landung/Score —
+/// der Recorder urteilt dann „review" (kein Touchdown).
+///
+/// Realer Fall OWx9 (GSG544 NVSE→NVVV): echter Go-Around aus ~56 ft, Steigflug
+/// auf ~465 ft → FSM korrekt „Climb". Das darauf folgende porpoisende
+/// Wieder-Reinkommen (V/S −1343/+371/−221…) erfüllte das Dwell-Gate von
+/// `check_descent_transition` nie → FSM blieb in „Climb" bis zum Aufsetzen
+/// (−26 fpm). Der Touchdown fiel in „Climb" und wurde nie erfasst.
+///
+/// Konsistent mit den bestehenden Universal-Fallbacks (Arrived-Fallback,
+/// Cruise→Descent-Rescue) wird ein solcher Luft→Boden-Edge durch DENSELBEN,
+/// unveränderten Final-Arm-Capture geleitet. `Final` (erfasst bereits selbst)
+/// und Departure-/Boden-Phasen (Takeoff*/Landing/Taxi/…) sind ausgenommen.
+fn is_airborne_touchdown_edge(prev_phase: FlightPhase, was_on_ground: bool, on_ground: bool) -> bool {
+    !was_on_ground
+        && on_ground
+        && matches!(
+            prev_phase,
+            FlightPhase::Climb
+                | FlightPhase::Cruise
+                | FlightPhase::Descent
+                | FlightPhase::Holding
+                | FlightPhase::Approach
+        )
+}
+
 fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase> {
     let mut stats = flight.stats.lock().expect("flight stats");
     let _now_for_state_update = Utc::now();
@@ -17481,7 +17512,20 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
     }
 
     // Match on a local Copy so the rest of the body is free to mutate `stats`.
-    match prev_phase {
+    //
+    // v0.15.20: Touchdown-Sicherheitsnetz. Die Touchdown-Erfassung (V/S-Capture
+    // + Landing-Anker) lebt NUR im Final-Arm. Setzt das Flugzeug aus einer
+    // anderen Luftphase auf (z. B. FSM nach einem Go-Around in „Climb" hängen
+    // geblieben — OWx9 GSG544), ginge der reale Touchdown verloren. Solchen
+    // Luft→Boden-Edge durch den UNVERÄNDERTEN Final-Arm-Capture leiten.
+    // `prev_phase` bleibt erhalten (Transition-Logging + holding-pending-Reset
+    // sehen weiterhin die echte Vorphase).
+    let dispatch_phase = if is_airborne_touchdown_edge(prev_phase, was_on_ground, snap.on_ground) {
+        FlightPhase::Final
+    } else {
+        prev_phase
+    };
+    match dispatch_phase {
         FlightPhase::Boarding => {
             // Pushback / departure detection: actual movement is the
             // only reliable trigger. Brake-release alone is NOT enough
@@ -26537,6 +26581,28 @@ mod sim_pause_tests {
         // Unbekannte Bahn / leer → None
         assert_eq!(runway_glideslope_for(&runways, "18"), None);
         assert_eq!(runway_glideslope_for(&runways, ""), None);
+    }
+
+    #[test]
+    fn airborne_touchdown_edge_v01520() {
+        use FlightPhase::*;
+        // OWx9 (GSG544): nach Go-Around in „Climb" hängen geblieben, dann
+        // Aufsetzen → muss durch den Final-Arm-Capture geleitet werden.
+        assert!(is_airborne_touchdown_edge(Climb, false, true));
+        // Auch andere Luftphasen, in denen der Touchdown sonst verloren ginge:
+        assert!(is_airborne_touchdown_edge(Cruise, false, true));
+        assert!(is_airborne_touchdown_edge(Descent, false, true));
+        assert!(is_airborne_touchdown_edge(Holding, false, true));
+        assert!(is_airborne_touchdown_edge(Approach, false, true));
+        // Final erfasst den Touchdown bereits selbst → KEIN Redirect.
+        assert!(!is_airborne_touchdown_edge(Final, false, true));
+        // Kein frischer Edge (schon am Boden) → kein Redirect.
+        assert!(!is_airborne_touchdown_edge(Climb, true, true));
+        // Noch in der Luft (kein Bodenkontakt) → kein Touchdown.
+        assert!(!is_airborne_touchdown_edge(Climb, false, false));
+        // Departure-Phasen sind keine Landungen.
+        assert!(!is_airborne_touchdown_edge(Takeoff, false, true));
+        assert!(!is_airborne_touchdown_edge(TakeoffRoll, false, true));
     }
 
     // ---- v0.12.1 Stream B — pilot-status gate (LE6) ----
