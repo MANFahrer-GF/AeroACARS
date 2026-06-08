@@ -32,6 +32,11 @@ mod discord_rpc;
 // Spec: docs/spec/touchdown-forensics-v2.md (v2.3, approved).
 pub mod touchdown_v2;
 
+// Category-aware landing pipeline: classify rotorcraft / seaplane / amphibian
+// so detection, validation and scoring can branch instead of mis-handling the
+// non-fixed-wing categories. ICAO taxonomy + live sim gear-type signals.
+pub mod aircraft_category;
+
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14596,7 +14601,6 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
         // `on_ground`-Edge wie vorher (MSFS hat eh den separaten
         // `PLANE TOUCHDOWN NORMAL VELOCITY`-SimVar als Primary).
         let mut prev_in_air: Option<bool> = None;
-        const GEAR_TOUCHDOWN_THRESHOLD_N: f32 = 1.0;
         // v0.7.18 (B-013): Sim-Position-Reset-Detection.
         //
         // Spec docs/spec/v0.7.18-orphan-flight-cleanup.md §B-013.
@@ -14765,10 +14769,28 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // Capture nur ONCE: sampler_touchdown_at bleibt Some bis
             // Flight-Reset → kein Re-Trigger bei Bouncing nach dem
             // initialen Touchdown.
-            let in_air_now = match snap.gear_normal_force_n {
-                Some(force) => force < GEAR_TOUCHDOWN_THRESHOLD_N,
-                None => !snap.on_ground,
-            };
+            // Category-aware "in air" signal. Resolved once per tick from the
+            // live ICAO + gear-type flags (FixedWing when unknown).
+            let category = aircraft_category::resolve_category(
+                snap.aircraft_icao.as_deref(),
+                snap.gear_is_skid,
+                snap.gear_is_floats,
+                snap.gear_is_wheels,
+                snap.water_rudder_present,
+            );
+            // For a seaplane/amphibian on water the wheeled gear / on_ground
+            // edge never fires; `sampler_in_air_now` falls back to height above
+            // the water surface so the touchdown edge fires when the floats
+            // settle, then flows through the SAME pending → validate → capture
+            // path (the seaplane validation anchors on sustained low-AGL, so a
+            // wave bounce / low pass is dropped). Fixed-wing / helicopter /
+            // on-runway are byte-identical to the wheeled branch.
+            let in_air_now = sampler_in_air_now(
+                category,
+                snap.on_ground,
+                snap.altitude_agl_ft,
+                snap.gear_normal_force_n,
+            );
             let edge_detected = matches!(prev_in_air, Some(true)) && !in_air_now;
 
             // v0.5.0: Premium-Plugin-Override.
@@ -14967,8 +14989,11 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                             Simulator::XPlane12 => SimKind::XPlane12,
                             _ => SimKind::Off,
                         };
+                        // Category-aware validation (loop-level `category`): a
+                        // rotorcraft / seaplane soft set-down has no force/G/vs
+                        // spike, so the fixed-wing anchors would drop it.
                         let validation = touchdown_v2::validate_candidate(
-                            &candidate, &v2_samples, sim, impact_vs,
+                            &candidate, &v2_samples, sim, impact_vs, category,
                         );
                         match validation {
                             touchdown_v2::ValidationResult::Validated { result } => {
@@ -14999,7 +15024,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                 // Cascade-Fallbacks).
                                 let landing_rate = impact_for_validation
                                     .as_ref()
-                                    .and_then(|ir| touchdown_v2::compute_landing_rate(&v2_samples, ir).ok());
+                                    .and_then(|ir| touchdown_v2::compute_landing_rate(&v2_samples, ir, category).ok());
                                 let impact_at_v = impact_for_validation
                                     .as_ref().map(|r| r.impact_at).unwrap_or(pending_at);
                                 let (final_vs, final_src, final_conf) = match &landing_rate {
@@ -15260,9 +15285,12 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // Legacy: bei REJECT (z.B. positive vs_at_edge UND alle smoothed
                 // positiv = sollte nie passieren) bleibt das Feld unveraendert
                 // (= alter SimVar-Wert wenn vorhanden).
+                // Category-aware landing rate (loop-level `category`):
+                // rotorcraft / seaplane touch down near-zero V/S, so the -10 fpm
+                // fixed-wing acceptance floor in the cascade is relaxed.
                 let v2_result = touchdown_v2::compute_impact_frame(&samples_for_v2, edge_at)
                     .and_then(|impact_result| {
-                        touchdown_v2::compute_landing_rate(&samples_for_v2, &impact_result).ok()
+                        touchdown_v2::compute_landing_rate(&samples_for_v2, &impact_result, category).ok()
                     });
 
                 // v0.7.11: Edge-Wert aus dem 50-Hz-Buffer als kanonische
@@ -17260,9 +17288,76 @@ fn is_flight_phase(phase: FlightPhase) -> bool {
     )
 }
 
+/// Takeoff → Climb AGL gate. A rotorcraft routinely flies an entire leg below
+/// the 500 ft fixed-wing gate, which would strand it in `Takeoff` — a phase
+/// excluded from [`is_flight_phase`], so the touchdown sampler never captures
+/// its landing. A low gate moves it into Climb (a capturable flight phase)
+/// once clearly airborne and translating. Fixed-wing keeps 500 ft.
+fn takeoff_climb_gate_ft(category: aircraft_category::AircraftCategory) -> f64 {
+    if category.is_rotorcraft() {
+        60.0
+    } else {
+        500.0
+    }
+}
+
+/// Sampler touchdown-edge gear-force threshold (N). Below this the gear is
+/// considered unloaded (in the air); X-Plane `fnrml_gear` spikes far above it
+/// on a wheel touchdown.
+const SAMPLER_GEAR_TOUCHDOWN_THRESHOLD_N: f32 = 1.0;
+
+/// Seaplane / amphibian water-contact AGL (ft): at or below this height above
+/// the water surface the floats / hull are settling onto the water.
+const SAMPLER_WATER_CONTACT_AGL_FT: f64 = 3.0;
+
+/// Category-aware "in air" signal for the 50 Hz touchdown sampler.
+///
+/// For a seaplane / amphibian on water `on_ground` stays false and there is no
+/// gear-force, so the wheeled touchdown edge never fires. For those categories
+/// — and only while off the runway (`on_ground == false`) — this uses height
+/// above the water surface instead: the aircraft counts as "in air" while above
+/// [`SAMPLER_WATER_CONTACT_AGL_FT`], so the edge fires when the floats settle
+/// onto the water. Everything else (fixed-wing, a helicopter on skids/wheels,
+/// any aircraft whose `on_ground` / gear-force is meaningful) uses the unchanged
+/// wheeled signal.
+///
+/// This only produces the candidate EDGE; the touchdown_v2 validation 1.1 s
+/// later still gates it (the seaplane path anchors on sustained low-AGL, so a
+/// wave bounce / momentary dip is dropped as a FalseEdge). The water branch is
+/// gated on a water-capable category, so it can never fire for a fixed-wing or
+/// helicopter — those stay byte-identical to the previous behaviour.
+fn sampler_in_air_now(
+    category: aircraft_category::AircraftCategory,
+    on_ground: bool,
+    altitude_agl_ft: f64,
+    gear_normal_force_n: Option<f32>,
+) -> bool {
+    if category.water_capable() && !on_ground {
+        altitude_agl_ft > SAMPLER_WATER_CONTACT_AGL_FT
+    } else {
+        match gear_normal_force_n {
+            Some(force) => force < SAMPLER_GEAR_TOUCHDOWN_THRESHOLD_N,
+            None => !on_ground,
+        }
+    }
+}
+
 fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase> {
     let mut stats = flight.stats.lock().expect("flight stats");
     let _now_for_state_update = Utc::now();
+
+    // Category-aware FSM: a rotorcraft flies a profile the fixed-wing phase
+    // logic mis-reads (operates below the 500 ft Climb gate, arrests its
+    // descent into a hover that looks like a go-around, lands rotors-running).
+    // Resolved once per tick from the live ICAO + gear-type flags; FixedWing
+    // when unknown ⇒ all of the branches below are byte-identical to before.
+    let category = aircraft_category::resolve_category(
+        snap.aircraft_icao.as_deref(),
+        snap.gear_is_skid,
+        snap.gear_is_floats,
+        snap.gear_is_wheels,
+        snap.water_rudder_present,
+    );
 
     // v0.7.19 GAF-707 Sim-Event-Pfad (Spec §Klassifikator-Trigger-Punkte):
     // wenn der Adapter `snap.crashed=true` liefert und der aktive Flug
@@ -17910,7 +18005,16 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
             }
         }
         FlightPhase::Takeoff => {
-            if snap.altitude_agl_ft > 500.0 {
+            // Helicopters/VTOL routinely fly an entire leg below the 500 ft
+            // fixed-wing Climb gate (pad-to-pad hops, survey, EMS), which
+            // would strand them in Takeoff — a phase EXCLUDED from
+            // `is_flight_phase`, so the touchdown sampler never captures their
+            // landing. A low gate moves a rotorcraft into Climb (a flight
+            // phase) once it is clearly airborne and translating; the sampler
+            // + the category-aware validator then capture the set-down. Fixed-
+            // wing keeps 500 ft unchanged.
+            let climb_gate_ft = takeoff_climb_gate_ft(category);
+            if snap.altitude_agl_ft > climb_gate_ft {
                 next_phase = FlightPhase::Climb;
                 // v0.5.9: reset climb peak so the new climb segment
                 // starts fresh (handles re-takeoffs after a divert).
@@ -18116,7 +18220,17 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
                 }
             }
 
-            if let Some(ga_phase) = check_go_around(&mut stats, snap, now) {
+            // Helicopters arrest a descent into a hover before set-down
+            // (collective cushion), which the fixed-wing detector reads as a
+            // climb-away go-around and reverts the phase to Climb. Suppress it
+            // for rotorcraft so a normal confined-area / pad approach is not
+            // falsely logged as a missed approach.
+            let ga_phase = if category.is_rotorcraft() {
+                None
+            } else {
+                check_go_around(&mut stats, snap, now)
+            };
+            if let Some(ga_phase) = ga_phase {
                 next_phase = ga_phase;
             } else if snap.altitude_agl_ft < 700.0 {
                 // 1500 ft AGL was too eager — pilots reported a 3 min
@@ -18142,7 +18256,15 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
             // important last 700 ft AGL.
             push_approach_sample(&mut stats, snap);
             update_lowest_approach_agl(&mut stats, snap);
-            if let Some(ga_phase) = check_go_around(&mut stats, snap, now) {
+            // Rotorcraft hover-arrest is not a go-around (see Approach arm) —
+            // suppress so a heli that stabilises into a hover before set-down
+            // stays in Final and its touchdown is captured by Path B.
+            let ga_phase = if category.is_rotorcraft() {
+                None
+            } else {
+                check_go_around(&mut stats, snap, now)
+            };
+            if let Some(ga_phase) = ga_phase {
                 next_phase = ga_phase;
             }
             // Approach runway: snapshot whatever ATC currently has us
@@ -18777,6 +18899,18 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
                 // Landing-Phase-Handler bereits gesetzt.
                 let td_ts = stats.landing_at;
                 let (vs_sd, bank_sd) = compute_approach_stddev(&stats.approach_buffer, td_ts);
+                // Rotorcraft / seaplane fly a vertical / non-glideslope profile
+                // that the fixed-wing approach-stability model mis-reads as
+                // "unstable" (high sink, large bank/IAS variance). The stability
+                // sub-score is DRIVEN by these std-devs and `sub_stability`
+                // returns None on None inputs (= sub-score SKIPPED, not
+                // penalised), so null them for these categories. Fixed-wing
+                // unchanged.
+                let (vs_sd, bank_sd) = if category.is_non_conventional() {
+                    (None, None)
+                } else {
+                    (vs_sd, bank_sd)
+                };
                 stats.approach_vs_stddev_fpm = vs_sd;
                 stats.approach_bank_stddev_deg = bank_sd;
                 let stab_v2 = compute_approach_stability_v2(
@@ -18808,10 +18942,17 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
                 // ─── v0.5.26 Per-Touchdown-Metriken ─────────────────
                 let limits = aircraft_limits_for(&flight.aircraft_icao);
 
-                // Wing-Strike-Severity: |bank_at_td| / max_bank × 100%
-                if let Some(bank) = stats.landing_bank_deg {
-                    let pct = (bank.abs() / limits.max_bank_landing_deg) * 100.0;
-                    stats.landing_wing_strike_severity_pct = Some(pct);
+                // Wing-Strike-Severity: |bank_at_td| / max_bank × 100%.
+                // A rotorcraft has no wing to strike, and the fixed-wing 8°
+                // fallback bank limit would flag a normal heli touchdown bank
+                // (15-20° on a slope/crosswind) as a 190-250% "wing strike" —
+                // skip it for rotorcraft. (Seaplanes keep it: a float-tip /
+                // wing-tip strike on water is still meaningful.)
+                if !category.is_rotorcraft() {
+                    if let Some(bank) = stats.landing_bank_deg {
+                        let pct = (bank.abs() / limits.max_bank_landing_deg) * 100.0;
+                        stats.landing_wing_strike_severity_pct = Some(pct);
+                    }
                 }
 
                 // Float-Distance: Threshold-Crossing → TD.
@@ -19350,11 +19491,23 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
 
         // v0.7.5 Phase-Safety Hotfix (Spec docs/spec/flight-phase-state-
         // machine.md §13.8): siehe arrived_fallback_conditions_basic.
-        let conditions_basic = arrived_fallback_conditions_basic(
-            snap.on_ground,
-            snap.engines_running,
-            snap.groundspeed_kt,
-        );
+        //
+        // Helicopters routinely keep the rotor running after touchdown (hot
+        // ops: EMS offload, sightseeing turnaround, pad/rig work), so the
+        // engines-off requirement would never finalise their arrival. Relax it
+        // for rotorcraft — but ONLY at the planned destination (`near_planned`)
+        // with the same on-ground + stationary + 30 s dwell guards, so a
+        // rotors-running intermediate stop can never be mis-filed as a divert
+        // (the divert path keeps the strict engines-off requirement).
+        let conditions_basic = if category.is_rotorcraft() && near_planned {
+            snap.on_ground && snap.groundspeed_kt < 1.0
+        } else {
+            arrived_fallback_conditions_basic(
+                snap.on_ground,
+                snap.engines_running,
+                snap.groundspeed_kt,
+            )
+        };
         if conditions_basic {
             let pending_at = stats.arrived_fallback_pending_since.get_or_insert(now);
             let elapsed = (now - *pending_at).num_seconds();
@@ -26535,6 +26688,39 @@ mod sim_pause_tests {
         // AUDIT-Invariante: bei exakt 3,0° identisch zum None-Fallback.
         let out_3_explicit = compute_approach_stability_v2(&buf, None, None, Some(3.0));
         assert_eq!(out_3.stable_at_da, out_3_explicit.stable_at_da);
+    }
+
+    #[test]
+    fn takeoff_climb_gate_is_low_for_rotorcraft() {
+        use crate::aircraft_category::AircraftCategory;
+        // Fixed-wing keeps the 500 ft gate; a rotorcraft uses a low gate so a
+        // low-level heli leaves Takeoff into a capturable flight phase.
+        assert_eq!(takeoff_climb_gate_ft(AircraftCategory::FixedWing), 500.0);
+        assert_eq!(takeoff_climb_gate_ft(AircraftCategory::Helicopter), 60.0);
+        // Seaplane / amphibian are not rotorcraft → fixed-wing gate unchanged.
+        assert_eq!(takeoff_climb_gate_ft(AircraftCategory::Seaplane), 500.0);
+        assert_eq!(takeoff_climb_gate_ft(AircraftCategory::Amphibian), 500.0);
+    }
+
+    #[test]
+    fn sampler_in_air_now_uses_water_surface_for_seaplane() {
+        use crate::aircraft_category::AircraftCategory;
+        // Seaplane on water (on_ground=false, no gear force): airborne above the
+        // water-contact AGL, on the surface below it → the edge that captures a
+        // water touchdown the wheeled signal would miss.
+        assert!(sampler_in_air_now(AircraftCategory::Seaplane, false, 20.0, None));
+        assert!(!sampler_in_air_now(AircraftCategory::Seaplane, false, 1.0, None));
+        assert!(sampler_in_air_now(AircraftCategory::Amphibian, false, 10.0, None));
+        // A seaplane ON A RUNWAY (on_ground=true) uses the wheeled signal, not
+        // the water surface → on the ground = not in air.
+        assert!(!sampler_in_air_now(AircraftCategory::Seaplane, true, 1.0, None));
+        // Fixed-wing / helicopter are NOT water-capable → byte-identical to the
+        // wheeled signal: low AGL over water does NOT make them "on the surface".
+        assert!(sampler_in_air_now(AircraftCategory::FixedWing, false, 1.0, None));
+        assert!(sampler_in_air_now(AircraftCategory::Helicopter, false, 1.0, None));
+        // Wheeled gear-force branch unchanged: spike → on ground; unloaded → air.
+        assert!(!sampler_in_air_now(AircraftCategory::FixedWing, false, 50.0, Some(5000.0)));
+        assert!(sampler_in_air_now(AircraftCategory::FixedWing, false, 50.0, Some(0.5)));
     }
 
     #[test]

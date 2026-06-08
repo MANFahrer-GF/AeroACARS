@@ -1479,6 +1479,25 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // merging the latest ClientData block — not here in the
         // standard SimVar parse path.
         pmdg: None,
+        // Category-aware landing: the live MSFS gear-type SimVars
+        // (IS GEAR SKIDS/FLOATS/WHEELS, CONTACT POINT IS ON GROUND,
+        // GEAR WATER DEPTH, WATER RUDDER HANDLE POSITION) are intentionally
+        // NOT wired here. Adding SimVars is a 4-point lockstep change to the
+        // fixed-offset SimConnect data definition (F:: list ↔ from_block ↔
+        // Telemetry struct ↔ here) that cannot be verified without a running
+        // sim, on the core telemetry path every MSFS pilot depends on. For
+        // now the aircraft CATEGORY is derived from the ICAO type (covers all
+        // current GSG rotorcraft + flying-boat seaplanes) and water/vertical
+        // touchdowns are detected via the sim-agnostic AGL + descent-arrest
+        // heuristic. Wiring these SimVars — for MSFS dual-use floatplane
+        // (C208/DHC2 on floats) auto-detection — is a tracked future
+        // robustness enhancement that needs in-sim verification.
+        gear_is_skid: None,
+        gear_is_floats: None,
+        gear_is_wheels: None,
+        contact_point_on_ground: None,
+        gear_water_depth_m: None,
+        water_rudder_present: None,
     }
 }
 

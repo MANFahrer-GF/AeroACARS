@@ -16,6 +16,7 @@ use chrono::{DateTime, Duration, Utc};
 use recorder::TouchdownWindowSample;
 use serde::{Deserialize, Serialize};
 
+use crate::aircraft_category::AircraftCategory;
 use crate::SimKind;
 
 /// **forensics_version=2** Marker fuer Events + PIREP-payload.
@@ -52,6 +53,17 @@ pub const BOUNCE_FORENSIC_MIN_AGL_FT: f32 = 5.0;
 /// v0.7.7+: Schwelle bei 15.0 ft eingependelt nach Echt-Daten-Review,
 /// kein Patch notwendig — Beobachtungs-Sample war ausgeglichen.
 pub const BOUNCE_SCORED_MIN_AGL_FT: f32 = 15.0;
+
+/// Seaplane / amphibian water-touchdown descent gate (fpm). A water touchdown
+/// is the floats / hull SETTLING onto the water — the impact V/S must be a
+/// genuine sink below this. This is what separates a landing from a level low
+/// pass, a step-taxi skim, or a glassy go-around that merely lingers in the
+/// water-contact band: those have V/S ≈ 0 and are rejected even though they
+/// sustain low-AGL. A real glassy-water landing descends ~100-200 fpm (well
+/// past this), so it is unaffected. Deliberately larger in magnitude than the
+/// fixed-wing −10 fpm floor so no phantom-validation window is left open for
+/// non-landing low flight over water (review finding, v0.15.21).
+pub const WATER_TOUCHDOWN_MIN_DESCENT_FPM: f32 = -50.0;
 
 // ─── Layer 1: TD-Candidate Detection ──────────────────────────────────────
 
@@ -187,6 +199,7 @@ pub fn validate_candidate(
     samples: &[TouchdownWindowSample],
     sim: SimKind,
     impact_frame_vs: f32,
+    category: AircraftCategory,
 ) -> ValidationResult {
     let edge_at = candidate.edge_at;
     let threshold_n = gear_force_threshold_n(candidate.edge_total_weight_kg);
@@ -223,6 +236,47 @@ pub fn validate_candidate(
         vs_negative_pass,
         vs_at_impact_used_for_test: impact_frame_vs,
     };
+
+    // ── Category-aware validation (rotorcraft / seaplane) ──────────────────
+    // Real helicopter and seaplane touchdowns are deliberately near-zero V/S
+    // with NO gear-force or G-force spike: the FAA Helicopter Flying Handbook
+    // has the pilot cushion the set-down with collective to "the slowest rate
+    // possible", and a glassy-water seaplane landing is a constant-attitude
+    // soft contact (AOPA: "wait for contact … never flare"). The fixed-wing
+    // anchors below (gear-force MUST-PASS, g>1.05, vs<-10) therefore REJECT a
+    // clean soft set-down as a FalseEdge — which is exactly why these
+    // categories were silently dropped. For them we anchor on PRESENCE
+    // instead: sustained low-AGL (<5 ft for ≥1000 ms) plus, for rotorcraft,
+    // sustained ground contact (≥500 ms). A single glitched on-ground/low-AGL
+    // tick CANNOT satisfy a sustained-1000 ms window, so phantom-touchdown
+    // protection is fully preserved. Gated on category ⇒ fixed-wing
+    // validation is byte-for-byte unchanged.
+    if category.is_non_conventional() {
+        let presence_ok = if category.water_capable() {
+            // Water: `on_ground` stays false while floating, so the sustained
+            // low-AGL window (AGL≈0 = on the water surface) confirms the
+            // aircraft is ON the surface. But sustained low-AGL ALONE is also
+            // satisfied by a level low pass / step-taxi skim / glassy go-around
+            // that lingers near the water WITHOUT landing, so we ALSO require a
+            // genuine descent onto the surface (impact V/S a clear sink). The
+            // two together separate a settling water touchdown from non-landing
+            // low flight — without the descent gate any sustained <5 ft water
+            // flight would phantom-validate as a touchdown (review finding).
+            low_agl_pass && impact_frame_vs < WATER_TOUCHDOWN_MIN_DESCENT_FPM
+        } else {
+            // Rotorcraft: skids/wheels assert `on_ground`, so require BOTH the
+            // sustained ground contact and the sustained low-AGL window.
+            low_agl_pass && sustained_pass
+        };
+        return if presence_ok {
+            ValidationResult::Validated { result: detail }
+        } else {
+            ValidationResult::FalseEdge {
+                reason: FalseEdgeReason::InsufficientVoteScore,
+                result: detail,
+            }
+        };
+    }
 
     if sim.is_xplane() {
         // Sonderfall: Wenn der Sample-Buffer KEIN gear_force enthaelt
@@ -518,6 +572,7 @@ fn finalize_vs(candidate_fpm: f32) -> Result<f32, RejectionReason> {
 pub fn compute_landing_rate(
     samples: &[TouchdownWindowSample],
     impact_result: &ImpactFrameResult,
+    category: AircraftCategory,
 ) -> Result<LandingRateResult, RejectionReason> {
     let impact_at = impact_result.impact_at;
     let vs_at_impact = impact_result.impact_vs_fpm;
@@ -527,15 +582,27 @@ pub fn compute_landing_rate(
     let vs_smoothed_1000 = avg_vs_in_window(samples, impact_at, -1000, 0);
     let pre_flare_peak = min_vs_in_window(samples, impact_at, -3000, -500);
 
-    let chosen = if vs_at_impact < -10.0 {
+    // Helicopters / seaplanes touch down at a deliberately near-zero V/S
+    // (collective cushion / glassy-water contact), so the -10 fpm fixed-wing
+    // acceptance floor would reject a real soft set-down and yield no landing
+    // rate. Use a near-zero floor for these categories; `finalize_vs` still
+    // rejects any non-negative rate, so a level/climbing sample never produces
+    // a landing. Fixed-wing keeps the -10 fpm floor unchanged.
+    let floor = if category.is_non_conventional() {
+        0.0
+    } else {
+        -10.0
+    };
+
+    let chosen = if vs_at_impact < floor {
         (vs_at_impact, "vs_at_impact_frame", Confidence::High)
-    } else if vs_smoothed_500.map(|v| v < -10.0).unwrap_or(false) {
+    } else if vs_smoothed_500.map(|v| v < floor).unwrap_or(false) {
         (
             vs_smoothed_500.unwrap(),
             "vs_smoothed_500ms_at_impact",
             Confidence::Medium,
         )
-    } else if vs_smoothed_1000.map(|v| v < -10.0).unwrap_or(false) {
+    } else if vs_smoothed_1000.map(|v| v < floor).unwrap_or(false) {
         (
             vs_smoothed_1000.unwrap(),
             "vs_smoothed_1000ms_at_impact",
@@ -796,6 +863,217 @@ mod tests {
     #[test]
     fn finalize_vs_accepts_typical_landing() {
         assert_eq!(finalize_vs(-150.0), Ok(-150.0));
+    }
+
+    // ── Category-aware validation + landing-rate (rotorcraft / seaplane) ──
+
+    fn cat_sample(
+        at: DateTime<Utc>,
+        agl_ft: f32,
+        on_ground: bool,
+        vs_fpm: f32,
+        g_force: f32,
+    ) -> TouchdownWindowSample {
+        TouchdownWindowSample {
+            at,
+            vs_fpm,
+            g_force,
+            on_ground,
+            agl_ft,
+            heading_true_deg: 0.0,
+            groundspeed_kt: 0.0,
+            indicated_airspeed_kt: 0.0,
+            lat: 0.0,
+            lon: 0.0,
+            pitch_deg: 0.0,
+            bank_deg: 0.0,
+            gear_normal_force_n: None,
+            total_weight_kg: Some(1100.0),
+        }
+    }
+
+    /// 1200 ms of on-surface samples from `edge` (AGL≈1 ft, near-zero V/S, no
+    /// G-spike) plus a matching candidate. `on_ground` toggles the wheeled
+    /// (helicopter skids) vs water (seaplane) case.
+    fn soft_setdown(
+        edge: DateTime<Utc>,
+        on_ground: bool,
+    ) -> (Vec<TouchdownWindowSample>, TdCandidate) {
+        let mut samples = Vec::new();
+        let mut t = edge;
+        let end = edge + Duration::milliseconds(1200);
+        while t <= end {
+            samples.push(cat_sample(t, 1.0, on_ground, -3.0, 1.0));
+            t = t + Duration::milliseconds(20);
+        }
+        let cand = TdCandidate {
+            edge_sample_index: 0,
+            edge_at: edge,
+            edge_agl_ft: 1.0,
+            edge_vs_fpm: -3.0,
+            edge_gear_force_n: None,
+            edge_g_force: 1.0,
+            edge_total_weight_kg: Some(1100.0),
+        };
+        (samples, cand)
+    }
+
+    #[test]
+    fn heli_soft_setdown_rejected_as_fixed_wing_but_validated_as_heli() {
+        let edge = Utc::now();
+        let (samples, cand) = soft_setdown(edge, true);
+        // Fixed-wing: no G-spike, V/S > -10 → only 2/4 votes → FalseEdge.
+        assert!(matches!(
+            validate_candidate(
+                &cand,
+                &samples,
+                SimKind::Msfs2024,
+                -3.0,
+                AircraftCategory::FixedWing
+            ),
+            ValidationResult::FalseEdge { .. }
+        ));
+        // Helicopter: sustained low-AGL + sustained ground = presence ⇒ Validated.
+        assert!(matches!(
+            validate_candidate(
+                &cand,
+                &samples,
+                SimKind::Msfs2024,
+                -3.0,
+                AircraftCategory::Helicopter
+            ),
+            ValidationResult::Validated { .. }
+        ));
+    }
+
+    #[test]
+    fn seaplane_water_contact_validates_without_on_ground() {
+        let edge = Utc::now();
+        // on_ground stays FALSE — the water case.
+        let (samples, cand) = soft_setdown(edge, false);
+        assert!(matches!(
+            validate_candidate(
+                &cand,
+                &samples,
+                SimKind::Msfs2024,
+                -120.0,
+                AircraftCategory::FixedWing
+            ),
+            ValidationResult::FalseEdge { .. }
+        ));
+        // Seaplane: sustained low-AGL (= on the water) carries it without on_ground.
+        assert!(matches!(
+            validate_candidate(
+                &cand,
+                &samples,
+                SimKind::Msfs2024,
+                -120.0,
+                AircraftCategory::Seaplane
+            ),
+            ValidationResult::Validated { .. }
+        ));
+    }
+
+    #[test]
+    fn seaplane_level_low_pass_not_validated_phantom_guard() {
+        // Phantom guard (review finding): a seaplane LINGERING in the water-
+        // contact band (sustained low-AGL) WITHOUT a genuine descent — a level
+        // low pass / step-taxi skim / glassy go-around — must NOT validate as a
+        // water touchdown. With impact V/S ≈ 0 the descent gate rejects it even
+        // though the low-AGL window is satisfied.
+        let edge = Utc::now();
+        let (samples, cand) = soft_setdown(edge, false); // on_ground=false (water)
+        assert!(matches!(
+            validate_candidate(
+                &cand,
+                &samples,
+                SimKind::Msfs2024,
+                -5.0, // near-zero sink = not a landing
+                AircraftCategory::Seaplane
+            ),
+            ValidationResult::FalseEdge { .. }
+        ));
+        // A genuine descending water touchdown (clear sink past the gate) DOES
+        // validate — the gate distinguishes landing from non-landing low flight.
+        assert!(matches!(
+            validate_candidate(
+                &cand,
+                &samples,
+                SimKind::Msfs2024,
+                -120.0,
+                AircraftCategory::Seaplane
+            ),
+            ValidationResult::Validated { .. }
+        ));
+    }
+
+    #[test]
+    fn single_low_agl_glitch_tick_not_validated_for_heli() {
+        // Phantom protection: one low-AGL tick at the edge, then back to cruise.
+        let edge = Utc::now();
+        let mut samples = vec![cat_sample(edge, 1.0, true, -3.0, 1.0)];
+        let mut t = edge + Duration::milliseconds(20);
+        let end = edge + Duration::milliseconds(1200);
+        while t <= end {
+            samples.push(cat_sample(t, 9000.0, false, 0.0, 1.0));
+            t = t + Duration::milliseconds(20);
+        }
+        let cand = TdCandidate {
+            edge_sample_index: 0,
+            edge_at: edge,
+            edge_agl_ft: 1.0,
+            edge_vs_fpm: -3.0,
+            edge_gear_force_n: None,
+            edge_g_force: 1.0,
+            edge_total_weight_kg: Some(1100.0),
+        };
+        // Not sustained ⇒ low-AGL fails ⇒ FalseEdge even for a helicopter.
+        assert!(matches!(
+            validate_candidate(
+                &cand,
+                &samples,
+                SimKind::Msfs2024,
+                -3.0,
+                AircraftCategory::Helicopter
+            ),
+            ValidationResult::FalseEdge { .. }
+        ));
+    }
+
+    #[test]
+    fn landing_rate_near_zero_rejected_fixed_wing_accepted_heli() {
+        let base = Utc::now();
+        let mut samples = Vec::new();
+        // Pre-flare window [base-3000, base-500): hovering, V/S = 0.
+        let mut t = base - Duration::milliseconds(3000);
+        while t < base - Duration::milliseconds(500) {
+            samples.push(cat_sample(t, 2.0, false, 0.0, 1.0));
+            t = t + Duration::milliseconds(50);
+        }
+        // Around impact: a gentle -5 fpm settle.
+        let mut t = base - Duration::milliseconds(400);
+        let end = base + Duration::milliseconds(100);
+        while t <= end {
+            samples.push(cat_sample(t, 0.5, true, -5.0, 1.0));
+            t = t + Duration::milliseconds(20);
+        }
+        let impact = ImpactFrameResult {
+            contact_at: base,
+            impact_at: base,
+            impact_vs_fpm: -5.0,
+            initial_load_peak_n: None,
+            initial_load_peak_g: 1.0,
+        };
+        // Fixed-wing: -5 fpm is above the -10 floor at every tier and the
+        // pre-flare window has no sink → rejected.
+        assert!(matches!(
+            compute_landing_rate(&samples, &impact, AircraftCategory::FixedWing),
+            Err(RejectionReason::AllSourcesPositive)
+        ));
+        // Helicopter: near-zero floor accepts the real -5 fpm impact.
+        let heli = compute_landing_rate(&samples, &impact, AircraftCategory::Helicopter)
+            .expect("helicopter near-zero landing accepted");
+        assert!((heli.vs_fpm - (-5.0)).abs() < 0.01);
     }
 
     fn touch(vs: f32) -> LowLevelTouch {

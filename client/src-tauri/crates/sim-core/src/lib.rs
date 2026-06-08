@@ -274,6 +274,44 @@ pub struct SimSnapshot {
     /// selected values, FMC-computed V-speeds, exact flap angle.
     /// See `pmdg-sdk-integration.md` for the full mapping.
     pub pmdg: Option<PmdgState>,
+
+    // ---- Gear type / surface contact (category-aware landing) ----
+    // Live signals that distinguish rotorcraft / seaplane / amphibian from
+    // wheeled fixed-wing so the touchdown pipeline can branch. All `None`
+    // when the sim doesn't expose them (older JSONL replays, X-Plane with
+    // the Web API off). Purely additive — fixed-wing behaviour is unchanged.
+    /// MSFS `IS GEAR SKIDS` (true ⇒ rotorcraft hint). X-Plane sets this from
+    /// `sim/aircraft/gear/acf_gear_is_skid`.
+    #[serde(default)]
+    pub gear_is_skid: Option<bool>,
+    /// MSFS `IS GEAR FLOATS` (true ⇒ seaplane/float hint). None on X-Plane
+    /// (no float boolean — we infer water-capability from the water rudder).
+    #[serde(default)]
+    pub gear_is_floats: Option<bool>,
+    /// MSFS `IS GEAR WHEELS`. Lets us tell an amphibian (floats+wheels) from
+    /// a pure seaplane. None on X-Plane (no equivalent dataref).
+    #[serde(default)]
+    pub gear_is_wheels: Option<bool>,
+    /// MSFS `CONTACT POINT IS ON GROUND` aggregated over the contact points —
+    /// true if any wheel/skid/float is on the surface. Unlike the wheeled
+    /// `on_ground` flag this asserts on WATER too, so it is the
+    /// surface-agnostic touchdown signal for seaplanes/floats. None on
+    /// X-Plane (no per-contact-point ground dataref confirmed in the SDK).
+    #[serde(default)]
+    pub contact_point_on_ground: Option<bool>,
+    /// MSFS `GEAR WATER DEPTH` converted to metres — depth of the gear/floats
+    /// in the water. >0 when immersed → a positive water-contact signal for a
+    /// seaplane touchdown. Reads 0 when floats skip across water at speed, so
+    /// it supplements (does not replace) the descent-arrest heuristic. None on
+    /// X-Plane.
+    #[serde(default)]
+    pub gear_water_depth_m: Option<f32>,
+    /// Water rudder present — MSFS `WATER RUDDER HANDLE POSITION` != -1, or
+    /// X-Plane `acf_water_rud_area` > 0. A static seaplane/amphibian
+    /// discriminator (NOT a touchdown detector — it reflects a handle
+    /// position, not water contact).
+    #[serde(default)]
+    pub water_rudder_present: Option<bool>,
 }
 
 /// PMDG aircraft "premium telemetry" — generic across 737 NG3 and
@@ -541,6 +579,12 @@ impl Default for SimSnapshot {
             selected_runway: None,
             aircraft_profile: AircraftProfile::default(),
             pmdg: None,
+            gear_is_skid: None,
+            gear_is_floats: None,
+            gear_is_wheels: None,
+            contact_point_on_ground: None,
+            gear_water_depth_m: None,
+            water_rudder_present: None,
         }
     }
 }

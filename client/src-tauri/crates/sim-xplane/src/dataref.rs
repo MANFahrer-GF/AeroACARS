@@ -903,6 +903,20 @@ impl XPlaneState {
             aircraft_profile: sim_core::AircraftProfile::default(),
             // PMDG SDK is MSFS-only; X-Plane never fills this.
             pmdg: None,
+            // Category-aware landing: the static X-Plane gear-type descriptors
+            // (acf_gear_is_skid, acf_water_rud_*) are not wired through this
+            // path yet — they'd flow via the plugin/Web-API dataref set and
+            // can't be verified without a running sim. The aircraft CATEGORY
+            // is derived from the ICAO type when available (X-Plane 12 Web
+            // API); on XP11 / Web-API-off it falls back to FixedWing, i.e.
+            // unchanged behaviour (no regression). Wiring these datarefs is a
+            // tracked future enhancement (needs in-sim verification).
+            gear_is_skid: None,
+            gear_is_floats: None,
+            gear_is_wheels: None,
+            contact_point_on_ground: None,
+            gear_water_depth_m: None,
+            water_rudder_present: None,
         }
     }
 }

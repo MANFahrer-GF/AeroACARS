@@ -20,6 +20,9 @@ use serde_json::Value;
 use aeroacars_app_lib::touchdown_v2::*;
 // Fuer SimKind brauchen wir den public re-export
 use aeroacars_app_lib::PublicSimKind as SimKind;
+// All replay fixtures are fixed-wing flights → pass FixedWing so the
+// category-aware paths are byte-identical to the pre-category behaviour.
+use aeroacars_app_lib::aircraft_category::AircraftCategory;
 
 fn fixture_path(name: &str) -> std::path::PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -109,7 +112,13 @@ fn run_pipeline(fixture: &FixtureFlight) -> Vec<EpisodeOutcome> {
             let impact_vs = impact_result.as_ref().map(|r| r.impact_vs_fpm).unwrap_or(0.0);
 
             // Validation (Layer 2)
-            let validation = validate_candidate(&cand, &fixture.samples, fixture.sim, impact_vs);
+            let validation = validate_candidate(
+                &cand,
+                &fixture.samples,
+                fixture.sim,
+                impact_vs,
+                AircraftCategory::FixedWing,
+            );
             eprintln!(
                 "DBG candidate idx={} at={} agl={} vs={} impact_vs={} -> {}",
                 idx, cand.edge_at.format("%H:%M:%S%.3f"),
@@ -131,7 +140,10 @@ fn run_pipeline(fixture: &FixtureFlight) -> Vec<EpisodeOutcome> {
                     validations_passed += 1;
                     // VS-Cascade (Layer 3)
                     let lr = impact_result.as_ref()
-                        .and_then(|ir| compute_landing_rate(&fixture.samples, ir).ok());
+                        .and_then(|ir| {
+                            compute_landing_rate(&fixture.samples, ir, AircraftCategory::FixedWing)
+                                .ok()
+                        });
 
                     if let (Some(ir), Some(lr)) = (impact_result, lr) {
                         match current_episode {
@@ -479,7 +491,13 @@ fn simulate_live_sampler(samples: &[recorder::TouchdownWindowSample], sim: SimKi
                     };
                     let impact = compute_impact_frame(samples, cand.edge_at);
                     let impact_vs = impact.as_ref().map(|r| r.impact_vs_fpm).unwrap_or(0.0);
-                    let validation = validate_candidate(&cand, samples, sim, impact_vs);
+                    let validation = validate_candidate(
+                        &cand,
+                        samples,
+                        sim,
+                        impact_vs,
+                        AircraftCategory::FixedWing,
+                    );
                     match validation {
                         ValidationResult::Validated { .. } => {
                             state.sampler_touchdown_at = Some(pending_at);
@@ -538,7 +556,8 @@ fn live_sampler_dah3181_promotes_real_td_skips_float() {
     // Plus: berechne den finalen VS am echten contact_frame —
     // exakt das was im Production-Dump-Pfad passieren wuerde
     let impact = compute_impact_frame(&f.samples, td_at).expect("impact_frame");
-    let landing_rate = compute_landing_rate(&f.samples, &impact).expect("landing_rate");
+    let landing_rate =
+        compute_landing_rate(&f.samples, &impact, AircraftCategory::FixedWing).expect("landing_rate");
     eprintln!(
         "DAH 3181 LIVE final: vs={} src={} conf={:?}",
         landing_rate.vs_fpm, landing_rate.source, landing_rate.confidence
