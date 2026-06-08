@@ -14702,7 +14702,12 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             let mut stats = flight.stats.lock().expect("flight stats");
             stats.snapshot_buffer.push_back(TelemetrySample {
                 at: now,
-                vs_fpm: snap.vertical_speed_fpm,
+                // The snapshot_buffer is the touchdown-window source (feeds the
+                // touchdown_v2 cascade, vs_at_edge and landing_peak). It MUST use
+                // the raw, lag-free V/S (X-Plane local_vy) — using the damped
+                // display VVI here would re-introduce the v0.4.3 VSI-lag bug
+                // where a real sink averages to ~0 by the touchdown moment.
+                vs_fpm: snap.touchdown_vs_source_fpm(),
                 g_force: snap.g_force,
                 on_ground: snap.on_ground,
                 agl_ft: snap.altitude_agl_ft as f32,
@@ -14741,7 +14746,9 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 && snap.altitude_agl_ft <= 250.0
             {
                 let pitch_rad = (snap.pitch_deg as f32) * std::f32::consts::PI / 180.0;
-                let vs_corrected = snap.vertical_speed_fpm * pitch_rad.cos();
+                // Touchdown VS fallback → raw, lag-free signal (X-Plane local_vy),
+                // NOT the display VVI, so the landing rate stays responsive.
+                let vs_corrected = snap.touchdown_vs_source_fpm() * pitch_rad.cos();
                 let curr_min = stats.low_agl_vs_min_fpm.unwrap_or(f32::INFINITY);
                 if vs_corrected < curr_min {
                     stats.low_agl_vs_min_fpm = Some(vs_corrected);
@@ -14943,7 +14950,9 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     pirep_id = %flight.pirep_id,
                     edge_at = %now,
                     edge_agl_ft = snap.altitude_agl_ft,
-                    edge_vs_fpm = snap.vertical_speed_fpm,
+                    // Log the RAW touchdown source (what actually gets scored),
+                    // not the display VVI, so forensic logs match the score.
+                    edge_vs_fpm = snap.touchdown_vs_source_fpm(),
                     edge_gear_force_n = ?snap.gear_normal_force_n,
                     "v0.7.0 TD-edge candidate detected — pending validation in 1.1s"
                 );
@@ -19145,9 +19154,12 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
                 let in_bounce_window = elapsed_secs <= BOUNCE_WINDOW_SECS;
 
                 if in_vs_window {
+                    // Post-touchdown peak-|V/S| refinement is a scored value, so
+                    // it uses the raw, lag-free touchdown source (not the VVI).
+                    let raw_vs = snap.touchdown_vs_source_fpm();
                     let peak_vs = stats.landing_peak_vs_fpm.unwrap_or(0.0);
-                    if snap.vertical_speed_fpm < peak_vs {
-                        stats.landing_peak_vs_fpm = Some(snap.vertical_speed_fpm);
+                    if raw_vs < peak_vs {
+                        stats.landing_peak_vs_fpm = Some(raw_vs);
                     }
                 }
                 if in_g_window {

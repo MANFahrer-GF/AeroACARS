@@ -1345,6 +1345,9 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         pitch_deg: -(t.pitch_deg as f32),
         bank_deg: t.bank_deg as f32,
         vertical_speed_fpm: t.vertical_speed_fpm as f32,
+        // MSFS `VERTICAL SPEED` is true earth-frame + responsive — no separate
+        // raw signal needed; the touchdown path falls back to vertical_speed_fpm.
+        vertical_speed_raw_fpm: None,
         velocity_body_x_fps: Some(t.velocity_body_x_fps as f32),
         velocity_body_z_fps: Some(t.velocity_body_z_fps as f32),
         groundspeed_kt: t.groundspeed_kt as f32,

@@ -46,7 +46,21 @@ pub struct SimSnapshot {
     pub heading_deg_magnetic: f32,
     pub pitch_deg: f32,
     pub bank_deg: f32,
+    /// Vertical speed for DISPLAY / phase-FSM / approach-stability (fpm).
+    /// On X-Plane this is the instrument VVI (`vvi_fpm_pilot`), which reads ~0
+    /// in level flight; the previous source (`local_vy`, OpenGL world-frame)
+    /// carried a ground-speed-proportional bias that mis-read level cruise as a
+    /// few-hundred-fpm descent. On MSFS this is the true earth-frame `VERTICAL
+    /// SPEED` SimVar (unchanged). Use [`Self::touchdown_vs_source_fpm`] for the
+    /// responsive touchdown signal.
     pub vertical_speed_fpm: f32,
+    /// Raw, lag-free vertical speed for the TOUCHDOWN capture (fpm). On X-Plane
+    /// this is `local_vy × 196.85` (responsive, no VSI damping — the v0.4.3
+    /// reason for moving off the laggy `vh_ind_fpm`). `None` on sims whose
+    /// `vertical_speed_fpm` is already raw+responsive (MSFS `VERTICAL SPEED`),
+    /// in which case the touchdown path falls back to `vertical_speed_fpm`.
+    #[serde(default)]
+    pub vertical_speed_raw_fpm: Option<f32>,
     /// Body-frame velocity components in feet per second.
     /// X = right (+) / left (−) component; Z = forward (+) / aft (−).
     /// Used to compute touchdown sideslip natively
@@ -476,6 +490,18 @@ pub struct PmdgState {
     pub parking_brake: Option<bool>,
 }
 
+impl SimSnapshot {
+    /// Vertical speed the TOUCHDOWN capture should use: the raw, lag-free signal
+    /// when the adapter provides one (X-Plane `local_vy`), otherwise the display
+    /// V/S (MSFS, whose `VERTICAL SPEED` SimVar is already raw + responsive).
+    /// This keeps touchdown detection responsive (no VSI lag) while
+    /// `vertical_speed_fpm` is the curvature-free value for display / phase-FSM /
+    /// approach-stability.
+    pub fn touchdown_vs_source_fpm(&self) -> f32 {
+        self.vertical_speed_raw_fpm.unwrap_or(self.vertical_speed_fpm)
+    }
+}
+
 impl Default for SimSnapshot {
     fn default() -> Self {
         Self {
@@ -491,6 +517,7 @@ impl Default for SimSnapshot {
             pitch_deg: 0.0,
             bank_deg: 0.0,
             vertical_speed_fpm: 0.0,
+            vertical_speed_raw_fpm: None,
             velocity_body_x_fps: None,
             velocity_body_z_fps: None,
             groundspeed_kt: 0.0,
@@ -1070,6 +1097,22 @@ mod tests {
         assert_eq!(clean_atc_model("TT:CESSNA"), None);
         // Vendor-tag prefix gets stripped.
         assert_eq!(clean_atc_model("$$:C750"), Some("C750".to_string()));
+    }
+
+    #[test]
+    fn touchdown_vs_source_prefers_raw_then_falls_back() {
+        let mut s = SimSnapshot::default();
+        s.vertical_speed_fpm = -50.0; // display value (e.g. the X-Plane VVI)
+        // No raw signal (MSFS) → touchdown falls back to the display V/S.
+        assert_eq!(s.vertical_speed_raw_fpm, None);
+        assert_eq!(s.touchdown_vs_source_fpm(), -50.0);
+        // Raw present (X-Plane local_vy) → touchdown uses the raw, responsive
+        // value, independent of the curvature-free (and possibly damped)
+        // display V/S — this is what keeps the landing rate lag-free.
+        s.vertical_speed_raw_fpm = Some(-320.0);
+        assert_eq!(s.touchdown_vs_source_fpm(), -320.0);
+        // The display V/S is untouched (stays the curvature-free FSM value).
+        assert_eq!(s.vertical_speed_fpm, -50.0);
     }
 
     #[test]

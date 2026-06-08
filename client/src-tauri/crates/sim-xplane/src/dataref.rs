@@ -37,7 +37,14 @@ pub enum FieldId {
     HeadingDegMagnetic,
     PitchDeg,
     BankDeg,
+    /// Display / phase-FSM / approach-stability V/S — the instrument VVI
+    /// (`vvi_fpm_pilot`, already fpm), which reads ~0 in level flight.
     VerticalSpeedFpm,
+    /// Raw, lag-free V/S for the touchdown capture — `local_vy` (m/s, world
+    /// frame), converted to fpm. Responsive (no VSI damping) but carries an
+    /// OpenGL-frame curvature bias at speed, so it is used ONLY for the
+    /// touchdown signal, never for display/FSM/stability.
+    VerticalSpeedRawFpm,
     GroundspeedKt,
     IndicatedAirspeedKt,
     TrueAirspeedKt,
@@ -181,7 +188,9 @@ pub const CATALOG: &[DatarefEntry] = &[
         field: FieldId::BankDeg,
     },
     DatarefEntry {
-        // RAW vertical velocity (m/s, ohne VSI-Smoothing/Lag).
+        // RAW vertical velocity (m/s, ohne VSI-Smoothing/Lag) — this is now the
+        // TOUCHDOWN source only (`vertical_speed_raw_fpm`); the display / phase
+        // FSM / approach-stability V/S comes from the VVI entry below.
         //
         // Wir lasen früher `vh_ind_fpm` — das ist die Vertical-Speed-
         // Indicator-Anzeige wie im echten Cockpit, mit absichtlichem
@@ -202,6 +211,22 @@ pub const CATALOG: &[DatarefEntry] = &[
         // Die haben dasselbe Vorzeichen — `local_vy` braucht keine
         // Vorzeichen-Umkehrung.
         name: "sim/flightmodel/position/local_vy",
+        field: FieldId::VerticalSpeedRawFpm,
+    },
+    DatarefEntry {
+        // Display / phase-FSM / approach-stability V/S — the instrument VVI.
+        //
+        // `local_vy` (above) is the OpenGL WORLD-frame vertical velocity and
+        // does NOT read zero in level flight — it carries a ground-speed-
+        // proportional bias (a level cruise at 341 kt GS reads ~ -277 fpm
+        // instead of ~0; X-Plane confirms local_vy is world-coordinate motion,
+        // not earth-referenced). That bias is fine for the responsive touchdown
+        // signal but wrong for the live V/S tile, the phase FSM (go-around /
+        // descent / holding gates) and approach-stability. The VVI reads ~0 in
+        // level flight (earth-referenced, lightly damped) — correct for those.
+        // It is ALREADY in fpm, so the value-setter does NOT apply the m/s→fpm
+        // factor (unlike local_vy).
+        name: "sim/cockpit2/gauges/indicators/vvi_fpm_pilot",
         field: FieldId::VerticalSpeedFpm,
     },
     // --- Speeds ---
@@ -512,7 +537,10 @@ pub struct XPlaneState {
     pub heading_magnetic_deg: f32,
     pub pitch_deg: f32,
     pub bank_deg: f32,
+    /// Display/FSM V/S (fpm) — from the instrument VVI (`vvi_fpm_pilot`).
     pub vertical_speed_fpm: f32,
+    /// Raw V/S (fpm) for the touchdown signal — from `local_vy` (m/s→fpm).
+    pub vertical_speed_raw_fpm: f32,
     /// Stored in M/S (X-Plane native). Convert at snapshot time.
     pub groundspeed_ms: f32,
     pub indicated_airspeed_kt: f32,
@@ -634,10 +662,12 @@ impl XPlaneState {
             FieldId::HeadingDegMagnetic => self.heading_magnetic_deg = value,
             FieldId::PitchDeg => self.pitch_deg = value,
             FieldId::BankDeg => self.bank_deg = value,
+            // vvi_fpm_pilot is ALREADY in fpm — no m/s→fpm conversion.
+            FieldId::VerticalSpeedFpm => self.vertical_speed_fpm = value,
             // local_vy ist in m/s (X-Plane native), konvertieren zu
             // fpm: 1 m/s = 196.8504 ft/min. Vorzeichen passt direkt
             // (positive Y = climb in beiden Konventionen).
-            FieldId::VerticalSpeedFpm => self.vertical_speed_fpm = value * 196.8504,
+            FieldId::VerticalSpeedRawFpm => self.vertical_speed_raw_fpm = value * 196.8504,
             FieldId::GroundspeedKt => self.groundspeed_ms = value, // m/s native
             FieldId::IndicatedAirspeedKt => self.indicated_airspeed_kt = value,
             FieldId::TrueAirspeedKt => self.true_airspeed_kt = value,
@@ -735,6 +765,9 @@ impl XPlaneState {
             pitch_deg: self.pitch_deg,
             bank_deg: self.bank_deg,
             vertical_speed_fpm: self.vertical_speed_fpm,
+            // Raw local_vy → the responsive touchdown signal (kept separate so
+            // the curvature bias never reaches display/FSM/stability).
+            vertical_speed_raw_fpm: Some(self.vertical_speed_raw_fpm),
             velocity_body_x_fps: Some((self.local_vx_ms / 0.3048) as f32),
             velocity_body_z_fps: Some((self.local_vz_ms / 0.3048) as f32),
             groundspeed_kt: self.groundspeed_ms * KT_PER_MS,
@@ -918,5 +951,28 @@ impl XPlaneState {
             gear_water_depth_m: None,
             water_rudder_present: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod vs_dual_source_tests {
+    use super::*;
+
+    #[test]
+    fn vvi_is_fpm_direct_local_vy_is_converted() {
+        let mut s = XPlaneState::default();
+        // vvi_fpm_pilot is already fpm → stored as-is (NO m/s factor).
+        s.apply_field(FieldId::VerticalSpeedFpm, -277.0);
+        assert!((s.vertical_speed_fpm - (-277.0)).abs() < 0.001);
+        // local_vy is m/s → ×196.8504 to fpm. -11.684 m/s ≈ -2300 fpm.
+        s.apply_field(FieldId::VerticalSpeedRawFpm, -11.684);
+        assert!(
+            (s.vertical_speed_raw_fpm - (-2300.0)).abs() < 1.0,
+            "local_vy m/s→fpm: expected ~-2300, got {}",
+            s.vertical_speed_raw_fpm
+        );
+        // The two are independent: the display VVI is NOT scaled by the m/s
+        // factor and is not overwritten by the raw read.
+        assert!((s.vertical_speed_fpm - (-277.0)).abs() < 0.001);
     }
 }
