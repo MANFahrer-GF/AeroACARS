@@ -14806,18 +14806,18 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // Das Event ist hier bereits konsumiert — wir muessen es jetzt
                 // *immer* speichern (oder bewusst verwerfen), sonst geht es
                 // still verloren.
-                let in_landing_phase = matches!(
-                    stats.phase,
-                    FlightPhase::Approach
-                        | FlightPhase::Final
-                        | FlightPhase::Landing
-                );
-                if !in_landing_phase || stats.sampler_touchdown_at.is_some() {
-                    // Out-of-phase oder TD schon abgeschlossen → bewusst drop.
+                // v0.15.20: Premium-Touchdown in JEDER Flug-Phase akzeptieren
+                // (nicht nur Approach/Final/Landing) — sonst geht der frame-
+                // genaue Plugin-Wert bei fehl-phasierter FSM (Go-Around →
+                // „Climb", OWx9) verloren. Phantom-Schutz via is_flight_phase
+                // (Boden-/Taxi-Phasen bleiben ausgeschlossen).
+                let in_flight_phase = is_flight_phase(stats.phase);
+                if !in_flight_phase || stats.sampler_touchdown_at.is_some() {
+                    // Out-of-phase (Boden/Taxi) oder TD schon abgeschlossen → drop.
                     tracing::debug!(
                         pirep_id = %flight.pirep_id,
                         captured_vs_fpm = td.captured_vs_fpm,
-                        in_landing_phase = in_landing_phase,
+                        in_flight_phase = in_flight_phase,
                         td_already_captured = stats.sampler_touchdown_at.is_some(),
                         "premium TD event dropped (out of phase or TD already finalised)"
                     );
@@ -14897,12 +14897,14 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // Landing-relevanten Phase ist. Approach-Ausloeser AGL>1500ft
             // ist OK (lange Endanflug-Bahnen), aber Taxi/Boarding/Cruise
             // sind explizit ausgeschlossen.
-            let in_landing_phase = matches!(
-                stats.phase,
-                FlightPhase::Approach
-                    | FlightPhase::Final
-                    | FlightPhase::Landing
-            );
+            // v0.15.20: Touchdown-Edge in JEDER Flug-Phase akzeptieren (s.
+            // is_flight_phase) statt nur Approach/Final/Landing — sonst geht ein
+            // realer Touchdown bei fehl-phasierter FSM (Go-Around → „Climb",
+            // OWx9 GSG544) verloren. Der Phantom-Schutz (Gear-Bump beim Taxi auf
+            // Bush-Strips, v0.5.45) bleibt: in einer Flug-Phase ist die
+            // Gear-Force durchgehend entlastet → es kann gar kein Edge entstehen;
+            // die Wackler passieren nur am Boden, dessen Phasen ausgeschlossen sind.
+            let in_flight_phase = is_flight_phase(stats.phase);
             // v0.7.0 — P0 Fix: Edge-Detection setzt jetzt nur `pending_td_at`.
             // Die echte Validation (touchdown_v2::validate_candidate) folgt 1.1 sec
             // spaeter wenn genug post-edge samples im Buffer sind. False-edges
@@ -14913,7 +14915,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // Float-Streifschuss mit vs=+104 fpm wurde gescort, der echte TD
             // 4 sec spaeter wurde ignoriert (single-shot is_none() Guard).
             if edge_detected && stats.sampler_touchdown_at.is_none()
-                && stats.pending_td_at.is_none() && in_landing_phase {
+                && stats.pending_td_at.is_none() && in_flight_phase {
                 stats.pending_td_at = Some(now);
                 tracing::info!(
                     pirep_id = %flight.pirep_id,
@@ -17230,35 +17232,32 @@ fn phase_stuck_on_ground_while_airborne(
     ground_phase && !on_ground && altitude_agl_ft > 500.0 && !reload_gap_suspect
 }
 
-/// v0.15.20: Entscheidung des phasen-unabhängigen Touchdown-Sicherheitsnetzes.
+/// v0.15.20: True für eine FLUG-Phase (in der Luft) — Gegenstück zu Boden-/
+/// Departure-Phasen (Boarding/Pushback/TaxiOut/TakeoffRoll/Takeoff/TaxiIn/
+/// BlocksOn/Arrived/PirepSubmitted).
 ///
-/// Die Touchdown-Erfassung (sim-spezifische V/S-Ketten, Landing-Score-Anker)
-/// lebt historisch NUR im `FlightPhase::Final`-Arm von [`step_flight`]. Setzt
-/// das Flugzeug aus einer anderen Luftphase auf, geht der reale Touchdown
-/// verloren und der Flug endet über den Arrived-Fallback ohne Landung/Score —
-/// der Recorder urteilt dann „review" (kein Touchdown).
+/// Maßgeblich dafür, ob ein realer Luft→Boden-Edge als Touchdown akzeptiert
+/// wird — an ALLEN drei Erfassungsstellen (Sampler-RREF-Edge, Sampler-Premium-
+/// Plugin, FSM-Capture). Vorher war das auf `Approach|Final|Landing` beschränkt,
+/// wodurch ein Touchdown bei fehl-phasierter FSM (Go-Around → in „Climb" hängen,
+/// OWx9) überall verworfen wurde.
 ///
-/// Realer Fall OWx9 (GSG544 NVSE→NVVV): echter Go-Around aus ~56 ft, Steigflug
-/// auf ~465 ft → FSM korrekt „Climb". Das darauf folgende porpoisende
-/// Wieder-Reinkommen (V/S −1343/+371/−221…) erfüllte das Dwell-Gate von
-/// `check_descent_transition` nie → FSM blieb in „Climb" bis zum Aufsetzen
-/// (−26 fpm). Der Touchdown fiel in „Climb" und wurde nie erfasst.
-///
-/// Konsistent mit den bestehenden Universal-Fallbacks (Arrived-Fallback,
-/// Cruise→Descent-Rescue) wird ein solcher Luft→Boden-Edge durch DENSELBEN,
-/// unveränderten Final-Arm-Capture geleitet. `Final` (erfasst bereits selbst)
-/// und Departure-/Boden-Phasen (Takeoff*/Landing/Taxi/…) sind ausgenommen.
-fn is_airborne_touchdown_edge(prev_phase: FlightPhase, was_on_ground: bool, on_ground: bool) -> bool {
-    !was_on_ground
-        && on_ground
-        && matches!(
-            prev_phase,
-            FlightPhase::Climb
-                | FlightPhase::Cruise
-                | FlightPhase::Descent
-                | FlightPhase::Holding
-                | FlightPhase::Approach
-        )
+/// Der Phantom-Touchdown-Schutz (Gear-Force-Wackler beim Taxi auf unebenem
+/// Boden) bleibt darüber **vollständig** erhalten: in einer Flug-Phase ist
+/// `gear_normal_force_n` durchgehend entlastet → es kann gar kein Gear-Bump-Edge
+/// (`prev_in_air=true → on_ground`) entstehen; die Wackler passieren nur am
+/// Boden (Taxi), und Boden-Phasen sind hier ausgeschlossen.
+fn is_flight_phase(phase: FlightPhase) -> bool {
+    matches!(
+        phase,
+        FlightPhase::Climb
+            | FlightPhase::Cruise
+            | FlightPhase::Descent
+            | FlightPhase::Holding
+            | FlightPhase::Approach
+            | FlightPhase::Final
+            | FlightPhase::Landing
+    )
 }
 
 fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase> {
@@ -17512,20 +17511,7 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
     }
 
     // Match on a local Copy so the rest of the body is free to mutate `stats`.
-    //
-    // v0.15.20: Touchdown-Sicherheitsnetz. Die Touchdown-Erfassung (V/S-Capture
-    // + Landing-Anker) lebt NUR im Final-Arm. Setzt das Flugzeug aus einer
-    // anderen Luftphase auf (z. B. FSM nach einem Go-Around in „Climb" hängen
-    // geblieben — OWx9 GSG544), ginge der reale Touchdown verloren. Solchen
-    // Luft→Boden-Edge durch den UNVERÄNDERTEN Final-Arm-Capture leiten.
-    // `prev_phase` bleibt erhalten (Transition-Logging + holding-pending-Reset
-    // sehen weiterhin die echte Vorphase).
-    let dispatch_phase = if is_airborne_touchdown_edge(prev_phase, was_on_ground, snap.on_ground) {
-        FlightPhase::Final
-    } else {
-        prev_phase
-    };
-    match dispatch_phase {
+    match prev_phase {
         FlightPhase::Boarding => {
             // Pushback / departure detection: actual movement is the
             // only reliable trigger. Brake-release alone is NOT enough
@@ -26584,25 +26570,20 @@ mod sim_pause_tests {
     }
 
     #[test]
-    fn airborne_touchdown_edge_v01520() {
+    fn is_flight_phase_v01520() {
         use FlightPhase::*;
-        // OWx9 (GSG544): nach Go-Around in „Climb" hängen geblieben, dann
-        // Aufsetzen → muss durch den Final-Arm-Capture geleitet werden.
-        assert!(is_airborne_touchdown_edge(Climb, false, true));
-        // Auch andere Luftphasen, in denen der Touchdown sonst verloren ginge:
-        assert!(is_airborne_touchdown_edge(Cruise, false, true));
-        assert!(is_airborne_touchdown_edge(Descent, false, true));
-        assert!(is_airborne_touchdown_edge(Holding, false, true));
-        assert!(is_airborne_touchdown_edge(Approach, false, true));
-        // Final erfasst den Touchdown bereits selbst → KEIN Redirect.
-        assert!(!is_airborne_touchdown_edge(Final, false, true));
-        // Kein frischer Edge (schon am Boden) → kein Redirect.
-        assert!(!is_airborne_touchdown_edge(Climb, true, true));
-        // Noch in der Luft (kein Bodenkontakt) → kein Touchdown.
-        assert!(!is_airborne_touchdown_edge(Climb, false, false));
-        // Departure-Phasen sind keine Landungen.
-        assert!(!is_airborne_touchdown_edge(Takeoff, false, true));
-        assert!(!is_airborne_touchdown_edge(TakeoffRoll, false, true));
+        // FLUG-Phasen → Touchdown wird an allen drei Erfassungsstellen
+        // akzeptiert (auch Climb/Cruise/Descent/Holding für die fehl-phasierte
+        // FSM nach einem Go-Around — OWx9).
+        for p in [Climb, Cruise, Descent, Holding, Approach, Final, Landing] {
+            assert!(is_flight_phase(p), "{p:?} sollte Flug-Phase sein");
+        }
+        // BODEN-/Departure-Phasen → AUSGESCHLOSSEN. Das IST der Phantom-Schutz:
+        // ein Gear-Force-Wackler beim Taxi/am Boden darf NIE als Touchdown
+        // durchgehen. Diese Invariante sichert v0.5.45 ab.
+        for p in [Boarding, Pushback, TaxiOut, TakeoffRoll, Takeoff, TaxiIn, BlocksOn, Arrived] {
+            assert!(!is_flight_phase(p), "{p:?} darf KEINE Flug-Phase sein (Phantom-Schutz)");
+        }
     }
 
     // ---- v0.12.1 Stream B — pilot-status gate (LE6) ----
