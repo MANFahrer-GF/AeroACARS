@@ -1634,6 +1634,11 @@ struct PersistedFlightStats {
     touchdown_sideslip_deg: Option<f32>,
     #[serde(default)]
     touchdown_profile: Vec<TouchdownProfilePoint>,
+    /// v0.15.24: the in-app live-map flown track ([lon,lat]), persisted so a
+    /// mid-flight app restart keeps the pre-restart trail (flight_get_track
+    /// returns the full track post-restore, not just the post-restart segment).
+    #[serde(default)]
+    track: Vec<[f64; 2]>,
     #[serde(default)]
     runway_match: Option<runway::RunwayMatch>,
     #[serde(default)]
@@ -1802,6 +1807,7 @@ impl PersistedFlightStats {
             aircraft_banner_logged: stats.aircraft_banner_logged,
             touchdown_sideslip_deg: stats.touchdown_sideslip_deg,
             touchdown_profile: stats.touchdown_profile.clone(),
+            track: stats.track.clone(),
             runway_match: stats.runway_match.clone(),
             landing_lat: stats.landing_lat,
             landing_lon: stats.landing_lon,
@@ -1895,6 +1901,7 @@ impl PersistedFlightStats {
         stats.aircraft_banner_logged = self.aircraft_banner_logged;
         stats.touchdown_sideslip_deg = self.touchdown_sideslip_deg;
         stats.touchdown_profile = self.touchdown_profile;
+        stats.track = self.track;
         stats.runway_match = self.runway_match;
         stats.landing_lat = self.landing_lat;
         stats.landing_lon = self.landing_lon;
@@ -2001,6 +2008,58 @@ const TOUCHDOWN_BUFFER_SECS: i64 = 5;
 /// Phase + erste Reverse/Brake-Action ab. Pre-TD-Buffer (5 s) + dies
 /// ergibt einen TouchdownWindow von ~15 s, gedumpt als ein Event.
 const TOUCHDOWN_POST_WINDOW_MS: i64 = 10_000;
+
+// ---- In-App-Live-Map: geflogener Track (Backend-Akkumulation) ----
+//
+// PARITÄT mit dem Frontend: Diese drei Werte spiegeln client/src/lib/
+// trackStore.ts EXAKT (AIR_MIN_DELTA_DEG / GROUND_MIN_DELTA_DEG / MAX_POINTS).
+// Der Streamer akkumuliert den Track jetzt im Backend bei voller Tick-Rate
+// (fokus-/fenster-unabhängig → lückenlos auch bei X-Plane-Vollbild); das
+// Frontend pollt ihn via `flight_get_track`. Ändert sich hier eine Schwelle,
+// MUSS sie in trackStore.ts mitgezogen werden, sonst weicht die gepollte Linie
+// von der alten in-memory-Linie ab.
+
+/// Ausdünn-Schwelle (Grad) in der LUFT (~0,002° ≈ 220 m) — Langstrecke
+/// überlädt die Linie sonst. Spiegelt AIR_MIN_DELTA_DEG in trackStore.ts.
+const TRACK_AIR_MIN_DELTA_DEG: f64 = 0.002;
+/// Deutlich feinere Schwelle am BODEN (~0,00015° ≈ 16 m), damit der Taxi-/
+/// Rollweg nachvollziehbar bleibt. Spiegelt GROUND_MIN_DELTA_DEG in trackStore.ts.
+const TRACK_GROUND_MIN_DELTA_DEG: f64 = 0.00015;
+/// Sicherheitskappe pro Flug (älteste Punkte fallen raus). Spiegelt MAX_POINTS
+/// in trackStore.ts.
+const MAX_TRACK_POINTS: usize = 5000;
+
+/// Einen geflogenen Track-Punkt (lon, lat) in `stats.track` aufnehmen — mit
+/// derselben Ausdünn-Logik wie das Frontend (`recordTrackPoint` in
+/// client/src/lib/trackStore.ts). No-op bei nicht-endlichen Koordinaten.
+///
+/// `on_ground` wählt die Schwelle: am Boden fein (Taxi-Weg sichtbar), in der
+/// Luft grob (Langstrecke bleibt leicht). Ein Punkt wird aufgenommen, wenn es
+/// noch keinen letzten gibt ODER |Δlon| bzw. |Δlat| die Schwelle überschreitet.
+/// Bei Überlauf werden die ÄLTESTEN Punkte gedrained (Kappe MAX_TRACK_POINTS).
+fn record_track_point(stats: &mut FlightStats, lon: f64, lat: f64, on_ground: bool) {
+    if !lon.is_finite() || !lat.is_finite() {
+        return;
+    }
+    let min_delta = if on_ground {
+        TRACK_GROUND_MIN_DELTA_DEG
+    } else {
+        TRACK_AIR_MIN_DELTA_DEG
+    };
+    let push = match stats.track.last() {
+        None => true,
+        Some([last_lon, last_lat]) => {
+            (last_lon - lon).abs() > min_delta || (last_lat - lat).abs() > min_delta
+        }
+    };
+    if push {
+        stats.track.push([lon, lat]);
+        if stats.track.len() > MAX_TRACK_POINTS {
+            let excess = stats.track.len() - MAX_TRACK_POINTS;
+            stats.track.drain(0..excess);
+        }
+    }
+}
 
 impl From<TelemetrySample> for TouchdownWindowSample {
     fn from(s: TelemetrySample) -> Self {
@@ -2110,6 +2169,19 @@ struct FlightStats {
     last_lon: Option<f64>,
     distance_nm: f64,
     position_count: u32,
+
+    /// Ausgedünnter geflogener Track [lon, lat] für die In-App-Live-Map.
+    ///
+    /// Wird im Position-Streamer bei dessen VOLLER Tick-Rate akkumuliert —
+    /// fenster-/fokus-unabhängig, also lückenlos auch wenn das AeroACARS-
+    /// Fenster im Hintergrund liegt (X-Plane Vollbild). Der Webview-Poll
+    /// (`setInterval`) holte den Track früher aus dem gedrosselten Snapshot-
+    /// Stream auf → im Hintergrund entstanden Lücken. Hier ist das Backend die
+    /// Quelle der Wahrheit; das Frontend spiegelt ihn nur noch via
+    /// `flight_get_track`. Ausgedünnt + gekappt durch `record_track_point` /
+    /// MAX_TRACK_POINTS. Runtime-only — FlightStats ist NICHT Serialize, das
+    /// Feld wird nicht persistiert und initialisiert via Default leer.
+    track: Vec<[f64; 2]>,
 
     // ---- Phase-FSM state ----
     /// Current flight phase. Starts at Boarding when flight_start fires.
@@ -7088,6 +7160,26 @@ fn flight_get_route_fixes(state: tauri::State<'_, AppState>) -> Vec<api_client::
             .lock()
             .expect("flight stats lock")
             .planned_waypoints
+            .clone(),
+        None => Vec::new(),
+    }
+}
+
+/// v0.15.x (In-App-Live-Map): der im Backend akkumulierte, ausgedünnte
+/// geflogene Track [lon, lat] des aktiven Flugs. Im Streamer bei voller Tick-
+/// Rate gefüllt (fokus-/fenster-unabhängig → lückenlos auch bei X-Plane-
+/// Vollbild, anders als der gedrosselte Webview-Snapshot-Poll). Leer, wenn
+/// kein aktiver Flug. Das Frontend spiegelt das via `setTrack` in den
+/// trackStore und rendert die Linie daraus.
+#[tauri::command]
+fn flight_get_track(state: tauri::State<'_, AppState>) -> Vec<[f64; 2]> {
+    let guard = state.active_flight.lock().expect("active_flight lock");
+    match guard.as_ref() {
+        Some(flight) => flight
+            .stats
+            .lock()
+            .expect("flight stats lock")
+            .track
             .clone(),
         None => Vec::new(),
     }
@@ -16747,6 +16839,18 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 }
             }
 
+            // v0.15.x: geflogenen Track im Backend bei voller Streamer-Tick-
+            // Rate akkumulieren (fokus-/fenster-unabhängig → lückenlos auch bei
+            // X-Plane-Vollbild). Das Frontend pollt ihn via `flight_get_track`.
+            // KURZLEBIGER, SYNCHRONER Block — der std-Mutex-Guard ist nicht Send
+            // und darf NICHT über ein `.await` gehalten werden (kein await im
+            // Block; Guard fällt am Block-Ende). Ausdünnung 1:1 wie
+            // client/src/lib/trackStore.ts (siehe record_track_point).
+            {
+                let mut stats = flight.stats.lock().expect("flight stats");
+                record_track_point(&mut stats, snap.lon, snap.lat, snap.on_ground);
+            }
+
             // v0.5.35: JSONL-Append jetzt PRO TICK (= 3s Cadence, oder
             // adaptive bis zu 500ms unter AGL<100ft). Vorher war der
             // Append nur INSIDE des phpVMS-OK-Branch — bei phpVMS-
@@ -24016,6 +24120,7 @@ pub fn run() {
             airport_get,
             flight_status,
             flight_get_route_fixes,
+            flight_get_track,
             va_live_flights,
             logbook_pireps,
             logbook_stats,
@@ -24741,6 +24846,44 @@ mod touch_and_go_go_around_tests {
         // alle None → None.
         let stats2 = FlightStats::default();
         assert_eq!(score_basis_vs_fpm(&stats2), None);
+    }
+
+    // ---- v0.15.x: Backend-Track-Akkumulation (Live-Map-Lücken-Fix) ----
+
+    #[test]
+    fn record_track_point_thins_like_frontend() {
+        let mut stats = FlightStats::default();
+        assert!(stats.track.is_empty());
+
+        // Erster Punkt wird IMMER aufgenommen.
+        record_track_point(&mut stats, 10.0, 50.0, false);
+        assert_eq!(stats.track, vec![[10.0, 50.0]]);
+
+        // Winziges Luft-Delta (< 0,002°) → verworfen (grobe Luft-Schwelle).
+        record_track_point(&mut stats, 10.0005, 50.0005, false);
+        assert_eq!(stats.track, vec![[10.0, 50.0]]);
+
+        // Ground-Delta von 0,0002° (> 0,00015°) → aufgenommen (feine Boden-Schwelle).
+        record_track_point(&mut stats, 10.0007, 50.0007, true);
+        assert_eq!(stats.track, vec![[10.0, 50.0], [10.0007, 50.0007]]);
+
+        // Nicht-endliche Koordinaten sind ein No-op.
+        record_track_point(&mut stats, f64::NAN, 50.0, false);
+        record_track_point(&mut stats, 10.0, f64::INFINITY, false);
+        assert_eq!(stats.track.len(), 2);
+
+        // Kappe drained die ÄLTESTEN Punkte. Wir füllen über MAX_TRACK_POINTS
+        // mit garantiert über der Luft-Schwelle liegenden Schritten (0,01°).
+        let mut stats2 = FlightStats::default();
+        let total = MAX_TRACK_POINTS + 3;
+        for i in 0..total {
+            let lon = i as f64 * 0.01;
+            record_track_point(&mut stats2, lon, 0.0, false);
+        }
+        assert_eq!(stats2.track.len(), MAX_TRACK_POINTS);
+        // Die ersten 3 (0.0, 0.01, 0.02) sind rausgefallen → ältester ist jetzt 0.03.
+        assert_eq!(stats2.track.first().unwrap()[0], 3.0 * 0.01);
+        assert_eq!(stats2.track.last().unwrap()[0], (total - 1) as f64 * 0.01);
     }
 }
 

@@ -17,7 +17,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { invoke } from "@tauri-apps/api/core";
 import type { ActiveFlightInfo, SimSnapshot } from "../types";
 import { ActivityLogPanel } from "./ActivityLogPanel";
-import { getTrack } from "../lib/trackStore";
+import { getTrack, setTrack } from "../lib/trackStore";
 import { aircraftSvg } from "../lib/aircraftIcon";
 import { phaseColor, phaseLabel as formatPhase } from "../lib/phaseColors";
 
@@ -195,6 +195,14 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const [routeFixes, setRouteFixes] = useState<RouteFix[]>([]);
   const [depArr, setDepArr] = useState<{ dep?: [number, number]; arr?: [number, number] }>({});
   const [vaFlights, setVaFlights] = useState<VaFlight[]>([]);
+  // v0.15.x: geflogener Track. QUELLE ist jetzt das Backend — der Rust-Streamer
+  // akkumuliert ihn bei voller Tick-Rate (fokus-/fenster-unabhängig → lückenlos
+  // auch bei X-Plane-Vollbild). Früher kam der Track aus dem im Hintergrund
+  // GEDROSSELTEN Snapshot-Stream (setInterval im Webview) → die Linie hatte
+  // Lücken. Wir pollen `flight_get_track` und spiegeln ihn in lokalen State;
+  // `track` steht in der Redraw-Dep-Liste, damit die Linie sicher neu zeichnet,
+  // wenn Punkte ankommen (auch wenn simSnapshot kurz stehen bleibt).
+  const [trackPoints, setTrackPoints] = useState<[number, number][]>([]);
 
   const pirepId = activeFlight?.pirep_id ?? null;
   // VA-Flieger ohne den eigenen Flug (steckt auch in /api/acars).
@@ -205,7 +213,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
 
   // ---- effektive Daten (aktiver Flug) ----
   const effFixes = routeFixes;
-  const effTrack: [number, number][] = getTrack(pirepId);
+  const effTrack: [number, number][] = trackPoints;
   const effDep = depArr.dep;
   const effArr = depArr.arr;
   const effAircraft: Aircraft | null =
@@ -487,6 +495,68 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     };
   }, [pirepId]);
 
+  // ---- geflogenen Track laden (Backend ist die Quelle) ----
+  // v0.15.x: Lücken-Fix. Der Rust-Streamer akkumuliert den Track lückenlos
+  // (fokus-unabhängig); wir pollen ihn hierher. Beim ersten Mal aus dem
+  // trackStore (localStorage) seeden — so ist die Linie nach einem App-Neustart
+  // mitten im Flug sofort da, bis das Backend wieder Punkte gesammelt hat.
+  // Danach gewinnt das Backend, sobald es ≥ so viele Punkte hat wie der Seed
+  // (verhindert, dass der frisch leere Backend-Track die hydratisierte Linie
+  // kurz löscht). Wir spiegeln den Track zusätzlich in den Store (setTrack),
+  // damit getTrack/localStorage konsistent bleiben (Neustart-Recovery).
+  useEffect(() => {
+    if (!pirepId) {
+      setTrackPoints([]);
+      return;
+    }
+    // Sofort aus dem persistierten Store seeden (überbrückt App-Neustart).
+    const seed = getTrack(pirepId);
+    setTrackPoints(seed);
+    let cancelled = false;
+    const load = () =>
+      invoke<[number, number][]>("flight_get_track")
+        .then((pts) => {
+          if (cancelled) return;
+          const next = pts ?? [];
+          setTrackPoints((prev) => {
+            // Transient leeren Backend-Track ignorieren (active_flight wird am
+            // Flugende ge-take()t) — die hydratisierte/letzte Linie behalten,
+            // nicht wegblitzen.
+            if (next.length === 0 && prev.length > 0) return prev;
+            // Backend erst übernehmen, wenn es den persistierten Seed eingeholt
+            // hat (Neustart-Brücke; der Backend-Track wird jetzt selbst
+            // persistiert+restauriert — das ist die zusätzliche Absicherung).
+            if (next.length < seed.length) return prev;
+            // Dedup: gleiche Länge + gleicher letzter Punkt = keine neuen Punkte
+            // → kein Redraw (spart das setData alle 2 s im geparkten Zustand).
+            // Beim Cap-Crawl (>5000 Punkte) ändert sich der letzte Punkt → es
+            // wird weitergezeichnet.
+            if (
+              next.length === prev.length &&
+              (prev.length === 0 ||
+                (next[next.length - 1][0] === prev[prev.length - 1][0] &&
+                  next[next.length - 1][1] === prev[prev.length - 1][1]))
+            ) {
+              return prev;
+            }
+            return next;
+          });
+          // Store + localStorage konsistent halten (nur reale, nicht-leere Tracks).
+          if (next.length >= seed.length && next.length > 0) {
+            setTrack(pirepId, next);
+          }
+        })
+        .catch(() => {
+          /* transienter Fehler → zuletzt gehaltenen Track behalten */
+        });
+    load();
+    const id = window.setInterval(load, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [pirepId]);
+
   useEffect(() => {
     let cancelled = false;
     if (!activeFlight) {
@@ -597,6 +667,10 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     follow,
     simSnapshot,
     routeFixes,
+    // v0.15.x: trackPoints in den Deps, damit die geflogene Linie sicher neu
+    // zeichnet, sobald der Backend-Poll neue Punkte liefert — auch wenn
+    // simSnapshot im Hintergrund kurz steht.
+    trackPoints,
     depArr.dep,
     depArr.arr,
     activeFlight?.was_just_resumed,

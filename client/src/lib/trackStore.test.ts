@@ -78,4 +78,54 @@ describe("trackStore", () => {
     expect(getTrack(null)).toEqual([]);
     expect(getTrack("unbekannt")).toEqual([]);
   });
+
+  // v0.15.x: setTrack spiegelt den vom Backend gepollten Track in den Store —
+  // überschreibt (kein Anhängen), validiert endliche Koordinaten, kappt auf die
+  // letzten MAX_POINTS und persistiert nach localStorage (Neustart-Recovery).
+  it("setTrack überschreibt, filtert ungültige Punkte und ist via getTrack lesbar", async () => {
+    const { setTrack, getTrack } = await import("./trackStore");
+    setTrack("S1", [
+      [10.0, 50.0],
+      [Number.NaN, 51.0], // ungültig → gefiltert
+      [11.0, Number.POSITIVE_INFINITY], // ungültig → gefiltert
+      [12.0, 52.0],
+    ]);
+    expect(getTrack("S1")).toEqual([
+      [10.0, 50.0],
+      [12.0, 52.0],
+    ]);
+    // Erneuter Aufruf ÜBERSCHREIBT (kein Anhängen).
+    setTrack("S1", [[20.0, 60.0]]);
+    expect(getTrack("S1")).toEqual([[20.0, 60.0]]);
+  });
+
+  it("setTrack kappt auf die letzten MAX_POINTS (5000)", async () => {
+    const { setTrack, getTrack } = await import("./trackStore");
+    const big: [number, number][] = Array.from(
+      { length: 5003 },
+      (_, i) => [i * 0.01, 0] as [number, number],
+    );
+    setTrack("S2", big);
+    const out = getTrack("S2");
+    expect(out).toHaveLength(5000);
+    // Die ÄLTESTEN 3 sind weg → erster Punkt ist der mit Index 3.
+    expect(out[0]).toEqual([3 * 0.01, 0]);
+    expect(out[out.length - 1]).toEqual([5002 * 0.01, 0]);
+  });
+
+  it("setTrack persistiert nach localStorage (übersteht App-Neustart)", async () => {
+    const m1 = await import("./trackStore");
+    m1.setTrack("S3", [
+      [7.0, 47.0],
+      [7.5, 47.5],
+    ]);
+    // „Neustart": Modul-Registry zurücksetzen → frischer in-memory-Store,
+    // localStorage bleibt erhalten. getTrack muss daraus hydratisieren.
+    vi.resetModules();
+    const m2 = await import("./trackStore");
+    expect(m2.getTrack("S3")).toEqual([
+      [7.0, 47.0],
+      [7.5, 47.5],
+    ]);
+  });
 });

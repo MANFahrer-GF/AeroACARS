@@ -15,6 +15,11 @@ const store = new Map<string, [number, number][]>();
 const hydrated = new Set<string>();
 
 const LS_PREFIX = "aa-track-";
+// PARITÄT: Die Ausdünn-Schwellen + die Kappe werden 1:1 im Rust-Streamer
+// gespiegelt (record_track_point / MAX_TRACK_POINTS in
+// client/src-tauri/src/lib.rs). Das Backend ist die Quelle der geflogenen
+// Linie (fokus-unabhängig, lückenlos); ändert sich hier ein Wert, MUSS er dort
+// mitgezogen werden, sonst weicht der gepollte Track vom alten in-memory-Track ab.
 /** Sicherheitskappe pro Flug, damit localStorage bei Langstrecke nicht platzt. */
 const MAX_POINTS = 5000;
 /**
@@ -99,6 +104,43 @@ export function recordTrackPoint(
     store.set(pirepId, arr);
     persist(pirepId, arr);
   }
+}
+
+/**
+ * v0.15.x: Den GESAMTEN Track eines PIREP setzen (lon/lat-Paare).
+ *
+ * Hintergrund: Die geflogene Linie wird jetzt im Rust-Streamer (Backend) bei
+ * voller Tick-Rate akkumuliert — fokus-unabhängig, also LÜCKENLOS auch wenn das
+ * AeroACARS-Fenster im Hintergrund liegt (X-Plane Vollbild). Der Webview-Poll
+ * holte den Track früher aus dem gedrosselten Snapshot-Stream auf, was im
+ * Hintergrund Lücken riss. `setTrack` spiegelt den vom Backend gelieferten,
+ * bereits ausgedünnten Track 1:1 in den Store (überschreibt — kein Anhängen).
+ *
+ * Validiert auf endliche Koordinaten, kappt auf die letzten MAX_POINTS und
+ * persistiert nach localStorage (gleiches Key-Schema wie `recordTrackPoint`),
+ * damit ein App-Neustart mitten im Flug die Linie behält. Backend-Quelle:
+ * `record_track_point` / `flight_get_track` in client/src-tauri/src/lib.rs.
+ */
+export function setTrack(pirepId: string, points: [number, number][]): void {
+  if (!pirepId || !Array.isArray(points)) return;
+  const clean = points.filter(
+    (p): p is [number, number] =>
+      Array.isArray(p) &&
+      p.length === 2 &&
+      typeof p[0] === "number" &&
+      typeof p[1] === "number" &&
+      Number.isFinite(p[0]) &&
+      Number.isFinite(p[1]),
+  );
+  // Sicherheitskappe wie bei recordTrackPoint: die LETZTEN MAX_POINTS behalten.
+  const capped =
+    clean.length > MAX_POINTS ? clean.slice(clean.length - MAX_POINTS) : clean;
+  // Ab jetzt gilt der Store als „hydratisiert" für diesen PIREP — ein
+  // späteres getTrack soll NICHT mehr aus localStorage nachladen (das Backend
+  // ist die Quelle der Wahrheit).
+  hydrated.add(pirepId);
+  store.set(pirepId, capped);
+  persist(pirepId, capped);
 }
 
 /** Akkumulierten Track für einen PIREP holen (leer wenn keiner). */

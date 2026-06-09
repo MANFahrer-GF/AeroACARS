@@ -38,7 +38,6 @@ import { IntegrityBanner } from "./components/IntegrityBanner";
 import { useDiscordRpcPush } from "./hooks/useDiscordRpcPush";
 import { LiveRecordingIndicator } from "./components/LiveRecordingIndicator";
 import { useSimSession } from "./hooks/useSimSession";
-import { recordTrackPoint } from "./lib/trackStore";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import type { ActiveFlightInfo, LoginResult, Profile, UiError } from "./types";
 
@@ -299,21 +298,13 @@ function App() {
     null,
   );
 
-  // v0.13.x: Track app-weit ab Flugstart sammeln (für die In-App-Live-Map).
-  // Läuft unabhängig davon, ob der Karten-Tab offen ist — so ist der Track
-  // ab Flugstart da, nicht erst ab Tab-Öffnen.
-  useEffect(() => {
-    if (activeFlight?.pirep_id && simSnapshot) {
-      // v0.15.13: on_ground steuert die Ausdünnung — am Boden feiner, damit
-      // der Taxi-Weg nachvollziehbar bleibt.
-      recordTrackPoint(
-        activeFlight.pirep_id,
-        simSnapshot.lon,
-        simSnapshot.lat,
-        simSnapshot.on_ground,
-      );
-    }
-  }, [simSnapshot, activeFlight?.pirep_id]);
+  // v0.15.x: Track-Akkumulation ist ins BACKEND gewandert (Rust-Streamer,
+  // `record_track_point`). Sie läuft dort bei voller Tick-Rate, fokus-/fenster-
+  // unabhängig — also LÜCKENLOS, auch wenn das AeroACARS-Fenster im Hintergrund
+  // liegt (X-Plane Vollbild). Vorher fütterte hier ein useEffect auf den
+  // GEDROSSELTEN simSnapshot-Stream den trackStore; im Hintergrund throttelt der
+  // Webview den Poll → die geflogene Linie hatte Lücken. Die LiveMapView pollt
+  // den Track jetzt via `flight_get_track`. Darum hier kein recordTrackPoint mehr.
 
   // v0.5.48: Zentraler Update-Checker. Beide UI-Komponenten — der
   // Header-Button und das große Banner — konsumieren denselben State,

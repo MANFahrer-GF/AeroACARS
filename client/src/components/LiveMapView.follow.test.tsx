@@ -93,7 +93,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   }),
 }));
 vi.mock("./ActivityLogPanel", () => ({ ActivityLogPanel: () => null }));
-vi.mock("../lib/trackStore", () => ({ getTrack: () => [] }));
+vi.mock("../lib/trackStore", () => ({ getTrack: () => [], setTrack: () => {} }));
 vi.mock("../lib/aircraftIcon", () => ({ aircraftSvg: () => "<svg class='aircraft-svg'></svg>" }));
 vi.mock("../lib/phaseColors", () => ({ phaseColor: () => "#ffffff", phaseLabel: () => "Steigflug" }));
 
