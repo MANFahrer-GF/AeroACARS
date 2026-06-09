@@ -84,13 +84,20 @@ vi.mock("maplibre-gl", () => {
   };
 });
 
-vi.mock("@tauri-apps/api/core", () => ({
+// v0.16.0 (#LAN-Remote): LiveMapView now imports `invoke` from the `lib/ipc`
+// seam, not directly from `@tauri-apps/api/core`. Mock the seam so the test
+// keeps intercepting the calls (the old mock targeted a module the component
+// no longer imports). `listen`/`openExternal` are included for completeness.
+vi.mock("../lib/ipc", () => ({
+  isTauri: false,
   invoke: vi.fn(async (cmd: string) => {
     if (cmd === "flight_get_route_fixes") return [];
     if (cmd === "va_live_flights") return { data: [] };
     if (cmd === "airport_get") return { lat: null, lon: null };
     return null;
   }),
+  listen: vi.fn(async () => () => {}),
+  openExternal: vi.fn(async () => {}),
 }));
 vi.mock("./ActivityLogPanel", () => ({ ActivityLogPanel: () => null }));
 vi.mock("../lib/trackStore", () => ({ getTrack: () => [], setTrack: () => {} }));

@@ -13,7 +13,7 @@
 // Spec: docs/spec/v0.13.0-mid-session-integrity-and-resume-policy.md
 
 import { useEffect, useState, useCallback } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "../lib/ipc";
 
 export type IntegritySeverity = "info" | "anomaly" | "critical";
 

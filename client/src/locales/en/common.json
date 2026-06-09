@@ -959,6 +959,38 @@
     "diag_ago_minutes": "{{n}} min ago",
     "diag_push_error": "Last push error: {{msg}}"
   },
+  "remote": {
+    "gate": {
+      "title": "AeroACARS Remote",
+      "subtitle": "Enter the 6-digit PIN shown in AeroACARS on your sim PC under Settings → LAN remote.",
+      "pinLabel": "PIN",
+      "unlock": "Connect",
+      "connecting": "Connecting …",
+      "badPin": "Wrong PIN. Check the PIN on the sim PC and try again.",
+      "network": "Connection failed. Are you on the same Wi-Fi as the sim PC?",
+      "hint": "Anyone with this PIN can control the active flight. Only share it with devices you trust."
+    },
+    "server": {
+      "section_title": "LAN remote control",
+      "intro": "Control the active flight from a tablet or a second PC on the same Wi-Fi. AeroACARS hosts a local server on this PC and shows a pairing PIN + a QR code.",
+      "toggle_label": "Enable LAN remote control",
+      "toggle_hint": "Starts a local web server on this PC. Off by default — never auto-started.",
+      "port_label": "Port",
+      "port_hint": "TCP port of the local server (default 8765). Change only if the port is in use. Allowed: {{min}}–{{max}}.",
+      "port_invalid": "Invalid port. Allowed: {{min}}–{{max}}.",
+      "pin_label": "Pairing PIN",
+      "qr_label": "Scan QR code",
+      "qr_hint": "Scan with the tablet camera — the PIN is applied automatically.",
+      "qr_alt": "QR code to connect to the LAN remote control",
+      "url_label": "Open in a browser",
+      "no_urls": "No LAN address found. Is this PC connected to a network?",
+      "copy": "Copy PIN",
+      "copy_url": "Copy URL",
+      "copied": "Copied ✓",
+      "firewall_note": "Note: on first start Windows or macOS may prompt for a firewall permission. Please allow it for the local (private) network.",
+      "security_warning": "⚠ Warning: anyone on this network who knows the PIN can fully control your active flight (start, end, file the PIREP). Only enable remote control on a network you trust. Pairing and login (e.g. entering your phpVMS API key) should only be done on a trusted network — the connection runs unencrypted (HTTP) over the LAN."
+    }
+  },
   "error_reporting": {
     "section_title": "Error telemetry (anonymous)",
     "intro": "AeroACARS can automatically send technical crash and error reports to our self-hosted GlitchTip server (tip.kant.ovh). This helps fix bugs before they hit many pilots. Fully anonymous, opt-in, can be turned off any time.",

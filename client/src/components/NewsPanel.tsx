@@ -10,7 +10,7 @@
 // Tags wird auf http/https validiert.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 
 export interface NewsItem {

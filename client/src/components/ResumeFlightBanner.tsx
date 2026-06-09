@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import type { ActiveFlightInfo, ResumableFlight, SimStatus } from "../types";
 import { useConfirm } from "./ConfirmDialog";

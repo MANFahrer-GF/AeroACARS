@@ -1,6 +1,26 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { check, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
+import type { Update } from "@tauri-apps/plugin-updater";
+import { isTauri } from "../lib/ipc";
+
+// v0.16.0 (#LAN-Remote): die Updater-/Process-Plugins existieren nur im
+// Tauri-Build. In einem reinen LAN-Browser (Tablet) gibt es keinen
+// Updater — der Tablet-Nutzer kann die Desktop-App eh nicht aktualisieren.
+// Deshalb werden `plugin-updater` und `plugin-process` NICHT mehr statisch
+// am Modulkopf importiert (das würde im Browser-Bundle beim Eval die
+// fehlenden Tauri-Globals anfassen). Stattdessen lazy `import()` nur auf dem
+// Tauri-Pfad. `import type { Update }` oben ist rein typseitig und wird vom
+// Bundler wegradiert — kein Runtime-Effekt.
+async function tauriCheckForUpdate(): Promise<Update | null> {
+  if (!isTauri) return null;
+  const { check } = await import("@tauri-apps/plugin-updater");
+  return (await check()) as Update | null;
+}
+
+async function tauriRelaunch(): Promise<void> {
+  if (!isTauri) return;
+  const { relaunch } = await import("@tauri-apps/plugin-process");
+  await relaunch();
+}
 
 /**
  * v0.5.48 — Zentraler Update-Checker mit Eskalations-Stufen.
@@ -146,10 +166,12 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
   const checkInFlight = useRef(false);
 
   const performCheck = useCallback(async () => {
+    // Browser-Build (LAN-Tablet): kein Updater — Hook bleibt no-op.
+    if (!isTauri) return;
     if (checkInFlight.current) return;
     checkInFlight.current = true;
     try {
-      const u = await check();
+      const u = await tauriCheckForUpdate();
       writeNum(LAST_CHECK_KEY, Date.now());
       if (u) {
         setUpdate(u);
@@ -240,7 +262,7 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
             break;
         }
       });
-      await relaunch();
+      await tauriRelaunch();
     } catch (err) {
       setProgress(`Fehler: ${err}`);
       setInstalling(false);

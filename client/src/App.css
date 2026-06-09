@@ -8439,3 +8439,221 @@ input:disabled {
 .aa-lb-ylab { position: absolute; left: 2px; font-size: 10px; color: var(--text-muted); transform: translateY(-50%); font-variant-numeric: tabular-nums; }
 .aa-lb-leg { font-size: 10px; text-transform: none; letter-spacing: 0; color: var(--text-muted); margin-left: 8px; font-weight: 600; }
 .aa-lb-leg i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 3px 0 8px; vertical-align: middle; }
+
+/* ===== LAN remote control (v0.16.0, #LAN-Remote) ===== */
+
+/* Full-screen PIN gate — shown only in the LAN browser build before a token
+   exists. Centred card on a calm backdrop; deliberately minimal so a tablet
+   user sees one thing to do. */
+.remote-pin-gate {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg);
+  color: var(--text);
+  z-index: 9999;
+}
+
+.remote-pin-gate__card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 340px;
+  padding: 28px 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  text-align: center;
+}
+
+.remote-pin-gate__title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.remote-pin-gate__subtitle {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.remote-pin-gate__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px 12px;
+  font-size: 28px;
+  font-weight: 600;
+  text-align: center;
+  letter-spacing: 0.5em;
+  text-indent: 0.5em;
+  font-variant-numeric: tabular-nums;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.remote-pin-gate__input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.remote-pin-gate__error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--danger);
+}
+
+.remote-pin-gate__submit {
+  appearance: none;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 16px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 15px;
+  color: #fff;
+  background: var(--accent);
+  cursor: pointer;
+}
+
+.remote-pin-gate__submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.remote-pin-gate__hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* Settings → LAN-Fernbedienung panel (Tauri-only). */
+.remote-panel__port-input {
+  appearance: none;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 14px;
+  max-width: 140px;
+  font-variant-numeric: tabular-nums;
+}
+
+.remote-panel__port-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.remote-panel__live {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 4px;
+  padding: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.remote-panel__pin-block,
+.remote-panel__qr-block,
+.remote-panel__urls-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.remote-panel__pin-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.remote-panel__pin {
+  font-family: var(--font-mono);
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 0.25em;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.remote-panel__qr {
+  display: block;
+  width: 180px;
+  height: 180px;
+  background: #fff;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.remote-panel__urls {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.remote-panel__url {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--text);
+}
+
+.remote-panel__copy {
+  appearance: none;
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.remote-panel__copy:hover {
+  border-color: var(--accent);
+}
+
+.remote-panel__error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--danger);
+}
+
+.remote-panel__note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.remote-panel__warning {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+}

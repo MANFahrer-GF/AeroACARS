@@ -18,7 +18,7 @@
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/ipc";
 import { consentIsUnset, setConsent } from "../lib/sentry";
 
 interface Props {

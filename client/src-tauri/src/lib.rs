@@ -37,6 +37,11 @@ pub mod touchdown_v2;
 // non-fixed-wing categories. ICAO taxonomy + live sim gear-type signals.
 pub mod aircraft_category;
 
+// v0.16.0 (#LAN-Remote): in-app LAN remote-control server. Serves the real
+// React SPA + bridges every safe Tauri command over HTTP/WS to a tablet or
+// second PC on the local network, PIN-gated. Lives entirely in `src/remote/`.
+mod remote;
+
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1045,6 +1050,22 @@ struct AppState {
     /// (Match ohne Warning) oder durch expliziten Dismiss-Command
     /// geloescht.
     ofp_callsign_warning: Mutex<Option<OfpCallsignWarning>>,
+    /// v0.16.0 (#LAN-Remote): handle to the running LAN remote-control
+    /// server, or `None` while stopped. Holds the graceful-shutdown
+    /// trigger + the bound port. Same `tokio::sync::Mutex<Option<…>>`
+    /// pattern as `mqtt` above — only ever touched from async command
+    /// contexts. Started/stopped via the `remote_server_*` commands; NOT
+    /// auto-started at boot.
+    remote_server: tokio::sync::Mutex<Option<remote::RemoteServerHandle>>,
+    /// v0.16.0 (#LAN-Remote): always-live event tap. The three Tauri push
+    /// emit sites (`integrity-flag`, `pirep_auto_filed`,
+    /// `pirep_cancelled_remotely`) ALSO fan their payload out here; the WS
+    /// handler subscribes so a paired tablet sees the same events. The bus
+    /// exists even when the server is stopped (cheap no-op sends), so the
+    /// emit sites never branch on server-running state. A `Default` newtype
+    /// (broadcast::Sender has no `Default`) keeps `#[derive(Default)]` on
+    /// AppState intact.
+    remote_events: remote::RemoteEventBus,
 }
 
 /// v0.7.9: Warning-State wenn SimBrief-OFP DEP+ARR matched aber Callsign
@@ -3555,8 +3576,12 @@ pub struct LoginResult {
 /// validation fields) so the UI can render a richer error than just a string.
 #[derive(Debug, Serialize)]
 pub struct UiError {
-    code: String,
-    message: String,
+    // v0.16.0 (#LAN-Remote): `pub(crate)` so the `remote` module can read
+    // `code`/`message` when building the HTTP 422 `{code,message}` body
+    // for the LAN bridge. Still serializes identically to the Tauri IPC
+    // reject shape.
+    pub(crate) code: String,
+    pub(crate) message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     details: Option<serde_json::Value>,
 }
@@ -5367,15 +5392,17 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
                     severity = %event.session_effective_severity,
                     "integrity_flag received from recorder"
                 );
-                let _ = tauri::Emitter::emit(
-                    &emit_app,
-                    "integrity-flag",
-                    serde_json::json!({
-                        "session_id": event.session_id,
-                        "session_effective_severity": event.session_effective_severity,
-                        "flag": event.flag,
-                    }),
-                );
+                let payload = serde_json::json!({
+                    "session_id": event.session_id,
+                    "session_effective_severity": event.session_effective_severity,
+                    "flag": event.flag,
+                });
+                let _ = tauri::Emitter::emit(&emit_app, "integrity-flag", payload.clone());
+                // v0.16.0 (#LAN-Remote): also fan out to LAN WS subscribers.
+                emit_app
+                    .state::<AppState>()
+                    .remote_events
+                    .send(remote::RemoteEvent::new("integrity-flag", payload));
             }
             tracing::debug!("integrity_flag forwarder loop exiting");
         });
@@ -17019,17 +17046,22 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     // hört auf dieses Event und zeigt das
                                     // grüne ✅ — sonst verschwände der Flug
                                     // beim Backend-Auto-File kommentarlos.
+                                    let payload = serde_json::json!({
+                                        "callsign": format_callsign(
+                                            &flight_af.airline_icao,
+                                            &flight_af.flight_number,
+                                        ),
+                                        "dpt": flight_af.dpt_airport,
+                                        "arr": flight_af.arr_airport,
+                                    });
                                     let _ = tauri::Emitter::emit(
                                         &app_af,
                                         "pirep_auto_filed",
-                                        serde_json::json!({
-                                            "callsign": format_callsign(
-                                                &flight_af.airline_icao,
-                                                &flight_af.flight_number,
-                                            ),
-                                            "dpt": flight_af.dpt_airport,
-                                            "arr": flight_af.arr_airport,
-                                        }),
+                                        payload.clone(),
+                                    );
+                                    // v0.16.0 (#LAN-Remote): fan out to LAN WS.
+                                    app_af.state::<AppState>().remote_events.send(
+                                        remote::RemoteEvent::new("pirep_auto_filed", payload),
                                     );
                                 }
                                 Err(e) => {
@@ -19952,14 +19984,15 @@ fn handle_remote_cancellation(app: &AppHandle, flight: &Arc<ActiveFlight>, sourc
     // Best-effort UI nudge — the dashboard listens for this and pops the
     // manual-PIREP banner. Failure to emit isn't fatal; the activity-log
     // entry above is the durable signal.
-    let _ = tauri::Emitter::emit(
-        app,
-        "pirep_cancelled_remotely",
-        serde_json::json!({
-            "pirep_id": flight.pirep_id,
-            "source": source,
-        }),
-    );
+    let payload = serde_json::json!({
+        "pirep_id": flight.pirep_id,
+        "source": source,
+    });
+    let _ = tauri::Emitter::emit(app, "pirep_cancelled_remotely", payload.clone());
+    // v0.16.0 (#LAN-Remote): fan out to LAN WS subscribers.
+    app.state::<AppState>()
+        .remote_events
+        .send(remote::RemoteEvent::new("pirep_cancelled_remotely", payload));
 }
 
 /// Build the custom-fields map sent in `POST /api/pireps/{id}/file`. Field
@@ -22469,7 +22502,7 @@ fn pmdg_status(state: tauri::State<'_, AppState>) -> PmdgStatusDto {
 // since the adapter is Windows-only anyway.
 
 #[derive(serde::Deserialize)]
-struct InspectorAddArgs {
+pub(crate) struct InspectorAddArgs {
     name: String,
     unit: String,
     /// "number" | "bool" | "string" — matches sim_msfs::WatchKind.
@@ -24193,6 +24226,14 @@ pub fn run() {
             flight_logs_stats,
             flight_logs_delete_all,
             flight_logs_purge_older_than,
+            // v0.16.0 (#LAN-Remote): LAN remote-control server controls.
+            // The server is opt-in (started here, never at boot) and
+            // serves the real SPA + bridges every safe command to a paired
+            // tablet over HTTP/WS. Port is user-configurable + persisted.
+            remote::remote_server_start,
+            remote::remote_server_stop,
+            remote::remote_server_status,
+            remote::remote_server_set_port,
         ])
         .build(tauri::generate_context!())
         .expect("error while building AeroACARS")

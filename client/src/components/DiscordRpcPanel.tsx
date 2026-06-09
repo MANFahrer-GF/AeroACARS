@@ -8,7 +8,7 @@
 // landet das auf Status "NotFound" — kein Crash, der Pilot sieht's hier.
 
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 
 export interface DiscordPresenceSettings {

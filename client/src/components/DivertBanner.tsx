@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/ipc";
 import type { ActiveFlightInfo, FlightEndOutcome } from "../types";
 
 interface Props {

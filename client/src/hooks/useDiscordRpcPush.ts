@@ -16,7 +16,7 @@
 //     ist's billig diesen Hook auch bei "RPC off" laufen zu lassen.
 
 import { useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/ipc";
 import type { ActiveFlightInfo, SimStatus } from "../types";
 
 interface Args {

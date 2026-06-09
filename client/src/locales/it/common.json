@@ -959,6 +959,38 @@
     "diag_ago_minutes": "{{n}} min fa",
     "diag_push_error": "Ultimo errore push: {{msg}}"
   },
+  "remote": {
+    "gate": {
+      "title": "Controllo remoto AeroACARS",
+      "subtitle": "Inserisci il PIN a 6 cifre mostrato in AeroACARS sul PC del simulatore in Impostazioni → Controllo remoto LAN.",
+      "pinLabel": "PIN",
+      "unlock": "Connetti",
+      "connecting": "Connessione …",
+      "badPin": "PIN errato. Controlla il PIN sul PC del simulatore e riprova.",
+      "network": "Connessione fallita. Sei sulla stessa rete Wi-Fi del PC del simulatore?",
+      "hint": "Chiunque conosca questo PIN può controllare il volo attivo. Condividilo solo con dispositivi di cui ti fidi."
+    },
+    "server": {
+      "section_title": "Controllo remoto LAN",
+      "intro": "Controlla il volo attivo da un tablet o da un secondo PC sulla stessa rete Wi-Fi. AeroACARS avvia un server locale su questo PC e mostra un PIN di abbinamento + un codice QR.",
+      "toggle_label": "Abilita controllo remoto LAN",
+      "toggle_hint": "Avvia un server web locale su questo PC. Disattivato per impostazione predefinita — mai avviato automaticamente.",
+      "port_label": "Porta",
+      "port_hint": "Porta TCP del server locale (predefinita 8765). Modificala solo se la porta è occupata. Consentito: {{min}}–{{max}}.",
+      "port_invalid": "Porta non valida. Consentito: {{min}}–{{max}}.",
+      "pin_label": "PIN di abbinamento",
+      "qr_label": "Scansiona il codice QR",
+      "qr_hint": "Scansiona con la fotocamera del tablet — il PIN viene applicato automaticamente.",
+      "qr_alt": "Codice QR per connettersi al controllo remoto LAN",
+      "url_label": "Apri nel browser",
+      "no_urls": "Nessun indirizzo LAN trovato. Questo PC è connesso a una rete?",
+      "copy": "Copia PIN",
+      "copy_url": "Copia URL",
+      "copied": "Copiato ✓",
+      "firewall_note": "Nota: al primo avvio Windows o macOS potrebbe richiedere un permesso del firewall. Consentilo per la rete locale (privata).",
+      "security_warning": "⚠ Attenzione: chiunque su questa rete conosca il PIN può controllare completamente il tuo volo attivo (avviare, terminare, inviare il PIREP). Abilita il controllo remoto solo su una rete di cui ti fidi. L'accoppiamento e il login (ad es. l'inserimento della tua chiave API phpVMS) dovrebbero avvenire solo su una rete affidabile — la connessione viaggia non cifrata (HTTP) sulla LAN."
+    }
+  },
   "error_reporting": {
     "section_title": "Telemetria errori (anonima)",
     "intro": "AeroACARS può inviare automaticamente report di crash ed errori al nostro server GlitchTip self-hosted (tip.kant.ovh). Questo aiuta a correggere bug prima che colpiscano molti piloti. Completamente anonimo, opt-in, disattivabile in qualsiasi momento.",

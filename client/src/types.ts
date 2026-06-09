@@ -625,3 +625,19 @@ export interface OrphanFlight {
   /** Minuten seit started_at, vom Backend berechnet. */
   age_minutes: number | null;
 }
+
+/** v0.16.0 (#LAN-Remote): Mirrors the Rust `RemoteServerStatus` returned by
+ *  `remote_server_start` / `remote_server_stop` / `remote_server_status`.
+ *  Drives the Settings → LAN-Fernbedienung panel (PIN, candidate LAN URLs,
+ *  pairing QR). */
+export interface RemoteServerStatus {
+  running: boolean;
+  /** TCP port the server binds (user-configurable, default 8765). */
+  port: number;
+  /** `http://<lan-ip>:<port>` for every RFC1918 / link-local interface. */
+  urls: string[];
+  /** 6-digit pairing PIN (also embedded in the QR as `?pin=`). */
+  pin: string;
+  /** QR of the primary URL + `?pin=<pin>`, as an `<svg>` data-URL. */
+  qr_svg: string;
+}

@@ -6,7 +6,7 @@
 //   2. Manual-Plan-Form (Block-Fuel, ETA Pflicht; Rest optional)
 
 import { useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import type { Bid, ActiveFlightInfo, UiError } from "../types";
 

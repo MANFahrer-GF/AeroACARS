@@ -959,6 +959,38 @@
     "diag_ago_minutes": "vor {{n}} min",
     "diag_push_error": "Letzter Push-Fehler: {{msg}}"
   },
+  "remote": {
+    "gate": {
+      "title": "AeroACARS Fernbedienung",
+      "subtitle": "Gib die 6-stellige PIN ein, die in AeroACARS auf deinem Sim-PC unter Einstellungen → LAN-Fernbedienung angezeigt wird.",
+      "pinLabel": "PIN",
+      "unlock": "Verbinden",
+      "connecting": "Verbinde …",
+      "badPin": "Falsche PIN. Bitte prüfe die PIN am Sim-PC und versuche es erneut.",
+      "network": "Verbindung fehlgeschlagen. Bist du im selben WLAN wie der Sim-PC?",
+      "hint": "Wer diese PIN kennt, kann den laufenden Flug steuern. Gib sie nur an Geräte weiter, denen du vertraust."
+    },
+    "server": {
+      "section_title": "LAN-Fernbedienung",
+      "intro": "Steuere den laufenden Flug von einem Tablet oder zweiten PC im selben WLAN. AeroACARS startet dazu auf diesem PC einen lokalen Server und zeigt dir eine Pairing-PIN + einen QR-Code.",
+      "toggle_label": "LAN-Fernbedienung aktivieren",
+      "toggle_hint": "Startet einen lokalen Web-Server auf diesem PC. Standardmäßig aus — niemals automatisch.",
+      "port_label": "Port",
+      "port_hint": "TCP-Port des lokalen Servers (Standard 8765). Ändern nur falls der Port belegt ist. Erlaubt: {{min}}–{{max}}.",
+      "port_invalid": "Ungültiger Port. Erlaubt: {{min}}–{{max}}.",
+      "pin_label": "Pairing-PIN",
+      "qr_label": "QR-Code scannen",
+      "qr_hint": "Mit der Tablet-Kamera scannen — die PIN wird automatisch übernommen.",
+      "qr_alt": "QR-Code zum Verbinden mit der LAN-Fernbedienung",
+      "url_label": "Im Browser öffnen",
+      "no_urls": "Keine LAN-Adresse gefunden. Ist dieser PC mit einem Netzwerk verbunden?",
+      "copy": "PIN kopieren",
+      "copy_url": "URL kopieren",
+      "copied": "Kopiert ✓",
+      "firewall_note": "Hinweis: Beim ersten Start fragt Windows bzw. macOS eventuell nach einer Firewall-Freigabe. Bitte für das lokale (private) Netzwerk erlauben.",
+      "security_warning": "⚠ Achtung: Jede Person in diesem Netzwerk, die die PIN kennt, kann deinen laufenden Flug vollständig steuern (starten, beenden, PIREP einreichen). Aktiviere die Fernbedienung nur in einem vertrauenswürdigen Netzwerk. Pairing und Login (z. B. deine phpVMS-API-Key-Eingabe) sollten nur in einem vertrauenswürdigen Netzwerk erfolgen — die Verbindung läuft unverschlüsselt (HTTP) über das LAN."
+    }
+  },
   "error_reporting": {
     "section_title": "Fehler-Telemetrie (anonym)",
     "intro": "AeroACARS kann technische Crash- und Fehlerberichte automatisch an unseren self-hosted GlitchTip-Server (tip.kant.ovh) senden. Das hilft Bugs zu fixen, bevor sie viele Piloten treffen. Alles anonym, freiwillig, jederzeit abschaltbar.",

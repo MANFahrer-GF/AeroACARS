@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import { setLanguage, SUPPORTED_LANGUAGES, LANGUAGE_LABELS, type SupportedLanguage } from "../i18n";
 import type { ActiveFlightInfo, SimKind, SimStatus } from "../types";
@@ -11,6 +11,7 @@ import { OrphanFlightsPanel } from "./OrphanFlightsPanel";
 import { useConfirm } from "./ConfirmDialog";
 import { getConsent, setConsent } from "../lib/sentry";
 import { DiscordRpcPanel } from "./DiscordRpcPanel";
+import { RemoteServerPanel } from "./RemoteServerPanel";
 
 const ALL_KINDS: SimKind[] = [
   "msfs2024",
@@ -507,6 +508,11 @@ export function SettingsPanel({
           {/* v0.9.0 (#Discord-RPC): Rich-Presence im Discord-Profil.
               Opt-In, Default = aus. */}
           <DiscordRpcPanel />
+
+          {/* v0.16.0 (#LAN-Remote): LAN-Fernbedienung. Nur im Tauri-Build —
+              ein Browser kann keinen Server hosten. Im LAN-Browser (Tablet)
+              ist diese Sektion ausgeblendet. */}
+          {isTauri && <RemoteServerPanel />}
         </>
       )}
 

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { invoke, openExternal as openUrl } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import { formatRefreshError } from "../lib/refreshErrorFormatter";
 import type {

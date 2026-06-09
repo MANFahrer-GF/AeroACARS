@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/ipc";
 import type { ActiveFlightInfo, SimSnapshot } from "../types";
 import { ActivityLogPanel } from "./ActivityLogPanel";
 import { setTrack } from "../lib/trackStore";

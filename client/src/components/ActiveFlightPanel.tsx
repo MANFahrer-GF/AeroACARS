@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import type { ActiveFlightInfo, FlightEndOutcome, SimSnapshot } from "../types";
 import { formatRefreshError } from "../lib/refreshErrorFormatter";
@@ -103,7 +103,11 @@ export function ActiveFlightPanel({
     setBusy("end");
     setError(null);
     try {
-      const payload = decision ? { accident_decision: decision } : undefined;
+      // Tauri's #[tauri::command] looks up args in camelCase, so the Rust
+      // `accident_decision` param is read as `accidentDecision`. Sending
+      // snake_case here silently drops the pilot's override (it would file
+      // as an accident regardless of the "harte Landung" choice).
+      const payload = decision ? { accidentDecision: decision } : undefined;
       await invoke("flight_end", payload);
       onFiledSuccess(filedOutcome());
     } catch (err: unknown) {

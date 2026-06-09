@@ -18,7 +18,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.15.26"
+version = "0.16.0"
 edition = "2021"
 license = "MIT"
 authors = ["Thomas Kant <github@MANFahrer-GF>", "AeroACARS contributors"]
@@ -155,6 +155,31 @@ sentry = { version = "0.42", default-features = false, features = ["backtrace", 
 # die den Default nutzen (GlitchTip aeroacars-client, 2026-06-01). Wir ziehen
 # rustls direkt rein, um in run() EINMAL den Default explizit zu installieren.
 rustls = { version = "0.23", features = ["aws_lc_rs"] }
+
+# v0.16.0 (#LAN-Remote): in-app LAN remote-control server. Serves the
+# real React SPA + bridges every safe Tauri command over HTTP/WS to a
+# tablet or second PC on the local network, PIN-gated. axum 0.8 reuses
+# the hyper 1.x / tower 0.5 / tower-http 0.6 already in the tree (via
+# reqwest + tauri), so this pulls almost no new transitive weight.
+# Lives entirely in `src/remote/` — does NOT bloat lib.rs.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "ws", "query", "tokio"] }
+# `fs` → ServeDir for the bundled SPA; `cors` → strict same-host CORS layer.
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+# Enumerate the host's RFC1918 interface addresses to build the
+# http://<lan-ip>:<port> connect URLs shown in the QR code.
+if-addrs = "0.13"
+# Render the primary connect URL (+ "?pin=") to a scannable QR as an
+# inline SVG data-URL the React settings panel can <img> directly.
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+# Constant-time PIN/token comparison — avoids a timing side-channel on
+# the auth endpoint that gates control of the REAL flight.
+subtle = "2"
+# CSPRNG for the 6-digit pairing PIN + the 256-bit bearer token. These
+# gate control of the REAL flight, so they must be unguessable — a
+# SystemTime-seeded PRNG is not acceptable here. `getrandom` is the
+# minimal OS-entropy primitive and is already fully resolved in the lock
+# (pulled transitively by rand/ring), so this adds zero new build weight.
+getrandom = "0.2"
 
 # Internal crates — wired up for use as the project grows
 api-client.workspace = true
