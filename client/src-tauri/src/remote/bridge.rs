@@ -28,8 +28,6 @@
 //! Every command in the `generate_handler!` list (lib.rs) is dispatched
 //! here EXCEPT a small deny-set:
 //!
-//! - `phpvms_load_session` — boot/session-restore path the desktop runs
-//!   once at launch; meaningless (and confusing) from a paired tablet.
 //! - `xplane_install_plugin` / `xplane_detect_install_path` — write to /
 //!   probe the **sim PC's** local X-Plane install; a remote tablet has no
 //!   business mutating the host filesystem, and the paths are the host's.
@@ -430,6 +428,13 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
             }
         }
         "phpvms_logout" => from_uierr(crate::phpvms_logout(app.clone(), st!()).await),
+        // v0.16.2: the paired tablet inherits the sim-PC's logged-in session.
+        // The frontend's startup login-check (App.tsx) calls this; bridging it
+        // means the tablet skips the API-key login page (the backend already
+        // holds the session). Returns Option<LoginResult> (profile, NOT the key).
+        "phpvms_load_session" => {
+            from_uierr(crate::phpvms_load_session(app.clone(), st!()).await)
+        }
 
         // ========================== SETTINGS =============================
         "set_minimize_to_tray" => {
