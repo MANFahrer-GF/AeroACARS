@@ -878,6 +878,23 @@ pub struct PirepFull {
     // dropping it makes the GET resilient to both shapes.
 }
 
+/// A single ACARS position row from `GET /api/pireps/{id}/acars/position`.
+///
+/// CRITICAL: decode ONLY `lat`/`lon`. The phpVMS `Acars` API resource returns
+/// `distance` and `fuel` as **unit-objects** (e.g. `{"nmi": 12.3}`), not bare
+/// scalars, so a struct that named those fields with a scalar type would fail
+/// to decode the whole envelope. Serde drops unknown fields by default, so we
+/// keep only the two coordinates — same resilience pattern as `PirepFull`,
+/// which drops `distance` for the same reason (see above).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AcarsPosition {
+    // Option: lat/lon are nullable in the phpVMS acars schema. A single null
+    // row must NOT poison the whole-batch decode (it would silently skip the
+    // track reseed) — null rows are filtered out at the consumer.
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PirepCreated {
     pub id: String,
@@ -1648,6 +1665,23 @@ impl Client {
     pub async fn get_pirep(&self, pirep_id: &str) -> Result<PirepFull, ApiError> {
         let path = format!("/api/pireps/{pirep_id}");
         self.get_data(&path).await
+    }
+
+    /// `GET /api/pireps/{pirep_id}/acars/position` — the complete server-side
+    /// ACARS position track for a PIREP, ordered by sim_time ASC (oldest →
+    /// newest) and unpaginated. This endpoint is under `api.auth` (same
+    /// `X-API-Key` we already send) and returns the standard `{ data: [...] }`
+    /// envelope.
+    ///
+    /// Used on flight-resume to reseed the in-app live-map track from the
+    /// authoritative superset, so a mid-flight update/restart can't leave the
+    /// local track empty or frozen behind a stale localStorage seed-gate.
+    pub async fn get_acars_positions(
+        &self,
+        pirep_id: &str,
+    ) -> Result<Vec<AcarsPosition>, ApiError> {
+        self.get_data(&format!("/api/pireps/{pirep_id}/acars/position"))
+            .await
     }
 
     /// `GET /api/fleet/aircraft/{id}` — single aircraft, used for diagnostics.

@@ -17,7 +17,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { invoke } from "@tauri-apps/api/core";
 import type { ActiveFlightInfo, SimSnapshot } from "../types";
 import { ActivityLogPanel } from "./ActivityLogPanel";
-import { getTrack, setTrack } from "../lib/trackStore";
+import { setTrack } from "../lib/trackStore";
 import { aircraftSvg } from "../lib/aircraftIcon";
 import { phaseColor, phaseLabel as formatPhase } from "../lib/phaseColors";
 
@@ -497,21 +497,19 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
 
   // ---- geflogenen Track laden (Backend ist die Quelle) ----
   // v0.15.x: Lücken-Fix. Der Rust-Streamer akkumuliert den Track lückenlos
-  // (fokus-unabhängig); wir pollen ihn hierher. Beim ersten Mal aus dem
-  // trackStore (localStorage) seeden — so ist die Linie nach einem App-Neustart
-  // mitten im Flug sofort da, bis das Backend wieder Punkte gesammelt hat.
-  // Danach gewinnt das Backend, sobald es ≥ so viele Punkte hat wie der Seed
-  // (verhindert, dass der frisch leere Backend-Track die hydratisierte Linie
-  // kurz löscht). Wir spiegeln den Track zusätzlich in den Store (setTrack),
-  // damit getTrack/localStorage konsistent bleiben (Neustart-Recovery).
+  // (fokus-unabhängig); wir pollen ihn hierher.
+  // v0.15.25: Der Backend-Track ist nach einem App-Neustart mitten im Flug
+  // jetzt VOLLSTÄNDIG — `try_resume_flight` reseedet ihn aus phpVMS (dem
+  // autoritativen Superset). Damit entfällt der fragile localStorage-Seed-Gate
+  // (`next.length < seed.length`), der einen korrekten Backend-Track blockierte,
+  // sobald ein veralteter localStorage-Seed länger war. Wir spiegeln den Track
+  // weiterhin in den Store (setTrack), damit getTrack/localStorage konsistent
+  // bleiben — das ist jetzt nur noch ein harmloser Cache, kein Gate mehr.
   useEffect(() => {
     if (!pirepId) {
       setTrackPoints([]);
       return;
     }
-    // Sofort aus dem persistierten Store seeden (überbrückt App-Neustart).
-    const seed = getTrack(pirepId);
-    setTrackPoints(seed);
     let cancelled = false;
     const load = () =>
       invoke<[number, number][]>("flight_get_track")
@@ -520,13 +518,8 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
           const next = pts ?? [];
           setTrackPoints((prev) => {
             // Transient leeren Backend-Track ignorieren (active_flight wird am
-            // Flugende ge-take()t) — die hydratisierte/letzte Linie behalten,
-            // nicht wegblitzen.
+            // Flugende ge-take()t) — die letzte Linie behalten, nicht wegblitzen.
             if (next.length === 0 && prev.length > 0) return prev;
-            // Backend erst übernehmen, wenn es den persistierten Seed eingeholt
-            // hat (Neustart-Brücke; der Backend-Track wird jetzt selbst
-            // persistiert+restauriert — das ist die zusätzliche Absicherung).
-            if (next.length < seed.length) return prev;
             // Dedup: gleiche Länge + gleicher letzter Punkt = keine neuen Punkte
             // → kein Redraw (spart das setData alle 2 s im geparkten Zustand).
             // Beim Cap-Crawl (>5000 Punkte) ändert sich der letzte Punkt → es
@@ -542,7 +535,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
             return next;
           });
           // Store + localStorage konsistent halten (nur reale, nicht-leere Tracks).
-          if (next.length >= seed.length && next.length > 0) {
+          if (next.length > 0) {
             setTrack(pirepId, next);
           }
         })

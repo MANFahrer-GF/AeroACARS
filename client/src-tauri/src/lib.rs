@@ -22816,6 +22816,43 @@ async fn try_resume_flight(
         "restored flight stats from disk"
     );
 
+    // v0.15.25: reseed the in-app live-map track from phpVMS — the server holds
+    // the authoritative SUPERSET of every position we ever posted. A mid-flight
+    // app update/restart starts `FlightStats.track` empty (and a stale
+    // localStorage seed-gate in the UI could hide a clean backend track), so we
+    // replace the locally-persisted track with the complete server track here.
+    // This runs inside the already-async fn, on a local `&mut` (no lock held
+    // across the await), and strictly BEFORE `restored_stats` is moved into the
+    // ActiveFlight Arc below — so there's no race with the streamer.
+    match client.get_acars_positions(&persisted.pirep_id).await {
+        Ok(pts) if !pts.is_empty() => {
+            restored_stats.track.clear();
+            for p in &pts {
+                // Skip null-coordinate rows (lat/lon nullable in phpVMS).
+                // on_ground=false (AIR threshold): the historical replay has no
+                // reliable ground state, and the coarser AIR threshold keeps the
+                // reseeded track light.
+                if let (Some(lon), Some(lat)) = (p.lon, p.lat) {
+                    record_track_point(&mut restored_stats, lon, lat, false);
+                }
+            }
+            tracing::info!(
+                pirep_id = %persisted.pirep_id,
+                raw = pts.len(),
+                thinned = restored_stats.track.len(),
+                "seeded live-map track from server on resume"
+            );
+        }
+        Ok(_) => {} // server has no rows yet → keep the persisted track from apply_to
+        Err(e) => {
+            tracing::warn!(
+                pirep_id = %persisted.pirep_id,
+                error = %e,
+                "server track fetch failed — keeping local persisted track"
+            );
+        }
+    }
+
     let flight = Arc::new(ActiveFlight {
         pirep_id: persisted.pirep_id.clone(),
         bid_id: persisted.bid_id,
@@ -24884,6 +24921,40 @@ mod touch_and_go_go_around_tests {
         // Die ersten 3 (0.0, 0.01, 0.02) sind rausgefallen → ältester ist jetzt 0.03.
         assert_eq!(stats2.track.first().unwrap()[0], 3.0 * 0.01);
         assert_eq!(stats2.track.last().unwrap()[0], (total - 1) as f64 * 0.01);
+    }
+
+    // v0.15.25: der Resume-Reseed replayt die kompletten Server-Positionen
+    // (sim_time ASC) durch `record_track_point` mit on_ground=false. Dieser
+    // Test spiegelt diesen Replay: Reihenfolge bleibt erhalten, der erste Punkt
+    // wird immer behalten, unter der Luft-Schwelle liegende Punkte fallen raus.
+    #[test]
+    fn record_track_point_replays_server_track_thinned_and_ordered() {
+        // Server-style Positionen (lon, lat), sim_time ASC. Manche Schritte sind
+        // bewusst kleiner als die Luft-Schwelle (0,002°) → müssen ausgedünnt werden.
+        let server_pts: Vec<(f64, f64)> = vec![
+            (10.0000, 50.0000), // erster Punkt → immer behalten
+            (10.0005, 50.0005), // Δ < 0,002° → verworfen
+            (10.0100, 50.0100), // Δ > 0,002° → behalten
+            (10.0105, 50.0105), // Δ < 0,002° → verworfen
+            (10.0300, 50.0300), // Δ > 0,002° → behalten
+        ];
+
+        let mut stats = FlightStats::default();
+        assert!(stats.track.is_empty());
+        for &(lon, lat) in &server_pts {
+            // on_ground=false = AIR-Schwelle (kein verlässlicher Ground-State im Replay).
+            record_track_point(&mut stats, lon, lat, false);
+        }
+
+        // Ausgedünnt: 5 rohe Punkte → 3 behaltene.
+        assert_eq!(
+            stats.track,
+            vec![[10.0000, 50.0000], [10.0100, 50.0100], [10.0300, 50.0300]]
+        );
+        // Reihenfolge erhalten: erster behaltener = ältester Server-Punkt,
+        // letzter behaltener = neuester Server-Punkt.
+        assert_eq!(stats.track.first().unwrap(), &[10.0000, 50.0000]);
+        assert_eq!(stats.track.last().unwrap(), &[10.0300, 50.0300]);
     }
 }
 
