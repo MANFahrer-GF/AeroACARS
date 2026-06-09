@@ -6,7 +6,8 @@
 //! POST /api/auth          {pin}              → {token} | 401 | 429
 //! POST /api/cmd/{name}     <named args json>  → 200 Ok | 422 UiError | 404
 //! GET  /ws?token=…         (WebSocket)         → push stream
-//! GET  /*path              (SPA via ServeDir, fallback index.html)
+//! GET  /*path              (SPA via embedded asset_resolver,
+//!                           fallback index.html for deep-links)
 //! ```
 //!
 //! Defence in depth applied to **every** `/api` + `/ws` request:
@@ -22,7 +23,7 @@ use std::sync::Arc;
 use axum::{
     body::Bytes,
     extract::{ws::WebSocketUpgrade, ConnectInfo, Path as AxumPath, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -31,7 +32,6 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 use tower_http::cors::CorsLayer;
-use tower_http::services::{ServeDir, ServeFile};
 
 use crate::remote::{auth::AuthError, bridge, events, net, RemoteContext};
 
@@ -54,13 +54,16 @@ pub async fn bind(port: u16) -> std::io::Result<tokio::net::TcpListener> {
 // SPA directory resolution
 // ----------------------------------------------------------------------
 
-/// Resolve the on-disk directory Tauri loads the SPA from, for `ServeDir`.
+/// Resolve the on-disk directory the SPA *might* live in, used ONLY as the
+/// dev / `cargo run` fallback when the frontend is not embedded.
 ///
-/// `tauri.conf.json` sets `frontendDist: "../dist"`. In a bundled build
-/// those files are copied into the platform resource dir; in `cargo
-/// run`/dev they live next to the crate. We probe the bundled resource
-/// dir first, then fall back to the dev path relative to `CARGO_MANIFEST_DIR`.
-/// Returns the first candidate that contains an `index.html`.
+/// In a PACKAGED build the frontend is embedded in the binary (served via
+/// [`AppHandle::asset_resolver`] in [`serve_spa`]), so this path is not
+/// hit. `tauri.conf.json` sets `frontendDist: "../dist"`; in dev those
+/// files live next to the crate. We probe the bundled resource dir first
+/// (harmless — usually empty for the frontend in Tauri 2), then fall back
+/// to the dev path relative to `CARGO_MANIFEST_DIR`. Returns the first
+/// candidate that contains an `index.html`.
 pub fn resolve_spa_dir(app: &AppHandle) -> PathBuf {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
@@ -79,9 +82,116 @@ pub fn resolve_spa_dir(app: &AppHandle) -> PathBuf {
             return c.clone();
         }
     }
-    // Last resort: the dev path even if not yet built — ServeDir will just
-    // 404 until `npm run build` has produced it.
+    // Last resort: the dev path even if not yet built — the FS fallback in
+    // `serve_spa` will just 404 until `npm run build` has produced it.
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist")
+}
+
+// ----------------------------------------------------------------------
+// SPA serving (embedded assets, FS dev fallback)
+// ----------------------------------------------------------------------
+
+/// Serve the SPA for an unmatched (non-`/api`, non-`/ws`) request.
+///
+/// PRIMARY path — the EMBEDDED assets via [`AppHandle::asset_resolver`].
+/// In a packaged Tauri app the frontend is compiled into the binary (via
+/// `generate_context!`), NOT shipped as loose files, so a filesystem
+/// `ServeDir` finds nothing and the tablet gets a blank page. The asset
+/// resolver reads the bundled bytes instead.
+///
+/// Tauri's resolver keys assets WITHOUT a leading slash (it strips one
+/// internally) and maps the empty path to `index.html`; it also already
+/// falls back to `index.html` for an unknown path, so a SPA deep-link like
+/// `/logbook` resolves to the app shell and the client router takes over.
+/// We pass the request path as-is — the resolver normalizes it — and only
+/// 404 if even `index.html` is absent (no frontend embedded at all).
+///
+/// DEV fallback — when the resolver yields nothing (e.g. `tauri dev` with
+/// `devUrl` set and no embedded assets, where the resolver may not find
+/// the file), read from the on-disk `spa_dir` so `cargo run` still serves
+/// a UI after `npm run build`.
+async fn serve_spa(app: &AppHandle, spa_dir: &std::path::Path, uri: Uri) -> Response {
+    let path = uri.path();
+
+    // 1) Embedded assets (production). The resolver strips a leading slash
+    //    and maps "" → index.html, so the raw request path works directly;
+    //    it also falls back to index.html for SPA deep-links itself.
+    if let Some(asset) = app.asset_resolver().get(path.to_string()) {
+        return (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, asset.mime_type)],
+            asset.bytes,
+        )
+            .into_response();
+    }
+
+    // 2) Dev / `cargo run` FS fallback. Resolve the on-disk file; for an
+    //    unmatched path (SPA deep-link) serve index.html so the client
+    //    router handles it.
+    if let Some(resp) = serve_from_fs(spa_dir, path).await {
+        return resp;
+    }
+
+    // 3) Nothing embedded and nothing on disk — genuine miss.
+    (StatusCode::NOT_FOUND, "not found").into_response()
+}
+
+/// Read the requested file from the on-disk `spa_dir` (dev fallback only).
+/// Returns the file bytes for a real file, the `index.html` shell for an
+/// unmatched path (SPA deep-link), or `None` when even `index.html` is
+/// absent on disk. The path is sanitized to its file components so a
+/// `../` traversal can't escape `spa_dir`.
+async fn serve_from_fs(spa_dir: &std::path::Path, req_path: &str) -> Option<Response> {
+    // Strip the leading slash and drop any non-`Normal` components
+    // (RootDir / ParentDir / CurDir) so the path can't escape spa_dir.
+    let rel: PathBuf = std::path::Path::new(req_path.trim_start_matches('/'))
+        .components()
+        .filter(|c| matches!(c, std::path::Component::Normal(_)))
+        .collect();
+
+    let candidate = spa_dir.join(&rel);
+    if rel.as_os_str().is_empty() || !candidate.is_file() {
+        // Directory request or unknown path → SPA shell (deep-link).
+        let index = spa_dir.join("index.html");
+        let bytes = tokio::fs::read(&index).await.ok()?;
+        return Some(
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/html")],
+                bytes,
+            )
+                .into_response(),
+        );
+    }
+
+    let bytes = tokio::fs::read(&candidate).await.ok()?;
+    let mime = mime_for_ext(&candidate);
+    Some((StatusCode::OK, [(header::CONTENT_TYPE, mime)], bytes).into_response())
+}
+
+/// Minimal extension → MIME mapping for the dev FS fallback. The packaged
+/// build never hits this (the asset resolver supplies the real MIME); this
+/// only needs to cover the handful of types a Vite build emits so a JS/CSS
+/// asset is served with a content-type the browser executes.
+fn mime_for_ext(path: &std::path::Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("html") => "text/html",
+        Some("js") | Some("mjs") => "text/javascript",
+        Some("css") => "text/css",
+        Some("json") => "application/json",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("ico") => "image/x-icon",
+        Some("woff2") => "font/woff2",
+        Some("woff") => "font/woff",
+        Some("ttf") => "font/ttf",
+        Some("wasm") => "application/wasm",
+        Some("map") => "application/json",
+        _ => "application/octet-stream",
+    }
 }
 
 // ----------------------------------------------------------------------
@@ -90,10 +200,18 @@ pub fn resolve_spa_dir(app: &AppHandle) -> PathBuf {
 
 /// Build the full axum `Router` for the LAN server.
 pub fn build_router(ctx: RemoteContext, spa_dir: PathBuf) -> Router {
-    // SPA: serve files; for any unmatched path fall back to index.html so
-    // the client-side router handles deep links (e.g. /logbook).
-    let index = spa_dir.join("index.html");
-    let serve_dir = ServeDir::new(&spa_dir).fallback(ServeFile::new(index));
+    // SPA fallback: in a PACKAGED build the frontend is EMBEDDED in the
+    // binary (via `generate_context!`), NOT shipped as loose files, so
+    // `ServeDir` on `spa_dir` finds nothing → blank page. We serve the
+    // embedded assets via `app.asset_resolver()` instead, keeping `spa_dir`
+    // only as the dev fallback (where assets aren't embedded). The handler
+    // captures `spa_dir` and reads the `AppHandle` from the shared
+    // `RemoteContext` router state.
+    let dev_spa_dir = spa_dir;
+    let spa_fallback = move |state: State<RemoteContext>, uri: Uri| {
+        let dev_spa_dir = dev_spa_dir.clone();
+        async move { serve_spa(&state.0.app, &dev_spa_dir, uri).await }
+    };
 
     Router::new()
         .route("/api/auth", post(auth_handler))
@@ -107,8 +225,10 @@ pub fn build_router(ctx: RemoteContext, spa_dir: PathBuf) -> Router {
         // logs. The token transport itself must stay as-is; do not "fix"
         // this by logging and redacting.
         .route("/ws", get(ws_handler))
-        // SPA + static assets (also the unmatched-route fallback).
-        .fallback_service(serve_dir)
+        // SPA + static assets (also the unmatched-route fallback). Served
+        // from the EMBEDDED assets; a deep-link with no asset falls back to
+        // index.html so the client router handles it.
+        .fallback(spa_fallback)
         // CORS note: a default (deny-all-cross-origin) `CorsLayer` is
         // applied, but CORS is NOT the security boundary here. CORS only
         // governs whether a *browser* exposes a cross-origin response to

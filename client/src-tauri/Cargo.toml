@@ -18,7 +18,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.16.0"
+version = "0.16.1"
 edition = "2021"
 license = "MIT"
 authors = ["Thomas Kant <github@MANFahrer-GF>", "AeroACARS contributors"]
@@ -163,8 +163,10 @@ rustls = { version = "0.23", features = ["aws_lc_rs"] }
 # reqwest + tauri), so this pulls almost no new transitive weight.
 # Lives entirely in `src/remote/` — does NOT bloat lib.rs.
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "ws", "query", "tokio"] }
-# `fs` → ServeDir for the bundled SPA; `cors` → strict same-host CORS layer.
-tower-http = { version = "0.6", features = ["fs", "cors"] }
+# `cors` → strict same-host CORS layer. The SPA itself is served from the
+# EMBEDDED Tauri assets via `app.asset_resolver()` (see `remote/router.rs`),
+# not `ServeDir`, so the `fs` feature is no longer needed.
+tower-http = { version = "0.6", features = ["cors"] }
 # Enumerate the host's RFC1918 interface addresses to build the
 # http://<lan-ip>:<port> connect URLs shown in the QR code.
 if-addrs = "0.13"

@@ -24143,6 +24143,47 @@ pub fn run() {
             // steht. Persistiert Attempt-Count pro PIREP damit nach App-
             // Restart einfach weiter retried wird.
             spawn_pirep_queue_worker(app.handle().clone());
+
+            // v0.16.0 (#LAN-Remote): headless autostart hook. If
+            // `AEROACARS_LAN_AUTOSTART` parses as a port, start the LAN
+            // remote-control server on launch on that port — same start
+            // path as the `remote_server_start` command, just driven by an
+            // env var instead of the GUI toggle. Lets the server be tested
+            // (and run) without touching the window, and doubles as a small
+            // power-user feature. No env var → no-op (the normal case;
+            // pilots never set it, so production is unaffected).
+            if let Some(port) = std::env::var("AEROACARS_LAN_AUTOSTART")
+                .ok()
+                .and_then(|v| v.trim().parse::<u16>().ok())
+            {
+                let app_for_lan = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    // Persist the requested port so the shared start path
+                    // (which reads the persisted port) binds it, then start.
+                    let _ = remote::remote_server_set_port(
+                        port,
+                        app_for_lan.clone(),
+                        app_for_lan.state::<AppState>(),
+                    )
+                    .await;
+                    match remote::remote_server_start(
+                        app_for_lan.clone(),
+                        app_for_lan.state::<AppState>(),
+                    )
+                    .await
+                    {
+                        Ok(status) => tracing::info!(
+                            port = status.port,
+                            "LAN remote-control server autostarted (AEROACARS_LAN_AUTOSTART)"
+                        ),
+                        Err(e) => tracing::error!(
+                            error = %e.message,
+                            "LAN autostart failed"
+                        ),
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
