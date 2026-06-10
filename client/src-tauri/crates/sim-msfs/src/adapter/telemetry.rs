@@ -373,6 +373,44 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:AB_AP_ATHR_LIGHT_ON", "Number"),
     F::f64("L:AB_AP_APPR_LIGHT_ON", "Number"),
     F::f64("L:AB_AP_LOC_LIGHT_ON", "Number"),
+
+    // ---- Aerosoft A340-600 full profile (v0.16.4, WASM-Analyse
+    // 2026-06-10) ----
+    // Komfort-/System-LVars analog zur Fenix-Abdeckung weiter oben.
+    // Alle Namen woertlich gegen die Strings der MSFS_ToLiss_Plugin
+    // .wasm verifiziert. LVars lesen auf Nicht-A346-Addons schlicht 0;
+    // das Snapshot-Mapping konsultiert sie NUR bei
+    // AircraftProfile::AerosoftA346. LOCKSTEP: Reihenfolge MUSS mit
+    // den pull_f64!-Aufrufen am Ende von `from_block` uebereinstimmen.
+    //
+    // Cabin signs (Overhead-Schalter; Wertebereich vermutlich 0/1
+    // oder 0/1/2 wie beim realen Airbus OFF/AUTO/ON — Mapping clamps
+    // auf 0..=2, Live-Flug-Verifikation steht aus).
+    F::f64("L:AB_OVH_SEATBELT", "Number"),
+    F::f64("L:AB_OVH_NO_SMOKING", "Number"),
+    // Anti-Ice: 4 Engine-Schalter (L1/L2/R1/R2 — die A346 hat 4
+    // Triebwerke), Wing, Probe/Window-Heat.
+    F::f64("L:AB_OVH_ANTIICE_ENGL1", "Number"),
+    F::f64("L:AB_OVH_ANTIICE_ENGL2", "Number"),
+    F::f64("L:AB_OVH_ANTIICE_ENGR1", "Number"),
+    F::f64("L:AB_OVH_ANTIICE_ENGR2", "Number"),
+    F::f64("L:AB_OVH_ANTIICE_WING", "Number"),
+    F::f64("L:AB_OVH_ANTIICE_PROBEWINDOW", "Number"),
+    // Batterie: das sind die "OFF"-ANNUNCIATOR-LAMPEN der BAT-Push-
+    // buttons (sie stehen im WASM-Strings-Block der *_OFF/*_FAULT/
+    // *_AVAIL-Lampen-Legends, NICHT im *_PB-Schalter-Block) →
+    // INVERTIERTE Semantik: Lampe an (1) = Batterie AUS. Das Mapping
+    // invertiert explizit, siehe `telemetry_to_snapshot`.
+    F::f64("L:AB_VC_OVH_ELEC_BAT1_OFF", "Number"),
+    F::f64("L:AB_VC_OVH_ELEC_BAT2_OFF", "Number"),
+    // Autobrake-Modus-Enum (Annahme: 0=OFF, 1=LO, 2=MED, 3=MAX wie
+    // die realen A340-Stufen; unbekannte Werte mappen auf None).
+    F::f64("L:AB_AutoBrake_Mode", "Number"),
+    // Gear-SELECTOR-LEVER: die Standard-SimVar `GEAR POSITION` klemmt
+    // bei der A346 auf "down" (v0.13.17-Befund) — der Hebel ist die
+    // einzige brauchbare Quelle. Richtung (0=up/1=down) ist plausibel
+    // aber unverifiziert bis zum ersten Live-Flug.
+    F::f64("L:AB_MPL_LANDING_GEAR_SELECTOR_LEVER", "Number"),
 ];
 
 // Helper builders so the table above stays compact.
@@ -587,6 +625,27 @@ pub struct Telemetry {
     pub a346_athr_light: f64,
     pub a346_appr_light: f64,
     pub a346_loc_light: f64,
+
+    // Aerosoft A340-600 full profile (v0.16.4) — Komfort-/System-
+    // LVars, nur bei AircraftProfile::AerosoftA346 konsultiert.
+    // Cabin signs (Schalterposition, geclamped 0..=2 im Mapping).
+    pub a346_seatbelt_sw: f64,
+    pub a346_no_smoking_sw: f64,
+    // Anti-Ice-Schalter: 4 Engines + Wing + Probe/Window.
+    pub a346_antiice_engl1: f64,
+    pub a346_antiice_engl2: f64,
+    pub a346_antiice_engr1: f64,
+    pub a346_antiice_engr2: f64,
+    pub a346_antiice_wing: f64,
+    pub a346_antiice_probewindow: f64,
+    // BAT-"OFF"-Annunciator-LAMPEN — INVERTIERT: 1 = Batterie aus,
+    // 0 = Batterie an (oder LVar noch nicht initialisiert).
+    pub a346_bat1_off_light: f64,
+    pub a346_bat2_off_light: f64,
+    // Autobrake-Modus-Enum (Annahme 0=OFF/1=LO/2=MED/3=MAX).
+    pub a346_autobrake_mode: f64,
+    // Gear-Selector-Lever (0=up/1=down angenommen, unverifiziert).
+    pub a346_gear_lever: f64,
 }
 
 // ---- Touchdown sample (separate data definition #2) ----
@@ -977,6 +1036,23 @@ impl Telemetry {
         pull_f64!(t.a346_appr_light);
         pull_f64!(t.a346_loc_light);
 
+        // Aerosoft A346 full profile (v0.16.4) — gleiche TELEMETRY_
+        // FIELDS-Reihenfolge wie am Tabellen-Ende registriert
+        // (Lockstep): 2× Signs, 6× Anti-Ice, 2× BAT-OFF-Lampen,
+        // Autobrake-Mode, Gear-Lever — alle f64.
+        pull_f64!(t.a346_seatbelt_sw);
+        pull_f64!(t.a346_no_smoking_sw);
+        pull_f64!(t.a346_antiice_engl1);
+        pull_f64!(t.a346_antiice_engl2);
+        pull_f64!(t.a346_antiice_engr1);
+        pull_f64!(t.a346_antiice_engr2);
+        pull_f64!(t.a346_antiice_wing);
+        pull_f64!(t.a346_antiice_probewindow);
+        pull_f64!(t.a346_bat1_off_light);
+        pull_f64!(t.a346_bat2_off_light);
+        pull_f64!(t.a346_autobrake_mode);
+        pull_f64!(t.a346_gear_lever);
+
         // Silence the unused-assignment warning the last `pull_*!`
         // emits (the macro always advances `off`, but the very last
         // call doesn't read it again).
@@ -1028,10 +1104,47 @@ fn read_str256(bytes: &[u8], off: usize) -> Option<String> {
     })
 }
 
+/// A346 (ToLiss-Port): Gear-Position aus dem SELECTOR LEVER ableiten.
+///
+/// Die Standard-SimVar `GEAR POSITION` klemmt bei der Aerosoft A346
+/// dauerhaft auf "down" (dokumentierter v0.13.17-Aera-Befund) — das
+/// Activity-Log zeigte nie "Gear UP" und der Stable-Config-Check sah
+/// das Gear immer als ausgefahren. Der Hebel-LVar
+/// `L:AB_MPL_LANDING_GEAR_SELECTOR_LEVER` ist die einzige brauchbare
+/// Quelle.
+///
+/// Richtungs-ANNAHME (unverifiziert bis zum ersten Live-Flug):
+/// 0 = Lever UP, != 0 = Lever DOWN — die uebliche Konvention solcher
+/// Lever-LVars und konsistent damit, dass ein Cold&Dark-Spawn mit
+/// uninitialisiertem LVar (0) zwar kurz "up" lesen wuerde, das Log
+/// aber nur TRANSITIONEN loggt (der erste Wert latcht still).
+/// Sollte der Live-Flug die Gegenrichtung zeigen, ist genau diese
+/// eine Funktion zu invertieren.
+///
+/// Konsumenten von `gear_position` (alle display-/analysefeld-seitig,
+/// NICHT score-kritisch — auditiert 2026-06-10):
+///   * Activity-Log "Gear UP/DOWN" (lib.rs detect_telemetry_changes)
+///   * Stable-Config `gear_ok` im Approach-Buffer (informatives
+///     PIREP-/MQTT-Feld; fliesst NICHT in compute_sub_scores ein)
+///   * MQTT-Live-Map-Payload (Anzeige)
+fn a346_gear_position_from_lever(lever: f64) -> f32 {
+    if lever != 0.0 {
+        1.0 // down
+    } else {
+        0.0 // up
+    }
+}
+
 fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     let profile = AircraftProfile::detect(&t.title, &t.atc_model);
     let is_fenix = profile.is_fenix();
     let is_fbw = matches!(profile, AircraftProfile::FbwA32nx);
+    // v0.16.4: A346-Komfort-LVars (Signs, Anti-Ice, BAT, Autobrake,
+    // Gear-Lever, A/THR) sind ausschliesslich unter diesem Gate
+    // gemappt — Nicht-A346-Aircraft bleiben byte-fuer-byte auf dem
+    // Status quo (siehe a346_full_profile_does_not_affect_other_
+    // profiles-Test).
+    let is_a346 = matches!(profile, AircraftProfile::AerosoftA346);
     // v0.7.17 (F-001): Fenix-A32x extension LVARs are now ALWAYS applied
     // when the profile is Fenix — the v0.7.16 opt-in flag is removed
     // after a positive testing phase. The branch below is kept under
@@ -1240,7 +1353,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             t.ap_nav,
             t.fnx_fcu_appr as i32 != 0 || t.ap_approach,
         )
-    } else if matches!(profile, AircraftProfile::AerosoftA346) {
+    } else if is_a346 {
         // Aerosoft A346: AP1- oder AP2-Lampe an = Master engaged;
         // Approach-Mode aus APPR- oder LOC-Lampe (LOC = lateraler
         // Approach-Capture ohne Glideslope). Die Lampen-LVars sind
@@ -1350,6 +1463,12 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // automatically active when engines are running, so we
         // treat both states as "heat available".
         t.fnx_probe_heat >= 0.0 // always considered "active" on Airbus
+    } else if is_a346 {
+        // A346 `L:AB_OVH_ANTIICE_PROBEWINDOW`: gleiche Airbus-Semantik
+        // wie der Fenix PROBE/WINDOW-HEAT-Pushbutton (0=AUTO, 1=ON) —
+        // AUTO heizt automatisch sobald Triebwerke laufen, also wie
+        // beim Fenix beide Stellungen als "heat available" werten.
+        t.a346_antiice_probewindow >= 0.0
     } else {
         t.pitot_heat
     };
@@ -1357,16 +1476,41 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // BAT 1 OR BAT 2 in AUTO/ON position counts as "battery on".
         // 0=OFF, 1=AUTO on real Airbus.
         t.fnx_bat1 as i32 != 0 || t.fnx_bat2 as i32 != 0
+    } else if is_a346 {
+        // INVERTIERT: `L:AB_VC_OVH_ELEC_BAT{1,2}_OFF` sind die weissen
+        // "OFF"-ANNUNCIATOR-LAMPEN der BAT-Pushbuttons (WASM-Strings-
+        // Block der *_OFF/*_FAULT-Lampen-Legends — die *_OFF_PB-
+        // Schalter-LVars existieren separat, deren Wertesemantik ist
+        // aber unbekannt). Lampe AN (1) = Batterie AUS; Lampe AUS (0)
+        // = Batterie AN — wie beim realen Airbus, wo die OFF-Lampe
+        // vom Battery-Hot-Bus selbst gespeist auch Cold&Dark leuchtet.
+        // "Battery master on" im Fenix-Sinn (mind. eine Batterie an):
+        // mindestens eine OFF-Lampe ist NICHT erleuchtet.
+        // Caveat (Live-Flug-Verifikation aussteht): vor der WASM-
+        // Initialisierung lesen beide LVars 0 → kurzzeitig "an"; das
+        // Log latcht den ersten Wert still und loggt nur Transitionen.
+        t.a346_bat1_off_light as i32 == 0 || t.a346_bat2_off_light as i32 == 0
     } else {
         t.battery_master
     };
     let engine_anti_ice = if is_fenix {
         t.fnx_eng1_anti_ice as i32 != 0 || t.fnx_eng2_anti_ice as i32 != 0
+    } else if is_a346 {
+        // 4 Engine-Anti-Ice-Schalter (L1/L2/R1/R2). Der Snapshot
+        // fuehrt nur das kombinierte "any engine anti-ice on" — wie
+        // der Standard-SimVar-Pfad (eng1..eng4 geODERt), also alle
+        // vier Schalter ODERn.
+        t.a346_antiice_engl1 as i32 != 0
+            || t.a346_antiice_engl2 as i32 != 0
+            || t.a346_antiice_engr1 as i32 != 0
+            || t.a346_antiice_engr2 as i32 != 0
     } else {
         t.eng1_anti_ice || t.eng2_anti_ice || t.eng3_anti_ice || t.eng4_anti_ice
     };
     let wing_anti_ice = if is_fenix {
         t.fnx_wing_anti_ice as i32 != 0
+    } else if is_a346 {
+        t.a346_antiice_wing as i32 != 0
     } else {
         t.structural_deice
     };
@@ -1386,11 +1530,22 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // right label set per field below.
     let seatbelts_sign = if is_fenix {
         Some(t.fnx_signs_seatbelts.round().clamp(0.0, 1.0) as u8)
+    } else if is_a346 {
+        // `L:AB_OVH_SEATBELT`: Overhead-Schalterposition. Der reale
+        // A340-Schalter ist 3-stufig (OFF/AUTO/ON) — wir clampen auf
+        // den Feld-Kontrakt 0..=2 (deckt auch einen binaeren 0/1-LVar
+        // identisch ab). Das Log wertet jede Nicht-Null als "ON";
+        // exakter Wertebereich braucht Live-Flug-Verifikation.
+        Some(t.a346_seatbelt_sw.round().clamp(0.0, 2.0) as u8)
     } else {
         None
     };
     let no_smoking_sign = if is_fenix {
         Some(t.fnx_signs_smoking.round().clamp(0.0, 2.0) as u8)
+    } else if is_a346 {
+        // `L:AB_OVH_NO_SMOKING`: wie Fenix' SMOKING-Sign auf 0..=2
+        // geclamped (OFF/AUTO/ON-Labels im Activity-Log).
+        Some(t.a346_no_smoking_sw.round().clamp(0.0, 2.0) as u8)
     } else {
         None
     };
@@ -1423,6 +1578,20 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         } else {
             Some("OFF".to_string())
         }
+    } else if is_a346 {
+        // `L:AB_AutoBrake_Mode` ist ein Modus-Enum (ein LVar statt der
+        // drei Fenix-Lampen). Konservative Annahme entlang der realen
+        // A340-Stufen: 0=OFF, 1=LO, 2=MED, 3=MAX — auf dieselben
+        // Labels gemappt wie beim Fenix. Werte ausserhalb 0..=3 →
+        // None ("wissen wir nicht"), damit kein erfundenes Label im
+        // Log landet. Enum-Belegung braucht Live-Flug-Verifikation.
+        match t.a346_autobrake_mode.round() as i32 {
+            0 => Some("OFF".to_string()),
+            1 => Some("LO".to_string()),
+            2 => Some("MED".to_string()),
+            3 => Some("MAX".to_string()),
+            _ => None,
+        }
     } else {
         None
     };
@@ -1438,6 +1607,36 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         } else {
             None
         }
+    };
+
+    // Gear: nur die A346 leitet aus dem Selector-Lever ab (die
+    // Standard-SimVar klemmt dort auf "down", v0.13.17-Befund) —
+    // alle anderen Profile bleiben auf `GEAR POSITION`. Siehe
+    // `a346_gear_position_from_lever` fuer Richtungs-Annahme und
+    // Konsumenten-Audit.
+    let gear_position = if is_a346 {
+        a346_gear_position_from_lever(t.a346_gear_lever)
+    } else {
+        t.gear_position as f32
+    };
+
+    // A/THR (v0.16.4): nur Profile mit verifizierter State-Quelle.
+    //   * A346: `L:AB_AP_ATHR_LIGHT_ON` — FCU-Annunciator-Lampe,
+    //     echter Engagement-State (seit v0.16.3 subscribed, bislang
+    //     ungemappt).
+    //   * Fenix: `L:S_FCU_ATHR` — Button-State-LVar. Achtung: die
+    //     Schwester-LVars S_FCU_AP1/AP2 erwiesen sich als Button-
+    //     PULSE (B-008); ob ATHR latcht oder pulst braucht Live-
+    //     Verifikation. Der A/THR-Log-Eintrag ist deshalb wie der
+    //     AP-Master debounced (AP_DEBOUNCE_SECS) — ein Puls fuehrt
+    //     dann schlimmstenfalls zu gar keinem Eintrag, nie zu Spam.
+    //   * Alle anderen (+ X-Plane): None → kein Log-Eintrag.
+    let autothrottle_on = if is_a346 {
+        Some(t.a346_athr_light as i32 != 0)
+    } else if is_fenix {
+        Some(t.fnx_fcu_athr as i32 != 0)
+    } else {
+        None
     };
 
     SimSnapshot {
@@ -1510,7 +1709,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         paused: false,
         slew_mode: false,
         simulation_rate: 1.0,
-        gear_position: t.gear_position as f32,
+        gear_position,
         flaps_position: t.flaps_position as f32,
         engines_running,
         fuel_total_kg,
@@ -1579,6 +1778,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         autopilot_altitude: Some(ap_alt),
         autopilot_nav: Some(ap_nav),
         autopilot_approach: Some(ap_appr),
+        autothrottle_on,
         fuel_flow_kg_per_h,
         spoilers_handle_position: Some(t.spoilers_handle_position as f32),
         spoilers_armed: Some(t.spoilers_armed),
@@ -1882,6 +2082,10 @@ mod tests {
         assert!(!t.eng4_combustion_ex1);
         assert_eq!(t.eng4_ff_corrected_pph, 0.0);
         assert_eq!(t.a346_loc_light, 0.0);
+        // v0.16.4: A346 full-profile tail (signs → gear lever).
+        assert_eq!(t.a346_seatbelt_sw, 0.0);
+        assert_eq!(t.a346_autobrake_mode, 0.0);
+        assert_eq!(t.a346_gear_lever, 0.0);
     }
 
     // ---- v0.13.17: N1-Fallback fuer engines_running ----
@@ -2116,7 +2320,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(buf.len(), 1684, "total block size");
+        assert_eq!(buf.len(), 1780, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -2152,9 +2356,24 @@ mod tests {
         assert_eq!(t.a346_athr_light, 1131.0); // idx 131
         assert_eq!(t.a346_appr_light, 1132.0); // idx 132
         assert_eq!(t.a346_loc_light, 1133.0); // idx 133
+
+        // ---- v0.16.4: the 12 A346 full-profile tail fields
+        //      (idx 134..145, all f64) ----
+        assert_eq!(t.a346_seatbelt_sw, 1134.0); // idx 134
+        assert_eq!(t.a346_no_smoking_sw, 1135.0); // idx 135
+        assert_eq!(t.a346_antiice_engl1, 1136.0); // idx 136
+        assert_eq!(t.a346_antiice_engl2, 1137.0); // idx 137
+        assert_eq!(t.a346_antiice_engr1, 1138.0); // idx 138
+        assert_eq!(t.a346_antiice_engr2, 1139.0); // idx 139
+        assert_eq!(t.a346_antiice_wing, 1140.0); // idx 140
+        assert_eq!(t.a346_antiice_probewindow, 1141.0); // idx 141
+        assert_eq!(t.a346_bat1_off_light, 1142.0); // idx 142
+        assert_eq!(t.a346_bat2_off_light, 1143.0); // idx 143
+        assert_eq!(t.a346_autobrake_mode, 1144.0); // idx 144
+        assert_eq!(t.a346_gear_lever, 1145.0); // idx 145
     }
 
-    /// Truncated block (e.g. all 13 new tail SimVars rejected by an older
+    /// Truncated block (e.g. all 12 new tail LVars rejected by an older
     /// sim build): everything before stays correct, the tail parses to
     /// safe defaults — no offset shift bleeds into pre-existing fields.
     #[test]
@@ -2167,11 +2386,244 @@ mod tests {
                 FieldKind::String256 => buf.extend_from_slice(&[0u8; 256]),
             }
         }
-        buf.truncate(buf.len() - 88); // drop the 13 new tail fields (4*4 + 9*8)
+        // v0.16.4: drop the 12 new A346 full-profile tail fields (12*8).
+        buf.truncate(buf.len() - 96);
         let t = Telemetry::from_block(&buf);
-        assert_eq!(t.fsr_phenom_eng2_knob, 1120.0); // last pre-existing field intact
-        assert!(!t.eng1_combustion_ex1); // tail = safe defaults
+        assert_eq!(t.fsr_phenom_eng2_knob, 1120.0); // pre-v0.16.3 field intact
+        assert_eq!(t.a346_loc_light, 1133.0); // last pre-existing field intact
+        assert_eq!(t.a346_seatbelt_sw, 0.0); // new tail = safe defaults
+        assert_eq!(t.a346_bat1_off_light, 0.0);
+        assert_eq!(t.a346_gear_lever, 0.0);
+
+        // Deeper truncation (both A346 tails gone, = a v0.16.2-era
+        // block): the v0.13.x layout still parses intact.
+        buf.truncate(buf.len() - 88); // also drop the v0.16.3 tail (4*4 + 9*8)
+        let t = Telemetry::from_block(&buf);
+        assert_eq!(t.fsr_phenom_eng2_knob, 1120.0);
+        assert!(!t.eng1_combustion_ex1); // v0.16.3 tail = safe defaults
         assert_eq!(t.eng1_ff_corrected_pph, 0.0);
         assert_eq!(t.a346_loc_light, 0.0);
+        assert_eq!(t.a346_gear_lever, 0.0);
+    }
+
+    // ---- v0.16.4: Aerosoft A346 full profile (Signs, Anti-Ice, BAT,
+    // Autobrake, Gear-Lever, A/THR) ----
+
+    /// Minimal A346-profile Telemetry. Standard SimVars stay at their
+    /// defaults so any mapped value is unambiguously LVar-sourced.
+    fn a346_telemetry() -> Telemetry {
+        let mut t = Telemetry::default();
+        t.title = "Aerosoft A346 Pro".into();
+        t.atc_model = "A346".into();
+        t
+    }
+
+    #[test]
+    fn a346_signs_map_from_overhead_switches() {
+        // Seatbelt 1 / No-Smoking 2 → beide Some, geclamped 0..=2.
+        let mut t = a346_telemetry();
+        t.a346_seatbelt_sw = 1.0;
+        t.a346_no_smoking_sw = 2.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.seatbelts_sign, Some(1));
+        assert_eq!(snap.no_smoking_sign, Some(2));
+
+        // Clamp: Werte ausserhalb des Kontrakts werden eingefangen.
+        let mut t = a346_telemetry();
+        t.a346_seatbelt_sw = 7.0;
+        t.a346_no_smoking_sw = -3.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.seatbelts_sign, Some(2));
+        assert_eq!(snap.no_smoking_sign, Some(0));
+
+        // Beide aus → Some(0), nicht None (das Profil LIEFERT Signs).
+        let snap = telemetry_to_snapshot(a346_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.seatbelts_sign, Some(0));
+        assert_eq!(snap.no_smoking_sign, Some(0));
+    }
+
+    #[test]
+    fn a346_engine_anti_ice_any_of_four_switches() {
+        // Jeder einzelne der 4 Schalter reicht fuer "any on".
+        for set in [
+            |t: &mut Telemetry| t.a346_antiice_engl1 = 1.0,
+            |t: &mut Telemetry| t.a346_antiice_engl2 = 1.0,
+            |t: &mut Telemetry| t.a346_antiice_engr1 = 1.0,
+            |t: &mut Telemetry| t.a346_antiice_engr2 = 1.0,
+        ] {
+            let mut t = a346_telemetry();
+            set(&mut t);
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert_eq!(snap.engine_anti_ice, Some(true));
+        }
+
+        // Alle aus → Some(false). Die Standard-SimVars (eng1_anti_ice
+        // etc.) duerfen unter A346 NICHT durchschlagen.
+        let mut t = a346_telemetry();
+        t.eng1_anti_ice = true; // Standard-SimVar-Slot (tot auf der A346)
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.engine_anti_ice, Some(false));
+    }
+
+    #[test]
+    fn a346_wing_anti_ice_from_lvar() {
+        let mut t = a346_telemetry();
+        t.a346_antiice_wing = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.wing_anti_ice, Some(true));
+
+        let snap = telemetry_to_snapshot(a346_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.wing_anti_ice, Some(false));
+    }
+
+    #[test]
+    fn a346_pitot_heat_mirrors_fenix_always_available() {
+        // Wie beim Fenix: PROBE/WINDOW 0=AUTO heizt automatisch →
+        // beide Stellungen gelten als "heat available".
+        let snap = telemetry_to_snapshot(a346_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.pitot_heat, Some(true));
+    }
+
+    #[test]
+    fn a346_battery_master_inverted_from_off_lights() {
+        // KERN-INVERSION: `AB_VC_OVH_ELEC_BAT{1,2}_OFF` sind die
+        // "OFF"-Annunciator-Lampen — Lampe AN (1) heisst Batterie AUS.
+
+        // Cold & Dark: beide OFF-Lampen leuchten → Batterien AUS.
+        let mut t = a346_telemetry();
+        t.a346_bat1_off_light = 1.0;
+        t.a346_bat2_off_light = 1.0;
+        t.battery_master = true; // Standard-SimVar darf nicht durchschlagen
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.battery_master, Some(false));
+
+        // Eine Batterie an (deren OFF-Lampe erloschen) → Master an.
+        let mut t = a346_telemetry();
+        t.a346_bat1_off_light = 0.0;
+        t.a346_bat2_off_light = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.battery_master, Some(true));
+
+        // Beide an (beide Lampen aus) → Master an.
+        let snap = telemetry_to_snapshot(a346_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.battery_master, Some(true));
+    }
+
+    #[test]
+    fn a346_autobrake_mode_enum_maps_to_fenix_labels() {
+        let cases = [
+            (0.0, Some("OFF")),
+            (1.0, Some("LO")),
+            (2.0, Some("MED")),
+            (3.0, Some("MAX")),
+            // Unbekannte Enum-Werte → None, kein erfundenes Label.
+            (4.0, None),
+            (-1.0, None),
+        ];
+        for (mode, expected) in cases {
+            let mut t = a346_telemetry();
+            t.a346_autobrake_mode = mode;
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert_eq!(
+                snap.autobrake.as_deref(),
+                expected,
+                "AB_AutoBrake_Mode={mode}"
+            );
+        }
+    }
+
+    #[test]
+    fn a346_gear_position_from_selector_lever() {
+        // v0.13.17-Befund: die Standard-SimVar klemmt bei der A346 auf
+        // "down" — unter dem A346-Profil zaehlt NUR der Lever-LVar.
+        let mut t = a346_telemetry();
+        t.gear_position = 1.0; // Standard-SimVar klemmt auf down
+        t.a346_gear_lever = 0.0; // Lever = UP
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.gear_position, 0.0, "lever up must win over stuck SimVar");
+
+        let mut t = a346_telemetry();
+        t.gear_position = 1.0;
+        t.a346_gear_lever = 1.0; // Lever = DOWN
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.gear_position, 1.0);
+    }
+
+    #[test]
+    fn gear_lever_does_not_affect_other_profiles() {
+        // Nicht-A346: Standard `GEAR POSITION` bleibt die Quelle, der
+        // (dort tote) Lever-LVar-Slot wird ignoriert.
+        let mut t = Telemetry::default();
+        t.title = "Asobo A320 Neo".into();
+        t.atc_model = "A20N".into();
+        t.gear_position = 0.0; // Standard sagt UP
+        t.a346_gear_lever = 1.0; // LVar-Slot (theoretisch) gesetzt
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.gear_position, 0.0);
+
+        let mut t = Telemetry::default();
+        t.gear_position = 1.0;
+        t.a346_gear_lever = 0.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.gear_position, 1.0);
+    }
+
+    #[test]
+    fn autothrottle_maps_for_a346_and_fenix_none_elsewhere() {
+        // A346: ATHR-Annunciator-Lampe (seit v0.16.3 subscribed).
+        let mut t = a346_telemetry();
+        t.a346_athr_light = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, Some(true));
+        let snap = telemetry_to_snapshot(a346_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, Some(false));
+
+        // Fenix: `L:S_FCU_ATHR`.
+        let mut t = Telemetry::default();
+        t.title = "FenixA320 CFM SL".into();
+        t.atc_model = "A320".into();
+        t.fnx_fcu_athr = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, Some(true));
+
+        // Default-Profil: None — auch wenn die (toten) LVar-Slots
+        // zufaellig Werte tragen.
+        let mut t = Telemetry::default();
+        t.title = "Asobo A320 Neo".into();
+        t.atc_model = "A20N".into();
+        t.a346_athr_light = 1.0;
+        t.fnx_fcu_athr = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, None);
+    }
+
+    #[test]
+    fn a346_full_profile_does_not_affect_other_profiles() {
+        // Profile-Gate-Beweis: ein Default-Profil-Aircraft mit (theore-
+        // tisch) gesetzten A346-LVar-Slots bleibt byte-fuer-byte auf
+        // dem Standard-SimVar-Pfad.
+        let mut t = Telemetry::default();
+        t.title = "Asobo A320 Neo".into();
+        t.atc_model = "A20N".into();
+        t.a346_seatbelt_sw = 2.0;
+        t.a346_no_smoking_sw = 2.0;
+        t.a346_antiice_engl1 = 1.0;
+        t.a346_antiice_wing = 1.0;
+        t.a346_antiice_probewindow = 1.0;
+        t.a346_bat1_off_light = 1.0;
+        t.a346_bat2_off_light = 1.0;
+        t.a346_autobrake_mode = 3.0;
+        // Standard-SimVars in einen definierten Zustand setzen.
+        t.battery_master = true;
+        t.pitot_heat = false;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.seatbelts_sign, None);
+        assert_eq!(snap.no_smoking_sign, None);
+        assert_eq!(snap.engine_anti_ice, Some(false)); // Standard eng1..4
+        assert_eq!(snap.wing_anti_ice, Some(false)); // Standard deice
+        assert_eq!(snap.pitot_heat, Some(false)); // Standard SimVar
+        assert_eq!(snap.battery_master, Some(true)); // Standard, NICHT invertiert
+        assert_eq!(snap.autobrake, None);
+        assert_eq!(snap.autothrottle_on, None);
     }
 }

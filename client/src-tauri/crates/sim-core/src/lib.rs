@@ -194,6 +194,14 @@ pub struct SimSnapshot {
     pub autopilot_altitude: Option<bool>,
     pub autopilot_nav: Option<bool>,
     pub autopilot_approach: Option<bool>,
+    /// Autothrottle / Airbus A/THR engaged. Only filled by profiles
+    /// with a verified state source: Aerosoft A346 (`L:AB_AP_ATHR_
+    /// LIGHT_ON` FCU annunciator) and Fenix (`L:S_FCU_ATHR`). `None`
+    /// everywhere else (incl. X-Plane) so the activity log stays
+    /// silent instead of logging a dead default. `serde(default)`
+    /// keeps pre-existing JSONL flight-log replays deserializable.
+    #[serde(default)]
+    pub autothrottle_on: Option<bool>,
 
     // ---- Powerplant (totals — per-engine arrays land later) ----
     /// Total fuel-flow across all running engines, kg/h.
@@ -579,6 +587,7 @@ impl Default for SimSnapshot {
             autopilot_altitude: None,
             autopilot_nav: None,
             autopilot_approach: None,
+            autothrottle_on: None,
             fuel_flow_kg_per_h: None,
             spoilers_handle_position: None,
             spoilers_armed: None,
@@ -1234,5 +1243,27 @@ mod tests {
             clean_atc_model("ATCCOM.AC_MODEL_C750.0.TEXT"),
             Some("C750".to_string()),
         );
+    }
+
+    #[test]
+    fn autothrottle_on_defaults_none_and_old_jsonl_replays_deserialize() {
+        // 2026-06-10 (A346 full profile): the new `autothrottle_on`
+        // field must default to None — only profiles with a verified
+        // A/THR state source (A346 ATHR light, Fenix S_FCU_ATHR) set
+        // it, everything else stays silent in the activity log.
+        let s = SimSnapshot::default();
+        assert_eq!(s.autothrottle_on, None);
+
+        // Backward compat: a snapshot serialized BEFORE the field
+        // existed (= recorded JSONL flight logs) must still
+        // deserialize — `#[serde(default)]` covers the missing key.
+        let mut v = serde_json::to_value(&s).expect("serialize");
+        v.as_object_mut()
+            .expect("object")
+            .remove("autothrottle_on")
+            .expect("field present after serialize");
+        let restored: SimSnapshot =
+            serde_json::from_value(v).expect("old JSONL without the key must deserialize");
+        assert_eq!(restored.autothrottle_on, None);
     }
 }

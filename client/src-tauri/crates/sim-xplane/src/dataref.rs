@@ -880,6 +880,9 @@ impl XPlaneState {
             autopilot_altitude: Some(self.ap_altitude),
             autopilot_nav: Some(self.ap_nav),
             autopilot_approach: Some(self.ap_approach),
+            // No verified X-Plane A/THR state source wired yet — stays
+            // None so the activity log doesn't log a dead default.
+            autothrottle_on: None,
             fuel_flow_kg_per_h: None,
             spoilers_handle_position: Some(self.spoilers_handle),
             spoilers_armed: Some(self.spoilers_armed),

@@ -2985,6 +2985,14 @@ struct FlightStats {
     /// momentary buttons, sim-engine restarts) from flooding the log.
     pending_ap_master: Option<bool>,
     pending_ap_master_since: Option<DateTime<Utc>>,
+    /// A/THR engaged state (v0.16.4 — generic autothrottle, fed by the
+    /// A346 ATHR annunciator LVar + Fenix `L:S_FCU_ATHR`). Same
+    /// debounce treatment as the AP master: Fenix `S_FCU_*` LVars are
+    /// known button-PULSE candidates (B-008), the debounce turns a
+    /// pulse into "no entry" instead of an ENGAGED/OFF pair.
+    last_logged_autothrottle: Option<bool>,
+    pending_autothrottle: Option<bool>,
+    pending_autothrottle_since: Option<DateTime<Utc>>,
     last_logged_parking_brake: Option<bool>,
     last_logged_engines_running: Option<u8>,
     /// Pending engine-count change waiting for stability — same
@@ -21491,6 +21499,46 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             .is_none_or(|prev| prev.master == ap.master)
         {
             stats.last_logged_ap = Some(ap);
+        }
+    }
+
+    // ---- A/THR (v0.16.4 — generic autothrottle).
+    // `snap.autothrottle_on` is only Some on profiles with a verified
+    // state source (Aerosoft A346 `L:AB_AP_ATHR_LIGHT_ON` annunciator,
+    // Fenix `L:S_FCU_ATHR`) — everything else stays None and logs
+    // nothing. Same debounce as the AP master: the Fenix S_FCU_*
+    // family is a known button-pulse candidate (B-008), so a 0→1→0
+    // pulse shorter than AP_DEBOUNCE_SECS produces no entry at all
+    // instead of a bogus ENGAGED/OFF pair.
+    if let Some(athr) = snap.autothrottle_on {
+        if stats.last_logged_autothrottle != Some(athr) {
+            let now = Utc::now();
+            if stats.pending_autothrottle != Some(athr) {
+                // First time we see this new state — start the timer.
+                stats.pending_autothrottle = Some(athr);
+                stats.pending_autothrottle_since = Some(now);
+            } else if let Some(since) = stats.pending_autothrottle_since {
+                // Same state held for AP_DEBOUNCE_SECS → publish.
+                if (now - since).num_seconds() >= AP_DEBOUNCE_SECS {
+                    // First observation latches silently (no entry on
+                    // the initial state, only on transitions).
+                    if stats.last_logged_autothrottle.is_some() {
+                        log_activity_handle(
+                            app,
+                            ActivityLevel::Info,
+                            format!("A/THR {}", if athr { "ENGAGED" } else { "OFF" }),
+                            None,
+                        );
+                    }
+                    stats.last_logged_autothrottle = Some(athr);
+                    stats.pending_autothrottle = None;
+                    stats.pending_autothrottle_since = None;
+                }
+            }
+        } else {
+            // Snap matches last logged again — drop any pending change.
+            stats.pending_autothrottle = None;
+            stats.pending_autothrottle_since = None;
         }
     }
 
