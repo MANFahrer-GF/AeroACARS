@@ -109,6 +109,13 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // bei diesen Addons gueltig (per Inspektor verifiziert: laufend ~0.66,
     // aus 0). Wirkt addon-agnostisch. Reihenfolge MUSS mit dem pull_f64!-
     // Block in `from_block` uebereinstimmen (Lockstep).
+    //
+    // Update 2026-06-10: Root Cause fuer die Aerosoft A346 (ToLiss-Port)
+    // ist per WASM-Strings-Analyse BESTAETIGT — das Aircraft treibt die
+    // `GENERAL ENG COMBUSTION EX1:N`-Variante statt der plain SimVar.
+    // EX1 wird jetzt nativ mitgelesen (siehe Tabellen-Ende) und per
+    // Engine mit der plain Combustion geODERt; der N1-Fallback bleibt
+    // als letzte Stufe fuer Addons, die KEINE der beiden treiben.
     F::f64("TURB ENG N1:1", "Percent"),
     F::f64("TURB ENG N1:2", "Percent"),
     F::f64("TURB ENG N1:3", "Percent"),
@@ -332,6 +339,40 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // docs/dev/lvar-discovery-hubhop.md fuer den vollen LVar-Katalog.
     F::f64("L:FSR_300E_ENGINE1_KNOB_POS", "Number"),
     F::f64("L:FSR_300E_ENGINE2_KNOB_POS", "Number"),
+
+    // ---- Aerosoft A340-600 (ToLiss port) — WASM-Analyse 2026-06-10 ----
+    // Strings-Analyse der `MSFS_ToLiss_Plugin.wasm` (Aerosoft A346 Pro =
+    // ToLiss-Port) hat bewiesen, dass das Aircraft NICHT die plain
+    // SimVars treibt, sondern die Varianten:
+    //   * `GENERAL ENG COMBUSTION EX1:1..4` statt `GENERAL ENG
+    //     COMBUSTION:N` → Root Cause des toten engines_running hinter
+    //     dem v0.13.17-N1-Fallback.
+    //   * `TURB ENG CORRECTED FF:1..4` statt `ENG FUEL FLOW PPH:N`
+    //     → Root Cause des toten Fuel-Flow hinter der v0.13.18-FOB-
+    //     Ableitung.
+    // Beide Varianten sind Standard-MSFS-SimVars (SDK-dokumentiert) und
+    // lesen auf Addons, die sie nicht treiben, schlicht 0/false → das
+    // Mapping kann sie addon-agnostisch ODER-/kaskadieren, kein
+    // Profile-Gate noetig. EX1 ist bool, CORRECTED FF kommt wie PPH in
+    // pounds per hour.
+    F::bool("GENERAL ENG COMBUSTION EX1:1"),
+    F::bool("GENERAL ENG COMBUSTION EX1:2"),
+    F::bool("GENERAL ENG COMBUSTION EX1:3"),
+    F::bool("GENERAL ENG COMBUSTION EX1:4"),
+    F::f64("TURB ENG CORRECTED FF:1", "pounds per hour"),
+    F::f64("TURB ENG CORRECTED FF:2", "pounds per hour"),
+    F::f64("TURB ENG CORRECTED FF:3", "pounds per hour"),
+    F::f64("TURB ENG CORRECTED FF:4", "pounds per hour"),
+    // AP-State liefert die A346 laut WASM-Analyse AUSSCHLIESSLICH als
+    // LVars (`AB_AP_*_LIGHT_ON` — die FCU-Annunciator-Lampen); die
+    // Standard-`AUTOPILOT *`-SimVars bleiben tot. Wie bei den Fenix-
+    // LVars oben: Nicht-A346-Aircraft lesen 0, das Snapshot-Mapping
+    // konsultiert sie nur bei AircraftProfile::AerosoftA346.
+    F::f64("L:AB_AP_AP1_LIGHT_ON", "Number"),
+    F::f64("L:AB_AP_AP2_LIGHT_ON", "Number"),
+    F::f64("L:AB_AP_ATHR_LIGHT_ON", "Number"),
+    F::f64("L:AB_AP_APPR_LIGHT_ON", "Number"),
+    F::f64("L:AB_AP_LOC_LIGHT_ON", "Number"),
 ];
 
 // Helper builders so the table above stays compact.
@@ -521,6 +562,31 @@ pub struct Telemetry {
     // FSR in Cold&Dark unzuverlaessig (Pilot-Befund Michael 2026-05-26).
     pub fsr_phenom_eng1_knob: f64,
     pub fsr_phenom_eng2_knob: f64,
+
+    // Aerosoft A340-600 (ToLiss port) — WASM-Analyse 2026-06-10.
+    // `GENERAL ENG COMBUSTION EX1:1..4`: die SimVar-Variante, die die
+    // A346 statt der plain Combustion treibt. Addon-agnostisch per
+    // Engine mit `engN_firing` geODERt (liest auf anderen Addons false).
+    pub eng1_combustion_ex1: bool,
+    pub eng2_combustion_ex1: bool,
+    pub eng3_combustion_ex1: bool,
+    pub eng4_combustion_ex1: bool,
+    // `TURB ENG CORRECTED FF:1..4` (pounds per hour): die Fuel-Flow-
+    // Variante der A346. Kaskade im Mapping: PPH-Summe > 0 gewinnt,
+    // sonst diese Summe, sonst None (dann greift die v0.13.18-FOB-
+    // Ableitung im Position-Streamer).
+    pub eng1_ff_corrected_pph: f64,
+    pub eng2_ff_corrected_pph: f64,
+    pub eng3_ff_corrected_pph: f64,
+    pub eng4_ff_corrected_pph: f64,
+    // `L:AB_AP_*_LIGHT_ON`: FCU-Annunciator-Lampen der A346 — laut
+    // WASM-Analyse die EINZIGE AP-State-Quelle (Standard-SimVars tot).
+    // Nur bei AircraftProfile::AerosoftA346 konsultiert.
+    pub a346_ap1_light: f64,
+    pub a346_ap2_light: f64,
+    pub a346_athr_light: f64,
+    pub a346_appr_light: f64,
+    pub a346_loc_light: f64,
 }
 
 // ---- Touchdown sample (separate data definition #2) ----
@@ -893,6 +959,24 @@ impl Telemetry {
         pull_f64!(t.fsr_phenom_eng1_knob);
         pull_f64!(t.fsr_phenom_eng2_knob);
 
+        // Aerosoft A340-600 (ToLiss port) — gleiche TELEMETRY_FIELDS-
+        // Reihenfolge wie am Tabellen-Ende registriert (Lockstep):
+        // 4× COMBUSTION EX1 (bool), 4× TURB ENG CORRECTED FF (f64),
+        // 5× AB_AP_*_LIGHT_ON LVars (f64).
+        pull_i32!(t.eng1_combustion_ex1);
+        pull_i32!(t.eng2_combustion_ex1);
+        pull_i32!(t.eng3_combustion_ex1);
+        pull_i32!(t.eng4_combustion_ex1);
+        pull_f64!(t.eng1_ff_corrected_pph);
+        pull_f64!(t.eng2_ff_corrected_pph);
+        pull_f64!(t.eng3_ff_corrected_pph);
+        pull_f64!(t.eng4_ff_corrected_pph);
+        pull_f64!(t.a346_ap1_light);
+        pull_f64!(t.a346_ap2_light);
+        pull_f64!(t.a346_athr_light);
+        pull_f64!(t.a346_appr_light);
+        pull_f64!(t.a346_loc_light);
+
         // Silence the unused-assignment warning the last `pull_*!`
         // emits (the macro always advances `off`, but the very last
         // call doesn't read it again).
@@ -968,25 +1052,34 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         (if t.fsr_phenom_eng1_knob > 0.5 { 1u8 } else { 0 })
             + (if t.fsr_phenom_eng2_knob > 0.5 { 1u8 } else { 0 })
     } else {
-        let combustion = (t.eng1_firing as u8)
-            + (t.eng2_firing as u8)
-            + (t.eng3_firing as u8)
-            + (t.eng4_firing as u8);
+        // 2026-06-10: per Engine plain Combustion ODER die EX1-Variante.
+        // Die Aerosoft A346 (ToLiss-Port) treibt laut WASM-Strings-
+        // Analyse NUR `GENERAL ENG COMBUSTION EX1:N` — die plain SimVar
+        // bleibt 0 (Root Cause des v0.13.17-Befunds). EX1 liest auf
+        // Addons, die sie nicht treiben, schlicht false → das ODER ist
+        // addon-agnostisch sicher, kein Profile-Gate noetig.
+        let combustion = ((t.eng1_firing || t.eng1_combustion_ex1) as u8)
+            + ((t.eng2_firing || t.eng2_combustion_ex1) as u8)
+            + ((t.eng3_firing || t.eng3_combustion_ex1) as u8)
+            + ((t.eng4_firing || t.eng4_combustion_ex1) as u8);
         if combustion > 0 {
             combustion
         } else {
             // v0.13.17: `GENERAL ENG COMBUSTION` ist bei manchen Addons
             // (iniBuilds/Aerosoft A340-600, MSFS 2024) konstant 0 obwohl
             // die Triebwerke laufen → Phase-FSM blieb in Pushback haengen
-            // (Live IRM1140/IBE778). Fallback: N1 ueber Idle/Windmill-
-            // Schwelle = Triebwerk laeuft. N1 kommt je nach Addon als
-            // 0-1-Ratio ODER 0-100 % → auf Prozent normalisieren. Greift
-            // NUR wenn COMBUSTION komplett 0 ist → kein Regress fuer
-            // Flieger, deren COMBUSTION-Flag funktioniert (dort ist N1
-            // ohnehin 0 wenn aus). Schwelle bewusst ueber reinem
-            // Windmilling (~15 %); am Boden (wo die FSM das Signal
-            // braucht) gibt es kein Windmilling, also trennt es dort
-            // sauber aus(0) vs laufend.
+            // (Live IRM1140/IBE778). Root Cause fuer die Aerosoft A346
+            // ist inzwischen bestaetigt (EX1-Variante, siehe oben) und
+            // nativ abgedeckt; der N1-Fallback bleibt als letzte Stufe
+            // fuer Addons, die WEDER plain NOCH EX1 treiben. Fallback:
+            // N1 ueber Idle/Windmill-Schwelle = Triebwerk laeuft. N1
+            // kommt je nach Addon als 0-1-Ratio ODER 0-100 % → auf
+            // Prozent normalisieren. Greift NUR wenn COMBUSTION (incl.
+            // EX1) komplett 0 ist → kein Regress fuer Flieger, deren
+            // COMBUSTION-Flag funktioniert (dort ist N1 ohnehin 0 wenn
+            // aus). Schwelle bewusst ueber reinem Windmilling (~15 %);
+            // am Boden (wo die FSM das Signal braucht) gibt es kein
+            // Windmilling, also trennt es dort sauber aus(0) vs laufend.
             const N1_RUNNING_PCT: f64 = 15.0;
             let n1_on = |raw: f64| {
                 let pct = if raw <= 1.5 { raw * 100.0 } else { raw };
@@ -1050,9 +1143,25 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
 
     // Total fuel flow across all running engines, kg/h. Sum the
     // per-engine PPH SimVars and convert.
+    //
+    // 2026-06-10: Kaskade statt Single-Source. Die Aerosoft A346
+    // (ToLiss-Port) treibt laut WASM-Strings-Analyse NUR die Variante
+    // `TURB ENG CORRECTED FF:N` — `ENG FUEL FLOW PPH` bleibt 0 (Root
+    // Cause der toten Fuel-Flow-Anzeige, wegen der v0.13.18 die FOB-
+    // Ableitung einfuehrte). Reihenfolge: PPH-Summe > 0 gewinnt (kein
+    // Regress), sonst CORRECTED-FF-Summe (gleiche pounds-per-hour-
+    // Einheit, gleiche Konversion), sonst None — dann greift weiterhin
+    // die v0.13.18-FOB-Ableitung im Position-Streamer als letzte Stufe.
+    // Addon-agnostisch: Aircraft ohne CORRECTED FF lesen dort 0.
     let total_ff_pph = t.eng1_ff_pph + t.eng2_ff_pph + t.eng3_ff_pph + t.eng4_ff_pph;
+    let total_ff_corrected_pph = t.eng1_ff_corrected_pph
+        + t.eng2_ff_corrected_pph
+        + t.eng3_ff_corrected_pph
+        + t.eng4_ff_corrected_pph;
     let fuel_flow_kg_per_h = if total_ff_pph > 0.0 {
         Some((total_ff_pph * KG_PER_LB) as f32)
+    } else if total_ff_corrected_pph > 0.0 {
+        Some((total_ff_corrected_pph * KG_PER_LB) as f32)
     } else {
         None
     };
@@ -1092,6 +1201,9 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     //     same as "mode is armed", but it's a closer signal than
     //     the I_FCU_* lamp LVars from the legacy session (those
     //     flickered with unrelated cockpit switches).
+    //   * Aerosoft A346 (ToLiss port): `L:AB_AP_*_LIGHT_ON` annunciator
+    //     LVars — per WASM strings analysis (2026-06-10) the ONLY AP
+    //     state source on that aircraft, the standard SimVars stay dead.
     //   * Default + others: standard MSFS SimVars.
     let (ap_master, ap_hdg, ap_alt, ap_nav, ap_appr) = if is_fbw {
         (
@@ -1127,6 +1239,25 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             t.ap_altitude,
             t.ap_nav,
             t.fnx_fcu_appr as i32 != 0 || t.ap_approach,
+        )
+    } else if matches!(profile, AircraftProfile::AerosoftA346) {
+        // Aerosoft A346: AP1- oder AP2-Lampe an = Master engaged;
+        // Approach-Mode aus APPR- oder LOC-Lampe (LOC = lateraler
+        // Approach-Capture ohne Glideslope). Die Lampen-LVars sind
+        // echte Annunciator-States (kein Button-Pulse wie Fenix
+        // `S_FCU_*`). HDG/ALT/NAV bleiben auf den Standard-SimVars —
+        // konservativ, nur das verifiziert Vorhandene mappen. Falls
+        // der Standard doch mal wired ist, gewinnt er per ODER.
+        (
+            t.a346_ap1_light as i32 != 0
+                || t.a346_ap2_light as i32 != 0
+                || t.ap_master,
+            t.ap_heading,
+            t.ap_altitude,
+            t.ap_nav,
+            t.a346_appr_light as i32 != 0
+                || t.a346_loc_light as i32 != 0
+                || t.ap_approach,
         )
     } else {
         (
@@ -1747,6 +1878,10 @@ mod tests {
         // And the new beta extension fields too.
         assert_eq!(t.fnx_ext_lt_wing, 0.0);
         assert_eq!(t.fnx_fc_flaps_lever, 0.0);
+        // 2026-06-10: the A346 appends at the very end of the layout.
+        assert!(!t.eng4_combustion_ex1);
+        assert_eq!(t.eng4_ff_corrected_pph, 0.0);
+        assert_eq!(t.a346_loc_light, 0.0);
     }
 
     // ---- v0.13.17: N1-Fallback fuer engines_running ----
@@ -1802,5 +1937,241 @@ mod tests {
         t.n1_pct_2 = 10.0;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.engines_running, 1);
+    }
+
+    // ---- 2026-06-10: Aerosoft A346 (ToLiss-Port) — native Reads ----
+    // WASM-Strings-Analyse der MSFS_ToLiss_Plugin.wasm: das Aircraft
+    // treibt `GENERAL ENG COMBUSTION EX1:N`, `TURB ENG CORRECTED FF:N`
+    // und AP-State NUR als `L:AB_AP_*_LIGHT_ON` LVars. Engines + Fuel-
+    // Flow lesen addon-agnostisch (Varianten lesen 0/false auf Addons,
+    // die sie nicht treiben), AP ist Profile-gegated.
+
+    #[test]
+    fn ex1_only_combustion_counts_engines_running() {
+        // A346-Szenario: plain COMBUSTION alle false, EX1 alle true →
+        // alle 4 als laufend erkannt, OHNE den N1-Fallback zu brauchen.
+        let mut t = Telemetry::default();
+        t.title = "Aerosoft A346 Pro".into();
+        t.atc_model = "A346".into();
+        t.eng1_firing = false;
+        t.eng2_firing = false;
+        t.eng3_firing = false;
+        t.eng4_firing = false;
+        t.eng1_combustion_ex1 = true;
+        t.eng2_combustion_ex1 = true;
+        t.eng3_combustion_ex1 = true;
+        t.eng4_combustion_ex1 = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.engines_running, 4);
+    }
+
+    #[test]
+    fn plain_combustion_aircraft_unaffected_by_ex1() {
+        // Aircraft mit funktionierender plain COMBUSTION (EX1 liest
+        // dort false): Ergebnis unveraendert — kein Doppelzaehlen.
+        let mut t = Telemetry::default();
+        t.title = "Asobo A320 Neo".into();
+        t.atc_model = "A20N".into();
+        t.eng1_firing = true;
+        t.eng2_firing = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.engines_running, 2);
+
+        // Per-Engine-ODER: plain auf Engine 1, EX1 auf Engine 2 →
+        // 2 Engines, nicht 1 und nicht 4.
+        let mut t = Telemetry::default();
+        t.eng1_firing = true;
+        t.eng2_combustion_ex1 = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.engines_running, 2);
+    }
+
+    #[test]
+    fn corrected_ff_only_maps_fuel_flow() {
+        // A346-Szenario: ENG FUEL FLOW PPH alle 0, TURB ENG CORRECTED
+        // FF liefert (A346-typisch ~2200 pph je Engine im Cruise) →
+        // fuel_flow = konvertierte Summe.
+        let mut t = Telemetry::default();
+        t.title = "Aerosoft A346 Pro".into();
+        t.atc_model = "A346".into();
+        t.eng1_ff_corrected_pph = 2200.0;
+        t.eng2_ff_corrected_pph = 2210.0;
+        t.eng3_ff_corrected_pph = 2190.0;
+        t.eng4_ff_corrected_pph = 2200.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        let expected = (8800.0 * KG_PER_LB) as f32;
+        let got = snap.fuel_flow_kg_per_h.expect("corrected FF must map");
+        assert!(
+            (got - expected).abs() < 0.5,
+            "expected ≈{expected} kg/h, got {got}"
+        );
+    }
+
+    #[test]
+    fn pph_wins_over_corrected_ff_when_present() {
+        // Aircraft, das BEIDE Quellen treibt: die direkte PPH-SimVar
+        // gewinnt (kein Regress, kein Doppelzaehlen).
+        let mut t = Telemetry::default();
+        t.eng1_ff_pph = 1000.0;
+        t.eng2_ff_pph = 1000.0;
+        t.eng1_ff_corrected_pph = 9999.0;
+        t.eng2_ff_corrected_pph = 9999.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        let expected = (2000.0 * KG_PER_LB) as f32;
+        let got = snap.fuel_flow_kg_per_h.expect("PPH must map");
+        assert!(
+            (got - expected).abs() < 0.5,
+            "PPH muss gewinnen: expected ≈{expected} kg/h, got {got}"
+        );
+    }
+
+    #[test]
+    fn no_fuel_flow_source_stays_none_for_fob_derivation() {
+        // Weder PPH noch CORRECTED FF → None, damit die v0.13.18-FOB-
+        // Ableitung im Position-Streamer als letzte Stufe greift.
+        let t = Telemetry::default();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fuel_flow_kg_per_h, None);
+    }
+
+    #[test]
+    fn a346_ap_master_from_ap_light_lvars() {
+        // AP1-Lampe an, Standard-SimVar tot (A346-Realitaet) →
+        // autopilot_master MUSS true melden.
+        let mut t = Telemetry::default();
+        t.title = "Aerosoft A346 Pro".into();
+        t.atc_model = "A346".into();
+        t.ap_master = false; // Standard-SimVar tot
+        t.a346_ap1_light = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(true));
+
+        // AP2 allein reicht ebenfalls (Master = AP1 ODER AP2).
+        let mut t = Telemetry::default();
+        t.title = "Aerosoft A346-MahanAir".into();
+        t.atc_model = "A346".into();
+        t.a346_ap2_light = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(true));
+
+        // Beide Lampen aus → Master off.
+        let mut t = Telemetry::default();
+        t.title = "Aerosoft A346 Pro".into();
+        t.atc_model = "A346".into();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(false));
+    }
+
+    #[test]
+    fn a346_approach_from_appr_or_loc_light() {
+        // APPR-Lampe → Approach-Hold an.
+        let mut t = Telemetry::default();
+        t.title = "Aerosoft A346 Pro".into();
+        t.atc_model = "A346".into();
+        t.a346_appr_light = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_approach, Some(true));
+
+        // LOC-Lampe allein (lateraler Capture) zaehlt ebenfalls.
+        let mut t = Telemetry::default();
+        t.title = "Aerosoft A346 Pro".into();
+        t.atc_model = "A346".into();
+        t.a346_loc_light = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_approach, Some(true));
+    }
+
+    #[test]
+    fn a346_ap_lvars_do_not_affect_other_profiles() {
+        // Profile-Gate: ein Nicht-A346-Aircraft mit (theoretisch)
+        // gesetzten AB_AP-LVar-Slots bleibt auf dem Standard-Pfad.
+        let mut t = Telemetry::default();
+        t.title = "Asobo A320 Neo".into();
+        t.atc_model = "A20N".into();
+        t.ap_master = false;
+        t.a346_ap1_light = 1.0;
+        t.a346_appr_light = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(false));
+        assert_eq!(snap.autopilot_approach, Some(false));
+    }
+
+    /// Definitive byte-level lockstep proof (QS v0.16.3): write a distinct
+    /// pattern per table index (f64 = 1000+i, i32 = i, str = "S{i}") and
+    /// assert each struct field parses exactly its own index value. Any
+    /// offset drift / kind mismatch / mid-table insertion fails loudly —
+    /// unlike the all-zero layout test above, which defaults can satisfy.
+    #[test]
+    fn pattern_buffer_proves_field_offsets() {
+        let mut buf: Vec<u8> = Vec::new();
+        for (i, f) in TELEMETRY_FIELDS.iter().enumerate() {
+            match f.kind {
+                FieldKind::Float64 => buf.extend_from_slice(&(1000.0 + i as f64).to_le_bytes()),
+                FieldKind::Int32 => buf.extend_from_slice(&(i as i32).to_le_bytes()),
+                FieldKind::String256 => {
+                    let mut s = [0u8; 256];
+                    let txt = format!("S{i}");
+                    s[..txt.len()].copy_from_slice(txt.as_bytes());
+                    buf.extend_from_slice(&s);
+                }
+            }
+        }
+        assert_eq!(buf.len(), 1684, "total block size");
+        let t = Telemetry::from_block(&buf);
+
+        // Identity / head sentinels.
+        assert_eq!(t.title, "S0");
+        assert_eq!(t.atc_model, "S1");
+        assert_eq!(t.atc_id, "S2");
+        assert_eq!(t.lat, 1003.0);
+        assert_eq!(t.vertical_speed_fpm, 1013.0);
+
+        // Mid-table sentinels around the bool clusters.
+        assert_eq!(t.gear_position, 1026.0); // idx 26
+        assert_eq!(t.n1_pct_1, 1032.0); // idx 32
+        assert_eq!(t.fuel_total_lb_ex1, 1036.0); // idx 36 (EX1 precedent)
+        assert_eq!(t.eng1_ff_pph, 1062.0); // idx 62
+        assert_eq!(t.pushback_state, 1068.0); // idx 68
+        assert_eq!(t.fbw_xpdr, 1079.0); // idx 79
+        assert_eq!(t.fnx_autobrake_max, 1111.0); // idx 111
+        assert_eq!(t.fnx_fc_flaps_lever, 1118.0); // idx 118
+        assert_eq!(t.fsr_phenom_eng1_knob, 1119.0); // idx 119
+        assert_eq!(t.fsr_phenom_eng2_knob, 1120.0); // idx 120
+
+        // ---- the 13 new A346 tail fields (idx 121..133) ----
+        assert!(t.eng1_combustion_ex1); // idx 121 (121 != 0)
+        assert!(t.eng2_combustion_ex1); // idx 122
+        assert!(t.eng3_combustion_ex1); // idx 123
+        assert!(t.eng4_combustion_ex1); // idx 124
+        assert_eq!(t.eng1_ff_corrected_pph, 1125.0); // idx 125
+        assert_eq!(t.eng2_ff_corrected_pph, 1126.0); // idx 126
+        assert_eq!(t.eng3_ff_corrected_pph, 1127.0); // idx 127
+        assert_eq!(t.eng4_ff_corrected_pph, 1128.0); // idx 128
+        assert_eq!(t.a346_ap1_light, 1129.0); // idx 129
+        assert_eq!(t.a346_ap2_light, 1130.0); // idx 130
+        assert_eq!(t.a346_athr_light, 1131.0); // idx 131
+        assert_eq!(t.a346_appr_light, 1132.0); // idx 132
+        assert_eq!(t.a346_loc_light, 1133.0); // idx 133
+    }
+
+    /// Truncated block (e.g. all 13 new tail SimVars rejected by an older
+    /// sim build): everything before stays correct, the tail parses to
+    /// safe defaults — no offset shift bleeds into pre-existing fields.
+    #[test]
+    fn truncated_tail_leaves_existing_fields_intact() {
+        let mut buf: Vec<u8> = Vec::new();
+        for (i, f) in TELEMETRY_FIELDS.iter().enumerate() {
+            match f.kind {
+                FieldKind::Float64 => buf.extend_from_slice(&(1000.0 + i as f64).to_le_bytes()),
+                FieldKind::Int32 => buf.extend_from_slice(&(i as i32).to_le_bytes()),
+                FieldKind::String256 => buf.extend_from_slice(&[0u8; 256]),
+            }
+        }
+        buf.truncate(buf.len() - 88); // drop the 13 new tail fields (4*4 + 9*8)
+        let t = Telemetry::from_block(&buf);
+        assert_eq!(t.fsr_phenom_eng2_knob, 1120.0); // last pre-existing field intact
+        assert!(!t.eng1_combustion_ex1); // tail = safe defaults
+        assert_eq!(t.eng1_ff_corrected_pph, 0.0);
+        assert_eq!(t.a346_loc_light, 0.0);
     }
 }

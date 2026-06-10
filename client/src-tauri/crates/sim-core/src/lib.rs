@@ -634,6 +634,11 @@ impl Default for SimSnapshot {
 ///   * `IniA340`    — detection only; LVar list TBD.
 ///   * `IniA350`    — detection only; LVar list TBD.
 ///   * `IniA346Pro` — detection only; LVar list TBD.
+///   * `AerosoftA346` — AP-state LVars wired (`L:AB_AP_*_LIGHT_ON`),
+///     confirmed via WASM strings analysis 2026-06-10. Engines/fuel-flow
+///     need no profile gate — the aircraft serves the standard
+///     `EX1`/CORRECTED-FF SimVar variants which the mapping now reads
+///     addon-agnostically.
 ///
 /// Cross-cutting issue: ~50 LVar fields in one SimConnectObject macro
 /// appears to overflow the read path on Fenix (lights/flaps return 0.0
@@ -669,6 +674,16 @@ pub enum AircraftProfile {
     IniA350,
     /// INIBuilds A340-600 Pro.
     IniA346Pro,
+    /// Aerosoft A340-600 Professional (MSFS, ToLiss port). WASM strings
+    /// analysis of `MSFS_ToLiss_Plugin.wasm` (2026-06-10) proved the
+    /// aircraft serves NON-standard SimVar variants:
+    /// `GENERAL ENG COMBUSTION EX1:1..4` (not the plain SimVar — root
+    /// cause of the dead `engines_running` behind v0.13.17),
+    /// `TURB ENG CORRECTED FF:1..4` (not `ENG FUEL FLOW PPH` — root
+    /// cause behind the v0.13.18 FOB derivation), and AP state ONLY
+    /// via `L:AB_AP_*_LIGHT_ON` LVars. Titles start with
+    /// "Aerosoft A346", `atc_model`/`icao_type_designator` = "A346".
+    AerosoftA346,
     /// v0.13.13: FSReborn Phenom 300E (MSFS 2024 release). Verwendet die
     /// FSR-eigenen Engine-Knob-LVars statt `GENERAL ENG COMBUSTION:N`.
     /// Hintergrund (Pilot-Befund Michael 2026-05-26): Standard-SimVar
@@ -734,6 +749,18 @@ impl AircraftProfile {
         if t.contains("inibuilds") && t.contains("a340") {
             return Self::IniA340;
         }
+        // Aerosoft A340-600 (ToLiss port). aircraft.cfg titles all start
+        // with "Aerosoft A346" (e.g. "Aerosoft A346-MahanAir"), the ICAO
+        // designator is "A346". The ICAO check uses the CLEANED model
+        // (some MSFS aircraft report localization tokens) and is exact —
+        // deliberately AFTER the INIBuilds branches above, so an
+        // iniBuilds A340-600 Pro (which may also report ICAO A346) keeps
+        // its own profile via its title.
+        if t.starts_with("aerosoft a346")
+            || clean_atc_model(icao).as_deref() == Some("A346")
+        {
+            return Self::AerosoftA346;
+        }
         // v0.13.13: FSReborn Phenom 300E. Title aus dem Sim heisst typisch
         // "FSReborn Phenom 300E Tristan Interior" (oder mit anderen
         // Interior-Varianten). Wir matchen tolerant auf fsreborn + phenom +
@@ -767,6 +794,9 @@ impl AircraftProfile {
             // v0.13.13: FSR Phenom 300E hat ICAO E55P (Embraer Phenom 300
             // Standard-Designator).
             Self::FsrPhenom300e => Some("E55P"),
+            // Aerosoft A340-600: kanonischer Designator A346 (deckt sich
+            // mit `icao_type_designator` in der aircraft.cfg).
+            Self::AerosoftA346 => Some("A346"),
             _ => None,
         }
     }
@@ -784,6 +814,7 @@ impl AircraftProfile {
             Self::IniA340 => "INIBuilds A340",
             Self::IniA350 => "INIBuilds A350",
             Self::IniA346Pro => "INIBuilds A340-600 Pro",
+            Self::AerosoftA346 => "Aerosoft A340-600",
             Self::FsrPhenom300e => "FSReborn Phenom 300E",
         }
     }
@@ -1085,6 +1116,79 @@ mod tests {
         // Sanity: das Profile darf NICHT als Fenix klassifiziert werden
         // (sonst wuerde der Fenix-LVar-Mapping-Block falsch greifen).
         assert!(!AircraftProfile::FsrPhenom300e.is_fenix());
+    }
+
+    // ---- AerosoftA346 Profile (WASM-Analyse 2026-06-10) ----
+
+    #[test]
+    fn detect_aerosoft_a346_from_title_prefix() {
+        // Reale Titles aus der aircraft.cfg beginnen alle mit
+        // "Aerosoft A346" (Livery-Suffix variiert).
+        let p = AircraftProfile::detect("Aerosoft A346-MahanAir", "A346");
+        assert_eq!(p, AircraftProfile::AerosoftA346);
+        let p = AircraftProfile::detect("Aerosoft A346 Pro", "A346");
+        assert_eq!(p, AircraftProfile::AerosoftA346);
+        assert_eq!(p.label(), "Aerosoft A340-600");
+    }
+
+    #[test]
+    fn detect_aerosoft_a346_case_insensitive_title() {
+        let p = AircraftProfile::detect("AEROSOFT A346 Lufthansa", "");
+        assert_eq!(p, AircraftProfile::AerosoftA346);
+    }
+
+    #[test]
+    fn detect_aerosoft_a346_via_icao_only() {
+        // Repaint-Szenario: Title traegt den Marker nicht, der ICAO-
+        // Designator A346 identifiziert das Aircraft trotzdem.
+        let p = AircraftProfile::detect("Custom A340-600 Repaint", "A346");
+        assert_eq!(p, AircraftProfile::AerosoftA346);
+        // Auch wenn der Sim den ICAO als Localization-Token liefert.
+        let p = AircraftProfile::detect(
+            "Custom A340-600 Repaint",
+            "ATCCOM.AC_MODEL A346.0.text",
+        );
+        assert_eq!(p, AircraftProfile::AerosoftA346);
+    }
+
+    #[test]
+    fn detect_aerosoft_a346_no_false_positives() {
+        // Andere Aircraft duerfen NICHT auf das A346-Profil fallen.
+        assert_eq!(
+            AircraftProfile::detect("FenixA320 CFM SL", "A320"),
+            AircraftProfile::FenixA320,
+        );
+        assert_eq!(
+            AircraftProfile::detect("Asobo A320 Neo", "A20N"),
+            AircraftProfile::Default,
+        );
+        // "Aerosoft" allein (anderes Aerosoft-Aircraft) reicht nicht.
+        assert_eq!(
+            AircraftProfile::detect("Aerosoft CRJ 550", "CRJ5"),
+            AircraftProfile::Default,
+        );
+        // ICAO muss EXAKT A346 sein — A343 etc. bleibt Default.
+        assert_eq!(
+            AircraftProfile::detect("Some A340-300", "A343"),
+            AircraftProfile::Default,
+        );
+    }
+
+    #[test]
+    fn detect_inibuilds_a346_pro_still_wins_over_aerosoft_icao_match() {
+        // Regression-Guard: die iniBuilds A340-600 Pro meldet u.U.
+        // ebenfalls ICAO A346 — ihr Title-Match muss weiter VOR dem
+        // Aerosoft-ICAO-Fallback greifen.
+        let p = AircraftProfile::detect("iniBuilds A340-600 Pro", "A346");
+        assert_eq!(p, AircraftProfile::IniA346Pro);
+    }
+
+    #[test]
+    fn aerosoft_a346_icao_fallback_and_not_fenix() {
+        assert_eq!(AircraftProfile::AerosoftA346.icao_fallback(), Some("A346"));
+        // Sanity: darf nicht als Fenix klassifiziert werden, sonst
+        // greift der Fenix-LVar-Mapping-Block faelschlich.
+        assert!(!AircraftProfile::AerosoftA346.is_fenix());
     }
 
     #[test]
