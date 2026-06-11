@@ -16676,7 +16676,20 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             score: stats.landing_score.map(|s| s.numeric()),
                             bounce: Some(stats.bounce_count > 0),
                             bounce_count: Some(stats.bounce_count),
-                            runway: stats.approach_runway.clone(),
+                            // v0.16.6 (Daten-Audit 2026-06-11): `approach_runway`
+                            // ist praktisch nie gesetzt → das Top-Level-Feld war
+                            // bei 407/407 VPS-Flügen None, und die Webapp-Anzeigen
+                            // (Stats/Heatmap/Pilots + Live-Notifications), die
+                            // `touchdowns.runway` lesen, zeigten NIE eine Runway —
+                            // obwohl der Korrelations-Match (97,5 % Trefferquote)
+                            // direkt daneben im Payload steht. Fallback auf den
+                            // Match-Ident füllt die DB-Spalte für neue Flüge.
+                            runway: stats.approach_runway.clone().or_else(|| {
+                                stats
+                                    .runway_match
+                                    .as_ref()
+                                    .map(|m| m.runway_ident.clone())
+                            }),
                             // v0.7.18 (B-012): aufgelöster Touchdown-Airport
                             // statt blind auf flight.arr_airport zu setzen.
                             airport: Some(td_resolution.icao.clone()),
