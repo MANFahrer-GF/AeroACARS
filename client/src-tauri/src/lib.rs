@@ -3720,6 +3720,37 @@ fn push_approach_sample(stats: &mut FlightStats, snap: &SimSnapshot) {
     }
 }
 
+/// v0.16.6: phase-independent gate for `push_approach_sample` — ONE central
+/// per-tick call in `step_flight` (right before the phase `match`) replaces
+/// the two arm-local calls that used to sit at the top of the Approach and
+/// Final arms.
+///
+///   * `Approach` / `Final` → ALWAYS push, exactly like the old arm-local
+///     calls (they were the unconditional first statement of each arm and
+///     nothing executes between the central call site and the old ones, so
+///     cadence and ordering are bit-identical for normal flights).
+///   * Any other phase → push only on a genuine descending low-level
+///     segment: the flight has been airborne, is currently airborne, is
+///     below 2000 ft AGL and sinking faster than −100 fpm. Short/low VFR
+///     bush hops (GSG312 97OG) land via the 50 Hz sampler while the FSM is
+///     still stuck in Takeoff/Climb — without this the approach buffer
+///     stayed empty and the stability stats (approach_vs_stddev /
+///     stable_* flags) were silently missing from the PIREP. Level or
+///     climbing low-level flight does NOT sample (V/S gate); the
+///     sampler-path evaluation additionally windows the buffer to the last
+///     `SAMPLER_STABILITY_WINDOW_SECS` before touchdown so a long low-level
+///     cruise can't poison the gate stats anyway.
+fn should_push_approach_sample(
+    phase: FlightPhase,
+    was_airborne: bool,
+    on_ground: bool,
+    agl_ft: f64,
+    vs_fpm: f32,
+) -> bool {
+    matches!(phase, FlightPhase::Approach | FlightPhase::Final)
+        || (was_airborne && !on_ground && agl_ft < 2000.0 && vs_fpm < -100.0)
+}
+
 /// Track the lowest AGL observed during the current Approach/Final
 /// segment. The go-around detector compares the *current* AGL against
 /// this minimum to decide whether a sustained climb-back has begun.
@@ -4138,6 +4169,34 @@ fn estimate_xplane_touchdown_vs_lua_style(
 const APPROACH_STABILITY_AGL_CAP_FT: f32 = 1500.0;
 const APPROACH_FLARE_CUTOFF_MS: i64 = 3000;
 
+/// v0.16.6: sampler-path stability-evaluation window. When a validated 50 Hz
+/// sampler touchdown evaluates approach stability (bush flights — the FSM
+/// never reaches Landing), only approach-buffer samples within this many
+/// seconds BEFORE the touchdown count. The phase-independent sampling
+/// (`should_push_approach_sample`) feeds the buffer on ANY descending
+/// low-level segment, so a 38-min Oregon-bush-tour leg flown at 1500 ft AGL
+/// would otherwise poison the 1000-ft gate with manoeuvring that has nothing
+/// to do with the actual approach. 180 s covers even a slow C152 final from
+/// well outside the gate. FSM-path flights pass `window = None` and are
+/// unaffected.
+const SAMPLER_STABILITY_WINDOW_SECS: i64 = 180;
+
+/// v0.16.6: time-window filter for the approach buffer — keeps only samples
+/// within `dur` before `td` (samples after `td` are dropped too). Shared by
+/// `compute_approach_stability_v2` (window = Some) and the sampler-path
+/// `compute_approach_stddev` call, so both stats families see the SAME
+/// windowed sample set.
+fn approach_buffer_window(
+    buf: &std::collections::VecDeque<ApproachBufferSample>,
+    td: DateTime<Utc>,
+    dur: chrono::Duration,
+) -> std::collections::VecDeque<ApproachBufferSample> {
+    buf.iter()
+        .filter(|s| s.at <= td && (td - s.at) <= dur)
+        .cloned()
+        .collect()
+}
+
 /// v0.12.1 (Stream C LE12): the `max V/S deviation < 500 ft` metric
 /// ignores samples below this height. A V/S excursion at < 50 ft is the
 /// flare / ground-effect, not approach instability — counting it produced
@@ -4315,7 +4374,28 @@ fn compute_approach_stability_v2(
     // OurAirports-Fallback / kein ILS) → Faktor 1,0 → IDENTISCH zum bisherigen
     // 3°-Verhalten (Audit-Invariante: keine Regression ohne Daten).
     glideslope_angle_deg: Option<f64>,
+    // v0.16.6: optionales Zeit-Fenster (touchdown_ts, duration) — nur Samples
+    // innerhalb `duration` VOR dem Touchdown (und keine danach) werden
+    // gewertet. Genutzt vom Sampler-Pfad (Bush-Flüge, FSM erreicht Landing
+    // nie): dort kann der Buffer durch das phasen-unabhängige Sampling einen
+    // 38-min-Low-Level-Cruise enthalten, der das 1000-ft-Gate sonst mit
+    // Manöver-Rauschen vergiftet. `None` = EXAKT das bisherige Verhalten
+    // (FSM-Pfad + alle bestehenden Tests — Audit-Invariante).
+    window: Option<(DateTime<Utc>, chrono::Duration)>,
 ) -> ApproachStabilityV2 {
+    // Fenster-Filter zuerst, dann identische Auswertung via Rekursion mit
+    // `None` — so existiert die eigentliche Mess-Logik nur einmal.
+    if let Some((td, dur)) = window {
+        let filtered = approach_buffer_window(buf, td, dur);
+        return compute_approach_stability_v2(
+            &filtered,
+            arr_elevation_ft,
+            td_ts,
+            glideslope_angle_deg,
+            None,
+        );
+    }
+
     let mut out = ApproachStabilityV2::default();
 
     // Skalierungsfaktor relativ zum 3°-Standard. tan-basiert (physikalisch
@@ -15183,15 +15263,15 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                 // `actual_td_at` (it prefers
                                 // `sampler_touchdown_at` once set).
                                 //
-                                // Known gaps deliberately NOT covered here
-                                // (FSM-arm-only, separate TODOs):
-                                //   * approach-stability evaluation (stddev /
-                                //     stable-approach-gate v2) — needs the
-                                //     approach_buffer pipeline; bush flights
-                                //     mis-phased in Takeoff/Climb never filled
-                                //     it correctly anyway.
-                                //   * rollout accumulation/finalisation — the
-                                //     Landing-phase tick loop owns it.
+                                // v0.16.6: the two formerly-known gaps
+                                // (approach-stability evaluation + rollout)
+                                // are closed below — the central
+                                // phase-independent sampling in `step_flight`
+                                // keeps the approach_buffer fed on descending
+                                // low-level segments, the evaluation here
+                                // windows it to the touchdown, and the
+                                // streamer drives `rollout_tick` for
+                                // sampler-stamped touchdowns.
                                 if stats.landing_lat.is_none() {
                                     let td_buf_sample = touchdown_buffer_sample(&stats);
                                     stamp_touchdown_metadata(
@@ -15207,6 +15287,100 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                         td_buf_sample.as_ref(),
                                     );
                                     stamp_landing_weight(&mut stats, &snap);
+
+                                    // v0.16.6: approach-stability evaluation on
+                                    // the sampler path — mirrors the FSM
+                                    // Landing-arm block (same inputs:
+                                    // `correlate_touchdown_runway` above has
+                                    // just resolved `runway_nav_geometry`
+                                    // exactly like the FSM arm does before its
+                                    // call), except both stats families are
+                                    // windowed to the last
+                                    // SAMPLER_STABILITY_WINDOW_SECS before the
+                                    // touchdown so a long low-level bush cruise
+                                    // doesn't poison the gate. On normal
+                                    // flights the FSM Landing arm runs
+                                    // afterwards and overwrites all of these
+                                    // with its full-buffer values, exactly as
+                                    // today (the `landing_lat.is_none()` guard
+                                    // above keeps this stamp first-touchdown-
+                                    // only, the FSM arm has no guard).
+                                    let td_ts = Some(pending_at);
+                                    let stab_window = chrono::Duration::seconds(
+                                        SAMPLER_STABILITY_WINDOW_SECS,
+                                    );
+                                    let windowed_buf = approach_buffer_window(
+                                        &stats.approach_buffer,
+                                        pending_at,
+                                        stab_window,
+                                    );
+                                    let (vs_sd, bank_sd) =
+                                        compute_approach_stddev(&windowed_buf, td_ts);
+                                    // Rotorcraft / seaplane: stability stddevs
+                                    // nulled — same category rule as the FSM arm.
+                                    let (vs_sd, bank_sd) = if category.is_non_conventional() {
+                                        (None, None)
+                                    } else {
+                                        (vs_sd, bank_sd)
+                                    };
+                                    stats.approach_vs_stddev_fpm = vs_sd;
+                                    stats.approach_bank_stddev_deg = bank_sd;
+                                    let stab_v2 = compute_approach_stability_v2(
+                                        &stats.approach_buffer,
+                                        stats.arr_airport_elevation_ft,
+                                        td_ts,
+                                        stats
+                                            .runway_nav_geometry
+                                            .as_ref()
+                                            .map(|g| g.glideslope_angle),
+                                        Some((pending_at, stab_window)),
+                                    );
+                                    stats.approach_vs_deviation_fpm = stab_v2.vs_deviation_fpm;
+                                    stats.approach_max_vs_deviation_below_500_fpm =
+                                        stab_v2.max_vs_deviation_below_500_fpm;
+                                    stats.approach_bank_stddev_filtered_deg =
+                                        stab_v2.bank_stddev_filtered_deg;
+                                    stats.approach_runway_changed_late =
+                                        stab_v2.runway_changed_late;
+                                    stats.approach_stable_at_gate = stab_v2.stable_at_gate;
+                                    stats.approach_vs_jerk_fpm = stab_v2.vs_jerk_fpm;
+                                    stats.approach_ias_stddev_kt = stab_v2.ias_stddev_kt;
+                                    stats.approach_excessive_sink = stab_v2.excessive_sink;
+                                    stats.approach_stable_config = stab_v2.stable_config;
+                                    stats.approach_used_hat = stab_v2.used_hat;
+                                    stats.approach_window_sample_count =
+                                        Some(stab_v2.window_sample_count);
+                                    stats.approach_stable_at_da = stab_v2.stable_at_da;
+                                    stats.approach_stall_warning_count =
+                                        stab_v2.stall_warning_count;
+                                    tracing::info!(
+                                        pirep_id = %flight.pirep_id,
+                                        vs_dev_fpm = ?stab_v2.vs_deviation_fpm,
+                                        bank_sd_filtered = ?stab_v2.bank_stddev_filtered_deg,
+                                        stable_at_gate = ?stab_v2.stable_at_gate,
+                                        samples = stab_v2.window_sample_count,
+                                        window_secs = SAMPLER_STABILITY_WINDOW_SECS,
+                                        "approach stability v2 computed (sampler path)"
+                                    );
+
+                                    // v0.16.6: rollout init — mirror of the FSM
+                                    // Landing-entry init, but anchored at the
+                                    // buffered touchdown coords (just stamped
+                                    // into landing_lat/lon above; the live
+                                    // `snap` fallback only fires on resumed
+                                    // flights with an empty buffer, same as the
+                                    // metadata stamp). The streamer's
+                                    // `sampler_path_rollout_tick` accumulates
+                                    // from here each tick while the FSM never
+                                    // reaches Landing; on normal flights the
+                                    // FSM Landing-entry re-initialises these
+                                    // with its own values, exactly as today.
+                                    stats.rollout_distance_m = Some(0.0);
+                                    stats.rollout_finalized = false;
+                                    stats.rollout_last_lat =
+                                        Some(stats.landing_lat.unwrap_or(snap.lat));
+                                    stats.rollout_last_lon =
+                                        Some(stats.landing_lon.unwrap_or(snap.lon));
                                 }
 
                                 // v0.7.0 P2 fix — emit TouchdownDetected mit
@@ -15660,6 +15834,11 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     // every other landing_* field anyway.
                     s.landing_lat = None;
                     s.landing_lon = None;
+                    // v0.16.6: stability stats + rollout are per-episode too —
+                    // the FINAL touchdown must re-evaluate its own approach
+                    // window and re-accumulate its own rollout (on bush
+                    // flights no FSM Landing arm ever overwrites them).
+                    clear_approach_stability_and_rollout(&mut s);
                     // landing_critical_until bleibt write-only (legacy field)
                     tracing::info!(
                         pirep_id = %flight.pirep_id,
@@ -16230,6 +16409,17 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 }
             }
             let phase_change = step_flight(&flight, &snap);
+
+            // v0.16.6: rollout for sampler-path landings (bush flights — the
+            // FSM never reaches Landing, so its arm never accumulates). Runs
+            // AFTER step_flight so the post-step `stats.phase` gates out the
+            // Landing case (the FSM arm has just ticked the same helper) and
+            // BEFORE the rollout-finalized publish block below so a finalise
+            // on this tick is published immediately.
+            {
+                let mut stats = flight.stats.lock().expect("flight stats");
+                sampler_path_rollout_tick(&mut stats, &snap);
+            }
 
             // v0.12.4 (Spec docs/spec/v0.12.4-score-consistency.md, LE4):
             // Sobald `step_flight` den Rollout finalisiert hat (~40 kt /
@@ -17897,6 +18087,130 @@ fn stamp_landing_weight(stats: &mut FlightStats, snap: &SimSnapshot) {
     }
 }
 
+/// v0.16.6: per-tick rollout accumulate/finalise — extracted VERBATIM from
+/// the FSM Landing arm in `step_flight` so sampler-path (bush) landings can
+/// drive it too while the FSM never reaches Landing. The FSM Landing arm
+/// calls this at the exact position its inline code used to sit (first thing
+/// in the arm), so FSM-path behaviour is unchanged.
+///
+/// Sums haversine deltas from the last seen position until one of the three
+/// finalisation triggers fires (~40 kt exit speed / >30° heading turn-off /
+/// 5 kt full-stop — see the `ROLLOUT_*` consts), then sets
+/// `rollout_finalized` + `rollout_finalize_reason`. No-op once finalised.
+/// Survives a Tauri restart because (last_lat, last_lon, distance,
+/// finalized) persist in `PersistedFlightStats`.
+fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
+    if !stats.rollout_finalized {
+        if let (Some(prev_lat), Some(prev_lon)) =
+            (stats.rollout_last_lat, stats.rollout_last_lon)
+        {
+            let delta = ::geo::distance_m(prev_lat, prev_lon, snap.lat, snap.lon);
+            stats.rollout_distance_m =
+                Some(stats.rollout_distance_m.unwrap_or(0.0) + delta);
+        }
+        stats.rollout_last_lat = Some(snap.lat);
+        stats.rollout_last_lon = Some(snap.lon);
+
+        // Three independent finalisation triggers — whichever
+        // fires first wins. See the constants near the top of
+        // this file for the rationale on each threshold.
+        let exit_speed_reached =
+            snap.groundspeed_kt < ROLLOUT_EXIT_GS_KT && snap.on_ground;
+        let full_stop = snap.groundspeed_kt < ROLLOUT_STOP_GS_KT && snap.on_ground;
+        let turned_off_runway = match stats.landing_heading_true_deg {
+            Some(td_heading) => {
+                // Wrap-around-safe signed delta in (-180, 180].
+                let mut diff = snap.heading_deg_true - td_heading;
+                while diff > 180.0 {
+                    diff -= 360.0;
+                }
+                while diff <= -180.0 {
+                    diff += 360.0;
+                }
+                diff.abs() > ROLLOUT_HEADING_DEVIATION_DEG
+            }
+            None => false,
+        };
+
+        if exit_speed_reached || full_stop || turned_off_runway {
+            stats.rollout_finalized = true;
+            // v0.12.4 (Spec LE4): wire-form reason — the streamer
+            // loop copies it into the `touchdown_rollout_finalized`
+            // MQTT event.
+            let reason = if turned_off_runway {
+                "turned_off_runway"
+            } else if full_stop {
+                "full_stop"
+            } else {
+                "exit_speed"
+            };
+            stats.rollout_finalize_reason = Some(reason.to_string());
+            tracing::info!(
+                meters = stats.rollout_distance_m.unwrap_or(0.0),
+                gs_kt = snap.groundspeed_kt,
+                reason,
+                "rollout finalised"
+            );
+        }
+    }
+}
+
+/// v0.16.6: streamer-driven rollout for sampler-path landings. Bush flights
+/// (GSG312 97OG) touch down via the validated 50 Hz sampler while the FSM is
+/// still in Takeoff/Climb — the FSM Landing arm (which owns the per-tick
+/// rollout) never runs, so `rollout_distance_m` stayed `Some(0.0)` forever.
+/// Called once per streamer tick right after `step_flight`:
+///
+///   * `sampler_touchdown_at` Some → a validated touchdown initialised the
+///     rollout fields (sampler stamp block).
+///   * `!rollout_finalized` → still accumulating.
+///   * FSM NOT in Landing → no double-tick: when the FSM IS in Landing its
+///     arm has just driven `rollout_tick` inside `step_flight` on this very
+///     tick. On normal flights the Final→Landing transition re-initialises
+///     the rollout fields with the FSM's own values, so this pre-Landing
+///     accumulation is discarded there — byte-identical to before.
+fn sampler_path_rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
+    if stats.sampler_touchdown_at.is_some()
+        && !stats.rollout_finalized
+        && !matches!(stats.phase, FlightPhase::Landing)
+    {
+        rollout_tick(stats, snap);
+    }
+}
+
+/// v0.16.6: per-episode reset of the approach-stability stats + rollout
+/// fields — called from the sampler's climb-out reset (touch-and-go) right
+/// next to the `landing_lat`/`landing_lon` re-arm. The FINAL touchdown of a
+/// bush flight must evaluate stability over ITS OWN window and accumulate
+/// ITS OWN rollout; without this the PIREP would silently carry TD#1's
+/// numbers (the FSM Landing arm never runs on bush flights to overwrite
+/// them). On FSM-tracked flights the Landing-entry recompute overwrites all
+/// of these at the next touchdown anyway — clearing them here additionally
+/// only means the fields read `None`/default between the T&G and the final
+/// touchdown instead of holding stale TD#1 values.
+fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
+    stats.approach_vs_stddev_fpm = None;
+    stats.approach_bank_stddev_deg = None;
+    stats.approach_vs_deviation_fpm = None;
+    stats.approach_max_vs_deviation_below_500_fpm = None;
+    stats.approach_bank_stddev_filtered_deg = None;
+    stats.approach_runway_changed_late = false;
+    stats.approach_stable_at_gate = None;
+    stats.approach_vs_jerk_fpm = None;
+    stats.approach_ias_stddev_kt = None;
+    stats.approach_excessive_sink = false;
+    stats.approach_stable_config = None;
+    stats.approach_used_hat = false;
+    stats.approach_window_sample_count = None;
+    stats.approach_stable_at_da = None;
+    stats.approach_stall_warning_count = 0;
+    stats.rollout_distance_m = None;
+    stats.rollout_finalized = false;
+    stats.rollout_last_lat = None;
+    stats.rollout_last_lon = None;
+    stats.rollout_finalize_reason = None;
+}
+
 fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase> {
     let mut stats = flight.stats.lock().expect("flight stats");
     let _now_for_state_update = Utc::now();
@@ -18158,6 +18472,22 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
         stats.was_on_ground = Some(snap.on_ground);
         stats.was_parking_brake = Some(snap.parking_brake);
         return Some(FlightPhase::Climb);
+    }
+
+    // v0.16.6: phase-independent approach sampling — see
+    // `should_push_approach_sample`. For Approach/Final this is the exact
+    // same per-tick push the two arms used to do as their first statement
+    // (nothing executes between here and the old call sites); for mis-phased
+    // bush flights it keeps the buffer fed on any descending segment below
+    // 2000 ft AGL so the sampler-path stability evaluation has data.
+    if should_push_approach_sample(
+        prev_phase,
+        stats.was_airborne,
+        snap.on_ground,
+        snap.altitude_agl_ft,
+        snap.vertical_speed_fpm,
+    ) {
+        push_approach_sample(&mut stats, snap);
     }
 
     // Match on a local Copy so the rest of the body is free to mutate `stats`.
@@ -18749,10 +19079,10 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
             }
         }
         FlightPhase::Approach => {
-            // Collect approach-stability samples on every tick. V/S
-            // and bank stddev over this window become the "Approach
-            // Stability" sub-score in the Landing Analyzer.
-            push_approach_sample(&mut stats, snap);
+            // Approach-stability samples (V/S + bank stddev → "Approach
+            // Stability" sub-score) are pushed by the central
+            // phase-independent call right before this match (v0.16.6) —
+            // same per-tick cadence as the old arm-local call here.
             // Track lowest AGL during approach for go-around detection.
             update_lowest_approach_agl(&mut stats, snap);
 
@@ -18805,11 +19135,11 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
             }
         }
         FlightPhase::Final => {
-            // Continue collecting approach-stability samples through
-            // the final segment too. Lots of pilots stabilise late;
-            // measuring only Approach would underweight the truly
-            // important last 700 ft AGL.
-            push_approach_sample(&mut stats, snap);
+            // Approach-stability sampling continues through the final
+            // segment too (lots of pilots stabilise late; measuring only
+            // Approach would underweight the truly important last 700 ft
+            // AGL) — handled by the central phase-independent call right
+            // before this match (v0.16.6), same cadence as before.
             update_lowest_approach_agl(&mut stats, snap);
             // Rotorcraft hover-arrest is not a go-around (see Approach arm) —
             // suppress so a heli that stabilises into a hover before set-down
@@ -19247,6 +19577,10 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
                         .runway_nav_geometry
                         .as_ref()
                         .map(|g| g.glideslope_angle),
+                    // v0.16.6: kein Zeit-Fenster auf dem FSM-Pfad — exakt das
+                    // bisherige Verhalten (das Fenster ist nur fuer den
+                    // Sampler-Pfad, dessen Buffer Low-Level-Cruise enthalten kann).
+                    None,
                 );
                 stats.approach_vs_deviation_fpm = stab_v2.vs_deviation_fpm;
                 stats.approach_max_vs_deviation_below_500_fpm = stab_v2.max_vs_deviation_below_500_fpm;
@@ -19387,63 +19721,11 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
         FlightPhase::Landing => {
             // Rollout-distance accumulator: from `landing_lat/lon` until
             // the rollout finalises (~40 kt exit speed / >30° heading
-            // turn-off / 5 kt full-stop — see the three triggers below).
-            // Sums haversine deltas tick-by-tick. Survives a Tauri restart
-            // because we persist (last_lat, last_lon, distance,
-            // finalized) in PersistedFlightStats.
-            if !stats.rollout_finalized {
-                if let (Some(prev_lat), Some(prev_lon)) =
-                    (stats.rollout_last_lat, stats.rollout_last_lon)
-                {
-                    let delta = ::geo::distance_m(prev_lat, prev_lon, snap.lat, snap.lon);
-                    stats.rollout_distance_m =
-                        Some(stats.rollout_distance_m.unwrap_or(0.0) + delta);
-                }
-                stats.rollout_last_lat = Some(snap.lat);
-                stats.rollout_last_lon = Some(snap.lon);
-
-                // Three independent finalisation triggers — whichever
-                // fires first wins. See the constants near the top of
-                // this file for the rationale on each threshold.
-                let exit_speed_reached =
-                    snap.groundspeed_kt < ROLLOUT_EXIT_GS_KT && snap.on_ground;
-                let full_stop = snap.groundspeed_kt < ROLLOUT_STOP_GS_KT && snap.on_ground;
-                let turned_off_runway = match stats.landing_heading_true_deg {
-                    Some(td_heading) => {
-                        // Wrap-around-safe signed delta in (-180, 180].
-                        let mut diff = snap.heading_deg_true - td_heading;
-                        while diff > 180.0 {
-                            diff -= 360.0;
-                        }
-                        while diff <= -180.0 {
-                            diff += 360.0;
-                        }
-                        diff.abs() > ROLLOUT_HEADING_DEVIATION_DEG
-                    }
-                    None => false,
-                };
-
-                if exit_speed_reached || full_stop || turned_off_runway {
-                    stats.rollout_finalized = true;
-                    // v0.12.4 (Spec LE4): wire-form reason — the streamer
-                    // loop copies it into the `touchdown_rollout_finalized`
-                    // MQTT event.
-                    let reason = if turned_off_runway {
-                        "turned_off_runway"
-                    } else if full_stop {
-                        "full_stop"
-                    } else {
-                        "exit_speed"
-                    };
-                    stats.rollout_finalize_reason = Some(reason.to_string());
-                    tracing::info!(
-                        meters = stats.rollout_distance_m.unwrap_or(0.0),
-                        gs_kt = snap.groundspeed_kt,
-                        reason,
-                        "rollout finalised"
-                    );
-                }
-            }
+            // turn-off / 5 kt full-stop). Extracted verbatim to
+            // `rollout_tick` (v0.16.6) so sampler-path bush landings can
+            // drive the same logic from the streamer — this call sits at
+            // the exact position the inline code used to.
+            rollout_tick(&mut stats, snap);
 
             // Touchdown analyzer windows (BeatMyLanding-aligned):
             //   * Peak G refined for TOUCHDOWN_G_WINDOW_MS (1500 ms)
@@ -27075,7 +27357,7 @@ mod sim_pause_tests {
         ]
         .into_iter()
         .collect();
-        let out = compute_approach_stability_v2(&buf, None, None, None);
+        let out = compute_approach_stability_v2(&buf, None, None, None, None);
         assert_eq!(out.stable_config, None, "flaps unreadable → not assessable");
     }
 
@@ -27090,7 +27372,7 @@ mod sim_pause_tests {
         ]
         .into_iter()
         .collect();
-        let out = compute_approach_stability_v2(&buf, None, None, None);
+        let out = compute_approach_stability_v2(&buf, None, None, None, None);
         assert_eq!(out.stable_config, Some(false), "genuine no-flaps → fail");
     }
 
@@ -27103,7 +27385,7 @@ mod sim_pause_tests {
         ]
         .into_iter()
         .collect();
-        let out = compute_approach_stability_v2(&buf, None, None, None);
+        let out = compute_approach_stability_v2(&buf, None, None, None, None);
         assert_eq!(out.stable_config, Some(true));
     }
 
@@ -27120,7 +27402,7 @@ mod sim_pause_tests {
         ]
         .into_iter()
         .collect();
-        let out = compute_approach_stability_v2(&buf, None, None, None);
+        let out = compute_approach_stability_v2(&buf, None, None, None, None);
         let max_dev = out
             .max_vs_deviation_below_500_fpm
             .expect("a sub-500 ft sample exists");
@@ -27146,17 +27428,17 @@ mod sim_pause_tests {
         .collect();
 
         // Ohne Gleitwinkel (3°-Fallback): fälschlich „excessive".
-        let out_3deg = compute_approach_stability_v2(&buf, None, None, None);
+        let out_3deg = compute_approach_stability_v2(&buf, None, None, None, None);
         assert!(out_3deg.excessive_sink, "gegen 3° gilt der Steilanflug als excessive");
 
         // Mit echtem 5,5°-Gleitwinkel: NICHT excessive + kleine V/S-Abweichung.
-        let out_55 = compute_approach_stability_v2(&buf, None, None, Some(5.5));
+        let out_55 = compute_approach_stability_v2(&buf, None, None, Some(5.5), None);
         assert!(!out_55.excessive_sink, "5,5°-Steilanflug ist nicht excessive");
         let dev = out_55.vs_deviation_fpm.expect("deviation vorhanden");
         assert!(dev < 200.0, "Abweichung vs 5,5°-Profil klein, war {dev}");
 
         // AUDIT-Invariante 1: None == exakt 3,0° (bit-identisch, keine Regression).
-        let out_explicit_3 = compute_approach_stability_v2(&buf, None, None, Some(3.0));
+        let out_explicit_3 = compute_approach_stability_v2(&buf, None, None, Some(3.0), None);
         assert_eq!(
             out_3deg.excessive_sink, out_explicit_3.excessive_sink,
             "None und 3,0° müssen identisch sein"
@@ -27165,7 +27447,7 @@ mod sim_pause_tests {
 
         // AUDIT-Invariante 2: unplausibler Gleitwinkel (außerhalb 2–7,5°) →
         // Fallback 3° (= None-Verhalten), kein Müll-Scaling.
-        let out_garbage = compute_approach_stability_v2(&buf, None, None, Some(15.0));
+        let out_garbage = compute_approach_stability_v2(&buf, None, None, Some(15.0), None);
         assert_eq!(
             out_3deg.excessive_sink, out_garbage.excessive_sink,
             "Müll-Gleitwinkel → 3°-Fallback"
@@ -27189,7 +27471,7 @@ mod sim_pause_tests {
         .collect();
 
         // 3°-Fallback (None): DA-Gate gegen fix −1000 → fälschlich instabil.
-        let out_3 = compute_approach_stability_v2(&buf, None, None, None);
+        let out_3 = compute_approach_stability_v2(&buf, None, None, None, None);
         assert_eq!(
             out_3.stable_at_da,
             Some(false),
@@ -27197,7 +27479,7 @@ mod sim_pause_tests {
         );
 
         // 5,5°-Gleitwinkel: Schwelle ~−1834 fpm → die −1120…−1150 sind sauber.
-        let out_55 = compute_approach_stability_v2(&buf, None, None, Some(5.5));
+        let out_55 = compute_approach_stability_v2(&buf, None, None, Some(5.5), None);
         assert_eq!(
             out_55.stable_at_da,
             Some(true),
@@ -27205,7 +27487,7 @@ mod sim_pause_tests {
         );
 
         // AUDIT-Invariante: bei exakt 3,0° identisch zum None-Fallback.
-        let out_3_explicit = compute_approach_stability_v2(&buf, None, None, Some(3.0));
+        let out_3_explicit = compute_approach_stability_v2(&buf, None, None, Some(3.0), None);
         assert_eq!(out_3.stable_at_da, out_3_explicit.stable_at_da);
     }
 
@@ -28049,5 +28331,399 @@ mod touchdown_metadata_stamp_tests {
                 "cfg {i}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod v0_16_6_bush_completeness_tests {
+    //! v0.16.6 — tests for the two final VFR/bush landing-completeness
+    //! pieces: phase-independent approach sampling + sampler-path stability
+    //! window (`should_push_approach_sample` / the
+    //! `compute_approach_stability_v2` time-window parameter) and the
+    //! phase-independent rollout (`rollout_tick` /
+    //! `sampler_path_rollout_tick` / the T&G episode reset
+    //! `clear_approach_stability_and_rollout`).
+
+    use super::*;
+    use chrono::TimeZone;
+    use sim_core::SimSnapshot;
+
+    fn td() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 6, 11, 12, 0, 0).unwrap()
+    }
+
+    fn sample_at(at: DateTime<Utc>, agl: f32, vs: f32) -> ApproachBufferSample {
+        ApproachBufferSample {
+            at,
+            agl_ft: agl,
+            msl_ft: agl,
+            gs_kt: 100.0,
+            ias_kt: 105.0,
+            vs_fpm: vs,
+            bank_deg: 1.0,
+            heading_true_deg: 90.0,
+            gear_position: 1.0,
+            flaps_position: 1.0,
+            selected_runway: None,
+            stall_warning: false,
+        }
+    }
+
+    // ─── (1) central-sampling equivalence: Approach/Final ────────────────
+
+    #[test]
+    fn central_gate_always_pushes_in_approach_and_final() {
+        // The old arm-local calls pushed UNCONDITIONALLY on every
+        // Approach/Final tick. The central gate must do the same regardless
+        // of airborne state / AGL / V/S — including pathological values.
+        for phase in [FlightPhase::Approach, FlightPhase::Final] {
+            for was_airborne in [false, true] {
+                for on_ground in [false, true] {
+                    for agl in [0.0, 500.0, 5000.0] {
+                        for vs in [-1500.0, 0.0, 1500.0] {
+                            assert!(
+                                should_push_approach_sample(
+                                    phase,
+                                    was_airborne,
+                                    on_ground,
+                                    agl,
+                                    vs
+                                ),
+                                "Approach/Final must always sample \
+                                 ({phase:?}, wa={was_airborne}, og={on_ground}, \
+                                 agl={agl}, vs={vs})"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ─── (2) bush AGL-sampling: descending below 2000 ft only ────────────
+
+    #[test]
+    fn central_gate_bush_descent_fires_outside_approach_final() {
+        // GSG312-class: FSM stuck in Takeoff/Climb on a short bush hop —
+        // airborne, below 2000 ft AGL, sinking → sample. The second gate
+        // half is deliberately phase-independent.
+        for phase in [
+            FlightPhase::Takeoff,
+            FlightPhase::Climb,
+            FlightPhase::Cruise,
+            FlightPhase::Descent,
+            FlightPhase::Landing,
+        ] {
+            assert!(
+                should_push_approach_sample(phase, true, false, 1500.0, -300.0),
+                "descending low-level segment must sample in {phase:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn central_gate_bush_blocks_level_climbing_ground_high_or_never_airborne() {
+        let p = FlightPhase::Climb;
+        // level (above the -100 fpm descent gate)
+        assert!(!should_push_approach_sample(p, true, false, 1500.0, -50.0));
+        // climbing
+        assert!(!should_push_approach_sample(p, true, false, 1500.0, 300.0));
+        // on ground
+        assert!(!should_push_approach_sample(p, true, true, 0.0, -300.0));
+        // too high
+        assert!(!should_push_approach_sample(p, true, false, 2500.0, -300.0));
+        // never airborne (taxi gear-bumps / pre-flight)
+        assert!(!should_push_approach_sample(p, false, false, 1500.0, -300.0));
+    }
+
+    // ─── (3) stability-v2 time window ─────────────────────────────────────
+
+    /// Buffer: 3 gate-band samples inside the 180 s window, 3 gate-band
+    /// samples 1000 s before touchdown (the "38-min low-level bush cruise"),
+    /// 1 sample after the touchdown.
+    fn windowed_buf() -> std::collections::VecDeque<ApproachBufferSample> {
+        let mut buf = std::collections::VecDeque::new();
+        // poison: old low-level manoeuvring, wildly unstable V/S
+        buf.push_back(sample_at(td() - chrono::Duration::seconds(1010), 900.0, -1500.0));
+        buf.push_back(sample_at(td() - chrono::Duration::seconds(1005), 600.0, 800.0));
+        buf.push_back(sample_at(td() - chrono::Duration::seconds(1000), 300.0, -1200.0));
+        // the actual approach, inside the window, calm
+        buf.push_back(sample_at(td() - chrono::Duration::seconds(120), 900.0, -600.0));
+        buf.push_back(sample_at(td() - chrono::Duration::seconds(60), 600.0, -610.0));
+        buf.push_back(sample_at(td() - chrono::Duration::seconds(20), 300.0, -590.0));
+        // post-touchdown sample (e.g. T&G climb-out) — must never count
+        buf.push_back(sample_at(td() + chrono::Duration::seconds(10), 200.0, -400.0));
+        buf
+    }
+
+    #[test]
+    fn stability_window_excludes_samples_outside_window() {
+        let buf = windowed_buf();
+        // td_ts = None isolates the new window parameter from the
+        // pre-existing flare-cutoff filter.
+        let windowed = compute_approach_stability_v2(
+            &buf,
+            None,
+            None,
+            None,
+            Some((td(), chrono::Duration::seconds(180))),
+        );
+        assert_eq!(
+            windowed.window_sample_count, 3,
+            "only the 3 in-window approach samples may count"
+        );
+        // the calm in-window approach must NOT look excessive — the old
+        // -1500 fpm poison sample is outside the window
+        assert!(!windowed.excessive_sink);
+
+        let unwindowed = compute_approach_stability_v2(&buf, None, None, None, None);
+        assert_eq!(
+            unwindowed.window_sample_count, 7,
+            "None = old behaviour: every gate-band sample counts"
+        );
+        assert!(
+            unwindowed.excessive_sink,
+            "without the window the poison sample leaks in"
+        );
+    }
+
+    #[test]
+    fn stability_window_none_equals_covering_window() {
+        // A window that covers every pre-TD sample must be bit-identical to
+        // `None` — proves the filter-then-recurse path changes nothing but
+        // membership. (Buffer without the post-TD sample, since a covering
+        // window still excludes samples after the touchdown.)
+        let mut buf = windowed_buf();
+        buf.pop_back();
+        let a = compute_approach_stability_v2(&buf, None, None, None, None);
+        let b = compute_approach_stability_v2(
+            &buf,
+            None,
+            None,
+            None,
+            Some((td(), chrono::Duration::days(365))),
+        );
+        assert_eq!(a.window_sample_count, b.window_sample_count);
+        assert_eq!(a.vs_jerk_fpm, b.vs_jerk_fpm);
+        assert_eq!(a.ias_stddev_kt, b.ias_stddev_kt);
+        assert_eq!(a.bank_stddev_filtered_deg, b.bank_stddev_filtered_deg);
+        assert_eq!(a.vs_deviation_fpm, b.vs_deviation_fpm);
+        assert_eq!(
+            a.max_vs_deviation_below_500_fpm,
+            b.max_vs_deviation_below_500_fpm
+        );
+        assert_eq!(a.excessive_sink, b.excessive_sink);
+        assert_eq!(a.stable_config, b.stable_config);
+        assert_eq!(a.stable_at_gate, b.stable_at_gate);
+        assert_eq!(a.stable_at_da, b.stable_at_da);
+        assert_eq!(a.runway_changed_late, b.runway_changed_late);
+        assert_eq!(a.used_hat, b.used_hat);
+        assert_eq!(a.stall_warning_count, b.stall_warning_count);
+    }
+
+    #[test]
+    fn approach_buffer_window_drops_post_touchdown_samples() {
+        let buf = windowed_buf();
+        let w = approach_buffer_window(&buf, td(), chrono::Duration::seconds(180));
+        assert_eq!(w.len(), 3);
+        assert!(w.iter().all(|s| s.at <= td()));
+    }
+
+    // ─── (4+5) rollout helper: accumulate + finalise ──────────────────────
+
+    fn rollout_snap(lat: f64, lon: f64, gs: f32, hdg: f32, on_ground: bool) -> SimSnapshot {
+        SimSnapshot {
+            lat,
+            lon,
+            groundspeed_kt: gs,
+            heading_deg_true: hdg,
+            on_ground,
+            ..SimSnapshot::default()
+        }
+    }
+
+    /// Stats as the sampler stamp initialises them: distance 0, last =
+    /// touchdown coords, TD heading stamped.
+    fn rollout_stats(lat: f64, lon: f64) -> FlightStats {
+        let mut stats = FlightStats::default();
+        stats.rollout_distance_m = Some(0.0);
+        stats.rollout_finalized = false;
+        stats.rollout_last_lat = Some(lat);
+        stats.rollout_last_lon = Some(lon);
+        stats.landing_heading_true_deg = Some(90.0);
+        stats
+    }
+
+    #[test]
+    fn rollout_tick_accumulates_haversine_distance() {
+        let mut stats = rollout_stats(50.0, 8.0);
+        let snap = rollout_snap(50.0, 8.001, 80.0, 90.0, true);
+        rollout_tick(&mut stats, &snap);
+        let expected = ::geo::distance_m(50.0, 8.0, 50.0, 8.001);
+        let got = stats.rollout_distance_m.expect("distance accumulated");
+        assert!((got - expected).abs() < 0.01, "got {got}, expected {expected}");
+        assert!(!stats.rollout_finalized, "gs 80 kt must not finalise");
+        assert_eq!(stats.rollout_last_lat, Some(50.0));
+        assert_eq!(stats.rollout_last_lon, Some(8.001));
+    }
+
+    #[test]
+    fn rollout_tick_finalizes_exit_speed() {
+        let mut stats = rollout_stats(50.0, 8.0);
+        let snap = rollout_snap(50.0, 8.0005, 35.0, 90.0, true);
+        rollout_tick(&mut stats, &snap);
+        assert!(stats.rollout_finalized);
+        assert_eq!(stats.rollout_finalize_reason.as_deref(), Some("exit_speed"));
+    }
+
+    #[test]
+    fn rollout_tick_finalizes_full_stop_below_5kt() {
+        let mut stats = rollout_stats(50.0, 8.0);
+        let snap = rollout_snap(50.0, 8.0005, 3.0, 90.0, true);
+        rollout_tick(&mut stats, &snap);
+        assert!(stats.rollout_finalized);
+        assert_eq!(stats.rollout_finalize_reason.as_deref(), Some("full_stop"));
+    }
+
+    #[test]
+    fn rollout_tick_finalizes_on_runway_turnoff() {
+        let mut stats = rollout_stats(50.0, 8.0);
+        // 40° off the TD heading, still fast — turned onto a taxiway.
+        let snap = rollout_snap(50.0, 8.0005, 100.0, 130.0, true);
+        rollout_tick(&mut stats, &snap);
+        assert!(stats.rollout_finalized);
+        assert_eq!(
+            stats.rollout_finalize_reason.as_deref(),
+            Some("turned_off_runway")
+        );
+    }
+
+    #[test]
+    fn rollout_tick_slow_but_airborne_does_not_finalize() {
+        // exit-speed / full-stop triggers require on_ground (a slow airborne
+        // bounce sample must not end the rollout).
+        let mut stats = rollout_stats(50.0, 8.0);
+        let snap = rollout_snap(50.0, 8.0005, 3.0, 90.0, false);
+        rollout_tick(&mut stats, &snap);
+        assert!(!stats.rollout_finalized);
+    }
+
+    #[test]
+    fn rollout_tick_noop_once_finalized() {
+        let mut stats = rollout_stats(50.0, 8.0);
+        stats.rollout_finalized = true;
+        stats.rollout_distance_m = Some(450.0);
+        let snap = rollout_snap(51.0, 9.0, 80.0, 90.0, true);
+        rollout_tick(&mut stats, &snap);
+        assert_eq!(stats.rollout_distance_m, Some(450.0));
+        assert_eq!(stats.rollout_last_lat, Some(50.0), "last coords frozen");
+    }
+
+    // ─── (5) sampler-path rollout: gate + accumulate-to-full-stop ────────
+
+    #[test]
+    fn sampler_path_rollout_accumulates_and_finalizes_at_full_stop() {
+        // Bush flight: FSM stuck in Climb, sampler stamped the touchdown and
+        // initialised the rollout. Three streamer ticks: rolling, slowing,
+        // stopped.
+        let mut stats = rollout_stats(50.0, 8.0);
+        stats.phase = FlightPhase::Climb;
+        stats.sampler_touchdown_at = Some(td());
+
+        sampler_path_rollout_tick(&mut stats, &rollout_snap(50.0, 8.001, 60.0, 90.0, true));
+        sampler_path_rollout_tick(&mut stats, &rollout_snap(50.0, 8.002, 45.0, 90.0, true));
+        sampler_path_rollout_tick(&mut stats, &rollout_snap(50.0, 8.003, 4.0, 90.0, true));
+
+        let expected = ::geo::distance_m(50.0, 8.0, 50.0, 8.001)
+            + ::geo::distance_m(50.0, 8.001, 50.0, 8.002)
+            + ::geo::distance_m(50.0, 8.002, 50.0, 8.003);
+        let got = stats.rollout_distance_m.expect("distance accumulated");
+        assert!((got - expected).abs() < 0.01, "got {got}, expected {expected}");
+        assert!(stats.rollout_finalized, "GS < 5 kt must finalise");
+        assert_eq!(stats.rollout_finalize_reason.as_deref(), Some("full_stop"));
+    }
+
+    #[test]
+    fn sampler_path_rollout_skips_when_fsm_in_landing() {
+        // No double-tick: when the FSM IS in Landing its arm has just driven
+        // rollout_tick inside step_flight on this very tick.
+        let mut stats = rollout_stats(50.0, 8.0);
+        stats.phase = FlightPhase::Landing;
+        stats.sampler_touchdown_at = Some(td());
+        sampler_path_rollout_tick(&mut stats, &rollout_snap(50.0, 8.001, 60.0, 90.0, true));
+        assert_eq!(stats.rollout_distance_m, Some(0.0), "Landing phase owns the tick");
+        assert_eq!(stats.rollout_last_lat, Some(50.0));
+    }
+
+    #[test]
+    fn sampler_path_rollout_skips_without_sampler_touchdown() {
+        let mut stats = rollout_stats(50.0, 8.0);
+        stats.phase = FlightPhase::Climb;
+        stats.sampler_touchdown_at = None;
+        sampler_path_rollout_tick(&mut stats, &rollout_snap(50.0, 8.001, 60.0, 90.0, true));
+        assert_eq!(stats.rollout_distance_m, Some(0.0));
+        assert_eq!(stats.rollout_last_lat, Some(50.0));
+    }
+
+    #[test]
+    fn sampler_path_rollout_skips_once_finalized() {
+        let mut stats = rollout_stats(50.0, 8.0);
+        stats.phase = FlightPhase::Climb;
+        stats.sampler_touchdown_at = Some(td());
+        stats.rollout_finalized = true;
+        stats.rollout_distance_m = Some(450.0);
+        sampler_path_rollout_tick(&mut stats, &rollout_snap(50.0, 8.001, 60.0, 90.0, true));
+        assert_eq!(stats.rollout_distance_m, Some(450.0));
+    }
+
+    // ─── (6) T&G climb-out reset clears stability + rollout ──────────────
+
+    #[test]
+    fn climbout_reset_clears_stability_and_rollout_fields() {
+        let mut stats = FlightStats::default();
+        // populate everything the sampler-path evaluation writes
+        stats.approach_vs_stddev_fpm = Some(120.0);
+        stats.approach_bank_stddev_deg = Some(3.0);
+        stats.approach_vs_deviation_fpm = Some(80.0);
+        stats.approach_max_vs_deviation_below_500_fpm = Some(400.0);
+        stats.approach_bank_stddev_filtered_deg = Some(2.5);
+        stats.approach_runway_changed_late = true;
+        stats.approach_stable_at_gate = Some(false);
+        stats.approach_vs_jerk_fpm = Some(60.0);
+        stats.approach_ias_stddev_kt = Some(4.0);
+        stats.approach_excessive_sink = true;
+        stats.approach_stable_config = Some(true);
+        stats.approach_used_hat = true;
+        stats.approach_window_sample_count = Some(42);
+        stats.approach_stable_at_da = Some(true);
+        stats.approach_stall_warning_count = 2;
+        stats.rollout_distance_m = Some(512.0);
+        stats.rollout_finalized = true;
+        stats.rollout_last_lat = Some(50.0);
+        stats.rollout_last_lon = Some(8.0);
+        stats.rollout_finalize_reason = Some("full_stop".into());
+
+        clear_approach_stability_and_rollout(&mut stats);
+
+        assert_eq!(stats.approach_vs_stddev_fpm, None);
+        assert_eq!(stats.approach_bank_stddev_deg, None);
+        assert_eq!(stats.approach_vs_deviation_fpm, None);
+        assert_eq!(stats.approach_max_vs_deviation_below_500_fpm, None);
+        assert_eq!(stats.approach_bank_stddev_filtered_deg, None);
+        assert!(!stats.approach_runway_changed_late);
+        assert_eq!(stats.approach_stable_at_gate, None);
+        assert_eq!(stats.approach_vs_jerk_fpm, None);
+        assert_eq!(stats.approach_ias_stddev_kt, None);
+        assert!(!stats.approach_excessive_sink);
+        assert_eq!(stats.approach_stable_config, None);
+        assert!(!stats.approach_used_hat);
+        assert_eq!(stats.approach_window_sample_count, None);
+        assert_eq!(stats.approach_stable_at_da, None);
+        assert_eq!(stats.approach_stall_warning_count, 0);
+        assert_eq!(stats.rollout_distance_m, None, "next TD re-accumulates");
+        assert!(!stats.rollout_finalized);
+        assert_eq!(stats.rollout_last_lat, None);
+        assert_eq!(stats.rollout_last_lon, None);
+        assert_eq!(stats.rollout_finalize_reason, None);
     }
 }
