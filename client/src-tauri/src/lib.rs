@@ -15157,6 +15157,58 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                 stats.pending_td_premium_vs = None;
                                 stats.pending_td_premium_g = None;
 
+                                // v0.15.24: Phase-independent touchdown METADATA.
+                                //
+                                // Short/low VFR bush hops (GSG312 97OG) land via
+                                // this sampler path while the FSM is still stuck
+                                // in Takeoff/Climb — the touchdown is captured,
+                                // scored and published (v0.15.23), but the
+                                // metadata (landing IAS/pitch/bank/heading/
+                                // coords/fuel/weight, touchdown profile,
+                                // sideslip, wind, RUNWAY correlation) was only
+                                // ever stamped in the FSM Landing arm, so the
+                                // PIREP report silently lost all those fields.
+                                // Stamp them here, at the validated touchdown,
+                                // with the SAME helpers the FSM arm calls.
+                                //
+                                // First-touchdown-wins guard: only stamp when
+                                // the FSM arm hasn't already (landing_lat is
+                                // its unconditional marker). On normal flights
+                                // the FSM Landing arm still runs afterwards and
+                                // overwrites these with its own values — its
+                                // behaviour is unchanged.
+                                //
+                                // `pending_at` is the validated contact time —
+                                // the same instant the FSM arm would use as
+                                // `actual_td_at` (it prefers
+                                // `sampler_touchdown_at` once set).
+                                //
+                                // Known gaps deliberately NOT covered here
+                                // (FSM-arm-only, separate TODOs):
+                                //   * approach-stability evaluation (stddev /
+                                //     stable-approach-gate v2) — needs the
+                                //     approach_buffer pipeline; bush flights
+                                //     mis-phased in Takeoff/Climb never filled
+                                //     it correctly anyway.
+                                //   * rollout accumulation/finalisation — the
+                                //     Landing-phase tick loop owns it.
+                                if stats.landing_lat.is_none() {
+                                    let td_buf_sample = touchdown_buffer_sample(&stats);
+                                    stamp_touchdown_metadata(
+                                        &mut stats,
+                                        &snap,
+                                        pending_at,
+                                        td_buf_sample.as_ref(),
+                                    );
+                                    correlate_touchdown_runway(
+                                        &mut stats,
+                                        &snap,
+                                        &flight,
+                                        td_buf_sample.as_ref(),
+                                    );
+                                    stamp_landing_weight(&mut stats, &snap);
+                                }
+
                                 // v0.7.0 P2 fix — emit TouchdownDetected mit
                                 // den ECHTEN Werten aus compute_landing_rate-
                                 // Cascade (vorher: confidence falsch = sim-string,
@@ -15599,6 +15651,15 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     s.touchdown_window_dumped_at = None;
                     s.post_touchdown_buffer.clear();
                     s.landing_score_finalized = false;
+                    // v0.16.5: re-arm the sampler-path metadata stamp. Its
+                    // once-guard keys on `landing_lat.is_none()` — on a
+                    // touch-and-go the FINAL touchdown must stamp fresh
+                    // metadata, not keep TD#1's (the FSM Landing arm never
+                    // runs on bush flights to overwrite it). Clearing the
+                    // anchor re-arms the guard; the next stamp overwrites
+                    // every other landing_* field anyway.
+                    s.landing_lat = None;
+                    s.landing_lon = None;
                     // landing_critical_until bleibt write-only (legacy field)
                     tracing::info!(
                         pirep_id = %flight.pirep_id,
@@ -17528,6 +17589,314 @@ fn sampler_in_air_now(
     }
 }
 
+/// v0.15.24: First on-ground sample in the 50 Hz snapshot buffer — the
+/// touchdown moment as the sampler recorded it. Shared by the FSM Landing
+/// arm and the sampler-validation stamping path so both read the SAME
+/// TD-instant values. `None` when the buffer is empty (resumed flight) or
+/// holds no on-ground sample yet — callers fall back to the live snap.
+fn touchdown_buffer_sample(stats: &FlightStats) -> Option<TelemetrySample> {
+    stats.snapshot_buffer.iter().find(|s| s.on_ground).cloned()
+}
+
+/// v0.15.24: Touchdown-METADATA stamp — extracted verbatim from the FSM
+/// Landing arm in `step_flight` so the validated sampler touchdown can stamp
+/// the same fields when the FSM never reaches Landing. Short/low VFR bush
+/// hops (GSG312, 97OG) land via the 50 Hz sampler while the FSM is still in
+/// Takeoff/Climb: the touchdown was captured + scored + published
+/// (v0.15.23), but landing IAS/pitch/bank/heading/speed/groundspeed/fuel/
+/// coords/profile/sideslip/wind were only ever stamped inside the FSM
+/// Landing arm — so the PIREP report silently lost all of them
+/// (`build_pirep_payload` omits `None` stats).
+///
+/// Behaviour-preserving for the FSM path: identical fallback chains, in the
+/// identical order — buffered TD-moment sample → MSFS-latched touchdown
+/// SimVars → live snap. The `snap` fallback is the worst case (post-rollout
+/// values), kept only for resumed flights where the buffer is empty.
+///
+/// `actual_td_at` anchors the profile timestamps; pass the same TD instant
+/// the caller uses for `landing_at` (FSM arm) / `sampler_touchdown_at`
+/// (sampler-validation path) so `t_ms = 0` is the contact frame.
+fn stamp_touchdown_metadata(
+    stats: &mut FlightStats,
+    snap: &SimSnapshot,
+    actual_td_at: DateTime<Utc>,
+    td_buf_sample: Option<&TelemetrySample>,
+) {
+    // IAS / pitch / heading: prefer the buffered sample
+    // at the actual TD moment (see `td_buf_sample`).
+    // Fall back chain — buffered sample → MSFS-latched
+    // touchdown SimVars → live snap. The `snap` fallback
+    // is the worst case (post-rollout values), kept only
+    // for resumed flights where the buffer is empty.
+    stats.landing_pitch_deg = Some(
+        snap.touchdown_pitch_deg
+            .or_else(|| td_buf_sample.map(|s| s.pitch_deg))
+            .unwrap_or(snap.pitch_deg),
+    );
+    // v0.5.16: bank at touchdown for wing-strike maintenance
+    // detection. MSFS latches bank too via the touchdown
+    // SimVar set; X-Plane via the buffered sample. Live
+    // snap as last-resort fallback (resumed flights).
+    stats.landing_bank_deg = Some(
+        snap.touchdown_bank_deg
+            .or_else(|| td_buf_sample.map(|s| s.bank_deg))
+            .unwrap_or(snap.bank_deg),
+    );
+    // Heading capture: MSFS gives us a magnetic-heading
+    // touchdown latch; the buffer carries true-heading
+    // only. When we fall back to the buffer we approximate
+    // magnetic from true via the live magvar delta
+    // (true−magnetic at the streamer tick) — small error
+    // since magvar doesn't change in 5 s of rollout.
+    stats.landing_heading_deg = Some(
+        snap.touchdown_heading_mag_deg
+            .or_else(|| {
+                td_buf_sample.map(|s| {
+                    let magvar =
+                        snap.heading_deg_true - snap.heading_deg_magnetic;
+                    s.heading_true_deg - magvar
+                })
+            })
+            .unwrap_or(snap.heading_deg_magnetic),
+    );
+    stats.landing_speed_kt = Some(
+        td_buf_sample
+            .map(|s| s.indicated_airspeed_kt)
+            .unwrap_or(snap.indicated_airspeed_kt),
+    );
+    // v0.5.17: groundspeed at touchdown (parallel to IAS).
+    // Buffered sample preferred — live snap is the post-
+    // rollout fallback for resumed flights only.
+    stats.landing_groundspeed_kt = Some(
+        td_buf_sample
+            .map(|s| s.groundspeed_kt)
+            .unwrap_or(snap.groundspeed_kt),
+    );
+    stats.landing_fuel_kg = Some(snap.fuel_total_kg);
+
+    // ---- Tier 2/3 BeatMyLanding-aligned extras ----
+
+    // Position + true heading at the touchdown edge — used
+    // for runway lookup and disambiguation between parallel
+    // runway pairs (08L/08R) via heading match.
+    //
+    // Pulls from the buffered TD-moment sample (same
+    // reasoning as the IAS / pitch / heading capture
+    // above): `snap` is up to 5 s late on the streamer
+    // tick, time enough for a typical airliner to roll
+    // 50–100 m down the runway and drift left/right via
+    // nose-wheel correction — the centerline offset
+    // sign would invert if the pilot touched down 3 m
+    // left and then drifted through center to right of
+    // centerline during the rollout. Live bug 2026-05-03
+    // (MKJS RWY 07: pilot reported 3 m left, app showed
+    // 2.7 m right). Buffer fallback to `snap` only when
+    // the buffer is empty (resumed flight).
+    stats.landing_lat = Some(
+        td_buf_sample
+            .map(|s| s.lat)
+            .unwrap_or(snap.lat),
+    );
+    stats.landing_lon = Some(
+        td_buf_sample
+            .map(|s| s.lon)
+            .unwrap_or(snap.lon),
+    );
+    stats.landing_heading_true_deg = Some(
+        td_buf_sample
+            .map(|s| s.heading_true_deg)
+            .unwrap_or(snap.heading_deg_true),
+    );
+
+    // Touchdown profile — full buffer reframed to ms-relative
+    // timestamps. PIREP renders this as a tiny V/S curve so
+    // the pilot can see the flare shape after the fact.
+    stats.touchdown_profile = stats
+        .snapshot_buffer
+        .iter()
+        .map(|s| TouchdownProfilePoint {
+            t_ms: (s.at - actual_td_at).num_milliseconds() as i32,
+            vs_fpm: s.vs_fpm,
+            g_force: s.g_force,
+            agl_ft: s.agl_ft,
+            on_ground: s.on_ground,
+            heading_true_deg: s.heading_true_deg,
+            groundspeed_kt: s.groundspeed_kt,
+            indicated_airspeed_kt: s.indicated_airspeed_kt,
+            pitch_deg: s.pitch_deg,
+            bank_deg: s.bank_deg,
+        })
+        .collect();
+
+    // Sideslip / crab angle at touchdown — GEES-aligned:
+    //   sideslip = atan2(VEL_BODY_X, VEL_BODY_Z) × 180/π
+    // VEL_BODY_X is the right component of velocity in the
+    // aircraft's body frame; VEL_BODY_Z is the forward
+    // component. The ratio's arctangent IS the angle
+    // between the velocity vector and the nose. Native
+    // and exact — much better than reconstructing track
+    // from successive lat/lon. None when the SimVar isn't
+    // wired or the aircraft is essentially stopped (Z<3 fps
+    // ≈ 1.8 kt, vector noise dominates below that).
+    stats.touchdown_sideslip_deg = match (
+        snap.velocity_body_x_fps,
+        snap.velocity_body_z_fps,
+    ) {
+        (Some(x), Some(z)) if z.abs() > 3.0 => {
+            Some(x.atan2(z).to_degrees())
+        }
+        _ => None,
+    };
+
+    // Headwind / crosswind components at the touchdown
+    // frame, native from `AIRCRAFT WIND X/Z`. Z is signed
+    // such that positive = tailwind (wind blowing into the
+    // aircraft from behind), so headwind = -Z. X positive
+    // = wind from the right side.
+    stats.landing_headwind_kt = snap.aircraft_wind_z_kt.map(|z| -z);
+    stats.landing_crosswind_kt = snap.aircraft_wind_x_kt;
+}
+
+/// v0.15.24: Runway correlation at the touchdown point — extracted verbatim
+/// from the FSM Landing arm (see `stamp_touchdown_metadata` for why).
+/// Resolves which runway the wheels actually touched on (Navigraph
+/// navdata-cache with transparent OurAirports fallback), stamps
+/// `runway_match` / `runway_source` / `runway_nav_cycle` /
+/// `runway_nav_geometry` plus the actual threshold-crossing height.
+///
+/// None when no runway lies within ~3 km of the touchdown coordinate. Sits
+/// next to `approach_runway` (from `ATC RUNWAY SELECTED`) — the runway_match
+/// value is the authoritative one because it's derived from where the wheels
+/// actually touched, not the ATC clearance. Uses the buffered TD-moment
+/// lat/lon/heading (same reasoning as the `landing_lat` capture in
+/// `stamp_touchdown_metadata`) so the centerline-offset sign and along-track
+/// distance reflect the real touchdown point, not where the aircraft has
+/// rolled to during the streamer's 5 s edge-detection lag.
+///
+/// Lock order: caller holds the `flight.stats` lock; this takes
+/// `flight.navdata` nested inside it — same order as the pre-extraction FSM
+/// arm (stats → navdata), never the reverse anywhere in the codebase.
+fn correlate_touchdown_runway(
+    stats: &mut FlightStats,
+    snap: &SimSnapshot,
+    flight: &ActiveFlight,
+    td_buf_sample: Option<&TelemetrySample>,
+) {
+    let (rw_lat, rw_lon, rw_hdg_true) = td_buf_sample
+        .map(|s| (s.lat, s.lon, s.heading_true_deg))
+        .unwrap_or((snap.lat, snap.lon, snap.heading_deg_true));
+
+    // v0.8.0: Navdata-Cache befragen — wenn der pro-Flug-
+    // Cache den arr_airport hat, nimm dessen NavAirport für
+    // die Match-Quelle. `lookup_runway_with_fallback`
+    // fällt transparent auf OurAirports zurück, wenn
+    // entweder kein NavAirport vorhanden ist oder die
+    // NavRunways zu weit weg vom Touchdown sind (= Pilot
+    // ist auf einer anderen Bahn gelandet als geplant).
+    let (nav_opt, nav_cycle) = {
+        let cache = flight.navdata.lock().expect("navdata lock");
+        let apt = cache.get(&flight.arr_airport).cloned();
+        let cycle = cache.cycle.clone();
+        (apt, cycle)
+    };
+
+    let lookup_result = runway::lookup_runway_with_fallback(
+        rw_lat,
+        rw_lon,
+        rw_hdg_true,
+        nav_opt.as_ref(),
+    );
+    if let Some((rw, source)) = lookup_result {
+        // Wenn der Match aus Navigraph kam, finde die
+        // konkrete NavRunway-Geometrie (designator-Match)
+        // damit die Assessment-Funktionen (TDZ/TCH/DDS)
+        // den displaced_threshold_ft, tch_ft und
+        // glideslope_angle ohne zweite Lookup-Runde
+        // bekommen. Bei OurAirports-Fallback bleibt
+        // runway_nav_geometry = None und die Assessment-
+        // Funktionen werden skipped.
+        let nav_geometry = if matches!(source, runway::RunwaySource::Navigraph) {
+            nav_opt.as_ref().and_then(|apt| {
+                apt.runways
+                    .iter()
+                    .find(|nr| nr.designator == rw.runway_ident)
+                    .cloned()
+            })
+        } else {
+            None
+        };
+        tracing::info!(
+            airport = %rw.airport_ident,
+            runway = %rw.runway_ident,
+            centerline_m = rw.centerline_distance_m,
+            from_threshold_ft = rw.touchdown_distance_from_threshold_ft,
+            side = %rw.side,
+            source = ?source,
+            cycle = ?nav_cycle,
+            "touchdown correlated to runway"
+        );
+        stats.runway_match = Some(rw);
+        stats.runway_source = Some(source);
+        stats.runway_nav_cycle = if matches!(source, runway::RunwaySource::Navigraph) {
+            nav_cycle
+        } else {
+            None
+        };
+        stats.runway_nav_geometry = nav_geometry;
+    } else {
+        stats.runway_match = None;
+        stats.runway_source = None;
+        stats.runway_nav_cycle = None;
+        stats.runway_nav_geometry = None;
+    }
+
+    // v0.8.0 F5 — TCH (Threshold-Crossing-Height) Actual:
+    // Scanne den snapshot_buffer chronologisch und nimm den
+    // ersten Sample dessen along-track-Distanz vom Landing-
+    // Threshold ≥ 0 ist (= Aircraft hat die Threshold-Linie
+    // gerade überflogen). agl_ft an diesem Sample = actual
+    // TCH. Nur möglich wenn wir die Navigraph-Geometrie
+    // haben (= echte Threshold-Position) — OurAirports-
+    // Threshold ist um bis zu 11 m off (MS713-Anchor),
+    // damit wäre der TCH-Wert unzuverlässig.
+    stats.runway_tch_actual_ft = None;
+    if let Some(geom) = stats.runway_nav_geometry.as_ref() {
+        let thr_lat = geom.threshold.lat;
+        let thr_lon = geom.threshold.lon;
+        let end_lat = geom.far_end.lat;
+        let end_lon = geom.far_end.lon;
+        for s in stats.snapshot_buffer.iter() {
+            let along = runway::along_track_m_signed(
+                thr_lat, thr_lon, end_lat, end_lon, s.lat, s.lon,
+            );
+            if along >= 0.0 {
+                // Erstes Sample past-threshold gefunden.
+                // Realistisch landet der TCH-Sample im
+                // Bereich 40-60 ft AGL für ILS-Anflüge.
+                stats.runway_tch_actual_ft = Some(s.agl_ft);
+                break;
+            }
+        }
+    }
+}
+
+/// v0.15.24: Landing-weight stamp — extracted verbatim from the tail of the
+/// FSM Landing arm. Prefer TOTAL WEIGHT (fuel + payload + empty); only
+/// fall back to ZFW + fuel if the SimVar is missing. Fenix returns 0 for
+/// both → snapshot mapping converted it to None, so the field stays unset
+/// and the PIREP filter drops it.
+fn stamp_landing_weight(stats: &mut FlightStats, snap: &SimSnapshot) {
+    if let Some(tw) = snap.total_weight_kg {
+        stats.landing_weight_kg = Some(tw as f64);
+    } else {
+        let zfw = snap.zfw_kg.unwrap_or(0.0);
+        let weight = zfw as f64 + snap.fuel_total_kg as f64;
+        if weight > 0.0 {
+            stats.landing_weight_kg = Some(weight);
+        }
+    }
+}
+
 fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase> {
     let mut stats = flight.stats.lock().expect("flight stats");
     let _now_for_state_update = Utc::now();
@@ -18490,11 +18859,7 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
                 // Live bug 2026-05-03: pilot at 135 kt touchdown saw
                 // "IAS bei TD: 118 kt" + "pitch -4.9°" because we
                 // were reading post-derotation values.
-                let td_buf_sample = stats
-                    .snapshot_buffer
-                    .iter()
-                    .find(|s| s.on_ground)
-                    .cloned();
+                let td_buf_sample = touchdown_buffer_sample(&stats);
 
                 // v0.5.12: SIM-AWARE touchdown capture — different
                 // priority chains for MSFS vs X-Plane.
@@ -18813,254 +19178,26 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
                 stats.landing_g_force = Some(touchdown_g);
                 stats.landing_peak_g_force = Some(touchdown_g);
 
-                // IAS / pitch / heading: prefer the buffered sample
-                // at the actual TD moment (see `td_buf_sample` above).
-                // Fall back chain — buffered sample → MSFS-latched
-                // touchdown SimVars → live snap. The `snap` fallback
-                // is the worst case (post-rollout values), kept only
-                // for resumed flights where the buffer is empty.
-                stats.landing_pitch_deg = Some(
-                    snap.touchdown_pitch_deg
-                        .or_else(|| td_buf_sample.as_ref().map(|s| s.pitch_deg))
-                        .unwrap_or(snap.pitch_deg),
+                // Touchdown metadata (IAS/pitch/bank/heading/speed/GS/fuel,
+                // TD coords, profile, sideslip, wind) + runway correlation —
+                // extracted to phase-independent helpers (v0.15.24) so the
+                // validated sampler touchdown can stamp them too when the
+                // FSM never reaches Landing (bush hops, GSG312). This call
+                // is behaviour-identical to the pre-extraction inline code;
+                // it deliberately OVERWRITES any earlier sampler-path stamp
+                // with the FSM-tick values, exactly as before.
+                stamp_touchdown_metadata(
+                    &mut stats,
+                    snap,
+                    actual_td_at,
+                    td_buf_sample.as_ref(),
                 );
-                // v0.5.16: bank at touchdown for wing-strike maintenance
-                // detection. MSFS latches bank too via the touchdown
-                // SimVar set; X-Plane via the buffered sample. Live
-                // snap as last-resort fallback (resumed flights).
-                stats.landing_bank_deg = Some(
-                    snap.touchdown_bank_deg
-                        .or_else(|| td_buf_sample.as_ref().map(|s| s.bank_deg))
-                        .unwrap_or(snap.bank_deg),
+                correlate_touchdown_runway(
+                    &mut stats,
+                    snap,
+                    flight,
+                    td_buf_sample.as_ref(),
                 );
-                // Heading capture: MSFS gives us a magnetic-heading
-                // touchdown latch; the buffer carries true-heading
-                // only. When we fall back to the buffer we approximate
-                // magnetic from true via the live magvar delta
-                // (true−magnetic at the streamer tick) — small error
-                // since magvar doesn't change in 5 s of rollout.
-                stats.landing_heading_deg = Some(
-                    snap.touchdown_heading_mag_deg
-                        .or_else(|| {
-                            td_buf_sample.as_ref().map(|s| {
-                                let magvar =
-                                    snap.heading_deg_true - snap.heading_deg_magnetic;
-                                s.heading_true_deg - magvar
-                            })
-                        })
-                        .unwrap_or(snap.heading_deg_magnetic),
-                );
-                stats.landing_speed_kt = Some(
-                    td_buf_sample
-                        .as_ref()
-                        .map(|s| s.indicated_airspeed_kt)
-                        .unwrap_or(snap.indicated_airspeed_kt),
-                );
-                // v0.5.17: groundspeed at touchdown (parallel to IAS).
-                // Buffered sample preferred — live snap is the post-
-                // rollout fallback for resumed flights only.
-                stats.landing_groundspeed_kt = Some(
-                    td_buf_sample
-                        .as_ref()
-                        .map(|s| s.groundspeed_kt)
-                        .unwrap_or(snap.groundspeed_kt),
-                );
-                stats.landing_fuel_kg = Some(snap.fuel_total_kg);
-
-                // ---- Tier 2/3 BeatMyLanding-aligned extras ----
-
-                // Position + true heading at the touchdown edge — used
-                // for runway lookup and disambiguation between parallel
-                // runway pairs (08L/08R) via heading match.
-                //
-                // Pulls from the buffered TD-moment sample (same
-                // reasoning as the IAS / pitch / heading capture
-                // above): `snap` is up to 5 s late on the streamer
-                // tick, time enough for a typical airliner to roll
-                // 50–100 m down the runway and drift left/right via
-                // nose-wheel correction — the centerline offset
-                // sign would invert if the pilot touched down 3 m
-                // left and then drifted through center to right of
-                // centerline during the rollout. Live bug 2026-05-03
-                // (MKJS RWY 07: pilot reported 3 m left, app showed
-                // 2.7 m right). Buffer fallback to `snap` only when
-                // the buffer is empty (resumed flight).
-                stats.landing_lat = Some(
-                    td_buf_sample
-                        .as_ref()
-                        .map(|s| s.lat)
-                        .unwrap_or(snap.lat),
-                );
-                stats.landing_lon = Some(
-                    td_buf_sample
-                        .as_ref()
-                        .map(|s| s.lon)
-                        .unwrap_or(snap.lon),
-                );
-                stats.landing_heading_true_deg = Some(
-                    td_buf_sample
-                        .as_ref()
-                        .map(|s| s.heading_true_deg)
-                        .unwrap_or(snap.heading_deg_true),
-                );
-
-                // Touchdown profile — full buffer reframed to ms-relative
-                // timestamps. PIREP renders this as a tiny V/S curve so
-                // the pilot can see the flare shape after the fact.
-                stats.touchdown_profile = stats
-                    .snapshot_buffer
-                    .iter()
-                    .map(|s| TouchdownProfilePoint {
-                        t_ms: (s.at - actual_td_at).num_milliseconds() as i32,
-                        vs_fpm: s.vs_fpm,
-                        g_force: s.g_force,
-                        agl_ft: s.agl_ft,
-                        on_ground: s.on_ground,
-                        heading_true_deg: s.heading_true_deg,
-                        groundspeed_kt: s.groundspeed_kt,
-                        indicated_airspeed_kt: s.indicated_airspeed_kt,
-                        pitch_deg: s.pitch_deg,
-                        bank_deg: s.bank_deg,
-                    })
-                    .collect();
-
-                // Sideslip / crab angle at touchdown — GEES-aligned:
-                //   sideslip = atan2(VEL_BODY_X, VEL_BODY_Z) × 180/π
-                // VEL_BODY_X is the right component of velocity in the
-                // aircraft's body frame; VEL_BODY_Z is the forward
-                // component. The ratio's arctangent IS the angle
-                // between the velocity vector and the nose. Native
-                // and exact — much better than reconstructing track
-                // from successive lat/lon. None when the SimVar isn't
-                // wired or the aircraft is essentially stopped (Z<3 fps
-                // ≈ 1.8 kt, vector noise dominates below that).
-                stats.touchdown_sideslip_deg = match (
-                    snap.velocity_body_x_fps,
-                    snap.velocity_body_z_fps,
-                ) {
-                    (Some(x), Some(z)) if z.abs() > 3.0 => {
-                        Some(x.atan2(z).to_degrees())
-                    }
-                    _ => None,
-                };
-
-                // Headwind / crosswind components at the touchdown
-                // frame, native from `AIRCRAFT WIND X/Z`. Z is signed
-                // such that positive = tailwind (wind blowing into the
-                // aircraft from behind), so headwind = -Z. X positive
-                // = wind from the right side.
-                stats.landing_headwind_kt = snap.aircraft_wind_z_kt.map(|z| -z);
-                stats.landing_crosswind_kt = snap.aircraft_wind_x_kt;
-
-                // Runway correlation. None when no runway lies within
-                // ~3 km of the touchdown coordinate. Sits next to
-                // `approach_runway` (from `ATC RUNWAY SELECTED`) — the
-                // runway_match value is the authoritative one because
-                // it's derived from where the wheels actually touched,
-                // not the ATC clearance. Uses the buffered TD-moment
-                // lat/lon/heading (same reasoning as `landing_lat`
-                // capture above) so the centerline-offset sign and
-                // along-track distance reflect the real touchdown
-                // point, not where the aircraft has rolled to during
-                // the streamer's 5 s edge-detection lag.
-                let (rw_lat, rw_lon, rw_hdg_true) = td_buf_sample
-                    .as_ref()
-                    .map(|s| (s.lat, s.lon, s.heading_true_deg))
-                    .unwrap_or((snap.lat, snap.lon, snap.heading_deg_true));
-
-                // v0.8.0: Navdata-Cache befragen — wenn der pro-Flug-
-                // Cache den arr_airport hat, nimm dessen NavAirport für
-                // die Match-Quelle. `lookup_runway_with_fallback`
-                // fällt transparent auf OurAirports zurück, wenn
-                // entweder kein NavAirport vorhanden ist oder die
-                // NavRunways zu weit weg vom Touchdown sind (= Pilot
-                // ist auf einer anderen Bahn gelandet als geplant).
-                let (nav_opt, nav_cycle, nav_geom_clone) = {
-                    let cache = flight.navdata.lock().expect("navdata lock");
-                    let apt = cache.get(&flight.arr_airport).cloned();
-                    let cycle = cache.cycle.clone();
-                    (apt, cycle, None::<aeroacars_mqtt::navdata::NavRunway>)
-                };
-                let _ = nav_geom_clone; // placeholder; populated below.
-
-                let lookup_result = runway::lookup_runway_with_fallback(
-                    rw_lat,
-                    rw_lon,
-                    rw_hdg_true,
-                    nav_opt.as_ref(),
-                );
-                if let Some((rw, source)) = lookup_result {
-                    // Wenn der Match aus Navigraph kam, finde die
-                    // konkrete NavRunway-Geometrie (designator-Match)
-                    // damit die Assessment-Funktionen (TDZ/TCH/DDS)
-                    // den displaced_threshold_ft, tch_ft und
-                    // glideslope_angle ohne zweite Lookup-Runde
-                    // bekommen. Bei OurAirports-Fallback bleibt
-                    // runway_nav_geometry = None und die Assessment-
-                    // Funktionen werden skipped.
-                    let nav_geometry = if matches!(source, runway::RunwaySource::Navigraph) {
-                        nav_opt.as_ref().and_then(|apt| {
-                            apt.runways
-                                .iter()
-                                .find(|nr| nr.designator == rw.runway_ident)
-                                .cloned()
-                        })
-                    } else {
-                        None
-                    };
-                    tracing::info!(
-                        airport = %rw.airport_ident,
-                        runway = %rw.runway_ident,
-                        centerline_m = rw.centerline_distance_m,
-                        from_threshold_ft = rw.touchdown_distance_from_threshold_ft,
-                        side = %rw.side,
-                        source = ?source,
-                        cycle = ?nav_cycle,
-                        "touchdown correlated to runway"
-                    );
-                    stats.runway_match = Some(rw);
-                    stats.runway_source = Some(source);
-                    stats.runway_nav_cycle = if matches!(source, runway::RunwaySource::Navigraph) {
-                        nav_cycle
-                    } else {
-                        None
-                    };
-                    stats.runway_nav_geometry = nav_geometry;
-                } else {
-                    stats.runway_match = None;
-                    stats.runway_source = None;
-                    stats.runway_nav_cycle = None;
-                    stats.runway_nav_geometry = None;
-                }
-
-                // v0.8.0 F5 — TCH (Threshold-Crossing-Height) Actual:
-                // Scanne den snapshot_buffer chronologisch und nimm den
-                // ersten Sample dessen along-track-Distanz vom Landing-
-                // Threshold ≥ 0 ist (= Aircraft hat die Threshold-Linie
-                // gerade überflogen). agl_ft an diesem Sample = actual
-                // TCH. Nur möglich wenn wir die Navigraph-Geometrie
-                // haben (= echte Threshold-Position) — OurAirports-
-                // Threshold ist um bis zu 11 m off (MS713-Anchor),
-                // damit wäre der TCH-Wert unzuverlässig.
-                stats.runway_tch_actual_ft = None;
-                if let Some(geom) = stats.runway_nav_geometry.as_ref() {
-                    let thr_lat = geom.threshold.lat;
-                    let thr_lon = geom.threshold.lon;
-                    let end_lat = geom.far_end.lat;
-                    let end_lon = geom.far_end.lon;
-                    for s in stats.snapshot_buffer.iter() {
-                        let along = runway::along_track_m_signed(
-                            thr_lat, thr_lon, end_lat, end_lon, s.lat, s.lon,
-                        );
-                        if along >= 0.0 {
-                            // Erstes Sample past-threshold gefunden.
-                            // Realistisch landet der TCH-Sample im
-                            // Bereich 40-60 ft AGL für ILS-Anflüge.
-                            stats.runway_tch_actual_ft = Some(s.agl_ft);
-                            break;
-                        }
-                    }
-                }
 
                 // Reset bounce state for the new analyzer window.
                 stats.bounce_armed_above_threshold = false;
@@ -19240,20 +19377,11 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
                 stats.rollout_finalized = false;
                 stats.rollout_last_lat = Some(snap.lat);
                 stats.rollout_last_lon = Some(snap.lon);
-                // Prefer TOTAL WEIGHT (fuel + payload + empty); only
-                // fall back to ZFW + fuel if the SimVar is missing.
-                // Fenix returns 0 for both → snapshot mapping converted
-                // it to None, so the field stays unset and the PIREP
-                // filter drops it.
-                if let Some(tw) = snap.total_weight_kg {
-                    stats.landing_weight_kg = Some(tw as f64);
-                } else {
-                    let zfw = snap.zfw_kg.unwrap_or(0.0);
-                    let weight = zfw as f64 + snap.fuel_total_kg as f64;
-                    if weight > 0.0 {
-                        stats.landing_weight_kg = Some(weight);
-                    }
-                }
+                // Landing weight — extracted helper (v0.15.24), called at
+                // the SAME point in the arm as the pre-extraction inline
+                // code (after the brake-energy proxy above, which must keep
+                // seeing the PREVIOUS landing_weight_kg on touch-and-go).
+                stamp_landing_weight(&mut stats, snap);
             }
         }
         FlightPhase::Landing => {
@@ -27436,3 +27564,490 @@ mod merge_touchdown_profile_tests {
 }
 
 
+
+#[cfg(test)]
+mod touchdown_metadata_stamp_tests {
+    //! v0.15.24 — tests for the phase-independent touchdown metadata stamp
+    //! (`stamp_touchdown_metadata` / `correlate_touchdown_runway` /
+    //! `stamp_landing_weight`), extracted from the FSM Landing arm so the
+    //! validated 50 Hz sampler touchdown can stamp the same fields when the
+    //! FSM never reaches Landing (bush hops — GSG312 97OG).
+
+    use super::*;
+    use chrono::TimeZone;
+    use sim_core::SimSnapshot;
+
+    fn td_at() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 6, 10, 18, 0, 0).unwrap()
+    }
+
+    /// Buffer sample with clearly-recognisable TD-instant values, distinct
+    /// from everything in `rollout_snap()` so each assertion can tell which
+    /// source won.
+    fn buf_sample(at: DateTime<Utc>, on_ground: bool) -> TelemetrySample {
+        TelemetrySample {
+            at,
+            vs_fpm: -350.0,
+            g_force: 1.4,
+            on_ground,
+            agl_ft: if on_ground { 0.0 } else { 12.0 },
+            heading_true_deg: 270.0,
+            groundspeed_kt: 95.0,
+            indicated_airspeed_kt: 100.0,
+            lat: 51.0,
+            lon: 12.0,
+            pitch_deg: 4.5,
+            bank_deg: -1.5,
+            gear_normal_force_n: None,
+            total_weight_kg: Some(1000.0),
+        }
+    }
+
+    /// Live snap as it would look on a (late) tick AFTER touchdown —
+    /// post-derotation pitch, bled-off IAS, drifted position. If any of
+    /// these leak into the stamped landing_* fields while the buffer holds
+    /// a TD sample, the fallback chain is broken.
+    fn rollout_snap() -> SimSnapshot {
+        SimSnapshot {
+            lat: 51.001,
+            lon: 12.001,
+            heading_deg_true: 280.0,
+            heading_deg_magnetic: 277.0, // magvar = +3.0
+            pitch_deg: -2.0,
+            bank_deg: 0.5,
+            indicated_airspeed_kt: 55.0,
+            groundspeed_kt: 50.0,
+            fuel_total_kg: 88.5,
+            velocity_body_x_fps: Some(5.0),
+            velocity_body_z_fps: Some(50.0),
+            aircraft_wind_x_kt: Some(7.0),
+            aircraft_wind_z_kt: Some(-9.0),
+            total_weight_kg: Some(1043.0),
+            ..SimSnapshot::default()
+        }
+    }
+
+    /// Stats with a 3-sample buffer: airborne → TD (first on-ground) →
+    /// rollout. The FIRST on-ground sample is the touchdown moment.
+    fn stats_with_buffer() -> FlightStats {
+        let mut stats = FlightStats::default();
+        stats
+            .snapshot_buffer
+            .push_back(buf_sample(td_at() - chrono::Duration::milliseconds(500), false));
+        stats.snapshot_buffer.push_back(buf_sample(td_at(), true));
+        stats
+            .snapshot_buffer
+            .push_back(buf_sample(td_at() + chrono::Duration::milliseconds(500), true));
+        stats
+    }
+
+    /// Minimal ActiveFlight for `correlate_touchdown_runway` (only
+    /// `navdata` + `arr_airport` are read by it).
+    fn flight_fixture(arr: &str) -> ActiveFlight {
+        ActiveFlight {
+            pirep_id: "test-pirep".into(),
+            bid_id: 0,
+            flight_id: String::new(),
+            bid_callsign: None,
+            pilot_callsign: None,
+            started_at: Utc::now(),
+            airline_icao: String::new(),
+            airline_logo_url: None,
+            planned_registration: String::new(),
+            aircraft_icao: "C172".into(),
+            aircraft_name: String::new(),
+            flight_number: "1".into(),
+            dpt_airport: "EDDF".into(),
+            arr_airport: arr.to_string(),
+            fares: Vec::new(),
+            stats: Mutex::new(FlightStats::new()),
+            stop: AtomicBool::new(false),
+            was_just_resumed: AtomicBool::new(false),
+            streamer_spawned: AtomicBool::new(false),
+            cancelled_remotely: AtomicBool::new(false),
+            position_outbox: Mutex::new(std::collections::VecDeque::new()),
+            phpvms_worker_spawned: AtomicBool::new(false),
+            connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
+            navdata: Mutex::new(NavdataCache::default()),
+        }
+    }
+
+    // ---- stamp_touchdown_metadata ----
+
+    #[test]
+    fn stamp_uses_buffer_td_sample_not_live_snap() {
+        let mut stats = stats_with_buffer();
+        let snap = rollout_snap();
+        let td_buf = touchdown_buffer_sample(&stats);
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+
+        // TD-instant values from the buffered first on-ground sample.
+        assert_eq!(stats.landing_pitch_deg, Some(4.5));
+        assert_eq!(stats.landing_bank_deg, Some(-1.5));
+        assert_eq!(stats.landing_speed_kt, Some(100.0));
+        assert_eq!(stats.landing_groundspeed_kt, Some(95.0));
+        assert_eq!(stats.landing_lat, Some(51.0));
+        assert_eq!(stats.landing_lon, Some(12.0));
+        assert_eq!(stats.landing_heading_true_deg, Some(270.0));
+        // Magnetic heading = buffer-true − live magvar (280 − 277 = 3).
+        assert_eq!(stats.landing_heading_deg, Some(267.0));
+        // Fuel always from the live snap (no buffered fuel field).
+        assert_eq!(stats.landing_fuel_kg, Some(88.5));
+        // Sideslip = atan2(5, 50) in degrees.
+        let slip = stats.touchdown_sideslip_deg.expect("sideslip");
+        assert!((slip - 5.0f32.atan2(50.0).to_degrees()).abs() < 1e-4);
+        // Headwind = −Z (Z negative = wind from ahead), crosswind = X.
+        assert_eq!(stats.landing_headwind_kt, Some(9.0));
+        assert_eq!(stats.landing_crosswind_kt, Some(7.0));
+        // Profile reframed to ms relative to the TD instant.
+        assert_eq!(stats.touchdown_profile.len(), 3);
+        assert_eq!(stats.touchdown_profile[0].t_ms, -500);
+        assert_eq!(stats.touchdown_profile[1].t_ms, 0);
+        assert_eq!(stats.touchdown_profile[2].t_ms, 500);
+    }
+
+    #[test]
+    fn stamp_falls_back_to_live_snap_when_buffer_empty() {
+        // Resumed flight: snapshot_buffer empty → everything that has no
+        // MSFS latch falls back to the live snap. Must not panic.
+        let mut stats = FlightStats::default();
+        let snap = rollout_snap();
+        let td_buf = touchdown_buffer_sample(&stats);
+        assert!(td_buf.is_none());
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+
+        assert_eq!(stats.landing_pitch_deg, Some(-2.0));
+        assert_eq!(stats.landing_bank_deg, Some(0.5));
+        assert_eq!(stats.landing_heading_deg, Some(277.0));
+        assert_eq!(stats.landing_speed_kt, Some(55.0));
+        assert_eq!(stats.landing_groundspeed_kt, Some(50.0));
+        assert_eq!(stats.landing_lat, Some(51.001));
+        assert_eq!(stats.landing_lon, Some(12.001));
+        assert_eq!(stats.landing_heading_true_deg, Some(280.0));
+        assert!(stats.touchdown_profile.is_empty());
+    }
+
+    #[test]
+    fn msfs_latched_touchdown_simvars_win_over_buffer() {
+        let mut stats = stats_with_buffer();
+        let mut snap = rollout_snap();
+        snap.touchdown_pitch_deg = Some(3.1);
+        snap.touchdown_bank_deg = Some(-0.4);
+        snap.touchdown_heading_mag_deg = Some(265.0);
+        let td_buf = touchdown_buffer_sample(&stats);
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+
+        assert_eq!(stats.landing_pitch_deg, Some(3.1));
+        assert_eq!(stats.landing_bank_deg, Some(-0.4));
+        assert_eq!(stats.landing_heading_deg, Some(265.0));
+        // IAS/GS/coords have no MSFS latch — still from the buffer.
+        assert_eq!(stats.landing_speed_kt, Some(100.0));
+        assert_eq!(stats.landing_lat, Some(51.0));
+    }
+
+    /// The sampler-path call site guards on `landing_lat.is_none()`
+    /// (first-touchdown-wins). That guard is only sound if the stamp
+    /// ALWAYS sets landing_lat — buffer or not. And a second (FSM-arm)
+    /// stamp must overwrite, because on normal flights the Landing arm
+    /// runs after the sampler stamp and its values win, exactly as
+    /// before the extraction.
+    #[test]
+    fn stamp_sets_once_guard_marker_and_second_stamp_overwrites() {
+        // Empty buffer — worst case for the marker.
+        let mut stats = FlightStats::default();
+        let snap = rollout_snap();
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), None);
+        assert!(stats.landing_lat.is_some(), "guard marker must be set");
+
+        // Call-site once-guard: a second sampler-path stamp is skipped.
+        assert!(
+            stats.landing_lat.is_some(),
+            "sampler call site would now skip (landing_lat.is_none() == false)"
+        );
+
+        // FSM-arm semantics: an UNGUARDED second stamp overwrites.
+        let mut late_snap = rollout_snap();
+        late_snap.lat = 48.0;
+        late_snap.lon = 11.0;
+        stamp_touchdown_metadata(&mut stats, &late_snap, td_at(), None);
+        assert_eq!(stats.landing_lat, Some(48.0));
+        assert_eq!(stats.landing_lon, Some(11.0));
+    }
+
+    // ---- stamp_landing_weight ----
+
+    #[test]
+    fn weight_prefers_total_weight_then_zfw_plus_fuel() {
+        let snap = rollout_snap();
+        let mut stats = FlightStats::default();
+        stamp_landing_weight(&mut stats, &snap);
+        assert_eq!(stats.landing_weight_kg, Some(1043.0));
+
+        // No TOTAL WEIGHT → ZFW + fuel.
+        let mut snap2 = rollout_snap();
+        snap2.total_weight_kg = None;
+        snap2.zfw_kg = Some(900.0);
+        let mut stats2 = FlightStats::default();
+        stamp_landing_weight(&mut stats2, &snap2);
+        assert_eq!(stats2.landing_weight_kg, Some(900.0 + 88.5f32 as f64));
+
+        // Fenix case: both unset/zero → field stays None.
+        let mut snap3 = rollout_snap();
+        snap3.total_weight_kg = None;
+        snap3.zfw_kg = None;
+        snap3.fuel_total_kg = 0.0;
+        let mut stats3 = FlightStats::default();
+        stamp_landing_weight(&mut stats3, &snap3);
+        assert_eq!(stats3.landing_weight_kg, None);
+    }
+
+    // ---- correlate_touchdown_runway ----
+
+    // EDDP/26R from the bundled OurAirports CSV (same fixture as
+    // runway::tests): threshold 51.4336.., 12.2674.., heading 265.7.
+    const EDDP_26R_THR_LAT: f64 = 51.433_601_379_392_15;
+    const EDDP_26R_THR_LON: f64 = 12.267_399_787_902_832;
+    const EDDP_26R_HEADING: f32 = 265.7;
+
+    #[test]
+    fn correlate_resolves_runway_via_ourairports_fallback() {
+        let flight = flight_fixture("EDDP");
+        let mut stats = FlightStats::default();
+        let mut td = buf_sample(td_at(), true);
+        td.lat = EDDP_26R_THR_LAT;
+        td.lon = EDDP_26R_THR_LON;
+        td.heading_true_deg = EDDP_26R_HEADING;
+        stats.snapshot_buffer.push_back(td);
+        let snap = rollout_snap();
+
+        let td_buf = touchdown_buffer_sample(&stats);
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+
+        let m = stats.runway_match.as_ref().expect("runway match");
+        assert_eq!(m.airport_ident, "EDDP");
+        assert_eq!(m.runway_ident, "26R");
+        assert!(matches!(
+            stats.runway_source,
+            Some(runway::RunwaySource::OurAirportsFallback)
+        ));
+        // OurAirports fallback ⇒ no Navigraph geometry / cycle / TCH.
+        assert!(stats.runway_nav_geometry.is_none());
+        assert!(stats.runway_nav_cycle.is_none());
+        assert!(stats.runway_tch_actual_ft.is_none());
+    }
+
+    #[test]
+    fn correlate_clears_match_fields_when_no_runway_nearby() {
+        let flight = flight_fixture("EDDP");
+        let mut stats = FlightStats::default();
+        // Pretend an earlier correlation already matched something.
+        let mut td = buf_sample(td_at(), true);
+        td.lat = EDDP_26R_THR_LAT;
+        td.lon = EDDP_26R_THR_LON;
+        td.heading_true_deg = EDDP_26R_HEADING;
+        stats.snapshot_buffer.push_back(td);
+        let snap = rollout_snap();
+        let td_buf = touchdown_buffer_sample(&stats);
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+        assert!(stats.runway_match.is_some());
+
+        // Now correlate a mid-ocean touchdown — all match fields reset.
+        let mut stats2 = FlightStats::default();
+        let mut ocean = buf_sample(td_at(), true);
+        ocean.lat = 0.0;
+        ocean.lon = -30.0;
+        stats2.snapshot_buffer.push_back(ocean);
+        let td_buf2 = touchdown_buffer_sample(&stats2);
+        correlate_touchdown_runway(&mut stats2, &snap, &flight, td_buf2.as_ref());
+        assert!(stats2.runway_match.is_none());
+        assert!(stats2.runway_source.is_none());
+        assert!(stats2.runway_nav_cycle.is_none());
+        assert!(stats2.runway_nav_geometry.is_none());
+    }
+
+    // ---- FSM-path equivalence (regression guard for the extraction) ----
+
+    /// Byte-for-byte copy of the PRE-extraction FSM Landing-arm inline code
+    /// (metadata + weight, v0.15.23). If the extracted helpers ever drift
+    /// from this, normal flights would no longer be behaviour-identical.
+    fn old_inline_stamp(
+        stats: &mut FlightStats,
+        snap: &SimSnapshot,
+        actual_td_at: DateTime<Utc>,
+    ) {
+        let td_buf_sample = stats
+            .snapshot_buffer
+            .iter()
+            .find(|s| s.on_ground)
+            .cloned();
+        stats.landing_pitch_deg = Some(
+            snap.touchdown_pitch_deg
+                .or_else(|| td_buf_sample.as_ref().map(|s| s.pitch_deg))
+                .unwrap_or(snap.pitch_deg),
+        );
+        stats.landing_bank_deg = Some(
+            snap.touchdown_bank_deg
+                .or_else(|| td_buf_sample.as_ref().map(|s| s.bank_deg))
+                .unwrap_or(snap.bank_deg),
+        );
+        stats.landing_heading_deg = Some(
+            snap.touchdown_heading_mag_deg
+                .or_else(|| {
+                    td_buf_sample.as_ref().map(|s| {
+                        let magvar =
+                            snap.heading_deg_true - snap.heading_deg_magnetic;
+                        s.heading_true_deg - magvar
+                    })
+                })
+                .unwrap_or(snap.heading_deg_magnetic),
+        );
+        stats.landing_speed_kt = Some(
+            td_buf_sample
+                .as_ref()
+                .map(|s| s.indicated_airspeed_kt)
+                .unwrap_or(snap.indicated_airspeed_kt),
+        );
+        stats.landing_groundspeed_kt = Some(
+            td_buf_sample
+                .as_ref()
+                .map(|s| s.groundspeed_kt)
+                .unwrap_or(snap.groundspeed_kt),
+        );
+        stats.landing_fuel_kg = Some(snap.fuel_total_kg);
+        stats.landing_lat = Some(
+            td_buf_sample
+                .as_ref()
+                .map(|s| s.lat)
+                .unwrap_or(snap.lat),
+        );
+        stats.landing_lon = Some(
+            td_buf_sample
+                .as_ref()
+                .map(|s| s.lon)
+                .unwrap_or(snap.lon),
+        );
+        stats.landing_heading_true_deg = Some(
+            td_buf_sample
+                .as_ref()
+                .map(|s| s.heading_true_deg)
+                .unwrap_or(snap.heading_deg_true),
+        );
+        stats.touchdown_profile = stats
+            .snapshot_buffer
+            .iter()
+            .map(|s| TouchdownProfilePoint {
+                t_ms: (s.at - actual_td_at).num_milliseconds() as i32,
+                vs_fpm: s.vs_fpm,
+                g_force: s.g_force,
+                agl_ft: s.agl_ft,
+                on_ground: s.on_ground,
+                heading_true_deg: s.heading_true_deg,
+                groundspeed_kt: s.groundspeed_kt,
+                indicated_airspeed_kt: s.indicated_airspeed_kt,
+                pitch_deg: s.pitch_deg,
+                bank_deg: s.bank_deg,
+            })
+            .collect();
+        stats.touchdown_sideslip_deg = match (
+            snap.velocity_body_x_fps,
+            snap.velocity_body_z_fps,
+        ) {
+            (Some(x), Some(z)) if z.abs() > 3.0 => {
+                Some(x.atan2(z).to_degrees())
+            }
+            _ => None,
+        };
+        stats.landing_headwind_kt = snap.aircraft_wind_z_kt.map(|z| -z);
+        stats.landing_crosswind_kt = snap.aircraft_wind_x_kt;
+        if let Some(tw) = snap.total_weight_kg {
+            stats.landing_weight_kg = Some(tw as f64);
+        } else {
+            let zfw = snap.zfw_kg.unwrap_or(0.0);
+            let weight = zfw as f64 + snap.fuel_total_kg as f64;
+            if weight > 0.0 {
+                stats.landing_weight_kg = Some(weight);
+            }
+        }
+    }
+
+    #[test]
+    fn extracted_helpers_match_old_inline_fsm_sequence() {
+        // Run the same snap over both paths in several configurations:
+        // full buffer, empty buffer, MSFS latches present, body-velocity
+        // below the sideslip floor.
+        let configs: Vec<(FlightStats, SimSnapshot)> = vec![
+            (stats_with_buffer(), rollout_snap()),
+            (FlightStats::default(), rollout_snap()),
+            (stats_with_buffer(), {
+                let mut s = rollout_snap();
+                s.touchdown_pitch_deg = Some(2.2);
+                s.touchdown_bank_deg = Some(0.1);
+                s.touchdown_heading_mag_deg = Some(269.0);
+                s
+            }),
+            (stats_with_buffer(), {
+                let mut s = rollout_snap();
+                s.velocity_body_z_fps = Some(1.0); // below 3 fps floor
+                s.total_weight_kg = None;
+                s.zfw_kg = Some(950.0);
+                s
+            }),
+        ];
+
+        for (i, (proto_stats, snap)) in configs.into_iter().enumerate() {
+            // Two identical stats instances (FlightStats is not Clone —
+            // rebuild from the same constructor and copy the buffer).
+            let mut old_stats = FlightStats {
+                snapshot_buffer: proto_stats.snapshot_buffer.clone(),
+                ..FlightStats::default()
+            };
+            let mut new_stats = FlightStats {
+                snapshot_buffer: proto_stats.snapshot_buffer.clone(),
+                ..FlightStats::default()
+            };
+
+            old_inline_stamp(&mut old_stats, &snap, td_at());
+
+            let td_buf = touchdown_buffer_sample(&new_stats);
+            stamp_touchdown_metadata(&mut new_stats, &snap, td_at(), td_buf.as_ref());
+            stamp_landing_weight(&mut new_stats, &snap);
+
+            assert_eq!(old_stats.landing_pitch_deg, new_stats.landing_pitch_deg, "cfg {i}");
+            assert_eq!(old_stats.landing_bank_deg, new_stats.landing_bank_deg, "cfg {i}");
+            assert_eq!(old_stats.landing_heading_deg, new_stats.landing_heading_deg, "cfg {i}");
+            assert_eq!(old_stats.landing_speed_kt, new_stats.landing_speed_kt, "cfg {i}");
+            assert_eq!(
+                old_stats.landing_groundspeed_kt,
+                new_stats.landing_groundspeed_kt,
+                "cfg {i}"
+            );
+            assert_eq!(old_stats.landing_fuel_kg, new_stats.landing_fuel_kg, "cfg {i}");
+            assert_eq!(old_stats.landing_lat, new_stats.landing_lat, "cfg {i}");
+            assert_eq!(old_stats.landing_lon, new_stats.landing_lon, "cfg {i}");
+            assert_eq!(
+                old_stats.landing_heading_true_deg,
+                new_stats.landing_heading_true_deg,
+                "cfg {i}"
+            );
+            assert_eq!(
+                old_stats.touchdown_sideslip_deg,
+                new_stats.touchdown_sideslip_deg,
+                "cfg {i}"
+            );
+            assert_eq!(old_stats.landing_headwind_kt, new_stats.landing_headwind_kt, "cfg {i}");
+            assert_eq!(
+                old_stats.landing_crosswind_kt,
+                new_stats.landing_crosswind_kt,
+                "cfg {i}"
+            );
+            assert_eq!(old_stats.landing_weight_kg, new_stats.landing_weight_kg, "cfg {i}");
+            // Profile: same length + identical serialised content
+            // (TouchdownProfilePoint has no PartialEq).
+            assert_eq!(
+                serde_json::to_value(&old_stats.touchdown_profile).unwrap(),
+                serde_json::to_value(&new_stats.touchdown_profile).unwrap(),
+                "cfg {i}"
+            );
+        }
+    }
+}
