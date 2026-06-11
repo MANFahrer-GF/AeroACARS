@@ -923,6 +923,10 @@ impl Default for SimSnapshot {
 ///     Codebasis).
 ///   * `TfdiMd11`   — detection only (v0.16.10 #Premium); Premium-Mapper
 ///     folgt in einer spaeteren Phase.
+///   * `IflyMax8`   — Premium-Mapper wired (v0.16.11): AP CMD A/B,
+///     A/T ARM, Master Caution/Fire, Reverser, Ground Spoiler,
+///     Cabin-Altitude-Warnung, Autobrake-Selector (WASM-strings +
+///     HubHop, Live-Flug-Verifikation steht aus).
 ///   * `FenixA320`  — Lights / parking brake / flaps wired and verified
 ///                    in MSFS 2024. AP indicator LVars (`I_FCU_AP*`) were
 ///                    observed flickering and are intentionally disabled
@@ -1005,6 +1009,13 @@ pub enum AircraftProfile {
     /// spaeteren Phase gemappt. atc_model "MD11"/"MD11F",
     /// ICAO-Designator MD11; Titles tragen "TFDi" + "MD-11".
     TfdiMd11,
+    /// v0.16.11: iFly 737 MAX 8 (MSFS). Title aus der aircraft.cfg:
+    /// "iFly 737-MAX8 (178Seat)" (Liveries variieren den Suffix).
+    /// `atc_model` ist ein nutzloser generischer ATCCOM-B737-Token —
+    /// Detection laeuft NUR ueber den Title-Marker. LVar-Quellen:
+    /// WASM-Strings-Dump (verifiziert) + HubHop-Output-Presets fuer
+    /// die CMD-A/B-LEDs (`L:VC_*_VAL`-Annunciator-Familie).
+    IflyMax8,
 }
 
 impl AircraftProfile {
@@ -1132,6 +1143,17 @@ impl AircraftProfile {
         {
             return Self::TfdiMd11;
         }
+        // v0.16.11: iFly 737 MAX 8. Title aus der aircraft.cfg heisst
+        // "iFly 737-MAX8 (178Seat)" — Liveries behalten den
+        // "iFly … MAX"-Stamm. atc_model ist ein generischer
+        // ATCCOM-B737-Token (nutzlos als Signal). BEWUSST KEIN
+        // bare-B38M-ICAO-Fallback: Bredok3d verkauft ebenfalls einen
+        // B38M ("Bredok3d 737 MAX") — ein ICAO-Fallback waere dieselbe
+        // Misdetection-Klasse wie der in v0.16.10 (QS M4) entfernte
+        // A20N-Fallback (totes LVar-Profil → Some(false)-Phantome).
+        if t.contains("ifly") && t.contains("max") {
+            return Self::IflyMax8;
+        }
         Self::Default
     }
 
@@ -1181,6 +1203,7 @@ impl AircraftProfile {
             Self::AerosoftA346 => "Aerosoft A340-600",
             Self::FsrPhenom300e => "FSReborn Phenom 300E",
             Self::TfdiMd11 => "TFDi MD-11",
+            Self::IflyMax8 => "iFly 737 MAX 8",
         }
     }
 }
@@ -1856,6 +1879,40 @@ mod tests {
         assert_eq!(
             AircraftProfile::detect("TFDi Design 717", "B712"),
             AircraftProfile::Default,
+        );
+    }
+
+    // ---- v0.16.11: iFly 737 MAX 8 ----
+
+    #[test]
+    fn detect_ifly_max8_from_title() {
+        // aircraft.cfg-Title (atc_model ist ein nutzloser generischer
+        // ATCCOM-B737-Token — darf keine Rolle spielen).
+        let p = AircraftProfile::detect(
+            "iFly 737-MAX8 (178Seat)",
+            "ATCCOM.AC_MODEL B737.0.text",
+        );
+        assert_eq!(p, AircraftProfile::IflyMax8);
+        assert_eq!(p.label(), "iFly 737 MAX 8");
+        // Livery-Title — behaelt den "iFly … MAX"-Stamm.
+        let p = AircraftProfile::detect("iFly 737-MAX8 TUI", "");
+        assert_eq!(p, AircraftProfile::IflyMax8);
+    }
+
+    #[test]
+    fn detect_ifly_max8_no_false_positives() {
+        // Bredok3d verkauft ebenfalls einen B38M — DESHALB gibt es
+        // keinen bare-B38M-ICAO-Fallback (gleiche Misdetection-Klasse
+        // wie der entfernte A20N-Fallback): tote VC_*-LVars wuerden
+        // dort Some(false)-Phantome erzeugen.
+        assert_eq!(
+            AircraftProfile::detect("Bredok3d 737 MAX", "B38M"),
+            AircraftProfile::Default,
+        );
+        // PMDG 737-800 bleibt auf dem PMDG-Profil (Branch-Reihenfolge).
+        assert_eq!(
+            AircraftProfile::detect("PMDG 737-800 Lufthansa", "B738"),
+            AircraftProfile::Pmdg737,
         );
     }
 

@@ -579,6 +579,23 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:MD11_ENG3_N1", "Number"),
     // Autobrake-Selector: Positions-Enum undokumentiert → "#{n}".
     F::f64("L:MD11_CTR_AUTOBRAKE_SW", "Number"),
+
+    // ---- iFly 737 MAX 8 (v0.16.11) — WASM-strings + HubHop ----
+    // Quelle: WASM-Strings-Dump des iFly-Pakets (alle Namen woertlich
+    // verifiziert; die Caution-/Fire-Lampen sind dort printf-Templates
+    // `VC_*_Light_%d_VAL` → Index 1 = Capt-Seite) + HubHop-Output-
+    // Presets fuer die CMD-A/B-LEDs. Nur bei AircraftProfile::IflyMax8
+    // gemappt.
+    F::f64("L:VC_CMD_A_SW_LIGHT_VAL", "Number"),   // AP CMD A LED (HubHop-Output)
+    F::f64("L:VC_CMD_B_SW_LIGHT_VAL", "Number"),   // AP CMD B LED (HubHop-Output)
+    F::f64("L:VC_AT_ARM_LIGHT_VAL", "Number"),     // A/T ARM light (ARM-Semantik wie PMDG NG3)
+    F::f64("L:VC_Master_Caution_Light_1_VAL", "Number"),
+    F::f64("L:VC_Fire_Warning_Light_1_VAL", "Number"),  // 737: Fire-Warn = rote Master-Klasse
+    F::f64("L:VC_WARNING_LIGHT_CABIN_ALTITUDE_L_VAL", "Number"),
+    F::f64("L:Animation_Engine_1_Reverser_VAL", "Number"),  // 0..1 Reverser-Stellung
+    F::f64("L:Animation_Engine_2_Reverser_VAL", "Number"),
+    F::f64("L:VC_FLTCTRL_LIGHT_SPEEDBRAKES_EXTENDED_VAL", "Number"),
+    F::f64("L:VC_Autobrake_SW_VAL", "Number"),     // Selektor-Enum unbekannt → "#n"
 ];
 
 // Helper builders so the table above stays compact.
@@ -914,6 +931,19 @@ pub struct Telemetry {
     pub md11_eng2_n1: f64,
     pub md11_eng3_n1: f64,
     pub md11_autobrake_sw: f64,
+
+    // Gruppe F: iFly 737 MAX 8 (v0.16.11, WASM-strings + HubHop) —
+    // nur bei AircraftProfile::IflyMax8 konsultiert.
+    pub ifly_cmd_a_light: f64,
+    pub ifly_cmd_b_light: f64,
+    pub ifly_at_arm_light: f64,
+    pub ifly_master_caution_light: f64,
+    pub ifly_fire_warning_light: f64,
+    pub ifly_cabin_alt_warning_light: f64,
+    pub ifly_eng1_reverser: f64,
+    pub ifly_eng2_reverser: f64,
+    pub ifly_speedbrakes_extended_light: f64,
+    pub ifly_autobrake_sw: f64,
 }
 
 // ---- Touchdown sample (separate data definition #2) ----
@@ -1329,7 +1359,7 @@ impl Telemetry {
 
         // ---- v0.16.10 (#Premium) — Lockstep mit dem Tabellen-Ende:
         // Gruppe A (13× Fenix), B (17× FBW), C (23× INI), D (12× A346),
-        // E (14× MD-11), alle f64.
+        // E (14× MD-11), F (10× iFly, v0.16.11), alle f64.
         pull_f64!(t.fnx_perf_v1);
         pull_f64!(t.fnx_perf_vr);
         pull_f64!(t.fnx_perf_v2);
@@ -1413,6 +1443,17 @@ impl Telemetry {
         pull_f64!(t.md11_eng2_n1);
         pull_f64!(t.md11_eng3_n1);
         pull_f64!(t.md11_autobrake_sw);
+
+        pull_f64!(t.ifly_cmd_a_light);
+        pull_f64!(t.ifly_cmd_b_light);
+        pull_f64!(t.ifly_at_arm_light);
+        pull_f64!(t.ifly_master_caution_light);
+        pull_f64!(t.ifly_fire_warning_light);
+        pull_f64!(t.ifly_cabin_alt_warning_light);
+        pull_f64!(t.ifly_eng1_reverser);
+        pull_f64!(t.ifly_eng2_reverser);
+        pull_f64!(t.ifly_speedbrakes_extended_light);
+        pull_f64!(t.ifly_autobrake_sw);
 
         // Silence the unused-assignment warning the last `pull_*!`
         // emits (the macro always advances `off`, but the very last
@@ -1623,6 +1664,10 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // das kombinierte `is_ini`-Gate fuer Gruppe C.
     let is_a340 = matches!(profile, AircraftProfile::IniA340);
     let is_md11 = matches!(profile, AircraftProfile::TfdiMd11);
+    // v0.16.11: iFly 737 MAX 8 — `L:VC_*_VAL`-Annunciator-LVars
+    // (WASM-strings + HubHop), strikt profile-gegated wie alle
+    // Premium-Gruppen.
+    let is_ifly = matches!(profile, AircraftProfile::IflyMax8);
     let is_ini = is_a350 || is_a340;
     // v0.7.17 (F-001): Fenix-A32x extension LVARs are now ALWAYS applied
     // when the profile is Fenix — the v0.7.16 opt-in flag is removed
@@ -1894,6 +1939,23 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             t.a350_appr_light as i32 != 0
                 || t.a350_loc_light as i32 != 0
                 || t.ap_approach,
+        )
+    } else if is_ifly {
+        // iFly 737 MAX 8 (v0.16.11): CMD-A-/CMD-B-LEDs am MCP
+        // (`L:VC_CMD_{A,B}_SW_LIGHT_VAL`, HubHop-Output) — echte
+        // Annunciator-States wie die PMDG-CMD-Lampen. Eine der beiden
+        // an = Master engaged; Standard-SimVar gewinnt per ODER, falls
+        // das Addon ihn doch treibt. AP-Sub-Modes (HDG/ALT/NAV/APPR)
+        // bleiben konservativ auf den Standard-SimVars — auf dem iFly
+        // ungetestet, nicht raten.
+        (
+            t.ifly_cmd_a_light != 0.0
+                || t.ifly_cmd_b_light != 0.0
+                || t.ap_master,
+            t.ap_heading,
+            t.ap_altitude,
+            t.ap_nav,
+            t.ap_approach,
         )
     } else {
         (
@@ -2184,6 +2246,12 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // Selector-Positions-Enum, Belegung undokumentiert → Roh-Wert
         // "#{n}" fuer n != 0 (Decode beim ersten Live-Flug).
         raw_enum_label(t.md11_autobrake_sw)
+    } else if is_ifly {
+        // v0.16.11: iFly 737 MAX 8 `L:VC_Autobrake_SW_VAL` —
+        // Selektor-Enum unbekannt → "#{n}" wie beim MD-11 (Decode
+        // beim ersten Live-Flug; der reale MAX-Selektor kennt
+        // RTO/OFF/1/2/3/MAX).
+        raw_enum_label(t.ifly_autobrake_sw)
     } else {
         None
     };
@@ -2253,6 +2321,15 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // v0.16.10 (#Premium): TFDi MD-11 `L:MD11_ATS_STATE` — Enum
         // undokumentiert, > 0 = ATS engaged (TFDi-Doku-Konvention).
         Some(t.md11_ats_state > 0.5)
+    } else if is_ifly {
+        // v0.16.11: iFly 737 MAX 8 `L:VC_AT_ARM_LIGHT_VAL` — die
+        // A/T-ARM-Lampe am MCP. 737-Semantik (dokumentiert identisch
+        // zum PMDG-NG3-AT-ARM, den der pmdg-Mapper als `at_armed`
+        // fuehrt): Lampe an = A/T armed ODER engaged, geht nach
+        // Disconnect aus. "Armed" als "on" zu werten ist hier die
+        // 737-Konvention — anders als beim FBW-AUTOTHRUST_STATUS gibt
+        // es keine getrennte Engaged-Quelle.
+        Some(t.ifly_at_arm_light != 0.0)
     } else {
         None
     };
@@ -2386,6 +2463,9 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         Some(t.ini_master_caution != 0.0)
     } else if is_a346 {
         Some(t.a346_master_caution_light != 0.0)
+    } else if is_ifly {
+        // v0.16.11: iFly `L:VC_Master_Caution_Light_1_VAL` (Capt-Seite).
+        Some(t.ifly_master_caution_light != 0.0)
     } else {
         None
     };
@@ -2395,6 +2475,21 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         Some(t.ini_master_warning != 0.0)
     } else if is_a346 {
         Some(t.a346_master_warning_light != 0.0)
+    } else if is_ifly {
+        // v0.16.11: die 737 hat KEINE MASTER-WARNING-Lampe — die rote
+        // Master-Klasse ist die FIRE-WARN-Lampe (`L:VC_Fire_Warning_
+        // Light_1_VAL`, Capt-Seite). Gleiche Konvention wie der
+        // PMDG-Mapper (dort speist fire_warn → master_warning).
+        Some(t.ifly_fire_warning_light != 0.0)
+    } else {
+        None
+    };
+
+    // Kabinenhoehen-Warnung: hier liefert sie nur das iFly-Profil
+    // nativ (`L:VC_WARNING_LIGHT_CABIN_ALTITUDE_L_VAL`, linke Lampe);
+    // PMDG kommt weiter ueber den pmdg-Struct-Merge.
+    let cabin_altitude_warning = if is_ifly {
+        Some(t.ifly_cabin_alt_warning_light != 0.0)
     } else {
         None
     };
@@ -2431,8 +2526,8 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         None
     };
 
-    // Reverser: nur die A346 liefert Ratio-LVars (PMDG via pmdg-
-    // Merge). > 0.05 filtert Idle-Jitter der 4 Ratios.
+    // Reverser: A346 + iFly liefern Ratio-/Animations-LVars (PMDG via
+    // pmdg-Merge). > 0.05 filtert Idle-Jitter der 4 A346-Ratios.
     let reverser_deployed = if is_a346 {
         Some(
             t.a346_eng1_rev_ratio > 0.05
@@ -2440,16 +2535,28 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
                 || t.a346_eng3_rev_ratio > 0.05
                 || t.a346_eng4_rev_ratio > 0.05,
         )
+    } else if is_ifly {
+        // v0.16.11: iFly `L:Animation_Engine_{1,2}_Reverser_VAL` —
+        // analoge 0..1-Reverser-Stellung (Animations-LVar). > 0.1
+        // filtert Stowed-Jitter und zaehlt erst echtes Ausfahren.
+        Some(t.ifly_eng1_reverser > 0.1 || t.ifly_eng2_reverser > 0.1)
     } else {
         None
     };
 
-    // Ground-Spoiler aktiv (FBW + INI; A346 hat keinen direkten
+    // Ground-Spoiler aktiv (FBW + INI + iFly; A346 hat keinen direkten
     // Active-Flag — nur den Lever, der bleibt ungemappt).
     let ground_spoilers_active = if is_fbw {
         Some(t.fbw_ground_spoilers_active != 0.0)
     } else if is_ini {
         Some(t.ini_ground_spoilers != 0.0)
+    } else if is_ifly {
+        // v0.16.11: iFly `L:VC_FLTCTRL_LIGHT_SPEEDBRAKES_EXTENDED_VAL`
+        // — die Lampe leuchtet bei JEDER ausgefahrenen Speedbrake,
+        // auch in der Luft (dort ist das Flight-Spoiler, kein Ground-
+        // Spoiler). Deshalb NUR am Boden als "Ground-Spoiler aktiv"
+        // werten; in der Luft bleibt das Feld ehrlich false.
+        Some(t.on_ground && t.ifly_speedbrakes_extended_light != 0.0)
     } else {
         None
     };
@@ -2750,9 +2857,11 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // Per-Tank-Fuel: bewusst None — die INI-Tank-Liste ist gross,
         // die generische fuel_total-Quelle reicht (PMDG via Merge).
         fuel_per_tank_kg: None,
-        // Die folgenden vier liefert nur der PMDG-SDK-Pfad (Merge).
+        // Die folgenden drei liefert nur der PMDG-SDK-Pfad (Merge);
+        // cabin_altitude_warning zusaetzlich nativ vom iFly-Profil
+        // (v0.16.11, siehe Mapping oben).
         below_gs_alert: None,
-        cabin_altitude_warning: None,
+        cabin_altitude_warning,
         stab_out_of_trim: None,
         minimums_baro_ft: None,
     }
@@ -3249,7 +3358,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(buf.len(), 2452, "total block size");
+        assert_eq!(buf.len(), 2532, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -3397,6 +3506,18 @@ mod tests {
         assert_eq!(t.md11_eng2_n1, 1227.0); // idx 227
         assert_eq!(t.md11_eng3_n1, 1228.0); // idx 228
         assert_eq!(t.md11_autobrake_sw, 1229.0); // idx 229
+
+        // Gruppe F: iFly 737 MAX 8 (idx 230..239, v0.16.11).
+        assert_eq!(t.ifly_cmd_a_light, 1230.0); // idx 230
+        assert_eq!(t.ifly_cmd_b_light, 1231.0); // idx 231
+        assert_eq!(t.ifly_at_arm_light, 1232.0); // idx 232
+        assert_eq!(t.ifly_master_caution_light, 1233.0); // idx 233
+        assert_eq!(t.ifly_fire_warning_light, 1234.0); // idx 234
+        assert_eq!(t.ifly_cabin_alt_warning_light, 1235.0); // idx 235
+        assert_eq!(t.ifly_eng1_reverser, 1236.0); // idx 236
+        assert_eq!(t.ifly_eng2_reverser, 1237.0); // idx 237
+        assert_eq!(t.ifly_speedbrakes_extended_light, 1238.0); // idx 238
+        assert_eq!(t.ifly_autobrake_sw, 1239.0); // idx 239
     }
 
     /// Truncated block (e.g. all 12 new tail LVars rejected by an older
@@ -3412,6 +3533,17 @@ mod tests {
                 FieldKind::String256 => buf.extend_from_slice(&[0u8; 256]),
             }
         }
+        // v0.16.11: drop the 10 iFly tail fields (10*8) — the new
+        // outermost layer. Everything up to the MD-11 group stays
+        // intact, the iFly slots parse to safe defaults.
+        buf.truncate(buf.len() - 80);
+        let t = Telemetry::from_block(&buf);
+        assert_eq!(t.md11_autobrake_sw, 1229.0); // last v0.16.10 field intact
+        assert_eq!(t.fnx_perf_v1, 1151.0); // first premium field intact
+        assert_eq!(t.ifly_cmd_a_light, 0.0); // iFly tail = safe defaults
+        assert_eq!(t.ifly_cabin_alt_warning_light, 0.0);
+        assert_eq!(t.ifly_autobrake_sw, 0.0);
+
         // v0.16.10 (#Premium): drop the 79 premium tail fields (79*8).
         buf.truncate(buf.len() - 632);
         let t = Telemetry::from_block(&buf);
@@ -4414,6 +4546,20 @@ mod tests {
         t.md11_eng2_n1 = 85.0;
         t.md11_eng3_n1 = 85.0;
         t.md11_autobrake_sw = 2.0;
+        // Gruppe F (iFly, v0.16.11).
+        t.ifly_cmd_a_light = 1.0;
+        t.ifly_cmd_b_light = 1.0;
+        t.ifly_at_arm_light = 1.0;
+        t.ifly_master_caution_light = 1.0;
+        t.ifly_fire_warning_light = 1.0;
+        t.ifly_cabin_alt_warning_light = 1.0;
+        t.ifly_eng1_reverser = 0.9;
+        t.ifly_eng2_reverser = 0.9;
+        t.ifly_speedbrakes_extended_light = 1.0;
+        t.ifly_autobrake_sw = 3.0;
+        // on_ground = true, damit auch das Boden-Gate des iFly-Ground-
+        // Spoiler-Mappings beheizt ist (haerterer Negativ-Fall).
+        t.on_ground = true;
 
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
 
@@ -4446,11 +4592,150 @@ mod tests {
         assert_eq!(snap.minimums_baro_ft, None);
 
         // Bestehende Felder bleiben auf dem Standard-Pfad.
-        assert_eq!(snap.autopilot_master, Some(false)); // MD11/FBW-Slots leaken nicht
+        assert_eq!(snap.autopilot_master, Some(false)); // MD11/FBW/iFly-Slots leaken nicht
         assert_eq!(snap.autothrottle_on, None);
         assert_eq!(snap.autobrake, None);
         assert_eq!(snap.spoilers_armed, Some(false)); // FBW/A346-ARMED leakt nicht
         assert_eq!(snap.fcu_selected_speed_kt, None); // MD11-AFS leakt nicht
         assert_eq!(snap.fcu_selected_altitude_ft, None);
+    }
+
+    // ---- v0.16.11: iFly 737 MAX 8 Premium-Mappings ----
+
+    /// Minimal iFly-Profil-Telemetry. Standard-SimVars bleiben auf
+    /// ihren Defaults, damit jeder gemappte Wert eindeutig aus den
+    /// `VC_*`-LVars stammt. atc_model traegt den nutzlosen generischen
+    /// ATCCOM-B737-Token aus dem echten Paket.
+    fn ifly_telemetry() -> Telemetry {
+        let mut t = Telemetry::default();
+        t.title = "iFly 737-MAX8 (178Seat)".into();
+        t.atc_model = "ATCCOM.AC_MODEL B737.0.text".into();
+        t
+    }
+
+    #[test]
+    fn ifly_ap_master_from_cmd_lights_with_standard_tiebreaker() {
+        // CMD A allein → Master engaged.
+        let mut t = ifly_telemetry();
+        t.ifly_cmd_a_light = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(true));
+
+        // CMD B allein zaehlt ebenfalls.
+        let mut t = ifly_telemetry();
+        t.ifly_cmd_b_light = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(true));
+
+        // Beide LEDs aus → Master off.
+        let t = ifly_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(false));
+
+        // Standard-SimVar gewinnt per ODER, falls das Addon ihn doch
+        // treibt (gleiche Tiebreaker-Semantik wie A346/A350/MD-11).
+        let mut t = ifly_telemetry();
+        t.ap_master = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(true));
+    }
+
+    #[test]
+    fn ifly_autothrottle_from_at_arm_light() {
+        // ARM-Lampe an = armed ODER engaged (PMDG-NG3-AT-ARM-Semantik).
+        let mut t = ifly_telemetry();
+        t.ifly_at_arm_light = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, Some(true));
+
+        // Lampe aus (nach Disconnect) → ehrliches Some(false) — das
+        // Profil LIEFERT die Quelle, anders als Default (None).
+        let t = ifly_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, Some(false));
+    }
+
+    #[test]
+    fn ifly_master_caution_and_fire_as_red_master_class() {
+        // Caution-Lampe → master_caution, NICHT master_warning.
+        let mut t = ifly_telemetry();
+        t.ifly_master_caution_light = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.master_caution, Some(true));
+        assert_eq!(snap.master_warning, Some(false));
+
+        // 737 hat keine MASTER-WARNING-Lampe — Fire-Warn ist die rote
+        // Master-Klasse (PMDG-Mapper-Konvention).
+        let mut t = ifly_telemetry();
+        t.ifly_fire_warning_light = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.master_warning, Some(true));
+        assert_eq!(snap.master_caution, Some(false));
+    }
+
+    #[test]
+    fn ifly_cabin_altitude_warning_maps_natively() {
+        let mut t = ifly_telemetry();
+        t.ifly_cabin_alt_warning_light = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.cabin_altitude_warning, Some(true));
+
+        let t = ifly_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.cabin_altitude_warning, Some(false));
+    }
+
+    #[test]
+    fn ifly_reverser_threshold_filters_stowed_jitter() {
+        // Unter der 0.1-Schwelle (stowed/Jitter) → nicht deployed.
+        let mut t = ifly_telemetry();
+        t.ifly_eng1_reverser = 0.05;
+        t.ifly_eng2_reverser = 0.05;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.reverser_deployed, Some(false));
+
+        // EIN Triebwerk ueber der Schwelle genuegt.
+        let mut t = ifly_telemetry();
+        t.ifly_eng2_reverser = 0.6;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.reverser_deployed, Some(true));
+    }
+
+    #[test]
+    fn ifly_ground_spoilers_only_count_on_ground() {
+        // Lampe an + am Boden → Ground-Spoiler aktiv.
+        let mut t = ifly_telemetry();
+        t.ifly_speedbrakes_extended_light = 1.0;
+        t.on_ground = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.ground_spoilers_active, Some(true));
+
+        // Lampe an, aber in der Luft = Flight-Spoiler/Speedbrake,
+        // KEIN Ground-Spoiler.
+        let mut t = ifly_telemetry();
+        t.ifly_speedbrakes_extended_light = 1.0;
+        t.on_ground = false;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.ground_spoilers_active, Some(false));
+
+        // Am Boden ohne Lampe → false.
+        let mut t = ifly_telemetry();
+        t.on_ground = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.ground_spoilers_active, Some(false));
+    }
+
+    #[test]
+    fn ifly_autobrake_passes_raw_enum_through() {
+        // Selektor-Enum unbekannt → "#{n}" (Decode beim ersten
+        // Live-Flug), 0 = uninitialisiert/OFF-Default → None.
+        let mut t = ifly_telemetry();
+        t.ifly_autobrake_sw = 3.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autobrake, Some("#3".to_string()));
+
+        let t = ifly_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autobrake, None);
     }
 }
