@@ -125,7 +125,7 @@ impl PmdgVariant {
     }
 }
 
-/// Canonicalise a PMDG SDK fuel quantity to kilograms (v0.16.9
+/// Canonicalise a PMDG SDK fuel quantity to kilograms (v0.16.10
 /// #Premium). The `FUEL_Qty*` floats in both PMDG_NG3_SDK.h and
 /// PMDG_777X_SDK.h arrive in the unit the pilot selected in the
 /// aircraft options — signalled by the struct's `WeightInKg` flag
@@ -210,7 +210,7 @@ mod tests {
         assert_eq!(PmdgVariant::X777.fallback_icao(), "B77W");
     }
 
-    /// v0.16.9 (#Premium): SDK fuel quantities follow the cockpit
+    /// v0.16.10 (#Premium): SDK fuel quantities follow the cockpit
     /// weight-unit option (`WeightInKg` flag) — both directions must
     /// canonicalise to kg.
     #[test]

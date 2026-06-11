@@ -1125,7 +1125,7 @@ impl XPlaneState {
             contact_point_on_ground: None,
             gear_water_depth_m: None,
             water_rudder_present: None,
-            // v0.16.9 (#Premium): Cockpit-Tiefendaten — auf dem
+            // v0.16.10 (#Premium): Cockpit-Tiefendaten — auf dem
             // X-Plane-Pfad noch nicht verdrahtet (spaetere Phase;
             // braucht Addon-Datarefs wie AirbusFBW/ToLiss + In-Sim-
             // Verifikation). Alle None = "Quelle liefert es nicht".

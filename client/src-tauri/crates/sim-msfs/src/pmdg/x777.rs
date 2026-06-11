@@ -745,7 +745,7 @@ pub struct Pmdg777XSnapshot {
     pub gpws_top_warn: bool,
     pub gpws_bottom_warn: bool,
 
-    // ---- v0.16.9 (#Premium): deep-data annunciators + fuel + minimums ----
+    // ---- v0.16.10 (#Premium): deep-data annunciators + fuel + minimums ----
     /// MASTER CAUTION lit on either side (`WARN_annunMASTER_CAUTION[0|1]`).
     pub master_caution: bool,
     /// MASTER WARNING lit on either side (`WARN_annunMASTER_WARNING[0|1]`).
@@ -863,7 +863,7 @@ impl Pmdg777XSnapshot {
             gpws_top_warn: raw.GPWS_annunGND_PROX_top != 0,
             gpws_bottom_warn: raw.GPWS_annunGND_PROX_bottom != 0,
 
-            // ---- v0.16.9 (#Premium) deep-data fields ----
+            // ---- v0.16.10 (#Premium) deep-data fields ----
             // Side-paired annunciators (Capt/FO): OR — "the light
             // is on" is what the cockpit shows.
             master_caution: raw.WARN_annunMASTER_CAUTION[0] != 0
@@ -1037,14 +1037,14 @@ mod tests {
         assert!(!s.gear_lever_down); // 0 = UP
         // Autobrake: byte 0 = RTO (per SDK comment "0: RTO")
         assert_eq!(s.autobrake, Pmdg777XAutobrake::Rto);
-        // v0.16.9: zeroed raw → premium defaults
+        // v0.16.10: zeroed raw → premium defaults
         assert!(!s.master_caution);
         assert!(!s.master_warning);
         assert_eq!(s.minimums_baro_ft, None);
         assert_eq!(s.fuel_per_tank_kg, [0.0; 4]);
     }
 
-    // ---- v0.16.9 (#Premium) deep-data field decoding ----
+    // ---- v0.16.10 (#Premium) deep-data field decoding ----
 
     fn zeroed_raw() -> Pmdg777XRawData {
         unsafe { std::mem::zeroed() }

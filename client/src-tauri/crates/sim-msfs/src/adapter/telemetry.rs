@@ -426,7 +426,7 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:INI_MCU_LOC_LIGHT", "Number"),
 
     // ================================================================
-    // v0.16.9 (#Premium): Cockpit-Tiefendaten — 5 LVar-Gruppen.
+    // v0.16.10 (#Premium): Cockpit-Tiefendaten — 5 LVar-Gruppen.
     // LOCKSTEP: append-only am Tabellen-Ende, gleiche Reihenfolge in
     // Telemetry-Struct + pull_f64!-Block. Tote LVars lesen auf fremden
     // Aircraft 0.0 → JEDES Mapping ist profile-gegated (siehe
@@ -822,7 +822,7 @@ pub struct Telemetry {
     pub a350_loc_light: f64,
 
     // ================================================================
-    // v0.16.9 (#Premium) — LOCKSTEP mit dem Tabellen-Ende, gleiche
+    // v0.16.10 (#Premium) — LOCKSTEP mit dem Tabellen-Ende, gleiche
     // Gruppen-Reihenfolge (A Fenix, B FBW, C INI, D A346, E MD-11).
     // ================================================================
 
@@ -1327,7 +1327,7 @@ impl Telemetry {
         pull_f64!(t.a350_appr_light);
         pull_f64!(t.a350_loc_light);
 
-        // ---- v0.16.9 (#Premium) — Lockstep mit dem Tabellen-Ende:
+        // ---- v0.16.10 (#Premium) — Lockstep mit dem Tabellen-Ende:
         // Gruppe A (13× Fenix), B (17× FBW), C (23× INI), D (12× A346),
         // E (14× MD-11), alle f64.
         pull_f64!(t.fnx_perf_v1);
@@ -1618,7 +1618,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // profiles-Test).
     let is_a346 = matches!(profile, AircraftProfile::AerosoftA346);
     let is_a350 = matches!(profile, AircraftProfile::IniA350);
-    // v0.16.9 (#Premium): zusaetzliche Profile-Gates. Die INI_-LVars
+    // v0.16.10 (#Premium): zusaetzliche Profile-Gates. Die INI_-LVars
     // teilen sich A350 und A340 (gleiche Namen laut Inventar), daher
     // das kombinierte `is_ini`-Gate fuer Gruppe C.
     let is_a340 = matches!(profile, AircraftProfile::IniA340);
@@ -1799,7 +1799,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     //   * Default + others: standard MSFS SimVars.
     let (ap_master, ap_hdg, ap_alt, ap_nav, ap_appr) = if is_fbw {
         (
-            // v0.16.9 (#Premium): AP1/AP2 einzeln (FBW-Doku
+            // v0.16.10 (#Premium): AP1/AP2 einzeln (FBW-Doku
             // `A32NX_AUTOPILOT_{1,2}_ACTIVE`) ODER der kombinierte
             // Active-LVar ODER der Standard-SimVar — jede Quelle
             // genuegt, keine Regression gegen den bisherigen Pfad.
@@ -1807,13 +1807,21 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
                 || t.fbw_ap1_active != 0.0
                 || t.fbw_ap2_active != 0.0
                 || t.ap_master,
-            t.fbw_ap_hdg != 0.0,
-            t.fbw_ap_alt != 0.0,
-            t.fbw_ap_nav != 0.0,
-            t.fbw_ap_appr != 0.0,
+            // v0.16.10 QS (M4) Defense-in-Depth: Sub-Modes ebenfalls
+            // ODER Standard-SimVar. Faengt einen marker-losen Nicht-
+            // FBW-A339, der per ICAO-Fallback hier landet: dessen
+            // A32NX_-LVars sind tot (0.0) — ohne das ODER waeren
+            // HDG/ALT/NAV/APPR permanent false, obwohl die Standard-
+            // SimVars die echten Modes liefern. Auf echten FBW kostet
+            // das nichts (deren Standard-SimVars sind konsistent oder
+            // tot-false — false veraendert ein ODER nie).
+            t.fbw_ap_hdg != 0.0 || t.ap_heading,
+            t.fbw_ap_alt != 0.0 || t.ap_altitude,
+            t.fbw_ap_nav != 0.0 || t.ap_nav,
+            t.fbw_ap_appr != 0.0 || t.ap_approach,
         )
     } else if is_md11 {
-        // TFDi MD-11 (v0.16.9 #Premium, TFDi-Doku): `L:MD11_AP_STATE`
+        // TFDi MD-11 (v0.16.10 #Premium, TFDi-Doku): `L:MD11_AP_STATE`
         // ist dokumentiert 0=Off, 1=AP1, 2=AP2, 3=both → jeder Wert
         // > 0 heisst Master engaged. Standard-SimVar gewinnt per ODER,
         // falls das Addon ihn doch treibt. HDG/ALT/NAV/APPR bleiben
@@ -2077,7 +2085,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             Some(t.fnx_fcu_vs.round() as i32),
         )
     } else if is_md11 {
-        // TFDi MD-11 (v0.16.9 #Premium): AFS-Glareshield-Targets aus
+        // TFDi MD-11 (v0.16.10 #Premium): AFS-Glareshield-Targets aus
         // `L:MD11_AFS_*`. Dash-Sentinels laut Doku: SPD/HDG zeigen
         // -999 wenn das Fenster "---" (dashed/managed) anzeigt, V/S
         // -9999. Wir filtern <= Sentinel-Schwelle (faengt auch noch
@@ -2089,15 +2097,26 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             } else {
                 None
             },
-            if t.md11_afs_hdg <= -998.0 {
-                None
-            } else {
-                Some(t.md11_afs_hdg.round() as i32)
+            // v0.16.10 QS (Minor 8): zusaetzlich Plausibilitaets-Gates —
+            // ein uninitialisierter LVar liest 0.0 und liegt damit
+            // ZWISCHEN den Dash-Sentinels und echten Werten. HDG-Fenster
+            // zeigt 1-360, SPD-Fenster nie unter ~100 kt → HDG nur in
+            // 1..=360, SPD nur >= 80 mappen.
+            {
+                let hdg = t.md11_afs_hdg.round() as i32;
+                if t.md11_afs_hdg <= -998.0 || !(1..=360).contains(&hdg) {
+                    None
+                } else {
+                    Some(hdg)
+                }
             },
-            if t.md11_afs_spd <= -998.0 {
-                None
-            } else {
-                Some(t.md11_afs_spd.round() as i32)
+            {
+                let spd = t.md11_afs_spd.round() as i32;
+                if t.md11_afs_spd <= -998.0 || spd < 80 {
+                    None
+                } else {
+                    Some(spd)
+                }
             },
             if t.md11_afs_vs <= -9998.0 {
                 None
@@ -2137,7 +2156,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             _ => None,
         }
     } else if is_fbw {
-        // v0.16.9 (#Premium): FBW `A32NX_AUTOBRAKES_ARMED_MODE`
+        // v0.16.10 (#Premium): FBW `A32NX_AUTOBRAKES_ARMED_MODE`
         // (FBW-Doku): 0=DIS, 1=LO, 2=MED, 3=MAX. 0 behaelt die
         // bisherige None-Semantik des Profils (kein erfundenes
         // "OFF"-Label); unbekannte Werte ebenfalls None.
@@ -2148,7 +2167,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             _ => None,
         }
     } else if is_a340 {
-        // v0.16.9 (#Premium): iniBuilds A340 `L:INI_AUTOBRAKE_LEVEL`
+        // v0.16.10 (#Premium): iniBuilds A340 `L:INI_AUTOBRAKE_LEVEL`
         // — Selector-Enum laut HubHop: 3=MED, 4=MAX, 5=LO. 0 =
         // uninitialisiert/aus → None; andere Werte als "#{n}"
         // durchreichen (Decode beim ersten Live-Flug, vermutlich
@@ -2161,7 +2180,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             n => Some(format!("#{n}")),
         }
     } else if is_md11 {
-        // v0.16.9 (#Premium): TFDi MD-11 `L:MD11_CTR_AUTOBRAKE_SW` —
+        // v0.16.10 (#Premium): TFDi MD-11 `L:MD11_CTR_AUTOBRAKE_SW` —
         // Selector-Positions-Enum, Belegung undokumentiert → Roh-Wert
         // "#{n}" fuer n != 0 (Decode beim ersten Live-Flug).
         raw_enum_label(t.md11_autobrake_sw)
@@ -2212,14 +2231,26 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     } else if is_fenix {
         Some(t.fnx_fcu_athr as i32 != 0)
     } else if is_fbw {
-        // v0.16.9 (#Premium): FBW `A32NX_AUTOTHRUST_STATUS` (FBW-Doku):
+        // v0.16.10 (#Premium): FBW `A32NX_AUTOTHRUST_STATUS` (FBW-Doku):
         // 0=off, 1=armed, 2=active. "On" heisst hier AKTIV (>= 2) —
         // armed (1) ist der TOGA-Takeoff-Zustand, in dem die Lever
         // noch manuell stehen; den als "A/THR on" zu loggen waere
         // irrefuehrend.
-        Some(t.fbw_athr_status >= 2.0)
+        //
+        // v0.16.10 QS (M4) Defense-in-Depth: Status 0 → None statt
+        // Some(false). Auf einem marker-losen Nicht-FBW-A339 (ICAO-
+        // Fallback) ist der LVar tot (liest permanent 0.0) — ein
+        // hartes Some(false) waere dort ein Phantom-"A/THR OFF" den
+        // ganzen Flug. Trade-off: ein echter FBW mit wirklich
+        // abgeschaltetem A/THR meldet ebenfalls None (kein OFF-Log) —
+        // akzeptiert, None erzeugt nie Spam.
+        if t.fbw_athr_status > 0.5 {
+            Some(t.fbw_athr_status >= 2.0)
+        } else {
+            None
+        }
     } else if is_md11 {
-        // v0.16.9 (#Premium): TFDi MD-11 `L:MD11_ATS_STATE` — Enum
+        // v0.16.10 (#Premium): TFDi MD-11 `L:MD11_ATS_STATE` — Enum
         // undokumentiert, > 0 = ATS engaged (TFDi-Doku-Konvention).
         Some(t.md11_ats_state > 0.5)
     } else {
@@ -2227,7 +2258,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     };
 
     // ================================================================
-    // v0.16.9 (#Premium): Cockpit-Tiefendaten-Mappings.
+    // v0.16.10 (#Premium): Cockpit-Tiefendaten-Mappings.
     // Alle Zweige strikt profile-gegated — tote LVars lesen auf
     // fremden Aircraft 0.0, ohne Gate entstuenden Phantom-Werte
     // (siehe premium_lvars_do_not_affect_default_profile-Test).
@@ -2451,10 +2482,15 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // N1-Fallback fuer engines_running oben).
     // MD-11-Ausnahme: display-exakte `MD11_ENG1..3_N1`-LVars
     // bevorzugen, sobald irgendeine > 0 liest; sonst Standard-Pfad.
+    // v0.16.10 QS (Minor 9): zusaetzlich max(N1) >= 5 % verlangt —
+    // Addons mit toten N1-SimVars aber lebenden Combustion-Bits
+    // lieferten sonst ein Bogus-Array aus Nullen ([0.0, 0.0]).
+    // Idle-N1 liegt bei ~20 %, das Gate kostet keine echten Werte.
     let eng_n1_pct: Option<Vec<f64>> = {
+        let alive = |n1: &[f64]| n1.iter().cloned().fold(0.0_f64, f64::max) >= 5.0;
         let md11_n1 = if is_md11 {
             let n1 = [t.md11_eng1_n1, t.md11_eng2_n1, t.md11_eng3_n1];
-            if n1.iter().any(|v| *v > 0.0) {
+            if alive(&n1) {
                 Some(n1.to_vec())
             } else {
                 None
@@ -2481,7 +2517,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
                 .map(|i| i + 1)
                 .max()
                 .unwrap_or(0);
-            if k == 0 {
+            if k == 0 || !alive(&n1[..k]) {
                 None
             } else {
                 Some(n1[..k].to_vec())
@@ -2634,7 +2670,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // beim Fenix (dessen `L:A_FC_SPEEDBRAKE` ist nur als Override-
         // Kandidat subscribed, s. Tabellen-Kommentar Gruppe A).
         spoilers_handle_position: Some(t.spoilers_handle_position as f32),
-        // v0.16.9 (#Premium): Standard ODER Profil-LVar (FBW/A346).
+        // v0.16.10 (#Premium): Standard ODER Profil-LVar (FBW/A346).
         spoilers_armed: Some(spoilers_armed),
         pushback_state,
         apu_switch: Some(apu_switch),
@@ -2686,7 +2722,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         contact_point_on_ground: None,
         gear_water_depth_m: None,
         water_rudder_present: None,
-        // v0.16.9 (#Premium): Cockpit-Tiefendaten — profile-gegated
+        // v0.16.10 (#Premium): Cockpit-Tiefendaten — profile-gegated
         // aus den LVar-Gruppen A-E gemappt (siehe Premium-Block oben).
         // PMDG-Premium fliesst zusaetzlich ueber den `pmdg`-Struct-
         // Merge in sim-core (`apply_pmdg_premium_override`).
@@ -2973,7 +3009,7 @@ mod tests {
         assert_eq!(t.a346_seatbelt_sw, 0.0);
         assert_eq!(t.a346_autobrake_mode, 0.0);
         assert_eq!(t.a346_gear_lever, 0.0);
-        // v0.16.9 (#Premium): the very end of the new tail.
+        // v0.16.10 (#Premium): the very end of the new tail.
         assert_eq!(t.fnx_perf_v1, 0.0);
         assert_eq!(t.fbw_fcu_alt_managed, 0.0);
         assert_eq!(t.ini_autobrake_level, 0.0);
@@ -3272,7 +3308,7 @@ mod tests {
         assert_eq!(t.a350_appr_light, 1149.0); // idx 149
         assert_eq!(t.a350_loc_light, 1150.0); // idx 150
 
-        // ---- v0.16.9 (#Premium): 79 tail fields (idx 151..229) ----
+        // ---- v0.16.10 (#Premium): 79 tail fields (idx 151..229) ----
         // Gruppe A: Fenix Premium (idx 151..163).
         assert_eq!(t.fnx_perf_v1, 1151.0); // idx 151
         assert_eq!(t.fnx_perf_vr, 1152.0); // idx 152
@@ -3376,7 +3412,7 @@ mod tests {
                 FieldKind::String256 => buf.extend_from_slice(&[0u8; 256]),
             }
         }
-        // v0.16.9 (#Premium): drop the 79 premium tail fields (79*8).
+        // v0.16.10 (#Premium): drop the 79 premium tail fields (79*8).
         buf.truncate(buf.len() - 632);
         let t = Telemetry::from_block(&buf);
         assert_eq!(t.a350_loc_light, 1150.0); // last v0.16.8 field intact
@@ -3693,7 +3729,7 @@ mod tests {
         assert_eq!(snap.autothrottle_on, None);
     }
 
-    // ==== v0.16.9 (#Premium): Cockpit-Tiefendaten (Gruppen A-E) ====
+    // ==== v0.16.10 (#Premium): Cockpit-Tiefendaten (Gruppen A-E) ====
 
     fn fbw_telemetry() -> Telemetry {
         let mut t = Telemetry::default();
@@ -3773,8 +3809,37 @@ mod tests {
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.autothrottle_on, Some(true));
 
+        // v0.16.10 QS (M4): Status 0 → None (toter LVar auf einem
+        // marker-losen Nicht-FBW-A339 darf kein Phantom-Some(false)
+        // produzieren).
         let snap = telemetry_to_snapshot(fbw_telemetry(), Simulator::Msfs2024);
-        assert_eq!(snap.autothrottle_on, Some(false));
+        assert_eq!(snap.autothrottle_on, None);
+    }
+
+    /// v0.16.10 QS (M4) Defense-in-Depth: ein Nicht-FBW-A339 (ICAO-
+    /// Fallback, A32NX_-LVars tot) muss AP-Sub-Modes weiterhin ueber
+    /// die Standard-SimVars melden — das ODER faengt den Fall.
+    #[test]
+    fn fbw_ap_submodes_or_standard_simvars() {
+        let mut t = fbw_telemetry();
+        t.ap_heading = true;
+        t.ap_altitude = true;
+        t.ap_nav = true;
+        t.ap_approach = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_heading, Some(true));
+        assert_eq!(snap.autopilot_altitude, Some(true));
+        assert_eq!(snap.autopilot_nav, Some(true));
+        assert_eq!(snap.autopilot_approach, Some(true));
+
+        // FBW-LVars allein genuegen weiterhin (kein Regress).
+        let mut t = fbw_telemetry();
+        t.fbw_ap_hdg = 1.0;
+        t.fbw_ap_appr = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_heading, Some(true));
+        assert_eq!(snap.autopilot_approach, Some(true));
+        assert_eq!(snap.autopilot_altitude, Some(false));
     }
 
     #[test]
@@ -4085,6 +4150,37 @@ mod tests {
         assert_eq!(snap.fcu_selected_altitude_ft, None);
     }
 
+    /// v0.16.10 QS (Minor 8): AFS-Plausibilitaets-Gates — ein
+    /// uninitialisierter LVar liest 0.0 (zwischen Dash-Sentinel und
+    /// echtem Wert). HDG nur 1..=360, SPD nur >= 80.
+    #[test]
+    fn md11_afs_implausible_values_to_none() {
+        // Uninitialisiert (0.0): HDG 0 und SPD 0 → None.
+        let snap = telemetry_to_snapshot(md11_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.fcu_selected_heading_deg, None);
+        assert_eq!(snap.fcu_selected_speed_kt, None);
+
+        // Unter den Plausibilitaets-Schwellen → None.
+        let mut t = md11_telemetry();
+        t.md11_afs_spd = 79.0;
+        t.md11_afs_hdg = 361.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fcu_selected_speed_kt, None);
+        assert_eq!(snap.fcu_selected_heading_deg, None);
+
+        // Grenzwerte sind plausibel: SPD 80, HDG 360 und HDG 1.
+        let mut t = md11_telemetry();
+        t.md11_afs_spd = 80.0;
+        t.md11_afs_hdg = 360.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fcu_selected_speed_kt, Some(80));
+        assert_eq!(snap.fcu_selected_heading_deg, Some(360));
+        let mut t = md11_telemetry();
+        t.md11_afs_hdg = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fcu_selected_heading_deg, Some(1));
+    }
+
     #[test]
     fn md11_vspeeds_and_raw_autobrake() {
         let mut t = md11_telemetry();
@@ -4176,13 +4272,24 @@ mod tests {
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.eng_n1_pct, Some(vec![0.0, 40.0]));
 
-        // EX1-Combustion zaehlt ebenfalls als Gate — Engine erfasst,
-        // obwohl ihr N1 (noch) unter der 5 %-Schwelle liegt.
+        // v0.16.10 QS (Minor 9): Combustion an, aber ALLE N1 unter
+        // 5 % (tote N1-SimVars bei lebenden Combustion-Bits) → None
+        // statt Bogus-[0.0]-Array.
         let mut t = Telemetry::default();
         t.eng1_combustion_ex1 = true;
-        t.n1_pct_1 = 0.0; // Spool-up-Beginn
+        t.n1_pct_1 = 0.0;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.eng_n1_pct, Some(vec![0.0]));
+        assert_eq!(snap.eng_n1_pct, None);
+
+        // Sobald EINE Engine >= 5 % liest, bleibt das Praefix-Array
+        // inkl. der (noch) spulenden Engine erhalten.
+        let mut t = Telemetry::default();
+        t.eng1_combustion_ex1 = true;
+        t.eng2_firing = true;
+        t.n1_pct_1 = 0.02; // Spool-up-Beginn → 2 %
+        t.n1_pct_2 = 0.4; // 40 %
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.eng_n1_pct, Some(vec![2.0, 40.0]));
 
         // Alles aus → None (kein leerer/Null-Vektor).
         let snap = telemetry_to_snapshot(Telemetry::default(), Simulator::Msfs2024);

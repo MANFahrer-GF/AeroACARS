@@ -702,7 +702,7 @@ pub struct Pmdg738Snapshot {
     // Comm + Misc
     pub xpdr_mode: u8,                  // 0=STBY 1=ALT_RPTG_OFF .. 4=TA/RA
 
-    // ---- v0.16.9 (#Premium): deep-data annunciators + fuel ----
+    // ---- v0.16.10 (#Premium): deep-data annunciators + fuel ----
     /// Any engine's REVERSER annunciator lit (`ENG_annunREVERSER[0|1]`).
     pub reverser_deployed: bool,
     /// MASTER CAUTION lit on either side (`WARN_annunMASTER_CAUTION[0|1]`).
@@ -905,7 +905,7 @@ impl Pmdg738Snapshot {
 
             xpdr_mode: raw.XPDR_ModeSel,
 
-            // ---- v0.16.9 (#Premium) deep-data fields ----
+            // ---- v0.16.10 (#Premium) deep-data fields ----
             // Two-channel annunciators (Capt/FO or Eng1/Eng2): OR —
             // "the light is on" is what the cockpit shows.
             reverser_deployed: raw.ENG_annunREVERSER[0] != 0
@@ -1032,7 +1032,7 @@ mod tests {
         assert!(!s.looks_alive()); // MCP not powered, APU not running
     }
 
-    // ---- v0.16.9 (#Premium) deep-data field decoding ----
+    // ---- v0.16.10 (#Premium) deep-data field decoding ----
 
     fn zeroed_raw() -> Pmdg738RawData {
         unsafe { std::mem::zeroed() }

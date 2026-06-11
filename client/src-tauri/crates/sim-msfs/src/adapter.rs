@@ -290,7 +290,7 @@ fn ng3_to_pmdg_state(s: &crate::pmdg::ng3::Pmdg738Snapshot) -> sim_core::PmdgSta
         battery_master: Some(s.battery_master),
         parking_brake: Some(s.parking_brake_set),
 
-        // ---- v0.16.9 (#Premium): deep-data carrier fields ----
+        // ---- v0.16.10 (#Premium): deep-data carrier fields ----
         // Annunciator booleans are always `Some(..)` while a PMDG
         // aircraft is active — `Some(false)` = "light is off", a
         // real cockpit observation. Presence-gating happens one
@@ -474,7 +474,7 @@ fn x777_to_pmdg_state(s: &crate::pmdg::x777::Pmdg777XSnapshot) -> sim_core::Pmdg
         battery_master: Some(s.battery_master),
         parking_brake: Some(s.parking_brake_set),
 
-        // ---- v0.16.9 (#Premium): deep-data carrier fields ----
+        // ---- v0.16.10 (#Premium): deep-data carrier fields ----
         // Booleans are always `Some(..)` while a PMDG 777 is active
         // (Some(false) = light off) — see the NG3 mapper for the
         // presence-gating rationale.
@@ -701,7 +701,7 @@ impl MsfsAdapter {
         // `SimSnapshot::apply_pmdg_autoflight_override` (sim-core,
         // cross-platform tested; this adapter is Windows-only).
         snap.apply_pmdg_autoflight_override();
-        // v0.16.9 (#Premium): sibling override for the deep-data
+        // v0.16.10 (#Premium): sibling override for the deep-data
         // fields (FMA labels, warn annunciators, reverser, per-tank
         // fuel, V-speeds, baro minimums, ground spoilers). Same
         // presence-gating — no-op when `snap.pmdg` is None.

@@ -335,7 +335,7 @@ pub struct SimSnapshot {
     #[serde(default)]
     pub water_rudder_present: Option<bool>,
 
-    // ---- v0.16.9 (#Premium): Autoflight-/Cockpit-Tiefendaten ----
+    // ---- v0.16.10 (#Premium): Autoflight-/Cockpit-Tiefendaten ----
     // Premium cockpit state from study-level addons (FMA modes, V-speeds,
     // warnings, …). Carrier fields only in this phase — the per-addon
     // mappers (PMDG SDK, FBW/Fenix/iniBuilds LVars, TFDi) fill them in
@@ -591,7 +591,7 @@ pub struct PmdgState {
     /// Parking brake set (PMDG-cockpit-authoritative).
     pub parking_brake: Option<bool>,
 
-    // ---- v0.16.9 (#Premium): zusaetzliche SDK-Felder ----
+    // ---- v0.16.10 (#Premium): zusaetzliche SDK-Felder ----
     // Carrier-Felder fuer Werte, die der PMDG-SDK-Struct bereits
     // mitsendet — die sim-msfs-Mapper fuellen sie in Phase 3. Alle
     // `Option` + `serde(default)`, damit aeltere serialisierte
@@ -676,7 +676,7 @@ impl SimSnapshot {
         self.autothrottle_on = Some(self.autothrottle_on.unwrap_or(false) || at_on);
     }
 
-    /// v0.16.9 (#Premium): Premium-First override for the new cockpit
+    /// v0.16.10 (#Premium): Premium-First override for the new cockpit
     /// deep-data fields — sibling of [`Self::apply_pmdg_autoflight_override`],
     /// called right after it in `MsfsAdapter::snapshot()` once the PMDG
     /// ClientData block is merged. Lives here (not in the Windows-only
@@ -700,51 +700,70 @@ impl SimSnapshot {
     ///     without ground context. On the ground that's the (auto)
     ///     ground-spoiler deployment → mapped; in the air it's a normal
     ///     in-flight speedbrake → `ground_spoilers_active` stays
-    ///     untouched (deliberately simple, see v0.16.9 spec).
+    ///     untouched (deliberately simple, see v0.16.10 spec).
     pub fn apply_pmdg_premium_override(&mut self) {
-        let Some(p) = self.pmdg.clone() else {
-            return;
-        };
-
-        // FMA columns → generic labels. Leerstring = Cockpit zeigt
-        // nichts an → None bleibt None.
+        // v0.16.10 QS (Minor 10): kein PmdgState-Vollklon pro Tick mehr —
+        // der Struct traegt etliche Strings/Vecs (variant_label, FMC-
+        // Flight-Number, Label-Felder, fuel_per_tank, …). Stattdessen
+        // unter dem &-Borrow nur die benoetigten Werte herauskopieren
+        // (die 3 FMA-Strings allozieren nur wenn non-empty, der Tank-Vec
+        // nur wenn Some), dann den Borrow fallen lassen und zuweisen.
         let non_empty = |s: &str| {
             let s = s.trim();
             (!s.is_empty()).then(|| s.to_string())
         };
-        if let Some(m) = non_empty(&p.fma_roll_mode) {
+        let Some(p) = self.pmdg.as_ref() else {
+            return;
+        };
+        // FMA columns → generic labels. Leerstring = Cockpit zeigt
+        // nichts an → None bleibt None.
+        let fma_lateral = non_empty(&p.fma_roll_mode);
+        let fma_vertical = non_empty(&p.fma_pitch_mode);
+        let fma_thrust = non_empty(&p.fma_speed_mode);
+        let master_caution = p.master_caution;
+        let master_warning = p.master_warning;
+        let reverser_deployed = p.reverser_deployed;
+        let below_gs = p.below_gs;
+        let cabin_altitude_warning = p.cabin_altitude_warning;
+        let stab_out_of_trim = p.stab_out_of_trim;
+        let minimums_baro_ft = p.minimums_baro_ft;
+        let fuel_per_tank_kg = p.fuel_per_tank_kg.clone();
+        let (v1, vr, v2, vref) = (p.fmc_v1_kt, p.fmc_vr_kt, p.fmc_v2_kt, p.fmc_vref_kt);
+        let speedbrake_extended = p.speedbrake_extended;
+
+        if let Some(m) = fma_lateral {
             self.fma_lateral_mode = Some(m);
         }
-        if let Some(m) = non_empty(&p.fma_pitch_mode) {
+        if let Some(m) = fma_vertical {
             self.fma_vertical_mode = Some(m);
         }
-        if let Some(m) = non_empty(&p.fma_speed_mode) {
+        if let Some(m) = fma_thrust {
             self.fma_thrust_mode = Some(m);
         }
 
         // Warn-/Status-Bits + Minimums: SDK-Wert gewinnt wenn vorhanden.
-        self.master_caution = p.master_caution.or(self.master_caution);
-        self.master_warning = p.master_warning.or(self.master_warning);
-        self.reverser_deployed = p.reverser_deployed.or(self.reverser_deployed);
-        self.below_gs_alert = p.below_gs.or(self.below_gs_alert);
-        self.cabin_altitude_warning = p.cabin_altitude_warning.or(self.cabin_altitude_warning);
-        self.stab_out_of_trim = p.stab_out_of_trim.or(self.stab_out_of_trim);
-        self.minimums_baro_ft = p.minimums_baro_ft.or(self.minimums_baro_ft);
-        if p.fuel_per_tank_kg.is_some() {
-            self.fuel_per_tank_kg = p.fuel_per_tank_kg;
+        self.master_caution = master_caution.or(self.master_caution);
+        self.master_warning = master_warning.or(self.master_warning);
+        self.reverser_deployed = reverser_deployed.or(self.reverser_deployed);
+        self.below_gs_alert = below_gs.or(self.below_gs_alert);
+        self.cabin_altitude_warning = cabin_altitude_warning.or(self.cabin_altitude_warning);
+        self.stab_out_of_trim = stab_out_of_trim.or(self.stab_out_of_trim);
+        self.minimums_baro_ft = minimums_baro_ft.or(self.minimums_baro_ft);
+        if fuel_per_tank_kg.is_some() {
+            self.fuel_per_tank_kg = fuel_per_tank_kg;
         }
 
         // FMC V-Speeds (Option<u8> kt) → generische f64-Felder.
-        self.v1_kt = p.fmc_v1_kt.map(f64::from).or(self.v1_kt);
-        self.vr_kt = p.fmc_vr_kt.map(f64::from).or(self.vr_kt);
-        self.v2_kt = p.fmc_v2_kt.map(f64::from).or(self.v2_kt);
-        self.vref_kt = p.fmc_vref_kt.map(f64::from).or(self.vref_kt);
+        self.v1_kt = v1.map(f64::from).or(self.v1_kt);
+        self.vr_kt = vr.map(f64::from).or(self.vr_kt);
+        self.v2_kt = v2.map(f64::from).or(self.v2_kt);
+        self.vref_kt = vref.map(f64::from).or(self.vref_kt);
 
         // Ground-Spoiler nur am Boden mappen — in der Luft ist
         // `speedbrake_extended` eine normale Speedbrake, kein
         // Ground-Spoiler-Signal.
         if self.on_ground {
-            self.ground_spoilers_active = Some(p.speedbrake_extended);
+            self.ground_spoilers_active = Some(speedbrake_extended);
         }
     }
 }
@@ -860,7 +879,7 @@ impl Default for SimSnapshot {
             contact_point_on_ground: None,
             gear_water_depth_m: None,
             water_rudder_present: None,
-            // v0.16.9 (#Premium): Cockpit-Tiefendaten — alle None bis
+            // v0.16.10 (#Premium): Cockpit-Tiefendaten — alle None bis
             // ein Premium-Mapper (PMDG SDK / Addon-LVars) sie fuellt.
             fma_lateral_mode: None,
             fma_vertical_mode: None,
@@ -899,10 +918,10 @@ impl Default for SimSnapshot {
 ///
 /// Mapping status (Phase H.4 backlog):
 ///   * `FbwA32nx`   — LVars wired (untested live, FBW not loaded yet).
-///     v0.16.9 (#Premium): deckt jetzt die ganze `A32NX_`-LVar-Familie
+///     v0.16.10 (#Premium): deckt jetzt die ganze `A32NX_`-LVar-Familie
 ///     ab — FBW A32NX, FBW A380X, Headwind A339 (alles Forks derselben
 ///     Codebasis).
-///   * `TfdiMd11`   — detection only (v0.16.9 #Premium); Premium-Mapper
+///   * `TfdiMd11`   — detection only (v0.16.10 #Premium); Premium-Mapper
 ///     folgt in einer spaeteren Phase.
 ///   * `FenixA320`  — Lights / parking brake / flaps wired and verified
 ///                    in MSFS 2024. AP indicator LVars (`I_FCU_AP*`) were
@@ -935,7 +954,7 @@ pub enum AircraftProfile {
     /// FlyByWire A32NX (community Airbus). Reads `L:A32NX_*` LVars.
     /// LVar reference: github.com/flybywiresim/aircraft/blob/master/
     /// fbw-a32nx/docs/a320-simvars.md
-    /// v0.16.9 (#Premium): EIN Profil fuer die ganze FBW-Familie —
+    /// v0.16.10 (#Premium): EIN Profil fuer die ganze FBW-Familie —
     /// A32NX, FBW A380X und Headwind A339 nutzen dieselbe
     /// `A32NX_`-LVar-Namensfamilie (Forks derselben Codebasis).
     FbwA32nx,
@@ -980,7 +999,7 @@ pub enum AircraftProfile {
     /// Rest der Telemetrie (N1/N2/Fuel/Gear/Flaps) kommt sauber via
     /// Standard-SimVars — kein voller Profile-Override noetig.
     FsrPhenom300e,
-    /// v0.16.9 (#Premium): TFDi Design MD-11 (Pax + Freighter — ein
+    /// v0.16.10 (#Premium): TFDi Design MD-11 (Pax + Freighter — ein
     /// Profil fuer beide). Detection-only in dieser Phase, die
     /// Premium-Quellen (laut 7-Agent-Inventar) werden in einer
     /// spaeteren Phase gemappt. atc_model "MD11"/"MD11F",
@@ -997,7 +1016,7 @@ impl AircraftProfile {
         let t = title.to_lowercase();
         let i = icao.to_lowercase();
         // FlyByWire — distinguish from real Airbus by FBW's marker text.
-        // v0.16.9 (#Premium): Familie erweitert — der FBW A380X
+        // v0.16.10 (#Premium): Familie erweitert — der FBW A380X
         // ("…A380X…" im Title, ICAO A388) und der Headwind A339
         // (A330-900neo, FBW-Fork) teilen die `A32NX_`-LVar-Familie und
         // landen auf demselben Profil. Keiner der Marker kommt in
@@ -1046,7 +1065,7 @@ impl AircraftProfile {
             return Self::IniA346Pro;
         }
         // INIBuilds A340 base.
-        // v0.16.9 (#Premium): Per-Livery-Titles der iniBuilds A340-300
+        // v0.16.10 (#Premium): Per-Livery-Titles der iniBuilds A340-300
         // heissen z.B. "A340-300 EIS1" OHNE "inibuilds" — daher
         // zusaetzlich ICAO A343 bzw. atc_model "A340-300" als Signal.
         // Kollisionsfrei: die Aerosoft A346 meldet atc_model
@@ -1071,18 +1090,28 @@ impl AircraftProfile {
         {
             return Self::AerosoftA346;
         }
-        // v0.16.9 (#Premium): FBW-ICAO-Fallback fuer Repaints/Liveries
-        // ohne Marker im Title. A20N = FBW A32NX (MSFS-only — die
-        // ToLiss A20N ist X-Plane und erreicht den MSFS-Adapter nie),
-        // A339 = Headwind A339. Bewusst NACH Fenix/iniBuilds/Aerosoft
-        // platziert (deren Title-Matches gewinnen) und mit Stock-Guard:
-        // die Asobo-/iniBuilds-Stock-A320neo meldet ebenfalls A20N, hat
-        // aber keine A32NX_-LVars → bleibt Default. (ICAO A388 braucht
-        // keinen eigenen Zweig — A380X-Titles tragen immer "A380X"
-        // bzw. "FlyByWire" und matchen oben.)
+        // v0.16.10 (#Premium): FBW-ICAO-Fallback fuer Repaints/Liveries
+        // ohne Marker im Title — NUR noch A339 (= Headwind A339, der
+        // einzige nennenswerte MSFS-A339; dessen Liveries tragen nicht
+        // immer den "Headwind"-Marker). Bewusst NACH Fenix/iniBuilds/
+        // Aerosoft platziert (deren Title-Matches gewinnen) und mit
+        // Stock-Guard gegen Asobo-/iniBuilds-Titles.
+        //
+        // v0.16.10 QS (M4): der fruehere A20N-Fallback ist ENTFERNT —
+        // A20N ist ein viel zu generischer Designator (LatinVFR A320neo,
+        // marker-lose Stock-Liveries, …). Diese Nicht-FBW-A20N bekamen
+        // das FBW-Profil und damit tote A32NX_-LVars → permanente
+        // Some(false)-Phantome auf AP-Sub-Modes + A/THR. FBW-Liveries
+        // matchen weiterhin ueber die Title-Marker (flybywire/a32nx/
+        // a380x/headwind). Akzeptierte Rest-Klasse: ein hypothetischer
+        // marker-loser Dritt-A339 wuerde weiter als FBW erkannt — den
+        // Fall faengt das Defense-in-Depth-OR im MSFS-Adapter ab
+        // (Standard-SimVars gewinnen, A/THR-0 → None statt Some(false)).
+        // (ICAO A388 braucht keinen eigenen Zweig — A380X-Titles tragen
+        // immer "A380X" bzw. "FlyByWire" und matchen oben.)
         if !t.contains("asobo")
             && !t.contains("inibuilds")
-            && matches!(clean_atc_model(icao).as_deref(), Some("A20N") | Some("A339"))
+            && clean_atc_model(icao).as_deref() == Some("A339")
         {
             return Self::FbwA32nx;
         }
@@ -1093,7 +1122,7 @@ impl AircraftProfile {
         if t.contains("fsreborn") && t.contains("phenom") && t.contains("300") {
             return Self::FsrPhenom300e;
         }
-        // v0.16.9 (#Premium): TFDi Design MD-11 / MD-11F. Title traegt
+        // v0.16.10 (#Premium): TFDi Design MD-11 / MD-11F. Title traegt
         // "TFDi" + "MD-11" (z.B. "TFDi Design MD-11 …"); Repaint-
         // Fallback ueber den ATC-MODEL/ICAO-Designator — "MD11" (Pax)
         // und "MD11F" (Freighter) landen beide auf EINEM Profil
@@ -1504,7 +1533,7 @@ mod tests {
             AircraftProfile::Default,
         );
         // ICAO muss EXAKT A346 sein — A343 darf NICHT auf Aerosoft
-        // fallen. v0.16.9 (#Premium): A343 mappt jetzt auf IniA340
+        // fallen. v0.16.10 (#Premium): A343 mappt jetzt auf IniA340
         // (Per-Livery-Titles der iniBuilds A340-300 tragen kein
         // "inibuilds") — der Guard hier bleibt: nicht AerosoftA346.
         assert_eq!(
@@ -1675,7 +1704,7 @@ mod tests {
         }
     }
 
-    // ---- v0.16.9 (#Premium): Cockpit-Tiefendaten ----
+    // ---- v0.16.10 (#Premium): Cockpit-Tiefendaten ----
     //
     // Foundation-Phase: neue SimSnapshot-/PmdgState-Carrier-Felder,
     // neue Profile (TfdiMd11, erweiterte FBW-Familie, IniA340-Livery-
@@ -1683,7 +1712,7 @@ mod tests {
     // in spaeteren Phasen — hier sichern wir Serde-Kompatibilitaet,
     // Detection-Regeln und die Override-Semantik ab.
 
-    /// Alle in v0.16.9 neu eingefuehrten SimSnapshot-Keys — fuer den
+    /// Alle in v0.16.10 neu eingefuehrten SimSnapshot-Keys — fuer den
     /// JSONL-Backward-Compat-Test unten.
     const PREMIUM_SNAPSHOT_KEYS: [&str; 26] = [
         "fma_lateral_mode",
@@ -1725,7 +1754,7 @@ mod tests {
         assert_eq!(s.ground_spoilers_active, None);
         assert_eq!(s.minimums_baro_ft, None);
 
-        // Backward compat: ein Snapshot, der VOR v0.16.9 serialisiert
+        // Backward compat: ein Snapshot, der VOR v0.16.10 serialisiert
         // wurde (= alle aufgezeichneten JSONL-Flight-Logs), traegt
         // KEINEN der neuen Keys — `#[serde(default)]` muss jeden
         // einzelnen abdecken.
@@ -1774,7 +1803,7 @@ mod tests {
         assert_eq!(restored.gnd_prox_warning, None);
     }
 
-    // ---- v0.16.9 (#Premium): Profile-Detection ----
+    // ---- v0.16.10 (#Premium): Profile-Detection ----
 
     #[test]
     fn detect_inibuilds_a340_per_livery_title_via_icao() {
@@ -1849,19 +1878,27 @@ mod tests {
 
     #[test]
     fn detect_fbw_family_icao_fallback() {
-        // Repaints ohne Title-Marker: ICAO A20N/A339 identifiziert die
-        // FBW-Familie (MSFS-only — die ToLiss A20N ist X-Plane und
-        // erreicht den MSFS-Adapter nie).
-        let p = AircraftProfile::detect("Airbus A320neo Lufthansa", "A20N");
-        assert_eq!(p, AircraftProfile::FbwA32nx);
+        // v0.16.10 QS (M4): nur noch A339 (Headwind ist der einzige
+        // MSFS-A339) faellt per ICAO auf das FBW-Profil zurueck.
         let p = AircraftProfile::detect("Custom A330-900 Livery", "A339");
         assert_eq!(p, AircraftProfile::FbwA32nx);
     }
 
     #[test]
-    fn detect_fbw_icao_fallback_keeps_stock_a20n_default() {
-        // Stock-Guard: Asobo-/iniBuilds-Stock-A320neo melden ebenfalls
-        // A20N, haben aber keine A32NX_-LVars → Default-Profil.
+    fn detect_a20n_without_marker_stays_default() {
+        // v0.16.10 QS (M4): A20N-ICAO-Fallback entfernt — A20N ist zu
+        // generisch. Nicht-FBW-A20N (LatinVFR, marker-lose Stock-
+        // Liveries) bekamen sonst das FBW-Profil und damit tote
+        // A32NX_-LVars (Some(false)-Phantome auf AP-Sub-Modes/A/THR).
+        assert_eq!(
+            AircraftProfile::detect("Airbus A320neo Lufthansa", "A20N"),
+            AircraftProfile::Default,
+        );
+        assert_eq!(
+            AircraftProfile::detect("LatinVFR A320neo", "A20N"),
+            AircraftProfile::Default,
+        );
+        // Stock-Guard-Faelle bleiben ebenfalls Default.
         assert_eq!(
             AircraftProfile::detect("Asobo A320 Neo", "A20N"),
             AircraftProfile::Default,
@@ -1870,11 +1907,20 @@ mod tests {
             AircraftProfile::detect("iniBuilds A320neo V2", "A20N"),
             AircraftProfile::Default,
         );
+        // Title-Marker matchen weiterhin (kein Regress fuer echte FBW).
+        assert_eq!(
+            AircraftProfile::detect("FlyByWire A32NX", "A20N"),
+            AircraftProfile::FbwA32nx,
+        );
+        assert_eq!(
+            AircraftProfile::detect("Airbus A320 Neo FlyByWire", "A20N"),
+            AircraftProfile::FbwA32nx,
+        );
     }
 
     #[test]
     fn detect_premium_regressions_unchanged() {
-        // v0.16.9-Guard: bestehende Profile duerfen sich durch die neuen
+        // v0.16.10-Guard: bestehende Profile duerfen sich durch die neuen
         // Zweige nicht verschieben.
         assert_eq!(
             AircraftProfile::detect("FenixA320 CFM SL", "A320"),
@@ -1898,7 +1944,7 @@ mod tests {
         );
     }
 
-    // ---- v0.16.9 (#Premium): PMDG-Premium-Override ----
+    // ---- v0.16.10 (#Premium): PMDG-Premium-Override ----
 
     /// PmdgState-Carrier mit gefuellten Premium-Feldern (Phase-3-Werte
     /// simuliert) fuer die Override-Tests.
