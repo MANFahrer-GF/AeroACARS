@@ -682,7 +682,7 @@ impl Default for SimSnapshot {
 ///                    a separate subscribe path).
 ///   * `Pmdg777`    — same as 737.
 ///   * `IniA340`    — detection only; LVar list TBD.
-///   * `IniA350`    — detection only; LVar list TBD.
+///   * `IniA350`    — AP1/AP2 + A/THR + APPR/LOC via FCU-LED-LVars (v0.16.8, HubHop).
 ///   * `IniA346Pro` — detection only; LVar list TBD.
 ///   * `AerosoftA346` — AP-state LVars wired (`L:AB_AP_*_LIGHT_ON`),
 ///     confirmed via WASM strings analysis 2026-06-10. Engines/fuel-flow

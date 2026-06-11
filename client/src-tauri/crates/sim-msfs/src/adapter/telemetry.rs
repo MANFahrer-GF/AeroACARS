@@ -411,6 +411,19 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // einzige brauchbare Quelle. Richtung (0=up/1=down) ist plausibel
     // aber unverifiziert bis zum ersten Live-Flug.
     F::f64("L:AB_MPL_LANDING_GEAR_SELECTOR_LEVER", "Number"),
+    // ---- iniBuilds A350 (v0.16.8) ----
+    // Quelle: HubHop-Preset-DB (IniBuilds.A350 (2024).Autopilot.* Output-
+    // Presets, 2026-06-11) — Daten-Audit: 10 A350-Flüge, AP nie an, weil
+    // der Standard-SimVar (wie bei allen Study-Addons) tot ist. Die
+    // FCU-LED-LVars sind echte Annunciator-States:
+    //   INI_ap1_on / INI_ap2_on   = AP1/AP2-LED (engaged)
+    //   INI_ATHR_LIGHT            = A/THR-LED
+    //   INI_MCU_LAND_LIGHT        = APPR-LED, INI_MCU_LOC_LIGHT = LOC-LED
+    F::f64("L:INI_ap1_on", "Number"),
+    F::f64("L:INI_ap2_on", "Number"),
+    F::f64("L:INI_ATHR_LIGHT", "Number"),
+    F::f64("L:INI_MCU_LAND_LIGHT", "Number"),
+    F::f64("L:INI_MCU_LOC_LIGHT", "Number"),
 ];
 
 // Helper builders so the table above stays compact.
@@ -646,6 +659,12 @@ pub struct Telemetry {
     pub a346_autobrake_mode: f64,
     // Gear-Selector-Lever (0=up/1=down angenommen, unverifiziert).
     pub a346_gear_lever: f64,
+    // ---- iniBuilds A350 (v0.16.8) — nur bei AircraftProfile::IniA350 konsultiert ----
+    pub a350_ap1_on: f64,
+    pub a350_ap2_on: f64,
+    pub a350_athr_light: f64,
+    pub a350_appr_light: f64,
+    pub a350_loc_light: f64,
 }
 
 // ---- Touchdown sample (separate data definition #2) ----
@@ -1052,6 +1071,12 @@ impl Telemetry {
         pull_f64!(t.a346_bat2_off_light);
         pull_f64!(t.a346_autobrake_mode);
         pull_f64!(t.a346_gear_lever);
+        // ---- iniBuilds A350 (v0.16.8) ----
+        pull_f64!(t.a350_ap1_on);
+        pull_f64!(t.a350_ap2_on);
+        pull_f64!(t.a350_athr_light);
+        pull_f64!(t.a350_appr_light);
+        pull_f64!(t.a350_loc_light);
 
         // Silence the unused-assignment warning the last `pull_*!`
         // emits (the macro always advances `off`, but the very last
@@ -1145,6 +1170,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // Status quo (siehe a346_full_profile_does_not_affect_other_
     // profiles-Test).
     let is_a346 = matches!(profile, AircraftProfile::AerosoftA346);
+    let is_a350 = matches!(profile, AircraftProfile::IniA350);
     // v0.7.17 (F-001): Fenix-A32x extension LVARs are now ALWAYS applied
     // when the profile is Fenix — the v0.7.16 opt-in flag is removed
     // after a positive testing phase. The branch below is kept under
@@ -1370,6 +1396,22 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             t.ap_nav,
             t.a346_appr_light as i32 != 0
                 || t.a346_loc_light as i32 != 0
+                || t.ap_approach,
+        )
+    } else if is_a350 {
+        // iniBuilds A350 (v0.16.8): FCU-LED-LVars aus der HubHop-DB —
+        // INI_ap1_on/INI_ap2_on sind die AP1/AP2-LEDs (engaged),
+        // APPR/LOC analog zur A346-Semantik. HDG/ALT/NAV konservativ
+        // auf den Standard-SimVars; Standard gewinnt per ODER.
+        (
+            t.a350_ap1_on as i32 != 0
+                || t.a350_ap2_on as i32 != 0
+                || t.ap_master,
+            t.ap_heading,
+            t.ap_altitude,
+            t.ap_nav,
+            t.a350_appr_light as i32 != 0
+                || t.a350_loc_light as i32 != 0
                 || t.ap_approach,
         )
     } else {
@@ -1633,6 +1675,9 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     //   * Alle anderen (+ X-Plane): None → kein Log-Eintrag.
     let autothrottle_on = if is_a346 {
         Some(t.a346_athr_light as i32 != 0)
+    } else if is_a350 {
+        // iniBuilds A350: A/THR-LED (INI_ATHR_LIGHT, HubHop-Output-Preset).
+        Some(t.a350_athr_light as i32 != 0)
     } else if is_fenix {
         Some(t.fnx_fcu_athr as i32 != 0)
     } else {
@@ -2320,7 +2365,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(buf.len(), 1780, "total block size");
+        assert_eq!(buf.len(), 1820, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -2371,6 +2416,13 @@ mod tests {
         assert_eq!(t.a346_bat2_off_light, 1143.0); // idx 143
         assert_eq!(t.a346_autobrake_mode, 1144.0); // idx 144
         assert_eq!(t.a346_gear_lever, 1145.0); // idx 145
+
+        // ---- the 5 new A350 tail fields (idx 146..150, v0.16.8) ----
+        assert_eq!(t.a350_ap1_on, 1146.0); // idx 146
+        assert_eq!(t.a350_ap2_on, 1147.0); // idx 147
+        assert_eq!(t.a350_athr_light, 1148.0); // idx 148
+        assert_eq!(t.a350_appr_light, 1149.0); // idx 149
+        assert_eq!(t.a350_loc_light, 1150.0); // idx 150
     }
 
     /// Truncated block (e.g. all 12 new tail LVars rejected by an older
@@ -2386,7 +2438,14 @@ mod tests {
                 FieldKind::String256 => buf.extend_from_slice(&[0u8; 256]),
             }
         }
-        // v0.16.4: drop the 12 new A346 full-profile tail fields (12*8).
+        // v0.16.8: drop the 5 new A350 tail fields (5*8).
+        buf.truncate(buf.len() - 40);
+        let t = Telemetry::from_block(&buf);
+        assert_eq!(t.a346_gear_lever, 1145.0); // last v0.16.4 field intact
+        assert_eq!(t.a350_ap1_on, 0.0); // A350 tail = safe defaults
+        assert_eq!(t.a350_loc_light, 0.0);
+
+        // v0.16.4: drop the 12 A346 full-profile tail fields (12*8).
         buf.truncate(buf.len() - 96);
         let t = Telemetry::from_block(&buf);
         assert_eq!(t.fsr_phenom_eng2_knob, 1120.0); // pre-v0.16.3 field intact
@@ -2624,6 +2683,58 @@ mod tests {
         assert_eq!(snap.pitot_heat, Some(false)); // Standard SimVar
         assert_eq!(snap.battery_master, Some(true)); // Standard, NICHT invertiert
         assert_eq!(snap.autobrake, None);
+        assert_eq!(snap.autothrottle_on, None);
+    }
+
+    // ---- v0.16.8: iniBuilds A350 AP/A-THR (HubHop-LVars) ----
+
+    #[test]
+    fn a350_ap_master_from_fcu_leds() {
+        let mut t = Telemetry::default();
+        t.title = "iniBuilds A350-900".into();
+        t.atc_model = "A359".into();
+        t.a350_ap1_on = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(true));
+
+        let mut t = Telemetry::default();
+        t.title = "iniBuilds A350-900".into();
+        t.atc_model = "A359".into();
+        t.a350_ap2_on = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(true));
+
+        // beide LEDs aus + Standard tot → false (Status quo)
+        let mut t = Telemetry::default();
+        t.title = "iniBuilds A350-900".into();
+        t.atc_model = "A359".into();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(false));
+    }
+
+    #[test]
+    fn a350_athr_and_approach_from_leds() {
+        let mut t = Telemetry::default();
+        t.title = "iniBuilds A350-900".into();
+        t.atc_model = "A359".into();
+        t.a350_athr_light = 1.0;
+        t.a350_loc_light = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, Some(true));
+        assert_eq!(snap.autopilot_approach, Some(true));
+    }
+
+    #[test]
+    fn a350_lvars_do_not_affect_other_profiles() {
+        // Profil-Gate: ein Default-Aircraft mit (theoretisch) gesetzten
+        // A350-LVar-Slots bleibt auf dem Standard-Pfad.
+        let mut t = Telemetry::default();
+        t.title = "Asobo C172".into();
+        t.atc_model = "C172".into();
+        t.a350_ap1_on = 1.0;
+        t.a350_athr_light = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(false));
         assert_eq!(snap.autothrottle_on, None);
     }
 }
