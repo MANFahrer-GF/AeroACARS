@@ -745,6 +745,27 @@ pub struct Pmdg777XSnapshot {
     pub gpws_top_warn: bool,
     pub gpws_bottom_warn: bool,
 
+    // ---- v0.16.9 (#Premium): deep-data annunciators + fuel + minimums ----
+    /// MASTER CAUTION lit on either side (`WARN_annunMASTER_CAUTION[0|1]`).
+    pub master_caution: bool,
+    /// MASTER WARNING lit on either side (`WARN_annunMASTER_WARNING[0|1]`).
+    /// Unlike the 737, the 777 has a real red MASTER WARNING light.
+    pub master_warning: bool,
+    /// Per-tank fuel quantity in kg, order **[left, center, right, aux]**
+    /// (FUEL_QtyLeft / FUEL_QtyCenter / FUEL_QtyRight / FUEL_QtyAux —
+    /// the aux tank is 777-specific). Already unit-canonicalised via
+    /// the raw struct's `WeightInKg` flag — see
+    /// [`super::pmdg_fuel_qty_to_kg`].
+    pub fuel_per_tank_kg: [f64; 4],
+    /// Captain-side EFIS baro minimums (DA/MDA, ft):
+    /// `EFIS_BaroMinimums[0]`, gated on `EFIS_BaroMinimumsSet[0]` —
+    /// `None` until the pilot has dialed a baro minimums value. The
+    /// SDK note "check EFIS_MinsSelBARO to determine if the active
+    /// minimums is BARO or RADIO" is deliberately not applied: the
+    /// dialed DA stays the pilot's baro minimums even while the
+    /// selector shows RADIO.
+    pub minimums_baro_ft: Option<i32>,
+
     // ---- Extras for v0.2.2 wider integration ----
     /// Wheel chocks set at the gate. Pre-flight ground state.
     pub wheel_chocks_set: bool,
@@ -841,6 +862,26 @@ impl Pmdg777XSnapshot {
             xpdr_mode: raw.XPDR_ModeSel,
             gpws_top_warn: raw.GPWS_annunGND_PROX_top != 0,
             gpws_bottom_warn: raw.GPWS_annunGND_PROX_bottom != 0,
+
+            // ---- v0.16.9 (#Premium) deep-data fields ----
+            // Side-paired annunciators (Capt/FO): OR — "the light
+            // is on" is what the cockpit shows.
+            master_caution: raw.WARN_annunMASTER_CAUTION[0] != 0
+                || raw.WARN_annunMASTER_CAUTION[1] != 0,
+            master_warning: raw.WARN_annunMASTER_WARNING[0] != 0
+                || raw.WARN_annunMASTER_WARNING[1] != 0,
+            // Order: [left, center, right, aux]. SDK floats follow
+            // the pilot's weight-unit option (WeightInKg flag) —
+            // convert to canonical kg here.
+            fuel_per_tank_kg: [
+                super::pmdg_fuel_qty_to_kg(raw.FUEL_QtyLeft, raw.WeightInKg != 0),
+                super::pmdg_fuel_qty_to_kg(raw.FUEL_QtyCenter, raw.WeightInKg != 0),
+                super::pmdg_fuel_qty_to_kg(raw.FUEL_QtyRight, raw.WeightInKg != 0),
+                super::pmdg_fuel_qty_to_kg(raw.FUEL_QtyAux, raw.WeightInKg != 0),
+            ],
+            // Captain-side baro minimums, only when dialed/valid.
+            minimums_baro_ft: (raw.EFIS_BaroMinimumsSet[0] != 0)
+                .then_some(raw.EFIS_BaroMinimums[0]),
 
             wheel_chocks_set: raw.WheelChocksSet != 0,
             ecl_complete: [
@@ -996,5 +1037,86 @@ mod tests {
         assert!(!s.gear_lever_down); // 0 = UP
         // Autobrake: byte 0 = RTO (per SDK comment "0: RTO")
         assert_eq!(s.autobrake, Pmdg777XAutobrake::Rto);
+        // v0.16.9: zeroed raw → premium defaults
+        assert!(!s.master_caution);
+        assert!(!s.master_warning);
+        assert_eq!(s.minimums_baro_ft, None);
+        assert_eq!(s.fuel_per_tank_kg, [0.0; 4]);
+    }
+
+    // ---- v0.16.9 (#Premium) deep-data field decoding ----
+
+    fn zeroed_raw() -> Pmdg777XRawData {
+        unsafe { std::mem::zeroed() }
+    }
+
+    /// MASTER CAUTION / MASTER WARNING are Capt/FO-sided — OR.
+    #[test]
+    fn premium_caution_and_warning_or_both_sides() {
+        let mut raw = zeroed_raw();
+        raw.WARN_annunMASTER_CAUTION = [1, 0];
+        raw.WARN_annunMASTER_WARNING = [0, 1];
+        let s = Pmdg777XSnapshot::from_raw(&raw);
+        assert!(s.master_caution);
+        assert!(s.master_warning);
+    }
+
+    /// GND PROX: top OR bottom annunciator counts (already-parsed
+    /// fields, pinned here because the mapper now consumes them).
+    #[test]
+    fn premium_gnd_prox_top_or_bottom() {
+        let mut raw = zeroed_raw();
+        raw.GPWS_annunGND_PROX_top = 1;
+        let s = Pmdg777XSnapshot::from_raw(&raw);
+        assert!(s.gpws_top_warn && !s.gpws_bottom_warn);
+
+        let mut raw = zeroed_raw();
+        raw.GPWS_annunGND_PROX_bottom = 1;
+        let s = Pmdg777XSnapshot::from_raw(&raw);
+        assert!(!s.gpws_top_warn && s.gpws_bottom_warn);
+    }
+
+    /// Fuel: [left, center, right, aux] order + WeightInKg unit
+    /// handling both ways.
+    #[test]
+    fn premium_fuel_per_tank_kg_units_and_order() {
+        let mut raw = zeroed_raw();
+        raw.FUEL_QtyLeft = 1000.0;
+        raw.FUEL_QtyCenter = 2000.0;
+        raw.FUEL_QtyRight = 3000.0;
+        raw.FUEL_QtyAux = 500.0;
+
+        // Pounds mode (WeightInKg = 0).
+        raw.WeightInKg = 0;
+        let s = Pmdg777XSnapshot::from_raw(&raw);
+        assert!((s.fuel_per_tank_kg[0] - 453.59237).abs() < 1e-6);
+        assert!((s.fuel_per_tank_kg[1] - 907.18474).abs() < 1e-6);
+        assert!((s.fuel_per_tank_kg[2] - 1360.77711).abs() < 1e-6);
+        assert!((s.fuel_per_tank_kg[3] - 226.796185).abs() < 1e-6);
+
+        // Kg mode (WeightInKg = 1) — passthrough.
+        raw.WeightInKg = 1;
+        let s = Pmdg777XSnapshot::from_raw(&raw);
+        assert_eq!(s.fuel_per_tank_kg, [1000.0, 2000.0, 3000.0, 500.0]);
+    }
+
+    /// Baro minimums: value only valid when the captain-side
+    /// `EFIS_BaroMinimumsSet[0]` flag says it's been dialed.
+    #[test]
+    fn premium_baro_minimums_valid_and_invalid() {
+        let mut raw = zeroed_raw();
+        raw.EFIS_BaroMinimums = [740, 0];
+
+        // Not set → None even though a stale value is present.
+        raw.EFIS_BaroMinimumsSet = [0, 0];
+        assert_eq!(Pmdg777XSnapshot::from_raw(&raw).minimums_baro_ft, None);
+
+        // Set on the captain side → Some(value).
+        raw.EFIS_BaroMinimumsSet = [1, 0];
+        assert_eq!(Pmdg777XSnapshot::from_raw(&raw).minimums_baro_ft, Some(740));
+
+        // FO-side set alone does NOT count (captain-side gate).
+        raw.EFIS_BaroMinimumsSet = [0, 1];
+        assert_eq!(Pmdg777XSnapshot::from_raw(&raw).minimums_baro_ft, None);
     }
 }

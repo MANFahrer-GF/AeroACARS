@@ -702,6 +702,25 @@ pub struct Pmdg738Snapshot {
     // Comm + Misc
     pub xpdr_mode: u8,                  // 0=STBY 1=ALT_RPTG_OFF .. 4=TA/RA
 
+    // ---- v0.16.9 (#Premium): deep-data annunciators + fuel ----
+    /// Any engine's REVERSER annunciator lit (`ENG_annunREVERSER[0|1]`).
+    pub reverser_deployed: bool,
+    /// MASTER CAUTION lit on either side (`WARN_annunMASTER_CAUTION[0|1]`).
+    pub master_caution: bool,
+    /// FIRE WARN lit on either side (`WARN_annunFIRE_WARN[0|1]`). The
+    /// 737 NG has no "MASTER WARNING" light — the red master on the
+    /// glareshield IS the fire-warning light.
+    pub fire_warn: bool,
+    /// BELOW G/S annunciator lit on either side (`MAIN_annunBELOW_GS[0|1]`).
+    pub below_gs: bool,
+    /// CABIN ALTITUDE warning annunciator (`MAIN_annunCABIN_ALTITUDE`).
+    pub cabin_altitude_warning: bool,
+    /// Per-tank fuel quantity in kg, order **[left, center, right]**
+    /// (FUEL_QtyLeft / FUEL_QtyCenter / FUEL_QtyRight). Already unit-
+    /// canonicalised via the raw struct's `WeightInKg` flag — see
+    /// [`super::pmdg_fuel_qty_to_kg`].
+    pub fuel_per_tank_kg: [f64; 3],
+
     // ---- Cockpit lights + systems for Premium-First override ----
     /// Either landing-light switch ON. NG3 has separate Fixed +
     /// Retractable switches (left/right each); we OR them so the
@@ -885,6 +904,27 @@ impl Pmdg738Snapshot {
             battery_master: raw.ELEC_BatSelector != 0,
 
             xpdr_mode: raw.XPDR_ModeSel,
+
+            // ---- v0.16.9 (#Premium) deep-data fields ----
+            // Two-channel annunciators (Capt/FO or Eng1/Eng2): OR —
+            // "the light is on" is what the cockpit shows.
+            reverser_deployed: raw.ENG_annunREVERSER[0] != 0
+                || raw.ENG_annunREVERSER[1] != 0,
+            master_caution: raw.WARN_annunMASTER_CAUTION[0] != 0
+                || raw.WARN_annunMASTER_CAUTION[1] != 0,
+            fire_warn: raw.WARN_annunFIRE_WARN[0] != 0
+                || raw.WARN_annunFIRE_WARN[1] != 0,
+            below_gs: raw.MAIN_annunBELOW_GS[0] != 0
+                || raw.MAIN_annunBELOW_GS[1] != 0,
+            cabin_altitude_warning: raw.MAIN_annunCABIN_ALTITUDE != 0,
+            // Order: [left, center, right]. SDK floats follow the
+            // pilot's weight-unit option (WeightInKg flag) — convert
+            // to canonical kg here so no consumer re-checks the flag.
+            fuel_per_tank_kg: [
+                super::pmdg_fuel_qty_to_kg(raw.FUEL_QtyLeft, raw.WeightInKg != 0),
+                super::pmdg_fuel_qty_to_kg(raw.FUEL_QtyCenter, raw.WeightInKg != 0),
+                super::pmdg_fuel_qty_to_kg(raw.FUEL_QtyRight, raw.WeightInKg != 0),
+            ],
         }
     }
 
@@ -990,5 +1030,81 @@ mod tests {
         assert_eq!(s.mcp_heading_deg, 0);
         assert!(!s.fma.vnav);
         assert!(!s.looks_alive()); // MCP not powered, APU not running
+    }
+
+    // ---- v0.16.9 (#Premium) deep-data field decoding ----
+
+    fn zeroed_raw() -> Pmdg738RawData {
+        unsafe { std::mem::zeroed() }
+    }
+
+    /// Two-channel annunciators must OR: either engine's REVERSER
+    /// light counts as "reverser deployed".
+    #[test]
+    fn premium_reverser_ors_both_engines() {
+        let mut raw = zeroed_raw();
+        assert!(!Pmdg738Snapshot::from_raw(&raw).reverser_deployed);
+        raw.ENG_annunREVERSER = [1, 0];
+        assert!(Pmdg738Snapshot::from_raw(&raw).reverser_deployed);
+        raw.ENG_annunREVERSER = [0, 1];
+        assert!(Pmdg738Snapshot::from_raw(&raw).reverser_deployed);
+    }
+
+    /// MASTER CAUTION + FIRE WARN are Capt/FO-sided lights — OR.
+    #[test]
+    fn premium_caution_and_fire_warn_or_both_sides() {
+        let mut raw = zeroed_raw();
+        let s = Pmdg738Snapshot::from_raw(&raw);
+        assert!(!s.master_caution);
+        assert!(!s.fire_warn);
+
+        raw.WARN_annunMASTER_CAUTION = [0, 1];
+        raw.WARN_annunFIRE_WARN = [1, 0];
+        let s = Pmdg738Snapshot::from_raw(&raw);
+        assert!(s.master_caution);
+        assert!(s.fire_warn);
+    }
+
+    #[test]
+    fn premium_below_gs_and_cabin_altitude() {
+        let mut raw = zeroed_raw();
+        raw.MAIN_annunBELOW_GS = [0, 1]; // FO side only still counts
+        raw.MAIN_annunCABIN_ALTITUDE = 1;
+        let s = Pmdg738Snapshot::from_raw(&raw);
+        assert!(s.below_gs);
+        assert!(s.cabin_altitude_warning);
+    }
+
+    /// STAB OUT OF TRIM was parsed since Phase 5 but dropped by the
+    /// mapper — pin the from_raw passthrough here.
+    #[test]
+    fn premium_stab_out_of_trim_passthrough() {
+        let mut raw = zeroed_raw();
+        assert!(!Pmdg738Snapshot::from_raw(&raw).stab_out_of_trim);
+        raw.MAIN_annunSTAB_OUT_OF_TRIM = 1;
+        assert!(Pmdg738Snapshot::from_raw(&raw).stab_out_of_trim);
+    }
+
+    /// Fuel: [left, center, right] order + WeightInKg unit handling
+    /// in both directions (false = LBS → ×0.45359237, true = kg
+    /// passthrough).
+    #[test]
+    fn premium_fuel_per_tank_kg_units_and_order() {
+        let mut raw = zeroed_raw();
+        raw.FUEL_QtyLeft = 1000.0;
+        raw.FUEL_QtyCenter = 2000.0;
+        raw.FUEL_QtyRight = 3000.0;
+
+        // Pounds mode (WeightInKg = 0).
+        raw.WeightInKg = 0;
+        let s = Pmdg738Snapshot::from_raw(&raw);
+        assert!((s.fuel_per_tank_kg[0] - 453.59237).abs() < 1e-6);
+        assert!((s.fuel_per_tank_kg[1] - 907.18474).abs() < 1e-6);
+        assert!((s.fuel_per_tank_kg[2] - 1360.77711).abs() < 1e-6);
+
+        // Kg mode (WeightInKg = 1) — passthrough.
+        raw.WeightInKg = 1;
+        let s = Pmdg738Snapshot::from_raw(&raw);
+        assert_eq!(s.fuel_per_tank_kg, [1000.0, 2000.0, 3000.0]);
     }
 }

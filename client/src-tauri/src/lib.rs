@@ -1613,6 +1613,12 @@ struct PersistedFlightStats {
     block_fuel_kg: Option<f32>,
     #[serde(default)]
     last_fuel_kg: Option<f32>,
+    /// v0.16.9: FOB-Baseline für den Fuel-Used-Fallback (PMDG liefert
+    /// FUEL TOTAL QUANTITY USED nicht — Live-Befund GLO4587). Persistiert
+    /// damit Resume die Baseline behält; `#[serde(default)]` hält alte
+    /// Resume-Files ladbar (None → Re-Latch beim ersten Tick).
+    #[serde(default)]
+    initial_fob_kg: Option<f32>,
     #[serde(default)]
     last_lat: Option<f64>,
     #[serde(default)]
@@ -1808,6 +1814,7 @@ impl PersistedFlightStats {
             landing_fuel_kg: stats.landing_fuel_kg,
             block_fuel_kg: stats.block_fuel_kg,
             last_fuel_kg: stats.last_fuel_kg,
+            initial_fob_kg: stats.initial_fob_kg,
             last_lat: stats.last_lat,
             last_lon: stats.last_lon,
             landing_peak_vs_fpm: stats.landing_peak_vs_fpm,
@@ -1904,6 +1911,7 @@ impl PersistedFlightStats {
         stats.landing_fuel_kg = self.landing_fuel_kg;
         stats.block_fuel_kg = self.block_fuel_kg;
         stats.last_fuel_kg = self.last_fuel_kg;
+        stats.initial_fob_kg = self.initial_fob_kg;
         stats.last_lat = self.last_lat;
         stats.last_lon = self.last_lon;
         stats.landing_peak_vs_fpm = self.landing_peak_vs_fpm;
@@ -3120,6 +3128,70 @@ struct FlightStats {
     /// Captured continuously — final value is the union of all
     /// phases that were ever ticked (NG3 stays None).
     pmdg_ecl_phases_complete: Option<[bool; 10]>,
+
+    // ---- v0.16.9 Premium-Cockpit-Daten — Activity-Log-Tracking ----
+    // Quellen: die profile-gated LVar-Mapper (Fenix/FBW/INI-A350/INI-
+    // A340/Aerosoft-A346/MD-11) + die PMDG-Premium-Override-Mapper.
+    // Alle Tracker folgen dem bestehenden Idiom: erster Wert latcht
+    // STUMM (kein Eintrag beim Sim-Connect), danach nur Transitionen —
+    // debounced wo Flacker-Gefahr besteht (Annunciator-Tests, LVar-
+    // Pulse). Nicht persistiert — Change-Detection-State baut sich nach
+    // Resume aus dem ersten Tick neu auf (wie last_logged_* oben).
+    /// Generic-FMA-Zeile (lateral | vertical | thrust) — NUR wenn
+    /// `snap.pmdg` None ist; PMDG hat seinen eigenen FMA-Logger.
+    premium_fma: DebouncedLogState<String>,
+    /// Takeoff-V-Speeds (V1/VR/V2 gerundet + FLEX gerundet). Erste
+    /// Komplett-Belegung loggt (= FMS-Perf-Init-Zeitstempel), danach
+    /// re-log nur bei Wertänderung. Das "· TOGA"-Suffix ist bewusst
+    /// NICHT Teil des Latch-Keys — eine Lever-Bewegung nach TOGA soll
+    /// die V-Speeds-Zeile nicht erneut loggen.
+    last_logged_vspeeds: Option<(i64, i64, i64, Option<i64>)>,
+    /// Approach-Speeds (VAPP/VLS/VREF gerundet) — nur in
+    /// Descent/Approach/Final geloggt.
+    last_logged_approach_speeds: Option<(Option<i64>, Option<i64>, Option<i64>)>,
+    /// MASTER CAUTION — Debounce 2 s (Annunciator-Flackern bei
+    /// Cockpit-Tests am Boden), erster Wert stumm, nur Transitionen.
+    premium_master_caution: DebouncedLogState<bool>,
+    /// MASTER WARNING — gleiche Behandlung wie MASTER CAUTION.
+    premium_master_warning: DebouncedLogState<bool>,
+    /// Umkehrschub — einmal pro Landung; re-arm sobald airborne
+    /// (Touch-and-Go bekommt so einen eigenen Eintrag).
+    last_seen_reverser: Option<bool>,
+    reverser_logged_this_landing: bool,
+    /// Ground-Spoiler — einmal pro Landung, re-arm airborne.
+    last_seen_ground_spoilers: Option<bool>,
+    ground_spoilers_logged_this_landing: bool,
+    /// Baro STD/QNH — erster Wert latcht stumm, danach Transitionen.
+    last_logged_baro_std: Option<bool>,
+    /// Flugzeug-eigene FMGC/FWC-Phase — Debounce 5 s, erster Wert
+    /// stumm. Rohe "#n"-Werte werden bewusst mitgeloggt (die Daten
+    /// sind der Punkt).
+    premium_aircraft_phase: DebouncedLogState<String>,
+    /// Below-G/S-Alert — einmal pro Approach; re-arm wenn der Alert
+    /// > BELOW_GS_REARM_SECS geklärt ist oder die FlightPhase wechselt.
+    last_seen_below_gs: Option<bool>,
+    below_gs_logged_this_approach: bool,
+    below_gs_clear_since: Option<DateTime<Utc>>,
+    below_gs_armed_phase: Option<FlightPhase>,
+    /// Kabinenhöhen-Warnung — nur Rising-Edge, erster Wert stumm.
+    last_logged_cabin_alt_warning: Option<bool>,
+    /// Stab-out-of-trim — Debounce 5 s, nur Rising-Edge geloggt.
+    premium_stab_out_of_trim: DebouncedLogState<bool>,
+    /// Schubhebel-Detent (INI: TOGA/FLX-MCT/CL) — Debounce 3 s,
+    /// erster Wert latcht stumm. Profile ohne Gate-LVar liefern None
+    /// und loggen nie.
+    premium_thrust_gate: DebouncedLogState<String>,
+
+    // ---- v0.16.9 Fuel-Used-Fallback (FOB-Delta) ----
+    /// FOB-Baseline beim Flugstart (erster Tick mit Fuel an Bord).
+    /// PMDG liefert FUEL TOTAL QUANTITY USED nicht (Live-Befund
+    /// GLO4587 2026-06-11) — `snap.fuel_used_kg` wird im Streamer aus
+    /// `initial_fob_kg − fuel_total_kg` abgeleitet wenn die SimVar tot
+    /// ist. PERSISTIERT (PersistedFlightStats), damit ein App-Restart
+    /// mid-flight die Baseline nicht verliert. Re-latcht auf den neuen
+    /// Maximalwert wenn FOB > 50 kg über die Baseline steigt
+    /// (Mid-Flight-Refuel → keine negativen Deltas).
+    initial_fob_kg: Option<f32>,
     // v0.7.13: FCU-Debounce-Felder entfernt — der geplante Switch auf
     // `AUTOPILOT * VAR` SimVars wurde verworfen, der Fenix-LVar-Variant
     // ist als Encoder-Click-Counter unzuverlaessig. Falls FCU-Logging
@@ -4921,6 +4993,79 @@ const TOUCHDOWN_G_SMOOTH: f32 = 1.20;
 /// `S_FCU_AP*` was the original culprit) from spamming the log with
 /// alternating ENGAGED / OFF lines.
 const AP_DEBOUNCE_SECS: i64 = 2;
+
+// ---- v0.16.9 Premium-Cockpit-Daten — Debounce-Fenster ----
+/// Generic-FMA-Zeile (Fenix/FBW/INI/…): 3 s wie beim PMDG-Pendant —
+/// FMA-Sub-Modes wechseln bei Mode-Reversions gern mehrfach pro Sekunde.
+const PREMIUM_FMA_DEBOUNCE_SECS: i64 = 3;
+/// MASTER CAUTION / MASTER WARNING: Annunciator-Lampen flackern bei
+/// Cockpit-Tests am Boden — 2 s Stabilität bevor eine Transition loggt.
+const MASTER_ANNUNCIATOR_DEBOUNCE_SECS: i64 = 2;
+/// Flugzeug-eigene FMGC/FWC-Phase: rein informativ, 5 s reichen.
+const AIRCRAFT_PHASE_DEBOUNCE_SECS: i64 = 5;
+/// Stab-out-of-trim-Annunciator: pulst während Trim-Läufen.
+const STAB_TRIM_DEBOUNCE_SECS: i64 = 5;
+/// Schubhebel-Detent (TOGA/FLX-MCT/CL): der Hebel wandert beim Setzen
+/// durch Zwischen-Detents — 3 s Stabilität pro Gate.
+const THRUST_GATE_DEBOUNCE_SECS: i64 = 3;
+/// Below-G/S-Alert: re-arm sobald der Alert so lange geklärt ist
+/// (einmal-pro-Approach-Latch, ein neuer Sinkflug unter den G/S soll
+/// wieder loggen dürfen).
+const BELOW_GS_REARM_SECS: i64 = 30;
+
+/// v0.16.9: Generischer Latch+Debounce-Tracker für Premium-Activity-
+/// Log-Zeilen. Gleiches Idiom wie der AP-Master-Debounce
+/// (`AP_DEBOUNCE_SECS`-Block in `detect_telemetry_changes`), nur
+/// wiederverwendbar statt drei Felder pro Logger:
+///   * der ERSTE beobachtete Wert latcht IMMER stumm (kein Eintrag
+///     beim Sim-Connect / App-Resume),
+///   * eine Änderung wird erst publiziert wenn der neue Wert
+///     `debounce_secs` stabil gehalten wurde — ein LVar-Puls kürzer
+///     als das Fenster produziert GAR KEINEN Eintrag,
+///   * Rückkehr zum gelatchten Wert räumt den Pending-State ab.
+#[derive(Debug, Clone, Default)]
+struct DebouncedLogState<T: PartialEq + Clone> {
+    last_logged: Option<T>,
+    pending: Option<T>,
+    pending_since: Option<DateTime<Utc>>,
+}
+
+impl<T: PartialEq + Clone> DebouncedLogState<T> {
+    /// Feed den aktuell beobachteten Wert; `true` ⇒ Transition ist
+    /// debounced-stabil und soll JETZT geloggt werden (der Wert ist
+    /// dann bereits als `last_logged` committed).
+    fn update(&mut self, value: T, now: DateTime<Utc>, debounce_secs: i64) -> bool {
+        if self.last_logged.as_ref() == Some(&value) {
+            // Wert stimmt wieder mit dem gelatchten überein → Pending-
+            // Änderung (falls vorhanden) war ein Puls, verwerfen.
+            self.pending = None;
+            self.pending_since = None;
+            return false;
+        }
+        if self.last_logged.is_none() {
+            // Erster Wert überhaupt — stumm latchen.
+            self.last_logged = Some(value);
+            self.pending = None;
+            self.pending_since = None;
+            return false;
+        }
+        if self.pending.as_ref() != Some(&value) {
+            // Neue (oder andere) Änderung — Debounce-Timer starten.
+            self.pending = Some(value);
+            self.pending_since = Some(now);
+            return false;
+        }
+        match self.pending_since {
+            Some(since) if (now - since).num_seconds() >= debounce_secs => {
+                self.last_logged = Some(value);
+                self.pending = None;
+                self.pending_since = None;
+                true
+            }
+            _ => false,
+        }
+    }
+}
 
 /// Suppress repeated "same" activity entries fired within this window.
 /// React StrictMode in dev double-mounts effects, so the login + session-
@@ -15876,6 +16021,64 @@ fn derive_fuel_flow_kg_per_h(prev_fob_kg: f32, cur_fob_kg: f32, dt_secs: f32) ->
     })
 }
 
+// ---- v0.16.9 Fuel-Used-Fallback (Task B) ----
+/// SimVar gilt als "lebendig" sobald sie mehr als diesen Wert meldet —
+/// dann hat sie Vorrang vor dem FOB-Delta.
+const FUEL_USED_SIMVAR_ALIVE_KG: f32 = 0.5;
+/// FOB-Delta muss mindestens so groß sein bevor der Fallback greift
+/// (filtert FOB-Mess-Rauschen am Gate raus).
+const FUEL_USED_MIN_DELTA_KG: f32 = 5.0;
+/// Steigt der FOB mehr als so viel ÜBER die Baseline, war das ein
+/// Mid-Flight-/Gate-Refuel → Baseline auf den neuen Maximalwert
+/// re-latchen statt negative Deltas zu produzieren.
+const FUEL_USED_REFUEL_RELATCH_KG: f32 = 50.0;
+
+/// PMDG liefert FUEL TOTAL QUANTITY USED nicht (Live-Befund GLO4587
+/// 2026-06-11) — Fallback aus FOB-Delta.
+///
+/// Latcht beim ersten Tick mit Fuel an Bord die FOB-Baseline
+/// (`initial_fob_kg`, persistiert via PersistedFlightStats) und leitet
+/// `fuel_used_kg` als `baseline − FOB` ab, solange die SimVar-Quelle
+/// tot ist (< FUEL_USED_SIMVAR_ALIVE_KG — beide Adapter stempeln das
+/// Feld aktuell hart auf 0.0). Kommt die SimVar je zum Leben, gewinnt
+/// sie. Refuel-Schutz: FOB > Baseline + 50 kg → Baseline re-latchen
+/// (Delta startet danach wieder bei ~0, nie negativ — geclampt).
+fn fuel_used_effective_kg(
+    initial_fob_kg: &mut Option<f32>,
+    simvar_used_kg: f32,
+    fob_kg: f32,
+) -> f32 {
+    if fob_kg > 0.0 {
+        match *initial_fob_kg {
+            // Flugstart (bzw. erster Tick mit Fuel) → Baseline latchen.
+            None => *initial_fob_kg = Some(fob_kg),
+            // Refuel: FOB deutlich über Baseline → auf neues Max re-latchen.
+            Some(initial) if fob_kg > initial + FUEL_USED_REFUEL_RELATCH_KG => {
+                *initial_fob_kg = Some(fob_kg);
+            }
+            Some(_) => {}
+        }
+    }
+    // SimVar lebt → sie ist authoritativ (kennt z.B. APU-Burn exakt).
+    if simvar_used_kg >= FUEL_USED_SIMVAR_ALIVE_KG {
+        return simvar_used_kg;
+    }
+    match *initial_fob_kg {
+        Some(initial) => {
+            let delta = initial - fob_kg;
+            if delta > FUEL_USED_MIN_DELTA_KG {
+                // Clamp ist Belt-and-Braces — delta > 5 impliziert > 0.
+                delta.max(0.0)
+            } else {
+                // Kleines/negatives Delta (Gate, frisches Refuel) →
+                // SimVar-Wert (≈ 0) unverändert durchreichen.
+                simvar_used_kg
+            }
+        }
+        None => simvar_used_kg,
+    }
+}
+
 fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Client) {
     if flight
         .streamer_spawned
@@ -16371,6 +16574,27 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 ff_last_fob_kg = Some(snap.fuel_total_kg);
                 ff_last_fob_at = Some(std::time::Instant::now());
                 ff_derived_kg_per_h = None;
+            }
+
+            // v0.16.9: Fuel-Used-Fallback aus dem FOB-Delta. PMDG liefert
+            // FUEL TOTAL QUANTITY USED nicht (Live-Befund GLO4587
+            // 2026-06-11: Cruise zeigte fuel_used_kg = 0.0 während der FOB
+            // korrekt runterlief) — tatsächlich stempeln BEIDE Adapter das
+            // Snapshot-Feld hart auf 0.0. Gleiche Stelle wie der Fuel-Flow-
+            // Fallback oben, damit ALLE nachgelagerten Verbraucher (JSONL-
+            // Flight-Log Position-Events, Forensik-Analysen) den
+            // abgeleiteten Wert sehen. Die FOB-Baseline lebt PERSISTIERT in
+            // den FlightStats (Resume-sicher — Fuel-Used zählt fürs PIREP-
+            // Umfeld). Der PIREP-`fuel_used`-Payload selbst rechnet
+            // unabhängig davon weiter block_fuel_kg − last_fuel_kg (Peak-
+            // FOB-Delta, war nie von der toten SimVar abhängig).
+            {
+                let mut stats = flight.stats.lock().expect("flight stats");
+                snap.fuel_used_kg = fuel_used_effective_kg(
+                    &mut stats.initial_fob_kg,
+                    snap.fuel_used_kg,
+                    snap.fuel_total_kg,
+                );
             }
 
             // Snapshot the current phase BEFORE stepping so we can pass
@@ -22574,6 +22798,258 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             stats.last_logged_pmdg_to_warning = Some(to_warn);
         }
     }
+
+    // ---- v0.16.9 Premium-Cockpit-Daten (FMA, V-Speeds, Warnings, …) ----
+    // Quellen: profile-gated LVar-Mapper (Fenix/FBW/INI-A350/INI-A340/
+    // Aerosoft-A346/MD-11) + PMDG-Premium-Override. Felder sind None wenn
+    // die Quelle sie nicht liefert — None loggt NIE. Latch-/Debounce-
+    // Regeln pro Zeile: siehe Feld-Doku auf FlightStats.
+    let now = Utc::now();
+
+    // (1) Generic-FMA-Zeile — NUR ohne PMDG: das PMDG-FMA-Logging oben
+    // ist für PMDG authoritativ, doppelt loggen wäre Spam. Erster Wert
+    // latcht stumm (wie beim PMDG-Logger), Änderungen debounced 3 s.
+    if snap.pmdg.is_none() {
+        if let Some(line) = fmt_fma_line(
+            snap.fma_lateral_mode.as_deref(),
+            snap.fma_vertical_mode.as_deref(),
+            snap.fma_thrust_mode.as_deref(),
+        ) {
+            if stats
+                .premium_fma
+                .update(line.clone(), now, PREMIUM_FMA_DEBOUNCE_SECS)
+            {
+                log_activity_handle(app, ActivityLevel::Info, format!("FMA: {line}"), None);
+            }
+        }
+    }
+
+    // (2) Takeoff-V-Speeds — loggt sobald V1+VR+V2 komplett sind
+    // (= FMS-Perf-Init fertig, der erste Treffer ist der informative)
+    // und bei jeder späteren Änderung. FLEX gehört zum Latch-Key
+    // (Perf-Daten-Änderung), das "· TOGA"-Suffix nicht (Lever-Bewegung).
+    if let (Some(v1), Some(vr), Some(v2)) = (snap.v1_kt, snap.vr_kt, snap.v2_kt) {
+        let key = (
+            v1.round() as i64,
+            vr.round() as i64,
+            v2.round() as i64,
+            snap.flex_temp_c.map(|t| t.round() as i64),
+        );
+        if stats.last_logged_vspeeds != Some(key) {
+            stats.last_logged_vspeeds = Some(key);
+            log_activity_handle(
+                app,
+                ActivityLevel::Info,
+                fmt_vspeeds_line(v1, vr, v2, snap.flex_temp_c, snap.thrust_gate.as_deref()),
+                None,
+            );
+        }
+    }
+
+    // (3) Approach-Speeds — nur in Descent/Approach/Final (vorher sind
+    // VAPP/VLS oft noch Climb-Artefakte bzw. nicht final berechnet).
+    // Erster Some-Wert loggt, danach re-log bei Änderung.
+    if matches!(
+        stats.phase,
+        FlightPhase::Descent | FlightPhase::Approach | FlightPhase::Final
+    ) {
+        if let Some(line) = fmt_approach_speeds_line(snap.vapp_kt, snap.vls_kt, snap.vref_kt) {
+            let key = (
+                snap.vapp_kt.map(|v| v.round() as i64),
+                snap.vls_kt.map(|v| v.round() as i64),
+                snap.vref_kt.map(|v| v.round() as i64),
+            );
+            if stats.last_logged_approach_speeds != Some(key) {
+                stats.last_logged_approach_speeds = Some(key);
+                log_activity_handle(app, ActivityLevel::Info, line, None);
+            }
+        }
+    }
+
+    // (4) MASTER CAUTION / MASTER WARNING — Transitionen, debounced 2 s
+    // (Annunciator-Tests am Boden flackern), erster Wert latcht stumm.
+    if let Some(mc) = snap.master_caution {
+        if stats
+            .premium_master_caution
+            .update(mc, now, MASTER_ANNUNCIATOR_DEBOUNCE_SECS)
+        {
+            if mc {
+                log_activity_handle(app, ActivityLevel::Warn, "⚠ MASTER CAUTION".to_string(), None);
+            } else {
+                log_activity_handle(app, ActivityLevel::Info, "MASTER CAUTION aus".to_string(), None);
+            }
+        }
+    }
+    if let Some(mw) = snap.master_warning {
+        if stats
+            .premium_master_warning
+            .update(mw, now, MASTER_ANNUNCIATOR_DEBOUNCE_SECS)
+        {
+            if mw {
+                log_activity_handle(app, ActivityLevel::Error, "🔴 MASTER WARNING".to_string(), None);
+            } else {
+                log_activity_handle(app, ActivityLevel::Info, "MASTER WARNING aus".to_string(), None);
+            }
+        }
+    }
+
+    // (5)+(6) Umkehrschub + Ground-Spoiler — je einmal pro Landung
+    // (Rising-Edge am Boden), re-arm sobald airborne: ein Touch-and-Go
+    // bekommt so für die nächste Landung wieder eigene Einträge.
+    // Borrow-Split: stats ist ein MutexGuard, Feld-Borrows splitten
+    // nicht durch den Deref — also die Felder einzeln rausziehen.
+    {
+        let FlightStats {
+            last_seen_reverser,
+            reverser_logged_this_landing,
+            last_seen_ground_spoilers,
+            ground_spoilers_logged_this_landing,
+            ..
+        } = &mut *stats;
+        if once_per_landing_rising_edge(
+            snap.reverser_deployed,
+            snap.on_ground,
+            last_seen_reverser,
+            reverser_logged_this_landing,
+        ) {
+            log_activity_handle(
+                app,
+                ActivityLevel::Info,
+                "Umkehrschub aktiviert".to_string(),
+                None,
+            );
+        }
+        if once_per_landing_rising_edge(
+            snap.ground_spoilers_active,
+            snap.on_ground,
+            last_seen_ground_spoilers,
+            ground_spoilers_logged_this_landing,
+        ) {
+            log_activity_handle(
+                app,
+                ActivityLevel::Info,
+                "Ground Spoiler ausgefahren".to_string(),
+                None,
+            );
+        }
+    }
+
+    // (7) Baro STD/QNH — erster Wert latcht stumm (beim Connect steht
+    // der Baro halt irgendwie), danach loggt jede Transition.
+    if let Some(std_set) = snap.baro_std {
+        if stats.last_logged_baro_std != Some(std_set) {
+            if stats.last_logged_baro_std.is_some() {
+                log_activity_handle(
+                    app,
+                    ActivityLevel::Info,
+                    if std_set {
+                        "Baro: STD gesetzt"
+                    } else {
+                        "Baro: QNH gesetzt"
+                    }
+                    .to_string(),
+                    None,
+                );
+            }
+            stats.last_logged_baro_std = Some(std_set);
+        }
+    }
+
+    // (8) Flugzeug-eigene FMGC/FWC-Phase — rein informativ, erster Wert
+    // stumm, 5 s Debounce. Rohe "#n"-Labels werden bewusst mitgeloggt.
+    if let Some(phase_label) = snap.flight_phase_aircraft.as_ref() {
+        if stats.premium_aircraft_phase.update(
+            phase_label.clone(),
+            now,
+            AIRCRAFT_PHASE_DEBOUNCE_SECS,
+        ) {
+            log_activity_handle(
+                app,
+                ActivityLevel::Info,
+                format!("Flugzeug meldet Phase: {phase_label}"),
+                None,
+            );
+        }
+    }
+
+    // (9) Below-G/S-Alert — einmal pro Approach; re-arm wenn der Alert
+    // > BELOW_GS_REARM_SECS geklärt ist oder die FlightPhase wechselt
+    // (Go-Around → neuer Approach darf wieder loggen). Erster Wert
+    // latcht stumm — ein beim Connect bereits aktiver Alert zählt als
+    // "schon geloggt".
+    if stats.below_gs_armed_phase != Some(stats.phase) {
+        stats.below_gs_armed_phase = Some(stats.phase);
+        stats.below_gs_logged_this_approach = false;
+    }
+    if let Some(below) = snap.below_gs_alert {
+        // Borrow-Split: Felder einzeln rausziehen damit der Helper
+        // drei &mut auf disjunkte stats-Felder bekommt.
+        let FlightStats {
+            last_seen_below_gs,
+            below_gs_logged_this_approach,
+            below_gs_clear_since,
+            ..
+        } = &mut *stats;
+        if below_gs_should_log(
+            below,
+            now,
+            last_seen_below_gs,
+            below_gs_logged_this_approach,
+            below_gs_clear_since,
+        ) {
+            log_activity_handle(
+                app,
+                ActivityLevel::Warn,
+                "⚠ Below Glideslope".to_string(),
+                None,
+            );
+        }
+    }
+
+    // (10) Kabinenhöhen-Warnung — selten + ernst, nur Rising-Edge,
+    // erster Wert latcht stumm.
+    if let Some(cab) = snap.cabin_altitude_warning {
+        if stats.last_logged_cabin_alt_warning != Some(cab) {
+            if stats.last_logged_cabin_alt_warning.is_some() && cab {
+                log_activity_handle(
+                    app,
+                    ActivityLevel::Error,
+                    "🔴 Kabinenhöhe-Warnung".to_string(),
+                    None,
+                );
+            }
+            stats.last_logged_cabin_alt_warning = Some(cab);
+        }
+    }
+
+    // (11) Stab-out-of-trim — debounced 5 s (Annunciator pulst während
+    // Trim-Läufen), nur die Rising-Edge loggt.
+    if let Some(oot) = snap.stab_out_of_trim {
+        if stats
+            .premium_stab_out_of_trim
+            .update(oot, now, STAB_TRIM_DEBOUNCE_SECS)
+            && oot
+        {
+            log_activity_handle(
+                app,
+                ActivityLevel::Warn,
+                "⚠ Stabilizer out of trim".to_string(),
+                None,
+            );
+        }
+    }
+
+    // (12) Schubhebel-Detent — nur INI-Profile liefern das Gate-Label;
+    // generisches None loggt nie. Erster Wert latcht stumm (der Hebel
+    // steht beim Connect irgendwo), Wechsel debounced 3 s.
+    if let Some(gate) = snap.thrust_gate.as_ref() {
+        if stats
+            .premium_thrust_gate
+            .update(gate.clone(), now, THRUST_GATE_DEBOUNCE_SECS)
+        {
+            log_activity_handle(app, ActivityLevel::Info, format!("Schubhebel: {gate}"), None);
+        }
+    }
 }
 
 /// Combine FMA sub-modes into a single human-readable string.
@@ -22590,6 +23066,146 @@ fn format_fma(speed: &str, pitch: &str, roll: &str) -> String {
     } else {
         parts.join(" / ")
     }
+}
+
+/// v0.16.9: Generic-FMA-Zeile aus den drei normalisierten Sub-Modes
+/// (lateral | vertical | thrust). None-/Leer-Teile werden weggelassen
+/// ("NAV | SPEED" wenn vertical fehlt); alles None ⇒ None — der
+/// Aufrufer loggt dann gar nicht (anders als das PMDG-`format_fma`,
+/// das "—" liefert, weil dort ein leeres FMA selbst informativ ist).
+fn fmt_fma_line(
+    lateral: Option<&str>,
+    vertical: Option<&str>,
+    thrust: Option<&str>,
+) -> Option<String> {
+    let parts: Vec<&str> = [lateral, vertical, thrust]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" | "))
+    }
+}
+
+/// v0.16.9: Takeoff-V-Speeds-Zeile. FLEX-Suffix wenn eine Assumed-Temp
+/// gesetzt ist, sonst "· TOGA" wenn der Schubhebel GERADE im
+/// TOGA-Detent steht (nur INI-Profile liefern das Gate).
+fn fmt_vspeeds_line(
+    v1: f64,
+    vr: f64,
+    v2: f64,
+    flex_temp_c: Option<f64>,
+    thrust_gate: Option<&str>,
+) -> String {
+    let mut line = format!("V-Speeds: V1 {v1:.0} · VR {vr:.0} · V2 {v2:.0}");
+    if let Some(flex) = flex_temp_c {
+        line.push_str(&format!(" · FLEX {flex:.0}°C"));
+    } else if thrust_gate == Some("TOGA") {
+        line.push_str(" · TOGA");
+    }
+    line
+}
+
+/// v0.16.9: Approach-Speeds-Zeile (VAPP Airbus / VLS Airbus / VREF
+/// Boeing) — None-Teile weggelassen, alles None ⇒ None (kein Log).
+fn fmt_approach_speeds_line(
+    vapp: Option<f64>,
+    vls: Option<f64>,
+    vref: Option<f64>,
+) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(v) = vapp {
+        parts.push(format!("VAPP {v:.0}"));
+    }
+    if let Some(v) = vls {
+        parts.push(format!("VLS {v:.0}"));
+    }
+    if let Some(v) = vref {
+        parts.push(format!("VREF {v:.0}"));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(format!("Approach-Speeds: {}", parts.join(" · ")))
+    }
+}
+
+/// v0.16.9: Einmal-pro-Landung-Rising-Edge-Detektor (Umkehrschub,
+/// Ground-Spoiler). `true` ⇒ jetzt loggen. Regeln:
+///   * loggt nur eine false→true-Transition WÄHREND on_ground,
+///   * erster beobachteter Wert latcht stumm (Resume mitten im
+///     Rollout produziert keinen nachträglichen Eintrag),
+///   * einmal pro Landung — re-arm sobald airborne (Touch-and-Go
+///     bekommt für die nächste Landung einen frischen Eintrag).
+fn once_per_landing_rising_edge(
+    value: Option<bool>,
+    on_ground: bool,
+    last_seen: &mut Option<bool>,
+    logged_this_landing: &mut bool,
+) -> bool {
+    if !on_ground {
+        *logged_this_landing = false;
+    }
+    let Some(v) = value else { return false };
+    let rising = *last_seen == Some(false) && v;
+    *last_seen = Some(v);
+    if rising && on_ground && !*logged_this_landing {
+        *logged_this_landing = true;
+        true
+    } else {
+        false
+    }
+}
+
+/// v0.16.9: Below-G/S-Alert-Latch. `true` ⇒ "⚠ Below Glideslope"
+/// jetzt loggen. Regeln:
+///   * nur die false→true-Transition loggt,
+///   * erster beobachteter Wert latcht stumm — ein beim Connect
+///     bereits aktiver Alert zählt als "schon geloggt",
+///   * einmal pro Approach — re-arm erst wenn der Alert
+///     `BELOW_GS_REARM_SECS` am Stück geklärt war (der Phase-Wechsel-
+///     Re-Arm sitzt im Aufrufer, der die FlightPhase kennt).
+fn below_gs_should_log(
+    below: bool,
+    now: DateTime<Utc>,
+    last_seen: &mut Option<bool>,
+    logged_this_approach: &mut bool,
+    clear_since: &mut Option<DateTime<Utc>>,
+) -> bool {
+    if below {
+        *clear_since = None;
+    } else {
+        if clear_since.is_none() {
+            *clear_since = Some(now);
+        }
+        if let Some(since) = *clear_since {
+            if (now - since).num_seconds() >= BELOW_GS_REARM_SECS {
+                *logged_this_approach = false;
+            }
+        }
+    }
+    let result = match *last_seen {
+        None => {
+            if below {
+                *logged_this_approach = true;
+            }
+            false
+        }
+        Some(prev) => {
+            if !prev && below && !*logged_this_approach {
+                *logged_this_approach = true;
+                true
+            } else {
+                false
+            }
+        }
+    };
+    *last_seen = Some(below);
+    result
 }
 
 /// Activity-log helper for 3-state cabin signs (OFF / AUTO / ON).
@@ -26136,6 +26752,299 @@ mod aircraft_alias_tests {
         assert_eq!(ff(50_000.0, 0.0, 60.0), Some(0.0));
         // Triebwerke aus (kein Burn) → 0.
         assert_eq!(ff(20_000.0, 20_000.0, 90.0), Some(0.0));
+    }
+
+    // ─── v0.16.9 Fuel-Used-Fallback (FOB-Delta, Live-Befund GLO4587) ───
+
+    /// PMDG 738: SimVar-fuel_used bleibt 0.0 während der FOB runterläuft
+    /// → Fallback aus Baseline−FOB. Baseline latcht beim ersten Tick.
+    #[test]
+    fn fuel_used_fallback_derives_from_fob_delta() {
+        use super::fuel_used_effective_kg as fu;
+        let mut initial: Option<f32> = None;
+        // Erster Tick: Baseline latcht, Delta 0 → SimVar-Wert (0) durchgereicht.
+        assert_eq!(fu(&mut initial, 0.0, 8_000.0), 0.0);
+        assert_eq!(initial, Some(8_000.0));
+        // Kleines Delta (< 5 kg, Mess-Rauschen am Gate) → weiter 0.
+        assert_eq!(fu(&mut initial, 0.0, 7_997.0), 0.0);
+        // Cruise: 1500 kg verbrannt, SimVar tot → FOB-Delta.
+        let used = fu(&mut initial, 0.0, 6_500.0);
+        assert!((used - 1_500.0).abs() < 0.01, "erwartete 1500, war {used}");
+        // Baseline bleibt stabil über die Ticks.
+        assert_eq!(initial, Some(8_000.0));
+    }
+
+    /// Kommt die SimVar je zum Leben (≥ 0.5 kg), gewinnt sie — auch wenn
+    /// das FOB-Delta größer wäre.
+    #[test]
+    fn fuel_used_fallback_prefers_live_simvar() {
+        use super::fuel_used_effective_kg as fu;
+        let mut initial: Option<f32> = Some(8_000.0);
+        // SimVar lebt (1234 kg) → authoritativ, kein Delta-Override.
+        assert_eq!(fu(&mut initial, 1_234.0, 6_500.0), 1_234.0);
+        // Knapp unter der Alive-Schwelle (< 0.5) zählt als tot → Delta.
+        let used = fu(&mut initial, 0.4, 6_500.0);
+        assert!((used - 1_500.0).abs() < 0.01, "erwartete 1500, war {used}");
+    }
+
+    /// Mid-Flight-/Gate-Refuel: FOB steigt > 50 kg über die Baseline →
+    /// Baseline re-latcht aufs neue Maximum, Delta startet wieder bei ~0
+    /// und wird NIE negativ.
+    #[test]
+    fn fuel_used_fallback_relatches_on_refuel() {
+        use super::fuel_used_effective_kg as fu;
+        let mut initial: Option<f32> = Some(8_000.0);
+        // FOB leicht über Baseline (< 50 kg drüber, z.B. Dichte-Jitter):
+        // KEIN Re-Latch, Delta negativ → SimVar-Wert (0), nicht negativ.
+        assert_eq!(fu(&mut initial, 0.0, 8_030.0), 0.0);
+        assert_eq!(initial, Some(8_000.0));
+        // Echtes Refuel: 8000 → 12000 kg → Re-Latch auf 12000.
+        assert_eq!(fu(&mut initial, 0.0, 12_000.0), 0.0);
+        assert_eq!(initial, Some(12_000.0));
+        // Danach zählt das Delta von der NEUEN Baseline.
+        let used = fu(&mut initial, 0.0, 11_000.0);
+        assert!((used - 1_000.0).abs() < 0.01, "erwartete 1000, war {used}");
+    }
+
+    /// FOB = 0 (Sim-Reload-Glitch / leerer Tank) darf die Baseline nicht
+    /// auf 0 latchen.
+    #[test]
+    fn fuel_used_fallback_ignores_zero_fob_for_latch() {
+        use super::fuel_used_effective_kg as fu;
+        let mut initial: Option<f32> = None;
+        assert_eq!(fu(&mut initial, 0.0, 0.0), 0.0);
+        assert_eq!(initial, None);
+        // Erster echter Fuel-Tick latcht dann normal.
+        assert_eq!(fu(&mut initial, 0.0, 5_000.0), 0.0);
+        assert_eq!(initial, Some(5_000.0));
+    }
+
+    // ─── v0.16.9 Premium-Activity-Log: DebouncedLogState ───────────────
+
+    /// Erster Wert latcht IMMER stumm; eine Änderung committet erst nach
+    /// dem Debounce-Fenster.
+    #[test]
+    fn debounced_log_state_first_value_latches_silently() {
+        use super::DebouncedLogState;
+        use chrono::Duration;
+        let t0 = chrono::Utc::now();
+        let mut s: DebouncedLogState<String> = DebouncedLogState::default();
+        // Erster Wert → stumm.
+        assert!(!s.update("NAV | ALT".to_string(), t0, 3));
+        // Gleicher Wert → nichts.
+        assert!(!s.update("NAV | ALT".to_string(), t0 + Duration::seconds(1), 3));
+        // Änderung: Tick 1 startet den Timer, noch kein Log.
+        assert!(!s.update("LOC | G/S".to_string(), t0 + Duration::seconds(10), 3));
+        // 2 s später — Fenster (3 s) noch nicht voll.
+        assert!(!s.update("LOC | G/S".to_string(), t0 + Duration::seconds(12), 3));
+        // 3 s später — committet, log jetzt.
+        assert!(s.update("LOC | G/S".to_string(), t0 + Duration::seconds(13), 3));
+        // Direkt danach: Wert ist gelatcht → kein Doppel-Log.
+        assert!(!s.update("LOC | G/S".to_string(), t0 + Duration::seconds(14), 3));
+    }
+
+    /// Ein Puls kürzer als das Fenster produziert GAR KEINEN Eintrag
+    /// (Original-Motivation: Fenix-LVar-Pulse, Annunciator-Tests).
+    #[test]
+    fn debounced_log_state_swallows_short_pulse() {
+        use super::DebouncedLogState;
+        use chrono::Duration;
+        let t0 = chrono::Utc::now();
+        let mut s: DebouncedLogState<bool> = DebouncedLogState::default();
+        assert!(!s.update(false, t0, 2)); // stumm gelatcht
+        // Puls: true für 1 s, dann wieder false.
+        assert!(!s.update(true, t0 + Duration::seconds(5), 2));
+        assert!(!s.update(false, t0 + Duration::seconds(6), 2));
+        // Zurück auf dem gelatchten Wert → Pending verworfen; auch ein
+        // erneutes true muss das Fenster wieder VOLL halten.
+        assert!(!s.update(true, t0 + Duration::seconds(7), 2));
+        assert!(s.update(true, t0 + Duration::seconds(9), 2));
+    }
+
+    /// Wechselt der Pending-Wert mitten im Fenster, startet der Timer neu
+    /// (nur ein STABILER neuer Wert committet).
+    #[test]
+    fn debounced_log_state_restarts_timer_on_pending_change() {
+        use super::DebouncedLogState;
+        use chrono::Duration;
+        let t0 = chrono::Utc::now();
+        let mut s: DebouncedLogState<String> = DebouncedLogState::default();
+        assert!(!s.update("CL".to_string(), t0, 3));
+        assert!(!s.update("FLX/MCT".to_string(), t0 + Duration::seconds(10), 3));
+        // Anderer Wert bevor FLX/MCT stabil war → Timer neu ab hier.
+        assert!(!s.update("TOGA".to_string(), t0 + Duration::seconds(12), 3));
+        // 2 s — für TOGA noch nicht voll (auch wenn FLX/MCT-Start 5 s her ist).
+        assert!(!s.update("TOGA".to_string(), t0 + Duration::seconds(14), 3));
+        assert!(s.update("TOGA".to_string(), t0 + Duration::seconds(15), 3));
+    }
+
+    // ─── v0.16.9 Premium-Activity-Log: Format-Helper ────────────────────
+
+    /// Generic-FMA-Zeile: None-Teile weggelassen, alles None ⇒ None.
+    #[test]
+    fn fmt_fma_line_omits_none_parts() {
+        use super::fmt_fma_line;
+        assert_eq!(
+            fmt_fma_line(Some("NAV"), Some("ALT"), Some("SPEED")),
+            Some("NAV | ALT | SPEED".to_string())
+        );
+        assert_eq!(
+            fmt_fma_line(Some("LOC"), None, Some("SPEED")),
+            Some("LOC | SPEED".to_string())
+        );
+        assert_eq!(fmt_fma_line(None, Some("G/S"), None), Some("G/S".to_string()));
+        assert_eq!(fmt_fma_line(None, None, None), None);
+        // Leere/Whitespace-Strings zählen wie None.
+        assert_eq!(fmt_fma_line(Some(""), Some("  "), None), None);
+        assert_eq!(
+            fmt_fma_line(Some(""), Some("VNAV PTH"), None),
+            Some("VNAV PTH".to_string())
+        );
+    }
+
+    /// V-Speeds-Zeile: Rundung, FLEX-Suffix, TOGA-Suffix, FLEX > TOGA.
+    #[test]
+    fn fmt_vspeeds_line_suffix_rules() {
+        use super::fmt_vspeeds_line;
+        // Basis (keine FLEX, kein Gate).
+        assert_eq!(
+            fmt_vspeeds_line(141.6, 146.4, 153.0, None, None),
+            "V-Speeds: V1 142 · VR 146 · V2 153"
+        );
+        // FLEX gesetzt → FLEX-Suffix.
+        assert_eq!(
+            fmt_vspeeds_line(142.0, 146.0, 153.0, Some(47.2), None),
+            "V-Speeds: V1 142 · VR 146 · V2 153 · FLEX 47°C"
+        );
+        // Kein FLEX, Hebel im TOGA-Detent → TOGA-Suffix.
+        assert_eq!(
+            fmt_vspeeds_line(142.0, 146.0, 153.0, None, Some("TOGA")),
+            "V-Speeds: V1 142 · VR 146 · V2 153 · TOGA"
+        );
+        // FLEX hat Vorrang vor TOGA (FLEX-Takeoff mit Lever kurz in TOGA).
+        assert_eq!(
+            fmt_vspeeds_line(142.0, 146.0, 153.0, Some(40.0), Some("TOGA")),
+            "V-Speeds: V1 142 · VR 146 · V2 153 · FLEX 40°C"
+        );
+        // Andere Gates (CL) erzeugen KEIN Suffix.
+        assert_eq!(
+            fmt_vspeeds_line(142.0, 146.0, 153.0, None, Some("CL")),
+            "V-Speeds: V1 142 · VR 146 · V2 153"
+        );
+    }
+
+    /// Approach-Speeds-Zeile: None-Teile weggelassen, alles None ⇒ None.
+    #[test]
+    fn fmt_approach_speeds_line_omits_none() {
+        use super::fmt_approach_speeds_line;
+        assert_eq!(
+            fmt_approach_speeds_line(Some(138.4), Some(132.0), Some(135.0)),
+            Some("Approach-Speeds: VAPP 138 · VLS 132 · VREF 135".to_string())
+        );
+        // Airbus-Fall: nur VAPP+VLS.
+        assert_eq!(
+            fmt_approach_speeds_line(Some(138.0), Some(132.0), None),
+            Some("Approach-Speeds: VAPP 138 · VLS 132".to_string())
+        );
+        // Boeing-Fall: nur VREF.
+        assert_eq!(
+            fmt_approach_speeds_line(None, None, Some(141.0)),
+            Some("Approach-Speeds: VREF 141".to_string())
+        );
+        assert_eq!(fmt_approach_speeds_line(None, None, None), None);
+    }
+
+    // ─── v0.16.9 Premium-Activity-Log: Einmal-pro-Landung + Below-G/S ──
+
+    /// Umkehrschub/Ground-Spoiler: Rising-Edge am Boden loggt genau
+    /// einmal pro Landung; airborne re-armt (Touch-and-Go-Szenario).
+    #[test]
+    fn once_per_landing_rising_edge_logs_once_and_rearms_airborne() {
+        use super::once_per_landing_rising_edge as edge;
+        let mut last_seen: Option<bool> = None;
+        let mut logged = false;
+        // None-Quelle (Profil liefert das Feld nicht) → nie.
+        assert!(!edge(None, true, &mut last_seen, &mut logged));
+        // Erster Wert latcht stumm (auch am Boden).
+        assert!(!edge(Some(false), true, &mut last_seen, &mut logged));
+        // Rising-Edge am Boden → loggt.
+        assert!(edge(Some(true), true, &mut last_seen, &mut logged));
+        // Hält an / flackert → kein zweites Log in derselben Landung.
+        assert!(!edge(Some(true), true, &mut last_seen, &mut logged));
+        assert!(!edge(Some(false), true, &mut last_seen, &mut logged));
+        assert!(!edge(Some(true), true, &mut last_seen, &mut logged));
+        // Touch-and-Go: airborne → re-arm…
+        assert!(!edge(Some(false), false, &mut last_seen, &mut logged));
+        // …nächste Landung bekommt wieder einen Eintrag.
+        assert!(edge(Some(true), true, &mut last_seen, &mut logged));
+    }
+
+    /// Rising-Edge in der Luft loggt NICHT (Umkehrschub-Test im Flug /
+    /// Spoiler-Lever-Bewegung zählen nicht als Landung).
+    #[test]
+    fn once_per_landing_rising_edge_ignores_airborne_edge() {
+        use super::once_per_landing_rising_edge as edge;
+        let mut last_seen: Option<bool> = None;
+        let mut logged = false;
+        assert!(!edge(Some(false), false, &mut last_seen, &mut logged));
+        assert!(!edge(Some(true), false, &mut last_seen, &mut logged));
+        // Wieder am Boden mit value=true: kein NEUER Rising-Edge
+        // (true→true) → kein Log; erst false→true am Boden loggt.
+        assert!(!edge(Some(true), true, &mut last_seen, &mut logged));
+        assert!(!edge(Some(false), true, &mut last_seen, &mut logged));
+        assert!(edge(Some(true), true, &mut last_seen, &mut logged));
+    }
+
+    /// Resume mitten im Rollout (erster Wert = true) latcht stumm.
+    #[test]
+    fn once_per_landing_rising_edge_first_true_is_silent() {
+        use super::once_per_landing_rising_edge as edge;
+        let mut last_seen: Option<bool> = None;
+        let mut logged = false;
+        assert!(!edge(Some(true), true, &mut last_seen, &mut logged));
+        assert!(!edge(Some(true), true, &mut last_seen, &mut logged));
+    }
+
+    /// Below-G/S: einmal pro Approach, re-arm erst nach 30 s clear;
+    /// erster Wert true latcht stumm als "schon geloggt".
+    #[test]
+    fn below_gs_logs_once_then_rearms_after_clear_window() {
+        use super::below_gs_should_log as gs;
+        use chrono::Duration;
+        let t0 = chrono::Utc::now();
+        let mut last_seen: Option<bool> = None;
+        let mut logged = false;
+        let mut clear_since: Option<chrono::DateTime<chrono::Utc>> = None;
+        // Erster Wert (false) latcht stumm.
+        assert!(!gs(false, t0, &mut last_seen, &mut logged, &mut clear_since));
+        // Alert feuert → loggt.
+        assert!(gs(true, t0 + Duration::seconds(5), &mut last_seen, &mut logged, &mut clear_since));
+        // Flackern (clear < 30 s, wieder true) → kein zweites Log.
+        assert!(!gs(false, t0 + Duration::seconds(10), &mut last_seen, &mut logged, &mut clear_since));
+        assert!(!gs(true, t0 + Duration::seconds(15), &mut last_seen, &mut logged, &mut clear_since));
+        // Alert klärt sich und BLEIBT > 30 s clear → re-arm…
+        assert!(!gs(false, t0 + Duration::seconds(20), &mut last_seen, &mut logged, &mut clear_since));
+        assert!(!gs(false, t0 + Duration::seconds(55), &mut last_seen, &mut logged, &mut clear_since));
+        // …der nächste Alert loggt wieder.
+        assert!(gs(true, t0 + Duration::seconds(60), &mut last_seen, &mut logged, &mut clear_since));
+    }
+
+    /// Below-G/S: beim Connect bereits aktiver Alert zählt als geloggt
+    /// (kein nachträglicher Eintrag), erst der NÄCHSTE Approach loggt.
+    #[test]
+    fn below_gs_first_true_latches_as_already_logged() {
+        use super::below_gs_should_log as gs;
+        use chrono::Duration;
+        let t0 = chrono::Utc::now();
+        let mut last_seen: Option<bool> = None;
+        let mut logged = false;
+        let mut clear_since: Option<chrono::DateTime<chrono::Utc>> = None;
+        // Erster Wert TRUE → stumm + als geloggt gelatcht.
+        assert!(!gs(true, t0, &mut last_seen, &mut logged, &mut clear_since));
+        assert!(logged);
+        // Kurzes clear + wieder true (< 30 s) → weiter still.
+        assert!(!gs(false, t0 + Duration::seconds(5), &mut last_seen, &mut logged, &mut clear_since));
+        assert!(!gs(true, t0 + Duration::seconds(10), &mut last_seen, &mut logged, &mut clear_since));
     }
 
     // ─── v0.7.3 Cargo-Aliases (Spec §4 HOHE-Prio Arbeitsliste) ──────

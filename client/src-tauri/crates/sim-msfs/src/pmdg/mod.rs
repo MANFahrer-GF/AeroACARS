@@ -125,6 +125,23 @@ impl PmdgVariant {
     }
 }
 
+/// Canonicalise a PMDG SDK fuel quantity to kilograms (v0.16.9
+/// #Premium). The `FUEL_Qty*` floats in both PMDG_NG3_SDK.h and
+/// PMDG_777X_SDK.h arrive in the unit the pilot selected in the
+/// aircraft options — signalled by the struct's `WeightInKg` flag
+/// (header comment: "false: LBS  true: KG"; the inline "// LBS"
+/// next to the FUEL_Qty fields documents the default, not a fixed
+/// unit). Shared by both snapshot decoders so the
+/// `PmdgState::fuel_per_tank_kg` carrier is always kg.
+pub fn pmdg_fuel_qty_to_kg(raw: f32, weight_in_kg: bool) -> f64 {
+    const LBS_TO_KG: f64 = 0.453_592_37;
+    if weight_in_kg {
+        f64::from(raw)
+    } else {
+        f64::from(raw) * LBS_TO_KG
+    }
+}
+
 /// Decode a PMDG XPDR mode selector byte to a cockpit-readable label.
 /// Both NG3 and 777X use the same mapping
 /// (`XPDR_ModeSel`: 0=STBY 1=ALT_RPTG_OFF 2=XPNDR 3=TA 4=TA/RA).
@@ -191,6 +208,19 @@ mod tests {
         use super::PmdgVariant;
         assert_eq!(PmdgVariant::Ng3.fallback_icao(), "B738");
         assert_eq!(PmdgVariant::X777.fallback_icao(), "B77W");
+    }
+
+    /// v0.16.9 (#Premium): SDK fuel quantities follow the cockpit
+    /// weight-unit option (`WeightInKg` flag) — both directions must
+    /// canonicalise to kg.
+    #[test]
+    fn fuel_qty_to_kg_both_unit_modes() {
+        use super::pmdg_fuel_qty_to_kg;
+        // Flag says kg → passthrough.
+        assert!((pmdg_fuel_qty_to_kg(1000.0, true) - 1000.0).abs() < 1e-9);
+        // Flag says lbs → ×0.45359237.
+        assert!((pmdg_fuel_qty_to_kg(1000.0, false) - 453.59237).abs() < 1e-6);
+        assert!((pmdg_fuel_qty_to_kg(0.0, false)).abs() < 1e-9);
     }
 
     #[test]

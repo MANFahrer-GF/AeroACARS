@@ -1125,6 +1125,36 @@ impl XPlaneState {
             contact_point_on_ground: None,
             gear_water_depth_m: None,
             water_rudder_present: None,
+            // v0.16.9 (#Premium): Cockpit-Tiefendaten — auf dem
+            // X-Plane-Pfad noch nicht verdrahtet (spaetere Phase;
+            // braucht Addon-Datarefs wie AirbusFBW/ToLiss + In-Sim-
+            // Verifikation). Alle None = "Quelle liefert es nicht".
+            fma_lateral_mode: None,
+            fma_vertical_mode: None,
+            fma_thrust_mode: None,
+            flight_phase_aircraft: None,
+            v1_kt: None,
+            vr_kt: None,
+            v2_kt: None,
+            vapp_kt: None,
+            vls_kt: None,
+            vref_kt: None,
+            flex_temp_c: None,
+            thrust_gate: None,
+            master_caution: None,
+            master_warning: None,
+            managed_speed: None,
+            managed_heading: None,
+            managed_altitude: None,
+            reverser_deployed: None,
+            ground_spoilers_active: None,
+            eng_n1_pct: None,
+            baro_std: None,
+            fuel_per_tank_kg: None,
+            below_gs_alert: None,
+            cabin_altitude_warning: None,
+            stab_out_of_trim: None,
+            minimums_baro_ft: None,
         }
     }
 }

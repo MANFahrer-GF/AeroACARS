@@ -289,6 +289,34 @@ fn ng3_to_pmdg_state(s: &crate::pmdg::ng3::Pmdg738Snapshot) -> sim_core::PmdgSta
         pitot_heat: Some(s.pitot_heat),
         battery_master: Some(s.battery_master),
         parking_brake: Some(s.parking_brake_set),
+
+        // ---- v0.16.9 (#Premium): deep-data carrier fields ----
+        // Annunciator booleans are always `Some(..)` while a PMDG
+        // aircraft is active — `Some(false)` = "light is off", a
+        // real cockpit observation. Presence-gating happens one
+        // level up (`snap.pmdg == None` ⇒ the premium override is
+        // a no-op), so an absent SDK block never injects fake
+        // `false` signals, and lit→off transitions stay
+        // distinguishable from "no data".
+        reverser_deployed: Some(s.reverser_deployed),
+        master_caution: Some(s.master_caution),
+        // The 737 NG has no MASTER WARNING light — the red master
+        // on the glareshield IS the FIRE WARN light, so it maps to
+        // the generic master_warning carrier.
+        master_warning: Some(s.fire_warn),
+        below_gs: Some(s.below_gs),
+        cabin_altitude_warning: Some(s.cabin_altitude_warning),
+        stab_out_of_trim: Some(s.stab_out_of_trim),
+        // Tank order: [left, center, right] — already canonical kg
+        // (WeightInKg handling lives in `Pmdg738Snapshot::from_raw`).
+        fuel_per_tank_kg: Some(s.fuel_per_tank_kg.to_vec()),
+        // Genuine NG3 SDK gaps: PMDG_NG3_SDK.h has no numeric
+        // minimums field (only the BARO/RADIO selector switch
+        // `EFIS_MinsSelBARO`) and no GND PROX annunciator (only
+        // `GPWS_annunINOP`). None ⇒ the override keeps whatever
+        // the generic telemetry provides.
+        minimums_baro_ft: None,
+        gnd_prox_warning: None,
     }
 }
 
@@ -445,6 +473,35 @@ fn x777_to_pmdg_state(s: &crate::pmdg::x777::Pmdg777XSnapshot) -> sim_core::Pmdg
         pitot_heat: Some(s.pitot_heat),
         battery_master: Some(s.battery_master),
         parking_brake: Some(s.parking_brake_set),
+
+        // ---- v0.16.9 (#Premium): deep-data carrier fields ----
+        // Booleans are always `Some(..)` while a PMDG 777 is active
+        // (Some(false) = light off) — see the NG3 mapper for the
+        // presence-gating rationale.
+        //
+        // PMDG_777X_SDK.h exposes NO thrust-reverser annunciator or
+        // state anywhere in PMDG_777X_Data (verified against the
+        // v3.x header: the only "reverse" hit is the CDU reverse-
+        // video display flag). None ⇒ the generic SimVar-based
+        // reverser detection stays in charge.
+        reverser_deployed: None,
+        master_caution: Some(s.master_caution),
+        master_warning: Some(s.master_warning),
+        // More genuine 777X SDK gaps: no BELOW G/S annunciator
+        // (`GPWS_GSInhibit_Sw` is a switch, not a light), no CABIN
+        // ALTITUDE annunciator, no STAB OUT OF TRIM annunciator.
+        below_gs: None,
+        cabin_altitude_warning: None,
+        stab_out_of_trim: None,
+        // Tank order: [left, center, right, aux] — already canonical
+        // kg (WeightInKg handling in `Pmdg777XSnapshot::from_raw`).
+        fuel_per_tank_kg: Some(s.fuel_per_tank_kg.to_vec()),
+        // Captain-side EFIS baro minimums (DA/MDA); None until
+        // dialed — the `EFIS_BaroMinimumsSet[0]` gate lives in
+        // `Pmdg777XSnapshot::from_raw`.
+        minimums_baro_ft: s.minimums_baro_ft.map(f64::from),
+        // GPWS GND PROX: top or bottom annunciator lit.
+        gnd_prox_warning: Some(s.gpws_top_warn || s.gpws_bottom_warn),
     }
 }
 
@@ -644,6 +701,14 @@ impl MsfsAdapter {
         // `SimSnapshot::apply_pmdg_autoflight_override` (sim-core,
         // cross-platform tested; this adapter is Windows-only).
         snap.apply_pmdg_autoflight_override();
+        // v0.16.9 (#Premium): sibling override for the deep-data
+        // fields (FMA labels, warn annunciators, reverser, per-tank
+        // fuel, V-speeds, baro minimums, ground spoilers). Same
+        // presence-gating — no-op when `snap.pmdg` is None.
+        // Semantics + tests live in
+        // `SimSnapshot::apply_pmdg_premium_override` (sim-core,
+        // cross-platform tested; this adapter is Windows-only).
+        snap.apply_pmdg_premium_override();
 
         Some(snap)
     }

@@ -424,6 +424,161 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:INI_ATHR_LIGHT", "Number"),
     F::f64("L:INI_MCU_LAND_LIGHT", "Number"),
     F::f64("L:INI_MCU_LOC_LIGHT", "Number"),
+
+    // ================================================================
+    // v0.16.9 (#Premium): Cockpit-Tiefendaten — 5 LVar-Gruppen.
+    // LOCKSTEP: append-only am Tabellen-Ende, gleiche Reihenfolge in
+    // Telemetry-Struct + pull_f64!-Block. Tote LVars lesen auf fremden
+    // Aircraft 0.0 → JEDES Mapping ist profile-gegated (siehe
+    // premium_lvars_do_not_affect_default_profile-Test).
+    // ================================================================
+
+    // ---- Gruppe A: Fenix A32x Premium (HubHop-Output) ----
+    // Quelle: HubHop-Preset-DB (Fenix.A320 Output-Presets). Achtung:
+    // HubHop listet "L:L:N_MISC_PERF_TO_V1" mit Doppel-Prefix-TYPO —
+    // die echten LVars tragen EIN "L:".
+    // FMS-PERF-Page: eingegebene V-Speeds + FLEX-Temp (0 = noch nicht
+    // eingegeben → None im Mapping).
+    F::f64("L:N_MISC_PERF_TO_V1", "Number"),
+    F::f64("L:N_MISC_PERF_TO_VR", "Number"),
+    F::f64("L:N_MISC_PERF_TO_V2", "Number"),
+    F::f64("L:N_MISC_PERF_TO_FLEX", "Number"),
+    // Master-Caution/-Warning: Capt-seitige Annunciator-Lampen.
+    F::f64("L:I_MIP_MASTER_CAUTION_CAPT", "Number"),
+    F::f64("L:I_MIP_MASTER_WARNING_CAPT", "Number"),
+    // Speedbrake-Handle (analog 0..1). NUR subscribed, KEIN Override:
+    // die Standard-SimVar `SPOILERS HANDLE POSITION` ist analog
+    // (percent over 100) und beim Fenix nicht als defekt/binaer
+    // dokumentiert — der LVar bleibt Override-Kandidat, falls ein
+    // Live-Flug zeigt, dass der Standard dort nur 0/1 liefert.
+    F::f64("L:A_FC_SPEEDBRAKE", "Number"),
+    // FCU-managed-Dots (Lampen neben den FCU-Fenstern) + EFIS BARO STD.
+    F::f64("L:I_FCU_SPEED_MANAGED", "Number"),
+    F::f64("L:I_FCU_HEADING_MANAGED", "Number"),
+    F::f64("L:I_FCU_ALTITUDE_MANAGED", "Number"),
+    F::f64("L:S_FCU_EFIS1_BARO_STD", "Number"),
+    // Engine-Fire-Lampen: subscribed, aber bewusst OHNE eigenes
+    // Snapshot-Feld — ein Fire zieht ohnehin das Master Warning;
+    // das Activity-Log lebt von master_warning.
+    F::f64("L:I_ENG_FIRE_1", "Number"),
+    F::f64("L:I_ENG_FIRE_2", "Number"),
+
+    // ---- Gruppe B: FBW-A32NX-Familie (FBW-Doku) ----
+    // Quelle: open-source FBW-Doku (fbw-a32nx/docs/a320-simvars.md).
+    // Deckt FBW A32NX + FBW A380X + Headwind A339 ab (gleiche
+    // A32NX_-LVar-Familie, ein Profil FbwA32nx). Inventar-Befund:
+    // die V-Speeds heissen VSPEEDS_* (nicht SPEEDS_*).
+    F::f64("L:A32NX_AUTOPILOT_1_ACTIVE", "Number"),
+    F::f64("L:A32NX_AUTOPILOT_2_ACTIVE", "Number"),
+    // AUTOTHRUST_STATUS: 0=off, 1=armed, 2=active.
+    F::f64("L:A32NX_AUTOTHRUST_STATUS", "Number"),
+    F::f64("L:A32NX_AUTOTHRUST_MODE", "Number"),
+    F::f64("L:A32NX_FMA_LATERAL_MODE", "Number"),
+    F::f64("L:A32NX_FMA_VERTICAL_MODE", "Number"),
+    // FWC-Flugphase (1..10, siehe fbw_fwc_phase_label).
+    F::f64("L:A32NX_FWC_FLIGHT_PHASE", "Number"),
+    F::f64("L:A32NX_VSPEEDS_V2", "Number"),
+    F::f64("L:A32NX_VSPEEDS_VLS", "Number"),
+    F::f64("L:A32NX_VSPEEDS_VAPP", "Number"),
+    // 0=DIS, 1=LO, 2=MED, 3=MAX.
+    F::f64("L:A32NX_AUTOBRAKES_ARMED_MODE", "Number"),
+    // Flaps-Lever-Detent: subscribed als Cross-Check; das generische
+    // `FLAPS HANDLE PERCENT` funktioniert beim FBW → kein Override.
+    F::f64("L:A32NX_FLAPS_HANDLE_INDEX", "Number"),
+    F::f64("L:A32NX_SPOILERS_ARMED", "Number"),
+    F::f64("L:A32NX_SPOILERS_GROUND_SPOILERS_ACTIVE", "Number"),
+    F::f64("L:A32NX_FCU_SPD_MANAGED_DOT", "Number"),
+    F::f64("L:A32NX_FCU_HDG_MANAGED_DOT", "Number"),
+    F::f64("L:A32NX_FCU_ALT_MANAGED", "Number"),
+
+    // ---- Gruppe C: iniBuilds A350/A340 Premium (WASM-strings) ----
+    // Quelle: WASM-Strings-Dump der iniBuilds A350 — ALLE Namen
+    // woertlich gegen den Dump verifiziert (2026-06-11). Dieselben
+    // INI_-LVars treibt auch die iniBuilds A340 (Inventar: 36/38
+    // woertlich bestaetigt) → Mapping unter is_a350 ODER is_a340.
+    // FMA-Mode-Enums: Belegung UNBEKANNT — Mapping reicht Roh-Werte
+    // als "#{n}" durch (Decode beim ersten Live-Flug).
+    F::f64("L:INI_ROLL_MODE_ACTIVE", "Number"),
+    F::f64("L:INI_PITCH_MODE_ACTIVE", "Number"),
+    F::f64("L:INI_THROTTLE_MODE_ACTIVE", "Number"),
+    F::f64("L:INI_V1", "Number"),
+    F::f64("L:INI_VR", "Number"),
+    F::f64("L:INI_V2", "Number"),
+    F::f64("L:INI_VLS_SPEED", "Number"),
+    F::f64("L:INI_VAPP_SPEED", "Number"),
+    F::f64("L:INI_VREF_SPEED", "Number"),
+    F::f64("L:INI_FLEX_TEMPERATURE", "Number"),
+    // Thrust-Lever-Gate-Flags (TOGA > FLX/MCT > CL Prioritaet).
+    F::f64("L:INI_LEVER_IN_TOGA", "Number"),
+    F::f64("L:INI_LEVER_IN_FLEX_MCT", "Number"),
+    F::f64("L:INI_LEVER_IN_CL", "Number"),
+    // Flaps-Detent: subscribed als Cross-Check, generisch reicht.
+    F::f64("L:INI_FLAPS_HANDLE_INDEX", "Number"),
+    F::f64("L:INI_SPOILERS_GROUND_SPOILERS_ACTIVE", "Number"),
+    // Autobrake-ENGAGED-Flag: subscribed, noch UNGEMAPPT — liefert
+    // kein Stufen-Label; Decode/Nutzen beim ersten Live-Flug klaeren.
+    F::f64("L:INI_AUTOBRAKE_ENGAGED", "Number"),
+    F::f64("L:INI_MASTER_CAUTION_CAPT_TOP", "Number"),
+    F::f64("L:INI_MASTER_WARNING_CAPT_TOP", "Number"),
+    // Per-Engine-Fuel-Flow in kg: subscribed fuer kuenftige Nutzung
+    // (die generische PPH/CORRECTED-FF-Kaskade funktioniert bereits).
+    // FLOW3/4 sind A340-only (4 Triebwerke) — fehlen erwartungsgemaess
+    // im A350-Dump, Namen folgen dem verifizierten FLOW1/2-Muster
+    // (Inventar-A340-Bestaetigung; Live-Flug-Verifikation steht aus).
+    F::f64("L:INI_FUEL_FLOW1_KG", "Number"),
+    F::f64("L:INI_FUEL_FLOW2_KG", "Number"),
+    F::f64("L:INI_FUEL_FLOW3_KG", "Number"),
+    F::f64("L:INI_FUEL_FLOW4_KG", "Number"),
+    // A340-Extra: Autobrake-Selector (HubHop: 3=MED, 4=MAX, 5=LO).
+    F::f64("L:INI_AUTOBRAKE_LEVEL", "Number"),
+
+    // ---- Gruppe D: Aerosoft A346 Premium-Extras (WASM-strings) ----
+    // Quelle: Strings der MSFS_ToLiss_Plugin.wasm — alle Namen
+    // woertlich verifiziert (Inventar 2026-06-11).
+    // FMGC-Phase-Enum: Belegung unbekannt → "#{n}"-Mapping.
+    F::f64("L:TLS_FLIGHT_PHASE", "Number"),
+    // FCU-managed-Dots (SPD/HDG/VS — die A346-FCU hat kein eigenes
+    // ALT-Dot; VS_MANAGED naehert managed_altitude an, s. Mapping).
+    F::f64("L:TLS_FCU_SPD_MANAGED", "Number"),
+    F::f64("L:TLS_FCU_HDG_MANAGED", "Number"),
+    F::f64("L:TLS_FCU_VS_MANAGED", "Number"),
+    F::f64("L:AB_MPL_Master_Warning_Light", "Number"),
+    F::f64("L:AB_MPL_Master_Caution_Light", "Number"),
+    // Speedbrake-Lever-Position: subscribed, KEIN Override — die
+    // generische `SPOILERS HANDLE POSITION` bleibt die Quelle.
+    F::f64("L:TLS_SPD_BRK_LEVER_POS", "Number"),
+    F::f64("L:TLS_SPOILER_LEVER_ARMED", "Number"),
+    // Reverser-Ratio je Triebwerk (0..1) → reverser_deployed wenn
+    // irgendeine Ratio > 0.05.
+    F::f64("L:TLS_ENG1_REVERSER_RATIO", "Number"),
+    F::f64("L:TLS_ENG2_REVERSER_RATIO", "Number"),
+    F::f64("L:TLS_ENG3_REVERSER_RATIO", "Number"),
+    F::f64("L:TLS_ENG4_REVERSER_RATIO", "Number"),
+
+    // ---- Gruppe E: TFDi MD-11 (TFDi-Doku + WASM-strings) ----
+    // Quelle: offizielle TFDi-Doku + WASM-Dump — alle Namen woertlich
+    // gegen den Dump verifiziert (2026-06-11).
+    // AP_STATE dokumentiert: 0=Off, 1=AP1, 2=AP2, 3=both.
+    F::f64("L:MD11_AP_STATE", "Number"),
+    // ATS_STATE: Enum undokumentiert; >0 = ATS on.
+    F::f64("L:MD11_ATS_STATE", "Number"),
+    // ATS-CLAMP-Mode: subscribed, ungemappt (Decode beim Live-Flug).
+    F::f64("L:MD11_ATS_CLAMP", "Number"),
+    // AFS-Targets — Dash-Sentinels: SPD/HDG = -999, V/S = -9999.
+    F::f64("L:MD11_AFS_SPD", "Number"),
+    F::f64("L:MD11_AFS_HDG", "Number"),
+    F::f64("L:MD11_AFS_ALT", "Number"),
+    F::f64("L:MD11_AFS_VS", "Number"),
+    F::f64("L:MD11_V1", "Number"),
+    F::f64("L:MD11_VR", "Number"),
+    F::f64("L:MD11_V2", "Number"),
+    // Display-exakte N1-Werte der 3 Triebwerke (eng_n1_pct bevorzugt
+    // sie gegenueber den Standard-SimVars, wenn > 0).
+    F::f64("L:MD11_ENG1_N1", "Number"),
+    F::f64("L:MD11_ENG2_N1", "Number"),
+    F::f64("L:MD11_ENG3_N1", "Number"),
+    // Autobrake-Selector: Positions-Enum undokumentiert → "#{n}".
+    F::f64("L:MD11_CTR_AUTOBRAKE_SW", "Number"),
 ];
 
 // Helper builders so the table above stays compact.
@@ -665,6 +820,100 @@ pub struct Telemetry {
     pub a350_athr_light: f64,
     pub a350_appr_light: f64,
     pub a350_loc_light: f64,
+
+    // ================================================================
+    // v0.16.9 (#Premium) — LOCKSTEP mit dem Tabellen-Ende, gleiche
+    // Gruppen-Reihenfolge (A Fenix, B FBW, C INI, D A346, E MD-11).
+    // ================================================================
+
+    // Gruppe A: Fenix A32x Premium (HubHop-Output).
+    pub fnx_perf_v1: f64,
+    pub fnx_perf_vr: f64,
+    pub fnx_perf_v2: f64,
+    pub fnx_perf_flex: f64,
+    pub fnx_master_caution: f64,
+    pub fnx_master_warning: f64,
+    pub fnx_speedbrake_handle: f64,
+    pub fnx_fcu_spd_managed: f64,
+    pub fnx_fcu_hdg_managed: f64,
+    pub fnx_fcu_alt_managed: f64,
+    pub fnx_baro_std: f64,
+    pub fnx_eng1_fire: f64,
+    pub fnx_eng2_fire: f64,
+
+    // Gruppe B: FBW-A32NX-Familie (FBW-Doku).
+    pub fbw_ap1_active: f64,
+    pub fbw_ap2_active: f64,
+    pub fbw_athr_status: f64,
+    pub fbw_athr_mode: f64,
+    pub fbw_fma_lateral: f64,
+    pub fbw_fma_vertical: f64,
+    pub fbw_fwc_phase: f64,
+    pub fbw_vspeeds_v2: f64,
+    pub fbw_vspeeds_vls: f64,
+    pub fbw_vspeeds_vapp: f64,
+    pub fbw_autobrake_armed_mode: f64,
+    pub fbw_flaps_handle_index: f64,
+    pub fbw_spoilers_armed: f64,
+    pub fbw_ground_spoilers_active: f64,
+    pub fbw_fcu_spd_dot: f64,
+    pub fbw_fcu_hdg_dot: f64,
+    pub fbw_fcu_alt_managed: f64,
+
+    // Gruppe C: iniBuilds A350/A340 Premium (WASM-strings).
+    pub ini_roll_mode: f64,
+    pub ini_pitch_mode: f64,
+    pub ini_throttle_mode: f64,
+    pub ini_v1: f64,
+    pub ini_vr: f64,
+    pub ini_v2: f64,
+    pub ini_vls: f64,
+    pub ini_vapp: f64,
+    pub ini_vref: f64,
+    pub ini_flex_temp: f64,
+    pub ini_lever_toga: f64,
+    pub ini_lever_flex_mct: f64,
+    pub ini_lever_cl: f64,
+    pub ini_flaps_handle_index: f64,
+    pub ini_ground_spoilers: f64,
+    pub ini_autobrake_engaged: f64,
+    pub ini_master_caution: f64,
+    pub ini_master_warning: f64,
+    pub ini_fuel_flow1_kg: f64,
+    pub ini_fuel_flow2_kg: f64,
+    pub ini_fuel_flow3_kg: f64,
+    pub ini_fuel_flow4_kg: f64,
+    pub ini_autobrake_level: f64,
+
+    // Gruppe D: Aerosoft A346 Premium-Extras (WASM-strings).
+    pub a346_flight_phase: f64,
+    pub a346_fcu_spd_managed: f64,
+    pub a346_fcu_hdg_managed: f64,
+    pub a346_fcu_vs_managed: f64,
+    pub a346_master_warning_light: f64,
+    pub a346_master_caution_light: f64,
+    pub a346_spd_brk_lever_pos: f64,
+    pub a346_spoiler_lever_armed: f64,
+    pub a346_eng1_rev_ratio: f64,
+    pub a346_eng2_rev_ratio: f64,
+    pub a346_eng3_rev_ratio: f64,
+    pub a346_eng4_rev_ratio: f64,
+
+    // Gruppe E: TFDi MD-11 (TFDi-Doku + WASM-strings).
+    pub md11_ap_state: f64,
+    pub md11_ats_state: f64,
+    pub md11_ats_clamp: f64,
+    pub md11_afs_spd: f64,
+    pub md11_afs_hdg: f64,
+    pub md11_afs_alt: f64,
+    pub md11_afs_vs: f64,
+    pub md11_v1: f64,
+    pub md11_vr: f64,
+    pub md11_v2: f64,
+    pub md11_eng1_n1: f64,
+    pub md11_eng2_n1: f64,
+    pub md11_eng3_n1: f64,
+    pub md11_autobrake_sw: f64,
 }
 
 // ---- Touchdown sample (separate data definition #2) ----
@@ -1078,6 +1327,93 @@ impl Telemetry {
         pull_f64!(t.a350_appr_light);
         pull_f64!(t.a350_loc_light);
 
+        // ---- v0.16.9 (#Premium) — Lockstep mit dem Tabellen-Ende:
+        // Gruppe A (13× Fenix), B (17× FBW), C (23× INI), D (12× A346),
+        // E (14× MD-11), alle f64.
+        pull_f64!(t.fnx_perf_v1);
+        pull_f64!(t.fnx_perf_vr);
+        pull_f64!(t.fnx_perf_v2);
+        pull_f64!(t.fnx_perf_flex);
+        pull_f64!(t.fnx_master_caution);
+        pull_f64!(t.fnx_master_warning);
+        pull_f64!(t.fnx_speedbrake_handle);
+        pull_f64!(t.fnx_fcu_spd_managed);
+        pull_f64!(t.fnx_fcu_hdg_managed);
+        pull_f64!(t.fnx_fcu_alt_managed);
+        pull_f64!(t.fnx_baro_std);
+        pull_f64!(t.fnx_eng1_fire);
+        pull_f64!(t.fnx_eng2_fire);
+
+        pull_f64!(t.fbw_ap1_active);
+        pull_f64!(t.fbw_ap2_active);
+        pull_f64!(t.fbw_athr_status);
+        pull_f64!(t.fbw_athr_mode);
+        pull_f64!(t.fbw_fma_lateral);
+        pull_f64!(t.fbw_fma_vertical);
+        pull_f64!(t.fbw_fwc_phase);
+        pull_f64!(t.fbw_vspeeds_v2);
+        pull_f64!(t.fbw_vspeeds_vls);
+        pull_f64!(t.fbw_vspeeds_vapp);
+        pull_f64!(t.fbw_autobrake_armed_mode);
+        pull_f64!(t.fbw_flaps_handle_index);
+        pull_f64!(t.fbw_spoilers_armed);
+        pull_f64!(t.fbw_ground_spoilers_active);
+        pull_f64!(t.fbw_fcu_spd_dot);
+        pull_f64!(t.fbw_fcu_hdg_dot);
+        pull_f64!(t.fbw_fcu_alt_managed);
+
+        pull_f64!(t.ini_roll_mode);
+        pull_f64!(t.ini_pitch_mode);
+        pull_f64!(t.ini_throttle_mode);
+        pull_f64!(t.ini_v1);
+        pull_f64!(t.ini_vr);
+        pull_f64!(t.ini_v2);
+        pull_f64!(t.ini_vls);
+        pull_f64!(t.ini_vapp);
+        pull_f64!(t.ini_vref);
+        pull_f64!(t.ini_flex_temp);
+        pull_f64!(t.ini_lever_toga);
+        pull_f64!(t.ini_lever_flex_mct);
+        pull_f64!(t.ini_lever_cl);
+        pull_f64!(t.ini_flaps_handle_index);
+        pull_f64!(t.ini_ground_spoilers);
+        pull_f64!(t.ini_autobrake_engaged);
+        pull_f64!(t.ini_master_caution);
+        pull_f64!(t.ini_master_warning);
+        pull_f64!(t.ini_fuel_flow1_kg);
+        pull_f64!(t.ini_fuel_flow2_kg);
+        pull_f64!(t.ini_fuel_flow3_kg);
+        pull_f64!(t.ini_fuel_flow4_kg);
+        pull_f64!(t.ini_autobrake_level);
+
+        pull_f64!(t.a346_flight_phase);
+        pull_f64!(t.a346_fcu_spd_managed);
+        pull_f64!(t.a346_fcu_hdg_managed);
+        pull_f64!(t.a346_fcu_vs_managed);
+        pull_f64!(t.a346_master_warning_light);
+        pull_f64!(t.a346_master_caution_light);
+        pull_f64!(t.a346_spd_brk_lever_pos);
+        pull_f64!(t.a346_spoiler_lever_armed);
+        pull_f64!(t.a346_eng1_rev_ratio);
+        pull_f64!(t.a346_eng2_rev_ratio);
+        pull_f64!(t.a346_eng3_rev_ratio);
+        pull_f64!(t.a346_eng4_rev_ratio);
+
+        pull_f64!(t.md11_ap_state);
+        pull_f64!(t.md11_ats_state);
+        pull_f64!(t.md11_ats_clamp);
+        pull_f64!(t.md11_afs_spd);
+        pull_f64!(t.md11_afs_hdg);
+        pull_f64!(t.md11_afs_alt);
+        pull_f64!(t.md11_afs_vs);
+        pull_f64!(t.md11_v1);
+        pull_f64!(t.md11_vr);
+        pull_f64!(t.md11_v2);
+        pull_f64!(t.md11_eng1_n1);
+        pull_f64!(t.md11_eng2_n1);
+        pull_f64!(t.md11_eng3_n1);
+        pull_f64!(t.md11_autobrake_sw);
+
         // Silence the unused-assignment warning the last `pull_*!`
         // emits (the macro always advances `off`, but the very last
         // call doesn't read it again).
@@ -1160,6 +1496,117 @@ fn a346_gear_position_from_lever(lever: f64) -> f32 {
     }
 }
 
+/// f64-Pendant zu `positive_or_none` — fuer die Premium-V-Speeds und
+/// FLEX-Temp: 0.0 heisst "noch nicht im FMS eingegeben" → None.
+fn positive_f64_or_none(v: f64) -> Option<f64> {
+    if v > 0.0 { Some(v) } else { None }
+}
+
+/// Roh-Enum-Durchreicher fuer Mode-/Phase-LVars mit UNBEKANNTER
+/// Belegung (iniBuilds `INI_*_MODE_ACTIVE`, A346 `TLS_FLIGHT_PHASE`):
+/// 0 → None (kein Mode / uninitialisiert), n → "#{n}". So liefert
+/// EIN Live-Flug die Decode-Tabelle (Roh-Wert gegen das PFD ablesen),
+/// ohne dass ein erfundenes Label im Log landet.
+fn raw_enum_label(v: f64) -> Option<String> {
+    let n = v.round() as i32;
+    if n == 0 {
+        None
+    } else {
+        Some(format!("#{n}"))
+    }
+}
+
+/// FBW A32NX FMA lateral mode → PFD-Label. Quelle: FBW-Doku
+/// (fbw-a32nx/docs/a320-simvars.md, `A32NX_FMA_LATERAL_MODE`).
+/// 0 = kein Mode → None; unbekannte Enum-Werte werden als "#{n}"
+/// durchgereicht statt verworfen (neue FBW-Versionen koennten das
+/// Enum erweitern — der Roh-Wert bleibt dann analysierbar).
+fn fbw_fma_lateral_label(n: i32) -> Option<String> {
+    Some(match n {
+        0 => return None,
+        10 => "HDG".to_string(),
+        11 => "TRACK".to_string(),
+        20 => "NAV".to_string(),
+        30 => "LOC*".to_string(),
+        31 => "LOC".to_string(),
+        32 => "LAND".to_string(),
+        33 => "FLARE".to_string(),
+        34 => "ROLLOUT".to_string(),
+        40 => "RWY".to_string(),
+        41 => "RWY TRK".to_string(),
+        50 => "GA TRK".to_string(),
+        other => format!("#{other}"),
+    })
+}
+
+/// FBW A32NX FMA vertical mode → PFD-Label (FBW-Doku). Gleiche
+/// "#{n}"-Fallback-Semantik wie lateral.
+fn fbw_fma_vertical_label(n: i32) -> Option<String> {
+    Some(match n {
+        0 => return None,
+        10 => "ALT".to_string(),
+        11 => "ALT CST".to_string(),
+        14 => "VS".to_string(),
+        15 => "FPA".to_string(),
+        20 => "OP CLB".to_string(),
+        21 => "OP DES".to_string(),
+        22 => "VS".to_string(),
+        23 => "FPA".to_string(),
+        30 => "SRS".to_string(),
+        31 => "SRS GA".to_string(),
+        40 => "CLB".to_string(),
+        41 => "DES".to_string(),
+        50 => "G/S*".to_string(),
+        51 => "G/S".to_string(),
+        52 => "LAND".to_string(),
+        53 => "FLARE".to_string(),
+        54 => "ROLLOUT".to_string(),
+        other => format!("#{other}"),
+    })
+}
+
+/// FBW `A32NX_AUTOTHRUST_MODE` → FMA-Thrust-Label (FBW-Doku).
+fn fbw_fma_thrust_label(n: i32) -> Option<String> {
+    Some(match n {
+        0 => return None,
+        1 => "MAN TOGA".to_string(),
+        2 => "MAN GA SOFT".to_string(),
+        3 => "MAN FLX".to_string(),
+        4 => "MAN DTO".to_string(),
+        5 => "MAN MCT".to_string(),
+        6 => "MAN THR".to_string(),
+        7 => "SPEED".to_string(),
+        8 => "MACH".to_string(),
+        9 => "THR MCT".to_string(),
+        10 => "THR CLB".to_string(),
+        11 => "THR LVR".to_string(),
+        12 => "THR IDLE".to_string(),
+        13 => "A.FLOOR".to_string(),
+        14 => "TOGA LK".to_string(),
+        other => format!("#{other}"),
+    })
+}
+
+/// FBW `A32NX_FWC_FLIGHT_PHASE` → Phasen-Label (FBW-Doku, FWC-Enum
+/// 1..10). 0 → None (FWC noch nicht initialisiert); unbekannte Werte
+/// als "#{n}" durchgereicht.
+fn fbw_fwc_phase_label(n: i32) -> Option<String> {
+    Some(match n {
+        0 => return None,
+        1 => "ELEC PWR".to_string(),
+        2 => "1ST ENG".to_string(),
+        3 => "T/O 80KT".to_string(),
+        4 => "LIFTOFF".to_string(),
+        5 => "CLIMB <1500".to_string(),
+        6 => "CRUISE".to_string(),
+        7 => "DESCENT".to_string(),
+        8 => "APPROACH".to_string(),
+        9 => "TOUCHDOWN".to_string(),
+        10 => "ROLLOUT <80KT".to_string(),
+        other => format!("#{other}"),
+    })
+}
+
 fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     let profile = AircraftProfile::detect(&t.title, &t.atc_model);
     let is_fenix = profile.is_fenix();
@@ -1171,6 +1618,12 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // profiles-Test).
     let is_a346 = matches!(profile, AircraftProfile::AerosoftA346);
     let is_a350 = matches!(profile, AircraftProfile::IniA350);
+    // v0.16.9 (#Premium): zusaetzliche Profile-Gates. Die INI_-LVars
+    // teilen sich A350 und A340 (gleiche Namen laut Inventar), daher
+    // das kombinierte `is_ini`-Gate fuer Gruppe C.
+    let is_a340 = matches!(profile, AircraftProfile::IniA340);
+    let is_md11 = matches!(profile, AircraftProfile::TfdiMd11);
+    let is_ini = is_a350 || is_a340;
     // v0.7.17 (F-001): Fenix-A32x extension LVARs are now ALWAYS applied
     // when the profile is Fenix — the v0.7.16 opt-in flag is removed
     // after a positive testing phase. The branch below is kept under
@@ -1346,11 +1799,31 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     //   * Default + others: standard MSFS SimVars.
     let (ap_master, ap_hdg, ap_alt, ap_nav, ap_appr) = if is_fbw {
         (
-            t.fbw_ap_active != 0.0,
+            // v0.16.9 (#Premium): AP1/AP2 einzeln (FBW-Doku
+            // `A32NX_AUTOPILOT_{1,2}_ACTIVE`) ODER der kombinierte
+            // Active-LVar ODER der Standard-SimVar — jede Quelle
+            // genuegt, keine Regression gegen den bisherigen Pfad.
+            t.fbw_ap_active != 0.0
+                || t.fbw_ap1_active != 0.0
+                || t.fbw_ap2_active != 0.0
+                || t.ap_master,
             t.fbw_ap_hdg != 0.0,
             t.fbw_ap_alt != 0.0,
             t.fbw_ap_nav != 0.0,
             t.fbw_ap_appr != 0.0,
+        )
+    } else if is_md11 {
+        // TFDi MD-11 (v0.16.9 #Premium, TFDi-Doku): `L:MD11_AP_STATE`
+        // ist dokumentiert 0=Off, 1=AP1, 2=AP2, 3=both → jeder Wert
+        // > 0 heisst Master engaged. Standard-SimVar gewinnt per ODER,
+        // falls das Addon ihn doch treibt. HDG/ALT/NAV/APPR bleiben
+        // konservativ auf den Standard-SimVars.
+        (
+            t.md11_ap_state > 0.5 || t.ap_master,
+            t.ap_heading,
+            t.ap_altitude,
+            t.ap_nav,
+            t.ap_approach,
         )
     } else if is_fenix {
         // v0.7.17 (B-008): `L:S_FCU_AP1` / `L:S_FCU_AP2` sind
@@ -1603,6 +2076,35 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             Some(t.fnx_fcu_spd.round() as i32),
             Some(t.fnx_fcu_vs.round() as i32),
         )
+    } else if is_md11 {
+        // TFDi MD-11 (v0.16.9 #Premium): AFS-Glareshield-Targets aus
+        // `L:MD11_AFS_*`. Dash-Sentinels laut Doku: SPD/HDG zeigen
+        // -999 wenn das Fenster "---" (dashed/managed) anzeigt, V/S
+        // -9999. Wir filtern <= Sentinel-Schwelle (faengt auch noch
+        // negativere Varianten ab). ALT kennt kein Dash — nur > 0 ist
+        // plausibel (0 = LVar uninitialisiert).
+        (
+            if t.md11_afs_alt > 0.0 {
+                Some(t.md11_afs_alt.round() as i32)
+            } else {
+                None
+            },
+            if t.md11_afs_hdg <= -998.0 {
+                None
+            } else {
+                Some(t.md11_afs_hdg.round() as i32)
+            },
+            if t.md11_afs_spd <= -998.0 {
+                None
+            } else {
+                Some(t.md11_afs_spd.round() as i32)
+            },
+            if t.md11_afs_vs <= -9998.0 {
+                None
+            } else {
+                Some(t.md11_afs_vs.round() as i32)
+            },
+        )
     } else {
         (None, None, None, None)
     };
@@ -1634,6 +2136,35 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             3 => Some("MAX".to_string()),
             _ => None,
         }
+    } else if is_fbw {
+        // v0.16.9 (#Premium): FBW `A32NX_AUTOBRAKES_ARMED_MODE`
+        // (FBW-Doku): 0=DIS, 1=LO, 2=MED, 3=MAX. 0 behaelt die
+        // bisherige None-Semantik des Profils (kein erfundenes
+        // "OFF"-Label); unbekannte Werte ebenfalls None.
+        match t.fbw_autobrake_armed_mode.round() as i32 {
+            1 => Some("LO".to_string()),
+            2 => Some("MED".to_string()),
+            3 => Some("MAX".to_string()),
+            _ => None,
+        }
+    } else if is_a340 {
+        // v0.16.9 (#Premium): iniBuilds A340 `L:INI_AUTOBRAKE_LEVEL`
+        // — Selector-Enum laut HubHop: 3=MED, 4=MAX, 5=LO. 0 =
+        // uninitialisiert/aus → None; andere Werte als "#{n}"
+        // durchreichen (Decode beim ersten Live-Flug, vermutlich
+        // 1/2 = OFF/DISARM-Stellungen).
+        match t.ini_autobrake_level.round() as i32 {
+            0 => None,
+            3 => Some("MED".to_string()),
+            4 => Some("MAX".to_string()),
+            5 => Some("LO".to_string()),
+            n => Some(format!("#{n}")),
+        }
+    } else if is_md11 {
+        // v0.16.9 (#Premium): TFDi MD-11 `L:MD11_CTR_AUTOBRAKE_SW` —
+        // Selector-Positions-Enum, Belegung undokumentiert → Roh-Wert
+        // "#{n}" fuer n != 0 (Decode beim ersten Live-Flug).
+        raw_enum_label(t.md11_autobrake_sw)
     } else {
         None
     };
@@ -1680,8 +2211,282 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         Some(t.a350_athr_light as i32 != 0)
     } else if is_fenix {
         Some(t.fnx_fcu_athr as i32 != 0)
+    } else if is_fbw {
+        // v0.16.9 (#Premium): FBW `A32NX_AUTOTHRUST_STATUS` (FBW-Doku):
+        // 0=off, 1=armed, 2=active. "On" heisst hier AKTIV (>= 2) —
+        // armed (1) ist der TOGA-Takeoff-Zustand, in dem die Lever
+        // noch manuell stehen; den als "A/THR on" zu loggen waere
+        // irrefuehrend.
+        Some(t.fbw_athr_status >= 2.0)
+    } else if is_md11 {
+        // v0.16.9 (#Premium): TFDi MD-11 `L:MD11_ATS_STATE` — Enum
+        // undokumentiert, > 0 = ATS engaged (TFDi-Doku-Konvention).
+        Some(t.md11_ats_state > 0.5)
     } else {
         None
+    };
+
+    // ================================================================
+    // v0.16.9 (#Premium): Cockpit-Tiefendaten-Mappings.
+    // Alle Zweige strikt profile-gegated — tote LVars lesen auf
+    // fremden Aircraft 0.0, ohne Gate entstuenden Phantom-Werte
+    // (siehe premium_lvars_do_not_affect_default_profile-Test).
+    // PMDG-Premium fliesst NICHT hier, sondern ueber den `pmdg`-
+    // Struct-Merge in sim-core (`apply_pmdg_premium_override`).
+    // ================================================================
+
+    // FMA-Spalten. FBW: dokumentierte Enums → PFD-Labels. INI: Enum-
+    // Belegung unbekannt → Roh-Wert "#{n}" (Decode beim Live-Flug).
+    let fma_lateral_mode = if is_fbw {
+        fbw_fma_lateral_label(t.fbw_fma_lateral.round() as i32)
+    } else if is_ini {
+        raw_enum_label(t.ini_roll_mode)
+    } else {
+        None
+    };
+    let fma_vertical_mode = if is_fbw {
+        fbw_fma_vertical_label(t.fbw_fma_vertical.round() as i32)
+    } else if is_ini {
+        raw_enum_label(t.ini_pitch_mode)
+    } else {
+        None
+    };
+    let fma_thrust_mode = if is_fbw {
+        fbw_fma_thrust_label(t.fbw_athr_mode.round() as i32)
+    } else if is_ini {
+        raw_enum_label(t.ini_throttle_mode)
+    } else {
+        None
+    };
+
+    // Aircraft-eigene Flugphase. FBW: FWC-Enum dokumentiert. A346:
+    // FMGC-Phase-Enum, Decode beim ersten Live-Flug → "#{n}".
+    let flight_phase_aircraft = if is_fbw {
+        fbw_fwc_phase_label(t.fbw_fwc_phase.round() as i32)
+    } else if is_a346 {
+        raw_enum_label(t.a346_flight_phase)
+    } else {
+        None
+    };
+
+    // V-Speeds + FLEX: 0 = noch nicht im FMS eingegeben → None.
+    let v1_kt = if is_fenix {
+        positive_f64_or_none(t.fnx_perf_v1)
+    } else if is_ini {
+        positive_f64_or_none(t.ini_v1)
+    } else if is_md11 {
+        positive_f64_or_none(t.md11_v1)
+    } else {
+        None
+    };
+    let vr_kt = if is_fenix {
+        positive_f64_or_none(t.fnx_perf_vr)
+    } else if is_ini {
+        positive_f64_or_none(t.ini_vr)
+    } else if is_md11 {
+        positive_f64_or_none(t.md11_vr)
+    } else {
+        None
+    };
+    let v2_kt = if is_fenix {
+        positive_f64_or_none(t.fnx_perf_v2)
+    } else if is_fbw {
+        positive_f64_or_none(t.fbw_vspeeds_v2)
+    } else if is_ini {
+        positive_f64_or_none(t.ini_v2)
+    } else if is_md11 {
+        positive_f64_or_none(t.md11_v2)
+    } else {
+        None
+    };
+    let vapp_kt = if is_fbw {
+        positive_f64_or_none(t.fbw_vspeeds_vapp)
+    } else if is_ini {
+        positive_f64_or_none(t.ini_vapp)
+    } else {
+        None
+    };
+    let vls_kt = if is_fbw {
+        positive_f64_or_none(t.fbw_vspeeds_vls)
+    } else if is_ini {
+        positive_f64_or_none(t.ini_vls)
+    } else {
+        None
+    };
+    // VREF liefert nur die INI-Familie (PMDG via pmdg-Merge).
+    let vref_kt = if is_ini {
+        positive_f64_or_none(t.ini_vref)
+    } else {
+        None
+    };
+    let flex_temp_c = if is_fenix {
+        // > 0 heisst FLEX eingegeben; das Gate-Label (thrust_gate)
+        // bleibt beim Fenix trotzdem None — nur die INI-Familie
+        // liefert die Lever-Gate-Flags.
+        positive_f64_or_none(t.fnx_perf_flex)
+    } else if is_ini {
+        positive_f64_or_none(t.ini_flex_temp)
+    } else {
+        None
+    };
+
+    // Thrust-Lever-Gate (nur INI): Prioritaet TOGA > FLX/MCT > CL —
+    // bei (theoretisch) mehreren gesetzten Flags gewinnt das hoechste.
+    let thrust_gate = if is_ini {
+        if t.ini_lever_toga != 0.0 {
+            Some("TOGA".to_string())
+        } else if t.ini_lever_flex_mct != 0.0 {
+            Some("FLX/MCT".to_string())
+        } else if t.ini_lever_cl != 0.0 {
+            Some("CL".to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Master Caution / Warning — echte Annunciator-Lampen-LVars.
+    // (Fenix-Engine-Fire ist subscribed, aber bewusst ungemappt: ein
+    // Fire zieht ohnehin das Master Warning.)
+    let master_caution = if is_fenix {
+        Some(t.fnx_master_caution != 0.0)
+    } else if is_ini {
+        Some(t.ini_master_caution != 0.0)
+    } else if is_a346 {
+        Some(t.a346_master_caution_light != 0.0)
+    } else {
+        None
+    };
+    let master_warning = if is_fenix {
+        Some(t.fnx_master_warning != 0.0)
+    } else if is_ini {
+        Some(t.ini_master_warning != 0.0)
+    } else if is_a346 {
+        Some(t.a346_master_warning_light != 0.0)
+    } else {
+        None
+    };
+
+    // FCU-managed-Dots. A346-Besonderheit: die FCU hat kein eigenes
+    // ALT-Dot — `TLS_FCU_VS_MANAGED` (V/S-Fenster managed = FMGC
+    // fuehrt das vertikale Profil) ist die naechstliegende
+    // APPROXIMATION fuer managed_altitude.
+    let managed_speed = if is_fenix {
+        Some(t.fnx_fcu_spd_managed != 0.0)
+    } else if is_fbw {
+        Some(t.fbw_fcu_spd_dot != 0.0)
+    } else if is_a346 {
+        Some(t.a346_fcu_spd_managed != 0.0)
+    } else {
+        None
+    };
+    let managed_heading = if is_fenix {
+        Some(t.fnx_fcu_hdg_managed != 0.0)
+    } else if is_fbw {
+        Some(t.fbw_fcu_hdg_dot != 0.0)
+    } else if is_a346 {
+        Some(t.a346_fcu_hdg_managed != 0.0)
+    } else {
+        None
+    };
+    let managed_altitude = if is_fenix {
+        Some(t.fnx_fcu_alt_managed != 0.0)
+    } else if is_fbw {
+        Some(t.fbw_fcu_alt_managed != 0.0)
+    } else if is_a346 {
+        Some(t.a346_fcu_vs_managed != 0.0)
+    } else {
+        None
+    };
+
+    // Reverser: nur die A346 liefert Ratio-LVars (PMDG via pmdg-
+    // Merge). > 0.05 filtert Idle-Jitter der 4 Ratios.
+    let reverser_deployed = if is_a346 {
+        Some(
+            t.a346_eng1_rev_ratio > 0.05
+                || t.a346_eng2_rev_ratio > 0.05
+                || t.a346_eng3_rev_ratio > 0.05
+                || t.a346_eng4_rev_ratio > 0.05,
+        )
+    } else {
+        None
+    };
+
+    // Ground-Spoiler aktiv (FBW + INI; A346 hat keinen direkten
+    // Active-Flag — nur den Lever, der bleibt ungemappt).
+    let ground_spoilers_active = if is_fbw {
+        Some(t.fbw_ground_spoilers_active != 0.0)
+    } else if is_ini {
+        Some(t.ini_ground_spoilers != 0.0)
+    } else {
+        None
+    };
+
+    // Spoilers ARMED: Standard-SimVar ODER Profil-LVar — jede Quelle
+    // genuegt, kein Regress fuer Aircraft mit funktionierendem
+    // Standard.
+    let spoilers_armed = if is_fbw {
+        t.spoilers_armed || t.fbw_spoilers_armed != 0.0
+    } else if is_a346 {
+        t.spoilers_armed || t.a346_spoiler_lever_armed != 0.0
+    } else {
+        t.spoilers_armed
+    };
+
+    // Baro STD (nur Fenix: EFIS1-Schalterstellung).
+    let baro_std = if is_fenix {
+        Some(t.fnx_baro_std != 0.0)
+    } else {
+        None
+    };
+
+    // eng_n1_pct: generisches N1-Array ueber die Standard-SimVars
+    // `TURB ENG N1:1..4` (alle Aircraft). Engine-Count-Heuristik:
+    // hoechster Index, dessen Combustion (plain ODER EX1) an ist
+    // ODER dessen normalisiertes N1 > 5 % liegt — das Praefix 1..k
+    // bleibt positionserhaltend (Single-Engine-Taxi auf Engine 2
+    // liefert [0, n1_2], nicht [n1_2]). Alles aus → None. Skala je
+    // Addon 0-1 ODER 0-100 → auf Prozent normalisiert (wie der
+    // N1-Fallback fuer engines_running oben).
+    // MD-11-Ausnahme: display-exakte `MD11_ENG1..3_N1`-LVars
+    // bevorzugen, sobald irgendeine > 0 liest; sonst Standard-Pfad.
+    let eng_n1_pct: Option<Vec<f64>> = {
+        let md11_n1 = if is_md11 {
+            let n1 = [t.md11_eng1_n1, t.md11_eng2_n1, t.md11_eng3_n1];
+            if n1.iter().any(|v| *v > 0.0) {
+                Some(n1.to_vec())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        md11_n1.or_else(|| {
+            let normalize = |raw: f64| if raw <= 1.5 { raw * 100.0 } else { raw };
+            let n1 = [
+                normalize(t.n1_pct_1),
+                normalize(t.n1_pct_2),
+                normalize(t.n1_pct_3),
+                normalize(t.n1_pct_4),
+            ];
+            let combustion = [
+                t.eng1_firing || t.eng1_combustion_ex1,
+                t.eng2_firing || t.eng2_combustion_ex1,
+                t.eng3_firing || t.eng3_combustion_ex1,
+                t.eng4_firing || t.eng4_combustion_ex1,
+            ];
+            let k = (0..4)
+                .filter(|&i| combustion[i] || n1[i] > 5.0)
+                .map(|i| i + 1)
+                .max()
+                .unwrap_or(0);
+            if k == 0 {
+                None
+            } else {
+                Some(n1[..k].to_vec())
+            }
+        })
     };
 
     SimSnapshot {
@@ -1825,8 +2630,12 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         autopilot_approach: Some(ap_appr),
         autothrottle_on,
         fuel_flow_kg_per_h,
+        // Spoilers-Handle: bleibt die analoge Standard-SimVar — auch
+        // beim Fenix (dessen `L:A_FC_SPEEDBRAKE` ist nur als Override-
+        // Kandidat subscribed, s. Tabellen-Kommentar Gruppe A).
         spoilers_handle_position: Some(t.spoilers_handle_position as f32),
-        spoilers_armed: Some(t.spoilers_armed),
+        // v0.16.9 (#Premium): Standard ODER Profil-LVar (FBW/A346).
+        spoilers_armed: Some(spoilers_armed),
         pushback_state,
         apu_switch: Some(apu_switch),
         apu_pct_rpm: Some(t.apu_pct_rpm as f32),
@@ -1877,6 +2686,39 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         contact_point_on_ground: None,
         gear_water_depth_m: None,
         water_rudder_present: None,
+        // v0.16.9 (#Premium): Cockpit-Tiefendaten — profile-gegated
+        // aus den LVar-Gruppen A-E gemappt (siehe Premium-Block oben).
+        // PMDG-Premium fliesst zusaetzlich ueber den `pmdg`-Struct-
+        // Merge in sim-core (`apply_pmdg_premium_override`).
+        fma_lateral_mode,
+        fma_vertical_mode,
+        fma_thrust_mode,
+        flight_phase_aircraft,
+        v1_kt,
+        vr_kt,
+        v2_kt,
+        vapp_kt,
+        vls_kt,
+        vref_kt,
+        flex_temp_c,
+        thrust_gate,
+        master_caution,
+        master_warning,
+        managed_speed,
+        managed_heading,
+        managed_altitude,
+        reverser_deployed,
+        ground_spoilers_active,
+        eng_n1_pct,
+        baro_std,
+        // Per-Tank-Fuel: bewusst None — die INI-Tank-Liste ist gross,
+        // die generische fuel_total-Quelle reicht (PMDG via Merge).
+        fuel_per_tank_kg: None,
+        // Die folgenden vier liefert nur der PMDG-SDK-Pfad (Merge).
+        below_gs_alert: None,
+        cabin_altitude_warning: None,
+        stab_out_of_trim: None,
+        minimums_baro_ft: None,
     }
 }
 
@@ -2131,6 +2973,12 @@ mod tests {
         assert_eq!(t.a346_seatbelt_sw, 0.0);
         assert_eq!(t.a346_autobrake_mode, 0.0);
         assert_eq!(t.a346_gear_lever, 0.0);
+        // v0.16.9 (#Premium): the very end of the new tail.
+        assert_eq!(t.fnx_perf_v1, 0.0);
+        assert_eq!(t.fbw_fcu_alt_managed, 0.0);
+        assert_eq!(t.ini_autobrake_level, 0.0);
+        assert_eq!(t.a346_eng4_rev_ratio, 0.0);
+        assert_eq!(t.md11_autobrake_sw, 0.0);
     }
 
     // ---- v0.13.17: N1-Fallback fuer engines_running ----
@@ -2365,7 +3213,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(buf.len(), 1820, "total block size");
+        assert_eq!(buf.len(), 2452, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -2423,6 +3271,96 @@ mod tests {
         assert_eq!(t.a350_athr_light, 1148.0); // idx 148
         assert_eq!(t.a350_appr_light, 1149.0); // idx 149
         assert_eq!(t.a350_loc_light, 1150.0); // idx 150
+
+        // ---- v0.16.9 (#Premium): 79 tail fields (idx 151..229) ----
+        // Gruppe A: Fenix Premium (idx 151..163).
+        assert_eq!(t.fnx_perf_v1, 1151.0); // idx 151
+        assert_eq!(t.fnx_perf_vr, 1152.0); // idx 152
+        assert_eq!(t.fnx_perf_v2, 1153.0); // idx 153
+        assert_eq!(t.fnx_perf_flex, 1154.0); // idx 154
+        assert_eq!(t.fnx_master_caution, 1155.0); // idx 155
+        assert_eq!(t.fnx_master_warning, 1156.0); // idx 156
+        assert_eq!(t.fnx_speedbrake_handle, 1157.0); // idx 157
+        assert_eq!(t.fnx_fcu_spd_managed, 1158.0); // idx 158
+        assert_eq!(t.fnx_fcu_hdg_managed, 1159.0); // idx 159
+        assert_eq!(t.fnx_fcu_alt_managed, 1160.0); // idx 160
+        assert_eq!(t.fnx_baro_std, 1161.0); // idx 161
+        assert_eq!(t.fnx_eng1_fire, 1162.0); // idx 162
+        assert_eq!(t.fnx_eng2_fire, 1163.0); // idx 163
+
+        // Gruppe B: FBW-Familie (idx 164..180).
+        assert_eq!(t.fbw_ap1_active, 1164.0); // idx 164
+        assert_eq!(t.fbw_ap2_active, 1165.0); // idx 165
+        assert_eq!(t.fbw_athr_status, 1166.0); // idx 166
+        assert_eq!(t.fbw_athr_mode, 1167.0); // idx 167
+        assert_eq!(t.fbw_fma_lateral, 1168.0); // idx 168
+        assert_eq!(t.fbw_fma_vertical, 1169.0); // idx 169
+        assert_eq!(t.fbw_fwc_phase, 1170.0); // idx 170
+        assert_eq!(t.fbw_vspeeds_v2, 1171.0); // idx 171
+        assert_eq!(t.fbw_vspeeds_vls, 1172.0); // idx 172
+        assert_eq!(t.fbw_vspeeds_vapp, 1173.0); // idx 173
+        assert_eq!(t.fbw_autobrake_armed_mode, 1174.0); // idx 174
+        assert_eq!(t.fbw_flaps_handle_index, 1175.0); // idx 175
+        assert_eq!(t.fbw_spoilers_armed, 1176.0); // idx 176
+        assert_eq!(t.fbw_ground_spoilers_active, 1177.0); // idx 177
+        assert_eq!(t.fbw_fcu_spd_dot, 1178.0); // idx 178
+        assert_eq!(t.fbw_fcu_hdg_dot, 1179.0); // idx 179
+        assert_eq!(t.fbw_fcu_alt_managed, 1180.0); // idx 180
+
+        // Gruppe C: INI A350/A340 (idx 181..203).
+        assert_eq!(t.ini_roll_mode, 1181.0); // idx 181
+        assert_eq!(t.ini_pitch_mode, 1182.0); // idx 182
+        assert_eq!(t.ini_throttle_mode, 1183.0); // idx 183
+        assert_eq!(t.ini_v1, 1184.0); // idx 184
+        assert_eq!(t.ini_vr, 1185.0); // idx 185
+        assert_eq!(t.ini_v2, 1186.0); // idx 186
+        assert_eq!(t.ini_vls, 1187.0); // idx 187
+        assert_eq!(t.ini_vapp, 1188.0); // idx 188
+        assert_eq!(t.ini_vref, 1189.0); // idx 189
+        assert_eq!(t.ini_flex_temp, 1190.0); // idx 190
+        assert_eq!(t.ini_lever_toga, 1191.0); // idx 191
+        assert_eq!(t.ini_lever_flex_mct, 1192.0); // idx 192
+        assert_eq!(t.ini_lever_cl, 1193.0); // idx 193
+        assert_eq!(t.ini_flaps_handle_index, 1194.0); // idx 194
+        assert_eq!(t.ini_ground_spoilers, 1195.0); // idx 195
+        assert_eq!(t.ini_autobrake_engaged, 1196.0); // idx 196
+        assert_eq!(t.ini_master_caution, 1197.0); // idx 197
+        assert_eq!(t.ini_master_warning, 1198.0); // idx 198
+        assert_eq!(t.ini_fuel_flow1_kg, 1199.0); // idx 199
+        assert_eq!(t.ini_fuel_flow2_kg, 1200.0); // idx 200
+        assert_eq!(t.ini_fuel_flow3_kg, 1201.0); // idx 201
+        assert_eq!(t.ini_fuel_flow4_kg, 1202.0); // idx 202
+        assert_eq!(t.ini_autobrake_level, 1203.0); // idx 203
+
+        // Gruppe D: A346 Premium-Extras (idx 204..215).
+        assert_eq!(t.a346_flight_phase, 1204.0); // idx 204
+        assert_eq!(t.a346_fcu_spd_managed, 1205.0); // idx 205
+        assert_eq!(t.a346_fcu_hdg_managed, 1206.0); // idx 206
+        assert_eq!(t.a346_fcu_vs_managed, 1207.0); // idx 207
+        assert_eq!(t.a346_master_warning_light, 1208.0); // idx 208
+        assert_eq!(t.a346_master_caution_light, 1209.0); // idx 209
+        assert_eq!(t.a346_spd_brk_lever_pos, 1210.0); // idx 210
+        assert_eq!(t.a346_spoiler_lever_armed, 1211.0); // idx 211
+        assert_eq!(t.a346_eng1_rev_ratio, 1212.0); // idx 212
+        assert_eq!(t.a346_eng2_rev_ratio, 1213.0); // idx 213
+        assert_eq!(t.a346_eng3_rev_ratio, 1214.0); // idx 214
+        assert_eq!(t.a346_eng4_rev_ratio, 1215.0); // idx 215
+
+        // Gruppe E: TFDi MD-11 (idx 216..229).
+        assert_eq!(t.md11_ap_state, 1216.0); // idx 216
+        assert_eq!(t.md11_ats_state, 1217.0); // idx 217
+        assert_eq!(t.md11_ats_clamp, 1218.0); // idx 218
+        assert_eq!(t.md11_afs_spd, 1219.0); // idx 219
+        assert_eq!(t.md11_afs_hdg, 1220.0); // idx 220
+        assert_eq!(t.md11_afs_alt, 1221.0); // idx 221
+        assert_eq!(t.md11_afs_vs, 1222.0); // idx 222
+        assert_eq!(t.md11_v1, 1223.0); // idx 223
+        assert_eq!(t.md11_vr, 1224.0); // idx 224
+        assert_eq!(t.md11_v2, 1225.0); // idx 225
+        assert_eq!(t.md11_eng1_n1, 1226.0); // idx 226
+        assert_eq!(t.md11_eng2_n1, 1227.0); // idx 227
+        assert_eq!(t.md11_eng3_n1, 1228.0); // idx 228
+        assert_eq!(t.md11_autobrake_sw, 1229.0); // idx 229
     }
 
     /// Truncated block (e.g. all 12 new tail LVars rejected by an older
@@ -2438,6 +3376,23 @@ mod tests {
                 FieldKind::String256 => buf.extend_from_slice(&[0u8; 256]),
             }
         }
+        // v0.16.9 (#Premium): drop the 79 premium tail fields (79*8).
+        buf.truncate(buf.len() - 632);
+        let t = Telemetry::from_block(&buf);
+        assert_eq!(t.a350_loc_light, 1150.0); // last v0.16.8 field intact
+        assert_eq!(t.a346_gear_lever, 1145.0); // v0.16.4 layer intact
+        // Premium tail = safe defaults (first + last of each group).
+        assert_eq!(t.fnx_perf_v1, 0.0);
+        assert_eq!(t.fnx_eng2_fire, 0.0);
+        assert_eq!(t.fbw_ap1_active, 0.0);
+        assert_eq!(t.fbw_fcu_alt_managed, 0.0);
+        assert_eq!(t.ini_roll_mode, 0.0);
+        assert_eq!(t.ini_autobrake_level, 0.0);
+        assert_eq!(t.a346_flight_phase, 0.0);
+        assert_eq!(t.a346_eng4_rev_ratio, 0.0);
+        assert_eq!(t.md11_ap_state, 0.0);
+        assert_eq!(t.md11_autobrake_sw, 0.0);
+
         // v0.16.8: drop the 5 new A350 tail fields (5*8).
         buf.truncate(buf.len() - 40);
         let t = Telemetry::from_block(&buf);
@@ -2736,5 +3691,659 @@ mod tests {
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.autopilot_master, Some(false));
         assert_eq!(snap.autothrottle_on, None);
+    }
+
+    // ==== v0.16.9 (#Premium): Cockpit-Tiefendaten (Gruppen A-E) ====
+
+    fn fbw_telemetry() -> Telemetry {
+        let mut t = Telemetry::default();
+        t.title = "FlyByWire A32NX".into();
+        t.atc_model = "A20N".into();
+        t
+    }
+
+    fn fenix_premium_telemetry() -> Telemetry {
+        let mut t = Telemetry::default();
+        t.title = "FenixA320 CFM SL".into();
+        t.atc_model = "A320".into();
+        t
+    }
+
+    fn ini_a350_telemetry() -> Telemetry {
+        let mut t = Telemetry::default();
+        t.title = "iniBuilds A350-900".into();
+        t.atc_model = "A359".into();
+        t
+    }
+
+    fn ini_a340_telemetry() -> Telemetry {
+        let mut t = Telemetry::default();
+        t.title = "iniBuilds A340-300".into();
+        t.atc_model = "A343".into();
+        t
+    }
+
+    fn md11_telemetry() -> Telemetry {
+        let mut t = Telemetry::default();
+        t.title = "TFDi Design MD-11".into();
+        t.atc_model = "MD11".into();
+        t
+    }
+
+    #[test]
+    fn fbw_fma_labels_documented_enum_and_unknown_fallback() {
+        // Dokumentierte Enum-Werte → PFD-Labels.
+        let mut t = fbw_telemetry();
+        t.fbw_fma_lateral = 20.0; // NAV
+        t.fbw_fma_vertical = 50.0; // G/S*
+        t.fbw_athr_mode = 7.0; // SPEED
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fma_lateral_mode.as_deref(), Some("NAV"));
+        assert_eq!(snap.fma_vertical_mode.as_deref(), Some("G/S*"));
+        assert_eq!(snap.fma_thrust_mode.as_deref(), Some("SPEED"));
+
+        // Unbekannte Enum-Werte → "#{n}" (nicht verworfen).
+        let mut t = fbw_telemetry();
+        t.fbw_fma_lateral = 99.0;
+        t.fbw_fma_vertical = 77.0;
+        t.fbw_athr_mode = 42.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fma_lateral_mode.as_deref(), Some("#99"));
+        assert_eq!(snap.fma_vertical_mode.as_deref(), Some("#77"));
+        assert_eq!(snap.fma_thrust_mode.as_deref(), Some("#42"));
+
+        // 0 = kein Mode → None.
+        let snap = telemetry_to_snapshot(fbw_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.fma_lateral_mode, None);
+        assert_eq!(snap.fma_vertical_mode, None);
+        assert_eq!(snap.fma_thrust_mode, None);
+    }
+
+    #[test]
+    fn fbw_athr_status_active_vs_armed_semantics() {
+        // Status 1 = ARMED (TOGA-Takeoff, Lever manuell) — zaehlt
+        // NICHT als "A/THR on". Erst Status >= 2 (ACTIVE) ist on.
+        let mut t = fbw_telemetry();
+        t.fbw_athr_status = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, Some(false));
+
+        let mut t = fbw_telemetry();
+        t.fbw_athr_status = 2.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, Some(true));
+
+        let snap = telemetry_to_snapshot(fbw_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, Some(false));
+    }
+
+    #[test]
+    fn fbw_ap_master_from_ap1_or_ap2_lvars() {
+        // AP1-LVar allein reicht (kombinierter Active-LVar + Standard
+        // beide tot).
+        let mut t = fbw_telemetry();
+        t.fbw_ap1_active = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(true));
+
+        let mut t = fbw_telemetry();
+        t.fbw_ap2_active = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(true));
+
+        // Bisheriger Pfad (kombinierter LVar) bleibt gueltig.
+        let mut t = fbw_telemetry();
+        t.fbw_ap_active = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(true));
+
+        let snap = telemetry_to_snapshot(fbw_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(false));
+    }
+
+    #[test]
+    fn fbw_fwc_phase_labels() {
+        let mut t = fbw_telemetry();
+        t.fbw_fwc_phase = 6.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.flight_phase_aircraft.as_deref(), Some("CRUISE"));
+
+        let mut t = fbw_telemetry();
+        t.fbw_fwc_phase = 10.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(
+            snap.flight_phase_aircraft.as_deref(),
+            Some("ROLLOUT <80KT")
+        );
+
+        // 0 = FWC nicht initialisiert → None; unbekannt → "#{n}".
+        let snap = telemetry_to_snapshot(fbw_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.flight_phase_aircraft, None);
+        let mut t = fbw_telemetry();
+        t.fbw_fwc_phase = 12.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.flight_phase_aircraft.as_deref(), Some("#12"));
+    }
+
+    #[test]
+    fn fbw_vspeeds_zero_to_none_and_values_map() {
+        // 0 = noch nicht berechnet/eingegeben → None.
+        let snap = telemetry_to_snapshot(fbw_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.v2_kt, None);
+        assert_eq!(snap.vls_kt, None);
+        assert_eq!(snap.vapp_kt, None);
+        // FBW liefert kein V1/VR/VREF → bleibt None.
+        assert_eq!(snap.v1_kt, None);
+        assert_eq!(snap.vr_kt, None);
+        assert_eq!(snap.vref_kt, None);
+
+        let mut t = fbw_telemetry();
+        t.fbw_vspeeds_v2 = 145.0;
+        t.fbw_vspeeds_vls = 118.0;
+        t.fbw_vspeeds_vapp = 136.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.v2_kt, Some(145.0));
+        assert_eq!(snap.vls_kt, Some(118.0));
+        assert_eq!(snap.vapp_kt, Some(136.0));
+    }
+
+    #[test]
+    fn fbw_managed_dots_autobrake_and_spoilers() {
+        let mut t = fbw_telemetry();
+        t.fbw_fcu_spd_dot = 1.0;
+        t.fbw_fcu_hdg_dot = 0.0;
+        t.fbw_fcu_alt_managed = 1.0;
+        t.fbw_autobrake_armed_mode = 2.0;
+        t.fbw_spoilers_armed = 1.0;
+        t.fbw_ground_spoilers_active = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.managed_speed, Some(true));
+        assert_eq!(snap.managed_heading, Some(false));
+        assert_eq!(snap.managed_altitude, Some(true));
+        assert_eq!(snap.autobrake.as_deref(), Some("MED"));
+        // ARMED: LVar ODER Standard — hier nur der LVar.
+        assert_eq!(snap.spoilers_armed, Some(true));
+        assert_eq!(snap.ground_spoilers_active, Some(true));
+
+        // Autobrake 0 = DIS → None (bisherige Profil-Semantik).
+        let snap = telemetry_to_snapshot(fbw_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.autobrake, None);
+        assert_eq!(snap.ground_spoilers_active, Some(false));
+    }
+
+    #[test]
+    fn fenix_premium_vspeeds_and_flex_zero_to_none() {
+        // PERF-Page leer (0) → None, kein Phantom "V1 0 kt".
+        let snap =
+            telemetry_to_snapshot(fenix_premium_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.v1_kt, None);
+        assert_eq!(snap.vr_kt, None);
+        assert_eq!(snap.v2_kt, None);
+        assert_eq!(snap.flex_temp_c, None);
+
+        let mut t = fenix_premium_telemetry();
+        t.fnx_perf_v1 = 142.0;
+        t.fnx_perf_vr = 145.0;
+        t.fnx_perf_v2 = 151.0;
+        t.fnx_perf_flex = 62.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.v1_kt, Some(142.0));
+        assert_eq!(snap.vr_kt, Some(145.0));
+        assert_eq!(snap.v2_kt, Some(151.0));
+        assert_eq!(snap.flex_temp_c, Some(62.0));
+        // FLEX eingegeben heisst NICHT thrust_gate (nur INI liefert
+        // die Lever-Gate-Flags).
+        assert_eq!(snap.thrust_gate, None);
+    }
+
+    #[test]
+    fn fenix_premium_caution_warning_managed_and_baro() {
+        let mut t = fenix_premium_telemetry();
+        t.fnx_master_caution = 1.0;
+        t.fnx_master_warning = 0.0;
+        t.fnx_fcu_spd_managed = 1.0;
+        t.fnx_fcu_hdg_managed = 0.0;
+        t.fnx_fcu_alt_managed = 1.0;
+        t.fnx_baro_std = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.master_caution, Some(true));
+        assert_eq!(snap.master_warning, Some(false));
+        assert_eq!(snap.managed_speed, Some(true));
+        assert_eq!(snap.managed_heading, Some(false));
+        assert_eq!(snap.managed_altitude, Some(true));
+        assert_eq!(snap.baro_std, Some(true));
+
+        // Fenix LIEFERT die Lampen → Some(false), nicht None.
+        let snap =
+            telemetry_to_snapshot(fenix_premium_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.master_caution, Some(false));
+        assert_eq!(snap.master_warning, Some(false));
+        assert_eq!(snap.baro_std, Some(false));
+    }
+
+    #[test]
+    fn ini_thrust_gate_priority_toga_over_flx_over_cl() {
+        // TOGA gewinnt ueber alles.
+        let mut t = ini_a350_telemetry();
+        t.ini_lever_toga = 1.0;
+        t.ini_lever_flex_mct = 1.0;
+        t.ini_lever_cl = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.thrust_gate.as_deref(), Some("TOGA"));
+
+        // FLX/MCT vor CL.
+        let mut t = ini_a350_telemetry();
+        t.ini_lever_flex_mct = 1.0;
+        t.ini_lever_cl = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.thrust_gate.as_deref(), Some("FLX/MCT"));
+
+        let mut t = ini_a350_telemetry();
+        t.ini_lever_cl = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.thrust_gate.as_deref(), Some("CL"));
+
+        // Kein Gate-Flag → None.
+        let snap = telemetry_to_snapshot(ini_a350_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.thrust_gate, None);
+    }
+
+    #[test]
+    fn ini_raw_fma_passthrough_as_hash_labels() {
+        // Enum-Belegung unbekannt → Roh-Wert "#{n}", 0 → None. Gilt
+        // fuer BEIDE INI-Profile (A350 + A340, gleiche LVars).
+        for make in [ini_a350_telemetry, ini_a340_telemetry] {
+            let mut t = make();
+            t.ini_roll_mode = 3.0;
+            t.ini_pitch_mode = 7.0;
+            t.ini_throttle_mode = 2.0;
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert_eq!(snap.fma_lateral_mode.as_deref(), Some("#3"));
+            assert_eq!(snap.fma_vertical_mode.as_deref(), Some("#7"));
+            assert_eq!(snap.fma_thrust_mode.as_deref(), Some("#2"));
+
+            let snap = telemetry_to_snapshot(make(), Simulator::Msfs2024);
+            assert_eq!(snap.fma_lateral_mode, None);
+            assert_eq!(snap.fma_vertical_mode, None);
+            assert_eq!(snap.fma_thrust_mode, None);
+        }
+    }
+
+    #[test]
+    fn ini_premium_vspeeds_warnings_and_ground_spoilers() {
+        let mut t = ini_a340_telemetry();
+        t.ini_v1 = 138.0;
+        t.ini_vr = 142.0;
+        t.ini_v2 = 148.0;
+        t.ini_vls = 121.0;
+        t.ini_vapp = 139.0;
+        t.ini_vref = 134.0;
+        t.ini_flex_temp = 58.0;
+        t.ini_master_caution = 1.0;
+        t.ini_master_warning = 0.0;
+        t.ini_ground_spoilers = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.v1_kt, Some(138.0));
+        assert_eq!(snap.vr_kt, Some(142.0));
+        assert_eq!(snap.v2_kt, Some(148.0));
+        assert_eq!(snap.vls_kt, Some(121.0));
+        assert_eq!(snap.vapp_kt, Some(139.0));
+        assert_eq!(snap.vref_kt, Some(134.0));
+        assert_eq!(snap.flex_temp_c, Some(58.0));
+        assert_eq!(snap.master_caution, Some(true));
+        assert_eq!(snap.master_warning, Some(false));
+        assert_eq!(snap.ground_spoilers_active, Some(true));
+
+        // FMS leer → alles None (0-Suppression).
+        let snap = telemetry_to_snapshot(ini_a350_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.v1_kt, None);
+        assert_eq!(snap.vref_kt, None);
+        assert_eq!(snap.flex_temp_c, None);
+    }
+
+    #[test]
+    fn ini_a340_autobrake_level_hubhop_enum() {
+        // HubHop: 3=MED, 4=MAX, 5=LO; 0 → None; unbekannt → "#{n}".
+        let cases = [
+            (0.0, None),
+            (3.0, Some("MED")),
+            (4.0, Some("MAX")),
+            (5.0, Some("LO")),
+            (7.0, Some("#7")),
+        ];
+        for (level, expected) in cases {
+            let mut t = ini_a340_telemetry();
+            t.ini_autobrake_level = level;
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert_eq!(
+                snap.autobrake.as_deref(),
+                expected,
+                "INI_AUTOBRAKE_LEVEL={level}"
+            );
+        }
+
+        // A350-Profil nutzt den (A340-only) Level-LVar NICHT.
+        let mut t = ini_a350_telemetry();
+        t.ini_autobrake_level = 3.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autobrake, None);
+    }
+
+    #[test]
+    fn md11_ap_state_enum_and_ats() {
+        // AP_STATE dokumentiert: 0=Off, 1=AP1, 2=AP2, 3=both.
+        for state in [1.0, 2.0, 3.0] {
+            let mut t = md11_telemetry();
+            t.md11_ap_state = state;
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert_eq!(
+                snap.autopilot_master,
+                Some(true),
+                "MD11_AP_STATE={state}"
+            );
+        }
+        let snap = telemetry_to_snapshot(md11_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(false));
+
+        // ATS: > 0 = engaged.
+        let mut t = md11_telemetry();
+        t.md11_ats_state = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, Some(true));
+        let snap = telemetry_to_snapshot(md11_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, Some(false));
+    }
+
+    #[test]
+    fn md11_afs_dash_sentinels_to_none() {
+        // SPD/HDG dashen mit -999, V/S mit -9999 → None.
+        let mut t = md11_telemetry();
+        t.md11_afs_spd = -999.0;
+        t.md11_afs_hdg = -999.0;
+        t.md11_afs_vs = -9999.0;
+        t.md11_afs_alt = 35000.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fcu_selected_speed_kt, None);
+        assert_eq!(snap.fcu_selected_heading_deg, None);
+        assert_eq!(snap.fcu_selected_vs_fpm, None);
+        assert_eq!(snap.fcu_selected_altitude_ft, Some(35000));
+
+        // Echte Werte mappen — inkl. negativem V/S (Descent).
+        let mut t = md11_telemetry();
+        t.md11_afs_spd = 250.0;
+        t.md11_afs_hdg = 180.0;
+        t.md11_afs_vs = -1500.0;
+        t.md11_afs_alt = 12000.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fcu_selected_speed_kt, Some(250));
+        assert_eq!(snap.fcu_selected_heading_deg, Some(180));
+        assert_eq!(snap.fcu_selected_vs_fpm, Some(-1500));
+        assert_eq!(snap.fcu_selected_altitude_ft, Some(12000));
+
+        // ALT 0 = uninitialisiert → None.
+        let snap = telemetry_to_snapshot(md11_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.fcu_selected_altitude_ft, None);
+    }
+
+    #[test]
+    fn md11_vspeeds_and_raw_autobrake() {
+        let mut t = md11_telemetry();
+        t.md11_v1 = 148.0;
+        t.md11_vr = 155.0;
+        t.md11_v2 = 163.0;
+        t.md11_autobrake_sw = 2.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.v1_kt, Some(148.0));
+        assert_eq!(snap.vr_kt, Some(155.0));
+        assert_eq!(snap.v2_kt, Some(163.0));
+        // Selector-Enum undokumentiert → Roh-Wert "#{n}".
+        assert_eq!(snap.autobrake.as_deref(), Some("#2"));
+
+        let snap = telemetry_to_snapshot(md11_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.v1_kt, None);
+        assert_eq!(snap.autobrake, None);
+    }
+
+    #[test]
+    fn a346_reverser_any_of_four_ratios() {
+        // Jede einzelne Ratio > 0.05 reicht.
+        for set in [
+            |t: &mut Telemetry| t.a346_eng1_rev_ratio = 0.8,
+            |t: &mut Telemetry| t.a346_eng2_rev_ratio = 0.8,
+            |t: &mut Telemetry| t.a346_eng3_rev_ratio = 0.8,
+            |t: &mut Telemetry| t.a346_eng4_rev_ratio = 0.8,
+        ] {
+            let mut t = a346_telemetry();
+            set(&mut t);
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert_eq!(snap.reverser_deployed, Some(true));
+        }
+
+        // Idle-Jitter unterhalb der Schwelle zaehlt nicht.
+        let mut t = a346_telemetry();
+        t.a346_eng1_rev_ratio = 0.04;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.reverser_deployed, Some(false));
+    }
+
+    #[test]
+    fn a346_premium_managed_flags_warnings_phase_and_spoilers() {
+        let mut t = a346_telemetry();
+        t.a346_fcu_spd_managed = 1.0;
+        t.a346_fcu_hdg_managed = 0.0;
+        t.a346_fcu_vs_managed = 1.0; // → managed_altitude (Approximation)
+        t.a346_master_caution_light = 1.0;
+        t.a346_master_warning_light = 0.0;
+        t.a346_flight_phase = 4.0;
+        t.a346_spoiler_lever_armed = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.managed_speed, Some(true));
+        assert_eq!(snap.managed_heading, Some(false));
+        assert_eq!(snap.managed_altitude, Some(true));
+        assert_eq!(snap.master_caution, Some(true));
+        assert_eq!(snap.master_warning, Some(false));
+        // FMGC-Phase-Enum unbekannt → Roh-Wert "#{n}".
+        assert_eq!(snap.flight_phase_aircraft.as_deref(), Some("#4"));
+        // ARMED: Standard ODER Lever-LVar.
+        assert_eq!(snap.spoilers_armed, Some(true));
+        // Kein direkter Ground-Spoiler-Active-Flag auf der A346.
+        assert_eq!(snap.ground_spoilers_active, None);
+    }
+
+    #[test]
+    fn eng_n1_pct_generic_combustion_gated() {
+        // Twin laeuft (plain Combustion), N1 auf 0-1-Skala → 2-er
+        // Vektor, auf Prozent normalisiert.
+        let mut t = Telemetry::default();
+        t.eng1_firing = true;
+        t.eng2_firing = true;
+        t.n1_pct_1 = 0.66;
+        t.n1_pct_2 = 0.65;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.eng_n1_pct, Some(vec![66.0, 65.0]));
+
+        // Combustion tot, aber N1 > 5 % (EX1-/N1-only-Addons) →
+        // trotzdem erfasst; 0-100-Skala bleibt unveraendert.
+        let mut t = Telemetry::default();
+        t.n1_pct_1 = 72.9;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.eng_n1_pct, Some(vec![72.9]));
+
+        // Positionserhaltung: nur Engine 2 laeuft → Praefix [0, n1_2].
+        let mut t = Telemetry::default();
+        t.eng2_firing = true;
+        t.n1_pct_2 = 0.4;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.eng_n1_pct, Some(vec![0.0, 40.0]));
+
+        // EX1-Combustion zaehlt ebenfalls als Gate — Engine erfasst,
+        // obwohl ihr N1 (noch) unter der 5 %-Schwelle liegt.
+        let mut t = Telemetry::default();
+        t.eng1_combustion_ex1 = true;
+        t.n1_pct_1 = 0.0; // Spool-up-Beginn
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.eng_n1_pct, Some(vec![0.0]));
+
+        // Alles aus → None (kein leerer/Null-Vektor).
+        let snap = telemetry_to_snapshot(Telemetry::default(), Simulator::Msfs2024);
+        assert_eq!(snap.eng_n1_pct, None);
+    }
+
+    #[test]
+    fn eng_n1_pct_md11_prefers_display_exact_lvars() {
+        // MD-11: display-exakte LVars gewinnen, sobald eine > 0 liest
+        // — auch wenn die Standard-SimVars parallel liefern.
+        let mut t = md11_telemetry();
+        t.md11_eng1_n1 = 85.2;
+        t.md11_eng2_n1 = 84.9;
+        t.md11_eng3_n1 = 85.5;
+        t.eng1_firing = true;
+        t.n1_pct_1 = 80.0; // Standard weicht ab → LVar gewinnt
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.eng_n1_pct, Some(vec![85.2, 84.9, 85.5]));
+
+        // LVars (noch) tot → Standard-Heuristik als Fallback.
+        let mut t = md11_telemetry();
+        t.eng1_firing = true;
+        t.eng2_firing = true;
+        t.eng3_firing = true;
+        t.n1_pct_1 = 81.0;
+        t.n1_pct_2 = 80.0;
+        t.n1_pct_3 = 82.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.eng_n1_pct, Some(vec![81.0, 80.0, 82.0]));
+    }
+
+    /// DIE kritische Phantom-Absicherung: ein Default-Profil-Aircraft,
+    /// bei dem (theoretisch) ALLE neuen Premium-LVar-Slots Werte
+    /// tragen, laesst saemtliche 26 Premium-Felder auf None und alle
+    /// bestehenden Felder auf dem Standard-Pfad.
+    #[test]
+    fn premium_lvars_do_not_affect_default_profile() {
+        let mut t = Telemetry::default();
+        t.title = "Asobo C172".into();
+        t.atc_model = "C172".into();
+        // Gruppe A (Fenix).
+        t.fnx_perf_v1 = 142.0;
+        t.fnx_perf_vr = 145.0;
+        t.fnx_perf_v2 = 151.0;
+        t.fnx_perf_flex = 62.0;
+        t.fnx_master_caution = 1.0;
+        t.fnx_master_warning = 1.0;
+        t.fnx_speedbrake_handle = 0.7;
+        t.fnx_fcu_spd_managed = 1.0;
+        t.fnx_fcu_hdg_managed = 1.0;
+        t.fnx_fcu_alt_managed = 1.0;
+        t.fnx_baro_std = 1.0;
+        t.fnx_eng1_fire = 1.0;
+        t.fnx_eng2_fire = 1.0;
+        // Gruppe B (FBW).
+        t.fbw_ap1_active = 1.0;
+        t.fbw_ap2_active = 1.0;
+        t.fbw_athr_status = 2.0;
+        t.fbw_athr_mode = 7.0;
+        t.fbw_fma_lateral = 20.0;
+        t.fbw_fma_vertical = 51.0;
+        t.fbw_fwc_phase = 6.0;
+        t.fbw_vspeeds_v2 = 145.0;
+        t.fbw_vspeeds_vls = 118.0;
+        t.fbw_vspeeds_vapp = 136.0;
+        t.fbw_autobrake_armed_mode = 3.0;
+        t.fbw_flaps_handle_index = 2.0;
+        t.fbw_spoilers_armed = 1.0;
+        t.fbw_ground_spoilers_active = 1.0;
+        t.fbw_fcu_spd_dot = 1.0;
+        t.fbw_fcu_hdg_dot = 1.0;
+        t.fbw_fcu_alt_managed = 1.0;
+        // Gruppe C (INI).
+        t.ini_roll_mode = 3.0;
+        t.ini_pitch_mode = 7.0;
+        t.ini_throttle_mode = 2.0;
+        t.ini_v1 = 140.0;
+        t.ini_vr = 144.0;
+        t.ini_v2 = 150.0;
+        t.ini_vls = 120.0;
+        t.ini_vapp = 138.0;
+        t.ini_vref = 132.0;
+        t.ini_flex_temp = 55.0;
+        t.ini_lever_toga = 1.0;
+        t.ini_lever_flex_mct = 1.0;
+        t.ini_lever_cl = 1.0;
+        t.ini_flaps_handle_index = 3.0;
+        t.ini_ground_spoilers = 1.0;
+        t.ini_autobrake_engaged = 1.0;
+        t.ini_master_caution = 1.0;
+        t.ini_master_warning = 1.0;
+        t.ini_fuel_flow1_kg = 2200.0;
+        t.ini_fuel_flow2_kg = 2200.0;
+        t.ini_fuel_flow3_kg = 2200.0;
+        t.ini_fuel_flow4_kg = 2200.0;
+        t.ini_autobrake_level = 3.0;
+        // Gruppe D (A346).
+        t.a346_flight_phase = 4.0;
+        t.a346_fcu_spd_managed = 1.0;
+        t.a346_fcu_hdg_managed = 1.0;
+        t.a346_fcu_vs_managed = 1.0;
+        t.a346_master_warning_light = 1.0;
+        t.a346_master_caution_light = 1.0;
+        t.a346_spd_brk_lever_pos = 0.8;
+        t.a346_spoiler_lever_armed = 1.0;
+        t.a346_eng1_rev_ratio = 0.9;
+        t.a346_eng2_rev_ratio = 0.9;
+        t.a346_eng3_rev_ratio = 0.9;
+        t.a346_eng4_rev_ratio = 0.9;
+        // Gruppe E (MD-11).
+        t.md11_ap_state = 3.0;
+        t.md11_ats_state = 1.0;
+        t.md11_ats_clamp = 1.0;
+        t.md11_afs_spd = 250.0;
+        t.md11_afs_hdg = 180.0;
+        t.md11_afs_alt = 35000.0;
+        t.md11_afs_vs = -1500.0;
+        t.md11_v1 = 148.0;
+        t.md11_vr = 155.0;
+        t.md11_v2 = 163.0;
+        t.md11_eng1_n1 = 85.0;
+        t.md11_eng2_n1 = 85.0;
+        t.md11_eng3_n1 = 85.0;
+        t.md11_autobrake_sw = 2.0;
+
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+
+        // Alle 26 Premium-Felder bleiben None.
+        assert_eq!(snap.fma_lateral_mode, None);
+        assert_eq!(snap.fma_vertical_mode, None);
+        assert_eq!(snap.fma_thrust_mode, None);
+        assert_eq!(snap.flight_phase_aircraft, None);
+        assert_eq!(snap.v1_kt, None);
+        assert_eq!(snap.vr_kt, None);
+        assert_eq!(snap.v2_kt, None);
+        assert_eq!(snap.vapp_kt, None);
+        assert_eq!(snap.vls_kt, None);
+        assert_eq!(snap.vref_kt, None);
+        assert_eq!(snap.flex_temp_c, None);
+        assert_eq!(snap.thrust_gate, None);
+        assert_eq!(snap.master_caution, None);
+        assert_eq!(snap.master_warning, None);
+        assert_eq!(snap.managed_speed, None);
+        assert_eq!(snap.managed_heading, None);
+        assert_eq!(snap.managed_altitude, None);
+        assert_eq!(snap.reverser_deployed, None);
+        assert_eq!(snap.ground_spoilers_active, None);
+        assert_eq!(snap.eng_n1_pct, None);
+        assert_eq!(snap.baro_std, None);
+        assert_eq!(snap.fuel_per_tank_kg, None);
+        assert_eq!(snap.below_gs_alert, None);
+        assert_eq!(snap.cabin_altitude_warning, None);
+        assert_eq!(snap.stab_out_of_trim, None);
+        assert_eq!(snap.minimums_baro_ft, None);
+
+        // Bestehende Felder bleiben auf dem Standard-Pfad.
+        assert_eq!(snap.autopilot_master, Some(false)); // MD11/FBW-Slots leaken nicht
+        assert_eq!(snap.autothrottle_on, None);
+        assert_eq!(snap.autobrake, None);
+        assert_eq!(snap.spoilers_armed, Some(false)); // FBW/A346-ARMED leakt nicht
+        assert_eq!(snap.fcu_selected_speed_kt, None); // MD11-AFS leakt nicht
+        assert_eq!(snap.fcu_selected_altitude_ft, None);
     }
 }
