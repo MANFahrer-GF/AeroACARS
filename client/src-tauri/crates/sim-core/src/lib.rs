@@ -346,7 +346,11 @@ pub struct SimSnapshot {
 /// standard MSFS SimVars at all (FMA modes, MCP selected speed
 /// when blanked, FMC V-speeds) OR are more accurate from PMDG
 /// (autobrake setting, flap angle in degrees vs. handle ratio).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `Default` (all-off / all-None) exists for tests that need a
+/// PmdgState carrier without filling ~50 fields — production code
+/// always builds it from a real SDK raw block in `sim-msfs`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PmdgState {
     /// Which PMDG variant produced this state — useful for the
     /// activity log ("PMDG 737-800: …") and for PIREP custom
@@ -507,6 +511,43 @@ impl SimSnapshot {
     /// approach-stability.
     pub fn touchdown_vs_source_fpm(&self) -> f32 {
         self.vertical_speed_raw_fpm.unwrap_or(self.vertical_speed_fpm)
+    }
+
+    /// Premium-First override for the autoflight booleans (v0.16.7).
+    ///
+    /// Data-audit finding (2026-06-11, 426 flights): the standard
+    /// `AUTOPILOT MASTER` SimVar reads permanently false on the PMDG
+    /// 737/777 (24 audited flights) — PMDG drives its autoflight purely
+    /// through the SDK, so the "Autopilot ENGAGED/OFF" and "A/THR"
+    /// activity-log lines never fired for those pilots. The real signals
+    /// are already in the SDK snapshot we receive: `ap_engaged`
+    /// (737 `MCP_annunCMD_A || MCP_annunCMD_B`, 777 `MCP_annunAP` L/R)
+    /// and `at_armed` (737 `MCP_annunATArm`, 777 `MCP_annunAT`).
+    ///
+    /// Semantics — same standard-var-OR-tiebreaker pattern as the
+    /// A346 / Fenix LVar mappings in the sim-msfs telemetry parser:
+    ///   * presence-gated: when `pmdg` is `None` (non-PMDG aircraft,
+    ///     SDK broadcast off, X-Plane, old JSONL replays) NOTHING
+    ///     changes — proven by the tests below;
+    ///   * `autopilot_master = standard || pmdg.ap_engaged` — if the
+    ///     standard SimVar is ever wired it can only agree or win;
+    ///   * `autothrottle_on = standard || pmdg.at_armed`. The NG3 SDK
+    ///     only exposes the MCP "A/T ARM" annunciator (lit while armed
+    ///     AND while engaged, off after disconnect) — there is no
+    ///     separate "engaged" bit in `PMDG_NG3_SDK.h`, so ARM is the
+    ///     closest cockpit truth and is mapped knowingly. The 777
+    ///     `MCP_annunAT` is the A/T engage-button light.
+    ///
+    /// Called by `MsfsAdapter::snapshot()` right after the PMDG state is
+    /// merged. Lives here (not in the Windows-only adapter) so the
+    /// mapping is unit-tested on every platform.
+    pub fn apply_pmdg_autoflight_override(&mut self) {
+        let Some((ap_engaged, at_on)) = self.pmdg.as_ref().map(|p| (p.ap_engaged, p.at_armed))
+        else {
+            return;
+        };
+        self.autopilot_master = Some(self.autopilot_master.unwrap_or(false) || ap_engaged);
+        self.autothrottle_on = Some(self.autothrottle_on.unwrap_or(false) || at_on);
     }
 }
 
@@ -1265,5 +1306,83 @@ mod tests {
         let restored: SimSnapshot =
             serde_json::from_value(v).expect("old JSONL without the key must deserialize");
         assert_eq!(restored.autothrottle_on, None);
+    }
+
+    // ---- v0.16.7 PMDG autoflight override (AP master + A/THR) ----
+    //
+    // Data-audit 2026-06-11: standard `AUTOPILOT MASTER` reads dead
+    // (never true) on PMDG 737/777 — the override maps the SDK
+    // annunciators onto the generic fields. Presence-gated: a snapshot
+    // without `pmdg` must come out bit-identical.
+
+    /// PmdgState carrier with just the two autoflight bits set.
+    fn pmdg_autoflight(ap_engaged: bool, at_armed: bool) -> PmdgState {
+        PmdgState {
+            ap_engaged,
+            at_armed,
+            ..PmdgState::default()
+        }
+    }
+
+    #[test]
+    fn pmdg_ap_engaged_overrides_dead_standard_simvar() {
+        // The audit case: standard SimVar stuck at false, CMD A (or B,
+        // or 777 AP L/R — all collapse into `ap_engaged`) is lit.
+        let mut s = SimSnapshot::default();
+        s.autopilot_master = Some(false); // dead standard var
+        s.pmdg = Some(pmdg_autoflight(true, false));
+        s.apply_pmdg_autoflight_override();
+        assert_eq!(s.autopilot_master, Some(true));
+    }
+
+    #[test]
+    fn pmdg_both_cmd_channels_off_reports_master_off() {
+        let mut s = SimSnapshot::default();
+        s.autopilot_master = Some(false);
+        s.pmdg = Some(pmdg_autoflight(false, false));
+        s.apply_pmdg_autoflight_override();
+        assert_eq!(s.autopilot_master, Some(false));
+        assert_eq!(s.autothrottle_on, Some(false));
+    }
+
+    #[test]
+    fn pmdg_standard_simvar_wins_as_or_tiebreaker() {
+        // Should PMDG ever wire the standard var, it can only agree or
+        // win — same OR semantics as the A346/Fenix LVar mappings.
+        let mut s = SimSnapshot::default();
+        s.autopilot_master = Some(true);
+        s.autothrottle_on = Some(true);
+        s.pmdg = Some(pmdg_autoflight(false, false));
+        s.apply_pmdg_autoflight_override();
+        assert_eq!(s.autopilot_master, Some(true));
+        assert_eq!(s.autothrottle_on, Some(true));
+    }
+
+    #[test]
+    fn pmdg_at_armed_maps_to_autothrottle_on() {
+        // PMDG (Default MSFS profile) leaves `autothrottle_on` at None
+        // in the telemetry parser — the override fills it from the SDK.
+        let mut s = SimSnapshot::default();
+        assert_eq!(s.autothrottle_on, None);
+        s.pmdg = Some(pmdg_autoflight(false, true));
+        s.apply_pmdg_autoflight_override();
+        assert_eq!(s.autothrottle_on, Some(true));
+    }
+
+    #[test]
+    fn absent_pmdg_leaves_snapshot_untouched() {
+        // Presence gate: no PMDG state → no field changes at all, for
+        // every starting value the standard telemetry can produce.
+        for master in [None, Some(false), Some(true)] {
+            for athr in [None, Some(false), Some(true)] {
+                let mut s = SimSnapshot::default();
+                s.autopilot_master = master;
+                s.autothrottle_on = athr;
+                assert!(s.pmdg.is_none());
+                s.apply_pmdg_autoflight_override();
+                assert_eq!(s.autopilot_master, master);
+                assert_eq!(s.autothrottle_on, athr);
+            }
+        }
     }
 }

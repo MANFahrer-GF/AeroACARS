@@ -122,6 +122,18 @@ pub enum FieldId {
     /// Spec v0.7.15 F6: `sim/time/is_in_replay` — 1 wenn der User in
     /// X-Planes Replay-Modus ist (eigene Pause-aehnliche Quelle).
     SimInReplay,
+    // v0.16.7 additions (ToLiss Airbus — AirbusFBW namespace):
+    /// `AirbusFBW/AP1Engage` — int 0/1, AP1 engaged. The ToLiss fleet
+    /// (A319/A320/A321/A340-600 …) drives its autoflight through the
+    /// documented `AirbusFBW/*` datarefs and leaves the standard
+    /// `servos_on` dead (data audit 2026-06-11: `autopilot_master`
+    /// never read true across ~30 ToLiss flights).
+    TolissAp1,
+    /// `AirbusFBW/AP2Engage` — int 0/1, AP2 engaged.
+    TolissAp2,
+    /// `AirbusFBW/ATHRmode` — int autothrust mode; 0 = off,
+    /// >0 = A/THR armed/active.
+    TolissAthrMode,
 }
 
 /// One row in the catalog: a DataRef name + which snapshot field it
@@ -518,6 +530,38 @@ pub const CATALOG: &[DatarefEntry] = &[
         name: "laminar/B738/annunciator/takeoff_config",
         field: FieldId::TakeoffConfigWarning,
     },
+    // ---- v0.16.7 additions (ToLiss Airbus — AirbusFBW namespace) ----
+    // ToLiss (A319/A320/A321/A340-600 …) routes its autoflight through
+    // the documented `AirbusFBW/*` datarefs (namespace shared with other
+    // QPAC-derived Airbus add-ons, which makes the OR in `to_snapshot`
+    // addon-agnostic) and leaves the standard
+    // `sim/cockpit2/autopilot/servos_on` dead. Data audit 2026-06-11:
+    // `autopilot_master` read false for the entire flight on every
+    // ToLiss leg (~30 flights, A20N/A21N/A320/A321), so the activity
+    // log never showed "Autopilot ENGAGED/OFF" for those pilots.
+    //
+    // Absent-dataref behaviour — same as the laminar/B738 entries
+    // above: X-Plane never streams an RREF index whose dataref doesn't
+    // exist (the aircraft-profile PROBE mechanism in adapter.rs relies
+    // on exactly that — `has_value` stays false forever for rejected
+    // datarefs), so on non-ToLiss aircraft `apply_field` is never
+    // called for these FieldIds, the state fields stay at their
+    // defaults and the snapshot is bit-identical to pre-v0.16.7.
+    // X-Plane notes one "invalid dataref" line in its own Log.txt per
+    // subscribe attempt — the same bounded trade-off the B738 entries
+    // already make.
+    DatarefEntry {
+        name: "AirbusFBW/AP1Engage",
+        field: FieldId::TolissAp1,
+    },
+    DatarefEntry {
+        name: "AirbusFBW/AP2Engage",
+        field: FieldId::TolissAp2,
+    },
+    DatarefEntry {
+        name: "AirbusFBW/ATHRmode",
+        field: FieldId::TolissAthrMode,
+    },
 ];
 
 /// Mutable parsed state — populated as RREF responses arrive. Held
@@ -606,6 +650,19 @@ pub struct XPlaneState {
     /// Spec v0.7.15 F6: `sim/time/is_in_replay`-Wert. AeroACARS
     /// behandelt Replay als Pause-aequivalent (kein echter Flug).
     pub sim_in_replay: bool,
+    // v0.16.7 — ToLiss Airbus (AirbusFBW namespace):
+    /// `AirbusFBW/AP1Engage` > 0.5 — AP1 engaged.
+    pub toliss_ap1: bool,
+    /// `AirbusFBW/AP2Engage` > 0.5 — AP2 engaged.
+    pub toliss_ap2: bool,
+    /// Raw `AirbusFBW/ATHRmode` value (0 = off, >0 = armed/active).
+    pub toliss_athr_mode: f32,
+    /// True once `ATHRmode` has been delivered at least once. X-Plane
+    /// never streams non-existent datarefs, so any delivery (even 0)
+    /// proves a ToLiss-family aircraft is loaded — this is the
+    /// presence gate that keeps `autothrottle_on` at `None` (the
+    /// pre-v0.16.7 behaviour) on every other aircraft.
+    pub toliss_athr_seen: bool,
     /// True once we've received at least one RREF packet — drives
     /// the connection state machine's transition into `Connected`.
     pub got_first_packet: bool,
@@ -720,6 +777,15 @@ impl XPlaneState {
             // Spec v0.7.15 F6
             FieldId::SimPaused => self.sim_paused = value > 0.5,
             FieldId::SimInReplay => self.sim_in_replay = value > 0.5,
+            // v0.16.7 — ToLiss Airbus autoflight (AirbusFBW namespace)
+            FieldId::TolissAp1 => self.toliss_ap1 = value > 0.5,
+            FieldId::TolissAp2 => self.toliss_ap2 = value > 0.5,
+            FieldId::TolissAthrMode => {
+                self.toliss_athr_mode = value;
+                // Any delivery (even 0.0) proves the dataref exists —
+                // see the `toliss_athr_seen` field doc.
+                self.toliss_athr_seen = true;
+            }
         }
     }
 
@@ -875,14 +941,32 @@ impl XPlaneState {
             // X-Plane's nav-light DataRef covers logo on most payware.
             light_logo: Some(self.light_nav),
             strobe_state: None,
-            autopilot_master: Some(self.ap_master),
+            // v0.16.7: OR the ToLiss `AirbusFBW/AP1Engage`/`AP2Engage`
+            // datarefs into the standard `servos_on` — addon-agnostic
+            // (absent datarefs are never streamed → the toliss_* bools
+            // stay false → identical to Some(self.ap_master); any
+            // aircraft that serves them simply wins the OR). Same
+            // tiebreaker pattern as the A346/Fenix LVar mapping on the
+            // MSFS side.
+            autopilot_master: Some(self.ap_master || self.toliss_ap1 || self.toliss_ap2),
             autopilot_heading: Some(self.ap_heading),
             autopilot_altitude: Some(self.ap_altitude),
             autopilot_nav: Some(self.ap_nav),
             autopilot_approach: Some(self.ap_approach),
-            // No verified X-Plane A/THR state source wired yet — stays
-            // None so the activity log doesn't log a dead default.
-            autothrottle_on: None,
+            // v0.16.7: ToLiss `AirbusFBW/ATHRmode` (0 = off, >0 =
+            // armed/active) is the first verified X-Plane A/THR state
+            // source. Presence-gated via `toliss_athr_seen`: X-Plane
+            // only streams the index when the dataref exists, so the
+            // field flips to Some(false) as soon as a ToLiss delivers
+            // its first packet (the initial state then latches silently
+            // in the activity log, exactly like the A346/Fenix MSFS
+            // path) and stays None — the pre-v0.16.7 behaviour — on
+            // every other aircraft.
+            autothrottle_on: if self.toliss_athr_seen {
+                Some(self.toliss_athr_mode > 0.5)
+            } else {
+                None
+            },
             fuel_flow_kg_per_h: None,
             spoilers_handle_position: Some(self.spoilers_handle),
             spoilers_armed: Some(self.spoilers_armed),
@@ -977,5 +1061,112 @@ mod vs_dual_source_tests {
         // The two are independent: the display VVI is NOT scaled by the m/s
         // factor and is not overwritten by the raw read.
         assert!((s.vertical_speed_fpm - (-277.0)).abs() < 0.001);
+    }
+}
+
+// ---- v0.16.7 — ToLiss Airbus autoflight (AirbusFBW namespace) ----
+//
+// Data-audit 2026-06-11: the standard `servos_on` dataref reads dead
+// (never true) on ToLiss aircraft. The tests pin the OR semantics AND
+// the no-behaviour-change guarantee for aircraft that don't serve the
+// AirbusFBW datarefs (X-Plane never streams absent datarefs, so their
+// `apply_field` calls simply never happen — modelled here by not
+// calling it).
+#[cfg(test)]
+mod toliss_autoflight_tests {
+    use super::*;
+
+    #[test]
+    fn absent_toliss_datarefs_change_nothing() {
+        // Non-ToLiss aircraft: no AirbusFBW index is ever streamed.
+        // Master must mirror the standard servos_on exactly and A/THR
+        // must stay None — bit-identical to the pre-v0.16.7 snapshot.
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::ApMaster, 0.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.autopilot_master, Some(false));
+        assert_eq!(snap.autothrottle_on, None);
+
+        // Standard servos_on alone still drives the master (Zibo etc.).
+        s.apply_field(FieldId::ApMaster, 1.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.autopilot_master, Some(true));
+        assert_eq!(snap.autothrottle_on, None);
+    }
+
+    #[test]
+    fn toliss_ap1_engages_master_despite_dead_standard_dataref() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::ApMaster, 0.0); // dead on ToLiss
+        s.apply_field(FieldId::TolissAp1, 1.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.autopilot_master, Some(true));
+    }
+
+    #[test]
+    fn toliss_ap2_engages_master_despite_dead_standard_dataref() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::ApMaster, 0.0);
+        s.apply_field(FieldId::TolissAp2, 1.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.autopilot_master, Some(true));
+    }
+
+    #[test]
+    fn toliss_both_aps_off_reports_master_off() {
+        // ToLiss loaded (datarefs streaming) but hand-flown: int 0s
+        // arrive for AP1/AP2 → master is a real Some(false).
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::ApMaster, 0.0);
+        s.apply_field(FieldId::TolissAp1, 0.0);
+        s.apply_field(FieldId::TolissAp2, 0.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.autopilot_master, Some(false));
+    }
+
+    #[test]
+    fn toliss_athr_mode_presence_gates_then_maps() {
+        let mut s = XPlaneState::default();
+        // First delivery is the int 0 of an A/THR that is simply off —
+        // it must flip the field to a real Some(false) (so the first
+        // ENGAGED transition gets logged after the silent initial
+        // latch), not leave it None.
+        s.apply_field(FieldId::TolissAthrMode, 0.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.autothrottle_on, Some(false));
+
+        // ATHRmode 1 (armed) and 2 (active) both count as ON (>0).
+        s.apply_field(FieldId::TolissAthrMode, 1.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).autothrottle_on,
+            Some(true)
+        );
+        s.apply_field(FieldId::TolissAthrMode, 2.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).autothrottle_on,
+            Some(true)
+        );
+
+        // Disconnect → back to a real Some(false), not None.
+        s.apply_field(FieldId::TolissAthrMode, 0.0);
+        assert_eq!(
+            s.to_snapshot(Simulator::XPlane12).autothrottle_on,
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn catalog_subscribes_the_documented_toliss_datarefs() {
+        // Guard the dataref-name ↔ FieldId pairing (a typo here would
+        // be silently dead: X-Plane just never answers).
+        let find = |field: FieldId| {
+            CATALOG
+                .iter()
+                .find(|e| e.field == field)
+                .map(|e| e.name)
+        };
+        assert_eq!(find(FieldId::TolissAp1), Some("AirbusFBW/AP1Engage"));
+        assert_eq!(find(FieldId::TolissAp2), Some("AirbusFBW/AP2Engage"));
+        assert_eq!(find(FieldId::TolissAthrMode), Some("AirbusFBW/ATHRmode"));
     }
 }

@@ -634,6 +634,16 @@ impl MsfsAdapter {
             // so the X-Plane / MSFS activity-log path can fire on it.
             snap.takeoff_config_warning = Some(pmdg.takeoff_config_warning);
         }
+        // v0.16.7: AP master + A/THR from the PMDG annunciators (737
+        // CMD A/B + A/T ARM, 777 AP L/R + AT), OR'd with the standard
+        // SimVars. Data-audit 2026-06-11: the standard `AUTOPILOT
+        // MASTER` SimVar reads permanently false on PMDG 737/777, so
+        // the "Autopilot ENGAGED/OFF" / "A/THR" activity-log lines
+        // never fired for those pilots. Presence-gated no-op when
+        // `snap.pmdg` is None — semantics + tests live in
+        // `SimSnapshot::apply_pmdg_autoflight_override` (sim-core,
+        // cross-platform tested; this adapter is Windows-only).
+        snap.apply_pmdg_autoflight_override();
 
         Some(snap)
     }
