@@ -445,6 +445,22 @@ export function ActiveFlightPanel({
                 defaultValue: info.phase,
               })}
             </span>
+            {/* v0.16.12 (#phase-v2): dezente Schatten-Engine-Zeile —
+                reine Verifikations-Hilfe, NUR sichtbar wenn die v2-Sicht
+                von der aktiven Phase abweicht. Bewusst unauffällig
+                (Piloten sollen nicht verwirrt werden). */}
+            {info.shadow_phase && info.shadow_phase !== info.phase && (
+              <span
+                className="active-flight__shadow-phase"
+                title="Phasen-Engine v2 (Schatten-Modus, ohne Funktion)"
+              >
+                v2:{" "}
+                {t(`active_flight.phase.${info.shadow_phase}`, {
+                  defaultValue: info.shadow_phase,
+                })}
+                {info.shadow_segment === "level" ? " · Level" : ""}
+              </span>
+            )}
           </div>
         </div>
         <div className="active-flight__route">

@@ -3948,6 +3948,18 @@ input:disabled {
   border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
 }
 
+/* v0.16.12 (#phase-v2): dezente Schatten-Engine-Zeile neben dem
+   Phase-Badge. Nur sichtbar, wenn die v2-Sicht abweicht — bewusst
+   klein + gedämpft (Verifikations-Hilfe, keine Pilot-Information). */
+.active-flight__shadow-phase {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  opacity: 0.75;
+  white-space: nowrap;
+  align-self: center;
+}
+
 /* Pulsing indicator dot ahead of the phase label — pulses on phases
    that are mid-action ("something is happening right now"), steady on
    stable / parked phases. */

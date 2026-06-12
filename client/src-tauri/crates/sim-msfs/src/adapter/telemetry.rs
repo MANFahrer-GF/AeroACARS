@@ -2864,6 +2864,10 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         cabin_altitude_warning,
         stab_out_of_trim: None,
         minimums_baro_ft: None,
+        // v0.16.12 (#phase-v2): Schatten-Felder stempelt NUR der
+        // Streamer (post-Engine) — Adapter liefern immer None.
+        shadow_phase: None,
+        shadow_segment: None,
     }
 }
 

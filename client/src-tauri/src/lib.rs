@@ -37,6 +37,14 @@ pub mod touchdown_v2;
 // non-fixed-wing categories. ICAO taxonomy + live sim gear-type signals.
 pub mod aircraft_category;
 
+// v0.16.12 (#phase-v2): fenster-basierte Phasen-Engine v2 im SCHATTEN-Modus.
+// Die alte FSM (`step_flight`) bleibt zu 100 % autoritativ; die Engine
+// beobachtet nur, stempelt `shadow_phase`/`shadow_segment` in die Position-
+// JSONL und zählt Divergenz-Sekunden. Pure Logik + Replay-Tests in
+// tests/phase_v2_replay.rs. Spec-Kontext: Daten-Audit 429 Flüge, 26 %
+// Phasen-Fehler (193 Descent→Cruise-Flaps, 69 Premature-Cruise).
+pub mod phase_v2;
+
 // v0.16.0 (#LAN-Remote): in-app LAN remote-control server. Serves the real
 // React SPA + bridges every safe Tauri command over HTTP/WS to a tablet or
 // second PC on the local network, PIN-gated. Lives entirely in `src/remote/`.
@@ -1787,6 +1795,15 @@ struct PersistedFlightStats {
     /// Persistenz. `#[serde(default)]` → None bei pre-v0.7.15 Files.
     #[serde(default)]
     current_pause_reason: Option<PauseReason>,
+    /// v0.16.12 (#phase-v2): geplante Cruise-Altitude (ft) — persistiert,
+    /// damit die Schatten-Engine nach einem Resume ihren `cruise_ref`
+    /// behält. `#[serde(default)]` → None bei pre-v0.16.12-Files.
+    #[serde(default)]
+    planned_cruise_alt_ft: Option<f64>,
+    /// v0.16.12 (#phase-v2): akkumulierte Schatten-Divergenz-Sekunden —
+    /// persistiert, damit das Flug-Aggregat einen App-Restart überlebt.
+    #[serde(default)]
+    shadow_divergence_secs: f64,
 }
 
 impl PersistedFlightStats {
@@ -1878,6 +1895,9 @@ impl PersistedFlightStats {
             pause_total_duration_secs: stats.pause_total_duration_secs,
             pause_segments: stats.pause_segments.clone(),
             current_pause_reason: stats.current_pause_reason,
+            // v0.16.12 (#phase-v2)
+            planned_cruise_alt_ft: stats.planned_cruise_alt_ft,
+            shadow_divergence_secs: stats.shadow_divergence_secs,
         }
     }
 
@@ -1977,6 +1997,11 @@ impl PersistedFlightStats {
         stats.pause_total_duration_secs = self.pause_total_duration_secs;
         stats.pause_segments = self.pause_segments;
         stats.current_pause_reason = self.current_pause_reason;
+        // v0.16.12 (#phase-v2): cruise_ref + Divergenz-Aggregat restoren.
+        // Die Engine selbst wird NICHT persistiert (wärmt sich nach dem
+        // Resume in ≤ 2 Fenstern wieder auf — dokumentiert).
+        stats.planned_cruise_alt_ft = self.planned_cruise_alt_ft;
+        stats.shadow_divergence_secs = self.shadow_divergence_secs;
     }
 }
 
@@ -2217,6 +2242,32 @@ struct FlightStats {
     phase: FlightPhase,
     /// Recent transitions for the flight log.
     transitions: Vec<(DateTime<Utc>, FlightPhase)>,
+
+    // ---- v0.16.12 (#phase-v2): Schatten-Phasen-Engine ----
+    /// Fenster-basierte Phasen-Engine v2 — läuft NUR im Schatten-Modus
+    /// mit (beobachtet, entscheidet nichts). Lebt pro Flug in den Stats
+    /// (Reset = frische FlightStats beim Flugstart). Runtime-only: nach
+    /// einem App-Restart wärmt sie sich binnen ≤ 2 Fenstern (~3 min)
+    /// wieder auf — Persistenz bewusst nicht Teil von Runde 1.
+    shadow_engine: phase_v2::ShadowPhaseEngine,
+    /// Letzte Schatten-Phase (für UI-Statuszeile + flight_info). Runtime-only.
+    shadow_phase: Option<FlightPhase>,
+    /// Letztes Schatten-Segment (z. B. Level während einer Restriction).
+    /// Runtime-only.
+    shadow_segment: Option<phase_v2::Segment>,
+    /// Akkumulierte Sekunden, in denen Schatten-Phase ≠ alte FSM-Phase
+    /// war (old==Holding ausgenommen — dokumentierter Diff, v2 modelliert
+    /// Holding in Runde 1 nicht). Billiges Aggregat fürs Reporting.
+    shadow_divergence_secs: f64,
+    /// Wall-Clock des letzten Schatten-Engine-Ticks (dt-Quelle für den
+    /// Divergenz-Zähler). Runtime-only.
+    shadow_last_tick_at: Option<DateTime<Utc>>,
+    /// v0.16.12 (#phase-v2): geplante Cruise-Altitude in ft als
+    /// `cruise_ref` der Schatten-Engine. Quelle: `bid.flight.level`
+    /// (phpVMS-Flight, FL→ft normalisiert) bzw. `plan.cruise_level_ft`
+    /// im Manual-Mode. None wenn die VA das Feld nicht pflegt — die
+    /// Engine fällt dann auf Dauer-Heuristiken zurück.
+    planned_cruise_alt_ft: Option<f64>,
     /// Snapshot of the previous tick — used to detect on_ground / parking
     /// brake transitions cleanly.
     was_on_ground: Option<bool>,
@@ -3506,6 +3557,15 @@ pub struct ActiveFlightInfo {
     position_count: u32,
     /// snake_case name of the current `FlightPhase` (e.g. "boarding", "climb").
     phase: String,
+    /// v0.16.12 (#phase-v2): snake_case-Phase der SCHATTEN-Engine v2 —
+    /// reine Beobachtung (Verifikations-Hilfe in der UI), nie
+    /// entscheidungsrelevant. None bis der erste Schatten-Tick lief.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shadow_phase: Option<String>,
+    /// v0.16.12 (#phase-v2): Fenster-Segment der Schatten-Engine
+    /// ("level" während einer ATC-Restriction etc.).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shadow_segment: Option<String>,
     /// ISO-8601 timestamps captured at major flight events. Each is `null`
     /// until the corresponding transition fires.
     block_off_at: Option<String>,
@@ -7349,6 +7409,12 @@ fn flight_info(flight: &ActiveFlight, resume_position_suspect: bool) -> ActiveFl
         distance_nm: stats.distance_nm,
         position_count: stats.position_count,
         phase: phase_to_snake(stats.phase).to_string(),
+        // v0.16.12 (#phase-v2): Schatten-Sicht für die dezente
+        // UI-Statuszeile (nur Anzeige, keine Entscheidung).
+        shadow_phase: stats.shadow_phase.map(|p| phase_to_snake(p).to_string()),
+        shadow_segment: stats
+            .shadow_segment
+            .map(|s| s.as_snake_str().to_string()),
         block_off_at: stats.block_off_at.map(|t| t.to_rfc3339()),
         takeoff_at: stats.takeoff_at.map(|t| t.to_rfc3339()),
         landing_at: stats.landing_at.map(|t| t.to_rfc3339()),
@@ -8561,6 +8627,24 @@ async fn flight_start(
     // ActiveFlight is committed; release the setup-in-progress flag.
     setup_guard.disarm();
 
+    // v0.16.12 (#phase-v2): geplante Cruise-Altitude aus dem phpVMS-Flight
+    // als `cruise_ref` für die Schatten-Engine. phpVMS-VAs pflegen das
+    // Feld mal als Flight-Level (360) und mal in Fuß (36000) — Werte
+    // < 1000 werden als FL interpretiert (×100). Unabhängig vom OFP
+    // gesetzt (auch Flüge ohne SimBrief haben oft ein Bid-Level).
+    if let Some(level) = bid.flight.level.filter(|&l| l > 0) {
+        let ft = if level < 1000 {
+            f64::from(level) * 100.0
+        } else {
+            f64::from(level)
+        };
+        flight
+            .stats
+            .lock()
+            .expect("flight stats lock")
+            .planned_cruise_alt_ft = Some(ft);
+    }
+
     // Stage 2: write the SimBrief OFP plan into FlightStats so the
     // streamer + PIREP builder can read it later. Done after commit
     // so stats already exists; the lock is short-held and never
@@ -9239,6 +9323,12 @@ async fn flight_start_manual(
         stats.planned_route = plan.planned_route;
         stats.planned_alternate = plan.alt_airport_id;
         stats.flight_plan_source = Some("manual");
+        // v0.16.12 (#phase-v2): VFR-/Manual-Reise-Level (bereits in ft)
+        // als `cruise_ref` für die Schatten-Engine.
+        stats.planned_cruise_alt_ft = plan
+            .cruise_level_ft
+            .filter(|&l| l > 0)
+            .map(f64::from);
         drop(stats);
         save_active_flight(&app, &flight);
     }
@@ -16772,6 +16862,67 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             {
                 let mut stats = flight.stats.lock().expect("flight stats");
                 sampler_path_rollout_tick(&mut stats, &snap);
+            }
+
+            // v0.16.12 (#phase-v2): Schatten-Phasen-Engine ticken — NACH
+            // step_flight (braucht die autoritative Post-Step-Phase als
+            // Sync-Quelle außerhalb des En-Route-Bands), VOR dem JSONL-
+            // Position-Append unten (die Schatten-Felder sollen im selben
+            // Snapshot landen). Beobachtet nur: kein Pfad liest die
+            // Schatten-Phase für Entscheidungen. Pause/Slew friert die
+            // Engine ein wie die alte FSM (step_flight returnt dort früh);
+            // die >5-min-Gap-Erkennung im Segmenter fängt den Resume ab.
+            if !snap.paused && !snap.slew_mode {
+                let shadow_now = Utc::now();
+                let mut stats = flight.stats.lock().expect("flight stats");
+                let old_phase_post_step = stats.phase;
+                // cruise_ref: FMC-Cruise-Alt (PMDG, vom Piloten gepflegt,
+                // step-climb-aktuell) vor dem geplanten Bid-/Manual-Level.
+                let cruise_ref_ft = snap
+                    .pmdg
+                    .as_ref()
+                    .and_then(|p| p.fmc_cruise_alt_ft)
+                    .filter(|&ft| ft > 0)
+                    .map(f64::from)
+                    .or(stats.planned_cruise_alt_ft);
+                // Divergenz-dt: Abstand zum letzten Schatten-Tick, auf 10 s
+                // gekappt (Streamer tickt ≤ 3 s; Resume-Lücken zählen so
+                // höchstens einen gedeckelten Tick).
+                let dt_secs = stats
+                    .shadow_last_tick_at
+                    .map(|prev| {
+                        ((shadow_now - prev).num_milliseconds() as f64 / 1000.0)
+                            .clamp(0.0, 10.0)
+                    })
+                    .unwrap_or(0.0);
+                stats.shadow_last_tick_at = Some(shadow_now);
+                let (shadow_phase, shadow_segment) = stats.shadow_engine.step(
+                    shadow_now,
+                    snap.altitude_msl_ft,
+                    snap.altitude_agl_ft,
+                    snap.vertical_speed_fpm,
+                    snap.on_ground,
+                    old_phase_post_step,
+                    cruise_ref_ft,
+                );
+                stats.shadow_phase = Some(shadow_phase);
+                stats.shadow_segment = Some(shadow_segment);
+                // Holding ist in v2 (Runde 1) bewusst unmodelliert —
+                // diese Ticks zählen nicht als Divergenz (Report klammert
+                // sie ebenfalls aus).
+                if shadow_phase != old_phase_post_step
+                    && old_phase_post_step != FlightPhase::Holding
+                {
+                    stats.shadow_divergence_secs += dt_secs;
+                }
+                drop(stats);
+                // Additive Telemetrie-Felder: landen via `snap.clone()` im
+                // JSONL-Position-Event (lokaler Recorder → VPS-Upload).
+                // Der alte VPS-Recorder speichert sie verbatim mit — NULL
+                // Recorder-Änderungen nötig.
+                snap.shadow_phase = Some(phase_to_snake(shadow_phase).to_string());
+                snap.shadow_segment =
+                    Some(shadow_segment.as_snake_str().to_string());
             }
 
             // v0.12.4 (Spec docs/spec/v0.12.4-score-consistency.md, LE4):

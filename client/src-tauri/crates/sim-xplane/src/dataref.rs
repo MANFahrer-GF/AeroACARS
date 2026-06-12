@@ -1155,6 +1155,10 @@ impl XPlaneState {
             cabin_altitude_warning: None,
             stab_out_of_trim: None,
             minimums_baro_ft: None,
+            // v0.16.12 (#phase-v2): Schatten-Felder stempelt NUR der
+            // Streamer (post-Engine) — Adapter liefern immer None.
+            shadow_phase: None,
+            shadow_segment: None,
         }
     }
 }

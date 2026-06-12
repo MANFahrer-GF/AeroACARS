@@ -424,6 +424,22 @@ pub struct SimSnapshot {
     /// Numeric baro minimums (DA/MDA, ft) where exposed (PMDG 777).
     #[serde(default)]
     pub minimums_baro_ft: Option<f64>,
+
+    // ---- v0.16.12 (#phase-v2): Schatten-Phasen-Engine ----
+    // Beide Felder werden vom STREAMER nach dem Schatten-Engine-Tick
+    // gestempelt — NIE von den Sim-Adaptern (die bauen den Snapshot mit
+    // `None`). Sie landen so additiv in der Position-JSONL (lokaler
+    // Recorder → VPS-Log-Upload), womit der Schatten-Diff alte-FSM-Phase
+    // (PhaseChanged-Events) vs. v2-Sicht pro Tick auswertbar ist.
+    // `serde(default)` + skip-if-None: alte JSONLs deserialisieren
+    // unverändert, Nicht-Flug-Snapshots bleiben sauber.
+    /// snake_case-Phase der Schatten-Engine v2 (z. B. "climb").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow_phase: Option<String>,
+    /// Fenster-Segment der Schatten-Engine v2 ("ground" / "climbing" /
+    /// "level" / "descending" / "insufficient").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow_segment: Option<String>,
 }
 
 /// PMDG aircraft "premium telemetry" — generic across 737 NG3 and
@@ -907,6 +923,10 @@ impl Default for SimSnapshot {
             cabin_altitude_warning: None,
             stab_out_of_trim: None,
             minimums_baro_ft: None,
+            // v0.16.12 (#phase-v2): nur der Streamer stempelt die
+            // Schatten-Felder — Default/Adapter liefern None.
+            shadow_phase: None,
+            shadow_segment: None,
         }
     }
 }
@@ -1824,6 +1844,37 @@ mod tests {
         assert_eq!(restored.reverser_deployed, None);
         assert_eq!(restored.fuel_per_tank_kg, None);
         assert_eq!(restored.gnd_prox_warning, None);
+    }
+
+    // ---- v0.16.12 (#phase-v2): Schatten-Felder-Carrier-Vertrag ----
+
+    #[test]
+    fn shadow_fields_default_none_and_skip_when_unset() {
+        // Adapter/Default liefern None — und None-Felder verschwinden
+        // per skip_serializing_if komplett aus dem JSON (Nicht-Flug-
+        // Snapshots + Frontend-Streams bleiben sauber).
+        let s = SimSnapshot::default();
+        assert_eq!(s.shadow_phase, None);
+        assert_eq!(s.shadow_segment, None);
+        let v = serde_json::to_value(&s).expect("serialize");
+        assert!(v.get("shadow_phase").is_none(), "None darf nicht serialisieren");
+        assert!(v.get("shadow_segment").is_none());
+
+        // Alte JSONL-Replays (ohne die Keys) deserialisieren weiter.
+        let restored: SimSnapshot =
+            serde_json::from_value(v).expect("old JSONL without shadow keys must deserialize");
+        assert_eq!(restored.shadow_phase, None);
+
+        // Vom Streamer gestempelte Werte runden sauber durch die JSONL.
+        let mut stamped = SimSnapshot::default();
+        stamped.shadow_phase = Some("climb".into());
+        stamped.shadow_segment = Some("level".into());
+        let v = serde_json::to_value(&stamped).expect("serialize stamped");
+        assert_eq!(v["shadow_phase"], "climb");
+        assert_eq!(v["shadow_segment"], "level");
+        let rt: SimSnapshot = serde_json::from_value(v).expect("round-trip");
+        assert_eq!(rt.shadow_phase.as_deref(), Some("climb"));
+        assert_eq!(rt.shadow_segment.as_deref(), Some("level"));
     }
 
     // ---- v0.16.10 (#Premium): Profile-Detection ----

@@ -337,6 +337,13 @@ export interface ActiveFlightInfo {
   distance_nm: number;
   position_count: number;
   phase: FlightPhase;
+  /** v0.16.12 (#phase-v2): snake_case-Phase der SCHATTEN-Engine v2 —
+   *  reine Beobachtung (Verifikations-Hilfe), nie entscheidungsrelevant.
+   *  Fehlt, bis der erste Schatten-Tick lief (skip_serializing_if). */
+  shadow_phase?: FlightPhase;
+  /** v0.16.12 (#phase-v2): Fenster-Segment der Schatten-Engine
+   *  ("ground" | "climbing" | "level" | "descending" | "insufficient"). */
+  shadow_segment?: string;
   block_off_at: string | null;
   takeoff_at: string | null;
   landing_at: string | null;
