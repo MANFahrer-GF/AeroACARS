@@ -1062,8 +1062,9 @@ struct AppState {
     /// server, or `None` while stopped. Holds the graceful-shutdown
     /// trigger + the bound port. Same `tokio::sync::Mutex<Option<…>>`
     /// pattern as `mqtt` above — only ever touched from async command
-    /// contexts. Started/stopped via the `remote_server_*` commands; NOT
-    /// auto-started at boot.
+    /// contexts. Started/stopped via the `remote_server_*` commands;
+    /// since v0.16.16 the toggle persists, so the setup hook auto-starts
+    /// the server at boot when the pilot left it switched ON.
     remote_server: tokio::sync::Mutex<Option<remote::RemoteServerHandle>>,
     /// v0.16.0 (#LAN-Remote): always-live event tap. The three Tauri push
     /// emit sites (`integrity-flag`, `pirep_auto_filed`,
@@ -25586,6 +25587,12 @@ pub fn run() {
             // (and run) without touching the window, and doubles as a small
             // power-user feature. No env var → no-op (the normal case;
             // pilots never set it, so production is unaffected).
+            //
+            // v0.16.16: calls `remote::start_server` (the shared path)
+            // instead of the `remote_server_start` command, because the
+            // command now also persists the Settings toggle ON — a
+            // test/headless env hook must not silently flip the pilot's
+            // stored preference.
             if let Some(port) = std::env::var("AEROACARS_LAN_AUTOSTART")
                 .ok()
                 .and_then(|v| v.trim().parse::<u16>().ok())
@@ -25600,12 +25607,7 @@ pub fn run() {
                         app_for_lan.state::<AppState>(),
                     )
                     .await;
-                    match remote::remote_server_start(
-                        app_for_lan.clone(),
-                        app_for_lan.state::<AppState>(),
-                    )
-                    .await
-                    {
+                    match remote::start_server(&app_for_lan).await {
                         Ok(status) => tracing::info!(
                             port = status.port,
                             "LAN remote-control server autostarted (AEROACARS_LAN_AUTOSTART)"
@@ -25613,6 +25615,41 @@ pub fn run() {
                         Err(e) => tracing::error!(
                             error = %e.message,
                             "LAN autostart failed"
+                        ),
+                    }
+                });
+            }
+
+            // v0.16.16 (#LAN-Remote): the Settings toggle persists. If the
+            // pilot left the LAN remote-control server switched ON, start
+            // it again automatically — paired tablets keep working across
+            // restarts/updates because the bearer token persists in the
+            // secrets store. Goes through the SAME shared start path as
+            // the `remote_server_start` command (mirroring how the bridge
+            // calls commands outside IPC via `app.state()`), spawned async
+            // so a slow/failed bind can never delay or crash startup. A
+            // failure (e.g. port already busy) is only logged; the stored
+            // `enabled` flag stays untouched, and the Settings toggle
+            // simply shows OFF because it reads the live running state
+            // via `remote_server_status` on mount.
+            if remote::read_persisted_enabled(app.handle()) {
+                let app_for_lan = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    match remote::start_server(&app_for_lan).await {
+                        Ok(status) => log_activity_handle(
+                            &app_for_lan,
+                            ActivityLevel::Info,
+                            format!(
+                                "LAN-Fernbedienung automatisch gestartet (Port {})",
+                                status.port
+                            ),
+                            None,
+                        ),
+                        Err(e) => log_activity_handle(
+                            &app_for_lan,
+                            ActivityLevel::Warn,
+                            "LAN-Fernbedienung konnte nicht automatisch starten",
+                            Some(e.message.clone()),
                         ),
                     }
                 });

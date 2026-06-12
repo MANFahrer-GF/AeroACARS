@@ -23,8 +23,13 @@
 //! depth: peers off the private LAN are rejected at the socket
 //! (`ConnectInfo` → [`net::is_private_peer`]), a strict same-host
 //! `CorsLayer` is applied, and WS upgrades with a foreign `Origin` are
-//! refused. The server is *opt-in*: it is started by the
-//! [`remote_server_start`] command, never auto-started.
+//! refused. The server is *opt-in*: it only ever runs because the pilot
+//! switched it on via the [`remote_server_start`] command. Since v0.16.16
+//! that choice *persists*: the on/off state is stored next to the port in
+//! `remote_server.json`, and lib.rs's setup hook restarts the server on
+//! launch when the toggle was left ON (same [`start_server`] path the
+//! command uses). Paired devices keep working across restarts/updates
+//! because the bearer token persists in the secrets store too.
 //!
 //! ## Layout
 //!
@@ -81,64 +86,124 @@ const FLIGHT_STATUS_TICK: std::time::Duration = std::time::Duration::from_secs(1
 pub const FLIGHT_STATUS_EVENT: &str = "flight_status";
 
 // ----------------------------------------------------------------------
-// Port persistence
+// Settings persistence (port + on/off toggle)
 // ----------------------------------------------------------------------
 //
 // Mirrors the existing settings-persistence pattern (`auto_start.json` via
 // `app_config_dir()`, lib.rs `read/write_auto_start_persisted`): a tiny
-// JSON file in the app config dir. The chosen port survives restarts, so
-// `remote_server_start` always binds the port the user last picked.
+// JSON file in the app config dir. Both the chosen port AND the on/off
+// toggle survive restarts: `remote_server_start` always binds the port the
+// user last picked, and the setup hook auto-starts the server on launch
+// when the toggle was left ON (v0.16.16).
 
-/// Path of the persisted-port file (`<app_config_dir>/remote_server.json`).
-fn port_settings_path(app: &AppHandle) -> Option<PathBuf> {
+/// On-disk shape of `<app_config_dir>/remote_server.json`.
+///
+/// `enabled` arrived in v0.16.16 — files written before that contain only
+/// `port`, so it deserializes via the `#[serde(default)]` to `false`
+/// (backwards compatible: a pre-0.16.16 install never auto-starts until
+/// the pilot flips the toggle once).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+struct PersistedRemoteSettings {
+    port: u16,
+    #[serde(default)]
+    enabled: bool,
+}
+
+impl Default for PersistedRemoteSettings {
+    fn default() -> Self {
+        Self {
+            port: DEFAULT_PORT,
+            enabled: false,
+        }
+    }
+}
+
+/// Path of the persisted-settings file
+/// (`<app_config_dir>/remote_server.json`).
+fn settings_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .app_config_dir()
         .ok()
         .map(|p| p.join("remote_server.json"))
 }
 
+/// Read the persisted settings, falling back to the defaults (port
+/// [`DEFAULT_PORT`], toggle off) if the file is unset / unreadable.
+fn read_persisted_settings(app: &AppHandle) -> PersistedRemoteSettings {
+    let Some(path) = settings_path(app) else {
+        return PersistedRemoteSettings::default();
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return PersistedRemoteSettings::default();
+    };
+    parse_persisted_settings(&text)
+}
+
 /// Read the persisted remote-server port, or [`DEFAULT_PORT`] if unset /
 /// unreadable / out of range.
 pub fn read_persisted_port(app: &AppHandle) -> u16 {
-    let Some(path) = port_settings_path(app) else {
-        return DEFAULT_PORT;
-    };
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return DEFAULT_PORT;
-    };
-    parse_persisted_port(&text)
+    read_persisted_settings(app).port
 }
 
-/// Persist `port` to `<app_config_dir>/remote_server.json`. Best-effort —
-/// a write failure is logged but not fatal (the chosen port still applies
-/// to the running process via `AppState`, it just won't survive restart).
-fn write_persisted_port(app: &AppHandle, port: u16) {
-    let Some(path) = port_settings_path(app) else {
+/// Read the persisted on/off toggle (v0.16.16). `true` means the pilot
+/// left the LAN server switched ON, so the setup hook should auto-start
+/// it on launch. Unset / unreadable / legacy port-only file → `false`.
+pub fn read_persisted_enabled(app: &AppHandle) -> bool {
+    read_persisted_settings(app).enabled
+}
+
+/// Persist the full settings to `<app_config_dir>/remote_server.json`.
+/// Best-effort — a write failure is logged but not fatal (the chosen
+/// values still apply to the running process, they just won't survive
+/// restart).
+fn write_persisted_settings(app: &AppHandle, settings: PersistedRemoteSettings) {
+    let Some(path) = settings_path(app) else {
         return;
     };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Err(e) = std::fs::write(&path, serialize_persisted_port(port)) {
-        tracing::warn!(error = %e, "remote: failed to persist port");
+    if let Err(e) = std::fs::write(&path, serialize_persisted_settings(settings)) {
+        tracing::warn!(error = %e, "remote: failed to persist settings");
     }
 }
 
-/// Serialize a port to the on-disk JSON body. Pure (testable).
-fn serialize_persisted_port(port: u16) -> String {
-    format!("{{\"port\":{port}}}")
+/// Persist `port`, preserving the stored `enabled` flag (read-modify-write
+/// so one write always lands BOTH fields).
+fn write_persisted_port(app: &AppHandle, port: u16) {
+    let mut settings = read_persisted_settings(app);
+    settings.port = port;
+    write_persisted_settings(app, settings);
 }
 
-/// Parse the on-disk JSON body back to a port, falling back to
-/// [`DEFAULT_PORT`] on malformed/empty/zero input. Pure (testable).
-fn parse_persisted_port(text: &str) -> u16 {
-    #[derive(serde::Deserialize)]
-    struct Stored {
-        port: u16,
-    }
-    match serde_json::from_str::<Stored>(text) {
-        Ok(s) if s.port != 0 => s.port,
-        _ => DEFAULT_PORT,
+/// Persist the on/off toggle, preserving the stored port (read-modify-write
+/// so one write always lands BOTH fields).
+fn write_persisted_enabled(app: &AppHandle, enabled: bool) {
+    let mut settings = read_persisted_settings(app);
+    settings.enabled = enabled;
+    write_persisted_settings(app, settings);
+}
+
+/// Serialize the settings to the on-disk JSON body. Pure (testable).
+fn serialize_persisted_settings(settings: PersistedRemoteSettings) -> String {
+    format!(
+        "{{\"port\":{},\"enabled\":{}}}",
+        settings.port, settings.enabled
+    )
+}
+
+/// Parse the on-disk JSON body back to settings, falling back to the
+/// defaults on malformed/empty input. A zero port is invalid and falls
+/// back to [`DEFAULT_PORT`] (the parsed `enabled` flag is kept). Pure
+/// (testable).
+fn parse_persisted_settings(text: &str) -> PersistedRemoteSettings {
+    match serde_json::from_str::<PersistedRemoteSettings>(text) {
+        Ok(s) if s.port != 0 => s,
+        Ok(s) => PersistedRemoteSettings {
+            port: DEFAULT_PORT,
+            ..s
+        },
+        Err(_) => PersistedRemoteSettings::default(),
     }
 }
 
@@ -322,13 +387,18 @@ fn qr_target_url(primary: Option<&str>, port: u16, pin: &str) -> String {
 }
 
 /// Start the LAN remote-control server. Idempotent: if already running it
-/// returns the current status instead of double-binding. Spawned via
-/// `tauri::async_runtime::spawn`; NOT auto-started.
-#[tauri::command]
-pub async fn remote_server_start(
-    app: AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<RemoteServerStatus, UiError> {
+/// returns the current status instead of double-binding (the `AppState`
+/// mutex is held across the whole start, so concurrent callers serialize).
+///
+/// This is the ONE shared start path: the [`remote_server_start`] command
+/// delegates here, and lib.rs's setup hook calls it directly for the
+/// launch-time auto-start (v0.16.16) and the `AEROACARS_LAN_AUTOSTART`
+/// env hook — same pattern as the bridge calling commands outside IPC via
+/// `app.state()`. Deliberately does NOT touch the persisted `enabled`
+/// flag: persisting is the command's job (it captures the pilot's toggle
+/// intent), so a failed auto-start can never flip the stored state.
+pub async fn start_server(app: &AppHandle) -> Result<RemoteServerStatus, UiError> {
+    let state = app.state::<AppState>();
     let mut guard = state.remote_server.lock().await;
     if let Some(handle) = guard.as_ref() {
         // Already running — surface the current status from the LIVE auth
@@ -338,7 +408,7 @@ pub async fn remote_server_start(
     }
 
     // Use the user-configured + persisted port (defaults to DEFAULT_PORT).
-    let port = read_persisted_port(&app);
+    let port = read_persisted_port(app);
     let auth_state = resolve_auth();
     let ctx = RemoteContext {
         app: app.clone(),
@@ -364,7 +434,7 @@ pub async fn remote_server_start(
 
     // Resolve the SPA dir + bind the listener up front so a failure is
     // reported synchronously to the caller (not swallowed in the task).
-    let serve_dir = router::resolve_spa_dir(&app);
+    let serve_dir = router::resolve_spa_dir(app);
     let listener = router::bind(port).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::AddrInUse {
             UiError::new(
@@ -412,7 +482,21 @@ pub async fn remote_server_start(
     Ok(build_status(true, port, Some(&auth_state)))
 }
 
-/// Stop the LAN server (graceful shutdown). No-op if not running.
+/// Settings-toggle ON: start the LAN server via the shared
+/// [`start_server`] path, then persist `enabled=true` so the server
+/// auto-starts on the next launch (v0.16.16). Persisted HERE — on the
+/// command, i.e. the pilot's explicit toggle action — and only on
+/// success, so a failed start (port busy) leaves the stored state as-is.
+#[tauri::command]
+pub async fn remote_server_start(app: AppHandle) -> Result<RemoteServerStatus, UiError> {
+    let status = start_server(&app).await?;
+    write_persisted_enabled(&app, true);
+    Ok(status)
+}
+
+/// Settings-toggle OFF: stop the LAN server (graceful shutdown; no-op if
+/// not running) and persist `enabled=false` so the next launch does NOT
+/// auto-start it (v0.16.16).
 #[tauri::command]
 pub async fn remote_server_stop(
     app: AppHandle,
@@ -426,6 +510,7 @@ pub async fn remote_server_stop(
     // Dropping the handle fires the graceful-shutdown oneshot.
     *guard = None;
     drop(guard);
+    write_persisted_enabled(&app, false);
     // Server is now stopped: report no PIN (don't mint a throwaway that
     // would imply pairing works).
     Ok(build_status(false, port, None))
@@ -549,24 +634,76 @@ mod tests {
     use super::*;
 
     #[test]
-    fn port_persistence_round_trips() {
+    fn settings_persistence_round_trips() {
         // The on-disk JSON body a write produces parses back to the same
-        // port (the file-IO wrapper just reads/writes this body verbatim).
+        // settings (the file-IO wrapper just reads/writes this body
+        // verbatim).
         for port in [8765u16, 1024, 49152, 65535] {
-            let body = serialize_persisted_port(port);
-            assert_eq!(parse_persisted_port(&body), port);
+            for enabled in [false, true] {
+                let settings = PersistedRemoteSettings { port, enabled };
+                let body = serialize_persisted_settings(settings);
+                assert_eq!(parse_persisted_settings(&body), settings);
+            }
         }
     }
 
+    // v0.16.16 backwards compatibility: a pre-0.16.16 file carries only
+    // `port` — it must keep its port and default the new toggle to OFF
+    // (an old install never auto-starts until the pilot opts in once).
     #[test]
-    fn parse_persisted_port_falls_back_on_garbage() {
-        assert_eq!(parse_persisted_port(""), DEFAULT_PORT);
-        assert_eq!(parse_persisted_port("not json"), DEFAULT_PORT);
-        assert_eq!(parse_persisted_port("{}"), DEFAULT_PORT);
-        // Port 0 is invalid → fall back.
-        assert_eq!(parse_persisted_port("{\"port\":0}"), DEFAULT_PORT);
-        // A real value is honored.
-        assert_eq!(parse_persisted_port("{\"port\":9000}"), 9000);
+    fn legacy_port_only_file_defaults_enabled_false() {
+        let s = parse_persisted_settings("{\"port\":9000}");
+        assert_eq!(s.port, 9000);
+        assert!(!s.enabled, "legacy file must NOT enable auto-start");
+    }
+
+    #[test]
+    fn parse_persisted_settings_falls_back_on_garbage() {
+        for garbage in ["", "not json", "{}", "{\"enabled\":true}", "[1,2]"] {
+            assert_eq!(
+                parse_persisted_settings(garbage),
+                PersistedRemoteSettings::default(),
+                "garbage {garbage:?} must yield the defaults"
+            );
+        }
+        // Defaults = DEFAULT_PORT + toggle off.
+        let d = PersistedRemoteSettings::default();
+        assert_eq!(d.port, DEFAULT_PORT);
+        assert!(!d.enabled);
+        // Port 0 is invalid → fall back to DEFAULT_PORT, but the parsed
+        // toggle survives.
+        let zero = parse_persisted_settings("{\"port\":0,\"enabled\":true}");
+        assert_eq!(zero.port, DEFAULT_PORT);
+        assert!(zero.enabled);
+    }
+
+    // The write helpers are read-modify-write over the whole struct: prove
+    // the pure core (parse → mutate ONE field → serialize → parse) keeps
+    // the other field — toggling `enabled` never loses the chosen port,
+    // and changing the port never loses the toggle.
+    #[test]
+    fn read_modify_write_preserves_the_other_field() {
+        // Toggle ON against a legacy port-only file (what the first
+        // `remote_server_start` after the v0.16.16 update does).
+        let mut s = parse_persisted_settings("{\"port\":9000}");
+        s.enabled = true;
+        let s = parse_persisted_settings(&serialize_persisted_settings(s));
+        assert_eq!(s.port, 9000, "toggling enabled must preserve the port");
+        assert!(s.enabled);
+
+        // Now change the port (remote_server_set_port) — toggle survives.
+        let mut s2 = s;
+        s2.port = 9001;
+        let s2 = parse_persisted_settings(&serialize_persisted_settings(s2));
+        assert_eq!(s2.port, 9001);
+        assert!(s2.enabled, "changing the port must preserve the toggle");
+
+        // And toggle OFF — port survives.
+        let mut s3 = s2;
+        s3.enabled = false;
+        let s3 = parse_persisted_settings(&serialize_persisted_settings(s3));
+        assert_eq!(s3.port, 9001, "toggling off must preserve the port");
+        assert!(!s3.enabled);
     }
 
     #[test]
