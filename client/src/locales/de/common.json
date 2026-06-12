@@ -1226,7 +1226,8 @@
       "pitot_heat": "Pitot-Heizung",
       "eng_anti_ice": "Eng Anti-Ice",
       "wing_anti_ice": "Wing Anti-Ice",
-      "apu": "APU"
+      "apu": "APU",
+      "altitude_indicated": "Höhe (Altimeter)"
     },
     "groups": {
       "lights": "Beleuchtung",

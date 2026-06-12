@@ -168,6 +168,9 @@ export interface SimSnapshot {
   lat: number;
   lon: number;
   altitude_msl_ft: number;
+  /** v0.16.15: Altimeter-Anzeige (mit aktuellem Baro) — primäre UI-Höhe. */
+  altitude_indicated_ft: number | null;
+  altitude_pressure_ft: number | null;
   altitude_agl_ft: number;
   heading_deg_true: number;
   heading_deg_magnetic: number;

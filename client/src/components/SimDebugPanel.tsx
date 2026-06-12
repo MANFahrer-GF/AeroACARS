@@ -385,6 +385,11 @@ function SnapshotGrid({ snap, locale }: { snap: SimSnapshot; locale: string }) {
       <Row label={t("sim.fields.position")}>
         {fmtCoord(snap.lat)} · {fmtCoord(snap.lon)}
       </Row>
+      {snap.altitude_indicated_ft != null && (
+        <Row label={t("sim.fields.altitude_indicated")}>
+          {fmtFt(snap.altitude_indicated_ft, locale)}
+        </Row>
+      )}
       <Row label={t("sim.fields.altitude_msl")}>
         {fmtFt(snap.altitude_msl_ft, locale)}
       </Row>

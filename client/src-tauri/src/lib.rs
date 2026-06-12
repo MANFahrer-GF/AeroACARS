@@ -16526,7 +16526,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             lat: snap.lat,
                             lon: snap.lon,
                             heading_deg: snap.heading_deg_true,
-                            altitude_ft: snap.altitude_msl_ft,
+                            altitude_ft: snap.altitude_indicated_ft.unwrap_or(snap.altitude_msl_ft),
                             fuel_total_kg: snap.fuel_total_kg,
                             zfw_kg: snap.zfw_kg,
                         };
@@ -23603,7 +23603,10 @@ fn snapshot_to_position(snap: &SimSnapshot) -> PositionEntry {
     PositionEntry {
         lat: snap.lat,
         lon: snap.lon,
-        altitude: snap.altitude_msl_ft,
+        // v0.16.15: `altitude` = Altimeter-Anzeige (was der Pilot sieht,
+        // PMDG-FL360-Befund KLM1540: GPS-Hoehe lag +1.100 ft drueber);
+        // `altitude_msl` bleibt bewusst die geometrische Hoehe.
+        altitude: snap.altitude_indicated_ft.unwrap_or(snap.altitude_msl_ft),
         altitude_agl: Some(snap.altitude_agl_ft),
         altitude_msl: Some(snap.altitude_msl_ft),
         heading: Some(snap.heading_deg_magnetic),

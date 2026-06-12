@@ -1049,7 +1049,12 @@ impl Handle {
             // Position
             lat: snap.lat,
             lon: snap.lon,
-            alt_ft: snap.altitude_msl_ft.round() as i32,
+            // v0.16.15: Live-Map zeigt die Altimeter-Hoehe (FR24-Konvention,
+            // Piloten-Erwartung); geometrisches MSL nur als Fallback.
+            alt_ft: snap
+                .altitude_indicated_ft
+                .unwrap_or(snap.altitude_msl_ft)
+                .round() as i32,
             agl_ft: snap.altitude_agl_ft.round() as i32,
 
             // Attitude

@@ -19,6 +19,14 @@ export function LiveTapes({ snapshot }: Props) {
   const ias = has ? Math.round(snapshot.indicated_airspeed_kt) : null;
   const gs = has ? Math.round(snapshot.groundspeed_kt) : null;
   const altMsl = has ? Math.round(snapshot.altitude_msl_ft) : null;
+  // v0.16.15: Piloten vergleichen mit dem Höhenmesser (PFD) — die
+  // angezeigte Höhe ist primär; die geometrische GPS-Höhe wandert in
+  // die Sub-Zeile (Differenz = Baro + Temperatur-Effekt, kein Fehler).
+  const altInd =
+    has && snapshot.altitude_indicated_ft != null
+      ? Math.round(snapshot.altitude_indicated_ft)
+      : null;
+  const altPrimary = altInd ?? altMsl;
   const altAgl = has ? Math.round(snapshot.altitude_agl_ft) : null;
   const vs = has ? Math.round(snapshot.vertical_speed_fpm) : null;
   const heading = has
@@ -51,9 +59,16 @@ export function LiveTapes({ snapshot }: Props) {
       <Tape label={t("tapes.gs")} value={fmtInt(gs)} unit="kt" />
       <Tape
         label={t("tapes.altitude")}
-        value={fmtInt(altMsl)}
+        value={fmtInt(altPrimary)}
         unit="ft"
-        sub={altAgl != null ? `AGL ${fmtInt(altAgl)} ft` : undefined}
+        sub={[
+          altAgl != null ? `AGL ${fmtInt(altAgl)} ft` : null,
+          altInd != null && altMsl != null && Math.abs(altInd - altMsl) >= 100
+            ? `GPS ${fmtInt(altMsl)} ft`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" · ") || undefined}
       />
       <Tape
         label={t("tapes.vs")}
