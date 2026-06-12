@@ -122,6 +122,14 @@ struct PositionPayload {
     /// ON_BLOCK). Inlined into every position so the Monitor never has
     /// to wait for a separate phase-topic delivery.
     phase: &'static str,
+    /// v0.16.13: Phasen-Engine-v2-Schatten (live.kant.ovh zeigt "v2:"-Badge
+    /// bei Abweichung). None solange der Client <0.16.12 ist oder die
+    /// Engine noch im Warmup — skip_serializing haelt alte Payloads byte-
+    /// identisch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shadow_phase: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shadow_segment: Option<String>,
 
     // ---- Position ----
     lat: f64,
@@ -1033,6 +1041,10 @@ impl Handle {
         let payload = PositionPayload {
             ts: snap.timestamp.timestamp_millis(),
             phase: phase_label(phase),
+            // v0.16.13: vom Streamer auf den Snapshot gestempelt (lib.rs,
+            // direkt nach der Schatten-Engine — Reihenfolge verifiziert).
+            shadow_phase: snap.shadow_phase.clone(),
+            shadow_segment: snap.shadow_segment.clone(),
 
             // Position
             lat: snap.lat,
