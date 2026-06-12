@@ -596,6 +596,30 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:Animation_Engine_2_Reverser_VAL", "Number"),
     F::f64("L:VC_FLTCTRL_LIGHT_SPEEDBRAKES_EXTENDED_VAL", "Number"),
     F::f64("L:VC_Autobrake_SW_VAL", "Number"),     // Selektor-Enum unbekannt → "#n"
+
+    // ---- FSLabs A321 (ceo+neo, v0.16.14) — HubHop-Output-Presets ----
+    // FSL faehrt die Systeme in einem EXTERNEN Prozess (Paket-WASMs sind
+    // Stubs) — die LVars existieren nur zur Laufzeit; HubHop ist die
+    // dokumentierte Lese-Oberflaeche. _Brt_Lt = LED-Helligkeit (Button-
+    // Presets nutzen ">50"-Idiom) — Schwelle >10 = "leuchtet",
+    // Live-Verifikation beim ersten FSL-Flug.
+    F::f64("L:VC_GSLD_FCU_AP1_Brt_Lt", "Number"),
+    F::f64("L:VC_GSLD_FCU_AP2_Brt_Lt", "Number"),
+    F::f64("L:VC_GSLD_FCU_ATHR_Brt_Lt", "Number"),
+    F::f64("L:VC_GSLD_FCU_APPR_Brt_Lt", "Number"),
+    F::f64("L:VC_GSLD_FCU_LOC_Brt_Lt", "Number"),
+    F::f64("L:FSL_FCU_SPD", "Number"),
+    F::f64("L:FSL_FCU_HDG", "Number"),
+    F::f64("L:FSL_FCU_ALT", "Number"),
+    F::f64("L:FSL_FCU_VS", "Number"),
+    F::f64("L:FSL_FCU_SPD_MANAGED", "Number"),
+    F::f64("L:FSL_FCU_HDG_MANAGED", "Number"),
+    F::f64("L:FSL_FCU_ALT_MANAGED", "Number"),
+    F::f64("L:FSL_FCU_SPD_DASHED", "Number"),
+    F::f64("L:FSL_FCU_HDG_DASHED", "Number"),
+    F::f64("L:VC_MIP_BRAKES_AUTOBRK_LO_BUTTON_BOT", "Number"),
+    F::f64("L:VC_MIP_BRAKES_AUTOBRK_MED_BUTTON_BOT", "Number"),
+    F::f64("L:VC_MIP_BRAKES_AUTOBRK_MAX_BUTTON_BOT", "Number"),
 ];
 
 // Helper builders so the table above stays compact.
@@ -944,6 +968,26 @@ pub struct Telemetry {
     pub ifly_eng2_reverser: f64,
     pub ifly_speedbrakes_extended_light: f64,
     pub ifly_autobrake_sw: f64,
+
+    // Gruppe G: FSLabs A321 (v0.16.14, HubHop-Output-Presets) —
+    // nur bei AircraftProfile::FsLabsA321 konsultiert.
+    pub fsl_ap1_light: f64,
+    pub fsl_ap2_light: f64,
+    pub fsl_athr_light: f64,
+    pub fsl_appr_light: f64,
+    pub fsl_loc_light: f64,
+    pub fsl_fcu_spd: f64,
+    pub fsl_fcu_hdg: f64,
+    pub fsl_fcu_alt: f64,
+    pub fsl_fcu_vs: f64,
+    pub fsl_fcu_spd_managed: f64,
+    pub fsl_fcu_hdg_managed: f64,
+    pub fsl_fcu_alt_managed: f64,
+    pub fsl_fcu_spd_dashed: f64,
+    pub fsl_fcu_hdg_dashed: f64,
+    pub fsl_autobrake_lo_light: f64,
+    pub fsl_autobrake_med_light: f64,
+    pub fsl_autobrake_max_light: f64,
 }
 
 // ---- Touchdown sample (separate data definition #2) ----
@@ -1359,7 +1403,8 @@ impl Telemetry {
 
         // ---- v0.16.10 (#Premium) — Lockstep mit dem Tabellen-Ende:
         // Gruppe A (13× Fenix), B (17× FBW), C (23× INI), D (12× A346),
-        // E (14× MD-11), F (10× iFly, v0.16.11), alle f64.
+        // E (14× MD-11), F (10× iFly, v0.16.11), G (17× FSLabs,
+        // v0.16.14), alle f64.
         pull_f64!(t.fnx_perf_v1);
         pull_f64!(t.fnx_perf_vr);
         pull_f64!(t.fnx_perf_v2);
@@ -1454,6 +1499,24 @@ impl Telemetry {
         pull_f64!(t.ifly_eng2_reverser);
         pull_f64!(t.ifly_speedbrakes_extended_light);
         pull_f64!(t.ifly_autobrake_sw);
+
+        pull_f64!(t.fsl_ap1_light);
+        pull_f64!(t.fsl_ap2_light);
+        pull_f64!(t.fsl_athr_light);
+        pull_f64!(t.fsl_appr_light);
+        pull_f64!(t.fsl_loc_light);
+        pull_f64!(t.fsl_fcu_spd);
+        pull_f64!(t.fsl_fcu_hdg);
+        pull_f64!(t.fsl_fcu_alt);
+        pull_f64!(t.fsl_fcu_vs);
+        pull_f64!(t.fsl_fcu_spd_managed);
+        pull_f64!(t.fsl_fcu_hdg_managed);
+        pull_f64!(t.fsl_fcu_alt_managed);
+        pull_f64!(t.fsl_fcu_spd_dashed);
+        pull_f64!(t.fsl_fcu_hdg_dashed);
+        pull_f64!(t.fsl_autobrake_lo_light);
+        pull_f64!(t.fsl_autobrake_med_light);
+        pull_f64!(t.fsl_autobrake_max_light);
 
         // Silence the unused-assignment warning the last `pull_*!`
         // emits (the macro always advances `off`, but the very last
@@ -1668,6 +1731,17 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // (WASM-strings + HubHop), strikt profile-gegated wie alle
     // Premium-Gruppen.
     let is_ifly = matches!(profile, AircraftProfile::IflyMax8);
+    // v0.16.14: FSLabs A321 (ceo + neo) — HubHop-Output-Presets,
+    // strikt profile-gegated. Master Caution/Warning, Reverser- und
+    // Engine-LVars sind fuer FSL extern, nicht katalogisiert —
+    // bleiben ehrlich None bzw. auf den Standard-SimVars + Kaskaden
+    // (EX1/N1-Fallbacks greifen addon-agnostisch).
+    let is_fsl = matches!(profile, AircraftProfile::FsLabsA321);
+    // FSL-LED-Schwelle: die `_Brt_Lt`-LVars tragen LED-HELLIGKEIT,
+    // kein 0/1-Flag — HubHop-Button-Presets pruefen ">50", wir werten
+    // konservativer > 10 als "leuchtet" (faengt gedimmte Cockpits;
+    // Live-Verifikation beim ersten FSL-Flug).
+    const FSL_LED_LIT: f64 = 10.0;
     let is_ini = is_a350 || is_a340;
     // v0.7.17 (F-001): Fenix-A32x extension LVARs are now ALWAYS applied
     // when the profile is Fenix — the v0.7.16 opt-in flag is removed
@@ -1957,6 +2031,27 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             t.ap_nav,
             t.ap_approach,
         )
+    } else if is_fsl {
+        // FSLabs A321 (v0.16.14): FCU-LED-Helligkeits-LVars
+        // (`L:VC_GSLD_FCU_*_Brt_Lt`, HubHop-Output-Presets) — > 10
+        // (FSL_LED_LIT) = LED leuchtet. AP1 ODER AP2 an = Master
+        // engaged; APPR ODER LOC = Approach-Mode (LOC = lateraler
+        // Approach-Capture ohne Glideslope, gleiche Semantik wie
+        // A346/A350). Standard-SimVar gewinnt jeweils per ODER, falls
+        // das Addon ihn doch treibt. HDG/ALT/NAV bleiben konservativ
+        // auf den Standard-SimVars — fuer FSL nicht katalogisiert,
+        // nicht raten.
+        (
+            t.fsl_ap1_light > FSL_LED_LIT
+                || t.fsl_ap2_light > FSL_LED_LIT
+                || t.ap_master,
+            t.ap_heading,
+            t.ap_altitude,
+            t.ap_nav,
+            t.fsl_appr_light > FSL_LED_LIT
+                || t.fsl_loc_light > FSL_LED_LIT
+                || t.ap_approach,
+        )
     } else {
         (
             t.ap_master,
@@ -2186,6 +2281,39 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
                 Some(t.md11_afs_vs.round() as i32)
             },
         )
+    } else if is_fsl {
+        // FSLabs A321 (v0.16.14): FCU-Fenster-Werte aus `L:FSL_FCU_*`
+        // (HubHop). SPD/HDG haben dokumentierte `*_DASHED`-Flags:
+        // Fenster zeigt "---" (managed) → None statt eines gestalten
+        // Restwerts. ALT kennt kein Dash — nur > 0 ist plausibel
+        // (0 = LVar uninitialisiert). `FSL_FCU_VS` traegt je nach
+        // FCU-Modus V/S (fpm) ODER FPA (Grad) — wir mappen den
+        // Roh-Wert ohne Umrechnung; ein dediziertes VS-Dashed-Flag
+        // ist nicht katalogisiert → nur != 0 mappen (0 = dashed/
+        // Level-off/uninitialisiert, besser ehrlich None als ein
+        // Phantom-"V/S 0").
+        (
+            if t.fsl_fcu_alt > 0.0 {
+                Some(t.fsl_fcu_alt.round() as i32)
+            } else {
+                None
+            },
+            if t.fsl_fcu_hdg_dashed == 0.0 && t.fsl_fcu_hdg > 0.0 {
+                Some(t.fsl_fcu_hdg.round() as i32)
+            } else {
+                None
+            },
+            if t.fsl_fcu_spd_dashed == 0.0 && t.fsl_fcu_spd > 0.0 {
+                Some(t.fsl_fcu_spd.round() as i32)
+            } else {
+                None
+            },
+            if t.fsl_fcu_vs != 0.0 {
+                Some(t.fsl_fcu_vs.round() as i32)
+            } else {
+                None
+            },
+        )
     } else {
         (None, None, None, None)
     };
@@ -2252,6 +2380,25 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // beim ersten Live-Flug; der reale MAX-Selektor kennt
         // RTO/OFF/1/2/3/MAX).
         raw_enum_label(t.ifly_autobrake_sw)
+    } else if is_fsl {
+        // FSLabs A321 (v0.16.14): die drei AUTO-BRK-Tasten-Lampen
+        // (`L:VC_MIP_BRAKES_AUTOBRK_{LO,MED,MAX}_BUTTON_BOT`,
+        // BOT = untere Lampenhaelfte = Mode selected). HubHop-Button-
+        // Presets pruefen ">50" — gleiche Schwelle hier (Helligkeits-
+        // LVar wie die FCU-LEDs, nur mit dem Preset-Idiom belegt).
+        // Real leuchtet genau eine; sollten (theoretisch) mehrere
+        // gleichzeitig lesen, gewinnt die erste (LO → MED → MAX).
+        // Keine leuchtet → None ("wissen wir nicht"), kein erfundenes
+        // OFF-Label.
+        if t.fsl_autobrake_lo_light > 50.0 {
+            Some("LO".to_string())
+        } else if t.fsl_autobrake_med_light > 50.0 {
+            Some("MED".to_string())
+        } else if t.fsl_autobrake_max_light > 50.0 {
+            Some("MAX".to_string())
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -2330,6 +2477,13 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // 737-Konvention — anders als beim FBW-AUTOTHRUST_STATUS gibt
         // es keine getrennte Engaged-Quelle.
         Some(t.ifly_at_arm_light != 0.0)
+    } else if is_fsl {
+        // FSLabs A321 (v0.16.14): A/THR-LED am FCU
+        // (`L:VC_GSLD_FCU_ATHR_Brt_Lt`, HubHop-Output) — Helligkeits-
+        // LVar, > 10 (FSL_LED_LIT) = leuchtet. Airbus-FCU-Semantik:
+        // LED an = A/THR armed ODER active (wie die echte ATHR-Taste);
+        // eine getrennte Engaged-Quelle ist nicht katalogisiert.
+        Some(t.fsl_athr_light > FSL_LED_LIT)
     } else {
         None
     };
@@ -2504,6 +2658,11 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         Some(t.fbw_fcu_spd_dot != 0.0)
     } else if is_a346 {
         Some(t.a346_fcu_spd_managed != 0.0)
+    } else if is_fsl {
+        // FSLabs A321 (v0.16.14): `L:FSL_FCU_*_MANAGED` (HubHop) —
+        // echte managed-Dot-Flags der FCU-Fenster (hier hat FSL,
+        // anders als die A346, auch ein dediziertes ALT-Flag).
+        Some(t.fsl_fcu_spd_managed != 0.0)
     } else {
         None
     };
@@ -2513,6 +2672,8 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         Some(t.fbw_fcu_hdg_dot != 0.0)
     } else if is_a346 {
         Some(t.a346_fcu_hdg_managed != 0.0)
+    } else if is_fsl {
+        Some(t.fsl_fcu_hdg_managed != 0.0)
     } else {
         None
     };
@@ -2522,6 +2683,8 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         Some(t.fbw_fcu_alt_managed != 0.0)
     } else if is_a346 {
         Some(t.a346_fcu_vs_managed != 0.0)
+    } else if is_fsl {
+        Some(t.fsl_fcu_alt_managed != 0.0)
     } else {
         None
     };
@@ -3362,7 +3525,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(buf.len(), 2532, "total block size");
+        assert_eq!(buf.len(), 2668, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -3522,6 +3685,25 @@ mod tests {
         assert_eq!(t.ifly_eng2_reverser, 1237.0); // idx 237
         assert_eq!(t.ifly_speedbrakes_extended_light, 1238.0); // idx 238
         assert_eq!(t.ifly_autobrake_sw, 1239.0); // idx 239
+
+        // Gruppe G: FSLabs A321 (idx 240..256, v0.16.14).
+        assert_eq!(t.fsl_ap1_light, 1240.0); // idx 240
+        assert_eq!(t.fsl_ap2_light, 1241.0); // idx 241
+        assert_eq!(t.fsl_athr_light, 1242.0); // idx 242
+        assert_eq!(t.fsl_appr_light, 1243.0); // idx 243
+        assert_eq!(t.fsl_loc_light, 1244.0); // idx 244
+        assert_eq!(t.fsl_fcu_spd, 1245.0); // idx 245
+        assert_eq!(t.fsl_fcu_hdg, 1246.0); // idx 246
+        assert_eq!(t.fsl_fcu_alt, 1247.0); // idx 247
+        assert_eq!(t.fsl_fcu_vs, 1248.0); // idx 248
+        assert_eq!(t.fsl_fcu_spd_managed, 1249.0); // idx 249
+        assert_eq!(t.fsl_fcu_hdg_managed, 1250.0); // idx 250
+        assert_eq!(t.fsl_fcu_alt_managed, 1251.0); // idx 251
+        assert_eq!(t.fsl_fcu_spd_dashed, 1252.0); // idx 252
+        assert_eq!(t.fsl_fcu_hdg_dashed, 1253.0); // idx 253
+        assert_eq!(t.fsl_autobrake_lo_light, 1254.0); // idx 254
+        assert_eq!(t.fsl_autobrake_med_light, 1255.0); // idx 255
+        assert_eq!(t.fsl_autobrake_max_light, 1256.0); // idx 256
     }
 
     /// Truncated block (e.g. all 12 new tail LVars rejected by an older
@@ -3537,9 +3719,18 @@ mod tests {
                 FieldKind::String256 => buf.extend_from_slice(&[0u8; 256]),
             }
         }
-        // v0.16.11: drop the 10 iFly tail fields (10*8) — the new
-        // outermost layer. Everything up to the MD-11 group stays
-        // intact, the iFly slots parse to safe defaults.
+        // v0.16.14: drop the 17 FSLabs tail fields (17*8) — the new
+        // outermost layer. Everything up to the iFly group stays
+        // intact, the FSL slots parse to safe defaults.
+        buf.truncate(buf.len() - 136);
+        let t = Telemetry::from_block(&buf);
+        assert_eq!(t.ifly_autobrake_sw, 1239.0); // last v0.16.11 field intact
+        assert_eq!(t.md11_autobrake_sw, 1229.0); // v0.16.10 layer intact
+        assert_eq!(t.fsl_ap1_light, 0.0); // FSL tail = safe defaults
+        assert_eq!(t.fsl_fcu_vs, 0.0);
+        assert_eq!(t.fsl_autobrake_max_light, 0.0);
+
+        // v0.16.11: drop the 10 iFly tail fields (10*8).
         buf.truncate(buf.len() - 80);
         let t = Telemetry::from_block(&buf);
         assert_eq!(t.md11_autobrake_sw, 1229.0); // last v0.16.10 field intact
@@ -4564,6 +4755,26 @@ mod tests {
         // on_ground = true, damit auch das Boden-Gate des iFly-Ground-
         // Spoiler-Mappings beheizt ist (haerterer Negativ-Fall).
         t.on_ground = true;
+        // Gruppe G (FSLabs, v0.16.14) — alle 17 Slots beheizt.
+        t.fsl_ap1_light = 80.0;
+        t.fsl_ap2_light = 80.0;
+        t.fsl_athr_light = 80.0;
+        t.fsl_appr_light = 80.0;
+        t.fsl_loc_light = 80.0;
+        t.fsl_fcu_spd = 250.0;
+        t.fsl_fcu_hdg = 180.0;
+        t.fsl_fcu_alt = 35000.0;
+        t.fsl_fcu_vs = -1500.0;
+        t.fsl_fcu_spd_managed = 1.0;
+        t.fsl_fcu_hdg_managed = 1.0;
+        t.fsl_fcu_alt_managed = 1.0;
+        // Die *_DASHED-Slots bleiben BEWUSST 0.0 — fuer das Profile-
+        // Gate ist das der HEISSE Fall: nicht-dashed + Wert > 0
+        // wuerde bei kaputtem Gate Some(250)/Some(180) liefern (ein
+        // beheiztes dashed=1 wuerde den Leak unsichtbar machen).
+        t.fsl_autobrake_lo_light = 80.0;
+        t.fsl_autobrake_med_light = 80.0;
+        t.fsl_autobrake_max_light = 80.0;
 
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
 
@@ -4596,12 +4807,15 @@ mod tests {
         assert_eq!(snap.minimums_baro_ft, None);
 
         // Bestehende Felder bleiben auf dem Standard-Pfad.
-        assert_eq!(snap.autopilot_master, Some(false)); // MD11/FBW/iFly-Slots leaken nicht
+        assert_eq!(snap.autopilot_master, Some(false)); // MD11/FBW/iFly/FSL-Slots leaken nicht
+        assert_eq!(snap.autopilot_approach, Some(false)); // FSL-APPR/LOC-LEDs leaken nicht
         assert_eq!(snap.autothrottle_on, None);
         assert_eq!(snap.autobrake, None);
         assert_eq!(snap.spoilers_armed, Some(false)); // FBW/A346-ARMED leakt nicht
-        assert_eq!(snap.fcu_selected_speed_kt, None); // MD11-AFS leakt nicht
+        assert_eq!(snap.fcu_selected_speed_kt, None); // MD11-AFS/FSL-FCU leaken nicht
         assert_eq!(snap.fcu_selected_altitude_ft, None);
+        assert_eq!(snap.fcu_selected_heading_deg, None);
+        assert_eq!(snap.fcu_selected_vs_fpm, None);
     }
 
     // ---- v0.16.11: iFly 737 MAX 8 Premium-Mappings ----
@@ -4741,5 +4955,197 @@ mod tests {
         let t = ifly_telemetry();
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.autobrake, None);
+    }
+
+    // ---- v0.16.14: FSLabs A321 Premium-Mappings ----
+
+    /// Minimal FSL-Profil-Telemetry. Standard-SimVars bleiben auf
+    /// ihren Defaults, damit jeder gemappte Wert eindeutig aus den
+    /// HubHop-LVars stammt. neo-Title aus der aircraft.cfg; der
+    /// ICAO-Designator spielt fuer die Detection keine Rolle.
+    fn fsl_telemetry() -> Telemetry {
+        let mut t = Telemetry::default();
+        t.title = "FSLabs A321-NEO LEAP DLH D-AIOA".into();
+        t.atc_model = "A21N".into();
+        t
+    }
+
+    #[test]
+    fn fsl_ap_master_from_fcu_led_brightness_with_threshold() {
+        // AP1-LED hell (> 10) → Master engaged.
+        let mut t = fsl_telemetry();
+        t.fsl_ap1_light = 80.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(true));
+
+        // AP2 allein zaehlt ebenfalls.
+        let mut t = fsl_telemetry();
+        t.fsl_ap2_light = 80.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(true));
+
+        // Rest-Glimmen UNTER der Schwelle (<= 10) zaehlt nicht.
+        let mut t = fsl_telemetry();
+        t.fsl_ap1_light = 5.0;
+        t.fsl_ap2_light = 5.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(false));
+
+        // Beide LEDs aus → Master off.
+        let t = fsl_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(false));
+
+        // Standard-SimVar gewinnt per ODER, falls das Addon ihn doch
+        // treibt (gleiche Tiebreaker-Semantik wie A346/A350/iFly).
+        let mut t = fsl_telemetry();
+        t.ap_master = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(true));
+    }
+
+    #[test]
+    fn fsl_autothrottle_from_athr_led() {
+        // A/THR-LED hell → on (armed ODER active, Airbus-FCU-Semantik).
+        let mut t = fsl_telemetry();
+        t.fsl_athr_light = 80.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, Some(true));
+
+        // Unter der Schwelle / aus → ehrliches Some(false) — das
+        // Profil LIEFERT die Quelle, anders als Default (None).
+        let mut t = fsl_telemetry();
+        t.fsl_athr_light = 5.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, Some(false));
+    }
+
+    #[test]
+    fn fsl_approach_from_appr_or_loc_led() {
+        // APPR-LED → Approach-Mode.
+        let mut t = fsl_telemetry();
+        t.fsl_appr_light = 80.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_approach, Some(true));
+
+        // LOC allein (lateraler Capture ohne Glideslope) zaehlt auch.
+        let mut t = fsl_telemetry();
+        t.fsl_loc_light = 80.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_approach, Some(true));
+
+        // Beide aus → false; Standard-SimVar gewinnt per ODER.
+        let t = fsl_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_approach, Some(false));
+        let mut t = fsl_telemetry();
+        t.ap_approach = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_approach, Some(true));
+    }
+
+    #[test]
+    fn fsl_managed_flags_from_fcu_lvars() {
+        // Jedes Flag mappt einzeln; ungesetzte bleiben ehrlich false
+        // (das Profil liefert die Quelle).
+        let mut t = fsl_telemetry();
+        t.fsl_fcu_spd_managed = 1.0;
+        t.fsl_fcu_alt_managed = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.managed_speed, Some(true));
+        assert_eq!(snap.managed_heading, Some(false));
+        assert_eq!(snap.managed_altitude, Some(true));
+
+        let mut t = fsl_telemetry();
+        t.fsl_fcu_hdg_managed = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.managed_speed, Some(false));
+        assert_eq!(snap.managed_heading, Some(true));
+        assert_eq!(snap.managed_altitude, Some(false));
+    }
+
+    #[test]
+    fn fsl_fcu_dashed_windows_map_to_none() {
+        // Selected-Werte: SPD/HDG nur ohne Dash, ALT > 0, V/S != 0.
+        let mut t = fsl_telemetry();
+        t.fsl_fcu_spd = 250.0;
+        t.fsl_fcu_hdg = 180.0;
+        t.fsl_fcu_alt = 35000.0;
+        t.fsl_fcu_vs = -1500.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fcu_selected_speed_kt, Some(250));
+        assert_eq!(snap.fcu_selected_heading_deg, Some(180));
+        assert_eq!(snap.fcu_selected_altitude_ft, Some(35000));
+        assert_eq!(snap.fcu_selected_vs_fpm, Some(-1500));
+
+        // Dash-Flags gesetzt (Fenster zeigt "---"/managed) → None,
+        // auch wenn der Werte-LVar noch einen Restwert traegt.
+        let mut t = fsl_telemetry();
+        t.fsl_fcu_spd = 250.0;
+        t.fsl_fcu_spd_dashed = 1.0;
+        t.fsl_fcu_hdg = 180.0;
+        t.fsl_fcu_hdg_dashed = 1.0;
+        t.fsl_fcu_alt = 35000.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fcu_selected_speed_kt, None);
+        assert_eq!(snap.fcu_selected_heading_deg, None);
+        // ALT kennt kein Dash — bleibt gemappt.
+        assert_eq!(snap.fcu_selected_altitude_ft, Some(35000));
+
+        // Uninitialisiert (alles 0): ALT 0 → None, V/S 0 → None
+        // (kein dediziertes VS-Dash-Flag katalogisiert — 0 ist
+        // dashed/Level-off/uninitialisiert, ehrlich None).
+        let t = fsl_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fcu_selected_speed_kt, None);
+        assert_eq!(snap.fcu_selected_heading_deg, None);
+        assert_eq!(snap.fcu_selected_altitude_ft, None);
+        assert_eq!(snap.fcu_selected_vs_fpm, None);
+    }
+
+    #[test]
+    fn fsl_autobrake_from_button_lights_with_priority() {
+        // Genau eine Lampe > 50 → ihr Label.
+        for (lo, med, max, want) in [
+            (80.0, 0.0, 0.0, "LO"),
+            (0.0, 80.0, 0.0, "MED"),
+            (0.0, 0.0, 80.0, "MAX"),
+        ] {
+            let mut t = fsl_telemetry();
+            t.fsl_autobrake_lo_light = lo;
+            t.fsl_autobrake_med_light = med;
+            t.fsl_autobrake_max_light = max;
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert_eq!(snap.autobrake, Some(want.to_string()));
+        }
+
+        // (Theoretisch) mehrere gleichzeitig → die erste gewinnt
+        // (LO → MED → MAX).
+        let mut t = fsl_telemetry();
+        t.fsl_autobrake_lo_light = 80.0;
+        t.fsl_autobrake_max_light = 80.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autobrake, Some("LO".to_string()));
+
+        // Unter der >50-Preset-Schwelle bzw. alles aus → None
+        // (kein erfundenes OFF-Label).
+        let mut t = fsl_telemetry();
+        t.fsl_autobrake_med_light = 30.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autobrake, None);
+    }
+
+    #[test]
+    fn fsl_undocumented_warning_fields_stay_none() {
+        // Master Caution/Warning, Reverser, Ground-Spoiler und
+        // Cabin-Alt sind fuer FSL extern + nicht katalogisiert —
+        // bleiben ehrlich None (Standard-SimVars + Kaskaden greifen
+        // an anderer Stelle, kein erfundenes Some(false)).
+        let snap = telemetry_to_snapshot(fsl_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.master_caution, None);
+        assert_eq!(snap.master_warning, None);
+        assert_eq!(snap.reverser_deployed, None);
+        assert_eq!(snap.ground_spoilers_active, None);
+        assert_eq!(snap.cabin_altitude_warning, None);
     }
 }

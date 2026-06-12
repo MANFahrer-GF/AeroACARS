@@ -947,6 +947,11 @@ impl Default for SimSnapshot {
 ///     A/T ARM, Master Caution/Fire, Reverser, Ground Spoiler,
 ///     Cabin-Altitude-Warnung, Autobrake-Selector (WASM-strings +
 ///     HubHop, Live-Flug-Verifikation steht aus).
+///   * `FsLabsA321` — Premium-Mapper wired (v0.16.14): AP1/AP2,
+///     A/THR, APPR/LOC via FCU-LED-Helligkeit, FCU-Werte mit
+///     managed/selected (dashed → None), Autobrake LO/MED/MAX
+///     (HubHop-Output-Presets; LED-Schwellen werden beim ersten
+///     Live-Flug verifiziert).
 ///   * `FenixA320`  — Lights / parking brake / flaps wired and verified
 ///                    in MSFS 2024. AP indicator LVars (`I_FCU_AP*`) were
 ///                    observed flickering and are intentionally disabled
@@ -1036,6 +1041,16 @@ pub enum AircraftProfile {
     /// WASM-Strings-Dump (verifiziert) + HubHop-Output-Presets fuer
     /// die CMD-A/B-LEDs (`L:VC_*_VAL`-Annunciator-Familie).
     IflyMax8,
+    /// v0.16.14: FSLabs A321 (MSFS, ceo + neo — EIN Profil fuer alle
+    /// Varianten: CFM, IAE, Sharklet, NEO LEAP/PW; die ceo teilt FSLs
+    /// LVar-Schema mit der neo). FSL faehrt die Systeme in einem
+    /// EXTERNEN Prozess — die Paket-WASMs sind Stubs, die LVars
+    /// existieren nur zur Laufzeit. Die HubHop-Output-Presets
+    /// (Vendor "Flight Sim Labs", A321neo) sind deshalb die
+    /// autoritative dokumentierte Lese-Oberflaeche. Detection NUR
+    /// ueber den "FSLabs"-Title-Praefix (alle Titles + Liveries
+    /// tragen ihn).
+    FsLabsA321,
 }
 
 impl AircraftProfile {
@@ -1174,6 +1189,17 @@ impl AircraftProfile {
         if t.contains("ifly") && t.contains("max") {
             return Self::IflyMax8;
         }
+        // v0.16.14: FSLabs A321 (ceo + neo). Alle aircraft.cfg-Titles
+        // tragen das "FSLabs"-Praefix ("FSLabs A321 CFM …", "FSLabs
+        // A321 IAE …", "FSLabs A321-SL …", "FSLabs A321-NEO LEAP/PW …"
+        // — Liveries behalten es). BEWUSST KEIN ICAO-Fallback: die
+        // Designatoren A321/A21N kollidieren mit Fenix-, FBW- und
+        // marker-losen Stock-Liveries — dieselbe Misdetection-Klasse
+        // wie der in v0.16.10 (QS M4) entfernte A20N-Fallback (totes
+        // LVar-Profil → Some(false)-/Phantom-Werte).
+        if t.contains("fslabs") {
+            return Self::FsLabsA321;
+        }
         Self::Default
     }
 
@@ -1224,6 +1250,7 @@ impl AircraftProfile {
             Self::FsrPhenom300e => "FSReborn Phenom 300E",
             Self::TfdiMd11 => "TFDi MD-11",
             Self::IflyMax8 => "iFly 737 MAX 8",
+            Self::FsLabsA321 => "FSLabs A321",
         }
     }
 }
@@ -1964,6 +1991,50 @@ mod tests {
         assert_eq!(
             AircraftProfile::detect("PMDG 737-800 Lufthansa", "B738"),
             AircraftProfile::Pmdg737,
+        );
+    }
+
+    // ---- v0.16.14: FSLabs A321 ----
+
+    #[test]
+    fn detect_fslabs_a321_from_title() {
+        // neo-Title aus der aircraft.cfg — der ICAO-Designator (A21N)
+        // darf keine Rolle spielen, Detection laeuft NUR ueber das
+        // "FSLabs"-Title-Praefix.
+        let p = AircraftProfile::detect("FSLabs A321-NEO LEAP DLH D-AIOA", "A21N");
+        assert_eq!(p, AircraftProfile::FsLabsA321);
+        assert_eq!(p.label(), "FSLabs A321");
+        // ceo-Title (CFM-Variante) — gleiches Profil, die ceo teilt
+        // FSLs LVar-Schema mit der neo.
+        let p = AircraftProfile::detect("FSLabs A321 CFM CFG D-ATCA", "A321");
+        assert_eq!(p, AircraftProfile::FsLabsA321);
+    }
+
+    #[test]
+    fn detect_fslabs_a321_no_false_positives() {
+        // BEWUSST kein ICAO-Fallback: A321/A21N kollidieren mit
+        // Fenix-, FBW- und Stock-Liveries (dieselbe Misdetection-
+        // Klasse wie der entfernte A20N-Fallback) — ein markerloser
+        // Stock-A321 bleibt Default, tote FSL_-LVars erzeugen dort
+        // keine Phantome.
+        assert_eq!(
+            AircraftProfile::detect("Airbus A321 Asobo", "A321"),
+            AircraftProfile::Default,
+        );
+        // Fenix A321 bleibt auf dem Fenix-Profil (Branch-Reihenfolge:
+        // der Fenix-Match steht VOR dem FSLabs-Zweig).
+        assert_eq!(
+            AircraftProfile::detect("FenixA321 Lufthansa", "A321"),
+            AircraftProfile::FenixA321,
+        );
+        // FBW-/Headwind-Familie unberuehrt.
+        assert_eq!(
+            AircraftProfile::detect("FlyByWire A32NX", "A20N"),
+            AircraftProfile::FbwA32nx,
+        );
+        assert_eq!(
+            AircraftProfile::detect("Headwind A330-900neo", "A339"),
+            AircraftProfile::FbwA32nx,
         );
     }
 
