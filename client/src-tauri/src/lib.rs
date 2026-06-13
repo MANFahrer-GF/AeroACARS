@@ -24827,9 +24827,19 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     .expect("aircraft_aliases_vps lock")
                     .is_empty();
                 let now = Utc::now();
+                // v0.16.19: NICHT mehr nur bei leerem Cache nachladen. Sonst
+                // griff ein neu im VA-Admin angelegter Alias auf dem Auto-
+                // Start-Pfad erst nach einem App-Neustart (der Cache war ja
+                // schon einmal gewärmt → nie wieder gefetcht). Jetzt: leerer
+                // Cache → schnelles Retry (60 s, Erst-Warmup unverändert),
+                // gefüllter Cache → periodischer Refresh (5 min), damit
+                // hinzugefügte/geänderte/gelöschte Aliase ohne Neustart
+                // greifen. fetch_… macht cache.clear()+neu NUR bei Erfolg,
+                // wischt also nie bei Netzfehler. Best-effort, 5 s-Timeout.
+                let refresh_due_secs = if cache_empty { 60 } else { 300 };
                 let due = alias_warm_attempt_at
-                    .is_none_or(|at| (now - at).num_seconds() >= 60);
-                if cache_empty && due {
+                    .is_none_or(|at| (now - at).num_seconds() >= refresh_due_secs);
+                if due {
                     alias_warm_attempt_at = Some(now);
                     let token =
                         secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten();
