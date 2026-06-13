@@ -7784,10 +7784,13 @@ async fn flight_discover_resumable(
         }
     }
     let client = current_client(&state)?;
-    let pireps = client.get_user_pireps().await?;
+    // v0.16.17: server-seitig auf IN_PROGRESS gefiltert (?state=0) statt
+    // page-1-fetch-then-filter — sonst sind Orphans älter als ~20 Flüge
+    // unsichtbar (paginate() liefert 20/Seite, newest first).
+    let pireps = client.get_user_pireps_in_progress().await?;
     Ok(pireps
         .into_iter()
-        .filter(|p| p.state == Some(0)) // IN_PROGRESS
+        .filter(|p| p.state == Some(0)) // defensiv — Server hat bereits gefiltert
         .filter_map(|p| {
             Some(ResumableFlight {
                 pirep_id: p.id,
@@ -7829,7 +7832,10 @@ async fn flight_adopt(
     }
 
     let client = current_client(&state)?;
-    let pireps = client.get_user_pireps().await?;
+    // v0.16.17: server-seitig auf IN_PROGRESS gefiltert (?state=0) — der
+    // gesuchte PIREP kann älter als die ersten 20 paginierten Einträge sein.
+    // Der state-Check im find() bleibt als defensive Doppelprüfung.
+    let pireps = client.get_user_pireps_in_progress().await?;
     let pirep = pireps
         .into_iter()
         .find(|p| p.id == pirep_id && p.state == Some(0))
@@ -8242,15 +8248,23 @@ async fn flight_start(
     // existing PIREP instead of trying to create a new one (which would fail
     // with aircraft-not-available because the aircraft is already "in use" by
     // the orphaned PIREP).
-    let existing = match client.get_user_pireps().await {
+    //
+    // v0.16.17: server-seitig auf IN_PROGRESS gefiltert (?state=0) — das
+    // paginierte get_user_pireps() sah nur die letzten 20 PIREPs, ältere
+    // Leichen blieben unsichtbar und blockierten Aircraft dauerhaft.
+    let existing = match client.get_user_pireps_in_progress().await {
         Ok(list) => list,
         Err(e) => {
             tracing::warn!(error = %e, "could not list user PIREPs to check for resume");
             Vec::new()
         }
     };
+    // v0.16.17 Selbstheilung: >24-h-alte Orphans best-effort wegcanceln,
+    // BEVOR der Adopt-/Collision-Check läuft — gibt die Überlebenden zurück.
+    let existing = sweep_stale_orphans_before_prefile(&app, &client, existing).await;
     let adoptable = existing.into_iter().find(|p| {
-        // phpVMS PirepState IN_PROGRESS = 0.
+        // phpVMS PirepState IN_PROGRESS = 0 — Server hat bereits gefiltert,
+        // der Check bleibt als defensive Doppelprüfung.
         p.state == Some(0)
             && p.flight_number.as_deref() == Some(body.flight_number.as_str())
             && (p.airline_id.is_none() || p.airline_id == Some(airline_id))
@@ -9189,8 +9203,13 @@ async fn flight_start_manual(
         )),
     };
 
-    let existing = client.get_user_pireps().await.unwrap_or_default();
+    // v0.16.17: server-seitig auf IN_PROGRESS gefiltert (?state=0) statt
+    // page-1-fetch-then-filter (siehe flight_start) + Selbstheilung: alte
+    // Orphans (>24 h) werden vor dem Adopt-/Collision-Check weggeräumt.
+    let existing = client.get_user_pireps_in_progress().await.unwrap_or_default();
+    let existing = sweep_stale_orphans_before_prefile(&app, &client, existing).await;
     let adoptable = existing.into_iter().find(|p| {
+        // state-Check defensiv — Server hat bereits gefiltert.
         p.state == Some(0)
             && p.flight_number.as_deref() == Some(body.flight_number.as_str())
             && (p.airline_id.is_none() || p.airline_id == Some(airline_id))
@@ -13984,7 +14003,221 @@ async fn flight_forget(
 //                                 bid_id ODER flight_id Body) + lokale
 //                                 Aufraeumung
 //   - flight_forget_remote      → nur lokale Aufraeumung, kein API-Call
+//
+// v0.16.17 ergänzt zwei Dinge:
+//   1. Alle Orphan-Konsumenten holen IN_PROGRESS-PIREPs jetzt über
+//      `get_user_pireps_in_progress()` (server-seitiges `?state=0`) statt
+//      fetch-then-filter über das paginierte `get_user_pireps()` (20/Seite,
+//      newest first) — Orphans älter als ~20 Flüge waren vorher unsichtbar
+//      (24 Leichen am 2026-06-13 manuell in Prod gelöscht).
+//   2. Selbstheilung beim Flugstart: `sweep_stale_orphans_before_prefile`
+//      räumt >24-h-alte Leichen automatisch ab, bevor ein neuer PIREP
+//      geprefiled wird (siehe unten).
 // ───────────────────────────────────────────────────────────────────
+
+/// v0.16.17: Mindestalter, ab dem ein fremder IN_PROGRESS-PIREP beim
+/// Flugstart automatisch gecancelt wird (Selbstheilung).
+///
+/// Warum 24 h: das schützt einen Piloten, der JETZT GERADE auf einem
+/// zweiten PC fliegt — ein lebender Parallel-Flug hat zwingend ein
+/// frisches `created_at` (Stunden, nicht Tage) und bleibt damit
+/// unangetastet. Jüngere Orphans bleiben ebenfalls liegen: für die ist
+/// der Resume-Banner-Flow (`flight_discover_resumable`) bzw. das manuelle
+/// Clean-Up-Panel zuständig (unverändert).
+const ORPHAN_AUTO_CLEANUP_MIN_AGE_HOURS: i64 = 24;
+
+/// Pure Entscheidung: darf der Kandidaten-PIREP beim Flugstart automatisch
+/// aufgeräumt (gecancelt) werden?
+///
+/// Regeln (konservativ — im Zweifel NICHT canceln):
+///   - Kandidat == lokal aktiver/resumender Flug → false (nie anfassen)
+///   - `created_at` fehlt oder unparsebar       → false (Alter nicht
+///     beweisbar; der PIREP bleibt für Resume-Banner + Clean-Up-Panel
+///     sichtbar, der Pilot entscheidet)
+///   - Alter > [`ORPHAN_AUTO_CLEANUP_MIN_AGE_HOURS`] → true
+fn should_auto_cleanup(
+    created_at: Option<&str>,
+    now: DateTime<Utc>,
+    active_pirep_id: Option<&str>,
+    candidate_id: &str,
+) -> bool {
+    if active_pirep_id == Some(candidate_id) {
+        return false;
+    }
+    let Some(created) = created_at.and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+    else {
+        return false;
+    };
+    now - created.with_timezone(&Utc)
+        > chrono::Duration::hours(ORPHAN_AUTO_CLEANUP_MIN_AGE_HOURS)
+}
+
+/// v0.16.17 (Selbstheilung beim Flugstart): cancelt best-effort alle
+/// verwaisten IN_PROGRESS-PIREPs älter als 24 h, BEVOR der neue PIREP
+/// geprefiled wird. Vorher blieben solche Leichen liegen, bis ein Admin
+/// sie löschte — der Pilot sah nur „aircraft not available".
+///
+/// Nimmt die bereits geholte IN_PROGRESS-Liste entgegen und gibt die
+/// **Überlebenden** zurück, damit der Aufrufer seinen Adopt-/Collision-
+/// Check auf demselben Fetch fahren kann (kein zweiter API-Call).
+///
+/// Fehlerphilosophie: jeder Cancel ist best-effort. Ein Fehlschlag wird
+/// geloggt, der PIREP bleibt in der Überlebenden-Liste (→ weiterhin im
+/// Clean-Up-Panel sichtbar / ggf. adoptierbar) — die Selbstheilung darf
+/// den Flugstart NIEMALS blockieren.
+async fn sweep_stale_orphans_before_prefile(
+    app: &AppHandle,
+    client: &Client,
+    in_progress: Vec<api_client::PirepSummary>,
+) -> Vec<api_client::PirepSummary> {
+    // Geschützt: der lokal aktive Flug ODER ein Disk-Resume-Kandidat, den
+    // try_resume_flight noch einsammeln will. Beim Flugstart ist
+    // active_flight praktisch immer None (der Guard im Command hätte sonst
+    // schon abgebrochen), aber der Check kostet nichts; der Disk-Kandidat
+    // dagegen ist real — sein PIREP gehört dem Resume-Flow.
+    let protected: Option<String> = {
+        let state = app.state::<AppState>();
+        let guard = state.active_flight.lock().expect("active_flight lock");
+        guard.as_ref().map(|f| f.pirep_id.clone())
+    }
+    .or_else(|| read_persisted_flight(app).map(|p| p.pirep_id));
+
+    let now = Utc::now();
+    let mut survivors = Vec::with_capacity(in_progress.len());
+    for p in in_progress {
+        if !should_auto_cleanup(p.created_at.as_deref(), now, protected.as_deref(), &p.id) {
+            survivors.push(p);
+            continue;
+        }
+        match client.cancel_pirep(&p.id).await {
+            Ok(()) => {
+                // Alter ist hier immer parsebar — should_auto_cleanup hätte
+                // sonst false geliefert. Fallback trotzdem defensiv.
+                let alter = p
+                    .created_at
+                    .as_deref()
+                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| {
+                        let h = (now - dt.with_timezone(&Utc)).num_hours();
+                        if h >= 48 {
+                            format!("{} Tage alt", h / 24)
+                        } else {
+                            format!("{h} h alt")
+                        }
+                    })
+                    .unwrap_or_else(|| "Alter unbekannt".to_string());
+                let nr = p.flight_number.as_deref().unwrap_or("?");
+                let dep = p.dpt_airport_id.as_deref().unwrap_or("?");
+                let arr = p.arr_airport_id.as_deref().unwrap_or("?");
+                log_activity_handle(
+                    app,
+                    ActivityLevel::Info,
+                    format!(
+                        "Verwaister Flug {nr} ({dep}→{arr}, {alter}) automatisch aufgeräumt"
+                    ),
+                    Some(format!(
+                        "PIREP {} server-seitig gecancelt (Selbstheilung beim Flugstart)",
+                        p.id
+                    )),
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    pirep_id = %p.id,
+                    error = %e,
+                    "auto-cleanup: cancel_pirep failed — orphan bleibt liegen, Flugstart läuft weiter"
+                );
+                survivors.push(p);
+            }
+        }
+    }
+    survivors
+}
+
+#[cfg(test)]
+mod orphan_auto_cleanup_tests {
+    use super::*;
+
+    fn now() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-06-13T12:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    /// Älter als 24 h → aufräumen.
+    #[test]
+    fn cleans_up_orphan_older_than_24h() {
+        assert!(should_auto_cleanup(
+            Some("2026-06-12T11:00:00+00:00"), // 25 h alt
+            now(),
+            None,
+            "pirep_old",
+        ));
+    }
+
+    /// Frischer Orphan (< 24 h) → liegen lassen (Resume-Banner-Flow).
+    #[test]
+    fn keeps_fresh_orphan() {
+        assert!(!should_auto_cleanup(
+            Some("2026-06-13T10:00:00+00:00"), // 2 h alt
+            now(),
+            None,
+            "pirep_fresh",
+        ));
+    }
+
+    /// Exakt 24 h → noch NICHT aufräumen (strikt „älter als").
+    #[test]
+    fn keeps_orphan_at_exactly_24h() {
+        assert!(!should_auto_cleanup(
+            Some("2026-06-12T12:00:00+00:00"),
+            now(),
+            None,
+            "pirep_boundary",
+        ));
+    }
+
+    /// Kandidat == lokal aktiver/resumender Flug → nie anfassen,
+    /// egal wie alt.
+    #[test]
+    fn never_touches_active_pirep() {
+        assert!(!should_auto_cleanup(
+            Some("2026-06-01T00:00:00+00:00"), // uralt
+            now(),
+            Some("pirep_active"),
+            "pirep_active",
+        ));
+    }
+
+    /// created_at fehlt → konservativ liegen lassen.
+    #[test]
+    fn keeps_orphan_without_created_at() {
+        assert!(!should_auto_cleanup(None, now(), None, "pirep_no_ts"));
+    }
+
+    /// created_at unparsebar → konservativ liegen lassen.
+    #[test]
+    fn keeps_orphan_with_unparseable_created_at() {
+        assert!(!should_auto_cleanup(
+            Some("gestern Mittag"),
+            now(),
+            None,
+            "pirep_bad_ts",
+        ));
+    }
+
+    /// Anderer PIREP als der aktive, alt genug → aufräumen (der
+    /// active-Schutz greift nur bei ID-Gleichheit).
+    #[test]
+    fn cleans_up_old_orphan_while_other_flight_is_active() {
+        assert!(should_auto_cleanup(
+            Some("2026-06-10T00:00:00+00:00"),
+            now(),
+            Some("pirep_active"),
+            "pirep_other",
+        ));
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OrphanFlight {
@@ -14023,14 +14256,18 @@ async fn flight_list_orphans(
         guard.as_ref().map(|f| f.pirep_id.clone())
     };
 
-    // 1) PIREPs holen, auf IN_PROGRESS filtern
-    let all_pireps = client.get_user_pireps().await.map_err(|e| {
-        tracing::warn!(error = %e, "flight_list_orphans: get_user_pireps failed");
+    // 1) IN_PROGRESS-PIREPs holen — v0.16.17: server-seitig gefiltert
+    //    (?state=0). Vorher fetch-then-filter über das paginierte
+    //    get_user_pireps() (20/Seite, newest first) — Orphans älter als
+    //    ~20 Flüge waren im Clean-Up-Panel unsichtbar (24 Leichen am
+    //    2026-06-13 manuell in Prod gelöscht).
+    let all_pireps = client.get_user_pireps_in_progress().await.map_err(|e| {
+        tracing::warn!(error = %e, "flight_list_orphans: get_user_pireps_in_progress failed");
         UiError::from(e)
     })?;
     let in_progress: Vec<_> = all_pireps
         .into_iter()
-        .filter(|p| p.state == Some(0))
+        .filter(|p| p.state == Some(0)) // defensiv — Server hat bereits gefiltert
         .filter(|p| {
             active_pirep_id
                 .as_deref()

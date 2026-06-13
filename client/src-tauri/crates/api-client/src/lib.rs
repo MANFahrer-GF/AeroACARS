@@ -144,6 +144,12 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// v0.16.17: server-side IN_PROGRESS filter (phpVMS PirepState 0). Const so
+/// the URL test below pins the exact path + query the client sends — see
+/// `get_user_pireps_in_progress` for why this must NOT be a page-1
+/// fetch-then-filter.
+const USER_PIREPS_IN_PROGRESS_PATH: &str = "/api/user/pireps?state=0";
+
 #[derive(Debug, Error)]
 pub enum ApiError {
     #[error("invalid base URL: {0}")]
@@ -1132,11 +1138,37 @@ impl Client {
         self.get_data("/api/user/bids").await
     }
 
-    /// `GET /api/user/pireps` — pilot's PIREPs (any state). Used during
-    /// flight_start to find an existing in-progress PIREP we should resume
-    /// rather than colliding with a fresh prefile.
+    /// `GET /api/user/pireps` — pilot's PIREPs (any state).
+    ///
+    /// **Pagination warning**: phpVMS returns `paginate()` here — 20 per
+    /// page, newest first — and this method only ever reads page 1. So the
+    /// result is "the 20 most recent PIREPs of any state", NOT the complete
+    /// list. Use this only for callers that genuinely want *recent* PIREPs.
+    /// Anything that hunts for IN_PROGRESS entries must use
+    /// [`get_user_pireps_in_progress`](Self::get_user_pireps_in_progress)
+    /// instead — see the 2026-06-13 incident note there.
     pub async fn get_user_pireps(&self) -> Result<Vec<PirepSummary>, ApiError> {
         self.get_data("/api/user/pireps").await
+    }
+
+    /// `GET /api/user/pireps?state=0` — ONLY the pilot's IN_PROGRESS PIREPs,
+    /// filtered **server-side**.
+    ///
+    /// Why a dedicated method: `/api/user/pireps` is paginated (20 per page,
+    /// newest first) and `get_user_pireps()` only reads page 1. Any stuck /
+    /// orphaned IN_PROGRESS PIREP older than the pilot's last ~20 flights was
+    /// therefore INVISIBLE to every fetch-then-filter consumer (orphan-cleanup
+    /// panel, resume discovery, prefile collision check) — pilots could not
+    /// self-clean and an admin had to delete by hand (24 such corpses were
+    /// cleaned manually in production on 2026-06-13). The server-side filter
+    /// beats pagination: phpVMS `UserController::pireps` applies
+    /// `$where['state']` when the query param is present, and a pilot has at
+    /// most a handful of IN_PROGRESS PIREPs at once, so page 1 is always the
+    /// complete set.
+    pub async fn get_user_pireps_in_progress(
+        &self,
+    ) -> Result<Vec<PirepSummary>, ApiError> {
+        self.get_data(USER_PIREPS_IN_PROGRESS_PATH).await
     }
 
     /// `GET /api/airports/{icao}` — single airport lookup with coordinates.
@@ -2038,6 +2070,23 @@ mod tests {
     fn strips_trailing_slash() {
         let c = Connection::new("https://example.com/", "k").unwrap();
         assert!(!c.base_url().ends_with("//"));
+    }
+
+    /// v0.16.17: `get_user_pireps_in_progress` must hit
+    /// `/api/user/pireps?state=0` — the server-side state filter is the
+    /// whole point (paginate() returns only 20/page newest-first, so a
+    /// client-side filter over page 1 misses older orphans; 24 corpses
+    /// cleaned manually in prod 2026-06-13). Guards both that the query
+    /// survives `endpoint()` URL-joining and that the path const doesn't
+    /// silently drift.
+    #[test]
+    fn in_progress_pireps_endpoint_keeps_state_query() {
+        let conn = Connection::new("https://example.com/", "k").unwrap();
+        let client = Client::new(conn).unwrap();
+        let url = client.endpoint(USER_PIREPS_IN_PROGRESS_PATH).unwrap();
+        assert_eq!(url.as_str(), "https://example.com/api/user/pireps?state=0");
+        assert_eq!(url.query(), Some("state=0"));
+        assert_eq!(url.path(), "/api/user/pireps");
     }
 
     #[test]
