@@ -583,6 +583,14 @@ pub struct Bid {
 pub struct PrefileBody {
     pub airline_id: i64,
     pub aircraft_id: String,
+    /// v0.16.18: phpVMS-Flight-ID aus dem aktiven Bid. phpVMS validiert
+    /// sie im PrefileRequest ('sometimes|nullable|exists:flights,id') und
+    /// haengt den PIREP damit an den geplanten Flug — wichtig fuers
+    /// Event-/Tour-Matching (SkyAdventures: Etappen mit festem Flug).
+    /// Vorher fehlte sie systematisch -> pireps.flight_id blieb leer.
+    /// Bei Diversion nullt phpVMS sie bewusst selbst (PirepService:778).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flight_id: Option<String>,
     pub flight_number: String,
     pub dpt_airport_id: String,
     pub arr_airport_id: String,
@@ -2311,5 +2319,27 @@ mod tests {
         assert_eq!(p.flight_number.as_deref(), Some("GSG123"));
         assert_eq!(p.aircraft_icao.as_deref(), Some("B738"));
         assert_eq!(p.aircraft_registration.as_deref(), Some("D-AGSG"));
+    }
+
+    /// v0.16.18: flight_id wird gesendet wenn vorhanden, sonst komplett
+    /// weggelassen (skip_serializing_if) — alte phpVMS-Installs sehen
+    /// keinen neuen Key, neue haengen den PIREP an den geplanten Flug.
+    #[test]
+    fn prefile_body_flight_id_serialization() {
+        let mut body = PrefileBody {
+            airline_id: 1,
+            aircraft_id: "170".into(),
+            flight_number: "434".into(),
+            dpt_airport_id: "EDDF".into(),
+            arr_airport_id: "KORD".into(),
+            source_name: "AeroACARS/test".into(),
+            ..Default::default()
+        };
+        let js = serde_json::to_string(&body).unwrap();
+        assert!(!js.contains("flight_id"), "None muss weggelassen werden: {js}");
+
+        body.flight_id = Some("N43EeJppON5wr3Rm".into());
+        let js = serde_json::to_string(&body).unwrap();
+        assert!(js.contains("\"flight_id\":\"N43EeJppON5wr3Rm\""), "{js}");
     }
 }

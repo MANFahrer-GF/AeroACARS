@@ -8225,6 +8225,9 @@ async fn flight_start(
     }
 
     let body = PrefileBody {
+        // v0.16.18: Flight-ID aus dem Bid mitschicken — phpVMS haengt den
+        // PIREP damit an den geplanten Flug (Event-/Tour-Matching, SkyAdventures).
+        flight_id: Some(bid.flight.id.clone()),
         airline_id,
         aircraft_id: aircraft_id.to_string(),
         flight_number: bid.flight.flight_number.clone(),
@@ -9182,6 +9185,9 @@ async fn flight_start_manual(
 
     // PIREP prefile (gleiche Logik wie flight_start, ohne SB-Felder)
     let body = PrefileBody {
+        // v0.16.18: Flight-ID aus dem Bid mitschicken — phpVMS haengt den
+        // PIREP damit an den geplanten Flug (Event-/Tour-Matching, SkyAdventures).
+        flight_id: Some(bid.flight.id.clone()),
         airline_id,
         aircraft_id: aircraft_id.to_string(),
         flight_number: bid.flight.flight_number.clone(),
