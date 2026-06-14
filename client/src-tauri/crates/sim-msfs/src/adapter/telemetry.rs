@@ -2858,16 +2858,18 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // Spoilers ARMED: Standard-SimVar ODER Profil-LVar — jede Quelle
     // genuegt, kein Regress fuer Aircraft mit funktionierendem
     // Standard.
+    //
+    // v0.16.21: FSLabs hat KEINEN Lever-basierten Override mehr. Der
+    // v0.16.20-Versuch las `VC_PED_SPD_BRK_LEVER` 5..=15 als armed —
+    // dieses Fenster faengt aber die NEUTRALE Lever-Stellung, sodass
+    // `spoilers_armed` den GANZEN Flug True las (Live-Befund: 985/985
+    // airborne-Samples). Kosmetisch (kein FSM/Scoring-Einfluss), aber
+    // falsch — also faellt FSL auf die Standard-SimVar zurueck wie
+    // jedes andere Aircraft ohne eigenes ARMED-LVar.
     let spoilers_armed = if is_fbw {
         t.spoilers_armed || t.fbw_spoilers_armed != 0.0
     } else if is_a346 {
         t.spoilers_armed || t.a346_spoiler_lever_armed != 0.0
-    } else if is_fsl {
-        // v0.16.20: NUR der armed-Detent kommt aus `VC_PED_SPD_BRK_LEVER`
-        // — Skript prueft exakt `10 ==` (10 = armed). Wir tolerieren ein
-        // Fenster (>= 5 und <= 15), falls der Live-Wert leicht abweicht.
-        // Der physische Handle bleibt bewusst auf der Standard-SimVar.
-        t.spoilers_armed || (t.fsl_spd_brk_lever >= 5.0 && t.fsl_spd_brk_lever <= 15.0)
     } else {
         t.spoilers_armed
     };
@@ -5505,26 +5507,35 @@ mod tests {
     }
 
     #[test]
-    fn fsl_speedbrake_handle_uses_standard_simvar_lever_only_arms() {
-        // Review-Fund v0.16.20: das FSL-Profil ueberschreibt
-        // `spoilers_handle_position` NICHT mehr — FSL treibt die
-        // Standard-SimVar `SPOILERS HANDLE POSITION` korrekt (Peters
-        // Log: 0→1 beim Rollout). Nur `spoilers_armed` kommt aus dem
-        // SPD_BRK_LEVER-Detent (== 10).
+    fn fsl_speedbrake_handle_and_armed_use_standard_simvar() {
+        // v0.16.21: das FSL-Profil hat KEINEN Lever-basierten Override
+        // mehr — weder fuer `spoilers_handle_position` (schon v0.16.20)
+        // noch fuer `spoilers_armed`. Beide kommen jetzt aus der
+        // Standard-SimVar. Grund (Live-Befund): das v0.16.20-Fenster
+        // `VC_PED_SPD_BRK_LEVER` 5..=15 fing die NEUTRALE Lever-Stellung
+        // → `spoilers_armed` las den ganzen Flug True (985/985 Samples).
+        // Kosmetisch (kein FSM/Scoring-Einfluss), aber falsch.
 
         // Lever eingefahren (0), Standard-Handle 0 → Handle 0, nicht armed.
         let snap = telemetry_to_snapshot(fsl_telemetry(), Simulator::Msfs2024);
         assert_eq!(snap.spoilers_handle_position, Some(0.0));
         assert_eq!(snap.spoilers_armed, Some(false));
 
-        // Armed-Detent (Skript: == 10) → armed. Der Handle bleibt auf
-        // der Standard-SimVar (hier Default 0.0) — NICHT vom Lever
-        // ueberschrieben (frueher faelschlich 10/50 = 0.2).
+        // Lever in der frueher als "armed" gewerteten Stellung (10) darf
+        // `spoilers_armed` jetzt NICHT mehr setzen — nur die Standard-
+        // SimVar entscheidet. Standard-armed=false → armed=false.
         let mut t = fsl_telemetry();
         t.fsl_spd_brk_lever = 10.0;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.spoilers_armed, Some(true));
+        assert_eq!(snap.spoilers_armed, Some(false)); // Lever armt NICHT mehr
         assert_eq!(snap.spoilers_handle_position, Some(0.0)); // Standard, NICHT 0.2
+
+        // Standard-SimVar `SPOILERS ARMED` true → armed true (Quelle
+        // ist jetzt ausschliesslich der Standard).
+        let mut t = fsl_telemetry();
+        t.spoilers_armed = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.spoilers_armed, Some(true));
 
         // Standard-Handle deployed (z.B. 1.0 beim Rollout) fliesst
         // unveraendert durch — der Lever-Wert aendert daran nichts.
