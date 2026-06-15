@@ -31151,3 +31151,388 @@ mod msfs_touchdown_delag_tests {
         assert!(canonical < -200.0);
     }
 }
+
+// ======================================================================
+// v0.16.21 — MSFS touchdown V/S de-lag REPLAY-GOLDEN acceptance test
+// ======================================================================
+//
+// WHY THIS EXISTS (the gap it closes). The 20 unit tests in
+// `msfs_touchdown_delag_tests` exercise `decide_msfs_touchdown_delag` and
+// `apply_msfs_touchdown_delag` with HAND-TYPED scalars (a synthetic
+// `descent_buffer` built to a target slope). NOTHING drives the FULL chain
+//
+//     real recorded AGL+timestamp samples
+//        → estimate_msfs_touchdown_vs_short_window  (the AGL-derivative)
+//        → decide_msfs_touchdown_delag              (the g-consistency gate)
+//        → apply_msfs_touchdown_delag               (writes the analysis JSON)
+//
+// over a REAL flared MSFS landing. The synthetic tests can't catch a
+// regression in how the geometric AGL-midpoint estimator reads a real,
+// noisy, quantised MSFS AGL trace (the AGL holds for two frames at a time,
+// the contact frame reads ~12 ft with on_ground=true — the sim quirk the
+// estimator's TD-gate is built around). This golden is that real-data
+// complement: it runs the SAME functions the sampler calls over the REAL
+// `touchdown_window` sample buffers and `landing_analysis` JSON pulled
+// straight from the VPS flight-logs, and asserts on what the REAL
+// estimator produces — never on a number we passed in.
+//
+// THE FIXTURES are real, trimmed flights (tests/fixtures/*.jsonl.gz),
+// each carrying the original `touchdown_window` (the recorded pre-TD
+// AGL+timestamp buffer), the original `landing_analysis` (the raw,
+// PRE-de-lag `vs_at_edge_fpm` + `peak_g_post_500ms`), the
+// `touchdown_detected` (sim kind) and `landing_scored` events. No sample
+// or field was synthesised or rounded — the JSON is verbatim from the log.
+// Corpus-truth anchors (documented in memory + the per-flight FACTS.md):
+//
+//   FIRE  JBU322  Msfs2024  edge -441.6  peak_g 1.249  → true ~-251
+//   FIRE  EWG906  Msfs2024  edge -422.2  peak_g 1.211  → true ~-263
+//   NONE  DLH848  Msfs2024  edge -285.7  peak_g 1.405  → genuinely firm
+//                           (g ≥ 1.40 hard-lock — real v0.16.21 capture)
+//   NONE  ITY324  XPlane12  edge -863.2  peak_g 2.78   → X-Plane sim gate,
+//                           genuinely steep (stays Severe)
+//
+#[cfg(test)]
+mod msfs_touchdown_delag_replay_golden {
+    use super::*;
+    use flate2::read::GzDecoder;
+    use std::collections::VecDeque;
+    use std::io::{BufRead, BufReader};
+    use std::path::Path;
+
+    const FW: aircraft_category::AircraftCategory =
+        aircraft_category::AircraftCategory::FixedWing;
+
+    fn fixture_path(name: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name)
+    }
+
+    /// A trimmed real flight reconstructed from the committed fixture.
+    struct ReplayFlight {
+        /// The recorded simulator, parsed from the `touchdown_detected`
+        /// event's `sim` field — drives the de-lag sim gate.
+        simulator: Simulator,
+        /// The recorded touchdown edge timestamp (`landing_analysis.edge_at`
+        /// == `touchdown_detected.contact_at`); the de-lag uses this as
+        /// `touchdown_at`.
+        edge_at: DateTime<Utc>,
+        /// The raw, PRE-de-lag `landing_analysis.analysis` object (carries
+        /// `vs_at_edge_fpm` + `peak_g_post_500ms`).
+        analysis: serde_json::Value,
+        /// The real pre-TD ring buffer reconstructed verbatim from
+        /// `touchdown_window.samples`, as `TelemetrySample`s — exactly what
+        /// the live de-lag estimator consumes.
+        buffer: VecDeque<TelemetrySample>,
+        /// The de-bounced bounce count the recorder actually scored with
+        /// (`landing_analysis.scored_bounce_count`) — used to reproduce the
+        /// class-band move faithfully (not a hand-picked 0).
+        scored_bounce_count: u8,
+    }
+
+    fn parse_rfc3339(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s)
+            .unwrap_or_else(|e| panic!("bad timestamp {s:?}: {e}"))
+            .with_timezone(&Utc)
+    }
+
+    /// Reconstruct a `TelemetrySample` field-by-field from a recorded
+    /// `touchdown_window` sample object. We build the crate-private struct
+    /// directly (this is an in-crate test) rather than deriving Deserialize
+    /// on the production type — the public API stays untouched. Every field
+    /// the AGL estimator reads (`at`, `agl_ft`, `on_ground`) comes verbatim
+    /// from the log.
+    fn sample_from_json(v: &serde_json::Value) -> TelemetrySample {
+        let f = |k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+        let f64v = |k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
+        TelemetrySample {
+            at: parse_rfc3339(v["at"].as_str().expect("sample.at")),
+            vs_fpm: f("vs_fpm"),
+            g_force: f("g_force"),
+            on_ground: v.get("on_ground").and_then(|x| x.as_bool()).unwrap_or(false),
+            agl_ft: f("agl_ft"),
+            heading_true_deg: f("heading_true_deg"),
+            groundspeed_kt: f("groundspeed_kt"),
+            indicated_airspeed_kt: f("indicated_airspeed_kt"),
+            lat: f64v("lat"),
+            lon: f64v("lon"),
+            pitch_deg: f("pitch_deg"),
+            bank_deg: f("bank_deg"),
+            gear_normal_force_n: v
+                .get("gear_normal_force_n")
+                .and_then(|x| x.as_f64())
+                .map(|x| x as f32),
+            total_weight_kg: v
+                .get("total_weight_kg")
+                .and_then(|x| x.as_f64())
+                .map(|x| x as f32),
+        }
+    }
+
+    fn sim_from_str(s: &str) -> Simulator {
+        match s {
+            "Msfs2024" => Simulator::Msfs2024,
+            "Msfs2020" => Simulator::Msfs2020,
+            "XPlane12" => Simulator::XPlane12,
+            "XPlane11" => Simulator::XPlane11,
+            other => panic!("unexpected sim {other:?} in fixture"),
+        }
+    }
+
+    fn load_replay(name: &str) -> ReplayFlight {
+        let path = fixture_path(name);
+        let file = std::fs::File::open(&path)
+            .unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
+        let reader = BufReader::new(GzDecoder::new(file));
+
+        let mut simulator: Option<Simulator> = None;
+        let mut edge_at: Option<DateTime<Utc>> = None;
+        let mut analysis: Option<serde_json::Value> = None;
+        let mut buffer: VecDeque<TelemetrySample> = VecDeque::new();
+        let mut scored_bounce_count: u8 = 0;
+
+        for line in reader.lines() {
+            let line = line.unwrap();
+            if line.trim().is_empty() {
+                continue;
+            }
+            let v: serde_json::Value = serde_json::from_str(&line)
+                .unwrap_or_else(|e| panic!("bad json line in {name}: {e}"));
+            match v.get("type").and_then(|x| x.as_str()).unwrap_or("") {
+                "touchdown_detected" => {
+                    if let Some(s) = v.get("sim").and_then(|x| x.as_str()) {
+                        simulator = Some(sim_from_str(s));
+                    }
+                }
+                "touchdown_window" => {
+                    edge_at = v
+                        .get("edge_at")
+                        .and_then(|x| x.as_str())
+                        .map(parse_rfc3339);
+                    for sv in v
+                        .get("samples")
+                        .and_then(|x| x.as_array())
+                        .expect("touchdown_window.samples")
+                    {
+                        buffer.push_back(sample_from_json(sv));
+                    }
+                }
+                "landing_analysis" => {
+                    if edge_at.is_none() {
+                        edge_at = v
+                            .get("edge_at")
+                            .and_then(|x| x.as_str())
+                            .map(parse_rfc3339);
+                    }
+                    analysis = v.get("analysis").cloned();
+                    if let Some(a) = &analysis {
+                        if let Some(n) = a.get("scored_bounce_count").and_then(|x| x.as_u64()) {
+                            scored_bounce_count = n as u8;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        ReplayFlight {
+            simulator: simulator.expect("fixture missing touchdown_detected.sim"),
+            edge_at: edge_at.expect("fixture missing edge_at"),
+            analysis: analysis.expect("fixture missing landing_analysis"),
+            buffer,
+            scored_bounce_count,
+        }
+    }
+
+    /// Pull a number out of an analysis object (post-mutation reads).
+    fn num(analysis: &serde_json::Value, key: &str) -> Option<f32> {
+        analysis.get(key).and_then(|v| v.as_f64()).map(|x| x as f32)
+    }
+
+    // ------------------------------------------------------------------
+    // FIRE cases — the de-lag must replace the lagged edge with the REAL
+    // short-window AGL estimate and move the class band one step shallower.
+    // ------------------------------------------------------------------
+
+    /// Shared driver for the two firing flights: runs the REAL estimator +
+    /// gate + apply over the real buffer, asserts the corrected value lands
+    /// in the documented band, the raw edge is preserved, the forensic keys
+    /// appear, and the landing class moves Firm → Acceptable.
+    ///
+    /// `expected_corrected` is the corpus-truth AGL rate; `band` is the
+    /// half-width tolerance justified by the estimator's tier resolution
+    /// (the 750 ms/1000 ms/1500 ms windows resolve the rate to a few fpm,
+    /// not to one exact value) — NOT tuned to a single observed number.
+    fn assert_fires(
+        name: &str,
+        expected_edge: f32,
+        expected_corrected: f32,
+        band: f32,
+    ) {
+        let mut f = load_replay(name);
+
+        // 1. The REAL short-window estimator over the REAL recorded AGL
+        //    samples — this is the step the synthetic unit tests skip.
+        let agl_est = estimate_msfs_touchdown_vs_short_window(&f.buffer, f.edge_at)
+            .unwrap_or_else(|| panic!("{name}: estimator must produce a short-window rate"));
+        assert!(
+            agl_est < 0.0 && agl_est.is_finite(),
+            "{name}: estimator must be negative+finite, got {agl_est}"
+        );
+        // The REAL estimate sits in the documented truth band. We assert on
+        // the estimator OUTPUT, not on an agl we fed in.
+        assert!(
+            (agl_est - expected_corrected).abs() <= band,
+            "{name}: real AGL estimate {agl_est:.1} not within ±{band} of \
+             corpus truth {expected_corrected:.1}"
+        );
+
+        // Sanity: the fixture really carries the lagged edge + low g.
+        let edge = num(&f.analysis, "vs_at_edge_fpm").unwrap();
+        assert!(
+            (edge - expected_edge).abs() < 1.0,
+            "{name}: fixture edge {edge} != documented {expected_edge}"
+        );
+
+        // 2. + 3. Run apply over the analysis JSON — the SAME entry point
+        //    the sampler calls. It internally re-runs the estimator + gate.
+        let corrected = apply_msfs_touchdown_delag(
+            &mut f.analysis,
+            &f.buffer,
+            f.edge_at,
+            f.simulator,
+            FW,
+        )
+        .unwrap_or_else(|| panic!("{name}: de-lag MUST fire"));
+
+        // The corrected value IS the real estimator output.
+        assert!(
+            (corrected - agl_est).abs() < 1e-3,
+            "{name}: apply corrected {corrected} != estimator {agl_est}"
+        );
+        assert!(
+            (corrected - expected_corrected).abs() <= band,
+            "{name}: corrected {corrected:.1} outside truth band \
+             {expected_corrected:.1}±{band}"
+        );
+
+        // The analysis edge was overwritten with the corrected value …
+        assert!((num(&f.analysis, "vs_at_edge_fpm").unwrap() - corrected).abs() < 1e-3);
+        // … the raw lagged edge preserved verbatim …
+        assert!(
+            (num(&f.analysis, "vs_at_edge_fpm_raw").unwrap() - expected_edge).abs() < 1.0,
+            "{name}: raw edge not preserved"
+        );
+        // … the source + signature forensic keys added …
+        assert_eq!(
+            f.analysis["vs_at_edge_source"].as_str().unwrap(),
+            "msfs_g_consistency_delag"
+        );
+        assert!(
+            f.analysis["vs_lag_signature"]
+                .as_str()
+                .unwrap()
+                .contains("delagged"),
+            "{name}: signature missing"
+        );
+
+        // 4. The class band moves one step shallower. Score the lagged edge
+        //    vs the corrected edge through the SAME classifier the pipeline
+        //    uses, with the REAL scored peak_g + de-bounced bounce count.
+        let peak_g = num(&f.analysis, "peak_g_post_500ms").unwrap();
+        let lagged_class = LandingScore::classify(expected_edge, peak_g, f.scored_bounce_count);
+        let corrected_class = LandingScore::classify(corrected, peak_g, f.scored_bounce_count);
+        assert_eq!(
+            lagged_class,
+            LandingScore::Firm,
+            "{name}: lagged edge should score Firm"
+        );
+        assert_eq!(
+            corrected_class,
+            LandingScore::Acceptable,
+            "{name}: corrected edge should score Acceptable (Firm→Acceptable)"
+        );
+        assert_eq!(corrected_class.numeric(), 80);
+    }
+
+    #[test]
+    fn jbu322_real_buffer_fires_to_agl_truth() {
+        // Documented truth: lagged edge -441.6, true AGL-derived ~-251,
+        // peak_g 1.249. Band ±15 fpm = estimator tier resolution.
+        assert_fires("jbu322_msfs_delag_fire.jsonl.gz", -441.6, -251.0, 15.0);
+    }
+
+    #[test]
+    fn ewg906_real_buffer_fires_to_agl_truth() {
+        // Documented truth: lagged edge -422.2, true ~-263, peak_g 1.211.
+        assert_fires("ewg906_msfs_delag_fire.jsonl.gz", -422.2, -263.0, 15.0);
+    }
+
+    // ------------------------------------------------------------------
+    // NO-FIRE controls — the gate must leave a genuinely-firm MSFS landing
+    // and a steep X-Plane landing completely untouched.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn dlh848_real_firm_landing_not_softened() {
+        // Real v0.16.21 MSFS capture: edge -285.7, peak_g 1.405 — ABOVE the
+        // 1.40 hard-lock. A genuinely firm touchdown. The gate must not fire
+        // and must add no forensic keys.
+        let mut f = load_replay("dlh848_msfs_firm_control.jsonl.gz");
+        assert!(matches!(
+            f.simulator,
+            Simulator::Msfs2020 | Simulator::Msfs2024
+        ));
+        let peak_g = num(&f.analysis, "peak_g_post_500ms").unwrap();
+        assert!(
+            peak_g >= MSFS_DELAG_G_HARD_LOCK,
+            "DLH848 peak_g {peak_g} should be at/above the hard-lock"
+        );
+        let before = f.analysis.clone();
+        let corrected = apply_msfs_touchdown_delag(
+            &mut f.analysis,
+            &f.buffer,
+            f.edge_at,
+            f.simulator,
+            FW,
+        );
+        assert!(corrected.is_none(), "DLH848 must NOT de-lag (hard-lock)");
+        assert_eq!(f.analysis, before, "DLH848 analysis must be untouched");
+        assert!(f.analysis.get("vs_at_edge_source").is_none());
+        assert!(f.analysis.get("vs_at_edge_fpm_raw").is_none());
+        assert!(f.analysis.get("vs_lag_signature").is_none());
+    }
+
+    #[test]
+    fn ity324_xplane_steep_not_softened() {
+        // X-Plane (raw local_vy already the scored source): the sim gate
+        // excludes it. edge -863.2, genuinely steep — must stay Severe.
+        let mut f = load_replay("ity324_xplane_steep_control.jsonl.gz");
+        assert!(matches!(
+            f.simulator,
+            Simulator::XPlane11 | Simulator::XPlane12
+        ));
+        let edge = num(&f.analysis, "vs_at_edge_fpm").unwrap();
+        let before = f.analysis.clone();
+        let corrected = apply_msfs_touchdown_delag(
+            &mut f.analysis,
+            &f.buffer,
+            f.edge_at,
+            f.simulator,
+            FW,
+        );
+        assert!(
+            corrected.is_none(),
+            "ITY324 must NOT de-lag (X-Plane sim gate)"
+        );
+        assert_eq!(f.analysis, before, "ITY324 analysis must be untouched");
+        // The steep edge still classifies Severe (its |V/S| ≥ 600 → Hard by
+        // V/S, and peak_g ≫ 2.10 → Severe by g): the de-lag never relaxes it.
+        let peak_g = num(&f.analysis, "peak_g_post_500ms").unwrap();
+        assert_eq!(
+            LandingScore::classify(edge, peak_g, 0),
+            LandingScore::Severe,
+            "ITY324 must stay Severe"
+        );
+    }
+}
