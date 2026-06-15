@@ -525,13 +525,18 @@ describe("SinkrateForensik render — Legacy + Missing-Data + Source-Pill", () =
     expect(container.querySelector(".sinkrate-buckets")).toBeNull();
   });
 
-  it("Flare-Reduktion zeigt POSITIVE Zahl wenn Pilot reduziert hat (|peak|>|edge|)", () => {
-    // peak = -235, edge = -142 → |235|-|142| = 93 (Flare hat reduziert)
+  // v0.16.22 FIX 3: the panel now reads the CANONICAL backend
+  // `flare_reduction_fpm` directly (not a recompute from peak/edge), so it
+  // agrees with LandingPanel.tsx and `flare_detected`. These tests drive the
+  // backend value and assert the display semantics are preserved.
+  it("Flare-Reduktion zeigt POSITIVE Zahl aus dem kanonischen Backend-Wert", () => {
+    // Backend liefert flare_reduction_fpm = 93 (Flare hat reduziert).
     render(<SinkrateForensik record={makeRecord({
       forensic_sample_count: 469,
       landing_peak_vs_fpm: -142,
       vs_at_edge_fpm: -142,
       peak_vs_pre_flare_fpm: -235,
+      flare_reduction_fpm: 93,
     })} />);
     // Wortlaut: "Flare hat Sinkrate um 93 fpm reduziert" — kein Minus
     expect(screen.getByText(/93 fpm reduziert/i)).toBeInTheDocument();
@@ -540,15 +545,34 @@ describe("SinkrateForensik render — Legacy + Missing-Data + Source-Pill", () =
     expect(reduction).toBeNull();
   });
 
-  it("Flare hat NICHT reduziert: alternativer Text statt negativer Zahl", () => {
-    // peak = -200, edge = -343 → |200|-|343| = -143 (negativ → "nicht reduziert")
+  it("Flare hat NICHT reduziert: alternativer Text wenn Backend-Wert ≤ 0", () => {
+    // Backend liefert flare_reduction_fpm = 0 → "nicht reduziert".
     render(<SinkrateForensik record={makeRecord({
       forensic_sample_count: 469,
       landing_peak_vs_fpm: -343,
       vs_at_edge_fpm: -343,
       peak_vs_pre_flare_fpm: -200,
+      flare_reduction_fpm: 0,
     })} />);
     expect(screen.getByText(/Flare hat die Sinkrate nicht reduziert/i)).toBeInTheDocument();
+  });
+
+  // v0.16.22 FIX 3 regression: the OLD recompute (|peak| − |edge|) would have
+  // shown a POSITIVE reduction here (|−659| − |−423| = 236) and DISAGREED
+  // with the backend, which de-lagged the edge and computed its own value.
+  // The panel must now honour the backend `flare_reduction_fpm` (188) so it
+  // matches LandingPanel.tsx and `flare_detected`.
+  it("FIX 3: nutzt Backend-Wert (188), nicht den Recompute aus peak/edge (236)", () => {
+    render(<SinkrateForensik record={makeRecord({
+      forensic_sample_count: 469,
+      vs_at_edge_fpm: -423,            // de-lagged edge
+      peak_vs_pre_flare_fpm: -659,     // AGL-derived peak
+      flare_reduction_fpm: 188,        // canonical backend reduction
+      flare_detected: true,
+    })} />);
+    expect(screen.getByText(/188 fpm reduziert/i)).toBeInTheDocument();
+    // The stale recompute value (236) must NOT appear.
+    expect(screen.queryByText(/236 fpm reduziert/i)).toBeNull();
   });
 
   it("Kein DLHv im Render-Output (V7-Acceptance)", () => {

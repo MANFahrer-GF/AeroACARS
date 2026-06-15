@@ -251,11 +251,17 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
   });
   const trace = selectTraceSamples(record.touchdown_profile);
   const scoreVs = scoreBasisVs(record);
-  // Flare-Reduktion ueber Betraege (sonst falsches Vorzeichen bei negativen
-  // VS): peak = -235 fpm + edge = -142 fpm → |peak|-|edge| = 93 fpm POSITIV
-  // (= Sinkrate um 93 fpm reduziert). v0.7.8 QS-Round-9-Fix.
-  const flareReduction = record.peak_vs_pre_flare_fpm != null && record.vs_at_edge_fpm != null
-    ? Math.round(Math.abs(record.peak_vs_pre_flare_fpm) - Math.abs(record.vs_at_edge_fpm))
+  // v0.16.22 FIX 3: use the CANONICAL backend `flare_reduction_fpm` directly
+  // instead of recomputing `|peak_vs_pre_flare_fpm| − |vs_at_edge_fpm|`. The
+  // old recompute mixed the AGL-derived peak with the de-lagged edge, so on
+  // MSFS it could go negative / disagree with the backend value and with
+  // `flare_detected` (and with LandingPanel.tsx, which already uses the
+  // canonical value). The backend computes the reduction from internally-
+  // consistent endpoints (AGL on the AGL path, SimVar on fallback); reading
+  // it here keeps both panels and the detection flag in lockstep. Positive =
+  // the flare reduced the sink rate; null/≤0 = no reduction.
+  const flareReduction = record.flare_reduction_fpm != null
+    ? Math.round(record.flare_reduction_fpm)
     : null;
 
   return (

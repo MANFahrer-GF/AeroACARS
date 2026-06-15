@@ -15344,6 +15344,20 @@ const MSFS_FLARE_MAX_MEDIAN_DT_MS: i64 = 60;
 /// frozen-end phantoms have 1-3 distinct values in the end-fit window; the
 /// largest REAL flares (reduction 500+) have 8 — a clean 2× margin at 4.
 const MSFS_FLARE_MIN_END_FIT_DISTINCT_AGL: usize = 4;
+/// Gate 1c BACKSTOP — minimum AGL SPAN (ft) in the flare-END fit window
+/// (±MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS around flare_hi). The distinct-bucket
+/// count above (Gate 1c) is fooled by a NOISY freeze: a trace that dithers
+/// across ≥4 quantized 0.01 ft buckets while spanning near-zero TRUE height
+/// passes the bucket count yet still reads vs_at_flare_end ≈ 0 from the flat
+/// plateau → a huge fake reduction → phantom score-100. The span check is the
+/// physics floor that bucket-counting cannot give: in the final ±300 ms a
+/// REAL flare descends through real height. On the corpus the slowest REAL
+/// flare-end (extra_y8Y5, end −95 fpm) covers ≈0.95 ft in that 600 ms window
+/// and the JBU323/jbu322 flares span 4-6 ft; a frozen/near-frozen plateau
+/// spans ~0. 0.3 ft sits an order of magnitude below the slowest real end
+/// span yet an order of magnitude above quantization+jitter (~0.01-0.05 ft),
+/// so it fires ONLY on a true plateau. Reject → SimVar fallback.
+const MSFS_FLARE_MIN_END_AGL_SPAN_FT: f32 = 0.3;
 /// Gate 2 — balloon tolerance (ft). If the airborne AGL trace rises by
 /// more than this above a prior in-window minimum it is non-monotone (a
 /// bounce/balloon), not a descent+flare. DA40 GSG2056 balloons ~2.4 ft;
@@ -15373,6 +15387,15 @@ const MSFS_FLARE_DETECT_FLOOR_FPM: f64 = 50.0;
 /// time point `t_ms`, via a least-squares fit of `agl_ft` over the
 /// airborne samples in `[t_ms ± MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS]`.
 ///
+/// `fit_hi_cap`: when `Some(cap)`, no sample at or after `cap` ms enters the
+/// fit. v0.16.22 hardening: the end point (nearest flare_hi = edge−100 ms)
+/// would otherwise reach edge+200 ms; on a touchdown-then-bounce the
+/// post-edge airborne balloon has RISING AGL, which flattens/reverses the
+/// end slope → an inflated reduction → phantom. Capping at `edge_ms` keeps
+/// the end fit on the genuine pre-touchdown descent (a firm landing's
+/// post-edge samples are on_ground and already excluded, so it is
+/// unaffected). Pass `None` for an uncapped fit.
+///
 /// Lag-free: AGL/position is not the lagged display-VSI SimVar. Returns
 /// `None` when fewer than `MSFS_FLARE_AGL_FIT_MIN_SAMPLES` qualifying
 /// samples exist, the AGL is above `MSFS_FLARE_AGL_MAX_FT` at the point,
@@ -15382,6 +15405,7 @@ fn agl_geometric_vs_fpm_at(
     samples: &[TouchdownWindowSample],
     t_ms: i64,
     pitch_deg_at_t: f32,
+    fit_hi_cap: Option<i64>,
 ) -> Option<f32> {
     let lo = t_ms - MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS;
     let hi = t_ms + MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS;
@@ -15397,6 +15421,13 @@ fn agl_geometric_vs_fpm_at(
         let ts = s.at.timestamp_millis();
         if ts < lo || ts > hi || s.on_ground {
             continue;
+        }
+        // Do not let the fit cross the touchdown moment (post-edge balloon
+        // would corrupt the end slope on a bounce).
+        if let Some(cap) = fit_hi_cap {
+            if ts >= cap {
+                continue;
+            }
         }
         if s.agl_ft > MSFS_FLARE_AGL_MAX_FT || !s.agl_ft.is_finite() {
             continue;
@@ -15441,12 +15472,17 @@ fn compute_msfs_agl_flare_endpoints(
     let mut peak_vs_pre: Option<f32> = None; // most negative AGL slope
     let mut vs_at_flare_end: Option<f32> = None;
     let mut min_dist_to_end = i64::MAX;
+    // v0.16.22 hardening: cap every endpoint fit at the touchdown edge so a
+    // post-edge bounce/balloon (rising AGL after first ground contact) never
+    // contaminates the end slope. flare_hi == edge_ms − 100, so edge_ms is
+    // flare_hi + 100; samples at/after that never enter a fit.
+    let edge_cap = flare_hi + 100;
     for s in samples {
         let ts = s.at.timestamp_millis();
         if ts < flare_lo || ts > flare_hi || s.on_ground {
             continue;
         }
-        let vs_agl = match agl_geometric_vs_fpm_at(samples, ts, s.pitch_deg) {
+        let vs_agl = match agl_geometric_vs_fpm_at(samples, ts, s.pitch_deg, Some(edge_cap)) {
             Some(v) => v,
             None => continue,
         };
@@ -15495,17 +15531,47 @@ fn evaluate_msfs_flare_gates(
         .collect();
     in_window.sort_by_key(|s| s.at.timestamp_millis());
 
-    // ── Gate 2 (bounce, part A): any on_ground=true in the window means a
-    // touchdown already happened here — a post-bounce settle, not a flare.
+    // ── Gate 2 (bounce, part A): any on_ground=true in the PRE-edge window
+    // means a touchdown already happened here — a post-bounce settle, not a
+    // flare. (Kept pre-edge: EVERY normal landing is on_ground just past the
+    // edge — that is the touchdown itself, not a prior bounce. Extending this
+    // to post-edge would wrongly trip on all firm landings; the post-edge
+    // bounce signal is the BALLOON below, not on_ground.)
     let any_on_ground = in_window.iter().any(|s| s.on_ground);
 
-    // Airborne, finite-AGL, near-ground samples drive the data-quality and
-    // balloon checks (mirrors the slope fit's qualifying set).
+    // ── Gate 2 (bounce) extended balloon-scan window. v0.16.22 hardening: a
+    // touchdown-then-bounce contacts the ground AT/near the edge, then goes
+    // airborne again just past it with RISING AGL. A NORMAL landing has no
+    // airborne samples post-edge (it is on the ground), so extending only the
+    // BALLOON (non-monotone rise among airborne samples) to flare_hi + the
+    // fit half-window (= edge + 200 ms) catches the bounce balloon WITHOUT
+    // tripping firm landings. (The fit endpoints are already capped at the
+    // edge — this gate is the corroborating veto so a bounce earns no
+    // credited flare. Data-quality gates 1a/1b/1c stay on the pre-edge set.)
+    let bounce_scan_hi = flare_hi + MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS;
+
+    // Airborne, finite-AGL, near-ground samples in the FLARE window drive the
+    // data-quality checks (mirrors the slope fit's qualifying set).
     let air: Vec<&TouchdownWindowSample> = in_window
         .iter()
         .copied()
         .filter(|s| !s.on_ground && s.agl_ft.is_finite() && s.agl_ft <= MSFS_FLARE_AGL_MAX_FT)
         .collect();
+    // Airborne set over the EXTENDED balloon-scan window (pre-edge flare
+    // window + post-edge fit reach) — used ONLY for the balloon (non-monotone
+    // rise) check so a post-edge bounce balloon is visible.
+    let mut air_bounce: Vec<&TouchdownWindowSample> = samples
+        .iter()
+        .filter(|s| {
+            let ts = s.at.timestamp_millis();
+            ts >= flare_lo
+                && ts <= bounce_scan_hi
+                && !s.on_ground
+                && s.agl_ft.is_finite()
+                && s.agl_ft <= MSFS_FLARE_AGL_MAX_FT
+        })
+        .collect();
+    air_bounce.sort_by_key(|s| s.at.timestamp_millis());
 
     // ── Gate 1a (data quality): distinct agl_ft count. Quantize to 0.01 ft
     // so float jitter does not inflate the count (the frozen E195 repeats
@@ -15524,19 +15590,42 @@ fn evaluate_msfs_flare_gates(
     // a localized mid/late freeze). Same quantization as Gate 1a.
     let end_lo = flare_hi - MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS;
     let end_hi = flare_hi + MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS;
-    let mut end_distinct: Vec<i64> = air
+    let end_agls: Vec<f32> = air
         .iter()
         .filter(|s| {
             let ts = s.at.timestamp_millis();
             ts >= end_lo && ts <= end_hi
         })
-        .map(|s| (s.agl_ft as f64 * 100.0).round() as i64)
+        .map(|s| s.agl_ft)
+        .collect();
+    let mut end_distinct: Vec<i64> = end_agls
+        .iter()
+        .map(|a| (*a as f64 * 100.0).round() as i64)
         .collect();
     end_distinct.sort_unstable();
     end_distinct.dedup();
     // Only judge the end window if it actually has samples (an empty end
     // window cannot be "frozen" — let the MIN_SAMPLES fit guard handle it).
     let n_end_distinct = end_distinct.len();
+    // Gate 1c backstop: the AGL SPAN across the end-fit window. A NOISY
+    // freeze dithers across ≥MSFS_FLARE_MIN_END_FIT_DISTINCT_AGL quantized
+    // buckets (passing the distinct count) while spanning ~0 true height —
+    // the span catches that where bucket-counting cannot.
+    let end_agl_span = if end_agls.len() >= 2 {
+        let mut lo = f32::INFINITY;
+        let mut hi = f32::NEG_INFINITY;
+        for &a in &end_agls {
+            if a < lo {
+                lo = a;
+            }
+            if a > hi {
+                hi = a;
+            }
+        }
+        Some(hi - lo)
+    } else {
+        None
+    };
 
     // ── Gate 1b (data quality): median sample Δt over the FULL in-window
     // set (airborne + ground) — a degraded stream is degraded regardless of
@@ -15554,11 +15643,12 @@ fn evaluate_msfs_flare_gates(
     };
 
     // ── Gate 2 (bounce, part B): non-monotone balloon. Walk the airborne
-    // AGL trace tracking the running minimum; if AGL rises more than the
+    // AGL trace (over the EXTENDED bounce-scan window so a post-edge balloon
+    // is visible) tracking the running minimum; if AGL rises more than the
     // tolerance above that minimum, the trace ballooned back up.
     let mut balloon_ft = 0.0_f32;
     let mut running_min = f32::INFINITY;
-    for s in &air {
+    for s in &air_bounce {
         if s.agl_ft < running_min {
             running_min = s.agl_ft;
         } else {
@@ -15569,8 +15659,17 @@ fn evaluate_msfs_flare_gates(
         }
     }
 
-    let end_frozen =
-        n_end_distinct > 0 && n_end_distinct < MSFS_FLARE_MIN_END_FIT_DISTINCT_AGL;
+    // Frozen end if EITHER the distinct-bucket count is too low (coarse/
+    // stepped freeze) OR the AGL span across the end window is below the
+    // physics floor (noisy multi-bucket freeze on a flat plateau). The span
+    // backstop is what catches a dither that spreads across ≥4 buckets yet
+    // covers near-zero true height (vs_at_flare_end ≈ 0 → fake reduction).
+    let end_span_flat = end_agl_span
+        .map(|sp| sp < MSFS_FLARE_MIN_END_AGL_SPAN_FT)
+        .unwrap_or(false);
+    let end_frozen = (n_end_distinct > 0
+        && n_end_distinct < MSFS_FLARE_MIN_END_FIT_DISTINCT_AGL)
+        || end_span_flat;
     let dq_reject = n_distinct < MSFS_FLARE_MIN_DISTINCT_AGL
         || median_dt > MSFS_FLARE_MAX_MEDIAN_DT_MS
         || end_frozen;
@@ -15889,20 +15988,43 @@ fn compute_landing_analysis(
         _ => None,
     };
     // dVS/dt grob: (vs_at_flare_end - vs_at_flare_start) / window_dt.
-    // Secondary diagnostic — kept on the SimVar pass (start + end both
-    // SimVar) so it stays an internally-consistent dVS/dt regardless of
-    // the chosen flare source above. v0.16.22: uses `vs_at_flare_end_
-    // simvar` explicitly (not the possibly-AGL `vs_at_flare_end`).
-    let flare_dvs_dt = match (earliest_in_window, vs_at_flare_end_simvar) {
-        (Some(start), Some(end_vs)) => {
+    // Secondary diagnostic. v0.16.22 FIX 4: route this through the SAME
+    // endpoint SOURCE as the published `flare_reduction` so the two
+    // diagnostics never disagree. On the MSFS AGL path both start and end are
+    // AGL-geometric (start = the capped AGL fit at the earliest in-window
+    // sample, end = the published AGL `vs_at_flare_end`); on the SimVar
+    // fallback (and X-Plane / Other) both stay SimVar → byte-identical to
+    // pre-v0.16.22.
+    let flare_dvs_dt = match earliest_in_window {
+        Some(start) => {
             let dt_sec = (flare_hi - start.at.timestamp_millis()) as f64 / 1000.0;
             if dt_sec > 0.1 {
-                let pitch_rad = (start.pitch_deg as f64) * std::f64::consts::PI / 180.0;
-                let start_vs = (start.vs_fpm as f64 * pitch_rad.cos()) as f32;
-                Some(((end_vs - start_vs) as f64 / dt_sec) as f32)
-            } else { None }
+                // Pick the start/end pair from the SAME source as the reduction.
+                let endpoints = if use_agl {
+                    // AGL start at the earliest-window timestamp (edge-capped,
+                    // matching compute_msfs_agl_flare_endpoints) + AGL end.
+                    let start_vs = agl_geometric_vs_fpm_at(
+                        samples,
+                        start.at.timestamp_millis(),
+                        start.pitch_deg,
+                        Some(flare_hi + 100),
+                    );
+                    match (start_vs, vs_at_flare_end) {
+                        (Some(sv), Some(ev)) => Some((sv, ev)),
+                        _ => None,
+                    }
+                } else {
+                    // SimVar pass: pitch-corrected vs_fpm start + SimVar end.
+                    let pitch_rad = (start.pitch_deg as f64) * std::f64::consts::PI / 180.0;
+                    let start_vs = (start.vs_fpm as f64 * pitch_rad.cos()) as f32;
+                    vs_at_flare_end_simvar.map(|ev| (start_vs, ev))
+                };
+                endpoints.map(|(start_vs, end_vs)| ((end_vs - start_vs) as f64 / dt_sec) as f32)
+            } else {
+                None
+            }
         }
-        _ => None,
+        None => None,
     };
 
     // v0.5.41: rebalanced — Endpoint-Score dominiert (was kommt am TD raus),
@@ -32124,7 +32246,7 @@ mod msfs_agl_flare_tests {
         let s = synth_trace(b, 20.0, &[(-2000, -300.0)], |_| 3.0);
         let edge_ms = b.timestamp_millis();
         // fit at -1000ms should read ~-300 (×cos(3°) ≈ ×0.9986 ⇒ ~-299.6)
-        let v = agl_geometric_vs_fpm_at(&s, edge_ms - 1000, 3.0).expect("fit");
+        let v = agl_geometric_vs_fpm_at(&s, edge_ms - 1000, 3.0, None).expect("fit");
         assert!((v - (-300.0 * (3.0_f32).to_radians().cos())).abs() < 8.0, "got {v}");
     }
 
@@ -32139,12 +32261,12 @@ mod msfs_agl_flare_tests {
             tw(b, -1000, 20.0, 3.0, false, -300.0),
             tw(b, -700, 18.0, 3.0, false, -300.0),
         ];
-        assert!(agl_geometric_vs_fpm_at(&sparse, edge_ms - 850, 3.0).is_none());
+        assert!(agl_geometric_vs_fpm_at(&sparse, edge_ms - 850, 3.0, None).is_none());
         // Dense but all AGL above the ceiling → None.
         let high: Vec<_> = (0..20)
             .map(|i| tw(b, -1000 + i * 20, 500.0, 3.0, false, -300.0))
             .collect();
-        assert!(agl_geometric_vs_fpm_at(&high, edge_ms - 800, 3.0).is_none());
+        assert!(agl_geometric_vs_fpm_at(&high, edge_ms - 800, 3.0, None).is_none());
     }
 
     /// REAL flare: sink reduces from -560 (early) to -360 (late) as pitch
@@ -32213,6 +32335,43 @@ mod msfs_agl_flare_tests {
         // (cos(3°) ≈ 0.99863; vs_fpm at the flare-window samples.)
         let peak = a.get("peak_vs_pre_flare_fpm").and_then(|v| v.as_f64()).unwrap();
         assert!(peak < -500.0, "X-Plane peak from SimVar, got {peak}");
+    }
+
+    /// FIX 4 (flare_dvs_dt source consistency). On the MSFS AGL path the
+    /// published `flare_reduction_fpm` is AGL-derived; `flare_dvs_dt` must use
+    /// the SAME source so the two diagnostics agree in SIGN. A genuine flare
+    /// (positive reduction) must yield a POSITIVE dVS/dt (sink decaying toward
+    /// zero). On X-Plane / Other the dVS/dt stays SimVar-derived (unchanged).
+    #[test]
+    fn flare_dvs_dt_follows_published_source() {
+        // synth_trace writes `vs_fpm` == the geometric sink, so for a clean
+        // synthetic AGL == SimVar; to PROVE dvs_dt follows the AGL source we
+        // additionally check the SIGN agrees with the AGL reduction.
+        let b = base();
+        // Real flare: steep early -560 → shallow late -360, pitch rising.
+        let s = synth_trace(b, 16.0, &[(-2000, -560.0), (-900, -460.0), (-400, -360.0)], |ms| {
+            let frac = ((ms + 2000) as f32 / 2000.0).clamp(0.0, 1.0);
+            2.5 + 2.7 * frac
+        });
+        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024);
+        assert_eq!(a.get("flare_vs_source").and_then(|v| v.as_str()), Some("msfs_agl"));
+        let red = a.get("flare_reduction_fpm").and_then(|v| v.as_f64()).unwrap();
+        let dvs = a.get("flare_dvs_dt_fpm_per_sec").and_then(|v| v.as_f64()).unwrap();
+        assert!(red > 100.0, "real flare reduction expected, got {red}");
+        // The KEY assertion: dvs_dt sign agrees with the AGL reduction.
+        // Pre-v0.16.22 FIX 4 this could disagree (SimVar end vs AGL reduction).
+        assert!(
+            dvs > 0.0,
+            "MSFS AGL dvs_dt must be POSITIVE (consistent with the positive AGL reduction), got {dvs}"
+        );
+
+        // X-Plane: dvs_dt stays SimVar-derived. With this same descending-
+        // then-shallowing profile the SimVar dvs_dt is also positive, but the
+        // point is it is computed from the SimVar pass — assert it is present
+        // and finite (byte-identical path; no AGL involvement).
+        let ax = compute_landing_analysis(&s, b, Simulator::XPlane12);
+        let dvs_x = ax.get("flare_dvs_dt_fpm_per_sec").and_then(|v| v.as_f64());
+        assert!(dvs_x.is_some_and(|v| v.is_finite()), "X-Plane dvs_dt must be SimVar-derived and present");
     }
 
     /// Real-fixture golden: the committed trimmed JBU323 flight. The
@@ -32513,6 +32672,119 @@ mod msfs_agl_flare_tests {
         );
     }
 
+    /// FIX 1 (Gate 1c span backstop): a NOISY freeze. The AGL descends
+    /// genuinely through the first ~1.5 s (many distinct values → Gate 1a
+    /// passes), then in the final ~600 ms it DITHERS across ≥4 distinct 0.01
+    /// ft buckets (so the Gate 1c bucket-COUNT passes) while the true span is
+    /// only ~0.03 ft — a flat plateau. The end-fit slope reads ≈0 →
+    /// vs_at_flare_end ≈ 0 → a huge fake reduction → phantom score-100. The
+    /// SPAN backstop must catch it where the bucket count cannot.
+    #[test]
+    fn gate_noisy_freeze_span_backstop_rejects() {
+        let b = base();
+        let edge_ms = b.timestamp_millis();
+        // End fit window is [flare_hi-300, flare_hi+300] = [-400, +200] ms.
+        // The flare window samples run [-2000, -100]. Build a real descent
+        // until -500 ms, then a near-flat noisy plateau through the end.
+        // The dither uses 5 distinct 0.01-ft buckets within a ~0.04 ft span.
+        let plateau = [6.00_f32, 6.01, 6.02, 6.03, 6.04];
+        let s: Vec<_> = (0..96)
+            .map(|i| {
+                let ms: i64 = -2000 + i * 20; // -2000 .. -100
+                let agl = if ms < -500 {
+                    // descend 18 → 6 over [-2000,-500]: many distinct values
+                    18.0 - (ms - (-2000)) as f32 / 1500.0 * 12.0
+                } else {
+                    // noisy plateau: cycle the 5 buckets (≥4 distinct, ~0.04 ft span)
+                    let idx = (((ms + 500) / 20).rem_euclid(plateau.len() as i64)) as usize;
+                    plateau[idx]
+                };
+                tw(b, ms, agl, 3.0, false, -300.0)
+            })
+            .collect();
+        let g = evaluate_msfs_flare_gates(&s, edge_ms - 2000, edge_ms - 100);
+        assert!(
+            !g.agl_reliable,
+            "noisy multi-bucket freeze (flat span) must be unreliable"
+        );
+        assert!(g.unreliable_source, "noisy freeze is a data-quality reject");
+        // Prove the bucket COUNT alone would NOT have caught it: the end-fit
+        // window has ≥ MSFS_FLARE_MIN_END_FIT_DISTINCT_AGL distinct buckets,
+        // so only the SPAN backstop rejects here.
+        let end_lo = (edge_ms - 100) - MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS;
+        let end_hi = (edge_ms - 100) + MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS;
+        let mut end_buckets: Vec<i64> = s
+            .iter()
+            .filter(|x| {
+                let t = x.at.timestamp_millis();
+                t >= end_lo && t <= end_hi && !x.on_ground
+            })
+            .map(|x| (x.agl_ft as f64 * 100.0).round() as i64)
+            .collect();
+        end_buckets.sort_unstable();
+        end_buckets.dedup();
+        assert!(
+            end_buckets.len() >= MSFS_FLARE_MIN_END_FIT_DISTINCT_AGL,
+            "end window has ≥4 distinct buckets ({}) — only the span backstop catches this",
+            end_buckets.len()
+        );
+        // And the end-to-end JSON must NOT publish a phantom: source falls
+        // back, no detection, no butter-100.
+        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024);
+        assert_eq!(
+            a.get("flare_vs_source").and_then(|v| v.as_str()),
+            Some("simvar_agl_unreliable")
+        );
+        assert_eq!(a.get("flare_detected").and_then(|v| v.as_bool()), Some(false));
+        let score = a.get("flare_quality_score").and_then(|v| v.as_i64()).unwrap();
+        assert!(score < 100, "no butter-100 on a noisy-freeze phantom (got {score})");
+    }
+
+    /// FIX 2 (post-edge bounce contamination): a clean descent to a touchdown
+    /// AT the edge, then a post-edge airborne BALLOON with rising AGL. The
+    /// uncapped end-fit would reach edge+200 ms and read those rising
+    /// post-edge samples, flattening/reversing the end slope → an inflated
+    /// reduction → phantom. The edge-capped fit + the extended balloon gate
+    /// must keep this from earning a credited flare.
+    #[test]
+    fn touchdown_then_balloon_not_credited() {
+        let b = base();
+        let edge_ms = b.timestamp_millis();
+        // Steady firm descent -350 fpm to ~0 ft at the edge (t=0), then the
+        // aircraft bounces: on_ground at the edge sample, airborne again and
+        // ballooning up ~2.5 ft over the next 200 ms.
+        let mut s: Vec<TouchdownWindowSample> = Vec::new();
+        // Pre-edge descent [-2000, -20] ms, AGL 11.6 → ~0.1, all airborne.
+        for i in 0..100 {
+            let ms = -2000 + i * 20;
+            let agl = 0.1 + (-ms as f32) / 1000.0 * 5.8; // ~-350 fpm geometry
+            s.push(tw(b, ms, agl, 4.0, false, -350.0));
+        }
+        // Edge sample: ground contact at t=0.
+        s.push(tw(b, 0, 0.0, 4.0, true, -350.0));
+        // Post-edge balloon: airborne again, rising AGL 0.5 → 2.5 ft.
+        for i in 1..=10 {
+            let ms = i * 20; // +20 .. +200
+            let agl = 0.5 + (i as f32) * 0.2; // climbs to 2.5 ft
+            s.push(tw(b, ms, agl, 4.0, false, 150.0));
+        }
+        let flare_lo = edge_ms - 2000;
+        let flare_hi = edge_ms - 100;
+        // The balloon gate must mark the AGL path unreliable/blocked.
+        let g = evaluate_msfs_flare_gates(&s, flare_lo, flare_hi);
+        assert!(
+            !g.agl_reliable,
+            "post-edge balloon must suppress the AGL path (Gate 2 extended)"
+        );
+        // End-to-end: no credited flare.
+        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024);
+        assert_eq!(
+            a.get("flare_detected").and_then(|v| v.as_bool()),
+            Some(false),
+            "touchdown-then-bounce must NOT produce a credited flare"
+        );
+    }
+
     /// Gate 3 (pitch veto): a clean, data-rich descent with a strongly
     /// NOSE-DOWN net pitch trend passes the data/bounce gates but sets the
     /// pitch_nose_down veto. A normal nose-up/flat flare does not.
@@ -32620,4 +32892,5 @@ mod msfs_agl_flare_tests {
             "bounce falls back to SimVar (data quality is fine, not 'unreliable')"
         );
     }
+
 }

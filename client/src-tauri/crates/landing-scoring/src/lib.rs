@@ -661,4 +661,53 @@ mod tests {
         let cat = classify_landing(-100.0, Some(1.10), 1);
         assert_eq!(cat, LandingCategory::Acceptable);
     }
+
+    /// v0.16.22 FIX 5 — dormant-flare-weight guardrail. `aggregate_master_
+    /// score` carries a live `"flare" => 1.0` weight, but `compute_sub_
+    /// scores` must NEVER emit a `"flare"` SubScoreEntry — the flare metric
+    /// is forensic/coaching-only and stays OUT of the master score (Landing-
+    /// Score is private; no scored flare ranking — see ACARS-focus policy).
+    /// This test fails loudly if a future edit accidentally wires flare into
+    /// the scored set, so the dormant weight can never silently activate.
+    /// Run over a FULLY-populated input so every sub-score branch fires.
+    #[test]
+    fn compute_sub_scores_never_emits_flare() {
+        let rich = LandingScoringInput {
+            vs_fpm: Some(-150.0),
+            peak_g_load: Some(1.4),
+            scored_g_load: Some(1.3),
+            bounce_count: Some(1),
+            approach_vs_stddev_fpm: Some(120.0),
+            approach_bank_stddev_deg: Some(3.0),
+            rollout_distance_m: Some(1500.0),
+            fuel_efficiency_pct: Some(2.0),
+            planned_zfw_kg: Some(60_000.0),
+            planned_tow_kg: Some(72_000.0),
+            planned_burn_kg: Some(5_000.0),
+            actual_trip_burn_kg: Some(5_100.0),
+            // Set the flare-quality input HIGH: if a `flare` sub-score were
+            // ever (wrongly) wired on this field, it would emit here.
+            flare_quality_score: Some(100),
+            aircraft_icao: Some("A320".into()),
+            td_distance_from_threshold_m: Some(400.0),
+            landing_float_distance_m: Some(200.0),
+            runway_length_m: Some(3000.0),
+            runway_displaced_threshold_ft: Some(0),
+            pre_displaced_threshold: Some(false),
+            runway_geometry_trusted: Some(true),
+            airport_source: Some("ourairports".into()),
+            runway_match_icao: Some("EDDM".into()),
+            runway_match_ident: Some("08R".into()),
+        };
+        let subs = compute_sub_scores(&rich);
+        assert!(
+            !subs.iter().any(|s| s.key == "flare"),
+            "compute_sub_scores must NEVER emit a `flare` sub-score (flare is forensic-only); got keys {:?}",
+            subs.iter().map(|s| s.key.as_str()).collect::<Vec<_>>()
+        );
+        // Also assert over a bare/default input (no fields) — the empty path
+        // must not emit flare either.
+        let bare = compute_sub_scores(&LandingScoringInput::default());
+        assert!(!bare.iter().any(|s| s.key == "flare"));
+    }
 }
