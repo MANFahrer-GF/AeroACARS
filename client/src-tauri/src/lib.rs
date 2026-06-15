@@ -4257,9 +4257,14 @@ fn negative_only(value: Option<f32>) -> Option<f32> {
 // lag artifact has LOW g that contradicts it and instead agrees with
 // the shallow AGL estimate.
 //
-// FITTED G↔|V/S| MODEL (calibrated from /tmp/td_data.json, the 278
-// MSFS simvar-latched landings, fitting peak_g_post_500ms against the
-// un-lagged truth |vs_estimate_msfs| via ordinary least squares):
+// FITTED G↔|V/S| MODEL. Calibrated on the corpus of MSFS simvar-latched
+// landings in the VPS flight-logs (278 at fit time, 2026-06: ssh live,
+// /var/lib/aeroacars-recorder/flight-logs/gsg/*/*.jsonl.gz), fitting
+// peak_g_post_500ms against the un-lagged truth |vs_estimate_msfs| via
+// ordinary least squares. To recalibrate (e.g. after an MSFS Sim Update
+// shifts the VSI lag profile), re-extract those two fields from the logs
+// and refit; the `vs_lag_signature` forensic key + the health-report make
+// the gate's fire-rate observable so drift is visible before it matters:
 //
 //     g_implied(|vs_fpm|) = 1.0019 + 0.0009421 * |vs_fpm|
 //
@@ -4384,9 +4389,11 @@ fn decide_msfs_touchdown_delag(
     if !(agl < 0.0 && agl.is_finite()) {
         return None;
     }
-    // Gate 6 + 7: divergence present AND only-soften-toward-zero (AGL
+    // Gate 5: divergence present AND only-soften-toward-zero (AGL
     // strictly shallower than edge). Both an absolute and a relative
-    // margin (the lag signature).
+    // margin (the lag signature). The first check is a hard invariant
+    // (never soften away from zero); the abs/rel margins below are what
+    // actually decide whether the divergence is large enough to act on.
     if agl.abs() >= edge.abs() {
         return None; // assert we only ever soften toward zero
     }
@@ -4396,23 +4403,24 @@ fn decide_msfs_touchdown_delag(
     if agl.abs() > MSFS_DELAG_MAX_AGL_REL * edge.abs() {
         return None;
     }
-    // Gate 5: the g-force consistency gate — the core safety gate.
+    // Gate 6: the g-force consistency gate — the core safety gate, run
+    // last so it has the final say over the divergence gates above.
     let g = peak_g?;
     if !g.is_finite() {
         return None;
     }
-    // 5a: hard lock — a real firm/hard impact ALWAYS shows in g.
+    // 6a: hard lock — a real firm/hard impact ALWAYS shows in g.
     if g >= MSFS_DELAG_G_HARD_LOCK {
         return None;
     }
     let g_implied_by_edge = msfs_delag_g_implied(edge.abs());
     let g_implied_by_agl = msfs_delag_g_implied(agl.abs());
-    // 5b: the edge over-reads vs the physics — measured g is well below
+    // 6b: the edge over-reads vs the physics — measured g is well below
     // the g the lagged edge would imply.
     if g >= g_implied_by_edge - MSFS_DELAG_G_EDGE_MARGIN {
         return None;
     }
-    // 5c: the measured g is CONSISTENT with the AGL estimate being the
+    // 6c: the measured g is CONSISTENT with the AGL estimate being the
     // true rate (not high relative to both sources).
     if g > g_implied_by_agl + MSFS_DELAG_G_AGL_TOLERANCE {
         return None;
@@ -16606,14 +16614,22 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     // v0.16.21: when the MSFS V/S-lag de-lag fired, route
                     // the CLASS through the same corrected (un-lagged) V/S
                     // that `canonical_landing_rate_fpm` now scores on. The
-                    // `finalize_landing_rate` calls above set
-                    // `landing_peak_vs_fpm` from the v2/edge forensic value,
-                    // which on a flared MSFS landing is the lagged peak — so
-                    // we overwrite it here so the class LABEL matches the
-                    // corrected numeric score (no class-vs-score split). The
-                    // g-band term in `classify` is untouched, so a real firm
-                    // impact can still only relax to the level g allows.
+                    // `finalize_landing_rate` calls above set BOTH
+                    // `landing_rate_fpm` AND `landing_peak_vs_fpm` from the
+                    // v2/edge forensic value, which on a flared MSFS landing
+                    // is the lagged peak — so we overwrite BOTH here so the
+                    // class LABEL matches the corrected numeric score AND any
+                    // direct reader of `landing_rate_fpm` (e.g. the
+                    // `LandingFinalized` forensic event in
+                    // `emit_landing_finalized`, which does not go through
+                    // `canonical_landing_rate_fpm`) reports the same corrected
+                    // rate — no class-vs-score and no field-vs-field split.
+                    // The lagged value stays preserved in the analysis
+                    // `vs_at_edge_fpm_raw` forensic key. The g-band term in
+                    // `classify` is untouched, so a real firm impact can still
+                    // only relax to the level g allows.
                     if let Some(corrected) = msfs_delag_vs {
+                        s.landing_rate_fpm = Some(corrected);
                         s.landing_peak_vs_fpm = Some(corrected);
                     }
                     let peak_vs = s.landing_peak_vs_fpm.unwrap_or(0.0);
