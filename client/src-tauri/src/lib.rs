@@ -31187,9 +31187,19 @@ mod msfs_touchdown_delag_tests {
 //   FIRE  JBU322  Msfs2024  edge -441.6  peak_g 1.249  → true ~-251
 //   FIRE  EWG906  Msfs2024  edge -422.2  peak_g 1.211  → true ~-263
 //   NONE  DLH848  Msfs2024  edge -285.7  peak_g 1.405  → genuinely firm
-//                           (g ≥ 1.40 hard-lock — real v0.16.21 capture)
-//   NONE  ITY324  XPlane12  edge -863.2  peak_g 2.78   → X-Plane sim gate,
-//                           genuinely steep (stays Severe)
+//                           (real v0.16.21 capture)
+//   NONE  ITY324  XPlane12  edge -863.2  peak_g 2.78   → genuinely steep
+//                           (stays Severe)
+//
+// On the two NONE controls: these are over-determined real flights — more
+// than one gate independently blocks the de-lag (DLH848: g ≥ 1.40 hard-lock
+// AND its AGL estimate -381 is DEEPER than the edge, so "only soften toward
+// zero" also rejects; ITY324: X-Plane sim gate AND a sub-60 fpm divergence
+// AND g 2.78). So they assert the real-world INVARIANT "a genuinely firm /
+// steep landing is never softened and stays untouched", NOT the isolation of
+// any one gate. Surgical single-gate isolation (incl. the X-Plane sim gate
+// and the hard-lock in isolation) is covered by the synthetic unit tests in
+// `msfs_touchdown_delag_tests`.
 //
 #[cfg(test)]
 mod msfs_touchdown_delag_replay_golden {
@@ -31476,8 +31486,11 @@ mod msfs_touchdown_delag_replay_golden {
     #[test]
     fn dlh848_real_firm_landing_not_softened() {
         // Real v0.16.21 MSFS capture: edge -285.7, peak_g 1.405 — ABOVE the
-        // 1.40 hard-lock. A genuinely firm touchdown. The gate must not fire
-        // and must add no forensic keys.
+        // 1.40 hard-lock. A genuinely firm touchdown. Over-determined: the
+        // hard-lock AND the "only soften toward zero" gate both reject it
+        // (its real AGL estimate is deeper than the edge), so this asserts
+        // the firm-landing INVARIANT (never softened, no forensic keys), not
+        // the hard-lock in isolation — that's a synthetic unit test.
         let mut f = load_replay("dlh848_msfs_firm_control.jsonl.gz");
         assert!(matches!(
             f.simulator,
@@ -31496,7 +31509,7 @@ mod msfs_touchdown_delag_replay_golden {
             f.simulator,
             FW,
         );
-        assert!(corrected.is_none(), "DLH848 must NOT de-lag (hard-lock)");
+        assert!(corrected.is_none(), "DLH848 must NOT de-lag (genuinely firm — left untouched)");
         assert_eq!(f.analysis, before, "DLH848 analysis must be untouched");
         assert!(f.analysis.get("vs_at_edge_source").is_none());
         assert!(f.analysis.get("vs_at_edge_fpm_raw").is_none());
@@ -31505,8 +31518,14 @@ mod msfs_touchdown_delag_replay_golden {
 
     #[test]
     fn ity324_xplane_steep_not_softened() {
-        // X-Plane (raw local_vy already the scored source): the sim gate
-        // excludes it. edge -863.2, genuinely steep — must stay Severe.
+        // X-Plane (raw local_vy already the scored source), edge -863.2,
+        // genuinely steep. Over-determined: the X-Plane sim gate excludes it,
+        // AND its divergence is < 60 fpm, AND g 2.78 ≫ the hard-lock — any one
+        // blocks the de-lag. So this asserts the steep-landing INVARIANT
+        // (untouched, stays Severe), not the sim gate in isolation (synthetic
+        // unit tests cover that). Verified by mutation: re-adding X-Plane to
+        // the sim gate leaves this test green precisely because the other
+        // gates still hold.
         let mut f = load_replay("ity324_xplane_steep_control.jsonl.gz");
         assert!(matches!(
             f.simulator,
@@ -31523,7 +31542,7 @@ mod msfs_touchdown_delag_replay_golden {
         );
         assert!(
             corrected.is_none(),
-            "ITY324 must NOT de-lag (X-Plane sim gate)"
+            "ITY324 must NOT de-lag (steep X-Plane — left untouched)"
         );
         assert_eq!(f.analysis, before, "ITY324 analysis must be untouched");
         // The steep edge still classifies Severe (its |V/S| ≥ 600 → Hard by
