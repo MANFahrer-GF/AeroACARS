@@ -113,6 +113,19 @@ export function formatRefreshError(
     },
     simbrief_direct_failed: { key: "bids.simbrief_direct_failed", tone: "warn" },
     bid_not_found: { key: "bids.ofp_bid_gone", tone: "warn" },
+    // v0.16.23: flight_refresh_route_only ohne konfigurierten SimBrief-
+    // Identifier. Actionable Notice — der Pilot muss seinen SimBrief-
+    // Username in Settings hinterlegen damit Route-Sync den AKTUELLEN
+    // OFP direkt ziehen kann (der Pointer-Pfad würde nur die stale Route
+    // liefern, deshalb gibt es hier keinen Fallback).
+    no_simbrief_identifier: { key: "bids.no_simbrief_identifier", tone: "warn" },
+    // v0.16.23: SimBrief gerade nicht erreichbar (Route-Sync, kein
+    // Pointer-Fallback). Eigener Code damit der Notice "versuch's gleich
+    // nochmal" statt "Bid weg" sagt.
+    simbrief_unavailable: {
+      key: "bids.simbrief_unavailable_and_bid_gone",
+      tone: "warn",
+    },
   };
   if (err.code && KNOWN_CODES[err.code]) {
     const { key, tone } = KNOWN_CODES[err.code];

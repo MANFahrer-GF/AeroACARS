@@ -43,7 +43,9 @@ export function ActiveFlightPanel({
 }: Props) {
   const { t, i18n } = useTranslation();
   const { confirm, dialog: confirmDialog } = useConfirm();
-  const [busy, setBusy] = useState<"end" | "cancel" | "forget" | "refresh" | null>(null);
+  const [busy, setBusy] = useState<
+    "end" | "cancel" | "forget" | "refresh" | "sync_route" | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
   // v0.3.2: short-lived inline message after a successful OFP refresh
   // ("Plan-Werte aktualisiert"). Cleared on the next action so it
@@ -379,6 +381,50 @@ export function ActiveFlightPanel({
   }
 
   /**
+   * v0.16.23: Sync ONLY the planned route from the latest SimBrief OFP
+   * and redraw it on the map — available in EVERY flight phase (unlike
+   * the full OFP refresh above, which stays Preflight–TaxiOut to protect
+   * the fuel/weight loadsheet baseline). Real-pilot workflow: ATC reroute
+   * mid-flight, pilot regenerates the SimBrief route, clicks "Sync route".
+   * The backend writes only planned_route / planned_waypoints / alternate
+   * and re-posts the route to phpVMS — no scored field is touched.
+   */
+  async function handleSyncRoute() {
+    if (busy) return;
+    setBusy("sync_route");
+    setError(null);
+    setRefreshMsg(null);
+    try {
+      const res = (await invoke("flight_refresh_route_only")) as {
+        waypoint_count: number;
+        route_posted: boolean;
+      };
+      // Differenzierte Erfolgsmeldung: Route lokal aktualisiert immer,
+      // aber das phpVMS-Upload kann fehlschlagen (Warning, kein Error)
+      // oder es gab keine Wegpunkte zu syncen.
+      if (res.waypoint_count === 0) {
+        setRefreshMsg(t("active_flight.sync_route_no_waypoints"));
+      } else if (res.route_posted) {
+        setRefreshMsg(t("active_flight.sync_route_done"));
+      } else {
+        setRefreshMsg(t("active_flight.sync_route_done_local"));
+      }
+    } catch (err: unknown) {
+      // Gleicher shared Formatter wie der OFP-Refresh — rendert
+      // no_simbrief_identifier (actionable) + den DEP/ARR-Mismatch-
+      // Hard-Block lesbar.
+      const formatted = formatRefreshError(
+        err as { code?: string; message?: string } | null,
+        t,
+        "cockpit",
+      );
+      setError(formatted?.text ?? String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /**
    * Force-discard local active-flight state without touching phpVMS. Useful
    * when the cancel call fails because the PIREP is already gone server-side
    * but our local state still thinks a flight is active.
@@ -509,6 +555,22 @@ export function ActiveFlightPanel({
                 : t("active_flight.refresh_ofp")}
             </button>
           )}
+          {/* v0.16.23: Route-Sync — in JEDER Phase verfügbar (im
+              Gegensatz zum OFP-Refresh oben). Aktualisiert NUR die
+              Karten-Route aus dem aktuellen SimBrief-OFP, kein
+              Fuel/Gewicht/Score wird angefasst. Nützlich nach einem
+              ATC-Reroute mitten im Flug. */}
+          <button
+            type="button"
+            className="active-flight__sync-route"
+            onClick={handleSyncRoute}
+            disabled={busy !== null}
+            title={t("active_flight.sync_route_hint")}
+          >
+            {busy === "sync_route"
+              ? t("active_flight.sync_route_busy")
+              : t("active_flight.sync_route")}
+          </button>
           <button
             type="button"
             className="active-flight__forget"

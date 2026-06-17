@@ -1447,7 +1447,13 @@
       "remaining_fuel_label": "Fuel still in tank (kg)",
       "remaining_fuel_hint": "Fuel left after landing. AeroACARS computes used = block − remaining",
       "notes_placeholder": "e.g. weather, anomalies, technical issues …"
-    }
+    },
+    "sync_route": "Sync route",
+    "sync_route_busy": "Syncing…",
+    "sync_route_hint": "Pull the latest SimBrief route for the running flight and redraw it on the map — useful after an ATC reroute or any route change you made on simbrief.com. Only the route is updated; fuel and weights are untouched. Works in every flight phase.",
+    "sync_route_done": "Route synced from the latest SimBrief OFP. The map now shows the corrected route.",
+    "sync_route_done_local": "Route updated locally, but the upload to the server failed — the map is correct, the server keeps the old route until the next successful sync.",
+    "sync_route_no_waypoints": "The latest SimBrief OFP has no navlog waypoints — nothing to sync."
   },
   "bids": {
     "title": "My booked flights",
@@ -1526,7 +1532,8 @@
     "open_weather_briefing_hint": "Open the GSG weather briefing page (shows the active bid)",
     "open_notifications": "Messages",
     "open_notifications_hint": "Open the phpVMS inbox",
-    "weather_briefing_load_hint": "Opening in your browser — the briefing page may take up to 30 s to load (METAR/TAF/NOTAMs/runway data are fetched live)."
+    "weather_briefing_load_hint": "Opening in your browser — the briefing page may take up to 30 s to load (METAR/TAF/NOTAMs/runway data are fetched live).",
+    "no_simbrief_identifier": "No SimBrief username configured. Set your SimBrief username in Settings → SimBrief Integration to sync route changes."
   },
   "flight": {
     "error": {

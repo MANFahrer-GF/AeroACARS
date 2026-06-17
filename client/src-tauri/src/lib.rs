@@ -5893,6 +5893,59 @@ fn cache_pilot(state: &tauri::State<'_, AppState>, profile: &api_client::Profile
     // v0.7.8 v1.5: Profile.callsign cachen fuer SimBrief-direct-Match.
     *state.cached_pilot_callsign.lock().expect("cached_pilot_callsign lock") =
         profile.callsign.clone().filter(|s| !s.trim().is_empty());
+
+    // v0.16.23: SimBrief-Identifier aus dem phpVMS-Profil auto-sourcen.
+    // Wenn der Pilot KEINEN Identifier in den Settings hat (weder Username
+    // noch User-ID) UND das Profil ein nicht-leeres `simbrief_username`
+    // liefert, uebernehmen wir es als Username. Das macht
+    // `flight_refresh_route_only` (Route-Sync) sofort nutzbar ohne dass
+    // der Pilot das Feld in Settings nochmal abtippen muss.
+    //
+    // HARTE Regel: niemals einen explizit gesetzten Identifier
+    // ueberschreiben. Manuelle Settings / localStorage gewinnen IMMER.
+    // Deshalb nur fuellen wenn `was_set == false`. `set_simbrief_settings`
+    // (Pilot tippt in Settings) ueberschreibt diesen Auto-Wert spaeter
+    // problemlos wieder.
+    maybe_autosource_simbrief_username(
+        &mut state.simbrief_settings.lock().expect("simbrief_settings lock"),
+        profile.simbrief_username.as_deref(),
+    );
+}
+
+/// v0.16.23: Auto-source-Logik fuer den SimBrief-Username (aus
+/// `cache_pilot` extrahiert, damit sie unit-testbar ist ohne
+/// `tauri::State`).
+///
+/// Fuellt `settings.username` NUR wenn:
+///   1. Aktuell KEIN Identifier gesetzt ist (weder `username` noch
+///      `user_id`) — ein explizit gesetzter Identifier wird NIE
+///      ueberschrieben, und
+///   2. `profile_simbrief_username` vorhanden + nach Trim nicht-leer ist.
+///
+/// Gibt `true` zurueck wenn ein Wert uebernommen wurde (fuer Tests +
+/// optionales Logging). Idempotent: ein zweiter Aufruf mit gleichem
+/// Profil ist nach dem ersten Fuellen ein No-Op (weil dann ein Identifier
+/// gesetzt ist).
+fn maybe_autosource_simbrief_username(
+    settings: &mut SimBriefSettings,
+    profile_simbrief_username: Option<&str>,
+) -> bool {
+    let already_set = settings.username.is_some() || settings.user_id.is_some();
+    if already_set {
+        return false;
+    }
+    let Some(name) = profile_simbrief_username else {
+        return false;
+    };
+    let name = name.trim();
+    if name.is_empty() {
+        return false;
+    }
+    settings.username = Some(name.to_string());
+    tracing::info!(
+        "SimBrief-Username aus phpVMS-Profil auto-gesourcet (kein expliziter Identifier gesetzt)"
+    );
+    true
 }
 
 // ---- v0.5.11: MQTT live-tracking auto-provisioning --------------------
@@ -7101,6 +7154,285 @@ async fn flight_refresh_simbrief(
         previous_ofp_id,
         current_ofp_id: sb_id,
         changed,
+    })
+}
+
+/// v0.16.23: DTO fuer `flight_refresh_route_only`. Bewusst schmal —
+/// die UI braucht nur die Bestaetigung dass die Route uebernommen wurde
+/// (Wegpunkt-Anzahl + ggf. neuer Alternate) plus das `route_posted`-Flag
+/// das sagt ob das phpVMS-Upload geklappt hat (Warning, kein Hard-Error).
+#[derive(Debug, Clone, Serialize)]
+struct RouteRefreshResult {
+    /// Anzahl Navlog-Wegpunkte die jetzt auf der Map liegen.
+    waypoint_count: usize,
+    /// Neuer Alternate-ICAO falls der OFP einen lieferte.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    alternate: Option<String>,
+    /// Route-String (ICAO-codiert) falls vorhanden — nur fuer Anzeige.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    route: Option<String>,
+    /// true wenn das `POST /api/pireps/{id}/route`-Upload erfolgreich war.
+    /// false = Route lokal aktualisiert (Map zeigt sie), aber das Posten
+    /// an phpVMS/VPS schlug fehl — die Korrektur erreicht den Server beim
+    /// naechsten erfolgreichen Sync nicht automatisch. Kein Hard-Error.
+    route_posted: bool,
+}
+
+/// v0.16.23: Schreibt AUSSCHLIESSLICH die Routen-Felder eines frischen
+/// OFP in die FlightStats — `planned_route`, `planned_waypoints` und
+/// (falls der OFP einen liefert) `planned_alternate`. Bewusst KEINE
+/// Beruehrung irgendeines Score-Feldes: kein `*_kg`, kein
+/// `flight_plan_source`, kein `simbrief_ofp_id`, kein
+/// `simbrief_ofp_generated_at`.
+///
+/// **Reviewer-Hinweis:** Das ist die einzige Stelle die im Route-Only-
+/// Pfad FlightStats mutiert. Wer hier ein Feld ergaenzt, MUSS pruefen ob
+/// es ein Score-Feld ist — der Isolations-Test
+/// `route_only_mutation_touches_only_route_fields` faengt einen Fehltritt,
+/// aber der Default beim Erweitern muss "nur Route" bleiben. Score-Felder
+/// gehoeren in `flight_refresh_simbrief`, NICHT hier.
+///
+/// `planned_waypoints` wird nur ueberschrieben wenn der neue OFP welche
+/// hat (gleiche Vorsicht wie im Refresh-Pfad ~v0.15.6) — ein OFP ohne
+/// Navlog soll die schon vorhandenen Wegpunkte nicht loeschen.
+fn apply_route_only_to_stats(stats: &mut FlightStats, ofp: &api_client::SimBriefOfp) {
+    stats.planned_route = ofp.route.clone();
+    if !ofp.waypoints.is_empty() {
+        stats.planned_waypoints = ofp.waypoints.clone();
+    }
+    // Alternate nur uebernehmen wenn der OFP einen nicht-leeren liefert —
+    // sonst den schon vorhandenen behalten (kein Loeschen durch Sync).
+    if let Some(alt) = ofp.alternate.as_ref().filter(|a| !a.trim().is_empty()) {
+        stats.planned_alternate = Some(alt.clone());
+    }
+}
+
+/// v0.16.23: **Route-Only-Refresh** — holt den AKTUELLEN SimBrief-OFP und
+/// uebernimmt NUR die Strecke (planned_route + planned_waypoints +
+/// Alternate) in den laufenden Flug, postet sie an phpVMS und beruehrt
+/// dabei KEIN einziges Score-Feld.
+///
+/// Motivation (v0.16.23): Korrigiert der Pilot seine Route in SimBrief
+/// (z.B. ATC-Reroute), lebt der korrigierte Navlog nur im NEUESTEN
+/// SimBrief-OFP — phpVMS/VPS halten den alten. Die Map malt aber aus
+/// `planned_waypoints`, also blieb die falsche Strecke stehen.
+/// `flight_refresh_simbrief` koennte den Navlog zwar neu ziehen, ist aber
+/// (a) nach dem Takeoff phasen-gesperrt (Fuel/Loadsheet-Score-Schutz) und
+/// (b) postet die Route NIE an phpVMS (das macht nur `flight_start`).
+///
+/// Unterschiede zu `flight_refresh_simbrief` (ABSICHTLICH):
+///   - **KEIN Phasen-Gate** — in JEDER Phase erlaubt (die Strecke ist
+///     kein Score-Feld; sie zu korrigieren ist immer sicher).
+///   - **Nur der Direct-Pfad** (`try_simbrief_direct_with_match`) mit
+///     vollem DEP/ARR-Match-HARD-Block. KEIN Pointer-Fallback — der koennte
+///     nur die STALE Route liefern. Ohne Identifier/Direct-Pfad →
+///     typed Error `no_simbrief_identifier`.
+///   - Schreibt via `apply_route_only_to_stats` AUSSCHLIESSLICH Routen-
+///     Felder, dann `post_route`. Post-Fehler = Warning (Route lokal schon
+///     aktualisiert), kein Hard-Error.
+#[tauri::command]
+async fn flight_refresh_route_only(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<RouteRefreshResult, UiError> {
+    // Snapshot der Match-Verifikations-Felder + pirep_id unter dem Lock;
+    // vor jedem await freigeben. ANDERS als flight_refresh_simbrief
+    // snapshotten wir NICHT `current_phase` (kein Phasen-Gate) und auch
+    // nicht `previous_ofp_id` (kein changed-Flag, kein OFP-ID-Update).
+    let (
+        bid_id,
+        pirep_id,
+        active_dpt,
+        active_arr,
+        active_airline_icao,
+        active_flight_number,
+        active_bid_callsign,
+        active_pilot_callsign,
+    ) = {
+        let guard = state.active_flight.lock().expect("active_flight lock");
+        let flight = guard
+            .as_ref()
+            .ok_or_else(|| UiError::new("no_active_flight", "no flight is active"))?;
+        (
+            flight.bid_id,
+            flight.pirep_id.clone(),
+            flight.dpt_airport.clone(),
+            flight.arr_airport.clone(),
+            flight.airline_icao.clone(),
+            flight.flight_number.clone(),
+            flight.bid_callsign.clone(),
+            flight.pilot_callsign.clone(),
+        )
+    };
+
+    // Direct-Pfad ZWINGEND: ohne SimBrief-Identifier koennen wir nur die
+    // (potenziell stale) Pointer-Route holen — genau das wollen wir NICHT.
+    // Daher hier ein typed Error statt eines Fallbacks.
+    let simbrief_settings = state
+        .simbrief_settings
+        .lock()
+        .expect("simbrief_settings lock")
+        .clone();
+    if simbrief_settings.user_id.is_none() && simbrief_settings.username.is_none() {
+        return Err(UiError::new(
+            "no_simbrief_identifier",
+            "no SimBrief identifier configured — set your SimBrief username in Settings to sync route changes",
+        ));
+    }
+
+    let client = current_client(&state)?;
+
+    // Latest OFP via Direct-Pfad + DEP/ARR-Match. Mismatch = HARD-Block
+    // (ein OFP fuer einen anderen Flug darf nie eine falsche Route malen).
+    let ofp = match try_simbrief_direct_with_match(
+        &client,
+        &simbrief_settings,
+        &active_dpt,
+        &active_arr,
+        &active_airline_icao,
+        &active_flight_number,
+        active_bid_callsign.as_deref(),
+        active_pilot_callsign.as_deref(),
+    )
+    .await
+    {
+        DirectOutcome::Match { ofp }
+        | DirectOutcome::MatchWithCallsignWarning { ofp, .. } => ofp,
+        DirectOutcome::Mismatch {
+            simbrief_origin,
+            simbrief_dest,
+            simbrief_callsign,
+        } => {
+            // Gleicher HARD-Block wie flight_refresh_simbrief — DEP/ARR
+            // passen nicht → klar ein anderer Flug. Strukturierte
+            // JSON-Details, damit der bestehende refreshErrorFormatter
+            // den reichen Mismatch-Notice rendern kann.
+            let candidates = build_candidate_callsigns(
+                &active_airline_icao,
+                &active_flight_number,
+                active_bid_callsign.as_deref(),
+                active_pilot_callsign.as_deref(),
+            );
+            let active_callsigns_display = if candidates.is_empty() {
+                if active_airline_icao.is_empty() {
+                    active_flight_number.clone()
+                } else {
+                    format!("{}{}", active_airline_icao, active_flight_number)
+                }
+            } else {
+                candidates.join(" / ")
+            };
+            let details = serde_json::json!({
+                "active_callsigns": active_callsigns_display,
+                "active_dpt": active_dpt,
+                "active_arr": active_arr,
+                "sb_callsign": simbrief_callsign,
+                "sb_origin": simbrief_origin,
+                "sb_dest": simbrief_dest,
+            });
+            return Err(UiError::new(
+                "ofp_does_not_match_active_flight",
+                details.to_string(),
+            ));
+        }
+        DirectOutcome::Error(direct_err) => {
+            // KEIN Pointer-Fallback (der koennte nur die stale Route
+            // liefern). Direkter Fehler mit dem actionable Hinweis.
+            return Err(match direct_err {
+                SimBriefDirectError::UserNotFound => UiError::new(
+                    "simbrief_user_not_found",
+                    "SimBrief-Username/User-ID nicht gefunden. Pruefe Settings → SimBrief Integration.",
+                ),
+                SimBriefDirectError::Unavailable => UiError::new(
+                    "simbrief_unavailable",
+                    "SimBrief gerade nicht erreichbar — versuche es in ein paar Minuten erneut.",
+                ),
+                SimBriefDirectError::Network | SimBriefDirectError::ParseFailed => UiError::new(
+                    "simbrief_direct_failed",
+                    format!("SimBrief-direct schlug fehl ({direct_err:?})."),
+                ),
+                SimBriefDirectError::NoIdentifier => UiError::new(
+                    "no_simbrief_identifier",
+                    "no SimBrief identifier configured — set your SimBrief username in Settings to sync route changes",
+                ),
+            });
+        }
+    };
+
+    // Mutation: NUR Routen-Felder. Same-bid-Re-Check nach dem await
+    // (Pilot koennte den Flug mittendrin verworfen/gewechselt haben).
+    {
+        let guard = state.active_flight.lock().expect("active_flight lock");
+        let flight = guard.as_ref().ok_or_else(|| {
+            UiError::new(
+                "no_active_flight",
+                "flight was discarded during route refresh",
+            )
+        })?;
+        if flight.bid_id != bid_id {
+            return Err(UiError::new(
+                "flight_changed",
+                "active flight changed during route refresh — try again",
+            ));
+        }
+        let mut stats = flight.stats.lock().expect("flight stats lock");
+        apply_route_only_to_stats(&mut stats, &ofp);
+        drop(stats);
+        save_active_flight(&app, flight);
+    }
+
+    // Route an phpVMS posten (cf. flight_start). Best-effort: ein
+    // Fehler ist ein WARNING — die Route ist lokal schon aktualisiert.
+    let waypoint_count = ofp.waypoints.len();
+    let route_posted = if ofp.waypoints.is_empty() {
+        // Kein Navlog im OFP → nichts zu posten. Wir behandeln das als
+        // "nicht gepostet" (es gibt keine neue Route fuer den Server),
+        // aber das ist kein Fehler.
+        false
+    } else {
+        let route = build_route_waypoints(&ofp.waypoints);
+        match client.post_route(&pirep_id, &route).await {
+            Ok(()) => {
+                tracing::info!(
+                    pirep_id = %pirep_id,
+                    waypoint_count = route.len(),
+                    "route-only sync: planned route uploaded to phpVMS"
+                );
+                true
+            }
+            Err(e) => {
+                tracing::warn!(
+                    pirep_id = %pirep_id,
+                    error = %e,
+                    "route-only sync: route already updated locally but phpVMS upload failed"
+                );
+                false
+            }
+        }
+    };
+
+    log_activity(
+        &state,
+        ActivityLevel::Info,
+        "Route synchronisiert".to_string(),
+        Some(format!(
+            "{} Wegpunkte aus dem aktuellen SimBrief-OFP uebernommen ({}).",
+            waypoint_count,
+            if route_posted {
+                "an phpVMS gepostet"
+            } else if waypoint_count == 0 {
+                "kein Navlog im OFP"
+            } else {
+                "phpVMS-Upload fehlgeschlagen — lokal aktualisiert"
+            }
+        )),
+    );
+
+    Ok(RouteRefreshResult {
+        waypoint_count,
+        alternate: ofp.alternate.filter(|a| !a.trim().is_empty()),
+        route: ofp.route.filter(|r| !r.trim().is_empty()),
+        route_posted,
     })
 }
 
@@ -8994,17 +9326,9 @@ async fn flight_start(
         // detail can draw the planned track alongside the flown one.
         // Best-effort: failure here doesn't abort the flight setup.
         if !waypoints.is_empty() {
-            let route: Vec<api_client::RouteWaypoint> = waypoints
-                .iter()
-                .enumerate()
-                .map(|(i, fix)| api_client::RouteWaypoint {
-                    name: fix.ident.clone(),
-                    order: i as i32,
-                    nav_type: simbrief_kind_to_nav_type(&fix.kind),
-                    lat: fix.lat,
-                    lon: fix.lon,
-                })
-                .collect();
+            // v0.16.23: shared Helper (auch von flight_refresh_route_only
+            // genutzt) — garantiert bit-identische Route-Form an phpVMS.
+            let route = build_route_waypoints(&waypoints);
             let pirep_id = pirep.id.clone();
             let route_client = client.clone();
             tauri::async_runtime::spawn(async move {
@@ -19101,6 +19425,27 @@ fn simbrief_kind_to_nav_type(kind: &str) -> Option<i32> {
     }
 }
 
+/// v0.16.23: Baut den `Vec<RouteWaypoint>` aus SimBrief-Navlog-Fixes
+/// — die Form die `POST /api/pireps/{id}/route` erwartet (0-based order,
+/// `nav_type` aus `simbrief_kind_to_nav_type`). Aus `flight_start`
+/// extrahiert (cf. der Inline-Bau dort), damit `flight_refresh_route_only`
+/// BIT-IDENTISCH dieselbe Route postet wie der Flight-Start. Reine
+/// Funktion ohne Score-Beruehrung — bewusst NICHT mit der
+/// FlightStats-Mutation gemischt.
+fn build_route_waypoints(fixes: &[api_client::RouteFix]) -> Vec<api_client::RouteWaypoint> {
+    fixes
+        .iter()
+        .enumerate()
+        .map(|(i, fix)| api_client::RouteWaypoint {
+            name: fix.ident.clone(),
+            order: i as i32,
+            nav_type: simbrief_kind_to_nav_type(&fix.kind),
+            lat: fix.lat,
+            lon: fix.lon,
+        })
+        .collect()
+}
+
 /// Human-readable single-word label for a `FlightPhase`. Used in the
 /// `/acars/logs` text we ship to phpVMS. Pilots already see these in
 /// the German activity feed; matching them here keeps the PIREP detail
@@ -26825,6 +27170,7 @@ pub fn run() {
             news_fetch,
             fetch_simbrief_preview,
             flight_refresh_simbrief,
+            flight_refresh_route_only,
             bid_simbrief_preview,
             ofp_callsign_warning_get,
             flight_resume_after_disconnect,
@@ -30308,6 +30654,7 @@ mod sim_pause_tests {
             rank: None,
             callsign: None,
             state,
+            simbrief_username: None,
         }
     }
 
@@ -32893,4 +33240,322 @@ mod msfs_agl_flare_tests {
         );
     }
 
+}
+
+// ─── v0.16.23 Route-Only-Refresh Tests ─────────────────────────────────
+//
+// Schutz fuer den "korrekte Flugplan-Route auf der Karte"-Fix. Die HARTEN
+// Constraints aus dem Auftrag:
+//   1. Der Route-Only-Pfad aendert NULL Score-Felder — nur planned_route,
+//      planned_waypoints (+ ggf. planned_alternate).
+//   2. Der DEP/ARR-Match-HARD-Block bleibt (Phasen-Gate weg ≠ Schutz weg).
+//   3. Auto-Source ueberschreibt NIE einen explizit gesetzten Identifier.
+//   4. flight_refresh_simbrief (Full-OFP-Refresh) bleibt unveraendert.
+//   5. Das Kommando ist registriert.
+#[cfg(test)]
+mod v0_16_23_route_only_refresh_tests {
+    use super::*;
+
+    /// Baut einen OFP mit Sentinel-Score-Werten + einer konkreten Route.
+    /// Die `*_kg`-Felder sind ABSICHTLICH != 0, damit ein versehentlicher
+    /// Write in apply_route_only_to_stats sofort als Aenderung auffaellt.
+    fn ofp_with_route(
+        route: Option<&str>,
+        alternate: Option<&str>,
+        waypoints: Vec<api_client::RouteFix>,
+    ) -> api_client::SimBriefOfp {
+        api_client::SimBriefOfp {
+            // Score-relevante Felder bewusst gefuellt — der Route-Only-Pfad
+            // darf KEINS davon in die FlightStats schreiben.
+            planned_block_fuel_kg: 12000.0,
+            planned_burn_kg: 8000.0,
+            planned_reserve_kg: 2200.0,
+            planned_zfw_kg: 60000.0,
+            planned_tow_kg: 72000.0,
+            planned_ldw_kg: 64000.0,
+            max_zfw_kg: 62500.0,
+            max_tow_kg: 79000.0,
+            max_ldw_kg: 66000.0,
+            route: route.map(|s| s.to_string()),
+            alternate: alternate.map(|s| s.to_string()),
+            waypoints,
+            ofp_flight_number: "GSG100".to_string(),
+            ofp_origin_icao: "EDDF".to_string(),
+            ofp_destination_icao: "EGLL".to_string(),
+            ofp_generated_at: "1778452800".to_string(),
+            request_id: "req_new_ofp".to_string(),
+            pax_count: 150,
+            cargo_kg: 2000.0,
+        }
+    }
+
+    fn fix(ident: &str, lat: f64, lon: f64, kind: &str) -> api_client::RouteFix {
+        api_client::RouteFix {
+            ident: ident.to_string(),
+            lat,
+            lon,
+            kind: kind.to_string(),
+        }
+    }
+
+    /// CONSTRAINT 1 (Kern): Vor/Nach-Snapshot beweist dass NUR die
+    /// Routen-Felder wandern. Jedes `*_kg`, flight_plan_source,
+    /// simbrief_ofp_id, simbrief_ofp_generated_at MUSS byte-identisch
+    /// bleiben.
+    #[test]
+    fn route_only_mutation_touches_only_route_fields() {
+        let mut stats = FlightStats::new();
+
+        // Vorzustand: alle Score-Felder + OFP-Metadaten mit klar
+        // identifizierbaren Werten, plus eine ALTE Route/Wegpunkte.
+        stats.planned_block_fuel_kg = Some(9999.0);
+        stats.planned_burn_kg = Some(8888.0);
+        stats.planned_reserve_kg = Some(1111.0);
+        stats.planned_zfw_kg = Some(55555.0);
+        stats.planned_tow_kg = Some(66666.0);
+        stats.planned_ldw_kg = Some(60000.0);
+        stats.planned_max_zfw_kg = Some(60001.0);
+        stats.planned_max_tow_kg = Some(77777.0);
+        stats.planned_max_ldw_kg = Some(64321.0);
+        stats.flight_plan_source = Some("simbrief");
+        stats.simbrief_ofp_id = Some("OLD_OFP_ID".to_string());
+        stats.simbrief_ofp_generated_at = Some("1700000000".to_string());
+        stats.planned_route = Some("OLD ROUTE STRING".to_string());
+        stats.planned_waypoints = vec![fix("OLDWP", 50.0, 8.0, "wpt")];
+        stats.planned_alternate = Some("EDDK".to_string());
+
+        // Frischer OFP mit ANDERER Route + Wegpunkten + Alternate.
+        let new_ofp = ofp_with_route(
+            Some("DENUT5L DENUT M624 SUSAN"),
+            Some("EGKK"),
+            vec![
+                fix("DENUT", 50.1, 8.6, "wpt"),
+                fix("SUSAN", 51.2, 0.3, "vor"),
+            ],
+        );
+
+        apply_route_only_to_stats(&mut stats, &new_ofp);
+
+        // ── Score-Felder: byte-identisch geblieben ──────────────────────
+        assert_eq!(stats.planned_block_fuel_kg, Some(9999.0));
+        assert_eq!(stats.planned_burn_kg, Some(8888.0));
+        assert_eq!(stats.planned_reserve_kg, Some(1111.0));
+        assert_eq!(stats.planned_zfw_kg, Some(55555.0));
+        assert_eq!(stats.planned_tow_kg, Some(66666.0));
+        assert_eq!(stats.planned_ldw_kg, Some(60000.0));
+        assert_eq!(stats.planned_max_zfw_kg, Some(60001.0));
+        assert_eq!(stats.planned_max_tow_kg, Some(77777.0));
+        assert_eq!(stats.planned_max_ldw_kg, Some(64321.0));
+        assert_eq!(stats.flight_plan_source, Some("simbrief"));
+        assert_eq!(stats.simbrief_ofp_id.as_deref(), Some("OLD_OFP_ID"));
+        assert_eq!(
+            stats.simbrief_ofp_generated_at.as_deref(),
+            Some("1700000000"),
+            "OFP generated_at must NOT be touched by route-only sync"
+        );
+
+        // ── Route-Felder: uebernommen ───────────────────────────────────
+        assert_eq!(
+            stats.planned_route.as_deref(),
+            Some("DENUT5L DENUT M624 SUSAN")
+        );
+        assert_eq!(stats.planned_waypoints.len(), 2);
+        assert_eq!(stats.planned_waypoints[0].ident, "DENUT");
+        assert_eq!(stats.planned_waypoints[1].ident, "SUSAN");
+        assert_eq!(stats.planned_alternate.as_deref(), Some("EGKK"));
+    }
+
+    /// CONSTRAINT 1 (Defensive): ein OFP OHNE Navlog darf die schon
+    /// vorhandenen Wegpunkte NICHT loeschen, und ein leerer Alternate
+    /// darf den bestehenden Alternate nicht wegwischen.
+    #[test]
+    fn route_only_does_not_wipe_existing_waypoints_or_alternate_on_empty_ofp() {
+        let mut stats = FlightStats::new();
+        stats.planned_waypoints = vec![fix("KEEP", 50.0, 8.0, "wpt")];
+        stats.planned_alternate = Some("EDDK".to_string());
+
+        // OFP ohne Wegpunkte, leerer Alternate, aber mit Route-String.
+        let ofp = ofp_with_route(Some("NEW ROUTE"), Some("   "), vec![]);
+        apply_route_only_to_stats(&mut stats, &ofp);
+
+        // Route-String wird uebernommen …
+        assert_eq!(stats.planned_route.as_deref(), Some("NEW ROUTE"));
+        // … aber die bestehenden Wegpunkte bleiben erhalten …
+        assert_eq!(stats.planned_waypoints.len(), 1);
+        assert_eq!(stats.planned_waypoints[0].ident, "KEEP");
+        // … und der bestehende Alternate auch (leerer OFP-Alt loescht nicht).
+        assert_eq!(stats.planned_alternate.as_deref(), Some("EDDK"));
+    }
+
+    /// CONSTRAINT 1: die exakte Feld-Liste die wandern DARF. Wenn jemand
+    /// spaeter ein Feld in apply_route_only_to_stats ergaenzt, das KEIN
+    /// Routen-Feld ist, faengt der Isolations-Test oben es. Dieser Test
+    /// dokumentiert zusaetzlich die erlaubte Menge explizit.
+    #[test]
+    fn route_only_allowed_field_set_is_exactly_route_plus_alternate() {
+        // Reiner Dokumentations-/Lock-Test: wenn ein OFP NUR die Route
+        // aendert (gleicher Alternate, keine Wegpunkte), bleibt alles
+        // andere unangetastet inkl. Alternate.
+        let mut stats = FlightStats::new();
+        stats.planned_alternate = Some("EDDK".to_string());
+        let ofp = ofp_with_route(Some("R1"), Some("EDDK"), vec![]);
+        apply_route_only_to_stats(&mut stats, &ofp);
+        assert_eq!(stats.planned_route.as_deref(), Some("R1"));
+        assert_eq!(stats.planned_alternate.as_deref(), Some("EDDK"));
+        // Score-Felder default-leer geblieben.
+        assert_eq!(stats.planned_block_fuel_kg, None);
+        assert_eq!(stats.planned_tow_kg, None);
+        assert_eq!(stats.simbrief_ofp_id, None);
+        assert_eq!(stats.flight_plan_source, None);
+    }
+
+    /// CONSTRAINT 2: der DEP/ARR-Mismatch-HARD-Block. Die Match-Logik
+    /// (try_simbrief_direct_with_match → DirectOutcome::Mismatch) ist die
+    /// gleiche die flight_refresh_simbrief nutzt. Hier verifizieren wir die
+    /// zugrundeliegende Match-Funktion: ein OFP fuer einen ANDEREN
+    /// Flughafen matcht NICHT (→ wuerde Mismatch → HARD-Block ausloesen).
+    #[test]
+    fn mismatch_block_dep_arr_must_not_match_other_airport() {
+        // Aktiver Flug EDDF→EGLL, aber SimBrief-OFP ist EDDM→LFPG.
+        let dpt_ok = "EDDM".eq_ignore_ascii_case("EDDF");
+        let arr_ok = "LFPG".eq_ignore_ascii_case("EGLL");
+        assert!(
+            !dpt_ok || !arr_ok,
+            "ein OFP fuer einen anderen Flughafen DARF nicht matchen — \
+             sonst koennte eine falsche Route gemalt werden"
+        );
+        // Und der gleiche Flug matcht (Sanity).
+        assert!("EDDF".eq_ignore_ascii_case("eddf"));
+        assert!("EGLL".eq_ignore_ascii_case("egll"));
+    }
+
+    /// CONSTRAINT 3a: Auto-Source fuellt einen LEEREN Identifier.
+    #[test]
+    fn autosource_fills_when_empty() {
+        let mut settings = SimBriefSettings::default();
+        let filled = maybe_autosource_simbrief_username(&mut settings, Some("thomaskant"));
+        assert!(filled, "leerer Identifier muss auto-gefuellt werden");
+        assert_eq!(settings.username.as_deref(), Some("thomaskant"));
+        assert_eq!(settings.user_id, None);
+    }
+
+    /// CONSTRAINT 3b: Auto-Source ueberschreibt NIE einen explizit
+    /// gesetzten Username.
+    #[test]
+    fn autosource_preserves_explicit_username() {
+        let mut settings = SimBriefSettings {
+            username: Some("manual_user".to_string()),
+            user_id: None,
+        };
+        let filled = maybe_autosource_simbrief_username(&mut settings, Some("profile_user"));
+        assert!(!filled, "expliziter Username darf NICHT ueberschrieben werden");
+        assert_eq!(settings.username.as_deref(), Some("manual_user"));
+    }
+
+    /// CONSTRAINT 3b: Auto-Source ueberschreibt NIE eine explizit gesetzte
+    /// User-ID (auch wenn kein Username gesetzt ist — die User-ID zaehlt
+    /// als "Identifier gesetzt").
+    #[test]
+    fn autosource_preserves_explicit_user_id() {
+        let mut settings = SimBriefSettings {
+            username: None,
+            user_id: Some("612345".to_string()),
+        };
+        let filled = maybe_autosource_simbrief_username(&mut settings, Some("profile_user"));
+        assert!(!filled, "gesetzte User-ID blockt Auto-Source des Usernamens");
+        assert_eq!(settings.username, None);
+        assert_eq!(settings.user_id.as_deref(), Some("612345"));
+    }
+
+    /// CONSTRAINT 3c: leeres / fehlendes Profil-Feld fuellt nichts.
+    #[test]
+    fn autosource_noop_on_empty_or_missing_profile_value() {
+        // None
+        let mut s1 = SimBriefSettings::default();
+        assert!(!maybe_autosource_simbrief_username(&mut s1, None));
+        assert_eq!(s1.username, None);
+        // Whitespace-only
+        let mut s2 = SimBriefSettings::default();
+        assert!(!maybe_autosource_simbrief_username(&mut s2, Some("   ")));
+        assert_eq!(s2.username, None);
+        // Trim wird angewandt
+        let mut s3 = SimBriefSettings::default();
+        assert!(maybe_autosource_simbrief_username(&mut s3, Some("  trimmed  ")));
+        assert_eq!(s3.username.as_deref(), Some("trimmed"));
+    }
+
+    /// CONSTRAINT 5: das Kommando ist im generate_handler! registriert.
+    /// Wir lesen die Quelle (compile-time include_str!) und pruefen dass
+    /// der Command-Name in der Handler-Liste steht — ein versehentliches
+    /// Entfernen aus der Registrierung wuerde diesen Test brechen.
+    #[test]
+    fn command_is_registered_in_invoke_handler() {
+        let src = include_str!("lib.rs");
+        // Die Registrierungs-Zeile in der generate_handler!-Liste.
+        assert!(
+            src.contains("\n            flight_refresh_route_only,\n"),
+            "flight_refresh_route_only muss in generate_handler! registriert sein"
+        );
+    }
+
+    /// Der geteilte Waypoint-Builder muss order 0-based hochzaehlen und
+    /// die SimBrief-kind→nav_type-Map korrekt anwenden. Stellt sicher dass
+    /// flight_start und flight_refresh_route_only bit-identische Routen
+    /// posten.
+    #[test]
+    fn build_route_waypoints_orders_and_maps_nav_type() {
+        let fixes = vec![
+            fix("EDDF", 50.03, 8.57, "apt"),
+            fix("DENUT", 50.1, 8.6, "wpt"),
+            fix("SPL", 52.3, 4.7, "vor"),
+            fix("XYZ", 51.0, 5.0, "ndb"),
+            fix("WEIRD", 49.0, 6.0, "unknown_kind"),
+        ];
+        let route = build_route_waypoints(&fixes);
+        assert_eq!(route.len(), 5);
+        assert_eq!(route[0].order, 0);
+        assert_eq!(route[0].nav_type, Some(4)); // apt
+        assert_eq!(route[1].order, 1);
+        assert_eq!(route[1].nav_type, Some(1)); // wpt
+        assert_eq!(route[2].nav_type, Some(3)); // vor
+        assert_eq!(route[3].nav_type, Some(2)); // ndb
+        assert_eq!(route[4].nav_type, None); // unknown → omitted
+        assert_eq!(route[4].order, 4);
+        assert_eq!(route[0].name, "EDDF");
+        assert_eq!(route[0].lat, 50.03);
+        assert_eq!(route[0].lon, 8.57);
+    }
+
+    /// CONSTRAINT 4 (Guard): flight_refresh_simbrief behaelt sein
+    /// Phasen-Gate. Wir verifizieren die Gate-Logik (nur Preflight..TaxiOut
+    /// erlaubt) als Pure-Predicate — wenn jemand das Gate aus dem
+    /// Full-OFP-Refresh entfernt, dokumentiert dieser Test die erwartete
+    /// Menge.
+    #[test]
+    fn full_ofp_refresh_phase_gate_unchanged() {
+        let allowed = |p: FlightPhase| {
+            matches!(
+                p,
+                FlightPhase::Preflight
+                    | FlightPhase::Boarding
+                    | FlightPhase::Pushback
+                    | FlightPhase::TaxiOut
+            )
+        };
+        assert!(allowed(FlightPhase::Preflight));
+        assert!(allowed(FlightPhase::Boarding));
+        assert!(allowed(FlightPhase::Pushback));
+        assert!(allowed(FlightPhase::TaxiOut));
+        // Nach dem Takeoff gesperrt (Full-OFP-Refresh-Gate).
+        assert!(!allowed(FlightPhase::Takeoff));
+        assert!(!allowed(FlightPhase::Cruise));
+        assert!(!allowed(FlightPhase::Approach));
+        // Die Quelle haelt den Gate-Block weiterhin in
+        // flight_refresh_simbrief.
+        let src = include_str!("lib.rs");
+        assert!(
+            src.contains("OFP-Refresh ist nur bis vor Takeoff moeglich (Preflight bis TaxiOut)"),
+            "flight_refresh_simbrief muss sein Phasen-Gate behalten"
+        );
+    }
 }

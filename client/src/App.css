@@ -6396,6 +6396,30 @@ input:disabled {
   cursor: not-allowed;
 }
 
+/* v0.16.23: Route-Sync-Button — gleiche Optik wie der OFP-Refresh,
+   damit die Aktions-Zeile konsistent bleibt. Anders als der OFP-Refresh
+   ist er in jeder Flugphase sichtbar. */
+.active-flight__sync-route {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.4rem 0.85rem;
+  border-radius: 7px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: border-color 100ms, background 100ms;
+}
+
+.active-flight__sync-route:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.active-flight__sync-route:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .active-flight__refresh-msg {
   margin-top: 0.5rem;
   font-size: 0.85rem;

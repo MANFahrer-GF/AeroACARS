@@ -296,6 +296,16 @@ pub struct Profile {
     /// don't expose the field.
     #[serde(default)]
     pub state: Option<i32>,
+    /// v0.16.23: SimBrief profile username as stored on the pilot's
+    /// phpVMS account. A companion phpVMS change exposes this through
+    /// `/api/user` so we can auto-source the SimBrief identifier (used by
+    /// `flight_refresh_route_only`) without the pilot re-typing it in
+    /// Settings. `#[serde(default)]` is mandatory: older phpVMS installs
+    /// (and any instance without the companion change) simply omit the
+    /// field — `None` then, no error. We NEVER overwrite an explicit
+    /// user-set identifier with this (see `cache_pilot`).
+    #[serde(default)]
+    pub simbrief_username: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1447,7 +1447,13 @@
       "remaining_fuel_label": "Noch im Tank (kg)",
       "remaining_fuel_hint": "Treibstoff nach der Landung. AeroACARS rechnet Verbrauch = Block − Rest",
       "notes_placeholder": "z. B. Wetter, Besonderheiten, technische Probleme …"
-    }
+    },
+    "sync_route": "Route synchronisieren",
+    "sync_route_busy": "Synchronisiere…",
+    "sync_route_hint": "Die aktuelle SimBrief-Route für den laufenden Flug ziehen und auf der Karte neu zeichnen — nützlich nach einem ATC-Reroute oder einer Routenänderung auf simbrief.com. Es wird NUR die Route aktualisiert; Sprit und Gewichte bleiben unangetastet. Funktioniert in jeder Flugphase.",
+    "sync_route_done": "Route aus dem aktuellen SimBrief-OFP übernommen. Die Karte zeigt jetzt die korrigierte Route.",
+    "sync_route_done_local": "Route lokal aktualisiert, aber der Upload zum Server schlug fehl — die Karte stimmt, der Server hält die alte Route bis zum nächsten erfolgreichen Sync.",
+    "sync_route_no_waypoints": "Der aktuelle SimBrief-OFP hat keine Navlog-Wegpunkte — nichts zu synchronisieren."
   },
   "bids": {
     "title": "Meine gebuchten Flüge",
@@ -1526,7 +1532,8 @@
     "open_weather_briefing_hint": "GSG-Wetter-Briefing-Seite öffnen (zeigt den aktiven Bid)",
     "open_notifications": "Nachrichten",
     "open_notifications_hint": "phpVMS-Posteingang öffnen",
-    "weather_briefing_load_hint": "Wird im Browser geöffnet — das Laden der Briefing-Seite kann bis zu 30 s dauern (METAR/TAF/NOTAMs/Bahn-Daten werden live geholt)."
+    "weather_briefing_load_hint": "Wird im Browser geöffnet — das Laden der Briefing-Seite kann bis zu 30 s dauern (METAR/TAF/NOTAMs/Bahn-Daten werden live geholt).",
+    "no_simbrief_identifier": "Kein SimBrief-Username konfiguriert. Trage deinen SimBrief-Username in Einstellungen → SimBrief-Integration ein, um Routenänderungen zu synchronisieren."
   },
   "flight": {
     "error": {
