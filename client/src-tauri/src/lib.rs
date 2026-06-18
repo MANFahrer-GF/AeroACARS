@@ -571,6 +571,40 @@ const DIVERT_DETECT_RADIUS_NM: f64 = 2.0;
 /// the pilot landed somewhere genuinely off-grid (private strip).
 const DIVERT_NEAREST_SEARCH_RADIUS_NM: f64 = 50.0;
 
+// ---- v0.16.24: approach-phase divert navdata pre-fetch -----------------
+//
+// During a descending approach we watch whether the nearest airport has
+// diverged from the planned `arr_airport`. Once the aircraft is on a
+// stable, committed approach to a DIFFERENT field (descending, low, near
+// that field, stable for a few seconds) we pre-fetch its Navigraph navdata
+// so the cache is warm at touchdown — instead of falling back to the
+// coarse OurAirports CSV. Bounded (only fires on divergence, idempotent per
+// ICAO) and debounced (stability dwell) so an airport merely overflown
+// mid-descent doesn't trigger a fetch.
+
+/// AGL ceiling (ft) below which we consider the aircraft committed enough
+/// to an approach to bother pre-fetching. Above this the nearest field is
+/// still ambiguous (en-route over a busy area). 5000 ft AGL is the same
+/// gate the FSM uses to enter Approach.
+const DIVERT_PREFETCH_MAX_AGL_FT: f64 = 5000.0;
+/// Horizontal radius (nm) within which the diverged nearest field must lie
+/// before we treat the approach as committed to it. 10 nm ≈ a typical
+/// final-approach intercept distance; tighter than the 50 nm divert search
+/// so a field merely passed at altitude doesn't qualify.
+const DIVERT_PREFETCH_MAX_DIST_NM: f64 = 10.0;
+/// The aircraft must be descending at least this fast (negative fpm) — a
+/// level overflight of an airport mid-cruise never qualifies.
+const DIVERT_PREFETCH_MIN_SINK_FPM: f64 = -200.0;
+/// How long the diverged nearest field must remain the stable candidate
+/// before the pre-fetch fires. Debounces an airport that is briefly nearest
+/// while the aircraft tracks past it on a vector.
+const DIVERT_PREFETCH_STABLE_SECS: i64 = 10;
+/// The diverged field must be at least this far from the planned
+/// `arr_airport` to count as a real divert (same threshold the
+/// parked-Arrived divert detection uses). Below this it's the same airport
+/// area and the planned navdata already covers it.
+const DIVERT_PREFETCH_PLANNED_DIVERGE_NM: f64 = 5.0;
+
 /// How often we POST `/pireps/{id}/update` purely to bump `pireps.updated_at`
 /// and keep phpVMS's `RemoveExpiredLiveFlights` cron from soft-deleting
 /// the in-flight PIREP. The cron runs hourly and looks at `updated_at`,
@@ -1514,6 +1548,44 @@ fn spawn_navdata_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, icaos: Vec<S
     tokio::spawn(async move {
         fetch_navdata_for_flight(app_clone, flight_arc, icaos, None, token).await;
     });
+}
+
+/// v0.16.24: on-demand navdata fetch for the ACTUAL landing airport when
+/// the touchdown runway correlation fell back to OurAirports (= the real
+/// field wasn't in the per-flight navdata cache at touchdown — typically a
+/// divert the approach pre-fetch didn't catch). Fires `spawn_navdata_fetch`
+/// for that airport so the cache is (hopefully) warm by the time
+/// `build_landing_record` re-correlates at PIREP-filing time
+/// (finalize-with-best). Cheap + safe to call every tick: it only acts
+/// while `runway_fallback_at_touchdown` is set, and `spawn_navdata_fetch`'s
+/// per-ICAO guard makes a duplicate a no-op. Once the fetch lands the field
+/// is cached, so even a re-run does nothing.
+fn maybe_fetch_actual_landing_navdata(app: &AppHandle, flight: &Arc<ActiveFlight>) {
+    let icao = {
+        let mut stats = flight.stats.lock().expect("flight stats");
+        if !stats.runway_fallback_at_touchdown {
+            return;
+        }
+        let Some(icao) = stats.runway_correlation_icao.clone() else {
+            return;
+        };
+        // One-shot per ICAO: a divert airport not in the active AIRAC cycle
+        // returns 404 and never populates the cache, so without this guard
+        // we'd re-issue the GET every tick until filing. Fire exactly once
+        // per actual-landing ICAO. (Re-targets cleanly if the correlation
+        // later resolves a different field — e.g. a touch-and-go elsewhere.)
+        if stats.divert_ondemand_fetch_attempted.as_deref() == Some(icao.as_str()) {
+            return;
+        }
+        stats.divert_ondemand_fetch_attempted = Some(icao.clone());
+        icao
+    };
+    // Don't re-issue for the planned airport — that's already fetched at
+    // flight start; a fallback there means a genuine VPS/cycle gap that a
+    // retry won't fix.
+    if icao != flight.arr_airport.trim().to_uppercase() {
+        spawn_navdata_fetch(app, flight, vec![icao]);
+    }
 }
 
 /// Connection-State-Konstanten für ActiveFlight.connection_state.
@@ -2696,6 +2768,45 @@ struct FlightStats {
     ///     (= Buffer-Cadence-Mismatch oder spätes-Engagement),
     ///   * Touchdown im Approach-Pfad gar nicht erreicht wurde.
     runway_tch_actual_ft: Option<f32>,
+    /// v0.16.24: the ICAO of the airport the wheels ACTUALLY touched on,
+    /// resolved from the touchdown coordinate (`correlate_airport_icao`).
+    /// For an on-plan landing this equals `arr_airport`; on a DIVERT it's
+    /// the real landing field. Drives the on-demand navdata fetch + the
+    /// finalize-with-best re-correlation + the OurAirports-fallback
+    /// diagnostics. Runtime-only (resolved at touchdown, consumed before
+    /// PIREP filing — never needs to survive a resume). None until the
+    /// touchdown runway correlation has run.
+    runway_correlation_icao: Option<String>,
+    /// v0.16.24: whether the touchdown runway correlation fell back to the
+    /// bundled OurAirports CSV (= the actual landing airport wasn't in the
+    /// navdata cache at touchdown). Gates the on-demand
+    /// `spawn_navdata_fetch` the streamer fires so finalize-with-best can
+    /// upgrade the provisional result once the fetch completes. Runtime-only.
+    runway_fallback_at_touchdown: bool,
+    /// v0.16.24: ICAO for which the ON-DEMAND touchdown navdata fetch has
+    /// already been fired (`maybe_fetch_actual_landing_navdata`). One-shot
+    /// guard so a divert airport NOT in the active AIRAC cycle (a 404 never
+    /// populates the cache, so `spawn_navdata_fetch`'s contains-key guard
+    /// can't suppress it) isn't re-requested every streamer/sampler tick for
+    /// the rest of the flight. Runtime-only.
+    divert_ondemand_fetch_attempted: Option<String>,
+    /// v0.16.24: ICAO of the divert airport for which the approach-phase
+    /// pre-fetch (`spawn_navdata_fetch`) was last fired, so a stable
+    /// committed approach to a different field warms the cache exactly once
+    /// (flicker / overflown-airport guard). Runtime-only.
+    divert_prefetch_icao: Option<String>,
+    /// v0.16.24: the diverged field currently accruing stability time
+    /// during a committed approach (distinct from `divert_prefetch_icao`,
+    /// which is the field already fetched). When the nearest field changes
+    /// this is reset along with `divert_prefetch_stable_since`. Runtime-only.
+    divert_prefetch_candidate: Option<String>,
+    /// v0.16.24: wall-clock instant the current divert-candidate airport
+    /// first became the nearest field during a descending approach. The
+    /// approach pre-fetch only fires after this has been stable for
+    /// `DIVERT_PREFETCH_STABLE_SECS` — debounces an overflown airport that
+    /// is briefly nearest mid-descent. Reset when the candidate changes or
+    /// the aircraft is no longer on a committed approach. Runtime-only.
+    divert_prefetch_stable_since: Option<DateTime<Utc>>,
     /// Latitude at the touchdown edge — captured separately from
     /// `last_lat` so a resume mid-rollout doesn't overwrite it.
     landing_lat: Option<f64>,
@@ -12028,11 +12139,29 @@ where
 fn record_landing_for_filed_flight(
     app: &AppHandle,
     flight: &ActiveFlight,
-    stats: &FlightStats,
+    stats: &mut FlightStats,
     // v0.15.x: tatsächlicher Landeflughafen (Divert-aware) — siehe
     // build_landing_record. Für Nicht-Diverts == flight.arr_airport.
     effective_arr_icao: &str,
 ) {
+    // v0.16.24: finalize-with-best — re-correlate the runway against the
+    // (now-hopefully-warm) navdata cache and write the upgraded fields back
+    // BEFORE building the record, so build_landing_record + all downstream
+    // consumers (assess_touchdown, the TouchdownPayload, the score inputs)
+    // see one consistent set. NON-RACY: this is a synchronous read of the
+    // current cache contents — no async re-correlation races the filing.
+    // ON-PLAN INVARIANT: when the touchdown match was already Navigraph
+    // (non-divert), `finalize_runway_correlation` returns the stamped values
+    // verbatim, so this write-back is a byte-identical no-op.
+    {
+        let finalized = finalize_runway_correlation(flight, stats);
+        stats.runway_match = finalized.runway_match;
+        stats.runway_source = finalized.runway_source;
+        stats.runway_nav_cycle = finalized.runway_nav_cycle;
+        stats.runway_nav_geometry = finalized.runway_nav_geometry;
+        stats.runway_tch_actual_ft = finalized.runway_tch_actual_ft;
+    }
+
     let snapshot = current_snapshot(app);
     let sim_kind_label = read_sim_config(app).kind;
     let sim_label = match sim_kind_label {
@@ -13111,12 +13240,12 @@ async fn flight_end(
         // /file success path so downstream UI (Landung-Tab, Activity)
         // sees the same state for divert and normal arrivals.
         {
-            let stats = flight.stats.lock().expect("flight stats");
+            let mut stats = flight.stats.lock().expect("flight stats");
             // v0.15.x: Divert → effektiver Landeflughafen für den Geometrie-Trust.
             record_landing_for_filed_flight(
                 &app,
                 &flight,
-                &stats,
+                &mut stats,
                 divert_to.as_deref().unwrap_or(&flight.arr_airport),
             );
         }
@@ -13234,12 +13363,12 @@ async fn flight_end(
             // tab something to render even after the PIREP is filed
             // and the in-memory FlightStats goes out of scope.
             {
-                let stats = flight.stats.lock().expect("flight stats");
+                let mut stats = flight.stats.lock().expect("flight stats");
                 // v0.15.x: tatsächlicher Landeflughafen (= gefilte arr) für Trust.
                 record_landing_for_filed_flight(
                     &app,
                     &flight,
-                    &stats,
+                    &mut stats,
                     body.arr_airport_id.as_deref().unwrap_or(&flight.arr_airport),
                 );
             }
@@ -13390,12 +13519,12 @@ async fn flight_end(
                 }
                 // Erfolgreich gequeued → Landing-Snapshot, clear, Activity-Log
                 {
-                    let stats = flight.stats.lock().expect("flight stats");
+                    let mut stats = flight.stats.lock().expect("flight stats");
                     // v0.15.x: tatsächlicher Landeflughafen (= gefilte arr) für Trust.
                     record_landing_for_filed_flight(
                         &app,
                         &flight,
-                        &stats,
+                        &mut stats,
                         body.arr_airport_id.as_deref().unwrap_or(&flight.arr_airport),
                     );
                 }
@@ -13928,12 +14057,12 @@ async fn flight_end_manual(
         Ok(()) => {
             // Same landing-history snapshot as the regular file path.
             {
-                let stats = flight.stats.lock().expect("flight stats");
+                let mut stats = flight.stats.lock().expect("flight stats");
                 // v0.15.x: manueller Divert → effektiver Landeflughafen für Trust.
                 record_landing_for_filed_flight(
                     &app,
                     &flight,
-                    &stats,
+                    &mut stats,
                     divert_to.as_deref().unwrap_or(&flight.arr_airport),
                 );
             }
@@ -17365,6 +17494,11 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // synchroness File-Append (~1-10 ms auf NTFS), das wollen wir
             // nicht das stats-Lock blockieren lassen.
             drop(stats);
+            // v0.16.24: if the sampler-path runway correlation just fell
+            // back to OurAirports (divert the pre-fetch missed), kick off the
+            // on-demand navdata fetch for the actual landing airport — same
+            // finalize-with-best wiring as the FSM path. Idempotent.
+            maybe_fetch_actual_landing_navdata(&app, &flight);
             if let Some((edge_at, samples, analysis, msfs_delag_vs)) = prepared_dump {
                 // v0.5.49 — IMMEDIATE persist nach dem Setzen von
                 // touchdown_window_dumped_at. Vorher wurde der Flag in
@@ -18324,6 +18458,40 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 }
             }
             let phase_change = step_flight(&flight, &snap);
+
+            // v0.16.24: approach-phase divert navdata pre-fetch. On a
+            // committed, stable descending approach to a field OTHER than
+            // the planned `arr_airport`, warm that field's Navigraph navdata
+            // so the runway correlation at touchdown hits the cache instead
+            // of falling back to the coarse OurAirports CSV. The decision is
+            // pure + debounced (`divert_prefetch_decision`); the fetch is
+            // idempotent per ICAO (`spawn_navdata_fetch` skips cached ones),
+            // so this is bounded — it only fires on a genuine divergence.
+            {
+                let prefetch_icao = {
+                    let mut stats = flight.stats.lock().expect("flight stats");
+                    divert_prefetch_decision(&mut stats, &snap, &flight.arr_airport, Utc::now())
+                };
+                if let Some(icao) = prefetch_icao {
+                    tracing::info!(
+                        actual = %icao,
+                        planned = %flight.arr_airport,
+                        "divert approach detected — pre-fetching navdata for actual landing airport"
+                    );
+                    spawn_navdata_fetch(&app, &flight, vec![icao]);
+                }
+            }
+
+            // v0.16.24: on-demand navdata fetch at touchdown. If the FSM
+            // Landing arm just correlated the runway and had to fall back to
+            // OurAirports (the actual landing field wasn't cached — e.g. a
+            // late divert the approach pre-fetch didn't catch), kick off a
+            // fetch for the real airport NOW so `build_landing_record` can
+            // re-correlate against the warm cache at PIREP-filing time
+            // (finalize-with-best). Non-racy: the provisional OurAirports
+            // result is already stamped; this only improves what the record
+            // builder sees later. Idempotent (per-ICAO guard).
+            maybe_fetch_actual_landing_navdata(&app, &flight);
 
             // v0.16.6: rollout for sampler-path landings (bush flights — the
             // FSM never reaches Landing, so its arm never accumulates). Runs
@@ -20031,6 +20199,179 @@ fn stamp_touchdown_metadata(
     stats.landing_crosswind_kt = snap.aircraft_wind_x_kt;
 }
 
+/// v0.16.24: how close (in nm) a second airport must be to the nearest one
+/// for the touchdown to count as "ambiguous between two fields". Inside this
+/// margin we prefer the planned `arr_airport` if it's one of the two — so a
+/// touchdown that is geometrically tied between the planned airport and an
+/// immediate neighbour never flips away from the plan. 1.5 nm is well below
+/// the spacing of any two distinct real-world airports a pilot could land on
+/// in one rollout, yet large enough to absorb the nearest-threshold proxy
+/// error `find_nearest_airports` introduces (it keys on the closest runway
+/// threshold, not the airport reference point).
+const CORRELATE_AIRPORT_AMBIGUITY_NM: f64 = 1.5;
+/// v0.16.24: search radius (nm) for resolving the ACTUAL landing airport from
+/// the touchdown coordinate. The touchdown is on a runway, so the nearest
+/// airport is at most a runway-half-length away (~1.5 nm for the longest
+/// strips). 6 nm is generous head-room without pulling in distant neighbours.
+const CORRELATE_AIRPORT_SEARCH_RADIUS_NM: f64 = 6.0;
+
+/// v0.16.24: resolve the ICAO of the airport the wheels ACTUALLY touched on,
+/// from the touchdown coordinate, for keying the navdata cache.
+///
+/// THE on-plan invariant (load-bearing): for a non-divert landing the nearest
+/// airport to the touchdown IS the planned `arr_airport`, so this returns
+/// `arr_airport` unchanged → the downstream cache lookup, NavAirport, runway
+/// match, source and geometry are byte-identical to the pre-v0.16.24
+/// `arr_airport`-keyed path. We additionally short-circuit to `arr_airport`
+/// the moment the nearest result matches it (case-insensitive) so the
+/// on-plan path never even looks at a different key.
+///
+/// On a DIVERT the nearest airport is the actual landing field (e.g. WMKA),
+/// not the planned one (WMKK) — we return that so the cached navdata for the
+/// real airport (warmed by the alternate fetch or the approach pre-fetch)
+/// becomes reachable.
+///
+/// Tie-break: when two airports are within `CORRELATE_AIRPORT_AMBIGUITY_NM`
+/// of each other and one of them is the planned `arr_airport`, prefer the
+/// plan — this keeps a touchdown that is geometrically ambiguous between the
+/// planned field and a stone's-throw neighbour anchored to the plan.
+///
+/// Returns the uppercased planned `arr_airport` when no airport is in range
+/// (mid-ocean / off-grid strip) — identical to the old behaviour, where the
+/// cache lookup on `arr_airport` would simply miss and fall through to
+/// OurAirports.
+fn correlate_airport_icao(arr_airport: &str, td_lat: f64, td_lon: f64) -> String {
+    let planned = arr_airport.trim().to_uppercase();
+    // Pull a small candidate set (not just the nearest) so the planned
+    // airport can win a near-tie even when a co-located / satellite field's
+    // runway-threshold proxy is marginally closer than the planned airport's
+    // own nearest threshold. 5 covers any realistic cluster of fields around
+    // one touchdown.
+    let nearby = runway::find_nearest_airports(
+        td_lat,
+        td_lon,
+        CORRELATE_AIRPORT_SEARCH_RADIUS_NM * 1852.0,
+        5,
+    );
+    let Some(nearest) = nearby.first() else {
+        // No airport within range — keep the planned key (cache miss →
+        // OurAirports fallback, exactly as before).
+        return planned;
+    };
+    let nearest_icao = nearest.icao.trim().to_uppercase();
+    // On-plan fast path: nearest IS the plan → byte-identical to the old
+    // `arr_airport`-keyed lookup.
+    if nearest_icao == planned {
+        return planned;
+    }
+    // Ambiguity tie-break (on-plan invariant guard): if the planned airport
+    // is among the candidates AND sits within the ambiguity margin of the
+    // nearest, prefer the plan. This keeps a genuine on-plan landing anchored
+    // to `arr_airport` even when threshold-proxy noise made a stone's-throw
+    // neighbour the bare nearest — so the result stays byte-identical to the
+    // old `arr_airport`-keyed path for non-diverts.
+    if let Some(planned_cand) = nearby
+        .iter()
+        .find(|na| na.icao.trim().eq_ignore_ascii_case(&planned))
+    {
+        let gap_nm = (planned_cand.distance_m - nearest.distance_m) / 1852.0;
+        if gap_nm <= CORRELATE_AIRPORT_AMBIGUITY_NM {
+            return planned;
+        }
+    }
+    // Genuine divert — the wheels touched a different field than planned.
+    nearest_icao
+}
+
+/// v0.16.24: per-tick decision for the approach-phase divert navdata
+/// pre-fetch. Pure (no I/O): inspects the live snapshot + the planned
+/// `arr_airport`, updates the stability-tracking state in `stats`, and
+/// returns `Some(icao)` exactly when a stable, committed approach to a
+/// DIFFERENT field has just become eligible for a navdata pre-fetch. The
+/// caller fires `spawn_navdata_fetch` for that ICAO (which has its own
+/// per-ICAO idempotency guard, so a duplicate is a cheap no-op).
+///
+/// Why it doesn't hammer the VPS:
+///   * Only runs while airborne and descending (`MIN_SINK_FPM`) below
+///     `MAX_AGL_FT` — i.e. an actual approach, not cruise.
+///   * Only considers a field that is (a) within `MAX_DIST_NM`, (b)
+///     genuinely diverged from the plan (`PLANNED_DIVERGE_NM`), and (c)
+///     NOT the planned `arr_airport` (whose navdata is already fetched).
+///   * Debounced: the same diverged field must stay the nearest candidate
+///     for `STABLE_SECS` before we fire — a field merely overflown on a
+///     vector resets the timer.
+///   * Dedup: once fired for an ICAO we record it in
+///     `stats.divert_prefetch_icao` and never re-fire for the same field.
+///
+/// Returns `None` (and clears the stability timer) whenever the conditions
+/// don't hold, so the timer only accrues on a genuinely stable candidate.
+fn divert_prefetch_decision(
+    stats: &mut FlightStats,
+    snap: &SimSnapshot,
+    arr_airport: &str,
+    now: DateTime<Utc>,
+) -> Option<String> {
+    // Gate: airborne, low enough, and actually descending.
+    let committed_approach = !snap.on_ground
+        && snap.altitude_agl_ft <= DIVERT_PREFETCH_MAX_AGL_FT
+        && (snap.vertical_speed_fpm as f64) <= DIVERT_PREFETCH_MIN_SINK_FPM;
+    if !committed_approach {
+        stats.divert_prefetch_stable_since = None;
+        return None;
+    }
+
+    let planned = arr_airport.trim().to_uppercase();
+    // How far is the planned destination from here? If we're still near it
+    // there's no divert to pre-fetch — the planned navdata covers us.
+    let dist_to_planned_nmi = runway::airport_position(&planned)
+        .map(|(la, lo)| runway::distance_m(snap.lat, snap.lon, la, lo) / 1852.0)
+        .unwrap_or(f64::INFINITY);
+    if dist_to_planned_nmi < DIVERT_PREFETCH_PLANNED_DIVERGE_NM {
+        stats.divert_prefetch_stable_since = None;
+        return None;
+    }
+
+    // Nearest field to the current position, within the committed-approach
+    // radius.
+    let nearby = runway::find_nearest_airports(
+        snap.lat,
+        snap.lon,
+        DIVERT_PREFETCH_MAX_DIST_NM * 1852.0,
+        1,
+    );
+    let Some(nearest) = nearby.into_iter().next() else {
+        stats.divert_prefetch_stable_since = None;
+        return None;
+    };
+    let nearest_icao = nearest.icao.trim().to_uppercase();
+    // Same airport as planned → not a divert; nothing to pre-fetch.
+    if nearest_icao == planned {
+        stats.divert_prefetch_stable_since = None;
+        return None;
+    }
+
+    // Stable candidate? Track since-when this exact field has been the
+    // committed nearest. Reset the timer whenever the candidate changes.
+    match &stats.divert_prefetch_candidate {
+        Some(prev) if *prev == nearest_icao => {}
+        _ => {
+            stats.divert_prefetch_candidate = Some(nearest_icao.clone());
+            stats.divert_prefetch_stable_since = Some(now);
+        }
+    }
+    let stable_since = stats.divert_prefetch_stable_since.get_or_insert(now);
+    if (now - *stable_since).num_seconds() < DIVERT_PREFETCH_STABLE_SECS {
+        return None;
+    }
+
+    // Already pre-fetched this field? Idempotent at this layer too.
+    if stats.divert_prefetch_icao.as_deref() == Some(nearest_icao.as_str()) {
+        return None;
+    }
+    stats.divert_prefetch_icao = Some(nearest_icao.clone());
+    Some(nearest_icao)
+}
+
 /// v0.15.24: Runway correlation at the touchdown point — extracted verbatim
 /// from the FSM Landing arm (see `stamp_touchdown_metadata` for why).
 /// Resolves which runway the wheels actually touched on (Navigraph
@@ -20060,19 +20401,27 @@ fn correlate_touchdown_runway(
         .map(|s| (s.lat, s.lon, s.heading_true_deg))
         .unwrap_or((snap.lat, snap.lon, snap.heading_deg_true));
 
-    // v0.8.0: Navdata-Cache befragen — wenn der pro-Flug-
-    // Cache den arr_airport hat, nimm dessen NavAirport für
-    // die Match-Quelle. `lookup_runway_with_fallback`
-    // fällt transparent auf OurAirports zurück, wenn
-    // entweder kein NavAirport vorhanden ist oder die
-    // NavRunways zu weit weg vom Touchdown sind (= Pilot
-    // ist auf einer anderen Bahn gelandet als geplant).
+    // v0.16.24: Navdata-Cache gegen den ECHTEN Landeflughafen befragen,
+    // nicht gegen den geplanten `arr_airport`. Bei einem On-Plan-Landing
+    // ist der nächste Airport zum Touchdown == `arr_airport`, also bleibt
+    // `actual_icao` == `arr_airport` und der Cache-Lookup ist
+    // BYTE-IDENTISCH zum vor-v0.16.24-Pfad (siehe `correlate_airport_icao`
+    // — die On-Plan-Invariante). Bei einem DIVERT ist `actual_icao` das
+    // tatsächliche Landefeld (z.B. WMKA statt geplant WMKK), womit dessen
+    // — vom Approach-Pre-Fetch oder Alternate-Fetch — gecachte Navdata
+    // erreichbar wird. `lookup_runway_with_fallback` fällt weiterhin
+    // transparent auf OurAirports zurück, wenn kein NavAirport vorhanden
+    // ist oder die NavRunways zu weit vom Touchdown liegen.
+    let actual_icao = correlate_airport_icao(&flight.arr_airport, rw_lat, rw_lon);
     let (nav_opt, nav_cycle) = {
         let cache = flight.navdata.lock().expect("navdata lock");
-        let apt = cache.get(&flight.arr_airport).cloned();
+        let apt = cache.get(&actual_icao).cloned();
         let cycle = cache.cycle.clone();
         (apt, cycle)
     };
+    // Record the actual landing airport for the on-demand fetch + the
+    // finalize-with-best re-correlation + diagnostics.
+    stats.runway_correlation_icao = Some(actual_icao.clone());
 
     let lookup_result = runway::lookup_runway_with_fallback(
         rw_lat,
@@ -20099,6 +20448,41 @@ fn correlate_touchdown_runway(
         } else {
             None
         };
+        // v0.16.24: remember whether we fell back to OurAirports at the
+        // touchdown instant, so the caller can fire an on-demand navdata
+        // fetch for the actual landing airport and `build_landing_record`
+        // can re-correlate against the now-warm cache (finalize-with-best).
+        let is_fallback = matches!(source, runway::RunwaySource::OurAirportsFallback);
+        stats.runway_fallback_at_touchdown = is_fallback;
+        // v0.16.24: enriched diagnostics on the fallback. The actual
+        // landing ICAO, whether its navdata was cached (cache-miss vs.
+        // present-but-too-far), and the AIRAC cycle — so a future fallback
+        // is diagnosable from the breadcrumb alone instead of "match came
+        // from OurAirports, no idea why".
+        if is_fallback {
+            let cached = nav_opt.is_some();
+            let reason = if cached {
+                // NavAirport WAS cached but its runways were all too far
+                // from the touchdown — pilot landed at a field we have
+                // navdata for, just not on a runway it lists (rare; stale
+                // geometry or a closed runway).
+                "navdata_cached_but_no_runway_within_range"
+            } else {
+                // The actual airport's navdata was never fetched / not in
+                // the active cycle — the common divert case.
+                "navdata_cache_miss"
+            };
+            tracing::warn!(
+                actual_airport = %actual_icao,
+                planned_airport = %flight.arr_airport,
+                divert = actual_icao != flight.arr_airport.trim().to_uppercase(),
+                navdata_cached = cached,
+                fallback_reason = reason,
+                airac_cycle = ?nav_cycle,
+                runway = %rw.runway_ident,
+                "runway correlation fell back to OurAirports"
+            );
+        }
         tracing::info!(
             airport = %rw.airport_ident,
             runway = %rw.runway_ident,
@@ -20118,6 +20502,9 @@ fn correlate_touchdown_runway(
         };
         stats.runway_nav_geometry = nav_geometry;
     } else {
+        // No runway within range at all — not a navdata fallback, just no
+        // match (mid-ocean / off-grid). Clear the fallback flag too.
+        stats.runway_fallback_at_touchdown = false;
         stats.runway_match = None;
         stats.runway_source = None;
         stats.runway_nav_cycle = None;
@@ -20151,6 +20538,132 @@ fn correlate_touchdown_runway(
                 break;
             }
         }
+    }
+}
+
+/// v0.16.24: the runway-correlation fields, resolved at record-build time
+/// (finalize-with-best). Mirrors the four `stats.runway_*` fields so
+/// `build_landing_record` can use a possibly-UPGRADED set without mutating
+/// `stats`.
+struct FinalizedRunwayCorrelation {
+    runway_match: Option<runway::RunwayMatch>,
+    runway_source: Option<runway::RunwaySource>,
+    runway_nav_cycle: Option<String>,
+    runway_nav_geometry: Option<aeroacars_mqtt::navdata::NavRunway>,
+    runway_tch_actual_ft: Option<f32>,
+}
+
+/// v0.16.24: finalize-with-best runway correlation, run at LandingRecord
+/// build time (minutes after touchdown, at/just-before PIREP filing).
+///
+/// The touchdown-instant correlation (`correlate_touchdown_runway`)
+/// produced a PROVISIONAL result. On a divert it may have fallen back to
+/// OurAirports because the actual airport's navdata wasn't cached yet. By
+/// record-build time the on-demand fetch (`maybe_fetch_actual_landing_navdata`)
+/// and/or the approach pre-fetch have (hopefully) warmed the cache. This
+/// re-runs the lookup against the now-current cache and RETURNS the better
+/// result if Navigraph is now available — otherwise it returns the stamped
+/// provisional values verbatim (graceful).
+///
+/// NON-RACY by construction: this is a synchronous read of whatever the
+/// cache holds AT THE MOMENT the record is built — there is no separate
+/// async "re-correlate later" path that could race the filing. If the
+/// fetch hasn't completed, the cache simply still lacks the airport and we
+/// keep the provisional OurAirports result.
+///
+/// ON-PLAN INVARIANT: for a non-divert landing the stamped source is
+/// already Navigraph (the planned airport was fetched at flight start), so
+/// the `is_fallback` guard below is false and we return the stamped values
+/// UNCHANGED — byte-identical to pre-v0.16.24. We only ever re-run the
+/// lookup when the touchdown FELL BACK, never when it already matched
+/// Navigraph.
+fn finalize_runway_correlation(
+    flight: &ActiveFlight,
+    stats: &FlightStats,
+) -> FinalizedRunwayCorrelation {
+    // The provisional (stamped) set — the default we keep unless we can
+    // strictly improve it.
+    let provisional = FinalizedRunwayCorrelation {
+        runway_match: stats.runway_match.clone(),
+        runway_source: stats.runway_source,
+        runway_nav_cycle: stats.runway_nav_cycle.clone(),
+        runway_nav_geometry: stats.runway_nav_geometry.clone(),
+        runway_tch_actual_ft: stats.runway_tch_actual_ft,
+    };
+
+    // Only attempt an upgrade when the touchdown correlation fell back to
+    // OurAirports. If it already matched Navigraph (the on-plan case), keep
+    // the stamped values verbatim → byte-identical, no re-lookup.
+    if !matches!(
+        stats.runway_source,
+        Some(runway::RunwaySource::OurAirportsFallback)
+    ) {
+        return provisional;
+    }
+
+    // Need the buffered TD-moment coordinates that the touchdown
+    // correlation used (stamped into landing_* by `stamp_touchdown_metadata`
+    // from the SAME td_buf_sample, so re-correlation uses identical inputs).
+    let (Some(rw_lat), Some(rw_lon), Some(rw_hdg_true)) = (
+        stats.landing_lat,
+        stats.landing_lon,
+        stats.landing_heading_true_deg,
+    ) else {
+        return provisional;
+    };
+
+    // Resolve the actual landing airport the same way the touchdown
+    // correlation did and look it up in the (now-warm) cache.
+    let actual_icao = correlate_airport_icao(&flight.arr_airport, rw_lat, rw_lon);
+    let (nav_opt, nav_cycle) = {
+        let cache = flight.navdata.lock().expect("navdata lock");
+        (cache.get(&actual_icao).cloned(), cache.cycle.clone())
+    };
+    // No navdata for the actual field yet (fetch not landed / 404) → keep
+    // the provisional OurAirports result. Graceful.
+    let Some(apt) = nav_opt else {
+        return provisional;
+    };
+    // Re-run the Navigraph-only lookup. If it still misses (pilot landed at
+    // a field we have navdata for but on a runway it doesn't list), keep
+    // the provisional result — never worse than today.
+    let Some(rw) = runway::lookup_runway_in_nav(rw_lat, rw_lon, rw_hdg_true, &apt) else {
+        return provisional;
+    };
+
+    // We have a strictly-better Navigraph match. Rebuild the consistent
+    // field set exactly as `correlate_touchdown_runway` would have, had the
+    // cache been warm at touchdown.
+    let nav_geometry = apt
+        .runways
+        .iter()
+        .find(|nr| nr.designator == rw.runway_ident)
+        .cloned();
+    // TCH-actual: deliberately NOT recomputed here. The first-past-threshold
+    // scan needs the pre-touchdown samples (~50 ft AGL at the threshold), but
+    // by record-build time (minutes after touchdown) the rolling 5 s
+    // `snapshot_buffer` has long evicted them — it now holds only on-ground /
+    // taxi samples, so a re-scan would stamp a garbage ~0 ft "TCH". The
+    // provisional value was `None` (the OurAirports fallback gates the TCH
+    // scan off), and `None` (honest "couldn't measure") is the correct,
+    // never-worse result for the upgrade. TCH-actual is forensic/coaching
+    // only and not a scored field, so the upgrade still delivers the
+    // LDA/rollout geometry that matters.
+    let runway_tch_actual_ft = None;
+
+    tracing::info!(
+        actual_airport = %actual_icao,
+        runway = %rw.runway_ident,
+        cycle = ?nav_cycle,
+        "finalize-with-best: upgraded provisional OurAirports runway match to Navigraph"
+    );
+
+    FinalizedRunwayCorrelation {
+        runway_match: Some(rw),
+        runway_source: Some(runway::RunwaySource::Navigraph),
+        runway_nav_cycle: nav_cycle,
+        runway_nav_geometry: nav_geometry,
+        runway_tch_actual_ft,
     }
 }
 
@@ -31191,6 +31704,415 @@ mod touchdown_metadata_stamp_tests {
         assert!(stats2.runway_source.is_none());
         assert!(stats2.runway_nav_cycle.is_none());
         assert!(stats2.runway_nav_geometry.is_none());
+    }
+
+    // ---- v0.16.24: divert runway-navdata correlation ----
+
+    /// Minimal EDDP NavAirport fixture whose 26R threshold sits exactly on
+    /// the bundled OurAirports coordinates, so a touchdown at
+    /// (EDDP_26R_THR_LAT, EDDP_26R_THR_LON) matches by both sources. Lets us
+    /// prove the on-plan path is unchanged AND that a divert reaches the
+    /// cached navdata. (08L is the opposite end; same geometry as the CSV.)
+    fn eddp_nav_fixture() -> aeroacars_mqtt::navdata::NavAirport {
+        use aeroacars_mqtt::navdata::{NavAirport, NavPoint, NavRunway};
+        // 08L end from the bundled CSV (le="08L" 51.43119812, 12.21580028).
+        const EDDP_08L_THR_LAT: f64 = 51.431_198_120_117_19;
+        const EDDP_08L_THR_LON: f64 = 12.215_800_285_339_355;
+        NavAirport {
+            cycle: "2604".to_string(),
+            valid_to: "2026-05-14".to_string(),
+            icao: "EDDP".to_string(),
+            name: "Leipzig/Halle".to_string(),
+            latitude: 51.432,
+            longitude: 12.241,
+            elevation_ft: Some(465),
+            runways: vec![
+                NavRunway {
+                    designator: "26R".to_string(),
+                    magnetic_course: 265.7,
+                    true_course: 265.7,
+                    length_ft: 11_811,
+                    width_ft: Some(148),
+                    surface: Some("ASP".to_string()),
+                    threshold: NavPoint {
+                        lat: EDDP_26R_THR_LAT,
+                        lon: EDDP_26R_THR_LON,
+                        elev_ft: Some(465),
+                    },
+                    far_end: NavPoint {
+                        lat: EDDP_08L_THR_LAT,
+                        lon: EDDP_08L_THR_LON,
+                        elev_ft: Some(465),
+                    },
+                    displaced_threshold_ft: 0,
+                    ils: None,
+                    glideslope_angle: 3.0,
+                    tch_ft: 50,
+                },
+                NavRunway {
+                    designator: "08L".to_string(),
+                    magnetic_course: 85.7,
+                    true_course: 85.7,
+                    length_ft: 11_811,
+                    width_ft: Some(148),
+                    surface: Some("ASP".to_string()),
+                    threshold: NavPoint {
+                        lat: EDDP_08L_THR_LAT,
+                        lon: EDDP_08L_THR_LON,
+                        elev_ft: Some(465),
+                    },
+                    far_end: NavPoint {
+                        lat: EDDP_26R_THR_LAT,
+                        lon: EDDP_26R_THR_LON,
+                        elev_ft: Some(465),
+                    },
+                    displaced_threshold_ft: 0,
+                    ils: None,
+                    glideslope_angle: 3.0,
+                    tch_ft: 50,
+                },
+            ],
+        }
+    }
+
+    /// Build the stats + snap for a touchdown at EDDP/26R, ready for
+    /// `correlate_touchdown_runway`.
+    fn eddp_26r_touchdown_stats() -> (FlightStats, SimSnapshot) {
+        let mut stats = FlightStats::default();
+        let mut td = buf_sample(td_at(), true);
+        td.lat = EDDP_26R_THR_LAT;
+        td.lon = EDDP_26R_THR_LON;
+        td.heading_true_deg = EDDP_26R_HEADING;
+        stats.snapshot_buffer.push_back(td);
+        (stats, rollout_snap())
+    }
+
+    /// HARD CONSTRAINT — on-plan landings byte-identical.
+    ///
+    /// For a non-divert landing the nearest airport IS the planned
+    /// `arr_airport`, so the actual-airport-keyed v0.16.24 path must produce
+    /// the EXACT same NavAirport lookup, runway match, source, geometry,
+    /// cycle and TCH as the old `arr_airport`-keyed path. We prove it by
+    /// comparing the v0.16.24 correlation against a hand-rolled OLD-style
+    /// `arr_airport`-keyed correlation over the same inputs.
+    #[test]
+    fn correlate_on_plan_is_byte_identical_to_arr_keyed_path() {
+        let flight = flight_fixture("EDDP");
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture());
+        flight.navdata.lock().unwrap().cycle = Some("2604".to_string());
+
+        // --- v0.16.24 path (keys on the ACTUAL landing airport) ---
+        let (mut stats_new, snap) = eddp_26r_touchdown_stats();
+        let td_buf = touchdown_buffer_sample(&stats_new);
+        correlate_touchdown_runway(&mut stats_new, &snap, &flight, td_buf.as_ref());
+
+        // --- OLD path (keys explicitly on flight.arr_airport) ---
+        let (rw_lat, rw_lon, rw_hdg) = td_buf
+            .as_ref()
+            .map(|s| (s.lat, s.lon, s.heading_true_deg))
+            .unwrap();
+        let nav_opt = flight
+            .navdata
+            .lock()
+            .unwrap()
+            .get(&flight.arr_airport)
+            .cloned();
+        let old = runway::lookup_runway_with_fallback(rw_lat, rw_lon, rw_hdg, nav_opt.as_ref());
+        let (old_match, old_source) = old.expect("old path matched");
+
+        // Source identical.
+        assert_eq!(stats_new.runway_source, Some(old_source));
+        assert!(matches!(old_source, runway::RunwaySource::Navigraph));
+        // RunwayMatch identical field-by-field (RunwayMatch is PartialEq via
+        // its derive; compare the whole struct).
+        assert_eq!(stats_new.runway_match.as_ref(), Some(&old_match));
+        // Nav cycle + geometry identical to what the old path would stamp.
+        assert_eq!(stats_new.runway_nav_cycle.as_deref(), Some("2604"));
+        let old_geom = nav_opt
+            .as_ref()
+            .and_then(|a| a.runways.iter().find(|r| r.designator == old_match.runway_ident))
+            .cloned();
+        assert_eq!(stats_new.runway_nav_geometry, old_geom);
+        // The fallback flag must be false on an on-plan Navigraph match.
+        assert!(!stats_new.runway_fallback_at_touchdown);
+    }
+
+    /// On-plan with NO navdata cached behaves exactly like the pre-existing
+    /// `correlate_resolves_runway_via_ourairports_fallback` test — empty
+    /// cache → OurAirports, regardless of the new actual-airport keying.
+    #[test]
+    fn correlate_on_plan_empty_cache_still_ourairports() {
+        let flight = flight_fixture("EDDP");
+        let (mut stats, snap) = eddp_26r_touchdown_stats();
+        let td_buf = touchdown_buffer_sample(&stats);
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+
+        let m = stats.runway_match.as_ref().expect("runway match");
+        assert_eq!(m.airport_ident, "EDDP");
+        assert_eq!(m.runway_ident, "26R");
+        assert!(matches!(
+            stats.runway_source,
+            Some(runway::RunwaySource::OurAirportsFallback)
+        ));
+        assert!(stats.runway_fallback_at_touchdown);
+        // The actual landing airport was resolved to the planned one.
+        assert_eq!(stats.runway_correlation_icao.as_deref(), Some("EDDP"));
+    }
+
+    /// DIVERT — the planned `arr_airport` is EDDF but the wheels touch at
+    /// EDDP. With EDDP's navdata cached (warmed by the alternate fetch or
+    /// the approach pre-fetch), the actual-airport keying makes it reachable
+    /// → Navigraph match instead of the OurAirports fallback the old
+    /// `arr_airport`-keyed path would have produced.
+    #[test]
+    fn correlate_divert_uses_navigraph_for_actual_airport_when_cached() {
+        // Planned EDDF, but EDDP navdata is what's cached (the divert field).
+        let flight = flight_fixture("EDDF");
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture());
+        flight.navdata.lock().unwrap().cycle = Some("2604".to_string());
+
+        let (mut stats, snap) = eddp_26r_touchdown_stats();
+        let td_buf = touchdown_buffer_sample(&stats);
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+
+        let m = stats.runway_match.as_ref().expect("runway match");
+        assert_eq!(m.airport_ident, "EDDP");
+        assert_eq!(m.runway_ident, "26R");
+        // The actual landing airport was resolved to EDDP, not planned EDDF.
+        assert_eq!(stats.runway_correlation_icao.as_deref(), Some("EDDP"));
+        // And because EDDP's navdata WAS cached, we got Navigraph — the whole
+        // point of v0.16.24.
+        assert!(matches!(
+            stats.runway_source,
+            Some(runway::RunwaySource::Navigraph)
+        ));
+        assert!(stats.runway_nav_geometry.is_some());
+        assert_eq!(stats.runway_nav_cycle.as_deref(), Some("2604"));
+        assert!(!stats.runway_fallback_at_touchdown);
+    }
+
+    /// DIVERT with the actual field NOT cached → provisional OurAirports
+    /// fallback (never worse than today), the fallback flag is set, and the
+    /// actual ICAO is recorded so the on-demand fetch + finalize-with-best
+    /// can run.
+    #[test]
+    fn correlate_divert_falls_back_when_actual_airport_not_cached() {
+        let flight = flight_fixture("EDDF"); // planned EDDF, nothing cached
+        let (mut stats, snap) = eddp_26r_touchdown_stats();
+        let td_buf = touchdown_buffer_sample(&stats);
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+
+        let m = stats.runway_match.as_ref().expect("runway match");
+        assert_eq!(m.airport_ident, "EDDP");
+        assert!(matches!(
+            stats.runway_source,
+            Some(runway::RunwaySource::OurAirportsFallback)
+        ));
+        assert!(stats.runway_fallback_at_touchdown);
+        // Recorded the ACTUAL landing airport (EDDP), not planned EDDF — this
+        // is what drives the on-demand fetch + finalize-with-best.
+        assert_eq!(stats.runway_correlation_icao.as_deref(), Some("EDDP"));
+    }
+
+    /// finalize-with-best: a touchdown that fell back to OurAirports (actual
+    /// field wasn't cached yet) is UPGRADED to Navigraph once the navdata
+    /// fetch lands, at record-build time.
+    #[test]
+    fn finalize_upgrades_provisional_fallback_when_fetch_completes() {
+        let flight = flight_fixture("EDDF"); // divert to EDDP, nothing cached
+        let (mut stats, snap) = eddp_26r_touchdown_stats();
+        let td_buf = touchdown_buffer_sample(&stats);
+        // Stamp landing_* coords (finalize reads these) the same way
+        // stamp_touchdown_metadata would have.
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+        // Provisional: OurAirports.
+        assert!(matches!(
+            stats.runway_source,
+            Some(runway::RunwaySource::OurAirportsFallback)
+        ));
+
+        // Simulate the on-demand fetch completing: EDDP navdata is now cached.
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture());
+        flight.navdata.lock().unwrap().cycle = Some("2604".to_string());
+
+        let finalized = finalize_runway_correlation(&flight, &stats);
+        // Upgraded to Navigraph.
+        assert!(matches!(
+            finalized.runway_source,
+            Some(runway::RunwaySource::Navigraph)
+        ));
+        assert_eq!(
+            finalized.runway_match.as_ref().map(|m| m.runway_ident.as_str()),
+            Some("26R")
+        );
+        assert!(finalized.runway_nav_geometry.is_some());
+        assert_eq!(finalized.runway_nav_cycle.as_deref(), Some("2604"));
+        // TCH-actual is deliberately NOT recomputed at finalize time (the
+        // pre-threshold samples are evicted from the rolling buffer by then),
+        // so it stays None — honest "couldn't measure", never a garbage value.
+        assert!(finalized.runway_tch_actual_ft.is_none());
+    }
+
+    /// finalize-with-best is GRACEFUL: if the fetch never completes (cache
+    /// still empty), it returns the provisional OurAirports result verbatim.
+    #[test]
+    fn finalize_keeps_provisional_when_navdata_unavailable() {
+        let flight = flight_fixture("EDDF");
+        let (mut stats, snap) = eddp_26r_touchdown_stats();
+        let td_buf = touchdown_buffer_sample(&stats);
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+
+        // Cache still empty — finalize must keep the provisional fallback.
+        let finalized = finalize_runway_correlation(&flight, &stats);
+        assert!(matches!(
+            finalized.runway_source,
+            Some(runway::RunwaySource::OurAirportsFallback)
+        ));
+        assert_eq!(
+            finalized.runway_match.as_ref().map(|m| m.airport_ident.as_str()),
+            Some("EDDP")
+        );
+    }
+
+    /// finalize-with-best is a NO-OP for an on-plan Navigraph match — the
+    /// on-plan byte-identical invariant at finalization time. It must return
+    /// the stamped values unchanged and never re-run the lookup.
+    #[test]
+    fn finalize_is_noop_for_on_plan_navigraph_match() {
+        let flight = flight_fixture("EDDP");
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture());
+        flight.navdata.lock().unwrap().cycle = Some("2604".to_string());
+        let (mut stats, snap) = eddp_26r_touchdown_stats();
+        let td_buf = touchdown_buffer_sample(&stats);
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+
+        let before_match = stats.runway_match.clone();
+        let before_geom = stats.runway_nav_geometry.clone();
+        let finalized = finalize_runway_correlation(&flight, &stats);
+        assert_eq!(finalized.runway_match, before_match);
+        assert_eq!(finalized.runway_nav_geometry, before_geom);
+        assert!(matches!(
+            finalized.runway_source,
+            Some(runway::RunwaySource::Navigraph)
+        ));
+    }
+
+    // ---- v0.16.24: approach-phase divert pre-fetch decision ----
+
+    /// A committed, stable, descending approach to a field OTHER than the
+    /// planned one fires the pre-fetch exactly once (idempotent).
+    #[test]
+    fn divert_prefetch_fires_once_on_stable_divergent_approach() {
+        let mut stats = FlightStats::default();
+        // Position right at EDDP/26R threshold, descending, low, airborne.
+        let mut snap = rollout_snap();
+        snap.lat = EDDP_26R_THR_LAT;
+        snap.lon = EDDP_26R_THR_LON;
+        snap.on_ground = false;
+        snap.altitude_agl_ft = 1500.0;
+        snap.vertical_speed_fpm = -700.0;
+        // Planned EDDF (far from EDDP → genuine divergence).
+        let t0 = td_at();
+        // First tick: candidate registered, not yet stable.
+        assert_eq!(
+            divert_prefetch_decision(&mut stats, &snap, "EDDF", t0),
+            None
+        );
+        assert_eq!(stats.divert_prefetch_candidate.as_deref(), Some("EDDP"));
+        // Still within the stability window.
+        assert_eq!(
+            divert_prefetch_decision(
+                &mut stats,
+                &snap,
+                "EDDF",
+                t0 + chrono::Duration::seconds(DIVERT_PREFETCH_STABLE_SECS - 1)
+            ),
+            None
+        );
+        // Past the window → fires for EDDP.
+        let fired = divert_prefetch_decision(
+            &mut stats,
+            &snap,
+            "EDDF",
+            t0 + chrono::Duration::seconds(DIVERT_PREFETCH_STABLE_SECS),
+        );
+        assert_eq!(fired.as_deref(), Some("EDDP"));
+        // Idempotent — a subsequent tick does NOT re-fire.
+        assert_eq!(
+            divert_prefetch_decision(
+                &mut stats,
+                &snap,
+                "EDDF",
+                t0 + chrono::Duration::seconds(DIVERT_PREFETCH_STABLE_SECS + 5)
+            ),
+            None
+        );
+    }
+
+    /// An ON-PLAN approach (nearest field == planned) never pre-fetches.
+    #[test]
+    fn divert_prefetch_silent_on_plan_approach() {
+        let mut stats = FlightStats::default();
+        let mut snap = rollout_snap();
+        snap.lat = EDDP_26R_THR_LAT;
+        snap.lon = EDDP_26R_THR_LON;
+        snap.on_ground = false;
+        snap.altitude_agl_ft = 1500.0;
+        snap.vertical_speed_fpm = -700.0;
+        let t0 = td_at();
+        // Planned EDDP — nearest == planned → no divert, never fires.
+        for i in 0..20 {
+            assert_eq!(
+                divert_prefetch_decision(
+                    &mut stats,
+                    &snap,
+                    "EDDP",
+                    t0 + chrono::Duration::seconds(i)
+                ),
+                None
+            );
+        }
+        assert!(stats.divert_prefetch_icao.is_none());
+    }
+
+    /// A level overflight (not descending) never pre-fetches, and an
+    /// on-ground state resets the stability timer.
+    #[test]
+    fn divert_prefetch_requires_descending_approach() {
+        let mut stats = FlightStats::default();
+        let mut snap = rollout_snap();
+        snap.lat = EDDP_26R_THR_LAT;
+        snap.lon = EDDP_26R_THR_LON;
+        snap.on_ground = false;
+        snap.altitude_agl_ft = 1500.0;
+        // Level (not descending past the sink threshold).
+        snap.vertical_speed_fpm = 0.0;
+        let t0 = td_at();
+        assert_eq!(divert_prefetch_decision(&mut stats, &snap, "EDDF", t0), None);
+        assert!(stats.divert_prefetch_stable_since.is_none());
     }
 
     // ---- FSM-path equivalence (regression guard for the extraction) ----

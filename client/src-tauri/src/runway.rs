@@ -63,7 +63,10 @@ struct RunwayRow {
 }
 
 /// Result of resolving a touchdown coordinate to a runway.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+// PartialEq (v0.16.24): lets the on-plan-byte-identical test assert the
+// actual-airport-keyed correlation produces an identical match to the old
+// `arr_airport`-keyed path. All fields are f32/f64/String — structural eq.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RunwayMatch {
     /// Airport ICAO/ident from CSV (e.g. "EDDP", "GB-0002").
     pub airport_ident: String,
