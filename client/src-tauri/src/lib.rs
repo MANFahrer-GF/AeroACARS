@@ -1749,6 +1749,29 @@ struct PersistedFlightStats {
     track: Vec<[f64; 2]>,
     #[serde(default)]
     runway_match: Option<runway::RunwayMatch>,
+    // v0.16.24 (QS-2 FIX B): persist the runway-correlation source/geometry so
+    // a DIVERT survives a suspend/resume between touchdown and PIREP filing.
+    // `save_active_flight` runs right after the touchdown dump; filing is the
+    // later manual `flight_end`. Without these, an app restart in between reset
+    // them to None/false → the finalize gate (`runway_source ==
+    // OurAirportsFallback`) and the on-demand-fetch gate
+    // (`runway_fallback_at_touchdown`) were both defeated and the divert filed
+    // with coarse OurAirports geometry. `#[serde(default)]` keeps OLD persisted
+    // blobs (saved before this change) deserializing cleanly — missing fields →
+    // None/false → identical to today's pre-change resume behaviour (never
+    // worse). On-plan is unaffected: the touchdown already stamps Navigraph, and
+    // even if reset, the finalize gate's "not OurAirportsFallback → provisional
+    // verbatim" is the correct no-op.
+    #[serde(default)]
+    runway_source: Option<runway::RunwaySource>,
+    #[serde(default)]
+    runway_nav_cycle: Option<String>,
+    #[serde(default)]
+    runway_nav_geometry: Option<aeroacars_mqtt::navdata::NavRunway>,
+    #[serde(default)]
+    runway_correlation_icao: Option<String>,
+    #[serde(default)]
+    runway_fallback_at_touchdown: bool,
     #[serde(default)]
     landing_lat: Option<f64>,
     #[serde(default)]
@@ -1927,6 +1950,12 @@ impl PersistedFlightStats {
             touchdown_profile: stats.touchdown_profile.clone(),
             track: stats.track.clone(),
             runway_match: stats.runway_match.clone(),
+            // v0.16.24 (QS-2 FIX B): persist the runway-correlation source/geometry.
+            runway_source: stats.runway_source,
+            runway_nav_cycle: stats.runway_nav_cycle.clone(),
+            runway_nav_geometry: stats.runway_nav_geometry.clone(),
+            runway_correlation_icao: stats.runway_correlation_icao.clone(),
+            runway_fallback_at_touchdown: stats.runway_fallback_at_touchdown,
             landing_lat: stats.landing_lat,
             landing_lon: stats.landing_lon,
             landing_heading_true_deg: stats.landing_heading_true_deg,
@@ -2025,6 +2054,13 @@ impl PersistedFlightStats {
         stats.touchdown_profile = self.touchdown_profile;
         stats.track = self.track;
         stats.runway_match = self.runway_match;
+        // v0.16.24 (QS-2 FIX B): restore the runway-correlation source/geometry
+        // so a resumed divert keeps its provisional/finalized state.
+        stats.runway_source = self.runway_source;
+        stats.runway_nav_cycle = self.runway_nav_cycle;
+        stats.runway_nav_geometry = self.runway_nav_geometry;
+        stats.runway_correlation_icao = self.runway_correlation_icao;
+        stats.runway_fallback_at_touchdown = self.runway_fallback_at_touchdown;
         stats.landing_lat = self.landing_lat;
         stats.landing_lon = self.landing_lon;
         stats.landing_heading_true_deg = self.landing_heading_true_deg;
@@ -2773,15 +2809,22 @@ struct FlightStats {
     /// For an on-plan landing this equals `arr_airport`; on a DIVERT it's
     /// the real landing field. Drives the on-demand navdata fetch + the
     /// finalize-with-best re-correlation + the OurAirports-fallback
-    /// diagnostics. Runtime-only (resolved at touchdown, consumed before
-    /// PIREP filing — never needs to survive a resume). None until the
-    /// touchdown runway correlation has run.
+    /// diagnostics. None until the touchdown runway correlation has run.
+    ///
+    /// v0.16.24 (QS-2 FIX B): PERSISTED (`PersistedFlightStats`) — a divert can
+    /// suspend/resume between touchdown and PIREP filing, and the finalize +
+    /// on-demand-fetch gates need this to survive the restart. `#[serde(default)]`
+    /// keeps old blobs (saved before the field was persisted) loading as None.
     runway_correlation_icao: Option<String>,
     /// v0.16.24: whether the touchdown runway correlation fell back to the
     /// bundled OurAirports CSV (= the actual landing airport wasn't in the
     /// navdata cache at touchdown). Gates the on-demand
     /// `spawn_navdata_fetch` the streamer fires so finalize-with-best can
-    /// upgrade the provisional result once the fetch completes. Runtime-only.
+    /// upgrade the provisional result once the fetch completes.
+    ///
+    /// v0.16.24 (QS-2 FIX B): PERSISTED — survives a suspend/resume between a
+    /// divert touchdown and PIREP filing so the on-demand-fetch gate isn't
+    /// defeated. `#[serde(default)]` → old blobs load as false.
     runway_fallback_at_touchdown: bool,
     /// v0.16.24: ICAO for which the ON-DEMAND touchdown navdata fetch has
     /// already been fired (`maybe_fetch_actual_landing_navdata`). One-shot
@@ -2807,6 +2850,18 @@ struct FlightStats {
     /// is briefly nearest mid-descent. Reset when the candidate changes or
     /// the aircraft is no longer on a committed approach. Runtime-only.
     divert_prefetch_stable_since: Option<DateTime<Utc>>,
+    /// v0.16.24 (QS-2 FIX C): memoized position of the PLANNED arrival airport,
+    /// resolved lazily on first need in `divert_prefetch_decision`. Before this,
+    /// that decision called `runway::airport_position(planned)` — a full ~48k-row
+    /// linear scan — on EVERY approach tick (AGL ≤ 5000 ft, ~0.7-2 Hz) of EVERY
+    /// flight, on-plan included, until the ≥5 nm-from-plan gate. The planned
+    /// airport never changes for a flight, so we resolve it once and reuse it.
+    /// Two-level Option: outer `None` = not yet resolved; `Some(inner)` = resolved
+    /// (`inner` preserves the `airport_position` result, incl. `None` when the
+    /// planned ICAO is absent from OurAirports → the INFINITY-distance branch).
+    /// Runtime-only (a pure cache of `arr_airport` — re-resolves trivially after
+    /// a resume, so it deliberately isn't persisted).
+    planned_arr_position_cache: Option<Option<(f64, f64)>>,
     /// Latitude at the touchdown edge — captured separately from
     /// `last_lat` so a resume mid-rollout doesn't overwrite it.
     landing_lat: Option<f64>,
@@ -13088,11 +13143,22 @@ async fn flight_end(
         // "60/100" — Score-Vertragsbruch.
         // Fallback: stats.landing_score.numeric() wenn Crate keinen
         // Aggregate liefert (z.B. komplett leerer Sub-Score-Vec).
-        let score = compute_aggregate_master_score(&stats, Some(&flight.aircraft_icao), &flight.arr_airport)
+        //
+        // v0.16.24 (QS-2 FIX A): den EFFEKTIVEN Ankunftsflughafen
+        // (`divert_to` falls bestätigt, sonst geplant) übergeben — exakt
+        // das gleiche Argument das `build_pirep_payload` / `build_landing_record`
+        // schon nutzen. Sonst prüfte der native Score die Runway-Geometrie
+        // gegen das GEPLANTE Ziel und übersprang bei einem Divert (Aircraft
+        // parkt >2 nm vom Threshold → `divert_hint.actual_icao`=None) den
+        // Rollout/LDA-Sub-Score, während Payload/Record ihn bekamen — der
+        // autoritative PIREP-Score wich vom Record ab. On-Plan: `divert_to`=None
+        // → effective_arr == arr_airport → BYTE-IDENTISCH.
+        let effective_arr = divert_to.as_deref().unwrap_or(&flight.arr_airport);
+        let score = compute_aggregate_master_score(&stats, Some(&flight.aircraft_icao), effective_arr)
             .map(|m| m as i32)
             .or_else(|| stats.landing_score.map(|s| s.numeric()));
         let distance_nm = stats.distance_nm;
-        let fields = build_pirep_fields(&flight, &stats);
+        let fields = build_pirep_fields(&flight, &stats, effective_arr);
         let mut notes = build_pirep_notes(&flight, &stats);
         // Prepend a divert banner to the notes so the VA admin sees
         // immediately on the PIREP page that this wasn't a normal
@@ -13954,7 +14020,18 @@ async fn flight_end_manual(
         let resolved_distance = distance_nm
             .filter(|d| *d > 0.0)
             .unwrap_or(stats.distance_nm);
-        let fields = build_pirep_fields(&flight, &stats);
+        // v0.16.24 (QS-2 FIX A): effektiver Ankunftsflughafen für die
+        // "Landing Score"-Custom-Field-Geometrie-Trust-Prüfung — gleiche
+        // Normalisierung (trim/uppercase/non-empty) wie der Divert-Notes-Block
+        // unten und wie der `record_landing_for_filed_flight`-Aufruf weiter
+        // unten. On-Plan (`divert_to`=None) == `flight.arr_airport`.
+        let effective_arr_norm = divert_to
+            .as_ref()
+            .map(|s| s.trim().to_uppercase())
+            .filter(|s| !s.is_empty());
+        let effective_arr =
+            effective_arr_norm.as_deref().unwrap_or(&flight.arr_airport);
+        let fields = build_pirep_fields(&flight, &stats, effective_arr);
         let mut notes = build_pirep_notes(&flight, &stats);
         notes.push_str("\n\n[MANUAL FILE — auto-validation bypassed by pilot.]");
         if let Some(divert) = divert_to
@@ -20362,7 +20439,17 @@ fn divert_prefetch_decision(
     let planned = arr_airport.trim().to_uppercase();
     // How far is the planned destination from here? If we're still near it
     // there's no divert to pre-fetch — the planned navdata covers us.
-    let dist_to_planned_nmi = runway::airport_position(&planned)
+    //
+    // v0.16.24 (QS-2 FIX C): resolve the planned airport's position ONCE per
+    // flight and reuse it. `airport_position` is a full ~48k-row linear scan;
+    // the planned airport never changes, so we memoize it (`get_or_insert_with`)
+    // instead of re-scanning every approach tick. Behaviour is identical — the
+    // cached value (including `None` when the planned ICAO isn't in OurAirports)
+    // preserves the exact INFINITY-distance fallback the inline call produced.
+    let planned_pos = *stats
+        .planned_arr_position_cache
+        .get_or_insert_with(|| runway::airport_position(&planned));
+    let dist_to_planned_nmi = planned_pos
         .map(|(la, lo)| runway::distance_m(snap.lat, snap.lon, la, lo) / 1852.0)
         .unwrap_or(f64::INFINITY);
     if dist_to_planned_nmi < DIVERT_PREFETCH_PLANNED_DIVERGE_NM {
@@ -23026,6 +23113,16 @@ fn handle_remote_cancellation(app: &AppHandle, flight: &Arc<ActiveFlight>, sourc
 fn build_pirep_fields(
     flight: &ActiveFlight,
     stats: &FlightStats,
+    // v0.16.24 (QS-2 FIX A): the EFFECTIVE arrival airport (the
+    // pilot-confirmed divert if any, else the planned `arr_airport`) — the
+    // same value `build_pirep_payload` / `build_landing_record` pass into the
+    // runway trust check. The "Landing Score" custom field below derives its
+    // aggregate via `compute_aggregate_master_score`, which trusts the runway
+    // geometry only when the matched ICAO equals the effective arrival; passing
+    // the planned `arr_airport` here would skip the rollout/LDA sub-score on a
+    // divert and disagree with the native `score` + the local record. On-plan
+    // this equals `flight.arr_airport` → byte-identical.
+    effective_arr_icao: &str,
 ) -> HashMap<String, String> {
     // Single-form custom-fields set: human-readable Title Case with
     // units. Earlier versions emitted EVERY field twice (Title Case +
@@ -23157,7 +23254,7 @@ fn build_pirep_fields(
     // 100/100" unten). Fallback auf Touchdown-Klassifikation wenn
     // Crate keinen Aggregate liefert.
     if let Some(touchdown_class) = stats.landing_score {
-        let aggregate = compute_aggregate_master_score(stats, Some(&flight.aircraft_icao), &flight.arr_airport);
+        let aggregate = compute_aggregate_master_score(stats, Some(&flight.aircraft_icao), effective_arr_icao);
         let (label, numeric) = match aggregate {
             Some(m) => (aggregate_score_label(m), m as i32),
             None => (touchdown_class.label(), touchdown_class.numeric()),
@@ -24073,7 +24170,21 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     // Master-Score (das was App/Web/phpVMS jetzt anzeigen). Damit
     // ist klar dass "Touchdown: smooth" nicht das gleiche ist wie
     // "Master 77/100" — Pilot sieht beide Begriffe ohne Verwechslung.
-    let aggregate_master = compute_aggregate_master_score(&stats, Some(&flight.aircraft_icao), &flight.arr_airport);
+    // v0.16.24 (QS-2 FIX A): use the EFFECTIVE arrival airport for the
+    // geometry-trust check, consistent with the PIREP score/payload/record.
+    // This is a LIVE touchdown announcement — the pilot hasn't confirmed a
+    // divert yet, so there's no `divert_to`. The authoritative "what airport
+    // did the wheels actually touch" is `runway_correlation_icao`, stamped at
+    // touchdown by the SAME `correlate_airport_icao` resolver that produced
+    // `runway_match.airport_ident` (touchdown coord, 6 nm, tiebreak,
+    // vanished-arr guard). On-plan it equals `arr_airport` byte-identically, so
+    // this is a no-op for non-diverts; on a divert it lets the rollout/LDA
+    // sub-score compute (matched == correlation ICAO) instead of skipping.
+    let effective_arr = stats
+        .runway_correlation_icao
+        .as_deref()
+        .unwrap_or(&flight.arr_airport);
+    let aggregate_master = compute_aggregate_master_score(&stats, Some(&flight.aircraft_icao), effective_arr);
     // v0.8.0: Per-Touchdown Navdata-Source + DDS-Warnung sammeln,
     // bevor wir `stats` droppen.
     let nav_source_msg: Option<(ActivityLevel, String)> = stats
@@ -30129,6 +30240,23 @@ mod v0_7_7_ofp_refresh_tests {
         assert_eq!(parsed.simbrief_ofp_generated_at, None);
     }
 
+    /// v0.16.24 (QS-2 FIX B): an OLD persisted blob (saved before these fields
+    /// existed) still deserialises — `#[serde(default)]` fills None/false, so
+    /// resume behaviour is identical to pre-change (never worse). (The
+    /// round-trip + resume-upgrade tests live in `touchdown_metadata_stamp_tests`
+    /// where the divert fixtures are.)
+    #[test]
+    fn persisted_flight_stats_legacy_resume_yields_default_runway_fields() {
+        let legacy_json = r#"{"distance_nm": 50.0}"#;
+        let parsed: PersistedFlightStats = serde_json::from_str(legacy_json)
+            .expect("legacy stats JSON (no runway-correlation fields) must still deserialise");
+        assert_eq!(parsed.runway_source, None);
+        assert_eq!(parsed.runway_nav_cycle, None);
+        assert_eq!(parsed.runway_nav_geometry, None);
+        assert_eq!(parsed.runway_correlation_icao, None);
+        assert!(!parsed.runway_fallback_at_touchdown);
+    }
+
     /// v0.7.7 §10-Pflicht: PersistedFlight legacy ohne flight_id-Feld
     /// muss weiter parseable bleiben (= leer-String via serde(default)).
     /// Das ist der "legacy active flight"-Fall fuer v0.7.8.
@@ -32257,6 +32385,12 @@ mod touchdown_metadata_stamp_tests {
         stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
         correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
 
+        // v0.16.24 (QS-2 FIX A): the REAL call sites (`flight_end` /
+        // `flight_end_manual`) pass the EFFECTIVE arrival (`divert_to`=EDDP),
+        // not the planned `arr_airport`. Model that here so the trust check
+        // passes via the effective arrival exactly as in production.
+        let eff = "EDDP";
+
         // Provisional: fell back to OurAirports (EDDP navdata not cached).
         assert!(matches!(
             stats.runway_source,
@@ -32264,8 +32398,8 @@ mod touchdown_metadata_stamp_tests {
         ));
         // The PIREP score the OLD ordering would have filed (provisional).
         let provisional_score =
-            compute_aggregate_master_score(&stats, Some("A320"), "EDDF");
-        let provisional_field = landing_score_field(&flight, &stats);
+            compute_aggregate_master_score(&stats, Some("A320"), eff);
+        let provisional_field = landing_score_field(&flight, &stats, eff);
 
         // The on-demand fetch completes: EDDP navdata (with a displaced
         // threshold) is now cached.
@@ -32295,8 +32429,8 @@ mod touchdown_metadata_stamp_tests {
         // The PIREP score now reflects the Navigraph LDA — strictly different
         // from the provisional OurAirports score (the displaced threshold
         // shortened the LDA → the rollout sub-score dropped a band).
-        let upgraded_score = compute_aggregate_master_score(&stats, Some("A320"), "EDDF");
-        let upgraded_field = landing_score_field(&flight, &stats);
+        let upgraded_score = compute_aggregate_master_score(&stats, Some("A320"), eff);
+        let upgraded_field = landing_score_field(&flight, &stats, eff);
         assert_ne!(
             upgraded_score, provisional_score,
             "the divert PIREP score must change when the Navigraph LDA upgrade lands \
@@ -32311,7 +32445,7 @@ mod touchdown_metadata_stamp_tests {
         // agree.
         let record_score_before = upgraded_score;
         apply_finalized_runway_correlation(&flight, &mut stats); // the no-op
-        let record_score_after = compute_aggregate_master_score(&stats, Some("A320"), "EDDF");
+        let record_score_after = compute_aggregate_master_score(&stats, Some("A320"), eff);
         assert_eq!(
             record_score_before, record_score_after,
             "the second finalize (inside record_landing_for_filed_flight) must be a no-op \
@@ -32322,6 +32456,205 @@ mod touchdown_metadata_stamp_tests {
             stats.runway_source,
             Some(runway::RunwaySource::Navigraph)
         ));
+    }
+
+    /// v0.16.24 (QS-2 FIX A) — the regression guard the ORIGINAL bug slipped
+    /// past. The sibling above hand-sets `divert_hint.actual_icao = EDDP`, so
+    /// its trust check passed via the divert hint even when the score was fed
+    /// the PLANNED `arr_airport` — exactly the masking that hid the bug. This
+    /// test does NOT set `divert_hint`. On a real divert where the aircraft
+    /// parks > ARRIVED_FALLBACK_RADIUS_NM (2 nm) from the threshold, the
+    /// passive `divert_hint` resolver yields None, so the ONLY thing that can
+    /// make the geometry trusted is passing the EFFECTIVE arrival (the
+    /// pilot-confirmed divert, EDDP) — which `build_pirep_payload` /
+    /// `build_landing_record` already do and which FIX A now makes the native
+    /// PIREP score + "Landing Score" custom field do too.
+    #[test]
+    fn divert_pirep_score_trusts_geometry_via_effective_arr_without_divert_hint() {
+        let flight = flight_fixture("EDDF"); // planned EDDF
+        // Warm the EDDP navdata (with a displaced threshold) so the runway
+        // correlation lands on Navigraph — the rollout/LDA sub-score can only
+        // differ from the no-geometry case when the geometry is TRUSTED.
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture_displaced());
+        flight.navdata.lock().unwrap().cycle = Some("2604".to_string());
+
+        let (mut stats, snap) = divert_score_stats();
+        // The crux: NO divert hint. The passive resolver can't help here.
+        stats.divert_hint = None;
+        let td_buf = touchdown_buffer_sample(&stats);
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+
+        // The touchdown correlated to EDDP/26R via Navigraph (warm cache).
+        assert!(matches!(
+            stats.runway_source,
+            Some(runway::RunwaySource::Navigraph)
+        ));
+        // Sanity: the actual-landing-airport resolver agrees it's a divert.
+        assert_eq!(stats.runway_correlation_icao.as_deref(), Some("EDDP"));
+
+        // OLD (buggy) behaviour: feeding the PLANNED arr with no divert hint →
+        // the trust check sees matched=EDDP != arr=EDDF and no divert match →
+        // icao_mismatch → the rollout/LDA sub-score is SKIPPED.
+        let buggy_planned_arr_score =
+            compute_aggregate_master_score(&stats, Some("A320"), "EDDF");
+        // FIXED behaviour: feeding the EFFECTIVE arrival (the divert EDDP) →
+        // matched=EDDP == effective=EDDP → geometry trusted → the rollout/LDA
+        // sub-score COMPUTES. This is what the native score now passes.
+        let fixed_effective_arr_score =
+            compute_aggregate_master_score(&stats, Some("A320"), "EDDP");
+
+        // The fix must change the scored value on this divert (the rollout
+        // sub-score went from skipped → computed against the Navigraph LDA).
+        assert_ne!(
+            buggy_planned_arr_score, fixed_effective_arr_score,
+            "feeding the effective arrival must let the trusted-geometry rollout \
+             sub-score compute (buggy/planned={buggy_planned_arr_score:?}, \
+             fixed/effective={fixed_effective_arr_score:?})"
+        );
+
+        // native PIREP score == "Landing Score" custom field == local record:
+        // all three derive from the SAME finalized stats via the SAME effective
+        // arrival, so they must agree. (The custom field is the numeric in the
+        // "G (label) — N/100" string.)
+        let native_score = fixed_effective_arr_score.expect("aggregate computes");
+        let field = landing_score_field(&flight, &stats, "EDDP")
+            .expect("Landing Score field present");
+        assert!(
+            field.contains(&format!("{native_score}/100")),
+            "the Landing Score custom field ({field}) must carry the same numeric \
+             as the native PIREP score ({native_score})"
+        );
+        // The local record path runs the SAME finalize (idempotent no-op once
+        // Navigraph) and the SAME effective arrival → identical score.
+        apply_finalized_runway_correlation(&flight, &mut stats);
+        let record_score = compute_aggregate_master_score(&stats, Some("A320"), "EDDP");
+        assert_eq!(
+            Some(native_score),
+            record_score,
+            "native PIREP score must equal the local-record score on a divert"
+        );
+    }
+
+    /// v0.16.24 (QS-2 FIX B): the five runway-correlation fields survive a
+    /// snapshot→apply (incl. JSON) round-trip, so a divert that suspends/resumes
+    /// between touchdown and PIREP filing keeps its source/geometry/correlation
+    /// state.
+    #[test]
+    fn persisted_flight_stats_preserves_runway_correlation_round_trip() {
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(runway::RunwayMatch {
+            airport_ident: "EDDP".to_string(),
+            runway_ident: "26R".to_string(),
+            heading_true_deg: 265.7,
+            length_ft: 11_811.0,
+            width_ft: 148.0,
+            surface: "ASP".to_string(),
+            threshold_lat: EDDP_26R_THR_LAT,
+            threshold_lon: EDDP_26R_THR_LON,
+            end_lat: 51.431_198,
+            end_lon: 12.215_800,
+            centerline_distance_m: 7.5,
+            centerline_distance_abs_ft: 24.6,
+            touchdown_distance_from_threshold_ft: 980.0,
+            side: "LEFT".to_string(),
+        });
+        stats.runway_source = Some(runway::RunwaySource::OurAirportsFallback);
+        stats.runway_nav_cycle = Some("2604".to_string());
+        stats.runway_nav_geometry =
+            eddp_nav_fixture_displaced().runways.first().cloned();
+        stats.runway_correlation_icao = Some("EDDP".to_string());
+        stats.runway_fallback_at_touchdown = true;
+
+        let persisted = PersistedFlightStats::snapshot_from(&stats);
+        // Round-trip through JSON too, to prove (de)serialisation preserves them.
+        let json = serde_json::to_string(&persisted)
+            .expect("PersistedFlightStats must serialise");
+        let reparsed: PersistedFlightStats =
+            serde_json::from_str(&json).expect("re-deserialise");
+
+        let mut restored = FlightStats::default();
+        reparsed.apply_to(&mut restored);
+
+        assert_eq!(
+            restored.runway_source,
+            Some(runway::RunwaySource::OurAirportsFallback)
+        );
+        assert_eq!(restored.runway_nav_cycle.as_deref(), Some("2604"));
+        assert_eq!(restored.runway_nav_geometry, stats.runway_nav_geometry);
+        assert_eq!(restored.runway_correlation_icao.as_deref(), Some("EDDP"));
+        assert!(restored.runway_fallback_at_touchdown);
+        assert_eq!(
+            restored.runway_match.as_ref().map(|m| m.airport_ident.as_str()),
+            Some("EDDP")
+        );
+    }
+
+    /// v0.16.24 (QS-2 FIX B): a DIVERT that fell back to OurAirports at
+    /// touchdown, then SUSPENDED and RESUMED, still upgrades to Navigraph at
+    /// finalize once the cache is warm. The resume rebuilds stats via
+    /// `FlightStats::new()` + `apply_to`; without persisting the five fields the
+    /// restored `runway_source` would be None → `finalize_runway_correlation`'s
+    /// "not OurAirportsFallback → provisional verbatim" guard would WRONGLY fire
+    /// and the divert would file with coarse OurAirports geometry.
+    #[test]
+    fn resumed_divert_still_upgrades_at_finalize_when_cache_warm() {
+        // ── Pre-suspend: divert touchdown that fell back to OurAirports. ──
+        let flight = flight_fixture("EDDF"); // planned EDDF, nothing cached
+        let (mut pre_stats, snap) = divert_score_stats();
+        let td_buf = touchdown_buffer_sample(&pre_stats);
+        stamp_touchdown_metadata(&mut pre_stats, &snap, td_at(), td_buf.as_ref());
+        correlate_touchdown_runway(&mut pre_stats, &snap, &flight, td_buf.as_ref());
+        assert!(matches!(
+            pre_stats.runway_source,
+            Some(runway::RunwaySource::OurAirportsFallback)
+        ));
+        assert!(pre_stats.runway_fallback_at_touchdown);
+        assert_eq!(pre_stats.runway_correlation_icao.as_deref(), Some("EDDP"));
+
+        // ── Suspend → resume: persist, then rebuild stats from scratch. ──
+        let persisted = PersistedFlightStats::snapshot_from(&pre_stats);
+        let json = serde_json::to_string(&persisted).expect("serialise");
+        let reparsed: PersistedFlightStats =
+            serde_json::from_str(&json).expect("deserialise");
+        let mut resumed_stats = FlightStats::new(); // fresh, as a real resume does
+        reparsed.apply_to(&mut resumed_stats);
+        // The fallback state survived the restart (this is what FIX B adds).
+        assert!(matches!(
+            resumed_stats.runway_source,
+            Some(runway::RunwaySource::OurAirportsFallback)
+        ));
+
+        // ── The on-demand fetch landed while suspended: EDDP now cached. ──
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture_displaced());
+        flight.navdata.lock().unwrap().cycle = Some("2604".to_string());
+
+        // ── Finalize at filing: the resumed divert upgrades to Navigraph. ──
+        apply_finalized_runway_correlation(&flight, &mut resumed_stats);
+        assert!(
+            matches!(
+                resumed_stats.runway_source,
+                Some(runway::RunwaySource::Navigraph)
+            ),
+            "a resumed divert must still upgrade to Navigraph at finalize when the cache is warm"
+        );
+        assert_eq!(
+            resumed_stats
+                .runway_nav_geometry
+                .as_ref()
+                .map(|g| g.displaced_threshold_ft),
+            Some(4000)
+        );
     }
 
     /// FIX 1 graceful: on a divert where the fetch NEVER lands by filing time,
@@ -32335,10 +32668,11 @@ mod touchdown_metadata_stamp_tests {
         stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
         correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
 
-        let before = compute_aggregate_master_score(&stats, Some("A320"), "EDDF");
+        // v0.16.24 (QS-2 FIX A): effective arrival == EDDP (the divert field).
+        let before = compute_aggregate_master_score(&stats, Some("A320"), "EDDP");
         // Empty cache → finalize keeps the provisional fallback.
         apply_finalized_runway_correlation(&flight, &mut stats);
-        let after = compute_aggregate_master_score(&stats, Some("A320"), "EDDF");
+        let after = compute_aggregate_master_score(&stats, Some("A320"), "EDDP");
         assert!(matches!(
             stats.runway_source,
             Some(runway::RunwaySource::OurAirportsFallback)
@@ -32372,11 +32706,12 @@ mod touchdown_metadata_stamp_tests {
             Some(runway::RunwaySource::Navigraph)
         ));
 
+        // On-plan: effective arrival == planned arrival == EDDP.
         let before = compute_aggregate_master_score(&stats, Some("A320"), "EDDP");
-        let before_field = landing_score_field(&flight, &stats);
+        let before_field = landing_score_field(&flight, &stats, "EDDP");
         apply_finalized_runway_correlation(&flight, &mut stats); // must be a no-op
         let after = compute_aggregate_master_score(&stats, Some("A320"), "EDDP");
-        let after_field = landing_score_field(&flight, &stats);
+        let after_field = landing_score_field(&flight, &stats, "EDDP");
         assert_eq!(before, after, "on-plan PIREP score must be unchanged by finalize");
         assert_eq!(before_field, after_field);
         assert!(matches!(
@@ -32387,8 +32722,16 @@ mod touchdown_metadata_stamp_tests {
 
     /// Helper: the exact "Landing Score" custom-field string `build_pirep_fields`
     /// would emit, so the score-path tests assert the field the PIREP carries.
-    fn landing_score_field(flight: &ActiveFlight, stats: &FlightStats) -> Option<String> {
-        build_pirep_fields(flight, stats).get("Landing Score").cloned()
+    /// `effective_arr` mirrors the real call sites (`flight_end` /
+    /// `flight_end_manual` pass `divert_to.unwrap_or(arr)`).
+    fn landing_score_field(
+        flight: &ActiveFlight,
+        stats: &FlightStats,
+        effective_arr: &str,
+    ) -> Option<String> {
+        build_pirep_fields(flight, stats, effective_arr)
+            .get("Landing Score")
+            .cloned()
     }
 
     // ---- v0.16.24: approach-phase divert pre-fetch decision ----
@@ -32484,6 +32827,94 @@ mod touchdown_metadata_stamp_tests {
         let t0 = td_at();
         assert_eq!(divert_prefetch_decision(&mut stats, &snap, "EDDF", t0), None);
         assert!(stats.divert_prefetch_stable_since.is_none());
+    }
+
+    /// v0.16.24 (QS-2 FIX C): the planned-airport position is memoized on first
+    /// need and the value matches `runway::airport_position` exactly, so the
+    /// per-tick decision is parity-identical to the pre-cache inline call.
+    #[test]
+    fn divert_prefetch_caches_planned_position_with_parity() {
+        // Ground-truth: resolve the planned airport position directly.
+        let direct = runway::airport_position("EDDF");
+        assert!(direct.is_some(), "EDDF must be in the OurAirports table");
+
+        let mut stats = FlightStats::default();
+        assert!(
+            stats.planned_arr_position_cache.is_none(),
+            "cache starts unresolved"
+        );
+
+        // A committed descending approach over EDDP (far from planned EDDF).
+        let mut snap = rollout_snap();
+        snap.lat = EDDP_26R_THR_LAT;
+        snap.lon = EDDP_26R_THR_LON;
+        snap.on_ground = false;
+        snap.altitude_agl_ft = 1500.0;
+        snap.vertical_speed_fpm = -700.0;
+        let t0 = td_at();
+
+        // First decision tick resolves + memoizes the planned position.
+        let _ = divert_prefetch_decision(&mut stats, &snap, "EDDF", t0);
+        assert_eq!(
+            stats.planned_arr_position_cache,
+            Some(direct),
+            "the cached planned position must equal airport_position(EDDF)"
+        );
+
+        // Parity: the decision's dist-to-planned gate is computed from the SAME
+        // position, so the committed-divergent-approach behaviour is unchanged.
+        // Reproduce the gate inline and confirm it agrees: EDDP is far from EDDF
+        // → dist ≥ DIVERT_PREFETCH_PLANNED_DIVERGE_NM → the candidate is tracked.
+        let (la, lo) = direct.expect("resolved");
+        let inline_dist_nmi =
+            runway::distance_m(snap.lat, snap.lon, la, lo) / 1852.0;
+        assert!(
+            inline_dist_nmi >= DIVERT_PREFETCH_PLANNED_DIVERGE_NM,
+            "EDDP must be a genuine divergence from EDDF (dist={inline_dist_nmi} nm)"
+        );
+        assert_eq!(
+            stats.divert_prefetch_candidate.as_deref(),
+            Some("EDDP"),
+            "with the cached position the decision still tracks the divergent candidate"
+        );
+
+        // Stays warm across ticks (no re-scan): a second tick keeps the same
+        // cached value and the same decision outcome (fires once stable).
+        let fired = divert_prefetch_decision(
+            &mut stats,
+            &snap,
+            "EDDF",
+            t0 + chrono::Duration::seconds(DIVERT_PREFETCH_STABLE_SECS),
+        );
+        assert_eq!(fired.as_deref(), Some("EDDP"));
+        assert_eq!(stats.planned_arr_position_cache, Some(direct));
+    }
+
+    /// v0.16.24 (QS-2 FIX C): when the planned ICAO is absent from OurAirports,
+    /// the cache memoizes `None` and the decision keeps the INFINITY-distance
+    /// fallback — i.e. "never near the (unknown) plan" → divergent candidate is
+    /// still tracked. Parity with the pre-cache `.unwrap_or(f64::INFINITY)`.
+    #[test]
+    fn divert_prefetch_caches_absent_planned_position() {
+        let unknown = "ZZZZ"; // not a real OurAirports ICAO
+        assert!(
+            runway::airport_position(unknown).is_none(),
+            "test precondition: ZZZZ must be absent from the table"
+        );
+        let mut stats = FlightStats::default();
+        let mut snap = rollout_snap();
+        snap.lat = EDDP_26R_THR_LAT;
+        snap.lon = EDDP_26R_THR_LON;
+        snap.on_ground = false;
+        snap.altitude_agl_ft = 1500.0;
+        snap.vertical_speed_fpm = -700.0;
+        let t0 = td_at();
+
+        let _ = divert_prefetch_decision(&mut stats, &snap, unknown, t0);
+        // Cache resolved to Some(None) — "resolved, planned not findable".
+        assert_eq!(stats.planned_arr_position_cache, Some(None));
+        // INFINITY distance → never near plan → divergent candidate tracked.
+        assert_eq!(stats.divert_prefetch_candidate.as_deref(), Some("EDDP"));
     }
 
     // ---- FSM-path equivalence (regression guard for the extraction) ----
