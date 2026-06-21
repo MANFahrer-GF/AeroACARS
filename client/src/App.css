@@ -8236,6 +8236,10 @@ input:disabled {
   padding: 24px;
   color: var(--text-muted);
   background: color-mix(in srgb, var(--bg) 70%, transparent);
+  /* Voll­flächen-Hinweis (kein aktiver Flug) — darf die Maus NICHT schlucken,
+     sonst lässt sich die Karte im Leer-Zustand nicht ziehen/zoomen. Der Hinweis
+     hat keine Buttons, also liegt er rein optisch drüber. */
+  pointer-events: none;
 }
 .aa-ac-marker {
   width: 38px;

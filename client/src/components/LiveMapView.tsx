@@ -12,7 +12,7 @@
 // Rein Anzeige — keine Wertung.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import maplibregl from "maplibre-gl";
+import maplibregl, { type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { invoke } from "../lib/ipc";
 import type { ActiveFlightInfo, SimSnapshot } from "../types";
@@ -23,6 +23,32 @@ import { phaseColor, phaseLabel as formatPhase } from "../lib/phaseColors";
 
 const BASEMAP_DARK = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 const BASEMAP_LIGHT = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+// Satellit (Esri World Imagery + Namens-Overlay, kein API-Key). Manuell wählbar
+// über den Karten-Toggle. glyphs auf die CARTO-Fonts (haben "Open Sans Regular"
+// wie dark/light — demotiles hat den Font NICHT, sonst fehlten Waypoint-Namen).
+const BASEMAP_SAT: StyleSpecification = {
+  version: 8,
+  glyphs: "https://tiles.basemaps.cartocdn.com/fonts/{fontstack}/{range}.pbf",
+  sources: {
+    "esri-imagery": {
+      type: "raster",
+      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+      tileSize: 256,
+      maxzoom: 19,
+      attribution: "Imagery © Esri, Maxar, Earthstar Geographics, USDA, USGS, AeroGRID, IGN, GIS User Community",
+    },
+    "esri-reference": {
+      type: "raster",
+      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
+      tileSize: 256,
+      maxzoom: 19,
+    },
+  },
+  layers: [
+    { id: "esri-imagery", type: "raster", source: "esri-imagery" },
+    { id: "esri-reference", type: "raster", source: "esri-reference" },
+  ],
+};
 
 interface RouteFix {
   ident: string;
@@ -153,6 +179,7 @@ const LYR_WPTS = "aa-planned-wpts-circles";
 const LYR_WPT_LABELS = "aa-planned-wpts-labels";
 const LYR_TRACK = "aa-flown-track-line";
 const LYR_TRACK_DOTS = "aa-flown-track-dots-circles";
+const LYR_ROUTE_CASING = "aa-planned-route-casing"; // dunkle Unterlage nur auf Satellit
 
 interface Props {
   activeFlight: ActiveFlightInfo | null;
@@ -190,6 +217,11 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
 
   const [mapReady, setMapReady] = useState(false);
   const [follow, setFollow] = useState(true);
+  // Basemap: "auto" = theme-gekoppelt (dark/light), "sat" = Esri-Satellit (manuell).
+  const [basemap, setBasemap] = useState<"auto" | "sat">(
+    () => (typeof localStorage !== "undefined" && localStorage.getItem("aaLivemapBasemap") === "sat" ? "sat" : "auto"),
+  );
+  const basemapRef = useRef<"auto" | "sat">(basemap);
   const [showVa, setShowVa] = useState(true); // VA-Verkehr ein-/ausblenden
   const [theme, setTheme] = useState<"dark" | "light">(readTheme());
   const [routeFixes, setRouteFixes] = useState<RouteFix[]>([]);
@@ -276,7 +308,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     if (!containerRef.current || mapRef.current) return;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: readTheme() === "dark" ? BASEMAP_DARK : BASEMAP_LIGHT,
+      style: basemapRef.current === "sat" ? BASEMAP_SAT : readTheme() === "dark" ? BASEMAP_DARK : BASEMAP_LIGHT,
       center: [6, 48],
       zoom: 4,
       attributionControl: { compact: true },
@@ -321,21 +353,48 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     return () => obs.disconnect();
   }, []);
   useEffect(() => {
-    mapRef.current?.setStyle(theme === "dark" ? BASEMAP_DARK : BASEMAP_LIGHT);
-  }, [theme]);
+    basemapRef.current = basemap;
+    try {
+      localStorage.setItem("aaLivemapBasemap", basemap);
+    } catch {
+      /* persist best-effort */
+    }
+    // setStyle wischt alle Layer — der styledata-Handler baut die Overlays
+    // (Track/Route/Waypoints) danach idempotent wieder auf, für jede Basemap.
+    mapRef.current?.setStyle(
+      basemap === "sat" ? BASEMAP_SAT : theme === "dark" ? BASEMAP_DARK : BASEMAP_LIGHT,
+    );
+  }, [theme, basemap]);
 
   // ---- Overlays anlegen (idempotent) + aus dataRef füllen ----
   function addOverlays(map: maplibregl.Map) {
+    const sat = basemapRef.current === "sat";
     const accent = cssVar("--accent", "#0a84ff");
-    const trackColor = cssVar("--map-track", "#e8e8e8"); // theme-aware (hell/dunkel)
-    const surface = cssVar("--surface", "#ffffff");
+    // Auf Satellit (immer dunkel-buntes Bild) die „dunkle-Karte"-Behandlung
+    // ERZWINGEN — heller Track/Text + dunkle Halos, unabhängig vom App-Theme;
+    // sonst verschwänden Track/Route/Labels auf dem Bild. So sieht alles auf
+    // Sat aus wie auf der dunklen Karte.
+    const trackColor = sat ? "#f2f5fa" : cssVar("--map-track", "#e8e8e8");
+    const haloColor = sat ? "#0b0f16" : cssVar("--surface", "#ffffff");
+    const textColor = sat ? "#f4f7fc" : cssVar("--text", "#e8edf2");
     const warning = cssVar("--warning", "#ff9f0a");
-    const textColor = cssVar("--text", "#e8edf2"); // theme-aware Label-Text
     const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
     if (!map.getSource(SRC_ROUTE)) map.addSource(SRC_ROUTE, { type: "geojson", data: empty });
     if (!map.getSource(SRC_WPTS)) map.addSource(SRC_WPTS, { type: "geojson", data: empty });
     if (!map.getSource(SRC_TRACK)) map.addSource(SRC_TRACK, { type: "geojson", data: empty });
     if (!map.getSource(SRC_TRACK_DOTS)) map.addSource(SRC_TRACK_DOTS, { type: "geojson", data: empty });
+    // Nur auf Satellit: dunkle Unterlage UNTER der Route (zuerst hinzufügen =
+    // liegt unter der eigentlichen Linie), damit die blaue gestrichelte Route
+    // auf hellem/buntem Bild nicht verschwindet. Auf Dark/Light nicht nötig.
+    if (sat && !map.getLayer(LYR_ROUTE_CASING)) {
+      map.addLayer({
+        id: LYR_ROUTE_CASING,
+        type: "line",
+        source: SRC_ROUTE,
+        layout: { "line-cap": "butt", "line-join": "round" },
+        paint: { "line-color": "#0b0f16", "line-width": 5, "line-opacity": 0.55 },
+      });
+    }
     if (!map.getLayer(LYR_ROUTE)) {
       map.addLayer({
         id: LYR_ROUTE,
@@ -345,7 +404,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
         layout: { "line-cap": "butt", "line-join": "round" },
         // Stratos-Look: GEPLANTE Route gestrichelt (die tatsächlich GEFLOGENE
         // Spur ist durchgezogen — so unterscheidet man Plan vs. Ist auf einen Blick).
-        paint: { "line-color": accent, "line-width": 2.5, "line-opacity": 0.7, "line-dasharray": [2, 2] },
+        paint: { "line-color": accent, "line-width": 2.5, "line-opacity": sat ? 0.95 : 0.7, "line-dasharray": [2, 2] },
       });
     }
     if (!map.getLayer(LYR_TRACK)) {
@@ -367,7 +426,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
           "circle-radius": 2.4,
           "circle-color": trackColor,
           "circle-stroke-width": 1,
-          "circle-stroke-color": surface,
+          "circle-stroke-color": haloColor,
         },
       });
     }
@@ -391,7 +450,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
             accent,
           ],
           "circle-stroke-width": ["case", ["==", ["get", "isNext"], true], 2, 1],
-          "circle-stroke-color": surface,
+          "circle-stroke-color": haloColor,
         },
       });
     }
@@ -417,7 +476,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
         },
         paint: {
           "text-color": textColor,
-          "text-halo-color": surface,
+          "text-halo-color": haloColor,
           "text-halo-width": 1.4,
           "text-halo-blur": 0.4,
         },
@@ -938,6 +997,25 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
             {/* Zähler-Slot IMMER da (feste Breite) → Ein-/Ausschalten oder
                 1-↔2-stellige Zahl verschiebt die Nachbar-Buttons nicht mehr. */}
             <span className="aa-livemap__vacount">{showVa ? vaVisible.length : ""}</span>
+          </button>
+          <button
+            type="button"
+            className="aa-livemap__iconbtn aa-livemap__iconbtn--toggle"
+            data-active={basemap === "sat"}
+            aria-pressed={basemap === "sat"}
+            data-tip={
+              basemap === "sat"
+                ? "Satellitenkarte: AN — klicken für Standard (dunkel/hell)"
+                : "Satellitenkarte: AUS — klicken für echtes Satellitenbild"
+            }
+            aria-label="Satellitenkarte umschalten"
+            onClick={() => setBasemap((b) => (b === "sat" ? "auto" : "sat"))}
+          >
+            {/* Globus = Satellit/echtes Bild */}
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M3 12h18M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18" />
+            </svg>
           </button>
         </div>
       </div>
