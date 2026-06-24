@@ -359,31 +359,32 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     } catch {
       /* persist best-effort */
     }
-    // setStyle wischt ALLE Quellen+Layer. Der ambiente styledata-Handler ist als
-    // Restore unzuverlässig (verfehlt beim Wechsel Vektor↔Raster den geladenen
-    // Moment) → Route/Track blieben leer bis zu einem Remount (Tab-Wechsel).
-    // `idle` wäre naheliegend, wird aber im FOLLOW-Modus durch das ständige
-    // easeTo (Kamera-Animation + Nachladen von Kacheln) ausgehungert → Route
-    // bliebe beim Umschalten MITTEN IM FLUG ~1-2 s leer (empirisch gemessen).
-    // Stattdessen pollen wir isStyleLoaded() — rein stil-abhängig, also
-    // kamera-/kachel-unabhängig: sobald der neue Stil geladen ist, die Overlays
-    // idempotent + datengefüllt (pushSources(dataRef.current)) neu anlegen
-    // (empirisch ~100 ms statt ~1500 ms unter Animation). Unmount-/Re-Run-sicher
-    // (cancelled + mapRef-Check) und beschränkt (~6 s).
+    // setStyle() wirft ALLE Quellen+Layer weg — die Overlays (Route/Track/WPTs)
+    // müssen danach neu angelegt werden. Tücke beim MEHRFACHEN Umschalten: ein
+    // EINMALIGER Re-Add (sobald isStyleLoaded()) kann mit dem Stil-Abbau RACEN —
+    // feuert er, während der alte Overlay-Layer noch existiert, überspringt
+    // addOverlays' „nur-wenn-fehlt"-Guard das Neu-Anlegen, danach wischt setStyle
+    // den Layer weg → Route weg (genau ab dem 2. Umschalten; beim 1. gibt's noch
+    // keinen Alt-Layer, der den Skip auslöst). Darum NICHT einmalig, sondern
+    // SELBSTKORRIGIEREND: ein paar Sekunden lang die Overlays IMMER WIEDER
+    // anlegen, sobald sie fehlen (kein Einzelschuss, der verlieren kann;
+    // konvergiert, sobald der Stil sich beruhigt). isStyleLoaded() statt `idle`
+    // (das im Follow-Modus durch easeTo ausgehungert wird) → kamera-/kachel-
+    // unabhängig. Unmount-/Re-Run-sicher (cancelled + mapRef-Check).
     const map = mapRef.current;
     if (!map) return;
     map.setStyle(basemap === "sat" ? BASEMAP_SAT : theme === "dark" ? BASEMAP_DARK : BASEMAP_LIGHT);
-    let tries = 0;
     let cancelled = false;
-    const restore = () => {
+    let elapsed = 0;
+    const ensureOverlays = () => {
       if (cancelled || mapRef.current !== map) return; // unmounted / Karte ersetzt
-      if (map.isStyleLoaded()) {
-        addOverlays(map);
-        return;
-      }
-      if (++tries <= 60) setTimeout(restore, 100);
+      // Sentinel LYR_ROUTE: fehlt der Route-Layer, legt addOverlays ALLE Overlays
+      // (Route/Casing/Track/WPTs/Labels) wieder an — sie werden gemeinsam erzeugt.
+      if (map.isStyleLoaded() && !map.getLayer(LYR_ROUTE)) addOverlays(map);
+      elapsed += 120;
+      if (elapsed < 4000) setTimeout(ensureOverlays, 120);
     };
-    restore();
+    ensureOverlays();
     return () => {
       cancelled = true;
     };

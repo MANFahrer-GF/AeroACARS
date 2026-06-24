@@ -24165,26 +24165,13 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     } else {
         String::new()
     };
-    // v0.7.1 Round-2 P2-Fix: zeige sowohl die Touchdown-Klasse (was
-    // den Aufprall-Charakter beschreibt) als auch den Aggregate-
-    // Master-Score (das was App/Web/phpVMS jetzt anzeigen). Damit
-    // ist klar dass "Touchdown: smooth" nicht das gleiche ist wie
-    // "Master 77/100" — Pilot sieht beide Begriffe ohne Verwechslung.
-    // v0.16.24 (QS-2 FIX A): use the EFFECTIVE arrival airport for the
-    // geometry-trust check, consistent with the PIREP score/payload/record.
-    // This is a LIVE touchdown announcement — the pilot hasn't confirmed a
-    // divert yet, so there's no `divert_to`. The authoritative "what airport
-    // did the wheels actually touch" is `runway_correlation_icao`, stamped at
-    // touchdown by the SAME `correlate_airport_icao` resolver that produced
-    // `runway_match.airport_ident` (touchdown coord, 6 nm, tiebreak,
-    // vanished-arr guard). On-plan it equals `arr_airport` byte-identically, so
-    // this is a no-op for non-diverts; on a divert it lets the rollout/LDA
-    // sub-score compute (matched == correlation ICAO) instead of skipping.
-    let effective_arr = stats
-        .runway_correlation_icao
-        .as_deref()
-        .unwrap_or(&flight.arr_airport);
-    let aggregate_master = compute_aggregate_master_score(&stats, Some(&flight.aircraft_icao), effective_arr);
+    // v0.16.27: Das Aktivitäts-/ACARS-Log zeigt beim Touchdown nur noch die
+    // MESSDATEN (V/S, G, Bounces) — KEINE Einstufung. Darum brauchen wir hier
+    // weder die Aufprall-Note (`letter_grade`) noch den Aggregate-Master-Score:
+    // der bewertete Score lebt ausschließlich im Landung-Tab + phpVMS-Feld
+    // „Landing Score". (Vorher zeigte der Log-Titel die Note NUR des Aufpralls
+    // [V/S+G], der Tab die Note des GANZEN Anflugs [Master] → zwei Metriken,
+    // als nackter Buchstabe wirkten sie widersprüchlich: „Touchdown B" vs „A".)
     // v0.8.0: Per-Touchdown Navdata-Source + DDS-Warnung sammeln,
     // bevor wir `stats` droppen.
     let nav_source_msg: Option<(ActivityLevel, String)> = stats
@@ -24230,22 +24217,17 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
             }
         });
     drop(stats);
-    let touchdown_grade = letter_grade(score.numeric());
-    let master_text = match aggregate_master {
-        Some(m) => format!("Master {}/100", m),
-        None => format!("Score {}/100", score.numeric()),
-    };
     log_activity_handle(
         app,
         level,
-        format!("Touchdown: {} ({})", touchdown_grade, score.label()),
-        Some(format!(
-            "V/S {:.0} fpm, G {:.2}{} — {}",
+        // nur Messdaten — keine Note/Einstufung (siehe Kommentar oben)
+        format!(
+            "Touchdown: V/S {:.0} fpm, G {:.2}{}",
             peak_vs, // signed: negative = descent, matches the PIREP
             sg.scored_g, // v0.12.3 (LE7): scored (EMA) G, not the raw peak
             bounce_part,
-            master_text,
-        )),
+        ),
+        None,
     );
     // v0.8.0: zusätzlich die Runway-Match-Source mitloggen damit der
     // Pilot weiß ob die Bewertung auf Jeppesen-Daten oder dem
@@ -24273,14 +24255,13 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     // Re-acquire to flag it as announced.
     let mut stats = flight.stats.lock().expect("flight stats");
     stats.landing_score_announced = true;
+    // acars/logs-Spiegelung (phpVMS-Serverlog): ebenfalls nur Messdaten, keine
+    // Einstufung — der bewertete Score steht im phpVMS-Feld „Landing Score".
     Some(format!(
-        "Touchdown {} ({}) — V/S {:.0} fpm, G {:.2}{}, {}",
-        touchdown_grade,
-        score.label(),
+        "Touchdown — V/S {:.0} fpm, G {:.2}{}",
         peak_vs,
         sg.scored_g, // v0.12.3 (LE7): scored (EMA) G, not the raw peak
         bounce_part,
-        master_text,
     ))
 }
 
