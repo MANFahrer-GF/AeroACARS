@@ -359,11 +359,34 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     } catch {
       /* persist best-effort */
     }
-    // setStyle wischt alle Layer — der styledata-Handler baut die Overlays
-    // (Track/Route/Waypoints) danach idempotent wieder auf, für jede Basemap.
-    mapRef.current?.setStyle(
-      basemap === "sat" ? BASEMAP_SAT : theme === "dark" ? BASEMAP_DARK : BASEMAP_LIGHT,
-    );
+    // setStyle wischt ALLE Quellen+Layer. Der ambiente styledata-Handler ist als
+    // Restore unzuverlässig (verfehlt beim Wechsel Vektor↔Raster den geladenen
+    // Moment) → Route/Track blieben leer bis zu einem Remount (Tab-Wechsel).
+    // `idle` wäre naheliegend, wird aber im FOLLOW-Modus durch das ständige
+    // easeTo (Kamera-Animation + Nachladen von Kacheln) ausgehungert → Route
+    // bliebe beim Umschalten MITTEN IM FLUG ~1-2 s leer (empirisch gemessen).
+    // Stattdessen pollen wir isStyleLoaded() — rein stil-abhängig, also
+    // kamera-/kachel-unabhängig: sobald der neue Stil geladen ist, die Overlays
+    // idempotent + datengefüllt (pushSources(dataRef.current)) neu anlegen
+    // (empirisch ~100 ms statt ~1500 ms unter Animation). Unmount-/Re-Run-sicher
+    // (cancelled + mapRef-Check) und beschränkt (~6 s).
+    const map = mapRef.current;
+    if (!map) return;
+    map.setStyle(basemap === "sat" ? BASEMAP_SAT : theme === "dark" ? BASEMAP_DARK : BASEMAP_LIGHT);
+    let tries = 0;
+    let cancelled = false;
+    const restore = () => {
+      if (cancelled || mapRef.current !== map) return; // unmounted / Karte ersetzt
+      if (map.isStyleLoaded()) {
+        addOverlays(map);
+        return;
+      }
+      if (++tries <= 60) setTimeout(restore, 100);
+    };
+    restore();
+    return () => {
+      cancelled = true;
+    };
   }, [theme, basemap]);
 
   // ---- Overlays anlegen (idempotent) + aus dataRef füllen ----
