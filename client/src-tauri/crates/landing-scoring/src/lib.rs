@@ -212,9 +212,10 @@ pub struct LandingScoringInput {
     // Wenn ALLE folgenden Felder Some sind UND alle Skip-Gates pass
     // (siehe sub_rollout::sub_rollout_v2), wird der NEUE Algorithmus
     // (LDA-basiert, td+rollout/lda) verwendet und im PIREP/Touchdown
-    // mit `score_algorithm_version = Some(3)` markiert (v0.12.0:
-    // Float-Toleranz-Refinement; vor v0.12.0 war es `Some(2)`). Wenn
-    // eines fehlt → Skip mit konkretem Reason (KEIN Fallback auf v1).
+    // mit `score_algorithm_version = Some(4)` markiert (v0.16.21;
+    // v0.12.0 war Float-Toleranz-Refinement mit `Some(3)`; vor
+    // v0.12.0 war es `Some(2)`). Wenn eines fehlt → Skip mit
+    // konkretem Reason (KEIN Fallback auf v1).
     //
     // Backward-Compat: Wenn aufrufender Code die Felder None lässt,
     // ruft `compute_sub_scores` weiterhin den alten `sub_rollout` als
@@ -273,8 +274,9 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
     // v0.10.0 (#runway-utilization-score): Wenn die v2-Datenlage da ist,
     // wird der neue LDA-basierte Sub-Score gerechnet (auch bei
     // Skip-Outcomes wie `missing_td_distance`). Der Caller markiert die
-    // Records dann mit `score_algorithm_version = Some(3)` (v0.12.0:
-    // Float-Toleranz-Refinement; vor v0.12.0 war es `Some(2)`).
+    // Records dann mit `score_algorithm_version = Some(4)` (v0.16.21;
+    // v0.12.0 war Float-Toleranz-Refinement mit `Some(3)`; vor
+    // v0.12.0 war es `Some(2)`).
     //
     // Wenn keines der v2-Felder gesetzt ist (= Caller ist nicht-migriert
     // oder Test-Fixture ohne Touchdown-Forensik), fallen wir auf den
