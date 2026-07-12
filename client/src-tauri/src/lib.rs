@@ -3463,6 +3463,11 @@ struct FlightStats {
     /// v0.19.3: the airport `arr_gate` was captured at. A stand name is only
     /// meaningful together with its field — see `arr_gate_for`.
     arr_gate_icao: Option<String>,
+    /// v0.19.3: (time, groundspeed) reference for the takeoff-roll acceleration
+    /// gate — see `takeoff_roll_detected`. Runtime-only: a resumed flight
+    /// re-baselines on its next tick, and a flight resumed mid-taxi has nothing
+    /// to gain from a stale sample anyway.
+    takeoff_roll_gs_ref: Option<(DateTime<Utc>, f64)>,
     /// `ATC RUNWAY SELECTED` snapshotted at touchdown. Useful for VAs
     /// that grade "did the pilot land on the right runway".
     approach_runway: Option<String>,
@@ -4585,6 +4590,100 @@ fn segment_contradicts_v1(v1: FlightPhase, segment: phase_v2::Segment) -> bool {
         }
         _ => false,
     }
+}
+
+/// Above this groundspeed, nobody is taxiing any more — no evidence needed.
+/// (Airliners taxi at 10–30 kt; the fastest sane taxi, an empty widebody on a
+/// long straight, tops out around 35–40 kt.)
+const TAKEOFF_ROLL_UNAMBIGUOUS_KT: f64 = 60.0;
+/// Below this, it isn't a takeoff roll no matter what the engines are doing —
+/// this is the floor a GA aircraft (rotating around 50 kt) must clear early
+/// enough that its TakeoffRoll phase is not skipped entirely.
+const TAKEOFF_ROLL_MIN_KT: f64 = 30.0;
+/// Sustained acceleration that says "this is a takeoff, not a taxi". A taxiing
+/// aircraft creeps up on its speed and holds it; a departing one is still
+/// gaining ~2–3 kt per second at this point. 1.2 kt/s over a 3-second window
+/// separates the two without demanding a rate a heavy, fully-loaded widebody
+/// cannot make.
+const TAKEOFF_ROLL_ACCEL_KT_PER_S: f64 = 1.2;
+const TAKEOFF_ROLL_ACCEL_WINDOW_SECS: i64 = 3;
+/// N1 that means "takeoff thrust is set". Only available for addons that expose
+/// per-engine N1 (the premium set); a taxiing jet sits near idle (20–30 %).
+const TAKEOFF_ROLL_N1_PCT: f64 = 60.0;
+
+/// Is the aircraft actually beginning its takeoff roll?
+///
+/// v0.19.3. This used to be `on_ground && groundspeed > 30 kt && engines
+/// running` — a speed threshold and nothing else. A heavy widebody taxis
+/// through 30 kt without trying, so the FSM announced a takeoff roll while the
+/// aircraft was still on the taxiway, fell back to TaxiOut, and rolled for real
+/// minutes later (field report: DLH367, ToLiss A346). Beyond the confusing log,
+/// the flip-flop re-fired the block-off transition and its fuel/weight
+/// diagnostic each time round.
+///
+/// So we ask for evidence of a TAKEOFF, in the order the evidence is
+/// trustworthy:
+///
+///   1. **Speed no taxi reaches** (≥ 60 kt) — done, no further questions.
+///   2. **Takeoff thrust**, where the addon tells us (N1 ≥ 60 %).
+///   3. **Sustained acceleration** — the addon-agnostic fallback, and the one
+///      that actually distinguishes the two: taxiing holds a speed, taking off
+///      is still gaining ~2–3 kt every second.
+///
+/// The 30 kt floor stays, because a Cessna rotates at ~50 kt and its TakeoffRoll
+/// phase must not be skipped.
+fn takeoff_roll_detected(
+    stats: &mut FlightStats,
+    snap: &SimSnapshot,
+    now: DateTime<Utc>,
+) -> bool {
+    if !snap.on_ground || !engines_effectively_running(stats, snap, now) {
+        stats.takeoff_roll_gs_ref = None;
+        return false;
+    }
+    let gs = snap.groundspeed_kt as f64;
+
+    // Track the speed a few seconds back, so we can ask how fast it is changing.
+    // Re-baselined whenever the aircraft slows down (a taxi hold, a runway line-
+    // up) so an old, low reference cannot later fake an acceleration.
+    let accelerating = match stats.takeoff_roll_gs_ref {
+        Some((t0, gs0)) if gs < gs0 => {
+            stats.takeoff_roll_gs_ref = Some((now, gs));
+            let _ = t0;
+            false
+        }
+        Some((t0, gs0)) => {
+            let dt = (now - t0).num_milliseconds() as f64 / 1000.0;
+            if dt >= TAKEOFF_ROLL_ACCEL_WINDOW_SECS as f64 {
+                let accel = (gs - gs0) / dt;
+                // Slide the window forward so the next tick measures fresh.
+                stats.takeoff_roll_gs_ref = Some((now, gs));
+                accel >= TAKEOFF_ROLL_ACCEL_KT_PER_S
+            } else {
+                false
+            }
+        }
+        None => {
+            stats.takeoff_roll_gs_ref = Some((now, gs));
+            false
+        }
+    };
+
+    if gs >= TAKEOFF_ROLL_UNAMBIGUOUS_KT {
+        return true;
+    }
+    if gs < TAKEOFF_ROLL_MIN_KT {
+        return false;
+    }
+
+    // Takeoff thrust, when the aircraft tells us.
+    let takeoff_thrust = snap
+        .eng_n1_pct
+        .as_ref()
+        .and_then(|n1| n1.iter().cloned().fold(None::<f64>, |m, v| Some(m.map_or(v, |m| m.max(v)))))
+        .is_some_and(|max_n1| max_n1 >= TAKEOFF_ROLL_N1_PCT);
+
+    takeoff_thrust || accelerating
 }
 
 /// Everything that "the aircraft has come to rest at its arrival stand" means
@@ -22644,15 +22743,16 @@ fn step_flight_at(
             }
         }
         FlightPhase::TaxiOut => {
-            // Threshold lowered from 40 → 30 kt so GA aircraft (Cessna,
-            // Diamond) which rotate around 50 kt enter TakeoffRoll well
-            // before liftoff. Plus the engine-running guard means a
-            // pilot dragging the parking brake at high taxi speed
-            // doesn't accidentally trigger TakeoffRoll without throttle.
-            if snap.on_ground
-                && snap.groundspeed_kt > 30.0
-                && engines_effectively_running(&stats, snap, now)
-            {
+            // v0.19.3: a takeoff roll is recognised by EVIDENCE OF A TAKEOFF,
+            // not by taxi speed alone — see `takeoff_roll_detected`.
+            //
+            // Field report (Thomas, DLH367 KCLT→EDDM, ToLiss A346, 2026-07-12):
+            // the FSM announced "TakeoffRoll" at 30 kt while the aircraft was
+            // still taxiing, fell back to TaxiOut two minutes later, and only
+            // then rolled for real. A heavy widebody simply taxis faster than 30
+            // kt. The flip-flop also re-fired the block-off transition, so
+            // "Fuel & Weight @ Block-off" landed in the pilot's log three times.
+            if takeoff_roll_detected(&mut stats, snap, now) {
                 next_phase = FlightPhase::TakeoffRoll;
             }
             // v0.5.10/11: helicopter / VTOL / glider / seaplane
@@ -24504,6 +24604,145 @@ mod arrived_fallback_dwell_tests {
 /// outside the 2 nm radius) while "which field am I on" was measured against
 /// the nearest RUNWAY THRESHOLD (0.30 nm — inside it). Both answers were
 /// "true" at once. See `crate::arrival`.
+/// v0.19.3 — the takeoff roll is recognised by evidence of a takeoff, not by
+/// taxi speed.
+///
+/// Field report (Thomas, DLH367 KCLT→EDDM, ToLiss A346, 2026-07-12): the client
+/// announced "Phase: TakeoffRoll" at 30 kt with the aircraft still taxiing,
+/// dropped back to TaxiOut two minutes later, then rolled for real. A heavy
+/// widebody taxis through 30 kt without trying. The flip-flop also re-fired the
+/// block-off transition, which is why "Fuel & Weight @ Block-off" appeared three
+/// times in his activity log.
+#[cfg(test)]
+mod takeoff_roll_tests {
+    use super::*;
+
+    fn taxiing(gs: f64) -> SimSnapshot {
+        SimSnapshot {
+            on_ground: true,
+            groundspeed_kt: gs as f32,
+            engines_running: 4,
+            ..SimSnapshot::default()
+        }
+    }
+
+    /// THE regression: a widebody rolling along the taxiway at 30-something knots
+    /// at a constant speed is taxiing, not departing.
+    #[test]
+    fn a_heavy_taxiing_at_35_kt_is_not_a_takeoff_roll() {
+        let mut stats = FlightStats::new();
+        let t0 = Utc::now();
+        let snap = taxiing(35.0);
+
+        // Several ticks at a steady 35 kt — the speed a heavy actually taxis at.
+        let mut fired = false;
+        for i in 0..10 {
+            let now = t0 + chrono::Duration::seconds(i * 2);
+            fired |= takeoff_roll_detected(&mut stats, &snap, now);
+        }
+        assert!(
+            !fired,
+            "a constant 35 kt taxi must never be announced as a takeoff roll"
+        );
+    }
+
+    /// And the thing it must still catch: an actual takeoff roll, where the
+    /// aircraft is gaining speed every second.
+    #[test]
+    fn a_real_takeoff_roll_is_detected() {
+        let mut stats = FlightStats::new();
+        let t0 = Utc::now();
+
+        let mut fired = false;
+        // 30 → 48 kt over 6 s: 3 kt/s, a normal airliner acceleration.
+        for i in 0..7 {
+            let now = t0 + chrono::Duration::seconds(i);
+            let snap = taxiing(30.0 + 3.0 * i as f64);
+            fired |= takeoff_roll_detected(&mut stats, &snap, now);
+        }
+        assert!(fired, "an accelerating takeoff roll must be detected");
+    }
+
+    /// A Cessna rotates around 50 kt, so its roll must be recognised well before
+    /// that — the 30 kt floor exists for exactly this reason.
+    #[test]
+    fn a_light_aircraft_accelerating_from_30_kt_is_detected() {
+        let mut stats = FlightStats::new();
+        let t0 = Utc::now();
+        let mut fired = false;
+        for i in 0..6 {
+            let now = t0 + chrono::Duration::seconds(i);
+            let mut snap = taxiing(30.0 + 2.0 * i as f64);
+            snap.engines_running = 1;
+            fired |= takeoff_roll_detected(&mut stats, &snap, now);
+        }
+        assert!(fired, "a GA takeoff roll must be caught before rotation");
+    }
+
+    /// No taxi reaches 60 kt. No evidence required.
+    #[test]
+    fn speed_no_taxi_reaches_needs_no_further_evidence() {
+        let mut stats = FlightStats::new();
+        assert!(takeoff_roll_detected(
+            &mut stats,
+            &taxiing(TAKEOFF_ROLL_UNAMBIGUOUS_KT + 1.0),
+            Utc::now()
+        ));
+    }
+
+    /// Takeoff thrust is proof on its own, for the addons that report N1 —
+    /// it fires on the first tick, without waiting for the acceleration window.
+    #[test]
+    fn takeoff_thrust_is_evidence_by_itself() {
+        let mut stats = FlightStats::new();
+        let snap = SimSnapshot {
+            eng_n1_pct: Some(vec![92.0, 91.5, 92.4, 91.8]),
+            ..taxiing(32.0)
+        };
+        assert!(takeoff_roll_detected(&mut stats, &snap, Utc::now()));
+    }
+
+    /// Idle thrust at taxi speed is not.
+    #[test]
+    fn idle_thrust_at_taxi_speed_is_not() {
+        let mut stats = FlightStats::new();
+        let snap = SimSnapshot {
+            eng_n1_pct: Some(vec![24.0, 23.5, 24.2, 23.8]),
+            ..taxiing(32.0)
+        };
+        let t0 = Utc::now();
+        let mut fired = false;
+        for i in 0..8 {
+            fired |= takeoff_roll_detected(
+                &mut stats,
+                &snap,
+                t0 + chrono::Duration::seconds(i * 2),
+            );
+        }
+        assert!(!fired, "idling at taxi speed is taxiing");
+    }
+
+    /// Slowing down (taxi hold, line-up) must re-baseline, so that a later,
+    /// slow drift back up cannot be mistaken for acceleration.
+    #[test]
+    fn slowing_down_rebaselines_the_acceleration_window() {
+        let mut stats = FlightStats::new();
+        let t0 = Utc::now();
+        // Rolling at 34 kt…
+        takeoff_roll_detected(&mut stats, &taxiing(34.0), t0);
+        // …slows to 5 kt for the hold…
+        takeoff_roll_detected(&mut stats, &taxiing(5.0), t0 + chrono::Duration::seconds(4));
+        // …then creeps back to 33 kt over half a minute. That is 1 kt/s only if
+        // measured against the stale 5 kt sample — it must not be.
+        let mut fired = false;
+        for i in 1..=6 {
+            let now = t0 + chrono::Duration::seconds(4 + i * 5);
+            fired |= takeoff_roll_detected(&mut stats, &taxiing(5.0 + 4.7 * i as f64), now);
+        }
+        assert!(!fired, "a slow creep back up to taxi speed is not a takeoff roll");
+    }
+}
+
 #[cfg(test)]
 mod arrived_fallback_geometry_tests {
     use super::*;
