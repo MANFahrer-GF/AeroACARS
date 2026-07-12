@@ -18968,6 +18968,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // arrival-reference-position retries out over the flight instead of
         // burning them all in the first seconds.
         let mut tick_count: u32 = 0;
+        // One warning per "sim is loading" episode, not one per tick.
+        let mut null_island_logged = false;
         // Heartbeat tracker: ensures `POST /pireps/{id}/update` fires at
         // least every `HEARTBEAT_INTERVAL` so phpVMS's RemoveExpiredLiveFlights
         // cron never reaches the inactivity threshold. Initialised one
@@ -19094,6 +19096,43 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             let previous_snap_for_recovery: Option<SimSnapshot> = last_good_snap.clone();
 
             let snapshot = current_snapshot(&app);
+
+            // v0.19.3: while a sim SESSION is loading — including a restart in
+            // the middle of a flight — MSFS reports the aircraft at (0, 0), Null
+            // Island, with a default airframe mass. Those snapshots are not
+            // telemetry, they are a placeholder, and nothing may be derived from
+            // them.
+            //
+            // Field evidence (Thomas, DLH367, 2026-07-12): he restarted the sim
+            // mid-session, and the client — still running — read the loading
+            // sim's placeholder and stamped a TAKEOFF at lat 0.008 / lon 0.00002
+            // with a takeoff weight of 349 t. The real departure, an hour later,
+            // was 300 t out of KCLT. The bogus takeoff went to the recorder and
+            // into the flight record, and (0, 0) positions would have drawn his
+            // track to the Gulf of Guinea on the live map.
+            //
+            // Dropped before ANYTHING sees them: FSM, stats, phpVMS, MQTT. The
+            // existing stale-snapshot machinery then treats the gap exactly like
+            // any other sim dropout, which is what a restarting sim is.
+            let snapshot = match snapshot {
+                Some(s) if !snapshot_position_is_usable(&s) => {
+                    if !null_island_logged {
+                        null_island_logged = true;
+                        tracing::warn!(
+                            lat = s.lat,
+                            lon = s.lon,
+                            "sim has not placed the aircraft (loading / restarting) — \
+                             ignoring its telemetry until it does"
+                        );
+                    }
+                    None
+                }
+                other => {
+                    null_island_logged = false;
+                    other
+                }
+            };
+
             if let Some(ref s) = snapshot {
                 last_good_snap = Some(s.clone());
                 last_good_snap_at = Some(std::time::Instant::now());
@@ -22216,6 +22255,27 @@ fn step_flight(flight: &ActiveFlight, snap: &SimSnapshot) -> Option<FlightPhase>
 /// machen damit die v1-FSM erstmals offline-replayfähig (das JSONL-
 /// Recorder-Format verspricht das seit jeher — "feed it back into the FSM
 /// offline", crates/recorder).
+/// Is this snapshot's position real, or is the sim still making it up?
+///
+/// MSFS reports (0, 0) — "Null Island", in the Gulf of Guinea — while a session
+/// is still loading, before the aircraft has been placed. Weights and speeds in
+/// those snapshots are equally meaningless (a default airframe mass, not the
+/// loaded one).
+///
+/// v0.19.3, field evidence: DLH367's first session stamped a TAKEOFF at
+/// lat 0.0084 / lon 0.00002 with a takeoff weight of 349 t — the aircraft's real
+/// takeoff, an hour later, was 300 t from Charlotte. A takeoff at Null Island
+/// went into the flight record, and nothing rejected it.
+///
+/// The 0.02° box (~2 km) is safe to refuse outright: there is no land, let alone
+/// an airport, within it.
+fn snapshot_position_is_usable(snap: &SimSnapshot) -> bool {
+    if !snap.lat.is_finite() || !snap.lon.is_finite() {
+        return false;
+    }
+    !(snap.lat.abs() < 0.02 && snap.lon.abs() < 0.02)
+}
+
 fn step_flight_at(
     flight: &ActiveFlight,
     snap: &SimSnapshot,
@@ -24614,6 +24674,60 @@ mod arrived_fallback_dwell_tests {
 /// block-off transition, which is why "Fuel & Weight @ Block-off" appeared three
 /// times in his activity log.
 #[cfg(test)]
+mod null_island_tests {
+    use super::*;
+
+    /// DLH367's first session (2026-07-12, ToLiss A346) stamped a TAKEOFF at
+    /// lat 0.0084 / lon 0.00002 with a 349 t takeoff weight — the sim had not
+    /// placed the aircraft yet, so it was sitting at Null Island with a default
+    /// airframe mass. The real takeoff, an hour later, was 300 t out of KCLT.
+    /// Nothing rejected the first one; it went into the flight record.
+    #[test]
+    fn a_snapshot_the_sim_has_not_placed_yet_is_refused() {
+        for (lat, lon) in [
+            (0.008367269690816801, 1.938915588084455e-05), // the actual field report
+            (0.0, 0.0),
+            (0.01, -0.01),
+            (f64::NAN, 8.5),
+            (50.0, f64::INFINITY),
+        ] {
+            let snap = SimSnapshot {
+                lat,
+                lon,
+                ..SimSnapshot::default()
+            };
+            assert!(
+                !snapshot_position_is_usable(&snap),
+                "({lat}, {lon}) is not a place an aircraft can be — the FSM must not \
+                 latch anything from it"
+            );
+        }
+    }
+
+    /// And a real position is of course fine — including one legitimately near
+    /// the equator or the prime meridian, just not both at once.
+    #[test]
+    fn real_positions_are_accepted() {
+        for (lat, lon) in [
+            (50.0333, 8.5706),  // EDDF
+            (0.0, 32.4),        // on the equator (Entebbe-ish)
+            (51.5, 0.0),        // on the prime meridian (London)
+            (-33.9, 151.2),     // Sydney
+        ] {
+            let snap = SimSnapshot {
+                lat,
+                lon,
+                ..SimSnapshot::default()
+            };
+            assert!(
+                snapshot_position_is_usable(&snap),
+                "({lat}, {lon}) is a real place and must be accepted"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod takeoff_roll_tests {
     use super::*;
 
@@ -24622,6 +24736,11 @@ mod takeoff_roll_tests {
             on_ground: true,
             groundspeed_kt: gs as f32,
             engines_running: 4,
+            // A real position — the FSM refuses snapshots the sim hasn't placed
+            // (see `snapshot_position_is_usable`), and these tests are about the
+            // takeoff roll, not about that gate.
+            lat: 35.2226,
+            lon: -80.9431, // KCLT
             ..SimSnapshot::default()
         }
     }
