@@ -24849,6 +24849,78 @@ mod takeoff_roll_tests {
         assert!(!fired, "idling at taxi speed is taxiing");
     }
 
+    /// The one way this change could ruin a whole flight: if the roll detector
+    /// stays silent AND the FSM then has no way out of TaxiOut, a pilot would
+    /// fly an entire leg stuck on the ground.
+    ///
+    /// It cannot: the TaxiOut arm promotes straight to Takeoff on the liftoff
+    /// edge (was on ground → airborne, AGL > 5 ft, VS > 100 fpm), which exists
+    /// because helicopters and gliders skip TakeoffRoll anyway. Worst case, an
+    /// aeroplane skips the TakeoffRoll phase too — it never gets stranded.
+    #[test]
+    fn a_flight_never_hangs_in_taxiout_even_if_the_roll_is_never_detected() {
+        let flight = flight_in_taxi_out();
+        // Airborne, climbing — but the roll detector never saw an acceleration
+        // (e.g. a tick gap swallowed the entire roll).
+        let snap = SimSnapshot {
+            on_ground: false,
+            altitude_agl_ft: 40.0,
+            vertical_speed_fpm: 900.0,
+            groundspeed_kt: 150.0,
+            engines_running: 2,
+            lat: 35.2226,
+            lon: -80.9431,
+            ..SimSnapshot::default()
+        };
+        {
+            let mut stats = flight.stats.lock().unwrap();
+            stats.was_on_ground = Some(true);
+        }
+        let result = step_flight(&flight, &snap);
+        assert_eq!(
+            result,
+            Some(FlightPhase::Takeoff),
+            "an aircraft that is airborne and climbing must reach Takeoff even if \
+             TakeoffRoll was never entered"
+        );
+    }
+
+    fn flight_in_taxi_out() -> ActiveFlight {
+        let flight = ActiveFlight {
+            pirep_id: "test-pirep".into(),
+            bid_id: 0,
+            flight_id: String::new(),
+            bid_callsign: None,
+            pilot_callsign: None,
+            started_at: Utc::now(),
+            airline_icao: String::new(),
+            planned_registration: String::new(),
+            aircraft_icao: "B738".into(),
+            aircraft_name: String::new(),
+            flight_number: "1".into(),
+            dpt_airport: "KCLT".into(),
+            arr_airport: "EDDM".into(),
+            airline_logo_url: None,
+            fares: Vec::new(),
+            stats: Mutex::new(FlightStats::new()),
+            stop: AtomicBool::new(false),
+            was_just_resumed: AtomicBool::new(false),
+            streamer_spawned: AtomicBool::new(false),
+            cancelled_remotely: AtomicBool::new(false),
+            position_outbox: Mutex::new(std::collections::VecDeque::new()),
+            phpvms_worker_spawned: AtomicBool::new(false),
+            touchdown_sampler_spawned: AtomicBool::new(false),
+            connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
+            navdata: Mutex::new(NavdataCache::default()),
+        };
+        {
+            let mut stats = flight.stats.lock().unwrap();
+            stats.phase = FlightPhase::TaxiOut;
+            stats.block_off_at = Some(Utc::now() - chrono::Duration::minutes(10));
+        }
+        flight
+    }
+
     /// Slowing down (taxi hold, line-up) must re-baseline, so that a later,
     /// slow drift back up cannot be mistaken for acceleration.
     #[test]
