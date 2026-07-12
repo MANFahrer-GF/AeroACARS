@@ -297,26 +297,40 @@ const THRESHOLD_OUTLIER_NM: f64 = 5.0;
 /// cited: a *wholly* misplaced runway is internally consistent, so the row
 /// looked fine.
 ///
-/// So: judge each threshold against its own airport. Take the airport's median
-/// threshold position (robust — a single bad point cannot move it), flag the
-/// outliers, and then:
+/// So: judge each threshold against the REST of its airport — but only where
+/// there *is* a rest to judge against.
 ///
-///   * one bad end, and we know the runway's heading and length → **reconstruct**
-///     it by projecting from the good end. KCLE 24L keeps working, and 06R comes
-///     back at its real position.
-///   * anything else → drop the row. Its geometry is not knowable.
+///   * **Airport with ≥ 2 runways** (≥ 4 thresholds): the median position of the
+///     others is a real, robust reference. One bad end → reconstruct it by
+///     projecting from the good end along the runway's heading and length. KCLE
+///     24L keeps working, and 06R comes back where it belongs. Both ends bad →
+///     the runway is a fabrication → drop it.
+///   * **Airport with a single runway** (74.7 % of the table — 8,402 of 11,247):
+///     there is NO independent reference. The first cut of this pass took the
+///     "median" of the two thresholds, which per axis is simply *the larger
+///     coordinate* — a coin flip about which end is the truth. It lost that flip
+///     at WAJI (Mararena Sarmi): the good threshold was declared the outlier and
+///     projected next to the corrupt one, putting the whole airport 5.2 nm from
+///     where it is, breaking a field that had worked fine before. So here we do
+///     not guess: if the row is internally implausible (its two ends are much
+///     farther apart than the runway is long), we **drop it** and let the phpVMS
+///     reference-point fallback (`arrival::locate`) place the airport. Losing a
+///     runway match is a real cost; inventing an airport 5 nm from its true
+///     position is a worse one.
 fn repair_corrupt_thresholds(rows: &mut Vec<RunwayRow>) {
     use std::collections::HashMap;
 
-    // Median threshold position per airport, from ALL thresholds. The median is
-    // what makes this safe: it takes more bad points than good ones to move it.
+    // Thresholds per airport, so we know whether an independent reference exists
+    // at all.
     let mut points: HashMap<&str, (Vec<f64>, Vec<f64>)> = HashMap::new();
+    let mut row_count: HashMap<&str, usize> = HashMap::new();
     for r in rows.iter() {
         let e = points.entry(r.airport_ident.as_str()).or_default();
         e.0.push(r.le_lat);
         e.0.push(r.he_lat);
         e.1.push(r.le_lon);
         e.1.push(r.he_lon);
+        *row_count.entry(r.airport_ident.as_str()).or_default() += 1;
     }
     let median = |v: &mut Vec<f64>| -> f64 {
         v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -328,12 +342,44 @@ fn repair_corrupt_thresholds(rows: &mut Vec<RunwayRow>) {
             (icao.to_string(), (median(&mut lats), median(&mut lons)))
         })
         .collect();
+    let single_runway: std::collections::HashSet<String> = row_count
+        .into_iter()
+        .filter(|(_, n)| *n < 2)
+        .map(|(icao, _)| icao.to_string())
+        .collect();
 
     let max_m = THRESHOLD_OUTLIER_NM * 1852.0;
     let mut repaired = 0_u32;
     let mut dropped = 0_u32;
 
     rows.retain_mut(|r| {
+        // ---- Single-runway airports: no reference, so no guessing. ----
+        if single_runway.contains(&r.airport_ident) {
+            let end_to_end_m = haversine_m(r.le_lat, r.le_lon, r.he_lat, r.he_lon);
+            let length_m = r.length_ft as f64 * 0.3048;
+            // A runway's two ends are, by definition, one runway-length apart.
+            // Allow 3× the stated length (or 8 km when the length is missing)
+            // before calling the row internally impossible.
+            let plausible_m = if length_m > 0.0 {
+                (length_m * 3.0).max(2_000.0)
+            } else {
+                8_000.0
+            };
+            if end_to_end_m > plausible_m {
+                dropped += 1;
+                tracing::debug!(
+                    ident = %r.airport_ident,
+                    end_to_end_m,
+                    length_m,
+                    "single-runway row dropped: ends implausibly far apart, and no \
+                     other runway to tell us which end is the bad one"
+                );
+                return false;
+            }
+            return true;
+        }
+
+        // ---- Multi-runway airports: the other runways are the reference. ----
         let Some(&(clat, clon)) = centres.get(&r.airport_ident) else {
             return true;
         };
@@ -357,21 +403,40 @@ fn repair_corrupt_thresholds(rows: &mut Vec<RunwayRow>) {
                     dropped += 1;
                     return false;
                 }
-                if le_bad {
-                    // he is good; le lies `length` along he's heading.
-                    let Some(hdg) = usable_heading(r.he_heading_true, &r.he_ident) else {
+                // The heading must come from the runway's NAME, not from the
+                // stored bearing: an absent CSV heading was already replaced at
+                // parse time by the bearing between the two thresholds — one of
+                // which is the corrupt one we are trying to repair. Projecting
+                // along that bearing would just reproduce the corruption.
+                let (good_lat, good_lon, hdg) = if le_bad {
+                    let Some(h) = heading_from_ident(&r.he_ident) else {
                         dropped += 1;
                         return false;
                     };
-                    let (lat, lon) = project(r.he_lat, r.he_lon, hdg, length_m);
+                    (r.he_lat, r.he_lon, h)
+                } else {
+                    let Some(h) = heading_from_ident(&r.le_ident) else {
+                        dropped += 1;
+                        return false;
+                    };
+                    (r.le_lat, r.le_lon, h)
+                };
+                let (lat, lon) = project(good_lat, good_lon, hdg, length_m);
+                // Sanity: the reconstruction must land ON the airport. If it
+                // doesn't, our inputs were worse than we thought — drop the row
+                // rather than publish an invented threshold.
+                if haversine_m(lat, lon, clat, clon) > max_m {
+                    dropped += 1;
+                    tracing::debug!(
+                        ident = %r.airport_ident,
+                        "runway row dropped: reconstruction landed off the airport"
+                    );
+                    return false;
+                }
+                if le_bad {
                     r.le_lat = lat;
                     r.le_lon = lon;
                 } else {
-                    let Some(hdg) = usable_heading(r.le_heading_true, &r.le_ident) else {
-                        dropped += 1;
-                        return false;
-                    };
-                    let (lat, lon) = project(r.le_lat, r.le_lon, hdg, length_m);
                     r.he_lat = lat;
                     r.he_lon = lon;
                 }
@@ -388,14 +453,21 @@ fn repair_corrupt_thresholds(rows: &mut Vec<RunwayRow>) {
     tracing::debug!(repaired, dropped, "runway threshold repair pass");
 }
 
-/// A usable true heading for reconstruction: the CSV value when it looks sane,
-/// otherwise derived from the runway's own name ("24L" → 240°), which is what
-/// the number in a runway designator means.
-fn usable_heading(csv_heading: f32, ident: &str) -> Option<f64> {
-    if csv_heading.is_finite() && csv_heading > 0.0 && csv_heading <= 360.0 {
-        return Some(csv_heading as f64);
-    }
-    let digits: String = ident.chars().take_while(|c| c.is_ascii_digit()).collect();
+/// The runway's heading, taken from its NAME ("24L" → 240°) — the one piece of
+/// information a corrupt coordinate cannot have contaminated.
+///
+/// Deliberately NOT the stored `*_heading_true`: when the CSV omits a heading,
+/// the parser fills it with the bearing computed *between the two thresholds*
+/// (see the parse loop) — and on a row we are repairing, one of those two is the
+/// corrupt one. Projecting along that bearing would faithfully reproduce the
+/// corruption. Names like "H1", "ALL" or "N/A" yield `None`, and the row is then
+/// dropped rather than guessed at.
+fn heading_from_ident(ident: &str) -> Option<f64> {
+    let digits: String = ident
+        .trim()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     let n: f64 = digits.parse().ok()?;
     if (1.0..=36.0).contains(&n) {
         Some(n * 10.0)
@@ -1099,6 +1171,48 @@ mod geo_search_tests {
             phantom_nm > 2.0,
             "the phantom threshold still makes a point {phantom_nm:.2} nm off the field read as on-field"
         );
+    }
+
+    /// The one that got away in QA round 3, and the reason this test exists.
+    ///
+    /// 74.7 % of airports have a SINGLE runway — two thresholds, no independent
+    /// reference. An earlier cut of the repair pass took their "median", which
+    /// per axis is just the larger of the two coordinates: a coin flip about
+    /// which end is the truth. At WAJI (Mararena Sarmi) it lost that flip,
+    /// declared the GOOD threshold an outlier and projected it next to the
+    /// corrupt one — moving a working airport 5.2 nm from where it is. Every
+    /// pilot flying there would then have been told he had diverted, at his own
+    /// destination, and auto-start would have refused to fire from its apron.
+    ///
+    /// Where we cannot tell which end is wrong, we must not guess.
+    #[test]
+    fn a_single_runway_airport_is_never_guessed_at() {
+        // WAJI's real reference point: -1.873077 / 138.749002.
+        const WAJI: (f64, f64) = (-1.873077, 138.749002);
+
+        for r in rows_for_airport("WAJI") {
+            for (lat, lon) in [(r.le_lat, r.le_lon), (r.he_lat, r.he_lon)] {
+                let off_nm = haversine_m(lat, lon, WAJI.0, WAJI.1) / 1852.0;
+                assert!(
+                    off_nm < 2.0,
+                    "WAJI threshold sits {off_nm:.2} nm from the airport — the repair \
+                     pass invented a position instead of dropping the row"
+                );
+            }
+        }
+
+        // Whatever we kept must not place the airport somewhere it isn't: an
+        // aircraft parked ON WAJI has to read as being on WAJI (or the geometry
+        // has to be absent, so the phpVMS reference point takes over).
+        match distance_to_airport_m("WAJI", WAJI.0, WAJI.1) {
+            Some(m) => assert!(
+                m / 1852.0 <= 2.0,
+                "an aircraft parked at WAJI reads {:.2} nm away — false divert at its own \
+                 destination",
+                m / 1852.0
+            ),
+            None => { /* geometry dropped — the reference-point fallback places it */ }
+        }
     }
 
     /// A runway row that is internally consistent but sits in another country

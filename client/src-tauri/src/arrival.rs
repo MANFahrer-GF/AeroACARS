@@ -30,11 +30,15 @@
 //!
 //! # The contract
 //!
-//! One function ([`locate`]) answers the question, with one metric (distance
-//! to the nearest runway threshold, [`runway::distance_to_airport_m`]) and one
-//! radius ([`ON_FIELD_RADIUS_NM`]). It returns a [`ArrivalSite`] whose variants
-//! are mutually exclusive by construction, so "at the planned airport" and "at
-//! some other airport" can no longer both be true.
+//! One function ([`locate`]) answers the question. It measures with the runway
+//! thresholds ([`runway::distance_to_airport_m`], radius [`ON_FIELD_RADIUS_NM`])
+//! and, for the thousands of fields that have no threshold data — and as a
+//! safety net under the fields whose data is simply wrong — with the airport's
+//! reference point from phpVMS ([`ON_FIELD_FALLBACK_RADIUS_NM`]). Either source
+//! recognising the destination is enough to acquit; accusing a pilot of a divert
+//! requires both to fail. It returns an [`ArrivalSite`] whose variants are
+//! mutually exclusive by construction, so "at the planned airport" and "at some
+//! other airport" can no longer both be true.
 //!
 //! A [`DivertHint`] can only be built from an `ArrivalSite` ([`DivertHint::from_site`]),
 //! and the struct carries a private field so no other module can construct one
@@ -158,29 +162,56 @@ pub fn locate(
         return ArrivalSite::AtPlanned { distance_nm: None };
     }
 
-    // Distance to the planned field, and the radius that goes with the geometry
-    // it came from: thresholds are precise, a reference point is not.
-    let planned_probe = runway::distance_to_airport_m(planned, lat, lon)
-        .map(|m| (m / 1852.0, ON_FIELD_RADIUS_NM))
-        .or_else(|| {
-            let (rlat, rlon) = planned_ref_pos?;
-            // phpVMS ships (0,0) for airports whose coordinates were never
-            // filled in. That is "unknown", not the Gulf of Guinea.
-            if (rlat == 0.0 && rlon == 0.0) || !rlat.is_finite() || !rlon.is_finite() {
-                return None;
-            }
-            Some((
-                runway::distance_m(lat, lon, rlat, rlon) / 1852.0,
-                ON_FIELD_FALLBACK_RADIUS_NM,
-            ))
-        });
+    // TWO independent probes for "am I at my destination", and it is enough for
+    // ONE of them to say yes.
+    //
+    //   * runway thresholds — precise (2 nm), but only as good as the runway
+    //     data, and that data has bad rows in it;
+    //   * the airport's reference point from phpVMS — coarser (3 nm), but an
+    //     entirely separate source.
+    //
+    // The asymmetry is deliberate. The two mistakes are not equally bad: falsely
+    // telling a pilot he diverted blocks his auto-filing, accuses him in the
+    // PIREP record, and announces a divert that never happened. Failing to notice
+    // a real divert merely leaves him where he was before this feature existed —
+    // he files as planned. So we require agreement to accuse, and a single voice
+    // to acquit.
+    //
+    // This is also the standing safety net under the runway data itself: an
+    // airport whose thresholds are wrong in the table (rounded coordinates, a
+    // truncated digit — HADD sits 4 nm from where OurAirports thinks it is)
+    // would otherwise generate a false divert for every single pilot who flies
+    // there. The repair pass in `runway.rs` catches what it can prove; this
+    // catches the rest.
+    let by_runway_nm =
+        runway::distance_to_airport_m(planned, lat, lon).map(|m| m / 1852.0);
+    let by_ref_nm = planned_ref_pos.and_then(|(rlat, rlon)| {
+        // phpVMS ships (0,0) for airports whose coordinates were never filled
+        // in. That is "unknown", not the Gulf of Guinea.
+        if (rlat == 0.0 && rlon == 0.0) || !rlat.is_finite() || !rlon.is_finite() {
+            return None;
+        }
+        Some(runway::distance_m(lat, lon, rlat, rlon) / 1852.0)
+    });
 
-    let Some((dist_planned_nm, on_field_radius_nm)) = planned_probe else {
+    if by_runway_nm.is_none() && by_ref_nm.is_none() {
         // No geometry from ANY source — genuinely unmeasurable, so not a divert.
         return ArrivalSite::AtPlanned { distance_nm: None };
+    }
+
+    let at_planned = by_runway_nm.is_some_and(|d| d <= ON_FIELD_RADIUS_NM)
+        || by_ref_nm.is_some_and(|d| d <= ON_FIELD_FALLBACK_RADIUS_NM);
+
+    // Report the smaller of the two — the honest "how far from the destination
+    // am I", not whichever source happened to be consulted first.
+    let dist_planned_nm = match (by_runway_nm, by_ref_nm) {
+        (Some(a), Some(b)) => a.min(b),
+        (Some(a), None) => a,
+        (None, Some(b)) => b,
+        (None, None) => unreachable!("handled above"),
     };
 
-    if dist_planned_nm <= on_field_radius_nm {
+    if at_planned {
         return ArrivalSite::AtPlanned {
             distance_nm: Some(dist_planned_nm),
         };
@@ -656,6 +687,47 @@ mod tests {
         let there = locate("EDLD", eddl_ref.0 + 0.005, eddl_ref.1, Some(eddl_ref));
         assert!(there.is_at_planned(), "on the field is AtPlanned, got {there:?}");
         assert!(DivertHint::from_site(&there, "EDLD", None).is_none());
+    }
+
+    /// The safety net under the runway data itself.
+    ///
+    /// Some airports are simply in the wrong place in OurAirports — HADD's
+    /// thresholds are rounded to one decimal and sit 4 nm from the real field.
+    /// The repair pass can only fix what it can *prove*; without a second
+    /// opinion, every pilot flying to such a field would be told he had diverted
+    /// at his own destination, and his PIREP would be withheld.
+    ///
+    /// So: two independent probes, and ONE of them saying "you're there" is
+    /// enough. Accusing needs agreement; acquitting does not. The two errors are
+    /// not symmetrical — a false divert blocks the pilot's filing and stamps a
+    /// false claim into his record, while a missed divert just leaves him where
+    /// he was before the feature existed.
+    #[test]
+    fn a_wrong_runway_position_cannot_accuse_a_pilot_who_is_at_his_destination() {
+        // Simulate the HADD class: the aircraft is parked at the airport's true
+        // reference point, but the runway table has that airport 4 nm away.
+        // (EDDF's thresholds are correct, so we fake the disagreement by placing
+        // the aircraft at a reference point 4 nm from them.)
+        let far_from_runways = (50.1000, 8.5706); // ~4 nm north of EDDF's field
+        let ref_pos = far_from_runways; // phpVMS says: this IS the airport
+
+        // Runway geometry alone would call this a divert…
+        let by_runway_nm = runway::distance_to_airport_m("EDDF", far_from_runways.0, far_from_runways.1)
+            .expect("EDDF has geometry")
+            / 1852.0;
+        assert!(
+            by_runway_nm > ON_FIELD_RADIUS_NM,
+            "test precondition: the runway probe must disagree ({by_runway_nm:.2} nm)"
+        );
+
+        // …but the reference point says the aircraft is at the airport, and that
+        // is enough.
+        let site = locate("EDDF", far_from_runways.0, far_from_runways.1, Some(ref_pos));
+        assert!(
+            site.is_at_planned(),
+            "one source saying 'you are at your destination' must be enough, got {site:?}"
+        );
+        assert!(DivertHint::from_site(&site, "EDDF", None).is_none());
     }
 
     /// A sim that hands us NaN coordinates (scenery load, teleport, paused sim)
