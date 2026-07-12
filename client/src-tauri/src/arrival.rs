@@ -56,6 +56,17 @@ use crate::runway;
 /// spare, while staying far below the distance to any *neighbouring* field.
 pub const ON_FIELD_RADIUS_NM: f64 = 2.0;
 
+/// The on-field radius when we are measuring against an airport's *reference
+/// point* (phpVMS) instead of its runway thresholds — the fallback for fields
+/// the runway table has no geometry for.
+///
+/// A reference point sits somewhere in the middle of the field, so the same
+/// stand measures farther from it than from the nearest threshold; 3 nm keeps
+/// the biggest aprons inside. Verified against the live flight corpus: of 617
+/// real arrivals, 613 parked within 3 nm of their destination's reference
+/// point, and the four beyond it were genuine diverts.
+pub const ON_FIELD_FALLBACK_RADIUS_NM: f64 = 3.0;
+
 /// How far out we look for the field an aircraft actually ended up on, when
 /// it is demonstrably not on the planned one. Real-world diverts land 20-100
 /// nm out; 50 nm covers the sane cases without dragging in half a continent.
@@ -112,19 +123,64 @@ impl ArrivalSite {
 
 /// Determine where the aircraft is relative to its planned destination.
 ///
+/// `planned_ref_pos`: the planned airport's reference coordinates as phpVMS
+/// knows them, when the caller has them. This is the fallback for the fields
+/// our runway table has no geometry for — and that is not a rare corner:
+///
+///   * the CSV parser drops every runway whose thresholds lack coordinates, so
+///     **6,446 real ICAO airports** have no geometry at all (183 German ED**
+///     fields, 176 French LF**, 85 UK EG**, …), and
+///   * of **7,125 helipads in the table, exactly 2 survive the parse** — so for
+///     practical purposes AeroACARS has no geometry for *any* heliport.
+///
+/// Without the fallback, all of those resolve to `AtPlanned` no matter where the
+/// aircraft actually is: a helicopter that sets down 80 nm short of its planned
+/// pad, or the real corpus case GSG 22 (planned EDLD — which has a runway row
+/// but no threshold coordinates — shut down 143 nm away), is quietly filed as a
+/// normal arrival and the pilot is never asked. "We cannot measure" must mean
+/// "ask someone who can", not "assume everything is fine".
+///
 /// Both probes — "how far from the planned field" and "which field am I on" —
-/// use distance to the nearest runway threshold, so they answer in the same
-/// units of the same geometry and cannot disagree about the same airport.
-pub fn locate(planned_arr_icao: &str, lat: f64, lon: f64) -> ArrivalSite {
+/// use the same geometry, so they cannot disagree about the same airport.
+pub fn locate(
+    planned_arr_icao: &str,
+    lat: f64,
+    lon: f64,
+    planned_ref_pos: Option<(f64, f64)>,
+) -> ArrivalSite {
     let planned = planned_arr_icao.trim();
-    let Some(dist_planned_nm) =
-        runway::distance_to_airport_m(planned, lat, lon).map(|m| m / 1852.0)
-    else {
-        // Planned field not in the table — unmeasurable, so not a divert.
+
+    // A sim can hand us NaN/inf coordinates (scenery load glitches, a paused
+    // sim mid-teleport). Every comparison below would be false, which used to
+    // fall out as "off airport" and paint a divert banner reading
+    // "~0 nmi vom Ziel entfernt". We cannot place the aircraft — so we don't.
+    if !lat.is_finite() || !lon.is_finite() {
+        return ArrivalSite::AtPlanned { distance_nm: None };
+    }
+
+    // Distance to the planned field, and the radius that goes with the geometry
+    // it came from: thresholds are precise, a reference point is not.
+    let planned_probe = runway::distance_to_airport_m(planned, lat, lon)
+        .map(|m| (m / 1852.0, ON_FIELD_RADIUS_NM))
+        .or_else(|| {
+            let (rlat, rlon) = planned_ref_pos?;
+            // phpVMS ships (0,0) for airports whose coordinates were never
+            // filled in. That is "unknown", not the Gulf of Guinea.
+            if (rlat == 0.0 && rlon == 0.0) || !rlat.is_finite() || !rlon.is_finite() {
+                return None;
+            }
+            Some((
+                runway::distance_m(lat, lon, rlat, rlon) / 1852.0,
+                ON_FIELD_FALLBACK_RADIUS_NM,
+            ))
+        });
+
+    let Some((dist_planned_nm, on_field_radius_nm)) = planned_probe else {
+        // No geometry from ANY source — genuinely unmeasurable, so not a divert.
         return ArrivalSite::AtPlanned { distance_nm: None };
     };
 
-    if dist_planned_nm <= ON_FIELD_RADIUS_NM {
+    if dist_planned_nm <= on_field_radius_nm {
         return ArrivalSite::AtPlanned {
             distance_nm: Some(dist_planned_nm),
         };
@@ -283,7 +339,7 @@ mod tests {
         );
 
         // And the distance we report to the pilot is the honest one.
-        let site = locate("EDDF", lat, lon);
+        let site = locate("EDDF", lat, lon, None);
         assert_eq!(
             site.distance_from_planned_nm().map(|d| d <= ON_FIELD_RADIUS_NM),
             Some(true),
@@ -293,7 +349,7 @@ mod tests {
 
     #[test]
     fn eddf_terminal_2_stand_is_at_the_planned_airport() {
-        let site = locate("EDDF", EDDF_TERMINAL_2.0, EDDF_TERMINAL_2.1);
+        let site = locate("EDDF", EDDF_TERMINAL_2.0, EDDF_TERMINAL_2.1, None);
         assert!(
             site.is_at_planned(),
             "a stand at EDDF T2 must be AtPlanned for a planned EDDF arrival, got {site:?}"
@@ -314,7 +370,7 @@ mod tests {
             (50.0264, 8.5431), // 18/36 threshold area, far corner of the field
             (50.0379, 8.5622), // centroid-ish
         ] {
-            let site = locate("EDDF", lat, lon);
+            let site = locate("EDDF", lat, lon, None);
             if let Some(hint) = DivertHint::from_site(&site, "EDDF", None) {
                 assert_ne!(
                     hint.actual_icao.as_deref(),
@@ -328,7 +384,7 @@ mod tests {
     #[test]
     fn a_real_divert_is_still_detected() {
         // Parked at EDDP (Leipzig) on a flight planned to EDDF.
-        let site = locate("EDDF", 51.4239, 12.2364);
+        let site = locate("EDDF", 51.4239, 12.2364, None);
         let ArrivalSite::AtOtherAirport { ref icao, .. } = site else {
             panic!("EDDP parking on an EDDF flight must be AtOtherAirport, got {site:?}");
         };
@@ -342,7 +398,7 @@ mod tests {
 
     #[test]
     fn diverting_to_the_filed_alternate_is_labelled_as_such() {
-        let site = locate("EDDF", 51.4239, 12.2364); // EDDP
+        let site = locate("EDDF", 51.4239, 12.2364, None); // EDDP
         let hint = DivertHint::from_site(&site, "EDDF", Some("EDDP")).expect("hint");
         assert_eq!(hint.kind, "alternate");
     }
@@ -350,7 +406,7 @@ mod tests {
     #[test]
     fn an_off_field_landing_yields_a_targetless_hint() {
         // Somewhere in the North Sea — no runway threshold within 2 nm.
-        let site = locate("EDDF", 55.5000, 3.5000);
+        let site = locate("EDDF", 55.5000, 3.5000, None);
         assert!(matches!(site, ArrivalSite::OffAirport { .. }), "{site:?}");
         let hint = DivertHint::from_site(&site, "EDDF", None).expect("hint");
         assert!(hint.actual_icao.is_none());
@@ -418,6 +474,24 @@ mod tests {
         let (c_pirep, c_flight, c_planned) = (col("pirep_id"), col("flight_number"), col("planned_arr_icao"));
         let (c_plat, c_plon) = (col("planned_arr_lat"), col("planned_arr_lon"));
         let (c_flat, c_flon) = (col("final_lat"), col("final_lon"));
+        // The corpus is raw on purpose, so the filtering is visible here rather
+        // than baked into an export nobody re-reads. Three conditions make a row
+        // gradeable, and each one cost a wrong conclusion before it was added:
+        //
+        //   actual_arr_icao != ""  — the PIREP was actually FILED. Aborted
+        //     sessions keep their client-minted pirep_id and a final position on
+        //     the departure stand; grading those produced 6 phantom "false
+        //     positives" (GEC 872 parked at EDDF on a flight to ENBR — because
+        //     it never left EDDF and was never filed).
+        //   last_phase == ARRIVED  — the flight reached its end.
+        //   final_on_ground == 1   — the last sample is the aircraft PARKED, not
+        //     a position stream that died in cruise. SFG 2406's last sample is
+        //     at FL445 over Brno; its "parked position" is a fiction.
+        let (c_actual, c_phase, c_onground) = (
+            col("actual_arr_icao"),
+            col("last_phase"),
+            col("final_on_ground"),
+        );
 
         let mut checked = 0_u32;
         let mut at_airport = 0_u32;
@@ -433,6 +507,18 @@ mod tests {
             }
             let (pirep, flight_no, planned) =
                 (f[c_pirep].trim(), f[c_flight].trim(), f[c_planned].trim());
+
+            // Only gradeable rows — see the note at the column indices above.
+            let filed = f.get(c_actual).map(|s| !s.trim().is_empty()).unwrap_or(false);
+            let arrived = f
+                .get(c_phase)
+                .map(|s| s.trim().eq_ignore_ascii_case("ARRIVED"))
+                .unwrap_or(false);
+            let parked = f.get(c_onground).map(|s| s.trim() == "1").unwrap_or(false);
+            if !(filed && arrived && parked) {
+                continue;
+            }
+
             let (Ok(lat), Ok(lon)) = (
                 f[c_flat].trim().parse::<f64>(),
                 f[c_flon].trim().parse::<f64>(),
@@ -452,7 +538,16 @@ mod tests {
             checked += 1;
 
             let truth_nm = runway::distance_m(lat, lon, plat, plon) / 1852.0;
-            let site = locate(planned, lat, lon);
+            // Exactly what production does: thresholds when we have them, the
+            // airport's reference point when we don't (see `locate`). For a
+            // field WITH threshold geometry — the large majority — the grading
+            // below is genuinely independent: the verdict comes from runway
+            // data, the truth from the airports table. For the handful without
+            // it (heliports, EDLD-class fields) the two sources coincide and the
+            // check degenerates into a consistency check. That is honest and
+            // still worth having: it is precisely those fields where the divert
+            // detection used to be blind altogether.
+            let site = locate(planned, lat, lon, Some((plat, plon)));
             let hint = DivertHint::from_site(&site, planned, None);
 
             let describe = |h: &DivertHint| {
@@ -513,12 +608,110 @@ mod tests {
         );
     }
 
+    /// 186 German ED** fields (EDAG, EDAI, EDAN, …) — and 6,446 ICAO airports
+    /// worldwide — have no runway threshold coordinates in the embedded table,
+    /// so the client has no geometry for them at all. The arrival side gives
+    /// those the benefit of the doubt (this test). The departure side used to
+    /// do the opposite and silently refuse to auto-start there; see
+    /// `distance_to_airport_any_source` in lib.rs.
+    #[test]
+    fn a_field_with_no_runway_geometry_is_recognised_as_unmeasurable() {
+        assert!(
+            runway::distance_to_airport_m("EDAG", 51.0, 7.0).is_none(),
+            "EDAG has no threshold coordinates in the table — precondition for \
+             this test and for the auto-start fallback in lib.rs"
+        );
+        // Unmeasurable ⇒ we do not accuse the pilot of diverting.
+        let site = locate("EDAG", 51.0, 7.0, None);
+        assert_eq!(site, ArrivalSite::AtPlanned { distance_nm: None });
+        assert!(DivertHint::from_site(&site, "EDAG", None).is_none());
+    }
+
+    /// The heliport / no-threshold-geometry class, which is most of what a
+    /// helicopter or bizjet operation actually flies to. Without the phpVMS
+    /// reference-point fallback these were ALL "AtPlanned" — the detection was
+    /// blind, not lenient.
+    #[test]
+    fn a_field_without_runway_geometry_is_located_via_the_reference_point() {
+        // EDLD: has a runway row, but no threshold coordinates → no geometry.
+        // Real corpus case (GSG 22): shut down 143 nm from EDLD and the client
+        // never asked. EDLD reference point ≈ 51.616,6.861 (from phpVMS).
+        let eddl_ref = (51.616018, 6.861262);
+        assert!(
+            runway::distance_to_airport_m("EDLD", 49.264, 7.489).is_none(),
+            "precondition: EDLD has no usable runway geometry"
+        );
+
+        // Parked 143 nm away → a divert, and now we can say so.
+        let far = locate("EDLD", 49.2643, 7.4897, Some(eddl_ref));
+        assert!(
+            !far.is_at_planned(),
+            "143 nm from the destination is not 'at the destination', got {far:?}"
+        );
+        assert!(DivertHint::from_site(&far, "EDLD", None).is_some());
+
+        // Parked ON the field → still a normal arrival. The fallback must not
+        // buy divert detection at the price of false alarms.
+        let there = locate("EDLD", eddl_ref.0 + 0.005, eddl_ref.1, Some(eddl_ref));
+        assert!(there.is_at_planned(), "on the field is AtPlanned, got {there:?}");
+        assert!(DivertHint::from_site(&there, "EDLD", None).is_none());
+    }
+
+    /// A sim that hands us NaN coordinates (scenery load, teleport, paused sim)
+    /// must not produce a divert banner reading "~0 nmi vom Ziel entfernt".
+    #[test]
+    fn non_finite_coordinates_are_unmeasurable_not_a_divert() {
+        for (lat, lon) in [
+            (f64::NAN, 8.5),
+            (50.0, f64::NAN),
+            (f64::INFINITY, 8.5),
+            (f64::NAN, f64::NAN),
+        ] {
+            let site = locate("EDDF", lat, lon, Some((50.033, 8.570)));
+            assert_eq!(
+                site,
+                ArrivalSite::AtPlanned { distance_nm: None },
+                "NaN/inf position must be unmeasurable, got {site:?}"
+            );
+            assert!(DivertHint::from_site(&site, "EDDF", None).is_none());
+        }
+    }
+
+    /// The divert target is filed into phpVMS as the arrival airport, so it has
+    /// to be something phpVMS can resolve. OurAirports also carries national
+    /// identifiers (`US-4991`, `DE-0901`) and FAA local codes (`48FA`) at or
+    /// beside real fields — those must never be named as the landing airport.
+    #[test]
+    fn a_divert_target_is_always_a_real_icao_code() {
+        // Sweep a grid over Europe/US at typical apron distances and assert the
+        // detector never names a non-ICAO ident.
+        for (lat, lon) in [
+            (28.8, -81.8),   // near KLEE / 48FA (Florida)
+            (45.4, -98.4),   // near KABR / SD32
+            (50.05, 8.58),   // EDDF
+            (51.47, -0.45),  // EGLL
+            (40.64, -73.78), // KJFK
+        ] {
+            let site = locate("ZZZZ", lat, lon, None); // planned unknown → AtPlanned
+            assert!(site.is_at_planned());
+
+            // Now ask the same geometry the divert path uses, directly.
+            for a in runway::find_nearest_airports(lat, lon, 10.0 * 1852.0, 10) {
+                assert!(
+                    a.icao.len() == 4 && a.icao.chars().all(|c| c.is_ascii_uppercase()),
+                    "nearest-airport search returned a non-ICAO ident: {}",
+                    a.icao
+                );
+            }
+        }
+    }
+
     #[test]
     fn an_unmeasurable_planned_field_is_never_a_divert() {
         // ICAO not in the runways table: we cannot measure, so we must not
         // accuse the pilot of diverting. (Old fallback did the same via
         // `arr_pos.is_none() ⇒ near_planned`.)
-        let site = locate("ZZZZ", 50.0500, 8.5860);
+        let site = locate("ZZZZ", 50.0500, 8.5860, None);
         assert_eq!(site, ArrivalSite::AtPlanned { distance_nm: None });
         assert!(DivertHint::from_site(&site, "ZZZZ", None).is_none());
     }

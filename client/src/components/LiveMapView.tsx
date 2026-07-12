@@ -289,14 +289,19 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       }
     }
     const nextLabel = next ? `${next.ident} · ${Math.round(bestD)} nm` : "—";
-    const dtg = activeFlight?.distance_nm;
+    // v0.19.3: distance-to-GO, i.e. great-circle from the aircraft to the
+    // destination — `acToArr`, computed above. This used to read
+    // `activeFlight.distance_nm`, which is the accumulated distance already
+    // FLOWN: the ETA therefore started near zero and grew for the whole flight,
+    // telling a pilot on short final he had another hour to run.
+    const dtgNm = Number.isFinite(acToArr) ? acToArr : null;
     const gs = simSnapshot?.groundspeed_kt;
     let eta = "—";
-    if (dtg != null && gs != null && gs > 30) {
-      const mins = Math.round((dtg / gs) * 60);
+    if (dtgNm != null && gs != null && gs > 30) {
+      const mins = Math.round((dtgNm / gs) * 60);
       eta = mins >= 60 ? `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m` : `${mins}m`;
     }
-    return { nextIdent: next?.ident, nextLabel, eta };
+    return { nextIdent: next?.ident, nextLabel, eta, dtgNm };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effFixes, effAircraft, effArr, activeFlight?.distance_nm, simSnapshot?.groundspeed_kt]);
 
@@ -912,9 +917,11 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       spd: fmt(s?.indicated_airspeed_kt, " kts"),
       hdg: s ? `${Math.round(s.heading_deg_magnetic)}°` : "—",
       gs: fmt(s?.groundspeed_kt, " kts"),
-      dtg: activeFlight?.distance_nm != null ? `${Math.round(activeFlight.distance_nm)} nm` : "—",
+      // v0.19.3: distance to GO (aircraft → destination), not the distance
+      // already flown. Same source as the ETA above — see `nav.dtgNm`.
+      dtg: nav.dtgNm != null ? `${Math.round(nav.dtgNm)} nm` : "—",
     };
-  }, [simSnapshot, activeFlight]);
+  }, [simSnapshot, activeFlight, nav]);
 
   const showOwnContent = !!activeFlight;
 

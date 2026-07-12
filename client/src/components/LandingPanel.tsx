@@ -1819,6 +1819,17 @@ function AccidentBanner({ record }: { record: LandingRecord }) {
   );
 }
 
+/**
+ * Wie weit vom Ziel entfernt eine Landung als "off airport" gilt.
+ *
+ * Spiegelt `MAX_FILE_DISTANCE_NM` im Backend (lib.rs): das ist die Distanz, ab
+ * der `flight_end` das Einreichen mit `not_at_arrival` verweigert. Beide Werte
+ * beantworten dieselbe Frage — "bist du eigentlich angekommen?" — und müssen
+ * deshalb übereinstimmen. v0.19.3: stand vorher als nackte `5` mitten in der
+ * Bedingung, ohne Bezug zum Backend-Wert.
+ */
+const OFF_AIRPORT_MIN_NM = 5;
+
 function OffAirportBanner({ record }: { record: LandingRecord }) {
   const { t } = useTranslation();
 
@@ -1871,8 +1882,8 @@ function OffAirportBanner({ record }: { record: LandingRecord }) {
 
   if (source === "planned_fallback") {
     // Position bekannt aber kein Airport in 25 nmi. Distanz-Hinweis nur
-    // sinnvoll wenn echter Off-airport-Crash (> 5 nmi).
-    if (distToDest == null || distToDest <= 5) return null;
+    // sinnvoll wenn echter Off-airport-Crash (> OFF_AIRPORT_MIN_NM).
+    if (distToDest == null || distToDest <= OFF_AIRPORT_MIN_NM) return null;
     return (
       <div className="off-airport-banner off-airport-banner--no-nearest" role="alert">
         <div className="off-airport-banner__head">

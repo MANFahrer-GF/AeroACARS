@@ -187,6 +187,35 @@ fn runways() -> &'static Vec<RunwayRow> {
 
             let airport_ident = record.get(2).unwrap_or("").to_string();
             let length_ft = parse_f32(record.get(3)).unwrap_or(0.0);
+
+            // v0.19.3: reject rows whose two thresholds are impossibly far
+            // apart. OurAirports contains truncated coordinates (KCLE's 06R
+            // threshold is stored as 41.30/-81.80 — four nautical miles off the
+            // field) and outright misplacements (a UUMU row sits in Belgorod,
+            // 600 km away). Such a row poisons everything downstream: it drags
+            // the airport's geometry to a phantom location, so `locate` would
+            // call a 2 nm circle around a point four miles off the field "at
+            // KCLE" — and a genuine divert there would be silently auto-filed as
+            // a normal arrival.
+            //
+            // A runway is at most ~5.5 km end to end. Allow 3× the stated length
+            // (or 8 km when the length is missing) before calling a row corrupt.
+            let end_to_end_m = haversine_m(le_lat, le_lon, he_lat, he_lon);
+            let plausible_m = if length_ft > 0.0 {
+                (length_ft as f64 * 0.3048 * 3.0).max(2_000.0)
+            } else {
+                8_000.0
+            };
+            if end_to_end_m > plausible_m {
+                tracing::debug!(
+                    ident = %airport_ident,
+                    end_to_end_m,
+                    length_ft,
+                    "runway row rejected: thresholds implausibly far apart (corrupt coordinates)"
+                );
+                continue;
+            }
+
             let width_ft = parse_f32(record.get(4)).unwrap_or(0.0);
             let surface = record.get(5).unwrap_or("").to_string();
             let le_ident = record.get(8).unwrap_or("").to_string();
@@ -299,6 +328,21 @@ pub fn airport_position(icao: &str) -> Option<(f64, f64)> {
     }
 }
 
+/// Absolute longitude difference in degrees, wrapped across the antimeridian.
+///
+/// A naive `(a - b).abs()` makes 179.5°E and 179.5°W look 359° apart instead of
+/// 1°, so any bounding-box filter using it silently drops everything on the
+/// other side of the dateline. Divert searches in the Pacific (Aleutians, Fiji,
+/// NZ) returned an empty list because of this.
+fn lon_delta_deg(a: f64, b: f64) -> f64 {
+    let d = (a - b).abs() % 360.0;
+    if d > 180.0 {
+        360.0 - d
+    } else {
+        d
+    }
+}
+
 /// Distance in meters from a point to the *nearest runway threshold* of
 /// the given airport — the one metric the whole app uses to answer "is
 /// the aircraft on this field". Returns `None` when the ident isn't in
@@ -373,34 +417,72 @@ pub fn find_nearest_airports(
     use std::collections::HashMap;
     let table = runways();
     let mut by_apt: HashMap<&str, (f64, f64, f64, f32)> = HashMap::new();
-    // Coarse bounding-box pre-filter so we don't haversine the entire
-    // world catalog. 1 degree latitude ≈ 111 km, so for a 50 nmi
-    // (~93 km) max-radius we look ~1 degree out generously.
-    let bbox_deg = (max_radius_m / 100_000.0).max(0.5);
+
+    // Coarse bounding-box pre-filter so we don't haversine the entire world
+    // catalog. Latitude is easy: 1° ≈ 111 km everywhere.
+    let lat_span_deg = (max_radius_m / 111_000.0).max(0.5);
+    // Longitude is NOT. A degree of longitude shrinks with cos(latitude), so a
+    // box that is `lat_span_deg` wide in longitude covers less and less ground
+    // the further north you go.
+    //
+    // v0.19.3: this used the same span for both axes, which quietly truncated
+    // every search away from the equator — a nominal 50 nm divert search
+    // reached only ~36 nm east/west at Frankfurt (50°N) and ~24 nm at
+    // Reykjavík (64°N). The pilot's manual divert list was simply missing
+    // fields. Scale by 1/cos(lat), clamped for the poles where cos(lat) → 0
+    // and the correction blows up (there, just take the whole longitude band —
+    // there is nothing to filter out that far north anyway).
+    let cos_lat = lat.to_radians().cos().abs().max(0.01);
+    let lon_span_deg = (lat_span_deg / cos_lat).min(180.0);
+
     for row in table.iter() {
+        // v0.19.3: only real ICAO idents. OurAirports also carries national
+        // fallback identifiers (`US-4991`, `DE-0901`) and FAA local codes
+        // (`48FA`, `5KE`) — 34 % of the table — and they sit at the SAME
+        // coordinates as, or right next to, real fields. This function names the
+        // airport a divert gets filed against: `actual_icao` goes into the
+        // banner, into `flight_end(divert_to)`, and from there into phpVMS's
+        // `arr_airport_id`, which cannot resolve "48FA". A pilot diverting to
+        // KLEE (Leesburg) could be told he landed at 48FA, whose threshold is
+        // 964 m from the apron. If the field a pilot actually used has no ICAO
+        // code, the honest answer is "we don't know which field" — the divert
+        // banner then asks him to pick one, which is exactly the right outcome.
+        if !looks_like_icao(&row.airport_ident) {
+            continue;
+        }
         let approx_lat = (row.le_lat + row.he_lat) / 2.0;
         let approx_lon = (row.le_lon + row.he_lon) / 2.0;
-        if (approx_lat - lat).abs() > bbox_deg
-            || (approx_lon - lon).abs() > bbox_deg
+        if (approx_lat - lat).abs() > lat_span_deg
+            || lon_delta_deg(approx_lon, lon) > lon_span_deg
         {
             continue;
         }
-        // Use the closer of the two threshold positions for each
-        // runway as that runway's distance to the query. The pilot
-        // touched down somewhere on the field — the nearer threshold
-        // is the better proxy than the centroid.
+        // Use the closer of the two threshold positions for each runway as that
+        // runway's distance to the query. The pilot touched down somewhere on
+        // the field — the nearer threshold is the better proxy than the
+        // centroid.
         let d_le = haversine_m(lat, lon, row.le_lat, row.le_lon);
         let d_he = haversine_m(lat, lon, row.he_lat, row.he_lon);
-        let d = d_le.min(d_he);
+        // The point the distance actually refers to. `NearestAirport.lat/lon`
+        // reports THIS, so that the coordinates and the distance next to them
+        // describe the same place — they used to be the runway midpoint while
+        // the distance was to the threshold, ~2 km apart at EDDF (harmless
+        // while nothing plotted the pin; a bug waiting for the first map that
+        // does).
+        let (d, near_lat, near_lon) = if d_le <= d_he {
+            (d_le, row.le_lat, row.le_lon)
+        } else {
+            (d_he, row.he_lat, row.he_lon)
+        };
         if d > max_radius_m {
             continue;
         }
         let entry = by_apt
             .entry(&row.airport_ident)
-            .or_insert((approx_lat, approx_lon, d, 0.0));
+            .or_insert((near_lat, near_lon, d, 0.0));
         if d < entry.2 {
-            entry.0 = approx_lat;
-            entry.1 = approx_lon;
+            entry.0 = near_lat;
+            entry.1 = near_lon;
             entry.2 = d;
         }
         if row.length_ft > entry.3 {
@@ -817,6 +899,72 @@ fn heading_diff(a: f32, b: f32) -> f32 {
         d = 360.0 - d;
     }
     d
+}
+
+#[cfg(test)]
+mod geo_search_tests {
+    use super::*;
+
+    #[test]
+    fn longitude_delta_wraps_the_antimeridian() {
+        assert!((lon_delta_deg(179.5, -179.5) - 1.0).abs() < 1e-9);
+        assert!((lon_delta_deg(-179.5, 179.5) - 1.0).abs() < 1e-9);
+        assert!((lon_delta_deg(10.0, 8.0) - 2.0).abs() < 1e-9);
+        assert!((lon_delta_deg(-170.0, 170.0) - 20.0).abs() < 1e-9);
+    }
+
+    /// The search box must not shrink east-west as you go north. At Frankfurt
+    /// (50°N) an un-corrected box covered only ~36 nm of a nominal 50 nm
+    /// search, so the divert picker was silently missing fields.
+    #[test]
+    fn the_search_radius_holds_up_at_northern_latitudes() {
+        // EDDF (50.03N, 8.57E). EDRK (Koblenz-Winningen) is 43.9 nm away —
+        // comfortably inside a 50 nm search — but 1.05° of longitude west,
+        // which the old un-scaled bounding box (0.926°) cut off. At 50°N that
+        // box only reached ~36 nm east-west of a nominal 50 nm search.
+        let found = find_nearest_airports(50.0333, 8.5706, 50.0 * 1852.0, 60);
+        let idents: Vec<&str> = found.iter().map(|a| a.icao.as_str()).collect();
+        assert!(
+            idents.contains(&"EDRK"),
+            "a 50 nm search from EDDF must reach EDRK (43.9 nm west) — the \
+             longitude box has to scale with 1/cos(lat) (found: {idents:?})"
+        );
+    }
+
+    /// A search right on the dateline must see both sides of it.
+    #[test]
+    fn a_search_on_the_dateline_sees_both_sides() {
+        // NFFN (Nadi, Fiji) sits at ~177.4E. Query from just EAST of the
+        // antimeridian (i.e. negative longitude, ~179.9W): Nadi is ~150 nm
+        // away in reality, so a generous search must still find *something*
+        // west of the line rather than returning an empty list.
+        let near_line = find_nearest_airports(-17.75, -179.9, 200.0 * 1852.0, 10);
+        assert!(
+            near_line.iter().any(|a| a.lon > 170.0),
+            "a search just east of the dateline must reach airports west of it \
+             (got: {:?})",
+            near_line.iter().map(|a| (&a.icao, a.lon)).collect::<Vec<_>>()
+        );
+    }
+
+    /// `NearestAirport.lat/lon` must describe the same point `distance_m`
+    /// measures to — otherwise anything that plots the pin lands ~2 km off.
+    #[test]
+    fn the_reported_position_is_the_point_the_distance_refers_to() {
+        let from = (50.0500, 8.5860); // EDDF Terminal 2
+        let eddf = find_nearest_airports(from.0, from.1, 5.0 * 1852.0, 5)
+            .into_iter()
+            .find(|a| a.icao == "EDDF")
+            .expect("EDDF found");
+        let recomputed = haversine_m(from.0, from.1, eddf.lat, eddf.lon);
+        assert!(
+            (recomputed - eddf.distance_m).abs() < 1.0,
+            "distance_m ({:.0} m) must be the distance to the reported lat/lon \
+             ({:.0} m)",
+            eddf.distance_m,
+            recomputed
+        );
+    }
 }
 
 #[cfg(test)]

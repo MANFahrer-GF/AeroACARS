@@ -1850,6 +1850,9 @@ struct PersistedFlightStats {
     /// the in-memory phase-transition list does NOT survive a resume.
     #[serde(default)]
     blocks_on_reached: bool,
+    /// v0.19.3: the airport the arrival stand was captured at.
+    #[serde(default)]
+    arr_gate_icao: Option<String>,
     #[serde(default)]
     approach_runway: Option<String>,
     #[serde(default)]
@@ -1940,6 +1943,13 @@ struct PersistedFlightStats {
     planned_waypoints: Vec<api_client::RouteFix>,
     #[serde(default)]
     planned_alternate: Option<String>,
+    /// v0.19.3: the arrival airport's reference coordinates as phpVMS knows
+    /// them. The fallback geometry for the ~6,400 ICAO fields (and effectively
+    /// every heliport) that the embedded runway table has no thresholds for —
+    /// see `arrival::locate`. Resolved once at flight start; persisted so a
+    /// resumed flight doesn't lose the ability to tell where it is.
+    #[serde(default)]
+    planned_arr_ref_pos: Option<(f64, f64)>,
     // v0.3.0: MAX-Werte aus dem OFP für Overweight-Detection.
     #[serde(default)]
     planned_max_zfw_kg: Option<f32>,
@@ -2065,6 +2075,7 @@ impl PersistedFlightStats {
             dep_gate: stats.dep_gate.clone(),
             arr_gate: stats.arr_gate.clone(),
             blocks_on_reached: stats.blocks_on_reached,
+            arr_gate_icao: stats.arr_gate_icao.clone(),
             approach_runway: stats.approach_runway.clone(),
             cruise_peak_msl: stats.cruise_peak_msl,
             climb_peak_msl: stats.climb_peak_msl,
@@ -2097,6 +2108,7 @@ impl PersistedFlightStats {
             planned_route: stats.planned_route.clone(),
             planned_waypoints: stats.planned_waypoints.clone(),
             planned_alternate: stats.planned_alternate.clone(),
+            planned_arr_ref_pos: stats.planned_arr_ref_pos,
             planned_max_zfw_kg: stats.planned_max_zfw_kg,
             planned_max_tow_kg: stats.planned_max_tow_kg,
             planned_max_ldw_kg: stats.planned_max_ldw_kg,
@@ -2177,6 +2189,7 @@ impl PersistedFlightStats {
                 self.phase,
                 FlightPhase::BlocksOn | FlightPhase::Arrived | FlightPhase::PirepSubmitted
             );
+        stats.arr_gate_icao = self.arr_gate_icao;
         stats.approach_runway = self.approach_runway;
         stats.cruise_peak_msl = self.cruise_peak_msl;
         stats.climb_peak_msl = self.climb_peak_msl;
@@ -2210,6 +2223,7 @@ impl PersistedFlightStats {
         stats.planned_route = self.planned_route;
         stats.planned_waypoints = self.planned_waypoints;
         stats.planned_alternate = self.planned_alternate;
+        stats.planned_arr_ref_pos = self.planned_arr_ref_pos;
         stats.planned_max_zfw_kg = self.planned_max_zfw_kg;
         stats.planned_max_tow_kg = self.planned_max_tow_kg;
         stats.planned_max_ldw_kg = self.planned_max_ldw_kg;
@@ -3189,6 +3203,12 @@ struct FlightStats {
     planned_waypoints: Vec<api_client::RouteFix>,
     /// Planned alternate ICAO from the OFP.
     planned_alternate: Option<String>,
+    /// v0.19.3: reference coordinates of the arrival airport, as phpVMS knows
+    /// them. Fallback geometry for fields the embedded runway table has no
+    /// thresholds for — every heliport, and ~6,400 ICAO airports besides. See
+    /// `arrival::locate`. `None` until resolved (or if phpVMS has no coords
+    /// either), in which case the arrival really is unmeasurable.
+    planned_arr_ref_pos: Option<(f64, f64)>,
     // ---- v0.3.0: MAX-Werte aus dem OFP für Overweight-Detection ----
     /// Maximum Zero-Fuel Weight (Strukturlimit). None wenn das OFP
     /// keinen `<max_zfw>`-Eintrag hatte (kommt bei Custom-Subfleets vor).
@@ -3358,6 +3378,9 @@ struct FlightStats {
     /// persisted (`StatsSnapshot`) — the in-memory transition list is
     /// runtime-only and would read as "never blocked on" after any resume.
     blocks_on_reached: bool,
+    /// v0.19.3: the airport `arr_gate` was captured at. A stand name is only
+    /// meaningful together with its field — see `arr_gate_for`.
+    arr_gate_icao: Option<String>,
     /// `ATC RUNWAY SELECTED` snapshotted at touchdown. Useful for VAs
     /// that grade "did the pilot land on the right runway".
     approach_runway: Option<String>,
@@ -4498,7 +4521,18 @@ fn segment_contradicts_v1(v1: FlightPhase, segment: phase_v2::Segment) -> bool {
 /// Both callers now go through here, so "how the FSM got to Arrived" can no
 /// longer change *what the flight record contains*. Each field is
 /// `get_or_insert`-style: an earlier, better value is never overwritten.
-fn settle_at_arrival_stand(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) {
+/// `at_icao`: the field the aircraft is actually standing on. Recorded next to
+/// the stand, because a stand name only means something together with the
+/// airport it belongs to: an aircraft that shut down at EDDP after a flight
+/// planned to EDDF has a real stand — at EDDP — and if the pilot then files the
+/// flight as a normal EDDF arrival anyway, "Gate A17" must NOT ride along into
+/// the EDDF PIREP. See `arr_gate_for`.
+fn settle_at_arrival_stand(
+    stats: &mut FlightStats,
+    snap: &SimSnapshot,
+    now: DateTime<Utc>,
+    at_icao: &str,
+) {
     if stats.block_on_at.is_none() {
         stats.block_on_at = Some(now);
     }
@@ -4511,7 +4545,22 @@ fn settle_at_arrival_stand(stats: &mut FlightStats, snap: &SimSnapshot, now: Dat
                 _ => name.clone(),
             };
             stats.arr_gate = Some(label);
+            stats.arr_gate_icao = Some(at_icao.trim().to_uppercase());
         }
+    }
+}
+
+/// The arrival stand, but only when it belongs to the airport the PIREP is
+/// actually being filed against. Otherwise `None` — an EDDP stand on an EDDF
+/// arrival is worse than no stand at all.
+fn arr_gate_for(stats: &FlightStats, effective_arr_icao: &str) -> Option<String> {
+    let gate = stats.arr_gate.as_ref()?;
+    match stats.arr_gate_icao.as_deref() {
+        // Captured before v0.19.3 (or by a path that didn't record the field):
+        // no reason to doubt it.
+        None => Some(gate.clone()),
+        Some(icao) if icao.eq_ignore_ascii_case(effective_arr_icao.trim()) => Some(gate.clone()),
+        Some(_) => None,
     }
 }
 
@@ -11762,7 +11811,9 @@ fn build_pirep_payload(
         go_around_count: Some(stats.go_around_count),
         touchdown_count: Some(touchdown_count),
         dep_gate: stats.dep_gate.clone(),
-        arr_gate: stats.arr_gate.clone(),
+        // Nur der Standplatz des Flughafens, gegen den wirklich eingereicht
+        // wird — siehe `arr_gate_for`.
+        arr_gate: arr_gate_for(&stats, effective_arr_icao),
         approach_runway: stats.approach_runway.clone(),
         // Bestätigter Divert (Tatsache) vs. FSM-Verdacht (Diagnose) — strikt
         // getrennt, siehe `divert_payload_markers`.
@@ -13343,13 +13394,20 @@ async fn metar_get(icao: String) -> Result<MetarSnapshot, UiError> {
     })
 }
 
-/// Compute the great-circle distance (nm) from the live sim position to
-/// the airport with the given ICAO. Returns `None` when we don't have
-/// a sim snapshot yet, can't resolve the airport, or the airport
-/// coordinates are zero (typical for stub records). Used by
-/// `flight_end` to enforce the "you have to actually be there to file"
-/// rule. Reads the airport from the in-memory cache first; only goes
-/// to the network if we haven't seen the ICAO yet.
+/// Distance (nm) from the live sim position to the airport with the given ICAO.
+/// `None` when we have no sim snapshot yet, or no coordinates for the airport
+/// from any source — in which case the caller must not gate on it.
+///
+/// Used by `flight_end` to enforce "you have to actually be there to file".
+///
+/// v0.19.3: measured with the SAME cascade as the arrival logic
+/// (`distance_to_airport_any_source`: runway thresholds first, phpVMS reference
+/// point as fallback). It used to be phpVMS-only, which made this the fourth
+/// independent notion of "where an airport is" in the client — and it meant a
+/// single bad coordinate in the phpVMS airports table could reject a pilot
+/// parked at the correct gate with `not_at_arrival`, with no way through except
+/// a manual PIREP (which forfeits ACARS auto-approval). Now phpVMS coordinates
+/// only decide when we have no runway geometry at all.
 async fn compute_distance_to_airport(
     app: &AppHandle,
     state: &tauri::State<'_, AppState>,
@@ -13357,6 +13415,11 @@ async fn compute_distance_to_airport(
 ) -> Option<f64> {
     let snap = current_snapshot(app)?;
     let key = icao.trim().to_uppercase();
+
+    // Runway geometry, when we have it — the same metric `arrival::locate` uses.
+    if let Some(m) = runway::distance_to_airport_m(&key, snap.lat, snap.lon) {
+        return Some(m / 1852.0);
+    }
 
     // Cache hit: synchronous lookup, no network call.
     let cached: Option<Airport> = {
@@ -13417,12 +13480,10 @@ async fn flight_end(
         .as_deref()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    if divert_to.is_some() && divert_reason.is_none() {
-        return Err(UiError::new(
-            "divert_reason_required",
-            "a divert PIREP requires a reason",
-        ));
-    }
+    // NOTE: the "a divert needs a reason" guard deliberately lives further down,
+    // AFTER we know the planned arrival and can tell whether this is a divert at
+    // all. Demanding a reason here would force the pilot to justify a "divert"
+    // to the airport he was already flying to — which we then discard.
 
     // v0.7.19 GAF-707 (QS-R1 Finding 3): Pilot-Override-Pfad. Werte:
     // - None / "auto"        → Stats-Werte bleiben unveraendert.
@@ -13530,16 +13591,40 @@ async fn flight_end(
     // was planned to EDDF. Even with the detection fixed, an ICAO typed by
     // hand in the manual dialog can land here, so the guard belongs in the
     // command, not in the UI.
-    let divert_to = divert_to.filter(|d| !d.eq_ignore_ascii_case(arr_icao.trim()));
+    //
+    // But the pilot naming his planned field IS a statement — "this is where I
+    // ended up" — and we must not punish him for making it. It happens for real:
+    // an off-field landing 6 nm short of EDDF raises a targetless hint
+    // (`kind: "unknown"`), the pilot opens the override and picks EDDF, because
+    // EDDF is in fact the field he was going to. Treat that as a confirmed
+    // arrival: file it normally, and skip the distance gate below — otherwise
+    // the very pilot who told us where he is gets `not_at_arrival` and no way
+    // through, which is worse than the bug we set out to fix.
+    let pilot_confirmed_planned = divert_to
+        .as_deref()
+        .map(|d| d.eq_ignore_ascii_case(arr_icao.trim()))
+        .unwrap_or(false);
+    let divert_to = divert_to.filter(|_| !pilot_confirmed_planned);
+
+    // A reason is required for a REAL divert (the one that rewrites the arrival
+    // airport). Checked here, after normalization — see the note at the top of
+    // this function.
+    if divert_to.is_some() && divert_reason.is_none() {
+        return Err(UiError::new(
+            "divert_reason_required",
+            "a divert PIREP requires a reason",
+        ));
+    }
 
     // Compute distance to the planned arrival. Used as an extra
     // pre-flight-filing gate ("not_at_arrival") so the pilot can't
     // file a flight from 200 nm out — they have to taxi to the gate or
     // file as a manual divert via flight_end_manual.
     //
-    // SKIPPED entirely when filing as a divert — by definition the
-    // pilot is NOT at the planned arrival, that's the whole point.
-    let distance_to_arr_nm = if divert_to.is_some() {
+    // SKIPPED when filing as a divert (by definition the pilot is NOT at the
+    // planned arrival — that's the whole point), and when the pilot has just
+    // explicitly confirmed the planned field as his actual landing site.
+    let distance_to_arr_nm = if divert_to.is_some() || pilot_confirmed_planned {
         None
     } else {
         compute_distance_to_airport(&app, &state, &arr_icao).await
@@ -13700,7 +13785,7 @@ async fn flight_end(
             .or_else(|| stats.landing_score.map(|s| s.numeric()));
         let distance_nm = stats.distance_nm;
         let fields = build_pirep_fields(&flight, &stats, effective_arr);
-        let mut notes = build_pirep_notes(&flight, &stats);
+        let mut notes = build_pirep_notes(&flight, &stats, effective_arr);
         // Prepend a divert banner to the notes so the VA admin sees
         // immediately on the PIREP page that this wasn't a normal
         // arrival. Format mirrors what most ACARS clients write
@@ -14585,7 +14670,7 @@ async fn flight_end_manual(
         let effective_arr =
             effective_arr_norm.as_deref().unwrap_or(&flight.arr_airport);
         let fields = build_pirep_fields(&flight, &stats, effective_arr);
-        let mut notes = build_pirep_notes(&flight, &stats);
+        let mut notes = build_pirep_notes(&flight, &stats, effective_arr);
         notes.push_str("\n\n[MANUAL FILE — auto-validation bypassed by pilot.]");
         if let Some(divert) = divert_to
             .as_ref()
@@ -19098,17 +19183,39 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // Ohne Elevation: Fallback auf AGL-Filter, used_hat=false.
             {
                 let mut stats_g = flight.stats.lock().expect("flight stats");
-                if stats_g.arr_airport_elevation_ft.is_none() {
+                let need_elev = stats_g.arr_airport_elevation_ft.is_none();
+                // v0.19.3: the arrival airport's reference coordinates, from the
+                // same cached phpVMS record. This is the fallback geometry
+                // `arrival::locate` needs for the fields our runway table has no
+                // thresholds for — every heliport, and ~6,400 ICAO airports
+                // (real corpus miss: GSG 22 to EDLD, shut down 143 nm away and
+                // never asked about it). Resolved lazily here, like the
+                // elevation above, and persisted with the stats.
+                let need_ref_pos = stats_g.planned_arr_ref_pos.is_none();
+                if need_elev || need_ref_pos {
                     let app_state = app.state::<AppState>();
                     let airports = app_state.airports.lock().expect("airports lock");
                     if let Some(arr) = airports.get(&flight.arr_airport.to_uppercase()) {
-                        if let Some(elev) = arr.elevation {
-                            stats_g.arr_airport_elevation_ft = Some(elev as f32);
-                            tracing::info!(
-                                arr = %flight.arr_airport,
-                                elevation_ft = elev,
-                                "arr airport elevation cached for HAT-based Stable-Approach-Gate"
-                            );
+                        if need_elev {
+                            if let Some(elev) = arr.elevation {
+                                stats_g.arr_airport_elevation_ft = Some(elev as f32);
+                                tracing::info!(
+                                    arr = %flight.arr_airport,
+                                    elevation_ft = elev,
+                                    "arr airport elevation cached for HAT-based Stable-Approach-Gate"
+                                );
+                            }
+                        }
+                        if need_ref_pos {
+                            if let Some(pos) = arr.lat.zip(arr.lon) {
+                                stats_g.planned_arr_ref_pos = Some(pos);
+                                tracing::info!(
+                                    arr = %flight.arr_airport,
+                                    lat = pos.0,
+                                    lon = pos.1,
+                                    "arr airport reference position cached (divert-geometry fallback)"
+                                );
+                            }
                         }
                     }
                 }
@@ -19425,6 +19532,41 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     .copied()
                             },
                         );
+                        // v0.19.3: welches Feld liegt unter den Rädern? Der
+                        // Trust-Check fragt „gehört die gematchte Runway zu dem
+                        // Flughafen, auf dem wir tatsächlich sind" — das ist eine
+                        // Frage nach dem ECHTEN Landeplatz, nicht nach dem Plan.
+                        //
+                        // Bisher bekam er hier den PLANflughafen plus
+                        // `stats.divert_hint`, der zum Touchdown-Zeitpunkt noch
+                        // `None` ist (der Hint entsteht erst im Stillstand). Bei
+                        // jedem echten Divert lief der Check deshalb auf
+                        // `icao_mismatch` → `runway_geometry_trusted=false` und
+                        // die Touchdown-Zone wurde unterdrückt — während derselbe
+                        // Check beim Einreichen mit dem bestätigten Ausweichfeld
+                        // `trusted=true` ergab. Der Recorder speicherte für EINE
+                        // Landung ein sich widersprechendes Paar, und der Pilot
+                        // sah für eine saubere Divert-Landung ein
+                        // „Geometrie nicht vertrauenswürdig"-Pill.
+                        //
+                        // `arrival::locate` an den Touchdown-Koordinaten liefert
+                        // dieselbe Antwort, die der Divert-Hint später liefert —
+                        // nur eben schon jetzt.
+                        let td_actual_icao: Option<String> = match (
+                            stats.landing_lat,
+                            stats.landing_lon,
+                        ) {
+                            (Some(la), Some(lo)) => match arrival::locate(
+                                &flight.arr_airport,
+                                la,
+                                lo,
+                                stats.planned_arr_ref_pos,
+                            ) {
+                                arrival::ArrivalSite::AtOtherAirport { icao, .. } => Some(icao),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
                         // v0.8.0: identische Assessment-Werte wie
                         // im LandingRecord (single source: assess_touchdown).
                         let payload_assessed = assess_touchdown(&stats);
@@ -19578,8 +19720,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 let (trusted, _) = runway_geometry_trust_check(
                                     rwy_match.map(|m| m.airport_ident.as_str()),
                                     &flight.arr_airport,
-                                    stats.divert_hint.as_ref()
-                                        .and_then(|h| h.actual_icao.as_deref()),
+                                    td_actual_icao.as_deref(),
                                     rwy_match.map(|m| m.centerline_distance_m as f32),
                                     stats.landing_float_distance_m,
                                 );
@@ -19661,8 +19802,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 let (trusted, _) = runway_geometry_trust_check(
                                     rwy_match.map(|m| m.airport_ident.as_str()),
                                     &flight.arr_airport,
-                                    stats.divert_hint.as_ref()
-                                        .and_then(|h| h.actual_icao.as_deref()),
+                                    td_actual_icao.as_deref(),
                                     rwy_match.map(|m| m.centerline_distance_m as f32),
                                     stats.landing_float_distance_m,
                                 );
@@ -23388,7 +23528,19 @@ fn step_flight_at(
             if snap.parking_brake && snap.groundspeed_kt < 1.0 && snap.on_ground {
                 next_phase = FlightPhase::BlocksOn;
                 stats.blocks_on_reached = true;
-                settle_at_arrival_stand(&mut stats, snap, now);
+                // Which field are we actually standing on? Usually the planned
+                // one — but a pilot who diverted also taxis in and sets the
+                // brake, and his stand belongs to the field he is ON.
+                let at_icao = match arrival::locate(
+                    &flight.arr_airport,
+                    snap.lat,
+                    snap.lon,
+                    stats.planned_arr_ref_pos,
+                ) {
+                    arrival::ArrivalSite::AtOtherAirport { icao, .. } => icao,
+                    _ => flight.arr_airport.clone(),
+                };
+                settle_at_arrival_stand(&mut stats, snap, now, &at_icao);
             }
         }
         FlightPhase::BlocksOn => {
@@ -23480,7 +23632,18 @@ fn step_flight_at(
     // bogus divert hint pointing at the departure airport — exactly
     // the bug pilots reported with NKS 833 KFLL→MKJS where GSX wackeln
     // produced "you landed at KFLL, planned was MKJS, file as divert?".
-    if !already_done && !pre_block_off && stats.block_off_at.is_some() && stats.was_airborne {
+    // `snap.on_ground` is part of the gate, not just an optimisation: the
+    // fallback below can only fire on the ground (every one of its paths
+    // requires it), and `arrival::locate` searches the airport table when the
+    // aircraft is NOT at its destination — which is every tick of the cruise.
+    // Asking the question only when the answer can matter keeps that search off
+    // the en-route hot path entirely.
+    if !already_done
+        && !pre_block_off
+        && stats.block_off_at.is_some()
+        && stats.was_airborne
+        && snap.on_ground
+    {
         // Where are we, relative to where we were going? One question, one
         // answer, one geometry — see `crate::arrival`. `near_planned` used to
         // be derived from the runway-layout CENTROID while the divert path
@@ -23488,7 +23651,12 @@ fn step_flight_at(
         // were standing on; at a big airport the two contradicted each other
         // and told pilots they had "landed in EDDF instead of planned EDDF".
         // Neither statement can now be made without the other agreeing.
-        let site = arrival::locate(&flight.arr_airport, snap.lat, snap.lon);
+        let site = arrival::locate(
+            &flight.arr_airport,
+            snap.lat,
+            snap.lon,
+            stats.planned_arr_ref_pos,
+        );
         let near_planned = site.is_at_planned();
 
         // v0.7.5 Phase-Safety Hotfix (Spec docs/spec/flight-phase-state-
@@ -23592,8 +23760,14 @@ fn step_flight_at(
                 // The fallback skips BlocksOn. Capture what BlocksOn would
                 // have captured (block-on time, arrival stand) so the flight
                 // record does not depend on WHICH path got us to Arrived —
-                // see `settle_at_arrival_stand`.
-                settle_at_arrival_stand(&mut stats, snap, now);
+                // see `settle_at_arrival_stand`. The stand is recorded against
+                // the field we are actually on, which on a divert is not the
+                // planned one.
+                let at_icao = match &site {
+                    arrival::ArrivalSite::AtOtherAirport { icao, .. } => icao.clone(),
+                    _ => flight.arr_airport.clone(),
+                };
+                settle_at_arrival_stand(&mut stats, snap, now, &at_icao);
                 // Helicopters often don't fire a touchdown event the
                 // way the analyzer expects. If we never recorded
                 // landing_at, stamp it now so the file body has a
@@ -24152,6 +24326,33 @@ mod arrived_fallback_geometry_tests {
             fresh.blocks_on_reached,
             "phase=BlocksOn in an old snapshot means the flight had blocked on"
         );
+    }
+
+    /// A stand name only means something together with its airport. If the
+    /// aircraft parked at EDDP and the pilot nonetheless files the flight as a
+    /// normal EDDF arrival, "Gate A17" (an EDDP stand) must not ride along into
+    /// the EDDF PIREP.
+    #[test]
+    fn a_stand_from_another_airport_never_reaches_the_pirep() {
+        let mut stats = FlightStats::new();
+        stats.arr_gate = Some("GATE A 17".to_string());
+        stats.arr_gate_icao = Some("EDDP".to_string());
+
+        assert_eq!(
+            arr_gate_for(&stats, "EDDP").as_deref(),
+            Some("GATE A 17"),
+            "filed against EDDP — the EDDP stand belongs in the PIREP"
+        );
+        assert_eq!(
+            arr_gate_for(&stats, "EDDF"),
+            None,
+            "filed against EDDF — an EDDP stand must not appear"
+        );
+
+        // A stand captured before v0.19.3 has no airport recorded. We don't
+        // know better, so we keep it (old behaviour).
+        stats.arr_gate_icao = None;
+        assert_eq!(arr_gate_for(&stats, "EDDF").as_deref(), Some("GATE A 17"));
     }
 
     /// A real divert still works — the fix must not buy a quiet banner by
@@ -25858,8 +26059,8 @@ fn build_pirep_fields(
     if let Some(g) = stats.dep_gate.as_ref().filter(|s| !s.is_empty()) {
         f.insert("Departure Gate".into(), g.clone());
     }
-    if let Some(g) = stats.arr_gate.as_ref().filter(|s| !s.is_empty()) {
-        f.insert("Arrival Gate".into(), g.clone());
+    if let Some(g) = arr_gate_for(stats, effective_arr_icao).filter(|s| !s.is_empty()) {
+        f.insert("Arrival Gate".into(), g);
     }
     if let Some(rw) = stats.approach_runway.as_ref().filter(|s| !s.is_empty()) {
         f.insert("Approach Runway (ATC)".into(), rw.clone());
@@ -25901,7 +26102,11 @@ fn humanize_duration_minutes(minutes: i64) -> String {
 /// Build the human-readable summary that goes into the PIREP `notes` field —
 /// a concise multi-line text that's always visible regardless of how the VA
 /// configured custom fields.
-fn build_pirep_notes(flight: &ActiveFlight, stats: &FlightStats) -> String {
+fn build_pirep_notes(
+    flight: &ActiveFlight,
+    stats: &FlightStats,
+    effective_arr_icao: &str,
+) -> String {
     use std::fmt::Write;
     let mut s = String::new();
 
@@ -26178,7 +26383,7 @@ fn build_pirep_notes(flight: &ActiveFlight, stats: &FlightStats) -> String {
         if let Some(g) = stats.dep_gate.as_ref().filter(|v| !v.is_empty()) {
             let _ = writeln!(s, "  Departure gate  {}", g);
         }
-        if let Some(g) = stats.arr_gate.as_ref().filter(|v| !v.is_empty()) {
+        if let Some(g) = arr_gate_for(stats, effective_arr_icao).filter(|v| !v.is_empty()) {
             let _ = writeln!(s, "  Arrival gate    {}", g);
         }
         if let Some(rw) = stats.approach_runway.as_ref().filter(|v| !v.is_empty()) {
@@ -29050,6 +29255,10 @@ fn spawn_auto_start_watcher(app: AppHandle) {
         // ersten Flug war er leer → ein aliased Flugzeug (z.B. E55P↔"PHENOM 300")
         // konnte NIE auto-starten (Henne-Ei). Wir wärmen den Cache jetzt lazy.
         let mut alias_warm_attempt_at: Option<DateTime<Utc>> = None;
+        // Airports we've already warned about having no usable coordinates —
+        // the loop ticks every 3 s and must not spam the activity log.
+        let mut no_geometry_logged: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         loop {
             tokio::time::sleep(Duration::from_secs(AUTO_START_INTERVAL_SECS)).await;
             let state = app.state::<AppState>();
@@ -29291,16 +29500,73 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     }
                 }
                 any_match_attempt = true;
+                // v0.19.3: the departure airport's coordinates as phpVMS knows
+                // them — the fallback for the thousands of fields the embedded
+                // runway table has no threshold geometry for (see
+                // `distance_to_airport_any_source`). Cache-only + best-effort
+                // fetch: this runs every 3 s, so a miss must not block the tick.
+                let dpt_icao = bid.flight.dpt_airport_id.trim().to_uppercase();
+                let phpvms_pos: Option<(f64, f64)> = {
+                    let cached = {
+                        let guard = state.airports.lock().expect("airports lock");
+                        guard.get(&dpt_icao).cloned()
+                    };
+                    let airport = match cached {
+                        Some(a) => Some(a),
+                        None => {
+                            let client =
+                                state.client.lock().expect("client mutex").clone();
+                            match client {
+                                Some(c) => match c.get_airport(&dpt_icao).await {
+                                    Ok(a) => {
+                                        state
+                                            .airports
+                                            .lock()
+                                            .expect("airports lock")
+                                            .insert(dpt_icao.clone(), a.clone());
+                                        Some(a)
+                                    }
+                                    Err(_) => None,
+                                },
+                                None => None,
+                            }
+                        }
+                    };
+                    airport.and_then(|a| a.lat.zip(a.lon))
+                };
+
                 // v0.7.17 (N-003): Track nearest-bid distance fuer
                 // den Aktivity-Log-Hint, wenn am Ende KEIN Bid matcht.
-                if let Some((apt_lat, apt_lon)) =
-                    runway::airport_position(&bid.flight.dpt_airport_id)
-                {
-                    let dist_nm = runway::distance_m(snap.lat, snap.lon, apt_lat, apt_lon)
-                        / 1852.0;
-                    closest_nm = Some(closest_nm.map_or(dist_nm, |c| c.min(dist_nm)));
+                match distance_to_airport_any_source(&dpt_icao, &snap, phpvms_pos) {
+                    Some(m) => {
+                        let dist_nm = m / 1852.0;
+                        closest_nm = Some(closest_nm.map_or(dist_nm, |c| c.min(dist_nm)));
+                    }
+                    None => {
+                        // No geometry from the runway table AND none from
+                        // phpVMS. Auto-start cannot fire for this bid — say so
+                        // once, instead of leaving the pilot staring at a gate
+                        // wondering why nothing happens.
+                        if !no_geometry_logged.contains(&dpt_icao) {
+                            no_geometry_logged.insert(dpt_icao.clone());
+                            log_activity_handle(
+                                &app,
+                                ActivityLevel::Warn,
+                                format!("Auto-Start für {dpt_icao} nicht möglich"),
+                                Some(format!(
+                                    "Für {dpt_icao} liegen weder in der Runway-Datenbank noch \
+                                     in phpVMS Koordinaten vor — der Auto-Start kann nicht \
+                                     prüfen, ob du dort stehst. Starte den Flug bitte manuell."
+                                )),
+                            );
+                            tracing::warn!(
+                                icao = %dpt_icao,
+                                "auto-start: no airport geometry from any source"
+                            );
+                        }
+                    }
                 }
-                if !bid_matches_current_state(bid, &snap) {
+                if !bid_matches_current_state(bid, &snap, phpvms_pos) {
                     continue;
                 }
                 // v0.13.16 (Option C): alias-bewusster Aircraft-Typ-Vorabcheck
@@ -29525,21 +29791,66 @@ fn spawn_auto_start_watcher(app: AppHandle) {
     });
 }
 
+/// How far is the aircraft from an airport, in meters? `None` = we have no
+/// coordinates for that field from ANY source and genuinely cannot tell.
+///
+/// Two sources, in order:
+///   1. the embedded runway table (nearest threshold — the same metric
+///      `arrival::locate` uses, so departure and arrival agree on what "at the
+///      airport" means);
+///   2. the airport coordinates phpVMS ships with the bid, cached in
+///      `state.airports`.
+///
+/// v0.19.3: (2) is new here, and it matters. The runway CSV parser drops every
+/// runway whose thresholds have no coordinates, so `airport_position` returns
+/// `None` for **6,446 real ICAO airports** — 183 German ED** fields, 176 French
+/// LF**, 85 UK EG**, plus airline-served fields like KECP. Auto-start treated
+/// that as "does not match" and simply never fired there, with no message: a
+/// pilot booking a Falcon out of EDAH or EGBK sat at the gate forever. The same
+/// missing-data condition on the arrival side means "give the pilot the benefit
+/// of the doubt" — the same table, the same question, and the opposite answer.
+/// phpVMS knows where its own airports are, so ask it.
+fn distance_to_airport_any_source(
+    icao: &str,
+    snap: &SimSnapshot,
+    phpvms_pos: Option<(f64, f64)>,
+) -> Option<f64> {
+    if let Some(m) = runway::distance_to_airport_m(icao, snap.lat, snap.lon) {
+        return Some(m);
+    }
+    let (lat, lon) = phpvms_pos?;
+    // phpVMS ships (0,0) for airports whose coordinates were never filled in —
+    // that is "unknown", not "off the coast of Africa".
+    if lat == 0.0 && lon == 0.0 {
+        return None;
+    }
+    Some(::geo::distance_m(snap.lat, snap.lon, lat, lon))
+}
+
 /// Does the loaded aircraft + position match this bid's expectations?
 ///
-/// MVP version: airport-proximity match only — pilot must be parked
-/// within `AUTO_START_PROXIMITY_M` of the bid's departure airport.
-/// Aircraft-type matching is not required because resolving the
-/// bid's planned aircraft requires an extra `get_aircraft` API call,
-/// and shipping that on every 3 s tick is too much. If multiple bids
-/// match the same airport, the first one wins; pilot can cancel
-/// the auto-started flight to fall through to the next.
-fn bid_matches_current_state(bid: &Bid, snap: &SimSnapshot) -> bool {
-    let Some((apt_lat, apt_lon)) = runway::airport_position(&bid.flight.dpt_airport_id) else {
-        return false;
-    };
-    let dist = runway::distance_m(snap.lat, snap.lon, apt_lat, apt_lon);
-    dist <= AUTO_START_PROXIMITY_M
+/// Airport-proximity match: the pilot must be parked within
+/// `AUTO_START_PROXIMITY_M` of the bid's departure airport. (Aircraft-type
+/// matching happens separately in the watcher, which has the API access to
+/// resolve the bid's planned aircraft.) If multiple bids match the same
+/// airport, the first one wins; the pilot can cancel the auto-started flight to
+/// fall through to the next.
+///
+/// `phpvms_pos`: the departure airport's coordinates as phpVMS knows them, when
+/// the caller has them cached — the fallback for fields the embedded runway
+/// table has no geometry for. When BOTH sources come up empty we return false
+/// (we cannot place the aircraft, and auto-starting a flight for a pilot who
+/// might be somewhere else entirely is worse than not auto-starting) — but the
+/// watcher logs that case, so it is never silent again.
+fn bid_matches_current_state(
+    bid: &Bid,
+    snap: &SimSnapshot,
+    phpvms_pos: Option<(f64, f64)>,
+) -> bool {
+    match distance_to_airport_any_source(&bid.flight.dpt_airport_id, snap, phpvms_pos) {
+        Some(dist) => dist <= AUTO_START_PROXIMITY_M,
+        None => false,
+    }
 }
 
 /// What state the tray icon is currently expressing — drives the
