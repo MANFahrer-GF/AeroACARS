@@ -1448,6 +1448,64 @@ impl NavdataCache {
     fn get(&self, icao: &str) -> Option<&aeroacars_mqtt::navdata::NavAirport> {
         self.airports.get(&icao.trim().to_uppercase())
     }
+
+    /// The airport's reference point from the active AIRAC cycle.
+    ///
+    /// v0.19.3: this is the FIRST source we ask for "where is this airport"
+    /// (see `airport_reference_pos`) — Navigraph, refreshed every 28 days,
+    /// and the only one of our three sources that is actually maintained for
+    /// flying. We were carrying it in this cache all along and not using it.
+    fn reference_pos(&self, icao: &str) -> Option<(f64, f64)> {
+        self.get(icao).map(|a| (a.latitude, a.longitude))
+    }
+}
+
+/// How good is the reference position we currently hold? Higher wins — a weaker
+/// source may never overwrite a better one, and the resolver keeps looking until
+/// it has the best (Navigraph's fetch is asynchronous and lands seconds into the
+/// flight).
+const ARR_REF_SOURCE_NONE: u8 = 0;
+const ARR_REF_SOURCE_OURAIRPORTS: u8 = 1;
+const ARR_REF_SOURCE_PHPVMS: u8 = 2;
+const ARR_REF_SOURCE_NAVIGRAPH: u8 = 3;
+
+/// Where is this airport? Asked of three sources, in order of how much they
+/// deserve to be believed:
+///
+///   1. **Navigraph** (the active AIRAC cycle, cached per flight). Current,
+///      aviation-grade, and the source Thomas re-uploads every cycle.
+///   2. **phpVMS** — the VA's own airport record. Hand-maintained, occasionally
+///      empty or (0,0), but it knows the fields the VA actually flies to.
+///   3. **OurAirports** — the table embedded in the binary. Complete (85,729
+///      idents, so it has the bush strips and helipads the others don't) but
+///      public-domain data of uneven quality: KCLE has a threshold four miles
+///      off the field, one UUMU runway is filed in Belgorod.
+///
+/// The order matters more than it looks. Every self-inflicted bug in this area
+/// came from treating the weakest source as the truth: repairing OurAirports
+/// against itself put WAJI 5 nm from where it is, and only asking phpVMS made
+/// divert detection depend on whether the UI happened to have fetched an
+/// airport.
+/// Returns the position and WHICH source it came from, so the caller can tell
+/// whether it is worth asking again later (Navigraph's fetch is asynchronous).
+fn airport_reference_pos(
+    icao: &str,
+    nav_pos: Option<(f64, f64)>,
+    phpvms_pos: Option<(f64, f64)>,
+) -> (Option<(f64, f64)>, u8) {
+    if let Some(pos) = nav_pos {
+        return (Some(pos), ARR_REF_SOURCE_NAVIGRAPH);
+    }
+    if let Some((lat, lon)) = phpvms_pos {
+        // phpVMS ships (0,0) for airports whose coordinates were never filled in.
+        if !(lat == 0.0 && lon == 0.0) && lat.is_finite() && lon.is_finite() {
+            return (Some((lat, lon)), ARR_REF_SOURCE_PHPVMS);
+        }
+    }
+    match runway::airport_reference(icao) {
+        Some(pos) => (Some(pos), ARR_REF_SOURCE_OURAIRPORTS),
+        None => (None, ARR_REF_SOURCE_NONE),
+    }
 }
 
 /// v0.8.0: Lädt Navdata für bis zu 3 ICAOs (dep/arr/alt) parallel vom
@@ -1960,13 +2018,15 @@ struct PersistedFlightStats {
     planned_waypoints: Vec<api_client::RouteFix>,
     #[serde(default)]
     planned_alternate: Option<String>,
-    /// v0.19.3: the arrival airport's reference coordinates as phpVMS knows
-    /// them. The fallback geometry for the ~6,400 ICAO fields (and effectively
-    /// every heliport) that the embedded runway table has no thresholds for —
-    /// see `arrival::locate`. Resolved once at flight start; persisted so a
-    /// resumed flight doesn't lose the ability to tell where it is.
+    /// v0.19.3: the arrival airport's reference coordinates (Navigraph → phpVMS
+    /// → OurAirports; see `airport_reference_pos`). Persisted so a resumed
+    /// flight doesn't lose the ability to tell where it is.
     #[serde(default)]
     planned_arr_ref_pos: Option<(f64, f64)>,
+    /// Which source the above came from — persisted alongside it, so a resumed
+    /// flight doesn't downgrade a Navigraph position to an OurAirports one.
+    #[serde(default)]
+    planned_arr_ref_source: u8,
     // v0.3.0: MAX-Werte aus dem OFP für Overweight-Detection.
     #[serde(default)]
     planned_max_zfw_kg: Option<f32>,
@@ -2126,6 +2186,7 @@ impl PersistedFlightStats {
             planned_waypoints: stats.planned_waypoints.clone(),
             planned_alternate: stats.planned_alternate.clone(),
             planned_arr_ref_pos: stats.planned_arr_ref_pos,
+            planned_arr_ref_source: stats.planned_arr_ref_source,
             planned_max_zfw_kg: stats.planned_max_zfw_kg,
             planned_max_tow_kg: stats.planned_max_tow_kg,
             planned_max_ldw_kg: stats.planned_max_ldw_kg,
@@ -2241,6 +2302,7 @@ impl PersistedFlightStats {
         stats.planned_waypoints = self.planned_waypoints;
         stats.planned_alternate = self.planned_alternate;
         stats.planned_arr_ref_pos = self.planned_arr_ref_pos;
+        stats.planned_arr_ref_source = self.planned_arr_ref_source;
         stats.planned_max_zfw_kg = self.planned_max_zfw_kg;
         stats.planned_max_tow_kg = self.planned_max_tow_kg;
         stats.planned_max_ldw_kg = self.planned_max_ldw_kg;
@@ -3220,12 +3282,15 @@ struct FlightStats {
     planned_waypoints: Vec<api_client::RouteFix>,
     /// Planned alternate ICAO from the OFP.
     planned_alternate: Option<String>,
-    /// v0.19.3: reference coordinates of the arrival airport, as phpVMS knows
-    /// them. Fallback geometry for fields the embedded runway table has no
-    /// thresholds for — every heliport, and ~6,400 ICAO airports besides. See
-    /// `arrival::locate`. `None` until resolved (or if phpVMS has no coords
-    /// either), in which case the arrival really is unmeasurable.
+    /// v0.19.3: reference coordinates of the arrival airport — the position the
+    /// divert geometry is measured against when the runway table is silent or
+    /// wrong. Resolved from Navigraph → phpVMS → OurAirports; see
+    /// `airport_reference_pos`.
     planned_arr_ref_pos: Option<(f64, f64)>,
+    /// Which source `planned_arr_ref_pos` came from (`ARR_REF_SOURCE_*`). Kept
+    /// so a weaker source can never overwrite a better one — Navigraph's fetch
+    /// is asynchronous and arrives after the first ticks have already run.
+    planned_arr_ref_source: u8,
     // ---- v0.3.0: MAX-Werte aus dem OFP für Overweight-Detection ----
     /// Maximum Zero-Fuel Weight (Strukturlimit). None wenn das OFP
     /// keinen `<max_zfw>`-Eintrag hatte (kommt bei Custom-Subfleets vor).
@@ -19270,40 +19335,76 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // wurde (passiert beim Bid-Pickup ueblicherweise schon).
             // Ohne Elevation: Fallback auf AGL-Filter, used_hat=false.
             {
-                let mut stats_g = flight.stats.lock().expect("flight stats");
-                let need_elev = stats_g.arr_airport_elevation_ft.is_none();
-                // v0.19.3: the arrival airport's reference coordinates, from the
-                // same cached phpVMS record. This is the fallback geometry
-                // `arrival::locate` needs for the fields our runway table has no
-                // thresholds for — every heliport, and ~6,400 ICAO airports
-                // (real corpus miss: GSG 22 to EDLD, shut down 143 nm away and
-                // never asked about it). Resolved lazily here, like the
-                // elevation above, and persisted with the stats.
-                let need_ref_pos = stats_g.planned_arr_ref_pos.is_none();
-                if need_elev || need_ref_pos {
-                    let app_state = app.state::<AppState>();
-                    let airports = app_state.airports.lock().expect("airports lock");
-                    if let Some(arr) = airports.get(&flight.arr_airport.to_uppercase()) {
-                        if need_elev {
-                            if let Some(elev) = arr.elevation {
-                                stats_g.arr_airport_elevation_ft = Some(elev as f32);
-                                tracing::info!(
-                                    arr = %flight.arr_airport,
-                                    elevation_ft = elev,
-                                    "arr airport elevation cached for HAT-based Stable-Approach-Gate"
-                                );
-                            }
-                        }
-                        if need_ref_pos {
-                            if let Some(pos) = arr.lat.zip(arr.lon) {
-                                stats_g.planned_arr_ref_pos = Some(pos);
-                                tracing::info!(
-                                    arr = %flight.arr_airport,
-                                    lat = pos.0,
-                                    lon = pos.1,
-                                    "arr airport reference position cached (divert-geometry fallback)"
-                                );
-                            }
+                let need_elev = {
+                    let stats_g = flight.stats.lock().expect("flight stats");
+                    stats_g.arr_airport_elevation_ft.is_none()
+                };
+                if need_elev {
+                    let elev = {
+                        let app_state = app.state::<AppState>();
+                        let airports = app_state.airports.lock().expect("airports lock");
+                        airports
+                            .get(&flight.arr_airport.to_uppercase())
+                            .and_then(|a| a.elevation)
+                    };
+                    if let Some(elev) = elev {
+                        let mut stats_g = flight.stats.lock().expect("flight stats");
+                        stats_g.arr_airport_elevation_ft = Some(elev as f32);
+                        tracing::info!(
+                            arr = %flight.arr_airport,
+                            elevation_ft = elev,
+                            "arr airport elevation cached for HAT-based Stable-Approach-Gate"
+                        );
+                    }
+                }
+
+                // v0.19.3: WHERE IS THE ARRIVAL AIRPORT — the question the whole
+                // divert geometry rests on. Asked of all three sources, best
+                // first (see `airport_reference_pos`): Navigraph's active AIRAC
+                // cycle, then phpVMS, then the embedded OurAirports table.
+                //
+                // Re-resolved on every tick until Navigraph answers, because the
+                // navdata fetch is asynchronous and lands a few seconds into the
+                // flight: a first answer from a weaker source must not lock us
+                // out of the better one that is still on its way.
+                //
+                // The locks are taken one at a time, never nested — `step_flight`
+                // holds `stats` while it runs, so taking `navdata` underneath it
+                // would invert the order this block establishes.
+                let have_navigraph = {
+                    let stats_g = flight.stats.lock().expect("flight stats");
+                    stats_g.planned_arr_ref_source == ARR_REF_SOURCE_NAVIGRAPH
+                };
+                if !have_navigraph {
+                    let nav_pos = {
+                        let cache = flight.navdata.lock().expect("navdata lock");
+                        cache.reference_pos(&flight.arr_airport)
+                    };
+                    let phpvms_pos = {
+                        let app_state = app.state::<AppState>();
+                        let airports = app_state.airports.lock().expect("airports lock");
+                        airports
+                            .get(&flight.arr_airport.to_uppercase())
+                            .and_then(|a| a.lat.zip(a.lon))
+                    };
+                    let (pos, source) =
+                        airport_reference_pos(&flight.arr_airport, nav_pos, phpvms_pos);
+                    if let Some(pos) = pos {
+                        let mut stats_g = flight.stats.lock().expect("flight stats");
+                        if source > stats_g.planned_arr_ref_source {
+                            stats_g.planned_arr_ref_pos = Some(pos);
+                            stats_g.planned_arr_ref_source = source;
+                            tracing::info!(
+                                arr = %flight.arr_airport,
+                                lat = pos.0,
+                                lon = pos.1,
+                                source = match source {
+                                    ARR_REF_SOURCE_NAVIGRAPH => "navigraph",
+                                    ARR_REF_SOURCE_PHPVMS => "phpvms",
+                                    _ => "ourairports",
+                                },
+                                "arrival airport reference position resolved"
+                            );
                         }
                     }
                 }

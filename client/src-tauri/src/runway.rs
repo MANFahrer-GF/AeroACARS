@@ -22,6 +22,23 @@ use std::sync::OnceLock;
 /// is essentially static on human timescales.
 const RUNWAYS_CSV: &str = include_str!("../data/ourairports-runways.csv");
 
+/// Embedded snapshot of the ourairports **airports** table (ident, type,
+/// reference point). Same source, same public domain, same refresh cadence.
+///
+/// v0.19.3: added because every previous attempt to reason about airport
+/// geometry was crippled by not having it. The runways table alone cannot tell
+/// you where an airport *is*: for 74.7 % of them (one runway, two thresholds)
+/// there is no way to tell a good coordinate from a corrupt one, so a repair
+/// pass has to guess — and a guess put WAJI 5.2 nm from itself. Worse, 6,446
+/// real ICAO airports and effectively every heliport have no usable runway
+/// coordinates at all, so the client simply did not know where they were, and
+/// fell back on asking phpVMS at runtime (which it might or might not answer).
+///
+/// A published reference point per airport removes all of that: corrupt
+/// thresholds can be *identified* rather than guessed at, and every airport has
+/// a position even when its runways don't.
+const AIRPORTS_CSV: &str = include_str!("../data/ourairports-airports.csv");
+
 /// Mean Earth radius (meters) — same value used by the haversine formula
 /// throughout aviation tooling.
 const EARTH_RADIUS_M: f64 = 6_371_000.0;
@@ -60,6 +77,14 @@ struct RunwayRow {
     he_lat: f64,
     he_lon: f64,
     he_heading_true: f32,
+    /// v0.19.3: did the CSV actually STATE these headings, or did we compute
+    /// them from the two thresholds? It matters for the corrupt-coordinate
+    /// repair: a computed heading is derived from the very coordinate we are
+    /// trying to repair, so projecting along it would faithfully reproduce the
+    /// corruption. A stated heading is independent evidence — and it is precise,
+    /// where the runway's NAME is only rounded to 10° (using the name put KCLE's
+    /// repaired threshold 529 m from its true position).
+    headings_stated: bool,
 }
 
 /// Result of resolving a touchdown coordinate to a runway.
@@ -121,6 +146,43 @@ pub struct RunwayMatch {
 /// label. Real bug observed 2026-05-02.
 fn looks_like_icao(ident: &str) -> bool {
     ident.len() == 4 && ident.chars().all(|c| c.is_ascii_uppercase())
+}
+
+/// Published reference point of an airport (its official ARP), from the
+/// embedded airports table. `None` for an ident the table doesn't carry.
+///
+/// This is the airport's *position* — independent of its runway data, and
+/// therefore the thing that lets us judge whether that runway data is any good.
+/// It exists for every airport, including the ~6,400 ICAO fields and the 7,000+
+/// heliports whose runway rows have no coordinates.
+pub fn airport_reference(icao: &str) -> Option<(f64, f64)> {
+    airports_by_ident()
+        .get(&icao.trim().to_uppercase())
+        .copied()
+}
+
+fn airports_by_ident() -> &'static std::collections::HashMap<String, (f64, f64)> {
+    static CELL: OnceLock<std::collections::HashMap<String, (f64, f64)>> = OnceLock::new();
+    CELL.get_or_init(|| {
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .from_reader(AIRPORTS_CSV.as_bytes());
+        let mut map = std::collections::HashMap::with_capacity(90_000);
+        for rec in rdr.records().flatten() {
+            let (Some(ident), Some(lat), Some(lon)) = (rec.get(0), rec.get(2), rec.get(3)) else {
+                continue;
+            };
+            let (Ok(lat), Ok(lon)) = (lat.parse::<f64>(), lon.parse::<f64>()) else {
+                continue;
+            };
+            if !lat.is_finite() || !lon.is_finite() {
+                continue;
+            }
+            map.insert(ident.trim().to_uppercase(), (lat, lon));
+        }
+        tracing::debug!(count = map.len(), "airport reference points parsed");
+        map
+    })
 }
 
 /// Ident → row indices, built once alongside the table. Turns "give me the
@@ -194,10 +256,13 @@ fn runways() -> &'static Vec<RunwayRow> {
             // The CSV occasionally omits headings — fall back to a computed
             // bearing from the threshold to the far end. That's what real
             // ATC charts use anyway.
-            let le_heading = parse_f32(record.get(12))
+            let le_heading_csv = parse_f32(record.get(12));
+            let he_heading_csv = parse_f32(record.get(18));
+            let headings_stated = le_heading_csv.is_some() && he_heading_csv.is_some();
+            let le_heading = le_heading_csv
                 .unwrap_or_else(|| initial_bearing_deg(le_lat, le_lon, he_lat, he_lon) as f32);
             let he_ident = record.get(14).unwrap_or("").to_string();
-            let he_heading = parse_f32(record.get(18))
+            let he_heading = he_heading_csv
                 .unwrap_or_else(|| initial_bearing_deg(he_lat, he_lon, le_lat, le_lon) as f32);
 
             out.push(RunwayRow {
@@ -213,6 +278,7 @@ fn runways() -> &'static Vec<RunwayRow> {
                 he_lat,
                 he_lon,
                 he_heading_true: he_heading,
+                headings_stated,
             });
         }
         tracing::debug!(count = out.len(), "runway table parsed (raw)");
@@ -267,12 +333,41 @@ fn runways() -> &'static Vec<RunwayRow> {
         final_out
     })
 }
+/// A runway is, by definition, one runway-length from end to end. When the two
+/// stored thresholds are much farther apart than that, one of them is wrong —
+/// this is what identifies a corrupt row, and it needs no outside reference.
+///
+/// 3× the stated length (or 8 km when no length is given) is generous enough
+/// that no real runway trips it, and tight enough to catch KCLE's 06R threshold,
+/// which is stored 4 nm from the field: its row spans 13.3 km for a 3.0 km
+/// runway.
+fn row_is_internally_impossible(r: &RunwayRow) -> bool {
+    let end_to_end_m = haversine_m(r.le_lat, r.le_lon, r.he_lat, r.he_lon);
+    let length_m = r.length_ft as f64 * 0.3048;
+    let plausible_m = if length_m > 0.0 {
+        (length_m * 3.0).max(2_000.0)
+    } else {
+        8_000.0
+    };
+    end_to_end_m > plausible_m
+}
 
-/// How far a threshold may sit from the rest of its airport before we call it
-/// corrupt. Real airports span ~3 nm at the very most (UNNT, the widest in the
-/// table, measures 1.42 nm from its centre to its most remote apron), so 5 nm
-/// leaves generous room and still catches the bad data.
-const THRESHOLD_OUTLIER_NM: f64 = 5.0;
+/// A runway this far from its airport's published reference point is not that
+/// airport's runway (UUMU has one in Belgorod, 319 nm away; 12WV has one in
+/// Florida, 480 nm).
+///
+/// It must stay well clear of legitimate sprawl: measured over all 29,410
+/// thresholds that have a reference point, 99 % are within 1.71 nm and the
+/// largest genuine outlier is EHAM's Polderbaan at 3.77 nm. The corrupt ones do
+/// not sit just past the edge — they are hundreds or thousands of nautical miles
+/// out. 10 nm sits in the empty gap between the two populations.
+///
+/// Note this canNOT be used to detect KCLE's corruption: its bad threshold is
+/// 4.0 nm from the field — *inside* the legitimate band, and closer in than
+/// EHAM's Polderbaan. That is why corruption is identified by
+/// `row_is_internally_impossible` and the reference point is used only to decide
+/// WHICH end of a broken row is the bad one.
+const RUNWAY_MISPLACED_NM: f64 = 10.0;
 
 /// Repair — and where that's impossible, discard — thresholds that OurAirports
 /// has in the wrong place.
@@ -280,175 +375,172 @@ const THRESHOLD_OUTLIER_NM: f64 = 5.0;
 /// Two real corruptions, both of which poison everything downstream:
 ///
 ///   * **A truncated coordinate.** KCLE's 06R threshold is stored as
-///     41.300/-81.800 — four nautical miles south-east of the field. Its 24L
-///     end is perfectly correct.
+///     41.300/-81.800 — four nautical miles south-east of the field. Its 24L end
+///     is perfectly correct.
 ///   * **A wholly misplaced runway.** One UUMU row sits at 50.648/36.576 —
-///     Belgorod, 319 nm away. One HEBA row sits next to HEAX.
+///     Belgorod, 319 nm away.
 ///
-/// Either one drags the airport's geometry to a phantom location, so
+/// Either drags the airport's geometry to a phantom location, so
 /// `arrival::locate` would treat a 2 nm circle around the phantom as "on the
-/// field" — and a genuine divert there would be filed as a normal arrival
-/// without ever asking the pilot.
+/// field", and a genuine divert there would be filed as a normal arrival without
+/// ever asking the pilot.
 ///
-/// The first cut of this fix rejected the whole *row* when its two thresholds
-/// were implausibly far apart. That threw away KCLE's good 24L end with the bad
-/// 06R one, so a pilot landing on Cleveland 24L got no runway match at all — no
-/// touchdown zone, no rollout score. Worse, it didn't even catch the case it
-/// cited: a *wholly* misplaced runway is internally consistent, so the row
-/// looked fine.
+/// # The two questions, kept apart
 ///
-/// So: judge each threshold against the REST of its airport — but only where
-/// there *is* a rest to judge against.
+/// **Is this row broken?** Answered from the row itself — its ends are farther
+/// apart than the runway is long. Nothing external, so a sprawling airport
+/// cannot be mistaken for bad data. (Three earlier attempts at this pass failed
+/// precisely by conflating the two questions: judging "broken" by distance from
+/// some centre threw away EHAM's Polderbaan, which is legitimately 3.8 nm from
+/// the terminal, while missing KCLE's bad threshold, which is only 4.0 nm out.)
 ///
-///   * **Airport with ≥ 2 runways** (≥ 4 thresholds): the median position of the
-///     others is a real, robust reference. One bad end → reconstruct it by
-///     projecting from the good end along the runway's heading and length. KCLE
-///     24L keeps working, and 06R comes back where it belongs. Both ends bad →
-///     the runway is a fabrication → drop it.
-///   * **Airport with a single runway** (74.7 % of the table — 8,402 of 11,247):
-///     there is NO independent reference. The first cut of this pass took the
-///     "median" of the two thresholds, which per axis is simply *the larger
-///     coordinate* — a coin flip about which end is the truth. It lost that flip
-///     at WAJI (Mararena Sarmi): the good threshold was declared the outlier and
-///     projected next to the corrupt one, putting the whole airport 5.2 nm from
-///     where it is, breaking a field that had worked fine before. So here we do
-///     not guess: if the row is internally implausible (its two ends are much
-///     farther apart than the runway is long), we **drop it** and let the phpVMS
-///     reference-point fallback (`arrival::locate`) place the airport. Losing a
-///     runway match is a real cost; inventing an airport 5 nm from its true
-///     position is a worse one.
+/// **Which end is broken?** Answered by the published reference point — the one
+/// piece of evidence that is independent of the runway data. Without it the
+/// question is unanswerable, and the two earlier attempts guessed: one dropped
+/// the whole row (losing KCLE's good 24L threshold, and with it a real pilot's
+/// runway match), the other took the "median" of the two ends — which is simply
+/// the larger coordinate — and at WAJI declared the GOOD threshold the outlier,
+/// moving a working airport 5.2 nm from itself.
 fn repair_corrupt_thresholds(rows: &mut Vec<RunwayRow>) {
-    use std::collections::HashMap;
-
-    // Thresholds per airport, so we know whether an independent reference exists
-    // at all.
-    let mut points: HashMap<&str, (Vec<f64>, Vec<f64>)> = HashMap::new();
-    let mut row_count: HashMap<&str, usize> = HashMap::new();
-    for r in rows.iter() {
-        let e = points.entry(r.airport_ident.as_str()).or_default();
-        e.0.push(r.le_lat);
-        e.0.push(r.he_lat);
-        e.1.push(r.le_lon);
-        e.1.push(r.he_lon);
-        *row_count.entry(r.airport_ident.as_str()).or_default() += 1;
-    }
-    let median = |v: &mut Vec<f64>| -> f64 {
-        v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        v[v.len() / 2]
-    };
-    let centres: HashMap<String, (f64, f64)> = points
-        .into_iter()
-        .map(|(icao, (mut lats, mut lons))| {
-            (icao.to_string(), (median(&mut lats), median(&mut lons)))
-        })
-        .collect();
-    let single_runway: std::collections::HashSet<String> = row_count
-        .into_iter()
-        .filter(|(_, n)| *n < 2)
-        .map(|(icao, _)| icao.to_string())
-        .collect();
-
-    let max_m = THRESHOLD_OUTLIER_NM * 1852.0;
+    let misplaced_m = RUNWAY_MISPLACED_NM * 1852.0;
     let mut repaired = 0_u32;
     let mut dropped = 0_u32;
 
-    rows.retain_mut(|r| {
-        // ---- Single-runway airports: no reference, so no guessing. ----
-        if single_runway.contains(&r.airport_ident) {
-            let end_to_end_m = haversine_m(r.le_lat, r.le_lon, r.he_lat, r.he_lon);
-            let length_m = r.length_ft as f64 * 0.3048;
-            // A runway's two ends are, by definition, one runway-length apart.
-            // Allow 3× the stated length (or 8 km when the length is missing)
-            // before calling the row internally impossible.
-            let plausible_m = if length_m > 0.0 {
-                (length_m * 3.0).max(2_000.0)
-            } else {
-                8_000.0
-            };
-            if end_to_end_m > plausible_m {
-                dropped += 1;
-                tracing::debug!(
-                    ident = %r.airport_ident,
-                    end_to_end_m,
-                    length_m,
-                    "single-runway row dropped: ends implausibly far apart, and no \
-                     other runway to tell us which end is the bad one"
-                );
-                return false;
-            }
-            return true;
+    // Thresholds per airport, so a suspect runway can be checked against its
+    // siblings before we throw it away. This matters: sometimes it is the
+    // *reference point* that is wrong, not the runway. OurAirports puts FAHS's
+    // reference point 2,446 nm from the airport while its two runways are
+    // correct (verified against Navigraph, which agrees with the runways to
+    // within 1 nm). Judging by the reference point alone would have discarded
+    // two perfectly good runways.
+    let siblings: std::collections::HashMap<String, Vec<(f64, f64)>> = {
+        let mut m: std::collections::HashMap<String, Vec<(f64, f64)>> =
+            std::collections::HashMap::new();
+        for r in rows.iter() {
+            let e = m.entry(r.airport_ident.to_uppercase()).or_default();
+            e.push((r.le_lat, r.le_lon));
+            e.push((r.he_lat, r.he_lon));
         }
+        m
+    };
 
-        // ---- Multi-runway airports: the other runways are the reference. ----
-        let Some(&(clat, clon)) = centres.get(&r.airport_ident) else {
-            return true;
-        };
-        let le_bad = haversine_m(r.le_lat, r.le_lon, clat, clon) > max_m;
-        let he_bad = haversine_m(r.he_lat, r.he_lon, clat, clon) > max_m;
+    rows.retain_mut(|r| {
+        let reference = airport_reference(&r.airport_ident);
 
-        match (le_bad, he_bad) {
-            (false, false) => true,
-            // Both ends elsewhere: the runway as a whole is misplaced (UUMU in
-            // Belgorod). Nothing to reconstruct from — the row is a fabrication.
-            (true, true) => {
-                dropped += 1;
-                tracing::debug!(ident = %r.airport_ident, "runway row dropped: both thresholds far from the airport");
-                false
-            }
-            // Exactly one end is wrong: rebuild it from the good end, the
-            // runway heading and its published length.
-            _ => {
-                let length_m = r.length_ft as f64 * 0.3048;
-                if length_m < 50.0 {
-                    dropped += 1;
-                    return false;
-                }
-                // The heading must come from the runway's NAME, not from the
-                // stored bearing: an absent CSV heading was already replaced at
-                // parse time by the bearing between the two thresholds — one of
-                // which is the corrupt one we are trying to repair. Projecting
-                // along that bearing would just reproduce the corruption.
-                let (good_lat, good_lon, hdg) = if le_bad {
-                    let Some(h) = heading_from_ident(&r.he_ident) else {
-                        dropped += 1;
-                        return false;
-                    };
-                    (r.he_lat, r.he_lon, h)
-                } else {
-                    let Some(h) = heading_from_ident(&r.le_ident) else {
-                        dropped += 1;
-                        return false;
-                    };
-                    (r.le_lat, r.le_lon, h)
-                };
-                let (lat, lon) = project(good_lat, good_lon, hdg, length_m);
-                // Sanity: the reconstruction must land ON the airport. If it
-                // doesn't, our inputs were worse than we thought — drop the row
-                // rather than publish an invented threshold.
-                if haversine_m(lat, lon, clat, clon) > max_m {
+        // A runway that is internally consistent but sits far from the airport
+        // is either a misfiled runway (UUMU has one in Belgorod) or the symptom
+        // of a wrong reference point (FAHS). Ask the other runways which it is:
+        // a runway that agrees with its siblings is corroborated, and then the
+        // reference point is the odd one out.
+        if let Some((alat, alon)) = reference {
+            let le_m = haversine_m(r.le_lat, r.le_lon, alat, alon);
+            let he_m = haversine_m(r.he_lat, r.he_lon, alat, alon);
+            if le_m > misplaced_m && he_m > misplaced_m {
+                let corroborated = siblings
+                    .get(&r.airport_ident.to_uppercase())
+                    .map(|pts| {
+                        pts.iter()
+                            .filter(|(plat, plon)| {
+                                // Not this row's own two thresholds.
+                                haversine_m(*plat, *plon, r.le_lat, r.le_lon) > 1.0
+                                    && haversine_m(*plat, *plon, r.he_lat, r.he_lon) > 1.0
+                            })
+                            .any(|(plat, plon)| {
+                                haversine_m(*plat, *plon, r.le_lat, r.le_lon) <= misplaced_m
+                            })
+                    })
+                    .unwrap_or(false);
+                if !corroborated {
                     dropped += 1;
                     tracing::debug!(
                         ident = %r.airport_ident,
-                        "runway row dropped: reconstruction landed off the airport"
+                        "runway row dropped: far from the airport and unsupported by any \
+                         other runway there"
                     );
                     return false;
                 }
-                if le_bad {
-                    r.le_lat = lat;
-                    r.le_lon = lon;
-                } else {
-                    r.he_lat = lat;
-                    r.he_lon = lon;
-                }
-                repaired += 1;
-                tracing::debug!(
-                    ident = %r.airport_ident,
-                    runway = %r.le_ident,
-                    "runway threshold reconstructed from the opposite end (corrupt coordinate)"
-                );
-                true
+                // Corroborated: the runways agree with each other and it is the
+                // reference point that is wrong. Keep the runway, and do NOT let
+                // that reference point decide anything else about this row.
+                return true;
             }
         }
+
+        if !row_is_internally_impossible(r) {
+            return true;
+        }
+
+        // The row is broken. Which end?
+        let Some((alat, alon)) = reference else {
+            // No reference point → unanswerable. Drop the row rather than guess;
+            // `arrival::locate` still places the airport by other means.
+            dropped += 1;
+            tracing::debug!(
+                ident = %r.airport_ident,
+                "runway row dropped: ends implausibly far apart and no reference point                  to tell us which one is wrong"
+            );
+            return false;
+        };
+        let le_m = haversine_m(r.le_lat, r.le_lon, alat, alon);
+        let he_m = haversine_m(r.he_lat, r.he_lon, alat, alon);
+        let le_bad = le_m > he_m;
+
+        let length_m = r.length_ft as f64 * 0.3048;
+        if length_m < 50.0 {
+            dropped += 1;
+            return false;
+        }
+
+        // Heading source, in order of trustworthiness:
+        //   1. the CSV's stated heading — precise, and (unlike a bearing computed
+        //      between the thresholds) not derived from the corrupt coordinate we
+        //      are repairing;
+        //   2. the runway's NAME ("24L" → 240°) — independent, but magnetic and
+        //      rounded to 10°, which at KCLE alone would put the rebuilt threshold
+        //      529 m off. A last resort, not a default.
+        let (good_lat, good_lon, hdg) = if le_bad {
+            let stated = r.headings_stated.then_some(r.he_heading_true as f64);
+            let Some(h) = stated.or_else(|| heading_from_ident(&r.he_ident)) else {
+                dropped += 1;
+                return false;
+            };
+            (r.he_lat, r.he_lon, h)
+        } else {
+            let stated = r.headings_stated.then_some(r.le_heading_true as f64);
+            let Some(h) = stated.or_else(|| heading_from_ident(&r.le_ident)) else {
+                dropped += 1;
+                return false;
+            };
+            (r.le_lat, r.le_lon, h)
+        };
+
+        let (lat, lon) = project(good_lat, good_lon, hdg, length_m);
+        // The rebuilt threshold has to be plausibly at the airport. If it isn't,
+        // our inputs were worse than we thought — drop the row rather than
+        // publish an invented coordinate.
+        if haversine_m(lat, lon, alat, alon) > misplaced_m {
+            dropped += 1;
+            tracing::debug!(
+                ident = %r.airport_ident,
+                "runway row dropped: reconstruction landed nowhere near the airport"
+            );
+            return false;
+        }
+
+        if le_bad {
+            r.le_lat = lat;
+            r.le_lon = lon;
+        } else {
+            r.he_lat = lat;
+            r.he_lon = lon;
+        }
+        repaired += 1;
+        tracing::debug!(
+            ident = %r.airport_ident,
+            runway = %r.le_ident,
+            "runway threshold reconstructed from the opposite end"
+        );
+        true
     });
     tracing::debug!(repaired, dropped, "runway threshold repair pass");
 }
@@ -1240,6 +1332,27 @@ mod geo_search_tests {
         assert!(
             belgorod_nm > 100.0,
             "Belgorod still reads as {belgorod_nm:.0} nm from UUMU"
+        );
+    }
+
+    /// Sometimes it is the REFERENCE POINT that is wrong, not the runway — and
+    /// then throwing the runway away is the mistake.
+    ///
+    /// OurAirports puts FAHS's reference point 2,446 nm from the airport, while
+    /// its two runways are correct (Navigraph, the authoritative source Thomas
+    /// re-uploads every AIRAC cycle, agrees with the runways to within 1 nm).
+    /// A rule that judged runways purely by their distance from the reference
+    /// point would have discarded both.
+    ///
+    /// The tie-breaker is corroboration: runways that agree with each other
+    /// outvote a lone reference point.
+    #[test]
+    fn a_wrong_reference_point_does_not_cost_an_airport_its_runways() {
+        let n = rows_for_airport("FAHS").count();
+        assert!(
+            n >= 2,
+            "FAHS must keep its runways — the reference point is the thing that is \
+             wrong there, and the runways corroborate each other (kept: {n})"
         );
     }
 
