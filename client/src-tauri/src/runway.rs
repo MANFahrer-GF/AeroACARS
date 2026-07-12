@@ -161,6 +161,51 @@ pub fn airport_reference(icao: &str) -> Option<(f64, f64)> {
         .copied()
 }
 
+/// The nearest airport whose published reference point is within `max_nm` —
+/// EXCLUDING `exclude_icao`. Returns its ident and the distance in nm.
+///
+/// Answers "is this aircraft sitting on some *other* airport?" even when that
+/// airport has no usable runway geometry — which is the case for ~6,400 ICAO
+/// fields and effectively every heliport, i.e. exactly the ones the
+/// runway-threshold search cannot see. Without this, "the pilot is parked at a
+/// neighbouring field" and "the pilot put it down in a meadow short of his
+/// destination" look identical, and they must not: the first must not be allowed
+/// to file as a normal arrival, the second must.
+pub fn nearest_airport_reference(
+    lat: f64,
+    lon: f64,
+    max_nm: f64,
+    exclude_icao: &str,
+) -> Option<(String, f64)> {
+    if !lat.is_finite() || !lon.is_finite() {
+        return None;
+    }
+    let exclude = exclude_icao.trim().to_uppercase();
+    let max_m = max_nm * 1852.0;
+    // Coarse box first (1° lat ≈ 111 km; longitude shrinks with cos(lat)).
+    let lat_span = (max_m / 111_000.0).max(0.05);
+    let cos_lat = lat.to_radians().cos().abs().max(0.01);
+    let lon_span = (lat_span / cos_lat).min(180.0);
+
+    let mut best: Option<(String, f64)> = None;
+    for (icao, (alat, alon)) in airports_by_ident().iter() {
+        if *icao == exclude {
+            continue;
+        }
+        if (alat - lat).abs() > lat_span || lon_delta_deg(*alon, lon) > lon_span {
+            continue;
+        }
+        let d = haversine_m(lat, lon, *alat, *alon);
+        if d > max_m {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(_, bd)| d / 1852.0 < *bd) {
+            best = Some((icao.clone(), d / 1852.0));
+        }
+    }
+    best
+}
+
 fn airports_by_ident() -> &'static std::collections::HashMap<String, (f64, f64)> {
     static CELL: OnceLock<std::collections::HashMap<String, (f64, f64)>> = OnceLock::new();
     CELL.get_or_init(|| {

@@ -13484,14 +13484,26 @@ async fn metar_get(icao: String) -> Result<MetarSnapshot, UiError> {
 ///
 /// Used by `flight_end` to enforce "you have to actually be there to file".
 ///
-/// v0.19.3: measured with the SAME cascade as the arrival logic
-/// (`distance_to_airport_any_source`: runway thresholds first, phpVMS reference
-/// point as fallback). It used to be phpVMS-only, which made this the fourth
-/// independent notion of "where an airport is" in the client — and it meant a
-/// single bad coordinate in the phpVMS airports table could reject a pilot
-/// parked at the correct gate with `not_at_arrival`, with no way through except
-/// a manual PIREP (which forfeits ACARS auto-approval). Now phpVMS coordinates
-/// only decide when we have no runway geometry at all.
+/// v0.19.3: this gate has to answer "is the pilot at his destination" the same
+/// way `arrival::locate` does, or the two contradict each other about the same
+/// parked aircraft — and this one is the side that can BLOCK a filing.
+///
+/// It therefore takes the SHORTEST distance any of our sources reports, rather
+/// than believing the first one that answers:
+///
+///   * runway thresholds (OurAirports, embedded), and
+///   * the airport's reference point (Navigraph → phpVMS → OurAirports, see
+///     `airport_reference_pos`).
+///
+/// The reason is the same asymmetry `arrival::locate` documents. Wrongly saying
+/// "you are not there" locks a pilot out of ACARS filing at his own gate and
+/// leaves him only a manual PIREP (which forfeits auto-approval). Wrongly saying
+/// "you are there" merely lets him file a flight he flew. The runway table has
+/// airports whose geometry is plainly wrong (22 real ICAO fields have surviving
+/// thresholds more than 2 nm from their own reference point, 20 of them more
+/// than 5 nm), and an earlier cut of this function preferred that geometry
+/// whenever it existed — which would have blocked a correctly-parked pilot at
+/// every one of them.
 async fn compute_distance_to_airport(
     app: &AppHandle,
     state: &tauri::State<'_, AppState>,
@@ -13500,37 +13512,58 @@ async fn compute_distance_to_airport(
     let snap = current_snapshot(app)?;
     let key = icao.trim().to_uppercase();
 
-    // Runway geometry, when we have it — the same metric `arrival::locate` uses.
-    if let Some(m) = runway::distance_to_airport_m(&key, snap.lat, snap.lon) {
-        return Some(m / 1852.0);
-    }
+    let by_runway_nm =
+        runway::distance_to_airport_m(&key, snap.lat, snap.lon).map(|m| m / 1852.0);
 
-    // Cache hit: synchronous lookup, no network call.
+    // Navigraph, from the active flight's navdata cache — the best source we have.
+    let nav_pos = {
+        let guard = state.active_flight.lock().expect("active_flight lock");
+        guard.as_ref().and_then(|f| {
+            let cache = f.navdata.lock().expect("navdata lock");
+            cache.reference_pos(&key)
+        })
+    };
+
+    // phpVMS: cache first, network only on a miss.
     let cached: Option<Airport> = {
         let guard = state.airports.lock().expect("airports lock");
         guard.get(&key).cloned()
     };
-    let airport = match cached {
-        Some(a) => a,
+    let phpvms_airport = match cached {
+        Some(a) => Some(a),
         None => {
-            // Cache miss: fetch via phpVMS. Best-effort — if the lookup
-            // fails (network down, airport not in DB) we skip the check
-            // rather than blocking the file.
-            let client = state.client.lock().expect("client mutex").clone()?;
-            let fetched = client.get_airport(&key).await.ok()?;
-            let mut guard = state.airports.lock().expect("airports lock");
-            guard.insert(key.clone(), fetched.clone());
-            fetched
+            // Best-effort — if the lookup fails (network down, airport not in the
+            // DB) we simply have one source fewer.
+            let client = state.client.lock().expect("client mutex").clone();
+            match client {
+                Some(c) => match c.get_airport(&key).await {
+                    Ok(fetched) => {
+                        state
+                            .airports
+                            .lock()
+                            .expect("airports lock")
+                            .insert(key.clone(), fetched.clone());
+                        Some(fetched)
+                    }
+                    Err(_) => None,
+                },
+                None => None,
+            }
         }
     };
+    let phpvms_pos = phpvms_airport.and_then(|a| a.lat.zip(a.lon));
 
-    let lat = airport.lat?;
-    let lon = airport.lon?;
-    if lat == 0.0 && lon == 0.0 {
-        return None;
+    let (ref_pos, _source) = airport_reference_pos(&key, nav_pos, phpvms_pos);
+    let by_ref_nm =
+        ref_pos.map(|(la, lo)| ::geo::distance_m(snap.lat, snap.lon, la, lo) / 1852.0);
+
+    match (by_runway_nm, by_ref_nm) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        // No coordinates from any source — the caller must not gate on this.
+        (None, None) => None,
     }
-    let meters = ::geo::distance_m(snap.lat, snap.lon, lat, lon);
-    Some(meters / 1852.0)
 }
 
 /// File the active PIREP with computed final stats. Refuses to file if any
@@ -13693,17 +13726,50 @@ async fn flight_end(
     // condition, a pilot parked at KLGA could pick KJFK from the override list
     // and file a clean, auto-approved KJFK arrival. If he really is at another
     // field, the honest options are the divert path or a manual PIREP.
+    // Is the aircraft standing on some OTHER airport?
+    //
+    // Not "can we NAME the other airport" — that is what an earlier cut of this
+    // guard asked, and it left the hole half open. `hint.actual_icao` is filled
+    // from the runway table, which cannot name ~6,400 ICAO fields or any
+    // heliport; for those the hint says "off airport", indistinguishable from a
+    // meadow. There are 1,856 real ICAO pairs 5–15 nm apart whose second field is
+    // unnameable that way (EDDK/EDKB 5.2 nm, LFPG/LFPH 5.9 nm), and at every one
+    // of them a pilot could have confirmed the planned airport and filed a clean,
+    // auto-approved arrival while parked somewhere else entirely.
+    //
+    // The reference points know those fields. Asking THEM keeps the distinction
+    // the relaxation depends on: parked at a neighbouring airport (no
+    // relaxation — file the divert, or file manually) versus genuinely off-field
+    // short of the destination (relaxation — he is the one who knows where he is).
     let standing_on_another_field = {
-        let stats = {
+        let (hint, pos) = {
             let guard = state.active_flight.lock().expect("active_flight lock");
-            guard
-                .as_ref()
-                .and_then(|f| f.stats.lock().ok().map(|s| s.divert_hint.clone()))
+            match guard.as_ref() {
+                Some(f) => {
+                    let s = f.stats.lock().expect("flight stats");
+                    (
+                        s.divert_hint.clone(),
+                        s.last_lat.zip(s.last_lon),
+                    )
+                }
+                None => (None, None),
+            }
         };
-        stats
-            .flatten()
-            .and_then(|h| h.actual_icao)
-            .is_some_and(|icao| !icao.eq_ignore_ascii_case(arr_icao.trim()))
+        let named_other = hint
+            .as_ref()
+            .and_then(|h| h.actual_icao.as_deref())
+            .is_some_and(|icao| !icao.eq_ignore_ascii_case(arr_icao.trim()));
+        let on_unnamed_other = hint.is_some()
+            && pos.is_some_and(|(la, lo)| {
+                runway::nearest_airport_reference(
+                    la,
+                    lo,
+                    arrival::ON_FIELD_FALLBACK_RADIUS_NM,
+                    arr_icao.trim(),
+                )
+                .is_some()
+            });
+        named_other || on_unnamed_other
     };
     let pilot_confirmed_planned = divert_to
         .as_deref()
@@ -18799,6 +18865,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // whole flight, which is exactly the bug this fallback exists to fix.
         // Bounded so a phpVMS outage cannot become a per-tick request storm.
         let mut arr_ref_pos_attempts: u8 = 0;
+        // Streamer ticks since the flight started. Only used to space the
+        // arrival-reference-position retries out over the flight instead of
+        // burning them all in the first seconds.
+        let mut tick_count: u32 = 0;
         // Heartbeat tracker: ensures `POST /pireps/{id}/update` fires at
         // least every `HEARTBEAT_INTERVAL` so phpVMS's RemoveExpiredLiveFlights
         // cron never reaches the inactivity threshold. Initialised one
@@ -19334,6 +19404,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // state.airports liefert sie sobald airport_get aufgerufen
             // wurde (passiert beim Bid-Pickup ueblicherweise schon).
             // Ohne Elevation: Fallback auf AGL-Filter, used_hat=false.
+            tick_count = tick_count.wrapping_add(1);
             {
                 let need_elev = {
                     let stats_g = flight.stats.lock().expect("flight stats");
@@ -19419,12 +19490,22 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 /// A transient error must not cost the whole flight; an outage
                 /// must not cost a request per tick.
                 const ARR_REF_POS_MAX_ATTEMPTS: u8 = 5;
+                /// Ticks between attempts. Without spacing, all five attempts
+                /// burn in the first seconds of the flight — the moment most
+                /// likely to hit a cold connection — and a single blip at the
+                /// gate would then disable the arrival geometry for the whole
+                /// leg, which is exactly the failure this fetch exists to
+                /// prevent. ~30 ticks is minutes, and the answer is not needed
+                /// until the aircraft is on the ground again.
+                const ARR_REF_POS_RETRY_EVERY_TICKS: u32 = 30;
 
                 let missing = {
                     let stats_g = flight.stats.lock().expect("flight stats");
                     stats_g.planned_arr_ref_pos.is_none()
                 };
-                if missing && arr_ref_pos_attempts < ARR_REF_POS_MAX_ATTEMPTS {
+                let due = arr_ref_pos_attempts == 0
+                    || tick_count.is_multiple_of(ARR_REF_POS_RETRY_EVERY_TICKS);
+                if missing && due && arr_ref_pos_attempts < ARR_REF_POS_MAX_ATTEMPTS {
                     arr_ref_pos_attempts += 1;
                     let key = flight.arr_airport.to_uppercase();
                     // The streamer's OWN client — reading it back out of AppState
