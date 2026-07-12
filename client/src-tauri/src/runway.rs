@@ -158,7 +158,7 @@ fn looks_like_icao(ident: &str) -> bool {
 pub fn airport_reference(icao: &str) -> Option<(f64, f64)> {
     airports_by_ident()
         .get(&icao.trim().to_uppercase())
-        .copied()
+        .map(|a| (a.lat, a.lon))
 }
 
 /// The nearest airport whose published reference point is within `max_nm` —
@@ -188,14 +188,15 @@ pub fn nearest_airport_reference(
     let lon_span = (lat_span / cos_lat).min(180.0);
 
     let mut best: Option<(String, f64)> = None;
-    for (icao, (alat, alon)) in airports_by_ident().iter() {
-        if *icao == exclude {
+    for (icao, entry) in airports_by_ident().iter() {
+        if *icao == exclude || !entry.landable {
             continue;
         }
-        if (alat - lat).abs() > lat_span || lon_delta_deg(*alon, lon) > lon_span {
+        let (alat, alon) = (entry.lat, entry.lon);
+        if (alat - lat).abs() > lat_span || lon_delta_deg(alon, lon) > lon_span {
             continue;
         }
-        let d = haversine_m(lat, lon, *alat, *alon);
+        let d = haversine_m(lat, lon, alat, alon);
         if d > max_m {
             continue;
         }
@@ -206,15 +207,45 @@ pub fn nearest_airport_reference(
     best
 }
 
-fn airports_by_ident() -> &'static std::collections::HashMap<String, (f64, f64)> {
-    static CELL: OnceLock<std::collections::HashMap<String, (f64, f64)>> = OnceLock::new();
+/// One airport's reference point, plus whether an aircraft could actually have
+/// come to rest there.
+#[derive(Debug, Clone, Copy)]
+struct AirportRef {
+    lat: f64,
+    lon: f64,
+    /// A field an AEROPLANE could have come to rest on: an airport or a water
+    /// base. Not a closed field (13,332 of those), not a balloonport — and not
+    /// a heliport (23,116 of those).
+    ///
+    /// This exists for one question: "is this aircraft standing on some OTHER
+    /// airport?" (`nearest_airport_reference`), which decides whether a pilot may
+    /// confirm his planned destination as his actual landing site.
+    ///
+    /// Counting every ident answers "yes" almost anywhere near a city: 59 % of
+    /// plausible off-field spots around a major airport have SOMETHING within
+    /// 3 nm. Even at 1 nm, a hospital helipad is enough — and an A340 did not
+    /// land on a hospital helipad. Blocking the honest pilot who put it down in a
+    /// field short of his destination, because there is a helipad 0.9 nm away, is
+    /// exactly the kind of nonsense this whole rewrite exists to end.
+    ///
+    /// (A helicopter that sets down on another PAD is not covered by this test —
+    /// its hint carries no ICAO either, since the runway table has no heliport
+    /// geometry. That gap is known and narrow: the flight is a rotorcraft
+    /// operation whose pilot is filing by hand anyway.)
+    landable: bool,
+}
+
+fn airports_by_ident() -> &'static std::collections::HashMap<String, AirportRef> {
+    static CELL: OnceLock<std::collections::HashMap<String, AirportRef>> = OnceLock::new();
     CELL.get_or_init(|| {
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(true)
             .from_reader(AIRPORTS_CSV.as_bytes());
         let mut map = std::collections::HashMap::with_capacity(90_000);
         for rec in rdr.records().flatten() {
-            let (Some(ident), Some(lat), Some(lon)) = (rec.get(0), rec.get(2), rec.get(3)) else {
+            let (Some(ident), Some(kind), Some(lat), Some(lon)) =
+                (rec.get(0), rec.get(1), rec.get(2), rec.get(3))
+            else {
                 continue;
             };
             let (Ok(lat), Ok(lon)) = (lat.parse::<f64>(), lon.parse::<f64>()) else {
@@ -223,7 +254,14 @@ fn airports_by_ident() -> &'static std::collections::HashMap<String, (f64, f64)>
             if !lat.is_finite() || !lon.is_finite() {
                 continue;
             }
-            map.insert(ident.trim().to_uppercase(), (lat, lon));
+            let landable = matches!(
+                kind,
+                "large_airport" | "medium_airport" | "small_airport" | "seaplane_base"
+            );
+            map.insert(
+                ident.trim().to_uppercase(),
+                AirportRef { lat, lon, landable },
+            );
         }
         tracing::debug!(count = map.len(), "airport reference points parsed");
         map
@@ -1399,6 +1437,54 @@ mod geo_search_tests {
             "FAHS must keep its runways — the reference point is the thing that is \
              wrong there, and the runways corroborate each other (kept: {n})"
         );
+    }
+
+    /// "Is the aircraft standing on some OTHER airport?" — the question that
+    /// decides whether a pilot may confirm his planned destination as his actual
+    /// landing site (see `standing_on_another_field` in lib.rs).
+    ///
+    /// It has to say YES at a neighbouring airport, and NO in a field. The first
+    /// cut counted every ident in the table — including 23,116 heliports and
+    /// 13,332 CLOSED fields — within 3 nm, which answers "yes" for 59 % of
+    /// plausible off-field spots around a major airport. That would have blocked
+    /// the honest pilot this path exists to serve.
+    #[test]
+    fn standing_on_a_neighbouring_airport_is_recognised() {
+        // Parked at LFPB (Le Bourget) on a flight planned to LFPG. 5.4 nm apart.
+        let lfpb = (48.9694, 2.4414);
+        let hit = nearest_airport_reference(lfpb.0, lfpb.1, 1.0, "LFPG");
+        assert_eq!(
+            hit.as_ref().map(|(i, _)| i.as_str()),
+            Some("LFPB"),
+            "an aircraft parked at Le Bourget is standing on Le Bourget"
+        );
+    }
+
+    #[test]
+    fn a_field_short_of_the_destination_is_not_another_airport() {
+        // ~6 nm north-east of EDDF, off-airport (the Frankfurt city forest).
+        let off_field = (50.1100, 8.6600);
+        let hit = nearest_airport_reference(off_field.0, off_field.1, 1.0, "EDDF");
+        assert!(
+            hit.is_none(),
+            "an off-field landing near the destination must not read as 'standing \
+             on another airport' (got {hit:?})"
+        );
+    }
+
+    /// Closed fields and helipads are not places an AEROPLANE comes to rest —
+    /// but they stay in the table, because they still have reference points.
+    #[test]
+    fn heliports_and_closed_fields_are_not_places_an_aeroplane_parks() {
+        let idx = airports_by_ident();
+        let not_landable = idx.values().filter(|a| !a.landable).count();
+        assert!(
+            not_landable > 30_000,
+            "heliports (23k) and closed fields (13k) must not count as somewhere an \
+             aeroplane could be standing: {not_landable}"
+        );
+        // …and they are still reachable as reference points.
+        assert!(airport_reference("EDDF").is_some());
     }
 
     #[test]

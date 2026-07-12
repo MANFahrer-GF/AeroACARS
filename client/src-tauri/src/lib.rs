@@ -794,6 +794,20 @@ const MAX_FILE_DISTANCE_NM: f64 = 5.0;
 /// goes to admin review.
 const PILOT_CONFIRMED_ARRIVAL_MAX_NM: f64 = 15.0;
 
+/// How close to another airport's reference point an aircraft has to be before
+/// we say it is STANDING ON that airport (and therefore may not confirm the
+/// planned one — see `standing_on_another_field`).
+///
+/// v0.19.3: deliberately tight, and deliberately not the on-field radius used
+/// elsewhere. The question here is not "is there an airport nearby" but "is the
+/// aircraft on it". Measured against the airports table: a 3 nm radius answers
+/// "yes" for 59 % of plausible off-field spots around a major airport, and even
+/// counting only landable fields, 36 % at 2 nm — which would have blocked the
+/// very pilot this relaxation exists for, the one who put it down in a field
+/// short of his destination and said so. At 1 nm it is 11 %, and those are spots
+/// that genuinely sit on top of another field.
+const STANDING_ON_OTHER_FIELD_NM: f64 = 1.0;
+
 // v0.12.10: `clean_atc_model` ist nach `sim-core` gezogen, damit der
 // MSFS-Telemetrie-Adapter den `ATC MODEL` schon bei der Erfassung
 // bereinigt (BlackSquare-Caravan-Bug: roher Token `ATCCOM.AC_MODEL
@@ -13857,7 +13871,7 @@ async fn flight_end(
                 runway::nearest_airport_reference(
                     la,
                     lo,
-                    arrival::ON_FIELD_FALLBACK_RADIUS_NM,
+                    STANDING_ON_OTHER_FIELD_NM,
                     arr_icao.trim(),
                 )
                 .is_some()
