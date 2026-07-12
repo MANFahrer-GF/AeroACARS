@@ -791,8 +791,30 @@ pub struct PirepPayload {
     pub dep_gate: Option<String>,
     pub arr_gate: Option<String>,
     pub approach_runway: Option<String>,
+    /// A divert that actually *happened*: the pilot confirmed it and the PIREP
+    /// was filed against a different arrival airport than planned. Consumers
+    /// (Discord "DIVERT filed" embed, webapp DIVERT pill) may treat this as
+    /// fact.
+    ///
+    /// v0.19.3: this used to be set from a mere FSM *suspicion* as well, so a
+    /// perfectly normal arrival that tripped the (broken) divert detection was
+    /// announced to Discord as a filed divert while phpVMS recorded a normal
+    /// arrival — the two systems then disagreed about the same flight forever.
+    /// A suspicion now travels in `divert_suspected` below and is nobody's
+    /// fact.
     pub divert: Option<bool>,
     pub diverted_to: Option<String>,
+    /// The FSM *suspected* a divert (aircraft not on the planned field at
+    /// shutdown) but the pilot did not file one. Diagnostic signal only —
+    /// audit trails and support may read it; nothing may render it as a divert
+    /// that happened.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub divert_suspected: Option<bool>,
+    /// Field the FSM suspected the aircraft ended up on, when it could name
+    /// one. `None` with `divert_suspected = Some(true)` means "off any known
+    /// field".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub divert_suspected_icao: Option<String>,
     pub notes: Option<String>,
     /// v0.7.0 — Touchdown-Forensik-Version-Marker.
     /// 1 = legacy single-shot edge mit vs_at_edge override

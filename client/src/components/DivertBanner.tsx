@@ -294,9 +294,11 @@ interface ManualProps {
 
 /**
  * Modal that opens from the divert banner's "override" button.
- * Loads the 5 nearest airports from the local DB (via the new
+ * Loads the 5 nearest airports from the local DB (via the
  * `divert_nearest_airports` Tauri command, which queries
- * runway::find_nearest_airports against the touchdown coords) and
+ * runway::find_nearest_airports against the touchdown coords — v0.19.3;
+ * before that it searched from the *current* position despite this comment,
+ * so a long taxi-in could offer the wrong field at an airport cluster) and
  * lets the pilot pick one — or type a custom ICAO if their actual
  * landing field isn't in the runways table.
  *

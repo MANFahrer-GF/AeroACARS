@@ -123,6 +123,38 @@ fn looks_like_icao(ident: &str) -> bool {
     ident.len() == 4 && ident.chars().all(|c| c.is_ascii_uppercase())
 }
 
+/// Ident → row indices, built once alongside the table. Turns "give me the
+/// runways of EDDF" from a 48k-row linear scan into a hash lookup plus a
+/// handful of rows.
+///
+/// This is what makes a per-tick `distance_to_airport_m` affordable, and it
+/// is why the callers that used to memoize an airport's position to dodge the
+/// scan (`divert_prefetch_decision`) no longer need to: the scan is gone.
+fn runways_by_ident() -> &'static std::collections::HashMap<String, Vec<u32>> {
+    static CELL: OnceLock<std::collections::HashMap<String, Vec<u32>>> = OnceLock::new();
+    CELL.get_or_init(|| {
+        let mut map: std::collections::HashMap<String, Vec<u32>> =
+            std::collections::HashMap::with_capacity(24_000);
+        for (i, row) in runways().iter().enumerate() {
+            map.entry(row.airport_ident.to_uppercase())
+                .or_default()
+                .push(i as u32);
+        }
+        map
+    })
+}
+
+/// Rows belonging to one airport ident (case-insensitive). Empty slice when
+/// the ident isn't in the table.
+fn rows_for_airport(icao: &str) -> impl Iterator<Item = &'static RunwayRow> {
+    let table = runways();
+    let idx = runways_by_ident()
+        .get(&icao.trim().to_uppercase())
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
+    idx.iter().map(move |i| &table[*i as usize])
+}
+
 /// Parse the embedded CSV exactly once. The OnceLock means concurrent
 /// callers from a thread pool don't race on parsing — first one through
 /// the door does the work, everyone else waits on the lock and reads
@@ -252,23 +284,47 @@ fn parse_f32(s: Option<&str>) -> Option<f32> {
 /// Returns `None` when the ident isn't in the OurAirports table
 /// (uncommon strips, military closed fields, etc.).
 pub fn airport_position(icao: &str) -> Option<(f64, f64)> {
-    let table = runways();
-    let needle = icao.trim().to_uppercase();
     let mut sum_lat = 0.0_f64;
     let mut sum_lon = 0.0_f64;
     let mut count = 0_u32;
-    for row in table.iter() {
-        if row.airport_ident.eq_ignore_ascii_case(&needle) {
-            sum_lat += (row.le_lat + row.he_lat) / 2.0;
-            sum_lon += (row.le_lon + row.he_lon) / 2.0;
-            count += 1;
-        }
+    for row in rows_for_airport(icao) {
+        sum_lat += (row.le_lat + row.he_lat) / 2.0;
+        sum_lon += (row.le_lon + row.he_lon) / 2.0;
+        count += 1;
     }
     if count == 0 {
         None
     } else {
         Some((sum_lat / count as f64, sum_lon / count as f64))
     }
+}
+
+/// Distance in meters from a point to the *nearest runway threshold* of
+/// the given airport — the one metric the whole app uses to answer "is
+/// the aircraft on this field". Returns `None` when the ident isn't in
+/// the embedded table.
+///
+/// Why not `airport_position()`: that returns the centroid of the runway
+/// layout, which is not a point on the field in any useful sense at a
+/// large airport. At EDDF the centroid is dragged ~1.5 nm south-west by
+/// runway 18 (Startbahn West), so a stand at Terminal 2 measures 2.04 nm
+/// from the centroid while sitting 0.30 nm off the 07C threshold. Feeding
+/// centroid distance into an on-field radius while `find_nearest_airports`
+/// feeds threshold distance into the *same* radius is what produced the
+/// "landed at EDDF instead of planned EDDF" divert banner. Both probes now
+/// answer with the same geometry, so they can no longer contradict each
+/// other about the same airport.
+///
+/// This is deliberately the same `min(le, he)` per-runway measure that
+/// `find_nearest_airports` uses — see the note there.
+pub fn distance_to_airport_m(icao: &str, lat: f64, lon: f64) -> Option<f64> {
+    let mut best: Option<f64> = None;
+    for row in rows_for_airport(icao) {
+        let d = haversine_m(lat, lon, row.le_lat, row.le_lon)
+            .min(haversine_m(lat, lon, row.he_lat, row.he_lon));
+        best = Some(best.map_or(d, |b: f64| b.min(d)));
+    }
+    best
 }
 
 /// Great-circle distance in meters between two WGS84 points.
