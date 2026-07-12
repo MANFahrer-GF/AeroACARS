@@ -187,7 +187,8 @@ pub fn locate(
     }
 
     // Off the planned field. Which field, if any, are we on instead?
-    let nearest = runway::find_nearest_airports(lat, lon, NEAREST_SEARCH_RADIUS_NM * 1852.0, 1)
+    let nearest =
+        runway::find_nearest_icao_airports(lat, lon, NEAREST_SEARCH_RADIUS_NM * 1852.0, 1)
         .into_iter()
         .next()
         .filter(|na| na.distance_m / 1852.0 <= ON_FIELD_RADIUS_NM);
@@ -696,7 +697,7 @@ mod tests {
             assert!(site.is_at_planned());
 
             // Now ask the same geometry the divert path uses, directly.
-            for a in runway::find_nearest_airports(lat, lon, 10.0 * 1852.0, 10) {
+            for a in runway::find_nearest_icao_airports(lat, lon, 10.0 * 1852.0, 10) {
                 assert!(
                     a.icao.len() == 4 && a.icao.chars().all(|c| c.is_ascii_uppercase()),
                     "nearest-airport search returned a non-ICAO ident: {}",

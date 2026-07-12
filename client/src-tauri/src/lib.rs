@@ -777,6 +777,23 @@ const MAX_START_DISTANCE_NM: f64 = 5.0;
 /// fine — same airport, same check.
 const MAX_FILE_DISTANCE_NM: f64 = 5.0;
 
+/// v0.19.3: how far from the planned field a pilot's own confirmation ("yes,
+/// this is where I ended up", via the divert banner's override) may relax the
+/// `not_at_arrival` gate.
+///
+/// The confirmation exists for a real case: an off-field landing a few miles
+/// short of the destination raises a targetless divert hint, and the pilot then
+/// picks the planned airport from the override list — correctly, because that IS
+/// the field he was going to. Without the relaxation he would be told
+/// `not_at_arrival` with no way through.
+///
+/// But it must not become a bypass. The override list includes the planned
+/// airport, so two clicks from a cockpit 200 nm away would otherwise produce a
+/// clean, auto-approved arrival PIREP with nothing recording the distance.
+/// Beyond this bound the pilot files manually — the path that is audited and
+/// goes to admin review.
+const PILOT_CONFIRMED_ARRIVAL_MAX_NM: f64 = 15.0;
+
 // v0.12.10: `clean_atc_model` ist nach `sim-core` gezogen, damit der
 // MSFS-Telemetrie-Adapter den `ATC MODEL` schon bei der Erfassung
 // bereinigt (BlackSquare-Caravan-Bug: roher Token `ATCCOM.AC_MODEL
@@ -7097,7 +7114,9 @@ fn divert_nearest_airports(
             },
         }
     };
-    Ok(runway::find_nearest_airports(
+    // ICAO-only: whatever the pilot picks here becomes the PIREP's arrival
+    // airport in phpVMS, which cannot resolve an FAA local code like "48FA".
+    Ok(runway::find_nearest_icao_airports(
         lat,
         lon,
         arrival::NEAREST_SEARCH_RADIUS_NM * 1852.0,
@@ -13621,13 +13640,29 @@ async fn flight_end(
     // file a flight from 200 nm out — they have to taxi to the gate or
     // file as a manual divert via flight_end_manual.
     //
-    // SKIPPED when filing as a divert (by definition the pilot is NOT at the
-    // planned arrival — that's the whole point), and when the pilot has just
-    // explicitly confirmed the planned field as his actual landing site.
-    let distance_to_arr_nm = if divert_to.is_some() || pilot_confirmed_planned {
+    // SKIPPED when filing as a divert — by definition the pilot is NOT at the
+    // planned arrival, that's the whole point.
+    let measured_arr_nm = if divert_to.is_some() {
         None
     } else {
         compute_distance_to_airport(&app, &state, &arr_icao).await
+    };
+
+    // The pilot confirming the planned field relaxes the gate — but only within
+    // reach of it. Without a bound, the confirm path is a hole straight through
+    // every check we have: the divert picker lists the planned airport (with a
+    // "· planned" badge), so two clicks from a cockpit 200 nm away produced a
+    // clean, ACARS-auto-approved arrival PIREP with nothing anywhere recording
+    // that the aircraft was nowhere near. Inside the bound we trust him (an
+    // off-field landing a few miles short is a real thing, and he is the one
+    // who knows); beyond it he has to file manually, which is the audited path.
+    let distance_to_arr_nm = if pilot_confirmed_planned {
+        match measured_arr_nm {
+            Some(d) if d > PILOT_CONFIRMED_ARRIVAL_MAX_NM => Some(d), // gate stays armed
+            _ => None,
+        }
+    } else {
+        measured_arr_nm
     };
 
     // Validate WITHOUT removing the flight from state, so a failed validation
@@ -13786,6 +13821,28 @@ async fn flight_end(
         let distance_nm = stats.distance_nm;
         let fields = build_pirep_fields(&flight, &stats, effective_arr);
         let mut notes = build_pirep_notes(&flight, &stats, effective_arr);
+        // v0.19.3: the pilot told us he ended up at the planned field although
+        // the FSM did not place him there. That statement is why this PIREP is
+        // being filed normally instead of being blocked — so it goes into the
+        // record, together with the distance we actually measured and the reason
+        // he typed. Previously the reason was demanded by the UI and then
+        // silently dropped, and nothing anywhere said the aircraft had not been
+        // where the PIREP claims.
+        if pilot_confirmed_planned {
+            let dist_line = measured_arr_nm
+                .map(|d| format!(" (gemessen: {d:.1} nm vom Ziel)"))
+                .unwrap_or_default();
+            let reason_line = divert_reason
+                .as_deref()
+                .map(|r| format!("\nBegründung: {r}"))
+                .unwrap_or_default();
+            notes = format!(
+                "ANKUNFT VOM PILOTEN BESTÄTIGT: {arr_icao}{dist_line}\n\
+                 Die automatische Erkennung hat den Flug nicht am Zielflughafen \
+                 verortet; der Pilot hat {arr_icao} als tatsächlichen Landeplatz \
+                 bestätigt.{reason_line}\n\n{notes}"
+            );
+        }
         // Prepend a divert banner to the notes so the VA admin sees
         // immediately on the PIREP page that this wasn't a normal
         // arrival. Format mirrors what most ACARS clients write
@@ -18646,6 +18703,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
     }
     tauri::async_runtime::spawn(async move {
         tracing::info!(pirep_id = %flight.pirep_id, "position streamer started");
+        // v0.19.3: one-shot guard for the arrival-airport reference-position
+        // fetch (the divert-geometry fallback). Set on the first attempt, hit or
+        // miss, so a phpVMS outage cannot turn into a per-tick request storm.
+        let mut arr_ref_pos_fetch_attempted = false;
         // Heartbeat tracker: ensures `POST /pireps/{id}/update` fires at
         // least every `HEARTBEAT_INTERVAL` so phpVMS's RemoveExpiredLiveFlights
         // cron never reaches the inactivity threshold. Initialised one
@@ -19214,6 +19275,56 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     lat = pos.0,
                                     lon = pos.1,
                                     "arr airport reference position cached (divert-geometry fallback)"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            // v0.19.3: the block above reads the phpVMS airport CACHE only, and
+            // that cache is filled by the UI (usually at bid pickup). In a
+            // session where the frontend never fetched the arrival airport it
+            // stays empty — and then the divert-geometry fallback silently does
+            // nothing, which would make the detection work or not work depending
+            // on what the pilot happened to click. Fetch it once, ourselves.
+            {
+                let missing = {
+                    let stats_g = flight.stats.lock().expect("flight stats");
+                    stats_g.planned_arr_ref_pos.is_none()
+                };
+                if missing && !arr_ref_pos_fetch_attempted {
+                    arr_ref_pos_fetch_attempted = true; // once per session, hit or miss
+                    let key = flight.arr_airport.to_uppercase();
+                    let client = {
+                        let app_state = app.state::<AppState>();
+                        let c = app_state.client.lock().expect("client mutex").clone();
+                        c
+                    };
+                    if let Some(client) = client {
+                        match client.get_airport(&key).await {
+                            Ok(airport) => {
+                                let app_state = app.state::<AppState>();
+                                app_state
+                                    .airports
+                                    .lock()
+                                    .expect("airports lock")
+                                    .insert(key.clone(), airport.clone());
+                                if let Some(pos) = airport.lat.zip(airport.lon) {
+                                    let mut stats_g =
+                                        flight.stats.lock().expect("flight stats");
+                                    stats_g.planned_arr_ref_pos = Some(pos);
+                                    tracing::info!(
+                                        arr = %key,
+                                        "arr airport reference position fetched (divert-geometry fallback)"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    arr = %key,
+                                    error = %e,
+                                    "could not fetch arr airport reference position — \
+                                     divert detection falls back to runway geometry only"
                                 );
                             }
                         }
@@ -19809,11 +19920,14 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 Some(trusted)
                             },
                             runway_geometry_reason: {
+                                // Dieselben Eingaben wie `runway_geometry_trusted`
+                                // direkt darüber — sonst liefert derselbe Check
+                                // zwei Antworten über EINE Landung
+                                // (trusted=true + reason="icao_mismatch").
                                 let (_, reason) = runway_geometry_trust_check(
                                     rwy_match.map(|m| m.airport_ident.as_str()),
                                     &flight.arr_airport,
-                                    stats.divert_hint.as_ref()
-                                        .and_then(|h| h.actual_icao.as_deref()),
+                                    td_actual_icao.as_deref(),
                                     rwy_match.map(|m| m.centerline_distance_m as f32),
                                     stats.landing_float_distance_m,
                                 );
@@ -21227,8 +21341,9 @@ fn divert_prefetch_decision(
     }
 
     // Nearest field to the current position, within the committed-approach
-    // radius.
-    let nearby = runway::find_nearest_airports(
+    // radius. ICAO-only: the result is a navdata cache key, and navdata is
+    // published per ICAO.
+    let nearby = runway::find_nearest_icao_airports(
         snap.lat,
         snap.lon,
         DIVERT_PREFETCH_MAX_DIST_NM * 1852.0,
@@ -23658,6 +23773,27 @@ fn step_flight_at(
             stats.planned_arr_ref_pos,
         );
         let near_planned = site.is_at_planned();
+        // v0.19.3: "the aircraft has come to rest ON an airport" — the planned
+        // one, or a different one we can name. This is what the relaxed arrival
+        // paths below key on, NOT `near_planned`.
+        //
+        // Why: before v0.19.3, "no geometry for this field" meant `near_planned
+        // = true`, so at every heliport and every geometry-less field the
+        // relaxed paths were unconditionally armed. Now that we can actually
+        // measure (via the phpVMS reference point), keying them on `near_planned`
+        // alone would DISARM them wherever the aircraft is not at the planned
+        // field — a helicopter with rotors turning, or a Contrail FA50 whose
+        // engine count is stuck at 3 and can never satisfy engines-off, would
+        // then never reach `Arrived` at all: no auto-file, and no divert banner
+        // either (the hint is only minted inside this fallback). "File it wrongly
+        // as a normal arrival" was bad; "file nothing and say nothing" is worse.
+        //
+        // Standing still on a field we can name is an arrival — the divert hint
+        // below then asks the pilot WHICH field. Off-field (no airport under the
+        // wheels) keeps the strict engines-off requirement, so a rotors-running
+        // intermediate stop in a meadow still cannot end a flight.
+        let settled_on_a_field =
+            near_planned || matches!(site, arrival::ArrivalSite::AtOtherAirport { .. });
 
         // v0.7.5 Phase-Safety Hotfix (Spec docs/spec/flight-phase-state-
         // machine.md §13.8): siehe arrived_fallback_conditions_basic.
@@ -23665,15 +23801,9 @@ fn step_flight_at(
         // Helicopters routinely keep the rotor running after touchdown (hot
         // ops: EMS offload, sightseeing turnaround, pad/rig work), so the
         // engines-off requirement would never finalise their arrival. Relax it
-        // for rotorcraft — but ONLY at the planned destination (`near_planned`)
-        // with the same on-ground + stationary + ARRIVED_FALLBACK_DWELL_SECS
-        // guards, so a rotors-running intermediate stop can never be
-        // mis-filed as a divert (the divert path keeps the strict
-        // engines-off requirement).
-        // Original engines-off-Pfad (ARRIVED_FALLBACK_DWELL_SECS Dwell) inkl.
-        // Rotorcraft-Relaxation (Rotoren laufen oft nach dem Aufsetzen weiter
-        // → nur Stillstand am Ziel gefordert).
-        let engines_off_path = if category.is_rotorcraft() && near_planned {
+        // for rotorcraft — but only once they are stationary ON an airport,
+        // with the same on-ground + ARRIVED_FALLBACK_DWELL_SECS guards.
+        let engines_off_path = if category.is_rotorcraft() && settled_on_a_field {
             snap.on_ground && snap.groundspeed_kt < 1.0
         } else {
             arrived_fallback_conditions_basic(
@@ -23697,9 +23827,14 @@ fn step_flight_at(
         // noch für Flugzeuge mit bestätigt kaputtem Triebwerkszähler (siehe
         // `AircraftProfile::engine_count_unreliable`) — für alle anderen bleibt
         // ausschließlich der harte engines-off-Pfad übrig, exakt wie vor v0.17.x.
+        // v0.19.3: same reasoning as the rotorcraft path above — an FA50 whose
+        // engine count is stuck can ONLY arrive through here, so gating it on
+        // "at the planned field" would leave it hanging forever after a divert.
+        // Standing still with the brake set on a field we can name is an
+        // arrival; the hint asks which field.
         let standstill_path = snap.aircraft_profile.engine_count_unreliable()
             && arrived_standstill_condition(
-                near_planned,
+                settled_on_a_field,
                 snap.on_ground,
                 snap.groundspeed_kt,
                 snap.parking_brake,
@@ -26374,8 +26509,12 @@ fn build_pirep_notes(
     }
 
     // ---- Stand / Runway (ATC-cleared) ----
+    // Der Ankunfts-Standplatz zählt nur, wenn er auch ausgegeben wird (er wird
+    // unterdrückt, wenn er von einem anderen Flughafen stammt als dem, gegen den
+    // eingereicht wird — siehe `arr_gate_for`). Sonst stünde hier eine leere
+    // Abschnitts-Überschrift ohne Inhalt.
     let any_atc = stats.dep_gate.as_ref().is_some_and(|v| !v.is_empty())
-        || stats.arr_gate.as_ref().is_some_and(|v| !v.is_empty())
+        || arr_gate_for(stats, effective_arr_icao).is_some_and(|v| !v.is_empty())
         || stats.approach_runway.as_ref().is_some_and(|v| !v.is_empty());
     if any_atc {
         start_section(&mut s, "GATES & ATC");
