@@ -1470,7 +1470,20 @@ impl NavdataCache {
     /// and the only one of our three sources that is actually maintained for
     /// flying. We were carrying it in this cache all along and not using it.
     fn reference_pos(&self, icao: &str) -> Option<(f64, f64)> {
-        self.get(icao).map(|a| (a.latitude, a.longitude))
+        let a = self.get(icao)?;
+        // v0.19.3: Navigraph sits at the TOP of the cascade and short-circuits
+        // everything below it — so one bad row (or a serde default) would put the
+        // destination at Null Island for the whole flight, and at the ~6,400
+        // fields with no runway geometry that means a false divert AND a refused
+        // filing for every pilot who flies there. The phpVMS arm has always
+        // filtered this; the better source deserves the same scepticism.
+        if !a.latitude.is_finite() || !a.longitude.is_finite() {
+            return None;
+        }
+        if a.latitude == 0.0 && a.longitude == 0.0 {
+            return None;
+        }
+        Some((a.latitude, a.longitude))
     }
 }
 
@@ -3482,6 +3495,10 @@ struct FlightStats {
     /// re-baselines on its next tick, and a flight resumed mid-taxi has nothing
     /// to gain from a stale sample anyway.
     takeoff_roll_gs_ref: Option<(DateTime<Utc>, f64)>,
+    /// Consecutive accelerating windows seen so far (see
+    /// `TAKEOFF_ROLL_ACCEL_WINDOWS_NEEDED`). Reset by any slowdown or any window
+    /// that fails the threshold.
+    takeoff_roll_accel_windows: u8,
     /// `ATC RUNWAY SELECTED` snapshotted at touchdown. Useful for VAs
     /// that grade "did the pilot land on the right runway".
     approach_runway: Option<String>,
@@ -4617,6 +4634,10 @@ const TAKEOFF_ROLL_MIN_KT: f64 = 30.0;
 /// cannot make.
 const TAKEOFF_ROLL_ACCEL_KT_PER_S: f64 = 1.2;
 const TAKEOFF_ROLL_ACCEL_WINDOW_SECS: i64 = 3;
+/// How many consecutive accelerating windows make a takeoff roll. One is a
+/// two-point delta and can be faked by a frame stutter or an un-pause; a real
+/// roll keeps accelerating for ten seconds and more.
+const TAKEOFF_ROLL_ACCEL_WINDOWS_NEEDED: u8 = 2;
 /// N1 that means "takeoff thrust is set". Only available for addons that expose
 /// per-engine N1 (the premium set); a taxiing jet sits near idle (20–30 %).
 const TAKEOFF_ROLL_N1_PCT: f64 = 60.0;
@@ -4656,9 +4677,17 @@ fn takeoff_roll_detected(
     // Track the speed a few seconds back, so we can ask how fast it is changing.
     // Re-baselined whenever the aircraft slows down (a taxi hold, a runway line-
     // up) so an old, low reference cannot later fake an acceleration.
+    //
+    // TWO consecutive windows are required, not one. A single window is a
+    // two-point delta, and a frame stutter or an un-pause can fake one — while a
+    // false TakeoffRoll is expensive: the demote only fires below 20 kt, so an
+    // aircraft that keeps taxiing at 25-30 kt would stay in TakeoffRoll for the
+    // rest of the taxi (and run the streamer at 2 Hz while it does). A real
+    // takeoff roll holds its acceleration for far longer than two windows.
     let accelerating = match stats.takeoff_roll_gs_ref {
         Some((t0, gs0)) if gs < gs0 => {
             stats.takeoff_roll_gs_ref = Some((now, gs));
+            stats.takeoff_roll_accel_windows = 0;
             let _ = t0;
             false
         }
@@ -4668,7 +4697,13 @@ fn takeoff_roll_detected(
                 let accel = (gs - gs0) / dt;
                 // Slide the window forward so the next tick measures fresh.
                 stats.takeoff_roll_gs_ref = Some((now, gs));
-                accel >= TAKEOFF_ROLL_ACCEL_KT_PER_S
+                if accel >= TAKEOFF_ROLL_ACCEL_KT_PER_S {
+                    stats.takeoff_roll_accel_windows =
+                        stats.takeoff_roll_accel_windows.saturating_add(1);
+                } else {
+                    stats.takeoff_roll_accel_windows = 0;
+                }
+                stats.takeoff_roll_accel_windows >= TAKEOFF_ROLL_ACCEL_WINDOWS_NEEDED
             } else {
                 false
             }
@@ -13616,20 +13651,43 @@ async fn compute_distance_to_airport(
     state: &tauri::State<'_, AppState>,
     icao: &str,
 ) -> Option<f64> {
-    let snap = current_snapshot(app)?;
     let key = icao.trim().to_uppercase();
 
-    let by_runway_nm =
-        runway::distance_to_airport_m(&key, snap.lat, snap.lon).map(|m| m / 1852.0);
-
-    // Navigraph, from the active flight's navdata cache — the best source we have.
-    let nav_pos = {
+    // WHERE IS THE AIRCRAFT — and this is a gate that can REFUSE a pilot's
+    // filing, so it had better not ask a sim that is still loading.
+    //
+    // v0.19.3: `current_snapshot` hands back whatever the adapter last saw,
+    // including the (0, 0) placeholder MSFS reports while a session loads. The
+    // streamer already refuses those (see `snapshot_position_is_usable`), but
+    // this gate read them raw — so a pilot who lands, parks, and restarts his sim
+    // BEFORE pressing "file" (exactly the DLH367 sequence, one step later) would
+    // be measured against Null Island, told he was 3,400 nm from his destination,
+    // and locked out of ACARS filing at his own gate.
+    //
+    // The last position the FSM actually accepted is right there in the stats.
+    // Use it. If we have neither, we cannot place the aircraft — return None, and
+    // the caller skips the gate rather than blocking on a guess.
+    let (nav_pos, pos) = {
         let guard = state.active_flight.lock().expect("active_flight lock");
-        guard.as_ref().and_then(|f| {
+        let flight = guard.as_ref();
+        let nav = flight.and_then(|f| {
             let cache = f.navdata.lock().expect("navdata lock");
             cache.reference_pos(&key)
-        })
+        });
+        let last = flight.and_then(|f| {
+            let s = f.stats.lock().expect("flight stats");
+            s.last_lat.zip(s.last_lon)
+        });
+        (nav, last)
     };
+    let live = current_snapshot(app).filter(snapshot_position_is_usable);
+    let (lat, lon) = match (live, pos) {
+        (Some(s), _) => (s.lat, s.lon),
+        (None, Some(p)) => p,
+        (None, None) => return None,
+    };
+
+    let by_runway_nm = runway::distance_to_airport_m(&key, lat, lon).map(|m| m / 1852.0);
 
     // phpVMS: cache first, network only on a miss.
     let cached: Option<Airport> = {
@@ -13661,8 +13719,7 @@ async fn compute_distance_to_airport(
     let phpvms_pos = phpvms_airport.and_then(|a| a.lat.zip(a.lon));
 
     let (ref_pos, _source) = airport_reference_pos(&key, nav_pos, phpvms_pos);
-    let by_ref_nm =
-        ref_pos.map(|(la, lo)| ::geo::distance_m(snap.lat, snap.lon, la, lo) / 1852.0);
+    let by_ref_nm = ref_pos.map(|(la, lo)| ::geo::distance_m(lat, lon, la, lo) / 1852.0);
 
     match (by_runway_nm, by_ref_nm) {
         (Some(a), Some(b)) => Some(a.min(b)),
@@ -19665,10 +19722,25 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     app_state.airports.lock().expect("airports lock");
                                 guard.insert(key.clone(), airport.clone());
                             }
-                            if let Some(pos) = airport.lat.zip(airport.lon) {
+                            if let Some(pos) = airport
+                                .lat
+                                .zip(airport.lon)
+                                .filter(|(la, lo)| {
+                                    !(*la == 0.0 && *lo == 0.0)
+                                        && la.is_finite()
+                                        && lo.is_finite()
+                                })
+                            {
                                 let mut stats_g =
                                     flight.stats.lock().expect("flight stats");
                                 stats_g.planned_arr_ref_pos = Some(pos);
+                                // v0.19.3: record WHICH source this is. Without it
+                                // the position kept `ARR_REF_SOURCE_NONE`, and the
+                                // next tick's cascade — seeing OurAirports (rank 1)
+                                // beat rank 0 — would overwrite this phpVMS position
+                                // with a weaker one. Exactly the inversion the
+                                // ranking exists to prevent.
+                                stats_g.planned_arr_ref_source = ARR_REF_SOURCE_PHPVMS;
                                 tracing::info!(
                                     arr = %key,
                                     "arr airport reference position fetched (divert-geometry fallback)"
@@ -24790,20 +24862,30 @@ mod takeoff_roll_tests {
         assert!(fired, "an accelerating takeoff roll must be detected");
     }
 
-    /// A Cessna rotates around 50 kt, so its roll must be recognised well before
-    /// that — the 30 kt floor exists for exactly this reason.
+    /// A Cessna rotates around 50 kt, so its roll must be recognised BEFORE that.
+    /// Ticked at the streamer's real ground cadence (3 s) with a modest 2 kt/s:
+    /// the two required windows complete at 6 s and ~42 kt — before rotation.
     #[test]
-    fn a_light_aircraft_accelerating_from_30_kt_is_detected() {
+    fn a_light_aircraft_is_detected_before_rotation() {
         let mut stats = FlightStats::new();
         let t0 = Utc::now();
-        let mut fired = false;
-        for i in 0..6 {
-            let now = t0 + chrono::Duration::seconds(i);
-            let mut snap = taxiing(30.0 + 2.0 * i as f64);
+        let mut gs_when_fired: Option<f64> = None;
+        for tick in 0..6_i64 {
+            let secs = tick * 3; // the streamer's ground cadence
+            let gs = 30.0 + 2.0 * secs as f64;
+            let mut snap = taxiing(gs);
             snap.engines_running = 1;
-            fired |= takeoff_roll_detected(&mut stats, &snap, now);
+            if takeoff_roll_detected(&mut stats, &snap, t0 + chrono::Duration::seconds(secs))
+                && gs_when_fired.is_none()
+            {
+                gs_when_fired = Some(gs);
+            }
         }
-        assert!(fired, "a GA takeoff roll must be caught before rotation");
+        let gs = gs_when_fired.expect("a GA takeoff roll must be detected");
+        assert!(
+            gs < 50.0,
+            "must fire before rotation (~50 kt), fired at {gs} kt"
+        );
     }
 
     /// No taxi reaches 60 kt. No evidence required.
