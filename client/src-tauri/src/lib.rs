@@ -1955,6 +1955,12 @@ struct PersistedFlightStats {
     /// v0.19.3: the airport the arrival stand was captured at.
     #[serde(default)]
     arr_gate_icao: Option<String>,
+    /// v0.19.3: last position the aircraft was seen at (survives a resume, unlike
+    /// the distance baseline `last_lat/lon`).
+    #[serde(default)]
+    last_known_lat: Option<f64>,
+    #[serde(default)]
+    last_known_lon: Option<f64>,
     #[serde(default)]
     approach_runway: Option<String>,
     #[serde(default)]
@@ -2180,6 +2186,8 @@ impl PersistedFlightStats {
             arr_gate: stats.arr_gate.clone(),
             blocks_on_reached: stats.blocks_on_reached,
             arr_gate_icao: stats.arr_gate_icao.clone(),
+            last_known_lat: stats.last_known_lat,
+            last_known_lon: stats.last_known_lon,
             approach_runway: stats.approach_runway.clone(),
             cruise_peak_msl: stats.cruise_peak_msl,
             climb_peak_msl: stats.climb_peak_msl,
@@ -2295,6 +2303,8 @@ impl PersistedFlightStats {
                 FlightPhase::BlocksOn | FlightPhase::Arrived | FlightPhase::PirepSubmitted
             );
         stats.arr_gate_icao = self.arr_gate_icao;
+        stats.last_known_lat = self.last_known_lat;
+        stats.last_known_lon = self.last_known_lon;
         stats.approach_runway = self.approach_runway;
         stats.cruise_peak_msl = self.cruise_peak_msl;
         stats.climb_peak_msl = self.climb_peak_msl;
@@ -3499,6 +3509,13 @@ struct FlightStats {
     /// `TAKEOFF_ROLL_ACCEL_WINDOWS_NEEDED`). Reset by any slowdown or any window
     /// that fails the threshold.
     takeoff_roll_accel_windows: u8,
+    /// v0.19.3: the last position the aircraft was actually seen at — as opposed
+    /// to `last_lat/lon`, which is the distance-accounting baseline and is
+    /// deliberately cleared on a resume. Nothing clears this one, and it is
+    /// persisted: it is what tells the filing gate where the aircraft is when the
+    /// sim is gone. See `aircraft_position_for_gates`.
+    last_known_lat: Option<f64>,
+    last_known_lon: Option<f64>,
     /// `ATC RUNWAY SELECTED` snapshotted at touchdown. Useful for VAs
     /// that grade "did the pilot land on the right runway".
     approach_runway: Option<String>,
@@ -4670,6 +4687,13 @@ fn takeoff_roll_detected(
 ) -> bool {
     if !snap.on_ground || !engines_effectively_running(stats, snap, now) {
         stats.takeoff_roll_gs_ref = None;
+        // QS round 7: the COUNTER has to go too. Leaving it set meant a single
+        // on_ground-flicker tick (the codebase documents those on bumpy runways
+        // and with PMDG textures) preserved a stale count of 1 — so the very next
+        // passing window reached 2 and fired. The "two consecutive windows"
+        // hardening then collapsed back to a single two-point delta, in exactly
+        // the noisy conditions it was added to defend against.
+        stats.takeoff_roll_accel_windows = 0;
         return false;
     }
     let gs = snap.groundspeed_kt as f64;
@@ -13646,6 +13670,29 @@ async fn metar_get(icao: String) -> Result<MetarSnapshot, UiError> {
 /// than 5 nm), and an earlier cut of this function preferred that geometry
 /// whenever it existed — which would have blocked a correctly-parked pilot at
 /// every one of them.
+/// Where is the aircraft, for the purposes of a GATE that can refuse a pilot's
+/// filing? Never from a snapshot the sim hasn't placed yet, and never from the
+/// distance baseline — which a resume deliberately clears.
+///
+/// v0.19.3, QS round 7: the first cut of this fell back to `last_lat/lon`, which
+/// `apply_pause_resume` nulls (and persists) so that a repositioning jump cannot
+/// count as flown distance. Correct for the odometer, fatal here: a pilot who
+/// blocked on at EDDF, lost his sim, pressed "Flug wiederaufnehmen" and then
+/// filed would have had the `not_at_arrival` gate skipped entirely — a clean,
+/// ACARS-auto-approved EDDM arrival, filed from Frankfurt.
+fn aircraft_position_for_gates(stats: &FlightStats) -> Option<(f64, f64)> {
+    stats
+        .last_known_lat
+        .zip(stats.last_known_lon)
+        // Pre-v0.19.3 flights resumed from an old snapshot have no
+        // `last_known_*`; the distance baseline is the best they have.
+        .or_else(|| stats.last_lat.zip(stats.last_lon))
+        // Failing everything: the touchdown point. Persisted, never cleared, and
+        // for an arrival gate it is exactly the right neighbourhood.
+        .or_else(|| stats.landing_lat.zip(stats.landing_lon))
+        .filter(|(la, lo)| la.is_finite() && lo.is_finite() && !(la.abs() < 0.02 && lo.abs() < 0.02))
+}
+
 async fn compute_distance_to_airport(
     app: &AppHandle,
     state: &tauri::State<'_, AppState>,
@@ -13676,7 +13723,7 @@ async fn compute_distance_to_airport(
         });
         let last = flight.and_then(|f| {
             let s = f.stats.lock().expect("flight stats");
-            s.last_lat.zip(s.last_lon)
+            aircraft_position_for_gates(&s)
         });
         (nav, last)
     };
@@ -13911,10 +13958,7 @@ async fn flight_end(
             match guard.as_ref() {
                 Some(f) => {
                     let s = f.stats.lock().expect("flight stats");
-                    (
-                        s.divert_hint.clone(),
-                        s.last_lat.zip(s.last_lon),
-                    )
+                    (s.divert_hint.clone(), aircraft_position_for_gates(&s))
                 }
                 None => (None, None),
             }
@@ -22420,6 +22464,19 @@ fn step_flight_at(
     }
     stats.last_lat = Some(snap.lat);
     stats.last_lon = Some(snap.lon);
+    // v0.19.3: WHERE THE AIRCRAFT LAST WAS — a different question from "what is
+    // the distance baseline", which is what `last_lat/lon` above is.
+    //
+    // A resume deliberately nulls `last_lat/lon` so that a repositioning jump
+    // doesn't count as flown distance. That is correct for the odometer and
+    // fatal for anyone asking "where is this aircraft": the filing gate then
+    // cannot place it at all and silently waves the flight through. A pilot who
+    // blocked on at EDDF, lost his sim, hit "resume", and filed would have got a
+    // clean, auto-approved EDDM arrival PIREP — from Frankfurt.
+    //
+    // So the last position is kept separately, and nothing clears it.
+    stats.last_known_lat = Some(snap.lat);
+    stats.last_known_lon = Some(snap.lon);
     stats.position_count = stats.position_count.saturating_add(1);
     let prev_fuel_kg = stats.last_fuel_kg;
     stats.last_fuel_kg = Some(snap.fuel_total_kg);
@@ -24753,6 +24810,63 @@ mod arrived_fallback_dwell_tests {
 /// widebody taxis through 30 kt without trying. The flip-flop also re-fired the
 /// block-off transition, which is why "Fuel & Weight @ Block-off" appeared three
 /// times in his activity log.
+/// QS round 7 — the filing gate must still be able to place the aircraft after a
+/// resume, or it silently waves through a PIREP it should refuse.
+#[cfg(test)]
+mod position_for_gates_tests {
+    use super::*;
+
+    /// The failure this exists to prevent: a pilot blocks on at EDDF on a flight
+    /// planned to EDDM, his sim dies, he presses "Flug wiederaufnehmen" (which
+    /// nulls the distance baseline `last_lat/lon` — deliberately, so the
+    /// repositioning jump cannot count as flown distance), and then files. If the
+    /// gate can no longer place him, it is skipped, and Frankfurt gets filed as
+    /// Munich, ACARS-auto-approved.
+    #[test]
+    fn a_resume_does_not_erase_where_the_aircraft_is() {
+        let mut stats = FlightStats::new();
+        stats.last_lat = Some(50.0333);
+        stats.last_lon = Some(8.5706);
+        stats.last_known_lat = Some(50.0333);
+        stats.last_known_lon = Some(8.5706);
+
+        // What `apply_pause_resume` does: clears the distance baseline.
+        stats.last_lat = None;
+        stats.last_lon = None;
+
+        let pos = aircraft_position_for_gates(&stats)
+            .expect("the gate must still know where the aircraft is");
+        assert!((pos.0 - 50.0333).abs() < 0.001 && (pos.1 - 8.5706).abs() < 0.001);
+    }
+
+    /// A flight resumed from a pre-v0.19.3 snapshot has no `last_known_*` — the
+    /// distance baseline, and failing that the touchdown point, still place it.
+    #[test]
+    fn older_flights_fall_back_to_what_they_have() {
+        let mut stats = FlightStats::new();
+        stats.last_lat = Some(50.0333);
+        stats.last_lon = Some(8.5706);
+        assert!(aircraft_position_for_gates(&stats).is_some());
+
+        let mut stats = FlightStats::new();
+        stats.landing_lat = Some(50.0333);
+        stats.landing_lon = Some(8.5706);
+        assert!(
+            aircraft_position_for_gates(&stats).is_some(),
+            "the touchdown point is a perfectly good answer for an arrival gate"
+        );
+    }
+
+    /// And a position the sim never placed is not an answer at all.
+    #[test]
+    fn null_island_is_not_a_position() {
+        let mut stats = FlightStats::new();
+        stats.last_known_lat = Some(0.008);
+        stats.last_known_lon = Some(0.00002);
+        assert_eq!(aircraft_position_for_gates(&stats), None);
+    }
+}
+
 #[cfg(test)]
 mod null_island_tests {
     use super::*;
