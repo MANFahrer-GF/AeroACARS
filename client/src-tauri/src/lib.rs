@@ -1961,6 +1961,12 @@ struct PersistedFlightStats {
     last_known_lat: Option<f64>,
     #[serde(default)]
     last_known_lon: Option<f64>,
+    /// v0.19.3 (QS round 8): the detected divert. Persisted because two gates
+    /// depend on it and the fallback that mints it cannot re-run once the flight
+    /// has reached `Arrived` — an app restart used to cost the pilot his divert
+    /// banner and his ACARS filing.
+    #[serde(default)]
+    divert_hint: Option<DivertHint>,
     #[serde(default)]
     approach_runway: Option<String>,
     #[serde(default)]
@@ -2188,6 +2194,7 @@ impl PersistedFlightStats {
             arr_gate_icao: stats.arr_gate_icao.clone(),
             last_known_lat: stats.last_known_lat,
             last_known_lon: stats.last_known_lon,
+            divert_hint: stats.divert_hint.clone(),
             approach_runway: stats.approach_runway.clone(),
             cruise_peak_msl: stats.cruise_peak_msl,
             climb_peak_msl: stats.climb_peak_msl,
@@ -2305,6 +2312,7 @@ impl PersistedFlightStats {
         stats.arr_gate_icao = self.arr_gate_icao;
         stats.last_known_lat = self.last_known_lat;
         stats.last_known_lon = self.last_known_lon;
+        stats.divert_hint = self.divert_hint;
         stats.approach_runway = self.approach_runway;
         stats.cruise_peak_msl = self.cruise_peak_msl;
         stats.climb_peak_msl = self.climb_peak_msl;
@@ -4651,13 +4659,25 @@ const TAKEOFF_ROLL_MIN_KT: f64 = 30.0;
 /// cannot make.
 const TAKEOFF_ROLL_ACCEL_KT_PER_S: f64 = 1.2;
 const TAKEOFF_ROLL_ACCEL_WINDOW_SECS: i64 = 3;
-/// How many consecutive accelerating windows make a takeoff roll. One is a
-/// two-point delta and can be faked by a frame stutter or an un-pause; a real
-/// roll keeps accelerating for ten seconds and more.
+/// How many consecutive accelerating windows make a takeoff roll at the MARGINAL
+/// rate. One is a two-point delta and can be faked by a frame stutter or an
+/// un-pause; a real roll keeps accelerating for ten seconds and more.
 const TAKEOFF_ROLL_ACCEL_WINDOWS_NEEDED: u8 = 2;
+/// Acceleration that needs no second opinion. Nothing taxis at this rate, and
+/// waiting for a second window would be too slow for the aircraft that reach it:
+/// a bush plane at 5 kt/s rotates ~45 kt, i.e. six seconds after crossing the
+/// 30 kt floor — its whole TakeoffRoll phase would otherwise be skipped.
+const TAKEOFF_ROLL_ACCEL_STRONG_KT_PER_S: f64 = 2.5;
 /// N1 that means "takeoff thrust is set". Only available for addons that expose
-/// per-engine N1 (the premium set); a taxiing jet sits near idle (20–30 %).
-const TAKEOFF_ROLL_N1_PCT: f64 = 60.0;
+/// per-engine N1 (the premium set).
+///
+/// QS round 8: 60 % was too low. MSFS reports `TURB ENG N1` as gas-generator
+/// speed, and a PT6 turboprop IDLES at 52–65 % Ng — so a King Air, TBM, PC-12 or
+/// FA50 taxiing at idle already satisfied "takeoff thrust", and the detector
+/// collapsed back to the bare `gs > 30` rule this whole rewrite exists to
+/// replace. A jet at takeoff power sits at 85–95 % N1, and even a flex/derated
+/// departure stays above 80 %.
+const TAKEOFF_ROLL_N1_PCT: f64 = 80.0;
 
 /// Is the aircraft actually beginning its takeoff roll?
 ///
@@ -4708,6 +4728,22 @@ fn takeoff_roll_detected(
     // aircraft that keeps taxiing at 25-30 kt would stay in TakeoffRoll for the
     // rest of the taxi (and run the streamer at 2 Hz while it does). A real
     // takeoff roll holds its acceleration for far longer than two windows.
+    // QS round 8: windows may only be BANKED above the floor. They used to
+    // accumulate while the aircraft was merely accelerating onto the taxiway —
+    // every 3 s tick bought one — so by the time it crossed 30 kt the count was
+    // already at 2, and the first passing window above the floor fired. The
+    // "two consecutive windows" rule was therefore worth exactly one window at
+    // the only place it mattered, and the DLH367/A346 profile (a heavy still
+    // gaining speed as it rolls through 30 kt) would have reproduced the false
+    // TakeoffRoll it was written to stop.
+    //
+    // Below the floor we hold a baseline but count nothing.
+    if gs < TAKEOFF_ROLL_MIN_KT {
+        stats.takeoff_roll_gs_ref = Some((now, gs));
+        stats.takeoff_roll_accel_windows = 0;
+        return false;
+    }
+
     let accelerating = match stats.takeoff_roll_gs_ref {
         Some((t0, gs0)) if gs < gs0 => {
             stats.takeoff_roll_gs_ref = Some((now, gs));
@@ -4727,7 +4763,9 @@ fn takeoff_roll_detected(
                 } else {
                     stats.takeoff_roll_accel_windows = 0;
                 }
-                stats.takeoff_roll_accel_windows >= TAKEOFF_ROLL_ACCEL_WINDOWS_NEEDED
+                // Unambiguous rate: one window is proof. Marginal rate: two.
+                accel >= TAKEOFF_ROLL_ACCEL_STRONG_KT_PER_S
+                    || stats.takeoff_roll_accel_windows >= TAKEOFF_ROLL_ACCEL_WINDOWS_NEEDED
             } else {
                 false
             }
@@ -4740,9 +4778,6 @@ fn takeoff_roll_detected(
 
     if gs >= TAKEOFF_ROLL_UNAMBIGUOUS_KT {
         return true;
-    }
-    if gs < TAKEOFF_ROLL_MIN_KT {
-        return false;
     }
 
     // Takeoff thrust, when the aircraft tells us.
@@ -7337,11 +7372,16 @@ fn divert_nearest_airports(
         // (aircraft never landed cleanly — the pilot still needs *some* list).
         // The pair is taken from ONE source: mixing a touchdown latitude with a
         // current longitude would name a field in the middle of nowhere.
+        // Touchdown point first (that is the field he landed on), then the
+        // resume-proof last known position — NOT `last_lat/lon`, which a resume
+        // nulls: a rotorcraft or a go-around-then-landing flight resumed after a
+        // sim loss would otherwise get an EMPTY list and be unable to name the
+        // field it actually landed at (QS round 8).
         match (stats.landing_lat, stats.landing_lon) {
             (Some(la), Some(lo)) => (la, lo),
-            _ => match (stats.last_lat, stats.last_lon) {
-                (Some(la), Some(lo)) => (la, lo),
-                _ => return Ok(Vec::new()),
+            _ => match aircraft_position_for_gates(&stats) {
+                Some(p) => p,
+                None => return Ok(Vec::new()),
             },
         }
     };
@@ -13681,16 +13721,22 @@ async fn metar_get(icao: String) -> Result<MetarSnapshot, UiError> {
 /// filed would have had the `not_at_arrival` gate skipped entirely — a clean,
 /// ACARS-auto-approved EDDM arrival, filed from Frankfurt.
 fn aircraft_position_for_gates(stats: &FlightStats) -> Option<(f64, f64)> {
-    stats
-        .last_known_lat
-        .zip(stats.last_known_lon)
+    /// A position the sim actually placed the aircraft at (not NaN, not Null
+    /// Island). QS round 8: this filters EACH candidate rather than the result —
+    /// a junk `last_known_*` used to discard the whole chain instead of falling
+    /// through to the next source.
+    fn usable(p: Option<(f64, f64)>) -> Option<(f64, f64)> {
+        p.filter(|(la, lo)| {
+            la.is_finite() && lo.is_finite() && !(la.abs() < 0.02 && lo.abs() < 0.02)
+        })
+    }
+    usable(stats.last_known_lat.zip(stats.last_known_lon))
         // Pre-v0.19.3 flights resumed from an old snapshot have no
         // `last_known_*`; the distance baseline is the best they have.
-        .or_else(|| stats.last_lat.zip(stats.last_lon))
+        .or_else(|| usable(stats.last_lat.zip(stats.last_lon)))
         // Failing everything: the touchdown point. Persisted, never cleared, and
         // for an arrival gate it is exactly the right neighbourhood.
-        .or_else(|| stats.landing_lat.zip(stats.landing_lon))
-        .filter(|(la, lo)| la.is_finite() && lo.is_finite() && !(la.abs() < 0.02 && lo.abs() < 0.02))
+        .or_else(|| usable(stats.landing_lat.zip(stats.landing_lon)))
 }
 
 async fn compute_distance_to_airport(
@@ -19746,9 +19792,20 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 /// until the aircraft is on the ground again.
                 const ARR_REF_POS_RETRY_EVERY_TICKS: u32 = 30;
 
+                // QS round 8: this used to ask `planned_arr_ref_pos.is_none()` —
+                // which is never true, because the cascade falls through to the
+                // embedded OurAirports table and that answers for essentially
+                // every ICAO. The whole phpVMS self-fetch was therefore dead
+                // code, and `ARR_REF_SOURCE_PHPVMS` was only ever reachable when
+                // the UI happened to have cached the airport: exactly the "works
+                // or not depending on what the pilot clicked" behaviour this
+                // block was written to end.
+                //
+                // Ask the real question: do we have anything BETTER than the
+                // offline table yet?
                 let missing = {
                     let stats_g = flight.stats.lock().expect("flight stats");
-                    stats_g.planned_arr_ref_pos.is_none()
+                    stats_g.planned_arr_ref_source < ARR_REF_SOURCE_PHPVMS
                 };
                 let due = arr_ref_pos_attempts == 0
                     || tick_count.is_multiple_of(ARR_REF_POS_RETRY_EVERY_TICKS);
@@ -25000,6 +25057,57 @@ mod takeoff_roll_tests {
             gs < 50.0,
             "must fire before rotation (~50 kt), fired at {gs} kt"
         );
+    }
+
+    /// QS round 8: windows must not be BANKED below the floor. They used to
+    /// accumulate while merely accelerating onto the taxiway, so the count was
+    /// already at 2 when the aircraft crossed 30 kt and the first window above
+    /// the floor fired — the "two windows" rule bought nothing exactly where it
+    /// mattered, and Thomas's A346 would have flip-flopped again.
+    #[test]
+    fn windows_are_not_banked_below_the_floor() {
+        let mut stats = FlightStats::new();
+        let t0 = Utc::now();
+        // Accelerate gently from a standstill to a 33 kt taxi, then HOLD it.
+        let mut fired = false;
+        for tick in 0..12_i64 {
+            let secs = tick * 3;
+            let gs = (2.0 * secs as f64).min(33.0); // 0 → 33 kt, then constant
+            fired |= takeoff_roll_detected(
+                &mut stats,
+                &taxiing(gs),
+                t0 + chrono::Duration::seconds(secs),
+            );
+        }
+        assert!(
+            !fired,
+            "accelerating onto the taxiway and then holding 33 kt is a taxi, not a \
+             takeoff roll"
+        );
+    }
+
+    /// A bush plane rotates around 45 kt and accelerates at ~5 kt/s — it is
+    /// airborne six seconds after crossing the floor. Waiting for two windows
+    /// would skip its TakeoffRoll entirely, so an unambiguous rate counts as
+    /// proof on its own.
+    #[test]
+    fn a_bush_plane_is_detected_despite_its_very_short_roll() {
+        let mut stats = FlightStats::new();
+        let t0 = Utc::now();
+        let mut gs_when_fired: Option<f64> = None;
+        for tick in 0..6_i64 {
+            let secs = tick * 3;
+            let gs = 5.0 * secs as f64; // 5 kt/s from a standstill
+            let mut snap = taxiing(gs);
+            snap.engines_running = 1;
+            if takeoff_roll_detected(&mut stats, &snap, t0 + chrono::Duration::seconds(secs))
+                && gs_when_fired.is_none()
+            {
+                gs_when_fired = Some(gs);
+            }
+        }
+        let gs = gs_when_fired.expect("a bush takeoff roll must be detected");
+        assert!(gs < 45.0, "must fire before rotation (~45 kt), fired at {gs} kt");
     }
 
     /// No taxi reaches 60 kt. No evidence required.

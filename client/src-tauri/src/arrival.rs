@@ -45,7 +45,7 @@
 //! by hand. A hint that names the planned airport as the divert target is thus
 //! not a bug to be guarded against — it is unrepresentable.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::runway;
 
@@ -248,7 +248,7 @@ pub fn locate(
 /// Its only job is to make `DivertHint { .. }` un-writable outside this
 /// module — the invariant "a divert never names the planned airport" is
 /// enforced by the compiler, not by every author remembering to check.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
 struct Sealed;
 
 /// A detected divert, surfaced via `flight_status` so the cockpit can ask the
@@ -259,7 +259,17 @@ struct Sealed;
 ///
 /// This is a *suspicion*, not a filed fact. Nothing may report it to the
 /// outside world as a divert that happened; see `divert_payload_markers`.
-#[derive(Debug, Clone, Serialize)]
+/// `Deserialize` (v0.19.3, QS round 8) so the hint SURVIVES AN APP RESTART. Two
+/// gates depend on it — the confirm-path guard and the auto-file suppression —
+/// and the fallback that mints it cannot re-run once the flight is `Arrived`. A
+/// pilot who diverted, restarted the app and then filed used to lose his divert
+/// banner AND be refused by the arrival gate (the true distance to the planned
+/// field is large), leaving him only a manual PIREP without auto-approval.
+///
+/// The `Sealed` invariant is untouched: `_sealed` is `#[serde(skip)]`, and no
+/// module outside `arrival` can name the type, so deserialization is still the
+/// only door — and it can only reconstruct a hint that this module built.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DivertHint {
     /// Best-guess actual landing airport. `None` when the aircraft is off
     /// any known field (private strip, off-DB military, scenery-only) — the
@@ -275,7 +285,11 @@ pub struct DivertHint {
     pub distance_to_planned_nmi: f64,
     /// "alternate" (it's the filed alternate), "nearest" (closest field in
     /// the DB), or "unknown" (no field found — manual override needed).
-    pub kind: &'static str,
+    ///
+    /// An owned `String`, not `&'static str`: the hint is persisted (QS round 8)
+    /// and a borrowed static cannot come back out of a snapshot. The JSON the
+    /// cockpit sees is unchanged.
+    pub kind: String,
     #[serde(skip)]
     _sealed: Sealed,
 }
@@ -311,7 +325,8 @@ impl DivertHint {
             "nearest"
         } else {
             "unknown"
-        };
+        }
+        .to_string();
 
         Some(DivertHint {
             actual_icao,

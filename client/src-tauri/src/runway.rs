@@ -825,6 +825,15 @@ fn find_nearest(
     limit: usize,
     icao_only: bool,
 ) -> Vec<NearestAirport> {
+    // QS round 8: without this, a NaN query made EVERY comparison below false —
+    // so nothing was filtered out, all 14.7k rows came back with `distance_m =
+    // NaN`, the sort degenerated into hash order, and the caller was handed five
+    // arbitrary airports from anywhere on Earth as "the nearest fields". The
+    // 50 Hz touchdown sampler is not behind the streamer's snapshot gate, so a
+    // NaN sample really can reach here and put the wrong airport in a PIREP.
+    if !lat.is_finite() || !lon.is_finite() {
+        return Vec::new();
+    }
     use std::collections::HashMap;
     let table = runways();
     let mut by_apt: HashMap<&str, (f64, f64, f64, f32)> = HashMap::new();
