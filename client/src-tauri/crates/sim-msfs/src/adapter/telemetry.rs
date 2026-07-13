@@ -5019,8 +5019,9 @@ mod tests {
         assert_eq!(snap.managed_altitude, Some(true));
         assert_eq!(snap.master_caution, Some(true));
         assert_eq!(snap.master_warning, Some(false));
-        // FMGC-Phase-Enum unbekannt → Roh-Wert "#{n}".
-        assert_eq!(snap.flight_phase_aircraft.as_deref(), Some("#4"));
+        // FWC-Phase 4 = die 80-kt-Marke im Startlauf (v0.19.4: an DLH367
+        // verifiziert; vorher war die Bedeutung unbekannt und der Wert blieb roh).
+        assert_eq!(snap.flight_phase_aircraft.as_deref(), Some("80 KT (T/O)"));
         // ARMED: Standard ODER Lever-LVar.
         assert_eq!(snap.spoilers_armed, Some(true));
         // Kein direkter Ground-Spoiler-Active-Flag auf der A346.
