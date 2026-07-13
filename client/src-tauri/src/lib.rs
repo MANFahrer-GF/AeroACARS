@@ -3727,6 +3727,8 @@ struct FlightStats {
     ground_spoilers_logged_this_landing: bool,
     /// Baro STD/QNH — erster Wert latcht stumm, danach Transitionen.
     last_logged_baro_std: Option<bool>,
+    /// Flugzeug-eigene FWC-Phase (nur A346) — Debounce 5 s, erster Wert stumm.
+    premium_aircraft_phase: DebouncedLogState<String>,
     /// Below-G/S-Alert — einmal pro Approach; re-arm wenn der Alert
     /// > BELOW_GS_REARM_SECS geklärt ist oder die FlightPhase wechselt.
     last_seen_below_gs: Option<bool>,
@@ -6204,6 +6206,8 @@ const PREMIUM_FMA_DEBOUNCE_SECS: i64 = 3;
 /// MASTER CAUTION / MASTER WARNING: Annunciator-Lampen flackern bei
 /// Cockpit-Tests am Boden — 2 s Stabilität bevor eine Transition loggt.
 const MASTER_ANNUNCIATOR_DEBOUNCE_SECS: i64 = 2;
+/// Flugzeug-eigene FWC-Phase: rein informativ, 5 s Debounce reichen.
+const AIRCRAFT_PHASE_DEBOUNCE_SECS: i64 = 5;
 /// Stab-out-of-trim-Annunciator: pulst während Trim-Läufen.
 const STAB_TRIM_DEBOUNCE_SECS: i64 = 5;
 /// Schubhebel-Detent (TOGA/FLX-MCT/CL): der Hebel wandert beim Setzen
@@ -29075,27 +29079,30 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         }
     }
 
-    // (8) Die flugzeug-eigene FMGC/FWC-Phase wird NICHT mehr ins Aktivitäts-Log
-    // geschrieben (v0.19.3). Sie wird weiterhin in die Telemetrie aufgezeichnet
-    // (`SimSnapshot::flight_phase_aircraft`) — nur eben nicht als Aussage an den
-    // Piloten ausgegeben.
+    // (8) Flugzeug-eigene FWC-Phase — NUR die A346 (ToLiss), deren Nummerierung
+    // an einem vollständigen echten Flug verifiziert ist (siehe
+    // `a346_fwc_phase_label`). Rein informativ; treibt die FSM nicht.
     //
-    // Warum: die Zahlen gehören dem Addon, nicht uns. Ihre Bedeutung definiert
-    // FlyByWire bzw. ToLiss, und sie ändert sich mit deren Versionen — belegt an
-    // zwei echten Flügen aus dem Live-Korpus: einer meldet zehn Phasenwerte, der
-    // andere zwölf. Unsere feste Tabelle (`fbw_fwc_phase_label`) war deshalb ab
-    // Wert 3 um eine Position verschoben und schrieb dem Piloten Unsinn ins Log:
-    // "APPROACH" im Reiseflug (Wert 8 stand dort 65 Minuten lang), "TOUCHDOWN"
-    // in 800 ft Höhe, und der echte Aufsetzer erschien als "ROLLOUT".
-    //
-    // Der Wert treibt ohnehin nichts — er ist ausdrücklich "info only, never
-    // drives our phase FSM". Wir haben eine eigene Phasen-Erkennung, die auf
-    // echter Telemetrie beruht und für die wir geradestehen; eine zweite,
-    // fremddefinierte Phasenanzeige daneben ist im besten Fall Doppelung und im
-    // beobachteten Fall ein Widerspruch.
-    //
-    // Die Rohwerte bleiben in den Flug-Logs, damit sie sich rückwirkend zuordnen
-    // lassen, sobald wir die Enum-Generation eines Addons sicher erkennen können.
+    // Der Präfix "FWC" ist Absicht: die Meldung kommt vom Flugwarnrechner des
+    // Flugzeugs, nicht von unserer Phasen-Erkennung. Ohne ihn stünde "TOUCHDOWN"
+    // (die FWC-Schwelle) direkt neben unserer Phase "Landing" — und in v0.19.2
+    // stand genau deshalb "APPROACH" im Reiseflug, mit einer um eine Position
+    // verschobenen Tabelle. Die FBW A32NX bleibt bewusst stumm: sie meldet je
+    // nach Addon-Version zehn ODER zwölf Werte.
+    if let Some(phase_label) = snap.flight_phase_aircraft.as_ref() {
+        if stats.premium_aircraft_phase.update(
+            phase_label.clone(),
+            now,
+            AIRCRAFT_PHASE_DEBOUNCE_SECS,
+        ) {
+            log_activity_handle(
+                app,
+                ActivityLevel::Info,
+                format!("FWC: {phase_label}"),
+                None,
+            );
+        }
+    }
 
     // (9) Below-G/S-Alert — einmal pro Approach; re-arm wenn der Alert
     // > BELOW_GS_REARM_SECS geklärt ist oder die FlightPhase wechselt

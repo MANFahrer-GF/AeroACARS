@@ -1873,22 +1873,43 @@ fn fbw_fma_thrust_label(n: i32) -> Option<String> {
     })
 }
 
-/// FBW `A32NX_FWC_FLIGHT_PHASE` → Phasen-Label (FBW-Doku, FWC-Enum
-/// 1..10). 0 → None (FWC noch nicht initialisiert); unbekannte Werte
-/// als "#{n}" durchgereicht.
-fn fbw_fwc_phase_label(n: i32) -> Option<String> {
+/// A346 (ToLiss) `L:TLS_FLIGHT_PHASE` → Airbus-FWC-Phasenname.
+///
+/// Das klassische Airbus-FWC-Enum mit zehn Phasen. Jede Zeile ist an EINEM
+/// vollstaendigen echten Flug verifiziert (DLH367, ToLiss A346, KCLT->EDDM,
+/// 2026-07-13) — die Telemetrie zum Zeitpunkt des Wechsels steht daneben:
+///
+///   1  ELEC PWR                  am Gate, 0 kt
+///   2  FIRST ENG STARTED         Triebwerksstart
+///   3  FIRST ENG TO T/O POWER    16 kt, Schub gesetzt
+///   4  80 KT (T/O)               83 kt am Boden
+///   5  LIFT OFF                  34 ft AGL, gerade abgehoben
+///   6  1500 FT                   1617 ft AGL, +2344 fpm
+///   7  800 FT                    802 ft AGL, -835 fpm (Anflug)
+///   8  TOUCHDOWN                 18 ft AGL, 129 kt, am Boden
+///   9  80 KT (ROLLOUT)           79 kt am Boden
+///  10  5 MIN AFTER               0 kt, acht Minuten nach dem Aufsetzen
+///
+/// Die 80-kt-Schwelle kommt zweimal vor (Start und Rollout) — Airbus
+/// unterscheidet sie ueber den Kontext, wir haengen ihn an, damit im Log kein
+/// Raetselraten entsteht.
+///
+/// Ein unbekannter Wert bleibt roh ("#{n}") statt geraten zu werden: sollte
+/// ToLiss die Nummerierung je erweitern, faellt das im Log auf, statt still
+/// falsch beschriftet zu werden.
+fn a346_fwc_phase_label(n: i32) -> Option<String> {
     Some(match n {
         0 => return None,
         1 => "ELEC PWR".to_string(),
-        2 => "1ST ENG".to_string(),
-        3 => "T/O 80KT".to_string(),
-        4 => "LIFTOFF".to_string(),
-        5 => "CLIMB <1500".to_string(),
-        6 => "CRUISE".to_string(),
-        7 => "DESCENT".to_string(),
-        8 => "APPROACH".to_string(),
-        9 => "TOUCHDOWN".to_string(),
-        10 => "ROLLOUT <80KT".to_string(),
+        2 => "FIRST ENG STARTED".to_string(),
+        3 => "FIRST ENG TO T/O POWER".to_string(),
+        4 => "80 KT (T/O)".to_string(),
+        5 => "LIFT OFF".to_string(),
+        6 => "1500 FT".to_string(),
+        7 => "800 FT".to_string(),
+        8 => "TOUCHDOWN".to_string(),
+        9 => "80 KT (ROLLOUT)".to_string(),
+        10 => "5 MIN AFTER".to_string(),
         other => format!("#{other}"),
     })
 }
@@ -2739,10 +2760,17 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
 
     // Aircraft-eigene Flugphase. FBW: FWC-Enum dokumentiert. A346:
     // FMGC-Phase-Enum, Decode beim ersten Live-Flug → "#{n}".
-    let flight_phase_aircraft = if is_fbw {
-        fbw_fwc_phase_label(t.fbw_fwc_phase.round() as i32)
-    } else if is_a346 {
-        raw_enum_label(t.a346_flight_phase)
+    // v0.19.4: die flugzeug-eigene FWC-Phase — NUR fuer die A346 (ToLiss), und
+    // nur, weil ihre Nummerierung an einem vollstaendigen echten Flug belegt ist
+    // (DLH367 KCLT->EDDM, 2026-07-13).
+    //
+    // Die FBW A32NX bleibt bewusst stumm: sie meldet je nach Addon-Version ZEHN
+    // oder ZWOELF Werte, und unsere alte Tabelle war deshalb ab Wert 3 um eine
+    // Position verschoben — "APPROACH" stand 65 Minuten lang im Reiseflug,
+    // "TOUCHDOWN" erschien in 800 ft Hoehe. Eine falsche Beschriftung ist
+    // schlechter als gar keine.
+    let flight_phase_aircraft = if is_a346 {
+        a346_fwc_phase_label(t.a346_flight_phase.round() as i32)
     } else {
         None
     };
@@ -4607,28 +4635,40 @@ mod tests {
         assert_eq!(snap.autopilot_master, Some(false));
     }
 
+    /// Die A346-FWC-Tabelle, verifiziert an DLH367 (ToLiss A346, KCLT→EDDM,
+    /// 2026-07-13) — dem ersten und bisher einzigen vollständigen Flug mit
+    /// echten Werten. Jede Zeile hier entspricht einem beobachteten
+    /// Phasenwechsel; die Telemetrie dazu steht im Doc-Kommentar der Funktion.
+    ///
+    /// Der Test existiert, weil die VORHERIGE Tabelle (aus der FBW übernommen)
+    /// ab Wert 3 um eine Position verschoben war und dem Piloten deshalb
+    /// "APPROACH" im Reiseflug und "TOUCHDOWN" in 800 ft Höhe ins Log schrieb.
     #[test]
-    fn fbw_fwc_phase_labels() {
-        let mut t = fbw_telemetry();
-        t.fbw_fwc_phase = 6.0;
-        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.flight_phase_aircraft.as_deref(), Some("CRUISE"));
-
-        let mut t = fbw_telemetry();
-        t.fbw_fwc_phase = 10.0;
-        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(
-            snap.flight_phase_aircraft.as_deref(),
-            Some("ROLLOUT <80KT")
-        );
-
-        // 0 = FWC nicht initialisiert → None; unbekannt → "#{n}".
-        let snap = telemetry_to_snapshot(fbw_telemetry(), Simulator::Msfs2024);
-        assert_eq!(snap.flight_phase_aircraft, None);
-        let mut t = fbw_telemetry();
-        t.fbw_fwc_phase = 12.0;
-        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.flight_phase_aircraft.as_deref(), Some("#12"));
+    fn a346_fwc_phase_labels_match_the_real_flight() {
+        let observed = [
+            (1, "ELEC PWR"),               // am Gate, 0 kt
+            (2, "FIRST ENG STARTED"),      // Triebwerksstart
+            (3, "FIRST ENG TO T/O POWER"), // 16 kt, Schub gesetzt
+            (4, "80 KT (T/O)"),            // 83 kt am Boden
+            (5, "LIFT OFF"),               // 34 ft AGL
+            (6, "1500 FT"),                // 1617 ft, +2344 fpm
+            (7, "800 FT"),                 // 802 ft, -835 fpm
+            (8, "TOUCHDOWN"),              // 18 ft, 129 kt, am Boden
+            (9, "80 KT (ROLLOUT)"),        // 79 kt am Boden
+            (10, "5 MIN AFTER"),           // 0 kt, 8 min nach dem Aufsetzen
+        ];
+        for (n, label) in observed {
+            assert_eq!(
+                a346_fwc_phase_label(n).as_deref(),
+                Some(label),
+                "FWC-Wert {n} muss '{label}' heißen (belegt an DLH367)"
+            );
+        }
+        // 0 = FWC nicht initialisiert → gar keine Meldung.
+        assert_eq!(a346_fwc_phase_label(0), None);
+        // Unbekannt → roh, NICHT geraten. Erweitert ToLiss die Nummerierung,
+        // fällt das im Log auf, statt still falsch beschriftet zu werden.
+        assert_eq!(a346_fwc_phase_label(11).as_deref(), Some("#11"));
     }
 
     #[test]
