@@ -33,6 +33,9 @@ Check: `grep -E '"0\.X\.Y"|version = "0\.X\.Y"' client/package.json client/src-t
 - [ ] `cargo check` (`client/src-tauri/`) ohne Warnings/Errors
 - [ ] `cargo test -p landing-scoring`
 - [ ] `cargo test -p aeroacars-app --lib` (Backend-Lib-Tests)
+- [ ] `cargo test --doc` (**Doctests!** — v0.19.3 hat `main` rot hinterlassen, weil ein
+      eingerückter Beispiel-Text im Modul-Kommentar von `arrival.rs` als Rust-Code
+      interpretiert und zu kompilieren versucht wurde. `--lib` fängt das NICHT.)
 - [ ] `npm test` im `client/` (Vitest)
 - [ ] `npx tsc -b` im `client/` (Strict-Type-Check)
 

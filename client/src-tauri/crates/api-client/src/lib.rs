@@ -752,6 +752,30 @@ pub struct FileBody {
     /// in `flight_end_with_divert`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arr_airport_id: Option<String>,
+    /// ISO-8601 / RFC-3339 off-block time (first movement out of the gate).
+    ///
+    /// phpVMS will NOT derive this on its own. `PirepService::create()` tries
+    /// (`block_off_time = block_on_time - flight_time`), but the guard
+    /// `if (!$pirep->block_off_time)` never fires: `block_off_time` is cast
+    /// with `App\Casts\CarbonCast`, whose `get()` turns a NULL column into
+    /// `new Carbon(null)` — i.e. the CURRENT time, which is always truthy.
+    /// So a PIREP we don't send this for keeps `block_off_time = NULL` in the
+    /// DB forever, while the model reports "now" to every reader.
+    ///
+    /// Consequence before this was sent: every AeroACARS PIREP on GSG had a
+    /// NULL off-block time (vmsACARS/smartCARS PIREPs all have one), which
+    /// broke SkyAdventures' event-window matching for long-haul flights.
+    /// `block_off_time` is in the Pirep `$fillable` list and `/file` mass-
+    /// assigns the raw request input, so sending it is enough.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_off_time: Option<String>,
+    /// ISO-8601 / RFC-3339 on-block time (parked at the gate).
+    ///
+    /// phpVMS otherwise falls back to the submission timestamp, which is when
+    /// the pilot clicked "file" — on a long flight that can be far from the
+    /// actual arrival. Same mass-assignment path as `block_off_time`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_on_time: Option<String>,
 }
 
 /// Minimal fare entry for filing — phpVMS uses `id` to look up the fare class

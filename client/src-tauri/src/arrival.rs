@@ -20,8 +20,8 @@
 //! threshold (→ "standing at EDDF"). Both statements at once produce the
 //! banner a pilot actually saw in v0.19.2:
 //!
-//!     "Anderer Landeplatz erkannt — Du bist gelandet in EDDF statt
-//!      geplant EDDF (~2 nmi vom Ziel entfernt)."
+//! > "Anderer Landeplatz erkannt — Du bist gelandet in EDDF statt geplant EDDF
+//! > (~2 nmi vom Ziel entfernt)."
 //!
 //! The divert-prefetch path had a `nearest == planned → not a divert` guard
 //! and was therefore immune; the detection path did not, and was not. That

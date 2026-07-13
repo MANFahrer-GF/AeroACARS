@@ -14286,6 +14286,16 @@ async fn flight_end(
             fares,
             fields: Some(fields),
             arr_airport_id: divert_to.clone(),
+            // Block times from the FSM. phpVMS derives NEITHER on its own:
+            // its own fallback in PirepService::create() is defeated by
+            // CarbonCast (NULL reads back as "now", so the `if (!$pirep->
+            // block_off_time)` guard never fires) — every PIREP we filed
+            // without these left block_off_time NULL in the DB.
+            block_off_time: stats.block_off_at.map(|t| t.to_rfc3339()),
+            block_on_time: stats
+                .block_on_at
+                .or(stats.landing_at)
+                .map(|t| t.to_rfc3339()),
         };
         // Block-on time = touchdown timestamp captured by the FSM.
         // Needed by the divert-finalize path because we skip /file
@@ -15228,6 +15238,14 @@ async fn flight_end_manual(
                 .as_ref()
                 .map(|s| s.trim().to_uppercase())
                 .filter(|s| !s.is_empty()),
+            // Block times — incl. the manual overrides applied to `stats`
+            // above. Until now the overrides only annotated the notes block;
+            // the values themselves never reached phpVMS.
+            block_off_time: stats.block_off_at.map(|t| t.to_rfc3339()),
+            block_on_time: stats
+                .block_on_at
+                .or(stats.landing_at)
+                .map(|t| t.to_rfc3339()),
         }
     };
     // Flip the PIREP `source` to MANUAL (1) before submitting. PhpVMS's
