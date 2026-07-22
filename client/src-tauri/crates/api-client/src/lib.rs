@@ -598,6 +598,29 @@ pub struct Fare {
     pub fare_type: Option<i32>,
 }
 
+/// One fare row returned by the PaxStudio ACARS API (`/api/paxstudio/ofp/{id}/…`).
+/// Only `id` + `count` are needed to file; the endpoint also sends `code`/`type`
+/// which serde ignores here.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PaxFare {
+    pub id: i64,
+    pub count: i32,
+}
+
+/// Response payload of the PaxStudio fares/claim endpoints (inside the `{data:…}`
+/// envelope). `value_source` is `"booked"` when the pilot's exact per-class split
+/// was returned, `"none"` when the OFP has no PaxStudio booking (empty `fares`).
+/// `linked` is only set by the claim endpoint (true once the OFP is bound to the PIREP).
+#[derive(Debug, Clone, Deserialize)]
+pub struct PaxStudioFares {
+    #[serde(default)]
+    pub value_source: String,
+    #[serde(default)]
+    pub fares: Vec<PaxFare>,
+    #[serde(default)]
+    pub linked: bool,
+}
+
 /// `GET /api/user/bids` returns a list of these.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bid {
@@ -1240,6 +1263,32 @@ impl Client {
         &self,
     ) -> Result<Vec<PirepSummary>, ApiError> {
         self.get_data(USER_PIREPS_IN_PROGRESS_PATH).await
+    }
+
+    /// `POST /api/paxstudio/ofp/{simbrief_id}/claim {pirep_id}` — claim a SimBrief OFP
+    /// for a PIREP and return the pilot's booked per-class PAX/Cargo split.
+    ///
+    /// Two effects in one call: (1) the server binds the OFP to the PIREP id-only
+    /// (authoritative link, NO route rewrite — PaxStudio does not call core
+    /// attachSimbriefToPirep), and (2) it returns the exact booked fares so we can file
+    /// them at the source instead of phpVMS-core's generic subfleet distribution. When
+    /// the OFP has no PaxStudio booking the response is `value_source:"none"` + empty
+    /// `fares` and the caller keeps its core-derived fares. Requires the PaxStudio module
+    /// (≥2.10.0); a 404/older install simply errors and the caller falls back.
+    pub async fn claim_paxstudio_ofp(
+        &self,
+        simbrief_id: &str,
+        pirep_id: &str,
+    ) -> Result<PaxStudioFares, ApiError> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            pirep_id: &'a str,
+        }
+        self.post_data(
+            &format!("/api/paxstudio/ofp/{simbrief_id}/claim"),
+            &Body { pirep_id },
+        )
+        .await
     }
 
     /// `GET /api/airports/{icao}` — single airport lookup with coordinates.
@@ -2200,6 +2249,44 @@ mod tests {
         assert_eq!(url.as_str(), "https://example.com/api/user/pireps?state=0");
         assert_eq!(url.query(), Some("state=0"));
         assert_eq!(url.path(), "/api/user/pireps");
+    }
+
+    #[test]
+    fn paxstudio_claim_endpoint_builds_correct_url() {
+        let conn = Connection::new("https://german-sky-group.eu", "k").unwrap();
+        let client = Client::new(conn).unwrap();
+        let path = format!("/api/paxstudio/ofp/{}/claim", "1777622821_5F3E3B3842");
+        let url = client.endpoint(&path).unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://german-sky-group.eu/api/paxstudio/ofp/1777622821_5F3E3B3842/claim"
+        );
+        assert_eq!(url.path(), "/api/paxstudio/ofp/1777622821_5F3E3B3842/claim");
+    }
+
+    #[test]
+    fn paxstudio_fares_decode_booked_from_envelope() {
+        // Shape returned by GET .../fares and POST .../claim (inside the {data:…} wrapper).
+        // The endpoint also sends `code`/`type` per fare — serde ignores them here.
+        let json = r#"{"data":{"ofp_id":"X","value_source":"booked","linked":true,
+            "fares":[{"id":6,"code":"Y","type":0,"count":150},
+                     {"id":7,"code":"CGO","type":1,"count":15000}]}}"#;
+        let env: DataEnvelope<PaxStudioFares> = serde_json::from_str(json).unwrap();
+        let res = env.data;
+        assert_eq!(res.value_source, "booked");
+        assert!(res.linked);
+        assert_eq!(res.fares.len(), 2);
+        assert_eq!((res.fares[0].id, res.fares[0].count), (6, 150));
+        assert_eq!((res.fares[1].id, res.fares[1].count), (7, 15000));
+    }
+
+    #[test]
+    fn paxstudio_fares_none_source_decodes_empty() {
+        let json = r#"{"data":{"ofp_id":"X","value_source":"none","fares":[]}}"#;
+        let env: DataEnvelope<PaxStudioFares> = serde_json::from_str(json).unwrap();
+        assert_eq!(env.data.value_source, "none");
+        assert!(env.data.fares.is_empty());
+        assert!(!env.data.linked); // defaults false when the key is absent
     }
 
     #[test]

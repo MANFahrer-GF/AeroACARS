@@ -9548,6 +9548,48 @@ async fn flight_discover_resumable(
         .collect())
 }
 
+/// Prefer the pilot's PaxStudio-booked per-class fare split over phpVMS-core's generic
+/// subfleet distribution. Claims the OFP for the PIREP (authoritative id-only link,
+/// no route rewrite) and returns the booked fares. Best-effort: no OFP, no PaxStudio
+/// booking, an older/absent PaxStudio module, or any error → keep `core_fares`. Never
+/// blocks the flight. This is how AeroACARS files the correct load at the source; the
+/// server-side correction then finds the data already correct and does nothing.
+async fn resolve_paxstudio_fares(
+    client: &Client,
+    simbrief_id: Option<&str>,
+    pirep_id: &str,
+    core_fares: Vec<(i64, i32)>,
+) -> Vec<(i64, i32)> {
+    let Some(sb_id) = simbrief_id else {
+        return core_fares;
+    };
+    match client.claim_paxstudio_ofp(sb_id, pirep_id).await {
+        Ok(res) if !res.fares.is_empty() => {
+            let mapped: Vec<(i64, i32)> = res.fares.iter().map(|f| (f.id, f.count)).collect();
+            tracing::info!(
+                pirep_id = %pirep_id, simbrief_id = %sb_id, fare_rows = mapped.len(),
+                value_source = %res.value_source, linked = res.linked,
+                "using PaxStudio booked fares (filed at source)"
+            );
+            mapped
+        }
+        Ok(res) => {
+            tracing::info!(
+                pirep_id = %pirep_id, simbrief_id = %sb_id, value_source = %res.value_source,
+                "PaxStudio has no booked split for this OFP; keeping core fares"
+            );
+            core_fares
+        }
+        Err(e) => {
+            tracing::warn!(
+                pirep_id = %pirep_id, simbrief_id = %sb_id, error = %e,
+                "PaxStudio claim failed; keeping core fares"
+            );
+            core_fares
+        }
+    }
+}
+
 /// Adopt a specific in-progress PIREP — creates the local ActiveFlight,
 /// persists it to disk, starts the position streamer. Used by the resume
 /// banner after the 10s countdown elapses (or the user clicks Resume now).
@@ -9616,6 +9658,18 @@ async fn flight_adopt(
                 .collect()
         })
         .unwrap_or_default();
+
+    // Prefer the pilot's PaxStudio-booked split (and set the authoritative OFP<->PIREP
+    // link) over the core subfleet distribution — same as flight_start. Best-effort.
+    let fares = resolve_paxstudio_fares(
+        &client,
+        matching_bid
+            .and_then(|b| b.flight.simbrief.as_ref())
+            .map(|s| s.id.as_str()),
+        &pirep.id,
+        fares,
+    )
+    .await;
 
     let airline_icao = matching_bid
         .and_then(|b| b.flight.airline.as_ref())
@@ -10124,6 +10178,16 @@ async fn flight_start(
                 .collect()
         })
         .unwrap_or_default();
+
+    // Prefer the pilot's actual PaxStudio-booked split (and set the authoritative
+    // OFP<->PIREP link server-side) over the core subfleet distribution. Best-effort.
+    let fares = resolve_paxstudio_fares(
+        &client,
+        bid.flight.simbrief.as_ref().map(|s| s.id.as_str()),
+        &pirep.id,
+        fares,
+    )
+    .await;
 
     let planned_registration = expected_aircraft
         .registration
