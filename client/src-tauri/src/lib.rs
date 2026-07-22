@@ -9563,7 +9563,25 @@ async fn resolve_paxstudio_fares(
     let Some(sb_id) = simbrief_id else {
         return core_fares;
     };
-    match client.claim_paxstudio_ofp(sb_id, pirep_id).await {
+    // Best-effort enrichment must never hold up flight start: cap the call well below
+    // the client's global 10s HTTP timeout so a slow/hanging VA PaxStudio endpoint
+    // can't delay tracking. On timeout we keep the core fares.
+    let claim = match tokio::time::timeout(
+        std::time::Duration::from_secs(4),
+        client.claim_paxstudio_ofp(sb_id, pirep_id),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            tracing::warn!(
+                pirep_id = %pirep_id, simbrief_id = %sb_id,
+                "PaxStudio claim timed out (4s); keeping core fares"
+            );
+            return core_fares;
+        }
+    };
+    match claim {
         Ok(res) if !res.fares.is_empty() => {
             let mapped: Vec<(i64, i32)> = res.fares.iter().map(|f| (f.id, f.count)).collect();
             tracing::info!(
