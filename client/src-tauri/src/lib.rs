@@ -12420,10 +12420,48 @@ impl FlightStats {
             .and_then(|v| v.get("vs_at_edge_fpm"))
             .and_then(|v| v.as_f64())
             .map(|x| x as f32);
-        [edge, self.landing_peak_vs_fpm, self.landing_rate_fpm]
+        // v0.20 (QS-Fix, fallback_zero-Score-Bug): `landing_peak_vs_fpm`/
+        // `landing_rate_fpm` werden ATOMAR zusammen mit `landing_source`
+        // geschrieben (`finalize_landing_rate`). Steht dort "fallback_zero"
+        // oder "other_fallback" (alle echten Quellen scheiterten, der Streamer
+        // hat 0.0 als Platzhalter eingesetzt — siehe vs_source-Kaskade
+        // lib.rs ~24834), ist die Zahl PER DEFINITION erfunden, egal wie
+        // plausibel sie fuer sich genommen aussieht (0 fpm ist ja ein
+        // voellig normaler echter Wert — genau deshalb faellt das der reinen
+        // Plausibilitaets-Pruefung oben nie auf). Diese zwei Kandidaten daher
+        // aussparen; `edge` kommt aus der unabhaengigen touchdown_v2-Pipeline
+        // und bleibt unangetastet — hatte die einen echten Touchdown erfasst,
+        // ist er weiterhin gueltig auch wenn der Legacy-Pfad in denselben
+        // Tick fallback_zero geschrieben hat.
+        let is_fabricated_fallback = matches!(
+            self.landing_source.as_deref(),
+            Some("fallback_zero") | Some("other_fallback")
+        );
+        let legacy_candidates: [Option<f32>; 2] = if is_fabricated_fallback {
+            [None, None]
+        } else {
+            [self.landing_peak_vs_fpm, self.landing_rate_fpm]
+        };
+        [edge, legacy_candidates[0], legacy_candidates[1]]
             .into_iter()
             .flatten()
             .find(|&v| landing_rate_is_plausible(v))
+    }
+
+    /// v0.20 (QS-Fix, fallback_zero-Score-Bug): SSoT-Gate für `landing_peak_
+    /// g_force`, analog zu `canonical_landing_rate_fpm`. `landing_peak_g_force`
+    /// wird im selben Streamer-Tick gesetzt wie die fallback_zero-Landerate
+    /// (lib.rs ~24928-24939: simpler Snapshot-Buffer-Max, kein echter Touchdown-
+    /// Impuls) — genauso wenig eine echte Messung. `None` statt einer
+    /// erfundenen Zahl, wenn keine echte Quelle je einen Wert lieferte.
+    pub fn canonical_peak_g_force(&self) -> Option<f32> {
+        if matches!(
+            self.landing_source.as_deref(),
+            Some("fallback_zero") | Some("other_fallback")
+        ) {
+            return None;
+        }
+        self.landing_peak_g_force
     }
 
     /// SSoT fuer die Bank-Streuung (sigma) im Anflug.
@@ -12747,10 +12785,11 @@ fn build_pirep_payload(
     let mut scoring_input = landing_scoring::LandingScoringInput {
         // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang.
         vs_fpm: score_basis_vs_fpm(&stats),
-        peak_g_load: stats.landing_peak_g_force,
-        // v0.12.3 (LE8): zentraler Scored-G-Helper —
-        // EMA-Wert, sonst raw_fallback; nie None (QS-P2).
-        scored_g_load: Some(score_g_for_stats(&stats).scored_g),
+        // v0.20 (QS-Fix, fallback_zero-Score-Bug): beide zusammen gaten —
+        // sonst wuerde compute_sub_scores' `.or(peak_g_load)`-Fallback die
+        // erfundene Zahl trotzdem aufgreifen, wenn nur scored_g_load None ist.
+        peak_g_load: stats.canonical_peak_g_force(),
+        scored_g_load: score_g_for_stats(&stats).map(|s| s.scored_g),
         // v0.7.6 P2-B: zentraler Helper statt direkten Read.
         bounce_count: Some(scored_bounce_count_for_score(&stats)),
         approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
@@ -13262,10 +13301,9 @@ fn compute_aggregate_master_score(
         // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang — siehe
         // `score_basis_vs_fpm()` Doc.
         vs_fpm: score_basis_vs_fpm(stats),
-        peak_g_load: stats.landing_peak_g_force,
-        // v0.12.3 (LE8): zentraler Scored-G-Helper — EMA-Wert aus der
-        // Forensik, sonst raw_fallback. Nie `None` an den Score (QS-P2).
-        scored_g_load: Some(score_g_for_stats(stats).scored_g),
+        // v0.20 (QS-Fix, fallback_zero-Score-Bug): beide zusammen gaten.
+        peak_g_load: stats.canonical_peak_g_force(),
+        scored_g_load: score_g_for_stats(stats).map(|s| s.scored_g),
         // v0.7.6 P2-B: zentraler Helper statt direkten Read.
         bounce_count: Some(scored_bounce_count_for_score(stats)),
         approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
@@ -13567,10 +13605,9 @@ where
         // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang — siehe
         // `score_basis_vs_fpm()` Doc.
         vs_fpm: score_basis_vs_fpm(stats),
-        peak_g_load: stats.landing_peak_g_force,
-        // v0.12.3 (LE8): zentraler Scored-G-Helper — EMA-Wert aus der
-        // Forensik, sonst raw_fallback. Nie `None` an den Score (QS-P2).
-        scored_g_load: Some(score_g_for_stats(stats).scored_g),
+        // v0.20 (QS-Fix, fallback_zero-Score-Bug): beide zusammen gaten.
+        peak_g_load: stats.canonical_peak_g_force(),
+        scored_g_load: score_g_for_stats(stats).map(|s| s.scored_g),
         // v0.7.6 P2-B: zentraler Helper statt direkten Read.
         bounce_count: Some(scored_bounce_count_for_score(stats)),
         approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
@@ -13810,8 +13847,8 @@ where
         peak_g_post_1000ms: ana_f32(&stats.landing_analysis, "peak_g_post_1000ms"),
         // v0.12.3 (LE4/LE7): gescorter G (EMA, sonst raw_fallback) + Methode
         // — die G-Force-Card headlinet diesen Wert.
-        landing_scored_g_force: Some(score_g_for_stats(stats).scored_g),
-        scored_g_method: Some(score_g_for_stats(stats).method.as_str().to_string()),
+        landing_scored_g_force: score_g_for_stats(stats).map(|s| s.scored_g),
+        scored_g_method: score_g_for_stats(stats).map(|s| s.method.as_str().to_string()),
         // v0.7.17 (B-009): G-Force-Forensik
         g_at_edge: ana_f32(&stats.landing_analysis, "g_at_edge"),
         g_smoothed_250ms_post: ana_f32(&stats.landing_analysis, "g_smoothed_250ms_post"),
@@ -17831,20 +17868,25 @@ fn ana_str(v: &Option<serde_json::Value>, key: &str) -> Option<String> {
 /// kein Touchdown-Fenster (`landing_analysis` ist `None`), fällt der Wert
 /// definiert auf den rohen Peak zurück (`raw_fallback`, LE8) — **kein**
 /// Pfad bekommt je `None`/`0` an den Score.
-fn score_g_for_stats(stats: &FlightStats) -> recorder::ScoredG {
+/// v0.20 (QS-Fix, fallback_zero-Score-Bug): gibt jetzt `None` zurück statt
+/// immer irgendeinen Wert — siehe `FlightStats::canonical_peak_g_force`.
+/// `ana_f32(landing_analysis, "scored_g")` kommt aus der unabhängigen
+/// touchdown_v2-Forensik-Pipeline; die ist bei einem fallback_zero-Flug
+/// (kein validierter Touchdown, siehe `canonical_landing_rate_fpm`) von
+/// selbst leer, muss also nicht extra gegatet werden.
+fn score_g_for_stats(stats: &FlightStats) -> Option<recorder::ScoredG> {
     if let Some(scored) = ana_f32(&stats.landing_analysis, "scored_g") {
         let method = match ana_str(&stats.landing_analysis, "scored_g_method").as_deref() {
             Some("raw_fallback") => recorder::ScoredGMethod::RawFallback,
             _ => recorder::ScoredGMethod::EmaMax,
         };
-        recorder::ScoredG {
+        return Some(recorder::ScoredG {
             scored_g: scored,
-            raw_peak: stats.landing_peak_g_force.unwrap_or(scored),
+            raw_peak: stats.canonical_peak_g_force().unwrap_or(scored),
             method,
-        }
-    } else {
-        recorder::scored_g_raw_fallback(stats.landing_peak_g_force.unwrap_or(0.0))
+        });
     }
+    stats.canonical_peak_g_force().map(recorder::scored_g_raw_fallback)
 }
 
 // ======================================================================
@@ -19905,7 +19947,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     // v0.12.3 (LE8/QS-P1): classify on the EMA-scored G, not
                     // the raw 50 Hz peak — a single raw spike must not push
                     // the landing to Hard/Severe on its own.
-                    let scored_g = score_g_for_stats(&s).scored_g;
+                    let scored_g = score_g_for_stats(&s).map(|sg| sg.scored_g).unwrap_or(0.0);
                     let new_score = LandingScore::classify(peak_vs, scored_g, scored_bounce);
                     s.landing_score = Some(new_score);
                     s.landing_score_finalized = true;
@@ -21349,15 +21391,16 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             // Roll" in maintenance-plugin lingo,
                             // captured in v0.5.16 alongside pitch).
                             bank_deg: stats.landing_bank_deg,
+                            // g_load/peak_g_load bleiben roh (Forensik-Display,
+                            // nicht Teil von compute_sub_scores) — unveraendert.
                             g_load: stats.landing_g_force,
                             peak_g_load: stats.landing_peak_g_force,
-                            // v0.12.3 (LE7/LE8): zentraler Scored-G-Helper —
-                            // EMA-Wert, sonst raw_fallback; nie None (QS-P2).
-                            // peak_g_load (oben) bleibt der rohe Wert.
-                            scored_g_load: Some(score_g_for_stats(&stats).scored_g),
-                            scored_g_method: Some(
-                                score_g_for_stats(&stats).method.as_str().to_string(),
-                            ),
+                            // v0.20 (QS-Fix, fallback_zero-Score-Bug): der
+                            // "faire" EMA-Score wird None statt einer erfundenen
+                            // Zahl, wenn keine echte Quelle je einen Wert lieferte.
+                            scored_g_load: score_g_for_stats(&stats).map(|s| s.scored_g),
+                            scored_g_method: score_g_for_stats(&stats)
+                                .map(|s| s.method.as_str().to_string()),
                             sideslip_deg: stats.touchdown_sideslip_deg,
                             headwind_kt: stats.landing_headwind_kt,
                             crosswind_kt: stats.landing_crosswind_kt,
@@ -25235,10 +25278,14 @@ fn step_flight_at(
                     // hatte). Sonst landing_score bleibt None, das
                     // Touchdown-Event wird im PIREP als „score not
                     // captured" markiert.
-                    if let Some(peak_vs) = stats.landing_peak_vs_fpm {
+                    // v0.20 (QS-Fix, fallback_zero-Score-Bug): dieselbe B-005-
+                    // Lehre gilt auch hier — `landing_peak_vs_fpm` allein auf
+                    // `Some` zu pruefen reicht nicht, wenn die 0.0 selbst ein
+                    // Platzhalter ist (fallback_zero). Kanonik statt Rohfeld.
+                    if let Some(peak_vs) = stats.canonical_landing_rate_fpm() {
                         // v0.12.3 (LE8/QS-P1): classify on the scored G
                         // (raw_fallback here — no forensics window).
-                        let scored_g = score_g_for_stats(&stats).scored_g;
+                        let scored_g = score_g_for_stats(&stats).map(|sg| sg.scored_g).unwrap_or(0.0);
                         let score = LandingScore::classify(peak_vs, scored_g, stats.bounce_count);
                         stats.landing_score = Some(score);
                     } else {
@@ -28102,7 +28149,12 @@ fn build_pirep_fields(
         // skipped. Pure numeric makes the maintenance check work.
         f.insert("Landing Rate".into(), format!("{:.0}", rate));
     }
-    if stats.landing_peak_g_force.or(stats.landing_g_force).is_some() {
+    // v0.20 (QS-Fix, fallback_zero-Score-Bug): `score_g_for_stats` selbst
+    // fragen statt der rohen Felder — sonst wuerde ein fallback_zero-Flug
+    // (Zahl ist erfunden, `.is_some()` aber trotzdem true) einen falschen
+    // G-Wert an das dmaintenance-Plugin weiterreichen (Schadens-Straf-
+    // Berechnung auf Basis einer Zahl, die nie gemessen wurde).
+    if let Some(g) = score_g_for_stats(stats) {
         // v0.5.16: pure numeric (no " G" suffix). Some maintenance
         // plugins also read this; same is_numeric() reasoning.
         //
@@ -28111,8 +28163,7 @@ fn build_pirep_fields(
         // rohen 50-Hz-Einzelframe-Peak. Pilot-Anzeige und Maintenance-
         // Penalty-Basis müssen konsistent sein (sonst sieht der Pilot
         // 1.78, das Plugin straft auf 1.95).
-        let g = score_g_for_stats(stats).scored_g;
-        f.insert("Landing G-Force".into(), format!("{:.2}", g));
+        f.insert("Landing G-Force".into(), format!("{:.2}", g.scored_g));
     }
     if let Some(p) = stats.landing_pitch_deg {
         // v0.5.16: pure numeric — `landing-pitch` slug is the tail-
@@ -28499,12 +28550,12 @@ fn build_pirep_notes(
         // ACARS-Log und das PIREP-Custom-Field "Landing G-Force" zeigen.
         // `landing_g_force` ist der Roh-Wert am Touchdown-Frame und wich
         // sichtbar ab (dritter G-Wert neben Roh-Peak und EMA).
-        if stats.landing_g_force.is_some() || stats.landing_peak_g_force.is_some() {
-            let _ = writeln!(
-                s,
-                "  G-force       {:.2} G",
-                score_g_for_stats(stats).scored_g
-            );
+        // v0.20 (QS-Fix, fallback_zero-Score-Bug): `score_g_for_stats`
+        // selbst fragen statt der rohen `.is_some()`-Felder — sonst stand
+        // hier "G-force 0.15 G" in den Notes, obwohl nie eine echte Landung
+        // erfasst wurde (genau der Joel-EWG3552-Befund).
+        if let Some(g) = score_g_for_stats(stats) {
+            let _ = writeln!(s, "  G-force       {:.2} G", g.scored_g);
         }
         if let Some(p) = stats.landing_pitch_deg {
             let _ = writeln!(s, "  Pitch         {:+.1}°", p);
@@ -28766,10 +28817,9 @@ fn build_pirep_notes(
         // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang — siehe
         // `score_basis_vs_fpm()` Doc.
         vs_fpm: score_basis_vs_fpm(stats),
-        peak_g_load: stats.landing_peak_g_force,
-        // v0.12.3 (LE8): zentraler Scored-G-Helper — EMA-Wert aus der
-        // Forensik, sonst raw_fallback. Nie `None` an den Score (QS-P2).
-        scored_g_load: Some(score_g_for_stats(stats).scored_g),
+        // v0.20 (QS-Fix, fallback_zero-Score-Bug): beide zusammen gaten.
+        peak_g_load: stats.canonical_peak_g_force(),
+        scored_g_load: score_g_for_stats(stats).map(|s| s.scored_g),
         // v0.7.6 P2-B: zentraler Helper statt direkten Read.
         bounce_count: Some(scored_bounce_count_for_score(stats)),
         approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
@@ -29064,7 +29114,10 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
         format!(
             "Touchdown: V/S {:.0} fpm, G {:.2}{}",
             peak_vs, // signed: negative = descent, matches the PIREP
-            sg.scored_g, // v0.12.3 (LE7): scored (EMA) G, not the raw peak
+            // v0.12.3 (LE7): scored (EMA) G, not the raw peak. v0.20
+            // (QS-Fix): 0.0 fallback ONLY for this transient log line —
+            // the durable JSONL/PIREP fields below stay properly None.
+            sg.as_ref().map(|s| s.scored_g).unwrap_or(0.0),
             bounce_part,
         ),
         None,
@@ -29088,8 +29141,10 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
             peak_g_force: peak_g,
             bounce_count: bounces,
             // v0.12.3 (LE7): EMA-Scored-G additiv; peak_g_force bleibt roh.
-            scored_g_force: Some(sg.scored_g),
-            scored_g_method: Some(sg.method.as_str().to_string()),
+            // v0.20 (QS-Fix, fallback_zero-Score-Bug): echtes None statt
+            // einer erfundenen Zahl im dauerhaften JSONL-Datensatz.
+            scored_g_force: sg.as_ref().map(|s| s.scored_g),
+            scored_g_method: sg.as_ref().map(|s| s.method.as_str().to_string()),
         },
     );
     // Re-acquire to flag it as announced.
@@ -29100,7 +29155,9 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     Some(format!(
         "Touchdown — V/S {:.0} fpm, G {:.2}{}",
         peak_vs,
-        sg.scored_g, // v0.12.3 (LE7): scored (EMA) G, not the raw peak
+        // v0.12.3 (LE7): scored (EMA) G, not the raw peak. v0.20 (QS-Fix):
+        // 0.0 fallback only for this transient mirror line, same as above.
+        sg.as_ref().map(|s| s.scored_g).unwrap_or(0.0),
         bounce_part,
     ))
 }
@@ -33318,6 +33375,86 @@ mod canonical_landing_rate_fpm_tests {
         assert_eq!(canonical.round() as i32, -206);
     }
 
+    /// QS-Fix (fallback_zero-Score-Bug, Joel EWG3552 2026-07-22): wenn KEINE
+    /// echte Quelle je einen Touchdown-VS lieferte, schreibt der Streamer
+    /// "fallback_zero" als landing_source. In der Praxis landet dabei IMMER
+    /// exakt 0.0 fpm im Feld (derselbe `.unwrap_or(0.0)`, der auch die
+    /// Source-Wahl trifft) — und 0.0 faellt schon durch die bestehende
+    /// `landing_rate_is_plausible`-Pruefung (verlangt < 0.0), unabhaengig
+    /// von diesem Fix. Dieser Test verriegelt trotzdem den INTENDIERTEN
+    /// Vertrag explizit ("fallback_zero heisst: Zahl ignorieren, egal wie
+    /// plausibel sie aussieht") mit einem Wert, der die alte Pruefung
+    /// alleine bestehen WUERDE — falls sich der Fallback-Default je aendert
+    /// (nicht mehr exakt 0.0), bleibt die Sperre trotzdem wirksam.
+    #[test]
+    fn fallback_zero_source_is_never_used_even_if_numerically_plausible() {
+        let mut stats = FlightStats::default();
+        stats.landing_rate_fpm = Some(-50.0);
+        stats.landing_peak_vs_fpm = Some(-50.0);
+        stats.landing_source = Some("fallback_zero".to_string());
+        assert_eq!(stats.canonical_landing_rate_fpm(), None);
+    }
+
+    #[test]
+    fn other_fallback_source_is_also_rejected() {
+        let mut stats = FlightStats::default();
+        stats.landing_rate_fpm = Some(-50.0);
+        stats.landing_source = Some("other_fallback".to_string());
+        assert_eq!(stats.canonical_landing_rate_fpm(), None);
+    }
+
+    /// Ein GENUINE Greaser-Touchdown (echte Quelle, kein Fallback) darf
+    /// natuerlich weiterhin durchgehen — der Fix darf nur fallback_zero/
+    /// other_fallback aussparen, sonst wuerde er auch echte, sehr sanfte
+    /// Landungen faelschlich als "nicht gemessen" markieren. (Hinweis:
+    /// exakt 0.0 fpm gilt schon vor diesem Fix nie als plausibel —
+    /// `landing_rate_is_plausible` verlangt < 0.0 — daher hier -5.0.)
+    #[test]
+    fn genuine_soft_landing_still_counts() {
+        let mut stats = FlightStats::default();
+        stats.landing_rate_fpm = Some(-5.0);
+        stats.landing_peak_vs_fpm = Some(-5.0);
+        stats.landing_source = Some("msfs_simvar_latched".to_string());
+        assert_eq!(stats.canonical_landing_rate_fpm(), Some(-5.0));
+    }
+
+    /// `edge` kommt aus der unabhaengigen touchdown_v2-Pipeline — ein
+    /// fallback_zero auf dem Legacy-Pfad darf einen ECHTEN Edge-Wert nicht
+    /// mit-unterdruecken.
+    #[test]
+    fn fallback_zero_does_not_suppress_independent_edge_value() {
+        let mut stats = FlightStats::default();
+        stats.landing_rate_fpm = Some(0.0);
+        stats.landing_peak_vs_fpm = Some(0.0);
+        stats.landing_source = Some("fallback_zero".to_string());
+        stats.landing_analysis = Some(json!({ "vs_at_edge_fpm": -180.0 }));
+        assert_eq!(stats.canonical_landing_rate_fpm(), Some(-180.0));
+    }
+
+    #[test]
+    fn canonical_peak_g_force_rejects_fallback_zero() {
+        let mut stats = FlightStats::default();
+        stats.landing_peak_g_force = Some(0.15);
+        stats.landing_source = Some("fallback_zero".to_string());
+        assert_eq!(stats.canonical_peak_g_force(), None);
+    }
+
+    #[test]
+    fn canonical_peak_g_force_passes_through_genuine_source() {
+        let mut stats = FlightStats::default();
+        stats.landing_peak_g_force = Some(1.24);
+        stats.landing_source = Some("msfs_simvar_latched".to_string());
+        assert_eq!(stats.canonical_peak_g_force(), Some(1.24));
+    }
+
+    #[test]
+    fn score_g_for_stats_is_none_for_fallback_zero_without_forensics() {
+        let mut stats = FlightStats::default();
+        stats.landing_peak_g_force = Some(0.15);
+        stats.landing_source = Some("fallback_zero".to_string());
+        assert!(score_g_for_stats(&stats).is_none());
+    }
+
     #[test]
     fn glitch_samples_kommen_nicht_in_den_anflug_puffer() {
         // VPS-Korpus, Flug 127 (MSFS): Sinkraten-Streuung 12.810 fpm aus 7
@@ -33559,7 +33696,7 @@ mod canonical_landing_rate_fpm_tests {
         // Zahl beruhen.
         let stats = pia3452_live_stats();
         let canonical = stats.canonical_landing_rate_fpm().expect("some");
-        let scored_g = score_g_for_stats(&stats).scored_g;
+        let scored_g = score_g_for_stats(&stats).expect("some").scored_g;
         assert_eq!(
             LandingScore::classify(canonical, scored_g, stats.bounce_count),
             LandingScore::classify(
