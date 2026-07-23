@@ -31027,7 +31027,13 @@ fn pmdg_status(state: tauri::State<'_, AppState>) -> PmdgStatusDto {
 // (Phase B). Non-Windows targets just return errors / empty lists
 // since the adapter is Windows-only anyway.
 
+// Fields are only read inside `inspector_add`'s `#[cfg(target_os = "windows")]`
+// body — on non-Windows targets that body is compiled out, so a Linux/macOS
+// `cargo check` sees them as "never read". Deserialize still needs them on
+// every platform (Tauri parses the command's JSON args before the cfg-gate
+// runs), so they can't be removed — just silence the false positive.
 #[derive(serde::Deserialize)]
+#[allow(dead_code)]
 pub(crate) struct InspectorAddArgs {
     name: String,
     unit: String,
