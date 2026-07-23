@@ -12771,7 +12771,23 @@ fn build_pirep_payload(
     planned_arr_icao: &str,
 ) -> aeroacars_mqtt::PirepPayload {
     let stats = flight.stats.lock().expect("flight stats");
-    let touchdown_count = stats.touchdown_events.len() as u32;
+    // v0.20 (QS-Fix, DLH2064 2026-07-23): `touchdown_events` wird nur
+    // gefuellt, wenn mindestens EIN Streamer-Tick waehrend `FlightPhase::
+    // Landing` laeuft (siehe der `if let Some(touchdown) = stats.landing_at`
+    // Block, Rollout-Tick-Handler) — rollt die FSM in derselben/naechsten
+    // Tick-Luecke sofort weiter zu TaxiIn (schnelle Landung, langsame Tick-
+    // Kadenz), verpasst dieser Block komplett und der Audit-Vec bleibt leer,
+    // OBWOHL eine echte Landung erfasst wurde (touchdown_v2/Edge-Pipeline
+    // lief unabhaengig davon weiter und lieferte einen gueltigen Score).
+    // Sicherheitsnetz: mindestens 1 zaehlen, wenn `canonical_landing_rate_
+    // fpm()` einen ECHTEN (nicht fallback_zero/other_fallback) Wert liefert
+    // — bewusst NICHT auf `landing_at.is_some()` gaten, das waere auch bei
+    // einem fallback_zero-Flug (kein echter Touchdown) gesetzt und wuerde
+    // genau das Signal verdecken, das der fallback_zero-Fix sichtbar machen
+    // soll (siehe Joel EWG3552).
+    let touchdown_count = (stats.touchdown_events.len() as u32).max(
+        if stats.canonical_landing_rate_fpm().is_some() { 1 } else { 0 },
+    );
     // Divert-Marker via pure Helper: bestätigter Divert vs. bloßer Verdacht.
     let divert_markers = divert_payload_markers(
         effective_arr_icao,
