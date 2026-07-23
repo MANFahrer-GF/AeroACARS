@@ -12753,6 +12753,172 @@ struct DivertMarkers {
     divert_suspected_icao: Option<String>,
 }
 
+/// v0.20 (QS-Fix, DLH2064 2026-07-23 — root-cause version): `stats.
+/// touchdown_events` only gets its `FinalLanding` entry appended if at
+/// least one streamer tick observes `FlightPhase::Landing` (the push site
+/// is nested inside that match arm, ~line 25486). A fast deceleration can
+/// roll the FSM straight through to TaxiIn in the gap between two ticks,
+/// so that arm's body never runs for this landing even though the
+/// independent touchdown_v2/edge pipeline captured and scored it fine —
+/// the audit vec is then incomplete (or entirely empty) despite a real
+/// landing having happened.
+///
+/// EVERY PIREP-facing consumer that counts or lists `touchdown_events`
+/// (the payload's `touchdown_count`, and both "Touchdowns" notes/custom-
+/// field sections) must go through this helper instead of reading the raw
+/// vec directly — fixing only one call site (as an earlier version of
+/// this fix did) leaves the other consumers exposed to the exact same
+/// incomplete-vec bug.
+///
+/// Deliberately gated on `canonical_landing_rate_fpm().is_some()`, NOT on
+/// `landing_at.is_some()` — the latter is also set for a fallback_zero
+/// flight (no real touchdown), and backfilling there would mask exactly
+/// the signal the fallback_zero fix (Joel EWG3552) exists to surface.
+fn effective_touchdown_events(stats: &FlightStats) -> std::borrow::Cow<'_, [TouchdownEvent]> {
+    // Gated on "is there already a FinalLanding entry", NOT "is the vec
+    // empty" — a flight with a real touch-and-go followed by a raced-out
+    // final landing has a NON-empty vec (the T&G is in there) but is still
+    // missing exactly the entry this whole helper exists to backfill.
+    let has_final = stats
+        .touchdown_events
+        .iter()
+        .any(|e| matches!(e.kind, TouchdownKind::FinalLanding));
+    if has_final {
+        return std::borrow::Cow::Borrowed(&stats.touchdown_events);
+    }
+    let Some(peak_vs_fpm) = stats.canonical_landing_rate_fpm() else {
+        // Either no landing at all, or a fallback_zero one — stays as-is
+        // (empty, or T&Gs only), which is the whole point of that fix.
+        return std::borrow::Cow::Borrowed(&stats.touchdown_events);
+    };
+    // v0.20 (QS-Fix, gefunden im Adversarial-Review): `landing_at` wird
+    // NUR im FSM-Tick-Pfad gesetzt (Approach/Final on_ground-Kante) — der
+    // Sampler-Pfad (Bush/VFR-Kurzhops, siehe lib.rs ~19467) stampt ihn
+    // nie, setzt aber `sampler_touchdown_at`. Ohne diesen Fallback haette
+    // ein rein-Sampler-erfasster Touchdown hier die PIREP-Filing-Zeit
+    // statt der echten Touchdown-Zeit bekommen — sichtbar wuerde das nur
+    // im seltenen Fall T&G+gerastete Sampler-Landung, aber ehrlicher ist's
+    // so oder so.
+    let timestamp = stats
+        .landing_at
+        .or(stats.sampler_touchdown_at)
+        .unwrap_or_else(Utc::now);
+    let mut events = stats.touchdown_events.clone();
+    events.push(TouchdownEvent {
+        timestamp,
+        kind: TouchdownKind::FinalLanding,
+        peak_vs_fpm,
+        peak_g: stats.canonical_peak_g_force().unwrap_or(0.0),
+        lat: stats.landing_lat.unwrap_or_default(),
+        lon: stats.landing_lon.unwrap_or_default(),
+        sub_bounces: stats.bounce_count,
+    });
+    std::borrow::Cow::Owned(events)
+}
+
+#[cfg(test)]
+mod effective_touchdown_events_tests {
+    use super::*;
+
+    #[test]
+    fn empty_vec_stays_empty_when_no_landing_at_all() {
+        let stats = FlightStats::default();
+        assert!(effective_touchdown_events(&stats).is_empty());
+    }
+
+    /// Kern-Regression (Joel EWG3552): ein fallback_zero-Flug darf NIE
+    /// einen synthetischen FinalLanding bekommen — sonst wuerde dieser
+    /// Helper genau das Signal verdecken, das der Score-Fix sichtbar
+    /// machen soll.
+    #[test]
+    fn empty_vec_stays_empty_for_fallback_zero() {
+        let mut stats = FlightStats::default();
+        stats.landing_rate_fpm = Some(0.0);
+        stats.landing_source = Some("fallback_zero".to_string());
+        assert!(effective_touchdown_events(&stats).is_empty());
+    }
+
+    /// DLH2064-Regression: leerer Vec, aber ein echter (nicht-fallback)
+    /// Touchdown wurde von der Kanonik erfasst → genau 1 synthetisierter
+    /// FinalLanding-Eintrag.
+    #[test]
+    fn empty_vec_backfills_one_final_landing_for_genuine_touchdown() {
+        let mut stats = FlightStats::default();
+        stats.landing_rate_fpm = Some(-409.0);
+        stats.landing_peak_vs_fpm = Some(-409.0);
+        stats.landing_source = Some("msfs_simvar_latched".to_string());
+        stats.landing_peak_g_force = Some(1.46);
+        let events = effective_touchdown_events(&stats);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0].kind, TouchdownKind::FinalLanding));
+        assert_eq!(events[0].peak_vs_fpm, -409.0);
+        assert_eq!(events[0].peak_g, 1.46);
+    }
+
+    /// Die tiefere Luecke, die die erste Fix-Version noch hatte: ein
+    /// echtes Touch-and-Go steht schon im Vec (also NICHT leer), aber die
+    /// finale Landung wurde gerastet. Der Helper muss trotzdem nachlegen,
+    /// statt beim ersten nicht-leeren Vec sofort "fertig" zu sagen.
+    #[test]
+    fn tg_present_but_final_missing_still_gets_backfilled() {
+        let mut stats = FlightStats::default();
+        stats.touchdown_events.push(TouchdownEvent {
+            timestamp: Utc::now(),
+            kind: TouchdownKind::TouchAndGo,
+            peak_vs_fpm: -250.0,
+            peak_g: 1.2,
+            lat: 50.0,
+            lon: 8.0,
+            sub_bounces: 0,
+        });
+        stats.landing_rate_fpm = Some(-409.0);
+        stats.landing_peak_vs_fpm = Some(-409.0);
+        stats.landing_source = Some("msfs_simvar_latched".to_string());
+        let events = effective_touchdown_events(&stats);
+        assert_eq!(events.len(), 2, "T&G + backfilled final, not just the T&G");
+        assert!(matches!(events[0].kind, TouchdownKind::TouchAndGo));
+        assert!(matches!(events[1].kind, TouchdownKind::FinalLanding));
+    }
+
+    /// QS-Fix (Adversarial-Review): auf dem Sampler-Pfad (Bush/VFR) wird
+    /// `landing_at` nie gestampt, nur `sampler_touchdown_at` — der
+    /// synthetisierte Eintrag muss DIESEN Zeitstempel nehmen, nicht die
+    /// PIREP-Filing-Zeit (`Utc::now()`).
+    #[test]
+    fn backfill_prefers_sampler_touchdown_at_over_now_when_landing_at_missing() {
+        let mut stats = FlightStats::default();
+        let real_touchdown = Utc::now() - chrono::Duration::minutes(4);
+        stats.sampler_touchdown_at = Some(real_touchdown);
+        stats.landing_rate_fpm = Some(-90.0);
+        stats.landing_peak_vs_fpm = Some(-90.0);
+        stats.landing_source = Some("sampler_gear_force".to_string());
+        let events = effective_touchdown_events(&stats);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].timestamp, real_touchdown);
+    }
+
+    /// Wenn der Vec bereits einen FinalLanding-Eintrag hat, wird NICHTS
+    /// nachgelegt — kein doppelter Eintrag.
+    #[test]
+    fn existing_final_landing_is_never_duplicated() {
+        let mut stats = FlightStats::default();
+        stats.touchdown_events.push(TouchdownEvent {
+            timestamp: Utc::now(),
+            kind: TouchdownKind::FinalLanding,
+            peak_vs_fpm: -180.0,
+            peak_g: 1.1,
+            lat: 50.0,
+            lon: 8.0,
+            sub_bounces: 0,
+        });
+        stats.landing_rate_fpm = Some(-180.0);
+        stats.landing_peak_vs_fpm = Some(-180.0);
+        stats.landing_source = Some("msfs_simvar_latched".to_string());
+        let events = effective_touchdown_events(&stats);
+        assert_eq!(events.len(), 1);
+    }
+}
+
 /// v0.12.5 (Spec v0.12.5-divert-and-manual-pirep.md, LE1): zentraler
 /// MQTT-PirepPayload-Builder — eine Stelle für alle 4 Filing-Pfade
 /// (normal /file, Divert, manuell, Queue-Worker). Vorher war dieser
@@ -12771,23 +12937,7 @@ fn build_pirep_payload(
     planned_arr_icao: &str,
 ) -> aeroacars_mqtt::PirepPayload {
     let stats = flight.stats.lock().expect("flight stats");
-    // v0.20 (QS-Fix, DLH2064 2026-07-23): `touchdown_events` wird nur
-    // gefuellt, wenn mindestens EIN Streamer-Tick waehrend `FlightPhase::
-    // Landing` laeuft (siehe der `if let Some(touchdown) = stats.landing_at`
-    // Block, Rollout-Tick-Handler) — rollt die FSM in derselben/naechsten
-    // Tick-Luecke sofort weiter zu TaxiIn (schnelle Landung, langsame Tick-
-    // Kadenz), verpasst dieser Block komplett und der Audit-Vec bleibt leer,
-    // OBWOHL eine echte Landung erfasst wurde (touchdown_v2/Edge-Pipeline
-    // lief unabhaengig davon weiter und lieferte einen gueltigen Score).
-    // Sicherheitsnetz: mindestens 1 zaehlen, wenn `canonical_landing_rate_
-    // fpm()` einen ECHTEN (nicht fallback_zero/other_fallback) Wert liefert
-    // — bewusst NICHT auf `landing_at.is_some()` gaten, das waere auch bei
-    // einem fallback_zero-Flug (kein echter Touchdown) gesetzt und wuerde
-    // genau das Signal verdecken, das der fallback_zero-Fix sichtbar machen
-    // soll (siehe Joel EWG3552).
-    let touchdown_count = (stats.touchdown_events.len() as u32).max(
-        if stats.canonical_landing_rate_fpm().is_some() { 1 } else { 0 },
-    );
+    let touchdown_count = effective_touchdown_events(&stats).len() as u32;
     // Divert-Marker via pure Helper: bestätigter Divert vs. bloßer Verdacht.
     let divert_markers = divert_payload_markers(
         effective_arr_icao,
@@ -28251,15 +28401,19 @@ fn build_pirep_fields(
     // both, no point adding empty rows. The detailed touchdown list
     // (peak V/S + G per event) lives in the Notes prose so it doesn't
     // bloat the structured fields with N rows on a training flight.
-    let tg_count = stats
-        .touchdown_events
+    // v0.20 (QS-Fix, DLH2064 2026-07-23): über `effective_touchdown_events`
+    // statt des rohen Vecs — sonst kann eine gerastete FinalLanding (siehe
+    // Doc-Kommentar dort) diese Zeile ganz unterdrücken oder "N T&G, kein
+    // Final" vorgaukeln, obwohl eine echte Landung stattfand.
+    let effective_events = effective_touchdown_events(stats);
+    let tg_count = effective_events
         .iter()
         .filter(|e| matches!(e.kind, TouchdownKind::TouchAndGo))
         .count();
-    if tg_count > 0 || stats.touchdown_events.len() > 1 {
+    if tg_count > 0 || effective_events.len() > 1 {
         // "Touchdowns: 4 (3 T&G + final)" — gives the VA admin one
         // glanceable line that matches the Notes story.
-        let total = stats.touchdown_events.len();
+        let total = effective_events.len();
         let suffix = if tg_count == 0 {
             String::new()
         } else if total == tg_count {
@@ -28642,15 +28796,17 @@ fn build_pirep_notes(
     // Only render when something noteworthy happened: at least one
     // T&G, OR more than one touchdown event total. A routine A→B with
     // a single final landing skips this section to keep notes short.
-    let tg_count = stats
-        .touchdown_events
+    // v0.20 (QS-Fix, DLH2064 2026-07-23): siehe die andere Stelle oben —
+    // dieselbe Begründung, dieselbe Lücke (roher Vec statt Helper).
+    let effective_events = effective_touchdown_events(stats);
+    let tg_count = effective_events
         .iter()
         .filter(|e| matches!(e.kind, TouchdownKind::TouchAndGo))
         .count();
-    if tg_count > 0 || stats.touchdown_events.len() > 1 {
+    if tg_count > 0 || effective_events.len() > 1 {
         start_section(&mut s, "TOUCHDOWNS");
         wrote_section = true;
-        for (i, ev) in stats.touchdown_events.iter().enumerate() {
+        for (i, ev) in effective_events.iter().enumerate() {
             let label = match ev.kind {
                 TouchdownKind::TouchAndGo => "T&G",
                 TouchdownKind::FinalLanding => "Final",
