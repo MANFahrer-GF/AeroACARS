@@ -25367,6 +25367,21 @@ fn step_flight_at(
                             stats.landing_lat = None;
                             stats.landing_lon = None;
                             stats.bounce_count = 0;
+                            // v0.20 (QS-Fix, /code-review high): `landing_rate_fpm`
+                            // (die zweite Haelfte des `finalize_landing_rate`-Paars)
+                            // sowie `landing_analysis`/`landing_source` fehlten hier —
+                            // ohne diesen Reset ueberlebt die Forensik der T&G-Landung
+                            // bis zum naechsten Sampler-Dump. Faellt der ECHTE finale
+                            // Touchdown dann auf `fallback_zero` zurueck (derselbe
+                            // Sim-Stotterer/Sparse-UDP-Fehlerklasse wie beim Joel-
+                            // Vorfall), las `canonical_landing_rate_fpm()`/
+                            // `score_g_for_stats()` den `edge`/`scored_g`-Kandidaten
+                            // aus dem ALTEN `landing_analysis` — der ist nur dann
+                            // "von selbst leer" (die Praemisse hinter dem fallback_
+                            // zero-Gate), wenn hier auch wirklich genullt wird.
+                            stats.landing_rate_fpm = None;
+                            stats.landing_analysis = None;
+                            stats.landing_source = None;
                             stats.bounce_armed_above_threshold = false;
                             stats.touch_and_go_pending_since = None;
                             // CRITICAL: also clear the GA tracker so the
@@ -33453,6 +33468,57 @@ mod canonical_landing_rate_fpm_tests {
         stats.landing_peak_g_force = Some(0.15);
         stats.landing_source = Some("fallback_zero".to_string());
         assert!(score_g_for_stats(&stats).is_none());
+    }
+
+    /// QS-Fix (/code-review high, gefunden am Release-Review): OHNE den
+    /// T&G/Go-Around-Reset (`landing_analysis`/`landing_source` = None,
+    /// lib.rs ~25362) wuerde ein zweiter, fallback_zero-getaggter Touchdown
+    /// nach einem Touch-and-Go trotzdem die ALTE Forensik des T&G als
+    /// "unabhaengige Pipeline" durchlassen — `edge`/`scored_g` sind ja nur
+    /// dann "von selbst leer", wenn wirklich genullt wurde. Dieser Test
+    /// simuliert exakt die vom Reviewer gefundene Sequenz: T&G-Forensik
+    /// erfassen → Reset (wie der Fix ihn jetzt macht) → zweite Landung
+    /// faellt auf fallback_zero zurueck → NICHTS von der T&G-Landung darf
+    /// mehr durchscheinen.
+    #[test]
+    fn stale_touch_and_go_forensics_do_not_leak_into_a_later_fallback_zero_landing() {
+        let mut stats = FlightStats::default();
+        // 1) Touch-and-Go: echte Forensik erfasst.
+        stats.landing_analysis = Some(json!({
+            "vs_at_edge_fpm": -300.0,
+            "scored_g": 1.1,
+        }));
+        stats.landing_source = Some("vs_at_edge_50hz".to_string());
+        stats.landing_rate_fpm = Some(-300.0);
+        stats.landing_peak_vs_fpm = Some(-300.0);
+        stats.landing_peak_g_force = Some(1.1);
+
+        // 2) Der Fix: Reset-Block (lib.rs ~25362-25382) nullt jetzt ALLES,
+        // nicht nur landing_peak_vs_fpm/landing_peak_g_force.
+        stats.landing_at = None;
+        stats.landing_peak_vs_fpm = None;
+        stats.landing_peak_g_force = None;
+        stats.landing_score = None;
+        stats.bounce_count = 0;
+        stats.landing_rate_fpm = None;
+        stats.landing_analysis = None;
+        stats.landing_source = None;
+
+        // 3) Zweite (finale) Landung: kein echter Touchdown erfasst.
+        stats.landing_rate_fpm = Some(0.0);
+        stats.landing_peak_vs_fpm = Some(0.0);
+        stats.landing_peak_g_force = Some(0.15);
+        stats.landing_source = Some("fallback_zero".to_string());
+
+        assert_eq!(
+            stats.canonical_landing_rate_fpm(),
+            None,
+            "darf NICHT die -300 fpm der T&G durchlassen"
+        );
+        assert!(
+            score_g_for_stats(&stats).is_none(),
+            "darf NICHT die 1.1 G der T&G durchlassen"
+        );
     }
 
     #[test]
