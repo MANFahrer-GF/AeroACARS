@@ -55,6 +55,15 @@ pub enum FlightLogEvent {
         timestamp: DateTime<Utc>,
         pirep_id: String,
         age_minutes: i64,
+        /// v0.20 (Process-Integrity): `Some(false)` if the PREVIOUS
+        /// AeroACARS run's crash-sentinel was still present at this run's
+        /// start (did NOT exit cleanly — crash/kill/power-loss). `Some(true)`
+        /// if it exited via the clean `RunEvent::ExitRequested` path. `None`
+        /// for logs written before this field existed, or if the check
+        /// itself couldn't run. Additive — old JSONL rows without this key
+        /// still deserialize.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        previous_exit_clean: Option<bool>,
     },
     /// Phase-FSM transitioned. Recorded once per change so post-hoc
     /// you can see exactly when boarding ended, takeoff fired, etc.
@@ -688,6 +697,46 @@ mod scored_g_tests {
                 assert_eq!(scored_g_force, None);
                 assert_eq!(scored_g_method, None);
             }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn old_flight_resumed_event_deserializes() {
+        // v0.20: a pre-existing FlightResumed row without previous_exit_clean
+        // must still deserialize (defaults to None) — old JSONL logs must
+        // stay readable.
+        let json = r#"{"type":"flight_resumed","timestamp":"2026-07-22T22:19:26Z",
+            "pirep_id":"g8wrmzEKnY9XGk6r","age_minutes":98}"#;
+        let ev: FlightLogEvent = serde_json::from_str(json).expect("deserialize old event");
+        match ev {
+            FlightLogEvent::FlightResumed {
+                age_minutes,
+                previous_exit_clean,
+                ..
+            } => {
+                assert_eq!(age_minutes, 98);
+                assert_eq!(previous_exit_clean, None);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn flight_resumed_round_trips_previous_exit_clean() {
+        let ev = FlightLogEvent::FlightResumed {
+            timestamp: Utc::now(),
+            pirep_id: "abc123".to_string(),
+            age_minutes: 5,
+            previous_exit_clean: Some(false),
+        };
+        let json = serde_json::to_string(&ev).expect("serialize");
+        assert!(json.contains("\"previous_exit_clean\":false"));
+        let back: FlightLogEvent = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            FlightLogEvent::FlightResumed {
+                previous_exit_clean, ..
+            } => assert_eq!(previous_exit_clean, Some(false)),
             _ => panic!("wrong variant"),
         }
     }

@@ -9,6 +9,12 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// v0.20 (Process-Integrity): cross-platform "is the sim's OS process
+/// still alive?" probe, keyed off `SimKind`. Lives here (not in
+/// `sim-msfs`/`sim-xplane`) so both adapters' heterogeneous disconnect
+/// signals can be disambiguated from one shared, cross-platform place.
+pub mod process_probe;
+
 /// One sample of simulator telemetry.
 ///
 /// Field set tracks the requirements spec §8 ("Simulator-Daten und Telemetrie").

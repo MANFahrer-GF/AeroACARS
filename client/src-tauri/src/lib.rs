@@ -95,6 +95,14 @@ const ACTIVE_FLIGHT_FILE: &str = "active_flight.json";
 /// sees the full flight history when they re-open Tauri mid-flight.
 /// Capped at `ACTIVITY_LOG_CAPACITY` entries (same as in-memory).
 const ACTIVITY_LOG_FILE: &str = "activity_log.json";
+/// v0.20 (Process-Integrity): written at every app start, removed ONLY on
+/// the existing clean `RunEvent::ExitRequested` path. If this file is still
+/// present at the NEXT start, the previous run did not exit cleanly (crash,
+/// force-kill, PC power-loss) — `active_flight.json` alone can't tell that
+/// apart from a deliberate mid-flight quit, since it's never cleared on
+/// exit either way. Content is informational only (PID + launch time),
+/// presence/absence is the actual signal.
+const RUN_SENTINEL_FILE: &str = "run_active.lock";
 
 /// Anything older than this is considered stale and discarded on resume.
 const RESUME_MAX_AGE_HOURS: i64 = 12;
@@ -756,6 +764,179 @@ const RESUME_DRIFT_TOAST_NM: f64 = 1.0;
 const RESUME_DRIFT_WARN_NM: f64 = 50.0;
 const RESUME_DRIFT_EXTREME_NM: f64 = 200.0;
 
+/// v0.20 (Process-Integrity): ein Fuel-ANSTIEG von mehr als dieser Menge
+/// zwischen Pause/Neustart-Snapshot und dem ersten frischen Snapshot danach
+/// ist physikalisch unmöglich (Flugzeuge tanken nicht mitten im Flug nach)
+/// — starkes Indiz für einen Sim/App-Reload mit frischem/anderem Ladezustand
+/// statt einer echten durchgehenden Simulation. Bewusst nur die ZUNAHME
+/// bewerten, nicht den Betrag: eine normale Verbrauchs-ABNAHME (auch über
+/// mehrere Tonnen bei langen Pausen) ist harmlos.
+const RESUME_FUEL_JUMP_IMPOSSIBLE_KG: f64 = 200.0;
+
+/// v0.20 (Process-Integrity): Ergebnis des Vergleichs "letzter bekannter
+/// Snapshot vor der Pause/dem Neustart" vs. "erster frischer Snapshot
+/// danach". `fuel_delta_kg` bleibt VORZEICHENBEHAFTET (aktuell − vorher) —
+/// anders als die Anzeige in `apply_pause_resume`, die nur den Betrag
+/// zeigt. Wird sowohl vom Sim-Pause-Resume-Pfad als auch vom App-Neustart-
+/// Resume-Pfad (`try_resume_flight`) genutzt, damit beide dieselbe Logik
+/// und dieselben Schwellwerte teilen statt sie zu duplizieren.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct ResumeDiscontinuity {
+    drift_nm: f64,
+    altitude_delta_ft: f64,
+    fuel_delta_kg: f64,
+    /// v0.20 QS-Fix: true wenn SOWOHL der "vorher"- als auch der "jetzt"-
+    /// Snapshot `on_ground` waren. Ein Fuel-ANSTIEG während das Flugzeug
+    /// durchgehend am Boden stand ist ein ganz normales Nachtanken während
+    /// einer Pause — KEIN unmöglicher Sprung. Ist dagegen mindestens eine
+    /// Seite airborne (der tatsächliche Vorfall-Fall: airborne vorher,
+    /// geparkt danach), bleibt ein Fuel-Anstieg weiter verdächtig.
+    both_grounded: bool,
+}
+
+/// Vergleicht den letzten bekannten Snapshot vor einer Pause/einem
+/// Neustart (`prev`) mit dem ersten frischen Snapshot danach (`cur`).
+fn compute_resume_discontinuity(prev: &PausedSnapshot, cur: &SimSnapshot) -> ResumeDiscontinuity {
+    let d_m = ::geo::distance_m(prev.lat, prev.lon, cur.lat, cur.lon);
+    ResumeDiscontinuity {
+        drift_nm: d_m / 1852.0,
+        altitude_delta_ft: cur.altitude_msl_ft - prev.altitude_ft,
+        fuel_delta_kg: cur.fuel_total_kg as f64 - prev.fuel_total_kg as f64,
+        both_grounded: prev.on_ground && cur.on_ground,
+    }
+}
+
+/// Physikalisch unmöglicher Sprung beim Wiederaufsetzen: entweder eine
+/// extreme Reposition (siehe `RESUME_DRIFT_EXTREME_NM`) oder ein Fuel-
+/// Anstieg über `RESUME_FUEL_JUMP_IMPOSSIBLE_KG` (Nachtanken mitten im
+/// Flug gibt es nicht — das ist ein Reload/neuer Ladezustand, keine
+/// durchgehende Simulation).
+fn is_impossible_discontinuity(d: &ResumeDiscontinuity) -> bool {
+    let impossible_fuel_jump = d.fuel_delta_kg > RESUME_FUEL_JUMP_IMPOSSIBLE_KG && !d.both_grounded;
+    d.drift_nm > RESUME_DRIFT_EXTREME_NM || impossible_fuel_jump
+}
+
+#[cfg(test)]
+mod resume_discontinuity_tests {
+    use super::*;
+
+    fn paused_snapshot(
+        lat: f64,
+        lon: f64,
+        altitude_ft: f64,
+        fuel_total_kg: f32,
+        on_ground: bool,
+    ) -> PausedSnapshot {
+        PausedSnapshot {
+            lat,
+            lon,
+            heading_deg: 0.0,
+            altitude_ft,
+            fuel_total_kg,
+            zfw_kg: None,
+            on_ground,
+        }
+    }
+
+    fn sim_snapshot(
+        lat: f64,
+        lon: f64,
+        altitude_msl_ft: f64,
+        fuel_total_kg: f32,
+        on_ground: bool,
+    ) -> SimSnapshot {
+        SimSnapshot {
+            lat,
+            lon,
+            altitude_msl_ft,
+            fuel_total_kg,
+            on_ground,
+            ..SimSnapshot::default()
+        }
+    }
+
+    /// Incident-Replay (Joel EWG3552, 2026-07-22): letzter bekannter Stand
+    /// vor der Lücke war AIRBOREN (Endanflug, 233 ft AGL, im Sinkflug);
+    /// danach stand das Flugzeug plötzlich GEPARKT mit 4117→11800 kg mehr
+    /// Fuel im Tank. Diese airborne→ground-Transition MIT Fuel-Anstieg ist
+    /// genau der Fall, den `is_impossible_discontinuity` fangen soll — der
+    /// QS-Fix (both_grounded-Ausnahme) darf ihn NICHT versehentlich
+    /// mit-exemptieren, weil `cur` allein schon on_ground=true ist.
+    #[test]
+    fn incident_fuel_jump_is_impossible() {
+        let prev = paused_snapshot(49.4955, 11.0752, 1200.0, 4117.4, false);
+        let cur = sim_snapshot(49.4955, 11.0752, 1027.0, 11800.7, true);
+        let d = compute_resume_discontinuity(&prev, &cur);
+        assert!(d.fuel_delta_kg > 0.0, "fuel delta must be signed positive on increase");
+        assert!(!d.both_grounded, "prev was airborne, so both_grounded must be false");
+        assert!(is_impossible_discontinuity(&d));
+    }
+
+    /// QS-Fix (Finding 2): ein Fuel-ANSTIEG ist harmlos, wenn das Flugzeug
+    /// DURCHGEHEND am Boden stand — das ist ein ganz normales Nachtanken
+    /// während einer Pause (z. B. App-Neustart am Gate), keine unmögliche
+    /// Simulation. Vorher hätte das fälschlich eskaliert.
+    #[test]
+    fn ground_refuel_between_pause_and_resume_is_not_impossible() {
+        let prev = paused_snapshot(50.0331, 8.5622, 360.0, 3000.0, true);
+        let cur = sim_snapshot(50.0331, 8.5622, 360.0, 12000.0, true);
+        let d = compute_resume_discontinuity(&prev, &cur);
+        assert!(d.fuel_delta_kg > RESUME_FUEL_JUMP_IMPOSSIBLE_KG);
+        assert!(d.both_grounded);
+        assert!(!is_impossible_discontinuity(&d));
+    }
+
+    /// Normaler Verbrauch während einer Pause (z. B. APU/Triebwerke liefen
+    /// weiter) — eine Abnahme, egal wie groß, ist niemals der unmögliche Fall.
+    #[test]
+    fn normal_fuel_burn_is_not_impossible() {
+        let prev = paused_snapshot(50.0, 8.0, 35000.0, 5500.0, false);
+        let cur = sim_snapshot(50.01, 8.01, 34950.0, 4300.0, false);
+        let d = compute_resume_discontinuity(&prev, &cur);
+        assert!(d.fuel_delta_kg < 0.0);
+        assert!(!is_impossible_discontinuity(&d));
+    }
+
+    /// Eine sehr große Reposition (> RESUME_DRIFT_EXTREME_NM) ist auch ohne
+    /// jeden Fuel-Sprung unmöglich — der Drift-Pfad muss unabhängig feuern
+    /// (und darf NICHT durch die both_grounded-Fuel-Ausnahme mit-exemptiert
+    /// werden — diese greift ausschließlich beim Fuel-Zweig).
+    #[test]
+    fn extreme_drift_alone_is_impossible() {
+        let prev = paused_snapshot(50.0, 8.0, 35000.0, 5000.0, false);
+        // 1° Breite ≈ 60 nm unabhängig von der geografischen Breite (anders
+        // als Längengrad, der mit cos(lat) schrumpft) → 5° ≈ 300 nm nördlich,
+        // gleicher Fuel-Stand.
+        let cur = sim_snapshot(55.0, 8.0, 35000.0, 5000.0, false);
+        let d = compute_resume_discontinuity(&prev, &cur);
+        assert!(d.drift_nm > RESUME_DRIFT_EXTREME_NM);
+        assert!(is_impossible_discontinuity(&d));
+    }
+
+    /// Extreme Drift bleibt unmöglich, auch wenn beide Seiten (zufällig)
+    /// on_ground sind — die both_grounded-Ausnahme gilt NUR für den Fuel-
+    /// Zweig, ein 300-nm-Sprung am Boden ist genauso unmöglich wie in der Luft.
+    #[test]
+    fn extreme_drift_stays_impossible_even_when_both_grounded() {
+        let prev = paused_snapshot(50.0, 8.0, 400.0, 5000.0, true);
+        let cur = sim_snapshot(55.0, 8.0, 400.0, 5000.0, true);
+        let d = compute_resume_discontinuity(&prev, &cur);
+        assert!(d.both_grounded);
+        assert!(is_impossible_discontinuity(&d));
+    }
+
+    /// Ein kleiner, plausibler Sprung (ein paar NM Drift, moderater Verbrauch)
+    /// darf NICHT als unmöglich gelten — sonst würde jeder normale Resume
+    /// fälschlich eskalieren.
+    #[test]
+    fn small_plausible_resume_is_not_impossible() {
+        let prev = paused_snapshot(50.0, 8.0, 5000.0, 2000.0, false);
+        let cur = sim_snapshot(50.02, 8.02, 4950.0, 1950.0, false);
+        let d = compute_resume_discontinuity(&prev, &cur);
+        assert!(!is_impossible_discontinuity(&d));
+    }
+}
+
 /// v0.13.0 Stream F (LE22-LE26): Pilot-getriggerter Re-Check-Workflow.
 /// Wenn `resume_position_suspect=true`, kann der Pilot sich erst manuell im
 /// Sim wieder zur gespeicherten Position bringen und dann via
@@ -1245,6 +1426,14 @@ struct AppState {
     /// (broadcast::Sender has no `Default`) keeps `#[derive(Default)]` on
     /// AppState intact.
     remote_events: remote::RemoteEventBus,
+    /// v0.20 (Process-Integrity): whether the PREVIOUS AeroACARS run exited
+    /// cleanly, per `run_sentinel_present()` checked BEFORE `write_run_sentinel`
+    /// overwrites the sentinel for the current run. `None` until the setup
+    /// hook determines it (should never observably stay `None` in practice —
+    /// set once, early, at startup). Read by `try_resume_flight()` so the
+    /// resulting `FlightResumed.previous_exit_clean` reflects the run that
+    /// just ended, not the one currently starting.
+    previous_run_exit_clean: Mutex<Option<bool>>,
 }
 
 /// v0.7.9: Warning-State wenn SimBrief-OFP DEP+ARR matched aber Callsign
@@ -2152,6 +2341,33 @@ struct PersistedFlightStats {
     /// Persistenz. `#[serde(default)]` → None bei pre-v0.7.15 Files.
     #[serde(default)]
     current_pause_reason: Option<PauseReason>,
+    /// v0.20 (Process-Integrity): siehe FlightStats-Feld gleichen Namens.
+    /// `#[serde(default)]` → None bei pre-v0.20 Files.
+    #[serde(default)]
+    disconnect_sim_liveness: Option<sim_core::process_probe::ProcessLiveness>,
+    /// v0.20 (Process-Integrity): letzter periodisch persistierter Snapshot
+    /// (unabhängig davon, ob je ein SimDisconnect-Pause registriert wurde) —
+    /// die Vergleichs-Basis für `try_resume_flight()`s Discontinuity-Check.
+    /// `#[serde(default)]` → None bei pre-v0.20 Files.
+    #[serde(default)]
+    last_persisted_snapshot: Option<PausedSnapshot>,
+    /// v0.20 (Process-Integrity): Ergebnis des App-Neustart-Resume-Discontinuity-
+    /// Checks, falls er getriggert hat. Bleibt bis zum PIREP-Filing erhalten
+    /// (siehe `build_pirep_payload`). `#[serde(default)]` → None bei pre-v0.20 Files.
+    #[serde(default)]
+    resume_discontinuity: Option<ResumeDiscontinuity>,
+    /// v0.20 (Process-Integrity): true wenn der App-Neustart, der diesen Flug
+    /// wiederaufgenommen hat, unsauber war (`FlightResumed.previous_exit_clean
+    /// == Some(false)`). None wenn nie ein App-Neustart passierte. Bleibt bis
+    /// zum PIREP-Filing erhalten. `#[serde(default)]` → None bei pre-v0.20 Files.
+    #[serde(default)]
+    app_restart_was_unclean: Option<bool>,
+    /// v0.20 (Process-Integrity): `age.num_minutes()` vom App-Neustart-Resume
+    /// (dasselbe, was auch ins `FlightResumed`-JSONL-Event geht) — hier
+    /// zusätzlich gespiegelt, damit es beim PIREP-Filing (viel später) noch
+    /// verfügbar ist. `#[serde(default)]` → None bei pre-v0.20 Files.
+    #[serde(default)]
+    resume_gap_minutes: Option<i64>,
     /// v0.16.12 (#phase-v2): geplante Cruise-Altitude (ft) — persistiert,
     /// damit die Schatten-Engine nach einem Resume ihren `cruise_ref`
     /// behält. `#[serde(default)]` → None bei pre-v0.16.12-Files.
@@ -2267,6 +2483,11 @@ impl PersistedFlightStats {
             pause_total_duration_secs: stats.pause_total_duration_secs,
             pause_segments: stats.pause_segments.clone(),
             current_pause_reason: stats.current_pause_reason,
+            disconnect_sim_liveness: stats.disconnect_sim_liveness,
+            last_persisted_snapshot: stats.last_persisted_snapshot.clone(),
+            resume_discontinuity: stats.resume_discontinuity,
+            app_restart_was_unclean: stats.app_restart_was_unclean,
+            resume_gap_minutes: stats.resume_gap_minutes,
             // v0.16.12 (#phase-v2)
             planned_cruise_alt_ft: stats.planned_cruise_alt_ft,
             shadow_divergence_secs: stats.shadow_divergence_secs,
@@ -2392,6 +2613,11 @@ impl PersistedFlightStats {
         stats.pause_total_duration_secs = self.pause_total_duration_secs;
         stats.pause_segments = self.pause_segments;
         stats.current_pause_reason = self.current_pause_reason;
+        stats.disconnect_sim_liveness = self.disconnect_sim_liveness;
+        stats.last_persisted_snapshot = self.last_persisted_snapshot;
+        stats.resume_discontinuity = self.resume_discontinuity;
+        stats.app_restart_was_unclean = self.app_restart_was_unclean;
+        stats.resume_gap_minutes = self.resume_gap_minutes;
         // v0.16.12 (#phase-v2): cruise_ref + Divergenz-Aggregat restoren.
         // Die Engine selbst wird NICHT persistiert (wärmt sich nach dem
         // Resume in ≤ 2 Fenstern wieder auf — dokumentiert).
@@ -2557,7 +2783,7 @@ struct TouchdownProfilePoint {
 /// v0.4.1: Snapshot der letzten bekannten Sim-Werte zum Zeitpunkt
 /// als der Streamer den Sim-Disconnect detektiert hat. Gezeigt im
 /// Cockpit-Banner + Activity-Log + bei Bedarf für Reposition.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct PausedSnapshot {
     pub lat: f64,
     pub lon: f64,
@@ -2565,6 +2791,14 @@ struct PausedSnapshot {
     pub altitude_ft: f64,
     pub fuel_total_kg: f32,
     pub zfw_kg: Option<f32>,
+    /// v0.20 (Process-Integrity, QS-Fix): needed so the resume-discontinuity
+    /// check can tell "impossible mid-air fuel increase" apart from "normal
+    /// ground refuel that happened to straddle a pause/restart" — see
+    /// `is_impossible_discontinuity`. `#[serde(default)]` → `false` for
+    /// pre-v0.20 persisted files (safe: falls back to the stricter
+    /// pre-fix behavior for old data instead of silently exempting it).
+    #[serde(default)]
+    pub on_ground: bool,
 }
 
 /// Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator):
@@ -2755,6 +2989,21 @@ struct FlightStats {
     /// gespeichert und beim Resume zurueck auf None gesetzt. None
     /// solange `paused_since` None ist.
     current_pause_reason: Option<PauseReason>,
+    /// v0.20 (Process-Integrity): Ergebnis des `sim_process_alive()`-Checks
+    /// (sim-core::process_probe) zum Zeitpunkt, als `SimDisconnect` erkannt
+    /// wurde — beantwortet "ist der Sim-Prozess selbst weg, oder läuft er
+    /// noch (nur die Datenverbindung ist tot)?". Wie `current_pause_reason`
+    /// beim Resume zurueckgesetzt; überlebt einen App-Neustart über
+    /// `PersistedFlightStats`, damit `try_resume_flight()` es ebenfalls sieht.
+    disconnect_sim_liveness: Option<sim_core::process_probe::ProcessLiveness>,
+    /// v0.20 (Process-Integrity): siehe PersistedFlightStats-Feld gleichen Namens.
+    last_persisted_snapshot: Option<PausedSnapshot>,
+    /// v0.20 (Process-Integrity): siehe PersistedFlightStats-Feld gleichen Namens.
+    resume_discontinuity: Option<ResumeDiscontinuity>,
+    /// v0.20 (Process-Integrity): siehe PersistedFlightStats-Feld gleichen Namens.
+    app_restart_was_unclean: Option<bool>,
+    /// v0.20 (Process-Integrity): siehe PersistedFlightStats-Feld gleichen Namens.
+    resume_gap_minutes: Option<i64>,
 
     /// Spec sim-disconnect-auto-resume F2 (Pause-Akkumulator):
     /// Summe aller Pause-Sekunden seit Flugstart. Wird beim
@@ -6538,6 +6787,42 @@ fn log_activity_handle(
     save_activity_log(&log);
 }
 
+/// v0.20 (Process-Integrity): same as `log_activity_handle`, but ALSO
+/// appends a `FlightLogEvent::Activity` row to the per-flight JSONL via
+/// `record_event()`. Until now that variant existed in the recorder crate
+/// but was never constructed anywhere — pause/resume/restart events only
+/// ever reached the two mutable, OVERWRITTEN local files
+/// (`activity_log.json`, `active_flight.json`) plus Sentry (Warn/Error
+/// only). A reviewer looking at the durable per-flight JSONL later had no
+/// record any of this ever happened. This gives pause/resume/restart/
+/// discontinuity events a permanent home alongside every other
+/// `FlightLogEvent` (phase changes, touchdowns, ...).
+fn log_activity_and_record(
+    app: &AppHandle,
+    pirep_id: &str,
+    level: ActivityLevel,
+    message: impl Into<String>,
+    detail: Option<String>,
+) {
+    let message = message.into();
+    let level_str = match level {
+        ActivityLevel::Info => "info",
+        ActivityLevel::Warn => "warn",
+        ActivityLevel::Error => "error",
+    };
+    record_event(
+        app,
+        pirep_id,
+        &FlightLogEvent::Activity {
+            timestamp: Utc::now(),
+            level: level_str.to_string(),
+            message: message.clone(),
+            detail: detail.clone(),
+        },
+    );
+    log_activity_handle(app, level, message, detail);
+}
+
 /// `GET` the entire activity log. Frontend polls this every couple of
 /// seconds; `ACTIVITY_LOG_CAPACITY` keeps the payload bounded.
 #[tauri::command]
@@ -8713,6 +8998,53 @@ fn read_persisted_flight(app: &AppHandle) -> Option<PersistedFlight> {
     }
     let bytes = std::fs::read(&path).ok()?;
     serde_json::from_slice::<PersistedFlight>(&bytes).ok()
+}
+
+fn run_sentinel_path(app: &AppHandle) -> Result<PathBuf, UiError> {
+    app.path()
+        .app_config_dir()
+        .map(|dir| dir.join(RUN_SENTINEL_FILE))
+        .map_err(|e| UiError::new("config_path", e.to_string()))
+}
+
+/// v0.20 (Process-Integrity): true if a sentinel from a PREVIOUS run is
+/// still on disk — meaning that run did not exit cleanly. Must be called
+/// BEFORE `write_run_sentinel` overwrites it for the current run.
+fn run_sentinel_present(app: &AppHandle) -> bool {
+    match run_sentinel_path(app) {
+        Ok(path) => path.exists(),
+        Err(_) => false,
+    }
+}
+
+/// Write the current run's sentinel (PID + launch time, informational —
+/// presence/absence is what matters). Best-effort: a write failure just
+/// means we lose the signal for this run, never a hard error.
+fn write_run_sentinel(app: &AppHandle) {
+    let Ok(path) = run_sentinel_path(app) else { return };
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            tracing::warn!(error = %e, "could not ensure run-sentinel parent dir");
+            return;
+        }
+    }
+    let content = format!("pid={}\nstarted_at={}\n", std::process::id(), Utc::now().to_rfc3339());
+    if let Err(e) = std::fs::write(&path, content) {
+        tracing::warn!(error = %e, "could not write run sentinel");
+    }
+}
+
+/// Remove the current run's sentinel — call ONLY from the clean-exit path
+/// (`RunEvent::ExitRequested`). Never called from a crash/kill, which is
+/// exactly the point: absence next launch = clean exit, presence = not.
+fn clear_run_sentinel(app: &AppHandle) {
+    if let Ok(path) = run_sentinel_path(app) {
+        if path.exists() {
+            if let Err(e) = std::fs::remove_file(&path) {
+                tracing::warn!(error = %e, "could not remove run sentinel");
+            }
+        }
+    }
 }
 
 // ---- Activity-log persistence ----
@@ -12606,6 +12938,99 @@ fn build_pirep_payload(
         // v0.16.21: bump 3→4 — MSFS touchdown V/S SimVar-lag corrected
         // (g-force-gated AGL de-lag; MSFS only, X-Plane unchanged).
         score_algorithm_version: Some(4),
+        client_health: build_client_health_report(&stats),
+    }
+}
+
+/// v0.20 (Process-Integrity): assembles `ClientHealthReport` from whatever
+/// `disconnect_sim_liveness` / `app_restart_was_unclean` / `resume_discontinuity`
+/// this flight accumulated (Phases 1-3). Returns `None` when NONE of them
+/// are set — the overwhelming majority of flights — so `client_health`
+/// itself is omitted from the wire via `skip_serializing_if`.
+fn build_client_health_report(stats: &FlightStats) -> Option<aeroacars_mqtt::ClientHealthReport> {
+    let disconnect_sim_liveness = stats
+        .disconnect_sim_liveness
+        .map(|l| l.as_wire_str().to_string());
+    let impossible_resume_jump = stats.resume_discontinuity.map(|_| true);
+    let resume_fuel_delta_kg = stats.resume_discontinuity.map(|d| d.fuel_delta_kg as f32);
+    let resume_altitude_delta_ft = stats
+        .resume_discontinuity
+        .map(|d| d.altitude_delta_ft as f32);
+
+    // v0.20 (QS-Fix, Finding 3): `Some(false)` (a perfectly CLEAN app
+    // restart) must count as "nothing to report", same as `None` — only
+    // `Some(true)` (an actually unclean restart) is worth shipping.
+    // `stats.app_restart_was_unclean.is_none()` alone would have let
+    // `Some(false)` defeat this guard, so EVERY resumed-but-uneventful
+    // flight shipped a non-`None` `client_health`.
+    let app_restart_unclean_flag = stats.app_restart_was_unclean == Some(true);
+
+    if disconnect_sim_liveness.is_none()
+        && !app_restart_unclean_flag
+        && impossible_resume_jump.is_none()
+    {
+        return None;
+    }
+
+    Some(aeroacars_mqtt::ClientHealthReport {
+        disconnect_sim_liveness,
+        app_restart_unclean: stats.app_restart_was_unclean,
+        impossible_resume_jump,
+        resume_fuel_delta_kg,
+        resume_altitude_delta_ft,
+        resume_gap_minutes: stats.resume_gap_minutes,
+    })
+}
+
+#[cfg(test)]
+mod client_health_report_tests {
+    use super::*;
+
+    #[test]
+    fn returns_none_for_unaffected_flight() {
+        let stats = FlightStats::new();
+        assert!(build_client_health_report(&stats).is_none());
+    }
+
+    #[test]
+    fn returns_none_when_only_gap_minutes_is_set() {
+        // A resume with no unclean exit and no discontinuity is boring —
+        // nothing worth reporting, even though resume_gap_minutes is Some.
+        let mut stats = FlightStats::new();
+        stats.resume_gap_minutes = Some(5);
+        assert!(build_client_health_report(&stats).is_none());
+    }
+
+    /// QS-Fix (Finding 3b): a CLEAN app restart (`Some(false)`) must be
+    /// treated the same as `None` — before the fix, `Some(false)` alone
+    /// defeated the early-return guard, so every uneventful resumed
+    /// flight shipped a non-`None` `client_health`.
+    #[test]
+    fn returns_none_when_app_restart_was_clean() {
+        let mut stats = FlightStats::new();
+        stats.app_restart_was_unclean = Some(false);
+        stats.resume_gap_minutes = Some(3);
+        assert!(build_client_health_report(&stats).is_none());
+    }
+
+    #[test]
+    fn incident_replay_produces_full_report() {
+        let mut stats = FlightStats::new();
+        stats.disconnect_sim_liveness = Some(sim_core::process_probe::ProcessLiveness::Unknown);
+        stats.app_restart_was_unclean = Some(true);
+        stats.resume_gap_minutes = Some(98);
+        stats.resume_discontinuity = Some(ResumeDiscontinuity {
+            drift_nm: 0.0,
+            altitude_delta_ft: 0.0,
+            fuel_delta_kg: 7683.3,
+            both_grounded: false,
+        });
+        let report = build_client_health_report(&stats).expect("must be Some");
+        assert_eq!(report.disconnect_sim_liveness.as_deref(), Some("unknown"));
+        assert_eq!(report.app_restart_unclean, Some(true));
+        assert_eq!(report.impossible_resume_jump, Some(true));
+        assert_eq!(report.resume_fuel_delta_kg, Some(7683.3));
+        assert_eq!(report.resume_gap_minutes, Some(98));
     }
 }
 
@@ -16964,16 +17389,21 @@ fn apply_pause_resume(
     // Der Pause-State wird trotzdem geclearet.
     let count_toward_accumulator = duration_secs >= 1;
 
-    // Drift-Werte berechnen (None wenn entweder Side fehlt).
-    let (drift_nm, alt_delta_ft, fuel_delta_kg) = match (&last_known, current_snap) {
-        (Some(prev), Some(cur)) => {
-            let d_m = ::geo::distance_m(prev.lat, prev.lon, cur.lat, cur.lon);
-            let nm = d_m / 1852.0;
-            let alt = (cur.altitude_msl_ft - prev.altitude_ft).abs();
-            let fuel = (cur.fuel_total_kg as f64 - prev.fuel_total_kg as f64).abs();
-            (Some(nm), Some(alt), Some(fuel))
-        }
-        _ => (None, None, None),
+    // Drift-Werte berechnen (None wenn entweder Side fehlt). Anzeige bleibt
+    // wie bisher der Betrag — intern (Phase 0, v0.20) wird das vorzeichen-
+    // behaftete Delta über `compute_resume_discontinuity` geteilt, damit
+    // derselbe Code auch den App-Neustart-Resume-Pfad bedienen kann.
+    let discontinuity = match (&last_known, current_snap) {
+        (Some(prev), Some(cur)) => Some(compute_resume_discontinuity(prev, cur)),
+        _ => None,
+    };
+    let (drift_nm, alt_delta_ft, fuel_delta_kg) = match discontinuity {
+        Some(d) => (
+            Some(d.drift_nm),
+            Some(d.altitude_delta_ft.abs()),
+            Some(d.fuel_delta_kg.abs()),
+        ),
+        None => (None, None, None),
     };
 
     let segment = PauseSegment {
@@ -16996,14 +17426,56 @@ fn apply_pause_resume(
         stats.paused_since = None;
         stats.paused_last_known = None;
         stats.current_pause_reason = None;
+        // v0.20 (QS-Fix, Finding 3): wie current_pause_reason zuruecksetzen —
+        // die Doku hat das immer schon behauptet, der Code tat es aber nie,
+        // wodurch JEDE aufgeloeste Pause (auch ein harmloser 31s-Ladebild-
+        // schirm) fuer den Rest des Fluges "client_health" mitschleppte.
+        stats.disconnect_sim_liveness = None;
         // Reposition-Distanz darf nicht in distance_nm einlaufen —
         // last_lat/lon auf None setzt die Distanz-Baseline neu, der
         // naechste Tick startet frisch (entspricht dem alten Verhalten
         // von flight_resume_after_disconnect).
         stats.last_lat = None;
         stats.last_lon = None;
+        // v0.20 (QS-Fix, Finding 1): dieser Pfad (Sim-Pause/-Disconnect-
+        // Resume INNERHALB desselben laufenden Prozesses) ist der weitaus
+        // haeufigere Resume-Fall — deutlich haeufiger als ein kompletter
+        // App-Neustart. Bisher berechnete er `discontinuity` nur fuer die
+        // Anzeige, wertete `is_impossible_discontinuity` aber nie aus,
+        // sodass genau der Vorfall-Typ (Fuel-Sprung/Extrem-Drift waehrend
+        // der Sim/App weiterlief) hier durchrutschte und `resume_discontinuity`
+        // nie gesetzt wurde. Jetzt dieselbe Klassifikation wie in
+        // `try_resume_flight` (Phase 3) — geteilte Logik, nicht dupliziert.
+        if let Some(d) = discontinuity {
+            if is_impossible_discontinuity(&d) {
+                stats.resume_discontinuity = Some(d);
+            }
+        }
     }
     save_active_flight(app, flight);
+    if let Some(d) = discontinuity {
+        if is_impossible_discontinuity(&d) {
+            log_activity_and_record(
+                app,
+                &flight.pirep_id,
+                ActivityLevel::Error,
+                "⚠ Unmöglicher Sprung beim Wiederaufnehmen erkannt".to_string(),
+                Some(format!(
+                    "Fuel-Δ {:+.0} kg · Höhen-Δ {:+.0} ft · Drift {:.1} nm — \
+                     physikalisch nicht plausibel (kein normaler Verbrauch/Flug), \
+                     vermutlich Reload/neuer Ladezustand während der Pause.",
+                    d.fuel_delta_kg, d.altitude_delta_ft, d.drift_nm,
+                )),
+            );
+            tracing::warn!(
+                pirep_id = %flight.pirep_id,
+                fuel_delta_kg = d.fuel_delta_kg,
+                altitude_delta_ft = d.altitude_delta_ft,
+                drift_nm = d.drift_nm,
+                "impossible resume discontinuity detected (apply_pause_resume path)"
+            );
+        }
+    }
 
     // Activity-Log mit Drift-Stufen aus v0.4-MVP-Spec:
     //   < 1 NM  : Info ohne Drift-Suffix
@@ -17046,7 +17518,7 @@ fn apply_pause_resume(
         )),
         _ => Some(format!("Pause-Dauer: {} s", duration_secs)),
     };
-    log_activity_handle(app, level, msg, detail);
+    log_activity_and_record(app, &flight.pirep_id, level, msg, detail);
 
     // Spec v0.7.15 F7: Aircraft-Change-Detection nach Resume.
     //
@@ -19823,6 +20295,57 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 }
             };
 
+            // v0.20 (Process-Integrity): App-Neustart-Resume-Discontinuity-
+            // Check — der eigentliche Vorfall-Pfad (Joel EWG3552). Anders als
+            // die Mid-Session-Crash-Detection unten (die vergleicht Ticks
+            // INNERHALB desselben laufenden Prozesses) geht es hier um einen
+            // App-NEUSTART: `previous_snap_for_recovery` ist nur dann `None`,
+            // wenn dieser Streamer-Lauf noch NIE einen echten Snapshot sah —
+            // entweder ein brandneuer Flug (dann ist `last_persisted_snapshot`
+            // ebenfalls `None`, kein Treffer) oder exakt der resumte Flug nach
+            // `try_resume_flight()`. `take()` sorgt dafür, dass der Vergleich
+            // nur EINMAL passiert, nicht auf jedem Tick.
+            if previous_snap_for_recovery.is_none() {
+                if let Some(ref curr) = snapshot {
+                    let maybe_prev = {
+                        let mut stats = flight.stats.lock().expect("flight stats");
+                        stats.last_persisted_snapshot.take()
+                    };
+                    if let Some(prev) = maybe_prev {
+                        let discontinuity = compute_resume_discontinuity(&prev, curr);
+                        if is_impossible_discontinuity(&discontinuity) {
+                            {
+                                let mut stats = flight.stats.lock().expect("flight stats");
+                                stats.resume_discontinuity = Some(discontinuity);
+                            }
+                            log_activity_and_record(
+                                &app,
+                                &flight.pirep_id,
+                                ActivityLevel::Error,
+                                "⚠ Unmöglicher Sprung beim Wiederaufnehmen erkannt".to_string(),
+                                Some(format!(
+                                    "Fuel-Δ {:+.0} kg · Höhen-Δ {:+.0} ft · Drift {:.1} nm — \
+                                     physikalisch nicht plausibel (kein normaler Verbrauch/Flug), \
+                                     vermutlich Reload/neuer Ladezustand während eines App- oder \
+                                     Sim-Neustarts.",
+                                    discontinuity.fuel_delta_kg,
+                                    discontinuity.altitude_delta_ft,
+                                    discontinuity.drift_nm,
+                                )),
+                            );
+                            tracing::warn!(
+                                pirep_id = %flight.pirep_id,
+                                fuel_delta_kg = discontinuity.fuel_delta_kg,
+                                altitude_delta_ft = discontinuity.altitude_delta_ft,
+                                drift_nm = discontinuity.drift_nm,
+                                "impossible resume discontinuity detected"
+                            );
+                            save_active_flight(&app, &flight);
+                        }
+                    }
+                }
+            }
+
             if let Some(ref s) = snapshot {
                 last_good_snap = Some(s.clone());
                 last_good_snap_at = Some(std::time::Instant::now());
@@ -19868,8 +20391,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     // gerade geliefert hat.
                     last_good_snap = previous_snap_for_recovery.clone();
                     save_active_flight(&app, &flight);
-                    log_activity_handle(
+                    log_activity_and_record(
                         &app,
+                        &flight.pirep_id,
                         ActivityLevel::Error,
                         "⚠ Sim-Reload erkannt — Aufzeichnung pausiert".to_string(),
                         Some(format!(
@@ -19927,6 +20451,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             altitude_ft: snap.altitude_indicated_ft.unwrap_or(snap.altitude_msl_ft),
                             fuel_total_kg: snap.fuel_total_kg,
                             zfw_kg: snap.zfw_kg,
+                            on_ground: snap.on_ground,
                         };
                         let detail = format!(
                             "Letzte bekannte Position: LAT {:.4}° · LON {:.4}° · ALT {:.0} ft",
@@ -20097,6 +20622,24 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         altitude_ft: last.altitude_msl_ft,
                         fuel_total_kg: last.fuel_total_kg,
                         zfw_kg: last.zfw_kg,
+                        on_ground: last.on_ground,
+                    };
+                    // v0.20 (Process-Integrity): nur EINMAL pro Pause-Übergang
+                    // probieren (nicht jeden Tick, während schon pausiert ist —
+                    // sysinfo-Scans sind nicht gratis, und der Zustand ist eh
+                    // eingefroren). Passiert VOR dem Lock unten, damit der Scan
+                    // selbst den Stats-Mutex nicht blockiert.
+                    let already_paused = flight
+                        .stats
+                        .lock()
+                        .expect("flight stats")
+                        .paused_since
+                        .is_some();
+                    let liveness = if already_paused {
+                        None
+                    } else {
+                        let kind = read_sim_config(&app).kind;
+                        Some(sim_core::process_probe::sim_process_alive(kind))
                     };
                     {
                         let mut stats = flight.stats.lock().expect("flight stats");
@@ -20107,10 +20650,20 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             // Resume-Helper weiss welcher Trigger es war.
                             stats.current_pause_reason =
                                 Some(PauseReason::SimDisconnect);
+                            stats.disconnect_sim_liveness = liveness;
                         }
                     }
+                    let liveness_line = match liveness {
+                        Some(sim_core::process_probe::ProcessLiveness::Gone) => {
+                            "\nSim-Prozess: NICHT MEHR gefunden (vermutlich beendet/abgestürzt)."
+                        }
+                        Some(sim_core::process_probe::ProcessLiveness::Alive) => {
+                            "\nSim-Prozess läuft noch — nur die Datenverbindung ist weg."
+                        }
+                        Some(sim_core::process_probe::ProcessLiveness::Unknown) | None => "",
+                    };
                     let detail = format!(
-                        "Letzte bekannte Position: LAT {:.4}° · LON {:.4}° · HDG {:.0}° · ALT {:.0} ft · Fuel {:.0} kg · ZFW {}",
+                        "Letzte bekannte Position: LAT {:.4}° · LON {:.4}° · HDG {:.0}° · ALT {:.0} ft · Fuel {:.0} kg · ZFW {}{}",
                         paused.lat,
                         paused.lon,
                         paused.heading_deg,
@@ -20119,10 +20672,12 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         paused
                             .zfw_kg
                             .map(|v| format!("{:.0} kg", v))
-                            .unwrap_or_else(|| "—".to_string())
+                            .unwrap_or_else(|| "—".to_string()),
+                        liveness_line,
                     );
-                    log_activity_handle(
+                    log_activity_and_record(
                         &app,
+                        &flight.pirep_id,
                         ActivityLevel::Warn,
                         "⏸ Sim getrennt — Flug pausiert. Klicke „Flug wiederaufnehmen\" sobald du repositioniert hast.".to_string(),
                         Some(detail),
@@ -21433,8 +21988,25 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // and keeps the file consistent if any of them changed via
             // backfill (airline_icao / planned_registration on resume).
             let should_persist = {
-                let stats = flight.stats.lock().expect("flight stats");
-                stats.position_count % STATS_PERSIST_EVERY_TICKS == 0
+                let mut stats = flight.stats.lock().expect("flight stats");
+                let due = stats.position_count % STATS_PERSIST_EVERY_TICKS == 0;
+                if due {
+                    // v0.20 (Process-Integrity): refresh the "last known
+                    // good state" independent of whether a SimDisconnect
+                    // pause was ever registered — this is the comparison
+                    // baseline `try_resume_flight()` uses after an app
+                    // restart (see there: `last_persisted_snapshot.take()`).
+                    stats.last_persisted_snapshot = Some(PausedSnapshot {
+                        lat: snap.lat,
+                        lon: snap.lon,
+                        heading_deg: snap.heading_deg_true,
+                        altitude_ft: snap.altitude_msl_ft,
+                        fuel_total_kg: snap.fuel_total_kg,
+                        zfw_kg: snap.zfw_kg,
+                        on_ground: snap.on_ground,
+                    });
+                }
+                due
             };
             // Re-check stop *before* writing — `flight_end` may have run
             // since the top-of-loop check, taken the flight, called
@@ -30661,9 +31233,16 @@ async fn try_resume_flight(
         }
     }
 
+    // v0.20 (Process-Integrity): the setup hook already determined, before
+    // writing THIS run's sentinel, whether the PREVIOUS run left one behind.
+    let previous_exit_clean = *state
+        .previous_run_exit_clean
+        .lock()
+        .expect("previous_run_exit_clean lock");
     tracing::info!(
         pirep_id = %persisted.pirep_id,
         age_minutes = age.num_minutes(),
+        ?previous_exit_clean,
         "resuming in-progress flight"
     );
     record_event(
@@ -30673,6 +31252,7 @@ async fn try_resume_flight(
             timestamp: Utc::now(),
             pirep_id: persisted.pirep_id.clone(),
             age_minutes: age.num_minutes(),
+            previous_exit_clean,
         },
     );
 
@@ -30720,6 +31300,12 @@ async fn try_resume_flight(
     // because we'd start the stats from zero again.
     let mut restored_stats = FlightStats::new();
     persisted.stats.clone().apply_to(&mut restored_stats);
+    // v0.20 (Process-Integrity): overwrite with THIS resume's freshly-
+    // determined value — `apply_to` just restored whatever an OLDER resume
+    // (if any) had persisted, which says nothing about the restart that
+    // just happened.
+    restored_stats.app_restart_was_unclean = previous_exit_clean.map(|clean| !clean);
+    restored_stats.resume_gap_minutes = Some(age.num_minutes());
     tracing::info!(
         distance_nm = restored_stats.distance_nm,
         position_count = restored_stats.position_count,
@@ -32065,6 +32651,18 @@ pub fn run() {
             // run without a handle (uses the OnceLock cache).
             init_activity_log_path(&app.handle());
 
+            // v0.20 (Process-Integrity): check whether the PREVIOUS run left
+            // its sentinel behind (= did not exit cleanly) BEFORE writing
+            // this run's own sentinel — order matters, otherwise we'd only
+            // ever see our own fresh sentinel and never the prior run's.
+            {
+                let previous_exit_clean = !run_sentinel_present(&app.handle());
+                let state = app.state::<AppState>();
+                *state.previous_run_exit_clean.lock().expect("previous_run_exit_clean lock") =
+                    Some(previous_exit_clean);
+            }
+            write_run_sentinel(&app.handle());
+
             // v0.15.26: restore the activity log from disk now that the path is
             // resolved cross-platform (ACTIVITY_LOG_PATH), so a mid-flight client
             // close/crash/update keeps the full flight history on the next launch
@@ -32348,6 +32946,10 @@ pub fn run() {
             // anyway when the broker times the connection out (~60 s),
             // but the explicit shutdown is faster and cleaner.
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                // v0.20 (Process-Integrity): remove this run's sentinel — the
+                // ONLY place this is called. A crash/kill never reaches here,
+                // so the sentinel survives for the next launch to find.
+                clear_run_sentinel(app_handle);
                 let app_for_mqtt = app_handle.clone();
                 tauri::async_runtime::block_on(async move {
                     let state = app_for_mqtt.state::<AppState>();

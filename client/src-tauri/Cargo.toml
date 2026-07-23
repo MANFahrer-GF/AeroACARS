@@ -59,6 +59,11 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
+# v0.20 (Process-Integrity): cross-platform OS-process-table lookup, used
+# by sim-core::process_probe to check whether the sim's own process is
+# still alive after a disconnect (Windows/Linux/macOS, one API).
+sysinfo = "0.32"
+
 # v0.7.13: schemars-Workspace-Dep entfernt — wurde von keinem direkten
 # Code-Pfad mehr genutzt. Audit Q4-2026-05 (L9).
 

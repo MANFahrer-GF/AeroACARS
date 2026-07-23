@@ -967,6 +967,50 @@ pub struct PirepPayload {
     /// Score). Spec: docs/spec/v0.10.0-runway-utilization-score.md LE11.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score_algorithm_version: Option<u8>,
+
+    /// v0.20 (Process-Integrity). Deliberately its OWN namespace, separate
+    /// from `accident_kind`/`accident_reasons` above: those describe an
+    /// in-sim AIRCRAFT accident/hull-loss (SimConnect's `Crashed` system
+    /// event). This describes the SIM or CLIENT PROCESS itself dying —
+    /// an unrelated failure mode. `None` when nothing worth reporting
+    /// happened (the overwhelming majority of flights) — omitted from the
+    /// wire entirely via `skip_serializing_if` so unaffected PIREPs are
+    /// byte-identical to before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_health: Option<ClientHealthReport>,
+}
+
+/// v0.20 (Process-Integrity): client-self-reported OBSERVATIONS about its
+/// own or the simulator's process health around a disconnect/resume. The
+/// client only ever asserts facts here — the recorder's `computeScoreTrust`
+/// (aeroacars-live/recorder/src/scoreTrust.ts) remains the sole place that
+/// turns these into a review verdict, same as every other trust signal.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ClientHealthReport {
+    /// "sim_process_gone" | "sim_process_alive" | "unknown" — from
+    /// `sim_core::process_probe::ProcessLiveness::as_wire_str()`, sampled
+    /// at the moment `SimDisconnect` was first detected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disconnect_sim_liveness: Option<String>,
+    /// `true` if the AeroACARS run that resumed this flight (if any) did
+    /// NOT exit cleanly (crash/kill/power-loss) — from the run-sentinel
+    /// check in `try_resume_flight()`. `None` if the flight never went
+    /// through an app restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_restart_unclean: Option<bool>,
+    /// `true` if the resume-discontinuity check (fuel jump / extreme
+    /// drift) fired — a physically-impossible jump between the last
+    /// known state and the first fresh snapshot after a pause/restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impossible_resume_jump: Option<bool>,
+    /// Signed (current − previous) — a positive value is the impossible
+    /// direction (fuel increasing mid-flight).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_fuel_delta_kg: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_altitude_delta_ft: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_gap_minutes: Option<i64>,
 }
 
 /// Default fuer pre-v0.7.0 PIREPs ohne den marker. Wird von serde
