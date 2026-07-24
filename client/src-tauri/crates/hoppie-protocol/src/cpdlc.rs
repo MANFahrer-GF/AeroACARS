@@ -159,7 +159,7 @@ mod tests {
         assert_eq!(msg.response, ResponseRequirement::WilcoUnable);
         match msg.parsed {
             ParsedElement::Recognized(r) => {
-                assert_eq!(r.spec_id, "UM_PROCEED_DIRECT_TO");
+                assert_eq!(r.spec_id, "UM74");
                 assert_eq!(r.values, vec!["UDROS".to_string()]);
             }
             other => panic!("expected Recognized, got {other:?}"),

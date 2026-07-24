@@ -50,6 +50,12 @@ pub struct CpdlcThread {
     open: HashMap<u32, PendingMessage>,
     history: Vec<ThreadEntry>,
     logged_on: bool,
+    /// MIN of our outstanding `DM_REQUEST_LOGON`, if any. Ties logon-
+    /// outcome interpretation to a specific MRN-threaded reply — see
+    /// [`logon_outcome`]'s docs for why this can't be a bare text match
+    /// once the real GOLD table (where `UM0`/`"UNABLE"` is a
+    /// general-purpose response, not logon-specific) is in play.
+    logon_request_min: Option<u32>,
 }
 
 impl CpdlcThread {
@@ -94,6 +100,11 @@ impl CpdlcThread {
         if let Some(m) = mrn {
             self.close_open_entry(m);
         }
+        if let ParsedElement::Recognized(r) = &parsed {
+            if r.spec_id == "DM_REQUEST_LOGON" {
+                self.logon_request_min = Some(min);
+            }
+        }
 
         let message = CpdlcMessage {
             min,
@@ -133,8 +144,9 @@ impl CpdlcThread {
                 },
             );
         }
-        if let Some(accepted) = logon_outcome(&message) {
+        if let Some(accepted) = logon_outcome(&message, self.logon_request_min) {
             self.logged_on = accepted;
+            self.logon_request_min = None;
         }
         self.history.push(ThreadEntry {
             min,
@@ -174,13 +186,26 @@ impl CpdlcThread {
     }
 }
 
-/// `Some(true)` for a `LOGON ACCEPTED` uplink, `Some(false)` for a
-/// logon-rejection `UNABLE`, `None` for anything else.
-fn logon_outcome(message: &CpdlcMessage) -> Option<bool> {
+/// `Some(true)` for a `LOGON ACCEPTED` uplink, `Some(false)` for an
+/// `UNABLE` uplink — but ONLY when it replies (`mrn ==
+/// logon_request_min`) to our own outstanding `REQUEST LOGON`.
+///
+/// This MRN-gating matters because the real GOLD table makes `UM0`
+/// (`"UNABLE"`) a general-purpose "cannot comply" response that ATC
+/// can send for all sorts of unrelated requests throughout a session —
+/// Hoppie's simplified logon handshake happens to reuse that exact
+/// same element for a rejected `REQUEST LOGON`, but a bare text/id
+/// match (as a first cut of this function did) would misinterpret ANY
+/// later `UNABLE` uplink as a logon failure. Threading it through the
+/// MRN instead ties the interpretation to the specific reply.
+fn logon_outcome(message: &CpdlcMessage, logon_request_min: Option<u32>) -> Option<bool> {
+    if message.mrn.is_none() || message.mrn != logon_request_min {
+        return None;
+    }
     match &message.parsed {
         ParsedElement::Recognized(r) => match r.spec_id {
             "UM_LOGON_ACCEPTED" => Some(true),
-            "UM_LOGON_UNABLE" => Some(false),
+            "UM0" => Some(false),
             _ => None,
         },
         ParsedElement::Raw(_) => None,
@@ -224,7 +249,7 @@ mod tests {
         assert_eq!(thread.peek_next_min(), 1);
         let min1 = send(&mut thread, "DM_REQUEST_LOGON", &[], None);
         assert_eq!(min1, 1);
-        let min2 = send(&mut thread, "DM_WILCO", &[], None);
+        let min2 = send(&mut thread, "DM0", &[], None);
         assert_eq!(min2, 2);
         assert_eq!(thread.peek_next_min(), 3);
     }
@@ -277,7 +302,7 @@ mod tests {
         assert_eq!(thread.pending_response_count(), 1);
 
         // We reply WILCO, MRN=7 — must close the uplink's pending entry.
-        send(&mut thread, "DM_WILCO", &[], Some(7));
+        send(&mut thread, "DM0", &[], Some(7));
         assert_eq!(thread.pending_response_count(), 0);
 
         let history = thread.history();
@@ -307,9 +332,9 @@ mod tests {
         receive(&mut thread, "/data2/1//WU/PROCEED DIRECT TO UDROS");
         receive(&mut thread, "/data2/2//WU/PROCEED DIRECT TO UDROS");
         assert_eq!(thread.pending_response_count(), 2);
-        send(&mut thread, "DM_WILCO", &[], Some(1));
+        send(&mut thread, "DM0", &[], Some(1));
         assert_eq!(thread.pending_response_count(), 1);
-        send(&mut thread, "DM_WILCO", &[], Some(2));
+        send(&mut thread, "DM0", &[], Some(2));
         assert_eq!(thread.pending_response_count(), 0);
     }
 }

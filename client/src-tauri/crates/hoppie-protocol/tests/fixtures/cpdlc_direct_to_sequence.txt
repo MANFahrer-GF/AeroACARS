@@ -2,4 +2,4 @@
 # threaded via MRN. Worked example from devHazz/hoppie-acars-docs'
 # CPDLC Format.md.
 RECV|/data2/7//WU/PROCEED DIRECT TO UDROS
-SEND|DM_WILCO||7
+SEND|DM0||7
