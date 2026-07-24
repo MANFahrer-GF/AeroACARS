@@ -1,0 +1,4 @@
+# Example PDC exchange (hand-built, per the verified EasyCPDLC format —
+# see src/pdc.rs docs). Format: two lines, REQUEST and REPLY.
+REQUEST|EDDF|GSG123|A320|EDDF|EDDM|A12|K
+REPLY|GSG123 CLRD TO EDDM VIA ANEKI2F SQUAWK 3421 INITIAL CLB FL050 CTC DEL 121.9

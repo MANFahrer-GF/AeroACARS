@@ -14,6 +14,9 @@ members = [
     "crates/landing-scoring",
     # v0.9.0 (#Discord-RPC) — Pilot-Flugstatus im Discord-Profil
     "crates/discord-presence",
+    # v1.3.0 (#Hoppie-PDC-CPDLC) — Hoppie-ACARS-Netzwerk-Protokoll +
+    # GOLD-Elementtabelle. Pure Logik, kein tauri/reqwest.
+    "crates/hoppie-protocol",
 ]
 resolver = "2"
 
@@ -79,6 +82,7 @@ geo        = { path = "crates/geo" }
 metar      = { path = "crates/metar" }
 aeroacars-mqtt = { path = "crates/aeroacars-mqtt" }
 landing-scoring = { path = "crates/landing-scoring" }
+hoppie-protocol = { path = "crates/hoppie-protocol" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
@@ -210,6 +214,9 @@ geo.workspace = true
 metar.workspace = true
 aeroacars-mqtt.workspace = true
 landing-scoring.workspace = true
+# v1.3.0 (#Hoppie-PDC-CPDLC): Hoppie-ACARS-Netzwerk-Protokoll + GOLD-
+# Elementtabelle. Wiring lebt in src/hoppie/.
+hoppie-protocol.workspace = true
 # v0.9.0 (#Discord-RPC): Pilot-Flugstatus im Discord-Profil
 discord-presence = { path = "crates/discord-presence" }
 

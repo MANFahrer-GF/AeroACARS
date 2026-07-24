@@ -31,6 +31,7 @@ dependencies = [
  "flate2",
  "geo",
  "getrandom 0.2.17",
+ "hoppie-protocol",
  "if-addrs",
  "landing-scoring",
  "metar",
@@ -1975,6 +1976,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc627f471c528ff0c4a49e1d5e60450c8f6461dd6d10ba9dcd3a61d3dff7728d"
 dependencies = [
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "hoppie-protocol"
+version = "1.2.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

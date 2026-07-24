@@ -1,0 +1,3 @@
+# Logon handshake: downlink REQUEST LOGON, uplink UNABLE (rejected).
+SEND|DM_REQUEST_LOGON||
+RECV|/data2/1/1/NE/UNABLE

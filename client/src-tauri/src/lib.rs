@@ -51,6 +51,11 @@ pub mod phase_v2;
 // second PC on the local network, PIN-gated. Lives entirely in `src/remote/`.
 mod remote;
 mod aircraft_scan;
+// v1.3.0 (#Hoppie-PDC-CPDLC): PDC/CPDLC client over the Hoppie ACARS
+// network. Opt-in, default OFF. Protocol/data logic lives in the pure
+// `hoppie-protocol` crate; this module is the thin Tauri wiring layer.
+// Spec: docs/spec/v1.3.0-hoppie-pdc-cpdlc.md
+mod hoppie;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -1426,6 +1431,12 @@ struct AppState {
     /// (broadcast::Sender has no `Default`) keeps `#[derive(Default)]` on
     /// AppState intact.
     remote_events: remote::RemoteEventBus,
+    /// v1.3.0 (#Hoppie-PDC-CPDLC): handle to the running Hoppie ACARS
+    /// poller, or `None` while stopped/not-connected. Same
+    /// `tokio::sync::Mutex<Option<…>>` + start/stop-via-Drop pattern as
+    /// `remote_server` above. Opt-in: only ever `Some` because the pilot
+    /// enabled the feature AND called `hoppie_connect`.
+    hoppie: tokio::sync::Mutex<Option<hoppie::HoppieHandle>>,
     /// v0.20 (Process-Integrity): whether the PREVIOUS AeroACARS run exited
     /// cleanly, per `run_sentinel_present()` checked BEFORE `write_run_sentinel`
     /// overwrites the sentinel for the current run. `None` until the setup
@@ -33183,6 +33194,19 @@ pub fn run() {
             remote::remote_server_stop,
             remote::remote_server_status,
             remote::remote_server_set_port,
+            // v1.3.0 (#Hoppie-PDC-CPDLC): PDC/CPDLC client over the
+            // Hoppie ACARS network. Opt-in (default OFF), started only
+            // via hoppie_connect once the pilot has enabled it and
+            // stored a logon code.
+            hoppie::hoppie_get_settings,
+            hoppie::hoppie_set_settings,
+            hoppie::hoppie_set_logon_code,
+            hoppie::hoppie_has_logon_code,
+            hoppie::hoppie_clear_logon_code,
+            hoppie::hoppie_verify_logon_code,
+            hoppie::hoppie_connect,
+            hoppie::hoppie_disconnect,
+            hoppie::hoppie_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building AeroACARS")
@@ -41134,6 +41158,19 @@ mod v0_16_23_route_only_refresh_tests {
         assert!(
             src.contains("\n            flight_refresh_route_only,\n"),
             "flight_refresh_route_only muss in generate_handler! registriert sein"
+        );
+    }
+
+    /// v1.3.0 (#Hoppie-PDC-CPDLC): gleiche Absicherung fuer den
+    /// wichtigsten Hoppie-Command — ein versehentliches Entfernen aus
+    /// der Registrierung (Refactor-Unfall) wuerde sonst erst zur
+    /// Laufzeit als kryptischer "command not found" auffallen.
+    #[test]
+    fn hoppie_connect_is_registered_in_invoke_handler() {
+        let src = include_str!("lib.rs");
+        assert!(
+            src.contains("\n            hoppie::hoppie_connect,\n"),
+            "hoppie::hoppie_connect muss in generate_handler! registriert sein"
         );
     }
 

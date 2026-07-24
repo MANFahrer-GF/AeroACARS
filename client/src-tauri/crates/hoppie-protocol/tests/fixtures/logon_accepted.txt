@@ -1,0 +1,5 @@
+# Logon handshake: downlink REQUEST LOGON, uplink LOGON ACCEPTED.
+# Format: SEND|<element_id>|<comma-separated values>|<mrn or empty>
+#         RECV|<raw /data2/... packet>
+SEND|DM_REQUEST_LOGON||
+RECV|/data2/1/1/NE/LOGON ACCEPTED
