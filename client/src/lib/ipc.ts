@@ -158,6 +158,21 @@ export interface UiError {
   message: string;
 }
 
+/**
+ * Format an `invoke()` rejection for display. A Tauri command's `Err(UiError)`
+ * arrives as the plain `{code, message}` object itself (not a JS `Error`), so
+ * `String(e)` on it renders the useless `"[object Object]"` instead of the
+ * actual message — always go through this instead of `String(e)`/`String(err)`
+ * at a catch site that might see a `UiError`.
+ */
+export function formatIpcError(e: unknown): string {
+  if (e && typeof e === "object" && "message" in e && typeof (e as UiError).message === "string") {
+    return (e as UiError).message;
+  }
+  if (e instanceof Error) return e.message;
+  return String(e);
+}
+
 // Lazily-resolved real Tauri invoke (only ever loaded inside Tauri).
 let tauriInvoke:
   | (<T>(cmd: string, args?: Record<string, unknown>) => Promise<T>)

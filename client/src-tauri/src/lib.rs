@@ -33207,6 +33207,13 @@ pub fn run() {
             hoppie::hoppie_connect,
             hoppie::hoppie_disconnect,
             hoppie::hoppie_status,
+            hoppie::hoppie_get_flight_context,
+            hoppie::hoppie_send_pdc_request,
+            hoppie::hoppie_get_thread,
+            hoppie::hoppie_send_logon_request,
+            hoppie::hoppie_send_free_text,
+            hoppie::hoppie_send_cpdlc_element,
+            hoppie::hoppie_list_elements,
         ])
         .build(tauri::generate_context!())
         .expect("error while building AeroACARS")

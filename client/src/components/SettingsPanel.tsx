@@ -13,6 +13,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { getConsent, setConsent } from "../lib/sentry";
 import { DiscordRpcPanel } from "./DiscordRpcPanel";
 import { RemoteServerPanel } from "./RemoteServerPanel";
+import { HoppieSettingsPanel } from "./HoppieSettingsPanel";
 
 const ALL_KINDS: SimKind[] = [
   "msfs2024",
@@ -514,6 +515,10 @@ export function SettingsPanel({
               ein Browser kann keinen Server hosten. Im LAN-Browser (Tablet)
               ist diese Sektion ausgeblendet. */}
           {isTauri && <RemoteServerPanel />}
+
+          {/* v1.3.0 (#Hoppie-PDC-CPDLC): PDC/CPDLC-Client ueber das
+              Hoppie-ACARS-Netzwerk. Opt-In, Default = aus. */}
+          <HoppieSettingsPanel />
         </>
       )}
 

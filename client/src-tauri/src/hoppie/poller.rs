@@ -16,7 +16,7 @@ use hoppie_protocol::elements::Direction;
 use hoppie_protocol::thread::CpdlcThread;
 use hoppie_protocol::wire::{self, HoppieRequest, HoppieResponseLine, PacketKind};
 
-use super::HoppieHttp;
+use super::{HoppieHttp, TelexEntry};
 
 /// Baseline poll interval — midpoint of the official docs' recommended
 /// 45-75s band (`hoppie.nl/acars/system/tech.html`: "heavily
@@ -44,18 +44,27 @@ pub fn poll_interval(pending_response_count: usize) -> Duration {
 /// `HoppieHandle::drop`, i.e. `hoppie_disconnect` or app shutdown).
 #[allow(clippy::too_many_arguments)]
 pub fn spawn(
-    _app: AppHandle,
+    app: AppHandle,
     http: Arc<HoppieHttp>,
     thread: Arc<StdMutex<CpdlcThread>>,
+    telex_log: Arc<StdMutex<Vec<TelexEntry>>>,
+    min_timestamps: Arc<StdMutex<std::collections::HashMap<u32, chrono::DateTime<chrono::Utc>>>>,
     last_error: Arc<StdMutex<Option<String>>>,
     from_callsign: String,
     logon: String,
     to_station: String,
+    notify_os: bool,
     mut stop_rx: watch::Receiver<bool>,
 ) {
     tauri::async_runtime::spawn(async move {
         loop {
-            let interval = {
+            let interval = if http.mock {
+                // Simulation mode: poll quickly (fixed 3s) so a pilot
+                // testing the UI sees the canned PDC reply land almost
+                // immediately, rather than waiting up to the real
+                // baseline's 60s.
+                Duration::from_secs(3)
+            } else {
                 let t = thread.lock().expect("hoppie thread mutex");
                 poll_interval(t.pending_response_count())
             };
@@ -66,7 +75,7 @@ pub fn spawn(
                     }
                 }
                 _ = tokio::time::sleep(interval) => {
-                    poll_once(&http, &thread, &last_error, &from_callsign, &logon, &to_station).await;
+                    poll_once(&app, &http, &thread, &telex_log, &min_timestamps, &last_error, &from_callsign, &logon, &to_station, notify_os).await;
                 }
             }
         }
@@ -74,13 +83,33 @@ pub fn spawn(
     });
 }
 
+/// Fire an OS-native toast for a newly-arrived message — visible even
+/// when the app isn't focused/is minimized to tray, mirroring the
+/// existing tray-mode notification pattern in `lib.rs` (PIREP-
+/// cancelled-remotely). `body` deliberately omits the full message
+/// text (OS notifications can be visible on a locked screen).
+fn notify_new_message(app: &AppHandle, from: &str) {
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app
+        .notification()
+        .builder()
+        .title("AeroACARS — CPDLC")
+        .body(format!("Neue Nachricht von {from}"))
+        .show();
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn poll_once(
+    app: &AppHandle,
     http: &HoppieHttp,
     thread: &StdMutex<CpdlcThread>,
+    telex_log: &StdMutex<Vec<TelexEntry>>,
+    min_timestamps: &StdMutex<std::collections::HashMap<u32, chrono::DateTime<chrono::Utc>>>,
     last_error: &StdMutex<Option<String>>,
     from_callsign: &str,
     logon: &str,
     to_station: &str,
+    notify_os: bool,
 ) {
     let req = HoppieRequest {
         logon: logon.to_string(),
@@ -96,18 +125,37 @@ async fn poll_once(
         Ok(HoppieResponseLine::OkWithPayload(content)) => {
             *last_error.lock().expect("hoppie last_error mutex") = None;
             let envelopes = wire::parse_poll_envelopes(&content);
-            let mut t = thread.lock().expect("hoppie thread mutex");
             for env in envelopes {
                 if env.kind != PacketKind::Cpdlc {
-                    // Phase 1: telex/PDC-reply envelopes aren't stored
-                    // yet — `hoppie_get_thread` (Phase 2) is what will
-                    // surface them. Nothing sends a PDC request before
-                    // Phase 2 either, so nothing meaningful is lost.
+                    // Telex traffic (PDC replies, free chat) — no MIN/MRN
+                    // threading, just appended in arrival order.
+                    let from = env.from.clone();
+                    telex_log
+                        .lock()
+                        .expect("hoppie telex_log mutex")
+                        .push(TelexEntry {
+                            direction: "received",
+                            text: env.packet,
+                            at: chrono::Utc::now(),
+                        });
+                    if notify_os {
+                        notify_new_message(app, &from);
+                    }
                     continue;
                 }
                 match cpdlc::decode(&env.packet, Direction::Uplink) {
                     Ok(msg) => {
+                        let min = msg.min;
+                        let mut t = thread.lock().expect("hoppie thread mutex");
                         t.record_received(msg);
+                        drop(t);
+                        min_timestamps
+                            .lock()
+                            .expect("hoppie min_timestamps mutex")
+                            .insert(min, chrono::Utc::now());
+                        if notify_os {
+                            notify_new_message(app, &env.from);
+                        }
                     }
                     Err(e) => {
                         tracing::warn!(

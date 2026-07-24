@@ -31,10 +31,17 @@ const LandingPanel = lazy(() =>
 const ReleaseNotesModal = lazy(() =>
   import("./components/ReleaseNotesModal").then((m) => ({ default: m.ReleaseNotesModal })),
 );
+// v1.3.0 (#Hoppie-PDC-CPDLC): lazy — only loaded once the pilot opens the
+// tab, same reasoning as the other feature panels above.
+const CpdlcPanel = lazy(() =>
+  import("./components/CpdlcPanel").then((m) => ({ default: m.CpdlcPanel })),
+);
 import { UpdateButton } from "./components/UpdateButton";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ErrorReportingFirstRunBanner } from "./components/ErrorReportingFirstRunBanner";
 import { IntegrityBanner } from "./components/IntegrityBanner";
+import { CpdlcMessageBanner } from "./components/CpdlcMessageBanner";
+import { useHoppieAttention } from "./hooks/useHoppieAttention";
 import { useDiscordRpcPush } from "./hooks/useDiscordRpcPush";
 import { LiveRecordingIndicator } from "./components/LiveRecordingIndicator";
 import { useSimSession } from "./hooks/useSimSession";
@@ -48,7 +55,7 @@ type SessionStatus =
   | { kind: "loggedOut"; restoreError?: UiError }
   | { kind: "loggedIn"; session: LoginResult };
 
-type Tab = "cockpit" | "briefing" | "logbook" | "landing" | "news" | "log" | "map" | "settings" | "about" | "devpreview";
+type Tab = "cockpit" | "briefing" | "logbook" | "landing" | "news" | "log" | "map" | "cpdlc" | "settings" | "about" | "devpreview";
 
 const DEBUG_STORAGE_KEY = "aeroacars.debug";
 const AUTO_FILE_STORAGE_KEY = "aeroacars.autoFile";
@@ -462,6 +469,7 @@ function App() {
   // Hook lebt im NewsPanel-Modul; wir lifen den Count nur fuer den
   // Tab-Badge nach oben.
   const unreadNews = useUnreadNewsCount(status.kind === "loggedIn");
+  const { pendingCount: cpdlcPendingCount } = useHoppieAttention(status.kind === "loggedIn");
 
   const phpvmsConnected = status.kind === "loggedIn";
   const simConnected = simState === "connected";
@@ -488,6 +496,9 @@ function App() {
           Critical-Banner kann nicht weggeklickt werden (Pilot soll
           sim-state-reset nicht verstecken). */}
       <IntegrityBanner />
+      {/* v1.3.0 (#Hoppie-PDC-CPDLC): visible on ANY tab, not just PDC/CPDLC —
+          a pilot on Cockpit still sees an uplink is waiting for a reply. */}
+      <CpdlcMessageBanner count={cpdlcPendingCount} onOpenTab={() => setTab("cpdlc")} />
       <header className="app__header">
         <div className="app__brand">
           <h1>{t("app.name")}</h1>
@@ -562,6 +573,20 @@ function App() {
             onClick={() => setTab("map")}
           >
             {t("tabs.map")}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "cpdlc"}
+            className={`tab ${tab === "cpdlc" ? "tab--active" : ""}`}
+            onClick={() => setTab("cpdlc")}
+          >
+            {t("tabs.cpdlc")}
+            {cpdlcPendingCount > 0 && (
+              <span className="tab__news-badge" aria-label={t("cpdlc.banner_text", { count: cpdlcPendingCount })}>
+                {cpdlcPendingCount > 9 ? "9+" : cpdlcPendingCount}
+              </span>
+            )}
           </button>
           <button
             type="button"
@@ -731,6 +756,12 @@ function App() {
       {status.kind === "loggedIn" && tab === "map" && (
         <Suspense fallback={<div className="lazy-fallback">…</div>}>
           <LiveMapView activeFlight={activeFlight} simSnapshot={simSnapshot} />
+        </Suspense>
+      )}
+
+      {status.kind === "loggedIn" && tab === "cpdlc" && (
+        <Suspense fallback={<div className="lazy-fallback">…</div>}>
+          <CpdlcPanel onOpenSettings={() => setTab("settings")} />
         </Suspense>
       )}
 

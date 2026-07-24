@@ -42,6 +42,16 @@ pub struct HoppieSettings {
     /// but mute the sound (or vice versa, platform permitting).
     #[serde(default = "default_true")]
     pub notify_sound: bool,
+    /// Simulation mode — `hoppie/mod.rs`'s `HoppieHttp` never touches
+    /// the real network when this is on; it fabricates canned
+    /// responses instead (ping always succeeds, a PDC request gets a
+    /// synthetic `[SIMULATION]`-tagged reply on the next poll). Lets a
+    /// pilot exercise the whole connect/PDC/thread UI without an
+    /// account on the real Hoppie network or without risking traffic
+    /// on it. Default `false` — real network — once a pilot HAS
+    /// enabled the feature for real use.
+    #[serde(default)]
+    pub mock_mode: bool,
 }
 
 fn default_station_id() -> String {
@@ -60,6 +70,7 @@ impl Default for HoppieSettings {
             station_id: default_station_id(),
             notify_os: true,
             notify_sound: true,
+            mock_mode: false,
         }
     }
 }
@@ -119,6 +130,7 @@ mod tests {
         assert!(!s.enabled);
         assert!(s.notify_os);
         assert!(s.notify_sound);
+        assert!(!s.mock_mode);
         assert_eq!(s.station_id, "SERVER");
         assert_eq!(s.callsign_override, None);
     }
@@ -131,6 +143,7 @@ mod tests {
             station_id: "EDDF".into(),
             notify_os: false,
             notify_sound: true,
+            mock_mode: true,
         };
         let json = serde_json::to_string(&s).unwrap();
         assert_eq!(parse_settings(&json), s);
