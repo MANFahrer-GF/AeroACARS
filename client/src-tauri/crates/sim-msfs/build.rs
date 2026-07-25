@@ -74,6 +74,20 @@ fn main() {
         }
     }
 
+    generate_bindings(&manifest_dir, &out_path);
+}
+
+/// Generate the SimConnect bindings.
+///
+/// Gated on the HOST, not the target: a build script is compiled for the
+/// host, and Cargo resolves `[target.'cfg(...)'.build-dependencies]`
+/// against the host too — so on macOS/Linux `bindgen` is not a
+/// dependency at all and the name doesn't resolve. A runtime
+/// `CARGO_CFG_TARGET_OS` check can't help, because the whole file still
+/// has to type-check. Without this split `cargo build --workspace` fails
+/// with E0433 on any non-Windows machine.
+#[cfg(target_os = "windows")]
+fn generate_bindings(manifest_dir: &PathBuf, out_path: &PathBuf) {
     // Run bindgen against the wrapper. We allowlist what we actually
     // use so the generated file stays small and compiles fast.
     let bindings = bindgen::Builder::default()
@@ -131,4 +145,18 @@ fn main() {
     bindings
         .write_to_file(out_path.join("simconnect_bindings.rs"))
         .expect("Failed to write SimConnect bindings");
+}
+
+/// Non-Windows host. Reached only when cross-compiling *to* Windows from
+/// e.g. macOS — the SimConnect SDK is Windows-only and `bindgen` isn't
+/// even a dependency here, so fail loudly rather than emit nothing and
+/// let the crate fail later with a confusing missing-symbol error.
+/// Windows builds run on Windows CI runners, so this path is not part of
+/// any normal flow.
+#[cfg(not(target_os = "windows"))]
+fn generate_bindings(_manifest_dir: &PathBuf, _out_path: &PathBuf) {
+    panic!(
+        "sim-msfs: cannot generate SimConnect bindings on a non-Windows host. \
+         Cross-compiling to Windows is not supported — build on Windows."
+    );
 }
