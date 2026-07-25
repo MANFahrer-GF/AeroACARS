@@ -31,7 +31,7 @@
 
 use crate::cpdlc::ResponseRequirement;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Direction {
     Uplink,
     Downlink,
@@ -296,8 +296,12 @@ fn try_match_template(spec: &ElementSpec, text: &str) -> Option<ResolvedElement>
                     }
                     _ => (rest, ""),
                 };
-                // Strip a defensive leading '@' — see the module docs.
-                let value = raw_value.trim().trim_start_matches('@').trim().to_string();
+                // Strip '@' on BOTH ends. It is a presentation line feed
+                // that "do[es] not really mean anything" per the docs, so
+                // a value is never meant to carry one. Trimming only the
+                // front left `CLIMB TO AND MAINTAIN @FL240@` captured as
+                // "FL240@".
+                let value = raw_value.trim().trim_matches('@').trim().to_string();
                 if value.is_empty() {
                     return None;
                 }
@@ -362,6 +366,19 @@ mod tests {
                 assert_eq!(r.spec_id, "UM74");
                 assert_eq!(r.values, vec!["UDROS".to_string()]);
             }
+            other => panic!("expected Recognized, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn placeholder_values_carry_no_at_sign_on_either_end() {
+        // vSMR and Hoppie's own tool wrap values in '@' on both sides.
+        match match_uplink_text("CLIMB TO AND MAINTAIN @FL240@") {
+            ParsedElement::Recognized(r) => assert_eq!(
+                r.values,
+                vec!["FL240".to_string()],
+                "a trailing '@' is presentation, never part of the value"
+            ),
             other => panic!("expected Recognized, got {other:?}"),
         }
     }

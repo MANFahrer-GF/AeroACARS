@@ -1188,6 +1188,9 @@ pub struct ThreadEntryDto {
     pub response: Option<String>,
     pub element_id: Option<String>,
     pub closed: Option<bool>,
+    /// Already deferred with STANDBY — the UI hides the STANDBY key so
+    /// the same instruction can't be pushed back repeatedly.
+    pub deferred: Option<bool>,
 }
 
 #[tauri::command]
@@ -1216,6 +1219,7 @@ pub async fn hoppie_get_thread(
             response: None,
             element_id: None,
             closed: None,
+            deferred: None,
         }));
     }
     {
@@ -1252,6 +1256,7 @@ pub async fn hoppie_get_thread(
                 response: Some(e.message.response.code().to_string()),
                 element_id,
                 closed: Some(e.closed),
+                deferred: Some(e.deferred),
             }
         }));
     }

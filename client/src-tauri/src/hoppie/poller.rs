@@ -19,12 +19,29 @@ use hoppie_protocol::wire::{self, HoppieRequest, HoppieResponseLine, PacketKind}
 use super::{HoppieHttp, MinTimestamps, TelexEntry};
 use crate::{log_activity_handle, ActivityLevel};
 
-/// Baseline poll interval — midpoint of the official docs' recommended
-/// 45-75s band (`hoppie.nl/acars/system/tech.html`: "heavily
-/// recommended to poll once between every 45 and 75 seconds, randomly
-/// timed"). Randomizing within the band is a documented nice-to-have,
-/// not implemented in Phase 1 — a fixed 60s is well within spec.
-const BASELINE_POLL_SECS: u64 = 60;
+/// The official docs' recommended idle band
+/// (`hoppie.nl/acars/system/tech.html`): "heavily recommended to poll
+/// once between every 45 and 75 seconds, randomly timed".
+const BASELINE_POLL_MIN_SECS: u64 = 45;
+const BASELINE_POLL_MAX_SECS: u64 = 75;
+
+/// Pick a fresh interval inside the band on every tick. The "randomly
+/// timed" part of the recommendation is not decoration: a fixed 60s
+/// means every client that started together keeps polling together, so
+/// the load arrives in a spike instead of spread out. Hoppie is run by
+/// one volunteer.
+///
+/// Falls back to the band's midpoint if the OS entropy source refuses —
+/// no worse than what we did before.
+fn randomized_baseline() -> Duration {
+    let mut byte = [0u8; 1];
+    let span = BASELINE_POLL_MAX_SECS - BASELINE_POLL_MIN_SECS;
+    let secs = match getrandom::getrandom(&mut byte) {
+        Ok(()) => BASELINE_POLL_MIN_SECS + (byte[0] as u64 * span) / 255,
+        Err(_) => (BASELINE_POLL_MIN_SECS + BASELINE_POLL_MAX_SECS) / 2,
+    };
+    Duration::from_secs(secs)
+}
 
 /// Faster cadence while a response is outstanding, per the docs ("you
 /// may increase the polling rate to once per 20 seconds").
@@ -37,7 +54,7 @@ pub fn poll_interval(pending_response_count: usize) -> Duration {
     if pending_response_count > 0 {
         Duration::from_secs(FAST_POLL_SECS)
     } else {
-        Duration::from_secs(BASELINE_POLL_SECS)
+        randomized_baseline()
     }
 }
 
@@ -343,7 +360,28 @@ mod tests {
     fn fast_interval_kicks_in_exactly_when_a_response_is_pending() {
         assert_eq!(poll_interval(1), Duration::from_secs(FAST_POLL_SECS));
         assert_eq!(poll_interval(5), Duration::from_secs(FAST_POLL_SECS));
-        assert_eq!(poll_interval(0), Duration::from_secs(BASELINE_POLL_SECS));
+        let idle = poll_interval(0);
+        assert!(idle >= Duration::from_secs(BASELINE_POLL_MIN_SECS));
+        assert!(idle <= Duration::from_secs(BASELINE_POLL_MAX_SECS));
+    }
+
+    /// "Randomly timed" is the documented request, and the point is that
+    /// clients which started together don't stay in lockstep. A constant
+    /// would pass every range check while defeating that entirely.
+    #[test]
+    fn idle_interval_actually_varies() {
+        let samples: std::collections::HashSet<u64> =
+            (0..40).map(|_| poll_interval(0).as_secs()).collect();
+        assert!(
+            samples.len() > 1,
+            "40 draws all landed on the same value — that is not random"
+        );
+        for secs in samples {
+            assert!(
+                (BASELINE_POLL_MIN_SECS..=BASELINE_POLL_MAX_SECS).contains(&secs),
+                "{secs}s is outside the documented 45-75s band"
+            );
+        }
     }
 
     #[test]

@@ -52,6 +52,7 @@ const uplink = (over: Partial<ThreadEntry> = {}): ThreadEntry => ({
   response: "WU",
   element_id: null,
   closed: false,
+  deferred: false,
   ...over,
 });
 
@@ -178,6 +179,18 @@ describe("CpdlcView replies", () => {
     expect(screen.getByRole("button", { name: "WILCO" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "UNABLE" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "STANDBY" })).toBeInTheDocument();
+  });
+
+  // STANDBY may be sent once. A second deferral of the same clearance
+  // tells the controller nothing and clutters their screen.
+  it("drops the STANDBY key once the instruction was already deferred", () => {
+    renderWith(uplink({ deferred: true }));
+    expect(screen.getByRole("button", { name: t("cpdlc.response_wilco") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("cpdlc.response_unable") })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: t("cpdlc.response_standby") }),
+      "deferring twice is not a thing",
+    ).not.toBeInTheDocument();
   });
 
   it("shows no reply keys on an already-answered uplink", () => {

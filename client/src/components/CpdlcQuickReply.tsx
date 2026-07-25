@@ -45,12 +45,18 @@ interface Armed {
 interface Props {
   /** MIN of the uplink being answered — becomes the reply's MRN. */
   min: number | null;
+  /** Already deferred once with STANDBY. The key disappears then: the
+   *  instruction is still open, but deferring it again tells the
+   *  controller nothing they don't already know. FlyByWire does the
+   *  same (WilcoUnableButtons.tsx re-offers WILCO/UNABLE without STBY
+   *  once a DM2 response exists). */
+  deferred: boolean;
   /** GOLD response code of the uplink: WU | AN | R | Y | N | NE. */
   response: string | null;
   onReplied: () => void;
 }
 
-export function CpdlcQuickReply({ min, response, onReplied }: Props) {
+export function CpdlcQuickReply({ min, response, deferred, onReplied }: Props) {
   const { t } = useTranslation();
   const [armed, setArmed] = useState<Armed | null>(null);
   const [busy, setBusy] = useState(false);
@@ -133,7 +139,7 @@ export function CpdlcQuickReply({ min, response, onReplied }: Props) {
           <>
             {key(WILCO, t("cpdlc.response_wilco"), "affirm")}
             {key(UNABLE, t("cpdlc.response_unable"), "deny")}
-            {key(STANDBY, t("cpdlc.response_standby"))}
+            {!deferred && key(STANDBY, t("cpdlc.response_standby"))}
           </>
         )}
         {response === "AN" && (

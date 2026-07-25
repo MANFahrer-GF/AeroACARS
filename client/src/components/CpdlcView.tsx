@@ -222,7 +222,12 @@ export function CpdlcView({
                 {collapsed ? m.text.replace(/@/g, " ") : formatDatalinkText(m.text)}
               </p>
               {open && (
-                <CpdlcQuickReply min={m.min} response={m.response} onReplied={onChanged} />
+                <CpdlcQuickReply
+                  min={m.min}
+                  response={m.response}
+                  deferred={Boolean(m.deferred)}
+                  onReplied={onChanged}
+                />
               )}
             </li>
           );

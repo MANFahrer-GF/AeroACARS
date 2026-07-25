@@ -30,6 +30,8 @@ export interface ThreadEntry {
   response: "WU" | "AN" | "R" | "Y" | "N" | "NE" | null;
   element_id: string | null;
   closed: boolean | null;
+  /** Already deferred with STANDBY — the key is then hidden. */
+  deferred: boolean | null;
 }
 
 const POLL_MS = 5000;

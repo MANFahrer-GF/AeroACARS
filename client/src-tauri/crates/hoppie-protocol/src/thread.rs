@@ -36,6 +36,12 @@ pub struct ThreadEntry {
     /// response requirement. Always `false` for entries that never
     /// required a response.
     pub closed: bool,
+    /// An uplink we have already answered with STANDBY. The instruction
+    /// stays open — STANDBY defers rather than answers — but the pilot
+    /// must not be able to defer it again: the controller would see a
+    /// second and third deferral of the same clearance and learn nothing
+    /// from any of them. Always `false` for downlinks.
+    pub deferred: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -51,11 +57,20 @@ pub enum ThreadEvent {
     },
 }
 
+/// Key for the open-message store and the history: the MIN alone is NOT
+/// unique. ATC numbers uplinks, we number downlinks, and both commonly
+/// start at 1 — so our third message and ATC's third message are both
+/// "MIN 3". Keying on the bare number let our downlink evict ATC's open
+/// uplink, which dropped `pending_uplink_count` to zero while a
+/// clearance was still waiting for a WILCO: the badge said "nothing to
+/// do" while the log still said "awaiting reply".
+type MessageKey = (Direction, u32);
+
 /// Per-connection MIN/MRN bookkeeping + full message history.
 #[derive(Debug, Default)]
 pub struct CpdlcThread {
     next_min: u32,
-    open: HashMap<u32, PendingMessage>,
+    open: HashMap<MessageKey, PendingMessage>,
     history: Vec<ThreadEntry>,
     logged_on: bool,
     /// MIN of our outstanding `DM_REQUEST_LOGON`, if any. Ties logon-
@@ -104,7 +119,7 @@ impl CpdlcThread {
 
         if response.requires_reply() {
             self.open.insert(
-                min,
+                (Direction::Downlink, min),
                 PendingMessage {
                     direction: Direction::Downlink,
                     response,
@@ -113,8 +128,20 @@ impl CpdlcThread {
         }
         let defers = matches!(&parsed, ParsedElement::Recognized(r) if r.spec_id == STANDBY_ID);
         if let Some(m) = mrn {
-            if !defers {
-                self.close_open_entry(m);
+            if defers {
+                // STANDBY leaves the instruction open on purpose, but
+                // records that we've already deferred it once.
+                if let Some(entry) = self
+                    .history
+                    .iter_mut()
+                    .find(|e| e.min == m && e.direction == Direction::Uplink)
+                {
+                    entry.deferred = true;
+                }
+            } else {
+                // Our MRN references ATC's uplink — that is what this
+                // answer closes, not anything of ours.
+                self.close_open_entry(Direction::Uplink, m);
             }
         }
         // Sending LOGOFF ends the session from our side immediately —
@@ -127,7 +154,7 @@ impl CpdlcThread {
         if matches!(&parsed, ParsedElement::Recognized(r) if r.spec_id == LOGOFF_ID) {
             self.logged_on = false;
             if let Some(pending) = self.logon_request_min.take() {
-                self.close_open_entry(pending);
+                self.close_open_entry(Direction::Downlink, pending);
             }
         }
         if let ParsedElement::Recognized(r) = &parsed {
@@ -135,7 +162,7 @@ impl CpdlcThread {
                 // A previous logon attempt that never got answered must
                 // not stay pending — only the newest one counts.
                 if let Some(previous) = self.logon_request_min.replace(min) {
-                    self.close_open_entry(previous);
+                    self.close_open_entry(Direction::Downlink, previous);
                 }
             }
         }
@@ -153,6 +180,7 @@ impl CpdlcThread {
             direction: Direction::Downlink,
             message: message.clone(),
             closed: false,
+            deferred: false,
         });
         (message, ThreadEvent::Sent { min })
     }
@@ -164,14 +192,15 @@ impl CpdlcThread {
         let mrn = message.mrn;
         let mut resolves = None;
         if let Some(m) = mrn {
-            if self.open.remove(&m).is_some() {
+            // An uplink's MRN references one of OUR downlinks.
+            if self.open.remove(&(Direction::Downlink, m)).is_some() {
                 resolves = Some(m);
-                self.mark_closed(m);
+                self.mark_closed(Direction::Downlink, m);
             }
         }
         if message.response.requires_reply() {
             self.open.insert(
-                min,
+                (Direction::Uplink, min),
                 PendingMessage {
                     direction: Direction::Uplink,
                     response: message.response,
@@ -188,7 +217,7 @@ impl CpdlcThread {
             // its 20s fast cadence for the whole session.
             if let Some(pending) = self.logon_request_min.take() {
                 if resolves != Some(pending) {
-                    self.close_open_entry(pending);
+                    self.close_open_entry(Direction::Downlink, pending);
                 }
             }
         }
@@ -198,17 +227,29 @@ impl CpdlcThread {
             direction: Direction::Uplink,
             message,
             closed: false,
+            deferred: false,
         });
         ThreadEvent::ReceivedUplink { min, mrn, resolves }
     }
 
-    fn close_open_entry(&mut self, min: u32) {
-        self.open.remove(&min);
-        self.mark_closed(min);
+    /// Close an entry in a specific direction. Which one matters: when
+    /// WE reply with an MRN we are closing ATC's UPLINK, but when we
+    /// abandon our own logon we are closing our own DOWNLINK. Keying on
+    /// the bare MIN conflated the two.
+    fn close_open_entry(&mut self, direction: Direction, min: u32) {
+        self.open.remove(&(direction, min));
+        self.mark_closed(direction, min);
     }
 
-    fn mark_closed(&mut self, min: u32) {
-        if let Some(entry) = self.history.iter_mut().find(|e| e.min == min) {
+    /// Mark the history entry closed. Matches on direction as well as
+    /// MIN — otherwise `find` returns whichever of the two numbering
+    /// spaces happens to come first and ticks off the wrong message.
+    fn mark_closed(&mut self, direction: Direction, min: u32) {
+        if let Some(entry) = self
+            .history
+            .iter_mut()
+            .find(|e| e.min == min && e.direction == direction)
+        {
             entry.closed = true;
         }
     }
@@ -229,8 +270,8 @@ impl CpdlcThread {
     /// direct-to request has nothing to answer.
     pub fn pending_uplink_count(&self) -> usize {
         self.open
-            .values()
-            .filter(|p| p.direction == Direction::Uplink)
+            .keys()
+            .filter(|(direction, _)| *direction == Direction::Uplink)
             .count()
     }
 
@@ -247,7 +288,7 @@ impl CpdlcThread {
     pub fn mark_logged_off(&mut self) {
         self.logged_on = false;
         if let Some(pending) = self.logon_request_min.take() {
-            self.close_open_entry(pending);
+            self.close_open_entry(Direction::Downlink, pending);
         }
     }
 
@@ -412,6 +453,100 @@ mod tests {
     /// anything that stays open forever pins us to the 20s "reply
     /// outstanding" rate against a free, volunteer-run service that asks
     /// for 45-75s. These guard every way a logon could get stuck.
+    /// The two MIN spaces are independent — ATC numbers uplinks, we
+    /// number downlinks, and both commonly start at 1. Sharing a key let
+    /// our own message evict ATC's open instruction, so the badge said
+    /// "nothing to answer" while a clearance was still waiting. The log
+    /// and the counter would then disagree, which is worse than either
+    /// being wrong on its own.
+    /// STANDBY defers but does not answer, so the instruction stays
+    /// open. It may only be sent ONCE though: a second deferral tells
+    /// the controller nothing and just clutters their screen.
+    #[test]
+    fn standby_marks_the_uplink_deferred_without_closing_it() {
+        let mut thread = CpdlcThread::new();
+        receive(&mut thread, "/data2/7//WU/CLIMB TO AND MAINTAIN FL240");
+
+        let before = thread
+            .history()
+            .iter()
+            .find(|e| e.direction == Direction::Uplink)
+            .unwrap();
+        assert!(!before.deferred, "nothing deferred yet");
+
+        send(&mut thread, "DM2", &[], Some(7));
+
+        let after = thread
+            .history()
+            .iter()
+            .find(|e| e.direction == Direction::Uplink)
+            .unwrap();
+        assert!(after.deferred, "STANDBY must mark it deferred");
+        assert!(!after.closed, "but STANDBY does not answer it");
+        assert_eq!(
+            thread.pending_uplink_count(),
+            1,
+            "ATC is still waiting for a real answer"
+        );
+
+        // A real answer closes it and the deferred flag is irrelevant.
+        send(&mut thread, "DM0", &[], Some(7));
+        assert_eq!(thread.pending_uplink_count(), 0);
+    }
+
+    #[test]
+    fn our_downlink_cannot_evict_atcs_uplink_with_the_same_min() {
+        let mut thread = CpdlcThread::new();
+        receive(&mut thread, "/data2/1//WU/CLIMB TO AND MAINTAIN FL240");
+        assert_eq!(thread.pending_uplink_count(), 1);
+
+        // Our first own message also gets MIN 1 — a request, unrelated.
+        send(&mut thread, "DM22", &["UDROS"], None);
+        assert_eq!(
+            thread.pending_uplink_count(),
+            1,
+            "ATC still waits for the WILCO — our own MIN 1 must not erase it"
+        );
+        assert_eq!(
+            thread.pending_response_count(),
+            2,
+            "both are genuinely outstanding, in opposite directions"
+        );
+
+        send(&mut thread, "DM0", &[], Some(1));
+        assert_eq!(thread.pending_uplink_count(), 0);
+        assert_eq!(
+            thread.pending_response_count(),
+            1,
+            "our own request is still waiting on ATC"
+        );
+    }
+
+    #[test]
+    fn closing_marks_the_right_history_entry_when_mins_collide() {
+        let mut thread = CpdlcThread::new();
+        receive(&mut thread, "/data2/1//WU/CLIMB TO AND MAINTAIN FL240");
+        send(&mut thread, "DM22", &["UDROS"], None);
+        send(&mut thread, "DM0", &[], Some(1));
+
+        let uplink = thread
+            .history()
+            .iter()
+            .find(|e| e.direction == Direction::Uplink && e.min == 1)
+            .expect("uplink is in the history");
+        assert!(uplink.closed, "the answered uplink must be marked closed");
+
+        let ours = thread
+            .history()
+            .iter()
+            .find(|e| e.direction == Direction::Downlink && e.min == 1)
+            .expect("our request is in the history");
+        assert!(
+            !ours.closed,
+            "our own unanswered request must NOT be ticked off by an unrelated reply"
+        );
+    }
+
     #[test]
     fn an_mrn_less_logon_accept_still_closes_the_request() {
         let mut thread = CpdlcThread::new();
