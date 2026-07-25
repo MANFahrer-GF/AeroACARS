@@ -12,6 +12,8 @@ import { formatDatalinkText } from "../lib/datalink";
 import type { ThreadEntry } from "../hooks/useCpdlcMessages";
 import { TelexQuickReply } from "./CpdlcQuickReply";
 import { useMessageLog } from "../hooks/useMessageLog";
+import { useStationOnline } from "../hooks/useStationOnline";
+import { StationBadge } from "./StationBadge";
 
 interface FlightContext {
   callsign: string | null;
@@ -111,6 +113,7 @@ export function PdcView({ online, callsign, messages, onChanged }: Props) {
   // Same reading behaviour as the CPDLC log: newest in view, settled
   // history folded above it.
   const { logRef, onScroll, toggle, isCollapsed } = useMessageLog(telex.length);
+  const stationStatus = useStationOnline(fields.recipient, online);
 
   return (
     <div className="cpdlc-section">
@@ -134,6 +137,7 @@ export function PdcView({ online, callsign, messages, onChanged }: Props) {
                 placeholder={t("cpdlc.pdc_station_placeholder")}
                 disabled={busy}
               />
+              <StationBadge status={stationStatus} />
             </label>
             <label className="cpdlc-field">
               <span>{t("cpdlc.pdc_form_aircraft_type")}</span>

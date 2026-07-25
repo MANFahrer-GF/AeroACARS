@@ -9362,6 +9362,40 @@ input:disabled {
   }
 }
 
+/* Station-online indicator next to the recipient/centre field. Three
+   states because "couldn't check" is not the same claim as "offline". */
+.cpdlc-station-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.cpdlc-station-badge__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.cpdlc-station-badge--online {
+  color: var(--success);
+}
+.cpdlc-station-badge--online .cpdlc-station-badge__dot {
+  background: var(--success);
+}
+
+.cpdlc-station-badge--offline {
+  color: var(--warning);
+}
+.cpdlc-station-badge--offline .cpdlc-station-badge__dot {
+  background: var(--warning);
+}
+
 /* ===== v1.3.0 (#Hoppie-PDC-CPDLC): top-level "needs attention" banner ===== */
 
 .cpdlc-banner {

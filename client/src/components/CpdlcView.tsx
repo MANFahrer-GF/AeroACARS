@@ -14,6 +14,8 @@ import type { ThreadEntry } from "../hooks/useCpdlcMessages";
 import { CpdlcQuickReply } from "./CpdlcQuickReply";
 import { CpdlcComposer } from "./CpdlcComposer";
 import { useMessageLog } from "../hooks/useMessageLog";
+import { useStationOnline } from "../hooks/useStationOnline";
+import { StationBadge } from "./StationBadge";
 
 /** GOLD response codes that actually demand an answer from the pilot.
  *  N (not required) and NE (none expected) are answered by nobody. */
@@ -88,6 +90,7 @@ export function CpdlcView({
 
   const cpdlc = messages.filter((m) => m.kind === "cpdlc");
   const { logRef, onScroll, toggle, isCollapsed } = useMessageLog(cpdlc.length);
+  const stationStatus = useStationOnline(stationInput, online);
 
   return (
     <div className="cpdlc-section">
@@ -106,6 +109,7 @@ export function CpdlcView({
             placeholder={t("cpdlc.center_placeholder")}
             disabled={busy}
           />
+          <StationBadge status={stationStatus} />
         </label>
         <button
           type="button"

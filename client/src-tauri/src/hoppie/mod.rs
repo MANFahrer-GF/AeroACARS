@@ -340,6 +340,89 @@ pub fn hoppie_clear_logon_code() -> Result<(), UiError> {
         .map_err(|e| UiError::new("hoppie_secrets", e.to_string()))
 }
 
+/// Whether a station is currently logged on to the Hoppie network.
+#[derive(Debug, Clone, Serialize)]
+pub struct StationStatus {
+    pub station: String,
+    /// `true` only when the network listed the station as online. A
+    /// `false` means "not listed" — which is also what a network error
+    /// looks like, hence `reason`.
+    pub online: bool,
+    /// Set when the check itself failed, as opposed to the station
+    /// simply not being there. The UI must not claim "offline" when it
+    /// actually means "couldn't ask".
+    pub reason: Option<String>,
+}
+
+/// Ask the network whether `station` is online, so the pilot isn't left
+/// sending a clearance request into a void.
+///
+/// The protocol has no delivery or read receipt: `ok` on a send only
+/// means the message reached the addressee's mailbox, and `peek` shows
+/// our own mailbox, not theirs. Whether a controller is even connected
+/// is the one thing we CAN establish — via `ping`, which the docs
+/// describe as side-effect-free (it does not register us as online or
+/// lock the callsign), so it is safe to call before every send.
+#[tauri::command]
+pub async fn hoppie_ping_station(
+    state: tauri::State<'_, AppState>,
+    station: String,
+) -> Result<StationStatus, UiError> {
+    let station = station.trim().to_uppercase();
+    if station.is_empty() {
+        return Err(UiError::new(
+            "hoppie_no_station",
+            "Keine Station angegeben.",
+        ));
+    }
+    let guard = state.hoppie.lock().await;
+    let handle = guard.as_ref().ok_or_else(|| {
+        UiError::new(
+            "hoppie_not_connected",
+            "Nicht mit Hoppie ACARS verbunden — zuerst verbinden.",
+        )
+    })?;
+    let logon = resolve_logon_code()?;
+
+    let req = hoppie_protocol::wire::HoppieRequest {
+        logon,
+        from: handle.from_callsign.clone(),
+        to: station.clone(),
+        kind: hoppie_protocol::wire::PacketKind::Ping,
+        // The payload names who we're asking about; the reply lists
+        // whichever of them are online.
+        packet: Some(station.clone()),
+    };
+    match handle.http.send(&req).await {
+        Ok(hoppie_protocol::wire::HoppieResponseLine::OkWithPayload(body)) => {
+            let online = hoppie_protocol::wire::parse_ping_stations(&body)
+                .iter()
+                .any(|s| s.eq_ignore_ascii_case(&station));
+            Ok(StationStatus {
+                station,
+                online,
+                reason: None,
+            })
+        }
+        // A bare `ok` carries no station list — nobody matched.
+        Ok(hoppie_protocol::wire::HoppieResponseLine::Ok) => Ok(StationStatus {
+            station,
+            online: false,
+            reason: None,
+        }),
+        Ok(hoppie_protocol::wire::HoppieResponseLine::Error(reason)) => Ok(StationStatus {
+            station,
+            online: false,
+            reason: Some(reason),
+        }),
+        Err(e) => Ok(StationStatus {
+            station,
+            online: false,
+            reason: Some(e.message),
+        }),
+    }
+}
+
 /// Test a logon code against the real Hoppie network via a single
 /// `ping` (see the module docs) — side-effect-free, safe to call
 /// repeatedly. Does NOT read/write the stored code; the caller decides

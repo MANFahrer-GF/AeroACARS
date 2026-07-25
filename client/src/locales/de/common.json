@@ -1866,7 +1866,10 @@
     "callsign_network_hint": "Dein Callsign im Netzwerk (VATSIM), exakt so wie du verbunden bist — nicht das VA-Callsign aus dem Flugplan.",
     "callsign_mismatch": "Kein Callsign eingetragen — es würde {{flight}} aus dem Flugplan verwendet. ATC sucht dich über dein NETZWERK-Callsign; weicht es ab, erreichen deine Nachrichten den Lotsen nie.",
     "logon_no_answer": "Keine Antwort von {{station}}. Nicht jede Station unterstützt CPDLC-Anmeldung — eine Delivery macht meist nur PDC. Versuch das zuständige Center, oder nutze PDC.",
-    "expand_hint": "Zum vollständigen Anzeigen klicken"
+    "expand_hint": "Zum vollständigen Anzeigen klicken",
+    "station_online": "{{station}} ist online",
+    "station_offline": "{{station}} ist nicht online — eine Anfrage liefe ins Leere",
+    "station_unknown": "{{station}} konnte nicht geprüft werden"
   },
   "hoppie_settings": {
     "section_title": "Hoppie ACARS (PDC/CPDLC)",

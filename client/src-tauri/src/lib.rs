@@ -33204,6 +33204,7 @@ pub fn run() {
             hoppie::hoppie_has_logon_code,
             hoppie::hoppie_clear_logon_code,
             hoppie::hoppie_verify_logon_code,
+            hoppie::hoppie_ping_station,
             hoppie::hoppie_connect,
             hoppie::hoppie_disconnect,
             hoppie::hoppie_status,
