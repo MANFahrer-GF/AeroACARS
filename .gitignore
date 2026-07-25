@@ -147,3 +147,6 @@ reference/
 
 # Flug-Korpus-Export (Produktionsdaten, read-only Analyse) — nie einchecken
 corpus-arrivals.csv
+
+# Wissensgraph — wird lokal gebaut (post-commit-Hook), gehoert nicht ins Repo
+graphify-out/

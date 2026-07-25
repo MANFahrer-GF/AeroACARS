@@ -88,6 +88,12 @@ export function LogbookView() {
   const [page, setPage] = useState(0);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [loading, setLoading] = useState(false);
+  // Getrennt vom Listen-`loading`, und die ID statt eines Ja/Nein:
+  // Ein Detailabruf dauert je nach Fluglänge 1,5–3 s (Langstrecke: 10.000
+  // Streckenpunkte). Bisher zeigte nur der Blätterbalken ganz unten "lädt …"
+  // — beim Klick auf eine Zeile passierte oben nichts, also klickt man
+  // nochmal. Mit der ID kann genau die angeklickte Zeile antworten.
+  const [openingId, setOpeningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const mapElRef = useRef<HTMLDivElement | null>(null);
@@ -110,14 +116,19 @@ export function LogbookView() {
   }, [page]);
 
   async function openDetail(id: string) {
-    setLoading(true);
+    // Zweitklick verwerfen statt eine zweite Abfrage loszuschicken. Ohne das
+    // holt ein ungeduldiger Doppelklick denselben Flug zweimal — beide
+    // Abrufe laufen, der langsamere gewinnt.
+    if (openingId) return;
+    setOpeningId(id);
+    setError(null);
     try {
       const d = await invoke<Detail>("logbook_pirep", { id });
       setDetail(d);
     } catch (e) {
       setError(errText(e));
     } finally {
-      setLoading(false);
+      setOpeningId(null);
     }
   }
 
@@ -201,11 +212,18 @@ export function LogbookView() {
       </div>
       <div className="aa-lb-card">
         {error && <div className="aa-lb-error">Logbuch konnte nicht geladen werden: {error}</div>}
-        <table>
+        {/* Der Balken macht das Warten sichtbar, bevor der Blick überhaupt bei
+            der Zeile ankommt — er sitzt an der Oberkante der Karte. */}
+        {(loading || openingId) && <div className="aa-lb-progress" role="presentation" />}
+        <table className={openingId ? "is-busy" : undefined} aria-busy={openingId ? true : undefined}>
           <thead><tr><th>Datum</th><th>Route</th><th>Muster</th><th className="num">Dauer</th><th className="num">Distanz</th><th className="num">Landung</th><th>Status</th><th></th></tr></thead>
           <tbody>
             {items.map((f) => (
-              <tr key={f.id} onClick={() => openDetail(f.id)}>
+              <tr
+                key={f.id}
+                className={openingId === f.id ? "is-opening" : undefined}
+                onClick={() => openDetail(f.id)}
+              >
                 <td className="aa-lb-muted">{fmtDate(f.date)}</td>
                 <td><span className="aa-lb-rt">{f.dep_icao}<span className="aa-lb-arr">→</span>{f.arr_icao}</span><div className="aa-lb-cs2">{f.callsign}</div></td>
                 <td>{f.aircraft_icao} <span className="aa-lb-muted">· {f.aircraft_reg}</span></td>
@@ -213,7 +231,9 @@ export function LogbookView() {
                 <td className="num">{f.distance_nm} nm</td>
                 <td className="num">{f.landing_rate_fpm} fpm</td>
                 <td><span dangerouslySetInnerHTML={{ __html: badge(f.status) }} /></td>
-                <td className="aa-lb-chev">›</td>
+                {/* Der Pfeil wird zum Kreisel — an genau der Stelle, auf die
+                    man geklickt hat, statt irgendwo sonst auf der Seite. */}
+                <td className="aa-lb-chev">{openingId === f.id ? <span className="aa-lb-spin" aria-label="lädt" /> : "›"}</td>
               </tr>
             ))}
           </tbody>
