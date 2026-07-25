@@ -21,6 +21,34 @@ import { StationBadge } from "./StationBadge";
  *  N (not required) and NE (none expected) are answered by nobody. */
 const REPLYABLE = ["WU", "AN", "R", "Y"];
 
+/** The centre the pilot typed but hasn't logged on to yet.
+ *
+ *  Field feedback: pilots typed a centre, got nothing back, and found the
+ *  box empty again ("Center" placeholder). Cause was this component's own
+ *  lifetime — the input lived in component state seeded from `station`,
+ *  which is null until the logon succeeds. Every unmount (switching to the
+ *  PDC tab, or the panel's mount condition in App.tsx flipping) therefore
+ *  reset it to empty. Persisting the draft outlives all of those. */
+const STATION_DRAFT_KEY = "aeroacars.cpdlc.station_draft";
+
+function loadStationDraft(): string {
+  try {
+    return localStorage.getItem(STATION_DRAFT_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function saveStationDraft(value: string): void {
+  try {
+    if (value) localStorage.setItem(STATION_DRAFT_KEY, value);
+    else localStorage.removeItem(STATION_DRAFT_KEY);
+  } catch {
+    // Private-mode / quota — the field just falls back to its old
+    // per-mount behaviour, which is no worse than before.
+  }
+}
+
 interface Props {
   online: boolean;
   loggedOn: boolean;
@@ -42,7 +70,13 @@ export function CpdlcView({
   onChanged,
 }: Props) {
   const { t } = useTranslation();
-  const [stationInput, setStationInput] = useState(station ?? "");
+  // An active session wins; otherwise fall back to the not-yet-sent draft
+  // so a typed centre survives tab switches and panel remounts.
+  const [stationInput, setStationInputState] = useState(() => station ?? loadStationDraft());
+  const setStationInput = (value: string) => {
+    setStationInputState(value);
+    saveStationDraft(value);
+  };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);

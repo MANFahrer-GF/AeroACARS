@@ -113,6 +113,55 @@ describe("CpdlcView logon", () => {
     );
     expect(screen.getByRole("button", { name: t("cpdlc.logon_send") })).toBeDisabled();
   });
+
+  // Field report: pilot types a centre, hasn't logged on yet, and the entry
+  // disappears — the placeholder "Center" is back. Cause was the input being
+  // seeded from `station` (null until logon succeeds) on every mount, so any
+  // remount wiped it. Guards the persisted draft.
+  it("keeps a typed centre across a remount while not logged on", async () => {
+    localStorage.clear();
+    const props = {
+      online: true,
+      loggedOn: false,
+      station: null,
+      logonSent: false,
+      messages: [],
+      onChanged: () => {},
+    } as const;
+
+    const first = render(<CpdlcView {...props} />);
+    await userEvent.type(screen.getByLabelText(t("cpdlc.center_label")), "EDGG");
+    expect(screen.getByLabelText(t("cpdlc.center_label"))).toHaveValue("EDGG");
+
+    // Switching to the PDC tab and back unmounts this view entirely.
+    first.unmount();
+    render(<CpdlcView {...props} />);
+
+    expect(
+      screen.getByLabelText(t("cpdlc.center_label")),
+      "the typed centre must survive — retyping it on every tab switch is the bug",
+    ).toHaveValue("EDGG");
+  });
+
+  // The live session always outranks a stale draft: once logged on to EDUU,
+  // a remount must not resurrect whatever was typed before.
+  it("prefers the logged-on station over a stored draft", () => {
+    localStorage.clear();
+    localStorage.setItem("aeroacars.cpdlc.station_draft", "EDGG");
+
+    render(
+      <CpdlcView
+        online
+        loggedOn
+        station="EDUU"
+        logonSent={false}
+        messages={[]}
+        onChanged={() => {}}
+      />,
+    );
+
+    expect(screen.getByLabelText(t("cpdlc.center_label"))).toHaveValue("EDUU");
+  });
 });
 
 describe("CpdlcView replies", () => {
