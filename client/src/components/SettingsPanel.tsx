@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke, isTauri } from "../lib/ipc";
+import { invoke, isTauri, formatIpcError } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import { setLanguage, SUPPORTED_LANGUAGES, LANGUAGE_LABELS, type SupportedLanguage } from "../i18n";
 import type { ActiveFlightInfo, SimKind, SimStatus } from "../types";
@@ -497,6 +497,7 @@ export function SettingsPanel({
 
           <div className="settings__section">
             <h3>{t("settings.storage_section")}</h3>
+            <LandingBackupManager />
             <FlightLogsManager
               autoDelete={autoDeleteFlightLogs}
               onAutoDeleteChange={onAutoDeleteFlightLogsChange}
@@ -769,6 +770,61 @@ function PhpvmsHeartbeatDebug({ activeFlight }: { activeFlight: ActiveFlightInfo
  * Stats are loaded once on mount and re-fetched after a successful
  * delete so the user sees the file count drop immediately.
  */
+
+/**
+ * Settings → Speicher: Landungs-Sicherung.
+ *
+ * Läuft automatisch (nach jeder Landung sichern, beim Start holen); die
+ * beiden Knöpfe sind nur für den Fall, dass jemand nicht warten will oder
+ * nach einer Neuinstallation sofort seine Historie sehen möchte.
+ */
+function LandingBackupManager() {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async (which: "save" | "restore") => {
+    setBusy(true);
+    setError(null);
+    setMsg(null);
+    try {
+      if (which === "save") {
+        const n = await invoke<number>("landing_backup_now");
+        setMsg(t("settings.landing_backup_saved", { count: n }));
+      } else {
+        const n = await invoke<number>("landing_backup_restore");
+        setMsg(
+          n === 0
+            ? t("settings.landing_backup_nothing_new")
+            : t("settings.landing_backup_restored", { count: n }),
+        );
+      }
+    } catch (e) {
+      setError(formatIpcError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="settings-block">
+      <div className="settings-label">{t("settings.landing_backup_label")}</div>
+      <p className="settings-hint">{t("settings.landing_backup_hint")}</p>
+      <div className="settings-row" style={{ gap: 8 }}>
+        <button type="button" className="button" disabled={busy} onClick={() => void run("save")}>
+          {t("settings.landing_backup_now")}
+        </button>
+        <button type="button" className="button" disabled={busy} onClick={() => void run("restore")}>
+          {t("settings.landing_backup_restore")}
+        </button>
+      </div>
+      {msg && <p className="settings-hint" style={{ color: "var(--success)" }}>{msg}</p>}
+      {error && <p className="settings-hint" style={{ color: "var(--danger)" }}>{error}</p>}
+    </div>
+  );
+}
+
 function FlightLogsManager({
   autoDelete,
   onAutoDeleteChange,

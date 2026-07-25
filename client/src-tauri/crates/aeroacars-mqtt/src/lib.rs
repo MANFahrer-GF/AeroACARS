@@ -38,6 +38,7 @@ use url::Url;
 
 pub mod provision;
 pub mod log_upload;
+pub mod backup;
 pub mod navdata;
 
 const STATUS_ONLINE: &str = "online";

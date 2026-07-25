@@ -1,189 +1,111 @@
 # Gesicherte Landungen — Entwurf
 
-**Stand:** 25.07.2026 · **Status:** Entwurf, nicht gebaut · **Für:** v1.2.7 oder später
+**Stand:** 25.07.2026 · **Status:** Entwurf, nicht gebaut · **Ziel:** v1.2.7 oder später
 
 ## Worum es geht
 
 Die Landungen eines Piloten liegen heute ausschließlich lokal in
 `landings.json` im App-Datenverzeichnis. Wer seinen Rechner neu aufsetzt, die
-Festplatte verliert oder den Simulator auf einen neuen PC umzieht, fängt bei
-null an — die gesamte Historie ist weg.
+Festplatte verliert oder auf einen neuen PC umzieht, fängt bei null an.
 
-Sie sollen deshalb auf dem Live-VPS gesichert werden, mit einer harten Zusage:
-**Weder der Serverbetreiber noch die Fluggesellschaft können hineinsehen.** Das
-muss technisch erzwungen sein, nicht organisatorisch versprochen.
+Sie sollen deshalb auf dem Live-Server gesichert werden, sodass ein neu
+installierter Client sie zurückholt.
 
-## Der Zielkonflikt, an dem alles hängt
+## Die Schutzanforderung
 
-Diese beiden Anforderungen ziehen gegeneinander:
+**Kein Pilot darf die Landungen eines anderen sehen. Administratoren dürfen
+es.** (Entscheidung Thomas, 25.07.2026.)
 
-1. Nur der Pilot kann entschlüsseln → der Schlüssel darf nirgends sonst liegen
-2. Nach einem Rechner-Neuaufsetzen soll der Pilot wieder drankommen → der
-   Schlüssel darf **nicht nur** auf dem Rechner liegen
+Das ist bewusst enger gefasst als die zuerst angedachte Ende-zu-Ende-
+Verschlüsselung — und dadurch erheblich einfacher. Ein früherer Entwurf sah
+einen Schlüssel vor, den nur der Pilot besitzt (24-Wort-Liste, XChaCha20,
+Argon2id). Das hätte drei Krypto-Abhängigkeiten, einen Wiederherstellungsablauf
+mit Schlüsseleingabe und vor allem ein hartes Verlustrisiko gebracht:
+Wortliste weg = Landungen unwiederbringlich weg. Für Landebewertungen aus einem
+Flugsimulator steht das in keinem Verhältnis.
 
-Ein Schlüssel, der nur auf dem verlorenen Rechner lag, macht das Backup wertlos.
-Ein Schlüssel, den der Server kennt, bricht die Zusage. Der Schlüssel muss also
-an etwas hängen, das der Pilot **unabhängig vom Gerät** besitzt.
+**Verworfen wurde auch**, den Verschlüsselungsschlüssel aus dem phpVMS-
+API-Schlüssel abzuleiten. Der steht in `phpvmsusers.api_key` im Klartext — jeder
+mit Datenbankzugriff könnte damit jedes Backup öffnen, die Verschlüsselung wäre
+also Fassade. Zudem hätte ein neu erzeugter API-Schlüssel alle alten Backups
+unlesbar gemacht.
 
-Erschwerend: Unser `secrets`-Crate legt Geheimnisse in einer JSON-Datei im
-App-Verzeichnis ab (der Systemschlüsselbund wurde in v0.5.15 bewusst
-verlassen). Ein dort abgelegter Schlüssel ist beim Neuaufsetzen ebenfalls weg.
-Er taugt als Bequemlichkeitsspeicher, nicht als alleinige Quelle.
+Ohne Verschlüsselung verschwindet dieses Problem: Der API-Schlüssel dient nur
+noch der Anmeldung, nicht dem Aufschließen. Wer sich einen neuen erzeugt, weist
+weiterhin denselben Piloten aus und kommt an seine Daten.
 
-## Schlüsselverwaltung — die eigentliche Entscheidung
+## Was das nicht leistet
 
-### Verworfen: Ableitung aus dem phpVMS-Passwort
-
-Naheliegend, aber schlecht. Der Server kennt den Passwort-Hash und könnte bei
-schwachen Passwörtern offline raten. Schlimmer: Ein Passwortwechsel würde
-sämtliche Backups unlesbar machen — der Pilot verlöre seine Historie durch eine
-Handlung, die damit nichts zu tun hat.
-
-### Verworfen: Schlüssel nur im App-Datenverzeichnis
-
-Löst den Wiederherstellungsfall nicht, siehe oben.
-
-### Empfohlen: Wiederherstellungscode, vom Client erzeugt
-
-Beim Einschalten der Funktion erzeugt der Client einen zufälligen
-256-Bit-Schlüssel und zeigt ihn als **Wortliste** (BIP-39-Stil, 24 Wörter) an.
-Der Pilot sichert diese Liste außerhalb des Rechners — Passwortmanager,
-ausgedruckt, egal. Der Schlüssel selbst landet zusätzlich im lokalen
-Geheimnisspeicher, damit der Alltag ohne Eingabe läuft.
-
-Vorteile: volle Schlüsselstärke (kein schwaches Passwort), unabhängig vom
-phpVMS-Konto, klar kommunizierbar („diese Wörter sind deine Landungen").
-
-Nachteil, der klar gesagt werden muss: **Wortliste weg = Daten weg.** Das ist
-kein Fehler, sondern der Preis dafür, dass niemand sonst hineinsehen kann.
-
-### Optional als Komfort: zusätzliche Passphrase
-
-Wer keine Wortliste verwahren mag, kann stattdessen eine Passphrase wählen, aus
-der der Schlüssel per **Argon2id** abgeleitet wird (Parameter bewusst teuer:
-mindestens 64 MiB Speicher, 3 Durchgänge). Schwächer als ein Zufallsschlüssel,
-weil offline angreifbar, aber besser als kein Backup. Als Zweitweg anbieten,
-nicht als Voreinstellung.
-
-## Kryptografie
-
-| | |
-|---|---|
-| Verfahren | **XChaCha20-Poly1305** (authentifiziert, AEAD) |
-| Schlüssellänge | 256 Bit |
-| Nonce | 192 Bit, **pro Upload neu zufällig** |
-| Ableitung (Passphrase-Variante) | Argon2id, ≥64 MiB, 3 Durchgänge, zufälliger Salt |
-| Bibliotheken | `chacha20poly1305`, `argon2`, `rand` — heute nicht eingebunden |
-
-XChaCha20 statt AES-GCM wegen des langen Nonce: Bei zufälligen Nonces und vielen
-Uploads ist die Kollisionsgefahr vernachlässigbar, während AES-GCM mit 96-Bit-
-Nonce sorgfältige Zählerführung verlangt. Authentifiziert heißt: Ein
-manipuliertes Backup fällt beim Entschlüsseln auf, statt Unsinn zu liefern.
-
-**Verschlüsselt wird clientseitig, bevor irgendetwas das Gerät verlässt.** Der
-Server bekommt einen Byteblock, den er nicht deuten kann.
-
-## Was der Server trotzdem sieht
-
-Ehrlichkeit an dieser Stelle ist wichtiger als eine schöne Zusage:
-
-**Sichtbar:** welcher Pilot, wann hochgeladen, wie groß, wie oft.
-
-**Nicht sichtbar:** Landungen, Bewertungen, Flughäfen, Zeitpunkte, Flugzeuge —
-also alles, worum es inhaltlich geht.
-
-Die Größe verrät grob die Anzahl der Landungen. Wer das nicht will, füllt auf
-feste Stufen auf (z. B. Vielfache von 64 KiB). Kostet etwas Speicher, ist aber
-billig. **Empfehlung: einbauen**, dann ist auch die letzte Ableitung zu.
+Wer den Server übernimmt, kann die Landungen lesen. Das ist die bewusste
+Konsequenz der Entscheidung oben und für diese Datenart vertretbar.
 
 ## Serverseite
 
-Ein neues Modul im `aeroacars-live`-Bestand, zwei Endpunkte, Anmeldung über den
-vorhandenen phpVMS-API-Schlüssel — dieselbe Mechanik wie beim Flight-Log-Upload:
+Ein kleines Modul im bestehenden `aeroacars-live`, drei Endpunkte, Anmeldung
+über `requireBearerPilot` — dieselbe Mechanik wie bei Navdaten und Flight-Logs:
 
 ```
-PUT  /api/backup/landings     Blob hochladen (ersetzt den Stand)
-GET  /api/backup/landings     letzten Blob holen
-GET  /api/backup/landings/log Liste der Stände (Zeit, Größe) ohne Inhalt
+PUT  /api/backup/landings       Stand hochladen
+GET  /api/backup/landings       eigenen letzten Stand holen
+GET  /api/backup/landings/log   eigene Stände auflisten (Zeit, Größe)
 ```
 
-**Speicherung:** eine Datei je Pilot unter `/var/lib/aeroacars-recorder/backups/<va>/<pilot>/`,
-plus die letzten **fünf** Stände als Historie. Grund: Ein fehlerhafter Client,
-der eine leere Liste hochlädt, darf nicht die einzige Kopie vernichten.
+**Zugriffsregel:** Der Pfad enthält **keine** Piloten-Kennung. Der Server nimmt
+sie ausschließlich aus dem geprüften Token (`req.navdataPilot`). Damit ist es
+strukturell unmöglich, durch Verbiegen eines Parameters an fremde Daten zu
+kommen — der häufigste Fehler bei genau dieser Art Endpunkt.
 
-**Grenzen:** 5 MiB je Blob, ein Upload je 5 Minuten. Eine `landings.json` mit
-mehreren hundert Landungen liegt weit darunter; die Grenze fängt Fehlläufe ab.
+**Ablage:** eine Datei je Pilot unter
+`/var/lib/aeroacars-recorder/backups/<va>/<pilot>/`, dazu die letzten **fünf**
+Stände. Grund: Ein fehlerhafter Client, der eine leere Liste hochlädt, darf
+nicht die einzige Kopie vernichten.
+
+**Grenzen:** 5 MiB je Stand, ein Upload alle fünf Minuten. Eine echte
+`landings.json` mit mehreren hundert Landungen liegt weit darunter; die Grenze
+fängt Fehlläufe ab.
 
 ## Clientseite
 
-**Wann gesichert wird:** nach dem Schreiben einer neuen Landung, verzögert um
-einige Minuten und zusammengefasst — nicht bei jeder Änderung sofort. Dazu
-einmal beim Start, falls der letzte Versuch scheiterte.
+Gesichert wird nach dem Schreiben einer neuen Landung, verzögert und
+zusammengefasst statt bei jeder Änderung sofort, dazu einmal beim Start, falls
+der letzte Versuch scheiterte.
 
-**Bei Netzproblemen:** still scheitern und beim nächsten Anlass erneut
-versuchen. Ein Backup, das den Flugbetrieb stört, ist schlechter als keines.
+Scheitert der Upload, wird still beim nächsten Anlass erneut versucht — ein
+Backup, das den Flugbetrieb stört, ist schlechter als keines.
 
-**Zwei Rechner:** Der einfache Weg (letzter Upload gewinnt) verliert Landungen,
-wenn jemand abwechselnd an zwei Rechnern fliegt. Deshalb beim Wiederherstellen
-**zusammenführen statt ersetzen** — Landungen haben mit der PIREP-Kennung einen
-natürlichen Schlüssel, Dubletten sind eindeutig erkennbar. Vor dem Hochladen den
-Serverstand holen, zusammenführen, dann schreiben.
+**Zwei Rechner:** Wer abwechselnd an zwei Maschinen fliegt, verliert bei
+„letzter Upload gewinnt" Landungen. Deshalb wird **zusammengeführt statt
+ersetzt** — Landungen tragen mit der PIREP-Kennung einen natürlichen Schlüssel,
+Dubletten sind eindeutig erkennbar. Vor dem Hochladen den Serverstand holen,
+zusammenführen, dann schreiben.
 
 ## Wiederherstellung
 
 1. Neue Installation, Anmeldung an phpVMS wie gewohnt
-2. Die App findet ein Backup und bietet es an
-3. Pilot gibt seine Wortliste ein (oder die Passphrase)
-4. Entschlüsseln, zusammenführen, fertig
+2. Die App findet ein Backup und holt es
+3. Zusammenführen mit dem (leeren) lokalen Stand, fertig
 
-Schlägt die Entschlüsselung fehl, ist die Wortliste falsch — **nicht** das
-Backup kaputt. Diese Unterscheidung muss die Meldung treffen, sonst sucht der
-Pilot an der falschen Stelle.
-
-## Grenzen — was das nicht leistet
-
-**Ein kompromittierter Rechner sieht alles.** Ende-zu-Ende schützt Übertragung
-und Server, nicht das Gerät des Piloten.
-
-**Verlorene Wortliste = verlorene Daten.** Es gibt keine Hintertür, das ist der
-Punkt der Übung. Muss beim Einschalten unübersehbar dastehen, nicht im
-Kleingedruckten.
-
-**Kein Schutz vor Löschung durch den Serverbetreiber.** Verschlüsselung
-verhindert Lesen, nicht Wegwerfen. Wer das abdecken will, braucht eine zweite
-Kopie woanders.
-
-**Wer den Server übernimmt, kann Chiffrate mitnehmen** und offline gegen
-Passphrasen rechnen. Bei zufälligen 256-Bit-Schlüsseln aussichtslos; bei der
-Passphrase-Variante der Grund für die teuren Argon2id-Parameter.
+Keine Schlüsseleingabe, kein Verlustrisiko, keine Sonderfälle.
 
 ## Aufwand
 
 | Teil | Umfang |
 |---|---|
-| Krypto-Baustein im Client (Schlüssel, Wortliste, Ver-/Entschlüsseln) | überschaubar, gut testbar |
-| Backup-Ablauf (auslösen, zusammenführen, wiederholen) | mittel — die Zusammenführung ist der knifflige Teil |
-| Bedienoberfläche (Einschalten, Wortliste zeigen, Wiederherstellen) | mittel, braucht sorgfältige Texte |
-| Serverendpunkte + Ablage | klein |
-| Tests | Krypto-Rundlauf, Zusammenführung, Wiederherstellung, falsche Wortliste |
+| Serverendpunkte + Ablage + Historie | klein |
+| Backup-Ablauf im Client (auslösen, wiederholen) | klein |
+| Zusammenführung zweier Stände | mittel — der knifflige Teil |
+| Oberfläche (Schalter, Stand anzeigen, jetzt sichern) | klein |
+| Tests | Zusammenführung, Dubletten, fremder Pilot wird abgewiesen |
 
-Drei neue Abhängigkeiten im Client. Kein Eingriff in Flugaufzeichnung, Bewertung
-oder PIREP-Ablauf — das Backup hängt sich nur an das Schreiben der Landungsdatei.
+Keine neuen Abhängigkeiten. Kein Eingriff in Flugaufzeichnung, Bewertung oder
+PIREP-Ablauf — das Backup hängt sich nur an das Schreiben der Landungsdatei.
 
-## Was ich von Dir brauche
+## Offen
 
-**Wortliste oder Passphrase als Standardweg?** Ich empfehle die Wortliste, weil
-sie nicht erraten werden kann. Sie verlangt vom Piloten aber, sie wirklich zu
-sichern.
+**Auch die Flight-Logs?** Dieser Entwurf deckt nur die Landungen ab. Die
+Flight-Logs liegen ohnehin schon auf dem Server; dort ginge es nicht um
+Sicherung, sondern darum, ob ein Pilot sie herunterladen darf. Eigenes Thema.
 
-**Auffüllen auf feste Größen?** Kostet Speicher, verschließt die letzte
-Ableitung über die Anzahl der Landungen. Ich würde es tun.
-
-**Verpflichtend oder freiwillig?** Ich rate zu freiwillig mit deutlichem
-Hinweis. Wer die Wortliste nicht sichern will, soll nicht zu einem Backup
-gezwungen werden, das er nie zurückholen kann.
-
-**Auch die Flight-Logs sichern?** Dieser Entwurf deckt nur die Landungen ab. Die
-Flight-Logs liegen ohnehin schon auf dem Server, allerdings unverschlüsselt und
-für den Betreiber lesbar. Falls das auch zugehen soll, ist es ein eigener
-Umbau — sag Bescheid, dann arbeite ich den getrennt aus.
+**Rückholen alter Stände?** Die Historie der letzten fünf Stände liegt auf dem
+Server. Ob der Pilot einen davon selbst zurückholen kann oder ob das
+Administratorensache bleibt, ist noch nicht entschieden.

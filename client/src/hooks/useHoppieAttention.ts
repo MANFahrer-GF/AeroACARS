@@ -55,10 +55,25 @@ export function useHoppieAttention(active: boolean): {
 
   useEffect(() => {
     if (!active) return;
-    void invoke<HoppieSettings>("hoppie_get_settings").then((s) => {
-      setEnabled(s.enabled);
-      setNotifySound(s.notify_sound);
-    });
+    const load = () =>
+      void invoke<HoppieSettings>("hoppie_get_settings")
+        .then((s) => {
+          setEnabled(s.enabled);
+          setNotifySound(s.notify_sound);
+        })
+        .catch(() => undefined);
+    load();
+    // Feldbefund: Der PDC/CPDLC-Reiter tauchte nach dem Einschalten erst
+    // beim nächsten App-Start auf. Grund war, dass die Einstellung NUR hier
+    // gelesen wurde — einmal beim Anmelden. Der Status-Poll weiter unten
+    // hängt an `enabled` und läuft deshalb gar nicht erst an, solange die
+    // Funktion aus ist; Ausschalten wirkte sofort, Einschalten nie.
+    //
+    // Alle fünf Sekunden nachsehen. Das ist ein Dateizugriff im eigenen
+    // Prozess, kein Netzaufruf — billiger als eine Ereignisleitung quer
+    // durch die App, die genau einen Bool transportiert.
+    const id = window.setInterval(load, 5000);
+    return () => window.clearInterval(id);
   }, [active]);
 
   const markSeen = useCallback(() => setUnseenCount(0), []);

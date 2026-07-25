@@ -143,7 +143,7 @@ impl From<reqwest::Error> for NavdataError {
     }
 }
 
-fn build_client() -> Result<reqwest::Client> {
+pub(crate) fn build_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(FETCH_TIMEOUT)
         .user_agent(concat!("AeroACARS/", env!("CARGO_PKG_VERSION")))

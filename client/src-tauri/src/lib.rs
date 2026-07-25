@@ -14363,7 +14363,100 @@ fn record_landing_for_filed_flight(
         tracing::warn!(error = ?e, "could not persist landing record");
     } else {
         tracing::info!(pirep_id = %flight.pirep_id, "landing record persisted");
+        // Erst nach erfolgreichem Schreiben sichern — sonst laedt der Upload
+        // einen Bestand hoch, der die eben geflogene Landung gar nicht enthaelt.
+        spawn_landing_backup(app);
     }
+}
+
+/// Landungs-Sicherung auf dem Live-Server.
+///
+/// Gesichert werden NUR die Kennzahlen — die Messkurven bleiben draussen
+/// (siehe `aeroacars_mqtt::backup`): Sie sind 95 % der Datenmenge UND liegen
+/// als Flug-Aufzeichnung ohnehin schon auf dem Server.
+///
+/// Kein Ein/Aus-Schalter: Einstellungen leben im Frontend-Speicher und
+/// erreichen diesen Pfad nicht, der nach einer Landung im Hintergrund
+/// laeuft. Ein halber Schalter, der den Automatiklauf nicht abschaltet,
+/// waere schlechter als keiner. Inhaltlich unbedenklich, weil der Server
+/// dieselben Landungen ueber die PIREPs ohnehin kennt.
+async fn upload_landing_backup(app: AppHandle) -> Result<usize, String> {
+    let Some(token) = secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten() else {
+        return Err("kein Live-Server-Zugang (nicht provisioniert)".into());
+    };
+    let Some(store) = open_landing_store(&app) else {
+        return Err("Landungsspeicher nicht verfuegbar".into());
+    };
+    let records = store.list().map_err(|e| e.to_string())?;
+    let stripped: Vec<serde_json::Value> = records
+        .iter()
+        .filter_map(|r| serde_json::to_value(r).ok())
+        .map(aeroacars_mqtt::backup::strip_curves)
+        .collect();
+
+    let res = aeroacars_mqtt::backup::put_landings(None, &token, &stripped)
+        .await
+        .map_err(|e| e.to_string())?;
+    tracing::info!(count = res.count, bytes = res.bytes, "landing backup uploaded");
+    Ok(res.count)
+}
+
+/// Serverstand holen und in den lokalen Bestand einmischen.
+///
+/// Bewusst ZUSAMMENFUEHREN statt ersetzen: Wer abwechselnd an zwei Rechnern
+/// fliegt, verlöre sonst die Landungen des jeweils anderen. Der Serverstand
+/// kann zudem aelter sein als der lokale — er darf nichts ueberschreiben.
+async fn restore_landing_backup(app: AppHandle) -> Result<usize, String> {
+    let Some(token) = secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten() else {
+        return Err("kein Live-Server-Zugang (nicht provisioniert)".into());
+    };
+    let Some(store) = open_landing_store(&app) else {
+        return Err("Landungsspeicher nicht verfuegbar".into());
+    };
+    let Some(payload) = aeroacars_mqtt::backup::get_landings(None, &token)
+        .await
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(0);
+    };
+    let incoming: Vec<storage::LandingRecord> = payload
+        .landings
+        .into_iter()
+        .filter_map(|v| serde_json::from_value(v).ok())
+        .collect();
+    let added = store.merge_from(incoming).map_err(|e| e.to_string())?;
+    tracing::info!(added, saved_at = %payload.saved_at, "landing backup restored");
+    Ok(added)
+}
+
+/// Sicherung nach einer neuen Landung — verzoegert und zusammengefasst.
+///
+/// Die Verzoegerung fasst mehrere Schreibvorgaenge kurz nacheinander zu einem
+/// Upload zusammen und haelt den Flugende-Pfad frei: Ein Backup, das den
+/// Betrieb aufhaelt, waere schlechter als keines. Fehler werden geschluckt —
+/// der naechste Anlass versucht es erneut.
+fn spawn_landing_backup(app: &AppHandle) {
+    let app = app.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+        if let Err(e) = upload_landing_backup(app).await {
+            tracing::debug!(error = %e, "landing backup deferred — will retry on next landing");
+        }
+    });
+}
+
+#[tauri::command]
+async fn landing_backup_now(app: AppHandle) -> Result<usize, UiError> {
+    upload_landing_backup(app)
+        .await
+        .map_err(|e| UiError::new("landing_backup_failed", e))
+}
+
+#[tauri::command]
+async fn landing_backup_restore(app: AppHandle) -> Result<usize, UiError> {
+    restore_landing_backup(app)
+        .await
+        .map_err(|e| UiError::new("landing_restore_failed", e))
 }
 
 /// Best-effort append to the flight log. Swallows errors so a missing
@@ -33224,6 +33317,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            landing_backup_now,
+            landing_backup_restore,
             app_info,
             aircraft_scan::ascan_list_aircraft,
             aircraft_scan::ascan_collect,

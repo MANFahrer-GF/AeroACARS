@@ -468,6 +468,26 @@ function App() {
   // v0.12.12-dev: VA-News-Badge — pollt /api/news + localStorage.
   // Hook lebt im NewsPanel-Modul; wir lifen den Count nur fuer den
   // Tab-Badge nach oben.
+  // Landungs-Sicherung zurückholen, sobald der Pilot angemeldet ist.
+  //
+  // Läuft bei JEDEM Start, nicht nur bei einer leeren Datei: Der Abgleich
+  // führt zusammen statt zu ersetzen, fügt also nur hinzu, was hier fehlt.
+  // Damit ist der Fall "landings.json gelöscht" genauso abgedeckt wie
+  // "zweiter Rechner" — ohne dass irgendwo entschieden werden müsste,
+  // welcher Stand der richtige ist.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (status.kind !== "loggedIn" || restoredRef.current) return;
+    restoredRef.current = true;
+    void invoke<number>("landing_backup_restore")
+      .then((n) => {
+        if (n > 0) console.info(`[landings] ${n} Landungen vom Server ergänzt`);
+      })
+      // Still scheitern: Wer keinen Live-Server-Zugang hat, soll deswegen
+      // keinen Fehler sehen — die Sicherung ist Zusatz, nicht Voraussetzung.
+      .catch(() => undefined);
+  }, [status.kind]);
+
   const unreadNews = useUnreadNewsCount(status.kind === "loggedIn");
   const {
     enabled: cpdlcEnabled,

@@ -246,6 +246,14 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const [basemap, setBasemap] = useState<"auto" | "sat">(
     () => (typeof localStorage !== "undefined" && localStorage.getItem("aaLivemapBasemap") === "sat" ? "sat" : "auto"),
   );
+
+  // Karte in Flugrichtung drehen (Track-up). BEWUSST abschaltbar und
+  // standardmäßig AUS: Eine sich mitdrehende Karte ist beim Fliegen
+  // hilfreich, beim Planen und Nachschauen aber hinderlich — Norden oben
+  // ist die Erwartung, solange man nicht ausdrücklich etwas anderes will.
+  const [trackUp, setTrackUp] = useState<boolean>(
+    () => typeof localStorage !== "undefined" && localStorage.getItem("aaLivemapTrackUp") === "1",
+  );
   const basemapRef = useRef<"auto" | "sat">(basemap);
   const [showVa, setShowVa] = useState(true); // VA-Verkehr ein-/ausblenden
   const [theme, setTheme] = useState<"dark" | "light">(readTheme());
@@ -1066,6 +1074,26 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     };
   }, [mapReady]);
 
+  // Kartenausrichtung an den Steuerkurs koppeln.
+  //
+  // `easeTo` statt `setBearing`: Ein harter Sprung bei jedem Telemetriepaket
+  // sieht aus wie Ruckeln. Beim Ausschalten zurück auf Norden, sonst bliebe
+  // die Karte in der zuletzt geflogenen Richtung stehen — der Pilot hätte
+  // eine schief stehende Karte ohne erkennbaren Grund.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    try { localStorage.setItem("aaLivemapTrackUp", trackUp ? "1" : "0"); } catch { /* egal */ }
+    if (!trackUp) {
+      map.easeTo({ bearing: 0, duration: 400 });
+      return;
+    }
+    const hdg = simSnapshot?.heading_deg_true ?? simSnapshot?.heading_deg_magnetic;
+    if (typeof hdg === "number" && Number.isFinite(hdg)) {
+      map.easeTo({ bearing: hdg, duration: 400 });
+    }
+  }, [trackUp, simSnapshot?.heading_deg_true, simSnapshot?.heading_deg_magnetic]);
+
   // ---- Redraw: eigener Flug (Quellen + Flugzeug-Marker + Pins) ----
   // Läuft immer; VA-Flieger liegen als zusätzliche Marker mit drauf (eigene Effekte).
   useEffect(() => {
@@ -1417,6 +1445,25 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
               </svg>
             </button>
           )}
+          <button
+            type="button"
+            className="aa-livemap__iconbtn aa-livemap__iconbtn--toggle"
+            data-active={trackUp}
+            aria-pressed={trackUp}
+            data-tip={
+              trackUp
+                ? "Karte dreht mit: AN — Flugrichtung zeigt nach oben (klicken für Norden oben)"
+                : "Karte dreht mit: AUS — Norden oben (klicken, damit die Karte mitdreht)"
+            }
+            aria-label="Karte in Flugrichtung drehen"
+            onClick={() => setTrackUp(!trackUp)}
+          >
+            {/* Kompassnadel = Ausrichtung der Karte */}
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M15.5 8.5l-2 5-5 2 2-5z" fill="currentColor" stroke="none" />
+            </svg>
+          </button>
           <button
             type="button"
             className="aa-livemap__iconbtn aa-livemap__iconbtn--toggle"

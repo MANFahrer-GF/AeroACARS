@@ -816,6 +816,20 @@ impl LandingStore {
             .find(|r| r.pirep_id == pirep_id))
     }
 
+    /// Merge a server backup into the local list and persist the result.
+    ///
+    /// Returns how many records the merge ADDED. Used when restoring on a
+    /// fresh machine, and before every upload so a second computer's
+    /// landings aren't overwritten.
+    pub fn merge_from(&self, incoming: Vec<LandingRecord>) -> Result<usize, StorageError> {
+        let local = self.read_all()?;
+        let before = local.len();
+        let merged = merge_landings(local, incoming);
+        let added = merged.len().saturating_sub(before);
+        self.write_all(&merged)?;
+        Ok(added)
+    }
+
     /// Replace the on-disk list with the given vector. Used by the
     /// Landing tab's delete-record flow.
     pub fn replace_all(&self, items: &[LandingRecord]) -> Result<(), StorageError> {
@@ -853,5 +867,165 @@ impl LandingStore {
         std::fs::write(&tmp, &bytes)?;
         std::fs::rename(&tmp, &self.path)?;
         Ok(())
+    }
+}
+
+/// Merge two landing lists into one, newest write per PIREP winning.
+///
+/// Why merging rather than "last upload wins": A pilot who flies from two
+/// machines would otherwise lose whatever the other one recorded — the
+/// second machine uploads its shorter list and silently erases the rest.
+/// Landings carry the PIREP id as a natural key, so duplicates are
+/// unambiguous and a merge is always well-defined.
+///
+/// Conflict rule is `recorded_at`, not `touchdown_at`: the same landing can
+/// legitimately be re-recorded (a re-filed PIREP, a corrected score), and the
+/// later WRITE is the better record even though the touchdown time is
+/// identical.
+pub fn merge_landings(
+    local: Vec<LandingRecord>,
+    incoming: Vec<LandingRecord>,
+) -> Vec<LandingRecord> {
+    use std::collections::HashMap;
+
+    let mut by_id: HashMap<String, LandingRecord> = HashMap::new();
+    for rec in local.into_iter().chain(incoming) {
+        match by_id.get(&rec.pirep_id) {
+            Some(existing) if existing.recorded_at >= rec.recorded_at => {}
+            _ => {
+                by_id.insert(rec.pirep_id.clone(), rec);
+            }
+        }
+    }
+
+    let mut out: Vec<LandingRecord> = by_id.into_values().collect();
+    // Oldest first on disk — `upsert` trims from the front when the cap is
+    // hit, so this ordering is what makes it drop the OLDEST rather than a
+    // random one.
+    out.sort_by_key(|r| r.touchdown_at);
+    if out.len() > LANDINGS_MAX_ROWS {
+        let drop_count = out.len() - LANDINGS_MAX_ROWS;
+        out.drain(0..drop_count);
+    }
+    out
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    /// Minimal-Datensatz. Nur die Pflichtfelder — alles andere hat
+    /// `serde(default)`, weshalb der Umweg über JSON hier deutlich weniger
+    /// Rauschen erzeugt als 95 Felder von Hand.
+    fn rec(pirep_id: &str, touchdown: &str, recorded: &str) -> LandingRecord {
+        serde_json::from_value(serde_json::json!({
+            "pirep_id": pirep_id,
+            "touchdown_at": touchdown,
+            "recorded_at": recorded,
+            "flight_number": "1224",
+            "airline_icao": "TKJ",
+            "dpt_airport": "EDDP",
+            "arr_airport": "LTFE",
+            "score_numeric": 80,
+            "score_label": "gut",
+            "grade_letter": "B",
+            "landing_rate_fpm": -236.0,
+            "bounce_count": 0,
+            "touchdown_profile": [],
+            "approach_samples": [],
+            "ux_version": 1,
+            "forensics_version": 1,
+            "sub_scores": [],
+            "accident": false,
+            "accident_reasons": [],
+        }))
+        .expect("test record")
+    }
+
+    /// Der Fall, für den es die Zusammenführung gibt: zwei Rechner, jeder
+    /// mit eigenen Flügen. "Letzter Upload gewinnt" hätte die Hälfte gelöscht.
+    #[test]
+    fn keeps_landings_from_both_machines() {
+        let local = vec![
+            rec("A", "2026-07-01T10:00:00Z", "2026-07-01T10:05:00Z"),
+            rec("B", "2026-07-02T10:00:00Z", "2026-07-02T10:05:00Z"),
+        ];
+        let remote = vec![
+            rec("C", "2026-07-03T10:00:00Z", "2026-07-03T10:05:00Z"),
+            rec("D", "2026-07-04T10:00:00Z", "2026-07-04T10:05:00Z"),
+        ];
+        let merged = merge_landings(local, remote);
+        let mut ids: Vec<&str> = merged.iter().map(|r| r.pirep_id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, ["A", "B", "C", "D"], "kein Flug darf verlorengehen");
+    }
+
+    /// Derselbe Flug auf beiden Seiten darf nicht doppelt erscheinen.
+    #[test]
+    fn deduplicates_by_pirep_id() {
+        let a = vec![rec("A", "2026-07-01T10:00:00Z", "2026-07-01T10:05:00Z")];
+        let b = vec![rec("A", "2026-07-01T10:00:00Z", "2026-07-01T10:05:00Z")];
+        assert_eq!(merge_landings(a, b).len(), 1);
+    }
+
+    /// Bei Konflikt gewinnt der SPÄTER GESCHRIEBENE Datensatz, nicht der mit
+    /// späterem Aufsetzzeitpunkt: Ein neu gefilter PIREP oder eine korrigierte
+    /// Bewertung hat dieselbe Aufsetzzeit, ist aber die bessere Angabe.
+    #[test]
+    fn later_write_wins_on_conflict() {
+        let old = vec![rec("A", "2026-07-01T10:00:00Z", "2026-07-01T10:05:00Z")];
+        let mut newer = rec("A", "2026-07-01T10:00:00Z", "2026-07-01T18:00:00Z");
+        newer.score_numeric = 95;
+        let merged = merge_landings(old, vec![newer]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].score_numeric, 95, "die spätere Fassung muss gewinnen");
+    }
+
+    /// Reihenfolge auch bei umgekehrter Übergabe — die Regel darf nicht davon
+    /// abhängen, welche Seite "lokal" heißt.
+    #[test]
+    fn conflict_rule_is_symmetric() {
+        let older = rec("A", "2026-07-01T10:00:00Z", "2026-07-01T10:05:00Z");
+        let mut newer = rec("A", "2026-07-01T10:00:00Z", "2026-07-01T18:00:00Z");
+        newer.score_numeric = 95;
+        assert_eq!(
+            merge_landings(vec![newer.clone()], vec![older.clone()])[0].score_numeric,
+            95,
+        );
+        assert_eq!(merge_landings(vec![older], vec![newer])[0].score_numeric, 95);
+    }
+
+    /// Ein leerer Serverstand darf lokale Landungen nicht löschen — genau der
+    /// Unfall, den ein fehlerhafter Client sonst auslösen würde.
+    #[test]
+    fn an_empty_side_never_deletes_anything() {
+        let local = vec![
+            rec("A", "2026-07-01T10:00:00Z", "2026-07-01T10:05:00Z"),
+            rec("B", "2026-07-02T10:00:00Z", "2026-07-02T10:05:00Z"),
+        ];
+        assert_eq!(merge_landings(local.clone(), vec![]).len(), 2);
+        assert_eq!(merge_landings(vec![], local).len(), 2);
+    }
+
+    /// Über der Obergrenze fallen die ÄLTESTEN heraus, nicht beliebige.
+    #[test]
+    fn trims_the_oldest_when_over_the_cap() {
+        let mut many: Vec<LandingRecord> = (0..LANDINGS_MAX_ROWS + 10)
+            .map(|i| {
+                rec(
+                    &format!("P{i}"),
+                    &format!("2026-01-01T00:{:02}:00Z", i % 60),
+                    "2026-01-01T00:00:00Z",
+                )
+            })
+            .collect();
+        // Aufsetzzeiten eindeutig machen, damit die Sortierung definiert ist.
+        for (i, r) in many.iter_mut().enumerate() {
+            r.touchdown_at = chrono::DateTime::from_timestamp(1_700_000_000 + i as i64 * 60, 0)
+                .expect("ts");
+        }
+        let merged = merge_landings(many, vec![]);
+        assert_eq!(merged.len(), LANDINGS_MAX_ROWS);
+        assert_eq!(merged[0].pirep_id, "P10", "die ältesten zehn müssen weg sein");
     }
 }

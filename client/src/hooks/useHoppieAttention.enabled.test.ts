@@ -82,3 +82,46 @@ describe("useHoppieAttention enabled flag", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });
+
+// Feldbefund Thomas, 25.07.2026: "TAB PDC kommt nach dem Aktivieren erst
+// beim Neustart der App." Ursache war, dass die Einstellung nur einmal beim
+// Anmelden gelesen wurde — der Status-Poll hängt an `enabled` und lief
+// deshalb nie an, solange die Funktion aus war. Ausschalten wirkte sofort,
+// Einschalten gar nicht.
+describe("useHoppieAttention picks up a settings change without a restart", () => {
+  it("turns enabled on when the pilot switches it on later", async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "hoppie_get_settings") {
+        return Promise.resolve({ enabled: false, notify_sound: true });
+      }
+      return Promise.resolve(null);
+    });
+
+    const { result } = renderHook(() => useHoppieAttention(true));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.enabled, "startet ausgeschaltet").toBe(false);
+
+    // Der Pilot schaltet es in den Einstellungen ein.
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "hoppie_get_settings") {
+        return Promise.resolve({ enabled: true, notify_sound: true });
+      }
+      if (cmd === "hoppie_status") {
+        return Promise.resolve({ connected: false, pending_uplink_count: 0 });
+      }
+      return Promise.resolve([]);
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+
+    expect(
+      result.current.enabled,
+      "ohne Neustart muss der Reiter erscheinen",
+    ).toBe(true);
+  });
+});
