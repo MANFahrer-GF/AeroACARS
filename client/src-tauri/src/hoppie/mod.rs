@@ -48,7 +48,7 @@ use serde::Serialize;
 use tauri::AppHandle;
 use tokio::sync::watch;
 
-use crate::{AppState, UiError};
+use crate::{log_activity_handle, ActivityLevel, AppState, UiError};
 
 pub use settings::HoppieSettings;
 
@@ -65,23 +65,12 @@ const BASE_URL: &str = "https://www.hoppie.nl/acars/system/connect.html";
 /// practice, since `run()` installs the process-wide default before
 /// `.setup()` (and therefore this code) ever executes — but reusing
 /// one client is still the right call for connection pooling.
-///
-/// In [`HoppieSettings::mock_mode`], [`send`](Self::send) never touches
-/// `http` at all — see [`mock_send`](Self::mock_send).
 pub struct HoppieHttp {
     http: reqwest::Client,
-    mock: bool,
-    /// Canned reply envelopes waiting to be "delivered" on the next
-    /// mocked `poll` — only ever touched when `mock` is true.
-    mock_inbox: StdMutex<std::collections::VecDeque<hoppie_protocol::wire::InboundEnvelope>>,
-    /// MIN counter for synthesized UPLINK messages (e.g. `LOGON
-    /// ACCEPTED`) — a distinct, high range so it can never collide
-    /// with our own downlink MIN sequence (which starts at 1).
-    mock_uplink_min: StdMutex<u32>,
 }
 
 impl HoppieHttp {
-    fn new(mock: bool) -> Result<Self, UiError> {
+    fn new() -> Result<Self, UiError> {
         let http = reqwest::Client::builder()
             .user_agent(concat!("AeroACARS/", env!("CARGO_PKG_VERSION")))
             // 15s connection timeout per the official docs'
@@ -90,26 +79,25 @@ impl HoppieHttp {
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .map_err(|e| UiError::new("hoppie_http_init", e.to_string()))?;
-        Ok(Self {
-            http,
-            mock,
-            mock_inbox: StdMutex::new(std::collections::VecDeque::new()),
-            mock_uplink_min: StdMutex::new(9000),
-        })
+        Ok(Self { http })
     }
 
     async fn send(
         &self,
         req: &hoppie_protocol::wire::HoppieRequest,
     ) -> Result<hoppie_protocol::wire::HoppieResponseLine, UiError> {
-        if self.mock {
-            return Ok(self.mock_send(req));
-        }
         let pairs = hoppie_protocol::wire::query_pairs(req);
+        // POST, not GET. The official docs: "in most cases, you will
+        // want to use POST protocol to avoid having to URL-encode the
+        // packet and/or run into maximum URL length limits. Good
+        // practice is to always keep URLs under 256 characters." A
+        // single free-text element blows past that as a query string —
+        // the logon code alone is ~24 chars and every '/' in the
+        // /data2/ prefix percent-encodes to three.
         let resp = self
             .http
-            .get(BASE_URL)
-            .query(&pairs)
+            .post(BASE_URL)
+            .form(&pairs)
             .send()
             .await
             .map_err(|e| UiError::new("hoppie_network", e.to_string()))?;
@@ -120,126 +108,9 @@ impl HoppieHttp {
         hoppie_protocol::wire::parse_response(&body)
             .map_err(|e| UiError::new("hoppie_protocol", e.to_string()))
     }
-
-    /// Fabricate a response without any network access. `ping` always
-    /// succeeds (any code "works" in simulation — there is nothing to
-    /// validate against), a PDC-request `telex` gets queued a synthetic
-    /// clearance reply for the next `poll`, and every other `telex`
-    /// is just accepted with no reply. Every synthesized reply is
-    /// tagged `[SIMULATION]` so it can never be mistaken for a real
-    /// clearance.
-    fn mock_send(&self, req: &hoppie_protocol::wire::HoppieRequest) -> hoppie_protocol::wire::HoppieResponseLine {
-        use hoppie_protocol::wire::{HoppieResponseLine, InboundEnvelope, PacketKind};
-        match req.kind {
-            PacketKind::Ping => HoppieResponseLine::Ok,
-            PacketKind::Telex => {
-                if let Some(packet) = &req.packet {
-                    if let Some(reply) = mock_pdc_reply(packet) {
-                        self.mock_inbox
-                            .lock()
-                            .expect("hoppie mock_inbox mutex")
-                            .push_back(InboundEnvelope {
-                                from: req.to.clone(),
-                                kind: PacketKind::Telex,
-                                packet: reply,
-                            });
-                    }
-                }
-                HoppieResponseLine::Ok
-            }
-            PacketKind::Poll => {
-                let mut inbox = self.mock_inbox.lock().expect("hoppie mock_inbox mutex");
-                if inbox.is_empty() {
-                    return HoppieResponseLine::Ok;
-                }
-                let body: String = inbox
-                    .drain(..)
-                    .map(|e| format!("{{{} {} {{{}}}}}", e.from, e.kind.as_wire_str(), e.packet))
-                    .collect();
-                HoppieResponseLine::OkWithPayload(body)
-            }
-            PacketKind::Peek => HoppieResponseLine::Ok,
-            PacketKind::Cpdlc => {
-                if let Some(packet) = &req.packet {
-                    if let Some(reply_packet) = self.mock_cpdlc_reply(packet) {
-                        self.mock_inbox
-                            .lock()
-                            .expect("hoppie mock_inbox mutex")
-                            .push_back(InboundEnvelope {
-                                from: req.to.clone(),
-                                kind: PacketKind::Cpdlc,
-                                packet: reply_packet,
-                            });
-                    }
-                }
-                HoppieResponseLine::Ok
-            }
-        }
-    }
-
-    /// If `packet` is our own encoded `REQUEST LOGON` downlink, build
-    /// an encoded `LOGON ACCEPTED` uplink reply (MRN threaded back to
-    /// it) so simulation mode exercises the full logon handshake, not
-    /// just PDC. Every other CPDLC send gets no synthetic reply (real
-    /// ATC-instruction simulation is future work — see the module's
-    /// Phase 3 notes).
-    fn mock_cpdlc_reply(&self, packet: &str) -> Option<String> {
-        let msg = hoppie_protocol::cpdlc::decode(
-            packet,
-            hoppie_protocol::elements::Direction::Downlink,
-        )
-        .ok()?;
-        let hoppie_protocol::elements::ParsedElement::Recognized(r) = &msg.parsed else {
-            return None;
-        };
-        if r.spec_id != "DM_REQUEST_LOGON" {
-            return None;
-        }
-        let mut next_min = self.mock_uplink_min.lock().expect("hoppie mock_uplink_min mutex");
-        let min = *next_min;
-        *next_min += 1;
-        // Element text must stay byte-exact "LOGON ACCEPTED" — the
-        // receiving side's `thread::logon_outcome()` matches it
-        // structurally (via `elements::match_uplink_text`) to flip
-        // `logged_on`, so an appended "[SIMULATION]" tag would silently
-        // break that (Raw fallback, never recognized). The persistent
-        // mock-mode badge already shown in the connection header is
-        // this app's simulation indicator; individual CPDLC element
-        // text can't also carry one without breaking the state
-        // machine, unlike free-form PDC telex replies.
-        let reply = hoppie_protocol::cpdlc::CpdlcMessage {
-            min,
-            mrn: Some(msg.min),
-            response: hoppie_protocol::cpdlc::ResponseRequirement::NoResponseExpected,
-            element_text: "LOGON ACCEPTED".to_string(),
-            parsed: hoppie_protocol::elements::ParsedElement::Raw(String::new()),
-        };
-        Some(hoppie_protocol::cpdlc::encode(&reply))
-    }
 }
 
-/// Build a canned `[SIMULATION]`-tagged PDC reply if `packet` looks
-/// like a PDC request (per the format `hoppie_send_pdc_request`
-/// sends), else `None` (nothing to synthesize for arbitrary telex).
-fn mock_pdc_reply(packet: &str) -> Option<String> {
-    // "REQUEST PREDEP CLEARANCE {CALLSIGN} {TYPE} TO {DEST} AT {DEP} STAND {STAND} ATIS {ATIS}"
-    let rest = packet.strip_prefix("REQUEST PREDEP CLEARANCE ")?;
-    let callsign = rest.split_whitespace().next().unwrap_or("UNKNOWN");
-    let dest = rest
-        .split(" TO ")
-        .nth(1)
-        .and_then(|s| s.split(" AT ").next())
-        .unwrap_or("DEST")
-        .trim();
-    Some(format!(
-        "{callsign} CLRD TO {dest} VIA DCT SQUAWK 2200 INITIAL CLB FL050 CTC DEL 121.9 [SIMULATION]"
-    ))
-}
-
-/// Result of testing a logon code via [`verify_logon`]. `reason` — when
-/// present — is the Hoppie server's own raw error text, never a guessed
-/// message (the exact wording for e.g. an invalid code isn't
-/// documented).
+/// Result of a logon-code check.
 #[derive(Debug, Clone, Serialize)]
 pub struct VerifyOutcome {
     pub valid: bool,
@@ -275,6 +146,15 @@ async fn verify_logon(http: &HoppieHttp, logon: &str, callsign: &str) -> VerifyO
     }
 }
 
+/// When each message was sent or received, keyed by `(is_uplink, MIN)`.
+///
+/// The direction is part of the key because the two MIN spaces are
+/// independent — ATC numbers uplinks, we number downlinks, and both
+/// typically start near 1. Sharing one key let an inbound message
+/// overwrite the timestamp of our own.
+pub(crate) type MinTimestamps =
+    std::collections::HashMap<(bool, u32), chrono::DateTime<chrono::Utc>>;
+
 /// One sent or received telex/PDC-request-reply line. CPDLC messages
 /// (MIN/MRN-threaded) live in `HoppieHandle::thread` instead — this is
 /// only for the un-threaded plain-telex traffic PDC uses, which has no
@@ -284,6 +164,13 @@ pub(crate) struct TelexEntry {
     direction: &'static str,
     text: String,
     at: chrono::DateTime<chrono::Utc>,
+    /// True when this arrived on the CPDLC channel but carried no
+    /// parseable `/data2/` header — vSMR sends STANDBY, "UNABLE CALL ON
+    /// FREQ" and its logon refusal that way. It has no MIN/MRN so it
+    /// can't join the threaded history, but it must still surface in the
+    /// CPDLC log rather than the PDC tab, which is a different
+    /// conversation entirely.
+    from_cpdlc_channel: bool,
 }
 
 /// Lives in `AppState::hoppie` while the poller is running, `None`
@@ -298,18 +185,27 @@ pub struct HoppieHandle {
     http: Arc<HoppieHttp>,
     thread: Arc<StdMutex<hoppie_protocol::thread::CpdlcThread>>,
     telex_log: Arc<StdMutex<Vec<TelexEntry>>>,
-    /// MIN -> when we sent/received it. The pure `CpdlcThread` is
-    /// deliberately wall-clock-free (keeps it a pure, fast-testable
-    /// state machine); this wiring-layer map is the only place a
-    /// CPDLC message's timestamp lives, populated by every send
-    /// command and by the poller on receipt.
-    min_timestamps: Arc<StdMutex<std::collections::HashMap<u32, chrono::DateTime<chrono::Utc>>>>,
+    /// (direction, MIN) -> when we sent/received it. The pure
+    /// `CpdlcThread` is deliberately wall-clock-free (keeps it a pure,
+    /// fast-testable state machine); this wiring-layer map is the only
+    /// place a CPDLC message's timestamp lives.
+    ///
+    /// Keyed by direction as well as MIN because the two numbering
+    /// spaces are INDEPENDENT: ATC assigns uplink MINs, we assign
+    /// downlink MINs, and both commonly start near 1. A shared map let
+    /// an inbound message overwrite the timestamp of our own — which
+    /// reordered the log and could mask or fabricate a logon timeout.
+    min_timestamps: Arc<StdMutex<MinTimestamps>>,
     last_error: Arc<StdMutex<Option<String>>>,
     last_verify: Option<VerifyOutcome>,
     /// Resolved at connect time — reused by every send command so they
     /// don't need to re-resolve settings/active-flight state.
     from_callsign: String,
-    to_station: String,
+    /// The ATC facility CPDLC messages are addressed to. Mutable because
+    /// a CPDLC logon always names a specific facility and a pilot
+    /// re-logs-on to the next one mid-flight (EDGG -> EDUU -> LOVV)
+    /// without dropping the Hoppie connection.
+    to_station: Arc<StdMutex<String>>,
 }
 
 impl Drop for HoppieHandle {
@@ -324,38 +220,81 @@ pub struct HoppieStatus {
     pub connected: bool,
     pub logged_on: bool,
     pub pending_response_count: usize,
+    /// Open UPLINKS only — what the pilot still owes ATC an answer for.
+    /// The tab badge and the attention banner use THIS, never
+    /// `pending_response_count`, which also counts our own outstanding
+    /// requests (see `CpdlcThread::pending_uplink_count`).
+    pub pending_uplink_count: usize,
     pub last_error: Option<String>,
     pub logon_verified: Option<VerifyOutcome>,
-    /// Whether the current connection is simulated (no real network
-    /// access) — the frontend shows a clear badge whenever this is
-    /// true so simulated traffic can never be mistaken for real.
-    pub mock_mode: bool,
+    /// The station every message in the thread is to/from — shown as
+    /// a per-message label in the UI. `None` while disconnected.
+    pub station_id: Option<String>,
+    /// A `REQUEST LOGON` is out and its answer hasn't arrived yet — the
+    /// DCDU's interim "LOGON SENT" state. Comes from the thread state
+    /// machine rather than being guessed in the UI: inferring it from
+    /// "we have sent some CPDLC message" was wrong the moment anything
+    /// else had been sent, and left the header claiming a logon was in
+    /// flight right after the pilot logged OFF.
+    pub logon_pending: bool,
+    /// A `REQUEST LOGON` has been outstanding longer than
+    /// [`LOGON_TIMEOUT_SECS`]. Plenty of stations never answer one — a
+    /// delivery desk, or any controller client without CPDLC logon — and
+    /// without this the UI would sit on "logon sent" indefinitely.
+    pub logon_timed_out: bool,
 }
+
+/// How long to wait for an answer to `REQUEST LOGON` before telling the
+/// pilot it isn't coming. Three baseline poll cycles (60s each) — long
+/// enough that a slow round trip isn't mistaken for silence.
+const LOGON_TIMEOUT_SECS: i64 = 180;
 
 fn build_status(handle: &Option<HoppieHandle>) -> HoppieStatus {
     match handle {
         Some(h) => {
             let thread = h.thread.lock().expect("hoppie thread mutex");
+            let logon_pending = thread.pending_logon_min().is_some();
+            let logon_timed_out = thread
+                .pending_logon_min()
+                .and_then(|min| {
+                    h.min_timestamps
+                        .lock()
+                        .expect("hoppie min_timestamps mutex")
+                        .get(&(false, min))
+                        .copied()
+                })
+                .is_some_and(|sent| (chrono::Utc::now() - sent).num_seconds() > LOGON_TIMEOUT_SECS);
             HoppieStatus {
                 connected: true,
                 logged_on: thread.is_logged_on(),
                 pending_response_count: thread.pending_response_count(),
+                pending_uplink_count: thread.pending_uplink_count(),
                 last_error: h
                     .last_error
                     .lock()
                     .expect("hoppie last_error mutex")
                     .clone(),
                 logon_verified: h.last_verify.clone(),
-                mock_mode: h.http.mock,
+                station_id: Some(
+                    h.to_station
+                        .lock()
+                        .expect("hoppie to_station mutex")
+                        .clone(),
+                ),
+                logon_pending,
+                logon_timed_out,
             }
         }
         None => HoppieStatus {
             connected: false,
             logged_on: false,
             pending_response_count: 0,
+            pending_uplink_count: 0,
             last_error: None,
             logon_verified: None,
-            mock_mode: false,
+            station_id: None,
+            logon_pending: false,
+            logon_timed_out: false,
         },
     }
 }
@@ -407,7 +346,6 @@ pub fn hoppie_clear_logon_code() -> Result<(), UiError> {
 /// whether to persist it (typically only after a successful verify).
 #[tauri::command]
 pub async fn hoppie_verify_logon_code(
-    app: AppHandle,
     code: String,
     callsign: String,
 ) -> Result<VerifyOutcome, UiError> {
@@ -418,8 +356,7 @@ pub async fn hoppie_verify_logon_code(
             reason: Some("Logon-Code ist leer.".to_string()),
         });
     }
-    let mock = settings::read_settings(&app).mock_mode;
-    let http = HoppieHttp::new(mock)?;
+    let http = HoppieHttp::new()?;
     let from = if callsign.trim().is_empty() {
         "TEST".to_string()
     } else {
@@ -450,16 +387,10 @@ pub async fn hoppie_connect(
             "Hoppie ACARS ist in den Einstellungen deaktiviert.",
         ));
     }
-    // Simulation mode needs neither a real logon code nor a real
-    // callsign — the whole point is testing the UI without touching
-    // the live network or an active flight. Both still fall back to
-    // whatever IS configured, so a half-configured settings panel
-    // (e.g. a real code already saved) is still honored.
     let logon = match secrets::load_api_key(HOPPIE_LOGON_CODE_ACCOUNT)
         .map_err(|e| UiError::new("hoppie_secrets", e.to_string()))?
     {
         Some(code) => code,
-        None if settings.mock_mode => "MOCK".to_string(),
         None => {
             return Err(UiError::new(
                 "hoppie_no_logon_code",
@@ -475,10 +406,12 @@ pub async fn hoppie_connect(
         .clone()
         .filter(|c| !c.trim().is_empty())
         .map(|c| c.trim().to_uppercase())
-        .or_else(|| flight_context(&app).callsign)
+        // Uppercase here too: the phpVMS flight plan supplies this raw,
+        // and vSMR matches acknowledgements case-SENSITIVELY, so a
+        // lowercase `from=` is invisible to the controller.
+        .or_else(|| flight_context(&app).callsign.map(|c| c.trim().to_uppercase()))
     {
         Some(cs) => cs,
-        None if settings.mock_mode => "MOCKPILOT".to_string(),
         None => {
             return Err(UiError::new(
                 "hoppie_no_callsign",
@@ -487,7 +420,7 @@ pub async fn hoppie_connect(
         }
     };
 
-    let http = Arc::new(HoppieHttp::new(settings.mock_mode)?);
+    let http = Arc::new(HoppieHttp::new()?);
     let verify = verify_logon(&http, &logon, &from).await;
     if !verify.valid {
         return Err(UiError::new(
@@ -499,10 +432,48 @@ pub async fn hoppie_connect(
         ));
     }
 
+    // Clean up ONLY a session we actually left open. `open_session` is
+    // written when a logon is accepted and cleared on logoff, so a
+    // marker here means the previous run died without logging off
+    // (crash, kill, power loss) and the facility still holds us.
+    //
+    // Firing this unconditionally was wrong and controller-visible: an
+    // unsolicited LOGOFF matches none of vSMR's filters and lands as an
+    // unread message, so every app restart made the tag of a controller
+    // we had never spoken to blink (SMRPlugin.cpp:162/:176 fall through
+    // to :182). On a fresh install it would even go to the "SERVER"
+    // placeholder.
+    if let Some(stale) = settings::open_session(&app) {
+        let stale_logoff = hoppie_protocol::wire::HoppieRequest {
+            logon: logon.clone(),
+            from: from.clone(),
+            to: stale.clone(),
+            // The previous session's MIN sequence died with it and this
+            // expects no reply, so the number carries no meaning. Kept
+            // clear of the new session's range (which starts at 1) so a
+            // MIN-tracking controller client doesn't see a duplicate.
+            packet: Some("/data2/9999//N/LOGOFF".to_string()),
+            kind: hoppie_protocol::wire::PacketKind::Cpdlc,
+        };
+        match http.send(&stale_logoff).await {
+            Ok(_) => {
+                tracing::info!(station = %stale, "hoppie: closed session left open by the previous run")
+            }
+            Err(e) => {
+                tracing::debug!(error = %e.message, "hoppie: stale-session LOGOFF failed (harmless)")
+            }
+        }
+        settings::clear_open_session(&app);
+    }
+
     let thread = Arc::new(StdMutex::new(hoppie_protocol::thread::CpdlcThread::new()));
     let telex_log = Arc::new(StdMutex::new(Vec::new()));
     let min_timestamps = Arc::new(StdMutex::new(std::collections::HashMap::new()));
     let last_error = Arc::new(StdMutex::new(None));
+    // Shared with the poller so an automatic sector handover re-points
+    // both the poll loop and every send command at the new facility.
+    let to_station = Arc::new(StdMutex::new(settings.station_id.clone()));
+    let from_for_log = from.clone();
     let (stop_tx, stop_rx) = watch::channel(false);
     poller::spawn(
         app.clone(),
@@ -513,7 +484,7 @@ pub async fn hoppie_connect(
         Arc::clone(&last_error),
         from.clone(),
         logon,
-        settings.station_id.clone(),
+        Arc::clone(&to_station),
         settings.notify_os,
         stop_rx,
     );
@@ -526,19 +497,87 @@ pub async fn hoppie_connect(
         min_timestamps,
         last_error,
         last_verify: Some(verify),
-        from_callsign: from,
-        to_station: settings.station_id.clone(),
+        from_callsign: from.clone(),
+        to_station: Arc::clone(&to_station),
     });
+    log_activity_handle(
+        &app,
+        ActivityLevel::Info,
+        format!("Hoppie: Empfang gestartet als {from_for_log}"),
+        None,
+    );
     Ok(build_status(&guard))
 }
 
-/// Stop the poller (no-op if not running). Dropping the handle fires
-/// the stop signal.
+/// Send `LOGOFF` if a CPDLC session is open, so the facility stops
+/// showing us as connected and stops queueing messages for us.
+/// Best-effort: a failure must never block disconnecting.
+async fn logoff_if_logged_on(handle: &HoppieHandle) {
+    {
+        let t = handle.thread.lock().expect("hoppie thread mutex");
+        // Nothing to end AND nothing outstanding — stay quiet rather than
+        // send an unsolicited LOGOFF a controller would see as an unread
+        // message from an aircraft they never spoke to.
+        if !t.is_logged_on() && t.pending_logon_min().is_none() {
+            return;
+        }
+    }
+    let Ok(logon) = resolve_logon_code() else {
+        return;
+    };
+    let Some(spec) = hoppie_protocol::elements::find("DM_LOGOFF") else {
+        return;
+    };
+    if let Err(e) = send_cpdlc_element(handle, logon, spec, Vec::new(), None).await {
+        tracing::warn!(error = %e.message, "hoppie: LOGOFF failed");
+    } else {
+        tracing::info!("hoppie: LOGOFF sent");
+    }
+}
+
+/// Same as [`logoff_if_logged_on`] but also forgets the persisted
+/// open-session marker, so the next connect has nothing to clean up.
+async fn logoff_and_forget(app: &AppHandle, handle: &HoppieHandle) {
+    logoff_if_logged_on(handle).await;
+    settings::clear_open_session(app);
+}
+
+/// Stop the poller (no-op if not running). Ends the CPDLC session first
+/// — leaving it open means the controller still sees the aircraft as
+/// connected and the network keeps queueing messages, which then all
+/// arrive at once on the next start. Dropping the handle fires the stop
+/// signal.
 #[tauri::command]
-pub async fn hoppie_disconnect(state: tauri::State<'_, AppState>) -> Result<HoppieStatus, UiError> {
+pub async fn hoppie_disconnect(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<HoppieStatus, UiError> {
     let mut guard = state.hoppie.lock().await;
+    let was_running = guard.is_some();
+    if let Some(handle) = guard.as_ref() {
+        logoff_and_forget(&app, handle).await;
+    }
     *guard = None;
+    // Logged so a "it stayed connected" report can be checked against
+    // what actually happened, instead of guessed at.
+    if was_running {
+        log_activity_handle(&app, ActivityLevel::Info, "Hoppie: Empfang gestoppt", None);
+    }
     Ok(build_status(&guard))
+}
+
+/// Shutdown hook: end the CPDLC session before the process goes away.
+/// Called from `lib.rs`'s `ExitRequested` handler, alongside the MQTT
+/// publisher teardown.
+pub async fn shutdown(app: &AppHandle, state: &AppState) {
+    let mut guard = state.hoppie.lock().await;
+    if guard.is_some() {
+        tracing::info!("hoppie: shutting down, ending any CPDLC session");
+    }
+    if let Some(handle) = guard.as_ref() {
+        logoff_and_forget(app, handle).await;
+    }
+    *guard = None;
 }
 
 #[tauri::command]
@@ -580,14 +619,12 @@ pub fn hoppie_get_flight_context(app: AppHandle) -> FlightContext {
     flight_context(&app)
 }
 
-/// Load the stored logon code, falling back to a placeholder in
-/// simulation mode (see [`hoppie_connect`]'s docs for why that's safe).
-fn resolve_logon_code(mock: bool) -> Result<String, UiError> {
+/// Load the stored logon code.
+fn resolve_logon_code() -> Result<String, UiError> {
     match secrets::load_api_key(HOPPIE_LOGON_CODE_ACCOUNT)
         .map_err(|e| UiError::new("hoppie_secrets", e.to_string()))?
     {
         Some(code) => Ok(code),
-        None if mock => Ok("MOCK".to_string()),
         None => Err(UiError::new(
             "hoppie_no_logon_code",
             "Kein Hoppie-Logon-Code hinterlegt.",
@@ -625,17 +662,23 @@ async fn send_cpdlc_element(
         .min_timestamps
         .lock()
         .expect("hoppie min_timestamps mutex")
-        .insert(min, chrono::Utc::now());
+        .insert((false, min), chrono::Utc::now());
 
     let packet = hoppie_protocol::cpdlc::encode(&message);
     let wire_req = hoppie_protocol::wire::HoppieRequest {
         logon,
         from: handle.from_callsign.clone(),
-        to: handle.to_station.clone(),
+        to: handle
+            .to_station
+            .lock()
+            .expect("hoppie to_station mutex")
+            .clone(),
         kind: hoppie_protocol::wire::PacketKind::Cpdlc,
         packet: Some(packet),
     };
-    if let hoppie_protocol::wire::HoppieResponseLine::Error(reason) = handle.http.send(&wire_req).await? {
+    if let hoppie_protocol::wire::HoppieResponseLine::Error(reason) =
+        handle.http.send(&wire_req).await?
+    {
         return Err(UiError::new("hoppie_cpdlc_rejected", reason));
     }
     Ok(min)
@@ -645,8 +688,104 @@ async fn send_cpdlc_element(
 /// logon-code-validation docs) `REQUEST LOGON` downlink that starts the
 /// CPDLC handshake. [`HoppieStatus::logged_on`] flips once the uplink
 /// `LOGON ACCEPTED`/`UNABLE` reply arrives (next poll).
+///
+/// A CPDLC logon always names the ATC facility it targets, so `station`
+/// re-points the connection before the request goes out and every later
+/// message follows it — that's how a pilot hands over from one centre
+/// to the next without reconnecting. It's also persisted, so the next
+/// session starts on the same facility.
 #[tauri::command]
 pub async fn hoppie_send_logon_request(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    station: Option<String>,
+) -> Result<HoppieStatus, UiError> {
+    let guard = state.hoppie.lock().await;
+    let handle = guard.as_ref().ok_or_else(|| {
+        UiError::new(
+            "hoppie_not_connected",
+            "Nicht mit Hoppie ACARS verbunden — zuerst verbinden.",
+        )
+    })?;
+
+    if let Some(raw) = station {
+        let trimmed = raw.trim().to_uppercase();
+        if trimmed.is_empty() {
+            return Err(UiError::new(
+                "hoppie_no_station",
+                "Keine ATC-Station angegeben — z. B. EDDF oder EDGG.",
+            ));
+        }
+        // Manually switching facilities is a handover the network didn't
+        // announce. Log off the old one FIRST, otherwise it keeps the
+        // aircraft on its list and keeps queueing messages for us while
+        // the new centre also thinks it's responsible. (An automatic
+        // HANDOVER is different — there the old centre initiated it and
+        // has already let go; see poller.rs.)
+        let previous = handle
+            .to_station
+            .lock()
+            .expect("hoppie to_station mutex")
+            .clone();
+        if previous != trimmed {
+            logoff_and_forget(&app, handle).await;
+        }
+        *handle.to_station.lock().expect("hoppie to_station mutex") = trimmed.clone();
+        let mut settings = settings::read_settings(&app);
+        settings.station_id = trimmed;
+        settings::write_settings(&app, &settings);
+    }
+
+    let logon = resolve_logon_code()?;
+    let spec = hoppie_protocol::elements::find("DM_REQUEST_LOGON").expect("built-in element");
+    send_cpdlc_element(handle, logon, spec, Vec::new(), None).await?;
+    Ok(build_status(&guard))
+}
+
+/// Tokens that make a controller's client read an inbound telex as a
+/// NEW clearance request instead of what it is. vSMR tests this branch
+/// before the acknowledgement branch (SMRPlugin.cpp:162 vs :176), so a
+/// reply containing any of them re-flashes the controller's request
+/// queue. Enforced here, in the command, rather than in one UI
+/// component — every send path has to inherit it.
+const REQUEST_TOKENS: &[&str] = &["CLR", "REQ", "PDC", "PREDEP"];
+
+/// Hoppie's encoding rules say uppercase only, and vSMR matches
+/// acknowledgements case-SENSITIVELY (`std::string::find("WILCO")`), so a
+/// lowercase reply is simply invisible to the controller.
+fn normalize_outbound(text: &str) -> Result<String, UiError> {
+    let upper = text.trim().to_uppercase();
+    if upper.is_empty() {
+        return Err(UiError::new("hoppie_empty_text", "Nachricht ist leer."));
+    }
+    Ok(upper)
+}
+
+/// Reject an acknowledgement that would be misread as a fresh request.
+fn reject_request_tokens(text: &str) -> Result<(), UiError> {
+    let hits: Vec<&str> = REQUEST_TOKENS
+        .iter()
+        .copied()
+        .filter(|tok| text.contains(tok))
+        .collect();
+    if hits.is_empty() {
+        return Ok(());
+    }
+    Err(UiError::new(
+        "hoppie_request_token",
+        format!(
+            "Enthält {} — ATC würde das als neue Freigabeanfrage lesen.",
+            hits.join(", ")
+        ),
+    ))
+}
+
+/// End the CPDLC session with the current facility on the pilot's
+/// command, without dropping the ACARS link. This is the counterpart to
+/// [`hoppie_send_logon_request`]: after logging off, no facility is
+/// responsible for the aircraft until the pilot logs on to the next one.
+#[tauri::command]
+pub async fn hoppie_send_logoff(
     state: tauri::State<'_, AppState>,
 ) -> Result<HoppieStatus, UiError> {
     let guard = state.hoppie.lock().await;
@@ -656,10 +795,76 @@ pub async fn hoppie_send_logon_request(
             "Nicht mit Hoppie ACARS verbunden — zuerst verbinden.",
         )
     })?;
-    let logon = resolve_logon_code(handle.http.mock)?;
-    let spec = hoppie_protocol::elements::find("DM_REQUEST_LOGON").expect("built-in element");
+    // Also allowed while a logon is merely OUTSTANDING: a station that
+    // never answers would otherwise trap the pilot — the button was
+    // gated on `logged_on`, so the only way out was dropping the whole
+    // ACARS link.
+    {
+        let t = handle.thread.lock().expect("hoppie thread mutex");
+        if !t.is_logged_on() && t.pending_logon_min().is_none() {
+            return Err(UiError::new(
+                "hoppie_not_logged_on",
+                "Bei keiner Station angemeldet.",
+            ));
+        }
+    }
+    let logon = resolve_logon_code()?;
+    let spec = hoppie_protocol::elements::find("DM_LOGOFF").expect("built-in element");
     send_cpdlc_element(handle, logon, spec, Vec::new(), None).await?;
     Ok(build_status(&guard))
+}
+
+/// Send a plain telex — the acknowledgment path for traffic that has no
+/// MIN/MRN threading, i.e. PDC replies. CPDLC's structured WILCO/ROGER
+/// elements don't apply to telex, so a readback goes back the same way
+/// it arrived.
+#[tauri::command]
+pub async fn hoppie_send_telex(
+    state: tauri::State<'_, AppState>,
+    text: String,
+    recipient: Option<String>,
+) -> Result<(), UiError> {
+    let trimmed = normalize_outbound(&text)?;
+    reject_request_tokens(&trimmed)?;
+    let guard = state.hoppie.lock().await;
+    let handle = guard.as_ref().ok_or_else(|| {
+        UiError::new(
+            "hoppie_not_connected",
+            "Nicht mit Hoppie ACARS verbunden — zuerst verbinden.",
+        )
+    })?;
+    let logon = resolve_logon_code()?;
+    let to = match recipient {
+        Some(r) if !r.trim().is_empty() => r.trim().to_uppercase(),
+        _ => handle
+            .to_station
+            .lock()
+            .expect("hoppie to_station mutex")
+            .clone(),
+    };
+    let wire_req = hoppie_protocol::wire::HoppieRequest {
+        logon,
+        from: handle.from_callsign.clone(),
+        to,
+        kind: hoppie_protocol::wire::PacketKind::Telex,
+        packet: Some(trimmed.to_string()),
+    };
+    if let hoppie_protocol::wire::HoppieResponseLine::Error(reason) =
+        handle.http.send(&wire_req).await?
+    {
+        return Err(UiError::new("hoppie_telex_rejected", reason));
+    }
+    handle
+        .telex_log
+        .lock()
+        .expect("hoppie telex_log mutex")
+        .push(TelexEntry {
+            direction: "sent",
+            text: trimmed.to_string(),
+            at: chrono::Utc::now(),
+            from_cpdlc_channel: false,
+        });
+    Ok(())
 }
 
 /// Send arbitrary free text as a CPDLC downlink (GOLD element `DM67`,
@@ -672,9 +877,27 @@ pub async fn hoppie_send_free_text(
     text: String,
     mrn: Option<u32>,
 ) -> Result<u32, UiError> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return Err(UiError::new("hoppie_empty_text", "Nachricht ist leer."));
+    let trimmed = normalize_outbound(&text)?;
+    // Guard only when this free text ANSWERS an uplink: an unsolicited
+    // free-text message may legitimately say "REQUEST VECTORS", but a
+    // reply containing a request token is read by the controller's
+    // client as a brand-new clearance request.
+    if mrn.is_some() {
+        reject_request_tokens(&trimmed)?;
+    }
+    // A sanity bound, not a transport limit — we POST, so the old URL
+    // ceiling no longer applies. EasyCPDLC caps its multiline box at
+    // 255; matching that keeps us within what controller clients and
+    // their displays actually handle.
+    const MAX_FREE_TEXT: usize = 255;
+    if trimmed.len() > MAX_FREE_TEXT {
+        return Err(UiError::new(
+            "hoppie_text_too_long",
+            format!(
+                "Nachricht ist {} Zeichen lang — höchstens {MAX_FREE_TEXT} sind zulässig.",
+                trimmed.len()
+            ),
+        ));
     }
     let guard = state.hoppie.lock().await;
     let handle = guard.as_ref().ok_or_else(|| {
@@ -683,9 +906,9 @@ pub async fn hoppie_send_free_text(
             "Nicht mit Hoppie ACARS verbunden — zuerst verbinden.",
         )
     })?;
-    let logon = resolve_logon_code(handle.http.mock)?;
+    let logon = resolve_logon_code()?;
     let spec = hoppie_protocol::elements::find("DM67").expect("GOLD free-text element");
-    send_cpdlc_element(handle, logon, spec, vec![trimmed.to_string()], mrn).await
+    send_cpdlc_element(handle, logon, spec, vec![trimmed], mrn).await
 }
 
 /// Send a structured downlink element by GOLD id (e.g. `"UM74"`
@@ -719,7 +942,19 @@ pub async fn hoppie_send_cpdlc_element(
             "Nicht mit Hoppie ACARS verbunden — zuerst verbinden.",
         )
     })?;
-    let logon = resolve_logon_code(handle.http.mock)?;
+    let logon = resolve_logon_code()?;
+    // Normalize in the COMMAND, not just the composer: any other caller
+    // (a future quick action, the LAN bridge) would otherwise be able to
+    // put lowercase on the wire, where the controller can't match it.
+    // Only normalization here — NOT the request-token guard. These are
+    // placeholder values, and the elements themselves are legitimately
+    // named "REQUEST DIRECT TO ..."; refusing those would break the
+    // composer's whole purpose. The guard exists for ACKNOWLEDGEMENTS,
+    // which must not read as a fresh request.
+    let values = values
+        .iter()
+        .map(|v| normalize_outbound(v))
+        .collect::<Result<Vec<_>, _>>()?;
     send_cpdlc_element(handle, logon, spec, values, mrn).await
 }
 
@@ -751,7 +986,6 @@ pub fn hoppie_list_elements() -> Vec<ElementSpecDto> {
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct PdcRequestArgs {
     pub recipient: String,
-    pub callsign: String,
     pub aircraft_type: String,
     pub dep_icao: String,
     pub dest_icao: String,
@@ -786,7 +1020,6 @@ pub async fn hoppie_send_pdc_request(
         .map_err(|e| UiError::new("hoppie_secrets", e.to_string()))?
     {
         Some(code) => code,
-        None if handle.http.mock => "MOCK".to_string(),
         None => {
             return Err(UiError::new(
                 "hoppie_no_logon_code",
@@ -795,9 +1028,14 @@ pub async fn hoppie_send_pdc_request(
         }
     };
 
+    // The callsign is NOT a form field. It comes from the one place it
+    // can come from: the ACARS callsign this connection was opened with.
+    // A second, separately-typed callsign meant PDC went out under a
+    // different identity than CPDLC, and a controller looking the
+    // aircraft up by the other one simply never found it.
     let pdc_request = hoppie_protocol::pdc::PdcRequest {
         recipient: request.recipient.trim().to_uppercase(),
-        callsign: request.callsign.trim().to_uppercase(),
+        callsign: handle.from_callsign.clone(),
         aircraft_type: request.aircraft_type.trim().to_uppercase(),
         dep_icao: request.dep_icao.trim().to_uppercase(),
         dest_icao: request.dest_icao.trim().to_uppercase(),
@@ -808,7 +1046,7 @@ pub async fn hoppie_send_pdc_request(
 
     let wire_req = hoppie_protocol::wire::HoppieRequest {
         logon,
-        from: pdc_request.callsign.clone(),
+        from: handle.from_callsign.clone(),
         to: pdc_request.recipient.clone(),
         kind: hoppie_protocol::wire::PacketKind::Telex,
         packet: Some(text.clone()),
@@ -828,6 +1066,7 @@ pub async fn hoppie_send_pdc_request(
             direction: "sent",
             text: text.clone(),
             at: now,
+            from_cpdlc_channel: false,
         });
 
     Ok(PdcSendResult {
@@ -869,7 +1108,11 @@ pub async fn hoppie_get_thread(
     {
         let log = handle.telex_log.lock().expect("hoppie telex_log mutex");
         entries.extend(log.iter().map(|e| ThreadEntryDto {
-            kind: "telex",
+            kind: if e.from_cpdlc_channel {
+                "cpdlc"
+            } else {
+                "telex"
+            },
             direction: e.direction,
             text: e.text.clone(),
             at: e.at.to_rfc3339(),
@@ -882,7 +1125,10 @@ pub async fn hoppie_get_thread(
     }
     {
         let thread = handle.thread.lock().expect("hoppie thread mutex");
-        let timestamps = handle.min_timestamps.lock().expect("hoppie min_timestamps mutex");
+        let timestamps = handle
+            .min_timestamps
+            .lock()
+            .expect("hoppie min_timestamps mutex");
         entries.extend(thread.history().iter().map(|e| {
             let (element_id, text) = match &e.message.parsed {
                 hoppie_protocol::elements::ParsedElement::Recognized(r) => {
@@ -891,7 +1137,10 @@ pub async fn hoppie_get_thread(
                 hoppie_protocol::elements::ParsedElement::Raw(t) => (None, t.clone()),
             };
             let at = timestamps
-                .get(&e.min)
+                .get(&(
+                    e.direction == hoppie_protocol::elements::Direction::Uplink,
+                    e.min,
+                ))
                 .copied()
                 .unwrap_or_else(chrono::Utc::now)
                 .to_rfc3339();
@@ -927,126 +1176,5 @@ mod tests {
         assert_eq!(status.pending_response_count, 0);
         assert!(status.last_error.is_none());
         assert!(status.logon_verified.is_none());
-        assert!(!status.mock_mode);
-    }
-
-    #[test]
-    fn mock_pdc_reply_extracts_callsign_and_destination() {
-        let reply = mock_pdc_reply(
-            "REQUEST PREDEP CLEARANCE GSG353 A320 TO EDDP AT EDDF STAND A2 ATIS A",
-        )
-        .expect("PDC request text must synthesize a reply");
-        assert!(reply.starts_with("GSG353 CLRD TO EDDP"));
-        assert!(reply.ends_with("[SIMULATION]"), "must be unmistakably tagged: {reply:?}");
-    }
-
-    #[test]
-    fn mock_pdc_reply_ignores_non_pdc_telex() {
-        assert!(mock_pdc_reply("just a normal free-text message").is_none());
-    }
-
-    #[tokio::test]
-    async fn mock_send_ping_always_succeeds() {
-        let http = HoppieHttp::new(true).unwrap();
-        let req = hoppie_protocol::wire::HoppieRequest {
-            logon: "anything".into(),
-            from: "TEST".into(),
-            to: "SERVER".into(),
-            kind: hoppie_protocol::wire::PacketKind::Ping,
-            packet: None,
-        };
-        assert_eq!(
-            http.send(&req).await.unwrap(),
-            hoppie_protocol::wire::HoppieResponseLine::Ok
-        );
-    }
-
-    #[tokio::test]
-    async fn mock_send_pdc_request_then_poll_delivers_the_canned_reply() {
-        let http = HoppieHttp::new(true).unwrap();
-        let telex_req = hoppie_protocol::wire::HoppieRequest {
-            logon: "MOCK".into(),
-            from: "GSG353".into(),
-            to: "EDDF".into(),
-            kind: hoppie_protocol::wire::PacketKind::Telex,
-            packet: Some(
-                "REQUEST PREDEP CLEARANCE GSG353 A320 TO EDDP AT EDDF STAND A2 ATIS A"
-                    .to_string(),
-            ),
-        };
-        assert_eq!(
-            http.send(&telex_req).await.unwrap(),
-            hoppie_protocol::wire::HoppieResponseLine::Ok
-        );
-
-        let poll_req = hoppie_protocol::wire::HoppieRequest {
-            logon: "MOCK".into(),
-            from: "GSG353".into(),
-            to: "EDDF".into(),
-            kind: hoppie_protocol::wire::PacketKind::Poll,
-            packet: None,
-        };
-        let poll_result = http.send(&poll_req).await.unwrap();
-        let hoppie_protocol::wire::HoppieResponseLine::OkWithPayload(body) = poll_result else {
-            panic!("expected a queued reply, got {poll_result:?}");
-        };
-        let envelopes = hoppie_protocol::wire::parse_poll_envelopes(&body);
-        assert_eq!(envelopes.len(), 1);
-        assert!(envelopes[0].packet.contains("[SIMULATION]"));
-
-        // The reply was drained — a second poll finds nothing new.
-        let poll_again = http.send(&poll_req).await.unwrap();
-        assert_eq!(poll_again, hoppie_protocol::wire::HoppieResponseLine::Ok);
-    }
-
-    #[tokio::test]
-    async fn mock_cpdlc_logon_round_trip_flips_logged_on() {
-        let http = HoppieHttp::new(true).unwrap();
-        let mut thread = hoppie_protocol::thread::CpdlcThread::new();
-
-        let spec = hoppie_protocol::elements::find("DM_REQUEST_LOGON").unwrap();
-        let resolved = hoppie_protocol::elements::resolve(spec, &[]).unwrap();
-        let filled_text = resolved.filled_text.clone();
-        let (message, _event) = thread.record_sent(
-            spec.response,
-            None,
-            filled_text,
-            hoppie_protocol::elements::ParsedElement::Recognized(resolved),
-        );
-        let packet = hoppie_protocol::cpdlc::encode(&message);
-
-        let send_req = hoppie_protocol::wire::HoppieRequest {
-            logon: "MOCK".into(),
-            from: "MOCKPILOT".into(),
-            to: "SERVER".into(),
-            kind: hoppie_protocol::wire::PacketKind::Cpdlc,
-            packet: Some(packet),
-        };
-        assert_eq!(
-            http.send(&send_req).await.unwrap(),
-            hoppie_protocol::wire::HoppieResponseLine::Ok
-        );
-        assert!(!thread.is_logged_on(), "must not flip before the reply is received");
-
-        let poll_req = hoppie_protocol::wire::HoppieRequest {
-            logon: "MOCK".into(),
-            from: "MOCKPILOT".into(),
-            to: "SERVER".into(),
-            kind: hoppie_protocol::wire::PacketKind::Poll,
-            packet: None,
-        };
-        let poll_result = http.send(&poll_req).await.unwrap();
-        let hoppie_protocol::wire::HoppieResponseLine::OkWithPayload(body) = poll_result else {
-            panic!("expected a queued LOGON ACCEPTED reply, got {poll_result:?}");
-        };
-        let envelopes = hoppie_protocol::wire::parse_poll_envelopes(&body);
-        assert_eq!(envelopes.len(), 1);
-        let reply = hoppie_protocol::cpdlc::decode(
-            &envelopes[0].packet,
-            hoppie_protocol::elements::Direction::Uplink,
-        )
-        .unwrap();
-        thread.record_received(reply);
-        assert!(thread.is_logged_on(), "LOGON ACCEPTED reply must flip logged_on");
     }
 }

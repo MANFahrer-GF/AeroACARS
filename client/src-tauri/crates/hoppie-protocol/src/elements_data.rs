@@ -46,13 +46,27 @@ pub const HOPPIE_UM_TABLE: &[ElementSpec] = &[ElementSpec {
     response: ResponseRequirement::NoResponseExpected,
 }];
 
-pub const HOPPIE_DM_TABLE: &[ElementSpec] = &[ElementSpec {
-    id: "DM_REQUEST_LOGON",
-    direction: Direction::Downlink,
-    template: "REQUEST LOGON",
-    placeholders: &[],
-    response: ResponseRequirement::AnyRequired,
-}];
+pub const HOPPIE_DM_TABLE: &[ElementSpec] = &[
+    ElementSpec {
+        id: "DM_REQUEST_LOGON",
+        direction: Direction::Downlink,
+        template: "REQUEST LOGON",
+        placeholders: &[],
+        response: ResponseRequirement::AnyRequired,
+    },
+    // Ends the CPDLC session with the current facility. Sent on
+    // disconnect and on app shutdown — leaving a session open means the
+    // controller still shows the aircraft as connected, and messages
+    // keep queueing server-side until they all land at once on the next
+    // start. Wire form per the reference clients: `/data2/{MIN}//N/LOGOFF`.
+    ElementSpec {
+        id: "DM_LOGOFF",
+        direction: Direction::Downlink,
+        template: "LOGOFF",
+        placeholders: &[],
+        response: ResponseRequirement::NotRequired,
+    },
+];
 
 pub const GOLD_UM_TABLE: &[ElementSpec] = &[
     ElementSpec {
@@ -409,7 +423,11 @@ pub const GOLD_UM_TABLE: &[ElementSpec] = &[
         id: "UM50",
         direction: Direction::Uplink,
         template: "CROSS @1 BETWEEN @2 AND @3",
-        placeholders: &[PlaceholderKind::Position, PlaceholderKind::Altitude, PlaceholderKind::Altitude],
+        placeholders: &[
+            PlaceholderKind::Position,
+            PlaceholderKind::Altitude,
+            PlaceholderKind::Altitude,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
@@ -437,7 +455,11 @@ pub const GOLD_UM_TABLE: &[ElementSpec] = &[
         id: "UM54",
         direction: Direction::Uplink,
         template: "CROSS @1 BETWEEN @2 AND @3",
-        placeholders: &[PlaceholderKind::Position, PlaceholderKind::Time, PlaceholderKind::Time],
+        placeholders: &[
+            PlaceholderKind::Position,
+            PlaceholderKind::Time,
+            PlaceholderKind::Time,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
@@ -465,35 +487,55 @@ pub const GOLD_UM_TABLE: &[ElementSpec] = &[
         id: "UM58",
         direction: Direction::Uplink,
         template: "CROSS @1 AT @2 AT @3",
-        placeholders: &[PlaceholderKind::Position, PlaceholderKind::Time, PlaceholderKind::Altitude],
+        placeholders: &[
+            PlaceholderKind::Position,
+            PlaceholderKind::Time,
+            PlaceholderKind::Altitude,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
         id: "UM59",
         direction: Direction::Uplink,
         template: "CROSS @1 AT OR BEFORE @2 AT @3",
-        placeholders: &[PlaceholderKind::Position, PlaceholderKind::Time, PlaceholderKind::Altitude],
+        placeholders: &[
+            PlaceholderKind::Position,
+            PlaceholderKind::Time,
+            PlaceholderKind::Altitude,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
         id: "UM60",
         direction: Direction::Uplink,
         template: "CROSS @1 AT OR AFTER @2 AT @3",
-        placeholders: &[PlaceholderKind::Position, PlaceholderKind::Time, PlaceholderKind::Altitude],
+        placeholders: &[
+            PlaceholderKind::Position,
+            PlaceholderKind::Time,
+            PlaceholderKind::Altitude,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
         id: "UM61",
         direction: Direction::Uplink,
         template: "CROSS @1 AT AND MAINTAIN @2 AT @3",
-        placeholders: &[PlaceholderKind::Position, PlaceholderKind::Altitude, PlaceholderKind::Speed],
+        placeholders: &[
+            PlaceholderKind::Position,
+            PlaceholderKind::Altitude,
+            PlaceholderKind::Speed,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
         id: "UM62",
         direction: Direction::Uplink,
         template: "AT @1 CROSS @2 AT AND MAINTAIN @3",
-        placeholders: &[PlaceholderKind::Time, PlaceholderKind::Position, PlaceholderKind::Altitude],
+        placeholders: &[
+            PlaceholderKind::Time,
+            PlaceholderKind::Position,
+            PlaceholderKind::Altitude,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     // Patched: libcpdlc's .text lacked the 4th (speed) placeholder its .args declares; phrasing mirrors sibling UM61.
@@ -501,28 +543,44 @@ pub const GOLD_UM_TABLE: &[ElementSpec] = &[
         id: "UM63",
         direction: Direction::Uplink,
         template: "AT @1 CROSS @2 AT AND MAINTAIN @3 AT @4",
-        placeholders: &[PlaceholderKind::Time, PlaceholderKind::Position, PlaceholderKind::Altitude, PlaceholderKind::Speed],
+        placeholders: &[
+            PlaceholderKind::Time,
+            PlaceholderKind::Position,
+            PlaceholderKind::Altitude,
+            PlaceholderKind::Speed,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
         id: "UM64",
         direction: Direction::Uplink,
         template: "OFFSET @1 @2 OF ROUTE",
-        placeholders: &[PlaceholderKind::DistanceOffset, PlaceholderKind::LateralDirection],
+        placeholders: &[
+            PlaceholderKind::DistanceOffset,
+            PlaceholderKind::LateralDirection,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
         id: "UM65",
         direction: Direction::Uplink,
         template: "AT @1 OFFSET @2 @3 OF ROUTE",
-        placeholders: &[PlaceholderKind::Position, PlaceholderKind::DistanceOffset, PlaceholderKind::LateralDirection],
+        placeholders: &[
+            PlaceholderKind::Position,
+            PlaceholderKind::DistanceOffset,
+            PlaceholderKind::LateralDirection,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
         id: "UM66",
         direction: Direction::Uplink,
         template: "AT @1 OFFSET @2 @3 OF ROUTE",
-        placeholders: &[PlaceholderKind::Time, PlaceholderKind::DistanceOffset, PlaceholderKind::LateralDirection],
+        placeholders: &[
+            PlaceholderKind::Time,
+            PlaceholderKind::DistanceOffset,
+            PlaceholderKind::LateralDirection,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
@@ -634,7 +692,10 @@ pub const GOLD_UM_TABLE: &[ElementSpec] = &[
         id: "UM82",
         direction: Direction::Uplink,
         template: "CLEARED TO DEVIATE UP TO @1 @2",
-        placeholders: &[PlaceholderKind::DistanceOffset, PlaceholderKind::LateralDirection],
+        placeholders: &[
+            PlaceholderKind::DistanceOffset,
+            PlaceholderKind::LateralDirection,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
@@ -698,7 +759,13 @@ pub const GOLD_UM_TABLE: &[ElementSpec] = &[
         id: "UM91",
         direction: Direction::Uplink,
         template: "HOLD AT @1 MAINTAIN @2 INBOUND TRACK @3 @4 TURN @5 LEG",
-        placeholders: &[PlaceholderKind::Position, PlaceholderKind::Altitude, PlaceholderKind::Degrees, PlaceholderKind::LateralDirection, PlaceholderKind::LegType],
+        placeholders: &[
+            PlaceholderKind::Position,
+            PlaceholderKind::Altitude,
+            PlaceholderKind::Degrees,
+            PlaceholderKind::LateralDirection,
+            PlaceholderKind::LegType,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
@@ -782,21 +849,33 @@ pub const GOLD_UM_TABLE: &[ElementSpec] = &[
         id: "UM103",
         direction: Direction::Uplink,
         template: "AT @1 EXPECT @2 TO @3",
-        placeholders: &[PlaceholderKind::Time, PlaceholderKind::Speed, PlaceholderKind::Speed],
+        placeholders: &[
+            PlaceholderKind::Time,
+            PlaceholderKind::Speed,
+            PlaceholderKind::Speed,
+        ],
         response: ResponseRequirement::Roger,
     },
     ElementSpec {
         id: "UM104",
         direction: Direction::Uplink,
         template: "AT @1 EXPECT @2 TO @3",
-        placeholders: &[PlaceholderKind::Position, PlaceholderKind::Speed, PlaceholderKind::Speed],
+        placeholders: &[
+            PlaceholderKind::Position,
+            PlaceholderKind::Speed,
+            PlaceholderKind::Speed,
+        ],
         response: ResponseRequirement::Roger,
     },
     ElementSpec {
         id: "UM105",
         direction: Direction::Uplink,
         template: "AT @1 EXPECT @2 TO @3",
-        placeholders: &[PlaceholderKind::Altitude, PlaceholderKind::Speed, PlaceholderKind::Speed],
+        placeholders: &[
+            PlaceholderKind::Altitude,
+            PlaceholderKind::Speed,
+            PlaceholderKind::Speed,
+        ],
         response: ResponseRequirement::Roger,
     },
     ElementSpec {
@@ -887,14 +966,22 @@ pub const GOLD_UM_TABLE: &[ElementSpec] = &[
         id: "UM118",
         direction: Direction::Uplink,
         template: "AT @1 CONTACT @2 @3",
-        placeholders: &[PlaceholderKind::Position, PlaceholderKind::IcaoName, PlaceholderKind::Frequency],
+        placeholders: &[
+            PlaceholderKind::Position,
+            PlaceholderKind::IcaoName,
+            PlaceholderKind::Frequency,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
         id: "UM119",
         direction: Direction::Uplink,
         template: "AT @1 CONTACT @2 @3",
-        placeholders: &[PlaceholderKind::Time, PlaceholderKind::IcaoName, PlaceholderKind::Frequency],
+        placeholders: &[
+            PlaceholderKind::Time,
+            PlaceholderKind::IcaoName,
+            PlaceholderKind::Frequency,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
@@ -908,14 +995,22 @@ pub const GOLD_UM_TABLE: &[ElementSpec] = &[
         id: "UM121",
         direction: Direction::Uplink,
         template: "AT @1 MONITOR @2 @3",
-        placeholders: &[PlaceholderKind::Position, PlaceholderKind::IcaoName, PlaceholderKind::Frequency],
+        placeholders: &[
+            PlaceholderKind::Position,
+            PlaceholderKind::IcaoName,
+            PlaceholderKind::Frequency,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
         id: "UM122",
         direction: Direction::Uplink,
         template: "AT @1 CONTACT @2 @3",
-        placeholders: &[PlaceholderKind::Time, PlaceholderKind::IcaoName, PlaceholderKind::Frequency],
+        placeholders: &[
+            PlaceholderKind::Time,
+            PlaceholderKind::IcaoName,
+            PlaceholderKind::Frequency,
+        ],
         response: ResponseRequirement::WilcoUnable,
     },
     ElementSpec {
@@ -1125,7 +1220,10 @@ pub const GOLD_UM_TABLE: &[ElementSpec] = &[
         id: "UM152",
         direction: Direction::Uplink,
         template: "WHEN CAN YOU ACCEPT @1 @2 OFFSET",
-        placeholders: &[PlaceholderKind::DistanceOffset, PlaceholderKind::LateralDirection],
+        placeholders: &[
+            PlaceholderKind::DistanceOffset,
+            PlaceholderKind::LateralDirection,
+        ],
         response: ResponseRequirement::NoResponseExpected,
     },
     ElementSpec {
@@ -1554,7 +1652,10 @@ pub const GOLD_DM_TABLE: &[ElementSpec] = &[
         id: "DM15",
         direction: Direction::Downlink,
         template: "REQUEST OFFSET @1 @2 OF ROUTE",
-        placeholders: &[PlaceholderKind::DistanceOffset, PlaceholderKind::LateralDirection],
+        placeholders: &[
+            PlaceholderKind::DistanceOffset,
+            PlaceholderKind::LateralDirection,
+        ],
         response: ResponseRequirement::AnyRequired,
     },
     // Patched: libcpdlc's .text lacked the trailing direction placeholder; phrasing mirrors sibling UM64.
@@ -1562,7 +1663,11 @@ pub const GOLD_DM_TABLE: &[ElementSpec] = &[
         id: "DM16",
         direction: Direction::Downlink,
         template: "AT @1 REQUEST OFFSET @2 @3 OF ROUTE",
-        placeholders: &[PlaceholderKind::Position, PlaceholderKind::DistanceOffset, PlaceholderKind::LateralDirection],
+        placeholders: &[
+            PlaceholderKind::Position,
+            PlaceholderKind::DistanceOffset,
+            PlaceholderKind::LateralDirection,
+        ],
         response: ResponseRequirement::AnyRequired,
     },
     // Patched: libcpdlc's .text lacked the trailing direction placeholder; phrasing mirrors sibling UM64.
@@ -1570,7 +1675,11 @@ pub const GOLD_DM_TABLE: &[ElementSpec] = &[
         id: "DM17",
         direction: Direction::Downlink,
         template: "AT @1 REQUEST OFFSET @2 @3 OF ROUTE",
-        placeholders: &[PlaceholderKind::Time, PlaceholderKind::DistanceOffset, PlaceholderKind::LateralDirection],
+        placeholders: &[
+            PlaceholderKind::Time,
+            PlaceholderKind::DistanceOffset,
+            PlaceholderKind::LateralDirection,
+        ],
         response: ResponseRequirement::AnyRequired,
     },
     ElementSpec {
@@ -1641,7 +1750,10 @@ pub const GOLD_DM_TABLE: &[ElementSpec] = &[
         id: "DM27",
         direction: Direction::Downlink,
         template: "REQUEST WEATHER DEVIATION UP TO @1 @2",
-        placeholders: &[PlaceholderKind::DistanceOffset, PlaceholderKind::LateralDirection],
+        placeholders: &[
+            PlaceholderKind::DistanceOffset,
+            PlaceholderKind::LateralDirection,
+        ],
         response: ResponseRequirement::AnyRequired,
     },
     ElementSpec {
@@ -1851,7 +1963,10 @@ pub const GOLD_DM_TABLE: &[ElementSpec] = &[
         id: "DM57",
         direction: Direction::Downlink,
         template: "@1 OF FUEL REMAINING AND @2 PERSONS ON BOARD",
-        placeholders: &[PlaceholderKind::TimeDuration, PlaceholderKind::PersonsOnBoard],
+        placeholders: &[
+            PlaceholderKind::TimeDuration,
+            PlaceholderKind::PersonsOnBoard,
+        ],
         response: ResponseRequirement::NotRequired,
     },
     ElementSpec {
@@ -1872,7 +1987,10 @@ pub const GOLD_DM_TABLE: &[ElementSpec] = &[
         id: "DM60",
         direction: Direction::Downlink,
         template: "OFFSETTING @1 @2 OF ROUTE",
-        placeholders: &[PlaceholderKind::DistanceOffset, PlaceholderKind::LateralDirection],
+        placeholders: &[
+            PlaceholderKind::DistanceOffset,
+            PlaceholderKind::LateralDirection,
+        ],
         response: ResponseRequirement::NotRequired,
     },
     ElementSpec {
@@ -1942,7 +2060,11 @@ pub const GOLD_DM_TABLE: &[ElementSpec] = &[
         id: "DM67d",
         direction: Direction::Downlink,
         template: "WE CAN ACCEPT @1 @2 AT @3",
-        placeholders: &[PlaceholderKind::DistanceOffset, PlaceholderKind::LateralDirection, PlaceholderKind::Time],
+        placeholders: &[
+            PlaceholderKind::DistanceOffset,
+            PlaceholderKind::LateralDirection,
+            PlaceholderKind::Time,
+        ],
         response: ResponseRequirement::NotRequired,
     },
     ElementSpec {
@@ -1963,7 +2085,10 @@ pub const GOLD_DM_TABLE: &[ElementSpec] = &[
         id: "DM67g",
         direction: Direction::Downlink,
         template: "WE CANNOT ACCEPT @1 @2",
-        placeholders: &[PlaceholderKind::DistanceOffset, PlaceholderKind::LateralDirection],
+        placeholders: &[
+            PlaceholderKind::DistanceOffset,
+            PlaceholderKind::LateralDirection,
+        ],
         response: ResponseRequirement::NotRequired,
     },
     ElementSpec {
@@ -2054,7 +2179,12 @@ pub const GOLD_DM_TABLE: &[ElementSpec] = &[
         id: "DM78",
         direction: Direction::Downlink,
         template: "AT @1 @2 @3 @4",
-        placeholders: &[PlaceholderKind::Time, PlaceholderKind::Distance, PlaceholderKind::ToFrom, PlaceholderKind::Position],
+        placeholders: &[
+            PlaceholderKind::Time,
+            PlaceholderKind::Distance,
+            PlaceholderKind::ToFrom,
+            PlaceholderKind::Position,
+        ],
         response: ResponseRequirement::NotRequired,
     },
     ElementSpec {
@@ -2068,7 +2198,10 @@ pub const GOLD_DM_TABLE: &[ElementSpec] = &[
         id: "DM80",
         direction: Direction::Downlink,
         template: "DEVIATING @1 @2 OF ROUTE",
-        placeholders: &[PlaceholderKind::DistanceOffset, PlaceholderKind::LateralDirection],
+        placeholders: &[
+            PlaceholderKind::DistanceOffset,
+            PlaceholderKind::LateralDirection,
+        ],
         response: ResponseRequirement::NotRequired,
     },
 ];
@@ -2095,21 +2228,39 @@ mod tests {
     fn no_duplicate_ids_across_hoppie_and_gold_within_a_direction() {
         let mut seen = std::collections::HashSet::new();
         for spec in HOPPIE_UM_TABLE.iter().chain(GOLD_UM_TABLE.iter()) {
-            assert!(seen.insert(spec.id), "duplicate UM id {} across Hoppie/GOLD tables", spec.id);
+            assert!(
+                seen.insert(spec.id),
+                "duplicate UM id {} across Hoppie/GOLD tables",
+                spec.id
+            );
         }
         let mut seen = std::collections::HashSet::new();
         for spec in HOPPIE_DM_TABLE.iter().chain(GOLD_DM_TABLE.iter()) {
-            assert!(seen.insert(spec.id), "duplicate DM id {} across Hoppie/GOLD tables", spec.id);
+            assert!(
+                seen.insert(spec.id),
+                "duplicate DM id {} across Hoppie/GOLD tables",
+                spec.id
+            );
         }
     }
 
     #[test]
     fn every_row_direction_matches_its_table() {
         for spec in HOPPIE_UM_TABLE.iter().chain(GOLD_UM_TABLE.iter()) {
-            assert_eq!(spec.direction, Direction::Uplink, "{} in a UM table", spec.id);
+            assert_eq!(
+                spec.direction,
+                Direction::Uplink,
+                "{} in a UM table",
+                spec.id
+            );
         }
         for spec in HOPPIE_DM_TABLE.iter().chain(GOLD_DM_TABLE.iter()) {
-            assert_eq!(spec.direction, Direction::Downlink, "{} in a DM table", spec.id);
+            assert_eq!(
+                spec.direction,
+                Direction::Downlink,
+                "{} in a DM table",
+                spec.id
+            );
         }
     }
 
@@ -2146,7 +2297,15 @@ mod tests {
         // re-running against a truncated source) without being brittle
         // against a future libcpdlc update adding/removing a handful
         // of rows.
-        assert!(GOLD_UM_TABLE.len() > 150, "GOLD_UM_TABLE looks truncated: {} rows", GOLD_UM_TABLE.len());
-        assert!(GOLD_DM_TABLE.len() > 60, "GOLD_DM_TABLE looks truncated: {} rows", GOLD_DM_TABLE.len());
+        assert!(
+            GOLD_UM_TABLE.len() > 150,
+            "GOLD_UM_TABLE looks truncated: {} rows",
+            GOLD_UM_TABLE.len()
+        );
+        assert!(
+            GOLD_DM_TABLE.len() > 60,
+            "GOLD_DM_TABLE looks truncated: {} rows",
+            GOLD_DM_TABLE.len()
+        );
     }
 }

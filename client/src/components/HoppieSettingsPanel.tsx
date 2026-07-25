@@ -16,7 +16,6 @@ export interface HoppieSettings {
   station_id: string;
   notify_os: boolean;
   notify_sound: boolean;
-  mock_mode: boolean;
 }
 
 interface VerifyOutcome {
@@ -129,19 +128,6 @@ export function HoppieSettingsPanel() {
 
       {settings.enabled && (
         <div style={{ margin: "4px 0 12px 28px", display: "flex", flexDirection: "column", gap: 12 }}>
-          <label className="settings__checkbox">
-            <input
-              type="checkbox"
-              checked={settings.mock_mode}
-              onChange={(e) => void update({ mock_mode: e.target.checked })}
-              disabled={busy}
-            />
-            <span>
-              <strong>{t("hoppie_settings.mock_mode_label")}</strong>
-              <span className="settings__row-hint">{t("hoppie_settings.mock_mode_hint")}</span>
-            </span>
-          </label>
-
           <p className="settings__row-hint">{t("hoppie_settings.callsign_moved_hint")}</p>
 
           <div className="settings__field">

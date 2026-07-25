@@ -12,11 +12,14 @@
 // The OS-native toast (tauri-plugin-notification, needs its own
 // permission flow) stays Phase 3.
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { invoke } from "../lib/ipc";
-import notifySoundUrl from "../assets/sounds/cpdlc-alert.mp3";
 
 export interface ThreadEntry {
+  /** "telex" is PDC traffic; "cpdlc" is datalink. A CPDLC packet that
+   *  arrived without a parseable /data2/ header is reported as
+   *  kind "cpdlc" with no MIN, so it shows up in the CPDLC log where
+   *  the pilot was working — not in the PDC tab. */
   kind: "telex" | "cpdlc";
   direction: "sent" | "received";
   text: string;
@@ -31,38 +34,23 @@ export interface ThreadEntry {
 
 const POLL_MS = 5000;
 
-export function useCpdlcMessages(
-  active: boolean,
-  notifySound: boolean,
-): {
+export function useCpdlcMessages(active: boolean): {
   messages: ThreadEntry[];
   refresh: () => void;
 } {
   const [messages, setMessages] = useState<ThreadEntry[]>([]);
-  const seenCount = useRef(0);
-  const notifySoundRef = useRef(notifySound);
-  notifySoundRef.current = notifySound;
 
+  // Deliberately silent. The alert lives in `useHoppieAttention`, which
+  // runs at the App root whether or not this tab is mounted. Playing it
+  // here too meant two overlapping chimes whenever the tab was open.
   const refresh = useCallback(() => {
     void invoke<ThreadEntry[]>("hoppie_get_thread")
-      .then((next) => {
-        const hasNewReceived =
-          next.length > seenCount.current &&
-          next.slice(seenCount.current).some((m) => m.direction === "received");
-        seenCount.current = next.length;
-        setMessages(next);
-        if (hasNewReceived && notifySoundRef.current) {
-          void new Audio(notifySoundUrl).play().catch(() => undefined);
-        }
-      })
+      .then(setMessages)
       .catch(() => undefined);
   }, []);
 
   useEffect(() => {
-    if (!active) {
-      seenCount.current = 0;
-      return;
-    }
+    if (!active) return;
     refresh();
     const id = window.setInterval(refresh, POLL_MS);
     return () => window.clearInterval(id);

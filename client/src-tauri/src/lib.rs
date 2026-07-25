@@ -1273,7 +1273,7 @@ const ACTIVITY_LOG_CAPACITY: usize = 1000;
 /// Severity of an activity-log entry. Drives the frontend's icon/colour.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum ActivityLevel {
+pub(crate) enum ActivityLevel {
     Info,
     Warn,
     Error,
@@ -6756,7 +6756,7 @@ fn log_activity(
 
 /// Same as `log_activity` but takes an `AppHandle` for use inside the
 /// streamer task (which has no `tauri::State` handle).
-fn log_activity_handle(
+pub(crate) fn log_activity_handle(
     app: &AppHandle,
     level: ActivityLevel,
     message: impl Into<String>,
@@ -33211,7 +33211,9 @@ pub fn run() {
             hoppie::hoppie_send_pdc_request,
             hoppie::hoppie_get_thread,
             hoppie::hoppie_send_logon_request,
+            hoppie::hoppie_send_logoff,
             hoppie::hoppie_send_free_text,
+            hoppie::hoppie_send_telex,
             hoppie::hoppie_send_cpdlc_element,
             hoppie::hoppie_list_elements,
         ])
@@ -33234,6 +33236,12 @@ pub fn run() {
                 let app_for_mqtt = app_handle.clone();
                 tauri::async_runtime::block_on(async move {
                     let state = app_for_mqtt.state::<AppState>();
+                    // v1.3.0 (#Hoppie-PDC-CPDLC): end the CPDLC session
+                    // before we go away. Without this the facility keeps
+                    // showing the aircraft as connected and the network
+                    // keeps queueing messages, which then all arrive at
+                    // once on the next start.
+                    hoppie::shutdown(&app_for_mqtt, &state).await;
                     let handle = state.mqtt.lock().await.take();
                     if let Some(handle) = handle {
                         handle.shutdown();

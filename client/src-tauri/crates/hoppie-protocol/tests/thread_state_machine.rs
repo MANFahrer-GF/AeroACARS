@@ -110,6 +110,9 @@ fn direct_to_sequence_fixture_closes_the_uplink_via_wilco() {
     assert_eq!(thread.pending_response_count(), 0);
     let history = thread.history();
     assert_eq!(history.len(), 2);
-    assert!(history[0].closed, "the PROCEED DIRECT TO uplink must be closed by the WILCO reply");
+    assert!(
+        history[0].closed,
+        "the PROCEED DIRECT TO uplink must be closed by the WILCO reply"
+    );
     assert_eq!(history[1].mrn, Some(7));
 }

@@ -1,3 +1,23 @@
+/* B612 Mono — the typeface Airbus commissioned for cockpit displays
+   (SIL OFL 1.1, see src/assets/fonts/OFL.txt). Bundled rather than
+   pulled from a CDN so the app keeps working offline. Used only for
+   datalink text — message bodies, clearances, and the fields that feed
+   them — not for the app chrome. */
+@font-face {
+  font-family: "B612 Mono";
+  src: url("./assets/fonts/B612Mono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "B612 Mono";
+  src: url("./assets/fonts/B612Mono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --bg: #f5f5f7;
   --surface: #ffffff;
@@ -25,6 +45,8 @@
   --surface-1: var(--surface);
   --r-sm: 6px;
   --font-mono: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
+  /* Datalink/ACARS text only — see the @font-face block above. */
+  --font-acars: "B612 Mono", "SF Mono", Menlo, Consolas, monospace;
 
   /* v0.3.0: Akzent-Farb-Tokens für Bid-Card Chips + Plan-Cards.
      Light-Theme-Werte hier — gesättigter & dunkler damit sie auf
@@ -8707,36 +8729,33 @@ input:disabled {
   border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
 }
 
-/* ===== v1.3.0 (#Hoppie-PDC-CPDLC): CPDLC/PDC tab ===== */
+/* ===== v1.3.0 (#Hoppie-PDC-CPDLC): PDC/CPDLC tab =====
+   Layout contract: exactly ONE scroll region on this tab.
+   .app is pinned to the viewport (like the map tab does), every
+   container in the chain is a flex column with min-height:0 so it can
+   actually shrink, and only .cpdlc-log carries overflow-y. Without the
+   min-height:0 links a flex child refuses to shrink below its content
+   and the page grows a second scrollbar behind the list. */
+
+.app:has(.cpdlc-panel) {
+  height: 100%;
+  overflow: hidden;
+}
 
 .cpdlc-panel {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  padding: 16px 0;
+  gap: 12px;
+  padding: 4px 0 0;
 }
 
 .cpdlc-panel--disabled {
+  flex: 0 0 auto;
   align-items: flex-start;
   gap: 12px;
-}
-
-.cpdlc-panel__header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.cpdlc-panel__mock-badge {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 3px 8px;
-  border-radius: 999px;
-  color: var(--warning, orange);
-  background: color-mix(in srgb, var(--warning, orange) 16%, transparent);
-  border: 1px solid color-mix(in srgb, var(--warning, orange) 45%, transparent);
+  padding: 24px 0;
 }
 
 .cpdlc-panel__error {
@@ -8745,300 +8764,602 @@ input:disabled {
   color: var(--danger);
 }
 
-.cpdlc-panel__success {
-  margin: 0;
-  font-size: 13px;
-  color: var(--success);
-}
+/* --- Level 1: the Hoppie network link itself (no station involved) --- */
 
-.cpdlc-panel__thread {
+.cpdlc-link-bar {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-}
-
-.cpdlc-panel__thread h3 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-}
-
-.cpdlc-pdc-form {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
+  gap: 6px;
+  padding: 10px 14px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
 }
 
-.cpdlc-pdc-form h3 {
+.cpdlc-link-bar__main {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+/* Same reasoning as .cpdlc-link: the label toggles between "start" and
+   "stop", so the button holds its width instead of resizing mid-click. */
+.cpdlc-link-bar__main .button {
+  min-width: 20ch;
+}
+
+.cpdlc-link-bar__warn {
   margin: 0;
-  font-size: 15px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--warning);
+  max-width: 70ch;
+}
+
+.cpdlc-link-bar__explain,
+.cpdlc-section__explain {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  max-width: 70ch;
+}
+
+/* Link state, shared by the ACARS bar and the CPDLC logon bar. */
+
+.cpdlc-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-muted);
+  /* Reserve the width of the LONGEST state up front. Without this the
+     row re-flows every time the text changes ("ACARS aus" ->
+     "ACARS empfängt", "Keine Verbindung" -> "Angemeldet bei EDDB") and
+     every control beside it jumps sideways. */
+  min-width: 21ch;
 }
 
-.cpdlc-pdc-form__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 10px;
+.cpdlc-link__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--offline);
+  flex: none;
 }
 
-.cpdlc-pdc-form__field {
+.cpdlc-link--connected {
+  color: var(--text);
+}
+
+.cpdlc-link--connected .cpdlc-link__dot {
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 25%, transparent);
+}
+
+.cpdlc-link--sent {
+  color: var(--warning);
+}
+
+.cpdlc-link--sent .cpdlc-link__dot {
+  background: var(--warning);
+}
+
+/* --- Shared small form field --- */
+
+.cpdlc-field {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: 11px;
 }
 
-.cpdlc-pdc-form__field span {
+.cpdlc-field > span {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  font-weight: 600;
 }
 
-.cpdlc-pdc-form__field--wide {
-  grid-column: 1 / -1;
+.cpdlc-field input {
+  font-family: var(--font-acars);
+  text-transform: uppercase;
+  min-width: 9ch;
 }
 
-.cpdlc-pdc-form__preview {
+/* --- Level 2/3 switch: PDC vs CPDLC --- */
+
+.cpdlc-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cpdlc-tabs__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.cpdlc-tabs__tab:hover {
+  color: var(--text);
+}
+
+.cpdlc-tabs__tab--active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.cpdlc-tabs__badge {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+/* --- Section body: header bar + the one scrolling log --- */
+
+/* Two columns from tablet width up: controls left, messages right.
+   Stacking them meant the form ate the height and the log — the thing
+   the pilot actually reads — got squeezed into a few rows. Each column
+   scrolls independently, and only when its own content overflows. */
+.cpdlc-section {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  /* Single column (only reachable below the app's 900px minWidth, e.g.
+     a narrow webview): the log keeps a floor so the form can't squeeze
+     it down to a couple of rows — the side column scrolls instead. */
+  grid-template-rows: minmax(0, auto) minmax(220px, 1fr);
+  gap: 12px;
+}
+
+/* Below the app's own 900px minimum, so the real window always gets the
+   two-column layout with the message log at full height. */
+@media (min-width: 860px) {
+  .cpdlc-section {
+    grid-template-columns: minmax(260px, 320px) 1fr;
+    grid-template-rows: 1fr;
+    align-items: stretch;
+  }
+}
+
+/* Left column: explain text + the request form. */
+.cpdlc-section__side {
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 
-.cpdlc-pdc-form__preview code {
+.cpdlc-section__bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* --- Request form (inline, collapsed by default) --- */
+
+.cpdlc-form {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.cpdlc-form__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.cpdlc-form__preview {
   display: block;
-  padding: 8px 10px;
+  padding: 6px 8px;
+  font-size: 11px;
   border-radius: 6px;
   background: var(--surface-2);
-  font-size: 12.5px;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.cpdlc-pdc-form__hint {
-  margin: 0;
+  font-family: var(--font-acars);
   font-size: 12px;
-  color: var(--text-muted);
-}
-
-.cpdlc-pdc-form__error {
-  margin: 0;
-  font-size: 13px;
-  color: var(--danger);
-}
-
-.cpdlc-pdc-form__success {
-  margin: 0;
-  font-size: 13px;
-  color: var(--success);
-}
-
-.cpdlc-thread {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.cpdlc-thread__entry {
-  max-width: 80%;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-}
-
-.cpdlc-thread__entry--sent {
-  align-self: flex-end;
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
-}
-
-.cpdlc-thread__entry--received {
-  align-self: flex-start;
-}
-
-.cpdlc-thread__meta {
-  margin: 0 0 3px;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.cpdlc-thread__text {
-  margin: 0;
-  font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.cpdlc-thread__entry--closed {
-  opacity: 0.6;
-}
-
-.cpdlc-thread__response-badge {
-  margin-left: 6px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--warning, orange);
-  background: color-mix(in srgb, var(--warning, orange) 16%, transparent);
-}
-
-.cpdlc-thread__closed-mark {
-  margin-left: 6px;
-  color: var(--success);
-}
-
-.cpdlc-thread__response-buttons {
+.cpdlc-form__actions {
   display: flex;
+  justify-content: flex-end;
   gap: 8px;
-  margin-top: 6px;
 }
 
-.cpdlc-thread__response-freetext {
-  display: flex;
-  gap: 8px;
+.cpdlc-form__missing {
+  margin: 0;
+  font-size: 12px;
+  color: var(--warning);
+}
+
+/* --- The message log: the ONLY scroll region on this tab --- */
+
+.cpdlc-log {
   flex: 1;
-}
-
-.cpdlc-thread__response-freetext input {
-  flex: 1;
-}
-
-/* ===== CPDLC callsign field (on the tab, not Settings) ===== */
-
-.cpdlc-panel__callsign {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.cpdlc-panel__callsign label {
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
+}
+
+/* Breathing room under the newest entry so it sits clear of the bottom
+   edge rather than pressed against it — a message that grows reply keys
+   then still lands comfortably in view instead of at the very bottom. */
+.cpdlc-log::after {
+  content: "";
+  display: block;
+  flex: 0 0 auto;
+  height: 96px;
+}
+
+.cpdlc-log__empty {
+  padding: 32px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Messages are full-width rows, not chat bubbles — a datalink log is a
+   record, and the eye should scan one left edge down the page. Uplink
+   and downlink are told apart by the accent rule and the label, not by
+   which side they sit on. */
+
+.cpdlc-msg {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.cpdlc-msg--down {
+  background: var(--surface-2);
+}
+
+.cpdlc-msg--open {
+  border-color: color-mix(in srgb, var(--warning) 55%, var(--border));
+  background: color-mix(in srgb, var(--warning) 7%, var(--surface));
+}
+
+/* Settled traffic folds to a single line: header stays, body truncates.
+   Keeps the live exchange in view without losing the record — one click
+   unfolds it again. */
+.cpdlc-msg--collapsed {
+  padding: 6px 12px;
+  opacity: 0.62;
+  cursor: pointer;
+}
+
+.cpdlc-msg--collapsed:hover,
+.cpdlc-msg--collapsed:focus-visible {
+  opacity: 1;
+  border-color: var(--accent);
+}
+
+.cpdlc-msg--collapsed .cpdlc-msg__meta {
+  margin-bottom: 2px;
+}
+
+.cpdlc-msg--collapsed .cpdlc-msg__text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 12px;
 }
 
-/* ===== CPDLC composer ===== */
+.cpdlc-msg__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.cpdlc-msg__who {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.cpdlc-msg__min,
+.cpdlc-msg__time {
+  /* Deliberately NOT the ACARS face: B612 puts ':' and '.' in their own
+     monospace cell, so a timestamp renders as "01: 28: 14". Chrome, not
+     datalink text — the UI mono reads better here. */
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.cpdlc-msg__time {
+  margin-left: auto;
+}
+
+.cpdlc-msg__flag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+}
+
+.cpdlc-msg__pending {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  background: var(--surface-2);
+}
+
+.cpdlc-msg__done {
+  color: var(--success);
+  font-weight: 700;
+}
+
+/* Datalink text is uppercase monospace on the real thing, and staying
+   faithful also makes a clearance readable at a glance. */
+.cpdlc-msg__text {
+  margin: 0;
+  font-family: var(--font-acars);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* --- Response keys, DCDU-style --- */
+
+.cpdlc-reply {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cpdlc-reply__keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cpdlc-key {
+  padding: 7px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-acars);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.cpdlc-key:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.cpdlc-key:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cpdlc-key--affirm {
+  border-color: color-mix(in srgb, var(--success) 55%, var(--border));
+  color: var(--success);
+}
+
+.cpdlc-key--affirm:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  border-color: var(--success);
+}
+
+.cpdlc-key--deny {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+  color: var(--danger);
+}
+
+.cpdlc-key--deny:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-color: var(--danger);
+}
+
+.cpdlc-reply__freetext {
+  display: flex;
+  gap: 8px;
+}
+
+.cpdlc-reply__freetext input {
+  flex: 1;
+  font-family: var(--font-acars);
+}
+
+.cpdlc-reply__confirm {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* --- Composer: a short menu, not a 287-row catalog --- */
 
 .cpdlc-composer {
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 14px 16px;
+  padding: 14px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
 }
 
-.cpdlc-composer h3 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.cpdlc-composer__mode-switch {
+.cpdlc-composer__head {
   display: flex;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 12px;
 }
 
-.cpdlc-composer__freetext {
+.cpdlc-composer__groups {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
 }
 
-.cpdlc-composer__structured {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.cpdlc-composer__element-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  max-height: 220px;
-  overflow-y: auto;
+.cpdlc-chip {
+  padding: 6px 14px;
+  border-radius: 999px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
 }
 
-.cpdlc-composer__element-option {
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
-  width: 100%;
-  text-align: left;
-  padding: 6px 10px;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  background: transparent;
+.cpdlc-chip:hover {
   color: var(--text);
-  font-size: 12.5px;
+}
+
+.cpdlc-chip--active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.cpdlc-composer__close {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px;
   cursor: pointer;
 }
 
-.cpdlc-composer__element-option:last-child {
-  border-bottom: none;
+.cpdlc-composer__close:hover {
+  color: var(--text);
 }
 
-.cpdlc-composer__element-option:hover {
-  background: var(--surface-2);
+.cpdlc-composer__search {
+  width: 100%;
 }
 
-.cpdlc-composer__element-option--active {
-  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
-}
-
-.cpdlc-composer__element-id {
-  font-weight: 600;
-  color: var(--text-muted);
-  min-width: 44px;
-}
-
-.cpdlc-composer__fields {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--surface-2);
-  border-radius: 8px;
-}
-
-.cpdlc-composer__field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-}
-
-.cpdlc-composer__field span {
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.cpdlc-composer__preview {
+/* No max-height here on purpose: a menu group is 4-7 rows and a search
+   is capped at 40, so this list never needs its own scrollbar. Giving it
+   one would put a scroll region inside the page's scroll region. */
+.cpdlc-composer__options {
+  /* The composer now owns the wide column, so its option list is the one
+     scroll region here — the message log is swapped out while it's open. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
   margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cpdlc-composer__option {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.cpdlc-composer__option:hover {
+  background: var(--surface-2);
+}
+
+.cpdlc-composer__option--active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.cpdlc-composer__option-text {
+  font-family: var(--font-acars);
   font-size: 12.5px;
-  font-family: monospace;
+}
+
+.cpdlc-composer__option-id {
+  font-size: 10.5px;
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cpdlc-composer__detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.cpdlc-composer__detail .cpdlc-field {
+  max-width: 22ch;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cpdlc-tabs__tab,
+  .cpdlc-chip,
+  .cpdlc-key {
+    transition: none;
+  }
 }
 
 /* ===== v1.3.0 (#Hoppie-PDC-CPDLC): top-level "needs attention" banner ===== */
@@ -9064,4 +9385,20 @@ input:disabled {
   margin: 0;
   flex: 1;
   font-size: 14px;
+}
+
+.cpdlc-banner__dismiss {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1;
+  padding: 6px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.cpdlc-banner__dismiss:hover {
+  color: var(--text);
+  background: var(--surface-2);
 }

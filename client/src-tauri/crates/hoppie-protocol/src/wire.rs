@@ -160,15 +160,20 @@ pub fn parse_poll_envelopes(content: &str) -> Vec<InboundEnvelope> {
         let type_str = rest[..brace2].trim();
         let kind = PacketKind::from_wire_str(type_str);
         rest = &rest[brace2 + 1..];
-        let Some(close) = rest.find('}') else {
-            break;
+        // The envelope is `{FROM type {packet}}`, so the packet ends at
+        // the `}}` pair — NOT at the first `}`. Stopping at the first one
+        // silently truncated any message whose text contains a brace,
+        // and a controller's free text is arbitrary: everything after it
+        // vanished without a trace. Falling back to the last `}` keeps a
+        // malformed final envelope readable instead of dropping it.
+        let (packet, consumed) = match rest.find("}}") {
+            Some(i) => (rest[..i].to_string(), i + 2),
+            None => match rest.rfind('}') {
+                Some(i) => (rest[..i].to_string(), i + 1),
+                None => break,
+            },
         };
-        let packet = rest[..close].to_string();
-        rest = &rest[close + 1..];
-        // Consume the envelope-closing brace, if present.
-        if let Some(close2) = rest.find('}') {
-            rest = &rest[close2 + 1..];
-        }
+        rest = &rest[consumed..];
         if let Some(kind) = kind {
             out.push(InboundEnvelope { from, kind, packet });
         }
@@ -205,7 +210,10 @@ mod tests {
         };
         let pairs = query_pairs(&req_with_packet);
         assert_eq!(
-            pairs.iter().find(|(k, _)| *k == "packet").map(|(_, v)| v.as_str()),
+            pairs
+                .iter()
+                .find(|(k, _)| *k == "packet")
+                .map(|(_, v)| v.as_str()),
             Some("hello")
         );
     }
@@ -272,12 +280,27 @@ mod tests {
     }
 
     #[test]
+    fn packet_text_containing_a_brace_survives_intact() {
+        // A controller's free text is arbitrary; stopping at the first
+        // '}' used to silently drop everything after it.
+        let envs = parse_poll_envelopes("{EDGG telex {CALL ME ON 118.5 (NOT 119.1} PLEASE}}");
+        assert_eq!(envs.len(), 1);
+        assert_eq!(envs[0].packet, "CALL ME ON 118.5 (NOT 119.1} PLEASE");
+    }
+
+    #[test]
+    fn a_brace_in_one_envelope_does_not_swallow_the_next() {
+        let envs = parse_poll_envelopes("{EDGG telex {ODD } TEXT}}{EDDF telex {SECOND}}");
+        assert_eq!(envs.len(), 2, "the following envelope must still parse");
+        assert_eq!(envs[0].packet, "ODD } TEXT");
+        assert_eq!(envs[1].packet, "SECOND");
+    }
+
+    #[test]
     fn parse_poll_envelopes_skips_unrecognized_type() {
         // A "progress" envelope (out of scope) must not abort parsing
         // of the rest of the payload.
-        let envs = parse_poll_envelopes(
-            "{EDDF progress {OUT 1200}}{EDDF telex {hello}}",
-        );
+        let envs = parse_poll_envelopes("{EDDF progress {OUT 1200}}{EDDF telex {hello}}");
         assert_eq!(envs.len(), 1);
         assert_eq!(envs[0].kind, PacketKind::Telex);
     }

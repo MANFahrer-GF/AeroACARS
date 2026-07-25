@@ -25,7 +25,10 @@ fn parse_fixture(text: &str) -> (PdcRequest, String) {
             reply = Some(rest.to_string());
         }
     }
-    (request.expect("fixture must have a REQUEST line"), reply.expect("fixture must have a REPLY line"))
+    (
+        request.expect("fixture must have a REQUEST line"),
+        reply.expect("fixture must have a REPLY line"),
+    )
 }
 
 #[test]

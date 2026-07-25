@@ -11,6 +11,15 @@ use tauri::{AppHandle, Manager};
 
 const SETTINGS_FILE: &str = "hoppie.json";
 
+/// Records the facility we currently hold a CPDLC session with, so a run
+/// that dies without logging off (crash, kill, power loss) can be cleaned
+/// up on the next connect.
+///
+/// Deliberately its OWN file rather than a field in [`HoppieSettings`]:
+/// the settings struct is round-tripped through the UI, which sends back
+/// the whole object and would silently drop a field it doesn't know.
+const SESSION_FILE: &str = "hoppie_session.json";
+
 /// Default `to=` addressee for CPDLC/PDC requests when the pilot
 /// hasn't chosen a specific station. The official docs
 /// (`hoppie.nl/acars/system/tech.html`) explicitly name `"SERVER"` as
@@ -42,16 +51,6 @@ pub struct HoppieSettings {
     /// but mute the sound (or vice versa, platform permitting).
     #[serde(default = "default_true")]
     pub notify_sound: bool,
-    /// Simulation mode — `hoppie/mod.rs`'s `HoppieHttp` never touches
-    /// the real network when this is on; it fabricates canned
-    /// responses instead (ping always succeeds, a PDC request gets a
-    /// synthetic `[SIMULATION]`-tagged reply on the next poll). Lets a
-    /// pilot exercise the whole connect/PDC/thread UI without an
-    /// account on the real Hoppie network or without risking traffic
-    /// on it. Default `false` — real network — once a pilot HAS
-    /// enabled the feature for real use.
-    #[serde(default)]
-    pub mock_mode: bool,
 }
 
 fn default_station_id() -> String {
@@ -70,7 +69,6 @@ impl Default for HoppieSettings {
             station_id: default_station_id(),
             notify_os: true,
             notify_sound: true,
-            mock_mode: false,
         }
     }
 }
@@ -130,7 +128,6 @@ mod tests {
         assert!(!s.enabled);
         assert!(s.notify_os);
         assert!(s.notify_sound);
-        assert!(!s.mock_mode);
         assert_eq!(s.station_id, "SERVER");
         assert_eq!(s.callsign_override, None);
     }
@@ -143,7 +140,6 @@ mod tests {
             station_id: "EDDF".into(),
             notify_os: false,
             notify_sound: true,
-            mock_mode: true,
         };
         let json = serde_json::to_string(&s).unwrap();
         assert_eq!(parse_settings(&json), s);
@@ -165,8 +161,89 @@ mod tests {
         // A hand-written / future-legacy file carrying only `enabled`.
         let parsed = parse_settings(r#"{"enabled":true}"#);
         assert!(parsed.enabled);
-        assert!(parsed.notify_os, "notify_os must default true on legacy files");
-        assert!(parsed.notify_sound, "notify_sound must default true on legacy files");
+        assert!(
+            parsed.notify_os,
+            "notify_os must default true on legacy files"
+        );
+        assert!(
+            parsed.notify_sound,
+            "notify_sound must default true on legacy files"
+        );
         assert_eq!(parsed.station_id, "SERVER");
+    }
+}
+
+// ----------------------------------------------------------------------
+// Open-session marker
+// ----------------------------------------------------------------------
+
+fn session_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|p| p.join(SESSION_FILE))
+}
+
+/// The facility we last logged on to and have not logged off from, if
+/// any. `None` means there is nothing to clean up — and in that case a
+/// connect must NOT send a stray LOGOFF: on the controller's side an
+/// unsolicited LOGOFF matches no filter and shows up as an unread
+/// message from an aircraft they have never spoken to.
+pub fn open_session(app: &AppHandle) -> Option<String> {
+    let path = session_path(app)?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let station = serde_json::from_str::<String>(&text).ok()?;
+    let trimmed = station.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+/// Remember that a CPDLC session is open with `station`.
+pub fn set_open_session(app: &AppHandle, station: &str) {
+    let Some(path) = session_path(app) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match serde_json::to_vec(station) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&path, json) {
+                tracing::warn!(error = %e, "hoppie: could not record open session");
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "hoppie: could not serialize open session"),
+    }
+}
+
+/// Forget the open session — after a successful LOGOFF, or once a stale
+/// one has been cleaned up.
+pub fn clear_open_session(app: &AppHandle) {
+    let Some(path) = session_path(app) else {
+        return;
+    };
+    if path.exists() {
+        if let Err(e) = std::fs::remove_file(&path) {
+            tracing::warn!(error = %e, "hoppie: could not clear open session");
+        }
+    }
+}
+
+#[cfg(test)]
+mod session_tests {
+    /// The marker is a plain JSON string; these guard the shape the
+    /// reader expects, without needing a Tauri AppHandle.
+    #[test]
+    fn round_trips_as_a_plain_json_string() {
+        let encoded = serde_json::to_string("EDGG").unwrap();
+        assert_eq!(encoded, "\"EDGG\"");
+        assert_eq!(serde_json::from_str::<String>(&encoded).unwrap(), "EDGG");
+    }
+
+    #[test]
+    fn blank_station_is_not_a_session() {
+        for blank in ["\"\"", "\"   \""] {
+            let s: String = serde_json::from_str(blank).unwrap();
+            assert!(s.trim().is_empty(), "must not count as an open session");
+        }
     }
 }

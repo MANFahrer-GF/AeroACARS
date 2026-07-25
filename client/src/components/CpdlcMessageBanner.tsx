@@ -8,9 +8,10 @@ import { useTranslation } from "react-i18next";
 interface Props {
   count: number;
   onOpenTab: () => void;
+  onDismiss: () => void;
 }
 
-export function CpdlcMessageBanner({ count, onOpenTab }: Props) {
+export function CpdlcMessageBanner({ count, onOpenTab, onDismiss }: Props) {
   const { t } = useTranslation();
   if (count === 0) return null;
 
@@ -22,6 +23,14 @@ export function CpdlcMessageBanner({ count, onOpenTab }: Props) {
       <p className="cpdlc-banner__text">{t("cpdlc.banner_text", { count })}</p>
       <button type="button" className="button button--primary" onClick={onOpenTab}>
         {t("cpdlc.banner_open")}
+      </button>
+      <button
+        type="button"
+        className="cpdlc-banner__dismiss"
+        onClick={onDismiss}
+        aria-label={t("cpdlc.banner_dismiss")}
+      >
+        ✕
       </button>
     </section>
   );

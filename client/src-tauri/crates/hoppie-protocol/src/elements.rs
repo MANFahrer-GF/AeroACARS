@@ -143,10 +143,7 @@ pub fn find(id: &str) -> Option<&'static ElementSpec> {
 /// Fill a template's `@N` placeholders with concrete values, in order.
 /// Templates with zero placeholders (e.g. `"WILCO"`) require an empty
 /// `values` slice.
-pub fn resolve(
-    spec: &ElementSpec,
-    values: &[String],
-) -> Result<ResolvedElement, ElementError> {
+pub fn resolve(spec: &ElementSpec, values: &[String]) -> Result<ResolvedElement, ElementError> {
     if values.len() != spec.placeholders.len() {
         return Err(ElementError::ArityMismatch {
             id: spec.id.to_string(),
@@ -184,21 +181,36 @@ pub fn match_downlink_text(text: &str) -> ParsedElement {
 }
 
 /// Try candidates MOST-specific-first (most literal characters, i.e.
-/// least reliant on a placeholder to "explain" the text). The real
-/// GOLD table has several elements whose entire template is just a
-/// single trailing placeholder (`"@1"`, e.g. `UM73`'s embedded-PDC-data
-/// carrier, or `UM169`/`UM183`/... free-text carriers) — matched in
-/// table order, one of those would swallow EVERY uplink text before a
-/// more specific template (like `UM74`'s `"PROCEED DIRECT TO @1"`)
-/// ever got a chance, and a template like `UM6`'s `"EXPECT @1"` would
-/// likewise shadow the longer, more specific `UM7`'s
-/// `"EXPECT CLIMB AT @1"`. Sorting by specificity first — falling back
-/// to a catch-all free-text element only once every more specific
-/// template has failed — fixes both.
+/// least reliant on a placeholder to "explain" the text), so that
+/// `UM6`'s `"EXPECT @1"` cannot shadow the longer, more specific
+/// `UM7`'s `"EXPECT CLIMB AT @1"`.
+///
+/// Templates carrying NO literal text at all are excluded from matching
+/// entirely. The real GOLD table has ~23 of them — elements whose whole
+/// template is a bare `"@1"` (`UM73`'s embedded-PDC carrier,
+/// `UM169`/`UM183`/… free-text carriers). Such a template matches *any*
+/// input, so sorting alone doesn't save us: once every specific template
+/// has failed, the first catch-all in table order claims the text and
+/// [`ParsedElement::Raw`] becomes unreachable. That mislabels genuinely
+/// unknown text — notably a vSMR clearance — as `UM73`, and anything
+/// keyed on the element id then misfires.
+///
+/// They remain fully available for COMPOSING (a pilot can still pick a
+/// free-text element to send); they simply never classify a receipt.
 fn match_in_table(text: &str, table: impl Iterator<Item = &'static ElementSpec>) -> ParsedElement {
     let trimmed = text.trim();
-    let mut candidates: Vec<&'static ElementSpec> = table.collect();
-    candidates.sort_by_key(|spec| std::cmp::Reverse(literal_specificity(spec.template)));
+    let mut candidates: Vec<&'static ElementSpec> = table
+        .filter(|spec| literal_specificity(spec.template) > 0)
+        .collect();
+    // Tie-break on placeholder count: with equal literal text, the
+    // template that pins down MORE structure is the more specific one.
+    // "WE CAN ACCEPT @1 @2 AT @3" and "WE CAN ACCEPT @1 AT @2" carry the
+    // same literals, and without this the table order decides — the
+    // two-placeholder one would swallow the three-placeholder message by
+    // stuffing two words into one slot.
+    candidates.sort_by_key(|spec| {
+        std::cmp::Reverse((literal_specificity(spec.template), spec.placeholders.len()))
+    });
     for spec in candidates {
         if let Some(resolved) = try_match_template(spec, trimmed) {
             return ParsedElement::Recognized(resolved);
@@ -213,7 +225,11 @@ fn literal_specificity(template: &str) -> usize {
     split_template(template)
         .iter()
         .map(|seg| match seg {
-            TemplateSegment::Literal(l) => l.len(),
+            // Whitespace between placeholders carries no meaning and must
+            // not count as specificity: `UM163`'s "@1 @2" would otherwise
+            // score 1 and act as a catch-all for any text containing a
+            // space — exactly the mislabelling this score exists to stop.
+            TemplateSegment::Literal(l) => l.chars().filter(|c| !c.is_whitespace()).count(),
             TemplateSegment::Placeholder => 0,
         })
         .sum()
@@ -362,28 +378,19 @@ mod tests {
     }
 
     #[test]
-    fn match_uplink_text_falls_back_to_a_generic_free_text_element_not_raw() {
-        // The real GOLD catalog includes several genuine free-text
-        // *carrier* elements on the uplink side too (UM73's embedded
-        // PDC data, UM169/UM183/UM194.../UM208's plain free text) —
-        // structurally, ANY uplink text COULD be one of those, so an
-        // unrecognized instruction correctly resolves to one of them
-        // rather than Raw. This mirrors reality: Raw is the fallback
-        // for when decode()/matching itself can't produce a value at
-        // all (see the next test), not "text didn't match a specific
-        // instruction".
-        // Which exact free-text-ish element wins isn't pinned here —
-        // several UM elements are plausible (single free-text
-        // placeholder, or e.g. two placeholders split on a space) and
-        // the tie-break among them isn't semantically meaningful. What
-        // matters is that a genuinely unrecognized instruction still
-        // reconstructs the full original text via its captured
-        // value(s), rather than silently truncating input.
+    fn match_uplink_text_preserves_unrecognized_text_verbatim_as_raw() {
+        // This test previously asserted the OPPOSITE — that unknown text
+        // should resolve to one of the free-text carrier elements
+        // (UM73/UM169/UM183/...), on the reasoning that any text
+        // structurally *could* be one. Auditing against vSMR showed why
+        // that's wrong in practice: a real controller clearance decoded
+        // as "UM73", so the UI displayed a bogus element id and anything
+        // keyed on it would misfire. What actually matters — that the
+        // full text survives without truncation — holds either way, and
+        // Raw states honestly that we did not recognize it.
         match elements_match_uplink("SOME UNKNOWN INSTRUCTION 42") {
-            ParsedElement::Recognized(r) => {
-                assert_eq!(r.values.join(" "), "SOME UNKNOWN INSTRUCTION 42");
-            }
-            other => panic!("expected Recognized(<free-text-ish element>), got {other:?}"),
+            ParsedElement::Raw(text) => assert_eq!(text, "SOME UNKNOWN INSTRUCTION 42"),
+            other => panic!("expected Raw, got {other:?}"),
         }
     }
 
@@ -432,6 +439,37 @@ mod tests {
     #[test]
     fn find_returns_none_for_unknown_id() {
         assert!(find("DOES_NOT_EXIST").is_none());
+    }
+
+    /// Unrecognized uplink text must land in `Raw`, not be claimed by one
+    /// of the ~23 literal-free carriers. The real case: vSMR's clearance
+    /// used to decode as `UM73` with the whole message as its argument.
+    #[test]
+    fn unrecognized_uplink_text_stays_raw_instead_of_being_labelled_a_carrier() {
+        for text in [
+            "CLR TO @EGLL@ RWY @27R@ DEP @DVR1G@ SQUAWK @1234@",
+            "UNABLE CALL ON FREQ",
+            "SOMETHING NOBODY PUT IN THE TABLE",
+        ] {
+            match match_uplink_text(text) {
+                ParsedElement::Raw(got) => assert_eq!(got, text),
+                ParsedElement::Recognized(r) => panic!(
+                    "{text:?} was labelled {} — a literal-free carrier must never \
+                     classify received text",
+                    r.spec_id
+                ),
+            }
+        }
+    }
+
+    /// The carriers stay usable for SENDING — only classification skips
+    /// them. Removing them from the table outright would be wrong.
+    #[test]
+    fn literal_free_carriers_remain_available_for_composing() {
+        let free_text = find("DM67").expect("GOLD free-text element");
+        assert_eq!(literal_specificity(free_text.template), 0);
+        let resolved = resolve(free_text, &["REQUESTING VECTORS".into()]).unwrap();
+        assert_eq!(resolved.filled_text, "REQUESTING VECTORS");
     }
 
     /// Corpus-sweep: every row across both tables (Hoppie-specific +
@@ -486,7 +524,19 @@ mod tests {
                     );
                 }
                 ParsedElement::Raw(text) => {
-                    panic!("round-trip of {} fell back to Raw({text:?})", spec.id)
+                    // Free-text carriers (template is a bare "@1", no
+                    // literal at all) are deliberately not classifiable —
+                    // see match_in_table. Falling back to Raw is the
+                    // contract for them, not a failure: it's what keeps
+                    // an unrecognized uplink from being mislabelled UM73.
+                    assert_eq!(
+                        literal_specificity(spec.template),
+                        0,
+                        "round-trip of {} (template {:?}) fell back to Raw({text:?}), \
+                         but only literal-free carriers may do that",
+                        spec.id,
+                        spec.template
+                    );
                 }
             }
         }

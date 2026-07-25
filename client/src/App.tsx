@@ -469,7 +469,11 @@ function App() {
   // Hook lebt im NewsPanel-Modul; wir lifen den Count nur fuer den
   // Tab-Badge nach oben.
   const unreadNews = useUnreadNewsCount(status.kind === "loggedIn");
-  const { pendingCount: cpdlcPendingCount } = useHoppieAttention(status.kind === "loggedIn");
+  const {
+    pendingCount: cpdlcPendingCount,
+    unseenCount: cpdlcUnseenCount,
+    markSeen: markCpdlcSeen,
+  } = useHoppieAttention(status.kind === "loggedIn");
 
   const phpvmsConnected = status.kind === "loggedIn";
   const simConnected = simState === "connected";
@@ -498,7 +502,14 @@ function App() {
       <IntegrityBanner />
       {/* v1.3.0 (#Hoppie-PDC-CPDLC): visible on ANY tab, not just PDC/CPDLC —
           a pilot on Cockpit still sees an uplink is waiting for a reply. */}
-      <CpdlcMessageBanner count={cpdlcPendingCount} onOpenTab={() => setTab("cpdlc")} />
+      <CpdlcMessageBanner
+        count={cpdlcUnseenCount}
+        onOpenTab={() => {
+          markCpdlcSeen();
+          setTab("cpdlc");
+        }}
+        onDismiss={markCpdlcSeen}
+      />
       <header className="app__header">
         <div className="app__brand">
           <h1>{t("app.name")}</h1>
@@ -579,7 +590,10 @@ function App() {
             role="tab"
             aria-selected={tab === "cpdlc"}
             className={`tab ${tab === "cpdlc" ? "tab--active" : ""}`}
-            onClick={() => setTab("cpdlc")}
+            onClick={() => {
+              markCpdlcSeen();
+              setTab("cpdlc");
+            }}
           >
             {t("tabs.cpdlc")}
             {cpdlcPendingCount > 0 && (

@@ -26,8 +26,7 @@ fn worked_example_from_the_community_docs_round_trips_through_the_public_api() {
 
 #[test]
 fn worked_reply_from_the_community_docs_round_trips_through_the_public_api() {
-    let msg =
-        decode("/data2/8/3/N/WILCO", Direction::Downlink).expect("worked reply must decode");
+    let msg = decode("/data2/8/3/N/WILCO", Direction::Downlink).expect("worked reply must decode");
     assert_eq!(msg.min, 8);
     assert_eq!(msg.mrn, Some(3));
     assert_eq!(encode(&msg), "/data2/8/3/N/WILCO");
