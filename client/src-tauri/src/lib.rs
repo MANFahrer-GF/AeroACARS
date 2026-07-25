@@ -3826,6 +3826,15 @@ struct FlightStats {
     last_logged_nav1: Option<f32>,
     last_logged_nav2: Option<f32>,
     last_logged_lights: Option<LightsState>,
+    /// Pro Lampe: (Beginn des Zählfensters, Wechsel darin, Blinkmodus gemeldet).
+    ///
+    /// Boeings können Landelichter auf FLASH stellen — die Lampe blinkt dann
+    /// bauartbedingt. Am Flug EDDP→LTFE (25.07.2026) wurden dadurch **52
+    /// Wechsel** protokolliert, 50 davon in fünf Minuten, Median-Halteperiode
+    /// 3,0 s. Fünfzig Zeilen "Landing lights ON/OFF" tragen keine Information
+    /// und begraben alles andere im Protokoll. Statt jeder Flanke wird das
+    /// Blinken einmal als solches benannt.
+    light_flicker: std::collections::HashMap<&'static str, (DateTime<Utc>, u8, bool)>,
     /// 3-state strobe selector (0=OFF, 1=AUTO, 2=ON) for aircraft
     /// addons that distinguish AUTO from ON. Lives separate from
     /// `last_logged_lights.strobe` so we don't log a "Strobe lights
@@ -6832,6 +6841,65 @@ fn log_activity_and_record(
         },
     );
     log_activity_handle(app, level, message, detail);
+}
+
+/// Was mit einem Lichtwechsel im Aktivitätsprotokoll geschehen soll.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FlickerVerdict {
+    /// Normaler Schaltvorgang — protokollieren.
+    Log,
+    /// Blinken gerade erkannt — EINMAL benennen.
+    AnnounceFlashing,
+    /// Weiterer Wechsel innerhalb eines laufenden Blinkens — schlucken.
+    Suppress,
+}
+
+/// Fenster, über das Wechsel gezählt werden.
+const FLICKER_WINDOW_SECS: i64 = 30;
+/// Ab so vielen Wechseln im Fenster gilt die Lampe als blinkend. Vier
+/// Wechsel in 30 s (= Halteperioden unter ~8 s) schafft kein Mensch am
+/// Schalter; der gemessene FLASH-Takt lag bei 3 s.
+const FLICKER_MIN_CHANGES: u8 = 4;
+
+/// Entscheidet, ob ein Lichtwechsel protokolliert, als Blinken gemeldet oder
+/// geschluckt wird.
+///
+/// Bewusst zustandsbehaftet pro Lampe: Ein Flugzeug kann die Landelichter
+/// blinken lassen, während die Nav-Lichter normal geschaltet werden — ein
+/// gemeinsamer Zähler würde die normalen Schaltvorgänge mitschlucken.
+///
+/// Das Fenster läuft weiter, solange Wechsel kommen; bleibt es
+/// [`FLICKER_WINDOW_SECS`] still, gilt das Blinken als beendet und der
+/// nächste Wechsel wird wieder normal protokolliert.
+pub(crate) fn flicker_verdict(
+    state: &mut std::collections::HashMap<&'static str, (DateTime<Utc>, u8, bool)>,
+    lamp: &'static str,
+    now: DateTime<Utc>,
+) -> FlickerVerdict {
+    let entry = state.entry(lamp).or_insert((now, 0, false));
+    let (last_change, count, announced) = *entry;
+
+    // Gemessen wird der Abstand zum LETZTEN Wechsel, nicht zum ersten der
+    // Serie: Eine blinkende Lampe soll als EINE Serie gelten, solange sie
+    // blinkt. Mit einem festen Fenster ab dem ersten Wechsel lief die Serie
+    // alle 30 s ab und "Blinkmodus" wurde erneut gemeldet — bei den
+    // gemessenen fünf Minuten zehnmal statt einmal.
+    if (now - last_change).num_seconds() > FLICKER_WINDOW_SECS {
+        *entry = (now, 1, false);
+        return FlickerVerdict::Log;
+    }
+
+    let count = count.saturating_add(1);
+    *entry = (now, count, announced);
+
+    if count < FLICKER_MIN_CHANGES {
+        FlickerVerdict::Log
+    } else if !announced {
+        entry.2 = true;
+        FlickerVerdict::AnnounceFlashing
+    } else {
+        FlickerVerdict::Suppress
+    }
 }
 
 /// Append one datalink message to the running flight's log.
@@ -29672,12 +29740,21 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             }
             for (name, old, new) in changes {
                 if old != new {
-                    log_activity_handle(
-                        app,
-                        ActivityLevel::Info,
-                        format!("{name} lights {}", if new { "ON" } else { "OFF" }),
-                        None,
-                    );
+                    match flicker_verdict(&mut stats.light_flicker, name, Utc::now()) {
+                        FlickerVerdict::Log => log_activity_handle(
+                            app,
+                            ActivityLevel::Info,
+                            format!("{name} lights {}", if new { "ON" } else { "OFF" }),
+                            None,
+                        ),
+                        FlickerVerdict::AnnounceFlashing => log_activity_handle(
+                            app,
+                            ActivityLevel::Info,
+                            format!("{name} lights: Blinkmodus"),
+                            None,
+                        ),
+                        FlickerVerdict::Suppress => {}
+                    }
                 }
             }
         }
@@ -39867,6 +39944,80 @@ mod msfs_touchdown_delag_tests {
 // and the hard-lock in isolation) is covered by the synthetic unit tests in
 // `msfs_touchdown_delag_tests`.
 //
+#[cfg(test)]
+mod light_flicker_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn at(sec: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp(1_700_000_000 + sec, 0).expect("timestamp")
+    }
+
+    /// Ein normal bedienter Schalter wird protokolliert wie bisher.
+    #[test]
+    fn a_normal_switch_is_still_logged() {
+        let mut st = HashMap::new();
+        assert_eq!(flicker_verdict(&mut st, "Landing", at(0)), FlickerVerdict::Log);
+        // Zweiter Wechsel eine Minute später — neues Fenster.
+        assert_eq!(flicker_verdict(&mut st, "Landing", at(60)), FlickerVerdict::Log);
+        assert_eq!(flicker_verdict(&mut st, "Landing", at(400)), FlickerVerdict::Log);
+    }
+
+    /// Der Feldfall: FLASH-Modus auf einer Boeing. Gemessen am Flug
+    /// EDDP→LTFE (25.07.2026): 50 Wechsel in fünf Minuten, Median-
+    /// Halteperiode 3,0 s. Erwartung: ein paar erste Zeilen, dann EIN
+    /// "Blinkmodus", danach Ruhe — statt fünfzig Zeilen.
+    #[test]
+    fn flash_mode_is_named_once_instead_of_flooding() {
+        let mut st = HashMap::new();
+        let mut logged = 0;
+        let mut announced = 0;
+        let mut suppressed = 0;
+        // 100 Wechsel im 3-Sekunden-Takt = die gemessenen fünf Minuten.
+        for i in 0..100 {
+            match flicker_verdict(&mut st, "Landing", at(i * 3)) {
+                FlickerVerdict::Log => logged += 1,
+                FlickerVerdict::AnnounceFlashing => announced += 1,
+                FlickerVerdict::Suppress => suppressed += 1,
+            }
+        }
+        assert_eq!(announced, 1, "Blinken genau einmal benennen");
+        assert!(logged <= 3, "hoechstens die ersten Flanken, war {logged}");
+        assert!(suppressed > 90, "der Rest muss geschluckt werden, war {suppressed}");
+    }
+
+    /// Blinken an EINER Lampe darf normale Schaltvorgaenge an einer anderen
+    /// nicht mitverschlucken — ein gemeinsamer Zaehler taete genau das.
+    #[test]
+    fn flashing_landing_lights_do_not_mute_the_nav_lights() {
+        let mut st = HashMap::new();
+        for i in 0..20 {
+            flicker_verdict(&mut st, "Landing", at(i * 3));
+        }
+        assert_eq!(
+            flicker_verdict(&mut st, "Nav", at(30)),
+            FlickerVerdict::Log,
+            "die Nav-Lampe hat gar nicht geblinkt"
+        );
+    }
+
+    /// Hoert das Blinken auf, wird der naechste echte Schaltvorgang wieder
+    /// normal protokolliert — sonst bliebe die Lampe fuer den Rest des
+    /// Fluges stumm.
+    #[test]
+    fn logging_resumes_after_the_flashing_stops() {
+        let mut st = HashMap::new();
+        for i in 0..20 {
+            flicker_verdict(&mut st, "Landing", at(i * 3));
+        }
+        // Ruhe, dann ein einzelner Schaltvorgang.
+        assert_eq!(
+            flicker_verdict(&mut st, "Landing", at(20 * 3 + FLICKER_WINDOW_SECS + 5)),
+            FlickerVerdict::Log
+        );
+    }
+}
+
 #[cfg(test)]
 mod msfs_touchdown_delag_replay_golden {
     use super::*;

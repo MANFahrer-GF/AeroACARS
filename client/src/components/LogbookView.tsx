@@ -1,4 +1,4 @@
-// Pilot-Logbuch — live über die StratosLogbook-API (Tauri-Commands
+// Pilot-Logbuch — live über die GsgLogbook-API (Tauri-Commands
 // logbook_pireps / logbook_stats / logbook_pirep), nichts lokal gespeichert.
 // Liste (Stats + Tabelle, keine Filter) → Klick → Detail mit geflogenem Track,
 // 3-Linien-Höhenprofil (MSL/AGL/Gelände) und Fluglogbuch.
@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { invoke } from "../lib/ipc";
+import { FlightProfile } from "./FlightProfile";
 
 const BASEMAP_DARK = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 const BASEMAP_LIGHT = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
@@ -14,13 +15,29 @@ const PAGE = 25;
 interface Stats {
   total_flights?: number; hours_flown?: number; distance_nm?: number;
   avg_landing_fpm?: number; rank?: string; rank_image?: string;
+  flights_this_month?: number; hours_this_year?: number;
 }
 interface Item {
   id: string; date?: string; dep_icao?: string; arr_icao?: string; callsign?: string;
   aircraft_icao?: string; aircraft_reg?: string; status?: string;
   duration_min?: number; distance_nm?: number; landing_rate_fpm?: number;
 }
-interface RoutePt { lat: number; lon: number; alt_ft?: number; agl_ft?: number }
+interface RoutePt {
+  lat: number; lon: number;
+  /** Zeit seit Flugbeginn in ms. */
+  t?: number;
+  alt_ft?: number;
+  /** Hoehe ueber Grund. Fehlte in der alten Stratos-API komplett. */
+  agl_ft?: number;
+  /** Gelaendehoehe, serverseitig als MSL-AGL gerechnet. `null` wenn eine
+   *  der beiden Hoehen fehlt — dann darf NICHT 0 gezeichnet werden, das
+   *  waere Meereshoehe unter einem Flugzeug ueber den Alpen. */
+  gnd_ft?: number | null;
+  ias_kt?: number | null;
+  vs_fpm?: number | null;
+  fuel?: number | null;
+  ff?: number | null;
+}
 interface Detail extends Item {
   route?: RoutePt[];
   log?: { t: number; level?: string; message: string }[];
@@ -34,6 +51,31 @@ const fmtDate = (iso?: string) => {
   const d = new Date(iso);
   const M = ["JAN", "FEB", "MRZ", "APR", "MAI", "JUN", "JUL", "AUG", "SEP", "OKT", "NOV", "DEZ"];
   return `${pad(d.getDate())} ${M[d.getMonth()]} ${d.getFullYear()}`;
+};
+/** Der Pilot braucht keinen Stacktrace, aber wir dürfen die Ursache auch
+ *  nicht verschlucken — Klartext vorn, technisches Detail dahinter. */
+const errText = (e: unknown): string => {
+  const raw = String((e as { message?: string })?.message ?? e ?? "").trim();
+  if (/network|fetch|connect|timeout|dns/i.test(raw)) {
+    return `Keine Verbindung zu phpVMS. (${raw})`;
+  }
+  if (/401|403|unauth|forbidden|api.?key/i.test(raw)) {
+    return `Anmeldung abgelehnt — prüfe deinen API-Schlüssel in den Einstellungen. (${raw})`;
+  }
+  if (/404|not found/i.test(raw)) {
+    return `Das Logbuch-Modul antwortet nicht — läuft GsgLogbook auf dem Server? (${raw})`;
+  }
+  return raw || "Unbekannter Fehler.";
+};
+
+/** Distanz gross genug fuer eine Kachel, aber ohne zu luegen.
+ *  Vorher stand hier `(n/1000).toFixed(0)+"k"` — das machte aus den
+ *  300 nm eines frischen Piloten ein glattes "0k". */
+export const fmtNm = (n?: number) => {
+  if (n == null) return "—";
+  if (n >= 10000) return `${Math.round(n / 1000)}k`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(Math.round(n));
 };
 const statusSlug = (s?: string) => (s === "accepted" || s === "pending" || s === "rejected" ? s : "pending");
 const badge = (s?: string) => `<span class="aa-lb-badge aa-lb-b-${statusSlug(s)}">${statusSlug(s)}</span>`;
@@ -62,7 +104,7 @@ export function LogbookView() {
     setError(null);
     invoke<{ items?: Item[]; total?: number }>("logbook_pireps", { limit: PAGE, offset: page * PAGE })
       .then((r) => { if (!cancelled) { setItems(r.items ?? []); setTotal(r.total ?? 0); } })
-      .catch((e) => { if (!cancelled) setError(String(e)); })
+      .catch((e) => { if (!cancelled) setError(errText(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [page]);
@@ -73,7 +115,7 @@ export function LogbookView() {
       const d = await invoke<Detail>("logbook_pirep", { id });
       setDetail(d);
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
     } finally {
       setLoading(false);
     }
@@ -137,8 +179,8 @@ export function LogbookView() {
           </div>
         </div>
         <div className="aa-lb-panel">
-          <h3>Höhenprofil <span className="aa-lb-leg"><i style={{ background: "var(--accent)" }} />MSL <i style={{ background: "var(--success)" }} />AGL <i style={{ background: "var(--text-muted)" }} />Gelände</span></h3>
-          <div className="aa-lb-vprofile" dangerouslySetInnerHTML={{ __html: profileSvg(route) }} />
+          <h3>Flugprofil</h3>
+          <FlightProfile route={route} />
         </div>
       </section>
     );
@@ -150,8 +192,11 @@ export function LogbookView() {
       <div className="aa-lb-stats">
         <div className="aa-lb-stat"><div className="aa-lb-k">Flüge</div><div className="aa-lb-bigv">{stats?.total_flights ?? "—"}</div></div>
         <div className="aa-lb-stat"><div className="aa-lb-k">Stunden</div><div className="aa-lb-bigv">{stats?.hours_flown != null ? Math.round(stats.hours_flown) : "—"}<small> h</small></div></div>
-        <div className="aa-lb-stat"><div className="aa-lb-k">Distanz</div><div className="aa-lb-bigv">{stats?.distance_nm != null ? (stats.distance_nm / 1000).toFixed(0) + "k" : "—"}<small> nm</small></div></div>
+        <div className="aa-lb-stat"><div className="aa-lb-k">Distanz</div><div className="aa-lb-bigv">{fmtNm(stats?.distance_nm)}<small> nm</small></div></div>
         <div className="aa-lb-stat"><div className="aa-lb-k">Ø Landung</div><div className="aa-lb-bigv">{stats?.avg_landing_fpm ?? "—"}<small> fpm</small></div></div>
+        {/* Die API lieferte beides schon immer, angezeigt wurde es nie. */}
+        <div className="aa-lb-stat"><div className="aa-lb-k">Diesen Monat</div><div className="aa-lb-bigv">{stats?.flights_this_month ?? "—"}<small> Flüge</small></div></div>
+        <div className="aa-lb-stat"><div className="aa-lb-k">Dieses Jahr</div><div className="aa-lb-bigv">{stats?.hours_this_year != null ? Math.round(stats.hours_this_year) : "—"}<small> h</small></div></div>
         <div className="aa-lb-stat aa-lb-rankcard">{stats?.rank_image && <img src={stats.rank_image} alt="" />}<div><div className="aa-lb-k">Rang</div><div className="aa-lb-rankv">{stats?.rank ?? "—"}</div></div></div>
       </div>
       <div className="aa-lb-card">
@@ -184,41 +229,4 @@ export function LogbookView() {
       </div>
     </section>
   );
-}
-
-/** 3-Linien-Höhenprofil (MSL/AGL/Gelände) als SVG. Exportiert fürs Testen der Strich-Zeichenreihenfolge. */
-export function profileSvg(route: RoutePt[]): string {
-  const pts = route.filter((p) => typeof p.alt_ft === "number");
-  if (pts.length < 2) return '<div class="aa-lb-muted" style="padding:8px">Keine Höhendaten.</div>';
-  const W = 1000, H = 210;
-  const msl = pts.map((p) => p.alt_ft ?? 0);
-  const agl = pts.map((p) => p.agl_ft ?? 0);
-  const terr = pts.map((p) => Math.max(0, (p.alt_ft ?? 0) - (p.agl_ft ?? 0)));
-  const maxAlt = Math.max(10000, Math.ceil(Math.max(...msl) / 10000) * 10000);
-  const x = (i: number) => (i / (pts.length - 1)) * W;
-  const y = (a: number) => H - (a / maxAlt) * H;
-  const poly = (arr: number[]) => arr.map((a, i) => `${x(i).toFixed(1)},${y(a).toFixed(1)}`).join(" ");
-  let grid = "", labels = "";
-  for (let a = 0; a <= maxAlt; a += 10000) {
-    const gy = y(a);
-    grid += `<line x1="0" y1="${gy.toFixed(1)}" x2="${W}" y2="${gy.toFixed(1)}" stroke="var(--border)" stroke-width="1" opacity="0.55"/>`;
-    labels += `<div class="aa-lb-ylab" style="top:${((gy / H) * 100).toFixed(1)}%">${a === 0 ? "0" : a / 1000 + "k"}</div>`;
-  }
-  // Reihenfolge der STRICHE bewusst MSL → Gelände → AGL (nicht wie vorher
-  // zuletzt/oben MSL): SVG malt später aufgeführte Elemente ÜBER früheren.
-  // Auf einer flachen Route (z. B. KINT→KBED, kaum Terrain-Relief) liegen
-  // AGL und Gelände über weite Strecken nur wenige hundert Fuß von MSL
-  // entfernt — bei einer 40k-ft-Skala ein Bruchteil eines Pixels. Wenn MSL
-  // zuletzt/oben gezeichnet wird, überdeckt die dickere blaue Linie die
-  // dünneren AGL-/Gelände-Linien praktisch überall dort vollständig — sie
-  // wirken "fehlend", obwohl die Werte (verifiziert in der Live-DB) korrekt
-  // vorliegen. AGL ganz oben, weil "Höhe über Grund" die für den Piloten
-  // operativ wichtigste der drei Linien ist.
-  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}` +
-    `<polyline points="0,${H} ${poly(msl)} ${W},${H}" fill="color-mix(in srgb, var(--accent) 14%, transparent)" stroke="none"/>` +
-    `<polyline points="0,${H} ${poly(terr)} ${W},${H}" fill="color-mix(in srgb, var(--text-muted) 30%, transparent)" stroke="none"/>` +
-    `<polyline points="${poly(msl)}" fill="none" stroke="var(--accent)" stroke-width="2" vector-effect="non-scaling-stroke"/>` +
-    `<polyline points="${poly(terr)}" fill="none" stroke="var(--text-muted)" stroke-width="1.4" vector-effect="non-scaling-stroke"/>` +
-    `<polyline points="${poly(agl)}" fill="none" stroke="var(--success)" stroke-width="1.6" vector-effect="non-scaling-stroke"/>` +
-    `</svg>${labels}`;
 }

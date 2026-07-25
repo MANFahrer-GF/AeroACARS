@@ -1326,10 +1326,19 @@ impl Client {
             .map_err(|e| ApiError::BadResponse(format!("read /api/acars: {e}")))
     }
 
-    /// StratosLogbook-Modul (GSG phpVMS): liest das Pilot-Logbuch LIVE über die
-    /// API — nichts gespeichert. Auth läuft über den phpVMS-`api_key` als
-    /// Bearer-Token (StratosAuth prüft `User::where('api_key', bearerToken)`).
-    /// Wir senden zusätzlich X-API-Key, schadet nicht.
+    /// GsgLogbook-Modul (GSG phpVMS): liest das Pilot-Logbuch LIVE über die
+    /// API — nichts gespeichert.
+    ///
+    /// Loest StratosLogbook ab. Grund: dessen Track lieferte pro Punkt genau
+    /// ein Hoehenfeld (`altitude_msl ?? altitude_agl ?? 0`), also nie AGL
+    /// separat — die AGL-Kurve der Logbuch-Ansicht fiel damit auf 0 zurueck
+    /// und das Gelaendeprofil (alt - agl) lag exakt auf MSL. Beide Werte
+    /// stehen in `phpvmsacars` und werden von der GSG-API mit ausgeliefert,
+    /// zusammen mit IAS, Steig-/Sinkrate und Treibstoff.
+    ///
+    /// Auth: phpVMS-`api_key`. Die GSG-Routen haengen an phpVMS' eigener
+    /// `api.auth`-Middleware (X-API-Key); der Bearer bleibt drin, damit ein
+    /// Rueckschalten auf Stratos ohne Codeaenderung moeglich ist.
     async fn get_logbook_json(&self, path: &str) -> Result<serde_json::Value, ApiError> {
         let url = self.endpoint(path)?;
         let response = self
@@ -1350,18 +1359,18 @@ impl Client {
 
     /// Logbuch-Flugliste (paginiert): `{ items, total, limit, offset }`.
     pub async fn get_logbook_pireps(&self, limit: u32, offset: u32) -> Result<serde_json::Value, ApiError> {
-        self.get_logbook_json(&format!("/api/stratos/logbook/pireps?limit={limit}&offset={offset}"))
+        self.get_logbook_json(&format!("/api/gsg/logbook/pireps?limit={limit}&offset={offset}"))
             .await
     }
 
     /// Logbuch-Summen (Flüge, Stunden, Distanz, Ø-Landung, Rang).
     pub async fn get_logbook_stats(&self) -> Result<serde_json::Value, ApiError> {
-        self.get_logbook_json("/api/stratos/logbook/stats").await
+        self.get_logbook_json("/api/gsg/logbook/stats").await
     }
 
     /// Logbuch-Detail eines PIREP inkl. `route` (Track) + `log` (Fluglogbuch).
     pub async fn get_logbook_pirep(&self, id: &str) -> Result<serde_json::Value, ApiError> {
-        self.get_logbook_json(&format!("/api/stratos/logbook/pireps/{id}")).await
+        self.get_logbook_json(&format!("/api/gsg/logbook/pireps/{id}")).await
     }
 
     /// POST a JSON body and decode the response envelope `{ data: T }`.

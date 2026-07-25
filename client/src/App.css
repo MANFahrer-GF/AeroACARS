@@ -8505,6 +8505,45 @@ input:disabled {
 .aa-lb-logrow .aa-lb-t { font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: 12px; }
 .aa-lb-logrow.phase .aa-lb-m { font-weight: 700; }
 .aa-lb-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 7px; vertical-align: middle; }
+/* ---- Nachflug-Profil: gestapelte Bahnen, gemeinsame Zeitachse ----
+   Ersetzt das alte Ein-Diagramm-Profil. Begründung in FlightProfile.tsx:
+   MSL/AGL/Gelände in einer 40k-Skala fielen bei flachem Gelände zusammen. */
+.aa-fp { display: flex; flex-direction: column; gap: 2px; }
+.aa-fp-band { display: flex; flex-direction: column; gap: 2px; }
+.aa-fp-band header {
+  display: flex; align-items: baseline; gap: 6px;
+  font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 600;
+  padding: 6px 0 0 34px;
+}
+.aa-fp-unit { text-transform: none; letter-spacing: 0; opacity: 0.75; font-weight: 500; }
+.aa-fp-legend { display: inline-flex; align-items: center; gap: 2px; text-transform: none; letter-spacing: 0; }
+.aa-fp-legend i { display: inline-block; width: 9px; height: 2px; border-radius: 1px; margin: 0 3px 0 8px; vertical-align: middle; }
+/* Messwerte am Fadenkreuz: rechtsbündig, damit sie beim Wandern nicht springen. */
+.aa-fp-read {
+  margin-left: auto; display: inline-flex; gap: 10px;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  text-transform: none; letter-spacing: 0; color: var(--text);
+}
+.aa-fp-read em { font-style: normal; color: var(--text-muted); font-weight: 500; }
+.aa-fp-plot { position: relative; padding-left: 34px; }
+.aa-fp-plot svg { position: absolute; inset: 0 0 0 34px; width: calc(100% - 34px); height: 100%; }
+.aa-fp-ylabs { position: absolute; inset: 0; width: 34px; pointer-events: none; }
+.aa-fp-ylabs span {
+  position: absolute; right: 4px; transform: translateY(-50%);
+  font-size: 9px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+.aa-fp-xaxis {
+  position: relative; display: flex; justify-content: space-between;
+  margin-left: 34px; padding-top: 4px;
+  font-size: 9px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+.aa-fp-xnow {
+  position: absolute; transform: translateX(-50%);
+  color: var(--text); font-weight: 600;
+  background: var(--surface); padding: 0 4px; border-radius: 3px;
+}
+
 .aa-lb-vprofile { position: relative; height: 210px; }
 .aa-lb-vprofile svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .aa-lb-ylab { position: absolute; left: 2px; font-size: 10px; color: var(--text-muted); transform: translateY(-50%); font-variant-numeric: tabular-nums; }
