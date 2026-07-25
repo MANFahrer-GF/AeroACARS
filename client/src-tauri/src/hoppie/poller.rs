@@ -208,6 +208,32 @@ async fn poll_once(
             *last_error.lock().expect("hoppie last_error mutex") = None;
             let envelopes = wire::parse_poll_envelopes(&content);
             for env in envelopes {
+                // Forensic record of EVERY inbound message, before any
+                // branching. Deliberately here and not in the individual
+                // arms below: the arm that matters most for fault-finding
+                // is the undecodable one (vSMR's bare-text STANDBY and
+                // logon refusals), and a per-arm call is exactly what gets
+                // forgotten when a new arm is added. Decoding twice for
+                // the metadata is cheap — one poll carries a handful of
+                // messages at most, minutes apart.
+                {
+                    let decoded = (env.kind == PacketKind::Cpdlc)
+                        .then(|| cpdlc::decode(&env.packet, Direction::Uplink).ok())
+                        .flatten();
+                    crate::record_datalink(
+                        app,
+                        "uplink",
+                        match env.kind {
+                            PacketKind::Cpdlc => "cpdlc",
+                            _ => "telex",
+                        },
+                        Some(env.from.clone()),
+                        decoded.as_ref().map(|m| m.min),
+                        decoded.as_ref().and_then(|m| m.mrn),
+                        decoded.as_ref().map(|m| m.response.code().to_string()),
+                        env.packet.clone(),
+                    );
+                }
                 if env.kind != PacketKind::Cpdlc {
                     // Telex traffic (PDC replies, free chat) — no MIN/MRN
                     // threading, just appended in arrival order.

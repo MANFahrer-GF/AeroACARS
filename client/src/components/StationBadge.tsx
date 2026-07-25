@@ -16,10 +16,19 @@ export function StationBadge({ status }: { status: StationStatus | null }) {
   if (!status) return null;
 
   const kind = status.reason ? "unknown" : status.online ? "online" : "offline";
-  const label = t(`cpdlc.station_${kind}`, { station: status.station });
+  // Two lengths on purpose. The badge sits in the same flex column as the
+  // station input, so its width IS the field's width — rendering the full
+  // sentence there (the offline one runs past 100 characters) stretched the
+  // input across the panel and pushed the buttons below the fold. Short
+  // label on screen, full explanation on hover.
+  const label = t(`cpdlc.station_${kind}_short`);
+  const explanation = t(`cpdlc.station_${kind}`, { station: status.station });
 
   return (
-    <span className={`cpdlc-station-badge cpdlc-station-badge--${kind}`} title={status.reason ?? undefined}>
+    <span
+      className={`cpdlc-station-badge cpdlc-station-badge--${kind}`}
+      title={status.reason ? `${explanation} (${status.reason})` : explanation}
+    >
       <span className="cpdlc-station-badge__dot" aria-hidden="true" />
       {label}
     </span>

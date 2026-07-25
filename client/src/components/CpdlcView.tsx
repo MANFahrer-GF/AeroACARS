@@ -6,7 +6,7 @@
 // header, mirroring a DCDU's status line, and every uplink that needs an
 // answer carries its answer keys inline.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke, formatIpcError } from "../lib/ipc";
 import { formatDatalinkText } from "../lib/datalink";
@@ -30,6 +30,19 @@ const REPLYABLE = ["WU", "AN", "R", "Y"];
  *  PDC tab, or the panel's mount condition in App.tsx flipping) therefore
  *  reset it to empty. Persisting the draft outlives all of those. */
 const STATION_DRAFT_KEY = "aeroacars.cpdlc.station_draft";
+
+/** How long the logon button stays blocked after a request went out.
+ *
+ *  Not a timeout — a double-click guard. Procedure has you send the logon
+ *  BEFORE entering the sector, and the controller commonly only accepts it
+ *  once they actually take you, so minutes of silence are normal and not an
+ *  error. What went wrong in the field was the pilot getting no feedback at
+ *  all, clicking again out of uncertainty, and ATC receiving a second
+ *  REQUEST LOGON — which vSMR re-flags as a fresh request because it scans
+ *  for "REQ" first. One poll cycle (max 75 s) plus headroom is enough for an
+ *  answer to have arrived; after that a deliberate retry stays possible,
+ *  which the field case needed: logon, no reaction, called on voice, retry. */
+const LOGON_COOLDOWN_SECS = 90;
 
 function loadStationDraft(): string {
   try {
@@ -81,12 +94,26 @@ export function CpdlcView({
   const [error, setError] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
 
+  // Ticks only while a cooldown is actually running, so the panel isn't
+  // re-rendering once a second for the entire flight.
+  const [cooldownLeft, setCooldownLeft] = useState(0);
+  const cooldownRunning = cooldownLeft > 0;
+  useEffect(() => {
+    if (!cooldownRunning) return;
+    const id = window.setInterval(
+      () => setCooldownLeft((s) => Math.max(0, s - 1)),
+      1000,
+    );
+    return () => window.clearInterval(id);
+  }, [cooldownRunning]);
+
   const sendLogon = async () => {
-    if (busy) return;
+    if (busy || cooldownLeft > 0) return;
     setBusy(true);
     setError(null);
     try {
       await invoke("hoppie_send_logon_request", { station: stationInput.trim().toUpperCase() });
+      setCooldownLeft(LOGON_COOLDOWN_SECS);
       onChanged();
     } catch (e) {
       setError(formatIpcError(e));
@@ -148,8 +175,16 @@ export function CpdlcView({
         <button
           type="button"
           className="button button--primary"
-          disabled={!online || busy || stationInput.trim() === "" || alreadyOn}
-          title={alreadyOn ? t("cpdlc.logon_already", { station }) : undefined}
+          disabled={
+            !online || busy || stationInput.trim() === "" || alreadyOn || cooldownRunning
+          }
+          title={
+            alreadyOn
+              ? t("cpdlc.logon_already", { station })
+              : cooldownRunning
+                ? t("cpdlc.logon_cooldown", { seconds: cooldownLeft })
+                : undefined
+          }
           onClick={() => void sendLogon()}
         >
           {/* One constant label. Swapping to "log on to next centre"

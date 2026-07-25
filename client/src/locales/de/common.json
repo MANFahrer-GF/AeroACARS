@@ -1860,16 +1860,20 @@
     "response_readback": "WILCO",
     "pdc_missing": "Noch offen: {{fields}}",
     "logon_already": "Bereits bei {{station}} angemeldet — für die Übergabe ein anderes Center eintragen.",
+    "logon_cooldown": "Anmeldung läuft — noch {{seconds}} s. Lotsen bestätigen oft erst, wenn sie dich übernehmen.",
     "awaiting_atc": "Wartet auf ATC",
     "readback_request_token": "Senden nicht möglich: {{tokens}} lässt ATC das als neue Freigabeanfrage lesen. Eine Bestätigung ist nur WILCO.",
     "logoff": "Abmelden",
     "callsign_network_hint": "Dein Callsign im Netzwerk (VATSIM), exakt so wie du verbunden bist — nicht das VA-Callsign aus dem Flugplan.",
     "callsign_mismatch": "Kein Callsign eingetragen — es würde {{flight}} aus dem Flugplan verwendet. ATC sucht dich über dein NETZWERK-Callsign; weicht es ab, erreichen deine Nachrichten den Lotsen nie.",
-    "logon_no_answer": "Keine Antwort von {{station}}. Nicht jede Station unterstützt CPDLC-Anmeldung — eine Delivery macht meist nur PDC. Versuch das zuständige Center, oder nutze PDC.",
+    "logon_no_answer": "Keine Antwort von {{station}}. Das ist normal, wenn du vor dem Sektoreintritt anmeldest — viele Lotsen bestätigen erst bei der Übernahme. Kommt auch danach nichts: Nicht jede Station unterstützt CPDLC-Anmeldung — eine Delivery macht meist nur PDC. Versuch das zuständige Center, oder nutze PDC.",
     "expand_hint": "Zum vollständigen Anzeigen klicken",
     "station_online": "{{station}} ist erreichbar",
     "station_offline": "Unter {{station}} ist nichts registriert — der Lotse nutzt evtl. ein anderes Datalink-Callsign (steht im ATIS)",
-    "station_unknown": "{{station}} konnte nicht geprüft werden"
+    "station_unknown": "{{station}} konnte nicht geprüft werden",
+    "station_online_short": "erreichbar",
+    "station_offline_short": "nicht registriert",
+    "station_unknown_short": "nicht prüfbar"
   },
   "hoppie_settings": {
     "section_title": "Hoppie ACARS (PDC/CPDLC)",

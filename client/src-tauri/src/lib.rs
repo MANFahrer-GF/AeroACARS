@@ -6834,6 +6834,49 @@ fn log_activity_and_record(
     log_activity_handle(app, level, message, detail);
 }
 
+/// Append one datalink message to the running flight's log.
+///
+/// No-op when no flight is active — without ACARS running there is no log
+/// to write into, and a datalink conversation held outside a flight isn't
+/// flight forensics. Deliberately best-effort and silent: a failed log
+/// write must never disturb the actual message exchange with ATC.
+///
+/// `text` is the wire text. Callers must never pass anything derived from
+/// the Hoppie logon code.
+pub(crate) fn record_datalink(
+    app: &AppHandle,
+    direction: &str,
+    channel: &str,
+    station: Option<String>,
+    min: Option<u32>,
+    mrn: Option<u32>,
+    response_code: Option<String>,
+    text: String,
+) {
+    let pirep_id = {
+        let state = app.state::<AppState>();
+        let guard = state.active_flight.lock().expect("active_flight lock");
+        match guard.as_ref() {
+            Some(f) => f.pirep_id.clone(),
+            None => return,
+        }
+    };
+    record_event(
+        app,
+        &pirep_id,
+        &FlightLogEvent::Datalink {
+            timestamp: Utc::now(),
+            direction: direction.to_string(),
+            channel: channel.to_string(),
+            station,
+            min,
+            mrn,
+            response_code,
+            text,
+        },
+    );
+}
+
 /// `GET` the entire activity log. Frontend polls this every couple of
 /// seconds; `ACTIVITY_LOG_CAPACITY` keeps the payload bounded.
 #[tauri::command]

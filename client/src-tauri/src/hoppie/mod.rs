@@ -588,7 +588,7 @@ pub async fn hoppie_connect(
 /// Send `LOGOFF` if a CPDLC session is open, so the facility stops
 /// showing us as connected and stops queueing messages for us.
 /// Best-effort: a failure must never block disconnecting.
-async fn logoff_if_logged_on(handle: &HoppieHandle) {
+async fn logoff_if_logged_on(app: &AppHandle, handle: &HoppieHandle) {
     {
         let t = handle.thread.lock().expect("hoppie thread mutex");
         // Nothing to end AND nothing outstanding — stay quiet rather than
@@ -604,7 +604,7 @@ async fn logoff_if_logged_on(handle: &HoppieHandle) {
     let Some(spec) = hoppie_protocol::elements::find("DM_LOGOFF") else {
         return;
     };
-    if let Err(e) = send_cpdlc_element(handle, logon, spec, Vec::new(), None).await {
+    if let Err(e) = send_cpdlc_element(&app, handle, logon, spec, Vec::new(), None).await {
         tracing::warn!(error = %e.message, "hoppie: LOGOFF failed");
     } else {
         tracing::info!("hoppie: LOGOFF sent");
@@ -614,7 +614,7 @@ async fn logoff_if_logged_on(handle: &HoppieHandle) {
 /// Same as [`logoff_if_logged_on`] but also forgets the persisted
 /// open-session marker, so the next connect has nothing to clean up.
 async fn logoff_and_forget(app: &AppHandle, handle: &HoppieHandle) {
-    logoff_if_logged_on(handle).await;
+    logoff_if_logged_on(app, handle).await;
     settings::clear_open_session(app);
 }
 
@@ -732,7 +732,11 @@ fn resolve_logon_code() -> Result<String, UiError> {
 /// its timestamp. Shared by every CPDLC-send command below so the
 /// MIN-allocation / wire-send / timestamp sequence lives in exactly
 /// one place.
+/// `app` is only here so the sent message reaches the flight log — every
+/// downlink funnels through this one function, so recording it here can't
+/// be forgotten when a new sender is added.
 async fn send_cpdlc_element(
+    app: &AppHandle,
     handle: &HoppieHandle,
     logon: String,
     spec: &'static hoppie_protocol::elements::ElementSpec,
@@ -776,6 +780,18 @@ async fn send_cpdlc_element(
     {
         return Err(UiError::new("hoppie_cpdlc_rejected", reason));
     }
+    // Only after the network accepted it — a rejected send never reached
+    // ATC and would read as a message the controller ignored.
+    crate::record_datalink(
+        app,
+        "downlink",
+        "cpdlc",
+        Some(wire_req.to.clone()),
+        Some(min),
+        mrn,
+        Some(spec.response.code().to_string()),
+        message.element_text.clone(),
+    );
     Ok(min)
 }
 
@@ -833,7 +849,7 @@ pub async fn hoppie_send_logon_request(
 
     let logon = resolve_logon_code()?;
     let spec = hoppie_protocol::elements::find("DM_REQUEST_LOGON").expect("built-in element");
-    send_cpdlc_element(handle, logon, spec, Vec::new(), None).await?;
+    send_cpdlc_element(&app, handle, logon, spec, Vec::new(), None).await?;
     Ok(build_status(&guard))
 }
 
@@ -881,6 +897,7 @@ fn reject_request_tokens(text: &str) -> Result<(), UiError> {
 /// responsible for the aircraft until the pilot logs on to the next one.
 #[tauri::command]
 pub async fn hoppie_send_logoff(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<HoppieStatus, UiError> {
     let guard = state.hoppie.lock().await;
@@ -905,7 +922,7 @@ pub async fn hoppie_send_logoff(
     }
     let logon = resolve_logon_code()?;
     let spec = hoppie_protocol::elements::find("DM_LOGOFF").expect("built-in element");
-    send_cpdlc_element(handle, logon, spec, Vec::new(), None).await?;
+    send_cpdlc_element(&app, handle, logon, spec, Vec::new(), None).await?;
     Ok(build_status(&guard))
 }
 
@@ -915,6 +932,7 @@ pub async fn hoppie_send_logoff(
 /// it arrived.
 #[tauri::command]
 pub async fn hoppie_send_telex(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     text: String,
     recipient: Option<String>,
@@ -949,6 +967,16 @@ pub async fn hoppie_send_telex(
     {
         return Err(UiError::new("hoppie_telex_rejected", reason));
     }
+    crate::record_datalink(
+        &app,
+        "downlink",
+        "telex",
+        Some(wire_req.to.clone()),
+        None,
+        None,
+        None,
+        trimmed.to_string(),
+    );
     handle
         .telex_log
         .lock()
@@ -968,6 +996,7 @@ pub async fn hoppie_send_telex(
 /// warrant picking a specific element.
 #[tauri::command]
 pub async fn hoppie_send_free_text(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     text: String,
     mrn: Option<u32>,
@@ -1003,7 +1032,7 @@ pub async fn hoppie_send_free_text(
     })?;
     let logon = resolve_logon_code()?;
     let spec = hoppie_protocol::elements::find("DM67").expect("GOLD free-text element");
-    send_cpdlc_element(handle, logon, spec, vec![trimmed], mrn).await
+    send_cpdlc_element(&app, handle, logon, spec, vec![trimmed], mrn).await
 }
 
 /// Send a structured downlink element by GOLD id (e.g. `"UM74"`
@@ -1013,6 +1042,7 @@ pub async fn hoppie_send_free_text(
 /// specific received uplink (e.g. the WILCO/UNABLE response buttons).
 #[tauri::command]
 pub async fn hoppie_send_cpdlc_element(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     element_id: String,
     values: Vec<String>,
@@ -1050,7 +1080,7 @@ pub async fn hoppie_send_cpdlc_element(
         .iter()
         .map(|v| normalize_outbound(v))
         .collect::<Result<Vec<_>, _>>()?;
-    send_cpdlc_element(handle, logon, spec, values, mrn).await
+    send_cpdlc_element(&app, handle, logon, spec, values, mrn).await
 }
 
 /// One row of the GOLD downlink catalog, for the composer's element
@@ -1100,6 +1130,7 @@ pub struct PdcSendResult {
 /// resolved a callsign, both reused here).
 #[tauri::command]
 pub async fn hoppie_send_pdc_request(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     request: PdcRequestArgs,
 ) -> Result<PdcSendResult, UiError> {
@@ -1151,6 +1182,17 @@ pub async fn hoppie_send_pdc_request(
     {
         return Err(UiError::new("hoppie_pdc_rejected", reason));
     }
+
+    crate::record_datalink(
+        &app,
+        "downlink",
+        "pdc",
+        Some(pdc_request.recipient.clone()),
+        None,
+        None,
+        None,
+        text.clone(),
+    );
 
     let now = chrono::Utc::now();
     handle

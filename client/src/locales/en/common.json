@@ -1860,16 +1860,20 @@
     "response_readback": "WILCO",
     "pdc_missing": "Still needed: {{fields}}",
     "logon_already": "Already logged on to {{station}} — enter a different centre to hand over.",
+    "logon_cooldown": "Logon in progress — {{seconds}} s to go. Controllers often only accept once they take you.",
     "awaiting_atc": "Awaiting ATC",
     "readback_request_token": "Cannot send: {{tokens}} makes ATC read this as a new clearance request. An acknowledgement is just WILCO.",
     "logoff": "Log off",
     "callsign_network_hint": "Your callsign on the network (VATSIM), exactly as you are connected — not the VA callsign from the flight plan.",
     "callsign_mismatch": "No callsign entered — {{flight}} from the flight plan would be used. ATC looks you up by your NETWORK callsign; if it differs, your messages never reach the controller.",
-    "logon_no_answer": "No answer from {{station}}. Not every station supports CPDLC logon — a delivery desk usually only does PDC. Try the responsible centre, or use PDC.",
+    "logon_no_answer": "No answer from {{station}}. That is normal when you log on before entering the sector — many controllers only accept once they take you. If nothing comes after that either: not every station supports CPDLC logon — a delivery desk usually only does PDC. Try the responsible centre, or use PDC.",
     "expand_hint": "Click to show in full",
     "station_online": "{{station}} is reachable",
     "station_offline": "Nothing registered as {{station}} — the controller may use a different datalink callsign (check the ATIS)",
-    "station_unknown": "Could not check {{station}}"
+    "station_unknown": "Could not check {{station}}",
+    "station_online_short": "reachable",
+    "station_offline_short": "not registered",
+    "station_unknown_short": "check failed"
   },
   "hoppie_settings": {
     "section_title": "Hoppie ACARS (PDC/CPDLC)",

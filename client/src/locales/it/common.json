@@ -1860,16 +1860,20 @@
     "response_readback": "WILCO",
     "pdc_missing": "Ancora da compilare: {{fields}}",
     "logon_already": "Già registrato su {{station}} — inserisci un altro centro per il passaggio.",
+    "logon_cooldown": "Logon in corso — ancora {{seconds}} s. I controllori spesso accettano solo quando ti prendono in carico.",
     "awaiting_atc": "In attesa ATC",
     "readback_request_token": "Invio impossibile: {{tokens}} fa interpretare il messaggio come nuova richiesta. Una conferma è solo WILCO.",
     "logoff": "Disconnetti",
     "callsign_network_hint": "Il tuo callsign sulla rete (VATSIM), esattamente come sei connesso — non quello della VA dal piano di volo.",
     "callsign_mismatch": "Nessun callsign inserito — verrebbe usato {{flight}} dal piano di volo. L'ATC ti cerca con il callsign di RETE; se differisce, i messaggi non raggiungono il controllore.",
-    "logon_no_answer": "Nessuna risposta da {{station}}. Non tutte le stazioni supportano il logon CPDLC — una delivery di solito fa solo PDC. Prova il centro competente, oppure usa il PDC.",
+    "logon_no_answer": "Nessuna risposta da {{station}}. È normale se ti registri prima di entrare nel settore — molti controllori accettano solo al momento della presa in carico. Se non arriva nulla neanche dopo: non tutte le stazioni supportano il logon CPDLC — una delivery di solito fa solo PDC. Prova il centro competente, o usa il PDC.",
     "expand_hint": "Clicca per vedere per intero",
     "station_online": "{{station}} è raggiungibile",
     "station_offline": "Nulla registrato come {{station}} — il controllore potrebbe usare un altro callsign datalink (vedi ATIS)",
-    "station_unknown": "Impossibile verificare {{station}}"
+    "station_unknown": "Impossibile verificare {{station}}",
+    "station_online_short": "raggiungibile",
+    "station_offline_short": "non registrata",
+    "station_unknown_short": "non verificabile"
   },
   "hoppie_settings": {
     "section_title": "Hoppie ACARS (PDC/CPDLC)",

@@ -90,6 +90,39 @@ pub enum FlightLogEvent {
         message: String,
         detail: Option<String>,
     },
+    /// One datalink message, sent or received, over the Hoppie network —
+    /// CPDLC, PDC and plain telex alike. Written so a flight's ATC
+    /// conversation can be reconstructed afterwards next to position and
+    /// phase, which is what post-flight fault-finding needs: whether an
+    /// uplink was answered, how long a logon stayed unanswered, whether a
+    /// clearance arrived before or after the phase changed.
+    ///
+    /// Never carries the Hoppie logon code — that is a credential and has
+    /// no business in a log that gets uploaded.
+    Datalink {
+        timestamp: DateTime<Utc>,
+        /// `"uplink"` (from ATC) or `"downlink"` (from us).
+        direction: String,
+        /// `"cpdlc"`, `"pdc"` or `"telex"`.
+        channel: String,
+        /// Facility as addressed on the wire, e.g. `"LKAA"`. `None` for
+        /// traffic that carried no station.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        station: Option<String>,
+        /// CPDLC message identification number. Only unique WITHIN a
+        /// direction — uplink and downlink number independently, so never
+        /// key on this alone.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min: Option<u32>,
+        /// The MIN this message answers, when it is a reply.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mrn: Option<u32>,
+        /// Expected-response code (`WU`, `AN`, `R`, `Y`, `N`, `NE`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        response_code: Option<String>,
+        /// Message text as it went over the wire, `@` line breaks intact.
+        text: String,
+    },
     /// Touchdown analyzer settled — final score with the contributing
     /// peak values. Mirrors the LandingScore enum in lib.rs.
     /// **Beibehalten fuer Backwards-Compat** — neue Forensik-Konsumenten
@@ -737,6 +770,90 @@ mod scored_g_tests {
             FlightLogEvent::FlightResumed {
                 previous_exit_clean, ..
             } => assert_eq!(previous_exit_clean, Some(false)),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    /// The row shape post-flight analysis reads. Pinned deliberately: the
+    /// whole point of recording datalink traffic is querying it later, and
+    /// a silently renamed field breaks every saved query.
+    #[test]
+    fn datalink_row_keeps_its_wire_shape() {
+        let ev = FlightLogEvent::Datalink {
+            timestamp: Utc::now(),
+            direction: "uplink".to_string(),
+            channel: "cpdlc".to_string(),
+            station: Some("LKAA".to_string()),
+            min: Some(53),
+            mrn: Some(2),
+            response_code: Some("WU".to_string()),
+            text: "CLIMB TO FL370".to_string(),
+        };
+        let json = serde_json::to_string(&ev).expect("serialize");
+        assert!(json.contains("\"type\":\"datalink\""), "{json}");
+        for field in [
+            "\"direction\":\"uplink\"",
+            "\"channel\":\"cpdlc\"",
+            "\"station\":\"LKAA\"",
+            "\"min\":53",
+            "\"mrn\":2",
+            "\"response_code\":\"WU\"",
+            "\"text\":\"CLIMB TO FL370\"",
+        ] {
+            assert!(json.contains(field), "missing {field} in {json}");
+        }
+
+        let back: FlightLogEvent = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            FlightLogEvent::Datalink { min, mrn, text, .. } => {
+                assert_eq!(min, Some(53));
+                assert_eq!(mrn, Some(2));
+                assert_eq!(text, "CLIMB TO FL370");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    /// Telex and PDC carry no MIN/MRN and no response code. Those keys must
+    /// be OMITTED rather than serialized as null, so a reader can treat
+    /// "has a MIN" as "is a threaded CPDLC message".
+    #[test]
+    fn datalink_row_omits_absent_cpdlc_fields() {
+        let ev = FlightLogEvent::Datalink {
+            timestamp: Utc::now(),
+            direction: "downlink".to_string(),
+            channel: "pdc".to_string(),
+            station: Some("EDDP".to_string()),
+            min: None,
+            mrn: None,
+            response_code: None,
+            text: "REQUEST PREDEP CLEARANCE".to_string(),
+        };
+        let json = serde_json::to_string(&ev).expect("serialize");
+        for absent in ["\"min\"", "\"mrn\"", "\"response_code\"", "null"] {
+            assert!(!json.contains(absent), "{absent} should be omitted: {json}");
+        }
+    }
+
+    /// A row written before this variant existed, and one from a future
+    /// build with extra keys, must both still parse — the JSONL is append
+    /// only and gets read by tooling of a different vintage than the writer.
+    #[test]
+    fn datalink_row_tolerates_missing_and_unknown_keys() {
+        let minimal = r#"{"type":"datalink","timestamp":"2026-07-25T12:42:49Z",
+            "direction":"uplink","channel":"telex","text":"STANDBY"}"#;
+        let ev: FlightLogEvent = serde_json::from_str(minimal).expect("minimal row parses");
+        match ev {
+            FlightLogEvent::Datalink {
+                station,
+                min,
+                text,
+                ..
+            } => {
+                assert_eq!(station, None);
+                assert_eq!(min, None);
+                assert_eq!(text, "STANDBY");
+            }
             _ => panic!("wrong variant"),
         }
     }
