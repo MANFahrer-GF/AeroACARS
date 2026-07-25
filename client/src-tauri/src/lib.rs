@@ -8138,6 +8138,7 @@ async fn bid_simbrief_preview(
         ofp_destination_icao: ofp.ofp_destination_icao.clone(),
         pax_count: ofp.pax_count,
         cargo_kg: ofp.cargo_kg,
+        freight_kg: ofp.freight_kg,
         callsign_warning,
     })
 }
@@ -8162,7 +8163,10 @@ pub struct BidSimBriefPreview {
     /// auch ohne phpVMS-Bid-Pointer-Cache die Pax/Cargo-Chips anzeigt
     /// (siehe BidsList.tsx `paxCount`/`cargoKg`).
     pub pax_count: i32,
+    /// Gepaeck + Fracht zusammen (SimBrief `<weights><cargo>`).
     pub cargo_kg: f32,
+    /// Reine Fracht ohne Pax-Gepaeck — das zeigt die Bid-Card als "Cargo".
+    pub freight_kg: f32,
     /// Wenn DEP+ARR matchen aber Callsign abweicht (v0.7.9 Soft-Warning).
     pub callsign_warning: Option<CallsignWarningDetails>,
 }
@@ -40964,6 +40968,7 @@ mod v0_16_23_route_only_refresh_tests {
             request_id: "req_new_ofp".to_string(),
             pax_count: 150,
             cargo_kg: 2000.0,
+            freight_kg: 2000.0,
         }
     }
 

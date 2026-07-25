@@ -552,8 +552,16 @@ pub struct SimBriefOfp {
     pub pax_count: i32,
     /// v0.7.12: Cargo-Last in kg. SimBrief liefert das in `<weights><cargo>`
     /// (default lbs, mit `units_set=kgs`-Toggle: kg). 0.0 wenn Tag fehlt.
+    ///
+    /// WICHTIG: Das ist Gepaeck + Fracht ZUSAMMEN, nicht die Fracht allein.
+    /// Fuer die Anzeige als "Cargo" `freight_kg` nehmen.
     #[serde(default)]
     pub cargo_kg: f32,
+    /// Reine Fracht in kg (ohne Pax-Gepaeck) aus `<weights><freight_added>`,
+    /// mit Fallback `cargo - bag_weight`. Das ist der Wert, den ein Pilot
+    /// meint, wenn er "wieviel Cargo habe ich" fragt.
+    #[serde(default)]
+    pub freight_kg: f32,
 }
 
 /// Single navlog fix from a SimBrief OFP. `kind` carries the SimBrief
@@ -2135,6 +2143,41 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
         .and_then(|s| s.trim().parse().ok())
         .map(to_kg)
         .unwrap_or(0.0);
+    // ACHTUNG: <weights><cargo> ist bei SimBrief Gepaeck + Fracht ZUSAMMEN,
+    // nicht die Fracht allein. Die reine Fracht steht in <freight_added>,
+    // das Gepaeck in <bag_weight>. Wir ziehen die Fracht separat, weil der
+    // Bid-Card-Chip sie als "Cargo" ausweist — mit dem Summenwert las sich
+    // ein 3-t-Frachtflug mit 150 Pax als 6 t Fracht.
+    let freight_kg: f32 = extract_tag(xml, "weights")
+        .and_then(|inner| extract_tag(inner, "freight_added"))
+        .and_then(|s| s.trim().parse::<f32>().ok())
+        .map(to_kg)
+        .filter(|&v| v > 0.0)
+        .or_else(|| {
+            // Fallback: Summe minus Gepaeck, wenn SimBrief kein freight_added
+            // liefert (aeltere OFP-Formate / manueller Payload).
+            // ACHTUNG: <bag_weight> ist das Gewicht PRO Gepaeckstueck (z.B. 20),
+            // nicht das Gesamtgepaeck — erst mit <bag_count> multiplizieren.
+            let per_bag_kg: f32 = extract_tag(xml, "weights")
+                .and_then(|inner| extract_tag(inner, "bag_weight"))
+                .and_then(|s| s.trim().parse::<f32>().ok())
+                .map(to_kg)
+                .unwrap_or(0.0);
+            let bag_count: f32 = extract_tag(xml, "weights")
+                .and_then(|inner| extract_tag(inner, "bag_count"))
+                .and_then(|s| s.trim().parse::<f32>().ok())
+                .or_else(|| {
+                    extract_tag(xml, "weights")
+                        .and_then(|inner| extract_tag(inner, "bag_count_actual"))
+                        .and_then(|s| s.trim().parse::<f32>().ok())
+                })
+                .unwrap_or(0.0);
+            let bag_total_kg = per_bag_kg * bag_count;
+            (bag_total_kg > 0.0 && cargo_kg > bag_total_kg).then(|| cargo_kg - bag_total_kg)
+        })
+        // Letzter Fallback: Summe. Dann ist sie entweder schon reine Fracht
+        // (Cargo-Only-Flight ohne Gepaeck) oder wir haben nichts Besseres.
+        .unwrap_or(cargo_kg);
 
     Some(SimBriefOfp {
         planned_block_fuel_kg: plan_ramp,
@@ -2157,6 +2200,7 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
         request_id,
         pax_count,
         cargo_kg,
+        freight_kg,
     })
 }
 
@@ -2603,5 +2647,69 @@ mod tests {
         body.flight_id = Some("N43EeJppON5wr3Rm".into());
         let js = serde_json::to_string(&body).unwrap();
         assert!(js.contains("\"flight_id\":\"N43EeJppON5wr3Rm\""), "{js}");
+    }
+
+    /// Weights-Block aus dem echten VF1224-OFP (EDDP→LTFE, AJet B38M,
+    /// 2026-07-25). `freight_added` wird optional weggelassen, um den
+    /// Fallback-Pfad zu testen.
+    fn ofp_with_weights(extra: &str) -> String {
+        format!(
+            r#"<?xml version="1.0"?>
+            <ofp>
+                <params><units>kgs</units></params>
+                <weights>
+                    <oew>45069</oew>
+                    <pax_count>146</pax_count>
+                    <bag_count>146</bag_count>
+                    <pax_weight>88</pax_weight>
+                    <bag_weight>20</bag_weight>
+                    {extra}
+                    <cargo>6120</cargo>
+                    <payload>18968</payload>
+                    <est_zfw>64037</est_zfw>
+                    <est_tow>73455</est_tow>
+                </weights>
+            </ofp>"#
+        )
+    }
+
+    /// SimBriefs `<weights><cargo>` ist Gepaeck + Fracht ZUSAMMEN. Die
+    /// Bid-Card weist aber "Cargo" aus, also muss `freight_kg` die reine
+    /// Fracht liefern — sonst meldet ein 146-PAX-Flug mit 3,2 t Fracht
+    /// 6,1 t "Cargo" (der Live-Befund, der diesen Fix ausgeloest hat).
+    #[test]
+    fn freight_kg_prefers_freight_added_over_combined_cargo() {
+        let xml = ofp_with_weights("<freight_added>3200</freight_added>");
+        let ofp = parse_simbrief_ofp(&xml).expect("parses");
+        assert_eq!(ofp.cargo_kg, 6120.0, "cargo_kg bleibt die Summe");
+        assert_eq!(ofp.freight_kg, 3200.0, "freight_kg ist die reine Fracht");
+    }
+
+    /// Ohne `freight_added` wird das Gepaeck von der Summe abgezogen.
+    /// ACHTUNG: `<bag_weight>` ist das Gewicht PRO Stueck (20), nicht das
+    /// Gesamtgepaeck — 6120 - 20 waere falsch, richtig ist 6120 - 146*20.
+    #[test]
+    fn freight_kg_falls_back_to_cargo_minus_bag_count_times_bag_weight() {
+        let xml = ofp_with_weights("");
+        let ofp = parse_simbrief_ofp(&xml).expect("parses");
+        assert_eq!(ofp.cargo_kg, 6120.0);
+        assert_eq!(ofp.freight_kg, 3200.0, "6120 - 146*20 = 3200");
+    }
+
+    /// Cargo-Only-Flug ohne Pax/Gepaeck: die Summe IST die Fracht.
+    #[test]
+    fn freight_kg_falls_back_to_combined_when_no_baggage_data() {
+        let xml = r#"<?xml version="1.0"?>
+            <ofp>
+                <params><units>kgs</units></params>
+                <weights>
+                    <oew>45069</oew>
+                    <pax_count>0</pax_count>
+                    <cargo>18000</cargo>
+                    <est_zfw>63069</est_zfw>
+                </weights>
+            </ofp>"#;
+        let ofp = parse_simbrief_ofp(xml).expect("parses");
+        assert_eq!(ofp.freight_kg, 18000.0);
     }
 }

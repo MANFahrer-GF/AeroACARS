@@ -243,7 +243,9 @@ export function BidsList({
     // v0.7.12: Pax/Cargo aus dem SimBrief-OFP-XML — die Bid-Card zeigt diese
     // statt der phpVMS-Bid-Pointer-Subfleet-Fares wenn Preview da ist.
     pax_count: number;
+    /** Gepaeck + Fracht zusammen — fuer den Chip `freight_kg` nehmen. */
     cargo_kg: number;
+    freight_kg: number;
     callsign_warning: { sb_callsign: string; active_callsigns: string } | null;
   }
   const [bidPreviews, setBidPreviews] = useState<Map<number, BidSimBriefPreview>>(
@@ -1121,7 +1123,9 @@ interface BidSimBriefPreviewProp {
   ofp_origin_icao: string;
   ofp_destination_icao: string;
   pax_count: number;
+  /** Gepaeck + Fracht zusammen — fuer den Chip `freight_kg` nehmen. */
   cargo_kg: number;
+  freight_kg: number;
   callsign_warning: { sb_callsign: string; active_callsigns: string } | null;
 }
 
@@ -1176,6 +1180,7 @@ function BidDetails({
         // wenn die phpVMS-Bid-Pointer-Subfleet-Fares leer sind.
         pax_count: preview.pax_count,
         cargo_kg: preview.cargo_kg,
+        freight_kg: preview.freight_kg,
       } as unknown as SimBriefOfp);
       setPlanLoading(false);
       setPlanError(null);
@@ -1226,7 +1231,14 @@ function BidDetails({
     .filter((f) => (f.type ?? 0) === 1)
     .reduce((sum, f) => sum + (f.count ?? 0), 0);
   const paxCount = preview && preview.pax_count > 0 ? preview.pax_count : faresPax;
-  const cargoKg = preview && preview.cargo_kg > 0 ? preview.cargo_kg : faresCargoKg;
+  // Der Chip weist REINE Fracht aus. `preview.cargo_kg` waere Gepaeck +
+  // Fracht (SimBrief `<weights><cargo>`) und stand vorher unter dem Label
+  // "Cargo" — ein 150-Pax-Flug mit 3 t Fracht las sich damit als 6 t Fracht.
+  // Der Fares-Fallback ist ohnehin schon reine Fracht, also passen beide
+  // Pfade jetzt zueinander.
+  const previewFreightKg =
+    preview && preview.freight_kg > 0 ? preview.freight_kg : 0;
+  const cargoKg = previewFreightKg > 0 ? previewFreightKg : faresCargoKg;
 
   const aircraftType = flight.simbrief?.subfleet?.type_;
   const aircraftName = flight.simbrief?.subfleet?.name;

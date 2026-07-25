@@ -124,7 +124,11 @@ export interface SimBriefOfp {
   /** v0.7.12: Pax + Cargo aus dem SimBrief-XML — damit die Bid-Card auch
    *  ohne phpVMS-Bid-Pointer-Subfleet-Fares die Pax/Cargo-Chips zeigt. */
   pax_count?: number;
+  /** Gepaeck + Fracht zusammen (SimBrief `<weights><cargo>`) — NICHT als
+   *  "Cargo" anzeigen, dafuer `freight_kg` nehmen. */
   cargo_kg?: number;
+  /** Reine Fracht ohne Pax-Gepaeck. */
+  freight_kg?: number;
 }
 
 export interface Flight {
