@@ -100,14 +100,28 @@ impl HoppieHttp {
             .form(&pairs)
             .send()
             .await
-            .map_err(|e| UiError::new("hoppie_network", e.to_string()))?;
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| UiError::new("hoppie_network", e.to_string()))?;
+            .map_err(redact_transport_error)?;
+        let body = resp.text().await.map_err(redact_transport_error)?;
         hoppie_protocol::wire::parse_response(&body)
             .map_err(|e| UiError::new("hoppie_protocol", e.to_string()))
     }
+}
+
+/// Turn a transport failure into something safe to show a pilot.
+///
+/// `reqwest`'s `Display` appends the request URL, and ours carries
+/// `?logon=<the pilot's secret>`. That string was ending up in a UI
+/// tooltip. The real cause still reaches the log, where it belongs.
+fn redact_transport_error(e: reqwest::Error) -> UiError {
+    tracing::warn!(error = %e, "hoppie: transport error");
+    let kind = if e.is_timeout() {
+        "Zeitüberschreitung"
+    } else if e.is_connect() {
+        "Keine Verbindung zum Hoppie-Netz"
+    } else {
+        "Netzwerkfehler"
+    };
+    UiError::new("hoppie_network", kind)
 }
 
 /// Result of a logon-code check.
@@ -375,25 +389,38 @@ pub async fn hoppie_ping_station(
             "Keine Station angegeben.",
         ));
     }
-    let guard = state.hoppie.lock().await;
-    let handle = guard.as_ref().ok_or_else(|| {
-        UiError::new(
-            "hoppie_not_connected",
-            "Nicht mit Hoppie ACARS verbunden — zuerst verbinden.",
-        )
-    })?;
+    // Take what we need and DROP the lock before the round trip. Holding
+    // it across a request that can run into the 15s timeout would stall
+    // every other command on the same mutex — including the status poll
+    // and a pilot pressing WILCO on a live clearance.
+    let (http, from_callsign) = {
+        let guard = state.hoppie.lock().await;
+        let handle = guard.as_ref().ok_or_else(|| {
+            UiError::new(
+                "hoppie_not_connected",
+                "Nicht mit Hoppie ACARS verbunden — zuerst verbinden.",
+            )
+        })?;
+        (Arc::clone(&handle.http), handle.from_callsign.clone())
+    };
     let logon = resolve_logon_code()?;
 
     let req = hoppie_protocol::wire::HoppieRequest {
         logon,
-        from: handle.from_callsign.clone(),
-        to: station.clone(),
+        from: from_callsign,
+        // A ping is addressed to the SERVER, not to the station being
+        // asked about. The docs: the `to` field is "ignored for certain
+        // messages that are essentially sent to the server ... but you
+        // still need to provide something. Such as SERVER." Putting the
+        // station here risks the server rejecting an unknown callsign,
+        // which would surface as "couldn't check" for every typo.
+        to: settings::DEFAULT_STATION_ID.to_string(),
         kind: hoppie_protocol::wire::PacketKind::Ping,
         // The payload names who we're asking about; the reply lists
         // whichever of them are online.
         packet: Some(station.clone()),
     };
-    match handle.http.send(&req).await {
+    match http.send(&req).await {
         Ok(hoppie_protocol::wire::HoppieResponseLine::OkWithPayload(body)) => {
             let online = hoppie_protocol::wire::parse_ping_stations(&body)
                 .iter()
@@ -421,31 +448,6 @@ pub async fn hoppie_ping_station(
             reason: Some(e.message),
         }),
     }
-}
-
-/// Test a logon code against the real Hoppie network via a single
-/// `ping` (see the module docs) — side-effect-free, safe to call
-/// repeatedly. Does NOT read/write the stored code; the caller decides
-/// whether to persist it (typically only after a successful verify).
-#[tauri::command]
-pub async fn hoppie_verify_logon_code(
-    code: String,
-    callsign: String,
-) -> Result<VerifyOutcome, UiError> {
-    let trimmed = code.trim();
-    if trimmed.is_empty() {
-        return Ok(VerifyOutcome {
-            valid: false,
-            reason: Some("Logon-Code ist leer.".to_string()),
-        });
-    }
-    let http = HoppieHttp::new()?;
-    let from = if callsign.trim().is_empty() {
-        "TEST".to_string()
-    } else {
-        callsign.trim().to_uppercase()
-    };
-    Ok(verify_logon(&http, trimmed, &from).await)
 }
 
 /// Start the poller. Idempotent — returns the current status without
@@ -484,16 +486,7 @@ pub async fn hoppie_connect(
     // Explicit override wins; otherwise fall back to the active flight's
     // callsign (same direct-mutex-read pattern every other subsystem
     // uses for `ActiveFlight` — no pub/sub, see `flight_context`).
-    let from = match settings
-        .callsign_override
-        .clone()
-        .filter(|c| !c.trim().is_empty())
-        .map(|c| c.trim().to_uppercase())
-        // Uppercase here too: the phpVMS flight plan supplies this raw,
-        // and vSMR matches acknowledgements case-SENSITIVELY, so a
-        // lowercase `from=` is invisible to the controller.
-        .or_else(|| flight_context(&app).callsign.map(|c| c.trim().to_uppercase()))
-    {
+    let from = match resolve_callsign(&app) {
         Some(cs) => cs,
         None => {
             return Err(UiError::new(
@@ -700,6 +693,25 @@ fn flight_context(app: &AppHandle) -> FlightContext {
 #[tauri::command]
 pub fn hoppie_get_flight_context(app: AppHandle) -> FlightContext {
     flight_context(&app)
+}
+
+/// The callsign every request goes out under: an explicit override
+/// wins, otherwise the active flight's. Shared by connect and the
+/// settings panel's verify button so they can never disagree — the
+/// button used to receive the callsign FROM the UI, which passed an
+/// empty string whenever no override was set and made "Test code" fail
+/// with "no callsign" while a perfectly good one sat in the flight plan.
+fn resolve_callsign(app: &AppHandle) -> Option<String> {
+    settings::read_settings(app)
+        .callsign_override
+        .filter(|c| !c.trim().is_empty())
+        .map(|c| c.trim().to_uppercase())
+        .or_else(|| {
+            flight_context(app)
+                .callsign
+                .map(|c| c.trim().to_uppercase())
+                .filter(|c| !c.is_empty())
+        })
 }
 
 /// Load the stored logon code.

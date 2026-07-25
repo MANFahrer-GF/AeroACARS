@@ -1,13 +1,21 @@
-// v1.2.3 (#Hoppie-PDC-CPDLC) — is anybody actually there?
+// v1.2.3 (#Hoppie-PDC-CPDLC) — is anything registered under this callsign?
 //
 // The protocol gives no delivery or read receipt: `ok` on a send only
-// means the message landed in the addressee's mailbox. Whether a
-// controller is even logged on is the one thing we can establish, via a
-// side-effect-free `ping`.
+// means the message landed in the addressee's mailbox. What we CAN ask
+// is whether a callsign is currently registered, via a `ping` the docs
+// describe as side-effect-free ("does not register the station that is
+// pinging as online", and no callsign lock).
 //
-// This matters because the failure is otherwise completely silent: a
-// clearance request to an airport with no controller online just sits
-// there, and the pilot waits for an answer that was never coming.
+// Deliberately checked on ENTRY only, not on a timer — the same design
+// FlyByWire uses (AcarsConnector.isStationAvailable, called from the
+// logon and departure-request pages). Hoppie is volunteer-run and the
+// docs ask repeatedly not to hammer it; a periodic badge refresh would
+// have roughly doubled our request count for the whole flight.
+//
+// Note what this can and cannot tell you: a controller's datalink
+// callsign is free-text on their side (vSMR defaults it to "EGKK") and
+// is advertised in the ATIS, so "nothing registered under EDDF" does NOT
+// mean nobody is working EDDF. The wording reflects that.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "../lib/ipc";
@@ -15,58 +23,60 @@ import { invoke } from "../lib/ipc";
 export interface StationStatus {
   station: string;
   online: boolean;
-  /** Set when the CHECK failed, not when the station is merely absent.
-   *  "Couldn't ask" must never be shown as "offline". */
+  /** Set when the CHECK failed, not when nothing was registered.
+   *  "Couldn't ask" must never be shown as "nothing there". */
   reason: string | null;
 }
 
-/** Re-check this often while the panel is open. Generous: `ping` is
- *  free of side effects but still a request to a volunteer-run service,
- *  and controllers don't come and go by the second. */
-const RECHECK_MS = 60_000;
-
 /** Wait for typing to settle before asking about a half-typed ICAO. */
-const DEBOUNCE_MS = 600;
+const DEBOUNCE_MS = 700;
 
 /**
- * Track whether `station` is logged on. Returns `null` while unknown —
- * before the first check, or when there is nothing to check.
+ * Look up whether `station` is registered, once the pilot stops typing.
+ * Returns `null` while unknown — before the first check, or when there
+ * is nothing to check.
  */
 export function useStationOnline(station: string, active: boolean): StationStatus | null {
   const [status, setStatus] = useState<StationStatus | null>(null);
-  const wanted = useRef(station);
-  wanted.current = station;
+  const trimmed = station.trim().toUpperCase();
 
-  const check = useCallback(() => {
-    const target = wanted.current.trim();
-    if (!target) {
-      setStatus(null);
-      return;
-    }
+  // Guards a reply that arrives after the pilot moved on, or after the
+  // panel closed. Without it a late failure could wipe the badge of a
+  // station it never described.
+  const generation = useRef(0);
+
+  const check = useCallback((target: string, mine: number) => {
     void invoke<StationStatus>("hoppie_ping_station", { station: target })
       .then((s) => {
-        // A reply for a station the pilot has since typed away from is
-        // stale — dropping it avoids showing the wrong one's state.
-        if (s.station.toUpperCase() === wanted.current.trim().toUpperCase()) {
-          setStatus(s);
-        }
+        if (generation.current === mine) setStatus(s);
       })
-      .catch(() => setStatus(null));
+      .catch(() => {
+        if (generation.current === mine) setStatus(null);
+      });
   }, []);
 
   useEffect(() => {
-    if (!active || station.trim() === "") {
+    generation.current += 1;
+    const mine = generation.current;
+
+    // "SERVER" is the docs' placeholder addressee and the settings
+    // default — it is not a facility, so checking it would announce
+    // "nothing registered as SERVER" to a pilot who has simply not
+    // picked a centre yet.
+    if (!active || trimmed === "" || trimmed === "SERVER") {
       setStatus(null);
       return;
     }
     setStatus(null);
-    const debounce = window.setTimeout(check, DEBOUNCE_MS);
-    const interval = window.setInterval(check, RECHECK_MS);
+    const id = window.setTimeout(() => check(trimmed, mine), DEBOUNCE_MS);
     return () => {
-      window.clearTimeout(debounce);
-      window.clearInterval(interval);
+      window.clearTimeout(id);
+      // Bumping the generation invalidates any in-flight reply, which is
+      // how an unmount mid-request is handled — `invoke` itself can't be
+      // cancelled.
+      generation.current += 1;
     };
-  }, [station, active, check]);
+  }, [trimmed, active, check]);
 
   return status;
 }

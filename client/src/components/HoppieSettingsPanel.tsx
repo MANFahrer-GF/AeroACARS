@@ -18,17 +18,11 @@ export interface HoppieSettings {
   notify_sound: boolean;
 }
 
-interface VerifyOutcome {
-  valid: boolean;
-  reason: string | null;
-}
-
 export function HoppieSettingsPanel() {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<HoppieSettings | null>(null);
   const [hasCode, setHasCode] = useState(false);
   const [codeInput, setCodeInput] = useState("");
-  const [verifyResult, setVerifyResult] = useState<VerifyOutcome | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,23 +54,7 @@ export function HoppieSettingsPanel() {
     }
   };
 
-  const verifyCode = async () => {
-    if (busy || codeInput.trim() === "") return;
-    setBusy(true);
-    setError(null);
-    setVerifyResult(null);
-    try {
-      const result = await invoke<VerifyOutcome>("hoppie_verify_logon_code", {
-        code: codeInput,
-        callsign: settings.callsign_override ?? "",
-      });
-      setVerifyResult(result);
-    } catch (e) {
-      setError(formatIpcError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+
 
   const saveCode = async () => {
     if (busy || codeInput.trim() === "") return;
@@ -86,7 +64,6 @@ export function HoppieSettingsPanel() {
       await invoke("hoppie_set_logon_code", { code: codeInput });
       setHasCode(true);
       setCodeInput("");
-      setVerifyResult(null);
     } catch (e) {
       setError(formatIpcError(e));
     } finally {
@@ -141,19 +118,10 @@ export function HoppieSettingsPanel() {
                 value={codeInput}
                 onChange={(e) => {
                   setCodeInput(e.target.value);
-                  setVerifyResult(null);
                 }}
                 placeholder={t("hoppie_settings.logon_code_placeholder")}
                 disabled={busy}
               />
-              <button
-                type="button"
-                className="button"
-                disabled={busy || codeInput.trim() === ""}
-                onClick={() => void verifyCode()}
-              >
-                {t("hoppie_settings.verify_button")}
-              </button>
               <button
                 type="button"
                 className="button button--primary"
@@ -168,13 +136,6 @@ export function HoppieSettingsPanel() {
                 </button>
               )}
             </div>
-            {verifyResult && (
-              <p className={verifyResult.valid ? "cpdlc-panel__success" : "cpdlc-panel__error"}>
-                {verifyResult.valid
-                  ? t("hoppie_settings.verify_valid")
-                  : t("hoppie_settings.verify_invalid", { reason: verifyResult.reason ?? "?" })}
-              </p>
-            )}
           </div>
 
           <label className="settings__checkbox">

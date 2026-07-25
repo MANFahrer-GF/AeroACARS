@@ -181,11 +181,27 @@ pub fn parse_poll_envelopes(content: &str) -> Vec<InboundEnvelope> {
     out
 }
 
-/// Parse a `ping` success payload — a space-separated list of station
-/// callsigns (empty when the ping carried no `ALL-CALLSIGNS`/callsign
-/// payload, which is the normal "just testing the link" case).
+/// Parse a `ping` success payload — the callsigns from the query that
+/// are actually online. Empty when the ping carried no callsign payload,
+/// which is the normal "just testing the link" case.
+///
+/// Braces are stripped because the framing is NOT documented: the docs
+/// describe the semantics ("returns a packet with the call signs of the
+/// list that are actually online") but show no example reply, and
+/// Hoppie's other payload-carrying responses wrap content in `{...}`.
+/// Getting this wrong is not a cosmetic bug — an unstripped `{EDDF}`
+/// never equals `EDDF`, so EVERY station would report as offline,
+/// permanently and silently. Accepting both shapes costs nothing and
+/// removes the guess. (FlyByWire sidesteps the same uncertainty with a
+/// raw substring test, which instead makes "EDD" match an online
+/// "EDDF" — a false positive we'd rather not have either.)
 pub fn parse_ping_stations(content: &str) -> Vec<String> {
-    content.split_whitespace().map(str::to_string).collect()
+    content
+        .split_whitespace()
+        .map(|token| token.trim_matches(|c| c == '{' || c == '}'))
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg(test)]
@@ -303,6 +319,30 @@ mod tests {
         let envs = parse_poll_envelopes("{EDDF progress {OUT 1200}}{EDDF telex {hello}}");
         assert_eq!(envs.len(), 1);
         assert_eq!(envs[0].kind, PacketKind::Telex);
+    }
+
+    #[test]
+    fn ping_stations_survive_either_framing() {
+        // The reply framing is undocumented. Both shapes must yield the
+        // same list, because guessing wrong means reporting every
+        // station offline forever.
+        for body in ["EDDF EDGG", "{EDDF EDGG}", "{EDDF} {EDGG}"] {
+            assert_eq!(
+                parse_ping_stations(body),
+                vec!["EDDF".to_string(), "EDGG".to_string()],
+                "framing {body:?} must parse the same"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_ping_payload_yields_no_stations() {
+        for body in ["", "   ", "{}", "{ }"] {
+            assert!(
+                parse_ping_stations(body).is_empty(),
+                "{body:?} must mean 'nobody online', not a phantom station"
+            );
+        }
     }
 
     #[test]

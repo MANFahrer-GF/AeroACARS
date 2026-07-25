@@ -1867,8 +1867,8 @@
     "callsign_mismatch": "No callsign entered — {{flight}} from the flight plan would be used. ATC looks you up by your NETWORK callsign; if it differs, your messages never reach the controller.",
     "logon_no_answer": "No answer from {{station}}. Not every station supports CPDLC logon — a delivery desk usually only does PDC. Try the responsible centre, or use PDC.",
     "expand_hint": "Click to show in full",
-    "station_online": "{{station}} is online",
-    "station_offline": "{{station}} is not online — a request would go nowhere",
+    "station_online": "{{station}} is reachable",
+    "station_offline": "Nothing registered as {{station}} — the controller may use a different datalink callsign (check the ATIS)",
     "station_unknown": "Could not check {{station}}"
   },
   "hoppie_settings": {
@@ -1881,11 +1881,8 @@
     "logon_code_label": "Logon code",
     "logon_code_stored": "A logon code is stored.",
     "logon_code_placeholder": "your hoppie.nl logon code",
-    "verify_button": "Test code",
     "save_button": "Save",
     "clear_button": "Remove",
-    "verify_valid": "Code is valid.",
-    "verify_invalid": "Invalid: {{reason}}",
     "notify_os_label": "System notification for new messages",
     "notify_os_hint": "Shows a toast even when AeroACARS isn't focused.",
     "notify_sound_label": "Play a sound for new messages",

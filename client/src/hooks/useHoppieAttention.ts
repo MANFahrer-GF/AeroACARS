@@ -37,6 +37,11 @@ interface ThreadEntry {
 const POLL_MS = 5000;
 
 export function useHoppieAttention(active: boolean): {
+  /** Whether the pilot has switched the feature on at all. The tab is
+   *  hidden entirely while this is false — opt-in should mean the app
+   *  looks as if the feature isn't there, not that it shows a dead tab
+   *  pointing at settings. */
+  enabled: boolean;
   pendingCount: number;
   unseenCount: number;
   markSeen: () => void;
@@ -117,5 +122,5 @@ export function useHoppieAttention(active: boolean): {
     return () => window.clearInterval(id);
   }, [active, enabled, notifySound]);
 
-  return { pendingCount, unseenCount, markSeen };
+  return { enabled, pendingCount, unseenCount, markSeen };
 }

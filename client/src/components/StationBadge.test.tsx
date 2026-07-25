@@ -30,12 +30,16 @@ describe("StationBadge", () => {
 
   it("reports an online station", () => {
     render(<StationBadge status={{ station: "EDDF", online: true, reason: null }} />);
-    expect(screen.getByText(/EDDF ist online/)).toBeInTheDocument();
+    expect(screen.getByText(/EDDF ist erreichbar/)).toBeInTheDocument();
   });
 
-  it("warns that a request would go nowhere", () => {
+  // The wording must not overstate: a controller's datalink callsign is
+  // free-text on their side and advertised in the ATIS, so "nothing under
+  // EDDF" is not the same as "nobody is working EDDF".
+  it("says nothing is registered, not that nobody is there", () => {
     render(<StationBadge status={{ station: "EDDF", online: false, reason: null }} />);
-    expect(screen.getByText(/EDDF ist nicht online/)).toBeInTheDocument();
+    expect(screen.getByText(/Unter EDDF ist nichts registriert/)).toBeInTheDocument();
+    expect(screen.getByText(/ATIS/)).toBeInTheDocument();
   });
 
   it("says 'could not check' instead of claiming offline when the check failed", () => {
@@ -44,7 +48,7 @@ describe("StationBadge", () => {
     );
     expect(screen.getByText(/konnte nicht geprüft werden/)).toBeInTheDocument();
     expect(
-      screen.queryByText(/ist nicht online/),
+      screen.queryByText(/ist nichts registriert/),
       "a failed check must not be reported as an empty position",
     ).not.toBeInTheDocument();
   });

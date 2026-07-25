@@ -470,10 +470,18 @@ function App() {
   // Tab-Badge nach oben.
   const unreadNews = useUnreadNewsCount(status.kind === "loggedIn");
   const {
+    enabled: cpdlcEnabled,
     pendingCount: cpdlcPendingCount,
     unseenCount: cpdlcUnseenCount,
     markSeen: markCpdlcSeen,
   } = useHoppieAttention(status.kind === "loggedIn");
+
+  // Opt-in should look like the feature isn't there — not like a dead tab
+  // that only points back at settings. If it gets switched off while the
+  // pilot is standing on it, move them somewhere real.
+  useEffect(() => {
+    if (!cpdlcEnabled && tab === "cpdlc") setTab("cockpit");
+  }, [cpdlcEnabled, tab]);
 
   const phpvmsConnected = status.kind === "loggedIn";
   const simConnected = simState === "connected";
@@ -503,7 +511,7 @@ function App() {
       {/* v1.3.0 (#Hoppie-PDC-CPDLC): visible on ANY tab, not just PDC/CPDLC —
           a pilot on Cockpit still sees an uplink is waiting for a reply. */}
       <CpdlcMessageBanner
-        count={cpdlcUnseenCount}
+        count={cpdlcEnabled ? cpdlcUnseenCount : 0}
         onOpenTab={() => {
           markCpdlcSeen();
           setTab("cpdlc");
@@ -585,6 +593,7 @@ function App() {
           >
             {t("tabs.map")}
           </button>
+          {cpdlcEnabled && (
           <button
             type="button"
             role="tab"
@@ -602,6 +611,7 @@ function App() {
               </span>
             )}
           </button>
+          )}
           <button
             type="button"
             role="tab"
