@@ -4015,6 +4015,12 @@ struct FlightStats {
     premium_master_caution: DebouncedLogState<bool>,
     /// MASTER WARNING — gleiche Behandlung wie MASTER CAUTION.
     premium_master_warning: DebouncedLogState<bool>,
+    /// Seit wann `snap.stall_warning` ununterbrochen `true` ist — Debounce
+    /// nur fuer den MQTT-Live-Payload (STALL_WARNING_MQTT_DEBOUNCE_SECS).
+    /// Der Accident-Classifier (approach_stall_warning_count, via
+    /// step_flight/Approach-Buffer befuellt) liest weiterhin den rohen
+    /// SimVar-Wert und ist davon unberuehrt.
+    stall_mqtt_true_since: Option<DateTime<Utc>>,
     /// Umkehrschub — einmal pro Landung; re-arm sobald airborne
     /// (Touch-and-Go bekommt so einen eigenen Eintrag).
     last_seen_reverser: Option<bool>,
@@ -6605,6 +6611,15 @@ const REVERSER_SPOILER_MIN_GS_KT: f32 = 40.0;
 /// (einmal-pro-Approach-Latch, ein neuer Sinkflug unter den G/S soll
 /// wieder loggen dürfen).
 const BELOW_GS_REARM_SECS: i64 = 30;
+/// v0.X — Diagnostics-Fund 2026-07-26: MSFS' natives STALL-WARNING-
+/// SimVar ist bei Payware mit eigenem Flugmodell (Fenix/FSReborn/
+/// ToLiss/PMDG) bekannt unzuverlaessig und kann bei ganz normaler
+/// Reise-/Anfluggeschwindigkeit kurz auf `true` flackern (Legacy-
+/// Flugmodell-Artefakt, kein echter Stall des tatsaechlich simulierten
+/// Flugzeugs — GSG-Live-Diagnostics zeigte dadurch 7,5% aller Fluege
+/// faelschlich als "Stall"). Nur ins Live-Map/Diagnostics-Payload
+/// veroeffentlichen wenn das SimVar mind. diese Zeit am Stueck true war.
+const STALL_WARNING_MQTT_DEBOUNCE_SECS: i64 = 3;
 
 /// v0.16.10: Generischer Latch+Debounce-Tracker für Premium-Activity-
 /// Log-Zeilen. Gleiches Idiom wie der AP-Master-Debounce
@@ -22268,6 +22283,24 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // - Streamer-Tick blockiert NIE auf phpVMS (strukturell garantiert)
             // - Live-Map-Track läuft kontinuierlich bis zum Gate
             // - Sample-Cadence im Approach wird NICHT mehr durch HTTP-Latenz gestreckt
+
+            // Diagnostics-Fund 2026-07-26: STALL-WARNING fuer den
+            // Live-Payload daempfen (siehe STALL_WARNING_MQTT_DEBOUNCE_SECS-
+            // Doc-Kommentar). Laeuft NACH step_flight/dem Approach-Buffer-
+            // Push weiter oben in diesem Tick — Accident-Classifier hat
+            // den rohen Wert also laengst gelesen, bevor wir ihn hier nur
+            // fuer die Veroeffentlichung ueberschreiben.
+            {
+                let mut stats = flight.stats.lock().expect("flight stats");
+                let now = Utc::now();
+                if snap.stall_warning {
+                    let since = *stats.stall_mqtt_true_since.get_or_insert(now);
+                    snap.stall_warning =
+                        (now - since).num_seconds() >= STALL_WARNING_MQTT_DEBOUNCE_SECS;
+                } else {
+                    stats.stall_mqtt_true_since = None;
+                }
+            }
 
             // v0.5.11: MQTT live-tracking publish (best-effort,
             // independent of phpVMS post). Publishing happens on a
