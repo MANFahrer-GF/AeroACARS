@@ -136,6 +136,13 @@ function fmtWind(
   return `${dir} / ${speed.toFixed(0)}${gustPart} kt`;
 }
 
+/** 1 hPa = 0.0295299830714 inHg. US-Piloten lesen QNH in inHg. */
+function fmtQnh(hpa: number | null): string {
+  if (hpa == null) return "—";
+  const inHg = hpa * 0.0295299830714;
+  return `${hpa.toFixed(0)} hPa / ${inHg.toFixed(2)} inHg`;
+}
+
 /**
  * Kompakte Inline-Zeile pro Airport (v0.3.0):
  *   ABFLUG  EDDW  300°/5 kt  9999  18°/11°  1013 hPa  [▸ METAR]
@@ -204,7 +211,7 @@ function MetarRow({
       </span>
       <span className="weather-row__sep" aria-hidden="true">·</span>
       <span className="weather-row__cell" title="QNH / Druck">
-        {m.qnh_hpa != null ? `${m.qnh_hpa.toFixed(0)} hPa` : "—"}
+        {fmtQnh(m.qnh_hpa)}
       </span>
       {wx && (
         <span
