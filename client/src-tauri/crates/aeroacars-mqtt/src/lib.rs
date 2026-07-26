@@ -165,6 +165,19 @@ struct PositionPayload {
     spoilers_armed: Option<bool>,
     engines_running: u8,
 
+    // ---- Lights ----
+    // Fund 2026-07-26: SimSnapshot liest diese SimVars/Datarefs seit
+    // langem korrekt (sim-msfs + sim-xplane befuellen sie), sie wurden
+    // aber nie in dieses Payload aufgenommen — der Recorder-seitige
+    // Procedure-Score (Beacon/Strobe/Landing-Light) hatte dadurch fleet-
+    // weit NIE einen einzigen Wert (0 von 940 Sessions).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    light_beacon: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    light_strobe: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    light_landing: Option<bool>,
+
     // ---- Fuel ----
     fuel_total_kg: f32,
     fuel_used_kg: f32,
@@ -1175,6 +1188,11 @@ impl Handle {
             spoilers_position: snap.spoilers_handle_position,
             spoilers_armed: snap.spoilers_armed,
             engines_running: snap.engines_running,
+
+            // Lights
+            light_beacon: snap.light_beacon,
+            light_strobe: snap.light_strobe,
+            light_landing: snap.light_landing,
 
             // Fuel
             fuel_total_kg: snap.fuel_total_kg,
