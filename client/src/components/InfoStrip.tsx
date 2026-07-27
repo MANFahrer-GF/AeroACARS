@@ -160,11 +160,17 @@ function fmtWind(snap: SimSnapshot | null): string {
     .padStart(2, "0")}`;
 }
 
+/** 1 hPa = 0.0295299830714 inHg. US-Piloten lesen QNH in inHg. */
 function fmtQnh(snap: SimSnapshot | null, locale: string): string {
   if (!snap || snap.qnh_hpa === null) return "—";
-  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(
-    snap.qnh_hpa,
-  )} hPa`;
+  const hpaLabel = new Intl.NumberFormat(locale, {
+    maximumFractionDigits: 0,
+  }).format(snap.qnh_hpa);
+  const inHgLabel = new Intl.NumberFormat(locale, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(snap.qnh_hpa * 0.0295299830714);
+  return `${hpaLabel} hPa / ${inHgLabel} inHg`;
 }
 
 function fmtTemp(c: number | null): string {
