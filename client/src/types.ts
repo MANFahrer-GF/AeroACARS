@@ -339,6 +339,15 @@ export interface ActiveFlightInfo {
    *  when no matching bid / aircraft details could be looked up. */
   planned_registration: string;
   flight_number: string;
+  /** `Bid.flight.callsign` (e.g. "7ME"), when phpVMS fills it. Prefer this
+   *  over `airline_icao + flight_number` when building a display callsign —
+   *  same precedence as phpVMS's own `Flight::atc()` accessor. Personal/
+   *  Free-Flight bookings often carry `flight_number: 0` (no fixable
+   *  formula value, unlike e.g. block times) and put the real identifier
+   *  in the callsign instead — ignoring it renders "CFG0" instead of
+   *  "CFG7ME" (pilot report Ralf T., GSG0016, 2026-07-28). Absent on
+   *  ordinary scheduled flights. */
+  callsign?: string;
   dpt_airport: string;
   arr_airport: string;
   distance_nm: number;

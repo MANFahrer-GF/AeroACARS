@@ -3,6 +3,7 @@ import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import type { ActiveFlightInfo, FlightEndOutcome, SimSnapshot } from "../types";
 import { formatRefreshError } from "../lib/refreshErrorFormatter";
+import { resolveFlightIdent } from "../lib/callsign";
 import { useConfirm } from "./ConfirmDialog";
 import { InfoStrip } from "./InfoStrip";
 import { LiveTapes } from "./LiveTapes";
@@ -140,8 +141,8 @@ export function ActiveFlightPanel({
     return {
       kind: "filed",
       callsign: info!.airline_icao
-        ? `${info!.airline_icao} ${info!.flight_number}`
-        : info!.flight_number,
+        ? `${info!.airline_icao} ${resolveFlightIdent(info!.flight_number, info!.callsign)}`
+        : resolveFlightIdent(info!.flight_number, info!.callsign),
       dpt: info!.dpt_airport,
       arr: info!.arr_airport,
     };
@@ -534,8 +535,8 @@ export function ActiveFlightPanel({
           <div className="active-flight__heading">
             <h2 className="active-flight__callsign">
               {info.airline_icao
-                ? `${info.airline_icao} ${info.flight_number}`
-                : info.flight_number}
+                ? `${info.airline_icao} ${resolveFlightIdent(info.flight_number, info.callsign)}`
+                : resolveFlightIdent(info.flight_number, info.callsign)}
             </h2>
             {/* #phase-v2 Cutover: Haupt-Badge = v2-Phase; bei einer
                 Höhen-Restriktion zeigt es „Level" (s. showLevel oben). Die

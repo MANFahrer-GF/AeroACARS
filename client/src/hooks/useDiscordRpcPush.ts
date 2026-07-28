@@ -18,6 +18,7 @@
 import { useEffect, useRef } from "react";
 import { invoke } from "../lib/ipc";
 import type { ActiveFlightInfo, SimStatus } from "../types";
+import { resolveFlightIdent } from "../lib/callsign";
 
 interface Args {
   activeFlight: ActiveFlightInfo | null;
@@ -45,7 +46,7 @@ export function useDiscordRpcPush({ activeFlight, simStatus, profileUrl }: Args)
       return;
     }
 
-    const callsign = `${activeFlight.airline_icao}${activeFlight.flight_number}`;
+    const callsign = `${activeFlight.airline_icao}${resolveFlightIdent(activeFlight.flight_number, activeFlight.callsign)}`;
     const altitudeFt = simStatus?.snapshot?.altitude_msl_ft
       ? Math.round(simStatus.snapshot.altitude_msl_ft)
       : null;

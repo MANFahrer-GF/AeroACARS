@@ -4347,6 +4347,18 @@ pub struct ActiveFlightInfo {
     airline_icao: String,
     planned_registration: String,
     flight_number: String,
+    /// `Bid.flight.callsign` (z.B. "7ME"), falls phpVMS es fuellt — reuses
+    /// `ActiveFlight::bid_callsign` (bislang nur fuer den OFP-Match genutzt,
+    /// siehe dessen Doc-Kommentar). UI-Komponenten sollen dies dem
+    /// `airline_icao + flight_number`-Callsign VORZIEHEN, exakt wie phpVMS'
+    /// eigener `Flight::atc()`-Accessor (`app/Models/Flight.php`): Freiflug-
+    /// Bookings (DisposableSpecial) speichern oft `flight_number=0` (kein
+    /// FIXBARER Formelwert — anders als z.B. Block-Zeiten) und tragen den
+    /// echten Identifier stattdessen im Callsign. `${icao}${flight_number}`
+    /// ohne diesen Fallback zeigte dann z.B. "CFG0" statt "CFG7ME" (Pilot-
+    /// Befund Ralf T., GSG0016, 2026-07-28).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    callsign: Option<String>,
     dpt_airport: String,
     arr_airport: String,
     distance_nm: f64,
@@ -9583,6 +9595,7 @@ fn flight_info(flight: &ActiveFlight, resume_position_suspect: bool) -> ActiveFl
         airline_icao: flight.airline_icao.clone(),
         planned_registration: flight.planned_registration.clone(),
         flight_number: flight.flight_number.clone(),
+        callsign: flight.bid_callsign.clone(),
         dpt_airport: flight.dpt_airport.clone(),
         arr_airport: flight.arr_airport.clone(),
         distance_nm: stats.distance_nm,
@@ -13875,6 +13888,19 @@ fn merge_touchdown_profile(
     profile
 }
 
+/// Same precedence as the TS `resolveFlightIdent()` (`src/lib/callsign.ts`)
+/// and phpVMS's own `Flight::atc()` accessor: prefer a non-empty, trimmed
+/// `callsign` over the raw `flight_number`. Extracted so it's directly unit-
+/// testable without needing a full `FlightStats` fixture (see
+/// `build_landing_record`, the only current caller).
+fn resolve_flight_ident(flight_number: &str, callsign: Option<&str>) -> String {
+    callsign
+        .map(str::trim)
+        .filter(|cs| !cs.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| flight_number.to_string())
+}
+
 fn build_landing_record<F>(
     flight: &ActiveFlight,
     stats: &FlightStats,
@@ -14067,7 +14093,10 @@ where
         pirep_id: flight.pirep_id.clone(),
         touchdown_at,
         recorded_at: Utc::now(),
-        flight_number: flight.flight_number.clone(),
+        // Prefer `bid_callsign` over the raw `flight_number` — see the
+        // `callsign` doc-comment on `ActiveFlightInfo` for the full story
+        // (Personal/Free-Flight bookings with `flight_number: 0`).
+        flight_number: resolve_flight_ident(&flight.flight_number, flight.bid_callsign.as_deref()),
         airline_icao: flight.airline_icao.clone(),
         dpt_airport: flight.dpt_airport.clone(),
         arr_airport: flight.arr_airport.clone(),
@@ -37930,6 +37959,60 @@ mod touchdown_metadata_stamp_tests {
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
             navdata: Mutex::new(NavdataCache::default()),
         }
+    }
+
+    // ---- flight_info() callsign exposure (pilot report Ralf T., GSG0016,
+    // 2026-07-28: Personal/Free-Flight bookings with flight_number=0
+    // rendered "CFG0" because the UI never saw the real callsign) ----
+
+    #[test]
+    fn flight_info_exposes_bid_callsign() {
+        let mut flight = flight_fixture("GCLP");
+        flight.flight_number = "0".into();
+        flight.bid_callsign = Some("7ME".into());
+        let info = flight_info(&flight, false);
+        assert_eq!(info.callsign, Some("7ME".to_string()));
+        // flight_number itself is untouched — callsign is an ADDITIONAL
+        // field, the UI decides the precedence (resolveFlightIdent()).
+        assert_eq!(info.flight_number, "0");
+    }
+
+    #[test]
+    fn flight_info_callsign_none_for_ordinary_scheduled_flights() {
+        let flight = flight_fixture("GCLP"); // bid_callsign: None (fixture default)
+        let info = flight_info(&flight, false);
+        assert_eq!(info.callsign, None);
+    }
+
+    // ---- resolve_flight_ident() (used by build_landing_record — mirrors
+    // the TS resolveFlightIdent() in src/lib/callsign.ts / callsign.test.ts) ----
+
+    #[test]
+    fn resolve_flight_ident_prefers_non_empty_callsign() {
+        assert_eq!(resolve_flight_ident("0", Some("7ME")), "7ME");
+    }
+
+    #[test]
+    fn resolve_flight_ident_falls_back_when_callsign_none() {
+        assert_eq!(resolve_flight_ident("1434", None), "1434");
+    }
+
+    #[test]
+    fn resolve_flight_ident_falls_back_when_callsign_empty() {
+        assert_eq!(resolve_flight_ident("1434", Some("")), "1434");
+    }
+
+    #[test]
+    fn resolve_flight_ident_falls_back_when_callsign_whitespace_only() {
+        assert_eq!(resolve_flight_ident("1434", Some("   ")), "1434");
+    }
+
+    #[test]
+    fn resolve_flight_ident_trims_padded_callsign() {
+        // Regression: an earlier inline version of this filter kept the
+        // UNTRIMMED string on success, diverging from the TS helper's
+        // `callsign?.trim() || flightNumber` for padded input.
+        assert_eq!(resolve_flight_ident("0", Some("  7ME  ")), "7ME");
     }
 
     // ---- stamp_touchdown_metadata ----

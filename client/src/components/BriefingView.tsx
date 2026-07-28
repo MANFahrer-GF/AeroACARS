@@ -10,6 +10,7 @@ import type {
 } from "../types";
 import { BidsList } from "./BidsList";
 import { PilotHeader } from "./PilotHeader";
+import { resolveFlightIdent } from "../lib/callsign";
 
 interface Props {
   session: LoginResult;
@@ -56,8 +57,8 @@ export function BriefingView({
         <div className="briefing-active-hint">
           {t("briefing.active_flight_hint", {
             callsign: activeFlight.airline_icao
-              ? `${activeFlight.airline_icao} ${activeFlight.flight_number}`
-              : activeFlight.flight_number,
+              ? `${activeFlight.airline_icao} ${resolveFlightIdent(activeFlight.flight_number, activeFlight.callsign)}`
+              : resolveFlightIdent(activeFlight.flight_number, activeFlight.callsign),
           })}
         </div>
       )}
