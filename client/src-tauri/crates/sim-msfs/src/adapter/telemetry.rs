@@ -4248,6 +4248,13 @@ mod tests {
                 FieldKind::String256 => buf.extend_from_slice(&[0u8; 256]),
             }
         }
+        // Synaptic A220: drop the 12 new tail fields (12*8).
+        buf.truncate(buf.len() - 96);
+        let t = Telemetry::from_block(&buf);
+        assert_eq!(t.contrail_fire_eng3, 1278.0); // last Contrail field intact
+        assert_eq!(t.syn_fg_lnav, 0.0); // A220 tail = safe defaults
+        assert_eq!(t.syn_flight_stage, 0.0);
+
         // Drop the whole premium tail after the v0.16.14 FSL group: 14
         // FSLabs PREMIUM fields (v0.16.20) + 8 Contrail FA50 fields (v0.17.x:
         // 4 FMA + 4 Phase-2b) = 22 fields * 8 = 176 bytes. Everything up to
