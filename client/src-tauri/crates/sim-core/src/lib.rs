@@ -1081,8 +1081,12 @@ pub enum AircraftProfile {
     /// nativ (die Inputs-Seite zeigt Standard-H-Events wie
     /// `AXIS_THROTTLE_SET`/`FLAPS_SET`), die `A22X`-LVars sind eine reine
     /// Zusatzschicht für Cockpit-Schalter/-Lampen. Profil erstmals aus der
-    /// Doku gebaut, BEVOR der Flieger lokal installiert war (2026-07-28) —
-    /// noch KEIN Live-Flug zur Verifikation. Gemappte Premium-Quellen:
+    /// Doku gebaut, BEVOR der Flieger lokal installiert war (2026-07-28).
+    /// Erster echter Flug (Thomas K., PIREP VGDmGnMEWmMbkJRP, 2026-07-28)
+    /// deckte einen Detection-Fehler auf (siehe `detect()`) und lief
+    /// deshalb komplett auf `Default` — die Premium-Mappings unten sind
+    /// also WEITERHIN unverifiziert (Detection-Fix kam erst danach).
+    /// Gemappte Premium-Quellen:
     ///   * FG-Modi (FMA-Äquivalent): L:A22X FG LNAV/Heading/Approach
     ///     (lateral), L:A22X FG Altitude/VNAV/Vertical Speed/Flight Path
     ///     Angle/Flight Level (vertikal)
@@ -1258,15 +1262,19 @@ impl AircraftProfile {
         if t.contains("contrail") && t.contains("falcon") {
             return Self::ContrailFa50;
         }
-        // Synaptic A220 (-100/-300). Vendor-Branding "Synaptic" steht
-        // vermutlich in jedem aircraft.cfg-Title (Muster wie FSLabs/iFly
-        // oben) — exakter Titel-String noch nicht verifiziert, der Flieger
-        // ist zum Zeitpunkt dieses Commits noch nicht installiert. BEWUSST
-        // KEIN ICAO-Fallback (BCS1/BCS3): dieselbe Misdetection-Vorsicht
-        // wie beim entfernten A20N-Fallback (QS M4) — bis der echte Title
-        // per Live-Flug bestätigt ist, matcht dieser Zweig konservativ nur
-        // auf den Vendor-Namen.
-        if t.contains("synaptic") {
+        // Synaptic A220 (-100/-300). KORRIGIERT nach dem ersten echten Flug
+        // (Thomas K., PIREP VGDmGnMEWmMbkJRP, EVRA→EDDB, 2026-07-28): die
+        // ursprüngliche Annahme "Vendor-Branding 'Synaptic' steht im Title"
+        // war FALSCH — der reale MSFS-TITLE-SimVar liefert schlicht
+        // "A220-300", kein Vendor-Marker. `ATC MODEL` kam die ganze
+        // Aufzeichnung ueber leer (None) — auch als ICAO-Signal nicht
+        // nutzbar. Match jetzt auf den bestaetigten bare-Titel; "A220-100"
+        // ist die naheliegende Analogie fuer die andere Baureihe, aber noch
+        // nicht separat live bestaetigt. Kein bekannter Kollisionskandidat
+        // (MSFS hat keinen Stock-A220, kein zweiter Addon-Hersteller
+        // aktuell bekannt) — anders als beim entfernten A20N-Fallback
+        // (QS M4), wo der Titel/ICAO tatsaechlich mehrdeutig war.
+        if t.contains("a220-300") || t.contains("a220-100") {
             return Self::SynapticA220;
         }
         Self::Default
@@ -1759,10 +1767,12 @@ mod tests {
 
     #[test]
     fn detect_synaptic_a220_from_title() {
-        // Titel noch nicht live verifiziert (Flieger noch nicht installiert,
-        // 2026-07-28) — der Vendor-Marker "synaptic" ist die einzige
-        // konservative Annahme.
-        for title in ["Synaptic A220-300", "Synaptic A220-100", "synaptic a220"] {
+        // Titel live bestätigt (Thomas K., PIREP VGDmGnMEWmMbkJRP,
+        // EVRA→EDDB, 2026-07-28): MSFS TITLE = "A220-300" — KEIN
+        // "Synaptic"-Marker (die urspüngliche Annahme dazu war falsch,
+        // siehe detect()-Kommentar). "A220-100" analog, noch nicht separat
+        // live bestätigt.
+        for title in ["A220-300", "A220-100", "a220-300"] {
             assert_eq!(
                 AircraftProfile::detect(title, "BCS3"),
                 AircraftProfile::SynapticA220,
@@ -1770,10 +1780,11 @@ mod tests {
             );
         }
         assert_eq!(AircraftProfile::SynapticA220.label(), "Synaptic A220");
-        // Kein ICAO-Fallback — ein bare BCS1/BCS3 ohne "synaptic" im Titel
-        // bleibt Default, statt ein anderes A220-Addon zu kapern.
+        // Kein ICAO-Fallback (`ATC MODEL` kam im echten Flug ohnehin leer
+        // zurück, also kein nutzbares Signal) — ein Title ohne "a220-300"/
+        // "a220-100" bleibt Default.
         assert_eq!(
-            AircraftProfile::detect("Some Other A220", "BCS3"),
+            AircraftProfile::detect("Some Other Aircraft", "BCS3"),
             AircraftProfile::Default,
         );
     }
