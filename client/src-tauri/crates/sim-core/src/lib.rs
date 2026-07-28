@@ -1073,6 +1073,31 @@ pub enum AircraftProfile {
     /// wird primär über den addon-agnostischen Stillstands-Fallback in der
     /// Phase-FSM abgefangen (siehe lib.rs) — polaritätsunabhängig.
     ContrailFa50,
+    /// Synaptic Simulations A220 (MSFS, -100/-300 — EIN Profil für beide
+    /// Varianten, gleiche `L:A22X_*`-LVar-Familie laut offizieller
+    /// Vendor-Doku docs.synapticsim.com/pilots/simvars). Anders als bei
+    /// FSLabs/Aerosoft ist hier NICHTS bekanntermaßen gefälscht — die
+    /// Standard-MSFS-SimVars (Triebwerk/Fahrwerk/Klappen/Bremse) laufen
+    /// nativ (die Inputs-Seite zeigt Standard-H-Events wie
+    /// `AXIS_THROTTLE_SET`/`FLAPS_SET`), die `A22X`-LVars sind eine reine
+    /// Zusatzschicht für Cockpit-Schalter/-Lampen. Profil erstmals aus der
+    /// Doku gebaut, BEVOR der Flieger lokal installiert war (2026-07-28) —
+    /// noch KEIN Live-Flug zur Verifikation. Gemappte Premium-Quellen:
+    ///   * FG-Modi (FMA-Äquivalent): L:A22X FG LNAV/Heading/Approach
+    ///     (lateral), L:A22X FG Altitude/VNAV/Vertical Speed/Flight Path
+    ///     Angle/Flight Level (vertikal)
+    ///   * Master Caution/Warning: L:A22X Caution PBA / Warning PBA
+    ///   * Autobrake: L:A22X Autobrake (Enum RTO/OFF/LO/MED/HI laut Doku-
+    ///     Reihenfolge — NICHT explizit nummeriert, Label braucht
+    ///     Live-Verifikation)
+    ///   * Aircraft-eigene Flugphase: L:A22X Flight Stage (Enum
+    ///     Hangar/Taxi/Apron/Runway/Climb/Cruise/Approach/Final laut
+    ///     Doku-Reihenfolge — ebenfalls nicht explizit nummeriert,
+    ///     Live-Verifikation offen, Info-only wie bei allen anderen
+    ///     Profilen)
+    /// Offene Lücke: KEINE numerischen V-Speed-LVars dokumentiert (nur
+    /// ein V1-Aural-Flag) — v1/vr/v2/vapp/vls bleiben None.
+    SynapticA220,
 }
 
 impl AircraftProfile {
@@ -1233,6 +1258,17 @@ impl AircraftProfile {
         if t.contains("contrail") && t.contains("falcon") {
             return Self::ContrailFa50;
         }
+        // Synaptic A220 (-100/-300). Vendor-Branding "Synaptic" steht
+        // vermutlich in jedem aircraft.cfg-Title (Muster wie FSLabs/iFly
+        // oben) — exakter Titel-String noch nicht verifiziert, der Flieger
+        // ist zum Zeitpunkt dieses Commits noch nicht installiert. BEWUSST
+        // KEIN ICAO-Fallback (BCS1/BCS3): dieselbe Misdetection-Vorsicht
+        // wie beim entfernten A20N-Fallback (QS M4) — bis der echte Title
+        // per Live-Flug bestätigt ist, matcht dieser Zweig konservativ nur
+        // auf den Vendor-Namen.
+        if t.contains("synaptic") {
+            return Self::SynapticA220;
+        }
         Self::Default
     }
 
@@ -1289,6 +1325,7 @@ impl AircraftProfile {
             Self::IflyMax8 => "iFly 737 MAX 8",
             Self::FsLabsA321 => "FSLabs A321",
             Self::ContrailFa50 => "Contrail Falcon 50",
+            Self::SynapticA220 => "Synaptic A220",
         }
     }
 
@@ -1718,6 +1755,27 @@ mod tests {
         // icao_fallback + label
         assert_eq!(AircraftProfile::ContrailFa50.icao_fallback(), Some("FA50"));
         assert_eq!(AircraftProfile::ContrailFa50.label(), "Contrail Falcon 50");
+    }
+
+    #[test]
+    fn detect_synaptic_a220_from_title() {
+        // Titel noch nicht live verifiziert (Flieger noch nicht installiert,
+        // 2026-07-28) — der Vendor-Marker "synaptic" ist die einzige
+        // konservative Annahme.
+        for title in ["Synaptic A220-300", "Synaptic A220-100", "synaptic a220"] {
+            assert_eq!(
+                AircraftProfile::detect(title, "BCS3"),
+                AircraftProfile::SynapticA220,
+                "title {title:?} sollte SynapticA220 sein",
+            );
+        }
+        assert_eq!(AircraftProfile::SynapticA220.label(), "Synaptic A220");
+        // Kein ICAO-Fallback — ein bare BCS1/BCS3 ohne "synaptic" im Titel
+        // bleibt Default, statt ein anderes A220-Addon zu kapern.
+        assert_eq!(
+            AircraftProfile::detect("Some Other A220", "BCS3"),
+            AircraftProfile::Default,
+        );
     }
 
     #[test]

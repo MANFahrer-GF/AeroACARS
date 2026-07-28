@@ -695,6 +695,26 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:CTL_FA50_LIGHT_WARN_FIRE_ENG1", "Bool"),
     F::f64("L:CTL_FA50_LIGHT_WARN_FIRE_ENG2", "Bool"),
     F::f64("L:CTL_FA50_LIGHT_WARN_FIRE_ENG3", "Bool"),
+
+    // ---- Gruppe I: Synaptic A220 (-100/-300) — offizielle Vendor-Doku
+    // docs.synapticsim.com/pilots/simvars, noch KEIN Live-Flug zur
+    // Verifikation (Profil aus Doku gebaut, 2026-07-28). Nur bei
+    // AircraftProfile::SynapticA220 konsultiert. FG-Booleans bilden das
+    // FMA-Äquivalent (kein Enum wie bei FBW/INI — jeder Modus ist ein
+    // eigenes Bool). LOCKSTEP: append-only, gleiche Reihenfolge in
+    // Struct + from_block + Byte-Test.
+    F::f64("L:A22X FG LNAV", "Bool"),
+    F::f64("L:A22X FG Heading", "Bool"),
+    F::f64("L:A22X FG Approach", "Bool"),
+    F::f64("L:A22X FG Altitude", "Bool"),
+    F::f64("L:A22X FG VNAV", "Bool"),
+    F::f64("L:A22X FG Vertical Speed", "Bool"),
+    F::f64("L:A22X FG Flight Path Angle", "Bool"),
+    F::f64("L:A22X FG Flight Level", "Bool"),
+    F::f64("L:A22X Caution PBA", "Bool"),
+    F::f64("L:A22X Warning PBA", "Bool"),
+    F::f64("L:A22X Autobrake", "Enum"),
+    F::f64("L:A22X Flight Stage", "Enum"),
 ];
 
 // Helper builders so the table above stays compact.
@@ -1091,6 +1111,21 @@ pub struct Telemetry {
     pub contrail_fire_eng1: f64,
     pub contrail_fire_eng2: f64,
     pub contrail_fire_eng3: f64,
+
+    // Gruppe I: Synaptic A220 (siehe TELEMETRY_FIELDS-Kommentar) — nur
+    // bei AircraftProfile::SynapticA220 konsultiert.
+    pub syn_fg_lnav: f64,
+    pub syn_fg_heading: f64,
+    pub syn_fg_approach: f64,
+    pub syn_fg_altitude: f64,
+    pub syn_fg_vnav: f64,
+    pub syn_fg_vs: f64,
+    pub syn_fg_fpa: f64,
+    pub syn_fg_flight_level: f64,
+    pub syn_caution_pba: f64,
+    pub syn_warning_pba: f64,
+    pub syn_autobrake: f64,
+    pub syn_flight_stage: f64,
 }
 
 // ---- Touchdown sample (separate data definition #2) ----
@@ -1647,6 +1682,19 @@ impl Telemetry {
         pull_f64!(t.contrail_fire_eng2);
         pull_f64!(t.contrail_fire_eng3);
 
+        pull_f64!(t.syn_fg_lnav);
+        pull_f64!(t.syn_fg_heading);
+        pull_f64!(t.syn_fg_approach);
+        pull_f64!(t.syn_fg_altitude);
+        pull_f64!(t.syn_fg_vnav);
+        pull_f64!(t.syn_fg_vs);
+        pull_f64!(t.syn_fg_fpa);
+        pull_f64!(t.syn_fg_flight_level);
+        pull_f64!(t.syn_caution_pba);
+        pull_f64!(t.syn_warning_pba);
+        pull_f64!(t.syn_autobrake);
+        pull_f64!(t.syn_flight_stage);
+
         // Silence the unused-assignment warning the last `pull_*!`
         // emits (the macro always advances `off`, but the very last
         // call doesn't read it again).
@@ -1914,6 +1962,49 @@ fn a346_fwc_phase_label(n: i32) -> Option<String> {
     })
 }
 
+/// Synaptic A220 lateral FMA-Äquivalent aus den `L:A22X FG *`-Booleans
+/// (kein Enum wie bei FBW/INI — jeder Modus ist ein eigenes Bool).
+/// Priorität wie bei realen FMAs: APPR (LOC/APPR-Capture) vor LNAV vor
+/// HDG. Reine Doku-Ableitung, noch kein Live-Flug — Priorität ggf.
+/// anzupassen, sobald echte Kombinationen beobachtet wurden.
+fn synaptic_a220_fma_lateral(lnav: f64, heading: f64, approach: f64) -> Option<String> {
+    if approach != 0.0 {
+        Some("APPR".to_string())
+    } else if lnav != 0.0 {
+        Some("LNAV".to_string())
+    } else if heading != 0.0 {
+        Some("HDG".to_string())
+    } else {
+        None
+    }
+}
+
+/// Synaptic A220 vertical FMA-Äquivalent. Priorität: ALT (captured) vor
+/// VNAV vor Flight-Level-Change vor VS vor FPA — analog zu gängigen
+/// Airbus/Boeing-FMA-Konventionen, noch nicht am echten Flieger
+/// verifiziert.
+fn synaptic_a220_fma_vertical(
+    altitude: f64,
+    vnav: f64,
+    vs: f64,
+    fpa: f64,
+    flight_level: f64,
+) -> Option<String> {
+    if altitude != 0.0 {
+        Some("ALT".to_string())
+    } else if vnav != 0.0 {
+        Some("VNAV".to_string())
+    } else if flight_level != 0.0 {
+        Some("FLC".to_string())
+    } else if vs != 0.0 {
+        Some("VS".to_string())
+    } else if fpa != 0.0 {
+        Some("FPA".to_string())
+    } else {
+        None
+    }
+}
+
 fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     let profile = AircraftProfile::detect(&t.title, &t.atc_model);
     let is_fenix = profile.is_fenix();
@@ -1945,6 +2036,11 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // Auto-File-Fix laeuft addon-agnostisch ueber die Phase-FSM
     // (Stillstands-Fallback), NICHT hier.
     let is_contrail_fa50 = matches!(profile, AircraftProfile::ContrailFa50);
+    // Synaptic A220 — `L:A22X_*`-Zusatzschicht, strikt profile-gegated wie
+    // alle Premium-Gruppen. Standard-SimVars (Triebwerk/Fahrwerk/Klappen)
+    // bleiben unangetastet — laut Vendor-Doku/Inputs-Seite nativ, nichts
+    // bekanntermaßen gefälscht (anders als FSLabs).
+    let is_synaptic_a220 = matches!(profile, AircraftProfile::SynapticA220);
     // FSL-LED-Schwelle: die `_Brt_Lt`-LVars tragen LED-HELLIGKEIT,
     // kein 0/1-Flag — HubHop-Button-Presets pruefen ">50", wir werten
     // konservativer > 10 als "leuchtet" (faengt gedimmte Cockpits;
@@ -2628,6 +2724,13 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         } else {
             None
         }
+    } else if is_synaptic_a220 {
+        // Synaptic A220 `L:A22X Autobrake` — Doku listet die Stufen
+        // "RTO, OFF, LO, MED, HI" nur als Namensliste OHNE explizite
+        // Index-Zuordnung (anders als z.B. "Bus Isolation Mode: 0=Main,
+        // 1=Auto, 2=Ess", das die Doku sehr wohl nummeriert). Roh-Wert
+        // "#{n}" wie bei MD-11/iFly — Decode beim ersten Live-Flug.
+        raw_enum_label(t.syn_autobrake)
     } else {
         None
     };
@@ -2738,6 +2841,8 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         raw_enum_label(t.ini_roll_mode)
     } else if is_contrail_fa50 {
         contrail_fma_combined(t.contrail_fma_lat_active, t.contrail_fma_lat_armed, true)
+    } else if is_synaptic_a220 {
+        synaptic_a220_fma_lateral(t.syn_fg_lnav, t.syn_fg_heading, t.syn_fg_approach)
     } else {
         None
     };
@@ -2747,6 +2852,14 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         raw_enum_label(t.ini_pitch_mode)
     } else if is_contrail_fa50 {
         contrail_fma_combined(t.contrail_fma_vert_active, t.contrail_fma_vert_armed1, false)
+    } else if is_synaptic_a220 {
+        synaptic_a220_fma_vertical(
+            t.syn_fg_altitude,
+            t.syn_fg_vnav,
+            t.syn_fg_vs,
+            t.syn_fg_fpa,
+            t.syn_fg_flight_level,
+        )
     } else {
         None
     };
@@ -2771,6 +2884,17 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // schlechter als gar keine.
     let flight_phase_aircraft = if is_a346 {
         a346_fwc_phase_label(t.a346_flight_phase.round() as i32)
+    } else if is_synaptic_a220 {
+        // `L:A22X Flight Stage` — Doku listet die Werte "Hangar, Taxi,
+        // Apron, Runway, Climb, Cruise, Approach, Final" nur als
+        // Namensliste OHNE Indizes (gleiche Unsicherheit wie beim
+        // Autobrake oben). Roh-Wert "#{n}" statt geraten — anders als
+        // FBW oben (die bewusst ganz stumm bleibt, weil sie schon
+        // FALSCH BESCHRIFTETE Werte auslieferte) haben wir hier noch
+        // gar kein Label geraten, also ist Rohwert-Durchreichen sicher
+        // (info-only, treibt nie unsere Phasen-FSM). Decode beim
+        // ersten Live-Flug.
+        raw_enum_label(t.syn_flight_stage)
     } else {
         None
     };
@@ -2867,6 +2991,10 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     } else if is_fsl {
         // v0.16.20: `VC_GSLD_CP_Caution_Button_BOT` — Skript `0 !=`=aktiv.
         Some(t.fsl_master_caution != 0.0)
+    } else if is_synaptic_a220 {
+        // `L:A22X Caution PBA` — sauberes Bool laut Doku ("whether the
+        // master caution annunciator is illuminated").
+        Some(t.syn_caution_pba != 0.0)
     } else {
         None
     };
@@ -2904,6 +3032,10 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
                 || t.contrail_fire_eng2 != 0.0
                 || t.contrail_fire_eng3 != 0.0,
         )
+    } else if is_synaptic_a220 {
+        // `L:A22X Warning PBA` — sauberes Bool laut Doku ("whether the
+        // master warning annunciator is illuminated").
+        Some(t.syn_warning_pba != 0.0)
     } else {
         None
     };
@@ -3851,7 +3983,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(buf.len(), 2844, "total block size");
+        assert_eq!(buf.len(), 2940, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -4057,6 +4189,20 @@ mod tests {
         assert_eq!(t.contrail_fire_eng1, 1276.0); // idx 276
         assert_eq!(t.contrail_fire_eng2, 1277.0); // idx 277
         assert_eq!(t.contrail_fire_eng3, 1278.0); // idx 278
+
+        // ---- Synaptic A220 (idx 279..290, aus Doku gebaut) ----
+        assert_eq!(t.syn_fg_lnav, 1279.0); // idx 279
+        assert_eq!(t.syn_fg_heading, 1280.0); // idx 280
+        assert_eq!(t.syn_fg_approach, 1281.0); // idx 281
+        assert_eq!(t.syn_fg_altitude, 1282.0); // idx 282
+        assert_eq!(t.syn_fg_vnav, 1283.0); // idx 283
+        assert_eq!(t.syn_fg_vs, 1284.0); // idx 284
+        assert_eq!(t.syn_fg_fpa, 1285.0); // idx 285
+        assert_eq!(t.syn_fg_flight_level, 1286.0); // idx 286
+        assert_eq!(t.syn_caution_pba, 1287.0); // idx 287
+        assert_eq!(t.syn_warning_pba, 1288.0); // idx 288
+        assert_eq!(t.syn_autobrake, 1289.0); // idx 289
+        assert_eq!(t.syn_flight_stage, 1290.0); // idx 290
     }
 
     #[test]
@@ -4102,6 +4248,13 @@ mod tests {
                 FieldKind::String256 => buf.extend_from_slice(&[0u8; 256]),
             }
         }
+        // Synaptic A220: drop the 12 new tail fields (12*8).
+        buf.truncate(buf.len() - 96);
+        let t = Telemetry::from_block(&buf);
+        assert_eq!(t.contrail_fire_eng3, 1278.0); // last Contrail field intact
+        assert_eq!(t.syn_fg_lnav, 0.0); // A220 tail = safe defaults
+        assert_eq!(t.syn_flight_stage, 0.0);
+
         // Drop the whole premium tail after the v0.16.14 FSL group: 14
         // FSLabs PREMIUM fields (v0.16.20) + 8 Contrail FA50 fields (v0.17.x:
         // 4 FMA + 4 Phase-2b) = 22 fields * 8 = 176 bytes. Everything up to
@@ -5833,5 +5986,107 @@ mod tests {
             let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
             assert_eq!(snap.xpdr_mode_label, Some("STBY".to_string()));
         }
+    }
+
+    // ---- Synaptic A220 Premium-Mappings (aus Vendor-Doku gebaut,
+    // 2026-07-28 — noch KEIN Live-Flug zur Verifikation) ----
+
+    /// Minimal A220-Profil-Telemetry. Standard-SimVars bleiben auf ihren
+    /// Defaults, damit jeder gemappte Wert eindeutig aus den `A22X`-LVars
+    /// stammt. Title-String ist eine plausible Annahme, noch nicht am
+    /// echten Addon verifiziert.
+    fn synaptic_a220_telemetry() -> Telemetry {
+        let mut t = Telemetry::default();
+        t.title = "Synaptic A220-300".into();
+        t.atc_model = "BCS3".into();
+        t
+    }
+
+    #[test]
+    fn synaptic_a220_premium_lvars_do_not_affect_other_profiles() {
+        // Profile-Gate: ein Nicht-A220-Aircraft mit (theoretisch)
+        // gesetzten A22X-LVar-Slots bleibt auf dem Standard-Pfad.
+        let mut t = Telemetry::default();
+        t.title = "Asobo A320 Neo".into();
+        t.atc_model = "A20N".into();
+        t.syn_caution_pba = 1.0;
+        t.syn_fg_lnav = 1.0;
+        t.syn_autobrake = 3.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.master_caution, None);
+        assert_eq!(snap.fma_lateral_mode, None);
+        assert_eq!(snap.autobrake, None);
+    }
+
+    #[test]
+    fn synaptic_a220_fma_lateral_and_vertical_priority() {
+        // Lateral: APPR schlaegt LNAV schlaegt HDG.
+        let mut t = synaptic_a220_telemetry();
+        t.syn_fg_heading = 1.0;
+        t.syn_fg_lnav = 1.0;
+        t.syn_fg_approach = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fma_lateral_mode, Some("APPR".to_string()));
+
+        let mut t = synaptic_a220_telemetry();
+        t.syn_fg_heading = 1.0;
+        t.syn_fg_lnav = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fma_lateral_mode, Some("LNAV".to_string()));
+
+        let mut t = synaptic_a220_telemetry();
+        t.syn_fg_heading = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fma_lateral_mode, Some("HDG".to_string()));
+
+        let t = synaptic_a220_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fma_lateral_mode, None);
+
+        // Vertical: ALT schlaegt VNAV schlaegt FLC schlaegt VS schlaegt FPA.
+        let mut t = synaptic_a220_telemetry();
+        t.syn_fg_vs = 1.0;
+        t.syn_fg_vnav = 1.0;
+        t.syn_fg_altitude = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fma_vertical_mode, Some("ALT".to_string()));
+
+        let mut t = synaptic_a220_telemetry();
+        t.syn_fg_fpa = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.fma_vertical_mode, Some("FPA".to_string()));
+    }
+
+    #[test]
+    fn synaptic_a220_master_caution_and_warning() {
+        let mut t = synaptic_a220_telemetry();
+        t.syn_caution_pba = 1.0;
+        t.syn_warning_pba = 0.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.master_caution, Some(true));
+        assert_eq!(snap.master_warning, Some(false));
+
+        let t = synaptic_a220_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.master_caution, Some(false));
+        assert_eq!(snap.master_warning, Some(false));
+    }
+
+    #[test]
+    fn synaptic_a220_autobrake_and_flight_stage_pass_through_raw() {
+        // Doku listet die Enum-Werte nur als Namensliste ohne Indizes —
+        // wir raten NICHTS und reichen den Rohwert durch (Decode beim
+        // ersten Live-Flug), analog zu MD-11/iFly.
+        let mut t = synaptic_a220_telemetry();
+        t.syn_autobrake = 2.0;
+        t.syn_flight_stage = 4.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autobrake, Some("#2".to_string()));
+        assert_eq!(snap.flight_phase_aircraft, Some("#4".to_string()));
+
+        let t = synaptic_a220_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autobrake, None);
+        assert_eq!(snap.flight_phase_aircraft, None);
     }
 }
