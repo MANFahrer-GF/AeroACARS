@@ -20,6 +20,7 @@ import { ActivityLogPanel } from "./ActivityLogPanel";
 import { setTrack } from "../lib/trackStore";
 import { aircraftSvg } from "../lib/aircraftIcon";
 import { phaseColor, phaseLabel as formatPhase } from "../lib/phaseColors";
+import { resolveFlightIdent } from "../lib/callsign";
 
 const BASEMAP_DARK = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 const BASEMAP_LIGHT = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
@@ -1363,7 +1364,7 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
           <span className="aa-stat__label">FLUG</span>
           <span className="aa-livemap__title-value">
             {activeFlight
-              ? `${activeFlight.airline_icao}${activeFlight.flight_number} · ${activeFlight.dpt_airport}→${activeFlight.arr_airport}`
+              ? `${activeFlight.airline_icao}${resolveFlightIdent(activeFlight.flight_number, activeFlight.callsign)} · ${activeFlight.dpt_airport}→${activeFlight.arr_airport}`
               : "Live-Karte"}
             {activeFlight?.was_just_resumed && (
               <span className="aa-livemap__resume-hint" title="warte auf Sim-Position">

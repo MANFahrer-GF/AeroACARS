@@ -2,6 +2,7 @@ import { useState } from "react";
 import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import type { ActiveFlightInfo } from "../types";
+import { resolveFlightIdent } from "../lib/callsign";
 
 interface Props {
   /** Active flight — used to seed the form (planned arrival, current FSM
@@ -236,7 +237,7 @@ export function ManualFileDialog({
 
             <div className="manual-dialog__summary">
               <span>
-                <strong>{info.flight_number}</strong>
+                <strong>{resolveFlightIdent(info.flight_number, info.callsign)}</strong>
               </span>
               <span>
                 {info.dpt_airport} → {info.arr_airport}

@@ -4347,6 +4347,18 @@ pub struct ActiveFlightInfo {
     airline_icao: String,
     planned_registration: String,
     flight_number: String,
+    /// `Bid.flight.callsign` (z.B. "7ME"), falls phpVMS es fuellt — reuses
+    /// `ActiveFlight::bid_callsign` (bislang nur fuer den OFP-Match genutzt,
+    /// siehe dessen Doc-Kommentar). UI-Komponenten sollen dies dem
+    /// `airline_icao + flight_number`-Callsign VORZIEHEN, exakt wie phpVMS'
+    /// eigener `Flight::atc()`-Accessor (`app/Models/Flight.php`): Freiflug-
+    /// Bookings (DisposableSpecial) speichern oft `flight_number=0` (kein
+    /// FIXBARER Formelwert — anders als z.B. Block-Zeiten) und tragen den
+    /// echten Identifier stattdessen im Callsign. `${icao}${flight_number}`
+    /// ohne diesen Fallback zeigte dann z.B. "CFG0" statt "CFG7ME" (Pilot-
+    /// Befund Ralf T., GSG0016, 2026-07-28).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    callsign: Option<String>,
     dpt_airport: String,
     arr_airport: String,
     distance_nm: f64,
@@ -9583,6 +9595,7 @@ fn flight_info(flight: &ActiveFlight, resume_position_suspect: bool) -> ActiveFl
         airline_icao: flight.airline_icao.clone(),
         planned_registration: flight.planned_registration.clone(),
         flight_number: flight.flight_number.clone(),
+        callsign: flight.bid_callsign.clone(),
         dpt_airport: flight.dpt_airport.clone(),
         arr_airport: flight.arr_airport.clone(),
         distance_nm: stats.distance_nm,
@@ -14067,7 +14080,15 @@ where
         pirep_id: flight.pirep_id.clone(),
         touchdown_at,
         recorded_at: Utc::now(),
-        flight_number: flight.flight_number.clone(),
+        // Prefer `bid_callsign` over the raw `flight_number` — same
+        // precedence as phpVMS's own `Flight::atc()` accessor. See the
+        // `callsign` doc-comment on `ActiveFlightInfo` for the full story
+        // (Personal/Free-Flight bookings with `flight_number: 0`).
+        flight_number: flight
+            .bid_callsign
+            .clone()
+            .filter(|cs| !cs.trim().is_empty())
+            .unwrap_or_else(|| flight.flight_number.clone()),
         airline_icao: flight.airline_icao.clone(),
         dpt_airport: flight.dpt_airport.clone(),
         arr_airport: flight.arr_airport.clone(),
@@ -37930,6 +37951,29 @@ mod touchdown_metadata_stamp_tests {
             connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
             navdata: Mutex::new(NavdataCache::default()),
         }
+    }
+
+    // ---- flight_info() callsign exposure (pilot report Ralf T., GSG0016,
+    // 2026-07-28: Personal/Free-Flight bookings with flight_number=0
+    // rendered "CFG0" because the UI never saw the real callsign) ----
+
+    #[test]
+    fn flight_info_exposes_bid_callsign() {
+        let mut flight = flight_fixture("GCLP");
+        flight.flight_number = "0".into();
+        flight.bid_callsign = Some("7ME".into());
+        let info = flight_info(&flight, false);
+        assert_eq!(info.callsign, Some("7ME".to_string()));
+        // flight_number itself is untouched — callsign is an ADDITIONAL
+        // field, the UI decides the precedence (resolveFlightIdent()).
+        assert_eq!(info.flight_number, "0");
+    }
+
+    #[test]
+    fn flight_info_callsign_none_for_ordinary_scheduled_flights() {
+        let flight = flight_fixture("GCLP"); // bid_callsign: None (fixture default)
+        let info = flight_info(&flight, false);
+        assert_eq!(info.callsign, None);
     }
 
     // ---- stamp_touchdown_metadata ----

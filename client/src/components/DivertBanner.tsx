@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import { invoke } from "../lib/ipc";
 import type { ActiveFlightInfo, FlightEndOutcome } from "../types";
+import { resolveFlightIdent } from "../lib/callsign";
 
 interface Props {
   activeFlight: ActiveFlightInfo;
@@ -49,8 +50,8 @@ export function DivertBanner({ activeFlight, onFiledSuccess }: Props) {
   const filedOutcome = (arr: string): FlightEndOutcome => ({
     kind: "filed",
     callsign: activeFlight.airline_icao
-      ? `${activeFlight.airline_icao} ${activeFlight.flight_number}`
-      : activeFlight.flight_number,
+      ? `${activeFlight.airline_icao} ${resolveFlightIdent(activeFlight.flight_number, activeFlight.callsign)}`
+      : resolveFlightIdent(activeFlight.flight_number, activeFlight.callsign),
     dpt: activeFlight.dpt_airport,
     arr,
   });

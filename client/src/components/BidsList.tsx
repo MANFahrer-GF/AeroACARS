@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, openExternal as openUrl } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import { formatRefreshError } from "../lib/refreshErrorFormatter";
+import { resolveFlightIdent } from "../lib/callsign";
 import type {
   ActiveFlightInfo,
   AircraftInfo,
@@ -158,7 +159,7 @@ function flightTypeKind(type: string): string {
 function buildCallsigns(flight: Flight): string {
   const icao = flight.airline?.icao?.trim();
   const iata = flight.airline?.iata?.trim();
-  const fnum = flight.flight_number;
+  const fnum = resolveFlightIdent(flight.flight_number, flight.callsign);
   const icaoCs = icao ? `${icao}${fnum}` : null;
   const iataCs = iata ? `${iata}${fnum}` : null;
   if (icaoCs && iataCs) return `${icaoCs} · ${iataCs}`;

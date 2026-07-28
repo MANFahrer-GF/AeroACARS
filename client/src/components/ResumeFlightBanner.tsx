@@ -3,6 +3,7 @@ import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import type { ActiveFlightInfo, ResumableFlight, SimStatus } from "../types";
 import { useConfirm } from "./ConfirmDialog";
+import { resolveFlightIdent } from "../lib/callsign";
 
 const COUNTDOWN_SECONDS = 30;
 
@@ -236,12 +237,18 @@ export function ResumeFlightBanner({
     mode.kind === "auto_resumed"
       ? {
           callsign: mode.flight.airline_icao
-            ? `${mode.flight.airline_icao} ${mode.flight.flight_number}`
-            : mode.flight.flight_number,
+            ? `${mode.flight.airline_icao} ${resolveFlightIdent(mode.flight.flight_number, mode.flight.callsign)}`
+            : resolveFlightIdent(mode.flight.flight_number, mode.flight.callsign),
           dpt_airport: mode.flight.dpt_airport,
           arr_airport: mode.flight.arr_airport,
         }
       : {
+          // "discovered" = an orphaned in-progress PIREP found on phpVMS
+          // (no local resume file). Sourced from `Pirep`, which has no
+          // `callsign` column at all (only `Flight` does) — fixing this
+          // branch would need an extra Flight lookup per discovered PIREP
+          // for a rare edge case. Left as flight_number-only, same as
+          // before; tracked as a known remaining gap, not silently fixed.
           callsign: mode.flight.flight_number,
           dpt_airport: mode.flight.dpt_airport,
           arr_airport: mode.flight.arr_airport,

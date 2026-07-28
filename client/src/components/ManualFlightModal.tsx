@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import type { Bid, ActiveFlightInfo, UiError } from "../types";
+import { resolveFlightIdent } from "../lib/callsign";
 
 // Local helper: konvertiert beliebigen err in UiError-Shape (analog
 // zur asUiError-Funktion in BidsList.tsx).
@@ -317,7 +318,7 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
         <header className="manual-modal__head">
           <h3 id="manual-modal-title">{t("manual_flight.title")}</h3>
           <div className="manual-modal__sub">
-            {bid.flight.flight_number}
+            {resolveFlightIdent(bid.flight.flight_number, bid.flight.callsign)}
             {" · "}
             {bid.flight.dpt_airport_id} → {bid.flight.arr_airport_id}
             {" · "}
