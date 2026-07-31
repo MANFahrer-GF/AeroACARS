@@ -76,24 +76,61 @@ describe("Stil-Varianten enthalten kein Layout", () => {
   });
 });
 
-describe("CPDLC-Feld bleibt so hoch wie seine Eingabe", () => {
-  // Zweite Ursache desselben Befunds: Die Statusanzeige hing UNTER dem
-  // Eingabefeld im Textfluss. Damit wurde das Feld höher als die Knöpfe
-  // daneben — und weil die Leiste an der Unterkante ausrichtet, saßen die
-  // Knöpfe gegenüber der Eingabe versetzt.
-  it("die Statusanzeige zählt nicht zur Feldhöhe", () => {
+describe("Erreichbarkeits-Anzeige verschiebt oder verdeckt nichts (v1.3.3)", () => {
+  // Dritte Runde desselben Grundproblems (Feldbefund 31.07.2026, PDC + CPDLC):
+  // die vorherige Lösung (siehe git history dieser Datei) nahm die Anzeige
+  // per `position: absolute` aus dem Textfluss, damit sie das Feld nicht
+  // höher macht. Das tauschte einen Bug gegen einen schlimmeren: aus dem
+  // Fluss genommen beanspruchte sie GAR keinen Platz mehr und rendert dann
+  // einfach UNTER dem, was zufällig als Nächstes im normalen Fluss kam — im
+  // CPDLC-Tab je nach Anmeldestatus mal über, mal unter den Buttons, im
+  // PDC-Formular über der nächsten Feldzeile. `position: absolute` auf
+  // `.cpdlc-station-badge` ist daher jetzt selbst das Regressionssignal,
+  // nicht mehr die Lösung.
+  it("die Statusanzeige ist NICHT aus dem Textfluss genommen", () => {
     const rule = /\.cpdlc-station-badge\s*\{([^}]*)\}/.exec(css);
     expect(rule, "Regel muss existieren").toBeTruthy();
     expect(
       rule![1],
-      "aus dem Textfluss genommen, sonst wächst das Feld über die Eingabe hinaus",
-    ).toContain("position: absolute");
+      "absolute Positionierung reserviert keinen Platz mehr — die Anzeige kann " +
+        "dann unter Buttons oder der nächsten Formularzeile landen (Befund 31.07.2026)",
+    ).not.toContain("position: absolute");
   });
 
-  it("das Feld ist Bezugspunkt für die Anzeige", () => {
+  // CPDLC: Felder (Link-Status + Center-Eingabe) und Aktions-Buttons stehen
+  // in getrennten Zeilen. Vorher standen sie in EINER `flex-wrap`-Zeile mit
+  // `align-items: flex-end` — je nachdem wie lang der Anmelde-Status-Text
+  // war (bzw. ob die Statusanzeige Platz brauchte), brach die Zeile an
+  // anderer Stelle um und die Buttons sprangen zwischen "neben dem Feld"
+  // und "darunter". Getrennte Zeilen heißt: das Feld kann wachsen oder
+  // schrumpfen, ohne dass es die Buttons je bewegt.
+  it("CPDLC: Felder und Buttons stehen in unabhängigen Zeilen", () => {
+    const rule = /\.cpdlc-section__bar\s*\{([^}]*)\}/.exec(css);
+    expect(rule, "Regel muss existieren").toBeTruthy();
+    expect(
+      rule![1],
+      "eine wrappende Ein-Zeilen-Leiste lässt die Buttons je nach Feld-/Status-Breite springen",
+    ).toContain("flex-direction: column");
+  });
+
+  // PDC: die Anzeige lebt als eigene, volle Raster-Zeile — nicht mehr
+  // INNERHALB des Delivery-Feldes. Sonst wird nur Delivery höher als
+  // Flugzeugtyp daneben, und die beiden Eingaben liegen nicht mehr auf
+  // gleicher Höhe (Befund 31.07.2026: "DELIVERY wandert nach unten").
+  it("PDC: die Anzeige spannt die volle Rasterbreite, statt in einem Feld zu stecken", () => {
+    const rule = /\.cpdlc-field__badge-row\s*\{([^}]*)\}/.exec(css);
+    expect(rule, "Regel muss existieren").toBeTruthy();
+    expect(rule![1]).toContain("grid-column: 1 / -1");
+  });
+
+  // Ohne `min-width: 0` setzt der ungebrochene Inhalt eines Feldes (Label +
+  // Lücke + langer Status-Text) eine Mindestbreite, bevor der Browser
+  // überhaupt ans Umbrechen denkt — bei `auto-fit`-Rastern kann das dazu
+  // führen, dass gar nicht mehr zwei Spalten nebeneinanderpassen und das
+  // ganze Formular auf eine Spalte kollabiert (derselbe Befund).
+  it("Felder dürfen unter ihre Inhaltsbreite schrumpfen (kein Grid-Kollaps)", () => {
     const rule = /\.cpdlc-field\s*\{([^}]*)\}/.exec(css);
-    expect(rule![1], "ohne relative Positionierung bezieht sich absolut auf die Seite").toContain(
-      "position: relative",
-    );
+    expect(rule, "Regel muss existieren").toBeTruthy();
+    expect(rule![1]).toContain("min-width: 0");
   });
 });

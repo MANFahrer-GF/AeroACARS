@@ -137,7 +137,6 @@ export function PdcView({ online, callsign, messages, onChanged }: Props) {
                 placeholder={t("cpdlc.pdc_station_placeholder")}
                 disabled={busy}
               />
-              <StationBadge status={stationStatus} />
             </label>
             <label className="cpdlc-field">
               <span>{t("cpdlc.pdc_form_aircraft_type")}</span>
@@ -148,6 +147,17 @@ export function PdcView({ online, callsign, messages, onChanged }: Props) {
                 disabled={busy}
               />
             </label>
+            {/* Own full-width grid row instead of living inside the DELIVERY
+                field (v1.2.3 fix 2026-07-31, #Hoppie-PDC-CPDLC): nested in
+                the field, the badge only added height to DELIVERY, not to
+                FLUGZEUGTYP next to it — their inputs no longer lined up
+                (field feedback: "DELIVERY wandert, nicht mehr in einer
+                Reihe"). Spanning the whole grid means it can never make one
+                cell taller than its row partner; DELIVERY/FLUGZEUGTYP stay
+                exactly the same height as every other field pair. */}
+            <div className="cpdlc-field__badge-row">
+              <StationBadge status={stationStatus} />
+            </div>
             <label className="cpdlc-field">
               <span>{t("cpdlc.pdc_form_dep")}</span>
               <input type="text" value={fields.dep_icao} onChange={set("dep_icao")} disabled={busy} />

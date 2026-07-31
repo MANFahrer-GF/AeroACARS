@@ -8963,11 +8963,22 @@ input:disabled {
 /* --- Shared small form field --- */
 
 .cpdlc-field {
-  position: relative; /* Bezug fuer die absolut gesetzte Statusanzeige */
   display: flex;
   flex-direction: column;
   gap: 4px;
   font-size: 11px;
+  /* Grid/flex items default to `min-width: auto`, which means their
+     CONTENT's natural width (e.g. "DELIVERY" + gap + "NICHT ERREICHBAR"
+     on one line) sets a floor under how far the track/item can shrink —
+     wrapping only kicks in once that floor is already wider than the
+     column has room for. In PDC's `repeat(auto-fit, minmax(110px, 1fr))`
+     grid that floor was wide enough to blow past 110px, so `auto-fit`
+     collapsed the whole form to a single column instead of the intended
+     two (field feedback 31.07.2026: "DELIVERY wandert nach unten, nicht
+     mehr in einer Reihe mit FLUGZEUGTYP"). Zeroing it lets the column
+     shrink to its intended width FIRST, so the label row wraps the badge
+     onto its own line instead of stretching the whole grid. */
+  min-width: 0;
 }
 
 .cpdlc-field > span {
@@ -8981,6 +8992,27 @@ input:disabled {
   font-family: var(--font-acars);
   text-transform: uppercase;
   min-width: 9ch;
+}
+
+/* v1.2.3 fix 2026-07-31 (#Hoppie-PDC-CPDLC): the reachability badge sits
+   next to the field LABEL, not below the input. Two earlier attempts each
+   fixed one thing and broke another: absolute-positioned (didn't reserve
+   space, so it landed under whatever content happened to sit below it —
+   the CPDLC action buttons or the next PDC form row) and, before that,
+   stacked in-flow below the input (made the field taller than its
+   siblings — pushed CPDLC's buttons around, and left a jagged gap in
+   PDC's form grid, since the field's grid ROW auto-sizes to match its
+   tallest cell while the sibling field next to it has nothing to fill
+   that extra height). Living in the label row instead means the field's
+   height never depends on whether a badge is present — always exactly
+   label-row + input, so it can never overlap or misalign anything. */
+.cpdlc-field__label-row {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 8px;
+  min-width: 0;
 }
 
 /* --- Level 2/3 switch: PDC vs CPDLC --- */
@@ -9064,10 +9096,30 @@ input:disabled {
   gap: 8px;
 }
 
+/* Two independent rows instead of one wrapping flex row (v1.2.3-fix
+   2026-07-31, #Hoppie-PDC-CPDLC). The old single-row layout put the link
+   status, the centre field (label+input+badge) AND the action buttons in
+   one `align-items: flex-end` flex row: whenever the field's box changed
+   height — different link-status text length, badge present/absent — the
+   wrap point shifted and the buttons jumped between "next to the field"
+   and "below it". Splitting fields and actions into their own rows means
+   the field can grow or shrink freely without ever moving the buttons. */
 .cpdlc-section__bar {
   flex: 0 0 auto;
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cpdlc-section__bar-fields {
+  display: flex;
   align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.cpdlc-section__bar-actions {
+  display: flex;
   flex-wrap: wrap;
   gap: 10px;
 }
@@ -9089,6 +9141,19 @@ input:disabled {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 10px;
+}
+
+/* Spans the full grid width so the reachability badge for DELIVERY never
+   makes that one field taller than FLUGZEUGTYP next to it (see the
+   comment at its call site in PdcView.tsx). Empty (no status yet) means
+   no text node at all, so it contributes zero height — no gap appears
+   before the pilot has typed a station. */
+.cpdlc-field__badge-row {
+  grid-column: 1 / -1;
+}
+
+.cpdlc-field__badge-row:empty {
+  display: none;
 }
 
 .cpdlc-form__preview {
@@ -9475,33 +9540,27 @@ input:disabled {
 }
 
 /* Station-online indicator next to the recipient/centre field. Three
-   states because "couldn't check" is not the same claim as "offline". */
+   states because "couldn't check" is not the same claim as "offline".
+   v1.2.3 fix history (field feedback 31.07.2026): went through three
+   layouts (stacked below the input, then absolute-positioned, then
+   inline in the label) before landing on its own full grid/flex row —
+   see the call sites in CpdlcView.tsx and PdcView.tsx for why each of
+   those broke something else. Typography matches `.cpdlc-field > span`
+   (same size, weight, uppercase, tracking) on purpose: it reads as a
+   status VALUE for that field, same family as the field's own label —
+   not a separate, unrelated smaller caption bolted on next to it. Colour
+   is the only thing that sets it apart, which is exactly the one signal
+   it needs to carry. */
 .cpdlc-station-badge {
-  /* Aus dem Textfluss genommen. Die Anzeige haengt unter dem Eingabefeld und
-     machte das Feld damit hoeher als die Knoepfe daneben; die Leiste richtet
-     an der UNTERKANTE aus, also sassen die Knoepfe gegenueber der Eingabe
-     versetzt (Feldbefund 25.07.2026). Absolut positioniert zaehlt sie nicht
-     mehr zur Feldhoehe — die Leiste sieht nur noch Beschriftung + Eingabe. */
-  position: absolute;
-  top: 100%;
-  left: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-top: 2px;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   color: var(--text-muted);
-  /* WARN: the badge shares a flex column with the station input, so its
-     width becomes the field's width. Without these three it dictated the
-     layout — a long status sentence stretched the input across the panel
-     and pushed the send buttons off the bottom. Keep the label short AND
-     keep this clamp; either alone is one careless string away from the
-     same bug. */
   white-space: nowrap;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .cpdlc-station-badge__dot {

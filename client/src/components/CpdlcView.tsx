@@ -157,60 +157,69 @@ export function CpdlcView({
     <div className="cpdlc-section">
       <div className="cpdlc-section__side">
       <header className="cpdlc-section__bar">
-        <span className={`cpdlc-link cpdlc-link--${linkState}`}>
-          <span className="cpdlc-link__dot" aria-hidden="true" />
-          {linkLabel}
-        </span>
-        <label className="cpdlc-field">
-          <span>{t("cpdlc.center_label")}</span>
-          <input
-            type="text"
-            value={stationInput}
-            onChange={(e) => setStationInput(e.target.value.toUpperCase())}
-            placeholder={t("cpdlc.center_placeholder")}
-            disabled={busy}
-          />
-          <StationBadge status={stationStatus} />
-        </label>
-        <button
-          type="button"
-          className="button button--primary"
-          disabled={
-            !online || busy || stationInput.trim() === "" || alreadyOn || cooldownRunning
-          }
-          title={
-            alreadyOn
-              ? t("cpdlc.logon_already", { station })
-              : cooldownRunning
-                ? t("cpdlc.logon_cooldown", { seconds: cooldownLeft })
-                : undefined
-          }
-          onClick={() => void sendLogon()}
-        >
-          {/* One constant label. Swapping to "log on to next centre"
-              resized the button and shoved the row around; the centre
-              field right next to it already says WHERE we're logging on. */}
-          {t("cpdlc.logon_send")}
-        </button>
-        <button
-          type="button"
-          className="button"
-          disabled={!online || !loggedOn}
-          onClick={() => setComposerOpen((v) => !v)}
-        >
-          {t("cpdlc.composer_open")}
-        </button>
-        {/* Ends the session deliberately without dropping the ACARS link.
-            After this no facility is responsible for the aircraft until
-            the pilot logs on to the next one. */}
-        <button
-          type="button"
-          className="button"
-          disabled={!online || busy || (!loggedOn && !logonSent && !logonTimedOut)}
-          onClick={() => void sendLogoff()}
-        >
-          {t("cpdlc.logoff")}
-        </button>
+        <div className="cpdlc-section__bar-fields">
+          <span className={`cpdlc-link cpdlc-link--${linkState}`}>
+            <span className="cpdlc-link__dot" aria-hidden="true" />
+            {linkLabel}
+          </span>
+          <label className="cpdlc-field">
+            <span className="cpdlc-field__label-row">
+              <span>{t("cpdlc.center_label")}</span>
+              <StationBadge status={stationStatus} />
+            </span>
+            <input
+              type="text"
+              value={stationInput}
+              onChange={(e) => setStationInput(e.target.value.toUpperCase())}
+              placeholder={t("cpdlc.center_placeholder")}
+              disabled={busy}
+            />
+          </label>
+        </div>
+        {/* Own row, independent of the fields above — their height (link
+            status text length, badge present/absent) can never move these
+            buttons; see the .cpdlc-section__bar-fields/-actions split. */}
+        <div className="cpdlc-section__bar-actions">
+          <button
+            type="button"
+            className="button button--primary"
+            disabled={
+              !online || busy || stationInput.trim() === "" || alreadyOn || cooldownRunning
+            }
+            title={
+              alreadyOn
+                ? t("cpdlc.logon_already", { station })
+                : cooldownRunning
+                  ? t("cpdlc.logon_cooldown", { seconds: cooldownLeft })
+                  : undefined
+            }
+            onClick={() => void sendLogon()}
+          >
+            {/* One constant label. Swapping to "log on to next centre"
+                resized the button and shoved the row around; the centre
+                field right next to it already says WHERE we're logging on. */}
+            {t("cpdlc.logon_send")}
+          </button>
+          <button
+            type="button"
+            className="button"
+            disabled={!online || !loggedOn}
+            onClick={() => setComposerOpen((v) => !v)}
+          >
+            {t("cpdlc.composer_open")}
+          </button>
+          {/* Ends the session deliberately without dropping the ACARS link.
+              After this no facility is responsible for the aircraft until
+              the pilot logs on to the next one. */}
+          <button
+            type="button"
+            className="button"
+            disabled={!online || busy || (!loggedOn && !logonSent && !logonTimedOut)}
+            onClick={() => void sendLogoff()}
+          >
+            {t("cpdlc.logoff")}
+          </button>
+        </div>
       </header>
 
       {logonTimedOut && (
