@@ -20221,12 +20221,15 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // exakten on_ground-Edge). User-Forderung Mai 12: "warum
                 // nutzen wir den MSFS Wert wenn wir das selber ermitteln".
                 //
-                // Neue Cascade-Ordnung:
-                //   1. v2-Result (= raffinierte Cascade vs_at_impact ->
-                //      smoothed_500ms -> smoothed_1000ms -> pre_flare_peak)
-                //   2. vs_at_edge_fpm aus dem Buffer (= 50-Hz interpoliert)
+                // Cascade-Ordnung (seit v0.20.0, siehe PIA3452-Kommentar
+                // direkt unten):
+                //   1. vs_at_edge_fpm aus dem Buffer (= 50-Hz interpoliert,
+                //      physikalisch am genauesten — FAR-25.473-Standard)
+                //   2. v2-Result (= raffinierte Cascade vs_at_impact ->
+                //      smoothed_500ms -> smoothed_1000ms -> pre_flare_peak),
+                //      nur wenn kein gueltiger Edge-Wert vorliegt
                 //   3. landing_rate_fpm unveraendert (= SimVar-latched
-                //      Fallback wenn weder v2 noch Edge verfuegbar — sehr
+                //      Fallback wenn weder Edge noch v2 verfuegbar — sehr
                 //      selten, nur bei Pre-v0.5.43 oder Buffer-Dump-Fail)
                 let edge_vs = analysis
                     .get("vs_at_edge_fpm")
