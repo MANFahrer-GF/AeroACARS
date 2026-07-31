@@ -715,6 +715,20 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:A22X Warning PBA", "Bool"),
     F::f64("L:A22X Autobrake", "Enum"),
     F::f64("L:A22X Flight Stage", "Enum"),
+
+    // ---- Gruppe I Erweiterung (v1.3.5 #Premium, Feldbefund 31.07.2026) ----
+    // Vollständiger Doku-Abgleich (docs.synapticsim.com/pilots/simvars)
+    // gegen einen echten Flug, nachdem die Klappen-Diskrepanz auffiel —
+    // dabei gefunden: `AUTOPILOT MASTER`/Autothrottle/Klappen/Cabin-Signs
+    // lasen für dieses Profil durchgehend falsch (AP false, A/THR nie
+    // gesetzt) oder gar nicht (Signs immer None), obwohl die generischen
+    // SimVars für andere Felder (Fahrwerk, Parkbremse) korrekt sind.
+    // Jedes Feld einzeln gegen die Doku verifiziert, kein Rätselraten.
+    F::f64("L:A22X Flap Lever", "Number"),
+    F::f64("L:A22X AP Master", "Bool"),
+    F::f64("L:A22X AT Master", "Bool"),
+    F::f64("L:A22X Seat Belt Lights", "Enum"),
+    F::f64("L:A22X No PED Lights", "Enum"),
 ];
 
 // Helper builders so the table above stays compact.
@@ -1126,6 +1140,12 @@ pub struct Telemetry {
     pub syn_warning_pba: f64,
     pub syn_autobrake: f64,
     pub syn_flight_stage: f64,
+    // Gruppe I Erweiterung (v1.3.5, siehe TELEMETRY_FIELDS-Kommentar).
+    pub syn_flap_lever: f64,
+    pub syn_ap_master: f64,
+    pub syn_at_master: f64,
+    pub syn_seatbelt_sign: f64,
+    pub syn_no_smoking_sign: f64,
 }
 
 // ---- Touchdown sample (separate data definition #2) ----
@@ -1694,6 +1714,11 @@ impl Telemetry {
         pull_f64!(t.syn_warning_pba);
         pull_f64!(t.syn_autobrake);
         pull_f64!(t.syn_flight_stage);
+        pull_f64!(t.syn_flap_lever);
+        pull_f64!(t.syn_ap_master);
+        pull_f64!(t.syn_at_master);
+        pull_f64!(t.syn_seatbelt_sign);
+        pull_f64!(t.syn_no_smoking_sign);
 
         // Silence the unused-assignment warning the last `pull_*!`
         // emits (the macro always advances `off`, but the very last
@@ -2037,9 +2062,12 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // (Stillstands-Fallback), NICHT hier.
     let is_contrail_fa50 = matches!(profile, AircraftProfile::ContrailFa50);
     // Synaptic A220 — `L:A22X_*`-Zusatzschicht, strikt profile-gegated wie
-    // alle Premium-Gruppen. Standard-SimVars (Triebwerk/Fahrwerk/Klappen)
-    // bleiben unangetastet — laut Vendor-Doku/Inputs-Seite nativ, nichts
-    // bekanntermaßen gefälscht (anders als FSLabs).
+    // alle Premium-Gruppen. Standard-SimVars (Triebwerk/Fahrwerk) bleiben
+    // unangetastet. KORREKTUR 31.07.2026: die Annahme "Klappen bleiben
+    // unangetastet, laut Vendor-Doku nativ" war falsch — Feldbefund
+    // Thomas K.: reale Klappenhebel-Stufe 5 (voll), aufgezeichnet als
+    // 40 % über die generische `FLAPS HANDLE PERCENT`-SimVar. Siehe
+    // `L:A22X Flap Lever`-Override weiter unten.
     let is_synaptic_a220 = matches!(profile, AircraftProfile::SynapticA220);
     // FSL-LED-Schwelle: die `_Brt_Lt`-LVars tragen LED-HELLIGKEIT,
     // kein 0/1-Flag — HubHop-Button-Presets pruefen ">50", wir werten
@@ -2366,6 +2394,24 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
                 || t.fsl_loc_light > FSL_LED_LIT
                 || t.ap_approach,
         )
+    } else if is_synaptic_a220 {
+        // Synaptic A220 (v1.3.5 #Premium, Feldbefund 31.07.2026): die
+        // Standard-`AUTOPILOT MASTER`-SimVar las beim Testflug
+        // durchgehend `false`, auch mitten im automatisch geflogenen
+        // Anflug — dasselbe bekannte Muster wie bei den anderen Study-
+        // Level-Addons oben. `L:A22X AP Master` ist laut Doku der echte
+        // Engagement-State. Die Sub-Modes brauchen keine neuen LVars:
+        // die FG-Booleans, die wir bereits fuer die FMA-Anzeige lesen
+        // (siehe `synaptic_a220_fma_lateral/vertical`), sind dieselbe
+        // Quelle wie HDG/ALT/NAV/APPR hier — ein Wert, zwei Verbraucher.
+        // Standard-SimVar gewinnt weiterhin per ODER, falls doch wired.
+        (
+            t.syn_ap_master != 0.0 || t.ap_master,
+            t.syn_fg_heading != 0.0 || t.ap_heading,
+            t.syn_fg_altitude != 0.0 || t.ap_altitude,
+            t.syn_fg_lnav != 0.0 || t.ap_nav,
+            t.syn_fg_approach != 0.0 || t.ap_approach,
+        )
     } else {
         (
             t.ap_master,
@@ -2540,6 +2586,12 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // identisch ab). Das Log wertet jede Nicht-Null als "ON";
         // exakter Wertebereich braucht Live-Flug-Verifikation.
         Some(t.a346_seatbelt_sw.round().clamp(0.0, 2.0) as u8)
+    } else if is_synaptic_a220 {
+        // Synaptic A220 (v1.3.5 #Premium): `L:A22X Seat Belt Lights` ist
+        // laut Doku 3-stufig (Off/Auto/On), wie beim A346 auf 0..=2
+        // geclamped — Feldbefund 31.07.2026: Standardwert blieb den
+        // ganzen Flug `None`, das Addon treibt die generische SimVar nicht.
+        Some(t.syn_seatbelt_sign.round().clamp(0.0, 2.0) as u8)
     } else {
         None
     };
@@ -2549,6 +2601,9 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // `L:AB_OVH_NO_SMOKING`: wie Fenix' SMOKING-Sign auf 0..=2
         // geclamped (OFF/AUTO/ON-Labels im Activity-Log).
         Some(t.a346_no_smoking_sw.round().clamp(0.0, 2.0) as u8)
+    } else if is_synaptic_a220 {
+        // `L:A22X No PED Lights` — gleiche 3-Stufen-Semantik wie oben.
+        Some(t.syn_no_smoking_sign.round().clamp(0.0, 2.0) as u8)
     } else {
         None
     };
@@ -2759,6 +2814,20 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         t.gear_position as f32
     };
 
+    // Klappen: Synaptic A220 `L:A22X Flap Lever` (Doku: 0-5, sechs Rasten
+    // 0=hochgefahren .. 5=FULL) statt der generischen `FLAPS HANDLE
+    // PERCENT`, die fuer dieses Addon nicht die reale Hebelposition
+    // widerspiegelt (Feldbefund 31.07.2026: Hebel auf Stufe 5, generisches
+    // SimVar zeigte 40 % statt ~100 %). Linear normalisiert (Lever/5) —
+    // die Doku nennt keine krummen Rasten-Prozentsaetze, und der bisherige
+    // Stable-Approach-/PIREP-Schwellwert (>=0.70 = "konfiguriert") passt
+    // damit sauber zu Stufe 4 (0.8) und 5 (1.0) als vollkonfiguriert.
+    let flaps_position = if is_synaptic_a220 {
+        (t.syn_flap_lever / 5.0).clamp(0.0, 1.0) as f32
+    } else {
+        t.flaps_position as f32
+    };
+
     // A/THR (v0.16.4): nur Profile mit verifizierter State-Quelle.
     //   * A346: `L:AB_AP_ATHR_LIGHT_ON` — FCU-Annunciator-Lampe,
     //     echter Engagement-State (seit v0.16.3 subscribed, bislang
@@ -2820,6 +2889,13 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // Contrail FA50 (v0.17.x Phase 2b): `L:CTL_FA50_AUTOTHROTTLE_ACTIVE`
         // — sauberes 0/1-Flag (Systemseite treibt es echt an/aus).
         Some(t.contrail_autothrottle_active != 0.0)
+    } else if is_synaptic_a220 {
+        // Synaptic A220 (v1.3.5 #Premium, Feldbefund 31.07.2026): der
+        // Standardwert blieb den kompletten Testflug `None` (nie ein
+        // einziges Mal gesetzt) — das Addon treibt die generische
+        // Autothrottle-SimVar ueberhaupt nicht. `L:A22X AT Master` ist
+        // laut Doku der echte Engagement-State, sauberes Bool.
+        Some(t.syn_at_master != 0.0)
     } else {
         None
     };
@@ -3315,7 +3391,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         slew_mode: false,
         simulation_rate: 1.0,
         gear_position,
-        flaps_position: t.flaps_position as f32,
+        flaps_position,
         engines_running,
         fuel_total_kg,
         fuel_used_kg: 0.0,
@@ -3983,7 +4059,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(buf.len(), 2940, "total block size");
+        assert_eq!(buf.len(), 2980, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -4203,6 +4279,14 @@ mod tests {
         assert_eq!(t.syn_warning_pba, 1288.0); // idx 288
         assert_eq!(t.syn_autobrake, 1289.0); // idx 289
         assert_eq!(t.syn_flight_stage, 1290.0); // idx 290
+
+        // ---- Synaptic A220 Erweiterung (idx 291..295, v1.3.5,
+        //      Feldbefund 31.07.2026) ----
+        assert_eq!(t.syn_flap_lever, 1291.0); // idx 291
+        assert_eq!(t.syn_ap_master, 1292.0); // idx 292
+        assert_eq!(t.syn_at_master, 1293.0); // idx 293
+        assert_eq!(t.syn_seatbelt_sign, 1294.0); // idx 294
+        assert_eq!(t.syn_no_smoking_sign, 1295.0); // idx 295
     }
 
     #[test]
@@ -4248,6 +4332,13 @@ mod tests {
                 FieldKind::String256 => buf.extend_from_slice(&[0u8; 256]),
             }
         }
+        // v1.3.5: drop the 5 Synaptic A220 extension tail fields (5*8).
+        buf.truncate(buf.len() - 40);
+        let t = Telemetry::from_block(&buf);
+        assert_eq!(t.syn_flight_stage, 1290.0); // last original A220 field intact
+        assert_eq!(t.syn_flap_lever, 0.0); // extension tail = safe defaults
+        assert_eq!(t.syn_no_smoking_sign, 0.0);
+
         // Synaptic A220: drop the 12 new tail fields (12*8).
         buf.truncate(buf.len() - 96);
         let t = Telemetry::from_block(&buf);
@@ -6012,10 +6103,25 @@ mod tests {
         t.syn_caution_pba = 1.0;
         t.syn_fg_lnav = 1.0;
         t.syn_autobrake = 3.0;
+        // v1.3.5 extension fields, same isolation guarantee.
+        t.syn_flap_lever = 5.0;
+        t.syn_ap_master = 1.0;
+        t.syn_at_master = 1.0;
+        t.syn_seatbelt_sign = 2.0;
+        t.syn_no_smoking_sign = 2.0;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.master_caution, None);
         assert_eq!(snap.fma_lateral_mode, None);
         assert_eq!(snap.autobrake, None);
+        // A320 Neo has no default-SimVar flaps/AP/A-THR truth here (all
+        // zeroed in `Telemetry::default()`), so this only proves the A22X
+        // LVars above did NOT leak through — not that the generic path
+        // produces a specific value.
+        assert_eq!(snap.flaps_position, 0.0);
+        assert_eq!(snap.autopilot_master, Some(false));
+        assert_eq!(snap.autothrottle_on, None);
+        assert_eq!(snap.seatbelts_sign, None);
+        assert_eq!(snap.no_smoking_sign, None);
     }
 
     #[test]
@@ -6088,5 +6194,95 @@ mod tests {
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.autobrake, None);
         assert_eq!(snap.flight_phase_aircraft, None);
+    }
+
+    // ---- Synaptic A220 Erweiterung (v1.3.5, Feldbefund 31.07.2026:
+    // Thomas K. flog Klappen-Hebel Stufe 5, generisches SimVar zeichnete
+    // 40 % auf — Anlass fuer den vollstaendigen Doku-Abgleich unten) ----
+
+    #[test]
+    fn synaptic_a220_flap_lever_maps_linearly_to_percent() {
+        // Doku: `L:A22X Flap Lever`, 0-5 (sechs Rasten). Linear normalisiert.
+        let mut t = synaptic_a220_telemetry();
+        t.syn_flap_lever = 5.0; // FULL — der exakte Feldbefund-Fall
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.flaps_position, 1.0);
+
+        let mut t = synaptic_a220_telemetry();
+        t.syn_flap_lever = 2.0; // was das generische SimVar faelschlich als "40%" zeigte
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert!((snap.flaps_position - 0.4).abs() < 1e-6);
+
+        let mut t = synaptic_a220_telemetry();
+        t.syn_flap_lever = 0.0; // hochgefahren
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.flaps_position, 0.0);
+
+        // Stufe 4 (0.8) und 5 (1.0) muessen die bestehende
+        // Stable-Approach-/PIREP-Schwelle (>=0.70 = "konfiguriert")
+        // ueberschreiten — das war der ganze Punkt des Fixes.
+        let mut t = synaptic_a220_telemetry();
+        t.syn_flap_lever = 4.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert!(snap.flaps_position >= 0.70);
+    }
+
+    #[test]
+    fn synaptic_a220_ap_master_and_submodes_from_fg_and_dedicated_lvar() {
+        let mut t = synaptic_a220_telemetry();
+        t.syn_ap_master = 1.0;
+        t.syn_fg_heading = 1.0;
+        t.syn_fg_altitude = 1.0;
+        t.syn_fg_lnav = 1.0;
+        t.syn_fg_approach = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(true));
+        assert_eq!(snap.autopilot_heading, Some(true));
+        assert_eq!(snap.autopilot_altitude, Some(true));
+        assert_eq!(snap.autopilot_nav, Some(true));
+        assert_eq!(snap.autopilot_approach, Some(true));
+
+        // Nothing set → everything false, not None (mirrors A346/A350).
+        let t = synaptic_a220_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(false));
+
+        // Standard-SimVar gewinnt weiterhin per ODER, falls doch wired.
+        let mut t = synaptic_a220_telemetry();
+        t.ap_master = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autopilot_master, Some(true));
+    }
+
+    #[test]
+    fn synaptic_a220_autothrottle_from_dedicated_lvar_not_none() {
+        // Feldbefund: der Standardwert blieb den ganzen Testflug `None`.
+        let mut t = synaptic_a220_telemetry();
+        t.syn_at_master = 1.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.autothrottle_on, Some(true));
+
+        let t = synaptic_a220_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(
+            snap.autothrottle_on,
+            Some(false),
+            "A220 has its own dedicated LVar, so this is a real known-off, not a None-worthy unknown"
+        );
+    }
+
+    #[test]
+    fn synaptic_a220_seatbelt_and_no_smoking_signs() {
+        let mut t = synaptic_a220_telemetry();
+        t.syn_seatbelt_sign = 2.0; // ON
+        t.syn_no_smoking_sign = 1.0; // AUTO
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.seatbelts_sign, Some(2));
+        assert_eq!(snap.no_smoking_sign, Some(1));
+
+        let t = synaptic_a220_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.seatbelts_sign, Some(0)); // OFF, not None — A220 has its own LVar
+        assert_eq!(snap.no_smoking_sign, Some(0));
     }
 }
