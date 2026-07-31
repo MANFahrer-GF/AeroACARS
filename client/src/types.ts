@@ -366,6 +366,11 @@ export interface ActiveFlightInfo {
   block_on_at: string | null;
   landing_rate_fpm: number | null;
   landing_g_force: number | null;
+  /** v1.3.5 (#Hard-Landing-Banner): true once the post-touchdown V/S
+   *  refinement is done. `landing_rate_fpm` can already hold a plausible
+   *  early value before this flips true — wait for this flag, not mere
+   *  presence of a value, before trusting the number on screen. */
+  landing_score_finalized: boolean;
   was_just_resumed: boolean;
   /** v0.12.1 (Stream E): on a resume, true when the sim position looks
    *  like a glitchy crash-reload (persisted phase airborne but sim

@@ -4424,6 +4424,19 @@ pub struct ActiveFlightInfo {
     /// None → Runway/Winkel unbekannt oder unplausibel → Banner bleibt beim
     /// 3°-Default (unverändert für normale Anflüge).
     approach_glideslope_angle: Option<f64>,
+    /// v1.3.5 (#Hard-Landing-Banner): mirrors `FlightStats.landing_score_
+    /// finalized` — true once the post-touchdown vertical-speed refinement
+    /// (edge-value recompute, ~9-12s after touchdown) is done. The live
+    /// hard-landing banner waits for this instead of showing the raw
+    /// SimVar-latched estimate immediately (field report 31.07.2026: raw
+    /// SimVar read -770 fpm at touchdown, the refined/scored value for the
+    /// SAME touchdown was -455 fpm — the banner showed the wrong number
+    /// for ~9 seconds before the Logbook/PIREP showed the real one).
+    /// `landing_rate_fpm` below can already hold a plausible early value
+    /// before this flips true (the edge-recompute cascade has an earlier,
+    /// less-refined fallback) — this flag is the actual "won't change
+    /// again" signal, not mere presence of a value.
+    landing_score_finalized: bool,
     /// ISO-8601 UTC timestamp of the last successful position-post.
     /// Powers the cockpit's LIVE recording indicator — "X seconds
     /// ago" derived client-side.
@@ -9621,6 +9634,7 @@ fn flight_info(flight: &ActiveFlight, resume_position_suspect: bool) -> ActiveFl
         // den Engineering-Edge.
         landing_rate_fpm: stats.canonical_landing_rate_fpm(),
         landing_g_force: stats.landing_g_force,
+        landing_score_finalized: stats.landing_score_finalized,
         was_just_resumed,
         resume_position_suspect,
         // v0.13.0 Stream F: nur befüllen wenn was_just_resumed=true, sonst

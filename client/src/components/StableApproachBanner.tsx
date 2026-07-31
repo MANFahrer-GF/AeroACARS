@@ -166,15 +166,29 @@ export function StableApproachBanner({ activeFlight, simSnapshot, enabled }: Pro
   const { t } = useTranslation();
   const [hardLandingHint, setHardLandingHint] = useState<{ vs: number; until: number } | null>(null);
 
-  // Track Touchdown-Übergang: phase wechselt zu "landing" oder Touchdown-Event,
-  // dann die V/S aus snap.touchdown_vs_fpm (oder aktuelle V/S falls bereits am Boden).
+  // v1.3.5 fix (Feldbefund 31.07.2026): this used to fire straight off
+  // `simSnapshot.touchdown_vs_fpm` — the raw MSFS SimVar, latched the
+  // instant the wheels touch. That value is known-unreliable (the whole
+  // reason AeroACARS recomputes its own vertical speed from multiple
+  // samples): a real flight showed -770 fpm here while the refined,
+  // actually-scored value for the SAME touchdown was -455 fpm. The pilot
+  // saw the wrong number in the banner and the right one, minutes later,
+  // in the Logbook — a jarring mismatch, not two views of the same fact.
+  //
+  // Now waits for `activeFlight.landing_score_finalized` (mirrors the
+  // backend's own `FlightStats.landing_score_finalized` — flips true once
+  // the post-touchdown refinement, ~9-12s, is done) and shows the
+  // canonical `landing_rate_fpm` — the SAME number the Logbook/PIREP use.
+  // No timer guess: the banner only ever appears once the number is the
+  // real, final one, however long that refinement actually took.
   useEffect(() => {
-    if (!enabled || !simSnapshot) return;
-    const tdVs = simSnapshot.touchdown_vs_fpm;
-    if (tdVs != null && tdVs < -600) {
-      setHardLandingHint({ vs: tdVs, until: Date.now() + 8000 });
+    if (!enabled) return;
+    if (!activeFlight.landing_score_finalized) return;
+    const vs = activeFlight.landing_rate_fpm;
+    if (vs != null && vs < -600) {
+      setHardLandingHint({ vs, until: Date.now() + 20000 });
     }
-  }, [simSnapshot?.touchdown_vs_fpm, enabled]);
+  }, [activeFlight.landing_score_finalized, activeFlight.landing_rate_fpm, enabled]);
 
   useEffect(() => {
     if (!hardLandingHint) return;
