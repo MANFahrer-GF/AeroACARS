@@ -1,3 +1,8 @@
+/* Redesign Stufe C: die wiederverwendbaren Bausteine. Muss vor allem
+   anderen stehen (CSS-@import-Regel), damit die Primitive von den
+   nachfolgenden Regeln ueberschrieben werden koennen und nicht umgekehrt. */
+@import "./components/ui/ui.css";
+
 /* B612 Mono — the typeface Airbus commissioned for cockpit displays
    (SIL OFL 1.1, see src/assets/fonts/OFL.txt). Bundled rather than
    pulled from a CDN so the app keeps working offline. Used only for

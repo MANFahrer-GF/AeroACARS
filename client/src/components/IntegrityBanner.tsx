@@ -10,9 +10,19 @@
 // dieser Banner ist nur die LIVE-Warnung während des Flugs damit der
 // Pilot weiß "hier stimmt was nicht, der PIREP wird vermutlich
 // untrusted werden".
+//
+// Redesign Stufe B — BUGFIX: Diese Komponente war vollständig in
+// Tailwind-Syntax geschrieben (`fixed top-12`, `bg-red-900/95`,
+// `rounded-lg`, `max-w-2xl` …), obwohl das Projekt kein Tailwind hat und
+// nie hatte. Keine dieser Klassen existierte in App.css. Ergebnis: wenn
+// mitten im Flug ein kritisches Integritätsproblem auftrat, sah der Pilot
+// ein ungestyltes <div> im normalen Textfluss — nicht fixiert, nicht rot,
+// ohne Rahmen. Jetzt über die Notice-Primitive, die dieselbe Wirkung mit
+// echten Tokens erzielt. Texte und Daten unverändert.
 
 import { useTranslation } from "react-i18next";
 import { useIntegrityFlags } from "../hooks/useIntegrityFlags";
+import { Button, Notice } from "./ui";
 
 export function IntegrityBanner() {
   const { t } = useTranslation();
@@ -22,63 +32,67 @@ export function IntegrityBanner() {
   if (state.dismissed && state.sessionSeverity !== "critical") return null;
 
   const isCritical = state.sessionSeverity === "critical";
-  const bgClass = isCritical
-    ? "bg-red-900/95 border-red-500 text-red-50"
-    : "bg-amber-800/95 border-amber-500 text-amber-50";
 
   const latestFlag = state.recentFlags[0];
   const flagType = latestFlag?.flag.type ?? "UNKNOWN";
   const flagPhase = latestFlag?.flag.phase ?? "—";
 
+  const title = isCritical
+    ? t("integrity.title_critical", "Data-Integrity-Problem entdeckt")
+    : t("integrity.title_anomaly", "Datenanomalie");
+
   return (
-    <div
-      className={`fixed top-12 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-lg border-2 shadow-xl max-w-2xl ${bgClass}`}
+    <Notice
+      floating
       role="alert"
       aria-live="assertive"
-    >
-      <div className="flex items-start gap-3">
-        <span className="text-2xl" aria-hidden>
-          {isCritical ? "⚠" : "ⓘ"}
-        </span>
-        <div className="flex-1">
-          <p className="font-bold text-sm uppercase tracking-wide">
-            {isCritical
-              ? t("integrity.title_critical", "Data-Integrity-Problem entdeckt")
-              : t("integrity.title_anomaly", "Datenanomalie")}
-          </p>
-          <p className="text-sm mt-1">
+      tone={isCritical ? "error" : "warn"}
+      level={title}
+      detail={
+        <>
+          <span>
             {t("integrity.flag_description", {
               defaultValue: "{{type}} in Phase {{phase}}",
               type: flagType,
               phase: flagPhase,
             })}
-          </p>
+          </span>
           {isCritical && (
-            <p className="text-xs mt-2 opacity-80">
-              {t("integrity.critical_warning",
-                "Der PIREP wird wahrscheinlich als 'untrusted' eingestuft und für VA-Admin-Review markiert.")}
-            </p>
+            <>
+              {" · "}
+              <span>
+                {t(
+                  "integrity.critical_warning",
+                  "Der PIREP wird wahrscheinlich als 'untrusted' eingestuft und für VA-Admin-Review markiert.",
+                )}
+              </span>
+            </>
           )}
           {state.recentFlags.length > 1 && (
-            <p className="text-xs mt-1 opacity-70">
-              {t("integrity.flag_count", {
-                defaultValue: "{{count}} flags in dieser Session",
-                count: state.recentFlags.length,
-              })}
-            </p>
+            <>
+              {" · "}
+              <span>
+                {t("integrity.flag_count", {
+                  defaultValue: "{{count}} flags in dieser Session",
+                  count: state.recentFlags.length,
+                })}
+              </span>
+            </>
           )}
-        </div>
-        {!isCritical && (
-          <button
-            type="button"
+        </>
+      }
+      actions={
+        !isCritical ? (
+          <Button
+            variant="quiet"
+            size="sm"
             onClick={dismiss}
-            className="text-xs px-2 py-1 rounded bg-amber-700/50 hover:bg-amber-700/70"
             aria-label={t("integrity.dismiss", "Schließen")}
           >
             ✕
-          </button>
-        )}
-      </div>
-    </div>
+          </Button>
+        ) : undefined
+      }
+    />
   );
 }
