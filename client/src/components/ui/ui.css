@@ -480,3 +480,11 @@
   font-size: var(--fs-300);
   line-height: var(--lh-normal);
 }
+
+/* Inhaltsbereich der Hilfe-Modale (Glossar, Anflug-Stabilität, Bahn-Auslastung).
+   Ersetzt drei identische Inline-Style-Blöcke. */
+.helpmodal__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
