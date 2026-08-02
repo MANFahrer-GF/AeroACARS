@@ -18,18 +18,109 @@
   font-display: swap;
 }
 
+/* ===========================================================================
+   REDESIGN — Stufe A: Design-Token-Fundament
+   ---------------------------------------------------------------------------
+   Vorher gab es 32 Tokens, ausschliesslich fuer Farben, plus EINEN Radius.
+   Fuer Abstaende, Schatten, Bewegung, Schriftgroessen und z-index existierte
+   nichts — entsprechend standen dort 65 verschiedene Schriftgroessen,
+   16 Radien, 37 Schatten und 31 Transitions direkt im Code.
+
+   Die alten Farbnamen (--accent, --success, --border …) bleiben bestehen und
+   zeigen jetzt auf die neuen semantischen Tokens. Dadurch uebernehmen die
+   bestehenden ~1360 Regelbloecke die neue Palette, ohne dass eine einzige
+   davon angefasst werden muss.
+   =========================================================================== */
 :root {
-  --bg: #f5f5f7;
+  /* --- Typografie ------------------------------------------------------- */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    "Helvetica Neue", Arial, sans-serif;
+  /* 7 Stufen statt 65 Einzelwerten in px/rem/pt/em. */
+  --fs-100: 10px;
+  --fs-200: 11px;
+  --fs-300: 12px;
+  --fs-400: 13px;
+  --fs-500: 16px;
+  --fs-600: 22px;
+  --fs-700: 52px;
+  --fw-regular: 400;
+  --fw-bold: 700;
+  --lh-tight: 1;
+  --lh-snug: 1.35;
+  --lh-normal: 1.55;
+  --ls-caps: 0.18em;
+  --ls-mono: 0.06em;
+  --ls-tight: -0.02em;
+
+  /* --- Abstaende — 8er-Raster ------------------------------------------- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+
+  /* --- Radien — 3 statt 16 ---------------------------------------------- */
+  --r-md: 6px;
+  --r-lg: 10px;
+
+  /* --- Elevation — 4 statt 37, theme-abhaengig --------------------------- */
+  --el-1: 0 1px 2px var(--shadow-color);
+  --el-2: 0 2px 8px var(--shadow-color);
+  --el-3: 0 12px 32px -8px var(--shadow-color);
+  --el-modal: 0 24px 64px -16px var(--shadow-color);
+
+  /* --- Bewegung — 3 Dauern + 1 Kurve statt 31 Transitions ---------------- */
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+  --ease: cubic-bezier(0.2, 0, 0.2, 1);
+
+  /* --- Ebenen — ersetzt 1/2/30/100/1000/1100/9999/10000 ------------------ */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-dropdown: 20;
+  --z-overlay: 30;
+  --z-toast: 40;
+  --scrim: rgba(0, 0, 0, 0.55);
+
+  /* --- Semantische Farben (Hell) ---------------------------------------- */
+  --acc: #0a66ce;
+  --acc-quiet: rgba(10, 102, 206, 0.1);
+  --line: #d3dbe3;
+  --tape: #f1f4f8;
+  --text-dim: #5c6975;
+  --tick: #c3ccd6;
+  --sem-ok: #0e7c55;
+  --sem-ok-bg: rgba(14, 124, 85, 0.1);
+  --sem-warn: #8a5a00;
+  --sem-warn-bg: rgba(138, 90, 0, 0.1);
+  --sem-danger: #c0362a;
+  --sem-danger-bg: rgba(192, 54, 42, 0.09);
+  --sem-info: #2a5f8a;
+  --sem-info-bg: rgba(42, 95, 138, 0.1);
+  --shadow-color: rgba(16, 24, 32, 0.14);
+
+  --bg: #eef1f5;
   --surface: #ffffff;
-  --surface-2: #ececf0;
-  --text: #1d1d1f;
-  --text-muted: #6e6e73;
-  --accent: #0a84ff;
-  --border: #d2d2d7;
-  --success: #30d158;
-  --warning: #ff9f0a;
-  --danger: #ff453a;
+  --surface-2: #f7f9fb;
+  --surface-3: #edf1f5;
+  --text: #0d1418;
+
+  /* --- Alt-Namen zeigen auf die neuen Tokens ----------------------------- */
+  --text-muted: var(--text-dim);
+  --accent: var(--acc);
+  --border: var(--line);
+  --success: var(--sem-ok);
+  --warning: var(--sem-warn);
+  --danger: var(--sem-danger);
   --offline: #8e8e93;
+  /* Waren Geister-Tokens: referenziert, nie definiert, ueberlebten nur ueber
+     Fallbacks — und --info hatte an zwei Stellen zwei verschiedene. */
+  --info: var(--sem-info);
+  --warn: var(--sem-warn);
+  --report-accent: var(--acc);
+  --bg-elevated: var(--surface-2);
   /* Live-Map: geflogener Track / Breadcrumbs — kontrastreich auf heller Basemap */
   --map-track: #334155;
 
@@ -74,13 +165,31 @@
 }
 
 :root[data-theme="dark"] {
-  --bg: #1c1c1e;
-  --surface: #2c2c2e;
-  --surface-2: #3a3a3c;
-  --text: #f5f5f7;
-  --text-muted: #98989d;
-  --accent: #0a84ff;
-  --border: #3a3a3c;
+  /* Eigene Dunkelwerte fuer JEDE semantische Farbe. Vorher wurden
+     --success/--warning/--danger im Dunkeln gar nicht ueberschrieben und
+     --accent war in beiden Themes identisch — also iOS-Hellfarben auf
+     dunklem Grund. */
+  --acc: #4cc2ff;
+  --acc-quiet: rgba(76, 194, 255, 0.14);
+  --line: #232c36;
+  --tape: #0d141b;
+  --text-dim: #8695a3;
+  --tick: #39434f;
+  --sem-ok: #3ecf8e;
+  --sem-ok-bg: rgba(62, 207, 142, 0.12);
+  --sem-warn: #f2b24c;
+  --sem-warn-bg: rgba(242, 178, 76, 0.12);
+  --sem-danger: #ff5c4d;
+  --sem-danger-bg: rgba(255, 92, 77, 0.12);
+  --sem-info: #7fa8c9;
+  --sem-info-bg: rgba(127, 168, 201, 0.12);
+  --shadow-color: rgba(0, 0, 0, 0.55);
+
+  --bg: #0a0d10;
+  --surface: #141a21;
+  --surface-2: #101620;
+  --surface-3: #182029;
+  --text: #e9eff5;
   --offline: #636366;
   /* Live-Map: Track / Breadcrumbs — hell auf dunkler Basemap (Stratos-Look) */
   --map-track: #e8edf2;
@@ -107,6 +216,48 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* ===========================================================================
+   REDESIGN — Stufe A: Pflicht-Basis, die bisher fehlte
+   =========================================================================== */
+
+/* Ein Fokus-Ring fuer die ganze App. Vorher: 2 :focus-visible-Regeln in
+   9.600 Zeilen, 0 :active-Regeln — Tastaturbedienung war praktisch blind. */
+:where(a, button, [role="tab"], [role="button"], [role="switch"], input, select,
+  textarea, tr[tabindex], [tabindex="0"]):focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+:where(button, [role="tab"], [role="button"]):active {
+  transform: translateY(1px);
+}
+
+/* Die sechs Endlos-Pulsanimationen laufen im peripheren Sichtfeld des
+   Piloten und ignorierten die Systemeinstellung bisher. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Wurde in .manual-file-dialog referenziert, war aber nirgends definiert —
+   der Dialog bekam still keine Einblendung. */
+@keyframes resume-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 html,
