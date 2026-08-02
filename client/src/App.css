@@ -128,6 +128,17 @@
   --warn: var(--sem-warn);
   --report-accent: var(--acc);
   --bg-elevated: var(--surface-2);
+
+  /* Sechsstufige Bewertungsskala (excellent..critical) — u.a. fuer
+     die Bahn-Auslastungs-Baender im Hilfe-Modal. Eigene Werte pro
+     Theme: derselbe Hex-Ton kann nicht gleichzeitig auf Weiss UND auf
+     fast-Schwarz die WCAG-4.5:1-Grenze fuer kleinen Text schaffen. */
+  --scale-excellent: #15803d;
+  --scale-good: #4d7c0f;
+  --scale-fair: #a16207;
+  --scale-poor: #c2410c;
+  --scale-bad: #dc2626;
+  --scale-critical: #b91c1c;
   /* Live-Map: geflogener Track / Breadcrumbs — kontrastreich auf heller Basemap */
   --map-track: #334155;
 
@@ -192,6 +203,17 @@
   --sem-info-bg: rgba(127, 168, 201, 0.12);
   --on-acc: #04121c;
   --shadow-color: rgba(0, 0, 0, 0.55);
+
+  /* Sechsstufige Bewertungsskala (excellent..critical) — u.a. fuer
+     die Bahn-Auslastungs-Baender im Hilfe-Modal. Eigene Werte pro
+     Theme: derselbe Hex-Ton kann nicht gleichzeitig auf Weiss UND auf
+     fast-Schwarz die WCAG-4.5:1-Grenze fuer kleinen Text schaffen. */
+  --scale-excellent: #22c55e;
+  --scale-good: #84cc16;
+  --scale-fair: #eab308;
+  --scale-poor: #f97316;
+  --scale-bad: #ef4444;
+  --scale-critical: #f87171;
 
   --bg: #0a0d10;
   --surface: #141a21;

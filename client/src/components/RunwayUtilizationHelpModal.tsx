@@ -29,15 +29,18 @@ const BAND_KEYS = [
 
 type BandKey = (typeof BAND_KEYS)[number];
 
-// Farb-Tokens für die Punktezahl pro Band — abgeleitet von den
-// existierenden Sub-Score-Bands im LandingPanel (good/ok/bad).
+// Farb-Tokens für die Punktezahl pro Band. Zeigen auf die sechsstufige
+// --scale-* Skala in App.css, die für Hell UND Dunkel eigens auf
+// WCAG-4.5:1 gegen die Kartenfläche abgestimmt ist — ein einzelner
+// Hex-Wert schafft das nie in beiden Themes gleichzeitig (Weiss vs.
+// fast-Schwarz brauchen entgegengesetzt helle/dunkle Töne).
 const BAND_COLORS: Record<BandKey, string> = {
-  excellent: "#22c55e", // green-500
-  good: "#84cc16", // lime-500
-  ok: "#eab308", // amber-500
-  long: "#f97316", // orange-500
-  marginal: "#ef4444", // red-500
-  overrun: "#dc2626", // red-600
+  excellent: "var(--scale-excellent)",
+  good: "var(--scale-good)",
+  ok: "var(--scale-fair)",
+  long: "var(--scale-poor)",
+  marginal: "var(--scale-bad)",
+  overrun: "var(--scale-critical)",
 };
 
 const TERM_KEYS = ["td_distance", "rollout", "lda"] as const;
@@ -79,19 +82,7 @@ export function RunwayUtilizationHelpModal({ onClose }: Props) {
           </p>
 
           <Section heading={t("landing.runway_utilization_help.formula_heading")}>
-            <div
-              style={{
-                background: "rgba(34,197,94,0.10)",
-                border: "1px solid rgba(34,197,94,0.35)",
-                borderRadius: 6,
-                padding: "10px 14px",
-                fontFamily:
-                  "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-                fontSize: "0.92rem",
-                color: "#bbf7d0",
-                whiteSpace: "pre-line",
-              }}
-            >
+            <div className="helpmodal__formula">
               {t("landing.runway_utilization_help.formula")}
             </div>
           </Section>
@@ -103,7 +94,7 @@ export function RunwayUtilizationHelpModal({ onClose }: Props) {
               "landing.runway_utilization_help.float_tolerance_heading",
             )}
           >
-            <p style={paragraphStyle}>
+            <p className="helpmodal__p">
               {t("landing.runway_utilization_help.float_tolerance_body")}
             </p>
           </Section>
@@ -127,17 +118,7 @@ export function RunwayUtilizationHelpModal({ onClose }: Props) {
           </Section>
 
           <Section heading={t("landing.runway_utilization_help.example_heading")}>
-            <div
-              style={{
-                background: "rgba(255,255,255,0.04)",
-                border: "1px solid rgba(255,255,255,0.08)",
-                borderRadius: 6,
-                padding: "10px 14px",
-                fontSize: "0.88rem",
-                lineHeight: 1.5,
-                whiteSpace: "pre-line",
-              }}
-            >
+            <div className="helpmodal__panel" style={{ fontSize: "0.88rem", lineHeight: 1.5, whiteSpace: "pre-line" }}>
               {t("landing.runway_utilization_help.example")}
             </div>
           </Section>
@@ -152,29 +133,17 @@ export function RunwayUtilizationHelpModal({ onClose }: Props) {
             >
               {t("landing.runway_utilization_help.bands_intro")}
             </p>
-            <div
-              style={{
-                border: "1px solid rgba(255,255,255,0.10)",
-                borderRadius: 6,
-                overflow: "hidden",
-              }}
-            >
-              <table
-                style={{
-                  width: "100%",
-                  borderCollapse: "collapse",
-                  fontSize: "0.86rem",
-                }}
-              >
+            <div className="helpmodal__table-wrap">
+              <table className="helpmodal__table">
                 <thead>
-                  <tr style={{ background: "rgba(255,255,255,0.06)" }}>
-                    <th style={thStyle}>
+                  <tr>
+                    <th className="helpmodal__th">
                       {t("landing.runway_utilization_help.bands_header.pct")}
                     </th>
-                    <th style={{ ...thStyle, textAlign: "right", width: 80 }}>
+                    <th className="helpmodal__th" style={{ textAlign: "right", width: 80 }}>
                       {t("landing.runway_utilization_help.bands_header.pts")}
                     </th>
-                    <th style={thStyle}>
+                    <th className="helpmodal__th">
                       {t("landing.runway_utilization_help.bands_header.label")}
                     </th>
                   </tr>
@@ -183,18 +152,15 @@ export function RunwayUtilizationHelpModal({ onClose }: Props) {
                   {BAND_KEYS.map((key) => (
                     <tr
                       key={key}
-                      style={{
-                        borderTop: "1px solid rgba(255,255,255,0.06)",
-                      }}
+                      className="helpmodal__tr"
                     >
-                      <td style={tdStyle}>
+                      <td className="helpmodal__td">
                         {t(
                           `landing.runway_utilization_help.bands.${key}.pct`,
                         )}
                       </td>
                       <td
                         style={{
-                          ...tdStyle,
                           textAlign: "right",
                           fontWeight: 700,
                           color: BAND_COLORS[key],
@@ -205,7 +171,7 @@ export function RunwayUtilizationHelpModal({ onClose }: Props) {
                           `landing.runway_utilization_help.bands.${key}.pts`,
                         )}
                       </td>
-                      <td style={tdStyle}>
+                      <td className="helpmodal__td">
                         {t(
                           `landing.runway_utilization_help.bands.${key}.label`,
                         )}
@@ -218,7 +184,7 @@ export function RunwayUtilizationHelpModal({ onClose }: Props) {
           </Section>
 
           <Section heading={t("landing.runway_utilization_help.heavy_heading")}>
-            <p style={paragraphStyle}>
+            <p className="helpmodal__p">
               {t("landing.runway_utilization_help.heavy_body")}
             </p>
           </Section>
@@ -228,7 +194,7 @@ export function RunwayUtilizationHelpModal({ onClose }: Props) {
               "landing.runway_utilization_help.pre_displaced_heading",
             )}
           >
-            <p style={paragraphStyle}>
+            <p className="helpmodal__p">
               {t("landing.runway_utilization_help.pre_displaced_body")}
             </p>
           </Section>
@@ -239,7 +205,7 @@ export function RunwayUtilizationHelpModal({ onClose }: Props) {
           <Section
             heading={t("landing.runway_utilization_help.long_float_heading")}
           >
-            <p style={paragraphStyle}>
+            <p className="helpmodal__p">
               {t("landing.runway_utilization_help.long_float_body")}
             </p>
           </Section>
@@ -272,7 +238,7 @@ export function RunwayUtilizationHelpModal({ onClose }: Props) {
           </Section>
 
           <Section heading={t("landing.runway_utilization_help.card_heading")}>
-            <p style={paragraphStyle}>
+            <p className="helpmodal__p">
               {t("landing.runway_utilization_help.card_body")}
             </p>
           </Section>
@@ -290,37 +256,11 @@ function Section({
 }) {
   return (
     <section>
-      <h4
-        style={{
-          margin: "0 0 8px 0",
-          fontSize: "0.96rem",
-          fontWeight: 600,
-          color: "rgba(255,255,255,0.92)",
-        }}
-      >
-        {heading}
-      </h4>
+      <h4 className="helpmodal__heading">{heading}</h4>
       {children}
     </section>
   );
 }
 
-const thStyle: React.CSSProperties = {
-  textAlign: "left",
-  padding: "8px 12px",
-  fontWeight: 600,
-  fontSize: "0.82rem",
-  opacity: 0.85,
-};
 
-const tdStyle: React.CSSProperties = {
-  padding: "8px 12px",
-  verticalAlign: "top",
-};
 
-const paragraphStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: "0.88rem",
-  lineHeight: 1.55,
-  opacity: 0.92,
-};

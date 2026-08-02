@@ -485,3 +485,85 @@
   flex-direction: column;
   gap: var(--sp-4);
 }
+
+/* Formel-/Code-Kasten in den Landung-Hilfe-Modalen (Bahn-Auslastung,
+   Anflug-Stabilität). War hart auf rgba(34,197,94,*) + #bbf7d0 codiert —
+   eine fuer Dunkel abgestimmte Mintfarbe, die im Hellmodus fast
+   unlesbar wurde (Kontrast < 2:1). Jetzt der normale OK-Status-Token,
+   der in beiden Themes eigens abgestimmt ist. */
+.helpmodal__formula {
+  background: var(--sem-ok-bg);
+  border: 1px solid color-mix(in srgb, var(--sem-ok) 35%, transparent);
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-400);
+  color: var(--sem-ok);
+  white-space: pre-line;
+}
+
+/* Schwellwert-Chip in den Approach-Stability-Kacheln (Hilfe-Modal) —
+   selbe Ursache wie .helpmodal__formula, kleinere/inline Variante. */
+.helpmodal__threshold {
+  font-size: var(--fs-200);
+  color: var(--sem-ok);
+  font-family: var(--font-mono);
+  padding: 4px 8px;
+  background: var(--sem-ok-bg);
+  border: 1px solid color-mix(in srgb, var(--sem-ok) 25%, transparent);
+  border-radius: var(--r-sm);
+  display: inline-block;
+}
+
+/* Zwischenüberschriften und Fließtext in den Hilfe-Modalen. Ersetzt
+   `color: rgba(255,255,255,0.92)` — reines Weiß, unsichtbar im Hellmodus
+   auf hellem Grund (Kontrast ~1:1). --text ist in beiden Themes richtig
+   abgestimmt. */
+.helpmodal__heading {
+  margin: 0 0 8px;
+  font-size: var(--fs-500);
+  font-weight: var(--fw-bold);
+  color: var(--text);
+}
+.helpmodal__p {
+  margin: 0;
+  font-size: var(--fs-400);
+  line-height: var(--lh-normal);
+  color: var(--text-dim);
+}
+/* Ruhige Info-Box (Beispielrechnung, Kachel-Erklärung). Ersetzt
+   rgba(255,255,255,0.04)/0.08 — im Hellmodus praktisch wirkungslos, da
+   Weiß-auf-Weiß keinen Kontrast zur Karte erzeugt. */
+.helpmodal__panel {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+}
+.helpmodal__table-wrap {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.helpmodal__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-300);
+}
+.helpmodal__table thead tr {
+  background: var(--surface-2);
+}
+.helpmodal__table tbody tr {
+  border-top: 1px solid var(--line);
+}
+.helpmodal__th {
+  text-align: left;
+  padding: 8px 12px;
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-300);
+  color: var(--text-dim);
+}
+.helpmodal__td {
+  padding: 8px 12px;
+  vertical-align: top;
+}

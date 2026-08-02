@@ -49,13 +49,13 @@ export function ApproachStabilityHelpModal({ onClose }: Props) {
           </p>
 
           <Section heading={t("landing.approach_stability_help.gate.heading")}>
-            <p style={paragraphStyle}>
+            <p className="helpmodal__p">
               {t("landing.approach_stability_help.gate.body")}
             </p>
           </Section>
 
           <Section heading={t("landing.approach_stability_help.pill.heading")}>
-            <p style={paragraphStyle}>
+            <p className="helpmodal__p">
               {t("landing.approach_stability_help.pill.body")}
             </p>
           </Section>
@@ -81,14 +81,7 @@ export function ApproachStabilityHelpModal({ onClose }: Props) {
 function TileExplain({ tileKey }: { tileKey: string }) {
   const { t } = useTranslation();
   return (
-    <div
-      style={{
-        background: "rgba(255,255,255,0.04)",
-        border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: 6,
-        padding: "10px 12px",
-      }}
-    >
+    <div className="helpmodal__panel" style={{ padding: "10px 12px" }}>
       <div
         style={{
           fontWeight: 600,
@@ -108,19 +101,7 @@ function TileExplain({ tileKey }: { tileKey: string }) {
       >
         {t(`landing.approach_stability_help.tiles.${tileKey}.body`)}
       </div>
-      <div
-        style={{
-          fontSize: "0.78rem",
-          color: "#bbf7d0",
-          fontFamily:
-            "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-          padding: "4px 8px",
-          background: "rgba(34,197,94,0.08)",
-          border: "1px solid rgba(34,197,94,0.25)",
-          borderRadius: 4,
-          display: "inline-block",
-        }}
-      >
+      <div className="helpmodal__threshold">
         {t(`landing.approach_stability_help.tiles.${tileKey}.thresholds`)}
       </div>
     </div>
@@ -136,24 +117,9 @@ function Section({
 }) {
   return (
     <section>
-      <h4
-        style={{
-          margin: "0 0 8px 0",
-          fontSize: "0.96rem",
-          fontWeight: 600,
-          color: "rgba(255,255,255,0.92)",
-        }}
-      >
-        {heading}
-      </h4>
+      <h4 className="helpmodal__heading">{heading}</h4>
       {children}
     </section>
   );
 }
 
-const paragraphStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: "0.88rem",
-  lineHeight: 1.55,
-  opacity: 0.92,
-};
