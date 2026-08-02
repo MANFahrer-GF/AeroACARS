@@ -16,7 +16,9 @@
     "cpdlc": "PDC/CPDLC"
   },
   "nav": {
-    "news": "News"
+    "news": "News",
+    "collapse": "Collapse menu",
+    "expand": "Expand menu"
   },
   "news": {
     "tab": "News",

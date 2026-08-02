@@ -278,9 +278,30 @@ body {
   color: var(--text);
 }
 
+/* ===========================================================================
+   REDESIGN Stufe D — Anwendungsrahmen mit Seitenleiste
+   ---------------------------------------------------------------------------
+   Vorher: eine zentrierte Spalte mit `max-width: 1200px`, darüber tote
+   Ränder links und rechts, und die Navigation als horizontale Tab-Leiste
+   ohne Umbruch und ohne Overflow-Verhalten.
+   Jetzt: Seitenleiste + Inhalt, der die volle Fensterbreite nutzen darf.
+   =========================================================================== */
+.shell {
+  display: grid;
+  grid-template-columns: var(--nav-w) 1fr;
+  height: 100%;
+  min-height: 100%;
+  transition: grid-template-columns var(--dur-base) var(--ease);
+}
+:root {
+  --nav-w: 216px;
+  --nav-w-icon: 60px;
+}
+.shell[data-nav="icon"] {
+  grid-template-columns: var(--nav-w-icon) 1fr;
+}
+
 .app {
-  max-width: 1200px;
-  margin: 0 auto;
   padding: 16px 20px;
   display: flex;
   flex-direction: column;
@@ -288,7 +309,233 @@ body {
   /* volle Höhe als Floor, damit flex:1-Kinder (z.B. die Live-Map) den
      verbleibenden Platz füllen; kürzere Tabs fließen unverändert oben. */
   min-height: 100%;
+  min-width: 0;
+  overflow-y: auto;
   box-sizing: border-box;
+}
+
+/* ---------- Seitenleiste ---------- */
+.nav {
+  background: var(--surface-2);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.nav__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-4) var(--sp-3) var(--sp-3);
+  border-bottom: 1px solid var(--line);
+}
+.nav__mark {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border-radius: var(--r-sm);
+  background: var(--acc);
+  color: var(--bg);
+  display: grid;
+  place-items: center;
+}
+.nav__mark svg {
+  width: 16px;
+  height: 16px;
+}
+.nav__wordmark {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.nav__name {
+  font-size: var(--fs-500);
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.nav__tagline {
+  font-size: var(--fs-200);
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nav__list {
+  flex: 1;
+  padding: var(--sp-2);
+  overflow-y: auto;
+  min-height: 0;
+}
+.navitem {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: 9px 11px;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-400);
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--r-md);
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.navitem:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.navitem--active {
+  background: var(--acc-quiet);
+  color: var(--text);
+  font-weight: var(--fw-bold);
+}
+.navitem--active::before {
+  content: "";
+  position: absolute;
+  left: -2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--acc);
+}
+.navitem__icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+.navitem__icon svg {
+  width: 17px;
+  height: 17px;
+}
+.navitem__label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.navitem__badge {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  font-weight: var(--fw-bold);
+  background: var(--acc);
+  color: var(--bg);
+  border-radius: 99px;
+  padding: 1px 6px;
+  min-width: 18px;
+  text-align: center;
+}
+/* Aktiver Flug — ersetzt das alte `.tab__badge` am Cockpit-Tab. */
+.navitem__dot {
+  margin-left: auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sem-ok);
+  flex: 0 0 auto;
+}
+.nav__foot {
+  border-top: 1px solid var(--line);
+  padding: var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.navstatus {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 5px 11px;
+  font-size: var(--fs-200);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.navstatus__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--offline);
+}
+.navstatus--online .navstatus__dot {
+  background: var(--sem-ok);
+}
+.navstatus--connecting .navstatus__dot {
+  background: var(--sem-warn);
+}
+.navstatus__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nav__tools {
+  display: flex;
+  gap: 4px;
+  padding: var(--sp-2);
+  border-top: 1px solid var(--line);
+}
+.navtool {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+.navtool:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+.navtool svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* ---------- Eingeklappt: nur Symbole ---------- */
+.shell[data-nav="icon"] .nav__wordmark,
+.shell[data-nav="icon"] .navitem__label,
+.shell[data-nav="icon"] .navstatus__text {
+  display: none;
+}
+.shell[data-nav="icon"] .nav__brand,
+.shell[data-nav="icon"] .navitem,
+.shell[data-nav="icon"] .navstatus {
+  justify-content: center;
+  padding-inline: 0;
+}
+.shell[data-nav="icon"] .navitem__badge {
+  position: absolute;
+  top: 3px;
+  right: 6px;
+  margin: 0;
+  min-width: 15px;
+  padding: 0 4px;
+  font-size: 9px;
+}
+.shell[data-nav="icon"] .navitem__dot {
+  position: absolute;
+  top: 6px;
+  right: 9px;
+  margin: 0;
+}
+.shell[data-nav="icon"] .navitem--active::before {
+  left: -6px;
+}
+.shell[data-nav="icon"] .nav__tools {
+  flex-direction: column;
 }
 
 /* v0.15.9: Auf dem KARTEN-Tab .app auf feste Viewport-Höhe nageln. Erst dadurch

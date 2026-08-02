@@ -44,6 +44,7 @@ import { CpdlcMessageBanner } from "./components/CpdlcMessageBanner";
 import { useHoppieAttention } from "./hooks/useHoppieAttention";
 import { useDiscordRpcPush } from "./hooks/useDiscordRpcPush";
 import { LiveRecordingIndicator } from "./components/LiveRecordingIndicator";
+import { Sidebar, getInitialCollapsed } from "./components/Sidebar";
 import { useSimSession } from "./hooks/useSimSession";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import type { ActiveFlightInfo, LoginResult, Profile, UiError } from "./types";
@@ -175,6 +176,8 @@ function simKindLabel(kind: string | undefined): string {
 function App() {
   const { t } = useTranslation();
   const [theme, setTheme] = useState<Theme>(() => getInitialTheme());
+  // Redesign Stufe D: Seitenleiste eingeklappt (nur Symbole) — gemerkt.
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => getInitialCollapsed());
   const [status, setStatus] = useState<SessionStatus>({ kind: "loading" });
   const [tab, setTab] = useState<Tab>("briefing");
   const [debugMode, setDebugMode] = useState<boolean>(() => loadDebugMode());
@@ -509,6 +512,56 @@ function App() {
   const showTabs = status.kind === "loggedIn";
 
   return (
+    <div className="shell" data-nav={navCollapsed ? "icon" : "wide"}>
+      {showTabs && (
+        <Sidebar
+          tab={tab}
+          setTab={setTab}
+          collapsed={navCollapsed}
+          onToggleCollapsed={() => {
+            setNavCollapsed((v) => {
+              const next = !v;
+              try {
+                localStorage.setItem("aeroacars.nav.collapsed", next ? "1" : "0");
+              } catch {
+                /* Private-Mode o.ä. — Einklappen funktioniert, wird nur nicht gemerkt. */
+              }
+              return next;
+            });
+          }}
+          cpdlcEnabled={cpdlcEnabled}
+          cpdlcPendingCount={cpdlcPendingCount}
+          onCpdlcOpen={() => {
+            markCpdlcSeen();
+            setTab("cpdlc");
+          }}
+          unreadNews={unreadNews}
+          hasActiveFlight={activeFlight !== null}
+          phpvmsConnected={phpvmsConnected}
+          simConnected={simConnected}
+          simConnecting={simConnecting}
+          simLabel={simKindLabel(simStatus?.kind)}
+          updateButton={<UpdateButton checker={updateChecker} />}
+          recording={
+            activeFlight ? (
+              <LiveRecordingIndicator
+                lastPositionAt={activeFlight.last_position_at}
+                queuedCount={activeFlight.queued_position_count}
+                positionCount={activeFlight.position_count}
+                connectionState={
+                  // v0.7.17 (B-007): "blocked" durchreichen so dass der
+                  // LiveRecordingIndicator den Pilot warnen kann.
+                  activeFlight.connection_state === "blocked"
+                    ? "blocked"
+                    : activeFlight.connection_state === "failing"
+                      ? "failing"
+                      : "live"
+                }
+              />
+            ) : undefined
+          }
+        />
+      )}
     <main className="app">
       {/* v0.5.48 — großes Update-Banner ÜBER dem Header. Wird vom
           Hook + UpdateBanner-Komponente nur eingeblendet wenn (a)
@@ -538,182 +591,16 @@ function App() {
         }}
         onDismiss={markCpdlcSeen}
       />
-      <header className="app__header">
-        <div className="app__brand">
-          <h1>{t("app.name")}</h1>
-          <p className="tagline">{t("app.tagline")}</p>
-        </div>
-        <div className="app__status-pills">
-          <UpdateButton checker={updateChecker} />
-          <span
-            className={`status-pill status-pill--${
-              phpvmsConnected ? "online" : "offline"
-            }`}
-            title={
-              phpvmsConnected
-                ? t("status.phpvms_connected")
-                : t("status.phpvms_disconnected")
-            }
-          >
-            <span className="status-pill__dot" />
-            {t("status.phpvms")}
-          </span>
-          <span
-            className={`status-pill status-pill--${
-              simConnected ? "online" : simConnecting ? "connecting" : "offline"
-            }`}
-            title={
-              simConnected
-                ? t("status.simulator_connected")
-                : simConnecting
-                  ? t("status.simulator_connecting")
-                  : t("status.simulator_disconnected")
-            }
-          >
-            <span className="status-pill__dot" />
-            {simKindLabel(simStatus?.kind)}
-          </span>
-          {activeFlight && (
-            <LiveRecordingIndicator
-              lastPositionAt={activeFlight.last_position_at}
-              queuedCount={activeFlight.queued_position_count}
-              positionCount={activeFlight.position_count}
-              connectionState={
-                // v0.7.17 (B-007): "blocked" durchreichen so dass der
-                // LiveRecordingIndicator den Pilot warnen kann.
-                activeFlight.connection_state === "blocked"
-                  ? "blocked"
-                  : activeFlight.connection_state === "failing"
-                    ? "failing"
-                    : "live"
-              }
-            />
-          )}
-        </div>
-      </header>
+      {/* Kopfzeile und Tab-Leiste sind in die Seitenleiste gewandert
+          (Redesign Stufe D). App-Name, Untertitel, die beiden Status-Pillen
+          und die Aufzeichnungs-Anzeige stehen dort im Fuß; die Navigation
+          darüber. Im ausgeloggten Zustand rendert die Seitenleiste nicht —
+          dann füllt die Login-Seite das Fenster wie bisher. */}
 
-      {showTabs && (
-        <nav className="tabs" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "cockpit"}
-            className={`tab ${tab === "cockpit" ? "tab--active" : ""}`}
-            onClick={() => setTab("cockpit")}
-          >
-            {t("tabs.cockpit")}
-            {activeFlight && <span className="tab__badge" aria-hidden="true" />}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "map"}
-            className={`tab ${tab === "map" ? "tab--active" : ""}`}
-            onClick={() => setTab("map")}
-          >
-            {t("tabs.map")}
-          </button>
-          {cpdlcEnabled && (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "cpdlc"}
-            className={`tab ${tab === "cpdlc" ? "tab--active" : ""}`}
-            onClick={() => {
-              markCpdlcSeen();
-              setTab("cpdlc");
-            }}
-          >
-            {t("tabs.cpdlc")}
-            {cpdlcPendingCount > 0 && (
-              <span className="tab__news-badge" aria-label={t("cpdlc.banner_text", { count: cpdlcPendingCount })}>
-                {cpdlcPendingCount > 9 ? "9+" : cpdlcPendingCount}
-              </span>
-            )}
-          </button>
-          )}
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "briefing"}
-            className={`tab ${tab === "briefing" ? "tab--active" : ""}`}
-            onClick={() => setTab("briefing")}
-          >
-            {t("tabs.briefing")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "logbook"}
-            className={`tab ${tab === "logbook" ? "tab--active" : ""}`}
-            onClick={() => setTab("logbook")}
-          >
-            {t("tabs.logbook")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "landing"}
-            className={`tab ${tab === "landing" ? "tab--active" : ""}`}
-            onClick={() => setTab("landing")}
-          >
-            {t("tabs.landing")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "news"}
-            className={`tab ${tab === "news" ? "tab--active" : ""}`}
-            onClick={() => setTab("news")}
-          >
-            {t("nav.news")}
-            {unreadNews > 0 && (
-              <span className="tab__news-badge" aria-label={t("news.new_badge")}>
-                {unreadNews > 9 ? "9+" : unreadNews}
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "log"}
-            className={`tab ${tab === "log" ? "tab--active" : ""}`}
-            onClick={() => setTab("log")}
-          >
-            {t("tabs.log")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "settings"}
-            className={`tab ${tab === "settings" ? "tab--active" : ""}`}
-            onClick={() => setTab("settings")}
-          >
-            {t("tabs.settings")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "about"}
-            className={`tab ${tab === "about" ? "tab--active" : ""}`}
-            onClick={() => setTab("about")}
-          >
-            {t("tabs.about")}
-          </button>
-          {import.meta.env.DEV && (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === "devpreview"}
-              className={`tab ${tab === "devpreview" ? "tab--active" : ""}`}
-              onClick={() => setTab("devpreview")}
-              title="Dev-only: RunwayDiagram-Preview mit Mock-Daten"
-            >
-              🧪 Preview
-            </button>
-          )}
-        </nav>
-      )}
+      {/* Die horizontale Tab-Leiste ist durch die Seitenleiste ersetzt
+          (Redesign Stufe D). Alle zehn Einträge, beide Zähler-Badges, der
+          Aktiv-Flug-Punkt am Cockpit, die CPDLC-Bedingung und der
+          Dev-Preview-Eintrag sind dorthin übernommen. */}
 
       {status.kind === "loading" && (
         <section className="phase">
@@ -856,6 +743,7 @@ function App() {
         </Suspense>
       )}
     </main>
+    </div>
   );
 }
 
