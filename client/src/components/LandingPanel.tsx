@@ -3446,10 +3446,32 @@ function LoadsheetScore({ record }: { record: LoadsheetScoreInput }) {
   score = Math.max(0, score);
 
   // v0.11.0-dev: Score-Farbe als hex statt CSS-Klasse — wird sowohl im
-  // Donut-Ring (SVG-stroke) als auch im Center-Label gebraucht.
-  const scoreColor =
-    score >= 90 ? "#22c55e" : score >= 70 ? "#eab308" : "#ef4444";
-  const ringBg = "rgba(255,255,255,0.08)";
+  // Donut-Ring (SVG-stroke) als auch im Center-Label gebraucht, dort per
+  // String-Suffix (`${scoreColor}12` etc.) zu einer Alpha-Variante
+  // verlängert — das geht nur mit echten Hex-Strings, nicht mit
+  // var(--token). Redesign: war ein einziger Wert je Stufe (Dunkel-
+  // Werte), unter 4.5:1 im Hellmodus (bis 1.82:1). Jetzt derselbe
+  // dataset.theme-Check wie in FlightProfile.tsx/LiveMapView.tsx/
+  // LogbookView.tsx — beide Sätze einzeln gegen --surface-2 auf
+  // >=4.5:1 verifiziert (tools/contrast.py).
+  const isDark = document.documentElement.dataset.theme === "dark";
+  const scoreColor = isDark
+    ? score >= 90
+      ? "#22c55e"
+      : score >= 70
+        ? "#eab308"
+        : "#ef4444"
+    : score >= 90
+      ? "#15803d"
+      : score >= 70
+        ? "#a16207"
+        : "#dc2626";
+  // War rgba(255,255,255,0.08) — ein Weiss-Schleier, der im Hellmodus zur
+  // Wirkungslosigkeit verblasst (Weiss auf Weiss). --line ist in beiden
+  // Themes als sichtbare, aber dezente Trennfarbe abgestimmt.
+  const ringBg = isDark
+    ? "rgba(255,255,255,0.08)"
+    : "rgba(15,23,42,0.08)";
 
   // Donut-Ring-Geometrie. Radius 36 in einem 80×80-Viewport (= 8 PX margin)
   // mit 8 PX stroke-width. Circumference = 2π·r.

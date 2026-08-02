@@ -649,15 +649,15 @@ body {
   letter-spacing: 0.02em;
   padding: 5px 12px;
   border-radius: 6px;
-  border: 1px solid #2563eb;
-  background: #2563eb;
-  color: white;
+  border: 1px solid var(--acc);
+  background: var(--acc);
+  color: var(--on-acc);
   cursor: pointer;
   transition: background 0.12s ease;
 }
 .update-button:hover {
-  background: #1d4ed8;
-  border-color: #1d4ed8;
+  background: color-mix(in srgb, var(--acc) 85%, var(--text));
+  border-color: color-mix(in srgb, var(--acc) 85%, var(--text));
 }
 .update-button__icon {
   font-size: 13px;
@@ -681,8 +681,8 @@ body {
   animation: update-button-pulse 2.4s ease-in-out infinite;
 }
 .update-button--escalated {
-  background: #06b6d4;
-  border-color: #06b6d4;
+  background: var(--sem-info);
+  border-color: var(--sem-info);
   animation: update-button-glow 2s ease-in-out infinite;
 }
 .update-button--escalated:hover {
@@ -714,7 +714,7 @@ body {
   justify-content: center;
   border-radius: 50%;
   background: rgba(6, 182, 212, 0.22);
-  color: #06b6d4;
+  color: var(--sem-info);
   flex-shrink: 0;
 }
 .update-banner__text {
@@ -733,7 +733,7 @@ body {
 }
 .update-banner__progress {
   font-size: 12px;
-  color: #06b6d4;
+  color: var(--sem-info);
   font-weight: 500;
   margin-top: 4px;
   font-variant-numeric: tabular-nums;
@@ -746,8 +746,8 @@ body {
 /* Im Banner ist der Primary-Button cyan statt blau für Konsistenz mit
    dem Banner-Akzent. */
 .update-banner .button--primary {
-  background: #06b6d4;
-  border-color: #06b6d4;
+  background: var(--sem-info);
+  border-color: var(--sem-info);
 }
 .update-banner .button--primary:hover:not(:disabled) {
   background: #0891b2;
@@ -1820,13 +1820,13 @@ button:disabled {
 }
 
 .pmdg-panel--active {
-  background: color-mix(in srgb, #10b981 8%, var(--surface));
-  border-color: color-mix(in srgb, #10b981 35%, var(--border));
+  background: color-mix(in srgb, var(--sem-ok) 8%, var(--surface));
+  border-color: color-mix(in srgb, var(--sem-ok) 35%, var(--border));
 }
 
 .pmdg-panel--warn {
-  background: color-mix(in srgb, #f59e0b 12%, var(--surface));
-  border-color: color-mix(in srgb, #f59e0b 40%, var(--border));
+  background: color-mix(in srgb, var(--sem-warn) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--sem-warn) 40%, var(--border));
 }
 
 .pmdg-panel__header {
@@ -2203,50 +2203,10 @@ button:disabled {
   font-size: 12px;
 }
 
-/* ===== Tab badge (active-flight indicator) ===== */
-
-.tab__badge {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  margin-left: 6px;
-  vertical-align: middle;
-  animation: status-pulse 1.5s ease-in-out infinite;
-}
-
-/* ===== Tabs ===== */
-
-.tabs {
-  display: flex;
-  gap: 4px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: -8px;
-}
-
-.tab {
-  appearance: none;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-muted);
-  padding: 6px 12px;
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  border-radius: 0;
-  transition: color 0.15s ease, border-color 0.15s ease;
-}
-
-.tab:hover {
-  color: var(--text);
-}
-
-.tab--active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-}
+/* Redesign Stufe D: die horizontale Tab-Leiste (.tabs/.tab/.tab--active/
+   .tab__badge) ist durch die Seitenleiste (.nav/.navitem, Sidebar.tsx)
+   ersetzt. Alle vier Klassen waren seither unerreichbar und sind entfernt
+   — der Aktiv-Flug-Punkt lebt jetzt als .navitem__dot weiter. */
 
 /* ===== Settings panel ===== */
 
@@ -2588,9 +2548,9 @@ button:disabled {
 }
 
 .switch-pill--on {
-  background: color-mix(in srgb, #22c55e 20%, transparent);
-  color: #22c55e;
-  border-color: color-mix(in srgb, #22c55e 35%, transparent);
+  background: color-mix(in srgb, var(--sem-ok) 20%, transparent);
+  color: var(--sem-ok);
+  border-color: color-mix(in srgb, var(--sem-ok) 35%, transparent);
 }
 
 .switch-pill--off {
@@ -2619,9 +2579,9 @@ button:disabled {
 
 /* Warning state — APU spooling up, anything in transit. */
 .switch-pill--warn {
-  background: color-mix(in srgb, #f59e0b 20%, transparent);
-  color: #f59e0b;
-  border-color: color-mix(in srgb, #f59e0b 35%, transparent);
+  background: color-mix(in srgb, var(--sem-warn) 20%, transparent);
+  color: var(--sem-warn);
+  border-color: color-mix(in srgb, var(--sem-warn) 35%, transparent);
 }
 
 .value-badge {
@@ -2880,7 +2840,7 @@ button:disabled {
 }
 
 .inspector-table__error {
-  color: #ef4444;
+  color: var(--sem-danger);
   font-size: 11px;
 }
 
@@ -2906,8 +2866,8 @@ button:disabled {
 }
 
 .inspector-remove:hover {
-  border-color: #ef4444;
-  color: #ef4444;
+  border-color: var(--sem-danger);
+  color: var(--sem-danger);
 }
 
 /* ----- Switch Detective: diff snapshot ----- */
@@ -2961,7 +2921,7 @@ button:disabled {
 }
 
 .diff-table__after {
-  color: #22c55e;
+  color: var(--sem-ok);
   font-weight: 500;
 }
 
@@ -3046,7 +3006,7 @@ input:disabled {
 
 .button--primary {
   background: var(--accent);
-  color: white;
+  color: var(--on-acc);
   border-color: var(--accent);
 }
 
@@ -3257,7 +3217,7 @@ input:disabled {
   height: 100%;
   font-size: 13px;
   font-weight: 600;
-  color: white;
+  color: var(--on-acc);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
   padding: 0 12px;
   text-align: center;
@@ -4721,8 +4681,8 @@ input:disabled {
 
 .bids__sim-position--warn {
   color: var(--text);
-  background: color-mix(in srgb, #f59e0b 12%, var(--surface));
-  border: 1px solid color-mix(in srgb, #f59e0b 40%, var(--border));
+  background: color-mix(in srgb, var(--sem-warn) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--sem-warn) 40%, var(--border));
 }
 
 /* v0.3.0: Auto-Start-Skip-Banner — gleicher Stil wie sim-position-Warn,
@@ -4736,8 +4696,8 @@ input:disabled {
   font-size: 13px;
   border-radius: 10px;
   color: var(--text);
-  background: color-mix(in srgb, #f59e0b 12%, var(--surface));
-  border: 1px solid color-mix(in srgb, #f59e0b 40%, var(--border));
+  background: color-mix(in srgb, var(--sem-warn) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--sem-warn) 40%, var(--border));
 }
 .bids__auto-start-skip-icon {
   font-size: 18px;
@@ -4915,7 +4875,7 @@ input:disabled {
     color-mix(in srgb, var(--accent) 80%, transparent),
     color-mix(in srgb, var(--accent) 40%, transparent)
   );
-  color: white;
+  color: var(--on-acc);
   font-weight: 700;
   font-size: 28px;
   letter-spacing: 0.05em;
@@ -5103,8 +5063,8 @@ input:disabled {
   color: var(--text);
   font-weight: 700;
 }
-.bid-card__mode-hint-row--ifr .bid-card__mode-hint-key { color: #93c5fd; }
-.bid-card__mode-hint-row--vfr .bid-card__mode-hint-key { color: #fbbf24; }
+.bid-card__mode-hint-row--ifr .bid-card__mode-hint-key { color: var(--sem-info); }
+.bid-card__mode-hint-row--vfr .bid-card__mode-hint-key { color: var(--sem-warn); }
 
 .bid-card__actions {
   display: flex;
@@ -5328,7 +5288,7 @@ input:disabled {
   border-color: rgba(59, 130, 246, 0.35);
 }
 .bid-card__ofp-mismatch--info .bid-card__ofp-mismatch-text strong {
-  color: #60a5fa;
+  color: var(--sem-info);
 }
 /* Bid-vs-OFP-Vergleich (v0.3.0): zwei Zeilen, label + monospace code. */
 .bid-card__ofp-compare {
@@ -5689,12 +5649,12 @@ input:disabled {
 }
 .landing-flag--warn {
   background: rgba(251, 191, 36, 0.18);
-  color: #fbbf24;
+  color: var(--sem-warn);
   border: 1px solid rgba(251, 191, 36, 0.4);
 }
 .landing-flag--err {
   background: rgba(239, 68, 68, 0.18);
-  color: #f87171;
+  color: var(--sem-danger);
   border: 1px solid rgba(239, 68, 68, 0.4);
 }
 
@@ -5720,7 +5680,7 @@ input:disabled {
 .landing-preview-card > h3 {
   margin: 0 0 0.75rem;
   font-size: 0.95rem;
-  color: #38bdf8;
+  color: var(--sem-info);
 }
 
 .landing-section {
@@ -5814,9 +5774,9 @@ input:disabled {
   background: var(--surface-1);
 }
 /* Δ-Farbcode: grün <5%, gelb 5-10%, rot >10% Abweichung */
-.landing-comparison__delta--ok    { color: #4ade80; }
-.landing-comparison__delta--warn  { color: #fbbf24; }
-.landing-comparison__delta--alert { color: #f87171; font-weight: 600; }
+.landing-comparison__delta--ok    { color: var(--sem-ok); }
+.landing-comparison__delta--warn  { color: var(--sem-warn); }
+.landing-comparison__delta--alert { color: var(--sem-danger); font-weight: 600; }
 
 /* Live-Loadsheet im Cockpit-Tab (v0.3.0 — überarbeitet).
    Komponente nutzt jetzt direkt die .info-strip-Klassen (gleiche
@@ -5854,9 +5814,9 @@ input:disabled {
   font-weight: 500;
   margin-left: -2px;
 }
-.loadsheet__delta--ok    { color: #4ade80; }
-.loadsheet__delta--warn  { color: #fbbf24; }
-.loadsheet__delta--alert { color: #f87171; font-weight: 600; }
+.loadsheet__delta--ok    { color: var(--sem-ok); }
+.loadsheet__delta--warn  { color: var(--sem-warn); }
+.loadsheet__delta--alert { color: var(--sem-danger); font-weight: 600; }
 /* Hint-Zeile: dezenter Text, gleiche Höhe wie info-strip-Cells. */
 .loadsheet__hint-inline {
   font-size: 11px;
@@ -5892,13 +5852,13 @@ input:disabled {
 }
 .loadsheet__refresh-done {
   font-size: 11px;
-  color: #34d399;
+  color: var(--sem-ok);
   font-style: normal;
   font-weight: 500;
 }
 .loadsheet__refresh-err {
   font-size: 11px;
-  color: #f87171;
+  color: var(--sem-danger);
   font-style: normal;
   font-weight: 500;
 }
@@ -5927,9 +5887,9 @@ input:disabled {
   letter-spacing: 0.04em;
   border-bottom: 1px solid var(--border);
 }
-.loadsheet__delta--ok    { color: #4ade80; }
-.loadsheet__delta--warn  { color: #fbbf24; }
-.loadsheet__delta--alert { color: #f87171; font-weight: 600; }
+.loadsheet__delta--ok    { color: var(--sem-ok); }
+.loadsheet__delta--warn  { color: var(--sem-warn); }
+.loadsheet__delta--alert { color: var(--sem-danger); font-weight: 600; }
 .loadsheet__row--overweight {
   background: rgba(248, 113, 113, 0.08);
 }
@@ -6250,12 +6210,12 @@ input:disabled {
 
 .landing-stability__row--good {
   background: rgba(34, 197, 94, 0.08);
-  border-color: #22c55e;
+  border-color: var(--sem-ok);
 }
 
 .landing-stability__row--ok {
   background: rgba(234, 179, 8, 0.08);
-  border-color: #eab308;
+  border-color: var(--sem-warn);
 }
 
 .landing-stability__row--bad {
@@ -6323,11 +6283,11 @@ input:disabled {
   align-self: flex-end;
   font-size: 0.95rem;
   font-weight: 600;
-  color: #22c55e;
+  color: var(--sem-ok);
 }
 
 .landing-fuelbar__delta--over {
-  color: #f97316;
+  color: var(--scale-poor);
 }
 
 /* ---- Score breakdown ---- */
@@ -6450,7 +6410,7 @@ input:disabled {
 .info-badge:hover,
 .info-badge--open {
   background: var(--accent, #38bdf8);
-  color: #fff;
+  color: var(--on-acc);
   border-color: var(--accent, #38bdf8);
 }
 
@@ -6620,13 +6580,13 @@ input:disabled {
 
 .landing-flare__chip--ok {
   background: rgba(63, 185, 80, 0.15);
-  color: #3fb950;
+  color: var(--sem-ok);
   border: 1px solid rgba(63, 185, 80, 0.4);
 }
 
 .landing-flare__chip--warn {
   background: rgba(210, 153, 34, 0.15);
-  color: #d29922;
+  color: var(--sem-warn);
   border: 1px solid rgba(210, 153, 34, 0.4);
 }
 
@@ -6661,9 +6621,9 @@ input:disabled {
   font-variant-numeric: tabular-nums;
 }
 
-.landing-flare__score-num[data-band="good"] { color: #3fb950; }
-.landing-flare__score-num[data-band="ok"]   { color: #d29922; }
-.landing-flare__score-num[data-band="bad"]  { color: #f85149; }
+.landing-flare__score-num[data-band="good"] { color: var(--sem-ok); }
+.landing-flare__score-num[data-band="ok"]   { color: var(--sem-warn); }
+.landing-flare__score-num[data-band="bad"]  { color: var(--sem-danger); }
 
 .landing-flare__score-label {
   margin-top: 0.4rem;
@@ -6747,101 +6707,17 @@ input:disabled {
  * components/ConfirmDialog.tsx for the why).
  * ====================================================================== */
 
-.confirm-dialog__overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  background: rgba(0, 0, 0, 0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  /* Fade-in when mounted. */
-  animation: confirm-dialog-fade 120ms ease-out;
-}
-
-@keyframes confirm-dialog-fade {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-.confirm-dialog {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 1.4rem 1.5rem 1.2rem;
-  max-width: 460px;
-  width: 100%;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-  animation: confirm-dialog-pop 160ms cubic-bezier(0.18, 0.89, 0.32, 1.28);
-}
-
-@keyframes confirm-dialog-pop {
-  from { transform: scale(0.92); opacity: 0; }
-  to   { transform: scale(1);    opacity: 1; }
-}
-
-.confirm-dialog__title {
-  margin: 0 0 0.7rem;
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--text);
-}
-
+/* Redesign Stufe D: ConfirmDialog rendert seit dem Umbau auf die
+   Modal-Primitive (Schleier, Box, Titel, Aktionen, Buttons kommen von
+   dort). Nur die Nachricht ist noch eigenes Markup — der Rest dieses
+   Blocks (Overlay/Box/Titel/Actions/Btn + Modifier) war seither
+   unerreichbar und ist entfernt. */
 .confirm-dialog__message {
-  margin: 0 0 1.4rem;
+  margin: 0;
   font-size: 0.92rem;
   line-height: 1.45;
   color: var(--text-muted);
   white-space: pre-wrap;
-}
-
-.confirm-dialog__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.6rem;
-}
-
-.confirm-dialog__btn {
-  border: 1px solid var(--border);
-  background: var(--surface-2, var(--surface));
-  color: var(--text);
-  padding: 0.5rem 1.1rem;
-  border-radius: 7px;
-  font-size: 0.88rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 100ms, border-color 100ms;
-}
-
-.confirm-dialog__btn:hover {
-  border-color: var(--accent);
-}
-
-.confirm-dialog__btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.confirm-dialog__btn--primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-
-.confirm-dialog__btn--primary:hover {
-  filter: brightness(1.1);
-}
-
-.confirm-dialog__btn--destructive {
-  background: #c8392f;
-  border-color: #c8392f;
-}
-
-.confirm-dialog__btn--destructive:hover {
-  background: #d6463c;
-  border-color: #d6463c;
-  filter: none;
 }
 
 /* v0.3.2: OFP-Refresh button + success message in active-flight header */
@@ -6926,7 +6802,7 @@ input:disabled {
 
 .active-flight__paused-header strong {
   font-size: 1.05rem;
-  color: #fbbf24;
+  color: var(--sem-warn);
 }
 
 .active-flight__paused-icon {
@@ -6998,7 +6874,7 @@ input:disabled {
   border-color: rgba(239, 68, 68, 0.5);
 }
 .active-flight__paused-banner--hard .active-flight__paused-header strong {
-  color: #ef4444;
+  color: var(--sem-danger);
 }
 
 /* 3-Spalten-Vergleichstabelle, ersetzt das 2×2-Pause-Grid */
@@ -7047,10 +6923,10 @@ input:disabled {
   font-weight: 600;
 }
 .resume-compare__delta--ok {
-  color: #34d399; /* grün */
+  color: var(--sem-ok); /* grün */
 }
 .resume-compare__delta--bad {
-  color: #fca5a5; /* rot */
+  color: var(--sem-danger); /* rot */
 }
 .resume-compare__delta--neutral {
   color: var(--text-muted);
@@ -7088,23 +6964,23 @@ input:disabled {
 .approach-advisory--warn {
   background: rgba(251, 191, 36, 0.10);
   border-color: rgba(251, 191, 36, 0.55);
-  color: #fcd34d;
+  color: var(--sem-warn);
 }
 .approach-advisory--alert {
   background: rgba(251, 146, 60, 0.10);
   border-color: rgba(251, 146, 60, 0.55);
-  color: #fdba74;
+  color: var(--scale-poor);
 }
 .approach-advisory--crit {
   background: rgba(239, 68, 68, 0.12);
   border-color: rgba(239, 68, 68, 0.65);
-  color: #fca5a5;
+  color: var(--sem-danger);
   animation: approach-advisory-pulse 1500ms ease-in-out infinite;
 }
 .approach-advisory--info {
   background: rgba(125, 211, 252, 0.10);
   border-color: rgba(125, 211, 252, 0.55);
-  color: #bae6fd;
+  color: var(--sem-info);
 }
 .approach-advisory__icon {
   font-size: 1.6rem;
@@ -7172,7 +7048,7 @@ input:disabled {
 }
 
 .cockpit-pirep-success__text strong {
-  color: #22c55e;
+  color: var(--sem-ok);
   font-size: 1rem;
 }
 
@@ -7281,14 +7157,14 @@ input:disabled {
   transition: all 0.1s ease;
 }
 .manual-modal__list-item:hover {
-  border-color: #67e8f9;
+  border-color: var(--sem-info);
   background: rgba(103, 232, 249, 0.05);
 }
 .manual-modal__list-item.selected {
-  border-color: #67e8f9;
+  border-color: var(--sem-info);
   background: rgba(103, 232, 249, 0.12);
 }
-.manual-modal__list-icao { font-weight: 700; color: #67e8f9; min-width: 60px; }
+.manual-modal__list-icao { font-weight: 700; color: var(--sem-info); min-width: 60px; }
 .manual-modal__list-reg { color: var(--text); min-width: 80px; }
 .manual-modal__list-name { color: var(--text-muted); font-size: 0.85em; }
 .manual-modal__form {
@@ -7348,7 +7224,7 @@ input:disabled {
   background: rgba(239, 68, 68, 0.1);
   border-left: 3px solid #ef4444;
   border-radius: 4px;
-  color: #fca5a5;
+  color: var(--sem-danger);
   font-size: 0.85rem;
   margin-top: 12px;
 }
@@ -7358,19 +7234,19 @@ input:disabled {
 .manual-modal__warning {
   padding: 10px 12px;
   background: rgba(251, 191, 36, 0.12);
-  border-left: 3px solid #fbbf24;
+  border-left: 3px solid var(--sem-warn);
   border-radius: 4px;
-  color: #fcd34d;
+  color: var(--sem-warn);
   font-size: 0.85rem;
   margin-top: 12px;
 }
 .manual-modal__warning-title {
   font-weight: 600;
   margin-bottom: 4px;
-  color: #fbbf24;
+  color: var(--sem-warn);
 }
 .manual-modal__warning-text {
-  color: #fde68a;
+  color: var(--sem-warn);
 }
 .manual-modal__actions {
   display: flex;
@@ -7395,7 +7271,7 @@ input:disabled {
 /* Aufklaerungs-Block — cyan-Akzent wie VPS-Web */
 .sinkrate-forensik-intro {
   padding: 10px 14px;
-  border-left: 3px solid #06b6d4;
+  border-left: 3px solid var(--sem-info);
   background: rgba(6, 182, 212, 0.06);
   border-radius: var(--r-sm);
   font-size: 0.85rem;
@@ -7403,7 +7279,7 @@ input:disabled {
 }
 .sinkrate-forensik-intro__header {
   font-weight: 600;
-  color: #67e8f9;
+  color: var(--sem-info);
   margin-bottom: 4px;
 }
 .sinkrate-forensik-intro__body {
@@ -7466,11 +7342,11 @@ input:disabled {
   font-weight: 500;
   color: var(--fg-dim);
 }
-.sinkrate-tile--good .sinkrate-tile__value { color: #34d399; }
-.sinkrate-tile--neutral .sinkrate-tile__value { color: #67e8f9; }
-.sinkrate-tile--warn .sinkrate-tile__value { color: #f59e0b; }
-.sinkrate-tile--err .sinkrate-tile__value { color: #ef4444; }
-.sinkrate-tile--err-severe .sinkrate-tile__value { color: #b91c1c; }
+.sinkrate-tile--good .sinkrate-tile__value { color: var(--sem-ok); }
+.sinkrate-tile--neutral .sinkrate-tile__value { color: var(--sem-info); }
+.sinkrate-tile--warn .sinkrate-tile__value { color: var(--sem-warn); }
+.sinkrate-tile--err .sinkrate-tile__value { color: var(--sem-danger); }
+.sinkrate-tile--err-severe .sinkrate-tile__value { color: var(--scale-critical); }
 .sinkrate-tile--na .sinkrate-tile__value { color: var(--fg-dim); }
 .sinkrate-tile--na {
   cursor: help;
@@ -7509,11 +7385,11 @@ input:disabled {
   line-height: 1.1;
   color: var(--fg);
 }
-.sinkrate-score-tile--good .sinkrate-score-tile__value { color: #34d399; }
-.sinkrate-score-tile--neutral .sinkrate-score-tile__value { color: #67e8f9; }
-.sinkrate-score-tile--warn .sinkrate-score-tile__value { color: #f59e0b; }
-.sinkrate-score-tile--err .sinkrate-score-tile__value { color: #ef4444; }
-.sinkrate-score-tile--err-severe .sinkrate-score-tile__value { color: #b91c1c; }
+.sinkrate-score-tile--good .sinkrate-score-tile__value { color: var(--sem-ok); }
+.sinkrate-score-tile--neutral .sinkrate-score-tile__value { color: var(--sem-info); }
+.sinkrate-score-tile--warn .sinkrate-score-tile__value { color: var(--sem-warn); }
+.sinkrate-score-tile--err .sinkrate-score-tile__value { color: var(--sem-danger); }
+.sinkrate-score-tile--err-severe .sinkrate-score-tile__value { color: var(--scale-critical); }
 .sinkrate-score-tile__unit {
   font-size: 0.95rem;
   font-weight: 500;
@@ -7624,7 +7500,7 @@ input:disabled {
   padding: 8px 12px;
   border-radius: var(--r-sm);
   background: var(--surface-2);
-  border-left: 1px solid #06b6d4;
+  border-left: 1px solid var(--sem-info);
   font-size: 0.85rem;
   line-height: 1.45;
   color: var(--fg);
@@ -7719,9 +7595,9 @@ input:disabled {
   font-weight: 500;
   color: var(--fg-dim);
 }
-.sinkrate-impact__tile--good .sinkrate-impact__value { color: #34d399; }
-.sinkrate-impact__tile--warn .sinkrate-impact__value { color: #f59e0b; }
-.sinkrate-impact__tile--err .sinkrate-impact__value { color: #ef4444; }
+.sinkrate-impact__tile--good .sinkrate-impact__value { color: var(--sem-ok); }
+.sinkrate-impact__tile--warn .sinkrate-impact__value { color: var(--sem-warn); }
+.sinkrate-impact__tile--err .sinkrate-impact__value { color: var(--sem-danger); }
 
 /* Legacy-Notice (pre-Forensik-PIREPs) */
 .sinkrate-forensik-legacy {
@@ -8410,26 +8286,9 @@ input:disabled {
   word-break: break-word;
 }
 
-/* Tab-Badge speziell fuer News (zaehlt ungelesene). Bewusst anders
-   als der pulsierende activeFlight-Dot — hier zeigen wir eine Zahl. */
-.tab__news-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 5px;
-  margin-left: 6px;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1;
-  border-radius: 999px;
-  background: var(--accent);
-  color: #ffffff;
-  vertical-align: middle;
-  font-variant-numeric: tabular-nums;
-}
-
+/* .tab__news-badge (zaehlte ungelesene News auf dem alten Tab) war seit
+   der Seitenleisten-Migration unerreichbar — der Zaehler lebt jetzt als
+   .navitem__badge weiter (Sidebar.tsx). Entfernt. */
 
 /* v0.13.15 — Settings-Tab-Leiste (Segmented Control). Theme-aware statt
    hart verdrahteter Dark-Mode-Inline-Farben, die im Light-Mode weiß-auf-
@@ -8768,7 +8627,7 @@ input:disabled {
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 6px;
-  color: #fff;
+  color: var(--on-acc);
   white-space: nowrap;
   transform: translateY(-4px);
 }
@@ -9482,7 +9341,7 @@ input:disabled {
   padding: 1px 5px;
   border-radius: 999px;
   background: var(--danger);
-  color: #fff;
+  color: var(--on-acc);
   font-size: 11px;
   font-weight: 700;
   text-align: center;
