@@ -444,3 +444,39 @@
   font-size: var(--fs-200);
   color: var(--sem-danger);
 }
+
+/* ---------- Glossar / Hilfe-Inhalte --------------------------------------
+   Gehoert inhaltlich zur Landung, steht aber hier, weil es aus den
+   Inline-Styles der drei Hilfe-Modale kommt, die bisher komplett am
+   Stylesheet vorbei gebaut waren (hart auf #111827, also dunkel-only). */
+.glossary__intro {
+  margin: 0 0 var(--sp-3);
+  color: var(--text-dim);
+  font-size: var(--fs-300);
+}
+.glossary__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.glossary__entry {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+}
+.glossary__term {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.glossary__full {
+  color: var(--text-dim);
+  font-size: var(--fs-300);
+}
+.glossary__explanation {
+  font-size: var(--fs-300);
+  line-height: var(--lh-normal);
+}

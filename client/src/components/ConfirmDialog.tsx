@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Button, Modal } from "./ui";
 
 /**
  * In-app modal confirm dialog. Replaces `window.confirm()` everywhere
@@ -66,15 +67,13 @@ export function useConfirm() {
     setPending(null);
   }, []);
 
-  // Esc cancels, Enter confirms — matches what users expect from
-  // native `confirm()`. Listener attaches only while a dialog is open.
+  // Enter bestätigt — das erwarten Nutzer vom nativen `confirm()`.
+  // Escape, Fokus-Falle, Fokus-Rückgabe und Klick auf den Schleier
+  // übernimmt seit Stufe D die Modal-Primitive.
   useEffect(() => {
     if (!pending) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        close(false);
-      } else if (e.key === "Enter") {
+      if (e.key === "Enter") {
         e.preventDefault();
         close(true);
       }
@@ -83,50 +82,30 @@ export function useConfirm() {
     return () => window.removeEventListener("keydown", onKey);
   }, [pending, close]);
 
-  const dialog = pending ? (
-    <div
-      className="confirm-dialog__overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="confirm-dialog-title"
-      onClick={(e) => {
-        // Click on backdrop (not on the dialog box) → cancel.
-        if (e.target === e.currentTarget) close(false);
-      }}
-    >
-      <div
-        className={
-          "confirm-dialog" +
-          (pending.destructive ? " confirm-dialog--destructive" : "")
-        }
-      >
-        <h2 id="confirm-dialog-title" className="confirm-dialog__title">
-          {pending.title ?? t("confirm_dialog.default_title")}
-        </h2>
-        <p className="confirm-dialog__message">{pending.message}</p>
-        <div className="confirm-dialog__actions">
-          <button
-            type="button"
-            className="confirm-dialog__btn confirm-dialog__btn--secondary"
-            onClick={() => close(false)}
-            autoFocus
-          >
-            {pending.cancelLabel ?? t("confirm_dialog.cancel")}
-          </button>
-          <button
-            type="button"
-            className={
-              "confirm-dialog__btn confirm-dialog__btn--primary" +
-              (pending.destructive ? " confirm-dialog__btn--destructive" : "")
-            }
+  const dialog = (
+    <Modal
+      open={pending !== null}
+      onClose={() => close(false)}
+      size="sm"
+      title={pending?.title ?? t("confirm_dialog.default_title")}
+      closeLabel={t("confirm_dialog.cancel")}
+      footer={
+        <>
+          <Button onClick={() => close(false)} autoFocus>
+            {pending?.cancelLabel ?? t("confirm_dialog.cancel")}
+          </Button>
+          <Button
+            variant={pending?.destructive ? "danger" : "primary"}
             onClick={() => close(true)}
           >
-            {pending.confirmLabel ?? t("confirm_dialog.confirm")}
-          </button>
-        </div>
-      </div>
-    </div>
-  ) : null;
+            {pending?.confirmLabel ?? t("confirm_dialog.confirm")}
+          </Button>
+        </>
+      }
+    >
+      <p className="confirm-dialog__message">{pending?.message}</p>
+    </Modal>
+  );
 
   return { confirm, dialog };
 }
