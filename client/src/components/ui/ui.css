@@ -45,11 +45,8 @@
 .ui-btn--primary {
   background: var(--acc);
   border-color: var(--acc);
-  color: #fff;
+  color: var(--on-acc);
   font-weight: var(--fw-bold);
-}
-:root[data-theme="dark"] .ui-btn--primary {
-  color: #04121c;
 }
 .ui-btn--primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--acc) 88%, var(--text));

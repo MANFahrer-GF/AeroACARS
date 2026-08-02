@@ -104,6 +104,8 @@
   --sem-danger-bg: rgba(192, 54, 42, 0.09);
   --sem-info: #2a5f8a;
   --sem-info-bg: rgba(42, 95, 138, 0.1);
+  /* Text auf Akzentflaechen (Primaer-Knopf) — pro Theme eigener Wert. */
+  --on-acc: #ffffff;
   --shadow-color: rgba(16, 24, 32, 0.14);
 
   --bg: #eef1f5;
@@ -176,7 +178,7 @@
      dunklem Grund. */
   --acc: #4cc2ff;
   --acc-quiet: rgba(76, 194, 255, 0.14);
-  --line: #232c36;
+  --line: #2a3541;
   --tape: #0d141b;
   --text-dim: #8695a3;
   --tick: #39434f;
@@ -188,6 +190,7 @@
   --sem-danger-bg: rgba(255, 92, 77, 0.12);
   --sem-info: #7fa8c9;
   --sem-info-bg: rgba(127, 168, 201, 0.12);
+  --on-acc: #04121c;
   --shadow-color: rgba(0, 0, 0, 0.55);
 
   --bg: #0a0d10;
