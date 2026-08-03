@@ -200,16 +200,25 @@ export function CockpitView({
   // matisch. Der Lade-Hinweis erscheint per Toast beim Klick (5 s sichtbar)
   // statt als permanenter Schild — der Pilot soll bemerken dass die Seite
   // ihre Daten live holt (METAR/TAF/NOTAMs/Runway), Ladezeit bis zu 30 s.
+  const handleOpenWeatherBriefing = () => {
+    setWeatherLoadHint(true);
+    window.setTimeout(() => setWeatherLoadHint(false), 5000);
+    void openUrl(WEATHER_BRIEFING_URL).catch(() => {});
+  };
+
+  // Field feedback (2026-08-03): with an active flight, this button used to
+  // float alone in its own row above everything else, top-right — visually
+  // disconnected from (and read as a confusing duplicate of) the actual
+  // Wetter-Briefing card + the Flug-beenden/Route-sync/OFP-refresh action
+  // row further down. It now renders INSIDE ActiveFlightPanel's own action
+  // row, alongside those buttons. Kept here (as its own top row) only for
+  // the no-active-flight empty state, which has no action row to join.
   const quickActionRow = (
     <div className="cockpit-actions">
       <button
         type="button"
         className="button cockpit-actions__weather"
-        onClick={() => {
-          setWeatherLoadHint(true);
-          window.setTimeout(() => setWeatherLoadHint(false), 5000);
-          void openUrl(WEATHER_BRIEFING_URL).catch(() => {});
-        }}
+        onClick={handleOpenWeatherBriefing}
         title={t("cockpit.weather_briefing_hint")}
       >
         🌦 {t("cockpit.weather_briefing")}
@@ -251,7 +260,13 @@ export function CockpitView({
   return (
     <>
       {noticeBanner}
-      {quickActionRow}
+      {/* was_just_resumed: ActiveFlightPanel (and its action row, below)
+          doesn't render at all yet — the resume banner owns the screen
+          instead — so the weather button still needs its own top row here,
+          same as the no-active-flight empty state. Once resumed it moves
+          into ActiveFlightPanel's own action row. */}
+      {activeFlight.was_just_resumed && quickActionRow}
+      {activeFlight.was_just_resumed && weatherLoadToast}
       <ResumeFlightBanner
         activeFlight={activeFlight}
         onAdopted={setActiveFlight}
@@ -281,6 +296,8 @@ export function CockpitView({
           simSnapshot={simSnapshot}
           onFiledSuccess={handleFiledSuccess}
           onRefreshActiveFlight={refreshActiveFlight}
+          onOpenWeatherBriefing={handleOpenWeatherBriefing}
+          weatherLoadHint={weatherLoadHint}
         />
       )}
 

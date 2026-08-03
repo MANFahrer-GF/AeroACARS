@@ -28,6 +28,14 @@ interface Props {
    * and the disconnect-resume. No PIREP was filed → no success banner.
    */
   onRefreshActiveFlight: () => void;
+  /** Field feedback (2026-08-03): the Wetter-Briefing button used to float
+   *  in its own row above the whole Cockpit tab — visually disconnected
+   *  from (and read as a confusing duplicate of) this panel's own action
+   *  row. Owned by CockpitView (needed there too for the no-active-flight
+   *  empty state); rendered here as a normal sibling of Route-Sync/OFP-
+   *  Refresh instead. */
+  onOpenWeatherBriefing: () => void;
+  weatherLoadHint: boolean;
 }
 
 function fmtDistance(nm: number, locale: string): string {
@@ -87,6 +95,8 @@ export function ActiveFlightPanel({
   simSnapshot,
   onFiledSuccess,
   onRefreshActiveFlight,
+  onOpenWeatherBriefing,
+  weatherLoadHint,
 }: Props) {
   const { t, i18n } = useTranslation();
   const { confirm, dialog: confirmDialog } = useConfirm();
@@ -616,6 +626,12 @@ export function ActiveFlightPanel({
         </p>
       )}
 
+      {weatherLoadHint && (
+        <div className="cockpit-weather-toast" role="status">
+          🌦 {t("cockpit.weather_briefing_load_hint")}
+        </div>
+      )}
+
       <div className="active-flight__actions">
         <button
           type="button"
@@ -663,6 +679,14 @@ export function ActiveFlightPanel({
               : t("active_flight.refresh_ofp")}
           </button>
         )}
+        <button
+          type="button"
+          className="cockpit-actions__weather"
+          onClick={onOpenWeatherBriefing}
+          title={t("cockpit.weather_briefing_hint")}
+        >
+          🌦 {t("cockpit.weather_briefing")}
+        </button>
         <span className="actions__spacer" />
         <button type="button" onClick={handleCancel} disabled={busy !== null}>
           {busy === "cancel"

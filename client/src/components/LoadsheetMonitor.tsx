@@ -122,8 +122,6 @@ export function LoadsheetMonitor({ info }: Props) {
     }
   }
 
-  const hasMax = info.planned_max_zfw_kg != null || info.planned_max_tow_kg != null;
-
   return (
     <div className="card">
       <div className="card__head">
@@ -169,12 +167,23 @@ export function LoadsheetMonitor({ info }: Props) {
             </tbody>
           </table>
 
-          {hasMax && (
+          {/* Field feedback (2026-08-03): the combined "Max ZFW / TOW" label
+              was too long for this narrow card at this font size — it wrapped
+              mid-phrase across three ragged lines ("Max" / "ZFW /" / "TOW"),
+              which read as broken/implausible even though the numbers
+              themselves were correct. Split into two ordinary rows (short
+              labels, same pattern as Block/ZFW/TOW above) — each fits on one
+              line like every other row in this card. */}
+          {info.planned_max_zfw_kg != null && (
             <div className="row" style={{ paddingTop: 9, marginTop: 5, borderTop: "1px solid var(--line)" }}>
-              <span className="row__label">Max ZFW / TOW</span>
-              <span className="row__value">
-                {fmtKg(info.planned_max_zfw_kg)} / {fmtKg(info.planned_max_tow_kg)}
-              </span>
+              <span className="row__label">Max ZFW</span>
+              <span className="row__value">{fmtKg(info.planned_max_zfw_kg)}</span>
+            </div>
+          )}
+          {info.planned_max_tow_kg != null && (
+            <div className="row" style={info.planned_max_zfw_kg == null ? { paddingTop: 9, marginTop: 5, borderTop: "1px solid var(--line)" } : undefined}>
+              <span className="row__label">Max TOW</span>
+              <span className="row__value">{fmtKg(info.planned_max_tow_kg)}</span>
             </div>
           )}
 
