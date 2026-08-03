@@ -61,6 +61,7 @@ vi.mock("maplibre-gl", () => {
     constructor() { h.map = this; }
     addControl() { return this; }
     on(ev: string, cb: (e?: unknown) => void) { (h.handlers[ev] ||= []).push(cb); return this; }
+    once() { return this; }
     // v0.21: die Taxi-Karte haengt sich an moveend/zoomend und meldet sich beim
     // Aufraeumen wieder ab — der Mock muss das koennen, sonst kracht der Unmount.
     off(ev: string, cb: (e?: unknown) => void) {

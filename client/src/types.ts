@@ -360,6 +360,11 @@ export interface ActiveFlightInfo {
   /** Planned aircraft registration from phpVMS (e.g. "D-AIUV"). Empty
    *  when no matching bid / aircraft details could be looked up. */
   planned_registration: string;
+  /** ICAO type of the phpVMS-planned aircraft (e.g. "A320"). Empty when no
+   *  matching bid/OFP aircraft could be resolved. */
+  aircraft_icao: string;
+  /** Full type name of the phpVMS-planned aircraft (e.g. "Airbus A320-200"). */
+  aircraft_name: string;
   flight_number: string;
   /** `Bid.flight.callsign` (e.g. "7ME"), when phpVMS fills it. Prefer this
    *  over `airline_icao + flight_number` when building a display callsign —

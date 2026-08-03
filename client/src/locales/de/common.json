@@ -809,8 +809,6 @@
       "preflight": "Preflight",
       "boarding": "Boarding",
       "frozen": "Eingefroren",
-      "expand": "Aufklappen",
-      "collapse": "Zuklappen",
       "ist": "IST",
       "soll": "SOLL",
       "block": "Block",
@@ -1097,7 +1095,8 @@
     "simulator_connected": "Verbunden",
     "simulator_connecting": "Verbinde…",
     "simulator_disconnected": "Nicht verbunden",
-    "checking_session": "Sitzung wird wiederhergestellt…"
+    "checking_session": "Sitzung wird wiederhergestellt…",
+    "tooltip": "{{service}}: {{state}}"
   },
   "pmdg_panel": {
     "title": "PMDG Premium Telemetry",
@@ -2001,7 +2000,6 @@
     "sys_inactive": "Recorder inaktiv",
     "sys_active": "Recorder aktiv · {{sim}} · {{uplink}}",
     "sys_uplink_ok": "Uplink OK",
-    "sys_uplink_lost": "Verbindung verloren",
-    "sys_messages": "Systemmeldungen ({{n}})"
+    "sys_uplink_lost": "Verbindung verloren"
   }
 }

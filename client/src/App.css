@@ -557,10 +557,21 @@ body {
   display: none;
 }
 .shell[data-nav="icon"] .nav__brand,
-.shell[data-nav="icon"] .navitem,
-.shell[data-nav="icon"] .navstatus {
+.shell[data-nav="icon"] .navitem {
   justify-content: center;
   padding-inline: 0;
+}
+/* Field feedback (2026-08-03): collapsed to icon-only, the status dot
+   lost its label text and just floated bare on the sidebar background —
+   no container at all, unlike the LIVE badge right next to it. Boxed
+   the same way (pill: --line border, --surface-2 fill) so it reads as
+   one deliberate element instead of a stray dot. */
+.shell[data-nav="icon"] .navstatus {
+  justify-content: center;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
 }
 .shell[data-nav="icon"] .navitem__badge {
   position: absolute;
@@ -582,6 +593,24 @@ body {
 }
 .shell[data-nav="icon"] .nav__tools {
   flex-direction: column;
+}
+/* Field feedback (2026-08-03): the recording pill (dot + "LIVE" label +
+   detail text + Σ-count) never had a collapsed-sidebar variant — at
+   --nav-w-icon (60px) it either overflowed past the sidebar edge or got
+   silently clipped by `.nav`'s `overflow:hidden`, cutting the text off
+   mid-word. Icon-only here too: just the coloured dot, in the same small
+   pill treatment as the connection-status dots next to it. Full detail
+   is still one hover away via the existing `title` attribute. */
+.shell[data-nav="icon"] .live-rec {
+  justify-content: center;
+  padding: 6px;
+  gap: 0;
+}
+.shell[data-nav="icon"] .live-rec__label,
+.shell[data-nav="icon"] .live-rec__detail,
+.shell[data-nav="icon"] .live-rec__sep,
+.shell[data-nav="icon"] .live-rec__count {
+  display: none;
 }
 
 /* v0.15.9: Auf dem KARTEN-Tab .app auf feste Viewport-Höhe nageln. Erst dadurch
@@ -1273,7 +1302,7 @@ button:disabled {
   background: var(--tape);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
-  padding: 10px 12px;
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
 }
@@ -1298,7 +1327,13 @@ button:disabled {
 }
 .tape__ticks {
   width: 10px;
-  height: 84px;
+  /* Field feedback (2026-08-03, "Aktiver Flug zu hoch"): trimmed from 84px
+     — the whole Cockpit-panel composition (tapes/phase-card/grid4-cards/
+     wx-cards/actions) stacked to nearly a full screen height; shrinking
+     the type scale here (kept scoped to these hardcoded tape/phase-card/
+     grid4 sizes, NOT the shared --fs-* tokens other screens rely on) was
+     the requested fix over restructuring. */
+  height: 72px;
   flex: 0 0 auto;
   background: repeating-linear-gradient(
     to bottom,
@@ -1319,13 +1354,13 @@ button:disabled {
 .tape__value {
   font-family: var(--font-acars);
   font-weight: var(--fw-bold);
-  font-size: 46px;
+  font-size: 40px;
   line-height: 0.92;
   letter-spacing: var(--ls-tight);
   font-variant-numeric: tabular-nums;
 }
 .tape--right .tape__value {
-  font-size: 36px;
+  font-size: 32px;
 }
 .tape__foot {
   display: flex;
@@ -1373,6 +1408,11 @@ button:disabled {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
+  /* .tiles below deliberately bleeds edge-to-edge (negative margin to
+     cancel this card's own horizontal padding) and has square corners —
+     without this, its bottom-left/bottom-right corners poke past the
+     card's rounded ones instead of being clipped to match. */
+  overflow: hidden;
   padding: 13px 16px 0;
   display: flex;
   flex-direction: column;
@@ -1424,7 +1464,7 @@ button:disabled {
 
 .route {
   position: relative;
-  margin: 26px 0 11px;
+  margin: 18px 0 9px;
   padding: 0 2px;
 }
 .route__track {
@@ -1510,7 +1550,7 @@ button:disabled {
 }
 .tile {
   background: var(--surface);
-  padding: 9px 12px 11px;
+  padding: 7px 12px 9px;             /* was 9px 12px 11px */
 }
 .tile__label {
   font-family: var(--font-mono);
@@ -1521,7 +1561,7 @@ button:disabled {
 }
 .tile__value {
   font-family: var(--font-acars);
-  font-size: 17px;
+  font-size: 15px;                   /* was 17px */
   font-weight: var(--fw-bold);
   letter-spacing: var(--ls-mono);
   margin-top: 2px;
@@ -1622,7 +1662,7 @@ button:disabled {
   color: var(--text);
 }
 .row--sum .row__value {
-  font-size: 20px;
+  font-size: 18px;                   /* was 20px */
   font-weight: var(--fw-bold);
 }
 .row__sub {
@@ -2097,8 +2137,24 @@ button:disabled {
   margin: 0.5rem 0 0.75rem;
 }
 
+/* Field feedback (2026-08-03): this button still had the bare/plain
+   `button--ghost` treatment while every other action button on this
+   screen got a dedicated style during the redesign — same look as its
+   siblings (.active-flight__sync-route/.active-flight__refresh-ofp) now,
+   for consistency instead of looking like the one that was forgotten. */
 .cockpit-actions__weather {
-  font-size: 0.88rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.4rem 0.85rem;
+  border-radius: 7px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: border-color 100ms, background 100ms;
+}
+.cockpit-actions__weather:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 /* v0.12.12-dev: Toast/Hinweis, der beim Klick auf den Wetter-Briefing-
@@ -6823,8 +6879,16 @@ input:disabled {
 .loadsheet__delta--ok    { color: var(--sem-ok); }
 .loadsheet__delta--warn  { color: var(--sem-warn); }
 .loadsheet__delta--alert { color: var(--sem-danger); font-weight: 600; }
-/* Hint-Zeile: dezenter Text, gleiche Höhe wie info-strip-Cells. */
+/* Hint-Zeile (z.B. "Tankvorgang läuft — noch X kg fehlen"). Field
+   feedback (2026-08-03): rendered as bare italic text sitting directly on
+   the card background — no visual container at all, unlike every other
+   callout on this redesigned screen. Boxed now (same recipe as the
+   .loadsheet__toggle hover / other --surface-2 insets on this card). */
 .loadsheet__hint-inline {
+  margin-top: 6px;
+  padding: 6px 9px;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
   font-size: 11px;
   color: var(--text-muted);
   font-style: italic;
@@ -9328,14 +9392,18 @@ input:disabled {
    idle card, system line). Popup content (`.aa-vapop .maplibregl-popup-content`,
    below) repeats these same four properties inline since MapLibre's Popup
    generates that wrapper itself — this class can't reach inside it. */
+/* Field feedback (2026-08-03): this used to be a translucent "glass"
+   background (rgba(...,.94) + backdrop-filter blur) — over the bright/
+   saturated satellite basemap that read as washed-out grey, and
+   inconsistently so: the Kartenschalter-Block LOOKED crisp/solid only
+   because its own buttons paint an opaque --surface on top, while a
+   text-only overlay like the Flugwerte card showed the translucency
+   directly. Made fully opaque (matching every other card in the app) so
+   every overlay looks identical regardless of what's rendered inside it. */
 .aa-livemap-overlay {
-  background: rgba(16, 22, 32, 0.94);
+  background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
-  backdrop-filter: blur(8px);
-}
-:root[data-theme="light"] .aa-livemap-overlay {
-  background: rgba(255, 255, 255, 0.94);
 }
 
 /* §2 — Kopfzeile: 56px fix, no buttons at all (every control moved into the
@@ -9532,9 +9600,25 @@ input:disabled {
   position: absolute;
   z-index: 500;
   right: 16px;
-  top: 16px;
+  /* Field feedback (2026-08-03): both this panel and .aa-livemap-controls
+     used to anchor at top:16px independently — with no awareness of each
+     other's width, the Kartenschalter-Block's rightmost "KARTE" group
+     could sit UNDER this panel (same z-index, later in the DOM wins) and
+     get visually covered. The panel must never overlap the controls row,
+     so it always starts below it instead of beside it — not dependent on
+     window width. 96px clears the controls row's rubric + one button row
+     + padding with room to spare. */
+  top: 96px;
   width: 296px;
-  max-height: calc(100% - 112px);
+  /* Field feedback (2026-08-03): the events log was crowding/overlapping
+     the bottom-right zoom (+/-) and attribution controls. Root cause: this
+     was always meant to be "100% - top(96px) - README §1's own 112px
+     bottom-right clearance for zoom+attribution" = 208px, but the pre-
+     existing calc only ever subtracted a single 112px term and silently
+     ignored its own top offset entirely, so the panel could reach up to
+     `top` pixels further down than intended — a pre-existing shortfall,
+     not something this round introduced, just never corrected until now. */
+  max-height: calc(100% - 208px);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -9740,16 +9824,6 @@ button.aa-livemap-events__row:hover {
   font-size: 13px;
   font-weight: var(--fw-bold);
 }
-.aa-livemap-events__count {
-  font-family: var(--font-mono);
-  font-size: var(--fs-100);
-  letter-spacing: 0.08em;
-  color: var(--text-dim);
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 1px 5px;
-  flex: none;
-}
 .aa-livemap-events__sub {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -9835,21 +9909,6 @@ button.aa-livemap-events__row:hover {
   height: 14px;
   background: var(--line);
   flex: none;
-}
-.aa-livemap-sysline__link {
-  appearance: none;
-  border: none;
-  background: none;
-  padding: 0;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.aa-livemap-sysline__link:hover {
-  color: var(--text);
 }
 .aa-ac-marker {
   width: 38px;

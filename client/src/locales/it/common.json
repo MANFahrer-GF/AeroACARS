@@ -809,8 +809,6 @@
       "preflight": "Preflight",
       "boarding": "Boarding",
       "frozen": "Bloccato",
-      "expand": "Espandi",
-      "collapse": "Comprimi",
       "ist": "REALE",
       "soll": "PIANO",
       "block": "Block",
@@ -1097,7 +1095,8 @@
     "simulator_connected": "Connesso",
     "simulator_connecting": "Connessione…",
     "simulator_disconnected": "Non connesso",
-    "checking_session": "Ripristino sessione…"
+    "checking_session": "Ripristino sessione…",
+    "tooltip": "{{service}}: {{state}}"
   },
   "pmdg_panel": {
     "title": "Telemetria Premium PMDG",
@@ -2001,7 +2000,6 @@
     "sys_inactive": "Recorder inattivo",
     "sys_active": "Recorder attivo · {{sim}} · {{uplink}}",
     "sys_uplink_ok": "Uplink OK",
-    "sys_uplink_lost": "Connessione persa",
-    "sys_messages": "Messaggi di sistema ({{n}})"
+    "sys_uplink_lost": "Connessione persa"
   }
 }

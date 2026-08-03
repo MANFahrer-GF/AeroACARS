@@ -204,7 +204,7 @@ export function CockpitView({
     <div className="cockpit-actions">
       <button
         type="button"
-        className="button button--ghost cockpit-actions__weather"
+        className="button cockpit-actions__weather"
         onClick={() => {
           setWeatherLoadHint(true);
           window.setTimeout(() => setWeatherLoadHint(false), 5000);

@@ -24,6 +24,7 @@ import { resolveFlightIdent } from "../lib/callsign";
 import { simKindLabel } from "../lib/simKind";
 import { useMapEvents, LiveMapEventList, type Filter } from "./LiveMapEvents";
 import { LiveMapEmptyState, nextBidInfo, type NextBidInfo } from "./LiveMapEmptyState";
+import { LiveRecordingIndicator } from "./LiveRecordingIndicator";
 
 const BASEMAP_DARK = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 const BASEMAP_LIGHT = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
@@ -337,9 +338,8 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       cancelled = true;
     };
   }, []);
-  // README §4.2: Ereignisliste filter — also settable from the System-Zeile's
-  // "Systemmeldungen (n)" link (§7), which is why it lives here, not inside
-  // LiveMapEventList itself.
+  // README §4.2: Ereignisliste filter — lives here (not inside
+  // LiveMapEventList) since it's a controlled prop the list receives.
   const [eventFilter, setEventFilter] = useState<Filter>("all");
   // README §2: header UTC clock, ticking every second — same pattern as
   // PilotHeader.tsx's own zulu clock.
@@ -446,6 +446,18 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       attributionControl: { compact: true },
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+    // Field feedback (2026-08-03): the attribution's `compact: true` reads
+    // as "collapsed by default, expands on click" — but MapLibre's own
+    // AttributionControl (`_updateCompact` in its source) actually adds
+    // BOTH `maplibregl-compact` AND the expanded `maplibregl-compact-show`
+    // class together on its very first render, so it starts OPEN and only
+    // collapses once the pilot clicks the (i) themselves. Force it closed
+    // once after load so "compact" really means collapsed-by-default.
+    map.once("load", () => {
+      const attrib = containerRef.current?.querySelector(".maplibregl-ctrl-attrib");
+      attrib?.classList.remove("maplibregl-compact-show");
+      attrib?.removeAttribute("open");
+    });
     mapRef.current = map;
     // Follow nicht „einsperren", aber ehrlich: zieht der Nutzer die Karte selbst
     // weg (echter Pan = originalEvent gesetzt; unser easeTo/jumpTo löst KEIN
@@ -1228,6 +1240,23 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       // was_just_resumed = der Resume-Gate wartet noch auf einen frischen
       // Sim-Snapshot. In dem Zustand kann X-Plane kurz eine Reload-/Lade-
       // position melden (z.B. Nordeuropa) → NICHT blind dorthin folgen.
+      // Field feedback (2026-08-03, "Norden oben/Kurs oben gehen nur
+      // sporadisch"): this effect's own easeTo/jumpTo calls (below) and the
+      // separate orientation effect's `easeTo({bearing, duration:400})`
+      // both fire off the SAME simSnapshot tick, independently, with no
+      // coordination. MapLibre's easeTo isn't per-property-isolated — a
+      // second call while the first is still mid-flight restarts the
+      // animation from whatever the CURRENT interpolated values are, so a
+      // center-only call here could freeze an in-flight bearing rotation
+      // wherever it happened to be, and vice versa. Every camera call in
+      // THIS effect now names its own target bearing explicitly (same
+      // trackUp/heading source the orientation effect uses) so whichever
+      // call "wins" the race, it's still driving toward the same target —
+      // no more silent stalls.
+      const targetBearing = trackUp
+        ? (simSnapshot?.heading_deg_true ?? simSnapshot?.heading_deg_magnetic ?? map.getBearing())
+        : 0;
+
       // Follow: bei gesetztem Haken IMMER auf den Flieger zentrieren — egal wie
       // weit man rausgezoomt hat. Gate NUR am `follow`-State (ein einziger Zustand,
       // nichts kann mehr desyncen). was_just_resumed unterdrückt das Folgen der
@@ -1241,6 +1270,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           map.jumpTo({
             center: lngLat,
             zoom: targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft),
+            bearing: targetBearing,
           });
           followEngageRef.current = false;
         } else if (followEngageRef.current) {
@@ -1249,13 +1279,14 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           map.easeTo({
             center: lngLat,
             zoom: targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft),
+            bearing: targetBearing,
             duration: 350,
           });
           followEngageRef.current = false;
         } else {
           // laufendes Folgen → NUR schwenken. Dein manueller Zoom bleibt erhalten
           // (kein Zurückziehen mehr auf den Phasen-Zoom — genau das war der Bug).
-          map.easeTo({ center: lngLat, duration: 400 });
+          map.easeTo({ center: lngLat, bearing: targetBearing, duration: 400 });
         }
       }
     } else {
@@ -1773,17 +1804,24 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   </div>
                 </div>
                 <div className="aa-livemap-flightcard__foot">
-                  {/* README §4.1 wants "Muster + Registrierung" left, "FL{ist}
-                      ↑ FL{soll}" right. Muster/Reg come from the live sim
-                      snapshot (ActiveFlightInfo has neither field). The
-                      planned cruise level ("FL{soll}") has no source
-                      reachable from here at all today — nothing in
-                      ActiveFlightInfo or SimSnapshot carries it, and
-                      fabricating one would be worse than leaving it out; the
-                      current-FL half alone is still real data, just not the
-                      full "ist ↑ soll" comparison the mock shows. */}
-                  <span>{[simSnapshot?.aircraft_icao, simSnapshot?.aircraft_registration].filter(Boolean).join(" · ") || "—"}</span>
-                  <span>{stats.alt}</span>
+                  {/* README §4.1 wants "Muster + Registrierung" left. Field
+                      feedback (2026-08-03): this used to read from the live
+                      SIM snapshot (`simSnapshot.aircraft_icao`/
+                      `aircraft_registration`) — wrong source, that's whatever
+                      happens to be loaded in the sim, not what phpVMS
+                      actually planned/booked. Now uses `activeFlight`'s own
+                      phpVMS-sourced `aircraft_name`/`aircraft_icao` +
+                      `planned_registration`. Right side used to repeat the
+                      HÖHE value already shown in the grid above (the planned
+                      cruise level it was meant to compare against has no
+                      source reachable from here) — replaced with the flight
+                      phase, which was missing from this card entirely. */}
+                  <span>
+                    {[activeFlight!.aircraft_name || activeFlight!.aircraft_icao, activeFlight!.planned_registration]
+                      .filter(Boolean)
+                      .join(" · ") || "—"}
+                  </span>
+                  <span>{phaseLabel}</span>
                 </div>
               </div>
 
@@ -1808,7 +1846,12 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
             <LiveMapEmptyState next={next} onGoToBriefing={onSwitchToBriefing} />
           )}
 
-          {/* README §7 — System-Zeile, overlay bottom-left. */}
+          {/* README §7 — System-Zeile, overlay bottom-left. Field feedback
+              (2026-08-03): the "Systemmeldungen (n)" count-link was replaced
+              by the actual recorder connection detail (last send, total
+              sent) — the same LiveRecordingIndicator the sidebar already
+              shows, so "what/when/how much are we sending" lives where the
+              pilot is actually looking, not behind a bare counter. */}
           <div className="aa-livemap-sysline aa-livemap-overlay">
             <span className={`aa-livemap-sysline__dot aa-livemap-sysline__dot--${recorderState}`} aria-hidden="true" />
             <span className="aa-livemap-sysline__text">
@@ -1819,10 +1862,23 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                     uplink: recorderState === "ok" ? t("livemap.sys_uplink_ok") : t("livemap.sys_uplink_lost"),
                   })}
             </span>
-            <span className="aa-livemap-sysline__sep" aria-hidden="true" />
-            <button type="button" className="aa-livemap-sysline__link" onClick={() => setEventFilter("system")}>
-              {t("livemap.sys_messages", { n: events.filter((e) => e.category === "system").length })}
-            </button>
+            {activeFlight && (
+              <>
+                <span className="aa-livemap-sysline__sep" aria-hidden="true" />
+                <LiveRecordingIndicator
+                  lastPositionAt={activeFlight.last_position_at}
+                  queuedCount={activeFlight.queued_position_count}
+                  positionCount={activeFlight.position_count}
+                  connectionState={
+                    activeFlight.connection_state === "blocked"
+                      ? "blocked"
+                      : activeFlight.connection_state === "failing"
+                        ? "failing"
+                        : "live"
+                  }
+                />
+              </>
+            )}
           </div>
         </div>
       </div>

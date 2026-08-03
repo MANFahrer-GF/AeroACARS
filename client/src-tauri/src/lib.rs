@@ -4346,6 +4346,16 @@ pub struct ActiveFlightInfo {
     started_at: String,
     airline_icao: String,
     planned_registration: String,
+    /// ICAO type of the phpVMS-planned aircraft (e.g. "A320"), looked up via
+    /// the same `get_aircraft` call as `planned_registration`. Empty when no
+    /// matching bid/OFP aircraft could be resolved.
+    aircraft_icao: String,
+    /// Full type name of the phpVMS-planned aircraft (e.g. "Airbus A320-200").
+    /// Field feedback (2026-08-03): the Karte-Flugwerte-card footer used to
+    /// show the SIM's own `aircraft_icao`/`aircraft_registration` (from
+    /// `SimSnapshot`) here — wrong source, since the pilot wants to see what
+    /// phpVMS actually planned/booked, not whatever's loaded in the sim.
+    aircraft_name: String,
     flight_number: String,
     /// `Bid.flight.callsign` (z.B. "7ME"), falls phpVMS es fuellt — reuses
     /// `ActiveFlight::bid_callsign` (bislang nur fuer den OFP-Match genutzt,
@@ -9657,6 +9667,8 @@ fn flight_info(flight: &ActiveFlight, resume_position_suspect: bool) -> ActiveFl
         started_at: flight.started_at.to_rfc3339(),
         airline_icao: flight.airline_icao.clone(),
         planned_registration: flight.planned_registration.clone(),
+        aircraft_icao: flight.aircraft_icao.clone(),
+        aircraft_name: flight.aircraft_name.clone(),
         flight_number: flight.flight_number.clone(),
         callsign: flight.bid_callsign.clone(),
         dpt_airport: flight.dpt_airport.clone(),

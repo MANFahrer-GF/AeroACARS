@@ -23,8 +23,6 @@ interface Props {
  * (<5 % grün, 5-10 % gelb, >10 % rot; Overweight = rot + ⚠), nur
  * tabellarisch statt inline.
  *
- * **Toggle:** kleiner Aufklapp-Pfeil im Karten-Kopf (card__action).
- * Default offen während Boarding.
  *
  * **v0.5.46 — OFP-Refresh-Button inline:** wenn der IST/SOLL-Vergleich
  * ein "OFP-Outdated"-Muster zeigt (großer Block-Delta + ZFW-Match,
@@ -40,7 +38,6 @@ export function LoadsheetMonitor({ info }: Props) {
   // Hook-Reihenfolge: alle Hooks vor early returns, sonst stolpert
   // React beim Re-Render wenn die Phase wechselt und der Component
   // mal mit/ohne useState aufgerufen wird.
-  const [expanded, setExpanded] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshDone, setRefreshDone] = useState(false);
   const [refreshErr, setRefreshErr] = useState<string | null>(null);
@@ -138,25 +135,9 @@ export function LoadsheetMonitor({ info }: Props) {
               : "cockpit.loadsheet.preflight",
           )}
         </Badge>
-        <button
-          type="button"
-          className="card__action"
-          onClick={() => setExpanded((v) => !v)}
-          aria-expanded={expanded}
-          title={
-            expanded
-              ? t("cockpit.loadsheet.collapse")
-              : t("cockpit.loadsheet.expand")
-          }
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="m6 9 6 6 6-6" />
-          </svg>
-        </button>
       </div>
 
-      {expanded && (
-        <div className="card__body">
+      <div className="card__body">
           <table className="ls" aria-label={t("cockpit.loadsheet.ist_label")}>
             <thead>
               <tr>
@@ -233,7 +214,6 @@ export function LoadsheetMonitor({ info }: Props) {
             </div>
           )}
         </div>
-      )}
     </div>
   );
 }

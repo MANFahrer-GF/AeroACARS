@@ -261,7 +261,10 @@ export function Sidebar({
         {updateButton}
         <span
           className={`navstatus navstatus--${phpvmsConnected ? "online" : "offline"}`}
-          title={phpvmsConnected ? t("status.phpvms_connected") : t("status.phpvms_disconnected")}
+          title={t("status.tooltip", {
+            service: t("status.phpvms"),
+            state: phpvmsConnected ? t("status.phpvms_connected") : t("status.phpvms_disconnected"),
+          })}
         >
           <span className="navstatus__dot" />
           <span className="navstatus__text">{t("status.phpvms")}</span>
@@ -270,13 +273,14 @@ export function Sidebar({
           className={`navstatus navstatus--${
             simConnected ? "online" : simConnecting ? "connecting" : "offline"
           }`}
-          title={
-            simConnected
+          title={t("status.tooltip", {
+            service: simLabel,
+            state: simConnected
               ? t("status.simulator_connected")
               : simConnecting
                 ? t("status.simulator_connecting")
-                : t("status.simulator_disconnected")
-          }
+                : t("status.simulator_disconnected"),
+          })}
         >
           <span className="navstatus__dot" />
           <span className="navstatus__text">{simLabel}</span>

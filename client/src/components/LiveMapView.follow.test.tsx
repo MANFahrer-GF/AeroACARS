@@ -69,6 +69,7 @@ vi.mock("maplibre-gl", () => {
       (h.mapHandlers[ev] ||= []).push(cb);
       return this;
     }
+    once() { return this; }
     // v0.21: die Taxi-Karte haengt sich an moveend/zoomend und meldet sich beim
     // Aufraeumen wieder ab. Ohne off() kracht der Unmount.
     off(ev: string, cb: (e?: unknown) => void) {
