@@ -209,6 +209,10 @@ export function Sidebar({
       </div>
 
       <div className="nav__list">
+        {/* Briefing (Gebuchte Flüge) first — that's where a session starts:
+            pick/confirm the flight before anything else. Matches the
+            default tab (App.tsx's useState<Tab>("briefing")) already. */}
+        <Item icon={I.briefing} label={t("tabs.briefing")} active={tab === "briefing"} onClick={() => setTab("briefing")} />
         <Item
           icon={I.cockpit}
           label={t("tabs.cockpit")}
@@ -229,7 +233,6 @@ export function Sidebar({
             onClick={onCpdlcOpen}
           />
         )}
-        <Item icon={I.briefing} label={t("tabs.briefing")} active={tab === "briefing"} onClick={() => setTab("briefing")} />
         <Item icon={I.logbook} label={t("tabs.logbook")} active={tab === "logbook"} onClick={() => setTab("logbook")} />
         <Item icon={I.landing} label={t("tabs.landing")} active={tab === "landing"} onClick={() => setTab("landing")} />
         <Item

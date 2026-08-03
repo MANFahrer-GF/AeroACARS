@@ -6,11 +6,15 @@ interface Props {
 }
 
 /**
- * Compact live-telemetry strip shown in the Cockpit tab while a flight
- * is active. Five glanceable tiles: IAS, GS, altitude (MSL+AGL), V/S
- * with a tiny climb/descent arrow, and heading. Numbers come straight
- * from the active sim snapshot — when the sim is disconnected we
- * render the tiles muted so the layout doesn't shift.
+ * The two lateral instrument tapes flanking the Cockpit phase card: IAS
+ * on the left, altitude on the right — each with a tick strip and a
+ * foot line of secondary readouts (GS/TAS/Mach under IAS, AGL/GPS under
+ * altitude). V/S and heading moved into the phase card's tile row in
+ * the Stage E redesign (they read more naturally next to Elapsed/
+ * Distance there); this component now owns only the two tapes.
+ *
+ * Numbers come straight from the active sim snapshot — when the sim is
+ * disconnected we render both tapes muted so the layout doesn't shift.
  */
 export function LiveTapes({ snapshot }: Props) {
   const { t, i18n } = useTranslation();
@@ -18,6 +22,8 @@ export function LiveTapes({ snapshot }: Props) {
 
   const ias = has ? Math.round(snapshot.indicated_airspeed_kt) : null;
   const gs = has ? Math.round(snapshot.groundspeed_kt) : null;
+  const tas = has ? Math.round(snapshot.true_airspeed_kt) : null;
+  const mach = has ? (snapshot.mach ?? null) : null;
   const altMsl = has ? Math.round(snapshot.altitude_msl_ft) : null;
   // v0.16.15: Piloten vergleichen mit dem Höhenmesser (PFD) — die
   // angezeigte Höhe ist primär; die geometrische GPS-Höhe wandert in
@@ -28,91 +34,53 @@ export function LiveTapes({ snapshot }: Props) {
       : null;
   const altPrimary = altInd ?? altMsl;
   const altAgl = has ? Math.round(snapshot.altitude_agl_ft) : null;
-  const vs = has ? Math.round(snapshot.vertical_speed_fpm) : null;
-  const heading = has
-    ? ((snapshot.heading_deg_magnetic % 360) + 360) % 360
-    : null;
 
   function fmtInt(n: number | null): string {
     if (n == null) return "—";
     return new Intl.NumberFormat(i18n.language).format(n);
   }
-  function fmtSigned(n: number | null): string {
-    if (n == null) return "—";
-    const sign = n > 0 ? "+" : "";
-    return `${sign}${new Intl.NumberFormat(i18n.language).format(n)}`;
-  }
 
-  const vsArrow = vs == null ? "" : vs > 50 ? "▲" : vs < -50 ? "▼" : "•";
-  const vsClass =
-    vs == null
-      ? "live-tape--idle"
-      : vs > 50
-        ? "live-tape--up"
-        : vs < -50
-          ? "live-tape--down"
-          : "live-tape--level";
+  const iasFoot = [
+    gs != null ? `${t("tapes.gs")} ${fmtInt(gs)}` : null,
+    tas != null ? `TAS ${fmtInt(tas)}` : null,
+    mach != null && mach > 0 ? `M ${mach.toFixed(2)}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const altFoot = [
+    altAgl != null ? `AGL ${fmtInt(altAgl)} ft` : null,
+    altInd != null && altMsl != null && Math.abs(altInd - altMsl) >= 100
+      ? `GPS ${fmtInt(altMsl)} ft`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <section className={`live-tapes ${has ? "" : "live-tapes--idle"}`}>
-      <Tape label={t("tapes.ias")} value={fmtInt(ias)} unit="kt" />
-      <Tape label={t("tapes.gs")} value={fmtInt(gs)} unit="kt" />
-      <Tape
-        label={t("tapes.altitude")}
-        value={fmtInt(altPrimary)}
-        unit="ft"
-        sub={[
-          altAgl != null ? `AGL ${fmtInt(altAgl)} ft` : null,
-          altInd != null && altMsl != null && Math.abs(altInd - altMsl) >= 100
-            ? `GPS ${fmtInt(altMsl)} ft`
-            : null,
-        ]
-          .filter(Boolean)
-          .join(" · ") || undefined}
-      />
-      <Tape
-        label={t("tapes.vs")}
-        value={fmtSigned(vs)}
-        unit="fpm"
-        modifier={vsClass}
-        prefix={vsArrow}
-      />
-      <Tape
-        label={t("tapes.heading")}
-        value={
-          heading == null
-            ? "—"
-            : Math.round(heading).toString().padStart(3, "0") + "°"
-        }
-      />
-    </section>
-  );
-}
-
-function Tape({
-  label,
-  value,
-  unit,
-  sub,
-  modifier,
-  prefix,
-}: {
-  label: string;
-  value: string;
-  unit?: string;
-  sub?: string;
-  modifier?: string;
-  prefix?: string;
-}) {
-  return (
-    <div className={`live-tape ${modifier ?? ""}`}>
-      <div className="live-tape__label">{label}</div>
-      <div className="live-tape__value">
-        {prefix && <span className="live-tape__prefix">{prefix}</span>}
-        {value}
-        {unit && <span className="live-tape__unit">{unit}</span>}
+    <>
+      <div className={`tape tape--left ${has ? "" : "tape--idle"}`}>
+        <div className="tape__head">
+          <span>{t("tapes.ias")}</span>
+          <span>KT</span>
+        </div>
+        <div className="tape__body">
+          <div className="tape__ticks" aria-hidden="true" />
+          <div className="tape__value">{fmtInt(ias)}</div>
+        </div>
+        {iasFoot && <div className="tape__foot">{iasFoot}</div>}
       </div>
-      {sub && <div className="live-tape__sub">{sub}</div>}
-    </div>
+      <div className={`tape tape--right ${has ? "" : "tape--idle"}`}>
+        <div className="tape__head">
+          <span>FT</span>
+          <span>{t("tapes.altitude")}</span>
+        </div>
+        <div className="tape__body">
+          <div className="tape__ticks" aria-hidden="true" />
+          <div className="tape__value">{fmtInt(altPrimary)}</div>
+        </div>
+        {altFoot && <div className="tape__foot">{altFoot}</div>}
+      </div>
+    </>
   );
 }

@@ -39,19 +39,16 @@ interface Props {
 }
 
 /**
- * Mini route map: departure pin on the left, arrival pin on the right,
- * a soft accent line between them, and a small plane glyph that
- * tracks the live position along the route.
+ * Route progress track for the Cockpit phase card: a thin filled bar
+ * between departure and arrival ICAO/gate labels, with a small plane
+ * glyph and a percentage readout that track the live position.
  *
- * Implementation: HTML/CSS layout (not SVG) so the pin circles and
- * plane glyph stay perfectly round regardless of container width.
- * The previous SVG version with preserveAspectRatio="none" stretched
- * everything horizontally, producing oval pins on wide screens.
- *
- * Projection is intentionally simple — straight-line interpolation
- * between the two endpoints in lat/lon space. Correct enough for
- * short/medium-haul; a true Mercator great circle is a follow-up if
- * VAs need accurate transatlantic shapes.
+ * Progress math is unchanged from the pre-redesign version (straight-
+ * line great-circle interpolation, intentionally simple — correct
+ * enough for short/medium-haul; a true Mercator great circle is a
+ * follow-up if VAs need accurate transatlantic shapes). Only the
+ * markup/classNames changed, from the old .route-map__pin layout to
+ * the new .route__track/.route__ends layout used by the phase card.
  */
 export function RouteMap({
   dptIcao,
@@ -110,39 +107,20 @@ export function RouteMap({
   const progressLabel = `${Math.round(progress * 100)}%`;
 
   return (
-    <div className="route-map">
-      <div className="route-map__track">
-        <div className="route-map__line" />
+    <div className="route">
+      <div className="route__track">
         <div
-          className="route-map__line-fill"
+          className="route__fill"
           style={{ width: `${trackProgressPct}%` }}
         />
-
-        <div className="route-map__pin route-map__pin--dpt">
-          <span className="route-map__icao">{dpt.icao}</span>
-          {dptGate && <span className="route-map__gate">{dptGate}</span>}
-          <span className="route-map__dot" />
-        </div>
-
-        <div className="route-map__pin route-map__pin--arr">
-          <span className="route-map__icao">{arr.icao}</span>
-          {arrGate && <span className="route-map__gate">{arrGate}</span>}
-          <span className="route-map__dot" />
-        </div>
-
         <div
-          className="route-map__plane"
+          className="route__plane"
           style={{ left: `${trackProgressPct}%` }}
           aria-hidden="true"
         >
           {/* Rotate the plane glyph 90° so the nose points along the
-              track toward the arrival pin instead of straight up. */}
-          <svg
-            viewBox="0 0 24 24"
-            width="20"
-            height="20"
-            style={{ transform: "rotate(90deg)" }}
-          >
+              track toward the arrival airport instead of straight up. */}
+          <svg viewBox="0 0 24 24" style={{ rotate: "90deg" }}>
             <path
               fill="currentColor"
               d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"
@@ -150,12 +128,22 @@ export function RouteMap({
           </svg>
         </div>
         <div
-          className="route-map__progress"
+          className="route__pct"
           style={{ left: `${trackProgressPct}%` }}
           aria-hidden="true"
         >
           {progressLabel}
         </div>
+      </div>
+      <div className="route__ends">
+        <span className="route__end">
+          <span className="route__icao">{dpt.icao}</span>
+          {dptGate && <span className="route__gate">{dptGate}</span>}
+        </span>
+        <span className="route__end route__end--arr">
+          <span className="route__icao">{arr.icao}</span>
+          {arrGate && <span className="route__gate">{arrGate}</span>}
+        </span>
       </div>
     </div>
   );

@@ -613,6 +613,133 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
             }
         }
 
+        // ========================== HOPPIE ACARS (PDC/CPDLC) ==============
+        // Missing here entirely until now — the whole feature (settings,
+        // connect, and therefore the PDC/CPDLC tab, which stays hidden
+        // while `enabled` reads as unset) was undriveable from a LAN
+        // tablet: every command below fell through to `Dispatch::Unknown`
+        // (404), and the frontend's own `.then(setSettings)` calls have no
+        // `.catch()` (deliberately — see useCpdlcMessages.ts and friends,
+        // which rely on the native/Tauri path never rejecting for a
+        // command that exists), so the rejection was swallowed and the
+        // settings section just sat on its heading forever.
+        "hoppie_get_settings" => ok_json(crate::hoppie::hoppie_get_settings(app.clone())),
+        "hoppie_set_settings" => {
+            #[derive(Deserialize)]
+            struct A {
+                settings: crate::hoppie::HoppieSettings,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => ok_json(crate::hoppie::hoppie_set_settings(app.clone(), a.settings)),
+                Err(e) => Err(e),
+            }
+        }
+        "hoppie_set_logon_code" => {
+            #[derive(Deserialize)]
+            struct A {
+                code: String,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::hoppie::hoppie_set_logon_code(a.code)),
+                Err(e) => Err(e),
+            }
+        }
+        "hoppie_has_logon_code" => from_uierr(crate::hoppie::hoppie_has_logon_code()),
+        "hoppie_clear_logon_code" => from_uierr(crate::hoppie::hoppie_clear_logon_code()),
+        "hoppie_connect" => from_uierr(crate::hoppie::hoppie_connect(app.clone(), st!()).await),
+        "hoppie_disconnect" => from_uierr(crate::hoppie::hoppie_disconnect(app.clone(), st!()).await),
+        "hoppie_status" => from_uierr(crate::hoppie::hoppie_status(st!()).await),
+        "hoppie_get_flight_context" => ok_json(crate::hoppie::hoppie_get_flight_context(app.clone())),
+        "hoppie_ping_station" => {
+            #[derive(Deserialize)]
+            struct A {
+                station: String,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::hoppie::hoppie_ping_station(st!(), a.station).await),
+                Err(e) => Err(e),
+            }
+        }
+        "hoppie_send_logon_request" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(default)]
+                station: Option<String>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(
+                    crate::hoppie::hoppie_send_logon_request(app.clone(), st!(), a.station).await,
+                ),
+                Err(e) => Err(e),
+            }
+        }
+        "hoppie_send_logoff" => from_uierr(crate::hoppie::hoppie_send_logoff(app.clone(), st!()).await),
+        "hoppie_send_telex" => {
+            #[derive(Deserialize)]
+            struct A {
+                text: String,
+                #[serde(default)]
+                recipient: Option<String>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(
+                    crate::hoppie::hoppie_send_telex(app.clone(), st!(), a.text, a.recipient).await,
+                ),
+                Err(e) => Err(e),
+            }
+        }
+        "hoppie_send_free_text" => {
+            #[derive(Deserialize)]
+            struct A {
+                text: String,
+                #[serde(default)]
+                mrn: Option<u32>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => {
+                    from_uierr(crate::hoppie::hoppie_send_free_text(app.clone(), st!(), a.text, a.mrn).await)
+                }
+                Err(e) => Err(e),
+            }
+        }
+        "hoppie_send_cpdlc_element" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                element_id: String,
+                values: Vec<String>,
+                #[serde(default)]
+                mrn: Option<u32>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(
+                    crate::hoppie::hoppie_send_cpdlc_element(
+                        app.clone(),
+                        st!(),
+                        a.element_id,
+                        a.values,
+                        a.mrn,
+                    )
+                    .await,
+                ),
+                Err(e) => Err(e),
+            }
+        }
+        "hoppie_send_pdc_request" => {
+            #[derive(Deserialize)]
+            struct A {
+                request: crate::hoppie::PdcRequestArgs,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => {
+                    from_uierr(crate::hoppie::hoppie_send_pdc_request(app.clone(), st!(), a.request).await)
+                }
+                Err(e) => Err(e),
+            }
+        }
+        "hoppie_get_thread" => from_uierr(crate::hoppie::hoppie_get_thread(st!()).await),
+        "hoppie_list_elements" => ok_json(crate::hoppie::hoppie_list_elements()),
+
         // ============================ REMOTE SELF ========================
         // The remote-server control commands themselves take a real
         // `tauri::State`; they manage the host's own server and are not
@@ -737,5 +864,81 @@ mod tests {
     fn unit_return_serializes_to_null() {
         let r: Result<(), UiError> = Ok(());
         assert_eq!(from_uierr(r).unwrap(), Value::Null);
+    }
+
+    /// Guards the module doc's own claim: every command in lib.rs's
+    /// `generate_handler!` list has a dispatch arm here, except the
+    /// documented deny-set. Written after finding the whole Hoppie
+    /// ACARS / PDC-CPDLC feature (17 commands) had silently fallen
+    /// through to `Dispatch::Unknown` since it was added — nobody
+    /// noticed because the frontend awaited those calls without a
+    /// `.catch()`, so a LAN session just sat on a loading state forever
+    /// instead of erroring. A source-text check catches the NEXT
+    /// command added to `generate_handler!` and forgotten here, without
+    /// needing a live AppState to call `dispatch` for real.
+    #[test]
+    fn every_generated_command_is_either_bridged_or_explicitly_denied() {
+        // Deliberately not bridged — see the module doc's "What is
+        // covered vs excluded" section for why each of these is exempt.
+        const DENY_SET: &[&str] = &[
+            "xplane_install_plugin",
+            "xplane_detect_install_path",
+            "error_reporting_set_consent",
+            // The remote-server control commands themselves — see the
+            // "REMOTE SELF" comment at the bottom of `dispatch`: they
+            // manage the host's own server and aren't meaningfully
+            // driveable from the tablet being served.
+            "remote_server_start",
+            "remote_server_stop",
+            "remote_server_status",
+            "remote_server_set_port",
+        ];
+
+        // Found by this same test while fixing the Hoppie gap — NOT yet
+        // triaged (unknown whether each is an oversight like Hoppie was,
+        // or a deliberate remote-desktop-only omission nobody wrote down).
+        // Exempted here so this test still catches the NEXT accidental
+        // gap instead of drowning it in a pile of pre-existing ones, but
+        // this list itself is a known-incomplete follow-up, not a design
+        // decision — see the "remote bridge gaps" task.
+        const NOT_YET_TRIAGED: &[&str] = &[
+            "landing_backup_now",
+            "landing_backup_restore",
+            "ascan_list_aircraft",
+            "ascan_collect",
+            "ascan_submit",
+            "flight_refresh_route_only",
+            "airport_ground_get",
+            "airport_ground_index",
+        ];
+
+        let lib_src = include_str!("../lib.rs");
+        let start = lib_src
+            .find("tauri::generate_handler![")
+            .expect("generate_handler! list must exist in lib.rs")
+            + "tauri::generate_handler![".len();
+        let rest = &lib_src[start..];
+        let end = rest.find("\n        ])").expect("generate_handler! list must close with `])`");
+        let list = &rest[..end];
+
+        let bridge_src = include_str!("bridge.rs");
+
+        let missing: Vec<&str> = list
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with("//"))
+            .map(|l| l.trim_end_matches(','))
+            .map(|l| l.rsplit("::").next().unwrap_or(l))
+            .filter(|name| !DENY_SET.contains(name))
+            .filter(|name| !NOT_YET_TRIAGED.contains(name))
+            .filter(|name| !bridge_src.contains(&format!("\"{name}\" =>")))
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "these commands are registered in generate_handler! but have no dispatch arm \
+             in remote/bridge.rs (silently 404s over the LAN bridge — add an arm or, if it \
+             genuinely shouldn't be remote-driveable, add it to DENY_SET with a reason): {missing:?}"
+        );
     }
 }

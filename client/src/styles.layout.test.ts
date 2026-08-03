@@ -77,60 +77,103 @@ describe("Stil-Varianten enthalten kein Layout", () => {
 });
 
 describe("Erreichbarkeits-Anzeige verschiebt oder verdeckt nichts (v1.3.3)", () => {
-  // Dritte Runde desselben Grundproblems (Feldbefund 31.07.2026, PDC + CPDLC):
-  // die vorherige Lösung (siehe git history dieser Datei) nahm die Anzeige
-  // per `position: absolute` aus dem Textfluss, damit sie das Feld nicht
-  // höher macht. Das tauschte einen Bug gegen einen schlimmeren: aus dem
-  // Fluss genommen beanspruchte sie GAR keinen Platz mehr und rendert dann
-  // einfach UNTER dem, was zufällig als Nächstes im normalen Fluss kam — im
-  // CPDLC-Tab je nach Anmeldestatus mal über, mal unter den Buttons, im
-  // PDC-Formular über der nächsten Feldzeile. `position: absolute` auf
-  // `.cpdlc-station-badge` ist daher jetzt selbst das Regressionssignal,
-  // nicht mehr die Lösung.
-  it("die Statusanzeige ist NICHT aus dem Textfluss genommen", () => {
-    const rule = /\.cpdlc-station-badge\s*\{([^}]*)\}/.exec(css);
-    expect(rule, "Regel muss existieren").toBeTruthy();
-    expect(
-      rule![1],
-      "absolute Positionierung reserviert keinen Platz mehr — die Anzeige kann " +
-        "dann unter Buttons oder der nächsten Formularzeile landen (Befund 31.07.2026)",
-    ).not.toContain("position: absolute");
-  });
+  // v1.3.5 (#Datalink-3a) rebuilt the PDC/CPDLC tab from the ground up —
+  // `.cpdlc-station-badge` (the "is anyone registered under this
+  // callsign?" ping feature) and `.cpdlc-field__badge-row` (the grid hack
+  // that made room for it) are both gone outright: the new spec is
+  // explicit that the app must not fake a station list or do network
+  // lookups for one (handoff_datalink_3a/README.md §3.2). Nothing takes
+  // their place, so the two regression guards that pinned their CSS are
+  // retired along with the feature rather than rewritten.
 
-  // CPDLC: Felder (Link-Status + Center-Eingabe) und Aktions-Buttons stehen
-  // in getrennten Zeilen. Vorher standen sie in EINER `flex-wrap`-Zeile mit
-  // `align-items: flex-end` — je nachdem wie lang der Anmelde-Status-Text
-  // war (bzw. ob die Statusanzeige Platz brauchte), brach die Zeile an
-  // anderer Stelle um und die Buttons sprangen zwischen "neben dem Feld"
-  // und "darunter". Getrennte Zeilen heißt: das Feld kann wachsen oder
-  // schrumpfen, ohne dass es die Buttons je bewegt.
-  it("CPDLC: Felder und Buttons stehen in unabhängigen Zeilen", () => {
-    const rule = /\.cpdlc-section__bar\s*\{([^}]*)\}/.exec(css);
+  // CPDLC: fields/status and action buttons still must not be able to
+  // jump around based on content width — now guaranteed structurally
+  // instead of via flex-direction: the status row is a fixed 66px,
+  // non-wrapping line (README §2/AC #8), so there is no wrap point left
+  // for a button to land on "below the field" at all.
+  it("die Statuszeile ist fix und bricht nicht um — Buttons können nicht springen", () => {
+    const rule = /\.datalink-status\s*\{([^}]*)\}/.exec(css);
     expect(rule, "Regel muss existieren").toBeTruthy();
-    expect(
-      rule![1],
-      "eine wrappende Ein-Zeilen-Leiste lässt die Buttons je nach Feld-/Status-Breite springen",
-    ).toContain("flex-direction: column");
-  });
-
-  // PDC: die Anzeige lebt als eigene, volle Raster-Zeile — nicht mehr
-  // INNERHALB des Delivery-Feldes. Sonst wird nur Delivery höher als
-  // Flugzeugtyp daneben, und die beiden Eingaben liegen nicht mehr auf
-  // gleicher Höhe (Befund 31.07.2026: "DELIVERY wandert nach unten").
-  it("PDC: die Anzeige spannt die volle Rasterbreite, statt in einem Feld zu stecken", () => {
-    const rule = /\.cpdlc-field__badge-row\s*\{([^}]*)\}/.exec(css);
-    expect(rule, "Regel muss existieren").toBeTruthy();
-    expect(rule![1]).toContain("grid-column: 1 / -1");
+    expect(rule![1]).toMatch(/flex:\s*0 0 66px/);
+    expect(rule![1], "eine wrappende Zeile lässt Inhalte je nach Breite umbrechen").not.toContain("flex-wrap: wrap");
   });
 
   // Ohne `min-width: 0` setzt der ungebrochene Inhalt eines Feldes (Label +
   // Lücke + langer Status-Text) eine Mindestbreite, bevor der Browser
-  // überhaupt ans Umbrechen denkt — bei `auto-fit`-Rastern kann das dazu
-  // führen, dass gar nicht mehr zwei Spalten nebeneinanderpassen und das
-  // ganze Formular auf eine Spalte kollabiert (derselbe Befund).
+  // überhaupt ans Umbrechen denkt — bei Rastern kann das dazu führen, dass
+  // gar nicht mehr mehrere Spalten nebeneinanderpassen und das ganze
+  // Formular auf eine Spalte kollabiert (derselbe Grundbefund, jetzt an
+  // `.datalink-field`, dem Nachfolger von `.cpdlc-field`).
   it("Felder dürfen unter ihre Inhaltsbreite schrumpfen (kein Grid-Kollaps)", () => {
-    const rule = /\.cpdlc-field\s*\{([^}]*)\}/.exec(css);
+    const rule = /\.datalink-field\s*\{([^}]*)\}/.exec(css);
     expect(rule, "Regel muss existieren").toBeTruthy();
     expect(rule![1]).toContain("min-width: 0");
+  });
+
+  // Feldbefund 03.08.2026: "Ändern" wurde über "BTI4TK" gemalt, dann
+  // "Anmelden" über "Letzte Abfrage" — das GEGENTEIL des Grid-Kollaps-Falls
+  // oben. `.datalink-field` (das Composer-Formularraster) darf schrumpfen,
+  // weil ein Label dort umbricht statt sich zu überlagern. `.datalink-block`
+  // (Statuszeile: CALLSIGN/CPDLC-LOGON) enthält einzeiligen, nicht
+  // umbrechenden Text — lässt man den Block trotzdem unter dessen
+  // Textbreite schrumpfen, malt der Text einfach über das nächste Element,
+  // weil er nirgendwo umbrechen kann. Diese drei Regeln müssen NIE wieder
+  // erlauben, dass irgendein Glied der Kette unter seine Inhaltsbreite
+  // schrumpft.
+  it("die Statuszeilen-Blöcke dürfen NICHT unter ihre Textbreite schrumpfen (kein Text-Überlappen)", () => {
+    const block = /\.datalink-block\s*\{([^}]*)\}/.exec(css);
+    expect(block, "Regel muss existieren").toBeTruthy();
+    expect(block![1], "min-width: 0 hier lässt nowrap-Text ins nächste Element malen").not.toContain(
+      "min-width: 0",
+    );
+
+    const left = /\.datalink-status__left\s*\{([^}]*)\}/.exec(css);
+    expect(left, "Regel muss existieren").toBeTruthy();
+    expect(left![1], "flex-shrink darf hier nicht 1 sein (Default oder explizit)").toMatch(/flex:\s*0 0 auto/);
+
+    const input = /\.datalink-block__input\s*\{([^}]*)\}/.exec(css);
+    expect(input, "Regel muss existieren").toBeTruthy();
+    expect(input![1], "eine feste width ohne flex-shrink:0 ist trotzdem ein Schrumpf-Ziel").toContain(
+      "flex-shrink: 0",
+    );
+  });
+
+  // Wenn's trotzdem nicht reicht (Fenster am dokumentierten Minimum von
+  // 900px, README §1): lieber diese eine Zeile scrollt intern, als dass
+  // irgendwas überlappt oder die feste 66px-Höhe bricht.
+  it("die Statuszeile scrollt bei echtem Platzmangel, statt zu überlappen", () => {
+    const rule = /\.datalink-status\s*\{([^}]*)\}/.exec(css);
+    expect(rule, "Regel muss existieren").toBeTruthy();
+    expect(rule![1]).toContain("overflow-x: auto");
+  });
+
+  // Feldbefund 03.08.2026 (zweite Runde): nach einer Anmeldung wird der
+  // linke Teil breiter (Wechseln+Abmelden statt Anmelden, "LOGON LÄUFT"
+  // länger als "KEIN LOGON") — mit `flex: none` auf BEIDEN Seiten hatte
+  // "Letzte Abfrage" keinen Platz mehr und wurde von space-between hinter
+  // den rechten Rand geschoben: unsichtbar, ohne erkennbaren Scrollbalken
+  // ("rutscht wieder alles nach außerhalb"). Die Uhr ist das am ehesten
+  // entbehrliche Element hier — sie muss selbst schrumpfen/kürzen, damit
+  // die Buttons links davon nie deswegen aus dem Fenster wandern.
+  it("Letzte Abfrage schrumpft/kürzt selbst, statt von space-between aus dem Fenster geschoben zu werden", () => {
+    const rule = /\.datalink-status__poll\s*\{([^}]*)\}/.exec(css);
+    expect(rule, "Regel muss existieren").toBeTruthy();
+    expect(rule![1], "flex: none hier lässt space-between es hinter den Rand schieben").not.toMatch(
+      /flex:\s*none/,
+    );
+    expect(rule![1]).toContain("min-width: 0");
+    expect(rule![1]).toContain("text-overflow: ellipsis");
+  });
+
+  // Feldbefund 03.08.2026 (dritte Runde): "CPDLC-LOGON" brach in "CPDLC-"
+  // / "LOGON" um, obwohl reichlich Fensterbreite frei war — der Bindestrich
+  // ist für Browser ein normaler Umbruchpunkt, und diese eine Textregel im
+  // ganzen Block hatte als einzige kein `white-space: nowrap`. Der dadurch
+  // zu hohe Block wurde vom `overflow-y: hidden` der Zeile teilweise
+  // abgeschnitten — daher wirkten Eingabefeld und Button kollabiert/schwebend.
+  it("das Block-Label bricht nicht um (Bindestrich in „CPDLC-LOGON“ ist sonst ein Umbruchpunkt)", () => {
+    const rule = /\.datalink-block__label\s*\{([^}]*)\}/.exec(css);
+    expect(rule, "Regel muss existieren").toBeTruthy();
+    expect(rule![1]).toContain("white-space: nowrap");
   });
 });

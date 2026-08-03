@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ActiveFlightInfo, SimSnapshot } from "../types";
 
@@ -10,22 +11,30 @@ interface Props {
 }
 
 /**
- * Single compact info-strip that replaces three separate panels
- * (Mass / Flight / Stats) in the Cockpit tab. Same data, ~⅓ the
- * vertical space. Three column groups keep the values logically
- * separated; on narrow screens the groups stack rather than going
- * tiny.
+ * Three cards in the Cockpit grid4 (Stage E redesign) — Weights, Air
+ * Data, Trip — replacing the single 3-Group .info-strip panel. Same
+ * data, same i18n keys; only the markup changed (from one strip with
+ * inline groups to three standalone .card elements so they sit next to
+ * the Loadsheet card in the grid).
  *
  * Design notes:
- *   * No per-group borders or padding — one container, one neutral
- *     background. The grouping comes from the small column headers.
  *   * Mono-numerics with tabular-nums so columns line up.
- *   * Gross weight is the only "primary" value (it's the dispatch-
- *     relevant figure pilots glance at), highlighted slightly.
+ *   * Gross weight / the Air-Data reference speed / (Trip has no single
+ *     headline — see TripCard) get the bold "row--sum" treatment,
+ *     matching the Weights/Air-Data cards' one dispatch-relevant figure.
  */
 export function InfoStrip({ info, snapshot, elapsedMinutes }: Props) {
-  const { t, i18n } = useTranslation();
+  return (
+    <>
+      <WeightsCard snapshot={snapshot} />
+      <AirDataCard snapshot={snapshot} />
+      <TripCard info={info} elapsedMinutes={elapsedMinutes} />
+    </>
+  );
+}
 
+function WeightsCard({ snapshot }: { snapshot: SimSnapshot | null }) {
+  const { t, i18n } = useTranslation();
   const fob = snapshot && snapshot.fuel_total_kg > 0 ? snapshot.fuel_total_kg : null;
   const gw =
     snapshot && snapshot.total_weight_kg !== null && snapshot.total_weight_kg > 0
@@ -39,90 +48,108 @@ export function InfoStrip({ info, snapshot, elapsedMinutes }: Props) {
   const payload = dow !== null && zfw !== null && zfw > dow ? zfw - dow : null;
 
   return (
-    <section className="info-strip">
-      <Group label={t("mass_panel.title")}>
-        <Cell label={t("mass_panel.dow")} value={fmtKgShort(dow, i18n.language)} />
-        <Cell
-          label={t("mass_panel.payload")}
-          value={fmtKgShort(payload, i18n.language)}
-        />
-        <Cell label={t("mass_panel.zfw")} value={fmtKgShort(zfw, i18n.language)} />
-        <Cell label={t("mass_panel.fob")} value={fmtKgShort(fob, i18n.language)} />
-        <Cell
-          label={t("mass_panel.gross_weight")}
-          value={fmtKgShort(gw, i18n.language)}
-          primary
-        />
-      </Group>
-      <Group label={t("flight_info.title")}>
-        <Cell label={t("flight_info.wind")} value={fmtWind(snapshot)} />
-        <Cell label={t("flight_info.qnh")} value={fmtQnh(snapshot, i18n.language)} />
-        <Cell label={t("flight_info.oat")} value={fmtTemp(snapshot?.outside_air_temp_c ?? null)} />
-        <Cell label={t("flight_info.tat")} value={fmtTemp(snapshot?.total_air_temp_c ?? null)} />
-        <Cell label={t("flight_info.mach")} value={fmtMach(snapshot?.mach ?? null)} />
-      </Group>
-      <Group label={t("info_strip.trip")}>
-        <Cell
+    <div className="card">
+      <div className="card__head">
+        <span className="card__title">{t("mass_panel.title")}</span>
+      </div>
+      <div className="card__body">
+        <Row label={t("mass_panel.dow")} value={fmtKgShort(dow, i18n.language)} />
+        <Row label={t("mass_panel.payload")} value={fmtKgShort(payload, i18n.language)} />
+        <Row label={t("mass_panel.zfw")} value={fmtKgShort(zfw, i18n.language)} />
+        <Row label={t("mass_panel.fob")} value={fmtKgShort(fob, i18n.language)} />
+        <Row label={t("mass_panel.gross_weight")} value={fmtKgShort(gw, i18n.language)} sum />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * v0.16.x hysteresis (Stage E redesign spec): the reference-speed
+ * headline row shows Mach once cruise speed reaches M0.50, and reverts
+ * to TAS-in-knots only once it drops below M0.45 — a dead band so the
+ * label doesn't flicker back and forth around M0.50 the way a naive
+ * single-threshold switch would (same idea as a real PFD's speed-tape
+ * Mach/IAS crossover).
+ */
+function AirDataCard({ snapshot }: { snapshot: SimSnapshot | null }) {
+  const { t, i18n } = useTranslation();
+  const mach = snapshot?.mach ?? null;
+  const [showMach, setShowMach] = useState(false);
+  const showMachRef = useRef(showMach);
+  showMachRef.current = showMach;
+  useEffect(() => {
+    if (mach == null) return;
+    if (!showMachRef.current && mach >= 0.5) setShowMach(true);
+    else if (showMachRef.current && mach < 0.45) setShowMach(false);
+  }, [mach]);
+
+  const tas = snapshot ? Math.round(snapshot.true_airspeed_kt) : null;
+  const refLabel = showMach && mach != null ? t("flight_info.mach") : t("flight_info.tas");
+  const refValue =
+    showMach && mach != null ? fmtMach(mach) : fmtTas(tas, i18n.language);
+
+  return (
+    <div className="card">
+      <div className="card__head">
+        <span className="card__title">{t("flight_info.title")}</span>
+      </div>
+      <div className="card__body">
+        <Row label={t("flight_info.wind")} value={fmtWind(snapshot)} />
+        <Row label={t("flight_info.qnh")} value={fmtQnh(snapshot, i18n.language)} />
+        <Row label={t("flight_info.oat")} value={fmtTemp(snapshot?.outside_air_temp_c ?? null)} />
+        <Row label={t("flight_info.tat")} value={fmtTemp(snapshot?.total_air_temp_c ?? null)} />
+        <Row label={refLabel} value={refValue} sum />
+      </div>
+    </div>
+  );
+}
+
+function TripCard({
+  info,
+  elapsedMinutes,
+}: {
+  info: ActiveFlightInfo;
+  elapsedMinutes: number;
+}) {
+  const { t, i18n } = useTranslation();
+  return (
+    <div className="card">
+      <div className="card__head">
+        <span className="card__title">{t("info_strip.trip")}</span>
+      </div>
+      <div className="card__body">
+        <Row
           label={t("active_flight.elapsed")}
           value={fmtDuration(elapsedMinutes, i18n.language)}
         />
-        <Cell
+        <Row
           label={t("active_flight.distance")}
           value={fmtDistance(info.distance_nm, i18n.language)}
         />
-        <Cell
-          label={t("active_flight.positions")}
-          value={String(info.position_count)}
-        />
-        {/* Touch-and-go + go-around counters: hidden until they fire,
-            so a routine A→B keeps the Trip group at three cells. The
-            moment a T&G or GA happens the cell appears and stays for
-            the rest of the flight as a quiet running tally. */}
+        <Row label={t("active_flight.positions")} value={String(info.position_count)} sum />
+        {/* Touch-and-go + go-around counters: hidden until they fire, so
+            a routine A→B keeps the Trip card at three rows. The moment
+            a T&G or GA happens the row appears and stays for the rest
+            of the flight as a quiet running tally. */}
         {info.touch_and_go_count > 0 && (
-          <Cell
+          <Row
             label={t("active_flight.touch_and_go")}
             value={String(info.touch_and_go_count)}
           />
         )}
         {info.go_around_count > 0 && (
-          <Cell
-            label={t("active_flight.go_around")}
-            value={String(info.go_around_count)}
-          />
+          <Row label={t("active_flight.go_around")} value={String(info.go_around_count)} />
         )}
-      </Group>
-    </section>
-  );
-}
-
-function Group({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="info-strip__group">
-      <h4 className="info-strip__group-label">{label}</h4>
-      <div className="info-strip__cells">{children}</div>
+      </div>
     </div>
   );
 }
 
-function Cell({
-  label,
-  value,
-  primary,
-}: {
-  label: string;
-  value: string;
-  primary?: boolean;
-}) {
+function Row({ label, value, sum }: { label: string; value: string; sum?: boolean }) {
   return (
-    <div className={`info-strip__cell ${primary ? "info-strip__cell--primary" : ""}`}>
-      <span className="info-strip__cell-label">{label}</span>
-      <span className="info-strip__cell-value">{value}</span>
+    <div className={`row ${sum ? "row--sum" : ""}`}>
+      <span className="row__label">{label}</span>
+      <span className="row__value">{value}</span>
     </div>
   );
 }
@@ -184,7 +211,12 @@ function fmtMach(m: number | null): string {
   return `M ${m.toFixed(2)}`;
 }
 
-function fmtDuration(minutes: number, locale: string): string {
+function fmtTas(kt: number | null, locale: string): string {
+  if (kt === null) return "—";
+  return `${new Intl.NumberFormat(locale).format(kt)} kt`;
+}
+
+export function fmtDuration(minutes: number, locale: string): string {
   const m = Math.max(0, Math.floor(minutes));
   const h = Math.floor(m / 60);
   const mm = m % 60;
@@ -194,7 +226,7 @@ function fmtDuration(minutes: number, locale: string): string {
     : `${h}h ${mm}m`;
 }
 
-function fmtDistance(nm: number, locale: string): string {
+export function fmtDistance(nm: number, locale: string): string {
   return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(
     nm,
   )} nm`;

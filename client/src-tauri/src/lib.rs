@@ -8290,6 +8290,24 @@ async fn bid_simbrief_preview(
         pax_count: ofp.pax_count,
         cargo_kg: ofp.cargo_kg,
         freight_kg: ofp.freight_kg,
+        aircraft_icao: ofp.aircraft_icao.clone(),
+        max_passengers: ofp.max_passengers,
+        sched_out_epoch: ofp.sched_out_epoch,
+        sched_in_epoch: ofp.sched_in_epoch,
+        planned_taxi_kg: ofp.planned_taxi_kg,
+        planned_contingency_kg: ofp.planned_contingency_kg,
+        planned_alternate_burn_kg: ofp.planned_alternate_burn_kg,
+        planned_extra_kg: ofp.planned_extra_kg,
+        planned_oew_kg: ofp.planned_oew_kg,
+        planned_payload_kg: ofp.planned_payload_kg,
+        planned_pax_weight_kg: ofp.planned_pax_weight_kg,
+        planned_baggage_kg: ofp.planned_baggage_kg,
+        // Briefing-2a: OPERATIONELLER MTOW-Grenzwert fuer diesen Flug
+        // (z.B. bahnlaengen-/temperaturlimitiert) — enger als der
+        // strukturelle Grenzwert aus phpVMS' `aircraft.mtow`. Pilot-
+        // Feedback 2026-08-03: der strukturelle Wert zeigte einen viel
+        // groesseren Puffer als real vorhanden.
+        planned_max_tow_kg: ofp.max_tow_kg,
         callsign_warning,
     })
 }
@@ -8318,6 +8336,32 @@ pub struct BidSimBriefPreview {
     pub cargo_kg: f32,
     /// Reine Fracht ohne Pax-Gepaeck — das zeigt die Bid-Card als "Cargo".
     pub freight_kg: f32,
+    /// Briefing-2a: Aircraft-ICAO-Typ aus dem SimBrief-OFP — Fallback wenn
+    /// der Bid (noch) keinen phpVMS-Bid-Pointer-Subfleet hat.
+    pub aircraft_icao: Option<String>,
+    /// Sitzplatz-Total der geplanten Config — Grundlage fuer "PAX von N".
+    pub max_passengers: Option<i32>,
+    /// Geplante Blockzeit ab/an (Unix-Epoch-Sekunden, UTC) — Fallback-STD/STA
+    /// wenn phpVMS' `flight.dpt_time`/`arr_time` fehlen.
+    pub sched_out_epoch: Option<i64>,
+    pub sched_in_epoch: Option<i64>,
+    /// Restliche Fuel-Kategorien — zusammen mit Trip + Reserve ergeben sie
+    /// exakt Block (Pilot-Feedback 2026-08-02: Trip+Reserve allein liess
+    /// sich nicht zu Block nachrechnen).
+    pub planned_taxi_kg: f32,
+    pub planned_contingency_kg: f32,
+    pub planned_alternate_burn_kg: f32,
+    pub planned_extra_kg: f32,
+    /// Operating Empty Weight + Payload — zusammen ergeben sie ZFW.
+    pub planned_oew_kg: f32,
+    pub planned_payload_kg: f32,
+    /// Pax-Gesamtgewicht + Gepaeck-Gesamtgewicht — zusammen mit der reinen
+    /// Fracht (`freight_kg`) ergeben sie `planned_payload_kg`.
+    pub planned_pax_weight_kg: f32,
+    pub planned_baggage_kg: f32,
+    /// Operationeller (flug-spezifischer) MTOW-Grenzwert aus dem OFP —
+    /// enger als der strukturelle Grenzwert aus phpVMS' `aircraft.mtow`.
+    pub planned_max_tow_kg: f32,
     /// Wenn DEP+ARR matchen aber Callsign abweicht (v0.7.9 Soft-Warning).
     pub callsign_warning: Option<CallsignWarningDetails>,
 }
@@ -9124,6 +9168,11 @@ async fn phpvms_get_aircraft(
         registration: details.registration,
         icao: details.icao,
         name: details.name,
+        // Briefing-2a-Spec §5.3: WEIGHTS-Rubrik braucht MTOW fuer die
+        // Einordnung ("TOW · n kg unter MTOW"). phpVMS liefert die Masse
+        // immer als {kg, lbs} — wir geben nur kg weiter, das Frontend
+        // braucht keine lbs-Variante.
+        mtow_kg: details.mtow.and_then(|m| m.kg),
     })
 }
 
@@ -9135,6 +9184,7 @@ struct AircraftInfoDto {
     registration: Option<String>,
     icao: Option<String>,
     name: Option<String>,
+    mtow_kg: Option<f64>,
 }
 
 // ---- Active-flight persistence (for resume after crash/restart) ----
@@ -41391,6 +41441,7 @@ mod v0_16_23_route_only_refresh_tests {
             pax_count: 150,
             cargo_kg: 2000.0,
             freight_kg: 2000.0,
+            ..Default::default()
         }
     }
 

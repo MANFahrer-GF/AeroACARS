@@ -326,6 +326,27 @@ body {
   grid-template-columns: var(--nav-w-icon) 1fr;
 }
 
+/* Bugfix 2026-08-03 (Feldbefund Thomas K.): `.shell` ist ein 2-Spalten-
+   Grid (Seitenleiste + Inhalt) — aber die Seitenleiste rendert NICHT im
+   ausgeloggten Zustand oder während des Session-Checks (`showTabs` false
+   in App.tsx). Mit nur einem Grid-Kind landete `.app` dann automatisch in
+   der ERSTEN, für die Seitenleiste reservierten 216px-Spalte statt in der
+   `1fr`-Inhaltsspalte — Login-Seite (und der Lade-Screen) quetschten sich
+   auf ~200px zusammen, jedes Wort brach einzeln um, riesige leere Fläche
+   daneben. War vermutlich die Ursache mehrerer als "kurzes Reload-
+   Flackern" fehlgedeuteter Beobachtungen in dieser Session. */
+.shell[data-nav="none"] {
+  grid-template-columns: 1fr;
+}
+
+/* Login-Karte zentriert im verfügbaren Raum statt oben-links zu kleben
+   (dasselbe `:has()`-Muster wie `.app:has(.aa-livemap)` weiter unten). */
+.app:has(> .login) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .app {
   padding: 16px 20px;
   display: flex;
@@ -1212,6 +1233,514 @@ button:disabled {
   color: var(--text-muted);
 }
 
+/* ===== Cockpit redesign — instrument band (tape · phase card · tape) =====
+   Stage E: visual language from the Claude-Design prototype
+   (~/Claude/aeroacars-redesign/index.html). Numeric readouts use
+   --font-acars (B612 Mono) per the redesign spec; captions/labels stay on
+   --font-mono so we don't touch the app-wide --font-mono binding (still
+   SF Mono outside Cockpit — a deliberate, scoped choice for this pass).
+   The old .route-map / .live-tape(s) rules above are superseded by
+   .route / .tape below and are dead CSS pending a later cleanup pass,
+   same pattern as the other confirmed-dead selectors already flagged. */
+
+.band {
+  display: grid;
+  grid-template-columns: 208px 1fr 208px;
+  gap: var(--sp-3);
+  margin: 10px 0 var(--sp-4);
+}
+/* LiveTapes renders tape--left + tape--right as a single fragment (so
+   ActiveFlightPanel can place it as one child before PhaseCard), which
+   puts both tapes ahead of .center in DOM order. Explicit `order`
+   restores the visual left/center/right layout independent of that
+   DOM order. */
+.band .tape--left {
+  order: 1;
+}
+.band .center {
+  order: 2;
+}
+.band .tape--right {
+  order: 3;
+}
+@media (max-width: 980px) {
+  .band {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tape {
+  background: var(--tape);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+}
+.tape--idle {
+  opacity: 0.55;
+}
+.tape__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: var(--ls-caps);
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.tape__body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+.tape__ticks {
+  width: 10px;
+  height: 84px;
+  flex: 0 0 auto;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--tick) 0 1px,
+    transparent 1px 11px
+  );
+}
+.tape--left .tape__ticks {
+  border-right: 1px solid var(--line);
+}
+.tape--right .tape__ticks {
+  border-left: 1px solid var(--line);
+  order: 2;
+}
+.tape--right .tape__body {
+  justify-content: flex-end;
+}
+.tape__value {
+  font-family: var(--font-acars);
+  font-weight: var(--fw-bold);
+  font-size: 46px;
+  line-height: 0.92;
+  letter-spacing: var(--ls-tight);
+  font-variant-numeric: tabular-nums;
+}
+.tape--right .tape__value {
+  font-size: 36px;
+}
+.tape__foot {
+  display: flex;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-acars);
+  font-size: var(--fs-200);
+  color: var(--text-dim);
+}
+.tape--right .tape__foot {
+  justify-content: flex-end;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--text-dim);
+}
+.dot--ok {
+  background: var(--sem-ok);
+}
+.dot--warn {
+  background: var(--sem-warn);
+}
+.dot--danger {
+  background: var(--sem-danger);
+  animation: cockpit-dot-pulse 3.2s ease-in-out infinite;
+}
+@keyframes cockpit-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.center {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 13px 16px 0;
+  display: flex;
+  flex-direction: column;
+}
+.center__phase {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.center__phase-name {
+  font-size: var(--fs-600);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.center__phase-note {
+  margin-left: auto;
+  font-family: var(--font-acars);
+  font-size: var(--fs-200);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.center__axis {
+  display: flex;
+  gap: 3px;
+  margin: 11px 0 3px;
+}
+.center__axis span {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.center__axis span[data-done] {
+  background: var(--sem-ok);
+}
+.center__axis span[data-now] {
+  background: var(--acc);
+}
+.center__axis-labels {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.route {
+  position: relative;
+  margin: 26px 0 11px;
+  padding: 0 2px;
+}
+.route__track {
+  position: relative;
+  height: 6px;
+  background: var(--line);
+  border-radius: 3px;
+}
+.route__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--acc);
+  border-radius: 3px;
+  transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.route__plane {
+  position: absolute;
+  top: 50%;
+  translate: -50% -50%;
+  /* v0.3.0 Nachfolge-Fix: Icon UND Track-Fill nutzten beide --acc —
+     das blaue Flugzeug verschwand auf der blauen Linie. Jetzt ein
+     gefüllter --acc-Kreis mit --surface-farbigem Icon, wie schon beim
+     alten .route-map__plane (Kreis + Kontrastfarbe statt Linienfarbe). */
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--acc);
+  color: var(--surface);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--acc) 50%, transparent);
+  display: grid;
+  place-items: center;
+  transition: left 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+.route__plane svg {
+  width: 12px;
+  height: 12px;
+}
+.route__pct {
+  position: absolute;
+  top: -19px;
+  translate: -50% 0;
+  font-family: var(--font-acars);
+  font-size: var(--fs-200);
+  font-weight: var(--fw-bold);
+  color: var(--acc);
+  transition: left 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.route__ends {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 7px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-200);
+}
+.route__end {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.route__end--arr {
+  text-align: right;
+}
+.route__icao {
+  font-size: var(--fs-400);
+  font-weight: var(--fw-bold);
+}
+.route__gate {
+  color: var(--text-dim);
+  font-size: var(--fs-100);
+  text-transform: uppercase;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border-top: 1px solid var(--line);
+  margin: auto -16px 0;
+}
+.tile {
+  background: var(--surface);
+  padding: 9px 12px 11px;
+}
+.tile__label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.tile__value {
+  font-family: var(--font-acars);
+  font-size: 17px;
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-mono);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.tile__value--up {
+  color: var(--sem-ok);
+}
+.tile__value--down {
+  color: var(--sem-warn);
+}
+
+/* ===== Cockpit redesign — card grid (Weights · Air Data · Trip · Loadsheet) ===== */
+
+.grid4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+@media (max-width: 1180px) {
+  .grid4 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  display: flex;
+  flex-direction: column;
+}
+.card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.card__title {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: var(--ls-caps);
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.card__action {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: var(--text-dim);
+  display: grid;
+  place-items: center;
+  padding: 2px;
+}
+.card__action:hover {
+  color: var(--text);
+}
+.card__action svg {
+  width: 13px;
+  height: 13px;
+  transition: transform var(--dur-fast) var(--ease);
+}
+.card__action[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
+}
+.card__body {
+  padding: 6px 12px 10px;
+  flex: 1;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: 5px 0;
+}
+.row__label {
+  font-size: var(--fs-300);
+  color: var(--text-dim);
+}
+.row__value {
+  margin-left: auto;
+  font-family: var(--font-acars);
+  font-size: var(--fs-300);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--ls-mono);
+  white-space: nowrap;
+}
+.row--sum {
+  margin-top: 5px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+.row--sum .row__label {
+  color: var(--text);
+}
+.row--sum .row__value {
+  font-size: 20px;
+  font-weight: var(--fw-bold);
+}
+.row__sub {
+  font-family: var(--font-acars);
+  font-size: var(--fs-100);
+  color: var(--text-dim);
+  margin-left: 6px;
+}
+
+.ls {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-300);
+}
+.ls th {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  text-align: right;
+  font-weight: 400;
+  padding: 3px 0 6px;
+}
+.ls th:first-child {
+  text-align: left;
+}
+.ls td {
+  font-family: var(--font-acars);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding: 4px 0;
+  white-space: nowrap;
+}
+.ls td:first-child {
+  text-align: left;
+  font-family: var(--font-sans);
+  color: var(--text-dim);
+}
+
+/* ===== Cockpit redesign — weather cards (Departure / Arrival) ===== */
+
+.wx {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+@media (max-width: 1180px) {
+  .wx {
+    grid-template-columns: 1fr;
+  }
+}
+.wx__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 9px 12px 0;
+}
+.wx__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px 10px;
+  flex-wrap: wrap;
+}
+.wx__tag {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.wx__icao {
+  font-family: var(--font-mono);
+  font-size: var(--fs-500);
+  font-weight: var(--fw-bold);
+}
+.wx__cell {
+  font-family: var(--font-acars);
+  font-size: var(--fs-300);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.wx__cell b {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  color: var(--text-dim);
+  font-size: var(--fs-100);
+  letter-spacing: 0.1em;
+}
+.wx__sep {
+  color: var(--line);
+}
+.wx__phen {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--sem-info-bg);
+  color: var(--sem-info);
+  font-size: var(--fs-200);
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+.wx__raw {
+  margin: 0 12px 10px;
+  padding: 8px 10px;
+  background: var(--tape);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-family: var(--font-acars);
+  font-size: var(--fs-200);
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-dim);
+}
+
 /* ===== Live recording indicator (cockpit, top of active-flight) ===== */
 
 .live-rec {
@@ -1431,284 +1960,118 @@ button:disabled {
   }
 }
 
-/* ===== Pilot header (Briefing tab) ===== */
+/* ===== Pilot bar (Briefing-2a §2) =====
+ * Kopfzeile statt Karte — identifiziert den Piloten, nicht die
+ * Airline (das Logo lebt jetzt an den Flügen selbst, siehe
+ * .bid-card__logo). 46px Zeile inkl. Padding. */
 
-.pilot-header {
-  display: grid;
-  grid-template-columns: auto 1fr auto auto;
-  gap: 24px;
+.pilot-bar {
+  display: flex;
   align-items: center;
-  padding: 16px 22px;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--accent) 10%, var(--surface)) 0%,
-    var(--surface) 60%
-  );
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
-  border-radius: 14px;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent);
-}
-
-@media (max-width: 720px) {
-  .pilot-header {
-    grid-template-columns: auto 1fr;
-    grid-template-rows: auto auto auto;
-  }
-  .pilot-header__locations,
-  .pilot-header__logout {
-    grid-column: 1 / -1;
-  }
-}
-
-.pilot-header__logo {
-  width: 96px;
-  height: 96px;
-  border-radius: 16px;
+  justify-content: space-between;
+  padding: 11px 20px;
   background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.pilot-bar__left {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  flex: 0 0 auto;
-}
-
-.pilot-header__logo img {
-  max-width: 84px;
-  max-height: 84px;
-  object-fit: contain;
-}
-
-.pilot-header__logo-fallback {
-  font-size: 32px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  color: var(--accent);
-}
-
-.pilot-header__identity {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: baseline;
+  gap: 12px;
   min-width: 0;
 }
 
-.pilot-header__name {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+.pilot-bar__ident {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.08em;
+  color: var(--acc);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 3px 7px;
 }
 
-.pilot-header__chips {
+.pilot-bar__name {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: var(--fw-bold);
+  color: var(--text);
+}
+
+.pilot-bar__role {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.pilot-bar__right {
   display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 0 0 auto;
+}
+
+.pilot-bar__loc {
+  display: inline-flex;
+  align-items: baseline;
   gap: 6px;
-  flex-wrap: wrap;
 }
 
-.pilot-header__chip {
-  font-size: 12px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 18%, var(--surface-2));
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.pilot-header__chip--muted {
-  background: var(--surface-2);
-  color: var(--text-muted);
-  font-weight: 500;
-}
-
-.pilot-header__locations {
-  display: flex;
-  gap: 18px;
-  align-items: center;
-}
-
-.pilot-header__loc {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  text-align: right;
-}
-
-.pilot-header__loc-label {
+.pilot-bar__loc-label {
+  font-family: var(--font-mono);
   font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
 }
 
-.pilot-header__loc-value {
-  font-size: 18px;
-  font-weight: 700;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-}
-
-.pilot-header__logout {
+.pilot-bar__loc-value {
+  font-family: var(--font-mono);
   font-size: 12px;
-  padding: 6px 12px;
+  font-weight: var(--fw-bold);
+  color: var(--text);
 }
 
-/* ===== Pilot header — slim variant (v0.1.29) =====
- *
- * Replaces the older big "card" layout that competed visually with
- * the bid list. Single horizontal line with airline logo · name +
- * chips · 📍 location · 🏠 home · ⏻ logout. Sits above a thin
- * dividing line so it reads as a header for the page, not a
- * standalone element.
- */
-.pilot-header--slim {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 12px 16px;
-  /* Subtle surface tint so the row reads as "header" rather than
-   * floating elements on the page background — feedback v0.1.29:
-   * "Leiste wirkt verloren". Light enough that it doesn't compete
-   * with the bid cards below. */
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: none;
-  margin-bottom: 18px;
+.pilot-bar__sep {
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+}
+
+.pilot-bar__clock {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.pilot-bar__clock-suffix {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.pilot-bar__logout {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.pilot-bar__logout:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
 }
 
 @media (max-width: 720px) {
-  .pilot-header--slim {
+  .pilot-bar {
     flex-wrap: wrap;
     row-gap: 8px;
   }
-}
-
-/* Wide airline logo container — 180×80 (= GSG native size, 2.25:1
- * ratio). Forced white background regardless of theme so all airline
- * logos pop properly: Lufthansa, Turkish, GSG etc. are designed for
- * white. Padding + thin border keep the white block from looking
- * harsh in the dark theme. v0.1.30 — feedback was "Logo viel zu
- * klein, ist Aushängeschild der Airline". Native size = no upscaling
- * = stays sharp. Other airlines whose logos have different aspect
- * ratios stay correctly proportioned via `object-fit: contain`. */
-.pilot-header__logo-slim {
-  width: 180px;
-  height: 80px;
-  padding: 6px 10px;
-  border-radius: 10px;
-  background: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  flex: 0 0 auto;
-}
-
-.pilot-header__logo-slim img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-}
-
-/* Fallback when airline.logo is empty: show the airline ICAO inside
- * the same 180×80 white container so the layout doesn't shift. */
-.pilot-header__logo-slim .pilot-header__logo-fallback {
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  color: var(--accent);
-}
-
-.pilot-header__identity-slim {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 4px;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.pilot-header__identity-line {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-}
-
-.pilot-header__name-slim {
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--text);
-}
-
-.pilot-header__sep {
-  color: var(--text-muted);
-  font-size: 12px;
-  user-select: none;
-}
-
-.pilot-header__chip-slim {
-  font-size: 12px;
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.pilot-header__chip-slim--muted {
-  color: var(--text-muted);
-  font-weight: 500;
-}
-
-.pilot-header__locations-slim {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex: 0 0 auto;
-}
-
-.pilot-header__loc-slim {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 13px;
-  cursor: help;
-}
-
-.pilot-header__loc-icon {
-  font-size: 14px;
-}
-
-.pilot-header__loc-value-slim {
-  font-weight: 700;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  letter-spacing: 0.02em;
-}
-
-.pilot-header__logout-slim {
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  color: var(--text-muted);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-}
-
-.pilot-header__logout-slim:hover {
-  background: var(--surface-2);
-  border-color: var(--border);
-  color: var(--text);
 }
 
 /* ===== Briefing tab — active-flight reminder ===== */
@@ -1806,7 +2169,7 @@ button:disabled {
 
 .pmdg-panel {
   padding: 14px 16px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--surface);
   display: flex;
@@ -1886,7 +2249,7 @@ button:disabled {
   font-size: 11px;
   background: var(--surface-2);
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
 }
 
 .pmdg-panel__code-block {
@@ -1895,7 +2258,7 @@ button:disabled {
   font-size: 11px;
   background: var(--surface-2);
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   overflow-x: auto;
 }
@@ -1938,7 +2301,7 @@ button:disabled {
   margin-top: 10px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
@@ -1972,7 +2335,7 @@ button:disabled {
   border: 1px solid var(--border);
   color: var(--text);
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   font-size: 13px;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
@@ -2008,7 +2371,7 @@ button:disabled {
 .off-airport-banner {
   margin: 12px 0;
   padding: 12px 14px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   border-left: 4px solid;
   font-size: 0.9rem;
   line-height: 1.45;
@@ -2046,7 +2409,7 @@ button:disabled {
 .accident-banner {
   margin: 16px 0;
   padding: 14px 16px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border-left: 6px solid;
   font-size: 0.95rem;
   line-height: 1.45;
@@ -2089,7 +2452,7 @@ button:disabled {
 .orphan-flights {
   margin-top: 24px;
   padding: 16px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid color-mix(in srgb, var(--warn, #f59e0b) 30%, var(--border));
   background: color-mix(in srgb, var(--warn, #f59e0b) 4%, var(--surface-2, transparent));
 }
@@ -2112,7 +2475,7 @@ button:disabled {
 }
 .orphan-flights__empty {
   padding: 12px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   background: rgba(0, 0, 0, 0.1);
   font-size: 0.9rem;
   color: var(--text-muted, var(--fg-dim));
@@ -2124,7 +2487,7 @@ button:disabled {
 .orphan-flights__error {
   padding: 10px 12px;
   margin-bottom: 12px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   background: color-mix(in srgb, var(--danger) 12%, var(--surface));
   color: var(--danger);
   font-size: 0.85rem;
@@ -2139,7 +2502,7 @@ button:disabled {
 }
 .orphan-flights__row {
   padding: 12px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: color-mix(in srgb, var(--warn, #f59e0b) 8%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--warn, #f59e0b) 40%, var(--border));
   display: flex;
@@ -2181,7 +2544,7 @@ button:disabled {
 }
 .orphan-flights__cancel-btn {
   padding: 8px 14px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--danger);
   color: var(--danger);
   background: transparent;
@@ -2213,7 +2576,7 @@ button:disabled {
 .settings {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
@@ -2275,7 +2638,7 @@ button:disabled {
   color: var(--text);
   border: 1px solid var(--border);
   padding: 8px 32px 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   font: inherit;
   font-size: 14px;
   cursor: pointer;
@@ -2314,7 +2677,7 @@ button:disabled {
 .sim-panel {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
@@ -2448,9 +2811,8 @@ button:disabled {
 .sim-panel__error code {
   background: var(--surface-2);
   padding: 1px 6px;
-  border-radius: 4px;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
 }
 
 .sim-panel__grid {
@@ -2468,8 +2830,7 @@ button:disabled {
 
 .sim-panel__grid dd {
   margin: 0;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
+  font-family: var(--font-mono);
   font-feature-settings: "tnum" 1;
 }
 
@@ -2973,6 +3334,14 @@ input[type="url"],
 input[type="text"],
 input[type="password"] {
   appearance: none;
+  /* Bugfix 2026-08-03 (Feldbefund Thomas K., zusammen mit dem .shell-
+     Grid-Fix): ein <input> ohne eigene width bleibt bei seiner
+     intrinsischen Browser-Breite (~20 Zeichen) und ignoriert den
+     stretch der Flex-Spalte um sich herum — deshalb schnitt der lange
+     API-Schlüssel-Platzhalter ab, unabhängig vom Grid-Bug. width:100%
+     + border-box macht die Eingabe so breit wie ihr Feld/Formular. */
+  width: 100%;
+  box-sizing: border-box;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
@@ -3761,8 +4130,8 @@ input:disabled {
 
 .activity-log {
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
   padding: 16px 18px;
   display: flex;
   flex-direction: column;
@@ -3793,13 +4162,13 @@ input:disabled {
   margin-left: auto;
   appearance: none;
   background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-muted);
+  border: 1px solid var(--line);
+  color: var(--text-dim);
   font-size: 12px;
   padding: 4px 12px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .activity-log__clear:hover:not(:disabled) {
@@ -3828,8 +4197,9 @@ input:disabled {
   gap: 0;
   max-height: 60vh;
   overflow-y: auto;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
+  /* ACARS-Log liest sich wie ein Datalink-Protokoll — B612 Mono wie
+     die CPDLC-Nachrichtentexte, nicht die UI-Mono-Schrift. */
+  font-family: var(--font-acars);
   font-size: 13px;
 }
 
@@ -4151,15 +4521,133 @@ input:disabled {
   flex-wrap: wrap;
 }
 
+/* ===== Über / About tab ===== */
+/* v0.19-Stage-E: bislang liefen .about/.about__* Elemente auf reinem
+   Browser-Default-Styling (h2/h3/p/ul ohne jede Regel) — Vollständigkeits-
+   Check erklärt das, es gab hier schlicht noch nie ein Stylesheet. Neu
+   gebaut nach dem Cockpit/Briefing-Kartenmuster (.card-artige Blöcke,
+   B612 Mono für Version/Commit), keine Struktur-/Textänderung in
+   AboutPanel.tsx nötig. */
+.about {
+  max-width: 720px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.about__hero {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--sp-5);
+  text-align: center;
+}
+
+.about__title {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-700);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-tight);
+}
+
+.about__tagline {
+  margin: var(--sp-2) 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-400);
+}
+
+.about__version {
+  margin: var(--sp-3) 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-300);
+  color: var(--text-dim);
+}
+
+.about__version code {
+  background: var(--surface-3);
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  font-family: var(--font-acars);
+}
+
+.about__credit {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-300);
+  color: var(--text-dim);
+}
+
 .about__hero-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  margin-top: 12px;
+  justify-content: center;
+  margin-top: var(--sp-4);
 }
 
 .about__hero-actions .button {
   text-decoration: none;
+}
+
+.about__section {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--sp-4);
+}
+
+.about__section h3 {
+  margin: 0 0 var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-200);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.about__section p {
+  margin: 0;
+  font-size: var(--fs-400);
+  line-height: 1.55;
+}
+
+.about__hint {
+  color: var(--text-dim) !important;
+  font-size: var(--fs-300) !important;
+  margin-bottom: var(--sp-2) !important;
+}
+
+.about__list {
+  margin: 0;
+  padding-left: 1.1em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  font-size: var(--fs-300);
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+.about__list strong {
+  color: var(--text);
+  font-weight: var(--fw-bold);
+}
+
+.about__list a {
+  color: var(--acc);
+}
+
+.about__footer {
+  text-align: center;
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--line);
+  color: var(--text-dim);
+  font-size: var(--fs-200);
+}
+
+.about__footer p {
+  margin: 2px 0;
 }
 
 .modal__title {
@@ -4308,7 +4796,10 @@ input:disabled {
 
 .active-flight__header {
   display: grid;
-  grid-template-columns: minmax(200px, auto) 1fr auto;
+  /* Stage E redesign: actions moved out of the header into a bottom
+     .actions bar (see .active-flight__actions below), so the header
+     is back to its two real children — title-block and route. */
+  grid-template-columns: minmax(200px, auto) 1fr;
   align-items: center;
   gap: 24px;
 }
@@ -4526,11 +5017,19 @@ input:disabled {
 }
 
 .active-flight__actions {
+  /* Stage E redesign: moved from the header's 3rd grid column to a
+     full-width bottom bar (matches the prototype's .actions row) —
+     margin-left:auto no longer applies; .actions__spacer below does
+     the "push the rest to the right" job instead. */
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
   align-items: center;
-  margin-left: auto;
+  padding-top: var(--sp-2);
+}
+
+.actions__spacer {
+  flex: 1;
 }
 
 .active-flight__stats {
@@ -4601,8 +5100,7 @@ input:disabled {
   align-items: center;
   font-size: 12px;
   font-weight: 500;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
+  font-family: var(--font-mono);
   padding: 4px 8px;
   border-radius: 6px;
   margin-right: auto;
@@ -4635,18 +5133,90 @@ input:disabled {
   gap: 12px;
 }
 
+/* Briefing-2a §3: OFP-Statuszeile — 34px fix, Hoehe aendert sich in
+ * KEINEM Zustand (README §10 Kriterium 6). Linke Kante 3px in der
+ * Tonfarbe, Hintergrund die zugehoerige -bg-Toenung. */
+.bids__ofp-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 34px;
+  padding: 0 20px 0 17px;
+  border-left: 3px solid var(--sem-info);
+  border-bottom: 1px solid var(--line);
+}
+
+.bids__ofp-status--ok {
+  border-left-color: var(--sem-ok);
+  background: var(--sem-ok-bg);
+}
+
+.bids__ofp-status--warn {
+  border-left-color: var(--sem-warn);
+  background: var(--sem-warn-bg);
+}
+
+.bids__ofp-status--danger {
+  border-left-color: var(--sem-danger);
+  background: var(--sem-danger-bg);
+}
+
+.bids__ofp-status-word {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.16em;
+}
+
+.bids__ofp-status--ok .bids__ofp-status-word { color: var(--sem-ok); }
+.bids__ofp-status--warn .bids__ofp-status-word { color: var(--sem-warn); }
+.bids__ofp-status--danger .bids__ofp-status-word { color: var(--sem-danger); }
+
+.bids__ofp-status-text {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .bids__header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: baseline;
   gap: 12px;
+  padding: 18px 20px 12px;
 }
 
 .bids__header h2 {
   margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  font-family: var(--font-sans);
+  font-size: 22px;
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.01em;
+}
+
+.bids__count {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: var(--fw-bold);
+  color: var(--text-dim);
+  margin-left: 10px;
+}
+
+.bids__header-right {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.bids__stand {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 .bids__refresh {
@@ -4654,7 +5224,12 @@ input:disabled {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
+  font-family: var(--font-sans);
   font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 5px;
 }
 
 .bids__refresh:disabled {
@@ -4736,6 +5311,40 @@ input:disabled {
   padding: 16px 18px;
 }
 
+/* Briefing-2a §9: leere Zeile statt Kachel — kein Illustrations-Kasten. */
+.bids__empty {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* Briefing-2a §9: Ladeplatzhalter in Card-Sollhoehe, keine Animation. */
+.bid-card-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.bid-card-skeleton__head {
+  height: 96px;
+  background: var(--surface-2);
+}
+.bid-card-skeleton__route {
+  height: 76px;
+  background: var(--surface-2);
+}
+.bid-card-skeleton__rubrics {
+  height: 84px;
+  background: var(--surface-2);
+}
+
 .bids__error {
   margin: 0;
   color: var(--danger);
@@ -4767,504 +5376,336 @@ input:disabled {
   padding: 8px 10px;
   background: color-mix(in srgb, var(--danger) 6%, var(--surface));
   border-radius: 6px;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text);
 }
 
-.bids__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-}
+/* ===== Briefing-2a §5: Hauptflug-Karte ===== */
 
-.bid-card {
+.bid-card--main {
   display: flex;
   flex-direction: column;
-  background: linear-gradient(
-    180deg,
-    var(--surface) 0%,
-    color-mix(in srgb, var(--accent) 4%, var(--surface)) 100%
-  );
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  overflow: hidden;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease,
-    transform 0.18s ease;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  border-top: 2px solid var(--acc);
+  box-shadow: none;
 }
 
-.bid-card:hover {
-  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
-  transform: translateY(-1px);
-  box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 12%, transparent);
-}
-
-/* v0.3.0: Beim Hover wird das ✈ leicht akzent-getönt — gibt einen
-   sanften Hinweis dass die Card aktiv ist, ohne das Symbol gegen
-   die Linie zu verlieren. Default-Farbe bleibt aber hell-weiß. */
-.bid-card:hover .bid-card__plane {
-  color: color-mix(in srgb, var(--accent) 30%, var(--text));
-}
-
-.bid-card--selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
-}
-
-.bid-card__body {
+/* §5.1 Kopfzeile */
+.bid-card__head {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 10px 14px;
-  text-align: left;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  font: inherit;
-  color: inherit;
-  width: 100%;
-  transition: background 0.15s ease;
-}
-
-.bid-card__body:hover {
-  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 20px 0;
+  flex-wrap: wrap;
 }
 
 .bid-card__brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
 }
 
+/* §5.1: 180×96, weißer Hintergrund in BEIDEN Themes (Airline-Marken
+ * sind fuer Weiss gezeichnet). */
 .bid-card__logo {
-  /* Sized to comfortably hold both wide logos (Lufthansa wordmark) and
-     square logos (UPS shield). White background so black-on-transparent
-     SVGs stay readable in dark mode. Bumped up from 72×48 → 96×64 for
-     the redesigned briefing tab. */
-  width: 96px;
-  height: 64px;
-  border-radius: 10px;
+  width: 180px;
+  height: 96px;
+  flex: none;
+  border-radius: var(--r-md);
   background: #ffffff;
+  border: 1px solid var(--line);
+  padding: 10px 16px;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  flex-shrink: 0;
-  padding: 6px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
 .bid-card__logo img {
   max-width: 100%;
   max-height: 100%;
-  width: auto;
-  height: auto;
   object-fit: contain;
 }
 
 .bid-card__logo--placeholder {
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--accent) 80%, transparent),
-    color-mix(in srgb, var(--accent) 40%, transparent)
-  );
-  color: var(--on-acc);
-  font-weight: 700;
-  font-size: 28px;
-  letter-spacing: 0.05em;
-  padding: 0;
-}
-
-.bid-card__top {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-dim);
 }
 
 .bid-card__title {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
+}
+
+.bid-card__title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.bid-card__next-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.16em;
+  color: var(--bg);
+  background: var(--acc);
+  border-radius: 3px;
+  padding: 3px 7px;
 }
 
 .bid-card__callsign {
-  font-weight: 700;
-  font-size: 18px;
-  letter-spacing: 0.01em;
+  font-family: var(--font-mono);
+  font-size: 19px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.04em;
+  color: var(--text);
 }
 
-.bid-card__airline {
-  font-size: 12px;
-  color: var(--text-muted);
+.bid-card__airline-line {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text-dim);
 }
 
-.bid-card__route {
-  display: grid;
-  grid-template-columns: minmax(80px, 1fr) minmax(80px, 2fr) minmax(80px, 1fr);
-  align-items: center;
-  gap: 14px;
-}
-
-.bid-card__leg {
+.bid-card__meta {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  gap: 14px;
+  align-items: center;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* §5.2 Streckenband — gleiche 190/1fr/190-Spalten wie die Einzeiler
+ * darunter (.bid-more), damit die Abflugorte vertikal fluchten. */
+.bid-card__route-grid {
+  display: grid;
+  grid-template-columns: 190px 1fr 190px;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 20px 18px;
+}
+
+.bid-card__route-leg {
   min-width: 0;
 }
 
-.bid-card__leg--arrival {
+.bid-card__route-leg--arrival {
   text-align: right;
 }
 
-.bid-card__icao {
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-size: 22px;
-  font-weight: 800;
-  color: var(--text);
-  letter-spacing: 0.04em;
+.bid-card__route-line1 {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
 }
 
-.bid-card__airport-name {
-  font-size: 11px;
-  color: var(--text-muted);
+.bid-card__route-leg--arrival .bid-card__route-line1 {
+  justify-content: flex-end;
+}
+
+.bid-card__route-icao {
+  font-family: var(--font-mono);
+  font-size: 32px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.02em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.bid-card__route-time {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: var(--fw-bold);
+  color: var(--acc);
+  font-variant-numeric: tabular-nums;
+}
+
+.bid-card__route-line2 {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.bid-card__path {
-  position: relative;
-  height: 36px;
+.bid-card__route-countdown--overdue {
+  color: var(--sem-warn);
+}
+
+.bid-card__route-mid {
   display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* v0.3.0: Gestrichelte Route-Linie entfernt — minimaler, cleaner.
-   Das animierte ✈-Symbol allein simuliert die Route durch seine
-   Bewegung zwischen den beiden Airport-Codes. Kein blau-auf-blau-
-   Konflikt mit dem Flugzeug-Symbol mehr. */
-
-.bid-card__plane {
-  position: relative;
-  z-index: 1;
-  /* v0.3.0: Kein Background mehr — das ✈ steht direkt auf der
-     gestrichelten Route-Linie, wie auf Flightradar-Karten. Sauberer
-     als der frühere "Kasten in Surface-Farbe" oder der radial-gradient. */
-  padding: 0 6px;
-  /* v0.3.0: 50 % größer (war 20 px → jetzt 30 px) — ohne Route-
-     Linie braucht das ✈ mehr visuelles Gewicht damit's nicht im
-     leeren Raum verloren wirkt. */
-  font-size: 30px;
-  /* Bleibt hell — auch ohne Linie passt's farblich besser zum Rest. */
-  color: var(--text);
-  /* v0.3.0: Realistische Vorwärts-Animation — ✈ fliegt von links
-     in die Mitte, durch nach rechts und fadet am Ende aus, dann
-     startet's wieder von links. Kein "Rückwärts-Fliegen" mehr.
-     10 s Loop mit langem Weg (±120 px) damit das Flugzeug richtig
-     "fliegt" und nicht nur kurz wackelt — gemütliches Tempo. */
-  animation: plane-fly-across 10s ease-in-out infinite;
-  transition: color 0.25s ease;
-}
-
-@keyframes plane-fly-across {
-  0%   { transform: translateX(-120px); opacity: 0; }
-  10%  { transform: translateX(-100px); opacity: 1; }
-  90%  { transform: translateX(100px);  opacity: 1; }
-  100% { transform: translateX(120px);  opacity: 0; }
-}
-
-/* v0.3.0: Linie wurde entfernt; der Selected-State nutzt jetzt
-   den Border-Highlight der Card selbst (siehe .bid-card--selected). */
-
-.bid-card__meta {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  color: var(--text-muted);
-  font-size: 12px;
-  white-space: nowrap;
-  align-items: center;
-}
-
-/* Flight-Type-Badge (v0.3.0) — kleine farbige Pill in der Bid-Card-Meta-Zeile.
-   Farben: PAX blau, CARGO orange, CHARTER lila, REPO grau, andere neutral. */
-.bid-card__type-badge {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  padding: 2px 6px;
-  border-radius: 4px;
-  text-transform: uppercase;
-  line-height: 1.2;
-}
-/* v0.13.15 — Light-Mode-Defaults (dunklerer Text auf hellem Tint). Die
-   bisherigen, fuer Dark-Mode getunten hellen Farben stehen jetzt im
-   [data-theme="dark"]-Block weiter unten → Dark-Mode unveraendert. */
-.bid-card__type-badge--pax     { background: rgba(37, 99, 235, 0.10);  color: #1d4ed8; }
-.bid-card__type-badge--cargo   { background: rgba(234, 88, 12, 0.10);  color: #c2410c; }
-.bid-card__type-badge--charter { background: rgba(124, 58, 237, 0.10); color: #6d28d9; }
-.bid-card__type-badge--repo    { background: rgba(100, 116, 139, 0.12); color: #475569; }
-.bid-card__type-badge--other   { background: rgba(148, 163, 184, 0.12); color: var(--text-muted); }
-:root[data-theme="dark"] .bid-card__type-badge--pax     { background: rgba(96, 165, 250, 0.18); color: #93c5fd; }
-:root[data-theme="dark"] .bid-card__type-badge--cargo   { background: rgba(251, 146, 60, 0.18); color: #fdba74; }
-:root[data-theme="dark"] .bid-card__type-badge--charter { background: rgba(168, 85, 247, 0.18); color: #c4b5fd; }
-:root[data-theme="dark"] .bid-card__type-badge--repo    { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; }
-
-/* v0.5.31: Mode-Hint-Box unter den Action-Buttons.
-   Klare Regel-Erklaerung: IFR braucht SB-OFP, VFR nicht. */
-.bid-card__mode-hint {
-  margin-top: 12px;
-  padding: 10px 12px;
-  background: rgba(148, 163, 184, 0.06);
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text);
-}
-.bid-card__mode-hint-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 6px;
-}
-.bid-card__mode-hint-row {
-  display: flex;
-  align-items: baseline;
+  flex-direction: column;
   gap: 6px;
-  padding: 3px 0;
+  min-width: 0;
 }
-.bid-card__mode-hint-icon {
-  font-size: 14px;
-  flex-shrink: 0;
+
+.bid-card__route-track {
+  display: flex;
+  align-items: center;
+  gap: 0;
 }
-.bid-card__mode-hint-key {
-  font-weight: 700;
-  flex-shrink: 0;
-  min-width: 80px;
+
+.bid-card__route-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
 }
-.bid-card__mode-hint-rule {
-  color: var(--text-muted);
+
+.bid-card__route-dot--filled {
+  background: var(--acc);
+}
+
+.bid-card__route-dot--hollow {
+  background: transparent;
+  border: 1px solid var(--text-dim);
+}
+
+.bid-card__route-tline {
   flex: 1;
-}
-.bid-card__mode-hint-rule strong {
-  color: var(--text);
-  font-weight: 700;
-}
-.bid-card__mode-hint-row--ifr .bid-card__mode-hint-key { color: var(--sem-info); }
-.bid-card__mode-hint-row--vfr .bid-card__mode-hint-key { color: var(--sem-warn); }
-
-.bid-card__actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  padding: 8px 14px 10px;
-  border-top: 1px solid var(--border);
-  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+  height: 1px;
+  background: var(--line);
+  min-width: 12px;
 }
 
-.bid-card__details {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 14px 10px;
-  border-top: 1px solid var(--border);
-}
-
-.bid-card__route-text {
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.5;
-  word-break: break-all;
-}
-
-.bid-card__actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.bid-card__route-label {
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 11px;
-}
-
-.bid-card__route-text code {
-  background: var(--surface-2);
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-}
-
-/* Bid-Card-Erweiterung (v0.3.0): Aircraft + Load + SimBrief Plan-Vorschau */
-.bid-card__detail-label {
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-.bid-card__aircraft {
-  font-size: 13px;
-  color: var(--text);
-}
-.bid-card__aircraft code {
-  background: var(--surface-2);
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-size: 12px;
-}
-.bid-card__load {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-.bid-card__load-chip {
-  /* v0.3.0: größere Chips (war 11px, jetzt 13px) damit sie nicht
-     "verloren" aussehen neben der Reg-Pill. Höhe passt zum 22px
-     Aircraft-Row-Standard. */
-  display: inline-flex;
-  align-items: center;
-  height: 22px;
+.bid-card__route-type {
+  flex: none;
   padding: 0 10px;
-  font-size: 13px;
-  font-weight: 600;
-  border-radius: 4px;
-  line-height: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
 }
-/* v0.3.0: theme-adaptive — siehe :root --chip-pax-* / --chip-cargo-* */
-.bid-card__load-chip--pax   { background: var(--chip-pax-bg);   color: var(--chip-pax-text); }
-.bid-card__load-chip--cargo { background: var(--chip-cargo-bg); color: var(--chip-cargo-text); }
 
-/* SimBrief-Plan-Anzeige (v0.3.0): groß, klar, immer sichtbar (kein
-   Aufklappen mehr nötig). Ersetzt das alte schwache Inline-Grid. */
-.bid-card__simbrief {
-  background: var(--surface-2);
-  border-radius: 8px;
-  padding: 12px 14px;
-  margin-top: 8px;
+.bid-card__route-altn {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
 }
-.bid-card__simbrief-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 10px;
+
+.bid-card__route-altn-label {
+  letter-spacing: 0.06em;
 }
-.bid-card__simbrief-loading {
-  font-size: 14px;
-  font-weight: 400;
-  color: var(--text-muted);
-  letter-spacing: 0;
+
+.bid-card__route-altn-value {
+  color: var(--text);
 }
-.bid-card__simbrief-cards {
+
+/* §5.3 Drei Rubriken — 1px-Gitterlinien statt Einzelkachel-Rahmen. */
+.bid-card__rubrics {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
-.bid-card__plan-card {
+
+.bid-card__rubric {
+  background: var(--surface);
+  padding: 13px 20px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
-  background: var(--surface-1);
-  /* Default-Border (v0.3.0): theme-adaptive — im Light-Theme stärker
-     sichtbar (rgba 0.45), im Dark-Theme dezenter (0.3). Sonst sähen
-     RESERVE-Cards (ohne Akzent-Variante) im Light-Mode "nackt" aus. */
-  border: 1px solid var(--plan-card-border);
-  border-radius: 6px;
-  font-variant-numeric: tabular-nums;
-}
-.bid-card__plan-card-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.bid-card__plan-card-value {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--text);
-  line-height: 1.1;
-}
-.bid-card__plan-card-unit {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-muted);
-  margin-left: 3px;
-}
-/* Akzent-Varianten (v0.3.0 theme-adaptive):
-   - primary (Block/Trip): blau-getönt — gesättigtes Dunkelblau im
-     Light-Theme, helles Sky-Blau im Dark-Theme
-   - weight (ZFW/TOW/LDW): nutzt Default-Border, kein Wert-Akzent
-   - alt (Alternate-Airport): violett, gleicher Dual-Mode-Pattern */
-.bid-card__plan-card--primary {
-  border-color: var(--plan-primary-border);
-  background: linear-gradient(180deg, var(--plan-primary-bg) 0%, var(--surface-1) 100%);
-}
-.bid-card__plan-card--primary .bid-card__plan-card-value {
-  color: var(--plan-primary-text);
-}
-.bid-card__plan-card--weight {
-  /* benutzt Default-Border (var(--plan-card-border)) — keine extra
-     Tönung, damit das Auge sich auf Block/Trip fokussiert. */
-}
-.bid-card__plan-card--alt {
-  border-color: var(--plan-alt-border);
-  background: linear-gradient(180deg, var(--plan-alt-bg) 0%, var(--surface-1) 100%);
-}
-.bid-card__plan-card--alt .bid-card__plan-card-value {
-  color: var(--plan-alt-text);
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-size: 16px;
-}
-.bid-card__simbrief-error {
-  font-size: 12px;
-  color: var(--text-muted);
-  font-style: italic;
-  padding: 4px 0;
+  gap: 7px;
+  min-width: 0;
 }
 
-/* v0.3.0: OFP-Mismatch-Banner — Pilot hat in SimBrief einen anderen
-   Flug erstellt als gebucht. Warnung in Gelb (nicht Rot — nicht
-   blockierend, nur Hinweis dass der OFP nicht passt). */
+.bid-card__rubric-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.bid-card__rubric-unit {
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.bid-card__rubric-headline {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: var(--fw-bold);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.bid-card__rubric-headline--danger {
+  color: var(--sem-danger);
+}
+
+.bid-card__rubric-headline-label {
+  margin-left: 9px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.bid-card__rubric-inset {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.bid-card__rubric-headline--danger + .bid-card__rubric-inset,
+.bid-card__rubric-headline--danger ~ .bid-card__rubric-inset {
+  color: var(--sem-danger);
+}
+
+.bid-card__rubric-rows {
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  column-gap: 16px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.bid-card__rubric-row {
+  white-space: nowrap;
+}
+
+/* Briefing-2a-Haertung: Ladeplatzhalter fuer die Rubriken solange der OFP-
+ * Preview-Fetch noch laeuft — statisch, keine Animation (README §9: keine
+ * Endlos-Animation auf diesem Screen). */
+.bid-card__rubric-loading {
+  background: var(--surface);
+  min-height: 84px;
+}
+
+/* Info/Mismatch-Banner + SimBrief-Status + Route-Text — unveraendert
+ * zwischen Rubriken und Aktionszeile. */
 .bid-card__ofp-mismatch {
   display: flex;
   gap: 10px;
   align-items: flex-start;
-  padding: 10px 12px;
-  margin-top: 4px;
-  background: rgba(251, 191, 36, 0.1);
-  border: 1px solid rgba(251, 191, 36, 0.4);
-  border-radius: 6px;
-}
-.bid-card__ofp-mismatch-icon {
-  font-size: 18px;
-  line-height: 1;
-  flex-shrink: 0;
-  margin-top: 1px;
+  padding: 10px 20px;
+  background: var(--sem-warn-bg);
+  border-top: 1px solid var(--line);
 }
 .bid-card__ofp-mismatch-text {
   display: flex;
@@ -5275,22 +5716,19 @@ input:disabled {
 }
 .bid-card__ofp-mismatch-text strong {
   font-size: 13px;
-  color: #fbbf24;
+  color: var(--sem-warn);
 }
 .bid-card__ofp-mismatch-hint {
-  color: var(--text-muted);
+  color: var(--text-dim);
   font-style: italic;
   margin-top: 2px;
 }
-/* v0.3.3: Info-Variante (blau statt gelb) für „kein OFP da"-Hinweis. */
 .bid-card__ofp-mismatch--info {
-  background: rgba(59, 130, 246, 0.08);
-  border-color: rgba(59, 130, 246, 0.35);
+  background: var(--sem-info-bg);
 }
 .bid-card__ofp-mismatch--info .bid-card__ofp-mismatch-text strong {
   color: var(--sem-info);
 }
-/* Bid-vs-OFP-Vergleich (v0.3.0): zwei Zeilen, label + monospace code. */
 .bid-card__ofp-compare {
   display: flex;
   flex-direction: column;
@@ -5307,102 +5745,278 @@ input:disabled {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--text-muted);
+  color: var(--text-dim);
   min-width: 50px;
 }
 .bid-card__ofp-compare code {
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text);
 }
-:root[data-theme="dark"] .bid-card__ofp-mismatch-text strong {
-  color: #fde047;
-}
-:root:not([data-theme="dark"]) .bid-card__ofp-mismatch-text strong {
-  color: #a16207;
-}
 
-/* Aircraft + Load-Zeile darüber: kompakter Header, Reg als Pill rechts.
-   v0.3.0: align-items auf "center" damit Label, Subfleet-Code, Name
-   und Reg-Pill alle auf gleicher visueller Mitte sitzen (vorher waren
-   sie wegen unterschiedlicher line-height/font-size leicht versetzt). */
-.bid-card__aircraft-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 4px;
-  line-height: 1.4;
-}
-.bid-card__aircraft {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  line-height: 1.4;
-}
-.bid-card__aircraft code {
-  /* Padding/Höhe so dass code-Pill auf der gleichen Baseline wie das
-     "FLUGZEUG"-Label sitzt — vorher zog die line-height vom <code>
-     den Block leicht nach oben. */
-  display: inline-flex;
-  align-items: center;
-  height: 22px;
-  padding: 0 8px;
-  background: var(--surface-2);
-  border-radius: 4px;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
+.bid-card__simbrief-status {
+  padding: 8px 20px 0;
   font-size: 12px;
-  line-height: 1;
+  color: var(--text-dim);
+  display: flex;
+  gap: 10px;
 }
-.bid-card__aircraft-name {
-  color: var(--text-muted);
-  display: inline-flex;
-  align-items: center;
-  height: 22px;
-  line-height: 1;
-}
-.bid-card__aircraft-reg {
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-size: 13px;
-  font-weight: 700;
-  /* v0.3.0: theme-adaptive Reg-Pill (--chip-reg-* in :root). Im Light-
-     Theme dunkles Bronze, im Dark-Theme helles Gold — beide auf dem
-     jeweiligen Surface gut lesbar. */
-  color: var(--chip-reg-text);
-  background: var(--chip-reg-bg);
-  border: 1px solid var(--chip-reg-border);
-  padding: 0 10px;
-  border-radius: 4px;
-  letter-spacing: 0.02em;
-  display: inline-flex;
-  align-items: center;
-  height: 22px;
-  line-height: 1;
+.bid-card__simbrief-error {
+  color: var(--sem-danger);
 }
 
-.phase {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 20px;
+.bid-card__route-label {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 11px;
+}
+.bid-card__route-text {
+  padding: 8px 20px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  word-break: break-all;
+}
+.bid-card__route-text code {
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+}
+
+/* §5.4 Aktionszeile */
+.bid-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 15px 20px;
+  flex-wrap: wrap;
+}
+
+.bid-card__mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.bid-card__mode-btn {
+  appearance: none;
+  border: none;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 400;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.bid-card__mode-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.bid-card__mode-btn--active {
+  background: var(--acc);
+  color: var(--bg);
+  font-weight: var(--fw-bold);
+}
+.bid-card__mode-btn:not(.bid-card__mode-btn--active):hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+/* Field bug (2026-08-03, Briefing screen): excluding the active state from
+   the rule above left it with no hover of its own, so the app-wide
+   generic `button:hover` rule (`background: var(--surface-2)`) won
+   instead — the `--bg`-on-`--acc` text then sat on a `--surface-2`
+   background, unreadable. Same root cause, same fix already applied to
+   `.datalink-mode--active`/`.cpdlc-chip--active`/`.button--primary`: every
+   accent-filled control needs its OWN hover, never just the inverse of
+   its sibling's. */
+.bid-card__mode-btn--active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--acc) 85%, black);
+  color: var(--bg);
+}
+.bid-card__mode-active-hint {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.bid-card__actions-spacer {
+  flex: 1;
+}
+.bid-card__links {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.bid-card__link {
+  appearance: none;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 9px 14px;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.bid-card__link:hover {
+  border-color: var(--text-dim);
+}
+.bid-card__start {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: var(--fw-bold);
+  padding: 10px 20px;
+  border-radius: var(--r-md);
+}
+
+/* ===== Briefing-2a §6: weitere gebuchte Fluege (Einzeiler) ===== */
+
+.bids__more-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
-.phase h2 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
+.bid-more {
+  display: grid;
+  grid-template-columns: 190px 1fr 190px;
+  align-items: center;
+  gap: 20px;
+  width: 100%;
+  padding: 14px 20px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease);
 }
 
-.phase p {
-  margin: 0;
-  color: var(--text-muted);
+.bid-more:hover {
+  background: color-mix(in srgb, var(--acc) 6%, var(--surface-2));
+}
+
+.bid-more__leg {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bid-more__leg--arrival {
+  justify-content: flex-end;
+}
+
+.bid-more__icao {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: var(--fw-bold);
+  color: var(--text);
+}
+
+.bid-more__time {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: var(--fw-bold);
+  color: var(--text-dim);
+}
+
+.bid-more__mid {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.bid-more__logo {
+  flex: none;
+  width: 104px;
+  height: 48px;
+  border-radius: var(--r-sm);
+  background: #ffffff;
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.bid-more__logo img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.bid-more__logo--placeholder {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.bid-more__callsign {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: var(--fw-bold);
+  color: var(--text);
+}
+
+.bid-more__meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.bid-more__badge {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--sem-warn);
+  background: var(--sem-warn-bg);
+  border-radius: 3px;
+  padding: 3px 8px;
+}
+
+/* Stage E: war ".phase" — kollidierte mit LogbookView's Phasen-Zeilen-
+   Modifier (siehe .aa-lb-logrow--phase) und war nur ein kleines, nicht
+   zentriertes Kästchen statt eines echten Vollbild-Ladezustands (Pilot-
+   Befund 2026-08-02: "ganz kleines Kästchen" beim Session-Check). Jetzt
+   eigener Name, füllt die verbleibende App-Höhe und zentriert sich. */
+.status-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  color: var(--text-dim);
+  font-size: var(--fs-400);
+}
+
+.status-loading__spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid var(--line);
+  border-top-color: var(--acc);
+  animation: status-loading-spin 0.8s linear infinite;
+}
+
+@keyframes status-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .appinfo {
@@ -5436,101 +6050,494 @@ input:disabled {
   margin: 0 auto;
 }
 
-.landing-history-title {
-  font-size: 1.05rem;
-  margin: 0.5rem 0 0;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+/* ===== Landungen-Übersicht (7a) — header/chart/table/footer, token-exact.
+   Root is `.landing-overview`, deliberately NOT `.landing-panel` — that
+   class's padded/max-width/shrink-wrap CSS above is still load-bearing for
+   the (untouched) detail view rendered by the same component. ===== */
+
+.landing-overview {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
-.landing-stats {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 0.75rem;
+.landing-ov-header {
+  flex-shrink: 0;
+  padding: 14px 20px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--sp-4);
 }
 
-@media (max-width: 800px) {
-  .landing-stats {
-    grid-template-columns: repeat(2, 1fr);
-  }
+.landing-ov-header__title {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  min-width: 0;
 }
 
-.landing-stat {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 0.85rem 1rem;
-  text-align: center;
-}
-
-.landing-stat__label {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 0.25rem;
-}
-
-.landing-stat__value {
-  font-size: 1.4rem;
-  font-weight: 600;
+.landing-ov-header__title h2 {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   color: var(--text);
 }
 
-.landing-table {
+.landing-ov-header__sub {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.landing-ov-stats {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.landing-ov-stat {
+  padding: 0 18px;
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.landing-ov-stat:last-child {
+  padding-right: 0;
+}
+
+.landing-ov-stat__label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.landing-ov-stat__value {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.landing-ov-stat__unit {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+  margin-left: 2px;
+}
+
+/* Real 5-band sink-rate scale (../lib/landingScoring.ts's classifyByVS,
+   200/400/600/1000 fpm) — NOT the handoff mock's own invented 3-band
+   350/600 scale, swapped out after a live consistency check against the
+   (untouched) report. Only 4 semantic tokens exist in tokens.css, so hard
+   and severe intentionally share --sem-danger. */
+.landing-ov-cat--smooth { color: var(--sem-ok); }
+.landing-ov-cat--acceptable { color: var(--sem-info); }
+.landing-ov-cat--firm { color: var(--sem-warn); }
+.landing-ov-cat--hard { color: var(--sem-danger); }
+.landing-ov-cat--severe { color: color-mix(in srgb, var(--sem-danger) 65%, black); }
+.landing-ov-dim { color: var(--text-dim); }
+
+/* ---- Sinkraten-Verlauf ---- */
+
+.landing-ov-chart {
+  flex-shrink: 0;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  padding: 13px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.landing-ov-chart__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.landing-ov-chart__title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.landing-ov-chart__legend {
+  display: flex;
+  gap: 14px;
+}
+
+.landing-ov-chart__legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.landing-ov-chart__swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.landing-ov-chart__swatch--smooth { background: var(--sem-ok); }
+.landing-ov-chart__swatch--acceptable { background: var(--sem-info); }
+.landing-ov-chart__swatch--firm { background: var(--sem-warn); }
+.landing-ov-chart__swatch--hard { background: var(--sem-danger); }
+.landing-ov-chart__swatch--severe { background: color-mix(in srgb, var(--sem-danger) 65%, black); }
+
+.landing-ov-chart__body {
+  display: flex;
+  height: 92px;
+}
+
+.landing-ov-chart__axis {
+  width: 24px;
+  flex-shrink: 0;
+  position: relative;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dim);
+}
+
+.landing-ov-chart__axis span {
+  position: absolute;
+  right: 4px;
+  transform: translateY(50%);
+}
+
+.landing-ov-chart__plot {
+  flex: 1;
+  position: relative;
+  border-left: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 0 4px;
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+}
+
+.landing-ov-chart__avgline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed var(--acc);
+  z-index: 1;
+}
+.landing-ov-chart__avgline-label {
+  position: absolute;
+  right: 0;
+  bottom: 2px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--acc);
+  background: var(--surface-2);
+  padding: 0 3px;
+  white-space: nowrap;
+}
+
+.landing-ov-chart__bar {
+  flex: 1;
+  border-radius: 2px 2px 0 0;
+  position: relative;
+  z-index: 2;
+}
+.landing-ov-chart__bar--smooth { background: var(--sem-ok); }
+.landing-ov-chart__bar--acceptable { background: var(--sem-info); }
+.landing-ov-chart__bar--firm { background: var(--sem-warn); }
+.landing-ov-chart__bar--hard { background: var(--sem-danger); }
+.landing-ov-chart__bar--severe { background: color-mix(in srgb, var(--sem-danger) 65%, black); }
+.landing-ov-chart__bar--latest {
+  outline: 1px solid var(--acc);
+  outline-offset: 1px;
+}
+
+.landing-ov-chart__foot {
+  display: flex;
+  justify-content: space-between;
+  padding-left: 26px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* ---- Tabelle ---- */
+
+.landing-ov-tablewrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.landing-ov-table {
   width: 100%;
   border-collapse: collapse;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
+  table-layout: fixed;
 }
 
-.landing-table th {
+.landing-ov-table th,
+.landing-ov-table td {
+  padding: 11px 7px;
   text-align: left;
-  padding: 0.6rem 0.85rem;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
+}
+.landing-ov-table th:first-child,
+.landing-ov-table td:first-child {
+  padding-left: 20px;
+}
+.landing-ov-table th:last-child,
+.landing-ov-table td:last-child {
+  padding-right: 20px;
+}
+
+.landing-ov-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-top: 9px;
+  padding-bottom: 9px;
   background: var(--surface-2);
-  border-bottom: 1px solid var(--border);
-}
-
-.landing-table td {
-  padding: 0.65rem 0.85rem;
-  font-size: 0.92rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.landing-row {
-  cursor: pointer;
-  transition: background 0.1s ease;
-}
-
-.landing-row:hover,
-.landing-row:focus {
-  background: var(--surface-2);
-  outline: none;
-}
-
-.landing-grade-pill {
-  display: inline-block;
-  padding: 0.15rem 0.55rem;
-  border-radius: 999px;
-  color: #000;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 10px;
   font-weight: 700;
-  font-size: 0.85rem;
-  min-width: 2.4rem;
-  text-align: center;
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+  text-transform: uppercase;
 }
 
-.landing-empty {
-  padding: 2rem;
-  color: var(--text-muted);
-  font-style: italic;
-  text-align: center;
+.landing-ov-table__num {
+  text-align: right;
+}
+
+.landing-ov-table__sortbtn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.landing-ov-row {
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.landing-ov-row td {
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.landing-ov-row:hover,
+.landing-ov-row:focus-visible {
+  background: var(--surface-2);
+}
+
+.landing-ov-date__d {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+}
+.landing-ov-date__t {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.landing-ov-route__l1 {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+.landing-ov-route__l2 {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.landing-ov-aircraft {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.landing-ov-rate-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.landing-ov-rate-bar {
+  width: 56px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.landing-ov-rate-bar__fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+.landing-ov-rate-bar__fill--smooth { background: var(--sem-ok); }
+.landing-ov-rate-bar__fill--acceptable { background: var(--sem-info); }
+.landing-ov-rate-bar__fill--firm { background: var(--sem-warn); }
+.landing-ov-rate-bar__fill--hard { background: var(--sem-danger); }
+.landing-ov-rate-bar__fill--severe { background: color-mix(in srgb, var(--sem-danger) 65%, black); }
+
+.landing-ov-rate-value {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.landing-ov-rate-value--smooth { color: var(--sem-ok); }
+.landing-ov-rate-value--acceptable { color: var(--sem-info); }
+.landing-ov-rate-value--firm { color: var(--sem-warn); }
+.landing-ov-rate-value--hard { color: var(--sem-danger); }
+.landing-ov-rate-value--severe { color: color-mix(in srgb, var(--sem-danger) 65%, black); }
+
+.landing-ov-score {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+}
+.landing-ov-score__suffix {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-left: 2px;
+}
+
+.landing-ov-grade {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.landing-ov-grade--smooth { color: var(--sem-ok); }
+.landing-ov-grade--acceptable { color: var(--sem-info); }
+.landing-ov-grade--firm { color: var(--sem-warn); }
+.landing-ov-grade--hard { color: var(--sem-danger); }
+.landing-ov-grade--severe { color: color-mix(in srgb, var(--sem-danger) 65%, black); }
+
+.landing-ov-chevron {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+.landing-ov-skeleton-row td {
+  padding-top: 11px;
+  padding-bottom: 11px;
+}
+.landing-ov-skeleton-bar {
+  height: 22px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.landing-ov-empty-row td {
+  padding: 24px 20px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text-dim);
+  text-align: left;
+}
+
+/* ---- Fußzeile ---- */
+
+.landing-ov-footer {
+  flex-shrink: 0;
+  padding: 11px 20px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+.landing-ov-footer__left {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.landing-ov-loadmore {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 6px 12px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.landing-ov-loadmore:hover {
+  background: var(--surface-2);
+}
+
+.landing-ov-footer__right {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.landing-ov-footer__right strong {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text);
 }
 
 /* ---- Detail view ---- */
@@ -5552,7 +6559,7 @@ input:disabled {
 .landing-export {
   background: transparent;
   border: 1px solid var(--accent, #2563eb);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   color: var(--accent, #2563eb);
   padding: 0.4rem 0.8rem;
   cursor: pointer;
@@ -5567,7 +6574,7 @@ input:disabled {
 .landing-back {
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   color: var(--text);
   padding: 0.4rem 0.8rem;
   cursor: pointer;
@@ -5581,7 +6588,7 @@ input:disabled {
 .landing-delete {
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   color: var(--danger, #ef4444);
   padding: 0.4rem 0.8rem;
   cursor: pointer;
@@ -5598,7 +6605,7 @@ input:disabled {
   align-items: center;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   padding: 1rem 1.25rem;
 }
 
@@ -5606,7 +6613,7 @@ input:disabled {
   font-size: 2.4rem;
   font-weight: 700;
   color: #000;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   padding: 0.4rem 0.9rem;
   min-width: 4rem;
   text-align: center;
@@ -5673,7 +6680,7 @@ input:disabled {
 .landing-preview-card {
   background: rgba(56, 189, 248, 0.06);
   border: 1px solid rgba(56, 189, 248, 0.4);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   padding: 1rem 1.25rem;
 }
 
@@ -5686,7 +6693,7 @@ input:disabled {
 .landing-section {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   padding: 1rem 1.25rem;
 }
 
@@ -5732,7 +6739,7 @@ input:disabled {
 .landing-comparison {
   margin-top: 1rem;
   background: var(--surface-2);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 0.75rem 1rem;
 }
 .landing-comparison + .landing-comparison {
@@ -5796,7 +6803,7 @@ input:disabled {
   color: var(--text-muted);
   font-size: 12px;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   justify-self: start;
   line-height: 1;
@@ -5807,8 +6814,7 @@ input:disabled {
 }
 /* Δ-Suffix neben dem IST-Wert — kompakt, kleinere Schrift, farbcodiert. */
 .loadsheet__delta-inline {
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
+  font-family: var(--font-mono);
   font-feature-settings: "tnum" 1;
   font-size: 11px;
   font-weight: 500;
@@ -5839,7 +6845,7 @@ input:disabled {
   background: var(--accent, #2563eb);
   color: #fff;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -5891,16 +6897,19 @@ input:disabled {
 .loadsheet__delta--warn  { color: var(--sem-warn); }
 .loadsheet__delta--alert { color: var(--sem-danger); font-weight: 600; }
 .loadsheet__row--overweight {
-  background: rgba(248, 113, 113, 0.08);
+  background: var(--sem-danger-bg);
 }
 .loadsheet__row--overweight td {
-  color: #f87171;
+  /* War #f87171 fest verdrahtet — passte nur im Dark-Theme (WCAG-Audit
+     FEHL im Hell-Theme gegen --surface-2). --sem-danger ist für beide
+     Themes eigens abgestimmt, wie schon .loadsheet__delta--alert daneben. */
+  color: var(--sem-danger);
 }
 .loadsheet__hint {
   margin-top: 0.6rem;
   padding: 0.5rem 0.75rem;
   background: var(--surface-2);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   font-size: 0.8rem;
   color: var(--text-muted);
 }
@@ -5909,7 +6918,7 @@ input:disabled {
 .loadsheet-score {
   margin-top: 1rem;
   background: var(--surface-2);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 0.75rem 1rem;
 }
 .loadsheet-score__header {
@@ -5930,9 +6939,11 @@ input:disabled {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.loadsheet-score__value--ok    { color: #4ade80; }
-.loadsheet-score__value--warn  { color: #fbbf24; }
-.loadsheet-score__value--alert { color: #f87171; }
+/* Waren feste Dark-Theme-Hex-Werte — im Hell-Theme gegen --surface-2
+   nicht mehr WCAG-konform. --sem-* ist für beide Themes abgestimmt. */
+.loadsheet-score__value--ok    { color: var(--sem-ok); }
+.loadsheet-score__value--warn  { color: var(--sem-warn); }
+.loadsheet-score__value--alert { color: var(--sem-danger); }
 .loadsheet-score__breakdown {
   list-style: none;
   margin: 0;
@@ -5948,9 +6959,9 @@ input:disabled {
   justify-content: space-between;
   padding: 0.15rem 0;
 }
-.loadsheet-score__pct--ok    { color: #4ade80; }
-.loadsheet-score__pct--warn  { color: #fbbf24; }
-.loadsheet-score__pct--alert { color: #f87171; font-weight: 600; }
+.loadsheet-score__pct--ok    { color: var(--sem-ok); }
+.loadsheet-score__pct--warn  { color: var(--sem-warn); }
+.loadsheet-score__pct--alert { color: var(--sem-danger); font-weight: 600; }
 
 .landing-keyvals > div {
   display: flex;
@@ -5958,7 +6969,7 @@ input:disabled {
   gap: 0.15rem;
   padding: 0.5rem 0.75rem;
   background: var(--surface-2);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   min-width: 0; /* allow truncation in narrow columns */
 }
 
@@ -6014,7 +7025,7 @@ input:disabled {
   overflow: hidden;
   width: 100%;
   min-height: 172px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   background: radial-gradient(125% 125% at 18% 0%, #1e293b 0%, #0b1120 100%);
   align-self: start;
 }
@@ -6078,7 +7089,7 @@ input:disabled {
 .windflow__runway {
   position: relative;
   height: 30px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: rgba(2, 6, 23, 0.55);
   border: 1px solid rgba(255, 255, 255, 0.16);
 }
@@ -6190,7 +7201,7 @@ input:disabled {
   justify-content: space-between;
   align-items: center;
   padding: 0.75rem 1rem;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   border-left: 4px solid;
   font-size: 0.92rem;
   gap: 1rem;
@@ -6251,13 +7262,13 @@ input:disabled {
 .landing-fuelbar__track {
   height: 12px;
   background: var(--surface-2);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   overflow: hidden;
 }
 
 .landing-fuelbar__fill {
   height: 100%;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   transition: width 0.3s ease;
 }
 
@@ -6301,7 +7312,7 @@ input:disabled {
 .landing-subscore {
   background: var(--surface-2);
   border-left: 4px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 0.75rem 0.9rem;
   display: flex;
   flex-direction: column;
@@ -6425,7 +7436,7 @@ input:disabled {
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
   font-size: 0.85rem;
   font-weight: 400;
@@ -6474,7 +7485,7 @@ input:disabled {
   line-height: 1;
   cursor: pointer;
   padding: 0;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
 }
 
 .info-badge__close:hover {
@@ -6487,7 +7498,7 @@ input:disabled {
 .landing-coach {
   margin-top: 1rem;
   padding: 0.85rem 1rem;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   border-left: 4px solid;
   background: var(--surface-2);
 }
@@ -6611,7 +7622,7 @@ input:disabled {
   padding: 1.25rem 0.5rem;
   background: var(--bg-elevated, rgba(255, 255, 255, 0.025));
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
 }
 
 .landing-flare__score-num {
@@ -6667,40 +7678,6 @@ input:disabled {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-
-/* ---- Trend sparkline above the table ---- */
-
-.landing-trend {
-  display: flex;
-  align-items: center;
-  gap: 0.85rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 0.6rem 1rem;
-}
-
-.landing-trend__label {
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.landing-trend__svg {
-  flex: 1;
-  height: 60px;
-  min-width: 0;
-}
-
-.landing-trend__last {
-  font-size: 0.85rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
 
 /* ======================================================================
  * Confirm-Dialog (in-app, replaces window.confirm() — see
@@ -8042,7 +9019,7 @@ input:disabled {
   font-size: 13px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-md);
 }
 
 .news-panel__spinner {
@@ -8076,7 +9053,7 @@ input:disabled {
     color-mix(in srgb, var(--accent) 3%, var(--surface)) 100%
   );
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   overflow: hidden;
   transition: border-color 0.18s ease, box-shadow 0.18s ease,
     transform 0.18s ease;
@@ -8230,11 +9207,11 @@ input:disabled {
 }
 
 .news-card__body code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 0.92em;
   background: var(--surface-2);
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
 }
 
 @keyframes news-fade-in {
@@ -8257,7 +9234,7 @@ input:disabled {
   padding: 60px 20px;
   background: var(--surface);
   border: 1px dashed var(--border);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   color: var(--text-muted);
   text-align: center;
 }
@@ -8282,7 +9259,7 @@ input:disabled {
 .news-empty__detail {
   font-size: 12px;
   color: var(--text-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   word-break: break-word;
 }
 
@@ -8301,19 +9278,19 @@ input:disabled {
   padding: 4px;
   background: color-mix(in srgb, var(--text) 5%, transparent);
   border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
-  border-radius: 10px;
+  border-radius: var(--r-md);
 }
 .settings__tab {
   flex: 1;
   padding: 8px 14px;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 7px;
-  color: var(--text-muted);
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
   font-size: 0.88rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--dur-fast) var(--ease);
 }
 .settings__tab:hover:not(.settings__tab--active) {
   color: var(--text);
@@ -8325,6 +9302,17 @@ input:disabled {
   color: var(--accent);
   font-weight: 600;
 }
+/* Same exclusion pattern as the two bugs above (`:not(--active)` on the
+   sibling rule), milder here since the text stays accent-colored rather
+   than white-on-fill, but still means hovering the active tab silently
+   loses its accent-tinted background to the generic
+   `button:hover { background: var(--surface-2) }` instead of getting a
+   little more emphasis, like every other hover state in this app does. */
+.settings__tab--active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+}
 
 /* ===== v0.13.x In-App Live-Map ===== */
 .aa-livemap {
@@ -8333,175 +9321,108 @@ input:disabled {
   /* füllt den verbleibenden Platz der .app-Flex-Column (kein Magie-Pixel) */
   flex: 1;
   min-height: 0;
-  gap: 8px;
+  gap: var(--sp-2);
 }
-.aa-livemap__right {
+/* README handoff_livemap_4a §1 — shared overlay-card optic used by every
+   floating element over the map (control block, flight card, events panel,
+   idle card, system line). Popup content (`.aa-vapop .maplibregl-popup-content`,
+   below) repeats these same four properties inline since MapLibre's Popup
+   generates that wrapper itself — this class can't reach inside it. */
+.aa-livemap-overlay {
+  background: rgba(16, 22, 32, 0.94);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(8px);
+}
+:root[data-theme="light"] .aa-livemap-overlay {
+  background: rgba(255, 255, 255, 0.94);
+}
+
+/* §2 — Kopfzeile: 56px fix, no buttons at all (every control moved into the
+   Kartenschalter-Block over the map, §3). */
+.aa-livemap__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 56px;
+  height: 56px;
+  padding: 0 20px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+.aa-livemap__header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+.aa-livemap__header-title {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 19px;
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.aa-livemap__header-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+  flex: none;
+}
+.aa-livemap__header-context {
   display: flex;
   align-items: center;
   gap: 10px;
-  /* v0.15.9: FEST und immer ganz rechts — wandert nie wieder in eine neue Zeile
-     (Topbar ist jetzt nowrap, die Stats in der Mitte schrumpfen/scrollen). */
-  flex: 0 0 auto;
-  margin-left: auto;
-  white-space: nowrap;
-}
-/* v0.15.6: „Auf mein Flugzeug zentrieren" — holt die Karte zurück zum Flieger,
-   wenn man sich verschaut hat oder nach einem Resume die Ansicht woanders steht. */
-.aa-livemap__recenter {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 4px 9px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-.aa-livemap__recenter:hover {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-}
-/* v0.15.9: kompakte Icon-Buttons (🎯 zentrieren, Folgen-Toggle, VA-Verkehr-
-   Toggle) statt Text — spart viel Platz. Erklärung steckt im title-Tooltip.
-   Aktive Toggles leuchten in Akzentfarbe. */
-.aa-livemap__iconbtn {
-  position: relative; /* Anker für den Tooltip */
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  height: 28px;
-  min-width: 28px;
-  padding: 0 6px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface);
-  color: var(--text-muted);
-  cursor: pointer;
-  flex: 0 0 auto;
-  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
-}
-.aa-livemap__iconbtn:hover {
-  border-color: var(--accent);
-  color: var(--text);
-}
-/* v0.15.9: eigener gestylter Tooltip (native title-Tooltips zeigt der WebView
-   zickig/verzögert). Erscheint beim Hovern direkt unter dem Button, rechtsbündig
-   (bleibt so im Fenster), über der Karte. */
-.aa-livemap__iconbtn[data-tip]:hover::after {
-  content: attr(data-tip);
-  position: absolute;
-  top: calc(100% + 7px);
-  right: 0;
-  z-index: 1000;
-  white-space: nowrap;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 9px;
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
-  pointer-events: none;
-}
-.aa-livemap__iconbtn--toggle[data-active="true"] {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 15%, var(--surface));
-}
-.aa-livemap__topbar {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  /* v0.15.9: KEIN Umbruch mehr (war flex-wrap:wrap) — sonst klappte die
-     Button-Gruppe bei zu wenig Platz in die nächste Zeile = „springt von
-     rechts nach links". Stattdessen: Titel kürzt, Stats schrumpfen/scrollen. */
-  flex-wrap: nowrap;
   min-width: 0;
-  padding: 4px 2px;
+  overflow: hidden;
 }
-.aa-livemap__title {
-  /* 2-zeilig wie die Stats (Label + Wert) → gleiche Höhe/Ausrichtung. */
-  display: flex;
-  flex-direction: column;
-  line-height: 1.15;
-  flex: 0 1 auto;
-  min-width: 0;
-}
-.aa-livemap__title-value {
+.aa-livemap__header-callsign {
+  font-family: var(--font-mono);
   font-size: 14px;
-  font-weight: 700;
-  color: var(--text);
-  letter-spacing: 0.01em;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.aa-livemap__header-route {
+  font-size: 13px;
+  color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis; /* lange Flugnummer → … statt alles zu schieben */
+  text-overflow: ellipsis;
 }
 .aa-livemap__resume-hint {
   font-weight: 600;
-  color: var(--warning);
+  color: var(--sem-warn);
 }
-.aa-livemap__stats {
+.aa-livemap__header-right {
   display: flex;
+  align-items: center;
   gap: 14px;
-  /* v0.15.9: Mitte — nimmt den Restplatz, schrumpft und scrollt notfalls
-     horizontal, statt die Button-Gruppe zu schieben. Scrollbar versteckt. */
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
+  flex: none;
+  margin-left: 16px;
 }
-.aa-livemap__stats::-webkit-scrollbar {
-  display: none;
+.aa-livemap__header-vacount {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
 }
-.aa-stat {
-  flex: 0 0 auto;
-}
-/* v0.15.9: VA-Zähler in FESTER Breite → Ein-/Ausschalten und 1- vs. 2-stellige
-   Zahlen verschieben die Leiste nicht mehr. */
-.aa-livemap__vacount {
-  display: inline-block;
-  min-width: 2ch; /* fest reserviert (fasst 1–2 Stellen) → kein Versatz */
-  text-align: center;
+.aa-livemap__header-clock {
+  font-family: var(--font-mono);
   font-size: 12px;
-  font-weight: 700;
-  color: currentColor; /* erbt Button-Farbe: gedämpft aus, Akzent an */
-  font-variant-numeric: tabular-nums;
-}
-.aa-stat {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.15;
-}
-.aa-stat__label {
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-.aa-stat__value {
-  font-size: 15px;
-  font-weight: 600;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-.aa-livemap__follow {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-muted);
+.aa-livemap__header-z {
+  font-size: 11px;
+  color: var(--text-dim);
 }
+
 .aa-livemap__body {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   flex: 1;
   min-height: 0;
 }
@@ -8509,67 +9430,426 @@ input:disabled {
   position: relative;
   flex: 1;
   min-height: 360px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
   overflow: hidden;
 }
 .aa-livemap__map .maplibregl-map {
   position: absolute;
   inset: 0;
 }
-.aa-livemap__log {
-  width: 300px;
-  flex-shrink: 0;
+
+/* §3 — Kartenschalter-Block: one overlay, four named groups, 16px from the
+   top-left corner. */
+.aa-livemap-controls {
+  position: absolute;
+  z-index: 500;
+  left: 16px;
+  top: 16px;
   display: flex;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
+  align-items: center;
+  gap: 14px;
+  padding: 8px 12px;
 }
-/* Im Karten-Kontext die innere Card auflösen — sonst Card-in-Card ("Sprechblase"). */
-.aa-livemap__log .activity-log {
-  flex: 1;
-  min-height: 0;
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  padding: 12px 14px;
+.aa-livemap-controls__group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.aa-livemap-controls__rubric {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caps);
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.aa-livemap-controls__row {
+  display: flex;
+  gap: 6px;
+}
+/* Segmented control (ANSICHT/AUSRICHTUNG): two segments, no gap, one outer
+   radius — active = --bg on --acc, inactive = --text-dim on --surface. */
+.aa-livemap-seg {
+  display: flex;
+}
+.aa-livemap-seg__btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: var(--fw-bold);
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.aa-livemap-seg__btn:first-child {
+  border-radius: var(--r-md) 0 0 var(--r-md);
+}
+.aa-livemap-seg__btn:last-child {
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  border-left: none;
+}
+.aa-livemap-seg__btn--active {
+  background: var(--acc);
+  color: var(--bg);
+  border-color: var(--acc);
+}
+/* Same illegible-on-hover bug class fixed repeatedly elsewhere this session
+   (Datalink §3/Briefing bid-card): an accent-filled control needs its OWN
+   hover, or the app-wide generic `button:hover` wins and leaves --bg text on
+   a --surface-2 background. */
+.aa-livemap-seg__btn--active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--acc) 85%, black);
+  color: var(--bg);
+}
+/* Single toggle (EBENEN/KARTE "Folgen"): same optic, rounded all round. */
+.aa-livemap-toggle {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: var(--fw-bold);
+  padding: 8px 14px;
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.aa-livemap-toggle--active {
+  background: var(--acc);
+  color: var(--bg);
+  border-color: var(--acc);
+}
+.aa-livemap-toggle--active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--acc) 85%, black);
+  color: var(--bg);
+}
+
+/* §4 — right panel: flex column, 296px, 16px from the top-right corner. */
+.aa-livemap-panel {
+  position: absolute;
+  z-index: 500;
+  right: 16px;
+  top: 16px;
+  width: 296px;
+  max-height: calc(100% - 112px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* §4.1 — Flugwerte card. */
+.aa-livemap-flightcard {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+}
+.aa-livemap-flightcard__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.aa-livemap-flightcard__rubric {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caps);
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.aa-livemap-flightcard__live {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--sem-ok);
+}
+.aa-livemap-flightcard__route {
+  display: flex;
+  align-items: baseline;
   gap: 10px;
 }
-.aa-livemap__log .activity-log__list {
-  max-height: none;
+.aa-livemap-flightcard__airport {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.03em;
+}
+.aa-livemap-flightcard__arrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.aa-livemap-flightcard__bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.aa-livemap-flightcard__bar-fill {
+  height: 100%;
+  background: var(--acc);
+}
+.aa-livemap-flightcard__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+.aa-livemap-flightcard__grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.aa-livemap-flightcard__label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: var(--ls-caps);
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.aa-livemap-flightcard__value {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+}
+.aa-livemap-flightcard__foot {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.aa-livemap-flightcard__foot span:last-child {
+  font-family: var(--font-mono);
+}
+
+/* §4.2 — Ereignisliste. */
+.aa-livemap-events {
   flex: 1;
-  /* v0.15.8: min-height:0 ist der entscheidende Flexbox-Fix — ohne ihn schrumpft
-     die Liste NICHT unter ihren Inhalt, die lange Log-Liste drückt die ganze
-     Seite auf (Map wird elend lang, Zoom-Buttons verschwinden). Mit min-height:0
-     scrollt die Liste intern, und die Karte bleibt auf Fenster-/Bildschirmhöhe. */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.aa-livemap-events__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.aa-livemap-events__title {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caps);
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.aa-livemap-events__filters {
+  display: flex;
+  gap: 10px;
+}
+.aa-livemap-filter {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.aa-livemap-filter--active {
+  color: var(--text);
+  font-weight: var(--fw-bold);
+}
+.aa-livemap-events__log {
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
 }
-.aa-livemap__log .activity-log__title {
-  font-size: 14px;
+.aa-livemap-events__empty {
+  margin: 0;
+  padding: 16px;
+  font-size: 13px;
+  color: var(--text-dim);
+  text-align: center;
 }
-/* In der Karte nur das aufgezeichnete Log zeigen — kein Zähler/Leeren-Button
-   (die gehören in den dedizierten ACARS-Log-Tab). */
-.aa-livemap__log .activity-log__count,
-.aa-livemap__log .activity-log__clear {
-  display: none;
+.aa-livemap-events__row {
+  display: flex;
+  gap: 11px;
+  width: 100%;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--line);
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  background: none;
+  text-align: left;
+  appearance: none;
+  font: inherit;
+  color: inherit;
 }
-.aa-livemap__empty {
+button.aa-livemap-events__row {
+  cursor: pointer;
+}
+button.aa-livemap-events__row:hover {
+  background: var(--surface);
+}
+.aa-livemap-events__row--fresh {
+  animation: resume-fade-in 0.25s ease-out;
+}
+.aa-livemap-events__edge {
+  width: 3px;
+  border-radius: 2px;
+  flex: none;
+}
+.aa-livemap-events__edge--flug {
+  background: var(--acc);
+}
+.aa-livemap-events__edge--acars {
+  background: var(--sem-ok);
+}
+.aa-livemap-events__edge--system {
+  background: var(--line);
+}
+.aa-livemap-events__body {
+  flex: 1;
+  min-width: 0;
+}
+.aa-livemap-events__row1 {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+.aa-livemap-events__time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  flex: none;
+}
+.aa-livemap-events__title-text {
+  font-size: 13px;
+  font-weight: var(--fw-bold);
+}
+.aa-livemap-events__count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 5px;
+  flex: none;
+}
+.aa-livemap-events__sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  padding-top: 2px;
+}
+
+/* §6 — Leerzustand. */
+.aa-livemap-idle {
   position: absolute;
-  inset: 0;
-  z-index: 2;
+  z-index: 500;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 420px;
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.aa-livemap-idle__rubric {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caps);
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.aa-livemap-idle__headline {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 17px;
+  font-weight: var(--fw-bold);
+}
+.aa-livemap-idle__detail {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  min-height: 1em;
+}
+.aa-livemap-idle__actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+/* §7 — System-Zeile. */
+.aa-livemap-sysline {
+  position: absolute;
+  z-index: 500;
+  left: 16px;
+  bottom: 16px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 24px;
-  color: var(--text-muted);
-  background: color-mix(in srgb, var(--bg) 70%, transparent);
-  /* Voll­flächen-Hinweis (kein aktiver Flug) — darf die Maus NICHT schlucken,
-     sonst lässt sich die Karte im Leer-Zustand nicht ziehen/zoomen. Der Hinweis
-     hat keine Buttons, also liegt er rein optisch drüber. */
-  pointer-events: none;
+  gap: 11px;
+  padding: 9px 13px;
+}
+.aa-livemap-sysline__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+.aa-livemap-sysline__dot--ok {
+  background: var(--sem-ok);
+}
+.aa-livemap-sysline__dot--off {
+  background: var(--text-dim);
+}
+.aa-livemap-sysline__dot--danger {
+  background: var(--sem-danger);
+}
+.aa-livemap-sysline__text {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.aa-livemap-sysline__sep {
+  width: 1px;
+  height: 14px;
+  background: var(--line);
+  flex: none;
+}
+.aa-livemap-sysline__link {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.aa-livemap-sysline__link:hover {
+  color: var(--text);
 }
 .aa-ac-marker {
   width: 38px;
@@ -8639,91 +9919,105 @@ input:disabled {
 }
 
 /* ===== VA-Flug-Popup (theme-fähig, dark + light) ===== */
+/* README §5 — Kollegen-Karteichen. Same overlay optic as the rest of this
+   screen's chrome (§1), inlined here since MapLibre generates this wrapper
+   itself — `.aa-livemap-overlay` can't reach inside it. */
 .aa-vapop .maplibregl-popup-content {
-  background: var(--surface);
+  background: rgba(16, 22, 32, 0.94);
+  backdrop-filter: blur(8px);
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 11px 13px;
-  min-width: 196px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 12px 14px;
+  min-width: 212px;
   font-size: 12px;
 }
+:root[data-theme="light"] .aa-vapop .maplibregl-popup-content {
+  background: rgba(255, 255, 255, 0.94);
+}
 .aa-vapop .maplibregl-popup-close-button {
-  color: var(--text-muted);
+  color: var(--text-dim);
   font-size: 16px;
   padding: 0 6px;
 }
 .aa-vapop.maplibregl-popup-anchor-top .maplibregl-popup-tip,
 .aa-vapop.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
 .aa-vapop.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
-  border-bottom-color: var(--surface);
+  border-bottom-color: var(--line);
 }
 .aa-vapop.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
 .aa-vapop.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
 .aa-vapop.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
-  border-top-color: var(--surface);
+  border-top-color: var(--line);
 }
 .aa-vapop.maplibregl-popup-anchor-left .maplibregl-popup-tip {
-  border-right-color: var(--surface);
+  border-right-color: var(--line);
 }
 .aa-vapop.maplibregl-popup-anchor-right .maplibregl-popup-tip {
-  border-left-color: var(--surface);
+  border-left-color: var(--line);
 }
+/* Kopf: Callsign links, Pilotenname rechts, darunter ein Trennstrich. */
 .aa-vapop__head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
 }
 .aa-vapop__cs {
-  font-weight: 800;
+  font-family: var(--font-mono);
+  font-weight: var(--fw-bold);
   font-size: 15px;
   color: var(--text);
   letter-spacing: 0.01em;
 }
-.aa-vapop__badge {
+.aa-vapop__pilot {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+/* Strecke: DEP → ARR links, Flugphase rechts — Zustand nie nur über Farbe
+   (README §9), darum reiner Text statt der alten Farb-Badge. */
+.aa-vapop__route {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+}
+.aa-vapop__route > span:first-child {
+  font-family: var(--font-mono);
+  font-weight: var(--fw-bold);
+  font-size: 17px;
+  color: var(--text);
+}
+.aa-vapop__arrow {
+  color: var(--text-dim);
+  font-weight: var(--fw-bold);
+  margin: 0 4px;
+}
+/* Colored phase pill — restored exactly as it was before this rewrite
+   briefly flattened it to plain dim text (field feedback: "fand ich richtig
+   mega", bring it back). `--p` is set inline per-popup from phaseColor(). */
+.aa-vapop__phase {
   font-size: 9.5px;
-  font-weight: 700;
+  font-weight: var(--fw-bold);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   padding: 2px 7px;
   border-radius: 999px;
   white-space: nowrap;
-  color: var(--p, var(--accent));
-  background: color-mix(in srgb, var(--p, var(--accent)) 16%, transparent);
-  border: 1px solid color-mix(in srgb, var(--p, var(--accent)) 45%, transparent);
-}
-.aa-vapop__sub {
-  color: var(--text-muted);
-  font-size: 11.5px;
-  margin-top: 3px;
-}
-.aa-vapop__pilot {
-  color: var(--text);
-  font-size: 11.5px;
-  opacity: 0.85;
-  margin-top: 1px;
-}
-.aa-vapop__route {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 700;
-  font-size: 13px;
-  color: var(--text);
-  margin: 9px 0;
-}
-.aa-vapop__arrow {
-  color: var(--accent);
-  font-weight: 800;
+  flex: none;
+  color: var(--p, var(--acc));
+  background: color-mix(in srgb, var(--p, var(--acc)) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--p, var(--acc)) 45%, transparent);
 }
 .aa-vapop__grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 7px 10px;
   padding-top: 8px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
 }
 .aa-vapop__cell {
   display: flex;
@@ -8731,14 +10025,16 @@ input:disabled {
   gap: 1px;
 }
 .aa-vapop__k {
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: var(--text-dim);
 }
 .aa-vapop__v {
-  font-weight: 700;
-  font-size: 12.5px;
+  font-family: var(--font-mono);
+  font-weight: var(--fw-bold);
+  font-size: 14px;
   color: var(--text);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -8747,37 +10043,44 @@ input:disabled {
   font-style: normal;
   font-weight: 400;
   font-size: 9px;
-  color: var(--text-muted);
+  color: var(--text-dim);
   margin-left: 1px;
+}
+.aa-vapop__sub {
+  color: var(--text-dim);
+  font-size: 11px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
 }
 
 /* ===================== Logbuch (LogbookView) ===================== */
 .aa-lb { max-width: 1180px; margin: 0 auto; width: 100%; }
 .aa-lb-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
-.aa-lb-title { font-size: 20px; font-weight: 800; letter-spacing: 0.02em; }
+.aa-lb-title { font-family: var(--font-mono); font-size: 20px; font-weight: 800; letter-spacing: 0.02em; }
 .aa-lb-sub { color: var(--text-muted); font-size: 12px; }
 .aa-lb-muted { color: var(--text-muted); }
 .aa-lb-error { padding: 12px 14px; color: var(--danger); }
-.aa-lb-btn { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+.aa-lb-btn { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 6px 12px; cursor: pointer; font-size: 13px; }
 .aa-lb-btn:hover { background: var(--surface-2); }
 .aa-lb-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 16px; }
-.aa-lb-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
-.aa-lb-k { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
-.aa-lb-bigv { font-size: 22px; font-weight: 800; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.aa-lb-stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 12px 14px; }
+.aa-lb-k { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
+.aa-lb-bigv { font-family: var(--font-acars); font-size: 22px; font-weight: 800; margin-top: 4px; font-variant-numeric: tabular-nums; }
 .aa-lb-bigv small { font-size: 12px; font-weight: 600; color: var(--text-muted); }
 .aa-lb-rankcard { display: flex; align-items: center; gap: 10px; }
 .aa-lb-rankcard img { width: 34px; height: 34px; object-fit: contain; }
 .aa-lb-rankv { font-size: 15px; font-weight: 700; margin-top: 2px; }
 /* `relative` ist Bezugspunkt für den Ladebalken an der Oberkante. */
-.aa-lb-card { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.aa-lb-card { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
 .aa-lb-card table { width: 100%; border-collapse: collapse; }
 .aa-lb-card thead th { text-align: left; font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-muted); font-weight: 600; padding: 12px 14px; border-bottom: 1px solid var(--border); }
-.aa-lb-card th.num, .aa-lb-card td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.aa-lb-card th.num, .aa-lb-card td.num { font-family: var(--font-acars); text-align: right; font-variant-numeric: tabular-nums; }
 .aa-lb-card tbody td { padding: 13px 14px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
 .aa-lb-card tbody tr { cursor: pointer; }
 .aa-lb-card tbody tr:hover { background: var(--surface-2); }
 .aa-lb-card tbody tr:last-child td { border-bottom: none; }
-.aa-lb-rt, .aa-lb-route { font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
+.aa-lb-rt, .aa-lb-route { font-family: var(--font-mono); font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
 .aa-lb-cs2 { color: var(--text-muted); font-size: 11px; }
 .aa-lb-arr { color: var(--text-muted); margin: 0 6px; }
 .aa-lb-chev { color: var(--text-muted); }
@@ -8846,23 +10149,23 @@ input:disabled {
 .aa-lb-b-rejected { color: var(--danger); background: color-mix(in srgb, var(--danger) 15%, transparent); }
 .aa-lb-pager { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; color: var(--text-muted); font-size: 12px; }
 .aa-lb-pagebtns { display: flex; align-items: center; gap: 10px; }
-.aa-lb-pagebtns button { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+.aa-lb-pagebtns button { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 4px 10px; cursor: pointer; font-size: 12px; }
 .aa-lb-pagebtns button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* Detail */
 .aa-lb-det-head { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; flex-wrap: wrap; }
-.aa-lb-cs { font-size: 18px; font-weight: 800; }
+.aa-lb-cs { font-family: var(--font-mono); font-size: 18px; font-weight: 800; }
 .aa-lb-det-stats { margin-left: auto; display: flex; gap: 18px; }
-.aa-lb-v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.aa-lb-v { font-family: var(--font-acars); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .aa-lb-det-row { display: grid; grid-template-columns: 1.5fr 1fr; gap: 14px; margin-bottom: 14px; }
-.aa-lb-map { height: 440px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; position: relative; }
-.aa-lb-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+.aa-lb-map { height: 440px; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; position: relative; }
+.aa-lb-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 12px 14px; }
 .aa-lb-panel h3 { margin: 0 0 10px; font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-muted); }
 .aa-lb-logpanel { height: 440px; display: flex; flex-direction: column; }
 .aa-lb-log { flex: 1; overflow-y: auto; }
 .aa-lb-logrow { display: grid; grid-template-columns: 48px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent); }
 .aa-lb-logrow:last-child { border-bottom: none; }
 .aa-lb-logrow .aa-lb-t { font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: 12px; }
-.aa-lb-logrow.phase .aa-lb-m { font-weight: 700; }
+.aa-lb-logrow--phase .aa-lb-m { font-weight: 700; }
 .aa-lb-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 7px; vertical-align: middle; }
 /* ---- Nachflug-Profil: gestapelte Bahnen, gemeinsame Zeitachse ----
    Ersetzt das alte Ein-Diagramm-Profil. Begründung in FlightProfile.tsx:
@@ -8984,7 +10287,7 @@ input:disabled {
 .remote-pin-gate__submit {
   appearance: none;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 12px 16px;
   font: inherit;
   font-weight: 600;
@@ -8992,6 +10295,14 @@ input:disabled {
   color: #fff;
   background: var(--accent);
   cursor: pointer;
+}
+
+/* This one had no hover rule at all — the app-wide generic `button:hover`
+   (`background: var(--surface-2)`) won by default, leaving the white
+   text meant for the accent fill sitting on a light background instead.
+   Same fix as every other accent-filled button on this pass. */
+.remote-pin-gate__submit:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, black);
 }
 
 .remote-pin-gate__submit:disabled {
@@ -9013,7 +10324,7 @@ input:disabled {
   color: var(--text);
   border: 1px solid var(--border);
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   font: inherit;
   font-size: 14px;
   max-width: 140px;
@@ -9127,13 +10438,16 @@ input:disabled {
   border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
 }
 
-/* ===== v1.3.0 (#Hoppie-PDC-CPDLC): PDC/CPDLC tab =====
-   Layout contract: exactly ONE scroll region on this tab.
-   .app is pinned to the viewport (like the map tab does), every
-   container in the chain is a flex column with min-height:0 so it can
-   actually shrink, and only .cpdlc-log carries overflow-y. Without the
-   min-height:0 links a flex child refuses to shrink below its content
-   and the page grows a second scrollbar behind the list. */
+/* ===== v1.3.5 (#Datalink-3a): PDC/CPDLC tab =====
+   Full rebuild per handoff_datalink_3a/README.md — a two-column radio
+   log (composer 420px fixed | history 1fr), not a form. Every value here
+   uses a tokens.css name directly (acceptance criterion #10) — no
+   legacy aliases (--border/--accent/--danger/--font-acars/...).
+
+   Layout contract: exactly ONE scroll region (.datalink-history__log).
+   .app is pinned to the viewport already (see the :has() rule below,
+   carried over unchanged), every container in the chain is a flex
+   column with min-height:0 so it can actually shrink. */
 
 .app:has(.cpdlc-panel) {
   height: 100%;
@@ -9145,8 +10459,7 @@ input:disabled {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 4px 0 0;
+  padding: 0;
 }
 
 .cpdlc-panel--disabled {
@@ -9158,610 +10471,605 @@ input:disabled {
 
 .cpdlc-panel__error {
   margin: 0;
-  font-size: 13px;
-  color: var(--danger);
+  font-size: var(--fs-300);
+  color: var(--sem-danger);
 }
 
-/* --- Level 1: the Hoppie network link itself (no station involved) --- */
+/* This screen's only secondary-button look (README §2b's "Ändern": same
+   optic reused for Wechseln/Abmelden/Anmelden). Deliberately the SAME
+   padding/font-size as the bare `button` element default (not the
+   spec's literal 9px/15px) — this button never appears alone, always
+   right next to `.button--primary` in the same 66px row, and a
+   different size there reads as broken alignment, not a design choice
+   (field feedback: "der Callsign-Button sieht anders aus wie Empfang
+   starten"). Only the fill/border differs; the box stays consistent. */
+.button--secondary {
+  font-family: var(--font-sans);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
 
-.cpdlc-link-bar {
+/* --- §2: connection status row — fixed 66px in every state (AC #8) --- */
+
+.datalink-status {
+  flex: 0 0 66px;
+  height: 66px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  /* Below the app's own stated minimum (900px, README §1) there is
+     genuinely not enough room for every field on one line at full,
+     legible size — no amount of squeezing changes that. The chosen
+     failure mode for that case is a horizontal scroll WITHIN this row
+     (nothing hidden, nothing overlapping, height still exactly 66px),
+     not shrinking children below their text's own width, which is what
+     produced the actual bug: "Ändern" painted over "BTI4TK", then
+     "Anmelden" over "Letzte Abfrage" once the first fix moved the
+     squeeze one level up. */
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.datalink-status__left {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  /* No shrink: this container must never be compressed below the sum of
+     its children's own natural widths — that's exactly what let text
+     overflow into the next sibling instead of the row scrolling. */
+  flex: 0 0 auto;
+}
+
+/* One "group" = a labeled block plus the single button that acts on it
+   (state+connect, callsign+Ändern, logon+Wechseln/Abmelden/Anmelden).
+   12px matches the one intra-group distance the spec actually states
+   (README §2b, "daneben, Abstand 12 px"); the 22px on `.datalink-status__left`
+   above is for the SPACE BETWEEN groups, not within one. */
+.datalink-status__group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+
+.datalink-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.datalink-link__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex: none;
+}
+
+.datalink-link--connected {
+  color: var(--sem-ok);
+}
+.datalink-link--connected .datalink-link__dot {
+  background: var(--sem-ok);
+}
+
+.datalink-link--error {
+  color: var(--sem-danger);
+}
+.datalink-link--error .datalink-link__dot {
+  background: var(--sem-danger);
+}
+
+.datalink-link--none {
+  color: var(--text-dim);
+}
+
+/* Reserves the width of the longer of "Empfang starten"/"Empfang
+   beenden" up front — without this the button resizes the instant its
+   label swaps and everything after it in the row visibly shifts (field
+   feedback: "der Button Empfang starten springt son bisschen hin und
+   her, weil der einfach zu lang ist"). Same fix the pre-rebuild
+   `.cpdlc-link-bar__main .button` min-width rule made for the same
+   button. */
+/* "Empfang starten" and "Empfang beenden" are the same length (16
+   characters each) — nothing to reserve width for, the button never
+   jumps between these two states. `white-space: nowrap` (the actual
+   fix for the wrap bug) still applies; min-width was dead weight that
+   only made the row's real space problem worse. */
+.datalink-connect-btn {
+  flex: none;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* Deliberately NO min-width: 0 here. The row's content genuinely doesn't
+   always fit at the app's own stated minimum width — but the failure
+   mode for "not enough room" must be the row itself running long
+   (recoverable — resize the window), never CALLSIGN's un-wrappable
+   nowrap text silently overlapping the button next to it (illegible,
+   and the exact bug a real field screenshot caught: "Ändern" painted
+   on top of "BTI4TK"). min-width: 0 on a flex item lets the browser
+   shrink it below its own text's rendered width, and nowrap text that
+   no longer fits its box doesn't wrap — it just paints over whatever's
+   next to it. Every block here keeps its natural (content) minimum. */
+.datalink-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: none;
+}
+
+/* Value + status word on one line ("Statuswort daneben") — the block is
+   label-above-value, exactly two lines, same as the callsign block next
+   to it. A third stacked line doesn't fit the fixed 66px row (see the
+   call site in CpdlcPanel.tsx for the overflow this caused). */
+.datalink-block__label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  /* Every other text rule in this row has this — this one was missing it.
+     "CPDLC-LOGON" has a hyphen, which browsers treat as a normal soft-wrap
+     point by default; without `nowrap` the label could break into
+     "CPDLC-" / "LOGON" under the slightest layout pressure, growing the
+     block past the row's fixed 66px height — the rest then got silently
+     clipped by `overflow-y: hidden` on `.datalink-status`, which is what
+     made the value/input and the action button look collapsed and
+     misaligned. Not width-dependent — this could happen at any window
+     size, which is why the field screenshot showing it had plenty of
+     spare width to the right. */
+  white-space: nowrap;
+}
+
+/* Same vertical box model as `.datalink-block__input` below (top/bottom
+   padding + border) — otherwise the block's total height changes the
+   instant it swaps between the two, shifting its vertical centring
+   within the fixed 66px row (field feedback: "das springt alles ein
+   bisschen aus der Höhe"). Horizontal padding/border deliberately
+   doesn't need to match — only the column's height does. */
+.datalink-block__value {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.06em;
+  color: var(--text);
+  white-space: nowrap;
+  padding: 2px 0;
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+}
+
+input.datalink-block__input {
+  /* Specificity note: the global `input[type=text]` width:100% rule
+     (Bugfix 2026-08-03, above) has selector weight (0,1,1) — one
+     attribute selector plus one type selector — which beats a bare
+     `.datalink-block__input` class selector (0,1,0) regardless of
+     source order. Combining the tag with the class here ties that
+     weight, so this rule (later in the cascade) wins and the intended
+     12ch actually applies. Without this, the input rendered at the full
+     row width (~271px) and painted its status word over "Anmelden". */
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.06em;
+  color: var(--text);
+  background: var(--tape);
+  border: 1px solid var(--acc);
+  border-radius: var(--r-sm);
+  padding: 2px 6px;
+  width: 12ch;
+  /* A `width` alone is still a flex-shrink TARGET, not a floor — under
+     pressure the box (and its border/placeholder) was being squeezed
+     down to near-nothing instead of staying at its stated 12ch, which is
+     the empty-looking black box in the field screenshot. */
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+
+.datalink-status-word {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.12em;
+  margin-left: 10px;
+  white-space: nowrap;
+}
+.datalink-status-word--ok {
+  color: var(--sem-ok);
+}
+.datalink-status-word--pending {
+  color: var(--sem-warn);
+}
+.datalink-status-word--none {
+  color: var(--text-dim);
+}
+
+.datalink-divider {
+  width: 1px;
+  height: 34px;
+  background: var(--line);
+  flex: none;
+}
+
+/* Deliberately the ONE shrinkable/truncatable item in this row — the
+   opposite choice from every other rule here. `.datalink-status__left`
+   must never shrink (that's what caused the original text-overlap bug),
+   but with `flex: none` here too, once the left side alone grew wider
+   than the window (e.g. after logon: "Wechseln"+"Abmelden" replacing the
+   single "Anmelden" button, plus "LOGON LÄUFT" being longer than "KEIN
+   LOGON"), `justify-content: space-between` had nowhere left to put this
+   span but past the right edge of the visible row — invisible with no
+   obvious scrollbar, i.e. it just silently vanished (field feedback:
+   "nach der Anmeldung rutscht wieder alles nach außerhalb"). This is the
+   least essential thing in the row (a nice-to-have freshness readout),
+   so it's the one allowed to give up space first: it shrinks and
+   ellipsizes in place instead, keeping the actually important controls
+   on the left fully visible. */
+.datalink-status__poll {
+  font-family: var(--font-mono);
+  font-size: var(--fs-300);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+  margin-left: 16px;
+}
+
+/* Error/warning lines render OUTSIDE the 66px row (see AC #8) — never
+   inside it, so the row's height can never depend on message length. */
+.datalink-alerts {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-}
-
-.cpdlc-link-bar__main {
-  display: flex;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-/* Same reasoning as .cpdlc-link: the label toggles between "start" and
-   "stop", so the button holds its width instead of resizing mid-click. */
-.cpdlc-link-bar__main .button {
-  min-width: 20ch;
+  gap: 4px;
+  padding: 8px 20px 0;
 }
 
 .cpdlc-link-bar__warn {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-300);
   line-height: 1.45;
-  color: var(--warning);
-  max-width: 70ch;
+  color: var(--sem-warn);
 }
 
-.cpdlc-link-bar__explain,
-.cpdlc-section__explain {
-  margin: 0;
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--text-muted);
-  max-width: 70ch;
-}
+/* --- §1.2 / workspace: composer 420px fixed | history 1fr --- */
 
-/* Link state, shared by the ACARS bar and the CPDLC logon bar. */
-
-.cpdlc-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-  color: var(--text-muted);
-  /* Reserve the width of the LONGEST state up front. Without this the
-     row re-flows every time the text changes ("ACARS aus" ->
-     "ACARS empfängt", "Keine Verbindung" -> "Angemeldet bei EDDB") and
-     every control beside it jumps sideways. */
-  min-width: 21ch;
-}
-
-.cpdlc-link__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--offline);
-  flex: none;
-}
-
-.cpdlc-link--connected {
-  color: var(--text);
-}
-
-.cpdlc-link--connected .cpdlc-link__dot {
-  background: var(--success);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 25%, transparent);
-}
-
-.cpdlc-link--sent {
-  color: var(--warning);
-}
-
-.cpdlc-link--sent .cpdlc-link__dot {
-  background: var(--warning);
-}
-
-/* --- Shared small form field --- */
-
-.cpdlc-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
-  /* Grid/flex items default to `min-width: auto`, which means their
-     CONTENT's natural width (e.g. "DELIVERY" + gap + "NICHT ERREICHBAR"
-     on one line) sets a floor under how far the track/item can shrink —
-     wrapping only kicks in once that floor is already wider than the
-     column has room for. In PDC's `repeat(auto-fit, minmax(110px, 1fr))`
-     grid that floor was wide enough to blow past 110px, so `auto-fit`
-     collapsed the whole form to a single column instead of the intended
-     two (field feedback 31.07.2026: "DELIVERY wandert nach unten, nicht
-     mehr in einer Reihe mit FLUGZEUGTYP"). Zeroing it lets the column
-     shrink to its intended width FIRST, so the label row wraps the badge
-     onto its own line instead of stretching the whole grid. */
-  min-width: 0;
-}
-
-.cpdlc-field > span {
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 600;
-}
-
-.cpdlc-field input {
-  font-family: var(--font-acars);
-  text-transform: uppercase;
-  min-width: 9ch;
-}
-
-/* v1.2.3 fix 2026-07-31 (#Hoppie-PDC-CPDLC): the reachability badge sits
-   next to the field LABEL, not below the input. Two earlier attempts each
-   fixed one thing and broke another: absolute-positioned (didn't reserve
-   space, so it landed under whatever content happened to sit below it —
-   the CPDLC action buttons or the next PDC form row) and, before that,
-   stacked in-flow below the input (made the field taller than its
-   siblings — pushed CPDLC's buttons around, and left a jagged gap in
-   PDC's form grid, since the field's grid ROW auto-sizes to match its
-   tallest cell while the sibling field next to it has nothing to fill
-   that extra height). Living in the label row instead means the field's
-   height never depends on whether a badge is present — always exactly
-   label-row + input, so it can never overlap or misalign anything. */
-.cpdlc-field__label-row {
-  display: flex;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 4px 8px;
-  min-width: 0;
-}
-
-/* --- Level 2/3 switch: PDC vs CPDLC --- */
-
-.cpdlc-tabs {
-  flex: 0 0 auto;
-  display: flex;
-  gap: 4px;
-  border-bottom: 1px solid var(--border);
-}
-
-.cpdlc-tabs__tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: none;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease;
-}
-
-.cpdlc-tabs__tab:hover {
-  color: var(--text);
-}
-
-.cpdlc-tabs__tab--active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-}
-
-.cpdlc-tabs__badge {
-  min-width: 18px;
-  padding: 1px 5px;
-  border-radius: 999px;
-  background: var(--danger);
-  color: var(--on-acc);
-  font-size: 11px;
-  font-weight: 700;
-  text-align: center;
-}
-
-/* --- Section body: header bar + the one scrolling log --- */
-
-/* Two columns from tablet width up: controls left, messages right.
-   Stacking them meant the form ate the height and the log — the thing
-   the pilot actually reads — got squeezed into a few rows. Each column
-   scrolls independently, and only when its own content overflows. */
-.cpdlc-section {
+.datalink-workspace {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1fr;
-  /* Single column (only reachable below the app's 900px minWidth, e.g.
-     a narrow webview): the log keeps a floor so the form can't squeeze
-     it down to a couple of rows — the side column scrolls instead. */
-  grid-template-rows: minmax(0, auto) minmax(220px, 1fr);
-  gap: 12px;
+  grid-template-columns: 420px 1fr;
+  gap: 1px;
+  background: var(--line);
 }
 
-/* Below the app's own 900px minimum, so the real window always gets the
-   two-column layout with the message log at full height. */
-@media (min-width: 860px) {
-  .cpdlc-section {
-    grid-template-columns: minmax(260px, 320px) 1fr;
-    grid-template-rows: 1fr;
-    align-items: stretch;
+@media (max-width: 900px) {
+  .datalink-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, auto) minmax(260px, 1fr);
   }
 }
 
-/* Left column: explain text + the request form. */
-.cpdlc-section__side {
+/* --- §3: composer --- */
+
+.datalink-composer {
   min-height: 0;
+  /* The layout contract above says exactly ONE scroll region
+     (.datalink-history__log) — `auto` here made this a second one. The
+     one place composer content can genuinely grow long, the CPDLC
+     element picker's result list, already has its own bounded scroll
+     (`.datalink-cpdlc-picker__options`, max-height 220px) — nothing else
+     in this column needs to scroll independently of the page. */
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  background: var(--bg);
 }
 
-/* Two independent rows instead of one wrapping flex row (v1.2.3-fix
-   2026-07-31, #Hoppie-PDC-CPDLC). The old single-row layout put the link
-   status, the centre field (label+input+badge) AND the action buttons in
-   one `align-items: flex-end` flex row: whenever the field's box changed
-   height — different link-status text length, badge present/absent — the
-   wrap point shifted and the buttons jumped between "next to the field"
-   and "below it". Splitting fields and actions into their own rows means
-   the field can grow or shrink freely without ever moving the buttons. */
-.cpdlc-section__bar {
-  flex: 0 0 auto;
+.datalink-composer > * {
+  flex: none;
+  padding: 14px 18px;
+}
+
+.datalink-composer__mode {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  padding: 14px 18px 0;
 }
 
-.cpdlc-section__bar-fields {
-  display: flex;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.cpdlc-section__bar-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-/* --- Request form (inline, collapsed by default) --- */
-
-.cpdlc-form {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-}
-
-.cpdlc-form__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: 10px;
-}
-
-/* Spans the full grid width so the reachability badge for DELIVERY never
-   makes that one field taller than FLUGZEUGTYP next to it (see the
-   comment at its call site in PdcView.tsx). Empty (no status yet) means
-   no text node at all, so it contributes zero height — no gap appears
-   before the pilot has typed a station. */
-.cpdlc-field__badge-row {
-  grid-column: 1 / -1;
-}
-
-.cpdlc-field__badge-row:empty {
-  display: none;
-}
-
-.cpdlc-form__preview {
-  display: block;
-  padding: 6px 8px;
-  font-size: 11px;
-  border-radius: 6px;
-  background: var(--surface-2);
-  font-family: var(--font-acars);
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.cpdlc-form__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.cpdlc-form__missing {
-  margin: 0;
-  font-size: 12px;
-  color: var(--warning);
-}
-
-/* --- The message log: the ONLY scroll region on this tab --- */
-
-.cpdlc-log {
+.datalink-mode {
   flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* Breathing room under the newest entry so it sits clear of the bottom
-   edge rather than pressed against it — a message that grows reply keys
-   then still lands comfortably in view instead of at the very bottom. */
-.cpdlc-log::after {
-  content: "";
-  display: block;
-  flex: 0 0 auto;
-  height: 96px;
-}
-
-.cpdlc-log__empty {
-  padding: 32px 16px;
-  text-align: center;
-  font-size: 13px;
-  color: var(--text-muted);
-}
-
-/* Messages are full-width rows, not chat bubbles — a datalink log is a
-   record, and the eye should scan one left edge down the page. Uplink
-   and downlink are told apart by the accent rule and the label, not by
-   which side they sit on. */
-
-.cpdlc-msg {
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  padding: 8px 16px;
+  border: 1px solid var(--line);
+  border-right: none;
   background: var(--surface);
-}
-
-.cpdlc-msg--down {
-  background: var(--surface-2);
-}
-
-.cpdlc-msg--open {
-  border-color: color-mix(in srgb, var(--warning) 55%, var(--border));
-  background: color-mix(in srgb, var(--warning) 7%, var(--surface));
-}
-
-/* Settled traffic folds to a single line: header stays, body truncates.
-   Keeps the live exchange in view without losing the record — one click
-   unfolds it again. */
-.cpdlc-msg--collapsed {
-  padding: 6px 12px;
-  opacity: 0.62;
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: var(--fw-regular);
   cursor: pointer;
 }
-
-.cpdlc-msg--collapsed:hover,
-.cpdlc-msg--collapsed:focus-visible {
-  opacity: 1;
-  border-color: var(--accent);
+.datalink-mode:first-child {
+  border-radius: var(--r-md) 0 0 var(--r-md);
+}
+.datalink-mode:last-child {
+  border-right: 1px solid var(--line);
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+}
+.datalink-mode--active {
+  background: var(--acc);
+  color: var(--bg);
+  font-weight: var(--fw-bold);
+  border-color: var(--acc);
+}
+/* Without this, the app-wide generic `button:hover` rule
+   (`background: var(--surface-2)`) wins on hover and leaves this
+   button's `--bg`-on-`--acc` text sitting on a `--surface-2` background
+   instead — unreadable the moment the mouse sits still over it (field
+   feedback: "dann wird der blaue Button dunkel und man kann die
+   Schrift nicht mehr sehen"). Every accent-filled control introduced
+   for this screen needs its own hover, same as `.button--primary`
+   already has. */
+.datalink-mode--active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--acc) 85%, black);
+  color: var(--bg);
 }
 
-.cpdlc-msg--collapsed .cpdlc-msg__meta {
-  margin-bottom: 2px;
+.datalink-station {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.cpdlc-msg--collapsed .cpdlc-msg__text {
+.datalink-station__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.datalink-station__head > span:first-child {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.datalink-station__hint {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  color: var(--text-dim);
+}
+
+.datalink-station__head-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Station-online indicator — restored after being dropped by mistake
+   during the datalink rebuild (the new spec's "no station list" line
+   was about NOT faking a directory/autocomplete; this is a live `ping`
+   check of the one station actually typed, an existing, deliberately
+   rate-limited feature that stays). Typography intentionally does NOT
+   inherit the field-label look it sits next to — colour is the one
+   signal it needs to carry. */
+.cpdlc-station-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: var(--fw-bold);
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-dim);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 12px;
 }
 
-.cpdlc-msg__meta {
+.cpdlc-station-badge__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex: 0 0 auto;
+}
+
+.cpdlc-station-badge--online {
+  color: var(--sem-ok);
+}
+.cpdlc-station-badge--online .cpdlc-station-badge__dot {
+  background: var(--sem-ok);
+}
+
+.cpdlc-station-badge--offline {
+  color: var(--sem-warn);
+}
+.cpdlc-station-badge--offline .cpdlc-station-badge__dot {
+  background: var(--sem-warn);
+}
+
+.datalink-station__box {
+  position: relative;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin: 0 0 6px;
-  font-size: 11px;
-  color: var(--text-muted);
 }
-
-.cpdlc-msg__who {
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--text);
-}
-
-.cpdlc-msg__min,
-.cpdlc-msg__time {
-  /* Deliberately NOT the ACARS face: B612 puts ':' and '.' in their own
-     monospace cell, so a timestamp renders as "01: 28: 14". Chrome, not
-     datalink text — the UI mono reads better here. */
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.cpdlc-msg__time {
-  margin-left: auto;
-}
-
-.cpdlc-msg__flag {
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--warning);
-  background: color-mix(in srgb, var(--warning) 16%, transparent);
-}
-
-.cpdlc-msg__pending {
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  background: var(--surface-2);
-}
-
-.cpdlc-msg__done {
-  color: var(--success);
-  font-weight: 700;
-}
-
-/* Datalink text is uppercase monospace on the real thing, and staying
-   faithful also makes a clearance readable at a glance. */
-.cpdlc-msg__text {
-  margin: 0;
-  font-family: var(--font-acars);
-  font-size: 13px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-/* --- Response keys, DCDU-style --- */
-
-.cpdlc-reply {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.cpdlc-reply__keys {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.cpdlc-key {
-  padding: 7px 16px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  font-family: var(--font-acars);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
-}
-
-.cpdlc-key:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-.cpdlc-key:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.cpdlc-key--affirm {
-  border-color: color-mix(in srgb, var(--success) 55%, var(--border));
-  color: var(--success);
-}
-
-.cpdlc-key--affirm:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--success) 12%, transparent);
-  border-color: var(--success);
-}
-
-.cpdlc-key--deny {
-  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
-  color: var(--danger);
-}
-
-.cpdlc-key--deny:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
-  border-color: var(--danger);
-}
-
-.cpdlc-reply__freetext {
-  display: flex;
-  gap: 8px;
-}
-
-.cpdlc-reply__freetext input {
-  flex: 1;
-  font-family: var(--font-acars);
-}
-
-.cpdlc-reply__confirm {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-/* --- Composer: a short menu, not a 287-row catalog --- */
-
-.cpdlc-composer {
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-}
-
-.cpdlc-composer__head {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.cpdlc-composer__groups {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  flex: 1;
-}
-
-.cpdlc-chip {
-  padding: 6px 14px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease;
-}
-
-.cpdlc-chip:hover {
-  color: var(--text);
-}
-
-.cpdlc-chip--active {
-  color: var(--text);
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-
-.cpdlc-composer__close {
-  border: none;
-  background: none;
-  color: var(--text-muted);
-  font-size: 15px;
-  line-height: 1;
-  padding: 4px;
-  cursor: pointer;
-}
-
-.cpdlc-composer__close:hover {
-  color: var(--text);
-}
-
-.cpdlc-composer__search {
+.datalink-station__box input {
   width: 100%;
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.06em;
+  color: var(--text);
+  background: var(--tape);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 11px 68px 11px 13px;
+  text-transform: uppercase;
+}
+.datalink-station__box input:focus-visible {
+  border-color: var(--acc);
+}
+.datalink-station__edit {
+  position: absolute;
+  right: 13px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  pointer-events: none;
 }
 
-/* No max-height here on purpose: a menu group is 4-7 rows and a search
-   is capped at 40, so this list never needs its own scrollbar. Giving it
-   one would put a scroll region inside the page's scroll region. */
-.cpdlc-composer__options {
-  /* The composer now owns the wide column, so its option list is the one
-     scroll region here — the message log is swapped out while it's open. */
+/* CPDLC logon — moved here from the shared status row (see the JSX
+   comment at its call site in DatalinkComposer.tsx for why). Same
+   head-row-then-input-row shape as `.datalink-station` above, so PDC's
+   station field and CPDLC's logon field read as the same kind of thing
+   switching tabs, but with the status word on the right of the head
+   (matching where it always was) and real action buttons instead of a
+   static "bearbeiten" hint, since logon has actual button-driven state
+   transitions that a hint alone can't cover. */
+.datalink-logon {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.datalink-logon__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.datalink-logon__head-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.datalink-logon__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.datalink-logon__value {
   flex: 1;
-  min-height: 0;
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+
+.datalink-logon__input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.06em;
+  color: var(--text);
+  background: var(--tape);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 11px 13px;
+  text-transform: uppercase;
+}
+.datalink-logon__input:focus-visible {
+  border-color: var(--acc);
+}
+
+.datalink-logon__actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.datalink-fieldgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.datalink-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.datalink-field > span {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.datalink-field input {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.06em;
+  color: var(--text);
+  background: var(--tape);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 9px 12px;
+  text-transform: uppercase;
+  min-width: 0;
+}
+.datalink-field input::placeholder {
+  color: var(--text-dim);
+  text-transform: none;
+}
+.datalink-field input:disabled {
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+/* The one field the pilot should fill next — exactly one at a time
+   (README §3.3's focus rule), so the form reads without an error. */
+.datalink-field--focus input {
+  border-color: var(--acc);
+}
+
+.datalink-cpdlc-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.datalink-cpdlc-picker__search {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--tape);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 8px 11px;
+}
+
+.datalink-cpdlc-picker__options {
+  max-height: 220px;
   overflow-y: auto;
   list-style: none;
   margin: 0;
@@ -9769,6 +11077,127 @@ input:disabled {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.datalink-cpdlc-picker__detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.datalink-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.datalink-preview__head {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  color: var(--text-dim);
+}
+.datalink-preview__head > span:first-child {
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.datalink-preview__head > span:last-child {
+  letter-spacing: 0.1em;
+}
+.datalink-preview__text {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text);
+  background: var(--tape);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 11px 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.datalink-preview__value {
+  color: var(--acc);
+}
+.datalink-preview__blank {
+  color: var(--sem-warn);
+  border-bottom: 1px solid var(--sem-warn);
+}
+
+/* --- §3.5: primary action, pinned to the preview, not the window edge --- */
+
+.datalink-primary {
+  padding-top: 14px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.datalink-primary__button {
+  width: 100%;
+  padding: 13px 20px;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--acc);
+  color: var(--bg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: var(--fw-bold);
+  text-align: center;
+  cursor: pointer;
+}
+.datalink-primary__button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--acc) 85%, black);
+  color: var(--bg);
+}
+.datalink-primary__button[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+.datalink-primary__help {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.datalink-composer__spacer {
+  flex: 1 1 auto !important;
+  padding: 0 !important;
+}
+
+/* --- §3.3 CPDLC-Modus: message-type chips + option list (the GOLD
+   element catalog picker, condensed into the 420px column instead of
+   taking over the wide one the way the pre-rebuild composer did). --- */
+
+.datalink-composer__groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cpdlc-chip {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: var(--fw-bold);
+  cursor: pointer;
+}
+.cpdlc-chip--active {
+  color: var(--bg);
+  background: var(--acc);
+  border-color: var(--acc);
+}
+.cpdlc-chip--active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--acc) 85%, black);
+  color: var(--bg);
 }
 
 .cpdlc-composer__option {
@@ -9779,97 +11208,433 @@ input:disabled {
   gap: 12px;
   padding: 8px 10px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: none;
   color: var(--text);
   text-align: left;
   cursor: pointer;
 }
-
 .cpdlc-composer__option:hover {
   background: var(--surface-2);
 }
-
 .cpdlc-composer__option--active {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: var(--acc);
+  background: var(--acc-quiet);
 }
-
 .cpdlc-composer__option-text {
-  font-family: var(--font-acars);
+  font-family: var(--font-mono);
   font-size: 12.5px;
 }
-
 .cpdlc-composer__option-id {
   font-size: 10.5px;
-  color: var(--text-muted);
+  color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
 
-.cpdlc-composer__detail {
+/* --- §4: history (right column) --- */
+
+.datalink-history {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.datalink-history__head {
+  flex: 0 0 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+.datalink-history__title {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.datalink-history__filters {
+  display: flex;
+  gap: 14px;
+}
+.datalink-filter {
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.datalink-filter--active {
+  color: var(--text);
+}
+
+.datalink-history__log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
+  padding: 14px 20px;
 }
 
-.cpdlc-composer__detail .cpdlc-field {
-  max-width: 22ch;
+.cpdlc-log__empty {
+  padding: 32px 16px;
+  text-align: center;
+  font-size: var(--fs-400);
+  color: var(--text-dim);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .cpdlc-tabs__tab,
-  .cpdlc-chip,
-  .cpdlc-key {
-    transition: none;
-  }
+/* --- §4.2: downlink (sent) — compact, not the point of the screen --- */
+
+.datalink-downlink {
+  width: 100%;
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg);
+}
+.datalink-downlink__meta {
+  margin: 0 0 4px;
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+}
+.datalink-downlink__delivered {
+  color: var(--sem-ok);
+}
+/* Never truncated — README §4.2 and AC #2: no ellipsis, no fixed line
+   count, the text just wraps. */
+.datalink-downlink__text {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-/* Station-online indicator next to the recipient/centre field. Three
-   states because "couldn't check" is not the same claim as "offline".
-   v1.2.3 fix history (field feedback 31.07.2026): went through three
-   layouts (stacked below the input, then absolute-positioned, then
-   inline in the label) before landing on its own full grid/flex row —
-   see the call sites in CpdlcView.tsx and PdcView.tsx for why each of
-   those broke something else. Typography matches `.cpdlc-field > span`
-   (same size, weight, uppercase, tracking) on purpose: it reads as a
-   status VALUE for that field, same family as the field's own label —
-   not a separate, unrelated smaller caption bolted on next to it. Colour
-   is the only thing that sets it apart, which is exactly the one signal
-   it needs to carry. */
-.cpdlc-station-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
+/* --- §4.3: uplink — the core of the screen --- */
+
+.datalink-uplink {
+  border: 1px solid var(--acc);
+  border-left: 3px solid var(--acc);
+  border-radius: 2px 8px 8px 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* README §6: a genuinely new uplink fades in ONCE — see the freshness
+   tracking at the call site in DatalinkHistory.tsx for why "once" is
+   actually true here (the class only ever lands on a freshly-mounted
+   DOM node, never re-added to an existing one). */
+.datalink-uplink--fresh {
+  animation: resume-fade-in 0.25s ease-out;
+}
+
+.datalink-uplink__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.datalink-uplink__tag {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.16em;
+  color: var(--acc);
+}
+.datalink-uplink__station {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: var(--fw-bold);
+  color: var(--text);
+}
+.datalink-uplink__title {
+  font-family: var(--font-sans);
+  font-size: var(--fs-400);
+  color: var(--text-dim);
+  flex: 1;
+}
+.datalink-uplink__time {
+  font-family: var(--font-mono);
+  font-size: var(--fs-300);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.cpdlc-station-badge__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-muted);
+.datalink-uplink__grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--line);
+}
+.datalink-uplink__cell {
+  background: var(--surface);
+  padding: 12px 16px;
+  min-width: 0;
+}
+.datalink-uplink__grid--row2 .datalink-uplink__cell {
+  padding: 10px 16px;
+}
+.datalink-uplink__cell-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.datalink-uplink__cell-value {
+  display: block;
+  font-family: var(--font-mono);
+  font-weight: var(--fw-bold);
+  line-height: 1.2;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.datalink-uplink__cell-value--lg {
+  font-size: 36px;
+}
+.datalink-uplink__cell-value--md {
+  font-size: 22px;
+}
+.datalink-uplink__grid:not(.datalink-uplink__grid--row2) .datalink-uplink__cell-value--md {
+  font-size: 30px;
+}
+.datalink-uplink__cell-value--warn {
+  color: var(--sem-warn);
+}
+
+/* Parsing failed entirely: raw text becomes the main content, one size
+   up, no grid (README §5's fallback rule). */
+.datalink-uplink__raw {
+  margin: 0;
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.datalink-uplink__conditions {
+  padding: 11px 16px;
+  border-top: 1px solid var(--line);
+}
+.datalink-uplink__conditions-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.datalink-uplink__conditions p {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.datalink-uplink__answered {
+  margin: 0;
+  padding: 11px 16px;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--sem-ok);
+}
+
+.datalink-uplink__original {
+  padding: 11px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.datalink-uplink__original-head {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  color: var(--text-dim);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.datalink-uplink__original-toggle {
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.datalink-uplink__original-toggle:hover {
+  color: var(--text);
+}
+/* Never truncated — this is the binding version of the message, the
+   parse above it is only a reading aid (README §4.3.f). */
+.datalink-uplink__original-text {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* --- §4.3.e: answer row — reuses .cpdlc-reply/.cpdlc-key, restyled --- */
+
+.cpdlc-reply {
+  padding: 11px 16px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cpdlc-reply__keys {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.cpdlc-reply__trailing {
+  margin-left: auto;
+}
+
+.cpdlc-key {
+  padding: 11px 24px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+.cpdlc-key:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.cpdlc-key--affirm {
+  background: var(--sem-ok);
+  border-color: var(--sem-ok);
+  color: var(--bg);
+}
+.cpdlc-key--affirm:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.cpdlc-key--deny {
+  color: var(--sem-danger);
+  border-color: var(--line);
+  background: var(--surface-2);
+}
+.cpdlc-key--deny:hover:not(:disabled) {
+  border-color: var(--sem-danger);
+}
+
+.cpdlc-reply__freetext {
+  display: flex;
+  gap: 8px;
+}
+.cpdlc-reply__freetext input {
+  flex: 1;
+  font-family: var(--font-mono);
+  background: var(--tape);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 8px 11px;
+  color: var(--text);
+}
+.cpdlc-reply__confirm {
+  margin: 0;
+  font-size: var(--fs-300);
+  font-weight: var(--fw-bold);
+  color: var(--text);
+}
+
+/* --- §4.4: footer + "older messages" --- */
+
+.datalink-history__footer {
   flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 20px;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.datalink-history__older-toggle {
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.datalink-history__older-toggle:hover {
+  color: var(--text);
 }
 
-.cpdlc-station-badge--online {
-  color: var(--success);
+.datalink-older {
+  opacity: 0.65;
 }
-.cpdlc-station-badge--online .cpdlc-station-badge__dot {
-  background: var(--success);
+.datalink-older-line {
+  margin: 0;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.datalink-older-line__dir {
+  font-weight: var(--fw-bold);
+  color: var(--text);
+  white-space: nowrap;
+}
+.datalink-older-line__time {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.datalink-older-line__text {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-.cpdlc-station-badge--offline {
-  color: var(--warning);
-}
-.cpdlc-station-badge--offline .cpdlc-station-badge__dot {
-  background: var(--warning);
+@media (prefers-reduced-motion: reduce) {
+  .datalink-mode,
+  .datalink-filter,
+  .cpdlc-key {
+    transition: none;
+  }
 }
 
 /* ===== v1.3.0 (#Hoppie-PDC-CPDLC): top-level "needs attention" banner ===== */
@@ -9877,7 +11642,7 @@ input:disabled {
 .cpdlc-banner {
   background: color-mix(in srgb, var(--accent) 10%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border));
-  border-radius: 12px;
+  border-radius: var(--r-md);
   padding: 12px 16px;
   margin-bottom: 14px;
   display: flex;
@@ -9905,7 +11670,7 @@ input:disabled {
   line-height: 1;
   padding: 6px;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
 }
 
 .cpdlc-banner__dismiss:hover {

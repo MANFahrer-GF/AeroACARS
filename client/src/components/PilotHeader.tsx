@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Profile } from "../types";
 
@@ -6,98 +7,65 @@ interface Props {
   onLogout: () => void;
 }
 
+function formatZulu(now: number): { time: string; suffix: string } {
+  const d = new Date(now);
+  const hh = d.getUTCHours().toString().padStart(2, "0");
+  const mm = d.getUTCMinutes().toString().padStart(2, "0");
+  const ss = d.getUTCSeconds().toString().padStart(2, "0");
+  return { time: `${hh}:${mm}:${ss}`, suffix: "z" };
+}
+
 /**
- * Slim pilot identity row above the bids list. Layout:
- *
- *   ┌────────────┐  Name (large)
- *   │ Logo 180×80│  Ident · Rank · Airline      📍 EDDM  🏠 EDDV  [⏻]
- *   └────────────┘
- *
- * Logo is 180×80 (= GSG native size, 2.25:1 ratio) on a white
- * background — airline logos are universally designed for white,
- * forcing the bg means a Turkish red, a GSG dark-blue, a Lufthansa
- * yellow all render correctly. Pre-v0.1.30 the logo lived in a
- * 36×36 square on a dark surface and was effectively invisible.
- *
- * Tooltips on 📍/🏠 say "laut Webseite ({{airline}})" — using the
- * airline ICAO from the profile so multi-VA pilots can tell which
- * site a stale value is coming from. Falls back to "Webseite" alone
- * when the airline relation isn't set.
+ * Briefing-2a (README §2): Kopfzeile statt Karte. Das Airline-Logo lebt
+ * jetzt an den Flügen selbst (BidsList main card), nicht mehr hier —
+ * eine Kopfzeile identifiziert den PILOTEN, nicht die Airline.
  */
 export function PilotHeader({ profile, onLogout }: Props) {
   const { t } = useTranslation();
-  const airline = profile.airline;
-  const airlineIcao = airline?.icao ?? "";
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const zulu = formatZulu(now);
 
   return (
-    <section className="pilot-header pilot-header--slim">
-      <div className="pilot-header__logo-slim">
-        {airline?.logo ? (
-          <img src={airline.logo} alt={airline.name} />
-        ) : (
-          <div className="pilot-header__logo-fallback" aria-hidden="true">
-            {airline?.icao ?? "✈"}
-          </div>
+    <header className="pilot-bar">
+      <div className="pilot-bar__left">
+        {profile.ident && (
+          <span className="pilot-bar__ident">{profile.ident}</span>
+        )}
+        <span className="pilot-bar__name">{profile.name}</span>
+        {(profile.rank?.name || profile.airline?.name) && (
+          <span className="pilot-bar__role">
+            {[profile.rank?.name, profile.airline?.name]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
         )}
       </div>
-
-      <div className="pilot-header__identity-slim">
-        <div className="pilot-header__identity-line">
-          <span className="pilot-header__name-slim">{profile.name}</span>
-        </div>
-        <div className="pilot-header__identity-line">
-          {profile.ident && (
-            <span className="pilot-header__chip-slim">{profile.ident}</span>
-          )}
-          {profile.rank?.name && (
-            <>
-              <span className="pilot-header__sep" aria-hidden="true">·</span>
-              <span className="pilot-header__chip-slim pilot-header__chip-slim--muted">
-                {profile.rank.name}
-              </span>
-            </>
-          )}
-          {airline && (
-            <>
-              <span className="pilot-header__sep" aria-hidden="true">·</span>
-              <span className="pilot-header__chip-slim pilot-header__chip-slim--muted">
-                {airline.icao}
-              </span>
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="pilot-header__locations-slim">
-        <span
-          className="pilot-header__loc-slim"
-          title={t("pilot_header.location_tooltip", { airline: airlineIcao })}
-        >
-          <span className="pilot-header__loc-icon" aria-hidden="true">📍</span>
-          <span className="pilot-header__loc-value-slim">
-            {profile.curr_airport ?? "—"}
-          </span>
+      <div className="pilot-bar__right">
+        <span className="pilot-bar__loc">
+          <span className="pilot-bar__loc-label">{t("pilot_header.pos_label")}</span>
+          <span className="pilot-bar__loc-value">{profile.curr_airport ?? "—"}</span>
         </span>
-        <span
-          className="pilot-header__loc-slim"
-          title={t("pilot_header.home_tooltip", { airline: airlineIcao })}
-        >
-          <span className="pilot-header__loc-icon" aria-hidden="true">🏠</span>
-          <span className="pilot-header__loc-value-slim">
-            {profile.home_airport ?? "—"}
-          </span>
+        <span className="pilot-bar__loc">
+          <span className="pilot-bar__loc-label">{t("pilot_header.basis_label")}</span>
+          <span className="pilot-bar__loc-value">{profile.home_airport ?? "—"}</span>
         </span>
+        <span className="pilot-bar__sep" aria-hidden="true" />
+        <span className="pilot-bar__clock">
+          {zulu.time}
+          <span className="pilot-bar__clock-suffix">{zulu.suffix}</span>
+        </span>
+        <button
+          type="button"
+          className="pilot-bar__logout"
+          onClick={onLogout}
+        >
+          {t("actions.logout")}
+        </button>
       </div>
-
-      <button
-        type="button"
-        className="pilot-header__logout-slim"
-        onClick={onLogout}
-        title={t("actions.logout")}
-        aria-label={t("actions.logout")}
-      >
-        ⏻
-      </button>
-    </section>
+    </header>
   );
 }

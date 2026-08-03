@@ -11,8 +11,26 @@
 //      SICHTBAR aus (Haken weg) und das Zentrieren stoppt.
 //   3. Der „🎯 Flugzeug"-Knopf zentriert wieder und schaltet Follow an.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from "vitest";
 import { render, screen, fireEvent, act, cleanup } from "@testing-library/react";
+import i18next from "i18next";
+import { initReactI18next } from "react-i18next";
+import deCommon from "../locales/de/common.json";
+
+// This test predates the Livemap-4a chrome rewrite, which added real i18n
+// copy to LiveMapView — real i18next (same setup as CpdlcPanel.test.tsx)
+// rather than a key-passthrough mock, so the "Folgen" button text this file
+// queries for stays true to what's actually configured.
+beforeAll(async () => {
+  if (!i18next.isInitialized) {
+    await i18next.use(initReactI18next).init({
+      lng: "de",
+      resources: { de: { common: deCommon } },
+      defaultNS: "common",
+      interpolation: { escapeValue: false },
+    });
+  }
+});
 
 // Gemeinsamer mutbarer Zustand für den maplibre-Mock (vi.hoisted, damit die
 // Mock-Factory ihn referenzieren darf — sie wird an den Modulanfang gehoistet).
@@ -75,6 +93,7 @@ vi.mock("maplibre-gl", () => {
     addLayer() { return this; }
     getSource() { return { setData: () => {} }; }
     getLayer() { return {}; }
+    setLayoutProperty() { return this; }
     easeTo(o: { center?: [number, number]; zoom?: number }) {
       h.easeTo.push(o);
       if (o.center) this.center = { lng: o.center[0], lat: o.center[1] };
@@ -112,6 +131,9 @@ vi.mock("../lib/ipc", () => ({
     if (cmd === "airport_get") return { lat: null, lon: null };
     if (cmd === "airport_ground_index") return [];
     if (cmd === "airport_ground_get") return null;
+    // Livemap-4a's Ereignisliste (useMapEvents) polls both of these.
+    if (cmd === "activity_log_get") return [];
+    if (cmd === "hoppie_get_thread") return [];
     return null;
   }),
   listen: vi.fn(async () => () => {}),
@@ -228,7 +250,7 @@ describe("LiveMapView Follow-Kamera", () => {
     expect(h.jumpTo.length).toBe(0);
   });
 
-  it("der „🎯 Flugzeug\"-Knopf zentriert wieder und schaltet Follow an", () => {
+  it("der „Auf Flug zentrieren\"-Knopf zentriert wieder und schaltet Follow an", () => {
     render(<LiveMapView activeFlight={flight as never} simSnapshot={snap(41.2, 28.7) as never} />);
     fireLoad();
     // erst Follow per Pan ausschalten
@@ -239,7 +261,10 @@ describe("LiveMapView Follow-Kamera", () => {
     expect(follow.getAttribute("aria-pressed")).toBe("false");
 
     h.easeTo.length = 0;
-    const btn = screen.getByRole("button", { name: /Flugzeug/ });
+    // v1.3.5 (#Livemap-4a): the old icon-only "🎯" button (aria-label "Auf
+    // mein Flugzeug zentrieren") became a labeled text button in the new
+    // Kartenschalter-Block, README §3 — same one-shot recenter action.
+    const btn = screen.getByRole("button", { name: "Auf Flug zentrieren" });
     act(() => fireEvent.click(btn));
 
     expect(follow.getAttribute("aria-pressed")).toBe("true");

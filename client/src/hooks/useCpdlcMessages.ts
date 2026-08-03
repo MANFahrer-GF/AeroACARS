@@ -1,16 +1,20 @@
 // v1.3.0 (#Hoppie-PDC-CPDLC) — message-history hook for the CPDLC tab.
 //
-// Phase 2: polls `hoppie_get_thread` every 5s while mounted (same cadence
-// DiscordRpcPanel already uses for its status poll). Phase 3 upgrades this
+// Phase 2: polls `hoppie_get_thread` while mounted. Phase 3 upgrades this
 // to real backend push (`listen("cpdlc-message", ...)`, mirroring
 // useIntegrityFlags.ts) once the poller actually emits that event — no
 // call-site changes needed then, this hook's return shape stays the same.
 //
-// The in-app sound alert is pulled forward from Phase 3 here (asset +
-// setting already existed) since it's cheap and self-contained — it just
-// plays `notify_sound_url` when a poll surfaces a new "received" entry.
-// The OS-native toast (tauri-plugin-notification, needs its own
-// permission flow) stays Phase 3.
+// Cadence: README §6 says 15-20s. Was 5s (an earlier, faster cadence
+// from before the Datalink-3a spec existed, never reconciled with it).
+// Note useHoppieAttention.ts polls the same `hoppie_get_thread` endpoint
+// independently at its own 5s cadence — that one drives the app-wide
+// notification banner/sound, not this screen's history, and is out of
+// this audit's scope; the two together still mean Hoppie sees requests
+// at roughly the faster of the two rates whenever this tab is open.
+//
+// This hook itself stays silent — see the `refresh` comment below for
+// where the sound alert actually lives and why it isn't here.
 
 import { useEffect, useState, useCallback } from "react";
 import { invoke } from "../lib/ipc";
@@ -34,20 +38,28 @@ export interface ThreadEntry {
   deferred: boolean | null;
 }
 
-const POLL_MS = 5000;
+const POLL_MS = 15000;
 
 export function useCpdlcMessages(active: boolean): {
   messages: ThreadEntry[];
   refresh: () => void;
+  /** When the last poll actually completed (`Date.now()`), for the
+   *  status bar's "letzte Abfrage vor {n}s" readout — `null` before the
+   *  first one lands. */
+  lastFetchedAt: number | null;
 } {
   const [messages, setMessages] = useState<ThreadEntry[]>([]);
+  const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null);
 
   // Deliberately silent. The alert lives in `useHoppieAttention`, which
   // runs at the App root whether or not this tab is mounted. Playing it
   // here too meant two overlapping chimes whenever the tab was open.
   const refresh = useCallback(() => {
     void invoke<ThreadEntry[]>("hoppie_get_thread")
-      .then(setMessages)
+      .then((entries) => {
+        setMessages(entries);
+        setLastFetchedAt(Date.now());
+      })
       .catch(() => undefined);
   }, []);
 
@@ -58,5 +70,5 @@ export function useCpdlcMessages(active: boolean): {
     return () => window.clearInterval(id);
   }, [active, refresh]);
 
-  return { messages, refresh };
+  return { messages, refresh, lastFetchedAt };
 }

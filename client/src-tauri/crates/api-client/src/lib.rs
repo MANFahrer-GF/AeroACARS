@@ -428,6 +428,13 @@ pub struct Flight {
     /// Scheduled flight time in minutes.
     #[serde(default)]
     pub flight_time: Option<i32>,
+    /// Scheduled departure time of day, "HH:MM", Zulu — raw phpVMS schedule
+    /// field, passed through unmodified (`phpvmsflights.dpt_time`).
+    #[serde(default, deserialize_with = "de_opt_str_or_int")]
+    pub dpt_time: Option<String>,
+    /// Scheduled arrival time of day, "HH:MM", Zulu (`phpvmsflights.arr_time`).
+    #[serde(default, deserialize_with = "de_opt_str_or_int")]
+    pub arr_time: Option<String>,
     /// Cruise level (e.g. 360 == FL360).
     #[serde(default)]
     pub level: Option<i32>,
@@ -518,6 +525,22 @@ pub struct SimBriefOfp {
     /// Maximum Landing Weight. Bei Overshoot droht Fuel-Dumping
     /// oder Overweight-Landing-Inspektion.
     pub max_ldw_kg: f32,
+    /// Briefing-2a Weights-Transparenz (Pilot-Feedback 2026-08-03, analog
+    /// zur Fuel-Aufschluesselung): Operating Empty Weight aus `<oew>` —
+    /// mit `planned_payload_kg` ergibt die Summe exakt `planned_zfw_kg`.
+    #[serde(default)]
+    pub planned_oew_kg: f32,
+    /// Payload (Pax + Fracht zusammen) aus `<payload>`.
+    #[serde(default)]
+    pub planned_payload_kg: f32,
+    /// Briefing-2a LOAD-Rubrik-Transparenz: Pax-Gesamtgewicht
+    /// (`pax_weight * pax_count`) und Gepaeck-Gesamtgewicht
+    /// (`bag_weight * bag_count`) getrennt von der reinen Fracht
+    /// (`freight_kg`) — zusammen ergeben sie `planned_payload_kg`.
+    #[serde(default)]
+    pub planned_pax_weight_kg: f32,
+    #[serde(default)]
+    pub planned_baggage_kg: f32,
     // ---- OFP-Identitätsfelder (v0.3.0) ----
     // Damit der Pilot bei Mismatch sieht WORAUF der SimBrief-OFP
     // tatsächlich basiert (Flight-Number, Origin, Destination, wann
@@ -562,6 +585,37 @@ pub struct SimBriefOfp {
     /// meint, wenn er "wieviel Cargo habe ich" fragt.
     #[serde(default)]
     pub freight_kg: f32,
+    /// Briefing-2a: Aircraft-ICAO-Typ aus `<aircraft><icaocode>` — Fallback
+    /// fuer die Route-Mitte/LOAD-Rubrik wenn der Bid (noch) keinen phpVMS-
+    /// Bid-Pointer-Subfleet hat (SimBrief-direct-Pfad, der Normalfall vor
+    /// dem ersten phpVMS-OFP-Binding).
+    #[serde(default)]
+    pub aircraft_icao: Option<String>,
+    /// Sitzplatz-Total der geplanten Config aus `<aircraft><max_passengers>` —
+    /// Grundlage fuer "PAX von N" in der LOAD-Rubrik. Verifiziert per Live-
+    /// XML-Dump 2026-08-02 (vorherige Annahme "kommt nicht aus der SimBrief-
+    /// Preview" war falsch, siehe BidsList.tsx-Historie).
+    #[serde(default)]
+    pub max_passengers: Option<i32>,
+    /// Geplante Blockzeit ab (Unix-Epoch-Sekunden, UTC) aus `<times><sched_out>`.
+    /// Fallback-Quelle fuer STD, wenn phpVMS' `flight.dpt_time` fehlt.
+    #[serde(default)]
+    pub sched_out_epoch: Option<i64>,
+    /// Geplante Blockzeit an (Unix-Epoch-Sekunden, UTC) aus `<times><sched_in>`.
+    #[serde(default)]
+    pub sched_in_epoch: Option<i64>,
+    /// Briefing-2a Fuel-Transparenz (Pilot-Feedback 2026-08-02: Trip+Reserve
+    /// allein ergaben keine plausible Summe zu Block — verifiziert per Live-
+    /// XML-Dump: `<fuel>` hat taxi/contingency/alternate_burn/reserve/extra,
+    /// die zusammen mit Trip exakt `plan_ramp` (Block) ergeben).
+    #[serde(default)]
+    pub planned_taxi_kg: f32,
+    #[serde(default)]
+    pub planned_contingency_kg: f32,
+    #[serde(default)]
+    pub planned_alternate_burn_kg: f32,
+    #[serde(default)]
+    pub planned_extra_kg: f32,
 }
 
 /// Single navlog fix from a SimBrief OFP. `kind` carries the SimBrief
@@ -577,7 +631,21 @@ pub struct RouteFix {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SimBriefSubfleet {
-    #[serde(default)]
+    // BUG-FIX (Briefing-2a, Pilot-Report 2026-08-02 "Subfleet-Bezeichnung
+    // passt nicht"): ohne dieses `alias` blieb das Feld IMMER `None`, weil
+    // phpVMS den JSON-Key `"type"` liefert (nicht `"type_"`) — Rust erlaubt
+    // `type` nicht als Bezeichner, daher der Trailing-Underscore. Live
+    // verifiziert: `flight.simbrief.subfleet.type` = "VLG-A320-IAE-SL"
+    // (Airline-Typ-Triebwerk-Winglet) ist in der API IMMER schon da, wurde
+    // aber nie ankommend gelesen.
+    // WICHTIG: `alias` statt `rename` — `rename` haette zusaetzlich das
+    // Serialize-Verhalten geaendert (Rust->Frontend-IPC-JSON schriebe dann
+    // `"type"` statt `"type_"`), was den bestehenden Frontend-Zugriff
+    // `subfleet?.type_` bricht (genau dieser Fehler ist beim ersten Versuch
+    // mit `rename` live aufgetreten — Subfleet blieb weiterhin leer, obwohl
+    // das Rust-Objekt intern schon korrekt befuellt war). `alias` wirkt nur
+    // beim Deserialisieren, Serialize bleibt beim Rust-Feldnamen `type_`.
+    #[serde(default, alias = "type")]
     pub type_: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
@@ -1103,6 +1171,23 @@ pub struct AircraftDetails {
     /// "A" active, "S" stored, etc.
     #[serde(default)]
     pub status: Option<String>,
+    /// Max takeoff weight, per-tail (`phpvmsaircraft.mtow`). phpVMS's
+    /// `App\Http\Resources\Aircraft` always wraps mass fields as
+    /// `{kg, lbs}` (`App\Contracts\Unit::getResponseUnits()`), never a
+    /// bare number — hence the nested struct instead of `Option<f64>`.
+    #[serde(default)]
+    pub mtow: Option<MassUnits>,
+}
+
+/// `{kg, lbs}` shape phpVMS's `Mass`/`Fuel` unit wrappers always emit
+/// (`App\Contracts\Unit::getResponseUnits()` — both units are hardcoded
+/// in `responseUnits`, so both keys are always present).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MassUnits {
+    #[serde(default)]
+    pub kg: Option<f64>,
+    #[serde(default)]
+    pub lbs: Option<f64>,
 }
 
 // v0.12.12-dev: VA-News-Post aus `GET /api/news`. phpVMS liefert je
@@ -1634,7 +1719,49 @@ impl Client {
     /// - Network/IO-Error vor Response → `Network`
     ///
     /// Spec docs/spec/ofp-refresh-simbrief-direct-v0.7.8.md §3.
+    ///
+    /// Briefing-2a-Haertung (Pilot-Feedback 2026-08-03): der allererste
+    /// Preview-Fetch direkt nach App-Start/Seiten-Reload schlug wiederholt
+    /// transient fehl (Cold-Start-Netzwerkstack/DNS, kurzer SimBrief-Haenger),
+    /// waehrend ein manueller "Aktualisieren"-Klick sofort danach klappte —
+    /// klassisches Retry-Symptom. `Network`/`Unavailable` (beide moeglicherweise
+    /// transient) bekommen bis zu 2 weitere Versuche mit kurzem Backoff;
+    /// `NoIdentifier`/`UserNotFound`/`ParseFailed` sind dauerhafte Fehler
+    /// (falscher Key, kein OFP, kaputtes XML) und werden NICHT wiederholt —
+    /// erneutes Versuchen wuerde nur Zeit kosten ohne die Ursache zu beheben.
     pub async fn fetch_simbrief_direct(
+        &self,
+        user_id: Option<&str>,
+        username: Option<&str>,
+    ) -> Result<SimBriefOfp, SimBriefDirectError> {
+        const MAX_ATTEMPTS: u32 = 3;
+        const BACKOFF: [std::time::Duration; 2] = [
+            std::time::Duration::from_millis(400),
+            std::time::Duration::from_millis(900),
+        ];
+        let mut last_err = SimBriefDirectError::Network;
+        for attempt in 0..MAX_ATTEMPTS {
+            match self.fetch_simbrief_direct_attempt(user_id, username).await {
+                Ok(ofp) => return Ok(ofp),
+                Err(e @ (SimBriefDirectError::Network | SimBriefDirectError::Unavailable)) => {
+                    last_err = e;
+                    if attempt + 1 < MAX_ATTEMPTS {
+                        tracing::warn!(
+                            attempt = attempt + 1,
+                            "SimBrief-direct: transienter Fehler, retry"
+                        );
+                        tokio::time::sleep(BACKOFF[attempt as usize]).await;
+                        continue;
+                    }
+                }
+                // Dauerhafte Fehler sofort durchreichen, kein Retry.
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last_err)
+    }
+
+    async fn fetch_simbrief_direct_attempt(
         &self,
         user_id: Option<&str>,
         username: Option<&str>,
@@ -2057,6 +2184,13 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
         .map(to_kg)
         .unwrap_or(0.0);
     let reserve = parse_f("reserve").map(to_kg).unwrap_or(0.0);
+    // Briefing-2a: die restlichen Fuel-Kategorien aus <fuel> — zusammen mit
+    // trip (enroute_burn/est_burn) + reserve ergeben sie exakt plan_ramp
+    // (Block). Ohne diese fehlt die Nachvollziehbarkeit der Block-Summe.
+    let taxi_fuel = parse_f("taxi").map(to_kg).unwrap_or(0.0);
+    let contingency_fuel = parse_f("contingency").map(to_kg).unwrap_or(0.0);
+    let alternate_burn_fuel = parse_f("alternate_burn").map(to_kg).unwrap_or(0.0);
+    let extra_fuel = parse_f("extra").map(to_kg).unwrap_or(0.0);
     // v0.3.0: MAX-Werte aus dem Aircraft-Performance-Block des OFP.
     // SimBrief liefert die in `<max_zfw>` / `<max_tow>` / `<max_ldw>`
     // unter `<weights>`. Bei Custom-Subfleets können die fehlen — dann
@@ -2064,6 +2198,10 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
     let max_zfw = parse_f("max_zfw").map(to_kg).unwrap_or(0.0);
     let max_tow = parse_f("max_tow").map(to_kg).unwrap_or(0.0);
     let max_ldw = parse_f("max_ldw").map(to_kg).unwrap_or(0.0);
+    // Briefing-2a: OEW + Payload aus <weights> — zusammen ergeben sie ZFW,
+    // macht die Zahl nachvollziehbar (analog zur Fuel-Aufschluesselung).
+    let oew = parse_f("oew").map(to_kg).unwrap_or(0.0);
+    let payload = parse_f("payload").map(to_kg).unwrap_or(0.0);
     // v0.3.0: OFP-Identitätsfelder. SimBrief liefert always den
     // letzten OFP des Pilot-Accounts — wenn der nicht zur aktuellen
     // Buchung passt, wollen wir das im Frontend deutlich anzeigen.
@@ -2188,6 +2326,54 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
         // (Cargo-Only-Flight ohne Gepaeck) oder wir haben nichts Besseres.
         .unwrap_or(cargo_kg);
 
+    // Briefing-2a: LOAD-Rubrik-Transparenz (Pilot-Feedback 2026-08-03,
+    // analog zu Fuel/Weights) — Pax-Gesamtgewicht + Gepaeck-Gesamtgewicht
+    // getrennt von der reinen Fracht, damit sich Payload nachvollziehen
+    // laesst (Pax-Gewicht + Gepaeck + Fracht = Payload).
+    let pax_weight_total_kg: f32 = {
+        let per_pax_kg: f32 = extract_tag(xml, "weights")
+            .and_then(|inner| extract_tag(inner, "pax_weight"))
+            .and_then(|s| s.trim().parse::<f32>().ok())
+            .map(to_kg)
+            .unwrap_or(0.0);
+        per_pax_kg * pax_count as f32
+    };
+    let baggage_total_kg: f32 = {
+        let per_bag_kg: f32 = extract_tag(xml, "weights")
+            .and_then(|inner| extract_tag(inner, "bag_weight"))
+            .and_then(|s| s.trim().parse::<f32>().ok())
+            .map(to_kg)
+            .unwrap_or(0.0);
+        let bag_count: f32 = extract_tag(xml, "weights")
+            .and_then(|inner| extract_tag(inner, "bag_count"))
+            .and_then(|s| s.trim().parse::<f32>().ok())
+            .or_else(|| {
+                extract_tag(xml, "weights")
+                    .and_then(|inner| extract_tag(inner, "bag_count_actual"))
+                    .and_then(|s| s.trim().parse::<f32>().ok())
+            })
+            .unwrap_or(0.0);
+        per_bag_kg * bag_count
+    };
+
+    // Briefing-2a: Aircraft-Typ + Sitzplatz-Total aus <aircraft>, geplante
+    // Block-Zeiten aus <times> — Fallback-Quellen wenn phpVMS' eigene Felder
+    // (Bid-Pointer-Subfleet bzw. flights.dpt_time/arr_time) fehlen.
+    let aircraft_icao = extract_tag(xml, "aircraft")
+        .and_then(|inner| extract_tag(inner, "icaocode").or_else(|| extract_tag(inner, "base_type")))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let max_passengers = extract_tag(xml, "aircraft")
+        .and_then(|inner| extract_tag(inner, "max_passengers"))
+        .and_then(|s| s.trim().parse::<i32>().ok())
+        .filter(|&n| n > 0);
+    let sched_out_epoch = extract_tag(xml, "times")
+        .and_then(|inner| extract_tag(inner, "sched_out"))
+        .and_then(|s| s.trim().parse::<i64>().ok());
+    let sched_in_epoch = extract_tag(xml, "times")
+        .and_then(|inner| extract_tag(inner, "sched_in"))
+        .and_then(|s| s.trim().parse::<i64>().ok());
+
     Some(SimBriefOfp {
         planned_block_fuel_kg: plan_ramp,
         planned_burn_kg: est_burn,
@@ -2202,6 +2388,10 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
         max_zfw_kg: max_zfw,
         max_tow_kg: max_tow,
         max_ldw_kg: max_ldw,
+        planned_oew_kg: oew,
+        planned_payload_kg: payload,
+        planned_pax_weight_kg: pax_weight_total_kg,
+        planned_baggage_kg: baggage_total_kg,
         ofp_flight_number,
         ofp_origin_icao,
         ofp_destination_icao,
@@ -2210,6 +2400,14 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
         pax_count,
         cargo_kg,
         freight_kg,
+        aircraft_icao,
+        max_passengers,
+        sched_out_epoch,
+        sched_in_epoch,
+        planned_taxi_kg: taxi_fuel,
+        planned_contingency_kg: contingency_fuel,
+        planned_alternate_burn_kg: alternate_burn_fuel,
+        planned_extra_kg: extra_fuel,
     })
 }
 

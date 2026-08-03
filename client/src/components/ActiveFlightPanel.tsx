@@ -9,7 +9,7 @@ import { InfoStrip } from "./InfoStrip";
 import { LiveTapes } from "./LiveTapes";
 import { LoadsheetMonitor } from "./LoadsheetMonitor";
 import { ManualFileDialog } from "./ManualFileDialog";
-import { RouteMap } from "./RouteMap";
+import { PhaseCard } from "./PhaseCard";
 import { WeatherBriefing } from "./WeatherBriefing";
 
 interface Props {
@@ -508,6 +508,16 @@ export function ActiveFlightPanel({
     defaultValue: info.phase,
   });
 
+  const elapsedMinutes = Math.max(
+    0,
+    Math.floor((Date.now() - new Date(info.started_at).getTime()) / 60000),
+  );
+
+  // v0.3.0: Loadsheet nur in Preflight/Boarding sichtbar (siehe
+  // LoadsheetMonitor) — die grid4-Karten-Reihe hat dann 4 statt 3
+  // Spalten, sonst würde die letzte Spalte als Lücke stehen bleiben.
+  const showLoadsheet = info.phase === "preflight" || info.phase === "boarding";
+
   return (
     <section className="active-flight">
       {confirmDialog}
@@ -541,7 +551,9 @@ export function ActiveFlightPanel({
             {/* #phase-v2 Cutover: Haupt-Badge = v2-Phase; bei einer
                 Höhen-Restriktion zeigt es „Level" (s. showLevel oben). Die
                 frühere dezente „v2:"-Schatten-Zeile ist entfernt — v2 IST
-                jetzt die angezeigte Phase. */}
+                jetzt die angezeigte Phase. Die Phase erscheint jetzt ZUSÄTZLICH
+                groß im Phase-Card (Stage E) — das Badge bleibt hier fürs
+                schnelle Scannen im Header. */}
             <span
               className={`active-flight__phase active-flight__phase--${phaseClass}`}
             >
@@ -559,115 +571,116 @@ export function ActiveFlightPanel({
           </span>
           <span className="active-flight__icao">{info.arr_airport}</span>
         </div>
-        <div className="active-flight__actions">
-          <button
-            type="button"
-            className="button button--primary"
-            onClick={handleEnd}
-            disabled={busy !== null}
-          >
-            {busy === "end" ? t("active_flight.filing") : t("active_flight.end")}
-          </button>
-          <button type="button" onClick={handleCancel} disabled={busy !== null}>
-            {busy === "cancel"
-              ? t("active_flight.cancelling")
-              : t("active_flight.cancel")}
-          </button>
-          {/* OFP refresh — pre-takeoff only. After takeoff the plan
-              shouldn't change anyway, and we don't want pilots
-              accidentally clobbering the loadsheet baseline mid-flight. */}
-          {/* v0.7.7: Phase-Gate inkl. Pushback (Spec §6.2) — Plan-Werte sind
-              dort noch nutzbar, Score noch nicht festgenagelt. Backend hat
-              denselben Gate. */}
-          {(info.phase === "preflight" ||
-            info.phase === "boarding" ||
-            info.phase === "pushback" ||
-            info.phase === "taxi_out") && (
-            <button
-              type="button"
-              className="active-flight__refresh-ofp"
-              onClick={handleRefreshOfp}
-              disabled={busy !== null}
-              title={t("active_flight.refresh_ofp_hint")}
-            >
-              {busy === "refresh"
-                ? t("active_flight.refresh_ofp_busy")
-                : t("active_flight.refresh_ofp")}
-            </button>
-          )}
-          {/* v0.16.23: Route-Sync — in JEDER Phase verfügbar (im
-              Gegensatz zum OFP-Refresh oben). Aktualisiert NUR die
-              Karten-Route aus dem aktuellen SimBrief-OFP, kein
-              Fuel/Gewicht/Score wird angefasst. Nützlich nach einem
-              ATC-Reroute mitten im Flug. */}
-          <button
-            type="button"
-            className="active-flight__sync-route"
-            onClick={handleSyncRoute}
-            disabled={busy !== null}
-            title={t("active_flight.sync_route_hint")}
-          >
-            {busy === "sync_route"
-              ? t("active_flight.sync_route_busy")
-              : t("active_flight.sync_route")}
-          </button>
-          <button
-            type="button"
-            className="active-flight__forget"
-            onClick={handleForget}
-            disabled={busy !== null}
-            title={t("active_flight.forget_hint")}
-          >
-            {busy === "forget"
-              ? t("active_flight.forgetting")
-              : t("active_flight.forget")}
-          </button>
-        </div>
-        {refreshMsg && (
-          <div className="active-flight__refresh-msg" role="status">
-            ✓ {refreshMsg}
-          </div>
-        )}
       </header>
 
-      {/* v0.3.0: RouteMap (Progress-Bar EDDW [✈] EGSS 0%) erst ab
-          Pushback einblenden. Vor Pushback ist 0 % Strecke logisch
-          unsinnig und verschwendet vertikalen Platz. Tachos bleiben
-          dagegen drin (User-Wunsch — nur 10 % kleiner). */}
-      {info.phase !== "preflight" && info.phase !== "boarding" && (
-        <RouteMap
-          dptIcao={info.dpt_airport}
-          arrIcao={info.arr_airport}
-          currentLat={simSnapshot?.lat ?? null}
-          currentLon={simSnapshot?.lon ?? null}
-          dptGate={info.dep_gate}
-          arrGate={info.arr_gate}
+      {/* Stage E redesign: instrument band (IAS tape · phase card ·
+          altitude tape) replaces the old flat live-tapes strip + the
+          RouteMap that used to sit between header and InfoStrip —
+          RouteMap now renders inside PhaseCard's route track. */}
+      <div className="band">
+        <LiveTapes snapshot={simSnapshot ?? null} />
+        <PhaseCard
+          info={info}
+          snapshot={simSnapshot ?? null}
+          phaseLabel={phaseLabel}
+          elapsedMinutes={elapsedMinutes}
         />
-      )}
+      </div>
 
-      <LiveTapes snapshot={simSnapshot ?? null} />
-
-      <InfoStrip
-        info={info}
-        snapshot={simSnapshot ?? null}
-        elapsedMinutes={Math.max(
-          0,
-          Math.floor((Date.now() - new Date(info.started_at).getTime()) / 60000),
-        )}
-      />
-
-      {/* v0.3.0: Loadsheet direkt unter dem InfoStrip — gehört zum
-          aktiven Flug, deshalb im selben Container. Verschwindet von
-          alleine ab TaxiOut/Pushback (siehe LoadsheetMonitor). */}
-      <LoadsheetMonitor info={info} />
+      <div
+        className="grid4"
+        style={{ gridTemplateColumns: showLoadsheet ? undefined : "repeat(3, 1fr)" }}
+      >
+        <InfoStrip
+          info={info}
+          snapshot={simSnapshot ?? null}
+          elapsedMinutes={elapsedMinutes}
+        />
+        {/* v0.3.0: Loadsheet als 4. Karte in derselben grid4-Reihe —
+            gehört zum aktiven Flug, deshalb im selben Container.
+            Verschwindet von alleine ab TaxiOut/Pushback (siehe
+            LoadsheetMonitor). */}
+        <LoadsheetMonitor info={info} />
+      </div>
 
       <WeatherBriefing dptIcao={info.dpt_airport} arrIcao={info.arr_airport} />
 
+      {refreshMsg && (
+        <div className="active-flight__refresh-msg" role="status">
+          ✓ {refreshMsg}
+        </div>
+      )}
       {error && (
         <p className="active-flight__error" role="alert">
           {error}
         </p>
       )}
+
+      <div className="active-flight__actions">
+        <button
+          type="button"
+          className="button button--primary"
+          onClick={handleEnd}
+          disabled={busy !== null}
+        >
+          {busy === "end" ? t("active_flight.filing") : t("active_flight.end")}
+        </button>
+        {/* v0.16.23: Route-Sync — in JEDER Phase verfügbar (im
+            Gegensatz zum OFP-Refresh unten). Aktualisiert NUR die
+            Karten-Route aus dem aktuellen SimBrief-OFP, kein
+            Fuel/Gewicht/Score wird angefasst. Nützlich nach einem
+            ATC-Reroute mitten im Flug. */}
+        <button
+          type="button"
+          className="active-flight__sync-route"
+          onClick={handleSyncRoute}
+          disabled={busy !== null}
+          title={t("active_flight.sync_route_hint")}
+        >
+          {busy === "sync_route"
+            ? t("active_flight.sync_route_busy")
+            : t("active_flight.sync_route")}
+        </button>
+        {/* OFP refresh — pre-takeoff only. After takeoff the plan
+            shouldn't change anyway, and we don't want pilots
+            accidentally clobbering the loadsheet baseline mid-flight. */}
+        {/* v0.7.7: Phase-Gate inkl. Pushback (Spec §6.2) — Plan-Werte sind
+            dort noch nutzbar, Score noch nicht festgenagelt. Backend hat
+            denselben Gate. */}
+        {(info.phase === "preflight" ||
+          info.phase === "boarding" ||
+          info.phase === "pushback" ||
+          info.phase === "taxi_out") && (
+          <button
+            type="button"
+            className="active-flight__refresh-ofp"
+            onClick={handleRefreshOfp}
+            disabled={busy !== null}
+            title={t("active_flight.refresh_ofp_hint")}
+          >
+            {busy === "refresh"
+              ? t("active_flight.refresh_ofp_busy")
+              : t("active_flight.refresh_ofp")}
+          </button>
+        )}
+        <span className="actions__spacer" />
+        <button type="button" onClick={handleCancel} disabled={busy !== null}>
+          {busy === "cancel"
+            ? t("active_flight.cancelling")
+            : t("active_flight.cancel")}
+        </button>
+        <button
+          type="button"
+          className="active-flight__forget"
+          onClick={handleForget}
+          disabled={busy !== null}
+          title={t("active_flight.forget_hint")}
+        >
+          {busy === "forget"
+            ? t("active_flight.forgetting")
+            : t("active_flight.forget")}
+        </button>
+      </div>
 
       {validationMissing !== null && (
         <ManualFileDialog

@@ -184,7 +184,12 @@ export function LogbookView() {
             <div className="aa-lb-log" dangerouslySetInnerHTML={{
               __html: (detail.log ?? []).map((l) => {
                 const phase = l.message.startsWith("Phase:");
-                return `<div class="aa-lb-logrow ${phase ? "phase" : ""}"><span class="aa-lb-t">${elapsed(l.t)}</span><span class="aa-lb-m">${phase ? '<span class="aa-lb-dot"></span>' : ""}${esc(l.message)}</span></div>`;
+                // v0.19-Stage-E: "phase" (ohne Praefix) kollidierte mit der
+                // GLOBALEN .phase-Klasse (App.tsx Lade-/Session-Check-Screen)
+                // — Grenzflaeche/Hintergrund/Padding/flex-column von dort
+                // ueberlagerten die Grid-Zeile hier, sichtbar als kaputte
+                // Kaesten im Fluglogbuch. Eigener, praefixierter Modifier.
+                return `<div class="aa-lb-logrow ${phase ? "aa-lb-logrow--phase" : ""}"><span class="aa-lb-t">${elapsed(l.t)}</span><span class="aa-lb-m">${phase ? '<span class="aa-lb-dot"></span>' : ""}${esc(l.message)}</span></div>`;
               }).join(""),
             }} />
           </div>

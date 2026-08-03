@@ -144,15 +144,15 @@ function fmtQnh(hpa: number | null): string {
 }
 
 /**
- * Kompakte Inline-Zeile pro Airport (v0.3.0):
- *   ABFLUG  EDDW  300°/5 kt  9999  18°/11°  1013 hPa  [▸ METAR]
- *
- * Die wichtigsten Werte (Wind / Sicht / Temp+Dew / QNH) inline,
- * der vollständige METAR-Text aufklappbar. Spart ~80 % Höhe gegenüber
- * der alten 2-Card-mit-Sub-Grid-Variante (die WIND/SICHT/TEMP/QNH
- * sowohl als Sub-Grid als auch implizit im METAR-Text hatte).
+ * Ein Wetter-Card pro Airport (Stage E redesign — .wx card statt der
+ * früheren kompakten Inline-Zeile). Kopf: Tag (Departure/Arrival) +
+ * ICAO + Wetter-Phänomen-Badge + Aufklapp-Button für den METAR-Rohtext.
+ * Zeile: Wind / Sicht / Temp+Dew / QNH inline mit Trennern — exakt
+ * dieselben Werte/Formatter wie vorher (fmtWind/fmtVisibilityKm/
+ * fmtVisibilityFromRaw/fmtQnh/extractWeatherPhenomena unverändert),
+ * nur in der neuen Karten-Optik statt der alten .weather-row-Zeile.
  */
-function MetarRow({
+function WxCard({
   label,
   state,
 }: {
@@ -164,19 +164,25 @@ function MetarRow({
 
   if (state.kind === "loading") {
     return (
-      <div className="weather-row weather-row--loading">
-        <span className="weather-row__label">{label}</span>
-        <span className="weather-row__hint">{t("weather.loading")}</span>
+      <div className="card">
+        <div className="wx__head">
+          <span className="wx__tag">{label}</span>
+        </div>
+        <div className="wx__row">
+          <span className="wx__cell">{t("weather.loading")}</span>
+        </div>
       </div>
     );
   }
   if (state.kind === "error") {
     return (
-      <div className="weather-row weather-row--error">
-        <span className="weather-row__label">{label}</span>
-        <span className="weather-row__hint">
-          {state.error ?? t("weather.error")}
-        </span>
+      <div className="card">
+        <div className="wx__head">
+          <span className="wx__tag">{label}</span>
+        </div>
+        <div className="wx__row">
+          <span className="wx__cell">{state.error ?? t("weather.error")}</span>
+        </div>
       </div>
     );
   }
@@ -193,45 +199,49 @@ function MetarRow({
   // 🌫 FG (Nebel), ☁ OVC (bedeckt). Wenn nichts erkannt → kein Element.
   const wx = extractWeatherPhenomena(m.raw);
   return (
-    <div className="weather-row">
-      <span className="weather-row__label">{label}</span>
-      <span className="weather-row__icao">{m.icao}</span>
-      <span className="weather-row__cell" title="Wind">
-        {fmtWind(m.wind_direction_deg, m.wind_speed_kt, m.gust_kt)}
-      </span>
-      <span className="weather-row__sep" aria-hidden="true">·</span>
-      <span className="weather-row__cell" title="Sicht / Visibility">
-        👁 {visibilityLabel}
-      </span>
-      <span className="weather-row__sep" aria-hidden="true">·</span>
-      <span className="weather-row__cell" title="Temperatur / Taupunkt">
-        {m.temperature_c != null ? `${m.temperature_c.toFixed(0)}°` : "—"}
-        {" / "}
-        {m.dewpoint_c != null ? `${m.dewpoint_c.toFixed(0)}°` : "—"}
-      </span>
-      <span className="weather-row__sep" aria-hidden="true">·</span>
-      <span className="weather-row__cell" title="QNH / Druck">
-        {fmtQnh(m.qnh_hpa)}
-      </span>
-      {wx && (
-        <span
-          className="weather-row__wx"
-          title={`Wetterphänomen: ${wx.label}`}
+    <div className="card">
+      <div className="wx__head">
+        <span className="wx__tag">{label}</span>
+        <span className="wx__icao">{m.icao}</span>
+        {wx && (
+          <span className="wx__phen" title={`Wetterphänomen: ${wx.label}`}>
+            {wx.icon} {wx.label}
+          </span>
+        )}
+        <button
+          type="button"
+          className="card__action"
+          style={{ marginLeft: "auto" }}
+          onClick={() => setShowRaw((v) => !v)}
+          aria-expanded={showRaw}
+          title="METAR"
         >
-          {wx.icon} {wx.label}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </button>
+      </div>
+      <div className="wx__row">
+        <span className="wx__cell" title="Wind">
+          {fmtWind(m.wind_direction_deg, m.wind_speed_kt, m.gust_kt)}
         </span>
-      )}
-      <button
-        type="button"
-        className="weather-row__toggle"
-        onClick={() => setShowRaw((v) => !v)}
-        aria-expanded={showRaw}
-      >
-        {showRaw ? "▾" : "▸"} METAR
-      </button>
-      {showRaw && m.raw && (
-        <pre className="weather-row__raw">{m.raw}</pre>
-      )}
+        <span className="wx__sep" aria-hidden="true">·</span>
+        <span className="wx__cell" title="Sicht / Visibility">
+          <b>VIS</b> {visibilityLabel}
+        </span>
+        <span className="wx__sep" aria-hidden="true">·</span>
+        <span className="wx__cell" title="Temperatur / Taupunkt">
+          <b>T/DP</b>{" "}
+          {m.temperature_c != null ? `${m.temperature_c.toFixed(0)}°` : "—"}
+          {" / "}
+          {m.dewpoint_c != null ? `${m.dewpoint_c.toFixed(0)}°` : "—"}
+        </span>
+        <span className="wx__sep" aria-hidden="true">·</span>
+        <span className="wx__cell" title="QNH / Druck">
+          <b>QNH</b> {fmtQnh(m.qnh_hpa)}
+        </span>
+      </div>
+      {showRaw && m.raw && <pre className="wx__raw">{m.raw}</pre>}
     </div>
   );
 }
@@ -296,9 +306,9 @@ export function WeatherBriefing({ dptIcao, arrIcao }: Props) {
           {refreshing ? "…" : "⟳"} <span>{t("weather.refresh")}</span>
         </button>
       </header>
-      <div className="weather-briefing__rows">
-        <MetarRow label={t("weather.departure")} state={dpt} />
-        <MetarRow label={t("weather.arrival")} state={arr} />
+      <div className="wx">
+        <WxCard label={t("weather.departure")} state={dpt} />
+        <WxCard label={t("weather.arrival")} state={arr} />
       </div>
     </section>
   );

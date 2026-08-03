@@ -122,35 +122,122 @@ function formatLevel(level: number | null): string | null {
   return `FL${level.toString().padStart(3, "0")}`;
 }
 
+/** "14:12z" aus einem Unix-Timestamp (Briefing-2a §3/§4 Zeitstempel). */
+function formatZuluHm(ms: number): string {
+  const d = new Date(ms);
+  const hh = d.getUTCHours().toString().padStart(2, "0");
+  const mm = d.getUTCMinutes().toString().padStart(2, "0");
+  return `${hh}:${mm}z`;
+}
+
+/** Briefing-2a §5.2 Countdown: "in 28 Min" vor STD, "überfällig seit n Min"
+ *  danach. `std` ist "HH:MM" Zulu-Uhrzeit-of-day (kein Datum) — wir nehmen
+ *  an, dass die Buchung innerhalb der naechsten 24h liegt und picken den
+ *  naeheren der beiden Kandidaten (heute/morgen) relativ zu `nowMs`. */
+function stdCountdown(
+  std: string | null,
+  nowMs: number,
+): { minutes: number; overdue: boolean; crossesDay: boolean; dayDiff: number } | null {
+  if (!std) return null;
+  const m = /^(\d{1,2}):(\d{2})$/.exec(std.trim());
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh > 23 || mm > 59) return null;
+  const now = new Date(nowMs);
+  const candidate = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hh, mm, 0),
+  );
+  let diffMin = Math.round((candidate.getTime() - nowMs) / 60_000);
+  // Naeherer 24h-Nachbar: wenn STD vor >12h "in der Vergangenheit" waere,
+  // ist es wahrscheinlicher der morgige Slot; wenn >12h in der Zukunft,
+  // wahrscheinlicher der gestrige (= schon ueberfaellig).
+  if (diffMin < -12 * 60) diffMin += 24 * 60;
+  else if (diffMin > 12 * 60) diffMin -= 24 * 60;
+  // phpVMS' dpt_time ist eine reine "HH:MM"-Tageszeit ohne Datum — es gibt
+  // hier kein echtes Kalenderdatum zum Vergleichen, daher immer `false`
+  // (bleibt bei der bisherigen Minuten-Anzeige, nie die Tage-Formulierung).
+  return { minutes: Math.abs(diffMin), overdue: diffMin < 0, crossesDay: false, dayDiff: 0 };
+}
+
+/** "HH:MM" (UTC) aus einem Unix-Epoch (Sekunden) — SimBrief `sched_out`/
+ *  `sched_in` Fallback wenn phpVMS' `flight.dpt_time`/`arr_time` fehlt. */
+function formatEpochHm(epochSec: number): string {
+  const d = new Date(epochSec * 1000);
+  const hh = d.getUTCHours().toString().padStart(2, "0");
+  const mm = d.getUTCMinutes().toString().padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+/** Countdown direkt aus einem Unix-Epoch — exakter als `stdCountdown`s
+ *  HH:MM-Naeherung (kein 24h-Nachbar-Raten noetig). */
+function epochCountdown(
+  epochSec: number,
+  nowMs: number,
+): { minutes: number; overdue: boolean; crossesDay: boolean; dayDiff: number } {
+  const diffMin = Math.round((epochSec * 1000 - nowMs) / 60_000);
+  // Pilot-Feedback 2026-08-03: die Anzeige zeigt STD nur als "HH:MMz" ohne
+  // Datum (formatEpochHm) — der Countdown rechnet aber mit dem VOLLEN
+  // Zeitstempel. Der tueckische Fall ist NICHT einfach ">24h alt", sondern
+  // wenn das OFP einen anderen Kalendertag hat als "jetzt" — das kann schon
+  // bei deutlich unter 24h Differenz passieren (z.B. 18.8h alt, aber ueber
+  // Mitternacht hinweg): die Minutenzahl sieht dann "plausibel klein" aus,
+  // passt aber nicht zur naiven Kopfrechnung "jetzige Uhrzeit minus
+  // angezeigte STD-Uhrzeit" (die waere "in N Std", nicht ueberfaellig).
+  // Deshalb wird hier der ECHTE Kalendertag verglichen, nicht nur die
+  // Minuten-Groessenordnung.
+  const epochDate = new Date(epochSec * 1000);
+  const nowDate = new Date(nowMs);
+  const epochDayIndex = Date.UTC(epochDate.getUTCFullYear(), epochDate.getUTCMonth(), epochDate.getUTCDate());
+  const nowDayIndex = Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), nowDate.getUTCDate());
+  const dayDiff = Math.round(Math.abs(epochDayIndex - nowDayIndex) / 86_400_000);
+  return { minutes: Math.abs(diffMin), overdue: diffMin < 0, crossesDay: dayDiff > 0, dayDiff };
+}
+
 /// phpVMS-Flight-Type-Code → kurzes UI-Label.
-/// Codes laut phpVMS-Core: J=Sched.Pax, F=Sched.Cargo, C=Charter,
-/// X=Reposition, I=Special, T=Training, M=Military, R=Repositioning.
+/// Stage-E-Fix (2026-08-02): die vorherige Zuordnung war eine ungeprüfte
+/// Annahme und stimmte an mehreren Stellen NICHT mit dem echten phpVMS-Core
+/// überein — verifiziert gegen `app/Models/Enums/FlightType.php` auf dem
+/// GSG-Server. Insbesondere: "T" ist TECHNICAL_TEST, nicht Training (echtes
+/// Training ist "K"); "M" ist MAIL_SERVICE, nicht Military (echtes Military
+/// ist "W"); "R" ist ADDTL_CARGO_IN_CABIN, keine Repositionierung (die ist
+/// "X", TECHNICAL_STOP). "E" = VIP — nicht "ECON", das gibt es als Konzept
+/// in diesem Enum gar nicht. Volle Liste, damit sowas nicht nochmal aus dem
+/// Bauch heraus geraten wird.
 function flightTypeLabel(type: string): string {
   switch (type.toUpperCase()) {
     case "J": return "PAX";
     case "F": return "CARGO";
     case "C": return "CHARTER";
-    case "X":
-    case "R": return "REPO";
-    case "T": return "TRAINING";
-    case "M": return "MIL";
-    case "I": return "SPECIAL";
+    case "A": return "CARGO+";
+    case "E": return "VIP";
+    case "G": return "PAX+";
+    case "H": return "CHARTER CARGO";
+    case "I": return "AMBULANCE";
+    case "K": return "TRAINING";
+    case "M": return "MAIL";
+    case "O": return "CHARTER SPECIAL";
+    case "P": return "POSITIONING";
+    case "T": return "TECH TEST";
+    case "W": return "MILITARY";
+    case "X": return "TECH STOP";
+    case "S": return "SHUTTLE";
+    case "B": return "SHUTTLE+";
+    case "Q":
+    case "R":
+    case "L": return "CARGO IN CABIN";
+    case "D": return "GA";
+    case "N": return "AIR TAXI";
+    case "Y": return "SPECIAL";
+    case "Z": return "OTHER";
     default: return type.toUpperCase();
   }
 }
 
-/// CSS-Class-Suffix abhängig vom Flight-Type — steuert die Badge-Farbe.
-/// Pax = blau, Cargo = orange, Charter = lila, Repo = grau.
-function flightTypeKind(type: string): string {
-  switch (type.toUpperCase()) {
-    case "J": return "pax";
-    case "F": return "cargo";
-    case "C": return "charter";
-    case "X":
-    case "R": return "repo";
-    default: return "other";
-  }
-}
+// Briefing-2a §5.1: Flugtyp erscheint nur noch als ausgeschriebener Text
+// in der Meta-Zeile (kein farbiges Badge mehr) — flightTypeKind() (Badge-
+// Farbklasse) ist damit ueberfluessig, siehe git history falls die
+// farbige Pill-Darstellung mal zurueckkommen soll.
 
 // v0.5.29: flightRulesHint() entfernt — Auto-Kategorisierung war zu eng.
 // Pilot entscheidet selbst ob IFR oder VFR (= klare Hinweis-Text-Box
@@ -166,6 +253,18 @@ function buildCallsigns(flight: Flight): string {
   return icaoCs ?? iataCs ?? fnum;
 }
 
+/** Briefing-2a §5.1: ICAO-Callsign (Zeile 1) und IATA-Callsign (Zeile 2,
+ *  hinter dem Airline-Namen) getrennt statt als ein kombinierter String. */
+function splitCallsigns(flight: Flight): { icao: string | null; iata: string | null } {
+  const icao = flight.airline?.icao?.trim();
+  const iata = flight.airline?.iata?.trim();
+  const fnum = resolveFlightIdent(flight.flight_number, flight.callsign);
+  return {
+    icao: icao ? `${icao}${fnum}` : null,
+    iata: iata ? `${iata}${fnum}` : null,
+  };
+}
+
 function asUiError(err: unknown): UiError {
   return typeof err === "object" && err !== null && "code" in err
     ? (err as UiError)
@@ -177,7 +276,7 @@ function airlineMonogram(flight: Flight): string {
   return (
     flight.airline?.iata?.toUpperCase() ??
     flight.airline?.icao?.slice(0, 2).toUpperCase() ??
-    "✈"
+    "—"
   );
 }
 
@@ -210,7 +309,15 @@ export function BidsList({
 }: Props) {
   const { t, i18n } = useTranslation();
   const [state, setState] = useState<State>({ kind: "loading" });
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  // Briefing-2a §6: genau EINE Hauptkarte (voller Umfang), alle anderen
+  // gebuchten Fluege als Einzeiler. Default = der zeitlich naechste Bid
+  // (state.bids[0]); ein Klick auf einen Einzeiler tauscht die Rolle.
+  const [mainBidId, setMainBidId] = useState<number | null>(null);
+  // Stage E redesign: IFR/VFR ist jetzt EIN Umschalter mit EINER
+  // primären "Flug starten"-Aktion statt zwei gleichrangigen Buttons.
+  // Default pro Bid: IFR wenn ein SimBrief-OFP gebunden ist (der
+  // Normalfall), sonst VFR (IFR braucht zwingend einen OFP).
+  const [modeByBid, setModeByBid] = useState<Record<number, "ifr" | "vfr">>({});
   const [refreshing, setRefreshing] = useState(false);
   // v0.7.7 → v1.5.2: Notice-Pill im Bid-Tab-Header nach Refresh.
   // Vereinfacht auf {text, tone} weil der shared formatRefreshError-Helper
@@ -247,11 +354,44 @@ export function BidsList({
     /** Gepaeck + Fracht zusammen — fuer den Chip `freight_kg` nehmen. */
     cargo_kg: number;
     freight_kg: number;
+    /** Briefing-2a: Fallback-Quellen wenn phpVMS-seitige Felder fehlen. */
+    aircraft_icao: string | null;
+    max_passengers: number | null;
+    sched_out_epoch: number | null;
+    sched_in_epoch: number | null;
+    /** Restliche Fuel-Kategorien — mit Trip+Reserve ergibt die Summe Block. */
+    planned_taxi_kg: number;
+    planned_contingency_kg: number;
+    planned_alternate_burn_kg: number;
+    planned_extra_kg: number;
+    /** OEW + Payload ergeben zusammen ZFW. */
+    planned_oew_kg: number;
+    planned_payload_kg: number;
+    /** Pax-Gewicht + Gepaeck + Fracht ergeben zusammen Payload. */
+    planned_pax_weight_kg: number;
+    planned_baggage_kg: number;
+    /** Operationeller (flug-spezifischer) MTOW-Grenzwert aus dem OFP. */
+    planned_max_tow_kg: number;
     callsign_warning: { sb_callsign: string; active_callsigns: string } | null;
   }
   const [bidPreviews, setBidPreviews] = useState<Map<number, BidSimBriefPreview>>(
     new Map(),
   );
+  /** Briefing-2a §3: OFP-Statuszeile braucht pro Bid, ob der Preview-Fetch
+   *  fehlgeschlagen ist (fuer den FEHLER-Zustand) und wann zuletzt erfolgreich
+   *  geladen wurde (fuer den BEREIT-Zeitstempel). */
+  const [bidPreviewErrors, setBidPreviewErrors] = useState<Set<number>>(new Set());
+  const [previewLoadedAt, setPreviewLoadedAt] = useState<number | null>(null);
+  /** Briefing-2a §4: "Stand {hh:mm}z" — Zeitpunkt des letzten erfolgreichen
+   *  Bid-Fetches (nicht des Previews). */
+  const [bidsLoadedAt, setBidsLoadedAt] = useState<number | null>(null);
+  /** Briefing-2a §5.2: Countdown-Minutentakt (README §8: "Minutentakt,
+   *  nicht sekuendlich"). */
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
   const [startingId, setStartingId] = useState<number | null>(null);
   const [startError, setStartError] = useState<{
     bidId: number;
@@ -268,8 +408,8 @@ export function BidsList({
   /** v0.5.27: Manual/VFR-Mode-Modal — Bid für den's gerade geöffnet ist. */
   const [manualModalBid, setManualModalBid] = useState<Bid | null>(null);
   /** v0.12.12-dev: Wetter-Briefing-Lade-Hinweis. Erscheint per Toast für 5 s
-   *  beim Klick auf den 🌦-Button und informiert den Pilot, dass die GSG-
-   *  Seite ihre Daten live holt → Browser-Tab kann bis 30 s laden. */
+   *  beim Klick auf "Wetter-Briefing öffnen" und informiert den Pilot, dass
+   *  die GSG-Seite ihre Daten live holt → Browser-Tab kann bis 30 s laden. */
   const [weatherLoadHint, setWeatherLoadHint] = useState(false);
   /** Cached airport coords keyed by uppercase ICAO. */
   const [airports, setAirports] = useState<Record<string, AirportInfo>>({});
@@ -280,6 +420,7 @@ export function BidsList({
     try {
       const bids = await invoke<Bid[]>("phpvms_get_bids");
       setState(bids.length === 0 ? { kind: "empty" } : { kind: "ready", bids });
+      setBidsLoadedAt(Date.now());
       return bids;
     } catch (err: unknown) {
       setState({ kind: "error", error: asUiError(err) });
@@ -298,12 +439,45 @@ export function BidsList({
         setBidPreviews(new Map());
         return { successCount: 0, errorCount: 0 };
       }
-      const results = await Promise.allSettled(
+      let results = await Promise.allSettled(
         bids.map((b) =>
           invoke<BidSimBriefPreview>("bid_simbrief_preview", { bidId: b.id }),
         ),
       );
+
+      // Briefing-2a-Haertung (Pilot-Feedback 2026-08-03): direkt nach dem
+      // Login laeuft dieser Fetch parallel zu App.tsx's eigenem useEffect,
+      // der die SimBrief-Settings aus localStorage ins Backend synct
+      // (`set_simbrief_settings`). Race-Condition: kommt dieser Fetch
+      // zuerst dran, sieht das Backend noch KEINE Settings und bricht mit
+      // `no_simbrief_settings` ab — ein reiner Timing-Fehler, kein
+      // Netzwerkproblem (das haette ein Retry im Rust-Client nicht
+      // behoben, da der Abbruch VOR jedem Netzwerk-Call passiert). Sync
+      // braucht nur einen Wimpernschlag; ein einziger verzoegerter Retry
+      // genau der betroffenen Bids reicht.
+      const raceFailedIdx = results
+        .map((r, i) => ({ r, i }))
+        .filter(({ r }) => {
+          if (r.status !== "rejected") return false;
+          const reason = r.reason as { code?: string } | undefined;
+          return reason?.code === "no_simbrief_settings";
+        })
+        .map(({ i }) => i);
+
+      if (raceFailedIdx.length > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        const retried = await Promise.allSettled(
+          raceFailedIdx.map((i) =>
+            invoke<BidSimBriefPreview>("bid_simbrief_preview", { bidId: bids[i]!.id }),
+          ),
+        );
+        raceFailedIdx.forEach((idx, j) => {
+          results[idx] = retried[j]!;
+        });
+      }
+
       const next = new Map<number, BidSimBriefPreview>();
+      const nextErrors = new Set<number>();
       let successCount = 0;
       let errorCount = 0;
       results.forEach((r, i) => {
@@ -315,10 +489,17 @@ export function BidsList({
           // erwartete Bedingung (kein OFP fuer den Bid generiert) und
           // sollte die DevTools nicht zumuellen. Bei Bedarf kann das
           // Backend ein log_activity-Entry liefern.
+          // Briefing-2a §3: trotzdem gemerkt, damit die Statuszeile bei
+          // einem Bid MIT gebundenem OFP dessen echtes Fehlschlagen
+          // ("SimBrief nicht erreichbar") von "kein OFP gebunden"
+          // unterscheiden kann (Aufrufer prueft flight.simbrief?.id dafuer).
+          nextErrors.add(bids[i]!.id);
           errorCount++;
         }
       });
       setBidPreviews(next);
+      setBidPreviewErrors(nextErrors);
+      setPreviewLoadedAt(Date.now());
       return { successCount, errorCount };
     },
     [],
@@ -557,10 +738,9 @@ export function BidsList({
     }
   }, [state, airports]);
 
-  function handleSelect(bid: Bid) {
-    const next = bid.id === selectedId ? null : bid.id;
-    setSelectedId(next);
-    onSelect?.(next === null ? null : bid);
+  function handleSetMain(bid: Bid) {
+    setMainBidId(bid.id);
+    onSelect?.(bid);
   }
 
   async function openFlightPage(flight: Flight) {
@@ -652,20 +832,68 @@ export function BidsList({
     !(simSnapshot.lat === 0 && simSnapshot.lon === 0);
   const showPositionWarning = simState === "connected" && !hasSimPosition;
 
+  // Briefing-2a §3: OFP-Statuszeile bezieht sich auf den NAECHSTEN Bid
+  // (= die Hauptkarte, state.bids[0]) — das ist der Flug, den der Pilot
+  // als naechstes starten wird.
+  const primaryBid = state.kind === "ready" ? (state.bids[0] ?? null) : null;
+  const primaryHasOfp = !!primaryBid?.flight.simbrief?.id;
+  const primaryPreviewFailed =
+    !!primaryBid && bidPreviewErrors.has(primaryBid.id);
+  const ofpStatus: { tone: "ok" | "warn" | "danger"; word: string; text: string } | null =
+    primaryBid === null
+      ? null
+      : primaryHasOfp && primaryPreviewFailed
+        ? {
+            tone: "danger",
+            word: t("bids.ofp_status.error_word"),
+            text: t("bids.ofp_status.error_text"),
+          }
+        : primaryHasOfp
+          ? {
+              tone: "ok",
+              word: t("bids.ofp_status.ready_word"),
+              text: t("bids.ofp_status.ready_text", {
+                callsign: buildCallsigns(primaryBid.flight),
+                time: previewLoadedAt ? formatZuluHm(previewLoadedAt) : "—",
+              }),
+            }
+          : {
+              tone: "warn",
+              word: t("bids.ofp_status.none_word"),
+              text: t("bids.ofp_status.none_text"),
+            };
+
   return (
     <section className="bids">
+      {ofpStatus && (
+        <div className={`bids__ofp-status bids__ofp-status--${ofpStatus.tone}`}>
+          <span className="bids__ofp-status-word">{ofpStatus.word}</span>
+          <span className="bids__ofp-status-text">{ofpStatus.text}</span>
+        </div>
+      )}
+
       <header className="bids__header">
-        <h2>{t("bids.title")}</h2>
-        <button
-          type="button"
-          className="bids__refresh"
-          onClick={handleRefresh}
-          disabled={refreshing || state.kind === "loading"}
-          aria-label={t("bids.refresh")}
-          title={t("bids.refresh")}
-        >
-          {refreshing ? "…" : "⟳"} <span>{t("bids.refresh")}</span>
-        </button>
+        <h2>
+          {t("bids.title")}
+          {state.kind === "ready" && (
+            <span className="bids__count">{state.bids.length}</span>
+          )}
+        </h2>
+        <div className="bids__header-right">
+          {bidsLoadedAt !== null && (
+            <span className="bids__stand">
+              {t("bids.stand", { time: formatZuluHm(bidsLoadedAt) })}
+            </span>
+          )}
+          <button
+            type="button"
+            className="bids__refresh"
+            onClick={handleRefresh}
+            disabled={refreshing || state.kind === "loading"}
+          >
+            {refreshing ? t("bids.refreshing") : t("bids.refresh")}
+          </button>
+        </div>
       </header>
 
       {/* v0.7.7 → v1.5.2: Notice nach Bid-Tab-Refresh. Text wird vom
@@ -673,7 +901,8 @@ export function BidsList({
           inline-Render in handleRefresh (Success-Pfad mit changed=false).
           Auto-clear nach 6s. */}
       {/* v0.12.12-dev: 30-s-Lade-Hinweis fuer Wetter-Briefing — erscheint
-          beim Klick auf den 🌦-Button und blendet sich nach 5 s aus. */}
+          beim Klick auf "Wetter-Briefing öffnen" und blendet sich nach 5 s
+          aus. */}
       {weatherLoadHint && (
         <div
           role="status"
@@ -688,7 +917,7 @@ export function BidsList({
             fontSize: "0.88rem",
           }}
         >
-          🌦 {t("bids.weather_briefing_load_hint")}
+          {t("bids.weather_briefing_load_hint")}
         </div>
       )}
       {refreshNotice && (
@@ -728,13 +957,6 @@ export function BidsList({
             fontSize: "0.85rem",
           }}
         >
-          {refreshNotice.tone === "warn"
-            ? "⚠ "
-            : refreshNotice.tone === "err"
-              ? "✖ "
-              : refreshNotice.tone === "ok"
-                ? "✓ "
-                : "ℹ︎ "}
           {refreshNotice.text}
         </div>
       )}
@@ -744,7 +966,6 @@ export function BidsList({
           className="bids__sim-position bids__sim-position--warn"
           role="status"
         >
-          <span className="bids__sim-position-icon" aria-hidden="true">⚠️</span>
           <span className="bids__sim-position-message">
             {t("bids.sim_position_warning")}
           </span>
@@ -756,9 +977,33 @@ export function BidsList({
           wartet die nie kommt. Pollt das Backend alle 3 s. */}
       <AutoStartSkipBanner />
 
-      {state.kind === "loading" && <p className="bids__hint">{t("bids.loading")}</p>}
+      {/* Briefing-2a §9: Ladevorgang = Platzhalterflaechen in der
+          Card-Sollhoehe statt Spinner-Overlay (keine Endlos-Animation
+          auf diesem Screen). */}
+      {state.kind === "loading" && (
+        <div className="bid-card-skeleton" aria-hidden="true">
+          <div className="bid-card-skeleton__head" />
+          <div className="bid-card-skeleton__route" />
+          <div className="bid-card-skeleton__rubrics" />
+        </div>
+      )}
 
-      {state.kind === "empty" && <p className="bids__hint">{t("bids.empty")}</p>}
+      {/* Briefing-2a §9: Statuszeile/Ueberschrift/Tab-Leiste bleiben
+          (Ueberschrift + Tab-Leiste rendern unabhaengig von state.kind
+          weiter oben/unten), an Stelle der Karte eine Zeile + Sekundär-
+          button statt der bisherigen Erklaer-Prosa. */}
+      {state.kind === "empty" && (
+        <div className="bids__empty">
+          <span>{t("bids.empty_title")}</span>
+          <button
+            type="button"
+            className="bid-card__link"
+            onClick={() => void openUrl(baseUrl).catch(() => {})}
+          >
+            {t("bids.empty_action")}
+          </button>
+        </div>
+      )}
 
       {state.kind === "error" && (
         <div className="bids__error" role="alert">
@@ -776,309 +1021,176 @@ export function BidsList({
         </div>
       )}
 
-      {state.kind === "ready" && (
-        <ul className="bids__list">
-          {state.bids.map((bid) => {
-            const f = bid.flight;
-            const dpt = f.dpt_airport?.icao ?? f.dpt_airport_id;
-            const arr = f.arr_airport?.icao ?? f.arr_airport_id;
-            const dptName = f.dpt_airport?.name ?? null;
-            const arrName = f.arr_airport?.name ?? null;
-            const callsign = buildCallsigns(f);
-            const airlineName = f.airline?.name ?? null;
-            const airlineLogo = f.airline?.logo?.trim() || null;
-            const monogram = airlineMonogram(f);
-            const level = formatLevel(f.level);
-            const isSelected = bid.id === selectedId;
+      {state.kind === "ready" && (() => {
+        const bids = state.bids;
+        const mainBid = bids.find((b) => b.id === mainBidId) ?? bids[0] ?? null;
+        const restBids = bids.filter((b) => b.id !== mainBid?.id);
+        // NÄCHSTER macht nur Sinn, wenn es ueberhaupt mehrere Buchungen gibt,
+        // gegenueber denen dieser Flug "der naechste" ist — bei nur einer
+        // Buchung waere das Badge bedeutungslose Deko (Pilot-Feedback 2026-08-03).
+        const isNextFlight =
+          bids.length > 1 && mainBid !== null && mainBid.id === bids[0]?.id;
 
-            // Compute distance from the aircraft to this bid's dpt airport (if
-            // we have both pieces of info). Drives the proactive gating: the
-            // Start button is enabled only when the aircraft is on the ground
-            // and within MAX_START_DISTANCE_NM of the departure airport.
-            const dptIcao = f.dpt_airport_id.trim().toUpperCase();
-            const dptCoords = airports[dptIcao];
-            // Defensive: a snapshot reporting EXACTLY 0,0 lat/lon is
-            // never a real airport — both adapters return that as
-            // their default uninitialised value, and the open ocean
-            // off the African coast is the only real point matching
-            // (no real flight starts there). Treat as "no position
-            // yet" rather than computing a 5000-nm phantom distance.
-            // Belt-and-braces alongside the backend stale-snapshot
-            // clear (commits in adapter.rs) so a brief race window
-            // between Connected-state and first-real-position can't
-            // surface a wrong "too far" gate to the pilot.
-            const hasRealPosition =
-              simSnapshot !== null &&
-              !(simSnapshot.lat === 0 && simSnapshot.lon === 0);
-            let distanceToDptNm: number | null = null;
-            if (
-              hasRealPosition &&
-              simSnapshot &&
-              dptCoords &&
-              dptCoords.lat !== null &&
-              dptCoords.lon !== null
-            ) {
-              distanceToDptNm = distanceNm(
-                simSnapshot.lat,
-                simSnapshot.lon,
-                dptCoords.lat,
-                dptCoords.lon,
-              );
-            }
-            const onGround = simSnapshot?.on_ground ?? false;
-            const tooFar =
-              distanceToDptNm !== null &&
-              distanceToDptNm > MAX_START_DISTANCE_NM;
-            const noPositionYet =
-              simState === "connected" && !hasRealPosition;
-
-            const startDisabled =
-              startingId !== null ||
-              hasActiveFlight ||
-              simState !== "connected" ||
-              noPositionYet ||
-              !onGround ||
-              tooFar;
-
-            let startTitle = "";
-            if (simState !== "connected") {
-              startTitle = t("bids.start_disabled_no_sim");
-            } else if (hasActiveFlight) {
-              startTitle = t("bids.start_disabled_active_flight");
-            } else if (noPositionYet) {
-              startTitle = t("bids.start_disabled_no_position");
-            } else if (!onGround) {
-              startTitle = t("bids.start_disabled_not_on_ground");
-            } else if (tooFar && distanceToDptNm !== null) {
-              startTitle = t("bids.start_disabled_too_far", {
-                distance: distanceToDptNm.toFixed(1),
-                airport: dptIcao,
-              });
-            }
-
-            return (
-              <li key={bid.id}>
-                <article
-                  className={`bid-card ${isSelected ? "bid-card--selected" : ""}`}
-                >
-                  <button
-                    type="button"
-                    className="bid-card__body"
-                    onClick={() => handleSelect(bid)}
-                    aria-pressed={isSelected}
-                    aria-expanded={isSelected}
-                  >
-                    <div className="bid-card__top">
-                      <div className="bid-card__brand">
-                        <div
-                          className={`bid-card__logo ${
-                            airlineLogo ? "" : "bid-card__logo--placeholder"
-                          }`}
-                        >
-                          {airlineLogo ? (
-                            <img src={airlineLogo} alt={airlineName ?? callsign} />
-                          ) : (
-                            <span>{monogram}</span>
-                          )}
-                        </div>
-                        <div className="bid-card__title">
-                          <span className="bid-card__callsign">{callsign}</span>
-                          {airlineName && (
-                            <span className="bid-card__airline">{airlineName}</span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="bid-card__meta">
-                        <span title={t("bids.flight_time")}>
-                          ⏱ {formatFlightTime(f.flight_time, i18n.language)}
-                        </span>
-                        <span title={t("bids.distance")}>
-                          📏 {formatDistanceNm(f.distance?.nmi ?? null, i18n.language)}
-                        </span>
-                        {level && (
-                          <span title={t("bids.cruise_level")}>✈ {level}</span>
-                        )}
-                        {f.flight_type && (
-                          <span
-                            className={`bid-card__type-badge bid-card__type-badge--${flightTypeKind(f.flight_type)}`}
-                            title={t("bids.flight_type")}
-                          >
-                            {flightTypeLabel(f.flight_type)}
-                          </span>
-                        )}
-                        {/* v0.5.29: IFR/VFR-Auto-Detection-Pills entfernt
-                            — Pilot entscheidet selbst, Auto-Kategorisierung
-                            war zu eng. Hinweis steht jetzt als Text-Line
-                            unter den Action-Buttons. */}
-                      </div>
-                    </div>
-
-                    <div className="bid-card__route">
-                      <div className="bid-card__leg">
-                        <span className="bid-card__icao">{dpt}</span>
-                        {dptName && (
-                          <span className="bid-card__airport-name">{dptName}</span>
-                        )}
-                      </div>
-                      <div className="bid-card__path" aria-hidden="true">
-                        <span className="bid-card__plane">✈</span>
-                      </div>
-                      <div className="bid-card__leg bid-card__leg--arrival">
-                        <span className="bid-card__icao">{arr}</span>
-                        {arrName && (
-                          <span className="bid-card__airport-name">{arrName}</span>
-                        )}
-                      </div>
-                    </div>
-                  </button>
-
-                  {/* v0.3.0: Bid-Details (Aircraft + SimBrief-Plan + Route)
-                      ZUERST — die wichtigen Plan-Werte vor den Action-
-                      Buttons, damit der Pilot den Plan sieht bevor er auf
-                      "Flug starten" klickt. Bei GSG kann der Pilot eh nur
-                      einen Flug buchen, also immer sichtbar. */}
-                  <BidDetails flight={f} bidId={bid.id} preview={bidPreviews.get(bid.id) ?? null} />
-                  {isSelected && null}
-
-                  {/* Action-Zeile am Ende — Flug starten / OFP / Flugseite.
-                      Bewusst NACH den Plan-Werten, damit der Pilot zuerst
-                      den OFP-Plan im Blick hat und dann entscheidet. */}
-                  <div className="bid-card__actions">
-                    <button
-                      type="button"
-                      className="button button--primary bid-card__start"
-                      onClick={() => void startFlight(bid)}
-                      disabled={startDisabled}
-                      title={startTitle ?? "Standard-Flug nach IFR-Regeln, basiert auf deinem SimBrief-OFP. Block-Fuel, Route, Weights und Alternates kommen aus dem OFP."}
-                    >
-                      🛫 {startingId === bid.id
-                        ? t("bids.starting")
-                        : "IFR Start (SimBrief)"}
-                    </button>
-                    {distanceToDptNm !== null && (
-                      <span
-                        className={`bid-card__distance ${
-                          tooFar ? "bid-card__distance--far" : "bid-card__distance--near"
-                        }`}
-                        title={t("bids.distance_to_departure", {
-                          airport: dptIcao,
-                        })}
-                      >
-                        {tooFar ? "✕ " : "✓ "}
-                        {distanceToDptNm < 1
-                          ? `< 1 nm ${t("bids.from_airport", { airport: dptIcao })}`
-                          : `${distanceToDptNm.toFixed(1)} nm ${t("bids.from_airport", { airport: dptIcao })}`}
-                      </span>
-                    )}
-                    {f.simbrief?.id && (
-                      <button
-                        type="button"
-                        className="button"
-                        onClick={() => void openOfp(f)}
-                      >
-                        {t("bids.open_ofp")} ↗
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="button"
-                      onClick={() => void openFlightPage(f)}
-                    >
-                      {t("bids.open_flight_page")} ↗
-                    </button>
-                    {/* v0.12.12-dev: GSG-Wetter-Briefing extern oeffnen.
-                        Login-basiert — die Seite zieht den aktiven Bid
-                        automatisch sobald der Pilot in phpVMS eingeloggt
-                        ist (gleiche Logik wie OFP/Flugseite). Der Lade-
-                        Hinweis erscheint per Toast beim Klick statt als
-                        permanenter Schild. */}
-                    <button
-                      type="button"
-                      className="button"
-                      onClick={() => {
-                        setWeatherLoadHint(true);
-                        window.setTimeout(() => setWeatherLoadHint(false), 5000);
-                        void openUrl("https://german-sky-group.eu/weatherbriefing").catch(() => {});
-                      }}
-                      title={t("bids.open_weather_briefing_hint")}
-                    >
-                      🌦 {t("bids.open_weather_briefing")} ↗
-                    </button>
-                    {/* v0.5.27 VFR/Manual-Mode-Button: immer verfuegbar
-                        wenn kein aktiver Flug laeuft. Pilot entscheidet
-                        ob er IFR (oben mit SB) oder VFR (hier manuell)
-                        fliegen will — keine harte Enforcement.
-                        v0.5.28: konsistenter Label "VFR Start (manuell)"
-                        unabhaengig ob SB existiert. */}
-                    {hasActiveFlight ? null : (
-                      <button
-                        type="button"
-                        className="button"
-                        onClick={() => setManualModalBid(bid)}
-                        title={t("bid_card.vfr_start_tooltip")}
-                      >
-                        {t("bid_card.vfr_start")}
-                      </button>
-                    )}
-                  </div>
-                  {/* v0.5.31: Klare Regel-Erklaerung statt
-                      Marketing-Sprech. IFR = SB-Pflicht, VFR = SB-frei. */}
-                  {!hasActiveFlight && (
-                    <div className="bid-card__mode-hint">
-                      <div className="bid-card__mode-hint-title">
-                        {t("bid_card.mode_hint_title")}
-                      </div>
-                      <div className="bid-card__mode-hint-row bid-card__mode-hint-row--ifr">
-                        <span className="bid-card__mode-hint-icon">🛫</span>
-                        <span className="bid-card__mode-hint-key">{t("bid_card.mode_hint_ifr_key")}</span>
-                        <span className="bid-card__mode-hint-rule">
-                          <strong>{t("bid_card.mode_hint_ifr_rule_strong")}</strong>{t("bid_card.mode_hint_ifr_rule_rest")}
-                        </span>
-                      </div>
-                      <div className="bid-card__mode-hint-row bid-card__mode-hint-row--vfr">
-                        <span className="bid-card__mode-hint-icon">🛩</span>
-                        <span className="bid-card__mode-hint-key">{t("bid_card.mode_hint_vfr_key")}</span>
-                        <span className="bid-card__mode-hint-rule">
-                          <strong>{t("bid_card.mode_hint_vfr_rule_strong")}</strong>{t("bid_card.mode_hint_vfr_rule_rest")}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  {startError?.bidId === bid.id && (
-                    <p className="bid-card__start-error" role="alert">
-                      {startError.message}
-                    </p>
-                  )}
-                  {/* v0.8.3 (#7): Wetlease-/Mismatch-Warning mit
-                      Override-Button (gelb) — analog ManualFlightModal. */}
-                  {startWarning?.bidId === bid.id && (
-                    <div className="manual-modal__warning" role="alert" style={{ marginTop: 8 }}>
-                      <div className="manual-modal__warning-title">
-                        {t("manual_flight.warning_title")}
-                      </div>
-                      <div className="manual-modal__warning-text">
-                        {startWarning.message}
-                      </div>
-                      <div style={{ marginTop: 8 }}>
-                        <button
-                          type="button"
-                          className="button button--primary"
-                          onClick={() => void startFlight(bid, true)}
-                          disabled={startingId !== null || hasActiveFlight}
-                          style={{ background: "#fbbf24", borderColor: "#fbbf24", color: "#1f1f1f" }}
-                        >
-                          {t("manual_flight.start_anyway")}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </article>
-              </li>
+        // Distanz/Sim-Gating braucht jeder Bid einzeln (Einzeiler zeigen
+        // zwar kein Distanz-Badge, aber der Klick zum Main-Swap soll immer
+        // moeglich sein — kein Gating dort).
+        function derivedFor(bid: Bid) {
+          const f = bid.flight;
+          const dptIcao = f.dpt_airport_id.trim().toUpperCase();
+          const dptCoords = airports[dptIcao];
+          const hasRealPosition =
+            simSnapshot !== null &&
+            !(simSnapshot.lat === 0 && simSnapshot.lon === 0);
+          let distanceToDptNm: number | null = null;
+          if (
+            hasRealPosition &&
+            simSnapshot &&
+            dptCoords &&
+            dptCoords.lat !== null &&
+            dptCoords.lon !== null
+          ) {
+            distanceToDptNm = distanceNm(
+              simSnapshot.lat,
+              simSnapshot.lon,
+              dptCoords.lat,
+              dptCoords.lon,
             );
-          })}
-        </ul>
-      )}
+          }
+          const onGround = simSnapshot?.on_ground ?? false;
+          const tooFar =
+            distanceToDptNm !== null && distanceToDptNm > MAX_START_DISTANCE_NM;
+          const noPositionYet = simState === "connected" && !hasRealPosition;
+          const startDisabled =
+            startingId !== null ||
+            hasActiveFlight ||
+            simState !== "connected" ||
+            noPositionYet ||
+            !onGround ||
+            tooFar;
+
+          let startTitle = "";
+          if (simState !== "connected") {
+            startTitle = t("bids.start_disabled_no_sim");
+          } else if (hasActiveFlight) {
+            startTitle = t("bids.start_disabled_active_flight");
+          } else if (noPositionYet) {
+            startTitle = t("bids.start_disabled_no_position");
+          } else if (!onGround) {
+            startTitle = t("bids.start_disabled_not_on_ground");
+          } else if (tooFar && distanceToDptNm !== null) {
+            startTitle = t("bids.start_disabled_too_far", {
+              distance: distanceToDptNm.toFixed(1),
+              airport: dptIcao,
+            });
+          }
+
+          const mode = modeByBid[bid.id] ?? (f.simbrief?.id ? "ifr" : "vfr");
+          const primaryDisabled = mode === "ifr" ? startDisabled : hasActiveFlight;
+          const primaryHint =
+            mode === "ifr"
+              ? startTitle || t("bid_card.mode_ifr_hint")
+              : t("bid_card.mode_vfr_hint");
+
+          return { dptIcao, distanceToDptNm, tooFar, startDisabled, startTitle, mode, primaryDisabled, primaryHint };
+        }
+
+        return (
+          <>
+            {mainBid && (() => {
+              const d = derivedFor(mainBid);
+              return (
+                <MainBidCard
+                  bid={mainBid}
+                  isNextFlight={isNextFlight}
+                  preview={bidPreviews.get(mainBid.id) ?? null}
+                  nowMs={nowMs}
+                  mode={d.mode}
+                  setMode={(next) => setModeByBid((prev) => ({ ...prev, [mainBid.id]: next }))}
+                  primaryDisabled={d.primaryDisabled}
+                  primaryHint={d.primaryHint}
+                  startTitle={d.startTitle}
+                  starting={startingId === mainBid.id}
+                  startError={startError?.bidId === mainBid.id ? startError.message : null}
+                  startWarning={startWarning?.bidId === mainBid.id ? startWarning.message : null}
+                  distanceToDptNm={d.distanceToDptNm}
+                  tooFar={d.tooFar}
+                  dptIcao={d.dptIcao}
+                  onStart={() => void startFlight(mainBid)}
+                  onAcknowledgeMismatch={() => void startFlight(mainBid, true)}
+                  onManualStart={() => setManualModalBid(mainBid)}
+                  onOfp={() => void openOfp(mainBid.flight)}
+                  onFlightPage={() => void openFlightPage(mainBid.flight)}
+                  onWeather={() => {
+                    setWeatherLoadHint(true);
+                    window.setTimeout(() => setWeatherLoadHint(false), 5000);
+                    void openUrl("https://german-sky-group.eu/weatherbriefing").catch(() => {});
+                  }}
+                />
+              );
+            })()}
+
+            {restBids.length > 0 && (
+              <ul className="bids__more-list">
+                {restBids.map((bid) => {
+                  const f = bid.flight;
+                  const preview = bidPreviews.get(bid.id) ?? null;
+                  const dpt = f.dpt_airport?.icao ?? f.dpt_airport_id;
+                  const arr = f.arr_airport?.icao ?? f.arr_airport_id;
+                  const { icao: icaoCallsign } = splitCallsigns(f);
+                  const airlineLogo = f.airline?.logo?.trim() || null;
+                  const monogram = airlineMonogram(f);
+                  const aircraftType = f.simbrief?.subfleet?.type_ ?? preview?.aircraft_icao ?? undefined;
+                  const dptTimeDisplay = f.dpt_time ?? (preview?.sched_out_epoch != null ? formatEpochHm(preview.sched_out_epoch) : null);
+                  const arrTimeDisplay = f.arr_time ?? (preview?.sched_in_epoch != null ? formatEpochHm(preview.sched_in_epoch) : null);
+
+                  return (
+                    <li key={bid.id}>
+                      <button
+                        type="button"
+                        className="bid-more"
+                        onClick={() => handleSetMain(bid)}
+                      >
+                        <div className="bid-more__leg">
+                          <span className="bid-more__icao">{dpt}</span>
+                          <span className="bid-more__time">
+                            {dptTimeDisplay ? `${dptTimeDisplay}z` : "--:--"}
+                          </span>
+                        </div>
+                        <div className="bid-more__mid">
+                          <div
+                            className={`bid-more__logo ${airlineLogo ? "" : "bid-more__logo--placeholder"}`}
+                          >
+                            {airlineLogo ? (
+                              <img src={airlineLogo} alt={f.airline?.name ?? icaoCallsign ?? ""} />
+                            ) : (
+                              <span>{f.airline?.icao ?? monogram}</span>
+                            )}
+                          </div>
+                          <span className="bid-more__callsign">{icaoCallsign}</span>
+                          <span className="bid-more__meta">
+                            {[aircraftType, formatDistanceNm(f.distance?.nmi ?? null, i18n.language), formatFlightTime(f.flight_time, i18n.language)]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                          {!f.simbrief?.id && (
+                            <span className="bid-more__badge">{t("bid_card.no_ofp_badge")}</span>
+                          )}
+                        </div>
+                        <div className="bid-more__leg bid-more__leg--arrival">
+                          <span className="bid-more__time">
+                            {arrTimeDisplay ? `${arrTimeDisplay}z` : "--:--"}
+                          </span>
+                          <span className="bid-more__icao">{arr}</span>
+                        </div>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </>
+        );
+      })()}
 
       {/* v0.5.27 Manual/VFR-Mode-Modal */}
       {manualModalBid && (
@@ -1101,15 +1213,16 @@ export function BidsList({
 }
 
 /**
- * Ausgeklappte Bid-Card-Details (v0.3.0):
- * - Aircraft-Info aus SimBrief-Subfleet (B738 · Boeing 737-800)
- * - Pax/Cargo-Load aus den fares
- * - Route-String (kommt aus phpVMS-Bid)
- * - SimBrief-Plan-Vorschau (Block-Fuel, Trip-Burn, TOW, LDW, Reserve,
- *   ZFW, Alternate) wird per `fetch_simbrief_preview` Tauri-Command
- *   geholt sobald die Card ausgeklappt wird. Lädt asynchron, kein
- *   Blocking — Pilot sieht erstmal die Route, der Plan-Block flutscht
- *   in 1-2s nach.
+ * Briefing-2a: die EINE Hauptflug-Karte (README §5). Ersetzt die
+ * vorherige BidDetails-Ausklapp-Komponente — jetzt die komplette Karte
+ * (Kopf + Streckenband + Rubriken + Aktionszeile) statt nur der
+ * ausgeklappten Detail-Sektion, weil Logo/ALTN/Aircraft-Typ jetzt Teil
+ * der Route sind statt einer separaten Kachel-Reihe.
+ *
+ * Aircraft-Info aus SimBrief-Subfleet (B738 · Boeing 737-800), Pax/Cargo-
+ * Load aus den fares, Route-String aus phpVMS-Bid, SimBrief-Plan-
+ * Vorschau (Block-Fuel, Trip-Burn, TOW, LDW, Reserve, ZFW, Alternate)
+ * per `fetch_simbrief_preview` bzw. `preview`-Prop (SimBrief-direct).
  */
 interface BidSimBriefPreviewProp {
   request_id: string;
@@ -1127,26 +1240,89 @@ interface BidSimBriefPreviewProp {
   /** Gepaeck + Fracht zusammen — fuer den Chip `freight_kg` nehmen. */
   cargo_kg: number;
   freight_kg: number;
+  aircraft_icao: string | null;
+  max_passengers: number | null;
+  sched_out_epoch: number | null;
+  sched_in_epoch: number | null;
+  planned_taxi_kg: number;
+  planned_contingency_kg: number;
+  planned_alternate_burn_kg: number;
+  planned_extra_kg: number;
+  planned_oew_kg: number;
+  planned_payload_kg: number;
+  planned_pax_weight_kg: number;
+  planned_baggage_kg: number;
+  planned_max_tow_kg: number;
   callsign_warning: { sb_callsign: string; active_callsigns: string } | null;
 }
 
-function BidDetails({
-  flight,
-  bidId: _bidId,
-  preview,
-}: {
-  flight: Flight;
-  bidId: number;
+interface MainBidCardProps {
+  bid: Bid;
+  /** README §5.1: NÄCHSTER-Badge nur an der zeitlich ersten Karte, auch
+   *  wenn der Pilot per Klick eine andere Buchung zur Hauptkarte macht. */
+  isNextFlight: boolean;
   preview: BidSimBriefPreviewProp | null;
-}) {
-  const { t } = useTranslation();
+  nowMs: number;
+  mode: "ifr" | "vfr";
+  setMode: (next: "ifr" | "vfr") => void;
+  primaryDisabled: boolean;
+  primaryHint: string;
+  startTitle: string;
+  starting: boolean;
+  startError: string | null;
+  startWarning: string | null;
+  distanceToDptNm: number | null;
+  tooFar: boolean;
+  dptIcao: string;
+  onStart: () => void;
+  onManualStart: () => void;
+  onAcknowledgeMismatch: () => void;
+  onOfp: () => void;
+  onFlightPage: () => void;
+  onWeather: () => void;
+}
+
+function MainBidCard({
+  bid,
+  isNextFlight,
+  preview,
+  nowMs,
+  mode,
+  setMode,
+  primaryDisabled,
+  primaryHint,
+  startTitle,
+  starting,
+  startError,
+  startWarning,
+  distanceToDptNm,
+  tooFar,
+  dptIcao,
+  onStart,
+  onManualStart,
+  onAcknowledgeMismatch,
+  onOfp,
+  onFlightPage,
+  onWeather,
+}: MainBidCardProps) {
+  const { t, i18n } = useTranslation();
+  const flight = bid.flight;
   const [plan, setPlan] = useState<SimBriefOfp | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
-  const [planLoading, setPlanLoading] = useState(false);
+  // Briefing-2a-Haertung (Pilot-Feedback 2026-08-03): startet "ladend" wenn
+  // ein OFP gebunden ist, statt bei "false" — sonst rendert die Karte beim
+  // allerersten Mount (bevor `preview` von BidsList ankommt) fuer 1-3s mit
+  // `plan=null`, was in den Rubriken NICHT als Ladezustand aussah, sondern
+  // wie fertige, aber unvollstaendige/falsche Werte (z.B. MTOW-Vergleich
+  // fiel auf den strukturellen phpVMS-Wert zurueck statt dem echten
+  // operationellen SimBrief-Wert zu zeigen — plausibel aussehend, aber
+  // sachlich falsch).
+  const [planLoading, setPlanLoading] = useState(() => !!flight.simbrief?.id);
   // v0.3.0: Aircraft-Reg — wenn die simbrief.aircraft_id vorhanden ist,
   // holen wir die konkrete Registrierung (z.B. "EI-ENI") über einen
   // separaten phpVMS-API-Call. Subfleet alleine sagt nur die Type-Klasse,
-  // nicht das konkrete Flugzeug.
+  // nicht das konkrete Flugzeug. Seit Briefing-2a traegt die Response
+  // auch `mtow_kg` (§21) — Grundlage fuer die WEIGHTS-Einordnung.
   const [aircraft, setAircraft] = useState<AircraftInfo | null>(null);
 
   // OFP-Vorschau bei Bid-Selection holen. Nur einmal pro Render-Lifetime.
@@ -1174,7 +1350,7 @@ function BidDetails({
         route: undefined,
         waypoints: [],
         max_zfw_kg: 0,
-        max_tow_kg: 0,
+        max_tow_kg: preview.planned_max_tow_kg,
         max_ldw_kg: 0,
         request_id: preview.request_id,
         // v0.7.12: Pax/Cargo aus dem OFP-XML — fuer die Bid-Card-Chips
@@ -1182,6 +1358,11 @@ function BidDetails({
         pax_count: preview.pax_count,
         cargo_kg: preview.cargo_kg,
         freight_kg: preview.freight_kg,
+        aircraft_icao: preview.aircraft_icao,
+        planned_oew_kg: preview.planned_oew_kg,
+        planned_payload_kg: preview.planned_payload_kg,
+        planned_pax_weight_kg: preview.planned_pax_weight_kg,
+        planned_baggage_kg: preview.planned_baggage_kg,
       } as unknown as SimBriefOfp);
       setPlanLoading(false);
       setPlanError(null);
@@ -1241,8 +1422,12 @@ function BidDetails({
     preview && preview.freight_kg > 0 ? preview.freight_kg : 0;
   const cargoKg = previewFreightKg > 0 ? previewFreightKg : faresCargoKg;
 
-  const aircraftType = flight.simbrief?.subfleet?.type_;
+  // Briefing-2a: Fallback auf preview.aircraft_icao — der SimBrief-direct-
+  // Pfad (Normalfall vor dem ersten phpVMS-OFP-Binding) hat keinen Bid-
+  // Pointer-Subfleet, aber das SimBrief-OFP kennt den Aircraft-Typ selbst.
+  const aircraftType = flight.simbrief?.subfleet?.type_ ?? preview?.aircraft_icao ?? undefined;
   const aircraftName = flight.simbrief?.subfleet?.name;
+  const registration = aircraft?.registration ?? null;
 
   // v0.3.0: SimBrief-OFP-Mismatch-Detection (mehrere Signale).
   // Hintergrund: SimBrief liefert IMMER den letzten OFP des Pilot-
@@ -1261,7 +1446,12 @@ function BidDetails({
   //
   // Mindestens EIN klares Mismatch-Signal → Banner. Mehrere Signale
   // → eindeutig falscher OFP.
-  const ofpAcIcao = aircraftType?.toUpperCase().trim();
+  // Briefing-2a-Fix: reiner ICAO-Typ (z.B. "A320") statt `aircraftType` —
+  // seit dem Subfleet-Serde-Fix traegt `aircraftType` den VOLLEN phpVMS-
+  // Subfleet-Namen ("VLG-A320-IAE-SL"), der hier gegen `aircraft.icao`
+  // (reiner Typ) immer als Mismatch durchgefallen waere. `plan.aircraft_icao`
+  // kommt direkt aus dem SimBrief-OFP als reiner Typ-Code.
+  const ofpAcIcao = plan?.aircraft_icao?.toUpperCase().trim();
   const bidAcIcao = aircraft?.icao?.toUpperCase().trim();
   const acTypeMismatch =
     !!ofpAcIcao && !!bidAcIcao && ofpAcIcao !== bidAcIcao;
@@ -1303,107 +1493,285 @@ function BidDetails({
   // ausführlichen Banner-Body wenn er sowieso schon offen ist.
   const ofpMismatch = acTypeMismatch || originMismatch || destMismatch;
 
-  // Wenn weder Aircraft-Info noch SimBrief-Plan noch Route da ist,
-  // rendern wir die Sektion gar nicht (würde sonst leer aussehen).
   const hasAircraft = !!(aircraftType || aircraftName);
   const hasLoad = paxCount > 0 || cargoKg > 0;
   const hasSimBriefId = !!flight.simbrief?.id;
   const hasRoute = !!flight.route;
-  if (!hasAircraft && !hasLoad && !hasSimBriefId && !hasRoute) return null;
+
+  // Briefing-2a: Trip+Reserve allein ergaben keine nachvollziehbare Summe zu
+  // Block (Pilot-Feedback 2026-08-02) — Taxi/Contingency/Alternate/Extra
+  // ergaenzen die Rechnung (alle sechs Werte zusammen = Block).
+  const fuelRows = [
+    plan && plan.planned_burn_kg > 0
+      ? `Trip ${Math.round(plan.planned_burn_kg).toLocaleString("de-DE")}`
+      : null,
+    plan && plan.planned_reserve_kg > 0
+      ? `Reserve ${Math.round(plan.planned_reserve_kg).toLocaleString("de-DE")}`
+      : null,
+    preview && preview.planned_taxi_kg > 0
+      ? `Taxi ${Math.round(preview.planned_taxi_kg).toLocaleString("de-DE")}`
+      : null,
+    preview && preview.planned_contingency_kg > 0
+      ? `Conting. ${Math.round(preview.planned_contingency_kg).toLocaleString("de-DE")}`
+      : null,
+    preview && preview.planned_alternate_burn_kg > 0
+      ? `Alt-Fuel ${Math.round(preview.planned_alternate_burn_kg).toLocaleString("de-DE")}`
+      : null,
+    preview && preview.planned_extra_kg > 0
+      ? `Extra ${Math.round(preview.planned_extra_kg).toLocaleString("de-DE")}`
+      : null,
+  ].filter((v): v is string => v !== null);
+  // Briefing-2a: OEW+Payload ergaenzen ZFW/LDW — zusammen ergibt
+  // OEW+Payload exakt ZFW (Pilot-Feedback 2026-08-03, analog zur Fuel-
+  // Aufschluesselung, wo Trip+Reserve+Taxi+... exakt Block ergibt).
+  const weightRows = [
+    plan && plan.planned_zfw_kg > 0
+      ? `ZFW ${Math.round(plan.planned_zfw_kg).toLocaleString("de-DE")}`
+      : null,
+    plan && plan.planned_ldw_kg > 0
+      ? `LDW ${Math.round(plan.planned_ldw_kg).toLocaleString("de-DE")}`
+      : null,
+    plan?.planned_oew_kg && plan.planned_oew_kg > 0
+      ? `OEW ${Math.round(plan.planned_oew_kg).toLocaleString("de-DE")}`
+      : null,
+    plan?.planned_payload_kg && plan.planned_payload_kg > 0
+      ? `Payload ${Math.round(plan.planned_payload_kg).toLocaleString("de-DE")}`
+      : null,
+  ].filter((v): v is string => v !== null);
+  // Briefing-2a: Pax-Gewicht + Gepaeck ergaenzen die reine Fracht — analog
+  // zu Fuel/Weights ergibt die Summe (Pax-Gewicht + Gepaeck + Fracht)
+  // exakt Payload (Pilot-Feedback 2026-08-03). Einheitlich in KG, nicht
+  // Cargo in Tonnen und Pax/Bags in KG gemischt (Pilot-Feedback 2026-08-03).
+  const loadRows = [
+    cargoKg > 0 ? `${t("bid_card.cargo_short")} ${Math.round(cargoKg).toLocaleString("de-DE")}` : null,
+    plan?.planned_pax_weight_kg && plan.planned_pax_weight_kg > 0
+      ? `Pax ${Math.round(plan.planned_pax_weight_kg).toLocaleString("de-DE")}`
+      : null,
+    plan?.planned_baggage_kg && plan.planned_baggage_kg > 0
+      ? `Bags ${Math.round(plan.planned_baggage_kg).toLocaleString("de-DE")}`
+      : null,
+    aircraftType,
+    registration,
+  ].filter((v): v is string => v !== null);
+  const hasRubrics = !ofpMismatch && (hasSimBriefId || hasAircraft || hasLoad);
+
+  // Briefing-2a §5.3: WEIGHTS-Einordnung ist Pflicht sobald MTOW bekannt
+  // ist (§21-Verify: `phpvmsaircraft.mtow` fliesst jetzt via
+  // `phpvms_get_aircraft` → `aircraft.mtow_kg` durch). Sitzplatz-Total
+  // fuer "PAX von N" bleibt bewusst weg — verifiziert (§21-Verify-Agent):
+  // kein Sitzplatz-Feld in phpVMS-Core, PaxStudios `seating`-JSON ist
+  // browser-session-only und ueber die Pilot-API nicht erreichbar.
+  const towKg = plan && plan.planned_tow_kg > 0 ? Math.round(plan.planned_tow_kg) : null;
+  // Briefing-2a-Korrektur (Pilot-Feedback 2026-08-03): der OPERATIONELLE
+  // MTOW-Grenzwert aus dem OFP (bahnlaengen-/temperaturlimitiert fuer
+  // DIESEN Flug) ist oft enger als der STRUKTURELLE Grenzwert aus
+  // phpVMS' `aircraft.mtow` — der strukturelle Wert zeigte einen viel
+  // groesseren, irrefuehrenden Puffer. Operationeller Wert hat Prioritaet,
+  // struktureller bleibt Fallback (z.B. VFR ohne OFP).
+  const mtowKg =
+    plan?.max_tow_kg && plan.max_tow_kg > 0
+      ? Math.round(plan.max_tow_kg)
+      : aircraft?.mtow_kg && aircraft.mtow_kg > 0
+        ? Math.round(aircraft.mtow_kg)
+        : null;
+  let weightsInset: string | null = null;
+  let weightsDanger = false;
+  if (towKg !== null && mtowKg !== null) {
+    const diff = mtowKg - towKg;
+    weightsInset =
+      diff >= 0
+        ? t("bid_card.tow_under_mtow", { n: diff.toLocaleString("de-DE") })
+        : t("bid_card.tow_over_mtow", { n: Math.abs(diff).toLocaleString("de-DE") });
+    weightsDanger = diff < 0;
+  }
+
+  const dpt = flight.dpt_airport?.icao ?? flight.dpt_airport_id;
+  const arr = flight.arr_airport?.icao ?? flight.arr_airport_id;
+  const dptName = flight.dpt_airport?.name ?? null;
+  const arrName = flight.arr_airport?.name ?? null;
+  const { icao: icaoCallsign, iata: iataCallsign } = splitCallsigns(flight);
+  const airlineName = flight.airline?.name ?? null;
+  const airlineLogo = flight.airline?.logo?.trim() || null;
+  const cruiseLevel = formatLevel(flight.level);
+  // Briefing-2a §8: STD/STA sind Pflichtfeld der Anzeige. phpVMS'
+  // flight.dpt_time/arr_time hat Prioritaet; fehlt es (viele Test-/manuell
+  // erstellte Buchungen haben kein Schedule-Feld gesetzt), faellt es auf
+  // SimBrief's <times><sched_out>/<sched_in> zurueck (verifiziert per
+  // Live-XML-Dump 2026-08-02) — erst wenn beides fehlt, "--:--".
+  const dptTimeDisplay = flight.dpt_time ?? (preview?.sched_out_epoch != null ? formatEpochHm(preview.sched_out_epoch) : null);
+  const arrTimeDisplay = flight.arr_time ?? (preview?.sched_in_epoch != null ? formatEpochHm(preview.sched_in_epoch) : null);
+  const dptCountdown = flight.dpt_time
+    ? stdCountdown(flight.dpt_time, nowMs)
+    : preview?.sched_out_epoch != null
+      ? epochCountdown(preview.sched_out_epoch, nowMs)
+      : null;
 
   return (
-    <div className="bid-card__details">
-      {/* v0.3.0: Bei OFP-Mismatch sind ALLE OFP-Werte unzuverlässig
-          (Aircraft/Subfleet, Pax/Cargo aus den Fares, Plan-Block-
-          Fuel/TOW etc.). Wir blenden sie aus, um keine falschen
-          Werte zu zeigen — nur das Banner + die phpVMS-eigene Route
-          bleiben sichtbar. Pilot kennt seine Buchung, AeroACARS hat
-          nichts Verlässliches zu zeigen bis ein neuer OFP da ist. */}
-      {/* Header: Aircraft-Info + Load-Chips in einer Zeile */}
-      {!ofpMismatch && (hasAircraft || hasLoad) && (
-        <div className="bid-card__aircraft-row">
-          {hasAircraft && (
-            <div className="bid-card__aircraft">
-              <span className="bid-card__detail-label">
-                {t("bids.aircraft")}
-              </span>
-              {aircraftType && <code>{aircraftType}</code>}
-              {aircraftName && (
-                <span className="bid-card__aircraft-name">{aircraftName}</span>
+    <article className="bid-card bid-card--main">
+      <div className="bid-card__head">
+        <div className="bid-card__brand">
+          <div className={`bid-card__logo ${airlineLogo ? "" : "bid-card__logo--placeholder"}`}>
+            {airlineLogo ? (
+              <img src={airlineLogo} alt={airlineName ?? icaoCallsign ?? ""} />
+            ) : (
+              <span>{flight.airline?.icao ?? airlineMonogram(flight)}</span>
+            )}
+          </div>
+          <div className="bid-card__title">
+            <div className="bid-card__title-row">
+              {isNextFlight && (
+                <span className="bid-card__next-badge">{t("bid_card.next_badge")}</span>
               )}
-              {/* v0.3.0: Konkrete Registrierung wenn verfügbar — z.B.
-                  "RYR-B738-WL · Boeing 737-800 · EI-ENI" */}
-              {aircraft?.registration && (
-                <span className="bid-card__aircraft-reg">
-                  {aircraft.registration}
-                </span>
-              )}
+              <span className="bid-card__callsign">{icaoCallsign}</span>
             </div>
-          )}
-          {hasLoad && (
-            <div className="bid-card__load">
-              {paxCount > 0 && (
-                <span className="bid-card__load-chip bid-card__load-chip--pax">
-                  👥 {paxCount} PAX
-                </span>
+            <span className="bid-card__airline-line">
+              {[airlineName, iataCallsign].filter(Boolean).join(" · ")}
+            </span>
+          </div>
+        </div>
+        <div className="bid-card__meta">
+          {flight.flight_type && <span>{flightTypeLabel(flight.flight_type)}</span>}
+          <span>{formatDistanceNm(flight.distance?.nmi ?? null, i18n.language)}</span>
+          <span>{formatFlightTime(flight.flight_time, i18n.language)}</span>
+        </div>
+      </div>
+
+      <div className="bid-card__route-grid">
+        <div className="bid-card__route-leg">
+          <div className="bid-card__route-line1">
+            <span className="bid-card__route-icao">{dpt}</span>
+            <span className="bid-card__route-time">
+              {dptTimeDisplay ? `${dptTimeDisplay}z` : "--:--"}
+            </span>
+          </div>
+          <div className="bid-card__route-line2">
+            {dptName && <span>{dptName}</span>}
+            {dptCountdown && (
+              <span className={dptCountdown.overdue ? "bid-card__route-countdown--overdue" : undefined}>
+                {dptName && " · "}
+                {/* Pilot-Feedback 2026-08-03: STD zeigt nur die Uhrzeit ohne
+                    Datum ("11:55z") — faellt das OFP auf einen anderen
+                    Kalendertag als "jetzt" (auch bei < 24h Differenz, z.B.
+                    ueber Mitternacht hinweg), las sich "überfällig seit
+                    1129 Min" neben der aktuellen Uhr wie ein Rechenfehler
+                    (naive Kopfrechnung "jetzt minus 11:55" ergibt etwas
+                    ganz anderes). Bei Tagessprung auf eine Tage-Formulierung
+                    wechseln macht den Datumssprung explizit. */}
+                {dptCountdown.crossesDay
+                  ? dptCountdown.overdue
+                    ? t("bid_card.overdue_days", { count: dptCountdown.dayDiff })
+                    : t("bid_card.countdown_days", { count: dptCountdown.dayDiff })
+                  : dptCountdown.overdue
+                    ? t("bid_card.overdue", { n: dptCountdown.minutes })
+                    : t("bid_card.countdown", { n: dptCountdown.minutes })}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="bid-card__route-mid">
+          <div className="bid-card__route-track" aria-hidden="true">
+            <span className="bid-card__route-dot bid-card__route-dot--filled" />
+            <span className="bid-card__route-tline" />
+            {(aircraftType || registration) && (
+              <span className="bid-card__route-type">
+                {[aircraftType, registration].filter(Boolean).join(" · ")}
+              </span>
+            )}
+            <span className="bid-card__route-tline" />
+            <span className="bid-card__route-dot bid-card__route-dot--hollow" />
+          </div>
+          {!ofpMismatch && (plan?.alternate || cruiseLevel) && (
+            <div className="bid-card__route-altn">
+              {plan?.alternate && (
+                <>
+                  <span className="bid-card__route-altn-label">{t("bid_card.altn_label")}</span>{" "}
+                  <span className="bid-card__route-altn-value">{plan.alternate}</span>
+                </>
               )}
-              {cargoKg > 0 && (
-                <span className="bid-card__load-chip bid-card__load-chip--cargo">
-                  📦 {(cargoKg / 1000).toFixed(1)} t Cargo
-                </span>
-              )}
+              {plan?.alternate && cruiseLevel && " · "}
+              {cruiseLevel && <span>CRZ {cruiseLevel}</span>}
             </div>
           )}
         </div>
+
+        <div className="bid-card__route-leg bid-card__route-leg--arrival">
+          <div className="bid-card__route-line1">
+            <span className="bid-card__route-time">
+              {arrTimeDisplay ? `${arrTimeDisplay}z` : "--:--"}
+            </span>
+            <span className="bid-card__route-icao">{arr}</span>
+          </div>
+          <div className="bid-card__route-line2">{arrName}</div>
+        </div>
+      </div>
+
+      {/* Briefing-2a-Haertung: solange der (einzige) OFP-Preview-Fetch noch
+          laeuft, einen echten Ladezustand zeigen statt der Rubriken mit
+          `plan=null` — sonst rendert kurz ein scheinbar fertiger, aber
+          unvollstaendiger/irrefuehrender Zwischenstand (z.B. MTOW-Vergleich
+          faellt auf den strukturellen statt operationellen Wert zurueck). */}
+      {planLoading ? (
+        <div className="bid-card__rubrics" aria-hidden="true">
+          <div className="bid-card__rubric-loading" />
+          <div className="bid-card__rubric-loading" />
+          <div className="bid-card__rubric-loading" />
+        </div>
+      ) : (
+        hasRubrics && (
+          <div className="bid-card__rubrics">
+            <Rubric
+              title={t("bid_card.rubric_fuel")}
+              unit="KG"
+              headline={plan && plan.planned_block_fuel_kg > 0 ? Math.round(plan.planned_block_fuel_kg).toLocaleString("de-DE") : null}
+              headlineLabel="Block"
+              rows={fuelRows}
+            />
+            <Rubric
+              title={t("bid_card.rubric_weights")}
+              unit="KG"
+              headline={towKg !== null ? towKg.toLocaleString("de-DE") : null}
+              headlineLabel="TOW"
+              inset={weightsInset}
+              insetDanger={weightsDanger}
+              rows={weightRows}
+            />
+            <Rubric
+              title={t("bid_card.rubric_load")}
+              headline={paxCount > 0 ? String(paxCount) : null}
+              headlineLabel="PAX"
+              inset={preview?.max_passengers ? t("bid_card.pax_of_total", { n: preview.max_passengers }) : null}
+              rows={loadRows}
+            />
+          </div>
+        )
       )}
 
-      {/* v0.3.3: Wenn der Bid noch GAR KEINEN SimBrief-OFP gebunden hat,
-          klarer Hinweis statt einfach nichts zu rendern. Vorher rätselte
-          der Pilot warum die Plan-Cards leer sind. */}
       {!hasSimBriefId && (
         <div className="bid-card__ofp-mismatch bid-card__ofp-mismatch--info">
-          <span className="bid-card__ofp-mismatch-icon">ℹ️</span>
           <div className="bid-card__ofp-mismatch-text">
             <strong>{t("bids.no_ofp_title")}</strong>
-            <span className="bid-card__ofp-mismatch-hint">
-              {t("bids.no_ofp_hint")}
-            </span>
+            <span className="bid-card__ofp-mismatch-hint">{t("bids.no_ofp_hint")}</span>
           </div>
         </div>
       )}
 
-      {/* v0.3.0: OFP-Mismatch-Warnung. SimBrief liefert immer den
-          letzten OFP des Pilot-Accounts — wenn der zur aktuellen
-          Buchung passt, alles gut. Wenn nicht (Aircraft / Route /
-          Flightnumber abweichen), zeigen wir einen klaren Vergleich
-          und die Anleitung zum Reparieren. */}
       {ofpMismatch && plan && (
         <div className="bid-card__ofp-mismatch">
-          <span className="bid-card__ofp-mismatch-icon">⚠</span>
           <div className="bid-card__ofp-mismatch-text">
             <strong>{t("bids.ofp_mismatch_title")}</strong>
             <div className="bid-card__ofp-compare">
               <div>
-                <span className="bid-card__ofp-compare-label">
-                  {t("bids.ofp_mismatch_bid")}
-                </span>
+                <span className="bid-card__ofp-compare-label">{t("bids.ofp_mismatch_bid")}</span>
                 <code>
-                  {/* Bevorzugt ATC-Callsign mit Airline-Prefix
-                      (z.B. "RYR4TK"). phpVMS speichert oft nur den
-                      Suffix, deshalb ergänzen wir den Prefix in
-                      `fullBidCallsign`. Sonst Airline-ICAO + Flight-
-                      Number als Standardformat. */}
-                  {fullBidCallsign
-                    || `${bidAirlineIcao ? `${bidAirlineIcao} ` : ""}${bidFnum}`}
+                  {fullBidCallsign || `${bidAirlineIcao ? `${bidAirlineIcao} ` : ""}${bidFnum}`}
                   {" · "}
                   {bidDpt} → {bidArr}
                   {bidAcIcao && ` · ${bidAcIcao}`}
                 </code>
               </div>
               <div>
-                <span className="bid-card__ofp-compare-label">
-                  {t("bids.ofp_mismatch_ofp")}
-                </span>
+                <span className="bid-card__ofp-compare-label">{t("bids.ofp_mismatch_ofp")}</span>
                 <code>
                   {plan.ofp_flight_number || "—"}
                   {plan.ofp_origin_icao && plan.ofp_destination_icao &&
@@ -1412,92 +1780,153 @@ function BidDetails({
                 </code>
               </div>
             </div>
-            <span className="bid-card__ofp-mismatch-hint">
-              {t("bids.ofp_mismatch_hint")}
-            </span>
+            <span className="bid-card__ofp-mismatch-hint">{t("bids.ofp_mismatch_hint")}</span>
           </div>
         </div>
       )}
 
-      {/* SimBrief-Plan: Card-Grid mit großen Werten — bei Mismatch
-          NICHT zeigen (siehe oben Kommentar). */}
-      {!ofpMismatch && hasSimBriefId && (
-        <div className="bid-card__simbrief">
-          <div className="bid-card__simbrief-header">
-            <span>📋 {t("bids.simbrief_plan")}</span>
-            {planLoading && <span className="bid-card__simbrief-loading">…</span>}
-          </div>
-          {plan && (
-            <div className="bid-card__simbrief-cards">
-              {/* Reihenfolge nach EFB-Konvention:
-                  Fuel-Block: Block → Trip → Reserve
-                  Weight-Block (mathematisch ZFW + Block - Taxi = TOW,
-                  TOW - Trip = LDW): ZFW → TOW → LDW
-                  Alt am Ende */}
-              <PlanCard
-                label="Block"
-                kg={plan.planned_block_fuel_kg}
-                accent="primary"
-              />
-              <PlanCard
-                label="Trip"
-                kg={plan.planned_burn_kg}
-                accent="primary"
-              />
-              <PlanCard label="Reserve" kg={plan.planned_reserve_kg} />
-              <PlanCard label="ZFW" kg={plan.planned_zfw_kg} accent="weight" />
-              <PlanCard label="TOW" kg={plan.planned_tow_kg} accent="weight" />
-              <PlanCard label="LDW" kg={plan.planned_ldw_kg} accent="weight" />
-              {plan.alternate && (
-                <div className="bid-card__plan-card bid-card__plan-card--alt">
-                  <span className="bid-card__plan-card-label">Alt</span>
-                  <span className="bid-card__plan-card-value">
-                    {plan.alternate}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-          {planError && !plan && (
-            <div className="bid-card__simbrief-error">{planError}</div>
-          )}
+      {!ofpMismatch && hasSimBriefId && (planLoading || (planError && !plan)) && (
+        <div className="bid-card__simbrief-status">
+          {planLoading && <span className="bid-card__simbrief-loading">{t("bids.simbrief_plan")} …</span>}
+          {planError && !plan && <span className="bid-card__simbrief-error">{planError}</span>}
         </div>
       )}
 
-      {/* Route-String aus phpVMS-Bid */}
       {hasRoute && (
         <div className="bid-card__route-text">
           <span className="bid-card__route-label">{t("bids.route")}</span>{" "}
           <code>{flight.route}</code>
         </div>
       )}
-    </div>
+
+      <div className="bid-card__actions">
+        <div className="bid-card__mode-toggle" role="group" aria-label={t("bid_card.mode_toggle_label")}>
+          <button
+            type="button"
+            className={`bid-card__mode-btn ${mode === "ifr" ? "bid-card__mode-btn--active" : ""}`}
+            onClick={() => setMode("ifr")}
+            disabled={!hasSimBriefId}
+            title={!hasSimBriefId ? t("bid_card.mode_ifr_needs_ofp") : undefined}
+          >
+            {t("bid_card.mode_ifr")}
+          </button>
+          <button
+            type="button"
+            className={`bid-card__mode-btn ${mode === "vfr" ? "bid-card__mode-btn--active" : ""}`}
+            onClick={() => setMode("vfr")}
+          >
+            {t("bid_card.mode_vfr")}
+          </button>
+        </div>
+        <span className="bid-card__mode-active-hint">{primaryHint}</span>
+        <span className="bid-card__actions-spacer" />
+        <div className="bid-card__links">
+          {hasSimBriefId && (
+            <button type="button" className="bid-card__link" onClick={onOfp}>
+              {t("bids.open_ofp")}
+            </button>
+          )}
+          <button type="button" className="bid-card__link" onClick={onFlightPage}>
+            {t("bids.open_flight_page")}
+          </button>
+          <button
+            type="button"
+            className="bid-card__link"
+            onClick={onWeather}
+            title={t("bids.open_weather_briefing_hint")}
+          >
+            {t("bids.open_weather_briefing")}
+          </button>
+        </div>
+        <button
+          type="button"
+          className="button button--primary bid-card__start"
+          onClick={mode === "ifr" ? onStart : onManualStart}
+          disabled={primaryDisabled}
+          title={mode === "ifr" ? startTitle || undefined : undefined}
+        >
+          {starting ? t("bids.starting") : t("bid_card.start_flight")}
+        </button>
+      </div>
+
+      {distanceToDptNm !== null && (
+        <span
+          className={`bid-card__distance ${tooFar ? "bid-card__distance--far" : "bid-card__distance--near"}`}
+          title={t("bids.distance_to_departure", { airport: dptIcao })}
+        >
+          {distanceToDptNm < 1
+            ? `< 1 nm ${t("bids.from_airport", { airport: dptIcao })}`
+            : `${distanceToDptNm.toFixed(1)} nm ${t("bids.from_airport", { airport: dptIcao })}`}
+        </span>
+      )}
+
+      {startError && (
+        <p className="bid-card__start-error" role="alert">
+          {startError}
+        </p>
+      )}
+      {startWarning && (
+        <div className="manual-modal__warning" role="alert" style={{ marginTop: 8 }}>
+          <div className="manual-modal__warning-title">{t("manual_flight.warning_title")}</div>
+          <div className="manual-modal__warning-text">{startWarning}</div>
+          <div style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={onAcknowledgeMismatch}
+              style={{ background: "#fbbf24", borderColor: "#fbbf24", color: "#1f1f1f" }}
+            >
+              {t("manual_flight.start_anyway")}
+            </button>
+          </div>
+        </div>
+      )}
+    </article>
   );
 }
 
-interface PlanCardProps {
-  label: string;
-  kg: number;
-  /** Visual emphasis. `primary` = Block/Trip (wichtigste), `weight` = TOW/LDW/
-   *  ZFW, default = sonst (Reserve). Treibt nur Farbe, kein Layout. */
-  accent?: "primary" | "weight";
+interface RubricProps {
+  /** Aviation-Rubrik-Titel — bewusst NICHT übersetzt (FUEL/WEIGHTS/LOAD
+   *  sind wie ZFW/TOW/LDW feststehende Fachbegriffe). */
+  title: string;
+  unit?: string;
+  /** Der EINE Leitwert der Rubrik (Block/TOW/PAX) — null blendet die
+   *  Rubrik-Kachel komplett aus, außer wenn wenigstens ein Nebenwert da ist. */
+  headline: string | null;
+  headlineLabel: string;
+  /** Briefing-2a §5.3: Einordnung neben dem Leitwert — bei WEIGHTS Pflicht
+   *  sobald MTOW bekannt ist ("3.983 kg unter MTOW"). */
+  inset?: string | null;
+  insetDanger?: boolean;
+  rows: string[];
 }
 
-function PlanCard({ label, kg, accent }: PlanCardProps) {
-  if (kg <= 0) return null;
-  const accentClass =
-    accent === "primary"
-      ? "bid-card__plan-card--primary"
-      : accent === "weight"
-        ? "bid-card__plan-card--weight"
-        : "";
+/** Eine Rubrik-Kachel (Fuel/Weights/Load) — ein Leitwert + Nebenwerte
+ *  statt sechs gleich großer Einzelkacheln. */
+function Rubric({ title, unit, headline, headlineLabel, inset, insetDanger, rows }: RubricProps) {
+  if (headline == null && rows.length === 0) return null;
   return (
-    <div className={`bid-card__plan-card ${accentClass}`}>
-      <span className="bid-card__plan-card-label">{label}</span>
-      <span className="bid-card__plan-card-value">
-        {Math.round(kg).toLocaleString("de-DE")}
-        <span className="bid-card__plan-card-unit"> kg</span>
-      </span>
+    <div className="bid-card__rubric">
+      <div className="bid-card__rubric-title">
+        {title}
+        {unit && <span className="bid-card__rubric-unit"> · {unit}</span>}
+      </div>
+      {headline != null && (
+        <div className={`bid-card__rubric-headline ${insetDanger ? "bid-card__rubric-headline--danger" : ""}`}>
+          {headline}
+          <span className="bid-card__rubric-headline-label"> {headlineLabel}</span>
+          {inset && <span className="bid-card__rubric-inset"> · {inset}</span>}
+        </div>
+      )}
+      {rows.length > 0 && (
+        <div className="bid-card__rubric-rows">
+          {rows.map((row, i) => (
+            <span key={i} className="bid-card__rubric-row">
+              {row}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1563,7 +1992,6 @@ function AutoStartSkipBanner() {
       role="status"
       aria-live="polite"
     >
-      <span className="bids__auto-start-skip-icon">🤖</span>
       <div className="bids__auto-start-skip-text">
         <strong>{t("bids.auto_start_skip.title")}</strong>
         <span>{reasonText}</span>

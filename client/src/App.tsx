@@ -46,6 +46,7 @@ import { useDiscordRpcPush } from "./hooks/useDiscordRpcPush";
 import { LiveRecordingIndicator } from "./components/LiveRecordingIndicator";
 import { Sidebar, getInitialCollapsed } from "./components/Sidebar";
 import { useSimSession } from "./hooks/useSimSession";
+import { simKindLabel } from "./lib/simKind";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import type { ActiveFlightInfo, LoginResult, Profile, UiError } from "./types";
 
@@ -150,27 +151,6 @@ function loadAutoDeleteFlightLogs(): boolean {
 
 function saveAutoDeleteFlightLogs(value: boolean) {
   localStorage.setItem(AUTO_DELETE_LOGS_STORAGE_KEY, value ? "1" : "0");
-}
-
-/**
- * Map a SimKind string to the brand label shown on the top-right
- * status pill. Pilots want to see WHICH sim is connected, not the
- * generic word "Simulator". Falls back to "SIM" when nothing is
- * selected so the pill never goes blank.
- */
-function simKindLabel(kind: string | undefined): string {
-  switch (kind) {
-    case "msfs2024":
-    case "msfs2020":
-      return "MSFS";
-    case "xplane11":
-    case "xplane12":
-      return "X-PLANE";
-    case "off":
-      return "SIM OFF";
-    default:
-      return "SIM";
-  }
 }
 
 function App() {
@@ -512,7 +492,7 @@ function App() {
   const showTabs = status.kind === "loggedIn";
 
   return (
-    <div className="shell" data-nav={navCollapsed ? "icon" : "wide"}>
+    <div className="shell" data-nav={!showTabs ? "none" : navCollapsed ? "icon" : "wide"}>
       {showTabs && (
         <Sidebar
           tab={tab}
@@ -603,7 +583,8 @@ function App() {
           Dev-Preview-Eintrag sind dorthin übernommen. */}
 
       {status.kind === "loading" && (
-        <section className="phase">
+        <section className="status-loading">
+          <span className="status-loading__spinner" aria-hidden="true" />
           <p>{t("status.checking_session")}</p>
         </section>
       )}
@@ -686,7 +667,12 @@ function App() {
 
       {status.kind === "loggedIn" && tab === "map" && (
         <Suspense fallback={<div className="lazy-fallback">…</div>}>
-          <LiveMapView activeFlight={activeFlight} simSnapshot={simSnapshot} />
+          <LiveMapView
+            activeFlight={activeFlight}
+            simSnapshot={simSnapshot}
+            simKind={simStatus?.kind}
+            onSwitchToBriefing={() => setTab("briefing")}
+          />
         </Suspense>
       )}
 

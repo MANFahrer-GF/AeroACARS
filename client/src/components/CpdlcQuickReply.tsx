@@ -54,9 +54,13 @@ interface Props {
   /** GOLD response code of the uplink: WU | AN | R | Y | N | NE. */
   response: string | null;
   onReplied: () => void;
+  /** Rendered right-aligned in the same row as the answer keys — the
+   *  history's "Squawk übernehmen" button (README §4.3.e). Only shown
+   *  next to the key row itself, not while a key is armed for confirm. */
+  trailing?: React.ReactNode;
 }
 
-export function CpdlcQuickReply({ min, response, deferred, onReplied }: Props) {
+export function CpdlcQuickReply({ min, response, deferred, onReplied, trailing }: Props) {
   const { t } = useTranslation();
   const [armed, setArmed] = useState<Armed | null>(null);
   const [busy, setBusy] = useState(false);
@@ -137,9 +141,16 @@ export function CpdlcQuickReply({ min, response, deferred, onReplied }: Props) {
       <div className="cpdlc-reply__keys">
         {response === "WU" && (
           <>
-            {key(WILCO, t("cpdlc.response_wilco"), "affirm")}
+            {/* Order: UNABLE, STANDBY, WILCO — matches the real Airbus
+                DCDU / FlyByWire A32NX line-button order this component is
+                modeled on (see the file header). The Datalink-3a spec
+                (README §7) states the opposite reading order
+                (WILCO/STANDBY/UNABLE) without citing hardware; real-DCDU
+                fidelity wins here since this is cockpit response
+                terminology, not a call to make on spec text alone. */}
             {key(UNABLE, t("cpdlc.response_unable"), "deny")}
             {!deferred && key(STANDBY, t("cpdlc.response_standby"))}
+            {key(WILCO, t("cpdlc.response_wilco"), "affirm")}
           </>
         )}
         {response === "AN" && (
@@ -162,6 +173,7 @@ export function CpdlcQuickReply({ min, response, deferred, onReplied }: Props) {
         {/* N / NE deliberately render nothing: an uplink that expects no
             response (LOGON ACCEPTED, advisories) must not be answered.
             Sending ROGER there is protocol noise, not politeness. */}
+        {trailing && <span className="cpdlc-reply__trailing">{trailing}</span>}
       </div>
 
       {response === "Y" && (
@@ -196,10 +208,13 @@ export function TelexQuickReply({
   recipient,
   clearance,
   onReplied,
+  trailing,
 }: {
   recipient: string | null;
   clearance: string;
   onReplied: () => void;
+  /** Same trailing slot as CpdlcQuickReply — see its prop doc. */
+  trailing?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
@@ -298,6 +313,7 @@ export function TelexQuickReply({
           >
             {t("cpdlc.response_unable")}
           </button>
+          {trailing && <span className="cpdlc-reply__trailing">{trailing}</span>}
         </div>
       )}
       {error && <p className="cpdlc-panel__error">{error}</p>}

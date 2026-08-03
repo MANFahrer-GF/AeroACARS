@@ -12,15 +12,18 @@
 // Rein Anzeige — keine Wertung.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import maplibregl, { type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { invoke } from "../lib/ipc";
-import type { ActiveFlightInfo, SimSnapshot } from "../types";
-import { ActivityLogPanel } from "./ActivityLogPanel";
+import type { ActiveFlightInfo, Bid, SimSnapshot } from "../types";
 import { setTrack } from "../lib/trackStore";
 import { aircraftSvg } from "../lib/aircraftIcon";
 import { phaseColor, phaseLabel as formatPhase } from "../lib/phaseColors";
 import { resolveFlightIdent } from "../lib/callsign";
+import { simKindLabel } from "../lib/simKind";
+import { useMapEvents, LiveMapEventList, type Filter } from "./LiveMapEvents";
+import { LiveMapEmptyState, nextBidInfo, type NextBidInfo } from "./LiveMapEmptyState";
 
 const BASEMAP_DARK = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 const BASEMAP_LIGHT = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
@@ -139,35 +142,41 @@ function flLabel(msl?: number | null): string {
   if (msl == null || Number.isNaN(msl)) return "—";
   return msl >= 18000 ? `FL${Math.round(msl / 100)}` : `${Math.round(msl)} ft`;
 }
-/** Theme-fähiges Popup-HTML mit den Flugdaten aus /api/acars. */
-function vaPopupHtml(f: VaFlight): string {
+/** README §5 — Kollegen-Karteichen: header (callsign+pilot), route row
+ *  (DEP→ARR + phase), 3-col grid (HÖHE/GS/ETA), footer (Muster). `eta` is
+ *  computed outside this function (needs an async airport-coordinate
+ *  lookup — see `vaEtaFor` at the call site) and passed in, defaulting to
+ *  "—" until resolved so opening the popup never blocks on it. */
+function vaPopupHtml(f: VaFlight, eta = "—"): string {
   const cs = f.ident || [f.airline?.icao, f.flight_number].filter(Boolean).join("") || f.flight_number || "—";
   const ac = [f.aircraft?.icao, f.aircraft?.registration].filter(Boolean).join(" · ");
   const pilot = f.user?.name ?? "";
   const phaseTxt = f.status_text ?? "";
+  // Field feedback (2026-08-03): the colored phase pill from the old popup
+  // ("fand ich richtig mega") comes back exactly as it was — same
+  // phaseColor() source as the marker itself, not the plain dim text this
+  // rewrite briefly had instead. Text + color together (not color alone)
+  // already satisfies README §9's "Zustand nie nur über Farbe".
   const pcol = phaseColor(f.status_text ?? (f.phase != null ? String(f.phase) : null));
   const pos = f.position ?? {};
   const gs = pos.gs != null ? `${Math.round(pos.gs)}` : "—";
-  const ias = pos.ias != null ? `${Math.round(pos.ias)}` : "—";
-  const hdg = pos.heading != null ? `${Math.round(pos.heading)}°` : "—";
-  const vs = pos.vs != null ? `${pos.vs > 0 ? "+" : ""}${Math.round(pos.vs)}` : "—";
   const cell = (k: string, v: string, u = "") =>
     `<div class="aa-vapop__cell"><span class="aa-vapop__k">${k}</span><span class="aa-vapop__v">${escHtml(v)}${u ? `<i>${u}</i>` : ""}</span></div>`;
   return (
     `<div class="aa-vapop__head">` +
     `<span class="aa-vapop__cs">${escHtml(cs)}</span>` +
-    (phaseTxt ? `<span class="aa-vapop__badge" style="--p:${pcol}">${escHtml(phaseTxt)}</span>` : "") +
+    (pilot ? `<span class="aa-vapop__pilot">${escHtml(pilot)}</span>` : "") +
     `</div>` +
-    (ac ? `<div class="aa-vapop__sub">${escHtml(ac)}</div>` : "") +
-    (pilot ? `<div class="aa-vapop__pilot">${escHtml(pilot)}</div>` : "") +
-    `<div class="aa-vapop__route">${escHtml(f.dpt_airport_id ?? "—")}<span class="aa-vapop__arrow">→</span>${escHtml(f.arr_airport_id ?? "—")}</div>` +
+    `<div class="aa-vapop__route">` +
+    `<span>${escHtml(f.dpt_airport_id ?? "—")}<span class="aa-vapop__arrow">→</span>${escHtml(f.arr_airport_id ?? "—")}</span>` +
+    (phaseTxt ? `<span class="aa-vapop__phase" style="--p:${pcol}">${escHtml(phaseTxt)}</span>` : "") +
+    `</div>` +
     `<div class="aa-vapop__grid">` +
-    cell("ALT", flLabel(pos.altitude_msl ?? pos.altitude)) +
+    cell("HÖHE", flLabel(pos.altitude_msl ?? pos.altitude)) +
     cell("GS", gs, " kt") +
-    cell("IAS", ias, " kt") +
-    cell("HDG", hdg) +
-    cell("V/S", vs, " fpm") +
-    `</div>`
+    cell("ETA", eta) +
+    `</div>` +
+    (ac ? `<div class="aa-vapop__sub">${escHtml(ac)}</div>` : "")
   );
 }
 
@@ -203,12 +212,36 @@ const LYR_GROUND_HOLD = "aa-ground-holding";
 const LYR_GROUND_RWY_LABELS = "aa-ground-runway-labels";
 const GROUND_MIN_ZOOM = 12;
 
+// README §3 EBENEN — originally spec'd as one combined "Track & Taxiweg"
+// switch; field feedback (2026-08-03) asked for them separable ("Track
+// ein-/ausschalten, Taxiwege ein-/ausschalten... das wäre gut, wenn man das
+// separat machen könnte"), so these are two independent layer groups now,
+// each with its own toggle.
+const TRACK_LAYERS = [LYR_ROUTE, LYR_ROUTE_CASING, LYR_WPTS, LYR_WPT_LABELS, LYR_TRACK, LYR_TRACK_DOTS];
+const TAXI_LAYERS = [
+  LYR_GROUND_APRON,
+  LYR_GROUND_TAXI,
+  LYR_GROUND_TAXI_LABELS,
+  LYR_GROUND_RWY,
+  LYR_GROUND_STANDS,
+  LYR_GROUND_STAND_LANES,
+  LYR_GROUND_STAND_LABELS,
+  LYR_GROUND_TERMINAL,
+  LYR_GROUND_HOLD,
+  LYR_GROUND_RWY_LABELS,
+];
+
 interface Props {
   activeFlight: ActiveFlightInfo | null;
   simSnapshot: SimSnapshot | null;
+  /** For the System-Zeile's "Recorder aktiv · {Simulator} · …" (README §7) —
+   *  the same value App.tsx's own sidebar status pill already shows. */
+  simKind: string | undefined;
+  onSwitchToBriefing: () => void;
 }
 
-export function LiveMapView({ activeFlight, simSnapshot }: Props) {
+export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBriefing }: Props) {
+  const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   // v0.21: Bodendaten der Taxi-Karte. Ref (nicht State), weil `addOverlays`
@@ -220,6 +253,10 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const vaMarkersRef = useRef<maplibregl.Marker[]>([]);
   const vaPopupRef = useRef<maplibregl.Popup | null>(null);
   const vaPopupIdRef = useRef<string | null>(null); // welcher VA-Flug das offene Popup zeigt
+  // README §5 — colleague popup ETA needs the arrival airport's coordinate,
+  // which /api/acars doesn't send (only the ICAO). Cached per-ICAO so
+  // reopening/refreshing a popup for the same destination doesn't re-fetch.
+  const airportCoordCacheRef = useRef(new Map<string, [number, number] | null>());
   const vaFittedRef = useRef(false);
   // Dead-Reckoning: VA-Marker zwischen den 12-s-Polls flüssig weiterrechnen.
   const vaDrRef = useRef<{ marker: maplibregl.Marker; lat: number; lon: number; hdg: number; gs: number }[]>([]);
@@ -258,6 +295,59 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
   const basemapRef = useRef<"auto" | "sat">(basemap);
   const [showVa, setShowVa] = useState(true); // VA-Verkehr ein-/ausblenden
   const [theme, setTheme] = useState<"dark" | "light">(readTheme());
+  // README §6/§2: next booked flight, shown in the idle empty-state card AND
+  // the header's idle context line — fetched once here so both read the same
+  // answer instead of polling `phpvms_get_bids` twice. `undefined` = loading.
+  const [next, setNext] = useState<NextBidInfo | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const bids = await invoke<Bid[]>("phpvms_get_bids");
+        const bid = bids[0] ?? null;
+        const flight = bid?.flight;
+        // Field bug (2026-08-03): phpVMS's own `dpt_time` schedule field can
+        // be null on a real, existing booking (verified — not a "no time
+        // set" placeholder, genuinely absent on this booking's API
+        // response). BidsList.tsx already has a fallback for exactly this
+        // (`f.dpt_time ?? sched_out_epoch via bid_simbrief_preview`) —
+        // replicated here rather than showing "no flight booked" for a
+        // flight that plainly IS booked.
+        let std: string | null = flight?.dpt_time ?? null;
+        if (!std && bid) {
+          try {
+            const preview = await invoke<{ sched_out_epoch: number | null }>("bid_simbrief_preview", {
+              bidId: bid.id,
+            });
+            if (preview?.sched_out_epoch != null) {
+              const d = new Date(preview.sched_out_epoch * 1000);
+              std = `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+            }
+          } catch {
+            // no SimBrief-direct preview either — std stays null, the card
+            // just won't show a departure time for this booking.
+          }
+        }
+        if (!cancelled) setNext(nextBidInfo(bid, std));
+      } catch {
+        if (!cancelled) setNext(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  // README §4.2: Ereignisliste filter — also settable from the System-Zeile's
+  // "Systemmeldungen (n)" link (§7), which is why it lives here, not inside
+  // LiveMapEventList itself.
+  const [eventFilter, setEventFilter] = useState<Filter>("all");
+  // README §2: header UTC clock, ticking every second — same pattern as
+  // PilotHeader.tsx's own zulu clock.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
   const [routeFixes, setRouteFixes] = useState<RouteFix[]>([]);
   const [depArr, setDepArr] = useState<{ dep?: [number, number]; arr?: [number, number] }>({});
   const [vaFlights, setVaFlights] = useState<VaFlight[]>([]);
@@ -330,10 +420,13 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     // telling a pilot on short final he had another hour to run.
     const dtgNm = Number.isFinite(acToArr) ? acToArr : null;
     const gs = simSnapshot?.groundspeed_kt;
+    // README §4.1 wants an absolute UTC time ("15:50z"), not a countdown
+    // duration — the Flugwerte card's ETA cell reads this directly.
     let eta = "—";
     if (dtgNm != null && gs != null && gs > 30) {
       const mins = Math.round((dtgNm / gs) * 60);
-      eta = mins >= 60 ? `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m` : `${mins}m`;
+      const arrival = new Date(Date.now() + mins * 60_000);
+      eta = `${arrival.toISOString().slice(11, 16)}z`;
     }
     return { nextIdent: next?.ident, nextLabel, eta, dtgNm };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -822,6 +915,18 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       });
     }
     pushSources(map, dataRef.current);
+    // README §3 EBENEN (Track / Taxiweg): a basemap switch re-runs this whole
+    // function (see the re-add sentinel above) and freshly-added layers
+    // default to visible — re-assert both current toggles so switching
+    // basemaps doesn't silently turn either layer back on.
+    const trackVis = showTrackRef.current ? "visible" : "none";
+    for (const id of TRACK_LAYERS) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", trackVis);
+    }
+    const taxiVis = showTaxiRef.current ? "visible" : "none";
+    for (const id of TAXI_LAYERS) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", taxiVis);
+    }
   }
 
   function pushSources(
@@ -1234,12 +1339,45 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       }
     };
     void poll();
-    const id = setInterval(poll, 12000);
+    // Field feedback (2026-08-03): "nothing happened in 5 seconds", explicit
+    // ask to speed this up. handoff_livemap_4a §8 actually states 15-30s as
+    // the target for this exact poll — slower than even the pre-existing
+    // 12s — so this is a deliberate override of the written spec, confirmed
+    // with the user (asked 5s/8s/leave-at-12s; they picked 8s: faster than
+    // today without going as aggressive as the un-throttled 5s option).
+    const id = setInterval(poll, 8000);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
   }, [showVa]);
+
+  async function resolveAirportCoord(icao: string): Promise<[number, number] | null> {
+    const cache = airportCoordCacheRef.current;
+    if (cache.has(icao)) return cache.get(icao)!;
+    try {
+      const a = await invoke<{ lat?: number | null; lon?: number | null }>("airport_get", { icao });
+      const coord: [number, number] | null = a.lat != null && a.lon != null ? [a.lon, a.lat] : null;
+      cache.set(icao, coord);
+      return coord;
+    } catch {
+      cache.set(icao, null);
+      return null;
+    }
+  }
+  /** README §5's ETA cell for a colleague aircraft — same great-circle +
+   *  groundspeed math as the own-flight ETA (`nav`), just resolving the
+   *  destination coordinate on demand instead of from the loaded route. */
+  async function vaEtaFor(f: VaFlight): Promise<string> {
+    const pos = f.position;
+    if (!pos || pos.lat == null || pos.lon == null || pos.gs == null || pos.gs <= 30 || !f.arr_airport_id) return "—";
+    const arrCoord = await resolveAirportCoord(f.arr_airport_id);
+    if (!arrCoord) return "—";
+    const dtg = distNm([pos.lon, pos.lat], arrCoord);
+    const mins = Math.round((dtg / pos.gs) * 60);
+    const arrival = new Date(Date.now() + mins * 60_000);
+    return `${arrival.toISOString().slice(11, 16)}z`;
+  }
 
   // ---- VA-Marker rendern (liegen mit auf der einen Karte) ----
   useEffect(() => {
@@ -1270,7 +1408,8 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
       el.addEventListener("click", (ev) => {
         ev.stopPropagation();
         vaPopupRef.current?.remove();
-        vaPopupIdRef.current = String(f.id ?? f.ident ?? f.flight_number ?? "");
+        const thisId = String(f.id ?? f.ident ?? f.flight_number ?? "");
+        vaPopupIdRef.current = thisId;
         const popup = new maplibregl.Popup({ offset: 16, closeButton: true, className: "aa-vapop", maxWidth: "260px" })
           .setLngLat(lngLat)
           .setHTML(vaPopupHtml(f))
@@ -1283,6 +1422,13 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
           }
         });
         vaPopupRef.current = popup;
+        // ETA needs an airport-coordinate lookup the popup can't wait on —
+        // show "—" first, fill it in once resolved, but only if this exact
+        // popup is still the one open (pilot may have clicked elsewhere or
+        // closed it by the time the lookup returns).
+        void vaEtaFor(f).then((eta) => {
+          if (vaPopupRef.current === popup && vaPopupIdRef.current === thisId) popup.setHTML(vaPopupHtml(f, eta));
+        });
       });
       const marker = new maplibregl.Marker({ element: el, rotationAlignment: "map" }).setLngLat(lngLat).setRotation(f.position?.heading ?? 0).addTo(map);
       vaMarkersRef.current.push(marker);
@@ -1297,7 +1443,12 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     if (vaPopupRef.current && vaPopupIdRef.current) {
       const t = popupTargets.get(vaPopupIdRef.current);
       if (t) {
-        vaPopupRef.current.setLngLat(t.lngLat).setHTML(vaPopupHtml(t.f));
+        const popup = vaPopupRef.current;
+        const openId = vaPopupIdRef.current;
+        popup.setLngLat(t.lngLat).setHTML(vaPopupHtml(t.f));
+        void vaEtaFor(t.f).then((eta) => {
+          if (vaPopupRef.current === popup && vaPopupIdRef.current === openId) popup.setHTML(vaPopupHtml(t.f, eta));
+        });
       } else {
         vaPopupRef.current.remove();
         vaPopupRef.current = null;
@@ -1333,7 +1484,38 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
     return () => clearInterval(id);
   }, [mapReady]);
 
-  // ---- Stats ----
+  // README §3 EBENEN: Track / Taxiweg show/hide, two independent toggles
+  // (field feedback, 2026-08-03 — split apart from the spec's original
+  // combined "Track & Taxiweg" switch). Deliberately additive and separate
+  // from `addOverlays` — the trackline/taxi-map DATA and how it's computed
+  // stay exactly as they were (README §0), this only toggles the existing
+  // layers' visibility. `setLayoutProperty` is a no-op-safe call guarded by
+  // `getLayer`, so it can't fight the style-reload re-add logic above; it
+  // just re-asserts the current toggle state whenever it changes.
+  const [showTrack, setShowTrack] = useState(true);
+  const [showTaxi, setShowTaxi] = useState(true);
+  const showTrackRef = useRef(showTrack);
+  showTrackRef.current = showTrack;
+  const showTaxiRef = useRef(showTaxi);
+  showTaxiRef.current = showTaxi;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const vis = showTrack ? "visible" : "none";
+    for (const id of TRACK_LAYERS) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis);
+    }
+  }, [showTrack, mapReady]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const vis = showTaxi ? "visible" : "none";
+    for (const id of TAXI_LAYERS) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis);
+    }
+  }, [showTaxi, mapReady]);
+
+  // ---- Stats (Flugwerte card — README §4.1: HÖHE, GS, REST, ETA only) ----
   const stats = useMemo(() => {
     const fmt = (v: number | null | undefined, suffix: string) =>
       v == null || Number.isNaN(v) ? "—" : `${Math.round(v)}${suffix}`;
@@ -1346,193 +1528,305 @@ export function LiveMapView({ activeFlight, simSnapshot }: Props) {
         : "—";
     return {
       alt: flLabel,
-      spd: fmt(s?.indicated_airspeed_kt, " kts"),
-      hdg: s ? `${Math.round(s.heading_deg_magnetic)}°` : "—",
       gs: fmt(s?.groundspeed_kt, " kts"),
       // v0.19.3: distance to GO (aircraft → destination), not the distance
       // already flown. Same source as the ETA above — see `nav.dtgNm`.
       dtg: nav.dtgNm != null ? `${Math.round(nav.dtgNm)} nm` : "—",
     };
-  }, [simSnapshot, activeFlight, nav]);
+  }, [simSnapshot, nav]);
 
   const showOwnContent = !!activeFlight;
+  const ident = activeFlight
+    ? `${activeFlight.airline_icao}${resolveFlightIdent(activeFlight.flight_number, activeFlight.callsign)}`
+    : null;
+  const clock = new Date(nowMs).toISOString().slice(11, 19);
+  const { events } = useMapEvents(showOwnContent);
+  const flyToPosition = (position: [number, number]) => {
+    mapRef.current?.flyTo({ center: position, duration: 700 });
+  };
+  const recorderState: "ok" | "off" | "danger" = !activeFlight
+    ? "off"
+    : activeFlight.connection_state === "blocked" || activeFlight.connection_state === "failing"
+      ? "danger"
+      : "ok";
 
   return (
     <section className="aa-livemap">
-      <div className="aa-livemap__topbar">
-        <div className="aa-livemap__title">
-          <span className="aa-stat__label">FLUG</span>
-          <span className="aa-livemap__title-value">
-            {activeFlight
-              ? `${activeFlight.airline_icao}${resolveFlightIdent(activeFlight.flight_number, activeFlight.callsign)} · ${activeFlight.dpt_airport}→${activeFlight.arr_airport}`
-              : "Live-Karte"}
-            {activeFlight?.was_just_resumed && (
-              <span className="aa-livemap__resume-hint" title="warte auf Sim-Position">
-                {" "}
-                ⏳
+      {/* README §2 — no buttons here at all; every control lives in the
+          Kartenschalter-Block over the map (§3). This header carries
+          identity/context and clock only. */}
+      <header className="aa-livemap__header">
+        <div className="aa-livemap__header-left">
+          <h1 className="aa-livemap__header-title">{t("livemap.title")}</h1>
+          <span className="aa-livemap__header-sep" aria-hidden="true" />
+          <div className="aa-livemap__header-context">
+            {activeFlight ? (
+              <>
+                <span className="aa-livemap__header-callsign">{ident}</span>
+                <span className="aa-livemap__header-route">
+                  {t("livemap.header_context_flight", {
+                    dep: activeFlight.dpt_airport,
+                    arr: activeFlight.arr_airport,
+                    phase: phaseLabel,
+                  })}
+                </span>
+                {activeFlight.was_just_resumed && (
+                  <span className="aa-livemap__resume-hint" title={t("livemap.resume_hint")}>
+                    {" "}
+                    ⏳
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="aa-livemap__header-route">
+                {next
+                  ? t("livemap.header_idle_next", { ident: next.ident, std: `${next.std}z` })
+                  : t("livemap.header_idle_none")}
               </span>
             )}
+          </div>
+        </div>
+        <div className="aa-livemap__header-right">
+          <span className="aa-livemap__header-vacount">{t("livemap.header_va_count", { count: vaVisible.length })}</span>
+          <span className="aa-livemap__header-clock">
+            {clock}
+            <span className="aa-livemap__header-z">z</span>
           </span>
         </div>
-
-        {showOwnContent && (
-          <div className="aa-livemap__stats">
-            <Stat label="ALT" value={stats.alt} />
-            <Stat label="IAS" value={stats.spd} />
-            <Stat label="HDG" value={stats.hdg} />
-            <Stat label="GS" value={stats.gs} />
-            <Stat label="DTG" value={stats.dtg} />
-            <Stat label="NEXT" value={nav.nextLabel} />
-            <Stat label="ETA" value={nav.eta} />
-            <Stat label="PHASE" value={phaseLabel} />
-            <Stat label="POS" value={effAircraft ? `${effAircraft.lat.toFixed(2)}/${effAircraft.lon.toFixed(2)}` : "—"} />
-            {/* v0.21: Ist die Taxi-Karte fuer diesen Platz ueberhaupt da? Der
-                Pilot soll das WISSEN und nicht raten muessen, wenn beim
-                Reinzoomen keine Rollwege auftauchen — bisher sind nur eine
-                Handvoll Flughaefen importiert. */}
-            {groundLoaded.length > 0 && (
-              <Stat label="TAXI" value={groundLoaded.join(" · ")} />
-            )}
-          </div>
-        )}
-
-        <div className="aa-livemap__right">
-          {activeFlight && effAircraft && (
-            <button
-              type="button"
-              className="aa-livemap__iconbtn"
-              data-tip="Karte aufs Flugzeug zentrieren"
-              aria-label="Auf mein Flugzeug zentrieren"
-              onClick={() => {
-                const map = mapRef.current;
-                if (!map || !effAircraft) return;
-                followEngageRef.current = true;
-                suppressRouteFitRef.current = true;
-                setFollow(true);
-                const tz = targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft);
-                map.easeTo({ center: [effAircraft.lon, effAircraft.lat], zoom: tz, duration: 500 });
-              }}
-            >
-              {/* Fadenkreuz = „jetzt zentrieren" */}
-              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="7" />
-                <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
-                <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
-              </svg>
-            </button>
-          )}
-          {activeFlight && (
-            <button
-              type="button"
-              className="aa-livemap__iconbtn aa-livemap__iconbtn--toggle"
-              data-active={follow}
-              aria-pressed={follow}
-              data-tip={
-                follow
-                  ? "Folgen: AN — Karte bleibt am Flugzeug (klicken zum Ausschalten)"
-                  : "Folgen: AUS — klicken, damit die Karte dem Flugzeug folgt"
-              }
-              aria-label="Folgen"
-              onClick={() => {
-                const next = !follow;
-                setFollow(next);
-                followEngageRef.current = next;
-                suppressRouteFitRef.current = next;
-              }}
-            >
-              {/* Flugzeug = „dem eigenen Flieger folgen" */}
-              <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
-                <path d="M21 15.5v-1.7l-7.5-4.6V4.2a1.5 1.5 0 0 0-3 0v5L3 13.8v1.7l7.5-2.2v4.3l-2 1.4v1.3l3.5-1 3.5 1v-1.3l-2-1.4v-4.3z" />
-              </svg>
-            </button>
-          )}
-          <button
-            type="button"
-            className="aa-livemap__iconbtn aa-livemap__iconbtn--toggle"
-            data-active={trackUp}
-            aria-pressed={trackUp}
-            data-tip={
-              trackUp
-                ? "Karte dreht mit: AN — Flugrichtung zeigt nach oben (klicken für Norden oben)"
-                : "Karte dreht mit: AUS — Norden oben (klicken, damit die Karte mitdreht)"
-            }
-            aria-label="Karte in Flugrichtung drehen"
-            onClick={() => setTrackUp(!trackUp)}
-          >
-            {/* Kompassnadel = Ausrichtung der Karte */}
-            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M15.5 8.5l-2 5-5 2 2-5z" fill="currentColor" stroke="none" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            className="aa-livemap__iconbtn aa-livemap__iconbtn--toggle"
-            data-active={showVa}
-            aria-pressed={showVa}
-            data-tip={
-              showVa
-                ? `VA-Verkehr: AN — ${vaVisible.length} online (klicken zum Ausblenden)`
-                : "VA-Verkehr: AUS — klicken zum Anzeigen anderer Piloten"
-            }
-            aria-label="VA-Verkehr anzeigen"
-            onClick={() => setShowVa(!showVa)}
-          >
-            {/* Radar = „anderer VA-Verkehr live" */}
-            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
-              <path d="M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7M6 18a9 9 0 0 1 0-12M18 6a9 9 0 0 1 0 12" />
-            </svg>
-            {/* Zähler-Slot IMMER da (feste Breite) → Ein-/Ausschalten oder
-                1-↔2-stellige Zahl verschiebt die Nachbar-Buttons nicht mehr. */}
-            <span className="aa-livemap__vacount">{showVa ? vaVisible.length : ""}</span>
-          </button>
-          <button
-            type="button"
-            className="aa-livemap__iconbtn aa-livemap__iconbtn--toggle"
-            data-active={basemap === "sat"}
-            aria-pressed={basemap === "sat"}
-            data-tip={
-              basemap === "sat"
-                ? "Satellitenkarte: AN — klicken für Standard (dunkel/hell)"
-                : "Satellitenkarte: AUS — klicken für echtes Satellitenbild"
-            }
-            aria-label="Satellitenkarte umschalten"
-            onClick={() => setBasemap((b) => (b === "sat" ? "auto" : "sat"))}
-          >
-            {/* Globus = Satellit/echtes Bild */}
-            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M3 12h18M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18" />
-            </svg>
-          </button>
-        </div>
-      </div>
+      </header>
 
       <div className="aa-livemap__body">
         <div className="aa-livemap__map" ref={containerRef}>
-          {!effAircraft && vaVisible.length === 0 && (
-            <div className="aa-livemap__empty">
-              {showVa
-                ? "Kein aktiver Flug und gerade kein VA-Verkehr."
-                : "Kein aktiver Flug — starte einen Flug, um ihn live zu verfolgen."}
+          {/* README §3 — Kartenschalter-Block, one overlay container, four
+              named groups. Every switch shows its own state (bold/accent =
+              active) — the whole point is that today's unlabeled icon
+              buttons didn't. */}
+          <div className="aa-livemap-controls aa-livemap-overlay">
+            <div className="aa-livemap-controls__group">
+              <span className="aa-livemap-controls__rubric">{t("livemap.group_view")}</span>
+              <div className="aa-livemap-seg">
+                <button
+                  type="button"
+                  className={`aa-livemap-seg__btn ${basemap !== "sat" ? "aa-livemap-seg__btn--active" : ""}`}
+                  aria-pressed={basemap !== "sat"}
+                  onClick={() => setBasemap("auto")}
+                >
+                  {t("livemap.view_map")}
+                </button>
+                <button
+                  type="button"
+                  className={`aa-livemap-seg__btn ${basemap === "sat" ? "aa-livemap-seg__btn--active" : ""}`}
+                  aria-pressed={basemap === "sat"}
+                  onClick={() => setBasemap("sat")}
+                >
+                  {t("livemap.view_sat")}
+                </button>
+              </div>
+            </div>
+
+            <div className="aa-livemap-controls__group">
+              <span className="aa-livemap-controls__rubric">{t("livemap.group_orientation")}</span>
+              <div className="aa-livemap-seg">
+                <button
+                  type="button"
+                  className={`aa-livemap-seg__btn ${!trackUp ? "aa-livemap-seg__btn--active" : ""}`}
+                  aria-pressed={!trackUp}
+                  onClick={() => setTrackUp(false)}
+                >
+                  {t("livemap.orient_north")}
+                </button>
+                <button
+                  type="button"
+                  className={`aa-livemap-seg__btn ${trackUp ? "aa-livemap-seg__btn--active" : ""}`}
+                  aria-pressed={trackUp}
+                  onClick={() => setTrackUp(true)}
+                >
+                  {t("livemap.orient_track")}
+                </button>
+              </div>
+            </div>
+
+            <div className="aa-livemap-controls__group">
+              <span className="aa-livemap-controls__rubric">{t("livemap.group_layers")}</span>
+              <div className="aa-livemap-controls__row">
+                <button
+                  type="button"
+                  className={`aa-livemap-toggle ${showTrack ? "aa-livemap-toggle--active" : ""}`}
+                  aria-pressed={showTrack}
+                  onClick={() => setShowTrack((v) => !v)}
+                >
+                  {t("livemap.layer_track")}
+                </button>
+                <button
+                  type="button"
+                  className={`aa-livemap-toggle ${showTaxi ? "aa-livemap-toggle--active" : ""}`}
+                  aria-pressed={showTaxi}
+                  onClick={() => setShowTaxi((v) => !v)}
+                  title={
+                    // v0.21: which airports actually have taxi-map coverage —
+                    // used to be its own "TAXI" stat tile in the old 9-tile
+                    // header strip (now removed per the new chrome's 4-value
+                    // Flugwerte card); the underlying "pilot should know this
+                    // exists" reason from that comment still applies, so it
+                    // moved to this toggle's tooltip instead of disappearing.
+                    groundLoaded.length > 0 ? t("livemap.taxi_loaded", { airports: groundLoaded.join(" · ") }) : undefined
+                  }
+                >
+                  {t("livemap.layer_taxi")}
+                </button>
+                <button
+                  type="button"
+                  className={`aa-livemap-toggle ${showVa ? "aa-livemap-toggle--active" : ""}`}
+                  aria-pressed={showVa}
+                  onClick={() => setShowVa((v) => !v)}
+                >
+                  {t("livemap.layer_va")}
+                </button>
+              </div>
+            </div>
+
+            <div className="aa-livemap-controls__group">
+              <span className="aa-livemap-controls__rubric">{t("livemap.group_map")}</span>
+              <div className="aa-livemap-controls__row">
+                <button
+                  type="button"
+                  className="button button--secondary"
+                  disabled={!activeFlight || !effAircraft}
+                  onClick={() => {
+                    const map = mapRef.current;
+                    if (!map || !effAircraft) return;
+                    followEngageRef.current = true;
+                    suppressRouteFitRef.current = true;
+                    setFollow(true);
+                    const tz = targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft);
+                    map.easeTo({ center: [effAircraft.lon, effAircraft.lat], zoom: tz, duration: 500 });
+                  }}
+                >
+                  {t("livemap.center_on_flight")}
+                </button>
+                {/* "Folgen" (continuous camera tracking) isn't in the
+                    handoff's own control table — confirmed with the user
+                    that it stays as its own switch, distinct from the
+                    one-shot centering button above (see follow.test.tsx for
+                    why: it auto-disables on a real user pan, which the
+                    centering button doesn't need to know about). */}
+                {activeFlight && (
+                  <button
+                    type="button"
+                    className={`aa-livemap-toggle ${follow ? "aa-livemap-toggle--active" : ""}`}
+                    aria-pressed={follow}
+                    onClick={() => {
+                      const next = !follow;
+                      setFollow(next);
+                      followEngageRef.current = next;
+                      suppressRouteFitRef.current = next;
+                    }}
+                  >
+                    {t("livemap.follow")}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {showOwnContent && (
+            <div className="aa-livemap-panel">
+              {/* README §4.1 — Flugwerte card. */}
+              <div className="aa-livemap-flightcard aa-livemap-overlay">
+                <div className="aa-livemap-flightcard__head">
+                  <span className="aa-livemap-flightcard__rubric">{t("livemap.own_flight")}</span>
+                  <span className="aa-livemap-flightcard__live">{t("livemap.live")}</span>
+                </div>
+                <div className="aa-livemap-flightcard__route">
+                  <span className="aa-livemap-flightcard__airport">{activeFlight!.dpt_airport}</span>
+                  <span className="aa-livemap-flightcard__arrow" aria-hidden="true">→</span>
+                  <span className="aa-livemap-flightcard__airport">{activeFlight!.arr_airport}</span>
+                </div>
+                <div className="aa-livemap-flightcard__bar">
+                  <div
+                    className="aa-livemap-flightcard__bar-fill"
+                    style={{
+                      width: `${
+                        activeFlight!.distance_nm && nav.dtgNm != null
+                          ? Math.min(100, Math.max(0, ((activeFlight!.distance_nm - nav.dtgNm) / activeFlight!.distance_nm) * 100))
+                          : 0
+                      }%`,
+                    }}
+                  />
+                </div>
+                <div className="aa-livemap-flightcard__grid">
+                  <div>
+                    <span className="aa-livemap-flightcard__label">{t("livemap.field_alt")}</span>
+                    <span className="aa-livemap-flightcard__value">{stats.alt}</span>
+                  </div>
+                  <div>
+                    <span className="aa-livemap-flightcard__label">{t("livemap.field_gs")}</span>
+                    <span className="aa-livemap-flightcard__value">{stats.gs}</span>
+                  </div>
+                  <div>
+                    <span className="aa-livemap-flightcard__label">{t("livemap.field_rest")}</span>
+                    <span className="aa-livemap-flightcard__value">{stats.dtg}</span>
+                  </div>
+                  <div>
+                    <span className="aa-livemap-flightcard__label">{t("livemap.field_eta")}</span>
+                    <span className="aa-livemap-flightcard__value">{nav.eta}</span>
+                  </div>
+                </div>
+                <div className="aa-livemap-flightcard__foot">
+                  {/* README §4.1 wants "Muster + Registrierung" left, "FL{ist}
+                      ↑ FL{soll}" right. Muster/Reg come from the live sim
+                      snapshot (ActiveFlightInfo has neither field). The
+                      planned cruise level ("FL{soll}") has no source
+                      reachable from here at all today — nothing in
+                      ActiveFlightInfo or SimSnapshot carries it, and
+                      fabricating one would be worse than leaving it out; the
+                      current-FL half alone is still real data, just not the
+                      full "ist ↑ soll" comparison the mock shows. */}
+                  <span>{[simSnapshot?.aircraft_icao, simSnapshot?.aircraft_registration].filter(Boolean).join(" · ") || "—"}</span>
+                  <span>{stats.alt}</span>
+                </div>
+              </div>
+
+              <LiveMapEventList
+                events={events}
+                callsign={ident}
+                onJumpTo={flyToPosition}
+                filter={eventFilter}
+                onFilterChange={setEventFilter}
+              />
             </div>
           )}
+
+          {/* Field feedback (2026-08-03): this card used to be shown whenever
+              there was no own flight, VA traffic or not — it visibly blocked
+              the map exactly where colleague aircraft render, which the
+              pilot explicitly wants to see when they're not flying
+              themselves. The OLD behaviour only showed the equivalent
+              full-map sentence when there was NEITHER an own flight NOR any
+              VA traffic — restoring that exact gate here. */}
+          {!showOwnContent && vaVisible.length === 0 && (
+            <LiveMapEmptyState next={next} onGoToBriefing={onSwitchToBriefing} />
+          )}
+
+          {/* README §7 — System-Zeile, overlay bottom-left. */}
+          <div className="aa-livemap-sysline aa-livemap-overlay">
+            <span className={`aa-livemap-sysline__dot aa-livemap-sysline__dot--${recorderState}`} aria-hidden="true" />
+            <span className="aa-livemap-sysline__text">
+              {recorderState === "off"
+                ? t("livemap.sys_inactive")
+                : t("livemap.sys_active", {
+                    sim: simKindLabel(simKind),
+                    uplink: recorderState === "ok" ? t("livemap.sys_uplink_ok") : t("livemap.sys_uplink_lost"),
+                  })}
+            </span>
+            <span className="aa-livemap-sysline__sep" aria-hidden="true" />
+            <button type="button" className="aa-livemap-sysline__link" onClick={() => setEventFilter("system")}>
+              {t("livemap.sys_messages", { n: events.filter((e) => e.category === "system").length })}
+            </button>
+          </div>
         </div>
-        <aside className="aa-livemap__log">
-          <ActivityLogPanel />
-        </aside>
       </div>
     </section>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="aa-stat">
-      <span className="aa-stat__label">{label}</span>
-      <span className="aa-stat__value">{value}</span>
-    </div>
   );
 }
 

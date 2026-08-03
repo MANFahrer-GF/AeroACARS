@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { invoke } from "../lib/ipc";
@@ -17,6 +17,11 @@ import { rolloutLdaMeters } from "../lib/runwayGeometry";
 import {
   computeSubScores as libComputeSubScores,
   type SubScore as LibSubScore,
+  type LandingCategory,
+  T_VS_SMOOTH_FPM,
+  T_VS_FIRM_FPM,
+  T_VS_HARD_FPM,
+  T_VS_SEVERE_FPM,
 } from "../lib/landingScoring";
 
 // ---- Types (mirror storage::LandingRecord on the Rust side) -------------
@@ -578,6 +583,116 @@ function fmtDateTime(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+// ---- Landungen-Übersicht (7a) — formatting helpers -----------------------
+// Separate from fmtDateTime() above: that one is locale/local-time and is
+// used by the (untouched) detail report. The overview table/chart/footer
+// need UTC, no-seconds, and a couple of overview-only date shapes.
+
+/** "31.07.2026", UTC. */
+function fmtDateUtc(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    return `${dd}.${mm}.${d.getUTCFullYear()}`;
+  } catch {
+    return iso;
+  }
+}
+
+/** "20:46z", UTC, no seconds. */
+function fmtTimeUtcZ(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const hh = String(d.getUTCHours()).padStart(2, "0");
+    const mm = String(d.getUTCMinutes()).padStart(2, "0");
+    return `${hh}:${mm}z`;
+  } catch {
+    return "—";
+  }
+}
+
+/** "12.06.", UTC, no year — used by the footer's softest/hardest stats. */
+function fmtDateShortUtc(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    return `${dd}.${mm}.`;
+  } catch {
+    return iso;
+  }
+}
+
+/** "29. JUN", UTC — the sink-rate chart's axis-adjacent date labels.
+ *  Hardcoded 3-letter abbreviations (not Intl) so the shape stays fixed
+ *  regardless of how a given locale's "short" month style happens to be
+ *  spelled — the mock wants exactly 3 uppercase letters. */
+const CHART_MONTH_ABBR: Record<string, string[]> = {
+  de: ["JAN", "FEB", "MÄR", "APR", "MAI", "JUN", "JUL", "AUG", "SEP", "OKT", "NOV", "DEZ"],
+  en: ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"],
+  it: ["GEN", "FEB", "MAR", "APR", "MAG", "GIU", "LUG", "AGO", "SET", "OTT", "NOV", "DIC"],
+};
+function fmtChartDateUtc(iso: string, lang: string): string {
+  try {
+    const d = new Date(iso);
+    const months = CHART_MONTH_ABBR[lang] ?? CHART_MONTH_ABBR.en;
+    return `${d.getUTCDate()}. ${months[d.getUTCMonth()]}`;
+  } catch {
+    return iso;
+  }
+}
+
+/** Spec §6: every number on this screen is de-DE-formatted regardless of
+ *  the app's UI language (comma decimal, dot thousands). */
+function fmtDeDe(v: number, digits = 0): string {
+  return v.toLocaleString("de-DE", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+/** This screen's single category for colour-coding (chart bars, header
+ *  distribution, sinkrate cell, NOTE cell).
+ *
+ *  History: v1 derived this from the raw sink-rate fpm alone (mirroring
+ *  `classifyByVS()`), independent of `grade_letter` — same letter (e.g. "A")
+ *  could sit next to either SMOOTH or ACCEPTABLE depending on which axis a
+ *  given landing fell on. Pilot asked to couple word and letter instead.
+ *
+ *  v2 tried the obvious fix — read the record's own `score_label` verbatim,
+ *  the exact field the (untouched) report shows via
+ *  `record.score_label.toUpperCase()`. Live check (2026-08-03) caught this
+ *  as ALSO wrong: `score_label` is written once at file-time and never
+ *  retroactively recomputed. Rust's `aggregate_score_label()`
+ *  (src-tauri/src/lib.rs) was realigned in v0.20.0 to sit exactly on
+ *  `grade_letter`'s own thresholds (95/88/82/75/65/50) — but PIREPs filed
+ *  before that migration still carry `score_label` computed under the OLD
+ *  cutoffs. Caught a real one live: 84 points / "B+" stored `score_label:
+ *  "firm"`, which a fresh recompute (below) puts at "acceptable" — and
+ *  "acceptable" is what actually lines up with B+ (82–87 range).
+ *
+ *  So: recompute from `score_numeric` fresh, mirroring
+ *  `aggregate_score_label()`'s CURRENT thresholds directly rather than
+ *  trusting a value that can silently predate the mapping it's supposed to
+ *  represent. This guarantees word and letter agree on every row here,
+ *  including pre-migration PIREPs — even though that means this screen can
+ *  occasionally show a different word than the report's (still untouched,
+ *  still showing the stale stored field) headline for the very same old
+ *  record. Given the choice, a self-consistent overview beats bit-for-bit
+ *  matching a report that's already showing stale data. */
+function recordCategory(r: LandingRecord): LandingCategory {
+  const s = r.score_numeric;
+  if (s >= 88) return "smooth";
+  if (s >= 75) return "acceptable";
+  if (s >= 50) return "firm";
+  if (s >= 15) return "hard";
+  return "severe";
+}
+
+/** Literal English, not translated — matches record.score_label.toUpperCase()
+ *  in the report exactly. */
+function rateCategoryWord(cat: LandingCategory): string {
+  return cat.toUpperCase();
 }
 
 /** Translate the runway-side enum from the backend ("RIGHT"/"LEFT"/
@@ -2009,52 +2124,100 @@ function QuickFlags({ record }: { record: LandingRecord }) {
 
 // ---- Trend sparkline (last N landings) ---------------------------------
 
-function TrendSparkline({ records }: { records: LandingRecord[] }) {
-  const { t } = useTranslation();
+// Landungen-Übersicht (7a) §3 — sink rate is the lead value now (was score).
+// v1.3.5 live-consistency fix: the handoff doc's own axis (0/350/600/800,
+// 3 colors) matched a 3-band scale invented for this screen only. Swapped
+// for the report's real 5-band scale — axis/reflines/bar heights now derive
+// from T_VS_SEVERE_FPM (1000) instead of a hardcoded 800.
+const CHART_MAX_FPM = T_VS_SEVERE_FPM;
+
+function LandingRateChart({ records }: { records: LandingRecord[] }) {
+  const { t, i18n } = useTranslation();
   if (records.length < 2) return null;
-  // Use newest-first list; chart wants oldest→newest left→right.
+  // Newest-first list; chart wants oldest→newest left→right.
   const latest = records.slice(0, 12).reverse();
-  const w = 360;
-  const h = 60;
-  const pad = 6;
-  const innerW = w - pad * 2;
-  const innerH = h - pad * 2;
-  const scores = latest.map((r) => r.score_numeric);
-  const sMin = Math.min(...scores, 50);
-  const sMax = Math.max(...scores, 100);
-  const range = Math.max(1, sMax - sMin);
-  const xStep = innerW / Math.max(1, latest.length - 1);
-  const y = (s: number) => pad + innerH - ((s - sMin) / range) * innerH;
-  const path = latest
-    .map((r, i) =>
-      `${i === 0 ? "M" : "L"} ${(pad + i * xStep).toFixed(1)} ${y(r.score_numeric).toFixed(1)}`,
-    )
-    .join(" ");
-  const last = latest[latest.length - 1];
+  const rates = latest.map((r) => Math.abs(scoreBasisVs(r)));
+  const oldest = latest[0];
+  const newest = latest[latest.length - 1];
+  // Same figure as the header's "Ø SINKRATE" (average over ALL loaded
+  // records, not just these 12 bars) — a second, differently-scoped
+  // average confused more than it helped when both were on screen at once.
+  const avgRateSigned = records.reduce((s, r) => s + scoreBasisVs(r), 0) / records.length;
+  const avgRateAbs = Math.abs(avgRateSigned);
+  const legendCats: LandingCategory[] = ["smooth", "acceptable", "firm", "hard", "severe"];
+
   return (
-    <div className="landing-trend">
-      <span className="landing-trend__label">{t("landing.trend")}</span>
-      <svg
-        className="landing-trend__svg"
-        viewBox={`0 0 ${w} ${h}`}
-        preserveAspectRatio="none"
+    <div className="landing-ov-chart">
+      <div className="landing-ov-chart__head">
+        <span className="landing-ov-chart__title">{t("landing.ov_chart_title")}</span>
+        <div className="landing-ov-chart__legend">
+          {legendCats.map((cat) => (
+            <span key={cat} className="landing-ov-chart__legend-item">
+              <i className={`landing-ov-chart__swatch landing-ov-chart__swatch--${cat}`} />
+              {rateCategoryWord(cat)}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div
+        className="landing-ov-chart__body"
         role="img"
-        aria-label={t("landing.trend")}
+        aria-label={t("landing.ov_chart_aria", {
+          count: latest.length,
+          min: Math.round(Math.min(...rates)),
+          max: Math.round(Math.max(...rates)),
+          last: Math.round(rates[rates.length - 1]),
+        })}
       >
-        <path d={path} fill="none" stroke="#38bdf8" strokeWidth="2" />
-        {latest.map((r, i) => (
-          <circle
-            key={r.pirep_id}
-            cx={pad + i * xStep}
-            cy={y(r.score_numeric)}
-            r={i === latest.length - 1 ? 4 : 2}
-            fill={i === latest.length - 1 ? gradeColor(r.grade_letter) : "#38bdf8"}
-          />
-        ))}
-      </svg>
-      <span className="landing-trend__last">
-        {last.score_numeric}/100 · {last.grade_letter}
-      </span>
+        <div className="landing-ov-chart__axis">
+          <span style={{ bottom: "100%" }}>{T_VS_SEVERE_FPM}</span>
+          <span style={{ bottom: `${(T_VS_HARD_FPM / CHART_MAX_FPM) * 100}%` }}>{T_VS_HARD_FPM}</span>
+          <span style={{ bottom: `${(T_VS_FIRM_FPM / CHART_MAX_FPM) * 100}%` }}>{T_VS_FIRM_FPM}</span>
+          <span style={{ bottom: `${(T_VS_SMOOTH_FPM / CHART_MAX_FPM) * 100}%` }}>{T_VS_SMOOTH_FPM}</span>
+          <span style={{ bottom: "0" }}>0</span>
+        </div>
+        {/* No tinted BAND reference lines anymore: bar COLOR is now the
+            record's overall score_label category (§ recordCategory), which
+            isn't a pure function of THIS bar's own fpm height, so a line at
+            a fixed fpm value wouldn't mark an actual colour boundary. A
+            plain average line is still useful on its own terms though —
+            added back per pilot request. */}
+        <div className="landing-ov-chart__plot">
+          <div
+            className="landing-ov-chart__avgline"
+            style={{ bottom: `${Math.min(100, (avgRateAbs / CHART_MAX_FPM) * 100)}%` }}
+          >
+            <span className="landing-ov-chart__avgline-label">
+              {t("landing.ov_chart_avg_label", { rate: fmtDeDe(Math.round(avgRateSigned)) })}
+            </span>
+          </div>
+          {latest.map((r, i) => {
+            const rate = rates[i];
+            const cat = recordCategory(r);
+            const isLatest = i === latest.length - 1;
+            return (
+              <div
+                key={r.pirep_id}
+                className={`landing-ov-chart__bar landing-ov-chart__bar--${cat}${
+                  isLatest ? " landing-ov-chart__bar--latest" : ""
+                }`}
+                style={{ height: `${Math.min(100, (rate / CHART_MAX_FPM) * 100)}%` }}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="landing-ov-chart__foot">
+        <span>{fmtChartDateUtc(oldest.touchdown_at, i18n.language)}</span>
+        <span>
+          {t("landing.ov_chart_last", {
+            date: fmtChartDateUtc(newest.touchdown_at, i18n.language),
+            rate: fmtDeDe(Math.round(scoreBasisVs(newest))),
+          })}
+        </span>
+      </div>
     </div>
   );
 }
@@ -3879,58 +4042,37 @@ function ComparisonTable({
 
 // ---- Stats summary across all landings ----------------------------------
 
-function HistoryStats({ records }: { records: LandingRecord[] }) {
-  const { t } = useTranslation();
-  const stats = useMemo(() => {
+// ---- Main panel ---------------------------------------------------------
+
+/** Landungen-Übersicht (7a) §2/§5 aggregate — one pass over `records` feeds
+ *  both the header stats and the footer's softest/hardest/bounce values, so
+ *  header and footer can never disagree about which landing is "the" worst. */
+function useOverviewStats(records: LandingRecord[]) {
+  return useMemo(() => {
     if (records.length === 0) return null;
     const total = records.length;
-    const avgScore =
-      records.reduce((s, r) => s + r.score_numeric, 0) / total;
-    // v0.20.0: scoreBasisVs() statt Rohfeld — sonst kuert die Statistik eine
-    // andere "beste Landung" als die Kacheln anzeigen.
-    const bestRate = records.reduce(
-      (best, r) =>
-        Math.abs(scoreBasisVs(r)) < Math.abs(scoreBasisVs(best)) ? r : best,
-      records[0],
-    );
-    const aGrades = records.filter(
-      (r) => r.grade_letter === "A+" || r.grade_letter === "A",
-    ).length;
+    const avgRate = records.reduce((s, r) => s + scoreBasisVs(r), 0) / total;
+    const avgScore = records.reduce((s, r) => s + r.score_numeric, 0) / total;
+    const byCategory: Record<LandingCategory, number> = {
+      smooth: 0,
+      acceptable: 0,
+      firm: 0,
+      hard: 0,
+      severe: 0,
+    };
+    let softest = records[0];
+    let hardest = records[0];
+    for (const r of records) {
+      byCategory[recordCategory(r)]++;
+      if (Math.abs(scoreBasisVs(r)) < Math.abs(scoreBasisVs(softest))) softest = r;
+      if (Math.abs(scoreBasisVs(r)) > Math.abs(scoreBasisVs(hardest))) hardest = r;
+    }
     const totalBounces = records.reduce((s, r) => s + r.bounce_count, 0);
-    return { total, avgScore, bestRate, aGrades, totalBounces };
+    return { total, avgRate, avgScore, byCategory, softest, hardest, totalBounces };
   }, [records]);
-
-  if (!stats) return null;
-
-  return (
-    <div className="landing-stats">
-      <div className="landing-stat">
-        <div className="landing-stat__label">{t("landing.total")}</div>
-        <div className="landing-stat__value">{stats.total}</div>
-      </div>
-      <div className="landing-stat">
-        <div className="landing-stat__label">{t("landing.avg_score")}</div>
-        <div className="landing-stat__value">{stats.avgScore.toFixed(1)}</div>
-      </div>
-      <div className="landing-stat">
-        <div className="landing-stat__label">{t("landing.a_grades")}</div>
-        <div className="landing-stat__value">{stats.aGrades}</div>
-      </div>
-      <div className="landing-stat">
-        <div className="landing-stat__label">{t("landing.best_rate")}</div>
-        <div className="landing-stat__value">
-          {scoreBasisVs(stats.bestRate).toFixed(0)} fpm
-        </div>
-      </div>
-      <div className="landing-stat">
-        <div className="landing-stat__label">{t("landing.bounces")}</div>
-        <div className="landing-stat__value">{stats.totalBounces}</div>
-      </div>
-    </div>
-  );
 }
 
-// ---- Main panel ---------------------------------------------------------
+const OVERVIEW_PAGE_SIZE = 15;
 
 export function LandingPanel() {
   const { t } = useTranslation();
@@ -3939,6 +4081,11 @@ export function LandingPanel() {
   const [preview, setPreview] = useState<LandingRecord | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sortAsc, setSortAsc] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(OVERVIEW_PAGE_SIZE);
+  const [airportNames, setAirportNames] = useState<Record<string, string>>({});
+  const requestedIcaosRef = useRef<Set<string>>(new Set());
+  const stats = useOverviewStats(records);
 
   async function refresh() {
     setLoading(true);
@@ -3964,6 +4111,29 @@ export function LandingPanel() {
     return () => clearInterval(t);
   }, []);
 
+  // Landungen-Übersicht (7a) §4/§6 "Ortsnamen aus der Flughafentabelle" —
+  // same cache-by-ICAO pattern as BidsList's dpt-airport lookup, just for
+  // both ends of the route. Falls back to the bare ICAO if a lookup fails.
+  useEffect(() => {
+    const icaos = new Set<string>();
+    for (const r of records) {
+      if (r.dpt_airport) icaos.add(r.dpt_airport);
+      if (r.arr_airport) icaos.add(r.arr_airport);
+    }
+    for (const icao of icaos) {
+      if (requestedIcaosRef.current.has(icao)) continue;
+      requestedIcaosRef.current.add(icao);
+      void (async () => {
+        try {
+          const info = await invoke<{ name: string | null }>("airport_get", { icao });
+          if (info?.name) setAirportNames((prev) => ({ ...prev, [icao]: info.name! }));
+        } catch {
+          // stays unresolved — row falls back to the bare ICAO
+        }
+      })();
+    }
+  }, [records]);
+
   async function handleDelete(id: string) {
     if (
       !(await confirm({
@@ -3981,12 +4151,31 @@ export function LandingPanel() {
     }
   }
 
+  // Landungen-Übersicht (7a) §4 — default sort: Datum absteigend (bereits die
+  // Backend-Reihenfolge, aber explizit sortiert statt sich darauf zu
+  // verlassen, damit der Umschalt-Knopf beide Richtungen korrekt bedient.
+  // MUSS vor dem frühen `return` des Detail-Zweigs unten stehen — ein Hook
+  // nach einem bedingten `return` verletzt die Rules of Hooks (React #300,
+  // "Bericht öffnen" crashte deswegen live: der Hook wurde beim ersten
+  // Render mit selectedId=null gezählt, beim zweiten mit selectedId gesetzt
+  // übersprungen → Hook-Anzahl änderte sich zwischen den Renders).
+  const sortedRecords = useMemo(() => {
+    const arr = [...records];
+    arr.sort((a, b) => {
+      const ta = Date.parse(a.touchdown_at);
+      const tb = Date.parse(b.touchdown_at);
+      return sortAsc ? ta - tb : tb - ta;
+    });
+    return arr;
+  }, [records, sortAsc]);
+  const visibleRecords = sortedRecords.slice(0, visibleCount);
+
   // Detail view
   if (selectedId) {
     const rec = records.find((r) => r.pirep_id === selectedId);
     if (rec) {
       return (
-        <section className="phase landing-panel">
+        <section className="landing-panel">
           {confirmDialog}
           <LandingDetail
             record={rec}
@@ -4001,8 +4190,12 @@ export function LandingPanel() {
   }
 
   // Preview-only state (active flight has touched down but record not yet filed)
+  // v1.3.5 (#Landungen-7a): root is `.landing-overview`, NOT `.landing-panel`
+  // — that class is shared with the (untouched) detail view above and its
+  // padded/max-width/shrink-wrapped CSS would break this screen's full-height
+  // header/chart/table/footer frame.
   return (
-    <section className="phase landing-panel">
+    <section className="landing-overview">
       {confirmDialog}
       {preview && (
         <div className="landing-preview-card">
@@ -4016,67 +4209,230 @@ export function LandingPanel() {
         </div>
       )}
 
-      <h2 className="landing-history-title">{t("landing.history")}</h2>
-      <HistoryStats records={records} />
-      <TrendSparkline records={records} />
+      <header className="landing-ov-header">
+          <div className="landing-ov-header__title">
+            <h2>{t("landing.ov_title")}</h2>
+            <span className="landing-ov-header__sub">
+              {t("landing.ov_subtitle", { count: records.length })}
+            </span>
+          </div>
+          <div className="landing-ov-stats">
+            <div className="landing-ov-stat">
+              <span className="landing-ov-stat__label">{t("landing.ov_avg_rate")}</span>
+              <span className="landing-ov-stat__value">
+                {stats ? (
+                  <>
+                    {fmtDeDe(Math.round(stats.avgRate))}
+                    <span className="landing-ov-stat__unit"> fpm</span>
+                  </>
+                ) : (
+                  "—"
+                )}
+              </span>
+            </div>
+            <div className="landing-ov-stat">
+              <span className="landing-ov-stat__label">{t("landing.ov_avg_score")}</span>
+              <span className="landing-ov-stat__value">
+                {stats ? fmtDeDe(stats.avgScore, 1) : "—"}
+              </span>
+            </div>
+            <div className="landing-ov-stat">
+              <span className="landing-ov-stat__label">{t("landing.ov_distribution")}</span>
+              <span className="landing-ov-stat__value">
+                {stats ? (
+                  <>
+                    {(["smooth", "acceptable", "firm", "hard", "severe"] as LandingCategory[]).map(
+                      (cat, i) => (
+                        <span key={cat}>
+                          {i > 0 && <span className="landing-ov-dim"> · </span>}
+                          <span className={`landing-ov-cat--${cat}`}>{fmtDeDe(stats.byCategory[cat])}</span>
+                        </span>
+                      ),
+                    )}
+                  </>
+                ) : (
+                  "—"
+                )}
+              </span>
+            </div>
+          </div>
+        </header>
 
-      {loading && records.length === 0 && (
-        <p className="landing-empty">{t("landing.loading")}</p>
-      )}
-      {!loading && records.length === 0 && !preview && (
-        <p className="landing-empty">{t("landing.no_landings")}</p>
-      )}
+        <LandingRateChart records={records} />
 
-      {records.length > 0 && (
-        <table className="landing-table">
-          <thead>
-            <tr>
-              <th>{t("landing.col_grade")}</th>
-              <th>{t("landing.col_when")}</th>
-              <th>{t("landing.col_callsign")}</th>
-              <th>{t("landing.col_route")}</th>
-              <th>{t("landing.col_aircraft")}</th>
-              <th>{t("landing.col_rate")}</th>
-              <th>{t("landing.col_score")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {records.map((r) => (
-              <tr
-                key={r.pirep_id}
-                className="landing-row"
-                onClick={() => setSelectedId(r.pirep_id)}
-                tabIndex={0}
-              >
-                <td>
-                  <span
-                    className="landing-grade-pill"
-                    style={{ background: gradeColor(r.grade_letter) }}
+        <div className="landing-ov-tablewrap">
+          <table className="landing-ov-table">
+            <colgroup>
+              <col style={{ width: 128 }} />
+              <col />
+              <col style={{ width: 168 }} />
+              <col style={{ width: 150 }} />
+              <col style={{ width: 108 }} />
+              <col style={{ width: 84 }} />
+              <col style={{ width: 26 }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th scope="col" aria-sort={sortAsc ? "ascending" : "descending"}>
+                  <button
+                    type="button"
+                    className="landing-ov-table__sortbtn"
+                    onClick={() => setSortAsc((v) => !v)}
+                    aria-label={
+                      sortAsc ? t("landing.ov_sort_desc_action") : t("landing.ov_sort_asc_action")
+                    }
                   >
-                    {r.grade_letter}
-                  </span>
-                </td>
-                <td>{fmtDateTime(r.touchdown_at)}</td>
-                <td>
-                  {r.airline_icao}
-                  {r.flight_number}
-                </td>
-                <td>
-                  {r.dpt_airport} → {r.arr_airport}
-                </td>
-                <td>
-                  {r.aircraft_icao || r.aircraft_registration || r.aircraft_title || "—"}
-                </td>
-                {/* v0.20.0: scoreBasisVs() — die Liste zeigte das Rohfeld,
-                    die Detail-Kachel den Edge-Wert. Gleiche Landung, zwei
-                    Zahlen, je nachdem wo der Pilot hinschaut. */}
-                <td>{scoreBasisVs(r).toFixed(0)} fpm</td>
-                <td>{r.score_numeric}</td>
+                    {t("landing.col_when")}
+                    <span aria-hidden="true">{sortAsc ? "↑" : "↓"}</span>
+                  </button>
+                </th>
+                <th scope="col">{t("landing.col_route")}</th>
+                <th scope="col">{t("landing.col_aircraft")}</th>
+                <th scope="col" className="landing-ov-table__num">
+                  {t("landing.col_rate")}
+                </th>
+                <th scope="col" className="landing-ov-table__num">
+                  {t("landing.col_score")}
+                </th>
+                <th scope="col" className="landing-ov-table__num">
+                  {t("landing.col_grade")}
+                </th>
+                <th scope="col" aria-hidden="true" />
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+            </thead>
+            <tbody>
+              {loading &&
+                records.length === 0 &&
+                Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={`skeleton-${i}`} className="landing-ov-skeleton-row" aria-hidden="true">
+                    <td colSpan={7}>
+                      <div className="landing-ov-skeleton-bar" />
+                    </td>
+                  </tr>
+                ))}
+              {!loading && records.length === 0 && (
+                <tr className="landing-ov-empty-row">
+                  <td colSpan={7}>{t("landing.no_landings")}</td>
+                </tr>
+              )}
+              {visibleRecords.map((r) => {
+                const rate = scoreBasisVs(r);
+                const cat = recordCategory(r);
+                const pattern = r.aircraft_icao || r.aircraft_title || "—";
+                const reg = r.aircraft_registration || "—";
+                const dep = r.dpt_airport;
+                const arr = r.arr_airport;
+                const callsign = `${r.airline_icao}${r.flight_number}`;
+                return (
+                  <tr
+                    key={r.pirep_id}
+                    className="landing-ov-row"
+                    tabIndex={0}
+                    onClick={() => setSelectedId(r.pirep_id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSelectedId(r.pirep_id);
+                      }
+                    }}
+                    aria-label={t("landing.ov_row_aria", {
+                      date: fmtDateUtc(r.touchdown_at),
+                      dep,
+                      arr,
+                      rate: fmtDeDe(Math.round(rate)),
+                    })}
+                  >
+                    <td>
+                      <span className="landing-ov-date__d">{fmtDateUtc(r.touchdown_at)}</span>
+                      <span className="landing-ov-date__t">{fmtTimeUtcZ(r.touchdown_at)}</span>
+                    </td>
+                    <td>
+                      <span className="landing-ov-route__l1">
+                        {dep} → {arr}
+                      </span>
+                      <span className="landing-ov-route__l2">
+                        {callsign} · {airportNames[dep] ?? dep} → {airportNames[arr] ?? arr}
+                      </span>
+                    </td>
+                    <td className="landing-ov-aircraft">
+                      {pattern} · {reg}
+                    </td>
+                    <td className="landing-ov-table__num">
+                      <span className="landing-ov-rate-cell">
+                        <span className="landing-ov-rate-bar">
+                          <span
+                            className={`landing-ov-rate-bar__fill landing-ov-rate-bar__fill--${cat}`}
+                            style={{ width: `${Math.min(100, (Math.abs(rate) / CHART_MAX_FPM) * 100)}%` }}
+                          />
+                        </span>
+                        <span className={`landing-ov-rate-value landing-ov-rate-value--${cat}`}>
+                          {fmtDeDe(Math.round(rate))}
+                        </span>
+                      </span>
+                    </td>
+                    <td className="landing-ov-table__num landing-ov-score">
+                      {fmtDeDe(r.score_numeric)}
+                      <span className="landing-ov-score__suffix">/100</span>
+                    </td>
+                    {/* Just the letter, colour-coded by the same category as
+                        the sinkrate cell — no word: after seeing SANFT/FEST/
+                        HART-style category words next to the letter live,
+                        the pilot found two labels for one grade harder to
+                        parse than the letter alone, and the letter is
+                        already real per-row text (not a colour-only cue),
+                        so a11y's "never colour alone" concern still holds. */}
+                    <td className={`landing-ov-table__num landing-ov-grade landing-ov-grade--${cat}`}>
+                      {r.grade_letter}
+                    </td>
+                    <td className="landing-ov-chevron" aria-hidden="true">
+                      ›
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <footer className="landing-ov-footer">
+          <div className="landing-ov-footer__left">
+            <span>
+              {t("landing.ov_footer_count", {
+                shown: Math.min(visibleCount, sortedRecords.length),
+                total: records.length,
+              })}
+            </span>
+            {visibleCount < sortedRecords.length && (
+              <button
+                type="button"
+                className="landing-ov-loadmore"
+                onClick={() => setVisibleCount((v) => v + OVERVIEW_PAGE_SIZE)}
+              >
+                {t("landing.ov_load_more")}
+              </button>
+            )}
+          </div>
+          {stats && (
+            <div className="landing-ov-footer__right">
+              <span>
+                {t("landing.ov_footer_bounces_label")}{" "}
+                <strong>{fmtDeDe(stats.totalBounces)}</strong>
+              </span>
+              <span>
+                {t("landing.ov_footer_softest_label")}{" "}
+                <strong>{fmtDeDe(Math.round(scoreBasisVs(stats.softest)))} fpm</strong> ·{" "}
+                {fmtDateShortUtc(stats.softest.touchdown_at)}{" "}
+                {stats.softest.touchdown_airport ?? stats.softest.arr_airport}
+              </span>
+              <span>
+                {t("landing.ov_footer_hardest_label")}{" "}
+                <strong>{fmtDeDe(Math.round(scoreBasisVs(stats.hardest)))} fpm</strong> ·{" "}
+                {fmtDateShortUtc(stats.hardest.touchdown_at)}{" "}
+                {stats.hardest.touchdown_airport ?? stats.hardest.arr_airport}
+              </span>
+            </div>
+          )}
+        </footer>
     </section>
   );
 }

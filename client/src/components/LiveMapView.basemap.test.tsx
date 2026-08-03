@@ -12,8 +12,27 @@
 // echte Route-GEOMETRIE (LineString-Feature in der Source) erhalten bleiben.
 // Mit dem alten Einmal-Poll wäre der Layer ab dem 2. Umschalten weg.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from "vitest";
 import { render, screen, fireEvent, act, cleanup } from "@testing-library/react";
+import i18next from "i18next";
+import { initReactI18next } from "react-i18next";
+import deCommon from "../locales/de/common.json";
+
+// This test predates the Livemap-4a chrome rewrite, which added real i18n
+// copy to LiveMapView — real i18next (same setup as CpdlcPanel.test.tsx),
+// this file only checks map-engine behavior (layer/geometry survival across
+// basemap switches), not translated copy, but the component now calls
+// useTranslation() unconditionally so it needs a real instance to render.
+beforeAll(async () => {
+  if (!i18next.isInitialized) {
+    await i18next.use(initReactI18next).init({
+      lng: "de",
+      resources: { de: { common: deCommon } },
+      defaultNS: "common",
+      interpolation: { escapeValue: false },
+    });
+  }
+});
 
 const h = vi.hoisted(() => ({
   map: null as null | { layers: Set<string>; sourceData: Map<string, { features?: unknown[] }> },
@@ -62,6 +81,7 @@ vi.mock("maplibre-gl", () => {
     getZoom() { return this.zoom; }
     isStyleLoaded() { return true; } // immer „geladen" → modelliert das Race-Fenster direkt nach setStyle
     getLayer(id: string) { return this.layers.has(id) ? ({} as unknown) : undefined; }
+    setLayoutProperty() { return this; }
     getSource(id: string) {
       if (!this.sources.has(id)) return undefined;
       return { setData: (d: { features?: unknown[] }) => { this.sourceData.set(id, d); } } as unknown;
@@ -98,6 +118,9 @@ vi.mock("../lib/ipc", () => ({
     if (cmd === "airport_get") return { lat: null, lon: null };
     if (cmd === "airport_ground_index") return [];
     if (cmd === "airport_ground_get") return null;
+    // Livemap-4a's Ereignisliste (useMapEvents) polls both of these.
+    if (cmd === "activity_log_get") return [];
+    if (cmd === "hoppie_get_thread") return [];
     return null;
   }),
   listen: vi.fn(async () => () => {}),
@@ -129,7 +152,19 @@ async function flushAsync() {
   // (Fake-Timer faken keine Promises → echte Microtask-Runden).
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 }
-function toggleBasemap() { act(() => { fireEvent.click(screen.getByLabelText("Satellitenkarte umschalten")); }); }
+// v1.3.5 (#Livemap-4a): the old single icon-toggle (aria-label
+// "Satellitenkarte umschalten") became a two-button ANSICHT segmented
+// control ("Karte" / "Satellit", README §3) — clicking whichever one isn't
+// currently pressed reproduces the same alternating dark↔sat↔dark toggle
+// this test cycles through.
+function toggleBasemap() {
+  act(() => {
+    const map = screen.getByRole("button", { name: "Karte" });
+    const sat = screen.getByRole("button", { name: "Satellit" });
+    const inactive = map.getAttribute("aria-pressed") === "false" ? map : sat;
+    fireEvent.click(inactive);
+  });
+}
 
 // die echte, vom Nutzer sichtbare Route: ein LineString-Feature in der Source
 function routeGeometryCount() {

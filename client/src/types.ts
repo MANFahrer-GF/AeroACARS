@@ -97,6 +97,9 @@ export interface AircraftInfo {
   registration: string | null;
   icao: string | null;
   name: string | null;
+  /** Max takeoff weight in kg (`phpvmsaircraft.mtow`), per-tail. Briefing-2a
+   *  WEIGHTS-Rubrik zeigt damit "TOW · n kg unter/über MTOW". */
+  mtow_kg: number | null;
 }
 
 /** SimBrief OFP plan values — fetched via `fetch_simbrief_preview` Tauri
@@ -129,6 +132,19 @@ export interface SimBriefOfp {
   cargo_kg?: number;
   /** Reine Fracht ohne Pax-Gepaeck. */
   freight_kg?: number;
+  /** Aircraft-ICAO-Typ aus dem SimBrief-OFP (z.B. "A320") — reiner Typ-Code,
+   *  NICHT der volle phpVMS-Subfleet-Name. Grundlage fuer den OFP/Bid-
+   *  Aircraft-Mismatch-Vergleich. */
+  aircraft_icao?: string | null;
+  /** Operationeller (flug-spezifischer) MTOW-Grenzwert aus dem OFP — enger
+   *  als der strukturelle Grenzwert aus phpVMS' `aircraft.mtow`. */
+  max_tow_kg?: number;
+  /** Operating Empty Weight + Payload — zusammen ergeben sie ZFW. */
+  planned_oew_kg?: number;
+  planned_payload_kg?: number;
+  /** Pax-Gewicht + Gepaeck + Fracht ergeben zusammen Payload. */
+  planned_pax_weight_kg?: number;
+  planned_baggage_kg?: number;
 }
 
 export interface Flight {
@@ -141,6 +157,12 @@ export interface Flight {
   arr_airport_id: string;
   alt_airport_id: string | null;
   flight_time: number | null;
+  /** Scheduled departure/arrival time-of-day, "HH:MM" Zulu, raw phpVMS
+   *  schedule fields (`phpvmsflights.dpt_time`/`arr_time`). Briefing-2a
+   *  §8: Pflichtfeld der Anzeige — null nur wenn die Buchung wirklich
+   *  keine Zeit hat, nie die Zeile weglassen. */
+  dpt_time: string | null;
+  arr_time: string | null;
   level: number | null;
   route: string | null;
   flight_type: string | null;
