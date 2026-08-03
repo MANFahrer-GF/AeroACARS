@@ -1490,7 +1490,6 @@
   "bids": {
     "title": "Booked Flights",
     "loading": "Loading flights…",
-    "empty": "You don't have any booked flights. Book one on your phpVMS site and click \"Refresh\" here.",
     "refresh": "Refresh",
     "flight_time": "Scheduled flight time",
     "distance": "Distance",
@@ -1577,6 +1576,7 @@
       "error_text": "SimBrief unreachable — try again"
     },
     "empty_title": "No flights booked",
+    "empty_hint": "Book a flight on your phpVMS site and click \"Refresh\" here — it'll show up.",
     "empty_action": "Book a flight"
   },
   "flight": {
@@ -1985,11 +1985,8 @@
     "field_gs": "GS",
     "field_rest": "REM",
     "field_eta": "ETA",
+    "field_phase": "PHASE",
     "events_title": "EVENTS · {{callsign}}",
-    "filter_all": "ALL",
-    "filter_flug": "FLIGHT",
-    "filter_acars": "ACARS",
-    "filter_system": "SYSTEM",
     "events_empty": "No events yet.",
     "idle_rubric": "NO ACTIVE FLIGHT",
     "idle_headline_none": "Nobody is flying in GSG right now.",

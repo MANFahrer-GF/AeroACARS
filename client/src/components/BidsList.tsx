@@ -988,16 +988,21 @@ export function BidsList({
         </div>
       )}
 
-      {/* Briefing-2a §9: Statuszeile/Ueberschrift/Tab-Leiste bleiben
-          (Ueberschrift + Tab-Leiste rendern unabhaengig von state.kind
-          weiter oben/unten), an Stelle der Karte eine Zeile + Sekundär-
-          button statt der bisherigen Erklaer-Prosa. */}
+      {/* Field feedback (2026-08-03): the Briefing-2a §9 "empty row, no
+          illustration" choice read as unprofessional right next to
+          Cockpit's own illustrated empty state — same icon+title+hint+
+          button recipe as `.cockpit-empty` now. Header/tab bar above still
+          render independently of state.kind, unchanged. */}
       {state.kind === "empty" && (
-        <div className="bids__empty">
-          <span>{t("bids.empty_title")}</span>
+        <div className="bids-empty">
+          <div className="bids-empty__icon" aria-hidden="true">
+            🗓
+          </div>
+          <h2 className="bids-empty__title">{t("bids.empty_title")}</h2>
+          <p className="bids-empty__hint">{t("bids.empty_hint")}</p>
           <button
             type="button"
-            className="bid-card__link"
+            className="button button--primary"
             onClick={() => void openUrl(baseUrl).catch(() => {})}
           >
             {t("bids.empty_action")}

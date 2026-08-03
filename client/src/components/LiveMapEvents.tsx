@@ -127,23 +127,19 @@ function fmtUtcHms(iso: string): string {
   return `${d.toISOString().slice(11, 19)}z`;
 }
 
-export type Filter = "all" | EventCategory;
-const FILTERS: Filter[] = ["all", "flug", "acars", "system"];
-
 interface EventListProps {
   events: MapEvent[];
   callsign: string | null;
   onJumpTo: (position: [number, number]) => void;
-  /** Controlled from outside too — the System-Zeile's "Systemmeldungen (n)"
-   *  link (README §7) switches this panel to the SYSTEM filter. */
-  filter: Filter;
-  onFilterChange: (f: Filter) => void;
 }
 
 /** README §4.2 — the right panel's event feed. Own component (not inlined in
  *  LiveMapView.tsx) because it owns real state (the new-entry fade-in
- *  baseline) independent of the map engine. */
-export function LiveMapEventList({ events, callsign, onJumpTo, filter, onFilterChange }: EventListProps) {
+ *  baseline) independent of the map engine.
+ *
+ *  Field feedback (2026-08-03): the Alle/Flug/ACARS/System filter bar
+ *  "passt nicht" — removed. Every entry shows, unfiltered, always. */
+export function LiveMapEventList({ events, callsign, onJumpTo }: EventListProps) {
   const { t } = useTranslation();
 
   // Same "fade in only what's genuinely new" pattern as the PDC/CPDLC
@@ -159,31 +155,17 @@ export function LiveMapEventList({ events, callsign, onJumpTo, filter, onFilterC
     for (const e of events) seenKeysRef.current!.add(e.key);
   });
 
-  const filtered = filter === "all" ? events : events.filter((e) => e.category === filter);
-
   return (
     <div className="aa-livemap-events aa-livemap-overlay">
       <header className="aa-livemap-events__head">
         <span className="aa-livemap-events__title">
           {t("livemap.events_title", { callsign: callsign ?? "—" })}
         </span>
-        <nav className="aa-livemap-events__filters">
-          {FILTERS.map((f) => (
-            <button
-              key={f}
-              type="button"
-              className={`aa-livemap-filter ${filter === f ? "aa-livemap-filter--active" : ""}`}
-              onClick={() => onFilterChange(f)}
-            >
-              {t(`livemap.filter_${f}`)}
-            </button>
-          ))}
-        </nav>
       </header>
 
       <div className="aa-livemap-events__log" role="log" aria-live="polite">
-        {filtered.length === 0 && <p className="aa-livemap-events__empty">{t("livemap.events_empty")}</p>}
-        {filtered.map((e) => {
+        {events.length === 0 && <p className="aa-livemap-events__empty">{t("livemap.events_empty")}</p>}
+        {events.map((e) => {
           const fresh = freshKeys.has(e.key);
           const content = (
             <>

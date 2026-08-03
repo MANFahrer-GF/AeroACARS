@@ -127,9 +127,16 @@ describe("Erreichbarkeits-Anzeige verschiebt oder verdeckt nichts (v1.3.3)", () 
       "min-width: 0",
     );
 
+    // v1.4.3 (#CPDLC-Callsign-Zeile): flex-GROW went 0 → 1 so this
+    // container can use space freed up when the LOGON block moved to
+    // DatalinkComposer.tsx — the actual invariant this test protects
+    // (flex-SHRINK must stay 0, or a nowrap text block can compress below
+    // its own content width and paint over the next element) still holds,
+    // just via the middle token of the shorthand now (`1 0 auto`) instead
+    // of the original `0 0 auto`.
     const left = /\.datalink-status__left\s*\{([^}]*)\}/.exec(css);
     expect(left, "Regel muss existieren").toBeTruthy();
-    expect(left![1], "flex-shrink darf hier nicht 1 sein (Default oder explizit)").toMatch(/flex:\s*0 0 auto/);
+    expect(left![1], "flex-shrink darf hier nicht 1 sein (Default oder explizit)").toMatch(/flex:\s*\d+ 0 auto/);
 
     const input = /\.datalink-block__input\s*\{([^}]*)\}/.exec(css);
     expect(input, "Regel muss existieren").toBeTruthy();

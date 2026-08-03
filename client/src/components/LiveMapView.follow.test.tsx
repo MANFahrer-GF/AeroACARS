@@ -225,6 +225,13 @@ describe("LiveMapView Follow-Kamera", () => {
     const c = h.jumpTo.at(-1)!.center!;
     expect(c[0]).toBeCloseTo(5.0, 1);
     expect(c[1]).toBeCloseTo(60.0, 1);
+    // Field feedback (2026-08-03, "Map hängt, kann nicht rauszoomen"): DIESE
+    // große Abweichung entsteht in der Praxis oft durchs bloße Rauszoomen
+    // (MapLibre zoomt um den Cursor, nicht um die Kartenmitte) — nicht durch
+    // ein echtes "Spur verloren". Der Re-Center-jumpTo hier darf den Zoom
+    // NICHT anfassen, sonst macht er den manuellen Rauszoom-Versuch des
+    // Piloten binnen einer Sekunde wieder rückgängig — genau der Bug.
+    expect(h.jumpTo.at(-1)!.zoom).toBeUndefined();
   });
 
   it("ein Nutzer-Pan schaltet Follow sichtbar AUS und stoppt das Zentrieren", () => {

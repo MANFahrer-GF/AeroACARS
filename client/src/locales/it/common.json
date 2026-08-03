@@ -1490,7 +1490,6 @@
   "bids": {
     "title": "Voli prenotati",
     "loading": "Caricamento voli…",
-    "empty": "Al momento non hai voli prenotati. Prenota un volo su german-sky-group.eu e clicca qui su „Aggiorna\", poi apparirà.",
     "refresh": "Aggiorna",
     "flight_time": "Tempo di volo previsto",
     "distance": "Distanza",
@@ -1577,6 +1576,7 @@
       "error_text": "SimBrief non raggiungibile — riprova"
     },
     "empty_title": "Nessun volo prenotato",
+    "empty_hint": "Prenota un volo su german-sky-group.eu e clicca qui su „Aggiorna\" — apparirà qui.",
     "empty_action": "Prenota un volo"
   },
   "flight": {
@@ -1985,11 +1985,8 @@
     "field_gs": "GS",
     "field_rest": "RESIDUO",
     "field_eta": "ETA",
+    "field_phase": "FASE",
     "events_title": "EVENTI · {{callsign}}",
-    "filter_all": "TUTTI",
-    "filter_flug": "VOLO",
-    "filter_acars": "ACARS",
-    "filter_system": "SISTEMA",
     "events_empty": "Ancora nessun evento.",
     "idle_rubric": "NESSUN VOLO ATTIVO",
     "idle_headline_none": "Al momento nessuno sta volando in GSG.",

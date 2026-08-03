@@ -77,6 +77,26 @@ export const fmtNm = (n?: number) => {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
   return String(Math.round(n));
 };
+// Field feedback (2026-08-03): a transient phpVMS hiccup showed a bare
+// error with zero recovery — one failed request, no retry, no manual
+// affordance. Retries only what LOOKS transient (same network/timeout
+// pattern `errText` above already detects) — retrying an auth or 404
+// error endlessly wouldn't help, just delays showing the real cause.
+export const RETRY_DELAYS_MS = [800, 2000]; // 3 attempts total: immediate + 2 retries
+export async function invokeWithRetry<T>(fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const msg = String((e as { message?: string })?.message ?? e ?? "");
+      if (attempt >= RETRY_DELAYS_MS.length || !/network|fetch|connect|timeout|dns/i.test(msg)) {
+        throw e;
+      }
+      await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}
+
 const statusSlug = (s?: string) => (s === "accepted" || s === "pending" || s === "rejected" ? s : "pending");
 const badge = (s?: string) => `<span class="aa-lb-badge aa-lb-b-${statusSlug(s)}">${statusSlug(s)}</span>`;
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
@@ -95,6 +115,10 @@ export function LogbookView() {
   // nochmal. Mit der ID kann genau die angeklickte Zeile antworten.
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Manual "Erneut versuchen" — bumped on click, included in the fetch
+  // effect's deps below so a click re-runs it even when `page` didn't
+  // change (all automatic retries in invokeWithRetry already exhausted).
+  const [retryTick, setRetryTick] = useState(0);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const mapElRef = useRef<HTMLDivElement | null>(null);
 
@@ -108,12 +132,14 @@ export function LogbookView() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    invoke<{ items?: Item[]; total?: number }>("logbook_pireps", { limit: PAGE, offset: page * PAGE })
+    invokeWithRetry(() =>
+      invoke<{ items?: Item[]; total?: number }>("logbook_pireps", { limit: PAGE, offset: page * PAGE }),
+    )
       .then((r) => { if (!cancelled) { setItems(r.items ?? []); setTotal(r.total ?? 0); } })
       .catch((e) => { if (!cancelled) setError(errText(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [page]);
+  }, [page, retryTick]);
 
   async function openDetail(id: string) {
     // Zweitklick verwerfen statt eine zweite Abfrage loszuschicken. Ohne das
@@ -216,7 +242,15 @@ export function LogbookView() {
         <div className="aa-lb-stat aa-lb-rankcard">{stats?.rank_image && <img src={stats.rank_image} alt="" />}<div><div className="aa-lb-k">Rang</div><div className="aa-lb-rankv">{stats?.rank ?? "—"}</div></div></div>
       </div>
       <div className="aa-lb-card">
-        {error && <div className="aa-lb-error">Logbuch konnte nicht geladen werden: {error}</div>}
+        {error && (
+          <div className="aa-lb-error">
+            Logbuch konnte nicht geladen werden: {error}
+            {" "}
+            <button type="button" className="aa-lb-btn" onClick={() => setRetryTick((t) => t + 1)}>
+              Erneut versuchen
+            </button>
+          </div>
+        )}
         {/* Der Balken macht das Warten sichtbar, bevor der Blick überhaupt bei
             der Zeile ankommt — er sitzt an der Oberkante der Karte. */}
         {(loading || openingId) && <div className="aa-lb-progress" role="presentation" />}

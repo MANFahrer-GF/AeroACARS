@@ -44,6 +44,22 @@ function fmtDistance(nm: number, locale: string): string {
   )} nmi`;
 }
 
+const EARTH_RADIUS_NM = 3440.065; // nautical miles
+
+/** Great-circle distance in nautical miles between two lat/lon points —
+ *  same formula/constant RouteMap.tsx uses for its own progress-bar math,
+ *  computed independently here (see the header-distance fix below). */
+function haversineNm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return EARTH_RADIUS_NM * c;
+}
+
 /**
  * #phase-v2 Cutover: bestimmt Label-Key + CSS-Klassen-Suffix des Phasen-Badges.
  * `phase` ist die (v2-)Flugphase; `shadowSegment` ist das ROHE Kinematik-Segment
@@ -123,6 +139,36 @@ export function ActiveFlightPanel({
     const id = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(id);
   }, []);
+
+  // Field feedback (2026-08-03): the header's route distance used to reuse
+  // `info.distance_nm` — that field is the CUMULATIVE distance FLOWN so far
+  // (ticks up from 0 server-side), correct for TripCard's own "Strecke"
+  // cell (InfoStrip.tsx, left untouched), but wrong here: the header wants
+  // the FIXED planned distance for the whole route, dep→arr, same
+  // dpt/arr-airport-coords + haversine pattern RouteMap.tsx already uses
+  // for its own progress-bar math — computed independently here so this
+  // header doesn't depend on RouteMap/PhaseCard's internal state.
+  const [routeDistanceNm, setRouteDistanceNm] = useState<number | null>(null);
+  useEffect(() => {
+    if (!info?.dpt_airport || !info?.arr_airport) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [dpt, arr] = await Promise.all([
+          invoke<{ lat: number; lon: number } | null>("airport_get", { icao: info.dpt_airport }),
+          invoke<{ lat: number; lon: number } | null>("airport_get", { icao: info.arr_airport }),
+        ]);
+        if (!cancelled && dpt?.lat != null && dpt?.lon != null && arr?.lat != null && arr?.lon != null) {
+          setRouteDistanceNm(haversineNm(dpt.lat, dpt.lon, arr.lat, arr.lon));
+        }
+      } catch {
+        // stays null — header falls back to the flown-so-far value below
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [info?.dpt_airport, info?.arr_airport]);
 
   if (!info) return null;
 
@@ -510,7 +556,7 @@ export function ActiveFlightPanel({
   // #phase-v2 Cutover: `info.phase` ist jetzt die v2-Phase. Die Badge-
   // Entscheidung (inkl. „Level" bei Höhen-Restriktion) steckt in der puren
   // `phaseBadgeDisplay`-Helper (unten, exportiert + unit-getestet).
-  const { labelKey, className: phaseClass } = phaseBadgeDisplay(
+  const { labelKey } = phaseBadgeDisplay(
     info.phase,
     info.shadow_segment,
   );
@@ -558,17 +604,9 @@ export function ActiveFlightPanel({
                 ? `${info.airline_icao} ${resolveFlightIdent(info.flight_number, info.callsign)}`
                 : resolveFlightIdent(info.flight_number, info.callsign)}
             </h2>
-            {/* #phase-v2 Cutover: Haupt-Badge = v2-Phase; bei einer
-                Höhen-Restriktion zeigt es „Level" (s. showLevel oben). Die
-                frühere dezente „v2:"-Schatten-Zeile ist entfernt — v2 IST
-                jetzt die angezeigte Phase. Die Phase erscheint jetzt ZUSÄTZLICH
-                groß im Phase-Card (Stage E) — das Badge bleibt hier fürs
-                schnelle Scannen im Header. */}
-            <span
-              className={`active-flight__phase active-flight__phase--${phaseClass}`}
-            >
-              {phaseLabel}
-            </span>
+            {/* Field feedback (2026-08-03): this badge duplicated the phase
+                that's already shown big in the PhaseCard band right below —
+                removed here, PhaseCard stays the single source for it. */}
           </div>
         </div>
         <div className="active-flight__route">
@@ -576,7 +614,7 @@ export function ActiveFlightPanel({
           <span className="active-flight__route-arrow">
             <span className="active-flight__arrow">→</span>
             <span className="active-flight__route-distance">
-              {fmtDistance(info.distance_nm, i18n.language)}
+              {fmtDistance(routeDistanceNm ?? info.distance_nm, i18n.language)}
             </span>
           </span>
           <span className="active-flight__icao">{info.arr_airport}</span>

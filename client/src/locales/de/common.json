@@ -1490,7 +1490,6 @@
   "bids": {
     "title": "Gebuchte Flüge",
     "loading": "Flüge werden geladen…",
-    "empty": "Du hast aktuell keine gebuchten Flüge. Buche einen Flug auf german-sky-group.eu und klicke hier auf „Aktualisieren“, dann erscheint er.",
     "refresh": "Aktualisieren",
     "flight_time": "Geplante Flugzeit",
     "distance": "Distanz",
@@ -1577,6 +1576,7 @@
       "error_text": "SimBrief nicht erreichbar — erneut versuchen"
     },
     "empty_title": "Keine Flüge gebucht",
+    "empty_hint": "Buche einen Flug auf german-sky-group.eu und klicke hier auf „Aktualisieren“ — dann erscheint er hier.",
     "empty_action": "Flug buchen"
   },
   "flight": {
@@ -1985,11 +1985,8 @@
     "field_gs": "GS",
     "field_rest": "REST",
     "field_eta": "ETA",
+    "field_phase": "PHASE",
     "events_title": "EREIGNISSE · {{callsign}}",
-    "filter_all": "ALLE",
-    "filter_flug": "FLUG",
-    "filter_acars": "ACARS",
-    "filter_system": "SYSTEM",
     "events_empty": "Noch keine Ereignisse.",
     "idle_rubric": "KEIN AKTIVER FLUG",
     "idle_headline_none": "Gerade fliegt niemand in der GSG.",

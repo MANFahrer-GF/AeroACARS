@@ -1593,8 +1593,8 @@ button:disabled {
 .grid4 {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: var(--sp-3);
-  margin-bottom: var(--sp-4);
+  gap: 9px;                           /* was var(--sp-3) = 12px */
+  margin-bottom: 11px;                /* was var(--sp-4) = 16px */
 }
 @media (max-width: 1180px) {
   .grid4 {
@@ -1613,7 +1613,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 9px 12px;
+  padding: 7px 10px;                 /* was 9px 12px */
   border-bottom: 1px solid var(--line);
 }
 .card__title {
@@ -1645,7 +1645,7 @@ button:disabled {
   transform: rotate(-90deg);
 }
 .card__body {
-  padding: 6px 12px 10px;
+  padding: 5px 10px 8px;              /* was 6px 12px 10px */
   flex: 1;
 }
 
@@ -1653,7 +1653,7 @@ button:disabled {
   display: flex;
   align-items: baseline;
   gap: var(--sp-2);
-  padding: 5px 0;
+  padding: 4px 0;                     /* was 5px 0 */
 }
 .row__label {
   font-size: var(--fs-300);
@@ -1668,8 +1668,8 @@ button:disabled {
   white-space: nowrap;
 }
 .row--sum {
-  margin-top: 5px;
-  padding-top: 9px;
+  margin-top: 4px;                    /* was 5px */
+  padding-top: 7px;                   /* was 9px */
   border-top: 1px solid var(--line);
 }
 .row--sum .row__label {
@@ -1699,7 +1699,7 @@ button:disabled {
   text-transform: uppercase;
   text-align: right;
   font-weight: 400;
-  padding: 3px 0 6px;
+  padding: 2px 0 5px;                 /* was 3px 0 6px */
 }
 .ls th:first-child {
   text-align: left;
@@ -1708,7 +1708,7 @@ button:disabled {
   font-family: var(--font-acars);
   font-variant-numeric: tabular-nums;
   text-align: right;
-  padding: 4px 0;
+  padding: 3px 0;                     /* was 4px 0 */
   white-space: nowrap;
 }
 .ls td:first-child {
@@ -1722,8 +1722,8 @@ button:disabled {
 .wx {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--sp-3);
-  margin-bottom: var(--sp-4);
+  gap: 9px;                           /* was var(--sp-3) = 12px */
+  margin-bottom: 11px;                /* was var(--sp-4) = 16px */
 }
 @media (max-width: 1180px) {
   .wx {
@@ -1734,13 +1734,13 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 9px 12px 0;
+  padding: 7px 10px 0;                /* was 9px 12px 0 */
 }
 .wx__row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 12px 10px;
+  padding: 5px 10px 8px;              /* was 6px 12px 10px */
   flex-wrap: wrap;
 }
 .wx__tag {
@@ -4914,23 +4914,6 @@ input:disabled {
     monospace;
 }
 
-.active-flight__phase {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 12px 4px 10px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 20%, var(--surface-2));
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  white-space: nowrap;
-  position: relative;
-  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
-}
-
 /* v0.16.12 (#phase-v2): dezente Schatten-Engine-Zeile neben dem
    Phase-Badge. Nur sichtbar, wenn die v2-Sicht abweicht — bewusst
    klein + gedämpft (Verifikations-Hilfe, keine Pilot-Information). */
@@ -4941,111 +4924,6 @@ input:disabled {
   opacity: 0.75;
   white-space: nowrap;
   align-self: center;
-}
-
-/* Pulsing indicator dot ahead of the phase label — pulses on phases
-   that are mid-action ("something is happening right now"), steady on
-   stable / parked phases. */
-.active-flight__phase::before {
-  content: "";
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
-  flex: 0 0 auto;
-  box-shadow: 0 0 0 0 currentColor;
-}
-
-/* Active / dynamic phases pulse so the user feels the live state. */
-.active-flight__phase--pushback::before,
-.active-flight__phase--taxi_out::before,
-.active-flight__phase--takeoff_roll::before,
-.active-flight__phase--takeoff::before,
-.active-flight__phase--climb::before,
-.active-flight__phase--level::before,
-.active-flight__phase--descent::before,
-.active-flight__phase--approach::before,
-.active-flight__phase--final::before,
-.active-flight__phase--landing::before,
-.active-flight__phase--taxi_in::before {
-  animation: phase-pulse 1.6s ease-in-out infinite;
-}
-
-@keyframes phase-pulse {
-  0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 60%, transparent);
-  }
-  70% {
-    box-shadow: 0 0 0 8px color-mix(in srgb, currentColor 0%, transparent);
-  }
-  100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 0%, transparent);
-  }
-}
-
-/* Phase-specific colour cues so the badge is scannable at a glance.
-   Boarding (waiting at the gate) — neutral accent.
-   Pushback / taxi — accent (active ground movement).
-   Takeoff / liftoff — orange-warning (high-energy event).
-   Climb / cruise — green (steady-state cruise).
-   Descent — green→amber (active phase but not critical yet).
-   Approach / final — orange (configuration matters).
-   Landing / blocks-on / arrived — strong green (success).
-   Preflight (legacy persisted-stats fallback) — muted grey. */
-.active-flight__phase--preflight {
-  background: var(--surface-2);
-  color: var(--text-muted);
-}
-
-.active-flight__phase--boarding {
-  background: color-mix(in srgb, var(--accent) 14%, var(--surface-2));
-  color: var(--accent);
-}
-
-.active-flight__phase--pushback,
-.active-flight__phase--taxi_out,
-.active-flight__phase--taxi_in {
-  background: color-mix(in srgb, var(--accent) 22%, var(--surface-2));
-  color: var(--accent);
-}
-
-.active-flight__phase--takeoff_roll,
-.active-flight__phase--takeoff,
-.active-flight__phase--landing {
-  background: color-mix(in srgb, var(--warning, orange) 22%, var(--surface-2));
-  color: var(--warning, orange);
-}
-
-.active-flight__phase--climb,
-.active-flight__phase--cruise {
-  background: color-mix(in srgb, var(--success, #22c55e) 18%, var(--surface-2));
-  color: var(--success, #22c55e);
-}
-
-.active-flight__phase--descent {
-  background: color-mix(in srgb, var(--success, #22c55e) 14%, var(--surface-2));
-  color: color-mix(in srgb, var(--success, #22c55e) 70%, var(--warning, orange));
-}
-
-/* #phase-v2: Level-Off an einer Höhen-Restriktion (Climb/Descent auf ATC-
-   Zwischenhöhe) — eigener, ruhiger Cyan-Ton, klar unterscheidbar von
-   Climb/Cruise (grün) und Descent (grün→amber). */
-.active-flight__phase--level {
-  background: color-mix(in srgb, var(--info, #38bdf8) 16%, var(--surface-2));
-  color: var(--info, #38bdf8);
-}
-
-.active-flight__phase--approach,
-.active-flight__phase--final {
-  background: color-mix(in srgb, var(--warning, orange) 18%, var(--surface-2));
-  color: var(--warning, orange);
-}
-
-.active-flight__phase--blocks_on,
-.active-flight__phase--arrived,
-.active-flight__phase--pirep_submitted {
-  background: color-mix(in srgb, var(--success, #22c55e) 26%, var(--surface-2));
-  color: var(--success, #22c55e);
 }
 
 .active-flight__route {
@@ -5381,15 +5259,42 @@ input:disabled {
   padding: 16px 18px;
 }
 
-/* Briefing-2a §9: leere Zeile statt Kachel — kein Illustrations-Kasten. */
-.bids__empty {
+/* Field feedback (2026-08-03): the original Briefing-2a §9 choice ("leere
+   Zeile statt Kachel — kein Illustrations-Kasten", bare text + a link-
+   styled button) read as unprofessional next to Cockpit's own empty state
+   right next to it in the sidebar. Same illustrated-card recipe as
+   `.cockpit-empty` now (icon + title + hint + primary button). */
+.bids-empty {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding: 16px 20px;
-  font-family: var(--font-sans);
-  font-size: 13px;
-  color: var(--text-dim);
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 20px;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  text-align: center;
+}
+
+.bids-empty__icon {
+  font-size: 56px;
+  color: var(--accent);
+  opacity: 0.6;
+}
+
+.bids-empty__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.bids-empty__hint {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--text-muted);
+  max-width: 420px;
+  line-height: 1.5;
 }
 
 /* Briefing-2a §9: Ladeplatzhalter in Card-Sollhoehe, keine Animation. */
@@ -6747,11 +6652,21 @@ input:disabled {
   text-transform: uppercase;
 }
 
+/* Field feedback (2026-08-03): this card embeds the full LandingDetail
+   report (charts, tiles, everything) right above the overview's own
+   header+list, with no height cap — right after touchdown that pushed the
+   list far below the fold, reading as "no list opens, just a preview".
+   Capped + internally scrollable now, so the list underneath (its own
+   `.landing-ov-tablewrap`, flex:1 + overflow-y:auto) always keeps real
+   space. CSS-only fix — LandingDetail.tsx itself stays untouched. */
 .landing-preview-card {
   background: rgba(56, 189, 248, 0.06);
   border: 1px solid rgba(56, 189, 248, 0.4);
   border-radius: var(--r-md);
   padding: 1rem 1.25rem;
+  max-height: 40vh;
+  overflow-y: auto;
+  flex-shrink: 0;
 }
 
 .landing-preview-card > h3 {
@@ -9523,6 +9438,11 @@ input:disabled {
 
 /* §3 — Kartenschalter-Block: one overlay, four named groups, 16px from the
    top-left corner. */
+/* Field feedback (2026-08-03): "die Icons ... zu groß, zu extrem präsent" —
+   this whole overlay (segmented Karte/Satellit + Norden/Kurs + layer
+   toggles) dominated the map view. Trimmed padding/gaps + button size
+   below, same recipe as this round's other card-shrink fixes: smaller
+   footprint, same labels, same click targets, nothing restructured. */
 .aa-livemap-controls {
   position: absolute;
   z-index: 500;
@@ -9530,8 +9450,8 @@ input:disabled {
   top: 16px;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 8px 12px;
+  gap: 10px;                          /* was 14px */
+  padding: 6px 10px;                   /* was 8px 12px */
 }
 .aa-livemap-controls__group {
   display: flex;
@@ -9561,9 +9481,9 @@ input:disabled {
   background: var(--surface);
   color: var(--text-dim);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: 11px;                     /* was 12px */
   font-weight: var(--fw-bold);
-  padding: 8px 14px;
+  padding: 6px 11px;                   /* was 8px 14px */
   cursor: pointer;
 }
 .aa-livemap-seg__btn:first-child {
@@ -9593,9 +9513,9 @@ input:disabled {
   background: var(--surface);
   color: var(--text-dim);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: 11px;                     /* was 12px */
   font-weight: var(--fw-bold);
-  padding: 8px 14px;
+  padding: 6px 11px;                   /* was 8px 14px */
   border-radius: var(--r-md);
   cursor: pointer;
 }
@@ -9701,6 +9621,17 @@ input:disabled {
   flex-direction: column;
   gap: 2px;
 }
+/* Field feedback (2026-08-03): phase used to be a small 12px dim footer
+   caption, easy to miss next to the bold 22px stat values below — now its
+   own full-width row spanning the grid, same value styling as the other
+   stats (comparable visual weight), separated with a hairline so it still
+   reads as "the header stat" rather than a fifth equal grid cell. */
+.aa-livemap-flightcard__phase-row {
+  grid-column: 1 / -1;
+  padding-bottom: 8px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--line);
+}
 .aa-livemap-flightcard__label {
   font-family: var(--font-mono);
   font-size: var(--fs-100);
@@ -9749,25 +9680,6 @@ input:disabled {
   letter-spacing: var(--ls-caps);
   color: var(--text-dim);
   text-transform: uppercase;
-}
-.aa-livemap-events__filters {
-  display: flex;
-  gap: 10px;
-}
-.aa-livemap-filter {
-  appearance: none;
-  border: none;
-  background: none;
-  padding: 0;
-  font-family: var(--font-mono);
-  font-size: var(--fs-100);
-  letter-spacing: 0.1em;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-.aa-livemap-filter--active {
-  color: var(--text);
-  font-weight: var(--fw-bold);
 }
 .aa-livemap-events__log {
   flex: 1;
@@ -10592,10 +10504,24 @@ button.aa-livemap-events__row:hover {
   display: flex;
   align-items: center;
   gap: 22px;
-  /* No shrink: this container must never be compressed below the sum of
-     its children's own natural widths — that's exactly what let text
-     overflow into the next sibling instead of the row scrolling. */
-  flex: 0 0 auto;
+  /* Field feedback (2026-08-03): "die Zeile da ist nach rechts noch Platz"
+     — the LOGON block that used to sit in this row moved to
+     DatalinkComposer.tsx in an earlier round, but this row's own layout
+     was never adjusted afterward. `.datalink-status__poll` (the small
+     right-aligned "last poll" text) was the only thing set to flex-grow,
+     so the freed space just sat as an empty gap between the callsign
+     block and that small text — reading as cramped-on-the-left even
+     though there was clearly room. This container now grows to fill the
+     row itself (minus what `.datalink-status__poll` needs) and spreads
+     its own groups apart via `justify-content` — the callsign group
+     visibly moves further right into the space that used to sit unused.
+     flex-shrink stays 0 — same guard as before against the original
+     squeeze bug (never below the sum of the children's own natural
+     widths, that's what let text overflow into the next sibling); only
+     flex-grow changed (0 → 1) to let this container use the freed space
+     at all. */
+  flex: 1 0 auto;
+  justify-content: space-between;
 }
 
 /* One "group" = a labeled block plus the single button that acts on it
@@ -10742,10 +10668,10 @@ input.datalink-block__input {
   border: 1px solid var(--acc);
   border-radius: var(--r-sm);
   padding: 2px 6px;
-  width: 12ch;
+  width: 18ch;                        /* was 12ch — see .datalink-status__left comment above: room to use */
   /* A `width` alone is still a flex-shrink TARGET, not a floor — under
      pressure the box (and its border/placeholder) was being squeezed
-     down to near-nothing instead of staying at its stated 12ch, which is
+     down to near-nothing instead of staying at its stated width, which is
      the empty-looking black box in the field screenshot. */
   flex-shrink: 0;
   text-transform: uppercase;

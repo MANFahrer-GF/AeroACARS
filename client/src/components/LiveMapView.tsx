@@ -22,7 +22,7 @@ import { aircraftSvg } from "../lib/aircraftIcon";
 import { phaseColor, phaseLabel as formatPhase } from "../lib/phaseColors";
 import { resolveFlightIdent } from "../lib/callsign";
 import { simKindLabel } from "../lib/simKind";
-import { useMapEvents, LiveMapEventList, type Filter } from "./LiveMapEvents";
+import { useMapEvents, LiveMapEventList } from "./LiveMapEvents";
 import { LiveMapEmptyState, nextBidInfo, type NextBidInfo } from "./LiveMapEmptyState";
 import { LiveRecordingIndicator } from "./LiveRecordingIndicator";
 
@@ -338,9 +338,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       cancelled = true;
     };
   }, []);
-  // README §4.2: Ereignisliste filter — lives here (not inside
-  // LiveMapEventList) since it's a controlled prop the list receives.
-  const [eventFilter, setEventFilter] = useState<Filter>("all");
   // README §2: header UTC clock, ticking every second — same pattern as
   // PilotHeader.tsx's own zulu clock.
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -1264,25 +1261,39 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       if (follow && !activeFlight?.was_just_resumed) {
         const c = map.getCenter();
         const far = Math.abs(c.lng - lngLat[0]) > 2 || Math.abs(c.lat - lngLat[1]) > 2;
-        if (far) {
-          // großer Versatz (Erst-Lock / weit draußen) → hart auf den Flieger,
-          // phasen-passender Zoom (Boden nah, Reiseflug weit).
-          map.jumpTo({
-            center: lngLat,
-            zoom: targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft),
-            bearing: targetBearing,
-          });
+        if (followEngageRef.current) {
+          // Bewusstes (Wieder-)Einschalten von Follow (Erst-Mount oder der
+          // "Auf Flug zentrieren"/"Folgen"-Knopf) → phasen-passenden Zoom
+          // setzen, egal wie weit die Kamera gerade weg ist.
+          if (far) {
+            map.jumpTo({
+              center: lngLat,
+              zoom: targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft),
+              bearing: targetBearing,
+            });
+          } else {
+            map.easeTo({
+              center: lngLat,
+              zoom: targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft),
+              bearing: targetBearing,
+              duration: 350,
+            });
+          }
           followEngageRef.current = false;
-        } else if (followEngageRef.current) {
-          // bewusst (wieder) eingeschaltet und Flieger schon nah → sanft zentrieren
-          // und EINMAL den phasen-Zoom setzen.
-          map.easeTo({
-            center: lngLat,
-            zoom: targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft),
-            bearing: targetBearing,
-            duration: 350,
-          });
-          followEngageRef.current = false;
+        } else if (far) {
+          // Field feedback (2026-08-03, "Map hängt, kann nicht rauszoomen,
+          // zeigt nicht mehr alle Flüge"): laufendes Folgen, aber die Kamera
+          // ist weit vom Flugzeug abgedriftet — das passierte auch schon von
+          // einem simplen Rauszoomen per Mausrad: MapLibre zoomt um den
+          // CURSOR, nicht um die Kartenmitte, also verschiebt Rauszoomen
+          // abseits des Flugzeug-Icons `getCenter()` vom Flieger weg. Der
+          // alte Code behandelte JEDE große Abweichung als "Spur verloren,
+          // hart auf festen Phasen-Zoom zurücksetzen" — das hat ein
+          // bewusstes Rauszoomen binnen einer Sekunde wieder rückgängig
+          // gemacht, jedes Mal. Hier nur auf den Flieger zentrieren, OHNE
+          // den Zoom anzufassen — der Phasen-Zoom-Override ist jetzt allein
+          // dem bewussten (Wieder-)Einschalten oben vorbehalten.
+          map.jumpTo({ center: lngLat, bearing: targetBearing });
         } else {
           // laufendes Folgen → NUR schwenken. Dein manueller Zoom bleibt erhalten
           // (kein Zurückziehen mehr auf den Phasen-Zoom — genau das war der Bug).
@@ -1786,6 +1797,24 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   />
                 </div>
                 <div className="aa-livemap-flightcard__grid">
+                  {/* Field feedback (2026-08-03): phase used to be tucked
+                      into the footer as a small 12px dim caption next to
+                      the aircraft type/registration — technically present
+                      but easy to miss next to the bold 22px stat values
+                      here, so it didn't read as "a data field" at all.
+                      Promoted to its own full-width row, same label/value
+                      styling as the other stats (colored via phaseColor()
+                      like the aircraft marker itself, for a quick visual
+                      match). */}
+                  <div className="aa-livemap-flightcard__phase-row">
+                    <span className="aa-livemap-flightcard__label">{t("livemap.field_phase")}</span>
+                    <span
+                      className="aa-livemap-flightcard__value"
+                      style={{ color: phaseColor(activeFlight?.phase) }}
+                    >
+                      {phaseLabel}
+                    </span>
+                  </div>
                   <div>
                     <span className="aa-livemap-flightcard__label">{t("livemap.field_alt")}</span>
                     <span className="aa-livemap-flightcard__value">{stats.alt}</span>
@@ -1804,24 +1833,18 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   </div>
                 </div>
                 <div className="aa-livemap-flightcard__foot">
-                  {/* README §4.1 wants "Muster + Registrierung" left. Field
-                      feedback (2026-08-03): this used to read from the live
-                      SIM snapshot (`simSnapshot.aircraft_icao`/
-                      `aircraft_registration`) — wrong source, that's whatever
-                      happens to be loaded in the sim, not what phpVMS
-                      actually planned/booked. Now uses `activeFlight`'s own
-                      phpVMS-sourced `aircraft_name`/`aircraft_icao` +
-                      `planned_registration`. Right side used to repeat the
-                      HÖHE value already shown in the grid above (the planned
-                      cruise level it was meant to compare against has no
-                      source reachable from here) — replaced with the flight
-                      phase, which was missing from this card entirely. */}
+                  {/* README §4.1 wants "Muster + Registrierung" left. Uses
+                      `activeFlight`'s own phpVMS-sourced `aircraft_name`/
+                      `aircraft_icao` + `planned_registration` — not the live
+                      SIM snapshot (whatever's loaded in the sim isn't
+                      necessarily what phpVMS actually planned/booked). Phase
+                      moved to its own row in the grid above (see comment
+                      there) — this footer is single-purpose again. */}
                   <span>
                     {[activeFlight!.aircraft_name || activeFlight!.aircraft_icao, activeFlight!.planned_registration]
                       .filter(Boolean)
                       .join(" · ") || "—"}
                   </span>
-                  <span>{phaseLabel}</span>
                 </div>
               </div>
 
@@ -1829,8 +1852,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                 events={events}
                 callsign={ident}
                 onJumpTo={flyToPosition}
-                filter={eventFilter}
-                onFilterChange={setEventFilter}
               />
             </div>
           )}
