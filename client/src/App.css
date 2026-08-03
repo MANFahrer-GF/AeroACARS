@@ -612,6 +612,20 @@ body {
 .shell[data-nav="icon"] .live-rec__count {
   display: none;
 }
+/* Field feedback (2026-08-03): same class of bug as .live-rec/.navstatus
+   above — the Update-verfügbar button never had a collapsed-sidebar
+   variant either, so its "Update verfügbar" text label had no room in
+   the 60px-wide icon rail and overflowed/overlapped whatever sits next
+   to it. Icon-only here too; the `title` attribute already carries the
+   full "Update auf vX.Y.Z verfügbar" text for a hover. */
+.shell[data-nav="icon"] .update-button {
+  justify-content: center;
+  padding: 6px;
+  gap: 0;
+}
+.shell[data-nav="icon"] .update-button__label {
+  display: none;
+}
 
 /* v0.15.9: Auf dem KARTEN-Tab .app auf feste Viewport-Höhe nageln. Erst dadurch
    bekommt die ganze Flex-Kette ein DEFINITES Maß — sonst (min-height:100% =

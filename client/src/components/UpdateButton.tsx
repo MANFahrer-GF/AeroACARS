@@ -75,7 +75,7 @@ export function UpdateButton({ checker }: { checker: UseUpdateCheckerResult }) {
         <span className="update-button__icon" aria-hidden="true">
           ⬇
         </span>
-        <span>{t("update.button_label")}</span>
+        <span className="update-button__label">{t("update.button_label")}</span>
       </button>
 
       {open && (
