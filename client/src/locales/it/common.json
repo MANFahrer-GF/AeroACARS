@@ -1168,7 +1168,10 @@
     "waiting": "Subscription registrata — in attesa del primo pacchetto dati…",
     "waiting_for_sim": "In attesa della connessione al sim — la verifica SDK parte non appena MSFS / X-Plane è connesso.",
     "waiting_for_aircraft": "In attesa del caricamento aereo — non appena l'aereo è completamente caricato in MSFS / X-Plane verifico lo stato SDK.",
-    "waiting_init": "Subscription registrata — concedo a PMDG ancora {{secs}}s per inizializzare…"
+    "waiting_init": "Subscription registrata — concedo a PMDG ancora {{secs}}s per inizializzare…",
+    "age_live": "📡 live",
+    "age_seconds": "{{secs}}s fa",
+    "age_minutes": "{{min}} min fa"
   },
   "xplane_premium_panel": {
     "title": "Plugin Premium X-Plane",

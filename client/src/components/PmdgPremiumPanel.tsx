@@ -112,10 +112,10 @@ export function PmdgPremiumPanel({ simState, simSnapshot }: Props) {
     status.stale_secs === null
       ? "—"
       : status.stale_secs <= 1
-        ? "📡 live"
+        ? t("pmdg_panel.age_live")
         : status.stale_secs < 60
-          ? `vor ${status.stale_secs}s`
-          : `vor ${Math.floor(status.stale_secs / 60)} min`;
+          ? t("pmdg_panel.age_seconds", { secs: status.stale_secs })
+          : t("pmdg_panel.age_minutes", { min: Math.floor(status.stale_secs / 60) });
 
   return (
     <section className={`pmdg-panel ${stateClass}`}>
