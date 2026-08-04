@@ -24,6 +24,17 @@ import type { RemoteServerStatus } from "../types";
 const DEFAULT_PORT = 8765;
 const MIN_PORT = 1024;
 const MAX_PORT = 65535;
+// v0.19.x FIX: the backend's per-IP bad-PIN backstop (remote/auth.rs
+// try_pin) silently rotates the PIN once too many wrong guesses come in
+// from the LAN (attacker or a mistyped pairing on a tablet) — there is
+// no push event for this, only remote_server_status reflects the new
+// value. Without a poll, this panel kept showing the stale PIN forever
+// after the initial mount fetch, so a pilot could read out a PIN that no
+// longer worked with no indication why. Poll while running; only touches
+// `status` (not portInput/busy/error) so it can't clobber an in-progress
+// port edit the way the sim-hint auto-select once clobbered a pilot's
+// aircraft choice.
+const STATUS_POLL_MS = 5000;
 
 export function RemoteServerPanel() {
   const { t } = useTranslation();
@@ -67,6 +78,19 @@ export function RemoteServerPanel() {
   );
 
   const running = status?.running ?? false;
+
+  // Keep the PIN (and URLs/QR) in sync with a backend-triggered rotation
+  // while the server is up. Deliberately calls setStatus directly, not
+  // applyStatus — a poll tick must never overwrite portInput mid-edit.
+  useEffect(() => {
+    if (!running) return;
+    const id = window.setInterval(() => {
+      void invoke<RemoteServerStatus>("remote_server_status")
+        .then(setStatus)
+        .catch(() => undefined);
+    }, STATUS_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [running]);
 
   async function handleToggle(next: boolean) {
     if (busy) return;
