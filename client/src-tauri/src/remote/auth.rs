@@ -53,8 +53,13 @@ pub struct AuthState {
     /// 6-digit pairing PIN, e.g. `"048213"`. Regenerated on the global
     /// backstop rotation, so it is interior-mutable behind a `Mutex`.
     pin: Mutex<String>,
-    /// 64-char hex bearer token. Persisted across restarts.
-    token: String,
+    /// 64-char hex bearer token. Persisted across restarts. Interior-
+    /// mutable so a pilot can revoke a lost/stolen tablet's access via
+    /// [`Self::rotate_token`] without restarting the server — previously
+    /// this was a plain `String` and there was NO way to invalidate an
+    /// already-issued token short of manually clearing the OS secrets
+    /// store outside the app.
+    token: Mutex<String>,
     /// Per-peer-IP PIN-attempt rate limiters + a global failure counter.
     /// Interior-mutable; handlers hold `&self`.
     limiter: Mutex<LimiterTable>,
@@ -81,7 +86,7 @@ impl AuthState {
         };
         std::sync::Arc::new(Self {
             pin: Mutex::new(gen_pin()),
-            token,
+            token: Mutex::new(token),
             limiter: Mutex::new(LimiterTable::default()),
         })
     }
@@ -91,7 +96,7 @@ impl AuthState {
     pub fn for_test(pin: &str, token: &str) -> Self {
         Self {
             pin: Mutex::new(pin.to_string()),
-            token: token.to_string(),
+            token: Mutex::new(token.to_string()),
             limiter: Mutex::new(LimiterTable::default()),
         }
     }
@@ -106,7 +111,24 @@ impl AuthState {
     /// Constant-time check that `candidate` equals the bearer token.
     /// Used on every `/api/cmd/*` + `/ws` request.
     pub fn verify_token(&self, candidate: &str) -> bool {
-        ct_eq(candidate.as_bytes(), self.token.as_bytes())
+        let current = self.token.lock().expect("auth token poisoned");
+        ct_eq(candidate.as_bytes(), current.as_bytes())
+    }
+
+    /// Revoke pairing: mint a fresh bearer token, persist it (overwriting
+    /// the old one in the secrets store), and swap it into this live
+    /// instance so already-issued tokens stop working on the very next
+    /// request — no restart needed. A device holding the old token must
+    /// re-pair with the CURRENT pairing PIN. Returns the new token (tests
+    /// only; the desktop UI never displays the raw token).
+    pub fn rotate_token(&self, token_account: &str) -> String {
+        let fresh = gen_token_hex();
+        if let Err(e) = secrets::store_api_key(token_account, &fresh) {
+            tracing::warn!(error = %e, "remote: failed to persist rotated bearer token");
+        }
+        *self.token.lock().expect("auth token poisoned") = fresh.clone();
+        tracing::warn!("remote: pairing token revoked — all previously paired devices must re-pair");
+        fresh
     }
 
     /// Attempt to exchange a PIN for the token, keyed by the requesting
@@ -140,7 +162,7 @@ impl AuthState {
                 .lock()
                 .expect("auth limiter poisoned")
                 .reset_ip(peer_ip);
-            Ok(self.token.clone())
+            Ok(self.token.lock().expect("auth token poisoned").clone())
         } else {
             let rotate = {
                 let mut table = self.limiter.lock().expect("auth limiter poisoned");
@@ -170,6 +192,17 @@ impl AuthState {
             "remote: global PIN-failure backstop hit ({GLOBAL_ROTATE_THRESHOLD}) — \
              pairing PIN rotated; already-paired devices are unaffected"
         );
+    }
+}
+
+/// Revoke pairing when no server is currently running (so there is no
+/// live [`AuthState`] to rotate in place) — mints and persists a fresh
+/// token directly, so a device that paired in an earlier session can't
+/// resume access on the next start.
+pub fn rotate_persisted_token(token_account: &str) {
+    let fresh = gen_token_hex();
+    if let Err(e) = secrets::store_api_key(token_account, &fresh) {
+        tracing::warn!(error = %e, "remote: failed to persist rotated bearer token");
     }
 }
 
@@ -371,6 +404,31 @@ mod tests {
         // Length mismatch is rejected without panicking.
         assert!(!auth.verify_token("short"));
         assert!(!auth.verify_token(""));
+    }
+
+    /// v0.19.x FIX: previously there was NO way to invalidate an
+    /// already-issued token — a lost/stolen tablet, or one paired by an
+    /// unwanted device that guessed a leaked PIN, kept working forever.
+    /// rotate_token() must make the old token stop verifying immediately
+    /// and mint a working replacement, without touching the pairing PIN
+    /// (a legitimate re-pair still uses whatever PIN is currently shown).
+    #[test]
+    fn rotate_token_invalidates_the_old_token_immediately() {
+        let auth = AuthState::for_test("424242", "old-token");
+        assert!(auth.verify_token("old-token"));
+
+        let fresh = auth.rotate_token("test-account-rotate-1");
+
+        assert!(!auth.verify_token("old-token"), "old token must stop working");
+        assert!(auth.verify_token(&fresh), "the freshly minted token must work");
+        assert_ne!(fresh, "old-token");
+    }
+
+    #[test]
+    fn rotate_token_does_not_touch_the_pairing_pin() {
+        let auth = AuthState::for_test("424242", "old-token");
+        auth.rotate_token("test-account-rotate-2");
+        assert_eq!(auth.pin(), "424242");
     }
 
     #[test]

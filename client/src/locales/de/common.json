@@ -1020,7 +1020,13 @@
       "copy_url": "URL kopieren",
       "copied": "Kopiert ✓",
       "firewall_note": "Hinweis: Beim ersten Start fragt Windows bzw. macOS eventuell nach einer Firewall-Freigabe. Bitte für das lokale (private) Netzwerk erlauben.",
-      "security_warning": "⚠ Achtung: Jede Person in diesem Netzwerk, die die PIN kennt, kann deinen laufenden Flug vollständig steuern (starten, beenden, PIREP einreichen). Aktiviere die Fernbedienung nur in einem vertrauenswürdigen Netzwerk. Pairing und Login (z. B. deine phpVMS-API-Key-Eingabe) sollten nur in einem vertrauenswürdigen Netzwerk erfolgen — die Verbindung läuft unverschlüsselt (HTTP) über das LAN."
+      "security_warning": "⚠ Achtung: Jede Person in diesem Netzwerk, die die PIN kennt, kann deinen laufenden Flug vollständig steuern (starten, beenden, PIREP einreichen). Aktiviere die Fernbedienung nur in einem vertrauenswürdigen Netzwerk. Pairing und Login (z. B. deine phpVMS-API-Key-Eingabe) sollten nur in einem vertrauenswürdigen Netzwerk erfolgen — die Verbindung läuft unverschlüsselt (HTTP) über das LAN.",
+      "revoke_label": "Alle gekoppelten Geräte trennen",
+      "revoke_hint": "Erzeugt einen neuen Zugangs-Code. Bisher gekoppelte Tablets/PCs verlieren sofort den Zugriff und müssen sich mit der aktuellen PIN neu koppeln.",
+      "revoke_button": "Geräte trennen",
+      "revoke_confirm_title": "Alle gekoppelten Geräte trennen?",
+      "revoke_confirm_message": "Jedes bisher gekoppelte Tablet/PC verliert sofort den Zugriff und muss sich mit der aktuell angezeigten PIN neu koppeln.",
+      "revoke_done": "Geräte getrennt ✓"
     }
   },
   "error_reporting": {

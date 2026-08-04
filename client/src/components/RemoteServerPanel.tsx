@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke, isTauri } from "../lib/ipc";
 import type { RemoteServerStatus } from "../types";
+import { useConfirm } from "./ConfirmDialog";
 
 const DEFAULT_PORT = 8765;
 const MIN_PORT = 1024;
@@ -46,6 +47,9 @@ export function RemoteServerPanel() {
   // "PIN kopiert" / "URL kopiert" transient feedback.
   const [copied, setCopied] = useState<"pin" | "url" | null>(null);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { confirm, dialog: confirmDialog } = useConfirm();
+  const [revoked, setRevoked] = useState(false);
+  const revokedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const applyStatus = useCallback((s: RemoteServerStatus) => {
     setStatus(s);
@@ -73,6 +77,7 @@ export function RemoteServerPanel() {
   useEffect(
     () => () => {
       if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      if (revokedTimer.current) clearTimeout(revokedTimer.current);
     },
     [],
   );
@@ -158,6 +163,35 @@ export function RemoteServerPanel() {
       flashCopied(what);
     } catch {
       /* clipboard blocked — ignore, the value is shown anyway */
+    }
+  }
+
+  // v0.19.x FIX: previously a paired tablet's bearer token was permanent
+  // — a lost/stolen tablet, or a device that guessed a leaked PIN before
+  // the rate-limit backstop kicked in, kept working forever with no way
+  // to cut it off short of editing the secrets file outside the app.
+  // This mints + persists a fresh token (invalidating the old one
+  // immediately) and re-pairing needs the currently-shown PIN.
+  async function handleRevoke() {
+    if (busy) return;
+    const ok = await confirm({
+      title: t("remote.server.revoke_confirm_title"),
+      message: t("remote.server.revoke_confirm_message"),
+      destructive: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const s = await invoke<RemoteServerStatus>("remote_server_revoke_pairing");
+      applyStatus(s);
+      setRevoked(true);
+      if (revokedTimer.current) clearTimeout(revokedTimer.current);
+      revokedTimer.current = setTimeout(() => setRevoked(false), 1800);
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -283,8 +317,29 @@ export function RemoteServerPanel() {
               </button>
             )}
           </div>
+
+          {/* Revoke pairing — mints a fresh token, cutting off every
+              previously paired device immediately. */}
+          <div className="remote-panel__revoke-block">
+            <span className="settings__field-label">
+              {t("remote.server.revoke_label")}
+            </span>
+            <small className="settings__row-hint">
+              {t("remote.server.revoke_hint")}
+            </small>
+            <button
+              type="button"
+              className="remote-panel__revoke"
+              disabled={busy}
+              onClick={() => void handleRevoke()}
+            >
+              {revoked ? t("remote.server.revoke_done") : t("remote.server.revoke_button")}
+            </button>
+          </div>
         </div>
       )}
+
+      {confirmDialog}
 
       {/* Firewall note — applies on first start regardless of running state. */}
       <p className="remote-panel__note">{t("remote.server.firewall_note")}</p>

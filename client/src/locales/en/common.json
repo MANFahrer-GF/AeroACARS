@@ -1020,7 +1020,13 @@
       "copy_url": "Copy URL",
       "copied": "Copied ✓",
       "firewall_note": "Note: on first start Windows or macOS may prompt for a firewall permission. Please allow it for the local (private) network.",
-      "security_warning": "⚠ Warning: anyone on this network who knows the PIN can fully control your active flight (start, end, file the PIREP). Only enable remote control on a network you trust. Pairing and login (e.g. entering your phpVMS API key) should only be done on a trusted network — the connection runs unencrypted (HTTP) over the LAN."
+      "security_warning": "⚠ Warning: anyone on this network who knows the PIN can fully control your active flight (start, end, file the PIREP). Only enable remote control on a network you trust. Pairing and login (e.g. entering your phpVMS API key) should only be done on a trusted network — the connection runs unencrypted (HTTP) over the LAN.",
+      "revoke_label": "Disconnect all paired devices",
+      "revoke_hint": "Generates a new access token. Previously paired tablets/PCs lose access immediately and must re-pair with the current PIN.",
+      "revoke_button": "Disconnect devices",
+      "revoke_confirm_title": "Disconnect all paired devices?",
+      "revoke_confirm_message": "Every previously paired tablet/PC loses access immediately and must re-pair using the PIN currently shown.",
+      "revoke_done": "Devices disconnected ✓"
     }
   },
   "error_reporting": {

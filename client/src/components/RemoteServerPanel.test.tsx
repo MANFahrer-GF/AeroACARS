@@ -8,6 +8,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../locales/de/common.json";
@@ -101,5 +102,44 @@ describe("RemoteServerPanel — PIN stays in sync with backend rotation", () => 
 
     expect(screen.getByText("222222")).toBeInTheDocument();
     expect(portField.value).toBe("999");
+  });
+});
+
+// v0.19.x FIX: a paired tablet's bearer token used to be permanent — a
+// lost/stolen tablet, or a device that guessed a leaked PIN before the
+// rate-limit backstop caught it, kept working forever with no way to cut
+// it off. These pin the new "disconnect all paired devices" action:
+// requires confirmation, calls the revoke command, and refreshes status.
+describe("RemoteServerPanel — revoke pairing", () => {
+  it("asks for confirmation and, once confirmed, calls remote_server_revoke_pairing", async () => {
+    const user = userEvent.setup();
+    invokeMock.mockResolvedValueOnce(status({ pin: "111111" }));
+    render(<RemoteServerPanel />);
+    await flushMountEffect();
+
+    await user.click(screen.getByRole("button", { name: "Geräte trennen" }));
+    // Confirm dialog is open with the default confirm label.
+    const confirmButton = await screen.findByRole("button", { name: "Bestätigen" });
+
+    invokeMock.mockResolvedValueOnce(status({ pin: "111111" }));
+    await user.click(confirmButton);
+
+    await flushMountEffect();
+    expect(invokeMock.mock.calls.some((c) => c[0] === "remote_server_revoke_pairing")).toBe(true);
+  });
+
+  it("does NOT call the revoke command when the pilot cancels", async () => {
+    const user = userEvent.setup();
+    invokeMock.mockResolvedValueOnce(status({ pin: "111111" }));
+    render(<RemoteServerPanel />);
+    await flushMountEffect();
+
+    await user.click(screen.getByRole("button", { name: "Geräte trennen" }));
+    // Two "Abbrechen" buttons exist (the modal's ✕ close via aria-label,
+    // and the footer Cancel button) — the footer one is the last match.
+    const cancelButtons = await screen.findAllByRole("button", { name: "Abbrechen" });
+    await user.click(cancelButtons[cancelButtons.length - 1]);
+
+    expect(invokeMock.mock.calls.some((c) => c[0] === "remote_server_revoke_pairing")).toBe(false);
   });
 });

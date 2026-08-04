@@ -892,6 +892,7 @@ mod tests {
             "remote_server_stop",
             "remote_server_status",
             "remote_server_set_port",
+            "remote_server_revoke_pairing",
         ];
 
         // Found by this same test while fixing the Hoppie gap — NOT yet

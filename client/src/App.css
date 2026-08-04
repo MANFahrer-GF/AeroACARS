@@ -9191,10 +9191,16 @@ button.aa-livemap-events__row:hover {
 
 .remote-panel__pin-block,
 .remote-panel__qr-block,
-.remote-panel__urls-block {
+.remote-panel__urls-block,
+.remote-panel__revoke-block {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.remote-panel__revoke-block {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
 }
 
 .remote-panel__pin-row {
@@ -9253,6 +9259,29 @@ button.aa-livemap-events__row:hover {
 
 .remote-panel__copy:hover {
   border-color: var(--accent);
+}
+
+.remote-panel__revoke {
+  appearance: none;
+  align-self: flex-start;
+  border: 1px solid color-mix(in srgb, var(--danger) 50%, var(--border));
+  background: var(--surface);
+  color: var(--danger);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.remote-panel__revoke:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+}
+
+.remote-panel__revoke:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .remote-panel__error {

@@ -1020,7 +1020,13 @@
       "copy_url": "Copia URL",
       "copied": "Copiato ✓",
       "firewall_note": "Nota: al primo avvio Windows o macOS potrebbe richiedere un permesso del firewall. Consentilo per la rete locale (privata).",
-      "security_warning": "⚠ Attenzione: chiunque su questa rete conosca il PIN può controllare completamente il tuo volo attivo (avviare, terminare, inviare il PIREP). Abilita il controllo remoto solo su una rete di cui ti fidi. L'accoppiamento e il login (ad es. l'inserimento della tua chiave API phpVMS) dovrebbero avvenire solo su una rete affidabile — la connessione viaggia non cifrata (HTTP) sulla LAN."
+      "security_warning": "⚠ Attenzione: chiunque su questa rete conosca il PIN può controllare completamente il tuo volo attivo (avviare, terminare, inviare il PIREP). Abilita il controllo remoto solo su una rete di cui ti fidi. L'accoppiamento e il login (ad es. l'inserimento della tua chiave API phpVMS) dovrebbero avvenire solo su una rete affidabile — la connessione viaggia non cifrata (HTTP) sulla LAN.",
+      "revoke_label": "Disconnetti tutti i dispositivi abbinati",
+      "revoke_hint": "Genera un nuovo codice di accesso. I tablet/PC precedentemente abbinati perdono immediatamente l'accesso e devono riabbinarsi con il PIN attuale.",
+      "revoke_button": "Disconnetti dispositivi",
+      "revoke_confirm_title": "Disconnettere tutti i dispositivi abbinati?",
+      "revoke_confirm_message": "Ogni tablet/PC precedentemente abbinato perde immediatamente l'accesso e deve riabbinarsi usando il PIN mostrato attualmente.",
+      "revoke_done": "Dispositivi disconnessi ✓"
     }
   },
   "error_reporting": {

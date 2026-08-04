@@ -33704,6 +33704,7 @@ pub fn run() {
             remote::remote_server_stop,
             remote::remote_server_status,
             remote::remote_server_set_port,
+            remote::remote_server_revoke_pairing,
             // v1.3.0 (#Hoppie-PDC-CPDLC): PDC/CPDLC client over the
             // Hoppie ACARS network. Opt-in (default OFF), started only
             // via hoppie_connect once the pilot has enabled it and

@@ -702,6 +702,42 @@ pub async fn remote_server_set_port(
     Ok(status)
 }
 
+/// Revoke pairing: mint a fresh bearer token and invalidate the old one.
+///
+/// v0.19.x FIX: previously a paired tablet's token was permanent — lost,
+/// stolen, or unintentionally-shared-PIN pairings had no way to be
+/// revoked short of manually editing the secrets file outside the app.
+/// This rotates the persisted token (so it takes effect even if the
+/// server is currently stopped) and, if the server IS running, swaps it
+/// into the LIVE `AuthState` so already-issued tokens stop verifying on
+/// the very next request — no restart required. Any device wanting
+/// access again must re-pair with the CURRENT pairing PIN; the PIN
+/// itself is untouched by this call.
+#[tauri::command]
+pub async fn remote_server_revoke_pairing(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<RemoteServerStatus, UiError> {
+    let guard = state.remote_server.lock().await;
+    match guard.as_ref() {
+        Some(h) => {
+            h.auth.rotate_token(TOKEN_ACCOUNT);
+            let status = build_status(true, h.port, Some(&h.auth));
+            drop(guard);
+            Ok(status)
+        }
+        None => {
+            drop(guard);
+            // Not running: still invalidate the persisted token so a
+            // device that paired in a previous session can't come back
+            // without the server ever starting again.
+            auth::rotate_persisted_token(TOKEN_ACCOUNT);
+            let port = read_persisted_port(&app);
+            Ok(build_status(false, port, None))
+        }
+    }
+}
+
 // ----------------------------------------------------------------------
 // Shared flight_status ticker
 // ----------------------------------------------------------------------
