@@ -1156,6 +1156,28 @@ impl AircraftProfile {
         }
         // INIBuilds A340-600 Pro — pro suffix is the discriminator vs the
         // standard A340 build.
+        //
+        // v0.19.x QS (backlog "A340 marker-less livery"): unlike IniA340
+        // just below (which has an ICAO-A343/atc_model fallback for
+        // per-livery titles that drop "inibuilds"), this branch has NONE
+        // — deliberately. A marker-less Pro livery (title drops
+        // "inibuilds" and/or "pro") falls through past this check and
+        // hits AerosoftA346's `clean_atc_model == "A346"` fallback below,
+        // because the iniBuilds A340-600 Pro reports the SAME ICAO A346
+        // as the real Aerosoft A346 (see the Aerosoft branch's own
+        // comment). There is no known signal that discriminates the two
+        // once the title marker is gone — adding one without real
+        // telemetry from such a livery would risk misclassifying genuine
+        // Aerosoft A346 aircraft instead, which is the same class of
+        // regression QS M4 explicitly avoided by REMOVING the too-broad
+        // A20N/B38M/A21N ICAO fallbacks. Accepted as a residual risk for
+        // now (same category as the documented "hypothetical marker-less
+        // Dritt-A339" case above) — worst case if it happens: this
+        // profile is "detection only, LVar list TBD" per its doc comment
+        // above, so misdetecting it as AerosoftA346 risks live-reading
+        // Aerosoft-specific LVars (`L:AB_*`) that don't exist on the
+        // iniBuilds airframe, most of which have no standard-SimVar OR
+        // fallback (unlike the Fenix/A346 autopilot mapping, which does).
         if t.contains("inibuilds") && (t.contains("a346") || t.contains("a340-600"))
             && t.contains("pro")
         {
