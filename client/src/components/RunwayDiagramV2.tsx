@@ -658,12 +658,20 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                   stroke={dotColor}
                   strokeWidth="3.5"
                 />
-                {/* Große Pfeilspitze */}
+                {/* Große Pfeilspitze.
+                    v0.19.x FIX: die Basis-/Spitze-Punkte waren vertauscht —
+                    die Spitze (der Einzelpunkt) lag auf der SCHAFT-Seite von
+                    `ax2`, die flache Basis ragte darüber hinaus. Eine
+                    Pfeilspitze zeigt in die Richtung, in der IHR Einzelpunkt
+                    am weitesten liegt; mit vertauschten Punkten zeigte der
+                    Pfeil zurück zum TD-Punkt statt in die gelabelte
+                    LINKS/RECHTS-Richtung — das genaue Gegenteil vom
+                    Text-Label daneben. */}
                 <polygon
                   points={
                     isLeft
-                      ? `${ax2 - 10},${arrowY - 8} ${ax2},${arrowY} ${ax2 - 10},${arrowY + 8}`
-                      : `${ax2 + 10},${arrowY - 8} ${ax2},${arrowY} ${ax2 + 10},${arrowY + 8}`
+                      ? `${ax2 + 10},${arrowY - 8} ${ax2},${arrowY} ${ax2 + 10},${arrowY + 8}`
+                      : `${ax2 - 10},${arrowY - 8} ${ax2},${arrowY} ${ax2 - 10},${arrowY + 8}`
                   }
                   fill={dotColor}
                 />

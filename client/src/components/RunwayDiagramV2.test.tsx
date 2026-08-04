@@ -47,6 +47,14 @@ function titles(container: HTMLElement): string[] {
   return [...container.querySelectorAll("title")].map((t) => t.textContent ?? "");
 }
 
+function polygonPoints(el: Element): number[][] {
+  return el
+    .getAttribute("points")!
+    .trim()
+    .split(/\s+/)
+    .map((pair) => pair.split(",").map(Number));
+}
+
 describe("RunwayDiagramV2 — hover tooltips follow the active locale", () => {
   it("shows German tooltip prose under de, different English prose under en", async () => {
     await i18next.changeLanguage("de");
@@ -98,6 +106,42 @@ describe("RunwayDiagramV2 — hover tooltips follow the active locale", () => {
 // explicitly supported case), utilization was computed against a
 // fictionally inflated runway and read too LOW — a genuinely tight
 // landing looked comfortable.
+// v0.19.x FIX: the lateral-offset arrowhead's tip/base vertices were
+// swapped — a proper arrowhead's single "tip" vertex must be the FURTHEST
+// point in the pointing direction, with the flared 2-point base behind it.
+// The old code had it backwards: the arrow visually pointed BACK toward
+// the touchdown dot instead of away from it in the LEFT/RIGHT direction
+// stated by the text label right next to it.
+describe("RunwayDiagramV2 — lateral-offset arrowhead points away from the touchdown dot", () => {
+  it("points LEFT (tip has the smallest x) when the touchdown is left of centerline", () => {
+    const { container } = render(
+      <RunwayDiagramV2
+        {...props({ aim_point_m: null, td_distance_from_threshold_m: 2000, td_centerline_offset_m: -5 })}
+      />,
+    );
+    const polygon = container.querySelector("polygon");
+    expect(polygon, "offset arrowhead must render for |offset| > 0.5 m").not.toBeNull();
+    const xs = polygonPoints(polygon!).map((p) => p[0]);
+    // The tip is the vertex whose x is unique; the base pair shares one x.
+    const tipX = xs.find((x) => xs.filter((v) => v === x).length === 1)!;
+    const baseX = xs.find((x) => xs.filter((v) => v === x).length === 2)!;
+    expect(tipX, `tip=${tipX} base=${baseX}`).toBeLessThan(baseX);
+  });
+
+  it("points RIGHT (tip has the largest x) when the touchdown is right of centerline", () => {
+    const { container } = render(
+      <RunwayDiagramV2
+        {...props({ aim_point_m: null, td_distance_from_threshold_m: 2000, td_centerline_offset_m: 5 })}
+      />,
+    );
+    const polygon = container.querySelector("polygon");
+    const xs = polygonPoints(polygon!).map((p) => p[0]);
+    const tipX = xs.find((x) => xs.filter((v) => v === x).length === 1)!;
+    const baseX = xs.find((x) => xs.filter((v) => v === x).length === 2)!;
+    expect(tipX, `tip=${tipX} base=${baseX}`).toBeGreaterThan(baseX);
+  });
+});
+
 describe("RunwayDiagramV2 — runway-utilization percentage ignores the SVG-geometry floor", () => {
   it("computes utilization against the real (sub-500m) LDA, not the floored value", () => {
     // 300 m LDA, td=100 m past threshold, rollout=150 m -> used = max(100+150, 150) = 250 m.
