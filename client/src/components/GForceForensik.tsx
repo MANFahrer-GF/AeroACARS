@@ -64,6 +64,23 @@ export function gTone(g: number | null | undefined): Tone | null {
   return "err-severe";
 }
 
+/// v0.19.x FIX: whether the "V/S leads, master score not dragged down by
+/// G" reassurance note is accurate. Was hardcoded at 1.40 (T_G_FIRM) —
+/// `classify_landing`'s actual B-009 guarantee (V/S smooth ⇒ the
+/// classification stays exactly what V/S alone produces) only holds up
+/// to (not including) T_G_HARD (1.70); at/above that, G can drop the
+/// category by one stage even with smooth V/S. Extracted as its own pure
+/// function so the threshold is directly testable, matching this file's
+/// other gate functions above.
+export function showsVsLeadsNote(
+  scoredG: number | null | undefined,
+  vsAtEdgeFpm: number | null | undefined,
+): boolean {
+  const vsSmooth = vsAtEdgeFpm != null && Math.abs(vsAtEdgeFpm) < T_VS_SMOOTH_FPM;
+  const gHigh = scoredG != null && scoredG >= T_G_HARD;
+  return vsSmooth && gHigh;
+}
+
 export type GCoachingTipKey =
   | "sim_strut"
   | "real_impact"
@@ -301,10 +318,9 @@ function GScoreBasisTile({
   const tone = gTone(scoredG);
   // V/S-fuehrt-Hinweis: wenn V/S smooth (< 200 fpm) und G hoch → Master-
   // Score wird trotzdem als Smooth/Acceptable klassifiziert (B-009 Score-
-  // Logik). Erklaer das hier dem Piloten.
-  const vsSmooth = vsAtEdge != null && Math.abs(vsAtEdge) < 200;
-  const gHigh = scoredG != null && scoredG >= 1.40;
-  const showVsLeadsNote = vsSmooth && gHigh;
+  // Logik). Erklaer das hier dem Piloten. Threshold-Logik siehe
+  // `showsVsLeadsNote` oben (v0.19.x FIX: T_G_HARD statt T_G_FIRM).
+  const showVsLeadsNote = showsVsLeadsNote(scoredG, vsAtEdge);
   return (
     <div className={`sinkrate-score-tile ${tone ? `sinkrate-score-tile--${tone}` : ""}`}>
       <div className="sinkrate-score-tile__heading">

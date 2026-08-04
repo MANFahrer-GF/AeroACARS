@@ -7426,8 +7426,10 @@ input:disabled {
   color: var(--fg-dim);
 }
 .sinkrate-impact__tile--good .sinkrate-impact__value { color: var(--sem-ok); }
+.sinkrate-impact__tile--neutral .sinkrate-impact__value { color: var(--sem-info); }
 .sinkrate-impact__tile--warn .sinkrate-impact__value { color: var(--sem-warn); }
 .sinkrate-impact__tile--err .sinkrate-impact__value { color: var(--sem-danger); }
+.sinkrate-impact__tile--err-severe .sinkrate-impact__value { color: var(--scale-critical); }
 
 /* Legacy-Notice (pre-Forensik-PIREPs) */
 .sinkrate-forensik-legacy {

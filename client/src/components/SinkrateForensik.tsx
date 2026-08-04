@@ -24,6 +24,13 @@ import {
   T_VS_HARD_FPM,
   T_VS_SEVERE_FPM,
 } from "../lib/landingScoring";
+// v0.19.x FIX: this file used to define its OWN hardcoded 3-band G-color
+// function (1.4/1.7, no "neutral"/"err-severe") that disagreed with
+// GForceForensik's real 5-band T_G_* ladder — the SAME peak-G value shown
+// on both panels of one report could read as a different color in each
+// (e.g. 1.25 G: green here, neutral there). Importing the single real
+// implementation instead of re-deriving it closes that drift for good.
+import { gTone } from "./GForceForensik";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Pure functions — gut testbar isoliert von React
@@ -511,24 +518,18 @@ function PositionTrace({ samples }: { samples: TraceSample[] }) {
 
 function ImpactTiles({ g500ms, g1000ms }: { g500ms: number; g1000ms: number | null }) {
   const { t } = useTranslation();
-  const gToneFor = (g: number | null): Tone | null => {
-    if (g == null) return null;
-    if (g >= 1.7) return "err";
-    if (g >= 1.4) return "warn";
-    return "good";
-  };
   return (
     <div className="sinkrate-impact">
       <div className="sinkrate-impact__title">
         💥 {t("landing.sinkrate_forensik.impact_title")}
       </div>
       <div className="sinkrate-impact__tiles">
-        <div className={`sinkrate-impact__tile sinkrate-impact__tile--${gToneFor(g500ms) ?? "na"}`}>
+        <div className={`sinkrate-impact__tile sinkrate-impact__tile--${gTone(g500ms) ?? "na"}`}>
           <div className="sinkrate-impact__label">{t("landing.sinkrate_forensik.impact_g_500ms")}</div>
           <div className="sinkrate-impact__value">{g500ms.toFixed(2)} <span>G</span></div>
         </div>
         {g1000ms != null && (
-          <div className={`sinkrate-impact__tile sinkrate-impact__tile--${gToneFor(g1000ms) ?? "na"}`}>
+          <div className={`sinkrate-impact__tile sinkrate-impact__tile--${gTone(g1000ms) ?? "na"}`}>
             <div className="sinkrate-impact__label">{t("landing.sinkrate_forensik.impact_g_1000ms")}</div>
             <div className="sinkrate-impact__value">{g1000ms.toFixed(2)} <span>G</span></div>
           </div>
