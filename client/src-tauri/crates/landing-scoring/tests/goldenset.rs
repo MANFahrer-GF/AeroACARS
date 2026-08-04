@@ -43,11 +43,15 @@ fn pto105_msfs_smooth_55fpm_with_loadsheet() {
     //   planned_burn=1500, actual=1515 (= +1.0%, on_plan, 100 pkt),
     //   planned_zfw=21000, planned_tow=23500 (+ block_fuel)
     //
-    // Sub-Scores: landing_rate=100, g=100, bounces=100, stability=80,
+    // v0.20.x target-corridor: |55| < 90 fpm → possible_float (85 pkt),
+    // nicht mehr 100 — 55 fpm ist SEHR weich (moegliches langes
+    // Abfangen), nicht mehr das erklaerte Ziel.
+    //
+    // Sub-Scores: landing_rate=85, g=100, bounces=100, stability=80,
     //             rollout=80, fuel=100, loadsheet=100
     // Gewichte: 3+3+2+2+1+1+1 = 13
-    // Sum = 300+300+200+160+80+100+100 = 1240
-    // Master = 1240/13 = 95.38 → 95
+    // Sum = 255+300+200+160+80+100+100 = 1195
+    // Master = 1195/13 = 91.9 → 92
     let input = LandingScoringInput {
         vs_fpm: Some(-55.0),
         peak_g_load: Some(1.10),
@@ -62,14 +66,14 @@ fn pto105_msfs_smooth_55fpm_with_loadsheet() {
         ..Default::default()
     };
     let subs = compute_sub_scores(&input);
-    assert_eq!(pts(&subs, "landing_rate"), 100);
+    assert_eq!(pts(&subs, "landing_rate"), 85);
     assert_eq!(pts(&subs, "g_force"), 100);
     assert_eq!(pts(&subs, "bounces"), 100);
     assert_eq!(pts(&subs, "stability"), 80);
     assert_eq!(pts(&subs, "rollout"), 80);
     assert_eq!(pts(&subs, "fuel"), 100);
     assert_eq!(pts(&subs, "loadsheet"), 100);
-    assert_eq!(aggregate_master_score(&subs), Some(95));
+    assert_eq!(aggregate_master_score(&subs), Some(92));
 }
 
 #[test]
@@ -83,10 +87,14 @@ fn dlh304_msfs_acceptable_with_underburn_no_penalty() {
     //   Legacy fuel(-3.5%): abs<5 → 80 (near_plan)
     //   Phase 2 fuel(-3.5%): under<5 → 100 (on_plan, KEIN Penalty) ← F3
     //
-    // Sub-Scores: 70, 60, 100, 80, 55, 100, 100
+    // v0.20.x target-corridor: |357| liegt jetzt im 250-400-Band
+    // ("above_target") mit 80 statt 70 — die Bänder unter 400 fpm sind
+    // insgesamt grosszuegiger gegen die Mitte verschoben.
+    //
+    // Sub-Scores: 80, 60, 100, 80, 55, 100, 100
     // Gewichte:    3,  3,   2,  2,  1,   1,   1 = 13
-    // Sum = 210+180+200+160+55+100+100 = 1005
-    // Master = 1005/13 = 77.31 → 77 (vs v0.7.0: 74 — Drift +3 durch F3)
+    // Sum = 240+180+200+160+55+100+100 = 1035
+    // Master = 1035/13 = 79.6 → 80
     let input = LandingScoringInput {
         vs_fpm: Some(-357.0),
         peak_g_load: Some(1.45),
@@ -101,7 +109,7 @@ fn dlh304_msfs_acceptable_with_underburn_no_penalty() {
         ..Default::default()
     };
     let subs = compute_sub_scores(&input);
-    assert_eq!(pts(&subs, "landing_rate"), 70);
+    assert_eq!(pts(&subs, "landing_rate"), 80);
     assert_eq!(pts(&subs, "g_force"), 60);
     assert_eq!(pts(&subs, "bounces"), 100);
     assert_eq!(pts(&subs, "stability"), 80);
@@ -109,7 +117,7 @@ fn dlh304_msfs_acceptable_with_underburn_no_penalty() {
     // F3 Asymmetrie: -3.5% Minderverbrauch nicht bestraft
     assert_eq!(pts(&subs, "fuel"), 100);
     assert_eq!(pts(&subs, "loadsheet"), 100);
-    assert_eq!(aggregate_master_score(&subs), Some(77));
+    assert_eq!(aggregate_master_score(&subs), Some(80));
 }
 
 #[test]
@@ -117,11 +125,14 @@ fn cfg785_msfs_smooth_with_overburn_unchanged() {
     // CFG 785: vs=-142, g=1.18, bounces=0, stab=70/2.0, rollout=750
     //   planned_burn=4500, actual=4523 (+0.5%, on_plan = 100 wie Legacy)
     //
-    // Sub-Scores: 90, 100, 100, 80, 100, 100, 100
+    // v0.20.x target-corridor: |142| liegt jetzt im 90-250-Zielkorridor
+    // ("firm_positive_touchdown") → 100 statt 90 — genau die Art fester,
+    // positiver Aufsetzer, die der Korridor als Ziel definiert.
+    //
+    // Sub-Scores: 100, 100, 100, 80, 100, 100, 100
     // Gewichte:    3,  3,  2,  2,  1,  1,  1 = 13
-    // Sum = 270+300+200+160+100+100+100 = 1230
-    // Master = 1230/13 = 94.6 → 95 (Legacy ohne loadsheet war 94 - leichter
-    //   Anstieg weil loadsheet 100 reinkommt)
+    // Sum = 300+300+200+160+100+100+100 = 1260
+    // Master = 1260/13 = 96.9 → 97
     let input = LandingScoringInput {
         vs_fpm: Some(-142.0),
         peak_g_load: Some(1.18),
@@ -136,14 +147,14 @@ fn cfg785_msfs_smooth_with_overburn_unchanged() {
         ..Default::default()
     };
     let subs = compute_sub_scores(&input);
-    assert_eq!(pts(&subs, "landing_rate"), 90);
+    assert_eq!(pts(&subs, "landing_rate"), 100);
     assert_eq!(pts(&subs, "g_force"), 100);
     assert_eq!(pts(&subs, "bounces"), 100);
     assert_eq!(pts(&subs, "stability"), 80);
     assert_eq!(pts(&subs, "rollout"), 100);
     assert_eq!(pts(&subs, "fuel"), 100);
     assert_eq!(pts(&subs, "loadsheet"), 100);
-    assert_eq!(aggregate_master_score(&subs), Some(95));
+    assert_eq!(aggregate_master_score(&subs), Some(97));
 }
 
 #[test]
@@ -204,7 +215,9 @@ fn vfr_no_zfw_no_burn_skips_loadsheet_and_fuel() {
         ..Default::default()
     };
     let subs = compute_sub_scores(&input);
-    assert_eq!(pts(&subs, "landing_rate"), 70);
+    // v0.20.x target-corridor: |200| liegt jetzt im 90-250-Zielkorridor
+    // ("firm_positive_touchdown") → 100 statt 70.
+    assert_eq!(pts(&subs, "landing_rate"), 100);
     // g_force(1.30): comfortable_g = 85
     assert_eq!(pts(&subs, "g_force"), 85);
     assert_eq!(pts(&subs, "bounces"), 100);
@@ -213,9 +226,9 @@ fn vfr_no_zfw_no_burn_skips_loadsheet_and_fuel() {
     // F1 + F2: loadsheet + fuel skipped → 0-Penalty vermieden
     assert!(skipped(&subs, "fuel"));
     assert!(skipped(&subs, "loadsheet"));
-    // Master = (70*3+85*3+100*2+80*2+80*1) / (3+3+2+2+1) = (210+255+200+160+80) / 11
-    //        = 905/11 = 82.27 → 82
-    assert_eq!(aggregate_master_score(&subs), Some(82));
+    // Master = (100*3+85*3+100*2+80*2+80*1) / (3+3+2+2+1) = (300+255+200+160+80) / 11
+    //        = 995/11 = 90.45 → 90
+    assert_eq!(aggregate_master_score(&subs), Some(90));
 }
 
 #[test]

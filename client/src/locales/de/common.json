@@ -203,11 +203,11 @@
       "loadsheet": "Loadsheet"
     },
     "info": {
-      "landing_rate": "Vertikalgeschwindigkeit (V/S) im Moment des Aufsetzens, in Fuß pro Minute. Negativ = sinkend. Boeing-/Airbus-FCOM-Schwellen: bis −240 fpm gilt als sauber, ab −600 fpm als Hard-Landing-Inspektion fällig.",
+      "landing_rate": "Vertikalgeschwindigkeit (V/S) im Moment des Aufsetzens, in Fuß pro Minute. Negativ = sinkend. Ziel-Korridor 90–250 fpm gilt als fest, positiv aufgesetzt — professioneller Standard, nicht „so weich wie möglich\": deutlich unter 90 fpm bedeutet meist ein langes Abfangen, das Bremsen/Spoiler-Ausfahren verzögert. Ab −600 fpm ist real eine Hard-Landing-Inspektion fällig.",
       "g_force": "Maximale G-Belastung im 1,5-Sekunden-Fenster um den Touchdown. 1,0 G = ruhig, ab 1,4 G deutlich spürbar, ab 1,7 G strukturkritisch (Boeing 737 FCOM Hard-Landing-Schwelle).",
       "bounces": "Wie oft das Flugzeug nach dem ersten Aufsetzen wieder über 35 ft AGL gestiegen und erneut gelandet ist (BeatMyLanding-Algorithmus). 0 = sauber gesetzt; jeder Bounce drückt den Score.",
       "stability": "Stabilitäts-Auswertung über das Stable-Approach-Gate (0–1000 ft HAT, Flare-Cutoff letzte 3 s vor TD). Backend rechnet sieben Faktoren: V/S-Jerk, Bank σ (vector-filtered), IAS σ, Sink-Rate-Verletzung, Landing-Config, V/S vs. 3°-ILS, Max V/S-Dev <500 ft. Details + Schwellwerte stehen in der Approach-Stability-Card weiter unten.",
-      "rollout": "Anteil der nutzbaren Bahnlänge (LDA), den deine gesamte Landung gebraucht hat — gemessen ab der Schwelle: erst die Float-Strecke bis zum Aufsetzen, dann die Ausrollstrecke bis zum Abrollen von der Bahn (~40 kt). Float innerhalb der ersten 15 % der LDA gilt als normal und kostet keine Punkte; darüber zählt es. < 50 % ist gut, > 90 % wird knapp — bei nasser Bahn riskant. Klick „🛬 Wie wird das berechnet?\" für die volle Erklärung.",
+      "rollout": "Anteil der nutzbaren Bahnlänge (LDA), den deine gesamte Landung gebraucht hat — gemessen ab der Schwelle: erst die Float-Strecke bis zum Aufsetzen, dann die Ausrollstrecke bis zum Abrollen von der Bahn (~40 kt). Float innerhalb der ersten 20 % der LDA gilt als normal und kostet keine Punkte; darüber zählt es. < 60 % ist gut, > 95 % wird knapp — bei nasser Bahn riskant. Klick „🛬 Wie wird das berechnet?\" für die volle Erklärung.",
       "fuel": "Treue zum SimBrief-OFP-Trip-Burn. Vergleicht den tatsächlichen Verbrauch (Block − Landing-Fuel) gegen den geplanten Trip-Burn. Mehrverbrauch zählt (Cost-Index, Höhe oder Wind nicht passend); Minderverbrauch wird NICHT bestraft. Bei >15 % unter Plan: Hinweis auf möglichen OFP-/Mess-/Routenfehler.",
       "loadsheet": "Vorhandensein von Loadsheet-Daten (ZFW + TOW im Plan). Im VFR-/Manual-Mode ohne Dispatch-Daten wird dieser Sub-Score übersprungen — kein 0-Penalty. Die detaillierte Plan-vs-Real-Bewertung (Block-Fuel, TOW, LDW, ZFW) siehst du im Treibstoff-Bereich als „Plan-Treue\"-Score.",
       "score_section": "Sieben Sub-Scores à 0–100 Punkte (Sinkrate, G-Kraft, Bounces, Anflug-Stabilität, Bahn-Auslastung, OFP-Treue, Loadsheet). Jede Kachel zeigt Wert, Punktzahl und farbigen Balken (grün/gelb/rot). Die schwächste Kategorie wird als nächstes Verbesserungs-Ziel im Coach-Tipp aufgegriffen.",
@@ -216,7 +216,9 @@
     },
     "rat": {
       "smooth_touchdown": "Butterweich aufgesetzt",
+      "possible_float": "Sehr weich aufgesetzt — mögliches langes Abfangen",
       "firm_but_clean": "Feste, aber saubere Landung",
+      "firm_positive_touchdown": "Fest, positiv aufgesetzt",
       "above_target": "Etwas härter als ideal",
       "hard_landing": "Harte Landung — Inspektion ggf. ratsam",
       "very_hard": "Sehr hart — Inspektion erforderlich",
@@ -257,7 +259,9 @@
     },
     "tip": {
       "smooth_touchdown": "Genau so — leichter Flare zur richtigen Zeit, sanfte Reduzierung der Sinkrate kurz vor TD.",
+      "possible_float": "Sehr sanft — das deutet auf ein langes Abfangen hin, was Bodenkontakt, Spoiler/Autobrake und damit auch den Bremsweg verzögert. Etwas entschlossener aufsetzen (Ziel 90–250 fpm).",
       "firm_but_clean": "Solide. Falls ruhiger gewünscht: 1-2 Sekunden früher mit dem Flare beginnen.",
+      "firm_positive_touchdown": "Genau richtig — fest und positiv aufgesetzt, ohne zu hart. So sollen Airliner-Landungen aussehen.",
       "above_target": "Mehr Flare einleiten und Schubreduktion etwas später timen — nicht aufdrücken.",
       "hard_landing": "Anflug-Sinkrate kontrollieren (Ziel −700 fpm im Final), dann sauberen Flare bei ~30 ft.",
       "very_hard": "Klassische Hard-Landing-Symptomatik. Stabilizer Approach prüfen, Flare-Timing & Pitch beobachten.",
@@ -280,7 +284,7 @@
       "excellent_stop": "Hervorragend — kurzer Bremsweg, gute Kontrolle. Kein Reverser-Overuse.",
       "excellent_margin": "Sehr viel Bahn übrig — perfekte Bahn-Auslastung für das Muster.",
       "good_stop": "Solider Bremsweg. Leichte Reserve — passt.",
-      "ok_stop": "Bahn-Auslastung im sportlichen Bereich (50–70 %). Bei nasser Bahn lieber etwas früher aufsetzen oder mehr Bremse setzen.",
+      "ok_stop": "Bahn-Auslastung im sportlichen Bereich (60–80 %). Bei nasser Bahn lieber etwas früher aufsetzen oder mehr Bremse setzen.",
       "long_rollout": "Etwas lang ausgerollt. Schon im Flare an Auto-Brake oder etwas Reverser denken.",
       "very_long_rollout": "Sehr langer Bremsweg. Auto-Brake-Setting prüfen oder früher in den Reverser.",
       "marginal_runway": "Bahnreserve war knapp — bei nasser Bahn kritisch. Höheres Auto-Brake-Setting wählen.",
@@ -503,7 +507,7 @@
         "runway_util": {
           "abbr": "Bahn-Auslastung",
           "full": "",
-          "explanation": "Verbrauchte Bahn (TD-Distanz + Rollout) ÷ LDA × 100 %. < 30 % = excellent, > 90 % = knapp am Overrun. Detail-Erklärung mit allen Bändern: siehe Info-Modal an der Bahn-Auslastung-Card."
+          "explanation": "Verbrauchte Bahn (TD-Distanz + Rollout) ÷ LDA × 100 %. < 40 % = excellent, > 95 % = knapp am Overrun. Detail-Erklärung mit allen Bändern: siehe Info-Modal an der Bahn-Auslastung-Card."
         },
         "airac": {
           "abbr": "AIRAC-Cycle",
@@ -542,21 +546,21 @@
       "title": "Bahn-Auslastung — wie der Score entsteht",
       "close_label": "Schließen ✕",
       "close_aria": "Bahn-Auslastung-Hilfe schließen",
-      "intro": "Der Sub-Score „Bahn-Auslastung\" misst, wie viel Prozent der nutzbaren Landebahn (LDA) deine Landung gebraucht hat — gemessen ab der Schwelle: erst die Float-Strecke bis zum Aufsetzen, dann die Ausrollstrecke bis zum Abrollen von der Bahn (~40 kt). Flugzeug- und bahnlängen-fair. Float innerhalb der ersten 15 % der LDA gilt als normal und kostet keine Punkte.",
+      "intro": "Der Sub-Score „Bahn-Auslastung\" misst, wie viel Prozent der nutzbaren Landebahn (LDA) deine Landung gebraucht hat — gemessen ab der Schwelle: erst die Float-Strecke bis zum Aufsetzen, dann die Ausrollstrecke bis zum Abrollen von der Bahn (~40 kt). Flugzeug- und bahnlängen-fair. Float innerhalb der ersten 20 % der LDA gilt als normal und kostet keine Punkte.",
       "formula_heading": "Die Formel",
-      "formula": "Banding % = (Ausrollstrecke + Float-Überschuss über 15 % LDA) ÷ LDA × 100\nOverrun-Check separat: (Float + Ausrollstrecke) ÷ LDA — auf der echten, ungekürzten Distanz",
-      "float_tolerance_heading": "Float-Toleranz (die ersten 15 % der LDA)",
-      "float_tolerance_body": "Float ist die Schwebestrecke zwischen Schwellen-Crossing und Aufsetzpunkt. Float innerhalb der ersten 15 % der LDA gilt als normal und kostet keine Punkte — nur der Float-Überschuss darüber fließt ins Banding ein. Die Ausrollstrecke (das eigentliche Bremsen) zählt immer voll. So trennt der Score faire Aufsetz-Toleranz von echter Brems-Disziplin. Wichtig: das Overrun-Risiko wird weiterhin auf der echten, ungekürzten Gesamtdistanz geprüft — die Toleranz versteckt kein echtes Overrun.",
+      "formula": "Banding % = (Ausrollstrecke + Float-Überschuss über 20 % LDA) ÷ LDA × 100\nOverrun-Check separat: (Float + Ausrollstrecke) ÷ LDA — auf der echten, ungekürzten Distanz",
+      "float_tolerance_heading": "Float-Toleranz (die ersten 20 % der LDA)",
+      "float_tolerance_body": "Float ist die Schwebestrecke zwischen Schwellen-Crossing und Aufsetzpunkt. Float innerhalb der ersten 20 % der LDA gilt als normal und kostet keine Punkte — nur der Float-Überschuss darüber fließt ins Banding ein. Die Ausrollstrecke (das eigentliche Bremsen) zählt immer voll. So trennt der Score faire Aufsetz-Toleranz von echter Brems-Disziplin. Wichtig: das Overrun-Risiko wird weiterhin auf der echten, ungekürzten Gesamtdistanz geprüft — die Toleranz versteckt kein echtes Overrun.",
       "terms_heading": "Was die Begriffe bedeuten",
       "terms": {
         "td_distance": "Float-Strecke — wie viele Meter NACH der Schwelle deine Räder den Belag berühren (Schwebestrecke nach dem Schwellen-Crossing).",
         "rollout": "Ausrollstrecke — vom Aufsetzen bis zum Abrollen von der Bahn (Abrollgeschwindigkeit ~40 kt oder Abbiegen in den Taxiway). Auf der Bahn wird nicht bis zum Stillstand gebremst.",
         "lda": "LDA (Landing Distance Available) = physische Bahnlänge − Displaced Threshold."
       },
-      "example_heading": "Beispiel BTX8815 (A319 in LOWS)",
-      "example": "541 m Float bis zum Aufsetzen, dann 442 m Ausrollstrecke.\nFloat-Toleranz = 15 % der LDA = 427 m.\nScore-relevant: 541 − 427 = 114 m Float-Überschuss.\nScore-Distanz = 442 m Ausrollen + 114 m Überschuss = 556 m = 20 % der LDA.\n20 % < 30 % → 100 PTS „Viel Bahn-Reserve\".\nEchte Auslastung in der Card-Zeile: 983 m / 35 % — Float zählt da voll mit.\nBremsen war top — die Punkte-Schwelle lag am Float, nicht am Bremsweg.",
+      "example_heading": "Beispiel: top gebremst, aber spät aufgesetzt",
+      "example": "700 m Float bis zum Aufsetzen, dann 800 m Ausrollstrecke auf 3000 m LDA.\nFloat-Toleranz = 20 % der LDA = 600 m.\nScore-relevant: 700 − 600 = 100 m Float-Überschuss.\nScore-Distanz = 800 m Ausrollen + 100 m Überschuss = 900 m = 30 % der LDA.\n30 % < 40 % → 100 PTS, Begründung wechselt aber auf „Bremsweg top — aber spät aufgesetzt\", weil die Ausrollstrecke allein (800 m = 26,7 % der LDA) excellent gewesen wäre.\nEchte Auslastung in der Card-Zeile: 1500 m / 50 % — Float zählt da voll mit.\nBremsen war top — die Punkte-Schwelle lag am Float, nicht am Bremsweg.",
       "bands_heading": "Die fünf Punkte-Bänder",
-      "bands_intro": "Bewertet wird auf der toleranzbereinigten Auslastung (Ausrollstrecke + Float-Überschuss über 15 % LDA, dann minus Heavy-Bonus). Grenzen sind exklusiv-oben: 30,0 % gehört schon ins nächste Band.",
+      "bands_intro": "Bewertet wird auf der toleranzbereinigten Auslastung (Ausrollstrecke + Float-Überschuss über 20 % LDA, dann minus Heavy-Bonus). Grenzen sind exklusiv-oben: 40,0 % gehört schon ins nächste Band.",
       "bands_header": {
         "pct": "Effektiv %",
         "pts": "Punkte",
@@ -564,27 +568,27 @@
       },
       "bands": {
         "excellent": {
-          "pct": "< 30 %",
+          "pct": "< 40 %",
           "pts": "100",
           "label": "Viel Bahn-Reserve"
         },
         "good": {
-          "pct": "30 – < 50 %",
+          "pct": "40 – < 60 %",
           "pts": "80",
           "label": "Solider Bremsweg"
         },
         "ok": {
-          "pct": "50 – < 70 %",
+          "pct": "60 – < 80 %",
           "pts": "55",
           "label": "OK — sportlich"
         },
         "long": {
-          "pct": "70 – < 90 %",
+          "pct": "80 – < 95 %",
           "pts": "25",
           "label": "Lang ausgerollt"
         },
         "marginal": {
-          "pct": "90 – 100 %",
+          "pct": "95 – 100 %",
           "pts": "5",
           "label": "⚠ Knapp — fast Overrun"
         },
@@ -599,7 +603,7 @@
       "pre_displaced_heading": "Sonderfall: vor dem Displaced Threshold aufgesetzt",
       "pre_displaced_body": "Wenn der Recorder erkennt, dass du VOR der nutzbaren Schwelle aufgesetzt hast (regelwidrig — Wirbelschleppen-/Lärmschutz-Verletzung), wird der Score auf maximal 55 PTS gekappt, die Begründung wechselt auf „Bremsweg ok, aber zu früh aufgesetzt\" und du siehst eine Warning-Pill „⚠ Vor Displaced-Threshold aufgesetzt — Anflugprofil prüfen\". Der Score zeigt also bewusst nicht „Viel Reserve\" mit 55 PTS — sonst wäre es unehrlich.",
       "long_float_heading": "Sonderfall: spät aufgesetzt, aber top gebremst",
-      "long_float_body": "Das Gegenstück zum Pre-Displaced-Cap. Wenn dein Float die 15 %-Toleranz überschreitet, deine Ausrollstrecke für sich allein aber excellent gewesen wäre (unter 30 % der LDA) und der Gesamt-Score im grünen Bereich liegt, wechselt die Begründung auf „Bremsweg top — aber spät aufgesetzt\". Die Botschaft: am Bremsen lag es nicht — übe einen früheren, präziseren Aufsetzpunkt (Aim-Point), kein härteres Bremsen.",
+      "long_float_body": "Das Gegenstück zum Pre-Displaced-Cap. Wenn dein Float die 20 %-Toleranz überschreitet, deine Ausrollstrecke für sich allein aber excellent gewesen wäre (unter 40 % der LDA) und der Gesamt-Score im grünen Bereich liegt, wechselt die Begründung auf „Bremsweg top — aber spät aufgesetzt\". Die Botschaft: am Bremsen lag es nicht — übe einen früheren, präziseren Aufsetzpunkt (Aim-Point), kein härteres Bremsen.",
       "skip_heading": "Wann wird NICHT bewertet?",
       "skip_intro": "Sechs Skip-Reasons. Die Card zeigt dann „nicht bewertet\" + Grund. Kein Fallback, keine geschätzten Meter — lieber kein Score als irreführend.",
       "skip_items": {

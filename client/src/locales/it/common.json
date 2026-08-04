@@ -203,11 +203,11 @@
       "loadsheet": "Loadsheet"
     },
     "info": {
-      "landing_rate": "Velocità verticale (V/S) al momento del touchdown, in piedi al minuto. Negativa = in discesa. Soglie FCOM Boeing/Airbus: fino a −240 fpm è pulito, da −600 fpm in poi è dovuta un'ispezione hard-landing.",
+      "landing_rate": "Velocità verticale (V/S) al momento del touchdown, in piedi al minuto. Negativa = in discesa. Il corridoio obiettivo 90–250 fpm è considerato un touchdown fermo e deciso — lo standard professionale, non \"il più morbido possibile\": ben sotto i 90 fpm di solito indica un flare prolungato, che ritarda frenata/spoiler. Da −600 fpm in poi è dovuta realmente un'ispezione hard-landing.",
       "g_force": "Carico G massimo nella finestra di 1,5 secondi attorno al touchdown. 1,0 G = morbido, da 1,4 G chiaramente percepibile, da 1,7 G strutturalmente critico (soglia hard-landing FCOM Boeing 737).",
       "bounces": "Quante volte l'aereo è risalito sopra i 35 ft AGL dopo il primo touchdown e poi è atterrato di nuovo (algoritmo BeatMyLanding). 0 = atterraggio pulito; ogni rimbalzo riduce il punteggio.",
       "stability": "Valutazione di stabilità sullo stable-approach gate (0–1000 ft HAT, flare-cutoff ultimi 3 s prima del TD). Il backend calcola sette fattori: V/S jerk, bank σ (vector-filtered), IAS σ, violazione sink rate, landing config, V/S vs. 3° ILS, max V/S dev <500 ft. Dettagli e soglie nella scheda Stabilità avvicinamento più in basso.",
-      "rollout": "Quota della lunghezza pista utilizzabile (LDA) che la tua intera landata ha usato — misurata dalla soglia: prima la distanza di float fino al touchdown, poi il rollout fino a quando lasci la pista (~40 kt). Il float entro il primo 15 % della LDA è considerato normale e non costa punti; oltre conta. < 50 % è buono, > 90 % diventa al limite — rischioso su pista bagnata. Clicca „🛬 Come viene calcolato?\" per la spiegazione completa.",
+      "rollout": "Quota della lunghezza pista utilizzabile (LDA) che la tua intera landata ha usato — misurata dalla soglia: prima la distanza di float fino al touchdown, poi il rollout fino a quando lasci la pista (~40 kt). Il float entro il primo 20 % della LDA è considerato normale e non costa punti; oltre conta. < 60 % è buono, > 95 % diventa al limite — rischioso su pista bagnata. Clicca „🛬 Come viene calcolato?\" per la spiegazione completa.",
       "fuel": "Aderenza al trip burn dell'OFP SimBrief. Confronta il consumo reale (block − landing fuel) con il trip burn pianificato. Il consumo eccessivo conta (cost-index, quota o vento non corretti); il consumo ridotto NON viene penalizzato. >15 % sotto piano segnala possibile errore OFP/misurazione/rotta.",
       "loadsheet": "Presenza dei dati di loadsheet (ZFW + TOW nel piano). Voli VFR/manuali senza dati dispatch saltano questo sub-score — nessuna penalità. La valutazione dettagliata piano-vs-reale (block fuel, TOW, LDW, ZFW) appare nell'area carburante come punteggio „Precisione del piano\".",
       "score_section": "Sette sotto-punteggi da 0–100 punti (rateo discesa, forza G, rimbalzi, stabilità avvicinamento, utilizzo pista, aderenza OFP, loadsheet). Ogni riquadro mostra valore, punti e barra colorata (verde/giallo/rosso). La categoria più debole viene presa come prossimo obiettivo nel suggerimento del coach.",
@@ -216,7 +216,9 @@
     },
     "rat": {
       "smooth_touchdown": "Atterraggio morbidissimo",
+      "possible_float": "Atterraggio molto morbido — possibile float prolungato",
       "firm_but_clean": "Atterraggio fermo ma pulito",
+      "firm_positive_touchdown": "Touchdown fermo e deciso",
       "above_target": "Un po' più duro dell'ideale",
       "hard_landing": "Atterraggio duro — ispezione consigliata",
       "very_hard": "Molto duro — ispezione necessaria",
@@ -257,7 +259,9 @@
     },
     "tip": {
       "smooth_touchdown": "Esattamente così — flare leggero al momento giusto, riduzione dolce del rateo di discesa appena prima del TD.",
+      "possible_float": "Molto morbido — di solito indica un flare/float prolungato, che ritarda il contatto al suolo, l'estensione di spoiler/autobrake e quindi anche la distanza di frenata. Punta a un touchdown più deciso (target 90–250 fpm).",
       "firm_but_clean": "Solido. Per un atterraggio più dolce: inizia il flare 1-2 secondi prima.",
+      "firm_positive_touchdown": "Esattamente giusto — fermo e deciso, senza essere duro. Così deve essere un touchdown professionale da compagnia aerea.",
       "above_target": "Inizia il flare un po' prima e ritarda la riduzione di spinta — non spingere giù.",
       "hard_landing": "Controlla il rateo di discesa in avvicinamento (target −700 fpm in finale), poi flare pulito a ~30 ft.",
       "very_hard": "Sintomi classici di hard-landing. Verifica lo stabilizzato approach, timing del flare e pitch.",
@@ -280,7 +284,7 @@
       "excellent_stop": "Eccellente — frenata corta, buon controllo. Niente abuso del reverser.",
       "excellent_margin": "Molta pista avanzata — utilizzo perfetto per questo tipo di velivolo.",
       "good_stop": "Frenata solida. Margine leggero — perfetto.",
-      "ok_stop": "Utilizzo pista nella fascia sportiva (50–70%). Su pista bagnata, tocca prima o applica più freno.",
+      "ok_stop": "Utilizzo pista nella fascia sportiva (60–80%). Su pista bagnata, tocca prima o applica più freno.",
       "long_rollout": "Rollout un po' lungo. Pensa già nel flare ad auto-brake o reverser.",
       "very_long_rollout": "Frenata molto lunga. Verifica auto-brake setting o usa il reverser prima.",
       "marginal_runway": "Margine pista al limite — critico su pista bagnata. Scegli un setting auto-brake più alto.",
@@ -503,7 +507,7 @@
         "runway_util": {
           "abbr": "Utilizzo pista",
           "full": "",
-          "explanation": "Pista utilizzata (distanza TD + rollout) ÷ LDA × 100 %. < 30 % = eccellente, > 90 % = vicino all'overrun. Spiegazione dettagliata con tutte le fasce: vedi il modal info sulla scheda Utilizzo pista."
+          "explanation": "Pista utilizzata (distanza TD + rollout) ÷ LDA × 100 %. < 40 % = eccellente, > 95 % = vicino all'overrun. Spiegazione dettagliata con tutte le fasce: vedi il modal info sulla scheda Utilizzo pista."
         },
         "airac": {
           "abbr": "Ciclo AIRAC",
@@ -542,21 +546,21 @@
       "title": "Utilizzo pista — come nasce il punteggio",
       "close_label": "Chiudi ✕",
       "close_aria": "Chiudi aiuto Utilizzo pista",
-      "intro": "Il sotto-punteggio „Utilizzo pista\" misura quale percentuale della pista utilizzabile (LDA) la tua landata ha usato — misurata dalla soglia: prima la distanza di float fino al touchdown, poi il rollout fino a quando lasci la pista (~40 kt). Equo tra tipi di aereo e lunghezze pista. Il float entro il primo 15 % della LDA è considerato normale e non costa punti.",
+      "intro": "Il sotto-punteggio „Utilizzo pista\" misura quale percentuale della pista utilizzabile (LDA) la tua landata ha usato — misurata dalla soglia: prima la distanza di float fino al touchdown, poi il rollout fino a quando lasci la pista (~40 kt). Equo tra tipi di aereo e lunghezze pista. Il float entro il primo 20 % della LDA è considerato normale e non costa punti.",
       "formula_heading": "La formula",
-      "formula": "Banding % = (rollout + eccesso di float oltre il 15 % LDA) ÷ LDA × 100\nCheck overrun separato: (float + rollout) ÷ LDA — sulla distanza reale, non ridotta",
-      "float_tolerance_heading": "Tolleranza di float (il primo 15 % della LDA)",
-      "float_tolerance_body": "Il float è la distanza in volo tra il sorvolo soglia e il touchdown. Il float entro il primo 15 % della LDA è considerato normale e non costa punti — solo l'eccesso di float oltre quella soglia entra nel banding. Il rollout (la frenata vera e propria) conta sempre per intero. Così il punteggio separa la tolleranza equa sul touchdown dalla vera disciplina di frenata. Importante: il rischio di overrun viene comunque verificato sulla distanza totale reale, non ridotta — la tolleranza non nasconde mai un overrun reale.",
+      "formula": "Banding % = (rollout + eccesso di float oltre il 20 % LDA) ÷ LDA × 100\nCheck overrun separato: (float + rollout) ÷ LDA — sulla distanza reale, non ridotta",
+      "float_tolerance_heading": "Tolleranza di float (il primo 20 % della LDA)",
+      "float_tolerance_body": "Il float è la distanza in volo tra il sorvolo soglia e il touchdown. Il float entro il primo 20 % della LDA è considerato normale e non costa punti — solo l'eccesso di float oltre quella soglia entra nel banding. Il rollout (la frenata vera e propria) conta sempre per intero. Così il punteggio separa la tolleranza equa sul touchdown dalla vera disciplina di frenata. Importante: il rischio di overrun viene comunque verificato sulla distanza totale reale, non ridotta — la tolleranza non nasconde mai un overrun reale.",
       "terms_heading": "Cosa significano i termini",
       "terms": {
         "td_distance": "Distanza di float — quanti metri DOPO la soglia le ruote toccano la superficie (distanza in volo dopo il sorvolo soglia).",
         "rollout": "Rollout — dal touchdown fino a quando lasci la pista (velocità di rollout ~40 kt, o svoltando nel taxiway). Sulla pista non si frena fino all'arresto completo.",
         "lda": "LDA (Landing Distance Available) = lunghezza fisica pista − displaced threshold."
       },
-      "example_heading": "Esempio BTX8815 (A319 a LOWS)",
-      "example": "541 m di float fino al touchdown, poi 442 m di rollout.\nTolleranza di float = 15 % della LDA = 427 m.\nRilevante per il punteggio: 541 − 427 = 114 m di eccesso di float.\nDistanza di punteggio = 442 m rollout + 114 m eccesso = 556 m = 20 % della LDA.\n20 % < 30 % → 100 PTS „molto margine\".\nUtilizzo reale nella riga della scheda: 983 m / 35 % — lì il float conta per intero.\nLa frenata era ottima — la soglia dei punti era il float, non il rollout.",
+      "example_heading": "Esempio: frenata ottima, ma touchdown lungo",
+      "example": "700 m di float fino al touchdown, poi 800 m di rollout su 3000 m di LDA.\nTolleranza di float = 20 % della LDA = 600 m.\nRilevante per il punteggio: 700 − 600 = 100 m di eccesso di float.\nDistanza di punteggio = 800 m rollout + 100 m eccesso = 900 m = 30 % della LDA.\n30 % < 40 % → 100 PTS, ma la motivazione passa a „Frenata ottima — ma toccato troppo lungo\" perché il rollout da solo (800 m = 26,7 % della LDA) sarebbe stato eccellente.\nUtilizzo reale nella riga della scheda: 1500 m / 50 % — lì il float conta per intero.\nLa frenata era ottima — la soglia dei punti era il float, non il rollout.",
       "bands_heading": "Le cinque fasce di punteggio",
-      "bands_intro": "Il punteggio si calcola sull'utilizzo corretto per la tolleranza (rollout + eccesso di float oltre il 15 % LDA, poi meno il bonus heavy). I limiti sono esclusivi in alto: 30,0 % cade nella fascia successiva.",
+      "bands_intro": "Il punteggio si calcola sull'utilizzo corretto per la tolleranza (rollout + eccesso di float oltre il 20 % LDA, poi meno il bonus heavy). I limiti sono esclusivi in alto: 40,0 % cade nella fascia successiva.",
       "bands_header": {
         "pct": "Effettivo %",
         "pts": "Punti",
@@ -564,27 +568,27 @@
       },
       "bands": {
         "excellent": {
-          "pct": "< 30 %",
+          "pct": "< 40%",
           "pts": "100",
           "label": "Molto margine"
         },
         "good": {
-          "pct": "30 – < 50 %",
+          "pct": "40 – < 60%",
           "pts": "80",
           "label": "Frenata solida"
         },
         "ok": {
-          "pct": "50 – < 70 %",
+          "pct": "60 – < 80%",
           "pts": "55",
           "label": "OK, sportivo"
         },
         "long": {
-          "pct": "70 – < 90 %",
+          "pct": "80 – < 95%",
           "pts": "25",
           "label": "Rollout lungo"
         },
         "marginal": {
-          "pct": "90 – 100 %",
+          "pct": "95 – 100%",
           "pts": "5",
           "label": "⚠ Limite — quasi overrun"
         },
@@ -599,7 +603,7 @@
       "pre_displaced_heading": "Caso speciale: touchdown prima della displaced threshold",
       "pre_displaced_body": "Se il recorder rileva che hai toccato PRIMA della soglia utilizzabile (illegale — violazione scia turbolenta/anti-rumore), il punteggio viene limitato a massimo 55 PTS, la motivazione cambia in „Frenata ok, ma touchdown troppo presto\" e appare una pill warning „⚠ Touchdown prima della displaced threshold — rivedere profilo approach\". Quindi il punteggio non mostra deliberatamente „molto margine\" a 55 PTS — sarebbe disonesto.",
       "long_float_heading": "Caso speciale: touchdown lungo, ma frenata ottima",
-      "long_float_body": "La controparte del cap displaced-threshold. Quando il tuo float supera la tolleranza del 15 %, ma il tuo rollout da solo sarebbe stato eccellente (sotto il 30 % della LDA) e il punteggio complessivo è in zona verde, la motivazione passa a „Frenata ottima — ma toccato troppo lungo\". Il messaggio: la frenata non era il problema — esercitati su un punto di touchdown più anticipato e preciso (aim-point), non su una frenata più dura.",
+      "long_float_body": "La controparte del cap displaced-threshold. Quando il tuo float supera la tolleranza del 20 %, ma il tuo rollout da solo sarebbe stato eccellente (sotto il 40 % della LDA) e il punteggio complessivo è in zona verde, la motivazione passa a „Frenata ottima — ma toccato troppo lungo\". Il messaggio: la frenata non era il problema — esercitati su un punto di touchdown più anticipato e preciso (aim-point), non su una frenata più dura.",
       "skip_heading": "Quando NON viene valutato?",
       "skip_intro": "Sei skip reasons. La scheda mostra allora „non valutato\" + motivo. Nessun fallback, nessun metro stimato — meglio nessun punteggio che fuorviante.",
       "skip_items": {

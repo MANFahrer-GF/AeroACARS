@@ -117,12 +117,30 @@ fn skip_reason(input: &RolloutInput) -> Option<&'static str> {
     None
 }
 
-/// v0.12.0 (#runway-utilization-refinement): Float-Toleranz als Anteil
-/// der LDA. Float bis zu diesem Anteil belastet das Punkte-Banding
-/// nicht — nur der Überschuss zählt. Spec LE1. 0.15 = exakt unterhalb
-/// der offiziellen Touchdown-Zone (min(900 m, LDA/3) ≈ 30 % LDA), und
-/// identisch mit der `long_float`-Rationale-Schwelle (LE2).
-const FLOAT_TOLERANCE_FRACTION: f32 = 0.15;
+/// v0.20.x (Bahnauslastung-QS, score_algorithm_version 4→5): 15 % LDA
+/// erwies sich in der Praxis als zu knapp — ein Aufsetzpunkt, der noch
+/// deutlich innerhalb der normalen Touchdown-Zone liegt, konnte schon
+/// "Float über Toleranz" ausloesen. 20 % LDA gibt der normalen
+/// Aufsetzzone spuerbar mehr Raum, bevor ueberhaupt etwas gegen den
+/// Bremsweg gerechnet wird — siehe Spec-Errata zu v0.12.0-runway-
+/// utilization-refinement.md. Float bis zu diesem Anteil belastet das
+/// Punkte-Banding nicht, nur der Überschuss zählt (Spec LE1).
+const FLOAT_TOLERANCE_FRACTION: f32 = 0.20;
+
+/// v0.20.x: obere Grenze des "excellent_margin"-Bands (100 Pkt) auf der
+/// toleranzbereinigten Auslastung. Vorher 30.0 — auf einer langen Bahn
+/// (z.B. 2850 m LDA) verlangte das einen Stopp innerhalb von ~855 m,
+/// was praktisch aggressives Bremsen/Reverse erzwingt, selbst bei einer
+/// vollkommen normalen, komfortablen Landung. Auch von
+/// `rollout_alone_excellent` (LE2 `long_float`-Override) genutzt, damit
+/// beide Stellen synchron bleiben.
+const EXCELLENT_MAX_PCT: f32 = 40.0;
+/// Obere Grenze des "good_stop"-Bands (80 Pkt). Vorher 50.0.
+const GOOD_MAX_PCT: f32 = 60.0;
+/// Obere Grenze des "ok_stop"-Bands (55 Pkt). Vorher 70.0.
+const OK_MAX_PCT: f32 = 80.0;
+/// Obere Grenze des "long_rollout"-Bands (25 Pkt). Vorher 90.0.
+const LONG_MAX_PCT: f32 = 95.0;
 
 /// Spec docs/spec/v0.10.0-runway-utilization-score.md (R5 ACCEPTED) +
 /// v0.12.0-runway-utilization-refinement.md (R2 ACCEPTED). Einzige
@@ -130,16 +148,27 @@ const FLOAT_TOLERANCE_FRACTION: f32 = 0.15;
 /// rendert NUR.
 ///
 /// v0.12.0-Änderungen (`score_algorithm_version` 3):
-///   - LE1: Float-Toleranz 15 % LDA — `effective_distance = rollout +
-///     max(0, td_dist - 0.15*LDA)`. Float in der normalen Touchdown-Zone
-///     belastet das Banding nicht.
+///   - LE1: Float-Toleranz als Anteil der LDA — `effective_distance =
+///     rollout + max(0, td_dist - FLOAT_TOLERANCE_FRACTION*LDA)`. Float
+///     in der normalen Touchdown-Zone belastet das Banding nicht.
 ///   - LE3: Banding auf `effective_ratio_pct`; Overrun-Gate bleibt auf
 ///     der echten ungekürzten `raw_ratio_pct` (Toleranz darf ein echtes
 ///     Overrun-Risiko nicht verstecken).
 ///   - LE2: `long_float`-Rationale wenn Float über Toleranz UND der
-///     reine Bremsweg `< 30 % LDA` (= excellent-Niveau) UND Band good.
+///     reine Bremsweg `< EXCELLENT_MAX_PCT` (= excellent-Niveau) UND
+///     Band good.
 ///   - LE5: `extra` bleibt LEER — der TS-Renderer baut die Zeilen aus
 ///     den Record-Feldern (i18n-fähig). value bleibt sprachneutral.
+///
+/// v0.20.x-Änderungen (Bahnauslastung-QS, `score_algorithm_version` 5):
+///   Beide Stellschrauben grosszuegiger gemacht, nachdem eine objektiv
+///   gute, komfortable Landung (583 m Aufsetzpunkt, 1379 m Rollout auf
+///   2850 m LDA = 53,8 % effektiv) nur „ok_stop" (55 Pkt) erreichte:
+///   - `FLOAT_TOLERANCE_FRACTION` 0.15 → 0.20 (mehr Aufsetzzone geschenkt)
+///   - Banding-Grenzen 30/50/70/90 → `EXCELLENT_MAX_PCT`/`GOOD_MAX_PCT`/
+///     `OK_MAX_PCT`/`LONG_MAX_PCT` (40/60/80/95) — ein normaler,
+///     komfortabler Stopp auf einer langen Bahn soll nicht aggressives
+///     Bremsen/Reverse erzwingen, um „excellent" zu erreichen.
 pub fn sub_rollout_v2(input: &RolloutInput) -> SubScoreEntry {
     // ── Skip-Gate (v0.10.0 LE6) ──────────────────────────────────────
     if let Some(reason) = skip_reason(input) {
@@ -163,7 +192,7 @@ pub fn sub_rollout_v2(input: &RolloutInput) -> SubScoreEntry {
     // Echte Auslastung — Basis fürs Overrun-Gate UND fürs Display.
     let raw_ratio_pct: f32 = (distance_used / lda_m) * 100.0;
 
-    // ── v0.12.0 LE1: Float-Toleranz (15 % LDA) ───────────────────────
+    // ── v0.12.0 LE1: Float-Toleranz (FLOAT_TOLERANCE_FRACTION * LDA) ─
     // Nur Float ÜBER der Toleranz belastet das Banding. Bei negativem
     // td_dist (pre-displaced) ist `td_dist - tolerance` erst recht
     // negativ → effective_float = 0 → effective_distance = rollout.
@@ -185,10 +214,10 @@ pub fn sub_rollout_v2(input: &RolloutInput) -> SubScoreEntry {
         let banding_pct: f32 = effective_ratio_pct - allowance_pp;
 
         match banding_pct {
-            e if e < 30.0 => (100, "excellent_margin", Band::Good),
-            e if e < 50.0 => (80, "good_stop", Band::Good),
-            e if e < 70.0 => (55, "ok_stop", Band::Ok),
-            e if e < 90.0 => (25, "long_rollout", Band::Bad),
+            e if e < EXCELLENT_MAX_PCT => (100, "excellent_margin", Band::Good),
+            e if e < GOOD_MAX_PCT => (80, "good_stop", Band::Good),
+            e if e < OK_MAX_PCT => (55, "ok_stop", Band::Ok),
+            e if e < LONG_MAX_PCT => (25, "long_rollout", Band::Bad),
             _ => (5, "marginal_runway", Band::Bad),
         }
     };
@@ -213,12 +242,12 @@ pub fn sub_rollout_v2(input: &RolloutInput) -> SubScoreEntry {
 
     // ── v0.12.0 LE2: long_float-Rationale-Override ───────────────────
     // Drei Bedingungen — „Bremsen war exzellent, nur spät aufgesetzt":
-    //   1. Float über der 15 %-Toleranz
-    //   2. Ausrollstrecke ALLEIN wäre excellent_margin (rollout/LDA < 30 %)
+    //   1. Float über der FLOAT_TOLERANCE_FRACTION-Toleranz
+    //   2. Ausrollstrecke ALLEIN wäre excellent_margin (rollout/LDA < EXCELLENT_MAX_PCT)
     //   3. finaler Band ist Good (good_stop / excellent_margin)
     // pre_displaced hat Vorrang (eigener Cap + eigene Rationale).
     let float_over_tolerance = td_dist > float_tolerance_m;
-    let rollout_alone_excellent = (rollout / lda_m) * 100.0 < 30.0;
+    let rollout_alone_excellent = (rollout / lda_m) * 100.0 < EXCELLENT_MAX_PCT;
     let (final_points, final_rationale, final_band) = if !pre_displaced
         && float_over_tolerance
         && rollout_alone_excellent

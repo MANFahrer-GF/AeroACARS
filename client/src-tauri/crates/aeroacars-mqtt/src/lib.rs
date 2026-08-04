@@ -749,9 +749,14 @@ pub struct TouchdownPayload {
     /// v0.10.0 (#runway-utilization-score) — Algorithmus-Version des im
     /// PIREP gespeicherten `sub_scores`-Arrays. None/Some(1) = pre-v0.10
     /// (meter-only Bahn-Auslastung); Some(2) = v0.10 (LDA-basierter
-    /// Runway-Utilization-Score). Renderer rendert die neuen Felder
-    /// (`extra`, neue Rationale-Keys, neue Warning-Werte) nur für v2.
-    /// Spec: docs/spec/v0.10.0-runway-utilization-score.md LE11.
+    /// Runway-Utilization-Score); Some(3) = v0.12.0 (Float-Toleranz-
+    /// Refinement); Some(4) = v0.16.21 (MSFS touchdown V/S SimVar-lag
+    /// corrected); Some(5) = v0.20.x (Bahnauslastung-QS: Float-Toleranz
+    /// 15→20 % LDA, Banding 30/50/70/90 → 40/60/80/95; Sinkraten-Score
+    /// auf Ziel-Korridor 90-250 fpm umgestellt). Renderer rendert die
+    /// neuen Felder (`extra`, neue Rationale-Keys, neue Warning-Werte)
+    /// nur für v2. Spec: docs/spec/v0.10.0-runway-utilization-score.md
+    /// LE11.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score_algorithm_version: Option<u8>,
 }
@@ -978,7 +983,10 @@ pub struct PirepPayload {
     /// v0.10.0 (#runway-utilization-score) — Algorithmus-Version des
     /// `sub_scores`-Arrays. None/Some(1) = pre-v0.10 (meter-only Bahn-
     /// Auslastung); Some(2) = v0.10 (LDA-basierter Runway-Utilization-
-    /// Score). Spec: docs/spec/v0.10.0-runway-utilization-score.md LE11.
+    /// Score); Some(3) = v0.12.0 (Float-Toleranz-Refinement); Some(4) =
+    /// v0.16.21 (MSFS touchdown V/S SimVar-lag corrected); Some(5) =
+    /// v0.20.x (Bahnauslastung-QS + Sinkraten-Ziel-Korridor). Spec:
+    /// docs/spec/v0.10.0-runway-utilization-score.md LE11.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score_algorithm_version: Option<u8>,
 

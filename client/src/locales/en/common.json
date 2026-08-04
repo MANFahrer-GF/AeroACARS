@@ -203,11 +203,11 @@
       "loadsheet": "Loadsheet"
     },
     "info": {
-      "landing_rate": "Vertical speed (V/S) at the moment of touchdown, in feet per minute. Negative = sinking. Boeing/Airbus FCOM thresholds: clean up to -240 fpm; hard-landing inspection at -600 fpm.",
+      "landing_rate": "Vertical speed (V/S) at the moment of touchdown, in feet per minute. Negative = sinking. The 90-250 fpm target corridor counts as a firm, positive touchdown — the professional standard, not \"as soft as possible\": well under 90 fpm usually means an extended flare, which delays braking/spoiler deployment. A real hard-landing inspection is due from -600 fpm.",
       "g_force": "Peak G load in the 1.5-second window around touchdown. 1.0 G is smooth, above 1.4 G is clearly noticeable, above 1.7 G triggers a hard-landing inspection (Boeing 737 FCOM).",
       "bounces": "How many times the aircraft climbed back above 35 ft AGL after the first touchdown and re-landed (BeatMyLanding algorithm). 0 = clean set; each bounce drops the score.",
       "stability": "Stability evaluation over the stable-approach gate (0–1000 ft HAT, flare-cutoff last 3 s before TD). Backend computes seven factors: V/S jerk, bank σ (vector-filtered), IAS σ, sink-rate violation, landing config, V/S vs. 3° ILS, max V/S dev <500 ft. Details and thresholds are in the approach-stability card further down.",
-      "rollout": "Share of the usable runway length (LDA) your whole landing used — measured from the threshold: first the float distance until touchdown, then the rollout until you clear the runway (~40 kt). Float within the first 15 % of the LDA counts as normal and costs no points; above that it counts. < 50 % is good, > 90 % gets tight — risky on a wet runway. Click „🛬 How is this calculated?\" for the full explanation.",
+      "rollout": "Share of the usable runway length (LDA) your whole landing used — measured from the threshold: first the float distance until touchdown, then the rollout until you clear the runway (~40 kt). Float within the first 20 % of the LDA counts as normal and costs no points; above that it counts. < 60 % is good, > 95 % gets tight — risky on a wet runway. Click „🛬 How is this calculated?\" for the full explanation.",
       "fuel": "Compliance with the SimBrief OFP trip burn. Compares actual burn (block − landing fuel) against planned trip burn. Overburn counts (cost index, altitude or wind not matching); underburn is NOT penalised. >15 % under plan flags a possible OFP/measurement/route mismatch.",
       "loadsheet": "Presence of loadsheet data (ZFW + TOW in the plan). VFR/manual flights without dispatch data skip this sub-score — no 0-penalty. The detailed plan-vs-actual evaluation (block fuel, TOW, LDW, ZFW) appears in the fuel area as the „Plan accuracy\" score.",
       "score_section": "Seven sub-scores rated 0–100 each (landing rate, G force, bounces, approach stability, runway utilization, OFP compliance, loadsheet). Every card shows value, points, and a coloured bar (green/yellow/red). The weakest category becomes the focus of the coach tip below.",
@@ -216,7 +216,9 @@
     },
     "rat": {
       "smooth_touchdown": "Butter-smooth touchdown",
+      "possible_float": "Very soft touchdown — possible extended float",
       "firm_but_clean": "Firm but clean",
+      "firm_positive_touchdown": "Firm, positive touchdown",
       "above_target": "Above target",
       "hard_landing": "Hard landing — inspection advisable",
       "very_hard": "Very hard — inspection required",
@@ -257,7 +259,9 @@
     },
     "tip": {
       "smooth_touchdown": "Exactly right — flare timing was on point and the descent rate bled off cleanly.",
+      "possible_float": "Very soft — that usually means an extended flare/float, which delays ground contact and spoiler/autobrake deployment, and therefore the stopping distance too. Aim for a more decisive touchdown (target 90-250 fpm).",
       "firm_but_clean": "Solid landing. For a softer touchdown, start the flare 1-2 seconds earlier.",
+      "firm_positive_touchdown": "Exactly right — firm and positive without being hard. This is what a professional airline touchdown looks like.",
       "above_target": "More flare and time the thrust reduction slightly later — don't push down.",
       "hard_landing": "Control approach descent (target -700 fpm in final), then a clean flare around 30 ft AGL.",
       "very_hard": "Classic hard-landing pattern. Review stabilized-approach criteria, flare timing and pitch attitude.",
@@ -280,7 +284,7 @@
       "excellent_stop": "Excellent — short rollout, good control. No reverser overuse.",
       "excellent_margin": "Lots of runway left — great runway-utilization for this aircraft type.",
       "good_stop": "Solid stop. Healthy margin — fine.",
-      "ok_stop": "Runway utilization in the sporty range (50–70%). On wet runway, touch down earlier or apply more braking.",
+      "ok_stop": "Runway utilization in the sporty range (60–80%). On wet runway, touch down earlier or apply more braking.",
       "long_rollout": "Slightly long rollout. Consider auto-brake or earlier reverser application.",
       "very_long_rollout": "Very long rollout. Check auto-brake setting or apply reversers earlier.",
       "marginal_runway": "Runway margin was tight — risky on wet runway. Use a higher auto-brake setting.",
@@ -503,7 +507,7 @@
         "runway_util": {
           "abbr": "Runway utilization",
           "full": "",
-          "explanation": "Used runway (TD distance + rollout) ÷ LDA × 100 %. < 30 % = excellent, > 90 % = close to overrun. Detail explanation with all bands: see the info modal on the runway-utilization card."
+          "explanation": "Used runway (TD distance + rollout) ÷ LDA × 100 %. < 40 % = excellent, > 95 % = close to overrun. Detail explanation with all bands: see the info modal on the runway-utilization card."
         },
         "airac": {
           "abbr": "AIRAC cycle",
@@ -542,21 +546,21 @@
       "title": "Runway utilization — how the score is built",
       "close_label": "Close ✕",
       "close_aria": "Close runway-utilization help",
-      "intro": "The „runway utilization\" sub-score measures what percentage of the usable runway (LDA) your landing used — measured from the threshold: first the float distance until touchdown, then the rollout until you clear the runway (~40 kt). Fair across aircraft types and runway lengths. Float within the first 15 % of the LDA counts as normal and costs no points.",
+      "intro": "The „runway utilization\" sub-score measures what percentage of the usable runway (LDA) your landing used — measured from the threshold: first the float distance until touchdown, then the rollout until you clear the runway (~40 kt). Fair across aircraft types and runway lengths. Float within the first 20 % of the LDA counts as normal and costs no points.",
       "formula_heading": "The formula",
-      "formula": "Banding % = (rollout + float excess over 15 % LDA) ÷ LDA × 100\nOverrun check separately: (float + rollout) ÷ LDA — on the real, un-shortened distance",
-      "float_tolerance_heading": "Float tolerance (the first 15 % of the LDA)",
-      "float_tolerance_body": "Float is the airborne distance between crossing the threshold and touchdown. Float within the first 15 % of the LDA counts as normal and costs no points — only the float excess above that feeds the banding. The rollout (the actual braking) always counts in full. This separates fair touchdown tolerance from real braking discipline. Important: the overrun risk is still checked on the real, un-shortened total distance — the tolerance never hides a real overrun.",
+      "formula": "Banding % = (rollout + float excess over 20 % LDA) ÷ LDA × 100\nOverrun check separately: (float + rollout) ÷ LDA — on the real, un-shortened distance",
+      "float_tolerance_heading": "Float tolerance (the first 20 % of the LDA)",
+      "float_tolerance_body": "Float is the airborne distance between crossing the threshold and touchdown. Float within the first 20 % of the LDA counts as normal and costs no points — only the float excess above that feeds the banding. The rollout (the actual braking) always counts in full. This separates fair touchdown tolerance from real braking discipline. Important: the overrun risk is still checked on the real, un-shortened total distance — the tolerance never hides a real overrun.",
       "terms_heading": "What the terms mean",
       "terms": {
         "td_distance": "Float distance — how many meters AFTER the threshold your wheels touch the surface (airborne distance after the threshold crossing).",
         "rollout": "Rollout — from touchdown until you clear the runway (rollout speed ~40 kt, or turning off into the taxiway). You don't brake to a standstill on the runway.",
         "lda": "LDA (Landing Distance Available) = physical runway length − displaced threshold."
       },
-      "example_heading": "Example BTX8815 (A319 at LOWS)",
-      "example": "541 m float until touchdown, then 442 m rollout.\nFloat tolerance = 15 % of the LDA = 427 m.\nScore-relevant: 541 − 427 = 114 m float excess.\nScore distance = 442 m rollout + 114 m excess = 556 m = 20 % of the LDA.\n20 % < 30 % → 100 PTS „plenty of margin\".\nReal utilization on the card row: 983 m / 35 % — float counts in full there.\nBraking was excellent — the points threshold was the float, not the rollout.",
+      "example_heading": "Example: excellent braking, but touched down long",
+      "example": "700 m float until touchdown, then 800 m rollout on a 3000 m LDA.\nFloat tolerance = 20 % of the LDA = 600 m.\nScore-relevant: 700 − 600 = 100 m float excess.\nScore distance = 800 m rollout + 100 m excess = 900 m = 30 % of the LDA.\n30 % < 40 % → 100 PTS, but the rationale switches to „Good braking — but touched down long\" because the rollout alone (800 m = 26.7 % of the LDA) would have been excellent.\nReal utilization on the card row: 1500 m / 50 % — float counts in full there.\nBraking was excellent — the points threshold was the float, not the rollout.",
       "bands_heading": "The five point bands",
-      "bands_intro": "Scoring runs on the tolerance-adjusted utilization (rollout + float excess over 15 % LDA, then minus the heavy bonus). Edges are exclusive at the top: 30.0 % falls into the next band.",
+      "bands_intro": "Scoring runs on the tolerance-adjusted utilization (rollout + float excess over 20 % LDA, then minus the heavy bonus). Edges are exclusive at the top: 40.0 % falls into the next band.",
       "bands_header": {
         "pct": "Effective %",
         "pts": "Points",
@@ -564,27 +568,27 @@
       },
       "bands": {
         "excellent": {
-          "pct": "< 30 %",
+          "pct": "< 40%",
           "pts": "100",
           "label": "Plenty of margin"
         },
         "good": {
-          "pct": "30 – < 50 %",
+          "pct": "40 – < 60%",
           "pts": "80",
           "label": "Solid stop"
         },
         "ok": {
-          "pct": "50 – < 70 %",
+          "pct": "60 – < 80%",
           "pts": "55",
           "label": "OK, sporty"
         },
         "long": {
-          "pct": "70 – < 90 %",
+          "pct": "80 – < 95%",
           "pts": "25",
           "label": "Long rollout"
         },
         "marginal": {
-          "pct": "90 – 100 %",
+          "pct": "95 – 100%",
           "pts": "5",
           "label": "⚠ Marginal — close to overrun"
         },
@@ -599,7 +603,7 @@
       "pre_displaced_heading": "Special case: touched down before the displaced threshold",
       "pre_displaced_body": "If the recorder detects that you touched down BEFORE the usable threshold (illegal — wake-turbulence/noise-abatement violation), the score is capped at a maximum of 55 PTS, the rationale switches to „Stopping ok, but touched down too early\", and a warning pill „⚠ Touched down before displaced threshold — review approach\" appears. So the score deliberately does NOT show „plenty of margin\" at 55 PTS — that would be dishonest.",
       "long_float_heading": "Special case: touched down long, but braked excellently",
-      "long_float_body": "The counterpart to the displaced-threshold cap. When your float exceeds the 15 % tolerance, but your rollout alone would have been excellent (under 30 % of the LDA) and the overall score is in the green, the rationale switches to „Good braking — but touched down long\". The message: braking wasn't the issue — practise an earlier, more precise touchdown point (aim-point), not harder braking.",
+      "long_float_body": "The counterpart to the displaced-threshold cap. When your float exceeds the 20 % tolerance, but your rollout alone would have been excellent (under 40 % of the LDA) and the overall score is in the green, the rationale switches to „Good braking — but touched down long\". The message: braking wasn't the issue — practise an earlier, more precise touchdown point (aim-point), not harder braking.",
       "skip_heading": "When is it NOT scored?",
       "skip_intro": "Six skip reasons. The card then shows „not scored\" + reason. No fallback, no estimated meters — better no score than misleading.",
       "skip_items": {

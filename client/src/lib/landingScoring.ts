@@ -144,16 +144,26 @@ export function band(points: number): Band {
   return "bad";
 }
 
+// v0.20.x (score_algorithm_version 4→5): replaced the old monotonic
+// "softer is always better" curve with a TARGET CORRIDOR — kept in
+// lockstep with Rust's sub_landing_rate.rs, see that file's doc comment
+// for the full rationale. T_VS_SMOOTH_FPM/etc. above are DELIBERATELY
+// left unchanged (they still drive classifyByVS's category ladder and
+// the forensics-chart tone functions) — only this function's own point
+// bands use the new corridor constants below.
+const VS_FLOAT_RISK_BELOW_FPM = 90;
+const VS_TARGET_CORRIDOR_TOP_FPM = 250;
+
 function subLandingRate(peakVsFpm: number): SubScore {
   const vs = Math.abs(peakVsFpm);
   const signed = Math.round(peakVsFpm);
   const display = `${signed === 0 ? 0 : signed} fpm`;
-  if (vs < 60)
-    return { key: "landing_rate", points: 100, value: display, band: "good", rationale: "smooth_touchdown" };
-  if (vs < T_VS_SMOOTH_FPM)
-    return { key: "landing_rate", points: 90, value: display, band: "good", rationale: "firm_but_clean" };
+  if (vs < VS_FLOAT_RISK_BELOW_FPM)
+    return { key: "landing_rate", points: 85, value: display, band: "good", rationale: "possible_float" };
+  if (vs < VS_TARGET_CORRIDOR_TOP_FPM)
+    return { key: "landing_rate", points: 100, value: display, band: "good", rationale: "firm_positive_touchdown" };
   if (vs < T_VS_FIRM_FPM)
-    return { key: "landing_rate", points: 70, value: display, band: "ok", rationale: "above_target" };
+    return { key: "landing_rate", points: 80, value: display, band: "good", rationale: "above_target" };
   if (vs < T_VS_HARD_FPM)
     return { key: "landing_rate", points: 45, value: display, band: "ok", rationale: "hard_landing" };
   if (vs < T_VS_SEVERE_FPM)

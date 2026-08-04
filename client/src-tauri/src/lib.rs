@@ -13271,9 +13271,12 @@ fn build_pirep_payload(
     };
     // v0.10.0 (#runway-utilization-score): LDA-basierter
     // Bahn-Auslastungs-Score. Markiert weiter unten am
-    // PirepPayload via score_algorithm_version: Some(4)
+    // PirepPayload via score_algorithm_version: Some(5)
     // (v0.12.0: Float-Toleranz-Refinement;
-    //  v0.16.21: MSFS touchdown V/S SimVar-lag g-force-gated de-lag).
+    //  v0.16.21: MSFS touchdown V/S SimVar-lag g-force-gated de-lag;
+    //  v0.20.x: Bahnauslastung-QS — Float-Toleranz 15→20 % LDA, Banding
+    //  30/50/70/90 → 40/60/80/95; Sinkraten-Score von monotoner
+    //  "weicher=besser"-Kurve auf Ziel-Korridor 90-250 fpm umgestellt).
     fill_v2_rollout_fields(&mut scoring_input, &stats, effective_arr_icao);
     let payload_sub_scores =
         landing_scoring::compute_sub_scores(&scoring_input);
@@ -13440,7 +13443,9 @@ fn build_pirep_payload(
         // Bahn-Auslastungs-Algorithmus stammen.
         // v0.16.21: bump 3→4 — MSFS touchdown V/S SimVar-lag corrected
         // (g-force-gated AGL de-lag; MSFS only, X-Plane unchanged).
-        score_algorithm_version: Some(4),
+        // v0.20.x: bump 4→5 — Bahnauslastung-QS (Float-Toleranz +
+        // Banding grosszuegiger) + Sinkraten-Ziel-Korridor.
+        score_algorithm_version: Some(5),
         client_health: build_client_health_report(&stats),
     }
 }
@@ -14455,7 +14460,9 @@ where
         // wurde. UI (LandingPanel.tsx) gated darauf das Rendering der
         // neuen `extra`-Lines + erweiterten Rationale-/Warning-Keys.
         // v0.16.21: bump 3→4 — MSFS touchdown V/S SimVar-lag corrected.
-        score_algorithm_version: Some(4),
+        // v0.20.x: bump 4→5 — Bahnauslastung-QS (Float-Toleranz +
+        // Banding grosszuegiger) + Sinkraten-Ziel-Korridor.
+        score_algorithm_version: Some(5),
     })
 }
 
@@ -22379,7 +22386,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             // entstanden ist.
                             // v0.16.21: bump 3→4 — MSFS touchdown V/S
                             // SimVar-lag corrected (g-force-gated de-lag).
-                            score_algorithm_version: Some(4),
+                            // v0.20.x: bump 4→5 — Bahnauslastung-QS
+                            // (Float-Toleranz + Banding grosszuegiger) +
+                            // Sinkraten-Ziel-Korridor.
+                            score_algorithm_version: Some(5),
                         }
                     })
                 };

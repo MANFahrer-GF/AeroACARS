@@ -67,10 +67,11 @@ fn eddf_25c_displaced_threshold_ok_stop() {
     // EDDF 25C: 4000 m physisch, 1968 ft displaced (≈600 m), LDA ≈ 3400 m
     // TD 800 m past threshold + 1500 m Rollout = 2300 m used
     // raw_ratio = 2300 / 3400 = 67.6 %; A320 = Medium, keine Allowance
-    // 67.6 < 70 → ok_stop (55 PTS)
+    // v0.20.x: tolerance 0.20*3400=680, eff_float=800-680=120,
+    // eff_distance=1500+120=1620, eff_ratio=47.6 % → < 60 → good_stop (80 PTS)
     let r = sub_rollout_v2(&ok_input(800.0, 1500.0, 4000.0, 1968, "A320"));
-    assert_eq!(r.points, 55);
-    assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.ok_stop"));
+    assert_eq!(r.points, 80);
+    assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.good_stop"));
 }
 
 // ── Overrun-vor-Allowance (R2-P0-2 Fix) ────────────────────────────────
@@ -125,17 +126,21 @@ fn negative_td_distance_clamped_to_rollout_only() {
 // ── Band-Grenzen / Banding (v0.12.0: effective_distance) ───────────────
 // HINWEIS v0.12.0: das Banding läuft auf der toleranzbereinigten
 // effective_distance. Damit kein Float die Band-Grenze verfälscht,
-// halten diese Tests td_dist INNERHALB der 15 %-Toleranz (effective_
+// halten diese Tests td_dist INNERHALB der 20 %-Toleranz (effective_
 // float = 0 → effective_distance = rollout).
+//
+// v0.20.x: Toleranz 15→20 %, Bandgrenzen 30/50/70/90 → 40/60/80/95
+// (EXCELLENT_MAX_PCT/GOOD_MAX_PCT/OK_MAX_PCT/LONG_MAX_PCT). Alle
+// Boundary-Tests unten zielen jetzt auf die NEUEN Grenzen.
 
 #[test]
 fn no_pre_rounding_at_band_boundary() {
-    // 29.5 % effective, Light (keine Allowance):
-    //   Wenn vorher gerundet wuerde: 30 → good_stop (80 PTS)
-    //   Mit Float-Banding: 29.5 < 30.0 → excellent_margin (100 PTS)
-    // td 100 m liegt unter Toleranz (0.15*1000 = 150 m) → effective_float=0,
-    // effective_distance = rollout 295 m → 29.5 %.
-    let input = ok_input(100.0, 295.0, 1000.0, 0, "C172");
+    // 39.5 % effective, Light (keine Allowance):
+    //   Wenn vorher gerundet wuerde: 40 → good_stop (80 PTS)
+    //   Mit Float-Banding: 39.5 < 40.0 (EXCELLENT_MAX_PCT) → excellent_margin (100 PTS)
+    // td 100 m liegt unter Toleranz (0.20*1000 = 200 m) → effective_float=0,
+    // effective_distance = rollout 395 m → 39.5 %.
+    let input = ok_input(100.0, 395.0, 1000.0, 0, "C172");
     let r = sub_rollout_v2(&input);
     assert_eq!(r.points, 100);
     assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.excellent_margin"));
@@ -143,35 +148,37 @@ fn no_pre_rounding_at_band_boundary() {
 
 #[test]
 fn heavy_allowance_5pp_at_band_boundary() {
-    // Heavy-Allowance an der 30 %-Bandgrenze. td 100 m < Toleranz 150 m
-    // → effective_float=0 → effective_distance = rollout.
-    //   Heavy, rollout 350 m / 1000 m LDA → 35 % − 5 pp = 30 %
-    //     → `30 < 30` false → `e if e < 50` → good_stop (80 PTS)
-    //   Heavy, rollout 340 m → 34 % − 5 pp = 29 % < 30 → excellent (100)
-    let r_heavy_35 = sub_rollout_v2(&ok_input(100.0, 350.0, 1000.0, 0, "A388"));
+    // Heavy-Allowance an der 40 %-Bandgrenze (EXCELLENT_MAX_PCT). td 100 m
+    // < Toleranz 200 m → effective_float=0 → effective_distance = rollout.
+    //   Heavy, rollout 450 m / 1000 m LDA → 45 % − 5 pp = 40 %
+    //     → `40 < 40` false → `e if e < 60` → good_stop (80 PTS)
+    //   Heavy, rollout 440 m → 44 % − 5 pp = 39 % < 40 → excellent (100)
+    let r_heavy_45 = sub_rollout_v2(&ok_input(100.0, 450.0, 1000.0, 0, "A388"));
     assert_eq!(
-        r_heavy_35.points, 80,
-        "Heavy 35% effective → 30% nach Allowance → good_stop"
+        r_heavy_45.points, 80,
+        "Heavy 45% effective → 40% nach Allowance → good_stop"
     );
-    let r_heavy_34 = sub_rollout_v2(&ok_input(100.0, 340.0, 1000.0, 0, "A388"));
+    let r_heavy_44 = sub_rollout_v2(&ok_input(100.0, 440.0, 1000.0, 0, "A388"));
     assert_eq!(
-        r_heavy_34.points, 100,
-        "Heavy 34% effective → 29% nach Allowance → excellent"
+        r_heavy_44.points, 100,
+        "Heavy 44% effective → 39% nach Allowance → excellent"
     );
 }
 
 #[test]
 fn medium_no_allowance() {
     // A320 (Medium, keine Allowance): rollout 500 m / 1000 m LDA = 50 %
-    // effective → ok_stop (55 PTS). td 100 m < Toleranz → kein Float-Anteil.
+    // effective → jetzt good_stop (80 PTS, GOOD_MAX_PCT=60). td 100 m <
+    // Toleranz → kein Float-Anteil.
     let r = sub_rollout_v2(&ok_input(100.0, 500.0, 1000.0, 0, "A320"));
-    assert_eq!(r.points, 55);
+    assert_eq!(r.points, 80);
 }
 
 #[test]
 fn cessna_grass_strip_long_rollout() {
-    // 350 m Rollout / 500 m Bahn → 70 % → long_rollout (25 PTS)
-    let r = sub_rollout_v2(&ok_input(0.0, 350.0, 500.0, 0, "C172"));
+    // 425 m Rollout / 500 m Bahn → 85 % → long_rollout (25 PTS,
+    // OK_MAX_PCT=80/LONG_MAX_PCT=95 — 70 % waere jetzt nur noch ok_stop).
+    let r = sub_rollout_v2(&ok_input(0.0, 425.0, 500.0, 0, "C172"));
     assert_eq!(r.points, 25);
     assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.long_rollout"));
 }
@@ -308,15 +315,22 @@ fn btx8815_real_case_long_float() {
     // Pilot-Beschwerde BTX8815 (Fenix A319, LOWS 15). Echte Flight-Log-
     // Werte. Exzellent gebremst (442 m), aber 540 m hinter der Schwelle
     // aufgesetzt.
-    //   tolerance      = 0.15 * 2849.88 = 427.5 m
-    //   effective_float= max(540.85 - 427.5, 0) = 113.4 m
-    //   effective_dist = 442.50 + 113.4 = 555.9 m
-    //   effective_ratio= 555.9 / 2849.88 = 19.5 %  → < 30 → excellent (100)
-    //   long_float: Float 540.85 > 427.5 ✓ · rollout/LDA 15.5 % < 30 ✓ ·
-    //               Band Good ✓  → Rationale-Override → long_float
+    //
+    // v0.20.x: mit der breiteren 20 %-Toleranz liegt der Aufsetzpunkt
+    // jetzt VOLLSTAENDIG innerhalb der Toleranz — der long_float-
+    // Override (der frueher noetig war, um die Punktzahl zu erklaeren)
+    // greift gar nicht mehr, weil der Float selbst nicht mehr als
+    // "ueber Toleranz" zaehlt. Genau der Fall, den die breitere
+    // Toleranz beheben sollte: eine normale, komfortable Landung braucht
+    // keine Sonder-Erklaerung mehr, sie ist einfach "excellent_margin".
+    //   tolerance      = 0.20 * 2849.88 = 570.0 m
+    //   effective_float= max(540.85 - 570.0, 0) = 0 m
+    //   effective_dist = 442.50 + 0 = 442.50 m
+    //   effective_ratio= 442.50 / 2849.88 = 15.5 %  → < 40 → excellent (100)
+    //   float_over_tolerance: 540.85 > 570.0 → false → kein long_float-Override
     let r = sub_rollout_v2(&ok_input(540.85, 442.50, 2849.88, 0, "A319"));
     assert_eq!(r.points, 100, "BTX8815: Float-Toleranz → 100 PT");
-    assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.long_float"));
+    assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.excellent_margin"));
     assert!(!r.skipped);
     assert!(r.warning.is_none());
     // value zeigt die ECHTE Auslastung (raw 983/2850 = 34.5 % → 35 %)
@@ -340,16 +354,17 @@ fn float_within_tolerance_no_override() {
 #[test]
 fn long_float_needs_excellent_rollout() {
     // R1-P1-1: long_float NUR wenn der reine Bremsweg excellent waere
-    // (rollout/LDA < 30 %). Hier: Float über Toleranz, aber rollout 400 m
-    // / 1000 m LDA = 40 % ≥ 30 % → KEIN long_float.
-    //   tolerance 150, effective_float = 300-150 = 150, eff_dist = 550,
-    //   eff_ratio 55 % → ok_stop (55). Band Ok (nicht Good) → eh kein
-    //   Override, plus rollout_alone 40 % ≥ 30 %.
+    // (rollout/LDA < EXCELLENT_MAX_PCT). Hier: Float über Toleranz, aber
+    // rollout 400 m / 1000 m LDA = 40 % — mit v0.20.x GENAU an der neuen
+    // 40 %-Grenze (`< 40` ist false für 40) → KEIN long_float.
+    //   tolerance 200, effective_float = 300-200 = 100, eff_dist = 500,
+    //   eff_ratio 50 % → good_stop (80, GOOD_MAX_PCT=60). Band Good, aber
+    //   rollout_alone 40 % ist NICHT < 40 → Override greift trotzdem nicht.
     let r = sub_rollout_v2(&ok_input(300.0, 400.0, 1000.0, 0, "A320"));
-    assert_eq!(r.points, 55);
+    assert_eq!(r.points, 80);
     assert_eq!(
         r.rationale_key.as_deref(),
-        Some("landing.rat.ok_stop"),
+        Some("landing.rat.good_stop"),
         "Bremsweg nicht excellent → normale Rationale, kein long_float"
     );
 }
@@ -367,17 +382,20 @@ fn overrun_still_on_raw_distance() {
 
 #[test]
 fn tolerance_scales_with_lda() {
-    // Toleranz ist 15 % der LDA — skaliert mit der Bahnlänge.
-    // Kurze Bahn 1500 m → Toleranz 225 m · lange Bahn 3500 m → 525 m.
-    // Gleicher Float 400 m: auf kurzer Bahn über Toleranz, auf langer drunter.
+    // Toleranz ist FLOAT_TOLERANCE_FRACTION (20 %) der LDA — skaliert mit
+    // der Bahnlänge. Kurze Bahn 1500 m → Toleranz 300 m · lange Bahn
+    // 3500 m → 700 m. Gleicher Float 400 m: auf kurzer Bahn über
+    // Toleranz, auf langer drunter — rationale-Ausgang bleibt bei beiden
+    // Bahnlängen unveraendert ggue. v0.12.0 (nur die Zwischenwerte
+    // verschieben sich), deshalb bleiben die Assertions gleich.
     let short = sub_rollout_v2(&ok_input(400.0, 300.0, 1500.0, 0, "A320"));
-    // tolerance 225, eff_float = 400-225 = 175, eff_dist = 475, ratio 31.7%
-    // → good_stop. Float 400 > 225 ✓, rollout/LDA 300/1500 = 20 % < 30 ✓,
-    // Band Good ✓ → long_float.
+    // tolerance 300, eff_float = 400-300 = 100, eff_dist = 400, ratio 26.7%
+    // → excellent_margin-Band. Float 400 > 300 ✓, rollout/LDA 300/1500 =
+    // 20 % < 40 (EXCELLENT_MAX_PCT) ✓, Band Good ✓ → Override → long_float.
     assert_eq!(short.rationale_key.as_deref(), Some("landing.rat.long_float"));
     let long = sub_rollout_v2(&ok_input(400.0, 300.0, 3500.0, 0, "A320"));
-    // tolerance 525, eff_float = max(400-525,0) = 0, eff_dist = 300,
-    // ratio 8.6 % → excellent_margin, Float 400 < 525 → kein long_float.
+    // tolerance 700, eff_float = max(400-700,0) = 0, eff_dist = 300,
+    // ratio 8.6 % → excellent_margin, Float 400 < 700 → kein long_float.
     assert_eq!(long.rationale_key.as_deref(), Some("landing.rat.excellent_margin"));
 }
 

@@ -19,8 +19,12 @@ import { computeSubScores } from "./landingScoring";
 
 describe("landingScoring TS legacy fallback — golden vectors (Q2)", () => {
   it("pins the full sub-score vector for a representative clean landing", () => {
+    // v0.20.x: landing_rate is NOT frozen (only the rollout piece below
+    // is — see the file header) — it tracks the live target-corridor
+    // redesign, so this line moved from 90/firm_but_clean to
+    // 100/firm_positive_touchdown (|150| is within the 90-250 corridor).
     const subs = computeSubScores({
-      vs_fpm: -150, // |150| ≥ 60, < 200 → 90 / firm_but_clean
+      vs_fpm: -150, // |150| in [90, 250) → 100 / firm_positive_touchdown
       scored_g_load: 1.3, // ≥ 1.20, < 1.40 → 85 / comfortable_g
       bounce_count: 0, // → 100 / clean_set
       approach_vs_stddev_fpm: 80, // < 100 → band 100
@@ -29,7 +33,7 @@ describe("landingScoring TS legacy fallback — golden vectors (Q2)", () => {
       fuel_efficiency_pct: 1.0, // |1.0| < 2 → 100 / on_plan
     });
     expect(subs.map((s) => [s.key, s.points, s.band, s.rationale])).toEqual([
-      ["landing_rate", 90, "good", "firm_but_clean"],
+      ["landing_rate", 100, "good", "firm_positive_touchdown"],
       ["g_force", 85, "good", "comfortable_g"],
       ["bounces", 100, "good", "clean_set"],
       ["stability", 100, "good", "very_stable"],

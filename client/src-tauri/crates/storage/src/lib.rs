@@ -596,11 +596,16 @@ pub struct LandingRecord {
     /// v0.10.0 (#runway-utilization-score) — Algorithmus-Version des
     /// `sub_scores`-Arrays. None/Some(1) = pre-v0.10 (meter-only Bahn-
     /// Auslastung); Some(2) = v0.10 (LDA-basierter Runway-Utilization-
-    /// Score). UI nutzt diesen Marker um zu entscheiden ob die neuen
-    /// Felder (`extra`, neue Rationale-Keys, neue Warning-Werte)
-    /// gerendert werden. Spec docs/spec/v0.10.0-runway-utilization-
-    /// score.md LE11. Backward-compat: alte landing_history.json-
-    /// Eintraege ohne diese Feld bleiben deserialisierbar (None).
+    /// Score); Some(3) = v0.12.0 (Float-Toleranz-Refinement); Some(4) =
+    /// v0.16.21 (MSFS touchdown V/S SimVar-lag corrected); Some(5) =
+    /// v0.20.x (Bahnauslastung-QS: Float-Toleranz 15→20 % LDA, Banding
+    /// 30/50/70/90 → 40/60/80/95; Sinkraten-Score von monotoner Kurve
+    /// auf Ziel-Korridor 90-250 fpm umgestellt). UI nutzt diesen Marker
+    /// um zu entscheiden ob die neuen Felder (`extra`, neue Rationale-
+    /// Keys, neue Warning-Werte) gerendert werden. Spec docs/spec/
+    /// v0.10.0-runway-utilization-score.md LE11. Backward-compat: alte
+    /// landing_history.json-Eintraege ohne diese Feld bleiben
+    /// deserialisierbar (None).
     #[serde(default)]
     pub score_algorithm_version: Option<u8>,
 }
