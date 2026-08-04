@@ -340,7 +340,7 @@ export function SettingsPanel({
                 value={simbriefUsername}
                 onChange={(e) => setSimbriefUsername(e.target.value)}
                 onBlur={() => persistSimbriefSettings(simbriefUsername, simbriefUserId)}
-                placeholder="z.B. thomaskant"
+                placeholder={t("settings.simbrief.username_placeholder")}
                 autoComplete="off"
                 spellCheck={false}
               />
@@ -359,7 +359,7 @@ export function SettingsPanel({
                   setSimbriefUserId(e.target.value.replace(/[^0-9]/g, ""))
                 }
                 onBlur={() => persistSimbriefSettings(simbriefUsername, simbriefUserId)}
-                placeholder="z.B. 612345"
+                placeholder={t("settings.simbrief.userid_placeholder")}
                 autoComplete="off"
                 spellCheck={false}
               />
