@@ -2069,6 +2069,42 @@ fn synaptic_a220_fma_vertical(
     }
 }
 
+/// Normalize a set of raw N1 readings that may come in on the 0-1
+/// fraction scale OR the 0-100 percent scale, depending on addon.
+///
+/// The old per-value heuristic (`if raw <= 1.5 { raw * 100.0 } else
+/// { raw }`) was applied independently to each engine and had a real
+/// overlap: a genuinely low PERCENT-scale reading — e.g. 1.2, meaning
+/// 1.2 % N1, which every single aircraft passes through during every
+/// engine start and every engine shutdown — is numerically
+/// indistinguishable *on its own* from a FRACTION-scale reading of the
+/// same magnitude (raw 1.2 as a 0-1 ratio would mean 120 %, i.e. deep
+/// overspeed, which is what the heuristic assumed). Multiplying it by
+/// 100 fabricated an impossible >100 % N1 right as an engine was
+/// spooling through single-digit percent.
+///
+/// Looking at all engines on the aircraft together resolves this in
+/// the overwhelmingly common case: fraction-scale N1 cannot physically
+/// exceed roughly 1.06 (106 % — the outer edge of turboprop overspeed)
+/// on ANY engine, so a single reading above 1.5 this tick proves the
+/// whole aircraft's N1 SimVars report percent directly — every engine
+/// must then be read literally, including ones sitting low (spooling
+/// up/down) in the same tick. Only a perfectly-synchronized multi-
+/// engine start/shutdown (or a single-engine aircraft) still passes
+/// through the old ambiguous branch, since there is then no other
+/// engine to disambiguate against.
+fn normalize_n1_group(raw: [f64; 4]) -> [f64; 4] {
+    const UNAMBIGUOUS_PERCENT_ABOVE: f64 = 1.5;
+    let confirmed_percent = raw.iter().any(|&r| r > UNAMBIGUOUS_PERCENT_ABOVE);
+    raw.map(|r| {
+        if confirmed_percent || r > UNAMBIGUOUS_PERCENT_ABOVE {
+            r
+        } else {
+            r * 100.0
+        }
+    })
+}
+
 fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     let profile = AircraftProfile::detect(&t.title, &t.atc_model);
     let is_fenix = profile.is_fenix();
@@ -2165,22 +2201,19 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             // nativ abgedeckt; der N1-Fallback bleibt als letzte Stufe
             // fuer Addons, die WEDER plain NOCH EX1 treiben. Fallback:
             // N1 ueber Idle/Windmill-Schwelle = Triebwerk laeuft. N1
-            // kommt je nach Addon als 0-1-Ratio ODER 0-100 % → auf
-            // Prozent normalisieren. Greift NUR wenn COMBUSTION (incl.
-            // EX1) komplett 0 ist → kein Regress fuer Flieger, deren
-            // COMBUSTION-Flag funktioniert (dort ist N1 ohnehin 0 wenn
-            // aus). Schwelle bewusst ueber reinem Windmilling (~15 %);
-            // am Boden (wo die FSM das Signal braucht) gibt es kein
-            // Windmilling, also trennt es dort sauber aus(0) vs laufend.
+            // kommt je nach Addon als 0-1-Ratio ODER 0-100 % →
+            // `normalize_n1_group` normalisiert alle 4 Triebwerke
+            // gemeinsam auf Prozent (Skalen-Erkennung ueber alle
+            // Engines zusammen, siehe dortiger Kommentar). Greift NUR
+            // wenn COMBUSTION (incl. EX1) komplett 0 ist → kein Regress
+            // fuer Flieger, deren COMBUSTION-Flag funktioniert (dort ist
+            // N1 ohnehin 0 wenn aus). Schwelle bewusst ueber reinem
+            // Windmilling (~15 %); am Boden (wo die FSM das Signal
+            // braucht) gibt es kein Windmilling, also trennt es dort
+            // sauber aus(0) vs laufend.
             const N1_RUNNING_PCT: f64 = 15.0;
-            let n1_on = |raw: f64| {
-                let pct = if raw <= 1.5 { raw * 100.0 } else { raw };
-                pct > N1_RUNNING_PCT
-            };
-            (n1_on(t.n1_pct_1) as u8)
-                + (n1_on(t.n1_pct_2) as u8)
-                + (n1_on(t.n1_pct_3) as u8)
-                + (n1_on(t.n1_pct_4) as u8)
+            let n1_pct = normalize_n1_group([t.n1_pct_1, t.n1_pct_2, t.n1_pct_3, t.n1_pct_4]);
+            n1_pct.iter().filter(|&&pct| pct > N1_RUNNING_PCT).count() as u8
         }
     };
 
@@ -3318,8 +3351,10 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // ODER dessen normalisiertes N1 > 5 % liegt — das Praefix 1..k
     // bleibt positionserhaltend (Single-Engine-Taxi auf Engine 2
     // liefert [0, n1_2], nicht [n1_2]). Alles aus → None. Skala je
-    // Addon 0-1 ODER 0-100 → auf Prozent normalisiert (wie der
-    // N1-Fallback fuer engines_running oben).
+    // Addon 0-1 ODER 0-100 → `normalize_n1_group` normalisiert alle 4
+    // Triebwerke gemeinsam auf Prozent (wie der N1-Fallback fuer
+    // engines_running oben — geteilte Funktion, siehe dortiger
+    // Kommentar zur Skalen-Ueberlappung).
     // MD-11-Ausnahme: display-exakte `MD11_ENG1..3_N1`-LVars
     // bevorzugen, sobald irgendeine > 0 liest; sonst Standard-Pfad.
     // v0.16.10 QS (Minor 9): zusaetzlich max(N1) >= 5 % verlangt —
@@ -3339,13 +3374,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             None
         };
         md11_n1.or_else(|| {
-            let normalize = |raw: f64| if raw <= 1.5 { raw * 100.0 } else { raw };
-            let n1 = [
-                normalize(t.n1_pct_1),
-                normalize(t.n1_pct_2),
-                normalize(t.n1_pct_3),
-                normalize(t.n1_pct_4),
-            ];
+            let n1 = normalize_n1_group([t.n1_pct_1, t.n1_pct_2, t.n1_pct_3, t.n1_pct_4]);
             let combustion = [
                 t.eng1_firing || t.eng1_combustion_ex1,
                 t.eng2_firing || t.eng2_combustion_ex1,
@@ -5408,6 +5437,67 @@ mod tests {
         // Alles aus → None (kein leerer/Null-Vektor).
         let snap = telemetry_to_snapshot(Telemetry::default(), Simulator::Msfs2024);
         assert_eq!(snap.eng_n1_pct, None);
+    }
+
+    // ---- N1-Skalen-Ueberlappung: 0-1-Fraction vs. 0-100-Prozent ----
+    // Bug: die alte Pro-Engine-Heuristik (`raw <= 1.5 → *100`) konnte
+    // eine echte NIEDRIGE Prozent-Ablesung (z.B. 1.2, waehrend jedes
+    // Anlassens/Abstellens durchlaufen) nicht von einer NIEDRIGEN
+    // Fraction-Ablesung unterscheiden — beide sehen als reine Zahl
+    // identisch aus. Multipliziert ergab das ein physikalisch
+    // unmoegliches N1 > 100 %. Fix: alle 4 Triebwerke gemeinsam
+    // betrachten — eine Fraction-Skala kann physikalisch nie > ~1,06
+    // (106 % Overspeed) liefern, also beweist EIN Wert > 1.5 in
+    // diesem Tick, dass die ganze Aircraft auf Prozent liest.
+
+    #[test]
+    fn normalize_n1_group_uses_a_confirmed_sibling_to_read_a_low_engine_literally() {
+        // Engine 1 laeuft normal bei 85 % (beweist: Prozent-Skala).
+        // Engine 2 steht bei echten 1.2 % (fast aus) — ohne den
+        // Cross-Engine-Fix wuerde das isoliert als Fraction (*100 =
+        // 120 %) fehlinterpretiert.
+        let result = normalize_n1_group([85.0, 1.2, 0.0, 0.0]);
+        assert_eq!(result, [85.0, 1.2, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn normalize_n1_group_still_multiplies_a_genuine_all_fraction_group() {
+        // Kein Engine ueber der Schwelle → keine Sibling-Bestaetigung
+        // moeglich, die Gruppe bleibt (wie zuvor) komplett als
+        // Fraction-Skala interpretiert. Deckt den Haupt-Fall ab
+        // (siehe n1_fallback_counts_running_when_combustion_zero).
+        let result = normalize_n1_group([0.6648, 0.6643, 0.6645, 0.6649]);
+        assert_eq!(result, [66.48, 66.43, 66.45, 66.49]);
+    }
+
+    #[test]
+    fn normalize_n1_group_leaves_unambiguous_percent_values_untouched() {
+        let result = normalize_n1_group([72.9, 10.0, 0.0, 0.0]);
+        assert_eq!(result, [72.9, 10.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn engines_running_does_not_falsely_count_a_spooling_down_engine_as_running() {
+        // Twin auf Prozent-Skala: Engine 1 haelt echte 85 % (laeuft),
+        // Engine 2 spult gerade durch 1.2 % Richtung Stillstand (aus).
+        // Vor dem Fix waere Engine 2 isoliert als Fraction gelesen
+        // (1.2 → *100 = 120 %) und faelschlich mitgezaehlt worden.
+        let mut t = Telemetry::default();
+        t.n1_pct_1 = 85.0;
+        t.n1_pct_2 = 1.2;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.engines_running, 1);
+    }
+
+    #[test]
+    fn eng_n1_pct_reports_a_low_sibling_literally_once_another_engine_confirms_percent_scale() {
+        let mut t = Telemetry::default();
+        t.eng1_firing = true;
+        t.eng2_firing = true;
+        t.n1_pct_1 = 85.0;
+        t.n1_pct_2 = 1.2;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.eng_n1_pct, Some(vec![85.0, 1.2]));
     }
 
     #[test]
