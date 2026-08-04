@@ -175,6 +175,36 @@ export function FlightProfile({ route }: { route: ProfilePt[] }) {
           return runs;
         };
 
+        // v0.19.x FIX: a missing terrain sample must NOT draw as 0 ft MSL —
+        // that would be sea level under an aircraft over the Alps (see the
+        // matching contract comment in LogbookView.tsx). One polygon per
+        // gap-free run, closed at ITS OWN baseline endpoints, mirrors how
+        // `path()` already breaks the MSL/AGL/speed lines into separate
+        // segments at null gaps instead of interpolating through them.
+        const fillRuns = (vals: (number | null)[]) => {
+          const runs: string[] = [];
+          let cur: string[] = [];
+          let startIdx = -1;
+          let endIdx = -1;
+          const flush = () => {
+            if (cur.length > 1) {
+              runs.push(
+                `${x(startIdx).toFixed(1)},${H - PAD_B} ${cur.join(" ")} ${x(endIdx).toFixed(1)},${H - PAD_B}`,
+              );
+            }
+            cur = [];
+            startIdx = -1;
+          };
+          vals.forEach((v, i) => {
+            if (v === null) { flush(); return; }
+            if (startIdx === -1) startIdx = i;
+            endIdx = i;
+            cur.push(`${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+          });
+          flush();
+          return runs;
+        };
+
         const ticks: number[] = [];
         for (let v = gLo; v <= gHi + 1e-6; v += step) ticks.push(v);
 
@@ -213,12 +243,9 @@ export function FlightProfile({ route }: { route: ProfilePt[] }) {
                     stroke="var(--border)" strokeWidth="1"
                     opacity={b.diverging && v === 0 ? 0.9 : 0.45} />
                 ))}
-                {b.fill && (
-                  <polygon
-                    points={`0,${H - PAD_B} ${b.fill.map((v, i) => `${x(i).toFixed(1)},${y(v ?? 0).toFixed(1)}`).join(" ")} ${W},${H - PAD_B}`}
-                    fill={GREY} opacity="0.38"
-                  />
-                )}
+                {b.fill && fillRuns(b.fill).map((pts, k) => (
+                  <polygon key={`fill${k}`} points={pts} fill={GREY} opacity="0.38" />
+                ))}
                 {b.series.map((s) =>
                   path(s.vals).map((d, k) => (
                     <polyline key={`${s.label}${k}`} points={d} fill="none"
