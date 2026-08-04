@@ -77,6 +77,18 @@ const EVENT_CHANNEL_CAP: usize = 64;
 /// refused cleanly with a 503.
 pub const MAX_WS_CONNECTIONS: usize = 12;
 
+/// v0.19.x FIX: hard cap on concurrent RAW TCP connections to the LAN
+/// server — plain HTTP (static SPA files, `/api/*` calls) as well as WS.
+/// `MAX_WS_CONNECTIONS` only bounds the WebSocket upgrade path; nothing
+/// bounded connections at the TCP-accept level, so any device on the LAN
+/// could open unbounded slow/half-open sockets (a classic slowloris-style
+/// FD-exhaustion attack) against an otherwise-unauthenticated listener —
+/// starving the SAME process's SimConnect/MQTT/log-file handles mid-flight.
+/// Set comfortably above `MAX_WS_CONNECTIONS` so normal use (a handful of
+/// paired devices, each holding one WS plus occasional short HTTP calls)
+/// is never throttled by this.
+pub const MAX_TCP_CONNECTIONS: usize = 64;
+
 /// Cadence of the single shared `flight_status` tick (one timer total,
 /// not one-per-connection). The frame is computed once per second and
 /// published into the broadcast bus that every WS already subscribes to.
@@ -386,6 +398,113 @@ fn qr_target_url(primary: Option<&str>, port: u16, pin: &str) -> String {
     }
 }
 
+/// v0.19.x FIX: wraps a `TcpStream`, holding a connection-slot permit for
+/// the stream's entire lifetime. The permit releases (via `Drop`) exactly
+/// when the connection closes, whichever side closes it — that's what
+/// makes the cap self-correcting instead of needing an explicit "done"
+/// callback threaded through axum/hyper's connection handling.
+struct LimitedStream {
+    inner: tokio::net::TcpStream,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+
+impl tokio::io::AsyncRead for LimitedStream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncWrite for LimitedStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
+
+/// v0.19.x FIX: wraps a `TcpListener`, gating every accepted connection
+/// behind a semaphore permit — bounds CONCURRENT CONNECTIONS, not just
+/// concurrent requests within an already-open one. That's the actual
+/// slowloris mitigation: an attacker holding many slow/half-open sockets
+/// never gets past `accept()` once the cap is hit, so the OS's own TCP
+/// backlog absorbs the excess instead of this process handing out
+/// unbounded file descriptors for them.
+struct LimitedListener {
+    inner: tokio::net::TcpListener,
+    slots: Arc<Semaphore>,
+}
+
+impl axum::serve::Listener for LimitedListener {
+    type Io = LimitedStream;
+    type Addr = std::net::SocketAddr;
+
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        // Blocks accepting a NEW connection until a slot frees up — the
+        // permit is acquired BEFORE the OS-level accept, not after.
+        let permit = Arc::clone(&self.slots)
+            .acquire_owned()
+            .await
+            .expect("connection-limit semaphore is never closed");
+        // `TcpListener`'s own `Listener::accept` impl already retries
+        // forever on transient accept errors (EMFILE backoff etc.), so
+        // this never needs its own retry loop.
+        let (stream, addr) =
+            <tokio::net::TcpListener as axum::serve::Listener>::accept(&mut self.inner).await;
+        (
+            LimitedStream {
+                inner: stream,
+                _permit: permit,
+            },
+            addr,
+        )
+    }
+
+    fn local_addr(&self) -> std::io::Result<Self::Addr> {
+        self.inner.local_addr()
+    }
+}
+
+/// `into_make_service_with_connect_info` (used so every handler/middleware
+/// — including [`router::lan_only`], which is the FIRST line of defence for
+/// this whole server — can read the peer's real address) needs
+/// `C: Connected<IncomingStream<'_, L>>` for whichever listener type `L`
+/// is in use. axum only provides a `Connected` impl straight on
+/// `SocketAddr` for its own built-in `TcpListener`, and Rust's orphan
+/// rules don't allow adding one for `SocketAddr` against a foreign
+/// `IncomingStream<'_, LimitedListener>` either (neither `Connected` nor
+/// `SocketAddr` nor `IncomingStream` are local to this crate) — hence this
+/// thin local wrapper, which IS a legal impl target.
+#[derive(Debug, Clone, Copy)]
+pub struct PeerAddr(pub std::net::SocketAddr);
+
+impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, LimitedListener>>
+    for PeerAddr
+{
+    fn connect_info(stream: axum::serve::IncomingStream<'_, LimitedListener>) -> Self {
+        PeerAddr(*stream.remote_addr())
+    }
+}
+
 /// Start the LAN remote-control server. Idempotent: if already running it
 /// returns the current status instead of double-binding (the `AppState`
 /// mutex is held across the whole start, so concurrent callers serialize).
@@ -453,11 +572,15 @@ pub async fn start_server(app: &AppHandle) -> Result<RemoteServerStatus, UiError
     })?;
 
     let router = router::build_router(ctx, serve_dir);
+    let limited_listener = LimitedListener {
+        inner: listener,
+        slots: Arc::new(Semaphore::new(MAX_TCP_CONNECTIONS)),
+    };
     tauri::async_runtime::spawn(async move {
         tracing::info!(port, "LAN remote-control server listening");
         let serve = axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            limited_listener,
+            router.into_make_service_with_connect_info::<PeerAddr>(),
         )
         .with_graceful_shutdown(async move {
             let _ = shutdown_rx.await;
@@ -803,5 +926,53 @@ mod tests {
         // A disconnect releases its permit → a new session fits again.
         drop(held.pop());
         assert!(Arc::clone(&sem).try_acquire_owned().is_ok());
+    }
+
+    // v0.19.x FIX: LimitedListener must bound RAW TCP connections at the
+    // accept() level (not just WS upgrades) — the actual slowloris
+    // mitigation. Real listener, real TCP connections, no mocking.
+    #[tokio::test]
+    async fn tcp_connection_cap_blocks_accept_beyond_the_limit() {
+        use axum::serve::Listener as _;
+        let raw = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = raw.local_addr().expect("local_addr");
+        let slots = Arc::new(Semaphore::new(2));
+        let mut limited = LimitedListener {
+            inner: raw,
+            slots: Arc::clone(&slots),
+        };
+
+        // First two connections fit within the cap and accept promptly.
+        let _c1 = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("client 1 connects");
+        let (s1, _) = limited.accept().await;
+        let _c2 = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("client 2 connects");
+        let (s2, _) = limited.accept().await;
+
+        // A third connection: the OS backlog accepts the client-side
+        // connect() regardless, but our accept() must NOT resolve while
+        // both slots are still held — race it against a short timeout.
+        let _c3 = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("client 3 connects (OS backlog, not our accept)");
+        let blocked = tokio::time::timeout(std::time::Duration::from_millis(200), limited.accept())
+            .await;
+        assert!(
+            blocked.is_err(),
+            "accept() must block once MAX_TCP_CONNECTIONS-equivalent slots are exhausted"
+        );
+
+        // Closing one held connection releases its permit — the pending
+        // accept() can now complete.
+        drop(s1);
+        let freed = tokio::time::timeout(std::time::Duration::from_secs(2), limited.accept()).await;
+        assert!(freed.is_ok(), "accept() must proceed once a slot frees up");
+
+        drop(s2);
     }
 }

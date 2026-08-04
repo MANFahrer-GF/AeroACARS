@@ -267,7 +267,7 @@ fn reject_non_private(peer: SocketAddr) -> Option<Response> {
 /// (including the SPA fallback), so the static bundle isn't reachable from a
 /// forwarded/public port. Runs before the route handlers; the per-handler
 /// `reject_non_private` checks remain as redundant defense-in-depth.
-async fn lan_only(ConnectInfo(peer): ConnectInfo<SocketAddr>, req: Request, next: Next) -> Response {
+async fn lan_only(ConnectInfo(crate::remote::PeerAddr(peer)): ConnectInfo<crate::remote::PeerAddr>, req: Request, next: Next) -> Response {
     if let Some(r) = reject_non_private(peer) {
         return r;
     }
@@ -294,7 +294,7 @@ struct AuthBody {
 
 async fn auth_handler(
     State(ctx): State<RemoteContext>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ConnectInfo(crate::remote::PeerAddr(peer)): ConnectInfo<crate::remote::PeerAddr>,
     Json(body): Json<AuthBody>,
 ) -> Response {
     if let Some(r) = reject_non_private(peer) {
@@ -321,7 +321,7 @@ async fn auth_handler(
 
 async fn cmd_handler(
     State(ctx): State<RemoteContext>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ConnectInfo(crate::remote::PeerAddr(peer)): ConnectInfo<crate::remote::PeerAddr>,
     AxumPath(name): AxumPath<String>,
     headers: HeaderMap,
     raw: Bytes,
@@ -387,7 +387,7 @@ struct WsQuery {
 
 async fn ws_handler(
     State(ctx): State<RemoteContext>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ConnectInfo(crate::remote::PeerAddr(peer)): ConnectInfo<crate::remote::PeerAddr>,
     Query(q): Query<WsQuery>,
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
