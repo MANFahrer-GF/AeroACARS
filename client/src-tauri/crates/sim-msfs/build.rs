@@ -102,6 +102,11 @@ fn generate_bindings(manifest_dir: &PathBuf, out_path: &PathBuf) {
         .allowlist_function("SimConnect_RequestDataOnSimObject")
         .allowlist_function("SimConnect_CallDispatch")
         .allowlist_function("SimConnect_GetNextDispatch")
+        // Correlates an async SIMCONNECT_RECV_EXCEPTION back to the
+        // specific AddToDataDefinition call that caused it, via its
+        // dwSendID — needed to attribute inspector-watch registration
+        // failures to the right watch entry (see register_inspector).
+        .allowlist_function("SimConnect_GetLastSentPacketID")
         // --- Receiver structs we actually inspect ---
         .allowlist_type("SIMCONNECT_RECV")
         .allowlist_type("SIMCONNECT_RECV_ID")

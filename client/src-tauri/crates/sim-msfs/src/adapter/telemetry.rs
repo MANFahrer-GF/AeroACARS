@@ -1287,6 +1287,26 @@ impl InspectorState {
         }
     }
 
+    /// Clear every watch's `error` field. Called right before a fresh
+    /// `register_inspector()` attempt so a name the pilot just fixed
+    /// (or a transient SimConnect hiccup) gets a clean slate instead
+    /// of showing a stale error forever.
+    pub fn clear_errors(&mut self) {
+        for w in &mut self.watches {
+            w.error = None;
+        }
+    }
+
+    /// Attribute a SIMCONNECT_RECV_EXCEPTION to the watch named `name`,
+    /// so the UI can render an error indicator instead of a stale
+    /// value. No-op if the watch was removed before the (async)
+    /// exception arrived.
+    pub fn set_error(&mut self, name: &str, message: String) {
+        if let Some(w) = self.watches.iter_mut().find(|w| w.name == name) {
+            w.error = Some(message);
+        }
+    }
+
     /// Parse the data block returned by SimConnect for the inspector
     /// definition — fields are at fixed offsets in watchlist order,
     /// same parsing model as the main telemetry block.
@@ -1315,6 +1335,25 @@ impl InspectorState {
             }
         }
     }
+}
+
+/// Correlate an async `SIMCONNECT_RECV_EXCEPTION` back to the inspector
+/// watch whose `AddToDataDefinition` call produced it.
+///
+/// `send_ids` is the `(send_id, watch_name)` table captured while
+/// registering the inspector's data definition — one entry per watch,
+/// in call order (see `Connection::register_inspector`). SimConnect
+/// often accepts an unresolvable SimVar/LVar name synchronously (the
+/// `AddToDataDefinition` call itself returns success) and only reports
+/// the problem later via an exception whose `dwSendID` matches that
+/// specific `AddToDataDefinition` call — this is the only reliable way
+/// to attribute the failure to one watch out of many sharing the same
+/// data definition.
+pub fn inspector_watch_for_exception(send_ids: &[(u32, String)], exception_send_id: u32) -> Option<&str> {
+    send_ids
+        .iter()
+        .find(|(id, _)| *id == exception_send_id)
+        .map(|(_, name)| name.as_str())
 }
 
 impl Touchdown {
@@ -6333,5 +6372,82 @@ mod tests {
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.seatbelts_sign, Some(0)); // OFF, not None — A220 has its own LVar
         assert_eq!(snap.no_smoking_sign, Some(0));
+    }
+
+    // Inspector-tool per-watch error attribution. Bug: `InspectorWatch.error`
+    // was documented ("set whenever a SIMCONNECT_RECV_EXCEPTION fires for
+    // this entry during registration") but nothing ever wrote it — the
+    // dispatch loop only logged the exception and looked up the *main
+    // telemetry* field table, never touching the inspector state at all.
+    // A pilot who mistyped an LVar name in the Inspector tool saw the
+    // watch sit forever at "no value", indistinguishable from "sim hasn't
+    // sent data yet".
+
+    #[test]
+    fn inspector_watch_for_exception_finds_the_matching_watch() {
+        let send_ids = vec![
+            (101, "L:FENIX_ECAM_SD".to_string()),
+            (102, "L:TYPO_NOT_A_REAL_LVAR".to_string()),
+            (103, "PLANE ALTITUDE".to_string()),
+        ];
+        assert_eq!(
+            inspector_watch_for_exception(&send_ids, 102),
+            Some("L:TYPO_NOT_A_REAL_LVAR")
+        );
+    }
+
+    #[test]
+    fn inspector_watch_for_exception_ignores_unrelated_send_ids() {
+        // An exception from some other SimConnect call entirely (e.g. the
+        // main telemetry definition) must not be misattributed to an
+        // inspector watch just because *a* table lookup succeeds.
+        let send_ids = vec![(101, "L:FENIX_ECAM_SD".to_string())];
+        assert_eq!(inspector_watch_for_exception(&send_ids, 999), None);
+    }
+
+    #[test]
+    fn inspector_watch_for_exception_empty_table_is_none() {
+        assert_eq!(inspector_watch_for_exception(&[], 42), None);
+    }
+
+    #[test]
+    fn inspector_state_set_error_flags_the_named_watch_only() {
+        let mut state = InspectorState::default();
+        let good = state.add("PLANE ALTITUDE".to_string(), "feet".to_string(), WatchKind::Number);
+        let bad = state.add(
+            "L:TYPO_NOT_A_REAL_LVAR".to_string(),
+            "number".to_string(),
+            WatchKind::Number,
+        );
+
+        state.set_error("L:TYPO_NOT_A_REAL_LVAR", "SimConnect exception #3".to_string());
+
+        let bad_watch = state.watches.iter().find(|w| w.id == bad).unwrap();
+        assert_eq!(bad_watch.error.as_deref(), Some("SimConnect exception #3"));
+        let good_watch = state.watches.iter().find(|w| w.id == good).unwrap();
+        assert_eq!(good_watch.error, None);
+    }
+
+    #[test]
+    fn inspector_state_set_error_on_unknown_name_is_a_harmless_noop() {
+        // The exception can legitimately arrive after the pilot already
+        // removed the watch from the UI — must not panic or affect other
+        // entries.
+        let mut state = InspectorState::default();
+        state.add("PLANE ALTITUDE".to_string(), "feet".to_string(), WatchKind::Number);
+        state.set_error("L:ALREADY_REMOVED", "SimConnect exception #3".to_string());
+        assert!(state.watches.iter().all(|w| w.error.is_none()));
+    }
+
+    #[test]
+    fn inspector_state_clear_errors_resets_every_watch_for_a_fresh_registration_attempt() {
+        let mut state = InspectorState::default();
+        state.add("L:TYPO_NOT_A_REAL_LVAR".to_string(), "number".to_string(), WatchKind::Number);
+        state.set_error("L:TYPO_NOT_A_REAL_LVAR", "SimConnect exception #3".to_string());
+        assert!(state.watches[0].error.is_some());
+
+        state.clear_errors();
+
+        assert_eq!(state.watches[0].error, None);
     }
 }

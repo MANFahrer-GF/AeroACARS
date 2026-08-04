@@ -919,7 +919,15 @@ fn run_dispatch(
             g.dirty
         };
         if needs_inspector_register {
-            let watches = shared.inspector.lock().watches.clone();
+            let watches = {
+                // Fresh registration attempt — clear stale errors so a
+                // name the pilot just corrected (or a transient
+                // SimConnect hiccup) gets a clean slate instead of
+                // showing yesterday's exception forever.
+                let mut g = shared.inspector.lock();
+                g.clear_errors();
+                g.watches.clone()
+            };
             match conn.register_inspector(&watches) {
                 Ok(()) => {
                     if !watches.is_empty() {
@@ -961,6 +969,20 @@ fn run_dispatch(
                         ?field,
                         "SIMCONNECT_RECV_EXCEPTION — SimVar request was rejected"
                     );
+                    // Route it to the Inspector tool too, if this
+                    // exception's send_id matches one of its watches'
+                    // AddToDataDefinition calls — otherwise the pilot
+                    // sees the mistyped LVar just sit at "no value"
+                    // forever, indistinguishable from "sim hasn't sent
+                    // data yet" (see InspectorWatch::error).
+                    if let Some(name) =
+                        telemetry::inspector_watch_for_exception(&conn.inspector_send_ids, send_id)
+                    {
+                        shared
+                            .inspector
+                            .lock()
+                            .set_error(name, format!("SimConnect exception #{exception} (send_id {send_id})"));
+                    }
                 }
                 Ok(Some(DispatchMsg::SimObjectData { request_id, bytes })) => {
                     last_data = Instant::now();
@@ -1299,6 +1321,12 @@ fn sleep_or_stop(stop: &Arc<AtomicBool>, dur: Duration) {
 /// the worker loop drives. `Drop` calls `SimConnect_Close`.
 struct Connection {
     handle: sys::HANDLE,
+    /// `(send_id, watch_name)` captured while registering the inspector
+    /// data definition — lets a later async SIMCONNECT_RECV_EXCEPTION be
+    /// attributed back to the specific watch whose AddToDataDefinition
+    /// call produced it. Rebuilt from scratch on every
+    /// `register_inspector()` call. See `telemetry::inspector_watch_for_exception`.
+    inspector_send_ids: Vec<(u32, String)>,
 }
 
 impl Connection {
@@ -1318,7 +1346,10 @@ impl Connection {
         if hr != 0 {
             return Err(format!("HRESULT 0x{hr:08X}"));
         }
-        Ok(Self { handle })
+        Ok(Self {
+            handle,
+            inspector_send_ids: Vec::new(),
+        })
     }
 
     /// Register every entry in `TELEMETRY_FIELDS` in order.
@@ -1403,6 +1434,10 @@ impl Connection {
         if hr != 0 {
             return Err(format!("ClearDataDefinition returned 0x{hr:08X}"));
         }
+        // Rebuilt below, one entry per successfully-issued
+        // AddToDataDefinition call — this is what lets a later async
+        // exception be attributed back to the right watch.
+        self.inspector_send_ids.clear();
         for (idx, w) in watches.iter().enumerate() {
             let cname = std::ffi::CString::new(w.name.as_str())
                 .map_err(|_| format!("watch #{idx} name contained NUL"))?;
@@ -1429,6 +1464,22 @@ impl Connection {
                     "AddToDataDefinition for inspector watch \"{}\" returned 0x{hr:08X}",
                     w.name
                 ));
+            }
+            // AddToDataDefinition frequently reports success (hr == 0)
+            // synchronously even for a name SimConnect can't actually
+            // resolve — MSFS only raises SIMCONNECT_RECV_EXCEPTION for
+            // that later, asynchronously, referencing this call's own
+            // send ID. Capture it now so the dispatch loop can route
+            // that exception back to watch `w`.
+            let mut send_id: sys::DWORD = 0;
+            let hr = unsafe { sys::SimConnect_GetLastSentPacketID(self.handle, &mut send_id) };
+            if hr == 0 {
+                self.inspector_send_ids.push((send_id, w.name.clone()));
+            } else {
+                tracing::warn!(
+                    watch = %w.name,
+                    "GetLastSentPacketID failed after AddToDataDefinition; this watch's exceptions won't be attributable"
+                );
             }
         }
         Ok(())
