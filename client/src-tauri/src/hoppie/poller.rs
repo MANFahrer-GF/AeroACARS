@@ -230,7 +230,18 @@ fn notify_new_message(app: &AppHandle, from: &str) {
 /// how the network transfers a CPDLC session between centres. Pure, so
 /// the parsing is testable without a live connection.
 fn parse_handover(text: &str) -> Option<String> {
-    let next = text.trim().strip_prefix("HANDOVER")?.trim();
+    let trimmed = text.trim();
+    let next = trimmed.strip_prefix("HANDOVER")?;
+    // v0.19.x FIX: require a separator after the literal word. Without
+    // this, any free-text starting with the 8 characters "HANDOVER"
+    // immediately followed by a token-looking string (e.g. a controller
+    // remark "HANDOVEREDUU..." or coincidentally similar text) parsed as
+    // a real handover to "EDUU" — silently logging the aircraft off a
+    // real ATC session.
+    if !next.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let next = next.trim();
     // Guard against a message that merely starts with the word (e.g. a
     // free-text remark) — a real handover carries exactly one token.
     let mut parts = next.split_whitespace();
@@ -239,6 +250,23 @@ fn parse_handover(text: &str) -> Option<String> {
         return None;
     }
     Some(station.to_uppercase())
+}
+
+/// v0.19.x FIX: whether an inbound `HANDOVER <station>` directive should
+/// actually be honored. Hoppie has no cryptographic sender verification —
+/// any account can address a packet to any callsign — and this client
+/// used to act on a HANDOVER regardless of who sent it, so any sender
+/// could redirect a pilot's live CPDLC session to an arbitrary facility
+/// (or off it) by simply naming their own outbound `from`. A real
+/// handover always comes from the facility the pilot is CURRENTLY
+/// connected to; requiring that match doesn't (and can't) close Hoppie's
+/// network-level lack of authentication, but it does close the class of
+/// stray/misrouted/spoofed packets that don't even bother pretending to
+/// be the current controller — which is the entire realistic threat
+/// surface a client-side check can actually reduce. Pure, so it's
+/// testable without a live connection.
+fn handover_sender_is_authorized(from: &str, current_station: &str) -> bool {
+    !current_station.trim().is_empty() && from.trim().eq_ignore_ascii_case(current_station.trim())
 }
 
 /// Fire `REQUEST LOGON` at `station` as part of an automatic handover.
@@ -371,26 +399,57 @@ async fn process_poll_payload(
                 // never acts on this — it's protocol bookkeeping, not
                 // an instruction, so it stays out of the message log.
                 if let Some(next) = parse_handover(&msg.element_text) {
-                    log_activity_handle(
-                        app,
-                        ActivityLevel::Info,
-                        format!("CPDLC: Übergabe an {next}"),
-                        None,
-                    );
-                    // The old centre has let go; the new one has
-                    // not accepted yet. Leaving `logged_on` set
-                    // made the header claim "connected <new
-                    // centre>" from this instant on, even if that
-                    // centre never answers — the pilot would
-                    // believe they have a datalink they don't.
-                    thread
-                        .lock()
-                        .expect("hoppie thread mutex")
-                        .mark_logged_off();
-                    crate::hoppie::settings::clear_open_session(app);
-                    *to_station.lock().expect("hoppie to_station mutex") = next.clone();
-                    send_logon(http, thread, min_timestamps, from_callsign, logon, &next).await;
-                    continue;
+                    let current_station =
+                        to_station.lock().expect("hoppie to_station mutex").clone();
+                    if !handover_sender_is_authorized(&env.from, &current_station) {
+                        // v0.19.x FIX: don't act on a HANDOVER from anyone
+                        // other than the facility we're currently connected
+                        // to — see `handover_sender_is_authorized`'s doc
+                        // comment. Fall through to normal message handling
+                        // below instead of `continue`ing, so the pilot
+                        // still sees the odd uplink rather than it vanishing.
+                        tracing::warn!(
+                            claimed_next = %next,
+                            from = %env.from,
+                            expected = %current_station,
+                            "hoppie: ignoring HANDOVER from unexpected sender"
+                        );
+                        log_activity_handle(
+                            app,
+                            ActivityLevel::Warn,
+                            format!(
+                                "CPDLC: HANDOVER-Anfrage an {next} von unerwartetem Absender \
+                                 ({from}) ignoriert",
+                                from = env.from
+                            ),
+                            Some(format!(
+                                "Erwartet wurde die aktuell verbundene Stelle ({current_station}). \
+                                 Die Übergabe wurde NICHT ausgeführt."
+                            )),
+                        );
+                    } else {
+                        log_activity_handle(
+                            app,
+                            ActivityLevel::Info,
+                            format!("CPDLC: Übergabe an {next}"),
+                            None,
+                        );
+                        // The old centre has let go; the new one has
+                        // not accepted yet. Leaving `logged_on` set
+                        // made the header claim "connected <new
+                        // centre>" from this instant on, even if that
+                        // centre never answers — the pilot would
+                        // believe they have a datalink they don't.
+                        thread
+                            .lock()
+                            .expect("hoppie thread mutex")
+                            .mark_logged_off();
+                        crate::hoppie::settings::clear_open_session(app);
+                        *to_station.lock().expect("hoppie to_station mutex") = next.clone();
+                        send_logon(http, thread, min_timestamps, from_callsign, logon, &next)
+                            .await;
+                        continue;
+                    }
                 }
                 let min = msg.min;
                 let mut t = thread.lock().expect("hoppie thread mutex");
@@ -580,6 +639,44 @@ mod tests {
         // Prefix-only / multi-token text is not a handover directive.
         assert_eq!(parse_handover("HANDOVER"), None);
         assert_eq!(parse_handover("HANDOVER EDGG WHEN READY"), None);
+    }
+
+    /// v0.19.x FIX: free text that merely starts with the 8 characters
+    /// "HANDOVER" with no separator must never be mistaken for a real
+    /// handover directive — that used to silently log the aircraft off.
+    #[test]
+    fn handover_requires_a_separator_after_the_literal_word() {
+        assert_eq!(parse_handover("HANDOVEREDUU"), None);
+        assert_eq!(parse_handover("HANDOVERSHIP HAS SAILED"), None);
+        // A real, whitespace-separated handover still works.
+        assert_eq!(parse_handover("HANDOVER EDUU"), Some("EDUU".to_string()));
+    }
+
+    // --- handover_sender_is_authorized ---
+
+    #[test]
+    fn handover_from_the_currently_connected_facility_is_authorized() {
+        assert!(handover_sender_is_authorized("EDGG", "EDGG"));
+        // Case-insensitive, whitespace-tolerant — matches how callsigns
+        // are compared elsewhere in this codebase.
+        assert!(handover_sender_is_authorized("edgg", " EDGG "));
+    }
+
+    #[test]
+    fn handover_from_any_other_sender_is_rejected() {
+        // The exact bug this closes: any Hoppie account could address a
+        // HANDOVER packet claiming to be from anyone at all.
+        assert!(!handover_sender_is_authorized("LBSR", "EDGG"));
+        assert!(!handover_sender_is_authorized("EDGG_2", "EDGG"));
+    }
+
+    #[test]
+    fn handover_is_never_authorized_before_any_station_is_connected() {
+        // An empty current_station means "not connected to anyone yet" —
+        // nothing should ever be authorized to redirect a session that
+        // doesn't exist.
+        assert!(!handover_sender_is_authorized("EDGG", ""));
+        assert!(!handover_sender_is_authorized("", ""));
     }
 
     // --- reorder_same_batch_envelopes / requires_reply_for_batch_order ---
