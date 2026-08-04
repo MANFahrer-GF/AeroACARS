@@ -1842,7 +1842,19 @@
     "surface_grv": "Ghiaia",
     "surface_grs": "Erba",
     "surface_dirt": "Terra",
-    "surface_turf": "Manto erboso"
+    "surface_turf": "Manto erboso",
+    "tooltip_pre_threshold": "Zona pre-soglia (Displaced Threshold, DDS): {{m}} m prima della soglia di atterraggio — toccare qui è illegale nel mondo reale (clearance ostacoli).",
+    "tooltip_threshold": "Soglia di atterraggio (Threshold) — inizio della parte utilizzabile della pista.",
+    "tooltip_runway_end": "Fine pista — fine della parte utilizzabile della pista.",
+    "tooltip_tdz": "Zona di contatto (Touchdown Zone, TDZ): primi {{m}} m della pista. Area di contatto prevista secondo ICAO Annex 14.",
+    "tooltip_aim_point": "Aim-Point — i due grandi quadrati bianchi sulla pista reale (qui disegnati in giallo). Il pilota punta a questo riferimento in avvicinamento; con il flare il contatto avviene tipicamente 50–150 m OLTRE questo punto (= inizio della TDZ). Posizione: {{m}} m oltre la soglia.",
+    "tooltip_touchdown": "Punto di contatto (Touchdown): {{distance}} m {{beforeAfter}} la soglia, {{lateral}} m {{side}}.",
+    "tooltip_word_before": "prima di",
+    "tooltip_word_after": "dopo",
+    "tooltip_word_right": "a destra della linea centrale",
+    "tooltip_word_left": "a sinistra della linea centrale",
+    "tooltip_word_on": "sulla linea centrale",
+    "tooltip_brake_point": "Punto di frenata — da qui hai rallentato a ~40 kt. È la velocità tipica di uscita ad alta velocità; al prossimo raccordo puoi ora lasciare la pista normalmente. NON è il punto in cui svolti effettivamente — quello avviene più avanti, a un raccordo specifico."
   },
   "ascan": {
     "title": "🔬 Invia aereo per l'analisi (Aircraft Scan)",

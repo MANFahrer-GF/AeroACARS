@@ -358,11 +358,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 strokeDasharray="4,4"
                 strokeWidth="1.2"
               >
-                <title>
-                  Pre-Threshold-Zone (Displaced Threshold, DDS): {ddsM.toFixed(0)} m
-                  vor der Landeschwelle — Aufsetzen hier ist in der echten Welt
-                  illegal (Hindernis-Clearance).
-                </title>
+                <title>{t("runway_v2.tooltip_pre_threshold", { m: ddsM.toFixed(0) })}</title>
               </rect>
               {/* DDS-Label am UNTEREN Rand der Zone — sodass es nicht
                   mit der AUFSETZZONE-Beschriftung kollidiert die am
@@ -422,9 +418,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               stroke="rgba(255,255,255,0.9)"
               strokeWidth="2"
             />
-            <title>
-              Landeschwelle (Threshold) — Beginn des landbaren Bahn-Teils.
-            </title>
+            <title>{t("runway_v2.tooltip_threshold")}</title>
           </g>
 
           {/* Bahn-Ende rechts — gespiegelte 8 weiße Streifen + solides
@@ -449,7 +443,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               height={innerH - 8}
               fill="rgba(255,255,255,0.9)"
             />
-            <title>Bahn-Ende — Ende des landbaren Bahn-Teils.</title>
+            <title>{t("runway_v2.tooltip_runway_end")}</title>
           </g>
 
           {/* TDZ-Box — gelbe Schraffur als Bereichs-Indikator + dünner
@@ -493,10 +487,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 strokeDasharray="6,5"
                 strokeWidth="1"
               >
-                <title>
-                  Aufsetzzone (Touchdown Zone, TDZ): erste {props.td_tdz_length_m?.toFixed(0)} m
-                  der Bahn. Soll-Aufsetz-Bereich nach ICAO Annex 14.
-                </title>
+                <title>{t("runway_v2.tooltip_tdz", { m: props.td_tdz_length_m?.toFixed(0) })}</title>
               </rect>
               <text
                 x={thresholdX + 24 + (tdzEndX - thresholdX - 24) / 2}
@@ -577,13 +568,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               >
                 {t("runway_v2.aim_subtitle")}
               </text>
-              <title>
-                Aim-Point — die zwei großen weißen Quadrate auf der echten
-                Bahn (hier gelb gezeichnet). Pilot zielt im Anflug auf
-                diese Markierung; durch den Flare setzt er typisch
-                50–150 m DAHINTER auf (= Anfang der TDZ).
-                Position: {props.aim_point_m?.toFixed(0)} m hinter Schwelle.
-              </title>
+              <title>{t("runway_v2.tooltip_aim_point", { m: props.aim_point_m?.toFixed(0) })}</title>
             </g>
           )}
 
@@ -696,18 +681,22 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             <circle cx={tdX} cy={tdY} r="14" fill={dotColor} opacity="0.22" />
             <circle cx={tdX} cy={tdY} r="9" fill={dotColor} stroke="#0c1628" strokeWidth="2" />
             <title>
-              Aufsetzpunkt (Touchdown): {props.td_distance_from_threshold_m.toFixed(0)} m
-              {props.td_distance_from_threshold_m < 0
-                ? " vor"
-                : " hinter"}{" "}
-              Schwelle,{" "}
-              {Math.abs(props.td_centerline_offset_m).toFixed(1)} m{" "}
-              {props.td_centerline_offset_m > 0.5
-                ? "rechts"
-                : props.td_centerline_offset_m < -0.5
-                ? "links"
-                : "auf"}
-              {" "}der Mittellinie.
+              {t("runway_v2.tooltip_touchdown", {
+                distance: props.td_distance_from_threshold_m.toFixed(0),
+                beforeAfter: t(
+                  props.td_distance_from_threshold_m < 0
+                    ? "runway_v2.tooltip_word_before"
+                    : "runway_v2.tooltip_word_after",
+                ),
+                lateral: Math.abs(props.td_centerline_offset_m).toFixed(1),
+                side: t(
+                  props.td_centerline_offset_m > 0.5
+                    ? "runway_v2.tooltip_word_right"
+                    : props.td_centerline_offset_m < -0.5
+                    ? "runway_v2.tooltip_word_left"
+                    : "runway_v2.tooltip_word_on",
+                ),
+              })}
             </title>
           </g>
 
@@ -778,14 +767,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                     </text>
                   </>
                 )}
-                <title>
-                  Bremspunkt — Ab hier hast du auf ~40 kt abgebremst. Das
-                  ist die typische High-Speed-Exit-Geschwindigkeit; am
-                  nächsten Rollwege-Abzweig kannst du die Bahn jetzt
-                  normal verlassen. NICHT die Stelle wo du tatsächlich
-                  abbiegst — das passiert später, an einem konkreten
-                  Taxiway.
-                </title>
+                <title>{t("runway_v2.tooltip_brake_point")}</title>
               </g>
             );
           })()}

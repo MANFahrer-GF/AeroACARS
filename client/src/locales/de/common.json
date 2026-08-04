@@ -1842,7 +1842,19 @@
     "surface_grv": "Schotter",
     "surface_grs": "Gras",
     "surface_dirt": "Erde",
-    "surface_turf": "Rasen"
+    "surface_turf": "Rasen",
+    "tooltip_pre_threshold": "Pre-Threshold-Zone (Displaced Threshold, DDS): {{m}} m vor der Landeschwelle — Aufsetzen hier ist in der echten Welt illegal (Hindernis-Clearance).",
+    "tooltip_threshold": "Landeschwelle (Threshold) — Beginn des landbaren Bahn-Teils.",
+    "tooltip_runway_end": "Bahn-Ende — Ende des landbaren Bahn-Teils.",
+    "tooltip_tdz": "Aufsetzzone (Touchdown Zone, TDZ): erste {{m}} m der Bahn. Soll-Aufsetz-Bereich nach ICAO Annex 14.",
+    "tooltip_aim_point": "Aim-Point — die zwei großen weißen Quadrate auf der echten Bahn (hier gelb gezeichnet). Pilot zielt im Anflug auf diese Markierung; durch den Flare setzt er typisch 50–150 m DAHINTER auf (= Anfang der TDZ). Position: {{m}} m hinter Schwelle.",
+    "tooltip_touchdown": "Aufsetzpunkt (Touchdown): {{distance}} m {{beforeAfter}} Schwelle, {{lateral}} m {{side}} der Mittellinie.",
+    "tooltip_word_before": "vor",
+    "tooltip_word_after": "hinter",
+    "tooltip_word_right": "rechts",
+    "tooltip_word_left": "links",
+    "tooltip_word_on": "auf",
+    "tooltip_brake_point": "Bremspunkt — Ab hier hast du auf ~40 kt abgebremst. Das ist die typische High-Speed-Exit-Geschwindigkeit; am nächsten Rollwege-Abzweig kannst du die Bahn jetzt normal verlassen. NICHT die Stelle wo du tatsächlich abbiegst — das passiert später, an einem konkreten Taxiway."
   },
   "ascan": {
     "title": "🔬 Flugzeug zur Analyse einreichen (Aircraft-Scan)",

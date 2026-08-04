@@ -1842,7 +1842,19 @@
     "surface_grv": "Gravel",
     "surface_grs": "Grass",
     "surface_dirt": "Dirt",
-    "surface_turf": "Turf"
+    "surface_turf": "Turf",
+    "tooltip_pre_threshold": "Pre-threshold zone (displaced threshold, DDS): {{m}} m before the landing threshold — touching down here is illegal in the real world (obstacle clearance).",
+    "tooltip_threshold": "Landing threshold — start of the usable runway.",
+    "tooltip_runway_end": "Runway end — end of the usable runway.",
+    "tooltip_tdz": "Touchdown zone (TDZ): first {{m}} m of the runway. Intended touchdown area per ICAO Annex 14.",
+    "tooltip_aim_point": "Aim point — the two large white squares on the real runway (drawn yellow here). The pilot aims for this marking on approach; the flare typically puts the touchdown 50–150 m PAST it (= start of the TDZ). Position: {{m}} m past the threshold.",
+    "tooltip_touchdown": "Touchdown point: {{distance}} m {{beforeAfter}} the threshold, {{lateral}} m {{side}} the centerline.",
+    "tooltip_word_before": "before",
+    "tooltip_word_after": "past",
+    "tooltip_word_right": "right of",
+    "tooltip_word_left": "left of",
+    "tooltip_word_on": "on",
+    "tooltip_brake_point": "Brake point — from here you've slowed to ~40 kt. That's the typical high-speed-exit speed; you can now leave the runway normally at the next taxiway junction. NOT the spot where you actually turn off — that happens later, at a specific taxiway."
   },
   "ascan": {
     "title": "🔬 Submit aircraft for analysis (Aircraft Scan)",
