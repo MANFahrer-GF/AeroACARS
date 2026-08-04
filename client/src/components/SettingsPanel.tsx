@@ -412,12 +412,13 @@ export function SettingsPanel({
                 checked={autoStart}
                 onChange={(e) => onAutoStartChange(e.target.checked)}
               />
+              {/* QS 2026-08-04: einzige Zeile in den Einstellungen, die nicht
+                  übersetzt war — englische/italienische Piloten sahen genau
+                  hier deutschen Text zwischen lauter übersetzten Zeilen. */}
               <span>
-                <strong>Auto-Start aufzeichnen</strong>
+                <strong>{t("settings.auto_start_label")}</strong>
                 <span className="settings__row-hint">
-                  Startet einen Flug automatisch, sobald das Flugzeug am
-                  Departure-Airport eines deiner Bids steht (≤ 5 km, On-Ground,
-                  Engines aus). Watcher tickt alle 3 s.
+                  {t("settings.auto_start_hint")}
                 </span>
               </span>
             </label>

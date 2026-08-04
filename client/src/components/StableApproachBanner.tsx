@@ -219,8 +219,16 @@ export function StableApproachBanner({ activeFlight, simSnapshot, enabled }: Pro
           <div className="approach-advisory__title">
             {t("approach_advisory.hard_landing")}
           </div>
+          {/* QS 2026-08-04: stand vorher fest verdrahtet auf Deutsch (also
+              auch für englische/italienische Piloten) — UND der Vergleich
+              war verdreht: das Banner erscheint nur bei vs < -600, gezeigt
+              wurde aber "-770 fpm — > -600 fpm", was rechnerisch falsch
+              ist. Jetzt übersetzt und richtig herum formuliert. */}
           <div className="approach-advisory__detail">
-            V/S {Math.round(hardLandingHint.vs)} fpm — &gt; {-600} fpm Boeing/Airbus FCOM Hard-Landing-Schwelle
+            {t("approach_advisory.hard_landing_detail", {
+              vs: Math.round(hardLandingHint.vs),
+              threshold: -600,
+            })}
           </div>
         </div>
       </div>

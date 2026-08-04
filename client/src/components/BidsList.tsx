@@ -433,10 +433,21 @@ export function BidsList({
   // die phpVMS-Snapshot-Werte ueberschreiben. Stille Fehler (nur Logging)
   // — Pre-Flight ist optional, phpVMS-Snapshot bleibt als Fallback.
   // Returns success/error counts fuer Notice-Anzeige.
+  // QS 2026-08-04: dieser Abruf wird von zwei Stellen ausgelöst (Erst-Laden
+  // beim Öffnen des Tabs und der "Aktualisieren"-Knopf) und schrieb bisher
+  // ungeprüft in den Zustand. Der Erst-Abruf kann durch die eingebaute
+  // 600-ms-Nachfass-Schleife (SimBrief-Einstellungen werden parallel ins
+  // Backend geschrieben) deutlich länger unterwegs sein — drückt der Pilot
+  // in dem Fenster auf "Aktualisieren", konnte die ältere Antwort die
+  // frischere überschreiben. Die laufende Nummer lässt nur noch die jeweils
+  // jüngste Anfrage schreiben.
+  const previewSeqRef = useRef(0);
+
   const fetchPreviewsForBids = useCallback(
     async (bids: Bid[]): Promise<{ successCount: number; errorCount: number }> => {
+      const seq = ++previewSeqRef.current;
       if (bids.length === 0) {
-        setBidPreviews(new Map());
+        if (seq === previewSeqRef.current) setBidPreviews(new Map());
         return { successCount: 0, errorCount: 0 };
       }
       let results = await Promise.allSettled(
@@ -497,9 +508,14 @@ export function BidsList({
           errorCount++;
         }
       });
-      setBidPreviews(next);
-      setBidPreviewErrors(nextErrors);
-      setPreviewLoadedAt(Date.now());
+      // Nur schreiben, wenn inzwischen kein neuerer Abruf gestartet wurde
+      // (siehe previewSeqRef oben). Die Zähler gehen trotzdem zurück, damit
+      // der Aufrufer sein eigenes Ergebnis melden kann.
+      if (seq === previewSeqRef.current) {
+        setBidPreviews(next);
+        setBidPreviewErrors(nextErrors);
+        setPreviewLoadedAt(Date.now());
+      }
       return { successCount, errorCount };
     },
     [],
@@ -512,6 +528,13 @@ export function BidsList({
         const bids = await invoke<Bid[]>("phpvms_get_bids");
         if (cancelled) return;
         setState(bids.length === 0 ? { kind: "empty" } : { kind: "ready", bids });
+        // QS 2026-08-04: fehlte hier — dieser Erst-Abruf setzte den
+        // Zeitstempel nicht, nur `fetchBids` (Knopf "Aktualisieren") und
+        // der 15-s-Hintergrund-Abruf taten das. Ergebnis: beim Öffnen des
+        // Briefings stand die Liste zwar da, die "Stand HH:MMz"-Angabe in
+        // der Kopfzeile blieb aber leer, bis der erste Hintergrund-Abruf
+        // durchlief oder der Pilot selbst aktualisierte.
+        setBidsLoadedAt(Date.now());
         // v0.7.10: nach Initial-Load gleich SimBrief-Previews holen
         // damit der erste Render schon die frischen Werte zeigt.
         void fetchPreviewsForBids(bids);

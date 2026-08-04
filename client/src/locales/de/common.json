@@ -958,7 +958,9 @@
     "delete_all_logs_done_one": "{{count}} Fluglog-Datei gelöscht.",
     "delete_all_logs_done_other": "{{count}} Fluglog-Dateien gelöscht.",
     "refresh_button_label": "Speicher-Statistiken aktualisieren",
-    "refresh_button_title": "Aktualisieren"
+    "refresh_button_title": "Aktualisieren",
+    "auto_start_label": "Auto-Start aufzeichnen",
+    "auto_start_hint": "Startet einen Flug automatisch, sobald das Flugzeug am Departure-Airport eines deiner Bids steht (≤ 5 km, am Boden, Triebwerke aus). Prüfung alle 3 s."
   },
   "behaviour": {
     "section_title": "Verhalten",
@@ -1144,12 +1146,6 @@
     "language_it": "Italiano",
     "show_app_info": "App-Info anzeigen",
     "logout": "Abmelden"
-  },
-  "appinfo": {
-    "title": "Anwendungs-Info",
-    "version": "Version",
-    "commit": "Commit",
-    "commit_unknown": "(Entwicklungs-Build)"
   },
   "login": {
     "title": "Mit German Sky Group verbinden",
@@ -1349,7 +1345,16 @@
     "confirm_cancel": "Den aktiven Flug abbrechen? Der PIREP wird auf phpVMS als „storniert\" markiert — er bleibt in der PIREP-Liste sichtbar. Vollständiges Löschen nur über die phpVMS-Webseite.",
     "adopt_failed": "Wiederherstellung fehlgeschlagen",
     "confirm_failed": "Bestätigung fehlgeschlagen",
-    "cancel_failed": "Flug konnte nicht abgebrochen werden"
+    "cancel_failed": "Flug konnte nicht abgebrochen werden",
+    "compare_head_saved": "Gespeichert",
+    "compare_head_sim": "Sim jetzt",
+    "compare_position": "Position",
+    "compare_altitude": "Höhe",
+    "compare_heading": "Kurs",
+    "compare_aircraft": "Flugzeug",
+    "compare_fuel": "Kraftstoff",
+    "compare_zfw": "ZFW",
+    "compare_total_weight": "Gesamtgewicht"
   },
   "active_flight": {
     "title": "Aktiver Flug",
@@ -1635,7 +1640,8 @@
     "sink_rate_pull_up": "🔴 Sinkrate! Hochziehen!",
     "hard_landing": "🛬 Harte Landung erkannt",
     "settings_label": "Anflug-Warnungen anzeigen",
-    "settings_hint": "Zeigt im Cockpit eine farbige Warnung wenn der Anflug die FAA-Stable-Approach-Kriterien (V/S, Bank, Konfiguration) verletzt — bei 1000 ft, 500 ft und 200 ft AGL. Plus Sinkrate-Warnung unter 100 ft und Hard-Landing-Hinweis nach Touchdown. Visuell, kein Sound."
+    "settings_hint": "Zeigt im Cockpit eine farbige Warnung wenn der Anflug die FAA-Stable-Approach-Kriterien (V/S, Bank, Konfiguration) verletzt — bei 1000 ft, 500 ft und 200 ft AGL. Plus Sinkrate-Warnung unter 100 ft und Hard-Landing-Hinweis nach Touchdown. Visuell, kein Sound.",
+    "hard_landing_detail": "V/S {{vs}} fpm — unter der Hard-Landing-Schwelle von {{threshold}} fpm (Boeing/Airbus FCOM)"
   },
   "manual_flight": {
     "title": "VFR / Manual-Mode — Flug starten",

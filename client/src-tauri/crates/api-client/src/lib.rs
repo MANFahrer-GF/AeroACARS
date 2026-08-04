@@ -2244,9 +2244,23 @@ fn parse_simbrief_ofp(xml: &str) -> Option<SimBriefOfp> {
     // the raw inner XML which made the PIREP-detail show
     // "<icao_code>LFBO</icao_code> <iata_code>TLS</iata_code> ..."
     // as the alternate string. Drill in to grab just the ICAO.
+    // QS 2026-08-04: hier stand ein `.or_else(|| extract_tag(xml, "icao_code"))`
+    // als "defensiver" Rueckfall, falls SimBrief den Alternate mal flach als
+    // Geschwister-Element liefert. Der Rueckfall war aber NICHT auf einen
+    // Bereich eingegrenzt, und `extract_tag` nimmt das ERSTE Vorkommen im
+    // ganzen Dokument. In einem echten OFP steht <origin> vor <alternate>
+    // und enthaelt selbst ein <icao_code> — plante der Pilot also gar kein
+    // Ausweichziel (auf Kurzstrecke die Regel, SimBrief laesst den Block
+    // dann weg oder leer), griff der Rueckfall daneben und lieferte den
+    // ABFLUGHAFEN. Ein EDDL->EDDM-Flug briefte damit "Alternate: EDDL" —
+    // und zwar nicht nur in der Anzeige: der Wert lief ueber
+    // `stats.planned_alternate` auch in die Live-Karte und ins PIREP-Feld
+    // "Plan Alternate". Kein Ausweichziel geplant heisst jetzt schlicht
+    // "keins" statt eines falschen. Der alte Test hat das nie bemerkt, weil
+    // sein Fixture kein <origin> enthielt — die eine Form, in der der
+    // Rueckfall nicht danebengreifen kann.
     let alternate = extract_tag(xml, "alternate")
         .and_then(|inner| extract_tag(inner, "icao_code"))
-        .or_else(|| extract_tag(xml, "icao_code"))
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
     let waypoints = extract_navlog_fixes(xml);
@@ -2639,10 +2653,16 @@ mod tests {
         assert_eq!(b.flight.flight_number, "6431");
     }
 
+    /// QS 2026-08-04: hiess frueher `..._falls_back_to_root_icao_when_no_wrapper`
+    /// und sicherte einen "defensiven" Rueckfall ab (flaches <icao_code>
+    /// irgendwo im Dokument = Alternate). Genau dieser Rueckfall war der
+    /// Fehler: sein Fixture enthielt kein <origin>, und nur deshalb konnte
+    /// er nicht danebengreifen — siehe den Test darunter. Der Rueckfall ist
+    /// entfernt; ein flach geliefertes <icao_code> gilt jetzt bewusst NICHT
+    /// mehr als Ausweichziel, weil sich diese Form nicht zuverlaessig vom
+    /// <origin>-ICAO unterscheiden laesst.
     #[test]
-    fn simbrief_alternate_falls_back_to_root_icao_when_no_wrapper() {
-        // Defensive — if a future SimBrief variant flattens the
-        // alternate to a sibling icao_code we still pick it up.
+    fn simbrief_alternate_ignores_a_bare_root_icao_code() {
         let xml = r#"
             <ofp>
                 <weights>
@@ -2652,8 +2672,71 @@ mod tests {
             </ofp>
         "#;
         let ofp = parse_simbrief_ofp(xml).expect("parses");
-        assert_eq!(ofp.alternate.as_deref(), Some("LFBO"));
+        assert_eq!(
+            ofp.alternate.as_deref(),
+            None,
+            "ein loses <icao_code> ist nicht unterscheidbar vom origin-ICAO"
+        );
     }
+
+    /// QS 2026-08-04: der Test, der den Fehler aufgedeckt hat. Das Fixture
+    /// des Tests darueber hatte KEIN <origin> — genau die eine Form, in der
+    /// der fruehere `.or_else()`-Rueckfall nicht danebengreifen konnte. In
+    /// einem echten OFP steht <origin> VOR <alternate>, und `extract_tag`
+    /// nimmt das ERSTE Vorkommen im ganzen Dokument: ohne geplantes
+    /// Ausweichziel lieferte der Rueckfall damit den ABFLUGHAFEN. Das lief
+    /// ins Briefing, in die Live-Karte und ins PIREP-Feld "Plan Alternate"
+    /// — ein EDDL->EDDM-Flug briefte "Alternate: EDDL".
+    #[test]
+    fn simbrief_alternate_is_none_when_ofp_plans_no_alternate() {
+        // Realistische Element-Reihenfolge: origin vor destination vor
+        // (hier fehlendem) alternate.
+        let xml = r#"
+            <ofp>
+                <origin>
+                    <icao_code>EDDL</icao_code>
+                </origin>
+                <destination>
+                    <icao_code>EDDM</icao_code>
+                </destination>
+                <weights>
+                    <est_zfw>71242</est_zfw>
+                </weights>
+            </ofp>
+        "#;
+        let ofp = parse_simbrief_ofp(xml).expect("parses");
+        assert_eq!(
+            ofp.alternate.as_deref(),
+            None,
+            "ohne <alternate> darf NICHT der Abflughafen einlaufen"
+        );
+        assert_eq!(ofp.ofp_origin_icao, "EDDL");
+        assert_eq!(ofp.ofp_destination_icao, "EDDM");
+    }
+
+    /// Gegenstueck: ein echt geplantes Ausweichziel muss weiter ankommen.
+    #[test]
+    fn simbrief_alternate_is_read_from_the_alternate_block() {
+        let xml = r#"
+            <ofp>
+                <origin>
+                    <icao_code>EDDL</icao_code>
+                </origin>
+                <destination>
+                    <icao_code>EDDM</icao_code>
+                </destination>
+                <alternate>
+                    <icao_code>EDDN</icao_code>
+                </alternate>
+                <weights>
+                    <est_zfw>71242</est_zfw>
+                </weights>
+            </ofp>
+        "#;
+        let ofp = parse_simbrief_ofp(xml).expect("parses");
+        assert_eq!(ofp.alternate.as_deref(), Some("EDDN"));
+    }
+
 
     /// v0.7.8: <params><request_id> ist die canonical changed-flag-
     /// Quelle fuer SimBrief-direct Refresh. Spec §3.

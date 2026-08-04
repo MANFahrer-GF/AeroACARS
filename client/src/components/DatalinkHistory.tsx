@@ -45,17 +45,38 @@ function findLatestUnansweredUplink(all: ThreadEntry[]): ThreadEntry | null {
   return null;
 }
 
+/** Substrings that make a telex a NEW clearance REQUEST rather than an
+ *  acknowledgement — identical list to CpdlcQuickReply.tsx's REQUEST_TOKENS,
+ *  which actively REFUSES to send an acknowledgement containing any of them
+ *  (a controller's client classifies inbound telex by these substrings and
+ *  tests the request branch first). The PDC composer's own template
+ *  ("REQUEST PREDEP CLEARANCE …") is built from them by definition, so this
+ *  is a reliable way to tell the two apart. */
+const TELEX_REQUEST_TOKENS = ["CLR", "REQ", "PDC", "PREDEP", "REQUEST"];
+function isTelexRequest(text: string): boolean {
+  const upper = text.toUpperCase();
+  return TELEX_REQUEST_TOKENS.some((tok) => upper.includes(tok));
+}
+
 /** The reply that closed `uplink`, if any — CPDLC threads it via MRN;
- *  telex has no threading, so the reply is simply the next SENT telex
- *  entry after it (there is at most one, since sending one is exactly
- *  what stops `uplink` from being "the last telex" any more). */
+ *  telex has no threading, so we look for the next SENT telex after it.
+ *
+ *  QS 2026-08-04: dieser Zweig nahm vorher JEDES später gesendete Telex als
+ *  "die Antwort" auf die frühere Freigabe — die Annahme im alten Kommentar
+ *  ("davon gibt es höchstens eins") stimmte nicht: der Verfasser-Bereich
+ *  lässt jederzeit eine ganz neue PDC-Anfrage los, ohne den Verlauf
+ *  anzusehen. Folge: unter einer unbestätigten Freigabe stand plötzlich
+ *  „Beantwortet: REQUEST PREDEP CLEARANCE …" — der Text einer völlig
+ *  unabhängigen Nachricht wurde als Bestätigung ausgegeben. Neuanfragen
+ *  zählen jetzt nicht mehr als Antwort. */
 function findReplyEntry(uplink: ThreadEntry, all: ThreadEntry[]): ThreadEntry | null {
   if (uplink.kind === "cpdlc") {
     return all.find((m) => m.kind === "cpdlc" && m.direction === "sent" && m.mrn === uplink.min) ?? null;
   }
   const idx = all.indexOf(uplink);
   for (let i = idx + 1; i < all.length; i++) {
-    if (all[i].kind === "telex" && all[i].direction === "sent") return all[i];
+    const m = all[i];
+    if (m.kind === "telex" && m.direction === "sent" && !isTelexRequest(m.text)) return m;
   }
   return null;
 }
@@ -72,20 +93,32 @@ function formatUtcHms(iso: string): string {
   return `${d.toISOString().slice(11, 19)}z`;
 }
 
+// QS 2026-08-04: lag vorher in `localStorage` — also dauerhaft über alle
+// Flüge und Programmstarts hinweg, ohne je gelöscht zu werden (kein Reset
+// bei Flugwechsel, Abmeldung oder Neustart; im ganzen Projekt gab es keine
+// einzige Stelle, die den Schlüssel wieder entfernt). Squawk-Codes sind nur
+// vierstellig und werden von ATC laufend wiederverwendet: hatte man z.B.
+// 2000 in einem früheren Flug einmal "übernommen", zeigte der Knopf bei der
+// nächsten Freigabe mit demselben Code sofort "übernommen" an — obwohl der
+// Transponder in diesem Flug nie angefasst wurde. Exakt dieselbe Falle wie
+// beim LOGON-Entwurfsfeld (bereits behoben): unbegrenzt haltbarer Browser-
+// Speicher für etwas, das nur für die laufende Sitzung gilt. `sessionStorage`
+// endet mit dem Programm, der Merker gilt damit nur noch für den laufenden
+// Betrieb statt für immer.
 const SQUAWK_MEMO_KEY = "aeroacars.transponder.squawk_memo";
 function loadSquawkMemo(): string | null {
   try {
-    return localStorage.getItem(SQUAWK_MEMO_KEY);
+    return sessionStorage.getItem(SQUAWK_MEMO_KEY);
   } catch {
     return null;
   }
 }
 function saveSquawkMemo(value: string): void {
   try {
-    localStorage.setItem(SQUAWK_MEMO_KEY, value);
+    sessionStorage.setItem(SQUAWK_MEMO_KEY, value);
   } catch {
-    // Private-mode / quota — the button just won't remember across a
-    // restart, which is no worse than the feature not existing.
+    // Private-mode / quota — the button just won't remember, which is no
+    // worse than the feature not existing.
   }
 }
 

@@ -5,7 +5,11 @@ import type { ActiveFlightInfo, FlightEndOutcome, SimSnapshot } from "../types";
 import { formatRefreshError } from "../lib/refreshErrorFormatter";
 import { resolveFlightIdent } from "../lib/callsign";
 import { useConfirm } from "./ConfirmDialog";
-import { InfoStrip } from "./InfoStrip";
+// QS 2026-08-04: `fmtDistance` war hier lokal nochmal definiert — mit der
+// Einheit "nmi", während die exportierte Variante (und damit PhaseCard +
+// TripCard, direkt darunter auf demselben Bildschirm) "nm" schreibt. Zwei
+// Schreibweisen derselben Einheit nebeneinander. Jetzt eine gemeinsame Quelle.
+import { InfoStrip, fmtDistance } from "./InfoStrip";
 import { LiveTapes } from "./LiveTapes";
 import { LoadsheetMonitor } from "./LoadsheetMonitor";
 import { ManualFileDialog } from "./ManualFileDialog";
@@ -36,12 +40,6 @@ interface Props {
    *  Refresh instead. */
   onOpenWeatherBriefing: () => void;
   weatherLoadHint: boolean;
-}
-
-function fmtDistance(nm: number, locale: string): string {
-  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(
-    nm,
-  )} nmi`;
 }
 
 const EARTH_RADIUS_NM = 3440.065; // nautical miles

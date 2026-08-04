@@ -958,7 +958,9 @@
     "delete_all_logs_done_one": "{{count}} flight log file deleted.",
     "delete_all_logs_done_other": "{{count}} flight log files deleted.",
     "refresh_button_label": "Refresh storage statistics",
-    "refresh_button_title": "Refresh"
+    "refresh_button_title": "Refresh",
+    "auto_start_label": "Auto-start recording",
+    "auto_start_hint": "Starts a flight automatically as soon as the aircraft is at the departure airport of one of your bids (≤ 5 km, on ground, engines off). Checked every 3 s."
   },
   "behaviour": {
     "section_title": "Behaviour",
@@ -1144,12 +1146,6 @@
     "language_it": "Italiano",
     "show_app_info": "Show app info",
     "logout": "Sign out"
-  },
-  "appinfo": {
-    "title": "Application info",
-    "version": "Version",
-    "commit": "Commit",
-    "commit_unknown": "(development build)"
   },
   "login": {
     "title": "Connect to phpVMS",
@@ -1349,7 +1345,16 @@
     "confirm_cancel": "Cancel the active flight? The PIREP will be marked as \"cancelled\" on phpVMS — it stays visible in the PIREP list. Full deletion only via the phpVMS website.",
     "adopt_failed": "Could not resume the flight",
     "confirm_failed": "Could not confirm the resume",
-    "cancel_failed": "Could not cancel the flight"
+    "cancel_failed": "Could not cancel the flight",
+    "compare_head_saved": "Saved",
+    "compare_head_sim": "Sim now",
+    "compare_position": "Position",
+    "compare_altitude": "Altitude",
+    "compare_heading": "Heading",
+    "compare_aircraft": "Aircraft",
+    "compare_fuel": "Fuel",
+    "compare_zfw": "ZFW",
+    "compare_total_weight": "Total weight"
   },
   "active_flight": {
     "title": "Active flight",
@@ -1635,7 +1640,8 @@
     "sink_rate_pull_up": "🔴 Sink rate! Pull up!",
     "hard_landing": "🛬 Hard landing detected",
     "settings_label": "Show approach advisories",
-    "settings_hint": "Shows a colored advisory in the cockpit when the approach violates FAA Stable-Approach criteria (V/S, bank, configuration) — at 1000 ft, 500 ft and 200 ft AGL. Plus a sink rate warning below 100 ft and a hard-landing hint after touchdown. Visual only, no sound."
+    "settings_hint": "Shows a colored advisory in the cockpit when the approach violates FAA Stable-Approach criteria (V/S, bank, configuration) — at 1000 ft, 500 ft and 200 ft AGL. Plus a sink rate warning below 100 ft and a hard-landing hint after touchdown. Visual only, no sound.",
+    "hard_landing_detail": "V/S {{vs}} fpm — below the {{threshold}} fpm hard-landing threshold (Boeing/Airbus FCOM)"
   },
   "manual_flight": {
     "title": "VFR / Manual mode — start flight",

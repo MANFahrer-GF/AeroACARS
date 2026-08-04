@@ -36,6 +36,10 @@ beforeEach(async () => {
   invokeMock.mockReset();
   invokeMock.mockResolvedValue(undefined);
   localStorage.clear();
+  // QS 2026-08-04: der Squawk-Merker liegt jetzt in sessionStorage (vorher
+  // localStorage, siehe DatalinkHistory.tsx) — ohne dieses Leeren schleppt
+  // ein Test, der den Knopf drueckt, seinen Zustand in alle folgenden.
+  sessionStorage.clear();
 });
 
 const t = (k: string, opts?: Record<string, unknown>) => i18next.t(k, opts);
@@ -163,6 +167,50 @@ describe("DatalinkHistory — answer row", () => {
     renderHistory([closedUplink, reply]);
     expect(screen.queryByRole("button", { name: t("cpdlc.response_wilco") })).not.toBeInTheDocument();
     expect(screen.getByText(t("cpdlc.answered_status", { answer: "WILCO", time: "14:05:20z" }))).toBeInTheDocument();
+  });
+
+  // QS 2026-08-04: Telex hat keine MIN/MRN-Verkettung, deshalb galt frueher
+  // schlicht "das naechste gesendete Telex ist die Antwort". Der Verfasser-
+  // Bereich laesst aber jederzeit eine ganz neue PDC-Anfrage los, ohne den
+  // Verlauf anzusehen — dann stand unter einer noch unbestaetigten Freigabe
+  // "Beantwortet: REQUEST PREDEP CLEARANCE ...", also der Text einer voellig
+  // unabhaengigen Nachricht als angebliche Bestaetigung.
+  it("does not count a NEW clearance request as the answer to an earlier uplink", () => {
+    const secondRequest: ThreadEntry = {
+      ...PDC_SENT,
+      text: "REQUEST PREDEP CLEARANCE BTI4TK A320 TO EDDF AT EDDK STAND B34 ATIS L",
+      at: "2026-08-03T14:10:00.000Z",
+    };
+    renderHistory([PDC_SENT, PDC_REPLY, secondRequest]);
+    // Kein "Beantwortet:"-Status, der die neue Anfrage als Antwort ausgibt.
+    expect(
+      screen.queryByText(new RegExp(t("cpdlc.answered_status", { answer: "", time: "" }).split("{")[0].trim())),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/REQUEST PREDEP CLEARANCE BTI4TK A320 TO EDDF/)).toBeInTheDocument();
+  });
+
+  it("still counts a genuine acknowledgement telex as the answer", () => {
+    const wilco: ThreadEntry = {
+      ...PDC_SENT,
+      text: "WILCO",
+      at: "2026-08-03T14:10:00.000Z",
+    };
+    renderHistory([PDC_SENT, PDC_REPLY, wilco]);
+    expect(
+      screen.getByText(t("cpdlc.answered_status", { answer: "WILCO", time: "14:10:00z" })),
+    ).toBeInTheDocument();
+  });
+
+  // QS 2026-08-04: der Merker lag in localStorage — also dauerhaft ueber
+  // Fluege und Programmstarts hinweg, ohne je geloescht zu werden. Squawks
+  // sind vierstellig und werden laufend wiederverwendet: ein frueher einmal
+  // "uebernommener" Code zeigte bei der naechsten Freigabe mit demselben
+  // Code sofort "uebernommen", obwohl der Transponder nie angefasst wurde.
+  it("does not carry a squawk-taken memo over from a previous session", () => {
+    localStorage.setItem("aeroacars.transponder.squawk_memo", "4231");
+    renderHistory([PDC_SENT, PDC_REPLY]);
+    const btn = screen.getByRole("button", { name: t("cpdlc.squawk_take", { squawk: "4231" }) });
+    expect(btn).toBeEnabled();
   });
 });
 

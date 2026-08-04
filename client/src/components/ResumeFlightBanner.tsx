@@ -374,6 +374,12 @@ function ComparisonGrid({
 }: {
   activeFlight: ActiveFlightInfo | null;
 }) {
+  // QS 2026-08-04: diese Tabelle war als einzige im ganzen Banner nicht
+  // übersetzt — und dabei gemischt deutsch/englisch fest verdrahtet
+  // ("Gespeichert"/"Sim jetzt" neben "Altitude"/"Fuel"/"Total Weight").
+  // Ein Pilot mit englischer oder italienischer Oberfläche bekam die
+  // Kreuzung aus beidem zu sehen.
+  const { t } = useTranslation();
   const [sim, setSim] = useState<SimStatus | null>(null);
 
   useEffect(() => {
@@ -445,12 +451,12 @@ function ComparisonGrid({
   return (
     <div className="resume-compare" role="table">
       <div className="resume-compare__head">&nbsp;</div>
-      <div className="resume-compare__head">Gespeichert</div>
-      <div className="resume-compare__head">Sim jetzt</div>
+      <div className="resume-compare__head">{t("resume.compare_head_saved")}</div>
+      <div className="resume-compare__head">{t("resume.compare_head_sim")}</div>
       <div className="resume-compare__head">Δ</div>
 
       {/* Position */}
-      <div className="resume-compare__label">Position</div>
+      <div className="resume-compare__label">{t("resume.compare_position")}</div>
       <Val>{sLat !== undefined && sLon !== undefined ? fmtPos(sLat, sLon) : null}</Val>
       <Val>{cLat !== undefined && cLon !== undefined ? fmtPos(cLat, cLon) : null}</Val>
       <Delta
@@ -461,7 +467,7 @@ function ComparisonGrid({
       />
 
       {/* Altitude */}
-      <div className="resume-compare__label">Altitude</div>
+      <div className="resume-compare__label">{t("resume.compare_altitude")}</div>
       <Val>{sAlt !== undefined ? `${sAlt.toLocaleString()} ft` : null}</Val>
       <Val>{cAlt !== undefined ? `${Math.round(cAlt).toLocaleString()} ft` : null}</Val>
       <Delta
@@ -472,7 +478,7 @@ function ComparisonGrid({
       />
 
       {/* Heading (nur Sim-Anzeige, kein Saved-Wert) */}
-      <div className="resume-compare__label">Heading</div>
+      <div className="resume-compare__label">{t("resume.compare_heading")}</div>
       <Val>{null}</Val>
       <Val>{cHdg !== undefined ? `${Math.round(cHdg)}°` : null}</Val>
       <div className="resume-compare__delta resume-compare__delta--neutral">
@@ -480,7 +486,7 @@ function ComparisonGrid({
       </div>
 
       {/* Aircraft */}
-      <div className="resume-compare__label">Aircraft</div>
+      <div className="resume-compare__label">{t("resume.compare_aircraft")}</div>
       <Val>{sAircraft ?? null}</Val>
       <Val>{cAircraft ?? null}</Val>
       <div
@@ -496,7 +502,7 @@ function ComparisonGrid({
       </div>
 
       {/* Fuel */}
-      <div className="resume-compare__label">Fuel</div>
+      <div className="resume-compare__label">{t("resume.compare_fuel")}</div>
       <Val>{sFuel !== undefined ? fmtKg(sFuel) : null}</Val>
       <Val>{cFuel !== undefined ? fmtKg(cFuel) : null}</Val>
       <Delta
@@ -507,7 +513,7 @@ function ComparisonGrid({
       />
 
       {/* ZFW */}
-      <div className="resume-compare__label">ZFW</div>
+      <div className="resume-compare__label">{t("resume.compare_zfw")}</div>
       <Val>{sZfw !== undefined ? fmtKg(sZfw) : null}</Val>
       <Val>{cZfw !== null && cZfw !== undefined ? fmtKg(cZfw) : null}</Val>
       <Delta
@@ -518,7 +524,7 @@ function ComparisonGrid({
       />
 
       {/* Total Weight */}
-      <div className="resume-compare__label">Total Weight</div>
+      <div className="resume-compare__label">{t("resume.compare_total_weight")}</div>
       <Val>{sTow !== undefined ? fmtKg(sTow) : null}</Val>
       <Val>{cTow !== null && cTow !== undefined ? fmtKg(cTow) : null}</Val>
       <Delta

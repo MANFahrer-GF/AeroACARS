@@ -1400,10 +1400,21 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     try {
       const a = await invoke<{ lat?: number | null; lon?: number | null }>("airport_get", { icao });
       const coord: [number, number] | null = a.lat != null && a.lon != null ? [a.lon, a.lat] : null;
+      // Nur ERFOLGE dauerhaft merken. Ein "der Flughafen hat keine
+      // Koordinaten" ist eine echte, stabile Antwort — die darf gecacht
+      // werden.
       cache.set(icao, coord);
       return coord;
     } catch {
-      cache.set(icao, null);
+      // QS 2026-08-04: hier wurde vorher `cache.set(icao, null)` gesetzt —
+      // ein einmaliger Aussetzer (`airport_get` ist ein Result-Command und
+      // wirft auch bei fehlendem Client/Netz-Hänger/Timeout, nicht nur bei
+      // "Flughafen unbekannt") hat sich damit für die ganze Sitzung
+      // eingebrannt: jede Kollegen-Blase zu diesem Ziel zeigte danach
+      // dauerhaft "—" als ETA, obwohl ein Versuch eine Sekunde später
+      // geklappt hätte. Fehlschläge werden jetzt NICHT gemerkt, der
+      // nächste Aufruf versucht es neu — so wie es die Schwester-Abfrage
+      // für den eigenen Flug (`lookup()`) oben auch schon macht.
       return null;
     }
   }

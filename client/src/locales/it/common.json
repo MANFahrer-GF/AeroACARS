@@ -958,7 +958,9 @@
     "delete_all_logs_done_one": "{{count}} file di log eliminato.",
     "delete_all_logs_done_other": "{{count}} file di log eliminati.",
     "refresh_button_label": "Aggiorna statistiche di archiviazione",
-    "refresh_button_title": "Aggiorna"
+    "refresh_button_title": "Aggiorna",
+    "auto_start_label": "Avvio automatico registrazione",
+    "auto_start_hint": "Avvia un volo automaticamente non appena l'aeromobile si trova all'aeroporto di partenza di una delle tue prenotazioni (≤ 5 km, a terra, motori spenti). Controllo ogni 3 s."
   },
   "behaviour": {
     "section_title": "Comportamento",
@@ -1144,12 +1146,6 @@
     "language_it": "Italiano",
     "show_app_info": "Mostra info app",
     "logout": "Esci"
-  },
-  "appinfo": {
-    "title": "Info applicazione",
-    "version": "Versione",
-    "commit": "Commit",
-    "commit_unknown": "(build di sviluppo)"
   },
   "login": {
     "title": "Connetti a German Sky Group",
@@ -1349,7 +1345,16 @@
     "hard_stop_force_resume": "Continua comunque (salto registrato nel log attività)",
     "recheck_check_now": "Verifica posizione ora + riprendi",
     "recheck_checking": "Verifica posizione…",
-    "recheck_show_force": "Avanzato: continua nonostante il drift"
+    "recheck_show_force": "Avanzato: continua nonostante il drift",
+    "compare_head_saved": "Salvato",
+    "compare_head_sim": "Sim ora",
+    "compare_position": "Posizione",
+    "compare_altitude": "Quota",
+    "compare_heading": "Prua",
+    "compare_aircraft": "Aeromobile",
+    "compare_fuel": "Carburante",
+    "compare_zfw": "ZFW",
+    "compare_total_weight": "Peso totale"
   },
   "active_flight": {
     "title": "Volo attivo",
@@ -1635,7 +1640,8 @@
     "sink_rate_pull_up": "🔴 Rateo di discesa! Cabra!",
     "hard_landing": "🛬 Atterraggio duro rilevato",
     "settings_label": "Mostra avvisi di avvicinamento",
-    "settings_hint": "Mostra in cockpit un avviso colorato quando l'avvicinamento viola i criteri FAA Stable-Approach (V/S, bank, configurazione) — a 1000 ft, 500 ft e 200 ft AGL. Più un avviso di rateo discesa sotto i 100 ft e un avviso di atterraggio duro dopo il touchdown. Solo visivo, nessun suono."
+    "settings_hint": "Mostra in cockpit un avviso colorato quando l'avvicinamento viola i criteri FAA Stable-Approach (V/S, bank, configurazione) — a 1000 ft, 500 ft e 200 ft AGL. Più un avviso di rateo discesa sotto i 100 ft e un avviso di atterraggio duro dopo il touchdown. Solo visivo, nessun suono.",
+    "hard_landing_detail": "V/S {{vs}} fpm — sotto la soglia di atterraggio duro di {{threshold}} fpm (Boeing/Airbus FCOM)"
   },
   "manual_flight": {
     "title": "Modalità VFR / manuale — avvia volo",
