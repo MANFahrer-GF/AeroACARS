@@ -151,6 +151,21 @@ pub struct ValidationDetail {
     pub gear_force_pass: bool,
     pub gear_force_peak_in_window_n: Option<f32>,
     pub gear_force_sustained_ms: Option<u64>,
+    /// How many samples in the [edge_at, edge_at+500ms] window carried
+    /// ANY finite `gear_normal_force_n` value, regardless of whether it
+    /// was above or below `gear_force_threshold_n`. Distinct from
+    /// `gear_force_pass`'s own 2-sample "sustained run" requirement —
+    /// this counts the raw data density available to judge from at
+    /// all. See `validate_candidate`'s X-Plane branch for why this
+    /// matters: below `MIN_GEAR_FORCE_SAMPLES_IN_WINDOW`, gear_force
+    /// data is too sparse to trust as a MUST-PASS gate (e.g. an FPS
+    /// stall/reconnect right at touchdown), so validation falls back to
+    /// voting instead of treating "not enough data" the same as
+    /// "genuinely no impact force". `#[serde(default)]` so old
+    /// persisted episodes/false-edges from before this field existed
+    /// still replay (as 0 — they never had this data to begin with).
+    #[serde(default)]
+    pub gear_force_sample_count_in_window: usize,
     pub g_force_pass: Option<bool>,
     pub g_force_peak_in_window: f32,
     pub low_agl_persistence_pass: bool,
@@ -205,7 +220,7 @@ pub fn validate_candidate(
     let threshold_n = gear_force_threshold_n(candidate.edge_total_weight_kg);
 
     // Test: gear_force-impact (X-Plane only — MUST-PASS)
-    let (gear_force_pass, gear_force_peak, gear_force_sustained_ms) =
+    let (gear_force_pass, gear_force_peak, gear_force_sustained_ms, gear_force_sample_count) =
         evaluate_gear_force_test(samples, edge_at, threshold_n);
 
     // Test: g_force-spike (MSFS-relevant)
@@ -227,6 +242,7 @@ pub fn validate_candidate(
         gear_force_pass,
         gear_force_peak_in_window_n: gear_force_peak,
         gear_force_sustained_ms,
+        gear_force_sample_count_in_window: gear_force_sample_count,
         g_force_pass: Some(g_force_pass),
         g_force_peak_in_window: g_force_peak,
         low_agl_persistence_pass: low_agl_pass,
@@ -279,15 +295,30 @@ pub fn validate_candidate(
     }
 
     if sim.is_xplane() {
-        // Sonderfall: Wenn der Sample-Buffer KEIN gear_force enthaelt
-        // (= alle samples haben gear_normal_force_n = None — passiert bei
-        // legacy JSONLs vor v0.7.0 ODER wenn ein X-Plane-Addon das DataRef
-        // nicht setzt), fallback auf MSFS-style Voting.
+        // v0.19.x QS (backlog "X-Plane gear-force MUST-PASS defeated by
+        // <2-sample windows"): gear_force is only trustworthy as a
+        // MUST-PASS anchor when the window actually HAS enough of it to
+        // judge from. Below MIN_GEAR_FORCE_SAMPLES_IN_WINDOW, "not
+        // enough data" was being treated exactly the same as
+        // "genuinely no impact force" — both fell straight to FalseEdge
+        // — which could discard a REAL hard-landing/gear-collapse
+        // whenever the 500ms window happened to be data-sparse (an FPS
+        // stall or telemetry reconnect right at touchdown is a
+        // realistic trigger, and X-Plane has no independent native
+        // crash flag — this heuristic is the only accident detector).
+        // "Not enough data" and "genuinely no gear_force dataref at
+        // all" (legacy JSONLs pre-v0.7.0, or an addon that never sets
+        // it) are the same kind of unknown, so both now fall through to
+        // the SAME 4-of-4 voting fallback below instead of discarding
+        // the candidate outright.
+        const MIN_GEAR_FORCE_SAMPLES_IN_WINDOW: usize = 2;
         let any_gear_force_data = samples
             .iter()
             .any(|s| s.gear_normal_force_n.is_some());
+        let gear_force_data_sufficient =
+            any_gear_force_data && gear_force_sample_count >= MIN_GEAR_FORCE_SAMPLES_IN_WINDOW;
 
-        if any_gear_force_data {
+        if gear_force_data_sufficient {
             // Echte X-Plane-Validation mit gear_force als MUST-PASS
             if !gear_force_pass {
                 return ValidationResult::FalseEdge {
@@ -303,10 +334,11 @@ pub fn validate_candidate(
             }
             return ValidationResult::Validated { result: detail };
         }
-        // Fallback ohne gear_force: 4-of-4 Voting (= strenger als MSFS
-        // damit X-Plane edge-trigger-happy-Streifschuesse nicht durch).
-        // Plus: agl_persistence ist hier kritisch weil g_force-spike bei
-        // X-Plane ohne gear_force evtl unzuverlaessig
+        // Fallback ohne (ausreichend) gear_force: 4-of-4 Voting (=
+        // strenger als MSFS damit X-Plane edge-trigger-happy-
+        // Streifschuesse nicht durch). Plus: agl_persistence ist hier
+        // kritisch weil g_force-spike bei X-Plane ohne gear_force evtl
+        // unzuverlaessig
         let passes = [g_force_pass, sustained_pass, low_agl_pass, vs_negative_pass]
             .iter()
             .filter(|p| **p)
@@ -337,15 +369,21 @@ pub fn validate_candidate(
 }
 
 /// gear_force-impact Evaluation (X-Plane).
-/// Returns (pass, peak_in_window, sustained_ms_above_threshold).
+/// Returns (pass, peak_in_window, sustained_ms_above_threshold, sample_count_in_window).
 ///
 /// Confirmation-Window: Force ueber threshold fuer mind. 60ms anhaltend
 /// (gemessen via Timestamps), mit mind. 2 distinct samples (Anti-Glitch).
+///
+/// `sample_count_in_window` counts ANY finite gear_normal_force_n value
+/// in the window regardless of threshold — the caller uses this to
+/// tell "the data says no impact force" apart from "there's barely any
+/// data to judge from at all" (see `validate_candidate`'s X-Plane
+/// branch).
 fn evaluate_gear_force_test(
     samples: &[TouchdownWindowSample],
     edge_at: DateTime<Utc>,
     threshold_n: f32,
-) -> (bool, Option<f32>, Option<u64>) {
+) -> (bool, Option<f32>, Option<u64>, usize) {
     let window_end = edge_at + Duration::milliseconds(500);
 
     // Sammle alle Samples im Window in Reihenfolge (sorted nach `at`).
@@ -353,6 +391,11 @@ fn evaluate_gear_force_test(
         .iter()
         .filter(|s| s.at >= edge_at && s.at <= window_end)
         .collect();
+
+    let sample_count_in_window = in_window
+        .iter()
+        .filter(|s| s.gear_normal_force_n.is_some_and(|f| f.is_finite()))
+        .count();
 
     let peak_in_window = in_window
         .iter()
@@ -397,7 +440,7 @@ fn evaluate_gear_force_test(
     }
 
     let pass = best_run_ms >= 60 && best_run_count >= 2;
-    (pass, peak_in_window, Some(best_run_ms))
+    (pass, peak_in_window, Some(best_run_ms), sample_count_in_window)
 }
 
 /// peak g_force im Window [edge_at, edge_at + 500ms]
@@ -1201,10 +1244,11 @@ mod tests {
             .map(|i| make_sample(1000 + i * 20, Some(50000.0)))
             .collect();
         let edge_at = samples[0].at;
-        let (pass, peak, sustained) = evaluate_gear_force_test(&samples, edge_at, 21478.0);
+        let (pass, peak, sustained, count) = evaluate_gear_force_test(&samples, edge_at, 21478.0);
         assert!(pass, "5 consecutive samples should pass");
         assert_eq!(peak, Some(50000.0));
         assert!(sustained.unwrap() >= 60);
+        assert_eq!(count, 5);
     }
 
     #[test]
@@ -1217,7 +1261,7 @@ mod tests {
             make_sample(1040, Some(50000.0)),  // above wieder
         ];
         let edge_at = samples[0].at;
-        let (pass, _peak, sustained) = evaluate_gear_force_test(&samples, edge_at, 21478.0);
+        let (pass, _peak, sustained, _count) = evaluate_gear_force_test(&samples, edge_at, 21478.0);
         // Best run hat nur 1 sample bzw 0ms span -> fail
         assert!(!pass, "gap in middle must NOT count as sustained, got sustained={:?}", sustained);
     }
@@ -1233,8 +1277,118 @@ mod tests {
             samples.push(make_sample(1100 + i * 20, Some(50000.0)));
         }
         let edge_at = samples[0].at;
-        let (pass, _peak, _sustained) = evaluate_gear_force_test(&samples, edge_at, 21478.0);
+        let (pass, _peak, _sustained, _count) = evaluate_gear_force_test(&samples, edge_at, 21478.0);
         assert!(pass, "long sustained run after gap should pass");
+    }
+
+    /// 60 samples (1180 ms) with the given `gear_ns` supplying the first N
+    /// entries' `gear_normal_force_n` (the rest `None`) — enough span to
+    /// satisfy sustained-ground (500 ms) and low-AGL persistence (1000 ms)
+    /// on their own, so only the gear_force test's own data density varies.
+    fn hard_landing_with_sparse_gear_force(gear_ns: &[Option<f32>]) -> (Vec<TouchdownWindowSample>, TdCandidate) {
+        let samples: Vec<TouchdownWindowSample> = (0..60)
+            .map(|i| {
+                let gear_n = gear_ns.get(i as usize).copied().unwrap_or(None);
+                make_sample(1000 + i * 20, gear_n)
+            })
+            .collect();
+        let edge_at = samples[0].at;
+        let cand = TdCandidate {
+            edge_sample_index: 0,
+            edge_at,
+            edge_agl_ft: 1.0,
+            edge_vs_fpm: -1200.0,
+            edge_gear_force_n: gear_ns.first().copied().flatten(),
+            edge_g_force: 1.2,
+            edge_total_weight_kg: Some(73000.0),
+        };
+        (samples, cand)
+    }
+
+    // v0.19.x QS (backlog "X-Plane gear-force MUST-PASS defeated by
+    // <2-sample windows"): a data-sparse gear_force window used to be
+    // treated exactly like "genuinely no impact force" — both forced
+    // FalseEdge. Reproduces a genuine hard landing (g-spike, sustained
+    // ground, sustained low-AGL, clear negative V/S — every OTHER vote
+    // passes) whose window happens to carry only ONE gear_normal_force_n
+    // sample (e.g. an FPS stall/telemetry reconnect right at touchdown).
+
+    #[test]
+    fn sparse_gear_force_window_falls_back_to_voting_instead_of_discarding_a_real_hard_landing() {
+        let (samples, cand) = hard_landing_with_sparse_gear_force(&[Some(50000.0)]);
+        match validate_candidate(&cand, &samples, SimKind::XPlane12, -1200.0, AircraftCategory::FixedWing) {
+            ValidationResult::Validated { result } => {
+                assert_eq!(
+                    result.gear_force_sample_count_in_window, 1,
+                    "only one gear_force sample was ever provided"
+                );
+            }
+            ValidationResult::FalseEdge { reason, .. } => panic!(
+                "a genuine hard landing must not be discarded just because gear_force \
+                 data was sparse — got FalseEdge({reason:?})"
+            ),
+        }
+    }
+
+    #[test]
+    fn zero_gear_force_samples_in_window_also_falls_back_to_voting() {
+        // The gear_force dataref exists elsewhere in the buffer (checked via
+        // `any_gear_force_data`) but happens to carry nothing in THIS
+        // specific window — same "not enough data" class as one sample.
+        let (mut samples, cand) = hard_landing_with_sparse_gear_force(&[]);
+        // Give the buffer a gear_force reading far outside the 500ms window
+        // so `any_gear_force_data` is true but the window itself is empty.
+        samples.push(make_sample(1000 + 800 * 20, Some(50000.0)));
+        assert!(matches!(
+            validate_candidate(&cand, &samples, SimKind::XPlane12, -1200.0, AircraftCategory::FixedWing),
+            ValidationResult::Validated { .. }
+        ));
+    }
+
+    #[test]
+    fn sparse_gear_force_window_still_rejects_a_genuine_non_landing_via_voting() {
+        // The fallback is 4-of-4 voting, same strictness as the "no
+        // gear_force dataref at all" path — a sparse window must NOT
+        // become an easier bar to clear than having no data whatsoever.
+        // Only 2 of the other 3 votes pass here (no sustained ground —
+        // on_ground toggles off), so even with a sparse gear_force window
+        // this must still FalseEdge.
+        let mut samples: Vec<TouchdownWindowSample> = (0..60)
+            .map(|i| {
+                let mut s = make_sample(1000 + i * 20, if i == 0 { Some(50000.0) } else { None });
+                s.on_ground = i < 5; // breaks sustained-ground almost immediately
+                s
+            })
+            .collect();
+        samples[0].g_force = 0.9; // no G-spike either
+        let edge_at = samples[0].at;
+        let cand = TdCandidate {
+            edge_sample_index: 0,
+            edge_at,
+            edge_agl_ft: 1.0,
+            edge_vs_fpm: -1200.0,
+            edge_gear_force_n: Some(50000.0),
+            edge_g_force: 0.9,
+            edge_total_weight_kg: Some(73000.0),
+        };
+        assert!(matches!(
+            validate_candidate(&cand, &samples, SimKind::XPlane12, -1200.0, AircraftCategory::FixedWing),
+            ValidationResult::FalseEdge { .. }
+        ));
+    }
+
+    #[test]
+    fn gear_force_sample_count_in_window_reflects_raw_data_density_not_threshold() {
+        // Below-threshold samples still count toward the density figure —
+        // it measures "how much data do we have", not "how much passed".
+        let samples = vec![
+            make_sample(1000, Some(100.0)),  // below threshold
+            make_sample(1020, Some(200.0)),  // below threshold
+        ];
+        let edge_at = samples[0].at;
+        let (pass, _peak, _sustained, count) = evaluate_gear_force_test(&samples, edge_at, 21478.0);
+        assert!(!pass, "both samples are below threshold");
+        assert_eq!(count, 2, "both are still real, finite data points");
     }
 
     #[test]
