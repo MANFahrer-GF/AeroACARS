@@ -74,6 +74,48 @@ const hhmm = (ms: number) => {
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 };
 
+/**
+ * v0.19.x FIX: the crosshair used to pick `hoverIdx` by treating the
+ * mouse's X-percentage as a linear fraction of the point ARRAY (`round(
+ * hoverPercent * (n-1))`) — but the crosshair line itself is drawn at
+ * `x(i) = (t(i)/tMax) * W`, i.e. proportional to TIMESTAMP, not index.
+ * Real telemetry samples aren't evenly time-spaced (cruise ticks are
+ * sparser than approach ticks), so wherever sampling density varies the
+ * two disagreed: the vertical line the pilot sees and the readout values
+ * shown could belong to visibly different points on the timeline. This
+ * inverts the SAME time-proportional mapping `x()` uses, so the crosshair
+ * and the values it reports always refer to the same point.
+ */
+export function findHoverIndex(
+  pts: ProfilePt[],
+  hasTime: boolean,
+  tMax: number,
+  hoverPercent: number,
+): number {
+  const n = pts.length;
+  if (n === 0) return 0;
+  const pct = Math.max(0, Math.min(100, hoverPercent));
+  if (!hasTime) {
+    return Math.round((pct / 100) * (n - 1));
+  }
+  const targetT = (pct / 100) * tMax;
+  // Binary search for the first point with t >= targetT — pts are
+  // chronologically ordered telemetry, so t(i) is monotonic.
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((pts[mid].t ?? 0) < targetT) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0) {
+    const before = pts[lo - 1].t ?? 0;
+    const at = pts[lo].t ?? 0;
+    if (Math.abs(before - targetT) <= Math.abs(at - targetT)) return lo - 1;
+  }
+  return lo;
+}
+
 export function FlightProfile({ route }: { route: ProfilePt[] }) {
   const [hover, setHover] = useState<number | null>(null);
 
@@ -138,8 +180,7 @@ export function FlightProfile({ route }: { route: ProfilePt[] }) {
 
   const x = (i: number) => (tMax === 0 ? 0 : (tOf(pts[i], i) / tMax) * W);
 
-  const hoverIdx = hover === null ? null : Math.max(0, Math.min(pts.length - 1,
-    Math.round((hover / 100) * (pts.length - 1))));
+  const hoverIdx = hover === null ? null : findHoverIndex(pts, hasTime, tMax, hover);
 
   return (
     <div
