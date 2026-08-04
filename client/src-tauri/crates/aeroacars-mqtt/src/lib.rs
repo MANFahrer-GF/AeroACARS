@@ -32,7 +32,7 @@ use chrono::{DateTime, Utc};
 use rumqttc::{AsyncClient, Event, LastWill, MqttOptions, Packet, QoS, TlsConfiguration, Transport};
 use serde::Serialize;
 use sim_core::{FlightPhase, SimSnapshot, Simulator};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, warn};
 use url::Url;
 
@@ -1129,6 +1129,18 @@ pub struct Handle {
     /// v0.13.0: optional Broadcast-Receiver für Integrity-Flag-Events.
     /// Wird per `take_integrity_rx()` einmalig konsumiert.
     integrity_rx: Arc<tokio::sync::Mutex<Option<mpsc::UnboundedReceiver<IntegrityFlagEvent>>>>,
+    /// v0.19.x FIX: `Cmd::Shutdown` only ever stopped the PUBLISHER task
+    /// (the one draining `tx`). The reconnect-loop "drive" task — the one
+    /// that owns `eventloop.poll()`, auto-reconnects on every error by
+    /// rumqttc's own design, and re-subscribes to integrity_flag — had no
+    /// way to learn shutdown happened at all: dropping its `JoinHandle`
+    /// (bound to `_drive`, never stored) does not abort a tokio task, and
+    /// `disconnect()`'s resulting poll error was itself just another
+    /// "reconnect after backoff" event to it. Credentials stayed in
+    /// active use on the broker seconds after an explicit local logout,
+    /// leaking one task+connection per login/logout cycle. This watch
+    /// channel lets `shutdown()` signal the drive loop directly.
+    shutdown_tx: watch::Sender<bool>,
 }
 
 impl Handle {
@@ -1366,6 +1378,9 @@ impl Handle {
 
     pub fn shutdown(&self) {
         let _ = self.tx.try_send(Cmd::Shutdown);
+        // v0.19.x FIX: also stop the reconnect-loop drive task — see the
+        // field doc comment on `shutdown_tx`.
+        let _ = self.shutdown_tx.send(true);
     }
 }
 
@@ -1438,46 +1453,65 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
     let subscribe_client = client.clone();
     let subscribe_topic = integrity_topic.clone();
 
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+
     let _drive = tokio::spawn(async move {
         let mut subscribed = false;
         loop {
-            match eventloop.poll().await {
-                Ok(Event::Incoming(Packet::ConnAck(_))) => {
-                    info!("MQTT CONNACK received");
-                    if !subscribed {
-                        match subscribe_client.subscribe(&subscribe_topic, QoS::AtLeastOnce).await {
-                            Ok(()) => {
-                                info!(topic = %subscribe_topic, "subscribed to integrity_flag topic");
-                                subscribed = true;
-                            }
-                            Err(e) => {
-                                warn!("integrity_flag subscribe failed: {e}");
-                            }
-                        }
+            // v0.19.x FIX: race the eventloop poll against the shutdown
+            // signal so a logout actually stops this loop instead of
+            // leaving it to auto-reconnect forever (rumqttc's poll()
+            // treats a deliberate disconnect the same as any other
+            // transient error — "reconnect after backoff").
+            tokio::select! {
+                biased;
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        info!("MQTT drive loop: shutdown signaled, exiting");
+                        break;
                     }
                 }
-                Ok(Event::Incoming(Packet::Publish(publish))) => {
-                    if publish.topic == subscribe_topic {
-                        match serde_json::from_slice::<IntegrityFlagEvent>(&publish.payload) {
-                            Ok(evt) => {
-                                if integrity_tx.send(evt).is_err() {
-                                    debug!("integrity_flag receiver dropped — discarding");
+                poll_result = eventloop.poll() => {
+                    match poll_result {
+                        Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                            info!("MQTT CONNACK received");
+                            if !subscribed {
+                                match subscribe_client.subscribe(&subscribe_topic, QoS::AtLeastOnce).await {
+                                    Ok(()) => {
+                                        info!(topic = %subscribe_topic, "subscribed to integrity_flag topic");
+                                        subscribed = true;
+                                    }
+                                    Err(e) => {
+                                        warn!("integrity_flag subscribe failed: {e}");
+                                    }
                                 }
                             }
-                            Err(e) => {
-                                warn!("integrity_flag JSON decode failed: {e}");
+                        }
+                        Ok(Event::Incoming(Packet::Publish(publish))) => {
+                            if publish.topic == subscribe_topic {
+                                match serde_json::from_slice::<IntegrityFlagEvent>(&publish.payload) {
+                                    Ok(evt) => {
+                                        if integrity_tx.send(evt).is_err() {
+                                            debug!("integrity_flag receiver dropped — discarding");
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("integrity_flag JSON decode failed: {e}");
+                                    }
+                                }
                             }
                         }
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!("MQTT poll error: {e} — backing off 5 s");
+                            subscribed = false;  // re-subscribe on reconnect
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                        }
                     }
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    warn!("MQTT poll error: {e} — backing off 5 s");
-                    subscribed = false;  // re-subscribe on reconnect
-                    tokio::time::sleep(Duration::from_secs(5)).await;
                 }
             }
         }
+        debug!("MQTT drive loop exiting");
     });
 
     let cfg_for_pub = cfg.clone();
@@ -1565,6 +1599,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
     Ok(Handle {
         tx,
         integrity_rx: Arc::new(tokio::sync::Mutex::new(Some(integrity_rx))),
+        shutdown_tx,
     })
 }
 
@@ -1627,5 +1662,87 @@ fn phase_label(p: FlightPhase) -> &'static str {
         FlightPhase::BlocksOn => "BLOCKS_ON",
         FlightPhase::Arrived => "ARRIVED",
         FlightPhase::PirepSubmitted => "PIREP_SUBMITTED",
+    }
+}
+
+// v0.19.x FIX: `start()`'s drive loop races `eventloop.poll()` (real
+// network I/O, not mockable without a live broker) against a
+// `watch::Receiver::changed()` shutdown signal inside `tokio::select!`.
+// The actual eventloop can't be unit-tested here, but the shutdown
+// mechanism itself — the exact correctness property this fix depends on
+// — is fully isolatable: does a `biased` select! between "shutdown
+// signaled" and "a long-pending branch" (standing in for poll() with no
+// events) exit promptly on shutdown, and does it NOT exit spuriously
+// when nothing has been signaled?
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration as StdDuration;
+
+    /// Mirrors the exact `tokio::select! { biased; changed = ...,
+    /// poll_result = ... }` shape used in `start()`'s drive loop, with
+    /// `eventloop.poll()` stood in by a long sleep (never resolves within
+    /// the test's timeout unless shutdown wins first).
+    async fn drive_loop_shape(mut shutdown_rx: watch::Receiver<bool>) {
+        loop {
+            tokio::select! {
+                biased;
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        break;
+                    }
+                }
+                _ = tokio::time::sleep(StdDuration::from_secs(3600)) => {
+                    // stand-in for an eventloop.poll() that never returns
+                    // within the test's own timeout
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_signal_breaks_the_drive_loop_promptly() {
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let handle = tokio::spawn(drive_loop_shape(shutdown_rx));
+
+        shutdown_tx.send(true).expect("receiver still alive");
+
+        let result = tokio::time::timeout(StdDuration::from_secs(2), handle).await;
+        assert!(
+            result.is_ok(),
+            "drive loop must exit promptly once shutdown is signaled — \
+             this is the exact mechanism that used to leak the reconnect \
+             task forever after a local logout"
+        );
+    }
+
+    #[tokio::test]
+    async fn drive_loop_does_not_exit_spuriously_without_a_shutdown_signal() {
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let handle = tokio::spawn(drive_loop_shape(shutdown_rx));
+
+        // No signal sent — the loop must still be running after a short
+        // wait (proves `changed()` doesn't fire on its own / on the
+        // initial `false` value).
+        let result = tokio::time::timeout(StdDuration::from_millis(200), handle).await;
+        assert!(
+            result.is_err(),
+            "drive loop must NOT exit on its own — only an explicit shutdown() may stop it"
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_the_sender_also_breaks_the_drive_loop() {
+        // Handle::shutdown() is the intended path, but a Handle drop
+        // (all senders gone) must not leave the drive loop spinning
+        // forever either — `changed()` returns Err once the sender side
+        // is gone, and the loop treats that the same as an explicit true.
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let handle = tokio::spawn(drive_loop_shape(shutdown_rx));
+
+        drop(shutdown_tx);
+
+        let result = tokio::time::timeout(StdDuration::from_secs(2), handle).await;
+        assert!(result.is_ok(), "a dropped sender must also unblock the drive loop");
     }
 }
