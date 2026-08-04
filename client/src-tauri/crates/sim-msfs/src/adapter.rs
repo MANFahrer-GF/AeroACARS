@@ -975,13 +975,13 @@ fn run_dispatch(
                     // sees the mistyped LVar just sit at "no value"
                     // forever, indistinguishable from "sim hasn't sent
                     // data yet" (see InspectorWatch::error).
-                    if let Some(name) =
+                    if let Some(watch_id) =
                         telemetry::inspector_watch_for_exception(&conn.inspector_send_ids, send_id)
                     {
-                        shared
-                            .inspector
-                            .lock()
-                            .set_error(name, format!("SimConnect exception #{exception} (send_id {send_id})"));
+                        shared.inspector.lock().set_error(
+                            watch_id,
+                            format!("SimConnect exception #{exception} (send_id {send_id})"),
+                        );
                     }
                 }
                 Ok(Some(DispatchMsg::SimObjectData { request_id, bytes })) => {
@@ -1321,12 +1321,14 @@ fn sleep_or_stop(stop: &Arc<AtomicBool>, dur: Duration) {
 /// the worker loop drives. `Drop` calls `SimConnect_Close`.
 struct Connection {
     handle: sys::HANDLE,
-    /// `(send_id, watch_name)` captured while registering the inspector
+    /// `(send_id, watch_id)` captured while registering the inspector
     /// data definition — lets a later async SIMCONNECT_RECV_EXCEPTION be
     /// attributed back to the specific watch whose AddToDataDefinition
     /// call produced it. Rebuilt from scratch on every
     /// `register_inspector()` call. See `telemetry::inspector_watch_for_exception`.
-    inspector_send_ids: Vec<(u32, String)>,
+    /// Keyed on the watch's stable `id`, not its name — two watches can
+    /// legitimately share a name (see `InspectorState::set_error`'s doc).
+    inspector_send_ids: Vec<(u32, u32)>,
 }
 
 impl Connection {
@@ -1474,7 +1476,7 @@ impl Connection {
             let mut send_id: sys::DWORD = 0;
             let hr = unsafe { sys::SimConnect_GetLastSentPacketID(self.handle, &mut send_id) };
             if hr == 0 {
-                self.inspector_send_ids.push((send_id, w.name.clone()));
+                self.inspector_send_ids.push((send_id, w.id));
             } else {
                 tracing::warn!(
                     watch = %w.name,

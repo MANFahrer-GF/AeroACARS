@@ -353,11 +353,18 @@ impl CpdlcThread {
             .collect();
         for min in stale_mins {
             self.open.remove(&(Direction::Uplink, min));
-            if let Some(entry) = self
-                .history
-                .iter_mut()
-                .find(|e| e.min == min && e.direction == Direction::Uplink)
-            {
+            // v0.20.x QS fix: a plain forward `.find()` here returned
+            // whichever entry with this MIN came FIRST in history — on
+            // a SECOND handover reusing a MIN a prior handover already
+            // superseded, that's the old, already-superseded (no-op)
+            // entry, not the new station's now-actually-stale one. Must
+            // use the same reverse "most recent" search as
+            // `mark_closed`/`is_superseded_uplink`, or a second-handover
+            // MIN collision silently defeats the whole supersede
+            // mechanism: `is_superseded_uplink` would keep reading the
+            // NEW (unmarked) entry as not-superseded, letting a reply
+            // through to the wrong station.
+            if let Some(entry) = self.find_current_entry_mut(Direction::Uplink, min) {
                 entry.superseded = true;
             }
         }
@@ -824,6 +831,47 @@ mod tests {
             !entry.closed,
             "superseded is not the same as answered — it was never actually closed"
         );
+    }
+
+    #[test]
+    fn second_handover_supersedes_the_new_stations_reused_min_not_the_stale_old_one() {
+        // v0.20.x QS fix: mark_logged_off's own supersede loop used a
+        // plain forward `.find()` — on a SECOND handover reusing a MIN
+        // the FIRST handover already superseded, that returned the old,
+        // already-superseded (no-op) entry instead of the new station's
+        // now-actually-stale one, leaving it with `superseded: false`.
+        // is_superseded_uplink (which correctly reverse-searches) would
+        // then read the wrong entry as "not superseded" — letting a
+        // reply through to the wrong (third) station.
+        let mut thread = CpdlcThread::new();
+        // Station A: uplink MIN 3, left open at handover 1.
+        receive(&mut thread, "/data2/3//WU/CLIMB TO AND MAINTAIN FL240");
+        thread.mark_logged_off(); // handover 1: A → B
+        assert!(thread.is_superseded_uplink(3));
+
+        // Station B reuses MIN 3 for an unrelated instruction, also
+        // left open when handover 2 fires before the pilot answers.
+        receive(&mut thread, "/data2/3//WU/DESCEND TO AND MAINTAIN FL180");
+        assert!(
+            !thread.is_superseded_uplink(3),
+            "B's fresh MIN-3 entry must not inherit A's stale supersession"
+        );
+        thread.mark_logged_off(); // handover 2: B → C
+
+        assert!(
+            thread.is_superseded_uplink(3),
+            "B's entry must now be superseded too — the pilot never answered it either"
+        );
+        assert_eq!(thread.pending_uplink_count(), 0);
+
+        let mut uplinks_min_3 = thread
+            .history()
+            .iter()
+            .filter(|e| e.direction == Direction::Uplink && e.min == 3);
+        let from_a = uplinks_min_3.next().unwrap();
+        let from_b = uplinks_min_3.next().unwrap();
+        assert!(from_a.superseded, "A's entry: superseded by handover 1");
+        assert!(from_b.superseded, "B's entry: must be superseded by handover 2, not left untouched");
     }
 
     #[test]

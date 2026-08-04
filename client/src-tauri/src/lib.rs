@@ -39297,8 +39297,11 @@ mod touchdown_metadata_stamp_tests {
         // for `landing_score_field` to surface a value to compare).
         stats.landing_score = Some(LandingScore::Acceptable);
         // Runway-utilisation inputs. td_dist ~300 m past threshold, rollout
-        // 1400 m. Against OurAirports LDA 3600 m → ratio ~39 % (good_stop).
-        // Against the displaced Navigraph LDA 2381 m → ratio ~59 % (ok_stop).
+        // 1400 m. Against OurAirports LDA 3600 m → ratio ~39 % (excellent_margin,
+        // v0.20.x bands). Against the displaced Navigraph LDA 2381 m → ratio
+        // ~59 % (good_stop). The test only asserts the two scores DIFFER
+        // (assert_ne!), not the literal rationale, so this comment is
+        // documentation only — no assertion depends on these band names.
         stats.rollout_distance_m = Some(1400.0);
         stats.landing_float_distance_m = Some(0.0);
         // Trust the geometry on this divert: the matched ICAO (EDDP) must

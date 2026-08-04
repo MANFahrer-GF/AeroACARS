@@ -1303,12 +1303,23 @@ impl InspectorState {
         }
     }
 
-    /// Attribute a SIMCONNECT_RECV_EXCEPTION to the watch named `name`,
-    /// so the UI can render an error indicator instead of a stale
-    /// value. No-op if the watch was removed before the (async)
-    /// exception arrived.
-    pub fn set_error(&mut self, name: &str, message: String) {
-        if let Some(w) = self.watches.iter_mut().find(|w| w.name == name) {
+    /// Attribute a SIMCONNECT_RECV_EXCEPTION to the watch with this
+    /// stable `id`, so the UI can render an error indicator instead of
+    /// a stale value. No-op if the watch was removed before the
+    /// (async) exception arrived.
+    ///
+    /// Keyed on `id`, NOT `name`: the pilot can legitimately add the
+    /// same SimVar/LVar name twice (e.g. once as Number, once as Bool,
+    /// to test both interpretations) — nothing rejects duplicate names
+    /// (see `add`). Matching by name would attribute every exception to
+    /// whichever of the two happens to come first in `watches`,
+    /// leaving the actual failing one (if it's the second) silently
+    /// stuck at `error: None` — the exact bug this method exists to
+    /// fix, just for the duplicate-name case. `id` is unique by
+    /// construction (`next_id` is a monotonic counter), so it can't
+    /// collide.
+    pub fn set_error(&mut self, id: u32, message: String) {
+        if let Some(w) = self.watches.iter_mut().find(|w| w.id == id) {
             w.error = Some(message);
         }
     }
@@ -1344,9 +1355,11 @@ impl InspectorState {
 }
 
 /// Correlate an async `SIMCONNECT_RECV_EXCEPTION` back to the inspector
-/// watch whose `AddToDataDefinition` call produced it.
+/// watch whose `AddToDataDefinition` call produced it. Returns the
+/// watch's stable `id` (not its name — see `InspectorState::set_error`
+/// for why a name isn't a safe enough key when duplicate names exist).
 ///
-/// `send_ids` is the `(send_id, watch_name)` table captured while
+/// `send_ids` is the `(send_id, watch_id)` table captured while
 /// registering the inspector's data definition — one entry per watch,
 /// in call order (see `Connection::register_inspector`). SimConnect
 /// often accepts an unresolvable SimVar/LVar name synchronously (the
@@ -1355,11 +1368,11 @@ impl InspectorState {
 /// specific `AddToDataDefinition` call — this is the only reliable way
 /// to attribute the failure to one watch out of many sharing the same
 /// data definition.
-pub fn inspector_watch_for_exception(send_ids: &[(u32, String)], exception_send_id: u32) -> Option<&str> {
+pub fn inspector_watch_for_exception(send_ids: &[(u32, u32)], exception_send_id: u32) -> Option<u32> {
     send_ids
         .iter()
         .find(|(id, _)| *id == exception_send_id)
-        .map(|(_, name)| name.as_str())
+        .map(|(_, watch_id)| *watch_id)
 }
 
 impl Touchdown {
@@ -6540,15 +6553,8 @@ mod tests {
 
     #[test]
     fn inspector_watch_for_exception_finds_the_matching_watch() {
-        let send_ids = vec![
-            (101, "L:FENIX_ECAM_SD".to_string()),
-            (102, "L:TYPO_NOT_A_REAL_LVAR".to_string()),
-            (103, "PLANE ALTITUDE".to_string()),
-        ];
-        assert_eq!(
-            inspector_watch_for_exception(&send_ids, 102),
-            Some("L:TYPO_NOT_A_REAL_LVAR")
-        );
+        let send_ids = vec![(101, 7u32), (102, 8u32), (103, 9u32)];
+        assert_eq!(inspector_watch_for_exception(&send_ids, 102), Some(8));
     }
 
     #[test]
@@ -6556,7 +6562,7 @@ mod tests {
         // An exception from some other SimConnect call entirely (e.g. the
         // main telemetry definition) must not be misattributed to an
         // inspector watch just because *a* table lookup succeeds.
-        let send_ids = vec![(101, "L:FENIX_ECAM_SD".to_string())];
+        let send_ids = vec![(101, 7u32)];
         assert_eq!(inspector_watch_for_exception(&send_ids, 999), None);
     }
 
@@ -6566,7 +6572,7 @@ mod tests {
     }
 
     #[test]
-    fn inspector_state_set_error_flags_the_named_watch_only() {
+    fn inspector_state_set_error_flags_only_the_matching_watch_id() {
         let mut state = InspectorState::default();
         let good = state.add("PLANE ALTITUDE".to_string(), "feet".to_string(), WatchKind::Number);
         let bad = state.add(
@@ -6575,7 +6581,7 @@ mod tests {
             WatchKind::Number,
         );
 
-        state.set_error("L:TYPO_NOT_A_REAL_LVAR", "SimConnect exception #3".to_string());
+        state.set_error(bad, "SimConnect exception #3".to_string());
 
         let bad_watch = state.watches.iter().find(|w| w.id == bad).unwrap();
         assert_eq!(bad_watch.error.as_deref(), Some("SimConnect exception #3"));
@@ -6583,22 +6589,48 @@ mod tests {
         assert_eq!(good_watch.error, None);
     }
 
+    // v0.20.x QS: `set_error` used to key on the watch NAME, not its
+    // stable `id`. Nothing stops a pilot from adding the same SimVar/
+    // LVar name twice (e.g. once as Number, once as Bool, to see which
+    // interpretation actually works) — with a name-keyed lookup, an
+    // exception belonging to the SECOND watch would land on the FIRST
+    // one instead (first match wins), leaving the actually-failing
+    // watch stuck at `error: None` forever — the exact bug this whole
+    // feature exists to fix, just for the duplicate-name case.
     #[test]
-    fn inspector_state_set_error_on_unknown_name_is_a_harmless_noop() {
+    fn inspector_state_set_error_distinguishes_two_watches_with_the_same_name() {
+        let mut state = InspectorState::default();
+        let as_number = state.add("L:AMBIGUOUS_LVAR".to_string(), "number".to_string(), WatchKind::Number);
+        let as_bool = state.add("L:AMBIGUOUS_LVAR".to_string(), "bool".to_string(), WatchKind::Bool);
+
+        // Only the SECOND watch (as_bool) actually failed.
+        state.set_error(as_bool, "SimConnect exception #3".to_string());
+
+        let number_watch = state.watches.iter().find(|w| w.id == as_number).unwrap();
+        assert_eq!(
+            number_watch.error, None,
+            "the Number watch never failed — a name-keyed lookup would wrongly flag it too"
+        );
+        let bool_watch = state.watches.iter().find(|w| w.id == as_bool).unwrap();
+        assert_eq!(bool_watch.error.as_deref(), Some("SimConnect exception #3"));
+    }
+
+    #[test]
+    fn inspector_state_set_error_on_unknown_id_is_a_harmless_noop() {
         // The exception can legitimately arrive after the pilot already
         // removed the watch from the UI — must not panic or affect other
         // entries.
         let mut state = InspectorState::default();
         state.add("PLANE ALTITUDE".to_string(), "feet".to_string(), WatchKind::Number);
-        state.set_error("L:ALREADY_REMOVED", "SimConnect exception #3".to_string());
+        state.set_error(9999, "SimConnect exception #3".to_string());
         assert!(state.watches.iter().all(|w| w.error.is_none()));
     }
 
     #[test]
     fn inspector_state_clear_errors_resets_every_watch_for_a_fresh_registration_attempt() {
         let mut state = InspectorState::default();
-        state.add("L:TYPO_NOT_A_REAL_LVAR".to_string(), "number".to_string(), WatchKind::Number);
-        state.set_error("L:TYPO_NOT_A_REAL_LVAR", "SimConnect exception #3".to_string());
+        let id = state.add("L:TYPO_NOT_A_REAL_LVAR".to_string(), "number".to_string(), WatchKind::Number);
+        state.set_error(id, "SimConnect exception #3".to_string());
         assert!(state.watches[0].error.is_some());
 
         state.clear_errors();

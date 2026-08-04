@@ -1,5 +1,5 @@
 // Pilot-Hilfe-Modal für den "Bahn-Auslastung"-Sub-Score (LDA-basiert,
-// v0.12.0 mit 15 %-Float-Toleranz).
+// v0.12.0 mit Float-Toleranz, v0.20.x auf 20 % angehoben).
 //
 // Wird über einen "🛬 Wie wird das berechnet?"-Button am Boden der
 // rollout-Card im LandingPanel geöffnet. Inhalt erklärt Formel, die
@@ -88,7 +88,8 @@ export function RunwayUtilizationHelpModal({ onClose }: Props) {
           </Section>
 
           {/* v0.12.0 (#runway-utilization-refinement, LE6): Float-Toleranz —
-              die ersten 15 % der LDA an Float kosten keine Punkte. */}
+              die ersten 20 % der LDA an Float kosten keine Punkte
+              (v0.20.x: von 15 % angehoben). */}
           <Section
             heading={t(
               "landing.runway_utilization_help.float_tolerance_heading",
