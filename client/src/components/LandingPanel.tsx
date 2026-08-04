@@ -656,42 +656,48 @@ function fmtDeDe(v: number, digits = 0): string {
  *
  *  History: v1 derived this from the raw sink-rate fpm alone (mirroring
  *  `classifyByVS()`), independent of `grade_letter` — same letter (e.g. "A")
- *  could sit next to either SMOOTH or ACCEPTABLE depending on which axis a
- *  given landing fell on. Pilot asked to couple word and letter instead.
+ *  could sit next to either SMOOTH or ACCEPTABLE. Pilot asked to couple word
+ *  and letter instead.
  *
- *  v2 tried the obvious fix — read the record's own `score_label` verbatim,
- *  the exact field the (untouched) report shows via
- *  `record.score_label.toUpperCase()`. Live check (2026-08-03) caught this
- *  as ALSO wrong: `score_label` is written once at file-time and never
- *  retroactively recomputed. Rust's `aggregate_score_label()`
- *  (src-tauri/src/lib.rs) was realigned in v0.20.0 to sit exactly on
- *  `grade_letter`'s own thresholds (95/88/82/75/65/50) — but PIREPs filed
- *  before that migration still carry `score_label` computed under the OLD
- *  cutoffs. Caught a real one live: 84 points / "B+" stored `score_label:
- *  "firm"`, which a fresh recompute (below) puts at "acceptable" — and
- *  "acceptable" is what actually lines up with B+ (82–87 range).
+ *  v2 read `record.score_label` verbatim — also wrong, because that field is
+ *  frozen at file-time: Rust's `aggregate_score_label()` was realigned in
+ *  v0.20.0, so older PIREPs carried the OLD ladder's result forever.
  *
- *  So: recompute from `score_numeric` fresh, mirroring
- *  `aggregate_score_label()`'s CURRENT thresholds directly rather than
- *  trusting a value that can silently predate the mapping it's supposed to
- *  represent. This guarantees word and letter agree on every row here,
- *  including pre-migration PIREPs — even though that means this screen can
- *  occasionally show a different word than the report's (still untouched,
- *  still showing the stale stored field) headline for the very same old
- *  record. Given the choice, a self-consistent overview beats bit-for-bit
- *  matching a report that's already showing stale data. */
-function recordCategory(r: LandingRecord): LandingCategory {
-  const s = r.score_numeric;
-  if (s >= 88) return "smooth";
-  if (s >= 75) return "acceptable";
-  if (s >= 50) return "firm";
-  if (s >= 15) return "hard";
-  return "severe";
+ *  v3 recomputed the ladder here in TypeScript. That fixed this screen but
+ *  put the SAME rule in the codebase twice — and promptly produced the next
+ *  contradiction: this overview said "SMOOTH" while the report right next to
+ *  it (still reading the frozen field) said "ACCEPTABLE" for one and the same
+ *  landing. Measured on real data: 2 of 31 flights, both 88 points / grade A.
+ *
+ *  v4 (QS 2026-08-04) fixes it where it belongs — `landing_list` in
+ *  src-tauri/src/lib.rs recomputes BOTH derived fields (`score_label` and
+ *  `grade_letter`) from `score_numeric` when it hands records to the UI. That
+ *  leaves exactly one source of truth, in Rust, for the whole app: every
+ *  surface gets the same word by construction, a future change to the ladder
+ *  applies retroactively to the entire history, and this duplicate ladder can
+ *  go away. So: just read the (now guaranteed-fresh) label.
+ *
+ *  The `default` arm is a pure safety net for a label the backend might add
+ *  later — it must never be reached with today's five values, and it
+ *  deliberately does NOT reintroduce a second threshold ladder. */
+export function recordCategory(r: LandingRecord): LandingCategory {
+  switch (r.score_label) {
+    case "smooth":
+    case "acceptable":
+    case "firm":
+    case "hard":
+    case "severe":
+      return r.score_label;
+    default:
+      return "firm";
+  }
 }
 
-/** Literal English, not translated — matches record.score_label.toUpperCase()
- *  in the report exactly. */
-function rateCategoryWord(cat: LandingCategory): string {
+/** Literal English, not translated — same wording the backend's own
+ *  `aggregate_score_label()` produces. Since QS 2026-08-04 this is the ONE
+ *  way the category word reaches the screen (overview list, chart, and the
+ *  report headline all go through here), so the two can no longer drift. */
+export function rateCategoryWord(cat: LandingCategory): string {
   return cat.toUpperCase();
 }
 
@@ -2454,10 +2460,14 @@ function LandingReport({ record }: { record: LandingRecord }) {
   const hasCharts = hasApproach || hasCloseup || v2Props != null;
 
   // Score-Label: bei Confirmed Accident → "ABSTURZ ERKANNT".
+  // QS 2026-08-04: liest bewusst ueber `recordCategory`/`rateCategoryWord`
+  // statt direkt `record.score_label` — eine Anzeigequelle fuer Uebersicht
+  // UND Bericht, damit beide nicht wieder auseinanderlaufen koennen. Die
+  // Frische des Feldes stellt inzwischen `landing_list` (Rust) sicher.
   const heroLabel =
     record.accident === true
       ? t("landing.report.accident_label")
-      : record.score_label.toUpperCase();
+      : rateCategoryWord(recordCategory(record));
 
   // Sub-Score-Balken: Farbe nach Punkten (grün / amber / rot).
   const barColor = (pts: number) =>
@@ -3086,7 +3096,7 @@ function LandingDetail({
                 Client Tab "Landung". */}
             {record.accident === true
               ? t("landing.accident.primary_label")
-              : record.score_label.toUpperCase()}
+              : rateCategoryWord(recordCategory(record))}
             {" "}· {record.score_numeric}/100 ·{" "}
             {fmtDateTime(record.touchdown_at)}
             {isPreview && (
@@ -4087,19 +4097,31 @@ export function LandingPanel() {
   const requestedIcaosRef = useRef<Set<string>>(new Set());
   const stats = useOverviewStats(records);
 
+  // QS 2026-08-04: `refresh` läuft alle 5 s. Dauert ein Abruf einmal
+  // länger als der Takt (träger VPS/phpVMS), überholen sich zwei
+  // Anfragen — und die ÄLTERE Antwort überschrieb dann klaglos die
+  // neuere, weil hier weder ein Abbruch-Merker noch eine laufende Nummer
+  // geprüft wurde. Die laufende Nummer stellt sicher, dass nur die
+  // jeweils jüngste Anfrage den Zustand setzen darf. Steigt zusätzlich
+  // beim Aushängen, damit eine noch offene Anfrage nach dem Verlassen
+  // des Tabs nichts mehr schreibt.
+  const refreshSeqRef = useRef(0);
+
   async function refresh() {
+    const seq = ++refreshSeqRef.current;
     setLoading(true);
     try {
       const [list, current] = await Promise.all([
         invoke<LandingRecord[]>("landing_list"),
         invoke<LandingRecord | null>("landing_get_current"),
       ]);
+      if (seq !== refreshSeqRef.current) return;
       setRecords(list);
       setPreview(current ?? null);
     } catch (e) {
       console.warn("landing_list failed", e);
     } finally {
-      setLoading(false);
+      if (seq === refreshSeqRef.current) setLoading(false);
     }
   }
 
@@ -4108,7 +4130,10 @@ export function LandingPanel() {
     // Refresh the preview every 5 s while we're on this tab so the
     // pilot sees their landing scores updating live during rollout.
     const t = setInterval(refresh, 5000);
-    return () => clearInterval(t);
+    return () => {
+      clearInterval(t);
+      refreshSeqRef.current++;
+    };
   }, []);
 
   // Landungen-Übersicht (7a) §4/§6 "Ortsnamen aus der Flughafentabelle" —

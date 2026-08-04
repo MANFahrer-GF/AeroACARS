@@ -7021,6 +7021,34 @@ fn activity_log_clear(state: tauri::State<'_, AppState>) {
 
 // ---- Landing-history commands (Landing tab) ----
 
+/// QS 2026-08-04: `score_label` und `grade_letter` sind ABGELEITETE Werte —
+/// beide sind reine Funktionen von `score_numeric`. Gespeichert werden sie
+/// trotzdem, einmal beim Einreichen, und danach nie wieder angefasst. Wird
+/// die Ableitungsregel spaeter praezisiert (in v0.20.0 passiert: die
+/// Label-Schwellen wurden auf die Noten-Schwellen ausgerichtet), tragen
+/// Alt-Datensaetze fuer immer das Ergebnis der ALTEN Regel mit sich herum.
+///
+/// Der Landungs-Tab hatte das mit einer eigenen, in TypeScript nachgebauten
+/// Schwellen-Leiter umschifft — und damit die Regel ZWEIMAL im Code stehen,
+/// was sofort die naechste Abweichung erzeugte: die Uebersicht rechnete
+/// frisch ("SMOOTH"), der Bericht las das eingefrorene Feld ("ACCEPTABLE"),
+/// fuer ein und dieselbe Landung (real gemessen: 2 von 31 Fluegen, beide
+/// 88 Punkte / Note A).
+///
+/// Nachhaltige Loesung statt zweier Anzeige-Flicken: die abgeleiteten
+/// Felder werden hier beim LESEN neu aus `score_numeric` berechnet. Damit
+/// gibt es genau eine Quelle der Wahrheit (`aggregate_score_label` /
+/// `letter_grade`), jede Oberflaeche bekommt automatisch denselben Wert,
+/// eine kuenftige Regelaenderung wirkt rueckwirkend auf die ganze Historie
+/// — und der Nachbau im Frontend kann entfallen. Der Speicher bleibt
+/// unangetastet (keine Migration, keine Schreibzugriffe).
+fn normalize_derived_scores(mut r: LandingRecord) -> LandingRecord {
+    let n = r.score_numeric.clamp(0, 100);
+    r.score_label = aggregate_score_label(n as u8).to_string();
+    r.grade_letter = letter_grade(n).to_string();
+    r
+}
+
 /// List every persisted landing record, newest first. Used by the
 /// Landing tab's list view.
 #[tauri::command]
@@ -7028,6 +7056,9 @@ fn landing_list(app: AppHandle) -> Vec<LandingRecord> {
     open_landing_store(&app)
         .and_then(|s| s.list().ok())
         .unwrap_or_default()
+        .into_iter()
+        .map(normalize_derived_scores)
+        .collect()
 }
 
 // v0.7.13: `landing_get(pirep_id)` Tauri-Command entfernt — Frontend nutzt
@@ -12805,12 +12836,27 @@ fn assess_touchdown(stats: &FlightStats) -> AssessedTouchdown {
         return AssessedTouchdown::default();
     };
     const FT_PER_M: f64 = 3.280_839_895;
-    let td_m = rm.touchdown_distance_from_threshold_ft / FT_PER_M;
+    // `touchdown_distance_from_threshold_ft` (from `runway::lookup_runway`/
+    // `lookup_runway_in_nav`) is measured from the *physical* runway-
+    // pavement start, not the landing threshold — see `NavRunway::
+    // threshold`'s doc comment and `runway_assessment::classify_displaced`'s.
+    // Whenever the runway has a displaced threshold, the legal landing
+    // threshold sits `displaced_threshold_m` further down the runway
+    // from that point. This is the ONE place that correction is applied;
+    // every classifier below gets the corrected distance except
+    // `classify_displaced`, which needs the raw pavement-relative value.
+    let td_raw_m = rm.touchdown_distance_from_threshold_ft / FT_PER_M;
+    let displaced_threshold_m = stats
+        .runway_nav_geometry
+        .as_ref()
+        .map(|g| g.displaced_threshold_ft as f64 / FT_PER_M)
+        .unwrap_or(0.0);
+    let td_m = td_raw_m - displaced_threshold_m;
     let length_m = (rm.length_ft as f64) / FT_PER_M;
     let tdz = runway_assessment::classify_tdz(td_m, length_m);
     let aim = Some(runway_assessment::classify_aim(td_m, length_m));
     let dds = stats.runway_nav_geometry.as_ref().map(|g| {
-        runway_assessment::classify_displaced(td_m, g.displaced_threshold_ft as f64)
+        runway_assessment::classify_displaced(td_raw_m, g.displaced_threshold_ft as f64)
     });
     // F5 TCH: nur klassifizieren wenn BOTH der nav-geometric tch_ft
     // AND der actual-measured tch_ft im Streamer-Tick vorhanden sind.
@@ -15251,6 +15297,30 @@ async fn compute_distance_to_airport(
     }
 }
 
+/// v0.19.x FIX (finding 2): restore a flight that failed to file back into
+/// `active_flight` for retry, undoing everything `flight_end` did to it
+/// before the attempt. `flight.stop` was set true and — because filing can
+/// take up to ~40s across the retry backoff, far longer than any worker's
+/// poll interval — the position streamer, phpVMS-position worker and
+/// touchdown sampler have almost certainly already exited because of it.
+/// Without this, the restored flight sits in `active_flight` looking
+/// active while nothing is actually recording it anymore: no streaming,
+/// no phpVMS posts, no touchdown capture. Mirrors the exact re-arm
+/// sequence `spawn_resume_sim_gate` uses after an app-restart resume.
+fn restore_flight_for_retry(
+    app: &AppHandle,
+    state: &AppState,
+    client: &Client,
+    flight: Arc<ActiveFlight>,
+) {
+    flight.stop.store(false, Ordering::Relaxed);
+    spawn_phpvms_position_worker(app.clone(), Arc::clone(&flight), client.clone());
+    spawn_position_streamer(app.clone(), Arc::clone(&flight), client.clone());
+    spawn_touchdown_sampler(app.clone(), Arc::clone(&flight));
+    let mut guard = state.active_flight.lock().expect("active_flight lock");
+    *guard = Some(flight);
+}
+
 /// File the active PIREP with computed final stats. Refuses to file if any
 /// of the minimum-quality checks in `validate_for_filing` fail — the UI then
 /// surfaces a dialog letting the user cancel the flight or file as a manual
@@ -15532,6 +15602,28 @@ async fn flight_end(
         }
     }
 
+    // v0.19.x FIX (finding 3): resolve the client BEFORE taking the flight
+    // out of state. This used to run after the take() below — a session-
+    // expiry error at that exact point permanently lost the flight from
+    // memory with no restore attempt at all, since nothing after the `?`
+    // early-return ever runs.
+    let client = current_client(&state)?;
+
+    // v0.19.x FIX (findings 1+2): hold the SAME in-progress flag
+    // `flight_start`/`flight_adopt` use, for the entire take → file →
+    // (restore-on-failure) window below. Without this, a slow/hanging
+    // /file call (up to ~40s across the retry backoff) leaves a window
+    // where `active_flight` is empty but this call isn't done with the
+    // flight yet — a concurrent auto-start or manual start sees the slot
+    // free and creates a NEW flight, which this call's later restore-on-
+    // error then silently clobbers. Reproduces the exact "double-submit
+    // lost a flight" incident class. Auto-released on every return path
+    // (success or restore) via `Drop` — no `disarm()` needed: on success
+    // `active_flight` is genuinely empty afterwards (fine for a new
+    // start), and on restore it holds the old flight again (also fine —
+    // the existing `active_flight`-occupied check takes back over).
+    let _lifecycle_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
+
     // Validation passed — now actually take the flight out of state and file.
     let flight = {
         let mut guard = state.active_flight.lock().expect("active_flight lock");
@@ -15546,8 +15638,6 @@ async fn flight_end(
     // letzten Tick orphan items in position_queue.json persistiert.
     flight.position_outbox.lock().expect("position_outbox lock").clear();
     flight.stop.store(true, Ordering::Relaxed);
-
-    let client = current_client(&state)?;
 
     // Snapshot all stats inside a single short-lived guard to avoid holding
     // the Mutex across an `await`.
@@ -15785,8 +15875,7 @@ async fn flight_end(
                     "Divert: Finalisierung fehlgeschlagen".to_string(),
                     Some(format!("{} — Flug bleibt aktiv für Retry", e)),
                 );
-                let mut guard = state.active_flight.lock().expect("active_flight lock");
-                *guard = Some(flight);
+                restore_flight_for_retry(&app, state.inner(), &client, flight);
                 return Err(e.into());
             }
         }
@@ -16118,8 +16207,7 @@ async fn flight_end(
                         "PIREP file failed",
                         Some(format!("{} — Queue ebenfalls kaputt, Flug bleibt aktiv für Retry", e)),
                     );
-                    let mut guard = state.active_flight.lock().expect("active_flight lock");
-                    *guard = Some(flight);
+                    restore_flight_for_retry(&app, state.inner(), &client, flight);
                     return Err(e.into());
                 }
                 // Erfolgreich gequeued → Landing-Snapshot, clear, Activity-Log
@@ -16167,8 +16255,7 @@ async fn flight_end(
                     "PIREP file failed",
                     Some(format!("{} — flight kept in state for retry", e)),
                 );
-                let mut guard = state.active_flight.lock().expect("active_flight lock");
-                *guard = Some(flight);
+                restore_flight_for_retry(&app, state.inner(), &client, flight);
                 Err(e.into())
             }
         }
@@ -16413,6 +16500,15 @@ async fn flight_end_manual(
     block_off_at_iso: Option<String>,
     block_on_at_iso: Option<String>,
 ) -> Result<(), UiError> {
+    // v0.19.x FIX: same two fixes as `flight_end` — resolve the client
+    // BEFORE taking the flight out of state (a session-expiry error must
+    // not strand the flight with zero restore attempt), and hold the
+    // lifecycle guard across the whole take → file → (restore) window so
+    // a concurrent auto-start/manual-start can't sneak a new flight into
+    // the empty `active_flight` slot while this call is still in flight.
+    let client = current_client(&state)?;
+    let _lifecycle_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
+
     let flight = {
         let mut guard = state.active_flight.lock().expect("active_flight lock");
         guard
@@ -16422,7 +16518,6 @@ async fn flight_end_manual(
     // v0.6.0: Outbox VOR stop=true leeren — siehe flight_end Begründung.
     flight.position_outbox.lock().expect("position_outbox lock").clear();
     flight.stop.store(true, Ordering::Relaxed);
-    let client = current_client(&state)?;
 
     // Same normalization as `flight_end`: a "divert" to the planned
     // destination is an arrival, not a divert. Here the ICAO can be typed by
@@ -16812,8 +16907,7 @@ async fn flight_end_manual(
                 error = %e,
                 "manual PIREP file failed — restoring flight to state for retry"
             );
-            let mut guard = state.active_flight.lock().expect("active_flight lock");
-            *guard = Some(flight);
+            restore_flight_for_retry(&app, state.inner(), &client, flight);
             Err(e.into())
         }
     }
@@ -34023,6 +34117,96 @@ mod canonical_landing_rate_fpm_tests {
         assert_eq!(stats.canonical_landing_rate_fpm(), Some(-180.0));
     }
 
+    /// Minimal-Datensatz fuer die Normalisierungs-Tests. Wie im
+    /// storage-Crate ueber JSON gebaut — alles andere hat `serde(default)`,
+    /// das erspart ~90 Felder von Hand.
+    fn landing_record_fixture() -> LandingRecord {
+        serde_json::from_value(json!({
+            "pirep_id": "test-pirep",
+            "touchdown_at": "2026-06-07T10:00:00Z",
+            "recorded_at": "2026-06-07T10:05:00Z",
+            "flight_number": "1224",
+            "airline_icao": "GSG",
+            "dpt_airport": "EYVI",
+            "arr_airport": "ENTC",
+            "score_numeric": 88,
+            "score_label": "acceptable",
+            "grade_letter": "A",
+            "landing_rate_fpm": -180.0,
+            "bounce_count": 0,
+            "touchdown_profile": [],
+            "approach_samples": [],
+            "ux_version": 1,
+            "forensics_version": 1,
+            "sub_scores": [],
+            "accident": false,
+            "accident_reasons": [],
+        }))
+        .expect("test record")
+    }
+
+    /// QS 2026-08-04: `score_label`/`grade_letter` sind abgeleitete Werte,
+    /// werden aber beim Einreichen eingefroren. Aendert sich die Regel
+    /// spaeter (v0.20.0: Label-Schwellen auf die Noten-Schwellen
+    /// ausgerichtet), tragen Alt-Datensaetze fuer immer das Ergebnis der
+    /// alten Regel — real gemessen: 88 Punkte / Note A, gespeichert als
+    /// "acceptable", waehrend die aktuelle Regel "smooth" sagt. Die
+    /// Uebersicht rechnete frisch, der Bericht las das eingefrorene Feld:
+    /// zwei verschiedene Woerter fuer dieselbe Landung. `landing_list`
+    /// normalisiert deshalb beim Lesen — dieser Test nagelt das fest.
+    #[test]
+    fn normalize_derived_scores_recomputes_a_stale_stored_label() {
+        let mut r = landing_record_fixture();
+        r.score_numeric = 88;
+        r.score_label = "acceptable".to_string(); // Ergebnis der ALTEN Regel
+        r.grade_letter = "A".to_string();
+        let n = normalize_derived_scores(r);
+        assert_eq!(n.score_label, "smooth", "Label muss der AKTUELLEN Regel folgen");
+        assert_eq!(n.grade_letter, "A");
+        assert_eq!(n.score_numeric, 88, "die Punktzahl selbst bleibt unangetastet");
+    }
+
+    /// Gegenprobe: ein bereits korrekter Datensatz darf sich nicht aendern,
+    /// und die Normalisierung muss ueber die ganze Leiter stimmen.
+    #[test]
+    fn normalize_derived_scores_is_stable_and_covers_every_band() {
+        for (score, label, grade) in [
+            (100, "smooth", "A+"),
+            (95, "smooth", "A+"),
+            (88, "smooth", "A"),
+            (87, "acceptable", "B+"),
+            (75, "acceptable", "B"),
+            (74, "firm", "C"),
+            (50, "firm", "D"),
+            (49, "hard", "F"),
+            (15, "hard", "F"),
+            (14, "severe", "F"),
+            (0, "severe", "F"),
+        ] {
+            let mut r = landing_record_fixture();
+            r.score_numeric = score;
+            let n = normalize_derived_scores(r);
+            assert_eq!(n.score_label, label, "Label bei {score} Punkten");
+            assert_eq!(n.grade_letter, grade, "Note bei {score} Punkten");
+            // idempotent: nochmal drueber aendert nichts mehr
+            let again = normalize_derived_scores(n);
+            assert_eq!(again.score_label, label);
+            assert_eq!(again.grade_letter, grade);
+        }
+    }
+
+    /// Ausreisser-Punktzahlen duerfen die Ableitung nicht sprengen.
+    #[test]
+    fn normalize_derived_scores_clamps_out_of_range_scores() {
+        let mut low = landing_record_fixture();
+        low.score_numeric = -5;
+        assert_eq!(normalize_derived_scores(low).score_label, "severe");
+        let mut high = landing_record_fixture();
+        high.score_numeric = 250;
+        assert_eq!(normalize_derived_scores(high).score_label, "smooth");
+    }
+
+
     #[test]
     fn canonical_peak_g_force_rejects_fallback_zero() {
         let mut stats = FlightStats::default();
@@ -38717,6 +38901,109 @@ mod touchdown_metadata_stamp_tests {
             }
         }
         apt
+    }
+
+    /// Runway-match fixture with an explicit RAW (pavement-start-relative)
+    /// touchdown distance, for exercising `assess_touchdown`'s displaced-
+    /// threshold correction directly.
+    fn eddp_26r_match_with_raw_td(touchdown_distance_from_threshold_ft: f64) -> runway::RunwayMatch {
+        runway::RunwayMatch {
+            airport_ident: "EDDP".to_string(),
+            runway_ident: "26R".to_string(),
+            heading_true_deg: 265.7,
+            length_ft: 11_811.0,
+            width_ft: 148.0,
+            surface: "ASP".to_string(),
+            threshold_lat: EDDP_26R_THR_LAT,
+            threshold_lon: EDDP_26R_THR_LON,
+            end_lat: 51.431_198,
+            end_lon: 12.215_800,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            touchdown_distance_from_threshold_ft,
+            side: "CENTER".to_string(),
+        }
+    }
+
+    /// v0.19.x FIX: `touchdown_distance_from_threshold_ft` is measured from
+    /// the physical runway-pavement start, not the landing threshold (see
+    /// `runway_assessment::classify_displaced`'s doc comment). On a runway
+    /// with a displaced threshold, `assess_touchdown` must subtract the
+    /// displacement before feeding TDZ/Aim — otherwise a textbook landing
+    /// right on the standard aim point gets misclassified as a long/severe
+    /// landing by the full displacement distance.
+    #[test]
+    fn assess_touchdown_corrects_tdz_and_aim_for_displaced_threshold() {
+        const FT_PER_M: f64 = 3.280_839_895;
+        // 4000 ft displaced (per eddp_nav_fixture_displaced) + exactly the
+        // 400 m long-runway aim point past the LANDING threshold, expressed
+        // as raw pavement-start-relative feet.
+        let raw_ft = 4000.0 + 400.0 * FT_PER_M;
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(eddp_26r_match_with_raw_td(raw_ft));
+        stats.runway_nav_geometry = eddp_nav_fixture_displaced().runways.into_iter().find(|r| r.designator == "26R");
+
+        let assessed = assess_touchdown(&stats);
+
+        let td_m = assessed
+            .td_distance_from_threshold_m
+            .expect("runway matched");
+        assert!(
+            (td_m - 400.0).abs() < 0.5,
+            "expected ~400 m from the LANDING threshold, got {td_m}"
+        );
+        let aim = assessed.aim.expect("aim computed");
+        assert_eq!(
+            aim.class,
+            runway_assessment::AimClass::Perfect,
+            "a textbook landing on the aim point must not be misclassified just \
+             because the runway has a displaced threshold (got delta={})",
+            aim.delta_m
+        );
+        let tdz = assessed.tdz.expect("runway long enough for TDZ");
+        assert!(tdz.in_tdz, "400 m past the landing threshold is inside the TDZ");
+    }
+
+    /// v0.19.x FIX: a touchdown that lands ON the displaced-threshold
+    /// paint (before the legal landing threshold, but past the physical
+    /// runway start) must be flagged by `classify_displaced` — the bug
+    /// this replaces could NEVER detect a real violation, only fire on
+    /// undershoots that never touched pavement at all.
+    #[test]
+    fn assess_touchdown_detects_real_dds_violation_before_true_threshold() {
+        const FT_PER_M: f64 = 3.280_839_895;
+        // 600 m from the physical pavement start — well inside the 1219.5 m
+        // (4000 ft) displaced zone, i.e. before the legal landing threshold.
+        let raw_ft = 600.0 * FT_PER_M;
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(eddp_26r_match_with_raw_td(raw_ft));
+        stats.runway_nav_geometry = eddp_nav_fixture_displaced().runways.into_iter().find(|r| r.designator == "26R");
+
+        let assessed = assess_touchdown(&stats);
+
+        let dds = assessed.dds.expect("nav geometry present");
+        assert!(
+            dds.in_pre_threshold_zone,
+            "touchdown 600 m from pavement start, 1219.5 m displaced threshold \
+             → must be flagged as landing before the legal threshold"
+        );
+    }
+
+    /// Regression: for the overwhelming majority of runways (no displaced
+    /// threshold), the correction must be a complete no-op — the corrected
+    /// distance equals the raw one, byte for byte.
+    #[test]
+    fn assess_touchdown_unaffected_when_no_displaced_threshold() {
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(eddp_26r_match_with_raw_td(980.0));
+        stats.runway_nav_geometry = eddp_nav_fixture().runways.into_iter().find(|r| r.designator == "26R");
+
+        let assessed = assess_touchdown(&stats);
+
+        let td_m = assessed.td_distance_from_threshold_m.expect("runway matched");
+        assert!((td_m - 980.0 / 3.280_839_895).abs() < 1e-9);
+        let dds = assessed.dds.expect("nav geometry present");
+        assert!(!dds.in_pre_threshold_zone, "no displaced threshold → never flagged");
     }
 
     /// Populate a divert touchdown (planned EDDF, wheels at EDDP/26R) with

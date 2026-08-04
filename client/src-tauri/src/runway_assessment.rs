@@ -18,9 +18,16 @@
 //!    runway's true course, NOT the magnetic course (the wind we get
 //!    from the sim is also referenced to true north).
 //!
-//! All distances internal to this module are **meters from the
-//! landing threshold along the centerline** — same sign convention as
-//! `runway::lookup_runway` (positive = past threshold).
+//! Distances passed to `classify_tdz`/`classify_aim` must be **meters
+//! from the landing threshold along the centerline**, positive = past
+//! threshold. `runway::lookup_runway`/`lookup_runway_in_nav` measure
+//! from the *physical runway-pavement start* instead (see their doc
+//! comments) — callers MUST subtract `displaced_threshold_m` before
+//! calling those two functions whenever the runway has one (see
+//! `assess_touchdown` in `lib.rs`, the single place this correction is
+//! applied). `classify_displaced` is the one function in this module
+//! that wants the *uncorrected* pavement-start-relative distance —
+//! see its own doc comment.
 //!
 //! Slice B wired these into the streamer-tick + `record_landing_for_
 //! filed_flight` + the live MQTT TouchdownPayload — no module-level
@@ -204,31 +211,48 @@ pub fn classify_tch(actual_ft: f64, expected_ft: f64) -> TchResult {
 
 // ─── F6: Displaced-Threshold-Warning ─────────────────────────────────
 
-/// Did the pilot touch down inside the painted pre-threshold zone
-/// (= before the displaced threshold)? `nav_runway.threshold` is
-/// already the *displaced* threshold (= landing threshold) — touching
-/// down at `td_distance_m < 0` AND in the DDS-painted-zone is the
-/// illegal case.
+/// Did the pilot touch down inside the painted pre-threshold zone —
+/// on the runway pavement, but before the legal landing threshold?
 ///
-/// Convention: `displaced_threshold_ft` is the distance from the
-/// painted runway start to the landing threshold. A touchdown at
-/// `td_distance_m = -X` means the pilot is X meters *before* the
-/// landing threshold; if X < displaced_threshold_m, the touchdown
-/// lands on the displaced-threshold paint = illegal.
+/// v0.19.x FIX: `td_distance_m` here is the RAW along-track distance
+/// from the *physical runway-pavement start* — i.e. `NavRunway::
+/// threshold` / `RunwayMatch::threshold_lat/lon`, exactly as computed
+/// by `runway::lookup_runway_in_nav`. That point is **not** the
+/// landing threshold whenever the runway has a displaced threshold:
+/// proven by the OLBA fixture in `runway.rs`, where RWY 35's
+/// `threshold` coordinate is bit-identical to RWY 17's `far_end` —
+/// the physical pavement end shared by both landing directions. The
+/// legal landing threshold sits `displaced_threshold_ft` further down
+/// the runway *from that point*.
+///
+/// So the illegal DDS zone is `0 <= td_distance_m < displaced_threshold_m`
+/// — on the pavement, before the legal threshold. `td_distance_m < 0`
+/// means the touchdown is before the physical runway even starts —
+/// a plain undershoot (off-airport), not a displaced-threshold
+/// violation.
+///
+/// (An earlier version of this function had the sign/zone backwards —
+/// it treated `td_distance_m < 0` as "before the landing threshold",
+/// which meant a real DDS violation could never be detected and the
+/// check instead fired on undershoots that never touched pavement at
+/// all. `assess_touchdown` in `lib.rs` still needs to independently
+/// correct `td_distance_m` for this same displacement before feeding
+/// it to `classify_tdz`/`classify_aim`, which — per this module's own
+/// doc comment — expect distance from the *landing* threshold.)
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DisplacedResult {
-    /// True when the touchdown sits between the runway start and the
-    /// landing threshold (= on the displaced-threshold paint).
+    /// True when the touchdown sits between the physical runway start
+    /// and the landing threshold (= on the displaced-threshold paint).
     pub in_pre_threshold_zone: bool,
     pub displaced_threshold_m: f64,
 }
 
 pub fn classify_displaced(td_distance_m: f64, displaced_threshold_ft: f64) -> DisplacedResult {
     let displaced_threshold_m = displaced_threshold_ft / FT_PER_M;
-    // Pilot below threshold (td_distance_m < 0) AND not so far below
-    // that they undershot completely off the airport.
+    // On the pavement (>= physical runway start) but short of the
+    // legal landing threshold.
     let in_pre_threshold_zone =
-        displaced_threshold_m > 0.0 && td_distance_m < 0.0 && td_distance_m > -displaced_threshold_m;
+        displaced_threshold_m > 0.0 && td_distance_m >= 0.0 && td_distance_m < displaced_threshold_m;
     DisplacedResult {
         in_pre_threshold_zone,
         displaced_threshold_m,
@@ -415,10 +439,11 @@ mod tests {
 
     #[test]
     fn displaced_olba_rwy35_anchor() {
-        // OLBA RWY 35 has DDS = 2690 ft (820 m). Pilot touched down
-        // 200 m past *landing* threshold → td_distance_m = +200 →
-        // NOT in pre-threshold zone (well past it).
-        let r = classify_displaced(200.0, 2690.0);
+        // OLBA RWY 35 has DDS = 2690 ft (819.91 m), measured from the
+        // physical runway-pavement start. Pilot touched down 200 m
+        // past the *landing* threshold, i.e. 819.91+200 = 1019.91 m
+        // from the pavement start → well past the DDS zone.
+        let r = classify_displaced(1019.91, 2690.0);
         assert!(!r.in_pre_threshold_zone);
         assert!((r.displaced_threshold_m - 819.91).abs() < 0.5);
     }
@@ -426,10 +451,31 @@ mod tests {
     #[test]
     fn displaced_touchdown_on_dds_paint_illegal() {
         // Pilot touched down 80 m BEFORE the landing threshold on a
-        // runway with 820 m DDS — illegal real-world landing on the
-        // painted displaced-threshold arrows.
-        let r = classify_displaced(-80.0, 2690.0);
+        // runway with 819.91 m DDS, i.e. 819.91-80 = 739.91 m from
+        // the pavement start — on the paved runway, short of the
+        // legal threshold. Illegal real-world landing on the painted
+        // displaced-threshold arrows.
+        let r = classify_displaced(739.91, 2690.0);
         assert!(r.in_pre_threshold_zone);
+    }
+
+    #[test]
+    fn displaced_boundary_at_pavement_start_is_in_zone() {
+        // Touching down exactly at the physical runway start (the
+        // worst legal-pavement case) must still be flagged — it's on
+        // the DDS paint, as far before the threshold as it gets.
+        let r = classify_displaced(0.0, 2690.0);
+        assert!(r.in_pre_threshold_zone);
+    }
+
+    #[test]
+    fn displaced_boundary_at_landing_threshold_is_not_in_zone() {
+        // Touching down exactly on (or just past) the landing threshold
+        // itself is the textbook case, not a violation. 820.5 m is
+        // deliberately just past the true 819.9512... m boundary so this
+        // isn't sensitive to float rounding of the boundary itself.
+        let r = classify_displaced(820.5, 2690.0);
+        assert!(!r.in_pre_threshold_zone);
     }
 
     #[test]
@@ -440,11 +486,11 @@ mod tests {
     }
 
     #[test]
-    fn displaced_undershoot_past_dds_is_off_field() {
-        // Pilot 900 m before threshold, DDS only 820 m → undershot
-        // past even the painted runway start = off-airport. Don't
-        // flag DDS for that — that's a different (worse) issue.
-        let r = classify_displaced(-900.0, 2690.0);
+    fn displaced_undershoot_before_pavement_is_off_field() {
+        // Pilot touched down 50 m before the physical runway even
+        // starts (td_distance_m < 0) — that's a plain undershoot off
+        // the airport, not a displaced-threshold violation.
+        let r = classify_displaced(-50.0, 2690.0);
         assert!(!r.in_pre_threshold_zone);
     }
 

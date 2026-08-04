@@ -105,7 +105,9 @@ pub struct RunwayMatch {
     pub width_ft: f32,
     /// Surface code from CSV (e.g. "ASPH", "CON", "GRVL").
     pub surface: String,
-    /// Threshold (= landing-direction start) lat/lon.
+    /// Threshold (= landing-direction, physical pavement start) lat/lon.
+    /// This is NOT the legal landing threshold when the runway has a
+    /// displaced threshold — see `touchdown_distance_from_threshold_ft`.
     pub threshold_lat: f64,
     pub threshold_lon: f64,
     /// Far-end (departure-direction) lat/lon.
@@ -116,13 +118,20 @@ pub struct RunwayMatch {
     pub centerline_distance_m: f64,
     /// |centerline_distance_m| converted to feet — easier for pilots.
     pub centerline_distance_abs_ft: f64,
-    /// Signed great-circle along-track distance from the threshold,
-    /// in feet. Positive = touchdown PAST the threshold (the normal
-    /// case — pilot crossed the threshold on final and put it down
-    /// somewhere down the runway). Negative = touchdown BEFORE the
-    /// threshold (undershoot — pilot was still on the approach side
-    /// when the on-ground edge fired). Zero = touchdown exactly on
-    /// the threshold within float precision.
+    /// Signed great-circle along-track distance from `threshold_lat/lon`
+    /// (= the physical runway-pavement start, NOT necessarily the legal
+    /// landing threshold — see that field's doc comment), in feet.
+    /// Positive = touchdown PAST that point (the normal case — pilot
+    /// crossed it on final and put it down somewhere down the runway).
+    /// Negative = touchdown BEFORE it (undershoot — pilot was still on
+    /// the approach side when the on-ground edge fired, off the paved
+    /// runway entirely). Zero = touchdown exactly on the pavement start
+    /// within float precision.
+    ///
+    /// v0.19.x: on a runway with a displaced threshold, this value is
+    /// `displaced_threshold_ft` short of "distance from the LANDING
+    /// threshold" — `assess_touchdown` in `lib.rs` applies that one
+    /// correction before feeding TDZ/Aim classification.
     ///
     /// v0.5.20: pre-v0.5.20 this field was the unsigned magnitude
     /// only, so undershoots showed up as small positive values
