@@ -3255,7 +3255,18 @@ struct FlightStats {
     /// mit dem ECHTEN Gleitwinkel skaliert (tan-basiert, z.B. ~−1834 fpm
     /// auf 5,5°), sodass korrekt geflogene Steilanflüge nicht fälschlich
     /// geflaggt werden. FSF-ALAR/FAA-AC-120-71B Stable-Approach-Kriterium.
-    approach_excessive_sink: bool,
+    ///
+    /// v0.19.x FIX: was a plain `bool` (never `None`) while every sibling
+    /// field here is `Option`. `compute_approach_stability_v2` bails out
+    /// early with fewer than 3 gate samples — a telemetry gap right at the
+    /// gate, not an actual measurement — and the struct's `Default` left
+    /// this at `false`, indistinguishable from "measured, genuinely no
+    /// excessive sink". The frontend's `isLegacy`/missing-band detection
+    /// correctly treats `None` as "not measured" for every OTHER field in
+    /// this struct; this one field being non-Option meant a gate with too
+    /// few samples still showed a confident green "STABLE" pill built from
+    /// zero real measurements.
+    approach_excessive_sink: Option<bool>,
     /// Stable-Configuration-Flag: Gear voll runter (≥99%) AND Flaps
     /// in Landing-Position (≥70%) am Gate. None bei Konfig-Sample fehlt.
     approach_stable_config: Option<bool>,
@@ -5991,8 +6002,10 @@ pub struct ApproachStabilityV2 {
     pub vs_jerk_fpm: Option<f32>,
     /// IAS-Stddev im Gate (Speed-Stability).
     pub ias_stddev_kt: Option<f32>,
-    /// Mind. ein Sample im Gate hatte V/S < -1000 fpm.
-    pub excessive_sink: bool,
+    /// Mind. ein Sample im Gate hatte V/S < -1000 fpm. `None` wenn das
+    /// Gate weniger als 3 Samples hatte (siehe Modul-Kommentar an
+    /// `FlightStats::approach_excessive_sink`) — NICHT `false`.
+    pub excessive_sink: Option<bool>,
     /// Gear+Flaps am 1000-ft-Sample in Landing-Konfig?
     pub stable_config: Option<bool>,
     /// HAT (statt AGL) als Window-Filter genutzt?
@@ -6146,9 +6159,11 @@ fn compute_approach_stability_v2(
     // bei 3° bleibt's −1000 fpm, bei 5,5° (z.B. EGLC) ~−1834 fpm, sodass ein
     // korrekt geflogener Steilanflug nicht fälschlich „excessive" ist.
     let excessive_sink_threshold = -1000.0 * gs_factor;
-    out.excessive_sink = gate_samples
-        .iter()
-        .any(|s| f64::from(s.vs_fpm) < excessive_sink_threshold);
+    out.excessive_sink = Some(
+        gate_samples
+            .iter()
+            .any(|s| f64::from(s.vs_fpm) < excessive_sink_threshold),
+    );
 
     // 6) Stable-Config: Gear+Flaps am 1000-ft-Sample (= aeltester
     //    Sample im Gate, = der mit hoechster Hoehe).
@@ -6230,7 +6245,10 @@ fn compute_approach_stability_v2(
     let bank_ok = out.bank_stddev_filtered_deg.map(|b| b < 5.0).unwrap_or(true);
     let ias_ok = out.ias_stddev_kt.map(|i| i < 10.0).unwrap_or(true);
     let config_ok = out.stable_config.unwrap_or(true); // None = unbekannt, kein blocker
-    let stable = jerk_ok && bank_ok && ias_ok && !out.excessive_sink && config_ok;
+    // At this point in the function we are always past the `gate_samples.len()
+    // < 3` early return, so `out.excessive_sink` is always `Some` (set just
+    // above) — `unwrap_or(false)` is a defensive fallback, never actually hit.
+    let stable = jerk_ok && bank_ok && ias_ok && !out.excessive_sink.unwrap_or(false) && config_ok;
     out.stable_at_gate = Some(stable);
 
     // 10) v0.5.26: Stable-At-DA (200 ft) — gleicher Composite-Check
@@ -13353,7 +13371,7 @@ fn build_pirep_payload(
         approach_vs_jerk_fpm: stats.approach_vs_jerk_fpm,
         approach_ias_stddev_kt: stats.approach_ias_stddev_kt,
         approach_stable_config: stats.approach_stable_config,
-        approach_excessive_sink: Some(stats.approach_excessive_sink),
+        approach_excessive_sink: stats.approach_excessive_sink,
         // v0.7.1 Round-2 P2-Fix: gate_window aus echten
         // Approach-Samples + TD-Timestamp gerechnet.
         gate_window: build_mqtt_gate_window_from_stats(&stats),
@@ -14345,10 +14363,10 @@ where
         approach_vs_jerk_fpm: stats.approach_vs_jerk_fpm,
         approach_ias_stddev_kt: stats.approach_ias_stddev_kt,
         approach_stable_config: stats.approach_stable_config,
-        // approach_excessive_sink ist im FlightStats `bool` (nie None),
-        // im Storage-Schema `Option<bool>` fuer backward-compat — wir
-        // wrappen Some() unconditional.
-        approach_excessive_sink: Some(stats.approach_excessive_sink),
+        // v0.19.x FIX: FlightStats::approach_excessive_sink is now
+        // Option<bool> like every sibling field here — None means "gate
+        // had too few samples to measure", not "measured, no excess sink".
+        approach_excessive_sink: stats.approach_excessive_sink,
         // v0.7.1 Round-2 P2-Fix: gate_window oben berechnet aus den
         // approach_samples — UI-Tooltip kann jetzt die echten
         // Boundaries zeigen statt nur die Crate-Konstanten.
@@ -14553,6 +14571,44 @@ async fn upload_landing_backup(app: AppHandle) -> Result<usize, String> {
     let Some(store) = open_landing_store(&app) else {
         return Err("Landungsspeicher nicht verfuegbar".into());
     };
+
+    // v0.19.x FIX: `put_landings` REPLACES the server's backup — it is not
+    // a merge. `restore_landing_backup` documents "merge before every
+    // upload so a second computer's landings aren't overwritten" as an
+    // existing safety invariant, but that merge only ever ran on the
+    // download/restore path. A client whose local store is missing
+    // records for any reason — a failed automatic restore-on-login
+    // (App.tsx swallows that error on purpose, since the backup is a
+    // nice-to-have, not a login requirement), a fresh install, a deleted
+    // landings.json — would silently overwrite the server's accumulated
+    // history with its own incomplete set the next time a landing
+    // triggers a backup. Merging the server's current state in FIRST
+    // makes the upload a strict superset of what the server already had,
+    // so replacing the server's state with it can never lose anything.
+    // A GET failure (as opposed to "no backup yet") means we cannot prove
+    // that, so the whole backup is skipped rather than risking data loss
+    // — the next landing retries.
+    match aeroacars_mqtt::backup::get_landings(None, &token).await {
+        Ok(Some(payload)) => {
+            let incoming: Vec<storage::LandingRecord> = payload
+                .landings
+                .into_iter()
+                .filter_map(|v| serde_json::from_value(v).ok())
+                .collect();
+            store.merge_from(incoming).map_err(|e| e.to_string())?;
+        }
+        Ok(None) => {
+            // No server backup yet — nothing to merge, safe to proceed
+            // (this is the normal first-ever-upload case).
+        }
+        Err(e) => {
+            return Err(format!(
+                "Serverstand konnte vor der Sicherung nicht geprüft werden, \
+                 Sicherung übersprungen (Datenverlustschutz): {e}"
+            ));
+        }
+    }
+
     let records = store.list().map_err(|e| e.to_string())?;
     let stripped: Vec<serde_json::Value> = records
         .iter()
@@ -22104,7 +22160,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             approach_window_sample_count: stats.approach_window_sample_count,
                             approach_vs_jerk_fpm: stats.approach_vs_jerk_fpm,
                             approach_ias_stddev_kt: stats.approach_ias_stddev_kt,
-                            approach_excessive_sink: Some(stats.approach_excessive_sink),
+                            approach_excessive_sink: stats.approach_excessive_sink,
                             approach_stable_config: stats.approach_stable_config,
                             approach_used_hat: Some(stats.approach_used_hat),
                             // v0.5.26
@@ -24166,7 +24222,7 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     stats.approach_stable_at_gate = None;
     stats.approach_vs_jerk_fpm = None;
     stats.approach_ias_stddev_kt = None;
-    stats.approach_excessive_sink = false;
+    stats.approach_excessive_sink = None;
     stats.approach_stable_config = None;
     stats.approach_used_hat = false;
     stats.approach_window_sample_count = None;
@@ -37627,6 +37683,51 @@ mod sim_pause_tests {
         assert_eq!(out.stable_config, Some(false), "genuine no-flaps → fail");
     }
 
+    /// v0.19.x FIX: fewer than 3 gate samples (a telemetry stall right at
+    /// the gate) must leave `excessive_sink` at `None` ("not measured"),
+    /// not the struct's old bool-default of `false` ("measured, clean").
+    /// Every OTHER field here already correctly defaults to `None`/absent
+    /// on this early-return path — this closes the one field that didn't,
+    /// which let the frontend's stable-approach pill show a confident
+    /// green "STABLE" built from zero real measurements.
+    #[test]
+    fn excessive_sink_is_none_not_false_when_gate_has_too_few_samples() {
+        let buf: std::collections::VecDeque<ApproachBufferSample> =
+            [approach_sample(900.0, 130.0, 132.0, -650.0, 1.0, 1.0)]
+                .into_iter()
+                .collect();
+        let out = compute_approach_stability_v2(&buf, None, None, None, None);
+        assert_eq!(out.window_sample_count, 1, "only 1 sample in the gate");
+        assert_eq!(
+            out.excessive_sink, None,
+            "1 sample is not enough evidence to confirm EITHER way — must be None, not Some(false)"
+        );
+        // Every other measured field must also report "not measured", the
+        // established contract this field was the one exception to.
+        assert_eq!(out.stable_config, None);
+        assert_eq!(out.stable_at_gate, None);
+        assert_eq!(out.vs_deviation_fpm, None);
+    }
+
+    #[test]
+    fn excessive_sink_is_some_once_the_gate_has_enough_samples() {
+        // Regression guard: the fix must not turn a genuine 3-sample
+        // measurement into "not measured".
+        let buf: std::collections::VecDeque<ApproachBufferSample> = [
+            approach_sample(900.0, 130.0, 132.0, -650.0, 1.0, 1.0),
+            approach_sample(600.0, 128.0, 130.0, -620.0, 1.0, 1.0),
+            approach_sample(300.0, 125.0, 128.0, -600.0, 1.0, 1.0),
+        ]
+        .into_iter()
+        .collect();
+        let out = compute_approach_stability_v2(&buf, None, None, None, None);
+        assert_eq!(
+            out.excessive_sink,
+            Some(false),
+            "3 calm samples is a real measurement confirming no excess sink"
+        );
+    }
+
     #[test]
     fn landing_config_ok_with_flaps_extended() {
         let buf: std::collections::VecDeque<ApproachBufferSample> = [
@@ -37680,11 +37781,11 @@ mod sim_pause_tests {
 
         // Ohne Gleitwinkel (3°-Fallback): fälschlich „excessive".
         let out_3deg = compute_approach_stability_v2(&buf, None, None, None, None);
-        assert!(out_3deg.excessive_sink, "gegen 3° gilt der Steilanflug als excessive");
+        assert_eq!(out_3deg.excessive_sink, Some(true), "gegen 3° gilt der Steilanflug als excessive");
 
         // Mit echtem 5,5°-Gleitwinkel: NICHT excessive + kleine V/S-Abweichung.
         let out_55 = compute_approach_stability_v2(&buf, None, None, Some(5.5), None);
-        assert!(!out_55.excessive_sink, "5,5°-Steilanflug ist nicht excessive");
+        assert_eq!(out_55.excessive_sink, Some(false), "5,5°-Steilanflug ist nicht excessive");
         let dev = out_55.vs_deviation_fpm.expect("deviation vorhanden");
         assert!(dev < 200.0, "Abweichung vs 5,5°-Profil klein, war {dev}");
 
@@ -39896,15 +39997,16 @@ mod v0_16_6_bush_completeness_tests {
         );
         // the calm in-window approach must NOT look excessive — the old
         // -1500 fpm poison sample is outside the window
-        assert!(!windowed.excessive_sink);
+        assert_eq!(windowed.excessive_sink, Some(false));
 
         let unwindowed = compute_approach_stability_v2(&buf, None, None, None, None);
         assert_eq!(
             unwindowed.window_sample_count, 7,
             "None = old behaviour: every gate-band sample counts"
         );
-        assert!(
+        assert_eq!(
             unwindowed.excessive_sink,
+            Some(true),
             "without the window the poison sample leaks in"
         );
     }
@@ -40113,7 +40215,7 @@ mod v0_16_6_bush_completeness_tests {
         stats.approach_stable_at_gate = Some(false);
         stats.approach_vs_jerk_fpm = Some(60.0);
         stats.approach_ias_stddev_kt = Some(4.0);
-        stats.approach_excessive_sink = true;
+        stats.approach_excessive_sink = Some(true);
         stats.approach_stable_config = Some(true);
         stats.approach_used_hat = true;
         stats.approach_window_sample_count = Some(42);
@@ -40136,7 +40238,7 @@ mod v0_16_6_bush_completeness_tests {
         assert_eq!(stats.approach_stable_at_gate, None);
         assert_eq!(stats.approach_vs_jerk_fpm, None);
         assert_eq!(stats.approach_ias_stddev_kt, None);
-        assert!(!stats.approach_excessive_sink);
+        assert_eq!(stats.approach_excessive_sink, None);
         assert_eq!(stats.approach_stable_config, None);
         assert!(!stats.approach_used_hat);
         assert_eq!(stats.approach_window_sample_count, None);

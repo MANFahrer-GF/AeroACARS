@@ -420,9 +420,25 @@ fn evaluate_low_agl_persistence(
     let target_dur = Duration::milliseconds(1000);
     let window_end = edge_at + target_dur;
 
+    let in_window: Vec<&TouchdownWindowSample> = samples
+        .iter()
+        .filter(|s| s.at >= edge_at && s.at <= window_end)
+        .collect();
+
+    // v0.19.x FIX: zero samples in the window is NOT the same as "confirmed
+    // no violation for the full 1000ms" — it's zero evidence either way.
+    // The old code treated an empty window identically to "checked every
+    // sample and found none above 5 ft", silently PASSing with a claimed
+    // full-duration confirmation. A telemetry stall right at the touchdown
+    // edge — exactly what a real hard-impact/CTD-adjacent crash tends to
+    // cause — used to sail through this test for free.
+    if in_window.is_empty() {
+        return (false, 0);
+    }
+
     // Suche erste violation (agl >= 5.0) im Target-Window
     let mut first_violation_at: Option<DateTime<Utc>> = None;
-    for s in samples.iter().filter(|s| s.at >= edge_at && s.at <= window_end) {
+    for s in &in_window {
         if s.agl_ft >= 5.0 {
             first_violation_at = Some(s.at);
             break;
@@ -447,10 +463,22 @@ fn evaluate_sustained_ground(
     samples: &[TouchdownWindowSample],
     edge_at: DateTime<Utc>,
 ) -> (bool, u64) {
+    let in_window: Vec<&TouchdownWindowSample> =
+        samples.iter().filter(|s| s.at >= edge_at).collect();
+
+    // v0.19.x FIX: zero samples means zero evidence of sustained ground
+    // contact, not a free pass. The old defaults (found_break=false,
+    // last_at=edge_at) made "no break observed" and "confirmed grounded
+    // for 0ms" indistinguishable, so an empty window passed with literally
+    // no data behind it.
+    if in_window.is_empty() {
+        return (false, 0);
+    }
+
     let mut last_at = edge_at;
     let mut found_break = false;
 
-    for s in samples.iter().filter(|s| s.at >= edge_at) {
+    for s in &in_window {
         if !s.on_ground {
             found_break = true;
             break;
@@ -1217,5 +1245,49 @@ mod tests {
             current_gs_kt: 80.0,
         };
         assert_eq!(classify_episode(s), EpisodeClass::Pending);
+    }
+
+    // v0.19.x FIX: an empty sample window (a telemetry stall right at the
+    // touchdown edge) must FAIL, not silently pass with a claimed
+    // full-duration confirmation built from zero evidence.
+
+    #[test]
+    fn low_agl_persistence_fails_on_a_totally_empty_window() {
+        let edge_at = DateTime::<Utc>::from_timestamp_millis(1000).unwrap();
+        let (pass, ms) = evaluate_low_agl_persistence(&[], edge_at);
+        assert!(!pass, "zero samples must not confirm 1000ms of low-AGL persistence");
+        assert_eq!(ms, 0);
+    }
+
+    #[test]
+    fn low_agl_persistence_still_passes_with_real_no_violation_data() {
+        // Regression guard: the fix must not turn a GENUINE pass (samples
+        // present, none of them above 5 ft) into a failure.
+        let samples: Vec<TouchdownWindowSample> =
+            (0..5).map(|i| make_sample(1000 + i * 100, None)).collect();
+        let edge_at = samples[0].at;
+        let (pass, ms) = evaluate_low_agl_persistence(&samples, edge_at);
+        assert!(pass, "real samples with no violation must still pass");
+        assert_eq!(ms, 1000);
+    }
+
+    #[test]
+    fn sustained_ground_fails_on_a_totally_empty_window() {
+        let edge_at = DateTime::<Utc>::from_timestamp_millis(1000).unwrap();
+        let (pass, ms) = evaluate_sustained_ground(&[], edge_at);
+        assert!(!pass, "zero samples must not confirm 500ms of sustained ground contact");
+        assert_eq!(ms, 0);
+    }
+
+    #[test]
+    fn sustained_ground_still_passes_with_real_data() {
+        // Regression guard: real on_ground=true samples spanning >= 500ms
+        // must still pass — the fix only changes the EMPTY-window case.
+        let samples: Vec<TouchdownWindowSample> =
+            (0..6).map(|i| make_sample(1000 + i * 100, None)).collect();
+        let edge_at = samples[0].at;
+        let (pass, ms) = evaluate_sustained_ground(&samples, edge_at);
+        assert!(pass, "500ms of real on_ground samples must pass");
+        assert!(ms >= 500);
     }
 }

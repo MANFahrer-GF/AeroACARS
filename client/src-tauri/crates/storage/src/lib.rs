@@ -855,15 +855,53 @@ impl LandingStore {
         match serde_json::from_slice(&bytes) {
             Ok(v) => Ok(v),
             Err(e) => {
-                tracing::warn!(error = %e, "landings.json unreadable — starting fresh");
+                // v0.19.x FIX: an unparseable file used to be treated as
+                // silently empty with nothing preserved — the very next
+                // write (e.g. the next landing's upsert) would then
+                // persist that empty state over the original bytes,
+                // permanently losing the history a corruption might only
+                // have partially damaged. Best-effort: copy the original
+                // bytes aside before falling back to empty, so there's a
+                // recovery path even though the app itself can't read it.
+                let backup_path = self.path.with_extension(format!(
+                    "json.corrupt-{}",
+                    chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+                ));
+                if let Err(backup_err) = std::fs::write(&backup_path, &bytes) {
+                    tracing::error!(
+                        error = %e,
+                        backup_error = %backup_err,
+                        "landings.json unreadable AND could not back up the original bytes — starting fresh with NO recovery copy"
+                    );
+                } else {
+                    tracing::warn!(
+                        error = %e,
+                        backup_path = %backup_path.display(),
+                        "landings.json unreadable — original bytes preserved, starting fresh"
+                    );
+                }
                 Ok(Vec::new())
             }
         }
     }
 
+    /// v0.19.x FIX: the on-disk invariant is "oldest first" — `upsert`'s
+    /// cap-trim (`items.drain(0..drop_count)`) and `merge_landings`'s both
+    /// depend on that to drop the OLDEST records when the 500-row cap is
+    /// hit, not an arbitrary end. `replace_all` (the delete-record flow)
+    /// used to write back whatever order its caller handed it — `list()`
+    /// returns NEWEST first, so deleting one record via the Landing tab
+    /// silently flipped the on-disk order. The next `upsert` past the cap
+    /// would then drop the NEWEST landings instead of the oldest. Sorting
+    /// here, at the one choke point every write goes through, makes the
+    /// invariant hold regardless of what order any caller passes in —
+    /// closing this class of bug for every current AND future caller, not
+    /// just the one that happened to trigger it.
     fn write_all(&self, items: &[LandingRecord]) -> Result<(), StorageError> {
+        let mut items = items.to_vec();
+        items.sort_by_key(|r| r.touchdown_at);
         let tmp = self.path.with_extension("json.tmp");
-        let bytes = serde_json::to_vec(items)?;
+        let bytes = serde_json::to_vec(&items)?;
         std::fs::write(&tmp, &bytes)?;
         std::fs::rename(&tmp, &self.path)?;
         Ok(())
@@ -1027,5 +1065,162 @@ mod merge_tests {
         let merged = merge_landings(many, vec![]);
         assert_eq!(merged.len(), LANDINGS_MAX_ROWS);
         assert_eq!(merged[0].pirep_id, "P10", "die ältesten zehn müssen weg sein");
+    }
+}
+
+/// v0.19.x FIX: `LandingStore` behavior against a REAL filesystem — the
+/// on-disk ordering invariant (`write_all`), and the corrupt-file recovery
+/// path (`read_all`). Both `merge_landings` and `upsert`'s cap-trim were
+/// already covered above as pure functions; these tests catch what only
+/// shows up once an actual file and an actual caller sequence are involved.
+#[cfg(test)]
+mod landing_store_tests {
+    use super::*;
+
+    fn rec(pirep_id: &str, touchdown: &str, recorded: &str) -> LandingRecord {
+        serde_json::from_value(serde_json::json!({
+            "pirep_id": pirep_id,
+            "touchdown_at": touchdown,
+            "recorded_at": recorded,
+            "flight_number": "1224",
+            "airline_icao": "TKJ",
+            "dpt_airport": "EDDP",
+            "arr_airport": "LTFE",
+            "score_numeric": 80,
+            "score_label": "gut",
+            "grade_letter": "B",
+            "landing_rate_fpm": -236.0,
+            "bounce_count": 0,
+            "touchdown_profile": [],
+            "approach_samples": [],
+            "ux_version": 1,
+            "forensics_version": 1,
+            "sub_scores": [],
+            "accident": false,
+            "accident_reasons": [],
+        }))
+        .expect("test record")
+    }
+
+    fn ts(offset_secs: i64) -> String {
+        chrono::DateTime::from_timestamp(1_700_000_000 + offset_secs, 0)
+            .expect("valid timestamp")
+            .to_rfc3339()
+    }
+
+    /// Isolated temp dir per test — unique per call so parallel test
+    /// threads (same process id) never collide.
+    fn temp_store() -> (LandingStore, PathBuf) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "aeroacars-landingstore-test-{}-{n}",
+            std::process::id()
+        ));
+        let store = LandingStore::open(&dir).expect("open temp store");
+        (store, dir)
+    }
+
+    #[test]
+    fn write_all_persists_oldest_first_regardless_of_input_order() {
+        let (store, dir) = temp_store();
+        // Deliberately newest-first input — exactly what `list()` (which
+        // is documented "newest first") hands to `replace_all` in the
+        // Landing tab's delete-record flow.
+        let items = vec![
+            rec("NEW", &ts(300), &ts(300)),
+            rec("OLD", &ts(100), &ts(100)),
+            rec("MID", &ts(200), &ts(200)),
+        ];
+        store.replace_all(&items).expect("write");
+        let on_disk = store.read_all().expect("read");
+        let ids: Vec<&str> = on_disk.iter().map(|r| r.pirep_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["OLD", "MID", "NEW"],
+            "on-disk order must always be oldest-first, regardless of what order the caller wrote"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The exact real-world sequence: fill to the cap, delete one record
+    /// via the same list()->retain->replace_all pattern `landing_delete`
+    /// uses, then add one more landing. Before the fix, `replace_all`'s
+    /// newest-first write flipped the on-disk order, so this last upsert's
+    /// cap-trim dropped the NEWEST records instead of the oldest.
+    #[test]
+    fn deleting_a_record_does_not_break_the_next_cap_trims_direction() {
+        let (store, dir) = temp_store();
+        for i in 0..LANDINGS_MAX_ROWS {
+            store
+                .upsert(rec(&format!("R{i}"), &ts(i as i64), &ts(i as i64)))
+                .expect("upsert within cap");
+        }
+
+        // Simulate landing_delete: list() (newest-first) -> retain -> replace_all.
+        let mut all = store.list().expect("list");
+        assert_eq!(
+            all[0].pirep_id,
+            format!("R{}", LANDINGS_MAX_ROWS - 1),
+            "list() must be newest-first, per its own doc comment"
+        );
+        all.retain(|r| r.pirep_id != "R0"); // pilot deletes the oldest record
+        store.replace_all(&all).expect("replace_all");
+        // 499 records left — exactly at the cap after one more, so add TWO
+        // to actually push past LANDINGS_MAX_ROWS and force a trim.
+        store
+            .upsert(rec(
+                "NEWEST1",
+                &ts(LANDINGS_MAX_ROWS as i64),
+                &ts(LANDINGS_MAX_ROWS as i64),
+            ))
+            .expect("upsert 1/2");
+        store
+            .upsert(rec(
+                "NEWEST2",
+                &ts(LANDINGS_MAX_ROWS as i64 + 1),
+                &ts(LANDINGS_MAX_ROWS as i64 + 1),
+            ))
+            .expect("upsert 2/2 triggers cap trim");
+
+        let final_ids: std::collections::HashSet<String> =
+            store.list().unwrap().into_iter().map(|r| r.pirep_id).collect();
+        assert!(
+            !final_ids.contains("R1"),
+            "the oldest surviving record (R1, since R0 was already deleted) must be \
+             the one the trim drops"
+        );
+        assert!(
+            final_ids.contains("NEWEST1") && final_ids.contains("NEWEST2"),
+            "the just-added newest records must survive the trim — a corrupted \
+             on-disk order would drop them instead"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupt_file_is_backed_up_before_falling_back_to_empty() {
+        let (store, dir) = temp_store();
+        std::fs::write(dir.join(LANDINGS_FILE), b"{not valid json").expect("write garbage");
+
+        let items = store
+            .list()
+            .expect("a corrupt file must not error — it falls back to empty");
+        assert!(items.is_empty());
+
+        let backups: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains("corrupt"))
+            .collect();
+        assert_eq!(backups.len(), 1, "exactly one backup of the corrupt file must exist");
+        let backup_bytes = std::fs::read(backups[0].path()).unwrap();
+        assert_eq!(
+            backup_bytes,
+            b"{not valid json",
+            "the backup must be byte-identical to the original corrupt file"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
