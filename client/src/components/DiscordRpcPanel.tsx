@@ -8,7 +8,7 @@
 // landet das auf Status "NotFound" — kein Crash, der Pilot sieht's hier.
 
 import { useEffect, useState } from "react";
-import { invoke } from "../lib/ipc";
+import { invoke, formatIpcError } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 
 export interface DiscordPresenceSettings {
@@ -44,7 +44,7 @@ export function DiscordRpcPanel() {
           setStatus(st);
         }
       } catch (e) {
-        if (!cancel) setError(String(e));
+        if (!cancel) setError(formatIpcError(e));
       }
     })();
     return () => {
@@ -64,11 +64,20 @@ export function DiscordRpcPanel() {
     return () => window.clearInterval(id);
   }, [settings?.enabled]);
 
+  // v0.19.x FIX: when the initial discord_rpc_get_settings/_get_status
+  // fetch fails, `settings` stays null forever — this early return used
+  // to ALWAYS show the loading spinner, so the catch block's setError()
+  // had no path to reach the screen at all. The pilot saw a permanently
+  // stuck "loading" state with no indication anything had gone wrong.
   if (!settings) {
     return (
       <div className="settings__section">
         <h3>{t("discord_rpc.section_title")}</h3>
-        <p className="settings__row-hint">{t("discord_rpc.loading")}</p>
+        {error ? (
+          <p style={{ color: "#f87171", fontSize: "0.85rem" }} role="alert">{error}</p>
+        ) : (
+          <p className="settings__row-hint">{t("discord_rpc.loading")}</p>
+        )}
       </div>
     );
   }
@@ -83,7 +92,7 @@ export function DiscordRpcPanel() {
       const st = await invoke<DiscordPresenceState>("discord_rpc_set_settings", { settings: next });
       setStatus(st);
     } catch (e) {
-      setError(String(e));
+      setError(formatIpcError(e));
     } finally {
       setBusy(false);
     }
@@ -100,7 +109,7 @@ export function DiscordRpcPanel() {
         void invoke<DiscordPresenceState>("discord_rpc_get_status").then(setStatus);
       }, 1000);
     } catch (e) {
-      setError(String(e));
+      setError(formatIpcError(e));
     } finally {
       setBusy(false);
     }
