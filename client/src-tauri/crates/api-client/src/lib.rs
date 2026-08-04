@@ -1231,6 +1231,37 @@ struct DataEnvelope<T> {
 
 // ---- Client ----
 
+/// v0.19.x FIX: outcome of [`same_host_redirect_decision`] — kept separate
+/// from `reqwest::redirect::Action` so the decision logic is testable
+/// without constructing a real `reqwest::redirect::Attempt` (which has no
+/// public constructor).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RedirectDecision {
+    Follow,
+    Stop,
+    TooMany,
+}
+
+/// Pure redirect-policy decision: only ever follow a redirect that stays
+/// on the phpVMS host this client was configured for. `X-API-Key` is not
+/// in reqwest's cross-host header-strip allowlist (only Authorization/
+/// Cookie/... are), so an unrestricted redirect could hand the API key —
+/// which also mints MQTT credentials — to any host a compromised or
+/// misconfigured phpVMS install redirects to.
+fn same_host_redirect_decision(
+    target_host: Option<&str>,
+    allowed_host: Option<&str>,
+    hops_so_far: usize,
+) -> RedirectDecision {
+    if hops_so_far > 5 {
+        RedirectDecision::TooMany
+    } else if target_host.is_some() && target_host == allowed_host {
+        RedirectDecision::Follow
+    } else {
+        RedirectDecision::Stop
+    }
+}
+
 /// A reusable client. `Clone` is cheap because the inner reqwest client is
 /// `Arc`-backed and `Connection` only holds a URL + API key string.
 #[derive(Clone)]
@@ -1242,6 +1273,26 @@ pub struct Client {
 impl Client {
     pub fn new(conn: Connection) -> Result<Self, ApiError> {
         let user_agent = format!("AeroACARS/{}", env!("CARGO_PKG_VERSION"));
+        // SECURITY (v0.19.x FIX): reqwest's default redirect policy strips
+        // Authorization/Cookie/... on a cross-host hop but does NOT strip
+        // custom headers — `X-API-Key` (the phpVMS credential, which also
+        // mints MQTT credentials) would survive a redirect to a completely
+        // different host. A compromised or misconfigured VA phpVMS install
+        // could hand it straight to an attacker. There is no legitimate
+        // reason for this client to ever need a cross-host redirect — every
+        // request is built against the one configured `base_url` — so only
+        // same-host redirects are followed at all; anything else is
+        // rejected outright, same effect as `Policy::none()` for the case
+        // that actually matters, without breaking a same-host https upgrade
+        // some phpVMS/load-balancer setups issue.
+        let allowed_host = conn.base_url.host_str().map(|h| h.to_string());
+        let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
+            match same_host_redirect_decision(attempt.url().host_str(), allowed_host.as_deref(), attempt.previous().len()) {
+                RedirectDecision::Follow => attempt.follow(),
+                RedirectDecision::Stop => attempt.stop(),
+                RedirectDecision::TooMany => attempt.error("too many redirects"),
+            }
+        });
         let http = HttpClient::builder()
             .user_agent(user_agent)
             .timeout(DEFAULT_TIMEOUT)
@@ -1252,6 +1303,7 @@ impl Client {
             .tcp_keepalive(TCP_KEEPALIVE)
             .pool_idle_timeout(POOL_IDLE_TIMEOUT)
             .pool_max_idle_per_host(8)
+            .redirect(redirect_policy)
             .build()
             .map_err(ApiError::from)?;
         Ok(Self { http, conn })
@@ -2455,6 +2507,42 @@ fn extract_navlog_fixes(xml: &str) -> Vec<RouteFix> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- same_host_redirect_decision (v0.19.x FIX: X-API-Key redirect leak) ----
+
+    #[test]
+    fn redirect_to_the_same_host_is_followed() {
+        assert_eq!(
+            same_host_redirect_decision(Some("va.example.com"), Some("va.example.com"), 0),
+            RedirectDecision::Follow
+        );
+    }
+
+    #[test]
+    fn redirect_to_a_different_host_is_stopped() {
+        // The exact vulnerability: a redirect to ANY other host used to
+        // carry X-API-Key straight along with it.
+        assert_eq!(
+            same_host_redirect_decision(Some("attacker.evil"), Some("va.example.com"), 0),
+            RedirectDecision::Stop
+        );
+    }
+
+    #[test]
+    fn redirect_with_no_resolvable_host_is_stopped() {
+        assert_eq!(
+            same_host_redirect_decision(None, Some("va.example.com"), 0),
+            RedirectDecision::Stop
+        );
+    }
+
+    #[test]
+    fn too_many_hops_is_rejected_even_on_the_same_host() {
+        assert_eq!(
+            same_host_redirect_decision(Some("va.example.com"), Some("va.example.com"), 6),
+            RedirectDecision::TooMany
+        );
+    }
 
     #[test]
     fn rejects_non_http_scheme() {
