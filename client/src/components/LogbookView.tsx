@@ -5,6 +5,8 @@
 import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { invoke } from "../lib/ipc";
 import { FlightProfile } from "./FlightProfile";
 
@@ -46,26 +48,30 @@ interface Detail extends Item {
 const pad = (n: number) => String(n).padStart(2, "0");
 const dur = (m?: number) => (m == null ? "—" : m >= 60 ? `${Math.floor(m / 60)}h ${pad(m % 60)}m` : `0h ${pad(m)}m`);
 const elapsed = (ms: number) => { const t = Math.round(ms / 60000); return `${pad(Math.floor(t / 60))}:${pad(t % 60)}`; };
-const fmtDate = (iso?: string) => {
+/** v0.19.x FIX: was a hand-rolled German-only month-abbreviation array
+ *  (JAN..DEZ), shown regardless of locale. `toLocaleDateString` gives the
+ *  same "12 AUG 2026"-style layout while actually respecting `locale`. */
+const fmtDate = (iso: string | undefined, locale: string) => {
   if (!iso) return "—";
   const d = new Date(iso);
-  const M = ["JAN", "FEB", "MRZ", "APR", "MAI", "JUN", "JUL", "AUG", "SEP", "OKT", "NOV", "DEZ"];
-  return `${pad(d.getDate())} ${M[d.getMonth()]} ${d.getFullYear()}`;
+  const day = pad(d.getDate());
+  const month = d.toLocaleDateString(locale, { month: "short" }).toUpperCase().replace(/\.$/, "");
+  return `${day} ${month} ${d.getFullYear()}`;
 };
 /** Der Pilot braucht keinen Stacktrace, aber wir dürfen die Ursache auch
  *  nicht verschlucken — Klartext vorn, technisches Detail dahinter. */
-const errText = (e: unknown): string => {
+const errText = (e: unknown, t: TFunction): string => {
   const raw = String((e as { message?: string })?.message ?? e ?? "").trim();
   if (/network|fetch|connect|timeout|dns/i.test(raw)) {
-    return `Keine Verbindung zu phpVMS. (${raw})`;
+    return t("logbook_view.error_network", { detail: raw });
   }
   if (/401|403|unauth|forbidden|api.?key/i.test(raw)) {
-    return `Anmeldung abgelehnt — prüfe deinen API-Schlüssel in den Einstellungen. (${raw})`;
+    return t("logbook_view.error_unauthorized", { detail: raw });
   }
   if (/404|not found/i.test(raw)) {
-    return `Das Logbuch-Modul antwortet nicht — läuft GsgLogbook auf dem Server? (${raw})`;
+    return t("logbook_view.error_not_found", { detail: raw });
   }
-  return raw || "Unbekannter Fehler.";
+  return raw || t("logbook_view.error_unknown");
 };
 
 /** Distanz gross genug fuer eine Kachel, aber ohne zu luegen.
@@ -98,10 +104,16 @@ export async function invokeWithRetry<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 const statusSlug = (s?: string) => (s === "accepted" || s === "pending" || s === "rejected" ? s : "pending");
-const badge = (s?: string) => `<span class="aa-lb-badge aa-lb-b-${statusSlug(s)}">${statusSlug(s)}</span>`;
+/** v0.19.x FIX: the badge text used to be the raw English status slug
+ *  itself ("accepted"/"pending"/"rejected"), shown verbatim regardless
+ *  of locale — the CSS class keeps the English slug (styling hook), only
+ *  the visible label is now localized. */
+const badge = (s: string | undefined, t: TFunction) =>
+  `<span class="aa-lb-badge aa-lb-b-${statusSlug(s)}">${esc(t(`logbook_view.status_${statusSlug(s)}`))}</span>`;
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
 
 export function LogbookView() {
+  const { t, i18n } = useTranslation();
   const [stats, setStats] = useState<Stats | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [total, setTotal] = useState(0);
@@ -136,9 +148,10 @@ export function LogbookView() {
       invoke<{ items?: Item[]; total?: number }>("logbook_pireps", { limit: PAGE, offset: page * PAGE }),
     )
       .then((r) => { if (!cancelled) { setItems(r.items ?? []); setTotal(r.total ?? 0); } })
-      .catch((e) => { if (!cancelled) setError(errText(e)); })
+      .catch((e) => { if (!cancelled) setError(errText(e, t)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, retryTick]);
 
   async function openDetail(id: string) {
@@ -152,7 +165,7 @@ export function LogbookView() {
       const d = await invoke<Detail>("logbook_pirep", { id });
       setDetail(d);
     } catch (e) {
-      setError(errText(e));
+      setError(errText(e, t));
     } finally {
       setOpeningId(null);
     }
@@ -192,21 +205,21 @@ export function LogbookView() {
     return (
       <section className="aa-lb">
         <div className="aa-lb-det-head">
-          <button type="button" className="aa-lb-btn" onClick={() => setDetail(null)}>← Logbuch</button>
+          <button type="button" className="aa-lb-btn" onClick={() => setDetail(null)}>{t("logbook_view.detail_back")}</button>
           <span className="aa-lb-cs">{detail.callsign}</span>
           <span className="aa-lb-route">{detail.dep_icao}<span className="aa-lb-arr">→</span>{detail.arr_icao}</span>
           <span className="aa-lb-muted">{detail.aircraft_icao} · {detail.aircraft_reg}</span>
-          <span dangerouslySetInnerHTML={{ __html: badge(detail.status) }} />
+          <span dangerouslySetInnerHTML={{ __html: badge(detail.status, t) }} />
           <div className="aa-lb-det-stats">
-            <div><div className="aa-lb-k">Dauer</div><div className="aa-lb-v">{dur(detail.duration_min)}</div></div>
-            <div><div className="aa-lb-k">Distanz</div><div className="aa-lb-v">{detail.distance_nm} nm</div></div>
-            <div><div className="aa-lb-k">Landung</div><div className="aa-lb-v">{detail.landing_rate_fpm} fpm</div></div>
+            <div><div className="aa-lb-k">{t("logbook_view.table_duration")}</div><div className="aa-lb-v">{dur(detail.duration_min)}</div></div>
+            <div><div className="aa-lb-k">{t("logbook_view.table_distance")}</div><div className="aa-lb-v">{detail.distance_nm} nm</div></div>
+            <div><div className="aa-lb-k">{t("logbook_view.table_landing")}</div><div className="aa-lb-v">{detail.landing_rate_fpm} fpm</div></div>
           </div>
         </div>
         <div className="aa-lb-det-row">
           <div className="aa-lb-map" ref={mapElRef} />
           <div className="aa-lb-panel aa-lb-logpanel">
-            <h3>Fluglogbuch</h3>
+            <h3>{t("logbook_view.detail_log_title")}</h3>
             <div className="aa-lb-log" dangerouslySetInnerHTML={{
               __html: (detail.log ?? []).map((l) => {
                 const phase = l.message.startsWith("Phase:");
@@ -221,7 +234,7 @@ export function LogbookView() {
           </div>
         </div>
         <div className="aa-lb-panel">
-          <h3>Flugprofil</h3>
+          <h3>{t("logbook_view.detail_profile_title")}</h3>
           <FlightProfile route={route} />
         </div>
       </section>
@@ -230,24 +243,24 @@ export function LogbookView() {
 
   return (
     <section className="aa-lb">
-      <div className="aa-lb-head"><div className="aa-lb-title">Logbuch</div><div className="aa-lb-sub">deine geflogenen Flüge — live aus phpVMS</div></div>
+      <div className="aa-lb-head"><div className="aa-lb-title">{t("logbook_view.section_title")}</div><div className="aa-lb-sub">{t("logbook_view.section_subtitle")}</div></div>
       <div className="aa-lb-stats">
-        <div className="aa-lb-stat"><div className="aa-lb-k">Flüge</div><div className="aa-lb-bigv">{stats?.total_flights ?? "—"}</div></div>
-        <div className="aa-lb-stat"><div className="aa-lb-k">Stunden</div><div className="aa-lb-bigv">{stats?.hours_flown != null ? Math.round(stats.hours_flown) : "—"}<small> h</small></div></div>
-        <div className="aa-lb-stat"><div className="aa-lb-k">Distanz</div><div className="aa-lb-bigv">{fmtNm(stats?.distance_nm)}<small> nm</small></div></div>
-        <div className="aa-lb-stat"><div className="aa-lb-k">Ø Landung</div><div className="aa-lb-bigv">{stats?.avg_landing_fpm ?? "—"}<small> fpm</small></div></div>
+        <div className="aa-lb-stat"><div className="aa-lb-k">{t("logbook_view.stat_flights")}</div><div className="aa-lb-bigv">{stats?.total_flights ?? "—"}</div></div>
+        <div className="aa-lb-stat"><div className="aa-lb-k">{t("logbook_view.stat_hours")}</div><div className="aa-lb-bigv">{stats?.hours_flown != null ? Math.round(stats.hours_flown) : "—"}<small> {t("logbook_view.unit_hours")}</small></div></div>
+        <div className="aa-lb-stat"><div className="aa-lb-k">{t("logbook_view.stat_distance")}</div><div className="aa-lb-bigv">{fmtNm(stats?.distance_nm)}<small> nm</small></div></div>
+        <div className="aa-lb-stat"><div className="aa-lb-k">{t("logbook_view.stat_avg_landing")}</div><div className="aa-lb-bigv">{stats?.avg_landing_fpm ?? "—"}<small> fpm</small></div></div>
         {/* Die API lieferte beides schon immer, angezeigt wurde es nie. */}
-        <div className="aa-lb-stat"><div className="aa-lb-k">Diesen Monat</div><div className="aa-lb-bigv">{stats?.flights_this_month ?? "—"}<small> Flüge</small></div></div>
-        <div className="aa-lb-stat"><div className="aa-lb-k">Dieses Jahr</div><div className="aa-lb-bigv">{stats?.hours_this_year != null ? Math.round(stats.hours_this_year) : "—"}<small> h</small></div></div>
-        <div className="aa-lb-stat aa-lb-rankcard">{stats?.rank_image && <img src={stats.rank_image} alt="" />}<div><div className="aa-lb-k">Rang</div><div className="aa-lb-rankv">{stats?.rank ?? "—"}</div></div></div>
+        <div className="aa-lb-stat"><div className="aa-lb-k">{t("logbook_view.stat_this_month")}</div><div className="aa-lb-bigv">{stats?.flights_this_month ?? "—"}<small> {t("logbook_view.unit_flights")}</small></div></div>
+        <div className="aa-lb-stat"><div className="aa-lb-k">{t("logbook_view.stat_this_year")}</div><div className="aa-lb-bigv">{stats?.hours_this_year != null ? Math.round(stats.hours_this_year) : "—"}<small> {t("logbook_view.unit_hours")}</small></div></div>
+        <div className="aa-lb-stat aa-lb-rankcard">{stats?.rank_image && <img src={stats.rank_image} alt="" />}<div><div className="aa-lb-k">{t("logbook_view.stat_rank")}</div><div className="aa-lb-rankv">{stats?.rank ?? "—"}</div></div></div>
       </div>
       <div className="aa-lb-card">
         {error && (
           <div className="aa-lb-error">
-            Logbuch konnte nicht geladen werden: {error}
+            {t("logbook_view.error_prefix", { error })}
             {" "}
-            <button type="button" className="aa-lb-btn" onClick={() => setRetryTick((t) => t + 1)}>
-              Erneut versuchen
+            <button type="button" className="aa-lb-btn" onClick={() => setRetryTick((n) => n + 1)}>
+              {t("logbook_view.retry")}
             </button>
           </div>
         )}
@@ -255,7 +268,18 @@ export function LogbookView() {
             der Zeile ankommt — er sitzt an der Oberkante der Karte. */}
         {(loading || openingId) && <div className="aa-lb-progress" role="presentation" />}
         <table className={openingId ? "is-busy" : undefined} aria-busy={openingId ? true : undefined}>
-          <thead><tr><th>Datum</th><th>Route</th><th>Muster</th><th className="num">Dauer</th><th className="num">Distanz</th><th className="num">Landung</th><th>Status</th><th></th></tr></thead>
+          <thead>
+            <tr>
+              <th>{t("logbook_view.table_date")}</th>
+              <th>{t("logbook_view.table_route")}</th>
+              <th>{t("logbook_view.table_type")}</th>
+              <th className="num">{t("logbook_view.table_duration")}</th>
+              <th className="num">{t("logbook_view.table_distance")}</th>
+              <th className="num">{t("logbook_view.table_landing")}</th>
+              <th>{t("logbook_view.table_status")}</th>
+              <th></th>
+            </tr>
+          </thead>
           <tbody>
             {items.map((f) => (
               <tr
@@ -263,26 +287,34 @@ export function LogbookView() {
                 className={openingId === f.id ? "is-opening" : undefined}
                 onClick={() => openDetail(f.id)}
               >
-                <td className="aa-lb-muted">{fmtDate(f.date)}</td>
+                <td className="aa-lb-muted">{fmtDate(f.date, i18n.language)}</td>
                 <td><span className="aa-lb-rt">{f.dep_icao}<span className="aa-lb-arr">→</span>{f.arr_icao}</span><div className="aa-lb-cs2">{f.callsign}</div></td>
                 <td>{f.aircraft_icao} <span className="aa-lb-muted">· {f.aircraft_reg}</span></td>
                 <td className="num">{dur(f.duration_min)}</td>
                 <td className="num">{f.distance_nm} nm</td>
                 <td className="num">{f.landing_rate_fpm} fpm</td>
-                <td><span dangerouslySetInnerHTML={{ __html: badge(f.status) }} /></td>
+                <td><span dangerouslySetInnerHTML={{ __html: badge(f.status, t) }} /></td>
                 {/* Der Pfeil wird zum Kreisel — an genau der Stelle, auf die
                     man geklickt hat, statt irgendwo sonst auf der Seite. */}
-                <td className="aa-lb-chev">{openingId === f.id ? <span className="aa-lb-spin" aria-label="lädt" /> : "›"}</td>
+                <td className="aa-lb-chev">{openingId === f.id ? <span className="aa-lb-spin" aria-label={t("logbook_view.opening_aria")} /> : "›"}</td>
               </tr>
             ))}
           </tbody>
         </table>
         <div className="aa-lb-pager">
-          <span>{loading ? "lädt …" : `${total ? page * PAGE + 1 : 0}–${Math.min((page + 1) * PAGE, total)} von ${total}`}</span>
+          <span>
+            {loading
+              ? t("logbook_view.loading")
+              : t("logbook_view.pager_range", {
+                  from: total ? page * PAGE + 1 : 0,
+                  to: Math.min((page + 1) * PAGE, total),
+                  total,
+                })}
+          </span>
           <span className="aa-lb-pagebtns">
-            <button type="button" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>‹ Zurück</button>
-            <span>Seite {page + 1} / {Math.max(1, Math.ceil(total / PAGE))}</span>
-            <button type="button" disabled={(page + 1) * PAGE >= total} onClick={() => setPage((p) => p + 1)}>Weiter ›</button>
+            <button type="button" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t("logbook_view.pager_back")}</button>
+            <span>{t("logbook_view.pager_page", { page: page + 1, pages: Math.max(1, Math.ceil(total / PAGE)) })}</span>
+            <button type="button" disabled={(page + 1) * PAGE >= total} onClick={() => setPage((p) => p + 1)}>{t("logbook_view.pager_next")}</button>
           </span>
         </div>
       </div>

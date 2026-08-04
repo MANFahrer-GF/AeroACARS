@@ -1,7 +1,21 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { render, screen } from "@testing-library/react";
+import i18next from "i18next";
+import { initReactI18next } from "react-i18next";
+import deCommon from "../locales/de/common.json";
 import { fmtNm } from "./LogbookView";
 import { FlightProfile } from "./FlightProfile";
+
+beforeAll(async () => {
+  if (!i18next.isInitialized) {
+    await i18next.use(initReactI18next).init({
+      lng: "de",
+      resources: { de: { common: deCommon } },
+      defaultNS: "common",
+      interpolation: { escapeValue: false },
+    });
+  }
+});
 
 // Live-Befund Thomas K.: AGL- und Gelände-Linie im Höhenprofil "fehlen".
 //

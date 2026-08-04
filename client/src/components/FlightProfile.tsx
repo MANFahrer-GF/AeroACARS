@@ -22,6 +22,7 @@
 // Blau↔Grau (Höhe/Geschwindigkeit, ΔE 15–18).
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface ProfilePt {
   t?: number;
@@ -117,11 +118,12 @@ export function findHoverIndex(
 }
 
 export function FlightProfile({ route }: { route: ProfilePt[] }) {
+  const { t } = useTranslation();
   const [hover, setHover] = useState<number | null>(null);
 
   const pts = route.filter((p) => typeof p.alt_ft === "number");
   if (pts.length < 2) {
-    return <div className="aa-lb-muted" style={{ padding: 8 }}>Keine Höhendaten.</div>;
+    return <div className="aa-lb-muted" style={{ padding: 8 }}>{t("flight_profile.no_altitude_data")}</div>;
   }
 
   // Gemeinsame Zeitachse. Fehlt `t`, wird gleichmäßig über den Index verteilt —
@@ -152,28 +154,28 @@ export function FlightProfile({ route }: { route: ProfilePt[] }) {
   // Titel "Treibstoff" behauptet, es gäbe nichts zu tanken.
   const bands: Band[] = [
     {
-      key: "alt", title: "Höhe über Meer", unit: "ft", height: 150,
+      key: "alt", title: t("flight_profile.title_alt"), unit: "ft", height: 150,
       series: [{ label: "MSL", vals: msl, color: BLUE, width: 2 }],
       fill: has(gnd) ? gnd : undefined,
     },
     has(agl) && {
-      key: "agl", title: "Höhe über Grund", unit: "ft", height: 100,
+      key: "agl", title: t("flight_profile.title_agl"), unit: "ft", height: 100,
       series: [{ label: "AGL", vals: agl, color: GREEN, width: 2 }],
     },
     (has(ias) || has(gs)) && {
-      key: "spd", title: "Geschwindigkeit", unit: "kt", height: 100,
+      key: "spd", title: t("flight_profile.title_speed"), unit: "kt", height: 100,
       series: [
         ...(has(ias) ? [{ label: "IAS", vals: ias, color: BLUE, width: 2 }] : []),
         ...(has(gs) ? [{ label: "GS", vals: gs, color: GREY, width: 1.5, dash: true }] : []),
       ],
     },
     has(vs) && {
-      key: "vs", title: "Steig- und Sinkrate", unit: "fpm", height: 100,
+      key: "vs", title: t("flight_profile.title_vs"), unit: "fpm", height: 100,
       series: [{ label: "V/S", vals: vs, color: BLUE, width: 1.6 }],
       diverging: true,
     },
     has(fuel) && {
-      key: "fuel", title: "Treibstoff an Bord", unit: "kg", height: 90,
+      key: "fuel", title: t("flight_profile.title_fuel"), unit: "kg", height: 90,
       series: [{ label: "Fuel", vals: fuel, color: ORANGE, width: 2 }],
     },
   ].filter(Boolean) as Band[];

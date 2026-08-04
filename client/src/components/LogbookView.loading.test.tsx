@@ -17,8 +17,22 @@
 // Diese Tests halten beides fest: dass die Rückmeldung SOFORT kommt (nicht erst
 // mit der Antwort), und dass ein zweiter Klick keine zweite Abfrage auslöst.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, act, cleanup, within } from "@testing-library/react";
+import i18next from "i18next";
+import { initReactI18next } from "react-i18next";
+import deCommon from "../locales/de/common.json";
+
+beforeAll(async () => {
+  if (!i18next.isInitialized) {
+    await i18next.use(initReactI18next).init({
+      lng: "de",
+      resources: { de: { common: deCommon } },
+      defaultNS: "common",
+      interpolation: { escapeValue: false },
+    });
+  }
+});
 
 const h = vi.hoisted(() => ({
   /** Aufgelöst von Hand, damit der Zustand WÄHREND des Ladens prüfbar ist. */
