@@ -66,7 +66,7 @@ export function useIntegrityFlags(): {
 
     (async () => {
       try {
-        unlisten = await listen<IntegrityFlagPayload>("integrity-flag", (event) => {
+        const fn = await listen<IntegrityFlagPayload>("integrity-flag", (event) => {
           if (!mounted) return;
           const p = event.payload;
           setState((prev) => {
@@ -83,6 +83,19 @@ export function useIntegrityFlags(): {
             return next;
           });
         });
+        // v0.19.x FIX: on a fast unmount (guaranteed every mount in React
+        // StrictMode dev), the cleanup below can run BEFORE this await
+        // resolves — `unlisten` would still be undefined when cleanup
+        // checks it, and the assignment below would then set it AFTER
+        // cleanup already ran, so nothing would ever call it: the Tauri
+        // listener leaked permanently. If we're already unmounted by the
+        // time the promise resolves, unregister immediately instead of
+        // stashing it in a variable cleanup already passed.
+        if (!mounted) {
+          fn();
+        } else {
+          unlisten = fn;
+        }
       } catch (err) {
         console.warn("[integrity] failed to listen for integrity-flag events:", err);
       }

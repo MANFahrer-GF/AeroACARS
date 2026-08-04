@@ -101,14 +101,7 @@ export function initSentry(appVersion: string): boolean {
         return null;
       }
     },
-    beforeBreadcrumb(crumb) {
-      if (crumb.category === "fetch" || crumb.category === "xhr") {
-        if (crumb.data?.url && typeof crumb.data.url === "string") {
-          crumb.data.url = crumb.data.url.split("?")[0];
-        }
-      }
-      return crumb;
-    },
+    beforeBreadcrumb: redactBreadcrumb,
     initialScope: {
       tags: {
         "app.component": "client",
@@ -117,6 +110,34 @@ export function initSentry(appVersion: string): boolean {
     },
   });
   return true;
+}
+
+/**
+ * v0.19.x FIX: strips query strings from breadcrumb URLs. Previously only
+ * covered `fetch`/`xhr` breadcrumbs (`data.url`) — Sentry's browser history
+ * integration also emits `navigation` breadcrumbs with `data.from`/`data.to`
+ * URLs, which were NOT covered. `ipc.ts`'s `consumePinFromUrl()` uses
+ * `history.replaceState` specifically to strip a `?pin=NNNNNN` LAN-pairing
+ * PIN from the address bar as soon as the app reads it — but the PIN is
+ * still in the URL at the instant that navigation happens, so it could
+ * otherwise reach a future error report verbatim in a navigation
+ * breadcrumb's `to` (or `from`) field.
+ */
+export function redactBreadcrumb(crumb: Sentry.Breadcrumb): Sentry.Breadcrumb {
+  if (crumb.category === "fetch" || crumb.category === "xhr") {
+    if (crumb.data?.url && typeof crumb.data.url === "string") {
+      crumb.data.url = crumb.data.url.split("?")[0];
+    }
+  }
+  if (crumb.category === "navigation" && crumb.data) {
+    for (const key of ["from", "to"] as const) {
+      const v = crumb.data[key];
+      if (typeof v === "string") {
+        crumb.data[key] = v.split("?")[0];
+      }
+    }
+  }
+  return crumb;
 }
 
 export function redactEvent(event: Sentry.ErrorEvent): Sentry.ErrorEvent {
