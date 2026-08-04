@@ -225,3 +225,104 @@ describe("RunwayDiagramV2 — skin thresholds are actually read, not just hardco
     expect(screen.getByText("1.30 g")).toHaveStyle({ color: "#fbbf24" });
   });
 });
+
+// v0.19.x FIX: `V2Skin.display` (7 show/hide flags — aim marker, TDZ
+// box, brake point, opposite-runway designator, in-diagram runway-
+// length label, aircraft bar, L/R offset arrow) was defined, defaulted
+// and merged like every other skin section, but the component never
+// read it — a VA admin turning an element off via the deployed VPS
+// skin saw zero effect. These prove each flag now actually controls
+// its element, while a still-true flag leaves the default look intact.
+describe("RunwayDiagramV2 — skin display flags actually hide/show elements", () => {
+  function withDisplay(overrides: Partial<V2Skin["display"]>) {
+    skinBox.current = {
+      ...DEFAULT_SKIN,
+      display: { ...DEFAULT_SKIN.display, ...overrides },
+    };
+  }
+
+  it("show_aim_marker toggles the aim-point marker and its legend entry", () => {
+    // Case-sensitive regex, NOT exact:false substring matching — the
+    // tooltip prose ("Aim-Point — die zwei großen...") also contains
+    // the same word in mixed case and exact:false matches case-
+    // insensitively, which would find both and throw on multiple hits.
+    const p = props({ aim_point_m: 300 });
+    const shown = render(<RunwayDiagramV2 {...p} />);
+    expect(screen.getByText(/AIM-POINT/)).toBeTruthy();
+    expect(screen.getByText(deCommon.runway_v2.legend_aim)).toBeTruthy();
+    shown.unmount();
+
+    withDisplay({ show_aim_marker: false });
+    render(<RunwayDiagramV2 {...p} />);
+    expect(screen.queryByText(/AIM-POINT/)).toBeNull();
+    expect(screen.queryByText(deCommon.runway_v2.legend_aim)).toBeNull();
+  });
+
+  it("show_aufsetzzone_box toggles the TDZ box and its legend entry", () => {
+    const p = props({ td_tdz_length_m: 900 });
+    const shown = render(<RunwayDiagramV2 {...p} />);
+    expect(screen.getByText(deCommon.runway_v2.legend_tdz)).toBeTruthy();
+    shown.unmount();
+
+    withDisplay({ show_aufsetzzone_box: false });
+    render(<RunwayDiagramV2 {...p} />);
+    expect(screen.queryByText(deCommon.runway_v2.legend_tdz)).toBeNull();
+  });
+
+  it("show_brakepoint toggles the brake-point marker and its legend entry", () => {
+    const p = props({ rollout_m: 500 });
+    const shown = render(<RunwayDiagramV2 {...p} />);
+    expect(screen.getByText(deCommon.runway_v2.legend_brakepoint)).toBeTruthy();
+    shown.unmount();
+
+    withDisplay({ show_brakepoint: false });
+    render(<RunwayDiagramV2 {...p} />);
+    expect(screen.queryByText(deCommon.runway_v2.legend_brakepoint)).toBeNull();
+  });
+
+  it("show_opposite_runway toggles the opposite-runway designator text", () => {
+    const p = props();
+    const shown = render(<RunwayDiagramV2 {...p} />);
+    expect(shown.container.querySelector('text[fill="#94a3b8"]')).not.toBeNull();
+    shown.unmount();
+
+    withDisplay({ show_opposite_runway: false });
+    const hidden = render(<RunwayDiagramV2 {...p} />);
+    expect(hidden.container.querySelector('text[fill="#94a3b8"]')).toBeNull();
+  });
+
+  it("show_bahn_length toggles the in-diagram runway-length label", () => {
+    const p = props();
+    const shown = render(<RunwayDiagramV2 {...p} />);
+    expect(shown.container.querySelector('text[fill="#64748b"]')).not.toBeNull();
+    shown.unmount();
+
+    withDisplay({ show_bahn_length: false });
+    const hidden = render(<RunwayDiagramV2 {...p} />);
+    expect(hidden.container.querySelector('text[fill="#64748b"]')).toBeNull();
+  });
+
+  it("show_flugzeug_bar toggles the aircraft data bar", () => {
+    const p = props({ aircraft_icao: "A320" });
+    const shown = render(<RunwayDiagramV2 {...p} />);
+    expect(screen.getByText(deCommon.runway_v2.flugzeug_label)).toBeTruthy();
+    shown.unmount();
+
+    withDisplay({ show_flugzeug_bar: false });
+    render(<RunwayDiagramV2 {...p} />);
+    expect(screen.queryByText(deCommon.runway_v2.flugzeug_label)).toBeNull();
+  });
+
+  it("show_lr_offset_arrow toggles the L/R offset arrow", () => {
+    // aim_point_m: null — the aim marker has its own <polygon> arrow;
+    // without this the two would be ambiguous to tell apart by query.
+    const p = props({ aim_point_m: null, td_distance_from_threshold_m: 2000, td_centerline_offset_m: -5 });
+    const shown = render(<RunwayDiagramV2 {...p} />);
+    expect(shown.container.querySelector("polygon")).not.toBeNull();
+    shown.unmount();
+
+    withDisplay({ show_lr_offset_arrow: false });
+    const hidden = render(<RunwayDiagramV2 {...p} />);
+    expect(hidden.container.querySelector("polygon")).toBeNull();
+  });
+});

@@ -106,6 +106,7 @@ function tdColor(p: RunwayDiagramV2Props, tokens: { tdSevere: string; tdPerfect:
 export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   const skin = useV2Skin();
   const TOKENS = skin.tokens;
+  const display = skin.display;
   const { t } = useTranslation();
   const [glossaryOpen, setGlossaryOpen] = useState(false);
 
@@ -459,7 +460,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           {/* TDZ-Box — gelbe Schraffur als Bereichs-Indikator + dünner
               Rahmen + Label. Die diagonale Schraffur soll visuell
               vermitteln "hier soll der Touchdown rein". */}
-          {tdzEndX != null && tdzEndX > thresholdX + 24 && (
+          {tdzEndX != null && tdzEndX > thresholdX + 24 && display.show_aufsetzzone_box && (
             <g>
               <defs>
                 <pattern
@@ -531,7 +532,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               "Stufen"-Optik — User-Befund 2026-05-13.) Streifen-Breite
               hier 24 px (entspricht ~50 m Real-Länge, ICAO gibt 30–60 m
               je nach Bahn). */}
-          {aimX != null && (
+          {aimX != null && display.show_aim_marker && (
             <g>
               <rect
                 x={aimX - 12}
@@ -616,7 +617,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               Bahn-Fläche, damit es nicht hinter den AIM-Quadraten
               verschwindet wenn TD und Aim-Position fast übereinander
               liegen. Nur wenn |offset| > 0.5 m. */}
-          {Math.abs(props.td_centerline_offset_m) > 0.5 && (() => {
+          {Math.abs(props.td_centerline_offset_m) > 0.5 && display.show_lr_offset_arrow && (() => {
             const isLeftOffset = props.td_centerline_offset_m < 0;
             // Pfeil-Group direkt unter der Bahn — über dem TD-Distanz-Label.
             const arrowY = rwyBot + 22;
@@ -726,7 +727,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 kollidieren) → Labels RECHTS vom Bremspunkt-Dot
               Reines Overlap-Hygiene-Detail, kein User-sichtbares
               Verhalten ändert sich beim normalen Fall. */}
-          {exitX != null && (() => {
+          {exitX != null && display.show_brakepoint && (() => {
             // 3-Modi-Anti-Overlap:
             // 1. "right": Wenn Rollout sehr kurz (< 80 px) → Labels rechts
             //    vom Bremspunkt-Dot, nicht drüber (sonst crashen sie in
@@ -806,28 +807,32 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           {/* Gegen-RWY-Designator + Bahnlänge rechts. Gegen-Designator
               zeigt klar dass die Bahn da endet (= Gegen-Richtung,
               z. B. RWY 32 ↔ RWY 14). Plus Bahn-Gesamtlänge darunter. */}
-          <text
-            x={W - padX / 2 + 8}
-            y={rwyCl - 2}
-            textAnchor="middle"
-            fontSize="20"
-            fill="#94a3b8"
-            fontWeight="700"
-            fontFamily="monospace"
-            opacity="0.85"
-          >
-            {oppositeRunway(props.runway_ident)}
-          </text>
-          <text
-            x={W - padX / 2 + 8}
-            y={rwyCl + 18}
-            textAnchor="middle"
-            fontSize="11"
-            fill="#64748b"
-            fontFamily="monospace"
-          >
-            {props.length_m.toFixed(0)} m
-          </text>
+          {display.show_opposite_runway && (
+            <text
+              x={W - padX / 2 + 8}
+              y={rwyCl - 2}
+              textAnchor="middle"
+              fontSize="20"
+              fill="#94a3b8"
+              fontWeight="700"
+              fontFamily="monospace"
+              opacity="0.85"
+            >
+              {oppositeRunway(props.runway_ident)}
+            </text>
+          )}
+          {display.show_bahn_length && (
+            <text
+              x={W - padX / 2 + 8}
+              y={rwyCl + 18}
+              textAnchor="middle"
+              fontSize="11"
+              fill="#64748b"
+              fontFamily="monospace"
+            >
+              {props.length_m.toFixed(0)} m
+            </text>
+          )}
 
           {/* (Landerichtungs-Pfeil entfernt — die neuen End-Streifen
               + der Gegen-RWY-Designator zeigen das Bahn-Ende
@@ -902,10 +907,10 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
         }}
       >
         <LegendItem swatch={TOKENS.threshold} label={t("runway_v2.legend_threshold")} />
-        {tdzEndX && <LegendItem swatch={TOKENS.tdzStroke} label={t("runway_v2.legend_tdz")} />}
-        {aimX && <LegendItem swatch={TOKENS.aimMarker} label={t("runway_v2.legend_aim")} />}
+        {tdzEndX && display.show_aufsetzzone_box && <LegendItem swatch={TOKENS.tdzStroke} label={t("runway_v2.legend_tdz")} />}
+        {aimX && display.show_aim_marker && <LegendItem swatch={TOKENS.aimMarker} label={t("runway_v2.legend_aim")} />}
         <LegendDot color={dotColor} label={t("runway_v2.legend_td")} />
-        {exitX && <LegendDot color={TOKENS.exitDot} label={t("runway_v2.legend_brakepoint")} />}
+        {exitX && display.show_brakepoint && <LegendDot color={TOKENS.exitDot} label={t("runway_v2.legend_brakepoint")} />}
         {ddsActive && <LegendItem swatch={TOKENS.ddsBorder} label={t("runway_v2.legend_pre_threshold")} />}
       </div>
 
@@ -1025,7 +1030,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               : "neutral"
           }
         />
-        <FlugzeugBar props={props} />
+        {display.show_flugzeug_bar && <FlugzeugBar props={props} />}
       </div>
 
       {glossaryOpen && (
