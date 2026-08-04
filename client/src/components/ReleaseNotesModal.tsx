@@ -3,7 +3,25 @@ import { useTranslation } from "react-i18next";
 import { invoke } from "../lib/ipc";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ReleaseNotes } from "../types";
+import type { ReleaseNotes, UiError } from "../types";
+
+// v0.19.x FIX: a rejected Tauri command resolves with the deserialized
+// `{code, message}` UiError object, NOT a JS Error — `String(err)` on it
+// stringifies to the useless "[object Object]", which never contains
+// "not_found". The distinction below never actually fired; every failure
+// (missing release AND genuine network errors alike) fell through to the
+// generic "offline" message. Extract `code` properly instead, mirroring
+// the same pattern already used in BidsList.tsx / ManualFlightModal.tsx.
+function asUiError(err: unknown): UiError {
+  if (err && typeof err === "object" && "code" in err && "message" in err) {
+    const e = err as Record<string, unknown>;
+    return {
+      code: typeof e.code === "string" ? e.code : "unknown",
+      message: typeof e.message === "string" ? e.message : String(err),
+    };
+  }
+  return { code: "unknown", message: String(err) };
+}
 
 interface Props {
   /** Version string WITHOUT leading 'v' (e.g. "0.1.23"). */
@@ -43,8 +61,8 @@ export function ReleaseNotesModal({ version, onClose }: Props) {
         // Distinguish between "release doesn't exist yet" and
         // "network is borked" — the user can decide whether to
         // open GitHub or just close.
-        const msg = String(e);
-        if (msg.includes("not_found")) {
+        const ui = asUiError(e);
+        if (ui.code === "not_found") {
           setError(t("release_notes.error_no_release"));
         } else {
           setError(t("release_notes.error_offline"));
