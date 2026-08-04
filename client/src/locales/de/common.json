@@ -999,6 +999,7 @@
       "connecting": "Verbinde …",
       "badPin": "Falsche PIN. Bitte prüfe die PIN am Sim-PC und versuche es erneut.",
       "network": "Verbindung fehlgeschlagen. Bist du im selben WLAN wie der Sim-PC?",
+      "rateLimited": "Zu viele Versuche. Bitte warte kurz, bevor du es erneut probierst — das ist kein Netzwerkproblem.",
       "hint": "Wer diese PIN kennt, kann den laufenden Flug steuern. Gib sie nur an Geräte weiter, denen du vertraust."
     },
     "server": {

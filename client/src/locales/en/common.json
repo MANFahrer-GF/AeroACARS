@@ -999,6 +999,7 @@
       "connecting": "Connecting …",
       "badPin": "Wrong PIN. Check the PIN on the sim PC and try again.",
       "network": "Connection failed. Are you on the same Wi-Fi as the sim PC?",
+      "rateLimited": "Too many attempts. Please wait a moment before trying again — this is not a network problem.",
       "hint": "Anyone with this PIN can control the active flight. Only share it with devices you trust."
     },
     "server": {

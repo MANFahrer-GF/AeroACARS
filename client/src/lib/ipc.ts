@@ -97,8 +97,26 @@ export function hasRemoteToken(): boolean {
 }
 
 /**
+ * v0.19.x FIX: a 429 (rate-limited) response used to throw a plain `Error`,
+ * indistinguishable from a genuine transport failure — RemotePinGate showed
+ * "network error, are you on the same WiFi?" for a rate-limit, and the user
+ * kept retrying, extending their own lockout. Callers can now check
+ * `err instanceof HttpStatusError && err.status === 429`.
+ */
+export class HttpStatusError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "HttpStatusError";
+  }
+}
+
+/**
  * POST a PIN to `/api/auth`. On success stores + returns the token; on a 401
- * (bad PIN) returns null. Throws only on transport errors.
+ * (bad PIN) returns null. Throws only on transport errors or a non-2xx/401
+ * HTTP status (see HttpStatusError for the 429 case specifically).
  */
 export async function authenticateWithPin(pin: string): Promise<string | null> {
   const res = await fetch("/api/auth", {
@@ -107,7 +125,7 @@ export async function authenticateWithPin(pin: string): Promise<string | null> {
     body: JSON.stringify({ pin }),
   });
   if (res.status === 401) return null;
-  if (!res.ok) throw new Error(`auth failed: HTTP ${res.status}`);
+  if (!res.ok) throw new HttpStatusError(res.status, `auth failed: HTTP ${res.status}`);
   const data = (await res.json()) as { token: string };
   setRemoteToken(data.token);
   return data.token;

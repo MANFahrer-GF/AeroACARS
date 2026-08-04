@@ -244,6 +244,28 @@ describe("token helpers + QR ?pin= flow", () => {
     expect(ipc.getRemoteToken()).toBeNull();
   });
 
+  // v0.19.x FIX: a 429 (rate-limited) used to throw a plain Error,
+  // indistinguishable from a real transport failure — RemotePinGate showed
+  // "network error, are you on the same WiFi?" for a rate-limit.
+  it("authenticateWithPin throws HttpStatusError with status 429 when rate-limited", async () => {
+    mockFetch(() => jsonResponse(429));
+    await expect(ipc.authenticateWithPin("123456")).rejects.toMatchObject({
+      name: "HttpStatusError",
+      status: 429,
+    });
+    await expect(ipc.authenticateWithPin("123456")).rejects.toBeInstanceOf(
+      ipc.HttpStatusError,
+    );
+  });
+
+  it("authenticateWithPin throws HttpStatusError for other non-401 failures too", async () => {
+    mockFetch(() => jsonResponse(500));
+    await expect(ipc.authenticateWithPin("123456")).rejects.toMatchObject({
+      name: "HttpStatusError",
+      status: 500,
+    });
+  });
+
   it("consumePinFromUrl auto-authenticates and strips ?pin= from the URL", async () => {
     window.history.replaceState({}, "", "/?pin=654321&tab=cockpit");
     mockFetch((url) => {

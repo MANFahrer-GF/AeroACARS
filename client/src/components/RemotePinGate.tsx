@@ -12,7 +12,7 @@
 
 import { type FormEvent, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { authenticateWithPin } from "../lib/ipc";
+import { authenticateWithPin, HttpStatusError } from "../lib/ipc";
 
 interface Props {
   /** Called once a token has been obtained — parent re-renders the real app. */
@@ -23,7 +23,7 @@ export function RemotePinGate({ onAuthenticated }: Props) {
   const { t } = useTranslation();
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<"bad_pin" | "network" | null>(null);
+  const [error, setError] = useState<"bad_pin" | "network" | "rate_limited" | null>(null);
 
   async function attempt(value: string): Promise<boolean> {
     setBusy(true);
@@ -36,8 +36,11 @@ export function RemotePinGate({ onAuthenticated }: Props) {
       }
       setError("bad_pin");
       return false;
-    } catch {
-      setError("network");
+    } catch (err) {
+      // v0.19.x FIX: a 429 is not a network failure — showing "are you on
+      // the same WiFi?" for a rate-limit just makes the pilot retry
+      // immediately and extend their own lockout.
+      setError(err instanceof HttpStatusError && err.status === 429 ? "rate_limited" : "network");
       return false;
     } finally {
       setBusy(false);
@@ -85,6 +88,11 @@ export function RemotePinGate({ onAuthenticated }: Props) {
         {error === "network" && (
           <p className="remote-pin-gate__error" role="alert">
             {t("remote.gate.network")}
+          </p>
+        )}
+        {error === "rate_limited" && (
+          <p className="remote-pin-gate__error" role="alert">
+            {t("remote.gate.rateLimited")}
           </p>
         )}
         <button

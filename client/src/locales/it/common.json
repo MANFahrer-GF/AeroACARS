@@ -999,6 +999,7 @@
       "connecting": "Connessione …",
       "badPin": "PIN errato. Controlla il PIN sul PC del simulatore e riprova.",
       "network": "Connessione fallita. Sei sulla stessa rete Wi-Fi del PC del simulatore?",
+      "rateLimited": "Troppi tentativi. Attendi un momento prima di riprovare — non è un problema di rete.",
       "hint": "Chiunque conosca questo PIN può controllare il volo attivo. Condividilo solo con dispositivi di cui ti fidi."
     },
     "server": {
