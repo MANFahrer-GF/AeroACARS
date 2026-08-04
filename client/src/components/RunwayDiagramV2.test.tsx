@@ -89,3 +89,43 @@ describe("RunwayDiagramV2 — hover tooltips follow the active locale", () => {
     expect(enTitle).not.toContain("rechts");
   });
 });
+
+// v0.19.x FIX: the runway-utilization percentage ("Bahn-Auslastung")
+// divided by a defensively-floored `Math.max(500, length_m)` instead of
+// the real LDA — that floor exists purely to keep the SVG geometry from
+// degenerating on missing/corrupt data, but leaked into the SCORE math
+// too. For a genuine short strip under 500 m LDA (bush/VFR fields, an
+// explicitly supported case), utilization was computed against a
+// fictionally inflated runway and read too LOW — a genuinely tight
+// landing looked comfortable.
+describe("RunwayDiagramV2 — runway-utilization percentage ignores the SVG-geometry floor", () => {
+  it("computes utilization against the real (sub-500m) LDA, not the floored value", () => {
+    // 300 m LDA, td=100 m past threshold, rollout=150 m -> used = max(100+150, 150) = 250 m.
+    // Correct: 250 / 300 = 83%. Buggy (floored to 500): 250 / 500 = 50%.
+    const { container } = render(
+      <RunwayDiagramV2
+        {...props({
+          length_m: 300,
+          td_distance_from_threshold_m: 100,
+          rollout_m: 150,
+        })}
+      />,
+    );
+    expect(container.textContent).toContain("83 %");
+    expect(container.textContent).not.toContain("50 %");
+  });
+
+  it("is unaffected for a normal-length runway (>= 500 m), matching the pre-fix output", () => {
+    // 3000 m LDA, td=500, rollout=500 -> used = max(500+500,500) = 1000 -> 1000/3000 = 33%.
+    const { container } = render(
+      <RunwayDiagramV2
+        {...props({
+          length_m: 3000,
+          td_distance_from_threshold_m: 500,
+          rollout_m: 500,
+        })}
+      />,
+    );
+    expect(container.textContent).toContain("33 %");
+  });
+});

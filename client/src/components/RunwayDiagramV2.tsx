@@ -185,16 +185,26 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   // (`buildRolloutValueLabel`): used = max(td + rollout, rollout), Nenner ist
   // die LDA. Vorher wich das hier zweifach ab — Nenner war die physische
   // Laenge (siehe Mapper-Kommentar), und die Klemmung auf 100 % verschwieg
-  // einen Overrun, den die Kachel daneben offen auswies. `lengthM` ist jetzt
-  // die LDA, also bleibt nur noch die Klemmung zu entfernen: wer ueber die
-  // Bahn hinausrollt, soll das auch lesen.
+  // einen Overrun, den die Kachel daneben offen auswies. `props.length_m`
+  // IST die LDA (siehe Mapper-Kommentar in runwayDiagramV2Mapper.ts).
+  //
+  // v0.19.x FIX: die Klemmung auf 500 m — bewusst als Schutz gegen eine
+  // degenerierte SVG-Geometrie bei fehlenden/kaputten Daten gedacht — war
+  // hier trotzdem als Nenner im Einsatz (`lengthM`, NICHT `props.length_m`).
+  // Für echte Kurzbahnen (Busch-/VFR-Landeplätze unter 500 m LDA, ein von
+  // AeroACARS ausdrücklich unterstützter Fall) rechnete die Auslastung
+  // gegen eine fiktiv aufgeblähte Bahn und zeigte einen zu NIEDRIGEN
+  // Prozentwert — eine wirklich knappe Landung auf einer 300-m-Piste sah
+  // entspannter aus als sie war. Die SVG-Geometrie darf die Klemmung
+  // weiter nutzen (`lengthM`), aber der Score-Nenner nimmt jetzt den
+  // echten, ungeklemmten Wert.
   const bahnUsedPct =
-    props.rollout_m != null && lengthM > 0
+    props.rollout_m != null && props.length_m > 0
       ? (Math.max(
           props.td_distance_from_threshold_m + props.rollout_m,
           props.rollout_m,
         ) /
-          lengthM) *
+          props.length_m) *
         100
       : null;
 
