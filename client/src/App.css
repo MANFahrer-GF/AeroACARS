@@ -640,51 +640,9 @@ body {
   overflow: hidden;
 }
 
-.app__header {
-  display: flex;
-  flex-direction: row;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-  padding-bottom: 4px;
-}
-
-.app__brand {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-}
-
-.app__brand h1 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-
 /* Vertical red separator between the AeroACARS title and the
    version label. 1px wide, slightly translucent so it doesn't
    shout — but the red still picks up against the dark header. */
-.app__version-divider {
-  display: inline-block;
-  width: 2px;
-  height: 18px;
-  background: #d04545;
-  border-radius: 1px;
-  opacity: 0.85;
-}
-
-.app__version {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-muted);
-  letter-spacing: 0;
-  font-variant-numeric: tabular-nums;
-}
 
 .tagline {
   margin: 0;
@@ -696,11 +654,6 @@ body {
    the old big Status-Grid cards. Two compact dots tell the pilot at a
    glance whether phpVMS and the simulator are connected; full status
    text shows on hover via the title attribute. */
-.app__status-pills {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
 
 /* Update-available button — sits inline next to the status pills.
    Replaces the old full-width banner that pushed all content down. */
@@ -948,51 +901,6 @@ body {
   flex: 0 0 auto;
 }
 
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-  background: var(--surface);
-}
-
-.status-pill__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: currentColor;
-  flex: 0 0 auto;
-}
-
-.status-pill--online {
-  color: var(--success);
-  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
-  background: color-mix(in srgb, var(--success) 10%, var(--surface));
-}
-
-.status-pill--offline {
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
-  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
-}
-
-.status-pill--connecting {
-  color: var(--warning, orange);
-  border-color: color-mix(in srgb, var(--warning, orange) 40%, var(--border));
-  background: color-mix(in srgb, var(--warning, orange) 10%, var(--surface));
-}
-
-.status-pill--connecting .status-pill__dot {
-  animation: status-pulse 1.4s ease-in-out infinite;
-}
-
 @keyframes status-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
@@ -1019,80 +927,11 @@ button:disabled {
   cursor: default;
 }
 
-.status-grid {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-}
-
-.status-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 12px;
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-
-.status-card__label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-}
-
-.status-card__value {
-  font-size: 13px;
-  font-weight: 500;
-  margin-left: auto;
-}
-
-.status-card--offline .status-card__value {
-  color: var(--offline);
-}
-
-.status-card--online .status-card__value {
-  color: var(--success);
-}
-
-.status-card--connecting .status-card__value {
-  color: var(--warning);
-}
-
 /* ===== Route map (Cockpit) — HTML-laid-out pin → pin with live plane ===== */
 
 .route-map {
   width: 100%;
   padding: 28px 0 12px;
-}
-
-.route-map__track {
-  position: relative;
-  height: 4px;
-  margin: 0 56px;
-  background: transparent;
-}
-
-.route-map__line {
-  position: absolute;
-  inset: 0;
-  background: var(--surface-2);
-  border-radius: 2px;
-}
-
-.route-map__line-fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  background: linear-gradient(
-    90deg,
-    var(--accent),
-    color-mix(in srgb, var(--accent) 70%, var(--success, #22c55e))
-  );
-  border-radius: 2px;
-  transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .route-map__pin {
@@ -1102,84 +941,6 @@ button:disabled {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-}
-
-.route-map__pin--dpt {
-  left: 0;
-  transform: translate(-50%, -50%);
-}
-
-.route-map__pin--arr {
-  right: 0;
-  transform: translate(50%, -50%);
-}
-
-.route-map__icao {
-  position: absolute;
-  bottom: 14px;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  color: var(--text);
-  white-space: nowrap;
-}
-
-.route-map__gate {
-  position: absolute;
-  top: 14px;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  white-space: nowrap;
-  text-transform: uppercase;
-}
-
-.route-map__dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--accent);
-  border: 2px solid var(--surface);
-  box-shadow: 0 0 0 2px var(--accent);
-  flex: 0 0 auto;
-}
-
-.route-map__plane {
-  position: absolute;
-  top: 50%;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--surface);
-  border: 2px solid var(--accent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--accent);
-  transform: translate(-50%, -50%);
-  transition: left 0.8s cubic-bezier(0.22, 1, 0.36, 1);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 40%, transparent);
-  pointer-events: none;
-}
-
-.route-map__progress {
-  position: absolute;
-  top: calc(50% + 22px);
-  transform: translateX(-50%);
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--accent);
-  letter-spacing: 0.05em;
-  white-space: nowrap;
-  transition: left 0.8s cubic-bezier(0.22, 1, 0.36, 1);
-  pointer-events: none;
 }
 
 /* ===== Live tapes (Cockpit) — IAS, GS, altitude, V/S, heading ===== */
@@ -1194,10 +955,6 @@ button:disabled {
   padding: 10px 0 4px;
 }
 
-.live-tapes--idle .live-tape {
-  opacity: 0.55;
-}
-
 .live-tape {
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -1210,71 +967,7 @@ button:disabled {
   overflow: hidden;
 }
 
-.live-tape__label {
-  font-size: 9px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--text-muted);
-}
-
-.live-tape__value {
-  font-size: 20px;
-  font-weight: 700;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  color: var(--text);
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-  line-height: 1.1;
-}
-
-.live-tape__prefix {
-  font-size: 14px;
-  margin-right: 2px;
-}
-
-.live-tape__unit {
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--text-muted);
-  margin-left: 2px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.live-tape__sub {
-  font-size: 9px;
-  color: var(--text-muted);
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  margin-top: 2px;
-}
-
 /* V/S colour-coding — climb green, descent amber, level neutral. */
-.live-tape--up {
-  background: color-mix(in srgb, var(--success, #22c55e) 14%, var(--surface-2));
-  border-color: color-mix(in srgb, var(--success, #22c55e) 40%, var(--border));
-}
-.live-tape--up .live-tape__value,
-.live-tape--up .live-tape__prefix {
-  color: var(--success, #22c55e);
-}
-
-.live-tape--down {
-  background: color-mix(in srgb, var(--warning, orange) 14%, var(--surface-2));
-  border-color: color-mix(in srgb, var(--warning, orange) 40%, var(--border));
-}
-.live-tape--down .live-tape__value,
-.live-tape--down .live-tape__prefix {
-  color: var(--warning, orange);
-}
-
-.live-tape--level .live-tape__prefix,
-.live-tape--idle .live-tape__prefix {
-  color: var(--text-muted);
-}
 
 /* ===== Cockpit redesign — instrument band (tape · phase card · tape) =====
    Stage E: visual language from the Claude-Design prototype
@@ -1441,13 +1134,6 @@ button:disabled {
   font-weight: var(--fw-bold);
   letter-spacing: 0.14em;
   text-transform: uppercase;
-}
-.center__phase-note {
-  margin-left: auto;
-  font-family: var(--font-acars);
-  font-size: var(--fs-200);
-  color: var(--text-dim);
-  white-space: nowrap;
 }
 .center__axis {
   display: flex;
@@ -1678,12 +1364,6 @@ button:disabled {
 .row--sum .row__value {
   font-size: 18px;                   /* was 20px */
   font-weight: var(--fw-bold);
-}
-.row__sub {
-  font-family: var(--font-acars);
-  font-size: var(--fs-100);
-  color: var(--text-dim);
-  margin-left: 6px;
 }
 
 .ls {
@@ -1919,87 +1599,11 @@ button:disabled {
 
 /* ===== Phase timeline (Cockpit) — animated SVG plane on a track ===== */
 
-.phase-timeline {
-  width: 100%;
-  padding: 22px 12px 38px;
-}
-
-.phase-timeline__track {
-  position: relative;
-  height: 4px;
-  background: var(--surface-2);
-  border-radius: 2px;
-  margin: 0 32px;
-}
-
 /* Filled portion of the track — grows with progress, smooth anim. */
-.phase-timeline__track-fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  background: linear-gradient(
-    90deg,
-    var(--accent),
-    color-mix(in srgb, var(--accent) 70%, var(--success, #22c55e))
-  );
-  border-radius: 2px;
-  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.phase-timeline__node {
-  position: absolute;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.phase-timeline__dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--surface);
-  border: 2px solid var(--border);
-  transition: background 0.3s ease, border-color 0.3s ease, transform 0.3s ease,
-    box-shadow 0.3s ease;
-}
-
-.phase-timeline__node--reached .phase-timeline__dot {
-  background: var(--accent);
-  border-color: var(--accent);
-}
 
 /* Current phase dot is the "you are here" marker. Filled accent
    colour with a soft halo so it stands out from past/future dots
    without dominating the layout. */
-.phase-timeline__node--current .phase-timeline__dot {
-  background: var(--accent);
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
-}
-
-.phase-timeline__label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  white-space: nowrap;
-  position: absolute;
-  top: 22px;
-}
-
-.phase-timeline__node--reached .phase-timeline__label {
-  color: var(--text);
-}
-
-.phase-timeline__node--current .phase-timeline__label {
-  color: var(--accent);
-  font-weight: 700;
-}
 
 /* The plane glyph — sits on the current checkpoint and rides the
    track as phases advance. Smooth left-transition gives it the "the
@@ -2009,10 +1613,7 @@ button:disabled {
    redundant. The phase timeline keeps just the dots + labels now.) */
 
 @media (max-width: 600px) {
-  .phase-timeline__label {
-    display: none;
   }
-}
 
 /* ===== Pilot bar (Briefing-2a §2) =====
  * Kopfzeile statt Karte — identifiziert den Piloten, nicht die
@@ -2815,21 +2416,6 @@ button:disabled {
   font-weight: 400;
 }
 
-.sim-panel__debug {
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-  margin-top: 4px;
-}
-
-.sim-panel__debug summary {
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 10px;
-}
-
 .sim-panel__state {
   display: inline-flex;
   align-items: center;
@@ -3052,65 +2638,6 @@ button:disabled {
 
 /* ----- Mass + Flight info panels (Cockpit tab) ----- */
 
-.mass-panel,
-.flight-info-panel {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px 14px;
-  margin-top: 10px;
-}
-
-.mass-panel__title,
-.flight-info-panel__title {
-  margin: 0 0 8px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-}
-
-.mass-panel__grid,
-.flight-info-panel__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 10px;
-  margin: 0;
-}
-
-.mass-panel__cell,
-.flight-info-panel__cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.mass-panel__cell dt,
-.flight-info-panel__cell dt {
-  font-size: 11px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.mass-panel__cell dd,
-.flight-info-panel__cell dd {
-  margin: 0;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-feature-settings: "tnum" 1;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text);
-}
-
-.mass-panel__cell--primary dd {
-  color: var(--accent, #5eead4);
-  font-size: 16px;
-  font-weight: 600;
-}
-
 /* ----- Compact InfoStrip (Cockpit tab) ----- */
 /* Three-row layout: each group (Mass / Flight / Trip) is its own
    horizontal band with a small uppercase label pinned on the left.
@@ -3127,77 +2654,14 @@ button:disabled {
   border-radius: 10px;
 }
 
-.info-strip__group {
-  display: grid;
-  grid-template-columns: 64px 1fr;
-  align-items: baseline;
-  column-gap: 12px;
-  min-width: 0;
-}
-
-.info-strip__group + .info-strip__group {
-  border-top: 1px solid var(--border);
-  padding-top: 6px;
-}
-
-.info-strip__group-label {
-  margin: 0;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
-.info-strip__cells {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 18px;
-  align-items: baseline;
-  min-width: 0;
-}
-
 /* Inline label/value cell: "DOW 42.700 kg" in a single row. Wrapping
    only happens between cells, never inside one. */
-.info-strip__cell {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-  white-space: nowrap;
-}
-
-.info-strip__cell-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-}
-
-.info-strip__cell-value {
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-feature-settings: "tnum" 1;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text);
-}
-
-.info-strip__cell--primary .info-strip__cell-value {
-  color: var(--accent, #5eead4);
-  font-weight: 600;
-}
 
 /* On narrow widths the group label becomes its own line above the
    cells so we keep the cells legible instead of cramming a two-
    column grid. */
 @media (max-width: 520px) {
-  .info-strip__group {
-    grid-template-columns: 1fr;
-    column-gap: 0;
-    row-gap: 4px;
   }
-}
 
 /* ----- SimVar / LVar Inspector (Settings → Debug) ----- */
 
@@ -3481,77 +2945,6 @@ input:disabled {
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
-}
-
-.dashboard__person {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-
-.dashboard__name {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.dashboard__chips {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.dashboard__chip {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
-}
-
-.dashboard__chip--muted {
-  color: var(--text-muted);
-  font-weight: 400;
-}
-
-.dashboard__locations {
-  display: flex;
-  gap: 18px;
-  margin-left: auto;
-}
-
-.dashboard__loc {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
-  line-height: 1.1;
-}
-
-.dashboard__loc-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
-.dashboard__loc-value {
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.dashboard__logout {
-  flex-shrink: 0;
 }
 
 /* ===== Resume card (inline, sits in dashboard flow) ===== */
@@ -3900,41 +3293,6 @@ input:disabled {
   background: color-mix(in srgb, var(--text-muted) 10%, transparent);
 }
 
-.manual-dialog__field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-}
-
-.manual-dialog__field > span {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.manual-dialog__field > small {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.manual-dialog__field input,
-.manual-dialog__field textarea {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
-  color: var(--text);
-  font-size: 14px;
-  font-family: inherit;
-  resize: vertical;
-}
-
-.manual-dialog__field input:focus,
-.manual-dialog__field textarea:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
 .manual-dialog__error {
   margin: 0;
   padding: 8px 12px;
@@ -3995,20 +3353,9 @@ input:disabled {
   cursor: not-allowed;
 }
 
-.weather-briefing__cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 10px;
-}
-
 /* v0.3.0: Kompaktes 1-Zeilen-Format pro Airport. ABFLUG/ANKUNFT label
    + ICAO + Wind/Sicht/Temp/QNH inline + aufklappbarer METAR-Text.
    Spart ~80 % Höhe gegenüber den alten weather-cards mit Sub-Grid. */
-.weather-briefing__rows {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
 .weather-row {
   display: flex;
   flex-wrap: wrap;
@@ -4021,180 +3368,11 @@ input:disabled {
 .weather-row:last-child {
   border-bottom: none;
 }
-.weather-row__label {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  min-width: 64px;
-}
-.weather-row__icao {
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text);
-  letter-spacing: 0.02em;
-}
-.weather-row__cell {
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text);
-}
 /* v0.3.0: dezenter Mittel-Punkt-Trenner zwischen Wind / Sicht / Temp /
    QNH — verhindert dass alle Werte als zusammenhängender String wirken
    und die Sicht-Spalte unter dem 👁-Icon untergeht. */
-.weather-row__sep {
-  color: var(--text-muted);
-  font-size: 12px;
-  opacity: 0.5;
-  user-select: none;
-}
-.weather-row__hint {
-  font-size: 12px;
-  color: var(--text-muted);
-  font-style: italic;
-}
 /* Wetter-Phänomen-Indikator (v0.3.0): Icon + kurzer Code (z.B. "🌦 -SHRA").
    Kompakt, wichtig genug für eigene Pille — bleibt aber visuell ruhig. */
-.weather-row__wx {
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text);
-  padding: 1px 6px;
-  background: var(--surface-2);
-  border-radius: 4px;
-  letter-spacing: 0.02em;
-}
-.weather-row__toggle {
-  appearance: none;
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-  font-size: 11px;
-  padding: 1px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  margin-left: auto;
-  line-height: 1.4;
-}
-.weather-row__toggle:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-.weather-row__raw {
-  width: 100%;
-  margin: 4px 0 0 0;
-  padding: 6px 8px;
-  background: var(--surface-2);
-  border-radius: 4px;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-size: 11px;
-  color: var(--text);
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.weather-card {
-  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  border-radius: 8px;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.weather-card--loading,
-.weather-card--error {
-  min-height: 80px;
-  align-items: flex-start;
-  justify-content: center;
-}
-
-.weather-card--error {
-  border-color: color-mix(in srgb, var(--danger) 50%, var(--border));
-  background: color-mix(in srgb, var(--danger) 8%, var(--surface-2));
-}
-
-.weather-card__header {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  justify-content: space-between;
-}
-
-.weather-card__label {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--text-muted);
-}
-
-.weather-card__icao {
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  color: var(--text);
-}
-
-.weather-card__raw {
-  margin: 0;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  font-size: 12px;
-  color: var(--text);
-  background: color-mix(in srgb, var(--surface) 70%, transparent);
-  border-radius: 4px;
-  padding: 6px 8px;
-  word-break: break-word;
-  line-height: 1.4;
-}
-
-.weather-card__hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.weather-card__stats {
-  margin: 0;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px 12px;
-  font-size: 12px;
-}
-
-.weather-card__stats > div {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.weather-card__stats dt {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-}
-
-.weather-card__stats dd {
-  margin: 0;
-  font-weight: 600;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-  color: var(--text);
-}
 
 /* ===== Activity log (smartcars-style flight feed) ===== */
 
@@ -4342,13 +3520,6 @@ input:disabled {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
-.resume-banner__icon {
-  font-size: 22px;
-  color: var(--accent);
-  animation: resume-spin 2s linear infinite;
-  flex-shrink: 0;
-}
-
 @keyframes resume-spin {
   from {
     transform: rotate(0deg);
@@ -4356,38 +3527,6 @@ input:disabled {
   to {
     transform: rotate(-360deg);
   }
-}
-
-.resume-banner__body {
-  flex-grow: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.resume-banner__title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--accent);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.resume-banner__detail {
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.resume-banner__hint {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.resume-banner__actions {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
 }
 
 /* ===== Divert banner (cockpit) ===== */
@@ -4917,14 +4056,6 @@ input:disabled {
 /* v0.16.12 (#phase-v2): dezente Schatten-Engine-Zeile neben dem
    Phase-Badge. Nur sichtbar, wenn die v2-Sicht abweicht — bewusst
    klein + gedämpft (Verifikations-Hilfe, keine Pilot-Information). */
-.active-flight__shadow-phase {
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--text-muted);
-  opacity: 0.75;
-  white-space: nowrap;
-  align-self: center;
-}
 
 .active-flight__route {
   display: flex;
@@ -4978,40 +4109,6 @@ input:disabled {
 
 .actions__spacer {
   flex: 1;
-}
-
-.active-flight__stats {
-  margin: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 8px;
-}
-
-.active-flight__stat {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.active-flight__stat dt {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--text-muted);
-  font-weight: 600;
-}
-
-.active-flight__stat dd {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--text);
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
 }
 
 .active-flight__error {
@@ -5222,11 +4319,6 @@ input:disabled {
   background: color-mix(in srgb, var(--sem-warn) 12%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--sem-warn) 40%, var(--border));
 }
-.bids__auto-start-skip-icon {
-  font-size: 18px;
-  flex-shrink: 0;
-  margin-top: 1px;
-}
 .bids__auto-start-skip-text {
   display: flex;
   flex-direction: column;
@@ -5240,23 +4332,9 @@ input:disabled {
   color: #a16207;
 }
 
-.bids__sim-position-icon {
-  font-size: 16px;
-}
-
 .bids__sim-position-message {
   flex: 1 1 auto;
   line-height: 1.4;
-}
-
-.bids__hint {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 13px;
-  background: var(--surface);
-  border: 1px dashed var(--border);
-  border-radius: 12px;
-  padding: 16px 18px;
 }
 
 /* Field feedback (2026-08-03): the original Briefing-2a §9 choice ("leere
@@ -5994,26 +5072,6 @@ input:disabled {
   }
 }
 
-.appinfo {
-  margin: 4px 0 0;
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  column-gap: 16px;
-  row-gap: 4px;
-  font-size: 13px;
-}
-
-.appinfo dt {
-  color: var(--text-muted);
-}
-
-.appinfo dd {
-  margin: 0;
-  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    monospace;
-}
-
-
 /* ===== Landing tab ===== */
 
 .landing-panel {
@@ -6695,16 +5753,8 @@ input:disabled {
   gap: 1.5rem;
 }
 
-.landing-grid--2 {
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
-  align-items: stretch;
-}
-
 @media (max-width: 720px) {
-  .landing-grid--2 {
-    grid-template-columns: 1fr;
   }
-}
 
 .landing-keyvals {
   display: grid;
@@ -6713,98 +5763,16 @@ input:disabled {
   margin: 0;
 }
 
-.landing-keyvals--inline {
-  margin-top: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 0.6rem 1.25rem;
-}
-
 /* Soll/Ist-Vergleichstabelle (v0.3.0) — Fuel- und Weight-Block im
    Landung-Tab mit drei Spalten IST/SOLL/Δ und farbcodierter Abweichung. */
-.landing-comparison {
-  margin-top: 1rem;
-  background: var(--surface-2);
-  border-radius: var(--r-sm);
-  padding: 0.75rem 1rem;
-}
-.landing-comparison + .landing-comparison {
-  margin-top: 0.75rem;
-}
-.landing-comparison__title {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 0.5rem;
-}
-.landing-comparison__table {
-  width: 100%;
-  border-collapse: collapse;
-  font-variant-numeric: tabular-nums;
-}
-.landing-comparison__table th,
-.landing-comparison__table td {
-  padding: 0.35rem 0.5rem;
-  text-align: right;
-}
-.landing-comparison__table th:first-child,
-.landing-comparison__table td:first-child {
-  text-align: left;
-  color: var(--text-muted);
-  font-weight: 400;
-}
-.landing-comparison__table thead th {
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  border-bottom: 1px solid var(--border);
-}
-.landing-comparison__table tbody tr:hover {
-  background: var(--surface-1);
-}
 /* Δ-Farbcode: grün <5%, gelb 5-10%, rot >10% Abweichung */
-.landing-comparison__delta--ok    { color: var(--sem-ok); }
-.landing-comparison__delta--warn  { color: var(--sem-warn); }
-.landing-comparison__delta--alert { color: var(--sem-danger); font-weight: 600; }
 
 /* Live-Loadsheet im Cockpit-Tab (v0.3.0 — überarbeitet).
    Komponente nutzt jetzt direkt die .info-strip-Klassen (gleiche
    Optik wie der MASSE/FLUG/TRIP-Strip oben). Hier nur die wenigen
    Loadsheet-spezifischen Add-ons: Toggle-Button, Δ-Inline-Suffix,
    Hint-Inline-Zeile. */
-.loadsheet__header-row {
-  /* Toggle-Pfeil rechts statt eines Cell-Wertes — überschreibt das
-     Standard-info-strip__group Layout damit der Pfeil nicht in der
-     Cell-Spalte landet. */
-  align-items: center !important;
-}
-.loadsheet__toggle {
-  appearance: none;
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: var(--r-sm);
-  cursor: pointer;
-  justify-self: start;
-  line-height: 1;
-}
-.loadsheet__toggle:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
 /* Δ-Suffix neben dem IST-Wert — kompakt, kleinere Schrift, farbcodiert. */
-.loadsheet__delta-inline {
-  font-family: var(--font-mono);
-  font-feature-settings: "tnum" 1;
-  font-size: 11px;
-  font-weight: 500;
-  margin-left: -2px;
-}
 .loadsheet__delta--ok    { color: var(--sem-ok); }
 .loadsheet__delta--warn  { color: var(--sem-warn); }
 .loadsheet__delta--alert { color: var(--sem-danger); font-weight: 600; }
@@ -6861,43 +5829,9 @@ input:disabled {
   font-style: normal;
   font-weight: 500;
 }
-.loadsheet__table {
-  width: 100%;
-  border-collapse: collapse;
-  font-variant-numeric: tabular-nums;
-  font-size: 0.85rem;
-}
-.loadsheet__table th,
-.loadsheet__table td {
-  padding: 0.4rem 0.6rem;
-  text-align: right;
-}
-.loadsheet__table th:first-child,
-.loadsheet__table td:first-child {
-  text-align: left;
-  color: var(--text-muted);
-  font-weight: 400;
-}
-.loadsheet__table thead th {
-  font-size: 0.7rem;
-  font-weight: 500;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  border-bottom: 1px solid var(--border);
-}
 .loadsheet__delta--ok    { color: var(--sem-ok); }
 .loadsheet__delta--warn  { color: var(--sem-warn); }
 .loadsheet__delta--alert { color: var(--sem-danger); font-weight: 600; }
-.loadsheet__row--overweight {
-  background: var(--sem-danger-bg);
-}
-.loadsheet__row--overweight td {
-  /* War #f87171 fest verdrahtet — passte nur im Dark-Theme (WCAG-Audit
-     FEHL im Hell-Theme gegen --surface-2). --sem-danger ist für beide
-     Themes eigens abgestimmt, wie schon .loadsheet__delta--alert daneben. */
-  color: var(--sem-danger);
-}
 .loadsheet__hint {
   margin-top: 0.6rem;
   padding: 0.5rem 0.75rem;
@@ -6914,47 +5848,8 @@ input:disabled {
   border-radius: var(--r-sm);
   padding: 0.75rem 1rem;
 }
-.loadsheet-score__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 0.4rem;
-}
-.loadsheet-score__title {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.loadsheet-score__value {
-  font-size: 1.4rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
 /* Waren feste Dark-Theme-Hex-Werte — im Hell-Theme gegen --surface-2
    nicht mehr WCAG-konform. --sem-* ist für beide Themes abgestimmt. */
-.loadsheet-score__value--ok    { color: var(--sem-ok); }
-.loadsheet-score__value--warn  { color: var(--sem-warn); }
-.loadsheet-score__value--alert { color: var(--sem-danger); }
-.loadsheet-score__breakdown {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 0.3rem 1rem;
-  font-size: 0.85rem;
-  font-variant-numeric: tabular-nums;
-}
-.loadsheet-score__breakdown li {
-  display: flex;
-  justify-content: space-between;
-  padding: 0.15rem 0;
-}
-.loadsheet-score__pct--ok    { color: var(--sem-ok); }
-.loadsheet-score__pct--warn  { color: var(--sem-warn); }
-.loadsheet-score__pct--alert { color: var(--sem-danger); font-weight: 600; }
 
 .landing-keyvals > div {
   display: flex;
@@ -7212,26 +6107,6 @@ input:disabled {
   font-variant-numeric: tabular-nums;
 }
 
-.landing-stability__row--good {
-  background: rgba(34, 197, 94, 0.08);
-  border-color: var(--sem-ok);
-}
-
-.landing-stability__row--ok {
-  background: rgba(234, 179, 8, 0.08);
-  border-color: var(--sem-warn);
-}
-
-.landing-stability__row--bad {
-  background: rgba(239, 68, 68, 0.08);
-  border-color: #ef4444;
-}
-
-.landing-stability__row--n\/a {
-  background: var(--surface-2);
-  border-color: var(--border);
-}
-
 /* ---- Fuel bar ---- */
 
 .landing-fuelbar {
@@ -7281,17 +6156,6 @@ input:disabled {
   font-variant-numeric: tabular-nums;
   text-align: right;
   font-weight: 600;
-}
-
-.landing-fuelbar__delta {
-  align-self: flex-end;
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--sem-ok);
-}
-
-.landing-fuelbar__delta--over {
-  color: var(--scale-poor);
 }
 
 /* ---- Score breakdown ---- */
@@ -7552,10 +6416,6 @@ input:disabled {
 }
 
 /* ---- Stability section gets full width now that wind moved out ---- */
-
-.landing-stability-row {
-  max-width: 720px;
-}
 
 .landing-stability-chart {
   margin-top: 1rem;
@@ -10191,12 +9051,6 @@ button.aa-livemap-events__row:hover {
   background: var(--surface); padding: 0 4px; border-radius: 3px;
 }
 
-.aa-lb-vprofile { position: relative; height: 210px; }
-.aa-lb-vprofile svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.aa-lb-ylab { position: absolute; left: 2px; font-size: 10px; color: var(--text-muted); transform: translateY(-50%); font-variant-numeric: tabular-nums; }
-.aa-lb-leg { font-size: 10px; text-transform: none; letter-spacing: 0; color: var(--text-muted); margin-left: 8px; font-weight: 600; }
-.aa-lb-leg i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 3px 0 8px; vertical-align: middle; }
-
 /* ===== LAN remote control (v0.16.0, #LAN-Remote) ===== */
 
 /* Full-screen PIN gate — shown only in the LAN browser build before a token
@@ -10693,13 +9547,6 @@ input.datalink-block__input {
 }
 .datalink-status-word--none {
   color: var(--text-dim);
-}
-
-.datalink-divider {
-  width: 1px;
-  height: 34px;
-  background: var(--line);
-  flex: none;
 }
 
 /* Deliberately the ONE shrinkable/truncatable item in this row — the
