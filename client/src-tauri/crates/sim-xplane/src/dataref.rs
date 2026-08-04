@@ -891,7 +891,17 @@ impl XPlaneState {
         } else {
             None
         };
-        let oew = if self.empty_weight_kg > 0.0 {
+        // v0.19.x FIX: mirror the MSFS-side gate (see telemetry.rs) —
+        // reject an OEW at or above the aircraft's own current gross
+        // weight, a hard physical impossibility (gross = empty + fuel
+        // + payload, all >= 0) rather than just an unusual number. A
+        // fixed floor can't safely catch implausibly-*low* bogus
+        // defaults without also rejecting real tiny GA airframes, so
+        // that gap stays open; this closes the high-end/unit-mixup
+        // case using data we already have, no aircraft-type reference
+        // needed.
+        let physically_possible = self.total_weight_kg <= 0.0 || self.empty_weight_kg < self.total_weight_kg;
+        let oew = if self.empty_weight_kg > 0.0 && physically_possible {
             Some(self.empty_weight_kg)
         } else {
             None
@@ -1450,5 +1460,47 @@ mod toliss_autoflight_tests {
         assert_eq!(find(FieldId::TolissAp1), Some("AirbusFBW/AP1Engage"));
         assert_eq!(find(FieldId::TolissAp2), Some("AirbusFBW/AP2Engage"));
         assert_eq!(find(FieldId::TolissAthrMode), Some("AirbusFBW/ATHRmode"));
+    }
+}
+
+// v0.19.x FIX — empty_weight_kg plausibility (mirrors telemetry.rs on
+// the MSFS side). The only prior gate was `> 0.0`, so a corrupted-but-
+// positive OEW reading (e.g. a unit-mixup bug) sailed straight through
+// into payload_kg. Reject an OEW at or above the aircraft's own
+// current gross weight — a hard physical impossibility for any
+// aircraft type, so no fixed-floor heuristic (which would also reject
+// real tiny GA airframes) is needed.
+#[cfg(test)]
+mod empty_weight_plausibility_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_a_reading_at_or_above_current_gross_weight() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::TotalWeightKg, 64_000.0);
+        s.apply_field(FieldId::EmptyWeightKg, 250_000.0); // impossible
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.empty_weight_kg, None);
+        assert_eq!(snap.payload_kg, None, "an impossible OEW must not leak into payload math");
+    }
+
+    #[test]
+    fn accepts_a_plausible_reading_below_gross_weight() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::TotalWeightKg, 64_000.0);
+        s.apply_field(FieldId::EmptyWeightKg, 42_000.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.empty_weight_kg, Some(42_000.0));
+    }
+
+    #[test]
+    fn still_passes_through_when_gross_weight_is_unavailable() {
+        // total_weight_kg still at its 0.0 default (= unknown this
+        // tick) — can't check the physical-impossibility gate, so fall
+        // back to the pre-existing positive-only gate.
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::EmptyWeightKg, 42_000.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.empty_weight_kg, Some(42_000.0));
     }
 }

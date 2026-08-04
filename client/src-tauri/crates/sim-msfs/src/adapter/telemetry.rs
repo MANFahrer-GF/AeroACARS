@@ -2249,11 +2249,21 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // the Asobo A320neo default reports ~1422 kg which is clearly bogus
     // (real OEW is ~42 t). Smallest realistic transport-cat empty
     // weight is a King Air at ~3.5 t / 7700 lb, so we'd ideally clamp
-    // there, but for now we just drop literal-zero readings and trust
-    // the value otherwise (lets GA addons through).
+    // there, but a fixed floor would also reject real GA addons (a
+    // Cessna 172's true OEW is under 1 t), so we can't tell "bogus
+    // default for THIS airframe" from "legit tiny aircraft" without
+    // per-type reference data we don't have. What we CAN reject without
+    // any such data: an OEW at or above the aircraft's own current
+    // gross weight, which is a hard physical impossibility (gross =
+    // empty + fuel + payload, all >= 0) rather than a merely-unusual
+    // number — e.g. a unit-mixup bug reporting OEW in the wrong scale.
     let empty_weight_kg: Option<f32> = {
         let kg = (t.empty_weight_lb * KG_PER_LB) as f32;
-        if kg > 0.0 { Some(kg) } else { None }
+        let physically_possible = match total_weight_kg {
+            Some(gw) => kg < gw,
+            None => true,
+        };
+        if kg > 0.0 && physically_possible { Some(kg) } else { None }
     };
 
     // Payload = ZFW − OEW. No MSFS SimVar exposes payload directly
@@ -5498,6 +5508,52 @@ mod tests {
         t.n1_pct_2 = 1.2;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.eng_n1_pct, Some(vec![85.0, 1.2]));
+    }
+
+    // ---- empty_weight_kg plausibility ----
+    // Bug: the only gate on OEW was `kg > 0.0` — a unit-mixup or
+    // otherwise-corrupt reading that happened to stay positive sailed
+    // straight through into payload_kg and the MQTT live-map feed.
+    // Fix: also reject an OEW at or above the aircraft's own current
+    // gross weight, a hard physical impossibility regardless of
+    // aircraft type (no fixed-floor heuristic needed, and none that
+    // would also safely reject real tiny GA airframes exists).
+
+    #[test]
+    fn empty_weight_kg_rejects_a_reading_at_or_above_current_gross_weight() {
+        // Real A320 at ZFW: gross ~64000 kg. An OEW reading of 250000
+        // kg (e.g. a unit-mixup bug) is physically impossible — can't
+        // weigh more empty than the aircraft currently weighs loaded.
+        let mut t = Telemetry::default();
+        t.total_weight_lb = 141_000.0; // ~64000 kg
+        t.empty_weight_lb = 551_000.0; // ~250000 kg — impossible
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.empty_weight_kg, None);
+        assert_eq!(snap.payload_kg, None, "an impossible OEW must not leak into payload math");
+    }
+
+    #[test]
+    fn empty_weight_kg_accepts_a_plausible_reading_below_gross_weight() {
+        // Real A320: OEW ~42 t, current gross ~64 t — must pass through.
+        let mut t = Telemetry::default();
+        t.total_weight_lb = 141_000.0; // ~64000 kg
+        t.empty_weight_lb = 92_600.0; // ~42000 kg
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert!(snap.empty_weight_kg.is_some());
+        let kg = snap.empty_weight_kg.unwrap();
+        assert!((kg - 42_002.0).abs() < 5.0, "expected ~42000 kg, got {kg}");
+    }
+
+    #[test]
+    fn empty_weight_kg_still_passes_through_when_gross_weight_is_unavailable() {
+        // No total_weight reading this tick (0.0 = unknown) — can't
+        // check the physical-impossibility gate, so fall back to the
+        // pre-existing positive-only gate rather than dropping valid
+        // data just because a sibling field hasn't arrived yet.
+        let mut t = Telemetry::default();
+        t.empty_weight_lb = 92_600.0; // ~42000 kg
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert!(snap.empty_weight_kg.is_some());
     }
 
     #[test]
