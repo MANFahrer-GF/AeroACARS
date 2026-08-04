@@ -27,12 +27,48 @@ function strOrNull(v: string): string | null {
   return t.length > 0 ? t : null;
 }
 
-/** Parse a numeric string (with comma OR dot decimal) to f64.
+/** v0.19.x FIX: parse a numeric string that may use EITHER convention for
+ *  the decimal point (comma or dot) AND may have thousands-grouping in
+ *  either convention — these fields are fuel (kg), distance (nm) and
+ *  cruise level (ft), all realistically typed with a thousands separator
+ *  by a German-speaking pilot ("12.500" or "12,500" both meaning twelve
+ *  thousand five hundred). The old implementation did a blind
+ *  `.replace(",", ".")`, which silently collapsed BOTH "12.500" and
+ *  "12,500" to `12.5` — a pilot typing a normal block-fuel figure would
+ *  silently file a PIREP with 12.5 kg of fuel instead of 12,500 kg.
+ *
+ *  Disambiguation:
+ *   - both separators present → the LAST one is the decimal point, the
+ *     other is thousands-grouping ("12.500,5" and "12,500.5" both → 12500.5).
+ *   - the same separator repeated → thousands-grouping only ("1.234.567").
+ *   - exactly one separator, followed by exactly 3 digits and nothing else
+ *     → thousands-grouping, not a fraction (these fields don't realistically
+ *     take a 3-decimal fraction — "12.500" means 12500, not 12.5).
+ *   - exactly one separator, any other digit count after it → decimal point
+ *     ("12,5" / "437.3" both parse as expected).
  *  Returns null on empty / invalid input. Negative numbers OK so the pilot
  *  can enter a landing rate like -180. */
-function numOrNull(v: string): number | null {
-  const t = v.trim().replace(",", ".");
+export function numOrNull(v: string): number | null {
+  let t = v.trim();
   if (t.length === 0) return null;
+
+  const commaCount = (t.match(/,/g) ?? []).length;
+  const dotCount = (t.match(/\./g) ?? []).length;
+
+  if (commaCount > 0 && dotCount > 0) {
+    if (t.lastIndexOf(",") > t.lastIndexOf(".")) {
+      t = t.replace(/\./g, "").replace(",", ".");
+    } else {
+      t = t.replace(/,/g, "");
+    }
+  } else if (commaCount > 1 || dotCount > 1) {
+    t = t.replace(/[.,]/g, "");
+  } else if (commaCount === 1 || dotCount === 1) {
+    const sep = commaCount === 1 ? "," : ".";
+    const after = t.slice(t.lastIndexOf(sep) + 1);
+    t = /^\d{3}$/.test(after) ? t.replace(sep, "") : t.replace(sep, ".");
+  }
+
   const n = Number(t);
   return Number.isFinite(n) ? n : null;
 }
