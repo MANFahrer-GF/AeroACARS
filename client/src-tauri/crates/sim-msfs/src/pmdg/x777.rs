@@ -622,10 +622,19 @@ impl Pmdg777XAutobrake {
             0 => Self::Rto,
             1 => Self::Off,
             2 => Self::Disarm,
-            3 => Self::One,
-            4 => Self::Two,
-            5 => Self::FourMaxAuto, // SDK: 5=MAX AUTO; "Three" not in real layout
-            other => Self::Unknown(other),
+            // v0.19.x QS (backlog "PMDG 777 autobrake enum mapping"):
+            // the raw struct field's own SDK-derived comment documents
+            // 3..5 as an undifferentiated "3..5=AUTO" range, but this
+            // used to split exactly those three values into distinct
+            // One/Two/FourMaxAuto labels anyway — an unverified guess
+            // (its own inline comment already admitted "Three not in
+            // real layout"). A wrong-but-confident label here silently
+            // corrupts the autobrake field in PIREPs/landing data,
+            // which is worse than admitting we don't know: report
+            // Unknown until a real PMDG 777 SDK header confirms the
+            // true per-position raw values. One/Two/Three/FourMaxAuto
+            // stay defined for when that data arrives.
+            _ => Self::Unknown(v),
         }
     }
 
@@ -1025,6 +1034,32 @@ mod tests {
             Pmdg777XPathVariant::from_air_path("/random/path"),
             Pmdg777XPathVariant::Unknown
         );
+    }
+
+    #[test]
+    fn autobrake_decoding() {
+        // 0/1/2 are consistent between the raw struct field's SDK
+        // comment and from_byte — not in dispute.
+        assert_eq!(Pmdg777XAutobrake::from_byte(0), Pmdg777XAutobrake::Rto);
+        assert_eq!(Pmdg777XAutobrake::from_byte(1), Pmdg777XAutobrake::Off);
+        assert_eq!(Pmdg777XAutobrake::from_byte(2), Pmdg777XAutobrake::Disarm);
+        assert_eq!(Pmdg777XAutobrake::from_byte(0).label(), "RTO");
+        assert_eq!(Pmdg777XAutobrake::from_byte(2).label(), "DISARM");
+
+        // v0.19.x QS: 3..5 used to split into specific-but-unverified
+        // One/Two/FourMaxAuto labels, contradicting the raw field's own
+        // "3..5=AUTO" SDK comment. Must report Unknown (label "?"), not
+        // a confident-but-unconfirmed number — an unverified label
+        // silently corrupting PIREP/landing data is worse than an
+        // honest "we don't know".
+        for raw in 3u8..=6 {
+            assert_eq!(
+                Pmdg777XAutobrake::from_byte(raw),
+                Pmdg777XAutobrake::Unknown(raw),
+                "raw {raw} must be Unknown, not a guessed specific position"
+            );
+            assert_eq!(Pmdg777XAutobrake::from_byte(raw).label(), "?");
+        }
     }
 
     #[test]
