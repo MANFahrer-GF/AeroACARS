@@ -931,7 +931,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               ? "bad"
               : props.td_distance_from_threshold_m < 0
               ? "bad"
-              : props.td_distance_from_threshold_m > 1000
+              : props.td_distance_from_threshold_m > skin.thresholds.hinter_schwelle_warn_above
               ? "warn"
               : "good"
           }
@@ -946,9 +946,9 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 }`
           }
           tone={
-            Math.abs(props.td_centerline_offset_m) < 5
+            Math.abs(props.td_centerline_offset_m) < skin.thresholds.centerline_warn_above
               ? "good"
-              : Math.abs(props.td_centerline_offset_m) < 15
+              : Math.abs(props.td_centerline_offset_m) < skin.thresholds.centerline_bad_above
               ? "warn"
               : "bad"
           }
@@ -968,7 +968,11 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               bahnUsedPct > 200 ? "> 200 %" : `${bahnUsedPct.toFixed(0)} %`
             }
             tone={
-              bahnUsedPct > 100 ? "bad" : bahnUsedPct > 85 ? "warn" : "good"
+              bahnUsedPct > 100
+                ? "bad"
+                : bahnUsedPct > skin.thresholds.bahn_auslastung_warn_above
+                ? "warn"
+                : "good"
             }
           />
         )}
@@ -1040,6 +1044,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
 // nicht "höher" durch gestapelte Rows.
 function FlugzeugBar({ props }: { props: RunwayDiagramV2Props }) {
   const { t } = useTranslation();
+  const skin = useV2Skin();
   const has =
     props.aircraft_icao ||
     props.aircraft_title ||
@@ -1088,8 +1093,11 @@ function FlugzeugBar({ props }: { props: RunwayDiagramV2Props }) {
   if (props.landing_pitch_deg != null || props.landing_bank_deg != null) {
     const p = props.landing_pitch_deg?.toFixed(1) ?? "—";
     const b = props.landing_bank_deg?.toFixed(1) ?? "—";
-    const tailStrike = props.landing_pitch_deg != null && props.landing_pitch_deg < 0;
-    const bankWarn = props.landing_bank_deg != null && Math.abs(props.landing_bank_deg) > 5;
+    const tailStrike =
+      props.landing_pitch_deg != null && props.landing_pitch_deg < skin.thresholds.pitch_bad_below;
+    const bankWarn =
+      props.landing_bank_deg != null &&
+      Math.abs(props.landing_bank_deg) > skin.thresholds.bank_warn_above;
     items.push({
       label: t("runway_v2.flugzeug_pb"),
       value: `${p}° / ${b}°`,
@@ -1105,7 +1113,12 @@ function FlugzeugBar({ props }: { props: RunwayDiagramV2Props }) {
       items.push({
         label: t("runway_v2.flugzeug_peakg"),
         value: `${g.toFixed(2)} g`,
-        color: g >= 1.7 ? "#ef4444" : g >= 1.5 ? "#fbbf24" : "#22c55e",
+        color:
+          g >= skin.thresholds.peak_g_bad
+            ? "#ef4444"
+            : g >= skin.thresholds.peak_g_warn
+            ? "#fbbf24"
+            : "#22c55e",
       });
     }
   }
@@ -1123,8 +1136,13 @@ function FlugzeugBar({ props }: { props: RunwayDiagramV2Props }) {
       parts.push(`XW ${Math.abs(xw).toFixed(0)} ${side}`);
     }
     const xwAbs = xw != null ? Math.abs(xw) : 0;
-    const isTw = hw != null && hw < -3;
-    const color = xwAbs > 25 || isTw ? "#ef4444" : xwAbs > 15 ? "#fbbf24" : undefined;
+    const isTw = hw != null && hw < -skin.thresholds.tailwind_bad;
+    const color =
+      xwAbs > skin.thresholds.crosswind_bad || isTw
+        ? "#ef4444"
+        : xwAbs > skin.thresholds.crosswind_warn
+        ? "#fbbf24"
+        : undefined;
     items.push({ label: t("runway_v2.flugzeug_wind"), value: parts.join(" "), color });
   }
 

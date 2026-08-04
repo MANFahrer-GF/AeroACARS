@@ -1,9 +1,17 @@
 // Runway Diagram v2 — Skin definition.
 //
 // Eine "Skin" ist die komplette visuelle Konfiguration der V2-Component:
-// Farben, Geometrie, Label-Strings, Tone-Schwellen, Display-Flags. Die
-// Pilot-Client- und Webapp-Komponenten lesen NICHT mehr Hardcoded-Werte
-// sondern beziehen alles aus dem aktuell geladenen Skin.
+// Farben, Geometrie, Tone-Schwellen, Display-Flags. Die Pilot-Client- und
+// Webapp-Komponenten lesen NICHT mehr Hardcoded-Werte sondern beziehen
+// alles aus dem aktuell geladenen Skin.
+//
+// v0.19.x FIX: das `labels`-Feld (Label-Strings) wurde entfernt — es war
+// hier definiert + befüllt + gemerged, aber die Component las es nie
+// (sie war längst auf i18next umgestiegen, siehe `t("runway_v2.*")`).
+// Ein VA-Admin, der über den VPS-Skin ein Label geändert hätte, hätte
+// KEINE Wirkung gesehen — toter Contract. Labels bleiben jetzt allein
+// bei i18next (3 Sprachen), statt einem zweiten, nicht-funktionierenden
+// System mit nur einer Sprache daneben herzuschleppen.
 //
 // Lade-Strategie:
 //   1. Beim App-Start versucht der Pilot-Client einen frischen Skin von
@@ -52,36 +60,6 @@ export interface V2Skin {
     svgHeight: number;
     rwyPaddingX: number;
     rwyPaddingY: number;
-  };
-
-  // ─── Label-Strings (i18n-fähig — heute nur DE) ─────────────────────
-  labels: {
-    aufsetzzone_prefix: string;     // "AUFSETZZONE (TDZ)"
-    aim_point_prefix: string;        // "AIM-POINT"
-    aim_subtitle: string;            // "↓ Soll-Aufsetz-Stelle"
-    bremspunkt_title: string;        // "Bremspunkt"
-    bremspunkt_speed: string;        // "40 kt"
-    td_prefix: string;               // "TD"
-    auf_cl: string;                  // "auf CL"
-    flugzeug_label: string;          // "Flugzeug"
-    flugzeug_type: string;           // "Type"
-    flugzeug_reg: string;            // "Reg"
-    flugzeug_weight: string;         // "Gewicht"
-    flugzeug_iast: string;           // "TD-IAS"
-    flugzeug_pb: string;             // "P / B"
-    flugzeug_peakg: string;          // "Peak-G"
-    flugzeug_wind: string;           // "Wind"
-    pill_bahn: string;               // "Bahn"
-    pill_laenge: string;             // "Länge"
-    pill_hinter_schwelle: string;    // "Hinter Schwelle"
-    pill_mittellinie: string;        // "Mittellinie"
-    pill_ausrollstrecke: string;     // "Ausrollstrecke"
-    pill_bahn_auslastung: string;    // "Bahn-Auslastung"
-    pill_tdz: string;                // "Touchdown-Zone"
-    pill_aim_point: string;          // "Aim-Point"
-    pill_tch: string;                // "Anflug-Profil (TCH)"
-    pill_pre_threshold: string;      // "⚠ Pre-Threshold"
-    pill_navdata: string;            // "Navdata-Quelle"
   };
 
   // ─── Tone-Schwellen (= Grenzwerte für grün/gelb/rot) ───────────────
@@ -140,34 +118,6 @@ export const DEFAULT_SKIN: V2Skin = {
     rwyPaddingX: 70,
     rwyPaddingY: 95,
   },
-  labels: {
-    aufsetzzone_prefix: "AUFSETZZONE (TDZ)",
-    aim_point_prefix: "AIM-POINT",
-    aim_subtitle: "↓ Soll-Aufsetz-Stelle",
-    bremspunkt_title: "Bremspunkt",
-    bremspunkt_speed: "40 kt",
-    td_prefix: "TD",
-    auf_cl: "auf CL",
-    flugzeug_label: "Flugzeug",
-    flugzeug_type: "Type",
-    flugzeug_reg: "Reg",
-    flugzeug_weight: "Gewicht",
-    flugzeug_iast: "TD-IAS",
-    flugzeug_pb: "P / B",
-    flugzeug_peakg: "Peak-G",
-    flugzeug_wind: "Wind",
-    pill_bahn: "Bahn",
-    pill_laenge: "Länge",
-    pill_hinter_schwelle: "Hinter Schwelle",
-    pill_mittellinie: "Mittellinie",
-    pill_ausrollstrecke: "Ausrollstrecke",
-    pill_bahn_auslastung: "Bahn-Auslastung",
-    pill_tdz: "Touchdown-Zone",
-    pill_aim_point: "Aim-Point",
-    pill_tch: "Anflug-Profil (TCH)",
-    pill_pre_threshold: "⚠ Pre-Threshold",
-    pill_navdata: "Navdata-Quelle",
-  },
   thresholds: {
     peak_g_warn: 1.5,
     peak_g_bad: 1.7,
@@ -204,7 +154,6 @@ export function mergeWithDefaults(partial: Partial<V2Skin> | null | undefined): 
     version: partial.version ?? DEFAULT_SKIN.version,
     tokens: { ...DEFAULT_SKIN.tokens, ...(partial.tokens ?? {}) },
     geometry: { ...DEFAULT_SKIN.geometry, ...(partial.geometry ?? {}) },
-    labels: { ...DEFAULT_SKIN.labels, ...(partial.labels ?? {}) },
     thresholds: { ...DEFAULT_SKIN.thresholds, ...(partial.thresholds ?? {}) },
     display: { ...DEFAULT_SKIN.display, ...(partial.display ?? {}) },
   };

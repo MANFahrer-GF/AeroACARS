@@ -6,11 +6,19 @@
 // follows the active language.
 
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
-import { render, cleanup } from "@testing-library/react";
+import { render, cleanup, screen } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../locales/de/common.json";
 import enCommon from "../locales/en/common.json";
+import { DEFAULT_SKIN, type V2Skin } from "./runwayV2Skin";
+
+const skinBox = vi.hoisted(() => ({ current: null as V2Skin | null }));
+vi.mock("./SkinContext", async () => {
+  const actual = await vi.importActual<typeof import("./runwayV2Skin")>("./runwayV2Skin");
+  return { useV2Skin: () => skinBox.current ?? actual.DEFAULT_SKIN };
+});
+
 import { RunwayDiagramV2, type RunwayDiagramV2Props } from "./RunwayDiagramV2";
 
 beforeAll(async () => {
@@ -27,6 +35,7 @@ beforeAll(async () => {
 afterEach(async () => {
   cleanup();
   await i18next.changeLanguage("de");
+  skinBox.current = null;
 });
 
 function props(overrides: Partial<RunwayDiagramV2Props> = {}): RunwayDiagramV2Props {
@@ -171,5 +180,48 @@ describe("RunwayDiagramV2 — runway-utilization percentage ignores the SVG-geom
       />,
     );
     expect(container.textContent).toContain("33 %");
+  });
+});
+
+// v0.19.x FIX: `V2Skin.thresholds` (peak_g_warn/bad, crosswind_warn/bad,
+// bank_warn_above, pitch_bad_below, bahn_auslastung_warn_above,
+// centerline_warn_above/bad_above, hinter_schwelle_warn_above) was defined,
+// defaulted and merged, but every tone decision in the component used a
+// HARDCODED magic number instead of reading it — a VA admin changing the
+// deployed VPS skin's thresholds would have had zero effect. These prove
+// a non-default skin's thresholds now actually change what the pilot sees.
+describe("RunwayDiagramV2 — skin thresholds are actually read, not just hardcoded copies", () => {
+  it("re-tones the runway-utilization pill when the skin raises the warn threshold", () => {
+    // 90% utilization: DEFAULT_SKIN.thresholds.bahn_auslastung_warn_above
+    // is 85, so this must read "warn" (amber) by default...
+    const p = props({ length_m: 1000, td_distance_from_threshold_m: 0, rollout_m: 900, aim_point_m: null });
+    const def = render(<RunwayDiagramV2 {...p} />);
+    expect(screen.getByText("90 %")).toHaveStyle({ color: "#fbbf24" });
+    def.unmount();
+
+    // ...but with a skin that raises the threshold to 95, the SAME 90%
+    // must read as "good" (green) instead.
+    skinBox.current = {
+      ...DEFAULT_SKIN,
+      thresholds: { ...DEFAULT_SKIN.thresholds, bahn_auslastung_warn_above: 95 },
+    };
+    render(<RunwayDiagramV2 {...p} />);
+    expect(screen.getByText("90 %")).toHaveStyle({ color: "#22c55e" });
+  });
+
+  it("re-tones the peak-G readout in the aircraft bar when the skin lowers peak_g_warn", () => {
+    const p = props({ aircraft_icao: "A320", landing_peak_g_force: 1.3 });
+    const def = render(<RunwayDiagramV2 {...p} />);
+    // 1.3 g is below DEFAULT_SKIN's peak_g_warn (1.5) -> green, no warning.
+    expect(screen.getByText("1.30 g")).toHaveStyle({ color: "#22c55e" });
+    def.unmount();
+
+    // A skin lowering peak_g_warn to 1.0 must flag the SAME 1.3 g as amber.
+    skinBox.current = {
+      ...DEFAULT_SKIN,
+      thresholds: { ...DEFAULT_SKIN.thresholds, peak_g_warn: 1.0 },
+    };
+    render(<RunwayDiagramV2 {...p} />);
+    expect(screen.getByText("1.30 g")).toHaveStyle({ color: "#fbbf24" });
   });
 });
