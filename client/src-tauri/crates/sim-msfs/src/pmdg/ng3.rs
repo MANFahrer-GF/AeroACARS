@@ -667,11 +667,15 @@ pub struct Pmdg738Snapshot {
     pub gear_lever_down: bool,
     pub speedbrake_armed: bool,
     pub speedbrake_extended: bool,
-    /// Synthesised lever position 0.0..1.0. NG3 SDK exposes only
-    /// boolean ARMED/EXTENDED states — we synthesise a stable
-    /// "lever percentage" from those (0=stowed, 0.25=armed,
-    /// 1.0=extended) so the standard `spoilers_handle_position`
-    /// Premium-First override doesn't jitter at the ARMED detent.
+    /// Synthesised lever position 0.0..1.0. NG3 SDK exposes only boolean
+    /// ARMED/EXTENDED states — we synthesise 0.0=stowed/armed, 1.0=
+    /// extended. v0.19.x FIX: this used to also synthesise 0.25 for
+    /// "armed" — the generic `spoilers_handle_position > 0.05` activity-
+    /// log consumer has no way to know 0.25 means "armed, not deployed",
+    /// so it fired a false "Spoilers DEPLOYED" the moment the pilot armed
+    /// speedbrakes. ARMED is tracked and logged separately via
+    /// `speedbrake_armed` above — this field now only ever reflects
+    /// actual physical deployment.
     pub speedbrake_lever_pos: f32,
     pub autobrake: Pmdg738Autobrake,
     pub takeoff_config_warning: bool,
@@ -830,13 +834,21 @@ impl Pmdg738Snapshot {
             gear_lever_down: raw.MAIN_GearLever == 2,
             speedbrake_armed: raw.MAIN_annunSPEEDBRAKE_ARMED != 0,
             speedbrake_extended: raw.MAIN_annunSPEEDBRAKE_EXTENDED != 0,
-            // Synthesise lever pos from the bools — sufficient for
-            // jitter-free Activity-Log overrides; doesn't claim to
-            // mirror the real lever motion in flight.
+            // v0.19.x FIX: this used to synthesise 0.25 for "armed but not
+            // extended" — the 737 NG's speedbrake ARM is a separate
+            // switch, not a lever detent, so 0.25 was an arbitrary
+            // non-physical stand-in with no real position behind it. The
+            // generic activity-log consumer (client/src-tauri/src/lib.rs,
+            // `spoilers_handle_position > 0.05` = "DEPLOYED") has no way to
+            // know 0.25 means "armed", so it fired a false "Spoilers
+            // DEPLOYED" log entry the moment the pilot armed speedbrakes —
+            // on every single PMDG NG3 flight. ARMED is already tracked
+            // and logged correctly via the separate `speedbrake_armed`
+            // bool above; the lever-position field now only reflects
+            // actual physical deployment, matching what its one consumer
+            // actually means by "lever position".
             speedbrake_lever_pos: if raw.MAIN_annunSPEEDBRAKE_EXTENDED != 0 {
                 1.0
-            } else if raw.MAIN_annunSPEEDBRAKE_ARMED != 0 {
-                0.25
             } else {
                 0.0
             },
@@ -1083,6 +1095,44 @@ mod tests {
         assert!(!Pmdg738Snapshot::from_raw(&raw).stab_out_of_trim);
         raw.MAIN_annunSTAB_OUT_OF_TRIM = 1;
         assert!(Pmdg738Snapshot::from_raw(&raw).stab_out_of_trim);
+    }
+
+    // v0.19.x FIX: speedbrake_lever_pos used to synthesise 0.25 for
+    // "armed" — the generic activity-log consumer's `pos > 0.05` =
+    // "DEPLOYED" threshold has no way to know 0.25 means "armed, not
+    // deployed", so arming speedbrakes fired a false "Spoilers DEPLOYED"
+    // log entry on every PMDG NG3 flight.
+
+    #[test]
+    fn speedbrake_armed_alone_reports_zero_lever_position() {
+        let mut raw = zeroed_raw();
+        raw.MAIN_annunSPEEDBRAKE_ARMED = 1;
+        let s = Pmdg738Snapshot::from_raw(&raw);
+        assert!(s.speedbrake_armed);
+        assert!(!s.speedbrake_extended);
+        assert_eq!(
+            s.speedbrake_lever_pos, 0.0,
+            "armed-but-not-extended must read as 0.0, not the old 0.25 — \
+             a generic 5% deployed-threshold consumer would otherwise treat \
+             ARMING as DEPLOYING"
+        );
+    }
+
+    #[test]
+    fn speedbrake_extended_reports_full_lever_position() {
+        let mut raw = zeroed_raw();
+        raw.MAIN_annunSPEEDBRAKE_EXTENDED = 1;
+        let s = Pmdg738Snapshot::from_raw(&raw);
+        assert!(s.speedbrake_extended);
+        assert_eq!(s.speedbrake_lever_pos, 1.0);
+    }
+
+    #[test]
+    fn speedbrake_neither_armed_nor_extended_reports_zero() {
+        let s = Pmdg738Snapshot::from_raw(&zeroed_raw());
+        assert!(!s.speedbrake_armed);
+        assert!(!s.speedbrake_extended);
+        assert_eq!(s.speedbrake_lever_pos, 0.0);
     }
 
     /// Fuel: [left, center, right] order + WeightInKg unit handling
