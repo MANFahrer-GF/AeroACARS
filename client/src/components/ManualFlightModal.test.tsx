@@ -5,12 +5,13 @@
 // in the modal, or even after advancing to the "plan" stage. These pin
 // down the pure matcher plus the actual overwrite-race in the component.
 
-import { describe, it, expect, beforeAll, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, beforeAll, afterEach, vi, beforeEach } from "vitest";
+import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../locales/de/common.json";
+import enCommon from "../locales/en/common.json";
 import type { Bid } from "../types";
 
 const invokeMock = vi.fn();
@@ -25,11 +26,16 @@ beforeAll(async () => {
   if (!i18next.isInitialized) {
     await i18next.use(initReactI18next).init({
       lng: "de",
-      resources: { de: { common: deCommon } },
+      resources: { de: { common: deCommon }, en: { common: enCommon } },
       defaultNS: "common",
       interpolation: { escapeValue: false },
     });
   }
+});
+
+afterEach(async () => {
+  cleanup();
+  await i18next.changeLanguage("de");
 });
 
 const FLEET = [
@@ -126,5 +132,54 @@ describe("ManualFlightModal — pilot selection survives a later sim-hint change
     await waitFor(() => expect(invokeMock.mock.calls.filter((c) => c[0] === "fleet_list_at_airport").length).toBeGreaterThan(1));
     expect(screen.getByText("D-AAAA").closest("button")).toHaveClass("selected");
     expect(screen.getByText("D-BBBB").closest("button")).not.toHaveClass("selected");
+  });
+});
+
+// v0.19.x FIX: the "in Use"/"in Flight"/"Maintenance" state badge and the
+// hover tooltip (both the "available" and "unavailable" phrasing) were
+// hardcoded German string literals, shown verbatim regardless of the
+// active locale.
+describe("ManualFlightModal — aircraft-state label and tooltip follow the active locale", () => {
+  const fleetWithInUse = [
+    { id: 1, registration: "D-CCCC", icao: "A320", name: "Airbus A320", airport_id: "EDDF", state: 1, display: "D-CCCC — A320" },
+  ];
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "fleet_list_at_airport") return Promise.resolve(fleetWithInUse);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  it("shows the German state badge under de, a different English one under en", async () => {
+    await i18next.changeLanguage("de");
+    render(<ManualFlightModal bid={makeBid()} simHint={null} onClose={() => {}} onFlightStarted={() => {}} />);
+    await waitFor(() => expect(screen.getByText("🔒 belegt")).toBeInTheDocument());
+    cleanup();
+
+    await i18next.changeLanguage("en");
+    render(<ManualFlightModal bid={makeBid()} simHint={null} onClose={() => {}} onFlightStarted={() => {}} />);
+    await waitFor(() => expect(screen.getByText("🔒 in Use")).toBeInTheDocument());
+    expect(screen.queryByText("🔒 belegt")).not.toBeInTheDocument();
+  });
+
+  it("localizes the unavailable-aircraft tooltip sentence, not just the state word", async () => {
+    await i18next.changeLanguage("de");
+    const de = render(<ManualFlightModal bid={makeBid()} simHint={null} onClose={() => {}} onFlightStarted={() => {}} />);
+    await waitFor(() => expect(screen.getByText("D-CCCC")).toBeInTheDocument());
+    expect(screen.getByText("D-CCCC").closest("button")).toHaveAttribute(
+      "title",
+      "🔒 belegt — phpVMS lehnt ggf. den Prefile ab.",
+    );
+    de.unmount();
+
+    await i18next.changeLanguage("en");
+    render(<ManualFlightModal bid={makeBid()} simHint={null} onClose={() => {}} onFlightStarted={() => {}} />);
+    await waitFor(() => expect(screen.getByText("D-CCCC")).toBeInTheDocument());
+    expect(screen.getByText("D-CCCC").closest("button")).toHaveAttribute(
+      "title",
+      "🔒 in Use — phpVMS may reject the prefile.",
+    );
   });
 });

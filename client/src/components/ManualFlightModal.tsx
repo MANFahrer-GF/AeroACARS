@@ -134,7 +134,7 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
       } catch (err: unknown) {
         if (cancelled) return;
         const ui = asUiError(err);
-        setError(`Konnte Fleet nicht laden: ${ui.message}`);
+        setError(t("manual_flight.fleet_load_error", { message: ui.message }));
         setAircraftList([]);
       } finally {
         if (!cancelled) setLoadingFleet(false);
@@ -389,9 +389,9 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
                   {filtered.map((a) => {
                     const stateLabel =
                       a.state === 0 ? null :
-                      a.state === 1 ? "🔒 in Use" :
-                      a.state === 2 ? "✈ in Flight" :
-                      "🔧 Maintenance";
+                      a.state === 1 ? t("manual_flight.state_in_use") :
+                      a.state === 2 ? t("manual_flight.state_in_flight") :
+                      t("manual_flight.state_maintenance");
                     const stateColor =
                       a.state === 0 ? undefined :
                       a.state === 1 ? "#fbbf24" :
@@ -405,8 +405,12 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
                         className={`manual-modal__list-item ${selected?.id === a.id ? "selected" : ""}`}
                         onClick={() => { pilotCommittedRef.current = true; setSelected(a); }}
                         title={a.state === 0
-                          ? `Verfügbar${atDpt ? ` am ${bid.flight.dpt_airport_id}` : a.airport_id ? ` (steht in ${a.airport_id})` : ""}`
-                          : `${stateLabel} — phpVMS lehnt ggf. den Prefile ab.`}
+                          ? (atDpt
+                              ? t("manual_flight.available_hint_at", { airport: bid.flight.dpt_airport_id })
+                              : a.airport_id
+                                ? t("manual_flight.available_hint_elsewhere", { airport: a.airport_id })
+                                : t("manual_flight.available_hint"))
+                          : t("manual_flight.unavailable_hint_suffix", { state: stateLabel })}
                       >
                         <span className="manual-modal__list-icao">{a.icao || "—"}</span>
                         <span className="manual-modal__list-reg">{a.registration || "—"}</span>
