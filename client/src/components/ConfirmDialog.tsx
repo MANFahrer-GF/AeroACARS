@@ -70,13 +70,23 @@ export function useConfirm() {
   // Enter bestätigt — das erwarten Nutzer vom nativen `confirm()`.
   // Escape, Fokus-Falle, Fokus-Rückgabe und Klick auf den Schleier
   // übernimmt seit Stufe D die Modal-Primitive.
+  //
+  // v0.19.x FIX: das galt bisher UNBEDINGT, auch wenn der Cancel-Button
+  // (bewusst per `autoFocus` als sicherer Default bei destruktiven
+  // Aktionen gesetzt) den Fokus hatte — Enter hat dann trotzdem
+  // bestätigt statt abzubrechen. Ein fokussierter `<button>` reagiert
+  // bereits nativ auf Enter (löst seinen eigenen `click` aus); wir
+  // dürfen das nicht überschreiben. Der Fallback (`close(true)`) greift
+  // nur, wenn der Fokus (noch) NICHT auf einem der beiden Dialog-Buttons
+  // liegt — z.B. im kurzen Fenster bevor die Modal-Fokus-Falle greift.
   useEffect(() => {
     if (!pending) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        close(true);
-      }
+      if (e.key !== "Enter" || e.repeat) return;
+      const active = document.activeElement;
+      if (active instanceof HTMLButtonElement) return;
+      e.preventDefault();
+      close(true);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
