@@ -2503,17 +2503,23 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     } else {
         t.apu_switch
     };
+    // v0.19.x FIX: `>= 0.0` is a tautology for a 0/1-valued LVar — both
+    // AUTO (0) and ON (1) satisfy it, so this reported pitot heat as
+    // unconditionally ON, even cold-and-dark with zero electrical power.
+    // The comment's own stated semantics ("AUTO heats automatically once
+    // engines are running") were never actually implemented — ON (1)
+    // means heat is active regardless; AUTO (0) means heat is active only
+    // when at least one engine is running (reusing `engines_running`,
+    // already computed above for the arrival/shutdown FSM).
     let pitot_heat = if is_fenix {
-        // L:S_OH_PROBE_HEAT: 0=AUTO, 1=ON. AUTO means heating is
-        // automatically active when engines are running, so we
-        // treat both states as "heat available".
-        t.fnx_probe_heat >= 0.0 // always considered "active" on Airbus
+        // L:S_OH_PROBE_HEAT: 0=AUTO, 1=ON.
+        let probe_heat = t.fnx_probe_heat as i32;
+        probe_heat == 1 || (probe_heat == 0 && engines_running > 0)
     } else if is_a346 {
         // A346 `L:AB_OVH_ANTIICE_PROBEWINDOW`: gleiche Airbus-Semantik
-        // wie der Fenix PROBE/WINDOW-HEAT-Pushbutton (0=AUTO, 1=ON) —
-        // AUTO heizt automatisch sobald Triebwerke laufen, also wie
-        // beim Fenix beide Stellungen als "heat available" werten.
-        t.a346_antiice_probewindow >= 0.0
+        // wie der Fenix PROBE/WINDOW-HEAT-Pushbutton (0=AUTO, 1=ON).
+        let probewindow = t.a346_antiice_probewindow as i32;
+        probewindow == 1 || (probewindow == 0 && engines_running > 0)
     } else {
         t.pitot_heat
     };
@@ -4496,11 +4502,54 @@ mod tests {
         assert_eq!(snap.wing_anti_ice, Some(false));
     }
 
+    // v0.19.x FIX: `>= 0.0` was a tautology for a 0/1-valued LVar (both
+    // AUTO and ON satisfy it) — pitot heat used to report unconditionally
+    // ON, even cold-and-dark with zero electrical power. AUTO (0) now
+    // means "heat active only while an engine is running", matching the
+    // comment's own stated (but previously unimplemented) semantics.
     #[test]
-    fn a346_pitot_heat_mirrors_fenix_always_available() {
-        // Wie beim Fenix: PROBE/WINDOW 0=AUTO heizt automatisch →
-        // beide Stellungen gelten als "heat available".
+    fn a346_pitot_heat_auto_is_off_cold_and_dark() {
         let snap = telemetry_to_snapshot(a346_telemetry(), Simulator::Msfs2024);
+        assert_eq!(snap.pitot_heat, Some(false));
+    }
+
+    #[test]
+    fn a346_pitot_heat_auto_is_on_once_an_engine_is_running() {
+        let mut t = a346_telemetry();
+        t.eng1_combustion_ex1 = true; // A346 drives the EX1 combustion variant
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.pitot_heat, Some(true));
+    }
+
+    #[test]
+    fn a346_pitot_heat_on_position_is_always_on_regardless_of_engines() {
+        let mut t = a346_telemetry();
+        t.a346_antiice_probewindow = 1.0; // explicit ON
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.pitot_heat, Some(true));
+    }
+
+    // Same fix, same bug pattern, on the Fenix A320 path.
+    #[test]
+    fn fenix_pitot_heat_auto_is_off_cold_and_dark() {
+        let snap =
+            telemetry_to_snapshot(fenix_telemetry(0.0, 0.0, 0.0, 0.0), Simulator::Msfs2024);
+        assert_eq!(snap.pitot_heat, Some(false));
+    }
+
+    #[test]
+    fn fenix_pitot_heat_auto_is_on_once_an_engine_is_running() {
+        let mut t = fenix_telemetry(0.0, 0.0, 0.0, 0.0);
+        t.eng1_combustion_ex1 = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.pitot_heat, Some(true));
+    }
+
+    #[test]
+    fn fenix_pitot_heat_on_position_is_always_on_regardless_of_engines() {
+        let mut t = fenix_telemetry(0.0, 0.0, 0.0, 0.0);
+        t.fnx_probe_heat = 1.0; // explicit ON
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.pitot_heat, Some(true));
     }
 
