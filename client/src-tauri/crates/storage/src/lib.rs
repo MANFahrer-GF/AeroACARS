@@ -38,6 +38,13 @@ const LANDINGS_FILE: &str = "landings.json";
 /// oldest so the file can't grow unbounded.
 const LANDINGS_MAX_ROWS: usize = 500;
 
+/// v0.20.x QS fix: tombstone list for `landing_delete`. See
+/// [`DeletedLandingsTombstone`].
+const DELETED_LANDINGS_FILE: &str = "deleted_landings.json";
+/// Cap on retained tombstones — bounds the file for a pilot who deletes a
+/// lot of landings over years without needing real GC.
+const DELETED_LANDINGS_MAX_ROWS: usize = 500;
+
 /// One pending position post, ready to be replayed once connectivity
 /// returns. The serialised `position` is opaque from the storage crate's
 /// point of view — it's just whatever JSON the API client wants to
@@ -738,7 +745,30 @@ impl PendingBidCleanupQueue {
         match serde_json::from_slice(&bytes) {
             Ok(v) => Ok(v),
             Err(e) => {
-                tracing::warn!(error = %e, "pending_bid_cleanup.json unreadable — starting fresh");
+                // v0.20.x QS fix: same bug `LandingStore::read_all` was
+                // fixed against this release — an unparseable file used to
+                // be treated as silently empty with nothing preserved, so
+                // the very next `enqueue`/`replace` would persist that
+                // empty state over the original (possibly only partially
+                // damaged) bytes. Best-effort: copy the original bytes
+                // aside before falling back to empty.
+                let backup_path = self.path.with_extension(format!(
+                    "json.corrupt-{}",
+                    chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+                ));
+                if let Err(backup_err) = std::fs::write(&backup_path, &bytes) {
+                    tracing::error!(
+                        error = %e,
+                        backup_error = %backup_err,
+                        "pending_bid_cleanup.json unreadable AND could not back up the original bytes — starting fresh with NO recovery copy"
+                    );
+                } else {
+                    tracing::warn!(
+                        error = %e,
+                        backup_path = %backup_path.display(),
+                        "pending_bid_cleanup.json unreadable — original bytes preserved, starting fresh"
+                    );
+                }
                 Ok(Vec::new())
             }
         }
@@ -777,6 +807,140 @@ impl PendingBidCleanupQueue {
         std::fs::write(&tmp, &bytes)?;
         std::fs::rename(&tmp, &self.path)?;
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// v0.20.x QS fix: deleted-landings tombstone
+// ---------------------------------------------------------------------------
+//
+// `LandingStore::merge_from` (below) is a plain union with no delete
+// concept — it exists to stop a client with an INCOMPLETE local store
+// (failed restore, fresh install) from shrinking the server's backup.
+// But `landing_delete` (in lib.rs) only ever rewrites the LOCAL file; the
+// server's backup blob still has the old copy. Without a tombstone, the
+// very next backup upload (which now merges the server's copy in FIRST,
+// per that same fix) — or an explicit "restore from server" — silently
+// resurrects a landing the pilot just deleted. This tombstone is
+// deliberately LOCAL-ONLY, never itself uploaded: it only has to stop
+// THIS machine's own merge from undoing THIS machine's own deletion.
+
+/// Small file-backed set of `pirep_id`s the pilot has explicitly deleted
+/// via the Landing tab. Consulted before merging an incoming server/
+/// restore payload so a deleted record can't come back from a backup
+/// that predates the deletion.
+pub struct DeletedLandingsTombstone {
+    path: PathBuf,
+}
+
+impl DeletedLandingsTombstone {
+    pub fn open(app_data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
+        let dir = app_data_dir.as_ref().to_path_buf();
+        std::fs::create_dir_all(&dir)?;
+        Ok(Self {
+            path: dir.join(DELETED_LANDINGS_FILE),
+        })
+    }
+
+    pub fn read_all(&self) -> Result<Vec<String>, StorageError> {
+        if !self.path.exists() {
+            return Ok(Vec::new());
+        }
+        let bytes = std::fs::read(&self.path)?;
+        if bytes.is_empty() {
+            return Ok(Vec::new());
+        }
+        match serde_json::from_slice(&bytes) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                tracing::warn!(error = %e, "deleted_landings.json unreadable — starting fresh");
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    /// Record a `pirep_id` as deleted. Idempotent.
+    pub fn record_deleted(&self, pirep_id: &str) -> Result<(), StorageError> {
+        let mut ids = self.read_all()?;
+        if ids.iter().any(|id| id == pirep_id) {
+            return Ok(());
+        }
+        ids.push(pirep_id.to_string());
+        if ids.len() > DELETED_LANDINGS_MAX_ROWS {
+            let excess = ids.len() - DELETED_LANDINGS_MAX_ROWS;
+            ids.drain(0..excess);
+        }
+        self.write_all(&ids)
+    }
+
+    fn write_all(&self, ids: &[String]) -> Result<(), StorageError> {
+        let tmp = self.path.with_extension("json.tmp");
+        let bytes = serde_json::to_vec(ids)?;
+        std::fs::write(&tmp, &bytes)?;
+        std::fs::rename(&tmp, &self.path)?;
+        Ok(())
+    }
+}
+
+/// Drop any `incoming` record whose `pirep_id` is tombstoned. Call this on
+/// a server/restore payload BEFORE `LandingStore::merge_from`, so a
+/// locally-deleted-but-still-server-backed-up record can't be merged back
+/// in. A pure function (no I/O) so it's directly unit-testable.
+pub fn filter_tombstoned(
+    incoming: Vec<LandingRecord>,
+    tombstoned: &[String],
+) -> Vec<LandingRecord> {
+    incoming
+        .into_iter()
+        .filter(|r| !tombstoned.iter().any(|id| id == &r.pirep_id))
+        .collect()
+}
+
+#[cfg(test)]
+mod pending_bid_cleanup_queue_tests {
+    use super::*;
+
+    fn temp_queue() -> (PendingBidCleanupQueue, PathBuf) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "aeroacars-pendingbidqueue-test-{}-{n}",
+            std::process::id()
+        ));
+        let queue = PendingBidCleanupQueue::open(&dir).expect("open temp queue");
+        (queue, dir)
+    }
+
+    /// v0.20.x QS fix: mirrors `LandingStore`'s
+    /// `corrupt_file_is_backed_up_before_falling_back_to_empty` — this
+    /// queue had the SAME bug (corruption silently treated as empty, then
+    /// the next write persisted that empty state over the original bytes)
+    /// until this release fixed it here too.
+    #[test]
+    fn corrupt_file_is_backed_up_before_falling_back_to_empty() {
+        let (queue, dir) = temp_queue();
+        std::fs::write(dir.join(PENDING_BID_CLEANUP_FILE), b"{not valid json")
+            .expect("write garbage");
+
+        let items = queue
+            .read_all()
+            .expect("a corrupt file must not error — it falls back to empty");
+        assert!(items.is_empty());
+
+        let backups: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains("corrupt"))
+            .collect();
+        assert_eq!(backups.len(), 1, "exactly one backup of the corrupt file must exist");
+        let backup_bytes = std::fs::read(backups[0].path()).unwrap();
+        assert_eq!(
+            backup_bytes,
+            b"{not valid json",
+            "the backup must be byte-identical to the original corrupt file"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
@@ -1225,6 +1389,108 @@ mod landing_store_tests {
             backup_bytes,
             b"{not valid json",
             "the backup must be byte-identical to the original corrupt file"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod deleted_landings_tombstone_tests {
+    use super::*;
+
+    fn rec(pirep_id: &str) -> LandingRecord {
+        serde_json::from_value(serde_json::json!({
+            "pirep_id": pirep_id,
+            "touchdown_at": "2026-08-01T00:00:00Z",
+            "recorded_at": "2026-08-01T00:00:00Z",
+            "flight_number": "1224",
+            "airline_icao": "TKJ",
+            "dpt_airport": "EDDP",
+            "arr_airport": "LTFE",
+            "score_numeric": 80,
+            "score_label": "gut",
+            "grade_letter": "B",
+            "landing_rate_fpm": -236.0,
+            "bounce_count": 0,
+            "touchdown_profile": [],
+            "approach_samples": [],
+            "ux_version": 1,
+            "forensics_version": 1,
+            "sub_scores": [],
+            "accident": false,
+            "accident_reasons": [],
+        }))
+        .expect("test record")
+    }
+
+    fn temp_dir() -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "aeroacars-tombstone-test-{}-{n}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn record_deleted_is_idempotent() {
+        let dir = temp_dir();
+        let tombstone = DeletedLandingsTombstone::open(&dir).expect("open");
+        tombstone.record_deleted("PIREP1").expect("record 1");
+        tombstone.record_deleted("PIREP1").expect("record again");
+        assert_eq!(tombstone.read_all().unwrap(), vec!["PIREP1".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn filter_tombstoned_drops_only_the_deleted_record() {
+        let incoming = vec![rec("KEEP1"), rec("DELETED"), rec("KEEP2")];
+        let filtered = filter_tombstoned(incoming, &["DELETED".to_string()]);
+        let ids: Vec<&str> = filtered.iter().map(|r| r.pirep_id.as_str()).collect();
+        assert_eq!(ids, ["KEEP1", "KEEP2"]);
+    }
+
+    #[test]
+    fn filter_tombstoned_is_a_no_op_with_no_tombstones() {
+        let incoming = vec![rec("A"), rec("B")];
+        let filtered = filter_tombstoned(incoming, &[]);
+        assert_eq!(filtered.len(), 2);
+    }
+
+    /// The exact real-world regression this tombstone exists to close:
+    /// delete a record locally, then simulate the next backup's
+    /// merge-server-copy-in-first step — the deleted record must NOT
+    /// reappear in the merged local store.
+    #[test]
+    fn a_deleted_record_does_not_reappear_after_the_next_merge() {
+        let dir = temp_dir();
+        let store = LandingStore::open(&dir).expect("open store");
+        let tombstone = DeletedLandingsTombstone::open(&dir).expect("open tombstone");
+
+        store.upsert(rec("KEEP")).expect("upsert keep");
+        store.upsert(rec("TO_DELETE")).expect("upsert to-delete");
+
+        // landing_delete's real sequence: remove locally, record the tombstone.
+        let mut all = store.list().expect("list");
+        all.retain(|r| r.pirep_id != "TO_DELETE");
+        store.replace_all(&all).expect("replace_all");
+        tombstone.record_deleted("TO_DELETE").expect("tombstone");
+
+        // The next backup upload: server still has the old copy (it was
+        // never told about the deletion) — this is exactly what
+        // `upload_landing_backup` merges in.
+        let server_copy = vec![rec("KEEP"), rec("TO_DELETE")];
+        let tombstoned = tombstone.read_all().expect("read tombstones");
+        let filtered = filter_tombstoned(server_copy, &tombstoned);
+        store.merge_from(filtered).expect("merge");
+
+        let ids: std::collections::HashSet<String> =
+            store.list().unwrap().into_iter().map(|r| r.pirep_id).collect();
+        assert!(ids.contains("KEEP"));
+        assert!(
+            !ids.contains("TO_DELETE"),
+            "a locally-deleted record must not be resurrected by the next backup merge"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

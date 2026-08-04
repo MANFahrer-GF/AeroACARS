@@ -26,8 +26,11 @@ import { invoke, formatIpcError } from "../lib/ipc";
 
 /** Substrings that make a controller's client read a telex as a NEW
  *  clearance request rather than an acknowledgement. An acknowledgement
- *  must never contain them. */
-const REQUEST_TOKENS = ["CLR", "REQ", "PDC", "PREDEP", "REQUEST"];
+ *  must never contain them. Exported so DatalinkHistory.tsx's
+ *  `isTelexRequest` (the read-side classification of the exact same
+ *  concept) shares this one list instead of hand-copying it — see
+ *  v0.20.x QS fix. */
+export const REQUEST_TOKENS = ["CLR", "REQ", "PDC", "PREDEP", "REQUEST"];
 
 /** GOLD downlink ids for the standard answers (elements_data.rs). */
 const WILCO = "DM0";

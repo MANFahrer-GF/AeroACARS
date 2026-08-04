@@ -218,15 +218,29 @@ impl DiscordPresenceManager {
     /// Idempotent — wenn die ID sich aendert (selten), schliessen wir die
     /// aktuelle Pipe und der naechste enable() oeffnet eine neue.
     pub async fn set_app_id(self: &Arc<Self>, app_id: String) {
-        let mut inner = self.inner.lock().await;
-        if inner.app_id == app_id {
-            return;
-        }
-        inner.app_id = app_id.clone();
-        inner.state.client_id = app_id;
-        // Bestehende Verbindung passt zur alten ID — wegwerfen
-        if let Some(mut c) = inner.client.take() {
-            let _ = c.close();
+        // v0.20.x QS fix: `close()` is synchronous pipe I/O — the same
+        // class of bug already fixed at the other three call sites
+        // (enable/connect, disable, the heartbeat reconnect), just missed
+        // here. Take the client out of the lock scope first (state is
+        // fully updated by the time the lock is dropped), then run the
+        // blocking cleanup off the async executor so a stalled Discord
+        // pipe can't hold up every other command sharing this lock.
+        let stale_client = {
+            let mut inner = self.inner.lock().await;
+            if inner.app_id == app_id {
+                return;
+            }
+            inner.app_id = app_id.clone();
+            inner.state.client_id = app_id;
+            // Bestehende Verbindung passt zur alten ID — wegwerfen
+            inner.client.take()
+        };
+        if let Some(mut c) = stale_client {
+            tokio::task::spawn_blocking(move || {
+                let _ = c.close();
+            })
+            .await
+            .ok();
         }
     }
 

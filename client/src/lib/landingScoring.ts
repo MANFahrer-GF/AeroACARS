@@ -34,6 +34,14 @@ export interface SubScore {
 // beim gleichen deutschen Text.
 
 export const RATIONALE_LABELS: Record<string, string> = {
+  // v0.20.x QS fix: possible_float/firm_positive_touchdown were added to
+  // the real scoring ladder (sub_landing_rate's target-corridor rework)
+  // but never added here — this file's own header comment demands they
+  // stay 1:1 with the aeroacars-live webapp mirror, which renders
+  // straight from this table with no i18next fallback. Text mirrors
+  // locales/de/common.json's landing.rat.*/landing.tip.* keys verbatim.
+  possible_float: "Sehr weich aufgesetzt — mögliches langes Abfangen",
+  firm_positive_touchdown: "Fest, positiv aufgesetzt",
   smooth_touchdown: "Butterweich aufgesetzt",
   firm_but_clean: "Feste, aber saubere Landung",
   above_target: "Etwas härter als ideal",
@@ -68,6 +76,10 @@ export const RATIONALE_LABELS: Record<string, string> = {
 };
 
 export const TIP_LABELS: Record<string, string> = {
+  possible_float:
+    "Sehr sanft — das deutet auf ein langes Abfangen hin, was Bodenkontakt, Spoiler/Autobrake und damit auch den Bremsweg verzögert. Etwas entschlossener aufsetzen (Ziel 90–250 fpm).",
+  firm_positive_touchdown:
+    "Genau richtig — fest und positiv aufgesetzt, ohne zu hart. So sollen Airliner-Landungen aussehen.",
   smooth_touchdown: "Genau so — leichter Flare zur richtigen Zeit, sanfte Reduzierung der Sinkrate kurz vor TD.",
   firm_but_clean: "Solide. Falls ruhiger gewünscht: 1-2 Sekunden früher mit dem Flare beginnen.",
   above_target: "Mehr Flare einleiten und Schubreduktion etwas später timen — nicht aufdrücken.",

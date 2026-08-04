@@ -97,6 +97,17 @@ const FLIGHT_STATUS_TICK: std::time::Duration = std::time::Duration::from_secs(1
 /// Event name used for the periodic `flight_status` push frame.
 pub const FLIGHT_STATUS_EVENT: &str = "flight_status";
 
+/// v0.20.x QS fix: sent on the shared event bus when a pairing is revoked
+/// ([`remote_server_revoke_pairing`]). `handle_socket` only checks
+/// `verify_token` ONCE, at the initial upgrade — rotating the token alone
+/// only blocks NEW connections, it does nothing to a session that's
+/// already open. This event tells every currently-connected socket (there
+/// is only ever one valid token at a time, so every open session is
+/// impacted by a rotation) to close itself immediately, so a revoked
+/// device actually stops receiving live data instead of streaming
+/// indefinitely until it happens to disconnect on its own.
+pub const PAIRING_REVOKED_EVENT: &str = "pairing_revoked";
+
 // ----------------------------------------------------------------------
 // Settings persistence (port + on/off toggle)
 // ----------------------------------------------------------------------
@@ -713,6 +724,14 @@ pub async fn remote_server_set_port(
 /// the very next request — no restart required. Any device wanting
 /// access again must re-pair with the CURRENT pairing PIN; the PIN
 /// itself is untouched by this call.
+///
+/// v0.20.x QS fix: rotating the token alone left an already-open WS
+/// session (the channel actually streaming live flight data) completely
+/// unaffected — `handle_socket` never re-checks `verify_token` after its
+/// initial upgrade. Now also broadcasts [`PAIRING_REVOKED_EVENT`] on the
+/// shared event bus, which every open socket treats as an immediate
+/// close (see `events::handle_socket`), so a revoked device actually
+/// stops receiving data instead of streaming until it disconnects itself.
 #[tauri::command]
 pub async fn remote_server_revoke_pairing(
     app: AppHandle,
@@ -722,6 +741,9 @@ pub async fn remote_server_revoke_pairing(
     match guard.as_ref() {
         Some(h) => {
             h.auth.rotate_token(TOKEN_ACCOUNT);
+            state
+                .remote_events
+                .send(RemoteEvent::new(PAIRING_REVOKED_EVENT, serde_json::json!({})));
             let status = build_status(true, h.port, Some(&h.auth));
             drop(guard);
             Ok(status)

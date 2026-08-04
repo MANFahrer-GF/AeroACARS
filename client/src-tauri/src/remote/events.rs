@@ -66,8 +66,16 @@ pub async fn handle_socket(
             evt = events.recv() => {
                 match evt {
                     Ok(RemoteEvent { event, payload }) => {
+                        // v0.20.x QS fix: a revoked pairing must close THIS
+                        // socket right away — we only ever check the bearer
+                        // token once, at the initial upgrade, so nothing
+                        // else would notice the token changed. Best-effort
+                        // notify the client (ignore send failure) then
+                        // close unconditionally.
+                        let is_revoked = should_close_on_broadcast_event(&event);
                         let body = payload.to_string();
-                        if send_event(&mut socket, &event, &body).await.is_err() {
+                        let sent = send_event(&mut socket, &event, &body).await;
+                        if is_revoked || sent.is_err() {
                             break;
                         }
                     }
@@ -83,6 +91,14 @@ pub async fn handle_socket(
             }
         }
     }
+}
+
+/// Whether receiving this broadcast event should close the socket right
+/// away, instead of just forwarding it as a normal push frame. Pulled out
+/// as a pure function so the decision is unit-testable without a live
+/// `WebSocket` (which needs a real HTTP upgrade to construct).
+fn should_close_on_broadcast_event(event: &str) -> bool {
+    event == crate::remote::PAIRING_REVOKED_EVENT
 }
 
 /// Send one `{"event":name,"payload":<raw json>}` frame. `payload_json`
@@ -128,6 +144,21 @@ mod tests {
         assert_eq!(escape_json_string("a\"b"), "a\\\"b");
         assert_eq!(escape_json_string("a\\b"), "a\\\\b");
         assert_eq!(escape_json_string("a\nb"), "a\\nb");
+    }
+
+    #[test]
+    fn pairing_revoked_event_closes_the_socket() {
+        assert!(should_close_on_broadcast_event(
+            crate::remote::PAIRING_REVOKED_EVENT
+        ));
+    }
+
+    #[test]
+    fn ordinary_push_events_do_not_close_the_socket() {
+        assert!(!should_close_on_broadcast_event("flight_status"));
+        assert!(!should_close_on_broadcast_event("integrity-flag"));
+        assert!(!should_close_on_broadcast_event("pirep_auto_filed"));
+        assert!(!should_close_on_broadcast_event("pirep_cancelled_remotely"));
     }
 
     #[test]

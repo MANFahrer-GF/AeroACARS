@@ -1275,12 +1275,20 @@ impl RedirectOrigin {
 /// still be "same host" and get followed, sending X-API-Key in cleartext
 /// (a classic scheme-downgrade attack); (b) a redirect to a different port
 /// on the same host — a completely different service — would also be
-/// followed. Both are now rejected. The one same-host cross-"port" case we
+/// followed. Both are now rejected. The one same-host cross-scheme case we
 /// deliberately keep allowing is an http -> https *upgrade* (some phpVMS/
-/// load-balancer setups issue exactly this): scheme differs so the port
-/// check is skipped for that case, since the standard http/https ports
-/// legitimately differ (80 vs 443) and upgrading to https can only make
-/// the request more secure, never less.
+/// load-balancer setups issue exactly this) — but ONLY to the standard
+/// https port (443), not an arbitrary one.
+///
+/// v0.20.x QS fix (follow-up): the first cut of this upgrade exception
+/// skipped the port check ENTIRELY whenever schemes differed, so an
+/// upgrade redirect to `https://<host>:<any-port>` was followed — not just
+/// the standard port. Since the only case reaching this branch is a
+/// plaintext `http://` connection (and `Connection::new` only ever allows
+/// that for loopback/localhost), this narrowed the exposure to an
+/// unexpected local service on an unexpected port, rather than a routable
+/// host — but it was still broader than the "some phpVMS/load-balancer
+/// setups issue a same-host https upgrade" case this exception exists for.
 fn same_host_redirect_decision(
     target: Option<&RedirectOrigin>,
     allowed: &RedirectOrigin,
@@ -1295,10 +1303,18 @@ fn same_host_redirect_decision(
     if target.host != allowed.host {
         return RedirectDecision::Stop;
     }
-    if allowed.scheme == "https" && target.scheme != "https" {
-        return RedirectDecision::Stop;
-    }
-    if target.scheme == allowed.scheme && target.port != allowed.port {
+    if target.scheme == allowed.scheme {
+        if target.port != allowed.port {
+            return RedirectDecision::Stop;
+        }
+    } else if allowed.scheme == "http" && target.scheme == "https" {
+        // The upgrade exception — standard https port only.
+        if target.port != Some(443) {
+            return RedirectDecision::Stop;
+        }
+    } else {
+        // Any other scheme mismatch (an https -> http downgrade, or
+        // anything else) is rejected.
         return RedirectDecision::Stop;
     }
     RedirectDecision::Follow
@@ -2652,6 +2668,20 @@ mod tests {
                 0
             ),
             RedirectDecision::Follow
+        );
+    }
+
+    #[test]
+    fn same_host_http_to_https_upgrade_to_a_non_standard_port_is_stopped() {
+        // v0.20.x QS fix: the upgrade exception must only cover the
+        // standard https port — not skip the port check outright.
+        assert_eq!(
+            same_host_redirect_decision(
+                Some(&origin("https://localhost:8443/api")),
+                &origin("http://localhost/api"),
+                0
+            ),
+            RedirectDecision::Stop
         );
     }
 
