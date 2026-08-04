@@ -209,8 +209,13 @@ pub async fn discord_rpc_push_state(args: PushStateArgs) -> Result<PushStateResu
         start_unix: args.start_unix,
         profile_url: args.profile_url,
     };
-    match m.set_flight(input).await {
-        Ok(_) => Ok(PushStateResult { pushed: true }),
+    // v0.19.x FIX: was `m.set_flight(input)` unconditionally — an
+    // uncapped full Discord IPC push on every call from this ~2Hz
+    // frontend loop. `push_state` reuses the existing activity for
+    // routine altitude-only refreshes (throttled) and only does a full
+    // push for a genuine new/changed flight identity.
+    match m.push_state(input).await {
+        Ok(()) => Ok(PushStateResult { pushed: true }),
         Err(e) => Err(e.to_string()),
     }
 }

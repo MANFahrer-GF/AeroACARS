@@ -22,7 +22,7 @@
 pub mod format;
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -175,7 +175,21 @@ struct Inner {
     /// Runtime-konfigurierte App-ID vom VPS-Public-Endpoint. Leerer String
     /// = vom VA-Owner noch nicht gepflegt → enable() scheitert mit Hinweis.
     app_id: String,
+    /// v0.19.x FIX: wall-clock throttle for altitude-only pushes (see
+    /// `ALTITUDE_PUSH_MIN_INTERVAL`). `update_phase`'s own "did anything
+    /// change" dedup provides ZERO real rate-limiting during climb/descent
+    /// — the frontend reports altitude rounded to the nearest FOOT, which
+    /// changes on almost every tick whenever the aircraft isn't level.
+    last_altitude_only_push_at: Option<Instant>,
 }
+
+/// v0.19.x FIX: Discord's documented limit is 5 presence updates per 20s
+/// (= one per 4s minimum). The live push path used to call `set_flight`
+/// unconditionally at ~2Hz — ~8x over that limit. Altitude-only refreshes
+/// (the ~2Hz stream) are throttled to this interval; phase transitions and
+/// genuine identity changes (new flight, divert, aircraft swap) are rare
+/// by nature and always push immediately regardless of this throttle.
+const ALTITUDE_PUSH_MIN_INTERVAL: Duration = Duration::from_secs(15);
 
 impl DiscordPresenceManager {
     pub fn new(settings: DiscordPresenceSettings) -> Arc<Self> {
@@ -194,6 +208,7 @@ impl DiscordPresenceManager {
                 sim_lost: false,
                 heartbeat_handle: None,
                 app_id: String::new(),
+                last_altitude_only_push_at: None,
             }),
         })
     }
@@ -371,17 +386,28 @@ impl DiscordPresenceManager {
         {
             let mut inner = self.inner.lock().await;
             inner.last_input = Some(input);
+            // A fresh flight identity starts its own throttle window —
+            // don't let a stale timestamp from a previous flight/session
+            // delay this flight's first altitude-only refresh.
+            inner.last_altitude_only_push_at = None;
         }
         self.push_current_activity().await
     }
 
     /// Nur Phase + Altitude haben sich geaendert (alter PresenceInput recyceln).
+    ///
+    /// v0.19.x FIX: a phase change always pushes immediately (rare, always
+    /// meaningful to viewers). An altitude-only change is throttled to
+    /// `ALTITUDE_PUSH_MIN_INTERVAL` — the stored state still updates every
+    /// call, so the NEXT allowed push (whether from throttle expiry or a
+    /// phase change) always carries the latest altitude; only the Discord
+    /// IPC call itself is rate-limited.
     pub async fn update_phase(
         self: &Arc<Self>,
         phase: FlightPhase,
         altitude_ft: Option<i32>,
     ) -> Result<()> {
-        {
+        let should_push = {
             let mut inner = self.inner.lock().await;
             let Some(last) = inner.last_input.as_mut() else {
                 return Ok(()); // kein aktiver Flug
@@ -389,10 +415,57 @@ impl DiscordPresenceManager {
             if last.phase == phase && last.altitude_ft == altitude_ft {
                 return Ok(()); // nichts geaendert
             }
+            let phase_changed = last.phase != phase;
             last.phase = phase;
             last.altitude_ft = altitude_ft;
+            if phase_changed {
+                true
+            } else {
+                let now = Instant::now();
+                let due = inner
+                    .last_altitude_only_push_at
+                    .map(|t| now.duration_since(t) >= ALTITUDE_PUSH_MIN_INTERVAL)
+                    .unwrap_or(true);
+                if due {
+                    inner.last_altitude_only_push_at = Some(now);
+                }
+                due
+            }
+        };
+        if !should_push {
+            return Ok(());
         }
         self.push_current_activity().await
+    }
+
+    /// v0.19.x FIX: smart entry point for the frontend's live push loop
+    /// (`discord_rpc_push_state`, driven by the phase-FSM at up to ~2Hz).
+    /// The old wiring called `set_flight` — a full, unconditional Discord
+    /// IPC push — on EVERY call, ~8x over Discord's documented 5-updates/
+    /// 20s rate limit, because `update_phase`'s dedup/throttle logic had
+    /// zero real callers. Reuses the existing Discord activity (routing
+    /// through `update_phase`, which throttles altitude-only refreshes)
+    /// whenever the core flight identity is unchanged from the last push,
+    /// and only does a full push when it actually changed: first call this
+    /// flight, a divert, an aircraft/sim swap, or a fresh profile_url.
+    pub async fn push_state(self: &Arc<Self>, input: PresenceInput) -> Result<()> {
+        let same_core = {
+            let inner = self.inner.lock().await;
+            inner.last_input.as_ref().is_some_and(|last| {
+                last.callsign == input.callsign
+                    && last.dep_icao == input.dep_icao
+                    && last.arr_icao == input.arr_icao
+                    && last.aircraft == input.aircraft
+                    && last.sim == input.sim
+                    && last.start_unix == input.start_unix
+                    && last.profile_url == input.profile_url
+            })
+        };
+        if same_core {
+            self.update_phase(input.phase, input.altitude_ft).await
+        } else {
+            self.set_flight(input).await
+        }
     }
 
     /// MQTT/Sim Disconnect → "⚠ Sim getrennt"-Suffix in der State-Zeile (LE8).
@@ -522,5 +595,133 @@ impl DiscordPresenceManager {
                 Err(anyhow!("{e:?}"))
             }
         }
+    }
+}
+
+// v0.19.x FIX: rate-limiting for the live push path. `inner.client` is
+// always `None` in these tests (no real Discord IPC connection), which
+// makes `push_current_activity` a clean no-op per its own doc comment —
+// exactly what lets these tests observe the throttle/routing STATE
+// (last_altitude_only_push_at, last_input) without needing to mock IPC.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input(callsign: &str, phase: FlightPhase, altitude_ft: i32) -> PresenceInput {
+        PresenceInput {
+            callsign: callsign.to_string(),
+            dep_icao: "EDDF".to_string(),
+            arr_icao: "EDDM".to_string(),
+            aircraft: "A320".to_string(),
+            altitude_ft: Some(altitude_ft),
+            phase,
+            sim: SimKind::Msfs2024,
+            start_unix: 1_700_000_000,
+            profile_url: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn altitude_only_pushes_are_throttled() {
+        let m = DiscordPresenceManager::new(DiscordPresenceSettings::default());
+        m.set_flight(input("TKJ1224", FlightPhase::Climb, 1000))
+            .await
+            .unwrap();
+
+        m.update_phase(FlightPhase::Climb, Some(1050)).await.unwrap();
+        let first_push_at = m.inner.lock().await.last_altitude_only_push_at;
+        assert!(
+            first_push_at.is_some(),
+            "the first altitude-only push after set_flight must be allowed"
+        );
+
+        // Rapid follow-up altitude change — must be throttled (real-world
+        // equivalent: the next tick, ~0.5-1s later).
+        m.update_phase(FlightPhase::Climb, Some(1100)).await.unwrap();
+        let second_push_at = m.inner.lock().await.last_altitude_only_push_at;
+        assert_eq!(
+            first_push_at, second_push_at,
+            "a rapid follow-up altitude-only change must be throttled, not pushed"
+        );
+
+        // The STORED altitude must still be the latest value even though
+        // it wasn't pushed to Discord yet — only the IPC call is throttled.
+        let stored_alt = m.inner.lock().await.last_input.as_ref().unwrap().altitude_ft;
+        assert_eq!(stored_alt, Some(1100));
+    }
+
+    #[tokio::test]
+    async fn phase_change_always_pushes_immediately_even_within_the_throttle_window() {
+        let m = DiscordPresenceManager::new(DiscordPresenceSettings::default());
+        m.set_flight(input("TKJ1224", FlightPhase::Climb, 1000))
+            .await
+            .unwrap();
+        m.update_phase(FlightPhase::Climb, Some(1050)).await.unwrap(); // consumes the throttle slot
+        let throttle_after_altitude = m.inner.lock().await.last_altitude_only_push_at;
+
+        // Immediately — well within the throttle window — transition phase.
+        m.update_phase(FlightPhase::Cruise, Some(35000)).await.unwrap();
+        let phase_now = m.inner.lock().await.last_input.as_ref().unwrap().phase;
+        assert_eq!(
+            phase_now,
+            FlightPhase::Cruise,
+            "a phase change must apply immediately, never throttled"
+        );
+        // A phase-change push is a different code path from the altitude
+        // throttle and must not touch its timestamp.
+        let throttle_after_phase = m.inner.lock().await.last_altitude_only_push_at;
+        assert_eq!(throttle_after_altitude, throttle_after_phase);
+    }
+
+    #[tokio::test]
+    async fn push_state_routes_through_update_phase_when_the_core_identity_is_unchanged() {
+        let m = DiscordPresenceManager::new(DiscordPresenceSettings::default());
+        m.push_state(input("TKJ1224", FlightPhase::Climb, 1000))
+            .await
+            .unwrap();
+        assert!(
+            m.inner.lock().await.last_altitude_only_push_at.is_none(),
+            "the first call (set_flight path) must not touch the altitude throttle"
+        );
+
+        m.push_state(input("TKJ1224", FlightPhase::Climb, 1050))
+            .await
+            .unwrap();
+        let after_first_altitude = m.inner.lock().await.last_altitude_only_push_at;
+        assert!(after_first_altitude.is_some());
+
+        m.push_state(input("TKJ1224", FlightPhase::Climb, 1100))
+            .await
+            .unwrap();
+        let after_second_altitude = m.inner.lock().await.last_altitude_only_push_at;
+        assert_eq!(
+            after_first_altitude, after_second_altitude,
+            "a rapid same-core-identity altitude push must be throttled via update_phase"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_state_does_a_full_push_when_the_core_identity_changes() {
+        let m = DiscordPresenceManager::new(DiscordPresenceSettings::default());
+        m.push_state(input("TKJ1224", FlightPhase::Climb, 1000))
+            .await
+            .unwrap();
+        m.update_phase(FlightPhase::Climb, Some(1050)).await.unwrap(); // consume the throttle slot
+        assert!(m.inner.lock().await.last_altitude_only_push_at.is_some());
+
+        // A different arr_icao (divert / effectively a new flight) must go
+        // through set_flight — NOT the throttled update_phase path.
+        let mut divert = input("TKJ1224", FlightPhase::Climb, 1200);
+        divert.arr_icao = "EDDL".to_string();
+        m.push_state(divert).await.unwrap();
+
+        assert!(
+            m.inner.lock().await.last_altitude_only_push_at.is_none(),
+            "a core-identity change must route through set_flight, which resets the throttle"
+        );
+        assert_eq!(
+            m.inner.lock().await.last_input.as_ref().unwrap().arr_icao,
+            "EDDL"
+        );
     }
 }
