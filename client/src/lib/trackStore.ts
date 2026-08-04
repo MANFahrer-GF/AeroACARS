@@ -15,6 +15,16 @@ const store = new Map<string, [number, number][]>();
 const hydrated = new Set<string>();
 
 const LS_PREFIX = "aa-track-";
+const INDEX_KEY = "aa-track-index";
+/**
+ * v0.19.x FIX: ohne dies wächst `localStorage` unbegrenzt — ein Key pro
+ * jemals geflogenem PIREP (bis zu ~220 KB bei 5000 Punkten), NIE geräumt.
+ * Nach genug langen Flügen (Größenordnung 20-45) läuft das Quota voll; der
+ * NÄCHSTE ungeschützte `localStorage.setItem`-Call anderswo (z.B. Theme)
+ * wirft dann eine Exception. Hält höchstens die letzten N Flüge im Speicher,
+ * räumt ältere beim Anlegen eines neuen automatisch weg.
+ */
+const MAX_PERSISTED_FLIGHTS = 20;
 // PARITÄT: Die Ausdünn-Schwellen + die Kappe werden 1:1 im Rust-Streamer
 // gespiegelt (record_track_point / MAX_TRACK_POINTS in
 // client/src-tauri/src/lib.rs). Das Backend ist die Quelle der geflogenen
@@ -35,6 +45,33 @@ const AIR_MIN_DELTA_DEG = 0.002;
  * Luft bleibt es grob, damit Langstrecken die Linie nicht überladen.
  */
 const GROUND_MIN_DELTA_DEG = 0.00015;
+
+/**
+ * Merkt vor, dass `pirepId` gerade persistiert wird, und räumt die
+ * ältesten Flüge weg, sobald mehr als `MAX_PERSISTED_FLIGHTS` im Index
+ * stehen. Best-effort wie der Rest dieser Datei — ein voller/fehlender
+ * localStorage lässt die App einfach ohne Bereinigung weiterlaufen statt
+ * zu werfen.
+ */
+function evictOldFlights(pirepId: string): void {
+  try {
+    const raw = localStorage.getItem(INDEX_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    const idx: string[] = Array.isArray(parsed)
+      ? parsed.filter((x): x is string => typeof x === "string")
+      : [];
+    const next = idx.filter((id) => id !== pirepId);
+    next.push(pirepId);
+    while (next.length > MAX_PERSISTED_FLIGHTS) {
+      const evicted = next.shift();
+      if (evicted) localStorage.removeItem(LS_PREFIX + evicted);
+    }
+    localStorage.setItem(INDEX_KEY, JSON.stringify(next));
+  } catch {
+    /* localStorage voll/nicht verfügbar → Eviction fällt diesmal aus,
+       kein Absturz. */
+  }
+}
 
 function persist(pirepId: string, arr: [number, number][]): void {
   try {
@@ -70,8 +107,10 @@ function ensure(pirepId: string): [number, number][] {
   if (existing) return existing;
   // Erster Zugriff in dieser App-Session → ggf. aus localStorage laden
   // (übersteht App-Neustart mitten im Flug).
-  const arr = hydrated.has(pirepId) ? [] : loadFromLs(pirepId);
+  const isNewThisSession = !hydrated.has(pirepId);
+  const arr = isNewThisSession ? loadFromLs(pirepId) : [];
   hydrated.add(pirepId);
+  if (isNewThisSession) evictOldFlights(pirepId);
   store.set(pirepId, arr);
   return arr;
 }
@@ -138,6 +177,7 @@ export function setTrack(pirepId: string, points: [number, number][]): void {
   // Ab jetzt gilt der Store als „hydratisiert" für diesen PIREP — ein
   // späteres getTrack soll NICHT mehr aus localStorage nachladen (das Backend
   // ist die Quelle der Wahrheit).
+  if (!hydrated.has(pirepId)) evictOldFlights(pirepId);
   hydrated.add(pirepId);
   store.set(pirepId, capped);
   persist(pirepId, capped);

@@ -128,4 +128,66 @@ describe("trackStore", () => {
       [7.5, 47.5],
     ]);
   });
+
+  // v0.19.x FIX: ohne Eviction wächst localStorage mit jedem jemals
+  // geflogenen PIREP unbegrenzt weiter, bis das Quota nach genug langen
+  // Flügen platzt — und der nächste ungeschützte localStorage-Call
+  // anderswo (Theme) dann wirft. Nur die letzten MAX_PERSISTED_FLIGHTS (20)
+  // Flüge dürfen im Speicher bleiben.
+  it("räumt localStorage-Einträge alter Flüge weg, wenn mehr als 20 verschiedene PIREPs persistiert wurden", async () => {
+    const { recordTrackPoint, getTrack } = await import("./trackStore");
+    for (let i = 0; i < 25; i++) {
+      recordTrackPoint(`OLD${i}`, i, i);
+    }
+    // Die ERSTEN 5 (0..4) müssen weg sein, die letzten 20 (5..24) bleiben.
+    for (let i = 0; i < 5; i++) {
+      expect(localStorage.getItem(`aa-track-OLD${i}`)).toBeNull();
+    }
+    for (let i = 5; i < 25; i++) {
+      expect(localStorage.getItem(`aa-track-OLD${i}`)).not.toBeNull();
+    }
+  });
+
+  it("Eviction zählt einen Flug nur einmal, auch bei vielen Punkten desselben PIREP", async () => {
+    const { recordTrackPoint } = await import("./trackStore");
+    // 30 Punkte für EIN EINZIGES PIREP dürfen nicht wie 30 verschiedene
+    // Flüge gezählt werden — sonst würde ein einzelner langer Flug sich
+    // selbst aus dem Index verdrängen.
+    for (let i = 0; i < 30; i++) {
+      recordTrackPoint("SAME", i * 0.01, i * 0.01);
+    }
+    expect(localStorage.getItem("aa-track-SAME")).not.toBeNull();
+  });
+
+  it("evictiert bei Überlauf den am längsten nicht angefassten Flug zuerst (LRU)", async () => {
+    const { recordTrackPoint } = await import("./trackStore");
+    // A ist der ÄLTESTE Eintrag (nie erneut angefasst) — wenn danach 20
+    // weitere neue PIREPs dazukommen (21 insgesamt, Cap = 20), muss genau
+    // A weichen, nicht irgendein beliebiger anderer Eintrag.
+    recordTrackPoint("A", 1, 1);
+    for (let i = 0; i < 20; i++) {
+      recordTrackPoint(`NEW${i}`, i, i);
+    }
+    expect(localStorage.getItem("aa-track-A")).toBeNull();
+    for (let i = 0; i < 20; i++) {
+      expect(localStorage.getItem(`aa-track-NEW${i}`)).not.toBeNull();
+    }
+  });
+
+  it("re-touchen eines bekannten Flugs verjüngt ihn im Eviction-Index", async () => {
+    const { recordTrackPoint } = await import("./trackStore");
+    recordTrackPoint("A", 1, 1);
+    for (let i = 0; i < 18; i++) {
+      recordTrackPoint(`MID${i}`, i, i); // 1(A) + 18 = 19, noch unter Cap 20
+    }
+    vi.resetModules();
+    const m2 = await import("./trackStore");
+    // A in einer neuen Session erneut anfassen → rückt ans Ende der
+    // Eviction-Reihenfolge, genau wie jeder frisch berührte Eintrag.
+    m2.recordTrackPoint("A", 2, 2);
+    // Jetzt genau EINEN weiteren neuen Flug hinzufügen (1(A)+18(MID)+1(NEW)
+    // = 20, exakt am Cap) — niemand darf weichen, A eingeschlossen.
+    m2.recordTrackPoint("NEW", 99, 99);
+    expect(localStorage.getItem("aa-track-A")).not.toBeNull();
+  });
 });
