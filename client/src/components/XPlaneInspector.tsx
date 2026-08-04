@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { invoke } from "../lib/ipc";
+import { useTranslation } from "react-i18next";
+import { invoke, formatIpcError } from "../lib/ipc";
 
 interface XPlaneDatarefSample {
   index: number;
@@ -21,6 +22,7 @@ interface XPlaneDatarefSample {
  * snapshot from a Mutex) so the cadence has no perf impact.
  */
 export function XPlaneInspector() {
+  const { t } = useTranslation();
   const [items, setItems] = useState<XPlaneDatarefSample[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,7 +36,7 @@ export function XPlaneInspector() {
           setError(null);
         }
       } catch (err) {
-        if (!cancelled) setError(String(err));
+        if (!cancelled) setError(formatIpcError(err));
       }
     }
     void poll();
@@ -51,18 +53,18 @@ export function XPlaneInspector() {
   return (
     <div className="inspector">
       <header className="inspector__header">
-        <h4>X-Plane DataRefs</h4>
+        <h4>{t("xplane_inspector.title")}</h4>
         <span className="inspector__hint">
-          {live} live · {missing} missing of {items.length}
+          {t("xplane_inspector.status", { live, missing, total: items.length })}
         </span>
       </header>
       {error && <p className="inspector__error">{error}</p>}
       <table className="inspector__table">
         <thead>
           <tr>
-            <th>#</th>
-            <th>DataRef</th>
-            <th style={{ textAlign: "right" }}>Value</th>
+            <th>{t("xplane_inspector.col_index")}</th>
+            <th>{t("xplane_inspector.col_dataref")}</th>
+            <th style={{ textAlign: "right" }}>{t("xplane_inspector.col_value")}</th>
           </tr>
         </thead>
         <tbody>

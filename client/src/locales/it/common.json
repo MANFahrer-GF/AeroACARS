@@ -1378,6 +1378,13 @@
     "col_value": "Valore",
     "col_actions": "Azioni"
   },
+  "xplane_inspector": {
+    "title": "X-Plane DataRefs",
+    "status": "{{live}} live · {{missing}} mancanti su {{total}}",
+    "col_index": "#",
+    "col_dataref": "DataRef",
+    "col_value": "Valore"
+  },
   "integrity": {
     "title_critical": "Problema di integrità dei dati rilevato",
     "title_anomaly": "Anomalia dei dati",
