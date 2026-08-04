@@ -413,7 +413,18 @@ pub fn compute_scored_g(samples: &[TouchdownWindowSample], edge_at: DateTime<Utc
         }
     } else {
         // Kein brauchbares Post-Edge-Sample → definierter Fallback (LE8).
-        let raw = if raw_peak.is_finite() { raw_peak } else { 0.0 };
+        //
+        // v0.19.x FIX: dieser Zweig fiel bisher auf 0.0 g zurück, wenn
+        // AUCH kein roher In-Window-Peak existiert (z. B. `samples`
+        // komplett leer, oder alle Samples liegen vor `edge_at`, wie im
+        // Test `raw_fallback_when_no_window_samples` — dort wird das gar
+        // nicht geprüft, weshalb der Fehler unbemerkt blieb). 0.0 g heißt
+        // Schwerelosigkeit — physikalisch unmöglich bei Bodenkontakt und
+        // fällt bei `sub_g_force` unterhalb JEDER Schwelle, was fälschlich
+        // als "besonders sanfte" Landung gewertet würde statt als "keine
+        // Daten". 1.0 g (Standlast/Ruhewert) ist der einzige physikalisch
+        // ehrliche "wir wissen es nicht"-Default.
+        let raw = if raw_peak.is_finite() { raw_peak } else { 1.0 };
         ScoredG { scored_g: raw, raw_peak: raw, method: ScoredGMethod::RawFallback }
     }
 }
@@ -694,13 +705,32 @@ mod scored_g_tests {
 
     #[test]
     fn raw_fallback_when_no_window_samples() {
-        // Only pre-edge samples → no post-edge data → RawFallback.
+        // Only pre-edge samples → no post-edge data → RawFallback. None of
+        // those pre-edge samples count toward `raw_peak` either (it only
+        // scans in-window samples), so this is the exact "nothing usable
+        // at all" case the 0.0 g bug hid in — asserting only `method`
+        // here previously let a scored_g of 0.0 (impossible: weightless
+        // on the ground) slip through unnoticed.
         let edge = Utc::now();
         let v: Vec<_> = (1..10)
             .map(|i| s(edge - chrono::Duration::milliseconds(i * 22), 1.0))
             .collect();
         let r = compute_scored_g(&v, edge);
         assert_eq!(r.method, ScoredGMethod::RawFallback);
+        assert_eq!(r.scored_g, 1.0, "must fall back to nominal 1g, not the impossible 0.0g");
+        assert_eq!(r.raw_peak, 1.0);
+    }
+
+    #[test]
+    fn raw_fallback_on_totally_empty_input_is_not_impossible_zero_g() {
+        // v0.19.x FIX: the exact bug — an empty sample slice used to
+        // score 0.0 g (weightless), which sub_g_force would misread as
+        // "impossibly smooth" instead of "no data at all".
+        let edge = Utc::now();
+        let r = compute_scored_g(&[], edge);
+        assert_eq!(r.method, ScoredGMethod::RawFallback);
+        assert_eq!(r.scored_g, 1.0);
+        assert_eq!(r.raw_peak, 1.0);
     }
 
     #[test]
