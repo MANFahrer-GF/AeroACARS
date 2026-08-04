@@ -2015,6 +2015,7 @@
     "squawk_take": "Imposta squawk",
     "squawk_taken": "Squawk {{squawk}} impostato",
     "answered_status": "{{answer}} inviato {{time}}",
+    "superseded_status": "Superato da un trasferimento — la stazione è cambiata prima della tua risposta. Non più possibile rispondere.",
     "original_label": "TESTO ORIGINALE",
     "original_collapse": "comprimi",
     "original_expand": "espandi",

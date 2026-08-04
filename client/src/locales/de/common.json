@@ -2015,6 +2015,7 @@
     "squawk_take": "Squawk übernehmen",
     "squawk_taken": "Squawk {{squawk}} übernommen",
     "answered_status": "{{answer}} gesendet {{time}}",
+    "superseded_status": "Überholt durch Übergabe — die Stelle hat gewechselt, bevor du geantwortet hast. Keine Antwort mehr möglich.",
     "original_label": "ORIGINALTEXT",
     "original_collapse": "einklappen",
     "original_expand": "aufklappen",

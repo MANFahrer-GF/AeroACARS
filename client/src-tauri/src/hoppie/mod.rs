@@ -748,6 +748,23 @@ async fn send_cpdlc_element(
     let filled_text = resolved.filled_text.clone();
     let (message, min) = {
         let mut t = handle.thread.lock().expect("hoppie thread mutex");
+        // v0.19.x FIX: a handover supersedes any uplink the pilot hadn't
+        // answered yet (see `CpdlcThread::mark_logged_off`). Without this
+        // check a late WILCO/UNABLE would still go out — addressed to
+        // `to_station`, which by send time is already the NEW centre —
+        // silently misdirecting a reply the old controller will never
+        // see and the new one can't make sense of (its MRN references a
+        // MIN from a numbering space that isn't theirs). Block it here,
+        // in the one function every downlink funnels through, rather
+        // than relying solely on the UI disabling the button.
+        if let Some(m) = mrn {
+            if t.is_superseded_uplink(m) {
+                return Err(UiError::new(
+                    "hoppie_superseded_uplink",
+                    "Diese Anweisung ist nicht mehr gültig — die Stelle hat vor deiner Antwort übergeben.",
+                ));
+            }
+        }
         let (message, _event) = t.record_sent(
             spec.response,
             mrn,
@@ -1215,10 +1232,12 @@ pub async fn hoppie_send_pdc_request(
 /// One entry in the message history the CPDLC tab renders — a merge of
 /// plain telex/PDC traffic (`kind: "telex"`) and MIN/MRN-threaded CPDLC
 /// messages (`kind: "cpdlc"`), sorted chronologically. The `min`/`mrn`/
-/// `response`/`element_id`/`closed` fields are only ever populated for
-/// `"cpdlc"` entries — the frontend uses `response` to decide which
-/// (if any) reply buttons to show, and `closed` to grey out an entry
-/// that already got one.
+/// `response`/`element_id`/`closed`/`superseded` fields are only ever
+/// populated for `"cpdlc"` entries — the frontend uses `response` to
+/// decide which (if any) reply buttons to show, `closed` to grey out an
+/// entry that already got one, and `superseded` to grey out (and refuse
+/// reply buttons for) an uplink orphaned by a handover before the pilot
+/// answered it — see `CpdlcThread::mark_logged_off`.
 #[derive(Debug, Clone, Serialize)]
 pub struct ThreadEntryDto {
     pub kind: &'static str,
@@ -1233,6 +1252,12 @@ pub struct ThreadEntryDto {
     /// Already deferred with STANDBY — the UI hides the STANDBY key so
     /// the same instruction can't be pushed back repeatedly.
     pub deferred: Option<bool>,
+    /// This uplink was still open when a handover happened — the
+    /// controller who sent it is no longer talking to the aircraft.
+    /// The UI must grey it out and hide/disable its reply buttons; the
+    /// backend also refuses to send a reply for it (see
+    /// `send_cpdlc_element`) as defense-in-depth.
+    pub superseded: Option<bool>,
 }
 
 #[tauri::command]
@@ -1262,6 +1287,7 @@ pub async fn hoppie_get_thread(
             element_id: None,
             closed: None,
             deferred: None,
+            superseded: None,
         }));
     }
     {
@@ -1299,6 +1325,7 @@ pub async fn hoppie_get_thread(
                 element_id,
                 closed: Some(e.closed),
                 deferred: Some(e.deferred),
+                superseded: Some(e.superseded),
             }
         }));
     }

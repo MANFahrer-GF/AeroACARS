@@ -24,7 +24,19 @@ function isTelexClearance(text: string): boolean {
 }
 
 function isCpdlcOpenUplink(m: ThreadEntry): boolean {
-  return m.kind === "cpdlc" && m.direction === "received" && !m.closed && REPLYABLE.includes(m.response ?? "");
+  // v0.19.x FIX: a handover can leave an uplink neither closed (never
+  // actually answered) NOR reply-worthy any more (`superseded`, see
+  // `CpdlcThread::mark_logged_off`) — the station that sent it isn't
+  // talking to the aircraft any more. Must be excluded here so it
+  // doesn't become "the" answer-row uplink and offer WILCO/UNABLE
+  // buttons whose reply the backend would refuse to send anyway.
+  return (
+    m.kind === "cpdlc" &&
+    m.direction === "received" &&
+    !m.closed &&
+    !m.superseded &&
+    REPLYABLE.includes(m.response ?? "")
+  );
 }
 
 /** Across the WHOLE unified thread, the single most recent uplink still
@@ -277,7 +289,7 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
     return (
       <article
         key={key}
-        className={`datalink-uplink ${freshUplinkAt.has(m.at) ? "datalink-uplink--fresh" : ""}`}
+        className={`datalink-uplink ${freshUplinkAt.has(m.at) ? "datalink-uplink--fresh" : ""} ${m.superseded ? "datalink-uplink--superseded" : ""}`}
         aria-label={`${t("cpdlc.thread_received")} ${station ?? ""} ${formatUtcHms(m.at)}`}
       >
         <header className="datalink-uplink__head">
@@ -335,6 +347,10 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
           <p className="datalink-uplink__answered">
             {t("cpdlc.answered_status", { answer: reply.text.trim(), time: formatUtcHms(reply.at) })}
           </p>
+        )}
+
+        {m.kind === "cpdlc" && m.superseded && (
+          <p className="datalink-uplink__superseded">{t("cpdlc.superseded_status")}</p>
         )}
 
         {parsed.recognized && (

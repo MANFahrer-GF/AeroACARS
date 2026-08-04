@@ -36,6 +36,12 @@ export interface ThreadEntry {
   closed: boolean | null;
   /** Already deferred with STANDBY — the key is then hidden. */
   deferred: boolean | null;
+  /** This uplink was still open when a handover happened — the station
+   *  that sent it is no longer talking to the aircraft. Must render as
+   *  greyed-out/inactive and hide its reply buttons: the backend also
+   *  refuses to send a reply for it, but the UI should never offer one
+   *  in the first place. */
+  superseded: boolean | null;
 }
 
 const POLL_MS = 15000;

@@ -2015,6 +2015,7 @@
     "squawk_take": "Take over squawk",
     "squawk_taken": "Squawk {{squawk}} taken",
     "answered_status": "{{answer}} sent {{time}}",
+    "superseded_status": "Superseded by handover — the station changed before you replied. No longer answerable.",
     "original_label": "ORIGINAL TEXT",
     "original_collapse": "collapse",
     "original_expand": "expand",

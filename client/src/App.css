@@ -10221,6 +10221,19 @@ input.datalink-block__input {
   animation: resume-fade-in 0.25s ease-out;
 }
 
+/* v0.19.x FIX: an uplink orphaned by a handover before the pilot
+   answered it — the accent border (which reads as "this needs you")
+   is deliberately muted to neutral so it doesn't compete with an
+   actually-actionable card above/below it. */
+.datalink-uplink--superseded {
+  border-color: var(--line);
+  opacity: 0.72;
+}
+.datalink-uplink--superseded .datalink-uplink__tag,
+.datalink-uplink--superseded .datalink-uplink__station {
+  color: var(--text-dim);
+}
+
 .datalink-uplink__head {
   display: flex;
   align-items: baseline;
@@ -10339,6 +10352,15 @@ input.datalink-block__input {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--sem-ok);
+}
+
+.datalink-uplink__superseded {
+  margin: 0;
+  padding: 11px 16px;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--sem-info);
 }
 
 .datalink-uplink__original {

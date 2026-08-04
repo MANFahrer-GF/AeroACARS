@@ -55,6 +55,7 @@ const PDC_SENT: ThreadEntry = {
   element_id: null,
   closed: null,
   deferred: null,
+  superseded: null,
 };
 
 // Shaped like hoppie-protocol/tests/fixtures/pdc_request_reply.txt, with
@@ -70,6 +71,7 @@ const PDC_REPLY: ThreadEntry = {
   element_id: null,
   closed: null,
   deferred: null,
+  superseded: null,
 };
 
 // Shaped like hoppie-protocol/tests/fixtures/cpdlc_direct_to_sequence.txt
@@ -85,6 +87,7 @@ const CPDLC_UPLINK_OPEN: ThreadEntry = {
   element_id: "UM_DIRECT",
   closed: false,
   deferred: false,
+  superseded: null,
 };
 
 function renderHistory(messages: ThreadEntry[]) {
@@ -162,6 +165,7 @@ describe("DatalinkHistory — answer row", () => {
       element_id: "DM0",
       closed: null,
       deferred: null,
+      superseded: null,
     };
     const closedUplink: ThreadEntry = { ...CPDLC_UPLINK_OPEN, closed: true };
     renderHistory([closedUplink, reply]);
@@ -211,6 +215,52 @@ describe("DatalinkHistory — answer row", () => {
     renderHistory([PDC_SENT, PDC_REPLY]);
     const btn = screen.getByRole("button", { name: t("cpdlc.squawk_take", { squawk: "4231" }) });
     expect(btn).toBeEnabled();
+  });
+});
+
+// v0.19.x FIX: a handover can leave an uplink neither `closed` (never
+// actually answered) nor reply-worthy any more (`superseded` — see
+// hoppie-protocol's `CpdlcThread::mark_logged_off`). Before this fix
+// `isCpdlcOpenUplink` only checked `!closed`, so a superseded uplink
+// still qualified as "the" answer-row uplink and rendered live
+// WILCO/UNABLE buttons — for a controller who had already handed off.
+describe("DatalinkHistory — superseded uplinks (handover)", () => {
+  const SUPERSEDED_UPLINK: ThreadEntry = { ...CPDLC_UPLINK_OPEN, superseded: true };
+
+  it("does not render reply buttons for a superseded uplink", () => {
+    renderHistory([SUPERSEDED_UPLINK]);
+    expect(screen.queryByRole("button", { name: t("cpdlc.response_wilco") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("cpdlc.response_unable") })).not.toBeInTheDocument();
+  });
+
+  it("shows the superseded status line instead of an answer row", () => {
+    renderHistory([SUPERSEDED_UPLINK]);
+    expect(screen.getByText(t("cpdlc.superseded_status"))).toBeInTheDocument();
+  });
+
+  it("skips a superseded uplink and gives the answer row to an older still-open one instead", () => {
+    // Older uplink genuinely still needs a reply; the newer one is
+    // superseded and must not steal the answer row nor silently hide
+    // the older one's.
+    const older: ThreadEntry = { ...CPDLC_UPLINK_OPEN, min: 5, at: "2026-08-03T14:00:00.000Z" };
+    const newerSuperseded: ThreadEntry = {
+      ...CPDLC_UPLINK_OPEN,
+      min: 9,
+      at: "2026-08-03T14:10:00.000Z",
+      superseded: true,
+    };
+    renderHistory([older, newerSuperseded]);
+    expect(screen.getAllByText(t("cpdlc.response_wilco"))).toHaveLength(1);
+    expect(screen.getByText(t("cpdlc.superseded_status"))).toBeInTheDocument();
+  });
+
+  it("does not show a superseded status line for a normal open or answered uplink", () => {
+    renderHistory([CPDLC_UPLINK_OPEN]);
+    expect(screen.queryByText(t("cpdlc.superseded_status"))).not.toBeInTheDocument();
+
+    const closedUplink: ThreadEntry = { ...CPDLC_UPLINK_OPEN, closed: true };
+    renderHistory([closedUplink]);
+    expect(screen.queryByText(t("cpdlc.superseded_status"))).not.toBeInTheDocument();
   });
 });
 
