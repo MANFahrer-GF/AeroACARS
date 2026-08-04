@@ -182,10 +182,7 @@ async fn fetch_metar_once(icao: &str) -> Result<MetarSnapshot, MetarError> {
     }
     let list: Vec<ApiMetar> = serde_json::from_slice(&body)
         .map_err(|e| MetarError::Parse(e.to_string()))?;
-    let raw = list
-        .into_iter()
-        .next()
-        .ok_or_else(|| MetarError::NotFound(icao.clone()))?;
+    let raw = pick_latest(list).ok_or_else(|| MetarError::NotFound(icao.clone()))?;
 
     let time = raw
         .obs_time
@@ -210,6 +207,23 @@ async fn fetch_metar_once(icao: &str) -> Result<MetarSnapshot, MetarError> {
         dewpoint_c: raw.dewp,
         qnh_hpa: raw.altim,
     })
+}
+
+/// Picks the freshest observation from the upstream list. Pure helper,
+/// extracted so we can regression-test the "always the most recent
+/// report, not just whichever one NOAA happened to list first" invariant
+/// without a network call.
+///
+/// `?hours=2` on the upstream request can return more than one report
+/// for the same station (a routine hourly observation plus a SPECI
+/// amendment, for example), and nothing in the API contract guarantees
+/// the array is ordered newest-first. Blindly taking the first element
+/// risked showing a stale observation as "the" current METAR for a
+/// takeoff/touchdown snapshot. Entries with a missing `obsTime` sort
+/// last (never preferred over a dated one) but still fall back to being
+/// picked if that's all upstream sent.
+fn pick_latest(list: Vec<ApiMetar>) -> Option<ApiMetar> {
+    list.into_iter().max_by_key(|m| m.obs_time.unwrap_or(i64::MIN))
 }
 
 /// Decode the aviationweather.gov `visib` field (and the raw METAR
@@ -262,6 +276,59 @@ fn decode_visibility(visib: Option<&Visibility>, raw_ob: Option<&str>) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn metar_at(obs_time: Option<i64>) -> ApiMetar {
+        ApiMetar {
+            icao_id: None,
+            raw_ob: None,
+            obs_time,
+            wdir: None,
+            wspd: None,
+            wgst: None,
+            temp: None,
+            dewp: None,
+            altim: None,
+            visib: None,
+        }
+    }
+
+    /// The exact bug: upstream lists the older report first. Taking
+    /// `.next()` used to silently hand back a stale observation.
+    #[test]
+    fn picks_the_newest_observation_even_when_listed_first_is_older() {
+        let list = vec![metar_at(Some(1_000)), metar_at(Some(2_000))];
+        let picked = pick_latest(list).expect("non-empty list");
+        assert_eq!(picked.obs_time, Some(2_000));
+    }
+
+    #[test]
+    fn picks_the_newest_observation_when_listed_last() {
+        let list = vec![metar_at(Some(2_000)), metar_at(Some(1_000))];
+        let picked = pick_latest(list).expect("non-empty list");
+        assert_eq!(picked.obs_time, Some(2_000));
+    }
+
+    /// A dated report is always preferred over one with no timestamp at
+    /// all, regardless of list order.
+    #[test]
+    fn dated_report_beats_undated_report() {
+        let list = vec![metar_at(None), metar_at(Some(500))];
+        let picked = pick_latest(list).expect("non-empty list");
+        assert_eq!(picked.obs_time, Some(500));
+    }
+
+    /// If nothing has a timestamp there's no ordering signal at all —
+    /// still returns *something* rather than NotFound.
+    #[test]
+    fn falls_back_to_any_entry_when_none_have_a_timestamp() {
+        let list = vec![metar_at(None), metar_at(None)];
+        assert!(pick_latest(list).is_some());
+    }
+
+    #[test]
+    fn empty_list_is_none() {
+        assert!(pick_latest(vec![]).is_none());
+    }
 
     /// Real EDDW METAR observed 2026-05-02: visibility column was
     /// rendering "—" in the UI because CAVOK wasn't being decoded.
