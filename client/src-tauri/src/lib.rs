@@ -23904,34 +23904,50 @@ fn correlate_touchdown_runway(
         stats.runway_nav_geometry = None;
     }
 
-    // v0.8.0 F5 — TCH (Threshold-Crossing-Height) Actual:
-    // Scanne den snapshot_buffer chronologisch und nimm den
-    // ersten Sample dessen along-track-Distanz vom Landing-
-    // Threshold ≥ 0 ist (= Aircraft hat die Threshold-Linie
-    // gerade überflogen). agl_ft an diesem Sample = actual
-    // TCH. Nur möglich wenn wir die Navigraph-Geometrie
-    // haben (= echte Threshold-Position) — OurAirports-
-    // Threshold ist um bis zu 11 m off (MS713-Anchor),
-    // damit wäre der TCH-Wert unzuverlässig.
-    stats.runway_tch_actual_ft = None;
-    if let Some(geom) = stats.runway_nav_geometry.as_ref() {
-        let thr_lat = geom.threshold.lat;
-        let thr_lon = geom.threshold.lon;
-        let end_lat = geom.far_end.lat;
-        let end_lon = geom.far_end.lon;
-        for s in stats.snapshot_buffer.iter() {
-            let along = runway::along_track_m_signed(
-                thr_lat, thr_lon, end_lat, end_lon, s.lat, s.lon,
-            );
-            if along >= 0.0 {
-                // Erstes Sample past-threshold gefunden.
-                // Realistisch landet der TCH-Sample im
-                // Bereich 40-60 ft AGL für ILS-Anflüge.
-                stats.runway_tch_actual_ft = Some(s.agl_ft);
-                break;
-            }
+    // v0.8.0 F5 — TCH (Threshold-Crossing-Height) Actual: siehe
+    // `tch_actual_from_buffer`.
+    stats.runway_tch_actual_ft = stats
+        .runway_nav_geometry
+        .as_ref()
+        .and_then(|geom| tch_actual_from_buffer(geom, &stats.snapshot_buffer));
+}
+
+/// v0.8.0 F5 (Threshold-Crossing-Height Actual): scan the buffer
+/// chronologically and take the first sample whose along-track distance
+/// from the landing threshold is ≥ 0 (= the aircraft has just crossed
+/// the threshold line). That sample's `agl_ft` is the actual TCH.
+///
+/// v0.19.x FIX: this used to accept that first past-threshold sample
+/// UNCONDITIONALLY — including when the buffer's very first entry was
+/// already past the threshold (late engagement / buffer-cadence
+/// mismatch, e.g. AeroACARS started recording only after the aircraft
+/// was already close-in). That directly contradicts this field's own
+/// doc comment (`FlightStats::runway_tch_actual_ft`), which documents
+/// "no pre-threshold sample in the buffer" as a `None` case — the code
+/// just never implemented that guard. A late-engaged flight could get a
+/// bogus "TCH" measured well past the threshold (much lower AGL than a
+/// real 40-60 ft threshold-crossing height) reported as if it were a
+/// reliable measurement. Now requires having actually OBSERVED a
+/// pre-threshold sample first, so the accepted sample genuinely brackets
+/// the crossing instead of being an arbitrary already-past-threshold one.
+fn tch_actual_from_buffer(
+    geom: &aeroacars_mqtt::navdata::NavRunway,
+    buffer: &std::collections::VecDeque<TelemetrySample>,
+) -> Option<f32> {
+    let thr_lat = geom.threshold.lat;
+    let thr_lon = geom.threshold.lon;
+    let end_lat = geom.far_end.lat;
+    let end_lon = geom.far_end.lon;
+    let mut saw_pre_threshold = false;
+    for s in buffer.iter() {
+        let along = runway::along_track_m_signed(thr_lat, thr_lon, end_lat, end_lon, s.lat, s.lon);
+        if along < 0.0 {
+            saw_pre_threshold = true;
+            continue;
         }
+        return if saw_pre_threshold { Some(s.agl_ft) } else { None };
     }
+    None
 }
 
 /// v0.16.24: the runway-correlation fields, resolved at record-build time
@@ -38640,6 +38656,85 @@ mod touchdown_metadata_stamp_tests {
                 },
             ],
         }
+    }
+
+    // ---- tch_actual_from_buffer ----
+
+    /// Point at fractional distance `frac` along the threshold→far_end
+    /// line (0 = threshold, 1 = far_end, negative = before threshold).
+    /// Linear lat/lon interpolation — plenty accurate over one runway
+    /// length for these tests.
+    fn point_along(thr: (f64, f64), end: (f64, f64), frac: f64) -> (f64, f64) {
+        (thr.0 + (end.0 - thr.0) * frac, thr.1 + (end.1 - thr.1) * frac)
+    }
+
+    fn tch_sample(lat: f64, lon: f64, agl_ft: f32) -> TelemetrySample {
+        let mut s = buf_sample(td_at(), false);
+        s.lat = lat;
+        s.lon = lon;
+        s.agl_ft = agl_ft;
+        s
+    }
+
+    fn eddp_26r_runway() -> aeroacars_mqtt::navdata::NavRunway {
+        eddp_nav_fixture().runways.into_iter().next().expect("26R fixture")
+    }
+
+    /// v0.19.x FIX — the exact bug: the buffer's chronologically FIRST
+    /// entry is already past the threshold (late engagement / buffer-
+    /// cadence mismatch). The old code accepted it anyway; this must
+    /// return None, matching `runway_tch_actual_ft`'s own doc comment.
+    #[test]
+    fn tch_actual_from_buffer_none_when_no_pre_threshold_sample_was_ever_seen() {
+        let rw = eddp_26r_runway();
+        let thr = (rw.threshold.lat, rw.threshold.lon);
+        let end = (rw.far_end.lat, rw.far_end.lon);
+        let mut buffer = std::collections::VecDeque::new();
+        // Every sample already past the threshold — no bracket ever observed.
+        let (lat, lon) = point_along(thr, end, 0.005);
+        buffer.push_back(tch_sample(lat, lon, 45.0));
+        let (lat2, lon2) = point_along(thr, end, 0.01);
+        buffer.push_back(tch_sample(lat2, lon2, 20.0));
+
+        assert_eq!(tch_actual_from_buffer(&rw, &buffer), None);
+    }
+
+    /// Genuine bracket: at least one pre-threshold sample, then the first
+    /// post-threshold one — that sample's AGL is the actual TCH.
+    #[test]
+    fn tch_actual_from_buffer_returns_first_post_threshold_agl_when_bracketed() {
+        let rw = eddp_26r_runway();
+        let thr = (rw.threshold.lat, rw.threshold.lon);
+        let end = (rw.far_end.lat, rw.far_end.lon);
+        let mut buffer = std::collections::VecDeque::new();
+        let (lat0, lon0) = point_along(thr, end, -0.01);
+        buffer.push_back(tch_sample(lat0, lon0, 62.0)); // pre-threshold
+        let (lat1, lon1) = point_along(thr, end, 0.002);
+        buffer.push_back(tch_sample(lat1, lon1, 48.0)); // first past-threshold — this one wins
+        let (lat2, lon2) = point_along(thr, end, 0.01);
+        buffer.push_back(tch_sample(lat2, lon2, 20.0)); // later — must NOT win
+
+        assert_eq!(tch_actual_from_buffer(&rw, &buffer), Some(48.0));
+    }
+
+    #[test]
+    fn tch_actual_from_buffer_none_for_empty_buffer() {
+        let rw = eddp_26r_runway();
+        assert_eq!(tch_actual_from_buffer(&rw, &std::collections::VecDeque::new()), None);
+    }
+
+    #[test]
+    fn tch_actual_from_buffer_none_when_touchdown_never_reaches_threshold() {
+        let rw = eddp_26r_runway();
+        let thr = (rw.threshold.lat, rw.threshold.lon);
+        let end = (rw.far_end.lat, rw.far_end.lon);
+        let mut buffer = std::collections::VecDeque::new();
+        let (lat, lon) = point_along(thr, end, -0.02);
+        buffer.push_back(tch_sample(lat, lon, 90.0));
+        let (lat2, lon2) = point_along(thr, end, -0.01);
+        buffer.push_back(tch_sample(lat2, lon2, 65.0));
+
+        assert_eq!(tch_actual_from_buffer(&rw, &buffer), None);
     }
 
     /// Build the stats + snap for a touchdown at EDDP/26R, ready for
