@@ -94,6 +94,12 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::bool("BRAKE PARKING POSITION"),
     F::bool("STALL WARNING"),
     F::bool("OVERSPEED WARNING"),
+    // v0.19.x QS: "percent over 100" is SimConnect's distinct 0.0-1.0
+    // fraction unit, NOT plain "Percent" (0-100) — matches the 0.0=up/
+    // 1.0=down scale gear_position is documented and consumed at
+    // (sim-core::SimSnapshot::gear_position; lib.rs's >= 0.99 / >= 0.5
+    // gates). Confirmed correct, not a unit bug — noted explicitly
+    // since a backlog item once suspected it was.
     F::f64("GEAR POSITION", "percent over 100"),
     F::f64("FLAPS HANDLE PERCENT", "percent over 100"),
     F::bool("GENERAL ENG COMBUSTION:1"),
