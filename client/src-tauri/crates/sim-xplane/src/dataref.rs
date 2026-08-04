@@ -667,7 +667,15 @@ pub struct XPlaneState {
     /// Stored in M/S (X-Plane native). Convert at snapshot time.
     pub groundspeed_ms: f32,
     pub indicated_airspeed_kt: f32,
-    pub true_airspeed_kt: f32,
+    /// v0.19.x FIX: `sim/flightmodel/position/true_airspeed` is M/S
+    /// (X-Plane native, same as groundspeed) — NOT knots despite the
+    /// dataref's short name suggesting otherwise. Convert at snapshot
+    /// time (see `to_snapshot`'s `KT_PER_MS`). Naming this field with
+    /// the `_ms` suffix (matching `groundspeed_ms` above) is deliberate:
+    /// a field called `true_airspeed_kt` holding a raw m/s value is
+    /// exactly the bug this replaces (TAS displayed at ~51% of the
+    /// real value — below IAS, physically impossible in cruise).
+    pub true_airspeed_ms: f32,
     pub g_force: f32,
     pub on_ground: bool,
     /// v0.4.4: Normal force on the gear (N). 0 in air, spikes on
@@ -806,7 +814,7 @@ impl XPlaneState {
             FieldId::VerticalSpeedRawFpm => self.vertical_speed_raw_fpm = value * 196.8504,
             FieldId::GroundspeedKt => self.groundspeed_ms = value, // m/s native
             FieldId::IndicatedAirspeedKt => self.indicated_airspeed_kt = value,
-            FieldId::TrueAirspeedKt => self.true_airspeed_kt = value,
+            FieldId::TrueAirspeedKt => self.true_airspeed_ms = value, // m/s native
             FieldId::GForce => self.g_force = value,
             FieldId::OnGround => self.on_ground = value > 0.5,
             FieldId::GearNormalForceN => self.gear_normal_force_n = value,
@@ -932,7 +940,7 @@ impl XPlaneState {
             // downstream consumers (PIREP, activity log) ever surface
             // a "−10 kt" — pilots reasonably treat that as a bug.
             indicated_airspeed_kt: self.indicated_airspeed_kt.max(0.0),
-            true_airspeed_kt: self.true_airspeed_kt.max(0.0),
+            true_airspeed_kt: (self.true_airspeed_ms * KT_PER_MS).max(0.0),
             aircraft_wind_x_kt: Some(self.wind_x_ms * KT_PER_MS),
             aircraft_wind_z_kt: Some(self.wind_z_ms * KT_PER_MS),
             g_force: self.g_force,
@@ -1183,6 +1191,71 @@ mod vs_dual_source_tests {
         // The two are independent: the display VVI is NOT scaled by the m/s
         // factor and is not overwritten by the raw read.
         assert!((s.vertical_speed_fpm - (-277.0)).abs() < 0.001);
+    }
+}
+
+// ---- v0.19.x FIX — true_airspeed m/s→kt conversion ----
+#[cfg(test)]
+mod airspeed_unit_tests {
+    use super::*;
+
+    const KT_PER_MS: f32 = 1.9438445;
+
+    /// The bug this replaces: `true_airspeed_kt` stored the raw
+    /// `sim/flightmodel/position/true_airspeed` m/s value directly, with
+    /// no conversion — so TAS displayed at ~51% of the real value.
+    /// Groundspeed (already correctly converted) is the control: both
+    /// must come out in the same unit family from the same kind of raw
+    /// X-Plane m/s input.
+    #[test]
+    fn true_airspeed_converts_ms_to_kt_like_groundspeed_does() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::GroundspeedKt, 100.0); // 100 m/s
+        s.apply_field(FieldId::TrueAirspeedKt, 100.0); // 100 m/s
+        let snap = s.to_snapshot(Simulator::XPlane11);
+        let expected_kt = 100.0 * KT_PER_MS;
+        assert!(
+            (snap.groundspeed_kt - expected_kt).abs() < 0.01,
+            "control (groundspeed) must convert m/s->kt"
+        );
+        assert!(
+            (snap.true_airspeed_kt - expected_kt).abs() < 0.01,
+            "true_airspeed_kt must convert m/s->kt exactly like groundspeed \
+             does — got {}, expected ~{expected_kt}",
+            snap.true_airspeed_kt
+        );
+    }
+
+    /// Physical sanity check that the old bug directly violated: true
+    /// airspeed must never read BELOW indicated airspeed at altitude (TAS
+    /// grows faster than IAS as air density drops). A real ~480 kt cruise
+    /// TAS with the old bug would have shown as ~247 kt — below a 300 kt
+    /// IAS, which is impossible.
+    #[test]
+    fn true_airspeed_is_not_below_indicated_at_a_realistic_cruise_value() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::IndicatedAirspeedKt, 300.0); // already kt, no conversion
+        // 480 kt real TAS, expressed as the m/s raw dataref value.
+        s.apply_field(FieldId::TrueAirspeedKt, 480.0 / KT_PER_MS);
+        let snap = s.to_snapshot(Simulator::XPlane11);
+        assert!(
+            snap.true_airspeed_kt > snap.indicated_airspeed_kt,
+            "TAS ({}) must exceed IAS ({}) in cruise — got the inverse, which \
+             is physically impossible",
+            snap.true_airspeed_kt,
+            snap.indicated_airspeed_kt
+        );
+        assert!((snap.true_airspeed_kt - 480.0).abs() < 0.5);
+    }
+
+    /// The ground-noise clamp (small negative pitot readings when
+    /// stationary) must still apply AFTER the unit conversion.
+    #[test]
+    fn true_airspeed_negative_ground_noise_still_clamps_to_zero() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::TrueAirspeedKt, -5.0); // -5 m/s sensor noise
+        let snap = s.to_snapshot(Simulator::XPlane11);
+        assert_eq!(snap.true_airspeed_kt, 0.0);
     }
 }
 
