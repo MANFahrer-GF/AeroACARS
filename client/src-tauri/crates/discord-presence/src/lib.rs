@@ -306,16 +306,34 @@ impl DiscordPresenceManager {
         }
 
         let now = Utc::now().to_rfc3339();
-        let connect_result = {
+        {
             let mut inner = self.inner.lock().await;
             inner.state.last_connect_attempt_at = Some(now);
+        }
 
-            // Discord-IPC-Client erstellen + connecten.
-            // In discord-rich-presence v0.2.5 returns DiscordIpcClient::new ein
-            // Result (kann beim Pipe-Path-Build scheitern); .connect() ist sync.
-            match DiscordIpcClient::new(&id).and_then(|mut client| {
-                client.connect().map(|_| client)
-            }) {
+        // v0.19.x FIX: `DiscordIpcClient::new` + `.connect()` are SYNCHRONOUS
+        // (pipe-path build + a blocking connect) — this used to run under
+        // `self.inner.lock().await`, stalling every other command on the
+        // same lock for however long the connect took (indefinitely, if
+        // Discord's pipe is hung). Runs on `spawn_blocking`'s dedicated
+        // pool now; the lock is only reacquired afterwards to record the
+        // result.
+        let id_for_blocking = id.clone();
+        // The crate's error type (`Box<dyn Error>`) isn't `Send`, so it can't
+        // cross the spawn_blocking boundary as-is — format it to a String
+        // (all we need it for: logging + the UI error_message) inside the
+        // closure instead.
+        let connect_outcome: Result<DiscordIpcClient, String> = tokio::task::spawn_blocking(move || {
+            DiscordIpcClient::new(&id_for_blocking)
+                .and_then(|mut client| client.connect().map(|_| client))
+                .map_err(|e| format!("{e:?}"))
+        })
+        .await
+        .map_err(|e| anyhow!("discord IPC blocking task panicked: {e}"))?;
+
+        let connect_result = {
+            let mut inner = self.inner.lock().await;
+            match connect_outcome {
                 Ok(client) => {
                     inner.client = Some(client);
                     inner.state.status = PresenceStatus::Connected;
@@ -325,9 +343,9 @@ impl DiscordPresenceManager {
                 }
                 Err(e) => {
                     inner.state.status = PresenceStatus::NotFound;
-                    inner.state.error_message = Some(format!("{e:?}"));
-                    debug!(error=?e, "[discord-rpc] connect failed (Discord not running?)");
-                    Err(anyhow!("connect failed: {e:?}"))
+                    inner.state.error_message = Some(e.clone());
+                    debug!(error=%e, "[discord-rpc] connect failed (Discord not running?)");
+                    Err(anyhow!("connect failed: {e}"))
                 }
             }
         };
@@ -362,16 +380,28 @@ impl DiscordPresenceManager {
     }
 
     async fn disable(&self) -> Result<()> {
-        let mut inner = self.inner.lock().await;
-        if let Some(handle) = inner.heartbeat_handle.take() {
-            handle.abort();
+        let client = {
+            let mut inner = self.inner.lock().await;
+            if let Some(handle) = inner.heartbeat_handle.take() {
+                handle.abort();
+            }
+            let client = inner.client.take();
+            inner.state.status = PresenceStatus::Disabled;
+            inner.state.error_message = None;
+            client
+        };
+        // v0.19.x FIX: `clear_activity`/`close` are synchronous pipe I/O —
+        // same class of bug as the other three sites. State is already
+        // updated above under the lock; the (best-effort, errors ignored
+        // same as before) cleanup I/O now runs off the async executor.
+        if let Some(mut client) = client {
+            tokio::task::spawn_blocking(move || {
+                let _ = client.clear_activity();
+                let _ = client.close();
+            })
+            .await
+            .ok();
         }
-        if let Some(mut client) = inner.client.take() {
-            let _ = client.clear_activity();
-            let _ = client.close();
-        }
-        inner.state.status = PresenceStatus::Disabled;
-        inner.state.error_message = None;
         info!("[discord-rpc] disabled");
         Ok(())
     }
@@ -532,13 +562,35 @@ impl DiscordPresenceManager {
             }
         }
 
-        // Re-connect-Versuch wenn keine Verbindung
-        {
-            let mut inner = self.inner.lock().await;
-            if inner.client.is_none() && !inner.app_id.is_empty() {
-                if let Ok(client) = DiscordIpcClient::new(&inner.app_id)
+        // Re-connect-Versuch wenn keine Verbindung.
+        //
+        // v0.19.x FIX: same blocking-connect-under-the-async-Mutex bug as
+        // `enable()` — and this site is hit on EVERY heartbeat tick while
+        // disconnected (Discord not running / pipe hung), the most
+        // frequent of the four call sites that had it. App-ID is read
+        // and dropped before the blocking call so the lock isn't held
+        // across it.
+        let app_id_for_reconnect = {
+            let inner = self.inner.lock().await;
+            (inner.client.is_none() && !inner.app_id.is_empty()).then(|| inner.app_id.clone())
+        };
+        if let Some(app_id) = app_id_for_reconnect {
+            // Error is dropped either way here (best-effort retry), so no
+            // need to convert it to a Send-friendly type — just discard it
+            // to Option inside the closure.
+            let reconnected = tokio::task::spawn_blocking(move || {
+                DiscordIpcClient::new(&app_id)
                     .and_then(|mut c| c.connect().map(|_| c))
-                {
+                    .ok()
+            })
+            .await
+            .ok()
+            .flatten();
+            if let Some(client) = reconnected {
+                let mut inner = self.inner.lock().await;
+                // Another task may have connected/disabled in the meantime —
+                // only claim the slot if it's still empty.
+                if inner.client.is_none() {
                     inner.client = Some(client);
                     inner.state.status = PresenceStatus::Connected;
                     inner.state.error_message = None;
@@ -551,36 +603,66 @@ impl DiscordPresenceManager {
 
     /// Baut das Activity-Objekt aus inner.last_input und sendet es.
     /// No-Op wenn kein aktiver Flug oder kein verbundener Client.
+    ///
+    /// v0.19.x FIX: `client.set_activity(..)` is a SYNCHRONOUS named-pipe/
+    /// socket write (the `discord-rich-presence` crate has no async API).
+    /// This used to run that blocking call while still holding
+    /// `self.inner.lock().await` — every other command that needs the
+    /// SAME lock (get_status, set_settings, send_test, the next push from
+    /// the phase-FSM, ...) would stall for however long that write took.
+    /// Normally sub-millisecond, but if Discord's pipe is stalled/hung the
+    /// whole Discord-presence subsystem (and the settings panel polling
+    /// it) would freeze for the duration — potentially indefinitely.
+    /// `client` is now taken OUT of `inner` before the blocking call, run
+    /// on `spawn_blocking`'s dedicated thread pool (never the async
+    /// executor), and put back under a freshly-reacquired lock once the
+    /// I/O completes — the lock is now held only for the actual state
+    /// reads/writes, never across the pipe write itself.
     async fn push_current_activity(self: &Arc<Self>) -> Result<()> {
+        let (client, details, state, small_image, small_tooltip, start_unix) = {
+            let mut inner = self.inner.lock().await;
+            let Some(input) = inner.last_input.clone() else {
+                return Ok(()); // nichts zu zeigen
+            };
+            let settings = inner.settings.clone();
+            let sim_lost = inner.sim_lost;
+
+            let Some(client) = inner.client.take() else {
+                return Ok(()); // Discord offline; Heartbeat retry's spaeter
+            };
+
+            let details = format::build_details(&input, settings.anonymize_callsign);
+            let state = format::build_state(&input, sim_lost);
+            let small_image = format::sim_to_asset_key(input.sim).unwrap_or("");
+            let small_tooltip = format::sim_to_tooltip(input.sim);
+
+            (client, details, state, small_image, small_tooltip, input.start_unix)
+        };
+
+        // Same Send-bound issue as enable()'s connect: format the crate's
+        // (non-Send) error to a String inside the closure.
+        let (client, set_result): (DiscordIpcClient, Result<(), String>) =
+            tokio::task::spawn_blocking(move || {
+                let mut assets = Assets::new().large_image(format::ASSET_LOGO);
+                if !small_image.is_empty() {
+                    assets = assets.small_image(small_image).small_text(small_tooltip);
+                }
+                let activity = Activity::new()
+                    .details(&details)
+                    .state(&state)
+                    .assets(assets)
+                    .timestamps(Timestamps::new().start(start_unix));
+                let mut client = client;
+                let r = client.set_activity(activity).map_err(|e| format!("{e:?}"));
+                (client, r)
+            })
+            .await
+            .map_err(|e| anyhow!("discord IPC blocking task panicked: {e}"))?;
+
         let mut inner = self.inner.lock().await;
-        let Some(input) = inner.last_input.clone() else {
-            return Ok(()); // nichts zu zeigen
-        };
-        let settings = inner.settings.clone();
-        let sim_lost = inner.sim_lost;
-
-        let Some(client) = inner.client.as_mut() else {
-            return Ok(()); // Discord offline; Heartbeat retry's spaeter
-        };
-
-        let details = format::build_details(&input, settings.anonymize_callsign);
-        let state = format::build_state(&input, sim_lost);
-        let small_image = format::sim_to_asset_key(input.sim).unwrap_or("");
-        let small_tooltip = format::sim_to_tooltip(input.sim);
-
-        let mut assets = Assets::new().large_image(format::ASSET_LOGO);
-        if !small_image.is_empty() {
-            assets = assets.small_image(small_image).small_text(small_tooltip);
-        }
-
-        let activity = Activity::new()
-            .details(&details)
-            .state(&state)
-            .assets(assets)
-            .timestamps(Timestamps::new().start(input.start_unix));
-
-        match client.set_activity(activity) {
+        match set_result {
             Ok(_) => {
+                inner.client = Some(client);
                 inner.state.status = PresenceStatus::Connected;
                 inner.state.error_message = None;
                 inner.state.last_update_at = Some(Utc::now().to_rfc3339());
@@ -590,9 +672,9 @@ impl DiscordPresenceManager {
                 // Pipe abgerissen → Client wegwerfen, naechster Heartbeat versucht's
                 inner.client = None;
                 inner.state.status = PresenceStatus::NotFound;
-                inner.state.error_message = Some(format!("{e:?}"));
-                warn!(error=?e, "[discord-rpc] set_activity failed, will retry");
-                Err(anyhow!("{e:?}"))
+                inner.state.error_message = Some(e.clone());
+                warn!(error=%e, "[discord-rpc] set_activity failed, will retry");
+                Err(anyhow!("{e}"))
             }
         }
     }
