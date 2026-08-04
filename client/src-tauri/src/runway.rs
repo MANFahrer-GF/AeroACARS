@@ -73,10 +73,18 @@ struct RunwayRow {
     le_lat: f64,
     le_lon: f64,
     le_heading_true: f32,
+    /// v0.19.x FIX: the CSV carries this (`le_displaced_threshold_ft`
+    /// column) but it was never parsed — `RunwayMatch::displaced_threshold_ft`
+    /// stayed unset for every OurAirports-fallback match, silently
+    /// skipping DDS (pre-threshold / illegal-landing) classification and
+    /// the LDA-based rollout-utilization correction for any landing that
+    /// didn't resolve via Navigraph.
+    le_displaced_threshold_ft: i32,
     he_ident: String,
     he_lat: f64,
     he_lon: f64,
     he_heading_true: f32,
+    he_displaced_threshold_ft: i32,
     /// v0.19.3: did the CSV actually STATE these headings, or did we compute
     /// them from the two thresholds? It matters for the corrupt-coordinate
     /// repair: a computed heading is derived from the very coordinate we are
@@ -142,6 +150,19 @@ pub struct RunwayMatch {
     pub touchdown_distance_from_threshold_ft: f64,
     /// "LEFT", "RIGHT", or "CENTER" (within 2 m of centerline).
     pub side: String,
+    /// Distance from the physical runway start to the LEGAL landing
+    /// threshold, in feet. 0 when the runway has no displaced threshold
+    /// (the common case) or the source genuinely doesn't state one.
+    ///
+    /// v0.19.x FIX: this is available from BOTH sources — the OurAirports
+    /// CSV carries `le_/he_displaced_threshold_ft` columns, they just
+    /// weren't parsed. Before this fix, only a Navigraph-sourced match
+    /// (via `NavRunway::displaced_threshold_ft`) could report a displaced
+    /// threshold at all, so DDS (pre-threshold / illegal-landing)
+    /// classification and the LDA-based rollout correction were silently
+    /// skipped for every OurAirports-fallback landing, even when the CSV
+    /// had the exact same data Navigraph would have used.
+    pub displaced_threshold_ft: i32,
 }
 
 /// Heuristic: does this airport_ident look like an ICAO code?
@@ -349,6 +370,9 @@ fn runways() -> &'static Vec<RunwayRow> {
             // bearing from the threshold to the far end. That's what real
             // ATC charts use anyway.
             let le_heading_csv = parse_f32(record.get(12));
+            // v0.19.x FIX: le_displaced_threshold_ft / he_displaced_threshold_ft
+            // (columns 13 / 19) — present in the CSV, previously never read.
+            let le_displaced_threshold_ft = parse_f32(record.get(13)).unwrap_or(0.0) as i32;
             let he_heading_csv = parse_f32(record.get(18));
             let headings_stated = le_heading_csv.is_some() && he_heading_csv.is_some();
             let le_heading = le_heading_csv
@@ -356,6 +380,7 @@ fn runways() -> &'static Vec<RunwayRow> {
             let he_ident = record.get(14).unwrap_or("").to_string();
             let he_heading = he_heading_csv
                 .unwrap_or_else(|| initial_bearing_deg(he_lat, he_lon, le_lat, le_lon) as f32);
+            let he_displaced_threshold_ft = parse_f32(record.get(19)).unwrap_or(0.0) as i32;
 
             out.push(RunwayRow {
                 airport_ident,
@@ -366,10 +391,12 @@ fn runways() -> &'static Vec<RunwayRow> {
                 le_lat,
                 le_lon,
                 le_heading_true: le_heading,
+                le_displaced_threshold_ft,
                 he_ident,
                 he_lat,
                 he_lon,
                 he_heading_true: he_heading,
+                he_displaced_threshold_ft,
                 headings_stated,
             });
         }
@@ -971,7 +998,7 @@ pub fn lookup_runway(
         // heading is closer to the aircraft heading at touchdown.
         let le_diff = heading_diff(aircraft_heading_true_deg, row.le_heading_true);
         let he_diff = heading_diff(aircraft_heading_true_deg, row.he_heading_true);
-        let (threshold_lat, threshold_lon, end_lat, end_lon, runway_ident, runway_heading) =
+        let (threshold_lat, threshold_lon, end_lat, end_lon, runway_ident, runway_heading, displaced_threshold_ft) =
             if le_diff <= he_diff {
                 (
                     row.le_lat,
@@ -980,6 +1007,7 @@ pub fn lookup_runway(
                     row.he_lon,
                     row.le_ident.clone(),
                     row.le_heading_true,
+                    row.le_displaced_threshold_ft,
                 )
             } else {
                 (
@@ -989,6 +1017,7 @@ pub fn lookup_runway(
                     row.le_lon,
                     row.he_ident.clone(),
                     row.he_heading_true,
+                    row.he_displaced_threshold_ft,
                 )
             };
 
@@ -1071,6 +1100,7 @@ pub fn lookup_runway(
             centerline_distance_abs_ft,
             touchdown_distance_from_threshold_ft: along_ft,
             side: side.to_string(),
+            displaced_threshold_ft,
         };
 
         // Pick the runway with the smallest perpendicular distance to
@@ -1206,6 +1236,7 @@ pub fn lookup_runway_in_nav(
             centerline_distance_abs_ft,
             touchdown_distance_from_threshold_ft: along_ft,
             side: side.to_string(),
+            displaced_threshold_ft: rwy.displaced_threshold_ft,
         };
 
         let score = xtd_m.abs();
@@ -1570,6 +1601,37 @@ mod geo_search_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // v0.19.x FIX: le_/he_displaced_threshold_ft (CSV columns 13/19) exist
+    // in the bundled data but were never parsed — RunwayMatch always
+    // reported 0, silently skipping DDS classification and the LDA
+    // rollout correction for every OurAirports-fallback landing, even on
+    // a runway the CSV itself says has a real displaced threshold.
+    //
+    // OLBA runway 35 from the bundled CSV: le="17" 33.838199615478516,
+    // 35.487098693847656, hdg 177, no displacement; he="35"
+    // 33.80929946899414, 35.48889923095703, hdg 357, displaced 2788 ft.
+    const OLBA_35_THR_LAT: f64 = 33.809_299_468_994_14;
+    const OLBA_35_THR_LON: f64 = 35.488_899_230_957_03;
+
+    #[test]
+    fn csv_source_reports_the_displaced_threshold_when_the_csv_states_one() {
+        let m = lookup_runway(OLBA_35_THR_LAT, OLBA_35_THR_LON, 357.0)
+            .expect("should resolve to OLBA/35");
+        assert_eq!(m.airport_ident, "OLBA");
+        assert_eq!(m.runway_ident, "35");
+        assert_eq!(
+            m.displaced_threshold_ft, 2788,
+            "OLBA/35 has a real displaced threshold in the bundled CSV — must not silently read as 0"
+        );
+    }
+
+    #[test]
+    fn csv_source_reports_zero_displacement_for_a_runway_with_none() {
+        let m = lookup_runway(EDDP_26R_THR_LAT, EDDP_26R_THR_LON, EDDP_26R_HEADING)
+            .expect("should resolve to EDDP/26R");
+        assert_eq!(m.displaced_threshold_ft, 0);
+    }
 
     // EDDP/26R from the bundled CSV:
     //   le="08L" 51.43119812011719, 12.215800285339355, hdg 85.7

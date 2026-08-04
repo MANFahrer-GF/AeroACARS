@@ -12864,18 +12864,22 @@ fn assess_touchdown(stats: &FlightStats) -> AssessedTouchdown {
     // every classifier below gets the corrected distance except
     // `classify_displaced`, which needs the raw pavement-relative value.
     let td_raw_m = rm.touchdown_distance_from_threshold_ft / FT_PER_M;
-    let displaced_threshold_m = stats
-        .runway_nav_geometry
-        .as_ref()
-        .map(|g| g.displaced_threshold_ft as f64 / FT_PER_M)
-        .unwrap_or(0.0);
+    // v0.19.x FIX: sourced from `runway_nav_geometry` (Navigraph-only)
+    // before — the OurAirports CSV carries this same displaced-threshold
+    // data (`le_/he_displaced_threshold_ft` columns), just wasn't parsed.
+    // `RunwayMatch::displaced_threshold_ft` is now populated from EITHER
+    // source, so this correction (and DDS classification below) applies
+    // uniformly instead of being silently skipped for every OurAirports-
+    // fallback landing.
+    let displaced_threshold_m = rm.displaced_threshold_ft as f64 / FT_PER_M;
     let td_m = td_raw_m - displaced_threshold_m;
     let length_m = (rm.length_ft as f64) / FT_PER_M;
     let tdz = runway_assessment::classify_tdz(td_m, length_m);
     let aim = Some(runway_assessment::classify_aim(td_m, length_m));
-    let dds = stats.runway_nav_geometry.as_ref().map(|g| {
-        runway_assessment::classify_displaced(td_raw_m, g.displaced_threshold_ft as f64)
-    });
+    let dds = Some(runway_assessment::classify_displaced(
+        td_raw_m,
+        rm.displaced_threshold_ft as f64,
+    ));
     // F5 TCH: nur klassifizieren wenn BOTH der nav-geometric tch_ft
     // AND der actual-measured tch_ft im Streamer-Tick vorhanden sind.
     let tch = match (stats.runway_nav_geometry.as_ref(), stats.runway_tch_actual_ft) {
@@ -13722,10 +13726,12 @@ fn fill_v2_rollout_fields(
         .map(|m| (m.touchdown_distance_from_threshold_ft as f64) * 0.3048);
     input.landing_float_distance_m = stats.landing_float_distance_m;
     input.runway_length_m = rm.map(|m| (m.length_ft as f32) * 0.3048);
-    input.runway_displaced_threshold_ft = stats
-        .runway_nav_geometry
-        .as_ref()
-        .map(|g| g.displaced_threshold_ft);
+    // v0.19.x FIX: sourced from Navigraph-only `runway_nav_geometry`
+    // before — `RunwayMatch::displaced_threshold_ft` now carries the same
+    // data from the OurAirports CSV too, so the LDA-based rollout-
+    // utilization correction (sub_rollout_v2) no longer silently assumes
+    // full runway length for every OurAirports-fallback landing.
+    input.runway_displaced_threshold_ft = rm.map(|m| m.displaced_threshold_ft);
     // assess_touchdown(stats).dds.in_pre_threshold_zone — identisch zu
     // dem was im TouchdownPayload + LandingRecord landet (single source).
     let assessed = assess_touchdown(stats);
@@ -29800,25 +29806,28 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
             };
             Some((level, label))
         });
-    let dds_warning_msg: Option<String> = stats
-        .runway_nav_geometry
-        .as_ref()
-        .and_then(|g| {
-            if g.displaced_threshold_ft == 0 {
-                return None;
-            }
-            let rm = stats.runway_match.as_ref()?;
-            let td_m = rm.touchdown_distance_from_threshold_ft / 3.280_839_895;
-            let displaced_m = (g.displaced_threshold_ft as f64) / 3.280_839_895;
-            if td_m < 0.0 && td_m > -displaced_m {
-                Some(format!(
-                    "⚠ Touchdown im Pre-Threshold-Bereich (DDS {:.0} m vor Landing-Threshold)",
-                    displaced_m
-                ))
-            } else {
-                None
-            }
-        });
+    // v0.19.x FIX: this used to hand-roll its own displaced-threshold
+    // check (`td_m < 0.0 && td_m > -displaced_m` against the RAW
+    // pavement-relative distance) instead of calling `classify_displaced`
+    // — the exact sign bug already fixed there (see that function's doc
+    // comment): checking `td_m < 0` only catches an undershoot before the
+    // physical pavement even starts, never a touchdown ON the displaced-
+    // threshold paint itself (0 <= td_m < displaced_m), which is the real
+    // violation those chevron markings warn about. It was also gated on
+    // `runway_nav_geometry` (Navigraph-only), so it never fired at all
+    // for an OurAirports-fallback match. `assess_touchdown` is the single
+    // source of truth for this classification (correct sign, both
+    // sources) — reuse it instead of a second, divergent copy.
+    let dds_warning_msg: Option<String> = assess_touchdown(&stats).dds.and_then(|d| {
+        if d.in_pre_threshold_zone {
+            Some(format!(
+                "⚠ Touchdown im Pre-Threshold-Bereich (DDS {:.0} m vor Landing-Threshold)",
+                d.displaced_threshold_m
+            ))
+        } else {
+            None
+        }
+    });
     drop(stats);
     log_activity_handle(
         app,
@@ -39104,6 +39113,17 @@ mod touchdown_metadata_stamp_tests {
     /// touchdown distance, for exercising `assess_touchdown`'s displaced-
     /// threshold correction directly.
     fn eddp_26r_match_with_raw_td(touchdown_distance_from_threshold_ft: f64) -> runway::RunwayMatch {
+        eddp_26r_match_with_raw_td_and_displacement(touchdown_distance_from_threshold_ft, 0)
+    }
+
+    /// v0.19.x FIX: `displaced_threshold_ft` parametrized separately —
+    /// `assess_touchdown` now sources the displacement from `RunwayMatch`
+    /// itself (available regardless of source) rather than exclusively
+    /// from the Navigraph-only `runway_nav_geometry`.
+    fn eddp_26r_match_with_raw_td_and_displacement(
+        touchdown_distance_from_threshold_ft: f64,
+        displaced_threshold_ft: i32,
+    ) -> runway::RunwayMatch {
         runway::RunwayMatch {
             airport_ident: "EDDP".to_string(),
             runway_ident: "26R".to_string(),
@@ -39119,6 +39139,7 @@ mod touchdown_metadata_stamp_tests {
             centerline_distance_abs_ft: 0.0,
             touchdown_distance_from_threshold_ft,
             side: "CENTER".to_string(),
+            displaced_threshold_ft,
         }
     }
 
@@ -39137,7 +39158,7 @@ mod touchdown_metadata_stamp_tests {
         // as raw pavement-start-relative feet.
         let raw_ft = 4000.0 + 400.0 * FT_PER_M;
         let mut stats = FlightStats::default();
-        stats.runway_match = Some(eddp_26r_match_with_raw_td(raw_ft));
+        stats.runway_match = Some(eddp_26r_match_with_raw_td_and_displacement(raw_ft, 4000));
         stats.runway_nav_geometry = eddp_nav_fixture_displaced().runways.into_iter().find(|r| r.designator == "26R");
 
         let assessed = assess_touchdown(&stats);
@@ -39173,7 +39194,7 @@ mod touchdown_metadata_stamp_tests {
         // (4000 ft) displaced zone, i.e. before the legal landing threshold.
         let raw_ft = 600.0 * FT_PER_M;
         let mut stats = FlightStats::default();
-        stats.runway_match = Some(eddp_26r_match_with_raw_td(raw_ft));
+        stats.runway_match = Some(eddp_26r_match_with_raw_td_and_displacement(raw_ft, 4000));
         stats.runway_nav_geometry = eddp_nav_fixture_displaced().runways.into_iter().find(|r| r.designator == "26R");
 
         let assessed = assess_touchdown(&stats);
@@ -39184,6 +39205,52 @@ mod touchdown_metadata_stamp_tests {
             "touchdown 600 m from pavement start, 1219.5 m displaced threshold \
              → must be flagged as landing before the legal threshold"
         );
+    }
+
+    /// v0.19.x FIX — the actual end-to-end bug: a PURE OurAirports-fallback
+    /// match (no `runway_nav_geometry` at all — the real-world case for any
+    /// divert or unlisted-in-Navigraph field) used to make DDS
+    /// classification silently unavailable (`assessed.dds == None`)
+    /// EVEN THOUGH `RunwayMatch::displaced_threshold_ft` now carries the
+    /// exact same CSV-sourced displacement data. This proves DDS violation
+    /// detection works from the CSV alone, with zero Navigraph data.
+    #[test]
+    fn assess_touchdown_detects_dds_violation_from_ourairports_csv_alone() {
+        const FT_PER_M: f64 = 3.280_839_895;
+        // 600 m from the physical pavement start, well inside a 1219.5 m
+        // (4000 ft) displaced zone — same scenario as the Navigraph test
+        // above, but with NO nav geometry at all.
+        let raw_ft = 600.0 * FT_PER_M;
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(eddp_26r_match_with_raw_td_and_displacement(raw_ft, 4000));
+        stats.runway_source = Some(runway::RunwaySource::OurAirportsFallback);
+        assert!(stats.runway_nav_geometry.is_none(), "this test's whole point is zero nav geometry");
+
+        let assessed = assess_touchdown(&stats);
+
+        let dds = assessed
+            .dds
+            .expect("DDS must be classifiable from RunwayMatch alone, no Navigraph geometry needed");
+        assert!(
+            dds.in_pre_threshold_zone,
+            "OurAirports-only match with a real displaced threshold must still detect the violation"
+        );
+    }
+
+    /// Companion to the above: a PURE OurAirports match on an undisplaced
+    /// runway must report a clean `Some(false)`, not `None` — the data
+    /// source alone is no longer a reason to withhold the classification.
+    #[test]
+    fn assess_touchdown_reports_clean_dds_from_ourairports_csv_alone() {
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(eddp_26r_match_with_raw_td(980.0));
+        stats.runway_source = Some(runway::RunwaySource::OurAirportsFallback);
+        assert!(stats.runway_nav_geometry.is_none());
+
+        let assessed = assess_touchdown(&stats);
+
+        let dds = assessed.dds.expect("DDS classifiable without Navigraph geometry");
+        assert!(!dds.in_pre_threshold_zone);
     }
 
     /// Regression: for the overwhelming majority of runways (no displaced
@@ -39429,6 +39496,7 @@ mod touchdown_metadata_stamp_tests {
             centerline_distance_abs_ft: 24.6,
             touchdown_distance_from_threshold_ft: 980.0,
             side: "LEFT".to_string(),
+            displaced_threshold_ft: 0,
         });
         stats.runway_source = Some(runway::RunwaySource::OurAirportsFallback);
         stats.runway_nav_cycle = Some("2604".to_string());
