@@ -5477,7 +5477,10 @@ mod tests {
         // Fraction-Skala interpretiert. Deckt den Haupt-Fall ab
         // (siehe n1_fallback_counts_running_when_combustion_zero).
         let result = normalize_n1_group([0.6648, 0.6643, 0.6645, 0.6649]);
-        assert_eq!(result, [66.48, 66.43, 66.45, 66.49]);
+        let expected = [66.48, 66.43, 66.45, 66.49];
+        for (r, e) in result.iter().zip(expected.iter()) {
+            assert!((r - e).abs() < 0.001, "expected {expected:?}, got {result:?}");
+        }
     }
 
     #[test]
