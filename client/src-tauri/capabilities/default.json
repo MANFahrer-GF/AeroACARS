@@ -9,6 +9,7 @@
     "updater:default",
     "process:default",
     "notification:default",
-    "dialog:default"
+    "dialog:default",
+    "core:webview:allow-print"
   ]
 }
