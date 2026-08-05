@@ -737,6 +737,7 @@
     "wind_calm": "Calm",
     "report": {
       "button": "Export PDF",
+      "export_failed": "PDF export isn't available right now — try File → Print from the system menu, or restart AeroACARS.",
       "title": "AeroACARS",
       "subtitle": "Landing Analysis",
       "generated": "Generated on {{date}} · AeroACARS v{{version}}",

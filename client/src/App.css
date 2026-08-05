@@ -5636,6 +5636,18 @@ input:disabled {
   background: rgba(37, 99, 235, 0.1);
 }
 
+/* Feld-Bug (2026-08-05): PDF-Export scheiterte auf macOS lautlos — jetzt
+   sichtbares Feedback statt gar nichts, siehe LandingPanel printFailed. */
+.landing-export-error {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: color-mix(in srgb, var(--sem-danger) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--sem-danger) 40%, var(--border));
+}
+
 .landing-back {
   background: transparent;
   border: 1px solid var(--border);

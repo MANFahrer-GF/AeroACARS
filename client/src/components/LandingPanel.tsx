@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { invoke } from "../lib/ipc";
+import { Sentry } from "../lib/sentry";
 import { useConfirm } from "./ConfirmDialog";
 import { ForensicsBadge } from "./ForensicsBadge";
 import { SinkrateForensik, scoreBasisVs } from "./SinkrateForensik";
@@ -2982,7 +2983,7 @@ function LandingReport({ record }: { record: LandingRecord }) {
   );
 }
 
-function LandingDetail({
+export function LandingDetail({
   record,
   allRecords,
   onBack,
@@ -3028,17 +3029,61 @@ function LandingDetail({
   // v0.12.8-dev: PDF-Export-State. Sobald `printing` true wird, rendert
   // der Effect den <LandingReport> ins DOM, ruft `window.print()` und
   // setzt nach `afterprint` wieder zurück.
+  //
+  // Feld-Bug (2026-08-05, macOS): der Button tat nach dem ersten Klick
+  // GAR NICHTS mehr. Ursache: `afterprint` ist in WKWebView (macOS-
+  // Tauri-Build) nicht zuverlässig — feuert das Event einmal nicht,
+  // bleibt `printing` fuer immer `true`. Der Button-Klick ruft dann nur
+  // noch `setPrinting(true)` auf einen bereits-`true`-Wert — React sieht
+  // keine State-Aenderung, der Effect laeuft nie wieder, `window.print()`
+  // wird nie wieder aufgerufen. Zwei Absicherungen:
+  //   1. `window.print()` selbst in try/catch — wirft es (oder existiert
+  //      gar nicht), zeigen wir sofort einen sichtbaren Fehler statt
+  //      still nichts zu tun.
+  //   2. Ein Fallback-Timeout setzt `printing` so oder so zurueck, falls
+  //      `afterprint` nie kommt — der Button darf nie dauerhaft blockiert
+  //      bleiben. 20 s laesst genug Zeit fuer einen echten, vom Piloten
+  //      bedienten Speichern-Dialog (das Druck-Snapshot wird von
+  //      WKWebView/WebView2 SOFORT bei `window.print()` erfasst, nicht
+  //      laufend aus dem Live-DOM neu gelesen — den Portal danach zu
+  //      entfernen stoert einen bereits offenen echten Dialog nicht).
+  //      Trade-off: feuert der Timeout, OBWOHL der Pilot nur langsam war,
+  //      zeigen wir faelschlich die Fehlermeldung — im Zweifel besser als
+  //      gar kein Feedback bei einem echten Fehlschlag.
   const [printing, setPrinting] = useState(false);
+  const [printFailed, setPrintFailed] = useState(false);
   useEffect(() => {
     if (!printing) return;
+    let settled = false;
+    const settle = (failed: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (failed) setPrintFailed(true);
+      setPrinting(false);
+    };
+    const onAfterPrint = () => settle(false);
     // Einen Frame warten, damit der Report (inkl. Charts) im DOM ist,
     // bevor der Druckdialog aufgeht.
     const raf = requestAnimationFrame(() => {
-      const done = () => setPrinting(false);
-      window.addEventListener("afterprint", done, { once: true });
-      window.print();
+      window.addEventListener("afterprint", onAfterPrint, { once: true });
+      try {
+        if (typeof window.print !== "function") {
+          throw new Error("window.print is not available");
+        }
+        window.print();
+      } catch (err) {
+        Sentry.captureException(err, {
+          tags: { feature: "landing-pdf-export" },
+        });
+        settle(true);
+      }
     });
-    return () => cancelAnimationFrame(raf);
+    const timeout = window.setTimeout(() => settle(true), 20_000);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(timeout);
+      window.removeEventListener("afterprint", onAfterPrint);
+    };
   }, [printing]);
 
   return (
@@ -3050,7 +3095,10 @@ function LandingDetail({
         <button
           type="button"
           className="landing-export"
-          onClick={() => setPrinting(true)}
+          onClick={() => {
+            setPrintFailed(false);
+            setPrinting(true);
+          }}
           title={t("landing.report.button")}
         >
           🖨 {t("landing.report.button")}
@@ -3066,6 +3114,12 @@ function LandingDetail({
           </button>
         )}
       </div>
+
+      {printFailed && (
+        <div role="alert" className="landing-export-error">
+          {t("landing.report.export_failed")}
+        </div>
+      )}
 
       {/* v0.12.8-dev: Druck-Report — per Portal an document.body gehängt,
           auf dem Bildschirm display:none, nur sichtbar im @media print. */}

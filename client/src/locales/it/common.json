@@ -737,6 +737,7 @@
     "wind_calm": "Calma",
     "report": {
       "button": "Esporta PDF",
+      "export_failed": "Esportazione PDF non disponibile al momento — prova con File → Stampa dal menu di sistema, oppure riavvia AeroACARS.",
       "title": "AeroACARS",
       "subtitle": "Analisi dell'atterraggio",
       "generated": "Generato il {{date}} · AeroACARS v{{version}}",
