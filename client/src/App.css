@@ -4337,6 +4337,38 @@ input:disabled {
   line-height: 1.4;
 }
 
+/* Bug (2026-08-05, Feld-Report): diese beiden Banner (Wetter-Briefing-
+   Ladehinweis + OFP-Refresh-Notice) waren komplett mit hartkodierten
+   Hex-Farben inline gestylt statt ueber Tokens — sahen im Dark-Theme
+   zufaellig passabel aus, waren im Light-Theme aber fix auf dunkle Navy-/
+   Amber-/Rot-Toene eingefroren und passten zu gar nichts. Gleiches Muster
+   wie .bids__sim-position--warn / .bids__auto-start-skip oben: --sem-*-Ton
+   per color-mix() sanft in die --surface-Flaeche gemischt, reagiert damit
+   automatisch auf Theme-Wechsel. */
+.bids-refresh-notice {
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+.bids-refresh-notice--info {
+  background: color-mix(in srgb, var(--sem-info) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--sem-info) 40%, var(--border));
+}
+.bids-refresh-notice--warn {
+  background: color-mix(in srgb, var(--sem-warn) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--sem-warn) 40%, var(--border));
+}
+.bids-refresh-notice--err {
+  background: color-mix(in srgb, var(--sem-danger) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--sem-danger) 40%, var(--border));
+}
+.bids-refresh-notice--ok {
+  background: color-mix(in srgb, var(--sem-ok) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--sem-ok) 40%, var(--border));
+}
+
 /* Field feedback (2026-08-03): the original Briefing-2a §9 choice ("leere
    Zeile statt Kachel — kein Illustrations-Kasten", bare text + a link-
    styled button) read as unprofessional next to Cockpit's own empty state

@@ -930,15 +930,6 @@ export function BidsList({
         <div
           role="status"
           className="bids-refresh-notice bids-refresh-notice--info"
-          style={{
-            padding: "8px 12px",
-            marginBottom: 10,
-            borderRadius: 6,
-            background: "rgba(56, 189, 248, 0.12)",
-            border: "1px solid rgba(56, 189, 248, 0.35)",
-            color: "#7dd3fc",
-            fontSize: "0.88rem",
-          }}
         >
           {t("bids.weather_briefing_load_hint")}
         </div>
@@ -947,38 +938,6 @@ export function BidsList({
         <div
           role="status"
           className={`bids-refresh-notice bids-refresh-notice--${refreshNotice.tone}`}
-          style={{
-            padding: "6px 10px",
-            marginBottom: 10,
-            borderRadius: 6,
-            // v0.7.10: 'ok'-Tone fuer gruene Success-Notice (Pre-Flight-
-            // OFP-Refresh). Vorher fiel das auf info (blau) zurueck.
-            background:
-              refreshNotice.tone === "warn"
-                ? "#3f2b0e"
-                : refreshNotice.tone === "err"
-                  ? "#3f0e0e"
-                  : refreshNotice.tone === "ok"
-                    ? "#0e3a1e"
-                    : "#1e3a5f",
-            border:
-              refreshNotice.tone === "warn"
-                ? "1px solid #b8842a"
-                : refreshNotice.tone === "err"
-                  ? "1px solid #c53030"
-                  : refreshNotice.tone === "ok"
-                    ? "1px solid #30d158"
-                    : "1px solid #3b82f6",
-            color:
-              refreshNotice.tone === "warn"
-                ? "#f5d68b"
-                : refreshNotice.tone === "err"
-                  ? "#fca5a5"
-                  : refreshNotice.tone === "ok"
-                    ? "#a7f3c2"
-                    : "#cfe3ff",
-            fontSize: "0.85rem",
-          }}
         >
           {refreshNotice.text}
         </div>

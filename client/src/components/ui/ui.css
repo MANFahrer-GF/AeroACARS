@@ -283,8 +283,9 @@
   inset: 0;
   z-index: var(--z-overlay);
   background: var(--scrim);
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: var(--sp-5);
 }
 .ui-modal {
@@ -292,7 +293,20 @@
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   box-shadow: var(--el-modal);
-  max-height: 100%;
+  /* Bug (2026-08-05, Feld-Report): mit dem Overlay als CSS-Grid +
+     place-items:center bekam die Grid-Zeile keine definite Hoehe (sie
+     wuchs mit dem Modal-Inhalt statt mit dem Container) — dadurch loeste
+     "max-height: 100%" hier gegen ein indefinites Containing-Block auf
+     und wirkte gar nicht. Das Modal konnte beliebig hoch werden, der
+     Footer/Schliessen-Button fiel aus dem Fenster, und die eigentlich
+     vorhandene ".ui-modal__body { overflow-y:auto }" griff nie, weil nie
+     geschrumpft wurde. Flexbox gibt der einzeiligen Cross-Achse immer die
+     volle Container-Hoehe (unabhaengig von align-items), UND max-height
+     haengt zusaetzlich direkt an der Fensterhoehe statt am Elternelement
+     — betraf jedes Modal (Bahn-Auslastung-Hilfe, Flug-starten-Bestaetigung,
+     Glossar, Anflug-Stabilitaet-Hilfe), da alle dieselbe .ui-modal-Huelle
+     teilen. */
+  max-height: calc(100vh - (var(--sp-5) * 2));
   display: flex;
   flex-direction: column;
   min-width: 0;

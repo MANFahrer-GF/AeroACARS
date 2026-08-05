@@ -37,6 +37,18 @@ if (isTauri) {
 
 applyTheme(getInitialTheme());
 
+// Feld-Report (2026-08-05): Rechtsklick zeigte das native macOS/WebView-
+// Kontextmenu (Zurueck/Neu laden/Element untersuchen) in grauem System-Chrome
+// — passt zu keinem Pixel des sonst komplett eigenen Dark-Themes. Es gibt
+// keine App-eigene Kontextmenue-Funktion, die dieses Menue ersetzen wuerde
+// (kein Copy/Paste-Bedarf, den ein Pilot hier haette), also wird es im
+// Desktop-Build schlicht unterdrueckt statt neu gebaut. NICHT im
+// LAN-Remote-Browser-Build (Tablet) — dort ist es ein echter Browser-Tab,
+// wo das native Menu (z. B. Reload) sinnvoll bleibt.
+if (isTauri) {
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+}
+
 /**
  * v0.16.0 (#LAN-Remote) — Browser-Bootstrap-Gate.
  *
