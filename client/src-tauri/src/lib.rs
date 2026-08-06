@@ -1865,8 +1865,14 @@ async fn fetch_navdata_for_flight(
             }
         };
         match res {
-            Ok(airport) => {
+            Ok(mut airport) => {
                 let cycle = airport.cycle.clone();
+                // Phantom-Bahn-Duplikate (siehe `runway::dedupe_near_duplicate_nav_runways`)
+                // hier EINMAL pro Airport rausfiltern — vor dem Cache-Insert, damit
+                // JEDER Konsument von `flight.navdata` (Touchdown-Matcher UND der
+                // Approach-Gleitwinkel in `runway_glideslope_for`) automatisch die
+                // bereinigte Liste sieht, statt dass jeder Aufrufer selbst dedupen muss.
+                airport.runways = runway::dedupe_near_duplicate_nav_runways(&airport.icao, airport.runways);
                 let mut cache = flight.navdata.lock().expect("navdata lock");
                 cache.airports.insert(icao.clone(), airport);
                 if cache.cycle.is_none() {
@@ -38142,6 +38148,51 @@ mod sim_pause_tests {
         // Unbekannte Bahn / leer → None
         assert_eq!(runway_glideslope_for(&runways, "18"), None);
         assert_eq!(runway_glideslope_for(&runways, ""), None);
+    }
+
+    #[test]
+    fn glideslope_lookup_no_longer_leaks_phantom_runway_after_fetch_time_dedupe() {
+        // Code-Review-Nachtrag zum EFTP-Phantom-Bahn-Fix (siehe runway.rs
+        // `dedupe_near_duplicate_nav_runways`): `runway_glideslope_for` liest
+        // dieselbe `flight.navdata`-Bahnliste wie der Touchdown-Matcher, hat
+        // aber NIE selbst dedupet. Der ursprüngliche Fix lief nur in
+        // `lookup_runway_in_nav` und hätte diesen Konsumenten (live im
+        // Anflug-Banner, siehe `resolve_approach_glideslope_deg`) weiterhin
+        // dem Phantom "24C" ausgesetzt gelassen. Nachhaltig gelöst durch
+        // Dedupe EINMAL an der Cache-Grenze (`spawn_navdata_fetch`), nicht
+        // durch einen zweiten Dedupe-Aufruf hier — dieser Test beweist, dass
+        // genau diese eine Reinigung ausreicht.
+        let raw: Vec<aeroacars_mqtt::navdata::NavRunway> = serde_json::from_str(
+            r#"[
+              {"designator":"24","magnetic_course":244.4,"true_course":244.445012365508,"length_ft":8858,
+               "threshold":{"lat":61.419369,"lon":23.627208},"end":{"lat":61.408922,"lon":23.581586},"glideslope_angle":3.0},
+              {"designator":"24C","magnetic_course":244.4,"true_course":244.439196313664,"length_ft":7871,
+               "threshold":{"lat":61.418208,"lon":23.622125},"end":{"lat":61.410561,"lon":23.588731},"glideslope_angle":4.2}
+            ]"#,
+        )
+        .expect("parse runways");
+
+        // Sanity: undedupliziert enthält die Liste den Phantom-Gleitwinkel.
+        assert_eq!(
+            runway_glideslope_for(&raw, "24C"),
+            Some(4.2),
+            "sanity: undeduped list still contains the phantom's glideslope"
+        );
+
+        // Dieselbe Reinigung, die `spawn_navdata_fetch` vor dem Cache-Insert
+        // anwendet — nicht ein zweiter, glideslope-spezifischer Dedupe-Pfad.
+        let cleaned = runway::dedupe_near_duplicate_nav_runways("EFTP", raw);
+        assert_eq!(
+            runway_glideslope_for(&cleaned, "24C"),
+            Some(3.0),
+            "'24C' is gone from the cleaned list, so the numeric-prefix fallback \
+             now resolves to the real runway 24's glideslope instead of the phantom's"
+        );
+        assert_eq!(
+            runway_glideslope_for(&cleaned, "24"),
+            Some(3.0),
+            "real runway 24 must survive with its own (correct) glideslope"
+        );
     }
 
     #[test]

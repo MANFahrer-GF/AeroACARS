@@ -20,6 +20,12 @@ use std::sync::OnceLock;
 /// when the upstream CSV gets significant updates (new airports, closed
 /// runways) — this isn't a hot data source, the world's runway layout
 /// is essentially static on human timescales.
+///
+/// Zuletzt aktualisiert: 2026-08-06, direkt von
+/// `https://ourairports.com/data/runways.csv` (48144 Zeilen, Rohformat,
+/// unverändertes Spalten-Schema — 1:1 Drop-in). Update-Rezept: Datei neu
+/// laden, hier ersetzen, `cargo test --lib runway::` laufen lassen (einige
+/// Tests hängen an echten Koordinaten für konkrete Flughäfen).
 const RUNWAYS_CSV: &str = include_str!("../data/ourairports-runways.csv");
 
 /// Embedded snapshot of the ourairports **airports** table (ident, type,
@@ -37,6 +43,17 @@ const RUNWAYS_CSV: &str = include_str!("../data/ourairports-runways.csv");
 /// A published reference point per airport removes all of that: corrupt
 /// thresholds can be *identified* rather than guessed at, and every airport has
 /// a position even when its runways don't.
+///
+/// Zuletzt aktualisiert: 2026-08-06. **Anders als `RUNWAYS_CSV` KEIN
+/// Rohformat** — `airports_by_ident()` liest positionell nur die ersten 4
+/// Spalten (`ident,type,latitude_deg,longitude_deg`), das rohe
+/// `https://ourairports.com/data/airports.csv` hat aber ~19 Spalten in
+/// anderer Reihenfolge. Update-Rezept: rohe `airports.csv` laden, per CSV-
+/// Reader auf exakt diese 4 benannten Spalten reduzieren (nicht einfach
+/// droppen — Spaltenreihenfolge im Rohformat hat sich zwischen 2023 und
+/// 2026 bereits einmal geändert, `icao_code` kam neu dazu), Header
+/// `ident,type,latitude_deg,longitude_deg` beibehalten, dann hier ersetzen
+/// und `cargo test --lib runway::` laufen lassen.
 const AIRPORTS_CSV: &str = include_str!("../data/ourairports-airports.csv");
 
 /// Mean Earth radius (meters) — same value used by the haversine formula
@@ -1139,11 +1156,100 @@ pub enum RunwaySource {
     OurAirportsFallback,
 }
 
+/// v0.21.x Feld-Report (Thomas, EFTP/BTI357): der Touchdown wurde gegen
+/// "24C" statt der echten Bahn "24" gematcht. Ursache: die Aerosoft-DFD-
+/// Navdata enthält für manche Flughäfen einen zusätzlichen, fehlerhaften
+/// Bahn-Eintrag mit fast identischer Peilung wie eine reale Bahn — aber
+/// LÄNGS (nicht seitlich) versetzt, mit abweichender Länge. Ein
+/// systematischer Abgleich gegen alle ~42k Navigraph-Bahnen (Zyklus 2607)
+/// fand 38 betroffene Flughäfen weltweit (EFTP, EGSS, LFxx-Kleinflugplätze,
+/// EGXY u.a.) — siehe internes Audit vom 2026-08-06.
+///
+/// Ein reiner Abstands-Schwellenwert reicht NICHT als Kriterium: viele
+/// echte, eng beieinanderliegende Parallelbahnen (z. B. EGCB 08L/08R nur
+/// 31 m auseinander) hätten sonst false positives erzeugt. Das eigentliche
+/// Unterscheidungsmerkmal: bei den Phantom-Fällen existiert eine
+/// UNSUFFIXIERTE Basis-Bahn ("24") UND eine verdächtige Variante ("24C"),
+/// wobei die verdächtige Variante der öffentlichen OurAirports-Referenz
+/// (dieselbe, die auch der Fallback-Pfad nutzt) unbekannt ist — echte
+/// Parallelbahnen sind dort so gut wie immer BEIDE gepflegt.
+///
+/// Kandidaten am selben Flughafen werden paarweise verglichen; hat einer
+/// eine nahezu identische Peilung (< 5°) zu einem anderen UND ist er der
+/// OurAirports-Referenz unbekannt, während der andere dort bestätigt ist,
+/// wird der unbestätigte Kandidat verworfen. Kennt OurAirports keinen von
+/// beiden (kleine, dort unerfasste Plätze) oder beide, bleibt die Liste
+/// unverändert — im Zweifel wird nichts entfernt.
+///
+/// **Läuft EINMAL pro Airport beim Navdata-Fetch** (`spawn_navdata_fetch`
+/// in lib.rs, direkt vor dem Cache-Insert), NICHT in jedem einzelnen
+/// Konsumenten. Grund (Code-Review 2026-08-06): `lookup_runway_in_nav`
+/// war nicht der einzige Leser von `NavAirport.runways` — auch
+/// `runway_glideslope_for`/`resolve_approach_glideslope_deg` (lib.rs, live
+/// im Anflug-Banner) las die Rohliste direkt und wäre von genau demselben
+/// Phantom-Bug betroffen geblieben, wenn der Dedupe nur im Matcher gelaufen
+/// wäre. Beide (und jeder künftige Konsument) lesen `flight.navdata`, also
+/// reicht ein einziger Reinigungspunkt an der Cache-Grenze — kein
+/// Sonderfall pro Aufrufer.
+pub(crate) fn dedupe_near_duplicate_nav_runways(
+    icao: &str,
+    runways: Vec<aeroacars_mqtt::navdata::NavRunway>,
+) -> Vec<aeroacars_mqtt::navdata::NavRunway> {
+    // Einmal pro Bahn berechnen statt einmal pro Paar (bis zu n-1 Mal
+    // wiederholt) — bei n Bahnen O(n) statt O(n²) OurAirports-Lookups.
+    let known: Vec<bool> = runways
+        .iter()
+        .map(|r| ourairports_has_runway_designator_for(icao, &r.designator))
+        .collect();
+    let mut discard: Vec<bool> = vec![false; runways.len()];
+    for i in 0..runways.len() {
+        for j in (i + 1)..runways.len() {
+            if discard[i] || discard[j] {
+                continue;
+            }
+            if heading_diff(runways[i].true_course as f32, runways[j].true_course as f32) >= 5.0 {
+                continue;
+            }
+            match (known[i], known[j]) {
+                (true, false) => discard[j] = true,
+                (false, true) => discard[i] = true,
+                // Beide bekannt oder beide unbekannt → keine Aussage
+                // möglich, Liste bleibt unveraendert fuer dieses Paar.
+                _ => {}
+            }
+        }
+    }
+    runways
+        .into_iter()
+        .zip(discard)
+        .filter_map(|(r, d)| if d { None } else { Some(r) })
+        .collect()
+}
+
+/// Ob `designator` (z. B. "24C") am gegebenen Flughafen in der
+/// eingebauten OurAirports-Referenz als `le_ident` oder `he_ident`
+/// vorkommt. Nutzt denselben Airport-Index wie `rows_for_airport` (statt
+/// eines eigenen linearen Scans über die volle 48k-Zeilen-Tabelle) und
+/// normalisiert den Designator genau wie `rows_for_airport` den ICAO
+/// normalisiert — ansonsten könnte ein Groß-/Kleinschreibungs- oder
+/// Whitespace-Unterschied einen echten Treffer als "unbekannt" verfehlen.
+fn ourairports_has_runway_designator_for(icao: &str, designator: &str) -> bool {
+    let designator = designator.trim().to_uppercase();
+    rows_for_airport(icao).any(|r| {
+        r.le_ident.trim().to_uppercase() == designator || r.he_ident.trim().to_uppercase() == designator
+    })
+}
+
 /// Wie `lookup_runway`, aber gegen die NavRunway-Liste eines per VPS
 /// geladenen Airports. Mathematik ist identisch — die Quelle ist nur
 /// genauer (Jeppesen-Threshold-Koordinaten statt Community-CSV).
 ///
 /// Verhalten:
+///   * Erwartet `airport.runways` bereits bereinigt von Phantom-Duplikaten
+///     (siehe `dedupe_near_duplicate_nav_runways`) — das läuft einmalig
+///     beim Navdata-Fetch, nicht hier, damit auch andere Konsumenten des
+///     `flight.navdata`-Caches (z. B. `runway_glideslope_for` in lib.rs)
+///     dieselbe bereinigte Liste sehen.
 ///   * Filtert NavRunways auf jene mit `heading_diff(aircraft, true_course)
 ///     < 90°` (= Landerichtung passt grob, blockt 17 vs 35).
 ///   * Rechnet pro verbleibendem Kandidat Cross-Track + Along-Track
@@ -1741,6 +1847,132 @@ mod tests {
             "along-track = {} ft (expected ≈-656.17)",
             m.touchdown_distance_from_threshold_ft
         );
+    }
+
+    // ─── v0.21.x: EFTP phantom-runway dedupe (Thomas field report,
+    // BTI357 EDDH2607) ───────────────────────────────────────────────
+    //
+    // Real production data pulled from the live navdata DB (AIRAC 2607,
+    // 2026-08-06): EFTP genuinely has one physical runway, "06"/"24"
+    // (2700 m, matches OurAirports exactly). The Aerosoft-DFD source
+    // additionally carries phantom "06C"/"24C" entries — same heading,
+    // shorter, threshold ~300-420 m further down the same physical
+    // strip. OurAirports has never heard of "06C"/"24C" for EFTP.
+    fn eftp_nav_fixture() -> NavAirport {
+        let rwy = |des: &str, tc: f64, length_ft: i32, t: (f64, f64), e: (f64, f64)| NavRunway {
+            designator: des.to_string(),
+            magnetic_course: 0.0,
+            true_course: tc,
+            length_ft,
+            width_ft: Some(148),
+            surface: Some("ASP".to_string()),
+            threshold: NavPoint { lat: t.0, lon: t.1, elev_ft: None },
+            far_end: NavPoint { lat: e.0, lon: e.1, elev_ft: None },
+            displaced_threshold_ft: 0,
+            ils: None,
+            glideslope_angle: 3.0,
+            tch_ft: 50,
+        };
+        NavAirport {
+            cycle: "2607".to_string(),
+            valid_to: "2026-08-06".to_string(),
+            icao: "EFTP".to_string(),
+            name: "Tampere-Pirkkala".to_string(),
+            latitude: 61.414,
+            longitude: 23.604,
+            elevation_ft: Some(390),
+            runways: vec![
+                rwy("06", 64.4049516350735, 8858, (61.408922, 23.581586), (61.419369, 23.627208)),
+                rwy("06C", 64.4098729375956, 7470, (61.410561, 23.588731), (61.418208, 23.622125)),
+                rwy("24", 244.445012365508, 8858, (61.419369, 23.627208), (61.408922, 23.581586)),
+                rwy("24C", 244.439196313664, 7871, (61.418208, 23.622125), (61.410561, 23.588731)),
+            ],
+        }
+    }
+
+    #[test]
+    fn dedupe_drops_the_phantom_c_variants_eftp_confirms_the_plain_ones() {
+        let apt = eftp_nav_fixture();
+        let kept = dedupe_near_duplicate_nav_runways(&apt.icao, apt.runways);
+        let idents: Vec<&str> = kept.iter().map(|r| r.designator.as_str()).collect();
+        assert_eq!(idents, vec!["06", "24"], "06C/24C are phantom entries unknown to OurAirports and must be dropped");
+    }
+
+    #[test]
+    fn eftp_touchdown_near_the_24c_phantom_threshold_now_matches_real_24() {
+        // v0.21.x: dedupe now runs once at the navdata-fetch boundary
+        // (`spawn_navdata_fetch` in lib.rs), not inside `lookup_runway_in_nav`
+        // itself — so the test mirrors the real pipeline shape: fetch, dedupe,
+        // *then* look up, instead of relying on the matcher to clean up after it.
+        let mut apt = eftp_nav_fixture();
+        apt.runways = dedupe_near_duplicate_nav_runways(&apt.icao, apt.runways);
+        // Exact touchdown coordinate from the field report (BTI357,
+        // 2026-08-05T22:15:27Z) — sits almost exactly ON the phantom
+        // "24C" threshold (61.418208, 23.622125), which is what made the
+        // pre-fix matcher pick it over the real "24".
+        let m = lookup_runway_in_nav(61.4180153, 23.6209501, 242.77, &apt)
+            .expect("touchdown near EFTP should resolve");
+        assert_eq!(m.airport_ident, "EFTP");
+        assert_eq!(
+            m.runway_ident, "24",
+            "must match the real runway 24, not the phantom 24C \
+             (pre-fix behaviour matched 24C because of its closer XTD)"
+        );
+        assert_eq!(m.length_ft, 8858.0, "must carry the real runway's length, not 24C's shorter phantom length");
+    }
+
+    #[test]
+    fn dedupe_leaves_real_parallel_runways_untouched_when_ourairports_confirms_both() {
+        // PAFA-style case: an unsuffixed "20" AND a suffixed "20L" BOTH
+        // exist in OurAirports for the same airport (real secondary
+        // strip, not a phantom) — dedupe must not remove either.
+        let rwy = |des: &str, tc: f64, t: (f64, f64), e: (f64, f64)| NavRunway {
+            designator: des.to_string(),
+            magnetic_course: 0.0,
+            true_course: tc,
+            length_ft: 4510,
+            width_ft: Some(75),
+            surface: Some("ASP".to_string()),
+            threshold: NavPoint { lat: t.0, lon: t.1, elev_ft: None },
+            far_end: NavPoint { lat: e.0, lon: e.1, elev_ft: None },
+            displaced_threshold_ft: 0,
+            ils: None,
+            glideslope_angle: 3.0,
+            tch_ft: 50,
+        };
+        let runways = vec![
+            rwy("20", 31.0669516863285, (64.815556, -147.856389), (64.803889, -147.849722)),
+            rwy("20L", 31.0669516863285, (64.815, -147.855), (64.803, -147.848)),
+        ];
+        let kept = dedupe_near_duplicate_nav_runways("PAFA", runways);
+        assert_eq!(kept.len(), 2, "both are real, OurAirports-confirmed runways — dedupe must not touch them");
+    }
+
+    #[test]
+    fn dedupe_leaves_unverifiable_small_airport_runways_untouched() {
+        // Neither designator is known to OurAirports (small/uncovered
+        // field) — dedupe can't tell duplicate from real secondary strip,
+        // so it must default to leaving the list unchanged.
+        let rwy = |des: &str, t: (f64, f64), e: (f64, f64)| NavRunway {
+            designator: des.to_string(),
+            magnetic_course: 0.0,
+            true_course: 90.0,
+            length_ft: 2000,
+            width_ft: Some(60),
+            surface: Some("GRS".to_string()),
+            threshold: NavPoint { lat: t.0, lon: t.1, elev_ft: None },
+            far_end: NavPoint { lat: e.0, lon: e.1, elev_ft: None },
+            displaced_threshold_ft: 0,
+            ils: None,
+            glideslope_angle: 3.0,
+            tch_ft: 50,
+        };
+        let runways = vec![
+            rwy("09", (0.0, 0.0), (0.0, 0.01)),
+            rwy("09C", (0.0001, 0.0), (0.0001, 0.01)),
+        ];
+        let kept = dedupe_near_duplicate_nav_runways("ZZZZ", runways);
+        assert_eq!(kept.len(), 2, "neither confirmed nor refuted by OurAirports — must not guess");
     }
 
     #[test]
