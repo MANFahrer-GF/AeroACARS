@@ -68,6 +68,7 @@ export function BriefingView({
         simState={simState}
         simSnapshot={simSnapshot}
         hasActiveFlight={activeFlight !== null}
+        activeBidId={activeFlight?.bid_id ?? null}
         onSelect={setSelectedBid}
         onFlightStarted={setActiveFlight}
         onProfileRefreshed={onProfileRefreshed}

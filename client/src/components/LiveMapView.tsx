@@ -297,11 +297,23 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   const [showVa, setShowVa] = useState(true); // VA-Verkehr ein-/ausblenden
   const [theme, setTheme] = useState<"dark" | "light">(readTheme());
   // README §6/§2: next booked flight, shown in the idle empty-state card AND
-  // the header's idle context line — fetched once here so both read the same
-  // answer instead of polling `phpvms_get_bids` twice. `undefined` = loading.
+  // the header's idle context line — fetched once per active-flight-identity
+  // so both read the same answer instead of polling `phpvms_get_bids` twice.
+  // `undefined` = loading.
+  //
+  // v1.4.7 (Feld-Report Thomas, Screenshot): dep-array war `[]` — fetchte
+  // GENAU EINMAL beim Mount und nie wieder. Ein Pilot der die Karte offen
+  // hatte, während er BTI358 flog und den PIREP absendete, sah danach
+  // weiterhin BTI358 als "nächster gebuchter Flug" — nicht weil phpVMS den
+  // Bid nicht entfernt hätte, sondern weil diese Komponente serverseitige
+  // Änderungen gar nicht erst nachfragte. Jetzt an `activeFlight?.pirep_id`
+  // gekoppelt: refetcht bei jedem Flug-Start (nicht mehr "next" relevant)
+  // UND bei jedem Flug-Ende (genau der Moment, in dem "next" veraltet sein
+  // könnte).
   const [next, setNext] = useState<NextBidInfo | null | undefined>(undefined);
   useEffect(() => {
     let cancelled = false;
+    setNext(undefined);
     void (async () => {
       try {
         const bids = await invoke<Bid[]>("phpvms_get_bids");
@@ -337,7 +349,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeFlight?.pirep_id]);
   // README §2: header UTC clock, ticking every second — same pattern as
   // PilotHeader.tsx's own zulu clock.
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -356,6 +368,24 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   // `track` steht in der Redraw-Dep-Liste, damit die Linie sicher neu zeichnet,
   // wenn Punkte ankommen (auch wenn simSnapshot kurz stehen bleibt).
   const [trackPoints, setTrackPoints] = useState<[number, number][]>([]);
+
+  // v1.4.7 (Feld-Report Thomas, "bei Kurs oben zittert die Karte immer"):
+  // rohe Telemetrie-Peilung ändert sich JEDEN 500ms-Poll um Bruchteile eines
+  // Grades. Zwei Effekte (Orientierung unten + der Redraw-Effekt weiter unten
+  // im File) lösen davon abhängig je einen eigenen 350–400ms `easeTo` auf die
+  // Bahn aus — bei ~500ms Poll-Intervall wird das Ease nie fertig, bevor der
+  // nächste Tick es mit einem minimal neuen Ziel unterbricht → sichtbares
+  // Zittern der ganzen Karte (nur in Kurs-oben spürbar, weil Norden-oben die
+  // Peilung dauerhaft auf 0 pinnt und diese Kette nie erneut anstößt).
+  // Fix: auf ganze Grad runden, BEVOR der Wert als Dependency/Ziel verwendet
+  // wird — Rauschen unter 0.5° löst dann gar keinen neuen Effect-Lauf mehr
+  // aus (React vergleicht Deps per ===), echte Kursänderungen bleiben sofort
+  // wirksam. Kein useMemo nötig: die Eingabewerte ändern sich praktisch bei
+  // jedem Tick, die eigentliche Wirkung ist die STABILITÄT des gerundeten
+  // Primitives für die Ziel-Effekte, nicht gesparte Rechenzeit.
+  const rawHeading = simSnapshot?.heading_deg_true ?? simSnapshot?.heading_deg_magnetic;
+  const trackUpHeadingDeg =
+    typeof rawHeading === "number" && Number.isFinite(rawHeading) ? Math.round(rawHeading) : null;
 
   const pirepId = activeFlight?.pirep_id ?? null;
   // VA-Flieger ohne den eigenen Flug (steckt auch in /api/acars).
@@ -1203,11 +1233,10 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       map.easeTo({ bearing: 0, duration: 400 });
       return;
     }
-    const hdg = simSnapshot?.heading_deg_true ?? simSnapshot?.heading_deg_magnetic;
-    if (typeof hdg === "number" && Number.isFinite(hdg)) {
-      map.easeTo({ bearing: hdg, duration: 400 });
+    if (trackUpHeadingDeg !== null) {
+      map.easeTo({ bearing: trackUpHeadingDeg, duration: 400 });
     }
-  }, [trackUp, simSnapshot?.heading_deg_true, simSnapshot?.heading_deg_magnetic]);
+  }, [trackUp, trackUpHeadingDeg]);
 
   // ---- Redraw: eigener Flug (Quellen + Flugzeug-Marker + Pins) ----
   // Läuft immer; VA-Flieger liegen als zusätzliche Marker mit drauf (eigene Effekte).
@@ -1250,9 +1279,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       // trackUp/heading source the orientation effect uses) so whichever
       // call "wins" the race, it's still driving toward the same target —
       // no more silent stalls.
-      const targetBearing = trackUp
-        ? (simSnapshot?.heading_deg_true ?? simSnapshot?.heading_deg_magnetic ?? map.getBearing())
-        : 0;
+      const targetBearing = trackUp ? (trackUpHeadingDeg ?? map.getBearing()) : 0;
 
       // Follow: bei gesetztem Haken IMMER auf den Flieger zentrieren — egal wie
       // weit man rausgezoomt hat. Gate NUR am `follow`-State (ein einziger Zustand,

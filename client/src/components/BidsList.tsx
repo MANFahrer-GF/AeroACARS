@@ -54,6 +54,15 @@ interface Props {
   simSnapshot: SimSnapshot | null;
   /** Whether a flight is already active (disables Start on every bid). */
   hasActiveFlight: boolean;
+  /** v1.4.7 (Feld-Report Thomas): id des Bids der gerade aktiv geflogen
+   *  wird, falls einer existiert. phpVMS entfernt den Bid zwar meist nach
+   *  `prefile_pirep` serverseitig — aber der 15s-Poll pausiert währenddessen
+   *  (kein neuer Flug kann eh starten), also bleibt der letzte Snapshot
+   *  stehen, wenn der Bid-Removal-Timing nicht rechtzeitig durchkam. Ohne
+   *  diesen Ausschluss zeigte "Gebuchte Flüge" den gerade geflogenen Bid
+   *  weiter mit Countdown an — der irgendwann auf "überfällig seit X Min"
+   *  kippte, obwohl der Pilot mitten im Flug war. */
+  activeBidId?: number | null;
   /** Notify the parent when a bid is selected so it can drive the next step. */
   onSelect?: (bid: Bid | null) => void;
   /** Notify the parent that a flight just started. */
@@ -302,6 +311,7 @@ export function BidsList({
   simState,
   simSnapshot,
   hasActiveFlight,
+  activeBidId = null,
   onActiveFlightUpdated,
   onSelect,
   onFlightStarted,
@@ -855,10 +865,16 @@ export function BidsList({
     !(simSnapshot.lat === 0 && simSnapshot.lon === 0);
   const showPositionWarning = simState === "connected" && !hasSimPosition;
 
+  // v1.4.7: denselben Ausschluss wie weiter unten in der Karten-Liste
+  // (activeBidId) auch hier anwenden — sonst zeigte die OFP-Statuszeile UND
+  // der "Gebuchte Flüge N"-Zähler weiterhin den gerade aktiv geflogenen Bid,
+  // obwohl die Kartenliste selbst ihn schon korrekt ausblendete.
+  const visibleBids = state.kind === "ready" ? state.bids.filter((b) => b.id !== activeBidId) : [];
+
   // Briefing-2a §3: OFP-Statuszeile bezieht sich auf den NAECHSTEN Bid
-  // (= die Hauptkarte, state.bids[0]) — das ist der Flug, den der Pilot
+  // (= die Hauptkarte, visibleBids[0]) — das ist der Flug, den der Pilot
   // als naechstes starten wird.
-  const primaryBid = state.kind === "ready" ? (state.bids[0] ?? null) : null;
+  const primaryBid = visibleBids[0] ?? null;
   const primaryHasOfp = !!primaryBid?.flight.simbrief?.id;
   const primaryPreviewFailed =
     !!primaryBid && bidPreviewErrors.has(primaryBid.id);
@@ -899,7 +915,7 @@ export function BidsList({
         <h2>
           {t("bids.title")}
           {state.kind === "ready" && (
-            <span className="bids__count">{state.bids.length}</span>
+            <span className="bids__count">{visibleBids.length}</span>
           )}
         </h2>
         <div className="bids__header-right">
@@ -1009,7 +1025,10 @@ export function BidsList({
       )}
 
       {state.kind === "ready" && (() => {
-        const bids = state.bids;
+        // v1.4.7: nutzt dieselbe activeBidId-gefilterte Liste wie primaryBid/
+        // der Header-Zähler oben — ein Filter, eine Quelle der Wahrheit,
+        // statt ihn ein zweites Mal hier zu wiederholen.
+        const bids = visibleBids;
         const mainBid = bids.find((b) => b.id === mainBidId) ?? bids[0] ?? null;
         const restBids = bids.filter((b) => b.id !== mainBid?.id);
         // NÄCHSTER macht nur Sinn, wenn es ueberhaupt mehrere Buchungen gibt,

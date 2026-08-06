@@ -4180,30 +4180,33 @@ input:disabled {
 
 /* Briefing-2a §3: OFP-Statuszeile — 34px fix, Hoehe aendert sich in
  * KEINEM Zustand (README §10 Kriterium 6). Linke Kante 3px in der
- * Tonfarbe, Hintergrund die zugehoerige -bg-Toenung. */
+ * Tonfarbe.
+ * v1.4.7 (Feld-Report Thomas): Hintergrund lief bisher auf der
+ * -bg-Toenung (`--sem-*-bg`) — dieselbe volle Farbfläche, die schon bei
+ * .bids__auto-start-skip / .bids__sim-position--warn als "sticht raus,
+ * passt nicht ins graue UI" gemeldet wurde. Jetzt konsistent neutral wie
+ * die beiden — der Rand-Streifen allein signalisiert den Status. */
 .bids__ofp-status {
   display: flex;
   align-items: center;
   gap: 12px;
   height: 34px;
   padding: 0 20px 0 17px;
+  background: var(--surface-2);
   border-left: 3px solid var(--sem-info);
   border-bottom: 1px solid var(--line);
 }
 
 .bids__ofp-status--ok {
   border-left-color: var(--sem-ok);
-  background: var(--sem-ok-bg);
 }
 
 .bids__ofp-status--warn {
   border-left-color: var(--sem-warn);
-  background: var(--sem-warn-bg);
 }
 
 .bids__ofp-status--danger {
   border-left-color: var(--sem-danger);
-  background: var(--sem-danger-bg);
 }
 
 .bids__ofp-status-word {
@@ -4299,14 +4302,24 @@ input:disabled {
   border-radius: 10px;
 }
 
+/* v1.4.7: gleicher Fall wie .bids__auto-start-skip direkt unten — volle
+   Amber-Tönung stach zu sehr aus dem sonst grauen Briefing-Screen heraus.
+   Neutrale Fläche + Rand-Akzent statt Flächen-Tönung. */
 .bids__sim-position--warn {
   color: var(--text);
-  background: color-mix(in srgb, var(--sem-warn) 12%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--sem-warn) 40%, var(--border));
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--sem-warn);
 }
 
 /* v0.3.0: Auto-Start-Skip-Banner — gleicher Stil wie sim-position-Warn,
-   aber mit eigenem Icon + 2-zeiligem Text (Titel + Erklärung). */
+   aber mit eigenem Icon + 2-zeiligem Text (Titel + Erklärung).
+   v1.4.7 (Feld-Report Thomas, Screenshot 2026-08-06): die volle Amber-
+   Tönung der Fläche stach zu sehr aus dem sonst grauen UI heraus ("passt
+   nicht rein"). Neutrale --surface-2-Fläche wie z.B. .pmdg-panel__code-
+   block, Warnung jetzt nur noch über den linken Rand-Streifen signalisiert
+   — gleiches Muster wie .bids__ofp-status--warn (Rand-Akzent statt
+   Flächen-Tönung). */
 .bids__auto-start-skip {
   display: flex;
   align-items: flex-start;
@@ -4316,8 +4329,9 @@ input:disabled {
   font-size: 13px;
   border-radius: 10px;
   color: var(--text);
-  background: color-mix(in srgb, var(--sem-warn) 12%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--sem-warn) 40%, var(--border));
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--sem-warn);
 }
 .bids__auto-start-skip-text {
   display: flex;
@@ -4341,32 +4355,33 @@ input:disabled {
    Ladehinweis + OFP-Refresh-Notice) waren komplett mit hartkodierten
    Hex-Farben inline gestylt statt ueber Tokens — sahen im Dark-Theme
    zufaellig passabel aus, waren im Light-Theme aber fix auf dunkle Navy-/
-   Amber-/Rot-Toene eingefroren und passten zu gar nichts. Gleiches Muster
-   wie .bids__sim-position--warn / .bids__auto-start-skip oben: --sem-*-Ton
-   per color-mix() sanft in die --surface-Flaeche gemischt, reagiert damit
-   automatisch auf Theme-Wechsel. */
+   Amber-/Rot-Toene eingefroren und passten zu gar nichts.
+   v1.4.7 (Feld-Report Thomas): der color-mix()-Zwischenstand von damals war
+   zwar theme-reaktiv, tönte die Fläche aber immer noch komplett ein — genau
+   das "sticht raus, passt nicht ins graue UI"-Muster wie bei
+   .bids__auto-start-skip / .bids__sim-position--warn oben. Jetzt dasselbe
+   neutrale Rezept: --surface-2-Fläche, neutraler Rand, Farbe nur noch am
+   linken Rand-Streifen. */
 .bids-refresh-notice {
   padding: 6px 10px;
   margin-bottom: 10px;
   border-radius: 6px;
   font-size: 0.85rem;
   color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
 }
 .bids-refresh-notice--info {
-  background: color-mix(in srgb, var(--sem-info) 12%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--sem-info) 40%, var(--border));
+  border-left: 3px solid var(--sem-info);
 }
 .bids-refresh-notice--warn {
-  background: color-mix(in srgb, var(--sem-warn) 12%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--sem-warn) 40%, var(--border));
+  border-left: 3px solid var(--sem-warn);
 }
 .bids-refresh-notice--err {
-  background: color-mix(in srgb, var(--sem-danger) 12%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--sem-danger) 40%, var(--border));
+  border-left: 3px solid var(--sem-danger);
 }
 .bids-refresh-notice--ok {
-  background: color-mix(in srgb, var(--sem-ok) 12%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--sem-ok) 40%, var(--border));
+  border-left: 3px solid var(--sem-ok);
 }
 
 /* Field feedback (2026-08-03): the original Briefing-2a §9 choice ("leere
@@ -8703,16 +8718,32 @@ button.aa-livemap-events__row:hover {
   padding-top: 2px;
 }
 
-/* §7 — System-Zeile. */
+/* §7 — System-Zeile.
+   v1.4.7 (Feld-Report Thomas, Screenshot): die Zeile hatte weder `max-width`
+   noch `flex-wrap` — als reines `left`/`bottom`-positioniertes Element wächst
+   sie IMMER auf ihre volle intrinsische Breite (Dots + Text + der komplette
+   LiveRecordingIndicator inkl. Σ-Zähler), unabhängig davon wie breit die
+   Karte gerade tatsächlich ist. Reichte die Breite nicht, wurde der
+   Überschuss vom `overflow: hidden` des `.aa-livemap__map`-Containers hart
+   abgeschnitten — der Σ-Zähler steht als letztes Element in der Zeile, war
+   also immer der erste Teil der verschwand. Jetzt per `max-width` an die
+   Kartenbreite gebunden und bricht bei Bedarf auf eine zweite Zeile um,
+   statt lautlos zu verschwinden. (KEIN `right` — bei gleichzeitig gesetztem
+   `width: fit-content` wäre das laut CSS2.1 §10.3.7 ein über-bestimmter Box,
+   und `right` würde von der Box-Auflösung ignoriert; `max-width` allein
+   drückt exakt dieselbe Grenze klarer aus.) */
 .aa-livemap-sysline {
   position: absolute;
   z-index: 500;
   left: 16px;
   bottom: 16px;
+  max-width: calc(100% - 32px);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 11px;
+  gap: 8px 11px;
   padding: 9px 13px;
+  width: fit-content;
 }
 .aa-livemap-sysline__dot {
   width: 7px;
