@@ -58,9 +58,9 @@ build/
 # un-ignore the source, leave the generated bits caught by build/ above.
 !msfs-panel/Build/
 !msfs-panel/Build/PackageSources/
-!msfs-panel/Build/PackageSources/*.xml
+!msfs-panel/Build/PackageSources/**
 !msfs-panel/Build/PackageDefinitions/
-!msfs-panel/Build/PackageDefinitions/*.xml
+!msfs-panel/Build/PackageDefinitions/**
 .parcel-cache/
 .turbo/
 .next/

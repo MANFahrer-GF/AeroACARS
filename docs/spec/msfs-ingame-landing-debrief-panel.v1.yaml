@@ -984,7 +984,65 @@ implementation_notes:
       only fetch, or neither) to the reused local server.
 
 feasibility_spike:
-  status: planned
+  status: in_progress
+  round_1_result: >
+    Run 2026-08-08 on Thomas's Windows/MSFS-2024 rig. INCONCLUSIVE on the
+    actual goal (network reachability) — blocked before getting there — but
+    produced two real, confirmed findings plus four verified packaging
+    fixes now merged into msfs-panel/. Full field report:
+    aeroacars-msfs-panel-windows-test-ergebnis-20260808-203900.zip
+    (Nextcloud Daten-Tausch-Ordner) / see [[aeroacars-msfs-ingame-debrief-panel-spec]]
+    in the memory graph for the complete writeup.
+  round_1_confirmed_working: >
+    Coherent GT renders our custom HTML/CSS panel correctly — title,
+    status line, PIN field, button and help text all appeared cleanly in
+    the MSFS toolbar once the packaging structure (below) was fixed. This
+    was completely unknown before and rules out "Coherent GT can't load
+    our assets at all" as a failure mode.
+  round_1_new_blocker: >
+    Coherent GT toolbar-panel text inputs do not receive keyboard focus by
+    default — MSFS's own control bindings intercept keystrokes unless the
+    panel explicitly claims/releases focus via
+    Coherent.trigger('FOCUS_INPUT_FIELD', ...) /
+    ('UNFOCUS_INPUT_FIELD', ...) (documented on MSFS DevSupport, "Disable
+    Bound Key Events when input into toolbar apps", confirmed working by a
+    PMDG developer in that thread). This blocked PIN entry entirely, so
+    round 1 never reached the actual fetch()/WebSocket test. A fix using
+    that same Coherent.trigger pattern is now in panel.js, but is NOT YET
+    independently re-verified live — the session that added it crashed
+    (unrelated CTD, cause not investigated) before confirming it restores
+    typing. There is a secondary, unconfirmed suspicion that the panel
+    also can't be dragged because it has no title bar of its own (MSFS
+    panels apparently must build their own window chrome for that — not
+    automatic) — possibly the same root cause as the focus issue, possibly
+    not. First thing round 2 should check.
+  round_1_packaging_fixes: >
+    Four real build-time bugs found and fixed, each verified against a
+    working public reference project (github.com/jopeek/msfs-panel-simaware,
+    same panel type, full source + build output) — now applied to
+    msfs-panel/ on main: (1) AssetPackage needs <PackageOrderHint> or
+    validation fails; (2) needs an explicit <Dependencies> block (the
+    unused manifest.json had it, the actual AssetPackage XML the Project
+    Editor reads did not); (3) needed TWO AssetGroups, not one — a
+    Type=SPB group for the panel definition (PackageSources\InGamePanels\
+    -> InGamePanels\) and a separate Type=Copy group for html_ui
+    (PackageSources\html_ui\ -> html_ui\); the original single-group setup
+    nested both under Build\, not package-root, which is why the toolbar
+    icon never appeared before this fix. msfs-panel/Build/PackageSources/
+    was restructured to InGamePanels/ + html_ui/ subfolders to match.
+    (4) MSFS 2024 has no standalone ProjectEditor.exe like 2020 — Project
+    Editor only runs in-sim via Developer Mode; msfs-panel/README.md's
+    Windows build steps need updating for this (not yet done).
+  round_1_open_for_round_2: >
+    (a) verify the FOCUS_INPUT_FIELD fix actually restores PIN typing;
+    (b) if not, investigate the title-bar/window-chrome theory; (c) once
+    PIN entry works, THAT is when the original goal below finally gets
+    tested; (d) AssetPackage Version was bumped 0.2.5->0.2.6 on a hunch
+    that MSFS caches built packages by version and was serving stale
+    content — never actually verified, re-check if the same symptom
+    recurs; (e) the CTD's cause is unknown and wasn't investigated
+    (session ended by Thomas's choice) — not established as related to
+    this panel, but also not ruled out; keep an eye out if it recurs.
   goal: >
     Resolve LIM-001 and the local_api.websocket_live.risk_note before
     committing to the full panel build: does a minimal MSFS 2024 in-game

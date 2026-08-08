@@ -438,6 +438,27 @@
       pinInput.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') pairBtn.click();
       });
+      // v0.1.1 (Windows in-sim test, 2026-08-08): Coherent GT otherwise still
+      // routes keystrokes to MSFS's own control bindings while this field has
+      // "focus" — a text field never actually receives typed input in-sim
+      // without explicitly claiming/releasing it via Coherent.trigger. See
+      // MSFS DevSupport "Disable Bound Key Events when input into toolbar
+      // apps" (confirmed working by a PMDG dev in that thread). Applied but
+      // NOT YET independently re-verified live — the test session that wrote
+      // this fix crashed (unrelated CTD, cause unknown) before confirming it
+      // actually restores typing. Next in-sim test should check this first.
+      var notifyCoherentFocus = function () {
+        if (window.Coherent && Coherent.trigger) {
+          Coherent.trigger('FOCUS_INPUT_FIELD', pinInput.id, '', '', pinInput.value || '', false);
+        }
+      };
+      pinInput.addEventListener('focus', notifyCoherentFocus);
+      pinInput.addEventListener('input', notifyCoherentFocus);
+      pinInput.addEventListener('blur', function () {
+        if (window.Coherent && Coherent.trigger) {
+          Coherent.trigger('UNFOCUS_INPUT_FIELD', pinInput.id);
+        }
+      });
     }
     var openDebrief = document.getElementById('open-full-debrief');
     if (openDebrief) {
