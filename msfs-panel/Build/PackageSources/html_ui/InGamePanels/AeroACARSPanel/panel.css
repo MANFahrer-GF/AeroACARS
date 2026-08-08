@@ -1,9 +1,77 @@
 /*
- * Visual style follows the reference mockups in docs/spec/assets/ (which
- * are themselves screenshots of SQWK Flight Review, used only as a visual
- * target per the spec's visual_references — this CSS is original).
- * Dark translucent card, monospace numeric values, green connected dot.
+ * Design system for the AeroACARS in-sim panel. Visual TARGET follows the
+ * reference mockups in docs/spec/assets/ (screenshots of a competing
+ * product, SQWK Flight Review, per the spec's visual_references) — dark
+ * translucent card, monospace numeric values, clean metric rows, score
+ * bar + band badge. This CSS is original, not a copy of theirs.
+ *
+ * v0.2.1 (round 2c, 2026-08-08): full spacing/typography pass — round 2's
+ * first cut had ad-hoc pixel values with no real scale (padding "14px
+ * 16px", gaps of 10px, metric-row padding of 3px), which read as flat and
+ * unfinished. Rebuilt on token scales below instead of one-off numbers.
+ *
+ * Platform note: this renders inside MSFS's Coherent GT engine (Windows
+ * only — MSFS never ships on macOS/Linux), NOT a normal browser, and
+ * cannot be live-previewed from outside MSFS. Font stacks are Windows
+ * system fonts accordingly (Segoe UI / Cascadia Mono, not SF Mono). Kept
+ * deliberately to plain, well-established CSS (flex, solid/rgba colors,
+ * simple transitions, CSS custom properties) — no backdrop-filter/blur or
+ * color-mix(), which are newer and not confirmed to render in this
+ * engine. Custom properties (`:root { --x }` / `var()`) are WebKit-vintage
+ * (supported since ~2016) and Coherent GT is WebKit-based, so this is a
+ * moderate-confidence bet, not a certainty — round 1 never actually used
+ * them (every value was a literal). If the panel renders unstyled/blank
+ * in the next test where round 1's did render, custom-property support
+ * is the first thing to suspect.
  */
+
+:root {
+  /* ---- spacing scale (4px base) ---- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 28px;
+
+  /* ---- type scale ---- */
+  --fs-micro: 10px;   /* metric labels — dense HUD context, all-caps+tracked */
+  --fs-small: 12px;   /* secondary text, metric values, debrief rows */
+  --fs-body: 13px;    /* primary labels, app name */
+  --fs-lead: 15px;    /* aircraft/route headline in approach view */
+  --fs-display: 36px; /* the one hero number: the score */
+
+  /* ---- radii ---- */
+  --radius-card: 14px;
+  --radius-control: 8px;
+  --radius-chip: 5px;
+
+  /* ---- palette ---- */
+  --bg-panel: rgba(15, 19, 27, 0.92);
+  --bg-panel-border: rgba(255, 255, 255, 0.09);
+  --bg-raised: rgba(255, 255, 255, 0.05);
+  --bg-raised-hover: rgba(255, 255, 255, 0.08);
+  --hairline: rgba(255, 255, 255, 0.07);
+
+  --ink: #eef1f6;
+  --ink-muted: #9aa4b6;
+  --ink-faint: #6f7889;
+
+  --accent: #3b7dfd;
+  --accent-hover: #5b91fd;
+  --accent-ink: #ffffff;
+
+  --status-good: #3ecf6a;
+  --status-good-bg: rgba(62, 207, 106, 0.16);
+  --status-warn: #f0a83f;
+  --status-warn-bg: rgba(240, 168, 63, 0.16);
+  --status-bad: #ef5464;
+  --status-bad-bg: rgba(239, 84, 100, 0.16);
+  --status-neutral: #6f7889;
+
+  --font-ui: "Segoe UI", "Segoe UI Variable", "Open Sans", sans-serif;
+  --font-mono: "Cascadia Mono", "Consolas", monospace;
+}
 
 html, body {
   height: 100%;
@@ -12,17 +80,15 @@ html, body {
   padding: 0;
   overflow: hidden;
   background: transparent;
-  font-family: "Segoe UI", "Open Sans", sans-serif;
-  color: #e8ecf1;
+  font-family: var(--font-ui);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
 }
 
-/* v0.2.0 (round 2): <ingame-ui> (see AeroACARSPanel.html) now owns the
-   actual window frame — title bar, drag, resize. .panel sizes to THAT
-   parent instead of hard-forcing 100vw/100vh itself (round 1's approach,
-   before <ingame-ui> was added), which would fight the native frame's own
-   sizing. Not yet live-verified how <ingame-ui> actually sizes its content
-   area — if the panel renders too small/large in round 2, this is the
-   first place to check. */
+/* <ingame-ui> (see AeroACARSPanel.html) owns the actual window frame —
+   title bar, drag, resize. .panel sizes to THAT parent instead of
+   hard-forcing 100vw/100vh itself, which would fight the native frame's
+   own sizing. */
 ingame-ui, .ingameUiFrame {
   display: block;
   width: 100%;
@@ -33,9 +99,9 @@ ingame-ui, .ingameUiFrame {
   box-sizing: border-box;
   width: 100%;
   height: 100%;
-  background: rgba(14, 18, 26, 0.88);
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-panel);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--bg-panel-border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -44,8 +110,7 @@ ingame-ui, .ingameUiFrame {
 .view {
   display: none;
   flex-direction: column;
-  padding: 14px 16px;
-  gap: 10px;
+  padding: var(--sp-4);
   height: 100%;
   box-sizing: border-box;
   overflow-y: auto;
@@ -56,95 +121,179 @@ ingame-ui, .ingameUiFrame {
 .header-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
 }
 
 .app-name {
+  font-size: var(--fs-body);
   font-weight: 600;
-  font-size: 13px;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.005em;
+  color: var(--ink);
 }
 
 .dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #4caf50;
+  background: var(--status-neutral);
+  box-shadow: 0 0 0 3px transparent;
   flex-shrink: 0;
+  transition: background-color 200ms ease-out, box-shadow 200ms ease-out;
 }
-.dot-good, .dot-excellent { background: #4caf50; }
-.dot-warn, .dot-firm { background: #f5a623; }
-.dot-bad, .dot-hard, .dot-severe { background: #e5484d; }
-.dot-neutral { background: #6b7684; }
+.dot-good, .dot-excellent {
+  background: var(--status-good);
+  box-shadow: 0 0 0 3px var(--status-good-bg);
+}
+.dot-warn, .dot-firm {
+  background: var(--status-warn);
+  box-shadow: 0 0 0 3px var(--status-warn-bg);
+}
+.dot-bad, .dot-hard, .dot-severe {
+  background: var(--status-bad);
+  box-shadow: 0 0 0 3px var(--status-bad-bg);
+}
+.dot-neutral { background: var(--status-neutral); }
 
-.muted { color: #8a93a3; font-size: 11px; }
-.mono { font-variant-numeric: tabular-nums; font-family: "Consolas", "SF Mono", monospace; }
+.muted { color: var(--ink-muted); font-size: var(--fs-small); }
+.mono {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
 
 button {
   cursor: pointer;
-  border: none;
-  border-radius: 6px;
-  padding: 6px 14px;
-  font-size: 12px;
-  background: #2f6fed;
-  color: white;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  padding: var(--sp-2) var(--sp-4);
+  font-family: var(--font-ui);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  background: var(--accent);
+  color: var(--accent-ink);
+  transition: background-color 150ms ease-out, transform 150ms ease-out;
 }
+button:hover { background: var(--accent-hover); }
+button:active { transform: scale(0.98); }
 button.secondary {
-  background: rgba(255, 255, 255, 0.08);
-  color: #c6cdd8;
+  background: var(--bg-raised);
+  color: var(--ink-muted);
+  border-color: var(--hairline);
 }
+button.secondary:hover { background: var(--bg-raised-hover); color: var(--ink); }
 
 /* ---- compact monitor view ---- */
 
 #view-monitor { justify-content: center; }
+#view-monitor .header-row { margin-bottom: var(--sp-1); }
 
 /* ---- approach / live telemetry view ---- */
 
+#view-approach .header-row { margin-bottom: var(--sp-1); }
+#ap-route { margin-bottom: var(--sp-3); }
+
 .metric-row {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
-  font-size: 12px;
-  padding: 3px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--hairline);
 }
-.metric-label { color: #8a93a3; letter-spacing: 0.03em; text-transform: uppercase; font-size: 10px; }
-.metric-value { font-size: 13px; font-weight: 600; }
+.metric-row:last-child { border-bottom: none; }
+.metric-label {
+  color: var(--ink-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+}
+.metric-value {
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--ink);
+}
 
 /* ---- scoring transitional view ---- */
 
-#view-scoring { justify-content: center; align-items: center; text-align: center; }
+#view-scoring { justify-content: center; align-items: center; text-align: center; gap: var(--sp-3); }
 .spinner {
-  width: 22px; height: 22px; border-radius: 50%;
-  border: 2px solid rgba(255,255,255,0.15); border-top-color: #2f6fed;
-  animation: spin 0.9s linear infinite;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--hairline);
+  border-top-color: var(--accent);
+  animation: spin 900ms linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 1800ms; }
+}
 
 /* ---- score card ---- */
 
-#view-score { text-align: center; }
-.score-total { font-size: 34px; font-weight: 700; }
+#view-score { text-align: center; gap: var(--sp-1); }
+#score-route { font-size: var(--fs-lead); font-weight: 700; }
+#score-sub { margin-bottom: var(--sp-4); }
+
+.score-total {
+  font-family: var(--font-mono);
+  font-size: var(--fs-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  margin-bottom: var(--sp-2);
+}
+
+.score-bar-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-raised);
+  overflow: hidden;
+  margin-bottom: var(--sp-2);
+}
+.score-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 500ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .score-bar-fill { transition: none; }
+}
+
 .score-band-badge {
   display: inline-block;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 4px;
-  background: rgba(76, 175, 80, 0.18);
-  color: #7fd88a;
+  letter-spacing: 0.04em;
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: 999px;
+  background: var(--status-good-bg);
+  color: var(--status-good);
+  margin-bottom: var(--sp-4);
 }
-.score-bar-track { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.08); overflow: hidden; margin: 6px 0; }
-.score-bar-fill { height: 100%; background: linear-gradient(90deg, #2f6fed, #4caf50); }
+.score-band-badge.band-warn { background: var(--status-warn-bg); color: var(--status-warn); }
+.score-band-badge.band-bad { background: var(--status-bad-bg); color: var(--status-bad); }
+
+#view-score .metric-row:first-of-type { margin-top: var(--sp-1); }
+#open-full-debrief { margin-top: var(--sp-4); align-self: center; }
 
 /* ---- full debrief view ---- */
+
+#view-debrief .header-row { margin-bottom: var(--sp-2); }
 
 .debrief-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  padding: 4px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--fs-small);
 }
-.debrief-label { flex: 1; color: #c6cdd8; }
-.debrief-value { font-weight: 600; }
+.debrief-row:last-child { border-bottom: none; }
+.debrief-label { flex: 1; color: var(--ink-muted); }
+.debrief-value {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--ink);
+}
+.debrief-row.muted { color: var(--ink-faint); }

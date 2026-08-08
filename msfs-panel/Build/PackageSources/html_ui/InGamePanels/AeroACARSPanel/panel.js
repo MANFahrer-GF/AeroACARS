@@ -302,9 +302,16 @@
     );
   }
 
-  function scoreBand(label) {
-    return (label || '--').toUpperCase();
-  }
+  // Real wire values (aggregate_score_label() in lib.rs): "smooth",
+  // "acceptable", "firm", "hard", "severe" — lowercase. Mapped to the same
+  // good/warn/bad color language as the sub-score dots (.dot-*) for a
+  // consistent system, not a badge that's always green regardless of the
+  // actual landing quality (round 2's bug — it never varied).
+  var BAND_CLASS = {
+    smooth: '', acceptable: '',
+    firm: 'band-warn',
+    hard: 'band-bad', severe: 'band-bad',
+  };
 
   function renderScore(d) {
     if (!d) { setText('score-total', '--'); return; }
@@ -316,7 +323,12 @@
         (rw.length_ft ? ' · ' + fmt(rw.length_ft, 0) + ' ft' : '')
     );
     setText('score-total', String(d.score_numeric != null ? d.score_numeric : '--'));
-    setText('score-band', scoreBand(d.score_label));
+    var bandKey = (d.score_label || '').toLowerCase();
+    var bandEl = document.getElementById('score-band');
+    if (bandEl) {
+      bandEl.textContent = (d.score_label || '--').toUpperCase();
+      bandEl.className = 'score-band-badge ' + (BAND_CLASS[bandKey] || '');
+    }
     var bar = document.getElementById('score-bar-fill');
     if (bar) bar.style.width = Math.max(0, Math.min(100, d.score_numeric || 0)) + '%';
     setText('score-vs', fmt(d.landing_rate_fpm, 0) + ' fpm');

@@ -698,6 +698,20 @@ pub async fn remote_server_set_port(
             format!("Port {port} ist reserviert — bitte einen Port ab 1024 wählen."),
         ));
     }
+    // v0.2.0 (#msfs-panel, round 2c): the MSFS panel server
+    // (crate::panel_server) binds a FIXED port that this command must
+    // never be allowed to collide with — see panel_server's module doc.
+    // Round 2b already decoupled the two entirely; this closes the one
+    // remaining way a pilot could still accidentally re-create the exact
+    // conflict that fix was for (Thomas's request, 2026-08-08).
+    if port == crate::panel_server::PANEL_SERVER_PORT {
+        return Err(UiError::new(
+            "remote_port_reserved_for_panel",
+            format!(
+                "Port {port} ist für das MSFS-In-Sim-Panel reserviert — bitte einen anderen Port wählen."
+            ),
+        ));
+    }
     write_persisted_port(&app, port);
 
     // The new port takes effect on the next start; if the server is running
