@@ -1,13 +1,26 @@
 /*
- * AeroACARS in-sim toolbar panel — v0.1.0 (feasibility-spike build).
+ * AeroACARS in-sim toolbar panel — v0.2.0 (feasibility-spike build, round 2).
  *
  * Talks to the AeroACARS desktop app's EXISTING LAN Remote Control server
- * (client/src-tauri/src/remote/, built for v0.16.0 tablet control) — no new
- * server, no new routes. Two calls, both already live:
- *   - POST /api/auth {pin} -> {token}                          (pairing)
- *   - GET  /ws?token=...    -> pushes `flight_status` @ 1Hz     (live data)
- *   - POST /api/cmd/flight_status                               (poll fallback)
- *   - POST /api/cmd/landing_get_current                         (debrief pull)
+ * (client/src-tauri/src/remote/) via three unauthenticated, loopback-only
+ * routes added specifically for this panel (v0.1.1, #msfs-panel):
+ *   - GET /panel/status  -> flight_status JSON (poll fallback)
+ *   - GET /panel/debrief -> landing_get_current JSON, pulled once per landing
+ *   - GET /panel/ws      -> pushes `flight_status` @ 1Hz (live data)
+ *
+ * v0.2.0 dropped the original PIN-pairing design entirely. That flow reused
+ * the LAN Remote Control server's tablet-auth model (bearer token from a
+ * typed PIN) — the right call for a TABLET on the LAN, which is a different
+ * device that has to prove it's authorized. This panel is not that: it only
+ * ever runs alongside AeroACARS on the SAME PC, so there is no cross-device
+ * trust question to solve, and the typed PIN was pure friction — it also
+ * directly caused round 1's blocker (Coherent GT toolbar-panel text inputs
+ * don't get keyboard focus by default; see the FOCUS_INPUT_FIELD comment
+ * that used to be here). Dropping the PIN removes that whole bug class: this
+ * panel now needs NO typed input and NO keyboard focus at all. Security
+ * boundary is now strictly the loopback check server-side (see
+ * remote/router.rs's module doc) — nothing this panel can do about that
+ * being right or wrong, it just consumes the three routes above.
  *
  * This panel is loaded from file:// inside MSFS's Coherent GT engine, NOT a
  * normal browser tab — `location.host` is empty there, so every request
@@ -16,20 +29,19 @@
  * feasibility_spike this build exists to run.
  *
  * KNOWN UNVERIFIED ASSUMPTION (the whole point of this build): whether
- * Coherent GT permits fetch()/WebSocket to 127.0.0.1 at all. If pairing or
- * the live connection silently fails in-sim, that IS the spike result —
- * report it, don't assume a code bug first. See LIM-001 in the spec.
+ * Coherent GT permits fetch()/WebSocket to 127.0.0.1 at all. If the panel
+ * silently fails to connect in-sim, that IS the spike result — report it,
+ * don't assume a code bug first. See LIM-001 in the spec.
  */
 (function () {
   'use strict';
 
   // ---------------------------------------------------------------------
-  // Config + persistence
+  // Config
   // ---------------------------------------------------------------------
 
   var DEFAULT_PORT = 8765;
-  var LS_PORT = 'aeroacars_panel_port';
-  var LS_TOKEN = 'aeroacars_panel_token';
+  var LS_PORT = 'aeroacars_panel_port'; // optional override, no UI for it yet
   var RECONNECT_BASE_MS = 1000;
   var RECONNECT_MAX_MS = 15000;
   var POLL_INTERVAL_MS = 1000;
@@ -41,18 +53,6 @@
     } catch (e) {
       return DEFAULT_PORT;
     }
-  }
-  function setPort(p) {
-    try { window.localStorage.setItem(LS_PORT, String(p)); } catch (e) { /* no-op: localStorage may be unavailable in Coherent GT */ }
-  }
-  function getToken() {
-    try { return window.localStorage.getItem(LS_TOKEN) || null; } catch (e) { return null; }
-  }
-  function setToken(t) {
-    try { window.localStorage.setItem(LS_TOKEN, t); } catch (e) { /* no-op */ }
-  }
-  function clearToken() {
-    try { window.localStorage.removeItem(LS_TOKEN); } catch (e) { /* no-op */ }
   }
 
   function httpBase() { return 'http://127.0.0.1:' + getPort(); }
@@ -70,43 +70,12 @@
   // ---------------------------------------------------------------------
 
   var state = {
-    mode: 'disconnected', // disconnected | unauthenticated | ready_monitoring | flight_active | approach_monitor | scoring | landing_score | full_debrief
+    mode: 'disconnected', // disconnected | ready_monitoring | flight_active | approach_monitor | scoring | landing_score | full_debrief
     connected: false,     // WS open (or poll succeeding)
-    transport: null,      // 'ws' | 'poll' | null
     status: null,         // last flight_status payload (ActiveFlightInfo) or null
     debrief: null,        // last landing_get_current payload (LandingRecord) or null
     debriefFetchedForFlight: null, // pirep_id we already fetched the debrief for
-    lastError: null,
   };
-
-  var els = {}; // filled in initDom()
-
-  // ---------------------------------------------------------------------
-  // Auth
-  // ---------------------------------------------------------------------
-
-  function pair(pin) {
-    setStatusLine('Verbinde...');
-    return fetch(httpBase() + '/api/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: pin }),
-    })
-      .then(function (res) {
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return res.json();
-      })
-      .then(function (data) {
-        if (!data || !data.token) throw new Error('no token in response');
-        setToken(data.token);
-        startTransport();
-      })
-      .catch(function (err) {
-        state.lastError = String(err && err.message ? err.message : err);
-        setMode('unauthenticated');
-        setStatusLine('PIN falsch oder AeroACARS nicht erreichbar (' + state.lastError + ')');
-      });
-  }
 
   // ---------------------------------------------------------------------
   // Transport — WebSocket primary, polling fallback (SHOULD-009)
@@ -118,29 +87,25 @@
   var wsGaveUp = false; // after repeated WS failures, fall back to polling for THIS session
 
   function startTransport() {
-    var token = getToken();
-    if (!token) { setMode('unauthenticated'); return; }
     if (!wsGaveUp) {
-      connectWs(token);
+      connectWs();
     } else {
-      startPolling(token);
+      startPolling();
     }
   }
 
-  function connectWs(token) {
+  function connectWs() {
     try {
-      ws = new WebSocket(wsBase() + '/ws?token=' + encodeURIComponent(token));
+      ws = new WebSocket(wsBase() + '/panel/ws');
     } catch (e) {
-      onWsFailed(String(e));
+      onWsFailed();
       return;
     }
     ws.onopen = function () {
       wsRetryMs = RECONNECT_BASE_MS;
       state.connected = true;
-      state.transport = 'ws';
-      if (state.mode === 'disconnected' || state.mode === 'unauthenticated') {
-        setMode(state.status ? deriveMode() : 'ready_monitoring');
-      }
+      setMode(deriveMode());
+      render();
     };
     ws.onmessage = function (evt) {
       var msg;
@@ -150,18 +115,16 @@
       }
     };
     ws.onerror = function () { /* onclose follows; handle retry there */ };
-    ws.onclose = function (evt) {
+    ws.onclose = function () {
       state.connected = false;
       ws = null;
-      // 401/403-shaped closes (bad/revoked token) surface as an abnormal
-      // close early; treat any close before a successful open as "pairing
-      // no longer valid" rather than retrying forever with a dead token.
-      if (!state.status && evt && evt.code && evt.code !== 1000 && wsRetryMs >= RECONNECT_MAX_MS) {
+      if (wsRetryMs >= RECONNECT_MAX_MS) {
         wsGaveUp = true;
-        startPolling(getToken());
+        startPolling();
         return;
       }
       setMode('disconnected');
+      render();
       scheduleWsRetry();
     };
   }
@@ -170,31 +133,25 @@
     state.connected = false;
     wsGaveUp = wsRetryMs >= RECONNECT_MAX_MS;
     if (wsGaveUp) {
-      startPolling(getToken());
+      startPolling();
     } else {
       setMode('disconnected');
+      render();
       scheduleWsRetry();
     }
   }
 
   function scheduleWsRetry() {
-    var token = getToken();
-    if (!token) return;
     setTimeout(function () {
       wsRetryMs = Math.min(wsRetryMs * 2, RECONNECT_MAX_MS);
-      connectWs(token);
+      connectWs();
     }, wsRetryMs);
   }
 
-  function startPolling(token) {
-    if (!token || pollTimer) return;
-    state.transport = 'poll';
+  function startPolling() {
+    if (pollTimer) return;
     function tick() {
-      fetch(httpBase() + '/api/cmd/flight_status', {
-        method: 'POST',
-        headers: { 'X-AeroACARS-Token': token, 'Content-Type': 'application/json' },
-        body: '{}',
-      })
+      fetch(httpBase() + '/panel/status')
         .then(function (res) {
           if (!res.ok) throw new Error('HTTP ' + res.status);
           return res.json();
@@ -206,6 +163,7 @@
         .catch(function () {
           state.connected = false;
           setMode('disconnected');
+          render();
         });
     }
     tick();
@@ -222,22 +180,19 @@
       state.debrief = null;
       state.debriefFetchedForFlight = null;
     }
-    var prevMode = state.mode;
     var next = deriveMode();
     setMode(next);
     // Fetch the debrief exactly once per flight, only on the
     // scoring -> landing_score edge (MUST-012a) — never earlier, the
     // pre-finalize numbers are known-wrong (see spec panel_modes.scoring).
-    if (next === 'landing_score' && state.debriefFetchedForFlight !== payload.pirep_id) {
+    if (next === 'landing_score' && payload && state.debriefFetchedForFlight !== payload.pirep_id) {
       fetchDebrief(payload.pirep_id);
     }
-    void prevMode;
     render();
   }
 
   function deriveMode() {
     if (!state.connected) return 'disconnected';
-    if (!getToken()) return 'unauthenticated';
     var s = state.status;
     if (!s) return 'ready_monitoring';
     var phase = s.phase;
@@ -260,13 +215,7 @@
   }
 
   function fetchDebrief(pirepId) {
-    var token = getToken();
-    if (!token) return;
-    fetch(httpBase() + '/api/cmd/landing_get_current', {
-      method: 'POST',
-      headers: { 'X-AeroACARS-Token': token, 'Content-Type': 'application/json' },
-      body: '{}',
-    })
+    fetch(httpBase() + '/panel/debrief')
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
@@ -276,9 +225,7 @@
         state.debriefFetchedForFlight = pirepId;
         render();
       })
-      .catch(function (err) {
-        state.lastError = String(err && err.message ? err.message : err);
-      });
+      .catch(function () { /* next flight_status tick will retry via the guard above */ });
   }
 
   // ---------------------------------------------------------------------
@@ -290,12 +237,8 @@
     return n.toFixed(digits === undefined ? 0 : digits);
   }
 
-  function setStatusLine(text) {
-    if (els.statusLine) els.statusLine.textContent = text;
-  }
-
   function show(view) {
-    ['view-pair', 'view-monitor', 'view-approach', 'view-scoring', 'view-score', 'view-debrief'].forEach(function (id) {
+    ['view-monitor', 'view-approach', 'view-scoring', 'view-score', 'view-debrief'].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.style.display = id === view ? 'flex' : 'none';
     });
@@ -307,19 +250,18 @@
 
     switch (state.mode) {
       case 'disconnected':
-        show('view-pair');
-        setStatusLine('AeroACARS nicht erreichbar - lauft die App? (Port ' + getPort() + ')');
-        break;
-      case 'unauthenticated':
-        show('view-pair');
-        setStatusLine('Verbunden - PIN eingeben (Einstellungen > Fernzugriff in AeroACARS)');
+        show('view-monitor');
+        setDot(false);
+        setText('monitor-subtitle', 'AeroACARS nicht erreichbar - laeuft die App? (Port ' + getPort() + ')');
         break;
       case 'ready_monitoring':
         show('view-monitor');
+        setDot(true);
         setText('monitor-subtitle', 'Bereit - wartet auf aktiven Flug');
         break;
       case 'flight_active':
         show('view-monitor');
+        setDot(true);
         setText('monitor-subtitle', 'Ueberwacht Flugtelemetrie (' + (s ? s.phase : '--') + ')');
         break;
       case 'approach_monitor':
@@ -343,6 +285,11 @@
   function setText(id, text) {
     var el = document.getElementById(id);
     if (el) el.textContent = text;
+  }
+
+  function setDot(ok) {
+    var el = document.getElementById('monitor-dot');
+    if (el) el.className = 'dot ' + (ok ? 'dot-good' : 'dot-bad');
   }
 
   function renderApproach(s) {
@@ -428,38 +375,6 @@
   // ---------------------------------------------------------------------
 
   function wireButtons() {
-    var pairBtn = document.getElementById('pair-submit');
-    var pinInput = document.getElementById('pair-pin');
-    if (pairBtn && pinInput) {
-      pairBtn.addEventListener('click', function () {
-        var pin = (pinInput.value || '').trim();
-        if (pin.length === 6) pair(pin);
-      });
-      pinInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') pairBtn.click();
-      });
-      // v0.1.1 (Windows in-sim test, 2026-08-08): Coherent GT otherwise still
-      // routes keystrokes to MSFS's own control bindings while this field has
-      // "focus" — a text field never actually receives typed input in-sim
-      // without explicitly claiming/releasing it via Coherent.trigger. See
-      // MSFS DevSupport "Disable Bound Key Events when input into toolbar
-      // apps" (confirmed working by a PMDG dev in that thread). Applied but
-      // NOT YET independently re-verified live — the test session that wrote
-      // this fix crashed (unrelated CTD, cause unknown) before confirming it
-      // actually restores typing. Next in-sim test should check this first.
-      var notifyCoherentFocus = function () {
-        if (window.Coherent && Coherent.trigger) {
-          Coherent.trigger('FOCUS_INPUT_FIELD', pinInput.id, '', '', pinInput.value || '', false);
-        }
-      };
-      pinInput.addEventListener('focus', notifyCoherentFocus);
-      pinInput.addEventListener('input', notifyCoherentFocus);
-      pinInput.addEventListener('blur', function () {
-        if (window.Coherent && Coherent.trigger) {
-          Coherent.trigger('UNFOCUS_INPUT_FIELD', pinInput.id);
-        }
-      });
-    }
     var openDebrief = document.getElementById('open-full-debrief');
     if (openDebrief) {
       openDebrief.addEventListener('click', function () {
@@ -471,17 +386,6 @@
     if (backBtn) {
       backBtn.addEventListener('click', function () {
         state.mode = 'landing_score';
-        render();
-      });
-    }
-    var forgetBtn = document.getElementById('forget-pairing');
-    if (forgetBtn) {
-      forgetBtn.addEventListener('click', function () {
-        clearToken();
-        if (ws) { try { ws.close(); } catch (e) { /* no-op */ } }
-        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-        wsGaveUp = false;
-        setMode('unauthenticated');
         render();
       });
     }

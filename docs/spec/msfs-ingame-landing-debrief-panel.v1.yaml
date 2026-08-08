@@ -150,7 +150,9 @@ architecture:
       responsibility:
         - appear as MSFS toolbar panel
         - render status, monitoring, score, and debrief views
-        - complete the one-time pairing handshake (panel_pairing_flow)
+        - connect to the loopback-only /panel/* routes on load, no
+          pairing/handshake step (see panel_pairing_flow.status — removed
+          in round 2)
         - derive panel_modes client-side from flight_status fields
           (phase, landing_score_finalized, live) — no server-side mode
           state machine was built; the panel computes its own mode
@@ -160,134 +162,118 @@ architecture:
   data_flow:
     - from: aeroacars_app
       to: msfs_ingame_panel
-      protocol: http_websocket_localhost (existing LAN remote-control server)
+      protocol: http_websocket_localhost (existing LAN remote-control server, /panel/* routes)
       note: >
-        GET /ws?token=... pushes the existing flight_status event every
-        1s (unchanged cadence/dedup logic), now including
+        GET /panel/ws pushes the existing flight_status event every 1s
+        (unchanged cadence/dedup logic), now including
         live: PanelLiveSnapshot { vertical_speed_fpm, g_force, ias_kt,
         gs_kt, pitch_deg, bank_deg, wind_dir_deg, wind_speed_kt, oat_c }
         whenever a sim snapshot is available (None on sim disconnect).
         Once landing_score_finalized flips true on this SAME event, the
-        panel does one POST /api/cmd/landing_get_current
-        (X-AeroACARS-Token header) to fetch the full LandingRecord for
-        the score/debrief views. No push event carries the debrief
-        payload itself — it's pulled once, on the finalize edge.
+        panel does one GET /panel/debrief to fetch the full LandingRecord
+        for the score/debrief views. No push event carries the debrief
+        payload itself — it's pulled once, on the finalize edge. No
+        token/header needed on either call — see local_api.
       payloads:
         - flight_status (ActiveFlightInfo, existing shape + new `live` field)
-        - landing_get_current response (LandingRecord, existing shape)
-    - from: msfs_ingame_panel
-      to: aeroacars_app
-      protocol: http_localhost (existing LAN remote-control server)
-      note: >
-        POST /api/auth {pin} -> {token}, the existing pairing endpoint,
-        called directly via fetch() from inside the panel (see
-        panel_pairing_flow — no system-browser hop needed).
-      payloads:
-        - PairingRequest (pin), PairingResponse (token)
+        - panel/debrief response (LandingRecord, existing shape)
 
 panel_pairing_flow:
   status: >
-    SIMPLIFIED from the original browser-hop design. No dependency on
-    Coherent GT being able to open a system browser at all — only on
-    fetch() to localhost working, which is a strictly lower bar than the
-    persistent WebSocket this whole feature still needs for live updates,
-    and is the same class of call SQWK's own "Authenticate" step implies
-    it can do successfully already.
-  summary: >
-    The panel shows its OWN PIN entry field (optionally alongside a QR
-    code rendered via the existing net.rs::qr_svg helper, for a pilot who
-    prefers scanning on a phone and reading the code off it) and POSTs
-    directly to /api/auth — the exact endpoint client/src/components/
-    RemotePinGate.tsx already calls for tablet pairing. No new pairing
-    endpoint, no browser hand-off.
-  steps:
-    - step: 1
-      actor: msfs_ingame_panel
-      action: >
-        Show an inline PIN entry (unauthenticated panel_mode) instead of
-        attempting the WebSocket immediately.
-    - step: 2
-      actor: msfs_ingame_panel
-      action: >
-        On submit, POST /api/auth {pin} via fetch(). On success, store
-        the returned bearer token (Coherent GT's persistence options for
-        this are TBD by feasibility_spike — likely
-        window.localStorage if available in that JS environment; if not,
-        re-pairing every MSFS session is an acceptable degraded mode, not
-        a blocker).
-    - step: 3
-      actor: msfs_ingame_panel
-      action: >
-        Open the WS with ?token=... and start deriving panel_modes from
-        the incoming flight_status stream.
-  open_question: >
-    Whether fetch() and/or the WebSocket succeed from inside Coherent GT
-    at all is still the central unknown — unchanged from LIM-001 — this
-    simplification only removes the EXTRA, now-unnecessary assumption
-    that Coherent GT can also open a system browser. feasibility_spike
-    tests fetch and WebSocket independently for exactly this reason.
+    REMOVED entirely in round 2 (2026-08-08), not just simplified. Thomas's
+    round-2 feedback ("warum brauchen wir eine PIN Abfrage?") was correct:
+    a typed PIN made sense for the tablet remote-control use case (a
+    genuinely different device that has to prove authorization) but was a
+    threat-model mismatch for this panel, which only ever runs on the SAME
+    PC as AeroACARS — there is no cross-device trust question to solve.
+    Round 1's actual keyboard-focus blocker (Coherent GT toolbar text
+    inputs don't get focus by default) only existed because the panel
+    needed the pilot to type something at all; removing the PIN removes
+    that entire bug class along with the friction. See local_api below for
+    what replaced it.
+  superseded_by: >
+    Three new unauthenticated, loopback-only routes on the SAME existing
+    LAN Remote Control server (client/src-tauri/src/remote/router.rs,
+    v0.1.1 #msfs-panel): GET /panel/status, GET /panel/debrief,
+    GET /panel/ws. Security boundary moved from "bearer token, LAN-wide
+    reachable" to "no token, loopback-only reachable" — narrower in reach
+    (only this PC, not the whole LAN) even though it dropped the token,
+    because loopback-only is the entire point: only a process on this same
+    machine can ever open that socket. See router.rs's module doc for the
+    full reasoning, and net.rs::is_loopback_peer (stricter than the
+    existing is_private_peer the tablet API uses).
 
 local_api:
   status: >
-    IMPLEMENTED — reuses the existing LAN Remote Control server as-is,
-    zero new routes. Everything below already exists in
-    client/src-tauri/src/remote/ and client/src-tauri/src/lib.rs.
+    IMPLEMENTED — client/src-tauri, commit pending on main, 48 remote::
+    tests green (2 new: loopback_accepts_only_loopback_not_wider_lan,
+    panel_routes_reject_lan_peers_that_full_remote_routes_would_allow).
+    The token-gated /api + /ws block further below is UNCHANGED and still
+    exists for the tablet; /panel/* is new and separate, not a relaxation
+    of it.
   host: 127.0.0.1
   default_port: 8765
   port_note: >
-    The existing LAN Remote Control server's default/configurable port
-    (remote_server.json / remote_server_set_port). The panel is just
-    another client of it, like the tablet UI. msfs_panel.local_port
-    below is a display-only convenience showing the pilot which port to
-    reach — it does not start a second server.
-  auth: >
-    Existing bearer-token model (X-AeroACARS-Token header for HTTP,
-    ?token= for the WS upgrade), obtained via panel_pairing_flow's
-    POST /api/auth.
-  endpoints:
+    Same server, same default/configurable port as the existing LAN
+    Remote Control server (remote_server.json / remote_server_set_port) —
+    /panel/* are additional routes on it, not a second server.
+  panel_endpoints:
+    - id: panel_status
+      method: GET
+      path: /panel/status
+      auth_required: false
+      loopback_only: true
+      response_schema: ActiveFlightInfo (existing flight_status shape, + `live`)
+      purpose: Poll fallback (SHOULD-009) if /panel/ws doesn't work.
+    - id: panel_debrief
+      method: GET
+      path: /panel/debrief
+      auth_required: false
+      loopback_only: true
+      response_schema: LandingRecord (storage crate, existing shape)
+      purpose: >
+        Pulled ONCE per landing by the panel, only after
+        landing_score_finalized (MUST-012a) — never on raw touchdown.
+    - id: panel_websocket
+      method: WEBSOCKET
+      path: /panel/ws
+      auth_required: false
+      loopback_only: true
+      messages:
+        - flight_status (existing event name/shape, + new `live` field)
+      purpose: >
+        Existing 1Hz push (unchanged cadence/dedup), now also fanned out
+        on this unauthenticated route. The panel derives every
+        panel_mode transition from this stream plus the one pull above.
+      note: >
+        Deliberately skips the foreign-Origin check the token-gated /ws
+        has: a file://-loaded panel sends `Origin: null` (present, not
+        absent), which that check would treat as foreign and reject.
+        There's no token here to protect against a cross-site replay of,
+        so the loopback gate alone is the real protection for this route.
+  tablet_endpoints_unchanged:
     - id: pairing
       method: POST
       path: /api/auth
       body: "{pin}"
       response: "{token}"
-      purpose: Existing endpoint, reused verbatim by panel_pairing_flow.
-    - id: landing_debrief_pull
+      purpose: >
+        Still exists, still used by the tablet remote-control UI — NOT
+        used by the panel anymore as of round 2.
+    - id: landing_debrief_pull_authenticated
       method: POST
       path: /api/cmd/landing_get_current
       auth_required: true
-      response_schema: LandingRecord (storage crate, existing shape)
-      purpose: >
-        Already bridged (remote/bridge.rs:119, pre-existing, not new
-        code) — the panel's landing_score/full_debrief views fetch this
-        ONCE per landing, only after landing_score_finalized (MUST-012a).
-    - id: websocket_live
+      purpose: Same underlying data as panel_debrief, tablet-facing path.
+    - id: websocket_live_authenticated
       method: WEBSOCKET
       path: /ws
       auth_required: true
-      messages:
-        - flight_status (existing event name/shape, + new `live` field)
-      purpose: >
-        Existing 1Hz push, unchanged cadence/dedup — the panel derives
-        every panel_mode transition from this single stream plus the one
-        pull above.
-      risk_note: >
-        The existing remote server's WS upgrade handler rejects a
-        *present* foreign-Origin header but allows a missing one
-        (native-client assumption from router.rs::reject_foreign_origin).
-        Coherent GT's actual Origin behavior for panel-issued WS requests
-        (e.g. a coui:// scheme) is unverified and must be checked in
-        feasibility_spike — it may need an explicit allowlist entry rather
-        than relying on the "no Origin" path.
+      purpose: Same underlying stream as panel_websocket, tablet-facing path.
 
 panel_modes:
   - id: disconnected
     description: AeroACARS local bridge is not reachable.
-  - id: unauthenticated
-    description: >
-      AeroACARS local bridge is reachable but panel_pairing_flow has not
-      completed yet (no valid token). Distinct from disconnected so the
-      panel can show "tap to authenticate" instead of a generic offline
-      state.
   - id: ready_monitoring
     description: AeroACARS is connected and monitoring flight telemetry.
   - id: flight_active
@@ -323,13 +309,19 @@ functional_requirements:
     - id: MUST-003
       text: >
         The panel must communicate with AeroACARS via local HTTP and
-        WebSocket, reached only after the one-time panel_pairing_flow
-        handshake (not an always-open, unauthenticated socket).
+        WebSocket, via routes gated to STRICT loopback on the server side
+        (net::is_loopback_peer) — not the wider private-LAN range the
+        tablet API uses. This is the panel's entire security boundary
+        (round 2: no PIN/token — see MUST-003a and platform_scope_note's
+        sibling, panel_pairing_flow.status, for why that's the right
+        trade for a same-PC-only consumer).
     - id: MUST-003a
       text: >
-        The panel must offer an explicit "Authenticate" action that opens
-        the system browser to complete pairing, rather than assuming an
-        implicit/silent local connection will succeed inside Coherent GT.
+        The panel must NOT require any typed input or pairing step to
+        connect — it should reach ready_monitoring automatically once
+        AeroACARS is running, with zero pilot action. (Superseded MUST-003a:
+        round 1's "offer an explicit Authenticate action" — dropped along
+        with the PIN it was authenticating.)
     - id: MUST-003b
       text: >
         The in-sim panel targets MSFS 2024 only. MSFS 2020 is out of scope
@@ -504,7 +496,6 @@ schemas:
       mode:
         enum:
           - disconnected
-          - unauthenticated
           - ready_monitoring
           - flight_active
           - approach_monitor
@@ -932,14 +923,9 @@ acceptance_criteria:
     text: If AeroACARS is running, the panel connects to the local bridge and shows ready/monitoring state.
   - id: AC-004a
     text: >
-      Before pairing has completed once, the panel shows the
-      unauthenticated state with an Authenticate action, not a raw
-      offline/error state.
-  - id: AC-004b
-    text: >
-      Authenticate opens the system browser to the existing AeroACARS PIN
-      pairing page and, once confirmed, the panel does not require
-      re-pairing on subsequent MSFS sessions.
+      No pairing/PIN step exists (round 2). The panel reaches
+      ready_monitoring automatically as soon as AeroACARS is running —
+      zero pilot action required to connect.
   - id: AC-005
     text: During approach/final, the panel can auto-activate according to settings.
   - id: AC-006
@@ -974,9 +960,12 @@ implementation_notes:
     text: Do not add full-flight constant 30 Hz logging just for this feature.
   - id: IMPL-007
     text: >
-      Extend client/src-tauri/src/remote/ (router.rs, events.rs, bridge.rs)
-      with panel-specific routes/WS messages instead of building a new
-      server; reuse auth.rs's token/PIN model for panel_pairing_flow.
+      Extend client/src-tauri/src/remote/ (router.rs, net.rs) with
+      panel-specific routes instead of building a new server. Round 2:
+      these are unauthenticated + strictly loopback-gated (net.rs::
+      is_loopback_peer), NOT auth.rs's token/PIN model — that model stays
+      in place unchanged for the tablet's /api + /ws routes, it's just not
+      what the panel uses.
   - id: IMPL-008
     text: >
       Do not commit to full MSFS build effort before feasibility_spike
@@ -1043,6 +1032,32 @@ feasibility_spike:
     recurs; (e) the CTD's cause is unknown and wasn't investigated
     (session ended by Thomas's choice) — not established as related to
     this panel, but also not ruled out; keep an eye out if it recurs.
+    SUPERSEDED by round_2_changes below — (a)/(b) turned out to be the
+    wrong question once the PIN requirement itself was removed.
+  round_2_changes: >
+    Prompted by direct Thomas feedback mid-round-1-writeup ("warum brauchen
+    wir eine PIN Abfrage? und warum sieht das Plugin so scheisse aus? ...
+    lässt sich nicht mal verschieben"), both raised issues turned out to
+    have real, fixable root causes rather than being inherent MSFS/Coherent
+    GT limitations:
+    (1) PIN removed entirely — replaced by three unauthenticated,
+    strictly-loopback-gated routes (/panel/status, /panel/debrief,
+    /panel/ws) on the same existing server; see panel_pairing_flow.status
+    and local_api. This also sidesteps round 1's keyboard-focus blocker
+    completely (no typed input needed at all anymore), so (a)/(b) above
+    are moot — round 2 goes straight to testing the actual goal.
+    (2) Not draggable/resizable — root cause found (not live-verified
+    yet): the panel was missing MSFS's own <ingame-ui panel-id="..."
+    title="..." ...> wrapper element, which is what the native frame
+    recognizes to supply a title bar/drag/resize — verified against
+    github.com/bymaximus/msfs2020-toolbar-window-template, whose reference
+    HTML wraps everything in exactly this element with no additional
+    custom drag code. Round 1 shipped plain <div class="panel"> content
+    with no such wrapper. Added in AeroACARSPanel.html; not yet
+    live-verified this alone is sufficient.
+    AssetPackage Version bumped 0.2.6->0.2.7 (substantial round-2 changes,
+    same caching precaution as round 1's bump, still unverified whether
+    that precaution is even necessary).
   goal: >
     Resolve LIM-001 and the local_api.websocket_live.risk_note before
     committing to the full panel build: does a minimal MSFS 2024 in-game

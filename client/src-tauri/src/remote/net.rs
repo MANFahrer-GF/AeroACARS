@@ -54,6 +54,31 @@ pub fn is_private_socket(addr: SocketAddr) -> bool {
     is_private_peer(addr.ip())
 }
 
+/// True iff `ip` is STRICTLY loopback (`127.0.0.0/8`, `::1`) — narrower
+/// than [`is_private_peer`], which also accepts the wider LAN ranges.
+///
+/// v0.1.1 (#msfs-panel): used for the panel's read-only endpoints, which
+/// are unauthenticated by design. That's only safe because they're gated
+/// to loopback: the in-sim panel always runs on the SAME PC as AeroACARS
+/// (unlike the tablet remote-control API, which needs cross-device LAN
+/// reach + a token precisely because it isn't local). Loopback-only is the
+/// entire security boundary for these routes — do not widen this to
+/// `is_private_peer` without adding auth back.
+pub fn is_loopback_peer(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_loopback(),
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => v4.is_loopback(),
+            None => v6.is_loopback(),
+        },
+    }
+}
+
+/// True iff a `SocketAddr` peer is strictly loopback. See [`is_loopback_peer`].
+pub fn is_loopback_socket(addr: SocketAddr) -> bool {
+    is_loopback_peer(addr.ip())
+}
+
 /// Build the `http://<ip>:<port>` connect URLs the settings panel shows
 /// and the QR encodes. One entry per private (RFC1918 / link-local /
 /// loopback) IPv4 interface, deduped, with loopback sorted LAST so the
@@ -196,6 +221,27 @@ mod tests {
         let pub_addr = SocketAddr::from_str("8.8.8.8:8765").unwrap();
         assert!(is_private_socket(priv_addr));
         assert!(!is_private_socket(pub_addr));
+    }
+
+    #[test]
+    fn loopback_accepts_only_loopback_not_wider_lan() {
+        assert!(is_loopback_peer(v4("127.0.0.1")));
+        assert!(is_loopback_peer(v6("::1")));
+        assert!(is_loopback_peer(v6("::ffff:127.0.0.1")));
+        // Wider private-LAN ranges are accepted by is_private_peer but must
+        // NOT be accepted here — that's the whole point of this function.
+        assert!(!is_loopback_peer(v4("192.168.1.5")));
+        assert!(!is_loopback_peer(v4("169.254.10.10")));
+        assert!(!is_loopback_peer(v6("fe80::1")));
+        assert!(!is_loopback_peer(v4("8.8.8.8")));
+    }
+
+    #[test]
+    fn is_loopback_socket_delegates_to_ip() {
+        let loop_addr = SocketAddr::from_str("127.0.0.1:8765").unwrap();
+        let lan_addr = SocketAddr::from_str("192.168.0.10:8765").unwrap();
+        assert!(is_loopback_socket(loop_addr));
+        assert!(!is_loopback_socket(lan_addr));
     }
 
     #[test]

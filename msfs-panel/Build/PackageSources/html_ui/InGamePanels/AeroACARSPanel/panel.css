@@ -6,8 +6,8 @@
  */
 
 html, body {
-  height: 100vh;
-  width: 100vw;
+  height: 100%;
+  width: 100%;
   margin: 0;
   padding: 0;
   overflow: hidden;
@@ -16,13 +16,23 @@ html, body {
   color: #e8ecf1;
 }
 
+/* v0.2.0 (round 2): <ingame-ui> (see AeroACARSPanel.html) now owns the
+   actual window frame — title bar, drag, resize. .panel sizes to THAT
+   parent instead of hard-forcing 100vw/100vh itself (round 1's approach,
+   before <ingame-ui> was added), which would fight the native frame's own
+   sizing. Not yet live-verified how <ingame-ui> actually sizes its content
+   area — if the panel renders too small/large in round 2, this is the
+   first place to check. */
+ingame-ui, .ingameUiFrame {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .panel {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
   box-sizing: border-box;
+  width: 100%;
+  height: 100%;
   background: rgba(14, 18, 26, 0.88);
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -68,25 +78,8 @@ html, body {
 .dot-neutral { background: #6b7684; }
 
 .muted { color: #8a93a3; font-size: 11px; }
-.status-line { font-size: 11px; color: #8a93a3; }
 .mono { font-variant-numeric: tabular-nums; font-family: "Consolas", "SF Mono", monospace; }
 
-/* ---- pairing view ---- */
-
-#view-pair { justify-content: center; align-items: stretch; }
-.pair-title { font-size: 13px; font-weight: 600; text-align: center; }
-.pair-input-row { display: flex; gap: 8px; justify-content: center; }
-#pair-pin {
-  width: 90px;
-  text-align: center;
-  font-size: 18px;
-  letter-spacing: 4px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(255, 255, 255, 0.06);
-  color: #e8ecf1;
-}
 button {
   cursor: pointer;
   border: none;
@@ -104,7 +97,6 @@ button.secondary {
 /* ---- compact monitor view ---- */
 
 #view-monitor { justify-content: center; }
-.monitor-icon { width: 26px; height: 26px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.2); display:flex; align-items:center; justify-content:center; }
 
 /* ---- approach / live telemetry view ---- */
 

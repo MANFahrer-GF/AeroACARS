@@ -3,15 +3,26 @@
 Spec: [`docs/spec/msfs-ingame-landing-debrief-panel.v1.yaml`](../docs/spec/msfs-ingame-landing-debrief-panel.v1.yaml).
 
 This package talks to AeroACARS's **existing** LAN Remote Control server
-(`client/src-tauri/src/remote/`, port 8765 by default) — no new server, no
-new routes. It is a **thin client** of two already-existing endpoints:
+(`client/src-tauri/src/remote/`) via three small, unauthenticated,
+loopback-only routes added specifically for it:
 
-- `POST /api/auth {pin}` — pairing (same PIN shown in AeroACARS's
-  Settings → Fernzugriff panel).
-- `GET /ws?token=...` — the existing 1Hz `flight_status` push, now
-  carrying an extra `live` telemetry sub-object.
-- `POST /api/cmd/landing_get_current` — pulled once per landing, after
-  scoring finalizes.
+- `GET /panel/status` — `flight_status` JSON (poll fallback).
+- `GET /panel/ws` — pushes `flight_status` @ 1Hz (live data), now carrying
+  an extra `live` telemetry sub-object.
+- `GET /panel/debrief` — `landing_get_current` JSON, pulled once per
+  landing, after scoring finalizes.
+
+**Round 2 (2026-08-08) dropped the original PIN-pairing design entirely.**
+Round 1's flow reused the LAN Remote Control server's tablet-auth model
+(typed PIN → bearer token) — the right call for a tablet on the LAN, a
+genuinely different device that has to prove it's authorized. This panel
+isn't that: it only ever runs on the SAME PC as AeroACARS, so there's no
+cross-device trust question, and the PIN was pure friction that directly
+caused round 1's keyboard-focus blocker (see below). The security boundary
+for `/panel/*` is now strictly server-side loopback-only (any process on
+the SAME machine can reach it, nothing else can — see
+`remote/router.rs`'s module doc for the reasoning). Panel-side, this means
+no typed input and no keyboard focus needed at all anymore.
 
 **The central open question this build exists to answer:** does Coherent
 GT (MSFS's in-game UI engine) actually allow `fetch()`/`WebSocket` calls to
@@ -80,37 +91,39 @@ before we know the core networking assumption above holds. See
 `docs/spec/msfs-ingame-landing-debrief-panel.v1.yaml` `feasibility_spike`
 for what "done" looks like before that's worth building.
 
-## Testing the spike
+## Testing the spike (round 2)
 
-1. Start AeroACARS, enable "Fernzugriff" (LAN Remote Control) in Settings —
-   note the port (default 8765) and PIN.
-2. Launch MSFS 2024 with the built package in Community.
+1. Start AeroACARS. Nothing to configure for the panel — no PIN, no pairing
+   step. (The existing "Fernzugriff"/LAN Remote Control toggle in Settings
+   still exists for the tablet use case and is unrelated to this panel now.)
+2. Launch MSFS 2024 with the freshly-built package (round 2 changed the
+   HTML/JS meaningfully — rebuild clean, don't reuse a round-1 package) in
+   Community.
 3. Look for the AeroACARS icon in the MSFS toolbar. Open it. **Round 1
-   confirmed this part works** — the panel renders correctly (title, status
-   line, PIN field, button).
-4. **First check: can you actually type into the PIN field now?** Round 1
-   found MSFS's own control bindings eat keystrokes in toolbar-panel text
-   fields unless the panel explicitly claims focus via
-   `Coherent.trigger('FOCUS_INPUT_FIELD', ...)` — a fix for that is in
-   `panel.js` now but was never live-verified (see
-   `feasibility_spike.round_1_new_blocker` in the spec). If typing still
-   doesn't work, that's the next thing to debug, not the network question
-   yet.
-5. Once you can type: enter the PIN. **Report exactly what happens** —
-   success, a fetch error, a silent hang, anything — THIS is the actual
-   spike result we still don't have.
-6. If pairing succeeds but the WebSocket never receives data, that's the
-   `websocket_live` risk materializing (SHOULD-009's polling fallback in
-   `panel.js` should kick in automatically after a few failed WS retries —
-   check whether IT works, too).
-7. Open the Coherent GT Debugger (`C:\MSFS 2024 SDK\Tools\CoherentGT
+   confirmed the panel renders** (title, status line) — round 2 adds the
+   `<ingame-ui>` wrapper MSFS needs to supply a native title bar/drag/resize
+   (round 1 shipped without it and the panel couldn't be moved). **First
+   check: does it look right now, and can you drag/resize it?** If not,
+   that's the first thing to report — see
+   `feasibility_spike` in the spec for the reasoning behind this fix and
+   what to check if it doesn't work.
+4. **This is the actual spike result we still don't have:** does the panel
+   connect on its own (no PIN needed now)? It should go straight from
+   "Verbinde..." to "Bereit - wartet auf aktiven Flug" if `/panel/status` or
+   `/panel/ws` reach AeroACARS. Report exactly what happens — connects,
+   stays on "Verbinde...", a visible error, anything.
+5. If it never connects, that's the `websocket_live`/fetch risk
+   materializing (SHOULD-009's polling fallback in `panel.js` should kick in
+   automatically after a few failed WS retries — check whether IT works,
+   too, before concluding nothing works at all).
+6. Open the Coherent GT Debugger (`C:\MSFS 2024 SDK\Tools\CoherentGT
    Debugger\Debugger.exe`) on the panel while testing to see the actual
    console/network errors. Round 1 found it crashes on direct launch
    (missing working directory for its DLL search) — start it with its own
-   folder as the working directory. Round 1 also got a blank page after
-   entering its `127.0.0.1:19999` URL despite the port showing active
-   connections in `netstat` — not resolved; if that recurs, it may not be a
-   simple REST/HTTP debugger and might need a different access method.
+   folder as the working directory. Round 1 also got a blank page at
+   `127.0.0.1:19999` — likely a sequencing issue (open the panel in-sim
+   FIRST, then start the debugger, then load that URL — it should then show
+   a list of inspectable views, not a blank page).
 
 Report back (even "nothing happened, blank panel") — that's real
 information either way.

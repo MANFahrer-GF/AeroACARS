@@ -6,33 +6,43 @@
   <link rel="stylesheet" href="panel.css" />
 </head>
 <body>
+  <!--
+    v0.2.0 (round 2, #msfs-panel): wrapped in MSFS's own <ingame-ui> custom
+    element. Round 1 shipped without it — plain <div class="panel"> — and
+    the panel rendered but could not be dragged or resized despite
+    resizeDirections="Both" being set in the InGamePanelDefinition. Verified
+    reference (github.com/bymaximus/msfs2020-toolbar-window-template): MSFS
+    toolbar panels get NO title bar / drag / resize chrome unless their
+    content is wrapped in <ingame-ui panel-id="..." title="..." ...> — that
+    tag is what the native frame recognizes to supply it, not something we
+    build ourselves in JS/CSS. panel-id must match the InGamePanelDefinition
+    id in Build/PackageSources/InGamePanels/aeroacars-panel.xml. NOT YET
+    live-verified that this alone is sufficient — round 2's first check.
+  -->
+  <ingame-ui
+    id="AeroACARSPanel"
+    panel-id="PANEL_AEROACARS_PANEL"
+    title="AeroACARS Flight Review"
+    class="ingameUiFrame"
+    content-fit="true"
+    min-width="220"
+    min-height="160"
+  >
   <div class="panel">
 
-    <!-- disconnected / unauthenticated -->
-    <div id="view-pair" class="view">
-      <div class="pair-title">AeroACARS Flight Review</div>
-      <div id="status-line" class="status-line">Verbinde...</div>
-      <div class="pair-input-row">
-        <input id="pair-pin" type="text" maxlength="6" inputmode="numeric" placeholder="PIN" />
-        <button id="pair-submit">Verbinden</button>
-      </div>
-      <div class="muted">PIN steht in AeroACARS unter Einstellungen &gt; Fernzugriff.</div>
-    </div>
-
-    <!-- ready_monitoring / flight_active -->
+    <!-- disconnected / ready_monitoring / flight_active -->
     <div id="view-monitor" class="view">
       <div class="header-row">
-        <div class="dot"></div>
+        <div id="monitor-dot" class="dot dot-bad"></div>
         <div class="app-name">AeroACARS Flight Review</div>
-        <button id="forget-pairing" class="secondary" style="margin-left:auto;font-size:10px;padding:3px 8px;">Trennen</button>
       </div>
-      <div id="monitor-subtitle" class="muted">Bereit - wartet auf aktiven Flug</div>
+      <div id="monitor-subtitle" class="muted">Verbinde...</div>
     </div>
 
     <!-- approach_monitor -->
     <div id="view-approach" class="view">
       <div class="header-row">
-        <div class="dot"></div>
+        <div class="dot dot-good"></div>
         <div id="ap-aircraft" class="app-name">--</div>
       </div>
       <div id="ap-route" class="muted">---- -&gt; ----</div>
@@ -74,6 +84,7 @@
     </div>
 
   </div>
+  </ingame-ui>
 
   <script src="panel.js"></script>
 </body>

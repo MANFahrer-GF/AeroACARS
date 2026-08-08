@@ -6,6 +6,9 @@
 //! POST /api/auth          {pin}              → {token} | 401 | 429
 //! POST /api/cmd/{name}     <named args json>  → 200 Ok | 422 UiError | 404
 //! GET  /ws?token=…         (WebSocket)         → push stream
+//! GET  /panel/status                          → flight_status JSON, loopback-only, NO token
+//! GET  /panel/debrief                         → landing_get_current JSON, loopback-only, NO token
+//! GET  /panel/ws                              → push stream, loopback-only, NO token
 //! GET  /*path              (SPA via embedded asset_resolver,
 //!                           fallback index.html for deep-links)
 //! ```
@@ -15,6 +18,20 @@
 //! 2. the bearer token must match (header on `/api/cmd`, query on `/ws`),
 //! 3. a strict same-origin `CorsLayer`, and the WS upgrade additionally
 //!    refuses a foreign `Origin` header.
+//!
+//! `/panel/*` (v0.1.1, #msfs-panel) is a DELIBERATELY DIFFERENT, narrower
+//! security model, not a relaxation of the one above: no PIN/token at all,
+//! gated to STRICT loopback ([`net::is_loopback_socket`], not the wider
+//! `is_private_socket`) instead. This is safe specifically because the
+//! MSFS in-sim panel always runs on the same physical PC as AeroACARS —
+//! there is no cross-device pairing need the way there is for a tablet on
+//! the LAN, so requiring a typed PIN added user friction (and, per the
+//! round-1 field test, ran straight into an MSFS/Coherent-GT keyboard-
+//! focus bug that blocked it) without buying real security: the loopback
+//! boundary already excludes every peer that isn't a process on this same
+//! machine. Read-only, and no more sensitive than the flight telemetry
+//! already visible on screen. Do not add mutating commands here — that's
+//! what the token-gated `/api/cmd/*` path stays for.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -23,7 +40,7 @@ use std::sync::Arc;
 use axum::{
     body::Bytes,
     extract::{ws::WebSocketUpgrade, ConnectInfo, Path as AxumPath, Query, Request, State},
-    http::{header, HeaderMap, StatusCode, Uri},
+    http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -217,6 +234,9 @@ pub fn build_router(ctx: RemoteContext, spa_dir: PathBuf) -> Router {
     Router::new()
         .route("/api/auth", post(auth_handler))
         .route("/api/cmd/{name}", post(cmd_handler))
+        .route("/panel/status", get(panel_status_handler))
+        .route("/panel/debrief", get(panel_debrief_handler))
+        .route("/panel/ws", get(panel_ws_handler))
         // SECURITY: the `/ws` route authenticates via the `?token=` query
         // parameter (a WebSocket upgrade can't carry a custom header from a
         // browser). That token therefore lives in the request URI. NO
@@ -281,6 +301,33 @@ fn header_token_ok(ctx: &RemoteContext, headers: &HeaderMap) -> bool {
         .and_then(|v| v.to_str().ok())
         .map(|t| ctx.auth.verify_token(t))
         .unwrap_or(false)
+}
+
+/// Reject a peer that is not strictly loopback. See [`net::is_loopback_socket`]
+/// and the module doc for why `/panel/*` uses this instead of
+/// [`reject_non_private`].
+fn reject_non_loopback(peer: SocketAddr) -> Option<Response> {
+    if net::is_loopback_socket(peer) {
+        None
+    } else {
+        tracing::warn!(%peer, "remote: rejected non-loopback peer on /panel route");
+        Some((StatusCode::FORBIDDEN, "forbidden: loopback only").into_response())
+    }
+}
+
+/// The `/panel/*` routes are meant to be fetchable from a `file://`-loaded
+/// MSFS panel, which is always cross-origin from the server's perspective
+/// (there is no "same origin" for a local file). The global `CorsLayer` on
+/// this router is deny-all (see `build_router`'s comment), which would
+/// otherwise let the request land server-side but block the panel's JS
+/// from reading the response. These 3 routes are unauthenticated +
+/// loopback-gated already (no token to protect via CORS), so an open ACAO
+/// header here doesn't weaken anything — set it explicitly rather than
+/// touching the shared CorsLayer that /api and /ws rely on.
+fn cors_open(mut resp: Response) -> Response {
+    resp.headers_mut()
+        .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    resp
 }
 
 // ----------------------------------------------------------------------
@@ -422,6 +469,62 @@ async fn ws_handler(
     upgrade.on_upgrade(move |socket| events::handle_socket(ctx2, socket, permit))
 }
 
+// ----------------------------------------------------------------------
+// GET /panel/status, GET /panel/debrief, GET /panel/ws — unauthenticated,
+// loopback-only. See the module doc for why this is a deliberately
+// different, narrower security model than the block above.
+// ----------------------------------------------------------------------
+
+async fn panel_status_handler(
+    State(ctx): State<RemoteContext>,
+    ConnectInfo(crate::remote::PeerAddr(peer)): ConnectInfo<crate::remote::PeerAddr>,
+) -> Response {
+    if let Some(r) = reject_non_loopback(peer) {
+        return r;
+    }
+    let value = super::current_flight_status_value(&ctx.app);
+    cors_open((StatusCode::OK, Json(value)).into_response())
+}
+
+async fn panel_debrief_handler(
+    State(ctx): State<RemoteContext>,
+    ConnectInfo(crate::remote::PeerAddr(peer)): ConnectInfo<crate::remote::PeerAddr>,
+) -> Response {
+    if let Some(r) = reject_non_loopback(peer) {
+        return r;
+    }
+    let state = ctx.app.state::<crate::AppState>();
+    let record = crate::landing_get_current(ctx.app.clone(), state);
+    let value = serde_json::to_value(record).unwrap_or(Value::Null);
+    cors_open((StatusCode::OK, Json(value)).into_response())
+}
+
+async fn panel_ws_handler(
+    State(ctx): State<RemoteContext>,
+    ConnectInfo(crate::remote::PeerAddr(peer)): ConnectInfo<crate::remote::PeerAddr>,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    if let Some(r) = reject_non_loopback(peer) {
+        return r;
+    }
+    // No reject_foreign_origin() here, deliberately: a `file://`-loaded
+    // panel sends `Origin: null` (present, not absent), which that check
+    // would treat as foreign and reject. It exists on `/ws` to stop a
+    // cross-site page from riding an ambient bearer token — there is no
+    // token here to steal, so the same protection isn't meaningful; the
+    // loopback gate above is what actually protects this route.
+    let Ok(permit) = Arc::clone(&ctx.ws_slots).try_acquire_owned() else {
+        tracing::warn!(%peer, "remote: WS connection cap reached — refusing panel upgrade");
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "too many active remote connections",
+        )
+            .into_response();
+    };
+    let ctx2 = ctx.clone();
+    upgrade.on_upgrade(move |socket| events::handle_socket(ctx2, socket, permit))
+}
+
 /// Reject a WS upgrade whose `Origin` host differs from the `Host` header.
 /// Returns `Some(403)` to reject, `None` to allow.
 fn reject_foreign_origin(headers: &HeaderMap) -> Option<Response> {
@@ -460,6 +563,18 @@ mod tests {
         assert!(reject_non_private(pub_peer).is_some());
         let lan_peer: SocketAddr = "192.168.1.5:5000".parse().unwrap();
         assert!(reject_non_private(lan_peer).is_none());
+    }
+
+    #[test]
+    fn panel_routes_reject_lan_peers_that_full_remote_routes_would_allow() {
+        // The whole point of reject_non_loopback vs. reject_non_private: a
+        // LAN tablet is a legitimate /api peer but must NOT reach /panel/*.
+        let lan_peer: SocketAddr = "192.168.1.5:5000".parse().unwrap();
+        assert!(reject_non_private(lan_peer).is_none());
+        assert!(reject_non_loopback(lan_peer).is_some());
+
+        let loop_peer: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        assert!(reject_non_loopback(loop_peer).is_none());
     }
 
     #[test]
