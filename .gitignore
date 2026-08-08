@@ -52,6 +52,15 @@ node_modules/
 .npm/
 dist/
 build/
+# msfs-panel/ uses "Build/" for the MSFS SDK's own project layout, which
+# mixes real *source* (PackageSources/, PackageDefinitions/) with generated
+# output (layout.json, _Temp/, Packages/, compiled .spb) in the same tree —
+# un-ignore the source, leave the generated bits caught by build/ above.
+!msfs-panel/Build/
+!msfs-panel/Build/PackageSources/
+!msfs-panel/Build/PackageSources/*.xml
+!msfs-panel/Build/PackageDefinitions/
+!msfs-panel/Build/PackageDefinitions/*.xml
 .parcel-cache/
 .turbo/
 .next/

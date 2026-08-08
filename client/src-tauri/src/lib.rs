@@ -4412,6 +4412,42 @@ pub struct ManualFilingDefaults {
     requires_reason: bool,
 }
 
+/// v0.21 (#msfs-panel): live cockpit telemetry for the MSFS in-sim toolbar
+/// panel's approach-monitor view. Sourced 1:1 from the current
+/// `SimSnapshot` — no new computation, just the subset the panel's
+/// live_telemetry card needs (docs/spec/msfs-ingame-landing-debrief-panel.v1.yaml
+/// ui_requirements.approach_monitor_view). `None` on `ActiveFlightInfo`
+/// whenever the sim isn't currently reachable (mirrors how `sim_fuel_kg`
+/// etc. already go stale/absent on disconnect).
+#[derive(Debug, Clone, Serialize)]
+pub struct PanelLiveSnapshot {
+    vertical_speed_fpm: f32,
+    g_force: f32,
+    ias_kt: f32,
+    gs_kt: f32,
+    pitch_deg: f32,
+    bank_deg: f32,
+    wind_dir_deg: Option<f32>,
+    wind_speed_kt: Option<f32>,
+    oat_c: Option<f32>,
+}
+
+impl PanelLiveSnapshot {
+    fn from_snapshot(snap: &SimSnapshot) -> Self {
+        Self {
+            vertical_speed_fpm: snap.vertical_speed_fpm,
+            g_force: snap.g_force,
+            ias_kt: snap.indicated_airspeed_kt,
+            gs_kt: snap.groundspeed_kt,
+            pitch_deg: snap.pitch_deg,
+            bank_deg: snap.bank_deg,
+            wind_dir_deg: snap.wind_direction_deg,
+            wind_speed_kt: snap.wind_speed_kt,
+            oat_c: snap.outside_air_temp_c,
+        }
+    }
+}
+
 #[derive(Serialize)]
 pub struct ActiveFlightInfo {
     pirep_id: String,
@@ -4520,6 +4556,13 @@ pub struct ActiveFlightInfo {
     /// less-refined fallback) — this flag is the actual "won't change
     /// again" signal, not mere presence of a value.
     landing_score_finalized: bool,
+    /// v0.21 (#msfs-panel): live cockpit telemetry for the MSFS in-sim
+    /// panel's approach-monitor card. `None` when the sim snapshot isn't
+    /// currently available (matches every other `sim_*` live field's
+    /// staleness behavior). Not read by the existing desktop UI — added
+    /// purely for the panel; see `PanelLiveSnapshot`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    live: Option<PanelLiveSnapshot>,
     /// ISO-8601 UTC timestamp of the last successful position-post.
     /// Powers the cockpit's LIVE recording indicator — "X seconds
     /// ago" derived client-side.
@@ -9766,7 +9809,11 @@ fn resolve_approach_glideslope_deg(flight: &ActiveFlight, approach_runway: Optio
     runway_glideslope_for(&apt.runways, rw)
 }
 
-fn flight_info(flight: &ActiveFlight, resume_position_suspect: bool) -> ActiveFlightInfo {
+fn flight_info(
+    flight: &ActiveFlight,
+    resume_position_suspect: bool,
+    live: Option<PanelLiveSnapshot>,
+) -> ActiveFlightInfo {
     // v0.15.19: Approach-Gleitwinkel zuerst auflösen — kurzer stats-Lock nur für
     // den Runway-String, dann navdata-Lock. So werden stats + navdata NIE
     // gleichzeitig gehalten (keine Lock-Order-Inversion ggü. step_flight).
@@ -9816,6 +9863,7 @@ fn flight_info(flight: &ActiveFlight, resume_position_suspect: bool) -> ActiveFl
         landing_rate_fpm: stats.canonical_landing_rate_fpm(),
         landing_g_force: stats.landing_g_force,
         landing_score_finalized: stats.landing_score_finalized,
+        live,
         was_just_resumed,
         resume_position_suspect,
         // v0.13.0 Stream F: nur befüllen wenn was_just_resumed=true, sonst
@@ -10100,7 +10148,14 @@ fn flight_status(
     } else {
         false
     };
-    Some(flight_info(flight.as_ref(), resume_position_suspect))
+    // v0.21 (#msfs-panel): live telemetry for the MSFS panel's
+    // approach-monitor card, piggybacked onto the same 1Hz status the LAN
+    // remote-control ticker already broadcasts — see PanelLiveSnapshot.
+    // `current_snapshot` was already the pattern used above for the
+    // resume-suspect check; calling it unconditionally here mirrors
+    // `landing_get_current`, which does the same on every poll.
+    let live = current_snapshot(&app).map(|snap| PanelLiveSnapshot::from_snapshot(&snap));
+    Some(flight_info(flight.as_ref(), resume_position_suspect, live))
 }
 
 #[derive(Serialize)]
@@ -10487,7 +10542,7 @@ async fn flight_adopt(
     // and the user can still cancel. `flight_resume_confirm` spawns it.
     let _ = client;
 
-    let info = flight_info(flight.as_ref(), false);
+    let info = flight_info(flight.as_ref(), false, None);
     log_activity(
         &state,
         ActivityLevel::Info,
@@ -11316,7 +11371,7 @@ async fn flight_start(
     // continuation history we want to keep.
     clear_activity_log_for_new_flight(&app);
 
-    let info = flight_info(flight.as_ref(), false);
+    let info = flight_info(flight.as_ref(), false, None);
     log_activity(
         &state,
         ActivityLevel::Info,
@@ -11881,7 +11936,7 @@ async fn flight_start_manual(
     spawn_touchdown_sampler(app.clone(), Arc::clone(&flight));
     clear_activity_log_for_new_flight(&app);
 
-    let info = flight_info(flight.as_ref(), false);
+    let info = flight_info(flight.as_ref(), false, None);
     log_activity(
         &state,
         ActivityLevel::Info,
@@ -38601,7 +38656,7 @@ mod touchdown_metadata_stamp_tests {
         let mut flight = flight_fixture("GCLP");
         flight.flight_number = "0".into();
         flight.bid_callsign = Some("7ME".into());
-        let info = flight_info(&flight, false);
+        let info = flight_info(&flight, false, None);
         assert_eq!(info.callsign, Some("7ME".to_string()));
         // flight_number itself is untouched — callsign is an ADDITIONAL
         // field, the UI decides the precedence (resolveFlightIdent()).
@@ -38611,7 +38666,7 @@ mod touchdown_metadata_stamp_tests {
     #[test]
     fn flight_info_callsign_none_for_ordinary_scheduled_flights() {
         let flight = flight_fixture("GCLP"); // bid_callsign: None (fixture default)
-        let info = flight_info(&flight, false);
+        let info = flight_info(&flight, false, None);
         assert_eq!(info.callsign, None);
     }
 

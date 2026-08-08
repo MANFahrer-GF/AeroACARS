@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>AeroACARS Flight Review</title>
+  <link rel="stylesheet" href="panel.css" />
+</head>
+<body>
+  <div class="panel">
+
+    <!-- disconnected / unauthenticated -->
+    <div id="view-pair" class="view">
+      <div class="pair-title">AeroACARS Flight Review</div>
+      <div id="status-line" class="status-line">Verbinde...</div>
+      <div class="pair-input-row">
+        <input id="pair-pin" type="text" maxlength="6" inputmode="numeric" placeholder="PIN" />
+        <button id="pair-submit">Verbinden</button>
+      </div>
+      <div class="muted">PIN steht in AeroACARS unter Einstellungen &gt; Fernzugriff.</div>
+    </div>
+
+    <!-- ready_monitoring / flight_active -->
+    <div id="view-monitor" class="view">
+      <div class="header-row">
+        <div class="dot"></div>
+        <div class="app-name">AeroACARS Flight Review</div>
+        <button id="forget-pairing" class="secondary" style="margin-left:auto;font-size:10px;padding:3px 8px;">Trennen</button>
+      </div>
+      <div id="monitor-subtitle" class="muted">Bereit - wartet auf aktiven Flug</div>
+    </div>
+
+    <!-- approach_monitor -->
+    <div id="view-approach" class="view">
+      <div class="header-row">
+        <div class="dot"></div>
+        <div id="ap-aircraft" class="app-name">--</div>
+      </div>
+      <div id="ap-route" class="muted">---- -&gt; ----</div>
+      <div class="metric-row"><span class="metric-label">V/S</span><span id="ap-fpm" class="metric-value mono">--</span></div>
+      <div class="metric-row"><span class="metric-label">G-Force</span><span id="ap-g" class="metric-value mono">--</span></div>
+      <div class="metric-row"><span class="metric-label">IAS | GS</span><span id="ap-iasgs" class="metric-value mono">--</span></div>
+      <div class="metric-row"><span class="metric-label">Pitch</span><span id="ap-pitch" class="metric-value mono">--</span></div>
+      <div class="metric-row"><span class="metric-label">Bank</span><span id="ap-bank" class="metric-value mono">--</span></div>
+      <div class="metric-row"><span class="metric-label">OAT</span><span id="ap-oat" class="metric-value mono">--</span></div>
+      <div class="metric-row"><span class="metric-label">Wind</span><span id="ap-wind" class="metric-value mono">--</span></div>
+    </div>
+
+    <!-- scoring (transitional, MUST-012a) -->
+    <div id="view-scoring" class="view">
+      <div class="spinner"></div>
+      <div class="muted" style="margin-top:8px;">Landung wird ausgewertet...</div>
+    </div>
+
+    <!-- landing_score -->
+    <div id="view-score" class="view">
+      <div id="score-route" class="app-name">---- -&gt; ----</div>
+      <div id="score-sub" class="muted">--</div>
+      <div class="score-total mono" id="score-total">--</div>
+      <div class="score-bar-track"><div id="score-bar-fill" class="score-bar-fill" style="width:0%"></div></div>
+      <div id="score-band" class="score-band-badge">--</div>
+      <div class="metric-row"><span class="metric-label">Landing Rate</span><span id="score-vs" class="metric-value mono">--</span></div>
+      <div class="metric-row"><span class="metric-label">Touchdown G</span><span id="score-g" class="metric-value mono">--</span></div>
+      <div class="metric-row"><span class="metric-label">Bounces</span><span id="score-bounces" class="metric-value mono">--</span></div>
+      <div class="metric-row"><span class="metric-label">Wind</span><span id="score-wind" class="metric-value mono">--</span></div>
+      <button id="open-full-debrief" style="margin-top:6px;">Vollstaendiges Debriefing</button>
+    </div>
+
+    <!-- full_debrief -->
+    <div id="view-debrief" class="view">
+      <div class="header-row">
+        <button id="debrief-back" class="secondary">&lt; Zurueck</button>
+      </div>
+      <div id="debrief-subscores"></div>
+    </div>
+
+  </div>
+
+  <script src="panel.js"></script>
+</body>
+</html>

@@ -1,0 +1,1046 @@
+schema_version: 1
+spec_id: aeroacars.msfs_ingame_landing_debrief_panel.v1
+title: AeroACARS MSFS Ingame Landing Debrief Panel
+status: draft
+target_product: AeroACARS
+target_platforms:
+  - msfs_2024
+platform_scope_note: >
+  msfs_2020 is explicitly out of scope for the in-sim toolbar panel. MSFS
+  2020 pilots keep full parity through the existing AeroACARS desktop app
+  and landing debrief UI (no toolbar overlay). This mirrors the reference
+  product SQWK Flight Review, whose own guide states the in-sim panel
+  "currently requires MSFS 2024" and that 2020 users get the desktop/web
+  flow only. Revisit only if MSFS SDK evidence emerges that 2020's older
+  Coherent GT/toolbar API actually supports this.
+primary_goal: >
+  Provide an AeroACARS in-simulator MSFS 2024 toolbar panel that automatically
+  activates before landing, displays live landing telemetry, and switches to a
+  compact landing score plus full structured debrief after touchdown.
+
+source_context:
+  compared_against:
+    - SQWK Flight Review style in-sim score panel
+  aeroacars_reference_version:
+    tag: v1.4.7
+    remote: origin/main
+  important_existing_aeroacars_capabilities:
+    - landing_forensics_v2
+    - high_rate_touchdown_buffer
+    - landing_scoring_crate
+    - runway_context
+    - weather_metar_context
+    - frontend_coach_tips
+    - landing_trend_ui
+    - lan_remote_control_server
+  known_limitations:
+    - id: LIM-001
+      text: >
+        Coherent GT (the MSFS in-game UI engine hosting toolbar panels) is
+        documented by the MSFS dev-support community to block or restrict
+        ws://localhost by default. A bare, always-open WebSocket per the
+        original MUST-003 draft is unlikely to work unmodified; see
+        panel_pairing_flow and IMPL-007.
+      source: https://devsupport.flightsimulator.com/t/ui-modifications-for-msfs-2024/10099
+    - id: LIM-002
+      text: >
+        SQWK Flight Review's in-sim panel is MSFS 2024-only; its own guide
+        gives no MSFS 2020 path for the panel itself, only for the desktop
+        exporter/website flow.
+      source: https://sqwk.io/guide
+
+visual_references:
+  - id: VIS-001
+    name: Compact monitoring status bar
+    file: docs/spec/assets/msfs-panel-compact-monitor-reference.png
+    applies_to:
+      - compact_monitor_view
+      - ready_monitoring
+      - approach_auto_activation
+    intent: >
+      Use as visual reference for the small pre-landing auto-activated status
+      panel. It should communicate that AeroACARS is ready and monitoring
+      telemetry without covering much of the simulator view.
+    required_visual_traits:
+      - small_horizontal_panel
+      - dark_translucent_background
+      - app_icon_left
+      - product_name
+      - ready_monitoring_subtitle
+      - green_connected_status_indicator
+
+  - id: VIS-002
+    name: Live telemetry card
+    file: docs/spec/assets/msfs-panel-live-telemetry-reference.png
+    applies_to:
+      - approach_monitor_view
+      - live_telemetry
+    intent: >
+      Use as visual reference for the approach/landing monitoring card. It
+      should show live flight telemetry in a compact stacked metric layout.
+    required_visual_traits:
+      - compact_vertical_card
+      - dark_translucent_background
+      - route_or_aircraft_header
+      - live_streaming_status
+      - two_column_metric_rows
+      - strong_monospace_numeric_values
+      - runway_wind_footer_line
+
+  - id: VIS-003
+    name: Landing score card
+    file: docs/spec/assets/msfs-panel-landing-score-reference.png
+    applies_to:
+      - compact_score_view
+      - landing_score
+      - post_touchdown_debrief_entry
+    intent: >
+      Use as visual reference for the post-touchdown score card. It should show
+      route, runway, total score, score band, score bar, core landing metrics,
+      environment values, and an action to open the full debrief.
+    required_visual_traits:
+      - centered_compact_score_card
+      - dark_translucent_background
+      - route_header
+      - runway_distance_elapsed_subheader
+      - large_total_score
+      - horizontal_score_bar
+      - score_band_badge
+      - compact_metric_list
+      - colored_metric_status_dots
+      - open_full_debrief_footer
+
+architecture:
+  status: >
+    SUPERSEDES the original component/data_flow design below with what is
+    actually implemented (client/src-tauri, commit pending on main, all
+    tests green incl. remote::bridge::tests::
+    every_generated_command_is_either_bridged_or_explicitly_denied).
+    Building the real thing surfaced a much simpler shape than first
+    drafted — see rationale in each subsection. The MSFS-side panel
+    package itself (html_ui/) is separately tracked in
+    feasibility_spike, since that part still needs a live MSFS test.
+  components:
+    - id: aeroacars_app
+      name: AeroACARS desktop app
+      responsibility:
+        - collect simulator telemetry
+        - detect flight phase
+        - compute landing forensics
+        - compute landing score and sub-scores
+        - expose local panel API
+    - id: local_panel_bridge
+      name: Localhost HTTP and WebSocket bridge
+      reuses: aeroacars_lan_remote_control_server
+      note: >
+        IMPLEMENTED as zero new routes. No PanelStateV1/LiveTelemetryV1/
+        PanelAutoActivateV1/LandingDebriefV1 wire types were built —
+        turned out unnecessary. The panel is a thin consumer of two
+        already-existing, already-bridged surfaces on the existing axum
+        server (client/src-tauri/src/remote/): the 1Hz flight_status WS
+        push (now carrying a new optional `live` telemetry sub-object,
+        PanelLiveSnapshot in lib.rs) and the already-bridged
+        `POST /api/cmd/landing_get_current` HTTP endpoint. See local_api.
+      responsibility:
+        - expose current panel state (via existing flight_status)
+        - stream live telemetry (via existing flight_status.live)
+        - expose landing debrief data (via existing landing_get_current)
+    - id: msfs_ingame_panel
+      name: MSFS toolbar ingame panel
+      responsibility:
+        - appear as MSFS toolbar panel
+        - render status, monitoring, score, and debrief views
+        - complete the one-time pairing handshake (panel_pairing_flow)
+        - derive panel_modes client-side from flight_status fields
+          (phase, landing_score_finalized, live) — no server-side mode
+          state machine was built; the panel computes its own mode
+        - reconnect to AeroACARS local bridge
+        - never recompute landing score
+
+  data_flow:
+    - from: aeroacars_app
+      to: msfs_ingame_panel
+      protocol: http_websocket_localhost (existing LAN remote-control server)
+      note: >
+        GET /ws?token=... pushes the existing flight_status event every
+        1s (unchanged cadence/dedup logic), now including
+        live: PanelLiveSnapshot { vertical_speed_fpm, g_force, ias_kt,
+        gs_kt, pitch_deg, bank_deg, wind_dir_deg, wind_speed_kt, oat_c }
+        whenever a sim snapshot is available (None on sim disconnect).
+        Once landing_score_finalized flips true on this SAME event, the
+        panel does one POST /api/cmd/landing_get_current
+        (X-AeroACARS-Token header) to fetch the full LandingRecord for
+        the score/debrief views. No push event carries the debrief
+        payload itself — it's pulled once, on the finalize edge.
+      payloads:
+        - flight_status (ActiveFlightInfo, existing shape + new `live` field)
+        - landing_get_current response (LandingRecord, existing shape)
+    - from: msfs_ingame_panel
+      to: aeroacars_app
+      protocol: http_localhost (existing LAN remote-control server)
+      note: >
+        POST /api/auth {pin} -> {token}, the existing pairing endpoint,
+        called directly via fetch() from inside the panel (see
+        panel_pairing_flow — no system-browser hop needed).
+      payloads:
+        - PairingRequest (pin), PairingResponse (token)
+
+panel_pairing_flow:
+  status: >
+    SIMPLIFIED from the original browser-hop design. No dependency on
+    Coherent GT being able to open a system browser at all — only on
+    fetch() to localhost working, which is a strictly lower bar than the
+    persistent WebSocket this whole feature still needs for live updates,
+    and is the same class of call SQWK's own "Authenticate" step implies
+    it can do successfully already.
+  summary: >
+    The panel shows its OWN PIN entry field (optionally alongside a QR
+    code rendered via the existing net.rs::qr_svg helper, for a pilot who
+    prefers scanning on a phone and reading the code off it) and POSTs
+    directly to /api/auth — the exact endpoint client/src/components/
+    RemotePinGate.tsx already calls for tablet pairing. No new pairing
+    endpoint, no browser hand-off.
+  steps:
+    - step: 1
+      actor: msfs_ingame_panel
+      action: >
+        Show an inline PIN entry (unauthenticated panel_mode) instead of
+        attempting the WebSocket immediately.
+    - step: 2
+      actor: msfs_ingame_panel
+      action: >
+        On submit, POST /api/auth {pin} via fetch(). On success, store
+        the returned bearer token (Coherent GT's persistence options for
+        this are TBD by feasibility_spike — likely
+        window.localStorage if available in that JS environment; if not,
+        re-pairing every MSFS session is an acceptable degraded mode, not
+        a blocker).
+    - step: 3
+      actor: msfs_ingame_panel
+      action: >
+        Open the WS with ?token=... and start deriving panel_modes from
+        the incoming flight_status stream.
+  open_question: >
+    Whether fetch() and/or the WebSocket succeed from inside Coherent GT
+    at all is still the central unknown — unchanged from LIM-001 — this
+    simplification only removes the EXTRA, now-unnecessary assumption
+    that Coherent GT can also open a system browser. feasibility_spike
+    tests fetch and WebSocket independently for exactly this reason.
+
+local_api:
+  status: >
+    IMPLEMENTED — reuses the existing LAN Remote Control server as-is,
+    zero new routes. Everything below already exists in
+    client/src-tauri/src/remote/ and client/src-tauri/src/lib.rs.
+  host: 127.0.0.1
+  default_port: 8765
+  port_note: >
+    The existing LAN Remote Control server's default/configurable port
+    (remote_server.json / remote_server_set_port). The panel is just
+    another client of it, like the tablet UI. msfs_panel.local_port
+    below is a display-only convenience showing the pilot which port to
+    reach — it does not start a second server.
+  auth: >
+    Existing bearer-token model (X-AeroACARS-Token header for HTTP,
+    ?token= for the WS upgrade), obtained via panel_pairing_flow's
+    POST /api/auth.
+  endpoints:
+    - id: pairing
+      method: POST
+      path: /api/auth
+      body: "{pin}"
+      response: "{token}"
+      purpose: Existing endpoint, reused verbatim by panel_pairing_flow.
+    - id: landing_debrief_pull
+      method: POST
+      path: /api/cmd/landing_get_current
+      auth_required: true
+      response_schema: LandingRecord (storage crate, existing shape)
+      purpose: >
+        Already bridged (remote/bridge.rs:119, pre-existing, not new
+        code) — the panel's landing_score/full_debrief views fetch this
+        ONCE per landing, only after landing_score_finalized (MUST-012a).
+    - id: websocket_live
+      method: WEBSOCKET
+      path: /ws
+      auth_required: true
+      messages:
+        - flight_status (existing event name/shape, + new `live` field)
+      purpose: >
+        Existing 1Hz push, unchanged cadence/dedup — the panel derives
+        every panel_mode transition from this single stream plus the one
+        pull above.
+      risk_note: >
+        The existing remote server's WS upgrade handler rejects a
+        *present* foreign-Origin header but allows a missing one
+        (native-client assumption from router.rs::reject_foreign_origin).
+        Coherent GT's actual Origin behavior for panel-issued WS requests
+        (e.g. a coui:// scheme) is unverified and must be checked in
+        feasibility_spike — it may need an explicit allowlist entry rather
+        than relying on the "no Origin" path.
+
+panel_modes:
+  - id: disconnected
+    description: AeroACARS local bridge is not reachable.
+  - id: unauthenticated
+    description: >
+      AeroACARS local bridge is reachable but panel_pairing_flow has not
+      completed yet (no valid token). Distinct from disconnected so the
+      panel can show "tap to authenticate" instead of a generic offline
+      state.
+  - id: ready_monitoring
+    description: AeroACARS is connected and monitoring flight telemetry.
+  - id: flight_active
+    description: Flight is active but not in approach or landing focus mode.
+  - id: approach_monitor
+    description: Panel is visible before landing and shows live approach telemetry.
+  - id: scoring
+    description: >
+      Touchdown has happened (phase left approach/final) but
+      `flight_status.landing_score_finalized` is still false. The
+      post-touchdown vertical-speed refinement takes roughly 9-12 seconds
+      (touchdown-forensics v2); the raw SimVar-latched value observed at
+      the moment of touchdown is known to be wrong by a material margin
+      (field precedent: -770 fpm raw vs. -455 fpm refined, same landing,
+      31.07.2026 report, which is exactly why the existing hard-landing
+      banner was fixed to gate on this same flag). The panel MUST show
+      this transitional state ("scoring your landing...") rather than
+      either freezing on the last approach_monitor frame or fetching/
+      showing landing_get_current before the flag flips. See MUST-012a.
+  - id: landing_score
+    description: >
+      Compact post-touchdown score card is visible. Only entered once
+      landing_score_finalized is true (never on raw touchdown).
+  - id: full_debrief
+    description: Expanded landing debrief is visible.
+
+functional_requirements:
+  must:
+    - id: MUST-001
+      text: The feature must provide an MSFS toolbar/ingame panel package.
+    - id: MUST-002
+      text: The panel must be usable without alt-tabbing out of MSFS.
+    - id: MUST-003
+      text: >
+        The panel must communicate with AeroACARS via local HTTP and
+        WebSocket, reached only after the one-time panel_pairing_flow
+        handshake (not an always-open, unauthenticated socket).
+    - id: MUST-003a
+      text: >
+        The panel must offer an explicit "Authenticate" action that opens
+        the system browser to complete pairing, rather than assuming an
+        implicit/silent local connection will succeed inside Coherent GT.
+    - id: MUST-003b
+      text: >
+        The in-sim panel targets MSFS 2024 only. MSFS 2020 is out of scope
+        for this feature end-to-end (see platform_scope_note); do not gate
+        MSFS 2020 build/release on this feature.
+    - id: MUST-004
+      text: AeroACARS must provide score and debrief data; the panel must not recompute landing scores.
+    - id: MUST-005
+      text: The panel must detect whether AeroACARS is connected.
+    - id: MUST-006
+      text: The panel must show an offline/waiting state when AeroACARS is not reachable.
+    - id: MUST-007
+      text: The panel must support automatic activation before landing.
+    - id: MUST-008
+      text: Automatic activation must be triggered by at least one configured approach condition.
+      accepted_conditions:
+        - flight_phase_is_approach
+        - flight_phase_is_final
+        - agl_below_threshold_ft
+        - distance_to_destination_below_threshold_nm
+    - id: MUST-009
+      text: Automatic activation must be user-disableable in AeroACARS settings.
+    - id: MUST-010
+      text: Automatic activation must not open duplicate panel instances.
+    - id: MUST-011
+      text: During approach and landing, the panel must display live telemetry.
+      telemetry_fields:
+        - aircraft
+        - route
+        - phase
+        - vertical_speed_fpm
+        - g_force
+        - ias_kt
+        - gs_kt
+        - pitch_deg
+        - bank_deg
+        - wind
+        - oat_c
+        - visibility
+    - id: MUST-012
+      text: >
+        After touchdown, the panel must automatically switch to landing
+        score mode ONLY once flight_status.landing_score_finalized is
+        true, not on raw touchdown/phase change. See MUST-012a.
+    - id: MUST-012a
+      text: >
+        Between touchdown and landing_score_finalized flipping true
+        (typically ~9-12s, per the existing touchdown-forensics v2
+        refinement window), the panel must show the scoring transitional
+        state (panel_modes.scoring) and must not fetch or display
+        landing_get_current yet — its numbers are provisional/wrong
+        during this window by design (the raw SimVar-latched estimate,
+        not the refined one). This mirrors the exact fix already applied
+        to AeroACARS's own hard-landing banner for the identical reason.
+    - id: MUST-013
+      text: Landing score mode must show the core landing result.
+      fields:
+        - total_score
+        - score_band
+        - landing_rate_fpm
+        - touchdown_g_force
+        - bounce_count
+        - touchdown_distance
+        - runway_used_or_rollout
+        - centerline_deviation_if_available
+        - approach_stability
+    - id: MUST-014
+      text: The panel must provide an Open Full Debrief action.
+    - id: MUST-015
+      text: Full debrief must show at least one clear next-session correction.
+
+  should:
+    - id: SHOULD-001
+      text: The panel should use a compact dark translucent visual style.
+    - id: SHOULD-002
+      text: The panel should be suitable for VR usage.
+    - id: SHOULD-003
+      text: The panel should be movable and resizable using normal MSFS panel behavior.
+    - id: SHOULD-004
+      text: The panel should automatically reconnect after temporary local bridge disconnects.
+    - id: SHOULD-005
+      text: The auto-open trigger should be configurable.
+      options:
+        - disabled
+        - approach_phase
+        - final_phase
+        - agl_below_2000_ft
+        - agl_below_1000_ft
+        - distance_to_destination_below_15_nm
+    - id: SHOULD-006
+      text: Before touchdown, the panel should start as a compact monitoring status bar.
+    - id: SHOULD-007
+      text: After touchdown, the panel should expand to a landing score card.
+    - id: SHOULD-008
+      text: The debrief should include runway, weather, and trend context when available.
+    - id: SHOULD-009
+      text: >
+        The panel should degrade gracefully to a polling-only mode (GET
+        get_panel_state on an interval) if feasibility_spike shows
+        Coherent GT permits fetch but not WebSocket, rather than the
+        feature being all-or-nothing on WS support.
+
+non_goals:
+  - id: NONGOAL-001
+    text: The MSFS panel must not contain the authoritative landing scoring algorithm.
+  - id: NONGOAL-002
+    text: The feature does not require full-flight constant 30 Hz storage.
+  - id: NONGOAL-003
+    text: The feature does not replace the existing AeroACARS desktop UI.
+  - id: NONGOAL-004
+    text: The first implementation does not need aircraft-specific WASM/L-var integration.
+  - id: NONGOAL-005
+    text: >
+      MSFS 2020 in-sim panel support is not a goal of this spec (see
+      platform_scope_note); MSFS 2020 keeps the existing desktop-only flow.
+  - id: NONGOAL-006
+    text: >
+      This feature does not build a second, parallel local server; it
+      extends the existing LAN Remote Control axum server instead
+      (local_panel_bridge.reuses).
+
+settings:
+  - key: msfs_panel.enabled
+    type: boolean
+    default: true
+    description: Enables the AeroACARS MSFS ingame panel integration.
+  - key: msfs_panel.auto_open.enabled
+    type: boolean
+    default: true
+    description: Allows the panel to auto-activate before landing.
+  - key: msfs_panel.auto_open.trigger
+    type: enum
+    default: final_phase
+    values:
+      - approach_phase
+      - final_phase
+      - agl_below_2000_ft
+      - agl_below_1000_ft
+      - distance_to_destination_below_15_nm
+    description: Selects the preferred auto-open trigger.
+  - key: msfs_panel.local_port
+    type: integer
+    default: null
+    description: >
+      Optional override for the panel bridge port; null means "inherit the
+      LAN Remote Control server's configured port" (default 8765), since
+      the panel reuses that server rather than a dedicated one.
+
+schemas:
+  status: >
+    NOT wire types anymore (see architecture.status / local_api.status) —
+    the actual wire types are the pre-existing flight_status
+    (ActiveFlightInfo, now +`live`) and landing_get_current
+    (LandingRecord) shapes in lib.rs, unchanged by this feature. The
+    schemas below describe the shape the panel's own JS derives/holds in
+    memory FROM those two existing responses — kept here as the
+    UI-requirements' data dictionary, not as things AeroACARS serializes.
+  PanelStateV1:
+    type: object
+    required:
+      - type
+      - version
+      - connected
+      - mode
+    properties:
+      type:
+        const: panel_state
+      version:
+        const: 1
+      connected:
+        type: boolean
+      mode:
+        enum:
+          - disconnected
+          - unauthenticated
+          - ready_monitoring
+          - flight_active
+          - approach_monitor
+          - landing_score
+          - full_debrief
+      message:
+        type: string
+      flight:
+        ref: FlightSummaryV1
+      latest_telemetry:
+        ref: LiveTelemetryV1
+      latest_debrief:
+        ref: LandingDebriefV1
+
+  LiveTelemetryV1:
+    type: object
+    required:
+      - type
+      - version
+      - timestamp_utc
+    properties:
+      type:
+        const: live_telemetry
+      version:
+        const: 1
+      timestamp_utc:
+        type: string
+        format: date-time
+      aircraft:
+        type: string
+      route:
+        type: string
+      phase:
+        type: string
+      vertical_speed_fpm:
+        type: number
+      g_force:
+        type: number
+      ias_kt:
+        type: number
+      gs_kt:
+        type: number
+      pitch_deg:
+        type: number
+      bank_deg:
+        type: number
+      oat_c:
+        type: number
+      visibility:
+        type: string
+      wind:
+        ref: WindV1
+      runway:
+        ref: RunwaySummaryV1
+
+  PanelAutoActivateV1:
+    type: object
+    required:
+      - type
+      - version
+      - reason
+      - mode
+    properties:
+      type:
+        const: panel_auto_activate
+      version:
+        const: 1
+      reason:
+        enum:
+          - approach_phase
+          - final_phase
+          - agl_threshold
+          - destination_distance_threshold
+      phase:
+        type: string
+      agl_ft:
+        type: number
+      distance_to_destination_nm:
+        type: number
+      mode:
+        const: approach_monitor
+
+  LandingDebriefV1:
+    type: object
+    required:
+      - type
+      - version
+      - flight
+      - score
+      - touchdown
+      - coach
+    properties:
+      type:
+        const: landing_debrief
+      version:
+        const: 1
+      generated_at_utc:
+        type: string
+        format: date-time
+      flight:
+        ref: FlightSummaryV1
+      score:
+        ref: LandingScoreSummaryV1
+      touchdown:
+        ref: TouchdownSummaryV1
+      runway_context:
+        ref: RunwayContextV1
+      weather_context:
+        ref: WeatherContextV1
+      trend_context:
+        ref: TrendContextV1
+      score_breakdown:
+        type: array
+        items:
+          ref: SubScoreV1
+      coach:
+        ref: CoachSummaryV1
+
+  FlightSummaryV1:
+    type: object
+    properties:
+      aircraft:
+        type: string
+      route:
+        type: string
+      departure_icao:
+        type: string
+      arrival_icao:
+        type: string
+      runway:
+        type: string
+      distance_nm:
+        type: number
+      elapsed_time:
+        type: string
+
+  LandingScoreSummaryV1:
+    type: object
+    required:
+      - total
+      - band
+    properties:
+      total:
+        type: integer
+        minimum: 0
+        maximum: 100
+      band:
+        type: string
+        examples:
+          - GOOD
+          - GREAT
+          - HARD
+          - ROUGH
+      context_points:
+        type: number
+      context_label:
+        type: string
+
+  TouchdownSummaryV1:
+    type: object
+    properties:
+      landing_rate_fpm:
+        type: number
+      g_force:
+        type: number
+      bounce_count:
+        type: integer
+      ias_kt:
+        type: number
+      gs_kt:
+        type: number
+      pitch_deg:
+        type: number
+      bank_deg:
+        type: number
+
+  RunwayContextV1:
+    type: object
+    properties:
+      airport_icao:
+        type: string
+      runway_ident:
+        type: string
+      lda_m:
+        type: number
+      touchdown_distance_ft:
+        type: number
+      touchdown_distance_m:
+        type: number
+      centerline_deviation_ft:
+        type: number
+      runway_used_percent:
+        type: number
+      rollout_distance_m:
+        type: number
+
+  WeatherContextV1:
+    type: object
+    properties:
+      wind_dir_deg:
+        type: number
+      wind_speed_kt:
+        type: number
+      headwind_kt:
+        type: number
+      crosswind_kt:
+        type: number
+      oat_c:
+        type: number
+      visibility:
+        type: string
+      metar:
+        type: string
+
+  TrendContextV1:
+    type: object
+    properties:
+      last_5_avg_score:
+        type: number
+      direction:
+        enum:
+          - improving
+          - stable
+          - declining
+          - unknown
+      recurring_issue:
+        type: string
+
+  SubScoreV1:
+    type: object
+    properties:
+      key:
+        type: string
+      label:
+        type: string
+      score:
+        type: integer
+        minimum: 0
+        maximum: 100
+      value:
+        type: string
+      band:
+        type: string
+      skipped:
+        type: boolean
+      rationale:
+        type: string
+
+  CoachSummaryV1:
+    type: object
+    required:
+      - primary_issue
+      - next_correction
+    properties:
+      primary_issue:
+        type: string
+      next_correction:
+        type: string
+      details:
+        type: string
+
+  WindV1:
+    type: object
+    properties:
+      direction_deg:
+        type: number
+      speed_kt:
+        type: number
+      headwind_kt:
+        type: number
+      crosswind_kt:
+        type: number
+
+  RunwaySummaryV1:
+    type: object
+    properties:
+      airport_icao:
+        type: string
+      runway_ident:
+        type: string
+
+example_messages:
+  panel_auto_activate:
+    type: panel_auto_activate
+    version: 1
+    reason: final_phase
+    phase: Final
+    agl_ft: 1420
+    distance_to_destination_nm: 8.4
+    mode: approach_monitor
+
+  landing_debrief:
+    type: landing_debrief
+    version: 1
+    generated_at_utc: "2026-08-08T18:30:00Z"
+    flight:
+      aircraft: B737 MAX 8
+      route: KSFO-KBOS
+      departure_icao: KSFO
+      arrival_icao: KBOS
+      runway: 33L
+      distance_nm: 2704
+      elapsed_time: 6h 32m
+    score:
+      total: 82
+      band: GOOD
+      context_points: 2.9
+      context_label: 7 kt crosswind
+    touchdown:
+      landing_rate_fpm: -243
+      g_force: 1.18
+      bounce_count: 0
+      ias_kt: 138
+      gs_kt: 134
+      pitch_deg: -1.2
+      bank_deg: -0.4
+    runway_context:
+      airport_icao: KBOS
+      runway_ident: 33L
+      lda_m: 3073
+      touchdown_distance_ft: 2081
+      touchdown_distance_m: 634
+      centerline_deviation_ft: 11
+      runway_used_percent: 58
+      rollout_distance_m: 1180
+    weather_context:
+      wind_dir_deg: 270
+      wind_speed_kt: 6
+      headwind_kt: 2
+      crosswind_kt: 7
+      oat_c: 15
+      visibility: 10+ sm
+      metar: ""
+    trend_context:
+      last_5_avg_score: 78
+      direction: improving
+      recurring_issue: sinkrate_high
+    score_breakdown:
+      - key: landing_rate
+        label: Landing Rate
+        score: 85
+        value: -243 fpm
+        band: good
+        skipped: false
+        rationale: smooth_firm
+      - key: g_force
+        label: Touchdown G-force
+        score: 100
+        value: 1.18 G
+        band: excellent
+        skipped: false
+        rationale: smooth_g
+      - key: bounces
+        label: Bounce Count
+        score: 100
+        value: 0 bounces
+        band: excellent
+        skipped: false
+        rationale: no_bounce
+    coach:
+      primary_issue: sinkrate_high
+      next_correction: Reduce sinkrate before flare.
+      details: Aim to stabilize descent earlier and begin the flare slightly sooner.
+
+ui_requirements:
+  compact_monitor_view:
+    purpose: Show that AeroACARS is connected and monitoring telemetry before landing.
+    visual_reference: VIS-001
+    required_elements:
+      - product_name
+      - connection_status
+      - monitoring_message
+      - status_indicator
+    example_text:
+      title: AeroACARS Flight Review
+      subtitle: Ready - monitoring flight telemetry
+
+  approach_monitor_view:
+    purpose: Show live landing-relevant telemetry before touchdown.
+    visual_reference: VIS-002
+    required_elements:
+      - aircraft
+      - vertical_speed_fpm
+      - g_force
+      - ias_and_gs
+      - pitch
+      - bank
+      - oat
+      - visibility
+      - runway_and_wind_line
+
+  compact_score_view:
+    purpose: Show post-touchdown landing result without leaving MSFS.
+    visual_reference: VIS-003
+    required_elements:
+      - route
+      - runway
+      - score
+      - score_bar
+      - score_band
+      - short_summary
+      - core_subscores
+      - wind_and_environment
+      - open_full_debrief_action
+
+  full_debrief_view:
+    purpose: Show explainable landing result and next correction.
+    required_elements:
+      - summary
+      - score_breakdown
+      - touchdown_forensics
+      - runway_context
+      - weather_context
+      - trend_context_if_available
+      - next_session_correction
+
+acceptance_criteria:
+  - id: AC-001
+    text: An AeroACARS toolbar icon appears in MSFS.
+  - id: AC-002
+    text: Opening the icon displays an ingame panel.
+  - id: AC-003
+    text: If AeroACARS is not running, the panel shows a waiting/offline state.
+  - id: AC-004
+    text: If AeroACARS is running, the panel connects to the local bridge and shows ready/monitoring state.
+  - id: AC-004a
+    text: >
+      Before pairing has completed once, the panel shows the
+      unauthenticated state with an Authenticate action, not a raw
+      offline/error state.
+  - id: AC-004b
+    text: >
+      Authenticate opens the system browser to the existing AeroACARS PIN
+      pairing page and, once confirmed, the panel does not require
+      re-pairing on subsequent MSFS sessions.
+  - id: AC-005
+    text: During approach/final, the panel can auto-activate according to settings.
+  - id: AC-006
+    text: The panel does not open duplicate instances when auto-activation fires multiple times.
+  - id: AC-007
+    text: During approach/landing, the panel shows live telemetry values from AeroACARS.
+  - id: AC-008
+    text: After touchdown, AeroACARS emits LandingDebriefV1.
+  - id: AC-009
+    text: After touchdown, the panel automatically switches to compact score view.
+  - id: AC-010
+    text: The displayed score matches the AeroACARS authoritative score.
+  - id: AC-011
+    text: Open Full Debrief opens the expanded debrief view.
+  - id: AC-012
+    text: Full debrief includes at least one clear next-session correction.
+  - id: AC-013
+    text: Temporary local bridge disconnects recover without restarting MSFS where possible.
+
+implementation_notes:
+  - id: IMPL-001
+    text: Prefer keeping all authoritative scoring and coaching logic inside AeroACARS.
+  - id: IMPL-002
+    text: The MSFS panel should be implemented as HTML/JS/CSS toolbar package.
+  - id: IMPL-003
+    text: The local bridge should bind only to localhost/LAN by default, unchanged from today's remote-control gate.
+  - id: IMPL-004
+    text: WebSocket messages should be versioned and tolerate additive fields.
+  - id: IMPL-005
+    text: Reuse existing AeroACARS landing-scoring and touchdown-forensics data where possible.
+  - id: IMPL-006
+    text: Do not add full-flight constant 30 Hz logging just for this feature.
+  - id: IMPL-007
+    text: >
+      Extend client/src-tauri/src/remote/ (router.rs, events.rs, bridge.rs)
+      with panel-specific routes/WS messages instead of building a new
+      server; reuse auth.rs's token/PIN model for panel_pairing_flow.
+  - id: IMPL-008
+    text: >
+      Do not commit to full MSFS build effort before feasibility_spike
+      resolves whether Coherent GT permits an authenticated WebSocket (or
+      only fetch, or neither) to the reused local server.
+
+feasibility_spike:
+  status: planned
+  goal: >
+    Resolve LIM-001 and the local_api.websocket_live.risk_note before
+    committing to the full panel build: does a minimal MSFS 2024 in-game
+    HTML/JS toolbar panel, registered through the official "publish
+    component library" SDK path, reach an already-running instance of
+    AeroACARS's existing LAN Remote Control server (127.0.0.1:8765) via
+    fetch and/or WebSocket, with and without a valid bearer token?
+  independent_corroboration: >
+    A second, unrelated MSFS 2024 in-game panel project (an ATC-assist
+    panel, github.com/Vihaan2012-cmyk/AI-ATC) documents the identical
+    unresolved risk in its own README: it connects its desktop app over
+    ws://localhost:8742, confirms the WebSocket works "in a normal
+    browser", but flags "CoherentGT may block ws://localhost" as
+    explicitly untested and unresolved ("the main unknown and needs
+    in-sim testing"), with a standalone desktop-widget fallback for if
+    it's blocked. This independently confirms LIM-001 is a live,
+    community-wide open question, not a one-off SQWK quirk, and that our
+    exit_criteria (including a non-WS fallback) are the right shape.
+  steps:
+    - "Build a throwaway MSFS 2024 Community package: manifest + panel.xml
+      + a single HTML/JS panel registered on the toolbar (no AeroACARS
+      logic yet). Note MSFS reads panel.xml only from a compiled .spb
+      produced by the SDK's fspackagetool, not raw source files, so the
+      spike must go through a real build/package step, not a live-reload
+      HTML edit."
+    - "From inside that panel (Coherent GT), attempt: (a) fetch GET
+      http://127.0.0.1:8765/api/... , (b) new WebSocket to ws://127.0.0.1:8765/ws.
+      Record pass/fail and the exact error for each."
+    - Use the Coherent GT Debugger (MSFS SDK) to inspect what Origin/Host
+      headers the panel's own requests actually carry.
+    - If WS is blocked but fetch works, note that as the fallback for
+      SHOULD-009 (polling mode).
+    - If both are blocked outright, check whether the official "publish
+      component library for 2024 in-game panels" SDK path (a declared,
+      signed manifest) changes the sandbox's network permissions, since
+      that thread exists specifically about this class of problem.
+    - Confirm whether an Origin header is sent at all, and if so whether
+      it is a coui:// value that would trip
+      remote/router.rs::reject_foreign_origin; if so, scope a narrow
+      allowlist change there rather than weakening the check generally.
+  exit_criteria:
+    - >
+      GO: fetch and/or WebSocket reach the existing remote server
+      end-to-end (paired + unpaired) with clear, reproducible steps ->
+      proceed to build panel_pairing_flow + panel UI against this spec.
+    - >
+      CONDITIONAL GO: only fetch works, not WebSocket -> proceed, but
+      panel_modes/local_api switch to polling per SHOULD-009 and
+      websocket_live becomes optional/future.
+    - >
+      NO-GO: neither reaches the server even after the signed-manifest
+      path and Origin allowlist adjustments -> this spec's MSFS panel is
+      not viable as an extension of AeroACARS's own local server; would
+      need a fundamentally different bridge (e.g. a WASM/SimConnect
+      Client Data Area channel instead of HTTP) or the feature is shelved.
+  sources:
+    - https://devsupport.flightsimulator.com/t/ui-modifications-for-msfs-2024/10099
+    - https://devsupport.flightsimulator.com/t/publish-component-library-for-2024-in-game-panels/11541
+    - https://docs.flightsimulator.com/msfs2024/html/6_Programming_APIs/JavaScript/Coherent_GT_Debugger.htm
