@@ -1,26 +1,25 @@
 /*
- * AeroACARS in-sim toolbar panel — v0.2.0 (feasibility-spike build, round 2).
+ * AeroACARS in-sim toolbar panel — v0.2.0 (feasibility-spike build, round 2b).
  *
- * Talks to the AeroACARS desktop app's EXISTING LAN Remote Control server
- * (client/src-tauri/src/remote/) via three unauthenticated, loopback-only
- * routes added specifically for this panel (v0.1.1, #msfs-panel):
+ * Talks to AeroACARS's dedicated, always-on panel server
+ * (client/src-tauri/src/panel_server.rs) via three unauthenticated,
+ * loopback-only, FIXED-port routes:
  *   - GET /panel/status  -> flight_status JSON (poll fallback)
  *   - GET /panel/debrief -> landing_get_current JSON, pulled once per landing
  *   - GET /panel/ws      -> pushes `flight_status` @ 1Hz (live data)
  *
- * v0.2.0 dropped the original PIN-pairing design entirely. That flow reused
- * the LAN Remote Control server's tablet-auth model (bearer token from a
- * typed PIN) — the right call for a TABLET on the LAN, which is a different
- * device that has to prove it's authorized. This panel is not that: it only
- * ever runs alongside AeroACARS on the SAME PC, so there is no cross-device
- * trust question to solve, and the typed PIN was pure friction — it also
- * directly caused round 1's blocker (Coherent GT toolbar-panel text inputs
- * don't get keyboard focus by default; see the FOCUS_INPUT_FIELD comment
- * that used to be here). Dropping the PIN removes that whole bug class: this
- * panel now needs NO typed input and NO keyboard focus at all. Security
- * boundary is now strictly the loopback check server-side (see
- * remote/router.rs's module doc) — nothing this panel can do about that
- * being right or wrong, it just consumes the three routes above.
+ * v0.2.0 dropped the original PIN-pairing design entirely — see
+ * panel_server.rs's module doc for the full reasoning (short version: this
+ * panel only ever runs alongside AeroACARS on the SAME PC, so there's no
+ * cross-device trust question a PIN would solve, and it was pure friction).
+ *
+ * Round 2b (2026-08-08) additionally moved off the LAN Remote Control
+ * server's port entirely, onto this panel's OWN fixed, non-configurable
+ * port (see PORT below). Round 2 originally reused the LAN server's
+ * port — Thomas caught live that changing that port in AeroACARS Settings
+ * (a normal, supported thing to do for the tablet feature) silently broke
+ * the panel with no way to notice or fix it from here. A fixed dedicated
+ * port removes that failure mode entirely: nothing to keep in sync.
  *
  * This panel is loaded from file:// inside MSFS's Coherent GT engine, NOT a
  * normal browser tab — `location.host` is empty there, so every request
@@ -40,23 +39,15 @@
   // Config
   // ---------------------------------------------------------------------
 
-  var DEFAULT_PORT = 8765;
-  var LS_PORT = 'aeroacars_panel_port'; // optional override, no UI for it yet
+  // Must match PANEL_SERVER_PORT in client/src-tauri/src/panel_server.rs —
+  // fixed and NOT user-configurable, deliberately (see file header above).
+  var PORT = 47847;
   var RECONNECT_BASE_MS = 1000;
   var RECONNECT_MAX_MS = 15000;
   var POLL_INTERVAL_MS = 1000;
 
-  function getPort() {
-    try {
-      var p = parseInt(window.localStorage.getItem(LS_PORT), 10);
-      return p > 0 ? p : DEFAULT_PORT;
-    } catch (e) {
-      return DEFAULT_PORT;
-    }
-  }
-
-  function httpBase() { return 'http://127.0.0.1:' + getPort(); }
-  function wsBase() { return 'ws://127.0.0.1:' + getPort(); }
+  function httpBase() { return 'http://127.0.0.1:' + PORT; }
+  function wsBase() { return 'ws://127.0.0.1:' + PORT; }
 
   // ---------------------------------------------------------------------
   // Phase helpers — must match phase_to_snake() in client/src-tauri/src/lib.rs
@@ -252,7 +243,7 @@
       case 'disconnected':
         show('view-monitor');
         setDot(false);
-        setText('monitor-subtitle', 'AeroACARS nicht erreichbar - laeuft die App? (Port ' + getPort() + ')');
+        setText('monitor-subtitle', 'AeroACARS nicht erreichbar - laeuft die App? (Port ' + PORT + ')');
         break;
       case 'ready_monitoring':
         show('view-monitor');

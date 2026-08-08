@@ -50,6 +50,11 @@ pub mod phase_v2;
 // React SPA + bridges every safe Tauri command over HTTP/WS to a tablet or
 // second PC on the local network, PIN-gated. Lives entirely in `src/remote/`.
 mod remote;
+// v0.2.0 (#msfs-panel, round 2b): always-on, loopback-only, fixed-port
+// server for the MSFS in-sim panel. Deliberately separate from `remote`
+// (opt-in, LAN-reachable, configurable port, PIN-gated) — see the module
+// doc for why sharing that server caused two real bugs.
+mod panel_server;
 mod aircraft_scan;
 // v1.3.0 (#Hoppie-PDC-CPDLC): PDC/CPDLC client over the Hoppie ACARS
 // network. Opt-in, default OFF. Protocol/data logic lives in the pure
@@ -33740,6 +33745,11 @@ pub fn run() {
             // persistente Pilot-Entscheidung anwenden. Default = aus, also
             // nichts passiert solang der Pilot nicht in Settings zustimmt.
             discord_rpc::init(&app.handle());
+            // v0.2.0 (#msfs-panel, round 2b): unconditional, no toggle —
+            // see panel_server's module doc for why this one is NOT
+            // gated behind an opt-in setting the way remote::start_server
+            // (below) is.
+            panel_server::spawn(app.handle().clone());
             // Persist the boot-time state (restored log + banner)
             // immediately so a crash before any activity event still
             // keeps the banner visible on next launch.

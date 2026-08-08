@@ -192,31 +192,36 @@ panel_pairing_flow:
     that entire bug class along with the friction. See local_api below for
     what replaced it.
   superseded_by: >
-    Three new unauthenticated, loopback-only routes on the SAME existing
-    LAN Remote Control server (client/src-tauri/src/remote/router.rs,
-    v0.1.1 #msfs-panel): GET /panel/status, GET /panel/debrief,
-    GET /panel/ws. Security boundary moved from "bearer token, LAN-wide
-    reachable" to "no token, loopback-only reachable" — narrower in reach
-    (only this PC, not the whole LAN) even though it dropped the token,
-    because loopback-only is the entire point: only a process on this same
-    machine can ever open that socket. See router.rs's module doc for the
-    full reasoning, and net.rs::is_loopback_peer (stricter than the
-    existing is_private_peer the tablet API uses).
+    SUPERSEDED by round 2b (same day) — see round_2_changes.round_2b below.
+    Originally: three new unauthenticated, loopback-only routes on the
+    SAME existing LAN Remote Control server. That lasted less than an
+    hour of real testing before Thomas hit two bugs baked into "same
+    server as the tablet": it's opt-in (silently never connects unless
+    Fernzugriff is toggled on) and its port is pilot-configurable
+    (silently breaks if changed). Moved to a fully independent,
+    always-on, fixed-port server instead — see local_api.status.
 
 local_api:
   status: >
-    IMPLEMENTED — client/src-tauri, commit pending on main, 48 remote::
-    tests green (2 new: loopback_accepts_only_loopback_not_wider_lan,
-    panel_routes_reject_lan_peers_that_full_remote_routes_would_allow).
-    The token-gated /api + /ws block further below is UNCHANGED and still
-    exists for the tablet; /panel/* is new and separate, not a relaxation
-    of it.
+    IMPLEMENTED, round 2b — client/src-tauri, commit pending on main.
+    `/panel/*` now lives on its OWN server, `client/src-tauri/src/
+    panel_server.rs`, NOT on the LAN Remote Control server anymore (that
+    was round 2's design, reverted same day after two real bugs — see
+    round_2_changes.round_2b). panel_server binds literally to
+    `127.0.0.1` (not `0.0.0.0`) on a fixed port, starts unconditionally
+    at app launch (no settings toggle, no opt-in), and is fully
+    independent of remote/'s auth/token/PIN/rate-limit machinery — none
+    of it is meaningful for a read-only, loopback-only, unauthenticated
+    route set. The token-gated /api + /ws block further below is
+    UNCHANGED and still exists for the tablet, on its own port (8765
+    default), on its own opt-in toggle — completely decoupled now.
   host: 127.0.0.1
-  default_port: 8765
+  default_port: 47847
   port_note: >
-    Same server, same default/configurable port as the existing LAN
-    Remote Control server (remote_server.json / remote_server_set_port) —
-    /panel/* are additional routes on it, not a second server.
+    Fixed, NOT user-configurable, NOT shared with the LAN Remote Control
+    server's port in any way — see round_2_changes.round_2b for why that
+    sharing was the actual bug. Chosen distinct from 8765 specifically so
+    the two can never be confused with each other again.
   panel_endpoints:
     - id: panel_status
       method: GET
@@ -1058,6 +1063,24 @@ feasibility_spike:
     AssetPackage Version bumped 0.2.6->0.2.7 (substantial round-2 changes,
     same caching precaution as round 1's bump, still unverified whether
     that precaution is even necessary).
+  round_2b: >
+    Same day, before round 2 was even tested in-sim: Thomas asked "was ist,
+    wenn ich den Port einfach ändere?" — a question that exposed round 2's
+    design flaw before it shipped. Sharing the LAN Remote Control server's
+    port/lifecycle for /panel/* (round 2's design) meant (1) the panel
+    silently never connects unless "Fernzugriff" is separately toggled on
+    (that server is opt-in) and (2) changing that port in Settings — a
+    normal, supported thing to do for the tablet feature — silently breaks
+    the panel with no way for it to notice. Fix: /panel/* moved entirely
+    off that server onto a NEW, independent, always-on server
+    (client/src-tauri/src/panel_server.rs), bound literally to 127.0.0.1
+    (not 0.0.0.0) on a FIXED, non-configurable port (47847, distinct from
+    8765 specifically so the two can't be confused again), started
+    unconditionally at app launch — no toggle, nothing to keep in sync.
+    The token-gated /api+/ws block for the tablet is completely unchanged
+    and untouched by this. panel.js's PORT constant is now a hardcoded
+    47847, not a configurable/localStorage value. See local_api.status and
+    architecture.status for the current (superseding) design.
   goal: >
     Resolve LIM-001 and the local_api.websocket_live.risk_note before
     committing to the full panel build: does a minimal MSFS 2024 in-game

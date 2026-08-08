@@ -2,9 +2,9 @@
 
 Spec: [`docs/spec/msfs-ingame-landing-debrief-panel.v1.yaml`](../docs/spec/msfs-ingame-landing-debrief-panel.v1.yaml).
 
-This package talks to AeroACARS's **existing** LAN Remote Control server
-(`client/src-tauri/src/remote/`) via three small, unauthenticated,
-loopback-only routes added specifically for it:
+This package talks to AeroACARS's **own dedicated panel server**
+(`client/src-tauri/src/panel_server.rs`) via three small, unauthenticated
+routes:
 
 - `GET /panel/status` — `flight_status` JSON (poll fallback).
 - `GET /panel/ws` — pushes `flight_status` @ 1Hz (live data), now carrying
@@ -12,17 +12,35 @@ loopback-only routes added specifically for it:
 - `GET /panel/debrief` — `landing_get_current` JSON, pulled once per
   landing, after scoring finalizes.
 
-**Round 2 (2026-08-08) dropped the original PIN-pairing design entirely.**
-Round 1's flow reused the LAN Remote Control server's tablet-auth model
-(typed PIN → bearer token) — the right call for a tablet on the LAN, a
-genuinely different device that has to prove it's authorized. This panel
-isn't that: it only ever runs on the SAME PC as AeroACARS, so there's no
-cross-device trust question, and the PIN was pure friction that directly
-caused round 1's keyboard-focus blocker (see below). The security boundary
-for `/panel/*` is now strictly server-side loopback-only (any process on
-the SAME machine can reach it, nothing else can — see
-`remote/router.rs`'s module doc for the reasoning). Panel-side, this means
-no typed input and no keyboard focus needed at all anymore.
+**Round 2 (2026-08-08) dropped the original PIN-pairing design entirely,**
+then **round 2b (same day) moved off the LAN Remote Control server's
+port/lifecycle entirely too** — both changes came directly from Thomas
+testing live and catching real bugs, not from planning ahead:
+
+- Round 1's flow reused the LAN Remote Control server's tablet-auth model
+  (typed PIN → bearer token) — the right call for a tablet on the LAN, a
+  genuinely different device that has to prove it's authorized. This panel
+  isn't that: it only ever runs on the SAME PC as AeroACARS, so there's no
+  cross-device trust question, and the PIN was pure friction that directly
+  caused round 1's keyboard-focus blocker.
+- Round 2 kept the PIN-free `/panel/*` routes on the SAME server the
+  tablet feature uses, just loopback-gated. Two real bugs followed, both
+  caught by Thomas within minutes of testing: (1) that server is opt-in
+  (`remote_server_start`) — the panel sat on "Verbinde..." forever unless
+  "Fernzugriff" was separately toggled on in Settings; (2) that server's
+  port is pilot-configurable — changing it silently broke the panel with
+  no way to notice.
+- Round 2b's fix: a **second, tiny, always-on server**
+  (`panel_server.rs`), bound literally to `127.0.0.1` (not `0.0.0.0`) on a
+  **fixed, non-configurable port (47847)**, started unconditionally at app
+  launch — no toggle, nothing to keep in sync with the tablet feature's
+  settings. The two servers are fully independent; the LAN Remote Control
+  server (port 8765 default, PIN-gated, opt-in) is completely unchanged
+  and still exists for the tablet use case.
+
+Panel-side, none of this history matters for actually using it: no typed
+input, no keyboard focus, no settings toggle — start AeroACARS, the panel
+connects.
 
 **The central open question this build exists to answer:** does Coherent
 GT (MSFS's in-game UI engine) actually allow `fetch()`/`WebSocket` calls to
@@ -91,11 +109,14 @@ before we know the core networking assumption above holds. See
 `docs/spec/msfs-ingame-landing-debrief-panel.v1.yaml` `feasibility_spike`
 for what "done" looks like before that's worth building.
 
-## Testing the spike (round 2)
+## Testing the spike (round 2b)
 
-1. Start AeroACARS. Nothing to configure for the panel — no PIN, no pairing
-   step. (The existing "Fernzugriff"/LAN Remote Control toggle in Settings
-   still exists for the tablet use case and is unrelated to this panel now.)
+1. Start AeroACARS — nothing to configure, no PIN, no toggle. The panel
+   server (`panel_server.rs`) starts automatically and unconditionally on
+   its own fixed port (47847), fully independent of the "Fernzugriff"/LAN
+   Remote Control toggle (that one stays opt-in, unchanged, port 8765 —
+   it's for the tablet feature and has nothing to do with this panel
+   anymore as of round 2b).
 2. Launch MSFS 2024 with the freshly-built package (round 2 changed the
    HTML/JS meaningfully — rebuild clean, don't reuse a round-1 package) in
    Community.
