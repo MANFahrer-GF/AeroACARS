@@ -1081,6 +1081,28 @@ feasibility_spike:
     and untouched by this. panel.js's PORT constant is now a hardcoded
     47847, not a configurable/localStorage value. See local_api.status and
     architecture.status for the current (superseding) design.
+  round_2c: >
+    Same day, still before any of round 2/2b was live-tested: (1) Thomas
+    asked for remote_server_set_port to reject 47847 outright, closing the
+    one remaining way to recreate the exact port collision round 2b's
+    fixed-port redesign exists to prevent — added as a guard clause,
+    UiError code remote_port_reserved_for_panel. (2) Thomas restated the
+    visual complaint in stronger terms ("nicht wie Kindergarten", proper
+    spacing) — panel.css/panel.js got a full design pass (spacing/type
+    scale as CSS custom properties, Windows-native mono font, button
+    hover/active states, status-dot glow, varied spacing for rhythm,
+    eased score-bar transition + prefers-reduced-motion) via the
+    `impeccable` skill's design principles, applied directly rather than
+    running the skill's full project-init ceremony (disproportionate for
+    a 3-file CSS pass in a much larger non-frontend-primary repo). Also
+    fixed a real bug surfaced while redesigning: the score band badge was
+    hardcoded green regardless of actual landing quality
+    (smooth/acceptable/firm/hard/severe) — now color-coded to match the
+    same good/warn/bad language already used for sub-score dots.
+    NONE of round 2b/2c has been live-verified yet — Thomas explicitly
+    paused further MSFS restart cycles for the day (~10 min each). Next
+    session should bundle round 2b + 2c into ONE fresh build/test instead
+    of yet more incremental rounds.
   goal: >
     Resolve LIM-001 and the local_api.websocket_live.risk_note before
     committing to the full panel build: does a minimal MSFS 2024 in-game
