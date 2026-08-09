@@ -117,30 +117,57 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════
-     3. Titelleiste verstecken
+     3. Titelleiste: schlank machen statt verstecken
      ═══════════════════════════════════════════════════════════════════
-     Thomas will sie weg. Wir kennen ihren genauen Namen nicht, also
-     suchen wir nach dem, was eine Kopfzeile ausmacht: bekannte
-     Klassennamen aus dem MSFS-UI, plus jedes Element in der Kette,
-     dessen Textinhalt exakt unser Panelname ist. */
+     KORREKTUR vom 09.08.2026, nach der ersten Befundzeile aus dem Sim:
 
-  function versteckeTitel() {
-    var weg = 0;
-    var muster = [
-      '.ingameUiHeader', '.ingameUiHeaderTitle', 'ingame-ui-header',
-      '[class*="ingameUiHeader"]', '[class*="panelHeader"]', '[class*="TitleBar"]',
-      '[class*="titleBar"]',
-    ];
+       KETTE  div.aa2-strip.aa2-quiet < body.aa2-nativ < html
+       Ziehen: Rahmen NICHT in unserem Dokument; Eltern kein Elternfenster
+
+     Damit ist zweierlei bewiesen:
+
+     (a) Ueber unserer Seite liegt NICHTS, was wir erreichen koennen. Das
+         Fenster gehoert dem Simulator, ausserhalb unseres Dokuments und
+         ohne Elternfenster. Ein eigenes Ziehen kann es also gar nicht
+         bewegen — der Fehler war nicht im Code, die Sache ist von aussen
+         zugenagelt.
+
+     (b) Die Titelleiste dagegen liegt IN unserem Dokument (der Bericht
+         zaehlte "Titel 1", und auf dem Foto war sie danach weg). Und
+         genau sie ist der Griff, an dem MSFS seine Panels bewegt.
+
+     Daraus folgt der Fehler in meinem ersten Entwurf: indem ich die
+     Leiste versteckt habe, habe ich den einzigen vorhandenen Griff
+     entfernt — und dann selbst gebaut, was ohne ihn nicht geht. Beide
+     Wuensche gleichzeitig ("keine Leiste" UND "verschiebbar") sind so
+     nicht erfuellbar.
+
+     Der Ausweg ist ein Kompromiss, der beidem so nah wie moeglich kommt:
+     die Leiste BLEIBT, wird aber auf einen schmalen, stillen Streifen
+     zusammengezogen — kein Text, kaum Hoehe, dezent. Sichtbar genug zum
+     Anfassen, unauffaellig genug, um nicht zu stoeren. Beim Ueberfahren
+     mit der Maus tritt sie hervor, damit man sie findet.
+
+     Wer sie doch ganz weg will: HOEHE auf 0 setzen. Dann ist das Panel
+     unverschiebbar und sitzt dort, wo die InGamePanelDefinition es
+     hinstellt (defaultTop/defaultLeft) — eine legitime Wahl, aber eine
+     bewusste. */
+
+  var LEISTE_HOEHE = 14;   // 0 = ganz weg, dann aber unverschiebbar
+
+  function schlankeTitelleiste() {
+    var behandelt = 0;
+    var kandidaten = [];
     try {
+      var muster = ['.ingameUiHeader', '.ingameUiHeaderTitle', 'ingame-ui-header',
+        '[class*="ingameUiHeader"]', '[class*="panelHeader"]',
+        '[class*="TitleBar"]', '[class*="titleBar"]'];
       for (var i = 0; i < muster.length; i++) {
-        var treffer = document.querySelectorAll(muster[i]);
-        for (var j = 0; j < treffer.length; j++) {
-          treffer[j].style.display = 'none';
-          weg++;
-        }
+        var tr = document.querySelectorAll(muster[i]);
+        for (var j = 0; j < tr.length; j++) kandidaten.push(tr[j]);
       }
-      /* Zusaetzlich: irgendein Vorfahren-Geschwister, dessen Text genau
-         "AeroACARS" ist — so heisst die Leiste laut Foto. */
+      /* Und jedes Geschwister in der Kette, dessen Text genau unser
+         Panelname ist — so hat sich die Leiste im Sim gezeigt. */
       var el = document.querySelector('.aa2-strip');
       var tiefe = 0;
       while (el && tiefe < 12) {
@@ -148,19 +175,44 @@
         if (eltern && eltern.children) {
           for (var k = 0; k < eltern.children.length; k++) {
             var g = eltern.children[k];
-            if (g === el) continue;
+            if (g === el || g.id === 'aa2-chrome-befund') continue;
             var txt = (g.textContent || '').trim().toLowerCase();
-            if (txt === 'aeroacars' && g.children.length <= 3) {
-              g.style.display = 'none';
-              weg++;
-            }
+            if (txt === 'aeroacars' && g.children.length <= 3) kandidaten.push(g);
           }
         }
         el = eltern;
         tiefe++;
       }
+
+      for (var m = 0; m < kandidaten.length; m++) {
+        var c = kandidaten[m];
+        if (c.getAttribute && c.getAttribute('data-aa2-leiste') === '1') continue;
+        if (LEISTE_HOEHE <= 0) {
+          c.style.display = 'none';
+        } else {
+          /* Nicht `display:none` — der Griff muss anfassbar bleiben.
+             Der Text verschwindet ueber die Schriftgroesse statt ueber
+             `visibility`, damit das Element seine Klickflaeche behaelt. */
+          c.style.height = LEISTE_HOEHE + 'px';
+          c.style.minHeight = LEISTE_HOEHE + 'px';
+          c.style.lineHeight = LEISTE_HOEHE + 'px';
+          c.style.padding = '0';
+          c.style.margin = '0';
+          c.style.fontSize = '0';
+          c.style.overflow = 'hidden';
+          c.style.opacity = '0.30';
+          c.style.cursor = 'move';
+          c.style.borderBottom = '0';
+          try {
+            c.addEventListener('mouseenter', function () { this.style.opacity = '0.85'; });
+            c.addEventListener('mouseleave', function () { this.style.opacity = '0.30'; });
+          } catch (e) {}
+        }
+        if (c.setAttribute) c.setAttribute('data-aa2-leiste', '1');
+        behandelt++;
+      }
     } catch (e) {}
-    return weg;
+    return behandelt;
   }
 
   /* ═══════════════════════════════════════════════════════════════════
@@ -369,11 +421,11 @@
 
   function lauf(erster) {
     var k = raeumeKlassen();
-    var t = versteckeTitel();
+    var t = schlankeTitelleiste();
     if (erster) {
       var z = ruesteZiehenAus();
       notiz('Klassen ' + k);
-      notiz('Titel ' + t);
+      notiz('Leiste ' + t + '@' + LEISTE_HOEHE + 'px');
       notiz('Ziehen ' + (z ? 'aktiv auf ' + (ziehZiel && ziehZiel.tagName
             ? ziehZiel.tagName.toLowerCase() +
               (ziehZiel.className ? '.' + String(ziehZiel.className).trim().split(/\s+/)[0] : '')
