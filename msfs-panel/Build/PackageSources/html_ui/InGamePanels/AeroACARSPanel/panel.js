@@ -527,6 +527,35 @@
     [/Ä/g, 'Ae'], [/Ö/g, 'Oe'], [/Ü/g, 'Ue'], [/ß/g, 'ss'],
     [/[^\x20-\x7E]/g, ''],   // Auffangrechen — MUSS letzter Eintrag bleiben
   ];
+  /* Log-Zeilen selbst kuerzen, statt sich auf `text-overflow: ellipsis`
+     zu verlassen. Zwei Gruende, beide aus dem Feld:
+
+     1. Die CSS-Ellipse zeichnet U+2026 — ein typografisches Zeichen.
+        Genau diese Klasse von Zeichen erschien im Sim als Kaestchen,
+        das war der ganze Grund fuer nurAscii(). Drei gewoehnliche
+        Punkte koennen das nicht passieren.
+     2. Ein Zeichenlimit wirkt unabhaengig von der Schrift. Der Sim
+        rendert rund ein Viertel breiter als der Browser — eine
+        pixelbasierte Kuerzung faellt in beiden Umgebungen verschieden
+        aus, eine zeichenbasierte nicht.
+
+     Anlass war die Sim-Pause-Meldung, die Vorher- UND Nachher-
+     Koordinaten mitfuehrt und dadurch weit ueber jede Fensterbreite
+     hinauslief (Foto aus dem Sim, 09.08.2026). Die CSS-Ellipse bleibt
+     als zweites Netz stehen, greift aber im Normalfall nicht mehr. */
+  var TICKER_MAX = 100;
+
+  function kuerze(t) {
+    var s = String(t == null ? '' : t);
+    if (s.length <= TICKER_MAX) return s;
+    /* An der letzten Wortgrenze trennen, damit nicht mitten im Wort
+       abgeschnitten wird — aber nur, wenn dabei nicht zu viel verloren
+       geht. */
+    var schnitt = s.lastIndexOf(' ', TICKER_MAX - 3);
+    if (schnitt < TICKER_MAX - 25) schnitt = TICKER_MAX - 3;
+    return s.slice(0, schnitt) + '...';
+  }
+
   function nurAscii(t) {
     var s = String(t == null ? '' : t);
     for (var i = 0; i < ERSATZ.length; i++) s = s.replace(ERSATZ[i][0], ERSATZ[i][1]);
@@ -651,7 +680,7 @@
     zeige(K.rule, !!a);
     if (!a) { K.age.textContent = ''; K.msg.textContent = ''; return; }
     K.age.textContent = alter(a.timestamp);
-    K.msg.textContent = nurAscii(a.detail ? a.message + ' - ' + a.detail : a.message);
+    K.msg.textContent = kuerze(nurAscii(a.detail ? a.message + ' - ' + a.detail : a.message));
     var stufe = String(a.level || '').toLowerCase();
     K.msg.className = 'aa2-msg' + (stufe === 'warn' ? ' aa2-w' : stufe === 'error' ? ' aa2-e' : '');
   }

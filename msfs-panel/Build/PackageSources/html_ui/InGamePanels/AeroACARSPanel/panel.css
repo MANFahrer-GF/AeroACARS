@@ -128,6 +128,15 @@ html, body {
   color: var(--aa2-ink-muted);
   overflow: hidden;
   text-overflow: ellipsis;
+  /* `min-width: 0` ist die Bedingung dafuer, dass die Ellipse ueberhaupt
+     erscheint. Ohne sie hat ein Flex-Kind die Mindestbreite seines
+     Inhalts, kann also gar nicht schrumpfen — die Zeile lief dann ueber
+     den Rand und wurde vom `overflow: hidden` des Elternteils HART
+     abgeschnitten, mitten im Wort und ohne jeden Hinweis. Genau so im
+     Sim fotografiert (09.08.2026, lange Sim-Pause-Meldung mit
+     Koordinaten). Jetzt endet sie sichtbar mit "...". */
+  min-width: 0;
+  flex: 0 1 auto;
 }
 .aa2-msg.aa2-w { color: var(--aa2-warn); }
 .aa2-msg.aa2-e { color: var(--aa2-bad); }
@@ -278,6 +287,21 @@ html, body {
   border-radius: 0;
 }
 
+/* WAS gekuerzt werden darf und was nicht (09.08.2026, nach dem Foto
+   aus dem Sim mit abgeschnittener Log-Zeile):
+ *
+ *   Die MESSWERTE nie — eine halbe Treibstoffzahl ist schlimmer als gar
+ *   keine, weil man ihr nicht ansieht, dass sie halb ist. Sie behalten
+ *   ihre Mindestbreite und laufen im Zweifel ueber den Rand.
+ *
+ *   Die LOG-ZEILE schon — sie ist Fliesstext, und mit "..." am Ende ist
+ *   sofort erkennbar, dass da noch mehr steht. Sie bekommt deshalb die
+ *   volle Fensterbreite und kuerzt sich selbst. */
+.aa2-nativ .aa2-ticker {
+  max-width: none;
+  width: 100%;
+}
+
 /* Mindestbreite, ab der nichts mehr rechts abfaellt.
  *
  * KORREKTUR 09.08.2026 nach dem zweiten Sim-Test: meine Browser-Messung
@@ -294,7 +318,7 @@ html, body {
  * Wird das Sim-Fenster schmaler gezogen, laeuft der Streifen darueber
  * hinaus statt Information stillschweigend zu verlieren — sichtbar ist
  * besser als lautlos weg. */
-.aa2-nativ .aa2-strip > * {
+.aa2-nativ .aa2-data {
   min-width: 840px;
 }
 
