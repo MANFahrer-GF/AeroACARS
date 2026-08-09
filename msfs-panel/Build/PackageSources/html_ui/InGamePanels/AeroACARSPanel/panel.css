@@ -105,6 +105,23 @@ ingame-ui, .ingameUiFrame {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  opacity: 1;
+  transition: opacity 400ms ease-out;
+}
+
+/* v0.2.2 (round 3): "quiet" state for ready_monitoring/flight_active — the
+ * pilot opens the panel once before departure (checks the connection dot),
+ * then it fades itself down for the enroute portion of the flight instead
+ * of sitting at full attention the whole time, and fades back up on its
+ * own once flight_status.phase reaches approach/final (see panel.js
+ * QUIET_MODES). Content stays technically present underneath, not
+ * display:none — a light hover brings it most of the way back for a
+ * quick glance without permanently waking it.
+ */
+.panel.quiet { opacity: 0.32; }
+.panel.quiet:hover { opacity: 0.85; }
+@media (prefers-reduced-motion: reduce) {
+  .panel { transition: none; }
 }
 
 .view {

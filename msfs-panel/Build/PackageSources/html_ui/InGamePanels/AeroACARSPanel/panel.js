@@ -235,9 +235,24 @@
     });
   }
 
+  // v0.2.2 (round 3, 2026-08-09): MSFS has no confirmed way for AeroACARS to
+  // open a CLOSED toolbar panel from outside (researched — an open Asobo
+  // dev-support request "Exposing Coherent to WASM" and an unanswered "open
+  // an in-game panel from wasm/SimConnect?" thread both suggest this isn't
+  // currently possible). So MUST-007/008's original "auto-activate before
+  // landing" can't mean "opens itself" — Thomas's alternative: the pilot
+  // opens the panel once before departure (it already shows the connection
+  // check via ready_monitoring/disconnected), then it quiets itself down
+  // during cruise and wakes back up for the approach, all while already
+  // open. No SDK capability needed for this — it's just the panel's own
+  // JS/CSS changing what's already rendered, which it can always do.
+  var QUIET_MODES = { ready_monitoring: true, flight_active: true };
+
   function render() {
     var s = state.status;
     var d = state.debrief;
+    var panelEl = document.querySelector('.panel');
+    if (panelEl) panelEl.classList.toggle('quiet', !!QUIET_MODES[state.mode]);
 
     switch (state.mode) {
       case 'disconnected':
