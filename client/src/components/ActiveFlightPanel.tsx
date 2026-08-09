@@ -813,7 +813,16 @@ function DisconnectBanner({
   return (
     <div className="active-flight__paused-banner" role="alert">
       <div className="active-flight__paused-header">
-        <span className="active-flight__paused-icon">⏸</span>
+        {/* Inline-SVG statt ⏸-Emoji — gleiche Begründung wie bei den
+            Sidebar-Symbolen (Sidebar.tsx): Emoji rendern je nach OS
+            unterschiedlich, lassen sich nicht einfärben und werden vom
+            Screenreader vorgelesen. Strichstärke 1.6, currentColor. */}
+        <span className="active-flight__paused-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M10 9v6M14 9v6" />
+          </svg>
+        </span>
         <div>
           <strong>{t("active_flight.paused.title")}</strong>
           <span className="active-flight__paused-since">

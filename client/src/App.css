@@ -1492,6 +1492,13 @@ button:disabled {
   white-space: nowrap;
   font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
     monospace;
+  /* Feldbefund (Thomas, 09.08.2026): in der schmalen Seitenleiste wuchs
+     die Pille über ihren Container hinaus und der Σ-Zähler wurde am Rand
+     abgeschnitten — der Pilot sah ein halbes Σ außerhalb der Pille. Die
+     Pille muss in ihren Platz passen; kürzbar ist allein der Freitext in
+     der Mitte (unten), NIE der Zähler. */
+  max-width: 100%;
+  min-width: 0;
 }
 
 .live-rec__dot {
@@ -1511,6 +1518,19 @@ button:disabled {
   font-weight: 500;
   text-transform: none;
   letter-spacing: 0.02em;
+  /* Das EINZIGE kürzbare Element der Pille: wird der Platz eng, endet
+     der Freitext mit „…“ — Zustand (LIVE) und Zähler (Σ) bleiben immer
+     vollständig lesbar. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-rec__dot,
+.live-rec__label,
+.live-rec__sep {
+  flex: 0 0 auto;
 }
 
 .live-rec__count {
@@ -1521,6 +1541,8 @@ button:disabled {
   color: currentColor;
   font-size: 10px;
   font-weight: 700;
+  /* Nie abschneiden — siehe .live-rec. */
+  flex: 0 0 auto;
 }
 
 /* States */
@@ -6666,15 +6688,21 @@ input:disabled {
  * v0.4.1: Sim-Disconnect-Pause-Banner (ActiveFlightPanel)
  * ====================================================================== */
 
+/* Feldbefund (Thomas, 09.08.2026): dieses Banner war der letzte Block im
+   alten Vor-Redesign-Stil — fest verdrahtete rgba-Farben statt Tokens,
+   2px-Rahmen, rem-Maße, Emoji-Icon. Jetzt dieselbe Formensprache wie
+   .divert-banner (die Redesign-Referenz für Warn-Banner): Token-Farben
+   über color-mix (funktioniert damit auch im hellen Thema), 1px-Rahmen,
+   12px-Radius, px-Skala. */
 .active-flight__paused-banner {
-  background: rgba(251, 191, 36, 0.08);
-  border: 2px solid rgba(251, 191, 36, 0.5);
-  border-radius: 10px;
-  padding: 1rem 1.2rem;
-  margin-bottom: 1rem;
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warning) 60%, var(--border));
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 14px;
   display: flex;
   flex-direction: column;
-  gap: 0.8rem;
+  gap: 10px;
 }
 
 .active-flight__paused-header {
@@ -6690,13 +6718,21 @@ input:disabled {
 }
 
 .active-flight__paused-header strong {
-  font-size: 1.05rem;
+  font-size: 15px;
   color: var(--sem-warn);
 }
 
 .active-flight__paused-icon {
-  font-size: 1.8rem;
-  line-height: 1;
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  color: var(--sem-warn);
+  flex: 0 0 auto;
+}
+
+.active-flight__paused-icon svg {
+  width: 100%;
+  height: 100%;
 }
 
 .active-flight__paused-since {
@@ -6714,10 +6750,14 @@ input:disabled {
 .active-flight__paused-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 0.5rem 1rem;
-  background: rgba(0, 0, 0, 0.18);
-  padding: 0.7rem 0.9rem;
-  border-radius: 7px;
+  gap: 8px 16px;
+  /* Vorher rgba(0,0,0,0.18): ein fester Dunkel-Schleier, der im hellen
+     Thema als schmutziger Fleck stand. Token-Fläche mit Hairline passt
+     sich beiden Themen an. */
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 10px 14px;
+  border-radius: 8px;
 }
 
 .active-flight__paused-grid > div {
@@ -6759,21 +6799,26 @@ input:disabled {
 
 /* Variante mit ROTEM Rahmen für hard-stop (statt orange) */
 .active-flight__paused-banner--hard {
-  background: rgba(239, 68, 68, 0.08);
-  border-color: rgba(239, 68, 68, 0.5);
+  background: color-mix(in srgb, var(--sem-danger) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--sem-danger) 60%, var(--border));
+}
+.active-flight__paused-banner--hard .active-flight__paused-icon {
+  color: var(--sem-danger);
 }
 .active-flight__paused-banner--hard .active-flight__paused-header strong {
   color: var(--sem-danger);
 }
 
-/* 3-Spalten-Vergleichstabelle, ersetzt das 2×2-Pause-Grid */
+/* 3-Spalten-Vergleichstabelle, ersetzt das 2×2-Pause-Grid.
+   Gleiche Token-Migration wie .active-flight__paused-grid darüber. */
 .resume-compare {
   display: grid;
   grid-template-columns: 110px 1fr 1fr 1fr;
-  gap: 0.25rem 1rem;
-  background: rgba(0, 0, 0, 0.18);
-  padding: 0.7rem 0.9rem;
-  border-radius: 7px;
+  gap: 4px 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 10px 14px;
+  border-radius: 8px;
   align-items: baseline;
 }
 
