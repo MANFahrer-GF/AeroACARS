@@ -255,12 +255,19 @@ html, body {
  * Streifen soll sich hineinlegen, nicht dagegen druecken.
  * ══════════════════════════════════════════════════════════════════════ */
 
-/* Nativ ist der Streifen selbst die Wurzel: er fuellt das Sim-Fenster,
-   statt wie in Flow frei ueber dem Bild zu schweben. Position und
-   Groesse besorgt der Fensterrahmen — deshalb hier KEIN position/fixed
-   und KEINE feste Hoehe. Die Auswahl ueber `body >` trifft nur den
-   nativen Fall; in Flow liegt der Streifen unter `.aa2-root`. */
-body > .aa2-strip {
+/* Nativ fuellt der Streifen das Sim-Fenster, statt wie in Flow frei
+   ueber dem Bild zu schweben. Position und Groesse besorgt der
+   Fensterrahmen — deshalb hier KEIN position/fixed und KEINE feste
+   Hoehe.
+
+   Ausgewaehlt ueber `aa2-nativ` am <body> (siehe AeroACARSPanel.html).
+   Zwei Fehlversuche stecken darin: `body > .aa2-strip` brach, sobald
+   der Sim den Streifen in einen eigenen Rahmen legte; die Klasse am
+   Streifen selbst ueberlebte nicht, weil panel.js dessen className
+   beim Umschalten auf "ruhig" komplett neu setzt. Der Body wird von
+   niemandem angefasst. In Flow existiert die Klasse nicht, dort bleibt
+   alles wie gehabt. */
+.aa2-nativ .aa2-strip {
   position: static;
   left: auto;
   right: auto;
@@ -275,13 +282,13 @@ body > .aa2-strip {
    Wird das Sim-Fenster schmaler gezogen, laeuft der Streifen darueber
    hinaus statt Information stillschweigend zu verlieren — sichtbar ist
    besser als lautlos weg. */
-body > .aa2-strip > * {
+.aa2-nativ .aa2-strip > * {
   min-width: 680px;
 }
 
 /* Nativ nie ausblenden: die Sichtbarkeit steuert das Toolbar-Symbol des
    Sims. `:empty { display: none }` aus dem Flow-Teil wuerde beim ersten
    Bildaufbau kurz ein leeres Fenster erzeugen. */
-body > .aa2-strip:empty {
+.aa2-nativ .aa2-strip:empty {
   display: block;
 }

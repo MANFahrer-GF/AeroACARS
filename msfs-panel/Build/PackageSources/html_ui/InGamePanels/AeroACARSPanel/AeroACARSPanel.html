@@ -5,7 +5,7 @@
   <title>AeroACARS</title>
   <link rel="stylesheet" href="panel.css" />
 </head>
-<body>
+<body class="aa2-nativ">
   <!--
     ═══════════════════════════════════════════════════════════════════
     v0.4.0 — KEIN <ingame-ui>. Das ist eine Korrektur, keine Nachlaessigkeit.
@@ -42,8 +42,32 @@
       zu pruefen, ob der Asobo-Bug behoben ist. Die Rueckfall-Variante
       steht in ../../../../../README.md unter "Variante B".
   -->
+  <!--
+    Der Schalter fuer den nativen Teil in panel.css ist `aa2-nativ` am
+    <body> — bewusst DORT und nicht am Streifen. Zwei Fehlversuche
+    liegen dahinter, beide im Test gefunden (09.08.2026):
+
+      1. `body > .aa2-strip` als CSS-Auswahl: brach, sobald der Sim den
+         Streifen in ein eigenes Rahmen-Div legte (dann kein direktes
+         Body-Kind mehr) — und dann gewann die Flow-Regel `position:
+         absolute`.
+      2. Die Klasse am Streifen selbst: panel.js setzt dessen
+         `className` beim Umschalten auf "ruhig" komplett neu und
+         loescht dabei jede Zusatzklasse. Der Marker war nach dem
+         ersten Takt weg.
+
+    Der Body wird von niemandem angefasst und ist immer Vorfahre.
+  -->
   <div class="aa2-strip"></div>
 
   <script type="text/javascript" src="panel.js"></script>
+
+  <!--
+    NUR nativ: Titelleiste und Ziehen. Bewusst eine EIGENE Datei, damit
+    panel.js byte-identisch mit dem Flow-Widget bleibt. Laedt NACH
+    panel.js, weil sie den fertig aufgebauten Streifen als Ziehgriff
+    braucht. Reihenfolge nicht tauschen.
+  -->
+  <script type="text/javascript" src="panel-chrome.js"></script>
 </body>
 </html>
