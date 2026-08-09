@@ -2,90 +2,66 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>AeroACARS Flight Review</title>
+  <title>AeroACARS</title>
   <link rel="stylesheet" href="panel.css" />
+
+  <!--
+    PFLICHT — und im Feld verifiziert (Thomas, 09.08.2026, Runde-3-Stand:
+    "das letzte native Panel konnten wir verschieben").
+
+    Ohne diese vier Skripte und zwei Vorlagen-Importe ist <ingame-ui> ein
+    unregistriertes Tag ohne jedes Verhalten: es rendert seine Kinder
+    inline, sonst nichts — kein Rahmen, keine Titelleiste, kein Ziehen.
+    Genau das war der Fehlschlag aus Runde 2, wo der Wrapper allein
+    gesetzt war. Quelle: Dutch-FlightSim-Developer/
+    developing-with-simconnect Teil 13-4 plus das dazu passende, noch
+    offene Asobo-Ticket 18144.
+  -->
+  <script type="text/javascript" src="/JS/coherent.js"></script>
+  <script type="text/javascript" src="/JS/common.js"></script>
+  <script type="text/javascript" src="/JS/buttons.js"></script>
+  <script type="text/javascript" src="/JS/Services/ToolBarPanels.js"></script>
+
+  <link rel="import" href="/templates/ingameUi/ingameUi.html" />
+  <link rel="import" href="/templates/ingameUiHeader/ingameUiHeader.html" />
 </head>
 <body>
   <!--
-    v0.2.0 (round 2, #msfs-panel): wrapped in MSFS's own <ingame-ui> custom
-    element. Round 1 shipped without it — plain <div class="panel"> — and
-    the panel rendered but could not be dragged or resized despite
-    resizeDirections="Both" being set in the InGamePanelDefinition. Verified
-    reference (github.com/bymaximus/msfs2020-toolbar-window-template): MSFS
-    toolbar panels get NO title bar / drag / resize chrome unless their
-    content is wrapped in <ingame-ui panel-id="..." title="..." ...> — that
-    tag is what the native frame recognizes to supply it, not something we
-    build ourselves in JS/CSS. panel-id must match the InGamePanelDefinition
-    id in Build/PackageSources/InGamePanels/aeroacars-panel.xml. NOT YET
-    live-verified that this alone is sufficient — round 2's first check.
+    v0.3.0 (09.08.2026): Inhalt ist jetzt der HUD-Streifen aus dem
+    Flow-Pro-Widget v3.3 — panel.js ist byte-identisch mit dessen code.js,
+    panel.css ist dessen code.css plus einem nativen Rahmen-Block am Ende.
+    EINE Quelle, zwei Ziele.
+
+    Vorher standen hier fuenf handgepflegte Ansichten (monitor/approach/
+    scoring/score/debrief) mit festen Kennungen. Die sind ersatzlos weg:
+    der Streifen deckt dieselben Zustaende ab, aber in der Fassung, die
+    18 QS-Faelle und einen Feldtag hinter sich hat — inklusive der teuer
+    erkauften Coherent-GT-Regeln (kein `gap`, nur ASCII), die hier
+    genauso gelten, weil BEIDE Umgebungen derselbe Renderer sind.
+
+    Der Streifen baut sich komplett selbst auf, unter `aa2-`-Kennungen.
+    Deshalb bleibt dieses Markup leer — das ist Absicht, nicht Rest.
+
+    Kein `content-fit`: in dieser SDK-Fassung kaputt (Asobo-Ticket 18144),
+    feste Rahmengroesse in panel.css ist der dokumentierte Ausweg.
+    `resize="both"` erlaubt manuelles Anpassen.
+
+    ⚠ Zum Schliessen das Toolbar-Symbol benutzen, NICHT das X der
+    Titelleiste — die Knoepfe der nativen Leiste stehen im
+    MSFS-Devsupport-Forum als Absturzausloeser.
   -->
   <ingame-ui
     id="AeroACARSPanel"
     panel-id="PANEL_AEROACARS_PANEL"
-    title="AeroACARS Flight Review"
+    title="AeroACARS"
     class="ingameUiFrame"
-    content-fit="true"
-    min-width="220"
-    min-height="160"
+    resize="both"
+    auto-inside=""
+    data-input-group="INGAME-UI"
   >
-  <div class="panel">
-
-    <!-- disconnected / ready_monitoring / flight_active -->
-    <div id="view-monitor" class="view">
-      <div class="header-row">
-        <div id="monitor-dot" class="dot dot-bad"></div>
-        <div class="app-name">AeroACARS Flight Review</div>
-      </div>
-      <div id="monitor-subtitle" class="muted">Verbinde...</div>
-    </div>
-
-    <!-- approach_monitor -->
-    <div id="view-approach" class="view">
-      <div class="header-row">
-        <div class="dot dot-good"></div>
-        <div id="ap-aircraft" class="app-name">--</div>
-      </div>
-      <div id="ap-route" class="muted">---- -&gt; ----</div>
-      <div class="metric-row"><span class="metric-label">V/S</span><span id="ap-fpm" class="metric-value mono">--</span></div>
-      <div class="metric-row"><span class="metric-label">G-Force</span><span id="ap-g" class="metric-value mono">--</span></div>
-      <div class="metric-row"><span class="metric-label">IAS | GS</span><span id="ap-iasgs" class="metric-value mono">--</span></div>
-      <div class="metric-row"><span class="metric-label">Pitch</span><span id="ap-pitch" class="metric-value mono">--</span></div>
-      <div class="metric-row"><span class="metric-label">Bank</span><span id="ap-bank" class="metric-value mono">--</span></div>
-      <div class="metric-row"><span class="metric-label">OAT</span><span id="ap-oat" class="metric-value mono">--</span></div>
-      <div class="metric-row"><span class="metric-label">Wind</span><span id="ap-wind" class="metric-value mono">--</span></div>
-    </div>
-
-    <!-- scoring (transitional, MUST-012a) -->
-    <div id="view-scoring" class="view">
-      <div class="spinner"></div>
-      <div class="muted" style="margin-top:8px;">Landung wird ausgewertet...</div>
-    </div>
-
-    <!-- landing_score -->
-    <div id="view-score" class="view">
-      <div id="score-route" class="app-name">---- -&gt; ----</div>
-      <div id="score-sub" class="muted">--</div>
-      <div class="score-total mono" id="score-total">--</div>
-      <div class="score-bar-track"><div id="score-bar-fill" class="score-bar-fill" style="width:0%"></div></div>
-      <div id="score-band" class="score-band-badge">--</div>
-      <div class="metric-row"><span class="metric-label">Landing Rate</span><span id="score-vs" class="metric-value mono">--</span></div>
-      <div class="metric-row"><span class="metric-label">Touchdown G</span><span id="score-g" class="metric-value mono">--</span></div>
-      <div class="metric-row"><span class="metric-label">Bounces</span><span id="score-bounces" class="metric-value mono">--</span></div>
-      <div class="metric-row"><span class="metric-label">Wind</span><span id="score-wind" class="metric-value mono">--</span></div>
-      <button id="open-full-debrief" style="margin-top:6px;">Vollstaendiges Debriefing</button>
-    </div>
-
-    <!-- full_debrief -->
-    <div id="view-debrief" class="view">
-      <div class="header-row">
-        <button id="debrief-back" class="secondary">&lt; Zurueck</button>
-      </div>
-      <div id="debrief-subscores"></div>
-    </div>
-
-  </div>
+    <div class="aa2-strip"></div>
   </ingame-ui>
 
-  <script src="panel.js"></script>
+  <script type="text/javascript" src="panel.js"></script>
 </body>
 </html>

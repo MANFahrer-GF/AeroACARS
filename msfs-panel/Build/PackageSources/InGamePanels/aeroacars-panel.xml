@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="Windows-1252"?>
 <SimBase.Document Type="InGamePanels" version="1,0">
 	<Filename>aeroacars-ingamepanel.spb</Filename>
-	<InGamePanels.InGamePanelDefinition id="PANEL_AEROACARS_PANEL" Name="AeroACARS" url="html_UI/InGamePanels/AeroACARSPanel/AeroACARSPanel.html" resizeDirections="Both" minWidth="20" minHeight="18" defaultWidth="26" defaultHeight="34" defaultTop="12" defaultLeft="70" icon="ICON_TOOLBAR_AEROACARS_PANEL" buttonVisible="true">
+	<InGamePanels.InGamePanelDefinition id="PANEL_AEROACARS_PANEL" Name="AeroACARS" url="html_UI/InGamePanels/AeroACARSPanel/AeroACARSPanel.html" resizeDirections="Both" minWidth="24" minHeight="6" defaultWidth="46" defaultHeight="9" defaultTop="86" defaultLeft="27" icon="ICON_TOOLBAR_AEROACARS_PANEL" buttonVisible="true">
 	</InGamePanels.InGamePanelDefinition>
 </SimBase.Document>
