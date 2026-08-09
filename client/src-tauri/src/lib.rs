@@ -34400,15 +34400,24 @@ pub fn run() {
             // last-will-and-testament eventually publishes OFFLINE
             // anyway when the broker times the connection out (~60 s),
             // but the explicit shutdown is faster and cleaner.
-            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
-                // v1.5.0 (#msfs-hud, QS 09.08.2026): ZUERST den Panel-Server
-                // stoppen, noch vor allem anderen im Beenden-Pfad. Er ist der
-                // einzige Dienst, der bis dahin gar keinen Stopp-Weg hatte,
-                // und er greift im Sekundentakt auf `AppState` zu — das darf
-                // nicht mehr laufen, während der Rest hier abgebaut wird.
-                // Siehe `panel_server::shutdown` für die vollständige
-                // Begründung.
+            // v1.5.0 (#msfs-hud): Panel-Server stoppen — aber an `Exit`, NICHT
+            // an `ExitRequested`.
+            //
+            // Erste Fassung hing am `ExitRequested`-Zweig unten. `ExitRequested`
+            // heißt nur „jemand möchte beenden" und kann abgelehnt werden; die
+            // App lief danach weiter, der Panel-Server war aber unwiderruflich
+            // aus. Genau das Bild kam aus dem Feld: beta.3 zeigte erst Daten im
+            // HUD und danach dauerhaft „Keine Verbindung", während AeroACARS
+            // selbst weiterlief (Thomas, 09.08.2026).
+            //
+            // `Exit` wird erst ausgelöst, wenn die Ereignisschleife wirklich
+            // endet — es kann nicht mehr abgelehnt werden. Der Zweck bleibt
+            // gewahrt: es passiert weiterhin VOR dem Abbau von `AppState`,
+            // also vor dem Wettlauf, den `panel_server::shutdown` beschreibt.
+            if matches!(event, tauri::RunEvent::Exit) {
                 panel_server::shutdown();
+            }
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
                 // v0.20 (Process-Integrity): remove this run's sentinel — the
                 // ONLY place this is called. A crash/kill never reaches here,
                 // so the sentinel survives for the next launch to find.

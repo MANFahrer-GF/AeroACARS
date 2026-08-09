@@ -82,23 +82,37 @@ struct PanelCtx {
 static SHUTDOWN: std::sync::OnceLock<tokio::sync::watch::Sender<bool>> =
     std::sync::OnceLock::new();
 
-/// Fährt den Panel-Server geordnet herunter. Muss auf dem
-/// `RunEvent::ExitRequested`-Pfad in `lib.rs` aufgerufen werden.
+/// Fährt den Panel-Server geordnet herunter. Wird AUSSCHLIESSLICH aus dem
+/// `RunEvent::Exit`-Zweig in `lib.rs` gerufen.
 ///
-/// **Warum das nötig ist (QS 09.08.2026):** dieser Server lief als einzige
-/// langlebige Aufgabe der App ohne jeden Stopp-Weg — MQTT, Hoppie und der
-/// LAN-Fernzugriff-Server fahren alle geordnet herunter, dieser nicht. Er
-/// hielt einen `AppHandle`, löste im Sekundentakt `app.state::<AppState>()`
-/// auf und lief dabei gegen den Abbau der App an. Genau daraus kann ein
-/// Zugriff auf bereits freigegebenen Speicher werden, und der zeigt sich
-/// als das, was in der Ereignisanzeige stand: `0xC0000374`
-/// (Heap-Korruption) beziehungsweise `0xC000001D`.
+/// **Warum es diesen Weg gibt (QS 09.08.2026):** dieser Server war die
+/// einzige langlebige Aufgabe der App ohne jeden Stopp-Weg — MQTT, Hoppie,
+/// der LAN-Fernzugriff-Server und der Positions-Streamer fahren alle
+/// geordnet herunter, dieser nicht. Er hielt einen `AppHandle` und löste
+/// im Sekundentakt `app.state::<AppState>()` auf, während die App abgebaut
+/// wurde. Daraus kann ein Zugriff auf bereits freigegebenen Speicher
+/// werden.
 ///
-/// Das ist ausdrücklich eine begründete Vermutung, kein Beweis — den
-/// liefert erst ein Speicherabbild. Der fehlende Stopp-Weg ist aber
-/// unabhängig davon ein Defekt.
+/// **Was das NICHT ist:** die Erklärung für die Abstürze vom 09.08.2026
+/// (Ereignis 1000: `0xC0000374` / `0xC000001D`). Diese Vermutung stand hier
+/// zunächst — die Logdatei hat sie widerlegt: der Server ging dort
+/// gemeinsam mit MQTT im selben Millisekundenschritt aus, also bei einem
+/// ganz normalen, vollständigen Beenden. Die Absturzursache ist weiter
+/// offen und braucht ein Speicherabbild. Der fehlende Stopp-Weg war
+/// trotzdem ein Defekt, und dieser Weg schließt ihn.
+///
+/// **Warum `Exit` und nicht `ExitRequested`:** letzteres heißt bloß
+/// „jemand möchte beenden" und kann abgelehnt werden. Hing der Stopp
+/// daran, konnte der Server ausgehen, während die App weiterlief — ein
+/// Zustand, aus dem das HUD nie zurückgefunden hätte. `Exit` feuert erst,
+/// wenn die Ereignisschleife wirklich endet, und immer noch vor dem Abbau
+/// von `AppState`.
 pub fn shutdown() {
     if let Some(tx) = SHUTDOWN.get() {
+        // Absichtlich auf `warn`: taucht diese Zeile im Log auf, OBWOHL die
+        // App danach weiterläuft, ist genau der obige Fehler zurück. So
+        // steht die Antwort in der Logdatei statt in einer Vermutung.
+        tracing::warn!("panel_server: shutdown signalled");
         let _ = tx.send(true);
     }
 }
@@ -122,20 +136,51 @@ pub fn spawn(app: AppHandle) {
         tracing::warn!("panel_server: spawn called twice — ignoring the second call");
         return;
     }
+    let ctx = PanelCtx { app, stop: stop_rx.clone() };
+    // Beide Rückschleifen-Adressen, nicht nur die IPv4.
+    //
+    // Grund (Feldtest 09.08.2026): Anfragen aus dem Simulator an
+    // 127.0.0.1 blieben irgendwann dauerhaft hängen — keine Antwort, kein
+    // Fehler. Der eingebettete Renderer führt seinen Verbindungsvorrat pro
+    // Ziel-Adresse; ist der einmal mit toten Steckplätzen belegt, kommt
+    // über DIESE Adresse nichts mehr durch. Eine zweite Adresse gibt dem
+    // Widget einen davon unabhängigen Weg, ohne dass jemand den Sim neu
+    // starten muss.
+    //
+    // Sicherheitseigenschaft bleibt: `::1` ist genauso Rückschleife wie
+    // `127.0.0.1`, vom LAN aus also unerreichbar. Schlägt eine der beiden
+    // fehl, läuft die andere weiter — auf Systemen ohne IPv6 ist das der
+    // Normalfall und kein Fehler.
+    for addr in [
+        SocketAddr::from(([127, 0, 0, 1], PANEL_SERVER_PORT)),
+        SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, PANEL_SERVER_PORT)),
+    ] {
+        spawn_listener(addr, ctx.clone(), stop_rx.clone());
+    }
+}
+
+/// Ein Lauscher auf genau einer Adresse. Mehrfach aufgerufen von [`spawn`].
+fn spawn_listener(addr: SocketAddr, ctx: PanelCtx, stop_rx: tokio::sync::watch::Receiver<bool>) {
     tauri::async_runtime::spawn(async move {
-        let addr = SocketAddr::from(([127, 0, 0, 1], PANEL_SERVER_PORT));
         let listener = match tokio::net::TcpListener::bind(addr).await {
             Ok(l) => l,
             Err(e) => {
                 tracing::warn!(
                     error = %e,
-                    port = PANEL_SERVER_PORT,
-                    "panel_server: bind failed — MSFS in-sim panel will not be able to connect this session"
+                    %addr,
+                    "panel_server: bind failed for this address — the in-sim panel can still use the other one"
                 );
                 return;
             }
         };
-        let ctx = PanelCtx { app, stop: stop_rx.clone() };
+        // Positive Meldung, nicht nur eine bei Fehlschlag.
+        // Beim ersten Feldtest von v1.5.0-beta.3 stand das HUD auf „Keine
+        // Verbindung", und der Log konnte die naheliegendste Frage —
+        // „lauscht der Server überhaupt?" — NICHT beantworten: es gab nur
+        // eine Zeile für den Fehlerfall, und deren Fehlen ließ beide
+        // Deutungen offen. Eine Zeile bei Erfolg kostet nichts und
+        // entscheidet die Frage sofort.
+        tracing::info!(%addr, "panel_server: listening");
         let router = Router::new()
             .route("/panel/status", get(status_handler))
             .route("/panel/debrief", get(debrief_handler))
@@ -154,9 +199,9 @@ pub fn spawn(app: AppHandle) {
         })
         .await
         {
-            tracing::warn!(error = %e, "panel_server: serve loop ended unexpectedly");
+            tracing::warn!(error = %e, %addr, "panel_server: serve loop ended unexpectedly");
         }
-        tracing::info!("panel_server: stopped");
+        tracing::info!(%addr, "panel_server: stopped");
     });
 }
 
@@ -360,6 +405,23 @@ mod tests {
         drop(tx);
         let res = recv.changed().await;
         assert!(res.is_err(), "weggefallener Absender muss als Fehler ankommen");
+    }
+
+    /// Seit v1.5.0-beta.4 lauscht der Server auf ZWEI Adressen. Die
+    /// Sicherheitseigenschaft — nur Rückschleife, keine Anmeldung nötig —
+    /// muss auf beiden gelten, sonst wäre die zweite Adresse ein offenes
+    /// Tor ohne Token.
+    #[test]
+    fn the_second_address_is_just_as_loopback_only_as_the_first() {
+        let v6_loopback: SocketAddr = "[::1]:5000".parse().unwrap();
+        assert!(reject_non_loopback(v6_loopback).is_none(), "::1 muss durchkommen");
+
+        // Öffentliche v6-Adresse und v4-gemappte LAN-Adresse müssen weiterhin
+        // abgewiesen werden.
+        let v6_public: SocketAddr = "[2001:db8::1]:5000".parse().unwrap();
+        assert!(reject_non_loopback(v6_public).is_some());
+        let v6_mapped_lan: SocketAddr = "[::ffff:192.168.1.5]:5000".parse().unwrap();
+        assert!(reject_non_loopback(v6_mapped_lan).is_some());
     }
 
     #[test]
