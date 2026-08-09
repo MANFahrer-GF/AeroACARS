@@ -41,13 +41,14 @@ use std::time::Duration;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        ConnectInfo, State,
+        ConnectInfo, Query, State,
     },
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
 };
+use serde::Deserialize;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
@@ -61,9 +62,45 @@ pub const PANEL_SERVER_PORT: u16 = 47847;
 
 const TICK: Duration = Duration::from_secs(1);
 
+/// Wie viele Aktivitäts-Einträge `/panel/activity` ohne `?limit=` liefert.
+/// Das HUD zeigt eine Zeile; ein paar mehr kosten nichts und erlauben eine
+/// kurze Historie, ohne dass die Anzeige nachfragen muss.
+const ACTIVITY_DEFAULT_LIMIT: usize = 5;
+/// Obergrenze, damit ein `?limit=100000` nicht den kompletten Ringpuffer
+/// durch eine Anzeige schiebt, die davon eine Zeile benutzt.
+const ACTIVITY_MAX_LIMIT: usize = 50;
+
 #[derive(Clone)]
 struct PanelCtx {
     app: AppHandle,
+    /// Flippt beim App-Ende auf `true`. Siehe [`shutdown`].
+    stop: tokio::sync::watch::Receiver<bool>,
+}
+
+/// Absender des Stopp-Signals, gesetzt von [`spawn`], ausgelöst von
+/// [`shutdown`]. `OnceLock` dient zugleich als Doppelstart-Sperre.
+static SHUTDOWN: std::sync::OnceLock<tokio::sync::watch::Sender<bool>> =
+    std::sync::OnceLock::new();
+
+/// Fährt den Panel-Server geordnet herunter. Muss auf dem
+/// `RunEvent::ExitRequested`-Pfad in `lib.rs` aufgerufen werden.
+///
+/// **Warum das nötig ist (QS 09.08.2026):** dieser Server lief als einzige
+/// langlebige Aufgabe der App ohne jeden Stopp-Weg — MQTT, Hoppie und der
+/// LAN-Fernzugriff-Server fahren alle geordnet herunter, dieser nicht. Er
+/// hielt einen `AppHandle`, löste im Sekundentakt `app.state::<AppState>()`
+/// auf und lief dabei gegen den Abbau der App an. Genau daraus kann ein
+/// Zugriff auf bereits freigegebenen Speicher werden, und der zeigt sich
+/// als das, was in der Ereignisanzeige stand: `0xC0000374`
+/// (Heap-Korruption) beziehungsweise `0xC000001D`.
+///
+/// Das ist ausdrücklich eine begründete Vermutung, kein Beweis — den
+/// liefert erst ein Speicherabbild. Der fehlende Stopp-Weg ist aber
+/// unabhängig davon ein Defekt.
+pub fn shutdown() {
+    if let Some(tx) = SHUTDOWN.get() {
+        let _ = tx.send(true);
+    }
 }
 
 /// Spawn the panel server for the lifetime of the app. Call exactly once,
@@ -77,6 +114,14 @@ struct PanelCtx {
 /// session, which is a strictly better failure mode than taking the whole
 /// app down over a feature most pilots will never open.
 pub fn spawn(app: AppHandle) {
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    if SHUTDOWN.set(stop_tx).is_err() {
+        // Schon einmal gestartet. Ein zweiter Server auf demselben Port
+        // käme ohnehin nicht hoch; wichtiger ist, den ersten Stopp-Sender
+        // nicht zu überschreiben und damit unerreichbar zu machen.
+        tracing::warn!("panel_server: spawn called twice — ignoring the second call");
+        return;
+    }
     tauri::async_runtime::spawn(async move {
         let addr = SocketAddr::from(([127, 0, 0, 1], PANEL_SERVER_PORT));
         let listener = match tokio::net::TcpListener::bind(addr).await {
@@ -90,20 +135,28 @@ pub fn spawn(app: AppHandle) {
                 return;
             }
         };
-        let ctx = PanelCtx { app };
+        let ctx = PanelCtx { app, stop: stop_rx.clone() };
         let router = Router::new()
             .route("/panel/status", get(status_handler))
             .route("/panel/debrief", get(debrief_handler))
+            .route("/panel/activity", get(activity_handler))
             .route("/panel/ws", get(ws_handler))
             .with_state(ctx);
+        let mut stop_serve = stop_rx;
         if let Err(e) = axum::serve(
             listener,
             router.into_make_service_with_connect_info::<SocketAddr>(),
         )
+        .with_graceful_shutdown(async move {
+            // `wait_for` kehrt auch zurück, wenn der Sender wegfällt —
+            // dann ist die App ohnehin weg und Herunterfahren richtig.
+            let _ = stop_serve.wait_for(|stopped| *stopped).await;
+        })
         .await
         {
             tracing::warn!(error = %e, "panel_server: serve loop ended unexpectedly");
         }
+        tracing::info!("panel_server: stopped");
     });
 }
 
@@ -151,6 +204,47 @@ async fn debrief_handler(
     cors_open((StatusCode::OK, Json(value)).into_response())
 }
 
+#[derive(Deserialize)]
+struct ActivityQuery {
+    limit: Option<usize>,
+}
+
+/// Wieviele Einträge tatsächlich geliefert werden. Als eigene Funktion, weil
+/// der Test unten genau diese Entscheidung prüfen soll und nicht eine
+/// Nachbildung davon.
+fn effective_activity_limit(requested: Option<usize>) -> usize {
+    match requested {
+        Some(n) if n > 0 => n.min(ACTIVITY_MAX_LIMIT),
+        _ => ACTIVITY_DEFAULT_LIMIT,
+    }
+}
+
+/// v1.5.0 (#msfs-hud): die jüngsten Aktivitäts-Einträge, neueste zuerst.
+///
+/// Eigene Route statt eines Felds in `/panel/status`: der Statusrahmen geht
+/// im Sekundentakt über die WebSocket-Verbindung, und ihn um einen
+/// Textblock zu erweitern, der sich nur alle paar Minuten ändert, hieße den
+/// Änderungsvergleich in `handle_socket` bei jedem Log-Eintrag anschlagen zu
+/// lassen. Der Ticker holt sich das lieber selbst, in seinem eigenen Takt.
+///
+/// `limit` wird auf [`ACTIVITY_MAX_LIMIT`] gedeckelt und ein `limit=0` auf
+/// den Standard zurückgesetzt — eine leere Antwort wäre für den Aufrufer
+/// nicht von „es gibt nichts zu berichten“ zu unterscheiden.
+async fn activity_handler(
+    State(ctx): State<PanelCtx>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Query(q): Query<ActivityQuery>,
+) -> Response {
+    if let Some(r) = reject_non_loopback(peer) {
+        return r;
+    }
+    let limit = effective_activity_limit(q.limit);
+    let state = ctx.app.state::<crate::AppState>();
+    let entries = crate::activity_log_tail(&state, limit);
+    let value = serde_json::to_value(entries).unwrap_or(Value::Null);
+    cors_open((StatusCode::OK, Json(value)).into_response())
+}
+
 async fn ws_handler(
     State(ctx): State<PanelCtx>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -172,8 +266,26 @@ async fn ws_handler(
 async fn handle_socket(ctx: PanelCtx, mut socket: WebSocket) {
     let mut ticker = tokio::time::interval(TICK);
     let mut last: Option<Value> = None;
+    let mut stop = ctx.stop.clone();
     loop {
         tokio::select! {
+            // MUSS mit im select stehen: `with_graceful_shutdown` hört zwar
+            // auf, neue Verbindungen anzunehmen, wartet aber auf die
+            // bestehenden. Eine dauerhaft offene Panel-Verbindung — also der
+            // Normalfall, sobald das HUD im Sim läuft — würde das Beenden
+            // sonst endlos aufhalten.
+            // `changed()` statt `wait_for(..)`: letzteres gibt eine Sperre auf
+            // den Wert zurück, die über das folgende `await` gehalten würde —
+            // damit wäre die ganze Zukunft nicht mehr zwischen Threads
+            // versendbar und axum nimmt sie nicht an. Der Wert wird deshalb
+            // sofort in eine lokale Variable kopiert.
+            res = stop.changed() => {
+                let stopped = res.is_err() || *stop.borrow();
+                if stopped {
+                    let _ = socket.send(Message::Close(None)).await;
+                    break;
+                }
+            }
             _ = ticker.tick() => {
                 let value = crate::remote::current_flight_status_value(&ctx.app);
                 if last.as_ref() != Some(&value) {
@@ -209,6 +321,45 @@ mod tests {
 
         let loop_peer: SocketAddr = "127.0.0.1:5000".parse().unwrap();
         assert!(reject_non_loopback(loop_peer).is_none());
+    }
+
+    /// Die Deckelung ist die einzige Stelle, an der ein Aufrufer diesem
+    /// Server etwas vorgeben kann. `limit=0` muss zum Standard werden statt
+    /// zu einer leeren Liste: leer hieße für den Ticker „nichts passiert“,
+    /// und er würde die letzte Zeile löschen, obwohl es sie noch gibt.
+    #[test]
+    fn activity_limit_is_clamped_and_never_collapses_to_empty() {
+        assert_eq!(effective_activity_limit(None), ACTIVITY_DEFAULT_LIMIT);
+        assert_eq!(effective_activity_limit(Some(0)), ACTIVITY_DEFAULT_LIMIT);
+        assert_eq!(effective_activity_limit(Some(3)), 3);
+        assert_eq!(effective_activity_limit(Some(100_000)), ACTIVITY_MAX_LIMIT);
+    }
+
+    /// Das Stopp-Signal muss auch bei einer Verbindung ankommen, die
+    /// ERST NACH dem Absenden ihren Empfänger klont — sonst hinge beim
+    /// Beenden eine Panel-Verbindung, die zufällig im falschen Moment
+    /// aufgebaut wurde, und mit ihr das geordnete Herunterfahren.
+    /// Prüft die Annahme über `watch`, auf der `handle_socket` aufbaut.
+    #[tokio::test]
+    async fn a_socket_opened_around_shutdown_still_sees_the_stop_signal() {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        tx.send(true).unwrap();
+        // Klon NACH dem Senden — genau der Wettlauf-Fall.
+        let mut late = rx.clone();
+        let res = tokio::time::timeout(Duration::from_millis(200), late.changed()).await;
+        assert!(res.is_ok(), "changed() muss sofort zurückkehren, nicht in den Timeout laufen");
+        assert!(*late.borrow());
+    }
+
+    /// Fällt der Absender weg (App bereits abgebaut), muss die Schleife das
+    /// als Stopp werten und nicht ewig weiterlaufen.
+    #[tokio::test]
+    async fn a_dropped_sender_counts_as_stop() {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let mut recv = rx.clone();
+        drop(tx);
+        let res = recv.changed().await;
+        assert!(res.is_err(), "weggefallener Absender muss als Fehler ankommen");
     }
 
     #[test]

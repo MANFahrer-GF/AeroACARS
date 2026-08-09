@@ -36,6 +36,9 @@ import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import { UpdateButton } from "./UpdateButton";
 import deCommon from "../locales/de/common.json";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import pkg from "../../package.json";
 
 beforeAll(async () => {
   if (!i18next.isInitialized) {
@@ -284,5 +287,61 @@ describe("UpdateButton modal — regression guards for Svenny1974 v0.9.2 bug", (
 
     const notesText = container.querySelector(".update-modal__notes")?.textContent ?? "";
     expect(notesText).toContain("Just a simple plain text release note.");
+  });
+});
+
+// ─── Die Release-Notes DIESER Version, echt von der Platte ────────────
+//
+// Punkt 4 der Pre-Release-Checkliste verlangt einen manuellen Sichttest
+// des Update-Dialogs mit dem AKTUELLEN Release-Body. Genau der wurde
+// beim Bau von v1.5.0-beta.3 fast übersprungen — und hätte einen echten
+// Fehler durchgelassen: die Notes begannen mit einem Markdown-Zitatblock
+// (`> …`), den dieser Renderer gar nicht kennt. Der Pilot hätte den
+// Warnhinweis mit einem rohen `>` davor gesehen.
+//
+// Der Test liest deshalb die Notes-Datei zur aktuellen Version aus
+// `package.json` und prüft sie durch den echten Renderer. Er hält sich
+// selbst aktuell: eine neue Version braucht nur ihre Notes-Datei.
+//
+// Bewusst KEIN Ersatz für den Sichttest — JSDOM hat keine Layout-Engine
+// und kann nicht sehen, ob der Installieren-Knopf aus dem Bild rutscht.
+// Er fängt aber die Hälfte, die sich mechanisch prüfen lässt: Markdown,
+// das gar nicht als Markdown ankommt.
+describe("Update-Dialog mit den Release-Notes der aktuellen Version", () => {
+  const version: string = pkg.version;
+  const notesPath = resolve(__dirname, "../../../docs/release-notes", `v${version}.md`);
+
+  it("hat überhaupt eine Notes-Datei", () => {
+    expect(
+      existsSync(notesPath),
+      `docs/release-notes/v${version}.md fehlt — Checklistenpunkt 2`,
+    ).toBe(true);
+  });
+
+  it("rendert sie ohne rohe Markdown-Reste", () => {
+    if (!existsSync(notesPath)) return;
+    const body = readFileSync(notesPath, "utf-8");
+    const checker = makeChecker(body, version);
+    const { container } = render(<UpdateButton checker={checker as never} />);
+    fireEvent.click(screen.getByRole("button", { name: /update/i }));
+
+    const notesText = container.querySelector(".update-modal__notes")?.textContent ?? "";
+    expect(notesText.length).toBeGreaterThan(50);
+
+    // Zeilenanfänge, die der Renderer nicht auflöst, bleiben als Zeichen
+    // stehen. Genau so hätte man den Zitatblock-Fehler gesehen.
+    for (const zeile of notesText.split("\n")) {
+      const t = zeile.trimStart();
+      expect(t.startsWith(">"), `Zitatblock wird nicht gerendert: ${zeile}`).toBe(false);
+      expect(t.startsWith("#"), `Überschrift wird nicht gerendert: ${zeile}`).toBe(false);
+      expect(t.startsWith("|"), `Tabellenzeile wird nicht gerendert: ${zeile}`).toBe(false);
+    }
+    expect(notesText).not.toContain("**");
+    expect(notesText).not.toContain("---");
+    // Backticks im gerenderten Text heißen: der Code-Abschnitt wurde nicht
+    // umgewandelt. Passiert genau dann, wenn er INNERHALB von Fettdruck
+    // steht — der Renderer verschachtelt bewusst nicht, und in
+    // v1.5.0-beta.3 stand genau so ein Fall in den Notes.
+    expect(notesText).not.toContain("`");
   });
 });

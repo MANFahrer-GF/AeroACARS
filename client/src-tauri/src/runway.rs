@@ -1419,6 +1419,108 @@ pub fn along_track_m_signed(
     }
 }
 
+// ---- Live-Bahnvorhersage im Endanflug (#msfs-hud) -------------------------
+
+/// Maximale Kursabweichung zwischen Flugzeug und Bahn, damit eine Bahn
+/// überhaupt als Anflugziel in Frage kommt. 30° lässt ein Aufschalten aus
+/// dem Base-Leg heraus noch zu, schließt Gegenanflug (180°) und Queranflug
+/// (90°) aber sicher aus.
+const PREDICT_MAX_HEADING_DIFF_DEG: f32 = 30.0;
+/// Ab welcher Entfernung zur Schwelle gar nicht erst vorhergesagt wird
+/// (15 NM). Weiter draußen ist die Bahnwahl bei Parallelbahnen ohnehin
+/// noch nicht entschieden.
+const PREDICT_MAX_THRESHOLD_DISTANCE_M: f64 = 27_780.0;
+/// Maximaler seitlicher Versatz zur verlängerten Mittellinie (2 NM).
+const PREDICT_MAX_CENTERLINE_OFFSET_M: f64 = 3_704.0;
+
+/// Vorhergesagte Landebahn, solange der Flug noch in der Luft ist.
+///
+/// **Ausdrücklich eine Schätzung.** Der genaue Bahn-Ident kommt weiterhin
+/// erst beim Aufsetzen aus [`lookup_runway`] / dem Korrelations-Match
+/// (97,5 % Trefferquote laut Daten-Audit vom 2026-06-11). Dieser Wert hier
+/// existiert nur, weil MSFS `ATC RUNWAY SELECTED` nicht liefert — der
+/// Adapter setzt `selected_runway` fest auf `None`, weshalb
+/// `stats.approach_runway` im selben Audit bei 407 von 407 Flügen leer war.
+///
+/// Konsequenz: dieser Wert darf **nie** in den Touchdown- oder PIREP-Payload
+/// fließen. Er speist ausschließlich die Live-Anzeige und den Live-Gleitwinkel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PredictedRunway {
+    pub designator: String,
+    /// Publizierter Gleitwinkel, bereits auf 2–7,5° plausibilisiert.
+    /// `None`, wenn die Navdaten keinen brauchbaren Wert führen — der
+    /// Aufrufer fällt dann auf den 3°-Standard zurück.
+    pub glideslope_angle: Option<f64>,
+    pub distance_to_threshold_m: f64,
+    /// Seitlicher Versatz zur Mittellinie in Metern, vorzeichenbehaftet:
+    /// positiv = rechts der Anfluglinie.
+    pub centerline_offset_m: f64,
+}
+
+/// Rät die Landebahn aus Position und Steuerkurs gegen die Navdaten des
+/// Zielflughafens (die beim Flugstart in den Per-Flug-Cache geladen werden,
+/// im Anflug also ohne Netz verfügbar sind).
+///
+/// Auswahl in drei Stufen: erst Bahnen verwerfen, deren Richtung nicht zum
+/// Steuerkurs passt, dann die zu weit entfernten oder seitlich zu weit
+/// abliegenden, und unter dem Rest die mit dem kleinsten Abstand zur
+/// Mittellinie nehmen. Genau dieser letzte Schritt trennt Parallelbahnen
+/// (26L/26R) — die Schwellenentfernung allein kann das nicht, weil beide
+/// Schwellen praktisch nebeneinander liegen.
+///
+/// `None` heißt schlicht „noch nicht entschieden“, nicht „Fehler“: früh im
+/// Anflug ist das der normale Zustand.
+pub fn predict_landing_runway(
+    runways: &[aeroacars_mqtt::navdata::NavRunway],
+    lat: f64,
+    lon: f64,
+    heading_true_deg: f32,
+) -> Option<PredictedRunway> {
+    let mut best: Option<(PredictedRunway, f64)> = None;
+
+    for rw in runways {
+        if heading_diff(heading_true_deg, rw.true_course as f32) > PREDICT_MAX_HEADING_DIFF_DEG {
+            continue;
+        }
+
+        let (t_lat, t_lon) = (rw.threshold.lat, rw.threshold.lon);
+        let (e_lat, e_lon) = (rw.far_end.lat, rw.far_end.lon);
+
+        let d_threshold = haversine_m(t_lat, t_lon, lat, lon);
+        if d_threshold > PREDICT_MAX_THRESHOLD_DISTANCE_M {
+            continue;
+        }
+
+        let theta_ab = initial_bearing_rad(t_lat, t_lon, e_lat, e_lon);
+        let theta_ac = initial_bearing_rad(t_lat, t_lon, lat, lon);
+        let xtd_m = ((d_threshold / EARTH_RADIUS_M).sin() * (theta_ac - theta_ab).sin()).asin()
+            * EARTH_RADIUS_M;
+        if xtd_m.abs() > PREDICT_MAX_CENTERLINE_OFFSET_M {
+            continue;
+        }
+
+        // Über das Bahnende hinaus ist es kein Anflug mehr auf diese Bahn.
+        let along_m = along_track_m_signed(t_lat, t_lon, e_lat, e_lon, lat, lon);
+        if along_m > rw.length_ft as f64 * 0.3048 {
+            continue;
+        }
+
+        let candidate = PredictedRunway {
+            designator: rw.designator.trim().to_string(),
+            glideslope_angle: Some(rw.glideslope_angle).filter(|g| (2.0..=7.5).contains(g)),
+            distance_to_threshold_m: d_threshold,
+            centerline_offset_m: xtd_m,
+        };
+        let score = xtd_m.abs();
+        match &best {
+            Some((_, best_score)) if *best_score <= score => {}
+            _ => best = Some((candidate, score)),
+        }
+    }
+
+    best.map(|(m, _)| m)
+}
+
 /// Great-circle distance in meters.
 fn haversine_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     let phi1 = lat1.to_radians();
@@ -2260,5 +2362,105 @@ mod tests {
         .expect("OurAirports has EDDP");
         assert_eq!(src, RunwaySource::OurAirportsFallback);
         assert_eq!(m.airport_ident, "EDDP");
+    }
+
+    // ---- Live-Bahnvorhersage (#msfs-hud) ---------------------------------
+
+    /// Baut eine gerade Nord-Süd-Bahn (Kurs 360°) mit gegebener Schwelle.
+    /// Länge 3000 m, damit die „hinter dem Bahnende“-Prüfung greifbar ist.
+    fn nav_rw(designator: &str, thr_lat: f64, thr_lon: f64, course: f64, gs: f64) -> NavRunway {
+        // Bahnende 3000 m in Kursrichtung — für die Testbreiten reicht die
+        // Näherung über Grad-Latitude bzw. -Longitude.
+        let (end_lat, end_lon) = if (course - 360.0).abs() < 0.5 || course < 0.5 {
+            (thr_lat + 3000.0 / 111_320.0, thr_lon)
+        } else {
+            // 090° — nach Osten.
+            (thr_lat, thr_lon + 3000.0 / (111_320.0 * thr_lat.to_radians().cos()))
+        };
+        NavRunway {
+            designator: designator.to_string(),
+            magnetic_course: course,
+            true_course: course,
+            length_ft: 9843, // 3000 m
+            width_ft: Some(150),
+            surface: Some("ASP".into()),
+            threshold: NavPoint { lat: thr_lat, lon: thr_lon, elev_ft: None },
+            far_end: NavPoint { lat: end_lat, lon: end_lon, elev_ft: None },
+            displaced_threshold_ft: 0,
+            ils: None,
+            glideslope_angle: gs,
+            tch_ft: 50,
+        }
+    }
+
+    /// 6 NM südlich der Schwelle, auf der verlängerten Mittellinie, Kurs 360°.
+    const SIX_NM_DEG: f64 = 11_112.0 / 111_320.0;
+
+    #[test]
+    fn predicts_the_runway_the_aircraft_is_lined_up_with() {
+        let rws = vec![nav_rw("36", 50.0, 8.0, 360.0, 3.0)];
+        let p = predict_landing_runway(&rws, 50.0 - SIX_NM_DEG, 8.0, 360.0)
+            .expect("aligned final should predict a runway");
+        assert_eq!(p.designator, "36");
+        assert_eq!(p.glideslope_angle, Some(3.0));
+        assert!(p.centerline_offset_m.abs() < 50.0, "offset {}", p.centerline_offset_m);
+    }
+
+    #[test]
+    fn picks_the_parallel_runway_the_aircraft_is_actually_tracking() {
+        // Zwei Parallelbahnen, 500 m auseinander. Die Schwellenentfernung
+        // ist für beide praktisch gleich — nur der Mittellinien-Abstand
+        // trennt sie. Genau dafür ist die Auswahl so gebaut.
+        let lon_500m = 500.0 / (111_320.0 * 50.0_f64.to_radians().cos());
+        let rws = vec![
+            nav_rw("36L", 50.0, 8.0, 360.0, 3.0),
+            nav_rw("36R", 50.0, 8.0 + lon_500m, 360.0, 3.0),
+        ];
+        let on_left = predict_landing_runway(&rws, 50.0 - SIX_NM_DEG, 8.0, 360.0).unwrap();
+        assert_eq!(on_left.designator, "36L");
+        let on_right =
+            predict_landing_runway(&rws, 50.0 - SIX_NM_DEG, 8.0 + lon_500m, 360.0).unwrap();
+        assert_eq!(on_right.designator, "36R");
+    }
+
+    #[test]
+    fn refuses_to_guess_on_downwind_and_base() {
+        let rws = vec![nav_rw("36", 50.0, 8.0, 360.0, 3.0)];
+        // Gegenanflug: gleiche Position, Kurs 180°.
+        assert!(predict_landing_runway(&rws, 50.0 - SIX_NM_DEG, 8.0, 180.0).is_none());
+        // Queranflug: Kurs 090°.
+        assert!(predict_landing_runway(&rws, 50.0 - SIX_NM_DEG, 8.0, 90.0).is_none());
+    }
+
+    #[test]
+    fn refuses_to_guess_from_too_far_out_or_too_far_off_centerline() {
+        let rws = vec![nav_rw("36", 50.0, 8.0, 360.0, 3.0)];
+        // 20 NM raus (Grenze liegt bei 15).
+        let twenty_nm_deg = 37_040.0 / 111_320.0;
+        assert!(predict_landing_runway(&rws, 50.0 - twenty_nm_deg, 8.0, 360.0).is_none());
+        // Auf Höhe 6 NM, aber 3 NM seitlich versetzt (Grenze 2 NM).
+        let three_nm_lon = 5_556.0 / (111_320.0 * 50.0_f64.to_radians().cos());
+        assert!(
+            predict_landing_runway(&rws, 50.0 - SIX_NM_DEG, 8.0 + three_nm_lon, 360.0).is_none()
+        );
+    }
+
+    #[test]
+    fn drops_an_implausible_glideslope_instead_of_passing_it_on() {
+        // Navdaten mit 9° — außerhalb der 2–7,5°-Plausibilität. Die Bahn
+        // bleibt gültig, nur der Winkel fällt weg; der Aufrufer nimmt dann
+        // seinen 3°-Standard.
+        let rws = vec![nav_rw("36", 50.0, 8.0, 360.0, 9.0)];
+        let p = predict_landing_runway(&rws, 50.0 - SIX_NM_DEG, 8.0, 360.0).unwrap();
+        assert_eq!(p.designator, "36");
+        assert_eq!(p.glideslope_angle, None);
+    }
+
+    #[test]
+    fn stops_predicting_once_past_the_far_end() {
+        // 500 m hinter dem Bahnende (Bahn ist 3000 m lang).
+        let rws = vec![nav_rw("36", 50.0, 8.0, 360.0, 3.0)];
+        let past = 50.0 + 3500.0 / 111_320.0;
+        assert!(predict_landing_runway(&rws, past, 8.0, 360.0).is_none());
     }
 }

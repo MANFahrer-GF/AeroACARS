@@ -21,7 +21,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.5.0-beta.2"
+version = "1.5.0-beta.3"
 edition = "2021"
 license = "MIT"
 authors = ["Thomas Kant <github@MANFahrer-GF>", "AeroACARS contributors"]
@@ -36,6 +36,16 @@ anyhow = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Rotierende Logdatei neben der stdout-Ausgabe. Eingeführt 2026-08-09,
+# nachdem drei Abstürze in Folge (Ereignisanzeige 1000: 0xC0000374
+# Heap-Korruption bzw. 0xC000001D) NULL Anwendungs-Log hinterlassen
+# hatten — `tracing_subscriber::fmt()` schrieb ausschließlich nach
+# stdout, das beim Start aus dem Explorer ins Leere läuft.
+tracing-appender = "0.2"
+# Basisverzeichnis für die Logdatei, BEVOR es einen AppHandle gibt
+# (init_tracing() läuft als Erstes in run()). Dieselbe Ableitung, die
+# Tauri für `app_config_dir()` benutzt.
+dirs = "6"
 
 # (De)serialization
 serde = { version = "1", features = ["derive"] }
@@ -138,6 +148,8 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+dirs.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 # HTTP client for the in-app GitHub-release-notes fetch. The

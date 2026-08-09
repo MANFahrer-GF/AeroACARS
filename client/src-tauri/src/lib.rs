@@ -3893,6 +3893,27 @@ struct FlightStats {
     /// `ATC RUNWAY SELECTED` snapshotted at touchdown. Useful for VAs
     /// that grade "did the pilot land on the right runway".
     approach_runway: Option<String>,
+    /// v1.5.0 (#msfs-hud): **geschätzte** Landebahn, laufend im Anflug aus
+    /// Position und Steuerkurs gegen die Navdaten bestimmt
+    /// (`runway::predict_landing_runway`). Existiert, weil der MSFS-Adapter
+    /// `selected_runway` gar nicht abonniert und `approach_runway` deshalb
+    /// im Daten-Audit vom 11.06.2026 bei 407 von 407 Flügen leer war.
+    ///
+    /// Bewusst ein EIGENES Feld statt eines Fallbacks in `approach_runway`:
+    /// dessen Wert fließt in den Touchdown- und PIREP-Payload, und dort
+    /// hat er bereits einen besseren Fallback auf den Korrelations-Match
+    /// nach dem Aufsetzen (97,5 % Trefferquote). Eine Live-Schätzung würde
+    /// den verdrängen — messbar schlechtere Daten für eine reine
+    /// Anzeigebequemlichkeit. Dieses Feld speist ausschließlich die
+    /// Live-Anzeige und den Live-Gleitwinkel.
+    ///
+    /// Laufzeit-only: wird jeden Tick neu bestimmt, ein fortgesetzter Flug
+    /// hat auf seinem nächsten Tick wieder einen Wert.
+    predicted_runway: Option<String>,
+    /// Publizierter Gleitwinkel zu [`Self::predicted_runway`], bereits auf
+    /// 2–7,5° plausibilisiert. `None`, wenn die Navdaten nichts Brauchbares
+    /// führen — die Anzeige nimmt dann den 3°-Standard.
+    predicted_glideslope_deg: Option<f64>,
 
     // ---- Edge detector for activity log (Phase H.3) ----
     /// Last value we logged to the activity feed. Used to detect when the
@@ -4435,6 +4456,21 @@ pub struct PanelLiveSnapshot {
     wind_dir_deg: Option<f32>,
     wind_speed_kt: Option<f32>,
     oat_c: Option<f32>,
+    /// v1.5.0 (#msfs-hud): Höhe über Grund. Die mit Abstand wichtigste
+    /// Ergänzung für die Anflug-Anzeige — ohne sie hat eine Sinkrate keinen
+    /// Bezugspunkt.
+    altitude_agl_ft: f64,
+    /// v1.5.0 (#msfs-hud): Windkomponenten auf die Flugzeugachsen gedreht,
+    /// wie sie MSFS nativ liefert. **Exakt dieselbe Vorzeichenkonvention wie
+    /// `landing_headwind_kt`/`landing_crosswind_kt` im Landeprotokoll**
+    /// (positiv = Gegenwind bzw. Wind von rechts) — sonst zeigte der Anflug
+    /// andere Vorzeichen als das Ergebnis zwei Minuten später.
+    ///
+    /// `None` bei Sims und Addons, die die SimVars nicht führen.
+    headwind_kt: Option<f32>,
+    crosswind_kt: Option<f32>,
+    /// v1.5.0 (#msfs-hud): Tankinhalt für die Boarding-Anzeige.
+    fuel_total_kg: f32,
 }
 
 impl PanelLiveSnapshot {
@@ -4449,7 +4485,60 @@ impl PanelLiveSnapshot {
             wind_dir_deg: snap.wind_direction_deg,
             wind_speed_kt: snap.wind_speed_kt,
             oat_c: snap.outside_air_temp_c,
+            altitude_agl_ft: snap.altitude_agl_ft,
+            // Z ist so vorzeichenbehaftet, dass positiv = Rückenwind heißt,
+            // Gegenwind ist also -Z. Siehe die identische Ableitung im
+            // Touchdown-Pfad (`stats.landing_headwind_kt`).
+            headwind_kt: snap.aircraft_wind_z_kt.map(|z| -z),
+            crosswind_kt: snap.aircraft_wind_x_kt,
+            fuel_total_kg: snap.fuel_total_kg,
         }
+    }
+}
+
+#[cfg(test)]
+mod panel_live_snapshot_tests {
+    use super::*;
+
+    /// Der Anflug-Streifen und die Ergebnisanzeige zeigen dieselben zwei
+    /// Windwerte im Abstand von zwei Minuten. Laufen die Vorzeichen
+    /// auseinander, wird aus 12 Knoten Gegenwind nach der Landung plötzlich
+    /// −12, und niemand merkt, welche der beiden Anzeigen lügt. Dieser Test
+    /// bindet beide Ableitungen aneinander.
+    #[test]
+    fn wind_signs_match_the_landing_record() {
+        let snap = SimSnapshot {
+            // Positiv = Rückenwind laut SimVar-Konvention …
+            aircraft_wind_z_kt: Some(9.0),
+            // … positiv = Wind von rechts.
+            aircraft_wind_x_kt: Some(6.0),
+            ..Default::default()
+        };
+
+        let live = PanelLiveSnapshot::from_snapshot(&snap);
+        // 9 kt Rückenwind sind −9 kt Gegenwind.
+        assert_eq!(live.headwind_kt, Some(-9.0));
+        assert_eq!(live.crosswind_kt, Some(6.0));
+
+        // Exakt die Ableitung aus dem Touchdown-Pfad, hier gespiegelt:
+        // weicht eine der beiden Stellen ab, fällt es hier auf.
+        assert_eq!(live.headwind_kt, snap.aircraft_wind_z_kt.map(|z| -z));
+        assert_eq!(live.crosswind_kt, snap.aircraft_wind_x_kt);
+    }
+
+    /// Sims und Addons ohne die beiden SimVars sollen nicht stillschweigend
+    /// als „windstill“ durchgehen — die Anzeige muss den Unterschied zwischen
+    /// „kein Wind“ und „kein Messwert“ treffen können.
+    #[test]
+    fn missing_wind_stays_absent_instead_of_becoming_zero() {
+        let snap = SimSnapshot {
+            aircraft_wind_z_kt: None,
+            aircraft_wind_x_kt: None,
+            ..Default::default()
+        };
+        let live = PanelLiveSnapshot::from_snapshot(&snap);
+        assert_eq!(live.headwind_kt, None);
+        assert_eq!(live.crosswind_kt, None);
     }
 }
 
@@ -4548,6 +4637,15 @@ pub struct ActiveFlightInfo {
     /// None → Runway/Winkel unbekannt oder unplausibel → Banner bleibt beim
     /// 3°-Default (unverändert für normale Anflüge).
     approach_glideslope_angle: Option<f64>,
+    /// v1.5.0 (#msfs-hud): **geschätzte** Landebahn im Anflug, aus Position
+    /// und Steuerkurs gegen die Navdaten bestimmt. Siehe
+    /// `FlightStats::predicted_runway` — insbesondere, warum das ein eigenes
+    /// Feld neben `approach_runway` ist und niemals in den PIREP fließt.
+    ///
+    /// `None` heißt „noch nicht entschieden“, nicht „Fehler“: am Boden und
+    /// früh im Flug ist das der Normalfall.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    predicted_runway: Option<String>,
     /// v1.3.5 (#Hard-Landing-Banner): mirrors `FlightStats.landing_score_
     /// finalized` — true once the post-touchdown vertical-speed refinement
     /// (edge-value recompute, ~9-12s after touchdown) is done. The live
@@ -4891,6 +4989,51 @@ fn push_approach_sample(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTi
     });
     while stats.approach_buffer.len() > APPROACH_BUFFER_MAX {
         stats.approach_buffer.pop_front();
+    }
+}
+
+/// v1.5.0 (#msfs-hud): Aktualisiert die geschätzte Landebahn und deren
+/// Gleitwinkel in `stats`, einmal pro Tick.
+///
+/// Am Boden wird die Schätzung gelöscht statt stehengelassen: nach dem
+/// Aufsetzen ist der Korrelations-Match die bessere Quelle, und eine
+/// weiterlaufende Schätzung würde die Anzeige nur mit einem Wert versorgen,
+/// der bereits überholt ist. Vor dem Abheben gibt es ohnehin nichts
+/// vorherzusagen — dort stünde sonst die Startbahn, die zufällig zum
+/// Steuerkurs passt.
+///
+/// Ohne Navdaten für den Zielflughafen (Abruf noch nicht durch, unbekanntes
+/// Feld) bleibt es bei `None`. Das ist kein Fehlerfall, sondern der normale
+/// Zustand in den ersten Minuten eines Fluges.
+fn update_predicted_runway(flight: &ActiveFlight, stats: &mut FlightStats, snap: &SimSnapshot) {
+    if snap.on_ground || !stats.was_airborne {
+        stats.predicted_runway = None;
+        stats.predicted_glideslope_deg = None;
+        return;
+    }
+    let predicted = {
+        let cache = match flight.navdata.lock() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        cache.get(&flight.arr_airport).and_then(|apt| {
+            runway::predict_landing_runway(
+                &apt.runways,
+                snap.lat,
+                snap.lon,
+                snap.heading_deg_true,
+            )
+        })
+    };
+    match predicted {
+        Some(p) => {
+            stats.predicted_glideslope_deg = p.glideslope_angle;
+            stats.predicted_runway = Some(p.designator);
+        }
+        None => {
+            stats.predicted_runway = None;
+            stats.predicted_glideslope_deg = None;
+        }
     }
 }
 
@@ -7129,6 +7272,17 @@ pub(crate) fn record_datalink(
 fn activity_log_get(state: tauri::State<'_, AppState>) -> Vec<ActivityEntry> {
     let log = state.activity_log.lock().expect("activity_log lock");
     log.iter().cloned().collect()
+}
+
+/// v1.5.0 (#msfs-hud): die jüngsten `limit` Einträge, **neueste zuerst**.
+///
+/// Eigener Zugriff neben [`activity_log_get`], weil das In-Sim-HUD einen
+/// laufenden Ticker füttert und dafür ein bis zwei Zeilen braucht, nicht
+/// tausend. Die Sortierung ist hier umgedreht, damit die Anzeige einfach
+/// den ersten Eintrag nehmen kann, statt die Länge zu kennen.
+pub(crate) fn activity_log_tail(state: &AppState, limit: usize) -> Vec<ActivityEntry> {
+    let log = state.activity_log.lock().expect("activity_log lock");
+    log.iter().rev().take(limit).cloned().collect()
 }
 
 /// Wipe the activity log. Useful when the pilot starts a fresh session
@@ -9825,7 +9979,19 @@ fn flight_info(
     let approach_glideslope_angle = {
         let rw = flight.stats.lock().ok().and_then(|s| s.approach_runway.clone());
         resolve_approach_glideslope_deg(flight, rw.as_deref())
-    };
+    }
+    // v1.5.0 (#msfs-hud): Fällt die ATC-Bahn aus — was bei MSFS IMMER der
+    // Fall ist, `selected_runway` wird vom Adapter nicht abonniert —, dann
+    // den Winkel der geschätzten Bahn nehmen. Die Reihenfolge ist bewusst so
+    // herum: liegt ausnahmsweise doch eine echte ATC-Bahn vor (X-Plane, oder
+    // ein künftiger MSFS-Adapter), gewinnt die gegenüber der Schätzung.
+    .or_else(|| {
+        flight
+            .stats
+            .lock()
+            .ok()
+            .and_then(|s| s.predicted_glideslope_deg)
+    });
     let stats = flight.stats.lock().expect("flight stats");
     // Don't consume here — the flag stays true until the resume banner has
     // run its course (flight_resume_confirm or flight_cancel clears it).
@@ -9895,6 +10061,7 @@ fn flight_info(
         arr_gate: stats.arr_gate.clone(),
         approach_runway: stats.approach_runway.clone(),
         approach_glideslope_angle,
+        predicted_runway: stats.predicted_runway.clone(),
         last_position_at: stats.last_position_at.map(|t| t.to_rfc3339()),
         last_heartbeat_at: stats.last_heartbeat_at.map(|t| t.to_rfc3339()),
         queued_position_count: stats.queued_position_count,
@@ -24952,6 +25119,19 @@ fn step_flight_at(
         push_approach_sample(&mut stats, snap, now);
     }
 
+    // v1.5.0 (#msfs-hud): Landebahn im Anflug schätzen, solange wir noch in
+    // der Luft sind. Bewusst hier, an derselben phasenunabhängigen Stelle wie
+    // die Approach-Sampling-Klammer darüber, statt in den Approach- und
+    // Final-Armen: Bush- und VFR-Anflüge erreichen die beiden Phasen oft gar
+    // nicht (siehe `should_push_approach_sample`), hätten sonst also nie eine
+    // Bahnanzeige.
+    //
+    // Sperrreihenfolge: `stats` ist hier gehalten und `navdata` wird darin
+    // genommen — dieselbe Richtung wie in `correlate_touchdown_runway`, das
+    // ebenfalls aus diesem Aufruf heraus läuft. `flight_info` nimmt die beiden
+    // dagegen nacheinander und nie gleichzeitig; keine Inversion.
+    update_predicted_runway(flight, &mut stats, snap);
+
     // Match on a local Copy so the rest of the body is free to mutate `stats`.
     match prev_phase {
         FlightPhase::Boarding => {
@@ -33581,10 +33761,203 @@ fn spawn_tray_updater(app: AppHandle) {
     });
 }
 
+/// Bundle-Identifier aus `tauri.conf.json`. Hier dupliziert, weil
+/// [`init_tracing`] als Allererstes in [`run`] läuft — da gibt es noch
+/// keinen `AppHandle`, über den sich `app_config_dir()` auflösen ließe.
+/// Der Test `log_dir_identifier_matches_tauri_conf` unten hält beide
+/// Stellen zusammen, damit ein Umbenennen nicht stillschweigend das
+/// Log-Verzeichnis vom Rest der App abkoppelt.
+const BUNDLE_IDENTIFIER: &str = "com.aeroacars.app";
+
+/// Unterverzeichnis der Logdateien unterhalb des App-Konfigverzeichnisses
+/// — dort, wo auch `activity_log.json` und `run_active.lock` liegen.
+const LOG_SUBDIR: &str = "logs";
+
+/// Wie viele Tagesdateien behalten werden, bevor die älteste wegfällt.
+const LOG_FILES_KEPT: usize = 7;
+
+/// Verzeichnis der Logdateien: `<app_config_dir>/logs`. Bildet dieselbe
+/// Ableitung nach, die Tauri für `app_config_dir()` benutzt
+/// (`dirs::config_dir()` plus Bundle-Identifier) — siehe
+/// [`BUNDLE_IDENTIFIER`], warum das hier von Hand passiert.
+fn log_dir() -> Option<PathBuf> {
+    Some(dirs::config_dir()?.join(BUNDLE_IDENTIFIER).join(LOG_SUBDIR))
+}
+
+/// Legt das Verzeichnis an und baut den rotierenden Schreiber darin.
+/// `None` bei jedem Fehler — die App startet dann eben nur mit
+/// stdout-Ausgabe weiter. Als eigene Funktion herausgezogen, damit der
+/// Test unten die Konfiguration wirklich ausführt: eine ungültige
+/// Rotations-Einstellung würde sonst lautlos im Fehlerzweig landen und wir
+/// hätten eine Protokollierung, die nichts protokolliert.
+fn build_log_appender(dir: &std::path::Path) -> Option<tracing_appender::rolling::RollingFileAppender> {
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("could not create log dir {}: {e}", dir.display());
+        return None;
+    }
+    match tracing_appender::rolling::Builder::new()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix("aeroacars")
+        .filename_suffix("log")
+        .max_log_files(LOG_FILES_KEPT)
+        .build(dir)
+    {
+        Ok(appender) => Some(appender),
+        Err(e) => {
+            eprintln!("could not open log file in {}: {e}", dir.display());
+            None
+        }
+    }
+}
+
+/// Richtet die Protokollierung ein: weiterhin nach stdout (für Starts aus
+/// der Konsole und `npm run tauri dev`) und zusätzlich in eine täglich
+/// rotierende Datei.
+///
+/// Die Datei existiert wegen einer konkreten Lücke: bis v1.5.0-beta.2 ging
+/// die gesamte Ausgabe ausschließlich nach stdout. Beim normalen Start aus
+/// dem Explorer hat der Prozess kein Konsolenfenster, die Ausgabe landet
+/// also im Nichts — drei Abstürze am 09.08.2026 hinterließen deshalb außer
+/// den Windows-Ereignissen 1000/1005 keinerlei Spur, und GlitchTip sieht
+/// native Abstürze ohnehin nicht (dessen Panic-Integration greift nur bei
+/// Rust-`panic!`).
+///
+/// **Bewusst ohne `tracing_appender::non_blocking`.** Der puffert Zeilen in
+/// einem Hintergrund-Thread, und genau die Zeilen unmittelbar vor einem
+/// harten Absturz — also die einzigen, die uns interessieren — gingen dann
+/// mit dem Prozess unter. Der direkte Schreiber kostet pro Ereignis einen
+/// Systemaufruf, dafür liegen die Daten danach im Kernel und überleben den
+/// Tod des Prozesses.
+///
+/// Schlägt das Anlegen der Datei fehl (fehlende Rechte, volles Laufwerk),
+/// bleibt es bei stdout allein: kein Grund, den Start daran scheitern zu
+/// lassen.
 fn init_tracing() {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,aeroacars=debug"));
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+
+    let file_layer = log_dir()
+        .and_then(|dir| build_log_appender(&dir))
+        .map(|appender| {
+            tracing_subscriber::fmt::layer()
+                .with_writer(appender)
+                .with_ansi(false)
+        });
+
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer())
+        .with(file_layer)
+        .try_init();
+
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        pid = std::process::id(),
+        log_dir = ?log_dir(),
+        "AeroACARS starting"
+    );
+
+    install_panic_logging();
+}
+
+/// Leitet Rust-Panics zusätzlich in die Protokollierung um.
+///
+/// Ohne das schreibt der Standard-Hook nur nach stderr — bei einem Start
+/// aus dem Explorer also nirgendwohin, genau wie vorher die gesamte
+/// Ausgabe. Sentry fängt Panics zwar auch, aber nur solange der Pilot
+/// zugestimmt hat und die Übertragung noch durchkommt; bei einem Absturz
+/// unmittelbar danach ist das Ereignis oft nicht mehr rausgegangen.
+///
+/// Wird bewusst VOR `sentry_init::init()` installiert: dessen
+/// `apply_defaults()` übernimmt den jeweils vorhandenen Hook als Vorgänger
+/// und ruft ihn weiter auf. Umgekehrte Reihenfolge würde Sentry
+/// aushebeln. Dieser Hook ruft seinerseits den vorherigen (den
+/// stderr-Standard) auf, es geht also nichts verloren.
+fn install_panic_logging() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "<nicht darstellbar>".to_string());
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unbekannt>".to_string());
+        tracing::error!(
+            panic = %payload,
+            location = %location,
+            backtrace = %std::backtrace::Backtrace::force_capture(),
+            "Rust-Panic"
+        );
+        previous(info);
+    }));
+}
+
+#[cfg(test)]
+mod logging_tests {
+    use super::*;
+
+    /// [`BUNDLE_IDENTIFIER`] dupliziert einen Wert aus `tauri.conf.json`,
+    /// weil `init_tracing()` vor dem ersten `AppHandle` läuft. Ohne diesen
+    /// Test würde ein Umbenennen des Identifiers die Logdateien lautlos in
+    /// ein anderes Verzeichnis wandern lassen als `activity_log.json` und
+    /// `run_active.lock` — und beim Absturz-Nachsehen schaut dann jeder in
+    /// den falschen Ordner.
+    #[test]
+    fn log_dir_identifier_matches_tauri_conf() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri.conf.json");
+        assert_eq!(
+            conf["identifier"].as_str(),
+            Some(BUNDLE_IDENTIFIER),
+            "BUNDLE_IDENTIFIER muss dem identifier aus tauri.conf.json entsprechen"
+        );
+    }
+
+    /// Die Logdatei liegt neben den anderen Laufzeitdateien, nicht in einem
+    /// eigenen Zweig — sonst wird sie beim Aufräumen übersehen.
+    #[test]
+    fn log_dir_sits_under_the_app_config_dir() {
+        let Some(dir) = log_dir() else { return };
+        let expected_parent = dirs::config_dir().unwrap().join(BUNDLE_IDENTIFIER);
+        assert_eq!(dir.parent(), Some(expected_parent.as_path()));
+        assert!(dir.ends_with(LOG_SUBDIR));
+    }
+
+    /// Der eigentliche Zweck der Übung: es muss wirklich eine Datei mit
+    /// Inhalt entstehen. Prüft zugleich, dass jede Zeile SOFORT auf der
+    /// Platte landet — ein gepufferter Schreiber würde beim Absturz genau
+    /// die letzten Zeilen verlieren, also die einzigen, die zählen.
+    #[test]
+    fn appender_writes_through_immediately() {
+        use std::io::Write;
+
+        let dir = std::env::temp_dir().join(format!("aeroacars-log-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut appender = build_log_appender(&dir).expect("appender should build");
+        writeln!(appender, "erste zeile").expect("write");
+
+        // Ohne Flush, ohne Drop des Appenders: der Inhalt muss schon da sein.
+        let written: String = std::fs::read_dir(&dir)
+            .expect("log dir")
+            .filter_map(|e| e.ok())
+            .map(|e| std::fs::read_to_string(e.path()).unwrap_or_default())
+            .collect();
+        assert!(
+            written.contains("erste zeile"),
+            "Logdatei war leer — der Schreiber puffert, statt durchzuschreiben. Inhalt: {written:?}"
+        );
+
+        drop(appender);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -33603,7 +33976,9 @@ pub fn run() {
     // Pilot-Consent wird im Setup-Hook bzw. vom Frontend per Command gesetzt;
     // bis dahin verwirft before_send alle Events (Default-Consent = aus).
     sentry_init::init();
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), "AeroACARS starting");
+    // Die Startzeile schreibt init_tracing() selbst, mit PID und
+    // Log-Verzeichnis — und vor allem, bevor irgendetwas anderes laufen
+    // und abstürzen kann.
 
     // Restore the activity log from disk before anything else uses
     // AppState. v0.15.26: the activity-log restore + boot banner moved into the
@@ -34026,6 +34401,14 @@ pub fn run() {
             // anyway when the broker times the connection out (~60 s),
             // but the explicit shutdown is faster and cleaner.
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                // v1.5.0 (#msfs-hud, QS 09.08.2026): ZUERST den Panel-Server
+                // stoppen, noch vor allem anderen im Beenden-Pfad. Er ist der
+                // einzige Dienst, der bis dahin gar keinen Stopp-Weg hatte,
+                // und er greift im Sekundentakt auf `AppState` zu — das darf
+                // nicht mehr laufen, während der Rest hier abgebaut wird.
+                // Siehe `panel_server::shutdown` für die vollständige
+                // Begründung.
+                panel_server::shutdown();
                 // v0.20 (Process-Integrity): remove this run's sentinel — the
                 // ONLY place this is called. A crash/kill never reaches here,
                 // so the sentinel survives for the next launch to find.
