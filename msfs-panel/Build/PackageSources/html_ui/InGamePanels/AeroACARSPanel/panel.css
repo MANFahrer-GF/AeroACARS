@@ -285,6 +285,22 @@ html, body {
   min-height: 100px;  /* siehe Notiz unten zu den Schriftmassen */
   box-sizing: border-box;
   border-radius: 0;
+
+  /* Fuer die Maus DURCHLAESSIG. In Flow ist der Streifen selbst der
+     Ziehgriff und braucht deshalb `pointer-events: auto` — nativ ist
+     das genau falsch herum: dort gehoert das Fenster dem Simulator, und
+     ein Streifen, der die ganze Flaeche bedeckt und alle Mausereignisse
+     schluckt, nimmt dem Sim jede Moeglichkeit, sein eigenes Fenster
+     anzufassen.
+
+     Der Streifen zeigt nur an, es gibt nichts zu klicken — durchlaessig
+     zu sein kostet also nichts. Deshalb hier zurueckgedreht.
+
+     (Die Windows-Sitzung hatte denselben Gedanken und berichtete "hat
+     nicht geholfen" — dort war zu dem Zeitpunkt aber auch die
+     Titelleiste versteckt, es blieb also gar nichts zum Anfassen
+     uebrig. Erst beides zusammen ergibt einen Sinn.) */
+  pointer-events: none;
 }
 
 /* WAS gekuerzt werden darf und was nicht (09.08.2026, nach dem Foto

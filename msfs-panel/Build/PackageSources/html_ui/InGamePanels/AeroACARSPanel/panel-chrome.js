@@ -91,6 +91,34 @@
     return aus;
   }
 
+  /* Alle direkten Kinder des Body mit Groesse auflisten.
+
+     Nach der ersten Befundzeile wissen wir, was UEBER uns liegt
+     (nichts). Was daneben liegt, wissen wir immer noch nicht — und
+     genau dort muss der Ziehgriff sein, wenn es ihn gibt. Diese Liste
+     schliesst die letzte Luecke: welche Elemente der Sim in unser
+     Dokument stellt, wie gross sie sind, und ob eines davon Maus-
+     ereignisse annimmt. */
+  function koerperKinder() {
+    var aus = [];
+    try {
+      var kinder = document.body ? document.body.children : [];
+      for (var i = 0; i < kinder.length && i < 10; i++) {
+        var k = kinder[i];
+        var r = k.getBoundingClientRect();
+        var name = k.tagName.toLowerCase();
+        if (k.id) name += '#' + k.id;
+        var kl = (typeof k.className === 'string') ? k.className.trim() : '';
+        if (kl) name += '.' + kl.split(/\s+/).join('.');
+        var pe = '';
+        try { pe = window.getComputedStyle(k).pointerEvents; } catch (e) {}
+        aus.push(name + '[' + Math.round(r.width) + 'x' + Math.round(r.height) +
+                 (pe === 'none' ? ',durchlaessig' : '') + ']');
+      }
+    } catch (e) { aus.push('nicht lesbar'); }
+    return aus;
+  }
+
   /* ═══════════════════════════════════════════════════════════════════
      2. Asobo-Fehler entschaerfen: hide/panelInvisible abraeumen
      ═══════════════════════════════════════════════════════════════════
@@ -198,7 +226,11 @@
           c.style.lineHeight = LEISTE_HOEHE + 'px';
           c.style.padding = '0';
           c.style.margin = '0';
-          c.style.fontSize = '0';
+          /* Schriftgroesse BEWUSST nicht auf 0: das Innenleben der
+             Leiste gehoert dem Sim, und wenn sein Ziehen an einem
+             Kindelement haengt, darf das nicht zusammenfallen. Der Text
+             verschwindet stattdessen durch die geringe Hoehe plus
+             `overflow: hidden`. */
           c.style.overflow = 'hidden';
           c.style.opacity = '0.30';
           c.style.cursor = 'move';
@@ -393,7 +425,9 @@
       d.style.cssText = 'position:static;margin-top:2px;' +
         'background:rgba(10,16,26,0.94);color:#8fb0d8;font:10px monospace;' +
         'padding:3px 6px;white-space:pre-wrap;line-height:1.35;';
-      d.textContent = 'AA2-CHROME  ' + BEFUND.join('  |  ') + '\nKETTE  ' + kette().join('  <  ');
+      d.textContent = 'AA2-CHROME  ' + BEFUND.join('  |  ') +
+        '\nKETTE  ' + kette().join('  <  ') +
+        '\nBODY   ' + koerperKinder().join('   ');
 
       /* Direkt HINTER den Streifen haengen, nicht an den Body. Zweiter
          Anlauf beim selben QS-Befund: `position:static` allein reichte
