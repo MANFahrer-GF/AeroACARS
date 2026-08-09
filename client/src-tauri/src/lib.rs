@@ -7280,6 +7280,24 @@ fn activity_log_get(state: tauri::State<'_, AppState>) -> Vec<ActivityEntry> {
 /// laufenden Ticker füttert und dafür ein bis zwei Zeilen braucht, nicht
 /// tausend. Die Sortierung ist hier umgedreht, damit die Anzeige einfach
 /// den ersten Eintrag nehmen kann, statt die Länge zu kennen.
+/// v1.5.0 (#msfs-hud, QS 09.08.2026): Diagnose-Schalter für den
+/// Panel-Server. Die Beta-Abstürze sind ungeklärt; der Schalter erlaubt
+/// den A/B-Test „stürzt es auch OHNE Panel-Server ab?", ohne auf v1.4.7
+/// zurückzumüssen. Wirkt beim nächsten App-Start (bewusst kein
+/// Laufzeit-Stopp/-Start — siehe `panel_server::set_enabled`).
+#[tauri::command]
+fn panel_server_get_enabled(app: AppHandle) -> bool {
+    panel_server::is_enabled(&app)
+}
+
+#[tauri::command]
+fn panel_server_set_enabled(app: AppHandle, enabled: bool) -> Result<bool, UiError> {
+    panel_server::set_enabled(&app, enabled)
+        .map_err(|e| UiError::new("panel_server_config", e))?;
+    tracing::info!(enabled, "panel_server: setting changed (takes effect on next start)");
+    Ok(enabled)
+}
+
 pub(crate) fn activity_log_tail(state: &AppState, limit: usize) -> Vec<ActivityEntry> {
     let log = state.activity_log.lock().expect("activity_log lock");
     log.iter().rev().take(limit).cloned().collect()
@@ -34366,6 +34384,10 @@ pub fn run() {
             remote::remote_server_status,
             remote::remote_server_set_port,
             remote::remote_server_revoke_pairing,
+            // v1.5.0 (#msfs-hud, QS 09.08.2026): Diagnose-Schalter für den
+            // Panel-Server des In-Sim-HUD. Wirkt beim nächsten App-Start.
+            panel_server_get_enabled,
+            panel_server_set_enabled,
             // v1.3.0 (#Hoppie-PDC-CPDLC): PDC/CPDLC client over the
             // Hoppie ACARS network. Opt-in (default OFF), started only
             // via hoppie_connect once the pilot has enabled it and

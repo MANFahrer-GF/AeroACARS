@@ -893,6 +893,14 @@ mod tests {
             "remote_server_status",
             "remote_server_set_port",
             "remote_server_revoke_pairing",
+            // v1.5.0 (#msfs-hud): Diagnose-Schalter für den Panel-Server
+            // des In-Sim-HUD. Bewusst NICHT über die LAN-Brücke: er
+            // verwaltet lokale Server-Infrastruktur des Hosts (gleiche
+            // Kategorie wie die remote_server_*-Befehle darüber), und ein
+            // Tablet im WLAN soll das In-Sim-HUD des Piloten nicht
+            // abschalten können.
+            "panel_server_get_enabled",
+            "panel_server_set_enabled",
         ];
 
         // Found by this same test while fixing the Hoppie gap — NOT yet

@@ -1,48 +1,62 @@
-//! Always-on, loopback-only local server for the MSFS in-sim panel
-//! (v0.2.0 #msfs-panel, round 2b, 2026-08-08).
+//! Loopback-only local server for the MSFS in-sim panel (#msfs-hud).
 //!
 //! Independent of the opt-in LAN Remote Control server (`remote/mod.rs`):
 //! different threat model (this panel only ever runs on the SAME PC as
 //! AeroACARS, a tablet is a genuinely different device on the LAN), so it
-//! gets its own **fixed, non-configurable port** and **starts
-//! unconditionally with the app**, no settings toggle.
+//! gets its own **fixed, non-configurable port**.
 //!
 //! This replaces an earlier round-2 design that put `/panel/*` routes on
 //! the SAME server/port as the tablet feature. That had two real bugs,
 //! both caught live by Thomas testing round 2: (1) that server is opt-in
 //! (`remote_server_start`) — the panel sat on "Verbinde..." forever unless
-//! the pilot separately toggled "Fernzugriff" on, silently reintroducing
-//! the "needs configuration" friction PIN removal was supposed to kill;
-//! (2) that server's port is pilot-configurable
-//! (`remote_server_set_port`) — changing it in Settings silently broke the
-//! panel, which had no way to learn about the change. A fixed, dedicated,
-//! always-on port sidesteps both: nothing to toggle, nothing to
-//! mismatch.
+//! the pilot separately toggled "Fernzugriff" on; (2) that server's port
+//! is pilot-configurable (`remote_server_set_port`) — changing it in
+//! Settings silently broke the panel. A fixed, dedicated port sidesteps
+//! both: nothing to toggle on the panel side, nothing to mismatch.
 //!
-//! Binds literally to `127.0.0.1` (not `0.0.0.0`) — genuinely unreachable
-//! from the LAN at the socket level, not just via an app-level peer
-//! check. [`reject_non_loopback`] below is still applied per-request as
-//! belt-and-suspenders, mirroring `remote/router.rs`'s own style, even
-//! though the bind address alone already rules out a non-loopback peer.
+//! Binds literally to loopback (`127.0.0.1` AND `::1`) — genuinely
+//! unreachable from the LAN at the socket level, not just via an
+//! app-level peer check. [`reject_non_loopback`] below is still applied
+//! per-request as belt-and-suspenders.
 //!
-//! Deliberately minimal: no auth, no rate limiting, no connection caps,
-//! no CORS middleware stack — none of that machinery is meaningful for a
-//! read-only, loopback-only, unauthenticated route set with no ambient
-//! credential to protect. That's also why this does NOT reuse
-//! `remote/router.rs`'s `LimitedListener`/`PeerAddr` (slowloris
-//! mitigation sized for a LAN-reachable, potentially hostile-peer server)
-//! — a plain `TcpListener` bound to loopback has a categorically smaller
-//! attack surface, and axum's built-in `SocketAddr` `Connected` impl is
-//! sufficient.
+//! ## Härtung (QS 09.08.2026)
+//!
+//! Die erste Fassung verzichtete bewusst auf Verbindungs-Obergrenzen
+//! („kein Bedarf auf reiner Rückschleife"). Der Feldtest hat das
+//! widerlegt — nur kam die Last nicht von einem Angreifer, sondern vom
+//! eigenen Klienten: Coherent GT (der eingebettete Renderer des
+//! Simulators) hielt tote Keep-Alive-Verbindungen unbegrenzt offen, und
+//! Alt-Kopien des Widgets stapelten weitere dazu (`netstat` zeigte fünf
+//! gleichzeitig). Deshalb jetzt, nach dem Vorbild von
+//! `remote::LimitedListener`:
+//!
+//!   * **Obergrenze gleichzeitiger Verbindungen** pro Adresse
+//!     ([`MAX_CONNS`]) — Zombies können den Prozess nicht fluten.
+//!   * **Lebenszeit-Schranke pro Verbindung** ([`CONN_LIFETIME`]): nach
+//!     Ablauf wird die Verbindung zwischen zwei Anfragen sauber per EOF
+//!     geschlossen. Damit räumen sich tote Steckplätze GARANTIERT selbst
+//!     auf, statt bis zum Sim-Neustart zu liegen; das Widget verbindet
+//!     transparent neu.
+//!   * **Keine WebSocket-Route mehr.** Das Widget nutzt seit v1.2 reines
+//!     Abfragen; die einzigen WS-Klienten wären Alt-Kopien im Sim, deren
+//!     halbfertige Upgrades hier Aufgaben liegen ließen. Ein 404 ist die
+//!     robustere Antwort.
+//!   * **Abschaltbar** über die Einstellungen ([`is_enabled`], wirkt beim
+//!     nächsten Start). Primär ein Diagnose-Werkzeug: die Beta-Abstürze
+//!     (Ereignis 1000, `0xC0000374`) sind ungeklärt, und der Schalter
+//!     erlaubt den A/B-Test „stürzt es auch OHNE Panel-Server ab?" —
+//!     ohne auf v1.4.7 zurückzumüssen.
 
+use std::future::Future as _;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::{
-    extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
-        ConnectInfo, Query, State,
-    },
+    extract::{ConnectInfo, Query, State},
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
@@ -51,6 +65,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::sync::Semaphore;
 
 use crate::remote::net;
 
@@ -60,22 +76,89 @@ use crate::remote::net;
 /// the two are never confusable.
 pub const PANEL_SERVER_PORT: u16 = 47847;
 
-const TICK: Duration = Duration::from_secs(1);
+/// Obergrenze gleichzeitig offener Verbindungen PRO Adresse. Das Widget
+/// braucht genau eine; die Reserve fängt Coherents Verbindungsvorrat und
+/// kurzlebige Überlappungen beim Neuverbinden ab. Zombies darüber hinaus
+/// bleiben im TCP-Rückstau des Betriebssystems statt hier Ressourcen zu
+/// binden.
+const MAX_CONNS: usize = 8;
+
+/// Lebenszeit einer Verbindung. Nach Ablauf schließt [`PanelStream`] die
+/// Verbindung zwischen zwei Anfragen per EOF — der einzige Weg, auf dem
+/// tote Keep-Alive-Steckplätze (Feldbefund: fünf gleichzeitig, gehalten
+/// bis zum Sim-Neustart) sich garantiert selbst aufräumen. Ein gesundes
+/// Widget verbindet danach transparent neu; auf der Rückschleife kostet
+/// das nichts.
+const CONN_LIFETIME: Duration = Duration::from_secs(120);
 
 /// Wie viele Aktivitäts-Einträge `/panel/activity` ohne `?limit=` liefert.
-/// Das HUD zeigt eine Zeile; ein paar mehr kosten nichts und erlauben eine
-/// kurze Historie, ohne dass die Anzeige nachfragen muss.
 const ACTIVITY_DEFAULT_LIMIT: usize = 5;
 /// Obergrenze, damit ein `?limit=100000` nicht den kompletten Ringpuffer
 /// durch eine Anzeige schiebt, die davon eine Zeile benutzt.
 const ACTIVITY_MAX_LIMIT: usize = 50;
 
+/// Dateiname der Panel-Server-Einstellung im App-Konfigverzeichnis.
+const CONFIG_FILE: &str = "panel_server.json";
+
 #[derive(Clone)]
 struct PanelCtx {
     app: AppHandle,
-    /// Flippt beim App-Ende auf `true`. Siehe [`shutdown`].
-    stop: tokio::sync::watch::Receiver<bool>,
 }
+
+// ---------------------------------------------------------------------------
+// Ein/Aus-Einstellung (Diagnose-Schalter)
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PanelConfig {
+    enabled: bool,
+}
+
+fn config_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_config_dir().ok().map(|d| d.join(CONFIG_FILE))
+}
+
+/// Pure Variante für Tests: liest die Einstellung von einem Pfad.
+/// Fehlende oder kaputte Datei = eingeschaltet — der Server ist das
+/// Standardverhalten, die Datei existiert nur, um ihn abzuschalten.
+fn read_enabled_from(path: &Path) -> bool {
+    match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice::<PanelConfig>(&bytes)
+            .map(|c| c.enabled)
+            .unwrap_or(true),
+        Err(_) => true,
+    }
+}
+
+fn write_enabled_to(path: &Path, enabled: bool) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_vec_pretty(&PanelConfig { enabled })
+        .expect("PanelConfig serialisiert immer");
+    std::fs::write(path, json)
+}
+
+/// Ist der Panel-Server eingeschaltet? (Persistierte Einstellung;
+/// Standard: ja.)
+pub fn is_enabled(app: &AppHandle) -> bool {
+    config_path(app).map(|p| read_enabled_from(&p)).unwrap_or(true)
+}
+
+/// Schreibt die Einstellung. Wirkt beim NÄCHSTEN App-Start — bewusst kein
+/// Stopp/Start zur Laufzeit: der Mehrwert wäre kosmetisch, und genau die
+/// Start/Stopp-Verschränkung mit laufenden Verbindungen ist die Sorte
+/// Komplexität, die dieses Modul nach dem 09.08. nicht mehr trägt.
+pub fn set_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    let Some(path) = config_path(app) else {
+        return Err("kein Konfigurationsverzeichnis".to_string());
+    };
+    write_enabled_to(&path, enabled).map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Stopp-Signal (App-Ende)
+// ---------------------------------------------------------------------------
 
 /// Absender des Stopp-Signals, gesetzt von [`spawn`], ausgelöst von
 /// [`shutdown`]. `OnceLock` dient zugleich als Doppelstart-Sperre.
@@ -83,74 +166,54 @@ static SHUTDOWN: std::sync::OnceLock<tokio::sync::watch::Sender<bool>> =
     std::sync::OnceLock::new();
 
 /// Fährt den Panel-Server geordnet herunter. Wird AUSSCHLIESSLICH aus dem
-/// `RunEvent::Exit`-Zweig in `lib.rs` gerufen.
+/// `RunEvent::Exit`-Zweig in `lib.rs` gerufen (nicht `ExitRequested` —
+/// das kann abgelehnt werden, und der Server wäre dann tot, während die
+/// App weiterläuft).
 ///
-/// **Warum es diesen Weg gibt (QS 09.08.2026):** dieser Server war die
-/// einzige langlebige Aufgabe der App ohne jeden Stopp-Weg — MQTT, Hoppie,
-/// der LAN-Fernzugriff-Server und der Positions-Streamer fahren alle
-/// geordnet herunter, dieser nicht. Er hielt einen `AppHandle` und löste
-/// im Sekundentakt `app.state::<AppState>()` auf, während die App abgebaut
-/// wurde. Daraus kann ein Zugriff auf bereits freigegebenen Speicher
-/// werden.
-///
-/// **Was das NICHT ist:** die Erklärung für die Abstürze vom 09.08.2026
-/// (Ereignis 1000: `0xC0000374` / `0xC000001D`). Diese Vermutung stand hier
-/// zunächst — die Logdatei hat sie widerlegt: der Server ging dort
-/// gemeinsam mit MQTT im selben Millisekundenschritt aus, also bei einem
-/// ganz normalen, vollständigen Beenden. Die Absturzursache ist weiter
-/// offen und braucht ein Speicherabbild. Der fehlende Stopp-Weg war
-/// trotzdem ein Defekt, und dieser Weg schließt ihn.
-///
-/// **Warum `Exit` und nicht `ExitRequested`:** letzteres heißt bloß
-/// „jemand möchte beenden" und kann abgelehnt werden. Hing der Stopp
-/// daran, konnte der Server ausgehen, während die App weiterlief — ein
-/// Zustand, aus dem das HUD nie zurückgefunden hätte. `Exit` feuert erst,
-/// wenn die Ereignisschleife wirklich endet, und immer noch vor dem Abbau
-/// von `AppState`.
+/// Hintergrund: dieser Server war die einzige langlebige Aufgabe der App
+/// ohne Stopp-Weg und griff im Sekundentakt auf `AppState` zu, während
+/// die App abgebaut wurde. Ob genau das die Beta-Abstürze erklärt, ist
+/// OFFEN (die Logdatei hat die erste Vermutung widerlegt; Klärung braucht
+/// ein Speicherabbild) — der fehlende Stopp-Weg war unabhängig davon ein
+/// Defekt.
 pub fn shutdown() {
     if let Some(tx) = SHUTDOWN.get() {
         // Absichtlich auf `warn`: taucht diese Zeile im Log auf, OBWOHL die
-        // App danach weiterläuft, ist genau der obige Fehler zurück. So
-        // steht die Antwort in der Logdatei statt in einer Vermutung.
+        // App danach weiterläuft, ist der ExitRequested-Fehler zurück.
         tracing::warn!("panel_server: shutdown signalled");
         let _ = tx.send(true);
     }
 }
 
+// ---------------------------------------------------------------------------
+// Start
+// ---------------------------------------------------------------------------
+
 /// Spawn the panel server for the lifetime of the app. Call exactly once,
-/// at startup, unconditionally — mirrors how the auto-start watcher is
-/// spawned once in `lib.rs`'s `setup()` hook regardless of whether its
-/// underlying feature is toggled on, because the *spawn* isn't the opt-in
-/// part; here there is no opt-in part at all.
+/// at startup. Respects the persisted [`is_enabled`] setting.
 ///
 /// A bind failure (something else already holding the port) is logged and
 /// swallowed, not propagated — the MSFS panel simply won't connect this
 /// session, which is a strictly better failure mode than taking the whole
 /// app down over a feature most pilots will never open.
 pub fn spawn(app: AppHandle) {
+    if !is_enabled(&app) {
+        // Die eine Zeile, die den A/B-Test dokumentiert: steht sie im Log
+        // und es stürzt TROTZDEM ab, ist der Panel-Server entlastet.
+        tracing::warn!("panel_server: disabled by setting — not starting");
+        return;
+    }
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
     if SHUTDOWN.set(stop_tx).is_err() {
-        // Schon einmal gestartet. Ein zweiter Server auf demselben Port
-        // käme ohnehin nicht hoch; wichtiger ist, den ersten Stopp-Sender
-        // nicht zu überschreiben und damit unerreichbar zu machen.
         tracing::warn!("panel_server: spawn called twice — ignoring the second call");
         return;
     }
-    let ctx = PanelCtx { app, stop: stop_rx.clone() };
-    // Beide Rückschleifen-Adressen, nicht nur die IPv4.
-    //
-    // Grund (Feldtest 09.08.2026): Anfragen aus dem Simulator an
-    // 127.0.0.1 blieben irgendwann dauerhaft hängen — keine Antwort, kein
-    // Fehler. Der eingebettete Renderer führt seinen Verbindungsvorrat pro
-    // Ziel-Adresse; ist der einmal mit toten Steckplätzen belegt, kommt
-    // über DIESE Adresse nichts mehr durch. Eine zweite Adresse gibt dem
-    // Widget einen davon unabhängigen Weg, ohne dass jemand den Sim neu
-    // starten muss.
-    //
-    // Sicherheitseigenschaft bleibt: `::1` ist genauso Rückschleife wie
-    // `127.0.0.1`, vom LAN aus also unerreichbar. Schlägt eine der beiden
-    // fehl, läuft die andere weiter — auf Systemen ohne IPv6 ist das der
-    // Normalfall und kein Fehler.
+    let ctx = PanelCtx { app };
+    // Beide Rückschleifen-Adressen: der Renderer im Sim führt seinen
+    // Verbindungsvorrat pro Ziel-Adresse; ist einer vergiftet, gibt die
+    // zweite Adresse dem Widget einen unabhängigen Weg ohne Sim-Neustart.
+    // `::1` ist genauso Rückschleife wie `127.0.0.1`; schlägt eine Bindung
+    // fehl (System ohne IPv6), läuft die andere weiter.
     for addr in [
         SocketAddr::from(([127, 0, 0, 1], PANEL_SERVER_PORT)),
         SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, PANEL_SERVER_PORT)),
@@ -173,24 +236,23 @@ fn spawn_listener(addr: SocketAddr, ctx: PanelCtx, stop_rx: tokio::sync::watch::
                 return;
             }
         };
-        // Positive Meldung, nicht nur eine bei Fehlschlag.
-        // Beim ersten Feldtest von v1.5.0-beta.3 stand das HUD auf „Keine
-        // Verbindung", und der Log konnte die naheliegendste Frage —
-        // „lauscht der Server überhaupt?" — NICHT beantworten: es gab nur
-        // eine Zeile für den Fehlerfall, und deren Fehlen ließ beide
-        // Deutungen offen. Eine Zeile bei Erfolg kostet nichts und
-        // entscheidet die Frage sofort.
+        // Positive Meldung, nicht nur eine bei Fehlschlag: ohne sie konnte
+        // der beta.3-Log die naheliegendste Frage — „lauscht der Server
+        // überhaupt?" — nicht beantworten.
         tracing::info!(%addr, "panel_server: listening");
+        let limited = PanelListener {
+            inner: listener,
+            slots: Arc::new(Semaphore::new(MAX_CONNS)),
+        };
         let router = Router::new()
             .route("/panel/status", get(status_handler))
             .route("/panel/debrief", get(debrief_handler))
             .route("/panel/activity", get(activity_handler))
-            .route("/panel/ws", get(ws_handler))
             .with_state(ctx);
         let mut stop_serve = stop_rx;
         if let Err(e) = axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<SocketAddr>(),
+            limited,
+            router.into_make_service_with_connect_info::<PanelPeer>(),
         )
         .with_graceful_shutdown(async move {
             // `wait_for` kehrt auch zurück, wenn der Sender wegfällt —
@@ -204,6 +266,116 @@ fn spawn_listener(addr: SocketAddr, ctx: PanelCtx, stop_rx: tokio::sync::watch::
         tracing::info!(%addr, "panel_server: stopped");
     });
 }
+
+// ---------------------------------------------------------------------------
+// Gedeckelter Lauscher + Verbindung mit Lebenszeit-Schranke
+// ---------------------------------------------------------------------------
+
+/// Nach dem Vorbild von `remote::LimitedListener` (dort seit v0.19.x als
+/// Slowloris-Schutz): das Permit wird VOR dem Betriebssystem-`accept`
+/// genommen, Überzählige warten im TCP-Rückstau statt hier Dateideskriptoren
+/// zu bekommen.
+struct PanelListener {
+    inner: tokio::net::TcpListener,
+    slots: Arc<Semaphore>,
+}
+
+impl axum::serve::Listener for PanelListener {
+    type Io = PanelStream;
+    type Addr = SocketAddr;
+
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        let permit = Arc::clone(&self.slots)
+            .acquire_owned()
+            .await
+            .expect("connection-limit semaphore is never closed");
+        let (stream, addr) =
+            <tokio::net::TcpListener as axum::serve::Listener>::accept(&mut self.inner).await;
+        (
+            PanelStream {
+                inner: stream,
+                _permit: permit,
+                deadline: Box::pin(tokio::time::sleep(CONN_LIFETIME)),
+                expired: false,
+            },
+            addr,
+        )
+    }
+
+    fn local_addr(&self) -> std::io::Result<Self::Addr> {
+        self.inner.local_addr()
+    }
+}
+
+/// TCP-Verbindung mit Ablaufdatum.
+///
+/// Nach [`CONN_LIFETIME`] liefert die LESE-Seite EOF — für HTTP heißt das:
+/// die laufende Antwort wird noch fertig geschrieben (die Schreibseite
+/// bleibt offen), danach schließt der Server die Keep-Alive-Verbindung
+/// sauber. Der eingebaute `Sleep` weckt den wartenden Lese-Poll zum
+/// Stichtag, die Verbindung schließt also ZWISCHEN zwei Anfragen und nicht
+/// erst, wenn die nächste hereinkommt — keine Anfrage geht verloren.
+struct PanelStream {
+    inner: tokio::net::TcpStream,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+    deadline: Pin<Box<tokio::time::Sleep>>,
+    expired: bool,
+}
+
+impl AsyncRead for PanelStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        if !self.expired && self.deadline.as_mut().poll(cx).is_ready() {
+            self.expired = true;
+        }
+        if self.expired {
+            // EOF: Puffer unangetastet lassen. Hyper wertet das als
+            // Verbindungsende und räumt die Keep-Alive-Verbindung ab.
+            return Poll::Ready(Ok(()));
+        }
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for PanelStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        data: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        // Bewusst KEINE Ablaufprüfung: eine zum Stichtag gerade laufende
+        // Antwort darf fertig geschrieben werden.
+        Pin::new(&mut self.inner).poll_write(cx, data)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+/// Lokaler `Connected`-Zielträger — gleicher Orphan-Rule-Grund wie
+/// `remote::PeerAddr`, siehe dessen Doku.
+#[derive(Debug, Clone, Copy)]
+struct PanelPeer(SocketAddr);
+
+impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, PanelListener>>
+    for PanelPeer
+{
+    fn connect_info(stream: axum::serve::IncomingStream<'_, PanelListener>) -> Self {
+        PanelPeer(*stream.remote_addr())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Handler
+// ---------------------------------------------------------------------------
 
 fn reject_non_loopback(peer: SocketAddr) -> Option<Response> {
     if net::is_loopback_socket(peer) {
@@ -227,7 +399,7 @@ fn cors_open(mut resp: Response) -> Response {
 
 async fn status_handler(
     State(ctx): State<PanelCtx>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ConnectInfo(PanelPeer(peer)): ConnectInfo<PanelPeer>,
 ) -> Response {
     if let Some(r) = reject_non_loopback(peer) {
         return r;
@@ -238,7 +410,7 @@ async fn status_handler(
 
 async fn debrief_handler(
     State(ctx): State<PanelCtx>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ConnectInfo(PanelPeer(peer)): ConnectInfo<PanelPeer>,
 ) -> Response {
     if let Some(r) = reject_non_loopback(peer) {
         return r;
@@ -266,18 +438,12 @@ fn effective_activity_limit(requested: Option<usize>) -> usize {
 
 /// v1.5.0 (#msfs-hud): die jüngsten Aktivitäts-Einträge, neueste zuerst.
 ///
-/// Eigene Route statt eines Felds in `/panel/status`: der Statusrahmen geht
-/// im Sekundentakt über die WebSocket-Verbindung, und ihn um einen
-/// Textblock zu erweitern, der sich nur alle paar Minuten ändert, hieße den
-/// Änderungsvergleich in `handle_socket` bei jedem Log-Eintrag anschlagen zu
-/// lassen. Der Ticker holt sich das lieber selbst, in seinem eigenen Takt.
-///
 /// `limit` wird auf [`ACTIVITY_MAX_LIMIT`] gedeckelt und ein `limit=0` auf
 /// den Standard zurückgesetzt — eine leere Antwort wäre für den Aufrufer
 /// nicht von „es gibt nichts zu berichten“ zu unterscheiden.
 async fn activity_handler(
     State(ctx): State<PanelCtx>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ConnectInfo(PanelPeer(peer)): ConnectInfo<PanelPeer>,
     Query(q): Query<ActivityQuery>,
 ) -> Response {
     if let Some(r) = reject_non_loopback(peer) {
@@ -290,77 +456,12 @@ async fn activity_handler(
     cors_open((StatusCode::OK, Json(value)).into_response())
 }
 
-async fn ws_handler(
-    State(ctx): State<PanelCtx>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    upgrade: WebSocketUpgrade,
-) -> Response {
-    if let Some(r) = reject_non_loopback(peer) {
-        return r;
-    }
-    upgrade.on_upgrade(move |socket| handle_socket(ctx, socket))
-}
-
-/// Self-contained 1Hz push loop, independent of `remote::RemoteEventBus`
-/// (which only exists while the opt-in tablet server is running — exactly
-/// the coupling this module exists to avoid). In practice there is only
-/// ever one MSFS instance/panel connection at a time, so an
-/// intentionally simple per-connection ticker (rather than a shared
-/// broadcast bus) costs nothing and keeps this module fully independent
-/// of `remote/`.
-async fn handle_socket(ctx: PanelCtx, mut socket: WebSocket) {
-    let mut ticker = tokio::time::interval(TICK);
-    let mut last: Option<Value> = None;
-    let mut stop = ctx.stop.clone();
-    loop {
-        tokio::select! {
-            // MUSS mit im select stehen: `with_graceful_shutdown` hört zwar
-            // auf, neue Verbindungen anzunehmen, wartet aber auf die
-            // bestehenden. Eine dauerhaft offene Panel-Verbindung — also der
-            // Normalfall, sobald das HUD im Sim läuft — würde das Beenden
-            // sonst endlos aufhalten.
-            // `changed()` statt `wait_for(..)`: letzteres gibt eine Sperre auf
-            // den Wert zurück, die über das folgende `await` gehalten würde —
-            // damit wäre die ganze Zukunft nicht mehr zwischen Threads
-            // versendbar und axum nimmt sie nicht an. Der Wert wird deshalb
-            // sofort in eine lokale Variable kopiert.
-            res = stop.changed() => {
-                let stopped = res.is_err() || *stop.borrow();
-                if stopped {
-                    let _ = socket.send(Message::Close(None)).await;
-                    break;
-                }
-            }
-            _ = ticker.tick() => {
-                let value = crate::remote::current_flight_status_value(&ctx.app);
-                if last.as_ref() != Some(&value) {
-                    last = Some(value.clone());
-                    let frame = serde_json::json!({ "event": "flight_status", "payload": value }).to_string();
-                    if socket.send(Message::Text(frame.into())).await.is_err() {
-                        break;
-                    }
-                }
-            }
-            msg = socket.recv() => {
-                match msg {
-                    Some(Ok(Message::Close(_))) | None => break,
-                    Some(Err(_)) => break,
-                    _ => {}
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn rejects_lan_peers_a_full_remote_route_would_allow() {
-        // The whole point of this module vs. reusing remote/router.rs: a
-        // LAN tablet is a legitimate /api peer there but must NOT reach
-        // the panel server at all.
         let lan_peer: SocketAddr = "192.168.1.5:5000".parse().unwrap();
         assert!(reject_non_loopback(lan_peer).is_some());
 
@@ -368,10 +469,19 @@ mod tests {
         assert!(reject_non_loopback(loop_peer).is_none());
     }
 
-    /// Die Deckelung ist die einzige Stelle, an der ein Aufrufer diesem
-    /// Server etwas vorgeben kann. `limit=0` muss zum Standard werden statt
-    /// zu einer leeren Liste: leer hieße für den Ticker „nichts passiert“,
-    /// und er würde die letzte Zeile löschen, obwohl es sie noch gibt.
+    /// Beide Rückschleifen-Adressen müssen durchkommen, alles andere nicht —
+    /// die zweite Adresse wäre sonst ein offenes Tor ohne Token.
+    #[test]
+    fn the_second_address_is_just_as_loopback_only_as_the_first() {
+        let v6_loopback: SocketAddr = "[::1]:5000".parse().unwrap();
+        assert!(reject_non_loopback(v6_loopback).is_none(), "::1 muss durchkommen");
+
+        let v6_public: SocketAddr = "[2001:db8::1]:5000".parse().unwrap();
+        assert!(reject_non_loopback(v6_public).is_some());
+        let v6_mapped_lan: SocketAddr = "[::ffff:192.168.1.5]:5000".parse().unwrap();
+        assert!(reject_non_loopback(v6_mapped_lan).is_some());
+    }
+
     #[test]
     fn activity_limit_is_clamped_and_never_collapses_to_empty() {
         assert_eq!(effective_activity_limit(None), ACTIVITY_DEFAULT_LIMIT);
@@ -380,56 +490,103 @@ mod tests {
         assert_eq!(effective_activity_limit(Some(100_000)), ACTIVITY_MAX_LIMIT);
     }
 
-    /// Das Stopp-Signal muss auch bei einer Verbindung ankommen, die
-    /// ERST NACH dem Absenden ihren Empfänger klont — sonst hinge beim
-    /// Beenden eine Panel-Verbindung, die zufällig im falschen Moment
-    /// aufgebaut wurde, und mit ihr das geordnete Herunterfahren.
-    /// Prüft die Annahme über `watch`, auf der `handle_socket` aufbaut.
-    #[tokio::test]
-    async fn a_socket_opened_around_shutdown_still_sees_the_stop_signal() {
-        let (tx, rx) = tokio::sync::watch::channel(false);
-        tx.send(true).unwrap();
-        // Klon NACH dem Senden — genau der Wettlauf-Fall.
-        let mut late = rx.clone();
-        let res = tokio::time::timeout(Duration::from_millis(200), late.changed()).await;
-        assert!(res.is_ok(), "changed() muss sofort zurückkehren, nicht in den Timeout laufen");
-        assert!(*late.borrow());
-    }
-
-    /// Fällt der Absender weg (App bereits abgebaut), muss die Schleife das
-    /// als Stopp werten und nicht ewig weiterlaufen.
-    #[tokio::test]
-    async fn a_dropped_sender_counts_as_stop() {
-        let (tx, rx) = tokio::sync::watch::channel(false);
-        let mut recv = rx.clone();
-        drop(tx);
-        let res = recv.changed().await;
-        assert!(res.is_err(), "weggefallener Absender muss als Fehler ankommen");
-    }
-
-    /// Seit v1.5.0-beta.4 lauscht der Server auf ZWEI Adressen. Die
-    /// Sicherheitseigenschaft — nur Rückschleife, keine Anmeldung nötig —
-    /// muss auf beiden gelten, sonst wäre die zweite Adresse ein offenes
-    /// Tor ohne Token.
-    #[test]
-    fn the_second_address_is_just_as_loopback_only_as_the_first() {
-        let v6_loopback: SocketAddr = "[::1]:5000".parse().unwrap();
-        assert!(reject_non_loopback(v6_loopback).is_none(), "::1 muss durchkommen");
-
-        // Öffentliche v6-Adresse und v4-gemappte LAN-Adresse müssen weiterhin
-        // abgewiesen werden.
-        let v6_public: SocketAddr = "[2001:db8::1]:5000".parse().unwrap();
-        assert!(reject_non_loopback(v6_public).is_some());
-        let v6_mapped_lan: SocketAddr = "[::ffff:192.168.1.5]:5000".parse().unwrap();
-        assert!(reject_non_loopback(v6_mapped_lan).is_some());
-    }
-
     #[test]
     fn panel_server_port_is_distinct_from_lan_remote_default() {
-        // Regression guard for the exact bug this module exists to fix:
-        // the panel's port must never accidentally end up equal to (or
-        // dependent on) the LAN Remote Control server's configurable
-        // default — see the module doc.
         assert_ne!(PANEL_SERVER_PORT, 8765);
+    }
+
+    /// Watch-Semantik, auf der das geordnete Herunterfahren aufbaut: ein
+    /// Empfänger, der erst NACH dem Absenden geklont wird, muss das Signal
+    /// trotzdem sehen, und ein weggefallener Absender zählt als Stopp.
+    #[tokio::test]
+    async fn shutdown_signal_semantics_hold() {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        tx.send(true).unwrap();
+        let mut late = rx.clone();
+        let res = tokio::time::timeout(Duration::from_millis(200), late.changed()).await;
+        assert!(res.is_ok(), "changed() muss sofort zurückkehren");
+        assert!(*late.borrow());
+
+        let (tx2, rx2) = tokio::sync::watch::channel(false);
+        let mut recv = rx2.clone();
+        drop(tx2);
+        assert!(recv.changed().await.is_err(), "weggefallener Absender = Stopp");
+    }
+
+    /// Der Kern der Härtung: eine abgelaufene Verbindung liefert auf der
+    /// Lese-Seite EOF — und zwar von selbst (der eingebaute Sleep weckt den
+    /// Poll), nicht erst bei der nächsten Anfrage. Real über ein
+    /// TCP-Sockelpaar geprüft, kein Nachbau.
+    #[tokio::test]
+    async fn an_expired_connection_reads_eof_on_its_own() {
+        use tokio::io::AsyncReadExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        // Klientenseite offen halten — es soll der ABLAUF schließen, nicht
+        // das Gegenüber.
+        let _client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (server_side, _) = listener.accept().await.unwrap();
+
+        let slots = Arc::new(Semaphore::new(1));
+        let permit = Arc::clone(&slots).acquire_owned().await.unwrap();
+        let mut stream = PanelStream {
+            inner: server_side,
+            _permit: permit,
+            deadline: Box::pin(tokio::time::sleep(Duration::from_millis(50))),
+            expired: false,
+        };
+
+        let mut buf = [0u8; 16];
+        // Ohne die Sleep-Weckung würde dieser read ewig hängen (der Klient
+        // schickt nichts) — der Test würde in den äußeren Timeout laufen.
+        let n = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut buf))
+            .await
+            .expect("read muss durch den Ablauf geweckt werden")
+            .expect("EOF ist ein sauberes Ok(0), kein Fehler");
+        assert_eq!(n, 0, "abgelaufene Verbindung muss EOF liefern");
+    }
+
+    /// Verbindungs-Deckel real am Sockel: mit vollem Semaphor darf accept()
+    /// nicht durchkommen — gleiche Prüfung wie beim LAN-Server-Vorbild.
+    #[tokio::test]
+    async fn connection_cap_blocks_accept_beyond_the_limit() {
+        use axum::serve::Listener as _;
+
+        let raw = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = raw.local_addr().unwrap();
+        let mut limited = PanelListener {
+            inner: raw,
+            slots: Arc::new(Semaphore::new(1)),
+        };
+
+        let _c1 = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (_held, _) = limited.accept().await;
+
+        let _c2 = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let blocked =
+            tokio::time::timeout(Duration::from_millis(200), limited.accept()).await;
+        assert!(blocked.is_err(), "zweite Verbindung darf den Deckel nicht passieren");
+    }
+
+    /// Die Ein/Aus-Einstellung: Standard ist AN (fehlende/kaputte Datei),
+    /// und ein geschriebenes AUS kommt wieder heraus.
+    #[test]
+    fn enabled_setting_round_trips_and_defaults_to_on() {
+        let dir = std::env::temp_dir().join(format!("aa-panel-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join(CONFIG_FILE);
+
+        assert!(read_enabled_from(&path), "fehlende Datei = eingeschaltet");
+
+        write_enabled_to(&path, false).unwrap();
+        assert!(!read_enabled_from(&path));
+        write_enabled_to(&path, true).unwrap();
+        assert!(read_enabled_from(&path));
+
+        std::fs::write(&path, b"kaputt{{{").unwrap();
+        assert!(read_enabled_from(&path), "kaputte Datei = eingeschaltet");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

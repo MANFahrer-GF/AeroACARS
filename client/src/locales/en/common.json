@@ -1036,6 +1036,13 @@
       "revoke_done": "Devices disconnected ✓"
     }
   },
+  "msfs_hud": {
+    "section_title": "MSFS in-sim HUD",
+    "intro": "The HUD strip inside the simulator (Flow Pro widget) gets its data from a local server on this PC (port 47847, reachable from this PC only).",
+    "toggle_label": "Enable panel server",
+    "toggle_hint": "Default: on. Can be disabled to isolate problems — without the server the in-sim HUD shows “no connection” permanently, everything else in AeroACARS keeps working.",
+    "restart_hint": "Takes effect the next time AeroACARS starts."
+  },
   "flight_profile": {
     "title_alt": "Altitude MSL",
     "title_agl": "Altitude AGL",

@@ -1036,6 +1036,13 @@
       "revoke_done": "Geräte getrennt ✓"
     }
   },
+  "msfs_hud": {
+    "section_title": "MSFS-In-Sim-HUD",
+    "intro": "Der HUD-Streifen im Simulator (Flow-Pro-Widget) holt seine Daten von einem lokalen Server auf diesem PC (Port 47847, nur von diesem PC aus erreichbar).",
+    "toggle_label": "Panel-Server aktivieren",
+    "toggle_hint": "Standard: an. Zum Eingrenzen von Problemen abschaltbar — ohne Server zeigt das HUD im Sim dauerhaft „Keine Verbindung“, alles andere in AeroACARS läuft normal weiter.",
+    "restart_hint": "Wirkt nach dem nächsten Start von AeroACARS."
+  },
   "flight_profile": {
     "title_alt": "Höhe über Meer",
     "title_agl": "Höhe über Grund",

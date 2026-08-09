@@ -13,6 +13,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { getConsent, setConsent } from "../lib/sentry";
 import { DiscordRpcPanel } from "./DiscordRpcPanel";
 import { RemoteServerPanel } from "./RemoteServerPanel";
+import { MsfsHudPanel } from "./MsfsHudPanel";
 import { HoppieSettingsPanel } from "./HoppieSettingsPanel";
 
 const ALL_KINDS: SimKind[] = [
@@ -517,6 +518,11 @@ export function SettingsPanel({
               ein Browser kann keinen Server hosten. Im LAN-Browser (Tablet)
               ist diese Sektion ausgeblendet. */}
           {isTauri && <RemoteServerPanel />}
+
+          {/* v1.5.0 (#msfs-hud): Diagnose-Schalter für den lokalen
+              Panel-Server des In-Sim-HUD. Default = an; wirkt beim
+              nächsten Start. */}
+          {isTauri && <MsfsHudPanel />}
 
           {/* v1.3.0 (#Hoppie-PDC-CPDLC): PDC/CPDLC-Client ueber das
               Hoppie-ACARS-Netzwerk. Opt-In, Default = aus. */}
