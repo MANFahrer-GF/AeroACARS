@@ -46,8 +46,22 @@
 (function () {
   'use strict';
 
+  /* Doppel-Lauf-Schutz. QS-Befund vom 09.08.2026: laedt der Sim beim
+     Wiederoeffnen des Panels dieselbe Ansicht erneut, ohne das Dokument
+     zu verwerfen, haengt jede Kopie ein weiteres Paar Maus-Zuhoerer an —
+     und dann bewegt ein Ziehen das Fenster um das Doppelte, Dreifache,
+     ... Genau die Fehlerklasse, die uns beim Flow-Widget als "springende
+     Anzeige" Stunden gekostet hat; hier vorher zugemacht statt hinterher
+     gesucht. Die aeltere Kopie raeumt ihre Zuhoerer selbst ab. */
+  var G = (typeof globalThis !== 'undefined') ? globalThis
+        : (typeof window !== 'undefined') ? window : this;
+  try {
+    if (G && G.__aa2ChromeStop && typeof G.__aa2ChromeStop === 'function') G.__aa2ChromeStop();
+  } catch (e) {}
+
   var BEFUND = [];            // was hat gegriffen, was nicht
   var ziehZiel = null;        // das Element, das wir tatsaechlich bewegen
+  var abraeumer = [];         // alles, was beim Neustart zurueckzunehmen ist
 
   function notiz(t) { try { BEFUND.push(t); } catch (e) {} }
 
@@ -234,11 +248,54 @@
         e.preventDefault();
       } catch (err) {}
     }
+    /* Am Bildrand festhalten. QS-Befund vom 09.08.2026: ohne diese
+       Schranke laesst sich das Fenster restlos aus dem Bild ziehen — und
+       dann ist es WEG. Es gibt ja keine Titelleiste mehr, an der man es
+       zurueckholen koennte, und das Toolbar-Symbol blendet es nur an
+       derselben unsichtbaren Stelle wieder ein. Ein Pilot, dem das im
+       Anflug passiert, hat sein HUD verloren und keine Handhabe.
+
+       Es bleiben immer mindestens RAND Pixel greifbar — an jeder Kante,
+       auch oben, damit ein zu weit nach oben geschobenes Fenster nicht
+       hinter der Sim-Toolbar verschwindet. */
+    var RAND = 90;
+
+    /* Bildgroesse ueber eine KETTE bestimmen, nicht ueber einen Wert.
+       QS-Befund vom 09.08.2026: in der Messumgebung lieferte
+       `window.innerWidth` glatte 0 — ein Wert, mit dem jede Schranke
+       unsinnig wird. Nur weil ein Rueckfallwert dahinterstand, ging es
+       gut aus. Coherent GT ist kein normaler Browser; auf einen einzigen
+       Messwert zu bauen waere hier leichtsinnig. */
+    function bildmass(quer) {
+      var kandidaten = quer
+        ? [document.documentElement && document.documentElement.clientWidth,
+           window.innerWidth, window.screen && window.screen.width, 1920]
+        : [document.documentElement && document.documentElement.clientHeight,
+           window.innerHeight, window.screen && window.screen.height, 1080];
+      for (var i = 0; i < kandidaten.length; i++) {
+        if (typeof kandidaten[i] === 'number' && kandidaten[i] > 200) return kandidaten[i];
+      }
+      return quer ? 1920 : 1080;
+    }
+
+    function halteImBild(l, t) {
+      try {
+        var b = ziel.offsetWidth || 200;
+        var bw = bildmass(true), bh = bildmass(false);
+        if (l > bw - RAND) l = bw - RAND;
+        if (l < RAND - b) l = RAND - b;
+        if (t > bh - RAND) t = bh - RAND;
+        if (t < 0) t = 0;
+      } catch (e) {}
+      return [l, t];
+    }
+
     function bewegt(e) {
       if (!greift) return;
       try {
-        ziel.style.left = (startL + (e.clientX - startX)) + 'px';
-        ziel.style.top  = (startT + (e.clientY - startY)) + 'px';
+        var lt = halteImBild(startL + (e.clientX - startX), startT + (e.clientY - startY));
+        ziel.style.left = lt[0] + 'px';
+        ziel.style.top  = lt[1] + 'px';
         e.preventDefault();
       } catch (err) {}
     }
@@ -250,6 +307,13 @@
       document.addEventListener('mousemove', bewegt, true);
       document.addEventListener('mouseup', hoch, true);
       griff.style.cursor = 'move';
+      abraeumer.push(function () {
+        try {
+          griff.removeEventListener('mousedown', runter, true);
+          document.removeEventListener('mousemove', bewegt, true);
+          document.removeEventListener('mouseup', hoch, true);
+        } catch (e) {}
+      });
       return true;
     } catch (e) { notiz('Ziehen: Ereignisse nicht setzbar'); return false; }
   }
@@ -267,11 +331,29 @@
       if (alt && alt.parentNode) alt.parentNode.removeChild(alt);
       var d = document.createElement('div');
       d.id = 'aa2-chrome-befund';
-      d.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99;' +
+      /* NICHT `position:fixed;bottom:0`. QS-Befund vom 09.08.2026: das
+         Panelfenster ist nur rund 130 px hoch — eine am unteren Rand
+         festgenagelte Zeile legt sich dann ueber die Datenzeile, also
+         genau ueber das, was der Pilot lesen will. Sie haengt jetzt im
+         normalen Fluss UNTER dem Streifen: ist Platz da, steht sie da;
+         ist keiner da, ist sie einfach nicht sichtbar — statt etwas
+         Wichtiges zu verdecken. */
+      d.style.cssText = 'position:static;margin-top:2px;' +
         'background:rgba(10,16,26,0.94);color:#8fb0d8;font:10px monospace;' +
         'padding:3px 6px;white-space:pre-wrap;line-height:1.35;';
       d.textContent = 'AA2-CHROME  ' + BEFUND.join('  |  ') + '\nKETTE  ' + kette().join('  <  ');
-      document.body.appendChild(d);
+
+      /* Direkt HINTER den Streifen haengen, nicht an den Body. Zweiter
+         Anlauf beim selben QS-Befund: `position:static` allein reichte
+         nicht, weil der Fensterrahmen absolut positioniert ist — am Body
+         angehaengt landete die Zeile oben links und lag damit wieder
+         ueber der Datenzeile. Als Geschwister des Streifens sitzt sie
+         zwangslaeufig darunter. Fehlt der Rahmen (Streifen haengt direkt
+         am Body), bleibt der Body die Rueckfallebene. */
+      var streifen = document.querySelector('.aa2-strip');
+      var wohin = (streifen && streifen.parentNode) ? streifen.parentNode : document.body;
+      if (streifen && streifen.nextSibling) wohin.insertBefore(d, streifen.nextSibling);
+      else wohin.appendChild(d);
       setTimeout(function () {
         try { if (d.parentNode) d.parentNode.removeChild(d); } catch (e) {}
       }, 90000);
@@ -309,6 +391,13 @@
       setTimeout(function () { lauf(false); zeigeBefund(); }, 3000);
     } catch (e) {}
   }
+
+  try {
+    G.__aa2ChromeStop = function () {
+      for (var i = 0; i < abraeumer.length; i++) { try { abraeumer[i](); } catch (e) {} }
+      abraeumer.length = 0;
+    };
+  } catch (e) {}
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start);

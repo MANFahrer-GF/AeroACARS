@@ -505,9 +505,27 @@
   // 6. Formatierung (B4 — nur ASCII)
   // ═══════════════════════════════════════════════════════════════════
 
+  /* Reihenfolge ist wichtig: erst die Zeichen, fuer die es eine sinnvolle
+     Entsprechung gibt, dann als LETZTES der Auffangrechen.
+
+     Der Auffangrechen kam am 09.08.2026 dazu. Die Windows-Sitzung fand
+     im Sim ein Kaestchen an der Stelle von `▶` (aus dem Fortsetzen-
+     Hinweis in lib.rs) — ein Zeichen, das in dieser Liste schlicht
+     fehlte. Das Muster war klar: jede Aufzaehlung einzelner Zeichen ist
+     unvollstaendig, sobald irgendwo im Client ein neues auftaucht. Ein
+     Kaestchen im Sim ist schlimmer als ein fehlendes Zeichen, also
+     faellt jetzt alles durch, was der Font nicht sicher hat.
+
+     Umlaute stehen BEWUSST vor dem Rechen: sonst wuerde aus
+     "Verzoegerung" ein "Verzgerung". */
   var ERSATZ = [
     [/→/g, '>'], [/·/g, '-'], [/✓/g, 'OK'], [/°/g, ''],
     [/[–—]/g, '-'], [/[„“”]/g, '"'],
+    [/[▶►➤]/g, '>'], [/[◀◄]/g, '<'], [/[•●]/g, '-'], [/[×✕✖]/g, 'x'],
+    [/[⚠]/g, '!'], [/[…]/g, '...'], [/[‚‘’]/g, "'"],
+    [/ä/g, 'ae'], [/ö/g, 'oe'], [/ü/g, 'ue'],
+    [/Ä/g, 'Ae'], [/Ö/g, 'Oe'], [/Ü/g, 'Ue'], [/ß/g, 'ss'],
+    [/[^\x20-\x7E]/g, ''],   // Auffangrechen — MUSS letzter Eintrag bleiben
   ];
   function nurAscii(t) {
     var s = String(t == null ? '' : t);

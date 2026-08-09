@@ -273,17 +273,29 @@ html, body {
   right: auto;
   bottom: auto;
   width: 100%;
-  min-height: 84px;   /* gemessen 63 px + Reserve */
+  min-height: 100px;  /* siehe Notiz unten zu den Schriftmassen */
   box-sizing: border-box;
   border-radius: 0;
 }
 
-/* Mindestbreite, ab der nichts mehr rechts abfaellt (gemessen 627 px).
-   Wird das Sim-Fenster schmaler gezogen, laeuft der Streifen darueber
-   hinaus statt Information stillschweigend zu verlieren — sichtbar ist
-   besser als lautlos weg. */
+/* Mindestbreite, ab der nichts mehr rechts abfaellt.
+ *
+ * KORREKTUR 09.08.2026 nach dem zweiten Sim-Test: meine Browser-Messung
+ * ergab 627 px Inhaltsbreite, im Sim war ein 620-px-Rahmen aber deutlich
+ * zu schmal und erst 780 px reichten. Der Unterschied sind die
+ * SCHRIFTMASSE — der Sim rendert mit anderen Fonts als der Browser auf
+ * dem Mac, rund ein Viertel breiter. Das ist Messung am echten Ziel und
+ * schlaegt meine Rechnung.
+ *
+ * Deshalb: 627 px Messwert x 1,25 Sim-Faktor + Reserve = 840 px. Die
+ * Hoehe oben ist aus demselben Grund von 84 auf 100 px gegangen
+ * (63 px x 1,25 + Reserve).
+ *
+ * Wird das Sim-Fenster schmaler gezogen, laeuft der Streifen darueber
+ * hinaus statt Information stillschweigend zu verlieren — sichtbar ist
+ * besser als lautlos weg. */
 .aa2-nativ .aa2-strip > * {
-  min-width: 680px;
+  min-width: 840px;
 }
 
 /* Nativ nie ausblenden: die Sichtbarkeit steuert das Toolbar-Symbol des
