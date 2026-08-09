@@ -276,6 +276,15 @@ local_api:
       auth_required: true
       purpose: Same underlying stream as panel_websocket, tablet-facing path.
 
+panel_modes_quiet_behavior: >
+  Round 3 (2026-08-09): ready_monitoring and flight_active render with
+  .panel.quiet (CSS opacity 0.32, eased transition, :hover raises it to
+  0.85 for a glance) instead of the full-attention treatment every other
+  mode gets. This is what "auto-activation" (MUST-007/008) now actually
+  means — see functional_requirements.must for the full reasoning. Not a
+  separate panel_mode value; it's a visual modifier panel.js applies to
+  the SAME modes, keyed off QUIET_MODES = {ready_monitoring, flight_active}.
+
 panel_modes:
   - id: disconnected
     description: AeroACARS local bridge is not reachable.
@@ -339,18 +348,48 @@ functional_requirements:
     - id: MUST-006
       text: The panel must show an offline/waiting state when AeroACARS is not reachable.
     - id: MUST-007
-      text: The panel must support automatic activation before landing.
+      text: >
+        REDEFINED (round 3, 2026-08-09): "automatic activation" cannot mean
+        the panel window opening itself — researched and found no confirmed
+        way for AeroACARS to open a CLOSED MSFS toolbar panel externally
+        (MSFS DevSupport has an open feature request "Exposing Coherent to
+        WASM", implying it's not exposed today, and an unanswered "open an
+        in-game panel from wasm/SimConnect?" thread from the prior month;
+        no documented SimConnect/WASM API for this was found). Redefined as:
+        the pilot opens the panel once before departure (already covered by
+        MUST-005/006's connection check), and the ALREADY-OPEN panel's own
+        JS/CSS automatically quiets itself down during cruise and wakes
+        back up for the approach — see panel_modes.quiet_behavior below.
+        This needs no external MSFS capability, only the panel's own
+        already-running code, which is why it's achievable where opening a
+        closed panel isn't.
     - id: MUST-008
-      text: Automatic activation must be triggered by at least one configured approach condition.
+      text: >
+        REDEFINED (round 3): the wake/quiet transition (not a window open)
+        must be triggered by at least one flight_status-derived condition.
+        Implemented in panel.js (v0.2.2): quiet during ready_monitoring/
+        flight_active, full attention from approach_monitor onward — i.e.
+        flight_phase_is_approach / flight_phase_is_final, matching two of
+        the four originally accepted_conditions below. agl_below_threshold_ft
+        and distance_to_destination_below_threshold_nm were never wired
+        (would need new fields on flight_status; not done, no current need
+        since phase-based already satisfies this MUST).
       accepted_conditions:
         - flight_phase_is_approach
         - flight_phase_is_final
         - agl_below_threshold_ft
         - distance_to_destination_below_threshold_nm
     - id: MUST-009
-      text: Automatic activation must be user-disableable in AeroACARS settings.
+      text: >
+        NOT IMPLEMENTED — no settings toggle exists yet to disable the
+        quiet/wake behavior (would fall back to always-full-opacity). Low
+        priority: the behavior is opacity-only, not a window
+        open/close, so the downside of not having a toggle is much smaller
+        than the original spec's version of this requirement assumed.
     - id: MUST-010
-      text: Automatic activation must not open duplicate panel instances.
+      text: >
+        N/A as originally written (no window-opening happens, so "duplicate
+        panel instances" cannot occur from this feature). Superseded.
     - id: MUST-011
       text: During approach and landing, the panel must display live telemetry.
       telemetry_fields:
@@ -1103,6 +1142,31 @@ feasibility_spike:
     paused further MSFS restart cycles for the day (~10 min each). Next
     session should bundle round 2b + 2c into ONE fresh build/test instead
     of yet more incremental rounds.
+  round_3: >
+    Next session (2026-08-09), still purely design/planning work, still no
+    live test run — asked before touching the CSS preview artifact:
+    Thomas confirmed the redesign "sieht gut aus", then asked two follow-
+    up questions: does the panel hide itself during cruise and only arm
+    near landing, and can the whole window actually be dragged. Answered
+    honestly: neither is confirmed — dragging is unverified per round 2's
+    <ingame-ui> bet, and auto-show/hide (the original MUST-007/008
+    "auto-activation before landing") was never actually built, only the
+    content-switching-once-open part was. Thomas asked to look into
+    auto-activation properly. Researched MSFS's SDK for a way to open a
+    CLOSED toolbar panel from outside (SimConnect/WASM) — found no
+    confirmed mechanism (MSFS DevSupport has an open feature request
+    "Exposing Coherent to WASM" implying it isn't exposed today, and an
+    unanswered "open an in-game panel from wasm/SimConnect?" thread from
+    the prior month). Reported this plainly rather than guessing further.
+    Thomas proposed the actually-achievable alternative himself: pilot
+    opens the panel once before departure (already covered by the
+    connection-check state), then the ALREADY-OPEN panel quiets itself
+    visually during cruise and wakes on its own for the approach — no
+    external MSFS capability needed, since it's just the panel's own
+    running JS/CSS changing what's already rendered. Implemented same
+    session as .panel.quiet (opacity 0.32, eased transition, :hover
+    partial-wake) — see MUST-007/008 above and panel_modes_quiet_behavior.
+    Commit d78e9a5. Also NOT yet live-verified.
   goal: >
     Resolve LIM-001 and the local_api.websocket_live.risk_note before
     committing to the full panel build: does a minimal MSFS 2024 in-game
