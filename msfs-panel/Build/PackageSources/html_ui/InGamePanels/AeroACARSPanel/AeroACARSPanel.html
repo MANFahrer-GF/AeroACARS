@@ -4,63 +4,45 @@
   <meta charset="utf-8" />
   <title>AeroACARS</title>
   <link rel="stylesheet" href="panel.css" />
-
-  <!--
-    PFLICHT — und im Feld verifiziert (Thomas, 09.08.2026, Runde-3-Stand:
-    "das letzte native Panel konnten wir verschieben").
-
-    Ohne diese vier Skripte und zwei Vorlagen-Importe ist <ingame-ui> ein
-    unregistriertes Tag ohne jedes Verhalten: es rendert seine Kinder
-    inline, sonst nichts — kein Rahmen, keine Titelleiste, kein Ziehen.
-    Genau das war der Fehlschlag aus Runde 2, wo der Wrapper allein
-    gesetzt war. Quelle: Dutch-FlightSim-Developer/
-    developing-with-simconnect Teil 13-4 plus das dazu passende, noch
-    offene Asobo-Ticket 18144.
-  -->
-  <script type="text/javascript" src="/JS/coherent.js"></script>
-  <script type="text/javascript" src="/JS/common.js"></script>
-  <script type="text/javascript" src="/JS/buttons.js"></script>
-  <script type="text/javascript" src="/JS/Services/ToolBarPanels.js"></script>
-
-  <link rel="import" href="/templates/ingameUi/ingameUi.html" />
-  <link rel="import" href="/templates/ingameUiHeader/ingameUiHeader.html" />
 </head>
 <body>
   <!--
-    v0.3.0 (09.08.2026): Inhalt ist jetzt der HUD-Streifen aus dem
-    Flow-Pro-Widget v3.3 — panel.js ist byte-identisch mit dessen code.js,
-    panel.css ist dessen code.css plus einem nativen Rahmen-Block am Ende.
-    EINE Quelle, zwei Ziele.
+    ═══════════════════════════════════════════════════════════════════
+    v0.4.0 — KEIN <ingame-ui>. Das ist eine Korrektur, keine Nachlaessigkeit.
+    ═══════════════════════════════════════════════════════════════════
 
-    Vorher standen hier fuenf handgepflegte Ansichten (monitor/approach/
-    scoring/score/debrief) mit festen Kennungen. Die sind ersatzlos weg:
-    der Streifen deckt dieselben Zustaende ab, aber in der Fassung, die
-    18 QS-Faelle und einen Feldtag hinter sich hat — inklusive der teuer
-    erkauften Coherent-GT-Regeln (kein `gap`, nur ASCII), die hier
-    genauso gelten, weil BEIDE Umgebungen derselbe Renderer sind.
+    Thomas' Feldbefund (09.08.2026, nach dem Test von v0.3.0):
 
-    Der Streifen baut sich komplett selbst auf, unter `aa2-`-Kennungen.
-    Deshalb bleibt dieses Markup leer — das ist Absicht, nicht Rest.
+      "Das Fenster laesst sich nicht verschieben. Wir hatten eine Version,
+       das war die letzte, die keine Kopfzeile oben hatte. Die hatte sich
+       verschieben lassen."
 
-    Kein `content-fit`: in dieser SDK-Fassung kaputt (Asobo-Ticket 18144),
-    feste Rahmengroesse in panel.css ist der dokumentierte Ausweg.
-    `resize="both"` erlaubt manuelles Anpassen.
+    Die verschiebbare Fassung war Runde 1 (Commit 37266dd): schlichtes
+    HTML, KEIN <ingame-ui>, keine Framework-Importe, keine eigene
+    Kopfzeile. Erst mit <ingame-ui> kam die Kopfzeile — und das Ziehen
+    war weg.
 
-    ⚠ Zum Schliessen das Toolbar-Symbol benutzen, NICHT das X der
-    Titelleiste — die Knoepfe der nativen Leiste stehen im
-    MSFS-Devsupport-Forum als Absturzausloeser.
+    Das passt zum bestaetigten Asobo-Bug (MSFS-DevSupport, mehrere
+    Addon-Entwickler seit SU2): der Sim haengt <ingame-ui>-Elementen
+    selbst die Klassen `hide` und `panelInvisible` an und bricht damit
+    Titelleiste und Ziehen. Solange das offen ist, ist die eigene
+    Fensterdekoration ein Minusgeschaeft: Ohne <ingame-ui> stellt der Sim
+    seinen EIGENEN Fensterrahmen um die Seite — der funktioniert, und der
+    Streifen bekommt die volle Flaeche statt sie mit einer Kopfzeile zu
+    teilen.
+
+    Der zweite Feldbefund haengt genau daran: "die Zeile ist zu klein,
+    es wird nur eins angezeigt". v0.3.0 hatte 92 px Rahmenhoehe, davon
+    frass die Kopfzeile rund 40 px — es blieben ~50 px fuer einen
+    Streifen, der gemessen 63 px braucht. Also war immer nur EINE der
+    beiden Zeilen zu sehen. Ohne Kopfzeile ist das Problem an der Wurzel
+    weg.
+
+    ⚠ NICHT "aufraeumen" und <ingame-ui> wieder einfuehren, ohne im Sim
+      zu pruefen, ob der Asobo-Bug behoben ist. Die Rueckfall-Variante
+      steht in ../../../../../README.md unter "Variante B".
   -->
-  <ingame-ui
-    id="AeroACARSPanel"
-    panel-id="PANEL_AEROACARS_PANEL"
-    title="AeroACARS"
-    class="ingameUiFrame"
-    resize="both"
-    auto-inside=""
-    data-input-group="INGAME-UI"
-  >
-    <div class="aa2-strip"></div>
-  </ingame-ui>
+  <div class="aa2-strip"></div>
 
   <script type="text/javascript" src="panel.js"></script>
 </body>
