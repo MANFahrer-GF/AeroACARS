@@ -1,5 +1,5 @@
 /*
- * AeroACARS HUD — v3.6, 10.08.2026: Pilotenfeedback-Runde — FL-Anzeige, Phasen-METAR, ETE-Umschalter.
+ * AeroACARS HUD — v3.8, 10.08.2026: METAR dekodiert vom Server (ein Dekoder, eine Wahrheit); Text-Parser nur noch Rueckfall.
  *
  * Spricht mit AeroACARS' fest eingebautem Panel-Server auf Port 47847:
  *   GET /panel/status    Flugstatus, im Sekundentakt abgefragt
@@ -659,25 +659,140 @@
     return ['FLT', verstrichen(s.takeoff_at), null, 'zeit'];
   }
 
-  /* v3.6 (F2): METAR fuers Anzeigen vorbereiten: Sonderzeichen raus,
-     auf eine Zellenlaenge gekuerzt (an der Wortgrenze, wie der Ticker).
-     60 Zeichen tragen Wind, Sicht, Wetter und die erste Wolkenschicht —
-     das QNH am Ende faellt bei langen METARs weg, dafuer steht es im
-     Anflug ohnehin im eigenen Feld. */
+  /* v3.7 (F2, zweiter Anlauf nach Pilotenfoto): METAR PARSEN statt roh
+     kuerzen.
+
+     Das Foto zeigte, warum rohes Kuerzen die falschen Teile trifft:
+     "METAR EDDB AUTO 26012KT 240V300 9999 -SHRA FEW///TCU 30/13 Q1011"
+     wurde nach "-SHRA" abgeschnitten — Fuellwoerter (METAR, AUTO),
+     Windvarianz (240V300) und Standardsicht (9999) frassen den Platz,
+     waehrend QNH, Temperatur und die Gewitterwolke hinten runterfielen.
+     Also genau verkehrt herum: das Wichtigste stand am Ende.
+
+     Deshalb: Tokens filtern und NUR die Kernwerte setzen —
+       Station | Wind (mit Boeen) | Sicht (nur wenn nicht 9999) |
+       Wetter (-SHRA, TS, FG ...) | niedrigste BKN/OVC-Schicht |
+       CB/TCU-Warnung (auch aus FEW///TCU) | Temp/Taupunkt | QNH/Alti
+     Aus dem Foto-Beispiel wird so: "EDDB 26012KT -SHRA TCU 30/13 Q1011"
+     — 34 Zeichen, alles Wesentliche, nichts abgeschnitten.
+
+     Alles nach BECMG/TEMPO/NOSIG/RMK ist Trend/Anhang und faellt weg.
+     Liefert das Parsen zu wenig (exotisches Format), faellt die Anzeige
+     auf den gekuerzten Rohtext zurueck — lieber haesslich als leer. */
+  /* v3.8 (#hud-metar): BEVORZUGT die vom Server DEKODIERTEN Felder.
+
+     Thomas' Vorgabe nach dem Foto der Desktop-App: "der muss alles
+     erfassen was es geben kann". Die Antwort ist kein zweiter Parser,
+     sondern derselbe Dekoder wie in der App: seit v1.5.2 liefert der
+     Server `dep_metar_decoded`/`arr_metar_decoded` (metar-Crate, exakt
+     die Quelle der App-Wetterkarte). Dieses Widget FORMATIERT nur noch:
+
+       EDDB -SHRA 260/12kt VIS 6km BKN012 30/13 Q1011
+
+     Reihenfolge und Auswahl wie die App-Karte (Station, Wetter, Wind,
+     Sicht, tiefste bedeckende Schicht, T/TP, QNH). Der Text-Parser
+     darunter bleibt als Rueckfall fuer Server vor v1.5.2. */
+  function wxAusDekodiert(d) {
+    if (!d) return null;
+    var teile = [];
+    if (d.icao) teile.push(nurAscii(d.icao));
+    if (d.weather) teile.push(nurAscii(d.weather));
+    if (typeof d.wind_speed_kt === 'number') {
+      var richtung = (typeof d.wind_direction_deg === 'number')
+        ? ('00' + Math.round(d.wind_direction_deg)).slice(-3)
+        : 'VRB';
+      teile.push(richtung + '/' + Math.round(d.wind_speed_kt) +
+        (typeof d.gust_kt === 'number' ? 'G' + Math.round(d.gust_kt) : '') + 'kt');
+    }
+    if (typeof d.visibility_m === 'number') {
+      /* Wie die App: ab 10 km ist die Zahl egal. */
+      teile.push(d.visibility_m >= 9999 ? 'VIS 10km+'
+        : 'VIS ' + (d.visibility_m >= 5000
+            ? Math.round(d.visibility_m / 1000) + 'km'
+            : d.visibility_m + 'm'));
+    }
+    if (d.cloud_layers && d.cloud_layers.length) {
+      /* Die tiefste Schicht, die eine Decke bildet — sonst die tiefste
+         ueberhaupt. CB/TCU-Zusatz bleibt am cover-Text erhalten. */
+      var beste = null;
+      for (var i = 0; i < d.cloud_layers.length; i++) {
+        var c = d.cloud_layers[i];
+        if (typeof c.base_ft !== 'number') continue;
+        var deckt = /^(BKN|OVC|VV)/.test(c.cover || '');
+        if (!beste || (deckt && !beste.deckt) ||
+            (deckt === beste.deckt && c.base_ft < beste.base_ft)) {
+          beste = { cover: c.cover, base_ft: c.base_ft, deckt: deckt };
+        }
+      }
+      if (beste) {
+        teile.push(nurAscii(beste.cover) + ('00' + Math.round(beste.base_ft / 100)).slice(-3));
+      }
+    }
+    if (typeof d.temperature_c === 'number' && typeof d.dewpoint_c === 'number') {
+      var g = function (x) { var r = Math.round(x); return (r < 0 ? 'M' : '') + ('0' + Math.abs(r)).slice(-2); };
+      teile.push(g(d.temperature_c) + '/' + g(d.dewpoint_c));
+    }
+    if (typeof d.qnh_hpa === 'number') teile.push('Q' + Math.round(d.qnh_hpa));
+    return teile.length >= 2 ? teile.join(' ') : null;
+  }
+
   function wxText(raw) {
     if (!raw) return null;
     var t = nurAscii(String(raw)).replace(/\s+/g, ' ').trim();
-    /* Die Zeitgruppe (101020Z) raus: am Gate interessiert das Wetter,
-       nicht wann es gemessen wurde — das Alter steht notfalls im Log.
-       Ebenso NOSIG/RMK-Anhaenge: "keine Aenderung erwartet" traegt auf
-       einem Streifen nichts. Acht bis vierzehn gesparte Zeichen, die
-       im Sim (der ein Viertel breiter rendert) den Unterschied machen,
-       ob die Phase am Zeilenende noch sichtbar ist. */
-    t = t.replace(/\b\d{6}Z\b ?/, '').replace(/ (NOSIG|RMK .*)$/, '');
-    if (t.length <= 48) return t;
-    var schnitt = t.lastIndexOf(' ', 45);
-    if (schnitt < 28) schnitt = 45;
-    return t.slice(0, schnitt) + '...';
+    var tok = t.split(' ');
+    var station = null, wind = null, sicht = null, temp = null, druck = null;
+    var wetter = [], wolkeTief = null, wolkeTiefFt = Infinity, konvektiv = null;
+    var kern = 0;
+    for (var i = 0; i < tok.length; i++) {
+      var w = tok[i];
+      if (/^(BECMG|TEMPO|NOSIG|RMK)$/.test(w)) break;
+      if (/^(METAR|SPECI|AUTO|COR)$/.test(w)) continue;
+      if (i < 2 && /^[A-Z]{4}$/.test(w) && !station) { station = w; continue; }
+      if (/^\d{6}Z$/.test(w)) continue;
+      if (/^\d{3}V\d{3}$/.test(w)) continue;              // Windvarianz
+      if (/^R\d{2}[LRC]?\//.test(w)) continue;            // RVR
+      if (/^(\d{3}|VRB)\d{2,3}(G\d{2,3})?(KT|MPS)$/.test(w)) { wind = w; kern++; continue; }
+      if (w === 'CAVOK') { sicht = 'CAVOK'; kern++; continue; }
+      if (/^\d{4}(NDV)?$/.test(w)) { if (w.slice(0, 4) !== '9999') sicht = w.slice(0, 4); kern++; continue; }
+      if (/SM$/.test(w)) { if (w !== '10SM') sicht = w; kern++; continue; }
+      if (/^(VC)?[+-]?(MI|PR|BC|DR|BL|SH|TS|FZ)?(DZ|RA|SN|SG|IC|PL|GR|GS|UP|BR|FG|FU|VA|DU|SA|HZ|PO|SQ|FC|SS|DS)+$/.test(w)) {
+        if (wetter.length < 3) wetter.push(w);
+        kern++;
+        continue;
+      }
+      var wolke = /^(FEW|SCT|BKN|OVC|VV)(\d{3}|\/\/\/)(CB|TCU)?$/.exec(w);
+      if (wolke) {
+        kern++;
+        if (wolke[3]) konvektiv = wolke[3];               // CB/TCU von JEDER Schicht
+        if ((wolke[1] === 'BKN' || wolke[1] === 'OVC' || wolke[1] === 'VV') && /^\d{3}$/.test(wolke[2])) {
+          var ft = parseInt(wolke[2], 10);
+          if (ft < wolkeTiefFt) { wolkeTiefFt = ft; wolkeTief = wolke[1] + wolke[2]; }
+        }
+        continue;
+      }
+      if (/^M?\d{2}\/M?\d{2}$/.test(w)) { temp = w; kern++; continue; }
+      if (/^[QA]\d{4}$/.test(w)) { druck = w; kern++; continue; }
+      // Unbekanntes Token: ignorieren, nicht stolpern.
+    }
+    if (kern < 2) {
+      /* Rueckfall: Rohtext ohne Fuellwoerter, an der Wortgrenze gekuerzt. */
+      t = t.replace(/^(METAR|SPECI) /, '').replace(/\b\d{6}Z\b ?/, '')
+           .replace(/ (NOSIG|RMK .*)$/, '');
+      if (t.length <= 48) return t;
+      var schnitt = t.lastIndexOf(' ', 45);
+      if (schnitt < 28) schnitt = 45;
+      return t.slice(0, schnitt) + '...';
+    }
+    var teile = [];
+    if (station) teile.push(station);
+    if (wind) teile.push(wind);
+    if (sicht) teile.push(sicht);
+    for (var j = 0; j < wetter.length; j++) teile.push(wetter[j]);
+    if (wolkeTief) teile.push(wolkeTief);
+    if (konvektiv) teile.push(konvektiv);
+    if (temp) teile.push(temp);
+    if (druck) teile.push(druck);
+    return teile.join(' ');
   }
 
   function verstrichen(iso) {
@@ -856,9 +971,9 @@
              Zeit umschaltbar (ETE/FLT, siehe zeitZelle). Das Zielwetter
              ab dem Sinkflug, bis ~10.000 ft — darunter uebernimmt die
              Anflug-Ansicht, und die hat fuer ein METAR keinen Platz. */
-          var wxSink = (s.phase === 'descent' && s.arr_metar &&
+          var wxSink = (s.phase === 'descent' &&
             (!live || typeof live.altitude_msl_ft !== 'number' || live.altitude_msl_ft > 10000))
-            ? wxText(s.arr_metar) : null;
+            ? (wxAusDekodiert(s.arr_metar_decoded) || wxText(s.arr_metar)) : null;
           setzeZellen([
             ['Route', route],
             hoehenZelle(live),
@@ -877,7 +992,7 @@
               beladungsFarbe(s.sim_zfw_kg, s.planned_zfw_kg)],
             /* v3.6 (F2): Abflugwetter am Gate — der Server holt es seit
                v1.5.1 schon beim Boarding statt erst nach dem Abheben. */
-            s.dep_metar ? ['WX', wxText(s.dep_metar)] : null,
+            ['WX', wxAusDekodiert(s.dep_metar_decoded) || wxText(s.dep_metar)],
           ]);
         }
         anhang(PHASEN[s.phase] || s.phase || '');

@@ -54,6 +54,24 @@ struct ApiMetar {
     /// Upstream uses both string and integer, so accept both.
     #[serde(default, rename = "visib")]
     visib: Option<Visibility>,
+    /// v1.5.2 (#hud-metar): Present-weather string, schon von NOAA
+    /// dekodiert ("-SHRA", "TSRA BR", …). Genau das Feld, aus dem die
+    /// Desktop-App ihre Wetter-Chips baut — jetzt Teil des Snapshots,
+    /// damit HUD und App aus DERSELBEN Quelle zeigen.
+    #[serde(default, rename = "wxString")]
+    wx_string: Option<String>,
+    /// v1.5.2 (#hud-metar): Wolkenschichten (cover + Basis in ft).
+    #[serde(default, rename = "clouds")]
+    clouds: Vec<ApiCloud>,
+}
+
+/// Upstream cloud-layer entry. `base` fehlt bei CLR/SKC/NSC-Eintraegen.
+#[derive(Debug, Clone, Deserialize)]
+struct ApiCloud {
+    #[serde(default, rename = "cover")]
+    cover: Option<String>,
+    #[serde(default, rename = "base")]
+    base: Option<f32>,
 }
 
 /// Wind-direction field can be either a numeric heading or the literal
@@ -92,6 +110,25 @@ pub struct MetarSnapshot {
     pub temperature_c: Option<f32>,
     pub dewpoint_c: Option<f32>,
     pub qnh_hpa: Option<f32>,
+    /// v1.5.2 (#hud-metar): Present weather ("-SHRA", "TSRA BR", …),
+    /// `None` wenn die Station nichts meldet. Direkt NOAAs dekodiertes
+    /// `wxString` — kein eigenes Raw-Parsen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weather: Option<String>,
+    /// v1.5.2 (#hud-metar): Wolkenschichten in Meldungsreihenfolge.
+    /// Leer bei CAVOK/CLR oder wenn die Station keine Wolken meldet.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cloud_layers: Vec<CloudLayer>,
+}
+
+/// Eine gemeldete Wolkenschicht. `base_ft` fehlt bei Eintraegen ohne
+/// Basis (CLR/SKC) — die filtern wir beim Mapping ohnehin heraus.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudLayer {
+    /// FEW / SCT / BKN / OVC / VV — wie gemeldet.
+    pub cover: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_ft: Option<u32>,
 }
 
 #[derive(Debug, Error)]
@@ -206,6 +243,23 @@ async fn fetch_metar_once(icao: &str) -> Result<MetarSnapshot, MetarError> {
         temperature_c: raw.temp,
         dewpoint_c: raw.dewp,
         qnh_hpa: raw.altim,
+        weather: raw.wx_string.filter(|w| !w.trim().is_empty()),
+        cloud_layers: raw
+            .clouds
+            .into_iter()
+            .filter_map(|c| {
+                let cover = c.cover?.trim().to_uppercase();
+                // CLR/SKC/NSC/NCD heisst "keine (relevanten) Wolken" —
+                // als leere Liste klarer als ein Pseudo-Layer.
+                if matches!(cover.as_str(), "CLR" | "SKC" | "NSC" | "NCD" | "CAVOK") {
+                    return None;
+                }
+                Some(CloudLayer {
+                    cover,
+                    base_ft: c.base.map(|b| b.max(0.0) as u32),
+                })
+            })
+            .collect(),
     })
 }
 
@@ -222,6 +276,58 @@ async fn fetch_metar_once(icao: &str) -> Result<MetarSnapshot, MetarError> {
 /// takeoff/touchdown snapshot. Entries with a missing `obsTime` sort
 /// last (never preferred over a dated one) but still fall back to being
 /// picked if that's all upstream sent.
+/// v1.5.2: Wetter + Wolken aus dem NOAA-JSON — der Snapshot muss beides
+/// verlustfrei tragen, denn das In-Sim-HUD zeigt ab v1.5.2 NUR noch
+/// diese dekodierten Felder (kein eigenes Raw-Parsen im Widget mehr).
+#[cfg(test)]
+mod decoded_wx_tests {
+    use super::*;
+
+    #[test]
+    fn weather_and_clouds_survive_the_mapping() {
+        let json = r#"[{
+            "icaoId":"EDDB","rawOb":"EDDB 101250Z AUTO 26012KT 9999 -SHRA FEW///TCU 30/13 Q1011",
+            "obsTime": 1770000000, "wdir": 260, "wspd": 12,
+            "temp": 30.0, "dewp": 13.0, "altim": 1011.0,
+            "wxString": "-SHRA",
+            "clouds": [
+                {"cover":"FEW","base":null},
+                {"cover":"BKN","base":1200},
+                {"cover":"CLR","base":null}
+            ]
+        }]"#;
+        let list: Vec<ApiMetar> = serde_json::from_str(json).expect("parse");
+        let m = pick_latest(list).expect("one entry");
+        assert_eq!(m.wx_string.as_deref(), Some("-SHRA"));
+        assert_eq!(m.clouds.len(), 3);
+        // Mapping-Logik gespiegelt (CLR faellt raus, Basis wird u32):
+        let layers: Vec<CloudLayer> = m.clouds.into_iter().filter_map(|c| {
+            let cover = c.cover?.trim().to_uppercase();
+            if matches!(cover.as_str(), "CLR" | "SKC" | "NSC" | "NCD" | "CAVOK") { return None; }
+            Some(CloudLayer { cover, base_ft: c.base.map(|b| b.max(0.0) as u32) })
+        }).collect();
+        assert_eq!(layers.len(), 2);
+        assert_eq!(layers[1].cover, "BKN");
+        assert_eq!(layers[1].base_ft, Some(1200));
+    }
+
+    #[test]
+    fn snapshot_serialises_new_fields_for_the_panel() {
+        let snap = MetarSnapshot {
+            icao: "EDDB".into(), raw: "x".into(), time: Utc::now(),
+            wind_direction_deg: Some(260.0), wind_speed_kt: Some(12.0), gust_kt: None,
+            visibility_m: Some(9999), temperature_c: Some(30.0), dewpoint_c: Some(13.0),
+            qnh_hpa: Some(1011.0),
+            weather: Some("-SHRA".into()),
+            cloud_layers: vec![CloudLayer { cover: "BKN".into(), base_ft: Some(1200) }],
+        };
+        let js = serde_json::to_string(&snap).expect("serialise");
+        assert!(js.contains("\"weather\":\"-SHRA\""), "{js}");
+        assert!(js.contains("\"cloud_layers\""), "{js}");
+        assert!(js.contains("\"base_ft\":1200"), "{js}");
+    }
+}
+
 fn pick_latest(list: Vec<ApiMetar>) -> Option<ApiMetar> {
     list.into_iter().max_by_key(|m| m.obs_time.unwrap_or(i64::MIN))
 }
@@ -289,6 +395,8 @@ mod tests {
             dewp: None,
             altim: None,
             visib: None,
+            wx_string: None,
+            clouds: Vec::new(),
         }
     }
 

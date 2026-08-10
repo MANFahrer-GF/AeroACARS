@@ -3719,8 +3719,14 @@ struct FlightStats {
     /// `step_flight` transitions into `Takeoff`. None until the fetch
     /// returns (and stays None if the airport isn't in NOAA's set).
     dep_metar_raw: Option<String>,
+    /// v1.5.2 (#hud-metar): der DEKODIERTE Snapshot zum selben Abruf —
+    /// das In-Sim-HUD zeigt ab v1.5.2 diese Felder statt den Rohtext zu
+    /// parsen. Ein Dekoder (metar-Crate), eine Wahrheit; `raw` bleibt
+    /// fuer Log und Alt-Widgets erhalten.
+    dep_metar_snap: Option<MetarSnapshot>,
     /// Same for the arrival airport at touchdown (Final → Landing).
     arr_metar_raw: Option<String>,
+    arr_metar_snap: Option<MetarSnapshot>,
     /// Markers so the streamer only kicks off one fetch per direction
     /// per flight. Set immediately when the spawn fires; cleared never.
     dep_metar_requested: bool,
@@ -4727,6 +4733,13 @@ pub struct ActiveFlightInfo {
     dep_metar: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     arr_metar: Option<String>,
+    /// v1.5.2 (#hud-metar): dieselben Abrufe DEKODIERT (Wind, Sicht,
+    /// Wetter, Wolken, Temperatur, QNH) — die Anzeige formatiert nur
+    /// noch, geparst wird ausschliesslich im metar-Crate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dep_metar_decoded: Option<MetarSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    arr_metar_decoded: Option<MetarSnapshot>,
     /// v1.5.0 (#msfs-hud): **geschätzte** Landebahn im Anflug, aus Position
     /// und Steuerkurs gegen die Navdaten bestimmt. Siehe
     /// `FlightStats::predicted_runway` — insbesondere, warum das ein eigenes
@@ -10173,6 +10186,8 @@ fn flight_info(
         // Anzeige unterscheidet "kein Wetter" nur über Abwesenheit.
         dep_metar: stats.dep_metar_raw.clone().filter(|m| !m.is_empty()),
         arr_metar: stats.arr_metar_raw.clone().filter(|m| !m.is_empty()),
+        dep_metar_decoded: stats.dep_metar_snap.clone(),
+        arr_metar_decoded: stats.arr_metar_snap.clone(),
         predicted_runway: stats.predicted_runway.clone(),
         last_position_at: stats.last_position_at.map(|t| t.to_rfc3339()),
         last_heartbeat_at: stats.last_heartbeat_at.map(|t| t.to_rfc3339()),
@@ -30258,12 +30273,16 @@ fn maybe_spawn_metar_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, new_phas
                 {
                     let mut stats = flight.stats.lock().expect("flight stats");
                     match kind {
-                        MetarKind::Departure => stats.dep_metar_raw = Some(raw.clone()),
-                        // Early und Final schreiben dasselbe Feld: Final
+                        MetarKind::Departure => {
+                            stats.dep_metar_raw = Some(raw.clone());
+                            stats.dep_metar_snap = Some(snap.clone());
+                        }
+                        // Early und Final schreiben dieselben Felder: Final
                         // überschreibt das ältere Descent-Wetter mit dem
                         // frischen — genau so gewollt.
                         MetarKind::ArrivalEarly | MetarKind::Arrival => {
-                            stats.arr_metar_raw = Some(raw.clone())
+                            stats.arr_metar_raw = Some(raw.clone());
+                            stats.arr_metar_snap = Some(snap.clone());
                         }
                     }
                 }
