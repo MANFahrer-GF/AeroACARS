@@ -211,7 +211,18 @@
      hinstellt (defaultTop/defaultLeft) — eine legitime Wahl, aber eine
      bewusste. */
 
-  var LEISTE_HOEHE = 14;   // 0 = ganz weg, dann aber unverschiebbar
+  /* KORREKTUR 10.08.2026, nach der ersten echten Befundzeile aus dem
+     Sim (Foto): das Panel traegt dort die Klasse `collapsible`, einen
+     permanenten Header gibt es NICHT mehr ("Leiste 0") — der Sim
+     erfuellt Thomas' "Titel weg" inzwischen von selbst und blendet die
+     Leiste mutmasslich erst beim Ueberfahren ein. Ein Schrumpfer, der
+     jede auftauchende Leiste sofort auf 14 px drueckt, wuerde dann
+     GENAU den Griff sabotieren, den wir suchen. Deshalb: Schrumpfen
+     standardmaessig AUS; die Leiste wird nur noch entschaerft (X/Pin)
+     und beobachtet. Sollte im Sim doch wieder ein permanenter Titel
+     stehen, laesst er sich hier gezielt reaktivieren. */
+  var LEISTE_SCHRUMPFEN = false;
+  var LEISTE_HOEHE = 14;   // wirkt nur, wenn LEISTE_SCHRUMPFEN = true
 
   function schlankeTitelleiste() {
     var behandelt = 0;
@@ -245,6 +256,20 @@
       for (var m = 0; m < kandidaten.length; m++) {
         var c = kandidaten[m];
         if (c.getAttribute && c.getAttribute('data-aa2-leiste') === '1') continue;
+        if (!LEISTE_SCHRUMPFEN) {
+          /* Nur entschaerfen, nicht anfassen: die X/Pin-Knoepfe bleiben
+             Absturzausloeser, alles andere gehoert dem Sim. */
+          try {
+            var kn = c.querySelectorAll('button, [class*="close"], [class*="Close"], [class*="pin"], [class*="Pin"], icon-button');
+            for (var kx = 0; kx < kn.length; kx++) {
+              kn[kx].style.pointerEvents = 'none';
+              kn[kx].style.visibility = 'hidden';
+            }
+          } catch (e) {}
+          if (c.setAttribute) c.setAttribute('data-aa2-leiste', '1');
+          behandelt++;
+          continue;
+        }
         if (LEISTE_HOEHE <= 0) {
           c.style.display = 'none';
         } else {
@@ -520,9 +545,63 @@
     }
   }
 
+  /* Die Hover-Probe. `collapsible` deutet darauf, dass der Sim die
+     Fensterleiste erst beim Ueberfahren einblendet. Von aussen laesst
+     sich echtes Ueberfahren nicht erzwingen, aber die ueblichen
+     Ereignisse kann man feuern und nachsehen, ob DANACH ein Header im
+     Baum steht. Das Ergebnis wandert in die Befundzeile — dann wissen
+     wir es, statt zu vermuten. */
+  function hoverProbe() {
+    try {
+      var panel = document.querySelector('ingame-ui');
+      if (!panel) { notiz('Hover-Probe: kein Panel'); return; }
+      var vorher = document.querySelectorAll('[class*="eader"]').length;
+      var arten = ['mouseover', 'mouseenter', 'mousemove'];
+      for (var i = 0; i < arten.length; i++) {
+        try {
+          var e = document.createEvent('MouseEvents');
+          e.initMouseEvent(arten[i], true, true, window, 0, 60, 8, 60, 8,
+            false, false, false, false, 0, null);
+          panel.dispatchEvent(e);
+        } catch (err) {}
+      }
+      setTimeout(function () {
+        try {
+          var nachher = document.querySelectorAll('[class*="eader"]');
+          var namen = [];
+          for (var j = 0; j < nachher.length && j < 3; j++) {
+            var n = nachher[j];
+            namen.push((n.tagName || '?').toLowerCase() + '.' +
+              String(n.className || '').trim().split(/\s+/)[0] +
+              '[' + Math.round(n.getBoundingClientRect().height) + 'px]');
+          }
+          notiz('Hover-Header: ' + (nachher.length > vorher ? 'NEU ' : '') +
+                (namen.length ? namen.join(' ') : 'keiner'));
+          zeigeBefund();
+        } catch (e) {}
+      }, 600);
+    } catch (e) {}
+  }
+
   function start() {
     try {
       lauf(true);
+      setTimeout(hoverProbe, 4200);
+
+      /* Erscheint die Leiste erst beim Ueberfahren (collapsible), dann
+         entsteht sie NACH allen gestaffelten Laeufen — und ihre
+         X/Pin-Knoepfe waeren scharf (Absturzausloeser, Thread 13657
+         #20). Deshalb: bei jedem Ueberfahren des Panels kurz danach
+         entschaerfen. Billig, idempotent (data-aa2-leiste-Marke),
+         und trifft genau den Moment, in dem der Sim die Leiste baut. */
+      try {
+        var panelEl = document.querySelector('ingame-ui');
+        if (panelEl) {
+          panelEl.addEventListener('mouseover', function () {
+            setTimeout(schlankeTitelleiste, 150);
+          });
+        }
+      } catch (e) {}
       /* Nachfassen: 300 ms / 1 s / 3 s. Deckt einen langsam
          aufgebauten Rahmen ab, ohne dauerhaft im Takt zu laufen. */
       setTimeout(function () { lauf(false); }, 300);
