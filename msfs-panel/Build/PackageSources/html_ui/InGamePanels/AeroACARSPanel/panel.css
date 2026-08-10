@@ -109,7 +109,14 @@ html, body {
 .aa2-ticker {
   display: flex;
   align-items: baseline;
-  max-width: 620px;
+  /* v3.6: vorher fest 620 px. Seit die Datenzeile mit WX-Zelle deutlich
+     breiter werden kann (Boarding gemessen ~1.140 px), soll der Ticker
+     die volle Boxbreite nutzen — die Box richtet sich nach der
+     Datenzeile, und die Ellipse in .aa2-msg kappt an deren Kante. Ein
+     fester Wert liesse den Ticker mitten in einer breiten Box enden,
+     was wie ein Fehler aussieht. */
+  max-width: 100%;
+  align-self: stretch;
   overflow: hidden;
 }
 .aa2-ticker > * + * { margin-left: var(--aa2-gap-tight); }
