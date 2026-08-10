@@ -4,70 +4,63 @@
   <meta charset="utf-8" />
   <title>AeroACARS</title>
   <link rel="stylesheet" href="panel.css" />
+
+  <!--
+    v0.10.0 (10.08.2026) — <ingame-ui> ist ZURUECK, und diesmal mit dem
+    entscheidenden fehlenden Teil.
+
+    Quelle, endlich im Volltext lesbar (devsupport-Thread 13657, alle 20
+    Beitraege): Der Entwickler von "All in One" (ErDebugger) hat exakt
+    unser Problem geloest und mit Screenshots belegt, dass sein Panel
+    seither wieder VERSCHIEBBAR ist. Sein Befund:
+
+      "Asobo has added the hide class to all <ingame-ui>, making them
+       hidden by default. [...] The solution is to remove that class.
+       If you also want the panel to be DRAGGABLE, you need to remove
+       the panelInvisible class as well."
+
+    Das heisst: Das Ziehen macht die ingameUi-KOMPONENTE selbst — es gibt
+    es NUR mit <ingame-ui> samt Framework-Importen. Alle Varianten ohne
+    (v0.4.0 bis v0.9.0) konnten nie verschiebbar werden; ohne die
+    Komponente existiert schlicht kein Zieh-Code. Und die Varianten MIT
+    <ingame-ui> (v0.3.0, Runde 2/3) haben die Asobo-Klassen nie
+    entfernt — deshalb waren auch sie fest. Beides zusammen gab es noch
+    nie; genau das ist v0.10.0. Das Entfernen macht panel-chrome.js,
+    gestaffelt, weil der Sim die Klassen nach dem Aufbau setzt.
+
+    Weitere gesicherte Fakten aus demselben Thread:
+    - Das <title> im <head> wird seit SU2 ignoriert; es zaehlt NUR das
+      title-Attribut am <ingame-ui> (Umberto67, #13).
+    - Die Komponente setzt seit SU2 eigene CSS-Variablen --min-width /
+      --open-min-height, die die Groesse brechen; auf panelReady
+      zuruecksetzen (fearlessfrog, #20). Macht panel-chrome.js.
+    - Die X/Pin-Knoepfe der Titelleiste stuerzen den Sim ab
+      (fearlessfrog, #20) — unsere schlanke Leiste versteckt sie durch
+      overflow:hidden gleich mit.
+    - KEIN content-fit: unabhaengig davon kaputt (Asobo-Ticket 18144).
+  -->
+  <script type="text/javascript" src="/JS/coherent.js"></script>
+  <script type="text/javascript" src="/JS/common.js"></script>
+  <script type="text/javascript" src="/JS/buttons.js"></script>
+  <script type="text/javascript" src="/JS/Services/ToolBarPanels.js"></script>
+
+  <link rel="import" href="/templates/ingameUi/ingameUi.html" />
+  <link rel="import" href="/templates/ingameUiHeader/ingameUiHeader.html" />
 </head>
 <body class="aa2-nativ">
-  <!--
-    ═══════════════════════════════════════════════════════════════════
-    v0.4.0 — KEIN <ingame-ui>. Das ist eine Korrektur, keine Nachlaessigkeit.
-    ═══════════════════════════════════════════════════════════════════
-
-    Thomas' Feldbefund (09.08.2026, nach dem Test von v0.3.0):
-
-      "Das Fenster laesst sich nicht verschieben. Wir hatten eine Version,
-       das war die letzte, die keine Kopfzeile oben hatte. Die hatte sich
-       verschieben lassen."
-
-    Die verschiebbare Fassung war Runde 1 (Commit 37266dd): schlichtes
-    HTML, KEIN <ingame-ui>, keine Framework-Importe, keine eigene
-    Kopfzeile. Erst mit <ingame-ui> kam die Kopfzeile — und das Ziehen
-    war weg.
-
-    Das passt zum bestaetigten Asobo-Bug (MSFS-DevSupport, mehrere
-    Addon-Entwickler seit SU2): der Sim haengt <ingame-ui>-Elementen
-    selbst die Klassen `hide` und `panelInvisible` an und bricht damit
-    Titelleiste und Ziehen. Solange das offen ist, ist die eigene
-    Fensterdekoration ein Minusgeschaeft: Ohne <ingame-ui> stellt der Sim
-    seinen EIGENEN Fensterrahmen um die Seite — der funktioniert, und der
-    Streifen bekommt die volle Flaeche statt sie mit einer Kopfzeile zu
-    teilen.
-
-    Der zweite Feldbefund haengt genau daran: "die Zeile ist zu klein,
-    es wird nur eins angezeigt". v0.3.0 hatte 92 px Rahmenhoehe, davon
-    frass die Kopfzeile rund 40 px — es blieben ~50 px fuer einen
-    Streifen, der gemessen 63 px braucht. Also war immer nur EINE der
-    beiden Zeilen zu sehen. Ohne Kopfzeile ist das Problem an der Wurzel
-    weg.
-
-    ⚠ NICHT "aufraeumen" und <ingame-ui> wieder einfuehren, ohne im Sim
-      zu pruefen, ob der Asobo-Bug behoben ist. Die Rueckfall-Variante
-      steht in ../../../../../README.md unter "Variante B".
-  -->
-  <!--
-    Der Schalter fuer den nativen Teil in panel.css ist `aa2-nativ` am
-    <body> — bewusst DORT und nicht am Streifen. Zwei Fehlversuche
-    liegen dahinter, beide im Test gefunden (09.08.2026):
-
-      1. `body > .aa2-strip` als CSS-Auswahl: brach, sobald der Sim den
-         Streifen in ein eigenes Rahmen-Div legte (dann kein direktes
-         Body-Kind mehr) — und dann gewann die Flow-Regel `position:
-         absolute`.
-      2. Die Klasse am Streifen selbst: panel.js setzt dessen
-         `className` beim Umschalten auf "ruhig" komplett neu und
-         loescht dabei jede Zusatzklasse. Der Marker war nach dem
-         ersten Takt weg.
-
-    Der Body wird von niemandem angefasst und ist immer Vorfahre.
-  -->
-  <div class="aa2-strip"></div>
+  <ingame-ui
+    id="AeroACARSPanel"
+    panel-id="PANEL_AEROACARS_PANEL"
+    title="AeroACARS"
+    class="ingameUiFrame"
+    resize="both"
+    auto-inside=""
+    data-input-group="INGAME-UI"
+  >
+    <div class="aa2-strip"></div>
+  </ingame-ui>
 
   <script type="text/javascript" src="panel.js"></script>
-
-  <!--
-    NUR nativ: Titelleiste und Ziehen. Bewusst eine EIGENE Datei, damit
-    panel.js byte-identisch mit dem Flow-Widget bleibt. Laedt NACH
-    panel.js, weil sie den fertig aufgebauten Streifen als Ziehgriff
-    braucht. Reihenfolge nicht tauschen.
-  -->
   <script type="text/javascript" src="panel-chrome.js"></script>
 </body>
 </html>

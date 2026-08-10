@@ -120,26 +120,56 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════
-     2. Asobo-Fehler entschaerfen: hide/panelInvisible abraeumen
+     2. Die dokumentierte Freischaltung (devsupport-Thread 13657)
      ═══════════════════════════════════════════════════════════════════
-     Der in mehreren DevSupport-Threads beschriebene Workaround. Wir
-     wenden ihn auf die ganze Kette an, nicht nur auf ein geratenes
-     Element — und WIEDERHOLT, weil der Sim die Klassen nach dem ersten
-     Bildaufbau erneut setzen kann. */
+     Drei Schritte, alle von Addon-Entwicklern mit funktionierenden
+     Panels belegt (ErDebugger #4/#8, fearlessfrog #20):
 
-  function raeumeKlassen() {
+     (a) `hide` weg vom <ingame-ui> — sonst unsichtbar (Asobo setzt sie
+         seit SU2 von sich aus).
+     (b) `panelInvisible` weg — WOERTLICH aus dem Thread: "If you also
+         want the panel to be draggable, you need to remove the
+         panelInvisible class as well." DAS ist der Zieh-Schalter, der
+         in allen unseren Fassungen bis v0.9.0 fehlte.
+     (c) Die SU2-Variablen --min-width/--open-min-height zuruecksetzen,
+         die die Komponente seither selbst setzt und die die Groesse
+         brechen.
+
+     Rekursiv auch auf den Kindern (fearlessfrog entfernte die Klassen
+     "recursively" — der Sim streut sie auch dorthin), aber NIE auf
+     unseren eigenen aa2-Elementen: der Streifen verwaltet seine
+     Sichtbarkeit selbst. Wiederholt aufgerufen, weil der Sim die
+     Klassen nach dem ersten Bildaufbau erneut setzen kann. */
+
+  function schalteFrei() {
     var getroffen = 0;
     try {
-      var el = document.querySelector('.aa2-strip');
-      var tiefe = 0;
-      while (el && tiefe < 12) {
+      var panel = document.getElementById('AeroACARSPanel') ||
+                  document.querySelector('ingame-ui');
+      if (!panel) return 0;
+
+      var alle = [panel];
+      try {
+        var kinder = panel.querySelectorAll('.hide, .panelInvisible');
+        for (var i = 0; i < kinder.length; i++) alle.push(kinder[i]);
+      } catch (e) {}
+
+      for (var j = 0; j < alle.length; j++) {
+        var el = alle[j];
+        /* Eigene Elemente nie anfassen. */
+        var kl = (typeof el.className === 'string') ? el.className : '';
+        if (kl.indexOf('aa2-') !== -1) continue;
         if (el.classList) {
           if (el.classList.contains('hide')) { el.classList.remove('hide'); getroffen++; }
           if (el.classList.contains('panelInvisible')) { el.classList.remove('panelInvisible'); getroffen++; }
         }
-        el = el.parentElement;
-        tiefe++;
       }
+
+      /* (c) — Groessen-Variablen der Komponente zuruecksetzen. */
+      try {
+        panel.style.removeProperty('--min-width');
+        panel.style.removeProperty('--open-min-height');
+      } catch (e) {}
     } catch (e) {}
     return getroffen;
   }
@@ -239,6 +269,19 @@
             c.addEventListener('mouseenter', function () { this.style.opacity = '0.85'; });
             c.addEventListener('mouseleave', function () { this.style.opacity = '0.30'; });
           } catch (e) {}
+          /* Die X/Pin-Knoepfe der Leiste stuerzen den Sim ab (Thread
+             13657 #20: "if clicked will cause a sim crash to desktop").
+             Bei 14 px Hoehe sind sie zwar geclippt, aber je nach
+             Sim-Markup noch treffbar — deshalb explizit stilllegen.
+             Die Leiste selbst bleibt voll anfassbar (der Ziehgriff!),
+             nur ihre Knoepfe werden taub. */
+          try {
+            var knoepfe = c.querySelectorAll('button, [class*="close"], [class*="Close"], [class*="pin"], [class*="Pin"], icon-button');
+            for (var kb = 0; kb < knoepfe.length; kb++) {
+              knoepfe[kb].style.pointerEvents = 'none';
+              knoepfe[kb].style.visibility = 'hidden';
+            }
+          } catch (e) {}
         }
         if (c.setAttribute) c.setAttribute('data-aa2-leiste', '1');
         behandelt++;
@@ -307,6 +350,16 @@
   }
 
   function ruesteZiehenAus() {
+    /* Existiert ein <ingame-ui>, zieht die KOMPONENTE selbst (das ist
+       ihre dokumentierte Faehigkeit, sobald panelInvisible weg ist —
+       Thread 13657 #4). Unser eigener Griff wuerde ihr ins Handwerk
+       pfuschen: im Test packte er den ingameUiWrapper und verschob den
+       INHALT im Fenster statt des Fensters — der bekannte falsche
+       Modus. Also: Finger weg, der Komponente ueberlassen. */
+    if (document.querySelector('ingame-ui')) {
+      notiz('Ziehen: der ingame-ui-Komponente ueberlassen');
+      return false;
+    }
     var ziel = findeZiehZiel();
     if (!ziel) {
       notiz('Ziehen: Rahmen NICHT in unserem Dokument; Eltern ' + elterndokumentErreichbar());
@@ -454,7 +507,7 @@
      ausserdem spaeter erneut setzen. */
 
   function lauf(erster) {
-    var k = raeumeKlassen();
+    var k = schalteFrei();
     var t = schlankeTitelleiste();
     if (erster) {
       var z = ruesteZiehenAus();

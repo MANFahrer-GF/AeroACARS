@@ -264,6 +264,32 @@ html, body {
  * Streifen soll sich hineinlegen, nicht dagegen druecken.
  * ══════════════════════════════════════════════════════════════════════ */
 
+/* ── Der <ingame-ui>-Rahmen (v0.10.0) ────────────────────────────────
+   content-fit ist kaputt (Asobo-Ticket 18144), also feste Rahmengroesse
+   plus erzwungene Fuellung der Framework-Wrapper — das ist der in
+   Runde 3 im Feld bestaetigte Ausweg. Groesse = die im Sim gemessenen
+   Werte (880 x 130) plus Platz fuer die schlanke Titelleiste. */
+ingame-ui#AeroACARSPanel {
+  width: 900px !important;
+  height: 150px !important;
+  min-width: 700px !important;
+  min-height: 120px !important;
+}
+
+/* Diese Wrapper erzeugt das Framework; ohne Zwangsfuellung fallen sie
+   auf Hoehe 0 zusammen — unabhaengig vom content-fit-Fehler. */
+ingame-ui#AeroACARSPanel .ingameUiContent,
+ingame-ui#AeroACARSPanel .ingameUiWrapper {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  overflow: hidden !important;
+}
+
 /* Nativ fuellt der Streifen das Sim-Fenster, statt wie in Flow frei
    ueber dem Bild zu schweben. Position und Groesse besorgt der
    Fensterrahmen — deshalb hier KEIN position/fixed und KEINE feste
