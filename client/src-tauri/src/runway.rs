@@ -1521,6 +1521,14 @@ pub fn predict_landing_runway(
     best.map(|(m, _)| m)
 }
 
+/// v1.5.1 (#hud-pilotenfeedback F3): Großkreis-Distanz in Seemeilen —
+/// die einzige öffentliche Distanz-Schnittstelle dieses Moduls. Bewusst
+/// ein Wrapper statt `haversine_m` zu öffnen: die Meter-Variante bleibt
+/// ein Implementierungsdetail der Bahn-Korrelation.
+pub fn distance_nm(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+    haversine_m(lat1, lon1, lat2, lon2) / 1852.0
+}
+
 /// Great-circle distance in meters.
 fn haversine_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     let phi1 = lat1.to_radians();

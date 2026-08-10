@@ -1,5 +1,5 @@
 /*
- * AeroACARS HUD — v3.3, 09.08.2026: EINE Quelldatei fuer Flow Pro UND das native MSFS-2024-Panel.
+ * AeroACARS HUD — v3.6, 10.08.2026: Pilotenfeedback-Runde — FL-Anzeige, Phasen-METAR, ETE-Umschalter.
  *
  * Spricht mit AeroACARS' fest eingebautem Panel-Server auf Port 47847:
  *   GET /panel/status    Flugstatus, im Sekundentakt abgefragt
@@ -252,6 +252,26 @@
       K.zellen.push({ wurzel: z, lbl: l, val: v });
     }
 
+    /* v3.6 (F3): die erste und einzige Klick-Flaeche des Widgets. Eine
+       Delegation auf der Datenzeile statt Handler pro Zelle: die Zellen
+       werden bei jedem Takt neu beschriftet, der Handler ueberlebt das.
+       In Flow liegt die Flaeche im Drag-Bereich — ein Klick ohne
+       Bewegung kommt als click durch, ein Ziehen bleibt Ziehen. */
+    try { K.data.addEventListener('click', klickAufDaten); } catch (err) {}
+    function klickAufDaten(e) {
+      try {
+        var el = e.target;
+        while (el && el !== K.data) {
+          if (el.getAttribute && el.getAttribute('data-aa2-klick') === 'zeit') {
+            zeitModus = (zeitModus === 'rest') ? 'flug' : 'rest';
+            zeichne();
+            return;
+          }
+          el = el.parentElement;
+        }
+      } catch (err) {}
+    }
+
     K.wind = neu('span', 'aa2-wind');
     K.wind.appendChild(neu('span', 'aa2-lbl', 'Wind'));
     var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -311,6 +331,11 @@
   /* Eine Zelle ohne Wert wird als GANZES ausgeblendet — nie eine
      Beschriftung ohne Zahl. */
   function setzeZellen(liste) {
+    /* null-Eintraege rausfiltern, damit optionale Zellen (WX) keine
+       Luecke lassen, sondern die folgenden aufruecken. */
+    var dicht = [];
+    for (var f = 0; f < liste.length; f++) if (liste[f]) dicht.push(liste[f]);
+    liste = dicht;
     for (var i = 0; i < K.zellen.length; i++) {
       var z = K.zellen[i];
       var e = liste[i];
@@ -318,6 +343,13 @@
       z.lbl.textContent = e[0];
       z.val.textContent = e[1];
       z.val.className = 'aa2-val aa2-mono' + (e[2] ? ' ' + e[2] : '');
+      /* v3.6 (F3): viertes Element = Klick-Kennung. Zellen sind sonst
+         reine Anzeige; nur wer eine Kennung traegt, ist anfassbar (CSS
+         zeigt den Zeiger, nativ oeffnet sie die pointer-events-Sperre). */
+      try {
+        if (e[3]) z.wurzel.setAttribute('data-aa2-klick', e[3]);
+        else z.wurzel.removeAttribute('data-aa2-klick');
+      } catch (err) {}
       zeige(z.wurzel, true);
     }
   }
@@ -325,6 +357,14 @@
   // ═══════════════════════════════════════════════════════════════════
   // 4. Uebertragung (B2 + B3)
   // ═══════════════════════════════════════════════════════════════════
+
+  /* v3.6 (F3): Der einzige interaktive Zustand des Widgets. 'rest' zeigt
+     die Restflugzeit (ETE vom Server), 'flug' die verstrichene Zeit.
+     Standard ist 'rest' — das war der eigentliche Pilotenwunsch; die
+     verstrichene Zeit gab es vorher schon. Ein Klick auf die Zeitzelle
+     wechselt. Bewusst NICHT persistiert: ein Neuladen faellt auf den
+     Wunsch-Standard zurueck, und mehr Zustand braucht ein Streifen nicht. */
+  var zeitModus = 'rest';
 
   var anfrageLaeuft = false;   // gilt fuer ALLE Routen zusammen
   var naechsterVersuch = 0;
@@ -574,6 +614,72 @@
     return s.callsign || ((s.airline_icao || '') + (s.flight_number || '')) || 'AeroACARS';
   }
 
+  /* v3.6 (F1): Die Hoehen-Zelle, phasenrichtig.
+
+     Oberhalb der Transition fliegt niemand nach Fuss ueber Grund oder
+     Meereshoehe — da zaehlt das Flight Level aus der DRUCKhoehe. Zwei
+     Ausloeser, jeder allein reicht:
+       - Druckhoehe ueber ~17.500 ft (die USA wechseln bei 18.000, Europa
+         frueher — 17.500 nimmt beide mit, und in der Übergangszone ist
+         FL ohnehin die richtigere Anzeige), oder
+       - QNH steht auf Standard 1013 (der Pilot HAT auf FL gewechselt,
+         egal in welcher Hoehe — z.B. Transition Altitude 5.000 in EDDB).
+     Darunter: echte Meereshoehe (ALT). Ganz ohne Barometrik (alte App,
+     Sim ohne SimVar): AGL wie bisher — nie eine leere Zelle. */
+  function hoehenZelle(live) {
+    if (!live) return ['AGL', null];
+    var p = live.altitude_pressure_ft;
+    var qnhStd = typeof live.qnh_hpa === 'number' && Math.abs(live.qnh_hpa - 1013.25) < 0.6;
+    if (typeof p === 'number' && (p >= 17500 || qnhStd)) {
+      var fl = Math.round(p / 100);
+      return ['FL', (fl < 100 ? ('00' + fl).slice(-3) : String(fl))];
+    }
+    if (typeof live.altitude_msl_ft === 'number') {
+      return ['ALT', Math.round(live.altitude_msl_ft / 100) * 100 + ' ft'];
+    }
+    return ['AGL', typeof live.altitude_agl_ft === 'number'
+      ? Math.round(live.altitude_agl_ft / 100) * 100 + ' ft' : null];
+  }
+
+  /* v3.6 (F3): Minuten als "1h04m" — dasselbe Format wie verstrichen(). */
+  function alsDauer(min) {
+    if (typeof min !== 'number' || min < 0) return null;
+    var h = Math.floor(min / 60), m = min % 60;
+    return h > 0 ? h + 'h' + (m < 10 ? '0' : '') + m + 'm' : m + 'm';
+  }
+
+  /* v3.6 (F3): Die Zeit-Zelle. Im Modus 'rest' die Restflugzeit vom
+     Server (Grosskreis zum Ziel / Groundspeed) — faellt sie aus (rollt
+     gerade, Server aelter als v1.5.1), stillschweigend die verstrichene
+     Zeit, denn eine leere Zelle beantwortet gar keine Frage. */
+  function zeitZelle(s, live) {
+    if (zeitModus === 'rest' && live && typeof live.ete_min === 'number') {
+      return ['ETE', alsDauer(live.ete_min), null, 'zeit'];
+    }
+    return ['FLT', verstrichen(s.takeoff_at), null, 'zeit'];
+  }
+
+  /* v3.6 (F2): METAR fuers Anzeigen vorbereiten: Sonderzeichen raus,
+     auf eine Zellenlaenge gekuerzt (an der Wortgrenze, wie der Ticker).
+     60 Zeichen tragen Wind, Sicht, Wetter und die erste Wolkenschicht —
+     das QNH am Ende faellt bei langen METARs weg, dafuer steht es im
+     Anflug ohnehin im eigenen Feld. */
+  function wxText(raw) {
+    if (!raw) return null;
+    var t = nurAscii(String(raw)).replace(/\s+/g, ' ').trim();
+    /* Die Zeitgruppe (101020Z) raus: am Gate interessiert das Wetter,
+       nicht wann es gemessen wurde — das Alter steht notfalls im Log.
+       Ebenso NOSIG/RMK-Anhaenge: "keine Aenderung erwartet" traegt auf
+       einem Streifen nichts. Acht bis vierzehn gesparte Zeichen, die
+       im Sim (der ein Viertel breiter rendert) den Unterschied machen,
+       ob die Phase am Zeilenende noch sichtbar ist. */
+    t = t.replace(/\b\d{6}Z\b ?/, '').replace(/ (NOSIG|RMK .*)$/, '');
+    if (t.length <= 48) return t;
+    var schnitt = t.lastIndexOf(' ', 45);
+    if (schnitt < 28) schnitt = 45;
+    return t.slice(0, schnitt) + '...';
+  }
+
   function verstrichen(iso) {
     if (!iso) return null;
     var ms = Date.parse(iso);
@@ -746,11 +852,18 @@
       case 'unterwegs': {
         var route = (s.dpt_airport || '----') + ' > ' + (s.arr_airport || '----');
         if (s.takeoff_at) {
+          /* v3.6: Hoehe phasenrichtig (FL/ALT/AGL, siehe hoehenZelle),
+             Zeit umschaltbar (ETE/FLT, siehe zeitZelle). Das Zielwetter
+             ab dem Sinkflug, bis ~10.000 ft — darunter uebernimmt die
+             Anflug-Ansicht, und die hat fuer ein METAR keinen Platz. */
+          var wxSink = (s.phase === 'descent' && s.arr_metar &&
+            (!live || typeof live.altitude_msl_ft !== 'number' || live.altitude_msl_ft > 10000))
+            ? wxText(s.arr_metar) : null;
           setzeZellen([
             ['Route', route],
-            ['AGL', live && typeof live.altitude_agl_ft === 'number'
-              ? Math.round(live.altitude_agl_ft / 100) * 100 + ' ft' : null],
-            ['Flugzeit', verstrichen(s.takeoff_at)],
+            hoehenZelle(live),
+            zeitZelle(s, live),
+            wxSink ? ['WX', wxSink] : null,
           ]);
         } else {
           /* Am Boden ist die Frage "ist geladen, was geladen sein soll":
@@ -762,6 +875,9 @@
               beladungsFarbe(s.sim_fuel_kg, s.planned_block_fuel_kg)],
             ['ZFW', istSoll(s.sim_zfw_kg, s.planned_zfw_kg),
               beladungsFarbe(s.sim_zfw_kg, s.planned_zfw_kg)],
+            /* v3.6 (F2): Abflugwetter am Gate — der Server holt es seit
+               v1.5.1 schon beim Boarding statt erst nach dem Abheben. */
+            s.dep_metar ? ['WX', wxText(s.dep_metar)] : null,
           ]);
         }
         anhang(PHASEN[s.phase] || s.phase || '');

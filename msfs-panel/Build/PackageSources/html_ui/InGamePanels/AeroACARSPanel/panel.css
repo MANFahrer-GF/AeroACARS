@@ -1,5 +1,5 @@
 /*
- * AeroACARS HUD — v2.2, Neufassung vom 09.08.2026.
+ * AeroACARS HUD — v3.6, 10.08.2026 (Pilotenfeedback-Runde).
  *
  * ─── Vier Regeln aus Feldtests. Bitte NICHT zurueckdrehen, auch wenn es
  *     im Browser anders schoener aussieht — der Browser ist hier nicht
@@ -233,36 +233,14 @@ html, body {
 
 .aa2-tail { font-size: 13px; font-weight: 600; color: var(--aa2-ink-muted); }
 
-/* ══════════════════════════════════════════════════════════════════════
- * NATIVER MSFS-2024-RAHMEN — v0.4.0 (09.08.2026)
- *
- * Alles daruber ist byte-identisch mit dem Flow-Pro-Widget (code.css).
- * Dieser Block gilt NUR nativ; in Flow greifen die Regeln nicht, weil es
- * dort keinen `body.aa2-nativ` gibt. So bleibt EINE Quelle fuer beide.
- *
- * ─── Gemessene Groessen, nicht geschaetzt ────────────────────────────
- *
- * Am 09.08.2026 mit der ECHTEN code.css ueber 12 Zustaende und 7
- * Rahmenbreiten im Browser gemessen (Skript: scratchpad/hoehenmessung):
- *
- *   Hoehe:  63 px in JEDEM Zustand mit Ticker (Tickerzeile + Trennlinie
- *           + Datenzeile), 38 px ohne Ticker. Konstant ueber alle
- *           Breiten — der Streifen bricht NICHT um, er schneidet
- *           seitlich ab. Darum ist die Hoehe unkritisch, sobald sie
- *           reicht, und die BREITE der eigentliche Engpass.
- *
- *   Breite: 627 px braucht der breiteste Zustand (Boarding, weil dort
- *           Fuel UND ZFW je als Ist/Soll stehen). Darunter faellt rechts
- *           Information weg, ohne dass man es merkt.
- *
- * Daraus die Vorgaben unten: 680 px Breite (627 + Reserve fuer laengere
- * Callsigns/Bahnkennungen), 84 px Hoehe (63 + Reserve). Beides sind
- * MINDEST-Werte; groesser ist immer unbedenklich, kleiner nicht.
- *
- * Bewusst KEINE feste `height` mehr auf dem Streifen (v0.3.0 hatte
- * 92 px hart gesetzt): der Rahmen gehoert jetzt dem Sim, und der
- * Streifen soll sich hineinlegen, nicht dagegen druecken.
- * ══════════════════════════════════════════════════════════════════════ */
+
+/* ─── v3.6 (F3): die einzige Klick-Flaeche ──────────────────────────── */
+
+/* Die Zeit-Zelle traegt data-aa2-klick="zeit" (setzeZellen). Dezente
+   Punktlinie darunter, damit man ihr die Anfassbarkeit ansieht, ohne
+   dass sie schreit. */
+[data-aa2-klick] { cursor: pointer; }
+[data-aa2-klick] .aa2-val { border-bottom: 1px dotted var(--aa2-ink-muted); }
 
 /* ── Der <ingame-ui>-Rahmen (v0.10.0) ────────────────────────────────
    content-fit ist kaputt (Asobo-Ticket 18144), also feste Rahmengroesse
@@ -369,4 +347,11 @@ ingame-ui#AeroACARSPanel .ingameUiWrapper {
    Bildaufbau kurz ein leeres Fenster erzeugen. */
 .aa2-nativ .aa2-strip:empty {
   display: block;
+}
+
+/* v3.6 (F3): Der Streifen ist nativ fuer die Maus durchlaessig — die
+   Zeit-Zelle als einzige Klick-Flaeche muss die Sperre wieder oeffnen,
+   sonst laesst sich die Zeit nur in Flow und im Browser umschalten. */
+.aa2-nativ [data-aa2-klick] {
+  pointer-events: auto;
 }

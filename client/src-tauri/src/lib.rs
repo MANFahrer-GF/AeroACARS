@@ -3725,6 +3725,9 @@ struct FlightStats {
     /// per flight. Set immediately when the spawn fires; cleared never.
     dep_metar_requested: bool,
     arr_metar_requested: bool,
+    /// v1.5.1 (F2): eigener Latch für den frühen Descent-Abruf, damit
+    /// der Final-Abruf trotzdem noch frisch nachholt (siehe `MetarKind`).
+    arr_metar_early_requested: bool,
 
     // ---- Fuel tracking ----
     block_fuel_kg: Option<f32>,
@@ -4471,6 +4474,26 @@ pub struct PanelLiveSnapshot {
     crosswind_kt: Option<f32>,
     /// v1.5.0 (#msfs-hud): Tankinhalt für die Boarding-Anzeige.
     fuel_total_kg: f32,
+    /// v1.5.1 (#hud-pilotenfeedback F1): Barometrik für die
+    /// Flight-Level-Anzeige. `altitude_msl_ft` ist die wahre Höhe (bisher
+    /// hatte das Panel oberhalb des Anflugs nur AGL — über den Alpen ist
+    /// das eine seltsame Zahl), `altitude_pressure_ft` die Druckhöhe, aus
+    /// der das Panel FLxxx rechnet, `qnh_hpa` erlaubt die
+    /// Standard-QNH-Erkennung (1013 → Pilot fliegt nach FL, egal wie hoch).
+    altitude_msl_ft: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    altitude_pressure_ft: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    qnh_hpa: Option<f32>,
+    /// v1.5.1 (#hud-pilotenfeedback F3): Restflugzeit in Minuten,
+    /// Großkreis zum Ziel / Groundspeed. `None` am Boden und unter 30 kt
+    /// (Lehre aus v0.19.3: NIE `distance_nm` benutzen — das ist die schon
+    /// GEFLOGENE Strecke; damit startete die ETA einst bei null und wuchs
+    /// den ganzen Flug). Berechnung in [`panel_ete_min`], gesetzt im
+    /// `flight_status`-Command, weil `from_snapshot` den Zielflughafen
+    /// nicht kennt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ete_min: Option<u32>,
 }
 
 impl PanelLiveSnapshot {
@@ -4492,7 +4515,67 @@ impl PanelLiveSnapshot {
             headwind_kt: snap.aircraft_wind_z_kt.map(|z| -z),
             crosswind_kt: snap.aircraft_wind_x_kt,
             fuel_total_kg: snap.fuel_total_kg,
+            altitude_msl_ft: snap.altitude_msl_ft,
+            altitude_pressure_ft: snap.altitude_pressure_ft,
+            qnh_hpa: snap.qnh_hpa,
+            ete_min: None,
         }
+    }
+}
+
+/// v1.5.1 (#hud-pilotenfeedback F3): Restflugzeit für das In-Sim-HUD.
+///
+/// Portiert aus `LiveMapView.tsx` (`nav.eta`), inklusive der dort teuer
+/// gelernten Regel: Großkreis Flugzeug→Ziel, NICHT die akkumulierte
+/// `distance_nm` (v0.19.3-Fehlbild: ETA begann bei null und wuchs — dem
+/// Piloten im Endanflug wurde eine weitere Stunde versprochen). Dasselbe
+/// 30-kt-Tor wie dort: darunter ist Groundspeed Rollverkehr, keine
+/// Reisegeschwindigkeit, und die Division ergäbe Phantasiewerte.
+fn panel_ete_min(snap: &SimSnapshot, arr_icao: &str) -> Option<u32> {
+    if snap.groundspeed_kt <= 30.0 {
+        return None;
+    }
+    let (alat, alon) = runway::airport_position(arr_icao)?;
+    let dist_nm = runway::distance_nm(snap.lat, snap.lon, alat, alon);
+    let min = (dist_nm / f64::from(snap.groundspeed_kt)) * 60.0;
+    // Über 24 h ist es kein Flug mehr, sondern ein Messfehler.
+    if !min.is_finite() || min < 0.0 || min > 1440.0 {
+        return None;
+    }
+    Some(min.round() as u32)
+}
+
+#[cfg(test)]
+mod panel_ete_tests {
+    use super::*;
+
+    #[test]
+    fn ete_uses_distance_to_go_not_distance_flown() {
+        // 60 nm vor dem (echten) Flughafen EDDB mit 120 kt: 30 Minuten.
+        let (alat, alon) = runway::airport_position("EDDB").expect("EDDB in OurAirports");
+        // 1° Breite = 60 nm: eine Position genau 1° südlich der Referenz.
+        let snap = SimSnapshot {
+            lat: alat - 1.0,
+            lon: alon,
+            groundspeed_kt: 120.0,
+            ..Default::default()
+        };
+        let ete = panel_ete_min(&snap, "EDDB").expect("ete");
+        // Großkreis 1° Breite = 60,04 nm → 30 min, Rundung ±1.
+        assert!((29..=31).contains(&ete), "ete war {ete}");
+    }
+
+    #[test]
+    fn ete_gates_on_taxi_speeds_and_unknown_airports() {
+        let snap = SimSnapshot {
+            lat: 52.0,
+            lon: 13.0,
+            groundspeed_kt: 20.0,
+            ..Default::default()
+        };
+        assert_eq!(panel_ete_min(&snap, "EDDB"), None, "unter 30 kt kein ETE");
+        let snap2 = SimSnapshot { groundspeed_kt: 400.0, ..snap };
+        assert_eq!(panel_ete_min(&snap2, "XXXX"), None, "unbekanntes Ziel");
     }
 }
 
@@ -4637,6 +4720,13 @@ pub struct ActiveFlightInfo {
     /// None → Runway/Winkel unbekannt oder unplausibel → Banner bleibt beim
     /// 3°-Default (unverändert für normale Anflüge).
     approach_glideslope_angle: Option<f64>,
+    /// v1.5.1 (#hud-pilotenfeedback F2): Roh-METARs für das In-Sim-HUD.
+    /// Abflugwetter ab Boarding, Zielwetter ab Sinkflug (Final holt
+    /// frisch nach und überschreibt). Rohtext, die Anzeige kürzt selbst.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dep_metar: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    arr_metar: Option<String>,
     /// v1.5.0 (#msfs-hud): **geschätzte** Landebahn im Anflug, aus Position
     /// und Steuerkurs gegen die Navdaten bestimmt. Siehe
     /// `FlightStats::predicted_runway` — insbesondere, warum das ein eigenes
@@ -10079,6 +10169,10 @@ fn flight_info(
         arr_gate: stats.arr_gate.clone(),
         approach_runway: stats.approach_runway.clone(),
         approach_glideslope_angle,
+        // v1.5.1 (F2): leere METARs gar nicht erst serialisieren — die
+        // Anzeige unterscheidet "kein Wetter" nur über Abwesenheit.
+        dep_metar: stats.dep_metar_raw.clone().filter(|m| !m.is_empty()),
+        arr_metar: stats.arr_metar_raw.clone().filter(|m| !m.is_empty()),
         predicted_runway: stats.predicted_runway.clone(),
         last_position_at: stats.last_position_at.map(|t| t.to_rfc3339()),
         last_heartbeat_at: stats.last_heartbeat_at.map(|t| t.to_rfc3339()),
@@ -10344,7 +10438,12 @@ fn flight_status(
     // `current_snapshot` was already the pattern used above for the
     // resume-suspect check; calling it unconditionally here mirrors
     // `landing_get_current`, which does the same on every poll.
-    let live = current_snapshot(&app).map(|snap| PanelLiveSnapshot::from_snapshot(&snap));
+    let live = current_snapshot(&app).map(|snap| {
+        let mut l = PanelLiveSnapshot::from_snapshot(&snap);
+        // F3: braucht den Zielflughafen, darum hier statt in from_snapshot.
+        l.ete_min = panel_ete_min(&snap, &flight.arr_airport);
+        l
+    });
     Some(flight_info(flight.as_ref(), resume_position_suspect, live))
 }
 
@@ -22100,6 +22199,20 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             }
             let phase_change = step_flight(&flight, &snap);
 
+            // v1.5.1 (F2): METAR-Trigger einmal pro Tick mit der AKTUELLEN
+            // Phase — nicht nur bei Übergängen. Boarding ist die Startphase
+            // (kein Übergang dorthin), und ein Resume mitten im Sinkflug
+            // hat den Descent-Übergang verpasst. Die requested-Flags machen
+            // den Aufruf idempotent; nach dem ersten Treffer ist er ein
+            // sofortiges return.
+            {
+                let tick_phase = {
+                    let stats = flight.stats.lock().expect("flight stats");
+                    stats.phase
+                };
+                maybe_spawn_metar_fetch(&app, &flight, tick_phase);
+            }
+
             // v0.16.24: approach-phase divert navdata pre-fetch. On a
             // committed, stable descending approach to a field OTHER than
             // the planned `arr_airport`, warm that field's Navigraph navdata
@@ -30100,7 +30213,16 @@ fn phase_to_status(phase: FlightPhase) -> Option<&'static str> {
 /// keeps ticking even if aviationweather.gov is slow.
 fn maybe_spawn_metar_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, new_phase: FlightPhase) {
     let kind = match new_phase {
-        FlightPhase::Takeoff => MetarKind::Departure,
+        // v1.5.1 (F2): Boarding zusätzlich zu Takeoff — der Pilot will
+        // das Abflugwetter am Gate sehen, nicht erst nach dem Abheben.
+        // Das requested-Flag macht den späteren Takeoff-Arm zum No-op.
+        // WICHTIG: Boarding ist die STARTphase, es gibt keinen Übergang
+        // dorthin — deshalb ruft der Streamer diese Funktion seit v1.5.1
+        // auch einmal pro Tick mit der aktuellen Phase auf (billig, die
+        // Flags machen alles idempotent). Das deckt zugleich Resume
+        // mitten im Sinkflug ab, wo der Descent-Übergang längst vorbei ist.
+        FlightPhase::Boarding | FlightPhase::Takeoff => MetarKind::Departure,
+        FlightPhase::Descent => MetarKind::ArrivalEarly,
         // Trigger at Final so the arrival weather is in the activity
         // log *before* the touchdown line, not after — pilots want the
         // wind for the approach, not for the rollout.
@@ -30109,12 +30231,13 @@ fn maybe_spawn_metar_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, new_phas
     };
     let icao = match kind {
         MetarKind::Departure => flight.dpt_airport.clone(),
-        MetarKind::Arrival => flight.arr_airport.clone(),
+        MetarKind::ArrivalEarly | MetarKind::Arrival => flight.arr_airport.clone(),
     };
     {
         let mut stats = flight.stats.lock().expect("flight stats");
         let already = match kind {
             MetarKind::Departure => stats.dep_metar_requested,
+            MetarKind::ArrivalEarly => stats.arr_metar_early_requested,
             MetarKind::Arrival => stats.arr_metar_requested,
         };
         if already {
@@ -30122,6 +30245,7 @@ fn maybe_spawn_metar_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, new_phas
         }
         match kind {
             MetarKind::Departure => stats.dep_metar_requested = true,
+            MetarKind::ArrivalEarly => stats.arr_metar_early_requested = true,
             MetarKind::Arrival => stats.arr_metar_requested = true,
         }
     }
@@ -30135,11 +30259,17 @@ fn maybe_spawn_metar_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, new_phas
                     let mut stats = flight.stats.lock().expect("flight stats");
                     match kind {
                         MetarKind::Departure => stats.dep_metar_raw = Some(raw.clone()),
-                        MetarKind::Arrival => stats.arr_metar_raw = Some(raw.clone()),
+                        // Early und Final schreiben dasselbe Feld: Final
+                        // überschreibt das ältere Descent-Wetter mit dem
+                        // frischen — genau so gewollt.
+                        MetarKind::ArrivalEarly | MetarKind::Arrival => {
+                            stats.arr_metar_raw = Some(raw.clone())
+                        }
                     }
                 }
                 let label = match kind {
                     MetarKind::Departure => "Departure METAR",
+                    MetarKind::ArrivalEarly => "Arrival METAR (descent)",
                     MetarKind::Arrival => "Arrival METAR",
                 };
                 log_activity_handle(
@@ -30160,10 +30290,17 @@ fn maybe_spawn_metar_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, new_phas
     });
 }
 
-/// Internal discriminator for the two METAR fetch directions.
+/// Internal discriminator for the METAR fetch directions.
+///
+/// v1.5.1 (#hud-pilotenfeedback F2): `ArrivalEarly` kam dazu — das
+/// In-Sim-HUD zeigt das Zielwetter schon ab dem Sinkflug. Bewusst eine
+/// EIGENE Variante mit eigenem Flag statt den `Arrival`-Fetch
+/// vorzuziehen: das früh geholte METAR ist beim Aufsetzen 20–40 Minuten
+/// alt, deshalb holt `Final` weiterhin FRISCH nach und überschreibt.
 #[derive(Debug, Clone, Copy)]
 enum MetarKind {
     Departure,
+    ArrivalEarly,
     Arrival,
 }
 

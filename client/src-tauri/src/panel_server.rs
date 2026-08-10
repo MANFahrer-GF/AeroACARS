@@ -105,6 +105,34 @@ struct PanelCtx {
     app: AppHandle,
 }
 
+/// v1.5.1 (#hud-pilotenfeedback, Thomas' Frage "kann man das HUD auch per
+/// Browser oeffnen?"): dieselbe Widget-Quelle als DRITTES Ziel, direkt vom
+/// Panel-Server ausgeliefert. `http://127.0.0.1:47847/hud` im Browser —
+/// same-origin, also kein CORS-Thema, und weil der Server Loopback-only
+/// ist, bleibt es beim eigenen Rechner.
+///
+/// Die Dateien kommen per `include_str!` ZUR COMPILE-ZEIT aus dem
+/// msfs-panel-Paket — `panel.js` ist dort byte-identisch mit dem
+/// Flow-Widget (eine Quelle, jetzt drei Ziele). Kein Laufzeit-Dateipfad,
+/// nichts zu installieren, nichts kann fehlen. Der Browser nimmt
+/// automatisch den "nativen" Einstieg des Skripts (kein Flow-`run()`),
+/// und `aa2-nativ` am Body waehlt die fuellende Positionierung.
+async fn hud_handler() -> axum::response::Html<String> {
+    const JS: &str = include_str!(
+        "../../../msfs-panel/Build/PackageSources/html_ui/InGamePanels/AeroACARSPanel/panel.js"
+    );
+    const CSS: &str = include_str!(
+        "../../../msfs-panel/Build/PackageSources/html_ui/InGamePanels/AeroACARSPanel/panel.css"
+    );
+    axum::response::Html(format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\">\
+         <title>AeroACARS HUD</title><style>{CSS}\
+         html,body{{margin:0;background:#101820;}}</style></head>\
+         <body class=\"aa2-nativ\"><div class=\"aa2-strip\"></div>\
+         <script>{JS}</script></body></html>"
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Ein/Aus-Einstellung (Diagnose-Schalter)
 // ---------------------------------------------------------------------------
@@ -248,6 +276,7 @@ fn spawn_listener(addr: SocketAddr, ctx: PanelCtx, stop_rx: tokio::sync::watch::
             .route("/panel/status", get(status_handler))
             .route("/panel/debrief", get(debrief_handler))
             .route("/panel/activity", get(activity_handler))
+            .route("/hud", get(hud_handler))
             .with_state(ctx);
         let mut stop_serve = stop_rx;
         if let Err(e) = axum::serve(
@@ -454,6 +483,23 @@ async fn activity_handler(
     let entries = crate::activity_log_tail(&state, limit);
     let value = serde_json::to_value(entries).unwrap_or(Value::Null);
     cors_open((StatusCode::OK, Json(value)).into_response())
+}
+
+#[cfg(test)]
+mod hud_page_tests {
+    /// Die eingebettete Browser-Fassung muss dieselbe Quelle tragen wie
+    /// das Flow-Widget und das native Panel — und ein vollstaendiges,
+    /// eigenstaendiges Dokument sein. Bricht jemand die include-Pfade
+    /// (Verzeichnis umbenannt, Datei verschoben), faellt es HIER auf und
+    /// nicht erst beim Piloten im Browser.
+    #[tokio::test]
+    async fn hud_page_embeds_the_widget() {
+        let html = super::hud_handler().await.0;
+        assert!(html.contains("aa2-strip"), "Streifen-Buehne fehlt");
+        assert!(html.contains("aa2-nativ"), "nativer Positionsschalter fehlt");
+        assert!(html.contains("__aeroacarsHudV2_"), "Widget-Kern fehlt");
+        assert!(html.len() > 20_000, "verdaechtig klein: {}", html.len());
+    }
 }
 
 #[cfg(test)]

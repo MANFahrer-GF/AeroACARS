@@ -1,5 +1,22 @@
 # AeroACARS — natives MSFS-2024-Panel
 
+> ## ⛔ BEGRABEN (Entscheidung Thomas, 10.08.2026)
+>
+> **Keine weiteren Paketrunden fuer das native Panel.** Nach drei
+> Portierungs-Staenden, elf Paketfassungen, zwei Forum-Workarounds,
+> einem GSX-Pro-Vergleich und einem Quellcode-basierten Fix-Versuch
+> laesst sich das Panel-Fenster in der aktuellen Sim-Version nicht
+> verschieben — auch die historisch als "ziehbar" erinnerte Fassung
+> wurde frisch nachgebaut und zieht nicht (FINAL-BEFUND, Windows-Session
+> 10.08.2026). Der Weg fuer Piloten ist das **Flow-Pro-Widget**; als
+> Drittweg liefert der Panel-Server das HUD unter
+> `http://127.0.0.1:47847/hud` im Browser aus.
+>
+> Der Verzeichnisstand bleibt als Referenz und als Quelle der
+> `include_str!`-Einbettung der /hud-Route — `panel.js`/`panel.css`
+> werden weiter mit dem Flow-Widget synchron gehalten.
+
+
 Der gleiche HUD-Streifen wie das Flow-Pro-Widget, nur als eigenes
 Toolbar-Panel im Simulator. **Der Pilot entscheidet, welchen Weg er
 nimmt** — beide funktionieren eigenstaendig, keiner braucht den anderen.
