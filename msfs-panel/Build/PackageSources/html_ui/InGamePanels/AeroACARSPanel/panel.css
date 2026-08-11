@@ -206,6 +206,27 @@ html, body {
 
 .aa2-mono { font-family: var(--aa2-font-mono); font-variant-numeric: tabular-nums; }
 
+/* v3.10: Zeitzelle ruhigstellen. Feste Mindestbreite — "45m" und
+   "14:05z" belegen denselben Platz, der Streifen aendert beim
+   Kandidatenwechsel (ETE/ETA/FLT) nicht mehr die Laenge. 7ch statt
+   knapper 6: im Browser-HUD kann die Mono-Schrift auf eine nicht
+   strikt dicktengleiche Ersatzschrift fallen (gemessen: 2 px Differenz
+   "47 min" vs "14:05z" bei 6ch) — die Reserve haelt die Breite auch
+   dann fest. */
+.aa2-val.aa2-zeit { display: inline-block; min-width: 7ch; }
+/* ... und das LABEL ebenso: "FLT" ist in der proportionalen UI-Schrift
+   2 px schmaler als "ETE"/"ETA" (gemessen: 18 vs 20 px) — auch diese
+   2 px liessen den Streifen beim Wechsel zucken. 2.5em = 22,5 px bei
+   9-px-Schrift, mit Luft ueber dem breitesten Label. */
+[data-aa2-klick="zeit"] .aa2-lbl { display: inline-block; min-width: 2.5em; }
+/* Weiches Ueberblenden beim Kandidatenwechsel — Bewegung nur in der
+   Deckkraft, keine Geometrie. Der JS-Retrigger setzt die Klasse neu. */
+.aa2-zeitwechsel .aa2-val { animation: aa2-zeitfade 600ms ease-out; }
+@keyframes aa2-zeitfade {
+  from { opacity: 0.15; }
+  to { opacity: 1; }
+}
+
 .aa2-spin {
   width: 12px; height: 12px;
   border-radius: 50%;
@@ -248,117 +269,3 @@ html, body {
    dass sie schreit. */
 [data-aa2-klick] { cursor: pointer; }
 [data-aa2-klick] .aa2-val { border-bottom: 1px dotted var(--aa2-ink-muted); }
-
-/* ── Der <ingame-ui>-Rahmen (v0.10.0) ────────────────────────────────
-   content-fit ist kaputt (Asobo-Ticket 18144), also feste Rahmengroesse
-   plus erzwungene Fuellung der Framework-Wrapper — das ist der in
-   Runde 3 im Feld bestaetigte Ausweg. Groesse = die im Sim gemessenen
-   Werte (880 x 130) plus Platz fuer die schlanke Titelleiste. */
-ingame-ui#AeroACARSPanel {
-  width: 900px !important;
-  height: 150px !important;
-  min-width: 700px !important;
-  min-height: 120px !important;
-}
-
-/* Diese Wrapper erzeugt das Framework; ohne Zwangsfuellung fallen sie
-   auf Hoehe 0 zusammen — unabhaengig vom content-fit-Fehler. */
-ingame-ui#AeroACARSPanel .ingameUiContent,
-ingame-ui#AeroACARSPanel .ingameUiWrapper {
-  display: flex !important;
-  flex-direction: column !important;
-  width: 100% !important;
-  height: 100% !important;
-  min-width: 0 !important;
-  min-height: 0 !important;
-  flex: 1 1 auto !important;
-  overflow: hidden !important;
-}
-
-/* Nativ fuellt der Streifen das Sim-Fenster, statt wie in Flow frei
-   ueber dem Bild zu schweben. Position und Groesse besorgt der
-   Fensterrahmen — deshalb hier KEIN position/fixed und KEINE feste
-   Hoehe.
-
-   Ausgewaehlt ueber `aa2-nativ` am <body> (siehe AeroACARSPanel.html).
-   Zwei Fehlversuche stecken darin: `body > .aa2-strip` brach, sobald
-   der Sim den Streifen in einen eigenen Rahmen legte; die Klasse am
-   Streifen selbst ueberlebte nicht, weil panel.js dessen className
-   beim Umschalten auf "ruhig" komplett neu setzt. Der Body wird von
-   niemandem angefasst. In Flow existiert die Klasse nicht, dort bleibt
-   alles wie gehabt. */
-.aa2-nativ .aa2-strip {
-  position: static;
-  left: auto;
-  right: auto;
-  bottom: auto;
-  width: 100%;
-  min-height: 100px;  /* siehe Notiz unten zu den Schriftmassen */
-  box-sizing: border-box;
-  border-radius: 0;
-
-  /* Fuer die Maus DURCHLAESSIG. In Flow ist der Streifen selbst der
-     Ziehgriff und braucht deshalb `pointer-events: auto` — nativ ist
-     das genau falsch herum: dort gehoert das Fenster dem Simulator, und
-     ein Streifen, der die ganze Flaeche bedeckt und alle Mausereignisse
-     schluckt, nimmt dem Sim jede Moeglichkeit, sein eigenes Fenster
-     anzufassen.
-
-     Der Streifen zeigt nur an, es gibt nichts zu klicken — durchlaessig
-     zu sein kostet also nichts. Deshalb hier zurueckgedreht.
-
-     (Die Windows-Sitzung hatte denselben Gedanken und berichtete "hat
-     nicht geholfen" — dort war zu dem Zeitpunkt aber auch die
-     Titelleiste versteckt, es blieb also gar nichts zum Anfassen
-     uebrig. Erst beides zusammen ergibt einen Sinn.) */
-  pointer-events: none;
-}
-
-/* WAS gekuerzt werden darf und was nicht (09.08.2026, nach dem Foto
-   aus dem Sim mit abgeschnittener Log-Zeile):
- *
- *   Die MESSWERTE nie — eine halbe Treibstoffzahl ist schlimmer als gar
- *   keine, weil man ihr nicht ansieht, dass sie halb ist. Sie behalten
- *   ihre Mindestbreite und laufen im Zweifel ueber den Rand.
- *
- *   Die LOG-ZEILE schon — sie ist Fliesstext, und mit "..." am Ende ist
- *   sofort erkennbar, dass da noch mehr steht. Sie bekommt deshalb die
- *   volle Fensterbreite und kuerzt sich selbst. */
-.aa2-nativ .aa2-ticker {
-  max-width: none;
-  width: 100%;
-}
-
-/* Mindestbreite, ab der nichts mehr rechts abfaellt.
- *
- * KORREKTUR 09.08.2026 nach dem zweiten Sim-Test: meine Browser-Messung
- * ergab 627 px Inhaltsbreite, im Sim war ein 620-px-Rahmen aber deutlich
- * zu schmal und erst 780 px reichten. Der Unterschied sind die
- * SCHRIFTMASSE — der Sim rendert mit anderen Fonts als der Browser auf
- * dem Mac, rund ein Viertel breiter. Das ist Messung am echten Ziel und
- * schlaegt meine Rechnung.
- *
- * Deshalb: 627 px Messwert x 1,25 Sim-Faktor + Reserve = 840 px. Die
- * Hoehe oben ist aus demselben Grund von 84 auf 100 px gegangen
- * (63 px x 1,25 + Reserve).
- *
- * Wird das Sim-Fenster schmaler gezogen, laeuft der Streifen darueber
- * hinaus statt Information stillschweigend zu verlieren — sichtbar ist
- * besser als lautlos weg. */
-.aa2-nativ .aa2-data {
-  min-width: 840px;
-}
-
-/* Nativ nie ausblenden: die Sichtbarkeit steuert das Toolbar-Symbol des
-   Sims. `:empty { display: none }` aus dem Flow-Teil wuerde beim ersten
-   Bildaufbau kurz ein leeres Fenster erzeugen. */
-.aa2-nativ .aa2-strip:empty {
-  display: block;
-}
-
-/* v3.6 (F3): Der Streifen ist nativ fuer die Maus durchlaessig — die
-   Zeit-Zelle als einzige Klick-Flaeche muss die Sperre wieder oeffnen,
-   sonst laesst sich die Zeit nur in Flow und im Browser umschalten. */
-.aa2-nativ [data-aa2-klick] {
-  pointer-events: auto;
-}

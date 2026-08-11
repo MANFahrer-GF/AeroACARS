@@ -1,5 +1,5 @@
 /*
- * AeroACARS HUD — v3.9, 11.08.2026: Zeitzelle rotiert selbst (ETE/ETA/FLT alle 8 s) — der Klick kam in Flow nie an.
+ * AeroACARS HUD — v3.10, 11.08.2026: Zeitzelle beruhigt — 30-s-Takt, feste Breite, weiches Ueberblenden (Pilotenbefund: 8-s-Rotation liess den Streifen "atmen" und zog den Blick ins HUD).
  *
  * Spricht mit AeroACARS' fest eingebautem Panel-Server auf Port 47847:
  *   GET /panel/status    Flugstatus, im Sekundentakt abgefragt
@@ -343,9 +343,22 @@
       var z = K.zellen[i];
       var e = liste[i];
       if (!e || e[1] == null) { zeige(z.wurzel, false); continue; }
+      /* v3.10: weiches Ueberblenden NUR wenn die Zeitzelle ihren
+         Kandidaten wechselt (ETE→ETA→FLT). Der Sekunden-Repaint setzt
+         nur textContent und triggert nichts; erst ein anderes LABEL
+         startet die CSS-Animation neu (Klasse ab + Reflow + Klasse an —
+         das klassische Retrigger-Idiom, ES5-sicher). */
+      var wechsel = e[3] === 'zeit' && z.lbl.textContent && z.lbl.textContent !== e[0];
       z.lbl.textContent = e[0];
       z.val.textContent = e[1];
       z.val.className = 'aa2-val aa2-mono' + (e[2] ? ' ' + e[2] : '');
+      if (wechsel) {
+        try {
+          z.wurzel.className = z.wurzel.className.replace(/ ?aa2-zeitwechsel/g, '');
+          void z.wurzel.offsetWidth;
+          z.wurzel.className += ' aa2-zeitwechsel';
+        } catch (err) {}
+      }
       /* v3.6 (F3): viertes Element = Klick-Kennung. Zellen sind sonst
          reine Anzeige; nur wer eine Kennung traegt, ist anfassbar (CSS
          zeigt den Zeiger, nativ oeffnet sie die pointer-events-Sperre). */
@@ -369,7 +382,12 @@
      selbst: ETE (Restflugzeit) -> ETA (Ankunftszeit, jetzt + ETE) ->
      FLT (geflogene Zeit). Der Klick bleibt als Bonus erhalten, wo er
      durchkommt (Browser-HUD): er schaltet sofort einen Schritt weiter. */
-  var ZEIT_ROTATION_MS = 8000;
+  /* v3.10: 8 s war zu hektisch — die wechselnde Textlaenge liess den
+     ganzen Streifen alle 8 s die Breite aendern und zog den Blick ins
+     HUD (Pilotenbefund Reiseflug). Jetzt: ruhiger 30-s-Takt, feste
+     Zellbreite (CSS .aa2-zeit) und ein weiches Ueberblenden NUR beim
+     Kandidatenwechsel (setzeZellen). */
+  var ZEIT_ROTATION_MS = 30000;
   var zeitKlickOffset = 0;
 
   var anfrageLaeuft = false;   // gilt fuer ALLE Routen zusammen
@@ -675,7 +693,10 @@
     if (!kandidaten.length) return null;
     var i = (Math.floor(Date.now() / ZEIT_ROTATION_MS) + zeitKlickOffset) % kandidaten.length;
     var k = kandidaten[i];
-    return [k[0], k[1], null, 'zeit'];
+    /* v3.10: 'aa2-zeit' gibt der Wert-Spanne eine feste Mindestbreite —
+       "45m" und "14:05z" sind dann gleich breit, der Streifen atmet
+       beim Kandidatenwechsel nicht mehr. */
+    return [k[0], k[1], 'aa2-zeit', 'zeit'];
   }
 
   /* v3.7 (F2, zweiter Anlauf nach Pilotenfoto): METAR PARSEN statt roh

@@ -206,6 +206,27 @@ html, body {
 
 .aa2-mono { font-family: var(--aa2-font-mono); font-variant-numeric: tabular-nums; }
 
+/* v3.10: Zeitzelle ruhigstellen. Feste Mindestbreite — "45m" und
+   "14:05z" belegen denselben Platz, der Streifen aendert beim
+   Kandidatenwechsel (ETE/ETA/FLT) nicht mehr die Laenge. 7ch statt
+   knapper 6: im Browser-HUD kann die Mono-Schrift auf eine nicht
+   strikt dicktengleiche Ersatzschrift fallen (gemessen: 2 px Differenz
+   "47 min" vs "14:05z" bei 6ch) — die Reserve haelt die Breite auch
+   dann fest. */
+.aa2-val.aa2-zeit { display: inline-block; min-width: 7ch; }
+/* ... und das LABEL ebenso: "FLT" ist in der proportionalen UI-Schrift
+   2 px schmaler als "ETE"/"ETA" (gemessen: 18 vs 20 px) — auch diese
+   2 px liessen den Streifen beim Wechsel zucken. 2.5em = 22,5 px bei
+   9-px-Schrift, mit Luft ueber dem breitesten Label. */
+[data-aa2-klick="zeit"] .aa2-lbl { display: inline-block; min-width: 2.5em; }
+/* Weiches Ueberblenden beim Kandidatenwechsel — Bewegung nur in der
+   Deckkraft, keine Geometrie. Der JS-Retrigger setzt die Klasse neu. */
+.aa2-zeitwechsel .aa2-val { animation: aa2-zeitfade 600ms ease-out; }
+@keyframes aa2-zeitfade {
+  from { opacity: 0.15; }
+  to { opacity: 1; }
+}
+
 .aa2-spin {
   width: 12px; height: 12px;
   border-radius: 50%;
