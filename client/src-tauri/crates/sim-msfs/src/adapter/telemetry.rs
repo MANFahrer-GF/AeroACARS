@@ -6056,8 +6056,8 @@ mod tests {
 
     #[test]
     fn ifly_autobrake_passes_raw_enum_through() {
-        // Selektor-Enum unbekannt → "#{n}" (Decode beim ersten
-        // Live-Flug), 0 = uninitialisiert/OFF-Default → None.
+        // Unbekannte Zwischenwerte bleiben als "#{n}" sichtbar,
+        // damit ein iFly-Update auffaellt statt falsch zu labeln.
         let mut t = ifly_telemetry();
         t.ifly_autobrake_sw = 3.0;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
@@ -6081,9 +6081,14 @@ mod tests {
             assert_eq!(snap.autobrake, Some(label.to_string()), "roh={roh}");
         }
 
+        // 0 ist beim iFly ein GUELTIGER Selektorwert (RTO), kein
+        // Uninitialisiert-Marker wie beim MD-11-raw_enum_label —
+        // Default-Telemetry zeigt deshalb bewusst RTO statt None.
+        // (Kurzes RTO waehrend des Flieger-Ladens ist harmlos;
+        // echtes RTO zu unterdruecken waere ein Funktionsverlust.)
         let t = ifly_telemetry();
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.autobrake, None);
+        assert_eq!(snap.autobrake, Some("RTO".to_string()));
     }
 
     // ---- v0.16.14: FSLabs A321 Premium-Mappings ----
