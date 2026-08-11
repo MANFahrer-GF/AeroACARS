@@ -4213,7 +4213,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(buf.len(), 2980, "total block size");
+        assert_eq!(buf.len(), 2988, "total block size"); // v1.5.3: +8 (ifly_park_brake_sw)
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -4487,6 +4487,11 @@ mod tests {
                 FieldKind::String256 => buf.extend_from_slice(&[0u8; 256]),
             }
         }
+        // v1.5.3: erst das neue iFly-Schwanzfeld weg (1*8) ...
+        buf.truncate(buf.len() - 8);
+        let t = Telemetry::from_block(&buf);
+        assert_eq!(t.syn_no_smoking_sign, 1295.0); // letztes A220-Feld intakt
+        assert_eq!(t.ifly_park_brake_sw, 0.0); // fehlender Schwanz = sicherer Default
         // v1.3.5: drop the 5 Synaptic A220 extension tail fields (5*8).
         buf.truncate(buf.len() - 40);
         let t = Telemetry::from_block(&buf);
