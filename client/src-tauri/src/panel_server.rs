@@ -124,11 +124,27 @@ async fn hud_handler() -> axum::response::Html<String> {
     const CSS: &str = include_str!(
         "../../../msfs-panel/Build/PackageSources/html_ui/InGamePanels/AeroACARSPanel/panel.css"
     );
+    // v1.5.3 (Thomas, 11.08.2026): NUR der Kasten, sonst nichts.
+    //
+    // Die erste Fassung erbte ueber `aa2-nativ` das Fensterfuell-
+    // Verhalten des nativen Panels: dunkler Seitengrund ueber den ganzen
+    // Bildschirm, Streifen ueber die volle Breite. Wer die Seite in
+    // OBS/Streamdeck & Co. einbettet, bekam damit "ein riesengrosses
+    // Bild" statt des Widgets. Jetzt:
+    //   - Seitengrund TRANSPARENT (Einbettungen zeigen nur den Kasten;
+    //     im normalen Browser bleibt er lesbar, weil er dafuer eine
+    //     OPAKE Flaeche bekommt statt der halbtransparenten aus dem Sim)
+    //   - Streifen als inline-flex im Fluss: endet hinter dem Inhalt,
+    //     nicht an der Bildschirmkante
     axum::response::Html(format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
          <title>AeroACARS HUD</title><style>{CSS}\
-         html,body{{margin:0;background:#101820;}}</style></head>\
-         <body class=\"aa2-nativ\"><div class=\"aa2-strip\"></div>\
+         html,body{{margin:0;padding:0;background:transparent;}}\
+         .aa2-strip{{position:static;display:inline-flex;width:auto;\
+         background:#101820;}}\
+         .aa2-strip.aa2-quiet{{opacity:1;}}\
+         .aa2-strip:empty{{display:none;}}</style></head>\
+         <body><div class=\"aa2-strip\"></div>\
          <script>{JS}</script></body></html>"
     ))
 }
@@ -496,7 +512,21 @@ mod hud_page_tests {
     async fn hud_page_embeds_the_widget() {
         let html = super::hud_handler().await.0;
         assert!(html.contains("aa2-strip"), "Streifen-Buehne fehlt");
-        assert!(html.contains("aa2-nativ"), "nativer Positionsschalter fehlt");
+        assert!(
+            html.contains("background:transparent"),
+            "Seitengrund muss transparent sein (Einbettung in OBS & Co.)"
+        );
+        assert!(
+            html.contains("display:inline-flex"),
+            "Streifen muss hinter dem Inhalt enden, nicht an der Bildschirmkante"
+        );
+        // Der Klassen-NAME darf in der eingebetteten CSS auftauchen (die
+        // .aa2-nativ-Regeln des Panels sind mit drin, matchen aber nie) —
+        // nur am BODY darf er nicht haengen.
+        assert!(
+            !html.contains("body class=\"aa2-nativ\""),
+            "aa2-nativ am Body wuerde das Fensterfuell-Verhalten zurueckholen"
+        );
         assert!(html.contains("__aeroacarsHudV2_"), "Widget-Kern fehlt");
         assert!(html.len() > 20_000, "verdaechtig klein: {}", html.len());
     }
