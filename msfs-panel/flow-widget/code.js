@@ -257,6 +257,9 @@
        werden bei jedem Takt neu beschriftet, der Handler ueberlebt das.
        In Flow liegt die Flaeche im Drag-Bereich — ein Klick ohne
        Bewegung kommt als click durch, ein Ziehen bleibt Ziehen. */
+    /* BONUS-Interaktion: der Klick schaltet die Zeitzelle sofort einen
+       Rotationsschritt weiter — noetig ist er NIE, die Zelle rotiert
+       von selbst (Flow frisst Klicks, Livetest 11.08.2026). */
     try { K.data.addEventListener('click', klickAufDaten); } catch (err) {}
     function klickAufDaten(e) {
       try {

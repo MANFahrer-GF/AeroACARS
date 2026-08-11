@@ -20,6 +20,14 @@ cmp msfs-panel/flow-widget/code.js \
     msfs-panel/Build/PackageSources/html_ui/InGamePanels/AeroACARSPanel/panel.js
 ```
 
+## Pflicht vor JEDEM Flow-Export
+
+    node msfs-panel/flow-widget/qs-flow-kompat.js
+
+Sechs Regeln aus echten Feldbefunden (gefressene Klicks, flex-gap,
+Kaestchen-Zeichen, haengende fetches ...) — laeuft in Sekunden, bricht
+bei Verstoss rot ab. Erst wenn es gruen ist, wird exportiert.
+
 ## Verteilweg an Piloten
 
 Thomas spielt die Dateien in seinen Flow-Skripteintrag ein und

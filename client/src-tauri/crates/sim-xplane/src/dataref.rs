@@ -973,6 +973,10 @@ impl XPlaneState {
             simulation_rate: 1.0,
             gear_position: self.gear_deploy,
             flaps_position: self.flaps_handle,
+            // v1.5.3: Rasterindex/-anzahl sind MSFS-SimVars; X-Plane
+            // bleibt bei der Prozent-Heuristik (None -> alter Pfad).
+            flap_handle_index: None,
+            flap_num_positions: None,
             engines_running: [
                 self.eng1_running,
                 self.eng2_running,
@@ -1073,6 +1077,7 @@ impl XPlaneState {
             } else {
                 None
             },
+            autothrottle_is_arm: false,
             fuel_flow_kg_per_h: None,
             spoilers_handle_position: Some(self.spoilers_handle),
             spoilers_armed: Some(self.spoilers_armed),

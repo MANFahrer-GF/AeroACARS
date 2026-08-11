@@ -748,6 +748,14 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // VC_Parking_Brake_LIGHT_VAL waere die Warnleuchte — die haengt an
     // der Elektrik und taugt darum nicht als Hebel-Wahrheit.
     F::f64("L:VC_Parking_Brake_SW_VAL", "Number"),
+
+    // ---- Rasterbewusste Klappen-Labels (v1.5.3, #ifly-audit) ----
+    // Generische SimVars (kein Addon-Special): Rasten-Index des Hebels
+    // und Rastenanzahl. Damit heissen die Boeing-Stufen endlich Boeing
+    // (UP/1/2/5/10/15/25/30/40) statt durchs Airbus-Prozentraster
+    // gezogen zu werden ("Flaps 5" -> "1+F", Thomas' Flug 11.08.2026).
+    F::f64("FLAPS HANDLE INDEX", "Number"),
+    F::f64("FLAPS NUM HANDLE POSITIONS", "Number"),
 ];
 
 // Helper builders so the table above stays compact.
@@ -1168,6 +1176,9 @@ pub struct Telemetry {
     /// v1.5.3: iFly-Parkbrems-HEBEL (siehe Registrierungs-Kommentar).
     /// Nur bei AircraftProfile::IflyMax8 konsultiert.
     pub ifly_park_brake_sw: f64,
+    /// v1.5.3 (#ifly-audit): Klappenhebel-Rastenindex + Rastenanzahl.
+    pub flap_handle_index: f64,
+    pub flap_num_positions: f64,
 }
 
 // ---- Touchdown sample (separate data definition #2) ----
@@ -1794,6 +1805,8 @@ impl Telemetry {
         pull_f64!(t.syn_seatbelt_sign);
         pull_f64!(t.syn_no_smoking_sign);
         pull_f64!(t.ifly_park_brake_sw);
+        pull_f64!(t.flap_handle_index);
+        pull_f64!(t.flap_num_positions);
 
         // Silence the unused-assignment warning the last `pull_*!`
         // emits (the macro always advances `off`, but the very last
@@ -2885,11 +2898,21 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // "#{n}" fuer n != 0 (Decode beim ersten Live-Flug).
         raw_enum_label(t.md11_autobrake_sw)
     } else if is_ifly {
-        // v0.16.11: iFly 737 MAX 8 `L:VC_Autobrake_SW_VAL` —
-        // Selektor-Enum unbekannt → "#{n}" wie beim MD-11 (Decode
-        // beim ersten Live-Flug; der reale MAX-Selektor kennt
-        // RTO/OFF/1/2/3/MAX).
-        raw_enum_label(t.ifly_autobrake_sw)
+        // v1.5.3 (#ifly-audit): Enum geknackt — nicht per Live-Flug,
+        // sondern ueber die HubHop-INPUT-Presets des iFly (die schreiben
+        // exakt diese Werte in den Selektor): 0=RTO, 10=OFF, 20=1,
+        // 30=2, 40=3, 50=MAX. Unbekannte Zwischenwerte laufen weiter
+        // als "#{n}" durch, damit ein kuenftiges iFly-Update auffaellt
+        // statt falsch beschriftet zu werden.
+        match t.ifly_autobrake_sw.round() as i32 {
+            0 => Some("RTO".to_string()),
+            10 => Some("OFF".to_string()),
+            20 => Some("1".to_string()),
+            30 => Some("2".to_string()),
+            40 => Some("3".to_string()),
+            50 => Some("MAX".to_string()),
+            n => Some(format!("#{n}")),
+        }
     } else if is_fsl {
         // FSLabs A321: die drei AUTO-BRK-Tasten-LVars
         // (`L:VC_MIP_BRAKES_AUTOBRK_{LO,MED,MAX}_Button_BOT`,
@@ -2959,6 +2982,19 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     } else {
         t.flaps_position as f32
     };
+
+    // v1.5.3 (#ifly-audit): Rasterindex/-anzahl nur durchreichen, wenn
+    // sie plausibel sind — 0 Rasten heisst "SimVar nicht gefuellt"
+    // (Menue, alter Sim), und ein Index jenseits der Rastenzahl ist
+    // Muell. Dann None -> die Prozent-Heuristik uebernimmt wie bisher.
+    let flap_num = t.flap_num_positions.round() as i64;
+    let flap_idx = t.flap_handle_index.round() as i64;
+    let (flap_handle_index, flap_num_positions) =
+        if (1..=12).contains(&flap_num) && (0..=flap_num).contains(&flap_idx) {
+            (Some(flap_idx as u8), Some(flap_num as u8))
+        } else {
+            (None, None)
+        };
 
     // A/THR (v0.16.4): nur Profile mit verifizierter State-Quelle.
     //   * A346: `L:AB_AP_ATHR_LIGHT_ON` — FCU-Annunciator-Lampe,
@@ -3513,6 +3549,8 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // PLANE TOUCHDOWN NORMAL VELOCITY-SimVar als Primary-Quelle.
         gear_normal_force_n: None,
         parking_brake,
+        flap_handle_index,
+        flap_num_positions,
         stall_warning: t.stall_warning,
         overspeed_warning: t.overspeed_warning,
         paused: false,
@@ -3592,6 +3630,9 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         autopilot_nav: Some(ap_nav),
         autopilot_approach: Some(ap_appr),
         autothrottle_on,
+        // iFly: die Quelle ist der A/T-ARM-Schalter, kein Engagement —
+        // die Logzeile textet dann "ARMED" (Thomas' Protokoll 11.08.).
+        autothrottle_is_arm: is_ifly,
         fuel_flow_kg_per_h,
         // Spoilers-Handle: bleibt fuer ALLE Profile die analoge
         // Standard-SimVar — auch beim Fenix (dessen `L:A_FC_SPEEDBRAKE`
@@ -3905,6 +3946,32 @@ mod tests {
     /// obwohl der Hebel gesetzt bleibt — und klemmt laut GSX-Forum auch
     /// andersherum. Der Hebel-LVar aus den WASM-Strings ist die Wahrheit;
     /// dieser Test bindet beide Richtungen fest.
+    /// v1.5.3: Rasterindex/-anzahl kommen nur plausibel durch — 0 Rasten
+    /// (SimVar leer) oder Index jenseits der Rastenzahl -> None, dann
+    /// uebernimmt die alte Prozent-Heuristik.
+    #[test]
+    fn flap_raster_passes_only_plausible_values() {
+        let mut t = Telemetry::default();
+        t.flap_num_positions = 8.0;
+        t.flap_handle_index = 3.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.flap_num_positions, Some(8));
+        assert_eq!(snap.flap_handle_index, Some(3));
+
+        let mut t = Telemetry::default();
+        t.flap_num_positions = 0.0; // Menue / SimVar nicht gefuellt
+        t.flap_handle_index = 3.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.flap_num_positions, None);
+        assert_eq!(snap.flap_handle_index, None);
+
+        let mut t = Telemetry::default();
+        t.flap_num_positions = 8.0;
+        t.flap_handle_index = 9.0; // jenseits der Rastenzahl
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.flap_handle_index, None);
+    }
+
     #[test]
     fn ifly_parking_brake_reads_the_lever_not_the_lying_simvar() {
         // Telemetry ist absichtlich nicht Clone (2,5-KB-Block) — pro
@@ -4213,7 +4280,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(buf.len(), 2988, "total block size"); // v1.5.3: +8 (ifly_park_brake_sw)
+        assert_eq!(buf.len(), 3004, "total block size"); // v1.5.3: +8 (ifly_park_brake_sw) +16 (flap raster)
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -4442,6 +4509,8 @@ mod tests {
         assert_eq!(t.syn_seatbelt_sign, 1294.0); // idx 294
         assert_eq!(t.syn_no_smoking_sign, 1295.0); // idx 295
         assert_eq!(t.ifly_park_brake_sw, 1296.0); // idx 296
+        assert_eq!(t.flap_handle_index, 1297.0); // idx 297
+        assert_eq!(t.flap_num_positions, 1298.0); // idx 298
     }
 
     #[test]
@@ -4487,11 +4556,13 @@ mod tests {
                 FieldKind::String256 => buf.extend_from_slice(&[0u8; 256]),
             }
         }
-        // v1.5.3: erst das neue iFly-Schwanzfeld weg (1*8) ...
-        buf.truncate(buf.len() - 8);
+        // v1.5.3: erst die drei neuen Schwanzfelder weg (3*8) ...
+        buf.truncate(buf.len() - 24);
         let t = Telemetry::from_block(&buf);
         assert_eq!(t.syn_no_smoking_sign, 1295.0); // letztes A220-Feld intakt
         assert_eq!(t.ifly_park_brake_sw, 0.0); // fehlender Schwanz = sicherer Default
+        assert_eq!(t.flap_handle_index, 0.0);
+        assert_eq!(t.flap_num_positions, 0.0); // 0 Rasten -> Mapping liefert None
         // v1.3.5: drop the 5 Synaptic A220 extension tail fields (5*8).
         buf.truncate(buf.len() - 40);
         let t = Telemetry::from_block(&buf);
@@ -5990,7 +6061,25 @@ mod tests {
         let mut t = ifly_telemetry();
         t.ifly_autobrake_sw = 3.0;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        // 3 ist KEIN gueltiger Selektor-Wert (Enum: 0/10/20/30/40/50)
+        // -> bleibt als Rohwert sichtbar, damit iFly-Updates auffallen.
         assert_eq!(snap.autobrake, Some("#3".to_string()));
+
+        // v1.5.3: die echten Selektor-Werte (HubHop-Input-Presets).
+        for (roh, label) in [
+            (0.0, "RTO"),
+            (10.0, "OFF"),
+            (20.0, "1"),
+            (30.0, "2"),
+            (40.0, "3"),
+            (50.0, "MAX"),
+        ] {
+            let mut t = Telemetry::default();
+            t.title = "iFly 737-MAX8 Ryanair EI-IGL".into();
+            t.ifly_autobrake_sw = roh;
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert_eq!(snap.autobrake, Some(label.to_string()), "roh={roh}");
+        }
 
         let t = ifly_telemetry();
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);

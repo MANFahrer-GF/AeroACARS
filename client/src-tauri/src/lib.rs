@@ -1638,6 +1638,11 @@ struct ActiveFlight {
     flight_number: String,
     dpt_airport: String,
     arr_airport: String,
+    /// v1.5.3 (#ifly-audit, ETE-Deckel): geplante Flugzeit aus phpVMS
+    /// (`bid.flight.flight_time`, Minuten). None bei Adopt/Resume (nicht
+    /// persistiert) oder wenn phpVMS keine pflegt — dann zeigt die
+    /// ETE-Zelle wie bisher ab dem ersten plausiblen Wert.
+    planned_flight_time_min: Option<i32>,
     /// Final loads (per fare-class id) captured at flight start so we can
     /// include them in the filed PIREP — even if the bid is gone by then.
     fares: Vec<(i64, i32)>,
@@ -4010,6 +4015,18 @@ struct FlightStats {
     last_logged_seatbelts_sign: Option<u8>,
     /// No smoking sign (0=OFF, 1=AUTO, 2=ON).
     last_logged_no_smoking_sign: Option<u8>,
+    /// v1.5.3 (#ifly-audit): Entprellen der generischen Flap-Logzeile.
+    /// Beleg aus der Live-DB (RYR1142, 11.08.2026): der iFly-Hebelwert
+    /// springt beim Einfahren 5->UP fuer exakt 3 Sekunden auf 1.0
+    /// ("Flaps FULL" bei 217 kt im Log). Ein Label wird erst geloggt,
+    /// wenn es FLAP_LOG_STABLE_SECS stabil steht — echte Rastenwechsel
+    /// stehen ohnehin, der Spike faellt durch. Gleiches Muster wie der
+    /// Engine-Debounce gegen Fenix' Zuend-Pulse.
+    pending_flap_label: Option<String>,
+    pending_flap_since: Option<DateTime<Utc>>,
+    /// Prozentwert zum zuletzt GELOGGTEN Label — nur fuer den
+    /// Richtungspfeil (ausfahren/einfahren) des naechsten Eintrags.
+    last_logged_flap_pos: Option<f32>,
     /// Autobrake setting label ("OFF" / "LO" / "MED" / "MAX") for
     /// the activity log. Reset on every flight.
     last_logged_autobrake: Option<String>,
@@ -4537,7 +4554,11 @@ impl PanelLiveSnapshot {
 /// Piloten im Endanflug wurde eine weitere Stunde versprochen). Dasselbe
 /// 30-kt-Tor wie dort: darunter ist Groundspeed Rollverkehr, keine
 /// Reisegeschwindigkeit, und die Division ergäbe Phantasiewerte.
-fn panel_ete_min(snap: &SimSnapshot, arr_icao: &str) -> Option<u32> {
+fn panel_ete_min(
+    snap: &SimSnapshot,
+    arr_icao: &str,
+    planned_flight_min: Option<i32>,
+) -> Option<u32> {
     if snap.groundspeed_kt <= 30.0 {
         return None;
     }
@@ -4547,6 +4568,17 @@ fn panel_ete_min(snap: &SimSnapshot, arr_icao: &str) -> Option<u32> {
     // Über 24 h ist es kein Flug mehr, sondern ein Messfehler.
     if !min.is_finite() || min < 0.0 || min > 1440.0 {
         return None;
+    }
+    // v1.5.3 (Thomas' Feldbefund: "sehr hoch beim Start"): erst zeigen,
+    // wenn die Hochrechnung unter das 1,3-fache der GEPLANTEN Flugzeit
+    // faellt. Im Steigflug mit halber Reise-GS ist die Momentan-ETE
+    // rechnerisch korrekt, aber als Prognose wertlos — dann lieber
+    // keine Zahl (die Zeitzelle rotiert derweil mit FLT weiter). Ohne
+    // Planzeit (Freiflug) bleibt das alte Verhalten.
+    if let Some(plan) = planned_flight_min {
+        if plan > 0 && min > f64::from(plan) * 1.3 {
+            return None;
+        }
     }
     Some(min.round() as u32)
 }
@@ -4566,7 +4598,7 @@ mod panel_ete_tests {
             groundspeed_kt: 120.0,
             ..Default::default()
         };
-        let ete = panel_ete_min(&snap, "EDDB").expect("ete");
+        let ete = panel_ete_min(&snap, "EDDB", None).expect("ete");
         // Großkreis 1° Breite = 60,04 nm → 30 min, Rundung ±1.
         assert!((29..=31).contains(&ete), "ete war {ete}");
     }
@@ -4579,9 +4611,30 @@ mod panel_ete_tests {
             groundspeed_kt: 20.0,
             ..Default::default()
         };
-        assert_eq!(panel_ete_min(&snap, "EDDB"), None, "unter 30 kt kein ETE");
+        assert_eq!(panel_ete_min(&snap, "EDDB", None), None, "unter 30 kt kein ETE");
         let snap2 = SimSnapshot { groundspeed_kt: 400.0, ..snap };
-        assert_eq!(panel_ete_min(&snap2, "XXXX"), None, "unbekanntes Ziel");
+        assert_eq!(panel_ete_min(&snap2, "XXXX", None), None, "unbekanntes Ziel");
+    }
+
+    /// v1.5.3: der Plausibilitaets-Deckel — im Steigflug mit halber
+    /// Reise-GS ist die Momentan-ETE keine Prognose. Erst unter dem
+    /// 1,3-fachen der Planzeit erscheint eine Zahl.
+    #[test]
+    fn ete_hides_until_below_plan_ceiling() {
+        let (alat, alon) = runway::airport_position("EDDB").expect("EDDB");
+        // 600 nm vor dem Ziel mit 200 kt -> 180 min Momentan-ETE.
+        let snap = SimSnapshot {
+            lat: alat - 10.0,
+            lon: alon,
+            groundspeed_kt: 200.0,
+            ..Default::default()
+        };
+        // Planzeit 120 min: 180 > 156 -> versteckt.
+        assert_eq!(panel_ete_min(&snap, "EDDB", Some(120)), None);
+        // Planzeit 150 min: 180 < 195 -> sichtbar.
+        assert!(panel_ete_min(&snap, "EDDB", Some(150)).is_some());
+        // Ohne Planzeit: altes Verhalten, sichtbar.
+        assert!(panel_ete_min(&snap, "EDDB", None).is_some());
     }
 }
 
@@ -4930,6 +4983,27 @@ impl From<ApiError> for UiError {
 /// used when no PMDG snapshot is available — for PMDG aircraft we
 /// take the cockpit-exact Boeing label directly from
 /// `pmdg.flap_handle_label` (see flap-detent change-detection block).
+/// v1.5.3 (#ifly-audit): RASTERBEWUSSTES Klappen-Label aus Index +
+/// Rastenzahl — die Zahl der Rasten verraet die Familie:
+///   9 Positionen (num=8, Index 0..8) -> Boeing 737: UP/1/2/5/10/15/25/30/40
+///   7 Positionen (num=6)             -> Boeing 777: UP/1/5/15/20/25/30
+///   5 Positionen (num=4)             -> Airbus:     UP/1/2/3/FULL
+/// Alles andere -> None, dann uebernimmt die alte Prozent-Heuristik
+/// (detent_label). Anlass: iFly-Flug 11.08.2026 — "Flaps 5" (Raste 3
+/// von 8) lief durchs Airbus-Prozentraster und hiess "1+F"; die
+/// Standard-Landung "Flaps 30" hiess "3".
+fn raster_flap_label(num_positions: u8, index: u8) -> Option<&'static str> {
+    const B737: [&str; 9] = ["UP", "1", "2", "5", "10", "15", "25", "30", "40"];
+    const B777: [&str; 7] = ["UP", "1", "5", "15", "20", "25", "30"];
+    const AIRBUS: [&str; 5] = ["UP", "1", "2", "3", "FULL"];
+    match num_positions {
+        8 => B737.get(index as usize).copied(),
+        6 => B777.get(index as usize).copied(),
+        4 => AIRBUS.get(index as usize).copied(),
+        _ => None,
+    }
+}
+
 fn detent_label(detent: u8) -> &'static str {
     match detent {
         0 => "UP",
@@ -10456,7 +10530,7 @@ fn flight_status(
     let live = current_snapshot(&app).map(|snap| {
         let mut l = PanelLiveSnapshot::from_snapshot(&snap);
         // F3: braucht den Zielflughafen, darum hier statt in from_snapshot.
-        l.ete_min = panel_ete_min(&snap, &flight.arr_airport);
+        l.ete_min = panel_ete_min(&snap, &flight.arr_airport, flight.planned_flight_time_min);
         l
     });
     Some(flight_info(flight.as_ref(), resume_position_suspect, live))
@@ -10803,6 +10877,7 @@ async fn flight_adopt(
         flight_number,
         dpt_airport,
         arr_airport,
+        planned_flight_time_min: None, // Adopt: kein Bid-Kontext
         fares,
         stats: Mutex::new(FlightStats::new()),
         stop: AtomicBool::new(false),
@@ -11473,6 +11548,7 @@ async fn flight_start(
         flight_number: bid.flight.flight_number.clone(),
         dpt_airport: bid.flight.dpt_airport_id.clone(),
         arr_airport: bid.flight.arr_airport_id.clone(),
+        planned_flight_time_min: bid.flight.flight_time,
         fares,
         stats: Mutex::new(FlightStats::new()),
         stop: AtomicBool::new(false),
@@ -12167,6 +12243,7 @@ async fn flight_start_manual(
         flight_number: bid.flight.flight_number.clone(),
         dpt_airport: bid.flight.dpt_airport_id.clone(),
         arr_airport: bid.flight.arr_airport_id.clone(),
+        planned_flight_time_min: bid.flight.flight_time,
         fares,
         stats: Mutex::new(FlightStats::new()),
         stop: AtomicBool::new(false),
@@ -15902,6 +15979,7 @@ mod rearm_background_task_guards_tests {
             flight_number: "1".into(),
             dpt_airport: "EDDF".into(),
             arr_airport: "ZZZZ".into(),
+            planned_flight_time_min: None,
             airline_logo_url: None,
             fares: Vec::new(),
             stats: Mutex::new(FlightStats::new()),
@@ -27201,6 +27279,7 @@ mod arrived_fallback_dwell_tests {
             flight_number: "1".into(),
             dpt_airport: "EDDF".into(),
             arr_airport: "ZZZZ".into(),
+            planned_flight_time_min: None,
             airline_logo_url: None,
             fares: Vec::new(),
             stats: Mutex::new(FlightStats::new()),
@@ -27757,6 +27836,7 @@ mod takeoff_roll_tests {
             flight_number: "1".into(),
             dpt_airport: "KCLT".into(),
             arr_airport: "EDDM".into(),
+            planned_flight_time_min: None,
             airline_logo_url: None,
             fares: Vec::new(),
             stats: Mutex::new(FlightStats::new()),
@@ -27825,6 +27905,7 @@ mod arrived_fallback_geometry_tests {
             flight_number: "859".into(),
             dpt_airport: "ENGM".into(),
             arr_airport: arr.into(),
+            planned_flight_time_min: None,
             airline_logo_url: None,
             fares: Vec::new(),
             stats: Mutex::new(FlightStats::new()),
@@ -28036,6 +28117,7 @@ mod enroute_reconcile_tests {
             flight_number: "22".into(),
             dpt_airport: "EDLN".into(),
             arr_airport: "ZZZZ".into(),
+            planned_flight_time_min: None,
             airline_logo_url: None,
             fares: Vec::new(),
             stats: Mutex::new(FlightStats::new()),
@@ -28990,6 +29072,7 @@ mod enroute_reconcile_replay_tests {
             // wie in arrived_fallback_dwell_tests; Distanz-Geometrie ist
             // dort separat abgedeckt).
             arr_airport: "ZZZZ".into(),
+            planned_flight_time_min: None,
             airline_logo_url: None,
             fares: Vec::new(),
             stats: Mutex::new(FlightStats::new()),
@@ -30873,7 +30956,17 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                         log_activity_handle(
                             app,
                             ActivityLevel::Info,
-                            format!("A/THR {}", if athr { "ENGAGED" } else { "OFF" }),
+                            format!(
+                                "A/THR {}",
+                                if athr {
+                                    // v1.5.3 (#ifly-audit): iFly liefert den
+                                    // ARM-Schalter, kein Engagement — am Gate
+                                    // stand sonst "ENGAGED" (Thomas' Protokoll).
+                                    if snap.autothrottle_is_arm { "ARMED" } else { "ENGAGED" }
+                                } else {
+                                    "OFF"
+                                }
+                            ),
                             None,
                         );
                     }
@@ -30995,22 +31088,62 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             stats.last_logged_flaps_detent = None;
         }
     } else {
-        let flaps_detent = (snap.flaps_position.clamp(0.0, 1.0) * 5.0).round() as u8;
-        if stats.last_logged_flaps_detent != Some(flaps_detent) {
-            if let Some(prev) = stats.last_logged_flaps_detent {
-                let dir = if flaps_detent > prev { "↓" } else { "↑" };
-                log_activity_handle(
-                    app,
-                    ActivityLevel::Info,
-                    format!("Flaps {dir} {}", detent_label(flaps_detent)),
-                    Some(format!(
-                        "IAS {:.0} kt, AGL {:.0} ft",
-                        snap.indicated_airspeed_kt, snap.altitude_agl_ft
-                    )),
-                );
+        // v1.5.3 (#ifly-audit): Label bevorzugt RASTERBEWUSST (Index +
+        // Rastenzahl -> echte Boeing-/Airbus-Namen), Prozent-Heuristik
+        // nur noch als Rueckfall fuer Sims ohne die beiden SimVars.
+        let label: String = match (snap.flap_num_positions, snap.flap_handle_index) {
+            (Some(num), Some(idx)) => raster_flap_label(num, idx)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("Raste {idx}/{num}")),
+            _ => {
+                let d = (snap.flaps_position.clamp(0.0, 1.0) * 5.0).round() as u8;
+                detent_label(d).to_string()
             }
-            stats.last_logged_flaps_detent = Some(flaps_detent);
-            stats.last_logged_flap_label = None;
+        };
+
+        // Entprellen (siehe FlightStats-Kommentar): erst loggen, wenn
+        // das neue Label FLAP_LOG_STABLE_SECS stabil steht — der
+        // 3-Sekunden-"FULL"-Spike des iFly faellt damit durch.
+        const FLAP_LOG_STABLE_SECS: i64 = 4;
+        let now = Utc::now();
+        if stats.last_logged_flap_label.as_deref() == Some(label.as_str()) {
+            stats.pending_flap_label = None;
+            stats.pending_flap_since = None;
+        } else {
+            if stats.pending_flap_label.as_deref() != Some(label.as_str()) {
+                stats.pending_flap_label = Some(label.clone());
+                stats.pending_flap_since = Some(now);
+            }
+            let stabil = stats
+                .pending_flap_since
+                .map(|t| (now - t).num_seconds() >= FLAP_LOG_STABLE_SECS)
+                .unwrap_or(false);
+            if stabil {
+                // Erste Beobachtung eines Flugs wird nicht geloggt —
+                // wie bisher: erst ab der zweiten Stellung gibt es
+                // eine Zeile (sonst staende beim Start "Flaps UP").
+                if stats.last_logged_flap_label.is_some() {
+                    let dir = match stats.last_logged_flap_pos {
+                        Some(prev) if snap.flaps_position > prev => "↓",
+                        Some(_) => "↑",
+                        None => "↓",
+                    };
+                    log_activity_handle(
+                        app,
+                        ActivityLevel::Info,
+                        format!("Flaps {dir} {}", label),
+                        Some(format!(
+                            "IAS {:.0} kt, AGL {:.0} ft",
+                            snap.indicated_airspeed_kt, snap.altitude_agl_ft
+                        )),
+                    );
+                }
+                stats.last_logged_flap_label = Some(label);
+                stats.last_logged_flap_pos = Some(snap.flaps_position);
+                stats.last_logged_flaps_detent = None;
+                stats.pending_flap_label = None;
+                stats.pending_flap_since = None;
+            }
         }
     }
 
@@ -32785,6 +32918,7 @@ async fn try_resume_flight(
         flight_number: persisted.flight_number.clone(),
         dpt_airport: persisted.dpt_airport.clone(),
         arr_airport: persisted.arr_airport.clone(),
+        planned_flight_time_min: None /* Resume: Planzeit nicht persistiert */,
         fares: persisted.fares.clone(),
         stats: Mutex::new(restored_stats),
         stop: AtomicBool::new(false),
@@ -39213,6 +39347,7 @@ mod touchdown_metadata_stamp_tests {
             flight_number: "1".into(),
             dpt_airport: "EDDF".into(),
             arr_airport: arr.to_string(),
+            planned_flight_time_min: None,
             fares: Vec::new(),
             stats: Mutex::new(FlightStats::new()),
             stop: AtomicBool::new(false),

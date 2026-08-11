@@ -124,6 +124,15 @@ pub struct SimSnapshot {
     // Configuration
     pub gear_position: f32, // 0.0 = up, 1.0 = down
     pub flaps_position: f32,
+    /// v1.5.3 (#ifly-audit): Rasten-Index des Klappenhebels (0 = UP)
+    /// und Anzahl der Rasten laut Sim (`FLAPS NUM HANDLE POSITIONS`).
+    /// Zusammen erlauben sie RASTERBEWUSSTE Labels: 8 Rasten = Boeing
+    /// 737 (UP/1/2/5/10/15/25/30/40), 4 = Airbus. `None` bei Sims/
+    /// Adaptern ohne die SimVars — dann greift die alte Prozent-
+    /// Heuristik. Anlass: iFly-Flug 11.08.2026, "Flaps 5" wurde als
+    /// Airbus-"1+F" geloggt.
+    pub flap_handle_index: Option<u8>,
+    pub flap_num_positions: Option<u8>,
     pub engines_running: u8,
 
     // Fuel & weight
@@ -208,6 +217,11 @@ pub struct SimSnapshot {
     /// keeps pre-existing JSONL flight-log replays deserializable.
     #[serde(default)]
     pub autothrottle_on: Option<bool>,
+    /// v1.5.3 (#ifly-audit): true, wenn `autothrottle_on` semantisch
+    /// ein ARM-Zustand ist (iFly: A/T-ARM-Schalter) und kein aktives
+    /// Engagement — die Logzeile textet dann "ARMED" statt "ENGAGED"
+    /// (Thomas' Protokoll 11.08.: "A/THR ENGAGED" um 10:22 am Gate).
+    pub autothrottle_is_arm: bool,
 
     // ---- Powerplant (totals — per-engine arrays land later) ----
     /// Total fuel-flow across all running engines, kg/h.
@@ -826,6 +840,8 @@ impl Default for SimSnapshot {
             simulation_rate: 1.0,
             gear_position: 1.0,
             flaps_position: 0.0,
+            flap_handle_index: None,
+            flap_num_positions: None,
             engines_running: 0,
             fuel_total_kg: 0.0,
             fuel_used_kg: 0.0,
@@ -868,6 +884,7 @@ impl Default for SimSnapshot {
             autopilot_nav: None,
             autopilot_approach: None,
             autothrottle_on: None,
+            autothrottle_is_arm: false,
             fuel_flow_kg_per_h: None,
             spoilers_handle_position: None,
             spoilers_armed: None,
