@@ -116,6 +116,7 @@ export function CpdlcPanel({ onOpenSettings }: Props) {
   const [callsignInput, setCallsignInput] = useState("");
   const [callsignDirty, setCallsignDirty] = useState(false);
   const [callsignEditing, setCallsignEditing] = useState(false);
+  const [callsignReconnecting, setCallsignReconnecting] = useState(false);
 
   const [mode, setMode] = useState<DatalinkMode>("pdc");
   const [busy, setBusy] = useState(false);
@@ -208,6 +209,21 @@ export function CpdlcPanel({ onOpenSettings }: Props) {
       setSettings(next);
       setCallsignInput(trimmed);
       setCallsignDirty(false);
+      // v1.5.6 (#hoppie-callsign): Das Rufzeichen ist der ABSENDER der
+      // Hoppie-Verbindung — eine laufende Verbindung sendet sonst weiter
+      // unter dem alten. Frueher war das der Grund, das Aendern bei
+      // Verbindung komplett zu sperren; Michel lief damit in eine
+      // Sackgasse (Hinweis "trag ein Rufzeichen ein", Knopf tot).
+      // Jetzt: kurz neu aufbauen, der Pilot merkt nur, dass es wirkt.
+      if (online) {
+        setCallsignReconnecting(true);
+        try {
+          await invoke<HoppieStatus>("hoppie_disconnect");
+          setStatus(await invoke<HoppieStatus>("hoppie_connect"));
+        } finally {
+          setCallsignReconnecting(false);
+        }
+      }
     } catch (e) {
       setError(formatIpcError(e));
     }
@@ -286,8 +302,29 @@ export function CpdlcPanel({ onOpenSettings }: Props) {
   // Nothing typed and no flight to fall back to a VA callsign from —
   // worth saying out loud since the failure mode is silent: the
   // controller never sees the request.
-  const mismatchedCallsign =
-    callsignInput.trim() === "" && flightCallsign !== null && flightCallsign !== "";
+  // v1.5.6 (#hoppie-callsign, Feldbefund Michel SBBR→LPPT): Vorher war das
+  // hier eine ORANGE WARNUNG, sobald das Feld leer war — also im Normalfall,
+  // denn dann greift das Flugplan-Callsign. Sie forderte zum Handeln auf,
+  // während Knopf und Feld gesperrt waren (siehe unten): eine Sackgasse.
+  //
+  // Der Client kann gar nicht wissen, was richtig ist — er kennt das
+  // NETZWERK-Callsign des Piloten nicht. Deshalb jetzt beides als
+  // neutraler Hinweis: was gesendet wird, und woher es kommt.
+  const callsignNotice: { key: string; vars: Record<string, string> } | null = (() => {
+    const typed = callsignInput.trim();
+    if (typed === "" && flightCallsign) {
+      const vars: Record<string, string> = { flight: flightCallsign };
+      return { key: "cpdlc.callsign_from_plan", vars };
+    }
+    if (typed !== "" && flightCallsign && typed.toUpperCase() !== flightCallsign.toUpperCase()) {
+      const vars: Record<string, string> = {
+        entered: typed.toUpperCase(),
+        flight: flightCallsign,
+      };
+      return { key: "cpdlc.callsign_override_active", vars };
+    }
+    return null;
+  })();
 
   const linkKind: "connected" | "error" | "none" = online
     ? "connected"
@@ -368,7 +405,7 @@ export function CpdlcPanel({ onOpenSettings }: Props) {
                     if (e.key === "Escape") setCallsignEditing(false);
                   }}
                   placeholder={flightCallsign ?? t("cpdlc.callsign_placeholder")}
-                  disabled={busy || online}
+                  disabled={busy || loggedOn || callsignReconnecting}
                   title={t("cpdlc.callsign_network_hint")}
                 />
               ) : (
@@ -381,14 +418,29 @@ export function CpdlcPanel({ onOpenSettings }: Props) {
                 </span>
               )}
             </div>
+            {/* v1.5.6 (#hoppie-callsign): Der Knopf war früher schon bei
+                bloßer VERBINDUNG gesperrt (`busy || online`) — Michel stand
+                damit vor einem toten Knopf, während der Hinweis darüber ein
+                Rufzeichen verlangte. Gesperrt ist jetzt nur noch, was
+                wirklich nicht gehen darf: eine laufende CPDLC-Anmeldung
+                (der Lotse kennt ihn unter dem alten Rufzeichen). */}
             {!callsignEditing && (
               <button
                 type="button"
                 className="button button--secondary"
-                disabled={busy || online}
+                disabled={busy || loggedOn || callsignReconnecting}
+                title={
+                  loggedOn
+                    ? t("cpdlc.callsign_locked_logon", {
+                        callsign: resolvedCallsign ?? "",
+                      })
+                    : undefined
+                }
                 onClick={() => setCallsignEditing(true)}
               >
-                {t("cpdlc.callsign_change")}
+                {callsignReconnecting
+                  ? t("cpdlc.callsign_reconnecting")
+                  : t("cpdlc.callsign_change")}
               </button>
             )}
           </div>
@@ -398,7 +450,7 @@ export function CpdlcPanel({ onOpenSettings }: Props) {
         </span>
       </header>
 
-      {(status?.last_error || error || logonError || logonTimedOut || mismatchedCallsign) && (
+      {(status?.last_error || error || logonError || logonTimedOut || callsignNotice) && (
         <div className="datalink-alerts">
           {status?.last_error && <p className="cpdlc-panel__error">{status.last_error}</p>}
           {error && <p className="cpdlc-panel__error">{error}</p>}
@@ -406,10 +458,8 @@ export function CpdlcPanel({ onOpenSettings }: Props) {
           {logonTimedOut && (
             <p className="cpdlc-link-bar__warn">{t("cpdlc.logon_no_answer", { station: stationInput })}</p>
           )}
-          {mismatchedCallsign && (
-            <p className="cpdlc-link-bar__warn">
-              {t("cpdlc.callsign_mismatch", { entered: callsignInput, flight: flightCallsign })}
-            </p>
+          {callsignNotice && (
+            <p className="cpdlc-link-bar__note">{t(callsignNotice.key, callsignNotice.vars)}</p>
           )}
         </div>
       )}

@@ -2042,7 +2042,12 @@
     "station_unknown": "Could not check {{station}}",
     "station_online_short": "reachable",
     "station_offline_short": "not registered",
-    "station_unknown_short": "check failed"
+    "station_unknown_short": "check failed",
+    "callsign_from_plan": "Sending as {{flight}} from the flight plan. If you fly under a different callsign on the network, enter it here — that is what ATC looks you up by.",
+    "callsign_override_active": "Sending as {{entered}} (flight plan: {{flight}}).",
+    "callsign_locked_logon": "Callsign locked while a CPDLC logon is active — the controller knows you as {{callsign}}. Log off first.",
+    "callsign_reconnecting": "Reconnecting with the new callsign …",
+    "field_callsign_readonly": "Display only — change the callsign above"
   },
   "hoppie_settings": {
     "section_title": "Hoppie ACARS (PDC/CPDLC)",

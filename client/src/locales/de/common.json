@@ -2042,7 +2042,12 @@
     "station_unknown": "{{station}} konnte nicht geprüft werden",
     "station_online_short": "erreichbar",
     "station_offline_short": "nicht registriert",
-    "station_unknown_short": "nicht prüfbar"
+    "station_unknown_short": "nicht prüfbar",
+    "callsign_from_plan": "Es wird {{flight}} aus dem Flugplan gesendet. Fliegst du im Netzwerk unter einem anderen Rufzeichen, trage es hier ein — ATC sucht dich danach.",
+    "callsign_override_active": "Du sendest als {{entered}} (Flugplan: {{flight}}).",
+    "callsign_locked_logon": "Rufzeichen während einer laufenden CPDLC-Anmeldung gesperrt — der Lotse kennt dich unter {{callsign}}. Erst abmelden.",
+    "callsign_reconnecting": "Verbindung wird mit dem neuen Rufzeichen neu aufgebaut …",
+    "field_callsign_readonly": "Anzeige — Rufzeichen oben ändern"
   },
   "hoppie_settings": {
     "section_title": "Hoppie ACARS (PDC/CPDLC)",

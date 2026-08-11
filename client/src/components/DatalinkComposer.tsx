@@ -363,8 +363,16 @@ export function DatalinkComposer({
               for the same at-a-glance layout the mockup shows, but a
               second, independently-editable callsign field would
               reintroduce exactly the bug that comment describes. */}
-          <label className="datalink-field">
-            <span>{t("cpdlc.field_callsign")}</span>
+          {/* v1.5.6 (#hoppie-callsign): Das Feld ist bewusst nur Anzeige
+              (ein zweites, eigenständig tippbares Rufzeichen wäre genau der
+              Feldfehler, den der Kommentar oben beschreibt) — es sah aber
+              aus wie ein Eingabefeld, und Michel hat darin vergeblich zu
+              tippen versucht. Jetzt sagt die Beschriftung, wo es hingeht. */}
+          <label className="datalink-field datalink-field--readonly">
+            <span>
+              {t("cpdlc.field_callsign")}
+              <em className="datalink-field__note">{t("cpdlc.field_callsign_readonly")}</em>
+            </span>
             <input type="text" value={callsign ?? ""} disabled readOnly title={t("cpdlc.field_callsign_hint")} />
           </label>
         </div>

@@ -9756,6 +9756,25 @@ input.datalink-block__input {
   color: var(--sem-warn);
 }
 
+/* v1.5.6 (#hoppie-callsign): neutraler Hinweis statt Alarm. Das Rufzeichen
+   aus dem Flugplan zu verwenden ist der NORMALFALL — dafür darf nichts
+   orange leuchten. Gedämpft, aber lesbar. */
+.cpdlc-link-bar__note {
+  margin: 0;
+  font-size: var(--fs-300);
+  line-height: 1.45;
+  color: var(--text-dim, #8b95a6);
+}
+
+/* Anzeige-Feld (Rufzeichen im PDC-Formular): der Zusatz sagt, wo man es
+   wirklich ändert — vorher sah es aus wie ein Eingabefeld. */
+.datalink-field__note {
+  margin-left: 6px;
+  font-style: normal;
+  font-size: 0.85em;
+  opacity: 0.65;
+}
+
 /* --- §1.2 / workspace: composer 420px fixed | history 1fr --- */
 
 .datalink-workspace {
