@@ -1,5 +1,5 @@
 /*
- * AeroACARS HUD — v3.8, 10.08.2026: METAR dekodiert vom Server (ein Dekoder, eine Wahrheit); Text-Parser nur noch Rueckfall.
+ * AeroACARS HUD — v3.9, 11.08.2026: Zeitzelle rotiert selbst (ETE/ETA/FLT alle 8 s) — der Klick kam in Flow nie an.
  *
  * Spricht mit AeroACARS' fest eingebautem Panel-Server auf Port 47847:
  *   GET /panel/status    Flugstatus, im Sekundentakt abgefragt
@@ -263,7 +263,7 @@
         var el = e.target;
         while (el && el !== K.data) {
           if (el.getAttribute && el.getAttribute('data-aa2-klick') === 'zeit') {
-            zeitModus = (zeitModus === 'rest') ? 'flug' : 'rest';
+            zeitKlickOffset++;
             zeichne();
             return;
           }
@@ -358,13 +358,16 @@
   // 4. Uebertragung (B2 + B3)
   // ═══════════════════════════════════════════════════════════════════
 
-  /* v3.6 (F3): Der einzige interaktive Zustand des Widgets. 'rest' zeigt
-     die Restflugzeit (ETE vom Server), 'flug' die verstrichene Zeit.
-     Standard ist 'rest' — das war der eigentliche Pilotenwunsch; die
-     verstrichene Zeit gab es vorher schon. Ein Klick auf die Zeitzelle
-     wechselt. Bewusst NICHT persistiert: ein Neuladen faellt auf den
-     Wunsch-Standard zurueck, und mehr Zustand braucht ein Streifen nicht. */
-  var zeitModus = 'rest';
+  /* v3.9 (F3, zweiter Anlauf nach Livetest): Die Zeitzelle ROTIERT von
+     selbst. Der Klick-Umschalter aus v3.6 kam im Flow-Widget nie an —
+     Flows Drag-Erkennung frisst den Klick (Thomas' Livetest 11.08.2026:
+     "geht nicht"), und eine Bedienung, die nur im Browser-HUD
+     funktioniert, ist keine. Also wechselt die Zelle jetzt alle 8 s
+     selbst: ETE (Restflugzeit) -> ETA (Ankunftszeit, jetzt + ETE) ->
+     FLT (geflogene Zeit). Der Klick bleibt als Bonus erhalten, wo er
+     durchkommt (Browser-HUD): er schaltet sofort einen Schritt weiter. */
+  var ZEIT_ROTATION_MS = 8000;
+  var zeitKlickOffset = 0;
 
   var anfrageLaeuft = false;   // gilt fuer ALLE Routen zusammen
   var naechsterVersuch = 0;
@@ -648,15 +651,28 @@
     return h > 0 ? h + 'h' + (m < 10 ? '0' : '') + m + 'm' : m + 'm';
   }
 
-  /* v3.6 (F3): Die Zeit-Zelle. Im Modus 'rest' die Restflugzeit vom
-     Server (Grosskreis zum Ziel / Groundspeed) — faellt sie aus (rollt
-     gerade, Server aelter als v1.5.1), stillschweigend die verstrichene
-     Zeit, denn eine leere Zelle beantwortet gar keine Frage. */
+  /* v3.9: Die Zeit-Zelle, rotierend. Kandidaten der Reihe nach:
+       ETE  Restflugzeit vom Server (Grosskreis zum Ziel / Groundspeed)
+       ETA  Ankunfts-UHRZEIT = jetzt + ETE, in Z — dieselbe Konvention
+            wie die Flugwerte-Karte der App
+       FLT  geflogene Zeit seit dem Abheben
+     Kandidaten ohne Daten (kein ete_min: rollt gerade oder alter
+     Server) fallen aus der Rotation, statt eine leere Zelle zu zeigen.
+     Reihenfolge und Takt sind fest — die Zelle soll vorhersehbar
+     ticken, nicht zappeln. */
   function zeitZelle(s, live) {
-    if (zeitModus === 'rest' && live && typeof live.ete_min === 'number') {
-      return ['ETE', alsDauer(live.ete_min), null, 'zeit'];
+    var kandidaten = [];
+    if (live && typeof live.ete_min === 'number') {
+      kandidaten.push(['ETE', alsDauer(live.ete_min)]);
+      var eta = new Date(Date.now() + live.ete_min * 60000);
+      kandidaten.push(['ETA',
+        ('0' + eta.getUTCHours()).slice(-2) + ':' + ('0' + eta.getUTCMinutes()).slice(-2) + 'z']);
     }
-    return ['FLT', verstrichen(s.takeoff_at), null, 'zeit'];
+    if (s.takeoff_at) kandidaten.push(['FLT', verstrichen(s.takeoff_at)]);
+    if (!kandidaten.length) return null;
+    var i = (Math.floor(Date.now() / ZEIT_ROTATION_MS) + zeitKlickOffset) % kandidaten.length;
+    var k = kandidaten[i];
+    return [k[0], k[1], null, 'zeit'];
   }
 
   /* v3.7 (F2, zweiter Anlauf nach Pilotenfoto): METAR PARSEN statt roh
