@@ -4095,6 +4095,17 @@ input:disabled {
   color: var(--text);
 }
 
+/* v1.5.5 Stand-Erkennung: gedämpfte Standzeile unter der Route,
+   gleiche Mono-Familie wie die ICAO-Zeile darüber. */
+.active-flight__stands {
+  margin-top: 2px;
+  text-align: center;
+  font-size: 12px;
+  font-family: "SF Mono", "Cascadia Code", "Source Code Pro", Menlo, Consolas,
+    monospace;
+  color: var(--text-dim, #8b95a6);
+}
+
 .active-flight__route-arrow {
   display: flex;
   flex-direction: column;

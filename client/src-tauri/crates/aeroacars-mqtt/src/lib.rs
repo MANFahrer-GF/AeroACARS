@@ -105,6 +105,12 @@ pub struct FlightMeta {
     /// keinen Session-Split mehr, solange der Client dieselbe
     /// `pirep_id` weiterschickt.
     pub pirep_id: String,
+    /// v1.5.5 Stand-Erkennung: erkannter Abflug-/Ankunftsstand (OSM).
+    /// In jedem Position-Payload, sobald bekannt — dauernd praesent
+    /// heisst selbstheilend nach einem Recorder-Neustart (kein Retain
+    /// noetig). None → Feld fehlt im JSON (Wire-additiv).
+    pub dep_gate: Option<String>,
+    pub arr_gate: Option<String>,
 }
 
 /// v0.5.14: rich position telemetry. Goal is "PIREP-grade analysis from
@@ -240,6 +246,12 @@ struct PositionPayload {
     /// welcher Pilot mit welcher Build-Version sendet. Ermöglicht
     /// Version-Compliance-Tracking (= "Pilot X läuft noch v0.5.16-Pre-
     /// Numeric-Fix, Hard-Landing-Check failed silent").
+    /// v1.5.5 Stand-Erkennung: erkannte Staende, sobald bekannt.
+    /// skip_serializing haelt Payloads ohne Stand byte-identisch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dep_gate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    arr_gate: Option<String>,
     client_version: &'static str,
 }
 
@@ -1258,6 +1270,12 @@ impl Handle {
             dep: non_empty(&meta.dep_icao),
             arr: non_empty(&meta.arr_icao),
             pirep_id: non_empty(&meta.pirep_id),
+            // v1.5.5 Stand-Erkennung (live): Recorder haengt sie per
+            // setFlightGates an den Live-Flug — Live-Map zeigt den
+            // Ankunftsstand damit schon beim Einparken, nicht erst
+            // nach dem PIREP-Filing.
+            dep_gate: meta.dep_gate.as_deref().and_then(non_empty),
+            arr_gate: meta.arr_gate.as_deref().and_then(non_empty),
             client_version: env!("CARGO_PKG_VERSION"),
         };
         match self.tx.try_send(Cmd::Position(Box::new(payload))) {

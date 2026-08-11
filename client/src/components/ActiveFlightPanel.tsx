@@ -77,6 +77,21 @@ function haversineNm(lat1: number, lon1: number, lat2: number, lon2: number): nu
  * Segmenter `Ground` meldet) — `phase` hier ist dadurch bereits `"landing"`,
  * kein zusätzliches Label-Override in dieser rein UI-seitigen Funktion nötig.
  */
+/** v1.5.5 Stand-Erkennung: Anzeigetext für die Standzeile unter der Route.
+ *  "Stand" liest sich in beiden Sprachen; null = Zeile weglassen. Leere
+ *  Strings zählen als "nicht erkannt" (Wire liefert null ODER nichts). */
+export function standsLine(
+  depGate: string | null | undefined,
+  arrGate: string | null | undefined,
+): string | null {
+  const dep = depGate?.trim() || null;
+  const arr = arrGate?.trim() || null;
+  if (dep && arr) return `Stand ${dep} → ${arr}`;
+  if (dep) return `Stand ${dep}`;
+  if (arr) return `Stand → ${arr}`;
+  return null;
+}
+
 export function phaseBadgeDisplay(
   phase: string,
   shadowSegment: string | undefined | null,
@@ -617,6 +632,14 @@ export function ActiveFlightPanel({
           </span>
           <span className="active-flight__icao">{info.arr_airport}</span>
         </div>
+        {/* v1.5.5 Stand-Erkennung: erkannte Stände unter der Route —
+            "Stand" liest sich in beiden Sprachen. Erscheint erst, wenn
+            mindestens einer erkannt wurde. */}
+        {standsLine(info.dep_gate, info.arr_gate) && (
+          <div className="active-flight__stands">
+            {standsLine(info.dep_gate, info.arr_gate)}
+          </div>
+        )}
       </header>
 
       {/* Stage E redesign: instrument band (IAS tape · phase card ·

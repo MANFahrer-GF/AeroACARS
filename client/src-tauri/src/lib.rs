@@ -3761,6 +3761,13 @@ struct FlightStats {
     /// kein Stand in Reichweite" — der Zustand hält sonst über viele Ticks
     /// an und würde das Log fluten.
     stand_gate_reject_logged: bool,
+    /// v1.5.5: Latches für die LIVE-Posts der Stand-Custom-Fields an
+    /// phpVMS (Dashboard zeigt den Stand schon im Boarding). Nicht
+    /// persistiert — ein Doppel-Post nach Resume überschreibt dasselbe
+    /// Feld mit demselben Wert, harmlos. Der BlocksOn-Rückweg setzt den
+    /// arr-Latch zurück, damit ein korrigierter Stand nachgepostet wird.
+    dep_gate_field_posted: bool,
+    arr_gate_field_posted: bool,
 
     // ---- Fuel tracking ----
     block_fuel_kg: Option<f32>,
@@ -22330,6 +22337,49 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // dep-Stand am Gate erfassen, arr-Stände für das
                 // BlocksOn-Stand-Gate vorladen.
                 maybe_spawn_stand_fetch(&app, &flight, tick_phase);
+                // v1.5.5: erkannte Staende LIVE als PIREP-Custom-Fields an
+                // phpVMS — das GSG-Dashboard zeigt den Stand damit schon im
+                // Boarding (der Weg des alten vmsACARS), nicht erst nach dem
+                // Filing. Latches machen jeden Post einmalig; der BlocksOn-
+                // Rueckweg re-armiert den arr-Latch fuer Korrekturen.
+                {
+                    let mut posts: HashMap<String, String> = HashMap::new();
+                    {
+                        let mut stats = flight.stats.lock().expect("flight stats");
+                        if !stats.dep_gate_field_posted {
+                            if let Some(g) =
+                                stats.dep_gate.clone().filter(|s| !s.is_empty())
+                            {
+                                stats.dep_gate_field_posted = true;
+                                posts.insert("Departure Stand".into(), g);
+                            }
+                        }
+                        if !stats.arr_gate_field_posted
+                            && stats.phase == FlightPhase::BlocksOn
+                        {
+                            if let Some(g) =
+                                stats.arr_gate.clone().filter(|s| !s.is_empty())
+                            {
+                                stats.arr_gate_field_posted = true;
+                                posts.insert("Arrival Stand".into(), g);
+                            }
+                        }
+                    }
+                    if !posts.is_empty() {
+                        let client = client.clone();
+                        let pirep_id = flight.pirep_id.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) =
+                                client.post_pirep_fields(&pirep_id, &posts).await
+                            {
+                                tracing::warn!(
+                                    error = %e,
+                                    "live stand field post failed (non-fatal)"
+                                );
+                            }
+                        });
+                    }
+                }
             }
 
             // v0.16.24: approach-phase divert navdata pre-fetch. On a
@@ -23268,6 +23318,13 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             .and_then(extract_icao_code)
                             .unwrap_or_default()
                     };
+                    // v1.5.5 Stand-Erkennung: erkannte Staende in jeden
+                    // Position-Tick — Live-Map sieht den Ankunftsstand
+                    // beim Einparken statt erst nach dem Filing.
+                    let (tick_dep_gate, tick_arr_gate) = {
+                        let stats = flight.stats.lock().expect("flight stats");
+                        (stats.dep_gate.clone(), stats.arr_gate.clone())
+                    };
                     let meta = aeroacars_mqtt::FlightMeta {
                         callsign: format_callsign(
                             &flight.airline_icao,
@@ -23284,6 +23341,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         // Sessions ueber pirep_id joinen kann — verhindert
                         // den AUA-323-Split bei langer Positions-Luecke.
                         pirep_id: flight.pirep_id.clone(),
+                        dep_gate: tick_dep_gate,
+                        arr_gate: tick_arr_gate,
                     };
                     // v0.5.14: pass current phase so it's inlined into
                     // the position payload — Monitor doesn't have to
@@ -26954,6 +27013,7 @@ fn step_flight_at(
                 next_phase = FlightPhase::TaxiIn;
                 stats.blocks_on_reached = false;
                 stats.block_on_at = None;
+                stats.arr_gate_field_posted = false;
                 stats.arr_gate = None;
                 stats.arr_gate_icao = None;
             }
@@ -29727,6 +29787,18 @@ fn build_pirep_fields(
     }
     if !flight.planned_registration.is_empty() {
         f.insert("Aircraft Reg".into(), flight.planned_registration.clone());
+    }
+
+    // v1.5.5 Stand-Erkennung: erkannte Staende als Custom-Fields — die
+    // phpVMS-Flugbericht-Seite zeigt sie damit automatisch an (derselbe
+    // Weg, den der alte vmsACARS ging). arr NUR ueber arr_gate_for():
+    // ein Stand vom falschen Flughafen (Divert) waere schlimmer als
+    // keiner.
+    if let Some(g) = stats.dep_gate.as_deref().filter(|s| !s.is_empty()) {
+        f.insert("Departure Stand".into(), g.to_string());
+    }
+    if let Some(g) = arr_gate_for(stats, effective_arr_icao) {
+        f.insert("Arrival Stand".into(), g);
     }
 
     // ---- Times (HH:MM:SS UTC, glanceable) + durations ----
