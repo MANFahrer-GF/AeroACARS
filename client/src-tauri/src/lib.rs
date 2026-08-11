@@ -22351,7 +22351,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 stats.dep_gate.clone().filter(|s| !s.is_empty())
                             {
                                 stats.dep_gate_field_posted = true;
-                                posts.insert("Departure Stand".into(), g);
+                                posts.insert("Departure Gate".into(), g);
                             }
                         }
                         if !stats.arr_gate_field_posted
@@ -22361,7 +22361,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 stats.arr_gate.clone().filter(|s| !s.is_empty())
                             {
                                 stats.arr_gate_field_posted = true;
-                                posts.insert("Arrival Stand".into(), g);
+                                posts.insert("Arrival Gate".into(), g);
                             }
                         }
                     }
@@ -29790,15 +29790,17 @@ fn build_pirep_fields(
     }
 
     // v1.5.5 Stand-Erkennung: erkannte Staende als Custom-Fields — die
-    // phpVMS-Flugbericht-Seite zeigt sie damit automatisch an (derselbe
-    // Weg, den der alte vmsACARS ging). arr NUR ueber arr_gate_for():
-    // ein Stand vom falschen Flughafen (Divert) waere schlimmer als
-    // keiner.
+    // phpVMS-Flugbericht-Seite zeigt sie automatisch, und das DBasic-
+    // FlightBoard auf dem GSG-Dashboard rendert sie als "Gate X" (es
+    // matcht die Slugs departure-gate/arrival-gate — exakt die alte
+    // vmsACARS-Konvention, daher GATE, nicht Stand). arr NUR ueber
+    // arr_gate_for(): ein Stand vom falschen Flughafen (Divert) waere
+    // schlimmer als keiner.
     if let Some(g) = stats.dep_gate.as_deref().filter(|s| !s.is_empty()) {
-        f.insert("Departure Stand".into(), g.to_string());
+        f.insert("Departure Gate".into(), g.to_string());
     }
     if let Some(g) = arr_gate_for(stats, effective_arr_icao) {
-        f.insert("Arrival Stand".into(), g);
+        f.insert("Arrival Gate".into(), g);
     }
 
     // ---- Times (HH:MM:SS UTC, glanceable) + durations ----
