@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { syncedSet, syncedRemove } from "../lib/syncedStorage";
 import { invoke, isTauri, formatIpcError } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import { setLanguage, SUPPORTED_LANGUAGES, LANGUAGE_LABELS, type SupportedLanguage } from "../i18n";
@@ -124,10 +125,12 @@ export function SettingsPanel({
   function persistSimbriefSettings(username: string, userId: string) {
     const u = username.trim();
     const i = userId.trim();
-    if (u) localStorage.setItem("simbrief_username", u);
-    else localStorage.removeItem("simbrief_username");
-    if (i) localStorage.setItem("simbrief_user_id", i);
-    else localStorage.removeItem("simbrief_user_id");
+    // v1.5.6 (#lan-bruecke-1zu1): über den Host spiegeln, sonst sieht das
+    // Tablet leere SimBrief-Felder (eigener Browser-Speicher).
+    if (u) syncedSet("simbrief_username", u);
+    else syncedRemove("simbrief_username");
+    if (i) syncedSet("simbrief_user_id", i);
+    else syncedRemove("simbrief_user_id");
     void invoke("set_simbrief_settings", {
       username: u || null,
       userId: i || null,

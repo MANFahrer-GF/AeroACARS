@@ -10,6 +10,7 @@
 // Tags wird auf http/https validiert.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { syncedSet } from "../lib/syncedStorage";
 import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 
@@ -59,7 +60,9 @@ function loadReadIds(): Set<number> {
 
 function saveReadIds(ids: Set<number>): void {
   try {
-    localStorage.setItem(READ_STORAGE_KEY, JSON.stringify(Array.from(ids)));
+    // v1.5.6 (#lan-bruecke-1zu1): gespiegelt — sonst zeigt das Tablet
+    // alles als ungelesen, was der Pilot in der App längst gelesen hat.
+    syncedSet(READ_STORAGE_KEY, JSON.stringify(Array.from(ids)));
   } catch {
     // localStorage voll oder disabled — egal, naechster Run probiert's erneut.
   }
@@ -151,6 +154,15 @@ async function fetchNews(): Promise<NewsItem[]> {
 export function useUnreadNewsCount(loggedIn: boolean): number {
   const [items, setItems] = useState<NewsItem[]>([]);
   const [readIds, setReadIds] = useState<Set<number>>(() => loadReadIds());
+  // v1.5.6 (#lan-bruecke-1zu1): Auf einem frisch verbundenen Tablet steht
+  // beim ersten Rendern noch der leere Browser-Speicher; sobald der
+  // Host-Stand da ist, den Gelesen-Status nachziehen.
+  useEffect(() => {
+    const onHydrated = () => setReadIds(loadReadIds());
+    window.addEventListener("aa-synced-storage-hydrated", onHydrated);
+    return () =>
+      window.removeEventListener("aa-synced-storage-hydrated", onHydrated);
+  }, []);
 
   useEffect(() => {
     if (!loggedIn) {
@@ -202,6 +214,14 @@ export function NewsPanel() {
   const { t, i18n } = useTranslation();
   const [state, setState] = useState<State>({ kind: "loading" });
   const [readIds, setReadIds] = useState<Set<number>>(() => loadReadIds());
+  // v1.5.6 (#lan-bruecke-1zu1): wie im Badge-Zähler — Host-Stand nachziehen,
+  // sobald er da ist (Tablet startet mit leerem Browser-Speicher).
+  useEffect(() => {
+    const onHydrated = () => setReadIds(loadReadIds());
+    window.addEventListener("aa-synced-storage-hydrated", onHydrated);
+    return () =>
+      window.removeEventListener("aa-synced-storage-hydrated", onHydrated);
+  }, []);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set());
   const mountedRef = useRef(true);
 

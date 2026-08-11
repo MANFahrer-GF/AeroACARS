@@ -7,6 +7,7 @@
 // (README §0).
 
 import { useEffect, useRef, useState } from "react";
+import { syncedGet, syncedSet } from "../lib/syncedStorage";
 import { useTranslation } from "react-i18next";
 import { formatDatalinkText } from "../lib/datalink";
 import { parseUplink, formatCtot, type ParsedUplink } from "../lib/datalinkParse";
@@ -118,21 +119,17 @@ function formatUtcHms(iso: string): string {
 // Speicher für etwas, das nur für die laufende Sitzung gilt. `sessionStorage`
 // endet mit dem Programm, der Merker gilt damit nur noch für den laufenden
 // Betrieb statt für immer.
-const SQUAWK_MEMO_KEY = "aeroacars.transponder.squawk_memo";
+// v1.5.6 (#lan-bruecke-1zu1): `session:`-Präfix = über den Host mit dem
+// Tablet geteilt, aber weiterhin NICHT haltbar (überlebt den Programmstart
+// bewusst nicht — siehe Kommentar oben).
+const SQUAWK_MEMO_KEY = "session:aeroacars.transponder.squawk_memo";
 function loadSquawkMemo(): string | null {
-  try {
-    return sessionStorage.getItem(SQUAWK_MEMO_KEY);
-  } catch {
-    return null;
-  }
+  return syncedGet(SQUAWK_MEMO_KEY);
 }
 function saveSquawkMemo(value: string): void {
-  try {
-    sessionStorage.setItem(SQUAWK_MEMO_KEY, value);
-  } catch {
-    // Private-mode / quota — the button just won't remember, which is no
-    // worse than the feature not existing.
-  }
+  // Private-mode / quota fängt syncedSet ab — der Knopf merkt sich dann
+  // nichts, was nicht schlimmer ist als die Funktion nicht zu haben.
+  syncedSet(SQUAWK_MEMO_KEY, value);
 }
 
 function SquawkTakeover({ squawk }: { squawk: string }) {

@@ -23,20 +23,29 @@
 //! The router maps `Ok` → HTTP 200, `Err(UiError)` → HTTP 422
 //! `{code,message}`, and an unknown command name → HTTP 404.
 //!
-//! ## What is covered vs excluded
+//! ## What is covered
 //!
-//! Every command in the `generate_handler!` list (lib.rs) is dispatched
-//! here EXCEPT a small deny-set:
+//! **Everything.** v1.5.6 (#lan-bruecke-1zu1) — Vorgabe Thomas: "die
+//! LAN-Bruecke soll alles 1 zu 1 machen". Jeder Befehl aus der
+//! `generate_handler!`-Liste (lib.rs) wird hier dispatcht; der Guard-Test
+//! am Dateiende haelt das durch und hat KEINE Ausnahmeliste mehr.
 //!
-//! - `xplane_install_plugin` / `xplane_detect_install_path` — write to /
-//!   probe the **sim PC's** local X-Plane install; a remote tablet has no
-//!   business mutating the host filesystem, and the paths are the host's.
-//! - `error_reporting_set_consent` — GDPR consent must be given on the
-//!   machine that actually sends the telemetry (the desktop), not proxied.
+//! Frueher gab es ein Deny-Set (X-Plane-Plugin-Installation,
+//! Fehlerbericht-Einwilligung, die Server-Schalter selbst) plus eine
+//! "noch nicht triagiert"-Liste, in der u. a. die OSM-Bodendaten lagen —
+//! weshalb die Live-Karte auf dem Tablet monatelang ohne Rollwege
+//! dastand. Beide Listen sind leer. Die Befehle laufen ohnehin alle auf
+//! dem HOST; das Tablet ist die Fernbedienung, nicht der Ausfuehrende.
 //!
-//! There are NO updater / process / relaunch / Window-taking commands in
-//! the handler list, so the "exclude those" rule is satisfied by the list
-//! simply not containing any.
+//! Zwei Ehrlichkeits-Fussnoten stehen an ihren Arms: `remote_server_stop`
+//! /`_set_port` kappen die eigene Leitung (gewollt, wenn der Pilot den
+//! Schalter umlegt), und der Aircraft-Scan kann seinen OPTIONALEN
+//! "Ordner waehlen"-Dialog im Browser nicht oeffnen — die Automatik und
+//! ein getippter Pfad funktionieren.
+//!
+//! Es gibt KEINE updater/process/relaunch/Window-Befehle in der
+//! Handler-Liste; die Regel "solche nicht bruecken" ist also erfuellt,
+//! weil es sie schlicht nicht gibt.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -155,6 +164,20 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 Err(e) => Err(e),
             }
         }
+        // v1.5.6 (#lan-bruecke-1zu1): OSM-Bodendaten. OHNE die beiden
+        // zeichnet die Live-Karte auf dem Tablet keine Rollwege, Staende
+        // und Haltepunkte — der Feldbefund, der diese Runde ausgeloest hat.
+        "airport_ground_get" => {
+            #[derive(Deserialize)]
+            struct A {
+                icao: String,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::airport_ground_get(app.clone(), a.icao).await),
+                Err(e) => Err(e),
+            }
+        }
+        "airport_ground_index" => from_uierr(crate::airport_ground_index().await),
         "phpvms_get_aircraft" => {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase")]
@@ -371,6 +394,10 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         "flight_refresh_simbrief" => {
             from_uierr(crate::flight_refresh_simbrief(app.clone(), st!()).await)
         }
+        // v1.5.6 (#lan-bruecke-1zu1): Route nachladen ohne den ganzen OFP.
+        "flight_refresh_route_only" => {
+            from_uierr(crate::flight_refresh_route_only(app.clone(), st!()).await)
+        }
         "flight_adopt" => {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase")]
@@ -437,6 +464,118 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         }
 
         // ========================== SETTINGS =============================
+        // v1.5.6 (#lan-bruecke-1zu1): gespiegelter UI-Zustand — ohne die
+        // drei sieht das Tablet leere SimBrief-Felder und alle Nachrichten
+        // als ungelesen (siehe crate::ui_state).
+        "ui_state_get_all" => ok_json(crate::ui_state::ui_state_get_all(app.clone())),
+        "ui_state_set" => {
+            #[derive(Deserialize)]
+            struct A {
+                key: String,
+                #[serde(default)]
+                value: Option<String>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => {
+                    crate::ui_state::ui_state_set(app.clone(), a.key, a.value);
+                    Ok(Value::Null)
+                }
+                Err(e) => Err(e),
+            }
+        }
+        "ui_state_seed" => {
+            #[derive(Deserialize)]
+            struct A {
+                values: std::collections::HashMap<String, String>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => ok_json(crate::ui_state::ui_state_seed(app.clone(), a.values)),
+                Err(e) => Err(e),
+            }
+        }
+        // v1.5.6 (#lan-bruecke-1zu1): Einwilligung zur Fehlerberichterstattung.
+        "error_reporting_set_consent" => {
+            #[derive(Deserialize)]
+            struct A {
+                enabled: bool,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::error_reporting_set_consent(a.enabled)),
+                Err(e) => Err(e),
+            }
+        }
+        // v1.5.6: X-Plane-Plugin-Installation. Beides laeuft auf dem HOST
+        // (dessen X-Plane-Ordner) — das Tablet ist nur die Fernbedienung.
+        "xplane_detect_install_path" => ok_json(crate::xplane_detect_install_path().await),
+        "xplane_install_plugin" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                install_dir: String,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_string_err(crate::xplane_install_plugin(a.install_dir).await),
+                Err(e) => Err(e),
+            }
+        }
+        // v1.5.6: Aircraft-Scan. Der Scan selbst laeuft auf dem HOST; nur der
+        // OPTIONALE "Ordner manuell waehlen"-Knopf braucht einen nativen
+        // Datei-Dialog, den ein Browser nicht hat — die Automatik (MSFS-
+        // Community-Ordner / X-Plane-Aircraft aus den Sim-Configs) greift
+        // ohne ihn, der Pilot kann den Pfad zur Not tippen.
+        "ascan_list_aircraft" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                #[serde(default)]
+                manual_dir: Option<String>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_string_err(
+                    crate::aircraft_scan::ascan_list_aircraft(
+                        app.state::<crate::aircraft_scan::AircraftScanState>(),
+                        a.manual_dir,
+                    )
+                    .await,
+                ),
+                Err(e) => Err(e),
+            }
+        }
+        "ascan_collect" => {
+            #[derive(Deserialize)]
+            struct A {
+                index: usize,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_string_err(
+                    crate::aircraft_scan::ascan_collect(
+                        app.state::<crate::aircraft_scan::AircraftScanState>(),
+                        a.index,
+                    )
+                    .await,
+                ),
+                Err(e) => Err(e),
+            }
+        }
+        "ascan_submit" => {
+            #[derive(Deserialize)]
+            struct A {
+                index: usize,
+                #[serde(default)]
+                endpoint: Option<String>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_string_err(
+                    crate::aircraft_scan::ascan_submit(
+                        app.state::<crate::aircraft_scan::AircraftScanState>(),
+                        a.index,
+                        a.endpoint,
+                    )
+                    .await,
+                ),
+                Err(e) => Err(e),
+            }
+        }
         "set_minimize_to_tray" => {
             #[derive(Deserialize)]
             struct A {
@@ -531,6 +670,10 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 Err(e) => Err(e),
             }
         }
+        // v1.5.6 (#lan-bruecke-1zu1): Landungs-Sicherung. Laeuft auf dem
+        // HOST (schreibt/liest dessen Datei) — das Tablet loest sie nur aus.
+        "landing_backup_now" => from_uierr(crate::landing_backup_now(app.clone()).await),
+        "landing_backup_restore" => from_uierr(crate::landing_backup_restore(app.clone()).await),
         "flight_logs_stats" => from_uierr(crate::flight_logs_stats(app.clone())),
         "flight_logs_delete_all" => from_uierr(crate::flight_logs_delete_all(app.clone())),
         "flight_logs_purge_older_than" => {
@@ -741,10 +884,57 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         "hoppie_list_elements" => ok_json(crate::hoppie::hoppie_list_elements()),
 
         // ============================ REMOTE SELF ========================
-        // The remote-server control commands themselves take a real
-        // `tauri::State`; they manage the host's own server and are not
-        // meaningfully driveable from the tablet that is being served, so
-        // they are intentionally NOT bridged.
+        // v1.5.6 (#lan-bruecke-1zu1, Thomas: "die LAN-Bruecke soll alles
+        // 1 zu 1 machen"): auch die Server-Schalter selbst. Vorher gesperrt
+        // mit der Begruendung "vom Tablet nicht sinnvoll steuerbar" — das
+        // ist eine Bequemlichkeits-, keine Sicherheitsfrage: hinter die
+        // Bruecke kommt ohnehin nur ein per PIN gepaartes Geraet, und der
+        // Pilot sieht am Tablet exakt dieselben Schalter wie am PC.
+        //
+        // EHRLICH DAZU: `remote_server_stop` und `remote_server_set_port`
+        // kappen die eigene Leitung — der Server, der die Antwort senden
+        // soll, ist danach weg bzw. auf einem anderen Port. Das Tablet
+        // sieht dann einen Verbindungsfehler statt einer Antwort; die
+        // Aktion selbst ist trotzdem korrekt ausgefuehrt. Wer den Schalter
+        // am Tablet umlegt, will genau das. Zum Zurueckholen fuehrt der
+        // Weg dann ueber den PC — wie beim Ausschalten jeder Fernbedienung.
+        "remote_server_start" => {
+            from_uierr(crate::remote::remote_server_start(app.clone()).await)
+        }
+        "remote_server_stop" => {
+            from_uierr(crate::remote::remote_server_stop(app.clone(), st!()).await)
+        }
+        "remote_server_status" => {
+            from_uierr(crate::remote::remote_server_status(app.clone(), st!()).await)
+        }
+        "remote_server_set_port" => {
+            #[derive(Deserialize)]
+            struct A {
+                port: u16,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(
+                    crate::remote::remote_server_set_port(a.port, app.clone(), st!()).await,
+                ),
+                Err(e) => Err(e),
+            }
+        }
+        "remote_server_revoke_pairing" => {
+            from_uierr(crate::remote::remote_server_revoke_pairing(app.clone(), st!()).await)
+        }
+        // Panel-Server (In-Sim-HUD) — gleiche Begruendung: der Pilot darf
+        // sein eigenes HUD auch vom Tablet aus schalten.
+        "panel_server_get_enabled" => ok_json(crate::panel_server_get_enabled(app.clone())),
+        "panel_server_set_enabled" => {
+            #[derive(Deserialize)]
+            struct A {
+                enabled: bool,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::panel_server_set_enabled(app.clone(), a.enabled)),
+                Err(e) => Err(e),
+            }
+        }
         _ => return Dispatch::Unknown,
     };
 
@@ -880,46 +1070,20 @@ mod tests {
     fn every_generated_command_is_either_bridged_or_explicitly_denied() {
         // Deliberately not bridged — see the module doc's "What is
         // covered vs excluded" section for why each of these is exempt.
-        const DENY_SET: &[&str] = &[
-            "xplane_install_plugin",
-            "xplane_detect_install_path",
-            "error_reporting_set_consent",
-            // The remote-server control commands themselves — see the
-            // "REMOTE SELF" comment at the bottom of `dispatch`: they
-            // manage the host's own server and aren't meaningfully
-            // driveable from the tablet being served.
-            "remote_server_start",
-            "remote_server_stop",
-            "remote_server_status",
-            "remote_server_set_port",
-            "remote_server_revoke_pairing",
-            // v1.5.0 (#msfs-hud): Diagnose-Schalter für den Panel-Server
-            // des In-Sim-HUD. Bewusst NICHT über die LAN-Brücke: er
-            // verwaltet lokale Server-Infrastruktur des Hosts (gleiche
-            // Kategorie wie die remote_server_*-Befehle darüber), und ein
-            // Tablet im WLAN soll das In-Sim-HUD des Piloten nicht
-            // abschalten können.
-            "panel_server_get_enabled",
-            "panel_server_set_enabled",
-        ];
+        // v1.5.6 (#lan-bruecke-1zu1): LEER. Thomas' Vorgabe ist "die
+        // LAN-Bruecke soll alles 1 zu 1 machen" — es gibt keinen Befehl
+        // mehr, den die Bruecke absichtlich verschweigt. Die Liste bleibt
+        // als Struktur stehen: wer je wieder einen Befehl bewusst
+        // aussperrt, traegt ihn hier MIT Begruendung ein, statt ihn im
+        // Dispatch stillschweigend fehlen zu lassen.
+        const DENY_SET: &[&str] = &[];
 
-        // Found by this same test while fixing the Hoppie gap — NOT yet
-        // triaged (unknown whether each is an oversight like Hoppie was,
-        // or a deliberate remote-desktop-only omission nobody wrote down).
-        // Exempted here so this test still catches the NEXT accidental
-        // gap instead of drowning it in a pile of pre-existing ones, but
-        // this list itself is a known-incomplete follow-up, not a design
-        // decision — see the "remote bridge gaps" task.
-        const NOT_YET_TRIAGED: &[&str] = &[
-            "landing_backup_now",
-            "landing_backup_restore",
-            "ascan_list_aircraft",
-            "ascan_collect",
-            "ascan_submit",
-            "flight_refresh_route_only",
-            "airport_ground_get",
-            "airport_ground_index",
-        ];
+        // v1.5.6: LEER — die frueher hier geparkten Luecken (Taxi-Karte,
+        // Route-Refresh, Landungs-Sicherung, Aircraft-Scan, X-Plane-Plugin,
+        // Fehlerbericht-Einwilligung) sind alle gebrueckt. Bleibt leer:
+        // dieser Test ist ab jetzt die harte Kante gegen die naechste
+        // vergessene Bruecke.
+        const NOT_YET_TRIAGED: &[&str] = &[];
 
         let lib_src = include_str!("../lib.rs");
         let start = lib_src

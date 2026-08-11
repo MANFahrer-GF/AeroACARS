@@ -12,6 +12,7 @@ mod accident;
 mod arrival;
 mod runway;
 mod stands;
+mod ui_state;
 mod runway_assessment;
 mod xplane_plugin_install;
 // v0.9.0 (#GlitchTip): Sentry-Init + Allowlist + Redaction. Opt-In, Default OFF.
@@ -34790,6 +34791,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .manage(aircraft_scan::AircraftScanState::default())
+        // v1.5.6 (#lan-bruecke-1zu1): gespiegelter UI-Zustand (SimBrief-Konto,
+        // gelesene Nachrichten, Squawk-Notiz) — damit App und Tablet
+        // dieselbe Wahrheit sehen statt je eigenem localStorage.
+        .manage(ui_state::UiStateStore::default())
         .on_window_event(|window, event| {
             // CloseRequested fires when the user clicks the red X
             // (Mac) or the title-bar X (Win). When the
@@ -35132,6 +35137,9 @@ pub fn run() {
             xplane_install_plugin,
             auto_start_set_enabled,
             auto_start_get_enabled,
+            ui_state::ui_state_get_all,
+            ui_state::ui_state_set,
+            ui_state::ui_state_seed,
             flight_logs_stats,
             flight_logs_delete_all,
             flight_logs_purge_older_than,

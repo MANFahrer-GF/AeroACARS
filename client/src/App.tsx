@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "./lib/ipc";
 import { applyTheme, getInitialTheme, type Theme } from "./theme";
+import { hydrateSyncedStorage } from "./lib/syncedStorage";
 import { LoginPage } from "./components/LoginPage";
 import { CockpitView } from "./components/CockpitView";
 import { BriefingView } from "./components/BriefingView";
@@ -339,8 +340,26 @@ function App() {
   // v0.7.8: Beim Login-Mount localStorage → Backend syncen damit
   // SimBrief-Settings nach App-Restart sofort verfuegbar sind, ohne
   // dass der Pilot Settings oeffnen muss. Spec §4.2 P2-Korrektur.
+  // v1.5.6 (#lan-bruecke-1zu1): ZUERST den gespiegelten Zustand vom Host
+  // holen — sonst arbeitet ein frisch verbundenes Tablet mit seinem
+  // leeren Browser-Speicher weiter (leere SimBrief-Felder, alle
+  // Nachrichten ungelesen). Danach ein Fenster-Ereignis, damit die schon
+  // gerenderten Panels ihren Stand neu lesen.
+  const [storageHydrated, setStorageHydrated] = useState(false);
   useEffect(() => {
-    if (status.kind !== "loggedIn") return;
+    let cancelled = false;
+    void hydrateSyncedStorage().then(() => {
+      if (cancelled) return;
+      setStorageHydrated(true);
+      window.dispatchEvent(new Event("aa-synced-storage-hydrated"));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (status.kind !== "loggedIn" || !storageHydrated) return;
     const username = localStorage.getItem("simbrief_username") ?? null;
     const userId = localStorage.getItem("simbrief_user_id") ?? null;
     if (username || userId) {
@@ -349,7 +368,7 @@ function App() {
         userId: userId && userId.trim() ? userId.trim() : null,
       }).catch(() => null);
     }
-  }, [status.kind]);
+  }, [status.kind, storageHydrated]);
 
   // Cockpit and the Briefing tab see the same state without duplicate
   // IPC calls. Cockpit auto-becomes the default tab once a flight
