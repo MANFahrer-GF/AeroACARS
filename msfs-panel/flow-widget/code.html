@@ -1,0 +1,49 @@
+<!--
+  AeroACARS HUD — v2.2, Neufassung vom 09.08.2026.
+
+  ─── Warum dieses Feld fast leer ist ────────────────────────────────────
+
+  Alle Fassungen bis v1.5 hatten den kompletten Aufbau hier stehen, mit
+  festen Kennungen wie `dot`, `ident`, `cell-a`. Genau das war der Fehler.
+
+  Flow laedt das Skript neu (beim Speichern mit offenem Editor, beim Ein-
+  und Ausschalten), raeumt die vorherige Kopie aber NICHT ab. Deren
+  Zeitgeber laufen im Prozess weiter — auch dann noch, wenn die Datei
+  laengst geloescht oder umbenannt ist. Und weil alle Kopien dieselben
+  Kennungen ansprachen, schrieben sie gleichzeitig in dieselben Felder:
+  die Anzeige sprang zwischen den Fassungen hin und her, Zeichen aus
+  ersetzten Versionen tauchten wieder auf.
+
+  Eine laufende Alt-Kopie laesst sich von hier aus nicht beenden — sie
+  kennt keinen Abschaltgriff. Also wird ihr stattdessen die Buehne
+  entzogen: das Skript baut seinen Inhalt selbst auf, unter EIGENEN
+  Kennungen, und raeumt vorher alles Vorherige weg. Eine Alt-Kopie findet
+  danach kein einziges Element mehr, das sie beschreiben koennte, und malt
+  ins Leere.
+
+  ─── Was hier bleiben MUSS ──────────────────────────────────────────────
+
+  Drei Dinge, alle durch Reverse-Engineering echter Flow-Widgets gefunden
+  und in Flows Doku nirgends erwaehnt:
+
+    1. Der Vollbild-Rahmen mit `pointer-events: none` (siehe code.css).
+       Ohne ihn kommen bei Flow gar keine Klicks im Widget an.
+    2. `data-dragtarget` UND `data-dragarea` auf DEMSELBEN Element. Die
+       Eltern-Kind-Variante zog ueberhaupt nicht.
+    3. Beide Attribute muessen im Markup stehen, nicht per Skript gesetzt
+       werden — Flow bindet das Ziehen beim Laden.
+
+  Deshalb bleibt genau dieser eine Kasten statisch. Alles darin baut
+  code.js. Die Klassennamen tragen bewusst das Praefix `aa2-`: keine
+  Fassung vor v2.0 kennt sie, also kann keine Alt-Kopie hier
+  hineingreifen.
+-->
+<div class="aa2-root">
+  <div
+    class="aa2-strip"
+    data-dragtarget="aeroacars-hud"
+    data-dragarea="aeroacars-hud"
+    data-defaultx="4"
+    data-defaulty="90"
+  ></div>
+</div>

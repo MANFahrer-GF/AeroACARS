@@ -1,0 +1,250 @@
+/*
+ * AeroACARS HUD — v3.6, 10.08.2026 (Pilotenfeedback-Runde).
+ *
+ * ─── Vier Regeln aus Feldtests. Bitte NICHT zurueckdrehen, auch wenn es
+ *     im Browser anders schoener aussieht — der Browser ist hier nicht
+ *     die Zielumgebung. ────────────────────────────────────────────────
+ *
+ * 1. KEIN `gap` auf Flex-Containern.
+ *    Wirkt in Flow Pros Renderer nicht: im Sim klebte alles aneinander
+ *    ("AeroACARS|Keine Verbindung", Punkt direkt am Text, Trennstriche
+ *    ohne Luft), zweimal fotografisch belegt. `gap` fuer Flexbox kam erst
+ *    mit Chromium 84; der eingebettete Renderer ist aelter. Ersatz sind
+ *    Raender ueber `> * + *` — das funktioniert ueberall.
+ *
+ * 2. Flaeche statt Verlauf.
+ *    Ohne Hintergrund war weisse Schrift ueber heller Wolkendecke
+ *    unlesbar. Ein weicher Verlauf schnurrte bei kurzem Text zu einem
+ *    Oval zusammen und wurde als "Pille" abgelehnt. Ein schlichter Kasten
+ *    wirkt auf jedem Untergrund gleich und hat keine Form, die je falsch
+ *    aussehen kann.
+ *
+ * 3. Linksbuendig verankert, NICHT zentriert.
+ *    Zentriert verschiebt jede Breitenaenderung beide Kanten um die
+ *    Haelfte — und die Breite aendert sich im Sekundentakt, allein durch
+ *    die Altersangabe im Ticker. Ergebnis war sichtbares Zittern.
+ *
+ * 4. Alle Klassennamen tragen das Praefix `aa2-`.
+ *    Fassungen vor v2.0 laufen im Sim-Prozess weiter, auch wenn ihre
+ *    Dateien geloescht sind. Sie suchen nach `.hud`, `.panel`, `#dot`,
+ *    `#ident` und so weiter. Findet sich davon nichts mehr, koennen sie
+ *    nichts mehr ueberschreiben. Deshalb heisst hier alles anders.
+ */
+
+:root {
+  --aa2-gap-tight: 5px;
+  --aa2-gap-cell: 13px;
+
+  --aa2-ink: #f2f5fa;
+  --aa2-ink-muted: #aeb8c9;
+  --aa2-good: #3ecf6a;
+  --aa2-warn: #f0a83f;
+  --aa2-bad: #ef5464;
+  --aa2-accent: #4c8dff;
+
+  --aa2-box-bg: rgba(13, 17, 24, 0.88);
+  --aa2-box-border: rgba(255, 255, 255, 0.13);
+  --aa2-hairline: rgba(255, 255, 255, 0.12);
+
+  --aa2-font-ui: "Segoe UI", "Segoe UI Variable", "Open Sans", sans-serif;
+  --aa2-font-mono: "Cascadia Mono", "Consolas", monospace;
+  --aa2-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  font-family: var(--aa2-font-ui);
+  color: var(--aa2-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Vollbild, klickdurchlaessig. NICHT anfassen: ohne dieses Konstrukt
+   kommen bei Flow gar keine Klicks im Widget an. */
+.aa2-root {
+  position: absolute;
+  top: 0; right: 0; bottom: 0; left: 0;
+  z-index: 100000;
+  pointer-events: none;
+  display: none;
+}
+.aa2-root.aa2-visible { display: block; }
+
+/* Der Kasten. position:absolute ist Pflicht fuer Flows Drag-API. */
+.aa2-strip {
+  position: absolute;
+  pointer-events: auto;
+  cursor: move;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  white-space: nowrap;
+  background: var(--aa2-box-bg);
+  border: 1px solid var(--aa2-box-border);
+  border-radius: 7px;
+  padding: 9px 15px;
+  opacity: 1;
+  transition: opacity 400ms ease-out;
+}
+.aa2-strip, .aa2-strip * { text-shadow: var(--aa2-shadow); }
+
+/* Ruhezustand: gedimmt, aber nie unsichtbar — der Statuspunkt soll
+   sichtbar bleiben, damit ein Verbindungsabriss auffaellt. */
+.aa2-strip.aa2-quiet { opacity: 0.5; }
+.aa2-strip.aa2-quiet:hover { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .aa2-strip { transition: none; }
+}
+
+/* Ist der Kasten leer (noch nichts aufgebaut), soll er auch nicht als
+   leerer Rahmen im Bild stehen. */
+.aa2-strip:empty { display: none; }
+
+/* ─── Obere Zeile: juengster ACARS-Log-Eintrag ──────────────────────── */
+
+.aa2-ticker {
+  display: flex;
+  align-items: baseline;
+  /* v3.6: vorher fest 620 px. Seit die Datenzeile mit WX-Zelle deutlich
+     breiter werden kann (Boarding gemessen ~1.140 px), soll der Ticker
+     die volle Boxbreite nutzen — die Box richtet sich nach der
+     Datenzeile, und die Ellipse in .aa2-msg kappt an deren Kante. Ein
+     fester Wert liesse den Ticker mitten in einer breiten Box enden,
+     was wie ein Fehler aussieht. */
+  max-width: 100%;
+  align-self: stretch;
+  overflow: hidden;
+}
+.aa2-ticker > * + * { margin-left: var(--aa2-gap-tight); }
+
+.aa2-age {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--aa2-ink);
+  flex-shrink: 0;
+  /* Feste Breite: die Altersangabe wechselt im Sekundentakt zwischen
+     "vor 9 s" und "vor 10 min" und schob sonst die Zeile hin und her. */
+  min-width: 62px;
+}
+.aa2-msg {
+  font-size: 11px;
+  color: var(--aa2-ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* `min-width: 0` ist die Bedingung dafuer, dass die Ellipse ueberhaupt
+     erscheint. Ohne sie hat ein Flex-Kind die Mindestbreite seines
+     Inhalts, kann also gar nicht schrumpfen — die Zeile lief dann ueber
+     den Rand und wurde vom `overflow: hidden` des Elternteils HART
+     abgeschnitten, mitten im Wort und ohne jeden Hinweis. Genau so im
+     Sim fotografiert (09.08.2026, lange Sim-Pause-Meldung mit
+     Koordinaten). Jetzt endet sie sichtbar mit "...". */
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.aa2-msg.aa2-w { color: var(--aa2-warn); }
+.aa2-msg.aa2-e { color: var(--aa2-bad); }
+
+.aa2-rule {
+  width: 100%;
+  height: 1px;
+  background: var(--aa2-hairline);
+  margin: 6px 0;
+}
+
+/* ─── Untere Zeile: die Zahlen ──────────────────────────────────────── */
+
+.aa2-data { display: flex; align-items: center; }
+.aa2-data > * + * { margin-left: var(--aa2-gap-cell); }
+
+.aa2-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #8b95a6;
+}
+.aa2-dot.aa2-live { background: var(--aa2-good); }
+.aa2-dot.aa2-sync { background: var(--aa2-accent); }
+.aa2-dot.aa2-off  { background: var(--aa2-bad); }
+
+.aa2-ident { font-size: 13px; font-weight: 700; }
+
+.aa2-state { font-size: 13px; font-weight: 600; }
+.aa2-state.aa2-g { color: var(--aa2-good); }
+.aa2-state.aa2-w { color: var(--aa2-warn); }
+
+/* Trennstrich zwischen zwei Zonen. Die Luft davor und dahinter kommt aus
+   der --aa2-gap-cell-Regel oben; der Strich braucht keine eigenen. */
+.aa2-sep {
+  width: 1px;
+  height: 15px;
+  background: rgba(255, 255, 255, 0.28);
+  flex-shrink: 0;
+}
+
+.aa2-cell { display: flex; align-items: baseline; }
+.aa2-cell > * + * { margin-left: var(--aa2-gap-tight); }
+
+.aa2-lbl {
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--aa2-ink-muted);
+  font-weight: 700;
+}
+.aa2-val { font-size: 15px; font-weight: 700; }
+.aa2-val.aa2-xl { font-size: 24px; }
+/* Die Zahl selbst faerbt sich, statt daneben einen Balken wachsen zu
+   lassen. In einem Streifen dieser Hoehe ist Farbe die einzige
+   Kodierung, die im Augenwinkel ankommt. */
+.aa2-val.aa2-g { color: var(--aa2-good); }
+.aa2-val.aa2-w { color: var(--aa2-warn); }
+.aa2-val.aa2-b { color: var(--aa2-bad); }
+
+.aa2-mono { font-family: var(--aa2-font-mono); font-variant-numeric: tabular-nums; }
+
+.aa2-spin {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  border-top-color: #ffffff;
+  flex-shrink: 0;
+  animation: aa2-spin 900ms linear infinite;
+}
+@keyframes aa2-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .aa2-spin { animation-duration: 2400ms; }
+}
+
+.aa2-wind { display: flex; align-items: center; }
+.aa2-wind > * + * { margin-left: var(--aa2-gap-tight); }
+.aa2-arrow { width: 15px; height: 15px; flex-shrink: 0; }
+.aa2-arrow path { fill: #ffffff; }
+
+.aa2-score { display: flex; align-items: baseline; }
+.aa2-score > * + * { margin-left: 9px; }
+.aa2-band {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(62, 207, 106, 0.24);
+  color: var(--aa2-good);
+}
+.aa2-band.aa2-w { background: rgba(240, 168, 63, 0.24); color: var(--aa2-warn); }
+.aa2-band.aa2-b { background: rgba(239, 84, 100, 0.24); color: var(--aa2-bad); }
+
+.aa2-tail { font-size: 13px; font-weight: 600; color: var(--aa2-ink-muted); }
+
+
+/* ─── v3.6 (F3): die einzige Klick-Flaeche ──────────────────────────── */
+
+/* Die Zeit-Zelle traegt data-aa2-klick="zeit" (setzeZellen). Dezente
+   Punktlinie darunter, damit man ihr die Anfassbarkeit ansieht, ohne
+   dass sie schreit. */
+[data-aa2-klick] { cursor: pointer; }
+[data-aa2-klick] .aa2-val { border-bottom: 1px dotted var(--aa2-ink-muted); }
