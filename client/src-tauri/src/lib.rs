@@ -3744,7 +3744,10 @@ struct FlightStats {
     // ---- Stand-Erkennung (v1.6, OSM-Ground-Layer) ----
     /// Fetch-Latches wie bei den METAR-Flags: einmal pro Richtung pro
     /// Flug, gesetzt beim Spawn, nie gelöscht. Bewusst NICHT im
-    /// Resume-Snapshot — nach einem Resume wird idempotent nachgeladen.
+    /// Resume-Snapshot — der Streamer ruft den Trigger jeden Tick mit der
+    /// aktuellen Phase, und die Arrival-Arme decken Descent bis TaxiIn ab:
+    /// jede Resume-Lage, in der das Stand-Gate die Daten noch braucht,
+    /// lädt idempotent nach.
     dep_stands_requested: bool,
     arr_stands_requested: bool,
     /// Parkpositionen des ZIELflughafens, geladen ab Descent. `None` =
@@ -3754,6 +3757,10 @@ struct FlightStats {
     /// Für welchen ICAO `arr_stands` gilt — bei einem Divert passt die
     /// Liste nicht zum Flughafen, auf dem der Pilot steht.
     arr_stands_icao: Option<String>,
+    /// Einmal-pro-Flug-Latch für die Diagnosezeile "Halt mit Bremse, aber
+    /// kein Stand in Reichweite" — der Zustand hält sonst über viele Ticks
+    /// an und würde das Log fluten.
+    stand_gate_reject_logged: bool,
 
     // ---- Fuel tracking ----
     block_fuel_kg: Option<f32>,
@@ -26878,18 +26885,42 @@ fn step_flight_at(
                 // Phase TaxiIn. Ohne Daten (kleiner Platz, Divert, offline)
                 // gilt das alte Kriterium — der universale Arrived-Fallback
                 // fängt ohnehin jeden abgestellten Flieger.
+                // Review-Fund v1.5.4: NORMALISIERT vergleichen — arr_stands_icao
+                // ist beim Fetch upper-getrimmt, at_icao kommt roh aus dem Bid.
+                // Ein lowercase-Bid deaktivierte das Gate sonst lautlos.
+                let at_icao_norm = at_icao.trim().to_uppercase();
                 let stand_data = stats
                     .arr_stands
                     .as_ref()
                     .filter(|l| !l.is_empty())
-                    .filter(|_| stats.arr_stands_icao.as_deref() == Some(at_icao.as_str()));
-                let (is_block_on, osm_stand) = match stand_data {
+                    .filter(|_| stats.arr_stands_icao.as_deref() == Some(at_icao_norm.as_str()));
+                let (is_block_on, osm_stand, rejected_nearest) = match stand_data {
                     Some(list) => match stands::stand_at(list, snap.lat, snap.lon) {
-                        Some(s) => (true, s.name.clone()),
-                        None => (false, None),
+                        Some(s) => (true, s.name.clone(), None),
+                        None => {
+                            let n = stands::nearest(list, snap.lat, snap.lon)
+                                .map(|(s, d)| (s.name.clone().unwrap_or_default(), d));
+                            (false, None, n)
+                        }
                     },
-                    None => (true, None),
+                    None => (true, None, None),
                 };
+                // Review-Fund v1.5.4: der abgelehnte Halt war vorher
+                // unsichtbar — bei versetzten/lückigen OSM-Daten (Stand
+                // fehlt, Szenerie-Offset) läuft der Flug still in den
+                // Arrived-Fallback und die Blockzeit wandert auf den
+                // Shutdown. EINMAL pro Flug festhalten, wie knapp es war.
+                if let Some((name, dist)) = rejected_nearest {
+                    if !stats.stand_gate_reject_logged {
+                        stats.stand_gate_reject_logged = true;
+                        tracing::info!(
+                            at = %at_icao_norm,
+                            nearest_stand = %name,
+                            dist_m = dist.round(),
+                            "stand gate: stopped with brake but no stand within radius — staying TaxiIn"
+                        );
+                    }
+                }
                 if is_block_on {
                     next_phase = FlightPhase::BlocksOn;
                     stats.blocks_on_reached = true;
@@ -26900,7 +26931,7 @@ fn step_flight_at(
                     if stats.arr_gate.is_none() {
                         if let Some(name) = osm_stand {
                             stats.arr_gate = Some(name);
-                            stats.arr_gate_icao = Some(at_icao.trim().to_uppercase());
+                            stats.arr_gate_icao = Some(at_icao_norm);
                         }
                     }
                 }
@@ -26914,7 +26945,12 @@ fn step_flight_at(
             // beides neu. Ohne diesen Rückweg blieb RYR 1142 nach dem
             // H4-Halt 9 Minuten in BlocksOn hängen, quer rollend über
             // den halben Flughafen.
-            if snap.on_ground && snap.groundspeed_kt > 5.0 {
+            //
+            // Review-Fund v1.5.4: `!parking_brake` dazu — ein einzelner
+            // GS-Spike bei GESETZTER Bremse (Slew, GSX-Ruck) ist ein
+            // Artefakt und darf die Block-On-Zeit nicht verwerfen. Wer
+            // wirklich weiterrollt, hat die Bremse gelöst.
+            if snap.on_ground && snap.groundspeed_kt > 5.0 && !snap.parking_brake {
                 next_phase = FlightPhase::TaxiIn;
                 stats.blocks_on_reached = false;
                 stats.block_on_at = None;
@@ -29282,6 +29318,46 @@ mod enroute_reconcile_replay_tests {
         }
 
         #[test]
+        fn lowercase_bid_icao_still_arms_the_stand_gate() {
+            // Review-Fund: arr_stands_icao ist upper-getrimmt, das Bid darf
+            // trotzdem lowercase liefern — das Gate muss greifen.
+            let mut flight = taxi_in_flight(Some(lppt_stands()));
+            flight.arr_airport = "zzzz".into();
+            let snap = stopped_at(38.7830, -9.1327); // H4
+            let change = step_flight_at(&flight, &snap, Utc::now());
+            assert_eq!(change, None, "Gate darf durch Gross/Klein nicht ausfallen");
+            let stats = flight.stats.lock().unwrap();
+            assert_eq!(stats.phase, FlightPhase::TaxiIn);
+        }
+
+        #[test]
+        fn gs_spike_with_brake_set_keeps_blocks_on() {
+            // Review-Fund: GS-Artefakt (Slew/GSX-Ruck) bei GESETZTER
+            // Parkbremse darf die Block-On-Zeit nicht verwerfen.
+            let flight = taxi_in_flight(None);
+            {
+                let mut stats = flight.stats.lock().unwrap();
+                stats.phase = FlightPhase::BlocksOn;
+                stats.blocks_on_reached = true;
+                stats.block_on_at = Some(Utc::now());
+            }
+            let snap = SimSnapshot {
+                lat: 38.7646843,
+                lon: -9.1368409,
+                on_ground: true,
+                parking_brake: true,
+                groundspeed_kt: 12.0,
+                engines_running: 2,
+                ..SimSnapshot::default()
+            };
+            let change = step_flight_at(&flight, &snap, Utc::now());
+            assert_eq!(change, None);
+            let stats = flight.stats.lock().unwrap();
+            assert_eq!(stats.phase, FlightPhase::BlocksOn);
+            assert!(stats.block_on_at.is_some());
+        }
+
+        #[test]
         fn creeping_forward_below_threshold_stays_blocks_on() {
             // 5-kt-Schwelle: Bremse lösen + Zentimeter rollen (Towbar-
             // Wackler, Brake-Check) wirft den Block-On nicht weg.
@@ -30637,7 +30713,15 @@ fn maybe_spawn_stand_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, phase: F
     }
     let dir = match phase {
         FlightPhase::Boarding | FlightPhase::Pushback => Dir::Departure,
-        FlightPhase::Descent | FlightPhase::Approach | FlightPhase::Final => Dir::Arrival,
+        // TaxiIn ist mit dabei (Review-Fund v1.5.4): nach einem Resume
+        // MITTEN im Einrollen wäre der Descent-Trigger längst vorbei und
+        // das Stand-Gate bliebe ohne Daten — der RYR-1142-Fehlschluss
+        // käme durch die Hintertür zurück. (Resume in BlocksOn läuft über
+        // den >5-kt-Rückweg ebenfalls nach TaxiIn und damit hierher.)
+        FlightPhase::Descent
+        | FlightPhase::Approach
+        | FlightPhase::Final
+        | FlightPhase::TaxiIn => Dir::Arrival,
         _ => return,
     };
     let icao = match dir {
