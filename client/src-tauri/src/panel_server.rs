@@ -449,8 +449,54 @@ async fn status_handler(
     if let Some(r) = reject_non_loopback(peer) {
         return r;
     }
-    let value = crate::remote::current_flight_status_value(&ctx.app);
+    let mut value = crate::remote::current_flight_status_value(&ctx.app);
+    with_display_callsign(&mut value);
     cors_open((StatusCode::OK, Json(value)).into_response())
+}
+
+/// v1.5.6 (Feldbefund Thomas): Das HUD zeigte bei GEC-Fluegen "4TK" statt
+/// "GEC 4TK".
+///
+/// Ursache: `ActiveFlightInfo.callsign` ist das ROHE `Bid.flight.callsign`
+/// aus phpVMS — bei manchen VA-Konfigurationen steht dort nur der
+/// Flug-Identifikator ohne Airline-Praefix ("4TK", "7ME"). Die React-App
+/// setzt sich die Anzeige selbst zusammen (`airline_icao + ident`, siehe
+/// `lib/callsign.ts`), das Widget nahm den Rohwert.
+///
+/// Der Fix sitzt bewusst HIER und nicht im Widget: `/panel/status` ist der
+/// einzige Konsument dieses JSON auf HUD-Seite, damit wirkt er sofort auf
+/// JEDE bereits ausgelieferte Widget- und HUD-Fassung — niemand muss sein
+/// Flow-Paket neu bauen. Die App und die LAN-Bruecke sehen den Rohwert
+/// unveraendert weiter (sie brauchen ihn fuer den OFP-Abgleich).
+///
+/// Regel identisch zu phpVMS' eigenem `Flight::atc()` (Airline-ICAO +
+/// callsign, sonst + flight_number), nur mit Leerzeichen als Trenner —
+/// so wie es die App seit jeher anzeigt.
+fn with_display_callsign(value: &mut serde_json::Value) {
+    let Some(obj) = value.as_object_mut() else { return };
+    let s = |v: Option<&serde_json::Value>| {
+        v.and_then(|x| x.as_str()).map(str::trim).unwrap_or("").to_string()
+    };
+    let airline = s(obj.get("airline_icao"));
+    let raw_callsign = s(obj.get("callsign"));
+    let flight_number = s(obj.get("flight_number"));
+
+    let ident = if raw_callsign.is_empty() {
+        flight_number
+    } else {
+        raw_callsign
+    };
+    if ident.is_empty() {
+        return;
+    }
+    // Traegt der Identifikator das Praefix schon (VAs, die "GEC4TK" in
+    // callsign schreiben), NICHT doppeln.
+    let display = if airline.is_empty() || ident.starts_with(&airline) {
+        ident
+    } else {
+        format!("{airline} {ident}")
+    };
+    obj.insert("callsign".into(), serde_json::Value::String(display));
 }
 
 async fn debrief_handler(
@@ -664,5 +710,58 @@ mod tests {
         assert!(read_enabled_from(&path), "kaputte Datei = eingeschaltet");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// v1.5.6 (Feldbefund Thomas, GEC-Flug): Das HUD zeigte "4TK" statt
+    /// "GEC 4TK", weil phpVMS in `Bid.flight.callsign` nur den
+    /// Flug-Identifikator ohne Airline-Praefix liefert.
+    #[test]
+    fn hud_callsign_gets_the_airline_prefix() {
+        // Der echte Fall: callsign="4TK", airline="GEC".
+        let mut v = serde_json::json!({
+            "airline_icao": "GEC",
+            "callsign": "4TK",
+            "flight_number": "4TK",
+        });
+        with_display_callsign(&mut v);
+        assert_eq!(v["callsign"], "GEC 4TK");
+    }
+
+    #[test]
+    fn hud_callsign_falls_back_to_the_flight_number() {
+        // phpVMS fuellt `callsign` nicht -> Flugnummer nehmen.
+        let mut v = serde_json::json!({
+            "airline_icao": "GSG",
+            "callsign": serde_json::Value::Null,
+            "flight_number": "1316",
+        });
+        with_display_callsign(&mut v);
+        assert_eq!(v["callsign"], "GSG 1316");
+    }
+
+    #[test]
+    fn hud_callsign_is_not_doubled_when_already_prefixed() {
+        // VAs, die "GEC4TK" komplett in callsign schreiben, duerfen nicht
+        // zu "GEC GEC4TK" werden.
+        let mut v = serde_json::json!({
+            "airline_icao": "GEC",
+            "callsign": "GEC4TK",
+            "flight_number": "4TK",
+        });
+        with_display_callsign(&mut v);
+        assert_eq!(v["callsign"], "GEC4TK");
+    }
+
+    #[test]
+    fn hud_callsign_survives_missing_fields() {
+        // Kein aktiver Flug (null) oder leere Felder -> nichts anfassen,
+        // niemals panicken.
+        let mut null = serde_json::Value::Null;
+        with_display_callsign(&mut null);
+        assert!(null.is_null());
+
+        let mut leer = serde_json::json!({ "airline_icao": "GSG" });
+        with_display_callsign(&mut leer);
+        assert!(leer.get("callsign").is_none(), "ohne Identifikator kein Feld erfinden");
     }
 }
