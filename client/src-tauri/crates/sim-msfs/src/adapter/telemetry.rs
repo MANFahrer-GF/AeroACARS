@@ -735,6 +735,19 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:A22X AT Master", "Bool"),
     F::f64("L:A22X Seat Belt Lights", "Enum"),
     F::f64("L:A22X No PED Lights", "Enum"),
+
+    // ---- iFly 737 MAX 8, Nachzuegler (v1.5.3) ----
+    // WASM-Strings des iFly-Pakets (11.08.2026, direkt vom Community-
+    // Share gezogen): `VC_Parking_Brake_SW_VAL` ist der HEBELzustand.
+    // Grund fuer den Sonderweg: der iFly kippt den Standard-SimVar
+    // BRAKE PARKING POSITION beim Systemstart minutenlang auf "geloest"
+    // (Serverlogs: 25 s bzw. 4 min nach Flugstart am kalten Flieger,
+    // Ruecksprung erst nach bis zu 14 min) und laesst ihn laut
+    // GSX-Forum auch in der Gegenrichtung klemmen. Gleiches Muster wie
+    // FSLabs, gleiche Loesung. Die ebenfalls vorhandene
+    // VC_Parking_Brake_LIGHT_VAL waere die Warnleuchte — die haengt an
+    // der Elektrik und taugt darum nicht als Hebel-Wahrheit.
+    F::f64("L:VC_Parking_Brake_SW_VAL", "Number"),
 ];
 
 // Helper builders so the table above stays compact.
@@ -1152,6 +1165,9 @@ pub struct Telemetry {
     pub syn_at_master: f64,
     pub syn_seatbelt_sign: f64,
     pub syn_no_smoking_sign: f64,
+    /// v1.5.3: iFly-Parkbrems-HEBEL (siehe Registrierungs-Kommentar).
+    /// Nur bei AircraftProfile::IflyMax8 konsultiert.
+    pub ifly_park_brake_sw: f64,
 }
 
 // ---- Touchdown sample (separate data definition #2) ----
@@ -1777,6 +1793,7 @@ impl Telemetry {
         pull_f64!(t.syn_at_master);
         pull_f64!(t.syn_seatbelt_sign);
         pull_f64!(t.syn_no_smoking_sign);
+        pull_f64!(t.ifly_park_brake_sw);
 
         // Silence the unused-assignment warning the last `pull_*!`
         // emits (the macro always advances `off`, but the very last
@@ -2586,6 +2603,14 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // standard SimVar on that aircraft.
     let parking_brake = if is_fenix {
         t.fnx_park_brake as i32 != 0
+    } else if is_ifly {
+        // v1.5.3: der Standard-SimVar luegt beim iFly in der Bodenphase
+        // in BEIDE Richtungen (Systemstart-Kipp auf "geloest", Klemmer
+        // auf "gesetzt" laut GSX-Forum) — der Hebel-LVar ist die
+        // Wahrheit. Schwelle 0.5 statt !=0, damit sowohl 0/1- als auch
+        // 0/100-Semantik richtig lesen. Thomas' Feldbefund 10.08.2026:
+        // "nach Elektrik an: Parkbremse geloest" bei gesetztem Hebel.
+        t.ifly_park_brake_sw >= 0.5
     } else if is_fsl {
         // v0.16.20: FSL faelscht den Standard-Parkbremsen-SimVar (Peters
         // Log: parking_brake=False bei real gesetzter Bremse). Skript
@@ -3875,6 +3900,36 @@ mod tests {
         assert_eq!(snap.transponder_code, None);
     }
 
+    /// v1.5.3 (Thomas' Feldbefund 10.08.2026 + Serverlog-Beleg): der iFly
+    /// kippt BRAKE PARKING POSITION beim Systemstart auf "geloest",
+    /// obwohl der Hebel gesetzt bleibt — und klemmt laut GSX-Forum auch
+    /// andersherum. Der Hebel-LVar aus den WASM-Strings ist die Wahrheit;
+    /// dieser Test bindet beide Richtungen fest.
+    #[test]
+    fn ifly_parking_brake_reads_the_lever_not_the_lying_simvar() {
+        let mut t = Telemetry::default();
+        t.title = "iFly 737-MAX8 Malta Air 9H-VUE".into();
+
+        // Systemstart: SimVar sagt "geloest", Hebel steht auf gesetzt.
+        t.parking_brake = 0;
+        t.ifly_park_brake_sw = 1.0;
+        let snap = telemetry_to_snapshot(t.clone(), Simulator::Msfs2024);
+        assert!(snap.parking_brake, "Hebel gesetzt muss gewinnen");
+
+        // GSX-Richtung: SimVar klemmt auf gesetzt, Hebel ist geloest.
+        t.parking_brake = 1;
+        t.ifly_park_brake_sw = 0.0;
+        let snap = telemetry_to_snapshot(t.clone(), Simulator::Msfs2024);
+        assert!(!snap.parking_brake, "Hebel geloest muss gewinnen");
+
+        // Nicht-iFly bleibt beim Standard-SimVar.
+        t.title = "737-800 PAX BW SC".into();
+        t.parking_brake = 1;
+        t.ifly_park_brake_sw = 0.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert!(snap.parking_brake, "Default-Profil liest den SimVar");
+    }
+
     #[test]
     fn b002_non_fenix_transponder_still_decoded() {
         // BCD-Decoding fuer Nicht-Fenix-Profile bleibt unveraendert.
@@ -4390,6 +4445,7 @@ mod tests {
         assert_eq!(t.syn_at_master, 1293.0); // idx 293
         assert_eq!(t.syn_seatbelt_sign, 1294.0); // idx 294
         assert_eq!(t.syn_no_smoking_sign, 1295.0); // idx 295
+        assert_eq!(t.ifly_park_brake_sw, 1296.0); // idx 296
     }
 
     #[test]
