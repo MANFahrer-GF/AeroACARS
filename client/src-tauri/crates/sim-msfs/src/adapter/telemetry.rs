@@ -587,20 +587,23 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:MD11_CTR_AUTOBRAKE_SW", "Number"),
 
     // ---- iFly 737 MAX 8 (v0.16.11) — WASM-strings + HubHop ----
-    // Quelle: WASM-Strings-Dump des iFly-Pakets (alle Namen woertlich
-    // verifiziert; die Caution-/Fire-Lampen sind dort printf-Templates
-    // `VC_*_Light_%d_VAL` → Index 1 = Capt-Seite) + HubHop-Output-
-    // Presets fuer die CMD-A/B-LEDs. Nur bei AircraftProfile::IflyMax8
-    // gemappt.
-    F::f64("L:VC_CMD_A_SW_LIGHT_VAL", "Number"),   // AP CMD A LED (HubHop-Output)
-    F::f64("L:VC_CMD_B_SW_LIGHT_VAL", "Number"),   // AP CMD B LED (HubHop-Output)
+    // Quelle: WASM-Strings-Dump + INTERIOR.xml-Behaviors des iFly-Pakets.
+    // ⚠️ iFly-Namensschema (Sweep v1.5.4): pro Lampen-Objekt existieren
+    // ZWEI LVars — `<Objekt>_VAL` treibt die ANIM (Tastendruck/Objekt-
+    // Zustand), `<Objekt>_LIGHT_VAL` den EMISSIVE_CODE (Lampe leuchtet).
+    // Fuer Warnlampen IMMER die `_LIGHT_VAL`-Variante lesen. CMD A/B und
+    // A/T ARM heissen schon `*_LIGHT_VAL` (Objekt = SW_LIGHT, treibt
+    // EMISSIVE direkt, keine Doppel-Variante). Nur bei
+    // AircraftProfile::IflyMax8 gemappt.
+    F::f64("L:VC_CMD_A_SW_LIGHT_VAL", "Number"),   // AP CMD A LED (EMISSIVE, verifiziert)
+    F::f64("L:VC_CMD_B_SW_LIGHT_VAL", "Number"),   // AP CMD B LED (EMISSIVE, verifiziert)
     F::f64("L:VC_AT_ARM_LIGHT_VAL", "Number"),     // A/T ARM light (ARM-Semantik wie PMDG NG3)
-    F::f64("L:VC_Master_Caution_Light_1_VAL", "Number"),
-    F::f64("L:VC_Fire_Warning_Light_1_VAL", "Number"),  // 737: Fire-Warn = rote Master-Klasse
-    F::f64("L:VC_WARNING_LIGHT_CABIN_ALTITUDE_L_VAL", "Number"),
-    F::f64("L:Animation_Engine_1_Reverser_VAL", "Number"),  // 0..1 Reverser-Stellung
+    F::f64("L:VC_Master_Caution_Light_1_LIGHT_VAL", "Number"), // Capt-Seite, EMISSIVE
+    F::f64("L:VC_Fire_Warning_Light_1_LIGHT_VAL", "Number"),   // 737: Fire-Warn = rote Master-Klasse
+    F::f64("L:VC_WARNING_LIGHT_CABIN_ALTITUDE_L_LIGHT_VAL", "Number"),
+    F::f64("L:Animation_Engine_1_Reverser_VAL", "Number"),  // 0..1 Reverser-STELLUNG (ANIM gewollt)
     F::f64("L:Animation_Engine_2_Reverser_VAL", "Number"),
-    F::f64("L:VC_FLTCTRL_LIGHT_SPEEDBRAKES_EXTENDED_VAL", "Number"),
+    F::f64("L:VC_FLTCTRL_LIGHT_SPEEDBRAKES_EXTENDED_LIGHT_VAL", "Number"),
     F::f64("L:VC_Autobrake_SW_VAL", "Number"),     // Selektor-Enum unbekannt → "#n"
 
     // ---- FSLabs A321 (ceo+neo, v0.16.14) — HubHop-Output-Presets ----
@@ -3230,7 +3233,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     } else if is_a346 {
         Some(t.a346_master_caution_light != 0.0)
     } else if is_ifly {
-        // v0.16.11: iFly `L:VC_Master_Caution_Light_1_VAL` (Capt-Seite).
+        // v1.5.4: iFly `L:VC_Master_Caution_Light_1_LIGHT_VAL` (Capt-Lampe, EMISSIVE).
         Some(t.ifly_master_caution_light != 0.0)
     } else if is_fsl {
         // v0.16.20: `VC_GSLD_CP_Caution_Button_BOT` — Skript `0 !=`=aktiv.
@@ -3285,7 +3288,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     };
 
     // Kabinenhoehen-Warnung: hier liefert sie nur das iFly-Profil
-    // nativ (`L:VC_WARNING_LIGHT_CABIN_ALTITUDE_L_VAL`, linke Lampe);
+    // nativ (`L:VC_WARNING_LIGHT_CABIN_ALTITUDE_L_LIGHT_VAL`, linke Lampe, EMISSIVE);
     // PMDG kommt weiter ueber den pmdg-Struct-Merge.
     let cabin_altitude_warning = if is_ifly {
         Some(t.ifly_cabin_alt_warning_light != 0.0)
@@ -3359,7 +3362,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     } else if is_ini {
         Some(t.ini_ground_spoilers != 0.0)
     } else if is_ifly {
-        // v0.16.11: iFly `L:VC_FLTCTRL_LIGHT_SPEEDBRAKES_EXTENDED_VAL`
+        // v1.5.4: iFly `L:VC_FLTCTRL_LIGHT_SPEEDBRAKES_EXTENDED_LIGHT_VAL`
         // — die Lampe leuchtet bei JEDER ausgefahrenen Speedbrake,
         // auch in der Luft (dort ist das Flight-Spoiler, kein Ground-
         // Spoiler). Deshalb NUR am Boden als "Ground-Spoiler aktiv"
