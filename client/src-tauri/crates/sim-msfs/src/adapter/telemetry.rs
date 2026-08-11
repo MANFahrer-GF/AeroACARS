@@ -3907,27 +3907,23 @@ mod tests {
     /// dieser Test bindet beide Richtungen fest.
     #[test]
     fn ifly_parking_brake_reads_the_lever_not_the_lying_simvar() {
-        let mut t = Telemetry::default();
-        t.title = "iFly 737-MAX8 Malta Air 9H-VUE".into();
+        // Telemetry ist absichtlich nicht Clone (2,5-KB-Block) — pro
+        // Fall eine frische Struktur, wie die Nachbartests es halten.
+        fn fall(title: &str, simvar: bool, hebel: f64) -> bool {
+            let mut t = Telemetry::default();
+            t.title = title.into();
+            t.parking_brake = simvar;
+            t.ifly_park_brake_sw = hebel;
+            telemetry_to_snapshot(t, Simulator::Msfs2024).parking_brake
+        }
+        const IFLY: &str = "iFly 737-MAX8 Malta Air 9H-VUE";
 
         // Systemstart: SimVar sagt "geloest", Hebel steht auf gesetzt.
-        t.parking_brake = 0;
-        t.ifly_park_brake_sw = 1.0;
-        let snap = telemetry_to_snapshot(t.clone(), Simulator::Msfs2024);
-        assert!(snap.parking_brake, "Hebel gesetzt muss gewinnen");
-
+        assert!(fall(IFLY, false, 1.0), "Hebel gesetzt muss gewinnen");
         // GSX-Richtung: SimVar klemmt auf gesetzt, Hebel ist geloest.
-        t.parking_brake = 1;
-        t.ifly_park_brake_sw = 0.0;
-        let snap = telemetry_to_snapshot(t.clone(), Simulator::Msfs2024);
-        assert!(!snap.parking_brake, "Hebel geloest muss gewinnen");
-
+        assert!(!fall(IFLY, true, 0.0), "Hebel geloest muss gewinnen");
         // Nicht-iFly bleibt beim Standard-SimVar.
-        t.title = "737-800 PAX BW SC".into();
-        t.parking_brake = 1;
-        t.ifly_park_brake_sw = 0.0;
-        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert!(snap.parking_brake, "Default-Profil liest den SimVar");
+        assert!(fall("737-800 PAX BW SC", true, 0.0), "Default liest den SimVar");
     }
 
     #[test]
