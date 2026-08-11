@@ -11,6 +11,7 @@
 mod accident;
 mod arrival;
 mod runway;
+mod stands;
 mod runway_assessment;
 mod xplane_plugin_install;
 // v0.9.0 (#GlitchTip): Sentry-Init + Allowlist + Redaction. Opt-In, Default OFF.
@@ -3739,6 +3740,20 @@ struct FlightStats {
     /// v1.5.1 (F2): eigener Latch für den frühen Descent-Abruf, damit
     /// der Final-Abruf trotzdem noch frisch nachholt (siehe `MetarKind`).
     arr_metar_early_requested: bool,
+
+    // ---- Stand-Erkennung (v1.6, OSM-Ground-Layer) ----
+    /// Fetch-Latches wie bei den METAR-Flags: einmal pro Richtung pro
+    /// Flug, gesetzt beim Spawn, nie gelöscht. Bewusst NICHT im
+    /// Resume-Snapshot — nach einem Resume wird idempotent nachgeladen.
+    dep_stands_requested: bool,
+    arr_stands_requested: bool,
+    /// Parkpositionen des ZIELflughafens, geladen ab Descent. `None` =
+    /// (noch) nicht verfügbar → die BlocksOn-Erkennung fällt auf das
+    /// alte Kriterium zurück statt zu blockieren.
+    arr_stands: Option<Vec<stands::ParkingStand>>,
+    /// Für welchen ICAO `arr_stands` gilt — bei einem Divert passt die
+    /// Liste nicht zum Flughafen, auf dem der Pilot steht.
+    arr_stands_icao: Option<String>,
 
     // ---- Fuel tracking ----
     block_fuel_kg: Option<f32>,
@@ -22304,6 +22319,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     stats.phase
                 };
                 maybe_spawn_metar_fetch(&app, &flight, tick_phase);
+                // v1.6: gleiche Mechanik für die OSM-Parkpositionen —
+                // dep-Stand am Gate erfassen, arr-Stände für das
+                // BlocksOn-Stand-Gate vorladen.
+                maybe_spawn_stand_fetch(&app, &flight, tick_phase);
             }
 
             // v0.16.24: approach-phase divert navdata pre-fetch. On a
@@ -26839,8 +26858,6 @@ fn step_flight_at(
         }
         FlightPhase::TaxiIn => {
             if snap.parking_brake && snap.groundspeed_kt < 1.0 && snap.on_ground {
-                next_phase = FlightPhase::BlocksOn;
-                stats.blocks_on_reached = true;
                 // Which field are we actually standing on? Usually the planned
                 // one — but a pilot who diverted also taxis in and sets the
                 // brake, and his stand belongs to the field he is ON.
@@ -26853,17 +26870,64 @@ fn step_flight_at(
                     arrival::ArrivalSite::AtOtherAirport { icao, .. } => icao,
                     _ => flight.arr_airport.clone(),
                 };
-                settle_at_arrival_stand(&mut stats, snap, now, &at_icao);
+                // v1.6 Stand-Gate (RYR-1142-Befund): Parkbremse + Stillstand
+                // allein ist KEIN Block-On — ein mehrminütiger Rollhalt (H4
+                // in LPPT, wartend mit gesetzter Bremse) sieht identisch aus.
+                // Liegen OSM-Parkpositionen für DIESEN Flughafen vor, zählt
+                // der Halt nur in Standnähe; fern jedes Stands bleibt die
+                // Phase TaxiIn. Ohne Daten (kleiner Platz, Divert, offline)
+                // gilt das alte Kriterium — der universale Arrived-Fallback
+                // fängt ohnehin jeden abgestellten Flieger.
+                let stand_data = stats
+                    .arr_stands
+                    .as_ref()
+                    .filter(|l| !l.is_empty())
+                    .filter(|_| stats.arr_stands_icao.as_deref() == Some(at_icao.as_str()));
+                let (is_block_on, osm_stand) = match stand_data {
+                    Some(list) => match stands::stand_at(list, snap.lat, snap.lon) {
+                        Some(s) => (true, s.name.clone()),
+                        None => (false, None),
+                    },
+                    None => (true, None),
+                };
+                if is_block_on {
+                    next_phase = FlightPhase::BlocksOn;
+                    stats.blocks_on_reached = true;
+                    settle_at_arrival_stand(&mut stats, snap, now, &at_icao);
+                    // settle_ füllt arr_gate nur aus dem (praktisch immer
+                    // leeren) MSFS-parking_name — der OSM-Standname ist die
+                    // verlässliche Quelle.
+                    if stats.arr_gate.is_none() {
+                        if let Some(name) = osm_stand {
+                            stats.arr_gate = Some(name);
+                            stats.arr_gate_icao = Some(at_icao.trim().to_uppercase());
+                        }
+                    }
+                }
             }
         }
         FlightPhase::BlocksOn => {
+            // v1.6 Sicherheitsnetz: aus BlocksOn wieder losgerollt — der
+            // Halt war eine Fehldeutung (Rollhalt ohne Standdaten) oder
+            // eine Repositionierung. Zurück zu TaxiIn, Block-On-Zeit und
+            // erfassten Stand verwerfen; der nächste echte Halt setzt
+            // beides neu. Ohne diesen Rückweg blieb RYR 1142 nach dem
+            // H4-Halt 9 Minuten in BlocksOn hängen, quer rollend über
+            // den halben Flughafen.
+            if snap.on_ground && snap.groundspeed_kt > 5.0 {
+                next_phase = FlightPhase::TaxiIn;
+                stats.blocks_on_reached = false;
+                stats.block_on_at = None;
+                stats.arr_gate = None;
+                stats.arr_gate_icao = None;
+            }
             // BlocksOn → Arrived once the pilot has actually shut
             // down: engines off + parking brake set + at least 30 s
             // since the wheels stopped. Real pilots routinely leave
             // engines running a minute or two after blocks-on for
             // cool-down / APU transition, so we don't flip to Arrived
             // the instant they hit the brake.
-            if let Some(block_on) = stats.block_on_at {
+            else if let Some(block_on) = stats.block_on_at {
                 let settled_secs = (now - block_on).num_seconds();
                 if settled_secs >= 30
                     && snap.engines_running == 0
@@ -29088,6 +29152,163 @@ mod enroute_reconcile_replay_tests {
         }
     }
 
+    /// v1.6 Stand-Gate (RYR-1142-Befund LPPT): TaxiIn→BlocksOn nur noch in
+    /// Standnähe, sobald OSM-Parkpositionen vorliegen — plus Rückweg aus
+    /// BlocksOn, wenn wieder gerollt wird. Koordinaten sind die echten aus
+    /// dem Beweisflug (H4-Halt 423 m vom nächsten Stand, Parkposition 17 m
+    /// vom OSM-Punkt für Stand 203).
+    mod stand_gate {
+        use super::*;
+
+        fn lppt_stands() -> Vec<crate::stands::ParkingStand> {
+            vec![
+                crate::stands::ParkingStand {
+                    name: Some("203".into()),
+                    lat: 38.764528,
+                    lon: -9.136807,
+                },
+                crate::stands::ParkingStand {
+                    name: Some("204".into()),
+                    lat: 38.764391,
+                    lon: -9.137202,
+                },
+            ]
+        }
+
+        /// Stillstand mit Parkbremse — einmal am Rollhalt, einmal am Stand.
+        fn stopped_at(lat: f64, lon: f64) -> SimSnapshot {
+            SimSnapshot {
+                lat,
+                lon,
+                on_ground: true,
+                parking_brake: true,
+                groundspeed_kt: 0.0,
+                // Engines laufen beim Taxi — hält zugleich den universalen
+                // Arrived-Fallback aus diesen Tests heraus.
+                engines_running: 2,
+                ..SimSnapshot::default()
+            }
+        }
+
+        fn taxi_in_flight(stands: Option<Vec<crate::stands::ParkingStand>>) -> ActiveFlight {
+            let flight = replay_fixture();
+            {
+                let mut stats = flight.stats.lock().unwrap();
+                stats.phase = FlightPhase::TaxiIn;
+                stats.arr_stands_icao = stands.as_ref().map(|_| "ZZZZ".to_string());
+                stats.arr_stands = stands;
+            }
+            flight
+        }
+
+        #[test]
+        fn taxi_hold_far_from_stands_stays_taxi_in() {
+            let flight = taxi_in_flight(Some(lppt_stands()));
+            let snap = stopped_at(38.7830, -9.1327); // H4
+            let change = step_flight_at(&flight, &snap, Utc::now());
+            assert_eq!(change, None, "Rollhalt fern jedes Stands ist kein Block-On");
+            let stats = flight.stats.lock().unwrap();
+            assert_eq!(stats.phase, FlightPhase::TaxiIn);
+            assert!(!stats.blocks_on_reached);
+            assert!(stats.block_on_at.is_none());
+        }
+
+        #[test]
+        fn stop_at_stand_becomes_blocks_on_with_gate_name() {
+            let flight = taxi_in_flight(Some(lppt_stands()));
+            let snap = stopped_at(38.7646843, -9.1368409); // Stand 203, 17 m
+            let change = step_flight_at(&flight, &snap, Utc::now());
+            assert_eq!(change, Some(FlightPhase::BlocksOn));
+            let stats = flight.stats.lock().unwrap();
+            assert!(stats.blocks_on_reached);
+            assert!(stats.block_on_at.is_some());
+            assert_eq!(stats.arr_gate.as_deref(), Some("203"));
+            assert_eq!(stats.arr_gate_icao.as_deref(), Some("ZZZZ"));
+        }
+
+        #[test]
+        fn without_stand_data_the_legacy_criteria_still_apply() {
+            let flight = taxi_in_flight(None);
+            let snap = stopped_at(38.7830, -9.1327); // H4 — aber ohne Daten
+            let change = step_flight_at(&flight, &snap, Utc::now());
+            assert_eq!(
+                change,
+                Some(FlightPhase::BlocksOn),
+                "ohne Bodendaten bleibt das alte Kriterium aktiv (kein Blockieren)"
+            );
+        }
+
+        #[test]
+        fn stand_data_for_another_airport_falls_back_to_legacy() {
+            let flight = taxi_in_flight(Some(lppt_stands()));
+            {
+                // Divert-Szenario: die Liste gilt für den GEPLANTEN Flughafen,
+                // gelandet wird woanders (at_icao "ZZZZ" ≠ "LPPT").
+                let mut stats = flight.stats.lock().unwrap();
+                stats.arr_stands_icao = Some("LPPT".into());
+            }
+            let snap = stopped_at(38.7830, -9.1327);
+            let change = step_flight_at(&flight, &snap, Utc::now());
+            assert_eq!(change, Some(FlightPhase::BlocksOn));
+        }
+
+        #[test]
+        fn rolling_again_returns_from_blocks_on_to_taxi_in() {
+            let flight = taxi_in_flight(Some(lppt_stands()));
+            {
+                let mut stats = flight.stats.lock().unwrap();
+                stats.phase = FlightPhase::BlocksOn;
+                stats.blocks_on_reached = true;
+                stats.block_on_at = Some(Utc::now());
+                stats.arr_gate = Some("203".into());
+                stats.arr_gate_icao = Some("ZZZZ".into());
+            }
+            let snap = SimSnapshot {
+                lat: 38.7830,
+                lon: -9.1327,
+                on_ground: true,
+                parking_brake: false,
+                groundspeed_kt: 12.0,
+                engines_running: 2,
+                ..SimSnapshot::default()
+            };
+            let change = step_flight_at(&flight, &snap, Utc::now());
+            assert_eq!(change, Some(FlightPhase::TaxiIn));
+            let stats = flight.stats.lock().unwrap();
+            assert!(!stats.blocks_on_reached);
+            assert!(stats.block_on_at.is_none());
+            assert!(stats.arr_gate.is_none());
+            assert!(stats.arr_gate_icao.is_none());
+        }
+
+        #[test]
+        fn creeping_forward_below_threshold_stays_blocks_on() {
+            // 5-kt-Schwelle: Bremse lösen + Zentimeter rollen (Towbar-
+            // Wackler, Brake-Check) wirft den Block-On nicht weg.
+            let flight = taxi_in_flight(None);
+            {
+                let mut stats = flight.stats.lock().unwrap();
+                stats.phase = FlightPhase::BlocksOn;
+                stats.blocks_on_reached = true;
+                stats.block_on_at = Some(Utc::now());
+            }
+            let snap = SimSnapshot {
+                lat: 38.7646843,
+                lon: -9.1368409,
+                on_ground: true,
+                parking_brake: false,
+                groundspeed_kt: 2.0,
+                engines_running: 2,
+                ..SimSnapshot::default()
+            };
+            let change = step_flight_at(&flight, &snap, Utc::now());
+            assert_eq!(change, None);
+            let stats = flight.stats.lock().unwrap();
+            assert_eq!(stats.phase, FlightPhase::BlocksOn);
+            assert!(stats.blocks_on_reached);
+        }
+    }
+
     /// Replayt ein Fixture durch v1+v2 in Streamer-Kopplung und liefert
     /// den v1-Phasen-Bogen als (Zeitpunkt, Phase)-Transitions-Liste.
     fn run_v1_arc(name: &str) -> Vec<(DateTime<Utc>, FlightPhase)> {
@@ -30387,6 +30608,97 @@ fn maybe_spawn_metar_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, new_phas
             }
             Err(e) => {
                 tracing::warn!(error = %e, %icao, "metar fetch failed");
+            }
+        }
+    });
+}
+
+/// v1.6 Stand-Erkennung: OSM-Parkpositionen holen, sobald sie gebraucht
+/// werden. Gleiches Muster wie [`maybe_spawn_metar_fetch`] — einmal pro
+/// Richtung pro Flug, idempotent über die `*_stands_requested`-Latches,
+/// vom Streamer jeden Tick mit der aktuellen Phase aufgerufen (deckt
+/// Boarding als Startphase und Resume mitten im Sinkflug ab).
+///
+/// - **Boarding/Pushback** → Abflughafen: nächste Parkposition zur
+///   aktuellen Flugzeugposition wird als `dep_gate` erfasst (der
+///   MSFS-`parking_name`-Weg liefert nie — SimConnect befüllt das Feld
+///   nicht).
+/// - **Descent/Approach/Final** → Zielflughafen: die Standliste wandert
+///   nach `stats.arr_stands`, wo das TaxiIn→BlocksOn-Stand-Gate sie
+///   auswertet.
+///
+/// `airport_ground_get` cached lokal pro ICAO (ETag) — im Normalfall ist
+/// das ein Plattenzugriff, kein Netz-Roundtrip.
+fn maybe_spawn_stand_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, phase: FlightPhase) {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Dir {
+        Departure,
+        Arrival,
+    }
+    let dir = match phase {
+        FlightPhase::Boarding | FlightPhase::Pushback => Dir::Departure,
+        FlightPhase::Descent | FlightPhase::Approach | FlightPhase::Final => Dir::Arrival,
+        _ => return,
+    };
+    let icao = match dir {
+        Dir::Departure => flight.dpt_airport.trim().to_uppercase(),
+        Dir::Arrival => flight.arr_airport.trim().to_uppercase(),
+    };
+    if icao.len() < 3 {
+        return;
+    }
+    {
+        let mut stats = flight.stats.lock().expect("flight stats");
+        let already = match dir {
+            Dir::Departure => stats.dep_stands_requested,
+            Dir::Arrival => stats.arr_stands_requested,
+        };
+        if already {
+            return;
+        }
+        match dir {
+            Dir::Departure => stats.dep_stands_requested = true,
+            Dir::Arrival => stats.arr_stands_requested = true,
+        }
+    }
+    let app = app.clone();
+    let flight = Arc::clone(flight);
+    tauri::async_runtime::spawn(async move {
+        let ground = match airport_ground_get(app, icao.clone()).await {
+            Ok(Some(g)) => g,
+            Ok(None) => {
+                tracing::info!(%icao, "no ground data for stand detection — fallback criteria stay active");
+                return;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e.message, %icao, "ground fetch for stand detection failed");
+                return;
+            }
+        };
+        let list = stands::parse_stands(&ground.geojson);
+        tracing::info!(%icao, stands = list.len(), "parking stands loaded for stand detection");
+        if list.is_empty() {
+            return;
+        }
+        let mut stats = flight.stats.lock().expect("flight stats");
+        match dir {
+            Dir::Departure => {
+                // Standzuweisung sofort — beim Boarding steht der Flieger
+                // ja bereits auf seinem Stand.
+                if stats.dep_gate.is_none() {
+                    if let Some((lat, lon)) = aircraft_position_for_gates(&stats) {
+                        if let Some(s) = stands::stand_at(&list, lat, lon) {
+                            if let Some(name) = &s.name {
+                                stats.dep_gate = Some(name.clone());
+                                tracing::info!(%icao, stand = %name, "departure stand captured from OSM ground data");
+                            }
+                        }
+                    }
+                }
+            }
+            Dir::Arrival => {
+                stats.arr_stands = Some(list);
+                stats.arr_stands_icao = Some(icao);
             }
         }
     });
