@@ -139,6 +139,28 @@ Zu beachten: Abruf höchstens alle 15 Sekunden (Rücksicht auf die Datenquelle),
 auf schwachen Geräten abschaltbar halten — hunderte Flugzeuge auf der Karte kosten
 Rechenzeit, die im Sim fehlt.
 
+### Stichpunkt: VDGS (Thomas, 12.08.2026)
+
+Gehört hierher, weil es ein VATSIM-Thema ist. Noch nicht ausgearbeitet — hier steht
+nur, was wir schon wissen, damit es nicht wieder von vorn recherchiert wird.
+
+**Der Begriff ist doppelt belegt, und die Wahl entscheidet über den Aufwand:**
+
+- **`vats.im/vdgs` — das A-CDM-Werkzeug.** Von VATSIM Spain gebaut, inoffiziell.
+  Bildet Airport-CDM nach: EOBT aus dem VATSIM-Flugplan, TOBT und TSAT im Werkzeug.
+  Bereits recherchiert (siehe Gedächtnis `aeroacars-cdm-hoppie-research`). **Der
+  Haken von damals gilt weiter:** Login nur über VATSIM-Connect hinter Cloudflare,
+  und es gibt **keine Schreib-Schnittstelle für die EOBT**. Lesen ginge vermutlich,
+  Schreiben nicht.
+- **VDGS als Andockanzeige am Gate** — die Tafel, die Stand, Flugzeugtyp und
+  Restmeter zeigt. Dafür haben wir seit v1.5.5 die Zutaten im Haus: die
+  Stand-Erkennung aus den OSM-Bodendaten und die Gates im Flugbericht. Das wäre
+  eine reine Anzeige im Client, ohne fremde Schnittstelle.
+
+**Was ich von dir brauche:** welche der beiden Lesarten du meinst. Beim ersten hängt
+alles an einer Anmeldung, die wir nicht automatisieren können; beim zweiten läge es
+in unserer Hand.
+
 ---
 
 ## 3. Tab-Wechsel über die LAN-Brücke ist träge
