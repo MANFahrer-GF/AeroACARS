@@ -46,46 +46,6 @@ export interface ChatTeilnehmer {
 
 /** Phasen, in denen Tippen nichts verloren hat. */
 const KEINE_TASTATUR = new Set(["FINAL", "LANDING", "TAKEOFF_ROLL", "TAKEOFF"]);
-/** Phasen, in denen der Ton leiser wird. */
-const LEISE = new Set(["DESCENT", "APPROACH"]);
-
-/**
- * Der Benachrichtigungston. Zwei kurze Sinustöne, eine Quarte auseinander —
- * nah am echten ACARS-Ruf und deutlich leiser als eine
- * Discord-Benachrichtigung. Bei einer Direktnachricht drei Töne, damit man
- * den Unterschied hört, ohne hinzusehen.
- *
- * Erzeugt statt abgespielt: keine Datei im Paket, keine Ladezeit, und die
- * Lautstärke lässt sich phasenabhängig steuern.
- */
-function spieleTon(art: "normal" | "direkt", staerke: "voll" | "leise"): void {
-  try {
-    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
-    const lautheit = staerke === "leise" ? 0.06 : 0.14;
-    const folge = art === "direkt" ? [880, 1174.7, 1567.9] : [880, 1174.7];
-    folge.forEach((hz, n) => {
-      const start = ctx.currentTime + n * 0.13;
-      const osz = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osz.type = "sine";
-      osz.frequency.value = hz;
-      // Kurzer Ein- und Ausklang, sonst knackt es hörbar.
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(lautheit, start + 0.012);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.19);
-      osz.connect(gain).connect(ctx.destination);
-      osz.start(start);
-      osz.stop(start + 0.21);
-    });
-    // Kontext nach dem Ausklingen schließen — sonst sammeln sich über einen
-    // Langstreckenflug hunderte offene Audio-Kontexte an.
-    setTimeout(() => { void ctx.close(); }, 900);
-  } catch {
-    /* Kein Ton verfügbar — der Chat funktioniert trotzdem. */
-  }
-}
 
 function uhrzeit(ts: number): string {
   const d = new Date(ts);
@@ -95,13 +55,11 @@ function uhrzeit(ts: number): string {
 export function ChatView({
   eigenePilotId,
   phase,
-  tonAn,
   onGelesen,
 }: {
   eigenePilotId: string | null;
-  /** Aktuelle Flugphase, für Ton und Tastatur. */
+  /** Aktuelle Flugphase — hier nur noch für die Tastatur-Sperre. */
   phase: string | null;
-  tonAn: boolean;
   /** Meldet der Hülle, dass alles gelesen ist (Zähler am Menü zurücksetzen). */
   onGelesen?: () => void;
 }) {
@@ -154,16 +112,12 @@ export function ChatView({
         if (alt.some((m) => m.id === n.id)) return alt;
         return [...alt, n].slice(-200);
       });
-      const direkt = n.an_pilot_id != null;
-      if (tonAn) {
-        spieleTon(
-          direkt ? "direkt" : "normal",
-          phase != null && LEISE.has(phase) ? "leise" : "voll",
-        );
-      }
+      // Kein Ton hier: der laeuft im dauerhaften Empfaenger in App.tsx.
+      // Wuerde er auch hier liegen, klaenge er bei offenem Chat doppelt —
+      // und bei geschlossenem gar nicht, was der Befund vom 12.08. war.
     });
     return () => { void p.then((ab) => ab()); };
-  }, [tonAn, phase]);
+  }, []);
 
   // Ans Ende scrollen, wenn etwas dazukommt.
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke, clearIpcCache } from "./lib/ipc";
 import { applyTheme, getInitialTheme, type Theme } from "./theme";
@@ -95,6 +95,7 @@ import { useSimSession } from "./hooks/useSimSession";
 import { simKindLabel } from "./lib/simKind";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import { listen } from "./lib/ipc";
+import { spieleChatTon } from "./lib/chatTon";
 import { ChatView } from "./components/ChatView";
 import type { ActiveFlightInfo, LoginResult, Profile, UiError } from "./types";
 
@@ -216,8 +217,17 @@ function App() {
   // ist — wer hinsieht, hat gelesen.
   const [chatUngelesen, setChatUngelesen] = useState(0);
   const [chatTonAn] = useState<boolean>(() => loadChatTon());
+  // Refs statt Abhaengigkeiten: der Empfaenger soll EINMAL registriert
+  // werden und trotzdem den aktuellen Reiter und die aktuelle Phase sehen.
   const [status, setStatus] = useState<SessionStatus>({ kind: "loading" });
   const [tab, setTab] = useState<Tab>("briefing");
+  const tabRef = useRef<Tab>(tab);
+  const phaseRef = useRef<string | null>(null);
+  const geklungen = useRef<Set<number>>(new Set());
+  useEffect(() => { tabRef.current = tab; }, [tab]);
+  // Die Phase steuert die Lautstaerke. Ueber ein Ref, damit der Empfaenger
+  // nicht bei jedem Phasenwechsel neu registriert werden muss.
+  const chatGelesen = useCallback(() => setChatUngelesen(0), []);
   const [debugMode, setDebugMode] = useState<boolean>(() => loadDebugMode());
   const [autoFile, setAutoFile] = useState<boolean>(() => loadAutoFile());
   const [autoStart, setAutoStart] = useState<boolean>(() => loadAutoStart());
@@ -345,6 +355,7 @@ function App() {
   const [activeFlight, setActiveFlight] = useState<ActiveFlightInfo | null>(
     null,
   );
+  useEffect(() => { phaseRef.current = activeFlight?.phase ?? null; }, [activeFlight]);
 
   // v0.15.x: Track-Akkumulation ist ins BACKEND gewandert (Rust-Streamer,
   // `record_track_point`). Sie läuft dort bei voller Tick-Rate, fokus-/fenster-
@@ -566,11 +577,24 @@ function App() {
   // klingeln.
   useEffect(() => {
     if (status.kind !== "loggedIn") return;
-    const p = listen("chat-nachricht", () => {
-      setTab((aktuell) => {
-        if (aktuell !== "chat") setChatUngelesen((n) => n + 1);
-        return aktuell;
-      });
+    const p = listen<{ id?: number; an_pilot_id?: string | null }>("chat-nachricht", (e) => {
+      const n = e.payload ?? {};
+      // Doppelte abwehren: derselbe Zuruf kann ueber Verlauf UND MQTT
+      // hereinkommen. Ohne das klingelt es zweimal.
+      if (typeof n.id === "number") {
+        if (geklungen.current.has(n.id)) return;
+        geklungen.current.add(n.id);
+        if (geklungen.current.size > 300) {
+          geklungen.current = new Set([...geklungen.current].slice(-150));
+        }
+      }
+      if (chatTonAn) {
+        spieleChatTon(n.an_pilot_id != null ? "direkt" : "normal", phaseRef.current);
+      }
+      // Kein Seiteneffekt im State-Updater (QS 12.08.): das lief im
+      // StrictMode zweimal und zaehlte still doppelt. Der Reiter steht
+      // stattdessen in einem Ref.
+      if (tabRef.current !== "chat") setChatUngelesen((z) => z + 1);
     });
     return () => { void p.then((ab) => ab()); };
   }, [status.kind]);
@@ -797,8 +821,7 @@ function App() {
         <ChatView
           eigenePilotId={pilotIdForChat}
           phase={activeFlight?.phase ?? null}
-          tonAn={chatTonAn}
-          onGelesen={() => setChatUngelesen(0)}
+          onGelesen={chatGelesen}
         />
       )}
 
