@@ -432,7 +432,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           `<span class="vatsim-pop-freq">${vatsimEsc(p.frequenz || "—")}</span></div>` +
           `<div class="vatsim-pop-row vatsim-pop-dim">${vatsimEsc(p.block)} · FL${vatsimEsc(p.fl_von)}–FL${vatsimEsc(p.fl_bis)}</div>` +
           (vertretung > 0
-            ? `<div class="vatsim-pop-row vatsim-pop-dim">deckt mit ab (Stufe ${vertretung} der Kette)</div>`
+            ? `<div class="vatsim-pop-row vatsim-pop-dim">${vatsimEsc(p.eigentlich || "Die eigentliche Station")} ist hier gerade nicht besetzt — dieser Lotse übernimmt den Sektor mit.</div>`
             : "") +
           `</div>`)
         .addTo(map);

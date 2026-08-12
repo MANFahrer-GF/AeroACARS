@@ -242,6 +242,13 @@ export function baueSektoren(
           fl_von: s.flVon,
           fl_bis: s.flBis,
           vertretung: stufe,
+          // Wen der Lotse hier VERTRITT — fuers Klickfenster. "Stufe 1 der
+          // Kette" war Innenleben, unter dem sich niemand etwas vorstellen
+          // kann (Feldbefund); der Name der unbesetzten Station schon.
+          eigentlich: stufe > 0
+            ? (bestand.stationen.get(`${block.land}/${block.owner[0]}`)?.gesprochen
+               ?? block.owner[0])
+            : "",
         },
       });
 
