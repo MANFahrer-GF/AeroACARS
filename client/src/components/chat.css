@@ -156,6 +156,18 @@
   margin-right: 6px;
 }
 
+/* Flugleitung: eigene Farbe, damit man sie nicht fuer einen Kollegen
+   haelt. Warnton statt Akzent — sie spricht einen an, das ist mehr als ein
+   Zuruf unter Kollegen. */
+.chat__msg--ops {
+  background: var(--sem-warn-bg);
+}
+.chat__msg--ops .chat__who { color: var(--sem-warn); }
+.chat__marke--ops {
+  border-color: var(--sem-warn);
+  color: var(--sem-warn);
+}
+
 /* ── Fusszeile: Schnellzurufe + Eingabe als EIN Bauteil ───────────────── */
 .chat__schnell {
   display: flex;

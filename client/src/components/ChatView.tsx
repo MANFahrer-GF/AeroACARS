@@ -44,6 +44,9 @@ export interface ChatTeilnehmer {
   anzeigename?: string | null;
 }
 
+/** Absenderkennung der Flugleitung — kein Pilot kann die haben. */
+const OPS_ID = "__ops";
+
 /** Phasen, in denen Tippen nichts verloren hat. */
 const KEINE_TASTATUR = new Set(["FINAL", "LANDING", "TAKEOFF_ROLL", "TAKEOFF"]);
 
@@ -219,14 +222,22 @@ export function ChatView({
         {nachrichten.map((n) => {
           const eigen = n.von_pilot_id === eigenePilotId;
           const direkt = n.an_pilot_id != null;
+          // Die Flugleitung ist kein Kollege — das muss man sehen, ohne den
+          // Namen zu lesen.
+          const vonOps = n.von_pilot_id === OPS_ID;
           return (
             <div
               key={n.id}
-              className={`chat__msg${eigen ? " chat__msg--eigen" : ""}${direkt ? " chat__msg--direkt" : ""}`}
+              className={`chat__msg${eigen ? " chat__msg--eigen" : ""}${direkt && !vonOps ? " chat__msg--direkt" : ""}${vonOps ? " chat__msg--ops" : ""}`}
             >
               <time>{uhrzeit(n.ts)}</time>
               <div>
-                {direkt && (
+                {vonOps && (
+                  <span className="chat__marke chat__marke--ops">
+                    {t("chat.marke_ops", "FLUGLEITUNG")}
+                  </span>
+                )}
+                {direkt && !vonOps && (
                   <span className="chat__marke">
                     {eigen
                       ? t("chat.marke_an", "DIREKT")

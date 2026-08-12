@@ -595,7 +595,11 @@ function App() {
       // bei jedem eigenen Tippen.
       const vonMirSelbst = n.von_pilot_id != null && n.von_pilot_id === eigenePilotIdRef.current;
       if (chatTonAn && !vonMirSelbst) {
-        spieleChatTon(n.an_pilot_id != null ? "direkt" : "normal", phaseRef.current);
+        spieleChatTon(
+          n.von_pilot_id === "__ops" ? "ops"
+            : n.an_pilot_id != null ? "direkt" : "normal",
+          phaseRef.current,
+        );
       }
       // Kein Seiteneffekt im State-Updater (QS 12.08.): das lief im
       // StrictMode zweimal und zaehlte still doppelt. Der Reiter steht

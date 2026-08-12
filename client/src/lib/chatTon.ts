@@ -14,7 +14,7 @@ const LEISE = new Set(["DESCENT", "APPROACH"]);
 /** Phasen, in denen gar nichts klingelt. Da hat niemand eine Hand frei. */
 const STILL = new Set(["FINAL", "LANDING", "TAKEOFF_ROLL", "TAKEOFF"]);
 
-export type Tonart = "normal" | "direkt";
+export type Tonart = "normal" | "direkt" | "ops";
 
 /** Wie laut darf es in dieser Flugphase sein? */
 export function lautstaerkeFuerPhase(phase: string | null | undefined): "voll" | "leise" | "still" {
@@ -39,7 +39,12 @@ export function spieleChatTon(art: Tonart, phase: string | null | undefined): vo
     if (!Ctx) return;
     const ctx = new Ctx();
     const lautheit = staerke === "leise" ? 0.06 : 0.14;
-    const folge = art === "direkt" ? [880, 1174.7, 1567.9] : [880, 1174.7];
+    // Die Flugleitung klingt anders als ein Kollege: absteigend statt
+    // aufsteigend, damit man den Unterschied ohne Hinsehen hoert.
+    const folge =
+      art === "ops" ? [1174.7, 880, 1174.7]
+        : art === "direkt" ? [880, 1174.7, 1567.9]
+          : [880, 1174.7];
     folge.forEach((hz, n) => {
       const start = ctx.currentTime + n * 0.13;
       const osz = ctx.createOscillator();

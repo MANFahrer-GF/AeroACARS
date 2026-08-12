@@ -2169,6 +2169,7 @@
       "delay": "Habe Verspätung",
       "taxi": "Rolle raus",
       "down": "Bin runter"
-    }
+    },
+    "marke_ops": "FLUGLEITUNG"
   }
 }
