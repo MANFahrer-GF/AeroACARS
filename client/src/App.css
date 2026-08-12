@@ -10735,22 +10735,23 @@ input.datalink-block__input {
 }
 
 /* ── VATSIM-Klickfenster auf der Live-Karte (12.08.2026) ──────────────
-   MapLibre-Popups sind hell; unser Wrapper stylt den Inhalt. Frequenz in
-   Mono-Ziffern, Einstufung als Plaettchen — Klartext statt "R11". */
-.vatsim-pop { font-size: var(--fs-300); line-height: 1.5; color: #1c2733; min-width: 150px; }
+   Sitzt in der aa-vapop-Hausform (dunkel, Theme-faehig) — das weisse
+   MapLibre-Standardfenster brach den Aufzug (Feldbefund). Alle Farben
+   ueber Tokens, damit hell/dunkel beides traegt. */
+.vatsim-pop { font-size: var(--fs-300); line-height: 1.5; color: var(--text); min-width: 150px; }
 .vatsim-pop-title { font-weight: 700; font-size: var(--fs-400); margin-bottom: 4px; letter-spacing: .02em; }
 .vatsim-pop-row { display: flex; align-items: center; gap: 7px; padding: 2px 0; white-space: nowrap; }
-.vatsim-pop-dim { opacity: .65; }
+.vatsim-pop-dim { color: var(--text-dim); }
 .vatsim-pop-freq {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  color: #0a66ce;
+  color: var(--acc);
 }
 .vatsim-pop-chip {
   font-family: var(--font-mono);
   font-size: 9px; letter-spacing: .08em;
-  border: 1px solid rgba(0,0,0,.25); border-radius: 3px;
-  padding: 1px 5px; opacity: .75;
+  border: 1px solid var(--line); border-radius: 3px;
+  padding: 1px 5px; color: var(--text-dim);
 }
 
 /* FL-Wahl fuer die VATSIM-Sektoren (12.08.2026) */
@@ -10764,10 +10765,16 @@ input.datalink-block__input {
   min-width: 44px;
 }
 
-/* Stationsarten-Chips im Klickfenster — dieselben Farben wie die
-   Buchstaben auf der Karte (A gelb, D blau, G gruen, T rot, APP amber). */
-.vatsim-pop-chip--atis { color: #a16207; border-color: #a16207; opacity: 1; }
-.vatsim-pop-chip--del  { color: #1d4ed8; border-color: #1d4ed8; opacity: 1; }
-.vatsim-pop-chip--gnd  { color: #15803d; border-color: #15803d; opacity: 1; }
-.vatsim-pop-chip--twr  { color: #b91c1c; border-color: #b91c1c; opacity: 1; }
-.vatsim-pop-chip--app  { color: #b45309; border-color: #b45309; opacity: 1; }
+/* Stationsarten-Chips — dieselben Farben wie die Buchstaben auf der
+   Karte. Helle Toene fuer den dunklen Grund; im hellen Aufzug die
+   dunkleren Entsprechungen. */
+.vatsim-pop-chip--atis { color: #eab308; border-color: #eab308; }
+.vatsim-pop-chip--del  { color: #60a5fa; border-color: #60a5fa; }
+.vatsim-pop-chip--gnd  { color: #4ade80; border-color: #4ade80; }
+.vatsim-pop-chip--twr  { color: #f87171; border-color: #f87171; }
+.vatsim-pop-chip--app  { color: #fbbf24; border-color: #fbbf24; }
+:root[data-theme="light"] .vatsim-pop-chip--atis { color: #a16207; border-color: #a16207; }
+:root[data-theme="light"] .vatsim-pop-chip--del  { color: #1d4ed8; border-color: #1d4ed8; }
+:root[data-theme="light"] .vatsim-pop-chip--gnd  { color: #15803d; border-color: #15803d; }
+:root[data-theme="light"] .vatsim-pop-chip--twr  { color: #b91c1c; border-color: #b91c1c; }
+:root[data-theme="light"] .vatsim-pop-chip--app  { color: #b45309; border-color: #b45309; }

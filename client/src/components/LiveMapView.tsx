@@ -393,7 +393,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       const f = e.features?.[0]; if (!f) return;
       const p = f.properties ?? {};
       const alt = Number(p.alt ?? 0), gs = Number(p.gs ?? 0);
-      new maplibregl.Popup({ closeButton: true, maxWidth: "260px" })
+      new maplibregl.Popup({ closeButton: true, className: "aa-vapop", maxWidth: "260px" })
         .setLngLat(e.lngLat)
         .setHTML(
           `<div class="vatsim-pop">` +
@@ -414,7 +414,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         `<div class="vatsim-pop-row"><span class="vatsim-pop-chip vatsim-pop-chip--${vatsimEsc(x.tag.toLowerCase())}">${vatsimEsc(x.tag)}</span>` +
         `<b>${vatsimEsc(x.callsign)}</b>` +
         `<span class="vatsim-pop-freq">${vatsimEsc(x.frequency)}</span></div>`).join("");
-      new maplibregl.Popup({ closeButton: true, maxWidth: "300px" })
+      new maplibregl.Popup({ closeButton: true, className: "aa-vapop", maxWidth: "300px" })
         .setLngLat(e.lngLat)
         .setHTML(`<div class="vatsim-pop"><div class="vatsim-pop-title">${vatsimEsc(p.icao)} — ATC</div>${zeilen}</div>`)
         .addTo(map);
@@ -423,7 +423,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       const f = e.features?.[0]; if (!f) return;
       const p = f.properties ?? {};
       const vertretung = Number(p.vertretung ?? 0);
-      new maplibregl.Popup({ closeButton: true, maxWidth: "300px" })
+      new maplibregl.Popup({ closeButton: true, className: "aa-vapop", maxWidth: "300px" })
         .setLngLat(e.lngLat)
         .setHTML(
           `<div class="vatsim-pop">` +
