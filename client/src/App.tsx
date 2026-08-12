@@ -94,7 +94,7 @@ import { Sidebar, getInitialCollapsed } from "./components/Sidebar";
 import { useSimSession } from "./hooks/useSimSession";
 import { simKindLabel } from "./lib/simKind";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "./lib/ipc";
 import { ChatView } from "./components/ChatView";
 import type { ActiveFlightInfo, LoginResult, Profile, UiError } from "./types";
 

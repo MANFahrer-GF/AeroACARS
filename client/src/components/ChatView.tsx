@@ -21,8 +21,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { listen } from "@tauri-apps/api/event";
-import { invoke } from "../lib/ipc";
+import { invoke, listen } from "../lib/ipc";
 import { Button } from "./ui";
 import "./chat.css";
 

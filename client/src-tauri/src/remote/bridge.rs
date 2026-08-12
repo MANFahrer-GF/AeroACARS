@@ -139,7 +139,15 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         // unbedenklich (eigene Tastatur, eigener Fokus) — deshalb hier keine
         // abgespeckte Fassung, sondern dieselben Befehle wie am PC.
         "chat_senden" => {
+            // rename_all ist hier NICHT optional: die Oberflaeche schickt
+            // `anPilotId`. Ohne die Umwandlung liest `an_pilot_id` still
+            // `None` — und jede Direktnachricht vom Tablet ginge an ALLE,
+            // waehrend das Fenster weiter "Direkt an ..." anzeigt.
+            // Derselbe Fehler ist in dieser Datei schon einmal passiert
+            // (divertTo, siehe weiter unten) — deshalb steht er ueber jedem
+            // Mehrwort-Argument.
             #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
             struct A {
                 text: String,
                 #[serde(default)]
