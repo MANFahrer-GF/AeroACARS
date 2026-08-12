@@ -19,24 +19,69 @@ import RunwayDiagramPreview from "./dev/RunwayDiagramPreview";
 // beschleunigt den Cold-Start.
 // v0.13.x: LiveMapView lazy — MapLibre (~1.7 MB) landet so in einem eigenen
 // Chunk und nur beim Öffnen des Karten-Tabs geladen (Haupt-Bundle bleibt schlank).
-const LiveMapView = lazy(() =>
-  import("./components/LiveMapView").then((m) => ({ default: m.LiveMapView })),
-);
-// Logbuch lazy (nutzt MapLibre fürs Detail) → eigener Chunk, nur bei Bedarf.
-const LogbookView = lazy(() =>
-  import("./components/LogbookView").then((m) => ({ default: m.LogbookView })),
-);
-const LandingPanel = lazy(() =>
-  import("./components/LandingPanel").then((m) => ({ default: m.LandingPanel })),
-);
-const ReleaseNotesModal = lazy(() =>
-  import("./components/ReleaseNotesModal").then((m) => ({ default: m.ReleaseNotesModal })),
-);
-// v1.3.0 (#Hoppie-PDC-CPDLC): lazy — only loaded once the pilot opens the
-// tab, same reasoning as the other feature panels above.
-const CpdlcPanel = lazy(() =>
-  import("./components/CpdlcPanel").then((m) => ({ default: m.CpdlcPanel })),
-);
+//
+// v1.5.7 (#lan-traegheit, Feldbefund Thomas): Die Aufteilung bleibt richtig —
+// der Programmstart soll nicht 1,7 MB MapLibre mitschleppen. Träge wurde es
+// erst über die LAN-Brücke: dort liegt der Nachschub nicht auf der Platte,
+// sondern im WLAN, und der Pilot wartet beim ERSTEN Öffnen jeder Ansicht.
+//
+// Lösung: die Ladefunktionen bekommen einen Namen, damit sie NACH dem ersten
+// Rendern im Leerlauf vorgeladen werden können (siehe `prefetchViews` unten).
+// Der Start bleibt schlank, der Wechsel wird trotzdem sofort — und weil die
+// Liste zentral steht, wird jede künftige Ansicht automatisch mitgenommen,
+// sobald sie dort eingetragen ist.
+const loadLiveMapView = () =>
+  import("./components/LiveMapView").then((m) => ({ default: m.LiveMapView }));
+const loadLogbookView = () =>
+  import("./components/LogbookView").then((m) => ({ default: m.LogbookView }));
+const loadLandingPanel = () =>
+  import("./components/LandingPanel").then((m) => ({ default: m.LandingPanel }));
+const loadReleaseNotesModal = () =>
+  import("./components/ReleaseNotesModal").then((m) => ({ default: m.ReleaseNotesModal }));
+const loadCpdlcPanel = () =>
+  import("./components/CpdlcPanel").then((m) => ({ default: m.CpdlcPanel }));
+
+/** Alle nachladbaren Ansichten — Reihenfolge = Vorlade-Reihenfolge. */
+const LAZY_VIEWS = [
+  loadCpdlcPanel,        // klein, oft gebraucht → zuerst
+  loadLandingPanel,
+  loadLogbookView,
+  loadLiveMapView,       // der 1,7-MB-Brocken zuletzt
+  loadReleaseNotesModal,
+];
+
+/**
+ * Ansichten im Leerlauf nacheinander holen. Nacheinander (nicht alle auf
+ * einmal), damit das Vorladen dem laufenden Betrieb keine Bandbreite
+ * wegnimmt — auf dem Tablet teilen sich Telemetrie und Nachschub dieselbe
+ * WLAN-Strecke. Fehler sind belanglos: schlägt es fehl, lädt die Ansicht
+ * beim Öffnen wie bisher.
+ */
+function prefetchViews(): void {
+  const idle: (cb: () => void) => void =
+    typeof window !== "undefined" &&
+    "requestIdleCallback" in window
+      ? (cb) => (window as unknown as {
+          requestIdleCallback: (c: () => void) => void;
+        }).requestIdleCallback(cb)
+      : (cb) => setTimeout(cb, 1200);
+
+  let i = 0;
+  const next = () => {
+    if (i >= LAZY_VIEWS.length) return;
+    const load = LAZY_VIEWS[i++];
+    void load()
+      .catch(() => null)
+      .then(() => idle(next));
+  };
+  idle(next);
+}
+
+const LiveMapView = lazy(loadLiveMapView);
+const LogbookView = lazy(loadLogbookView);
+const LandingPanel = lazy(loadLandingPanel);
+const ReleaseNotesModal = lazy(loadReleaseNotesModal);
+const CpdlcPanel = lazy(loadCpdlcPanel);
 import { UpdateButton } from "./components/UpdateButton";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ErrorReportingFirstRunBanner } from "./components/ErrorReportingFirstRunBanner";
@@ -353,6 +398,9 @@ function App() {
       setStorageHydrated(true);
       window.dispatchEvent(new Event("aa-synced-storage-hydrated"));
     });
+    // v1.5.7 (#lan-traegheit): Ansichten im Leerlauf vorladen, damit der
+    // erste Tab-Wechsel auf dem Tablet nicht auf das WLAN wartet.
+    prefetchViews();
     return () => {
       cancelled = true;
     };

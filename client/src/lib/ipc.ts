@@ -257,7 +257,77 @@ async function browserInvoke<T>(
  * Drop-in replacement for Tauri's `invoke`. In Tauri it forwards to the native
  * bridge; in a LAN browser it POSTs to `/api/cmd/{cmd}` with the bearer token.
  */
-export async function invoke<T = unknown>(
+// ---------------------------------------------------------------------------
+// Antwort-Zwischenspeicher (v1.5.7, #lan-traegheit)
+// ---------------------------------------------------------------------------
+//
+// **Warum.** Feldbefund Thomas: Der Tab-Wechsel auf dem Tablet ist träge. Eine
+// Ansicht fragt beim Öffnen 5–12 Werte einzeln ab; am PC ist das native IPC
+// (Mikrosekunden), über die LAN-Brücke sind es 5–12 HTTP-Runden durchs WLAN.
+// Wer zwischen Karte und Cockpit hin und her wechselt, bezahlt sie JEDES MAL
+// neu — obwohl sich Flughafendaten, Logbuchseiten oder Flottenlisten in
+// diesen Sekunden nicht ändern.
+//
+// **Wie.** Für ausgewählte LESENDE Befehle wird die letzte Antwort kurz
+// behalten. Ein Wiederholungsaufruf bekommt sie SOFORT und stößt im
+// Hintergrund eine Auffrischung an ("stale while revalidate") — die Ansicht
+// steht also augenblicklich da und aktualisiert sich still.
+//
+// **Sicherheitsnetz.** Der Zwischenspeicher ist eine ausdrückliche Liste,
+// KEINE Namensheuristik. Wer künftig einen Befehl hinzufügt und ihn nicht
+// einträgt, bekommt exakt das heutige Verhalten — nie ein falsches Ergebnis.
+// Schreibende Befehle (flight_start, hoppie_connect, …) stehen niemals drin.
+
+/** Wie lange eine Antwort ohne Rückfrage weiterverwendet werden darf. */
+const CACHE_TTL_MS = 20_000;
+
+/**
+ * Lesende Befehle, deren Antwort sich in Sekundenfrist nicht sinnvoll ändert.
+ * Bewusst konservativ: alles Sicherheits-, Flug- oder Zustandsrelevante fehlt
+ * hier absichtlich (`flight_status` kommt ohnehin als Ereignis im
+ * Sekundentakt, nicht per Abfrage).
+ */
+const CACHEABLE = new Set<string>([
+  // Stammdaten — ändern sich, wenn überhaupt, im Tagesrhythmus
+  "airport_get",
+  "airport_ground_get",
+  "airport_ground_index",
+  "phpvms_get_aircraft",
+  "fleet_list_at_airport",
+  "divert_nearest_airports",
+  // Listen, die eine Ansicht beim Öffnen zieht
+  "logbook_stats",
+  "logbook_pireps",
+  "logbook_pirep",
+  "landing_list",
+  "phpvms_get_bids",
+  "news_fetch",
+  "va_live_flights",
+  // Wetter — der Anbieter aktualisiert ohnehin nur halbstündlich
+  "metar_get",
+]);
+
+interface CacheSlot {
+  at: number;
+  value: unknown;
+  /** Läuft gerade eine Auffrischung? Verhindert Anfrage-Lawinen. */
+  refreshing?: boolean;
+}
+
+const cache = new Map<string, CacheSlot>();
+
+function cacheKey(cmd: string, args?: Record<string, unknown>): string {
+  return args && Object.keys(args).length > 0
+    ? `${cmd}:${JSON.stringify(args)}`
+    : cmd;
+}
+
+/** Zwischenspeicher leeren — nach Abmelden/VA-Wechsel aufrufen. */
+export function clearIpcCache(): void {
+  cache.clear();
+}
+
+async function rawInvoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
 ): Promise<T> {
@@ -266,6 +336,45 @@ export async function invoke<T = unknown>(
     return tauriInvoke!<T>(cmd, args);
   }
   return browserInvoke<T>(cmd, args);
+}
+
+export async function invoke<T = unknown>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  if (!CACHEABLE.has(cmd)) return rawInvoke<T>(cmd, args);
+
+  const key = cacheKey(cmd, args);
+  const slot = cache.get(key);
+
+  if (slot && Date.now() - slot.at < CACHE_TTL_MS) {
+    // Frisch genug — direkt zurück, ohne das Netz anzufassen.
+    return slot.value as T;
+  }
+
+  if (slot) {
+    // Vorhanden, aber alt: SOFORT ausliefern und still auffrischen. Genau
+    // das nimmt dem Tab-Wechsel die Wartezeit — die Ansicht ist da, die
+    // Zahlen aktualisieren sich einen Wimpernschlag später.
+    if (!slot.refreshing) {
+      slot.refreshing = true;
+      void rawInvoke<T>(cmd, args)
+        .then((fresh) => cache.set(key, { at: Date.now(), value: fresh }))
+        .catch(() => {
+          // Auffrischung fehlgeschlagen: alten Wert behalten, aber als
+          // abgelaufen markieren, damit der nächste Aufruf es erneut
+          // versucht statt ewig Altes zu zeigen.
+          const s = cache.get(key);
+          if (s) s.refreshing = false;
+        });
+    }
+    return slot.value as T;
+  }
+
+  // Erstaufruf — normal holen und merken. Fehler NICHT zwischenspeichern.
+  const value = await rawInvoke<T>(cmd, args);
+  cache.set(key, { at: Date.now(), value });
+  return value;
 }
 
 // ---------------------------------------------------------------------------
