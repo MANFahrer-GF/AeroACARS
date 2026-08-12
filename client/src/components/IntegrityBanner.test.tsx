@@ -100,6 +100,30 @@ describe("Integritätsmeldung", () => {
     expect(document.body.textContent).toContain("7-mal");
   });
 
+  // QS-Runde 2: Der Server schickt bei jedem neuen Vorkommen denselben
+  // Eintrag mit gewachsenem Zähler — 1, dann 2, dann 3. Wer das aufaddiert,
+  // landet bei 6 statt 3 und meldet dem Piloten die doppelte Zahl.
+  it("addiert den wachsenden Zählerstand nicht auf", async () => {
+    render(<IntegrityBanner />);
+    await melden(
+      flag("TELEMETRY_GAP_SHORT", "CRUISE", "anomaly", "anomaly", 1),
+      flag("TELEMETRY_GAP_SHORT", "CRUISE", "anomaly", "anomaly", 2),
+      flag("TELEMETRY_GAP_SHORT", "CRUISE", "anomaly", "anomaly", 3),
+    );
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("3-mal");
+    expect(text).not.toContain("6-mal");
+  });
+
+  it("summiert dagegen über verschiedene Merkmale", async () => {
+    render(<IntegrityBanner />);
+    await melden(
+      flag("TELEMETRY_GAP_SHORT", "CRUISE", "anomaly", "anomaly", 2),
+      flag("POSITION_DELTA_EXCESSIVE", "FINAL", "critical", "critical", 3),
+    );
+    expect(document.body.textContent).toContain("5-mal");
+  });
+
   // Der Hook sammelt über die Laufzeit der App, nicht über den Flug. Ohne
   // Reset stünde beim zweiten Flug die Meldung des ersten noch da — und
   // seit dem Umbau auf "zeige den schwersten Fall" hätte der alte Fall den

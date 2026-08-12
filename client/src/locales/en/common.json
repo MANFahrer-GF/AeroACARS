@@ -2179,6 +2179,14 @@
     "settings_ton_hint": "Quieter in the descent, always silent on final — regardless of this setting.",
     "nicht_erreichbar": "no chat",
     "nicht_erreichbar_titel": "This pilot is flying with a client that has no chat — a message would not arrive.",
-    "gelandet": "landed at {{ort}}"
+    "gelandet": "landed at {{ort}}",
+    "einblendung_ops": "Ops",
+    "einblendung_direkt": "Direct to you",
+    "einblendung_alle": "Call",
+    "einblendung_oeffnen": "Open",
+    "datenschutz": "Privacy",
+    "wer_unbekannt": "Who is flying shows once you fly",
+    "zu_titel": "The chat is open while you are flying.",
+    "zu_text": "Once the recording runs you can join in — and for 30 minutes after your flight report."
   }
 }

@@ -80,6 +80,8 @@ export function ChatView({
   const [entwurf, setEntwurf] = useState("");
   const [empfaenger, setEmpfaenger] = useState<ChatTeilnehmer | null>(null);
   const [tastaturImChat, setTastaturImChat] = useState(false);
+  /** Der Server laesst gerade niemanden reden — kein laufender Flug. */
+  const [amBoden, setAmBoden] = useState(false);
   const [sendet, setSendet] = useState(false);
   const listeRef = useRef<HTMLDivElement>(null);
   const feldRef = useRef<HTMLInputElement>(null);
@@ -112,8 +114,13 @@ export function ChatView({
     if (!erzwingen && jetzt - letzterAbgleich.current < 15_000) return;
     letzterAbgleich.current = jetzt;
     try {
-      const v = await invoke<{ nachrichten: ChatNachricht[] }>("chat_verlauf");
+      const v = await invoke<{ nachrichten: ChatNachricht[]; kein_laufender_flug?: boolean }>("chat_verlauf");
       const geholt = v?.nachrichten ?? [];
+      // Der Server sagt, ob ueberhaupt geredet werden darf. Vorher stand
+      // das Eingabefeld auch am Boden bereit, und der Zuruf verschwand
+      // lautlos — "kommt keine durch, gut so, aber transparent ist das
+      // nicht" (Thomas, 12.08.2026).
+      setAmBoden(v?.kein_laufender_flug === true);
       setNachrichten((alt) => {
         const bekannt = new Set(alt.map((m) => m.id));
         const neue = geholt.filter((m) => !bekannt.has(m.id));
@@ -222,21 +229,39 @@ export function ChatView({
     <div className="chat">
       <div className="chat__kopf">
         <span className="chat__titel">{t("chat.title", "Pilotenchat")}</span>
-        <span className="chat__wer">
-          <span className="chat__punkt" />
-          {t("chat.in_der_luft", { count: teilnehmer.length, defaultValue: "{{count}} in der Luft" })}
-        </span>
+        {/* Feldbefund 12.08.2026: Am Boden stand hier "0 in der Luft" — und
+            das stimmte nicht. Der Server verrät einem, der nicht fliegt,
+            aus gutem Grund nicht, wer gerade unterwegs ist; die leere
+            Antwort heißt also "wir wissen es nicht", nicht "niemand".
+            Eine Null zu zeigen, wo Unkenntnis herrscht, ist die
+            unehrlichste aller Anzeigen. */}
+        {amBoden ? (
+          <span className="chat__wer chat__wer--unbekannt">
+            {t("chat.wer_unbekannt", "Wer fliegt, siehst du im Flug")}
+          </span>
+        ) : (
+          <span className="chat__wer">
+            <span className="chat__punkt" />
+            {t("chat.in_der_luft", { count: teilnehmer.length, defaultValue: "{{count}} in der Luft" })}
+          </span>
+        )}
         {/* Die Regeln stehen dort, wo man sie braucht — nicht nur auf einer
-            Rechtsseite, die niemand aufschlaegt. Beide Saetze sind das
-            Wesentliche aus der Datenschutzerklaerung; der Knopf fuehrt zum
-            vollstaendigen Text. */}
+            Rechtsseite, die niemand aufschlaegt.
+            Feldbefund 12.08.2026: "kein Hinweis zu Datenschutz (Link)". Der
+            Knopf war zwar da, sah aber aus wie ein Zustandstext ("12 h
+            Gedaechtnis · Flugleitung liest mit") — niemand erkannte darin
+            einen Verweis. Jetzt steht die Sache daneben und der Verweis
+            heisst, was er ist. */}
+        <span className="chat__regeln-kurz">
+          {t("chat.regeln", "12 h Gedächtnis · Flugleitung liest mit")}
+        </span>
         <button
           type="button"
           className="chat__regeln"
           onClick={() => void openExternal("https://german-sky-group.eu/page/impressum").catch(() => {})}
           title={t("chat.regeln_titel", "Datenschutz zum Pilotenchat öffnen")}
         >
-          {t("chat.regeln", "12 h Gedächtnis · Flugleitung liest mit")}
+          {t("chat.datenschutz", "Datenschutz")} ↗
         </button>
       </div>
 
@@ -312,6 +337,7 @@ export function ChatView({
         })}
       </div>
 
+      {!amBoden && (
       <div className="chat__schnell">
         <span className="chat__schnell-marke">{t("chat.zuruf", "Zuruf")}</span>
         {schnellzurufe.map((z) => (
@@ -320,6 +346,7 @@ export function ChatView({
           </button>
         ))}
       </div>
+      )}
 
       {empfaenger && (
         <div className="chat__an-wen">
@@ -334,7 +361,24 @@ export function ChatView({
         </div>
       )}
 
-      {tippenGesperrt ? (
+      {amBoden ? (
+        <div className="chat__zu">
+          <strong>{t("chat.zu_titel", "Der Chat ist offen, solange du fliegst.")}</strong>
+          <span>
+            {t(
+              "chat.zu_text",
+              "Sobald die Aufzeichnung läuft, kannst du mitreden — und noch 30 Minuten nach dem Flugbericht.",
+            )}
+          </span>
+          <button
+            type="button"
+            className="chat__zu-link"
+            onClick={() => void openExternal("https://german-sky-group.eu/page/impressum").catch(() => {})}
+          >
+            {t("chat.datenschutz", "Datenschutz")} ↗
+          </button>
+        </div>
+      ) : tippenGesperrt ? (
         <div className="chat__gesperrt">
           {t(
             "chat.gesperrt",

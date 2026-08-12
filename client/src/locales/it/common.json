@@ -2095,5 +2095,15 @@
     "sys_active": "Recorder attivo · {{sim}} · {{uplink}}",
     "sys_uplink_ok": "Uplink OK",
     "sys_uplink_lost": "Connessione persa"
+  },
+  "chat": {
+    "einblendung_ops": "Operazioni",
+    "einblendung_direkt": "Diretto a te",
+    "einblendung_alle": "Messaggio",
+    "einblendung_oeffnen": "Apri",
+    "datenschutz": "Privacy",
+    "wer_unbekannt": "Chi vola lo vedi in volo",
+    "zu_titel": "La chat è aperta mentre voli.",
+    "zu_text": "Appena parte la registrazione puoi partecipare — e ancora 30 minuti dopo il rapporto di volo."
   }
 }

@@ -50,7 +50,6 @@
 /* Die Regeln im Chat selbst, nicht nur auf der Rechtsseite. Zurueckhaltend
    gesetzt — es ist ein Hinweis, keine Warnung. */
 .chat__regeln {
-  margin-left: auto;
   background: none;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
@@ -192,13 +191,18 @@
 }
 
 /* ── Fusszeile: Schnellzurufe + Eingabe als EIN Bauteil ───────────────── */
+/* Feldbefund 12.08.2026: "warum wieder das grau? als leiste unten?"
+   Die Fusszeile bestand aus zwei getoenten Baendern (Schnellzurufe und
+   Eingabe, beide --surface-2), die zusammen wie ein abgeschalteter Bereich
+   wirkten. Jetzt EIN Bauteil auf der normalen Oberflaeche, abgesetzt durch
+   eine Linie — dieselbe Bauform wie in der Chat-Ansicht der Live-Karte. */
 .chat__schnell {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  padding: var(--sp-3) var(--sp-3) 2px;
-  background: var(--surface-2);
+  padding: var(--sp-3) var(--sp-3) 0;
+  background: var(--surface);
   border-top: 1px solid var(--line);
   flex: none;
 }
@@ -211,7 +215,7 @@
   margin-right: 2px;
 }
 .chat__schnell button {
-  background: transparent;
+  background: var(--surface-2);
   border: 1px solid var(--line);
   color: var(--text-dim);
   border-radius: var(--r-md);
@@ -230,13 +234,17 @@
   display: flex;
   gap: var(--sp-2);
   padding: var(--sp-3);
-  background: var(--surface-2);
+  background: var(--surface);
   flex: none;
 }
+/* Ohne Schnellzurufe darueber (Endanflug, Direktnachricht) braucht die
+   Eingabe ihre eigene Trennlinie, sonst schwimmt sie am Verlauf. */
+.chat__schnell + .chat__eingabe { border-top: 0; }
+.chat__log + .chat__eingabe { border-top: 1px solid var(--line); }
 .chat__eingabe input {
   flex: 1;
   min-width: 0;
-  background: var(--surface);
+  background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   color: var(--text);
@@ -279,19 +287,29 @@
 .chat__an-weg:hover { color: var(--text); }
 
 /* ── Zwei Warnungen, die im Cockpit zaehlen ───────────────────────────── */
+/* Der Hinweis, dass die Tastatur jetzt im Chat steht und nicht mehr im
+   Sim. Er MUSS auffallen — aber nicht als Farbfleck.
+   Feldbefund 12.08.2026: "wenn man ins Textfeld klickt, das grau da
+   drunter — braun". Der getoente Warngrund (--sem-warn-bg) sieht im
+   dunklen Aufzug schlicht schmutzig aus. Die Warnung traegt jetzt ein
+   Zeichen und die Warnfarbe im Text, der Grund bleibt die normale
+   Oberflaeche. */
 .chat__fokus {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
-  background: var(--sem-warn-bg);
-  border-top: 1px solid var(--sem-warn);
+  background: var(--surface);
+  border-top: 1px solid var(--line);
   font-size: var(--fs-300);
-  /* Volle Textfarbe, nicht gedaempft: das ist eine Warnung, kein Nebentext.
-     Gedaempft waere sie auf getoentem Grund grenzwertig lesbar — genau der
-     Befund vom Integritaets-Banner. */
   color: var(--text);
   flex: none;
+}
+.chat__fokus::before {
+  content: "⌨";
+  color: var(--sem-warn);
+  font-size: var(--fs-400);
+  line-height: 1;
 }
 .chat__fokus kbd {
   font-family: var(--font-mono);
@@ -307,8 +325,56 @@
   background: var(--surface-2);
   border-top: 1px solid var(--line);
   font-size: var(--fs-400);
-  color: var(--text-dim);
+  /* Volle Textfarbe: gedaempftes Grau auf getoentem Grund war schon am
+     Integritaets-Banner der Befund ("kaum lesbar"). */
+  color: var(--text);
   flex: none;
+}
+
+/* Am Boden: keine Eingabe, sondern eine Ansage. Bewusst KEIN graues Band —
+   das ist eine Auskunft, kein abgeschalteter Bereich. */
+.chat__zu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--sp-4);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  flex: none;
+}
+.chat__zu strong { font-size: var(--fs-400); color: var(--text); }
+.chat__zu span { font-size: var(--fs-300); color: var(--text-dim); max-width: 62ch; }
+.chat__zu-link {
+  align-self: flex-start;
+  margin-top: 2px;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-300);
+  color: var(--acc);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.chat__zu-link:hover { color: var(--text); }
+.chat__zu-link:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+
+.chat__wer--unbekannt { font-family: inherit; }
+
+/* Der Verweis auf die Rechtsseite sieht jetzt aus wie ein Verweis; die
+   Kurzfassung daneben ist reiner Text. */
+.chat__regeln-kurz {
+  font-size: var(--fs-200);
+  color: var(--text-dim);
+  margin-left: auto;
+}
+.chat__regeln {
+  margin-left: var(--sp-2);
+  color: var(--acc);
+  border-color: transparent;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -317,3 +383,34 @@
     transition: none;
   }
 }
+
+/* ── Kurze Einblendung bei einem eingehenden Zuruf ─────────────────────
+   Sitzt auf der Notice-Grundform und bleibt deshalb im Bild wie die
+   Integritaets-Meldung. Anklickbar, weil man von hier direkt in den Chat
+   will — deshalb der Zeiger und der deutliche Rand beim Ueberfahren. */
+.chat-einblendung {
+  cursor: pointer;
+  max-width: 46ch;
+}
+.chat-einblendung:hover { border-color: var(--acc); }
+.chat-einblendung .ui-notice__text {
+  /* Ein Zuruf ist kurz; laeuft er doch ueber, lieber abschneiden als das
+     halbe Cockpit verdecken. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.chat-einblendung__oeffnen {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-300);
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chat-einblendung__oeffnen:hover { border-color: var(--acc); color: var(--text); }
+.chat-einblendung__oeffnen:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }

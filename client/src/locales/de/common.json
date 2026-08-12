@@ -2179,6 +2179,14 @@
     "settings_ton_hint": "Im Sinkflug leiser, im Endanflug immer still — unabhängig von dieser Einstellung.",
     "nicht_erreichbar": "kein Chat",
     "nicht_erreichbar_titel": "Dieser Pilot fliegt mit einem Client ohne Chat — eine Nachricht käme nicht an.",
-    "gelandet": "gelandet in {{ort}}"
+    "gelandet": "gelandet in {{ort}}",
+    "einblendung_ops": "Flugleitung",
+    "einblendung_direkt": "Direkt an dich",
+    "einblendung_alle": "Zuruf",
+    "einblendung_oeffnen": "Öffnen",
+    "datenschutz": "Datenschutz",
+    "wer_unbekannt": "Wer fliegt, siehst du im Flug",
+    "zu_titel": "Der Chat ist offen, solange du fliegst.",
+    "zu_text": "Sobald die Aufzeichnung läuft, kannst du mitreden — und noch 30 Minuten nach dem Flugbericht."
   }
 }

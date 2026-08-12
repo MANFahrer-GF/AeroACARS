@@ -10553,8 +10553,17 @@ async fn chat_verlauf() -> Result<serde_json::Value, UiError> {
             "nachrichten": nachrichten,
             "fenster_stunden": fenster_stunden,
         })),
-        // Best-effort: lieber leer starten und über MQTT nachfüllen, als den
-        // Piloten mit einem Fehler zu behelligen, den er nicht beheben kann.
+        // "Du fliegst gerade nicht" ist kein Fehler, sondern der
+        // Normalzustand am Boden. Er wird durchgereicht, damit die
+        // Oberfläche ihn benennen kann, statt ein Eingabefeld anzubieten,
+        // aus dem nichts herausgeht (Feldbefund Thomas, 12.08.2026:
+        // "kommt keine durch — gut so, aber transparent ist das nicht").
+        Err(aeroacars_mqtt::chat::ChatFehler::KeinFlug) => Ok(serde_json::json!({
+            "nachrichten": [], "fenster_stunden": 12, "kein_laufender_flug": true,
+        })),
+        // Alles andere best-effort: lieber leer starten und über MQTT
+        // nachfüllen, als den Piloten mit einem Fehler zu behelligen, den
+        // er nicht beheben kann.
         Err(e) => {
             tracing::warn!(error = %e, "Chat-Verlauf nicht abrufbar");
             Ok(serde_json::json!({ "nachrichten": [], "fenster_stunden": 12 }))
@@ -10568,6 +10577,9 @@ async fn chat_teilnehmer() -> Result<serde_json::Value, UiError> {
     let token = secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten();
     match aeroacars_mqtt::chat::teilnehmer(None, token.as_deref()).await {
         Ok(t) => Ok(serde_json::json!({ "teilnehmer": t })),
+        Err(aeroacars_mqtt::chat::ChatFehler::KeinFlug) => Ok(serde_json::json!({
+            "teilnehmer": [], "kein_laufender_flug": true,
+        })),
         Err(e) => {
             tracing::warn!(error = %e, "Chat-Teilnehmer nicht abrufbar");
             Ok(serde_json::json!({ "teilnehmer": [] }))

@@ -80,6 +80,12 @@ pub enum ChatFehler {
     Netz(String),
     #[error("nicht angemeldet")]
     NichtAngemeldet,
+    /// Der Server laesst nur mitreden, wer gerade fliegt (plus 30 Minuten
+    /// Nachlauf). Das ist kein Fehler, sondern der Normalzustand am Boden —
+    /// und die Oberflaeche muss ihn benennen koennen, statt ein Eingabefeld
+    /// anzubieten, aus dem nichts herausgeht.
+    #[error("kein laufender Flug")]
+    KeinFlug,
     #[error("Server {status}: {body}")]
     Server { status: u16, body: String },
 }
@@ -112,8 +118,20 @@ async fn hole<T: for<'de> Deserialize<'de>>(
     }
     let antwort = req.send().await?;
     let status = antwort.status();
-    if status.as_u16() == 401 || status.as_u16() == 403 {
+    if status.as_u16() == 401 {
         return Err(ChatFehler::NichtAngemeldet);
+    }
+    if status.as_u16() == 403 {
+        // 403 hat zwei Bedeutungen: Zugang gesperrt (Pilot stillgelegt) oder
+        // schlicht "du fliegst gerade nicht". Nur der zweite Fall ist
+        // alltaeglich, und nur er darf in der Oberflaeche als Hinweis statt
+        // als Fehler erscheinen — deshalb wird hier unterschieden.
+        let body = antwort.text().await.unwrap_or_default();
+        return Err(if body.contains("kein_laufender_flug") {
+            ChatFehler::KeinFlug
+        } else {
+            ChatFehler::NichtAngemeldet
+        });
     }
     if !status.is_success() {
         let body = antwort.text().await.unwrap_or_default();

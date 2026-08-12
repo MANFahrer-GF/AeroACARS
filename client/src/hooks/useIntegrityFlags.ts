@@ -53,7 +53,18 @@ export interface IntegrityState {
    * Grund war nirgends zu sehen.
    */
   schwersterFlag: IntegrityFlagPayload | null;
-  /** Wie oft insgesamt gemeldet wurde, Serverzähler eingerechnet. */
+  /**
+   * Wie oft insgesamt etwas aufgetreten ist, Serverzähler eingerechnet.
+   *
+   * QS-Runde 2 (12.08.2026): Hier wurde zunächst schlicht aufaddiert
+   * (`prev + anzahl`). Das war falsch, sobald der Server gleichlautende
+   * Funde zusammenfasst: er schickt bei jedem neuen Vorkommen den
+   * VOLLSTÄNDIGEN Eintrag mit dem inzwischen gewachsenen Zähler. Drei
+   * gleiche Funde kamen also als 1, dann 2, dann 3 herein — addiert
+   * ergab das 6 statt 3, und im Cockpit stand die doppelte Zahl.
+   * Deshalb: je Merkmal den höchsten gemeldeten Stand halten und diese
+   * Stände summieren.
+   */
   meldungenGesamt: number;
   /** Wahr wenn der Benutzer den Banner dismissed hat (UI-only, kein
    *  persistenter State; Reset auf neue critical). */
@@ -86,6 +97,23 @@ const INITIAL: IntegrityState = {
 const severityOrder: Record<IntegritySeverity, number> = {
   info: 1, anomaly: 2, critical: 3,
 };
+
+/**
+ * Wie oft ist etwas aufgetreten? Je Merkmal (Art + Phase) zählt der
+ * höchste vom Server gemeldete Stand; die Stände werden summiert.
+ * Siehe die Erklärung an `meldungenGesamt`.
+ */
+function zaehleMeldungen(alle: IntegrityFlagPayload[]): number {
+  const hoechster = new Map<string, number>();
+  for (const p of alle) {
+    const schluessel = `${p.flag.type}|${p.flag.phase}`;
+    const stand = p.flag.anzahl ?? 1;
+    hoechster.set(schluessel, Math.max(hoechster.get(schluessel) ?? 0, stand));
+  }
+  let summe = 0;
+  for (const n of hoechster.values()) summe += n;
+  return summe;
+}
 
 export function useIntegrityFlags(): {
   state: IntegrityState;
@@ -122,7 +150,7 @@ export function useIntegrityFlags(): {
               sessionSeverity: newSev,
               recentFlags: alle,
               schwersterFlag: neuerIstSchwerer ? p : bisher,
-              meldungenGesamt: prev.meldungenGesamt + (p.flag.anzahl ?? 1),
+              meldungenGesamt: zaehleMeldungen(alle),
               // Re-show banner if a new CRITICAL arrives — even if previously
               // dismissed (don't let pilot hide a sim-state-reset).
               dismissed: p.session_effective_severity === "critical" ? false : prev.dismissed,

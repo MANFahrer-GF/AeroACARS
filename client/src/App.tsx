@@ -13,6 +13,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { ActivityLogPanel } from "./components/ActivityLogPanel";
 import { AboutPanel } from "./components/AboutPanel";
 import { NewsPanel, useUnreadNewsCount } from "./components/NewsPanel";
+import { ChatEinblendung, type EingehenderZuruf } from "./components/ChatEinblendung";
 import RunwayDiagramPreview from "./dev/RunwayDiagramPreview";
 
 // v0.13.7: LandingPanel + ReleaseNotesModal lazy-loaded. Beide bringen
@@ -217,6 +218,8 @@ function App() {
   const [chatUngelesen, setChatUngelesen] = useState(0);
   const [chatTonAn, setChatTonAn] = useState<boolean>(() => chatTonGeladen());
   const [chatAn, setChatAn] = useState<boolean>(() => chatAnGeladen());
+  /** Zuletzt eingegangener Zuruf — nur fuer die kurze Einblendung. */
+  const [letzterZuruf, setLetzterZuruf] = useState<EingehenderZuruf | null>(null);
   // Refs statt Abhaengigkeiten: der Empfaenger soll EINMAL registriert
   // werden und trotzdem den aktuellen Reiter und die aktuelle Phase sehen.
   const [status, setStatus] = useState<SessionStatus>({ kind: "loading" });
@@ -578,7 +581,10 @@ function App() {
   // klingeln.
   useEffect(() => {
     if (status.kind !== "loggedIn" || !chatAn) return;
-    const p = listen<{ id?: number; an_pilot_id?: string | null; von_pilot_id?: string }>("chat-nachricht", (e) => {
+    const p = listen<{
+      id?: number; an_pilot_id?: string | null; von_pilot_id?: string;
+      text?: string; callsign?: string | null; anzeigename?: string | null;
+    }>("chat-nachricht", (e) => {
       const n = e.payload ?? {};
       // Doppelte abwehren: derselbe Zuruf kann ueber Verlauf UND MQTT
       // hereinkommen. Ohne das klingelt es zweimal.
@@ -604,7 +610,24 @@ function App() {
       // Kein Seiteneffekt im State-Updater (QS 12.08.): das lief im
       // StrictMode zweimal und zaehlte still doppelt. Der Reiter steht
       // stattdessen in einem Ref.
-      if (tabRef.current !== "chat" && !vonMirSelbst) setChatUngelesen((z) => z + 1);
+      if (tabRef.current !== "chat" && !vonMirSelbst) {
+        setChatUngelesen((z) => z + 1);
+        // Feldbefund 12.08.2026: Bis hierher gab es nur den Ton und den
+        // Zaehler an der Seitenleiste. Wer im Vollbild fliegt, hoerte also
+        // etwas und erfuhr nichts — und beim ersten Mal weiss niemand,
+        // wofuer das Geraeusch steht. Jetzt eine kurze Einblendung mit
+        // Absender und Text; in den stillen Phasen bleibt sie weg
+        // (dieselbe Regel wie beim Ton).
+        if (typeof n.id === "number" && typeof n.text === "string") {
+          setLetzterZuruf({
+            id: n.id, text: n.text,
+            von_pilot_id: n.von_pilot_id ?? "",
+            an_pilot_id: n.an_pilot_id ?? null,
+            callsign: n.callsign ?? null,
+            anzeigename: n.anzeigename ?? null,
+          });
+        }
+      }
     });
     return () => { void p.then((ab) => ab()); };
   }, [status.kind, chatAn, chatTonAn]);
@@ -708,6 +731,13 @@ function App() {
           Critical-Banner kann nicht weggeklickt werden (Pilot soll
           sim-state-reset nicht verstecken). */}
       <IntegrityBanner />
+      {chatAn && (
+        <ChatEinblendung
+          zuruf={letzterZuruf}
+          phase={activeFlight?.phase ?? null}
+          onOeffnen={() => { setTab("chat"); chatGelesen(); }}
+        />
+      )}
       {/* v1.3.0 (#Hoppie-PDC-CPDLC): visible on ANY tab, not just PDC/CPDLC —
           a pilot on Cockpit still sees an uplink is waiting for a reply. */}
       <CpdlcMessageBanner
