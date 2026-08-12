@@ -201,6 +201,26 @@ export function baueSektoren(
     }
   }
 
+  // Stammband je Station: Mittel der Hoehenbaender ihrer ORIGINAEREN
+  // Bloecke (owner[0]). Grundlage fuer die Richtungsangabe im
+  // Klickfenster ("uebernimmt den tieferen/hoeheren Sektor mit").
+  const stammband = new Map<string, { summe: number; n: number }>();
+  for (const block of bestand.bloecke) {
+    const erster = block.owner[0];
+    if (!erster) continue;
+    const schluessel = `${block.land}/${erster}`;
+    for (const s of block.sektoren) {
+      const mitte = (s.flVon + Math.min(s.flBis, 660)) / 2;
+      const b = stammband.get(schluessel) ?? { summe: 0, n: 0 };
+      b.summe += mitte; b.n += 1;
+      stammband.set(schluessel, b);
+    }
+  }
+  const bandMitte = (schluessel: string): number | null => {
+    const b = stammband.get(schluessel);
+    return b && b.n > 0 ? b.summe / b.n : null;
+  };
+
   const flaechen: GeoJSON.Feature[] = [];
   interface MarkenLage { st: Station; ruf: string; groesste: number; lon: number; lat: number; flVon: number; flBis: number }
   const marken = new Map<string, MarkenLage>();
@@ -249,6 +269,19 @@ export function baueSektoren(
             ? (bestand.stationen.get(`${block.land}/${block.owner[0]}`)?.gesprochen
                ?? block.owner[0])
             : "",
+          // Liegt der mituebernommene Sektor UNTER oder UEBER dem
+          // Stammbereich des Lotsen? (Thomas: "hoeherer oder tieferer
+          // Sektor wird mit uebernommen" — das ist die Angabe, unter der
+          // man sich etwas vorstellen kann.)
+          lage: (() => {
+            if (stufe <= 0) return "";
+            const eigen = bandMitte(`${besitzer.land}/${besitzer.kuerzel}`);
+            if (eigen == null) return "";
+            const dieser = (s.flVon + Math.min(s.flBis, 660)) / 2;
+            if (dieser < eigen - 20) return "tiefer";
+            if (dieser > eigen + 20) return "hoeher";
+            return "";
+          })(),
         },
       });
 
