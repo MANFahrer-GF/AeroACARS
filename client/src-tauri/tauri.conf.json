@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost https://german-sky-group.eu https://www.german-sky-group.eu https://www.simbrief.com https://*.simbrief.com https://live.kant.ovh wss://live.kant.ovh https://github.com https://*.cartocdn.com https://server.arcgisonline.com https://ourairports.com; img-src 'self' data: blob: https://german-sky-group.eu https://www.german-sky-group.eu https://*.cartocdn.com https://server.arcgisonline.com; style-src 'self' 'unsafe-inline'; script-src 'self' blob:; worker-src 'self' blob:; child-src 'self' blob:; font-src 'self' data:"
+      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost https://german-sky-group.eu https://www.german-sky-group.eu https://www.simbrief.com https://*.simbrief.com https://live.kant.ovh wss://live.kant.ovh https://github.com https://*.cartocdn.com https://server.arcgisonline.com https://ourairports.com https://data.vatsim.net https://cdn.jsdelivr.net; img-src 'self' data: blob: https://german-sky-group.eu https://www.german-sky-group.eu https://*.cartocdn.com https://server.arcgisonline.com; style-src 'self' 'unsafe-inline'; script-src 'self' blob:; worker-src 'self' blob:; child-src 'self' blob:; font-src 'self' data:"
     }
   },
   "bundle": {
