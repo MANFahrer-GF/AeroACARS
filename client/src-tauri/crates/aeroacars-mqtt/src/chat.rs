@@ -54,6 +54,10 @@ pub struct ChatTeilnehmer {
     /// bisherigen Verhalten.
     #[serde(default = "wahr")]
     pub erreichbar: bool,
+    /// Flug bereits abgeschlossen — der Pilot ist im Nachlauf (der Chat
+    /// bleibt nach dem Flugbericht noch eine halbe Stunde offen).
+    #[serde(default)]
+    pub gelandet: bool,
 }
 
 fn wahr() -> bool { true }

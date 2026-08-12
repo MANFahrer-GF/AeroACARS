@@ -2179,6 +2179,7 @@
     "settings_ton_label": "Sound on new messages",
     "settings_ton_hint": "Quieter in the descent, always silent on final — regardless of this setting.",
     "nicht_erreichbar": "no chat",
-    "nicht_erreichbar_titel": "This pilot is flying with a client that has no chat — a message would not arrive."
+    "nicht_erreichbar_titel": "This pilot is flying with a client that has no chat — a message would not arrive.",
+    "gelandet": "landed at {{ort}}"
   }
 }

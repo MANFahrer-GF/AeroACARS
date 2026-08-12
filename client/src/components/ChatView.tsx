@@ -47,6 +47,9 @@ export interface ChatTeilnehmer {
    *  eine Nachricht an sie sähe abgeschickt aus und käme nie an. Fehlt das
    *  Feld (älterer Server), gilt der Pilot als erreichbar. */
   erreichbar?: boolean;
+  /** Flug schon abgeschlossen — der Kollege ist im Nachlauf und
+   *  verschwindet gleich aus der Liste. */
+  gelandet?: boolean;
 }
 
 /** Absenderkennung der Flugleitung — kein Pilot kann die haben. */
@@ -230,7 +233,9 @@ export function ChatView({
               <span className="chat__pilot-weg">
                 {p.erreichbar === false
                   ? t("chat.nicht_erreichbar", "kein Chat")
-                  : `${p.dep ?? "?"} → ${p.arr ?? "?"}`}
+                  : p.gelandet
+                    ? t("chat.gelandet", { ort: p.arr ?? "?", defaultValue: "gelandet in {{ort}}" })
+                    : `${p.dep ?? "?"} → ${p.arr ?? "?"}`}
               </span>
             </button>
           ))}

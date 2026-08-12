@@ -2179,6 +2179,7 @@
     "settings_ton_label": "Ton bei neuen Nachrichten",
     "settings_ton_hint": "Im Sinkflug leiser, im Endanflug immer still — unabhängig von dieser Einstellung.",
     "nicht_erreichbar": "kein Chat",
-    "nicht_erreichbar_titel": "Dieser Pilot fliegt mit einem Client ohne Chat — eine Nachricht käme nicht an."
+    "nicht_erreichbar_titel": "Dieser Pilot fliegt mit einem Client ohne Chat — eine Nachricht käme nicht an.",
+    "gelandet": "gelandet in {{ort}}"
   }
 }
