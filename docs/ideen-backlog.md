@@ -1,6 +1,11 @@
 # AeroACARS — Ideen-Backlog
 
 Gesammelte Funktionswünsche mit Ausarbeitung. Stand 12.08.2026.
+
+**Beim Lesen beachten:** Dieses Dokument ist eine Momentaufnahme und veraltet
+schneller als der Code. Vor jeder Aussage über den Stand einer Sache am Code
+nachsehen — genau das ist am 12.08. schiefgegangen, als der längst gebaute
+Vorlade-Mechanismus hier noch als offen stand.
 Nichts hier ist beschlossen; die offenen Entscheidungen stehen jeweils am Ende.
 
 ---
@@ -163,23 +168,22 @@ in unserer Hand.
 
 ---
 
-## 3. Tab-Wechsel über die LAN-Brücke ist träge
+## 3. Tab-Wechsel über die LAN-Brücke ist träge — GRÖSSTENTEILS ERLEDIGT (v1.5.7)
 
-**Ursache steht fest:** Fünf Ansichten (Karte, Logbuch, Landung, PDC/CPDLC,
-Release-Notes) werden erst beim ersten Öffnen nachgeladen. Am PC ist das ein
-Plattenzugriff, auf dem Tablet ein WLAN-Transfer — danach holen die Ansichten ihre
-Daten in weiteren Einzelanfragen.
+**Stand 12.08.2026, am Code geprüft.** Zwei der drei Hebel sind gebaut und
+ausgeliefert:
 
-Drei Hebel, aufsteigend nach Aufwand:
-
-1. **Vorladen im Leerlauf** — sobald die App steht, die Ansichten still im
-   Hintergrund holen. Größter Effekt, kleinster Eingriff.
-2. **Daten zwischenspeichern** — beim Zurückwechseln den letzten Stand sofort zeigen
-   und im Hintergrund auffrischen, statt weiß zu bleiben.
-3. **Abfragen bündeln** — ein Tab-Wechsel soll nicht fünf einzelne Anfragen
-   auslösen.
-
----
+1. **Vorladen im Leerlauf — ERLEDIGT** (`App.tsx`, `prefetchViews`): sobald die
+   App steht, werden die fünf nachgeladenen Ansichten nacheinander im
+   Hintergrund geholt. Nacheinander, nicht gleichzeitig — auf dem Tablet teilen
+   sich Telemetrie und Nachschub dieselbe WLAN-Strecke.
+2. **Daten zwischenspeichern — ERLEDIGT** (`lib/ipc.ts`): 20 Sekunden
+   Weiterverwendung, harte Obergrenze 120 Sekunden. Bewusst eine kurze,
+   ausdrückliche Liste (Flughafen-Stammdaten, Flugzeugdaten, abgeschlossene
+   Flugberichte) — die QS hatte die erste, weite Fassung als gefährlich
+   entlarvt, u.a. beim Divert-Fenster. Begründung steht im Code.
+3. **Abfragen bündeln — offen.** Der kleinste der drei Hebel: ein Tab-Wechsel
+   löst weiterhin mehrere Einzelanfragen aus.
 
 ## 4. Menü als Symbolleiste statt fester Seitenleiste
 
