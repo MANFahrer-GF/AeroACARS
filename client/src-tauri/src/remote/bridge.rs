@@ -135,6 +135,23 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         "xplane_premium_status" => ok_json(crate::xplane_premium_status(st!())),
 
         "va_live_flights" => from_uierr(crate::va_live_flights(st!()).await),
+        // Pilotenchat: eins zu eins. Auf dem Tablet ist Tippen ohnehin
+        // unbedenklich (eigene Tastatur, eigener Fokus) — deshalb hier keine
+        // abgespeckte Fassung, sondern dieselben Befehle wie am PC.
+        "chat_senden" => {
+            #[derive(Deserialize)]
+            struct A {
+                text: String,
+                #[serde(default)]
+                an_pilot_id: Option<String>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::chat_senden(st!(), a.text, a.an_pilot_id).await),
+                Err(e) => Err(e),
+            }
+        }
+        "chat_verlauf" => from_uierr(crate::chat_verlauf().await),
+        "chat_teilnehmer" => from_uierr(crate::chat_teilnehmer().await),
         "logbook_stats" => from_uierr(crate::logbook_stats(st!()).await),
         "phpvms_get_bids" => from_uierr(crate::phpvms_get_bids(st!()).await),
         "news_fetch" => from_uierr(crate::news_fetch(st!()).await),

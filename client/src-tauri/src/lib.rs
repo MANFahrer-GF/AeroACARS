@@ -8070,6 +8070,24 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
         });
     }
 
+    // Pilotenchat: derselbe Weg wie beim Integritaets-Kanal. Der zweite
+    // `send` an `remote_events` ist die LAN-Bruecke — dadurch sieht das
+    // Tablet dieselben Zurufe zur selben Zeit, ohne eigene Verdrahtung.
+    if let Some(mut chat_rx) = handle.take_chat_rx().await {
+        let emit_app = app.clone();
+        tokio::spawn(async move {
+            while let Some(n) = chat_rx.recv().await {
+                let payload = serde_json::to_value(&n).unwrap_or(serde_json::Value::Null);
+                let _ = tauri::Emitter::emit(&emit_app, "chat-nachricht", payload.clone());
+                emit_app
+                    .state::<AppState>()
+                    .remote_events
+                    .send(remote::RemoteEvent::new("chat-nachricht", payload));
+            }
+            tracing::debug!("Chat-Weiterleiter beendet");
+        });
+    }
+
     *state.mqtt.lock().await = Some(handle);
     tracing::info!("live-tracking publisher running");
 }
@@ -10493,6 +10511,68 @@ async fn logbook_pireps(
         .get_logbook_pireps(limit, offset)
         .await
         .map_err(UiError::from)
+}
+
+// ─── Pilotenchat ────────────────────────────────────────────────────────
+//
+// Drei Befehle, mehr braucht die Oberfläche nicht. Der laufende Betrieb
+// kommt über MQTT herein (Ereignis "chat-nachricht"), diese hier sind für
+// Einstieg und Absenden.
+
+/// Einen Zuruf abschicken. `an_pilot_id` gesetzt = Direktnachricht.
+///
+/// Absender und Rufzeichen setzt der SERVER aus der laufenden Flugsitzung —
+/// hier geht bewusst nur der Text raus. Und wer keine offene Sitzung hat,
+/// wird serverseitig abgewiesen; das ist kein Fehler der Oberfläche, sondern
+/// die Regel "nur wer fliegt, redet mit".
+#[tauri::command]
+async fn chat_senden(
+    state: tauri::State<'_, AppState>,
+    text: String,
+    an_pilot_id: Option<String>,
+) -> Result<bool, UiError> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Ok(false);
+    }
+    let mqtt = state.mqtt.lock().await;
+    match mqtt.as_ref() {
+        Some(h) => Ok(h.chat(text, an_pilot_id)),
+        // Kein Live-Kanal: der Pilot ist nicht verbunden. Kein Fehlerdialog —
+        // die Oberfläche zeigt das ohnehin am Verbindungszustand.
+        None => Ok(false),
+    }
+}
+
+/// Was lief, bevor ich mich verbunden habe. Zwölf Stunden, mehr nicht.
+#[tauri::command]
+async fn chat_verlauf() -> Result<serde_json::Value, UiError> {
+    let token = secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten();
+    match aeroacars_mqtt::chat::verlauf(None, token.as_deref()).await {
+        Ok((nachrichten, fenster_stunden)) => Ok(serde_json::json!({
+            "nachrichten": nachrichten,
+            "fenster_stunden": fenster_stunden,
+        })),
+        // Best-effort: lieber leer starten und über MQTT nachfüllen, als den
+        // Piloten mit einem Fehler zu behelligen, den er nicht beheben kann.
+        Err(e) => {
+            tracing::warn!(error = %e, "Chat-Verlauf nicht abrufbar");
+            Ok(serde_json::json!({ "nachrichten": [], "fenster_stunden": 12 }))
+        }
+    }
+}
+
+/// Wer gerade fliegt — Name, Rufzeichen, Strecke.
+#[tauri::command]
+async fn chat_teilnehmer() -> Result<serde_json::Value, UiError> {
+    let token = secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten();
+    match aeroacars_mqtt::chat::teilnehmer(None, token.as_deref()).await {
+        Ok(t) => Ok(serde_json::json!({ "teilnehmer": t })),
+        Err(e) => {
+            tracing::warn!(error = %e, "Chat-Teilnehmer nicht abrufbar");
+            Ok(serde_json::json!({ "teilnehmer": [] }))
+        }
+    }
 }
 
 /// Logbuch: Summen (Flüge/Stunden/Distanz/Ø-Landung/Rang).
@@ -35149,6 +35229,9 @@ pub fn run() {
             flight_get_track,
             va_live_flights,
             logbook_pireps,
+            chat_senden,
+            chat_verlauf,
+            chat_teilnehmer,
             logbook_stats,
             logbook_pirep,
             flight_start,

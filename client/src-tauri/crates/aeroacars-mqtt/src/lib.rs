@@ -40,6 +40,7 @@ pub mod provision;
 pub mod log_upload;
 pub mod backup;
 pub mod navdata;
+pub mod chat;
 
 const STATUS_ONLINE: &str = "online";
 const STATUS_OFFLINE: &str = "offline";
@@ -1208,6 +1209,20 @@ pub struct TouchdownRolloutFinalizedPayload {
     pub finalize_reason: Option<String>,
 }
 
+/// Was der Client sendet, wenn jemand etwas zuruft.
+///
+/// Rufzeichen und Klarname stehen bewusst NICHT drin — die setzt der Server
+/// aus der laufenden Flugsitzung. Sonst koennte sich jemand ein fremdes
+/// Rufzeichen geben.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChatSenden {
+    pub ts: i64,
+    pub text: String,
+    /// Gesetzt = Direktnachricht an genau diesen Piloten.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub an_pilot_id: Option<String>,
+}
+
 enum Cmd {
     // v1.5.7 (#mqtt-outage, Feldbefund Michel TAP58): `Position` ist hier
     // BEWUSST NICHT MEHR drin. Positionen laufen über einen eigenen
@@ -1231,6 +1246,12 @@ enum Cmd {
     /// und nutzt diesen Pfad für ALLE 4 Filing-Wege — inkl. dem Queue-
     /// Worker, der nur die persistierte JSON-Form besitzt.
     PirepJson(Box<serde_json::Value>),
+    /// Pilotenchat: ein abgeschickter Zuruf. Bewusst in der Warteschlange
+    /// der Ereignisse und NICHT im Positions-Kanal — ein Zuruf entsteht
+    /// selten und darf nicht von der naechsten Position ueberschrieben
+    /// werden. `retain: false`: ein Zuruf ist fluechtig, niemand soll ihn
+    /// beim Verbinden nachgeliefert bekommen.
+    Chat(Box<ChatSenden>),
     TouchdownAccidentOverride(Box<TouchdownAccidentOverridePayload>),
     TouchdownRolloutFinalized(Box<TouchdownRolloutFinalizedPayload>),
     Shutdown,
@@ -1239,6 +1260,26 @@ enum Cmd {
 /// v0.13.0 Stream F (Slice 6) — Integrity-Flag-Event vom Recorder.
 /// Wird live published auf `aeroacars/<va>/<pilot>/integrity_flag` und
 /// vom Client konsumiert für DATA-INTEGRITY-Banner + Resume-Policy.
+/// Ein eingehender Zuruf aus dem Pilotenchat.
+///
+/// Der Server stellt ihn auf dem persoenlichen Thema des Empfaengers zu
+/// (`aeroacars/{va}/{pilot}/chat_in`). Direktnachrichten erreichen deshalb
+/// wirklich nur einen — die Trennung ist nicht bloss Anzeige.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChatNachricht {
+    pub id: i64,
+    pub va_prefix: String,
+    pub von_pilot_id: String,
+    #[serde(default)]
+    pub an_pilot_id: Option<String>,
+    pub ts: i64,
+    pub text: String,
+    #[serde(default)]
+    pub callsign: Option<String>,
+    #[serde(default)]
+    pub anzeigename: Option<String>,
+}
+
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct IntegrityFlagEvent {
     pub session_id: i64,
@@ -1257,6 +1298,7 @@ pub struct Handle {
     /// v0.13.0: optional Broadcast-Receiver für Integrity-Flag-Events.
     /// Wird per `take_integrity_rx()` einmalig konsumiert.
     integrity_rx: Arc<tokio::sync::Mutex<Option<mpsc::UnboundedReceiver<IntegrityFlagEvent>>>>,
+    chat_rx: Arc<tokio::sync::Mutex<Option<mpsc::UnboundedReceiver<ChatNachricht>>>>,
     /// v0.19.x FIX: `Cmd::Shutdown` only ever stopped the PUBLISHER task
     /// (the one draining `tx`). The reconnect-loop "drive" task — the one
     /// that owns `eventloop.poll()`, auto-reconnects on every error by
@@ -1278,6 +1320,12 @@ impl Handle {
     /// als Tauri-Events an die React-UI.
     ///
     /// Returns None wenn der Receiver bereits genommen wurde.
+    /// Der Empfaenger fuer eingehende Zurufe. Wie beim Integritaets-Kanal
+    /// nur EINMAL zu holen — danach liefert der Aufruf None.
+    pub async fn take_chat_rx(&self) -> Option<mpsc::UnboundedReceiver<ChatNachricht>> {
+        self.chat_rx.lock().await.take()
+    }
+
     pub async fn take_integrity_rx(&self) -> Option<mpsc::UnboundedReceiver<IntegrityFlagEvent>> {
         self.integrity_rx.lock().await.take()
     }
@@ -1424,6 +1472,21 @@ impl Handle {
             )
             .await;
         });
+    }
+
+    /// Einen Zuruf abschicken. `an_pilot_id` gesetzt = Direktnachricht.
+    ///
+    /// `try_send`: schlaegt der Kanal fehl, geht der Zuruf verloren statt die
+    /// Oberflaeche zu blockieren. Das ist bei einem Chat richtig — anders als
+    /// bei einer Landung, die pro Flug genau einmal entsteht.
+    pub fn chat(&self, text: String, an_pilot_id: Option<String>) -> bool {
+        self.tx
+            .try_send(Cmd::Chat(Box::new(ChatSenden {
+                ts: chrono::Utc::now().timestamp_millis(),
+                text,
+                an_pilot_id,
+            })))
+            .is_ok()
     }
 
     pub fn touchdown(&self, payload: TouchdownPayload) {
@@ -1589,14 +1652,19 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
     // vom Broker. Hat Eigenrate-Begrenzung (Recorder published nur bei
     // tatsächlichen Flags — < 1/min im normalen Cruise).
     let (integrity_tx, integrity_rx) = mpsc::unbounded_channel::<IntegrityFlagEvent>();
+    // Pilotenchat: zweiter Rueckkanal, gleiche Mechanik.
+    let (chat_tx, chat_rx) = mpsc::unbounded_channel::<ChatNachricht>();
     let integrity_topic = format!("aeroacars/{}/{}/integrity_flag", cfg.va_prefix, cfg.pilot_id);
+    let chat_topic = format!("aeroacars/{}/{}/chat_in", cfg.va_prefix, cfg.pilot_id);
     let subscribe_client = client.clone();
     let subscribe_topic = integrity_topic.clone();
+    let subscribe_chat_topic = chat_topic.clone();
 
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
     let _drive = tokio::spawn(async move {
         let mut subscribed = false;
+        let mut chat_subscribed = false;
         loop {
             // v0.19.x FIX: race the eventloop poll against the shutdown
             // signal so a logout actually stops this loop instead of
@@ -1641,6 +1709,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                             // sobald sie einmal durch sind.
                             eventloop.clean();
                             subscribed = false;
+                            chat_subscribed = false;
                             if let Some(auf) = link_state_for(LinkEvent::WatchdogTimeout) {
                                 let _ = link_tx.send(auf);
                             }
@@ -1676,6 +1745,11 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                                 &subscribe_topic,
                                 &mut subscribed,
                             );
+                            try_subscribe_once(
+                                &subscribe_client,
+                                &subscribe_chat_topic,
+                                &mut chat_subscribed,
+                            );
                             if let Some(auf) = link_state_for(LinkEvent::ConnAck) {
                                 let _ = link_tx.send(auf);
                             }
@@ -1692,6 +1766,15 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                                         warn!("integrity_flag JSON decode failed: {e}");
                                     }
                                 }
+                            } else if publish.topic == subscribe_chat_topic {
+                                match serde_json::from_slice::<ChatNachricht>(&publish.payload) {
+                                    Ok(n) => {
+                                        if chat_tx.send(n).is_err() {
+                                            debug!("Chat-Empfaenger weg — Zuruf verworfen");
+                                        }
+                                    }
+                                    Err(e) => warn!("Chat-Nachricht nicht lesbar: {e}"),
+                                }
                             }
                         }
                         Ok(_) => {
@@ -1707,6 +1790,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                         Err(e) => {
                             warn!("MQTT poll error: {e} — backing off 5 s");
                             subscribed = false;  // re-subscribe on reconnect
+                            chat_subscribed = false;
                             // Leitung weg → keine Positionen mehr in den
                             // Auftragskanal schieben (siehe `link_tx`).
                             if let Some(auf) = link_state_for(LinkEvent::PollError) {
@@ -1724,6 +1808,13 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                             &subscribe_client,
                             &subscribe_topic,
                             &mut subscribed,
+                        );
+                    }
+                    if !chat_subscribed {
+                        try_subscribe_once(
+                            &subscribe_client,
+                            &subscribe_chat_topic,
+                            &mut chat_subscribed,
                         );
                     }
                 }
@@ -1806,6 +1897,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                 }
             };
             match cmd {
+                Cmd::Chat(c) => publish_json(&pub_client, &cfg_for_pub.topic("chat"), &c, QoS::AtLeastOnce, false).await,
                 Cmd::Phase(p) => publish_json(&pub_client, &cfg_for_pub.topic("phase"), &p, QoS::AtLeastOnce, true).await,
                 Cmd::Block(p) => publish_json(&pub_client, &cfg_for_pub.topic("block"), &p, QoS::AtLeastOnce, true).await,
                 Cmd::Takeoff(p) => publish_json(&pub_client, &cfg_for_pub.topic("takeoff"), &p, QoS::AtLeastOnce, true).await,
@@ -1853,6 +1945,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
         tx,
         pos_tx,
         integrity_rx: Arc::new(tokio::sync::Mutex::new(Some(integrity_rx))),
+        chat_rx: Arc::new(tokio::sync::Mutex::new(Some(chat_rx))),
         shutdown_tx,
     })
 }
@@ -1869,13 +1962,13 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
 fn try_subscribe_once(client: &AsyncClient, topic: &str, subscribed: &mut bool) {
     match client.try_subscribe(topic, QoS::AtLeastOnce) {
         Ok(()) => {
-            info!(topic = %topic, "subscribed to integrity_flag topic");
+            info!(topic = %topic, "Rueckkanal abonniert");
             *subscribed = true;
         }
         Err(e) => {
             // Voller Auftragskanal ist der Normalfall nach einem Ausfall —
             // kein Fehler, nur "später nochmal".
-            debug!("integrity_flag subscribe deferred: {e}");
+            debug!("Abo auf {topic} zurueckgestellt: {e}");
         }
     }
 }
