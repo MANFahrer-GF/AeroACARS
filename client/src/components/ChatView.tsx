@@ -229,22 +229,18 @@ export function ChatView({
     <div className="chat">
       <div className="chat__kopf">
         <span className="chat__titel">{t("chat.title", "Pilotenchat")}</span>
-        {/* Feldbefund 12.08.2026: Am Boden stand hier "0 in der Luft" — und
-            das stimmte nicht. Der Server verrät einem, der nicht fliegt,
-            aus gutem Grund nicht, wer gerade unterwegs ist; die leere
-            Antwort heißt also "wir wissen es nicht", nicht "niemand".
-            Eine Null zu zeigen, wo Unkenntnis herrscht, ist die
-            unehrlichste aller Anzeigen. */}
-        {amBoden ? (
-          <span className="chat__wer chat__wer--unbekannt">
-            {t("chat.wer_unbekannt", "Wer fliegt, siehst du im Flug")}
-          </span>
-        ) : (
-          <span className="chat__wer">
-            <span className="chat__punkt" />
-            {t("chat.in_der_luft", { count: teilnehmer.length, defaultValue: "{{count}} in der Luft" })}
-          </span>
-        )}
+        {/* Feldbefund 12.08.2026, zweistufig: Erst stand hier am Boden
+            "0 in der Luft" — das war schlicht falsch, denn der Server hat
+            die Liste gar nicht herausgegeben. Der erste Versuch ersetzte
+            die Null durch einen Verweis ("siehst du im Flug"); Thomas'
+            Antwort darauf war die richtige: warum anzeigen, was man auch
+            zeigen kann? Wer fliegt, steht ohnehin offen auf der
+            Live-Karte. Seitdem gibt der Server die Liste immer heraus —
+            geschützt bleibt der VERLAUF, also was gesagt wurde. */}
+        <span className="chat__wer">
+          <span className="chat__punkt" />
+          {t("chat.in_der_luft", { count: teilnehmer.length, defaultValue: "{{count}} in der Luft" })}
+        </span>
         {/* Die Regeln stehen dort, wo man sie braucht — nicht nur auf einer
             Rechtsseite, die niemand aufschlaegt.
             Feldbefund 12.08.2026: "kein Hinweis zu Datenschutz (Link)". Der
@@ -271,7 +267,7 @@ export function ChatView({
             <button
               key={p.pilot_id}
               type="button"
-              disabled={p.erreichbar === false}
+              disabled={p.erreichbar === false || amBoden}
               className={`chat__pilot${empfaenger?.pilot_id === p.pilot_id ? " chat__pilot--ziel" : ""}${p.erreichbar === false ? " chat__pilot--stumm" : ""}`}
               title={
                 p.erreichbar === false
