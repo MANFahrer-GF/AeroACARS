@@ -10790,3 +10790,12 @@ input.datalink-block__input {
 :root[data-theme="light"] .vatsim-pop-chip--gnd  { color: #15803d; border-color: #15803d; }
 :root[data-theme="light"] .vatsim-pop-chip--twr  { color: #b91c1c; border-color: #b91c1c; }
 :root[data-theme="light"] .vatsim-pop-chip--app  { color: #b45309; border-color: #b45309; }
+
+/* ATIS-Buchstabe im Platz-Fenster — "INFO: K", gelb wie auf der Karte. */
+.vatsim-pop-info {
+  font-family: var(--font-mono);
+  font-size: var(--fs-200);
+  color: #eab308;
+  letter-spacing: .04em;
+}
+:root[data-theme="light"] .vatsim-pop-info { color: #a16207; }

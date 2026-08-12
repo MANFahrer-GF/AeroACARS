@@ -201,26 +201,6 @@ export function baueSektoren(
     }
   }
 
-  // Stammbereich je Station: von/bis ueber ihre ORIGINAEREN Bloecke
-  // (owner[0]). Grundlage fuer die Richtungsangabe im Klickfenster.
-  //
-  // Befund Bremen/Boerde (12.08.2026): der erste Wurf verglich MITTELWERTE
-  // und machte aus zwei fast deckungsgleichen Baendern (Mark FL0-284,
-  // Boerde FL165-284) ein "hoeher". Richtung gibt es nur, wenn die Baender
-  // WIRKLICH getrennt liegen — sonst ist es der Nachbarsektor.
-  const stammbereich = new Map<string, { von: number; bis: number }>();
-  for (const block of bestand.bloecke) {
-    const erster = block.owner[0];
-    if (!erster) continue;
-    const schluessel = `${block.land}/${erster}`;
-    for (const s of block.sektoren) {
-      const b = stammbereich.get(schluessel) ?? { von: 999, bis: 0 };
-      b.von = Math.min(b.von, s.flVon);
-      b.bis = Math.max(b.bis, Math.min(s.flBis, 660));
-      stammbereich.set(schluessel, b);
-    }
-  }
-
   const flaechen: GeoJSON.Feature[] = [];
   interface MarkenLage { st: Station; ruf: string; groesste: number; lon: number; lat: number; flVon: number; flBis: number }
   const marken = new Map<string, MarkenLage>();
@@ -262,20 +242,6 @@ export function baueSektoren(
           fl_von: s.flVon,
           fl_bis: s.flBis,
           vertretung: stufe,
-          // Richtung des mituebernommenen Sektors — NUR wenn die Baender
-          // klar getrennt liegen. Der Sprechfunkname taugt fuers "wer ist
-          // nicht besetzt" NICHT: alle EDWW-Sektoren sprechen als "Bremen
-          // Radar", der Satz "Bremen Radar ist nicht besetzt — Bremen
-          // Radar uebernimmt" war absurd. Der SEKTORNAME (block.id) ist
-          // eindeutig und steht deshalb im Satz.
-          lage: (() => {
-            if (stufe <= 0) return "";
-            const eigen = stammbereich.get(`${besitzer.land}/${besitzer.kuerzel}`);
-            if (!eigen || eigen.bis <= eigen.von) return "";
-            if (s.flVon >= eigen.bis - 5) return "hoeher";
-            if (Math.min(s.flBis, 660) <= eigen.von + 5) return "tiefer";
-            return "";
-          })(),
         },
       });
 

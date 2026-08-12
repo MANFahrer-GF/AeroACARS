@@ -1101,7 +1101,15 @@ mod tests {
         // als Struktur stehen: wer je wieder einen Befehl bewusst
         // aussperrt, traegt ihn hier MIT Begruendung ein, statt ihn im
         // Dispatch stillschweigend fehlen zu lassen.
-        const DENY_SET: &[&str] = &[];
+        const DENY_SET: &[&str] = &[
+            // VATSIM-CDM (v1.6.0): oeffnet ein NATIVES Fenster auf dem
+            // Sim-PC. Vom Tablet aus ergibt das keinen Sinn — das Fenster
+            // ginge auf dem PC auf, nicht auf dem Tablet. Der Browser-Pfad
+            // der Oberflaeche faellt deshalb selbst auf openExternal
+            // zurueck (VatsimCdmView/CpdlcPanel pruefen isTauri).
+            "vdgs_fenster_oeffnen",
+            "vdgs_fenster_offen",
+        ];
 
         // v1.5.6: LEER — die frueher hier geparkten Luecken (Taxi-Karte,
         // Route-Refresh, Landungs-Sicherung, Aircraft-Scan, X-Plane-Plugin,

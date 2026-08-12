@@ -310,6 +310,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   const vatsimAtcRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
   const vatsimSectorsRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
   const vatsimSectorLabelsRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
+  const vatsimPopupRef = useRef<maplibregl.Popup | null>(null);
   // Welche Flugflaeche die Sektoren zeigen. "auto" folgt dem eigenen Flug —
   // die Karte beantwortet dann durchgehend "wer ist fuer MICH zustaendig".
   // Ohne Flug gilt der Regler (Start FL200: dort spielt der Streckenflug).
@@ -341,7 +342,12 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       (map.getSource("vatsim-sector-labels") as maplibregl.GeoJSONSource | undefined)?.setData(labels);
     };
 
-    if (!showVatsim) { setzen(emptyFC(), emptyFC(), emptyFC(), emptyFC()); return; }
+    if (!showVatsim) {
+      vatsimPopupRef.current?.remove();
+      vatsimPopupRef.current = null;
+      setzen(emptyFC(), emptyFC(), emptyFC(), emptyFC());
+      return;
+    }
 
     let beendet = false;
     let abbruch = new AbortController();
@@ -385,63 +391,67 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
 
   // Klickfenster fuer das VATSIM-Overlay — Klartext statt Rohdaten
   // (dieselbe Bauform wie auf der Live-Karte der Webapp).
+  //
+  // Feldbefund (Screenshot, 12.08.): zwei Fenster uebereinander. Zwei
+  // Ursachen: jeder Klick baute ein NEUES Fenster, ohne das alte zu
+  // schliessen — und ein Klick, der Platz UND Sektor trifft, feuerte
+  // BEIDE Behandler. Deshalb: EIN gemeinsames Fenster (Ref), und eine
+  // Vorfahrtsregel ueber ein Merkmal am Ursprungs-Ereignis.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
 
+    const fenster = vatsimPopupRef;
+    const oeffnen = (lngLat: maplibregl.LngLatLike, html: string, breite: string) => {
+      fenster.current?.remove();
+      fenster.current = new maplibregl.Popup({ closeButton: true, className: "aa-vapop", maxWidth: breite })
+        .setLngLat(lngLat)
+        .setHTML(html)
+        .addTo(map);
+    };
+    const schonBehandelt = (e: maplibregl.MapMouseEvent): boolean => {
+      const ev = e.originalEvent as MouseEvent & { _vatsimKlick?: boolean };
+      if (ev._vatsimKlick) return true;
+      ev._vatsimKlick = true;
+      return false;
+    };
+
     const aufPilot = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
-      const f = e.features?.[0]; if (!f) return;
+      const f = e.features?.[0]; if (!f || schonBehandelt(e)) return;
       const p = f.properties ?? {};
       const alt = Number(p.alt ?? 0), gs = Number(p.gs ?? 0);
-      new maplibregl.Popup({ closeButton: true, className: "aa-vapop", maxWidth: "260px" })
-        .setLngLat(e.lngLat)
-        .setHTML(
+      oeffnen(e.lngLat, 
           `<div class="vatsim-pop">` +
           `<div class="vatsim-pop-title">${vatsimEsc(p.callsign)}</div>` +
           `<div class="vatsim-pop-row">${vatsimEsc(p.dep ?? "—")} → ${vatsimEsc(p.arr ?? "—")}</div>` +
           `<div class="vatsim-pop-row vatsim-pop-dim">${vatsimEsc(p.actype ?? "—")} · FL${String(Math.round(alt / 100)).padStart(3, "0")} · ${gs} kt</div>` +
-          `</div>`)
-        .addTo(map);
+          `</div>`, "260px");
     };
     const aufAtc = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
-      const f = e.features?.[0]; if (!f) return;
+      const f = e.features?.[0]; if (!f || schonBehandelt(e)) return;
       const p = f.properties ?? {};
-      let liste: { tag: string; callsign: string; frequency: string }[] = [];
+      let liste: { tag: string; callsign: string; frequency: string; code?: string }[] = [];
       try { liste = JSON.parse(String(p.positions ?? "[]")); } catch { liste = []; }
       const reihenfolge = ["ATIS", "DEL", "GND", "TWR", "APP"];
       liste.sort((a, b) => reihenfolge.indexOf(a.tag) - reihenfolge.indexOf(b.tag));
       const zeilen = liste.map((x) =>
         `<div class="vatsim-pop-row"><span class="vatsim-pop-chip vatsim-pop-chip--${vatsimEsc(x.tag.toLowerCase())}">${vatsimEsc(x.tag)}</span>` +
         `<b>${vatsimEsc(x.callsign)}</b>` +
-        `<span class="vatsim-pop-freq">${vatsimEsc(x.frequency)}</span></div>`).join("");
-      new maplibregl.Popup({ closeButton: true, className: "aa-vapop", maxWidth: "300px" })
-        .setLngLat(e.lngLat)
-        .setHTML(`<div class="vatsim-pop"><div class="vatsim-pop-title">${vatsimEsc(p.icao)} — ATC</div>${zeilen}</div>`)
-        .addTo(map);
+        `<span class="vatsim-pop-freq">${vatsimEsc(x.frequency)}</span>` +
+        (x.tag === "ATIS" && x.code ? `<span class="vatsim-pop-info">INFO: ${vatsimEsc(x.code)}</span>` : "") +
+        `</div>`).join("");
+      oeffnen(e.lngLat, `<div class="vatsim-pop"><div class="vatsim-pop-title">${vatsimEsc(p.icao)} — ATC</div>${zeilen}</div>`, "300px");
     };
     const aufSektor = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
-      const f = e.features?.[0]; if (!f) return;
+      const f = e.features?.[0]; if (!f || schonBehandelt(e)) return;
       const p = f.properties ?? {};
-      const vertretung = Number(p.vertretung ?? 0);
-      new maplibregl.Popup({ closeButton: true, className: "aa-vapop", maxWidth: "300px" })
-        .setLngLat(e.lngLat)
-        .setHTML(
+      oeffnen(e.lngLat,
           `<div class="vatsim-pop">` +
           `<div class="vatsim-pop-title">${vatsimEsc(p.ruf)}</div>` +
           `<div class="vatsim-pop-row"><b>${vatsimEsc(p.gesprochen || "—")}</b>` +
           `<span class="vatsim-pop-freq">${vatsimEsc(p.frequenz || "—")}</span></div>` +
           `<div class="vatsim-pop-row vatsim-pop-dim">${vatsimEsc(p.block)} · FL${vatsimEsc(p.fl_von)}–FL${vatsimEsc(p.fl_bis)}</div>` +
-          (vertretung > 0
-            ? `<div class="vatsim-pop-note">${
-                p.lage === "tiefer"
-                  ? `Der tiefere Sektor ${vatsimEsc(p.block)} ist nicht besetzt`
-                  : p.lage === "hoeher"
-                    ? `Der höhere Sektor ${vatsimEsc(p.block)} ist nicht besetzt`
-                    : `Der Nachbarsektor ${vatsimEsc(p.block)} ist nicht besetzt`
-              } — wird hier mit übernommen.</div>`
-            : "") +
-          `</div>`)
-        .addTo(map);
+          `</div>`, "300px");
     };
 
     const zeiger = () => { map.getCanvas().style.cursor = "pointer"; };
