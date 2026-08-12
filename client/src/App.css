@@ -10747,6 +10747,18 @@ input.datalink-block__input {
   font-variant-numeric: tabular-nums;
   color: var(--acc);
 }
+/* Erklaerungssaetze duerfen UMBRECHEN — die Datenzeilen (nowrap) nicht.
+   "das passt nicht": der Vertretungssatz lief aus dem Fenster. */
+.vatsim-pop-note {
+  white-space: normal;
+  max-width: 34ch;
+  color: var(--text-dim);
+  line-height: 1.5;
+  padding-top: 4px;
+  margin-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
 .vatsim-pop-chip {
   font-family: var(--font-mono);
   font-size: 9px; letter-spacing: .08em;

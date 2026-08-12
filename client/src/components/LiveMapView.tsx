@@ -432,13 +432,13 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           `<span class="vatsim-pop-freq">${vatsimEsc(p.frequenz || "—")}</span></div>` +
           `<div class="vatsim-pop-row vatsim-pop-dim">${vatsimEsc(p.block)} · FL${vatsimEsc(p.fl_von)}–FL${vatsimEsc(p.fl_bis)}</div>` +
           (vertretung > 0
-            ? `<div class="vatsim-pop-row vatsim-pop-dim">${
+            ? `<div class="vatsim-pop-note">${
                 p.lage === "tiefer"
-                  ? "Der tiefere Sektor wird mit übernommen"
+                  ? `Der tiefere Sektor ${vatsimEsc(p.block)} ist nicht besetzt`
                   : p.lage === "hoeher"
-                    ? "Der höhere Sektor wird mit übernommen"
-                    : "Dieser Sektor wird mit übernommen"
-              } — ${vatsimEsc(p.eigentlich || "die eigentliche Station")} ist nicht besetzt.</div>`
+                    ? `Der höhere Sektor ${vatsimEsc(p.block)} ist nicht besetzt`
+                    : `Der Nachbarsektor ${vatsimEsc(p.block)} ist nicht besetzt`
+              } — wird hier mit übernommen.</div>`
             : "") +
           `</div>`)
         .addTo(map);

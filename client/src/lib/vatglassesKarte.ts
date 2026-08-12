@@ -201,25 +201,25 @@ export function baueSektoren(
     }
   }
 
-  // Stammband je Station: Mittel der Hoehenbaender ihrer ORIGINAEREN
-  // Bloecke (owner[0]). Grundlage fuer die Richtungsangabe im
-  // Klickfenster ("uebernimmt den tieferen/hoeheren Sektor mit").
-  const stammband = new Map<string, { summe: number; n: number }>();
+  // Stammbereich je Station: von/bis ueber ihre ORIGINAEREN Bloecke
+  // (owner[0]). Grundlage fuer die Richtungsangabe im Klickfenster.
+  //
+  // Befund Bremen/Boerde (12.08.2026): der erste Wurf verglich MITTELWERTE
+  // und machte aus zwei fast deckungsgleichen Baendern (Mark FL0-284,
+  // Boerde FL165-284) ein "hoeher". Richtung gibt es nur, wenn die Baender
+  // WIRKLICH getrennt liegen — sonst ist es der Nachbarsektor.
+  const stammbereich = new Map<string, { von: number; bis: number }>();
   for (const block of bestand.bloecke) {
     const erster = block.owner[0];
     if (!erster) continue;
     const schluessel = `${block.land}/${erster}`;
     for (const s of block.sektoren) {
-      const mitte = (s.flVon + Math.min(s.flBis, 660)) / 2;
-      const b = stammband.get(schluessel) ?? { summe: 0, n: 0 };
-      b.summe += mitte; b.n += 1;
-      stammband.set(schluessel, b);
+      const b = stammbereich.get(schluessel) ?? { von: 999, bis: 0 };
+      b.von = Math.min(b.von, s.flVon);
+      b.bis = Math.max(b.bis, Math.min(s.flBis, 660));
+      stammbereich.set(schluessel, b);
     }
   }
-  const bandMitte = (schluessel: string): number | null => {
-    const b = stammband.get(schluessel);
-    return b && b.n > 0 ? b.summe / b.n : null;
-  };
 
   const flaechen: GeoJSON.Feature[] = [];
   interface MarkenLage { st: Station; ruf: string; groesste: number; lon: number; lat: number; flVon: number; flBis: number }
@@ -262,24 +262,18 @@ export function baueSektoren(
           fl_von: s.flVon,
           fl_bis: s.flBis,
           vertretung: stufe,
-          // Wen der Lotse hier VERTRITT — fuers Klickfenster. "Stufe 1 der
-          // Kette" war Innenleben, unter dem sich niemand etwas vorstellen
-          // kann (Feldbefund); der Name der unbesetzten Station schon.
-          eigentlich: stufe > 0
-            ? (bestand.stationen.get(`${block.land}/${block.owner[0]}`)?.gesprochen
-               ?? block.owner[0])
-            : "",
-          // Liegt der mituebernommene Sektor UNTER oder UEBER dem
-          // Stammbereich des Lotsen? (Thomas: "hoeherer oder tieferer
-          // Sektor wird mit uebernommen" — das ist die Angabe, unter der
-          // man sich etwas vorstellen kann.)
+          // Richtung des mituebernommenen Sektors — NUR wenn die Baender
+          // klar getrennt liegen. Der Sprechfunkname taugt fuers "wer ist
+          // nicht besetzt" NICHT: alle EDWW-Sektoren sprechen als "Bremen
+          // Radar", der Satz "Bremen Radar ist nicht besetzt — Bremen
+          // Radar uebernimmt" war absurd. Der SEKTORNAME (block.id) ist
+          // eindeutig und steht deshalb im Satz.
           lage: (() => {
             if (stufe <= 0) return "";
-            const eigen = bandMitte(`${besitzer.land}/${besitzer.kuerzel}`);
-            if (eigen == null) return "";
-            const dieser = (s.flVon + Math.min(s.flBis, 660)) / 2;
-            if (dieser < eigen - 20) return "tiefer";
-            if (dieser > eigen + 20) return "hoeher";
+            const eigen = stammbereich.get(`${besitzer.land}/${besitzer.kuerzel}`);
+            if (!eigen || eigen.bis <= eigen.von) return "";
+            if (s.flVon >= eigen.bis - 5) return "hoeher";
+            if (Math.min(s.flBis, 660) <= eigen.von + 5) return "tiefer";
             return "";
           })(),
         },
