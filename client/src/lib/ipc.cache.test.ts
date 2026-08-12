@@ -74,19 +74,22 @@ describe("IPC-Zwischenspeicher", () => {
     // Das ist der eigentliche Trick gegen die Trägheit: die Ansicht steht
     // augenblicklich da, die Zahlen aktualisieren sich einen Wimpernschlag
     // später — statt dass der Pilot auf das WLAN wartet.
+    // `logbook_stats` ist seit dem QS-Befund NICHT mehr zwischengespeichert
+    // (das Logbuch soll nach der Landung sofort stimmen) — deshalb hier ein
+    // echter Stammdaten-Befehl.
     vi.useFakeTimers();
     tauriInvoke.mockResolvedValue("alt");
-    expect(await invoke("logbook_stats")).toBe("alt");
+    expect(await invoke("airport_get", { icao: "LPPT" })).toBe("alt");
 
-    vi.advanceTimersByTime(25_000); // über die Haltbarkeit hinaus
+    vi.advanceTimersByTime(25_000); // über die Haltbarkeit, unter der Grenze
     tauriInvoke.mockResolvedValue("neu");
 
     // Sofortige Antwort = noch der alte Wert, ohne Warten.
-    expect(await invoke("logbook_stats")).toBe("alt");
+    expect(await invoke("airport_get", { icao: "LPPT" })).toBe("alt");
     expect(tauriInvoke).toHaveBeenCalledTimes(2); // die Auffrischung lief an
 
     await vi.runAllTimersAsync();
-    expect(await invoke("logbook_stats")).toBe("neu");
+    expect(await invoke("airport_get", { icao: "LPPT" })).toBe("neu");
   });
 
   it("speichert Fehler nicht", async () => {
@@ -100,9 +103,120 @@ describe("IPC-Zwischenspeicher", () => {
 
   it("lässt sich leeren (Abmelden, VA-Wechsel)", async () => {
     tauriInvoke.mockResolvedValue("erster Pilot");
-    await invoke("logbook_stats");
+    await invoke("logbook_pirep", { id: "abc" });
     clearIpcCache();
     tauriInvoke.mockResolvedValue("zweiter Pilot");
-    expect(await invoke("logbook_stats")).toBe("zweiter Pilot");
+    expect(await invoke("logbook_pirep", { id: "abc" })).toBe("zweiter Pilot");
+  });
+
+  it("hält die gefährlichen Befehle draußen (QS-Befund v1.5.7)", async () => {
+    // Jeder dieser Einträge hat einen konkreten Schaden angerichtet, als
+    // er zwischengespeichert wurde — sie dürfen nie zurückkommen:
+    //   divert_nearest_airports → nimmt die Position NICHT als Argument,
+    //     der Schlüssel war sitzungsweit gleich → Ausweichliste des
+    //     VORIGEN Flugs landet als Zielflughafen im PIREP
+    //   metar_get → der Aktualisieren-Knopf zeigte altes Wetter
+    //   landing_list → gelöschte Landung kam zurück
+    //   phpvms_get_bids → machte den v1.4.7-Fix rückgängig
+    //   va_live_flights / logbook_* / news_fetch → bewusste Poll-Takte
+    for (const cmd of [
+      "divert_nearest_airports",
+      "metar_get",
+      "landing_list",
+      "phpvms_get_bids",
+      "va_live_flights",
+      "logbook_stats",
+      "logbook_pireps",
+      "news_fetch",
+    ]) {
+      tauriInvoke.mockReset();
+      tauriInvoke.mockResolvedValue("frisch");
+      await invoke(cmd, { a: 1 });
+      await invoke(cmd, { a: 1 });
+      expect(tauriInvoke, `${cmd} MUSS jedes Mal frisch geholt werden`).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it("liefert jenseits der harten Altersgrenze nichts Altes mehr", async () => {
+    // QS-Befund: Ohne Obergrenze konnte ein Wert beliebig alt werden —
+    // die Auffrischung schrieb nur in den Speicher, eine Ansicht, die beim
+    // Öffnen einmal lädt, sah den alten Stand für immer.
+    vi.useFakeTimers();
+    tauriInvoke.mockResolvedValue("alt");
+    expect(await invoke("airport_get", { icao: "EDDF" })).toBe("alt");
+
+    vi.advanceTimersByTime(3 * 60_000); // weit über der Obergrenze
+    tauriInvoke.mockResolvedValue("neu");
+
+    // Kein Ausliefern des alten Werts mehr — es wird gewartet.
+    expect(await invoke("airport_get", { icao: "EDDF" })).toBe("neu");
+  });
+
+  it("verwirft verspätete Antworten aus einer alten Sitzung (QS-Befund)", async () => {
+    // Der Wettlauf: Eine Auffrischung startet VOR dem Abmelden und kommt
+    // DANACH zurück. Ohne Generationszähler landete sie im frisch
+    // geleerten Speicher — der nächste Pilot sah die Daten des vorigen.
+    let aufloesen: (v: unknown) => void = () => {};
+    const mockAufgerufen = new Promise<void>((bereit) => {
+      tauriInvoke.mockImplementationOnce(
+        () =>
+          new Promise((res) => {
+            aufloesen = res;
+            bereit();
+          }),
+      );
+    });
+
+    const unterwegs = invoke("airport_get", { icao: "EDDF" });
+    await mockAufgerufen; // sicherstellen, dass die Anfrage wirklich läuft
+    clearIpcCache(); // Pilot meldet sich ab
+    aufloesen("PILOT-A"); // alte Antwort trifft erst jetzt ein
+    await unterwegs;
+
+    tauriInvoke.mockResolvedValue("PILOT-B");
+    expect(await invoke("airport_get", { icao: "EDDF" })).toBe("PILOT-B");
+  });
+
+  it("hält Live-Verfügbarkeit und fehlertolerante Befehle draußen", async () => {
+    // QS-Befund: `fleet_list_at_airport` filtert auf PARKED/aktiv — das
+    // ist Live-Verfügbarkeit, kein Stammdatum (ein belegtes Flugzeug
+    // würde weiter angeboten). `airport_ground_*` wandeln Netzfehler in
+    // leere Erfolge — die wären sonst zwischengespeichert worden.
+    for (const cmd of [
+      "fleet_list_at_airport",
+      "airport_ground_get",
+      "airport_ground_index",
+    ]) {
+      tauriInvoke.mockReset();
+      tauriInvoke.mockResolvedValue("frisch");
+      await invoke(cmd, { icao: "EDDF" });
+      await invoke(cmd, { icao: "EDDF" });
+      expect(tauriInvoke, `${cmd} MUSS jedes Mal frisch geholt werden`).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it("leert sich beim Abmelden selbst — auch ohne Aufruf von außen", async () => {
+    // QS-Runde 4: Der Schutz hing an einer einzelnen Zeile in der
+    // Abmelde-Funktion, deren Löschen kein Test bemerkte. Jetzt hängt er
+    // am Befehl — wer sich abmeldet, leert den Speicher zwangsläufig.
+    tauriInvoke.mockResolvedValue("PILOT-A");
+    await invoke("airport_get", { icao: "EDDF" });
+
+    tauriInvoke.mockResolvedValue(null);
+    await invoke("phpvms_logout");
+
+    tauriInvoke.mockResolvedValue("PILOT-B");
+    expect(await invoke("airport_get", { icao: "EDDF" })).toBe("PILOT-B");
+  });
+
+  it("leert auch, wenn das Abmelden fehlschlägt", async () => {
+    tauriInvoke.mockResolvedValue("PILOT-A");
+    await invoke("airport_get", { icao: "EDDF" });
+
+    tauriInvoke.mockRejectedValueOnce(new Error("Keyring weg"));
+    await expect(invoke("phpvms_logout")).rejects.toThrow();
+
+    tauriInvoke.mockResolvedValue("PILOT-B");
+    expect(await invoke("airport_get", { icao: "EDDF" })).toBe("PILOT-B");
   });
 });

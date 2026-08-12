@@ -49,6 +49,99 @@ const STATUS_OFFLINE: &str = "offline";
 /// burst tolerance of 200 msgs).
 const CMD_BUFFER: usize = 200;
 
+/// v1.5.7 (#mqtt-outage): Wartefrist beim Einreihen der EINMALIGEN
+/// Ereignisse (Landung, Flugbericht, Block, Takeoff …).
+///
+/// Vorher 250–500 ms. Das reichte im Normalbetrieb, war aber genau dann
+/// zu knapp, wenn es darauf ankam: Bei Michels Netzausfall (11.08.2026)
+/// stand die Warteschlange voll mit Positionen, die Landung wartete 250 ms
+/// und wurde verworfen ("dropping touchdown publish"). Ein Ereignis, das
+/// pro Flug genau EINMAL entsteht, darf nicht an einer Viertelsekunde
+/// scheitern — es gibt keinen zweiten Versuch.
+///
+/// Seit die Positionen einen eigenen Weg haben (siehe `Cmd`), ist diese
+/// Schlange ohnehin fast immer leer; die längere Frist kostet im
+/// Normalfall nichts und rettet den Ausnahmefall. Die Sendung läuft in
+/// einer eigenen Aufgabe, blockiert also keinen Aufrufer.
+const EVENT_ENQUEUE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// v1.5.7 (QS-Runde 4): Was der Drive-Loop dem Publisher über die Leitung
+/// meldet. Als eigene Funktion, damit die ZUORDNUNG prüfbar ist — die
+/// Mutationsprobe hatte gezeigt, dass ein gelöschtes `link_tx.send(...)`
+/// von keinem Test bemerkt wird.
+///
+/// EHRLICHE GRENZE: Geprüft ist damit die Zuordnung Ereignis → Zustand.
+/// Dass der Aufruf an der richtigen Stelle in der Schleife steht, sichert
+/// weiterhin nur das Lesen des Codes; ein echter Nachweis bräuchte einen
+/// Broker im Test.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum LinkEvent {
+    /// Der Broker hat die Verbindung bestätigt.
+    ConnAck,
+    /// `poll()` meldete einen Fehler — Leitung gilt als weg.
+    PollError,
+    /// Der Stille-Wächter hat zugeschlagen.
+    WatchdogTimeout,
+    /// Alles andere (eingehende Nachrichten, Outgoing-Bestätigungen).
+    Other,
+}
+
+/// `None` = kein Zustandswechsel zu melden.
+fn link_state_for(event: LinkEvent) -> Option<bool> {
+    match event {
+        LinkEvent::ConnAck => Some(true),
+        LinkEvent::PollError | LinkEvent::WatchdogTimeout => Some(false),
+        LinkEvent::Other => None,
+    }
+}
+
+/// v1.5.7 (#mqtt-outage, QS-Runde 3): Die Positions-Entscheidung als
+/// eigene Funktion — klein, aber der Kern des Fixes und damit prüfbar.
+///
+/// Im Feldbefund füllten Positionen während des Ausfalls den
+/// Auftragskanal von rumqttc (Kapazität 200) im 3-Sekunden-Takt wieder
+/// auf. Die Landung, die danach kam, fand keinen Platz mehr und wurde
+/// nach 20 s verworfen. Solange die Leitung liegt, hat eine Position dort
+/// nichts verloren: Sie ist in Sekunden überholt, während die Landung
+/// pro Flug genau einmal entsteht.
+fn should_publish_position(link_up: bool) -> bool {
+    link_up
+}
+
+/// v1.5.7 (#mqtt-outage): Wächter gegen die HALB OFFENE Verbindung.
+///
+/// Der zweite Befund aus Michels Flug — und der heimtückischere: Um
+/// 23:51:14 kam nach dem Netzausfall ein CONNACK, 90 Sekunden später war
+/// die Leitung wieder weg (Broker: "closed its connection"), und der
+/// Client hat es NIE bemerkt. Fünf Stunden lang kein Fehler, kein neuer
+/// Versuch, keine einzige Logzeile: `eventloop.poll()` wartete auf Daten,
+/// die nie kamen. Ohne Fehler kein Neuaufbau — der klassische
+/// halb-offene TCP-Fall, bei dem beide Seiten verschiedener Meinung sind.
+///
+/// Gegenmittel: eine Obergrenze für Stille. Bei stehender Verbindung
+/// weckt spätestens der Keepalive (60 s) den Eventloop. Wenn also
+/// 2,5 Keepalive-Perioden lang GAR NICHTS passiert, ist die Leitung tot,
+/// egal was das Betriebssystem behauptet — dann wird sie verworfen.
+///
+/// EHRLICHE EINORDNUNG (QS-Befund): Das ist das ZWEITE Netz, nicht das
+/// erste. rumqttc erkennt eine tote Leitung über den ausbleibenden
+/// PINGRESP selbst (spätestens nach 2 Keepalive-Perioden) und liefert
+/// dann einen Fehler; auf einem tatsächlich gepollten Eventloop feuert
+/// dieser Wächter also nie zuerst. Er greift nur, wenn `poll()`
+/// überhaupt nicht mehr zum Zug kommt — der eigentliche Fehler aus
+/// Michels Flug lag genau dort (blockierendes `subscribe()`), ist aber
+/// an der Wurzel behoben. Der Wächter bleibt als Auffangnetz für
+/// Blockade-Fälle, die wir noch nicht kennen.
+///
+/// Bewusst großzügig: lieber ein paar Sekunden später neu verbinden als
+/// eine gesunde Verbindung wegen einer Verkehrspause abzuräumen.
+const POLL_SILENCE_TIMEOUT: Duration = Duration::from_secs(150);
+
+/// v1.5.7: Frist für einen einzelnen Sendeversuch. `publish()` wartet
+/// sonst unbegrenzt auf Platz im internen Vorrat von rumqttc — bei toter
+/// Leitung also für immer, womit die gesamte Sende-Schleife stillsteht.
+const PUBLISH_TIMEOUT: Duration = Duration::from_secs(20);
+
 #[derive(Clone, Debug)]
 pub struct MqttConfig {
     /// e.g. `wss://live.kant.ovh/mqtt`
@@ -1116,7 +1209,17 @@ pub struct TouchdownRolloutFinalizedPayload {
 }
 
 enum Cmd {
-    Position(Box<PositionPayload>),
+    // v1.5.7 (#mqtt-outage, Feldbefund Michel TAP58): `Position` ist hier
+    // BEWUSST NICHT MEHR drin. Positionen laufen über einen eigenen
+    // `watch`-Kanal (siehe `Handle::pos_tx`), der IMMER nur den neuesten
+    // Wert hält und deshalb strukturell nicht volllaufen kann.
+    //
+    // Vorher teilten sie sich diese Warteschlange mit den Ereignissen —
+    // mit fatalem Ausgang bei Michels 4,5-stündigem Netzausfall: 200 alte
+    // Positionen verstopften den Kanal, 4976 neue wurden verworfen, und
+    // als die Landung kam, gab sie nach 250 ms auf ("dropping touchdown
+    // publish"). Genau die Nachricht, auf die es ankam, verlor gegen
+    // Daten, die längst wertlos waren.
     Phase(PhasePayload),
     Block(Box<BlockPayload>),
     Takeoff(Box<TakeoffPayload>),
@@ -1146,6 +1249,11 @@ pub struct IntegrityFlagEvent {
 #[derive(Clone)]
 pub struct Handle {
     tx: mpsc::Sender<Cmd>,
+    /// v1.5.7: Positions-Weg, getrennt von den Ereignissen. `watch` hält
+    /// genau EINEN Wert — ein Sender überschreibt den vorigen, statt eine
+    /// Schlange zu bilden. Nach einem Netzausfall geht damit sofort die
+    /// AKTUELLE Position raus statt Hunderter veralteter.
+    pos_tx: watch::Sender<Option<Box<PositionPayload>>>,
     /// v0.13.0: optional Broadcast-Receiver für Integrity-Flag-Events.
     /// Wird per `take_integrity_rx()` einmalig konsumiert.
     integrity_rx: Arc<tokio::sync::Mutex<Option<mpsc::UnboundedReceiver<IntegrityFlagEvent>>>>,
@@ -1278,14 +1386,13 @@ impl Handle {
             arr_gate: meta.arr_gate.as_deref().and_then(non_empty),
             client_version: env!("CARGO_PKG_VERSION"),
         };
-        match self.tx.try_send(Cmd::Position(Box::new(payload))) {
-            Ok(()) => {}
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                debug!("mqtt cmd channel full — dropping position tick");
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                debug!("mqtt cmd channel closed — publisher down");
-            }
+        // v1.5.7 (#mqtt-outage): kann NICHT fehlschlagen und NICHTS
+        // blockieren — `send` auf einem `watch` überschreibt den vorigen
+        // Wert. Ein Netzausfall staut hier nichts mehr auf; sobald die
+        // Leitung zurück ist, geht die zu DIESEM Zeitpunkt aktuelle
+        // Position raus, nicht die von vor drei Stunden.
+        if self.pos_tx.send(Some(Box::new(payload))).is_err() {
+            debug!("mqtt position channel closed — publisher down");
         }
     }
 
@@ -1301,7 +1408,7 @@ impl Handle {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             let _ = tokio::time::timeout(
-                Duration::from_millis(500),
+                EVENT_ENQUEUE_TIMEOUT,
                 tx.send(Cmd::Block(Box::new(payload))),
             )
             .await;
@@ -1312,7 +1419,7 @@ impl Handle {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             let _ = tokio::time::timeout(
-                Duration::from_millis(500),
+                EVENT_ENQUEUE_TIMEOUT,
                 tx.send(Cmd::Takeoff(Box::new(payload))),
             )
             .await;
@@ -1323,7 +1430,7 @@ impl Handle {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             if let Err(e) = tokio::time::timeout(
-                Duration::from_millis(250),
+                EVENT_ENQUEUE_TIMEOUT,
                 tx.send(Cmd::Touchdown(Box::new(payload))),
             )
             .await
@@ -1337,7 +1444,7 @@ impl Handle {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             if let Err(e) =
-                tokio::time::timeout(Duration::from_millis(500), tx.send(Cmd::Pirep(Box::new(payload)))).await
+                tokio::time::timeout(EVENT_ENQUEUE_TIMEOUT, tx.send(Cmd::Pirep(Box::new(payload)))).await
             {
                 warn!("dropping pirep publish: {e}");
             }
@@ -1352,7 +1459,7 @@ impl Handle {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             if let Err(e) = tokio::time::timeout(
-                Duration::from_millis(500),
+                EVENT_ENQUEUE_TIMEOUT,
                 tx.send(Cmd::PirepJson(Box::new(payload))),
             )
             .await
@@ -1372,7 +1479,7 @@ impl Handle {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             if let Err(e) = tokio::time::timeout(
-                Duration::from_millis(500),
+                EVENT_ENQUEUE_TIMEOUT,
                 tx.send(Cmd::TouchdownAccidentOverride(Box::new(payload))),
             )
             .await
@@ -1392,7 +1499,7 @@ impl Handle {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             if let Err(e) = tokio::time::timeout(
-                Duration::from_millis(500),
+                EVENT_ENQUEUE_TIMEOUT,
                 tx.send(Cmd::TouchdownRolloutFinalized(Box::new(payload))),
             )
             .await
@@ -1414,6 +1521,13 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
     cfg.validate()?;
 
     let (tx, mut rx) = mpsc::channel::<Cmd>(CMD_BUFFER);
+    // v1.5.7 (#mqtt-outage): eigener Weg für Positionen — siehe `Cmd`.
+    let (pos_tx, mut pos_rx) = watch::channel::<Option<Box<PositionPayload>>>(None);
+    // v1.5.7: Der Drive-Loop weiß als Einziger, ob die Leitung steht.
+    // Ohne diese Auskunft schob der Publisher weiter Positionen in den
+    // Auftragskanal, bis der voll war. Jetzt: Positionen nur bei
+    // stehender Verbindung.
+    let (link_tx, link_rx) = watch::channel::<bool>(false);
 
     let url = Url::parse(&cfg.broker_url)?;
     let port = url.port_or_known_default().unwrap_or(443);
@@ -1497,20 +1611,73 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                         break;
                     }
                 }
-                poll_result = eventloop.poll() => {
+                // v1.5.7: poll() bekommt eine Obergrenze für Stille. Ein
+                // Timeout ist KEIN Fehler von rumqttc — er bedeutet: von
+                // dieser Verbindung kommt nichts mehr, auch keine
+                // Fehlermeldung. Genau Michels Fall.
+                poll_result = tokio::time::timeout(POLL_SILENCE_TIMEOUT, eventloop.poll()) => {
+                    let poll_result = match poll_result {
+                        Ok(r) => r,
+                        Err(_) => {
+                            warn!(
+                                "MQTT: {} s ohne jedes Lebenszeichen — Verbindung gilt als tot, \
+                                 Neuaufbau erzwungen",
+                                POLL_SILENCE_TIMEOUT.as_secs()
+                            );
+                            // `clean()` verschiebt Inflight-Nachrichten und
+                            // den Auftragskanal nach `pending` — GEDACHT zur
+                            // Wiederholung. Weil wir mit `clean_session`
+                            // verbinden, meldet der Broker aber nie eine
+                            // fortgesetzte Sitzung, und rumqttc leert
+                            // `pending` beim nächsten CONNACK. Netto wird
+                            // also verworfen — aber über diesen Umweg, nicht
+                            // durch `clean()` selbst (QS-Befund: der frühere
+                            // Kommentar behauptete das Falsche).
+                            //
+                            // Für uns ist das Verwerfen richtig: Was hier
+                            // liegt, sind fast ausschliesslich Positionen,
+                            // die längst überholt sind. Landung und
+                            // Flugbericht liegen als `retain` beim Broker,
+                            // sobald sie einmal durch sind.
+                            eventloop.clean();
+                            subscribed = false;
+                            if let Some(auf) = link_state_for(LinkEvent::WatchdogTimeout) {
+                                let _ = link_tx.send(auf);
+                            }
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                            continue;
+                        }
+                    };
                     match poll_result {
                         Ok(Event::Incoming(Packet::ConnAck(_))) => {
                             info!("MQTT CONNACK received");
-                            if !subscribed {
-                                match subscribe_client.subscribe(&subscribe_topic, QoS::AtLeastOnce).await {
-                                    Ok(()) => {
-                                        info!(topic = %subscribe_topic, "subscribed to integrity_flag topic");
-                                        subscribed = true;
-                                    }
-                                    Err(e) => {
-                                        warn!("integrity_flag subscribe failed: {e}");
-                                    }
-                                }
+                            // v1.5.7 (#mqtt-outage, QS-Befund): NICHT-blockierend.
+                            //
+                            // Hier lag der eigentliche Fünf-Stunden-Hänger aus
+                            // Michels Flug — nicht in einer halb offenen Leitung,
+                            // wie zuerst vermutet. `subscribe().await` wartet auf
+                            // Platz im internen Auftragskanal von rumqttc. Nach
+                            // einem längeren Ausfall ist der voll (bei 3-s-Takt
+                            // nach ~10 Minuten), und geleert wird er ausgerechnet
+                            // von DIESER Schleife. Der Aufruf blockierte also die
+                            // Stelle, die ihn hätte freimachen müssen: eine
+                            // Selbstverklemmung. Danach ging nichts mehr raus,
+                            // nicht einmal ein Lebenspuls — deshalb warf der
+                            // Broker den Client nach 90 s (1,5 × Keepalive)
+                            // hinaus, und der Client bemerkte fünf Stunden nichts.
+                            //
+                            // `try_subscribe` gibt bei vollem Kanal sofort auf;
+                            // `subscribed` bleibt dann false, und der Versuch
+                            // wiederholt sich beim nächsten Ereignis (siehe
+                            // Nachzieh-Block unter dem `match`), sobald wieder
+                            // Platz ist.
+                            try_subscribe_once(
+                                &subscribe_client,
+                                &subscribe_topic,
+                                &mut subscribed,
+                            );
+                            if let Some(auf) = link_state_for(LinkEvent::ConnAck) {
+                                let _ = link_tx.send(auf);
                             }
                         }
                         Ok(Event::Incoming(Packet::Publish(publish))) => {
@@ -1527,12 +1694,37 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                                 }
                             }
                         }
-                        Ok(_) => {}
+                        Ok(_) => {
+                            // Ausgehende Bestätigungen, PINGRESP, sonstiges
+                            // Eingehendes: kein Zustandswechsel. Läuft
+                            // trotzdem durch `link_state_for`, damit die
+                            // Entscheidung „was ändert den Leitungszustand"
+                            // an genau EINER Stelle steht.
+                            if let Some(auf) = link_state_for(LinkEvent::Other) {
+                                let _ = link_tx.send(auf);
+                            }
+                        }
                         Err(e) => {
                             warn!("MQTT poll error: {e} — backing off 5 s");
                             subscribed = false;  // re-subscribe on reconnect
+                            // Leitung weg → keine Positionen mehr in den
+                            // Auftragskanal schieben (siehe `link_tx`).
+                            if let Some(auf) = link_state_for(LinkEvent::PollError) {
+                                let _ = link_tx.send(auf);
+                            }
                             tokio::time::sleep(Duration::from_secs(5)).await;
                         }
+                    }
+                    // v1.5.7: Nachziehen. Scheiterte `try_subscribe` beim CONNACK
+                    // am vollen Kanal, holen wir es hier nach — bei jedem
+                    // Ereignis, kostenlos, solange es offen ist. Ohne das bliebe
+                    // die Anmeldung bis zum nächsten Verbindungsaufbau aus.
+                    if !subscribed {
+                        try_subscribe_once(
+                            &subscribe_client,
+                            &subscribe_topic,
+                            &mut subscribed,
+                        );
                     }
                 }
             }
@@ -1576,9 +1768,44 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
         // OK weil der Subscriber den position-payload schneller sieht
         // als ein Monitor connected.
 
-        while let Some(cmd) = rx.recv().await {
+        // v1.5.7 (#mqtt-outage): Ereignisse und Positionen aus ZWEI Quellen,
+        // `biased` = Ereignisse haben Vorrang. Damit kann ein Positionsstrom
+        // eine Landung oder ein PIREP nie wieder aushungern — der Fall, der
+        // Michels Flug die halbe Auswertung gekostet hat.
+        loop {
+            let cmd = tokio::select! {
+                biased;
+                maybe = rx.recv() => match maybe {
+                    Some(c) => c,
+                    None => break, // Sender weg → Ende
+                },
+                changed = pos_rx.changed() => {
+                    if changed.is_err() {
+                        break; // Sender weg → Ende
+                    }
+                    // v1.5.7 (QS-Runde 2): KEINE Positionen in den
+                    // Auftragskanal, solange die Leitung liegt. Genau das
+                    // hat ihn im Feldbefund nach ~10 Minuten wieder
+                    // vollgeschoben und die Landung ausgesperrt.
+                    if !should_publish_position(*link_rx.borrow()) {
+                        continue;
+                    }
+                    // Momentaufnahme ziehen und den Borrow SOFORT beenden —
+                    // über ein `.await` darf er nicht gehalten werden.
+                    let snapshot = pos_rx.borrow_and_update().clone();
+                    if let Some(p) = snapshot {
+                        // NICHT `publish_json`: Positionen duerfen den
+                        // Auftragskanal nicht belegen (siehe dort).
+                        publish_position_lossy(
+                            &pub_client,
+                            &cfg_for_pub.topic("position"),
+                            &p,
+                        );
+                    }
+                    continue;
+                }
+            };
             match cmd {
-                Cmd::Position(p) => publish_json(&pub_client, &cfg_for_pub.topic("position"), &p, QoS::AtMostOnce, true).await,
                 Cmd::Phase(p) => publish_json(&pub_client, &cfg_for_pub.topic("phase"), &p, QoS::AtLeastOnce, true).await,
                 Cmd::Block(p) => publish_json(&pub_client, &cfg_for_pub.topic("block"), &p, QoS::AtLeastOnce, true).await,
                 Cmd::Takeoff(p) => publish_json(&pub_client, &cfg_for_pub.topic("takeoff"), &p, QoS::AtLeastOnce, true).await,
@@ -1624,12 +1851,42 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
 
     Ok(Handle {
         tx,
+        pos_tx,
         integrity_rx: Arc::new(tokio::sync::Mutex::new(Some(integrity_rx))),
         shutdown_tx,
     })
 }
 
-async fn publish_json<T: Serialize>(client: &AsyncClient, topic: &str, payload: &T, qos: QoS, retain: bool) {
+/// v1.5.7 (#mqtt-outage): Anmeldung am integrity_flag-Kanal, ohne je zu
+/// blockieren. Siehe die ausführliche Begründung am CONNACK-Zweig.
+///
+/// Diese Funktion ist bewusst SYNCHRON. Das ist der eigentliche Schutz
+/// gegen den Rückfall: Wer hier je wieder ein `await` einbaut, bekommt
+/// keinen roten Test, sondern einen Übersetzungsfehler — und muss die
+/// Signatur ändern, also bewusst hinsehen. Ein Test könnte das nicht
+/// besser absichern (QS-Runde 3: eine Mutation ohne `await` verändert das
+/// Verhalten gar nicht, eine mit `await` kompiliert nicht).
+fn try_subscribe_once(client: &AsyncClient, topic: &str, subscribed: &mut bool) {
+    match client.try_subscribe(topic, QoS::AtLeastOnce) {
+        Ok(()) => {
+            info!(topic = %topic, "subscribed to integrity_flag topic");
+            *subscribed = true;
+        }
+        Err(e) => {
+            // Voller Auftragskanal ist der Normalfall nach einem Ausfall —
+            // kein Fehler, nur "später nochmal".
+            debug!("integrity_flag subscribe deferred: {e}");
+        }
+    }
+}
+
+async fn publish_json<T: Serialize>(
+    client: &AsyncClient,
+    topic: &str,
+    payload: &T,
+    qos: QoS,
+    retain: bool,
+) {
     let body = match serde_json::to_vec(payload) {
         Ok(b) => b,
         Err(e) => {
@@ -1637,8 +1894,50 @@ async fn publish_json<T: Serialize>(client: &AsyncClient, topic: &str, payload: 
             return;
         }
     };
-    if let Err(e) = client.publish(topic, qos, retain, body).await {
-        warn!("publish {topic} failed: {e}");
+    // v1.5.7 (#mqtt-outage): `publish()` wartet, bis im internen Vorrat
+    // von rumqttc Platz ist. Bei toter Leitung ist der voll und bleibt es
+    // — der Aufruf hängt dann unbegrenzt und legt die GANZE Sende-Schleife
+    // still (der dritte Weg, auf dem Michels Flug Daten verlor). Mit
+    // Frist: Der Versuch wird aufgegeben, die Schleife läuft weiter, der
+    // Wächter räumt die tote Verbindung ab.
+    //
+    // Verloren geht dabei nur diese eine Nachricht. Für Positionen ist das
+    // richtig (die nächste kommt in Sekunden); die einmaligen Ereignisse
+    // liegen als `retain` auf dem Broker, sobald sie einmal durch sind.
+    match tokio::time::timeout(PUBLISH_TIMEOUT, client.publish(topic, qos, retain, body)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => warn!("publish {topic} failed: {e}"),
+        Err(_) => warn!(
+            "publish {topic} nach {} s abgebrochen — Leitung blockiert",
+            PUBLISH_TIMEOUT.as_secs()
+        ),
+    }
+}
+
+/// v1.5.7 (#mqtt-outage, QS-Befund): Positionen NICHT-blockierend senden.
+///
+/// Der QS-Review hat gezeigt, dass die erste Fassung den Engpass nur
+/// verschoben hat: Positionen liefen zwar nicht mehr in der eigenen
+/// Warteschlange auf, belegten dafuer aber den internen Auftragskanal von
+/// rumqttc (Kapazitaet 200). Eine Landung, die danach kam, wartete auf
+/// Platz, der nie frei wurde — und wurde nach 20 s verworfen. Dasselbe
+/// Ergebnis wie vorher, nur eine Ebene tiefer.
+///
+/// Deshalb hier `try_publish`: Ist kein Platz, wird DIESE Position
+/// verworfen — sofort und ohne zu warten. Das ist genau richtig, denn
+/// drei Sekunden spaeter kommt die naechste, und der Kanal bleibt fuer
+/// das frei, was zaehlt: Landung, Flugbericht, Phasenwechsel.
+fn publish_position_lossy<T: Serialize>(client: &AsyncClient, topic: &str, payload: &T) {
+    let body = match serde_json::to_vec(payload) {
+        Ok(b) => b,
+        Err(e) => {
+            error!("serialize {topic} failed: {e}");
+            return;
+        }
+    };
+    // QoS 0 + retain: der Recorder braucht nur den jeweils neuesten Stand.
+    if let Err(e) = client.try_publish(topic, QoS::AtMostOnce, true, body) {
+        debug!("position publish skipped (Auftragskanal voll): {e}");
     }
 }
 
@@ -1770,5 +2069,86 @@ mod tests {
 
         let result = tokio::time::timeout(StdDuration::from_secs(2), handle).await;
         assert!(result.is_ok(), "a dropped sender must also unblock the drive loop");
+    }
+
+    // ---------------------------------------------------------------
+    // v1.5.7 (#mqtt-outage) — Feldbefund Michel, TAP58 SBBR→LPPT.
+    //
+    // Hergang: 4,5 h Netzausfall über dem Atlantik. Der interne
+    // Auftragskanal von rumqttc (Kapazität CMD_BUFFER) lief mit Positionen
+    // voll. Folge 1: `subscribe().await` beim Wiederverbinden blockierte
+    // auf genau diesem Kanal — und blockierte damit die Schleife, die ihn
+    // hätte leeren müssen (Selbstverklemmung, 5 h Stille). Folge 2: die
+    // Landung wartete auf Platz, der nie frei wurde, und wurde verworfen.
+    //
+    // Diese Tests arbeiten gegen einen ECHTEN `AsyncClient` mit winzigem
+    // Kanal und ungepolltem Eventloop — also gegen dieselbe Mechanik, die
+    // Michels Flug zerlegt hat. Die erste Test-Fassung prüfte nur
+    // Tokio-Bausteine und wäre grün geblieben, wenn man die halbe
+    // Publisher-Schleife löscht (QS-Befund).
+    // ---------------------------------------------------------------
+
+    // QS-Runden 2 und 3 haben die Tests hier zweimal als Selbstbestätigung
+    // entlarvt (synchrone Funktion in `timeout`; `include_str!`, das den
+    // eigenen Assert-Text findet). Die Lehre: Prüfe eine ENTSCHEIDUNG mit
+    // echten Eingaben, nicht die Anwesenheit von Quelltext.
+    //
+    // Deshalb sind die beiden Entscheidungen als eigene Funktionen
+    // herausgezogen. Was diese Tests NICHT leisten: nachzuweisen, dass die
+    // Funktionen an der richtigen Stelle der Publisher-Schleife aufgerufen
+    // werden. Das sichert nur das Lesen des Codes — ein echter Nachweis
+    // bräuchte einen MQTT-Broker im Test.
+
+    /// Die Zuordnung Ereignis → gemeldeter Leitungszustand. Ohne sie ist
+    /// die Positions-Sperre wirkungslos: Meldet niemand "Leitung weg",
+    /// läuft der Auftragskanal wieder voll; meldet niemand "Leitung da",
+    /// gehen nie wieder Positionen raus.
+    #[test]
+    fn the_link_state_follows_the_drive_loop_events() {
+        assert_eq!(link_state_for(LinkEvent::ConnAck), Some(true));
+        assert_eq!(link_state_for(LinkEvent::PollError), Some(false));
+        assert_eq!(link_state_for(LinkEvent::WatchdogTimeout), Some(false));
+        assert_eq!(
+            link_state_for(LinkEvent::Other),
+            None,
+            "normaler Verkehr darf den Zustand nicht umschalten"
+        );
+    }
+
+    /// Der Kern der Positions-Sperre: Bei liegender Leitung darf keine
+    /// Position in den Auftragskanal. Genau das hat ihn im Feldbefund
+    /// gefüllt und die Landung ausgesperrt.
+    #[test]
+    fn positions_only_go_out_while_the_link_is_up() {
+        assert!(should_publish_position(true), "steht die Leitung, wird gesendet");
+        assert!(
+            !should_publish_position(false),
+            "liegt die Leitung, darf NICHTS in den Auftragskanal — sonst \
+             verstopft er und die Landung kommt nicht mehr durch"
+        );
+    }
+
+    /// Einmalige Ereignisse (Landung, Flugbericht) bekommen eine
+    /// großzügige Einreih-Frist — sie entstehen pro Flug genau einmal.
+    #[test]
+    fn one_shot_events_get_a_generous_deadline() {
+        assert!(
+            EVENT_ENQUEUE_TIMEOUT >= Duration::from_secs(10),
+            "eine Viertelsekunde hat Michels Landung gekostet — nie wieder"
+        );
+    }
+
+    /// Die Fristen müssen zueinander passen: Ein einzelner Sendeversuch
+    /// muss vor dem Wächter aufgeben, sonst greift dieser nie.
+    #[test]
+    fn the_timeouts_are_ordered_sensibly() {
+        assert!(PUBLISH_TIMEOUT >= Duration::from_secs(10));
+        assert!(PUBLISH_TIMEOUT < POLL_SILENCE_TIMEOUT);
+        // Der Wächter ist das ZWEITE Netz: rumqttc erkennt eine tote
+        // Leitung über den Keepalive selbst (≤2 Perioden). Er darf deshalb
+        // später greifen — aber nicht so spät, dass ein Flug darunter
+        // leidet.
+        assert!(POLL_SILENCE_TIMEOUT > Duration::from_secs(120));
+        assert!(POLL_SILENCE_TIMEOUT <= Duration::from_secs(300));
     }
 }

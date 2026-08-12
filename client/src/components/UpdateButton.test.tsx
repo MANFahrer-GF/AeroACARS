@@ -240,6 +240,31 @@ describe("UpdateButton modal — regression guards for Svenny1974 v0.9.2 bug", (
     expect(lis.length).toBeGreaterThan(0);        // `- Default = aus` etc.
   });
 
+  it("rendert *kursiv* als <em> — und lässt **fett** dabei heil", () => {
+    // v1.5.7: Der Renderer kannte gar kein Kursiv. Weil unsere Notes am Ende
+    // immer eine kursive Fußzeile tragen, stand im Update-Dialog seit
+    // mehreren Versionen sichtbar `*…*` als Zeichen. Der Roh-Markdown-
+    // Wächter schlug erst an, als zwei kursive Absätze aufeinander folgten
+    // und ihre Sternchen zu `**` zusammenstießen — der Fehler lag also die
+    // ganze Zeit knapp unter der Schwelle. Dieser Test setzt sie tiefer.
+    const body = [
+      "*Keine Änderungen am Wire-Format.*",
+      "",
+      "*Zweite kursive Zeile direkt danach.*",
+      "",
+      "Ein **fetter** und ein *kursiver* Teil in einer Zeile.",
+    ].join("\n");
+    const checker = makeChecker(body);
+    const { container } = render(<UpdateButton checker={checker as never} />);
+    fireEvent.click(screen.getByRole("button", { name: /update/i }));
+
+    const notes = container.querySelector(".update-modal__notes")!;
+    expect(notes.querySelectorAll("em").length).toBe(3);
+    expect(notes.querySelectorAll("strong").length).toBe(1);
+    // Kein einziges Sternchen darf im sichtbaren Text übrig bleiben.
+    expect(notes.textContent ?? "").not.toContain("*");
+  });
+
   it("rendert Tabellen-Pipe-Zeilen als Klartext-Zeilen mit `·`-Separator", () => {
     const body = `| Check | Status |\n|---|---|\n| \`cargo test\` | ✅ 201/201 |`;
     const checker = makeChecker(body);

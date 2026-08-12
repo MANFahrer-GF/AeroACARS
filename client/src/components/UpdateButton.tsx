@@ -186,13 +186,24 @@ function parseReleaseNotes(body: string): ParsedLine[] {
     });
 }
 
-/** Wandelt Inline-Markdown (`**bold**`, `` `code` ``, `[txt](url)`) in
- *  React-Nodes um. Bewusst minimal — kein verschachteltes Markdown. */
+/** Wandelt Inline-Markdown (`**bold**`, `*kursiv*`, `` `code` ``,
+ *  `[txt](url)`) in React-Nodes um. Bewusst minimal — kein verschachteltes
+ *  Markdown.
+ *
+ *  v1.5.7: Kursiv kam dazu. Bis dahin fehlte es, und weil unsere Notes am
+ *  Ende immer eine kursive Fußzeile tragen ("*Keine Änderungen am
+ *  Wire-Format …*"), stand im Update-Dialog seit mehreren Versionen
+ *  sichtbar `*…*` als Zeichen. Aufgefallen ist es erst, als zwei kursive
+ *  Absätze aufeinander folgten und ihre Sternchen im gerenderten Text
+ *  zu `**` zusammenstießen — dann schlug der Roh-Markdown-Wächter an.
+ *  Der Fehler war die ganze Zeit da, nur unter der Schwelle des Tests. */
 function renderInline(text: string): ReactNode[] {
-  // Pattern matched: **bold**, `code`, [text](url) — in dieser Reihenfolge
-  // (längste/spezifischste Pattern zuerst).
+  // Reihenfolge: längstes/spezifischstes Pattern zuerst. `**bold**` MUSS
+  // vor `*kursiv*` stehen, sonst frisst Kursiv die Fettdruck-Sternchen
+  // paarweise auf.
   const out: ReactNode[] = [];
-  const re = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
+  const re =
+    /(\*\*([^*]+)\*\*|\*([^*\s][^*]*?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
   let lastIdx = 0;
   let m: RegExpExecArray | null;
   let key = 0;
@@ -203,14 +214,16 @@ function renderInline(text: string): ReactNode[] {
     if (m[2] != null) {
       out.push(<strong key={key++}>{m[2]}</strong>);
     } else if (m[3] != null) {
-      out.push(<code key={key++}>{m[3]}</code>);
+      out.push(<em key={key++}>{m[3]}</em>);
     } else if (m[4] != null) {
+      out.push(<code key={key++}>{m[4]}</code>);
+    } else if (m[5] != null) {
       // Link: Text + URL als Klartext (Modal hat keinen Browser-Open-
       // Hook; URL haengen wir an damit Pilot sie zumindest copy-paste
       // kann). Spaeter ggf. via tauri shell.open() echter Link.
       out.push(
         <span key={key++}>
-          {m[4]} <code style={{ fontSize: "0.85em" }}>{m[5]}</code>
+          {m[5]} <code style={{ fontSize: "0.85em" }}>{m[6]}</code>
         </span>,
       );
     }

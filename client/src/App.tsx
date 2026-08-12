@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke } from "./lib/ipc";
+import { invoke, clearIpcCache } from "./lib/ipc";
 import { applyTheme, getInitialTheme, type Theme } from "./theme";
 import { hydrateSyncedStorage } from "./lib/syncedStorage";
 import { LoginPage } from "./components/LoginPage";
@@ -487,6 +487,12 @@ function App() {
     } catch {
       // Drop in-memory session even if the keyring call fails.
     }
+    // QS-Befund v1.5.7: Der Antwort-Zwischenspeicher MUSS hier geleert
+    // werden. Ohne das sah der nächste angemeldete Pilot beim ersten
+    // Rendern Logbuch, Flugzeuge und Flughäfen seines Vorgängers — die
+    // Leerfunktion existierte und war getestet, wurde aber nirgends
+    // aufgerufen.
+    clearIpcCache();
     setStatus({ kind: "loggedOut" });
     setTab("briefing");
   }

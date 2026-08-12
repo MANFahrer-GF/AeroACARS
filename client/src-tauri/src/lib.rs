@@ -23291,12 +23291,16 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             }
 
             // v0.5.11: MQTT live-tracking publish (best-effort,
-            // independent of phpVMS post). Publishing happens on a
-            // bounded mpsc — try_send drops at full buffer so a
-            // stalled broker can NEVER stall the streamer's hot
-            // path. Position is the high-frequency channel; the
-            // crate marks it QoS 0 retained for live-map snap-on-
-            // connect.
+            // independent of phpVMS post). Ein hängender Broker darf
+            // den Streamer NIE aufhalten.
+            //
+            // v1.5.7 (QS-Runde 4): Positionen laufen seither NICHT mehr
+            // über die beschränkte mpsc, sondern über einen `watch`, der
+            // nur den neuesten Wert hält (siehe aeroacars-mqtt: `Cmd` und
+            // `should_publish_position`) — der alte Kommentar beschrieb
+            // hier eine Mechanik, die es nicht mehr gibt. QoS 0 + retain
+            // bleibt, damit die Live-Karte beim Verbinden sofort einen
+            // Stand hat.
             {
                 let app_state = app.state::<AppState>();
                     let mqtt = app_state.mqtt.lock().await;

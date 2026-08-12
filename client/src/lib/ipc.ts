@@ -282,39 +282,74 @@ async function browserInvoke<T>(
 const CACHE_TTL_MS = 20_000;
 
 /**
- * Lesende Befehle, deren Antwort sich in Sekundenfrist nicht sinnvoll ändert.
- * Bewusst konservativ: alles Sicherheits-, Flug- oder Zustandsrelevante fehlt
- * hier absichtlich (`flight_status` kommt ohnehin als Ereignis im
- * Sekundentakt, nicht per Abfrage).
+ * Absolute Obergrenze fürs Ausliefern eines veralteten Werts.
+ *
+ * QS-Befund v1.5.7: Ohne diese Grenze konnte ein Wert BELIEBIG alt werden.
+ * Die Auffrischung schreibt nur in den Speicher zurück — eine Ansicht, die
+ * beim Öffnen einmal lädt (der Normalfall, alle Reiter werden beim Wechsel
+ * neu aufgebaut), zeigte den alten Stand und korrigierte sich nie. Jenseits
+ * dieser Grenze wird deshalb gewartet, bis frische Daten da sind.
+ */
+const CACHE_HARD_MAX_MS = 120_000;
+
+/**
+ * Lesende Befehle, deren Antwort sich in Sekundenfrist nicht sinnvoll
+ * ändert. AUSDRÜCKLICHE Liste, keine Namensheuristik: Wer künftig einen
+ * Befehl hinzufügt und ihn nicht einträgt, bekommt exakt das heutige
+ * Verhalten — nie ein falsches Ergebnis.
+ *
+ * QS-Befund v1.5.7 — die Liste war zu weit gefasst und hat mehrere
+ * absichtlich gebaute Aktualisierungswege gebrochen. Entfernt wurden:
+ *
+ *   `divert_nearest_airports` — GEFÄHRLICH: nimmt die Position NICHT als
+ *      Argument (sie kommt aus dem Programmzustand), der Schlüssel war also
+ *      sitzungsweit derselbe. Beim zweiten Flug einer Sitzung zeigte das
+ *      Divert-Fenster die Liste des ERSTEN Flugs — und der gewählte Platz
+ *      wandert als Zielflughafen ins PIREP.
+ *   `metar_get` — den Aktualisieren-Knopf drückt man GENAU DANN, wenn sich
+ *      das Wetter geändert hat (SPECI, Scherung, Sichtabfall).
+ *   `landing_list` — nach dem Löschen einer Landung kam sie zurück; und
+ *      der bewusste 5-s-Takt während des Ausrollens wäre ausgebremst.
+ *   `phpvms_get_bids` — hätte den v1.4.7-Fix rückgängig gemacht (Flug
+ *      erscheint nach dem Einreichen noch als nächster Flug).
+ *   `va_live_flights` — 8-s-Takt ist nach Feldrückmeldung so gewollt.
+ *   `logbook_stats` / `logbook_pireps` — direkt nach der Landung soll das
+ *      Logbuch den neuen Flug zeigen, nicht den Stand von vorher.
+ *   `news_fetch` — geringer Gewinn, aber verzögerte Meldungen.
+ *
+ * Übrig bleibt, was sich frühestens im Tagesrhythmus ändert.
  */
 const CACHEABLE = new Set<string>([
-  // Stammdaten — ändern sich, wenn überhaupt, im Tagesrhythmus
+  // Flughafen-Stammdaten — ändern sich nicht im Flug
   "airport_get",
-  "airport_ground_get",
-  "airport_ground_index",
+  // Flugzeug-Stammdaten aus phpVMS
   "phpvms_get_aircraft",
-  "fleet_list_at_airport",
-  "divert_nearest_airports",
-  // Listen, die eine Ansicht beim Öffnen zieht
-  "logbook_stats",
-  "logbook_pireps",
+  // Ein ABGESCHLOSSENER Flugbericht ändert sich nicht mehr
   "logbook_pirep",
-  "landing_list",
-  "phpvms_get_bids",
-  "news_fetch",
-  "va_live_flights",
-  // Wetter — der Anbieter aktualisiert ohnehin nur halbstündlich
-  "metar_get",
 ]);
 
 interface CacheSlot {
   at: number;
   value: unknown;
+  /** Aus welcher Cache-Generation dieser Wert stammt (siehe oben). */
+  gen: number;
   /** Läuft gerade eine Auffrischung? Verhindert Anfrage-Lawinen. */
   refreshing?: boolean;
 }
 
 const cache = new Map<string, CacheSlot>();
+
+/**
+ * Zähler gegen den Wettlauf beim Piloten-/VA-Wechsel (QS-Befund v1.5.7).
+ *
+ * Eine Auffrischung, die VOR dem Abmelden losgeschickt wurde, kam nach
+ * `clearIpcCache()` zurück und schrieb ihre Antwort in den frisch
+ * geleerten Speicher — der nächste Pilot sah dann Daten seines Vorgängers.
+ * Jede Antwort merkt sich jetzt, aus welcher "Generation" sie stammt;
+ * nach dem Leeren zählt der Wert hoch und verspätete Antworten werden
+ * verworfen.
+ */
+let cacheGeneration = 0;
 
 function cacheKey(cmd: string, args?: Record<string, unknown>): string {
   return args && Object.keys(args).length > 0
@@ -325,6 +360,9 @@ function cacheKey(cmd: string, args?: Record<string, unknown>): string {
 /** Zwischenspeicher leeren — nach Abmelden/VA-Wechsel aufrufen. */
 export function clearIpcCache(): void {
   cache.clear();
+  // Alles, was noch unterwegs ist, gehört ab jetzt zur alten Generation
+  // und darf den Speicher nicht mehr befüllen.
+  cacheGeneration++;
 }
 
 async function rawInvoke<T>(
@@ -338,18 +376,64 @@ async function rawInvoke<T>(
   return browserInvoke<T>(cmd, args);
 }
 
+/**
+ * Befehle, die die Sitzung beenden — danach darf NICHTS aus dem
+ * Zwischenspeicher des vorigen Piloten überleben.
+ *
+ * QS-Runde 4: Vorher hing das an einem einzelnen Aufruf in der
+ * Abmelde-Funktion. Den kann man löschen, ohne dass ein Test es merkt
+ * (bewiesen per Mutation) — genau der Fehler, der schon einmal passiert
+ * war (Leerfunktion existierte, wurde nirgends gerufen). Jetzt hängt das
+ * Leeren am Befehl selbst: Wer sich abmeldet, leert den Speicher, egal
+ * von welcher Stelle im Programm aus.
+ */
+const SESSION_ENDING = new Set<string>(["phpvms_logout"]);
+
 export async function invoke<T = unknown>(
   cmd: string,
   args?: Record<string, unknown>,
 ): Promise<T> {
+  if (SESSION_ENDING.has(cmd)) {
+    try {
+      return await rawInvoke<T>(cmd, args);
+    } finally {
+      // Auch wenn das Abmelden serverseitig scheitert: die lokale
+      // Sitzung ist beendet, die Daten dürfen nicht liegen bleiben.
+      clearIpcCache();
+    }
+  }
   if (!CACHEABLE.has(cmd)) return rawInvoke<T>(cmd, args);
 
   const key = cacheKey(cmd, args);
+  // Generation bei Aufrufbeginn festhalten — siehe `cacheGeneration`.
+  const gen = cacheGeneration;
   const slot = cache.get(key);
 
   if (slot && Date.now() - slot.at < CACHE_TTL_MS) {
     // Frisch genug — direkt zurück, ohne das Netz anzufassen.
     return slot.value as T;
+  }
+
+  // QS-Befund v1.5.7: jenseits der harten Grenze NICHT mehr ausliefern —
+  // lieber kurz warten als beliebig alte Zahlen zeigen.
+  // QS-Runde 4: `slot.gen` wurde geschrieben, aber nie gelesen — ein
+  // Feld, das wie Schutz aussieht und keiner ist. Jetzt zählt es: Ein
+  // Eintrag aus einer früheren Sitzung wird verworfen, auch wenn die
+  // Leerfunktion ihn (etwa nach einem Wettlauf) übersehen hat.
+  if (slot && slot.gen !== gen) {
+    cache.delete(key);
+    const fresh = await rawInvoke<T>(cmd, args);
+    cache.set(key, { at: Date.now(), value: fresh, gen });
+    return fresh;
+  }
+
+  if (slot && Date.now() - slot.at >= CACHE_HARD_MAX_MS) {
+    cache.delete(key);
+    const fresh = await rawInvoke<T>(cmd, args);
+    if (gen === cacheGeneration) {
+      cache.set(key, { at: Date.now(), value: fresh, gen });
+    }
+    return fresh;
   }
 
   if (slot) {
@@ -359,11 +443,16 @@ export async function invoke<T = unknown>(
     if (!slot.refreshing) {
       slot.refreshing = true;
       void rawInvoke<T>(cmd, args)
-        .then((fresh) => cache.set(key, { at: Date.now(), value: fresh }))
+        .then((fresh) => {
+          // Verspätete Antwort aus einer alten Sitzung: verwerfen.
+          if (gen !== cacheGeneration) return;
+          cache.set(key, { at: Date.now(), value: fresh, gen });
+        })
         .catch(() => {
-          // Auffrischung fehlgeschlagen: alten Wert behalten, aber als
-          // abgelaufen markieren, damit der nächste Aufruf es erneut
-          // versucht statt ewig Altes zu zeigen.
+          // Auffrischung fehlgeschlagen: alten Wert behalten und die
+          // Sperre lösen, damit der nächste Aufruf es erneut versucht.
+          // (Der Wert altert weiter; die harte Grenze oben zieht ihn
+          // irgendwann ohnehin aus dem Verkehr.)
           const s = cache.get(key);
           if (s) s.refreshing = false;
         });
@@ -373,7 +462,9 @@ export async function invoke<T = unknown>(
 
   // Erstaufruf — normal holen und merken. Fehler NICHT zwischenspeichern.
   const value = await rawInvoke<T>(cmd, args);
-  cache.set(key, { at: Date.now(), value });
+  if (gen === cacheGeneration) {
+    cache.set(key, { at: Date.now(), value, gen });
+  }
   return value;
 }
 
