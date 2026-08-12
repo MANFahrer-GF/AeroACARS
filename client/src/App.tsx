@@ -3,6 +3,9 @@ import { useTranslation } from "react-i18next";
 import { invoke, clearIpcCache } from "./lib/ipc";
 import { applyTheme, getInitialTheme, type Theme } from "./theme";
 import { hydrateSyncedStorage } from "./lib/syncedStorage";
+import {
+  chatAnGeladen, chatAnSpeichern, chatTonGeladen, chatTonSpeichern,
+} from "./lib/chatEinstellungen";
 import { LoginPage } from "./components/LoginPage";
 import { CockpitView } from "./components/CockpitView";
 import { BriefingView } from "./components/BriefingView";
@@ -169,16 +172,7 @@ function saveDebugMode(value: boolean) {
  *  removes one click from the happy path. Disabling forces the
  *  pilot to hit "Flug beenden" manually, useful when they want to
  *  inspect mass / fuel / activity log before submitting. */
-const CHAT_TON_STORAGE_KEY = "aeroacars.chat.ton";
-const CHAT_AN_STORAGE_KEY = "aeroacars.chat.an";
-/** Chat beim ersten Start AN — wer ihn nicht will, schaltet ihn aus. */
-function loadChatAn(): boolean {
-  return localStorage.getItem(CHAT_AN_STORAGE_KEY) !== "0";
-}
-/** Ton beim ersten Start AN — wer ihn nicht will, schaltet ihn aus. */
-function loadChatTon(): boolean {
-  return localStorage.getItem(CHAT_TON_STORAGE_KEY) !== "0";
-}
+
 
 function loadAutoFile(): boolean {
   const v = localStorage.getItem(AUTO_FILE_STORAGE_KEY);
@@ -221,8 +215,8 @@ function App() {
   // Ungelesene Zurufe. Zaehlt nur, solange der Chat NICHT die offene Ansicht
   // ist — wer hinsieht, hat gelesen.
   const [chatUngelesen, setChatUngelesen] = useState(0);
-  const [chatTonAn, setChatTonAn] = useState<boolean>(() => loadChatTon());
-  const [chatAn, setChatAn] = useState<boolean>(() => loadChatAn());
+  const [chatTonAn, setChatTonAn] = useState<boolean>(() => chatTonGeladen());
+  const [chatAn, setChatAn] = useState<boolean>(() => chatAnGeladen());
   // Refs statt Abhaengigkeiten: der Empfaenger soll EINMAL registriert
   // werden und trotzdem den aktuellen Reiter und die aktuelle Phase sehen.
   const [status, setStatus] = useState<SessionStatus>({ kind: "loading" });
@@ -856,14 +850,14 @@ function App() {
           chatAn={chatAn}
           onChatAnChange={(next) => {
             setChatAn(next);
-            localStorage.setItem(CHAT_AN_STORAGE_KEY, next ? "1" : "0");
+            chatAnSpeichern(next);
             // Aus heisst aus: der offene Reiter darf nicht stehen bleiben.
             if (!next) { setChatUngelesen(0); setTab((a) => (a === "chat" ? "cockpit" : a)); }
           }}
           chatTon={chatTonAn}
           onChatTonChange={(next) => {
             setChatTonAn(next);
-            localStorage.setItem(CHAT_TON_STORAGE_KEY, next ? "1" : "0");
+            chatTonSpeichern(next);
           }}
           minimizeToTray={minimizeToTray}
           onMinimizeToTrayChange={(next) => {
