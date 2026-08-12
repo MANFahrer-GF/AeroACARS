@@ -2139,7 +2139,9 @@
     "sys_inactive": "Recorder inactive",
     "sys_active": "Recorder active · {{sim}} · {{uplink}}",
     "sys_uplink_ok": "Uplink OK",
-    "sys_uplink_lost": "Connection lost"
+    "sys_uplink_lost": "Connection lost",
+    "layer_vatsim": "VATSIM",
+    "layer_vatsim_hint": "Sectors, controllers and other pilots from the VATSIM network"
   },
   "chat": {
     "title": "Pilot chat",
@@ -2188,5 +2190,17 @@
     "wer_unbekannt": "Who is flying shows once you fly",
     "zu_titel": "The chat is open while you are flying.",
     "zu_text": "Once the recording runs you can join in — and for 30 minutes after your flight report."
+  },
+  "cdm": {
+    "titel": "VATSIM CDM",
+    "fuss": "Page by VATSIM Spain. AeroACARS only displays it, sends nothing there and stores nothing from it.",
+    "oeffnen": "Open VDGS",
+    "nach_vorn": "Bring window to front",
+    "fehler": "The window could not be opened.",
+    "was_titel": "Your departure sequence on VATSIM.",
+    "was_text": "TOBT, TSAT and CTOT come from the CDM page by VATSIM Spain. It opens in its own AeroACARS window — you sign in once yourself with your VATSIM account, and the sign-in stays there.",
+    "warum_fenster": "Why a separate window and not in here: VATSIM does not allow their sign-in page to be embedded in another program — for good reason, otherwise someone could put a fake one in front of it.",
+    "knopf": "VATSIM CDM",
+    "knopf_titel": "Open your departure sequence on VATSIM (TOBT, TSAT, CTOT)"
   }
 }

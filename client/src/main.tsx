@@ -14,6 +14,7 @@ import {
   onReauthNeeded,
 } from "./lib/ipc";
 import { RemotePinGate } from "./components/RemotePinGate";
+import { VatsimCdmView } from "./components/VatsimCdmView";
 
 // v0.9.0 (#GlitchTip): Sentry-Init MUSS frueh laufen, sonst gehen
 // Bootstrap-Fehler im weissen Bildschirm unter. Init macht KEIN
@@ -63,7 +64,36 @@ if (isTauri) {
  * Ein spaeteres 401 ruft `clearRemoteToken()` in der ipc-Schicht, das ueber
  * `onReauthNeeded` hier zurueck in den Locked-State flippt — ohne Reload.
  */
+/**
+ * Vorschau einzelner Ansichten waehrend der Entwicklung.
+ *
+ * Im Browser laeuft der Client als Fernbedienung und ist deshalb hinter der
+ * PIN vom Sim-PC gesperrt — richtig fuer das Tablet, im Weg, wenn man nur
+ * eine Ansicht anschauen will. Dieser Weg existiert AUSSCHLIESSLICH im
+ * Entwicklungsmodus (`import.meta.env.DEV`); im gebauten Programm ist der
+ * Zweig gar nicht erst enthalten.
+ *
+ * Aufruf: http://localhost:1420/?vorschau=cdm
+ */
+function Vorschau({ was }: { was: string }) {
+  if (was === "cdm") {
+    return (
+      <SkinProvider>
+        <div style={{ height: "100vh", padding: 12, background: "var(--bg)" }}>
+          <VatsimCdmView />
+        </div>
+      </SkinProvider>
+    );
+  }
+  return <div style={{ padding: 24, fontFamily: "system-ui" }}>Unbekannte Vorschau: {was}</div>;
+}
+
 function Root() {
+  if (import.meta.env.DEV) {
+    const was = new URLSearchParams(window.location.search).get("vorschau");
+    if (was) return <Vorschau was={was} />;
+  }
+
   // Tauri: nie gesperrt. Browser: gesperrt bis ein Token da ist.
   const [unlocked, setUnlocked] = useState(() => isTauri || hasRemoteToken());
   // Wir warten im Browser einen Tick auf den QR-`?pin=`-Flow, damit das

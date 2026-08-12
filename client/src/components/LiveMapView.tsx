@@ -13,6 +13,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  buildAtcAirportFeatures, buildPilotFeatures, buildSectorFeatures,
+  buildSectorLabelFeatures, emptyFC, fetchVatsimData, loadBoundaries,
+  loadVatSpy, ratingLabel, esc as vatsimEsc,
+} from "../lib/vatsimKarte";
 import maplibregl, { type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { invoke } from "../lib/ipc";
@@ -295,7 +300,137 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   );
   const basemapRef = useRef<"auto" | "sat">(basemap);
   const [showVa, setShowVa] = useState(true); // VA-Verkehr ein-/ausblenden
+  // VATSIM-Overlay (Sektoren + Lotsen + fremde Piloten). Standard AUS und
+  // gemerkt: das ist eine bewusste Zuschaltung, kein Dauerzustand — die
+  // Karte gehoert zuerst dem eigenen Flug.
+  const [showVatsim, setShowVatsim] = useState<boolean>(
+    () => typeof localStorage !== "undefined" && localStorage.getItem("aaLivemapVatsim") === "1",
+  );
+  const vatsimPilotsRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
+  const vatsimAtcRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
+  const vatsimSectorsRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
+  const vatsimSectorLabelsRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
   const [theme, setTheme] = useState<"dark" | "light">(readTheme());
+  // ── VATSIM-Overlay: Daten holen, solange es eingeschaltet ist ─────────
+  useEffect(() => {
+    try { localStorage.setItem("aaLivemapVatsim", showVatsim ? "1" : "0"); } catch { /* egal */ }
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const setzen = (
+      pilots: GeoJSON.FeatureCollection, atc: GeoJSON.FeatureCollection,
+      sectors: GeoJSON.FeatureCollection, labels: GeoJSON.FeatureCollection,
+    ) => {
+      vatsimPilotsRef.current = pilots;
+      vatsimAtcRef.current = atc;
+      vatsimSectorsRef.current = sectors;
+      vatsimSectorLabelsRef.current = labels;
+      (map.getSource("vatsim-pilots") as maplibregl.GeoJSONSource | undefined)?.setData(pilots);
+      (map.getSource("vatsim-atc-airports") as maplibregl.GeoJSONSource | undefined)?.setData(atc);
+      (map.getSource("vatsim-sectors") as maplibregl.GeoJSONSource | undefined)?.setData(sectors);
+      (map.getSource("vatsim-sector-labels") as maplibregl.GeoJSONSource | undefined)?.setData(labels);
+    };
+
+    if (!showVatsim) { setzen(emptyFC(), emptyFC(), emptyFC(), emptyFC()); return; }
+
+    let beendet = false;
+    let abbruch = new AbortController();
+    const holen = async () => {
+      abbruch.abort();
+      abbruch = new AbortController();
+      try {
+        const [daten, grenzen, vatspy] = await Promise.all([
+          fetchVatsimData(abbruch.signal),
+          loadBoundaries(abbruch.signal),
+          loadVatSpy(abbruch.signal),
+        ]);
+        if (beendet) return;
+        setzen(
+          buildPilotFeatures(daten.pilots),
+          buildAtcAirportFeatures(daten.controllers, vatspy.airports),
+          buildSectorFeatures(daten.controllers, grenzen, vatspy.prefixToBoundary),
+          buildSectorLabelFeatures(daten.controllers, grenzen, vatspy.prefixToBoundary),
+        );
+      } catch (e) {
+        if (!beendet && (e as Error)?.name !== "AbortError") {
+          console.warn("[vatsim] Abruf fehlgeschlagen:", e);
+        }
+      }
+    };
+    void holen();
+    const takt = setInterval(() => { void holen(); }, 30_000);
+    return () => { beendet = true; abbruch.abort(); clearInterval(takt); };
+  }, [showVatsim, mapReady]);
+
+  // Klickfenster fuer das VATSIM-Overlay — Klartext statt Rohdaten
+  // (dieselbe Bauform wie auf der Live-Karte der Webapp).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const aufPilot = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+      const f = e.features?.[0]; if (!f) return;
+      const p = f.properties ?? {};
+      const alt = Number(p.alt ?? 0), gs = Number(p.gs ?? 0);
+      new maplibregl.Popup({ closeButton: true, maxWidth: "260px" })
+        .setLngLat(e.lngLat)
+        .setHTML(
+          `<div class="vatsim-pop">` +
+          `<div class="vatsim-pop-title">${vatsimEsc(p.callsign)}</div>` +
+          `<div class="vatsim-pop-row">${vatsimEsc(p.dep ?? "—")} → ${vatsimEsc(p.arr ?? "—")}</div>` +
+          `<div class="vatsim-pop-row vatsim-pop-dim">${vatsimEsc(p.actype ?? "—")} · FL${String(Math.round(alt / 100)).padStart(3, "0")} · ${gs} kt</div>` +
+          `</div>`)
+        .addTo(map);
+    };
+    const aufAtc = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+      const f = e.features?.[0]; if (!f) return;
+      const p = f.properties ?? {};
+      let liste: { tag: string; callsign: string; frequency: string }[] = [];
+      try { liste = JSON.parse(String(p.positions ?? "[]")); } catch { liste = []; }
+      const zeilen = liste.map((x) =>
+        `<div class="vatsim-pop-row"><span class="vatsim-pop-chip">${vatsimEsc(x.tag)}</span>` +
+        `<b>${vatsimEsc(x.callsign)}</b>` +
+        `<span class="vatsim-pop-freq">${vatsimEsc(x.frequency)}</span></div>`).join("");
+      new maplibregl.Popup({ closeButton: true, maxWidth: "300px" })
+        .setLngLat(e.lngLat)
+        .setHTML(`<div class="vatsim-pop"><div class="vatsim-pop-title">${vatsimEsc(p.icao)} — ATC</div>${zeilen}</div>`)
+        .addTo(map);
+    };
+    const aufSektor = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+      const f = e.features?.[0]; if (!f) return;
+      const p = f.properties ?? {};
+      let liste: { callsign: string; frequency: string; rating: number }[] = [];
+      try { liste = JSON.parse(String(p.controllers ?? "[]")); } catch { liste = []; }
+      const zeilen = liste.map((c) =>
+        `<div class="vatsim-pop-row"><b>${vatsimEsc(c.callsign)}</b>` +
+        `<span class="vatsim-pop-freq">${vatsimEsc(c.frequency)}</span>` +
+        `<span class="vatsim-pop-chip">${vatsimEsc(ratingLabel(c.rating))}</span></div>`).join("");
+      new maplibregl.Popup({ closeButton: true, maxWidth: "300px" })
+        .setLngLat(e.lngLat)
+        .setHTML(`<div class="vatsim-pop"><div class="vatsim-pop-title">${vatsimEsc(p.fir)} — Center</div>${zeilen}</div>`)
+        .addTo(map);
+    };
+
+    const zeiger = () => { map.getCanvas().style.cursor = "pointer"; };
+    const zeigerWeg = () => { map.getCanvas().style.cursor = ""; };
+    map.on("click", "vatsim-pilots-symbol", aufPilot);
+    map.on("click", "vatsim-atc-airports-circle", aufAtc);
+    map.on("click", "vatsim-sectors-fill", aufSektor);
+    for (const id of ["vatsim-pilots-symbol", "vatsim-atc-airports-circle", "vatsim-sectors-fill"]) {
+      map.on("mouseenter", id, zeiger);
+      map.on("mouseleave", id, zeigerWeg);
+    }
+    return () => {
+      map.off("click", "vatsim-pilots-symbol", aufPilot);
+      map.off("click", "vatsim-atc-airports-circle", aufAtc);
+      map.off("click", "vatsim-sectors-fill", aufSektor);
+      for (const id of ["vatsim-pilots-symbol", "vatsim-atc-airports-circle", "vatsim-sectors-fill"]) {
+        map.off("mouseenter", id, zeiger);
+        map.off("mouseleave", id, zeigerWeg);
+      }
+    };
+  }, [mapReady]);
+
   // README §6/§2: next booked flight, shown in the idle empty-state card AND
   // the header's idle context line — fetched once per active-flight-identity
   // so both read the same answer instead of polling `phpvms_get_bids` twice.
@@ -585,6 +720,110 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     // `sat` oben) — helle Linien, dunkle Halos. Das Rollweg-Gruen ist bewusst
     // kraeftig: es muss sowohl auf grauem Beton (Satellit) als auch auf der
     // dunklen Karte stehen.
+    // ── VATSIM-Overlay — dieselbe ruhige Bauform wie auf der Live-Karte
+    //    der Webapp (12.08.2026): Flaeche kaum getoент, duenne Kante,
+    //    Kennung + Frequenz IN der Flaeche. Quellen immer anlegen; ob
+    //    Daten drinstehen, entscheidet der Poll (showVatsim).
+    if (!map.getSource("vatsim-sectors")) {
+      map.addSource("vatsim-sectors", { type: "geojson", data: vatsimSectorsRef.current });
+    }
+    if (!map.getLayer("vatsim-sectors-fill")) {
+      map.addLayer({
+        id: "vatsim-sectors-fill", type: "fill", source: "vatsim-sectors",
+        paint: { "fill-color": "#22d3ee", "fill-opacity": 0.055 },
+      });
+    }
+    if (!map.getLayer("vatsim-sectors-line")) {
+      map.addLayer({
+        id: "vatsim-sectors-line", type: "line", source: "vatsim-sectors",
+        paint: { "line-color": "#22d3ee", "line-width": 1.2, "line-opacity": 0.5 },
+      });
+    }
+    if (!map.getSource("vatsim-sector-labels")) {
+      map.addSource("vatsim-sector-labels", { type: "geojson", data: vatsimSectorLabelsRef.current });
+    }
+    if (!map.getLayer("vatsim-sector-labels-symbol")) {
+      try {
+        map.addLayer({
+          id: "vatsim-sector-labels-symbol", type: "symbol", source: "vatsim-sector-labels",
+          layout: {
+            "text-field": ["format",
+              ["get", "fir"], {},
+              "\n", {},
+              ["get", "freq"], { "font-scale": 0.8 },
+            ],
+            // CARTO-Glyphs: "Open Sans Regular" gibt es auf dark, light UND
+            // Satellit — "Noto Sans" NICHT (siehe BASEMAP_SAT-Kommentar).
+            "text-font": ["Open Sans Regular"],
+            "text-size": 13,
+            "text-line-height": 1.3,
+            "text-padding": 6,
+          },
+          paint: {
+            "text-color": "#7de3f4",
+            "text-opacity": 0.9,
+            "text-halo-color": "#07090e",
+            "text-halo-width": 2,
+          },
+        });
+      } catch { /* Style ohne glyphs → nur Flaeche. */ }
+    }
+    if (!map.getSource("vatsim-atc-airports")) {
+      map.addSource("vatsim-atc-airports", { type: "geojson", data: vatsimAtcRef.current });
+    }
+    if (!map.getLayer("vatsim-atc-airports-circle")) {
+      map.addLayer({
+        id: "vatsim-atc-airports-circle", type: "circle", source: "vatsim-atc-airports",
+        paint: {
+          "circle-radius": ["case", [">", ["get", "count"], 1], 7, 5.5],
+          "circle-color": "#0b2830",
+          "circle-stroke-width": 1.6,
+          "circle-stroke-color": "#22d3ee",
+          "circle-opacity": 0.9,
+        },
+      });
+    }
+    if (!map.getLayer("vatsim-atc-airports-label")) {
+      try {
+        map.addLayer({
+          id: "vatsim-atc-airports-label", type: "symbol", source: "vatsim-atc-airports",
+          layout: {
+            "text-field": ["get", "icao"],
+            "text-font": ["Open Sans Regular"],
+            "text-size": 10,
+            "text-offset": [0, 1.5],
+            "text-anchor": "top",
+            "text-padding": 4,
+          },
+          paint: {
+            "text-color": "#bfeef7",
+            "text-halo-color": "#07090e",
+            "text-halo-width": 2.4,
+          },
+        });
+      } catch { /* dito */ }
+    }
+    if (!map.getSource("vatsim-pilots")) {
+      map.addSource("vatsim-pilots", { type: "geojson", data: vatsimPilotsRef.current });
+    }
+    if (!map.hasImage("vatsim-plane")) {
+      const img = makeVatsimPlaneImage();
+      if (img) map.addImage("vatsim-plane", img, { pixelRatio: 2 });
+    }
+    if (!map.getLayer("vatsim-pilots-symbol")) {
+      map.addLayer({
+        id: "vatsim-pilots-symbol", type: "symbol", source: "vatsim-pilots",
+        layout: {
+          "icon-image": "vatsim-plane",
+          "icon-rotate": ["get", "hdg"],
+          "icon-rotation-alignment": "map",
+          "icon-allow-overlap": true,
+          "icon-size": 0.62,
+        },
+        paint: { "icon-opacity": 0.9 },
+      });
+    }
+
     if (!map.getSource(SRC_GROUND)) {
       map.addSource(SRC_GROUND, {
         type: "geojson",
@@ -1762,6 +2001,14 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                 >
                   {t("livemap.layer_va")}
                 </button>
+                <button
+                  type="button"
+                  className={`aa-livemap-toggle ${showVatsim ? "aa-livemap-toggle--active" : ""}`}
+                  onClick={() => setShowVatsim((v) => !v)}
+                  title={t("livemap.layer_vatsim_hint", "Sektoren, Lotsen und fremde Piloten aus dem VATSIM-Netz")}
+                >
+                  {t("livemap.layer_vatsim", "VATSIM")}
+                </button>
               </div>
             </div>
 
@@ -1945,3 +2192,28 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   );
 }
 
+
+
+/** Gelbes Chevron fuer fremde VATSIM-Piloten — identisch zur Webapp-Karte. */
+function makeVatsimPlaneImage(): ImageData | null {
+  const size = 48; // 24px @ pixelRatio 2
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.clearRect(0, 0, size, size);
+  const cx = size / 2;
+  ctx.fillStyle = "#f2c14e";
+  ctx.strokeStyle = "#1a1205";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx, 6);
+  ctx.lineTo(size - 8, size - 8);
+  ctx.lineTo(cx, size - 16);
+  ctx.lineTo(8, size - 8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  return ctx.getImageData(0, 0, size, size);
+}

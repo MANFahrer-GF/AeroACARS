@@ -2139,7 +2139,9 @@
     "sys_inactive": "Recorder inaktiv",
     "sys_active": "Recorder aktiv · {{sim}} · {{uplink}}",
     "sys_uplink_ok": "Uplink OK",
-    "sys_uplink_lost": "Verbindung verloren"
+    "sys_uplink_lost": "Verbindung verloren",
+    "layer_vatsim": "VATSIM",
+    "layer_vatsim_hint": "Sektoren, Lotsen und fremde Piloten aus dem VATSIM-Netz"
   },
   "chat": {
     "title": "Pilotenchat",
@@ -2188,5 +2190,17 @@
     "wer_unbekannt": "Wer fliegt, siehst du im Flug",
     "zu_titel": "Der Chat ist offen, solange du fliegst.",
     "zu_text": "Sobald die Aufzeichnung läuft, kannst du mitreden — und noch 30 Minuten nach dem Flugbericht."
+  },
+  "cdm": {
+    "titel": "VATSIM CDM",
+    "fuss": "Seite von VATSIM Spain. AeroACARS zeigt sie nur an, übergibt nichts dorthin und speichert nichts davon.",
+    "oeffnen": "VDGS öffnen",
+    "nach_vorn": "Fenster nach vorn holen",
+    "fehler": "Das Fenster ließ sich nicht öffnen.",
+    "was_titel": "Deine Abflugfolge auf VATSIM.",
+    "was_text": "TOBT, TSAT und CTOT kommen von der CDM-Seite von VATSIM Spain. Sie öffnet sich in einem eigenen Fenster von AeroACARS — anmelden musst du dich einmal selbst mit deinem VATSIM-Konto, danach bleibt die Anmeldung dort bestehen.",
+    "warum_fenster": "Warum ein eigenes Fenster und nicht hier drin: VATSIM erlaubt es nicht, die Anmeldeseite in ein anderes Programm einzubetten — aus gutem Grund, sonst könnte jemand eine falsche davorlegen.",
+    "knopf": "VATSIM CDM",
+    "knopf_titel": "Abflugfolge auf VATSIM öffnen (TOBT, TSAT, CTOT)"
   }
 }

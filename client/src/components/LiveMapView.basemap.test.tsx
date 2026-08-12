@@ -89,6 +89,8 @@ vi.mock("maplibre-gl", () => {
     }
     addLayer(o: { id: string }) { this.layers.add(o.id); return this; }
     addSource(id: string) { this.sources.add(id); return this; }
+    hasImage() { return false; }
+    addImage() { return this; }
     removeLayer(id: string) { this.layers.delete(id); return this; }
     removeSource(id: string) { this.sources.delete(id); this.sourceData.delete(id); return this; }
     setStyle() {

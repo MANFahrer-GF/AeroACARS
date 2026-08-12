@@ -414,3 +414,73 @@
 }
 .chat-einblendung__oeffnen:hover { border-color: var(--acc); color: var(--text); }
 .chat-einblendung__oeffnen:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+
+/* ── VATSIM CDM ────────────────────────────────────────────────────────
+   Aufbau wie jede andere Ansicht: Kopfzeile, Inhalt über die volle
+   Flaeche, Fusszeile. Die fremde Seite bekommt den ganzen Platz — sie ist
+   die Hauptsache, unsere Leiste nur der Rahmen. */
+.cdm {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+.cdm__kopf {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  flex: none;
+}
+.cdm__titel { margin: 0; font-size: var(--fs-500); letter-spacing: var(--ls-tight); }
+.cdm__quelle { font-family: var(--font-mono); font-size: var(--fs-200); color: var(--text-dim); }
+.cdm__knoepfe { margin-left: auto; display: flex; gap: 6px; }
+
+.cdm__flaeche { flex: 1 1 auto; min-height: 0; background: var(--surface); position: relative; }
+.cdm__rahmen { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+
+.cdm__erklaerung {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  padding: var(--sp-6);
+  text-align: center;
+}
+.cdm__erklaerung strong { font-size: var(--fs-500); }
+.cdm__erklaerung span { color: var(--text-dim); font-size: var(--fs-400); max-width: 64ch; line-height: 1.6; }
+.cdm__leise { font-size: var(--fs-300) !important; opacity: .8; }
+.cdm__fehler { color: var(--sem-warn); font-size: var(--fs-300); }
+
+.cdm__ersatz {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  padding: var(--sp-6);
+  text-align: center;
+}
+.cdm__ersatz strong { font-size: var(--fs-500); }
+.cdm__ersatz span { color: var(--text-dim); font-size: var(--fs-400); max-width: 62ch; line-height: 1.55; }
+
+.cdm__fuss {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-4);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  font-size: var(--fs-200);
+  color: var(--text-dim);
+  flex: none;
+}

@@ -10726,3 +10726,29 @@ input.datalink-block__input {
   color: var(--text);
   background: var(--surface-2);
 }
+
+/* VATSIM-CDM-Knopf in der Datalink-Kopfzeile (12.08.2026). Bewusst ruhig:
+   er ist ein Absprung, keine Hauptaktion — die bleibt "Verbinden". */
+.datalink-cdm-btn {
+  margin-left: 12px;
+  white-space: nowrap;
+}
+
+/* ── VATSIM-Klickfenster auf der Live-Karte (12.08.2026) ──────────────
+   MapLibre-Popups sind hell; unser Wrapper stylt den Inhalt. Frequenz in
+   Mono-Ziffern, Einstufung als Plaettchen — Klartext statt "R11". */
+.vatsim-pop { font-size: var(--fs-300); line-height: 1.5; color: #1c2733; min-width: 150px; }
+.vatsim-pop-title { font-weight: 700; font-size: var(--fs-400); margin-bottom: 4px; letter-spacing: .02em; }
+.vatsim-pop-row { display: flex; align-items: center; gap: 7px; padding: 2px 0; white-space: nowrap; }
+.vatsim-pop-dim { opacity: .65; }
+.vatsim-pop-freq {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: #0a66ce;
+}
+.vatsim-pop-chip {
+  font-family: var(--font-mono);
+  font-size: 9px; letter-spacing: .08em;
+  border: 1px solid rgba(0,0,0,.25); border-radius: 3px;
+  padding: 1px 5px; opacity: .75;
+}

@@ -21,9 +21,9 @@
 // separate real layout bugs in a single afternoon; see the comment at
 // the logon block's new home in DatalinkComposer.tsx for the full list.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, formatIpcError } from "../lib/ipc";
+import { invoke, formatIpcError, isTauri, openExternal } from "../lib/ipc";
 import { useCpdlcMessages } from "../hooks/useCpdlcMessages";
 import { useStationOnline } from "../hooks/useStationOnline";
 import { DatalinkComposer } from "./DatalinkComposer";
@@ -166,6 +166,20 @@ export function CpdlcPanel({ onOpenSettings }: Props) {
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings?.enabled]);
+
+  /** Oeffnet die CDM-Seite in einem eigenen Fenster der App. Im
+   *  LAN-Browser gibt es keine App-Fenster — dort der normale Weg. */
+  const oeffneVatsimCdm = useCallback(async () => {
+    if (!isTauri) {
+      void openExternal("https://vats.im/vdgs").catch(() => {});
+      return;
+    }
+    try {
+      await invoke("vdgs_fenster_oeffnen");
+    } catch {
+      void openExternal("https://vats.im/vdgs").catch(() => {});
+    }
+  }, []);
 
   const online = Boolean(status?.connected);
   const { messages, refresh: refreshMessages, lastFetchedAt } = useCpdlcMessages(online);
@@ -448,6 +462,19 @@ export function CpdlcPanel({ onOpenSettings }: Props) {
         <span className="datalink-status__poll">
           {lastFetchedAt != null && t("cpdlc.last_poll", { seconds: pollAgeSec })}
         </span>
+        {/* VATSIM CDM (12.08.2026): kein eigener Menueeintrag fuer einen
+            einzigen Knopf. Die Abflugfolge gehoert dorthin, wo man ohnehin
+            die Freigabe holt — und dort bestaetigt man auch seine TOBT.
+            Das Fenster oeffnet die Seite von VATSIM Spain; einbetten laesst
+            sie sich nicht (X-Frame-Options), siehe VatsimCdmView. */}
+        <button
+          type="button"
+          className="button datalink-cdm-btn"
+          onClick={() => void oeffneVatsimCdm()}
+          title={t("cdm.knopf_titel", "Abflugfolge auf VATSIM öffnen (TOBT, TSAT, CTOT)")}
+        >
+          {t("cdm.knopf", "VATSIM CDM")} ↗
+        </button>
       </header>
 
       {(status?.last_error || error || logonError || logonTimedOut || callsignNotice) && (

@@ -2094,7 +2094,9 @@
     "sys_inactive": "Recorder inattivo",
     "sys_active": "Recorder attivo · {{sim}} · {{uplink}}",
     "sys_uplink_ok": "Uplink OK",
-    "sys_uplink_lost": "Connessione persa"
+    "sys_uplink_lost": "Connessione persa",
+    "layer_vatsim": "VATSIM",
+    "layer_vatsim_hint": "Settori, controllori e altri piloti dalla rete VATSIM"
   },
   "chat": {
     "einblendung_ops": "Operazioni",
@@ -2105,5 +2107,17 @@
     "wer_unbekannt": "Chi vola lo vedi in volo",
     "zu_titel": "La chat è aperta mentre voli.",
     "zu_text": "Appena parte la registrazione puoi partecipare — e ancora 30 minuti dopo il rapporto di volo."
+  },
+  "cdm": {
+    "titel": "VATSIM CDM",
+    "fuss": "Pagina di VATSIM Spain. AeroACARS la mostra soltanto, non invia nulla e non memorizza nulla.",
+    "oeffnen": "Apri VDGS",
+    "nach_vorn": "Porta la finestra in primo piano",
+    "fehler": "Impossibile aprire la finestra.",
+    "was_titel": "La tua sequenza di partenza su VATSIM.",
+    "was_text": "TOBT, TSAT e CTOT arrivano dalla pagina CDM di VATSIM Spain. Si apre in una finestra di AeroACARS — l'accesso lo fai tu una volta con il tuo account VATSIM.",
+    "warum_fenster": "Perché una finestra separata: VATSIM non consente di incorporare la pagina di accesso in un altro programma.",
+    "knopf": "VATSIM CDM",
+    "knopf_titel": "Apri la sequenza di partenza su VATSIM"
   }
 }

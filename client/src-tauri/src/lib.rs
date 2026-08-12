@@ -10571,6 +10571,53 @@ async fn chat_verlauf() -> Result<serde_json::Value, UiError> {
     }
 }
 
+// ─── VATSIM CDM ─────────────────────────────────────────────────────────
+//
+// Öffnet `vats.im/vdgs` in einem EIGENEN Fenster der App — nicht in einem
+// Rahmen innerhalb der Oberfläche.
+//
+// Warum kein Rahmen: gemessen am 12.08.2026 setzt `auth.vatsim.net` den
+// Kopf `X-Frame-Options: SAMEORIGIN`. Eine Anmeldeseite, die sich einbetten
+// liesse, waere auch ein Sicherheitsproblem — man koennte eine falsche
+// davorlegen. Ein eigenes Fenster ist dagegen normale Navigation und
+// funktioniert; die Anmeldung bleibt darin bestehen, weil es dieselbe
+// WebView-Sitzung nutzt.
+//
+// Zweimal aufgerufen wird kein zweites Fenster gebaut, sondern das
+// vorhandene nach vorn geholt.
+#[tauri::command]
+async fn vdgs_fenster_oeffnen(app: AppHandle) -> Result<(), UiError> {
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+    if let Some(vorhanden) = app.get_webview_window("vdgs") {
+        let _ = vorhanden.unminimize();
+        let _ = vorhanden.show();
+        let _ = vorhanden.set_focus();
+        return Ok(());
+    }
+
+    let url: tauri::Url = "https://vats.im/vdgs"
+        .parse()
+        .map_err(|e| UiError::new("bad_url", format!("VDGS-Adresse ungültig: {e}")))?;
+
+    WebviewWindowBuilder::new(&app, "vdgs", WebviewUrl::External(url))
+        .title("VATSIM CDM — vats.im/vdgs")
+        .inner_size(1160.0, 820.0)
+        .min_inner_size(700.0, 520.0)
+        .resizable(true)
+        .build()
+        .map_err(|e| UiError::new("window_failed", format!("Fenster ließ sich nicht öffnen: {e}")))?;
+
+    Ok(())
+}
+
+/// Ist das VDGS-Fenster gerade offen? Die Oberfläche beschriftet ihren
+/// Knopf danach ("öffnen" gegen "nach vorn holen").
+#[tauri::command]
+async fn vdgs_fenster_offen(app: AppHandle) -> Result<bool, UiError> {
+    Ok(app.get_webview_window("vdgs").is_some())
+}
+
 /// Wer gerade fliegt — Name, Rufzeichen, Strecke.
 #[tauri::command]
 async fn chat_teilnehmer() -> Result<serde_json::Value, UiError> {
@@ -35188,6 +35235,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            vdgs_fenster_oeffnen,
+            vdgs_fenster_offen,
             landing_backup_now,
             landing_backup_restore,
             app_info,

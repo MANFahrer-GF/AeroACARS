@@ -245,8 +245,6 @@ export function Sidebar({
             onClick={onCpdlcOpen}
           />
         )}
-        {/* Direkt unter PDC: beides ist Kommunikation, und der Zaehler
-            funktioniert nach demselben Muster. */}
         {chatAn && (
         <Item
           icon={I.chat}

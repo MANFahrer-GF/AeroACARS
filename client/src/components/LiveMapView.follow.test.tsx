@@ -91,6 +91,10 @@ vi.mock("maplibre-gl", () => {
     isStyleLoaded() { return true; }
     setStyle() { return this; }
     addSource() { return this; }
+    // 12.08.2026 (VATSIM-Overlay): das Piloten-Symbol registriert ein
+    // Kartenbild. Der Nachbau kennt die Bild-API, wie die echte Karte.
+    hasImage() { return false; }
+    addImage() { return this; }
     addLayer() { return this; }
     getSource() { return { setData: () => {} }; }
     getLayer() { return {}; }
