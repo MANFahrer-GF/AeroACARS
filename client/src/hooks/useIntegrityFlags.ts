@@ -30,6 +30,11 @@ export interface IntegrityFlagPayload {
     mode: "continuous" | "gap_edge";
     detector: string;
     ruleset_version?: string;
+    /** Wie oft dieselbe Auffälligkeit in derselben Phase auftrat. Der
+     *  Server fasst Gleichlautendes seit dem 12.08.2026 zusammen, statt es
+     *  zu stapeln — fehlt das Feld (älterer Server), zählt der Eintrag
+     *  einfach als einer. */
+    anzahl?: number;
   };
 }
 
@@ -38,6 +43,18 @@ export interface IntegrityState {
   sessionSeverity: IntegritySeverity;
   /** Liste der zuletzt empfangenen Flags (max 50; FIFO). */
   recentFlags: IntegrityFlagPayload[];
+  /**
+   * Der schwerste bisher gemeldete Fall.
+   *
+   * Feldbefund 12.08.2026: Das Banner zeigte immer den ZULETZT
+   * eingegangenen Flag. Bei kritischer Sitzung stand deshalb im roten
+   * Kasten ein harmloser Hinweis ("Tankvorgang beim Boarding") — die
+   * Überschrift schrie, der Text passte nicht dazu, und der eigentliche
+   * Grund war nirgends zu sehen.
+   */
+  schwersterFlag: IntegrityFlagPayload | null;
+  /** Wie oft insgesamt gemeldet wurde, Serverzähler eingerechnet. */
+  meldungenGesamt: number;
   /** Wahr wenn der Benutzer den Banner dismissed hat (UI-only, kein
    *  persistenter State; Reset auf neue critical). */
   dismissed: boolean;
@@ -46,6 +63,8 @@ export interface IntegrityState {
 const INITIAL: IntegrityState = {
   sessionSeverity: "info",
   recentFlags: [],
+  schwersterFlag: null,
+  meldungenGesamt: 0,
   dismissed: false,
 };
 
@@ -73,9 +92,17 @@ export function useIntegrityFlags(): {
             const newSev = severityOrder[p.session_effective_severity] > severityOrder[prev.sessionSeverity]
               ? p.session_effective_severity
               : prev.sessionSeverity;
+            const bisher = prev.schwersterFlag;
+            const neuerIstSchwerer =
+              !bisher ||
+              severityOrder[p.flag.effective_severity] >
+                severityOrder[bisher.flag.effective_severity];
+            const alle = [p, ...prev.recentFlags].slice(0, 50);
             const next: IntegrityState = {
               sessionSeverity: newSev,
-              recentFlags: [p, ...prev.recentFlags].slice(0, 50),
+              recentFlags: alle,
+              schwersterFlag: neuerIstSchwerer ? p : bisher,
+              meldungenGesamt: prev.meldungenGesamt + (p.flag.anzahl ?? 1),
               // Re-show banner if a new CRITICAL arrives — even if previously
               // dismissed (don't let pilot hide a sim-state-reset).
               dismissed: p.session_effective_severity === "critical" ? false : prev.dismissed,

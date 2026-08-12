@@ -86,32 +86,53 @@ export function ChatView({
 
   const tippenGesperrt = phase != null && KEINE_TASTATUR.has(phase);
 
-  // ── Einstieg: Verlauf + wer fliegt ───────────────────────────────────
-  useEffect(() => {
-    let abgebrochen = false;
-    void (async () => {
-      try {
-        const v = await invoke<{ nachrichten: ChatNachricht[] }>("chat_verlauf");
-        if (!abgebrochen) setNachrichten(v?.nachrichten ?? []);
-      } catch { /* leer starten, MQTT füllt nach */ }
-      try {
-        const p = await invoke<{ teilnehmer: ChatTeilnehmer[] }>("chat_teilnehmer");
-        if (!abgebrochen) setTeilnehmer(p?.teilnehmer ?? []);
-      } catch { /* dito */ }
-    })();
-    return () => { abgebrochen = true; };
+  // ── Einstieg und Abgleich: Verlauf + wer fliegt ──────────────────────
+  //
+  // Beides in EINEM Weg, aus zwei Gründen:
+  //
+  //   1. Wettlauf beim Öffnen. Vorher setzte der Verlauf-Abruf die Liste
+  //      hart (`setNachrichten(v.nachrichten)`). Traf ein Zuruf über MQTT
+  //      ein, WÄHREND der Abruf noch lief, war er danach weg — der Abruf
+  //      kannte ihn ja noch nicht. Jetzt wird zusammengeführt statt
+  //      ersetzt; die Kennung entscheidet, was doppelt ist.
+  //
+  //   2. Löcher nach einem Verbindungsabriss. Wer im Funkschatten war
+  //      (Tablet aus, WLAN weg, Rechner im Schlaf), hat die Zurufe dieser
+  //      Zeit nie bekommen. Deshalb wird nicht nur beim Öffnen abgeglichen,
+  //      sondern auch im Takt und immer dann, wenn das Fenster wieder
+  //      sichtbar wird.
+  const abgleichen = useCallback(async () => {
+    try {
+      const v = await invoke<{ nachrichten: ChatNachricht[] }>("chat_verlauf");
+      const geholt = v?.nachrichten ?? [];
+      setNachrichten((alt) => {
+        const bekannt = new Set(alt.map((m) => m.id));
+        const neue = geholt.filter((m) => !bekannt.has(m.id));
+        if (neue.length === 0) return alt;
+        return [...alt, ...neue].sort((a, b) => a.ts - b.ts).slice(-200);
+      });
+    } catch { /* leer starten, MQTT füllt nach */ }
+    try {
+      const p = await invoke<{ teilnehmer: ChatTeilnehmer[] }>("chat_teilnehmer");
+      setTeilnehmer(p?.teilnehmer ?? []);
+    } catch { /* dito */ }
   }, []);
 
-  // Teilnehmerliste im Takt nachziehen: wer landet, verschwindet; wer
-  // startet, kommt dazu. Zwei Minuten reichen — das ist keine Live-Karte.
   useEffect(() => {
-    const id = setInterval(() => {
-      void invoke<{ teilnehmer: ChatTeilnehmer[] }>("chat_teilnehmer")
-        .then((p) => setTeilnehmer(p?.teilnehmer ?? []))
-        .catch(() => { /* nächster Takt */ });
-    }, 120_000);
-    return () => clearInterval(id);
-  }, []);
+    void abgleichen();
+    // Zwei Minuten reichen — das ist keine Live-Karte. Der Takt holt
+    // zugleich die Teilnehmer nach: wer landet, verschwindet; wer startet,
+    // kommt dazu.
+    const id = setInterval(() => { void abgleichen(); }, 120_000);
+    const beiSichtbar = () => {
+      if (document.visibilityState === "visible") void abgleichen();
+    };
+    document.addEventListener("visibilitychange", beiSichtbar);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", beiSichtbar);
+    };
+  }, [abgleichen]);
 
   // ── Eingehende Zurufe ────────────────────────────────────────────────
   useEffect(() => {

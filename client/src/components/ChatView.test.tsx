@@ -74,6 +74,63 @@ describe("Pilotenchat", () => {
     });
   });
 
+  // Der Wettlauf beim Öffnen: der Verlauf-Abruf braucht einen Moment, und
+  // in genau diesem Moment kann über MQTT ein Zuruf eintreffen. Vorher
+  // setzte der Abruf die Liste hart und der Zuruf war weg — ohne jede
+  // Spur, denn technisch war nichts schiefgegangen.
+  it("verliert keinen Zuruf, der während des Abrufs eintrifft", async () => {
+    let verlaufAufloesen: (w: unknown) => void = () => {};
+    tauriInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "chat_verlauf") return new Promise((res) => { verlaufAufloesen = res; });
+      if (cmd === "chat_teilnehmer") return Promise.resolve({ teilnehmer: TEILNEHMER });
+      return Promise.resolve(null);
+    });
+    render(<ChatView eigenePilotId="1" phase="CRUISE" tonAn={false} />);
+
+    // Der Zuruf kommt an, bevor der Verlauf da ist.
+    await waitFor(() => expect(hoerer.fn).toBeTruthy());
+    hoerer.fn!({ payload: {
+      id: 77, va_prefix: "gsg", von_pilot_id: "2", an_pilot_id: null,
+      ts: Date.now(), text: "Bin schon im Steigflug", callsign: "EZY 5077",
+      anzeigename: "Michel D",
+    } });
+    expect(await screen.findByText("Bin schon im Steigflug")).toBeTruthy();
+
+    // Jetzt trifft der Verlauf ein — mit einer ÄLTEREN Zeile, die den
+    // frischen Zuruf nicht verdrängen darf.
+    verlaufAufloesen({ nachrichten: [{
+      id: 12, va_prefix: "gsg", von_pilot_id: "9", an_pilot_id: null,
+      ts: Date.now() - 60_000, text: "Guten Morgen zusammen", callsign: "GEC 1306",
+      anzeigename: "Sven M",
+    }], fenster_stunden: 12 });
+
+    expect(await screen.findByText("Guten Morgen zusammen")).toBeTruthy();
+    expect(screen.getByText("Bin schon im Steigflug")).toBeTruthy();
+  });
+
+  // Wer im Funkschatten war (Tablet aus, WLAN weg, Rechner im Schlaf), hat
+  // die Zurufe dieser Zeit nie bekommen. Beim Zurückkommen wird abgeglichen.
+  it("holt Verpasstes nach, wenn das Fenster wieder sichtbar wird", async () => {
+    render(<ChatView eigenePilotId="1" phase="CRUISE" tonAn={false} />);
+    await waitFor(() => expect(tauriInvoke).toHaveBeenCalledWith("chat_verlauf", undefined));
+    const vorher = tauriInvoke.mock.calls.filter((c) => c[0] === "chat_verlauf").length;
+
+    tauriInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "chat_verlauf") return Promise.resolve({ nachrichten: [{
+        id: 99, va_prefix: "gsg", von_pilot_id: "2", an_pilot_id: null,
+        ts: Date.now(), text: "Warst du weg?", callsign: "EZY 5077", anzeigename: "Michel D",
+      }], fenster_stunden: 12 });
+      if (cmd === "chat_teilnehmer") return Promise.resolve({ teilnehmer: TEILNEHMER });
+      return Promise.resolve(null);
+    });
+
+    document.dispatchEvent(new Event("visibilitychange"));
+    await waitFor(() => {
+      expect(tauriInvoke.mock.calls.filter((c) => c[0] === "chat_verlauf").length).toBeGreaterThan(vorher);
+    });
+    expect(await screen.findByText("Warst du weg?")).toBeTruthy();
+  });
+
   it("zeigt Namen UND Rufzeichen UND Strecke — Rufzeichen allein nutzt nichts", async () => {
     render(<ChatView eigenePilotId="1" phase="CRUISE" tonAn={false} />);
     expect(await screen.findByText("Michel D")).toBeTruthy();

@@ -210,7 +210,137 @@ async function ensureTauriInvoke(): Promise<void> {
   await tauriInvokeLoad;
 }
 
-async function browserInvoke<T>(
+// ---------------------------------------------------------------------------
+// Buendelung (v1.5.9, #lan-traegheit Teil 3)
+// ---------------------------------------------------------------------------
+//
+// **Warum.** Eine Ansicht fragt beim Aufbau fuenf bis zwoelf Werte ab. Am PC
+// ist das native Bruecke — Mikrosekunden. Im LAN-Browser ist jede Abfrage ein
+// eigener HTTP-Rundlauf; auf dem Tablet summiert sich das sichtbar. Vorladen
+// und Zwischenspeicher (v1.5.7) helfen beim ZWEITEN Mal; beim ersten Aufbau
+// einer Ansicht gibt es nichts vorzuladen und nichts im Speicher.
+//
+// **Wie.** Alles, was im selben Arbeitsschritt (Tick) an Abfragen anfaellt,
+// geht in EINER Anfrage raus. Die Sammelphase ist eine Mikroaufgabe — kein
+// Timer, keine kuenstliche Wartezeit: der Aufruf verzoegert sich um weniger
+// als eine Millisekunde und spart dafuer bis zu elf WLAN-Rundlaeufe.
+//
+// **Was NICHT gebuendelt wird:** der Tauri-Pfad (dort ist ein Aufruf ohnehin
+// billig) und alles, was ueber die Obergrenze hinausgeht — der Rest geht als
+// naechstes Buendel. Faellt die Sammelroute aus (aelterer Client-Server, der
+// die Route nicht kennt), fallen die Aufrufe still auf Einzelanfragen
+// zurueck; die Bruecke bleibt damit abwaertskompatibel.
+
+/** Muss zur Obergrenze im Rust-Router passen (BATCH_MAX). */
+const BUENDEL_MAX = 24;
+
+interface OffenerAufruf {
+  cmd: string;
+  args?: Record<string, unknown>;
+  fertig: (wert: unknown) => void;
+  fehler: (e: unknown) => void;
+}
+
+let sammlung: OffenerAufruf[] = [];
+let sammlungGeplant = false;
+/** Wird auf true gesetzt, sobald die Bruecke die Sammelroute nicht kennt. */
+let buendelnMoeglich = true;
+
+function fehlerAus(status: number, cmd: string, body: unknown): unknown {
+  if (status === 422 || status === 404) {
+    const e = body as UiError | undefined;
+    if (e && typeof e.code === "string") return e;
+    return { code: "unknown", message: `HTTP ${status} (${cmd})` } satisfies UiError;
+  }
+  if (status === 401) {
+    clearRemoteToken();
+    return { code: "unauthorized", message: "Session abgelaufen" } satisfies UiError;
+  }
+  return new Error(`invoke ${cmd} failed: HTTP ${status}`);
+}
+
+async function sammlungAbschicken(): Promise<void> {
+  const stapel = sammlung.slice(0, BUENDEL_MAX);
+  sammlung = sammlung.slice(BUENDEL_MAX);
+  sammlungGeplant = false;
+  if (sammlung.length > 0) planeSammlung();
+  if (stapel.length === 0) return;
+
+  // Ein einzelner Aufruf gewinnt durch die Sammelroute nichts.
+  if (stapel.length === 1) {
+    const a = stapel[0];
+    einzelInvoke(a.cmd, a.args).then(a.fertig, a.fehler);
+    return;
+  }
+
+  try {
+    const token = currentToken();
+    const res = await fetch("/api/cmd-batch", {
+      method: "POST",
+      headers: {
+        "X-AeroACARS-Token": token ?? "",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(stapel.map((a) => ({ name: a.cmd, args: a.args ?? {} }))),
+    });
+    if (res.status === 404 || res.status === 405) {
+      // Die Gegenstelle kennt die Sammelroute nicht — ab jetzt einzeln.
+      buendelnMoeglich = false;
+      for (const a of stapel) einzelInvoke(a.cmd, a.args).then(a.fertig, a.fehler);
+      return;
+    }
+    if (res.status !== 200) {
+      const fehler = fehlerAus(res.status, "cmd-batch", undefined);
+      for (const a of stapel) a.fehler(fehler);
+      return;
+    }
+    const teile = (await res.json()) as Array<{
+      status: number; value?: unknown; error?: UiError;
+    }>;
+    stapel.forEach((a, i) => {
+      const t = teile[i];
+      if (!t) { a.fehler(new Error(`invoke ${a.cmd}: keine Antwort im Buendel`)); return; }
+      if (t.status === 200) a.fertig(t.value);
+      else a.fehler(fehlerAus(t.status, a.cmd, t.error));
+    });
+  } catch (e) {
+    // Netzfehler: nicht das ganze Buendel verlieren, sondern einzeln
+    // nachfassen. Ist die Leitung wirklich tot, scheitern die auch — dann
+    // aber mit dem Fehler, den die Aufrufer ohnehin erwarten.
+    for (const a of stapel) einzelInvoke(a.cmd, a.args).then(a.fertig, a.fehler);
+    void e;
+  }
+}
+
+function planeSammlung(): void {
+  if (sammlungGeplant) return;
+  sammlungGeplant = true;
+  queueMicrotask(() => { void sammlungAbschicken(); });
+}
+
+function browserInvoke<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  if (!buendelnMoeglich) return einzelInvoke<T>(cmd, args);
+  return new Promise<T>((fertig, fehler) => {
+    sammlung.push({
+      cmd, args,
+      fertig: (w) => fertig(w as T),
+      fehler,
+    });
+    planeSammlung();
+  });
+}
+
+/** Nur fuer Tests: Sammelzustand zuruecksetzen. */
+export function _buendelungZuruecksetzen(): void {
+  sammlung = [];
+  sammlungGeplant = false;
+  buendelnMoeglich = true;
+}
+
+async function einzelInvoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
 ): Promise<T> {

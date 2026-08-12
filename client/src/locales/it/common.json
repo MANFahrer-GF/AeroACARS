@@ -1393,10 +1393,10 @@
   "integrity": {
     "title_critical": "Problema di integrità dei dati rilevato",
     "title_anomaly": "Anomalia dei dati",
-    "flag_description": "{{type}} in fase {{phase}}",
-    "critical_warning": "Il PIREP sarà probabilmente contrassegnato come 'untrusted' e segnalato per la revisione dell'admin VA.",
     "flag_count": "{{count}} flag in questa sessione",
-    "dismiss": "Chiudi"
+    "dismiss": "Chiudi",
+    "folge_kritisch": "Il volo viene comunque valutato normalmente. Se però la registrazione resta lacunosa, alla fine potrebbe mancare l'atterraggio — in quel caso il rapporto va in revisione. Meglio tenere d'occhio il collegamento con il simulatore.",
+    "folge_harmlos": "Nessun intervento necessario — il volo viene valutato normalmente."
   },
   "resume": {
     "title": "Volo attivo rilevato",

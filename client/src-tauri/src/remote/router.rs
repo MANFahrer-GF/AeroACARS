@@ -224,6 +224,7 @@ pub fn build_router(ctx: RemoteContext, spa_dir: PathBuf) -> Router {
     Router::new()
         .route("/api/auth", post(auth_handler))
         .route("/api/cmd/{name}", post(cmd_handler))
+        .route("/api/cmd-batch", post(cmd_batch_handler))
         // SECURITY: the `/ws` route authenticates via the `?token=` query
         // parameter (a WebSocket upgrade can't carry a custom header from a
         // browser). That token therefore lives in the request URI. NO
@@ -381,6 +382,103 @@ async fn cmd_handler(
         )
             .into_response(),
     }
+}
+
+// ----------------------------------------------------------------------
+// POST /api/cmd-batch
+// ----------------------------------------------------------------------
+//
+// Ein Tab-Wechsel auf dem Tablet loest fuenf bis zwoelf Einzelabfragen aus.
+// Am PC sind das Mikrosekunden ueber die native Bruecke; ueber das WLAN ist
+// jede davon ein eigener Rundlauf mit Verbindungsaufbau. Genau das war der
+// Rest der Traegheit, den Vorladen und Zwischenspeicher (v1.5.7) nicht
+// erwischt haben: beim ERSTEN Aufbau einer Ansicht gibt es nichts
+// vorzuladen und nichts im Speicher.
+//
+// Diese Route nimmt mehrere Befehle in EINER Anfrage entgegen und liefert
+// die Ergebnisse in derselben Reihenfolge zurueck. Jeder Eintrag traegt
+// sein eigenes Ergebnis — ein fehlgeschlagener Befehl reisst die anderen
+// nicht mit, sonst waere ein Buendel schlechter als Einzelaufrufe.
+//
+// Sicherheit: dieselbe Route, derselbe Router, dieselben Pruefungen
+// (privates Netz + Token). Zusaetzlich eine harte Obergrenze, damit eine
+// einzelne Anfrage den Client nicht beliebig lange beschaeftigen kann.
+
+/// Hoechstzahl Befehle je Buendel.
+const BATCH_MAX: usize = 24;
+
+#[derive(Deserialize)]
+struct BatchEintrag {
+    name: String,
+    #[serde(default)]
+    args: Option<Value>,
+}
+
+async fn cmd_batch_handler(
+    State(ctx): State<RemoteContext>,
+    ConnectInfo(crate::remote::PeerAddr(peer)): ConnectInfo<crate::remote::PeerAddr>,
+    headers: HeaderMap,
+    raw: Bytes,
+) -> Response {
+    if let Some(r) = reject_non_private(peer) {
+        return r;
+    }
+    if !header_token_ok(&ctx, &headers) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+
+    let eintraege: Vec<BatchEintrag> = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "code": "bad_request", "message": format!("invalid JSON: {e}") })),
+            )
+                .into_response();
+        }
+    };
+    if eintraege.len() > BATCH_MAX {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "code": "batch_too_large",
+                "message": format!("at most {BATCH_MAX} commands per batch")
+            })),
+        )
+            .into_response();
+    }
+
+    let mut ergebnisse: Vec<Value> = Vec::with_capacity(eintraege.len());
+    for eintrag in eintraege {
+        let args = match eintrag.args {
+            Some(v @ Value::Object(_)) => v,
+            None | Some(Value::Null) => json!({}),
+            Some(_) => {
+                ergebnisse.push(json!({
+                    "status": 400,
+                    "error": { "code": "bad_request", "message": "args must be a JSON object" }
+                }));
+                continue;
+            }
+        };
+        let wert = match bridge::dispatch(&ctx, &eintrag.name, &args).await {
+            bridge::Dispatch::Handled(Ok(value)) => json!({ "status": 200, "value": value }),
+            bridge::Dispatch::Handled(Err(ui)) => json!({
+                "status": 422,
+                "error": { "code": ui.code, "message": ui.message }
+            }),
+            bridge::Dispatch::Unknown => json!({
+                "status": 404,
+                "error": {
+                    "code": "unknown_command",
+                    "message": format!("unknown command: {}", eintrag.name)
+                }
+            }),
+        };
+        ergebnisse.push(wert);
+    }
+
+    (StatusCode::OK, Json(Value::Array(ergebnisse))).into_response()
 }
 
 // ----------------------------------------------------------------------

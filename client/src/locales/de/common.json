@@ -1401,8 +1401,6 @@
   "integrity": {
     "title_critical": "Data-Integrity-Problem entdeckt",
     "title_anomaly": "Datenanomalie",
-    "flag_description": "{{type}} in Phase {{phase}}",
-    "critical_warning": "Der PIREP wird wahrscheinlich als 'untrusted' eingestuft und für VA-Admin-Review markiert.",
     "flag_count": "{{count}} Flags in dieser Session",
     "dismiss": "Schließen",
     "flag_type": {
@@ -1437,7 +1435,8 @@
     "flag_description_readable": "{{was}} {{wann}}",
     "flag_count_readable_one": "einmal in diesem Flug",
     "flag_count_readable_other": "{{count}}-mal in diesem Flug",
-    "harmless_hint": "Kein Eingriff nötig — der Flug wird normal gewertet."
+    "folge_kritisch": "Der Flug wird normal gewertet. Bleibt die Aufzeichnung aber lückenhaft, fehlt am Ende womöglich die Landung — dann geht der Bericht zur Prüfung. Am besten die Verbindung zum Simulator im Blick behalten.",
+    "folge_harmlos": "Kein Eingriff nötig — der Flug wird normal gewertet."
   },
   "resume": {
     "title": "Aktiver Flug erkannt",

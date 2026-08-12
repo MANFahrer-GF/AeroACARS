@@ -1401,8 +1401,6 @@
   "integrity": {
     "title_critical": "Data integrity problem detected",
     "title_anomaly": "Data anomaly",
-    "flag_description": "{{type}} in phase {{phase}}",
-    "critical_warning": "The PIREP will likely be marked as 'untrusted' and flagged for VA admin review.",
     "flag_count": "{{count}} flags this session",
     "dismiss": "Dismiss",
     "flag_type": {
@@ -1437,7 +1435,8 @@
     "flag_description_readable": "{{was}} {{wann}}",
     "flag_count_readable_one": "once on this flight",
     "flag_count_readable_other": "{{count}} times on this flight",
-    "harmless_hint": "No action needed — the flight is scored normally."
+    "folge_kritisch": "The flight is still scored normally. But if the recording stays patchy, the landing may be missing at the end — then the report goes to review. Best keep an eye on the connection to the simulator.",
+    "folge_harmlos": "Nothing to do — the flight is scored normally."
   },
   "resume": {
     "title": "Active flight detected",
