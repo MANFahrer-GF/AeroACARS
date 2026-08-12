@@ -368,7 +368,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         const sektoren = baueSektoren(bestand, fl, rufzeichen);
         setzen(
           buildPilotFeatures(daten.pilots),
-          buildAtcAirportFeatures(daten.controllers, vatspy.airports),
+          buildAtcAirportFeatures(daten.controllers, vatspy.airports, daten.atis),
           sektoren.flaechen,
           sektoren.marken,
         );
@@ -408,8 +408,10 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       const p = f.properties ?? {};
       let liste: { tag: string; callsign: string; frequency: string }[] = [];
       try { liste = JSON.parse(String(p.positions ?? "[]")); } catch { liste = []; }
+      const reihenfolge = ["ATIS", "DEL", "GND", "TWR", "APP"];
+      liste.sort((a, b) => reihenfolge.indexOf(a.tag) - reihenfolge.indexOf(b.tag));
       const zeilen = liste.map((x) =>
-        `<div class="vatsim-pop-row"><span class="vatsim-pop-chip">${vatsimEsc(x.tag)}</span>` +
+        `<div class="vatsim-pop-row"><span class="vatsim-pop-chip vatsim-pop-chip--${vatsimEsc(x.tag.toLowerCase())}">${vatsimEsc(x.tag)}</span>` +
         `<b>${vatsimEsc(x.callsign)}</b>` +
         `<span class="vatsim-pop-freq">${vatsimEsc(x.frequency)}</span></div>`).join("");
       new maplibregl.Popup({ closeButton: true, maxWidth: "300px" })
@@ -798,6 +800,22 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     if (!map.getSource("vatsim-atc-airports")) {
       map.addSource("vatsim-atc-airports", { type: "geojson", data: vatsimAtcRef.current });
     }
+    if (!map.getLayer("vatsim-atc-app-ring")) {
+      map.addLayer({
+        id: "vatsim-atc-app-ring", type: "circle", source: "vatsim-atc-airports",
+        filter: ["==", ["get", "hat_app"], 1],
+        paint: {
+          // Der Ring IST der Anflug (Radar-Bauform) — die Sektorflaeche
+          // der APP-Station wird bewusst nicht gefuellt, sie laege genau
+          // ueber dem Platz und allem, was dort beschriftet ist.
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 9, 8, 20],
+          "circle-color": "rgba(0,0,0,0)",
+          "circle-stroke-width": 1.6,
+          "circle-stroke-color": "#fbbf24",
+          "circle-stroke-opacity": 0.75,
+        },
+      });
+    }
     if (!map.getLayer("vatsim-atc-airports-circle")) {
       map.addLayer({
         id: "vatsim-atc-airports-circle", type: "circle", source: "vatsim-atc-airports",
@@ -815,20 +833,21 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         map.addLayer({
           id: "vatsim-atc-airports-label", type: "symbol", source: "vatsim-atc-airports",
           layout: {
-            // Zweite Zeile: welche Stationen online sind — D/G/T/A in festen
-            // Farben (Radar-Vorbild). Ein leerer Slot verschwindet einfach.
+            // EINE Zeile (Radar-Vorbild): ICAO, daneben die Stationsarten
+            // als feste Farb-Slots — A(TIS) gelb, D blau, G gruen, T rot.
+            // Approach ist KEIN Buchstabe, sondern der Ring um den Platz.
+            // Ein leerer Slot verschwindet einfach.
             "text-field": ["format",
               ["get", "icao"], {},
-              "\n", {},
+              "  ", {},
+              ["get", "t_atis"], { "text-color": "#eab308" },
               ["get", "t_del"], { "text-color": "#60a5fa" },
               ["get", "t_gnd"], { "text-color": "#4ade80" },
               ["get", "t_twr"], { "text-color": "#f87171" },
-              ["get", "t_app"], { "text-color": "#fbbf24" },
             ],
             "text-font": ["Open Sans Regular"],
             "text-size": 10,
-            "text-line-height": 1.2,
-            "text-offset": [0, 1.5],
+            "text-offset": [0, 1.4],
             "text-anchor": "top",
             "text-padding": 4,
           },

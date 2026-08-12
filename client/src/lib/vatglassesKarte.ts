@@ -51,6 +51,7 @@ interface RohDatei {
 interface Station {
   kuerzel: string;
   land: string;
+  typ: string;
   frequenz: string | null;
   gesprochen: string | null;
   farbe: string | null;
@@ -106,6 +107,7 @@ export class VatglassesBestand {
       this.stationen.set(`${land}/${k}`, {
         kuerzel: k,
         land,
+        typ: (p.type ?? "").toUpperCase(),
         frequenz: p.frequency ?? null,
         gesprochen: p.callsign ?? null,
         farbe: p.colours?.[0]?.hex ?? null,
@@ -221,6 +223,11 @@ export function baueSektoren(
         }
       }
       if (!besitzer) continue; // Unicom → keine Fläche, Stille ist Information.
+      // Anflug-Stationen füllen KEINE Fläche: ihr Block läge genau über dem
+      // Flughafen, und Label + Platz-Beschriftung + ATIS lagen dort
+      // übereinander (Feldbefund). Der Platz trägt stattdessen den
+      // Approach-Ring — die Bauform von VATSIM Radar.
+      if (besitzer.typ === "APP" || besitzer.typ === "DEP") continue;
 
       flaechen.push({
         type: "Feature",

@@ -10763,3 +10763,11 @@ input.datalink-block__input {
   color: var(--text-dim);
   min-width: 44px;
 }
+
+/* Stationsarten-Chips im Klickfenster — dieselben Farben wie die
+   Buchstaben auf der Karte (A gelb, D blau, G gruen, T rot, APP amber). */
+.vatsim-pop-chip--atis { color: #a16207; border-color: #a16207; opacity: 1; }
+.vatsim-pop-chip--del  { color: #1d4ed8; border-color: #1d4ed8; opacity: 1; }
+.vatsim-pop-chip--gnd  { color: #15803d; border-color: #15803d; opacity: 1; }
+.vatsim-pop-chip--twr  { color: #b91c1c; border-color: #b91c1c; opacity: 1; }
+.vatsim-pop-chip--app  { color: #b45309; border-color: #b45309; opacity: 1; }

@@ -41,6 +41,8 @@ export interface VatsimController {
 export interface VatsimData {
   pilots: VatsimPilot[];
   controllers: VatsimController[];
+  /** ATIS-Stationen — eigener Zweig im Feed, NICHT in controllers. */
+  atis: Array<{ callsign: string; frequency: string }>;
 }
 
 const VATSIM_DATA_URL = "https://data.vatsim.net/v3/vatsim-data.json";
@@ -64,6 +66,7 @@ export async function fetchVatsimData(signal?: AbortSignal): Promise<VatsimData>
   const json = (await res.json()) as {
     pilots?: unknown[];
     controllers?: unknown[];
+    atis?: unknown[];
   };
 
   const pilots: VatsimPilot[] = [];
@@ -105,7 +108,15 @@ export async function fetchVatsimData(signal?: AbortSignal): Promise<VatsimData>
     });
   }
 
-  return { pilots, controllers };
+  const atis: Array<{ callsign: string; frequency: string }> = [];
+  for (const raw of Array.isArray(json.atis) ? json.atis : []) {
+    const a = raw as Record<string, unknown>;
+    if (typeof a.callsign === "string") {
+      atis.push({ callsign: a.callsign, frequency: typeof a.frequency === "string" ? a.frequency : "" });
+    }
+  }
+
+  return { pilots, controllers, atis };
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +199,7 @@ interface AtcPosition {
 export function buildAtcAirportFeatures(
   controllers: VatsimController[],
   airportCoords?: Map<string, [number, number]>,
+  atis?: Array<{ callsign: string; frequency: string }>,
 ): GeoJSON.FeatureCollection<GeoJSON.Point> {
   const AIRPORT_FACILITIES = new Set([2, 3, 4, 5]);
   const byIcao = new Map<string, AtcPosition[]>();
@@ -202,6 +214,15 @@ export function buildAtcAirportFeatures(
       callsign: c.callsign,
       frequency: c.frequency,
     });
+    byIcao.set(icao, list);
+  }
+
+  // ATIS dazumischen — gleicher Schluessel (ICAO-Praefix des Rufzeichens).
+  for (const a of atis ?? []) {
+    const icao = callsignPrefix(a.callsign);
+    if (!icao) continue;
+    const list = byIcao.get(icao) ?? [];
+    list.push({ tag: "ATIS", callsign: a.callsign, frequency: a.frequency });
     byIcao.set(icao, list);
   }
 
@@ -223,12 +244,13 @@ export function buildAtcAirportFeatures(
         tone: hasTower ? "twr" : "gnd",
         positions: JSON.stringify(positions),
         // Radar-Vorbild (Thomas, 12.08.2026): welche Station online ist,
-        // muss OHNE Klick erkennbar sein. Je Art ein fester Buchstaben-
-        // Slot, damit die Kartenbeschriftung ihn fest einfaerben kann.
+        // muss OHNE Klick erkennbar sein — EINE Zeile fester Buchstaben-
+        // Slots (feste Farbe je Slot), Approach als Ring um den Platz.
+        t_atis: positions.some((p) => p.tag === "ATIS") ? "A " : "",
         t_del: positions.some((p) => p.tag === "DEL") ? "D " : "",
         t_gnd: positions.some((p) => p.tag === "GND") ? "G " : "",
-        t_twr: positions.some((p) => p.tag === "TWR") ? "T " : "",
-        t_app: positions.some((p) => p.tag === "APP") ? "A" : "",
+        t_twr: positions.some((p) => p.tag === "TWR") ? "T" : "",
+        hat_app: positions.some((p) => p.tag === "APP") ? 1 : 0,
       },
     });
   }
