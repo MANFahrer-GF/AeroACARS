@@ -13,7 +13,8 @@
     "log": "ACARS log",
     "settings": "Settings",
     "about": "About",
-    "cpdlc": "PDC/CPDLC"
+    "cpdlc": "PDC/CPDLC",
+    "chat": "Chat"
   },
   "nav": {
     "news": "News",
@@ -1403,7 +1404,40 @@
     "flag_description": "{{type}} in phase {{phase}}",
     "critical_warning": "The PIREP will likely be marked as 'untrusted' and flagged for VA admin review.",
     "flag_count": "{{count}} flags this session",
-    "dismiss": "Dismiss"
+    "dismiss": "Dismiss",
+    "flag_type": {
+      "POSITION_DELTA_EXCESSIVE": "Unusual position jump",
+      "ALTITUDE_DELTA_EXCESSIVE": "Unusual altitude jump",
+      "FUEL_RATE_IMPOSSIBLE": "Implausible fuel burn",
+      "FUEL_INCREASE_IN_FLIGHT": "Fuel increased in flight",
+      "WEIGHT_DELTA_EXCESSIVE": "Weight changed unexpectedly",
+      "GROUND_ELEVATION_MISMATCH": "Ground elevation does not match the airport",
+      "AIR_TO_GROUND_TELEPORT": "Jump from air to ground",
+      "SIM_STATE_RESET_SIGNATURE": "Sim appears to have been reloaded",
+      "TELEMETRY_GAP_SHORT": "Short data gap",
+      "TELEMETRY_GAP_LONG": "Longer data gap",
+      "UNKNOWN": "Unknown anomaly"
+    },
+    "phase_name": {
+      "BOARDING": "during boarding",
+      "PUSHBACK": "during pushback",
+      "TAXI_OUT": "while taxiing out",
+      "TAXI_IN": "while taxiing in",
+      "TAKEOFF_ROLL": "during the takeoff roll",
+      "TAKEOFF": "during takeoff",
+      "CLIMB": "in the climb",
+      "CRUISE": "in cruise",
+      "DESCENT": "in the descent",
+      "APPROACH": "on approach",
+      "FINAL": "on final",
+      "LANDING": "during landing",
+      "BLOCKS_ON": "after blocks on",
+      "ARRIVED": "after arrival"
+    },
+    "flag_description_readable": "{{was}} {{wann}}",
+    "flag_count_readable_one": "once on this flight",
+    "flag_count_readable_other": "{{count}} times on this flight",
+    "harmless_hint": "No action needed — the flight is scored normally."
   },
   "resume": {
     "title": "Active flight detected",
@@ -2107,5 +2141,34 @@
     "sys_active": "Recorder active · {{sim}} · {{uplink}}",
     "sys_uplink_ok": "Uplink OK",
     "sys_uplink_lost": "Connection lost"
+  },
+  "chat": {
+    "title": "Pilot chat",
+    "in_der_luft": "{{count}} airborne",
+    "wer_fliegt": "Who is flying right now",
+    "direkt_an": "Message {{name}} directly",
+    "direkt_an_kurz": "Direct to",
+    "an_alle": "to everyone instead",
+    "marke_an": "DIRECT",
+    "marke_von": "TO YOU ONLY",
+    "du": "you",
+    "leer": "Nothing said yet. The last twelve hours are shown.",
+    "zuruf": "Quick",
+    "senden": "Send",
+    "eingabe": "Write a message",
+    "platzhalter": "Say something short …",
+    "platzhalter_direkt": "Direct to {{name}} …",
+    "fokus": "The keyboard is in the chat now — the sim gets nothing.",
+    "fokus_zurueck": "gives it back.",
+    "gesperrt": "Final approach. Typing is put away — quick calls only. Reading still works.",
+    "ungelesen_one": "one unread message",
+    "ungelesen_other": "{{count}} unread messages",
+    "quick": {
+      "gate": "Almost at the gate",
+      "wer": "Anyone else out there?",
+      "delay": "Running late",
+      "taxi": "Taxiing out",
+      "down": "I'm down"
+    }
   }
 }

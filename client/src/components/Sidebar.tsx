@@ -23,6 +23,7 @@ export type Tab =
   | "cockpit"
   | "map"
   | "cpdlc"
+  | "chat"
   | "briefing"
   | "logbook"
   | "landing"
@@ -48,6 +49,11 @@ export function getInitialCollapsed(): boolean {
    vorgelesen. Strichstärke 1.6, currentColor. */
 
 const I = {
+  chat: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.6 9.6 0 0 1-3.5-.7L3 21l1.9-4.6A8.2 8.2 0 0 1 3.6 11.5a8.4 8.4 0 0 1 9-8.4 8.4 8.4 0 0 1 8.4 8.4z" />
+    </svg>
+  ),
   cockpit: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" />
@@ -169,6 +175,8 @@ export function Sidebar({
   cpdlcEnabled,
   cpdlcPendingCount,
   onCpdlcOpen,
+  chatUngelesen,
+  onChatOpen,
   unreadNews,
   hasActiveFlight,
   phpvmsConnected,
@@ -185,6 +193,8 @@ export function Sidebar({
   cpdlcEnabled: boolean;
   cpdlcPendingCount: number;
   onCpdlcOpen: () => void;
+  chatUngelesen: number;
+  onChatOpen: () => void;
   unreadNews: number;
   hasActiveFlight: boolean;
   phpvmsConnected: boolean;
@@ -233,6 +243,16 @@ export function Sidebar({
             onClick={onCpdlcOpen}
           />
         )}
+        {/* Direkt unter PDC: beides ist Kommunikation, und der Zaehler
+            funktioniert nach demselben Muster. */}
+        <Item
+          icon={I.chat}
+          label={t("tabs.chat", "Chat")}
+          active={tab === "chat"}
+          badge={chatUngelesen > 0 ? (chatUngelesen > 9 ? "9+" : chatUngelesen) : undefined}
+          badgeLabel={t("chat.ungelesen", { count: chatUngelesen, defaultValue: "{{count}} ungelesene Zurufe" })}
+          onClick={onChatOpen}
+        />
         <Item icon={I.logbook} label={t("tabs.logbook")} active={tab === "logbook"} onClick={() => setTab("logbook")} />
         <Item icon={I.landing} label={t("tabs.landing")} active={tab === "landing"} onClick={() => setTab("landing")} />
         <Item

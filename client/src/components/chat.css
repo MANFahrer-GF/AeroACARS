@@ -1,0 +1,284 @@
+/* Pilotenchat.
+ *
+ * Ausschliesslich ueber die Tokens aus App.css — keine eigenen Farben, keine
+ * eigenen Radien. Der Chat soll wie ein Teil des Programms aussehen und nicht
+ * wie ein Gast. Radien nur --r-md/--r-lg; volle Rundung bleibt dem
+ * Ungelesen-Zaehler vorbehalten, wo sie hingehoert.
+ */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.chat__kopf {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  flex: none;
+}
+.chat__titel {
+  font-size: var(--fs-400);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-tight);
+}
+.chat__wer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-200);
+  color: var(--text-dim);
+}
+.chat__punkt {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--sem-ok);
+  flex: none;
+}
+
+/* ── Wer fliegt: Name, Rufzeichen, Strecke ─────────────────────────────
+   Rufzeichen allein nutzt im Flug nichts — man weiss nicht, wer
+   dahintersteckt und wohin er unterwegs ist. */
+.chat__leiste {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  flex: none;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.chat__pilot {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: none;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 7px 11px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.chat__pilot:hover { border-color: var(--acc); }
+.chat__pilot:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.chat__pilot--ziel { border-color: var(--acc); background: var(--acc-quiet); }
+.chat__pilot-name {
+  font-size: var(--fs-400);
+  font-weight: var(--fw-bold);
+  color: var(--text);
+}
+.chat__pilot-ruf {
+  font-family: var(--font-mono);
+  font-size: var(--fs-200);
+  letter-spacing: var(--ls-mono);
+  color: var(--acc);
+}
+.chat__pilot-weg {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  color: var(--text-dim);
+}
+
+/* ── Verlauf ──────────────────────────────────────────────────────────── */
+.chat__log {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-2) var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.chat__leer {
+  color: var(--text-dim);
+  font-size: var(--fs-400);
+  padding: var(--sp-4);
+  text-align: center;
+}
+
+.chat__msg {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: var(--sp-2);
+  padding: 6px var(--sp-2);
+  border-radius: var(--r-md);
+  font-size: var(--fs-400);
+  align-items: baseline;
+}
+.chat__msg time {
+  font-family: var(--font-mono);
+  font-size: var(--fs-200);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.chat__who {
+  font-family: var(--font-mono);
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-300);
+  letter-spacing: var(--ls-mono);
+  color: var(--acc);
+  margin-right: 7px;
+}
+.chat__name {
+  color: var(--text-dim);
+  font-size: var(--fs-300);
+  margin-right: 7px;
+}
+/* Eigene Zurufe neutral tönen — der Akzent bleibt fuer "betrifft dich". */
+.chat__msg--eigen { background: var(--surface-3); }
+.chat__msg--eigen .chat__who { color: var(--text); }
+.chat__msg--direkt { background: var(--acc-quiet); }
+.chat__marke {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: 0.1em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--acc);
+  color: var(--acc);
+  margin-right: 6px;
+}
+
+/* ── Fusszeile: Schnellzurufe + Eingabe als EIN Bauteil ───────────────── */
+.chat__schnell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: var(--sp-3) var(--sp-3) 2px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--line);
+  flex: none;
+}
+.chat__schnell-marke {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-right: 2px;
+}
+.chat__schnell button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  border-radius: var(--r-md);
+  padding: 5px 10px;
+  font: inherit;
+  font-size: var(--fs-300);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.chat__schnell button:hover:not(:disabled) { border-color: var(--acc); color: var(--text); }
+.chat__schnell button:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.chat__schnell button:disabled { opacity: 0.5; cursor: default; }
+
+.chat__eingabe {
+  display: flex;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  flex: none;
+}
+.chat__eingabe input {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--text);
+  padding: 9px var(--sp-3);
+  font: inherit;
+  font-size: var(--fs-400);
+}
+.chat__eingabe input::placeholder { color: var(--text-dim); }
+.chat__eingabe input:focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; }
+
+/* ── Direktnachricht: an wen geht das gerade ──────────────────────────── */
+.chat__an-wen {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--acc-quiet);
+  border-top: 1px solid var(--acc);
+  font-size: var(--fs-400);
+  color: var(--acc);
+  flex: none;
+}
+.chat__an-wen b { color: var(--text); }
+.chat__an-ruf {
+  font-family: var(--font-mono);
+  font-size: var(--fs-300);
+  letter-spacing: var(--ls-mono);
+}
+.chat__an-weg {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--acc);
+  color: var(--acc);
+  border-radius: var(--r-md);
+  font: inherit;
+  font-size: var(--fs-300);
+  padding: 2px 9px;
+  cursor: pointer;
+}
+.chat__an-weg:hover { color: var(--text); }
+
+/* ── Zwei Warnungen, die im Cockpit zaehlen ───────────────────────────── */
+.chat__fokus {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--sem-warn-bg);
+  border-top: 1px solid var(--sem-warn);
+  font-size: var(--fs-300);
+  /* Volle Textfarbe, nicht gedaempft: das ist eine Warnung, kein Nebentext.
+     Gedaempft waere sie auf getoentem Grund grenzwertig lesbar — genau der
+     Befund vom Integritaets-Banner. */
+  color: var(--text);
+  flex: none;
+}
+.chat__fokus kbd {
+  font-family: var(--font-mono);
+  font-size: var(--fs-200);
+  border: 1px solid var(--sem-warn);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--sem-warn);
+}
+
+.chat__gesperrt {
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-400);
+  color: var(--text-dim);
+  flex: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat__pilot,
+  .chat__schnell button {
+    transition: none;
+  }
+}

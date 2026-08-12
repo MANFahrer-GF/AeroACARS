@@ -214,7 +214,8 @@
   padding: 6px var(--sp-4);
   border-left: 3px solid var(--sem-info);
   background: var(--sem-info-bg);
-  font-size: var(--fs-300);
+  /* 12px war fuer eine Warnung im Cockpit zu klein — eine Stufe hoch. */
+  font-size: var(--fs-400);
   border-radius: var(--r-sm);
 }
 .ui-notice--warn {
@@ -254,7 +255,12 @@
   font-weight: var(--fw-bold);
 }
 .ui-notice__detail {
-  color: var(--text-dim);
+  /* Feldbefund Thomas (12.08.2026): "kaum lesbar". Nachgemessen war die
+     gedaempfte Schrift auf getoentem Grund bei 4.53:1 — sie bestand die
+     Norm um drei Hundertstel und war im dunklen Cockpit trotzdem muehsam.
+     Inhaltlich war es ohnehin falsch: der `detail` IST die Meldung, kein
+     Nebentext. Mit --text sind es 12:1 (dunkel) bzw. 16:1 (hell). */
+  color: var(--text);
 }
 .ui-notice__actions {
   margin-left: auto;

@@ -13,7 +13,8 @@
     "log": "ACARS-Log",
     "settings": "Einstellungen",
     "about": "Über",
-    "cpdlc": "PDC/CPDLC"
+    "cpdlc": "PDC/CPDLC",
+    "chat": "Chat"
   },
   "nav": {
     "news": "Nachrichten",
@@ -1403,7 +1404,40 @@
     "flag_description": "{{type}} in Phase {{phase}}",
     "critical_warning": "Der PIREP wird wahrscheinlich als 'untrusted' eingestuft und für VA-Admin-Review markiert.",
     "flag_count": "{{count}} Flags in dieser Session",
-    "dismiss": "Schließen"
+    "dismiss": "Schließen",
+    "flag_type": {
+      "POSITION_DELTA_EXCESSIVE": "Ungewöhnlicher Positionssprung",
+      "ALTITUDE_DELTA_EXCESSIVE": "Ungewöhnlicher Höhensprung",
+      "FUEL_RATE_IMPOSSIBLE": "Unplausibler Treibstoffverbrauch",
+      "FUEL_INCREASE_IN_FLIGHT": "Treibstoff nahm im Flug zu",
+      "WEIGHT_DELTA_EXCESSIVE": "Gewicht sprang unerwartet",
+      "GROUND_ELEVATION_MISMATCH": "Bodenhöhe passt nicht zum Flughafen",
+      "AIR_TO_GROUND_TELEPORT": "Sprung aus der Luft auf den Boden",
+      "SIM_STATE_RESET_SIGNATURE": "Sim wurde offenbar neu geladen",
+      "TELEMETRY_GAP_SHORT": "Kurze Datenlücke",
+      "TELEMETRY_GAP_LONG": "Längere Datenlücke",
+      "UNKNOWN": "Unbekannte Auffälligkeit"
+    },
+    "phase_name": {
+      "BOARDING": "beim Boarding",
+      "PUSHBACK": "beim Zurückstoßen",
+      "TAXI_OUT": "beim Rollen zum Start",
+      "TAXI_IN": "beim Rollen zum Stand",
+      "TAKEOFF_ROLL": "beim Startlauf",
+      "TAKEOFF": "beim Start",
+      "CLIMB": "im Steigflug",
+      "CRUISE": "im Reiseflug",
+      "DESCENT": "im Sinkflug",
+      "APPROACH": "im Anflug",
+      "FINAL": "im Endanflug",
+      "LANDING": "bei der Landung",
+      "BLOCKS_ON": "nach dem Anstellen",
+      "ARRIVED": "nach der Ankunft"
+    },
+    "flag_description_readable": "{{was}} {{wann}}",
+    "flag_count_readable_one": "einmal in diesem Flug",
+    "flag_count_readable_other": "{{count}}-mal in diesem Flug",
+    "harmless_hint": "Kein Eingriff nötig — der Flug wird normal gewertet."
   },
   "resume": {
     "title": "Aktiver Flug erkannt",
@@ -2107,5 +2141,34 @@
     "sys_active": "Recorder aktiv · {{sim}} · {{uplink}}",
     "sys_uplink_ok": "Uplink OK",
     "sys_uplink_lost": "Verbindung verloren"
+  },
+  "chat": {
+    "title": "Pilotenchat",
+    "in_der_luft": "{{count}} in der Luft",
+    "wer_fliegt": "Wer gerade fliegt",
+    "direkt_an": "Direkt an {{name}} schreiben",
+    "direkt_an_kurz": "Direkt an",
+    "an_alle": "an alle stattdessen",
+    "marke_an": "DIREKT",
+    "marke_von": "NUR AN DICH",
+    "du": "du",
+    "leer": "Noch nichts gesagt. Zu sehen sind die letzten zwölf Stunden.",
+    "zuruf": "Zuruf",
+    "senden": "Senden",
+    "eingabe": "Nachricht schreiben",
+    "platzhalter": "Kurz zurufen …",
+    "platzhalter_direkt": "Direkt an {{name}} …",
+    "fokus": "Die Tastatur liegt jetzt im Chat — der Sim bekommt nichts.",
+    "fokus_zurueck": "gibt sie zurück.",
+    "gesperrt": "Endanflug. Tippen ist weggeräumt — nur noch Zurufe auf Knopfdruck. Lesen geht weiter.",
+    "ungelesen_one": "ein ungelesener Zuruf",
+    "ungelesen_other": "{{count}} ungelesene Zurufe",
+    "quick": {
+      "gate": "Bin gleich am Gate",
+      "wer": "Wer ist noch unterwegs?",
+      "delay": "Habe Verspätung",
+      "taxi": "Rolle raus",
+      "down": "Bin runter"
+    }
   }
 }

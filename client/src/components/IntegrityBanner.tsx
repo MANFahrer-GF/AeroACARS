@@ -35,7 +35,17 @@ export function IntegrityBanner() {
 
   const latestFlag = state.recentFlags[0];
   const flagType = latestFlag?.flag.type ?? "UNKNOWN";
-  const flagPhase = latestFlag?.flag.phase ?? "—";
+  const flagPhase = latestFlag?.flag.phase ?? "";
+
+  // Feldbefund Thomas (12.08.2026): "POSITION_DELTA_EXCESSIVE in Phase CLIMB"
+  // stand so im Cockpit — Maschinenbezeichner, für einen Piloten kryptisch.
+  // Jetzt Klartext, mit dem Rohnamen als Rückfallebene, damit ein neuer
+  // Melder-Typ nicht als leerer Text erscheint, sondern wenigstens erkennbar
+  // bleibt.
+  const wasIstLos = t(`integrity.flag_type.${flagType}`, { defaultValue: flagType });
+  const wannWar = flagPhase
+    ? t(`integrity.phase_name.${flagPhase}`, { defaultValue: flagPhase })
+    : "";
 
   const title = isCritical
     ? t("integrity.title_critical", "Data-Integrity-Problem entdeckt")
@@ -51,11 +61,13 @@ export function IntegrityBanner() {
       detail={
         <>
           <span>
-            {t("integrity.flag_description", {
-              defaultValue: "{{type}} in Phase {{phase}}",
-              type: flagType,
-              phase: flagPhase,
-            })}
+            {wannWar
+              ? t("integrity.flag_description_readable", {
+                  defaultValue: "{{was}} {{wann}}",
+                  was: wasIstLos,
+                  wann: wannWar,
+                })
+              : wasIstLos}
           </span>
           {isCritical && (
             <>
@@ -72,10 +84,21 @@ export function IntegrityBanner() {
             <>
               {" · "}
               <span>
-                {t("integrity.flag_count", {
-                  defaultValue: "{{count}} flags in dieser Session",
+                {t("integrity.flag_count_readable", {
+                  defaultValue: "{{count}}-mal in diesem Flug",
                   count: state.recentFlags.length,
                 })}
+              </span>
+            </>
+          )}
+          {!isCritical && (
+            <>
+              {" · "}
+              <span>
+                {t(
+                  "integrity.harmless_hint",
+                  "Kein Eingriff nötig — der Flug wird normal gewertet.",
+                )}
               </span>
             </>
           )}

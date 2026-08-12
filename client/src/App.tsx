@@ -94,6 +94,8 @@ import { Sidebar, getInitialCollapsed } from "./components/Sidebar";
 import { useSimSession } from "./hooks/useSimSession";
 import { simKindLabel } from "./lib/simKind";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
+import { listen } from "@tauri-apps/api/event";
+import { ChatView } from "./components/ChatView";
 import type { ActiveFlightInfo, LoginResult, Profile, UiError } from "./types";
 
 type SessionStatus =
@@ -103,7 +105,7 @@ type SessionStatus =
   | { kind: "loggedOut"; restoreError?: UiError }
   | { kind: "loggedIn"; session: LoginResult };
 
-type Tab = "cockpit" | "briefing" | "logbook" | "landing" | "news" | "log" | "map" | "cpdlc" | "settings" | "about" | "devpreview";
+type Tab = "cockpit" | "chat" | "briefing" | "logbook" | "landing" | "news" | "log" | "map" | "cpdlc" | "settings" | "about" | "devpreview";
 
 const DEBUG_STORAGE_KEY = "aeroacars.debug";
 const AUTO_FILE_STORAGE_KEY = "aeroacars.autoFile";
@@ -166,6 +168,12 @@ function saveDebugMode(value: boolean) {
  *  removes one click from the happy path. Disabling forces the
  *  pilot to hit "Flug beenden" manually, useful when they want to
  *  inspect mass / fuel / activity log before submitting. */
+const CHAT_TON_STORAGE_KEY = "aeroacars.chat.ton";
+/** Ton beim ersten Start AN — wer ihn nicht will, schaltet ihn aus. */
+function loadChatTon(): boolean {
+  return localStorage.getItem(CHAT_TON_STORAGE_KEY) !== "0";
+}
+
 function loadAutoFile(): boolean {
   const v = localStorage.getItem(AUTO_FILE_STORAGE_KEY);
   // Default true: only persisted "0" disables.
@@ -204,6 +212,10 @@ function App() {
   const [theme, setTheme] = useState<Theme>(() => getInitialTheme());
   // Redesign Stufe D: Seitenleiste eingeklappt (nur Symbole) — gemerkt.
   const [navCollapsed, setNavCollapsed] = useState<boolean>(() => getInitialCollapsed());
+  // Ungelesene Zurufe. Zaehlt nur, solange der Chat NICHT die offene Ansicht
+  // ist — wer hinsieht, hat gelesen.
+  const [chatUngelesen, setChatUngelesen] = useState(0);
+  const [chatTonAn] = useState<boolean>(() => loadChatTon());
   const [status, setStatus] = useState<SessionStatus>({ kind: "loading" });
   const [tab, setTab] = useState<Tab>("briefing");
   const [debugMode, setDebugMode] = useState<boolean>(() => loadDebugMode());
@@ -544,6 +556,27 @@ function App() {
       .catch(() => undefined);
   }, [status.kind]);
 
+  // Die Piloten-Kennung des Servers ist die phpVMS-Benutzer-id als Text
+  // (siehe provision.ts im Recorder) — daran erkennt der Chat die eigenen
+  // Zurufe und die an einen selbst gerichteten.
+  // Ungelesene Zurufe zaehlen, waehrend der Chat NICHT die offene Ansicht
+  // ist. Die Chat-Ansicht selbst setzt den Zaehler beim Anzeigen zurueck —
+  // wer hinsieht, hat gelesen. Der Ton laeuft bewusst NUR in der
+  // Chat-Ansicht: ein zweiter Hoerer hier wuerde bei offenem Chat doppelt
+  // klingeln.
+  useEffect(() => {
+    if (status.kind !== "loggedIn") return;
+    const p = listen("chat-nachricht", () => {
+      setTab((aktuell) => {
+        if (aktuell !== "chat") setChatUngelesen((n) => n + 1);
+        return aktuell;
+      });
+    });
+    return () => { void p.then((ab) => ab()); };
+  }, [status.kind]);
+
+  const pilotIdForChat =
+    status.kind === "loggedIn" ? String(status.session.profile.id) : null;
   const unreadNews = useUnreadNewsCount(status.kind === "loggedIn");
   const {
     enabled: cpdlcEnabled,
@@ -587,6 +620,11 @@ function App() {
           onCpdlcOpen={() => {
             markCpdlcSeen();
             setTab("cpdlc");
+          }}
+          chatUngelesen={chatUngelesen}
+          onChatOpen={() => {
+            setChatUngelesen(0);
+            setTab("chat");
           }}
           unreadNews={unreadNews}
           hasActiveFlight={activeFlight !== null}
@@ -753,6 +791,15 @@ function App() {
         <Suspense fallback={<div className="lazy-fallback">…</div>}>
           <CpdlcPanel onOpenSettings={() => setTab("settings")} />
         </Suspense>
+      )}
+
+      {status.kind === "loggedIn" && tab === "chat" && (
+        <ChatView
+          eigenePilotId={pilotIdForChat}
+          phase={activeFlight?.phase ?? null}
+          tonAn={chatTonAn}
+          onGelesen={() => setChatUngelesen(0)}
+        />
       )}
 
       {status.kind === "loggedIn" && tab === "settings" && (
