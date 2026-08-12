@@ -74,6 +74,24 @@ Solange noch v0.9.x-Clients da draußen sind:
 
 Ab v0.10.0+ funktioniert das Auto-Update wieder normal (Modal-Hotfix in v0.10.0).
 
+## 6b. Flow-Widget (MSFS-In-Sim-Panel) mitziehen
+
+Das Flow-Widget wird NICHT über den Updater verteilt, sondern als Zip im
+Nextcloud-Tauschordner (`~/Library/CloudStorage/Nextcloud-cloud.kant.ovh-
+ThomasKant/Daten Tausch Claude/`). Es veraltet deshalb lautlos, wenn man
+es beim Release vergisst (Anweisung Thomas, 13.08.2026: „bitte auch immer
+den letzten Stand von Flow mitziehen").
+
+- [ ] Prüfen, ob sich `msfs-panel/flow-widget/` seit dem letzten Paket
+      geändert hat:
+      `find msfs-panel/flow-widget -newer "<Tauschordner>/aeroacars-flow-widget-v*.zip" -type f`
+- [ ] Wenn ja: Version hochzählen, neu zippen, ins Tauschverzeichnis
+      legen (`aeroacars-flow-widget-vX.Y-fuer-export-YYYYMMDD.zip`),
+      altes Paket dort liegen lassen (Historie).
+- [ ] Wenn der Panel-SERVER im Client geändert wurde (client/src-tauri
+      panel_server, /panel/*-Routen): prüfen, ob das Widget die Änderung
+      braucht — Server und Widget sind ein Wire-Paar wie Client/Recorder.
+
 ## 7. Release-Tag + GitHub-Actions
 
 - [ ] PR auf `main` gemerget
