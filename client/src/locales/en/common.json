@@ -2170,6 +2170,8 @@
       "taxi": "Taxiing out",
       "down": "I'm down"
     },
-    "marke_ops": "OPS"
+    "marke_ops": "OPS",
+    "regeln": "12 h memory · ops can read along",
+    "regeln_titel": "Open the pilot chat privacy notice"
   }
 }

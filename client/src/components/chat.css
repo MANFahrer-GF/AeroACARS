@@ -47,6 +47,23 @@
   flex: none;
 }
 
+/* Die Regeln im Chat selbst, nicht nur auf der Rechtsseite. Zurueckhaltend
+   gesetzt — es ist ein Hinweis, keine Warnung. */
+.chat__regeln {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-200);
+  padding: 3px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chat__regeln:hover { border-color: var(--acc); color: var(--text); }
+.chat__regeln:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+
 /* ── Wer fliegt: Name, Rufzeichen, Strecke ─────────────────────────────
    Rufzeichen allein nutzt im Flug nichts — man weiss nicht, wer
    dahintersteckt und wohin er unterwegs ist. */

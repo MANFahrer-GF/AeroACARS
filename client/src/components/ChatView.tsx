@@ -21,7 +21,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, listen } from "../lib/ipc";
+import { invoke, listen, openExternal } from "../lib/ipc";
 import { Button } from "./ui";
 import "./chat.css";
 
@@ -188,6 +188,18 @@ export function ChatView({
           <span className="chat__punkt" />
           {t("chat.in_der_luft", { count: teilnehmer.length, defaultValue: "{{count}} in der Luft" })}
         </span>
+        {/* Die Regeln stehen dort, wo man sie braucht — nicht nur auf einer
+            Rechtsseite, die niemand aufschlaegt. Beide Saetze sind das
+            Wesentliche aus der Datenschutzerklaerung; der Knopf fuehrt zum
+            vollstaendigen Text. */}
+        <button
+          type="button"
+          className="chat__regeln"
+          onClick={() => void openExternal("https://german-sky-group.eu/page/impressum").catch(() => {})}
+          title={t("chat.regeln_titel", "Datenschutz zum Pilotenchat öffnen")}
+        >
+          {t("chat.regeln", "12 h Gedächtnis · Flugleitung liest mit")}
+        </button>
       </div>
 
       {sortiert.length > 0 && (

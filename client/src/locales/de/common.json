@@ -2170,6 +2170,8 @@
       "taxi": "Rolle raus",
       "down": "Bin runter"
     },
-    "marke_ops": "FLUGLEITUNG"
+    "marke_ops": "FLUGLEITUNG",
+    "regeln": "12 h Gedächtnis · Flugleitung liest mit",
+    "regeln_titel": "Datenschutz zum Pilotenchat öffnen"
   }
 }
