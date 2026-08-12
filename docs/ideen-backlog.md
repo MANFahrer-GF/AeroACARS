@@ -144,27 +144,46 @@ Zu beachten: Abruf höchstens alle 15 Sekunden (Rücksicht auf die Datenquelle),
 auf schwachen Geräten abschaltbar halten — hunderte Flugzeuge auf der Karte kosten
 Rechenzeit, die im Sim fehlt.
 
-### Stichpunkt: VDGS (Thomas, 12.08.2026)
+### VDGS — geklärt am 12.08.2026 (gemessen, nicht vermutet)
 
-Gehört hierher, weil es ein VATSIM-Thema ist. Noch nicht ausgearbeitet — hier steht
-nur, was wir schon wissen, damit es nicht wieder von vorn recherchiert wird.
+**Entschieden:** Es geht um `vats.im/vdgs`, das A-CDM-Werkzeug von VATSIM Spain.
+Die Andockanzeige am Gate ist NICHT gemeint.
 
-**Der Begriff ist doppelt belegt, und die Wahl entscheidet über den Aufwand:**
+**Was der Aufruf ergibt.** `vats.im/vdgs` leitet auf `cdm.vatsimspain.es/vdgs/`
+und von dort auf `auth.vatsim.net/oauth/authorize` mit **`client_id=1560`** und
+einer Rückleit-Adresse auf deren Server. Daraus folgt:
 
-- **`vats.im/vdgs` — das A-CDM-Werkzeug.** Von VATSIM Spain gebaut, inoffiziell.
-  Bildet Airport-CDM nach: EOBT aus dem VATSIM-Flugplan, TOBT und TSAT im Werkzeug.
-  Bereits recherchiert (siehe Gedächtnis `aeroacars-cdm-hoppie-research`). **Der
-  Haken von damals gilt weiter:** Login nur über VATSIM-Connect hinter Cloudflare,
-  und es gibt **keine Schreib-Schnittstelle für die EOBT**. Lesen ginge vermutlich,
-  Schreiben nicht.
-- **VDGS als Andockanzeige am Gate** — die Tafel, die Stand, Flugzeugtyp und
-  Restmeter zeigt. Dafür haben wir seit v1.5.5 die Zutaten im Haus: die
-  Stand-Erkennung aus den OSM-Bodendaten und die Gates im Flugbericht. Das wäre
-  eine reine Anzeige im Client, ohne fremde Schnittstelle.
+- **Wir können den Piloten dort nicht anmelden.** Die OAuth-Anwendung gehört
+  VATSIM Spain. Eine eigene VATSIM-Connect-Anwendung gäbe uns nur die Identität
+  des Piloten, keinen Zugang zu deren Daten.
+- **Keine Schnittstelle.** Die üblichen Pfade (`api.php`, `data.php`, `/api`,
+  `get.php`) antworten alle mit 404.
 
-**Was ich von dir brauche:** welche der beiden Lesarten du meinst. Beim ersten hängt
-alles an einer Anmeldung, die wir nicht automatisieren können; beim zweiten läge es
-in unserer Hand.
+**Und der wichtigste Punkt, bestätigt von Thomas:** Vorbelegen müssen wir gar
+nichts. Rufzeichen und EOBT holt sich die Seite aus dem VATSIM-Flugplan, TSAT,
+CTOT und ATFCM rechnet deren CDM-Logik. Der Pilot trägt dort selbst nur die TOBT
+ein. „Daten übergeben" fällt als Aufgabe damit weg.
+
+**Was bleibt — reine Anzeige, zwei Stufen:**
+
+1. **Fenster mit der Seite.** Ein Knopf in AeroACARS öffnet ein eigenes Fenster,
+   der Pilot meldet sich einmal mit VATSIM an, die Sitzung bleibt bestehen. Kein
+   Rahmen in unserer Oberfläche (Cloudflare, PHP-Sitzung, fremdes Eigentum),
+   sondern ein echtes Fenster. Klein, in etwa einer Stunde gebaut.
+2. **Werte ablesen und weiterreichen** — TOBT, TSAT, CTOT, Taxi-Zeit — und dort
+   zeigen, wo sie gebraucht werden: Cockpit-Fenster, Tablet, MSFS-Panel im Sim.
+   Das ist der eigentliche Gewinn: die Zeiten sehen, ohne aus dem Sim zu
+   wechseln.
+
+**Vorbehalte, die man beim Bauen kennen muss:**
+
+- Stufe 2 hängt am HTML der fremden Seite. Ändert es sich, steht bei uns „—".
+  Deshalb nur anzeigen und NICHTS davon in Flugberichte schreiben.
+- Die Seite pollt selbst („Retrying…"), es gibt also einen internen
+  Datenendpunkt. Im eingeloggten Zustand ist in einer Minute sichtbar, ob der
+  sich sauber ansprechen lässt — das wäre stabiler als das HTML.
+- Anständig wäre eine kurze Mail an VATSIM Spain: nicht um Erlaubnis, sondern
+  damit sie Bescheid geben können, wenn sich etwas ändert.
 
 ---
 
