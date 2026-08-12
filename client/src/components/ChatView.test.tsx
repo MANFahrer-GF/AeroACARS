@@ -124,11 +124,26 @@ describe("Pilotenchat", () => {
       return Promise.resolve(null);
     });
 
+    // Zwei Wechsel kurz hintereinander — die Drossel darf daraus nur eine
+    // Anfrage machen, sonst häufen sich beim Hin- und Herklicken zwischen
+    // Sim und Client die Rundläufe über die LAN-Brücke.
+    // Eine echte Abwesenheit dauert länger als ein Wimpernschlag — die Uhr
+    // eine Minute vorstellen, sonst prüft der Test nur die Drossel.
+    const echt = Date.now();
+    const uhr = vi.spyOn(Date, "now").mockReturnValue(echt + 60_000);
+
+    // Zwei Wechsel kurz hintereinander — die Drossel darf daraus nur eine
+    // Anfrage machen, sonst häufen sich beim Hin- und Herklicken zwischen
+    // Sim und Client die Rundläufe über die LAN-Brücke.
+    document.dispatchEvent(new Event("visibilitychange"));
     document.dispatchEvent(new Event("visibilitychange"));
     await waitFor(() => {
       expect(tauriInvoke.mock.calls.filter((c) => c[0] === "chat_verlauf").length).toBeGreaterThan(vorher);
     });
     expect(await screen.findByText("Warst du weg?")).toBeTruthy();
+    const nachher = tauriInvoke.mock.calls.filter((c) => c[0] === "chat_verlauf").length;
+    expect(nachher - vorher).toBe(1);
+    uhr.mockRestore();
   });
 
   it("zeigt Namen UND Rufzeichen UND Strecke — Rufzeichen allein nutzt nichts", async () => {

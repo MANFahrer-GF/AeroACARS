@@ -587,6 +587,40 @@ mod tests {
         assert!(reject_foreign_origin(&none).is_none());
     }
 
+    // Buendelung (v1.5.9): die Form, in der der Browser Befehle schickt.
+    // Ein Eintrag OHNE `args` ist gueltig (Befehl ohne Parameter) — vorher
+    // haette ein fehlendes Feld die ganze Anfrage verworfen und damit ein
+    // Buendel schlechter gemacht als Einzelaufrufe.
+    #[test]
+    fn batch_eintraege_lesen_sich_mit_und_ohne_args() {
+        let roh = r#"[
+            {"name":"airport_get","args":{"icao":"EDDB"}},
+            {"name":"logbook_stats"},
+            {"name":"landing_list","args":null}
+        ]"#;
+        let eintraege: Vec<BatchEintrag> = serde_json::from_str(roh).expect("sollte lesbar sein");
+        assert_eq!(eintraege.len(), 3);
+        assert_eq!(eintraege[0].name, "airport_get");
+        assert!(eintraege[0].args.is_some());
+        assert!(eintraege[1].args.is_none(), "ohne args ist gueltig");
+        // serde macht aus einem ausdruecklichen `null` ebenfalls `None` —
+        // im Handler landen beide Wege deshalb im selben Zweig und werden
+        // zu `{}`. (Der `Some(Value::Null)`-Zweig dort ist Guertel und
+        // Hosentraeger; er kostet nichts und faengt eine kuenftige
+        // Umstellung auf `#[serde(deserialize_with = ...)]` ab.)
+        assert!(eintraege[2].args.is_none(), "ausdrueckliches null zaehlt wie fehlend");
+    }
+
+    // Die Obergrenze ist die Bremse gegen eine Anfrage, die den Client
+    // beliebig lange beschaeftigt. Sie muss zur Zahl im Browser passen
+    // (BUENDEL_MAX in src/lib/ipc.ts) — der TypeScript-Test dort liest
+    // diese Datei und vergleicht, damit die beiden Zahlen nicht
+    // auseinanderlaufen.
+    #[test]
+    fn batch_obergrenze_ist_gesetzt() {
+        assert_eq!(BATCH_MAX, 24);
+    }
+
     #[test]
     fn resolve_spa_dir_dev_fallback_path_shape() {
         // We can't build an AppHandle in a unit test, but the dev fallback

@@ -45,9 +45,9 @@ beforeAll(async () => {
 
 afterEach(() => { cleanup(); melde = null; });
 
-function flag(art: string, phase: string, schwere: string, sitzung = schwere, anzahl?: number) {
+function flag(art: string, phase: string, schwere: string, sitzung = schwere, anzahl?: number, sitzungId = 1) {
   return {
-    session_id: 1,
+    session_id: sitzungId,
     session_effective_severity: sitzung,
     flag: {
       type: art, phase, base_severity: schwere, effective_severity: schwere,
@@ -98,6 +98,34 @@ describe("Integritätsmeldung", () => {
     // Ein Ereignis, das der Server bereits siebenfach zusammengefasst hat.
     await melden(flag("TELEMETRY_GAP_SHORT", "CRUISE", "anomaly", "anomaly", 7));
     expect(document.body.textContent).toContain("7-mal");
+  });
+
+  // Der Hook sammelt über die Laufzeit der App, nicht über den Flug. Ohne
+  // Reset stünde beim zweiten Flug die Meldung des ersten noch da — und
+  // seit dem Umbau auf "zeige den schwersten Fall" hätte der alte Fall den
+  // aktuellen überstrahlt.
+  it("fängt bei einem neuen Flug von vorn an", async () => {
+    render(<IntegrityBanner />);
+    await melden(flag("SIM_STATE_RESET_SIGNATURE", "CRUISE", "critical", "critical", undefined, 1));
+    expect(document.body.textContent).toContain(
+      deCommon.integrity.flag_type.SIM_STATE_RESET_SIGNATURE,
+    );
+
+    // Neuer Flug, neue Sitzungskennung, harmlosere Meldung.
+    await melden(flag("TELEMETRY_GAP_SHORT", "CLIMB", "anomaly", "anomaly", undefined, 2));
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain(deCommon.integrity.flag_type.SIM_STATE_RESET_SIGNATURE);
+    expect(text).toContain(deCommon.integrity.flag_type.TELEMETRY_GAP_SHORT);
+  });
+
+  it("zählt den Zähler beim neuen Flug ebenfalls zurück", async () => {
+    render(<IntegrityBanner />);
+    await melden(
+      flag("TELEMETRY_GAP_SHORT", "CRUISE", "anomaly", "anomaly", 5, 1),
+      flag("TELEMETRY_GAP_SHORT", "CRUISE", "anomaly", "anomaly", 2, 2),
+    );
+    expect(document.body.textContent).not.toContain("7-mal");
+    expect(document.body.textContent).toContain("2-mal");
   });
 
   it("bleibt bei einem reinen Hinweis ganz weg", async () => {

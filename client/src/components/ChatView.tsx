@@ -101,7 +101,16 @@ export function ChatView({
   //      Zeit nie bekommen. Deshalb wird nicht nur beim Öffnen abgeglichen,
   //      sondern auch im Takt und immer dann, wenn das Fenster wieder
   //      sichtbar wird.
-  const abgleichen = useCallback(async () => {
+  const letzterAbgleich = useRef(0);
+  const abgleichen = useCallback(async (erzwingen = false) => {
+    // QS 12.08.2026: Der Abgleich hängt auch am Sichtbarwerden des
+    // Fensters. Wer zwischen Sim und Client hin und her klickt, löst ihn
+    // dabei im Sekundentakt aus — über die LAN-Brücke wäre das eine Kette
+    // von Anfragen für nichts. Häufiger als alle 15 Sekunden lohnt es
+    // ohnehin nicht; der laufende Betrieb kommt über MQTT.
+    const jetzt = Date.now();
+    if (!erzwingen && jetzt - letzterAbgleich.current < 15_000) return;
+    letzterAbgleich.current = jetzt;
     try {
       const v = await invoke<{ nachrichten: ChatNachricht[] }>("chat_verlauf");
       const geholt = v?.nachrichten ?? [];
@@ -119,11 +128,11 @@ export function ChatView({
   }, []);
 
   useEffect(() => {
-    void abgleichen();
+    void abgleichen(true);
     // Zwei Minuten reichen — das ist keine Live-Karte. Der Takt holt
     // zugleich die Teilnehmer nach: wer landet, verschwindet; wer startet,
     // kommt dazu.
-    const id = setInterval(() => { void abgleichen(); }, 120_000);
+    const id = setInterval(() => { void abgleichen(true); }, 120_000);
     const beiSichtbar = () => {
       if (document.visibilityState === "visible") void abgleichen();
     };

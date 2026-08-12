@@ -58,6 +58,20 @@ export interface IntegrityState {
   /** Wahr wenn der Benutzer den Banner dismissed hat (UI-only, kein
    *  persistenter State; Reset auf neue critical). */
   dismissed: boolean;
+  /**
+   * Zu welchem Flug die gesammelten Meldungen gehören.
+   *
+   * QS 12.08.2026: Der Hook sammelte über die gesamte Laufzeit der App —
+   * `clear()` existiert, wird aber von niemandem gerufen (per Mutation
+   * geprüft: Löschen der Funktion fiel nirgends auf). Beim zweiten Flug
+   * einer Sitzung stand deshalb die Meldung des ersten noch im Zustand,
+   * und der Text "x-mal in diesem Flug" zählte quer über Flüge. Mit dem
+   * Umbau auf "zeige den schwersten Fall" wäre daraus ein echter Fehler
+   * geworden: der schwerste Fall des VORIGEN Fluges hätte den aktuellen
+   * überstrahlt. Jetzt hängt der Reset an der Flugsitzung selbst — kein
+   * Aufrufer, der vergessen werden kann.
+   */
+  sessionId: number | null;
 }
 
 const INITIAL: IntegrityState = {
@@ -66,6 +80,7 @@ const INITIAL: IntegrityState = {
   schwersterFlag: null,
   meldungenGesamt: 0,
   dismissed: false,
+  sessionId: null,
 };
 
 const severityOrder: Record<IntegritySeverity, number> = {
@@ -88,7 +103,11 @@ export function useIntegrityFlags(): {
         const fn = await listen<IntegrityFlagPayload>("integrity-flag", (event) => {
           if (!mounted) return;
           const p = event.payload;
-          setState((prev) => {
+          setState((prevRoh) => {
+            // Neuer Flug → bei null anfangen.
+            const prev = prevRoh.sessionId != null && prevRoh.sessionId !== p.session_id
+              ? { ...INITIAL, sessionId: p.session_id }
+              : prevRoh;
             const newSev = severityOrder[p.session_effective_severity] > severityOrder[prev.sessionSeverity]
               ? p.session_effective_severity
               : prev.sessionSeverity;
@@ -99,6 +118,7 @@ export function useIntegrityFlags(): {
                 severityOrder[bisher.flag.effective_severity];
             const alle = [p, ...prev.recentFlags].slice(0, 50);
             const next: IntegrityState = {
+              sessionId: p.session_id,
               sessionSeverity: newSev,
               recentFlags: alle,
               schwersterFlag: neuerIstSchwerer ? p : bisher,

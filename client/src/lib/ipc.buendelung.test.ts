@@ -14,6 +14,8 @@
 //     weiter (ältere Brücke).
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const fetchMock = vi.fn();
 (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
@@ -36,6 +38,24 @@ beforeEach(() => {
 });
 
 describe("LAN-Brücke — Abfragen bündeln", () => {
+  // Zwei Zahlen, die zusammenpassen müssen: der Browser packt höchstens
+  // BUENDEL_MAX Befehle in eine Anfrage, die Brücke nimmt höchstens
+  // BATCH_MAX an. Läuft der Browser der Brücke davon, antwortet sie mit
+  // "batch_too_large" — und zwar für das GANZE Bündel, also fällt eine
+  // ganze Ansicht aus. Beim Ändern muss man beide Stellen anfassen; dieser
+  // Test sorgt dafür, dass man es merkt.
+  it("hält dieselbe Obergrenze wie die Brücke", () => {
+    // Pfade relativ zum Projektverzeichnis: im Browser-Umfeld von Vitest
+    // ist `import.meta.url` keine Datei-URL.
+    const rust = readFileSync(resolve("src-tauri/src/remote/router.rs"), "utf8");
+    const treffer = /const BATCH_MAX: usize = (\d+);/.exec(rust);
+    expect(treffer, "BATCH_MAX steht nicht mehr im Router").toBeTruthy();
+    const ts = readFileSync(resolve("src/lib/ipc.ts"), "utf8");
+    const eigen = /const BUENDEL_MAX = (\d+);/.exec(ts);
+    expect(eigen, "BUENDEL_MAX steht nicht mehr in ipc.ts").toBeTruthy();
+    expect(Number(eigen![1])).toBeLessThanOrEqual(Number(treffer![1]));
+  });
+
   it("fasst Aufrufe desselben Arbeitsschritts zu einer Anfrage zusammen", async () => {
     fetchMock.mockResolvedValue(antwort(200, [
       { status: 200, value: { name: "Berlin" } },

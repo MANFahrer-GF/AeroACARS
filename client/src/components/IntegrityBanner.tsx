@@ -1,15 +1,19 @@
 // v0.13.0 Slice 6 — Mid-Session-Integrity-Banner
 //
-// Zeigt eine Warnung wenn der Recorder ein integrity-flag-Event
-// gepublisht hat. Drei Severities:
-//   info     — kein Banner (zu noisy für UI)
-//   anomaly  — orange info banner, dismissable
-//   critical — rotes blockierendes Banner, prominent
+// Zeigt eine Meldung, wenn der Recorder ein integrity-flag-Ereignis
+// geschickt hat:
+//   info     — kommt seit dem 12.08.2026 gar nicht mehr im Client an
+//              (der Server funkt nur noch Kritisches ins Cockpit)
+//   anomaly  — gelbe Meldung, schliessbar
+//   critical — rote Meldung, ebenfalls schliessbar
 //
-// Hinweis: Stream C macht den finalen Score-Trust auf PIREP-Submission;
-// dieser Banner ist nur die LIVE-Warnung während des Flugs damit der
-// Pilot weiß "hier stimmt was nicht, der PIREP wird vermutlich
-// untrusted werden".
+// Hinweis: Der Kopfkommentar sagte frueher, das Banner warne den Piloten
+// davor, dass sein Flugbericht "vermutlich untrusted" werde. Das war schon
+// seit v0.13.4 des Servers nicht mehr wahr und ist am 12.08.2026 aus Text
+// UND Absicht entfernt worden: das Banner meldet einen Datenzustand, es
+// droht keine Folge an. Welche Berichte wirklich in die Pruefung gehen,
+// entscheidet ausschliesslich scoreTrust.ts im Recorder (fehlende Landung,
+// Sim-Absturz-Signatur).
 //
 // Redesign Stufe B — BUGFIX: Diese Komponente war vollständig in
 // Tailwind-Syntax geschrieben (`fixed top-12`, `bg-red-900/95`,
