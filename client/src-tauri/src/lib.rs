@@ -10979,7 +10979,50 @@ async fn flight_adopt(
 }
 
 /// Start tracking a flight: prefile a PIREP and begin position streaming.
+
+/// Darf ein noch offener Flugbericht für diesen Start wiederverwendet werden?
+///
+/// Die Übernahme existiert für den Wiederaufnahme-Fall: Absturz mitten im
+/// Flug, der angefangene Flugbericht liegt noch auf dem Server und blockiert
+/// das Flugzeug. Dann ist es richtig, ihn weiterzuverwenden.
+///
+/// QS 12.08.2026: Geprüft wurden dafür nur Flugnummer und Fluggesellschaft.
+/// Das beschreibt den Fall nicht eindeutig — dieselbe Nummer kann für eine
+/// andere Strecke oder ein anderes Flugzeug stehen (Umlaufwechsel, geänderter
+/// Plan, Rückflug unter gleicher Nummer). Dann erbte der NEUE Flug die
+/// Kennung des alten, während der alte Eintrag seine Strecke und sein
+/// Flugzeug behielt. Und weil bei einer Übernahme das Vorfilen ganz
+/// entfällt, korrigierte das auch niemand mehr.
+///
+/// Felder, die phpVMS je nach Version und Konfiguration nicht mitliefert,
+/// sind vom Vergleich ausgenommen — sonst wäre die Wiederaufnahme auf solchen
+/// Installationen komplett tot, und das wäre die schlechtere Kur.
+fn pirep_ist_uebernehmbar(
+    p: &api_client::PirepSummary,
+    body: &PrefileBody,
+    airline_id: i64,
+) -> bool {
+    fn passt_wenn_bekannt(vorhanden: Option<&str>, erwartet: &str) -> bool {
+        match vorhanden {
+            Some(v) => v.eq_ignore_ascii_case(erwartet),
+            None => true, // Feld nicht geliefert → kein Ausschlussgrund
+        }
+    }
+    // phpVMS PirepState IN_PROGRESS = 0 — der Server filtert schon, der
+    // Check bleibt als defensive Doppelprüfung.
+    p.state == Some(0)
+        && p.flight_number.as_deref() == Some(body.flight_number.as_str())
+        && (p.airline_id.is_none() || p.airline_id == Some(airline_id))
+        && passt_wenn_bekannt(p.dpt_airport_id.as_deref(), body.dpt_airport_id.as_str())
+        && passt_wenn_bekannt(p.arr_airport_id.as_deref(), body.arr_airport_id.as_str())
+        && match (p.aircraft_id, body.aircraft_id.parse::<i64>().ok()) {
+            (Some(alt), Some(neu)) => alt == neu,
+            _ => true, // eine der beiden Seiten unbekannt → nicht ausschliessen
+        }
+}
+
 #[tauri::command]
+
 async fn flight_start(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
@@ -11228,13 +11271,10 @@ async fn flight_start(
     // v0.16.17 Selbstheilung: >24-h-alte Orphans best-effort wegcanceln,
     // BEVOR der Adopt-/Collision-Check läuft — gibt die Überlebenden zurück.
     let existing = sweep_stale_orphans_before_prefile(&app, &client, existing).await;
-    let adoptable = existing.into_iter().find(|p| {
-        // phpVMS PirepState IN_PROGRESS = 0 — Server hat bereits gefiltert,
-        // der Check bleibt als defensive Doppelprüfung.
-        p.state == Some(0)
-            && p.flight_number.as_deref() == Some(body.flight_number.as_str())
-            && (p.airline_id.is_none() || p.airline_id == Some(airline_id))
-    });
+    let adoptable = existing
+        .into_iter()
+        .find(|p| pirep_ist_uebernehmbar(p, &body, airline_id));
+
     if let Some(p) = &adoptable {
         tracing::info!(pirep_id = %p.id, "adopting existing in-progress PIREP");
     }
@@ -43808,5 +43848,100 @@ mod v0_16_23_route_only_refresh_tests {
             src.contains("OFP-Refresh ist nur bis vor Takeoff moeglich (Preflight bis TaxiOut)"),
             "flight_refresh_simbrief muss sein Phasen-Gate behalten"
         );
+    }
+}
+
+#[cfg(test)]
+mod pirep_uebernahme_tests {
+    use super::*;
+
+    fn vorlage() -> PrefileBody {
+        PrefileBody {
+            airline_id: 52,
+            aircraft_id: "360".to_string(),
+            flight_id: None,
+            flight_number: "58".to_string(),
+            dpt_airport_id: "SBBR".to_string(),
+            arr_airport_id: "LPPT".to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn offener_bericht() -> api_client::PirepSummary {
+        api_client::PirepSummary {
+            id: "ALT-PIREP".to_string(),
+            airline_id: Some(52),
+            flight_number: Some("58".to_string()),
+            aircraft_id: Some(360),
+            state: Some(0),
+            dpt_airport_id: Some("SBBR".to_string()),
+            arr_airport_id: Some("LPPT".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn wiederaufnahme_desselben_flugs_wird_uebernommen() {
+        // Der Fall, für den die Übernahme gebaut wurde: Absturz mitten im
+        // Flug, alles identisch. Muss weiterhin greifen.
+        assert!(pirep_ist_uebernehmbar(&offener_bericht(), &vorlage(), 52));
+    }
+
+    #[test]
+    fn gleiche_nummer_andere_strecke_wird_nicht_uebernommen() {
+        // DER BEFUND. Gleiche Flugnummer, aber der Pilot fliegt jetzt
+        // zurück. Vorher erbte dieser Flug die Kennung des alten, und der
+        // alte Eintrag behielt Strecke und Flugzeug.
+        let mut body = vorlage();
+        body.dpt_airport_id = "LPPT".to_string();
+        body.arr_airport_id = "SBBR".to_string();
+        assert!(!pirep_ist_uebernehmbar(&offener_bericht(), &body, 52));
+    }
+
+    #[test]
+    fn gleiche_nummer_anderes_ziel_wird_nicht_uebernommen() {
+        let mut body = vorlage();
+        body.arr_airport_id = "LPPR".to_string();
+        assert!(!pirep_ist_uebernehmbar(&offener_bericht(), &body, 52));
+    }
+
+    #[test]
+    fn anderes_flugzeug_wird_nicht_uebernommen() {
+        let mut body = vorlage();
+        body.aircraft_id = "999".to_string();
+        assert!(!pirep_ist_uebernehmbar(&offener_bericht(), &body, 52));
+    }
+
+    #[test]
+    fn fehlende_felder_blockieren_die_wiederaufnahme_nicht() {
+        // phpVMS liefert Strecke und Flugzeug je nach Version/Konfiguration
+        // nicht mit. Dann darf der Vergleich nicht ausschliessen — sonst
+        // wäre die Wiederaufnahme auf solchen Installationen ganz tot.
+        let mut alt = offener_bericht();
+        alt.dpt_airport_id = None;
+        alt.arr_airport_id = None;
+        alt.aircraft_id = None;
+        assert!(pirep_ist_uebernehmbar(&alt, &vorlage(), 52));
+    }
+
+    #[test]
+    fn grossschreibung_der_icao_spielt_keine_rolle() {
+        let mut alt = offener_bericht();
+        alt.dpt_airport_id = Some("sbbr".to_string());
+        assert!(pirep_ist_uebernehmbar(&alt, &vorlage(), 52));
+    }
+
+    #[test]
+    fn abgeschlossener_bericht_wird_nie_uebernommen() {
+        let mut alt = offener_bericht();
+        alt.state = Some(2); // ACCEPTED
+        assert!(!pirep_ist_uebernehmbar(&alt, &vorlage(), 52));
+    }
+
+    #[test]
+    fn andere_flugnummer_wird_nicht_uebernommen() {
+        let mut alt = offener_bericht();
+        alt.flight_number = Some("59".to_string());
+        assert!(!pirep_ist_uebernehmbar(&alt, &vorlage(), 52));
     }
 }

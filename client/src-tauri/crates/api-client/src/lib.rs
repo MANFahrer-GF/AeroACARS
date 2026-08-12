@@ -1080,7 +1080,10 @@ pub struct PirepCreated {
 /// an existing in-progress flight so we can resume it instead of doing a
 /// fresh prefile (which would fail with aircraft-not-available because the
 /// existing PIREP holds the aircraft "in use").
-#[derive(Debug, Clone, Deserialize)]
+// Default: nur damit Tests eine Vorlage bauen können, ohne zwei Dutzend
+// Optionsfelder aufzuzählen. Alle Felder sind Option/serde(default), der
+// abgeleitete Default ist also derselbe leere Zustand, den serde erzeugt.
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct PirepSummary {
     pub id: String,
     #[serde(default)]
