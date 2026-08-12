@@ -14,10 +14,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  buildAtcAirportFeatures, buildPilotFeatures, buildSectorFeatures,
-  buildSectorLabelFeatures, emptyFC, fetchVatsimData, loadBoundaries,
-  loadVatSpy, ratingLabel, esc as vatsimEsc,
+  buildAtcAirportFeatures, buildPilotFeatures, emptyFC, fetchVatsimData,
+  loadVatSpy, esc as vatsimEsc,
 } from "../lib/vatsimKarte";
+import { baueSektoren, ladeBestand } from "../lib/vatglassesKarte";
 import maplibregl, { type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { invoke } from "../lib/ipc";
@@ -310,6 +310,16 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   const vatsimAtcRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
   const vatsimSectorsRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
   const vatsimSectorLabelsRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
+  // Welche Flugflaeche die Sektoren zeigen. "auto" folgt dem eigenen Flug —
+  // die Karte beantwortet dann durchgehend "wer ist fuer MICH zustaendig".
+  // Ohne Flug gilt der Regler (Start FL200: dort spielt der Streckenflug).
+  const [flModus, setFlModus] = useState<"auto" | "fest">("auto");
+  const [flWert, setFlWert] = useState(200);
+  const flModusRef = useRef(flModus);
+  const flWertRef = useRef(flWert);
+  useEffect(() => { flModusRef.current = flModus; flWertRef.current = flWert; }, [flModus, flWert]);
+  const simSnapshotRef = useRef<SimSnapshot | null>(null);
+  useEffect(() => { simSnapshotRef.current = simSnapshot; });
   const [theme, setTheme] = useState<"dark" | "light">(readTheme());
   // ── VATSIM-Overlay: Daten holen, solange es eingeschaltet ist ─────────
   useEffect(() => {
@@ -339,17 +349,28 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       abbruch.abort();
       abbruch = new AbortController();
       try {
-        const [daten, grenzen, vatspy] = await Promise.all([
+        const [daten, bestand, vatspy] = await Promise.all([
           fetchVatsimData(abbruch.signal),
-          loadBoundaries(abbruch.signal),
+          ladeBestand(abbruch.signal),
           loadVatSpy(abbruch.signal),
         ]);
         if (beendet) return;
+        // Sektoren nach HOEHE: im Flug die eigene Flugflaeche, sonst der
+        // Regler. Genau dafuer sind die VATGlasses-Daten da — die flachen
+        // FIR-Flaechen waren fuer Deutschland schlicht falsch.
+        const eigeneFl = simSnapshotRef.current
+          ? Math.max(0, Math.round((simSnapshotRef.current.altitude_msl_ft ?? 0) / 100))
+          : null;
+        const fl = flModusRef.current === "auto" && eigeneFl != null ? eigeneFl : flWertRef.current;
+        const rufzeichen = daten.controllers
+          .filter((c) => c.facility >= 5)
+          .map((c) => c.callsign);
+        const sektoren = baueSektoren(bestand, fl, rufzeichen);
         setzen(
           buildPilotFeatures(daten.pilots),
           buildAtcAirportFeatures(daten.controllers, vatspy.airports),
-          buildSectorFeatures(daten.controllers, grenzen, vatspy.prefixToBoundary),
-          buildSectorLabelFeatures(daten.controllers, grenzen, vatspy.prefixToBoundary),
+          sektoren.flaechen,
+          sektoren.marken,
         );
       } catch (e) {
         if (!beendet && (e as Error)?.name !== "AbortError") {
@@ -360,7 +381,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     void holen();
     const takt = setInterval(() => { void holen(); }, 30_000);
     return () => { beendet = true; abbruch.abort(); clearInterval(takt); };
-  }, [showVatsim, mapReady]);
+  }, [showVatsim, mapReady, flModus, flWert]);
 
   // Klickfenster fuer das VATSIM-Overlay — Klartext statt Rohdaten
   // (dieselbe Bauform wie auf der Live-Karte der Webapp).
@@ -399,15 +420,19 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     const aufSektor = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
       const f = e.features?.[0]; if (!f) return;
       const p = f.properties ?? {};
-      let liste: { callsign: string; frequency: string; rating: number }[] = [];
-      try { liste = JSON.parse(String(p.controllers ?? "[]")); } catch { liste = []; }
-      const zeilen = liste.map((c) =>
-        `<div class="vatsim-pop-row"><b>${vatsimEsc(c.callsign)}</b>` +
-        `<span class="vatsim-pop-freq">${vatsimEsc(c.frequency)}</span>` +
-        `<span class="vatsim-pop-chip">${vatsimEsc(ratingLabel(c.rating))}</span></div>`).join("");
+      const vertretung = Number(p.vertretung ?? 0);
       new maplibregl.Popup({ closeButton: true, maxWidth: "300px" })
         .setLngLat(e.lngLat)
-        .setHTML(`<div class="vatsim-pop"><div class="vatsim-pop-title">${vatsimEsc(p.fir)} — Center</div>${zeilen}</div>`)
+        .setHTML(
+          `<div class="vatsim-pop">` +
+          `<div class="vatsim-pop-title">${vatsimEsc(p.ruf)}</div>` +
+          `<div class="vatsim-pop-row"><b>${vatsimEsc(p.gesprochen || "—")}</b>` +
+          `<span class="vatsim-pop-freq">${vatsimEsc(p.frequenz || "—")}</span></div>` +
+          `<div class="vatsim-pop-row vatsim-pop-dim">${vatsimEsc(p.block)} · FL${vatsimEsc(p.fl_von)}–FL${vatsimEsc(p.fl_bis)}</div>` +
+          (vertretung > 0
+            ? `<div class="vatsim-pop-row vatsim-pop-dim">deckt mit ab (Stufe ${vertretung} der Kette)</div>`
+            : "") +
+          `</div>`)
         .addTo(map);
     };
 
@@ -730,13 +755,15 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     if (!map.getLayer("vatsim-sectors-fill")) {
       map.addLayer({
         id: "vatsim-sectors-fill", type: "fill", source: "vatsim-sectors",
-        paint: { "fill-color": "#22d3ee", "fill-opacity": 0.055 },
+        // Farbe je BESITZENDER STATION aus den VATGlasses-Daten — dieselben
+        // Farben, die Lotsen und VATGlasses-Nutzer kennen.
+        paint: { "fill-color": ["get", "farbe"], "fill-opacity": 0.14 },
       });
     }
     if (!map.getLayer("vatsim-sectors-line")) {
       map.addLayer({
         id: "vatsim-sectors-line", type: "line", source: "vatsim-sectors",
-        paint: { "line-color": "#22d3ee", "line-width": 1.2, "line-opacity": 0.5 },
+        paint: { "line-color": ["get", "farbe"], "line-width": 1, "line-opacity": 0.55 },
       });
     }
     if (!map.getSource("vatsim-sector-labels")) {
@@ -748,9 +775,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           id: "vatsim-sector-labels-symbol", type: "symbol", source: "vatsim-sector-labels",
           layout: {
             "text-field": ["format",
-              ["get", "fir"], {},
+              ["get", "ruf"], {},
               "\n", {},
-              ["get", "freq"], { "font-scale": 0.8 },
+              ["get", "frequenz"], { "font-scale": 0.8 },
             ],
             // CARTO-Glyphs: "Open Sans Regular" gibt es auf dark, light UND
             // Satellit — "Noto Sans" NICHT (siehe BASEMAP_SAT-Kommentar).
@@ -760,8 +787,8 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
             "text-padding": 6,
           },
           paint: {
-            "text-color": "#7de3f4",
-            "text-opacity": 0.9,
+            "text-color": ["get", "farbe"],
+            "text-opacity": 0.95,
             "text-halo-color": "#07090e",
             "text-halo-width": 2,
           },
@@ -788,9 +815,19 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         map.addLayer({
           id: "vatsim-atc-airports-label", type: "symbol", source: "vatsim-atc-airports",
           layout: {
-            "text-field": ["get", "icao"],
+            // Zweite Zeile: welche Stationen online sind — D/G/T/A in festen
+            // Farben (Radar-Vorbild). Ein leerer Slot verschwindet einfach.
+            "text-field": ["format",
+              ["get", "icao"], {},
+              "\n", {},
+              ["get", "t_del"], { "text-color": "#60a5fa" },
+              ["get", "t_gnd"], { "text-color": "#4ade80" },
+              ["get", "t_twr"], { "text-color": "#f87171" },
+              ["get", "t_app"], { "text-color": "#fbbf24" },
+            ],
             "text-font": ["Open Sans Regular"],
             "text-size": 10,
+            "text-line-height": 1.2,
             "text-offset": [0, 1.5],
             "text-anchor": "top",
             "text-padding": 4,
@@ -813,14 +850,18 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     if (!map.getLayer("vatsim-pilots-symbol")) {
       map.addLayer({
         id: "vatsim-pilots-symbol", type: "symbol", source: "vatsim-pilots",
+        // Befund: in der Uebersicht lagen hunderte Pfeile uebereinander.
+        // Unter Zoom 4.5 traegt kein einzelner Flieger Information — dort
+        // sind Sektoren und Stationen die Karte, nicht der Verkehr.
+        minzoom: 4.5,
         layout: {
           "icon-image": "vatsim-plane",
           "icon-rotate": ["get", "hdg"],
           "icon-rotation-alignment": "map",
           "icon-allow-overlap": true,
-          "icon-size": 0.62,
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 4.5, 0.38, 8, 0.7],
         },
-        paint: { "icon-opacity": 0.9 },
+        paint: { "icon-opacity": 0.88 },
       });
     }
 
@@ -2005,10 +2046,36 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   type="button"
                   className={`aa-livemap-toggle ${showVatsim ? "aa-livemap-toggle--active" : ""}`}
                   onClick={() => setShowVatsim((v) => !v)}
-                  title={t("livemap.layer_vatsim_hint", "Sektoren, Lotsen und fremde Piloten aus dem VATSIM-Netz")}
+                  title={t("livemap.layer_vatsim_hint", "Sektoren nach Höhe (VATGlasses, CC BY-NC-SA), Lotsen und fremde Piloten aus dem VATSIM-Netz")}
                 >
                   {t("livemap.layer_vatsim", "VATSIM")}
                 </button>
+                {showVatsim && (
+                  <span className="aa-livemap-flwahl">
+                    <button
+                      type="button"
+                      className={`aa-livemap-toggle ${flModus === "auto" ? "aa-livemap-toggle--active" : ""}`}
+                      onClick={() => setFlModus((m) => (m === "auto" ? "fest" : "auto"))}
+                      title={t("livemap.fl_auto_hint", "Sektoren auf der eigenen Flughöhe zeigen")}
+                    >
+                      {t("livemap.fl_auto", "eigene Höhe")}
+                    </button>
+                    {flModus === "fest" && (
+                      <>
+                        <input
+                          type="range"
+                          min={0}
+                          max={450}
+                          step={10}
+                          value={flWert}
+                          onChange={(e) => setFlWert(Number(e.target.value))}
+                          aria-label={t("livemap.fl_regler", "Flugfläche für die Sektoransicht")}
+                        />
+                        <span className="aa-livemap-flwahl__wert">FL{String(flWert).padStart(3, "0")}</span>
+                      </>
+                    )}
+                  </span>
+                )}
               </div>
             </div>
 

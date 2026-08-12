@@ -2141,7 +2141,10 @@
     "sys_uplink_ok": "Uplink OK",
     "sys_uplink_lost": "Verbindung verloren",
     "layer_vatsim": "VATSIM",
-    "layer_vatsim_hint": "Sektoren, Lotsen und fremde Piloten aus dem VATSIM-Netz"
+    "layer_vatsim_hint": "Sektoren nach Höhe (VATGlasses, CC BY-NC-SA), Lotsen und fremde Piloten aus dem VATSIM-Netz",
+    "fl_auto": "eigene Höhe",
+    "fl_auto_hint": "Sektoren auf der eigenen Flughöhe zeigen",
+    "fl_regler": "Flugfläche für die Sektoransicht"
   },
   "chat": {
     "title": "Pilotenchat",

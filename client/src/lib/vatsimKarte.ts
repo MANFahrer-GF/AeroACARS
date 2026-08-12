@@ -222,6 +222,13 @@ export function buildAtcAirportFeatures(
         count: positions.length,
         tone: hasTower ? "twr" : "gnd",
         positions: JSON.stringify(positions),
+        // Radar-Vorbild (Thomas, 12.08.2026): welche Station online ist,
+        // muss OHNE Klick erkennbar sein. Je Art ein fester Buchstaben-
+        // Slot, damit die Kartenbeschriftung ihn fest einfaerben kann.
+        t_del: positions.some((p) => p.tag === "DEL") ? "D " : "",
+        t_gnd: positions.some((p) => p.tag === "GND") ? "G " : "",
+        t_twr: positions.some((p) => p.tag === "TWR") ? "T " : "",
+        t_app: positions.some((p) => p.tag === "APP") ? "A" : "",
       },
     });
   }

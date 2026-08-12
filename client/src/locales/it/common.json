@@ -2096,7 +2096,10 @@
     "sys_uplink_ok": "Uplink OK",
     "sys_uplink_lost": "Connessione persa",
     "layer_vatsim": "VATSIM",
-    "layer_vatsim_hint": "Settori, controllori e altri piloti dalla rete VATSIM"
+    "layer_vatsim_hint": "Settori per quota (VATGlasses, CC BY-NC-SA), controllori e altri piloti dalla rete VATSIM",
+    "fl_auto": "quota propria",
+    "fl_auto_hint": "Mostra i settori alla propria quota",
+    "fl_regler": "Livello di volo per i settori"
   },
   "chat": {
     "einblendung_ops": "Operazioni",

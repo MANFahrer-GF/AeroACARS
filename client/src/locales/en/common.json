@@ -2141,7 +2141,10 @@
     "sys_uplink_ok": "Uplink OK",
     "sys_uplink_lost": "Connection lost",
     "layer_vatsim": "VATSIM",
-    "layer_vatsim_hint": "Sectors, controllers and other pilots from the VATSIM network"
+    "layer_vatsim_hint": "Sectors by altitude (VATGlasses, CC BY-NC-SA), controllers and other pilots from the VATSIM network",
+    "fl_auto": "own altitude",
+    "fl_auto_hint": "Show sectors at your own flight level",
+    "fl_regler": "Flight level for the sector view"
   },
   "chat": {
     "title": "Pilot chat",

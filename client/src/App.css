@@ -10752,3 +10752,14 @@ input.datalink-block__input {
   border: 1px solid rgba(0,0,0,.25); border-radius: 3px;
   padding: 1px 5px; opacity: .75;
 }
+
+/* FL-Wahl fuer die VATSIM-Sektoren (12.08.2026) */
+.aa-livemap-flwahl { display: inline-flex; align-items: center; gap: 8px; }
+.aa-livemap-flwahl input[type="range"] { width: 110px; accent-color: var(--acc); }
+.aa-livemap-flwahl__wert {
+  font-family: var(--font-mono);
+  font-size: var(--fs-200);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  min-width: 44px;
+}
