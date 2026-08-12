@@ -2087,6 +2087,12 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                 </button>
                 {showVatsim && (
                   <span className="aa-livemap-flwahl">
+                    {/* Feldbefund: der Regler war hinter "eigene Hoehe"
+                        versteckt — ein Bedienelement, das man suchen muss,
+                        ist falsch gebaut. Jetzt IMMER sichtbar; "eigene
+                        Hoehe" schaltet ihn nur still, solange der Flug die
+                        Hoehe liefert. Ohne Sim-Verbindung gilt ohnehin der
+                        Regler, egal was der Knopf sagt. */}
                     <button
                       type="button"
                       className={`aa-livemap-toggle ${flModus === "auto" ? "aa-livemap-toggle--active" : ""}`}
@@ -2095,20 +2101,21 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                     >
                       {t("livemap.fl_auto", "eigene Höhe")}
                     </button>
-                    {flModus === "fest" && (
-                      <>
-                        <input
-                          type="range"
-                          min={0}
-                          max={450}
-                          step={10}
-                          value={flWert}
-                          onChange={(e) => setFlWert(Number(e.target.value))}
-                          aria-label={t("livemap.fl_regler", "Flugfläche für die Sektoransicht")}
-                        />
-                        <span className="aa-livemap-flwahl__wert">FL{String(flWert).padStart(3, "0")}</span>
-                      </>
-                    )}
+                    <input
+                      type="range"
+                      min={0}
+                      max={450}
+                      step={10}
+                      value={flWert}
+                      disabled={flModus === "auto" && simSnapshot != null}
+                      onChange={(e) => { setFlModus("fest"); setFlWert(Number(e.target.value)); }}
+                      aria-label={t("livemap.fl_regler", "Flugfläche für die Sektoransicht")}
+                    />
+                    <span className="aa-livemap-flwahl__wert">
+                      {flModus === "auto" && simSnapshot != null
+                        ? `FL${String(Math.max(0, Math.round((simSnapshot.altitude_msl_ft ?? 0) / 100))).padStart(3, "0")}`
+                        : `FL${String(flWert).padStart(3, "0")}`}
+                    </span>
                   </span>
                 )}
               </div>
