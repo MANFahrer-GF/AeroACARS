@@ -46,6 +46,10 @@ interface Props {
    *  off; toggle persisted in localStorage and synced to the Rust
    *  backend so the close-handler reads it directly. */
   minimizeToTray: boolean;
+  chatAn: boolean;
+  onChatAnChange: (next: boolean) => void;
+  chatTon: boolean;
+  onChatTonChange: (next: boolean) => void;
   onMinimizeToTrayChange: (next: boolean) => void;
   /** v0.5.38: Stable-Approach-Banner im Cockpit-Tab. Default ON. */
   approachAdvisoriesEnabled: boolean;
@@ -71,6 +75,10 @@ export function SettingsPanel({
   onAutoDeleteFlightLogsChange,
   minimizeToTray,
   onMinimizeToTrayChange,
+  chatAn,
+  onChatAnChange,
+  chatTon,
+  onChatTonChange,
   approachAdvisoriesEnabled,
   onApproachAdvisoriesEnabledChange,
   theme,
@@ -477,6 +485,48 @@ export function SettingsPanel({
                 <option value="dark">{t("settings.theme_dark")}</option>
                 <option value="light">{t("settings.theme_light")}</option>
               </select>
+            </label>
+          </div>
+
+          {/* QS-Abschluss 12.08.2026: Auf der Datenschutzseite steht seit
+              heute "Sie koennen den Chat in den Einstellungen des Clients
+              abschalten." Diesen Schalter gab es nicht — nur einen
+              gespeicherten Wert ohne Bedienelement. Eine Zusage auf einer
+              Rechtsseite muss man einloesen koennen. */}
+          <div className="settings__section">
+            <h3>{t("chat.settings_title", "Pilotenchat")}</h3>
+            <label className="settings__checkbox">
+              <input
+                type="checkbox"
+                checked={chatAn}
+                onChange={(e) => onChatAnChange(e.target.checked)}
+              />
+              <span>
+                <strong>{t("chat.settings_an_label", "Pilotenchat verwenden")}</strong>
+                <span className="settings__row-hint">
+                  {t(
+                    "chat.settings_an_hint",
+                    "Aus: kein Chat-Reiter, keine eingehenden Nachrichten, kein Senden. Nachrichten werden nach zwölf Stunden ohnehin gelöscht; die Flugleitung kann mitlesen.",
+                  )}
+                </span>
+              </span>
+            </label>
+            <label className="settings__checkbox">
+              <input
+                type="checkbox"
+                checked={chatTon}
+                disabled={!chatAn}
+                onChange={(e) => onChatTonChange(e.target.checked)}
+              />
+              <span>
+                <strong>{t("chat.settings_ton_label", "Ton bei neuen Nachrichten")}</strong>
+                <span className="settings__row-hint">
+                  {t(
+                    "chat.settings_ton_hint",
+                    "Im Sinkflug leiser, im Endanflug immer still — unabhängig von dieser Einstellung.",
+                  )}
+                </span>
+              </span>
             </label>
           </div>
 

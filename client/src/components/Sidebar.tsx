@@ -175,6 +175,7 @@ export function Sidebar({
   cpdlcEnabled,
   cpdlcPendingCount,
   onCpdlcOpen,
+  chatAn,
   chatUngelesen,
   onChatOpen,
   unreadNews,
@@ -193,6 +194,7 @@ export function Sidebar({
   cpdlcEnabled: boolean;
   cpdlcPendingCount: number;
   onCpdlcOpen: () => void;
+  chatAn: boolean;
   chatUngelesen: number;
   onChatOpen: () => void;
   unreadNews: number;
@@ -245,6 +247,7 @@ export function Sidebar({
         )}
         {/* Direkt unter PDC: beides ist Kommunikation, und der Zaehler
             funktioniert nach demselben Muster. */}
+        {chatAn && (
         <Item
           icon={I.chat}
           label={t("tabs.chat", "Chat")}
@@ -253,6 +256,7 @@ export function Sidebar({
           badgeLabel={t("chat.ungelesen", { count: chatUngelesen, defaultValue: "{{count}} ungelesene Zurufe" })}
           onClick={onChatOpen}
         />
+        )}
         <Item icon={I.logbook} label={t("tabs.logbook")} active={tab === "logbook"} onClick={() => setTab("logbook")} />
         <Item icon={I.landing} label={t("tabs.landing")} active={tab === "landing"} onClick={() => setTab("landing")} />
         <Item

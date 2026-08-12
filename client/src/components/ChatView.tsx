@@ -42,6 +42,11 @@ export interface ChatTeilnehmer {
   dep?: string | null;
   arr?: string | null;
   anzeigename?: string | null;
+  /** Ob dieser Pilot einen Zuruf empfangen kann. Flüge über die
+   *  Stratos-Brücke und ältere Clients hören auf dem Rückkanal nicht zu —
+   *  eine Nachricht an sie sähe abgeschickt aus und käme nie an. Fehlt das
+   *  Feld (älterer Server), gilt der Pilot als erreichbar. */
+  erreichbar?: boolean;
 }
 
 /** Absenderkennung der Flugleitung — kein Pilot kann die haben. */
@@ -208,8 +213,13 @@ export function ChatView({
             <button
               key={p.pilot_id}
               type="button"
-              className={`chat__pilot${empfaenger?.pilot_id === p.pilot_id ? " chat__pilot--ziel" : ""}`}
-              title={t("chat.direkt_an", { name: p.anzeigename ?? p.callsign ?? p.pilot_id, defaultValue: "Direkt an {{name}} schreiben" })}
+              disabled={p.erreichbar === false}
+              className={`chat__pilot${empfaenger?.pilot_id === p.pilot_id ? " chat__pilot--ziel" : ""}${p.erreichbar === false ? " chat__pilot--stumm" : ""}`}
+              title={
+                p.erreichbar === false
+                  ? t("chat.nicht_erreichbar_titel", "Dieser Pilot fliegt mit einem Client ohne Chat — eine Nachricht käme nicht an.")
+                  : t("chat.direkt_an", { name: p.anzeigename ?? p.callsign ?? p.pilot_id, defaultValue: "Direkt an {{name}} schreiben" })
+              }
               onClick={() => {
                 setEmpfaenger(p);
                 if (!tippenGesperrt) feldRef.current?.focus();
@@ -218,7 +228,9 @@ export function ChatView({
               <span className="chat__pilot-name">{p.anzeigename ?? p.pilot_id}</span>
               <span className="chat__pilot-ruf">{p.callsign ?? "—"}</span>
               <span className="chat__pilot-weg">
-                {p.dep ?? "?"} → {p.arr ?? "?"}
+                {p.erreichbar === false
+                  ? t("chat.nicht_erreichbar", "kein Chat")
+                  : `${p.dep ?? "?"} → ${p.arr ?? "?"}`}
               </span>
             </button>
           ))}

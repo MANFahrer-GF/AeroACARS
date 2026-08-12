@@ -2172,6 +2172,13 @@
     },
     "marke_ops": "FLUGLEITUNG",
     "regeln": "12 h Gedächtnis · Flugleitung liest mit",
-    "regeln_titel": "Datenschutz zum Pilotenchat öffnen"
+    "regeln_titel": "Datenschutz zum Pilotenchat öffnen",
+    "settings_title": "Pilotenchat",
+    "settings_an_label": "Pilotenchat verwenden",
+    "settings_an_hint": "Aus: kein Chat-Reiter, keine eingehenden Nachrichten, kein Senden. Nachrichten werden nach zwölf Stunden ohnehin gelöscht; die Flugleitung kann mitlesen.",
+    "settings_ton_label": "Ton bei neuen Nachrichten",
+    "settings_ton_hint": "Im Sinkflug leiser, im Endanflug immer still — unabhängig von dieser Einstellung.",
+    "nicht_erreichbar": "kein Chat",
+    "nicht_erreichbar_titel": "Dieser Pilot fliegt mit einem Client ohne Chat — eine Nachricht käme nicht an."
   }
 }

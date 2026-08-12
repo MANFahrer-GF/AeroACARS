@@ -170,6 +170,11 @@ function saveDebugMode(value: boolean) {
  *  pilot to hit "Flug beenden" manually, useful when they want to
  *  inspect mass / fuel / activity log before submitting. */
 const CHAT_TON_STORAGE_KEY = "aeroacars.chat.ton";
+const CHAT_AN_STORAGE_KEY = "aeroacars.chat.an";
+/** Chat beim ersten Start AN — wer ihn nicht will, schaltet ihn aus. */
+function loadChatAn(): boolean {
+  return localStorage.getItem(CHAT_AN_STORAGE_KEY) !== "0";
+}
 /** Ton beim ersten Start AN — wer ihn nicht will, schaltet ihn aus. */
 function loadChatTon(): boolean {
   return localStorage.getItem(CHAT_TON_STORAGE_KEY) !== "0";
@@ -216,7 +221,8 @@ function App() {
   // Ungelesene Zurufe. Zaehlt nur, solange der Chat NICHT die offene Ansicht
   // ist — wer hinsieht, hat gelesen.
   const [chatUngelesen, setChatUngelesen] = useState(0);
-  const [chatTonAn] = useState<boolean>(() => loadChatTon());
+  const [chatTonAn, setChatTonAn] = useState<boolean>(() => loadChatTon());
+  const [chatAn, setChatAn] = useState<boolean>(() => loadChatAn());
   // Refs statt Abhaengigkeiten: der Empfaenger soll EINMAL registriert
   // werden und trotzdem den aktuellen Reiter und die aktuelle Phase sehen.
   const [status, setStatus] = useState<SessionStatus>({ kind: "loading" });
@@ -577,7 +583,7 @@ function App() {
   // Chat-Ansicht: ein zweiter Hoerer hier wuerde bei offenem Chat doppelt
   // klingeln.
   useEffect(() => {
-    if (status.kind !== "loggedIn") return;
+    if (status.kind !== "loggedIn" || !chatAn) return;
     const p = listen<{ id?: number; an_pilot_id?: string | null; von_pilot_id?: string }>("chat-nachricht", (e) => {
       const n = e.payload ?? {};
       // Doppelte abwehren: derselbe Zuruf kann ueber Verlauf UND MQTT
@@ -607,7 +613,7 @@ function App() {
       if (tabRef.current !== "chat" && !vonMirSelbst) setChatUngelesen((z) => z + 1);
     });
     return () => { void p.then((ab) => ab()); };
-  }, [status.kind]);
+  }, [status.kind, chatAn, chatTonAn]);
 
   const pilotIdForChat =
     status.kind === "loggedIn" ? String(status.session.profile.id) : null;
@@ -656,6 +662,7 @@ function App() {
             markCpdlcSeen();
             setTab("cpdlc");
           }}
+          chatAn={chatAn}
           chatUngelesen={chatUngelesen}
           onChatOpen={() => {
             setChatUngelesen(0);
@@ -828,7 +835,7 @@ function App() {
         </Suspense>
       )}
 
-      {status.kind === "loggedIn" && tab === "chat" && (
+      {status.kind === "loggedIn" && chatAn && tab === "chat" && (
         <ChatView
           eigenePilotId={pilotIdForChat}
           phase={activeFlight?.phase ?? null}
@@ -846,6 +853,18 @@ function App() {
           onAutoStartChange={handleAutoStartChange}
           autoDeleteFlightLogs={autoDeleteFlightLogs}
           onAutoDeleteFlightLogsChange={handleAutoDeleteFlightLogsChange}
+          chatAn={chatAn}
+          onChatAnChange={(next) => {
+            setChatAn(next);
+            localStorage.setItem(CHAT_AN_STORAGE_KEY, next ? "1" : "0");
+            // Aus heisst aus: der offene Reiter darf nicht stehen bleiben.
+            if (!next) { setChatUngelesen(0); setTab((a) => (a === "chat" ? "cockpit" : a)); }
+          }}
+          chatTon={chatTonAn}
+          onChatTonChange={(next) => {
+            setChatTonAn(next);
+            localStorage.setItem(CHAT_TON_STORAGE_KEY, next ? "1" : "0");
+          }}
           minimizeToTray={minimizeToTray}
           onMinimizeToTrayChange={(next) => {
             setMinimizeToTray(next);

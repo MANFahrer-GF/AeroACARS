@@ -46,7 +46,17 @@ pub struct ChatTeilnehmer {
     pub arr: Option<String>,
     #[serde(default)]
     pub anzeigename: Option<String>,
+    /// Kann dieser Pilot einen Zuruf ueberhaupt empfangen? Fluege ueber die
+    /// Stratos-Bruecke und aeltere Clients lauschen auf dem Rueckkanal gar
+    /// nicht — an sie gerichtete Nachrichten verschwinden lautlos. Der
+    /// Server entscheidet das; wir zeigen es nur an. Fehlt das Feld (alter
+    /// Server), nehmen wir "erreichbar" an und bleiben damit beim
+    /// bisherigen Verhalten.
+    #[serde(default = "wahr")]
+    pub erreichbar: bool,
 }
+
+fn wahr() -> bool { true }
 
 #[derive(Debug, Deserialize)]
 struct VerlaufAntwort {

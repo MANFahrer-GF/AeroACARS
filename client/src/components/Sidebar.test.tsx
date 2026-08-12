@@ -9,7 +9,7 @@
 // lautlos weg und niemand merkt es, bis ein Pilot ihn sucht.
 
 import { describe, it, expect, beforeAll, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../locales/de/common.json";
@@ -32,6 +32,9 @@ function renderNav(over: Partial<React.ComponentProps<typeof Sidebar>> = {}) {
     collapsed: false,
     onToggleCollapsed: vi.fn(),
     cpdlcEnabled: true,
+    chatAn: true,
+    chatUngelesen: 0,
+    onChatOpen: vi.fn(),
     cpdlcPendingCount: 0,
     onCpdlcOpen: vi.fn(),
     unreadNews: 0,
@@ -62,6 +65,15 @@ describe("Sidebar — nichts darf beim Umbau verloren gehen", () => {
     ]) {
       expect(screen.getByRole("button", { name: new RegExp(label) })).toBeTruthy();
     }
+  });
+
+  // Die Datenschutzseite sagt zu, dass der Chat abschaltbar ist. Aus muss
+  // aus heissen — auch in der Navigation, nicht nur beim Empfang.
+  it("blendet den Chat aus, wenn er abgeschaltet ist", () => {
+    const an = renderNav({ chatAn: true });
+    expect(within(an.container).getByRole("button", { name: new RegExp(deCommon.tabs.chat) })).toBeTruthy();
+    const aus = renderNav({ chatAn: false });
+    expect(within(aus.container).queryByRole("button", { name: new RegExp(deCommon.tabs.chat) })).toBeNull();
   });
 
   it("blendet PDC/CPDLC aus, wenn Hoppie nicht aktiv ist", () => {

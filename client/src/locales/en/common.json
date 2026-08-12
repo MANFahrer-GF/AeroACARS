@@ -2172,6 +2172,13 @@
     },
     "marke_ops": "OPS",
     "regeln": "12 h memory · ops can read along",
-    "regeln_titel": "Open the pilot chat privacy notice"
+    "regeln_titel": "Open the pilot chat privacy notice",
+    "settings_title": "Pilot chat",
+    "settings_an_label": "Use the pilot chat",
+    "settings_an_hint": "Off: no chat tab, no incoming messages, no sending. Messages are deleted after twelve hours anyway; ops can read along.",
+    "settings_ton_label": "Sound on new messages",
+    "settings_ton_hint": "Quieter in the descent, always silent on final — regardless of this setting.",
+    "nicht_erreichbar": "no chat",
+    "nicht_erreichbar_titel": "This pilot is flying with a client that has no chat — a message would not arrive."
   }
 }

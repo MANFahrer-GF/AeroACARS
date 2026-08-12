@@ -96,6 +96,12 @@
 .chat__pilot:hover { border-color: var(--acc); }
 .chat__pilot:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
 .chat__pilot--ziel { border-color: var(--acc); background: var(--acc-quiet); }
+/* Wer mit einem Client ohne Chat fliegt: sichtbar, aber nicht anwaehlbar.
+   Ausblenden waere schlechter — dann fragt man sich, wo der Kollege ist,
+   den man auf der Karte sieht. */
+.chat__pilot--stumm { opacity: 0.55; cursor: default; }
+.chat__pilot--stumm:hover { border-color: var(--line); }
+.chat__pilot--stumm .chat__pilot-ruf { color: var(--text-dim); }
 .chat__pilot-name {
   font-size: var(--fs-400);
   font-weight: var(--fw-bold);
