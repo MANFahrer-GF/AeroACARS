@@ -224,6 +224,7 @@ function App() {
   const tabRef = useRef<Tab>(tab);
   const phaseRef = useRef<string | null>(null);
   const geklungen = useRef<Set<number>>(new Set());
+  const eigenePilotIdRef = useRef<string | null>(null);
   useEffect(() => { tabRef.current = tab; }, [tab]);
   // Die Phase steuert die Lautstaerke. Ueber ein Ref, damit der Empfaenger
   // nicht bei jedem Phasenwechsel neu registriert werden muss.
@@ -577,7 +578,7 @@ function App() {
   // klingeln.
   useEffect(() => {
     if (status.kind !== "loggedIn") return;
-    const p = listen<{ id?: number; an_pilot_id?: string | null }>("chat-nachricht", (e) => {
+    const p = listen<{ id?: number; an_pilot_id?: string | null; von_pilot_id?: string }>("chat-nachricht", (e) => {
       const n = e.payload ?? {};
       // Doppelte abwehren: derselbe Zuruf kann ueber Verlauf UND MQTT
       // hereinkommen. Ohne das klingelt es zweimal.
@@ -588,19 +589,25 @@ function App() {
           geklungen.current = new Set([...geklungen.current].slice(-150));
         }
       }
-      if (chatTonAn) {
+      // Der eigene Zuruf kommt seit der Absender-Echo-Aenderung auch
+      // zurueck (der Server ist die einzige Quelle, damit alle dieselbe
+      // Zeile sehen). Dafuer darf es aber nicht klingeln — sonst piept es
+      // bei jedem eigenen Tippen.
+      const vonMirSelbst = n.von_pilot_id != null && n.von_pilot_id === eigenePilotIdRef.current;
+      if (chatTonAn && !vonMirSelbst) {
         spieleChatTon(n.an_pilot_id != null ? "direkt" : "normal", phaseRef.current);
       }
       // Kein Seiteneffekt im State-Updater (QS 12.08.): das lief im
       // StrictMode zweimal und zaehlte still doppelt. Der Reiter steht
       // stattdessen in einem Ref.
-      if (tabRef.current !== "chat") setChatUngelesen((z) => z + 1);
+      if (tabRef.current !== "chat" && !vonMirSelbst) setChatUngelesen((z) => z + 1);
     });
     return () => { void p.then((ab) => ab()); };
   }, [status.kind]);
 
   const pilotIdForChat =
     status.kind === "loggedIn" ? String(status.session.profile.id) : null;
+  useEffect(() => { eigenePilotIdRef.current = pilotIdForChat; }, [pilotIdForChat]);
   const unreadNews = useUnreadNewsCount(status.kind === "loggedIn");
   const {
     enabled: cpdlcEnabled,
