@@ -2980,8 +2980,20 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // die Doku nennt keine krummen Rasten-Prozentsaetze, und der bisherige
     // Stable-Approach-/PIREP-Schwellwert (>=0.70 = "konfiguriert") passt
     // damit sauber zu Stufe 4 (0.8) und 5 (1.0) als vollkonfiguriert.
+    // SKALEN-BEFUND 12.08.2026 (Flug ITY 4532, EDDB→LICC, Thomas K.):
+    // Die Doku nennt fuer `L:A22X Flap Lever` "0-5, one of the 6 detents" —
+    // aufgezeichnet wurden aber ueber den GANZEN Flug nur Werte bis 0.2,
+    // in exakten 0.04er-Stufen (= Hebel/25): die LVar liefert real 0-1
+    // (Hebelstufe x 0.2), und die Division durch 5 normalisierte doppelt.
+    // Ergebnis war "LANDING CONFIG: INCOMPLETE" bei voller Landestellung.
+    // Empirie schlaegt Doku: Werte ueber 1 gelten als Doku-Skala (0-5),
+    // Werte bis 1 als bereits normalisiert. Restrisiko: ein exaktes 1.0
+    // ist auf der Doku-Skala Stufe 1 — auf der beobachteten Skala FULL;
+    // wir folgen der BEOBACHTETEN, denn sie stammt aus echten Fluegen.
     let flaps_position = if is_synaptic_a220 {
-        (t.syn_flap_lever / 5.0).clamp(0.0, 1.0) as f32
+        let roh = t.syn_flap_lever;
+        let normalisiert = if roh > 1.001 { roh / 5.0 } else { roh };
+        normalisiert.clamp(0.0, 1.0) as f32
     } else {
         t.flaps_position as f32
     };
@@ -6612,16 +6624,33 @@ mod tests {
 
     #[test]
     fn synaptic_a220_flap_lever_maps_linearly_to_percent() {
-        // Doku: `L:A22X Flap Lever`, 0-5 (sechs Rasten). Linear normalisiert.
+        // ZWEI Skalen, beide festgenagelt:
+        //   Doku-Skala 0-5 (falls eine Firmware sie je liefert) — und die
+        //   BEOBACHTETE Skala 0-1 aus echten Fluegen (12.08.2026,
+        //   ITY 4532: voller Hebel kam als 1.0 an, aufgezeichnet wurde
+        //   durch die damalige Doppel-Division nur 0.2 → "LANDING
+        //   CONFIG: INCOMPLETE" bei korrekt gesetzten Klappen).
         let mut t = synaptic_a220_telemetry();
-        t.syn_flap_lever = 5.0; // FULL — der exakte Feldbefund-Fall
+        t.syn_flap_lever = 5.0; // Doku-Skala: FULL
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.flaps_position, 1.0);
 
         let mut t = synaptic_a220_telemetry();
-        t.syn_flap_lever = 2.0; // was das generische SimVar faelschlich als "40%" zeigte
+        t.syn_flap_lever = 2.0; // Doku-Skala: Stufe 2
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert!((snap.flaps_position - 0.4).abs() < 1e-6);
+
+        // Beobachtete Skala (der reale Addon-Stand): Werte 0..1.
+        let mut t = synaptic_a220_telemetry();
+        t.syn_flap_lever = 1.0; // voller Hebel, wie am 12.08. aufgezeichnet
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.flaps_position, 1.0, "voller Hebel darf nie wieder als 0.2 enden");
+
+        let mut t = synaptic_a220_telemetry();
+        t.syn_flap_lever = 0.8; // Stufe 4 auf der beobachteten Skala
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert!((snap.flaps_position - 0.8).abs() < 1e-6);
+        assert!(snap.flaps_position >= 0.70, "Stufe 4 muss als konfiguriert gelten");
 
         let mut t = synaptic_a220_telemetry();
         t.syn_flap_lever = 0.0; // hochgefahren
