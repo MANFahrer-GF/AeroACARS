@@ -1,7 +1,29 @@
 # AeroACARS — Ideen-Backlog
 
-Gesammelte Funktionswünsche mit Ausarbeitung. Stand 11.08.2026.
+Gesammelte Funktionswünsche mit Ausarbeitung. Stand 12.08.2026.
 Nichts hier ist beschlossen; die offenen Entscheidungen stehen jeweils am Ende.
+
+---
+
+## 0. Beschlossen: was in die nächste Version soll
+
+**Entscheidung Thomas, 12.08.2026:** Der Client-Fix an der Flugbericht-Übernahme
+geht NICHT einzeln raus, sondern fährt mit Chat und VATSIM-Karte zusammen.
+Ausdrücklich **nicht jetzt** — kein Zeitdruck, kein Zwischenrelease.
+
+Damit hängt an der nächsten Client-Version:
+
+| Teil | Stand |
+|---|---|
+| Übernahme prüft Strecke + Flugzeug (`pirep_ist_uebernehmbar`) | **fertig, committet, nicht released** (`8978f47`) |
+| Pilotenchat | Ausarbeitung unten, Entscheidungen offen |
+| VATSIM auf der Client-Karte | Ausarbeitung unten, Entscheidungen offen |
+
+Der Übernahme-Fix ist der einzige davon, der einen echten Fehler behebt:
+gleiche Flugnummer auf anderer Strecke oder mit anderem Flugzeug liess den
+neuen Flug die Kennung des alten erben. Er liegt fertig da und wartet nur auf
+die Begleitung — falls doch früher etwas anderes released wird, sollte er
+einfach mitfahren.
 
 ---
 
