@@ -2203,18 +2203,19 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     let is_synaptic_a220 = matches!(profile, AircraftProfile::SynapticA220);
     // FSL-LED-Schwelle: die `_Brt_Lt`-LVars tragen LED-HELLIGKEIT,
     // kein 0/1-Flag — HubHop-Button-Presets pruefen ">50", wir werten
-    // konservativer > 10 als "leuchtet" (faengt gedimmte Cockpits).
+    // konservativer > 10 als "leuchtet" (faengt gedimmte Cockpits;
+    // Live-Verifikation beim ersten FSL-Flug).
     //
-    // SKALEN-ABSICHERUNG (Lehre aus dem A220-Klappenhebel, 12.08.2026):
-    // die 0–100-Annahme stammt aus HubHop-Presets, nicht aus einer
-    // Messung. Liefert FSLabs die Helligkeit real als 0–1 (wie der A220
-    // seinen Hebel), laese eine starre >10-Schwelle den AP-Master den
-    // ganzen Flug als AUS. Deshalb zweigleisig: Werte ueber 1.001 sind
-    // die 0–100-Doku-Skala (Schwelle 10), Werte darunter die 0–1-Skala
-    // (Schwelle 0.5). Eine dunkle LED ist auf beiden Skalen 0.
-    let fsl_led_lit = |roh: f64| -> bool {
-        if roh > 1.001 { roh > 10.0 } else { roh > 0.5 }
-    };
+    // BEWUSST KEINE Dual-Skala-Heuristik wie beim A220-Klappenhebel
+    // (QS v1.6.1): ein Zwischenstand dieses Releases deutete Werte
+    // unter 1.001 als 0-1-Skala — damit haette ein Rest-Glimmen von
+    // 0.6-1.0 auf der 0-100-Skala den AP faelschlich als AN gemeldet.
+    // Die 0-100-Annahme ist durch funktionierende HubHop-Presets
+    // gestuetzt; im VPS-Korpus gibt es bisher KEINEN FSLabs-Flug zum
+    // Gegenmessen (die A321-Fluege sind Fenix). Sollte der erste
+    // FSL-Flug AP dauerhaft AUS zeigen, ist DIESE Schwelle der erste
+    // Verdaechtige.
+    let fsl_led_lit = |roh: f64| -> bool { roh > 10.0 };
     let is_ini = is_a350 || is_a340;
     // v0.7.17 (F-001): Fenix-A32x extension LVARs are now ALWAYS applied
     // when the profile is Fenix — the v0.7.16 opt-in flag is removed

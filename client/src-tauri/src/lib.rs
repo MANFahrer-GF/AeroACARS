@@ -3920,9 +3920,9 @@ struct FlightStats {
     queued_position_count: u32,
 
     // ---- Gates / runway (from MSFS ATC SimVars) ----
-    /// Parking stand the pilot pushed back from. Captured the first
-    /// time `step_flight` sees a non-empty `parking_name` while still
-    /// in Boarding. Survives across the whole flight.
+    /// Parking stand the pilot pushed back from. Captured from the OSM
+    /// ground data while still in Boarding (nearest NAMED stand within
+    /// `STAND_NAME_RADIUS_M`). Survives across the whole flight.
     dep_gate: Option<String>,
     /// Stand the pilot ended up parked at after arrival. Captured when the
     /// aircraft comes to rest at the arrival stand — by the normal
@@ -5719,24 +5719,15 @@ fn settle_at_arrival_stand(
     if stats.block_on_at.is_none() {
         stats.block_on_at = Some(now);
     }
-    // MSFS only fills `parking_name` while the aircraft is actually on a named
-    // stand, so this is the moment to read it — later is too late.
-    if stats.arr_gate.is_none() {
-        if let Some(name) = snap.parking_name.as_ref().filter(|s| !s.is_empty()) {
-            let label = match snap.parking_number.as_ref() {
-                Some(num) if !num.is_empty() => format!("{name} {num}"),
-                _ => name.clone(),
-            };
-            stats.arr_gate = Some(label);
-            stats.arr_gate_icao = Some(at_icao.trim().to_uppercase());
-        }
-    }
-    // Beide Sims liefern `parking_name` faktisch nie (MSFS: SimConnect
-    // befuellt es nicht; X-Plane: hart `None`) — der Zweig oben ist ein
-    // totes Sicherheitsnetz. Der verlaessliche Weg sind die OSM-Stand-
-    // daten, exakt wie am BlocksOn-Gate: ohne diesen Zweig verlor jeder
-    // Flug, der ueber den Arrived-Fallback ankam (ohne Parkbremse
-    // abgestellt, Helikopter, kalt-und-dunkel), seinen Ankunfts-Stand.
+    // v1.6.1: der fruehere `snap.parking_name`-Zweig ist ersatzlos raus —
+    // beide Sims liefern das Feld nachweislich nie (MSFS: SimConnect
+    // befuellt es nicht, sim-msfs setzt hart None; X-Plane: dataref.rs
+    // hart None). Er stand als totes Sicherheitsnetz VOR dem verlaess-
+    // lichen OSM-Weg und haette ihn bei Junk-Werten eines kuenftigen
+    // Adapters lautlos praeemptiert. Der OSM-Weg ist derselbe wie am
+    // BlocksOn-Gate: ohne ihn verlor jeder Flug, der ueber den Arrived-
+    // Fallback ankam (ohne Parkbremse abgestellt, Helikopter, kalt-und-
+    // dunkel), seinen Ankunfts-Stand.
     if stats.arr_gate.is_none() {
         let at_norm = at_icao.trim().to_uppercase();
         let fund = stats
@@ -22579,12 +22570,11 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // kann an einer noch fehlenden Position scheitern — die
                 // Liste liegt dann in dep_stands, und hier greift jeder
                 // weitere Tick, bis der Stand sitzt oder das Rollen beginnt.
-                // Nur im (Fast-)Stillstand: wer schon rollt, faehrt an
-                // fremden Staenden vorbei, und ein einmal gestempelter
-                // dep_gate wird nie korrigiert.
-                if matches!(tick_phase, FlightPhase::Boarding | FlightPhase::Pushback)
-                    && snap.groundspeed_kt <= 2.5
-                {
+                // Nur im Boarding und im (Fast-)Stillstand: waehrend des
+                // Pushbacks steht der Flieger schon NEBEN fremden Staenden
+                // (30-80 m vom eigenen), und ein einmal gestempelter
+                // dep_gate wird nie korrigiert (QS-Befund).
+                if tick_phase == FlightPhase::Boarding && snap.groundspeed_kt <= 2.5 {
                     let mut stats = flight.stats.lock().expect("flight stats");
                     if stats.dep_gate.is_none() {
                         if let (Some(list), Some((lat, lon))) = (
@@ -25601,18 +25591,11 @@ fn step_flight_at(
     // pick it up. Acknowledge to silence the unused-variable warning.
     let _ = stats.was_parking_brake;
 
-    // Capture the departure gate as soon as MSFS gives us a parking
-    // name — that means the aircraft is still on the named stand and
-    // hasn't pushed back yet. Set once and stay.
-    if stats.dep_gate.is_none() {
-        if let Some(name) = snap.parking_name.as_ref().filter(|s| !s.is_empty()) {
-            let label = match snap.parking_number.as_ref() {
-                Some(num) if !num.is_empty() => format!("{name} {num}"),
-                _ => name.clone(),
-            };
-            stats.dep_gate = Some(label);
-        }
-    }
+    // v1.6.1: der fruehere `snap.parking_name`-Weg fuer den Abflug-Stand
+    // ist ersatzlos raus — beide Sim-Adapter setzen das Feld hart auf
+    // None (SimConnect befuellt es nie, X-Plane hat kein Pendant). Der
+    // Abflug-Stand kommt ausschliesslich aus den OSM-Bodendaten
+    // (`maybe_spawn_stand_fetch` + Boarding-Retry-Tick im Streamer).
 
     // v0.5.11: freeze FSM transitions during sim pause / slew mode.
     //
@@ -28434,9 +28417,21 @@ mod arrived_fallback_geometry_tests {
     /// stand was silently dropped on every fallback arrival.
     #[test]
     fn the_fallback_captures_the_arrival_stand_that_blockson_would_have() {
-        let (flight, mut snap) = flight_planned_to("EDDF", EDDF_TERMINAL_2);
-        snap.parking_name = Some("GATE A".to_string());
-        snap.parking_number = Some("17".to_string());
+        // v1.6.1: der Test uebte frueher den `snap.parking_name`-Zweig —
+        // einen Pfad, der im Feld nie lief (beide Sims liefern None).
+        // Jetzt uebt er den echten Weg: OSM-Standliste + Position.
+        let (flight, snap) = flight_planned_to("EDDF", EDDF_TERMINAL_2);
+        {
+            let mut stats = flight.stats.lock().unwrap();
+            stats.arr_stands = Some(vec![crate::stands::ParkingStand {
+                name: Some("A17".into()),
+                lat: EDDF_TERMINAL_2.0,
+                lon: EDDF_TERMINAL_2.1,
+                linie: None,
+                flaeche: false,
+            }]);
+            stats.arr_stands_icao = Some("EDDF".into());
+        }
 
         step_flight(&flight, &snap);
 
@@ -28444,7 +28439,7 @@ mod arrived_fallback_geometry_tests {
         assert_eq!(stats.phase, FlightPhase::Arrived);
         assert_eq!(
             stats.arr_gate.as_deref(),
-            Some("GATE A 17"),
+            Some("A17"),
             "arriving via the fallback must still record the arrival stand"
         );
         assert!(stats.block_on_at.is_some(), "block-on time must be stamped");
@@ -29568,12 +29563,14 @@ mod enroute_reconcile_replay_tests {
                     lat: 38.764528,
                     lon: -9.136807,
                     linie: None,
+                    flaeche: false,
                 },
                 crate::stands::ParkingStand {
                     name: Some("204".into()),
                     lat: 38.764391,
                     lon: -9.137202,
                     linie: None,
+                    flaeche: false,
                 },
             ]
         }
@@ -31107,7 +31104,15 @@ fn maybe_spawn_stand_fetch(
         FlightPhase::Descent
         | FlightPhase::Approach
         | FlightPhase::Final
-        | FlightPhase::TaxiIn => Dir::Arrival,
+        | FlightPhase::TaxiIn
+        // BlocksOn/Arrived dazu (QS-Befunde v1.6.1): (a) der Divert-Hint
+        // wird erst beim Arrived-Fallback gemintet — ohne diese Phasen
+        // koennte der Refetch fuers TATSAECHLICHE Ziel nie feuern;
+        // (b) ein Resume direkt in BlocksOn/Arrived haette sonst nie
+        // eine Standliste. Der requested-Latch haelt Normalfluege bei
+        // genau einem Abruf.
+        | FlightPhase::BlocksOn
+        | FlightPhase::Arrived => Dir::Arrival,
         _ => return,
     };
     let icao = match dir {
@@ -31136,8 +31141,8 @@ fn maybe_spawn_stand_fetch(
     /// Ticks Abstand zwischen Wiederholungen. Ohne Spacing verbrennen
     /// alle fünf Versuche in den ersten ~15 Sekunden des Fluges — genau
     /// dann, wenn WLAN/VPN am wahrscheinlichsten noch nicht steht
-    /// (dasselbe Muster wie `ARR_REF_POS_RETRY_EVERY_TICKS`). ~30 Ticks
-    /// sind Minuten; die Antwort wird erst am Stand gebraucht.
+    /// (dasselbe Muster wie `ARR_REF_POS_RETRY_EVERY_TICKS`). 30 Ticks
+    /// sind ~90 s am Boden; die Antwort wird erst am Stand gebraucht.
     const STAND_FETCH_RETRY_EVERY_TICKS: u32 = 30;
     {
         let mut stats = flight.stats.lock().expect("flight stats");
@@ -31185,6 +31190,15 @@ fn maybe_spawn_stand_fetch(
         // maximal STAND_FETCH_MAX_ATTEMPTS gerasterte Anfragen, dann Ruhe.
         let fetch_failed = |flight: &Arc<ActiveFlight>, grund: &str| {
             let mut stats = flight.stats.lock().expect("flight stats");
+            // Stale-Spawn-Guard (QS-Befund): ein Divert-Reset kann diesen
+            // Spawn ueberholt haben — dann gehoert der Fehlversuch einem
+            // ICAO, das niemand mehr angefragt hat. Zaehler/Latch des
+            // NEUEN Ziels nicht anfassen.
+            if dir == Dir::Arrival
+                && stats.arr_stands_requested_icao.as_deref() != Some(icao.as_str())
+            {
+                return;
+            }
             let attempts = match dir {
                 Dir::Departure => {
                     stats.dep_stand_fetch_attempts = stats.dep_stand_fetch_attempts.saturating_add(1);
@@ -31225,11 +31239,13 @@ fn maybe_spawn_stand_fetch(
         let mut stats = flight.stats.lock().expect("flight stats");
         match dir {
             Dir::Departure => {
-                // Erstversuch sofort — beim Boarding steht der Flieger ja
-                // bereits auf seinem Stand. Aber NICHT der einzige Versuch:
-                // die Liste bleibt liegen, und der Tick probiert es weiter,
-                // solange Boarding/Pushback laeuft (Befund OCN 1408).
-                if stats.dep_gate.is_none() {
+                // Erstversuch sofort — aber NUR im Boarding: da steht der
+                // Flieger auf seinem Stand. Ein spaet antwortender Fetch
+                // (Retry nach Netzfehler) darf nach Pushback/Rollbeginn
+                // keinen fremden Nachbar-Stand mehr stempeln (QS-Befund).
+                // Nicht der einzige Versuch: die Liste bleibt liegen, der
+                // Boarding-Tick probiert weiter (Befund OCN 1408).
+                if stats.phase == FlightPhase::Boarding && stats.dep_gate.is_none() {
                     if let Some((lat, lon)) = aircraft_position_for_gates(&stats) {
                         if let Some((s, _)) = stands::benannter_stand_bei(&list, lat, lon) {
                             if let Some(name) = &s.name {
@@ -31242,8 +31258,15 @@ fn maybe_spawn_stand_fetch(
                 stats.dep_stands = Some(list);
             }
             Dir::Arrival => {
-                stats.arr_stands = Some(list);
-                stats.arr_stands_icao = Some(icao);
+                // Stale-Spawn-Guard (QS-Befund): nach einem Divert-Reset
+                // darf die VERSPAETETE Antwort des alten Ziels die schon
+                // geladene Liste des echten Ziels nicht ueberschreiben.
+                if stats.arr_stands_requested_icao.as_deref() == Some(icao.as_str()) {
+                    stats.arr_stands = Some(list);
+                    stats.arr_stands_icao = Some(icao);
+                } else {
+                    tracing::info!(%icao, "stale stand list dropped (target changed mid-fetch)");
+                }
             }
         }
     });

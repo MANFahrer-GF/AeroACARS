@@ -32,7 +32,15 @@ pub struct ParkingStand {
     /// der alte Ein-Punkt-Abstand verfehlte den 60-m-Radius, und
     /// EDDF ist (wie viele große Plätze) komplett linien-gemappt.
     /// `None` bei Punkt-Geometrien.
+    ///
+    /// Bewusster Trade-off: Lead-in-Linien BEGINNEN am Rollweg — ein
+    /// Parkbrems-Halt am Linienanfang kann damit als „am Stand" zählen.
+    /// Das fängt der BlocksOn→TaxiIn-Rückweg (wer weiterrollt, verwirft
+    /// Block-On-Zeit UND Stand); der Endzustand bleibt korrekt.
     pub linie: Option<Vec<(f64, f64)>>,
+    /// `true`, wenn die Geometrie eine Fläche war (Polygon-Außenring in
+    /// `linie`): dann gilt „drin = 0 m", nicht nur Ringnähe.
+    pub flaeche: bool,
 }
 
 /// Wie nah (Meter) der Stillstand an einer Parkposition liegen muss,
@@ -41,6 +49,14 @@ pub struct ParkingStand {
 /// der fehlgedeutete H4-Halt 423 m. 60 m fängt Szenerie-Versatz ab
 /// und bleibt weit unter der Rollweg-Distanz.
 pub const STAND_CAPTURE_RADIUS_M: f64 = 60.0;
+
+/// Engerer Radius für die NAMENS-Zuordnung. QS-Befund v1.6.1: mit dem
+/// vollen 60-m-Radius könnte ein Flieger auf einer ungetaggten Position
+/// den Namen des NACHBAR-Stands (45 m weiter) gestempelt bekommen — ein
+/// falscher Name im PIREP ist schlimmer als ein leeres Feld. 30 m hält
+/// die RYR-1142-Kalibrierung (eigener Stand 17 m, Nachbar 34 m) auf der
+/// richtigen Seite und deckt Szenerie-Versatz weiter ab.
+pub const STAND_NAME_RADIUS_M: f64 = 30.0;
 
 /// Parkpositionen aus dem `airport_ground`-GeoJSON ziehen.
 ///
@@ -87,7 +103,14 @@ pub fn parse_stands(geojson: &str) -> Vec<ParkingStand> {
                 ("Point", Some(c)) => (lonlat(c), None),
                 ("LineString", Some(c)) => {
                     let pts = linien_punkte(c);
-                    (pts.as_ref().and_then(|p| p.last().copied().map(|(la, lo)| (lo, la))), pts)
+                    // Degenerierte Ein-Punkt-"Linie": als Punkt-Stand
+                    // weiterleben lassen (QS-Befund — vorher fiel er weg).
+                    let punkt = pts
+                        .as_ref()
+                        .and_then(|p| p.last().copied())
+                        .or_else(|| c.as_array().and_then(|a| a.last()).and_then(lonlat).map(|(lon, lat)| (lat, lon)))
+                        .map(|(la, lo)| (lo, la));
+                    (punkt, pts)
                 }
                 ("Polygon", Some(c)) => {
                     let pts = c.as_array().and_then(|rings| rings.first()).and_then(linien_punkte);
@@ -96,7 +119,8 @@ pub fn parse_stands(geojson: &str) -> Vec<ParkingStand> {
                 _ => (None, None),
             };
         if let Some((lon, lat)) = point {
-            stands.push(ParkingStand { name, lat, lon, linie });
+            let flaeche = gtype == "Polygon";
+            stands.push(ParkingStand { name, lat, lon, linie, flaeche });
         }
     }
     stands
@@ -129,6 +153,15 @@ pub fn abstand_m(stand: &ParkingStand, lat: f64, lon: f64) -> f64 {
     let my = 110_540.0;
     let p = (0.0, 0.0);
     let proj = |(la, lo): (f64, f64)| ((lo - lon) * mx, (la - lat) * my);
+    // Flächig gemappter Stand: WER DRAUF STEHT, ist am Stand — Abstand 0.
+    // (QS-Befund: große GA-Aprons als ein Polygon; die Ringnähe allein
+    // verfehlte die Mitte.) Ray-Cast in der lokalen Projektion.
+    if stand.flaeche {
+        let ring: Vec<(f64, f64)> = linie.iter().map(|&q| proj(q)).collect();
+        if punkt_in_ring(p, &ring) {
+            return 0.0;
+        }
+    }
     let mut best = f64::INFINITY;
     for seg in linie.windows(2) {
         let a = proj(seg[0]);
@@ -136,6 +169,28 @@ pub fn abstand_m(stand: &ParkingStand, lat: f64, lon: f64) -> f64 {
         best = best.min(punkt_strecke_m(p, a, b));
     }
     best
+}
+
+/// Punkt-in-Polygon (Ray-Cast) in ebenen Koordinaten. Der Ring muss
+/// nicht explizit geschlossen sein — das letzte Segment wird ergänzt.
+fn punkt_in_ring(p: (f64, f64), ring: &[(f64, f64)]) -> bool {
+    if ring.len() < 3 {
+        return false;
+    }
+    let (px, py) = p;
+    let mut drin = false;
+    let mut j = ring.len() - 1;
+    for i in 0..ring.len() {
+        let (xi, yi) = ring[i];
+        let (xj, yj) = ring[j];
+        if ((yi > py) != (yj > py))
+            && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)
+        {
+            drin = !drin;
+        }
+        j = i;
+    }
+    drin
 }
 
 /// Abstand Punkt→Strecke in der Ebene (Meter-Koordinaten).
@@ -189,7 +244,7 @@ pub fn benannter_stand_bei(
         .iter()
         .filter(|s| s.name.is_some())
         .map(|s| (s, abstand_m(s, lat, lon)))
-        .filter(|(_, d)| *d <= STAND_CAPTURE_RADIUS_M)
+        .filter(|(_, d)| *d <= STAND_NAME_RADIUS_M)
         .min_by(|a, b| a.1.total_cmp(&b.1))
 }
 
@@ -268,14 +323,51 @@ mod tests {
         // stand_at liefert den namenlosen (korrekt für die Nähe-Frage),
         // benannter_stand_bei liefert den Namen fürs PIREP.
         let stands = vec![
-            ParkingStand { name: None, lat: 50.00009, lon: 8.0, linie: None },
-            ParkingStand { name: Some("A22".into()), lat: 50.00022, lon: 8.0, linie: None },
+            ParkingStand { name: None, lat: 50.00009, lon: 8.0, linie: None, flaeche: false },
+            ParkingStand { name: Some("A22".into()), lat: 50.00022, lon: 8.0, linie: None, flaeche: false },
         ];
         let bei = stand_at(&stands, 50.0, 8.0).expect("in Standnähe");
         assert_eq!(bei.name, None);
         let (benannt, d) = benannter_stand_bei(&stands, 50.0, 8.0).expect("benannt");
         assert_eq!(benannt.name.as_deref(), Some("A22"));
         assert!(d < 30.0);
+    }
+
+    #[test]
+    fn namens_radius_stempelt_keinen_fernen_nachbarn() {
+        // Ungetaggte Position unterm Flieger, benannter Nachbar 45 m
+        // weiter: der Nachbar-Name darf NICHT ins PIREP (QS-Befund
+        // v1.6.1) — 45 m liegt ausserhalb von STAND_NAME_RADIUS_M.
+        let stands = vec![
+            ParkingStand { name: None, lat: 50.0, lon: 8.0, linie: None, flaeche: false },
+            ParkingStand { name: Some("B10".into()), lat: 50.00041, lon: 8.0, linie: None, flaeche: false },
+        ];
+        assert!(stand_at(&stands, 50.0, 8.0).is_some(), "Naehe ja");
+        assert!(benannter_stand_bei(&stands, 50.0, 8.0).is_none(), "Name nein");
+    }
+
+    #[test]
+    fn polygon_stand_mitte_zaehlt_als_drauf() {
+        // ~220x220-m-Apron als ein parking_position-Polygon: die Mitte
+        // ist >60 m vom Ring entfernt und muss trotzdem matchen.
+        let gj = r#"{"type":"FeatureCollection","features":[
+          {"type":"Feature","properties":{"k":"parking_position","r":"APRON"},"geometry":{"type":"Polygon","coordinates":[[[8.0,50.0],[8.003,50.0],[8.003,50.002],[8.0,50.002],[8.0,50.0]]]}}
+        ]}"#;
+        let stands = parse_stands(gj);
+        assert_eq!(stands.len(), 1);
+        let s = stand_at(&stands, 50.001, 8.0015).expect("mitten drauf");
+        assert_eq!(s.name.as_deref(), Some("APRON"));
+    }
+
+    #[test]
+    fn einpunkt_linestring_bleibt_als_punkt_stand() {
+        let gj = r#"{"type":"FeatureCollection","features":[
+          {"type":"Feature","properties":{"k":"parking_position","r":"X1"},"geometry":{"type":"LineString","coordinates":[[8.0,50.0]]}}
+        ]}"#;
+        let stands = parse_stands(gj);
+        assert_eq!(stands.len(), 1);
+        assert_eq!(stands[0].linie, None);
+        assert!(stand_at(&stands, 50.0, 8.0).is_some());
     }
 
     #[test]
