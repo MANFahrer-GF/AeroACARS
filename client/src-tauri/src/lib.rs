@@ -3766,6 +3766,11 @@ struct FlightStats {
     dep_stand_fetch_attempts: u8,
     arr_stand_fetch_attempts: u8,
     arr_stands_requested: bool,
+    /// Für WELCHEN Flughafen die Ankunfts-Standliste angefragt wurde.
+    /// Weicht das tatsächliche Ziel ab (Divert!), wird neu angefragt —
+    /// vorher blieb bei einer Ausweichlandung für immer die Liste des
+    /// GEPLANTEN Ziels liegen und der Stand konnte nie erfasst werden.
+    arr_stands_requested_icao: Option<String>,
     /// Parkpositionen des ZIELflughafens, geladen ab Descent. `None` =
     /// (noch) nicht verfügbar → die BlocksOn-Erkennung fällt auf das
     /// alte Kriterium zurück statt zu blockieren.
@@ -5726,6 +5731,26 @@ fn settle_at_arrival_stand(
             stats.arr_gate_icao = Some(at_icao.trim().to_uppercase());
         }
     }
+    // Beide Sims liefern `parking_name` faktisch nie (MSFS: SimConnect
+    // befuellt es nicht; X-Plane: hart `None`) — der Zweig oben ist ein
+    // totes Sicherheitsnetz. Der verlaessliche Weg sind die OSM-Stand-
+    // daten, exakt wie am BlocksOn-Gate: ohne diesen Zweig verlor jeder
+    // Flug, der ueber den Arrived-Fallback ankam (ohne Parkbremse
+    // abgestellt, Helikopter, kalt-und-dunkel), seinen Ankunfts-Stand.
+    if stats.arr_gate.is_none() {
+        let at_norm = at_icao.trim().to_uppercase();
+        let fund = stats
+            .arr_stands
+            .as_deref()
+            .filter(|_| stats.arr_stands_icao.as_deref() == Some(at_norm.as_str()))
+            .and_then(|list| stands::benannter_stand_bei(list, snap.lat, snap.lon))
+            .and_then(|(st, _)| st.name.clone());
+        if let Some(name) = fund {
+            tracing::info!(stand = %name, at = %at_norm, "arrival stand captured from OSM ground data (settle)");
+            stats.arr_gate = Some(name);
+            stats.arr_gate_icao = Some(at_norm);
+        }
+    }
 }
 
 /// The arrival stand, but only when it belongs to the airport the PIREP is
@@ -6371,6 +6396,12 @@ const MAX_VS_DEV_FLOOR_FT: f32 = 50.0;
 /// LANDING-CONFIG check then reports "not assessable" instead of a
 /// false "INCOMPLETE".
 const FLAPS_UNREADABLE_MAX_IAS_KT: f32 = 160.0;
+/// Klappenstellung, unterhalb derer eine Landekonfiguration (Fahrwerk
+/// unten, Landegeschwindigkeit) als Messfehler statt Pilotenfehler gilt —
+/// siehe Kommentar am `flaps_unreadable`-Check. 0.25 fängt die bekannten
+/// Skalen-Artefakte (÷5-Doppelnormalisierung → 0.2) und liegt klar unter
+/// jeder echten Lande-Klappenstufe.
+const FLAPS_IMPLAUSIBLE_BELOW: f32 = 0.25;
 
 fn compute_approach_stddev(
     buf: &std::collections::VecDeque<ApproachBufferSample>,
@@ -6657,8 +6688,20 @@ fn compute_approach_stability_v2(
         // flaps" — report the config as not-assessable (None) rather than
         // a false "INCOMPLETE" fail. A genuine flapless approach would be
         // far faster than FLAPS_UNREADABLE_MAX_IAS_KT.
-        let flaps_all_zero = gate_samples.iter().all(|s| s.flaps_position < 0.01);
-        let flaps_unreadable = flaps_all_zero
+        //
+        // v1.6.1 (Befund ITY 4TK, Synaptic A220): die Grenze lag bei
+        // < 0.01 und fing damit nur TOTE Datarefs. Ein falsch SKALIERTER
+        // Wert (A220-Klappenhebel doppelt normalisiert → 0.2 statt 1.0)
+        // rutschte durch und wurde als „Pilot hat die Klappen vergessen"
+        // bewertet. Physik-Argument wie oben: Fahrwerk unten und
+        // Landegeschwindigkeit mit ≤ 25 % Klappen ist keine plausible
+        // Konfiguration, sondern ein kaputter oder fehlskalierter
+        // Messwert → nicht bewertbar statt falsch-INCOMPLETE. Fängt
+        // die ganze Fehlerklasse für alle künftigen Profile.
+        let flaps_all_implausible = gate_samples
+            .iter()
+            .all(|s| s.flaps_position < FLAPS_IMPLAUSIBLE_BELOW);
+        let flaps_unreadable = flaps_all_implausible
             && gear_ok
             && gate_entry.ias_kt < FLAPS_UNREADABLE_MAX_IAS_KT;
         if flaps_unreadable {
@@ -22531,24 +22574,57 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // v1.6: gleiche Mechanik für die OSM-Parkpositionen —
                 // dep-Stand am Gate erfassen, arr-Stände für das
                 // BlocksOn-Stand-Gate vorladen.
-                maybe_spawn_stand_fetch(&app, &flight, tick_phase);
+                maybe_spawn_stand_fetch(&app, &flight, tick_phase, tick_count);
                 // Abflug-Stand nachziehen: der Erstversuch im Lade-Task
                 // kann an einer noch fehlenden Position scheitern — die
                 // Liste liegt dann in dep_stands, und hier greift jeder
                 // weitere Tick, bis der Stand sitzt oder das Rollen beginnt.
-                if matches!(tick_phase, FlightPhase::Boarding | FlightPhase::Pushback) {
+                // Nur im (Fast-)Stillstand: wer schon rollt, faehrt an
+                // fremden Staenden vorbei, und ein einmal gestempelter
+                // dep_gate wird nie korrigiert.
+                if matches!(tick_phase, FlightPhase::Boarding | FlightPhase::Pushback)
+                    && snap.groundspeed_kt <= 2.5
+                {
                     let mut stats = flight.stats.lock().expect("flight stats");
                     if stats.dep_gate.is_none() {
                         if let (Some(list), Some((lat, lon))) = (
                             stats.dep_stands.as_deref(),
                             aircraft_position_for_gates(&stats),
                         ) {
-                            if let Some(name) = stands::stand_at(list, lat, lon)
-                                .and_then(|s| s.name.clone())
+                            if let Some(name) = stands::benannter_stand_bei(list, lat, lon)
+                                .and_then(|(s, _)| s.name.clone())
                             {
                                 tracing::info!(stand = %name, "departure stand captured on retry tick");
                                 stats.dep_gate = Some(name);
                             }
+                        }
+                    }
+                }
+                // Ankunfts-Gegenstueck (QS-Befund B5): kommt die Standliste
+                // erst NACH der TaxiIn→BlocksOn-Kante an (Fetch-Latenz,
+                // spaeter Retry), war die einzige Zuordnungsstelle schon
+                // vorbei. Solange der Flieger abgestellt steht, traegt
+                // jeder Tick den Namen nach. Falscher Platz ist dabei
+                // ausgeschlossen: die Liste selbst gehoert zu einem ICAO,
+                // und ein Stand in 60-m-Naehe IST der Ortsbeweis.
+                if matches!(tick_phase, FlightPhase::BlocksOn | FlightPhase::Arrived)
+                    && snap.on_ground
+                    && snap.groundspeed_kt < 1.0
+                {
+                    let mut stats = flight.stats.lock().expect("flight stats");
+                    if stats.arr_gate.is_none() {
+                        let fund = match (stats.arr_stands.as_deref(), stats.arr_stands_icao.clone()) {
+                            (Some(list), Some(list_icao)) => {
+                                stands::benannter_stand_bei(list, snap.lat, snap.lon)
+                                    .and_then(|(st, _)| st.name.clone())
+                                    .map(|n| (n, list_icao))
+                            }
+                            _ => None,
+                        };
+                        if let Some((name, list_icao)) = fund {
+                            tracing::info!(stand = %name, at = %list_icao, "arrival stand captured on retry tick");
+                            stats.arr_gate = Some(name);
+                            stats.arr_gate_icao = Some(list_icao);
                         }
                     }
                 }
@@ -27174,7 +27250,17 @@ fn step_flight_at(
                     .filter(|_| stats.arr_stands_icao.as_deref() == Some(at_icao_norm.as_str()));
                 let (is_block_on, osm_stand, rejected_nearest) = match stand_data {
                     Some(list) => match stands::stand_at(list, snap.lat, snap.lon) {
-                        Some(s) => (true, s.name.clone(), None),
+                        // Naehe entscheidet ueber Block-On (auch ein namen-
+                        // loser Stand zaehlt); der NAME kommt vom naechsten
+                        // BENANNTEN Stand im Radius — sonst blockiert eine
+                        // ungetaggte Position 10 m daneben das PIREP-Feld,
+                        // obwohl der richtige Name 20 m weiter bereitliegt.
+                        Some(_) => (
+                            true,
+                            stands::benannter_stand_bei(list, snap.lat, snap.lon)
+                                .and_then(|(st, _)| st.name.clone()),
+                            None,
+                        ),
                         None => {
                             let n = stands::nearest(list, snap.lat, snap.lon)
                                 .map(|(s, d)| (s.name.clone().unwrap_or_default(), d));
@@ -29481,11 +29567,13 @@ mod enroute_reconcile_replay_tests {
                     name: Some("203".into()),
                     lat: 38.764528,
                     lon: -9.136807,
+                    linie: None,
                 },
                 crate::stands::ParkingStand {
                     name: Some("204".into()),
                     lat: 38.764391,
                     lon: -9.137202,
+                    linie: None,
                 },
             ]
         }
@@ -30998,7 +31086,12 @@ fn maybe_spawn_metar_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, new_phas
 ///
 /// `airport_ground_get` cached lokal pro ICAO (ETag) — im Normalfall ist
 /// das ein Plattenzugriff, kein Netz-Roundtrip.
-fn maybe_spawn_stand_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, phase: FlightPhase) {
+fn maybe_spawn_stand_fetch(
+    app: &AppHandle,
+    flight: &Arc<ActiveFlight>,
+    phase: FlightPhase,
+    tick_count: u32,
+) {
     #[derive(Clone, Copy, PartialEq)]
     enum Dir {
         Departure,
@@ -31019,35 +31112,78 @@ fn maybe_spawn_stand_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, phase: F
     };
     let icao = match dir {
         Dir::Departure => flight.dpt_airport.trim().to_uppercase(),
-        Dir::Arrival => flight.arr_airport.trim().to_uppercase(),
+        // Divert: der Stand gehört zum Platz, auf dem der Flieger WIRKLICH
+        // landet. Ohne das lädt eine Ausweichlandung für immer die Liste
+        // des geplanten Ziels — und das BlocksOn-Stand-Gate filtert sie
+        // (zu Recht) weg, der Stand bleibt leer.
+        Dir::Arrival => {
+            let stats = flight.stats.lock().expect("flight stats");
+            stats
+                .divert_hint
+                .as_ref()
+                .and_then(|h| h.actual_icao.as_deref())
+                .unwrap_or(&flight.arr_airport)
+                .trim()
+                .to_uppercase()
+        }
     };
     if icao.len() < 3 {
         return;
     }
+    /// Nach so vielen Fehlversuchen geben wir auf — ein dauerhaft toter
+    /// Server soll nicht endlos angefragt werden.
+    const STAND_FETCH_MAX_ATTEMPTS: u8 = 5;
+    /// Ticks Abstand zwischen Wiederholungen. Ohne Spacing verbrennen
+    /// alle fünf Versuche in den ersten ~15 Sekunden des Fluges — genau
+    /// dann, wenn WLAN/VPN am wahrscheinlichsten noch nicht steht
+    /// (dasselbe Muster wie `ARR_REF_POS_RETRY_EVERY_TICKS`). ~30 Ticks
+    /// sind Minuten; die Antwort wird erst am Stand gebraucht.
+    const STAND_FETCH_RETRY_EVERY_TICKS: u32 = 30;
     {
         let mut stats = flight.stats.lock().expect("flight stats");
-        let already = match dir {
-            Dir::Departure => stats.dep_stands_requested,
-            Dir::Arrival => stats.arr_stands_requested,
+        // Divert-Wechsel: angefragt wurde ein anderer Platz als der, auf
+        // dem wir landen → Anfrage-Latch und Zähler zurücksetzen.
+        if dir == Dir::Arrival
+            && stats.arr_stands_requested
+            && stats.arr_stands_requested_icao.as_deref() != Some(icao.as_str())
+        {
+            stats.arr_stands_requested = false;
+            stats.arr_stand_fetch_attempts = 0;
+        }
+        let (already, attempts) = match dir {
+            Dir::Departure => (stats.dep_stands_requested, stats.dep_stand_fetch_attempts),
+            Dir::Arrival => (stats.arr_stands_requested, stats.arr_stand_fetch_attempts),
         };
         if already {
             return;
         }
+        // Wiederholungen (attempts > 0) laufen nur im Raster — der
+        // Erstversuch sofort.
+        if attempts > 0
+            && (attempts >= STAND_FETCH_MAX_ATTEMPTS
+                || !tick_count.is_multiple_of(STAND_FETCH_RETRY_EVERY_TICKS))
+        {
+            return;
+        }
         match dir {
             Dir::Departure => stats.dep_stands_requested = true,
-            Dir::Arrival => stats.arr_stands_requested = true,
+            Dir::Arrival => {
+                stats.arr_stands_requested = true;
+                stats.arr_stands_requested_icao = Some(icao.clone());
+            }
         }
     }
     let app = app.clone();
     let flight = Arc::clone(flight);
     tauri::async_runtime::spawn(async move {
-        /// Nach so vielen Fehlversuchen geben wir auf — ein dauerhaft
-        /// toter Abruf soll nicht im 5-Sekunden-Takt weiterhaemmern.
-        const MAX_FETCH_ATTEMPTS: u8 = 5;
-        // Ein Fehlversuch gibt das requested-Flag zurueck: der naechste
-        // Tick versucht es erneut. Vorher war JEDER Fehlschlag endgueltig
-        // fuer den ganzen Flug (Befund OCN 1408, EDDF).
-        let fetch_failed = |flight: &Arc<ActiveFlight>| {
+        // JEDER erfolglose Ausgang gibt das requested-Flag zurueck, damit
+        // der naechste Raster-Tick es erneut probiert. Wichtig dabei:
+        // `airport_ground_get` maskiert Netzfehler ohne lokale Kopie als
+        // `Ok(None)` — ein reiner Err-Arm waere fuer den realen Fehlerfall
+        // unerreichbar (QS-Befund B1 zur ersten Fassung dieses Fixes).
+        // Ein echtes „dieser Platz hat keine Bodendaten" (404) kostet so
+        // maximal STAND_FETCH_MAX_ATTEMPTS gerasterte Anfragen, dann Ruhe.
+        let fetch_failed = |flight: &Arc<ActiveFlight>, grund: &str| {
             let mut stats = flight.stats.lock().expect("flight stats");
             let attempts = match dir {
                 Dir::Departure => {
@@ -31059,44 +31195,43 @@ fn maybe_spawn_stand_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, phase: F
                     stats.arr_stand_fetch_attempts
                 }
             };
-            if attempts < MAX_FETCH_ATTEMPTS {
+            if attempts < STAND_FETCH_MAX_ATTEMPTS {
                 match dir {
                     Dir::Departure => stats.dep_stands_requested = false,
                     Dir::Arrival => stats.arr_stands_requested = false,
                 }
+                tracing::info!(%grund, attempts, "stand-detection ground fetch failed — will retry");
             } else {
-                tracing::warn!("stand-detection ground fetch gave up after {attempts} attempts");
+                tracing::warn!(%grund, "stand-detection ground fetch gave up after {attempts} attempts");
             }
         };
         let ground = match airport_ground_get(app, icao.clone()).await {
             Ok(Some(g)) => g,
             Ok(None) => {
-                tracing::info!(%icao, "no ground data for stand detection — fallback criteria stay active");
+                fetch_failed(&flight, "keine Daten (404 oder Netzfehler ohne Cache)");
                 return;
             }
             Err(e) => {
-                tracing::warn!(error = %e.message, %icao, "ground fetch for stand detection failed — will retry");
-                fetch_failed(&flight);
+                fetch_failed(&flight, &e.message);
                 return;
             }
         };
         let list = stands::parse_stands(&ground.geojson);
         tracing::info!(%icao, stands = list.len(), "parking stands loaded for stand detection");
         if list.is_empty() {
+            fetch_failed(&flight, "Bodendaten ohne Parkpositionen");
             return;
         }
         let mut stats = flight.stats.lock().expect("flight stats");
         match dir {
             Dir::Departure => {
                 // Erstversuch sofort — beim Boarding steht der Flieger ja
-                // bereits auf seinem Stand. Aber NICHT mehr der einzige
-                // Versuch: die Liste bleibt liegen, und der Tick probiert
-                // es weiter, solange Boarding/Pushback laeuft (Befund
-                // OCN 1408: Position im Spawn-Moment noch nicht nutzbar →
-                // dep_gate blieb leer, V172 lag 0,4 m daneben).
+                // bereits auf seinem Stand. Aber NICHT der einzige Versuch:
+                // die Liste bleibt liegen, und der Tick probiert es weiter,
+                // solange Boarding/Pushback laeuft (Befund OCN 1408).
                 if stats.dep_gate.is_none() {
                     if let Some((lat, lon)) = aircraft_position_for_gates(&stats) {
-                        if let Some(s) = stands::stand_at(&list, lat, lon) {
+                        if let Some((s, _)) = stands::benannter_stand_bei(&list, lat, lon) {
                             if let Some(name) = &s.name {
                                 stats.dep_gate = Some(name.clone());
                                 tracing::info!(%icao, stand = %name, "departure stand captured from OSM ground data");
@@ -39406,6 +39541,24 @@ mod sim_pause_tests {
         .collect();
         let out = compute_approach_stability_v2(&buf, None, None, None, None);
         assert_eq!(out.stable_config, Some(false), "genuine no-flaps → fail");
+    }
+
+    #[test]
+    fn landing_config_scale_artifact_is_not_assessable() {
+        // Befund ITY 4TK (Synaptic A220, 12.08.2026): Klappenhebel doppelt
+        // normalisiert → flaps_position 0.2 statt 1.0 den ganzen Anflug.
+        // Fahrwerk unten, 130 kt — das ist ein Messfehler, kein Pilot, der
+        // mit Klappen 20 % landet. Muss None (nicht bewertbar) ergeben,
+        // nie wieder ein falsches „INCOMPLETE".
+        let buf: std::collections::VecDeque<ApproachBufferSample> = [
+            approach_sample(900.0, 130.0, 132.0, -650.0, 1.0, 0.2),
+            approach_sample(600.0, 128.0, 130.0, -620.0, 1.0, 0.2),
+            approach_sample(300.0, 125.0, 128.0, -600.0, 1.0, 0.2),
+        ]
+        .into_iter()
+        .collect();
+        let out = compute_approach_stability_v2(&buf, None, None, None, None);
+        assert_eq!(out.stable_config, None, "Skalen-Artefakt → nicht bewertbar");
     }
 
     /// v0.19.x FIX: fewer than 3 gate samples (a telemetry stall right at

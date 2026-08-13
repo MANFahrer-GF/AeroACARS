@@ -1886,6 +1886,11 @@ fn read_str256(bytes: &[u8], off: usize) -> Option<String> {
 ///     PIREP-/MQTT-Feld; fliesst NICHT in compute_sub_scores ein)
 ///   * MQTT-Live-Map-Payload (Anzeige)
 fn a346_gear_position_from_lever(lever: f64) -> f32 {
+    // KORPUS-BELEG (13.08.2026): 8 A346-Fluege auf dem VPS, 12 796
+    // Reiseflug-Samples — gear_position dort durchgehend 0.0, am Boden/
+    // im Anflug 1.0. Die "≠0 = DOWN"-Deutung stimmt also im Feld; ein
+    // Tri-State-Hebel mit 1 = OFF haette im Reiseflug dauerhaft DOWN
+    // gemeldet. Damit ist diese Skala gemessen, nicht mehr angenommen.
     if lever != 0.0 {
         1.0 // down
     } else {
@@ -2198,9 +2203,18 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     let is_synaptic_a220 = matches!(profile, AircraftProfile::SynapticA220);
     // FSL-LED-Schwelle: die `_Brt_Lt`-LVars tragen LED-HELLIGKEIT,
     // kein 0/1-Flag — HubHop-Button-Presets pruefen ">50", wir werten
-    // konservativer > 10 als "leuchtet" (faengt gedimmte Cockpits;
-    // Live-Verifikation beim ersten FSL-Flug).
-    const FSL_LED_LIT: f64 = 10.0;
+    // konservativer > 10 als "leuchtet" (faengt gedimmte Cockpits).
+    //
+    // SKALEN-ABSICHERUNG (Lehre aus dem A220-Klappenhebel, 12.08.2026):
+    // die 0–100-Annahme stammt aus HubHop-Presets, nicht aus einer
+    // Messung. Liefert FSLabs die Helligkeit real als 0–1 (wie der A220
+    // seinen Hebel), laese eine starre >10-Schwelle den AP-Master den
+    // ganzen Flug als AUS. Deshalb zweigleisig: Werte ueber 1.001 sind
+    // die 0–100-Doku-Skala (Schwelle 10), Werte darunter die 0–1-Skala
+    // (Schwelle 0.5). Eine dunkle LED ist auf beiden Skalen 0.
+    let fsl_led_lit = |roh: f64| -> bool {
+        if roh > 1.001 { roh > 10.0 } else { roh > 0.5 }
+    };
     let is_ini = is_a350 || is_a340;
     // v0.7.17 (F-001): Fenix-A32x extension LVARs are now ALWAYS applied
     // when the profile is Fenix — the v0.7.16 opt-in flag is removed
@@ -2518,14 +2532,14 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // auf den Standard-SimVars — fuer FSL nicht katalogisiert,
         // nicht raten.
         (
-            t.fsl_ap1_light > FSL_LED_LIT
-                || t.fsl_ap2_light > FSL_LED_LIT
+            fsl_led_lit(t.fsl_ap1_light)
+                || fsl_led_lit(t.fsl_ap2_light)
                 || t.ap_master,
             t.ap_heading,
             t.ap_altitude,
             t.ap_nav,
-            t.fsl_appr_light > FSL_LED_LIT
-                || t.fsl_loc_light > FSL_LED_LIT
+            fsl_led_lit(t.fsl_appr_light)
+                || fsl_led_lit(t.fsl_loc_light)
                 || t.ap_approach,
         )
     } else if is_synaptic_a220 {
@@ -3067,7 +3081,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // LVar, > 10 (FSL_LED_LIT) = leuchtet. Airbus-FCU-Semantik:
         // LED an = A/THR armed ODER active (wie die echte ATHR-Taste);
         // eine getrennte Engaged-Quelle ist nicht katalogisiert.
-        Some(t.fsl_athr_light > FSL_LED_LIT)
+        Some(fsl_led_lit(t.fsl_athr_light))
     } else if is_contrail_fa50 {
         // Contrail FA50 (v0.17.x Phase 2b): `L:CTL_FA50_AUTOTHROTTLE_ACTIVE`
         // — sauberes 0/1-Flag (Systemseite treibt es echt an/aus).
