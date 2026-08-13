@@ -3750,6 +3750,21 @@ struct FlightStats {
     /// jede Resume-Lage, in der das Stand-Gate die Daten noch braucht,
     /// lädt idempotent nach.
     dep_stands_requested: bool,
+    /// Geladene Parkpositionen des ABFLUGhafens — Gegenstueck zu
+    /// `arr_stands`. Befund OCN 1408 (Peter Z, EDDF, 13.08.2026): die
+    /// Abflug-Zuordnung war ein EINMALversuch im Lade-Task; war die
+    /// Position in genau dem Moment noch nicht nutzbar, blieb dep_gate
+    /// fuer den ganzen Flug leer — obwohl der Stand (V172) in den Daten
+    /// 0,4 m neben dem Flieger lag. Jetzt liegt die Liste hier und jeder
+    /// Boarding-/Pushback-Tick versucht die Zuordnung erneut.
+    dep_stands: Option<Vec<stands::ParkingStand>>,
+    /// Fehlversuchs-Zaehler des Bodendaten-Abrufs (dep/arr gemeinsam
+    /// gezaehlt je Richtung ueber die requested-Flags): ein gescheiterter
+    /// Abruf gibt das requested-Flag zurueck, damit der naechste Tick es
+    /// erneut probiert — aber hoechstens so oft, dass ein toter Server
+    /// nicht endlos gehämmert wird.
+    dep_stand_fetch_attempts: u8,
+    arr_stand_fetch_attempts: u8,
     arr_stands_requested: bool,
     /// Parkpositionen des ZIELflughafens, geladen ab Descent. `None` =
     /// (noch) nicht verfügbar → die BlocksOn-Erkennung fällt auf das
@@ -22517,6 +22532,26 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // dep-Stand am Gate erfassen, arr-Stände für das
                 // BlocksOn-Stand-Gate vorladen.
                 maybe_spawn_stand_fetch(&app, &flight, tick_phase);
+                // Abflug-Stand nachziehen: der Erstversuch im Lade-Task
+                // kann an einer noch fehlenden Position scheitern — die
+                // Liste liegt dann in dep_stands, und hier greift jeder
+                // weitere Tick, bis der Stand sitzt oder das Rollen beginnt.
+                if matches!(tick_phase, FlightPhase::Boarding | FlightPhase::Pushback) {
+                    let mut stats = flight.stats.lock().expect("flight stats");
+                    if stats.dep_gate.is_none() {
+                        if let (Some(list), Some((lat, lon))) = (
+                            stats.dep_stands.as_deref(),
+                            aircraft_position_for_gates(&stats),
+                        ) {
+                            if let Some(name) = stands::stand_at(list, lat, lon)
+                                .and_then(|s| s.name.clone())
+                            {
+                                tracing::info!(stand = %name, "departure stand captured on retry tick");
+                                stats.dep_gate = Some(name);
+                            }
+                        }
+                    }
+                }
                 // v1.5.5: erkannte Staende LIVE als PIREP-Custom-Fields an
                 // phpVMS — das GSG-Dashboard zeigt den Stand damit schon im
                 // Boarding (der Weg des alten vmsACARS), nicht erst nach dem
@@ -31006,6 +31041,33 @@ fn maybe_spawn_stand_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, phase: F
     let app = app.clone();
     let flight = Arc::clone(flight);
     tauri::async_runtime::spawn(async move {
+        /// Nach so vielen Fehlversuchen geben wir auf — ein dauerhaft
+        /// toter Abruf soll nicht im 5-Sekunden-Takt weiterhaemmern.
+        const MAX_FETCH_ATTEMPTS: u8 = 5;
+        // Ein Fehlversuch gibt das requested-Flag zurueck: der naechste
+        // Tick versucht es erneut. Vorher war JEDER Fehlschlag endgueltig
+        // fuer den ganzen Flug (Befund OCN 1408, EDDF).
+        let fetch_failed = |flight: &Arc<ActiveFlight>| {
+            let mut stats = flight.stats.lock().expect("flight stats");
+            let attempts = match dir {
+                Dir::Departure => {
+                    stats.dep_stand_fetch_attempts = stats.dep_stand_fetch_attempts.saturating_add(1);
+                    stats.dep_stand_fetch_attempts
+                }
+                Dir::Arrival => {
+                    stats.arr_stand_fetch_attempts = stats.arr_stand_fetch_attempts.saturating_add(1);
+                    stats.arr_stand_fetch_attempts
+                }
+            };
+            if attempts < MAX_FETCH_ATTEMPTS {
+                match dir {
+                    Dir::Departure => stats.dep_stands_requested = false,
+                    Dir::Arrival => stats.arr_stands_requested = false,
+                }
+            } else {
+                tracing::warn!("stand-detection ground fetch gave up after {attempts} attempts");
+            }
+        };
         let ground = match airport_ground_get(app, icao.clone()).await {
             Ok(Some(g)) => g,
             Ok(None) => {
@@ -31013,7 +31075,8 @@ fn maybe_spawn_stand_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, phase: F
                 return;
             }
             Err(e) => {
-                tracing::warn!(error = %e.message, %icao, "ground fetch for stand detection failed");
+                tracing::warn!(error = %e.message, %icao, "ground fetch for stand detection failed — will retry");
+                fetch_failed(&flight);
                 return;
             }
         };
@@ -31025,8 +31088,12 @@ fn maybe_spawn_stand_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, phase: F
         let mut stats = flight.stats.lock().expect("flight stats");
         match dir {
             Dir::Departure => {
-                // Standzuweisung sofort — beim Boarding steht der Flieger
-                // ja bereits auf seinem Stand.
+                // Erstversuch sofort — beim Boarding steht der Flieger ja
+                // bereits auf seinem Stand. Aber NICHT mehr der einzige
+                // Versuch: die Liste bleibt liegen, und der Tick probiert
+                // es weiter, solange Boarding/Pushback laeuft (Befund
+                // OCN 1408: Position im Spawn-Moment noch nicht nutzbar →
+                // dep_gate blieb leer, V172 lag 0,4 m daneben).
                 if stats.dep_gate.is_none() {
                     if let Some((lat, lon)) = aircraft_position_for_gates(&stats) {
                         if let Some(s) = stands::stand_at(&list, lat, lon) {
@@ -31037,6 +31104,7 @@ fn maybe_spawn_stand_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, phase: F
                         }
                     }
                 }
+                stats.dep_stands = Some(list);
             }
             Dir::Arrival => {
                 stats.arr_stands = Some(list);
