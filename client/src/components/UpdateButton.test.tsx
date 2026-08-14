@@ -391,10 +391,17 @@ describe("Update-Dialog mit den Release-Notes der aktuellen Version", () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
     const verzeichnis = path.resolve(__dirname, "../../../docs/release-notes");
+    // Nach Versionsnummer sortieren, nicht als Text: sonst käme `v1.10.0`
+    // vor `v1.6.3` und der Test prüfte irgendwann die falsche Notiz.
+    const alsZahlen = (d: string) =>
+      d.replace(/^v|\.md$/g, "").split(".").map(Number);
     const dateien = fs
       .readdirSync(verzeichnis)
       .filter((d) => /^v\d+\.\d+\.\d+\.md$/.test(d))
-      .sort();
+      .sort((a, b) => {
+        const [x, y] = [alsZahlen(a), alsZahlen(b)];
+        return x[0]! - y[0]! || x[1]! - y[1]! || x[2]! - y[2]!;
+      });
     const neueste = dateien[dateien.length - 1];
     const koerper = fs.readFileSync(path.join(verzeichnis, neueste), "utf-8");
 

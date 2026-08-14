@@ -215,7 +215,7 @@
       "score_section": "Eight sub-scores rated 0–100 each (landing rate, G force, bounces, approach stability, runway utilization, OFP compliance, loadsheet, alignment). Every card shows value, points, and a coloured bar (green/yellow/red). The weakest category becomes the focus of the coach tip below.",
       "runway_section": "Visualisation of your touchdown on the runway. The cyan dot marks the touchdown point; the green band shows the rollout distance until you cleared the runway (high-speed exit at ~40 kt). Values below: total length, centerline offset, distance past threshold, runway utilization as a percentage.",
       "fuel_section": "Block = fuel at chocks-off; TO Fuel = at takeoff position; LDG Fuel = at touchdown; TOW = takeoff weight (empty + payload + TO fuel); LDW = landing weight; ZFW = zero fuel weight. Plan values come from the SimBrief OFP if available. The „Plan accuracy\" score below evaluates the Block/TOW/LDW/ZFW deltas (penalty above >5 %, heavier above >10 %).",
-      "alignment": "Where and how straight you touched down: lateral offset from the centreline — measured against runway width, because the same metres weigh heavier on a narrow runway — and how far your heading deviated from the runway axis. The worse of the two sets the score. Crosswind is credited: the crab angle the wind requires costs no points (up to 5°, the acceptable residual drift named by Airbus and the Flight Safety Foundation). The angle shown is always your measured one, with the credit given as \"XW\" beside it. The credit uses the crosswind relative to the runway axis — the “Crosswind” tile beside it shows it relative to the aircraft nose. Both figures are correct, but they differ by exactly the crab angle in question."
+      "alignment": "Where and how straight you touched down: lateral offset from the centreline — measured against runway width, because the same metres weigh heavier on a narrow runway — and how far your heading deviated from the runway axis. The worse of the two sets the score. Crosswind is credited: the crab angle the wind requires costs no points (up to 5°, the acceptable residual drift named by Airbus and the Flight Safety Foundation). The angle shown is always your measured one, with the credit given as \"XW\" beside it. The credit uses the crosswind relative to the runway axis, while the “Crosswind” tile beside it uses the wind relative to the aircraft nose. Both figures are correct — they simply refer to different directions, and the crab angle is exactly what lies between them."
     },
     "rat": {
       "smooth_touchdown": "Butter-smooth touchdown",
@@ -439,7 +439,7 @@
     "gforce_forensik": {
       "title": "💪 G-Force Forensics",
       "intro_header": "Which G-force is the right one?",
-      "intro_body": "AeroACARS scores touchdown G-force the way real flight data monitoring does (FOQA): the G signal is lightly smoothed (EMA, ~100 ms), then the peak is taken. That removes the over-sharp 50 Hz single-frame spikes — the scored value matches what a real flight recorder would capture. The raw 50 Hz peak stays visible below as forensic detail.\n\nSince v1.6.2 the scored value is additionally converted to a common reference. The reason: MSFS reports an already-damped instrument value while X-Plane reports the raw quantity — so identical touchdown impacts produced very different numbers on the same points scale. What is displayed is still your simulator's own measurement; only what awards points is converted.",
+      "intro_body": "AeroACARS scores touchdown G-force the way real flight data monitoring does (FOQA): the G signal is lightly smoothed (EMA, ~100 ms), then the peak is taken. That removes the over-sharp 50 Hz single-frame spikes — the scored value matches what a real flight recorder would capture. The raw 50 Hz peak stays visible below as forensic detail.\n\nSince v1.6.2 the value is additionally converted to a common reference before it feeds points and accident detection. The reason: MSFS reports an already-damped instrument value while X-Plane reports the raw quantity — so identical touchdown impacts produced very different numbers on the same scale. What is displayed is still your simulator's own measurement.",
       "tool_section_title": "G trace around touchdown",
       "tool_section_subtitle": "Raw values (50 Hz) — forensic detail, not the scored value.",
       "robust_section_title": "Robust statistics (spike-resistant)",
@@ -799,7 +799,7 @@
       "yes": "yes",
       "no": "no"
     },
-    "ov_mixed_versions": "This overview contains landings from before and after the sink-rate measurement changed (v1.6.3). Average, chart and personal best therefore compare two measurement methods — a step in them is expected and not an error."
+    "ov_mixed_versions": "The chart below shows landings from before and after the sink-rate measurement changed (v1.6.3) side by side — a step in it is expected and not an error."
   },
   "about": {
     "tagline": "Modern ACARS for phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",

@@ -215,7 +215,7 @@
       "score_section": "Acht Sub-Scores à 0–100 Punkte (Sinkrate, G-Kraft, Bounces, Anflug-Stabilität, Bahn-Auslastung, OFP-Treue, Loadsheet, Ausrichtung). Jede Kachel zeigt Wert, Punktzahl und farbigen Balken (grün/gelb/rot). Die schwächste Kategorie wird als nächstes Verbesserungs-Ziel im Coach-Tipp aufgegriffen.",
       "runway_section": "Visualisierung deines Touchdowns auf der Bahn. Das blaue Symbol markiert den Aufsetzpunkt, das grüne Band zeigt die Ausrollstrecke bis zum Abrollen von der Bahn (Highspeed-Exit bei ~40 kt). Werte unten: Gesamtlänge, Centerline-Abweichung, Distanz hinter der Schwelle, Bahn-Auslastung in Prozent.",
       "fuel_section": "Block = Spritmenge beim Abblock; TO Fuel = nach dem Rollen am Startpunkt; LDG Fuel = bei Touchdown; TOW = Takeoff Weight (Leergewicht + Last + TO Fuel); LDW = Landing Weight; ZFW = Zero Fuel Weight. Plan-Werte stammen aus dem SimBrief-OFP, falls vorhanden. Der „Plan-Treue\"-Score unten bewertet die Abweichungen Block/TOW/LDW/ZFW (Penalty ab >5 %, schwerer ab >10 %).",
-      "alignment": "Wo und wie gerade du aufgesetzt hast: seitlicher Versatz zur Mittellinie — gemessen an der Bahnbreite, denn dieselben Meter wiegen auf einer schmalen Bahn schwerer — und die Abweichung deines Steuerkurses von der Bahnachse. Bewertet wird die schlechtere der beiden Größen. Seitenwind wird angerechnet: der Vorhaltewinkel, den der Wind erzwingt, kostet keine Punkte (höchstens 5°, der von Airbus und der Flight Safety Foundation genannte vertretbare Restwinkel). Angezeigt wird immer dein gemessener Winkel, die Gutschrift steht als „XW“ daneben. Die Gutschrift rechnet mit dem Seitenwind bezogen auf die Bahnachse — die Kachel „Seitenwind“ daneben zeigt ihn bezogen auf die Flugzeugnase. Beide Zahlen sind richtig, unterscheiden sich aber um genau den Vorhaltewinkel, um den es hier geht."
+      "alignment": "Wo und wie gerade du aufgesetzt hast: seitlicher Versatz zur Mittellinie — gemessen an der Bahnbreite, denn dieselben Meter wiegen auf einer schmalen Bahn schwerer — und die Abweichung deines Steuerkurses von der Bahnachse. Bewertet wird die schlechtere der beiden Größen. Seitenwind wird angerechnet: der Vorhaltewinkel, den der Wind erzwingt, kostet keine Punkte (höchstens 5°, der von Airbus und der Flight Safety Foundation genannte vertretbare Restwinkel). Angezeigt wird immer dein gemessener Winkel, die Gutschrift steht als „XW“ daneben. Die Gutschrift rechnet mit dem Seitenwind bezogen auf die Bahnachse, die Kachel „Seitenwind“ daneben mit dem Wind bezogen auf die Flugzeugnase. Beide Zahlen stimmen — sie beziehen sich nur auf verschiedene Richtungen, und zwischen diesen liegt genau der Vorhaltewinkel."
     },
     "rat": {
       "smooth_touchdown": "Butterweich aufgesetzt",
@@ -439,7 +439,7 @@
     "gforce_forensik": {
       "title": "💪 G-Kraft-Forensik",
       "intro_header": "Welche G-Kraft ist die richtige?",
-      "intro_body": "AeroACARS bewertet die Aufsetz-G-Kraft wie eine echte Flugdaten-Überwachung (FOQA): das G-Signal wird leicht geglättet (EMA, ~100 ms), dann der Spitzenwert genommen. Das entfernt die überscharfen 50-Hz-Einzelbild-Spitzen — der bewertete Wert entspricht dem, was ein echter Flugschreiber aufzeichnen würde. Der rohe 50-Hz-Spitzenwert bleibt unten als Forensik-Detail sichtbar.\n\nSeit v1.6.2 wird der Wert für die Punktevergabe zusätzlich auf eine gemeinsame Bezugsgröße umgerechnet. Grund: MSFS liefert einen bereits gedämpften Instrumentenwert, X-Plane die rohe Messgröße — bei identischem Aufsetzstoß standen dadurch sehr unterschiedliche Zahlen auf derselben Punkteskala. Angezeigt wird weiterhin der Messwert deines Simulators; umgerechnet wird nur, was Punkte vergibt.",
+      "intro_body": "AeroACARS bewertet die Aufsetz-G-Kraft wie eine echte Flugdaten-Überwachung (FOQA): das G-Signal wird leicht geglättet (EMA, ~100 ms), dann der Spitzenwert genommen. Das entfernt die überscharfen 50-Hz-Einzelbild-Spitzen — der bewertete Wert entspricht dem, was ein echter Flugschreiber aufzeichnen würde. Der rohe 50-Hz-Spitzenwert bleibt unten als Forensik-Detail sichtbar.\n\nSeit v1.6.2 wird der Wert zusätzlich auf eine gemeinsame Bezugsgröße umgerechnet, bevor er in Punkte und in die Unfall-Erkennung geht. Grund: MSFS liefert einen bereits gedämpften Instrumentenwert, X-Plane die rohe Messgröße — bei identischem Aufsetzstoß standen dadurch sehr unterschiedliche Zahlen auf derselben Skala. Angezeigt wird weiterhin der Messwert deines Simulators.",
       "tool_section_title": "G-Verlauf um den Touchdown",
       "tool_section_subtitle": "Rohwerte (50 Hz) — Forensik-Detail, nicht der bewertete Wert.",
       "robust_section_title": "Robuste Statistiken (Spike-resistent)",
@@ -799,7 +799,7 @@
       "yes": "ja",
       "no": "nein"
     },
-    "ov_mixed_versions": "Diese Übersicht enthält Landungen von vor und nach der Umstellung der Sinkraten-Messung (v1.6.3). Durchschnitt, Kurve und Bestwert vergleichen deshalb zwei Messverfahren — ein Sprung darin ist zu erwarten und kein Fehler."
+    "ov_mixed_versions": "Die Kurve unten zeigt Landungen von vor und nach der Umstellung der Sinkraten-Messung (v1.6.3) nebeneinander — ein Sprung darin ist zu erwarten und kein Fehler."
   },
   "about": {
     "tagline": "Modernes ACARS für phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",

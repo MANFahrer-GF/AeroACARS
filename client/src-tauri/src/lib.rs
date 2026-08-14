@@ -14995,12 +14995,20 @@ where
         // Wert kein Flugzustand, gibt es ihn nicht.
         vs_at_edge_fpm: ana_f32(&stats.landing_analysis, "vs_at_edge_fpm")
             .filter(|&v| landing_rate_is_plausible(v)),
-        vs_at_edge_quelle: stats
-            .landing_analysis
-            .as_ref()
-            .and_then(|a| a.get("vs_at_edge_quelle"))
-            .and_then(|v| v.as_str())
-            .map(str::to_owned),
+        // Die Quelle faellt mit dem Wert. Wird `vs_at_edge_fpm` als
+        // unplausibel verworfen, kommt die angezeigte Zahl aus der
+        // Rueckfallkaskade — dann darf die Kachel kein Messverfahren
+        // nennen, das zu dieser Zahl gar nicht gehoert (QS-Befund v1.6.3).
+        vs_at_edge_quelle: ana_f32(&stats.landing_analysis, "vs_at_edge_fpm")
+            .filter(|&v| landing_rate_is_plausible(v))
+            .and_then(|_| {
+                stats
+                    .landing_analysis
+                    .as_ref()
+                    .and_then(|a| a.get("vs_at_edge_quelle"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+            }),
         vs_simvar_edge_fpm: ana_f32(&stats.landing_analysis, "vs_simvar_edge_fpm"),
         vs_smoothed_250ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_250ms_fpm"),
         vs_smoothed_500ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_500ms_fpm"),

@@ -215,7 +215,7 @@
       "score_section": "Otto sotto-punteggi da 0–100 punti (rateo discesa, forza G, rimbalzi, stabilità avvicinamento, utilizzo pista, aderenza OFP, loadsheet, allineamento). Ogni riquadro mostra valore, punti e barra colorata (verde/giallo/rosso). La categoria più debole viene presa come prossimo obiettivo nel suggerimento del coach.",
       "runway_section": "Visualizzazione del touchdown sulla pista. Il simbolo blu indica il punto di tocco, la banda verde mostra la distanza di rollout fino all'uscita dalla pista (highspeed-exit a ~40 kt). Valori sotto: lunghezza totale, scostamento dall'asse, distanza dalla soglia, utilizzo pista in percentuale.",
       "fuel_section": "Block = carburante al pushback; TO Fuel = dopo il rullaggio al punto di decollo; LDG Fuel = al touchdown; TOW = peso al decollo (peso a vuoto + carico + carburante TO); LDW = peso all'atterraggio; ZFW = zero fuel weight. I valori pianificati provengono dall'OFP SimBrief, se disponibile. Il punteggio „Precisione del piano\" sotto valuta le deviazioni Block/TOW/LDW/ZFW (penalty sopra >5 %, più pesante sopra >10 %).",
-      "alignment": "Dove e quanto dritto hai toccato: scostamento laterale dalla linea centrale — misurato sulla larghezza della pista, perché gli stessi metri pesano di più su una pista stretta — e quanto la tua prua si discosta dall'asse pista. Fa punteggio la peggiore delle due. Il vento al traverso viene riconosciuto: l'angolo di deriva imposto dal vento non costa punti (fino a 5°, il valore residuo accettabile indicato da Airbus e dalla Flight Safety Foundation). L'angolo mostrato è sempre quello misurato, con il credito indicato accanto come «XW». Il credito usa il vento al traverso riferito all'asse pista — il riquadro «Vento al traverso» accanto lo mostra riferito al muso. Entrambi i valori sono corretti, ma differiscono proprio dell'angolo di deriva in questione."
+      "alignment": "Dove e quanto dritto hai toccato: scostamento laterale dalla linea centrale — misurato sulla larghezza della pista, perché gli stessi metri pesano di più su una pista stretta — e quanto la tua prua si discosta dall'asse pista. Fa punteggio la peggiore delle due. Il vento al traverso viene riconosciuto: l'angolo di deriva imposto dal vento non costa punti (fino a 5°, il valore residuo accettabile indicato da Airbus e dalla Flight Safety Foundation). L'angolo mostrato è sempre quello misurato, con il credito indicato accanto come «XW». Il credito usa il vento al traverso riferito all'asse pista, mentre il riquadro «Vento al traverso» accanto usa il vento riferito al muso. Entrambi i valori sono corretti — si riferiscono solo a direzioni diverse, e fra queste sta esattamente l'angolo di deriva."
     },
     "rat": {
       "smooth_touchdown": "Atterraggio morbidissimo",
@@ -439,7 +439,7 @@
     "gforce_forensik": {
       "title": "💪 Forensica forza-G",
       "intro_header": "Qual è la forza-G giusta?",
-      "intro_body": "AeroACARS valuta la forza G al contatto come un vero monitoraggio dei dati di volo (FOQA): il segnale G viene lievemente filtrato (EMA, ~100 ms), poi se ne prende il picco. Questo elimina i picchi eccessivi di singolo fotogramma a 50 Hz — il valore valutato corrisponde a quanto registrerebbe un registratore di volo reale. Il picco grezzo a 50 Hz resta visibile sotto come dettaglio forense.\n\nDalla v1.6.2 il valore valutato viene inoltre convertito su un riferimento comune. Il motivo: MSFS fornisce un valore di strumento già smorzato, X-Plane la grandezza grezza — a parità di impatto ne risultavano numeri molto diversi sulla stessa scala di punteggio. Viene mostrata comunque la misura del tuo simulatore; si converte solo ciò che assegna punti.",
+      "intro_body": "AeroACARS valuta la forza G al contatto come un vero monitoraggio dei dati di volo (FOQA): il segnale G viene lievemente filtrato (EMA, ~100 ms), poi se ne prende il picco. Questo elimina i picchi eccessivi di singolo fotogramma a 50 Hz — il valore valutato corrisponde a quanto registrerebbe un registratore di volo reale. Il picco grezzo a 50 Hz resta visibile sotto come dettaglio forense.\n\nDalla v1.6.2 il valore viene inoltre convertito su un riferimento comune prima di alimentare punteggio e rilevamento incidenti. Il motivo: MSFS fornisce un valore di strumento già smorzato, X-Plane la grandezza grezza — a parità di impatto ne risultavano numeri molto diversi sulla stessa scala. Viene mostrata comunque la misura del tuo simulatore.",
       "tool_section_title": "Andamento G attorno al touchdown",
       "tool_section_subtitle": "Valori grezzi (50 Hz) — dettaglio forense, non il valore valutato.",
       "robust_section_title": "Statistiche robuste (resistenti ai picchi)",
@@ -799,7 +799,7 @@
       "yes": "sì",
       "no": "no"
     },
-    "ov_mixed_versions": "Questa panoramica contiene atterraggi precedenti e successivi al cambio di misura della velocità di discesa (v1.6.3). Media, grafico e record confrontano quindi due metodi di misura: un salto è previsto e non è un errore."
+    "ov_mixed_versions": "Il grafico qui sotto mostra affiancati atterraggi precedenti e successivi al cambio di misura della velocità di discesa (v1.6.3): un salto è previsto e non è un errore."
   },
   "about": {
     "tagline": "ACARS moderno per phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",

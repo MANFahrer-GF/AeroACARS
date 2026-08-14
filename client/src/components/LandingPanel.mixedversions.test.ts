@@ -27,6 +27,13 @@ describe("Hinweis auf gemischte Bewertungs-Stände", () => {
     expect(gemischteBewertungsstaende(mach(null, null) as never)).toBe(false);
   });
 
+  it("zählt fehlende Versionen als 'vor der Umstellung'", () => {
+    // Sehr alte Datensätze tragen die Nummer gar nicht. Sie zu überspringen
+    // ließe den Hinweis ausgerechnet bei den ältesten Beständen aus.
+    expect(gemischteBewertungsstaende(mach(7, null) as never)).toBe(true);
+    expect(gemischteBewertungsstaende(mach(7, 7, null, 6) as never)).toBe(true);
+  });
+
   it("bleibt aus bei leerer Liste und bei einer einzelnen Landung", () => {
     expect(gemischteBewertungsstaende([] as never)).toBe(false);
     expect(gemischteBewertungsstaende(mach(7) as never)).toBe(false);

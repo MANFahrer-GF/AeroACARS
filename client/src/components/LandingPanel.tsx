@@ -479,14 +479,17 @@ export function gemischteBewertungsstaende(records: LandingRecord[]): boolean {
   // Sprung ist aber genau dort sichtbar, wo alt und neu nebeneinander
   // gezeichnet werden; nach zwölf neuen Landungen erklärt sich nichts mehr
   // und der Hinweis verschwindet von selbst.
-  const staende = new Set(
-    records
-      .slice(0, KURVE_LAENGE)
-      .map((r) => r.score_algorithm_version)
-      .filter((v): v is number => v != null),
+  const sichtbar = records.slice(0, KURVE_LAENGE);
+  // Fehlt die Versionsnummer, stammt der Datensatz aus einer Zeit, in der
+  // es sie noch gar nicht gab — also erst recht von vor der Umstellung.
+  // Ihn zu überspringen ließe den Hinweis ausgerechnet bei den ältesten
+  // Beständen aus (QS-Befund v1.6.3).
+  const vorHoehenkurve = sichtbar.some(
+    (r) => r.score_algorithm_version == null || r.score_algorithm_version < 7,
   );
-  const vorHoehenkurve = [...staende].some((v) => v < 7);
-  const abHoehenkurve = [...staende].some((v) => v >= 7);
+  const abHoehenkurve = sichtbar.some(
+    (r) => r.score_algorithm_version != null && r.score_algorithm_version >= 7,
+  );
   return vorHoehenkurve && abHoehenkurve;
 }
 
