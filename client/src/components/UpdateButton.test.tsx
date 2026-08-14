@@ -60,6 +60,13 @@ beforeAll(async () => {
 // wenn jemand die v0.9.2-Notes verschiebt/umbenennt. Inhalt entspricht
 // dem strukturellen Charakter eines bilingualen Release-Body — Headings,
 // Listen, Tabellen-Pipes, fett, inline-code, hr-Trenner, Links.
+//
+// **Achtung, Namensfalle (QS v1.6.3).** "LONG" beschreibt hier die
+// STRUKTUR, nicht die Länge: dieser Text ist rund 260 Zeichen lang,
+// echte Release-Notes sind es zehntausend. Der Test hat den Modal-Bug
+// also nie an realistischer Länge geprüft. Die eigentliche Absicherung
+// dagegen steht weiter unten in `echte_release_notes_sprengen_das_modal
+// _nicht` — die lädt die tatsächlich ausgelieferte Notiz von der Platte.
 const REALISTIC_LONG_BODY_v092 = `## 🇩🇪 Deutsch
 
 **v0.9.2 — Zwei grosse neue Features auf einmal: Dein Flug wandert ins Discord-Profil, und AeroACARS-Crashes melden sich automatisch beim VA-Owner (anonym).**
@@ -368,5 +375,75 @@ describe("Update-Dialog mit den Release-Notes der aktuellen Version", () => {
     // steht — der Renderer verschachtelt bewusst nicht, und in
     // v1.5.0-beta.3 stand genau so ein Fall in den Notes.
     expect(notesText).not.toContain("`");
+  });
+
+  // ─── Die echte ausgelieferte Notiz ──────────────────────────────────
+  //
+  // Der Grund für diesen Test: der Body oben heißt "REALISTIC_LONG", ist
+  // aber 264 Zeichen lang — die Notiz zu v1.6.3 hat 9548, also das
+  // 36-fache. Der Modal-Bug, den diese Datei verhindern soll, hängt genau
+  // an der Länge. Ohne diesen Test prüft der ganze Rest ihn nie.
+  //
+  // Die Datei wird zur Bauzeit eingelesen, nicht kopiert: so kann die
+  // Notiz nicht auseinanderlaufen mit dem, was der Pilot im Update-Fenster
+  // sieht.
+  it("die echten Release-Notes sprengen das Modal nicht", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const verzeichnis = path.resolve(__dirname, "../../../docs/release-notes");
+    const dateien = fs
+      .readdirSync(verzeichnis)
+      .filter((d) => /^v\d+\.\d+\.\d+\.md$/.test(d))
+      .sort();
+    const neueste = dateien[dateien.length - 1];
+    const koerper = fs.readFileSync(path.join(verzeichnis, neueste), "utf-8");
+
+    // Vorbedingung: der Test taugt nur, wenn die Notiz wirklich lang ist.
+    expect(koerper.length).toBeGreaterThan(3000);
+
+    const checker = makeChecker(koerper);
+    const { container } = render(<UpdateButton checker={checker as never} />);
+    fireEvent.click(screen.getByRole("button", { name: /update/i }));
+
+    // Die drei Bausteine, an denen der Svenny-Bug hing: scrollbarer
+    // Notiz-Bereich, verankerte Knopfleiste, beide Knöpfe im DOM.
+    expect(container.querySelector(".update-modal")).not.toBeNull();
+    expect(container.querySelector(".update-modal__notes")).not.toBeNull();
+    expect(container.querySelector(".update-modal__actions")).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: /installieren|jetzt/i }),
+    ).toBeInTheDocument();
+
+    // Und das Markdown muss gerendert sein, nicht als Rohtext dastehen —
+    // sonst liest der Pilot "## 🇩🇪 Deutsch" wörtlich.
+    const notiz = container.querySelector(".update-modal__notes")!;
+    expect(
+      container.querySelectorAll(".update-modal__notes-h2").length,
+    ).toBeGreaterThan(0);
+    const text = notiz.textContent ?? "";
+    // Kein roher Markdown darf durchschlagen — das ist die Klasse, die
+    // schon zweimal beim Piloten sichtbar war (Kursiv-Sternchen v1.5.7).
+    expect(text).not.toContain("##");
+    expect(text).not.toMatch(/\|\s*-{3,}/);
+    expect(text).not.toMatch(/^\s*\|/m);
+
+    // Tabellen: der Renderer kann keine echten <table>-Elemente, er baut
+    // aus jeder Zeile eine Aufzaehlung mit Trennpunkten. Das ist in
+    // Ordnung — aber eine LEERE Kopfzelle verschiebt dort die Zuordnung,
+    // weil sie beim Rendern wegfaellt und die Kopfzeile dann eine Spalte
+    // weniger hat als die Datenzeilen. Der Pilot liest dann Werte unter
+    // den falschen Ueberschriften (QS v1.6.3).
+    const zeilen = koerper.split("\n").filter((z) => z.trim().startsWith("|"));
+    const spalten = (z: string) =>
+      z.trim().replace(/^\||\|$/g, "").split("|").length;
+    for (const [i, zeile] of zeilen.entries()) {
+      if (/^\s*\|[\s|:-]+\|\s*$/.test(zeile)) continue; // Trennzeile
+      const zellen = zeile.trim().replace(/^\||\|$/g, "").split("|");
+      expect(
+        zellen.every((c) => c.trim().length > 0),
+        `Tabellenzeile ${i + 1} hat eine leere Zelle: ${zeile.trim()}`,
+      ).toBe(true);
+      expect(spalten(zeile)).toBe(spalten(zeilen[0]));
+    }
   });
 });
