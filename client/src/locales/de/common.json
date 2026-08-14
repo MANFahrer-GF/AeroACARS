@@ -205,7 +205,7 @@
       "alignment": "Ausrichtung"
     },
     "info": {
-      "landing_rate": "Vertikalgeschwindigkeit (V/S) im Moment des Aufsetzens, in Fuß pro Minute. Negativ = sinkend. Ziel-Korridor 90–250 fpm gilt als fest, positiv aufgesetzt — professioneller Standard, nicht „so weich wie möglich\": deutlich unter 90 fpm bedeutet meist ein langes Abfangen, das Bremsen/Spoiler-Ausfahren verzögert. Ab −600 fpm ist real eine Hard-Landing-Inspektion fällig.",
+      "landing_rate": "Vertikalgeschwindigkeit im Moment des Aufsetzens, in Fuß pro Minute. Negativ = sinkend. Der Zielkorridor 90–250 fpm gilt als fest, positiv aufgesetzt — professioneller Standard, nicht „so weich wie möglich“: deutlich unter 90 fpm bedeutet meist ein langes Abfangen, das Bremsen und Spoiler-Ausfahren verzögert. Ab 600 fpm Sinken ist real eine Hard-Landing-Inspektion fällig.\n\nGemessen wird seit v1.6.3 aus dem tatsächlichen Höhenverlauf der letzten Drittelsekunde vor dem Aufsetzen, nicht mehr vom Sinkgeschwindigkeitsmesser des Simulators — der ist träge wie ein echtes Cockpit-Instrument. Steht die Höhe im Simulator zeitweise still, wird nicht gerechnet, sondern der Instrumentenwert genommen.",
       "g_force": "Maximale G-Belastung im 1,5-Sekunden-Fenster um den Touchdown. 1,0 G = ruhig, ab 1,4 G deutlich spürbar, ab 1,7 G strukturkritisch (Boeing 737 FCOM Hard-Landing-Schwelle).",
       "bounces": "Wie oft das Flugzeug nach dem ersten Aufsetzen wieder über 35 ft AGL gestiegen und erneut gelandet ist (BeatMyLanding-Algorithmus). 0 = sauber gesetzt; jeder Bounce drückt den Score.",
       "stability": "Stabilitäts-Auswertung über das Stable-Approach-Gate (0–1000 ft HAT, Flare-Cutoff letzte 3 s vor TD). Backend rechnet sieben Faktoren: V/S-Jerk, Bank σ (vector-filtered), IAS σ, Sink-Rate-Verletzung, Landing-Config, V/S vs. 3°-ILS, Max V/S-Dev <500 ft. Details + Schwellwerte stehen in der Approach-Stability-Card weiter unten.",
@@ -432,7 +432,7 @@
     "gforce_forensik": {
       "title": "💪 G-Kraft-Forensik",
       "intro_header": "Welche G-Kraft ist die richtige?",
-      "intro_body": "AeroACARS bewertet die Aufsetz-G-Kraft wie eine echte Flugdaten-Überwachung (FOQA): das G-Signal wird leicht geglättet (EMA, ~100 ms), dann der Spitzenwert genommen. Das entfernt die überscharfen 50-Hz-Einzelbild-Spikes — der bewertete Wert entspricht dem, was ein echter Flugschreiber aufzeichnen würde. Der rohe 50-Hz-Peak bleibt unten als Forensik-Detail sichtbar.",
+      "intro_body": "AeroACARS bewertet die Aufsetz-G-Kraft wie eine echte Flugdaten-Überwachung (FOQA): das G-Signal wird leicht geglättet (EMA, ~100 ms), dann der Spitzenwert genommen. Das entfernt die überscharfen 50-Hz-Einzelbild-Spitzen — der bewertete Wert entspricht dem, was ein echter Flugschreiber aufzeichnen würde. Der rohe 50-Hz-Spitzenwert bleibt unten als Forensik-Detail sichtbar.\n\nSeit v1.6.2 wird der Wert für die Punktevergabe zusätzlich auf eine gemeinsame Bezugsgröße umgerechnet. Grund: MSFS liefert einen bereits gedämpften Instrumentenwert, X-Plane die rohe Messgröße — bei identischem Aufsetzstoß standen dadurch sehr unterschiedliche Zahlen auf derselben Punkteskala. Angezeigt wird weiterhin der Messwert deines Simulators; umgerechnet wird nur, was Punkte vergibt.",
       "tool_section_title": "G-Verlauf um den Touchdown",
       "tool_section_subtitle": "Rohwerte (50 Hz) — Forensik-Detail, nicht der bewertete Wert.",
       "robust_section_title": "Robuste Statistiken (Spike-resistent)",

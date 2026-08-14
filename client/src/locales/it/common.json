@@ -205,7 +205,7 @@
       "alignment": "Allineamento"
     },
     "info": {
-      "landing_rate": "Velocità verticale (V/S) al momento del touchdown, in piedi al minuto. Negativa = in discesa. Il corridoio obiettivo 90–250 fpm è considerato un touchdown fermo e deciso — lo standard professionale, non \"il più morbido possibile\": ben sotto i 90 fpm di solito indica un flare prolungato, che ritarda frenata/spoiler. Da −600 fpm in poi è dovuta realmente un'ispezione hard-landing.",
+      "landing_rate": "Velocità verticale nell'istante del contatto, in piedi al minuto. Negativa = in discesa. Il corridoio obiettivo di 90–250 fpm è voluto — standard professionale, non «il più morbido possibile»: ben sotto i 90 fpm significa di solito una lunga richiamata che ritarda frenata e spoiler. Oltre 600 fpm di discesa sarebbe dovuta un'ispezione per atterraggio duro.\n\nDalla v1.6.3 la misura viene dall'andamento reale della quota nell'ultimo terzo di secondo prima del contatto, non più dal variometro del simulatore, lento come uno strumento di bordo reale. Se il simulatore blocca temporaneamente la lettura della quota, non si calcola nulla e si usa il valore dello strumento.",
       "g_force": "Carico G massimo nella finestra di 1,5 secondi attorno al touchdown. 1,0 G = morbido, da 1,4 G chiaramente percepibile, da 1,7 G strutturalmente critico (soglia hard-landing FCOM Boeing 737).",
       "bounces": "Quante volte l'aereo è risalito sopra i 35 ft AGL dopo il primo touchdown e poi è atterrato di nuovo (algoritmo BeatMyLanding). 0 = atterraggio pulito; ogni rimbalzo riduce il punteggio.",
       "stability": "Valutazione di stabilità sullo stable-approach gate (0–1000 ft HAT, flare-cutoff ultimi 3 s prima del TD). Il backend calcola sette fattori: V/S jerk, bank σ (vector-filtered), IAS σ, violazione sink rate, landing config, V/S vs. 3° ILS, max V/S dev <500 ft. Dettagli e soglie nella scheda Stabilità avvicinamento più in basso.",
@@ -432,7 +432,7 @@
     "gforce_forensik": {
       "title": "💪 Forensica forza-G",
       "intro_header": "Qual è la forza-G giusta?",
-      "intro_body": "AeroACARS valuta la forza-G del touchdown come un vero monitoraggio dati di volo (FOQA): il segnale G viene leggermente livellato (EMA, ~100 ms), poi se ne prende il picco. Questo rimuove gli spike a frame singolo del campionamento a 50 Hz — il valore valutato corrisponde a quello che registrerebbe un registratore di volo. Il picco grezzo a 50 Hz resta sotto come dettaglio forense.",
+      "intro_body": "AeroACARS valuta la forza G al contatto come un vero monitoraggio dei dati di volo (FOQA): il segnale G viene lievemente filtrato (EMA, ~100 ms), poi se ne prende il picco. Questo elimina i picchi eccessivi di singolo fotogramma a 50 Hz — il valore valutato corrisponde a quanto registrerebbe un registratore di volo reale. Il picco grezzo a 50 Hz resta visibile sotto come dettaglio forense.\n\nDalla v1.6.2 il valore valutato viene inoltre convertito su un riferimento comune. Il motivo: MSFS fornisce un valore di strumento già smorzato, X-Plane la grandezza grezza — a parità di impatto ne risultavano numeri molto diversi sulla stessa scala di punteggio. Viene mostrata comunque la misura del tuo simulatore; si converte solo ciò che assegna punti.",
       "tool_section_title": "Andamento G attorno al touchdown",
       "tool_section_subtitle": "Valori grezzi (50 Hz) — dettaglio forense, non il valore valutato.",
       "robust_section_title": "Statistiche robuste (resistenti ai picchi)",

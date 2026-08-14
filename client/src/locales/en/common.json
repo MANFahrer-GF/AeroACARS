@@ -205,7 +205,7 @@
       "alignment": "Alignment"
     },
     "info": {
-      "landing_rate": "Vertical speed (V/S) at the moment of touchdown, in feet per minute. Negative = sinking. The 90-250 fpm target corridor counts as a firm, positive touchdown — the professional standard, not \"as soft as possible\": well under 90 fpm usually means an extended flare, which delays braking/spoiler deployment. A real hard-landing inspection is due from -600 fpm.",
+      "landing_rate": "Vertical speed at the moment of touchdown, in feet per minute. Negative = descending. The target corridor of 90–250 fpm is deliberate — a professional standard, not “as soft as possible”: well below 90 fpm usually means a long float that delays braking and spoiler deployment. Beyond 600 fpm of sink a real hard-landing inspection would be due.\n\nSince v1.6.3 this is measured from the actual height trace over the final third of a second before touchdown, no longer from the simulator's vertical speed indicator, which is sluggish like a real cockpit instrument. If the simulator freezes the altitude readout, no calculation is done and the instrument value is used instead.",
       "g_force": "Peak G load in the 1.5-second window around touchdown. 1.0 G is smooth, above 1.4 G is clearly noticeable, above 1.7 G triggers a hard-landing inspection (Boeing 737 FCOM).",
       "bounces": "How many times the aircraft climbed back above 35 ft AGL after the first touchdown and re-landed (BeatMyLanding algorithm). 0 = clean set; each bounce drops the score.",
       "stability": "Stability evaluation over the stable-approach gate (0–1000 ft HAT, flare-cutoff last 3 s before TD). Backend computes seven factors: V/S jerk, bank σ (vector-filtered), IAS σ, sink-rate violation, landing config, V/S vs. 3° ILS, max V/S dev <500 ft. Details and thresholds are in the approach-stability card further down.",
@@ -432,7 +432,7 @@
     "gforce_forensik": {
       "title": "💪 G-Force Forensics",
       "intro_header": "Which G-force is the right one?",
-      "intro_body": "AeroACARS scores the touchdown G the way real flight-data monitoring (FOQA) does: the G signal is lightly smoothed (EMA, ~100 ms), then the peak is taken. That removes the over-sharp single-frame spikes of 50 Hz sampling — the scored value matches what an aircraft's flight recorder would log. The raw 50 Hz peak stays below as forensic detail.",
+      "intro_body": "AeroACARS scores touchdown G-force the way real flight data monitoring does (FOQA): the G signal is lightly smoothed (EMA, ~100 ms), then the peak is taken. That removes the over-sharp 50 Hz single-frame spikes — the scored value matches what a real flight recorder would capture. The raw 50 Hz peak stays visible below as forensic detail.\n\nSince v1.6.2 the scored value is additionally converted to a common reference. The reason: MSFS reports an already-damped instrument value while X-Plane reports the raw quantity — so identical touchdown impacts produced very different numbers on the same points scale. What is displayed is still your simulator's own measurement; only what awards points is converted.",
       "tool_section_title": "G trace around touchdown",
       "tool_section_subtitle": "Raw values (50 Hz) — forensic detail, not the scored value.",
       "robust_section_title": "Robust statistics (spike-resistant)",
