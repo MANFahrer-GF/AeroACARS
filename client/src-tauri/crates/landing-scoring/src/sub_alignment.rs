@@ -107,12 +107,85 @@ pub struct AlignmentInput {
     /// Vertrauensurteil über die Bahngeometrie. `None` gilt als NICHT
     /// vertrauenswürdig (dasselbe Muster wie beim Bremsweg-Score).
     pub runway_geometry_trusted: Option<bool>,
+    /// Rechtweisende Windrichtung und -stärke im Moment des Aufsetzens.
+    /// Fehlt der Wind, wird nichts zugestanden — genau das bisherige
+    /// Verhalten (fehlende Größen bestrafen nie, sie belohnen nur nicht).
+    pub wind_direction_deg: Option<f32>,
+    pub wind_speed_kt: Option<f32>,
+    /// Geschwindigkeit über Grund beim Aufsetzen, als Bezug für den
+    /// Vorhaltewinkel. Fällt auf die angezeigte Fluggeschwindigkeit zurück.
+    pub bezugsgeschwindigkeit_kt: Option<f32>,
     /// `true` bei Drehflüglern und Wasserflugzeugen. Für sie gibt es keine
     /// Bahnachse, an der man sich ausrichten müsste — ein Helikopter setzt
     /// regulär quer auf. Ohne dieses Gate bekäme er 15 Punkte und den
     /// Ratschlag „mit dem Seitenruder ausrichten" (QS-Befund v1.6.2,
     /// dieselbe Lücke wie bei den Anflug-Streuungen in v0.15.21).
     pub nicht_konventionell: bool,
+}
+
+/// Höchster Vorhaltewinkel, der bei Seitenwind zugestanden wird.
+///
+/// **Warum überhaupt zugestanden wird (Hinweis Adrian, 14.08.2026).** Bei
+/// Seitenwind MUSS ein Flugzeug schräg zur Bahn stehen, um die Mittellinie
+/// zu halten — das ist Geometrie, kein Fehler. Bei 20 kt Seitenwind und
+/// 135 kt sind es 8,5°, während die Leiter schon ab 3° Punkte abzieht. Im
+/// eigenen Bestand halten 88 % der Piloten die 3-Grad-Grenze bei ruhigem
+/// Wetter ein, aber nur 40 % bei 5–10 kt Seitenwind — und das Verhältnis
+/// von geflogenem zu physikalisch nötigem Vorhalt liegt im Median bei 1,06.
+/// Sie fliegen also korrekt und verlieren trotzdem Punkte.
+///
+/// **Warum gedeckelt.** Ohne Deckel bekäme bei 30 kt Seitenwind auch ein
+/// Aufsetzen mit 13° Schräglage volle Punkte — genau der Fall, den die
+/// Flight Safety Foundation mit „potentially resulting in landing gear
+/// damage" beschreibt. 5° ist der einzige publizierte Zahlenwert dazu:
+/// Airbus nennt „maximum 5° residual drift", die FSF „touching down with a
+/// five-degree crab angle is a typical technique in strong crosswinds".
+/// Der Deckel greift ab rund 12 kt Seitenwind — darunter wird der volle
+/// Vorhalt verziehen, darüber muss ausgerichtet werden wie im echten
+/// Flugbetrieb.
+const MAX_WIND_ZUGESTAENDNIS_DEG: f32 = 5.0;
+
+/// Unterhalb dieser Seitenwindstärke wird nichts zugestanden — bei
+/// Schwachwind ist die Vorzeichenprüfung reines Rauschen.
+const MIN_RELEVANTER_SEITENWIND_KT: f32 = 2.0;
+
+/// Zerlegt den rechtweisenden Wind gegen die Bahnachse. Positiv = von
+/// rechts. Gleiche Mathematik wie `runway_assessment::classify_wind` im
+/// Hauptcrate; hier lokal, weil das Score-Crate nicht dorthin sehen darf.
+fn seitenwind_kt(wind_dir_true: f32, wind_kt: f32, bahnkurs_true: f32) -> f32 {
+    let diff = (wind_dir_true - bahnkurs_true).to_radians();
+    // METAR-Konvention: Windrichtung ist die Richtung, AUS der er kommt.
+    wind_kt * diff.sin()
+}
+
+/// Wieviel Kursabweichung der Seitenwind erzwingt — und damit zugestanden
+/// wird. `0.0`, wenn Wind fehlt, zu schwach ist oder die Nase auf die
+/// FALSCHE Seite zeigt (ein Vorhalt gegen den Wind ist nicht windbedingt).
+fn wind_zugestaendnis_deg(input: &AlignmentInput, kurs_abw_signiert: f32) -> f32 {
+    let (Some(dir), Some(kt), Some(bahn)) = (
+        input.wind_direction_deg,
+        input.wind_speed_kt,
+        input.runway_true_course_deg,
+    ) else {
+        return 0.0;
+    };
+    if !dir.is_finite() || !kt.is_finite() || kt <= 0.0 {
+        return 0.0;
+    }
+    let xw = seitenwind_kt(dir, kt, bahn);
+    if xw.abs() < MIN_RELEVANTER_SEITENWIND_KT {
+        return 0.0;
+    }
+    // Nase muss in den Wind zeigen, sonst ist die Schräglage selbstgemacht.
+    if kurs_abw_signiert != 0.0 && kurs_abw_signiert.signum() != xw.signum() {
+        return 0.0;
+    }
+    let v = input
+        .bezugsgeschwindigkeit_kt
+        .filter(|v| v.is_finite() && *v > 40.0)
+        .unwrap_or(130.0);
+    let noetig = (xw.abs() / v).clamp(0.0, 1.0).asin().to_degrees();
+    noetig.min(MAX_WIND_ZUGESTAENDNIS_DEG)
 }
 
 /// Kleinster Winkel zwischen zwei Kursen, 0–180°.
@@ -191,19 +264,28 @@ fn gepruefte_werte(input: &AlignmentInput) -> Result<(f32, f32), &'static str> {
     };
 
     let anteil = offset / (breite / 2.0);
-    let kurs_abw = kursdifferenz(heading, kurs);
+    let kurs_roh = kursdifferenz(heading, kurs);
+    // Signiert, damit die Windprüfung weiß, auf welche Seite die Nase zeigt:
+    // positiv = Nase nach rechts vom Bahnkurs.
+    let kurs_signiert = {
+        let d = (heading - kurs).rem_euclid(360.0);
+        if d > 180.0 { d - 360.0 } else { d }
+    };
+    // Seitenwind erzwingt einen Vorhaltewinkel — der wird abgezogen, statt
+    // die Leiter aufzuweichen (siehe `wind_zugestaendnis_deg`).
+    let kurs_abw = (kurs_roh - wind_zugestaendnis_deg(input, kurs_signiert)).max(0.0);
 
     // Falsches Bahnende gematcht (Landung nahe der Bahnmitte, Divert): die
     // Kursabweichung springt auf ~180°. Das ist kein schiefes Aufsetzen,
     // sondern eine Fehlzuordnung — dieselbe Klasse wie der EDHE-Fall.
-    if kurs_abw > MAX_BEWERTBARE_KURSABWEICHUNG_DEG {
+    if kurs_roh > MAX_BEWERTBARE_KURSABWEICHUNG_DEG {
         return Err("implausible_runway_geometry");
     }
     // Geometrie fragwürdig: weit daneben (relativ UND absolut), aber sauber
     // ausgerichtet.
     if anteil >= GEOMETRIE_FRAGWUERDIG_AB_ANTEIL
         && offset >= GEOMETRIE_FRAGWUERDIG_AB_METER
-        && kurs_abw <= GEOMETRIE_FRAGWUERDIG_MAX_KURS_DEG
+        && kurs_roh <= GEOMETRIE_FRAGWUERDIG_MAX_KURS_DEG
     {
         return Err("implausible_runway_geometry");
     }
@@ -266,6 +348,9 @@ mod tests {
             airport_source: Some("runway_match".into()),
             runway_geometry_trusted: Some(true),
             nicht_konventionell: false,
+            wind_direction_deg: None,
+            wind_speed_kt: None,
+            bezugsgeschwindigkeit_kt: None,
         }
     }
 
@@ -378,6 +463,84 @@ mod tests {
             assert_eq!(e.reason.as_deref(), Some(erwartet));
             assert_eq!(e.points, 0, "übersprungene Achsen zählen gar nicht mit");
         }
+    }
+
+    #[test]
+    fn seitenwind_verzeiht_den_noetigen_vorhaltewinkel() {
+        // Bahn 070°, Wind aus 160° mit 20 kt = voller Seitenwind von rechts.
+        // Bei 130 kt sind 8,8° Vorhalt physikalisch noetig; zugestanden
+        // werden 5° (Deckel). Aus 8° gemessener Schraeglage bleiben 3°.
+        let e = sub_alignment(&AlignmentInput {
+            heading_true_deg: Some(78.0),
+            runway_true_course_deg: Some(70.0),
+            wind_direction_deg: Some(160.0),
+            wind_speed_kt: Some(20.0),
+            bezugsgeschwindigkeit_kt: Some(130.0),
+            ..basis()
+        });
+        assert!(!e.skipped);
+        assert_eq!(e.points, 100, "korrekt geflogene Seitenwindlandung");
+    }
+
+    #[test]
+    fn ohne_wind_bleibt_alles_wie_bisher() {
+        // Dieselbe Schraeglage ohne Wind: unveraendert Abzug.
+        let e = sub_alignment(&AlignmentInput {
+            heading_true_deg: Some(78.0),
+            runway_true_course_deg: Some(70.0),
+            ..basis()
+        });
+        assert_eq!(e.points, 65, "8 Grad ohne Wind bleiben 8 Grad");
+    }
+
+    #[test]
+    fn vorhalt_auf_die_falsche_seite_wird_nicht_verziehen() {
+        // Wind von rechts, Nase nach LINKS gedreht — das ist kein
+        // windbedingter Vorhalt, sondern eine echte Schraeglage.
+        let e = sub_alignment(&AlignmentInput {
+            heading_true_deg: Some(62.0),
+            runway_true_course_deg: Some(70.0),
+            wind_direction_deg: Some(160.0),
+            wind_speed_kt: Some(20.0),
+            bezugsgeschwindigkeit_kt: Some(130.0),
+            ..basis()
+        });
+        assert_eq!(e.points, 65, "Vorhalt gegen den Wind zaehlt voll");
+    }
+
+    #[test]
+    fn starker_seitenwind_entschuldigt_nicht_alles() {
+        // 30 kt Seitenwind: physikalisch 13,4 Grad noetig, zugestanden
+        // werden trotzdem nur 5. Wer mit 16 Grad aufsetzt, verliert.
+        let e = sub_alignment(&AlignmentInput {
+            heading_true_deg: Some(86.0),
+            runway_true_course_deg: Some(70.0),
+            wind_direction_deg: Some(160.0),
+            wind_speed_kt: Some(30.0),
+            bezugsgeschwindigkeit_kt: Some(130.0),
+            ..basis()
+        });
+        assert!(!e.skipped);
+        assert_eq!(e.points, 40, "16 Grad minus 5 Grad Zugestaendnis = 11 Grad");
+    }
+
+    #[test]
+    fn bti243_bleibt_trotz_wind_bei_15_punkten() {
+        // Der Ausloeserflug: METAR EDDF 13005KT, Bahnkurs 69,5 Grad
+        // → nur 4,3 kt Seitenwind, also knapp 2 Grad Zugestaendnis.
+        // Von 14,9 Grad bleiben 13 — und ueber den Versatz sowieso 15 Punkte.
+        let e = sub_alignment(&AlignmentInput {
+            centerline_offset_m: Some(-45.7),
+            runway_width_m: Some(45.1),
+            heading_true_deg: Some(84.487),
+            runway_true_course_deg: Some(69.548),
+            wind_direction_deg: Some(130.0),
+            wind_speed_kt: Some(5.0),
+            bezugsgeschwindigkeit_kt: Some(126.0),
+            ..basis()
+        });
+        assert!(!e.skipped);
+        assert_eq!(e.points, 15);
     }
 
     #[test]

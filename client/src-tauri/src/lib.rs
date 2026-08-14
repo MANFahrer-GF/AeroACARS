@@ -2217,6 +2217,14 @@ struct PersistedFlightStats {
     /// v1.6.2). Als String, weil `&'static str` nicht serialisierbar ist.
     landing_simulator: Option<String>,
     landing_source: Option<String>,
+    /// Rechtweisender Wind beim Aufsetzen — Basis der Seitenwind-
+    /// Kompensation der Ausrichtungs-Achse. Persistiert aus demselben
+    /// Grund wie `landing_simulator`: sonst faellt die Kompensation nach
+    /// einem Neustart still aus.
+    #[serde(default)]
+    landing_wind_direction_deg: Option<f32>,
+    #[serde(default)]
+    landing_wind_speed_kt: Option<f32>,
     #[serde(default)]
     bounce_count: u8,
     #[serde(default)]
@@ -2504,6 +2512,8 @@ impl PersistedFlightStats {
             // damit ein Re-Open des PIREP nach App-Restart konsistent bleibt.
             landing_confidence: stats.landing_confidence.clone(),
             landing_source: stats.landing_source.clone(),
+            landing_wind_direction_deg: stats.landing_wind_direction_deg,
+            landing_wind_speed_kt: stats.landing_wind_speed_kt,
             landing_simulator: stats.landing_simulator.map(|s| s.to_string()),
             bounce_count: stats.bounce_count,
             landing_score: stats.landing_score,
@@ -2623,6 +2633,8 @@ impl PersistedFlightStats {
         stats.landing_peak_g_force = self.landing_peak_g_force;
         stats.landing_confidence = self.landing_confidence;
         stats.landing_source = self.landing_source;
+        stats.landing_wind_direction_deg = self.landing_wind_direction_deg;
+        stats.landing_wind_speed_kt = self.landing_wind_speed_kt;
         // Zurueck auf die drei bekannten Kennungen; alles andere gilt als
         // unbekannt und laesst die Normierung (bewusst) aus.
         stats.landing_simulator = match self.landing_simulator.as_deref() {
@@ -3556,6 +3568,14 @@ struct FlightStats {
     /// Crosswind at touchdown in knots. Positive = from the right.
     /// Sourced from `AIRCRAFT WIND X`.
     landing_crosswind_kt: Option<f32>,
+    /// Rechtweisender Wind im Moment des Aufsetzens — Basis der
+    /// Seitenwind-Kompensation. Bewusst ZUSAETZLICH zu den koerperfesten
+    /// Komponenten daneben: die haengen am Steuerkurs, der beim Ausrollen
+    /// weiterdreht, und sie waren bis 14.08.2026 auf beiden Sims
+    /// fehlerhaft. Der meteorologische Wind ist steuerkursunabhaengig und
+    /// in beiden Simulatoren gleich definiert.
+    landing_wind_direction_deg: Option<f32>,
+    landing_wind_speed_kt: Option<f32>,
 
     // ---- Landing Analyzer (Stage 1) ----
     /// Rolling buffer of (V/S, bank) samples collected during the
@@ -5989,272 +6009,18 @@ fn estimate_xplane_touchdown_vs_from_agl(
 fn negative_only(value: Option<f32>) -> Option<f32> {
     value.filter(|v| v.is_finite() && *v < 0.0)
 }
-
-// ======================================================================
-// v0.16.21 — MSFS touchdown V/S SimVar-lag de-lag (g-force-gated)
-// ======================================================================
+// v1.6.3: Der gesamte MSFS-Entlagungs-Apparat (Konstanten, g-Modell,
+// Kurzfenster-Schaetzer, Entscheidungsgatter, Anwendung) ist hier
+// ersatzlos entfernt.
 //
-// PROBLEM. MSFS exposes no un-lagged raw V/S at the touchdown frame.
-// The scored `vs_at_edge_fpm` (read by `canonical_landing_rate_fpm`)
-// is derived from the display VSI, which LAGS the airframe through the
-// flare and therefore OVER-reads the touchdown sink on landings with a
-// flare. Real example JBU322: scored -441 fpm, but the true rate from
-// the geometric AGL derivative was ~-251 fpm (peak_g 1.25 — physically
-// inconsistent with -441). EWG906: -422 → -261 (peak_g 1.21).
-//
-// We already compute the un-lagged truth: `estimate_xplane_touchdown_
-// vs_from_agl` (the geometric AGL-midpoint derivative, pre-contact,
-// AGL-gated, never reads the impact frame). On X-Plane it's already the
-// scored source; on MSFS it has only been a fallback when the latched
-// SimVar is null.
-//
-// WHY A NAIVE DIVERGENCE THRESHOLD IS UNSAFE. A 278-landing VPS corpus
-// of `msfs_simvar_latched` touchdowns shows that V/S divergence ALONE
-// (edge vs AGL) CANNOT distinguish "soft landing + lagged V/S" from
-// "firm landing + lagged V/S": 22 genuine firm/hard landings diverge by
-// the same 100-250 fpm as the soft lag artifacts. Softening on
-// divergence alone would wrongly relax those firm landings.
-//
-// THE LAG-INDEPENDENT ARBITER IS THE G-FORCE. peak_g correlates 0.93
-// with |AGL estimate| but only 0.80 with |lagged edge| (measured on the
-// corpus). A real hard landing has HIGH g corroborating the high V/S; a
-// lag artifact has LOW g that contradicts it and instead agrees with
-// the shallow AGL estimate.
-//
-// FITTED G↔|V/S| MODEL. Calibrated on the corpus of MSFS simvar-latched
-// landings in the VPS flight-logs (278 at fit time, 2026-06: ssh live,
-// /var/lib/aeroacars-recorder/flight-logs/gsg/*/*.jsonl.gz), fitting
-// peak_g_post_500ms against the un-lagged truth |vs_estimate_msfs| via
-// ordinary least squares. To recalibrate (e.g. after an MSFS Sim Update
-// shifts the VSI lag profile), re-extract those two fields from the logs
-// and refit; the `vs_lag_signature` forensic key + the health-report make
-// the gate's fire-rate observable so drift is visible before it matters:
-//
-//     g_implied(|vs_fpm|) = 1.0019 + 0.0009421 * |vs_fpm|
-//
-// i.e. baseline ~1.0 g at zero sink + ~0.942 g per 1000 fpm. Residual
-// stddev 0.061 g. r(peak_g, |agl|)=0.930 vs r(peak_g, |edge|)=0.799.
-//
-// HOW THE ANCHORS RESOLVE under this model (g_implied for each source):
-//   JBU322  edge-441 g_impl 1.42 | agl-251 g_impl 1.24 | peak_g 1.25
-//           → measured g sits at the AGL prediction, far below the edge
-//             prediction ⇒ lag artifact ⇒ FIRE (→ -251).
-//   EWG906  edge-422 g_impl 1.40 | agl-263 g_impl 1.25 | peak_g 1.21-1.25
-//           → same ⇒ FIRE (→ -263).
-//   DANGER  JrMr edge-614 agl-470 peak_g 1.465 ; 8ZOp edge-764 agl-518
-//           peak_g 1.609 ; pJ4v edge-782 agl-618 peak_g 1.720
-//           → measured g HIGH, corroborates the high edge V/S ⇒ the
-//             hard-G lock (peak_g ≥ 1.40) blocks the override ⇒ NO FIRE,
-//             score band unchanged.
-//
-// On the corpus this gate fires on 27/278 landings (18 with a score-
-// band change), ZERO of which have peak_g ≥ 1.35 — so not a single
-// genuine firm/hard landing is softened. All 44 corpus landings with
-// peak_g ≥ 1.35 are left untouched.
-const MSFS_DELAG_G_BASELINE: f32 = 1.0019;
-const MSFS_DELAG_G_PER_FPM: f32 = 0.000_942_1;
-/// The edge's implied g must exceed the measured g by at least this
-/// margin for the override to fire (the edge over-reads vs physics).
-/// 0.10 g ≈ 1.6× the 0.061 g fit residual — comfortably outside noise.
-const MSFS_DELAG_G_EDGE_MARGIN: f32 = 0.10;
-/// The measured g must also be CONSISTENT with the AGL estimate being
-/// the truth: at most this far above its AGL-implied g. Keeps a case
-/// where g is high relative to BOTH sources (a true firm landing the
-/// AGL estimate happened to read shallow on) from being softened.
-const MSFS_DELAG_G_AGL_TOLERANCE: f32 = 0.05;
-/// Hard lock: never de-lag a landing whose measured peak g is at/above
-/// the Firm g-threshold. A real firm/hard impact ALWAYS shows up in g
-/// (g is lag-free); this is the structural guard that protects every
-/// one of the 22 genuine firm landings the corpus warned about.
-const MSFS_DELAG_G_HARD_LOCK: f32 = TOUCHDOWN_G_FIRM; // 1.40
-/// Divergence (lag signature): the lagged edge must be more-negative
-/// than the AGL estimate by at least this absolute amount …
-const MSFS_DELAG_MIN_ABS_DIVERGENCE_FPM: f32 = 60.0;
-/// … AND the AGL estimate must be at most this fraction of |edge|
-/// (a relative divergence floor — guards against tiny relative gaps
-/// on already-shallow landings).
-const MSFS_DELAG_MAX_AGL_REL: f32 = 0.92;
-/// Structural accident guard: |edge| at/above this is the accident
-/// band — NEVER softened, so a real crash can never be un-flagged.
-const MSFS_DELAG_MAX_EDGE_ABS_FPM: f32 = 1000.0;
-/// Prefer a SHORT window for the de-lag estimate. A long-float window
-/// (≥2 s) averages too much of the shallow late flare and reads too
-/// close to zero — over-softening. We only de-lag using the ≤1500 ms
-/// tiers; if none qualifies we fall back to no override.
-const MSFS_DELAG_MAX_WINDOW_MS: i64 = 1500;
-
-#[inline]
-fn msfs_delag_g_implied(vs_abs_fpm: f32) -> f32 {
-    MSFS_DELAG_G_BASELINE + MSFS_DELAG_G_PER_FPM * vs_abs_fpm
-}
-
-/// Short-window variant of the AGL-derivative touchdown estimator used
-/// ONLY for the de-lag override. Identical algorithm + guards to
-/// `estimate_xplane_touchdown_vs_from_agl`, but restricted to the
-/// ≤`MSFS_DELAG_MAX_WINDOW_MS` tiers so we never average a long float
-/// down toward zero. Returns `None` if no short tier qualifies.
-fn estimate_msfs_touchdown_vs_short_window(
-    buffer: &std::collections::VecDeque<TelemetrySample>,
-    touchdown_at: DateTime<Utc>,
-) -> Option<f32> {
-    let est = estimate_xplane_touchdown_vs_from_agl(buffer, touchdown_at)?;
-    if est.window_ms <= MSFS_DELAG_MAX_WINDOW_MS && est.fpm.is_finite() && est.fpm < 0.0 {
-        Some(est.fpm)
-    } else {
-        None
-    }
-}
-
-/// Result of the de-lag decision: the corrected V/S plus a human-
-/// readable signature for the forensic key.
-struct MsfsDelagResult {
-    corrected_fpm: f32,
-    raw_edge_fpm: f32,
-    signature: String,
-}
-
-/// Decide whether the MSFS touchdown V/S `analysis["vs_at_edge_fpm"]`
-/// is a lag artifact that should be replaced by the un-lagged AGL
-/// estimate, GATED on the g-force being too low to justify the lagged
-/// edge V/S. Returns `Some` only when ALL gates pass; the caller then
-/// overrides the analysis edge AND routes the landing class through the
-/// corrected value. Pure + side-effect-free so it is unit-testable on
-/// every platform.
-///
-/// `peak_g` is the lag-free impact g (peak_g_post_500ms). `edge_fpm` is
-/// the current `analysis["vs_at_edge_fpm"]`. `agl_fpm` is the short-
-/// window AGL estimate (already filtered to a short tier by the caller).
-fn decide_msfs_touchdown_delag(
-    simulator: Simulator,
-    category: aircraft_category::AircraftCategory,
-    edge_fpm: Option<f32>,
-    agl_fpm: Option<f32>,
-    peak_g: Option<f32>,
-) -> Option<MsfsDelagResult> {
-    // Gate 1: MSFS only — X-Plane (raw local_vy) and Other untouched.
-    if !matches!(simulator, Simulator::Msfs2020 | Simulator::Msfs2024) {
-        return None;
-    }
-    // Gate 2: fixed-wing only — heli / seaplane touch down near-zero
-    // V/S, the de-lag would over-soften toward 0.
-    if category != aircraft_category::AircraftCategory::FixedWing {
-        return None;
-    }
-    // Gate 3: canonical only uses negative edge; |edge| < accident band.
-    let edge = edge_fpm?;
-    if !(edge < 0.0 && edge.is_finite()) {
-        return None;
-    }
-    if edge.abs() >= MSFS_DELAG_MAX_EDGE_ABS_FPM {
-        return None; // structural accident guard — never soften a crash
-    }
-    // Gate 4: AGL estimate present, finite, negative.
-    let agl = agl_fpm?;
-    if !(agl < 0.0 && agl.is_finite()) {
-        return None;
-    }
-    // Gate 5: divergence present AND only-soften-toward-zero (AGL
-    // strictly shallower than edge). Both an absolute and a relative
-    // margin (the lag signature). The first check is a hard invariant
-    // (never soften away from zero); the abs/rel margins below are what
-    // actually decide whether the divergence is large enough to act on.
-    if agl.abs() >= edge.abs() {
-        return None; // assert we only ever soften toward zero
-    }
-    if (edge.abs() - agl.abs()) < MSFS_DELAG_MIN_ABS_DIVERGENCE_FPM {
-        return None;
-    }
-    if agl.abs() > MSFS_DELAG_MAX_AGL_REL * edge.abs() {
-        return None;
-    }
-    // Gate 6: the g-force consistency gate — the core safety gate, run
-    // last so it has the final say over the divergence gates above.
-    let g = peak_g?;
-    if !g.is_finite() {
-        return None;
-    }
-    // 6a: hard lock — a real firm/hard impact ALWAYS shows in g.
-    if g >= MSFS_DELAG_G_HARD_LOCK {
-        return None;
-    }
-    let g_implied_by_edge = msfs_delag_g_implied(edge.abs());
-    let g_implied_by_agl = msfs_delag_g_implied(agl.abs());
-    // 6b: the edge over-reads vs the physics — measured g is well below
-    // the g the lagged edge would imply.
-    if g >= g_implied_by_edge - MSFS_DELAG_G_EDGE_MARGIN {
-        return None;
-    }
-    // 6c: the measured g is CONSISTENT with the AGL estimate being the
-    // true rate (not high relative to both sources).
-    if g > g_implied_by_agl + MSFS_DELAG_G_AGL_TOLERANCE {
-        return None;
-    }
-    let signature = format!(
-        "edge {:.0} vs agl {:.0}, peak_g {:.2} implies ~{:.0} fpm (edge would imply ~{:.0}), delagged",
-        edge,
-        agl,
-        g,
-        // invert the model: |vs| ≈ (g - baseline) / slope
-        ((g - MSFS_DELAG_G_BASELINE) / MSFS_DELAG_G_PER_FPM).max(0.0),
-        edge.abs(),
-    );
-    Some(MsfsDelagResult {
-        corrected_fpm: agl,
-        raw_edge_fpm: edge,
-        signature,
-    })
-}
-
-/// Apply the de-lag decision to a `landing_analysis` JSON in place.
-/// When the gate fires: overrides `vs_at_edge_fpm` with the AGL
-/// estimate and adds additive forensic keys (`vs_at_edge_fpm_raw`,
-/// `vs_at_edge_source`, `vs_lag_signature`). Returns the corrected V/S
-/// so the caller can also route the landing CLASS through it (keeping
-/// the class label consistent with the corrected numeric score).
-///
-/// Reads `vs_at_edge_fpm` + `peak_g_post_500ms` from `analysis` and the
-/// short-window AGL estimate from `buffer`. No-op (returns `None`,
-/// leaving today's behaviour untouched) whenever any gate fails.
-fn apply_msfs_touchdown_delag(
-    analysis: &mut serde_json::Value,
-    buffer: &std::collections::VecDeque<TelemetrySample>,
-    touchdown_at: DateTime<Utc>,
-    simulator: Simulator,
-    category: aircraft_category::AircraftCategory,
-) -> Option<f32> {
-    let edge_fpm = analysis
-        .get("vs_at_edge_fpm")
-        .and_then(|v| v.as_f64())
-        .map(|x| x as f32);
-    let peak_g = analysis
-        .get("peak_g_post_500ms")
-        .and_then(|v| v.as_f64())
-        .map(|x| x as f32);
-    let agl_fpm = estimate_msfs_touchdown_vs_short_window(buffer, touchdown_at);
-
-    let result =
-        decide_msfs_touchdown_delag(simulator, category, edge_fpm, agl_fpm, peak_g)?;
-
-    if let Some(obj) = analysis.as_object_mut() {
-        obj.insert(
-            "vs_at_edge_fpm".into(),
-            serde_json::json!(result.corrected_fpm),
-        );
-        obj.insert(
-            "vs_at_edge_fpm_raw".into(),
-            serde_json::json!(result.raw_edge_fpm),
-        );
-        obj.insert(
-            "vs_at_edge_source".into(),
-            serde_json::json!("msfs_g_consistency_delag"),
-        );
-        obj.insert(
-            "vs_lag_signature".into(),
-            serde_json::json!(result.signature),
-        );
-    }
-    Some(result.corrected_fpm)
-}
+// Er war ein Pflaster auf dem gedaempften SimVar-Kanal und ist mit der
+// Umstellung von `vs_at_edge_fpm` auf die Hoehenkurve gegenstandslos
+// geworden. Zwei Gruende, ihn nicht "fuer alle Faelle" liegen zu lassen:
+// er lief nachweislich nie (null Marker-Treffer in 692 Aufsetzvorgaengen),
+// und er konnte konstruktiv nur nach unten korrigieren — den haeufigeren
+// Fall "zu weich gemeldet" haette er nie erfasst. Wer die Herleitung
+// braucht: docs/release-notes/v0.16.21.md und der Befundbericht zur
+// Sinkrate vom 14.08.2026.
 
 // ---- v0.5.13: Lua-style adaptive 30-sample AGL-Δ estimator ------------
 //
@@ -14238,9 +14004,12 @@ fn build_pirep_payload(
         // Banding grosszuegiger) + Sinkraten-Ziel-Korridor.
         // v1.6.2: bump 5→6 — achte Achse „Ausrichtung" (Versatz zur
         // Mittellinie an der Bahnbreite gemessen + Kursabweichung).
+        // v1.6.3: bump 6→7 — Sinkrate kommt aus der Hoehenkurve statt aus
+        // dem gedaempften Sim-Messwert, plus Seitenwind-Kompensation der
+        // Ausrichtungs-Achse. Beides veraendert Punkte.
         // Forward-only wie alle Vorgaenger: alte Fluege behalten ihren
         // gespeicherten Score, es wird nichts nachgerechnet.
-        score_algorithm_version: Some(6),
+        score_algorithm_version: Some(7),
         client_health: build_client_health_report(&stats),
     }
 }
@@ -14567,6 +14336,13 @@ fn fill_v2_rollout_fields(
     input.runway_true_course_deg = rm.map(|m| m.heading_true_deg);
     // Drehfluegler/Wasserflugzeuge richten sich nicht an einer Bahnachse aus.
     input.nicht_konventionell = stats.landing_nicht_konventionell;
+    // Seitenwind-Kompensation der Ausrichtungs-Achse: rechtweisender Wind
+    // beim Aufsetzen plus Bezugsgeschwindigkeit fuer den Vorhaltewinkel.
+    input.landing_wind_direction_deg = stats.landing_wind_direction_deg;
+    input.landing_wind_speed_kt = stats.landing_wind_speed_kt;
+    input.landing_groundspeed_kt = stats
+        .landing_groundspeed_kt
+        .or(stats.landing_speed_kt);
 }
 
 /// v0.7.1 Round-2 Helper: berechnet den gewichteten Aggregate-Master-
@@ -15294,7 +15070,7 @@ where
         // v0.16.21: bump 3→4 — MSFS touchdown V/S SimVar-lag corrected.
         // v0.20.x: bump 4→5 — Bahnauslastung-QS (Float-Toleranz +
         // Banding grosszuegiger) + Sinkraten-Ziel-Korridor.
-        score_algorithm_version: Some(6),
+        score_algorithm_version: Some(7),
     })
 }
 
@@ -20097,7 +19873,82 @@ fn compute_landing_analysis(
     let vs_1000 = mean_vs_window(1000);
     let vs_1500 = mean_vs_window(1500);
 
-    // --- Interpolated VS am Edge ---
+    // --- Sinkrate aus der HÖHENKURVE (v1.6.3, die gescorte Quelle) ---
+    //
+    // **Warum nicht mehr der V/S-Messwert des Sims.** Pilotenbefund Adrian
+    // (14.08.2026): „Die Dämpfung im MSFS ist einer der Gründe, warum ich
+    // da nur bei long landings niedrige Landeraten habe." An 764
+    // gespeicherten Aufsetz-Fenstern nachgemessen — der Fehler des
+    // SimVar-Kanals hängt an der Abfangstrecke:
+    //
+    //   kurzer Float  (<300 m):  323 fpm gemeldet, 245 fpm tatsächlich
+    //   langer Float  (>1000 m): 189 fpm gemeldet, 246 fpm tatsächlich
+    //
+    // 135 fpm Spanne, allein davon abhängig, wie lange abgefangen wurde.
+    // Besonders bitter: seit v1.4.4 soll zu weiches Aufsetzen Punkte
+    // kosten (langer Abfangbogen → späte Bremswirkung) — der Messfehler
+    // hebt genau diese Landungen wieder ins volle Punkteband.
+    //
+    // **Warum die Höhenkurve die Wahrheit besser trifft.** Die G-Kraft
+    // misst denselben Stoß unabhängig und dient als Schiedsrichter.
+    // Übereinstimmung mit ihr:
+    //
+    //                        SimVar   Höhengeometrie
+    //   MSFS                  0,800        0,899
+    //   MSFS, langer Float    0,802        0,921
+    //   X-Plane               0,658        0,800
+    //
+    // Die Geometrie gewinnt in BEIDEN Simulatoren — es ist kein
+    // MSFS-Sonderfall, sondern generell die bessere Messung. Damit
+    // verschwindet zugleich die letzte sim-spezifische Verzweigung im
+    // Sinkraten-Pfad: beide Sims werden ab hier identisch gemessen.
+    //
+    // **Fensterbreite 310 ms** — am Korpus optimiert (MSFS 0,919 bei
+    // ±310 ms; kürzer wird es verrauscht, länger mittelt es den späten
+    // flachen Teil des Abfangens ein und liest zu nah an Null).
+    const AGL_FENSTER_MS: i64 = 310;
+    /// Weniger Messpunkte im Fenster → keine belastbare Steigung.
+    const AGL_MIN_SAMPLES: usize = 4;
+    /// Manche Zusatzflugzeuge frieren die Höhe ein. Ohne Bewegung in der
+    /// Kurve ist die Ableitung wertlos (im Korpus: 0,5 % der Landungen).
+    const AGL_MIN_VERSCHIEDENE: usize = 3;
+
+    let vs_aus_hoehenkurve = || -> Option<f32> {
+        let lo = edge_ms - AGL_FENSTER_MS;
+        let fenster: Vec<&TouchdownWindowSample> = samples
+            .iter()
+            .filter(|s| {
+                let ts = s.at.timestamp_millis();
+                ts >= lo && ts <= edge_ms && s.agl_ft.is_finite()
+            })
+            .collect();
+        if fenster.len() < AGL_MIN_SAMPLES {
+            return None;
+        }
+        let verschieden = fenster
+            .iter()
+            .map(|s| (s.agl_ft * 1000.0).round() as i64)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        if verschieden < AGL_MIN_VERSCHIEDENE {
+            return None;
+        }
+        let a = fenster.first()?;
+        let b = fenster.last()?;
+        let dt = (b.at.timestamp_millis() - a.at.timestamp_millis()) as f64 / 1000.0;
+        if dt <= 0.05 {
+            return None;
+        }
+        let fpm = ((b.agl_ft - a.agl_ft) as f64 / dt * 60.0) as f32;
+        // Nur ein SINKEN ist eine Landerate; ein Steigen im Fenster heißt,
+        // dass der Aufsetzpunkt nicht sauber erfasst wurde.
+        if !fpm.is_finite() || fpm >= 0.0 {
+            return None;
+        }
+        Some(fpm)
+    };
+
+    // --- Interpolated VS am Edge (jetzt Rückfallebene + Forensik) ---
     // Finde das Sample-Paar (last airborne, first on_ground) das den Edge
     // umschließt; lineare Interpolation der VS auf edge_ms.
     let mut last_air: Option<&TouchdownWindowSample> = None;
@@ -20110,7 +19961,7 @@ fn compute_landing_analysis(
             break;
         }
     }
-    let vs_at_edge = match (last_air, first_ground) {
+    let vs_aus_simvar = match (last_air, first_ground) {
         (Some(a), Some(g)) => {
             let t_a = a.at.timestamp_millis() as f64;
             let t_g = g.at.timestamp_millis() as f64;
@@ -20124,6 +19975,10 @@ fn compute_landing_analysis(
         }
         _ => None,
     };
+    // Höhenkurve führt; der Sim-Messwert bleibt als Rückfallebene für die
+    // 0,5 % der Landungen mit unbrauchbarer Höhenspur — und als Forensik.
+    let vs_geometrie = vs_aus_hoehenkurve();
+    let vs_at_edge = vs_geometrie.or(vs_aus_simvar);
 
     // --- Peak G post-TD (Gear-Compression sucht nach Edge) ---
     let peak_g_window = |window_ms: i64| -> Option<f32> {
@@ -20452,6 +20307,12 @@ fn compute_landing_analysis(
 
     let mut analysis = json!({
         "vs_at_edge_fpm": vs_at_edge,
+        // Forensik: beide Kandidaten getrennt, damit jede Landung
+        // nachträglich mit beiden Verfahren nachgerechnet werden kann —
+        // das ersetzt ein Rollback-Werkzeug.
+        "vs_geometrie_fpm": vs_geometrie,
+        "vs_simvar_edge_fpm": vs_aus_simvar,
+        "vs_at_edge_quelle": if vs_geometrie.is_some() { "hoehenkurve" } else { "simvar_fallback" },
         "vs_smoothed_250ms_fpm": vs_250,
         "vs_smoothed_500ms_fpm": vs_500,
         "vs_smoothed_1000ms_fpm": vs_1000,
@@ -21333,24 +21194,28 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // damit der Touchdown-Payload-Builder im Streamer-Tick die Felder
             // direkt zur Verfuegung hat (anstatt aus der JSONL re-zu-parsen).
             let prepared_dump = if let Some((edge_at, samples)) = dump_payload {
-                let mut analysis =
+                let analysis =
                     compute_landing_analysis(&samples, edge_at, snap.simulator);
                 // v0.16.21: MSFS touchdown V/S SimVar-lag de-lag —
                 // g-force-gated. Runs BEFORE the analysis is stored, the
                 // accident heuristic, and the class re-derivation below, so
                 // the corrected (un-lagged) `vs_at_edge_fpm` flows through
                 // `canonical_landing_rate_fpm` to the score / PIREP / MQTT.
-                // No-op for X-Plane / Other, helis, the accident band, and
-                // any landing whose impact g corroborates the high V/S. The
-                // returned Some(corrected) also routes the landing CLASS
-                // through the corrected value below (class label ↔ score).
-                let msfs_delag_vs = apply_msfs_touchdown_delag(
-                    &mut analysis,
-                    &stats.snapshot_buffer,
-                    edge_at,
-                    snap.simulator,
-                    category,
-                );
+                // v1.6.3: die MSFS-Entlagung ist ERSATZLOS entfallen.
+                //
+                // Sie war ein Pflaster auf dem gedämpften SimVar-Kanal —
+                // und lief nachweislich nie: sie bekam den Datenpuffer erst,
+                // nachdem er auf 5 s beschnitten war, und sah damit nur
+                // Messwerte NACH dem Aufsetzen. Gegenprobe an der
+                // Aufzeichnungs-Datenbank: in 692 Aufsetzvorgängen und
+                // 885 Flugberichten null Treffer ihrer Marker.
+                //
+                // Sie ist jetzt auch fachlich überflüssig: `vs_at_edge_fpm`
+                // kommt aus der Höhenkurve und ist gar nicht mehr gedämpft
+                // (siehe compute_landing_analysis). Zudem konnte sie
+                // konstruktiv nur nach unten korrigieren — den häufigeren
+                // Fall „zu weich gemeldet" hätte sie nie erfasst.
+                let msfs_delag_vs: Option<f32> = None;
                 stats.landing_analysis = Some(analysis.clone());
                 // v0.7.19 GAF-707: Heuristik-Klassifikator EINMAL pro
                 // Touchdown am TD-Edge ausfuehren — direkt nachdem die
@@ -23496,7 +23361,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             // v0.20.x: bump 4→5 — Bahnauslastung-QS
                             // (Float-Toleranz + Banding grosszuegiger) +
                             // Sinkraten-Ziel-Korridor.
-                            score_algorithm_version: Some(6),
+                            score_algorithm_version: Some(7),
                         }
                     })
                 };
@@ -24731,6 +24596,11 @@ fn stamp_touchdown_metadata(
     // such that positive = tailwind (wind blowing into the
     // aircraft from behind), so headwind = -Z. X positive
     // = wind from the right side.
+    // Meteorologischer Wind: die Basis der Seitenwind-Kompensation.
+    if stats.landing_wind_direction_deg.is_none() {
+        stats.landing_wind_direction_deg = snap.wind_direction_deg;
+        stats.landing_wind_speed_kt = snap.wind_speed_kt;
+    }
     stats.landing_headwind_kt = snap.aircraft_wind_z_kt.map(|z| -z);
     stats.landing_crosswind_kt = snap.aircraft_wind_x_kt;
 }
@@ -42566,319 +42436,6 @@ mod v0_16_6_bush_completeness_tests {
 // g-consistency model unit-tested against the anchor points. The two
 // MUST-CORRECT anchors (JBU322, EWG906) and the high-g danger cases
 // (which MUST NOT change score band) are the load-bearing assertions.
-#[cfg(test)]
-mod msfs_touchdown_delag_tests {
-    use super::*;
-    use chrono::TimeZone;
-    use std::collections::VecDeque;
-
-    const FW: aircraft_category::AircraftCategory =
-        aircraft_category::AircraftCategory::FixedWing;
-    const HELI: aircraft_category::AircraftCategory =
-        aircraft_category::AircraftCategory::Helicopter;
-
-    fn t0() -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap()
-    }
-
-    // --- the fitted g↔|V/S| model itself ------------------------------
-
-    #[test]
-    fn g_model_matches_corpus_fit() {
-        // g_implied = 1.0019 + 0.0009421 * |vs|
-        assert!((msfs_delag_g_implied(0.0) - 1.0019).abs() < 1e-4);
-        // 1000 fpm → ~1.944 g; 250 fpm → ~1.237 g; 440 fpm → ~1.416 g.
-        assert!((msfs_delag_g_implied(1000.0) - 1.9440).abs() < 1e-3);
-        assert!((msfs_delag_g_implied(250.0) - 1.2374).abs() < 1e-3);
-        assert!((msfs_delag_g_implied(440.0) - 1.4164).abs() < 1e-3);
-        // monotonic in |vs|
-        assert!(msfs_delag_g_implied(500.0) > msfs_delag_g_implied(250.0));
-    }
-
-    // --- the pure decision gate (the heart of the fix) ----------------
-
-    #[test]
-    fn jbu322_corrected() {
-        // edge -441.6, agl -251, peak_g 1.249 → FIRE, corrected to -251.
-        let r = decide_msfs_touchdown_delag(
-            Simulator::Msfs2020,
-            FW,
-            Some(-441.6),
-            Some(-251.0),
-            Some(1.249),
-        )
-        .expect("JBU322 must de-lag");
-        assert_eq!(r.corrected_fpm, -251.0);
-        assert_eq!(r.raw_edge_fpm, -441.6);
-        assert!(r.signature.contains("delagged"));
-    }
-
-    #[test]
-    fn ewg906_corrected() {
-        // edge -422.2, agl -263, peak_g 1.211 → FIRE, corrected to -263.
-        let r = decide_msfs_touchdown_delag(
-            Simulator::Msfs2024,
-            FW,
-            Some(-422.2),
-            Some(-263.0),
-            Some(1.211),
-        )
-        .expect("EWG906 must de-lag");
-        assert_eq!(r.corrected_fpm, -263.0);
-    }
-
-    #[test]
-    fn danger_high_g_cases_not_softened() {
-        // The three corpus danger cases — measured g HIGH (≥1.45),
-        // corroborates the high edge V/S → the hard-G lock blocks the
-        // override. MUST NOT fire.
-        // JrMr: edge -613.9, agl -470, peak_g 1.465
-        assert!(decide_msfs_touchdown_delag(
-            Simulator::Msfs2020, FW, Some(-613.9), Some(-470.0), Some(1.465)
-        ).is_none());
-        // 8ZOp: edge -763.6, agl -518, peak_g 1.609
-        assert!(decide_msfs_touchdown_delag(
-            Simulator::Msfs2020, FW, Some(-763.6), Some(-518.0), Some(1.609)
-        ).is_none());
-        // pJ4v: edge -782.4, agl -618, peak_g 1.720
-        assert!(decide_msfs_touchdown_delag(
-            Simulator::Msfs2020, FW, Some(-782.4), Some(-618.0), Some(1.720)
-        ).is_none());
-    }
-
-    #[test]
-    fn firm_landing_g135_band_not_softened() {
-        // A genuine firm landing: high g (1.36) corroborates a steep
-        // edge. Even though it diverges from a shallow AGL read, the
-        // g-consistency gate (measured g not below g_implied_by_edge by
-        // the margin, and above g_implied_by_agl + tol) blocks it.
-        let r = decide_msfs_touchdown_delag(
-            Simulator::Msfs2020, FW, Some(-468.0), Some(-260.0), Some(1.36),
-        );
-        // g_implied_by_agl(260)=1.247; 1.36 > 1.247+0.05 ⇒ blocked.
-        assert!(r.is_none());
-    }
-
-    #[test]
-    fn xplane_untouched() {
-        // Same lag signature, but X-Plane → never de-lag (raw local_vy).
-        assert!(decide_msfs_touchdown_delag(
-            Simulator::XPlane11, FW, Some(-441.6), Some(-251.0), Some(1.249)
-        ).is_none());
-        assert!(decide_msfs_touchdown_delag(
-            Simulator::XPlane12, FW, Some(-441.6), Some(-251.0), Some(1.249)
-        ).is_none());
-    }
-
-    #[test]
-    fn other_sim_untouched() {
-        assert!(decide_msfs_touchdown_delag(
-            Simulator::Other, FW, Some(-441.6), Some(-251.0), Some(1.249)
-        ).is_none());
-    }
-
-    #[test]
-    fn heli_excluded() {
-        // Helicopter de-lag would over-soften near-zero touchdowns.
-        assert!(decide_msfs_touchdown_delag(
-            Simulator::Msfs2020, HELI, Some(-441.6), Some(-251.0), Some(1.249)
-        ).is_none());
-    }
-
-    #[test]
-    fn accident_band_never_softened() {
-        // |edge| ≥ 1000 = accident band — structural guard, even with a
-        // low g that "looks like" a lag artifact.
-        assert!(decide_msfs_touchdown_delag(
-            Simulator::Msfs2020, FW, Some(-1100.0), Some(-300.0), Some(1.20)
-        ).is_none());
-        // Just below the band with a clear lag signature still fires.
-        assert!(decide_msfs_touchdown_delag(
-            Simulator::Msfs2020, FW, Some(-990.0), Some(-700.0), Some(1.55)
-        ).is_none()); // g 1.55 ≥ hard lock 1.40 → blocked anyway
-    }
-
-    #[test]
-    fn agl_none_fallback_no_override() {
-        // No AGL estimate → no override (today's behaviour, no regression).
-        assert!(decide_msfs_touchdown_delag(
-            Simulator::Msfs2020, FW, Some(-441.6), None, Some(1.249)
-        ).is_none());
-    }
-
-    #[test]
-    fn peak_g_none_no_override() {
-        assert!(decide_msfs_touchdown_delag(
-            Simulator::Msfs2020, FW, Some(-441.6), Some(-251.0), None
-        ).is_none());
-    }
-
-    #[test]
-    fn positive_edge_skipped() {
-        // Canonical only uses negative edge; positive edge never de-lagged.
-        assert!(decide_msfs_touchdown_delag(
-            Simulator::Msfs2020, FW, Some(50.0), Some(-251.0), Some(1.10)
-        ).is_none());
-    }
-
-    #[test]
-    fn positive_agl_outlier_cannot_enter() {
-        // A post-TD rebound (positive AGL estimate) can never become the
-        // override — the estimator is pre-contact + negative-only, and
-        // the gate rejects non-negative agl defensively.
-        assert!(decide_msfs_touchdown_delag(
-            Simulator::Msfs2020, FW, Some(-441.6), Some(30.0), Some(1.10)
-        ).is_none());
-    }
-
-    #[test]
-    fn only_softens_toward_zero() {
-        // AGL more-negative than edge (estimator deeper) → never used;
-        // we only ever soften toward zero.
-        assert!(decide_msfs_touchdown_delag(
-            Simulator::Msfs2020, FW, Some(-251.0), Some(-441.6), Some(1.05)
-        ).is_none());
-    }
-
-    #[test]
-    fn tiny_divergence_not_softened() {
-        // edge -300, agl -270 → only 30 fpm gap (< 60 abs margin) → no fire.
-        assert!(decide_msfs_touchdown_delag(
-            Simulator::Msfs2020, FW, Some(-300.0), Some(-270.0), Some(1.20)
-        ).is_none());
-    }
-
-    // --- class-label-matches-corrected-score --------------------------
-
-    #[test]
-    fn class_label_matches_corrected_score() {
-        // JBU322: with the lagged edge -441 the class is Firm (60);
-        // routed through the corrected -251 + the same g 1.249 the class
-        // must be Acceptable (80) — matching the corrected numeric score.
-        let lagged = LandingScore::classify(-441.6, 1.249, 0);
-        assert_eq!(lagged, LandingScore::Firm);
-        let corrected = LandingScore::classify(-251.0, 1.249, 0);
-        assert_eq!(corrected, LandingScore::Acceptable);
-        assert_eq!(corrected.numeric(), 80);
-    }
-
-    #[test]
-    fn class_g_band_floor_preserved_for_danger() {
-        // Even if (hypothetically) a danger V/S were softened, the g-band
-        // term in classify is a floor that keeps a high-g impact from
-        // becoming Smooth. 8ZOp peak_g 1.609 → Firm by g alone.
-        let by_g_only = LandingScore::classify(-1.0, 1.609, 0);
-        assert_eq!(by_g_only, LandingScore::Firm);
-    }
-
-    // --- full path: apply_msfs_touchdown_delag over an analysis JSON ---
-
-    fn make_sample(at: DateTime<Utc>, agl_ft: f32) -> TelemetrySample {
-        TelemetrySample {
-            at,
-            vs_fpm: 60.0, // positive rebound — VSI lies; geometry wins
-            g_force: 1.2,
-            on_ground: false,
-            agl_ft,
-            heading_true_deg: 0.0,
-            groundspeed_kt: 130.0,
-            indicated_airspeed_kt: 130.0,
-            lat: 0.0,
-            lon: 0.0,
-            pitch_deg: 0.0,
-            bank_deg: 0.0,
-            gear_normal_force_n: None,
-            total_weight_kg: None,
-        }
-    }
-
-    /// Build a dense short-window buffer with a known geometric descent
-    /// rate (`target_fpm`, negative). 1 s window, AGL → 0 at touchdown.
-    fn descent_buffer(td: DateTime<Utc>, target_fpm: f32) -> VecDeque<TelemetrySample> {
-        let mut buf = VecDeque::new();
-        // For the avg-AGL midpoint trick on a linear descent the
-        // resulting rate equals the linear slope. Start AGL so that the
-        // 1 s linear descent yields `target_fpm`: rate = -start/1s*60.
-        let start_agl = (-target_fpm) / 60.0; // ft over 1 s
-        for ms in (0..=1000).step_by(50) {
-            let frac = ms as f32 / 1000.0;
-            let agl = (start_agl * (1.0 - frac)).max(0.0);
-            buf.push_back(make_sample(
-                td - chrono::Duration::milliseconds(1000 - ms as i64),
-                agl,
-            ));
-        }
-        // touchdown sample on the ground
-        let last = buf.back_mut().unwrap();
-        last.on_ground = true;
-        last.agl_ft = 0.0;
-        buf
-    }
-
-    #[test]
-    fn apply_overrides_analysis_and_adds_forensic_keys() {
-        let td = t0();
-        let buf = descent_buffer(td, -251.0); // geometry says ~-251 fpm
-        let mut analysis = serde_json::json!({
-            "vs_at_edge_fpm": -441.6,   // lagged edge
-            "peak_g_post_500ms": 1.249, // low g — corroborates AGL
-        });
-        let corrected = apply_msfs_touchdown_delag(
-            &mut analysis, &buf, td, Simulator::Msfs2020, FW,
-        );
-        let c = corrected.expect("should de-lag");
-        // corrected ≈ -251 (geometry); within a few fpm of the target
-        assert!((c - (-251.0)).abs() < 30.0, "corrected = {c}");
-        // analysis edge replaced with the corrected value
-        let new_edge = analysis["vs_at_edge_fpm"].as_f64().unwrap() as f32;
-        assert!((new_edge - c).abs() < 1e-3);
-        // forensic keys added (additive)
-        assert!((analysis["vs_at_edge_fpm_raw"].as_f64().unwrap() - (-441.6)).abs() < 1e-3);
-        assert_eq!(
-            analysis["vs_at_edge_source"].as_str().unwrap(),
-            "msfs_g_consistency_delag"
-        );
-        assert!(analysis["vs_lag_signature"].as_str().unwrap().contains("delagged"));
-    }
-
-    #[test]
-    fn apply_noop_for_high_g_keeps_analysis() {
-        let td = t0();
-        let buf = descent_buffer(td, -470.0);
-        let mut analysis = serde_json::json!({
-            "vs_at_edge_fpm": -613.9,
-            "peak_g_post_500ms": 1.465, // danger — must not fire
-        });
-        let before = analysis.clone();
-        let corrected = apply_msfs_touchdown_delag(
-            &mut analysis, &buf, td, Simulator::Msfs2020, FW,
-        );
-        assert!(corrected.is_none());
-        assert_eq!(analysis, before, "analysis must be untouched");
-    }
-
-    #[test]
-    fn canonical_reads_corrected_value() {
-        // After the override, canonical_landing_rate_fpm reads the
-        // corrected (shallower) value from landing_analysis.
-        let td = t0();
-        let buf = descent_buffer(td, -251.0);
-        let mut analysis = serde_json::json!({
-            "vs_at_edge_fpm": -441.6,
-            "peak_g_post_500ms": 1.249,
-        });
-        apply_msfs_touchdown_delag(&mut analysis, &buf, td, Simulator::Msfs2020, FW)
-            .expect("should de-lag");
-        let mut stats = FlightStats::default();
-        stats.landing_analysis = Some(analysis);
-        // pretend the lagged peak is still on stats — canonical must
-        // prefer the corrected analysis edge.
-        stats.landing_peak_vs_fpm = Some(-441.6);
-        let canonical = stats.canonical_landing_rate_fpm().unwrap();
-        assert!(canonical > -300.0, "canonical = {canonical} (should be ~-251)");
-        assert!(canonical < -200.0);
-    }
-}
 
 // ======================================================================
 // v0.16.21 — MSFS touchdown V/S de-lag REPLAY-GOLDEN acceptance test
@@ -43011,8 +42568,6 @@ mod msfs_touchdown_delag_replay_golden {
     use std::io::{BufRead, BufReader};
     use std::path::Path;
 
-    const FW: aircraft_category::AircraftCategory =
-        aircraft_category::AircraftCategory::FixedWing;
 
     fn fixture_path(name: &str) -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -43021,6 +42576,10 @@ mod msfs_touchdown_delag_replay_golden {
     }
 
     /// A trimmed real flight reconstructed from the committed fixture.
+    /// Die Felder `analysis` und `scored_bounce_count` liest aktuell kein
+    /// Test — sie bleiben, weil sie die aufgezeichnete Wahrheit der Fixture
+    /// tragen und der naechste Replay-Test sie sofort braucht.
+    #[allow(dead_code)]
     struct ReplayFlight {
         /// The recorded simulator, parsed from the `touchdown_detected`
         /// event's `sim` field — drives the de-lag sim gate.
@@ -43161,200 +42720,43 @@ mod msfs_touchdown_delag_replay_golden {
         analysis.get(key).and_then(|v| v.as_f64()).map(|x| x as f32)
     }
 
-    // ------------------------------------------------------------------
-    // FIRE cases — the de-lag must replace the lagged edge with the REAL
-    // short-window AGL estimate and move the class band one step shallower.
-    // ------------------------------------------------------------------
-
-    /// Shared driver for the two firing flights: runs the REAL estimator +
-    /// gate + apply over the real buffer, asserts the corrected value lands
-    /// in the documented band, the raw edge is preserved, the forensic keys
-    /// appear, and the landing class moves Firm → Acceptable.
+    /// v1.6.3: Beweis an ECHTEN Flügen, dass die Höhenkurve die
+    /// dokumentierte Wahrheit trifft — dieselben zwei Aufzeichnungen, an
+    /// denen v0.16.21 seinerzeit die (nie gelaufene) Entlagung kalibriert
+    /// hat. Der gedämpfte SimVar-Kanal las damals 441 bzw. 422 fpm, die
+    /// aus der Höhe abgeleitete Wahrheit lag bei rund 251 bzw. 263.
     ///
-    /// `expected_corrected` is the corpus-truth AGL rate; `band` is the
-    /// half-width tolerance justified by the estimator's tier resolution
-    /// (the 750 ms/1000 ms/1500 ms windows resolve the rate to a few fpm,
-    /// not to one exact value) — NOT tuned to a single observed number.
-    fn assert_fires(
-        name: &str,
-        expected_edge: f32,
-        expected_corrected: f32,
-        band: f32,
-    ) {
-        let mut f = load_replay(name);
-
-        // 1. The REAL short-window estimator over the REAL recorded AGL
-        //    samples — this is the step the synthetic unit tests skip.
-        let agl_est = estimate_msfs_touchdown_vs_short_window(&f.buffer, f.edge_at)
-            .unwrap_or_else(|| panic!("{name}: estimator must produce a short-window rate"));
-        assert!(
-            agl_est < 0.0 && agl_est.is_finite(),
-            "{name}: estimator must be negative+finite, got {agl_est}"
-        );
-        // The REAL estimate sits in the documented truth band. We assert on
-        // the estimator OUTPUT, not on an agl we fed in.
-        assert!(
-            (agl_est - expected_corrected).abs() <= band,
-            "{name}: real AGL estimate {agl_est:.1} not within ±{band} of \
-             corpus truth {expected_corrected:.1}"
-        );
-
-        // Sanity: the fixture really carries the lagged edge + low g.
-        let edge = num(&f.analysis, "vs_at_edge_fpm").unwrap();
-        assert!(
-            (edge - expected_edge).abs() < 1.0,
-            "{name}: fixture edge {edge} != documented {expected_edge}"
-        );
-
-        // 2. + 3. Run apply over the analysis JSON — the SAME entry point
-        //    the sampler calls. It internally re-runs the estimator + gate.
-        let corrected = apply_msfs_touchdown_delag(
-            &mut f.analysis,
-            &f.buffer,
-            f.edge_at,
-            f.simulator,
-            FW,
-        )
-        .unwrap_or_else(|| panic!("{name}: de-lag MUST fire"));
-
-        // The corrected value IS the real estimator output.
-        assert!(
-            (corrected - agl_est).abs() < 1e-3,
-            "{name}: apply corrected {corrected} != estimator {agl_est}"
-        );
-        assert!(
-            (corrected - expected_corrected).abs() <= band,
-            "{name}: corrected {corrected:.1} outside truth band \
-             {expected_corrected:.1}±{band}"
-        );
-
-        // The analysis edge was overwritten with the corrected value …
-        assert!((num(&f.analysis, "vs_at_edge_fpm").unwrap() - corrected).abs() < 1e-3);
-        // … the raw lagged edge preserved verbatim …
-        assert!(
-            (num(&f.analysis, "vs_at_edge_fpm_raw").unwrap() - expected_edge).abs() < 1.0,
-            "{name}: raw edge not preserved"
-        );
-        // … the source + signature forensic keys added …
+    /// Der Test läuft durch `compute_landing_analysis`, also den Weg, den
+    /// echte Daten nehmen — nicht gegen eine Hilfsfunktion. Genau daran ist
+    /// die alte Entlagung gescheitert: 20 grüne Tests, im Feld nie gelaufen.
+    fn assert_hoehenkurve_trifft(datei: &str, wahrheit_fpm: f32, band: f32) {
+        let f = load_replay(datei);
+        let samples: Vec<TouchdownWindowSample> =
+            f.buffer.iter().cloned().map(Into::into).collect();
+        let analysis = compute_landing_analysis(&samples, f.edge_at, f.simulator);
+        let gescort = num(&analysis, "vs_at_edge_fpm").expect("vs_at_edge_fpm");
+        let quelle = analysis
+            .get("vs_at_edge_quelle")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         assert_eq!(
-            f.analysis["vs_at_edge_source"].as_str().unwrap(),
-            "msfs_g_consistency_delag"
+            quelle, "hoehenkurve",
+            "{datei}: die Höhenkurve muss die gescorte Quelle sein, war {quelle}"
         );
         assert!(
-            f.analysis["vs_lag_signature"]
-                .as_str()
-                .unwrap()
-                .contains("delagged"),
-            "{name}: signature missing"
+            (gescort - wahrheit_fpm).abs() <= band,
+            "{datei}: erwartet {wahrheit_fpm} ±{band} fpm, gemessen {gescort}"
         );
-
-        // 4. The class band moves one step shallower. Score the lagged edge
-        //    vs the corrected edge through the SAME classifier the pipeline
-        //    uses, with the REAL scored peak_g + de-bounced bounce count.
-        let peak_g = num(&f.analysis, "peak_g_post_500ms").unwrap();
-        let lagged_class = LandingScore::classify(expected_edge, peak_g, f.scored_bounce_count);
-        let corrected_class = LandingScore::classify(corrected, peak_g, f.scored_bounce_count);
-        assert_eq!(
-            lagged_class,
-            LandingScore::Firm,
-            "{name}: lagged edge should score Firm"
-        );
-        assert_eq!(
-            corrected_class,
-            LandingScore::Acceptable,
-            "{name}: corrected edge should score Acceptable (Firm→Acceptable)"
-        );
-        assert_eq!(corrected_class.numeric(), 80);
     }
 
     #[test]
-    fn jbu322_real_buffer_fires_to_agl_truth() {
-        // Documented truth: lagged edge -441.6, true AGL-derived ~-251,
-        // peak_g 1.249. Band ±15 fpm = estimator tier resolution.
-        assert_fires("jbu322_msfs_delag_fire.jsonl.gz", -441.6, -251.0, 15.0);
+    fn jbu322_hoehenkurve_trifft_die_wahrheit() {
+        assert_hoehenkurve_trifft("jbu322_msfs_delag_fire.jsonl.gz", -251.0, 60.0);
     }
 
     #[test]
-    fn ewg906_real_buffer_fires_to_agl_truth() {
-        // Documented truth: lagged edge -422.2, true ~-263, peak_g 1.211.
-        assert_fires("ewg906_msfs_delag_fire.jsonl.gz", -422.2, -263.0, 15.0);
-    }
-
-    // ------------------------------------------------------------------
-    // NO-FIRE controls — the gate must leave a genuinely-firm MSFS landing
-    // and a steep X-Plane landing completely untouched.
-    // ------------------------------------------------------------------
-
-    #[test]
-    fn dlh848_real_firm_landing_not_softened() {
-        // Real v0.16.21 MSFS capture: edge -285.7, peak_g 1.405 — ABOVE the
-        // 1.40 hard-lock. A genuinely firm touchdown. Over-determined: the
-        // hard-lock AND the "only soften toward zero" gate both reject it
-        // (its real AGL estimate is deeper than the edge), so this asserts
-        // the firm-landing INVARIANT (never softened, no forensic keys), not
-        // the hard-lock in isolation — that's a synthetic unit test.
-        let mut f = load_replay("dlh848_msfs_firm_control.jsonl.gz");
-        assert!(matches!(
-            f.simulator,
-            Simulator::Msfs2020 | Simulator::Msfs2024
-        ));
-        let peak_g = num(&f.analysis, "peak_g_post_500ms").unwrap();
-        assert!(
-            peak_g >= MSFS_DELAG_G_HARD_LOCK,
-            "DLH848 peak_g {peak_g} should be at/above the hard-lock"
-        );
-        let before = f.analysis.clone();
-        let corrected = apply_msfs_touchdown_delag(
-            &mut f.analysis,
-            &f.buffer,
-            f.edge_at,
-            f.simulator,
-            FW,
-        );
-        assert!(corrected.is_none(), "DLH848 must NOT de-lag (genuinely firm — left untouched)");
-        assert_eq!(f.analysis, before, "DLH848 analysis must be untouched");
-        assert!(f.analysis.get("vs_at_edge_source").is_none());
-        assert!(f.analysis.get("vs_at_edge_fpm_raw").is_none());
-        assert!(f.analysis.get("vs_lag_signature").is_none());
-    }
-
-    #[test]
-    fn ity324_xplane_steep_not_softened() {
-        // X-Plane (raw local_vy already the scored source), edge -863.2,
-        // genuinely steep. Over-determined: the X-Plane sim gate excludes it,
-        // AND its divergence is < 60 fpm, AND g 2.78 ≫ the hard-lock — any one
-        // blocks the de-lag. So this asserts the steep-landing INVARIANT
-        // (untouched, stays Severe), not the sim gate in isolation (synthetic
-        // unit tests cover that). Verified by mutation: re-adding X-Plane to
-        // the sim gate leaves this test green precisely because the other
-        // gates still hold.
-        let mut f = load_replay("ity324_xplane_steep_control.jsonl.gz");
-        assert!(matches!(
-            f.simulator,
-            Simulator::XPlane11 | Simulator::XPlane12
-        ));
-        let edge = num(&f.analysis, "vs_at_edge_fpm").unwrap();
-        let before = f.analysis.clone();
-        let corrected = apply_msfs_touchdown_delag(
-            &mut f.analysis,
-            &f.buffer,
-            f.edge_at,
-            f.simulator,
-            FW,
-        );
-        assert!(
-            corrected.is_none(),
-            "ITY324 must NOT de-lag (steep X-Plane — left untouched)"
-        );
-        assert_eq!(f.analysis, before, "ITY324 analysis must be untouched");
-        // The steep edge still classifies Severe (its |V/S| ≥ 600 → Hard by
-        // V/S, and peak_g ≫ 2.10 → Severe by g): the de-lag never relaxes it.
-        let peak_g = num(&f.analysis, "peak_g_post_500ms").unwrap();
-        assert_eq!(
-            LandingScore::classify(edge, peak_g, 0),
-            LandingScore::Severe,
-            "ITY324 must stay Severe"
-        );
+    fn ewg906_hoehenkurve_trifft_die_wahrheit() {
+        assert_hoehenkurve_trifft("ewg906_msfs_delag_fire.jsonl.gz", -263.0, 60.0);
     }
 }
 
@@ -43667,16 +43069,29 @@ mod msfs_agl_flare_tests {
             Some("msfs_agl")
         );
 
-        // The TOUCHDOWN rate must NOT change — only the flare metric does.
-        // compute_landing_analysis computes vs_at_edge_fpm the same way
-        // regardless of simulator (no de-lag applied inside it).
+        // v1.6.3: Die Aufsetzrate ÄNDERT sich hier bewusst — und dieser
+        // Test hat die Änderung korrekt bemerkt. Bis v1.6.2 kam sie aus
+        // dem gedämpften SimVar-Kanal (aufgezeichnet: −423,5 fpm), jetzt
+        // aus der Höhenkurve (−463,9). Die Landung war also HÄRTER als
+        // bisher gemeldet — dieselbe Richtung, die der Korpus für kurzes
+        // Abfangen zeigt. Festgehalten wird ab jetzt der neue Wert plus
+        // die Herkunft, damit ein künftiger Rückschritt auffällt.
         let edge_recorded = recorded.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).unwrap();
         let edge_new = a.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).unwrap();
-        assert!(
-            (edge_recorded - edge_new).abs() < 1.0,
-            "touchdown rate must be unchanged: recorded {edge_recorded}, new {edge_new}"
+        assert_eq!(
+            a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
+            Some("hoehenkurve"),
+            "die Aufsetzrate muss aus der Höhenkurve kommen"
         );
-        assert!(edge_new < -400.0, "touchdown still firm (~-423), got {edge_new}");
+        assert!(
+            edge_new < edge_recorded,
+            "die ungedämpfte Messung muss hier härter ausfallen: aufgezeichnet \
+             {edge_recorded}, neu {edge_new}"
+        );
+        assert!(
+            (-500.0..=-430.0).contains(&edge_new),
+            "erwartet rund −464 fpm aus der Höhenkurve, gemessen {edge_new}"
+        );
 
         // The lagged SimVar values are preserved as forensic provenance and
         // match the recorded (lagged) endpoints.

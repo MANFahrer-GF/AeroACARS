@@ -79,12 +79,16 @@ pub struct SimSnapshot {
     pub groundspeed_kt: f32,
     pub indicated_airspeed_kt: f32,
     pub true_airspeed_kt: f32,
-    /// Body-frame wind components in knots. Positive
-    /// `aircraft_wind_x_kt` = wind from the right (= crosswind from
-    /// the right side). Positive `aircraft_wind_z_kt` = tailwind.
-    /// MSFS gives us these natively rotated to airframe axes —
-    /// saves us computing wind-vs-heading at PIREP time. None when
-    /// the SimVar isn't wired.
+    /// Koerperfeste Windkomponenten in Knoten. Positiver
+    /// `aircraft_wind_x_kt` = Wind von RECHTS, positiver
+    /// `aircraft_wind_z_kt` = Rueckenwind.
+    ///
+    /// Der Vertrag galt schon immer so — eingehalten hat ihn bis zum
+    /// 14.08.2026 keiner der beiden Adapter: MSFS lieferte das Vorzeichen
+    /// der Seitenkomponente verkehrt herum, X-Plane sogar den ganzen
+    /// Vektor im Weltsystem (Nord/Ost statt vorn/rechts). Beide Adapter
+    /// rechnen jetzt um; wer hier einen dritten Simulator anbindet, muss
+    /// dasselbe tun. `None`, wenn die Quelle fehlt.
     pub aircraft_wind_x_kt: Option<f32>,
     pub aircraft_wind_z_kt: Option<f32>,
 

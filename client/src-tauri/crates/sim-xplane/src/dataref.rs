@@ -419,9 +419,17 @@ pub const CATALOG: &[DatarefEntry] = &[
         name: "sim/cockpit2/annunciators/speedbrake",
         field: FieldId::SpoilersArmed,
     },
-    // Wind components in airframe-relative coords (m/s). Used for
-    // headwind/crosswind reporting in the PIREP. Same DataRefs in
-    // X-Plane 11 and 12.
+    // Windkomponenten im OpenGL-WELTSYSTEM (m/s): +X = Ost, +Z = Sued —
+    // NICHT flugzeugbezogen, trotz des `aircraft/`-Pfads. Genau dieselbe
+    // Achsenkonvention wie `local_vx`/`local_vz` weiter oben.
+    //
+    // Feldbefund 14.08.2026: sie wurden ungedreht in die als koerperfest
+    // deklarierten Snapshot-Felder gereicht. Ueber 133 Landungen gemessen
+    // korrelierte der gemeldete „Gegenwind" mit +0,89 zur Himmelsrichtung
+    // Nord und mit −0,15 zur Flugzeugachse — die Windangaben im Flugbericht
+    // waren fuer jeden X-Plane-Flug frei erfunden. Die Drehung passiert
+    // jetzt in `wind_body_kt` (dieselbe Mathematik wie `body_velocity_fps`).
+    // Same DataRefs in X-Plane 11 und 12.
     DatarefEntry {
         name: "sim/weather/aircraft/wind_now_x_msc",
         field: FieldId::WindXMs,
@@ -641,6 +649,34 @@ fn body_velocity_fps(
     let forward_ms = north * psi.cos() + east * psi.sin();
     let right_ms = east * psi.cos() - north * psi.sin();
     (Some(forward_ms / M_PER_FT), Some(right_ms / M_PER_FT))
+}
+
+/// Windvektor aus dem OpenGL-Weltsystem in flugzeugbezogene Komponenten.
+///
+/// Spiegelt `body_velocity_fps` — dieselbe Drehung um den rechtweisenden
+/// Steuerkurs, nur fuer den Wind. `wind_now_x_msc` ist die OST-, `_z_msc`
+/// die SUED-Komponente des Vektors, in den der Wind WEHT.
+///
+/// Rueckgabe `(gegenwind_kt, seitenwind_kt)` in der Konvention des
+/// Snapshots: Gegenwind positiv, wenn der Wind von vorn kommt; Seitenwind
+/// positiv, wenn er von rechts kommt.
+fn wind_body_kt(
+    wind_x_ms: f32,
+    wind_z_ms: f32,
+    heading_true_deg: f32,
+) -> (Option<f32>, Option<f32>) {
+    const KT_PER_MS: f32 = 1.943_844_5;
+    let north = -wind_z_ms;
+    let east = wind_x_ms;
+    let psi = heading_true_deg.to_radians();
+    // Komponenten des Vektors, in den der Wind weht.
+    let nach_vorn = north * psi.cos() + east * psi.sin();
+    let nach_rechts = east * psi.cos() - north * psi.sin();
+    // „Von vorn" ist das Gegenteil von „weht nach vorn"; dasselbe seitlich.
+    (
+        Some(-nach_vorn * KT_PER_MS),
+        Some(-nach_rechts * KT_PER_MS),
+    )
 }
 
 /// Mutable parsed state — populated as RREF responses arrive. Held
@@ -919,6 +955,10 @@ impl XPlaneState {
             self.heading_true_deg,
             self.groundspeed_ms,
         );
+        // Wind mit derselben Drehung wie die Geschwindigkeit (Feldbefund
+        // 14.08.2026 — vorher ungedreht und damit fuer jeden Flug falsch).
+        let (wind_gegen, wind_seitlich) =
+            wind_body_kt(self.wind_x_ms, self.wind_z_ms, self.heading_true_deg);
 
         SimSnapshot {
             timestamp: chrono::Utc::now(),
@@ -951,8 +991,11 @@ impl XPlaneState {
             // a "−10 kt" — pilots reasonably treat that as a bug.
             indicated_airspeed_kt: self.indicated_airspeed_kt.max(0.0),
             true_airspeed_kt: (self.true_airspeed_ms * KT_PER_MS).max(0.0),
-            aircraft_wind_x_kt: Some(self.wind_x_ms * KT_PER_MS),
-            aircraft_wind_z_kt: Some(self.wind_z_ms * KT_PER_MS),
+            // Gedreht statt roh durchgereicht (s. Kommentar am Dataref).
+            // `aircraft_wind_z_kt` traegt laut Snapshot-Vertrag den RUECKENwind
+            // positiv, `wind_body_kt` liefert den Gegenwind — daher negiert.
+            aircraft_wind_x_kt: wind_seitlich,
+            aircraft_wind_z_kt: wind_gegen.map(|g| -g),
             g_force: self.g_force,
             on_ground: self.on_ground,
             // v0.7.19: X-Plane setzt `crashed` in v0.7.19 NICHT (kein
@@ -1507,5 +1550,62 @@ mod empty_weight_plausibility_tests {
         s.apply_field(FieldId::EmptyWeightKg, 42_000.0);
         let snap = s.to_snapshot(Simulator::XPlane12);
         assert_eq!(snap.empty_weight_kg, Some(42_000.0));
+    }
+}
+
+#[cfg(test)]
+mod wind_body_tests {
+    use super::*;
+
+    /// Der Wind muss durch die GANZE Kette korrekt ankommen — nicht nur in
+    /// der Hilfsfunktion. Genau daran ist die MSFS-Entlagung gescheitert:
+    /// 20 Tests grün, im Feld nie gelaufen. Deshalb hier über
+    /// `apply_field` + `to_snapshot`, also den Weg, den echte Daten nehmen.
+    fn snapshot_mit_wind(x_ms: f32, z_ms: f32, heading: f32) -> SimSnapshot {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::WindXMs, x_ms);
+        s.apply_field(FieldId::WindZMs, z_ms);
+        s.apply_field(FieldId::HeadingDegTrue, heading);
+        s.to_snapshot(Simulator::XPlane12)
+    }
+
+    #[test]
+    fn wind_kommt_koerperfest_im_snapshot_an() {
+        // Wind weht nach Norden (z = -10 m/s ≙ Nordkomponente +10),
+        // Flugzeug fliegt nach Norden → reiner RÜCKENwind.
+        let s = snapshot_mit_wind(0.0, -10.0, 0.0);
+        let rueck = s.aircraft_wind_z_kt.expect("Wind da");
+        assert!(rueck > 15.0, "Rueckenwind muss positiv sein, war {rueck}");
+        assert!(
+            s.aircraft_wind_x_kt.unwrap().abs() < 1.0,
+            "reiner Rueckenwind darf keine Seitenkomponente haben"
+        );
+    }
+
+    #[test]
+    fn dasselbe_wetter_dreht_sich_mit_dem_steuerkurs() {
+        // DER Feldbefund: vorher haengte das Ergebnis NICHT am Steuerkurs,
+        // weil die Weltkoordinaten ungedreht durchgereicht wurden.
+        let nach_norden = snapshot_mit_wind(0.0, -10.0, 0.0);
+        let nach_osten = snapshot_mit_wind(0.0, -10.0, 90.0);
+        // Nach Osten fliegend wird aus dem Rueckenwind ein Seitenwind.
+        assert!(nach_norden.aircraft_wind_z_kt.unwrap() > 15.0);
+        assert!(
+            nach_osten.aircraft_wind_z_kt.unwrap().abs() < 1.0,
+            "quer zum Wind darf kein Rueckenwind mehr uebrig sein"
+        );
+        assert!(
+            nach_osten.aircraft_wind_x_kt.unwrap().abs() > 15.0,
+            "quer zum Wind muss die Seitenkomponente voll da sein"
+        );
+    }
+
+    #[test]
+    fn seitenwind_von_rechts_ist_positiv() {
+        // Flugzeug nach Norden, Wind weht nach Westen (x = -10 ≙ Ost -10)
+        // → der Wind kommt aus Osten, also von RECHTS.
+        let s = snapshot_mit_wind(-10.0, 0.0, 0.0);
+        let seit = s.aircraft_wind_x_kt.expect("Wind da");
+        assert!(seit > 15.0, "Wind von rechts muss positiv sein, war {seit}");
     }
 }

@@ -83,10 +83,19 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("AIRSPEED INDICATED", "knots"),
     F::f64("AIRSPEED TRUE", "knots"),
     F::f64("G FORCE", "GForce"),
-    // Body-frame wind components. Positive AIRCRAFT WIND X = wind
-    // from the aircraft's right (= crosswind from the right side).
-    // Positive AIRCRAFT WIND Z = tailwind. Sign convention per MSFS
-    // SDK; we surface absolute headwind/crosswind in the PIREP.
+    // Koerperfeste Windkomponenten.
+    //
+    // VORZEICHEN-BEFUND 14.08.2026 (435 Landungen gegen METAR gemessen):
+    // `AIRCRAFT WIND X` ist die Komponente des Vektors, in den der Wind
+    // WEHT — positiv heisst also „weht nach rechts" und damit „kommt von
+    // LINKS", nicht von rechts. Korrelation gegen den METAR-Seitenwind:
+    // −0,917 in der bisherigen Lesart, der mittlere Fehler sinkt mit
+    // gedrehtem Vorzeichen von 8,5 kt auf 0,75 kt. Die Betraege stimmten
+    // immer, nur die Seite war vertauscht — im Flugbericht, in den Notizen
+    // und im Cockpit-Display. Umgedreht wird beim Mapping unten.
+    //
+    // `AIRCRAFT WIND Z` traegt den Rueckenwind positiv; das passt zum
+    // Snapshot-Vertrag und wurde in derselben Messung bestaetigt (+0,92).
     F::f64("AIRCRAFT WIND X", "knots"),
     F::f64("AIRCRAFT WIND Z", "knots"),
     // ---- Aircraft state ----
@@ -3562,7 +3571,10 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // identical clamp; pilots reasonably treat "−10 kt" as a bug.
         indicated_airspeed_kt: (t.indicated_airspeed_kt as f32).max(0.0),
         true_airspeed_kt: (t.true_airspeed_kt as f32).max(0.0),
-        aircraft_wind_x_kt: Some(t.aircraft_wind_x_kt as f32),
+        // Vorzeichen gedreht — siehe Befund am SimVar oben. Der Snapshot
+        // fuehrt „Seitenwind von rechts" positiv, MSFS liefert „weht nach
+        // rechts".
+        aircraft_wind_x_kt: Some(-t.aircraft_wind_x_kt as f32),
         aircraft_wind_z_kt: Some(t.aircraft_wind_z_kt as f32),
         g_force: t.g_force as f32,
         on_ground: t.on_ground,
@@ -6834,5 +6846,40 @@ mod tests {
         state.clear_errors();
 
         assert_eq!(state.watches[0].error, None);
+    }
+}
+
+#[cfg(test)]
+mod wind_vorzeichen_tests {
+    use super::*;
+
+    /// Wie beim X-Plane-Gegenstück durch die ECHTE Kette geprüft
+    /// (`telemetry_to_snapshot`), nicht gegen eine Hilfsfunktion —
+    /// sonst wiederholt sich die tote MSFS-Entlagung, die 20 grüne
+    /// Tests hatte und im Feld nie lief.
+    #[test]
+    fn seitenwind_von_rechts_kommt_positiv_im_snapshot_an() {
+        // MSFS meldet die Komponente, in die der Wind WEHT: ein Wind von
+        // rechts weht nach LINKS, also negatives `AIRCRAFT WIND X`.
+        // Feldbefund 14.08.2026: das wurde ungedreht durchgereicht, seither
+        // stand in jedem Bericht die falsche Seite.
+        let mut t = Telemetry::default();
+        t.aircraft_wind_x_kt = -12.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        let seit = snap.aircraft_wind_x_kt.expect("Wind da");
+        assert!(
+            seit > 11.0,
+            "Wind von rechts muss im Snapshot positiv sein, war {seit}"
+        );
+    }
+
+    #[test]
+    fn rueckenwind_bleibt_positiv() {
+        // Die Laengskomponente war immer richtig (+0,92 gegen METAR
+        // gemessen) — sie darf beim Vorzeichen-Fix nicht mitgedreht werden.
+        let mut t = Telemetry::default();
+        t.aircraft_wind_z_kt = 9.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert!((snap.aircraft_wind_z_kt.unwrap() - 9.0).abs() < 0.01);
     }
 }
