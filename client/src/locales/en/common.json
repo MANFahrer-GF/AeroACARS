@@ -433,7 +433,8 @@
       "quelle": {
         "hoehenkurve": "Height trace",
         "simvar_fallback": "Instrument (fallback)"
-      }
+      },
+      "bucket_bewertet": "scored"
     },
     "gforce_forensik": {
       "title": "💪 G-Force Forensics",

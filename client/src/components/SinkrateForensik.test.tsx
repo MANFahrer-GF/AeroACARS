@@ -12,6 +12,7 @@ import { initReactI18next } from "react-i18next";
 import {
   hasForensics,
   computeBuckets,
+  BEWERTET_MARKE,
   isMonotonAccelerating,
   pickCoachingTip,
   pickForensicsLegacyKey,
@@ -591,3 +592,53 @@ describe("SinkrateForensik render — Legacy + Missing-Data + Source-Pill", () =
   });
 });
 
+
+describe("Trend-Diagnose rechnet auf EINER Messreihe (v1.6.3)", () => {
+  // Der letzte Balken zeigt seit v1.6.3 den bewerteten Wert aus dem
+  // Höhenverlauf, seine drei Nachbarn kommen aus den Instrument-Mitteln.
+  // Ohne Trennung von Anzeige- und Trendwert entstünde der gemeldete Trend
+  // aus dem Verfahrenswechsel statt aus dem Flug — am Fixture dlh848 sind
+  // das 102 fpm, das Fünffache der 20-fpm-Schwelle.
+  it("nimmt den Instrument-Wert für den Trend, nicht den angezeigten", () => {
+    const buckets = computeBuckets(-200, -220, -250, -277, -379, -290);
+    expect(buckets).not.toBeNull();
+    // Angezeigt wird der bewertete Wert …
+    expect(buckets![3]!.vs).toBe(-379);
+    // … gerechnet wird mit dem vergleichbaren Instrument-Wert.
+    expect(buckets![3]!.trendVs).toBe(-290);
+  });
+
+  it("fällt ohne Instrument-Wert auf das 250-ms-Mittel zurück", () => {
+    const buckets = computeBuckets(-200, -220, -250, -277, -379, null);
+    expect(buckets![3]!.trendVs).toBe(-277);
+  });
+
+  it("meldet keinen Trend, der nur aus dem Verfahrenswechsel stammt", () => {
+    // Instrument zeigt eine abflachende Sinkrate (Flare wirkt), die
+    // Höhenkurve liest am Ende härter. Ohne Trennung wäre das ein
+    // „durchgesackt"-Banner für eine Landung, bei der genau das nicht
+    // passiert ist.
+    const buckets = computeBuckets(-200, -230, -280, -300, -420, -240);
+    expect(isMonotonAccelerating(buckets!)).toBe(false);
+  });
+});
+
+describe("Kein hartkodiertes Deutsch in den Balken-Labels", () => {
+  // Drei der vier Labels sind sprachneutrale Zeitspannen. Das vierte war
+  // kurzzeitig das deutsche Wort „bewertet" — der englische und der
+  // italienische Pilot hätten es wörtlich gelesen. Dieselbe Regel, die im
+  // Score-Crate seit v0.12.0 gilt und dort zwei Kommentarabsätze lang
+  // begründet ist (QS-Befund v1.6.3).
+  it("Labels sind entweder Zeitspannen oder ein Übersetzungs-Platzhalter", () => {
+    const buckets = computeBuckets(-200, -220, -250, -277, -300, -290)!;
+    for (const b of buckets) {
+      const istZeitspanne = /^[−-]?\d/.test(b.label);
+      const istPlatzhalter = b.label === BEWERTET_MARKE;
+      expect(
+        istZeitspanne || istPlatzhalter,
+        `Label "${b.label}" ist weder Zeitspanne noch Platzhalter — steht ` +
+          `hier ein deutsches Wort, sieht es jeder fremdsprachige Pilot`,
+      ).toBe(true);
+    }
+  });
+});

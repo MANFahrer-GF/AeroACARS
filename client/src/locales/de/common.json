@@ -391,7 +391,7 @@
     "sinkrate_forensik": {
       "title": "🎯 Sinkrate-Forensik",
       "intro_header": "Welche Sinkrate ist die „richtige“?",
-      "intro_body": "Je nach Mittelungsfenster bekommst du unterschiedliche Werte für denselben Touchdown. Volanta und Cockpit-VSI mitteln über 0,5–1,5 s und filtern Spitzen heraus, damit eine Böe nicht jeden Touchdown als harte Landung markiert. AeroACARS bewertet den Wert direkt im Aufsetz-Moment (Engineering-Standard nach FAR 25.473 — er misst die Belastung der Fahrwerksstruktur).\n\nSeit v1.6,3 stammt dieser bewertete Wert aus dem tatsächlichen Höhenverlauf, nicht mehr vom Sinkgeschwindigkeitsmesser des Simulators. Der ist träge wie ein echtes Instrument und lag in MSFS je nach Abfangbogen bis zu 90 fpm daneben. Die vier Mittelwerte unten kommen weiterhin aus dem Instrument — dass die bewertete Sinkrate von ihnen abweicht, ist deshalb kein Fehler, sondern der Unterschied zwischen Messverfahren und Instrument.",
+      "intro_body": "Je nach Mittelungsfenster bekommst du unterschiedliche Werte für denselben Touchdown. Volanta und Cockpit-VSI mitteln über 0,5–1,5 s und filtern Spitzen heraus, damit eine Böe nicht jeden Touchdown als harte Landung markiert. AeroACARS bewertet den Wert direkt im Aufsetz-Moment (Engineering-Standard nach FAR 25.473 — er misst die Belastung der Fahrwerksstruktur).\n\nSeit v1.6.3 stammt dieser bewertete Wert aus dem tatsächlichen Höhenverlauf, nicht mehr vom Sinkgeschwindigkeitsmesser des Simulators. Der ist träge wie ein echtes Instrument und lag in MSFS je nach Abfangbogen bis zu 90 fpm daneben. Die vier Mittelwerte unten kommen weiterhin aus dem Instrument — dass die bewertete Sinkrate von ihnen abweicht, ist deshalb kein Fehler, sondern der Unterschied zwischen Messverfahren und Instrument.",
       "tool_section_title": "Was dein Cockpit / Volanta anzeigt",
       "tool_section_subtitle": "Mittel über verschiedene Zeitfenster — Spikes ausgeglättet. Vergleiche mit dem Score-Block unten.",
       "score_section_title": "Was AeroACARS scort",
@@ -406,7 +406,7 @@
       "tile_1500ms": "1,5 s Mittel",
       "tile_1000ms": "1,0 s Mittel",
       "tile_500ms": "0,5 s Mittel",
-      "tile_250ms": "0.25 s Mittel",
+      "tile_250ms": "0,25 s Mittel",
       "score_basis_label": "Bewertete Sinkrate",
       "score_basis_hint": "Basis für den Sinkraten-Sub-Score (Engineering-Standard nach FAR 25.473).",
       "score_basis_source_pill": "Quelle:",
@@ -433,7 +433,8 @@
       "quelle": {
         "hoehenkurve": "Höhenverlauf",
         "simvar_fallback": "Instrument (Rückfall)"
-      }
+      },
+      "bucket_bewertet": "bewertet"
     },
     "gforce_forensik": {
       "title": "💪 G-Kraft-Forensik",

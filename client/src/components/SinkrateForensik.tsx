@@ -69,8 +69,13 @@ export function pickForensicsLegacyKey(
 export interface Bucket {
   /// Anzeige-Label fuer die Phase, z.B. "−1.5 s … −1.0 s"
   label: string;
-  /// Berechnete mittlere VS in fpm (negativ = sinkend)
+  /// Berechnete mittlere VS in fpm (negativ = sinkend) — was der Balken ZEIGT.
   vs: number;
+  /// v1.6.3: Wert fuer die Trend-Diagnose, gesetzt wenn `vs` aus einer
+  /// anderen Messreihe stammt als die Nachbarbalken. Ohne ihn verglichen
+  /// isMonotonAccelerating und pickCoachingTip Hoehenkurve gegen Instrument
+  /// und meldeten einen Trend, den es im Flug nicht gab.
+  trendVs?: number;
 }
 
 /// Bucket-Aufschluesselung aus den 4 kumulativen Mittelwerten + Edge.
@@ -85,6 +90,9 @@ export function computeBuckets(
   vs500: number | null | undefined,
   vs250: number | null | undefined,
   vsEdge: number | null | undefined,
+  /** v1.6.3: der Instrument-Wert am Aufsetzpunkt, falls vorhanden. Nur fuer
+   *  die Trend-Diagnose — angezeigt wird weiterhin der bewertete Wert. */
+  vsSimvarEdge?: number | null,
 ): Bucket[] | null {
   // Alle 5 Werte muessen vorhanden sein (oder edge-Fallback auf 250ms-Mittel).
   // Spec §3.1: Bucket-Sub-Sektion ausgeblendet wenn nicht alle 5 da.
@@ -92,6 +100,14 @@ export function computeBuckets(
     return null;
   }
   const edge = vsEdge ?? vs250;
+  // Der letzte Balken ZEIGT den bewerteten Wert (Hoehenkurve), fuer den
+  // TREND zaehlt aber der Instrument-Wert derselben Messreihe wie die drei
+  // Nachbarn. Sonst entstuende der Trend aus dem Verfahrenswechsel statt
+  // aus dem Flug — am Fixture dlh848 sind das 102 fpm, das Fuenffache der
+  // Schwelle (QS-Befund v1.6.3). Fehlt der Instrument-Wert, faellt der
+  // Trend auf das 250-ms-Mittel zurueck, das ebenfalls vom Instrument
+  // stammt.
+  const trendEnde = vsSimvarEdge ?? vs250;
   return [
     { label: "−1.5 s … −1.0 s", vs: (1500 * vs1500 - 1000 * vs1000) / 500 },
     { label: "−1.0 s … −0.5 s", vs: (1000 * vs1000 - 500 * vs500) / 500 },
@@ -102,18 +118,35 @@ export function computeBuckets(
     // beides falsch: die Spanne und die Herkunft. Sichtbar wird der
     // Unterschied als scheinbar unmöglicher Sprung gegenüber dem Nachbarn
     // (im Fixture dlh848: −277 gegen −379 fpm).
-    { label: "bewertet", vs: edge },
+    { label: BEWERTET_MARKE, vs: edge, trendVs: trendEnde },
   ];
 }
 
 /// Spec §3.2: Trend-Diagnose ueber BETRAG (sonst falsch bei negativen VS).
-/// True wenn alle 3 Inter-Bucket-Deltas > 20 fpm (Betrag steigt monoton).
+///
+/// **Nur die ersten drei Balken.** Sie stammen aus derselben Messreihe
+/// (den geglaetteten Mitteln des Simulator-Instruments) und sind deshalb
+/// untereinander vergleichbar. Der vierte ist seit v1.6.3 der bewertete
+/// Wert aus dem Hoehenverlauf — ein anderes Messverfahren. Ihn
+/// mitzuvergleichen erzeugte einen Sprung aus der Umstellung statt aus dem
+/// Flug: am Fixture dlh848 sind das 102 fpm, das Fuenffache der 20-fpm-
+/// Schwelle. Der Banner "Sinkrate hat zum Touchdown hin staerker
+/// zugenommen — Flare nicht gehalten" waere damit fuer Landungen
+/// erschienen, bei denen genau das nicht passiert ist (QS-Befund v1.6.3).
+/** Platzhalter fuer das Label des bewerteten Balkens. Die Bucket-Liste
+ *  wird auch ausserhalb von React gebaut (Tests, Hilfsfunktionen), wo kein
+ *  Uebersetzer zur Hand ist — die Komponente ersetzt ihn beim Rendern.
+ *  Ein deutsches Wort direkt in der Liste waere fuer den englischen und den
+ *  italienischen Piloten woertlich sichtbar (QS-Befund v1.6.3). */
+export const BEWERTET_MARKE = "__bewertet__";
+
 export function isMonotonAccelerating(buckets: Bucket[]): boolean {
   if (buckets.length < 4) return false;
+  const w = (b: Bucket) => Math.abs(b.trendVs ?? b.vs);
   const deltas = [
-    Math.abs(buckets[1]!.vs) - Math.abs(buckets[0]!.vs),
-    Math.abs(buckets[2]!.vs) - Math.abs(buckets[1]!.vs),
-    Math.abs(buckets[3]!.vs) - Math.abs(buckets[2]!.vs),
+    w(buckets[1]!) - w(buckets[0]!),
+    w(buckets[2]!) - w(buckets[1]!),
+    w(buckets[3]!) - w(buckets[2]!),
   ];
   return deltas.every((d) => d > 20);
 }
@@ -261,6 +294,7 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
     record.vs_smoothed_500ms_fpm,
     record.vs_smoothed_250ms_fpm,
     record.vs_at_edge_fpm,
+    record.vs_simvar_edge_fpm,
   );
   const tipKey = pickCoachingTip({
     buckets,
@@ -500,6 +534,7 @@ function ScoreBasisTile({
 }
 
 function VsBucketBreakdown({ buckets }: { buckets: Bucket[] }) {
+  const { t } = useTranslation();
   const maxAbs = Math.max(...buckets.map((b) => Math.abs(b.vs)), 1);
   return (
     <div className="sinkrate-buckets">
@@ -508,7 +543,11 @@ function VsBucketBreakdown({ buckets }: { buckets: Bucket[] }) {
         const tone = vsTone(b.vs);
         return (
           <div className="sinkrate-bucket-row" key={i}>
-            <div className="sinkrate-bucket-row__label">{b.label}</div>
+            <div className="sinkrate-bucket-row__label">
+              {b.label === BEWERTET_MARKE
+                ? t("landing.sinkrate_forensik.bucket_bewertet")
+                : b.label}
+            </div>
             <div className="sinkrate-bucket-row__bar">
               <div
                 className={`sinkrate-bucket-row__fill ${tone ? `sinkrate-bucket-row__fill--${tone}` : ""}`}

@@ -15001,6 +15001,7 @@ where
             .and_then(|a| a.get("vs_at_edge_quelle"))
             .and_then(|v| v.as_str())
             .map(str::to_owned),
+        vs_simvar_edge_fpm: ana_f32(&stats.landing_analysis, "vs_simvar_edge_fpm"),
         vs_smoothed_250ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_250ms_fpm"),
         vs_smoothed_500ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_500ms_fpm"),
         vs_smoothed_1000ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_1000ms_fpm"),

@@ -352,6 +352,12 @@ pub struct LandingRecord {
     /// Verfahren nannte.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vs_at_edge_quelle: Option<String>,
+    /// v1.6.3: der Instrument-Wert am Aufsetzpunkt. Die Forensik-Kachel
+    /// braucht ihn, um ihre Trend-Diagnose auf EINER Messreihe zu rechnen —
+    /// sonst vergleicht sie die Hoehenkurve gegen Instrument-Mittel und
+    /// meldet einen Trend, den es im Flug nicht gab.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vs_simvar_edge_fpm: Option<f32>,
     /// Mean V/S ueber 250 ms vor Edge (nur negative Samples).
     #[serde(default)]
     pub vs_smoothed_250ms_fpm: Option<f32>,

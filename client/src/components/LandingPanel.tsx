@@ -137,6 +137,9 @@ export interface LandingRecord {
    *  das steht auf `vs_at_edge_50hz` und benennt nur die Buffer-Stelle,
    *  nicht das Verfahren. */
   vs_at_edge_quelle?: string | null;
+  /** v1.6.3: Instrument-Wert am Aufsetzpunkt. Nur fuer die Trend-Diagnose
+   *  der Forensik — angezeigt wird der bewertete Wert. */
+  vs_simvar_edge_fpm?: number | null;
   vs_smoothed_250ms_fpm?: number | null;
   vs_smoothed_500ms_fpm?: number | null;
   vs_smoothed_1000ms_fpm?: number | null;

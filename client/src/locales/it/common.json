@@ -433,7 +433,8 @@
       "quelle": {
         "hoehenkurve": "Andamento quota",
         "simvar_fallback": "Strumento (ripiego)"
-      }
+      },
+      "bucket_bewertet": "valutato"
     },
     "gforce_forensik": {
       "title": "💪 Forensica forza-G",
