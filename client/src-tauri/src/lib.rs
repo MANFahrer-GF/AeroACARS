@@ -2210,6 +2210,12 @@ struct PersistedFlightStats {
     landing_confidence: Option<String>,
     /// "vs_at_impact" | "smoothed_500ms" | "smoothed_1000ms" | "pre_flare_peak"
     #[serde(default)]
+    /// Welcher Simulator die Landung geliefert hat. Persistiert, weil die
+    /// G-Fairness-Normierung daran haengt: ohne das Feld faellt sie nach
+    /// einem Neustart zwischen Aufsetzen und Einreichen still aus, und
+    /// derselbe Landestoss bekommt zwei verschiedene Noten (QS-Befund
+    /// v1.6.2). Als String, weil `&'static str` nicht serialisierbar ist.
+    landing_simulator: Option<String>,
     landing_source: Option<String>,
     #[serde(default)]
     bounce_count: u8,
@@ -2498,6 +2504,7 @@ impl PersistedFlightStats {
             // damit ein Re-Open des PIREP nach App-Restart konsistent bleibt.
             landing_confidence: stats.landing_confidence.clone(),
             landing_source: stats.landing_source.clone(),
+            landing_simulator: stats.landing_simulator.map(|s| s.to_string()),
             bounce_count: stats.bounce_count,
             landing_score: stats.landing_score,
             landing_score_announced: stats.landing_score_announced,
@@ -2616,6 +2623,14 @@ impl PersistedFlightStats {
         stats.landing_peak_g_force = self.landing_peak_g_force;
         stats.landing_confidence = self.landing_confidence;
         stats.landing_source = self.landing_source;
+        // Zurueck auf die drei bekannten Kennungen; alles andere gilt als
+        // unbekannt und laesst die Normierung (bewusst) aus.
+        stats.landing_simulator = match self.landing_simulator.as_deref() {
+            Some("msfs") => Some("msfs"),
+            Some("xplane") => Some("xplane"),
+            Some("other") => Some("other"),
+            _ => None,
+        };
         stats.bounce_count = self.bounce_count;
         stats.landing_score = self.landing_score;
         stats.landing_score_announced = self.landing_score_announced;
@@ -3424,6 +3439,10 @@ struct FlightStats {
     // aeroacars-live-Monitor weitergeben kann fuer Forensik-Vergleiche.
     /// "msfs" / "xplane" / "other" — gestempelt im Touchdown-Frame.
     landing_simulator: Option<&'static str>,
+    /// Drehflügler/Wasserflugzeug — beim Aufsetzen aus dem Snapshot
+    /// bestimmt (dort liegen Kufen-/Schwimmer-Signale), damit die
+    /// Ausrichtungs-Achse sie überspringen kann.
+    landing_nicht_konventionell: bool,
     /// Lua-Style 30-Sample-Schaetzung in fpm. None wenn Pfad nicht lief.
     landing_vs_estimate_xp_fpm: Option<i32>,
     /// Time-Tier-Schaetzung in fpm. None wenn Pfad nicht lief.
@@ -14025,7 +14044,7 @@ fn build_pirep_payload(
         // sonst wuerde compute_sub_scores' `.or(peak_g_load)`-Fallback die
         // erfundene Zahl trotzdem aufgreifen, wenn nur scored_g_load None ist.
         peak_g_load: stats.canonical_peak_g_force(),
-        scored_g_load: score_g_for_stats(&stats).map(|s| s.scored_g),
+        scored_g_load: scored_g_fuer_punkte(&stats),
         // v0.7.6 P2-B: zentraler Helper statt direkten Read.
         bounce_count: Some(scored_bounce_count_for_score(&stats)),
         approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
@@ -14538,14 +14557,16 @@ fn fill_v2_rollout_fields(
     // Navigraph-Geometrie: sonst haetten OurAirports-Landungen nie eine.
     input.runway_width_m = rm.map(|m| m.width_ft * 0.3048).filter(|w| *w > 0.0);
     input.landing_heading_true_deg = stats.landing_heading_true_deg;
-    // Bahnkurs gibt es nur aus Navigraph-Navdaten. Fehlt er, weist
-    // `sub_alignment` die Achse als „nicht bewertet" aus — der Versatz
-    // allein wuerde genau die Groesse verlieren, die einen Kartenfehler
-    // von einer Fehllandung trennt.
-    input.runway_true_course_deg = stats
-        .runway_nav_geometry
-        .as_ref()
-        .map(|g| g.true_course as f32);
+    // Bahnkurs aus dem MATCH, nicht aus der Navigraph-Geometrie: beide
+    // Match-Pfade fuellen `heading_true_deg` (Navigraph wie OurAirports),
+    // `runway_nav_geometry` dagegen nur der Navigraph-Pfad. Genau dieselbe
+    // Falle wie beim Versatz-Schwellenwert 30 Zeilen weiter oben (v0.19.x):
+    // sonst faellt die Achse bei jedem Divert auf einen Platz ohne gecachte
+    // Navdaten stillschweigend aus — also ausgerechnet dort, wo schief
+    // gelandet wird (QS-Befund v1.6.2).
+    input.runway_true_course_deg = rm.map(|m| m.heading_true_deg);
+    // Drehfluegler/Wasserflugzeuge richten sich nicht an einer Bahnachse aus.
+    input.nicht_konventionell = stats.landing_nicht_konventionell;
 }
 
 /// v0.7.1 Round-2 Helper: berechnet den gewichteten Aggregate-Master-
@@ -14568,7 +14589,7 @@ fn compute_aggregate_master_score(
         vs_fpm: score_basis_vs_fpm(stats),
         // v0.20 (QS-Fix, fallback_zero-Score-Bug): beide zusammen gaten.
         peak_g_load: stats.canonical_peak_g_force(),
-        scored_g_load: score_g_for_stats(stats).map(|s| s.scored_g),
+        scored_g_load: scored_g_fuer_punkte(stats),
         // v0.7.6 P2-B: zentraler Helper statt direkten Read.
         bounce_count: Some(scored_bounce_count_for_score(stats)),
         approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
@@ -14902,7 +14923,7 @@ where
         vs_fpm: score_basis_vs_fpm(stats),
         // v0.20 (QS-Fix, fallback_zero-Score-Bug): beide zusammen gaten.
         peak_g_load: stats.canonical_peak_g_force(),
-        scored_g_load: score_g_for_stats(stats).map(|s| s.scored_g),
+        scored_g_load: scored_g_fuer_punkte(stats),
         // v0.7.6 P2-B: zentraler Helper statt direkten Read.
         bounce_count: Some(scored_bounce_count_for_score(stats)),
         approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
@@ -19499,7 +19520,6 @@ fn g_auf_referenzkette(g: f32, simulator: Option<&str>) -> f32 {
 
 fn score_g_for_stats(stats: &FlightStats) -> Option<recorder::ScoredG> {
     if let Some(scored) = ana_f32(&stats.landing_analysis, "scored_g") {
-        let scored = g_auf_referenzkette(scored, stats.landing_simulator);
         let method = match ana_str(&stats.landing_analysis, "scored_g_method").as_deref() {
             Some("raw_fallback") => recorder::ScoredGMethod::RawFallback,
             _ => recorder::ScoredGMethod::EmaMax,
@@ -19510,13 +19530,26 @@ fn score_g_for_stats(stats: &FlightStats) -> Option<recorder::ScoredG> {
             method,
         });
     }
-    // Auch der Fallback-Pfad muss ueber die Referenzkette — sonst haette ein
-    // Flug ohne Touchdown-Fenster auf X-Plane wieder den Rohwert im Score.
-    stats.canonical_peak_g_force().map(|g| {
-        let mut sg = recorder::scored_g_raw_fallback(g);
-        sg.scored_g = g_auf_referenzkette(sg.scored_g, stats.landing_simulator);
-        sg
-    })
+    stats.canonical_peak_g_force().map(recorder::scored_g_raw_fallback)
+}
+
+/// Der G-Wert **fuer die Punktevergabe** — `score_g_for_stats` plus die
+/// Umrechnung auf die Referenz-Messkette (siehe `g_auf_referenzkette`).
+///
+/// **Warum getrennt von `score_g_for_stats` (QS-Befund v1.6.2).** Der erste
+/// Wurf normierte direkt in `score_g_for_stats` — und traf damit weit mehr
+/// als die Bewertung: dieselbe Funktion speist das phpVMS-Feld
+/// „Landing G-Force", das das dmaintenance-Plugin fuer die Schadens-
+/// Strafberechnung liest, dazu Activity-Log, ACARS-Text und den lokalen
+/// Flugbericht. Ein X-Plane-Pilot mit real 1,72 g waere dort als 1,31 g
+/// erschienen — die Schadens-Erdung haette nicht mehr ausgeloest, waehrend
+/// derselbe Stoss auf MSFS erdet. Genau die Ungerechtigkeit, die der Fix
+/// beseitigen soll, nur andersherum.
+///
+/// Deshalb: **alles, was eine physikalische Aussage macht, bekommt den
+/// gemessenen Wert. Nur die Punktevergabe bekommt den umgerechneten.**
+fn scored_g_fuer_punkte(stats: &FlightStats) -> Option<f32> {
+    score_g_for_stats(stats).map(|s| g_auf_referenzkette(s.scored_g, stats.landing_simulator))
 }
 
 // ======================================================================
@@ -23144,7 +23177,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             // v0.20 (QS-Fix, fallback_zero-Score-Bug): der
                             // "faire" EMA-Score wird None statt einer erfundenen
                             // Zahl, wenn keine echte Quelle je einen Wert lieferte.
-                            scored_g_load: score_g_for_stats(&stats).map(|s| s.scored_g),
+                            scored_g_load: scored_g_fuer_punkte(&stats),
                             scored_g_method: score_g_for_stats(&stats)
                                 .map(|s| s.method.as_str().to_string()),
                             sideslip_deg: stats.touchdown_sideslip_deg,
@@ -24207,7 +24240,18 @@ fn apply_accident_heuristic(stats: &mut FlightStats, analysis: &serde_json::Valu
         // ist der relevante; die EMA-Glättung (faire Pilot-Bewertung)
         // würde einen Grenzfall-Crash unter die Schwelle drücken. Nicht
         // versehentlich auf `scored_g` umstellen.
-        peak_g_load: stats.landing_peak_g_force,
+        //
+        // v1.6.2: der Extremwert bleibt (keine Glättung), wird aber auf die
+        // Referenz-Messkette umgerechnet — die Schwellen hier (3,0 g
+        // bestätigt / 2,1 g Verdacht) sind an MSFS-Werten gewachsen, und
+        // X-Planes ungefilterter Kanal liest bei gleicher Physik gut das
+        // Doppelte über 1 g. Ungerechnet bekäme jede X-Plane-Landung mit
+        // 1500 fpm rechnerisch 3,9 g und damit den Unfall-Banner, während
+        // dieselbe Landung auf MSFS bei 2,3 g unauffällig bleibt
+        // (QS-Befund v1.6.2). Gleiche Physik, gleiches Urteil.
+        peak_g_load: stats
+            .landing_peak_g_force
+            .map(|g| g_auf_referenzkette(g, stats.landing_simulator)),
         sideslip_deg: stats.touchdown_sideslip_deg,
         landing_wing_strike_severity_pct: stats.landing_wing_strike_severity_pct,
         approach_stall_warning_count: Some(stats.approach_stall_warning_count),
@@ -24520,12 +24564,42 @@ fn touchdown_buffer_sample(stats: &FlightStats) -> Option<TelemetrySample> {
 /// `actual_td_at` anchors the profile timestamps; pass the same TD instant
 /// the caller uses for `landing_at` (FSM arm) / `sampler_touchdown_at`
 /// (sampler-validation path) so `t_ms = 0` is the contact frame.
+/// Simulator-Kennung aus dem Snapshot — dieselben Strings, die der
+/// FSM-Landing-Arm stempelt. Muss hier mitlaufen, weil kurze VFR-/Busch-
+/// Hops den FSM-Arm nie erreichen und die G-Fairness-Normierung sonst
+/// still ausfaellt (QS-Befund v1.6.2).
+fn simulator_kennung(snap: &SimSnapshot) -> &'static str {
+    match snap.simulator {
+        Simulator::Msfs2020 | Simulator::Msfs2024 => "msfs",
+        Simulator::XPlane11 | Simulator::XPlane12 => "xplane",
+        Simulator::Other => "other",
+    }
+}
+
 fn stamp_touchdown_metadata(
     stats: &mut FlightStats,
     snap: &SimSnapshot,
     actual_td_at: DateTime<Utc>,
     td_buf_sample: Option<&TelemetrySample>,
 ) {
+    // Simulator-Kennung: identisch zum FSM-Landing-Arm, aber auch fuer die
+    // Sampler-Landungen (kurze VFR-/Busch-Hops erreichen den FSM-Arm nie).
+    // Ohne sie faellt die G-Fairness-Normierung still aus.
+    if stats.landing_simulator.is_none() {
+        stats.landing_simulator = Some(simulator_kennung(snap));
+    }
+    if aircraft_category::resolve_category(
+        snap.aircraft_icao.as_deref(),
+        snap.gear_is_skid,
+        snap.gear_is_floats,
+        snap.gear_is_wheels,
+        snap.water_rudder_present,
+    )
+    .is_non_conventional()
+    {
+        stats.landing_nicht_konventionell = true;
+    }
+
     // IAS / pitch / heading: prefer the buffered sample
     // at the actual TD moment (see `td_buf_sample`).
     // Fall back chain — buffered sample → MSFS-latched
@@ -30287,7 +30361,17 @@ fn build_pirep_fields(
     // (Zahl ist erfunden, `.is_some()` aber trotzdem true) einen falschen
     // G-Wert an das dmaintenance-Plugin weiterreichen (Schadens-Straf-
     // Berechnung auf Basis einer Zahl, die nie gemessen wurde).
-    if let Some(g) = score_g_for_stats(stats) {
+    // v1.6.2: auf die Referenzkette umgerechnet — das dmaintenance-Plugin
+    // und die SkyAdventures-Erdung legen feste G-Schwellen an, die aus der
+    // MSFS-only-Zeit stammen. Roh weitergereicht bekäme ein X-Plane-Pilot
+    // fuer denselben Stoss haerteren Schaden als ein MSFS-Pilot.
+    if let Some(g) = scored_g_fuer_punkte(stats).map(|scored_g| recorder::ScoredG {
+        scored_g,
+        raw_peak: stats.canonical_peak_g_force().unwrap_or(scored_g),
+        method: score_g_for_stats(stats)
+            .map(|s| s.method)
+            .unwrap_or(recorder::ScoredGMethod::RawFallback),
+    }) {
         // v0.5.16: pure numeric (no " G" suffix). Some maintenance
         // plugins also read this; same is_numeric() reasoning.
         //
@@ -30958,7 +31042,7 @@ fn build_pirep_notes(
         vs_fpm: score_basis_vs_fpm(stats),
         // v0.20 (QS-Fix, fallback_zero-Score-Bug): beide zusammen gaten.
         peak_g_load: stats.canonical_peak_g_force(),
-        scored_g_load: score_g_for_stats(stats).map(|s| s.scored_g),
+        scored_g_load: scored_g_fuer_punkte(stats),
         // v0.7.6 P2-B: zentraler Helper statt direkten Read.
         bounce_count: Some(scored_bounce_count_for_score(stats)),
         approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),

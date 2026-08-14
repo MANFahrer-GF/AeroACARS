@@ -212,7 +212,7 @@
       "rollout": "Anteil der nutzbaren Bahnlänge (LDA), den deine gesamte Landung gebraucht hat — gemessen ab der Schwelle: erst die Float-Strecke bis zum Aufsetzen, dann die Ausrollstrecke bis zum Abrollen von der Bahn (~40 kt). Float innerhalb der ersten 20 % der LDA gilt als normal und kostet keine Punkte; darüber zählt es. < 60 % ist gut, > 95 % wird knapp — bei nasser Bahn riskant. Klick „🛬 Wie wird das berechnet?\" für die volle Erklärung.",
       "fuel": "Treue zum SimBrief-OFP-Trip-Burn. Vergleicht den tatsächlichen Verbrauch (Block − Landing-Fuel) gegen den geplanten Trip-Burn. Mehrverbrauch zählt (Cost-Index, Höhe oder Wind nicht passend); Minderverbrauch wird NICHT bestraft. Bei >15 % unter Plan: Hinweis auf möglichen OFP-/Mess-/Routenfehler.",
       "loadsheet": "Vorhandensein von Loadsheet-Daten (ZFW + TOW im Plan). Im VFR-/Manual-Mode ohne Dispatch-Daten wird dieser Sub-Score übersprungen — kein 0-Penalty. Die detaillierte Plan-vs-Real-Bewertung (Block-Fuel, TOW, LDW, ZFW) siehst du im Treibstoff-Bereich als „Plan-Treue\"-Score.",
-      "score_section": "Sieben Sub-Scores à 0–100 Punkte (Sinkrate, G-Kraft, Bounces, Anflug-Stabilität, Bahn-Auslastung, OFP-Treue, Loadsheet). Jede Kachel zeigt Wert, Punktzahl und farbigen Balken (grün/gelb/rot). Die schwächste Kategorie wird als nächstes Verbesserungs-Ziel im Coach-Tipp aufgegriffen.",
+      "score_section": "Acht Sub-Scores à 0–100 Punkte (Sinkrate, G-Kraft, Bounces, Anflug-Stabilität, Bahn-Auslastung, OFP-Treue, Loadsheet, Ausrichtung). Jede Kachel zeigt Wert, Punktzahl und farbigen Balken (grün/gelb/rot). Die schwächste Kategorie wird als nächstes Verbesserungs-Ziel im Coach-Tipp aufgegriffen.",
       "runway_section": "Visualisierung deines Touchdowns auf der Bahn. Das blaue Symbol markiert den Aufsetzpunkt, das grüne Band zeigt die Ausrollstrecke bis zum Abrollen von der Bahn (Highspeed-Exit bei ~40 kt). Werte unten: Gesamtlänge, Centerline-Abweichung, Distanz hinter der Schwelle, Bahn-Auslastung in Prozent.",
       "fuel_section": "Block = Spritmenge beim Abblock; TO Fuel = nach dem Rollen am Startpunkt; LDG Fuel = bei Touchdown; TOW = Takeoff Weight (Leergewicht + Last + TO Fuel); LDW = Landing Weight; ZFW = Zero Fuel Weight. Plan-Werte stammen aus dem SimBrief-OFP, falls vorhanden. Der „Plan-Treue\"-Score unten bewertet die Abweichungen Block/TOW/LDW/ZFW (Penalty ab >5 %, schwerer ab >10 %).",
       "alignment": "Wo und wie gerade du aufgesetzt hast: seitlicher Versatz zur Mittellinie — gemessen an der Bahnbreite, denn dieselben Meter wiegen auf einer schmalen Bahn schwerer — und die Abweichung deines Steuerkurses von der Bahnachse. Bewertet wird die schlechtere der beiden Größen."
@@ -340,7 +340,10 @@
       "missing_runway_width": "Bahnbreite unbekannt",
       "missing_runway_course": "Bahnkurs nicht in den Navigationsdaten",
       "missing_heading": "Kein Steuerkurs beim Aufsetzen erfasst",
-      "implausible_runway_geometry": "Bahndaten fragwürdig — nicht gewertet"
+      "implausible_runway_geometry": "Bahndaten fragwürdig — nicht gewertet",
+      "alignment_off_airport": "Keine erkannte Bahn — Ausrichtung nicht bewertbar",
+      "alignment_untrusted_geometry": "Bahndaten nicht verlässlich — Ausrichtung nicht bewertet",
+      "not_applicable_for_category": "Für dieses Muster nicht sinnvoll (keine Bahnachse)"
     },
     "warn": {
       "pre_displaced_threshold": "⚠ Vor Displaced-Threshold aufgesetzt — Anflugprofil prüfen",

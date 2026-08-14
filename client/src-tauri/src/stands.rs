@@ -56,13 +56,17 @@ pub const STAND_CAPTURE_RADIUS_M: f64 = 60.0;
 /// LGAV-Ankunft (13.08.2026), Stand C37 war der naechstliegende Punkt
 /// UEBERHAUPT (kein naeherer unbenannter Kandidat), aber 40,2 m entfernt
 /// — mit 30 m blieb arr_gate leer, obwohl die Zuordnung eindeutig war.
-/// `benannter_stand_bei` waehlt ohnehin immer den NAECHSTEN benannten
-/// Stand, nie einen zufaelligen — der Schutz vor Fehlbenennung kommt aus
-/// dieser Naechster-Punkt-Logik, nicht aus einem knappen Radius. Gleicher
-/// Wert wie STAND_CAPTURE_RADIUS_M haelt beide Fragen ("steht er dort?"
-/// und "wie heisst der Stand?") auf derselben, mehrfach am Feld
-/// bestaetigten Schwelle.
-pub const STAND_NAME_RADIUS_M: f64 = STAND_CAPTURE_RADIUS_M;
+/// Der Schutz vor Fehlbenennung kommt seit der v1.6.2-QS nicht mehr aus
+/// dem Radius, sondern aus `STAND_NAME_VORSPRUNG_M`: liegt ein UNBENANNTER
+/// Stand klar naeher, steht der Flieger dort und der benannte Nachbar
+/// bekommt den Namen nicht. Damit gilt beides — LGAV/C37 wird benannt,
+/// und am dichten Vorfeld wandert kein Nachbarname ins PIREP.
+pub const STAND_NAME_RADIUS_M: f64 = 60.0;
+
+/// Wieviel naeher ein unbenannter Stand liegen muss, damit er den benannten
+/// Namen verwirft. Kleine Unterschiede sind Szenerie-Rauschen; erst ein
+/// klarer Vorsprung heisst „der Flieger steht woanders".
+const STAND_NAME_VORSPRUNG_M: f64 = 10.0;
 
 /// Parkpositionen aus dem `airport_ground`-GeoJSON ziehen.
 ///
@@ -246,12 +250,22 @@ pub fn benannter_stand_bei(
     lat: f64,
     lon: f64,
 ) -> Option<(&ParkingStand, f64)> {
-    stands
+    let benannt = stands
         .iter()
         .filter(|s| s.name.is_some())
         .map(|s| (s, abstand_m(s, lat, lon)))
         .filter(|(_, d)| *d <= STAND_NAME_RADIUS_M)
-        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .min_by(|a, b| a.1.total_cmp(&b.1))?;
+    // Steht ein UNBENANNTER Stand naeher, gehoert der Flieger dorthin — dann
+    // ist der benannte Nachbar der falsche Name (QS-Befund v1.6.2: der weite
+    // Radius allein liess sonst an dichten Vorfeldern, wo 40-55 m Standabstand
+    // normal sind, den Nachbarnamen ins PIREP wandern). Ein leeres Feld ist
+    // besser als ein falscher Stand.
+    let naechster = nearest(stands, lat, lon)?;
+    if naechster.1 + STAND_NAME_VORSPRUNG_M < benannt.1 {
+        return None;
+    }
+    Some(benannt)
 }
 
 /// Der Stand, AN dem das Flugzeug gerade steht — `Some` nur innerhalb
@@ -324,16 +338,18 @@ mod tests {
     }
 
     #[test]
-    fn benannter_stand_ueberspringt_namenlosen_nachbarn() {
-        // Namenloser Punkt 10 m neben dem Flieger, benannter Stand 25 m —
-        // stand_at liefert den namenlosen (korrekt für die Nähe-Frage),
-        // benannter_stand_bei liefert den Namen fürs PIREP.
+    fn benannter_stand_gewinnt_bei_aehnlicher_entfernung() {
+        // Namenloser Punkt 10 m, benannter Stand 15 m: der Vorsprung des
+        // namenlosen liegt unter STAND_NAME_VORSPRUNG_M — das ist
+        // Szenerie-Rauschen, der Name gilt. (Der Gegenfall, ein klar
+        // naeherer unbenannter Stand, steht in
+        // `naeherer_unbenannter_stand_verwirft_den_nachbarnamen`.)
         let stands = vec![
             ParkingStand { name: None, lat: 50.00009, lon: 8.0, linie: None, flaeche: false },
-            ParkingStand { name: Some("A22".into()), lat: 50.00022, lon: 8.0, linie: None, flaeche: false },
+            ParkingStand { name: Some("A22".into()), lat: 50.000_135, lon: 8.0, linie: None, flaeche: false },
         ];
         let bei = stand_at(&stands, 50.0, 8.0).expect("in Standnähe");
-        assert_eq!(bei.name, None);
+        assert_eq!(bei.name, None, "die Naehe-Frage gewinnt der naechste Punkt");
         let (benannt, d) = benannter_stand_bei(&stands, 50.0, 8.0).expect("benannt");
         assert_eq!(benannt.name.as_deref(), Some("A22"));
         assert!(d < 30.0);
@@ -348,13 +364,30 @@ mod tests {
         // Namensradius liess das Feld leer, obwohl die Zuordnung eindeutig
         // war. `benannter_stand_bei` waehlt immer den NAECHSTEN benannten
         // Stand, das schuetzt vor Fehlbenennung unabhaengig vom Radius.
+        // Live-Beleg LGAV/C37: der benannte Stand war der NAECHSTE Kandidat
+        // ueberhaupt, nur 40 m weg — kein naeherer unbenannter dazwischen.
+        let stands = vec![
+            ParkingStand { name: Some("C37".into()), lat: 50.00036, lon: 8.0, linie: None, flaeche: false },
+            ParkingStand { name: Some("C39".into()), lat: 50.00057, lon: 8.0, linie: None, flaeche: false },
+        ];
+        assert!(stand_at(&stands, 50.0, 8.0).is_some(), "Naehe ja");
+        let (s, _) = benannter_stand_bei(&stands, 50.0, 8.0).expect("Name im Capture-Radius");
+        assert_eq!(s.name.as_deref(), Some("C37"));
+    }
+
+    #[test]
+    fn naeherer_unbenannter_stand_verwirft_den_nachbarnamen() {
+        // Dichtes Vorfeld: Flieger steht auf einer ungetaggten Position,
+        // benannter Nachbar 45 m weiter. Der Name gehoert NICHT ins PIREP.
         let stands = vec![
             ParkingStand { name: None, lat: 50.0, lon: 8.0, linie: None, flaeche: false },
             ParkingStand { name: Some("B10".into()), lat: 50.00041, lon: 8.0, linie: None, flaeche: false },
         ];
         assert!(stand_at(&stands, 50.0, 8.0).is_some(), "Naehe ja");
-        let (s, _) = benannter_stand_bei(&stands, 50.0, 8.0).expect("Name im Capture-Radius");
-        assert_eq!(s.name.as_deref(), Some("B10"));
+        assert!(
+            benannter_stand_bei(&stands, 50.0, 8.0).is_none(),
+            "naeherer unbenannter Stand muss den Nachbarnamen verwerfen"
+        );
     }
 
     #[test]

@@ -212,7 +212,7 @@
       "rollout": "Share of the usable runway length (LDA) your whole landing used — measured from the threshold: first the float distance until touchdown, then the rollout until you clear the runway (~40 kt). Float within the first 20 % of the LDA counts as normal and costs no points; above that it counts. < 60 % is good, > 95 % gets tight — risky on a wet runway. Click „🛬 How is this calculated?\" for the full explanation.",
       "fuel": "Compliance with the SimBrief OFP trip burn. Compares actual burn (block − landing fuel) against planned trip burn. Overburn counts (cost index, altitude or wind not matching); underburn is NOT penalised. >15 % under plan flags a possible OFP/measurement/route mismatch.",
       "loadsheet": "Presence of loadsheet data (ZFW + TOW in the plan). VFR/manual flights without dispatch data skip this sub-score — no 0-penalty. The detailed plan-vs-actual evaluation (block fuel, TOW, LDW, ZFW) appears in the fuel area as the „Plan accuracy\" score.",
-      "score_section": "Seven sub-scores rated 0–100 each (landing rate, G force, bounces, approach stability, runway utilization, OFP compliance, loadsheet). Every card shows value, points, and a coloured bar (green/yellow/red). The weakest category becomes the focus of the coach tip below.",
+      "score_section": "Eight sub-scores rated 0–100 each (landing rate, G force, bounces, approach stability, runway utilization, OFP compliance, loadsheet, alignment). Every card shows value, points, and a coloured bar (green/yellow/red). The weakest category becomes the focus of the coach tip below.",
       "runway_section": "Visualisation of your touchdown on the runway. The cyan dot marks the touchdown point; the green band shows the rollout distance until you cleared the runway (high-speed exit at ~40 kt). Values below: total length, centerline offset, distance past threshold, runway utilization as a percentage.",
       "fuel_section": "Block = fuel at chocks-off; TO Fuel = at takeoff position; LDG Fuel = at touchdown; TOW = takeoff weight (empty + payload + TO fuel); LDW = landing weight; ZFW = zero fuel weight. Plan values come from the SimBrief OFP if available. The „Plan accuracy\" score below evaluates the Block/TOW/LDW/ZFW deltas (penalty above >5 %, heavier above >10 %).",
       "alignment": "Where and how straight you touched down: lateral offset from the centreline — measured against runway width, because the same distance matters more on a narrow runway — and how far your heading differed from the runway axis. The worse of the two is scored."
@@ -340,7 +340,10 @@
       "missing_runway_width": "Runway width unknown",
       "missing_runway_course": "Runway course not in navigation data",
       "missing_heading": "No heading captured at touchdown",
-      "implausible_runway_geometry": "Runway data questionable — not scored"
+      "implausible_runway_geometry": "Runway data questionable — not scored",
+      "alignment_off_airport": "No runway identified — alignment not assessable",
+      "alignment_untrusted_geometry": "Runway data unreliable — alignment not scored",
+      "not_applicable_for_category": "Not meaningful for this type (no runway axis)"
     },
     "warn": {
       "pre_displaced_threshold": "⚠ Touched down before displaced threshold — review approach",

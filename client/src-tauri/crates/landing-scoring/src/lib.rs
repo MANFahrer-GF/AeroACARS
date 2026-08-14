@@ -242,6 +242,8 @@ pub struct LandingScoringInput {
     pub runway_width_m: Option<f32>,
     pub landing_heading_true_deg: Option<f32>,
     pub runway_true_course_deg: Option<f32>,
+    /// Drehflügler/Wasserflugzeug — siehe `sub_alignment::AlignmentInput`.
+    pub nicht_konventionell: bool,
 }
 
 /// Berechnet alle Sub-Scores.
@@ -344,6 +346,7 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
             runway_true_course_deg: input.runway_true_course_deg,
             airport_source: input.airport_source.clone(),
             runway_geometry_trusted: input.runway_geometry_trusted,
+            nicht_konventionell: input.nicht_konventionell,
         }));
     }
 
@@ -772,6 +775,7 @@ mod tests {
             runway_width_m: Some(60.0),
             landing_heading_true_deg: Some(83.0),
             runway_true_course_deg: Some(82.0),
+            nicht_konventionell: false,
         };
         let subs = compute_sub_scores(&rich);
         assert!(

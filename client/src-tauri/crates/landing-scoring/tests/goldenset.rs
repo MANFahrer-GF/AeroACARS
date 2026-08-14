@@ -304,3 +304,92 @@ fn empty_input_returns_only_bounces_loadsheet_fuel() {
         "ohne messbare Landerate gibt es keine Note — lieber keine als eine geschenkte",
     );
 }
+
+/// v1.6.2 — Integrations-Absicherung der achten Achse.
+///
+/// **Warum es diesen Test braucht (QS-Befund).** Der Goldenset oben setzt in
+/// keinem Fixture v2-Felder; damit entsteht die Ausrichtungs-Achse dort gar
+/// nicht, und die Suite lief grün, ohne die Achse je gesehen zu haben. Ein
+/// Tippfehler im Schlüssel, ein verrutschter `push` oder eine Änderung an
+/// `scoring_input_has_v2_fields` hätte sie still verschwinden lassen — und
+/// der Master-Score aller Piloten hätte sich verschoben, bei grüner CI.
+/// Das ist die Gegenrichtung zu `compute_sub_scores_never_emits_flare`.
+mod ausrichtung_integration {
+    use landing_scoring::*;
+
+    /// Vollständige v2-Datenlage mit einer sauber ausgerichteten Landung.
+    fn eingabe_mit_ausrichtung(offset_m: f32, heading: f32) -> LandingScoringInput {
+        LandingScoringInput {
+            vs_fpm: Some(-150.0),
+            scored_g_load: Some(1.15),
+            bounce_count: Some(0),
+            approach_vs_stddev_fpm: Some(100.0),
+            approach_bank_stddev_deg: Some(2.0),
+            rollout_distance_m: Some(1200.0),
+            planned_burn_kg: Some(5000.0),
+            actual_trip_burn_kg: Some(5000.0),
+            planned_zfw_kg: Some(60_000.0),
+            planned_tow_kg: Some(72_000.0),
+            aircraft_icao: Some("A320".into()),
+            td_distance_from_threshold_m: Some(420.0),
+            landing_float_distance_m: Some(180.0),
+            runway_length_m: Some(3000.0),
+            runway_displaced_threshold_ft: Some(0),
+            pre_displaced_threshold: Some(false),
+            runway_geometry_trusted: Some(true),
+            airport_source: Some("runway_match".into()),
+            runway_match_icao: Some("EDDF".into()),
+            runway_match_ident: Some("07L".into()),
+            runway_match_centerline_offset_m: Some(offset_m),
+            runway_width_m: Some(45.0),
+            landing_heading_true_deg: Some(heading),
+            runway_true_course_deg: Some(70.0),
+            nicht_konventionell: false,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn achse_erscheint_und_wird_gewichtet() {
+        let subs = compute_sub_scores(&eingabe_mit_ausrichtung(2.0, 70.0));
+        let a = subs
+            .iter()
+            .find(|s| s.key == "alignment")
+            .expect("die achte Achse muss im v2-Datenpfad erscheinen");
+        assert!(!a.skipped, "bei sauberer Datenlage wird bewertet");
+        assert_eq!(a.points, 100);
+
+        // Dieselbe Landung, nur schief aufgesetzt: der Master MUSS sinken —
+        // sonst haengt die Achse zwar im Ergebnis, wirkt aber nicht.
+        let gut = aggregate_master_score(&subs).expect("Master");
+        let schief = aggregate_master_score(&compute_sub_scores(&eingabe_mit_ausrichtung(
+            40.0, 88.0,
+        )))
+        .expect("Master");
+        assert!(
+            schief < gut,
+            "schiefe Landung muss den Gesamtscore druecken: {schief} !< {gut}"
+        );
+    }
+
+    #[test]
+    fn uebersprungene_achse_veraendert_den_master_nicht() {
+        // Ohne Bahnkurs wird die Achse sichtbar uebersprungen — und ein
+        // Skip darf den Score weder heben noch senken.
+        let mut ohne = eingabe_mit_ausrichtung(2.0, 70.0);
+        ohne.runway_true_course_deg = None;
+        let subs = compute_sub_scores(&ohne);
+        let a = subs.iter().find(|s| s.key == "alignment").expect("Eintrag");
+        assert!(a.skipped);
+
+        let mut ohne_felder = ohne.clone();
+        ohne_felder.runway_match_centerline_offset_m = None;
+        ohne_felder.runway_width_m = None;
+        ohne_felder.landing_heading_true_deg = None;
+        assert_eq!(
+            aggregate_master_score(&subs),
+            aggregate_master_score(&compute_sub_scores(&ohne_felder)),
+            "eine uebersprungene Achse darf den Master nicht bewegen"
+        );
+    }
+}

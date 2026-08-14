@@ -211,7 +211,7 @@
       "rollout": "Quota della lunghezza pista utilizzabile (LDA) che la tua intera landata ha usato — misurata dalla soglia: prima la distanza di float fino al touchdown, poi il rollout fino a quando lasci la pista (~40 kt). Il float entro il primo 20 % della LDA è considerato normale e non costa punti; oltre conta. < 60 % è buono, > 95 % diventa al limite — rischioso su pista bagnata. Clicca „🛬 Come viene calcolato?\" per la spiegazione completa.",
       "fuel": "Aderenza al trip burn dell'OFP SimBrief. Confronta il consumo reale (block − landing fuel) con il trip burn pianificato. Il consumo eccessivo conta (cost-index, quota o vento non corretti); il consumo ridotto NON viene penalizzato. >15 % sotto piano segnala possibile errore OFP/misurazione/rotta.",
       "loadsheet": "Presenza dei dati di loadsheet (ZFW + TOW nel piano). Voli VFR/manuali senza dati dispatch saltano questo sub-score — nessuna penalità. La valutazione dettagliata piano-vs-reale (block fuel, TOW, LDW, ZFW) appare nell'area carburante come punteggio „Precisione del piano\".",
-      "score_section": "Sette sotto-punteggi da 0–100 punti (rateo discesa, forza G, rimbalzi, stabilità avvicinamento, utilizzo pista, aderenza OFP, loadsheet). Ogni riquadro mostra valore, punti e barra colorata (verde/giallo/rosso). La categoria più debole viene presa come prossimo obiettivo nel suggerimento del coach.",
+      "score_section": "Otto sotto-punteggi da 0–100 punti (rateo discesa, forza G, rimbalzi, stabilità avvicinamento, utilizzo pista, aderenza OFP, loadsheet, allineamento). Ogni riquadro mostra valore, punti e barra colorata (verde/giallo/rosso). La categoria più debole viene presa come prossimo obiettivo nel suggerimento del coach.",
       "runway_section": "Visualizzazione del touchdown sulla pista. Il simbolo blu indica il punto di tocco, la banda verde mostra la distanza di rollout fino all'uscita dalla pista (highspeed-exit a ~40 kt). Valori sotto: lunghezza totale, scostamento dall'asse, distanza dalla soglia, utilizzo pista in percentuale.",
       "fuel_section": "Block = carburante al pushback; TO Fuel = dopo il rullaggio al punto di decollo; LDG Fuel = al touchdown; TOW = peso al decollo (peso a vuoto + carico + carburante TO); LDW = peso all'atterraggio; ZFW = zero fuel weight. I valori pianificati provengono dall'OFP SimBrief, se disponibile. Il punteggio „Precisione del piano\" sotto valuta le deviazioni Block/TOW/LDW/ZFW (penalty sopra >5 %, più pesante sopra >10 %).",
       "alignment": "Dove e quanto dritto hai toccato: scostamento laterale dall'asse pista — misurato rispetto alla larghezza della pista, perché gli stessi metri pesano di più su una pista stretta — e differenza tra la tua prua e l'asse pista. Viene valutato il peggiore dei due."
@@ -339,7 +339,10 @@
       "missing_runway_width": "Larghezza pista sconosciuta",
       "missing_runway_course": "Rotta pista assente nei dati di navigazione",
       "missing_heading": "Nessuna prua registrata al contatto",
-      "implausible_runway_geometry": "Dati pista dubbi — non valutato"
+      "implausible_runway_geometry": "Dati pista dubbi — non valutato",
+      "alignment_off_airport": "Nessuna pista identificata — allineamento non valutabile",
+      "alignment_untrusted_geometry": "Dati pista non affidabili — allineamento non valutato",
+      "not_applicable_for_category": "Non significativo per questo tipo (nessun asse pista)"
     },
     "warn": {
       "pre_displaced_threshold": "⚠ Touchdown prima del displaced threshold — rivedere approach",
