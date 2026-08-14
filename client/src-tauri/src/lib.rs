@@ -21573,6 +21573,16 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     // every other landing_* field anyway.
                     s.landing_lat = None;
                     s.landing_lon = None;
+                    // v1.6.3: der Landewind muss hier ausdruecklich mit weg.
+                    // Die Zusage eine Zeile darueber ("der naechste Stempel
+                    // ueberschreibt ohnehin jedes andere Feld") gilt fuer ihn
+                    // NICHT: er wird nur mit einem gueltigen Wert
+                    // ueberschrieben, damit ein fehlender Tick den guten Wert
+                    // nicht loescht. Ohne diesen Rücksetzer rechnete die
+                    // Seitenwind-Kompensation der Ausrichtungs-Achse beim
+                    // FINALEN Aufsetzen mit dem Wind des ersten.
+                    s.landing_wind_direction_deg = None;
+                    s.landing_wind_speed_kt = None;
                     // v0.16.6: stability stats + rollout are per-episode too —
                     // the FINAL touchdown must re-evaluate its own approach
                     // window and re-accumulate its own rollout (on bush
@@ -24673,8 +24683,19 @@ fn stamp_touchdown_metadata(
     // schlechtesten Fall 5 Grad geschenkter Vorhalt fuer eine wirklich
     // schiefe Landung. Alle Nachbarfelder hier (Position, Kurs, Geschwindig-
     // keit, Windkomponenten) ueberschreiben aus demselben Grund.
-    stats.landing_wind_direction_deg = snap.wind_direction_deg;
-    stats.landing_wind_speed_kt = snap.wind_speed_kt;
+    // Aber NUR mit einem gültigen Wert überschreiben. Dieser Stempel läuft
+    // zweimal — einmal aus dem Sampler, danach aus der Phasen-Logik, die
+    // ausdrücklich überschreibt. Ein blindes Zuweisen würde einen guten
+    // Wert des ersten Laufs löschen, sobald der zweite Schnappschuss die
+    // Windfelder gerade nicht trägt (X-Plane liefert sie nur bei
+    // Windgeschwindigkeit über null, und ein einzelner Tick kann fehlen).
+    // Der Rücksetzer für Touch-and-Go räumt sie stattdessen gezielt ab.
+    if let Some(dir) = snap.wind_direction_deg {
+        stats.landing_wind_direction_deg = Some(dir);
+    }
+    if let Some(kt) = snap.wind_speed_kt {
+        stats.landing_wind_speed_kt = Some(kt);
+    }
     stats.landing_headwind_kt = snap.aircraft_wind_z_kt.map(|z| -z);
     stats.landing_crosswind_kt = snap.aircraft_wind_x_kt;
 }
@@ -27201,6 +27222,17 @@ fn step_flight_at(
                             stats.landing_rate_fpm = None;
                             stats.landing_analysis = None;
                             stats.landing_source = None;
+                            // v1.6.3: derselbe Gedanke fuer den Landewind.
+                            // Nach einem Touch-and-Go am Platz A und einer
+                            // Landung am Platz B haette die Seitenwind-
+                            // Kompensation der Ausrichtungs-Achse sonst den
+                            // Wind von A gegen Bahnkurs und Steuerkurs von B
+                            // gerechnet. Sie kann nur schenken, nie strafen —
+                            // im schlechtesten Fall also fuenf Grad
+                            // geschenkter Vorhalt fuer eine wirklich schiefe
+                            // Landung.
+                            stats.landing_wind_direction_deg = None;
+                            stats.landing_wind_speed_kt = None;
                             stats.bounce_armed_above_threshold = false;
                             stats.touch_and_go_pending_since = None;
                             // CRITICAL: also clear the GA tracker so the
@@ -41295,8 +41327,8 @@ mod touchdown_metadata_stamp_tests {
             mit_wind.value
         );
         assert!(
-            mit_wind.value.as_deref().is_some_and(|v| v.contains("Wind")),
-            "das gewährte Zugeständnis muss ausgewiesen sein, war {:?}",
+            mit_wind.value.as_deref().is_some_and(|v| v.contains("XW")),
+            "das gewährte Zugeständnis muss sprachneutral ausgewiesen sein, war {:?}",
             mit_wind.value
         );
     }

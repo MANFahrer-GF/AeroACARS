@@ -351,8 +351,13 @@ pub fn sub_alignment(input: &AlignmentInput) -> SubScoreEntry {
         // Zugestaendnis steht als Minus-Term daneben, damit die Punktzahl
         // ohne Blick in den Quelltext nachrechenbar ist. Ohne Wind-
         // Kompensation bleibt die Anzeige unveraendert kurz.
+        // `XW` ist die international einheitliche Kurzform fuer Seitenwind
+        // (crosswind) — genau wie `m`, `kt` und `°` sprachneutral und damit
+        // regelkonform. Ein ausgeschriebenes "Wind" waere Deutsch und im
+        // Italienischen "vento": derselbe Fehler, den die v1.6.2-QS in
+        // diesem Crate schon einmal gefunden hat.
         if zugestanden > 0.05 {
-            format!("{offset_m:.0} m · {kurs_roh:.0}° (−{zugestanden:.0}° Wind)")
+            format!("{offset_m:.0} m · {kurs_roh:.0}° (−{zugestanden:.0}° XW)")
         } else {
             format!("{offset_m:.0} m · {kurs_roh:.0}°")
         },
