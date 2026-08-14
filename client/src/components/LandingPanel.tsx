@@ -459,6 +459,24 @@ function computeSubScores(r: LandingRecord): SubScore[] {
 /** Minimaler t-Typ — reicht für die Extra-Zeilen-Interpolation. */
 type RolloutTFn = (key: string, opts?: Record<string, string | number>) => string;
 
+/** Stehen in dieser Liste Landungen aus verschiedenen Bewertungs-Ständen?
+ *
+ *  Ab Version 7 kommt die Sinkrate aus dem Höhenverlauf statt vom
+ *  Instrument des Simulators. Das verschiebt sowohl die angezeigte Zahl
+ *  als auch die Punkte — in MSFS deutlich. Ein Durchschnitt über beide
+ *  Stände ist deshalb kein Trend, und der weichste Flug bleibt auf
+ *  absehbare Zeit ein alter, zu weich gemessener. */
+function gemischteBewertungsstaende(records: LandingRecord[]): boolean {
+  const staende = new Set(
+    records
+      .map((r) => r.score_algorithm_version)
+      .filter((v): v is number => v != null),
+  );
+  const vorHoehenkurve = [...staende].some((v) => v < 7);
+  const abHoehenkurve = [...staende].some((v) => v >= 7);
+  return vorHoehenkurve && abHoehenkurve;
+}
+
 /** Erste score_algorithm_version mit TS-gerenderten Extra-Zeilen. */
 const ROLLOUT_ALGO_V3 = 3;
 
@@ -4345,6 +4363,17 @@ export function LandingPanel() {
             </div>
           </div>
         </header>
+
+        {/* v1.6.3: Hinweis, wenn Werte aus verschiedenen Bewertungs-Ständen
+            nebeneinanderstehen. Die Sinkraten-Umstellung verschiebt sowohl
+            die Zahl als auch die Punkte; ohne Hinweis liest sich der Sprung
+            in Durchschnitt, Kurve und Bestwert wie ein Fehler. Die
+            Release-Notes kündigen ihn an — die Oberfläche schwieg dazu. */}
+        {gemischteBewertungsstaende(records) && (
+          <div className="landing-ov-mixed-note">
+            {t("landing.ov_mixed_versions")}
+          </div>
+        )}
 
         <LandingRateChart records={records} />
 

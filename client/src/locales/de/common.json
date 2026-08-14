@@ -797,7 +797,8 @@
       "rwy_length": "Bahnlänge",
       "yes": "ja",
       "no": "nein"
-    }
+    },
+    "ov_mixed_versions": "Diese Übersicht enthält Landungen von vor und nach der Umstellung der Sinkraten-Messung (v1.6.3). Durchschnitt, Kurve und Bestwert vergleichen deshalb zwei Messverfahren — ein Sprung darin ist zu erwarten und kein Fehler."
   },
   "about": {
     "tagline": "Modernes ACARS für phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",

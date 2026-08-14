@@ -797,7 +797,8 @@
       "rwy_length": "Lunghezza pista",
       "yes": "sì",
       "no": "no"
-    }
+    },
+    "ov_mixed_versions": "Questa panoramica contiene atterraggi precedenti e successivi al cambio di misura della velocità di discesa (v1.6.3). Media, grafico e record confrontano quindi due metodi di misura: un salto è previsto e non è un errore."
   },
   "about": {
     "tagline": "ACARS moderno per phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",

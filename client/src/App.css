@@ -10807,3 +10807,16 @@ input.datalink-block__input {
   letter-spacing: .04em;
 }
 :root[data-theme="light"] .vatsim-pop-info { color: #a16207; }
+
+/* v1.6.3: Hinweis auf gemischte Bewertungs-Stände in der Landungs-Übersicht.
+   Bewusst zurückhaltend — er soll einordnen, nicht warnen. */
+.landing-ov-mixed-note {
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid var(--accent, #38bdf8);
+  background: color-mix(in srgb, var(--accent, #38bdf8) 8%, transparent);
+  border-radius: 0 6px 6px 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--fg-dim, #94a3b8);
+}

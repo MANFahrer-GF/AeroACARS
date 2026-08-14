@@ -797,7 +797,8 @@
       "rwy_length": "Runway length",
       "yes": "yes",
       "no": "no"
-    }
+    },
+    "ov_mixed_versions": "This overview contains landings from before and after the sink-rate measurement changed (v1.6.3). Average, chart and personal best therefore compare two measurement methods — a step in them is expected and not an error."
   },
   "about": {
     "tagline": "Modern ACARS for phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",
