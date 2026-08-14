@@ -2178,6 +2178,9 @@ struct PersistedFlightStats {
     /// v0.5.17: groundspeed at touchdown.
     #[serde(default)]
     landing_groundspeed_kt: Option<f32>,
+    /// Gemessene Eigengeschwindigkeit beim Aufsetzen (v1.6.3-QS).
+    #[serde(default)]
+    landing_true_airspeed_kt: Option<f32>,
     #[serde(default)]
     landing_weight_kg: Option<f64>,
     #[serde(default)]
@@ -2314,7 +2317,9 @@ struct PersistedFlightStats {
     landing_headwind_kt: Option<f32>,
     /// Crosswind component at touchdown (knots). Positive = from the
     /// right side; negative = from the left. Sourced from
-    /// `AIRCRAFT WIND X` (positive X is crosswind from right per MSFS).
+    /// `AIRCRAFT WIND X`. Achtung: MSFS meldet dort NEGATIV fuer Wind von
+    /// rechts — der Adapter dreht das Vorzeichen seit v1.6.3, hier steht
+    /// also die Vertragslesart (positiv = von rechts), nicht die rohe.
     #[serde(default)]
     landing_crosswind_kt: Option<f32>,
     // ---- Landing Analyzer (Stage 1) ----
@@ -2498,6 +2503,7 @@ impl PersistedFlightStats {
             landing_bank_deg: stats.landing_bank_deg,
             landing_speed_kt: stats.landing_speed_kt,
             landing_groundspeed_kt: stats.landing_groundspeed_kt,
+            landing_true_airspeed_kt: stats.landing_true_airspeed_kt,
             landing_weight_kg: stats.landing_weight_kg,
             landing_heading_deg: stats.landing_heading_deg,
             landing_fuel_kg: stats.landing_fuel_kg,
@@ -2621,6 +2627,7 @@ impl PersistedFlightStats {
         stats.landing_bank_deg = self.landing_bank_deg;
         stats.landing_speed_kt = self.landing_speed_kt;
         stats.landing_groundspeed_kt = self.landing_groundspeed_kt;
+        stats.landing_true_airspeed_kt = self.landing_true_airspeed_kt;
         stats.landing_weight_kg = self.landing_weight_kg;
         stats.landing_heading_deg = self.landing_heading_deg;
         stats.landing_fuel_kg = self.landing_fuel_kg;
@@ -3199,6 +3206,11 @@ struct FlightStats {
     /// real-world rollout distance vs. IAS-derived rollout (which
     /// distorts when there's strong head/tailwind).
     landing_groundspeed_kt: Option<f32>,
+    /// Gemessene Eigengeschwindigkeit beim Aufsetzen. Nenner des
+    /// Vorhaltewinkels in der Ausrichtungs-Achse (v1.6.3-QS): beide
+    /// Simulatoren liefern sie nativ, sie muss also nicht aus Grund-
+    /// geschwindigkeit und Gegenwind zusammengerechnet werden.
+    landing_true_airspeed_kt: Option<f32>,
     landing_weight_kg: Option<f64>,
     landing_heading_deg: Option<f32>,
     landing_fuel_kg: Option<f32>,
@@ -13828,7 +13840,7 @@ fn build_pirep_payload(
     };
     // v0.10.0 (#runway-utilization-score): LDA-basierter
     // Bahn-Auslastungs-Score. Markiert weiter unten am
-    // PirepPayload via score_algorithm_version: Some(6)
+    // PirepPayload via score_algorithm_version: Some(7)
     // (v0.12.0: Float-Toleranz-Refinement;
     //  v0.16.21: MSFS touchdown V/S SimVar-lag g-force-gated de-lag;
     //  v0.20.x: Bahnauslastung-QS — Float-Toleranz 15→20 % LDA, Banding
@@ -14342,23 +14354,45 @@ fn fill_v2_rollout_fields(
     input.landing_wind_speed_kt = stats.landing_wind_speed_kt;
     // v1.6.3-QS: **Eigengeschwindigkeit, nicht Grundgeschwindigkeit.** Der
     // Vorhaltewinkel folgt dem Winddreieck sin(Vorhalt) = Seitenwind / TAS.
-    // Gelandet wird fast immer gegen den Wind, GS liegt also systematisch
-    // unter TAS — mit GS als Nenner faellt der "noetige" Vorhalt zu gross
-    // aus und die Kompensation zu grosszuegig. Beispiel: 25 kt Gegenwind,
-    // TAS 130, GS 105, 8 kt Seitenwind → gerechnet 4,4 statt korrekt 3,5
-    // Grad. An der 3-Grad-Stufe ist das eine ganze Bandbreite geschenkt.
-    // Der Gegenwind liegt hier bereits gemessen vor, die Rueckrechnung
-    // kostet also nichts. Fehlt die Grundgeschwindigkeit, ist der Rueckfall
-    // die angezeigte Fluggeschwindigkeit — die naeher an TAS liegt als GS
-    // und deshalb NICHT noch einmal korrigiert werden darf.
-    input.landing_groundspeed_kt = match (
-        stats.landing_groundspeed_kt.filter(|v| v.is_finite() && *v > 40.0),
-        stats.landing_headwind_kt.filter(|v| v.is_finite()),
-    ) {
-        (Some(gs), Some(hw)) => Some(gs + hw),
-        (Some(gs), None) => Some(gs),
-        (None, _) => stats.landing_speed_kt,
+    // Gelandet wird fast immer gegen den Wind, die Grundgeschwindigkeit
+    // liegt also systematisch unter der Eigengeschwindigkeit — als Nenner
+    // faellt der "noetige" Vorhalt damit zu gross aus und die Kompensation
+    // zu grosszuegig. Beispiel: 25 kt Gegenwind, TAS 130, GS 105, 8 kt
+    // Seitenwind → gerechnet 4,4 statt korrekt 3,5 Grad. An der 3-Grad-
+    // Stufe ist das eine ganze Bandbreite geschenkt.
+    //
+    // Drei Stufen, absteigend nach Verlaesslichkeit:
+    //   1. die GEMESSENE Eigengeschwindigkeit — beide Simulatoren liefern
+    //      sie nativ (`AIRSPEED TRUE` bzw. `true_airspeed_ms`). Sie erst
+    //      aus anderen Groessen zusammenzurechnen, waere Aufwand fuer ein
+    //      schlechteres Ergebnis.
+    //   2. Grundgeschwindigkeit plus Gegenwind — die Rekonstruktion.
+    //   3. die angezeigte Fluggeschwindigkeit. Sie liegt naeher an der
+    //      Eigengeschwindigkeit als die Grundgeschwindigkeit und darf
+    //      deshalb NICHT noch einmal um den Gegenwind korrigiert werden.
+    //
+    // Die Untergrenze liegt bei 25 kt, nicht bei 40: sie soll Standwerte
+    // aussortieren, nicht langsame Flugzeuge. Ein Buschflieger, der mit
+    // 35 kt aufsetzt, fiel vorher auf die Ersatzannahme von 130 kt und
+    // bekam dadurch nicht einmal ein Drittel des Vorhalts zugestanden, den
+    // er tatsaechlich fliegen musste — ausgerechnet die Klasse, die unter
+    // Seitenwind am meisten leidet.
+    const MIN_BEZUGSGESCHWINDIGKEIT_KT: f32 = 25.0;
+    let brauchbar = |v: Option<f32>| {
+        v.filter(|x| x.is_finite() && *x > MIN_BEZUGSGESCHWINDIGKEIT_KT)
     };
+    input.landing_groundspeed_kt = brauchbar(stats.landing_true_airspeed_kt)
+        .or_else(|| {
+            match (
+                brauchbar(stats.landing_groundspeed_kt),
+                stats.landing_headwind_kt.filter(|v| v.is_finite()),
+            ) {
+                (Some(gs), Some(hw)) => Some(gs + hw),
+                (Some(gs), None) => Some(gs),
+                (None, _) => None,
+            }
+        })
+        .or_else(|| brauchbar(stats.landing_speed_kt));
 }
 
 /// v0.7.1 Round-2 Helper: berechnet den gewichteten Aggregate-Master-
@@ -19928,9 +19962,31 @@ fn compute_landing_analysis(
     /// Manche Zusatzflugzeuge frieren die Hoehe ein. Ohne Bewegung in der
     /// Kurve ist die Ableitung wertlos (im Korpus: 0,5 % der Landungen).
     const AGL_MIN_VERSCHIEDENE: usize = 3;
-    /// Die Ausgleichsgerade braucht eine echte Zeitbasis. 0,15 s bei 50 Hz
-    /// sind ~8 Messpunkte; darunter dominiert die AGL-Quantisierung (MSFS
-    /// meldet in ~0,5-ft-Stufen) den Anstieg vollstaendig.
+    /// Wie oft derselbe Hoehenwert hoechstens am Stueck stehen darf.
+    ///
+    /// **Warum das zusaetzlich zu `AGL_MIN_VERSCHIEDENE` noetig ist.** Die
+    /// Hoehe wird oft mit halber Bildrate nachgefuehrt; Wertpaare sind der
+    /// Normalfall und harmlos. Laengere Haltezeiten sind es nicht: die
+    /// verschluckte Bewegung holt der Simulator im naechsten Schritt am
+    /// Stueck nach, und die Ausgleichsgerade mittelt das Plateau mit ein —
+    /// sie liest dann zu FLACH, also zu weich. Am Korpus (748 Fenster) ist
+    /// die Asymmetrie eindeutig: bei bis zu zwei Wiederholungen liest die
+    /// Kurve in 47 % weicher als der Simulator-Kanal, also Muenzwurf; ab
+    /// fuenf Wiederholungen in 89 %. Ein Zaehler verschiedener Werte fangt
+    /// das NICHT — vier der neun Faelle haben fuenf und mehr verschiedene
+    /// Werte und kaemen glatt durch.
+    ///
+    /// Betroffen sind 1,2 % der Landungen; sie fallen sauber auf den
+    /// Simulator-Kanal zurueck. Der Anlass ist die Aufzeichnung
+    /// `a320_vrnevnl_frozen_end`: 19 Messpunkte auf demselben Wert, danach
+    /// −1,49 ft in einem einzigen Schritt. Die Gerade las dort −45 statt
+    /// −162 fpm — der Pilot haette 15 Punkte fuer einen langen Abfangbogen
+    /// verloren, den er nie geflogen ist.
+    const AGL_MAX_WIEDERHOLUNGEN: usize = 4;
+    /// Die Ausgleichsgerade braucht eine echte Zeitbasis. Gemessen liefert
+    /// MSFS rund 32, X-Plane rund 43 Hoehenwerte je Sekunde; 0,15 s sind
+    /// also etwa 5 bis 7 Messpunkte. Darunter bestimmt der Abstand zweier
+    /// Nachfuehrschritte den Anstieg vollstaendig.
     const AGL_MIN_SPANNE_S: f64 = 0.15;
     /// Ueber diesem Betrag ist es kein Sinkflug mehr, sondern ein Sprung im
     /// Hoehenbezug (Gelaendekante, Helipad-Dach, Bodenmodell-Wechsel).
@@ -19957,12 +20013,31 @@ fn compute_landing_analysis(
         if fenster.len() < AGL_MIN_SAMPLES {
             return None;
         }
-        let verschieden = fenster
+        let gerundet: Vec<i64> = fenster
             .iter()
             .map(|s| (s.agl_ft * 1000.0).round() as i64)
+            .collect();
+        let verschieden = gerundet
+            .iter()
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         if verschieden < AGL_MIN_VERSCHIEDENE {
+            return None;
+        }
+        let laengste_wiederholung = {
+            let mut best = 1usize;
+            let mut lauf = 1usize;
+            for paar in gerundet.windows(2) {
+                if paar[0] == paar[1] {
+                    lauf += 1;
+                    best = best.max(lauf);
+                } else {
+                    lauf = 1;
+                }
+            }
+            best
+        };
+        if laengste_wiederholung > AGL_MAX_WIEDERHOLUNGEN {
             return None;
         }
         let t0 = fenster.first()?.at.timestamp_millis();
@@ -19993,6 +20068,10 @@ fn compute_landing_analysis(
             .map(|(t, y)| (t - t_mittel) * (y - y_mittel))
             .sum();
         let nenner: f64 = ts.iter().map(|t| (t - t_mittel).powi(2)).sum();
+        // Nach dem Spannen-Riegel liegt der Nenner bei mindestens rund
+        // 0,02 — diese Pruefung kann also gar nicht mehr greifen. Sie
+        // bleibt als Division-durch-null-Riegel stehen, falls jemand
+        // AGL_MIN_SPANNE_S spaeter senkt.
         if nenner <= f64::EPSILON {
             return None;
         }
@@ -24591,6 +24670,12 @@ fn stamp_touchdown_metadata(
             .map(|s| s.groundspeed_kt)
             .unwrap_or(snap.groundspeed_kt),
     );
+    // v1.6.3-QS: gemessene Eigengeschwindigkeit. Der Aufsetz-Puffer traegt
+    // sie nicht, der Schnappschuss dieses Augenblicks schon — und beim
+    // Aufsetzen ist genau das der richtige Zeitpunkt.
+    if snap.true_airspeed_kt.is_finite() && snap.true_airspeed_kt > 0.0 {
+        stats.landing_true_airspeed_kt = Some(snap.true_airspeed_kt);
+    }
     stats.landing_fuel_kg = Some(snap.fuel_total_kg);
 
     // ---- Tier 2/3 BeatMyLanding-aligned extras ----
@@ -41288,9 +41373,24 @@ mod touchdown_metadata_stamp_tests {
             Some(195.0),
             "der gestempelte Wind muss die Bewertung erreichen"
         );
-        // Eigengeschwindigkeit statt Grundgeschwindigkeit: 120 kt über
-        // Grund plus 4 kt Gegenwind.
+        // Ohne gemessene Eigengeschwindigkeit wird sie rekonstruiert:
+        // 120 kt über Grund plus 4 kt Gegenwind.
         assert_eq!(input.landing_groundspeed_kt, Some(124.0));
+
+        // Liegt sie gemessen vor, hat sie Vorrang — beide Simulatoren
+        // liefern sie nativ, die Rekonstruktion ist nur die Rückfallebene.
+        let mit_tas = SimSnapshot {
+            true_airspeed_kt: 131.0,
+            ..snap
+        };
+        stamp_touchdown_metadata(&mut stats, &mit_tas, Utc::now(), None);
+        let mut input2 = landing_scoring::LandingScoringInput::default();
+        fill_v2_rollout_fields(&mut input2, &stats, "EDDP");
+        assert_eq!(
+            input2.landing_groundspeed_kt,
+            Some(131.0),
+            "die gemessene Eigengeschwindigkeit muss die Rekonstruktion schlagen"
+        );
 
         let mit_wind = sub_alignment(&AlignmentInput {
             centerline_offset_m: Some(2.0),
@@ -41322,8 +41422,8 @@ mod touchdown_metadata_stamp_tests {
         // Der Pilot muss seinen GEMESSENEN Winkel wiederfinden, nicht den
         // heruntergerechneten — sonst widerspricht die Kachel der Karte.
         assert!(
-            mit_wind.value.as_deref().is_some_and(|v| v.contains("16°")),
-            "die Anzeige muss den gemessenen Winkel tragen, war {:?}",
+            mit_wind.value.as_deref().is_some_and(|v| v.contains("15.7°")),
+            "die Anzeige muss den gemessenen Winkel auf die Nachkommastelle tragen, war {:?}",
             mit_wind.value
         );
         assert!(
@@ -43291,6 +43391,126 @@ mod msfs_agl_flare_tests {
     /// ~30 fpm); re-running compute_landing_analysis with MSFS must flip
     /// it to TRUE on the lag-free AGL geometry, while the touchdown rate
     /// (vs_at_edge_fpm) stays the recorded firm value (-423).
+    /// **Eine eingefrorene Hoehenspur wird nicht gescort.**
+    ///
+    /// Diese Aufzeichnung ist der Anlass fuer `AGL_MAX_WIEDERHOLUNGEN`: die
+    /// Hoehe steht ueber 19 Messpunkte auf demselben Wert, dann holt der
+    /// Simulator −1,49 ft in einem einzigen Schritt nach. Die Ausgleichs-
+    /// gerade mittelt das Plateau mit ein und las −45 statt −162 fpm — der
+    /// Pilot haette 15 Punkte fuer einen langen Abfangbogen verloren, den er
+    /// nie geflogen ist.
+    ///
+    /// Der Test haelt fest, dass hier auf den Simulator-Kanal
+    /// zurueckgefallen wird. **Er stand kurzzeitig andersherum im Baum** und
+    /// forderte die falschen −45 fpm als Sollwert: die eine Pruefrunde hatte
+    /// den Wert als richtig angenommen, die andere ihn an den Daten
+    /// widerlegt (ab fuenf Wiederholungen liest die Kurve in 89 % zu weich,
+    /// bei normalen Verlaeufen in 47 %). Ein Test kann einen Fehler auch
+    /// festschreiben.
+    #[test]
+    fn eingefrorene_hoehenspur_faellt_auf_den_simvar_zurueck() {
+        let (edge_at, samples, _r) = load_flare_fixture("a320_vrnevnl_frozen_end.jsonl.gz");
+        assert!(
+            samples.iter().any(|s| s.on_ground) && samples.iter().any(|s| !s.on_ground),
+            "Fixture taugt nur als Beleg, wenn beide Sorten vorkommen"
+        );
+        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024);
+        assert!(
+            a.get("vs_geometrie_fpm").and_then(|v| v.as_f64()).is_none(),
+            "eingefrorene Hoehenspur darf keine Ausgleichsgerade liefern, war {:?}",
+            a.get("vs_geometrie_fpm")
+        );
+        assert_eq!(
+            a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
+            Some("simvar_fallback"),
+            "hier muss der Simulator-Kanal die Bewertung tragen"
+        );
+        let gescort = a.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).unwrap();
+        assert!(
+            (gescort - -162.0).abs() < 40.0,
+            "erwartet die echten rund −162 fpm, gescort wurde {gescort}"
+        );
+    }
+
+    /// **Die Ausgleichsgerade, an drei echten Fluegen festgenagelt.** Alle
+    /// uebrigen Pruefungen der Sinkrate sind relativ (Quelle A gegen Quelle
+    /// B) oder haben 60-fpm-Baender — die Endpunkt-Differenz liegt auf
+    /// diesen Aufzeichnungen 15–19 fpm daneben und rutschte durch jede
+    /// davon. Enges Band, absolute Werte: das ist die Pruefung, die den
+    /// Rueckbau auf zwei Messpunkte bemerkt.
+    #[test]
+    fn qs_m2_ausgleichsgerade_statt_endpunkten() {
+        for (datei, wahrheit) in [
+            ("dlh848_msfs_firm_control.jsonl.gz", -377.5_f32),
+            ("jbu323_msfs_late_flare.jsonl.gz", -422.7_f32),
+            ("dlh304.jsonl.gz", -337.8_f32),
+        ] {
+            let (edge_at, samples, _r) = load_flare_fixture(datei);
+            let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024);
+            let geo = a.get("vs_geometrie_fpm").and_then(|v| v.as_f64()).unwrap() as f32;
+            assert!(
+                (geo - wahrheit).abs() < 8.0,
+                "{datei}: Ausgleichsgerade erwartet {wahrheit} +-8 fpm, gemessen {geo}"
+            );
+        }
+    }
+
+    /// **Zu kurze Zeitbasis heisst: Finger weg.** Kein Fixture reizt diese
+    /// Grenze (alle liegen bei 0,20–0,28 s), sie ist also nur synthetisch
+    /// pruefbar — und ohne Pruefung liess sich `AGL_MIN_SPANNE_S` auf null
+    /// setzen, ohne dass etwas rot wurde.
+    #[test]
+    fn qs_m3_zu_kurze_zeitbasis_faellt_auf_simvar_zurueck() {
+        let b = base();
+        // Nur 4 Messpunkte in 30 ms; die AGL-Quantisierung (0,25-ft-Stufen)
+        // taeuscht darin rund 1000 fpm vor, echt sind 150.
+        let s = vec![
+            tw(b, -40, 12.50, 2.0, false, -150.0),
+            tw(b, -30, 12.25, 2.0, false, -150.0),
+            tw(b, -20, 12.00, 2.0, false, -150.0),
+            tw(b, -10, 12.00, 2.0, false, -150.0),
+            tw(b, 0, 0.0, 2.0, true, -150.0),
+            tw(b, 20, 0.0, 2.0, true, -140.0),
+        ];
+        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024);
+        assert_eq!(
+            a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
+            Some("simvar_fallback"),
+            "30 ms Zeitbasis duerfen keine Ausgleichsgerade tragen"
+        );
+        let scored = a.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).unwrap();
+        assert!(
+            (scored - -150.0).abs() < 30.0,
+            "der Rueckfall muss die echten -150 fpm liefern, war {scored}"
+        );
+    }
+
+    /// **Ein Sprung im Hoehenbezug ist keine Landerate.** Gelaendekante,
+    /// Helipad-Dach, Bodenmodell-Wechsel: 25 ft in 250 ms sind rechnerisch
+    /// 6000 fpm. Auch diese Grenze reizt kein Fixture, und auch sie liess
+    /// sich folgenlos aushebeln.
+    #[test]
+    fn qs_m4_hoehensprung_ist_keine_landerate() {
+        let b = base();
+        // Gelaendekante: 25 ft AGL-Sprung in 250 ms = rechnerisch 6000 fpm.
+        let mut s: Vec<_> = (0..13)
+            .map(|i| tw(b, -250 + i * 20, 30.0 - i as f32 * 2.1, 2.0, false, -200.0))
+            .collect();
+        s.push(tw(b, 0, 2.0, 2.0, true, -200.0));
+        s.push(tw(b, 20, 1.0, 2.0, true, -180.0));
+        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024);
+        assert_eq!(
+            a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
+            Some("simvar_fallback"),
+            "ein Sprung im Hoehenbezug darf nicht als Sinkrate gescort werden"
+        );
+        let scored = a.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).unwrap();
+        assert!(
+            scored > -400.0,
+            "gescort wurde {scored} fpm — der Sprung ist durchgerutscht"
+        );
+    }
+
     #[test]
     fn jbu323_real_fixture_flare_flips_true_touchdown_unchanged() {
         use flate2::read::GzDecoder;
@@ -44251,5 +44471,68 @@ mod pirep_uebernahme_tests {
         let mut alt = offener_bericht();
         alt.flight_number = Some("59".to_string());
         assert!(!pirep_ist_uebernehmbar(&alt, &vorlage(), 52));
+    }
+}
+
+#[cfg(test)]
+/// Pruefungen, die aus dem Mutationstest zu v1.6.3 entstanden sind: von
+/// zwoelf gezielt eingebauten Fehlern blieben acht unbemerkt. Was hier
+/// steht, deckt die schlimmsten davon ab.
+mod v163_mutationsluecken {
+    use super::*;
+
+    /// **Der Crash-Schutz — bis hierher komplett ungeprueft.**
+    /// `apply_accident_heuristic` wurde von keinem einzigen Test aufgerufen.
+    /// Sowohl das Umdrehen des Vergleichs (weichster statt haertester Wert)
+    /// als auch der vollstaendige Rueckbau blieben unsichtbar. Genau der
+    /// Riegel, der verhindert, dass die neue Messquelle einen Aufprall unter
+    /// die Schwelle spuelt.
+    #[test]
+    fn qs_m56_unfallerkennung_nimmt_den_haertesten_messwert() {
+        let mut stats = FlightStats {
+            landing_simulator: Some("Msfs2024"),
+            landing_peak_g_force: Some(3.6),
+            runway_match: None,
+            ..Default::default()
+        };
+        // Der gescorte Wert ist harmlos, die SimVar-Quelle reisst die Schwelle.
+        let analysis = serde_json::json!({
+            "vs_at_edge_fpm": -400.0,
+            "vs_geometrie_fpm": -400.0,
+            "vs_simvar_edge_fpm": -1600.0,
+        });
+        apply_accident_heuristic(&mut stats, &analysis);
+        assert!(
+            stats.accident_kind.is_some() || stats.accident_detected,
+            "eine Sinkrate von 1600 fpm darf nicht durchrutschen, nur weil die \
+             gescorte Quelle weicher liest"
+        );
+    }
+
+    /// **Der Landewind: ueberschreiben ja, loeschen nein.** Beide Haelften
+    /// sind je einmal falsch gebaut worden — erst als `is_none()`-Latch (der
+    /// nach einem Touch-and-Go mit dem Wind des ERSTEN Aufsetzens rechnete),
+    /// dann als blindes Zuweisen (das einen guten Wert loeschte, sobald ein
+    /// Tick die Windfelder nicht trug). Der Test haelt beide Haelften fest.
+    #[test]
+    fn qs_m7_landewind_wird_ueberschrieben_nicht_gelatcht() {
+        let mut stats = FlightStats::default();
+        let erst = SimSnapshot {
+            wind_direction_deg: Some(10.0),
+            wind_speed_kt: Some(12.0),
+            ..SimSnapshot::default()
+        };
+        stamp_touchdown_metadata(&mut stats, &erst, Utc::now(), None);
+        assert_eq!(stats.landing_wind_direction_deg, Some(10.0));
+        let zweit = SimSnapshot { wind_direction_deg: Some(250.0), wind_speed_kt: Some(18.0), ..SimSnapshot::default() };
+        stamp_touchdown_metadata(&mut stats, &zweit, Utc::now(), None);
+        assert_eq!(
+            stats.landing_wind_direction_deg, Some(250.0),
+            "der zweite Stempel muss den Wind ueberschreiben (kein is_none()-Latch)"
+        );
+        // Gegenprobe: ein Tick OHNE Windmeldung darf den guten Wert nicht loeschen.
+        let leer = SimSnapshot::default();
+        stamp_touchdown_metadata(&mut stats, &leer, Utc::now(), None);
+        assert_eq!(stats.landing_wind_direction_deg, Some(250.0));
     }
 }

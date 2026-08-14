@@ -356,8 +356,14 @@ pub fn sub_alignment(input: &AlignmentInput) -> SubScoreEntry {
         // regelkonform. Ein ausgeschriebenes "Wind" waere Deutsch und im
         // Italienischen "vento": derselbe Fehler, den die v1.6.2-QS in
         // diesem Crate schon einmal gefunden hat.
+        // Mit Wind-Gutschrift eine Nachkommastelle, sonst nicht. Grund:
+        // gerundet stuende da "8° (−5° XW)", der Pilot rechnet 3° und
+        // erwartet die volle Punktzahl — gescort werden aber die echten
+        // 3,2° und damit die naechstschlechtere Stufe. Der Rundungsfehler
+        // reicht bis fast 1° und damit ueber jede Bandgrenze. Ohne Wind
+        // gibt es nichts nachzurechnen, dort bleibt die Anzeige kurz.
         if zugestanden > 0.05 {
-            format!("{offset_m:.0} m · {kurs_roh:.0}° (−{zugestanden:.0}° XW)")
+            format!("{offset_m:.0} m · {kurs_roh:.1}° (−{zugestanden:.1}° XW)")
         } else {
             format!("{offset_m:.0} m · {kurs_roh:.0}°")
         },
