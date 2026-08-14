@@ -44829,7 +44829,51 @@ mod v163_mutationsluecken {
         );
     }
 
-/// **Die Unfall-Erkennung liest die verworfene Höhenkurve wirklich.**
+    /// **Beide Episoden-Enden rufen den Rücksetzer wirklich auf.**
+    ///
+    /// Der Test daneben prüft, was `landung_episode_zuruecksetzen` TUT.
+    /// Dieser hier prüft, dass sie überhaupt aufgerufen wird — beide
+    /// Aufrufe ließen sich einzeln ersatzlos streichen, ohne dass ein
+    /// einziger von 1276 Tests rot wurde (QS-Befund Runde 6).
+    ///
+    /// Dieselbe Fehlerklasse, die dieses Release schon zweimal getroffen
+    /// hat, nur eine Ebene höher: in Runde 4 stand ein Grenzwert an zweiter
+    /// Stelle unverändert, in Runde 5 sprang ein Test über die
+    /// Erzeuger-Kette. Hier war es der Schluss „beide Stellen rufen die
+    /// Funktion auf, also deckt der Test beide ab" — genau das war die
+    /// ungeprüfte Annahme.
+    ///
+    /// Ein Wächter über den Quelltext statt ein Ablauf-Test, weil beide
+    /// Stellen tief in der Phasen-Logik bzw. in einem Hintergrund-Task
+    /// sitzen. Grob, aber er fängt das ersatzlose Streichen — und darum
+    /// geht es.
+    #[test]
+    fn beide_episoden_enden_raeumen_die_landung_ab() {
+        const SRC: &str = include_str!("lib.rs");
+        let ohne_kommentare: String = SRC
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for funktion in ["fn spawn_touchdown_sampler", "fn step_flight_at"] {
+            let start = ohne_kommentare.find(funktion).unwrap_or_else(|| {
+                panic!("{funktion} nicht mehr gefunden — Test anpassen, nicht löschen")
+            });
+            let rest = &ohne_kommentare[start..];
+            let ende = rest[1..]
+                .find("\nfn ")
+                .map(|i| i + 1)
+                .unwrap_or(rest.len());
+            assert!(
+                rest[..ende].contains("landung_episode_zuruecksetzen("),
+                "{funktion} räumt die Landung nicht mehr ab — nach einem \
+                 Touch-and-Go rechnet die nächste Landung dann mit dem Wind \
+                 und der Geschwindigkeit der vorigen"
+            );
+        }
+    }
+
+    /// **Die Unfall-Erkennung liest die verworfene Höhenkurve wirklich.**
     /// Der Test daneben belegt, dass der Wert im Datensatz landet — dieser
     /// hier, dass er auch benutzt wird. Ohne ihn ließ sich der Kandidat aus
     /// der Liste streichen, ohne dass etwas rot wurde (QS-Befund Runde 5).
