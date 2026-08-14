@@ -23406,6 +23406,23 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             // nicht 10s post-TD gesehen, oder Touchdown vor
                             // Buffer-Init), bleiben alle Felder None.
                             vs_at_edge_fpm: ana_f32(&stats.landing_analysis, "vs_at_edge_fpm"),
+                            // Herkunft der bewerteten Sinkrate plus beide
+                            // Rohwerte — damit im Feld nachrechenbar ist,
+                            // welche Quelle gegriffen hat.
+                            vs_at_edge_quelle: stats
+                                .landing_analysis
+                                .as_ref()
+                                .and_then(|a| a.get("vs_at_edge_quelle"))
+                                .and_then(|v| v.as_str())
+                                .map(str::to_owned),
+                            vs_geometrie_fpm: ana_f32(
+                                &stats.landing_analysis,
+                                "vs_geometrie_fpm",
+                            ),
+                            vs_simvar_edge_fpm: ana_f32(
+                                &stats.landing_analysis,
+                                "vs_simvar_edge_fpm",
+                            ),
                             vs_smoothed_250ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_250ms_fpm"),
                             vs_smoothed_500ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_500ms_fpm"),
                             vs_smoothed_1000ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_1000ms_fpm"),
@@ -44827,6 +44844,39 @@ mod v163_mutationsluecken {
             "eine Sinkrate von 1600 fpm darf nicht durchrutschen, nur weil die \
              gescorte Quelle weicher liest"
         );
+    }
+
+    /// **Die Herkunft der Sinkrate erreicht die Datenbank.**
+    ///
+    /// Ohne dieses Feld liesse sich nach dem Release nur per Durchsuchen
+    /// der Flugprotokoll-Dateien feststellen, ob die neue Messquelle
+    /// ueberhaupt greift. Genau das ist der Vorgaenger-Korrektur zum
+    /// Verhaengnis geworden: sie lag zwei Monate wirkungslos im Code, und
+    /// niemand konnte es sehen. Der Test haelt fest, dass die drei
+    /// Schluessel den Weg in den Payload finden.
+    #[test]
+    fn die_herkunft_der_sinkrate_steht_im_payload() {
+        // Der Payload wird nur mit vorhandener Analyse gebaut; hier reicht
+        // die Gegenprobe ueber den Quelltext, weil die Bau-Stelle tief im
+        // Streamer sitzt.
+        const SRC: &str = include_str!("lib.rs");
+        let ohne_kommentare: String = SRC
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for schluessel in [
+            "vs_at_edge_quelle",
+            "vs_geometrie_fpm",
+            "vs_simvar_edge_fpm",
+        ] {
+            assert!(
+                ohne_kommentare.contains(&format!("{schluessel}:")),
+                "{schluessel} erreicht den Touchdown-Payload nicht mehr — \
+                 damit ist im Feld nicht mehr messbar, ob die Hoehenkurve \
+                 wirklich greift"
+            );
+        }
     }
 
     /// **Beide Episoden-Enden rufen den Rücksetzer wirklich auf.**

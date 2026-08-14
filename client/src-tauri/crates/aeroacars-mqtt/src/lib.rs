@@ -683,6 +683,18 @@ pub struct TouchdownPayload {
     /// den zwei umschliessenden 20-ms-Samples).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vs_at_edge_fpm: Option<f32>,
+    /// v1.6.3: welche Quelle die bewertete Sinkrate geliefert hat —
+    /// `hoehenkurve` oder `simvar_fallback`. Zusammen mit den beiden
+    /// Rohwerten darunter macht das die Umstellung im Feld nachrechenbar,
+    /// per Datenbank-Abfrage statt per Log-Durchsuchung. Der Anlass: die
+    /// Vorgaenger-Korrektur lag zwei Monate wirkungslos im Code, weil
+    /// niemand es messen konnte.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vs_at_edge_quelle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vs_geometrie_fpm: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vs_simvar_edge_fpm: Option<f32>,
     /// Mean VS ueber 250 ms vor Edge (airborne-Samples).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vs_smoothed_250ms_fpm: Option<f32>,
