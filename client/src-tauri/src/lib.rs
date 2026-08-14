@@ -2778,6 +2778,11 @@ struct TelemetrySample {
     heading_true_deg: f32,
     groundspeed_kt: f32,
     indicated_airspeed_kt: f32,
+    /// v1.6.3: Eigengeschwindigkeit zum Aufsetzzeitpunkt. Alle anderen
+    /// Groessen dieser Struktur werden aus dem Puffer bevorzugt, weil der
+    /// Schnappschuss beim Stempeln schon das Ausrollen zeigen kann — das
+    /// gilt fuer die Eigengeschwindigkeit genauso.
+    true_airspeed_kt: f32,
     lat: f64,
     lon: f64,
     pitch_deg: f32,
@@ -2866,6 +2871,7 @@ impl From<TelemetrySample> for TouchdownWindowSample {
             heading_true_deg: s.heading_true_deg,
             groundspeed_kt: s.groundspeed_kt,
             indicated_airspeed_kt: s.indicated_airspeed_kt,
+            true_airspeed_kt: s.true_airspeed_kt,
             lat: s.lat,
             lon: s.lon,
             pitch_deg: s.pitch_deg,
@@ -14387,7 +14393,12 @@ fn fill_v2_rollout_fields(
                 brauchbar(stats.landing_groundspeed_kt),
                 stats.landing_headwind_kt.filter(|v| v.is_finite()),
             ) {
-                (Some(gs), Some(hw)) => Some(gs + hw),
+                // Auch die Rekonstruktion muss durch dieselbe Pruefung:
+                // bei starkem Rueckenwind kann `gs + hw` unter die Grenze
+                // fallen oder negativ werden, und ein `Some` daraus wuerde
+                // den Rueckfall auf die angezeigte Fluggeschwindigkeit
+                // blockieren.
+                (Some(gs), Some(hw)) => brauchbar(Some(gs + hw)),
                 (Some(gs), None) => Some(gs),
                 (None, _) => None,
             }
@@ -19931,58 +19942,77 @@ fn compute_landing_analysis(
     // gespeicherten Aufsetz-Fenstern nachgemessen — der Fehler des
     // SimVar-Kanals hängt an der Abfangstrecke:
     //
-    //   kurzer Float  (<300 m):  323 fpm gemeldet, 245 fpm tatsächlich
-    //   langer Float  (>1000 m): 189 fpm gemeldet, 246 fpm tatsächlich
+    //   MSFS, kurz aufgesetzt:     359 fpm gemeldet, 268 tatsächlich
+    //   MSFS, lang abgefangen:     189 fpm gemeldet, 217 tatsächlich
+    //   MSFS, sehr lang:           113 fpm gemeldet, 137 tatsächlich
     //
-    // 135 fpm Spanne, allein davon abhängig, wie lange abgefangen wurde.
-    // Besonders bitter: seit v1.4.4 soll zu weiches Aufsetzen Punkte
-    // kosten (langer Abfangbogen → späte Bremswirkung) — der Messfehler
-    // hebt genau diese Landungen wieder ins volle Punkteband.
+    // Die Verzerrung dreht sich also mit dem Abfangbogen um. Besonders
+    // bitter: seit v1.4.4 soll zu weiches Aufsetzen Punkte kosten (langer
+    // Abfangbogen → späte Bremswirkung) — der Messfehler hob genau diese
+    // Landungen wieder ins volle Punkteband.
+    //
+    // **Es IST ein MSFS-Phänomen.** Eine frühere Fassung dieses Kommentars
+    // behauptete das Gegenteil („kein MSFS-Sonderfall, generell die bessere
+    // Messung"); nach Simulator getrennt nachgerechnet stimmt das nicht.
+    // In X-Plane liegen gemeldeter und tatsächlicher Wert praktisch
+    // aufeinander (kurz 464 gegen 475 fpm, lang 215 gegen 220) — dort gibt
+    // es fast nichts zu korrigieren. Der Hinweis des Piloten, der das
+    // ausgelöst hat, benannte MSFS von Anfang an richtig.
     //
     // **Warum die Höhenkurve die Wahrheit besser trifft.** Die G-Kraft
     // misst denselben Stoß unabhängig und dient als Schiedsrichter.
-    // Übereinstimmung mit ihr:
+    // Übereinstimmung mit ihr (748 Fenster, mit allen Riegeln dieses
+    // Codes gerechnet):
     //
     //                        SimVar   Höhengeometrie
-    //   MSFS                  0,800        0,899
-    //   MSFS, langer Float    0,802        0,921
-    //   X-Plane               0,658        0,800
+    //   MSFS                  0,801        0,930
+    //   X-Plane               0,720        0,845
     //
-    // Die Geometrie gewinnt in BEIDEN Simulatoren — es ist kein
-    // MSFS-Sonderfall, sondern generell die bessere Messung. Damit
-    // verschwindet zugleich die letzte sim-spezifische Verzweigung im
-    // Sinkraten-Pfad: beide Sims werden ab hier identisch gemessen.
+    // Die Geometrie gewinnt in BEIDEN Simulatoren — sie ist also überall
+    // die richtige Quelle, auch wenn der behobene Fehler fast nur MSFS
+    // betrifft. Damit verschwindet zugleich die letzte sim-spezifische
+    // Verzweigung im Sinkraten-Pfad.
     //
-    // **Fensterbreite 310 ms** — am Korpus optimiert (MSFS 0,919 bei
-    // ±310 ms; kürzer wird es verrauscht, länger mittelt es den späten
-    // flachen Teil des Abfangens ein und liest zu nah an Null).
+    // **Fensterbreite 310 ms** — am Korpus optimiert (kürzer wird es
+    // verrauscht, länger mittelt es den späten flachen Teil des Abfangens
+    // ein und liest zu nah an Null).
     const AGL_FENSTER_MS: i64 = 310;
     /// Weniger Messpunkte im Fenster → keine belastbare Steigung.
     const AGL_MIN_SAMPLES: usize = 4;
     /// Manche Zusatzflugzeuge frieren die Hoehe ein. Ohne Bewegung in der
     /// Kurve ist die Ableitung wertlos (im Korpus: 0,5 % der Landungen).
     const AGL_MIN_VERSCHIEDENE: usize = 3;
-    /// Wie oft derselbe Hoehenwert hoechstens am Stueck stehen darf.
+    /// Wie lange die Hoehe hoechstens stillstehen darf, in Millisekunden.
     ///
     /// **Warum das zusaetzlich zu `AGL_MIN_VERSCHIEDENE` noetig ist.** Die
-    /// Hoehe wird oft mit halber Bildrate nachgefuehrt; Wertpaare sind der
-    /// Normalfall und harmlos. Laengere Haltezeiten sind es nicht: die
-    /// verschluckte Bewegung holt der Simulator im naechsten Schritt am
-    /// Stueck nach, und die Ausgleichsgerade mittelt das Plateau mit ein —
-    /// sie liest dann zu FLACH, also zu weich. Am Korpus (748 Fenster) ist
-    /// die Asymmetrie eindeutig: bei bis zu zwei Wiederholungen liest die
-    /// Kurve in 47 % weicher als der Simulator-Kanal, also Muenzwurf; ab
-    /// fuenf Wiederholungen in 89 %. Ein Zaehler verschiedener Werte fangt
-    /// das NICHT — vier der neun Faelle haben fuenf und mehr verschiedene
-    /// Werte und kaemen glatt durch.
+    /// Hoehe wird oft mit halber Bildrate nachgefuehrt; kurze Haltezeiten
+    /// sind der Normalfall und harmlos. Laengere sind es nicht: die
+    /// verschluckte Bewegung holt der Simulator danach am Stueck nach, und
+    /// die Ausgleichsgerade mittelt das Plateau mit ein — sie liest dann zu
+    /// FLACH, also zu weich.
     ///
-    /// Betroffen sind 1,2 % der Landungen; sie fallen sauber auf den
-    /// Simulator-Kanal zurueck. Der Anlass ist die Aufzeichnung
-    /// `a320_vrnevnl_frozen_end`: 19 Messpunkte auf demselben Wert, danach
-    /// −1,49 ft in einem einzigen Schritt. Die Gerade las dort −45 statt
-    /// −162 fpm — der Pilot haette 15 Punkte fuer einen langen Abfangbogen
-    /// verloren, den er nie geflogen ist.
-    const AGL_MAX_WIEDERHOLUNGEN: usize = 4;
+    /// **Warum in Zeit und nicht in Messpunkten.** Die Abtastrate schwankt
+    /// um mehr als das Vierfache (MSFS median 36, X-Plane 45, im Extrem
+    /// 146 Werte je Sekunde). Fuenf gleiche Werte sind bei 36 Hz ein echter
+    /// Stillstand von 140 ms, bei 146 Hz aber nur 34 ms ganz normaler
+    /// Ueberabtastung. Eine Zaehlgrenze verwirft deshalb genau die
+    /// Aufzeichnungen mit der BESTEN Datenlage. Eine erste Fassung dieses
+    /// Riegels zaehlte Messpunkte und kostete unterm Strich Punkte
+    /// (QS-Befund Runde 4).
+    ///
+    /// **Die Grenze ist gemessen, nicht geschaetzt.** Ueber 748 Fenster mit
+    /// der G-Kraft als unabhaengigem Schiedsrichter: bis 40 ms Stillstand
+    /// trifft die Hoehenkurve in 70 % der Faelle naeher als der
+    /// Simulator-Kanal, bei 41–80 ms in 58 %, bei 81–120 ms in 79 % — erst
+    /// ab 121 ms kippt es auf 43 %, dort ist der Kanal also besser.
+    /// Betroffen sind 0,9 % der Landungen.
+    ///
+    /// Anlass war die Aufzeichnung `a320_vrnevnl_frozen_end`: die Hoehe
+    /// steht dort ueber eine halbe Sekunde still, danach kommt der ganze
+    /// Weg in einem Schritt. Die Gerade las −45 statt −162 fpm — der Pilot
+    /// haette 15 Punkte fuer einen langen Abfangbogen verloren, den er nie
+    /// geflogen ist.
+    const AGL_MAX_STILLSTAND_MS: i64 = 120;
     /// Die Ausgleichsgerade braucht eine echte Zeitbasis. Gemessen liefert
     /// MSFS rund 32, X-Plane rund 43 Hoehenwerte je Sekunde; 0,15 s sind
     /// also etwa 5 bis 7 Messpunkte. Darunter bestimmt der Abstand zweier
@@ -19993,7 +20023,14 @@ fn compute_landing_analysis(
     /// Deckt sich mit `VS_FLOOR_FPM` der kanonischen Landerate.
     const AGL_MAX_PLAUSIBEL_FPM: f32 = -3000.0;
 
-    let vs_aus_hoehenkurve = || -> Option<f32> {
+    // `auch_bei_stillstand` schaltet den Stillstands-Riegel ab. Der Score
+    // laesst ihn an (eine eingefrorene Hoehenspur liest zu weich, siehe
+    // `AGL_MAX_STILLSTAND_MS`); die Unfall-Erkennung braucht den Wert
+    // trotzdem, weil sie den HAERTESTEN aller Messwerte nimmt und ein zu
+    // weicher Kandidat ihr nicht schaden kann. Ohne diesen zweiten Aufruf
+    // verlaere sie bei eingefrorener Spur genau den Kandidaten, den der
+    // Kommentar dort ausdruecklich zusagt (QS-Befund Runde 4).
+    let vs_aus_hoehenkurve_mit = |auch_bei_stillstand: bool| -> Option<f32> {
         let lo = edge_ms - AGL_FENSTER_MS;
         // `!s.on_ground` ist nicht kosmetisch: der Kontakt-Frame traegt schon
         // die beginnende Fahrwerkskompression und bei MSFS zusaetzlich einen
@@ -20013,31 +20050,44 @@ fn compute_landing_analysis(
         if fenster.len() < AGL_MIN_SAMPLES {
             return None;
         }
-        let gerundet: Vec<i64> = fenster
+        let verschieden = fenster
             .iter()
             .map(|s| (s.agl_ft * 1000.0).round() as i64)
-            .collect();
-        let verschieden = gerundet
-            .iter()
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         if verschieden < AGL_MIN_VERSCHIEDENE {
             return None;
         }
-        let laengste_wiederholung = {
-            let mut best = 1usize;
-            let mut lauf = 1usize;
-            for paar in gerundet.windows(2) {
-                if paar[0] == paar[1] {
-                    lauf += 1;
-                    best = best.max(lauf);
+        // Laengster Stillstand der Hoehe, in Millisekunden.
+        //
+        // Die Zeitrechnung erledigt nebenbei ein Aufzeichnungs-Artefakt:
+        // X-Plane liefert vereinzelt jeden Messpunkt zwei- bis dreifach
+        // mit identischem Zeitstempel. Ein Zaehler gleicher Werte haette
+        // das als Stillstand gelesen und ausgerechnet die dichtesten
+        // Aufzeichnungen verworfen — bei gleicher Uhrzeit ist die
+        // Stillstandsdauer aber schlicht null. Eine eigene Entdopplung
+        // waere toter Code (QS-Befund Runde 4: sie liess sich entfernen,
+        // ohne dass ein Test rot wurde).
+        let laengster_stillstand_ms = {
+            let mut best = 0i64;
+            let mut start = 0usize;
+            for i in 1..fenster.len() {
+                let gleich = ((fenster[i].agl_ft - fenster[i - 1].agl_ft).abs() * 1000.0)
+                    .round() as i64
+                    == 0;
+                if gleich {
+                    best = best.max(
+                        fenster[i].at.timestamp_millis()
+                            - fenster[start].at.timestamp_millis(),
+                    );
                 } else {
-                    lauf = 1;
+                    start = i;
                 }
             }
             best
         };
-        if laengste_wiederholung > AGL_MAX_WIEDERHOLUNGEN {
+        let eingefroren = laengster_stillstand_ms > AGL_MAX_STILLSTAND_MS;
+        if eingefroren && !auch_bei_stillstand {
             return None;
         }
         let t0 = fenster.first()?.at.timestamp_millis();
@@ -20083,8 +20133,7 @@ fn compute_landing_analysis(
         }
         Some(fpm)
     };
-
-    // --- Interpolated VS am Edge (jetzt Rückfallebene + Forensik) ---
+    let vs_aus_hoehenkurve = || vs_aus_hoehenkurve_mit(false);
     // Finde das Sample-Paar (last airborne, first on_ground) das den Edge
     // umschließt; lineare Interpolation der VS auf edge_ms.
     let mut last_air: Option<&TouchdownWindowSample> = None;
@@ -20114,6 +20163,11 @@ fn compute_landing_analysis(
     // Höhenkurve führt; der Sim-Messwert bleibt als Rückfallebene für die
     // 0,5 % der Landungen mit unbrauchbarer Höhenspur — und als Forensik.
     let vs_geometrie = vs_aus_hoehenkurve();
+    // Fuer die Unfall-Erkennung: dieselbe Rechnung, aber ohne den
+    // Stillstands-Riegel. Sie nimmt den haertesten aller Messwerte —
+    // ein zusaetzlicher, moeglicherweise zu weicher Kandidat kann ihr
+    // nicht schaden, ein FEHLENDER harter dagegen schon.
+    let vs_geometrie_ungefiltert = vs_aus_hoehenkurve_mit(true);
     let vs_at_edge = vs_geometrie.or(vs_aus_simvar);
 
     // --- Peak G post-TD (Gear-Compression sucht nach Edge) ---
@@ -20447,6 +20501,10 @@ fn compute_landing_analysis(
         // nachträglich mit beiden Verfahren nachgerechnet werden kann —
         // das ersetzt ein Rollback-Werkzeug.
         "vs_geometrie_fpm": vs_geometrie,
+        // Ohne Stillstands-Riegel — Sicherheitsnetz der Unfall-Erkennung
+        // und zugleich die Gegenprobe, mit der sich eine verworfene
+        // Hoehenkurve nachtraeglich noch nachrechnen laesst.
+        "vs_geometrie_ungefiltert_fpm": vs_geometrie_ungefiltert,
         "vs_simvar_edge_fpm": vs_aus_simvar,
         "vs_at_edge_quelle": if vs_geometrie.is_some() { "hoehenkurve" } else { "simvar_fallback" },
         "vs_smoothed_250ms_fpm": vs_250,
@@ -20664,6 +20722,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 agl_ft: snap.altitude_agl_ft as f32,
                 heading_true_deg: snap.heading_deg_true,
                 groundspeed_kt: snap.groundspeed_kt,
+                true_airspeed_kt: snap.true_airspeed_kt,
                 indicated_airspeed_kt: snap.indicated_airspeed_kt,
                 lat: snap.lat,
                 lon: snap.lon,
@@ -21662,6 +21721,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     // FINALEN Aufsetzen mit dem Wind des ersten.
                     s.landing_wind_direction_deg = None;
                     s.landing_wind_speed_kt = None;
+                    s.landing_true_airspeed_kt = None;
                     // v0.16.6: stability stats + rollout are per-episode too —
                     // the FINAL touchdown must re-evaluate its own approach
                     // window and re-accumulate its own rollout (on bush
@@ -24231,6 +24291,7 @@ fn apply_accident_heuristic(stats: &mut FlightStats, analysis: &serde_json::Valu
             ana_f32(&Some(analysis.clone()), "vs_at_edge_fpm"),
             ana_f32(&Some(analysis.clone()), "vs_geometrie_fpm"),
             ana_f32(&Some(analysis.clone()), "vs_simvar_edge_fpm"),
+            ana_f32(&Some(analysis.clone()), "vs_geometrie_ungefiltert_fpm"),
         ];
         kandidaten
             .into_iter()
@@ -24673,8 +24734,18 @@ fn stamp_touchdown_metadata(
     // v1.6.3-QS: gemessene Eigengeschwindigkeit. Der Aufsetz-Puffer traegt
     // sie nicht, der Schnappschuss dieses Augenblicks schon — und beim
     // Aufsetzen ist genau das der richtige Zeitpunkt.
-    if snap.true_airspeed_kt.is_finite() && snap.true_airspeed_kt > 0.0 {
-        stats.landing_true_airspeed_kt = Some(snap.true_airspeed_kt);
+    // Aus dem Aufsetz-Puffer, nicht aus dem Schnappschuss — wie jede andere
+    // Groesse hier. Der Schnappschuss zeigt beim Stempeln schon das
+    // Ausrollen: im Mittel 0,27 s danach (harmlos, rund 0,4 kt), im
+    // schlechtesten Prozent aber ueber vier Sekunden. Dann waere der Nenner
+    // des Vorhaltewinkels mehrere Knoten zu klein und die Gutschrift zu
+    // grosszuegig (QS-Befund Runde 4).
+    let tas = td_buf_sample
+        .map(|s| s.true_airspeed_kt)
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .or(Some(snap.true_airspeed_kt).filter(|v| v.is_finite() && *v > 0.0));
+    if let Some(v) = tas {
+        stats.landing_true_airspeed_kt = Some(v);
     }
     stats.landing_fuel_kg = Some(snap.fuel_total_kg);
 
@@ -27318,6 +27389,7 @@ fn step_flight_at(
                             // Landung.
                             stats.landing_wind_direction_deg = None;
                             stats.landing_wind_speed_kt = None;
+                            stats.landing_true_airspeed_kt = None;
                             stats.bounce_armed_above_threshold = false;
                             stats.touch_and_go_pending_since = None;
                             // CRITICAL: also clear the GA tracker so the
@@ -37391,6 +37463,7 @@ mod touchdown_vs_estimator_tests {
             heading_true_deg: 0.0,
             groundspeed_kt: 130.0,
             indicated_airspeed_kt: 130.0,
+            true_airspeed_kt: 130.0,
             lat: 0.0,
             lon: 0.0,
             pitch_deg: 0.0,
@@ -40360,6 +40433,7 @@ mod merge_touchdown_profile_tests {
             heading_true_deg: 0.0,
             groundspeed_kt: 120.0,
             indicated_airspeed_kt: 120.0,
+            true_airspeed_kt: 120.0,
             lat: 0.0,
             lon: 0.0,
             pitch_deg: 0.0,
@@ -40450,6 +40524,7 @@ mod touchdown_metadata_stamp_tests {
             heading_true_deg: 270.0,
             groundspeed_kt: 95.0,
             indicated_airspeed_kt: 100.0,
+            true_airspeed_kt: 100.0,
             lat: 51.0,
             lon: 12.0,
             pitch_deg: 4.5,
@@ -40472,6 +40547,7 @@ mod touchdown_metadata_stamp_tests {
             pitch_deg: -2.0,
             bank_deg: 0.5,
             indicated_airspeed_kt: 55.0,
+            true_airspeed_kt: 55.0,
             groundspeed_kt: 50.0,
             fuel_total_kg: 88.5,
             velocity_body_x_fps: Some(5.0),
@@ -42950,6 +43026,7 @@ mod msfs_touchdown_delag_replay_golden {
             heading_true_deg: f("heading_true_deg"),
             groundspeed_kt: f("groundspeed_kt"),
             indicated_airspeed_kt: f("indicated_airspeed_kt"),
+            true_airspeed_kt: f("indicated_airspeed_kt"),
             lat: f64v("lat"),
             lon: f64v("lon"),
             pitch_deg: f("pitch_deg"),
@@ -43186,6 +43263,7 @@ mod msfs_agl_flare_tests {
             heading_true_deg: 0.0,
             groundspeed_kt: 120.0,
             indicated_airspeed_kt: 130.0,
+            true_airspeed_kt: 130.0,
             lat: 0.0,
             lon: 0.0,
             pitch_deg,
@@ -43391,6 +43469,219 @@ mod msfs_agl_flare_tests {
     /// ~30 fpm); re-running compute_landing_analysis with MSFS must flip
     /// it to TRUE on the lag-free AGL geometry, while the touchdown rate
     /// (vs_at_edge_fpm) stays the recorded firm value (-423).
+    #[test]
+    fn jbu323_real_fixture_flare_flips_true_touchdown_unchanged() {
+        use flate2::read::GzDecoder;
+        use std::io::{BufRead, BufReader};
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/jbu323_msfs_late_flare.jsonl.gz");
+        let file = std::fs::File::open(&path).expect("open jbu323 fixture");
+        let reader = BufReader::new(GzDecoder::new(file));
+
+        let mut edge_at: Option<DateTime<Utc>> = None;
+        let mut samples: Vec<TouchdownWindowSample> = Vec::new();
+        let mut recorded: Option<serde_json::Value> = None;
+        for line in reader.lines() {
+            let line = line.unwrap();
+            if line.trim().is_empty() {
+                continue;
+            }
+            let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+            match v.get("type").and_then(|x| x.as_str()).unwrap_or("") {
+                "touchdown_window" => {
+                    edge_at = v
+                        .get("edge_at")
+                        .and_then(|x| x.as_str())
+                        .map(|s| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc));
+                    for sv in v.get("samples").and_then(|x| x.as_array()).unwrap() {
+                        let f = |k: &str| sv.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+                        let f64v = |k: &str| sv.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
+                        samples.push(TouchdownWindowSample {
+                            at: DateTime::parse_from_rfc3339(sv["at"].as_str().unwrap())
+                                .unwrap()
+                                .with_timezone(&Utc),
+                            vs_fpm: f("vs_fpm"),
+                            g_force: f("g_force"),
+                            on_ground: sv.get("on_ground").and_then(|x| x.as_bool()).unwrap_or(false),
+                            agl_ft: f("agl_ft"),
+                            heading_true_deg: f("heading_true_deg"),
+                            groundspeed_kt: f("groundspeed_kt"),
+                            indicated_airspeed_kt: f("indicated_airspeed_kt"),
+                            true_airspeed_kt: f("indicated_airspeed_kt"),
+                            lat: f64v("lat"),
+                            lon: f64v("lon"),
+                            pitch_deg: f("pitch_deg"),
+                            bank_deg: f("bank_deg"),
+                            gear_normal_force_n: sv
+                                .get("gear_normal_force_n")
+                                .and_then(|x| x.as_f64())
+                                .map(|x| x as f32),
+                            total_weight_kg: sv
+                                .get("total_weight_kg")
+                                .and_then(|x| x.as_f64())
+                                .map(|x| x as f32),
+                        });
+                    }
+                }
+                "landing_analysis" => recorded = v.get("analysis").cloned(),
+                _ => {}
+            }
+        }
+        let edge_at = edge_at.expect("edge_at");
+        let recorded = recorded.expect("recorded analysis");
+
+        // The recorded (production, pre-v0.16.22 LAGGED) verdict.
+        assert_eq!(
+            recorded.get("flare_detected").and_then(|v| v.as_bool()),
+            Some(false),
+            "recorded lagged analysis said no flare"
+        );
+
+        // Re-run with the v0.16.22 MSFS AGL path.
+        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024);
+
+        let flare_detected = a.get("flare_detected").and_then(|v| v.as_bool()).unwrap();
+        let reduction = a.get("flare_reduction_fpm").and_then(|v| v.as_f64()).unwrap();
+        assert!(flare_detected, "JBU323 flare must flip to TRUE on AGL geometry");
+        assert!(
+            (100.0..=260.0).contains(&reduction),
+            "JBU323 AGL flare reduction should land ~100-200 fpm, got {reduction}"
+        );
+        assert_eq!(
+            a.get("flare_vs_source").and_then(|v| v.as_str()),
+            Some("msfs_agl")
+        );
+
+        // v1.6.3: Die Aufsetzrate kommt ab jetzt aus der Höhenkurve. JBU323
+        // ist der Beleg, dass das bei einem STEILEN Anflug nichts kaputt
+        // macht: aufgezeichnet −423,5 fpm aus dem SimVar-Kanal, gemessen
+        // −422,2 aus der Ausgleichsgeraden — 1,3 fpm auseinander. Wo nichts
+        // zu dämpfen ist, fallen beide Quellen zusammen; die Umstellung
+        // wirkt nur dort, wo der Kanal wirklich hinterherhinkt.
+        //
+        // Die QS zu diesem Release hat hier einen eigenen Fehler gefunden:
+        // eine Zwischenfassung rechnete die Kurve als Differenz zweier
+        // Einzelwerte und las dadurch −463,9 — 40 fpm härter, allein aus
+        // dem Aufsetz-Frame. Der Test forderte daraufhin „muss härter
+        // ausfallen" und hätte die Korrektur zurück auf die Ausgleichs-
+        // gerade blockiert. Die belastbare Zusage ist NICHT „härter",
+        // sondern „bei steilem Anflug deckungsgleich".
+        let edge_recorded = recorded.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).unwrap();
+        let edge_new = a.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).unwrap();
+        assert_eq!(
+            a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
+            Some("hoehenkurve"),
+            "die Aufsetzrate muss aus der Höhenkurve kommen"
+        );
+        assert!(
+            (edge_new - edge_recorded).abs() <= 25.0,
+            "steiler Anflug: beide Quellen müssen zusammenfallen, aufgezeichnet \
+             {edge_recorded}, neu {edge_new}"
+        );
+
+        // The lagged SimVar values are preserved as forensic provenance and
+        // match the recorded (lagged) endpoints.
+        let raw_peak = a.get("peak_vs_pre_flare_fpm_raw").and_then(|v| v.as_f64()).unwrap();
+        let rec_peak = recorded.get("peak_vs_pre_flare_fpm").and_then(|v| v.as_f64()).unwrap();
+        assert!((raw_peak - rec_peak).abs() < 1.0, "raw peak must equal recorded lagged peak");
+    }
+
+    /// Die Riegel der Höhenkurve, jeder für sich festgenagelt. Runde 4 der
+    /// QS fand sie nur EINSEITIG belegt: sie schärfer zu stellen machte
+    /// Tests rot, sie abzuschalten nicht. Ein Riegel, den man folgenlos
+    /// entfernen kann, ist kein Riegel.
+    #[test]
+    fn die_riegel_der_hoehenkurve_greifen_einzeln() {
+        let b = base();
+
+        // Zu wenige Messpunkte: drei reichen nicht für eine Gerade.
+        let wenige = vec![
+            tw(b, -300, 14.0, 2.0, false, -200.0),
+            tw(b, -160, 12.0, 2.0, false, -200.0),
+            tw(b, -20, 10.0, 2.0, false, -200.0),
+            tw(b, 0, 0.0, 2.0, true, -200.0),
+            tw(b, 20, 0.0, 2.0, true, -190.0),
+        ];
+        let a = compute_landing_analysis(&wenige, b, Simulator::Msfs2024);
+        assert_eq!(
+            a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
+            Some("simvar_fallback"),
+            "drei Messpunkte dürfen keine Ausgleichsgerade tragen"
+        );
+
+        // Zu wenige VERSCHIEDENE Werte: zwei Stufen sind keine Kurve.
+        let zwei_stufen = vec![
+            tw(b, -300, 12.0, 2.0, false, -200.0),
+            tw(b, -220, 12.0, 2.0, false, -200.0),
+            tw(b, -140, 11.0, 2.0, false, -200.0),
+            tw(b, -60, 11.0, 2.0, false, -200.0),
+            tw(b, 0, 0.0, 2.0, true, -200.0),
+            tw(b, 20, 0.0, 2.0, true, -190.0),
+        ];
+        let a = compute_landing_analysis(&zwei_stufen, b, Simulator::Msfs2024);
+        assert_eq!(
+            a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
+            Some("simvar_fallback"),
+            "zwei verschiedene Höhenwerte dürfen keine Ausgleichsgerade tragen"
+        );
+
+        // Stillstand exakt an der Grenze (120 ms) ist noch erlaubt,
+        // knapp darüber nicht mehr. Beide Seiten der Kante geprüft —
+        // sonst bliebe ein Verschieben der Konstante folgenlos.
+        let mit_pause = |pause_ms: i64| {
+            vec![
+                tw(b, -300, 15.0, 2.0, false, -200.0),
+                tw(b, -300 + pause_ms, 15.0, 2.0, false, -200.0),
+                tw(b, -300 + pause_ms + 40, 13.0, 2.0, false, -200.0),
+                tw(b, -300 + pause_ms + 80, 11.0, 2.0, false, -200.0),
+                tw(b, -60, 9.0, 2.0, false, -200.0),
+                tw(b, -20, 8.0, 2.0, false, -200.0),
+                tw(b, 0, 0.0, 2.0, true, -200.0),
+                tw(b, 20, 0.0, 2.0, true, -190.0),
+            ]
+        };
+        let a = compute_landing_analysis(&mit_pause(120), b, Simulator::Msfs2024);
+        assert_eq!(
+            a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
+            Some("hoehenkurve"),
+            "120 ms Stillstand liegen noch im erlaubten Bereich"
+        );
+        let a = compute_landing_analysis(&mit_pause(121), b, Simulator::Msfs2024);
+        assert_eq!(
+            a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
+            Some("simvar_fallback"),
+            "121 ms Stillstand müssen die Ausgleichsgerade verwerfen"
+        );
+    }
+
+    /// Doppelte Zeitstempel sind ein Aufzeichnungs-Artefakt, kein
+    /// Stillstand. X-Plane liefert vereinzelt jeden Messpunkt mehrfach mit
+    /// derselben Uhrzeit — eine Zaehlung gleicher Werte haette das als
+    /// Stillstand gelesen und ausgerechnet die dichtesten Aufzeichnungen
+    /// verworfen. Der Test sichert, dass der Riegel in ZEIT rechnet und
+    /// nicht wieder auf Messpunkte zurueckgebaut wird.
+    #[test]
+    fn doppelte_zeitstempel_gelten_nicht_als_stillstand() {
+        let b = base();
+        let mut s = Vec::new();
+        for i in 0..8 {
+            let t = -300 + i * 40;
+            let agl = 15.0 - i as f32 * 1.5;
+            s.push(tw(b, t, agl, 2.0, false, -200.0));
+            // derselbe Zeitstempel, derselbe Wert — reines Artefakt
+            s.push(tw(b, t, agl, 2.0, false, -200.0));
+        }
+        s.push(tw(b, 0, 0.0, 2.0, true, -200.0));
+        s.push(tw(b, 20, 0.0, 2.0, true, -190.0));
+        let a = compute_landing_analysis(&s, b, Simulator::XPlane12);
+        assert_eq!(
+            a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
+            Some("hoehenkurve"),
+            "verdoppelte Messpunkte dürfen die Kurve nicht verwerfen"
+        );
+    }
+
     /// **Eine eingefrorene Hoehenspur wird nicht gescort.**
     ///
     /// Diese Aufzeichnung ist der Anlass fuer `AGL_MAX_WIEDERHOLUNGEN`: die
@@ -43511,123 +43802,6 @@ mod msfs_agl_flare_tests {
         );
     }
 
-    #[test]
-    fn jbu323_real_fixture_flare_flips_true_touchdown_unchanged() {
-        use flate2::read::GzDecoder;
-        use std::io::{BufRead, BufReader};
-
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/jbu323_msfs_late_flare.jsonl.gz");
-        let file = std::fs::File::open(&path).expect("open jbu323 fixture");
-        let reader = BufReader::new(GzDecoder::new(file));
-
-        let mut edge_at: Option<DateTime<Utc>> = None;
-        let mut samples: Vec<TouchdownWindowSample> = Vec::new();
-        let mut recorded: Option<serde_json::Value> = None;
-        for line in reader.lines() {
-            let line = line.unwrap();
-            if line.trim().is_empty() {
-                continue;
-            }
-            let v: serde_json::Value = serde_json::from_str(&line).unwrap();
-            match v.get("type").and_then(|x| x.as_str()).unwrap_or("") {
-                "touchdown_window" => {
-                    edge_at = v
-                        .get("edge_at")
-                        .and_then(|x| x.as_str())
-                        .map(|s| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc));
-                    for sv in v.get("samples").and_then(|x| x.as_array()).unwrap() {
-                        let f = |k: &str| sv.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
-                        let f64v = |k: &str| sv.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
-                        samples.push(TouchdownWindowSample {
-                            at: DateTime::parse_from_rfc3339(sv["at"].as_str().unwrap())
-                                .unwrap()
-                                .with_timezone(&Utc),
-                            vs_fpm: f("vs_fpm"),
-                            g_force: f("g_force"),
-                            on_ground: sv.get("on_ground").and_then(|x| x.as_bool()).unwrap_or(false),
-                            agl_ft: f("agl_ft"),
-                            heading_true_deg: f("heading_true_deg"),
-                            groundspeed_kt: f("groundspeed_kt"),
-                            indicated_airspeed_kt: f("indicated_airspeed_kt"),
-                            lat: f64v("lat"),
-                            lon: f64v("lon"),
-                            pitch_deg: f("pitch_deg"),
-                            bank_deg: f("bank_deg"),
-                            gear_normal_force_n: sv
-                                .get("gear_normal_force_n")
-                                .and_then(|x| x.as_f64())
-                                .map(|x| x as f32),
-                            total_weight_kg: sv
-                                .get("total_weight_kg")
-                                .and_then(|x| x.as_f64())
-                                .map(|x| x as f32),
-                        });
-                    }
-                }
-                "landing_analysis" => recorded = v.get("analysis").cloned(),
-                _ => {}
-            }
-        }
-        let edge_at = edge_at.expect("edge_at");
-        let recorded = recorded.expect("recorded analysis");
-
-        // The recorded (production, pre-v0.16.22 LAGGED) verdict.
-        assert_eq!(
-            recorded.get("flare_detected").and_then(|v| v.as_bool()),
-            Some(false),
-            "recorded lagged analysis said no flare"
-        );
-
-        // Re-run with the v0.16.22 MSFS AGL path.
-        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024);
-
-        let flare_detected = a.get("flare_detected").and_then(|v| v.as_bool()).unwrap();
-        let reduction = a.get("flare_reduction_fpm").and_then(|v| v.as_f64()).unwrap();
-        assert!(flare_detected, "JBU323 flare must flip to TRUE on AGL geometry");
-        assert!(
-            (100.0..=260.0).contains(&reduction),
-            "JBU323 AGL flare reduction should land ~100-200 fpm, got {reduction}"
-        );
-        assert_eq!(
-            a.get("flare_vs_source").and_then(|v| v.as_str()),
-            Some("msfs_agl")
-        );
-
-        // v1.6.3: Die Aufsetzrate kommt ab jetzt aus der Höhenkurve. JBU323
-        // ist der Beleg, dass das bei einem STEILEN Anflug nichts kaputt
-        // macht: aufgezeichnet −423,5 fpm aus dem SimVar-Kanal, gemessen
-        // −422,2 aus der Ausgleichsgeraden — 1,3 fpm auseinander. Wo nichts
-        // zu dämpfen ist, fallen beide Quellen zusammen; die Umstellung
-        // wirkt nur dort, wo der Kanal wirklich hinterherhinkt.
-        //
-        // Die QS zu diesem Release hat hier einen eigenen Fehler gefunden:
-        // eine Zwischenfassung rechnete die Kurve als Differenz zweier
-        // Einzelwerte und las dadurch −463,9 — 40 fpm härter, allein aus
-        // dem Aufsetz-Frame. Der Test forderte daraufhin „muss härter
-        // ausfallen" und hätte die Korrektur zurück auf die Ausgleichs-
-        // gerade blockiert. Die belastbare Zusage ist NICHT „härter",
-        // sondern „bei steilem Anflug deckungsgleich".
-        let edge_recorded = recorded.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).unwrap();
-        let edge_new = a.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).unwrap();
-        assert_eq!(
-            a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
-            Some("hoehenkurve"),
-            "die Aufsetzrate muss aus der Höhenkurve kommen"
-        );
-        assert!(
-            (edge_new - edge_recorded).abs() <= 25.0,
-            "steiler Anflug: beide Quellen müssen zusammenfallen, aufgezeichnet \
-             {edge_recorded}, neu {edge_new}"
-        );
-
-        // The lagged SimVar values are preserved as forensic provenance and
-        // match the recorded (lagged) endpoints.
-        let raw_peak = a.get("peak_vs_pre_flare_fpm_raw").and_then(|v| v.as_f64()).unwrap();
-        let rec_peak = recorded.get("peak_vs_pre_flare_fpm").and_then(|v| v.as_f64()).unwrap();
-        assert!((raw_peak - rec_peak).abs() < 1.0, "raw peak must equal recorded lagged peak");
-    }
-
     // ─── v0.16.22 hardening: phantom-flare guard tests ────────────────────
 
     /// Load a trimmed `.jsonl.gz` fixture (touchdown_window + landing_
@@ -43673,6 +43847,7 @@ mod msfs_agl_flare_tests {
                             heading_true_deg: f("heading_true_deg"),
                             groundspeed_kt: f("groundspeed_kt"),
                             indicated_airspeed_kt: f("indicated_airspeed_kt"),
+                            true_airspeed_kt: f("indicated_airspeed_kt"),
                             lat: f64v("lat"),
                             lon: f64v("lon"),
                             pitch_deg: f("pitch_deg"),

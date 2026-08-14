@@ -287,6 +287,11 @@ pub struct TouchdownWindowSample {
     pub heading_true_deg: f32,
     pub groundspeed_kt: f32,
     pub indicated_airspeed_kt: f32,
+    /// v1.6.3: Eigengeschwindigkeit. Nenner des Vorhaltewinkels in der
+    /// Ausrichtungs-Achse — sie gehoert in den Aufsetz-Puffer, damit der
+    /// Wert vom Aufsetzen stammt und nicht aus dem Ausrollen.
+    #[serde(default)]
+    pub true_airspeed_kt: f32,
     pub lat: f64,
     pub lon: f64,
     pub pitch_deg: f32,
@@ -589,6 +594,7 @@ mod scored_g_tests {
             agl_ft: 0.0,
             heading_true_deg: 0.0,
             groundspeed_kt: 0.0,
+            true_airspeed_kt: 0.0,
             indicated_airspeed_kt: 0.0,
             lat: 0.0,
             lon: 0.0,

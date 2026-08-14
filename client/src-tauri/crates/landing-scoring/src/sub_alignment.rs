@@ -141,7 +141,7 @@ pub struct AlignmentInput {
 /// Seitenwind MUSS ein Flugzeug schräg zur Bahn stehen, um die Mittellinie
 /// zu halten — das ist Geometrie, kein Fehler. Bei 20 kt Seitenwind und
 /// 135 kt sind es 8,5°, während die Leiter schon ab 3° Punkte abzieht. Im
-/// eigenen Bestand halten 88 % der Piloten die 3-Grad-Grenze bei ruhigem
+/// eigenen Bestand halten 92 % der Piloten die 3-Grad-Grenze bei ruhigem
 /// Wetter ein, aber nur 40 % bei 5–10 kt Seitenwind — und das Verhältnis
 /// von geflogenem zu physikalisch nötigem Vorhalt liegt im Median bei 1,06.
 /// Sie fliegen also korrekt und verlieren trotzdem Punkte.
@@ -160,6 +160,16 @@ const MAX_WIND_ZUGESTAENDNIS_DEG: f32 = 5.0;
 /// Unterhalb dieser Seitenwindstärke wird nichts zugestanden — bei
 /// Schwachwind ist die Vorzeichenprüfung reines Rauschen.
 const MIN_RELEVANTER_SEITENWIND_KT: f32 = 2.0;
+
+/// Ab dieser Eigengeschwindigkeit ist der Messwert brauchbar. Muss mit
+/// der Grenze im Erzeuger (`fill_v2_rollout_fields`) übereinstimmen.
+const MIN_BEZUGSGESCHWINDIGKEIT_KT: f32 = 25.0;
+
+/// Ersatzannahme, wenn gar keine Geschwindigkeit vorliegt — grob die
+/// Aufsetzgeschwindigkeit eines Verkehrsflugzeugs. Für langsamere Muster
+/// zu hoch (der Vorhalt fiele zu klein aus), aber besser als gar keine
+/// Kompensation; ein echter Messwert schlägt sie immer.
+const ERSATZ_BEZUGSGESCHWINDIGKEIT_KT: f32 = 130.0;
 
 /// Zerlegt den rechtweisenden Wind gegen die Bahnachse. Positiv = von
 /// rechts. Gleiche Mathematik wie `runway_assessment::classify_wind` im
@@ -192,10 +202,16 @@ fn wind_zugestaendnis_deg(input: &AlignmentInput, kurs_abw_signiert: f32) -> f32
     if kurs_abw_signiert != 0.0 && kurs_abw_signiert.signum() != xw.signum() {
         return 0.0;
     }
+    // v1.6.3-QS: 25 kt, nicht 40. Die Grenze soll Standwerte aussortieren,
+    // nicht langsame Flugzeuge. Sie muss mit der Grenze im Erzeuger
+    // (`fill_v2_rollout_fields`) uebereinstimmen — stand hier weiter 40,
+    // war die dortige Senkung wirkungslos, weil dieser Filter sie wieder
+    // verwarf und auf die Ersatzannahme zurueckfiel. Genau die Klasse
+    // "eingebaut, aber wirkungslos", gefunden in der vierten Pruefrunde.
     let v = input
         .bezugsgeschwindigkeit_kt
-        .filter(|v| v.is_finite() && *v > 40.0)
-        .unwrap_or(130.0);
+        .filter(|v| v.is_finite() && *v > MIN_BEZUGSGESCHWINDIGKEIT_KT)
+        .unwrap_or(ERSATZ_BEZUGSGESCHWINDIGKEIT_KT);
     let noetig = (xw.abs() / v).clamp(0.0, 1.0).asin().to_degrees();
     noetig.min(MAX_WIND_ZUGESTAENDNIS_DEG)
 }
@@ -717,5 +733,47 @@ mod tests {
             assert!(e.points >= 15);
             vorher = e.points;
         }
+    }
+
+    /// Ein langsames Flugzeug bekommt seinen echten Vorhalt zugestanden.
+    ///
+    /// Die Grenze fuer eine brauchbare Bezugsgeschwindigkeit lag bei 40 kt
+    /// und damit ueber der Aufsetzgeschwindigkeit mancher Buschflieger.
+    /// Ein solches Muster fiel auf die Ersatzannahme von 130 kt und bekam
+    /// dadurch nicht einmal ein Drittel des Vorhalts gutgeschrieben, den
+    /// es tatsaechlich fliegen musste — ausgerechnet die Klasse, die unter
+    /// Seitenwind am meisten leidet.
+    ///
+    /// Der Test haelt beide Haelften fest: dass 30 kt akzeptiert werden
+    /// UND dass daraus ein groesseres Zugestaendnis folgt als aus der
+    /// Ersatzannahme. Ohne die zweite Haelfte bliebe eine Rueckkehr zur
+    /// 40er-Grenze unbemerkt.
+    #[test]
+    fn langsames_flugzeug_bekommt_seinen_echten_vorhalt() {
+        let langsam = AlignmentInput {
+            centerline_offset_m: Some(2.0),
+            runway_width_m: Some(45.0),
+            heading_true_deg: Some(8.0),
+            runway_true_course_deg: Some(0.0),
+            airport_source: Some("runway_match".into()),
+            runway_geometry_trusted: Some(true),
+            wind_direction_deg: Some(90.0),
+            wind_speed_kt: Some(4.0),
+            bezugsgeschwindigkeit_kt: Some(30.0),
+            ..Default::default()
+        };
+        let ohne_messwert = AlignmentInput {
+            bezugsgeschwindigkeit_kt: None,
+            ..langsam.clone()
+        };
+        let a = sub_alignment(&langsam);
+        let b = sub_alignment(&ohne_messwert);
+        assert!(
+            a.points > b.points,
+            "30 kt muessen als Messwert zaehlen und mehr Vorhalt erlauben \
+             als die Ersatzannahme: mit {:?}, ohne {:?}",
+            a.points,
+            b.points
+        );
     }
 }
