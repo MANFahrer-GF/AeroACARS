@@ -215,7 +215,7 @@
       "score_section": "Acht Sub-Scores à 0–100 Punkte (Sinkrate, G-Kraft, Bounces, Anflug-Stabilität, Bahn-Auslastung, OFP-Treue, Loadsheet, Ausrichtung). Jede Kachel zeigt Wert, Punktzahl und farbigen Balken (grün/gelb/rot). Die schwächste Kategorie wird als nächstes Verbesserungs-Ziel im Coach-Tipp aufgegriffen.",
       "runway_section": "Visualisierung deines Touchdowns auf der Bahn. Das blaue Symbol markiert den Aufsetzpunkt, das grüne Band zeigt die Ausrollstrecke bis zum Abrollen von der Bahn (Highspeed-Exit bei ~40 kt). Werte unten: Gesamtlänge, Centerline-Abweichung, Distanz hinter der Schwelle, Bahn-Auslastung in Prozent.",
       "fuel_section": "Block = Spritmenge beim Abblock; TO Fuel = nach dem Rollen am Startpunkt; LDG Fuel = bei Touchdown; TOW = Takeoff Weight (Leergewicht + Last + TO Fuel); LDW = Landing Weight; ZFW = Zero Fuel Weight. Plan-Werte stammen aus dem SimBrief-OFP, falls vorhanden. Der „Plan-Treue\"-Score unten bewertet die Abweichungen Block/TOW/LDW/ZFW (Penalty ab >5 %, schwerer ab >10 %).",
-      "alignment": "Wo und wie gerade du aufgesetzt hast: seitlicher Versatz zur Mittellinie — gemessen an der Bahnbreite, denn dieselben Meter wiegen auf einer schmalen Bahn schwerer — und die Abweichung deines Steuerkurses von der Bahnachse. Bewertet wird die schlechtere der beiden Größen."
+      "alignment": "Wo und wie gerade du aufgesetzt hast: seitlicher Versatz zur Mittellinie — gemessen an der Bahnbreite, denn dieselben Meter wiegen auf einer schmalen Bahn schwerer — und die Abweichung deines Steuerkurses von der Bahnachse. Bewertet wird die schlechtere der beiden Größen. Seitenwind wird angerechnet: der Vorhaltewinkel, den der Wind erzwingt, kostet keine Punkte (höchstens 5°, der von Airbus und der Flight Safety Foundation genannte vertretbare Restwinkel). Angezeigt wird immer dein gemessener Winkel, die Gutschrift steht als „XW“ daneben."
     },
     "rat": {
       "smooth_touchdown": "Butterweich aufgesetzt",
@@ -310,7 +310,7 @@
       "aligned_on_centerline": "Mittellinie getroffen und gerade gestanden — genau so.",
       "off_centerline": "Im Endanflug früher auf die Mittellinie korrigieren, statt erst im Flare. Bei Seitenwind den Vorhaltewinkel halten und erst kurz vor dem Aufsetzen mit dem Seitenruder ausrichten.",
       "off_runway_surface": "Der Aufsetzpunkt lag jenseits des Bahnrands. Bei Seitenwind: Vorhaltewinkel fliegen, die Bahn mit dem Seitenruder ausrichten und die Luv-Fläche leicht senken — nicht das Flugzeug seitlich versetzen lassen.",
-      "crooked_touchdown": "Vor dem Aufsetzen mit dem Seitenruder auf die Bahnachse ausrichten. Schräg aufsetzen belastet das Fahrwerk seitlich und zieht dich nach dem Bodenkontakt von der Mittellinie weg."
+      "crooked_touchdown": "Vor dem Aufsetzen mit dem Seitenruder auf die Bahnachse ausrichten. Schräg aufsetzen belastet das Fahrwerk seitlich und zieht dich nach dem Bodenkontakt von der Mittellinie weg. Der windbedingte Vorhaltewinkel ist hier schon abgezogen — was übrig bleibt, ist nicht durch den Wind erklärt."
     },
     "forensics": {
       "label": "Forensik v2",
@@ -391,7 +391,7 @@
     "sinkrate_forensik": {
       "title": "🎯 Sinkrate-Forensik",
       "intro_header": "Welche Sinkrate ist die „richtige“?",
-      "intro_body": "Je nach Mittelungsfenster bekommst du unterschiedliche Werte für denselben Touchdown. Volanta und Cockpit-VSI mitteln über 0.5–1.5 s und filtern Spikes raus, damit eine Böe nicht jeden Touchdown als Hard-Landing taggt. AeroACARS bewertet hingegen den Sinkraten-Wert direkt am Aufsetz-Moment (Engineering-Standard nach FAR 25.473 — misst die Belastung der Fahrwerksstruktur).",
+      "intro_body": "Je nach Mittelungsfenster bekommst du unterschiedliche Werte für denselben Touchdown. Volanta und Cockpit-VSI mitteln über 0,5–1,5 s und filtern Spitzen heraus, damit eine Böe nicht jeden Touchdown als harte Landung markiert. AeroACARS bewertet den Wert direkt im Aufsetz-Moment (Engineering-Standard nach FAR 25.473 — er misst die Belastung der Fahrwerksstruktur).\n\nSeit v1.6.3 stammt dieser bewertete Wert aus dem tatsächlichen Höhenverlauf, nicht mehr vom Sinkgeschwindigkeitsmesser des Simulators. Der ist träge wie ein echtes Instrument und lag in MSFS je nach Abfangbogen bis zu 90 fpm daneben. Die vier Mittelwerte unten kommen weiterhin aus dem Instrument — dass die bewertete Sinkrate von ihnen abweicht, ist deshalb kein Fehler, sondern der Unterschied zwischen Messverfahren und Instrument.",
       "tool_section_title": "Was dein Cockpit / Volanta anzeigt",
       "tool_section_subtitle": "Mittel über verschiedene Zeitfenster — Spikes ausgeglättet. Vergleiche mit dem Score-Block unten.",
       "score_section_title": "Was AeroACARS scort",

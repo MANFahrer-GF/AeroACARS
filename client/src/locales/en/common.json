@@ -215,7 +215,7 @@
       "score_section": "Eight sub-scores rated 0–100 each (landing rate, G force, bounces, approach stability, runway utilization, OFP compliance, loadsheet, alignment). Every card shows value, points, and a coloured bar (green/yellow/red). The weakest category becomes the focus of the coach tip below.",
       "runway_section": "Visualisation of your touchdown on the runway. The cyan dot marks the touchdown point; the green band shows the rollout distance until you cleared the runway (high-speed exit at ~40 kt). Values below: total length, centerline offset, distance past threshold, runway utilization as a percentage.",
       "fuel_section": "Block = fuel at chocks-off; TO Fuel = at takeoff position; LDG Fuel = at touchdown; TOW = takeoff weight (empty + payload + TO fuel); LDW = landing weight; ZFW = zero fuel weight. Plan values come from the SimBrief OFP if available. The „Plan accuracy\" score below evaluates the Block/TOW/LDW/ZFW deltas (penalty above >5 %, heavier above >10 %).",
-      "alignment": "Where and how straight you touched down: lateral offset from the centreline — measured against runway width, because the same distance matters more on a narrow runway — and how far your heading differed from the runway axis. The worse of the two is scored."
+      "alignment": "Where and how straight you touched down: lateral offset from the centreline — measured against runway width, because the same metres weigh heavier on a narrow runway — and how far your heading deviated from the runway axis. The worse of the two sets the score. Crosswind is credited: the crab angle the wind requires costs no points (up to 5°, the acceptable residual drift named by Airbus and the Flight Safety Foundation). The angle shown is always your measured one, with the credit given as \"XW\" beside it."
     },
     "rat": {
       "smooth_touchdown": "Butter-smooth touchdown",
@@ -310,7 +310,7 @@
       "aligned_on_centerline": "Centreline held and straight on touchdown — exactly right.",
       "off_centerline": "Correct onto the centreline earlier on final rather than during the flare. In a crosswind, hold the crab and align with rudder only just before touchdown.",
       "off_runway_surface": "The touchdown point was beyond the runway edge. In a crosswind: fly the crab, align with rudder and lower the upwind wing slightly — do not let the aircraft drift sideways.",
-      "crooked_touchdown": "Align with the runway axis using rudder before touchdown. Landing at an angle puts side loads on the gear and pulls you off the centreline during rollout."
+      "crooked_touchdown": "Align with the runway axis using rudder before touchdown. Touching down crabbed loads the gear sideways and pulls you off the centreline after contact. The wind-induced crab angle has already been deducted here — what remains is not explained by the wind."
     },
     "forensics": {
       "label": "Forensics v2",
@@ -391,7 +391,7 @@
     "sinkrate_forensik": {
       "title": "🎯 Sink-Rate Forensics",
       "intro_header": "Which sink-rate is the right one?",
-      "intro_body": "Depending on the averaging window you get different values for the same touchdown. Volanta and the cockpit VSI average over 0.5–1.5 s and filter out spikes, so a gust does not tag every touchdown as a hard landing. AeroACARS instead scores the sink-rate value at the actual ground-contact moment (engineering standard per FAR 25.473 — measures the loading on the landing-gear structure).",
+      "intro_body": "Depending on the averaging window you get different values for the same touchdown. Volanta and the cockpit VSI average over 0.5–1.5 s and filter out spikes so a gust does not tag every touchdown as a hard landing. AeroACARS scores the value at the exact moment of touchdown (engineering standard per FAR 25.473 — it measures the load on the gear structure).\n\nSince v1.6.3 that scored value comes from the actual height trace, no longer from the simulator's vertical speed indicator. That instrument is sluggish like a real one and was off by up to 90 fpm in MSFS depending on the flare. The four averages below still come from the instrument — so the scored sink rate differing from them is not an error, it is the difference between a measurement and an instrument.",
       "tool_section_title": "What your cockpit / Volanta shows",
       "tool_section_subtitle": "Means over different time windows — spikes smoothed. Compare with the score block below.",
       "score_section_title": "What AeroACARS scores",

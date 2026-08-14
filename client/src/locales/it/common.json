@@ -215,7 +215,7 @@
       "score_section": "Otto sotto-punteggi da 0–100 punti (rateo discesa, forza G, rimbalzi, stabilità avvicinamento, utilizzo pista, aderenza OFP, loadsheet, allineamento). Ogni riquadro mostra valore, punti e barra colorata (verde/giallo/rosso). La categoria più debole viene presa come prossimo obiettivo nel suggerimento del coach.",
       "runway_section": "Visualizzazione del touchdown sulla pista. Il simbolo blu indica il punto di tocco, la banda verde mostra la distanza di rollout fino all'uscita dalla pista (highspeed-exit a ~40 kt). Valori sotto: lunghezza totale, scostamento dall'asse, distanza dalla soglia, utilizzo pista in percentuale.",
       "fuel_section": "Block = carburante al pushback; TO Fuel = dopo il rullaggio al punto di decollo; LDG Fuel = al touchdown; TOW = peso al decollo (peso a vuoto + carico + carburante TO); LDW = peso all'atterraggio; ZFW = zero fuel weight. I valori pianificati provengono dall'OFP SimBrief, se disponibile. Il punteggio „Precisione del piano\" sotto valuta le deviazioni Block/TOW/LDW/ZFW (penalty sopra >5 %, più pesante sopra >10 %).",
-      "alignment": "Dove e quanto dritto hai toccato: scostamento laterale dall'asse pista — misurato rispetto alla larghezza della pista, perché gli stessi metri pesano di più su una pista stretta — e differenza tra la tua prua e l'asse pista. Viene valutato il peggiore dei due."
+      "alignment": "Dove e quanto dritto hai toccato: scostamento laterale dalla linea centrale — misurato sulla larghezza della pista, perché gli stessi metri pesano di più su una pista stretta — e quanto la tua prua si discosta dall'asse pista. Fa punteggio la peggiore delle due. Il vento al traverso viene riconosciuto: l'angolo di deriva imposto dal vento non costa punti (fino a 5°, il valore residuo accettabile indicato da Airbus e dalla Flight Safety Foundation). L'angolo mostrato è sempre quello misurato, con il credito indicato accanto come «XW»."
     },
     "rat": {
       "smooth_touchdown": "Atterraggio morbidissimo",
@@ -310,7 +310,7 @@
       "aligned_on_centerline": "Asse pista tenuto e aereo dritto al contatto — esattamente così.",
       "off_centerline": "Correggi sull'asse pista già in finale, non durante la richiamata. Con vento al traverso mantieni il crab e allinea con il timone solo poco prima del contatto.",
       "off_runway_surface": "Il punto di contatto era oltre il bordo pista. Con vento al traverso: vola in crab, allinea con il timone e abbassa leggermente l'ala sopravento — non lasciare derivare l'aereo.",
-      "crooked_touchdown": "Allinea con l'asse pista usando il timone prima del contatto. Toccare di traverso carica lateralmente il carrello e ti porta fuori asse durante la corsa."
+      "crooked_touchdown": "Allinea alla pista con il timone prima del contatto. Toccare di traverso carica il carrello lateralmente e ti porta fuori dalla linea centrale dopo il contatto. L'angolo di deriva dovuto al vento è già stato scalato: quel che resta non è spiegato dal vento."
     },
     "forensics": {
       "label": "Forensica v2",
@@ -391,7 +391,7 @@
     "sinkrate_forensik": {
       "title": "🎯 Forense del rateo di discesa",
       "intro_header": "Qual è il valore „giusto“?",
-      "intro_body": "A seconda della finestra di mediazione ottieni valori diversi per lo stesso touchdown. Volanta e il VSI di cabina mediano su 0.5–1.5 s e filtrano i picchi, in modo che una raffica non venga marcata come hard landing. AeroACARS valuta invece il valore del rateo di discesa esattamente al momento del contatto al suolo (standard FAR 25.473 — misura il carico sul carrello).",
+      "intro_body": "A seconda della finestra di media ottieni valori diversi per lo stesso atterraggio. Volanta e il VSI di bordo mediano su 0,5–1,5 s e filtrano i picchi, così una raffica non segna ogni atterraggio come duro. AeroACARS valuta il valore esattamente al momento del contatto (standard ingegneristico secondo FAR 25.473 — misura il carico sulla struttura del carrello).\n\nDalla v1.6.3 quel valore proviene dall'andamento reale della quota, non più dal variometro del simulatore. Quest'ultimo è lento come uno strumento reale e in MSFS sbagliava fino a 90 fpm a seconda della richiamata. Le quattro medie qui sotto vengono ancora dallo strumento: se la velocità di discesa valutata differisce da esse non è un errore, ma la differenza fra una misura e uno strumento.",
       "tool_section_title": "Quello che mostra il cockpit / Volanta",
       "tool_section_subtitle": "Medie su finestre temporali diverse — picchi smussati. Confronta con il blocco del punteggio sotto.",
       "score_section_title": "Quello che AeroACARS valuta",
