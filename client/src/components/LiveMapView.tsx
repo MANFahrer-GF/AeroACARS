@@ -17,7 +17,7 @@ import {
   buildAtcAirportFeatures, buildPilotFeatures, emptyFC, fetchVatsimData,
   loadVatSpy, esc as vatsimEsc,
 } from "../lib/vatsimKarte";
-import { baueSektoren, ladeBestand } from "../lib/vatglassesKarte";
+import { ladeSektoren } from "../lib/vatglassesKarte";
 import maplibregl, { type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { invoke } from "../lib/ipc";
@@ -355,9 +355,8 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       abbruch.abort();
       abbruch = new AbortController();
       try {
-        const [daten, bestand, vatspy] = await Promise.all([
+        const [daten, vatspy] = await Promise.all([
           fetchVatsimData(abbruch.signal),
-          ladeBestand(abbruch.signal),
           loadVatSpy(abbruch.signal),
         ]);
         if (beendet) return;
@@ -368,10 +367,10 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           ? Math.max(0, Math.round((simSnapshotRef.current.altitude_msl_ft ?? 0) / 100))
           : null;
         const fl = flModusRef.current === "auto" && eigeneFl != null ? eigeneFl : flWertRef.current;
-        const rufzeichen = daten.controllers
-          .filter((c) => c.facility >= 5)
-          .map((c) => c.callsign);
-        const sektoren = baueSektoren(bestand, fl, rufzeichen);
+        // Die Sektoren rechnet der Live-Server — dieselbe Quelle wie die
+        // Karte auf live.kant.ovh, damit beide dasselbe zeigen.
+        const sektoren = await ladeSektoren(fl, abbruch.signal);
+        if (beendet) return;
         setzen(
           buildPilotFeatures(daten.pilots),
           buildAtcAirportFeatures(daten.controllers, vatspy.airports, daten.atis),
