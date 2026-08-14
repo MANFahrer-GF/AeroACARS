@@ -20568,6 +20568,28 @@ fn compute_landing_analysis(
 /// in den post_touchdown_buffer kopieren und das Landing-Critical-Window
 /// öffnen. Der Sampler füllt den Buffer in den nächsten Iterationen mit
 /// Post-TD-Samples weiter und dumpt ihn nach TOUCHDOWN_POST_WINDOW_MS.
+/// Räumt die Messwerte ab, die zu EINER Landung gehören und beim nächsten
+/// Aufsetzen frisch erhoben werden müssen.
+///
+/// **Warum das eine eigene Funktion ist.** Es gibt zwei Stellen, an denen
+/// eine Landungs-Episode endet und die nächste beginnt: der Rücksetzer nach
+/// einem bestätigten Touch-and-Go und der Rücksetzer nach einem
+/// Mehrfach-Aufsetzen. Beide standen als Hand-Kopien nebeneinander und sind
+/// schon einmal auseinandergelaufen — der ausführliche Kommentar zu
+/// `landing_rate_fpm` an einer der beiden Stellen dokumentiert genau so
+/// einen Fall. In dieser Release-Arbeit ist es zweimal erneut passiert:
+/// erst fehlte der Landewind in beiden Kopien, dann die
+/// Eigengeschwindigkeit.
+///
+/// Betroffen sind nur die Felder, die **latchen** statt zu überschreiben.
+/// Alles, was der Aufsetz-Stempel bedingungslos neu setzt, braucht hier
+/// nichts zu tun.
+fn landung_episode_zuruecksetzen(stats: &mut FlightStats) {
+    stats.landing_wind_direction_deg = None;
+    stats.landing_wind_speed_kt = None;
+    stats.landing_true_airspeed_kt = None;
+}
+
 fn open_touchdown_capture_window(stats: &mut FlightStats, now: DateTime<Utc>) {
     stats.landing_critical_until = Some(
         now + chrono::Duration::milliseconds(TOUCHDOWN_POST_WINDOW_MS),
@@ -21719,9 +21741,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     // nicht loescht. Ohne diesen Rücksetzer rechnete die
                     // Seitenwind-Kompensation der Ausrichtungs-Achse beim
                     // FINALEN Aufsetzen mit dem Wind des ersten.
-                    s.landing_wind_direction_deg = None;
-                    s.landing_wind_speed_kt = None;
-                    s.landing_true_airspeed_kt = None;
+                    landung_episode_zuruecksetzen(&mut s);
                     // v0.16.6: stability stats + rollout are per-episode too —
                     // the FINAL touchdown must re-evaluate its own approach
                     // window and re-accumulate its own rollout (on bush
@@ -24837,8 +24857,9 @@ fn stamp_touchdown_metadata(
     // mit dem Wetter des ERSTEN Aufsetzens gegen Bahnkurs und Steuerkurs des
     // LETZTEN. Da die Kompensation nur schenken kann, waeren das im
     // schlechtesten Fall 5 Grad geschenkter Vorhalt fuer eine wirklich
-    // schiefe Landung. Alle Nachbarfelder hier (Position, Kurs, Geschwindig-
-    // keit, Windkomponenten) ueberschreiben aus demselben Grund.
+    // schiefe Landung. Alle Nachbarfelder hier (Position, Kurs,
+    // Geschwindigkeit) ueberschreiben aus demselben Grund.
+    //
     // Aber NUR mit einem gültigen Wert überschreiben. Dieser Stempel läuft
     // zweimal — einmal aus dem Sampler, danach aus der Phasen-Logik, die
     // ausdrücklich überschreibt. Ein blindes Zuweisen würde einen guten
@@ -24846,6 +24867,11 @@ fn stamp_touchdown_metadata(
     // Windfelder gerade nicht trägt (X-Plane liefert sie nur bei
     // Windgeschwindigkeit über null, und ein einzelner Tick kann fehlen).
     // Der Rücksetzer für Touch-and-Go räumt sie stattdessen gezielt ab.
+    //
+    // Die beiden körperfesten Windkomponenten darunter werden dagegen
+    // bedingungslos gesetzt, und das ist auch richtig so: beide Adapter
+    // liefern sie immer als Wert (nie fehlend), ein Löschen kann dort also
+    // gar nicht entstehen.
     if let Some(dir) = snap.wind_direction_deg {
         stats.landing_wind_direction_deg = Some(dir);
     }
@@ -27387,9 +27413,7 @@ fn step_flight_at(
                             // im schlechtesten Fall also fuenf Grad
                             // geschenkter Vorhalt fuer eine wirklich schiefe
                             // Landung.
-                            stats.landing_wind_direction_deg = None;
-                            stats.landing_wind_speed_kt = None;
-                            stats.landing_true_airspeed_kt = None;
+                            landung_episode_zuruecksetzen(&mut stats);
                             stats.bounce_armed_above_threshold = false;
                             stats.touch_and_go_pending_since = None;
                             // CRITICAL: also clear the GA tracker so the
@@ -41398,6 +41422,100 @@ mod touchdown_metadata_stamp_tests {
         }
     }
 
+
+    /// **Die 25-kt-Grenze, diesmal im Erzeuger geprüft.** Runde 4 fand,
+    /// dass die Senkung im Score-Kern wirkungslos war, weil dieselbe
+    /// Grenze im Erzeuger unverändert stand. Runde 5 fand das Spiegelbild:
+    /// die Grenze im Erzeuger ließ sich zurückdrehen, ohne dass ein Test
+    /// rot wurde — der vorhandene Test ruft die Bewertung direkt auf und
+    /// überspringt genau diese Kette. Beide Seiten sind jetzt belegt.
+    #[test]
+    fn langsame_eigengeschwindigkeit_ueberlebt_den_erzeuger() {
+        let stats = FlightStats {
+            runway_match: Some(eddp_26r_match_with_raw_td(1500.0)),
+            landing_true_airspeed_kt: Some(30.0),
+            ..Default::default()
+        };
+        let mut input = landing_scoring::LandingScoringInput::default();
+        fill_v2_rollout_fields(&mut input, &stats, "EDDP");
+        assert_eq!(
+            input.landing_groundspeed_kt,
+            Some(30.0),
+            "30 kt müssen den Erzeuger passieren — sonst rechnet die \
+             Ausrichtungs-Achse mit der Ersatzannahme von 130 kt"
+        );
+    }
+
+    /// **Die Eigengeschwindigkeit kommt aus dem Aufsetz-Puffer.** Der
+    /// Schnappschuss zeigt beim Stempeln unter Umständen schon das
+    /// Ausrollen — im schlechtesten Prozent über vier Sekunden danach.
+    /// Der Test setzt beide Quellen weit auseinander, damit ein Rückbau
+    /// auf den Schnappschuss sofort auffällt.
+    #[test]
+    fn eigengeschwindigkeit_kommt_aus_dem_aufsetz_puffer() {
+        let mut stats = FlightStats::default();
+        let puffer = TelemetrySample {
+            true_airspeed_kt: 140.0,
+            ..buf_sample(Utc::now(), true)
+        };
+        let snap = SimSnapshot {
+            true_airspeed_kt: 60.0,
+            ..SimSnapshot::default()
+        };
+        stamp_touchdown_metadata(&mut stats, &snap, Utc::now(), Some(&puffer));
+        assert_eq!(
+            stats.landing_true_airspeed_kt,
+            Some(140.0),
+            "der gepufferte Aufsetz-Wert muss den späten Schnappschuss schlagen"
+        );
+
+        // Ohne Puffer bleibt der Schnappschuss die Rückfallebene — sonst
+        // hätten fortgesetzte Flüge gar keine Eigengeschwindigkeit.
+        let mut ohne = FlightStats::default();
+        stamp_touchdown_metadata(&mut ohne, &snap, Utc::now(), None);
+        assert_eq!(ohne.landing_true_airspeed_kt, Some(60.0));
+    }
+
+    /// **Die Eigengeschwindigkeit wird beim Touch-and-Go abgeräumt.** Sie
+    /// ist das einzige Feld ihrer Kette, das latcht statt zu überschreiben
+    /// — ohne Rücksetzer rechnete die zweite Landung mit der
+    /// Geschwindigkeit der ersten. Für den Landewind wurde genau das zwei
+    /// Runden zuvor repariert; die Eigengeschwindigkeit kam später dazu und
+    /// war zunächst ungedeckt (QS-Befund Runde 5).
+    #[test]
+    fn eigengeschwindigkeit_ueberlebt_kein_touch_and_go() {
+        let mut stats = FlightStats::default();
+        let snap = SimSnapshot {
+            true_airspeed_kt: 140.0,
+            wind_direction_deg: Some(270.0),
+            wind_speed_kt: Some(18.0),
+            ..SimSnapshot::default()
+        };
+        stamp_touchdown_metadata(&mut stats, &snap, Utc::now(), None);
+        assert_eq!(stats.landing_true_airspeed_kt, Some(140.0));
+        assert_eq!(stats.landing_wind_direction_deg, Some(270.0));
+
+        // Der ECHTE Rücksetzer, nicht nachgestellt. Beide Aufrufstellen
+        // (Touch-and-Go und Mehrfach-Aufsetzen) gehen durch diese eine
+        // Funktion — deshalb deckt der Test hier beide ab.
+        landung_episode_zuruecksetzen(&mut stats);
+
+        // Zweites Aufsetzen ohne Messwert: es darf nichts von der ersten
+        // Landung übrig sein.
+        let leer = SimSnapshot::default();
+        stamp_touchdown_metadata(&mut stats, &leer, Utc::now(), None);
+        assert_eq!(
+            stats.landing_true_airspeed_kt, None,
+            "nach dem Rücksetzer darf die alte Eigengeschwindigkeit nicht \
+             wieder auftauchen"
+        );
+        // Der Landewind gehört zur selben Episode und muss mit weg —
+        // sonst rechnet die Ausrichtungs-Achse der zweiten Landung mit
+        // dem Wetter der ersten.
+        assert_eq!(stats.landing_wind_direction_deg, None);
+        assert_eq!(stats.landing_wind_speed_kt, None);
+    }
+
     /// **Die Wind-Kette über den echten Pfad.** Das ist die Prüfung, die
     /// der MSFS-Entlagung zwei Monate lang gefehlt hat: sie hatte 20 grüne
     /// Tests gegen ihre eigene Rechenfunktion und lief im Feld nie, weil
@@ -43682,9 +43800,36 @@ mod msfs_agl_flare_tests {
         );
     }
 
+
+    /// **Die verworfene Höhenkurve bleibt der Unfall-Erkennung erhalten.**
+    /// Der Score verwirft sie bei eingefrorener Höhenspur, weil sie dort zu
+    /// weich liest. Die Unfall-Erkennung nimmt aber den HÄRTESTEN aller
+    /// Messwerte — ihr kann ein zusätzlicher Kandidat nicht schaden, ein
+    /// fehlender harter dagegen schon. Ohne diesen Test ließ sich der
+    /// Kandidat ersatzlos aus der Liste streichen, ohne dass etwas rot
+    /// wurde (QS-Befund Runde 5) — und genau mit diesem Maßstab hat
+    /// dieselbe Release-Arbeit an anderer Stelle Code weggeworfen.
+    #[test]
+    fn verworfene_hoehenkurve_bleibt_der_unfallerkennung_erhalten() {
+        let (edge_at, samples, _r) = load_flare_fixture("a320_vrnevnl_frozen_end.jsonl.gz");
+        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024);
+        assert!(
+            a.get("vs_geometrie_fpm").and_then(|v| v.as_f64()).is_none(),
+            "Vorbedingung: der Score muss die Kurve hier verwerfen"
+        );
+        let ungefiltert = a
+            .get("vs_geometrie_ungefiltert_fpm")
+            .and_then(|v| v.as_f64())
+            .expect("die verworfene Kurve muss der Unfall-Erkennung erhalten bleiben");
+        assert!(
+            ungefiltert < 0.0 && ungefiltert.is_finite(),
+            "unbrauchbarer Wert: {ungefiltert}"
+        );
+    }
+
     /// **Eine eingefrorene Hoehenspur wird nicht gescort.**
     ///
-    /// Diese Aufzeichnung ist der Anlass fuer `AGL_MAX_WIEDERHOLUNGEN`: die
+    /// Diese Aufzeichnung ist der Anlass fuer `AGL_MAX_STILLSTAND_MS`: die
     /// Hoehe steht ueber 19 Messpunkte auf demselben Wert, dann holt der
     /// Simulator −1,49 ft in einem einzigen Schritt nach. Die Ausgleichs-
     /// gerade mittelt das Plateau mit ein und las −45 statt −162 fpm — der
@@ -44681,6 +44826,33 @@ mod v163_mutationsluecken {
             stats.accident_kind.is_some() || stats.accident_detected,
             "eine Sinkrate von 1600 fpm darf nicht durchrutschen, nur weil die \
              gescorte Quelle weicher liest"
+        );
+    }
+
+/// **Die Unfall-Erkennung liest die verworfene Höhenkurve wirklich.**
+    /// Der Test daneben belegt, dass der Wert im Datensatz landet — dieser
+    /// hier, dass er auch benutzt wird. Ohne ihn ließ sich der Kandidat aus
+    /// der Liste streichen, ohne dass etwas rot wurde (QS-Befund Runde 5).
+    /// Aufgebaut ist er so, dass ausschließlich dieser eine Kandidat die
+    /// Schwelle reißt.
+    #[test]
+    fn unfallerkennung_liest_auch_die_verworfene_hoehenkurve() {
+        let mut stats = FlightStats {
+            landing_simulator: Some("Msfs2024"),
+            landing_peak_g_force: Some(3.6),
+            ..Default::default()
+        };
+        let analysis = serde_json::json!({
+            "vs_at_edge_fpm": -300.0,
+            "vs_geometrie_fpm": serde_json::Value::Null,
+            "vs_simvar_edge_fpm": -300.0,
+            "vs_geometrie_ungefiltert_fpm": -1700.0,
+        });
+        apply_accident_heuristic(&mut stats, &analysis);
+        assert!(
+            stats.accident_kind.is_some() || stats.accident_detected,
+            "1700 fpm dürfen nicht durchrutschen, nur weil der Score diese \
+             Quelle verworfen hat"
         );
     }
 
