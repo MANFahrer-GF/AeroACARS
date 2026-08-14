@@ -459,6 +459,9 @@ function computeSubScores(r: LandingRecord): SubScore[] {
 /** Minimaler t-Typ — reicht für die Extra-Zeilen-Interpolation. */
 type RolloutTFn = (key: string, opts?: Record<string, string | number>) => string;
 
+/** Wie viele Landungen die Übersichts-Kurve zeigt. */
+const KURVE_LAENGE = 12;
+
 /** Stehen in dieser Liste Landungen aus verschiedenen Bewertungs-Ständen?
  *
  *  Ab Version 7 kommt die Sinkrate aus dem Höhenverlauf statt vom
@@ -466,9 +469,16 @@ type RolloutTFn = (key: string, opts?: Record<string, string | number>) => strin
  *  als auch die Punkte — in MSFS deutlich. Ein Durchschnitt über beide
  *  Stände ist deshalb kein Trend, und der weichste Flug bleibt auf
  *  absehbare Zeit ein alter, zu weich gemessener. */
-function gemischteBewertungsstaende(records: LandingRecord[]): boolean {
+export function gemischteBewertungsstaende(records: LandingRecord[]): boolean {
+  // Nur die Landungen, die auch in der Kurve stehen. `landing_list` gibt
+  // ALLE Datensätze zurück — an die volle Liste gebunden bliebe der Hinweis
+  // dauerhaft stehen, solange irgendwo noch ein alter Flug liegt. Der
+  // Sprung ist aber genau dort sichtbar, wo alt und neu nebeneinander
+  // gezeichnet werden; nach zwölf neuen Landungen erklärt sich nichts mehr
+  // und der Hinweis verschwindet von selbst.
   const staende = new Set(
     records
+      .slice(0, KURVE_LAENGE)
       .map((r) => r.score_algorithm_version)
       .filter((v): v is number => v != null),
   );
@@ -2169,7 +2179,7 @@ function LandingRateChart({ records }: { records: LandingRecord[] }) {
   const { t, i18n } = useTranslation();
   if (records.length < 2) return null;
   // Newest-first list; chart wants oldest→newest left→right.
-  const latest = records.slice(0, 12).reverse();
+  const latest = records.slice(0, KURVE_LAENGE).reverse();
   const rates = latest.map((r) => Math.abs(scoreBasisVs(r)));
   const oldest = latest[0];
   const newest = latest[latest.length - 1];
