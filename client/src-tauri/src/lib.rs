@@ -14340,9 +14340,25 @@ fn fill_v2_rollout_fields(
     // beim Aufsetzen plus Bezugsgeschwindigkeit fuer den Vorhaltewinkel.
     input.landing_wind_direction_deg = stats.landing_wind_direction_deg;
     input.landing_wind_speed_kt = stats.landing_wind_speed_kt;
-    input.landing_groundspeed_kt = stats
-        .landing_groundspeed_kt
-        .or(stats.landing_speed_kt);
+    // v1.6.3-QS: **Eigengeschwindigkeit, nicht Grundgeschwindigkeit.** Der
+    // Vorhaltewinkel folgt dem Winddreieck sin(Vorhalt) = Seitenwind / TAS.
+    // Gelandet wird fast immer gegen den Wind, GS liegt also systematisch
+    // unter TAS — mit GS als Nenner faellt der "noetige" Vorhalt zu gross
+    // aus und die Kompensation zu grosszuegig. Beispiel: 25 kt Gegenwind,
+    // TAS 130, GS 105, 8 kt Seitenwind → gerechnet 4,4 statt korrekt 3,5
+    // Grad. An der 3-Grad-Stufe ist das eine ganze Bandbreite geschenkt.
+    // Der Gegenwind liegt hier bereits gemessen vor, die Rueckrechnung
+    // kostet also nichts. Fehlt die Grundgeschwindigkeit, ist der Rueckfall
+    // die angezeigte Fluggeschwindigkeit — die naeher an TAS liegt als GS
+    // und deshalb NICHT noch einmal korrigiert werden darf.
+    input.landing_groundspeed_kt = match (
+        stats.landing_groundspeed_kt.filter(|v| v.is_finite() && *v > 40.0),
+        stats.landing_headwind_kt.filter(|v| v.is_finite()),
+    ) {
+        (Some(gs), Some(hw)) => Some(gs + hw),
+        (Some(gs), None) => Some(gs),
+        (None, _) => stats.landing_speed_kt,
+    };
 }
 
 /// v0.7.1 Round-2 Helper: berechnet den gewichteten Aggregate-Master-
@@ -19909,17 +19925,33 @@ fn compute_landing_analysis(
     const AGL_FENSTER_MS: i64 = 310;
     /// Weniger Messpunkte im Fenster → keine belastbare Steigung.
     const AGL_MIN_SAMPLES: usize = 4;
-    /// Manche Zusatzflugzeuge frieren die Höhe ein. Ohne Bewegung in der
+    /// Manche Zusatzflugzeuge frieren die Hoehe ein. Ohne Bewegung in der
     /// Kurve ist die Ableitung wertlos (im Korpus: 0,5 % der Landungen).
     const AGL_MIN_VERSCHIEDENE: usize = 3;
+    /// Die Ausgleichsgerade braucht eine echte Zeitbasis. 0,15 s bei 50 Hz
+    /// sind ~8 Messpunkte; darunter dominiert die AGL-Quantisierung (MSFS
+    /// meldet in ~0,5-ft-Stufen) den Anstieg vollstaendig.
+    const AGL_MIN_SPANNE_S: f64 = 0.15;
+    /// Ueber diesem Betrag ist es kein Sinkflug mehr, sondern ein Sprung im
+    /// Hoehenbezug (Gelaendekante, Helipad-Dach, Bodenmodell-Wechsel).
+    /// Deckt sich mit `VS_FLOOR_FPM` der kanonischen Landerate.
+    const AGL_MAX_PLAUSIBEL_FPM: f32 = -3000.0;
 
     let vs_aus_hoehenkurve = || -> Option<f32> {
         let lo = edge_ms - AGL_FENSTER_MS;
+        // `!s.on_ground` ist nicht kosmetisch: der Kontakt-Frame traegt schon
+        // die beginnende Fahrwerkskompression und bei MSFS zusaetzlich einen
+        // AGL-Sprung (im Fixture a320_vrnevnl 1,49 ft in 32 ms — das 17-fache
+        // der echten Bewegung). Als Endpunkt einer Zweipunkt-Steigung hebt
+        // genau dieser eine Frame das Ergebnis um 158 fpm an. `mean_vs_window`
+        // direkt darueber und `agl_geometric_vs_fpm_at` filtern aus demselben
+        // Grund; der gescorte Wert darf nicht schwaecher geschuetzt sein als
+        // die forensische Anzeige.
         let fenster: Vec<&TouchdownWindowSample> = samples
             .iter()
             .filter(|s| {
                 let ts = s.at.timestamp_millis();
-                ts >= lo && ts <= edge_ms && s.agl_ft.is_finite()
+                ts >= lo && ts <= edge_ms && s.agl_ft.is_finite() && !s.on_ground
             })
             .collect();
         if fenster.len() < AGL_MIN_SAMPLES {
@@ -19933,16 +19965,41 @@ fn compute_landing_analysis(
         if verschieden < AGL_MIN_VERSCHIEDENE {
             return None;
         }
-        let a = fenster.first()?;
-        let b = fenster.last()?;
-        let dt = (b.at.timestamp_millis() - a.at.timestamp_millis()) as f64 / 1000.0;
-        if dt <= 0.05 {
+        let t0 = fenster.first()?.at.timestamp_millis();
+        let spanne = (fenster.last()?.at.timestamp_millis() - t0) as f64 / 1000.0;
+        if spanne < AGL_MIN_SPANNE_S {
             return None;
         }
-        let fpm = ((b.agl_ft - a.agl_ft) as f64 / dt * 60.0) as f32;
-        // Nur ein SINKEN ist eine Landerate; ein Steigen im Fenster heißt,
+        // **Ausgleichsgerade, nicht Endpunkt-Differenz.** Eine Zweipunkt-
+        // Steigung haengt komplett an zwei von ~15 Messpunkten: ein einziger
+        // Quantisierungsschritt (~0,5 ft) am Rand verschiebt das Ergebnis um
+        // ~97 fpm, also mehr als eine halbe Bandbreite der Landerate-Achse.
+        // Am Korpus gegengerechnet liest die Endpunkt-Methode in 12 von 15
+        // Aufzeichnungen haerter als die Gerade, im Median 25 fpm, im
+        // Extremfall 158 fpm. Die Gerade verduennt denselben Randfehler auf
+        // etwa ein Sechstel. Der forensische Flare-Pfad rechnet seit v0.16.22
+        // aus genau diesem Grund ebenfalls mit Ausgleich.
+        let n = fenster.len() as f64;
+        let ts: Vec<f64> = fenster
+            .iter()
+            .map(|s| (s.at.timestamp_millis() - t0) as f64 / 1000.0)
+            .collect();
+        let ys: Vec<f64> = fenster.iter().map(|s| s.agl_ft as f64).collect();
+        let t_mittel = ts.iter().sum::<f64>() / n;
+        let y_mittel = ys.iter().sum::<f64>() / n;
+        let zaehler: f64 = ts
+            .iter()
+            .zip(ys.iter())
+            .map(|(t, y)| (t - t_mittel) * (y - y_mittel))
+            .sum();
+        let nenner: f64 = ts.iter().map(|t| (t - t_mittel).powi(2)).sum();
+        if nenner <= f64::EPSILON {
+            return None;
+        }
+        let fpm = (zaehler / nenner * 60.0) as f32;
+        // Nur ein SINKEN ist eine Landerate; ein Steigen im Fenster heisst,
         // dass der Aufsetzpunkt nicht sauber erfasst wurde.
-        if !fpm.is_finite() || fpm >= 0.0 {
+        if !fpm.is_finite() || !(AGL_MAX_PLAUSIBEL_FPM..0.0).contains(&fpm) {
             return None;
         }
         Some(fpm)
@@ -21196,11 +21253,6 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             let prepared_dump = if let Some((edge_at, samples)) = dump_payload {
                 let analysis =
                     compute_landing_analysis(&samples, edge_at, snap.simulator);
-                // v0.16.21: MSFS touchdown V/S SimVar-lag de-lag —
-                // g-force-gated. Runs BEFORE the analysis is stored, the
-                // accident heuristic, and the class re-derivation below, so
-                // the corrected (un-lagged) `vs_at_edge_fpm` flows through
-                // `canonical_landing_rate_fpm` to the score / PIREP / MQTT.
                 // v1.6.3: die MSFS-Entlagung ist ERSATZLOS entfallen.
                 //
                 // Sie war ein Pflaster auf dem gedämpften SimVar-Kanal —
@@ -21215,7 +21267,6 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // (siehe compute_landing_analysis). Zudem konnte sie
                 // konstruktiv nur nach unten korrigieren — den häufigeren
                 // Fall „zu weich gemeldet" hätte sie nie erfasst.
-                let msfs_delag_vs: Option<f32> = None;
                 stats.landing_analysis = Some(analysis.clone());
                 // v0.7.19 GAF-707: Heuristik-Klassifikator EINMAL pro
                 // Touchdown am TD-Edge ausfuehren — direkt nachdem die
@@ -21224,7 +21275,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // 50-Hz-Loop. Worst-Case-Aggregation fuer Multi-TD
                 // (Touch-and-Go) ist im Helper.
                 apply_accident_heuristic(&mut stats, &analysis);
-                Some((edge_at, samples, analysis, msfs_delag_vs))
+                Some((edge_at, samples, analysis))
             } else {
                 None
             };
@@ -21238,7 +21289,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // on-demand navdata fetch for the actual landing airport — same
             // finalize-with-best wiring as the FSM path. Idempotent.
             maybe_fetch_actual_landing_navdata(&app, &flight);
-            if let Some((edge_at, samples, analysis, msfs_delag_vs)) = prepared_dump {
+            if let Some((edge_at, samples, analysis)) = prepared_dump {
                 // v0.5.49 — IMMEDIATE persist nach dem Setzen von
                 // touchdown_window_dumped_at. Vorher wurde der Flag in
                 // stats gesetzt, aber save_active_flight wartete auf den
@@ -21448,27 +21499,6 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                             .map(|n| n.min(u8::MAX as u64) as u8))
                         .unwrap_or(s.bounce_count);
                     s.bounce_count = scored_bounce;
-                    // v0.16.21: when the MSFS V/S-lag de-lag fired, route
-                    // the CLASS through the same corrected (un-lagged) V/S
-                    // that `canonical_landing_rate_fpm` now scores on. The
-                    // `finalize_landing_rate` calls above set BOTH
-                    // `landing_rate_fpm` AND `landing_peak_vs_fpm` from the
-                    // v2/edge forensic value, which on a flared MSFS landing
-                    // is the lagged peak — so we overwrite BOTH here so the
-                    // class LABEL matches the corrected numeric score AND any
-                    // direct reader of `landing_rate_fpm` (e.g. the
-                    // `LandingFinalized` forensic event in
-                    // `emit_landing_finalized`, which does not go through
-                    // `canonical_landing_rate_fpm`) reports the same corrected
-                    // rate — no class-vs-score and no field-vs-field split.
-                    // The lagged value stays preserved in the analysis
-                    // `vs_at_edge_fpm_raw` forensic key. The g-band term in
-                    // `classify` is untouched, so a real firm impact can still
-                    // only relax to the level g allows.
-                    if let Some(corrected) = msfs_delag_vs {
-                        s.landing_rate_fpm = Some(corrected);
-                        s.landing_peak_vs_fpm = Some(corrected);
-                    }
                     // v0.20.0: ueber die Kanonik lesen, nicht das Rohfeld — die
                     // Einstufung (SMOOTH/FIRM/HARD) muss auf DERSELBEN Zahl
                     // klassifizieren, die Score, Karte, Log und PIREP zeigen.
@@ -24097,8 +24127,36 @@ fn extract_icao_code(raw: &str) -> Option<String> {
 ///   nur ersetzt wenn die neue |vs_at_edge_fpm| HOEHER ist (Worst-Case-
 ///   Aggregation per Spec §Leitentscheidung 7).
 fn apply_accident_heuristic(stats: &mut FlightStats, analysis: &serde_json::Value) {
+    // v1.6.3: **Die Unfall-Erkennung spuelt nie weich.** Der Score nimmt die
+    // Hoehenkurve, weil sie die Wahrheit besser trifft — hier zaehlt der
+    // HAERTERE der beiden Messwerte. Damit kann kein Aufprall unter die
+    // Schwelle rutschen, egal welche Quelle im Einzelfall danebenliegt
+    // (etwa eine geneigte Bahn, bei der die Hoehenkurve das wegfallende
+    // Gelaende mitmisst, oder ein gehaltener AGL-Frame, der die Gerade
+    // abflacht). Der im selben Release entfernte Entlagungs-Code trug
+    // denselben Gedanken als `MSFS_DELAG_MAX_EDGE_ABS_FPM` = "never soften
+    // a crash"; der Riegel darf mit ihm nicht verschwinden. Wirkt nur nach
+    // oben: ein Wert, der KEINE Schwelle reisst, aendert nichts.
+    let haerteste_sinkrate = {
+        let kandidaten = [
+            ana_f32(&Some(analysis.clone()), "vs_at_edge_fpm"),
+            ana_f32(&Some(analysis.clone()), "vs_geometrie_fpm"),
+            ana_f32(&Some(analysis.clone()), "vs_simvar_edge_fpm"),
+        ];
+        kandidaten
+            .into_iter()
+            .flatten()
+            .filter(|v| v.is_finite() && *v < 0.0)
+            .fold(None::<f32>, |acc, v| {
+                Some(match acc {
+                    Some(a) if a.abs() >= v.abs() => a,
+                    _ => v,
+                })
+            })
+            .or_else(|| ana_f32(&Some(analysis.clone()), "vs_at_edge_fpm"))
+    };
     let input = accident::AccidentHeuristicInput {
-        vs_at_edge_fpm: ana_f32(&Some(analysis.clone()), "vs_at_edge_fpm"),
+        vs_at_edge_fpm: haerteste_sinkrate,
         // v0.12.3 (LE10): Accident-/Crash-Erkennung nutzt BEWUSST den
         // rohen `peak_g_load`, NICHT den EMA-geglätteten `scored_g`.
         // Crash-Detektion ist Extremwert-Detektion — der schärfste Wert
@@ -24117,6 +24175,14 @@ fn apply_accident_heuristic(stats: &mut FlightStats, analysis: &serde_json::Valu
         peak_g_load: stats
             .landing_peak_g_force
             .map(|g| g_auf_referenzkette(g, stats.landing_simulator)),
+        // v1.6.3: NIE weichspuelen. Der Score nimmt die Hoehenkurve, weil
+        // sie die Wahrheit besser trifft — die Unfall-Erkennung nimmt den
+        // HAERTEREN der beiden Messwerte. Damit kann kein Aufprall unter
+        // die Schwelle rutschen, egal welche Quelle im Einzelfall daneben
+        // liegt (etwa eine geneigte Bahn, bei der die Hoehenkurve das
+        // wegfallende Gelaende mitmisst). Der geloeschte Entlagungs-Code
+        // trug denselben Gedanken als `MSFS_DELAG_MAX_EDGE_ABS_FPM`; der
+        // Riegel darf mit ihm nicht verschwinden.
         sideslip_deg: stats.touchdown_sideslip_deg,
         landing_wing_strike_severity_pct: stats.landing_wing_strike_severity_pct,
         approach_stall_warning_count: Some(stats.approach_stall_warning_count),
@@ -24597,10 +24663,18 @@ fn stamp_touchdown_metadata(
     // aircraft from behind), so headwind = -Z. X positive
     // = wind from the right side.
     // Meteorologischer Wind: die Basis der Seitenwind-Kompensation.
-    if stats.landing_wind_direction_deg.is_none() {
-        stats.landing_wind_direction_deg = snap.wind_direction_deg;
-        stats.landing_wind_speed_kt = snap.wind_speed_kt;
-    }
+    //
+    // v1.6.3-QS: **ueberschreiben, nicht latchen.** Ein `is_none()`-Guard
+    // waere hier falsch — er stammt vom flugkonstanten `landing_simulator`,
+    // wo er richtig ist. Der Wind ist es nicht: nach einem Touch-and-Go oder
+    // einem Durchstarten mit Ausweichlandung rechnete die Kompensation sonst
+    // mit dem Wetter des ERSTEN Aufsetzens gegen Bahnkurs und Steuerkurs des
+    // LETZTEN. Da die Kompensation nur schenken kann, waeren das im
+    // schlechtesten Fall 5 Grad geschenkter Vorhalt fuer eine wirklich
+    // schiefe Landung. Alle Nachbarfelder hier (Position, Kurs, Geschwindig-
+    // keit, Windkomponenten) ueberschreiben aus demselben Grund.
+    stats.landing_wind_direction_deg = snap.wind_direction_deg;
+    stats.landing_wind_speed_kt = snap.wind_speed_kt;
     stats.landing_headwind_kt = snap.aircraft_wind_z_kt.map(|z| -z);
     stats.landing_crosswind_kt = snap.aircraft_wind_x_kt;
 }
@@ -41131,6 +41205,125 @@ mod touchdown_metadata_stamp_tests {
         }
     }
 
+    /// **Die Wind-Kette über den echten Pfad.** Das ist die Prüfung, die
+    /// der MSFS-Entlagung zwei Monate lang gefehlt hat: sie hatte 20 grüne
+    /// Tests gegen ihre eigene Rechenfunktion und lief im Feld nie, weil
+    /// der Weg dorthin nicht stimmte. Hier geht der Test denselben Weg wie
+    /// echte Flugdaten — Momentaufnahme aus dem Simulator, Stempel beim
+    /// Aufsetzen, Übergabe an die Bewertung — statt `AlignmentInput` von
+    /// Hand zu füllen.
+    ///
+    /// EDDP 26R (Bahnkurs 265,7°), Wind aus 195° mit 20 kt: das sind rund
+    /// 19,7 kt von links. Die Nase muss also nach LINKS vorhalten, und
+    /// genau dieser Vorhalt darf keine Punkte kosten.
+    #[test]
+    fn seitenwind_kompensation_wirkt_ueber_die_echte_kette() {
+        use landing_scoring::sub_alignment::{sub_alignment, AlignmentInput};
+
+        let mut stats = FlightStats {
+            // Zwei Meter neben der Mittellinie — der Versatz ist hier nicht
+            // das Thema, die Kursabweichung ist es.
+            runway_match: Some(runway::RunwayMatch {
+                centerline_distance_m: 2.0,
+                ..eddp_26r_match_with_raw_td(1500.0)
+            }),
+            ..Default::default()
+        };
+
+        // Der Weg, den echte Daten nehmen: ALLES kommt aus der Momentauf-
+        // nahme. Vorbelegte `stats`-Felder würde der Stempel überschreiben
+        // — genau das hat dieser Test beim Schreiben schon aufgedeckt.
+        let snap = SimSnapshot {
+            wind_direction_deg: Some(195.0),
+            wind_speed_kt: Some(20.0),
+            heading_deg_true: 250.0,
+            groundspeed_kt: 120.0,
+            // Positiv = Rückenwind, also sind −4 kt vier Knoten Gegenwind.
+            aircraft_wind_z_kt: Some(-4.0),
+            ..SimSnapshot::default()
+        };
+        stamp_touchdown_metadata(&mut stats, &snap, Utc::now(), None);
+        assert_eq!(
+            stats.landing_wind_direction_deg,
+            Some(195.0),
+            "der Wind muss beim Aufsetzen überhaupt gestempelt werden"
+        );
+
+        let mut input = landing_scoring::LandingScoringInput::default();
+        fill_v2_rollout_fields(&mut input, &stats, "EDDP");
+        assert_eq!(
+            input.landing_wind_direction_deg,
+            Some(195.0),
+            "der gestempelte Wind muss die Bewertung erreichen"
+        );
+        // Eigengeschwindigkeit statt Grundgeschwindigkeit: 120 kt über
+        // Grund plus 4 kt Gegenwind.
+        assert_eq!(input.landing_groundspeed_kt, Some(124.0));
+
+        let mit_wind = sub_alignment(&AlignmentInput {
+            centerline_offset_m: Some(2.0),
+            runway_width_m: Some(45.0),
+            heading_true_deg: Some(250.0),
+            runway_true_course_deg: Some(265.7),
+            airport_source: Some("runway_match".into()),
+            runway_geometry_trusted: Some(true),
+            wind_direction_deg: input.landing_wind_direction_deg,
+            wind_speed_kt: input.landing_wind_speed_kt,
+            bezugsgeschwindigkeit_kt: input.landing_groundspeed_kt,
+            ..Default::default()
+        });
+        let ohne_wind = sub_alignment(&AlignmentInput {
+            centerline_offset_m: Some(2.0),
+            runway_width_m: Some(45.0),
+            heading_true_deg: Some(250.0),
+            runway_true_course_deg: Some(265.7),
+            airport_source: Some("runway_match".into()),
+            runway_geometry_trusted: Some(true),
+            ..Default::default()
+        });
+        assert!(
+            mit_wind.points > ohne_wind.points,
+            "der windbedingte Vorhalt muss Punkte zurückgeben: mit {:?}, ohne {:?}",
+            mit_wind.points,
+            ohne_wind.points
+        );
+        // Der Pilot muss seinen GEMESSENEN Winkel wiederfinden, nicht den
+        // heruntergerechneten — sonst widerspricht die Kachel der Karte.
+        assert!(
+            mit_wind.value.as_deref().is_some_and(|v| v.contains("16°")),
+            "die Anzeige muss den gemessenen Winkel tragen, war {:?}",
+            mit_wind.value
+        );
+        assert!(
+            mit_wind.value.as_deref().is_some_and(|v| v.contains("Wind")),
+            "das gewährte Zugeständnis muss ausgewiesen sein, war {:?}",
+            mit_wind.value
+        );
+    }
+
+    /// Gegenprobe: derselbe Schiefstand OHNE Wind bekommt nichts geschenkt.
+    /// Ohne diesen Test wäre nicht belegt, dass die Kompensation an den
+    /// Wind gebunden ist statt die Leiter generell aufzuweichen.
+    #[test]
+    fn ohne_wind_gibt_es_kein_zugestaendnis() {
+        let mut stats = FlightStats {
+            runway_match: Some(eddp_26r_match_with_raw_td(1500.0)),
+            ..Default::default()
+        };
+        let snap = SimSnapshot {
+            groundspeed_kt: 120.0,
+            ..SimSnapshot::default()
+        };
+        stamp_touchdown_metadata(&mut stats, &snap, Utc::now(), None);
+
+        let mut input = landing_scoring::LandingScoringInput::default();
+        fill_v2_rollout_fields(&mut input, &stats, "EDDP");
+        assert!(
+            input.landing_wind_direction_deg.is_none(),
+            "ohne Windmeldung darf nichts gestempelt werden"
+        );
+    }
+
     /// v0.19.x FIX: `touchdown_distance_from_threshold_ft` is measured from
     /// the physical runway-pavement start, not the landing threshold (see
     /// `runway_assessment::classify_displaced`'s doc comment). On a runway
@@ -42758,6 +42951,86 @@ mod msfs_touchdown_delag_replay_golden {
     fn ewg906_hoehenkurve_trifft_die_wahrheit() {
         assert_hoehenkurve_trifft("ewg906_msfs_delag_fire.jsonl.gz", -263.0, 60.0);
     }
+
+    /// Die eigentliche Sicherheitsfrage: **spuelt die neue Quelle eine
+    /// harte Landung weich?** DLH848 ist eine echt firme MSFS-Landung; der
+    /// gedaempfte Kanal las sie mit 286 fpm zu weich. Die Hoehenkurve muss
+    /// mindestens so hart lesen wie der Simulator — nie weicher.
+    ///
+    /// Diese Aufzeichnung lag nach dem Entfernen der Entlagung verwaist im
+    /// Repo: ihr Test war mitgeloescht, die Datei geblieben. Genau der Fall,
+    /// den v1.6.3 nicht wiederholen darf — Pruefungen duerfen nicht mit dem
+    /// Code verschwinden, den sie abgesichert haben (QS-Befund v1.6.3).
+    #[test]
+    fn dlh848_firme_msfs_landung_wird_nicht_weichgespuelt() {
+        let f = load_replay("dlh848_msfs_firm_control.jsonl.gz");
+        let samples: Vec<TouchdownWindowSample> =
+            f.buffer.iter().cloned().map(Into::into).collect();
+        let analysis = compute_landing_analysis(&samples, f.edge_at, f.simulator);
+        let geo = num(&analysis, "vs_geometrie_fpm").expect("Hoehenkurve fehlt");
+        let simvar = num(&analysis, "vs_simvar_edge_fpm").expect("SimVar fehlt");
+        assert!(
+            geo <= simvar,
+            "firme Landung darf nicht weicher gelesen werden: Kurve {geo}, SimVar {simvar}"
+        );
+        // Und sie muss klar im firmen Band bleiben, nicht nur knapp.
+        assert!(
+            geo < -300.0,
+            "DLH848 ist firm; die Kurve liest {geo} fpm und damit zu weich"
+        );
+    }
+
+    /// Der **einzige** Replay-Test auf X-Plane-Daten. Ohne ihn stellt v1.6.3
+    /// X-Plane erstmals auf dieselbe Quelle um, ohne dass ein echter
+    /// X-Plane-Flug das je bestaetigt — die Testlage waere schlechter als
+    /// die Aenderung. ITY324 ist eine steile Landung (863 fpm gemeldet):
+    /// hier ist der Simulator-Kanal ausnahmsweise gut, weil bei steilem
+    /// Anflug nichts zu daempfen ist. Die Kurve muss das reproduzieren
+    /// statt eine eigene Wahrheit zu erfinden.
+    #[test]
+    fn ity324_steile_xplane_landung_bleibt_steil() {
+        let f = load_replay("ity324_xplane_steep_control.jsonl.gz");
+        assert!(
+            matches!(f.simulator, Simulator::XPlane11 | Simulator::XPlane12),
+            "Fixture muss X-Plane sein, war {:?}",
+            f.simulator
+        );
+        let samples: Vec<TouchdownWindowSample> =
+            f.buffer.iter().cloned().map(Into::into).collect();
+        let analysis = compute_landing_analysis(&samples, f.edge_at, f.simulator);
+        let geo = num(&analysis, "vs_geometrie_fpm").expect("Hoehenkurve fehlt");
+        let simvar = num(&analysis, "vs_simvar_edge_fpm").expect("SimVar fehlt");
+        assert!(
+            (geo - simvar).abs() < 60.0,
+            "bei steilem Anflug muessen beide Quellen zusammenfallen: \
+             Kurve {geo}, SimVar {simvar}"
+        );
+        assert!(geo < -700.0, "steile Landung, gemessen aber nur {geo} fpm");
+    }
+
+    /// Der Kontakt-Frame darf die Steigung nicht bestimmen. Ohne den
+    /// `!on_ground`-Filter hob im Fixture a320_vrnevnl ein einzelner
+    /// 1,49-ft-Sprung beim Aufsetzen das Ergebnis um 158 fpm an — bei einer
+    /// Zweipunkt-Steigung waere das die halbe Punktzahl der Achse.
+    #[test]
+    fn bodenkontakt_samples_zaehlen_nicht_in_die_sinkrate() {
+        let f = load_replay("jbu322_msfs_delag_fire.jsonl.gz");
+        let samples: Vec<TouchdownWindowSample> =
+            f.buffer.iter().cloned().map(Into::into).collect();
+        let mit_boden = samples.iter().filter(|s| s.on_ground).count();
+        assert!(
+            mit_boden > 0,
+            "Fixture taugt nicht als Beleg: enthaelt keine Boden-Samples"
+        );
+        let analysis = compute_landing_analysis(&samples, f.edge_at, f.simulator);
+        let geo = num(&analysis, "vs_geometrie_fpm").expect("Hoehenkurve fehlt");
+        // Fahrwerkskompression liest immer HAERTER; ein Wert jenseits des
+        // Plausiblen waere das Zeichen, dass der Filter nicht greift.
+        assert!(
+            geo > -600.0 && geo < 0.0,
+            "Kurve liest {geo} fpm — riecht nach mitgemessener Fahrwerkskompression"
+        );
+    }
 }
 
 // ======================================================================
@@ -43069,13 +43342,20 @@ mod msfs_agl_flare_tests {
             Some("msfs_agl")
         );
 
-        // v1.6.3: Die Aufsetzrate ÄNDERT sich hier bewusst — und dieser
-        // Test hat die Änderung korrekt bemerkt. Bis v1.6.2 kam sie aus
-        // dem gedämpften SimVar-Kanal (aufgezeichnet: −423,5 fpm), jetzt
-        // aus der Höhenkurve (−463,9). Die Landung war also HÄRTER als
-        // bisher gemeldet — dieselbe Richtung, die der Korpus für kurzes
-        // Abfangen zeigt. Festgehalten wird ab jetzt der neue Wert plus
-        // die Herkunft, damit ein künftiger Rückschritt auffällt.
+        // v1.6.3: Die Aufsetzrate kommt ab jetzt aus der Höhenkurve. JBU323
+        // ist der Beleg, dass das bei einem STEILEN Anflug nichts kaputt
+        // macht: aufgezeichnet −423,5 fpm aus dem SimVar-Kanal, gemessen
+        // −422,2 aus der Ausgleichsgeraden — 1,3 fpm auseinander. Wo nichts
+        // zu dämpfen ist, fallen beide Quellen zusammen; die Umstellung
+        // wirkt nur dort, wo der Kanal wirklich hinterherhinkt.
+        //
+        // Die QS zu diesem Release hat hier einen eigenen Fehler gefunden:
+        // eine Zwischenfassung rechnete die Kurve als Differenz zweier
+        // Einzelwerte und las dadurch −463,9 — 40 fpm härter, allein aus
+        // dem Aufsetz-Frame. Der Test forderte daraufhin „muss härter
+        // ausfallen" und hätte die Korrektur zurück auf die Ausgleichs-
+        // gerade blockiert. Die belastbare Zusage ist NICHT „härter",
+        // sondern „bei steilem Anflug deckungsgleich".
         let edge_recorded = recorded.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).unwrap();
         let edge_new = a.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).unwrap();
         assert_eq!(
@@ -43084,13 +43364,9 @@ mod msfs_agl_flare_tests {
             "die Aufsetzrate muss aus der Höhenkurve kommen"
         );
         assert!(
-            edge_new < edge_recorded,
-            "die ungedämpfte Messung muss hier härter ausfallen: aufgezeichnet \
+            (edge_new - edge_recorded).abs() <= 25.0,
+            "steiler Anflug: beide Quellen müssen zusammenfallen, aufgezeichnet \
              {edge_recorded}, neu {edge_new}"
-        );
-        assert!(
-            (-500.0..=-430.0).contains(&edge_new),
-            "erwartet rund −464 fpm aus der Höhenkurve, gemessen {edge_new}"
         );
 
         // The lagged SimVar values are preserved as forensic provenance and

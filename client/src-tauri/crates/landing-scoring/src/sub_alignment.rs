@@ -1,4 +1,4 @@
-//! Ausrichtungs-Sub-Score (v1.6.2, `score_algorithm_version` 6).
+//! Ausrichtungs-Sub-Score (seit v1.6.2; `score_algorithm_version` 7).
 //!
 //! **Warum es diese Achse gibt.** Der Score maß bis v1.6.1 ausschließlich,
 //! WIE sanft aufgesetzt wurde — nie, WO und wie gerade. Auslöser war
@@ -26,13 +26,25 @@
 //!
 //! **Nur Größen, die BEIDE Simulatoren gleichwertig liefern.** Versatz und
 //! Kursabweichung stammen aus Position und rechtweisendem Steuerkurs; beide
-//! sind in MSFS und X-Plane nativ und gleich definiert. Bewusst NICHT
-//! verwendet: der Schiebewinkel (X-Plane liefert ihn nur bei 26 % der
-//! Landungen und rechnet ihn anders als MSFS), die Windkomponenten (Frame
-//! auf X-Plane ungeklärt) und das VORZEICHEN der Querneigung (MSFS dreht
-//! bei der Längsneigung das Vorzeichen und der Code korrigiert das
-//! ausdrücklich — bei der Querneigung passiert diese Korrektur nicht, das
-//! ist nie verifiziert worden).
+//! sind in MSFS und X-Plane nativ und gleich definiert.
+//!
+//! **Seit v1.6.3 gehört die meteorologische Windrichtung dazu** (Seitenwind-
+//! Kompensation, siehe `wind_zugestaendnis_deg`). Die Konvention ist an
+//! echten Daten geprüft, nicht angenommen: gegen METAR über 532 Landungen
+//! (X-Plane Kreismittel −1,9°, MSFS +0,4°, null Fälle in der Nähe von 180°)
+//! und — steuerkursfrei und damit rahmenunabhängig — gegen den rohen
+//! X-Plane-Windvektor desselben Ticks (85 von 85 Landungen innerhalb ±10°,
+//! R = 1,000). Beide Simulatoren melden „kommt aus", rechtweisend.
+//!
+//! Bewusst NICHT verwendet: der Schiebewinkel (X-Plane liefert ihn nur bei
+//! 26 % der Landungen und rechnet ihn anders als MSFS), die körperfesten
+//! Windkomponenten `aircraft_wind_x/z_kt` (sie tragen dieselbe Information,
+//! sind aber die Kanäle, in denen v1.6.3 gerade in BEIDEN Simulatoren einen
+//! Fehler gefunden hat — die meteorologische Richtung ist die belegte
+//! Quelle) und das VORZEICHEN der Querneigung (MSFS dreht bei der
+//! Längsneigung das Vorzeichen und der Code korrigiert das ausdrücklich —
+//! bei der Querneigung passiert diese Korrektur nicht, das ist nie
+//! verifiziert worden).
 
 use crate::SubScoreEntry;
 
@@ -225,7 +237,9 @@ fn punkte_aus_stufen(wert: f32, stufen: &[(f32, u8)], darueber: u8) -> u8 {
 ///
 /// Reihenfolge wie beim Bremsweg-Score: erst Voraussetzungen (die
 /// spezifischere Aussage), dann fehlende Daten, dann Plausibilität.
-fn gepruefte_werte(input: &AlignmentInput) -> Result<(f32, f32), &'static str> {
+fn gepruefte_werte(
+    input: &AlignmentInput,
+) -> Result<(f32, f32, f32, f32), &'static str> {
     if input.nicht_konventionell {
         return Err("not_applicable_for_category");
     }
@@ -273,7 +287,8 @@ fn gepruefte_werte(input: &AlignmentInput) -> Result<(f32, f32), &'static str> {
     };
     // Seitenwind erzwingt einen Vorhaltewinkel — der wird abgezogen, statt
     // die Leiter aufzuweichen (siehe `wind_zugestaendnis_deg`).
-    let kurs_abw = (kurs_roh - wind_zugestaendnis_deg(input, kurs_signiert)).max(0.0);
+    let zugestanden = wind_zugestaendnis_deg(input, kurs_signiert);
+    let kurs_abw = (kurs_roh - zugestanden).max(0.0);
 
     // Falsches Bahnende gematcht (Landung nahe der Bahnmitte, Divert): die
     // Kursabweichung springt auf ~180°. Das ist kein schiefes Aufsetzen,
@@ -289,14 +304,14 @@ fn gepruefte_werte(input: &AlignmentInput) -> Result<(f32, f32), &'static str> {
     {
         return Err("implausible_runway_geometry");
     }
-    Ok((anteil, kurs_abw))
+    Ok((anteil, kurs_abw, kurs_roh, zugestanden))
 }
 
 /// Der Ausrichtungs-Sub-Score. Die schlechtere der beiden Größen bestimmt
 /// die Punktzahl — wer die Mittellinie trifft, aber 15° schräg steht, hat
 /// genauso ein Problem wie umgekehrt.
 pub fn sub_alignment(input: &AlignmentInput) -> SubScoreEntry {
-    let (anteil, kurs_abw) = match gepruefte_werte(input) {
+    let (anteil, kurs_abw, kurs_roh, zugestanden) = match gepruefte_werte(input) {
         Ok(werte) => werte,
         Err(grund) => {
             return SubScoreEntry::skipped("alignment", "landing.sub.alignment", grund)
@@ -329,7 +344,18 @@ pub fn sub_alignment(input: &AlignmentInput) -> SubScoreEntry {
         "alignment",
         "landing.sub.alignment",
         punkte,
-        format!("{offset_m:.0} m · {kurs_abw:.0}°"),
+        // v1.6.3-QS: **den GEMESSENEN Winkel zeigen, nicht den korrigierten.**
+        // Sonst liest der Pilot "3 Grad", waehrend Karte und Flugbericht
+        // seine echten 8 Grad zeigen — eine Landung, zwei Zahlen, genau die
+        // Krankheit, die der PIA3452-Umbau ausgeraeumt hat. Das gewaehrte
+        // Zugestaendnis steht als Minus-Term daneben, damit die Punktzahl
+        // ohne Blick in den Quelltext nachrechenbar ist. Ohne Wind-
+        // Kompensation bleibt die Anzeige unveraendert kurz.
+        if zugestanden > 0.05 {
+            format!("{offset_m:.0} m · {kurs_roh:.0}° (−{zugestanden:.0}° Wind)")
+        } else {
+            format!("{offset_m:.0} m · {kurs_roh:.0}°")
+        },
         grund,
         crate::band_from_points(punkte),
     )
