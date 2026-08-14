@@ -17,56 +17,18 @@ import en from "./en/common.json";
 import italienisch from "./it/common.json";
 
 /**
- * Altlast: italienische Übersetzungen, die schon vor diesem Test fehlten.
+ * Vollständigkeits-Ausnahmen — derzeit **leer**, und das soll so bleiben.
  *
- * Bewusst als KONKRETE Liste statt als Namensraum-Muster — so schrumpft sie,
- * wenn jemand übersetzt, und ein neuer fehlender Schlüssel im selben Zweig
- * fällt trotzdem sofort auf. Wer hier etwas austrägt, hat übersetzt.
+ * Als dieser Test entstand, standen hier 39 fehlende italienische Texte
+ * (Pilotenchat, MSFS-HUD, Integritätsmeldungen, CPDLC). Sie sind übersetzt;
+ * die Liste ist der Ort, an dem eine neue Lücke sichtbar würde, bevor sie
+ * beim Piloten als roher Schlüssel auf dem Bildschirm landet. Wer hier
+ * etwas einträgt, verschiebt Arbeit — besser gleich übersetzen.
  */
-const ALTLAST_IT = new Set([
-  "tabs.chat",
-  "msfs_hud.section_title",
-  "msfs_hud.intro",
-  "msfs_hud.toggle_label",
-  "msfs_hud.toggle_hint",
-  "msfs_hud.restart_hint",
-  "integrity.flag_type.POSITION_DELTA_EXCESSIVE",
-  "integrity.flag_type.ALTITUDE_DELTA_EXCESSIVE",
-  "integrity.flag_type.FUEL_RATE_IMPOSSIBLE",
-  "integrity.flag_type.FUEL_INCREASE_IN_FLIGHT",
-  "integrity.flag_type.WEIGHT_DELTA_EXCESSIVE",
-  "integrity.flag_type.GROUND_ELEVATION_MISMATCH",
-  "integrity.flag_type.AIR_TO_GROUND_TELEPORT",
-  "integrity.flag_type.SIM_STATE_RESET_SIGNATURE",
-  "integrity.flag_type.TELEMETRY_GAP_SHORT",
-  "integrity.flag_type.TELEMETRY_GAP_LONG",
-  "integrity.flag_type.UNKNOWN",
-  "integrity.phase_name.BOARDING",
-  "integrity.phase_name.PUSHBACK",
-  "integrity.phase_name.TAXI_OUT",
-  "integrity.phase_name.TAXI_IN",
-  "integrity.phase_name.TAKEOFF_ROLL",
-  "integrity.phase_name.TAKEOFF",
-  "integrity.phase_name.CLIMB",
-  "integrity.phase_name.CRUISE",
-  "integrity.phase_name.DESCENT",
-  "integrity.phase_name.APPROACH",
-  "integrity.phase_name.FINAL",
-  "integrity.phase_name.LANDING",
-  "integrity.phase_name.BLOCKS_ON",
-  "integrity.phase_name.ARRIVED",
-  "integrity.flag_description_readable",
-  "integrity.flag_count_readable_one",
-  "integrity.flag_count_readable_other",
-  "cpdlc.callsign_from_plan",
-  "cpdlc.callsign_override_active",
-  "cpdlc.callsign_locked_logon",
-  "cpdlc.callsign_reconnecting",
-  "cpdlc.field_callsign_readonly",
-]);
+const ALTLAST_IT = new Set<string>([]);
 
-/** Der Pilotenchat ist in beiden Fremdsprachen noch nicht übersetzt. */
-const AUSGENOMMEN = [/^chat\./];
+/** Keine Namensräume ausgenommen — jeder Text zählt. */
+const AUSGENOMMEN: RegExp[] = [];
 
 function schluessel(obj: unknown, praefix = ""): string[] {
   if (obj === null || typeof obj !== "object" || Array.isArray(obj)) {

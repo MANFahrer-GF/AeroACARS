@@ -13,7 +13,8 @@
     "log": "Log ACARS",
     "settings": "Impostazioni",
     "about": "Info",
-    "cpdlc": "PDC/CPDLC"
+    "cpdlc": "PDC/CPDLC",
+    "chat": "Chat"
   },
   "nav": {
     "news": "Notizie",
@@ -1414,7 +1415,39 @@
     "flag_count": "{{count}} flag in questa sessione",
     "dismiss": "Chiudi",
     "folge_kritisch": "Il volo viene comunque valutato normalmente. Se però la registrazione resta lacunosa, alla fine potrebbe mancare l'atterraggio — in quel caso il rapporto va in revisione. Meglio tenere d'occhio il collegamento con il simulatore.",
-    "folge_harmlos": "Nessun intervento necessario — il volo viene valutato normalmente."
+    "folge_harmlos": "Nessun intervento necessario — il volo viene valutato normalmente.",
+    "flag_type": {
+      "POSITION_DELTA_EXCESSIVE": "Salto di posizione anomalo",
+      "ALTITUDE_DELTA_EXCESSIVE": "Salto di quota anomalo",
+      "FUEL_RATE_IMPOSSIBLE": "Consumo di carburante non plausibile",
+      "FUEL_INCREASE_IN_FLIGHT": "Il carburante è aumentato in volo",
+      "WEIGHT_DELTA_EXCESSIVE": "Il peso è cambiato inaspettatamente",
+      "GROUND_ELEVATION_MISMATCH": "La quota del terreno non corrisponde all'aeroporto",
+      "AIR_TO_GROUND_TELEPORT": "Salto dall'aria al suolo",
+      "SIM_STATE_RESET_SIGNATURE": "Il simulatore sembra essere stato ricaricato",
+      "TELEMETRY_GAP_SHORT": "Breve interruzione dei dati",
+      "TELEMETRY_GAP_LONG": "Interruzione dei dati prolungata",
+      "UNKNOWN": "Anomalia sconosciuta"
+    },
+    "phase_name": {
+      "BOARDING": "durante l'imbarco",
+      "PUSHBACK": "durante il pushback",
+      "TAXI_OUT": "durante il rullaggio in partenza",
+      "TAXI_IN": "durante il rullaggio in arrivo",
+      "TAKEOFF_ROLL": "durante la corsa di decollo",
+      "TAKEOFF": "al decollo",
+      "CLIMB": "in salita",
+      "CRUISE": "in crociera",
+      "DESCENT": "in discesa",
+      "APPROACH": "in avvicinamento",
+      "FINAL": "in finale",
+      "LANDING": "all'atterraggio",
+      "BLOCKS_ON": "dopo l'arrivo ai blocchi",
+      "ARRIVED": "dopo l'arrivo"
+    },
+    "flag_description_readable": "{{was}} {{wann}}",
+    "flag_count_readable_one": "una volta in questo volo",
+    "flag_count_readable_other": "{{count}} volte in questo volo"
   },
   "resume": {
     "title": "Volo attivo rilevato",
@@ -2053,7 +2086,12 @@
     "station_unknown": "Impossibile verificare {{station}}",
     "station_online_short": "raggiungibile",
     "station_offline_short": "non registrata",
-    "station_unknown_short": "non verificabile"
+    "station_unknown_short": "non verificabile",
+    "callsign_from_plan": "Verrà trasmesso {{flight}} dal piano di volo. Se voli in rete con un nominativo diverso, inseriscilo qui — è con quello che l'ATC ti cerca.",
+    "callsign_override_active": "Stai trasmettendo come {{entered}} (piano di volo: {{flight}}).",
+    "callsign_locked_logon": "Nominativo bloccato mentre è attivo un logon CPDLC — il controllore ti conosce come {{callsign}}. Disconnettiti prima.",
+    "callsign_reconnecting": "Riconnessione con il nuovo nominativo …",
+    "field_callsign_readonly": "Solo visualizzazione — cambia il nominativo sopra"
   },
   "hoppie_settings": {
     "section_title": "Hoppie ACARS (PDC/CPDLC)",
@@ -2120,14 +2158,52 @@
     "fl_regler": "Livello di volo per i settori"
   },
   "chat": {
-    "einblendung_ops": "Operazioni",
+    "title": "Chat piloti",
+    "in_der_luft": "{{count}} in volo",
+    "wer_fliegt": "Chi sta volando adesso",
+    "direkt_an": "Scrivi direttamente a {{name}}",
+    "direkt_an_kurz": "Diretto a",
+    "an_alle": "a tutti invece",
+    "marke_an": "DIRETTO",
+    "marke_von": "SOLO PER TE",
+    "du": "tu",
+    "leer": "Ancora nessun messaggio. Vedi le ultime dodici ore.",
+    "zuruf": "Rapido",
+    "senden": "Invia",
+    "eingabe": "Scrivi un messaggio",
+    "platzhalter": "Scrivi qualcosa di breve …",
+    "platzhalter_direkt": "Diretto a {{name}} …",
+    "fokus": "Adesso la tastiera è nella chat — il simulatore non riceve nulla.",
+    "fokus_zurueck": "la restituisce.",
+    "gesperrt": "Finale. La scrittura è disattivata — solo messaggi rapidi. Puoi comunque leggere.",
+    "ungelesen_one": "un messaggio non letto",
+    "ungelesen_other": "{{count}} messaggi non letti",
+    "quick": {
+      "gate": "Sono quasi al gate",
+      "wer": "C'è qualcun altro in volo?",
+      "delay": "Sono in ritardo",
+      "taxi": "Sto rullando",
+      "down": "Sono atterrato"
+    },
+    "marke_ops": "OPERATIVO",
+    "regeln": "Memoria 12 h · l'operativo può leggere",
+    "regeln_titel": "Apri l'informativa privacy della chat piloti",
+    "settings_title": "Chat piloti",
+    "settings_an_label": "Usa la chat piloti",
+    "settings_an_hint": "Disattivata: nessuna scheda chat, nessun messaggio in arrivo, nessun invio. I messaggi vengono comunque cancellati dopo dodici ore; l'operativo può leggere.",
+    "settings_ton_label": "Suono per i nuovi messaggi",
+    "settings_ton_hint": "Più basso in discesa, sempre silenzioso in finale — indipendentemente da questa impostazione.",
+    "nicht_erreichbar": "niente chat",
+    "nicht_erreichbar_titel": "Questo pilota vola con un client senza chat — il messaggio non arriverebbe.",
+    "gelandet": "atterrato a {{ort}}",
+    "einblendung_ops": "Operativo",
     "einblendung_direkt": "Diretto a te",
     "einblendung_alle": "Messaggio",
     "einblendung_oeffnen": "Apri",
     "datenschutz": "Privacy",
-    "wer_unbekannt": "Chi vola lo vedi in volo",
+    "wer_unbekannt": "Chi vola lo vedi quando sei in volo",
     "zu_titel": "La chat è aperta mentre voli.",
-    "zu_text": "Appena parte la registrazione puoi partecipare — e ancora 30 minuti dopo il rapporto di volo."
+    "zu_text": "Appena parte la registrazione puoi partecipare — e ancora per 30 minuti dopo il rapporto di volo."
   },
   "cdm": {
     "titel": "VATSIM CDM",
@@ -2140,5 +2216,12 @@
     "warum_fenster": "Perché una finestra separata: VATSIM non consente di incorporare la pagina di accesso in un altro programma.",
     "knopf": "VATSIM CDM",
     "knopf_titel": "Apri la sequenza di partenza su VATSIM"
+  },
+  "msfs_hud": {
+    "section_title": "HUD in-sim per MSFS",
+    "intro": "La striscia HUD dentro il simulatore (widget Flow Pro) riceve i dati da un server locale su questo PC (porta 47847, raggiungibile solo da questo PC).",
+    "toggle_label": "Attiva il server del pannello",
+    "toggle_hint": "Predefinito: attivo. Puoi disattivarlo per isolare eventuali problemi — senza il server l'HUD nel simulatore mostra sempre «nessuna connessione», tutto il resto di AeroACARS continua a funzionare.",
+    "restart_hint": "Ha effetto al prossimo avvio di AeroACARS."
   }
 }
