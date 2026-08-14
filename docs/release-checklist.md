@@ -31,7 +31,13 @@ Check: `grep -E '"0\.X\.Y"|version = "0\.X\.Y"' client/package.json client/src-t
 ## 3. Tests grün
 
 - [ ] `cargo check` (`client/src-tauri/`) ohne Warnings/Errors
-- [ ] `cargo test -p landing-scoring`
+- [ ] **`cargo test --workspace`** — nicht `cargo test`! Ohne `--workspace`
+      läuft aus `client/src-tauri` **nur** das Paket `aeroacars-app`; die
+      Tests von `landing-scoring` (also der komplette Landungs-Score) laufen
+      dann gar nicht mit. Bei der QS zu v1.6.3 blieben dadurch zwei echte
+      Regressionen lokal grün, die in der CI rot gewesen wären.
+- [ ] `cargo test -p landing-scoring` (deckt `--workspace` mit ab; einzeln
+      nur nützlich, wenn man gezielt am Score arbeitet)
 - [ ] `cargo test -p aeroacars-app --lib` (Backend-Lib-Tests)
 - [ ] `cargo test --doc` (**Doctests!** — v0.19.3 hat `main` rot hinterlassen, weil ein
       eingerückter Beispiel-Text im Modul-Kommentar von `arrival.rs` als Rust-Code
