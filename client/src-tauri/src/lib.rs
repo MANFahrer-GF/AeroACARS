@@ -14043,7 +14043,7 @@ fn build_pirep_payload(
     };
     // v0.10.0 (#runway-utilization-score): LDA-basierter
     // Bahn-Auslastungs-Score. Markiert weiter unten am
-    // PirepPayload via score_algorithm_version: Some(5)
+    // PirepPayload via score_algorithm_version: Some(6)
     // (v0.12.0: Float-Toleranz-Refinement;
     //  v0.16.21: MSFS touchdown V/S SimVar-lag g-force-gated de-lag;
     //  v0.20.x: Bahnauslastung-QS — Float-Toleranz 15→20 % LDA, Banding
@@ -14217,7 +14217,11 @@ fn build_pirep_payload(
         // (g-force-gated AGL de-lag; MSFS only, X-Plane unchanged).
         // v0.20.x: bump 4→5 — Bahnauslastung-QS (Float-Toleranz +
         // Banding grosszuegiger) + Sinkraten-Ziel-Korridor.
-        score_algorithm_version: Some(5),
+        // v1.6.2: bump 5→6 — achte Achse „Ausrichtung" (Versatz zur
+        // Mittellinie an der Bahnbreite gemessen + Kursabweichung).
+        // Forward-only wie alle Vorgaenger: alte Fluege behalten ihren
+        // gespeicherten Score, es wird nichts nachgerechnet.
+        score_algorithm_version: Some(6),
         client_health: build_client_health_report(&stats),
     }
 }
@@ -14524,6 +14528,24 @@ fn fill_v2_rollout_fields(
     input.airport_source = rm.map(|_| "runway_match".to_string());
     input.runway_match_icao = rm.map(|m| m.airport_ident.clone());
     input.runway_match_ident = rm.map(|m| m.runway_ident.clone());
+    // ── v1.6.2 Ausrichtung ───────────────────────────────────────────
+    //
+    // Bewusst hier und nicht an den vier Aufrufstellen: der Helfer ist die
+    // einzige Stelle, an der die Bahn-Geometrie in den Score wandert —
+    // alles andere waere vier Kopien, die auseinanderlaufen koennen.
+    input.runway_match_centerline_offset_m = rm.map(|m| m.centerline_distance_m as f32);
+    // Breite aus dem Match (beide Match-Pfade fuellen sie), nicht aus der
+    // Navigraph-Geometrie: sonst haetten OurAirports-Landungen nie eine.
+    input.runway_width_m = rm.map(|m| m.width_ft * 0.3048).filter(|w| *w > 0.0);
+    input.landing_heading_true_deg = stats.landing_heading_true_deg;
+    // Bahnkurs gibt es nur aus Navigraph-Navdaten. Fehlt er, weist
+    // `sub_alignment` die Achse als „nicht bewertet" aus — der Versatz
+    // allein wuerde genau die Groesse verlieren, die einen Kartenfehler
+    // von einer Fehllandung trennt.
+    input.runway_true_course_deg = stats
+        .runway_nav_geometry
+        .as_ref()
+        .map(|g| g.true_course as f32);
 }
 
 /// v0.7.1 Round-2 Helper: berechnet den gewichteten Aggregate-Master-
@@ -15251,7 +15273,7 @@ where
         // v0.16.21: bump 3→4 — MSFS touchdown V/S SimVar-lag corrected.
         // v0.20.x: bump 4→5 — Bahnauslastung-QS (Float-Toleranz +
         // Banding grosszuegiger) + Sinkraten-Ziel-Korridor.
-        score_algorithm_version: Some(5),
+        score_algorithm_version: Some(6),
     })
 }
 
@@ -19424,8 +19446,60 @@ fn ana_str(v: &Option<serde_json::Value>, key: &str) -> Option<String> {
 /// touchdown_v2-Forensik-Pipeline; die ist bei einem fallback_zero-Flug
 /// (kein validierter Touchdown, siehe `canonical_landing_rate_fpm`) von
 /// selbst leer, muss also nicht extra gegatet werden.
+/// Kanal-Charakteristik des G-Messwerts, je Simulator — die Grundlage der
+/// Fairness-Normierung unten.
+///
+/// **Der Befund (14.08.2026, Korpus 577 Landungen).** MSFS und X-Plane
+/// liefern NICHT dieselbe physikalische Groesse:
+///
+/// * MSFS `G FORCE` ist ein gedaempfter Instrumentenwert. Regression ueber
+///   473 Landungen: `G = 1,011 + 0,000844 · |fpm|` → implizierte
+///   Abbremszeit **614 ms**.
+/// * X-Plane `sim/flightmodel2/misc/gforce_normal` ist die frame-genaue
+///   Lastziffer. Regression ueber 104 Landungen: `G = 1,002 + 0,001942 ·
+///   |fpm|` → **267 ms**.
+///
+/// 614 ms sind fuer eine Fahrwerksfederung physikalisch unmoeglich (Airliner
+/// ~200-300 ms, GA-Blattfeder ~100-150 ms) — das ist die Signatur eines
+/// Tiefpasses im MSFS-Kanal. X-Plane liegt genau im plausiblen Bereich.
+///
+/// **Warum eine reine Skalierung genuegt:** die Signalform ist in beiden Sims
+/// identisch (Median/Peak im 500-ms-Fenster 0,863 gegen 0,855). Es
+/// unterscheidet sich nur die Amplitude, nicht die Form — also reicht ein
+/// Amplitudenfaktor, kein Nachbau des Filters.
+///
+/// **Warum MSFS die Referenz ist:** die Punkteschwellen in `sub_g_force`
+/// (1,20/1,40/1,70/2,10) stammen aus der Zeit, als AeroACARS MSFS-only war,
+/// und sind nie neu kalibriert worden. Auf X-Plane umzustellen haette jeden
+/// bestehenden Score verschoben; die Kette auf die kalibrierte Referenz zu
+/// bringen ist der kleinere und ehrlichere Eingriff.
+///
+/// Der ROHWERT bleibt unangetastet — er wandert unveraendert als
+/// `peak_g_load` in die Forensik und ins Touchdown-Payload. Normalisiert
+/// wird ausschliesslich der Wert, der in die BEWERTUNG geht; genau dafuer
+/// existiert die Trennung `scored_g_load` / `peak_g_load` seit v0.12.3.
+///
+/// Ein neuer Simulator traegt hier seine gemessene Steigung ein — dieselbe
+/// Messung, dieselbe Herleitung.
+const G_KANAL_STEIGUNG_MSFS: f32 = 0.000_844;
+const G_KANAL_STEIGUNG_XPLANE: f32 = 0.001_942;
+
+/// Rechnet einen G-Messwert auf die MSFS-Referenzkette um. `None` als
+/// Simulator (oder ein unbekannter) bleibt unveraendert — lieber roh als
+/// falsch normiert.
+fn g_auf_referenzkette(g: f32, simulator: Option<&str>) -> f32 {
+    let faktor = match simulator {
+        Some("xplane") => G_KANAL_STEIGUNG_MSFS / G_KANAL_STEIGUNG_XPLANE,
+        _ => return g,
+    };
+    // Nur der Ueberschuss ueber 1 g wird skaliert: 1 g ist in beiden Sims
+    // derselbe Ruhezustand, der Filter wirkt nur auf die Auslenkung.
+    1.0 + (g - 1.0) * faktor
+}
+
 fn score_g_for_stats(stats: &FlightStats) -> Option<recorder::ScoredG> {
     if let Some(scored) = ana_f32(&stats.landing_analysis, "scored_g") {
+        let scored = g_auf_referenzkette(scored, stats.landing_simulator);
         let method = match ana_str(&stats.landing_analysis, "scored_g_method").as_deref() {
             Some("raw_fallback") => recorder::ScoredGMethod::RawFallback,
             _ => recorder::ScoredGMethod::EmaMax,
@@ -19436,7 +19510,13 @@ fn score_g_for_stats(stats: &FlightStats) -> Option<recorder::ScoredG> {
             method,
         });
     }
-    stats.canonical_peak_g_force().map(recorder::scored_g_raw_fallback)
+    // Auch der Fallback-Pfad muss ueber die Referenzkette — sonst haette ein
+    // Flug ohne Touchdown-Fenster auf X-Plane wieder den Rohwert im Score.
+    stats.canonical_peak_g_force().map(|g| {
+        let mut sg = recorder::scored_g_raw_fallback(g);
+        sg.scored_g = g_auf_referenzkette(sg.scored_g, stats.landing_simulator);
+        sg
+    })
 }
 
 // ======================================================================
@@ -23383,7 +23463,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             // v0.20.x: bump 4→5 — Bahnauslastung-QS
                             // (Float-Toleranz + Banding grosszuegiger) +
                             // Sinkraten-Ziel-Korridor.
-                            score_algorithm_version: Some(5),
+                            score_algorithm_version: Some(6),
                         }
                     })
                 };
@@ -38384,6 +38464,39 @@ mod v0_7_6_payload_consistency_tests {
         );
         assert!(!trusted_old);
         assert_eq!(reason_old, Some("icao_mismatch"));
+    }
+
+    #[test]
+    fn g_referenzkette_gleicht_xplane_an_msfs_an() {
+        // Kernfall der Fairness-Normierung: derselbe Landestoss, in X-Plane
+        // ungefiltert gemessen, muss nach der Umrechnung im selben
+        // Punkteband landen wie der gedaempfte MSFS-Wert.
+        // Feldzahlen A21N bei ~220 fpm: MSFS 1,14 g, X-Plane 1,37 g.
+        let xp = g_auf_referenzkette(1.37, Some("xplane"));
+        assert!(
+            (xp - 1.16).abs() < 0.02,
+            "X-Plane 1,37 g muss auf ~1,16 g der MSFS-Kette abbilden, war {xp}"
+        );
+        // Beide landen damit im 100-Punkte-Band (Schwelle 1,20).
+        assert!(xp <= 1.20);
+    }
+
+    #[test]
+    fn g_referenzkette_laesst_msfs_und_unbekannte_unveraendert() {
+        for sim in [Some("msfs"), Some("other"), None] {
+            assert_eq!(g_auf_referenzkette(1.42, sim), 1.42, "sim={sim:?}");
+        }
+    }
+
+    #[test]
+    fn g_referenzkette_haelt_den_ruhezustand_fest() {
+        // 1 g ist in beiden Sims derselbe Ruhezustand — die Normierung darf
+        // ihn nicht verschieben, sonst wanderte jede sanfte Landung.
+        assert!((g_auf_referenzkette(1.0, Some("xplane")) - 1.0).abs() < 1e-6);
+        // Und sie muss monoton bleiben: haerter bleibt haerter.
+        let a = g_auf_referenzkette(1.5, Some("xplane"));
+        let b = g_auf_referenzkette(2.5, Some("xplane"));
+        assert!(b > a);
     }
 
     #[test]

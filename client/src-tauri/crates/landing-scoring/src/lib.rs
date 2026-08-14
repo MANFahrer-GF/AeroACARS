@@ -15,6 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod gate;
+pub mod sub_alignment;
 pub mod sub_bounces;
 pub mod sub_fuel;
 pub mod sub_g_force;
@@ -229,6 +230,18 @@ pub struct LandingScoringInput {
     pub airport_source: Option<String>,
     pub runway_match_icao: Option<String>,
     pub runway_match_ident: Option<String>,
+    // ─── v1.6.2 Ausrichtungs-Score (score_algorithm_version 6) ────────
+    //
+    // Siehe `sub_alignment` — bewertet WO und wie gerade aufgesetzt wurde.
+    // Alle vier Felder muessen vorliegen, sonst wird die Achse sichtbar
+    // als „nicht bewertet" ausgewiesen statt zu bestrafen.
+    pub runway_match_centerline_offset_m: Option<f32>,
+    /// Bahnbreite in Metern. Ohne sie ist der Versatz nicht einzuordnen —
+    /// dieselben 26 m sind auf einer 61-m-Bahn harmlos und auf einer
+    /// 45-m-Bahn der Bahnrand.
+    pub runway_width_m: Option<f32>,
+    pub landing_heading_true_deg: Option<f32>,
+    pub runway_true_course_deg: Option<f32>,
 }
 
 /// Berechnet alle Sub-Scores.
@@ -318,6 +331,22 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
         out.push(ro);
     }
 
+    // v1.6.2: Ausrichtung — WO und wie gerade wurde aufgesetzt. Laeuft nur
+    // im v2-Datenpfad, weil sie dieselbe Bahn-Geometrie braucht wie der
+    // Bremsweg-Score; ohne die Felder erscheint sie gar nicht (statt als
+    // „nicht bewertet"), damit alte Aufrufer und Test-Fixturen
+    // unveraendert 7 Achsen sehen.
+    if scoring_input_has_v2_fields(input) {
+        out.push(sub_alignment::sub_alignment(&sub_alignment::AlignmentInput {
+            centerline_offset_m: input.runway_match_centerline_offset_m,
+            runway_width_m: input.runway_width_m,
+            heading_true_deg: input.landing_heading_true_deg,
+            runway_true_course_deg: input.runway_true_course_deg,
+            airport_source: input.airport_source.clone(),
+            runway_geometry_trusted: input.runway_geometry_trusted,
+        }));
+    }
+
     // v0.7.1 Phase 2 F2 + F3: ersetzt sub_fuel_legacy durch
     // sub_fuel_v0_7_1 mit Hard-Gate + Asymmetrie. Wenn weder
     // planned_burn noch actual_trip_burn vorhanden → skipped (NICHT
@@ -381,6 +410,11 @@ pub fn aggregate_master_score(subs: &[SubScoreEntry]) -> Option<u8> {
             "bounces" => 2.0,
             "stability" => 2.0,
             "rollout" => 1.0,
+            // v1.6.2: Gewicht 1 wie Bremsweg/Sprit/Ladepapiere. Bewusst
+            // NICHT hoeher: die Achse trifft nur 2,5 % der Landungen
+            // ueberhaupt, soll dort aber spuerbar sein. Explizit gelistet,
+            // damit sie nicht still ueber den `_`-Default mitlaeuft.
+            "alignment" => 1.0,
             "fuel" => 1.0,
             "loadsheet" => 1.0, // NEU v0.7.1
             "flare" => 1.0,     // NEU v0.7.1
@@ -734,6 +768,10 @@ mod tests {
             airport_source: Some("ourairports".into()),
             runway_match_icao: Some("EDDM".into()),
             runway_match_ident: Some("08R".into()),
+            runway_match_centerline_offset_m: Some(3.0),
+            runway_width_m: Some(60.0),
+            landing_heading_true_deg: Some(83.0),
+            runway_true_course_deg: Some(82.0),
         };
         let subs = compute_sub_scores(&rich);
         assert!(

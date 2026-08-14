@@ -50,13 +50,19 @@ pub struct ParkingStand {
 /// und bleibt weit unter der Rollweg-Distanz.
 pub const STAND_CAPTURE_RADIUS_M: f64 = 60.0;
 
-/// Engerer Radius für die NAMENS-Zuordnung. QS-Befund v1.6.1: mit dem
-/// vollen 60-m-Radius könnte ein Flieger auf einer ungetaggten Position
-/// den Namen des NACHBAR-Stands (45 m weiter) gestempelt bekommen — ein
-/// falscher Name im PIREP ist schlimmer als ein leeres Feld. 30 m hält
-/// die RYR-1142-Kalibrierung (eigener Stand 17 m, Nachbar 34 m) auf der
-/// richtigen Seite und deckt Szenerie-Versatz weiter ab.
-pub const STAND_NAME_RADIUS_M: f64 = 30.0;
+/// Radius für die NAMENS-Zuordnung. War in der v1.6.1-QS testweise auf
+/// 30 m verengt (Sorge: falscher Nachbar-Name auf einer ungetaggten
+/// Position). REVERTIERT nach dem ersten Live-Tag mit echten Daten:
+/// LGAV-Ankunft (13.08.2026), Stand C37 war der naechstliegende Punkt
+/// UEBERHAUPT (kein naeherer unbenannter Kandidat), aber 40,2 m entfernt
+/// — mit 30 m blieb arr_gate leer, obwohl die Zuordnung eindeutig war.
+/// `benannter_stand_bei` waehlt ohnehin immer den NAECHSTEN benannten
+/// Stand, nie einen zufaelligen — der Schutz vor Fehlbenennung kommt aus
+/// dieser Naechster-Punkt-Logik, nicht aus einem knappen Radius. Gleicher
+/// Wert wie STAND_CAPTURE_RADIUS_M haelt beide Fragen ("steht er dort?"
+/// und "wie heisst der Stand?") auf derselben, mehrfach am Feld
+/// bestaetigten Schwelle.
+pub const STAND_NAME_RADIUS_M: f64 = STAND_CAPTURE_RADIUS_M;
 
 /// Parkpositionen aus dem `airport_ground`-GeoJSON ziehen.
 ///
@@ -334,16 +340,35 @@ mod tests {
     }
 
     #[test]
-    fn namens_radius_stempelt_keinen_fernen_nachbarn() {
+    fn namens_radius_findet_benannten_nachbarn_im_capture_radius() {
         // Ungetaggte Position unterm Flieger, benannter Nachbar 45 m
-        // weiter: der Nachbar-Name darf NICHT ins PIREP (QS-Befund
-        // v1.6.1) — 45 m liegt ausserhalb von STAND_NAME_RADIUS_M.
+        // weiter (innerhalb STAND_CAPTURE_RADIUS_M = STAND_NAME_RADIUS_M):
+        // der Name wird verwendet. Live-Beleg LGAV/C37 (13.08.2026): der
+        // naechste — und einzige — Kandidat lag 40,2 m entfernt; ein enger
+        // Namensradius liess das Feld leer, obwohl die Zuordnung eindeutig
+        // war. `benannter_stand_bei` waehlt immer den NAECHSTEN benannten
+        // Stand, das schuetzt vor Fehlbenennung unabhaengig vom Radius.
         let stands = vec![
             ParkingStand { name: None, lat: 50.0, lon: 8.0, linie: None, flaeche: false },
             ParkingStand { name: Some("B10".into()), lat: 50.00041, lon: 8.0, linie: None, flaeche: false },
         ];
         assert!(stand_at(&stands, 50.0, 8.0).is_some(), "Naehe ja");
-        assert!(benannter_stand_bei(&stands, 50.0, 8.0).is_none(), "Name nein");
+        let (s, _) = benannter_stand_bei(&stands, 50.0, 8.0).expect("Name im Capture-Radius");
+        assert_eq!(s.name.as_deref(), Some("B10"));
+    }
+
+    #[test]
+    fn namens_radius_ignoriert_stand_ausserhalb_des_capture_radius() {
+        // Weiterhin eine Grenze: ein Stand jenseits STAND_CAPTURE_RADIUS_M
+        // (60 m) ist zu weit weg, um noch "derselbe Stand" zu sein.
+        let stands = vec![ParkingStand {
+            name: Some("Z9".into()),
+            lat: 50.00061, // ~68 m
+            lon: 8.0,
+            linie: None,
+            flaeche: false,
+        }];
+        assert!(benannter_stand_bei(&stands, 50.0, 8.0).is_none());
     }
 
     #[test]

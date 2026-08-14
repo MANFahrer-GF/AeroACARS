@@ -201,7 +201,8 @@
       "stability": "Approach stability",
       "rollout": "Runway used",
       "fuel": "OFP compliance",
-      "loadsheet": "Loadsheet"
+      "loadsheet": "Loadsheet",
+      "alignment": "Alignment"
     },
     "info": {
       "landing_rate": "Vertical speed (V/S) at the moment of touchdown, in feet per minute. Negative = sinking. The 90-250 fpm target corridor counts as a firm, positive touchdown — the professional standard, not \"as soft as possible\": well under 90 fpm usually means an extended flare, which delays braking/spoiler deployment. A real hard-landing inspection is due from -600 fpm.",
@@ -213,7 +214,8 @@
       "loadsheet": "Presence of loadsheet data (ZFW + TOW in the plan). VFR/manual flights without dispatch data skip this sub-score — no 0-penalty. The detailed plan-vs-actual evaluation (block fuel, TOW, LDW, ZFW) appears in the fuel area as the „Plan accuracy\" score.",
       "score_section": "Seven sub-scores rated 0–100 each (landing rate, G force, bounces, approach stability, runway utilization, OFP compliance, loadsheet). Every card shows value, points, and a coloured bar (green/yellow/red). The weakest category becomes the focus of the coach tip below.",
       "runway_section": "Visualisation of your touchdown on the runway. The cyan dot marks the touchdown point; the green band shows the rollout distance until you cleared the runway (high-speed exit at ~40 kt). Values below: total length, centerline offset, distance past threshold, runway utilization as a percentage.",
-      "fuel_section": "Block = fuel at chocks-off; TO Fuel = at takeoff position; LDG Fuel = at touchdown; TOW = takeoff weight (empty + payload + TO fuel); LDW = landing weight; ZFW = zero fuel weight. Plan values come from the SimBrief OFP if available. The „Plan accuracy\" score below evaluates the Block/TOW/LDW/ZFW deltas (penalty above >5 %, heavier above >10 %)."
+      "fuel_section": "Block = fuel at chocks-off; TO Fuel = at takeoff position; LDG Fuel = at touchdown; TOW = takeoff weight (empty + payload + TO fuel); LDW = landing weight; ZFW = zero fuel weight. Plan values come from the SimBrief OFP if available. The „Plan accuracy\" score below evaluates the Block/TOW/LDW/ZFW deltas (penalty above >5 %, heavier above >10 %).",
+      "alignment": "Where and how straight you touched down: lateral offset from the centreline — measured against runway width, because the same distance matters more on a narrow runway — and how far your heading differed from the runway axis. The worse of the two is scored."
     },
     "rat": {
       "smooth_touchdown": "Butter-smooth touchdown",
@@ -256,7 +258,11 @@
       "way_off_plan": "Way off plan",
       "efficient": "Efficient (under-burn)",
       "very_efficient": "Very efficient — review OFP",
-      "loadsheet_present": "Loadsheet present"
+      "loadsheet_present": "Loadsheet present",
+      "aligned_on_centerline": "Right on the centreline",
+      "off_centerline": "Touched down off the centreline",
+      "off_runway_surface": "Touched down beyond the runway edge",
+      "crooked_touchdown": "Touched down at an angle to the runway"
     },
     "tip": {
       "smooth_touchdown": "Exactly right — flare timing was on point and the descent rate bled off cleanly.",
@@ -300,7 +306,11 @@
       "efficient": "Burned less than planned — nice. Underburn isn't penalised.",
       "very_efficient": "Very efficient (>15% under plan). Verify OFP burn was correct, or whether you flew a shorter route.",
       "loadsheet_present": "Loadsheet data on file — all green.",
-      "fallback": "Solid landing. The score breakdown shows where there's still room to grow."
+      "fallback": "Solid landing. The score breakdown shows where there's still room to grow.",
+      "aligned_on_centerline": "Centreline held and straight on touchdown — exactly right.",
+      "off_centerline": "Correct onto the centreline earlier on final rather than during the flare. In a crosswind, hold the crab and align with rudder only just before touchdown.",
+      "off_runway_surface": "The touchdown point was beyond the runway edge. In a crosswind: fly the crab, align with rudder and lower the upwind wing slightly — do not let the aircraft drift sideways.",
+      "crooked_touchdown": "Align with the runway axis using rudder before touchdown. Landing at an angle puts side loads on the gear and pulls you off the centreline during rollout."
     },
     "forensics": {
       "label": "Forensics v2",
@@ -325,7 +335,12 @@
       "untrusted_geometry": "Runway geometry not trusted — runway utilization not scored.",
       "off_airport_landing": "Off-airport landing — no known runway, no runway utilization computed.",
       "invalid_lda": "LDA data inconsistent (runway length less than displaced threshold) — runway utilization skipped.",
-      "fallback": "Not scored."
+      "fallback": "Not scored.",
+      "missing_centerline_offset": "Centreline offset not measurable",
+      "missing_runway_width": "Runway width unknown",
+      "missing_runway_course": "Runway course not in navigation data",
+      "missing_heading": "No heading captured at touchdown",
+      "implausible_runway_geometry": "Runway data questionable — not scored"
     },
     "warn": {
       "pre_displaced_threshold": "⚠ Touched down before displaced threshold — review approach",

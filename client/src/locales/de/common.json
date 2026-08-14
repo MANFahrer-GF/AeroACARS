@@ -201,7 +201,8 @@
       "stability": "Anflug-Stabilität",
       "rollout": "Bahn-Auslastung",
       "fuel": "OFP-Treue",
-      "loadsheet": "Loadsheet"
+      "loadsheet": "Loadsheet",
+      "alignment": "Ausrichtung"
     },
     "info": {
       "landing_rate": "Vertikalgeschwindigkeit (V/S) im Moment des Aufsetzens, in Fuß pro Minute. Negativ = sinkend. Ziel-Korridor 90–250 fpm gilt als fest, positiv aufgesetzt — professioneller Standard, nicht „so weich wie möglich\": deutlich unter 90 fpm bedeutet meist ein langes Abfangen, das Bremsen/Spoiler-Ausfahren verzögert. Ab −600 fpm ist real eine Hard-Landing-Inspektion fällig.",
@@ -213,7 +214,8 @@
       "loadsheet": "Vorhandensein von Loadsheet-Daten (ZFW + TOW im Plan). Im VFR-/Manual-Mode ohne Dispatch-Daten wird dieser Sub-Score übersprungen — kein 0-Penalty. Die detaillierte Plan-vs-Real-Bewertung (Block-Fuel, TOW, LDW, ZFW) siehst du im Treibstoff-Bereich als „Plan-Treue\"-Score.",
       "score_section": "Sieben Sub-Scores à 0–100 Punkte (Sinkrate, G-Kraft, Bounces, Anflug-Stabilität, Bahn-Auslastung, OFP-Treue, Loadsheet). Jede Kachel zeigt Wert, Punktzahl und farbigen Balken (grün/gelb/rot). Die schwächste Kategorie wird als nächstes Verbesserungs-Ziel im Coach-Tipp aufgegriffen.",
       "runway_section": "Visualisierung deines Touchdowns auf der Bahn. Das blaue Symbol markiert den Aufsetzpunkt, das grüne Band zeigt die Ausrollstrecke bis zum Abrollen von der Bahn (Highspeed-Exit bei ~40 kt). Werte unten: Gesamtlänge, Centerline-Abweichung, Distanz hinter der Schwelle, Bahn-Auslastung in Prozent.",
-      "fuel_section": "Block = Spritmenge beim Abblock; TO Fuel = nach dem Rollen am Startpunkt; LDG Fuel = bei Touchdown; TOW = Takeoff Weight (Leergewicht + Last + TO Fuel); LDW = Landing Weight; ZFW = Zero Fuel Weight. Plan-Werte stammen aus dem SimBrief-OFP, falls vorhanden. Der „Plan-Treue\"-Score unten bewertet die Abweichungen Block/TOW/LDW/ZFW (Penalty ab >5 %, schwerer ab >10 %)."
+      "fuel_section": "Block = Spritmenge beim Abblock; TO Fuel = nach dem Rollen am Startpunkt; LDG Fuel = bei Touchdown; TOW = Takeoff Weight (Leergewicht + Last + TO Fuel); LDW = Landing Weight; ZFW = Zero Fuel Weight. Plan-Werte stammen aus dem SimBrief-OFP, falls vorhanden. Der „Plan-Treue\"-Score unten bewertet die Abweichungen Block/TOW/LDW/ZFW (Penalty ab >5 %, schwerer ab >10 %).",
+      "alignment": "Wo und wie gerade du aufgesetzt hast: seitlicher Versatz zur Mittellinie — gemessen an der Bahnbreite, denn dieselben Meter wiegen auf einer schmalen Bahn schwerer — und die Abweichung deines Steuerkurses von der Bahnachse. Bewertet wird die schlechtere der beiden Größen."
     },
     "rat": {
       "smooth_touchdown": "Butterweich aufgesetzt",
@@ -256,7 +258,11 @@
       "way_off_plan": "Weit vom Plan entfernt",
       "efficient": "Effizient (Minderverbrauch)",
       "very_efficient": "Sehr effizient — OFP prüfen",
-      "loadsheet_present": "Loadsheet vorhanden"
+      "loadsheet_present": "Loadsheet vorhanden",
+      "aligned_on_centerline": "Sauber auf der Mittellinie",
+      "off_centerline": "Neben der Mittellinie aufgesetzt",
+      "off_runway_surface": "Außerhalb der Bahnbreite aufgesetzt",
+      "crooked_touchdown": "Schräg zur Bahnachse aufgesetzt"
     },
     "tip": {
       "smooth_touchdown": "Genau so — leichter Flare zur richtigen Zeit, sanfte Reduzierung der Sinkrate kurz vor TD.",
@@ -300,7 +306,11 @@
       "efficient": "Sparsam geflogen — gut! Minderverbrauch wird nicht bestraft.",
       "very_efficient": "Sehr sparsam (>15% unter Plan). Prüfen ob OFP-Burn korrekt war oder eine kürzere Route geflogen wurde.",
       "loadsheet_present": "Loadsheet-Daten vorhanden — alles im grünen Bereich.",
-      "fallback": "Solide Landung. Im Score-Breakdown siehst du wo es noch Luft nach oben gibt."
+      "fallback": "Solide Landung. Im Score-Breakdown siehst du wo es noch Luft nach oben gibt.",
+      "aligned_on_centerline": "Mittellinie getroffen und gerade gestanden — genau so.",
+      "off_centerline": "Im Endanflug früher auf die Mittellinie korrigieren, statt erst im Flare. Bei Seitenwind den Vorhaltewinkel halten und erst kurz vor dem Aufsetzen mit dem Seitenruder ausrichten.",
+      "off_runway_surface": "Der Aufsetzpunkt lag jenseits des Bahnrands. Bei Seitenwind: Vorhaltewinkel fliegen, die Bahn mit dem Seitenruder ausrichten und die Luv-Fläche leicht senken — nicht das Flugzeug seitlich versetzen lassen.",
+      "crooked_touchdown": "Vor dem Aufsetzen mit dem Seitenruder auf die Bahnachse ausrichten. Schräg aufsetzen belastet das Fahrwerk seitlich und zieht dich nach dem Bodenkontakt von der Mittellinie weg."
     },
     "forensics": {
       "label": "Forensik v2",
@@ -325,7 +335,12 @@
       "untrusted_geometry": "Bahn-Geometrie nicht vertrauenswürdig — Bahn-Auslastung wird nicht bewertet.",
       "off_airport_landing": "Off-Airport-Landung — keine bekannte Bahn, keine Bahn-Auslastung berechnet.",
       "invalid_lda": "LDA-Daten inkonsistent (Bahnlänge kleiner als Displaced-Threshold) — Bahn-Auslastung übersprungen.",
-      "fallback": "Nicht bewertet."
+      "fallback": "Nicht bewertet.",
+      "missing_centerline_offset": "Kein Versatz zur Mittellinie messbar",
+      "missing_runway_width": "Bahnbreite unbekannt",
+      "missing_runway_course": "Bahnkurs nicht in den Navigationsdaten",
+      "missing_heading": "Kein Steuerkurs beim Aufsetzen erfasst",
+      "implausible_runway_geometry": "Bahndaten fragwürdig — nicht gewertet"
     },
     "warn": {
       "pre_displaced_threshold": "⚠ Vor Displaced-Threshold aufgesetzt — Anflugprofil prüfen",

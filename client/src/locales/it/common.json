@@ -200,7 +200,8 @@
       "stability": "Stabilità avvicinamento",
       "rollout": "Pista utilizzata",
       "fuel": "Aderenza OFP",
-      "loadsheet": "Loadsheet"
+      "loadsheet": "Loadsheet",
+      "alignment": "Allineamento"
     },
     "info": {
       "landing_rate": "Velocità verticale (V/S) al momento del touchdown, in piedi al minuto. Negativa = in discesa. Il corridoio obiettivo 90–250 fpm è considerato un touchdown fermo e deciso — lo standard professionale, non \"il più morbido possibile\": ben sotto i 90 fpm di solito indica un flare prolungato, che ritarda frenata/spoiler. Da −600 fpm in poi è dovuta realmente un'ispezione hard-landing.",
@@ -212,7 +213,8 @@
       "loadsheet": "Presenza dei dati di loadsheet (ZFW + TOW nel piano). Voli VFR/manuali senza dati dispatch saltano questo sub-score — nessuna penalità. La valutazione dettagliata piano-vs-reale (block fuel, TOW, LDW, ZFW) appare nell'area carburante come punteggio „Precisione del piano\".",
       "score_section": "Sette sotto-punteggi da 0–100 punti (rateo discesa, forza G, rimbalzi, stabilità avvicinamento, utilizzo pista, aderenza OFP, loadsheet). Ogni riquadro mostra valore, punti e barra colorata (verde/giallo/rosso). La categoria più debole viene presa come prossimo obiettivo nel suggerimento del coach.",
       "runway_section": "Visualizzazione del touchdown sulla pista. Il simbolo blu indica il punto di tocco, la banda verde mostra la distanza di rollout fino all'uscita dalla pista (highspeed-exit a ~40 kt). Valori sotto: lunghezza totale, scostamento dall'asse, distanza dalla soglia, utilizzo pista in percentuale.",
-      "fuel_section": "Block = carburante al pushback; TO Fuel = dopo il rullaggio al punto di decollo; LDG Fuel = al touchdown; TOW = peso al decollo (peso a vuoto + carico + carburante TO); LDW = peso all'atterraggio; ZFW = zero fuel weight. I valori pianificati provengono dall'OFP SimBrief, se disponibile. Il punteggio „Precisione del piano\" sotto valuta le deviazioni Block/TOW/LDW/ZFW (penalty sopra >5 %, più pesante sopra >10 %)."
+      "fuel_section": "Block = carburante al pushback; TO Fuel = dopo il rullaggio al punto di decollo; LDG Fuel = al touchdown; TOW = peso al decollo (peso a vuoto + carico + carburante TO); LDW = peso all'atterraggio; ZFW = zero fuel weight. I valori pianificati provengono dall'OFP SimBrief, se disponibile. Il punteggio „Precisione del piano\" sotto valuta le deviazioni Block/TOW/LDW/ZFW (penalty sopra >5 %, più pesante sopra >10 %).",
+      "alignment": "Dove e quanto dritto hai toccato: scostamento laterale dall'asse pista — misurato rispetto alla larghezza della pista, perché gli stessi metri pesano di più su una pista stretta — e differenza tra la tua prua e l'asse pista. Viene valutato il peggiore dei due."
     },
     "rat": {
       "smooth_touchdown": "Atterraggio morbidissimo",
@@ -255,7 +257,11 @@
       "way_off_plan": "Lontano dal piano",
       "efficient": "Efficiente (sotto piano)",
       "very_efficient": "Molto efficiente — verifica OFP",
-      "loadsheet_present": "Loadsheet presente"
+      "loadsheet_present": "Loadsheet presente",
+      "aligned_on_centerline": "Perfettamente sull'asse pista",
+      "off_centerline": "Atterrato fuori dall'asse pista",
+      "off_runway_surface": "Atterrato oltre il bordo pista",
+      "crooked_touchdown": "Atterrato di traverso rispetto all'asse pista"
     },
     "tip": {
       "smooth_touchdown": "Esattamente così — flare leggero al momento giusto, riduzione dolce del rateo di discesa appena prima del TD.",
@@ -299,7 +305,11 @@
       "efficient": "Volato risparmioso — bene! Il sotto-consumo non viene penalizzato.",
       "very_efficient": "Molto efficiente (>15% sotto piano). Verifica se il piano OFP era corretto o se hai volato una rotta più corta.",
       "loadsheet_present": "Dati di loadsheet presenti — tutto in zona verde.",
-      "fallback": "Atterraggio solido. Nello score-breakdown vedi dove c'è ancora margine di miglioramento."
+      "fallback": "Atterraggio solido. Nello score-breakdown vedi dove c'è ancora margine di miglioramento.",
+      "aligned_on_centerline": "Asse pista tenuto e aereo dritto al contatto — esattamente così.",
+      "off_centerline": "Correggi sull'asse pista già in finale, non durante la richiamata. Con vento al traverso mantieni il crab e allinea con il timone solo poco prima del contatto.",
+      "off_runway_surface": "Il punto di contatto era oltre il bordo pista. Con vento al traverso: vola in crab, allinea con il timone e abbassa leggermente l'ala sopravento — non lasciare derivare l'aereo.",
+      "crooked_touchdown": "Allinea con l'asse pista usando il timone prima del contatto. Toccare di traverso carica lateralmente il carrello e ti porta fuori asse durante la corsa."
     },
     "forensics": {
       "label": "Forensica v2",
@@ -324,7 +334,12 @@
       "untrusted_geometry": "Geometria pista non affidabile — utilizzo pista non valutato.",
       "off_airport_landing": "Atterraggio fuori aeroporto — nessuna pista nota, nessun utilizzo pista calcolato.",
       "invalid_lda": "Dati LDA inconsistenti (lunghezza pista inferiore al displaced threshold) — utilizzo pista saltato.",
-      "fallback": "Non valutato."
+      "fallback": "Non valutato.",
+      "missing_centerline_offset": "Scostamento dall'asse non misurabile",
+      "missing_runway_width": "Larghezza pista sconosciuta",
+      "missing_runway_course": "Rotta pista assente nei dati di navigazione",
+      "missing_heading": "Nessuna prua registrata al contatto",
+      "implausible_runway_geometry": "Dati pista dubbi — non valutato"
     },
     "warn": {
       "pre_displaced_threshold": "⚠ Touchdown prima del displaced threshold — rivedere approach",
