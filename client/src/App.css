@@ -6300,9 +6300,16 @@ input:disabled {
   font-size: 1.1rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* v1.6.3: zweizeilig erlaubt statt abschneiden.
+     Die Ausrichtungs-Achse trägt seit der Seitenwind-Gutschrift bis zu
+     211 px ("102 m · 14.9° (−5.0° XW)"); bei maximiertem Fenster stehen
+     in der Fünf-Spalten-Aufteilung nur 188 px zur Verfügung. Abgeschnitten
+     wurde ausgerechnet die Gutschrift — also genau die Angabe, die die
+     Punktzahl erklärt — und ein Tooltip fehlte. Umbruch statt Ellipse
+     löst das für jede Achse; die Karte wächst um eine Zeile mit. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
 }
 
 .landing-subscore__bar {

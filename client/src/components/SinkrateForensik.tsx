@@ -96,7 +96,13 @@ export function computeBuckets(
     { label: "−1.5 s … −1.0 s", vs: (1500 * vs1500 - 1000 * vs1000) / 500 },
     { label: "−1.0 s … −0.5 s", vs: (1000 * vs1000 - 500 * vs500) / 500 },
     { label: "−0.5 s … −0.25 s", vs: (500 * vs500 - 250 * vs250) / 250 },
-    { label: "−0.25 s … TD", vs: edge },
+    // v1.6.3: Der letzte Balken ist NICHT das 0,25-s-Fenster derselben
+    // Messreihe — er ist der bewertete Wert, seit v1.6.3 aus dem
+    // Höhenverlauf über 310 ms. Das alte Label „−0.25 s … TD" behauptete
+    // beides falsch: die Spanne und die Herkunft. Sichtbar wird der
+    // Unterschied als scheinbar unmöglicher Sprung gegenüber dem Nachbarn
+    // (im Fixture dlh848: −277 gegen −379 fpm).
+    { label: "bewertet", vs: edge },
   ];
 }
 
@@ -347,7 +353,11 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
         <div className="sinkrate-forensik-section__subtitle">
           {t("landing.sinkrate_forensik.score_section_subtitle")}
         </div>
-        <ScoreBasisTile vs={scoreVs} landingSource={record.landing_source ?? null} />
+        <ScoreBasisTile
+          vs={scoreVs}
+          quelle={record.vs_at_edge_quelle ?? null}
+          landingSource={record.landing_source ?? null}
+        />
         {record.peak_vs_pre_flare_fpm != null && (
           <div className="sinkrate-forensik-pre-flare">
             <span className="sinkrate-forensik-pre-flare__label">
@@ -431,7 +441,17 @@ function SmoothedVsTile({
   );
 }
 
-function ScoreBasisTile({ vs, landingSource }: { vs: number; landingSource: string | null }) {
+function ScoreBasisTile({
+  vs,
+  quelle,
+  landingSource,
+}: {
+  vs: number;
+  /** v1.6.3: das MESSVERFAHREN (`hoehenkurve` / `simvar_fallback`). */
+  quelle: string | null;
+  /** Ältere Aufzeichnungen: nur die Buffer-Stelle, kein Verfahren. */
+  landingSource: string | null;
+}) {
   const { t } = useTranslation();
   const tone = vsTone(vs);
   return (
@@ -446,14 +466,34 @@ function ScoreBasisTile({ vs, landingSource }: { vs: number; landingSource: stri
         {Math.round(vs)}
         <span className="sinkrate-score-tile__unit"> fpm</span>
       </div>
-      {landingSource && landingSource !== "" && (
+      {/* Die Quelle nur zeigen, wenn sie das VERFAHREN benennt. Für
+          Aufzeichnungen vor v1.6.3 stand hier `landing_source` — also
+          `vs_at_edge_50hz`, eine Buffer-Stelle. Unter einer aus der
+          Höhenkurve gerechneten Zahl war das schlicht das falsche Wort. */}
+      {quelle ? (
         <div className="sinkrate-score-tile__source">
           {t("landing.sinkrate_forensik.score_basis_source_pill")}
-          <code className="sinkrate-score-tile__source-code">{landingSource}</code>
+          <code className="sinkrate-score-tile__source-code">
+            {t(`landing.sinkrate_forensik.quelle.${quelle}`, {
+              defaultValue: quelle,
+            })}
+          </code>
         </div>
+      ) : (
+        landingSource != null &&
+        landingSource !== "" && (
+          <div className="sinkrate-score-tile__source">
+            {t("landing.sinkrate_forensik.score_basis_source_pill")}
+            <code className="sinkrate-score-tile__source-code">{landingSource}</code>
+          </div>
+        )
       )}
       <div className="sinkrate-score-tile__hint">
-        {t("landing.sinkrate_forensik.score_basis_hint")}
+        {quelle
+          ? t(`landing.sinkrate_forensik.score_basis_hint_${quelle}`, {
+              defaultValue: t("landing.sinkrate_forensik.score_basis_hint"),
+            })
+          : t("landing.sinkrate_forensik.score_basis_hint")}
       </div>
     </div>
   );

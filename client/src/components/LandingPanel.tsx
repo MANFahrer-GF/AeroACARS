@@ -132,6 +132,11 @@ export interface LandingRecord {
   // v0.5.43 — 50-Hz-TouchdownWindow Forensik. Optional weil pre-v0.5.39
   // landing_history.json-Eintraege sie nicht haben.
   vs_at_edge_fpm?: number | null;
+  /** v1.6.3: `hoehenkurve` oder `simvar_fallback` — welche Messquelle die
+   *  bewertete Sinkrate geliefert hat. NICHT `landing_source` verwenden:
+   *  das steht auf `vs_at_edge_50hz` und benennt nur die Buffer-Stelle,
+   *  nicht das Verfahren. */
+  vs_at_edge_quelle?: string | null;
   vs_smoothed_250ms_fpm?: number | null;
   vs_smoothed_500ms_fpm?: number | null;
   vs_smoothed_1000ms_fpm?: number | null;
@@ -1735,7 +1740,11 @@ function ScoreBreakdown({
               </span>
               <span className="landing-subscore__points">{s.points} PTS</span>
             </div>
-            <div className="landing-subscore__value">{valueText}</div>
+            {/* `title` als Netz: der Wert darf umbrechen, aber wenn ihn
+                jemand doch einmal kürzt, bleibt er wenigstens erreichbar. */}
+            <div className="landing-subscore__value" title={valueText}>
+              {valueText}
+            </div>
             <div className="landing-subscore__bar">
               <div
                 className="landing-subscore__fill"

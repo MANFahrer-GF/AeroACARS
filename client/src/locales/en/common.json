@@ -356,8 +356,8 @@
       "very_low": "Confidence: Very low",
       "unknown": "Confidence: —"
     },
-    "vs_at_edge": "Sink rate at edge",
-    "vs_at_edge_hint": "Linearly interpolated to the exact on_ground edge between two 20 ms samples (= Volanta-equivalent)",
+    "vs_at_edge": "Sink rate at touchdown",
+    "vs_at_edge_hint": "Scored value — from v1.6.3 on computed from the height trace, before that from the vertical speed indicator.",
     "vs_smoothed_250ms": "Sink rate 250 ms mean",
     "vs_smoothed_250ms_hint": "Mean of sink-rate samples in the last 250 ms before TD",
     "vs_smoothed_500ms": "Sink rate 500 ms mean (Volanta)",
@@ -397,7 +397,7 @@
       "score_section_title": "What AeroACARS scores",
       "score_section_subtitle": "Engineering standard FAR 25.473 — load on the gear at the touchdown moment.",
       "bucket_title": "How your sink rate developed in each phase",
-      "bucket_subtitle": "From the 4 cumulative means above we compute the real sink rate in each sub-window.",
+      "bucket_subtitle": "The first three bars come from the averages above, i.e. from the instrument. The last one is the scored value from the height trace — so it may legitimately differ from its neighbours.",
       "bucket_trend_drop": "Sink rate accelerated toward touchdown — flare not held / sagged through.",
       "trace_title": "Last 3 seconds before touchdown",
       "trace_no_data": "Position trace not available (too few buffer samples).",
@@ -408,7 +408,7 @@
       "tile_500ms": "0.5 s mean",
       "tile_250ms": "0.25 s mean",
       "score_basis_label": "Scored sink-rate",
-      "score_basis_hint": "50 Hz sample at the touchdown moment — basis for the landing_rate sub-score.",
+      "score_basis_hint": "Basis for the sink-rate sub-score (engineering standard per FAR 25.473).",
       "score_basis_source_pill": "Source:",
       "peak_pre_flare_label": "Peak sink-rate pre-flare:",
       "peak_pre_flare_reduction": "Flare reduced sink rate by {{reduction}} fpm",
@@ -427,7 +427,13 @@
       "tile_na_tooltip": "Value not recorded — sampler buffer was not full at touchdown",
       "impact_g_500ms": "Peak G post-touchdown (500 ms)",
       "impact_g_1000ms": "Peak G post-touchdown (1 s)",
-      "trace_caption": "Snapshots from the touchdown buffer — not the score basis, only to visualize the trend."
+      "trace_caption": "Snapshots from the touchdown buffer — not the score basis, only to visualize the trend.",
+      "score_basis_hint_hoehenkurve": "Best-fit line across the final third of a second of the height trace — basis for the sink-rate sub-score (engineering standard per FAR 25.473).",
+      "score_basis_hint_simvar_fallback": "Fallback to the vertical speed indicator: the height trace was not usable here (too few samples, or frozen for a while).",
+      "quelle": {
+        "hoehenkurve": "Height trace",
+        "simvar_fallback": "Instrument (fallback)"
+      }
     },
     "gforce_forensik": {
       "title": "💪 G-Force Forensics",

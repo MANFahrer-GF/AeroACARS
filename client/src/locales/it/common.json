@@ -356,8 +356,8 @@
       "very_low": "Confidenza: Molto bassa",
       "unknown": "Confidenza: —"
     },
-    "vs_at_edge": "Rateo discesa al touchdown",
-    "vs_at_edge_hint": "Interpolato linearmente al momento esatto del contatto al suolo (= equivalente Volanta)",
+    "vs_at_edge": "Velocità di discesa al contatto",
+    "vs_at_edge_hint": "Valore valutato — dalla v1.6.3 calcolato dall'andamento della quota, prima dal variometro.",
     "vs_smoothed_250ms": "Rateo discesa media 250 ms",
     "vs_smoothed_250ms_hint": "Media dei rate di discesa negli ultimi 250 ms prima del TD",
     "vs_smoothed_500ms": "Rateo discesa media 500 ms (Volanta)",
@@ -397,7 +397,7 @@
       "score_section_title": "Quello che AeroACARS valuta",
       "score_section_subtitle": "Standard FAR 25.473 — carico sul carrello al momento del touchdown.",
       "bucket_title": "Come si è sviluppato il tuo rateo di discesa in ogni fase",
-      "bucket_subtitle": "Dalle 4 medie cumulative sopra calcoliamo il rateo reale in ogni sotto-finestra.",
+      "bucket_subtitle": "Le prime tre barre vengono dalle medie qui sopra, cioè dallo strumento. L'ultima è il valore valutato dall'andamento della quota — può quindi legittimamente discostarsi dalle vicine.",
       "bucket_trend_drop": "Il rateo di discesa è aumentato verso il touchdown — flare non mantenuto / cedimento.",
       "trace_title": "Ultimi 3 secondi prima del touchdown",
       "trace_no_data": "Tracciato posizione non disponibile (troppo pochi campioni di buffer).",
@@ -408,7 +408,7 @@
       "tile_500ms": "Media 0.5 s",
       "tile_250ms": "Media 0.25 s",
       "score_basis_label": "Rateo valutato",
-      "score_basis_hint": "Campione 50 Hz al momento del touchdown — base per il sub-score landing_rate.",
+      "score_basis_hint": "Base per il sotto-punteggio della velocità di discesa (standard ingegneristico secondo FAR 25.473).",
       "score_basis_source_pill": "Sorgente:",
       "peak_pre_flare_label": "Picco rateo pre-flare:",
       "peak_pre_flare_reduction": "Il flare ha ridotto il rateo di {{reduction}} fpm",
@@ -427,7 +427,13 @@
       "tile_na_tooltip": "Valore non registrato — buffer del sampler non pieno al touchdown",
       "impact_g_500ms": "G di picco post-touchdown (500 ms)",
       "impact_g_1000ms": "G di picco post-touchdown (1 s)",
-      "trace_caption": "Istantanee dal buffer del touchdown — non base del punteggio, solo per visualizzare l'andamento."
+      "trace_caption": "Istantanee dal buffer del touchdown — non base del punteggio, solo per visualizzare l'andamento.",
+      "score_basis_hint_hoehenkurve": "Retta di regressione sull'ultimo terzo di secondo dell'andamento della quota — base per il sotto-punteggio della velocità di discesa (standard ingegneristico secondo FAR 25.473).",
+      "score_basis_hint_simvar_fallback": "Ripiego sul variometro: qui l'andamento della quota non era utilizzabile (troppo pochi campioni o temporaneamente bloccato).",
+      "quelle": {
+        "hoehenkurve": "Andamento quota",
+        "simvar_fallback": "Strumento (ripiego)"
+      }
     },
     "gforce_forensik": {
       "title": "💪 Forensica forza-G",

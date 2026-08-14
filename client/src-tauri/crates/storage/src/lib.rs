@@ -345,6 +345,13 @@ pub struct LandingRecord {
     /// zwei 20-30 ms Samples. Volanta-equivalent.
     #[serde(default)]
     pub vs_at_edge_fpm: Option<f32>,
+    /// v1.6.3: welche Quelle die bewertete Sinkrate geliefert hat —
+    /// `hoehenkurve` oder `simvar_fallback`. Die Forensik-Kachel zeigte
+    /// bis dahin `landing_source` an, das auf `vs_at_edge_50hz` steht und
+    /// damit unter einer aus der Hoehenkurve gerechneten Zahl das falsche
+    /// Verfahren nannte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vs_at_edge_quelle: Option<String>,
     /// Mean V/S ueber 250 ms vor Edge (nur negative Samples).
     #[serde(default)]
     pub vs_smoothed_250ms_fpm: Option<f32>,

@@ -14995,6 +14995,12 @@ where
         // Wert kein Flugzustand, gibt es ihn nicht.
         vs_at_edge_fpm: ana_f32(&stats.landing_analysis, "vs_at_edge_fpm")
             .filter(|&v| landing_rate_is_plausible(v)),
+        vs_at_edge_quelle: stats
+            .landing_analysis
+            .as_ref()
+            .and_then(|a| a.get("vs_at_edge_quelle"))
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
         vs_smoothed_250ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_250ms_fpm"),
         vs_smoothed_500ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_500ms_fpm"),
         vs_smoothed_1000ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_1000ms_fpm"),
