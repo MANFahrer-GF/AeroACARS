@@ -12,6 +12,7 @@ import { RunwayUtilizationHelpModal } from "./RunwayUtilizationHelpModal";
 import { ApproachStabilityCard } from "./ApproachStabilityCard";
 import { mapLandingRecordToV2Props } from "../dev/runwayDiagramV2Mapper";
 import { rolloutLdaMeters } from "../lib/runwayGeometry";
+import { displayCallsign } from "../lib/callsign";
 // v0.5.47 — Score-Modul ist jetzt zentral, identisch zu webapp/src/
 // components/landingScoring.ts. Dieselben Schwellen, Bands, Coach-Tipps
 // für Pilot-App und Live-Monitor.
@@ -2484,7 +2485,7 @@ function LandingReport({ record }: { record: LandingRecord }) {
   const { t } = useTranslation();
 
   const callsign = record.airline_icao
-    ? `${record.airline_icao}${record.flight_number}`
+    ? displayCallsign(record.airline_icao, record.flight_number)
     : record.flight_number;
 
   const subs = useMemo(() => computeSubScores(record), [record]);
@@ -3043,7 +3044,7 @@ export function LandingDetail({
   const { t } = useTranslation();
 
   const callsign = record.airline_icao
-    ? `${record.airline_icao}${record.flight_number}`
+    ? displayCallsign(record.airline_icao, record.flight_number)
     : record.flight_number;
 
   const subs = useMemo(() => computeSubScores(record), [record]);
@@ -4455,7 +4456,7 @@ export function LandingPanel() {
                 const reg = r.aircraft_registration || "—";
                 const dep = r.dpt_airport;
                 const arr = r.arr_airport;
-                const callsign = `${r.airline_icao}${r.flight_number}`;
+                const callsign = displayCallsign(r.airline_icao, r.flight_number);
                 return (
                   <tr
                     key={r.pirep_id}

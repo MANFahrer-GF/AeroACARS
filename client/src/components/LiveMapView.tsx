@@ -24,7 +24,7 @@ import type { ActiveFlightInfo, Bid, SimSnapshot } from "../types";
 import { setTrack } from "../lib/trackStore";
 import { aircraftSvg } from "../lib/aircraftIcon";
 import { phaseColor, phaseLabel as formatPhase } from "../lib/phaseColors";
-import { resolveFlightIdent } from "../lib/callsign";
+import { displayCallsign } from "../lib/callsign";
 import { simKindLabel } from "../lib/simKind";
 import { useMapEvents, LiveMapEventList } from "./LiveMapEvents";
 import { LiveMapEmptyState, nextBidInfo, type NextBidInfo } from "./LiveMapEmptyState";
@@ -2078,7 +2078,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
 
   const showOwnContent = !!activeFlight;
   const ident = activeFlight
-    ? `${activeFlight.airline_icao}${resolveFlightIdent(activeFlight.flight_number, activeFlight.callsign)}`
+    ? displayCallsign(activeFlight.airline_icao, activeFlight.flight_number, activeFlight.callsign)
     : null;
   const clock = new Date(nowMs).toISOString().slice(11, 19);
   const { events } = useMapEvents(showOwnContent);
