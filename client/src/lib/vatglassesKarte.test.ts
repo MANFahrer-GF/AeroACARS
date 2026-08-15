@@ -15,6 +15,33 @@ function antwort(inhalt: unknown, ok = true, status = 200) {
 }
 
 describe("ladeSektoren", () => {
+  it("reicht die Nahverkehrsbereiche durch und zaehlt sie zur Abdeckung", async () => {
+    // Ein Anflug mit eigener Flaeche braucht keine grobe FIR-Ersatzgrenze
+    // mehr — sonst laege eine ganze FIR ueber seiner Zone.
+    antwort({
+      flaechen: { type: "FeatureCollection", features: [] },
+      abgedeckt: ["EDGG_CTR"],
+      tracon: {
+        flaechen: { type: "FeatureCollection", features: [
+          { type: "Feature", properties: { ruf: "EDDM_APP", art: "APP" },
+            geometry: { type: "Polygon", coordinates: [[[11, 48], [12, 48], [12, 49], [11, 48]]] } }] },
+        marken: { type: "FeatureCollection", features: [] },
+        abgedeckt: ["EDDM_APP"],
+      },
+    });
+    const r = await ladeSektoren(50, undefined, BASIS);
+    expect(r.nahbereich.features).toHaveLength(1);
+    expect(r.abgedeckt.has("EDDM_APP")).toBe(true);
+    expect(r.abgedeckt.has("EDGG_CTR")).toBe(true);
+  });
+
+  it("kommt ohne Nahverkehrsbereiche in der Antwort klar", async () => {
+    antwort({ flaechen: { type: "FeatureCollection", features: [] } });
+    const r = await ladeSektoren(50, undefined, BASIS);
+    expect(r.nahbereich.features).toHaveLength(0);
+    expect(r.nahbereichMarken.type).toBe("FeatureCollection");
+  });
+
   it("reicht Flächen, Marken und Abdeckung durch", async () => {
     antwort({
       flaechen: { type: "FeatureCollection", features: [{ type: "Feature", properties: { ruf: "EDGG_CTR" }, geometry: { type: "Polygon", coordinates: [[[8, 50], [9, 50], [9, 51], [8, 50]]] } }] },

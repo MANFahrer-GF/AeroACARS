@@ -374,8 +374,12 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         setzen(
           buildPilotFeatures(daten.pilots),
           buildAtcAirportFeatures(daten.controllers, vatspy.airports, daten.atis),
-          sektoren.flaechen,
-          sektoren.marken,
+          // Die kleinen Nahverkehrsbereiche zuletzt, damit sie nicht
+          // unter einem Hoehensektor verschwinden.
+          { type: "FeatureCollection",
+            features: [...sektoren.flaechen.features, ...sektoren.nahbereich.features] },
+          { type: "FeatureCollection",
+            features: [...sektoren.marken.features, ...sektoren.nahbereichMarken.features] },
         );
       } catch (e) {
         if (!beendet && (e as Error)?.name !== "AbortError") {

@@ -16,6 +16,11 @@ const STANDARD_BASIS = "https://live.kant.ovh";
 export interface SektorenFuerKarte {
   flaechen: GeoJSON.FeatureCollection;
   marken: GeoJSON.FeatureCollection;
+  /** Nahverkehrsbereiche um die Plätze (Anflug und Turm). Die stehen
+   *  NICHT in VATGlasses, sondern im SimAware-Datensatz — ohne sie zeigt
+   *  die Karte dort nur einen Punkt, wo eine Fläche hingehört. */
+  nahbereich: GeoJSON.FeatureCollection;
+  nahbereichMarken: GeoJSON.FeatureCollection;
   /** Rufzeichen mit echter Höhenfläche. */
   abgedeckt: Set<string>;
 }
@@ -24,6 +29,8 @@ function leer(): SektorenFuerKarte {
   return {
     flaechen: { type: "FeatureCollection", features: [] },
     marken: { type: "FeatureCollection", features: [] },
+    nahbereich: { type: "FeatureCollection", features: [] },
+    nahbereichMarken: { type: "FeatureCollection", features: [] },
     abgedeckt: new Set(),
   };
 }
@@ -46,12 +53,19 @@ export async function ladeSektoren(
       flaechen?: GeoJSON.FeatureCollection;
       marken?: GeoJSON.FeatureCollection;
       abgedeckt?: string[];
+      tracon?: {
+        flaechen?: GeoJSON.FeatureCollection;
+        marken?: GeoJSON.FeatureCollection;
+        abgedeckt?: string[];
+      };
     };
     const l = leer();
     return {
       flaechen: d.flaechen ?? l.flaechen,
       marken: d.marken ?? l.marken,
-      abgedeckt: new Set(d.abgedeckt ?? []),
+      nahbereich: d.tracon?.flaechen ?? l.nahbereich,
+      nahbereichMarken: d.tracon?.marken ?? l.nahbereichMarken,
+      abgedeckt: new Set([...(d.abgedeckt ?? []), ...(d.tracon?.abgedeckt ?? [])]),
     };
   } catch (e) {
     if ((e as Error)?.name === "AbortError") throw e;
