@@ -94,6 +94,28 @@ interface Aircraft {
   hdg: number;
 }
 
+/** Eine Kartenebene anlegen, ohne die uebrigen zu gefaehrden.
+ *
+ *  MapLibre wirft bei einem ungueltigen Paint- oder Layout-Ausdruck. Da
+ *  die Ebenen nacheinander angelegt werden, riss ein einziger Fehler
+ *  alle nachfolgenden mit — zuletzt ein `case` bei `line-dasharray`
+ *  (nimmt keine Ausdruecke), wodurch Lotsen, Tuerme und Sektoren
+ *  verschwanden und nur der Verkehr blieb. Eine kaputte Ebene darf
+ *  fehlen; sie darf nicht die Karte leeren.
+ */
+function ebeneAnlegen(
+  m: maplibregl.Map,
+  spec: maplibregl.LayerSpecification,
+  davor?: string,
+): void {
+  if (m.getLayer(spec.id)) return;
+  try {
+    m.addLayer(spec, davor);
+  } catch (e) {
+    console.warn(`[karte] Ebene "${spec.id}" nicht angelegt:`, e);
+  }
+}
+
 function readTheme(): "dark" | "light" {
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
 }
@@ -796,8 +818,8 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     if (!map.getSource("vatsim-sectors")) {
       map.addSource("vatsim-sectors", { type: "geojson", data: vatsimSectorsRef.current });
     }
-    if (!map.getLayer("vatsim-sectors-fill")) {
-      map.addLayer({
+    {
+      ebeneAnlegen(map, {
         id: "vatsim-sectors-fill", type: "fill", source: "vatsim-sectors",
         // Farbe je BESITZENDER STATION aus den VATGlasses-Daten — dieselben
         // Farben, die Lotsen und VATGlasses-Nutzer kennen.
@@ -815,15 +837,18 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         },
       });
     }
-    if (!map.getLayer("vatsim-sectors-line")) {
-      map.addLayer({
+    {
+      ebeneAnlegen(map, {
         id: "vatsim-sectors-line", type: "line", source: "vatsim-sectors",
         paint: {
           "line-color": ["get", "farbe"],
           "line-width": ["case", ["has", "ohne_hoehe"], 1.4, 1],
-          // Gebuchte gestrichelt: "hier ist gleich jemand".
-          "line-dasharray": ["case", ["has", "gebucht"], ["literal", [2, 2]], ["literal", [1]]],
-          "line-opacity": ["case", ["has", "gebucht"], 0.45, 0.6],
+          // KEIN Ausdruck bei line-dasharray: das ist in MapLibre eine
+          // CrossFadedProperty und nimmt keine Ausdruecke — ein `case`
+          // darin laesst das Anlegen der Ebene WERFEN, und da die Ebenen
+          // hier nacheinander entstehen, fehlten ab da ALLE folgenden:
+          // keine Lotsen, keine Tuerme, nur noch Verkehr.
+          "line-opacity": ["case", ["has", "gebucht"], 0.4, 0.6],
         },
       });
     }
@@ -859,8 +884,8 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     if (!map.getSource("vatsim-atc-airports")) {
       map.addSource("vatsim-atc-airports", { type: "geojson", data: vatsimAtcRef.current });
     }
-    if (!map.getLayer("vatsim-atc-app-ring")) {
-      map.addLayer({
+    {
+      ebeneAnlegen(map, {
         id: "vatsim-atc-app-ring", type: "circle", source: "vatsim-atc-airports",
         filter: ["==", ["get", "hat_app"], 1],
         paint: {
@@ -875,8 +900,8 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         },
       });
     }
-    if (!map.getLayer("vatsim-atc-airports-circle")) {
-      map.addLayer({
+    {
+      ebeneAnlegen(map, {
         id: "vatsim-atc-airports-circle", type: "circle", source: "vatsim-atc-airports",
         paint: {
           "circle-radius": ["case", [">", ["get", "count"], 1], 7, 5.5],
@@ -925,8 +950,8 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       const img = makeVatsimPlaneImage();
       if (img) map.addImage("vatsim-plane", img, { pixelRatio: 2 });
     }
-    if (!map.getLayer("vatsim-pilots-symbol")) {
-      map.addLayer({
+    {
+      ebeneAnlegen(map, {
         id: "vatsim-pilots-symbol", type: "symbol", source: "vatsim-pilots",
         // Befund: in der Uebersicht lagen hunderte Pfeile uebereinander.
         // Unter Zoom 4.5 traegt kein einzelner Flieger Information — dort
