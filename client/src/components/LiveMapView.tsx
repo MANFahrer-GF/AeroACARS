@@ -801,13 +801,30 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         id: "vatsim-sectors-fill", type: "fill", source: "vatsim-sectors",
         // Farbe je BESITZENDER STATION aus den VATGlasses-Daten — dieselben
         // Farben, die Lotsen und VATGlasses-Nutzer kennen.
-        paint: { "fill-color": ["get", "farbe"], "fill-opacity": 0.14 },
+        paint: {
+          "fill-color": ["get", "farbe"],
+          // Wie auf der Live-Karte: gebuchte Positionen sehr schwach
+          // ("gleich", nicht "jetzt"), grobe Ersatzgrenzen etwas
+          // schwaecher als ein Hoehensektor. `has` statt Wertvergleich —
+          // die Sektoren fuehren diese Felder gar nicht, und ein
+          // Null-Vergleich laesst MapLibre werfen.
+          "fill-opacity": ["case",
+            ["has", "gebucht"], 0.05,
+            ["has", "ohne_hoehe"], 0.13,
+            0.16],
+        },
       });
     }
     if (!map.getLayer("vatsim-sectors-line")) {
       map.addLayer({
         id: "vatsim-sectors-line", type: "line", source: "vatsim-sectors",
-        paint: { "line-color": ["get", "farbe"], "line-width": 1, "line-opacity": 0.55 },
+        paint: {
+          "line-color": ["get", "farbe"],
+          "line-width": ["case", ["has", "ohne_hoehe"], 1.4, 1],
+          // Gebuchte gestrichelt: "hier ist gleich jemand".
+          "line-dasharray": ["case", ["has", "gebucht"], ["literal", [2, 2]], ["literal", [1]]],
+          "line-opacity": ["case", ["has", "gebucht"], 0.45, 0.6],
+        },
       });
     }
     if (!map.getSource("vatsim-sector-labels")) {
