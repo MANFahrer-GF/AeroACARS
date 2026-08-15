@@ -51,12 +51,19 @@ function leer(): SektorenFuerKarte {
  *  nur ohne Sektorflächen. Ein Abbruch (Kartenwechsel, Neuabfrage) wird
  *  durchgereicht, damit der Aufrufer ihn wie gewohnt verwerfen kann. */
 export async function ladeSektoren(
-  fl: number,
+  /** Flugflaeche, oder "alle" fuer jedes Hoehenband auf einmal. Mit "alle"
+   *  filtert die Karte selbst und der Hoehenregler wirkt augenblicklich,
+   *  statt bei jedem Schritt neu zu laden — genauso haelt es die Live-Karte
+   *  auf live.kant.ovh. Eine einzelne Flugflaeche liefert nur ein Zehntel
+   *  der Sektoren (gemessen: 103 statt 1014), weshalb die beiden Karten
+   *  vorher sichtbar auseinanderliefen. */
+  fl: number | "alle",
   signal?: AbortSignal,
   basis: string = STANDARD_BASIS,
 ): Promise<SektorenFuerKarte> {
   try {
-    const res = await fetch(`${basis}/api/vatglasses?fl=${Math.round(fl)}`, { signal });
+    const wert = fl === "alle" ? "alle" : String(Math.round(fl));
+    const res = await fetch(`${basis}/api/vatglasses?fl=${wert}`, { signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const d = (await res.json()) as {
       flaechen?: GeoJSON.FeatureCollection;

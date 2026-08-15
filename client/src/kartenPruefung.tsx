@@ -22,6 +22,16 @@ const gemerkt: unknown[] = [];
     (window as unknown as Record<string, unknown>).__karten = gemerkt;
     const fehler: string[] = [];
     (window as unknown as Record<string, unknown>).__ebenenFehler = fehler;
+    // Externe Kacheln sind im Prüf-Browser blockiert, und MapLibre feuert
+    // `load` erst mit vollständig geladenem Stil. Ohne dieses Ereignis
+    // läuft `addOverlays` nie — man sähe den gesuchten Fehler nicht.
+    // Deshalb sofort auf einen Stil ohne Fremdquellen umstellen.
+    this.setStyle({
+      version: 8,
+      glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+      sources: {},
+      layers: [{ id: "grund", type: "background", paint: { "background-color": "#0b1220" } }],
+    } as never);
     const anlegen = this.addLayer.bind(this);
     this.addLayer = ((spec: { id?: string }, davor?: string) => {
       try { return anlegen(spec as never, davor); }

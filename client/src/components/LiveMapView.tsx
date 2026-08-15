@@ -94,6 +94,31 @@ interface Aircraft {
   hdg: number;
 }
 
+/** Nur die Sektoren zeigen, die bei dieser Flugflaeche zustaendig sind.
+ *
+ *  Der Server liefert mit `fl=alle` jedes Hoehenband auf einmal; gefiltert
+ *  wird hier. Dadurch wirkt der Regler augenblicklich statt erst beim
+ *  naechsten Abruf — und die Karte zeigt dasselbe wie die Live-Karte auf
+ *  live.kant.ovh, die es genauso macht. Flaechen ohne Hoehenangabe und die
+ *  Nahverkehrsbereiche gelten immer: sie haben kein Band, das man filtern
+ *  koennte.
+ */
+function hoehenfilterSetzen(m: maplibregl.Map, fl: number): void {
+  const filter: maplibregl.FilterSpecification = ["any",
+    ["has", "ohne_hoehe"],
+    ["has", "tracon"],
+    ["all",
+      ["<=", ["coalesce", ["get", "fl_von"], 0], fl],
+      [">=", ["coalesce", ["get", "fl_bis"], 999], fl],
+    ],
+  ];
+  for (const id of ["vatsim-sectors-fill", "vatsim-sectors-line", "vatsim-sector-labels-symbol"]) {
+    if (m.getLayer(id)) {
+      try { m.setFilter(id, filter); } catch { /* Ebene fehlt → nichts zu filtern */ }
+    }
+  }
+}
+
 /** Eine Kartenebene anlegen, ohne die uebrigen zu gefaehrden.
  *
  *  MapLibre wirft bei einem ungueltigen Paint- oder Layout-Ausdruck. Da
@@ -388,7 +413,8 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         const fl = flModusRef.current === "auto" && eigeneFl != null ? eigeneFl : flWertRef.current;
         // Die Sektoren rechnet der Live-Server — dieselbe Quelle wie die
         // Karte auf live.kant.ovh, damit beide dasselbe zeigen.
-        const sektoren = await ladeSektoren(fl, abbruch.signal);
+        // Alle Hoehenbaender auf einmal — gefiltert wird auf der Karte.
+        const sektoren = await ladeSektoren("alle", abbruch.signal);
         if (beendet) return;
         setzen(
           buildPilotFeatures(daten.pilots),
@@ -421,6 +447,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
               ...sektoren.nahbereichMarken.features,
             ] },
         );
+        // Der Server hat jedes Hoehenband geliefert — hier faellt die
+        // Entscheidung, welches davon zu sehen ist.
+        hoehenfilterSetzen(map, fl);
       } catch (e) {
         if (!beendet && (e as Error)?.name !== "AbortError") {
           console.warn("[vatsim] Abruf fehlgeschlagen:", e);
@@ -430,7 +459,22 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     void holen();
     const takt = setInterval(() => { void holen(); }, 30_000);
     return () => { beendet = true; abbruch.abort(); clearInterval(takt); };
-  }, [showVatsim, mapReady, flModus, flWert]);
+    // Der Regler loest KEINEN neuen Abruf mehr aus: die Daten enthalten
+    // ohnehin jedes Band, gefiltert wird im Effekt darunter.
+  }, [showVatsim, mapReady]);
+
+  // Hoehenregler: wirkt augenblicklich auf die schon geladenen Sektoren.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !showVatsim) return;
+    const eigeneFl = simSnapshotRef.current
+      ? Math.max(0, Math.round((simSnapshotRef.current.altitude_msl_ft ?? 0) / 100))
+      : null;
+    hoehenfilterSetzen(
+      map,
+      flModus === "auto" && eigeneFl != null ? eigeneFl : flWert,
+    );
+  }, [mapReady, showVatsim, flModus, flWert]);
 
   // Klickfenster fuer das VATSIM-Overlay — Klartext statt Rohdaten
   // (dieselbe Bauform wie auf der Live-Karte der Webapp).
