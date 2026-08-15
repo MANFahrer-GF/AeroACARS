@@ -2201,6 +2201,10 @@ struct PersistedFlightStats {
     last_lat: Option<f64>,
     #[serde(default)]
     last_lon: Option<f64>,
+    /// Wann die Distanz-Basislinie gesetzt wurde — ohne die Zeit laesst sich
+    /// nicht sagen, ob ein Segment plausibel ist. Siehe `MAX_SEGMENT_SPEED_KT`.
+    #[serde(default)]
+    last_pos_at: Option<DateTime<Utc>>,
     #[serde(default)]
     landing_peak_vs_fpm: Option<f32>,
     #[serde(default)]
@@ -2512,6 +2516,7 @@ impl PersistedFlightStats {
             initial_fob_kg: stats.initial_fob_kg,
             last_lat: stats.last_lat,
             last_lon: stats.last_lon,
+            last_pos_at: stats.last_pos_at,
             landing_peak_vs_fpm: stats.landing_peak_vs_fpm,
             landing_peak_g_force: stats.landing_peak_g_force,
             // v0.7.1 (Spec F4 + P2.2-D): Confidence + Source persistieren
@@ -2636,6 +2641,7 @@ impl PersistedFlightStats {
         stats.initial_fob_kg = self.initial_fob_kg;
         stats.last_lat = self.last_lat;
         stats.last_lon = self.last_lon;
+        stats.last_pos_at = self.last_pos_at;
         stats.landing_peak_vs_fpm = self.landing_peak_vs_fpm;
         stats.landing_peak_g_force = self.landing_peak_g_force;
         stats.landing_confidence = self.landing_confidence;
@@ -2975,6 +2981,9 @@ struct FlightStats {
     // Position tracking.
     last_lat: Option<f64>,
     last_lon: Option<f64>,
+    /// Zeitpunkt der Distanz-Basislinie — ohne ihn laesst sich ein Sprung
+    /// nicht von einem Flug unterscheiden. Siehe `segment_is_flown`.
+    last_pos_at: Option<DateTime<Utc>>,
     distance_nm: f64,
     position_count: u32,
 
@@ -18919,6 +18928,7 @@ fn apply_pause_resume(
         // von flight_resume_after_disconnect).
         stats.last_lat = None;
         stats.last_lon = None;
+        stats.last_pos_at = None;
         // v0.20 (QS-Fix, Finding 1): dieser Pfad (Sim-Pause/-Disconnect-
         // Resume INNERHALB desselben laufenden Prozesses) ist der weitaus
         // haeufigere Resume-Fall — deutlich haeufiger als ein kompletter
@@ -20669,8 +20679,9 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
         let mut reset_warning_logged_this_session = false;
         const RESET_NULL_ISLAND_DEG: f64 = 0.1;
         const RESET_MAX_ALT_JUMP_FT: f64 = 10_000.0;
-        const RESET_MAX_DIST_NM_PER_TICK: f64 = 10.0;
-        const RESET_CHECK_MAX_DT_SECS: i64 = 2;
+        // Strecke und Abstand stehen jetzt in `RESET_LIMITS` bei
+        // `classify_segment` — hier bleiben nur die Werte, die diese
+        // Schleife selbst auswertet.
         loop {
             // 20 ms = 50 Hz target — matches GEES (`SAMPLE_RATE = 20`),
             // the only open-source reference impl that publishes its
@@ -20688,30 +20699,34 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             let now = Utc::now();
 
             // v0.7.18 (B-013) Reset-Detection — vor Buffer-Push + Edge-Detect.
+            // Dieselbe Regel wie die Streckenzaehlung und das Ausrollen —
+            // `classify_segment` mit der hier erprobten Toleranz
+            // (`RESET_LIMITS`: 10 NM flach, 10.000 ft, bis 2 s Abstand).
+            // Vorher stand die Pruefung dreimal im Code, in drei Fassungen;
+            // eine davon zaehlte einen Sprung von 4900 NM als geflogen.
             let is_null_island = snap.lat.abs() < RESET_NULL_ISLAND_DEG
                 && snap.lon.abs() < RESET_NULL_ISLAND_DEG;
-            let (alt_jump, dist_jump_nm, dt_too_large) = match prev_sample_for_reset_check {
+            let (alt_jump, dist_jump_nm, urteil) = match prev_sample_for_reset_check {
                 Some((p_lat, p_lon, p_alt, p_at)) => {
-                    let dt = (now - p_at).num_seconds();
-                    if dt > RESET_CHECK_MAX_DT_SECS {
-                        // Zu lange her → Jump-Checks skippen, prev_state
-                        // wird unten neu gesetzt mit dem aktuellen Sample.
-                        (0.0, 0.0, true)
-                    } else {
-                        let dist_m =
-                            ::geo::distance_m(p_lat, p_lon, snap.lat, snap.lon);
-                        let dist_nm = dist_m / 1852.0;
-                        let alt_diff =
-                            (snap.altitude_msl_ft - p_alt).abs();
-                        (alt_diff, dist_nm, false)
-                    }
+                    let dt = (now - p_at).num_milliseconds() as f64 / 1000.0;
+                    let alt_diff = (snap.altitude_msl_ft - p_alt).abs();
+                    let dist_nm =
+                        ::geo::distance_m(p_lat, p_lon, snap.lat, snap.lon) / 1852.0;
+                    let u = classify_segment(
+                        (p_lat, p_lon),
+                        (snap.lat, snap.lon),
+                        Some(alt_diff),
+                        Some(dt),
+                        RESET_LIMITS,
+                    );
+                    (alt_diff, dist_nm, u)
                 }
-                None => (0.0, 0.0, false),
+                None => (0.0, 0.0, SegmentVerdict::Flown),
             };
-            let is_alt_jump = !dt_too_large && alt_jump > RESET_MAX_ALT_JUMP_FT;
-            let is_dist_jump = !dt_too_large && dist_jump_nm > RESET_MAX_DIST_NM_PER_TICK;
+            let ist_sprung = matches!(urteil, SegmentVerdict::Jump(_));
+            let is_alt_jump = ist_sprung && alt_jump > RESET_MAX_ALT_JUMP_FT;
 
-            if is_null_island || is_alt_jump || is_dist_jump {
+            if is_null_island || ist_sprung {
                 if !reset_warning_logged_this_session {
                     let reason = if is_null_island {
                         "lat/lon ≈ 0/0 (Null-Island)"
@@ -25500,8 +25515,22 @@ fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
             (stats.rollout_last_lat, stats.rollout_last_lon)
         {
             let delta = ::geo::distance_m(prev_lat, prev_lon, snap.lat, snap.lon);
-            stats.rollout_distance_m =
-                Some(stats.rollout_distance_m.unwrap_or(0.0) + delta);
+            // Dieselbe Regel wie die Streckenzaehlung: hier gab es GAR keinen
+            // Riegel, nicht einmal die 5-Meter-Untergrenze. Ein Versetzen
+            // beim Ausrollen ging voll in die Rollstrecke — und die fliesst
+            // in die Landebewertung. Ohne Zeitbezug greift die Strecken-
+            // schranke aus `classify_segment`.
+            if classify_segment(
+                (prev_lat, prev_lon),
+                (snap.lat, snap.lon),
+                None,
+                None,
+                ODOMETER_LIMITS,
+            ) == SegmentVerdict::Flown
+            {
+                stats.rollout_distance_m =
+                    Some(stats.rollout_distance_m.unwrap_or(0.0) + delta);
+            }
         }
         stats.rollout_last_lat = Some(snap.lat);
         stats.rollout_last_lon = Some(snap.lon);
@@ -25740,6 +25769,114 @@ fn snapshot_position_is_usable(snap: &SimSnapshot) -> bool {
     !(snap.lat.abs() < 0.02 && snap.lon.abs() < 0.02)
 }
 
+/// Wie ein Positions-Sprung einzuordnen ist.
+///
+/// Es gab diese Pruefung im Code schon einmal — inline in der Aufzeichnungs-
+/// schleife, mit lokalen Konstanten, und deshalb fuer niemanden sonst
+/// benutzbar. Die Streckenzaehlung und das Ausrollen hatten je eigene
+/// (bzw. gar keine) Regeln. Ergebnis: Michael K. hatte EDAV->EDAZ (real
+/// 42 NM) mit 4987 NM im Logbuch. Jetzt gibt es EINE Regel; die Toleranz
+/// bleibt je Verwendung verschieden, weil ein Reset-Erkenner grosszuegiger
+/// sein darf als ein Kilometerzaehler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SegmentVerdict {
+    /// Plausibel geflogen — zaehlen.
+    Flown,
+    /// Sprung: Null-Position, Hoehen- oder Streckensprung. Verwerfen und
+    /// die Basislinie neu setzen.
+    Jump(&'static str),
+    /// Die Luecke ist zu gross, um irgendetwas zu behaupten. Nicht zaehlen,
+    /// neu ansetzen — ein zu kleiner Zaehlerstand ist ehrlicher als ein
+    /// erfundener.
+    Gap,
+}
+
+/// Grenzwerte einer Verwendung. Eigene Struktur, damit an der Aufrufstelle
+/// steht, WAS geprueft wird, statt vier nackter Zahlen.
+#[derive(Debug, Clone, Copy)]
+struct SegmentLimits {
+    /// Groesste Luecke zwischen zwei Proben, die noch beurteilbar ist.
+    max_dt_secs: f64,
+    /// Groesste Strecke je Sekunde, ausgedrueckt als Geschwindigkeit.
+    max_speed_kt: f64,
+    /// Fester Zuschlag gegen Takt-Jitter.
+    slack_nm: f64,
+    /// Groesster Hoehensprung; `None` schaltet die Pruefung ab.
+    max_alt_jump_ft: Option<f64>,
+    /// Feste Streckengrenze statt der geschwindigkeitsabhaengigen. Der
+    /// Reset-Erkenner arbeitet seit jeher so (10 NM, unabhaengig vom
+    /// Abstand) und ist im Feld erprobt — das Verhalten bleibt, damit die
+    /// Vereinheitlichung nichts verstellt, was sich bewaehrt hat.
+    flat_max_dist_nm: Option<f64>,
+}
+
+/// Toleranz der Streckenzaehlung: eng, weil hier jeder Fehler dauerhaft im
+/// Logbuch steht. Weit ueber jedem Muster (SR-71 ~1900 kt), damit kein
+/// echter Flug beschnitten wird.
+const ODOMETER_LIMITS: SegmentLimits = SegmentLimits {
+    max_dt_secs: 120.0,
+    max_speed_kt: 2200.0,
+    slack_nm: 1.0,
+    max_alt_jump_ft: None,
+    flat_max_dist_nm: None,
+};
+
+/// Toleranz des Reset-Erkenners — unveraendert aus der Aufzeichnungs-
+/// schleife uebernommen (10 NM bei bis zu 2 s, 10.000 ft). Bewusst
+/// grosszuegig: hier kostet ein Fehlalarm eine ganze Sitzung.
+const RESET_LIMITS: SegmentLimits = SegmentLimits {
+    max_dt_secs: 2.0,
+    max_speed_kt: f64::INFINITY,
+    slack_nm: 0.0,
+    max_alt_jump_ft: Some(10_000.0),
+    flat_max_dist_nm: Some(10.0),
+};
+
+/// Null-Position: das Flugzeug ist beim Laden kurz auf 0/0, bevor der
+/// Simulator es setzt. Der haeufigste Sprung ueberhaupt.
+fn is_null_island(lat: f64, lon: f64) -> bool {
+    lat.abs() < 0.1 && lon.abs() < 0.1
+}
+
+fn classify_segment(
+    prev: (f64, f64),
+    cur: (f64, f64),
+    alt_jump_ft: Option<f64>,
+    dt_secs: Option<f64>,
+    limits: SegmentLimits,
+) -> SegmentVerdict {
+    if is_null_island(cur.0, cur.1) || is_null_island(prev.0, prev.1) {
+        return SegmentVerdict::Jump("Null-Position");
+    }
+    let d_nm = ::geo::distance_m(prev.0, prev.1, cur.0, cur.1) / 1852.0;
+    let Some(dt) = dt_secs else {
+        // Ohne Zeitbezug (Sitzungen von vor diesem Feld) bleibt nur die
+        // Strecke selbst. Ein einzelner Tick ueber 50 NM ist kein Flug.
+        return if d_nm > 50.0 {
+            SegmentVerdict::Jump("Strecke ohne Zeitbezug")
+        } else {
+            SegmentVerdict::Flown
+        };
+    };
+    if !(0.0..=limits.max_dt_secs).contains(&dt) {
+        return SegmentVerdict::Gap;
+    }
+    if let (Some(grenze), Some(sprung)) = (limits.max_alt_jump_ft, alt_jump_ft) {
+        if sprung > grenze {
+            return SegmentVerdict::Jump("Hoehensprung");
+        }
+    }
+    let erlaubt = match limits.flat_max_dist_nm {
+        Some(fest) => fest,
+        None => limits.max_speed_kt * (dt / 3600.0) + limits.slack_nm,
+    };
+    if d_nm > erlaubt {
+        SegmentVerdict::Jump("Positionssprung")
+    } else {
+        SegmentVerdict::Flown
+    }
+}
+
 fn step_flight_at(
     flight: &ActiveFlight,
     snap: &SimSnapshot,
@@ -25798,12 +25935,23 @@ fn step_flight_at(
     // Distance accounting.
     if let (Some(prev_lat), Some(prev_lon)) = (stats.last_lat, stats.last_lon) {
         let d_m = ::geo::distance_m(prev_lat, prev_lon, snap.lat, snap.lon);
-        if d_m > DISTANCE_EPSILON_M {
+        let dt = stats
+            .last_pos_at
+            .map(|t| (now - t).num_milliseconds() as f64 / 1000.0);
+        let urteil = classify_segment(
+            (prev_lat, prev_lon),
+            (snap.lat, snap.lon),
+            None,
+            dt,
+            ODOMETER_LIMITS,
+        );
+        if d_m > DISTANCE_EPSILON_M && urteil == SegmentVerdict::Flown {
             stats.distance_nm += d_m / 1852.0;
         }
     }
     stats.last_lat = Some(snap.lat);
     stats.last_lon = Some(snap.lon);
+    stats.last_pos_at = Some(now);
     // v0.19.3: WHERE THE AIRCRAFT LAST WAS — a different question from "what is
     // the distance baseline", which is what `last_lat/lon` above is.
     //
@@ -42803,6 +42951,115 @@ mod v0_16_6_bush_completeness_tests {
         stats.rollout_last_lon = Some(lon);
         stats.landing_heading_true_deg = Some(90.0);
         stats
+    }
+
+    // ---- segment_is_flown(): Sprung vs. Flug -------------------------
+    //
+    // Feldbefund Michael K. (PIREP 6QgxNLQP8b62XaKq, 12.07.2026): EDAV->EDAZ,
+    // real 42 NM, im Logbuch 4987 NM bei 40 Minuten Flugzeit. Ueber alle
+    // ACARS-Clients hinweg traf die Klasse 20 PIREPs.
+
+    /// Zwei echte Punkte, ihre Strecke entscheidet. Start bewusst NICHT
+    /// bei 0/0 — das waere die Null-Position und traefe eine andere Regel.
+    const BER: (f64, f64) = (52.36, 13.50);
+    /// ~0,55 NM oestlich: eine Reiseflug-Probe im 4-Sekunden-Takt.
+    const BER_NAH: (f64, f64) = (52.36, 13.515);
+    /// Frankfurt, ~232 NM entfernt — als Tick unmoeglich.
+    const FRA: (f64, f64) = (50.033, 8.570);
+    const NULL_ISLAND: (f64, f64) = (0.0, 0.0);
+
+    fn urteil(von: (f64, f64), nach: (f64, f64), dt: Option<f64>) -> SegmentVerdict {
+        classify_segment(von, nach, None, dt, ODOMETER_LIMITS)
+    }
+
+    // ---- RESET_LIMITS: das erprobte Verhalten der Aufzeichnungsschleife
+    //      muss die gemeinsame Regel unveraendert wiedergeben.
+
+    #[test]
+    fn reset_toleranz_bleibt_bei_zehn_meilen() {
+        let reset = |von, nach, alt, dt| classify_segment(von, nach, alt, Some(dt), RESET_LIMITS);
+        // 0,55 NM: weit unter der flachen Grenze, egal wie kurz der Abstand.
+        assert_eq!(reset(BER, BER_NAH, None, 0.02), SegmentVerdict::Flown);
+        assert_eq!(reset(BER, BER_NAH, None, 2.0), SegmentVerdict::Flown);
+        // Berlin -> Frankfurt sind 232 NM — deutlich ueber 10.
+        assert!(matches!(reset(BER, FRA, None, 1.0), SegmentVerdict::Jump(_)));
+    }
+
+    #[test]
+    fn reset_toleranz_haengt_nicht_am_abstand() {
+        // Anders als die Streckenzaehlung: die flache Grenze gilt
+        // unabhaengig vom Abstand, solange er unter 2 s bleibt. Genau so
+        // arbeitete die Schleife vorher auch.
+        let reset = |dt| classify_segment(BER, FRA, None, Some(dt), RESET_LIMITS);
+        assert!(matches!(reset(0.02), SegmentVerdict::Jump(_)));
+        assert!(matches!(reset(1.99), SegmentVerdict::Jump(_)));
+        // Darueber wird nicht mehr geurteilt, sondern neu angesetzt.
+        assert_eq!(reset(2.5), SegmentVerdict::Gap);
+    }
+
+    #[test]
+    fn reset_hoehensprung_wird_erkannt() {
+        let u = classify_segment(BER, BER_NAH, Some(12_000.0), Some(1.0), RESET_LIMITS);
+        assert!(matches!(u, SegmentVerdict::Jump(_)));
+        // Die Streckenzaehlung prueft die Hoehe bewusst NICHT — ein
+        // Hoehensprung allein verfaelscht keinen Kilometerzaehler.
+        assert_eq!(
+            classify_segment(BER, BER_NAH, Some(12_000.0), Some(1.0), ODOMETER_LIMITS),
+            SegmentVerdict::Flown
+        );
+    }
+
+    #[test]
+    fn segment_normaler_reiseflug_zaehlt() {
+        // ~0,55 NM in 4 s = rund 500 kt. Muss durchgehen.
+        assert_eq!(urteil(BER, BER_NAH, Some(4.0)), SegmentVerdict::Flown);
+    }
+
+    #[test]
+    fn segment_kleiner_zuschlag_deckt_takt_jitter() {
+        // Der feste Zuschlag von 1 NM dominiert bei sehr kurzen Abstaenden:
+        // dieselbe halbe Meile gilt auch bei 0,2 s noch als geflogen,
+        // obwohl das rechnerisch rund 9900 kt waeren. Das ist gewollt — ein
+        // schwankender Takt darf keine Strecke verschlucken, und 1 NM
+        // Unschaerfe faellt im Logbuch nicht ins Gewicht. Die Sprungfaelle,
+        // um die es geht, liegen um Groessenordnungen darueber.
+        assert_eq!(urteil(BER, BER_NAH, Some(0.2)), SegmentVerdict::Flown);
+        assert_eq!(urteil(BER, BER_NAH, Some(4.0)), SegmentVerdict::Flown);
+        // Ein echter Sprung faellt auch im selben kurzen Abstand durch.
+        assert!(matches!(urteil(BER, FRA, Some(0.2)), SegmentVerdict::Jump(_)));
+    }
+
+    #[test]
+    fn segment_versetzen_zaehlt_nicht() {
+        // Michaels Fall in klein: Berlin -> Frankfurt in einem Tick.
+        assert!(matches!(urteil(BER, FRA, Some(4.0)), SegmentVerdict::Jump(_)));
+    }
+
+    #[test]
+    fn segment_null_position_sprung_zaehlt_nicht() {
+        // Null Island -> Berlin, der haeufigste Fall vor v0.19.3 — und
+        // ebenso der Rueckweg, wenn der Simulator kurz zurueckfaellt.
+        assert!(matches!(urteil(NULL_ISLAND, BER, Some(2.0)), SegmentVerdict::Jump(_)));
+        assert!(matches!(urteil(BER, NULL_ISLAND, Some(2.0)), SegmentVerdict::Jump(_)));
+    }
+
+    #[test]
+    fn segment_zu_grosse_luecke_zaehlt_nicht() {
+        // Was in fuenf Minuten geschah, wissen wir nicht — lieber zu wenig
+        // zaehlen als eine Strecke erfinden.
+        assert_eq!(urteil(BER, BER_NAH, Some(300.0)), SegmentVerdict::Gap);
+    }
+
+    #[test]
+    fn segment_rueckwaerts_laufende_zeit_zaehlt_nicht() {
+        assert_eq!(urteil(BER, BER_NAH, Some(-10.0)), SegmentVerdict::Gap);
+    }
+
+    #[test]
+    fn segment_ohne_zeitbezug_faellt_auf_die_strecke_zurueck() {
+        // Sitzungen, die vor diesem Feld begannen, tragen keine Zeit.
+        assert_eq!(urteil(BER, BER_NAH, None), SegmentVerdict::Flown);
+        assert!(matches!(urteil(BER, FRA, None), SegmentVerdict::Jump(_)));
     }
 
     #[test]
