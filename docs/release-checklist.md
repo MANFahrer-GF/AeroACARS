@@ -27,6 +27,20 @@ Check: `grep -E '"0\.X\.Y"|version = "0\.X\.Y"' client/package.json client/src-t
 - [ ] Hat 🇩🇪 Deutsch-Block UND 🇬🇧 English-Block
 - [ ] Wenn Wire-Format-Änderungen drin sind: VA-Owner-Hinweis ob `aeroacars-live` mit-deployed werden muss
 - [ ] Wenn Migration-Sensible Änderung drin (Score-Algorithmen, DB-Schemas): konkreter Hinweis was passieren sollte
+- [ ] **Notes FINAL machen, BEVOR der Tag gesetzt wird.** Die CI liest die
+      Datei im getaggten Stand. Was danach committet wird, landet weder im
+      Release-Text noch im Update-Fenster der Piloten — und faellt niemandem
+      auf, weil beides trotzdem gefuellt aussieht. Nachtraeglich kostet es
+      ZWEI Korrekturen (v1.6.4, 15.08.2026):
+      `gh release edit vX.Y.Z --notes-file docs/release-notes/vX.Y.Z.md`
+      UND das `notes`-Feld in `latest.json` neu hochladen
+      (`gh release upload vX.Y.Z latest.json --clobber`) — letzteres ist das,
+      was der Pilot im Update-Fenster tatsaechlich liest. Die Signaturen in
+      `latest.json` bleiben dabei unberuehrt, aber danach pruefen.
+- [ ] Diff gegen die Notes gegenlesen: `git log --reverse --oneline <letzter-Tag>..HEAD`.
+      Bei v1.6.4 fehlten so drei pilotensichtbare Punkte (gebuchte Positionen,
+      Nahverkehrsbereiche, Klickfenster-Kosmetik) — Thomas hat sie gefunden,
+      nicht die Checkliste.
 
 ## 3. Tests grün
 
@@ -101,6 +115,7 @@ den letzten Stand von Flow mitziehen").
 ## 7. Release-Tag + GitHub-Actions
 
 - [ ] PR auf `main` gemerget
+- [ ] **Letzter Blick auf die Notes** — nach dem Tag ist die Datei fuer die CI eingefroren (siehe Abschnitt 2).
 - [ ] `git tag vX.Y.Z && git push origin vX.Y.Z` (KEIN lokales `npm run tauri build` — GitHub-Actions baut signed Win+Mac, siehe `MEMORY.md` „Release-Automation")
 
 > **Lokal testen: `npm run build:lokal`.**
