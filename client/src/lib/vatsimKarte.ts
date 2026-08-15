@@ -339,6 +339,9 @@ export async function loadVatSpy(signal?: AbortSignal): Promise<VatSpyData> {
     if (!res.ok) throw new Error(`vatspy HTTP ${res.status}`);
     const text = await res.text();
     const airports = new Map<string, [number, number]>();
+    const rohPlaetze: Array<{
+      icao: string; lon: number; lat: number; praefix: string; behelf: boolean;
+    }> = [];
     const prefixToBoundary = new Map<string, string>();
     let section = "";
     for (const rawLine of text.split(/\r?\n/)) {
@@ -347,12 +350,30 @@ export async function loadVatSpy(signal?: AbortSignal): Promise<VatSpyData> {
       if (line.startsWith("[")) { section = line.toUpperCase(); continue; }
       const parts = line.split("|");
       if (section === "[AIRPORTS]") {
-        // ICAO|Name|Lat|Lon|IATA|FIR|IsPseudo
+        // ICAO|Name|Lat|Lon|Rufzeichen-Präfix|FIR|IsPseudo
+        //
+        // Das fünfte Feld ist das Präfix, mit dem sich die Lotsen dort
+        // melden — oft NICHT der ICAO-Code: San Francisco funkt als
+        // SFO_TWR, Sydney als SY_TWR, die kalifornische Sammelposition
+        // als SCT_APP. Ohne diesen Schlüssel finden all diese Lotsen
+        // keinen Platz und verschwinden von der Karte: weder Fläche noch
+        // Marker.
+        //
+        // Erst einsammeln, aufgelöst wird nach der Datei — die
+        // Rangfolge steht weiter unten und folgt der von VATSIM Radar.
         if (parts.length < 4) continue;
         const icao = parts[0].toUpperCase();
         const lat = parseFloat(parts[2]);
         const lon = parseFloat(parts[3]);
-        if (icao && isFinite(lat) && isFinite(lon)) airports.set(icao, [lon, lat]);
+        if (!icao || !isFinite(lat) || !isFinite(lon)) continue;
+        rohPlaetze.push({
+          icao,
+          lon,
+          lat,
+          praefix: (parts[4] ?? "").trim().toUpperCase(),
+          // Das siebte Feld markiert Behelfseinträge.
+          behelf: (parts[6] ?? "").trim() === "1",
+        });
       } else if (section === "[FIRS]") {
         // ICAO|NAME|CALLSIGN PREFIX|FIR BOUNDARY
         if (parts.length < 4) continue;
@@ -364,6 +385,35 @@ export async function loadVatSpy(signal?: AbortSignal): Promise<VatSpyData> {
         if (key && !prefixToBoundary.has(key)) prefixToBoundary.set(key, boundary);
       }
     }
+    // Rangfolge der Schlüssel, wie sie VATSIM Radar auflöst
+    // (app/composables/render/update/atc.ts, Kette
+    // `realIata || iata || realIcao || icao`):
+    //   1. Rufzeichen-Präfix aus einem echten Eintrag
+    //   2. Rufzeichen-Präfix aus einem Behelfseintrag
+    //   3. ICAO aus einem echten Eintrag
+    //   4. ICAO aus einem Behelfseintrag
+    // Innerhalb jeder Stufe gewinnt die ERSTE Zeile der Datei. Deshalb
+    // stark nach schwach durchgehen und nur belegen, was noch frei ist.
+    //
+    // Ohne diese Reihenfolge landen Lotsen am falschen Platz: LIMM_CTR
+    // gehört an Mailand-Malpensa, nicht auf den gleichnamigen
+    // FIR-Eintrag.
+    const belege = (
+      schluessel: (p: (typeof rohPlaetze)[number]) => string,
+      nimm: (p: (typeof rohPlaetze)[number]) => boolean,
+    ) => {
+      for (const p of rohPlaetze) {
+        if (!nimm(p)) continue;
+        const k = schluessel(p);
+        if (k && !airports.has(k)) airports.set(k, [p.lon, p.lat]);
+      }
+    };
+    belege((p) => p.praefix, (p) => !!p.praefix && !p.behelf);
+    belege((p) => p.praefix, (p) => !!p.praefix && p.behelf);
+    belege((p) => p.icao, (p) => !p.behelf);
+    belege((p) => p.icao, () => true);
+
+
     vatspyCache = { airports, prefixToBoundary };
     return vatspyCache;
   })();
