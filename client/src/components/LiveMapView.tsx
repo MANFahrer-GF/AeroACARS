@@ -726,11 +726,26 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       }
     });
     map.on("load", () => {
-      addOverlays(map);
-      setMapReady(true);
+      // Die Bereitschaft MUSS gesetzt werden, auch wenn das Anlegen der
+      // Ebenen scheitert. Vorher stand sie dahinter: ein einziger
+      // Fehler in addOverlays — etwa ein Ausdruck an einer Eigenschaft,
+      // die keine nimmt — verhinderte sie, und damit lief der ganze
+      // Datenabruf nie an. Auf der Karte blieb nur der Verkehr übrig,
+      // der aus einer anderen Quelle kommt.
+      try {
+        addOverlays(map);
+      } catch (e) {
+        console.error("[karte] Ebenen konnten nicht angelegt werden:", e);
+      } finally {
+        setMapReady(true);
+      }
     });
     map.on("styledata", () => {
-      if (map.isStyleLoaded()) addOverlays(map);
+      // Auch hier: ein Fehler darf den Stilwechsel nicht abbrechen.
+      if (map.isStyleLoaded()) {
+        try { addOverlays(map); }
+        catch (e) { console.error("[karte] Ebenen nach Stilwechsel:", e); }
+      }
     });
     return () => {
       map.remove();
@@ -857,7 +872,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     }
     if (!map.getLayer("vatsim-sector-labels-symbol")) {
       try {
-        map.addLayer({
+        ebeneAnlegen(map, {
           id: "vatsim-sector-labels-symbol", type: "symbol", source: "vatsim-sector-labels",
           layout: {
             "text-field": ["format",
@@ -914,7 +929,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     }
     if (!map.getLayer("vatsim-atc-airports-label")) {
       try {
-        map.addLayer({
+        ebeneAnlegen(map, {
           id: "vatsim-atc-airports-label", type: "symbol", source: "vatsim-atc-airports",
           layout: {
             // EINE Zeile (Radar-Vorbild): ICAO, daneben die Stationsarten
