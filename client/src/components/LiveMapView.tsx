@@ -14,8 +14,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  buildAtcAirportFeatures, buildPilotFeatures, emptyFC, fetchVatsimData,
-  loadVatSpy, esc as vatsimEsc,
+  buildPilotFeatures, emptyFC, fetchVatsimData, esc as vatsimEsc,
 } from "../lib/vatsimKarte";
 import { ladeSektoren } from "../lib/vatglassesKarte";
 import maplibregl, { type StyleSpecification } from "maplibre-gl";
@@ -355,10 +354,8 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       abbruch.abort();
       abbruch = new AbortController();
       try {
-        const [daten, vatspy] = await Promise.all([
-          fetchVatsimData(abbruch.signal),
-          loadVatSpy(abbruch.signal),
-        ]);
+        // VATSpy braucht der Client nicht mehr — der Server wertet es aus.
+        const daten = await fetchVatsimData(abbruch.signal);
         if (beendet) return;
         // Sektoren nach HOEHE: im Flug die eigene Flugflaeche, sonst der
         // Regler. Genau dafuer sind die VATGlasses-Daten da — die flachen
@@ -373,13 +370,34 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         if (beendet) return;
         setzen(
           buildPilotFeatures(daten.pilots),
-          buildAtcAirportFeatures(daten.controllers, vatspy.airports, daten.atis),
+          // Platz-Marker kommen seit dem Umbau vom Server — dieselbe
+          // Quelle wie die Live-Karte. Vorher rechnete der Client sie
+          // selbst und lag daneben: Marker uebereinander, "LGT" statt
+          // Balken, US- und australische Plaetze unsichtbar.
+          sektoren.plaetze,
           // Die kleinen Nahverkehrsbereiche zuletzt, damit sie nicht
           // unter einem Hoehensektor verschwinden.
+          // Reihenfolge wie auf der Live-Karte: gebuchte und grobe
+          // Grenzen unten, Hoehensektoren darueber, Nahbereiche zuoberst.
           { type: "FeatureCollection",
-            features: [...sektoren.flaechen.features, ...sektoren.nahbereich.features] },
+            features: [
+              ...sektoren.gebucht.features,
+              ...sektoren.firFlaechen.features.map((f) => ({
+                ...f,
+                properties: { ...f.properties, farbe: "#4ade80", ohne_hoehe: 1 },
+              })),
+              ...sektoren.flaechen.features,
+              ...sektoren.nahbereich.features,
+            ] },
           { type: "FeatureCollection",
-            features: [...sektoren.marken.features, ...sektoren.nahbereichMarken.features] },
+            features: [
+              ...sektoren.marken.features,
+              ...sektoren.firMarken.features.map((f) => ({
+                ...f,
+                properties: { ...f.properties, farbe: "#4ade80" },
+              })),
+              ...sektoren.nahbereichMarken.features,
+            ] },
         );
       } catch (e) {
         if (!beendet && (e as Error)?.name !== "AbortError") {

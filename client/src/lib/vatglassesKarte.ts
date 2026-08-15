@@ -16,13 +16,18 @@ const STANDARD_BASIS = "https://live.kant.ovh";
 export interface SektorenFuerKarte {
   flaechen: GeoJSON.FeatureCollection;
   marken: GeoJSON.FeatureCollection;
-  /** Nahverkehrsbereiche um die Plätze (Anflug und Turm). Die stehen
-   *  NICHT in VATGlasses, sondern im SimAware-Datensatz — ohne sie zeigt
-   *  die Karte dort nur einen Punkt, wo eine Fläche hingehört. */
-  nahbereich: GeoJSON.FeatureCollection;
-  nahbereichMarken: GeoJSON.FeatureCollection;
   /** Rufzeichen mit echter Höhenfläche. */
   abgedeckt: Set<string>;
+  /** Platz-Marker und grobe FIR-Grenzen — seit dem Umbau vom Server,
+   *  damit Client und Live-Karte dieselbe Darstellung zeigen. Vorher
+   *  rechnete der Client das selbst und lief auseinander: Marker
+   *  uebereinander, "LGT" statt Balken, ganze FIRs statt Teilsektoren. */
+  plaetze: GeoJSON.FeatureCollection;
+  firFlaechen: GeoJSON.FeatureCollection;
+  firMarken: GeoJSON.FeatureCollection;
+  nahbereich: GeoJSON.FeatureCollection;
+  nahbereichMarken: GeoJSON.FeatureCollection;
+  gebucht: GeoJSON.FeatureCollection;
 }
 
 function leer(): SektorenFuerKarte {
@@ -31,6 +36,10 @@ function leer(): SektorenFuerKarte {
     marken: { type: "FeatureCollection", features: [] },
     nahbereich: { type: "FeatureCollection", features: [] },
     nahbereichMarken: { type: "FeatureCollection", features: [] },
+    plaetze: { type: "FeatureCollection", features: [] },
+    firFlaechen: { type: "FeatureCollection", features: [] },
+    firMarken: { type: "FeatureCollection", features: [] },
+    gebucht: { type: "FeatureCollection", features: [] },
     abgedeckt: new Set(),
   };
 }
@@ -53,10 +62,16 @@ export async function ladeSektoren(
       flaechen?: GeoJSON.FeatureCollection;
       marken?: GeoJSON.FeatureCollection;
       abgedeckt?: string[];
+      gebucht?: GeoJSON.FeatureCollection;
       tracon?: {
         flaechen?: GeoJSON.FeatureCollection;
         marken?: GeoJSON.FeatureCollection;
         abgedeckt?: string[];
+      };
+      atc?: {
+        plaetze?: GeoJSON.FeatureCollection;
+        firFlaechen?: GeoJSON.FeatureCollection;
+        firMarken?: GeoJSON.FeatureCollection;
       };
     };
     const l = leer();
@@ -65,6 +80,10 @@ export async function ladeSektoren(
       marken: d.marken ?? l.marken,
       nahbereich: d.tracon?.flaechen ?? l.nahbereich,
       nahbereichMarken: d.tracon?.marken ?? l.nahbereichMarken,
+      gebucht: d.gebucht ?? l.gebucht,
+      plaetze: d.atc?.plaetze ?? l.plaetze,
+      firFlaechen: d.atc?.firFlaechen ?? l.firFlaechen,
+      firMarken: d.atc?.firMarken ?? l.firMarken,
       abgedeckt: new Set([...(d.abgedeckt ?? []), ...(d.tracon?.abgedeckt ?? [])]),
     };
   } catch (e) {
