@@ -449,7 +449,12 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           `<div class="vatsim-pop-title">${vatsimEsc(p.ruf)}</div>` +
           `<div class="vatsim-pop-row"><b>${vatsimEsc(p.gesprochen || "—")}</b>` +
           `<span class="vatsim-pop-freq">${vatsimEsc(p.frequenz || "—")}</span></div>` +
-          `<div class="vatsim-pop-row vatsim-pop-dim">${vatsimEsc(p.block)} · FL${vatsimEsc(p.fl_von)}–FL${vatsimEsc(p.fl_bis)}</div>` +
+          // Die Bezeichnung fehlt, wenn mehrere unterschiedlich benannte
+          // Bloecke zu einer Flaeche verschmolzen wurden — dann steht
+          // hier nur das Hoehenband statt eines fuehrenden Trennpunkts.
+          (p.block
+            ? `<div class="vatsim-pop-row vatsim-pop-dim">${vatsimEsc(p.block)} · FL${vatsimEsc(p.fl_von)}–FL${vatsimEsc(p.fl_bis)}</div>`
+            : `<div class="vatsim-pop-row vatsim-pop-dim">FL${vatsimEsc(p.fl_von)}–FL${vatsimEsc(p.fl_bis)}</div>`) +
           `</div>`, "300px");
     };
 
