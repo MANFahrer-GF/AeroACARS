@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:lokal": "tauri build --config src-tauri/tauri.lokal.conf.json"
   },
   "dependencies": {
     "@sentry/react": "^10.53.1",

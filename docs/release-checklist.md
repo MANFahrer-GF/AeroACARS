@@ -102,6 +102,20 @@ den letzten Stand von Flow mitziehen").
 
 - [ ] PR auf `main` gemerget
 - [ ] `git tag vX.Y.Z && git push origin vX.Y.Z` (KEIN lokales `npm run tauri build` — GitHub-Actions baut signed Win+Mac, siehe `MEMORY.md` „Release-Automation")
+
+> **Lokal testen: `npm run build:lokal`.**
+> Der private Signaturschluessel liegt bewusst nur in der CI. Ein lokales
+> `npm run tauri build` laeuft deshalb bis zum Ende durch, endet aber mit
+> Fehlercode ("incorrect updater private key password"), obwohl die `.app`
+> fertig gebaut ist -- das sieht wie ein gescheiterter Build aus und ist
+> keiner. `build:lokal` schaltet ueber `src-tauri/tauri.lokal.conf.json` nur
+> die Updater-Dateien ab und endet mit 0.
+>
+> **Niemals `createUpdaterArtifacts` in der Hauptkonfiguration abschalten.**
+> Dann bauten die CI-Releases keine `.sig` und keine `latest.json` mehr, und
+> das Auto-Update aller Piloten stuende still, ohne dass es jemand merkt.
+> `client/src/lokalerBuild.test.ts` haelt beides fest.
+
 - [ ] GitHub-Release-Body aus `docs/release-notes/vX.Y.Z.md` reinkopieren (das genaue File rendert dann auch im Update-Modal sauber — siehe Stufe 4)
 - [ ] Verify in den Release-Assets:
   - [ ] `latest.json` enthält neue Version
