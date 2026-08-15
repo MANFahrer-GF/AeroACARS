@@ -430,9 +430,20 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           { type: "FeatureCollection",
             features: [
               ...sektoren.gebucht.features,
+              // Die groben FIR-Flaechen tragen andere Feldnamen als die
+              // Sektoren (`fir`, `fir_name`, `controllers`). Ohne diese
+              // Uebersetzung zeigte das Klickfenster leere Striche —
+              // "– –" und "FL–FL". Wortgleich von der Live-Karte.
               ...sektoren.firFlaechen.features.map((f) => ({
                 ...f,
-                properties: { ...f.properties, farbe: "#4ade80", ohne_hoehe: 1 },
+                properties: {
+                  ...f.properties,
+                  ruf: String(f.properties?.ruf ?? f.properties?.fir ?? ""),
+                  gesprochen: String(f.properties?.fir_name || f.properties?.fir || ""),
+                  frequenz: String(f.properties?.frequenz ?? ""),
+                  farbe: "#4ade80",
+                  ohne_hoehe: 1,
+                },
               })),
               ...sektoren.flaechen.features,
               ...sektoren.nahbereich.features,
