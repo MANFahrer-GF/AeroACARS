@@ -62,3 +62,33 @@ describe("Kartenbild", () => {
     expect(quelle).toContain("}, [showVatsim, mapReady]);");
   });
 });
+
+describe("Darstellung wie auf der Live-Karte", () => {
+  // Die Werte stammen wortgleich aus webapp/src/tabs/LiveMap.tsx auf
+  // live.kant.ovh. Client und Live-Karte sind zwei getrennte Fassungen
+  // derselben Ansicht und sind genau deshalb auseinandergelaufen: der
+  // Client malte jeden Platz als dunklen Punkt mit tuerkisem Rand, die
+  // Live-Karte faerbt nach Stationsart. Weicht hier etwas ab, sieht der
+  // Pilot etwas anderes als der Beobachter.
+  const quelle = readFileSync("src/components/LiveMapView.tsx", "utf8");
+
+  it("faerbt Plaetze nach Stationsart", () => {
+    expect(quelle).toContain('"twr", "#38bdf8"');
+    expect(quelle).toContain('"gnd", "#818cf8"');
+    expect(quelle).toContain('"circle-stroke-color": "#07090e"');
+  });
+
+  it("nutzt dieselbe Schrift", () => {
+    expect(quelle).not.toContain("Open Sans Regular");
+    expect(quelle).toContain('"text-font": ["Noto Sans Regular"]');
+  });
+
+  it("zeichnet die Bodendaten ueber den Sektoren", () => {
+    // Sonst uebermalen die Nahverkehrsbereiche die Rollwege.
+    const sektor = quelle.indexOf('id: "vatsim-sectors-fill"');
+    const boden = quelle.indexOf("source: SRC_GROUND");
+    expect(sektor).toBeGreaterThan(-1);
+    expect(boden).toBeGreaterThan(sektor);
+  });
+});
+

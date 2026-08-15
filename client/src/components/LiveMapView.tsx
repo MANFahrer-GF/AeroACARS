@@ -33,7 +33,7 @@ import { LiveRecordingIndicator } from "./LiveRecordingIndicator";
 const BASEMAP_DARK = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 const BASEMAP_LIGHT = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
 // Satellit (Esri World Imagery + Namens-Overlay, kein API-Key). Manuell wählbar
-// über den Karten-Toggle. glyphs auf die CARTO-Fonts (haben "Open Sans Regular"
+// über den Karten-Toggle. glyphs auf die CARTO-Fonts (führen "Noto Sans Regular"
 // wie dark/light — demotiles hat den Font NICHT, sonst fehlten Waypoint-Namen).
 const BASEMAP_SAT: StyleSpecification = {
   version: 8,
@@ -924,9 +924,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
               "\n", {},
               ["get", "frequenz"], { "font-scale": 0.8 },
             ],
-            // CARTO-Glyphs: "Open Sans Regular" gibt es auf dark, light UND
+            // CARTO-Glyphs: "Noto Sans Regular" gibt es auf dark, light UND
             // Satellit — "Noto Sans" NICHT (siehe BASEMAP_SAT-Kommentar).
-            "text-font": ["Open Sans Regular"],
+            "text-font": ["Noto Sans Regular"],
             "text-size": 13,
             "text-line-height": 1.3,
             "text-padding": 6,
@@ -964,10 +964,18 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         id: "vatsim-atc-airports-circle", type: "circle", source: "vatsim-atc-airports",
         paint: {
           "circle-radius": ["case", [">", ["get", "count"], 1], 7, 5.5],
-          "circle-color": "#0b2830",
-          "circle-stroke-width": 1.6,
-          "circle-stroke-color": "#22d3ee",
-          "circle-opacity": 0.9,
+          // Farbe nach Stationsart, wie auf der Live-Karte: ein Turm ist
+          // blau, die Rollkontrolle violett. Der Client malte stattdessen
+          // ueberall denselben dunklen Punkt mit tuerkisem Rand — dieselbe
+          // Lage sah auf beiden Karten verschieden aus.
+          "circle-color": ["match", ["get", "tone"],
+            "twr", "#38bdf8",
+            "gnd", "#818cf8",
+            "#38bdf8",
+          ],
+          "circle-stroke-width": 1.5,
+          "circle-stroke-color": "#07090e",
+          "circle-opacity": 0.95,
         },
       });
     }
@@ -988,7 +996,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
               ["get", "t_gnd"], { "text-color": "#4ade80" },
               ["get", "t_twr"], { "text-color": "#f87171" },
             ],
-            "text-font": ["Open Sans Regular"],
+            "text-font": ["Noto Sans Regular"],
             "text-size": 10,
             "text-offset": [0, 1.4],
             "text-anchor": "top",
@@ -1133,7 +1141,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         layout: {
           "symbol-placement": "point",
           "text-field": ["get", "r"],
-          "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
+          "text-font": ["Noto Sans Regular", "Arial Unicode MS Regular"],
           "text-size": ["interpolate", ["linear"], ["zoom"], 15, 8, 18, 12],
           "text-allow-overlap": false,
           "text-padding": 2,
@@ -1174,7 +1182,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         layout: {
           "symbol-placement": "line",
           "text-field": ["get", "r"],
-          "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
+          "text-font": ["Noto Sans Regular", "Arial Unicode MS Regular"],
           "text-size": ["interpolate", ["linear"], ["zoom"], 12, 11, 16, 16, 18, 20],
           "text-letter-spacing": 0.1,
           "text-allow-overlap": false,
@@ -1261,7 +1269,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         layout: {
           "symbol-placement": "line",
           "text-field": ["get", "r"],
-          "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
+          "text-font": ["Noto Sans Regular", "Arial Unicode MS Regular"],
           "text-size": ["interpolate", ["linear"], ["zoom"], 14, 9, 18, 14],
           "text-allow-overlap": false,
           "text-padding": 4,
@@ -1379,7 +1387,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         minzoom: 6.5,
         layout: {
           "text-field": ["get", "ident"],
-          "text-font": ["Open Sans Regular"],
+          "text-font": ["Noto Sans Regular"],
           "text-size": 11,
           "text-offset": [0, 1.1],
           "text-anchor": "top",
