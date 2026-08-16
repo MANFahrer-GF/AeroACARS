@@ -9,6 +9,18 @@
 //!   - Asymmetrie: Minderverbrauch nicht bestrafen
 //!   - Label-Wechsel "Spritverbrauch" → "OFP-Treue"
 //!
+//! v1.6.7 (score_algorithm_version 7→8): die Asymmetrie war nur halb
+//! umgesetzt. Der Kopf sagte „Minderverbrauch wird nicht bestraft", die
+//! Tabelle zog ab 5 % Minderverbrauch trotzdem 5 Punkte ab (95 statt 100)
+//! — der Widerspruch stammt 1:1 aus dem Spec-Entwurf (docs/spec/historical/
+//! v0.7.1-landing-ux-fairness.md §F3, „nie Strafe" direkt ueber `score(95,
+//! ...)`). Ausloeser war EWG 2047 (EDDH→EDDS, 16.08.2026): 2047,8 statt
+//! 2163 kg geplant = -5,3 %, also 0,32 Prozentpunkte ueber der Grenze —
+//! sieben Kilo mehr Verbrauch haetten die volle Punktzahl gegeben.
+//! Jetzt: Minderverbrauch bis 15 % = 100 Punkte. Erst jenseits der 15 %
+//! bleibt es bei 85 + Warnung — und auch das ist keine Strafe fuers
+//! Sparen, sondern der Hinweis, dass eher der Plan als der Flug falsch war.
+//!
 //! Phase 0 behaelt die Legacy-Funktion fuer Goldenset-Tests.
 //! Phase 2 fuegt `sub_fuel_v0_7_1` hinzu — wird ab v0.7.1 verwendet.
 
@@ -20,8 +32,10 @@ use crate::{Band, SubScoreEntry};
 ///     kein actual_trip_burn → skipped
 /// F3: efficiency = (actual - planned) / planned * 100
 ///     Mehrverbrauch (efficiency > 0): wie Legacy bestraft
-///     Minderverbrauch (efficiency <= 0): nicht bestraft, ggf. Bonus
-///     Starker Minderverbrauch (>15% under): Warning "planned_burn_may_be_off"
+///     Minderverbrauch (efficiency <= 0): NIE bestraft — bis 15 % unter
+///       Plan volle 100 Punkte (v1.6.7; vorher 95 ab 5 % unter Plan)
+///     Starker Minderverbrauch (>15% under): 85 + Warning
+///       "planned_burn_may_be_off" — Zweifel am Plan, nicht am Piloten
 /// Label-Aenderung: "Spritverbrauch" → "OFP-Treue" (i18n key bleibt
 /// `landing.sub.fuel`, der String dahinter aendert sich in Phase 3).
 pub fn sub_fuel_v0_7_1(
@@ -94,7 +108,11 @@ pub fn sub_fuel_v0_7_1(
             )
         }
     } else {
-        // Minderverbrauch (efficiency <= 0) — KEIN Penalty
+        // Minderverbrauch (efficiency <= 0) — KEIN Penalty. v1.6.7: das
+        // gilt jetzt auch zwischen 5 % und 15 % unter Plan (vorher 95).
+        // Die Rationale bleibt getrennt, damit der Pilot „Effizient
+        // (Minderverbrauch)" liest und nicht „Auf Plan" — gleiche Punkte,
+        // ehrlichere Aussage.
         let under = efficiency.abs();
         if under < 5.0 {
             SubScoreEntry::scored(
@@ -109,7 +127,7 @@ pub fn sub_fuel_v0_7_1(
             SubScoreEntry::scored(
                 "fuel",
                 "landing.sub.fuel",
-                95,
+                100,
                 value,
                 "efficient",
                 Band::Good,
@@ -226,11 +244,60 @@ mod tests {
 
     #[test]
     fn v0_7_1_underburn_not_punished() {
-        // -10% Minderverbrauch → 95 (efficient), KEIN Warning
+        // v1.6.7: -10% Minderverbrauch → 100 (efficient), KEIN Warning.
+        // Vorher 95 — der Abzug widersprach der eigenen Doku.
         let s = sub_fuel_v0_7_1(Some(5000.0), Some(4500.0));
-        assert_eq!(s.score, 95);
+        assert_eq!(s.score, 100);
         assert_eq!(s.rationale_key.as_deref(), Some("landing.rat.efficient"));
         assert!(s.warning.is_none());
+    }
+
+    /// v1.6.7 — der Fall, der die Aenderung ausgeloest hat: EWG 2047
+    /// (EDDH→EDDS, 16.08.2026). Geplant 2163 kg, verbrannt 2047,83 kg =
+    /// -5,32 %. Lag 0,32 Prozentpunkte hinter der alten 5-%-Grenze und
+    /// kostete deshalb 5 Punkte auf der Achse (98 statt 100 gesamt).
+    #[test]
+    fn v1_6_7_ewg2047_underburn_scores_full() {
+        let s = sub_fuel_v0_7_1(Some(2163.0), Some(2047.8259));
+        assert_eq!(s.score, 100);
+        assert_eq!(s.rationale_key.as_deref(), Some("landing.rat.efficient"));
+        assert_eq!(s.value.as_deref(), Some("-5.3%"));
+        assert!(s.warning.is_none());
+    }
+
+    /// Bandgrenzen des Minderverbrauchs am Stueck — inklusive der Stelle,
+    /// an der es NICHT mehr 100 gibt. Ohne diesen Test kann die
+    /// 15-%-Warnschwelle still mitwandern, wenn jemand die Zahlen
+    /// anfasst.
+    #[test]
+    fn v1_6_7_underburn_band_edges() {
+        // knapp unter der alten 5-%-Grenze — war schon immer 100
+        let s = sub_fuel_v0_7_1(Some(1000.0), Some(950.5)); // -4,95 %
+        assert_eq!((s.score, s.rationale_key.as_deref()), (100, Some("landing.rat.on_plan")));
+        // exakt auf der alten Grenze — hier stand vorher die 95
+        let s = sub_fuel_v0_7_1(Some(1000.0), Some(950.0)); // -5,0 %
+        assert_eq!((s.score, s.rationale_key.as_deref()), (100, Some("landing.rat.efficient")));
+        // kurz vor der Warnschwelle — weiterhin volle Punktzahl
+        let s = sub_fuel_v0_7_1(Some(1000.0), Some(850.5)); // -14,95 %
+        assert_eq!((s.score, s.rationale_key.as_deref()), (100, Some("landing.rat.efficient")));
+        assert!(s.warning.is_none());
+        // ab hier zweifelt die Bewertung am Plan, nicht am Piloten
+        let s = sub_fuel_v0_7_1(Some(1000.0), Some(850.0)); // -15,0 %
+        assert_eq!((s.score, s.rationale_key.as_deref()), (85, Some("landing.rat.very_efficient")));
+        assert_eq!(s.warning.as_deref(), Some("planned_burn_may_be_off"));
+    }
+
+    /// Mehrverbrauch bleibt unangetastet — die Aenderung ist einseitig.
+    #[test]
+    fn v1_6_7_overburn_bands_unchanged() {
+        assert_eq!(sub_fuel_v0_7_1(Some(1000.0), Some(1019.0)).score, 100); // +1,9 %
+        assert_eq!(sub_fuel_v0_7_1(Some(1000.0), Some(1049.0)).score, 80); // +4,9 %
+        // Gegenprobe zur Asymmetrie: -5,3 % geben 100, +5,3 % kosten
+        // weiterhin die Haelfte. Genau das ist der Sinn von „OFP-Treue".
+        assert_eq!(sub_fuel_v0_7_1(Some(1000.0), Some(1053.0)).score, 55); // +5,3 %
+        assert_eq!(sub_fuel_v0_7_1(Some(1000.0), Some(1070.0)).score, 55); // +7,0 %
+        assert_eq!(sub_fuel_v0_7_1(Some(1000.0), Some(1150.0)).score, 25); // +15,0 %
+        assert_eq!(sub_fuel_v0_7_1(Some(1000.0), Some(1250.0)).score, 5); // +25,0 %
     }
 
     #[test]
