@@ -84,6 +84,7 @@ describe("Kartenbild", () => {
       expect(quelle).toContain(id);
     }
   });
+});
 
 describe("Darstellung wie auf der Live-Karte", () => {
   // Die Werte stammen wortgleich aus webapp/src/tabs/LiveMap.tsx auf

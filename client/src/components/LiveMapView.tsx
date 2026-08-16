@@ -399,6 +399,20 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   // welchen Luftraum betreut. Die Ausschliesslichkeit steckt deshalb in
   // der Bauform — ein Umschalter statt zweier Schalter, es GEHT nicht
   // anders. Siehe docs/spec/livemap-netze-und-leiste.md.
+  /** Wie lange der letzte Netz-Durchlauf gedauert hat, in Millisekunden.
+   *
+   *  Eingebaut, weil das Zuschalten beim ersten Mal 20-25 s dauert und ich
+   *  es aus der Ferne nicht eingrenzen konnte: Datenkette gemessen 471 ms,
+   *  Server hoechstens 1,2 s ueber 27 Abrufe, Grafikkarte arbeitet (die
+   *  Software-Rendering-These ist damit tot). Bleibt das Zeichnen — und das
+   *  misst sich nur dort, wo es passiert. `zeichnen` laeuft bis die Karte
+   *  nach dem Setzen der Daten zur Ruhe kommt, erfasst also auch das
+   *  Zerlegen der Geometrie im Hintergrund. */
+  const [netzZeit, setNetzZeit] = useState<
+    { abruf: number; zeichnen: number; erster: boolean } | null
+  >(null);
+  const netzErsterRef = useRef(true);
+
   const [netz, setNetz] = useState<Netz>(() => {
     if (typeof localStorage === "undefined") return "aus";
     const gemerkt = localStorage.getItem("aaLivemapNetz");
@@ -455,6 +469,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     const holen = async () => {
       abbruch.abort();
       abbruch = new AbortController();
+      const tStart = performance.now();
       try {
         // VATSpy braucht der Client nicht mehr — der Server wertet es aus.
         const daten = await fetchVatsimData(abbruch.signal);
@@ -518,6 +533,20 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         // Der Server hat jedes Hoehenband geliefert — hier faellt die
         // Entscheidung, welches davon zu sehen ist.
         hoehenfilterSetzen(map, fl);
+
+        // Bis die Karte zur Ruhe kommt: das ist der Teil, der beim ersten
+        // Zuschalten so lange braucht.
+        const tGesetzt = performance.now();
+        const erster = netzErsterRef.current;
+        netzErsterRef.current = false;
+        map.once("idle", () => {
+          if (beendet) return;
+          setNetzZeit({
+            abruf: Math.round(tGesetzt - tStart),
+            zeichnen: Math.round(performance.now() - tGesetzt),
+            erster,
+          });
+        });
       } catch (e) {
         if (!beendet && (e as Error)?.name !== "AbortError") {
           console.warn("[vatsim] Abruf fehlgeschlagen:", e);
@@ -2537,6 +2566,21 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
               shows, so "what/when/how much are we sending" lives where the
               pilot is actually looking, not behind a bare counter. */}
           <div className="aa-livemap-sysline aa-livemap-overlay">
+            {/* Wie lange der letzte Netz-Durchlauf gebraucht hat, getrennt
+                nach Holen und Zeichnen. Beim ersten Zuschalten dauert es
+                20-25 s, und aus der Ferne war nicht zu klaeren, woran —
+                also misst es sich selbst. */}
+            {netzZeit && (
+              <span
+                className="aa-livemap-sysline__text"
+                style={{ opacity: 0.7, fontVariantNumeric: "tabular-nums" }}
+                title={t("livemap.netz_zeit_hint", "Holen der Daten und Zeichnen der Flächen beim letzten Durchlauf")}
+              >
+                {netzZeit.erster ? "Netz (erstmals): " : "Netz: "}
+                {(netzZeit.abruf / 1000).toFixed(1)} s holen ·{" "}
+                {(netzZeit.zeichnen / 1000).toFixed(1)} s zeichnen
+              </span>
+            )}
             <span className={`aa-livemap-sysline__dot aa-livemap-sysline__dot--${recorderState}`} aria-hidden="true" />
             <span className="aa-livemap-sysline__text">
               {recorderState === "off"
