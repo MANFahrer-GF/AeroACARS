@@ -1007,7 +1007,7 @@ const STANDING_ON_OTHER_FIELD_NM: f64 = 1.0;
 // C208.0.text` landete ungereinigt in `aircraft_icao` → „Type ?" →
 // kaputtes phpVMS-Filing). Re-Import hier, damit die bestehenden
 // Aufruf-Stellen unverändert weiterlaufen.
-use sim_core::clean_atc_model;
+use sim_core::{clean_atc_model, normalize_icao_type};
 
 /// Loose check: does the aircraft title from MSFS appear to mention the given
 /// ICAO code? Used as a permissive backup when ATC MODEL parses to one code
@@ -2979,6 +2979,15 @@ struct PauseSegment {
 #[derive(Default)]
 struct FlightStats {
     // Position tracking.
+    /// Muster, das in `aircraft_limits_for` fehlte — fuer den Health-Report.
+    /// Siehe `ClientHealthReport::unknown_aircraft_icao`.
+    unbekanntes_muster: Option<String>,
+    /// Kleinste und groesste Klappenstellung des ganzen Fluges. Zusammen sagen
+    /// sie, ob sich der Kanal ueberhaupt bewegt hat und wo das Raster dieses
+    /// Musters endet — beides braucht die Landekonfiguration am 1000-ft-Tor
+    /// (siehe `KonfigKontext`).
+    flaps_min_gesehen: Option<f32>,
+    flaps_max_gesehen: Option<f32>,
     last_lat: Option<f64>,
     last_lon: Option<f64>,
     /// Zeitpunkt der Distanz-Basislinie — ohne ihn laesst sich ein Sprung
@@ -5252,6 +5261,37 @@ fn stability_stddev(vals: impl Iterator<Item = f32>) -> Option<f32> {
     Some(var.sqrt() as f32)
 }
 
+/// Schreibt die Klappen-Spanne des Fluges fort. NaN/Inf werden verworfen —
+/// ein kaputter Messwert darf die Spanne nicht auf „hat sich bewegt" ziehen.
+fn merke_klappen_spanne(stats: &mut FlightStats, flaps_position: f32) {
+    if !flaps_position.is_finite() {
+        return;
+    }
+    let v = flaps_position.clamp(0.0, 1.0);
+    stats.flaps_min_gesehen = Some(stats.flaps_min_gesehen.map_or(v, |m| m.min(v)));
+    stats.flaps_max_gesehen = Some(stats.flaps_max_gesehen.map_or(v, |m| m.max(v)));
+}
+
+/// Baut den Musterwissen-Kontext fuer die Landekonfiguration.
+///
+/// `muster` ist der ICAO-Code, gegen den auch die uebrigen Landegrenzen
+/// aufgeloest werden — Simulator zuerst, Buchung als Rueckfall.
+fn konfig_kontext(stats: &FlightStats, muster: &str) -> KonfigKontext {
+    let limits = aircraft_limits_for(muster);
+    // Bewegt heisst: Spanne groesser als eine halbe Raststufe des feinsten im
+    // Korpus beobachteten Rasters (1/9 ≈ 0,111 bei der Fokker 28). 0,02 liegt
+    // klar darunter und klar ueber dem Rauschen animierter Klappen.
+    let bewegt = match (stats.flaps_min_gesehen, stats.flaps_max_gesehen) {
+        (Some(min), Some(max)) => Some((max - min) > 0.02),
+        _ => None,
+    };
+    KonfigKontext {
+        typical_vref_kt: limits.typical_vref_kt,
+        flaps_bewegt: bewegt,
+        flaps_max_im_flug: stats.flaps_max_gesehen,
+    }
+}
+
 fn push_approach_sample(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) {
     if !approach_sample_is_plausible(snap) {
         tracing::debug!(
@@ -6205,6 +6245,38 @@ const FLAPS_UNREADABLE_MAX_IAS_KT: f32 = 160.0;
 /// Skalen-Artefakte (÷5-Doppelnormalisierung → 0.2) und liegt klar unter
 /// jeder echten Lande-Klappenstufe.
 const FLAPS_IMPLAUSIBLE_BELOW: f32 = 0.25;
+/// Klappenstellung (normiert 0..1), ab der die Landekonfiguration am
+/// 1000-ft-Tor als erfuellt gilt. Gilt fuer jedes Muster, dessen Raster der
+/// Sim auf 1,0 skaliert — das ist die grosse Mehrheit.
+const FLAPS_LANDING_MIN: f32 = 0.70;
+/// Geschwindigkeitsfenster eines stabilisierten Anflugs oberhalb Vref
+/// (Flight Safety Foundation ALAR, Briefing Note 7.1: Vref … Vref+20).
+///
+/// Wird als Physik-Gegenprobe gebraucht, wenn die Klappenzahl unter
+/// `FLAPS_LANDING_MIN` liegt, aber schon das Maximum dieses Fluges ist:
+/// mit deutlich weniger als Landeklappen kommt niemand auf Vref+20 herunter.
+/// Passt die Geschwindigkeit, misst die Zahl das Raster des Sims und nicht
+/// den Piloten.
+const STABILISIERT_UEBER_VREF_KT: f32 = 20.0;
+
+/// Was `compute_approach_stability_v2` ueber das geflogene Muster wissen
+/// muss, um die Landekonfiguration zu beurteilen.
+///
+/// Alle Felder duerfen `None` sein — dann verhaelt sich die Bewertung exakt
+/// wie vor v1.6.6 (Audit-Invariante: keine Regression ohne Daten).
+#[derive(Debug, Clone, Copy, Default)]
+struct KonfigKontext {
+    /// Typische Referenzgeschwindigkeit des Musters aus der Grenzen-Tabelle.
+    /// `None` = Muster unbekannt → die Rasterkorrektur unten bleibt aus,
+    /// weil ohne Geschwindigkeits-Anker ein fremdes Raster nicht von einer
+    /// echten Unter-Klappung zu unterscheiden ist.
+    typical_vref_kt: Option<f32>,
+    /// Hat sich der Klappenwert im ganzen Flug ueberhaupt je bewegt?
+    /// `Some(false)` = der Kanal traegt keine Information.
+    flaps_bewegt: Option<bool>,
+    /// Hoechste Klappenstellung des ganzen Fluges.
+    flaps_max_im_flug: Option<f32>,
+}
 
 fn compute_approach_stddev(
     buf: &std::collections::VecDeque<ApproachBufferSample>,
@@ -6241,56 +6313,191 @@ fn compute_approach_stddev(
 struct AircraftLimits {
     max_bank_landing_deg: f32,
     typical_vref_kt: Option<f32>,
+    /// Kam dieser Satz aus dem Rueckfall statt aus der Tabelle?
+    ///
+    /// Die Tabelle ist eine Positivliste. Fehlt ein Muster, rechnete die
+    /// Wing-Strike-Bewertung gegen generische 8° und die Vref-Abweichung
+    /// blieb leer — LAUTLOS. Gemessen am 16.08.2026 gegen die echte GSG-
+    /// Flotte: 31 von 84 geflogenen Mustern ohne Eintrag, 470 von 2978
+    /// Fluegen (16 %). Aufgefallen ist es erst nach Wochen, weil eine leere
+    /// Kennzahl aussieht wie "war halt nicht messbar".
+    ///
+    /// Der Code hat das schon dreimal nachgetragen (v0.8.3: King Air,
+    /// Baron/Seneca, Bonanza) und die Klasse nie geschlossen. Deshalb
+    /// wandert die Information jetzt mit, statt im Nichts zu enden.
+    is_fallback: bool,
+}
+
+/// Weitere Schreibweisen, unter denen dasselbe Muster in der Tabelle stehen
+/// koennte. Laeuft NUR, wenn weder der Rohwert noch [`normalize_icao_type`]
+/// getroffen haben.
+///
+/// Die Marketingnamen ("PHENOM 300E", "A350-900", Baureihen ohne Variante)
+/// pflegt `sim-core::map_model_name_to_icao` — eine Liste, ein Korpus, ein
+/// Test. Hier stehen nur die Formregeln, die sich nicht dorthin verschieben
+/// lassen: sie zerlegen einen Code auf Verdacht, und ob das Ergebnis Sinn
+/// ergibt, weiss allein die Tabelle, gegen die hier probiert wird.
+/// `normalize_icao_type` muesste dieselbe Zerlegung blind zurueckgeben und
+/// wuerde damit echte Designatoren beschaedigen — aus "B76F" (Tabellen-
+/// eintrag) wuerde "B76".
+///
+/// Gemessen am 16.08.2026 ueber 827 aufgezeichnete Fluege: 130 (16 %)
+/// meldeten eine Schreibweise, die die Tabelle nicht kennt.
+fn muster_kandidaten(upper: &str) -> Vec<String> {
+    let mut aus = Vec::new();
+    let mut schieben = |k: String| {
+        if !k.is_empty() && !aus.contains(&k) {
+            aus.push(k);
+        }
+    };
+
+    // Bewusst ueber `chars`, nicht ueber Byte-Indizes: hier kommt an, was der
+    // Simulator als Mustername meldet, und das ist beliebiger Text. Ein
+    // `[..4]` auf einem Mehrbyte-Zeichen wuerde die Bewertung mitten im
+    // Anflug in eine Panik reissen.
+    let zeichen: Vec<char> = upper.chars().filter(|c| *c != '-' && *c != ' ').collect();
+    let ohne_trenner: String = zeichen.iter().collect();
+    schieben(ohne_trenner.clone());
+    // Frachter-Suffix: MD11F → MD11, E190F → E190.
+    if let Some(r) = ohne_trenner.strip_suffix('F') {
+        schieben(r.to_string());
+    }
+    // Varianten-Anhang: C680+ → C680, C182Q → C182.
+    if let Some(r) = ohne_trenner.strip_suffix('+') {
+        schieben(r.to_string());
+    }
+    if zeichen.len() == 5 && zeichen[4].is_ascii_alphabetic() {
+        schieben(zeichen[..4].iter().collect());
+    }
+    // Fuehrende Werksnummer wie 414AW (Cessna 414) → C414.
+    if zeichen.len() >= 3 && zeichen[..3].iter().all(char::is_ascii_digit) {
+        let zahl: String = zeichen[..3].iter().collect();
+        schieben(format!("C{zahl}"));
+    }
+
+    aus
 }
 
 fn aircraft_limits_for(icao: &str) -> AircraftLimits {
     let upper = icao.to_uppercase();
-    let upper_str = upper.as_str();
+    let direkt = aircraft_limits_exakt(upper.as_str());
+    if !direkt.is_fallback {
+        return direkt;
+    }
+    // Marketingnamen zuerst — dieselbe Uebersetzung, die auch der
+    // Health-Report und die Profil-Aufloesung benutzen.
+    if let Some(n) = normalize_icao_type(&upper) {
+        let treffer = aircraft_limits_exakt(&n);
+        if !treffer.is_fallback {
+            return treffer;
+        }
+    }
+    for kandidat in muster_kandidaten(upper.as_str()) {
+        let treffer = aircraft_limits_exakt(&kandidat);
+        if !treffer.is_fallback {
+            return treffer;
+        }
+    }
+    direkt
+}
+
+fn aircraft_limits_exakt(upper_str: &str) -> AircraftLimits {
     match upper_str {
         // Heavy / Wide-Body
-        "B741" | "B742" | "B743" | "B744" | "B748" => AircraftLimits { max_bank_landing_deg: 9.0, typical_vref_kt: Some(160.0) },
-        "B772" | "B773" | "B77L" | "B77W" | "B778" | "B779" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(150.0) },
-        "B788" | "B789" | "B78X" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(145.0) },
-        "A332" | "A333" | "A338" | "A339" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0) },
-        "A359" | "A35K" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0) },
-        "A388" => AircraftLimits { max_bank_landing_deg: 7.0, typical_vref_kt: Some(145.0) },
+        "B741" | "B742" | "B743" | "B744" | "B748" => AircraftLimits { max_bank_landing_deg: 9.0, typical_vref_kt: Some(160.0), is_fallback: false },
+        "B772" | "B773" | "B77L" | "B77W" | "B778" | "B779" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(150.0), is_fallback: false },
+        "B788" | "B789" | "B78X" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(145.0), is_fallback: false },
+        "A332" | "A333" | "A338" | "A339" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0), is_fallback: false },
+        "A359" | "A35K" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0), is_fallback: false },
+        "A388" => AircraftLimits { max_bank_landing_deg: 7.0, typical_vref_kt: Some(145.0), is_fallback: false },
         // Narrow-Body Jets
-        "A318" | "A319" | "A320" | "A20N" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(135.0) },
-        "A321" | "A21N" => AircraftLimits { max_bank_landing_deg: 7.0, typical_vref_kt: Some(140.0) }, // A321 tail-strike-prone
-        "B736" | "B737" | "B738" | "B739" | "B73X" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0) },
-        "B38M" | "B39M" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0) },
-        "B752" | "B753" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0) },
-        "B762" | "B763" | "B764" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0) },
+        "A318" | "A319" | "A320" | "A20N" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(135.0), is_fallback: false },
+        "A321" | "A21N" => AircraftLimits { max_bank_landing_deg: 7.0, typical_vref_kt: Some(140.0), is_fallback: false }, // A321 tail-strike-prone
+        "B736" | "B737" | "B738" | "B739" | "B73X" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0), is_fallback: false },
+        "B38M" | "B39M" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0), is_fallback: false },
+        "B752" | "B753" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0), is_fallback: false },
+        "B762" | "B763" | "B764" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0), is_fallback: false },
         // Regional Jets
-        "E170" | "E175" | "E190" | "E195" | "E290" | "E295" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(130.0) },
-        "CRJ7" | "CRJ9" | "CRJX" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(135.0) },
+        "E170" | "E175" | "E190" | "E195" | "E290" | "E295" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(130.0), is_fallback: false },
+        "CRJ7" | "CRJ9" | "CRJX" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(135.0), is_fallback: false },
         // Business Jets
-        "CL30" | "CL35" | "CL60" | "CL64" | "CL65" => AircraftLimits { max_bank_landing_deg: 6.0, typical_vref_kt: Some(115.0) },
-        "GLF5" | "GLF6" | "GLEX" | "G280" | "GL5T" | "GL7T" => AircraftLimits { max_bank_landing_deg: 7.0, typical_vref_kt: Some(120.0) },
-        "C25A" | "C25B" | "C25C" | "C525" | "C56X" | "C68A" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(105.0) },
+        "CL30" | "CL35" | "CL60" | "CL64" | "CL65" => AircraftLimits { max_bank_landing_deg: 6.0, typical_vref_kt: Some(115.0), is_fallback: false },
+        "GLF5" | "GLF6" | "GLEX" | "G280" | "GL5T" | "GL7T" => AircraftLimits { max_bank_landing_deg: 7.0, typical_vref_kt: Some(120.0), is_fallback: false },
+        "C25A" | "C25B" | "C25C" | "C525" | "C56X" | "C68A" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(105.0), is_fallback: false },
         // Turboprops — Regional/Commuter
-        "DH8A" | "DH8B" | "DH8C" | "DH8D" | "AT43" | "AT72" | "AT75" | "AT76" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(110.0) },
+        "DH8A" | "DH8B" | "DH8C" | "DH8D" | "AT43" | "AT72" | "AT75" | "AT76" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(110.0), is_fallback: false },
         // Beechcraft King Air family (turboprop). v0.8.3: duplicate B190
         // removed, BE9L/BE10/BE20/BE30 hinzugefuegt — vorher fielen alle
         // King-Air-Varianten ausser B190/B350 auf den 8°/None-Fallback.
-        "B190" | "B350" | "BE9L" | "BE10" | "BE20" | "BE30" => AircraftLimits { max_bank_landing_deg: 10.0, typical_vref_kt: Some(95.0) },
+        "B190" | "B350" | "BE9L" | "BE10" | "BE20" | "BE30" => AircraftLimits { max_bank_landing_deg: 10.0, typical_vref_kt: Some(95.0), is_fallback: false },
         // GA Twins (piston). v0.8.3: BE58 (Baron) + PA34 (Seneca) +
         // AEST (Aerostar) hinzugefuegt — Reports zeigten GSG-Piloten mit
         // Baron/Seneca landeten mit Airliner-Bank-Limits (8° statt 15°).
-        "BE58" | "BE76" | "PA34" | "PA44" | "AEST" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(85.0) },
+        "BE58" | "BE76" | "PA34" | "PA44" | "AEST" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(85.0), is_fallback: false },
         // GA Singles
-        "C172" | "C152" | "C150" | "C162" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(65.0) },
-        "C182" | "C206" | "C208" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(75.0) },
-        "DA40" | "DA42" | "DA62" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(75.0) },
-        "P28A" | "PA28" | "PA32" | "PA46" | "P28R" | "PA24" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(75.0) },
-        "SR20" | "SR22" | "SR2T" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(80.0) },
+        "C172" | "C152" | "C150" | "C162" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(65.0), is_fallback: false },
+        "C182" | "C206" | "C208" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(75.0), is_fallback: false },
+        "DA40" | "DA42" | "DA62" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(75.0), is_fallback: false },
+        "P28A" | "PA28" | "PA32" | "PA46" | "P28R" | "PA24" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(75.0), is_fallback: false },
+        "SR20" | "SR22" | "SR2T" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(80.0), is_fallback: false },
         // Beechcraft Bonanza family (single-engine piston, Svenny's Bird).
         // v0.8.3: zuvor war BE36 nicht aufgelistet → Airliner-Fallback.
-        "BE33" | "BE35" | "BE36" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(75.0) },
+        "BE33" | "BE35" | "BE36" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(75.0), is_fallback: false },
         // Mooney + andere High-Performance Singles
-        "M20P" | "M20T" | "MU2" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(80.0) },
-        // Fallback fuer unbekannte
-        _ => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: None },
+        "M20P" | "M20T" | "MU2" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(80.0), is_fallback: false },
+
+        // ─── Nachgetragen 16.08.2026 nach Messung gegen die echte Flotte ──
+        //
+        // 31 von 84 geflogenen Mustern fehlten, 470 von 2978 Fluegen (16 %).
+        // Vref recherchiert und mit Thomas abgestimmt; Bank-Grenzen aus der
+        // jeweiligen Klasse wie im Bestand daruber.
+        //
+        // Bizjets
+        "E55P" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(110.0), is_fallback: false }, // Phenom 300: Anflug 109 kt (AOPA/FlyRadius)
+        "C750" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(115.0), is_fallback: false },
+        "C680" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(108.0), is_fallback: false },
+        "HDJT" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(110.0), is_fallback: false },
+        "FA50" => AircraftLimits { max_bank_landing_deg: 7.0, typical_vref_kt: Some(113.0), is_fallback: false },
+        "SF50" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(88.0), is_fallback: false },
+        // Grossraum / aeltere Muster
+        "MD11" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(155.0), is_fallback: false }, // Boeing nennt 155 kt
+        "A346" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(145.0), is_fallback: false },
+        "A343" | "A342" | "A345" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(138.0), is_fallback: false },
+        "A306" | "A30B" | "A310" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(138.0), is_fallback: false },
+        "L101" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(138.0), is_fallback: false },
+        "MD81" | "MD82" | "MD83" | "MD87" | "MD88" | "MD90" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(138.0), is_fallback: false },
+        "B76F" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0), is_fallback: false },
+        // Narrow-Body / Regional
+        "BCS1" | "BCS3" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(128.0), is_fallback: false }, // A220: 125-130
+        "RJ85" | "RJ1H" | "B461" | "B462" | "B463" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(122.0), is_fallback: false },
+        "F28" | "F70" | "F100" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(122.0), is_fallback: false },
+        "E135" | "E145" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(128.0), is_fallback: false },
+        // Turboprop / GA
+        "P180" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(112.0), is_fallback: false },
+        "TBM7" | "TBM8" | "TBM9" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(85.0), is_fallback: false },
+        "AC11" | "AC90" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(78.0), is_fallback: false },
+        "C414" | "C421" | "C310" | "C340" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(98.0), is_fallback: false },
+        "BE23" | "BE24" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(70.0), is_fallback: false },
+        "C185" | "C180" | "C170" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(68.0), is_fallback: false },
+        "GA8" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(68.0), is_fallback: false },
+
+        // BEWUSST OHNE Vref, aber MIT Eintrag: fuer diese Muster gibt es
+        // keine belastbare oeffentliche Zahl. Ein geratener Wert in einer
+        // Bewertung waere schlimmer als eine leere Kennzahl. Der Eintrag
+        // sorgt dafuer, dass sie NICHT als "unbekanntes Muster" gemeldet
+        // werden — sie sind bekannt, nur ohne Referenzgeschwindigkeit.
+        //
+        // Hubschrauber: Wing-Strike wird fuer sie ohnehin uebersprungen
+        // (siehe `category.is_rotorcraft()`), und ein Vref ergibt hier
+        // keinen Sinn.
+        "A109" | "A139" | "H145" | "EC35" | "EC45" | "H125" | "H135" =>
+            AircraftLimits { max_bank_landing_deg: 20.0, typical_vref_kt: None, is_fallback: false },
+        // Militaer und Sonderfaelle
+        "A400" | "EUFI" | "CONC" =>
+            AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: None, is_fallback: false },
+
+        // Fallback fuer unbekannte — ab hier wird gemeldet, nicht geschwiegen.
+        _ => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: None, is_fallback: true },
     }
 }
 
@@ -6366,6 +6573,9 @@ fn compute_approach_stability_v2(
     // Manöver-Rauschen vergiftet. `None` = EXAKT das bisherige Verhalten
     // (FSM-Pfad + alle bestehenden Tests — Audit-Invariante).
     window: Option<(DateTime<Utc>, chrono::Duration)>,
+    // v1.6.6: Musterwissen fuer die Landekonfiguration (Vref + Klappen-Raster
+    // dieses Fluges). `Default::default()` = alles None = bisheriges Verhalten.
+    konfig: KonfigKontext,
 ) -> ApproachStabilityV2 {
     // Fenster-Filter zuerst, dann identische Auswertung via Rekursion mit
     // `None` — so existiert die eigentliche Mess-Logik nur einmal.
@@ -6377,6 +6587,7 @@ fn compute_approach_stability_v2(
             td_ts,
             glideslope_angle_deg,
             None,
+            konfig,
         );
     }
 
@@ -6507,10 +6718,58 @@ fn compute_approach_stability_v2(
         let flaps_unreadable = flaps_all_implausible
             && gear_ok
             && gate_entry.ias_kt < FLAPS_UNREADABLE_MAX_IAS_KT;
-        if flaps_unreadable {
+
+        // v1.6.6: der allgemeine Fall des Obigen. Wenn sich der Klappenwert im
+        // GANZEN Flug kein einziges Mal bewegt hat, traegt der Kanal keine
+        // Information — egal welchen Wert er anzeigt und egal wie schnell das
+        // Flugzeug am Tor war. Der Check darueber faengt dasselbe nur unter
+        // 160 kt; im Korpus (827 Fluege) rutschten damit genau die schweren
+        // Muster durch, die am Tor legitim schneller sind: B77W, A339, MD11,
+        // A346, A20N, DH8D — 15 Fluege, alle mit einem toten Dataref als
+        // „Klappen vergessen" gewertet.
+        let flaps_tot = konfig.flaps_bewegt == Some(false);
+
+        if !gear_ok {
+            // Das Fahrwerk ist eindeutig: oben ist oben. Ob die Klappen
+            // messbar sind, aendert daran nichts — dieser Zweig haelt die
+            // Bewertung dort streng, wo sie es immer war (bisher implizit,
+            // weil der Riegel darunter `gear_ok` verlangte).
+            out.stable_config = Some(false);
+        } else if flaps_tot || flaps_unreadable {
             out.stable_config = None;
         } else {
-            let flaps_ok = gate_entry.flaps_position >= 0.70;
+            let mut flaps_ok = gate_entry.flaps_position >= FLAPS_LANDING_MIN;
+            if !flaps_ok {
+                // v1.6.6: fremdes Rastermass. Nicht jedes Muster skaliert seine
+                // Klappen auf 1,0 — die Fokker 28 im Sim endet bei 0,667, die
+                // Falcon 50 ebenso. Steht der Hebel am Tor schon auf dem
+                // Maximum DIESES Fluges und passt die Geschwindigkeit ins
+                // stabilisierte Fenster (Vref…Vref+20), dann misst die absolute
+                // 0,70-Schwelle das Raster des Sims, nicht den Piloten.
+                //
+                // Die Geschwindigkeit ist hier der Riegel, nicht Beiwerk: ohne
+                // sie wuerde jede Landung mit Anflugklappen als „Landeklappen"
+                // durchgehen, weil ein einzelner Flug nie zeigt, welche Stufen
+                // es noch gaebe. Genau daran scheitern im Korpus die echten
+                // Faelle — DA40 mit T/O-Klappen bei Vref+43, Phenom 300 bei
+                // Vref+59, A320 mit CONF 2 bei 215 kt — und sie bleiben
+                // korrekt bewertet.
+                //
+                // Kein Vref (Muster nicht in der Tabelle) → Regel bleibt aus.
+                // Der Health-Report meldet solche Muster separat, damit die
+                // Tabelle waechst statt die Schwelle aufzuweichen.
+                if let (Some(max_im_flug), Some(vref)) =
+                    (konfig.flaps_max_im_flug, konfig.typical_vref_kt)
+                {
+                    let am_eigenen_maximum = gate_entry.flaps_position >= max_im_flug - 0.01
+                        && gate_entry.flaps_position >= FLAPS_IMPLAUSIBLE_BELOW;
+                    if am_eigenen_maximum
+                        && gate_entry.ias_kt <= vref + STABILISIERT_UEBER_VREF_KT
+                    {
+                        flaps_ok = true;
+                    }
+                }
+            }
             out.stable_config = Some(gear_ok && flaps_ok);
         }
     }
@@ -14063,15 +14322,22 @@ fn build_client_health_report(stats: &FlightStats) -> Option<aeroacars_mqtt::Cli
     // `Some(false)` defeat this guard, so EVERY resumed-but-uneventful
     // flight shipped a non-`None` `client_health`.
     let app_restart_unclean_flag = stats.app_restart_was_unclean == Some(true);
+    // Ein Muster ohne Eintrag in der Grenzen-Tabelle ist meldenswert, auch
+    // wenn der Flug sonst voellig unauffaellig war: die Bewertung lief auf
+    // Ersatzwerten. Ohne diesen Zweig bliebe die Luecke stumm — genau der
+    // Zustand, der 470 Fluege lang niemandem aufgefallen ist.
+    let unknown_aircraft_icao = stats.unbekanntes_muster.clone();
 
     if disconnect_sim_liveness.is_none()
         && !app_restart_unclean_flag
         && impossible_resume_jump.is_none()
+        && unknown_aircraft_icao.is_none()
     {
         return None;
     }
 
     Some(aeroacars_mqtt::ClientHealthReport {
+        unknown_aircraft_icao,
         disconnect_sim_liveness,
         app_restart_unclean: stats.app_restart_was_unclean,
         impossible_resume_jump,
@@ -21184,6 +21450,15 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                     };
                                     stats.approach_vs_stddev_fpm = vs_sd;
                                     stats.approach_bank_stddev_deg = bank_sd;
+                                    // Musterquelle wie im FSM-Pfad: Sim zuerst.
+                                    let sim_muster = snap
+                                        .aircraft_icao
+                                        .as_deref()
+                                        .and_then(clean_atc_model);
+                                    let muster = sim_muster
+                                        .as_deref()
+                                        .unwrap_or(flight.aircraft_icao.trim());
+                                    let konfig = konfig_kontext(&stats, muster);
                                     let stab_v2 = compute_approach_stability_v2(
                                         &stats.approach_buffer,
                                         stats.arr_airport_elevation_ft,
@@ -21193,6 +21468,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                             .as_ref()
                                             .map(|g| g.glideslope_angle),
                                         Some((pending_at, stab_window)),
+                                        konfig,
                                     );
                                     stats.approach_vs_deviation_fpm = stab_v2.vs_deviation_fpm;
                                     stats.approach_max_vs_deviation_below_500_fpm =
@@ -25897,6 +26173,14 @@ fn step_flight_at(
         snap.water_rudder_present,
     );
 
+    // Klappen-Spanne des Fluges mitschreiben — einmal pro Tick, zwei Zahlen.
+    // Sie beantworten spaeter am 1000-ft-Tor zwei Fragen, die ein einzelner
+    // Messwert nicht beantworten kann: bewegt sich der Kanal ueberhaupt, und
+    // wo endet das Raster dieses Musters. Bewusst hier und nicht in
+    // `push_approach_sample`: der Puffer dort ist phasen-gebunden und wirft
+    // Samples weg, die Spanne braucht aber den ganzen Flug.
+    merke_klappen_spanne(&mut stats, snap.flaps_position);
+
     // v0.7.19 GAF-707 Sim-Event-Pfad (Spec §Klassifikator-Trigger-Punkte):
     // wenn der Adapter `snap.crashed=true` liefert und der aktive Flug
     // noch nicht gelatcht war, sofort Accident setzen — KEIN Warten auf
@@ -27241,6 +27525,27 @@ fn step_flight_at(
                 };
                 stats.approach_vs_stddev_fpm = vs_sd;
                 stats.approach_bank_stddev_deg = bank_sd;
+                // Musterquelle wie bei `category` oben: erst der Simulator,
+                // dann die Buchung. Vorher fragte die Grenzen-Tabelle NUR die
+                // Buchung, waehrend die Kategorie-Logik im selben Block am
+                // Sim-Wert haengt — zwei Antworten auf dieselbe Frage. Wer
+                // anders fliegt als gebucht, bekam Bank-Grenze und Vref des
+                // gebuchten Musters und die Kategorie des geflogenen.
+                let sim_muster = snap.aircraft_icao.as_deref().and_then(clean_atc_model);
+                let muster = sim_muster
+                    .as_deref()
+                    .unwrap_or(flight.aircraft_icao.trim());
+                let limits = aircraft_limits_for(muster);
+                if limits.is_fallback && !muster.is_empty() && stats.unbekanntes_muster.is_none() {
+                    // Einmal pro Flug — nicht je Landung.
+                    tracing::warn!(
+                        aircraft_icao = %muster,
+                        "Muster nicht in der Grenzen-Tabelle: Wing-Strike gegen \
+                         generische 8°, keine Vref-Abweichung"
+                    );
+                    stats.unbekanntes_muster = Some(muster.to_string());
+                }
+                let konfig = konfig_kontext(&stats, muster);
                 let stab_v2 = compute_approach_stability_v2(
                     &stats.approach_buffer,
                     stats.arr_airport_elevation_ft,
@@ -27256,6 +27561,7 @@ fn step_flight_at(
                     // bisherige Verhalten (das Fenster ist nur fuer den
                     // Sampler-Pfad, dessen Buffer Low-Level-Cruise enthalten kann).
                     None,
+                    konfig,
                 );
                 stats.approach_vs_deviation_fpm = stab_v2.vs_deviation_fpm;
                 stats.approach_max_vs_deviation_below_500_fpm = stab_v2.max_vs_deviation_below_500_fpm;
@@ -27273,8 +27579,6 @@ fn step_flight_at(
                 stats.approach_stall_warning_count = stab_v2.stall_warning_count;
 
                 // ─── v0.5.26 Per-Touchdown-Metriken ─────────────────
-                let limits = aircraft_limits_for(&flight.aircraft_icao);
-
                 // Wing-Strike-Severity: |bank_at_td| / max_bank × 100%.
                 // A rotorcraft has no wing to strike, and the fixed-wing 8°
                 // fallback bank limit would flag a normal heli touchdown bank
@@ -40069,6 +40373,117 @@ mod sim_pause_tests {
         }
     }
 
+    /// Die Muster, die die GSG-Flotte laut den 827 aufgezeichneten
+    /// Fluegen vom 16.08.2026 tatsaechlich geflogen ist — genau so
+    /// geschrieben, wie der Simulator sie meldet.
+    ///
+    /// Der Test prueft die Tabelle gegen die Wirklichkeit statt gegen eine
+    /// Wunschliste. Genau daran ist die Positivliste dreimal gescheitert:
+    /// sie wurde nachgetragen, wenn jemand ein Muster vermisste, nie
+    /// abgeglichen mit dem, was wirklich fliegt.
+    const GEFLOGENE_FLOTTE: &[(&str, u32)] = &[
+        ("A320", 136), ("A321", 71), ("B738", 59), ("A21N", 54), ("A20N", 52),
+        ("PHENOM 300E", 51), ("A319", 32), ("E55P", 23), ("HA420", 20),
+        ("BE58", 20), ("B77L", 18), ("DH8D", 18), ("DA40", 17), ("C172", 17),
+        ("BE36", 15), ("A350-900", 14), ("AC11", 12), ("CL60", 12), ("A346", 10),
+        ("C208", 9), ("C182Q", 8), ("AEST", 7), ("FALCON 50", 6), ("PA24", 5),
+        ("C680+", 5), ("B77W", 5), ("C750", 4), ("A300", 4), ("B752", 4),
+        ("BE24", 4), ("A330", 3), ("A380", 3), ("A400M", 3), ("B763", 3),
+        ("PA34", 3), ("A339", 3), ("A359", 3), ("MD11F", 2),
+        ("A350-900 ULR", 2), ("B789", 2), ("A340-300", 2), ("A350-1000", 2),
+        ("F28", 2), ("FA50", 2), ("B736", 1), ("414AW", 1), ("GA-8", 1),
+        ("B772", 1), ("C185", 1), ("A343", 1), ("E170", 1), ("E190F", 1),
+        ("MU2", 1), ("MD88", 1), ("RJ85", 1), ("TYPHOON", 1), ("B762", 1),
+        ("E195", 1), ("B748", 1), ("B742", 1), ("C152", 1), ("MD11", 1),
+        ("A109", 1), ("P28R", 1),
+    ];
+
+    /// Die gebuchte Flotte: `phpvmsaircraft.icao` ueber alle 3794 PIREPs,
+    /// gemessen am 16.08.2026. Zweite Quelle neben `GEFLOGENE_FLOTTE`, weil
+    /// die Bewertung beide Wege kennt — der Simulator meldet ein Muster, die
+    /// Buchung ein anderes, und beide landen in derselben Tabelle.
+    const GEBUCHTE_FLOTTE: &[(&str, u32)] = &[
+        ("A320", 929), ("A321", 397), ("B738", 270), ("A319", 265), ("A20N", 202),
+        ("A359", 129), ("A21N", 126), ("B77L", 117), ("A339", 109), ("E55P", 106),
+        ("MD11", 81), ("A346", 77), ("CL60", 53), ("B772", 53), ("A388", 52),
+        ("A333", 46), ("DH8D", 45), ("B763", 40), ("B77W", 35), ("B38M", 35),
+        ("BCS3", 35), ("A35K", 31), ("A343", 30), ("BE58", 29), ("C750", 26),
+        ("B742", 25), ("BE36", 24), ("B752", 24), ("C208", 24), ("DA40", 23),
+        ("HDJT", 20), ("P28R", 19), ("B789", 18), ("AEST", 18), ("C172", 17),
+        ("B748", 15), ("A332", 15), ("E190", 14), ("B737", 14), ("B744", 14),
+        ("B736", 13), ("C680", 13), ("AC11", 12), ("A139", 11), ("FA50", 10),
+        ("SF50", 9), ("C182", 8), ("PA24", 7), ("A400", 7), ("A109", 7),
+        ("B350", 6), ("GA8", 6), ("A306", 6), ("C152", 6), ("P180", 5),
+        ("L101", 5), ("PA34", 4), ("BE24", 4), ("E195", 4), ("C525", 3),
+        ("MD88", 3), ("B76F", 3), ("RJ85", 3), ("TBM9", 3), ("AT76", 3),
+        ("B762", 3), ("B78X", 2), ("B463", 2), ("CONC", 2), ("H145", 2),
+        ("B753", 2), ("MU2", 2), ("F28", 2), ("C25C", 2), ("C185", 2),
+        ("C414", 2), ("E135", 1), ("GLF5", 1), ("B739", 1), ("BE35", 1),
+        ("DA42", 1), ("EUFI", 1), ("GLF6", 1), ("E170", 1),
+    ];
+
+    #[test]
+    fn grenzen_tabelle_deckt_die_geflogene_flotte() {
+        let luecken: Vec<(&str, u32)> = GEFLOGENE_FLOTTE
+            .iter()
+            .chain(GEBUCHTE_FLOTTE.iter())
+            .copied()
+            .filter(|(muster, _)| aircraft_limits_for(muster).is_fallback)
+            .collect();
+        let betroffene_fluege: u32 = luecken.iter().map(|(_, n)| n).sum();
+        assert!(
+            luecken.is_empty(),
+            "{} Muster ohne Eintrag in der Grenzen-Tabelle, zusammen {} Fluege: {:?}\n\
+             Entweder einen Eintrag ergaenzen oder in `muster_kandidaten` uebersetzen. \
+             Diese Liste kommt aus echten Aufzeichnungen — sie zu kuerzen, statt die \
+             Luecke zu schliessen, waere genau der Fehler, den der Test verhindern soll.",
+            luecken.len(),
+            betroffene_fluege,
+            luecken,
+        );
+    }
+
+    #[test]
+    #[ignore = "Hilfsmittel: gibt die aufgeloesten Grenzen der Messflotte aus"]
+    fn dump_flottengrenzen() {
+        for (muster, _) in GEFLOGENE_FLOTTE.iter().chain(GEBUCHTE_FLOTTE.iter()) {
+            let l = aircraft_limits_for(muster);
+            println!(
+                "DUMP\t{muster}\t{}\t{}",
+                l.typical_vref_kt.map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
+                l.is_fallback
+            );
+        }
+    }
+
+    #[test]
+    fn muster_kandidaten_uebersetzen_die_sim_schreibweisen() {
+        // Airbus-Langform und Familie ohne Variante.
+        assert_eq!(aircraft_limits_for("A350-900").typical_vref_kt, Some(140.0));
+        assert_eq!(aircraft_limits_for("A350-1000").typical_vref_kt, Some(140.0));
+        assert_eq!(aircraft_limits_for("A340-300").typical_vref_kt, Some(138.0));
+        assert!(!aircraft_limits_for("A380").is_fallback);
+        // Frachter-Suffix, Bindestrich, Varianten-Anhang, fuehrende Zahl.
+        assert!(!aircraft_limits_for("MD11F").is_fallback);
+        assert!(!aircraft_limits_for("GA-8").is_fallback);
+        assert!(!aircraft_limits_for("C680+").is_fallback);
+        assert!(!aircraft_limits_for("C182Q").is_fallback);
+        assert!(!aircraft_limits_for("414AW").is_fallback);
+        // Marketingname.
+        assert_eq!(aircraft_limits_for("PHENOM 300E").typical_vref_kt, Some(110.0));
+
+        // Und die Gegenprobe: ein echter Designator darf NICHT durch die
+        // Varianten-Regel zerlegt werden, und Unbekanntes bleibt unbekannt.
+        assert_eq!(aircraft_limits_for("B77W").typical_vref_kt, Some(150.0));
+        assert!(aircraft_limits_for("QQQQ").is_fallback);
+        assert!(aircraft_limits_for("").is_fallback);
+        // Der Simulator meldet beliebigen Text — Mehrbyte-Zeichen duerfen
+        // die Zerlegung nicht in eine Panik reissen.
+        for muell in ["ÜBUNG", "Ä", "飛行機", "A—350", "🛫🛬"] {
+            assert!(aircraft_limits_for(muell).is_fallback, "{muell}");
+        }
+    }
+
     #[test]
     fn landing_config_softfails_when_flaps_unreadable() {
         // GSG225 / Hot-Start CL650: flaps dataref reads 0 the whole
@@ -40082,7 +40497,7 @@ mod sim_pause_tests {
         ]
         .into_iter()
         .collect();
-        let out = compute_approach_stability_v2(&buf, None, None, None, None);
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
         assert_eq!(out.stable_config, None, "flaps unreadable → not assessable");
     }
 
@@ -40097,8 +40512,113 @@ mod sim_pause_tests {
         ]
         .into_iter()
         .collect();
-        let out = compute_approach_stability_v2(&buf, None, None, None, None);
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
         assert_eq!(out.stable_config, Some(false), "genuine no-flaps → fail");
+    }
+
+    #[test]
+    fn landekonfiguration_nicht_bewertbar_wenn_klappen_sich_nie_ruehren() {
+        // Korpus 16.08.2026: 15 Fluege mit einem Klappenwert, der sich im
+        // GANZEN Flug nicht bewegt — B77W, A339, MD11, A346, A20N, DH8D.
+        // Der aeltere Riegel greift nur unter 160 kt; schwere Muster sind am
+        // Tor legitim schneller und bekamen deshalb ein falsches INCOMPLETE.
+        let buf: std::collections::VecDeque<ApproachBufferSample> = [
+            approach_sample(900.0, 168.0, 170.0, -700.0, 1.0, 0.0),
+            approach_sample(600.0, 165.0, 167.0, -680.0, 1.0, 0.0),
+            approach_sample(300.0, 160.0, 162.0, -650.0, 1.0, 0.0),
+        ]
+        .into_iter()
+        .collect();
+        let konfig = KonfigKontext {
+            typical_vref_kt: Some(150.0),
+            flaps_bewegt: Some(false),
+            flaps_max_im_flug: Some(0.0),
+        };
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, konfig);
+        assert_eq!(
+            out.stable_config, None,
+            "toter Klappenkanal → nicht bewertbar, egal wie schnell"
+        );
+    }
+
+    #[test]
+    fn landekonfiguration_akzeptiert_fremdes_rastermass() {
+        // Fokker 28 im Sim: das Raster endet bei 0,667, nicht bei 1,0. Der
+        // Hebel steht am Tor auf dem Maximum dieses Fluges und die
+        // Geschwindigkeit liegt im stabilisierten Fenster (Vref 122 + 10).
+        // Die absolute 0,70-Schwelle misst hier das Raster, nicht den Piloten.
+        let buf: std::collections::VecDeque<ApproachBufferSample> = [
+            approach_sample(900.0, 130.0, 132.0, -650.0, 1.0, 0.667),
+            approach_sample(600.0, 128.0, 130.0, -620.0, 1.0, 0.667),
+            approach_sample(300.0, 125.0, 128.0, -600.0, 1.0, 0.667),
+        ]
+        .into_iter()
+        .collect();
+        let konfig = KonfigKontext {
+            typical_vref_kt: Some(122.0),
+            flaps_bewegt: Some(true),
+            flaps_max_im_flug: Some(0.667),
+        };
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, konfig);
+        assert_eq!(out.stable_config, Some(true), "fremdes Raster → Landekonfiguration");
+    }
+
+    #[test]
+    fn landekonfiguration_faellt_bei_echter_unterklappung_durch() {
+        // Phenom 300 im Korpus: Klappen 0,5 am Tor — auch das Maximum dieses
+        // Fluges — aber 169 kt bei Vref 110, also Vref+59. Mit Anflugklappen
+        // kommt man nicht auf Landegeschwindigkeit; die Geschwindigkeit ist
+        // hier der Riegel, der die Rasterkorrektur oben nicht zum Freifahrt-
+        // schein werden laesst.
+        let buf: std::collections::VecDeque<ApproachBufferSample> = [
+            approach_sample(900.0, 168.0, 169.0, -700.0, 1.0, 0.5),
+            approach_sample(600.0, 165.0, 166.0, -680.0, 1.0, 0.5),
+            approach_sample(300.0, 160.0, 162.0, -650.0, 1.0, 0.5),
+        ]
+        .into_iter()
+        .collect();
+        let konfig = KonfigKontext {
+            typical_vref_kt: Some(110.0),
+            flaps_bewegt: Some(true),
+            flaps_max_im_flug: Some(0.5),
+        };
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, konfig);
+        assert_eq!(out.stable_config, Some(false), "Vref+59 mit halben Klappen → durchgefallen");
+    }
+
+    #[test]
+    fn landekonfiguration_bleibt_streng_ohne_vref() {
+        // Dasselbe Bild wie beim fremden Raster, nur ohne Vref in der
+        // Tabelle. Ohne Geschwindigkeits-Anker laesst sich ein fremdes
+        // Raster nicht von einer Unter-Klappung unterscheiden — dann bleibt
+        // es beim bisherigen, strengen Verhalten. Der Health-Report meldet
+        // das Muster separat, damit die Tabelle waechst.
+        let buf: std::collections::VecDeque<ApproachBufferSample> = [
+            approach_sample(900.0, 105.0, 108.0, -600.0, 1.0, 0.5),
+            approach_sample(600.0, 103.0, 106.0, -580.0, 1.0, 0.5),
+            approach_sample(300.0, 100.0, 104.0, -560.0, 1.0, 0.5),
+        ]
+        .into_iter()
+        .collect();
+        let konfig = KonfigKontext {
+            typical_vref_kt: None,
+            flaps_bewegt: Some(true),
+            flaps_max_im_flug: Some(0.5),
+        };
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, konfig);
+        assert_eq!(out.stable_config, Some(false), "kein Vref → Schwelle bleibt absolut");
+    }
+
+    #[test]
+    fn klappen_spanne_ignoriert_kaputte_messwerte() {
+        let mut stats = FlightStats::default();
+        merke_klappen_spanne(&mut stats, f32::NAN);
+        assert_eq!(stats.flaps_max_gesehen, None, "NaN darf die Spanne nicht oeffnen");
+        merke_klappen_spanne(&mut stats, 0.0);
+        merke_klappen_spanne(&mut stats, 1.5);
+        merke_klappen_spanne(&mut stats, -0.3);
+        assert_eq!(stats.flaps_min_gesehen, Some(0.0));
+        assert_eq!(stats.flaps_max_gesehen, Some(1.0), "auf 0..1 geklemmt");
     }
 
     #[test]
@@ -40115,7 +40635,7 @@ mod sim_pause_tests {
         ]
         .into_iter()
         .collect();
-        let out = compute_approach_stability_v2(&buf, None, None, None, None);
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
         assert_eq!(out.stable_config, None, "Skalen-Artefakt → nicht bewertbar");
     }
 
@@ -40132,7 +40652,7 @@ mod sim_pause_tests {
             [approach_sample(900.0, 130.0, 132.0, -650.0, 1.0, 1.0)]
                 .into_iter()
                 .collect();
-        let out = compute_approach_stability_v2(&buf, None, None, None, None);
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
         assert_eq!(out.window_sample_count, 1, "only 1 sample in the gate");
         assert_eq!(
             out.excessive_sink, None,
@@ -40156,7 +40676,7 @@ mod sim_pause_tests {
         ]
         .into_iter()
         .collect();
-        let out = compute_approach_stability_v2(&buf, None, None, None, None);
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
         assert_eq!(
             out.excessive_sink,
             Some(false),
@@ -40173,7 +40693,7 @@ mod sim_pause_tests {
         ]
         .into_iter()
         .collect();
-        let out = compute_approach_stability_v2(&buf, None, None, None, None);
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
         assert_eq!(out.stable_config, Some(true));
     }
 
@@ -40190,7 +40710,7 @@ mod sim_pause_tests {
         ]
         .into_iter()
         .collect();
-        let out = compute_approach_stability_v2(&buf, None, None, None, None);
+        let out = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
         let max_dev = out
             .max_vs_deviation_below_500_fpm
             .expect("a sub-500 ft sample exists");
@@ -40216,17 +40736,17 @@ mod sim_pause_tests {
         .collect();
 
         // Ohne Gleitwinkel (3°-Fallback): fälschlich „excessive".
-        let out_3deg = compute_approach_stability_v2(&buf, None, None, None, None);
+        let out_3deg = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
         assert_eq!(out_3deg.excessive_sink, Some(true), "gegen 3° gilt der Steilanflug als excessive");
 
         // Mit echtem 5,5°-Gleitwinkel: NICHT excessive + kleine V/S-Abweichung.
-        let out_55 = compute_approach_stability_v2(&buf, None, None, Some(5.5), None);
+        let out_55 = compute_approach_stability_v2(&buf, None, None, Some(5.5), None, Default::default());
         assert_eq!(out_55.excessive_sink, Some(false), "5,5°-Steilanflug ist nicht excessive");
         let dev = out_55.vs_deviation_fpm.expect("deviation vorhanden");
         assert!(dev < 200.0, "Abweichung vs 5,5°-Profil klein, war {dev}");
 
         // AUDIT-Invariante 1: None == exakt 3,0° (bit-identisch, keine Regression).
-        let out_explicit_3 = compute_approach_stability_v2(&buf, None, None, Some(3.0), None);
+        let out_explicit_3 = compute_approach_stability_v2(&buf, None, None, Some(3.0), None, Default::default());
         assert_eq!(
             out_3deg.excessive_sink, out_explicit_3.excessive_sink,
             "None und 3,0° müssen identisch sein"
@@ -40235,7 +40755,7 @@ mod sim_pause_tests {
 
         // AUDIT-Invariante 2: unplausibler Gleitwinkel (außerhalb 2–7,5°) →
         // Fallback 3° (= None-Verhalten), kein Müll-Scaling.
-        let out_garbage = compute_approach_stability_v2(&buf, None, None, Some(15.0), None);
+        let out_garbage = compute_approach_stability_v2(&buf, None, None, Some(15.0), None, Default::default());
         assert_eq!(
             out_3deg.excessive_sink, out_garbage.excessive_sink,
             "Müll-Gleitwinkel → 3°-Fallback"
@@ -40259,7 +40779,7 @@ mod sim_pause_tests {
         .collect();
 
         // 3°-Fallback (None): DA-Gate gegen fix −1000 → fälschlich instabil.
-        let out_3 = compute_approach_stability_v2(&buf, None, None, None, None);
+        let out_3 = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
         assert_eq!(
             out_3.stable_at_da,
             Some(false),
@@ -40267,7 +40787,7 @@ mod sim_pause_tests {
         );
 
         // 5,5°-Gleitwinkel: Schwelle ~−1834 fpm → die −1120…−1150 sind sauber.
-        let out_55 = compute_approach_stability_v2(&buf, None, None, Some(5.5), None);
+        let out_55 = compute_approach_stability_v2(&buf, None, None, Some(5.5), None, Default::default());
         assert_eq!(
             out_55.stable_at_da,
             Some(true),
@@ -40275,7 +40795,7 @@ mod sim_pause_tests {
         );
 
         // AUDIT-Invariante: bei exakt 3,0° identisch zum None-Fallback.
-        let out_3_explicit = compute_approach_stability_v2(&buf, None, None, Some(3.0), None);
+        let out_3_explicit = compute_approach_stability_v2(&buf, None, None, Some(3.0), None, Default::default());
         assert_eq!(out_3.stable_at_da, out_3_explicit.stable_at_da);
     }
 
@@ -42865,6 +43385,7 @@ mod v0_16_6_bush_completeness_tests {
             None,
             None,
             Some((td(), chrono::Duration::seconds(180))),
+            Default::default(),
         );
         assert_eq!(
             windowed.window_sample_count, 3,
@@ -42874,7 +43395,7 @@ mod v0_16_6_bush_completeness_tests {
         // -1500 fpm poison sample is outside the window
         assert_eq!(windowed.excessive_sink, Some(false));
 
-        let unwindowed = compute_approach_stability_v2(&buf, None, None, None, None);
+        let unwindowed = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
         assert_eq!(
             unwindowed.window_sample_count, 7,
             "None = old behaviour: every gate-band sample counts"
@@ -42894,13 +43415,14 @@ mod v0_16_6_bush_completeness_tests {
         // window still excludes samples after the touchdown.)
         let mut buf = windowed_buf();
         buf.pop_back();
-        let a = compute_approach_stability_v2(&buf, None, None, None, None);
+        let a = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
         let b = compute_approach_stability_v2(
             &buf,
             None,
             None,
             None,
             Some((td(), chrono::Duration::days(365))),
+            Default::default(),
         );
         assert_eq!(a.window_sample_count, b.window_sample_count);
         assert_eq!(a.vs_jerk_fpm, b.vs_jerk_fpm);

@@ -1132,6 +1132,17 @@ pub struct ClientHealthReport {
     /// at the moment `SimDisconnect` was first detected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disconnect_sim_liveness: Option<String>,
+    /// Das geflogene Muster stand nicht in der Grenzen-Tabelle des Clients
+    /// (`aircraft_limits_for`), die Bewertung lief also auf generischen
+    /// Ersatzwerten: Wing-Strike gegen 8° statt gegen das echte Limit, und
+    /// keine Vref-Abweichung.
+    ///
+    /// Ohne diese Meldung bleibt so eine Luecke wochenlang unbemerkt — eine
+    /// leere Kennzahl sieht aus wie "war halt nicht messbar". Gemessen am
+    /// 16.08.2026 traf das 31 der 84 gebuchten Muster, 496 von 3794 Fluegen.
+    /// Traegt den ICAO-Code, damit der VA-Betreiber weiss, WAS fehlt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unknown_aircraft_icao: Option<String>,
     /// `true` if the AeroACARS run that resumed this flight (if any) did
     /// NOT exit cleanly (crash/kill/power-loss) — from the run-sentinel
     /// check in `try_resume_flight()`. `None` if the flight never went
