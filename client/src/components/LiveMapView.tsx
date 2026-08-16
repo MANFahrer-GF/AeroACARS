@@ -926,7 +926,14 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       map.addSource("vatsim-sector-labels", { type: "geojson", data: vatsimSectorLabelsRef.current });
     }
     if (!map.getLayer("vatsim-sector-labels-symbol")) {
-      try {
+      {
+        // Kein try/catch mehr: `ebeneAnlegen` faengt selbst ab und wirft
+        // nicht weiter — der aeussere Block fing also nichts und behauptete
+        // trotzdem, fehlende Glyphen zu behandeln. Das tut er nicht: eine
+        // fehlende Schrift wirft NICHT beim Anlegen, sie faellt erst beim
+        // Zeichnen auf und steht nur in der Browser-Konsole. Genau diese
+        // Sorte Schein-Absicherung hat auf der Live-Karte eine ganze Runde
+        // gekostet (16.08.2026, 404 auf den kombinierten Schriftsatz).
         ebeneAnlegen(map, {
           id: "vatsim-sector-labels-symbol", type: "symbol", source: "vatsim-sector-labels",
           layout: {
@@ -949,7 +956,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
             "text-halo-width": 2,
           },
         });
-      } catch { /* Style ohne glyphs → nur Flaeche. */ }
+      }
     }
     if (!map.getSource("vatsim-atc-airports")) {
       map.addSource("vatsim-atc-airports", { type: "geojson", data: vatsimAtcRef.current });

@@ -40,6 +40,36 @@ export function AboutPanel({ onShowReleaseNotes }: Props) {
     };
   }, []);
 
+  // Womit die Karte zeichnet — Grafikkarte oder Software.
+  //
+  // Grund: das Aufbauen der VATSIM-Flaechen dauert im Fenster 20-25 s,
+  // waehrend die Datenkette gemessen 471 ms braucht (Feed 254, Sektoren 213).
+  // Es ist also das Zeichnen. Faellt die WebView auf Software-Rendering
+  // zurueck (SwiftShader/llvmpipe), erklaert das die Groessenordnung — und
+  // ohne diese Angabe laesst es sich nicht von aussen feststellen.
+  const [renderer, setRenderer] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const c = document.createElement("canvas");
+      const gl = (c.getContext("webgl2") ?? c.getContext("webgl")) as
+        | WebGLRenderingContext
+        | null;
+      if (!gl) {
+        setRenderer("kein WebGL");
+
+        return;
+      }
+      const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+      setRenderer(
+        dbg
+          ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL))
+          : String(gl.getParameter(gl.RENDERER)),
+      );
+    } catch {
+      setRenderer("nicht ermittelbar");
+    }
+  }, []);
+
   return (
     <section className="about">
       <header className="about__hero">
@@ -49,6 +79,11 @@ export function AboutPanel({ onShowReleaseNotes }: Props) {
           <p className="about__version">
             v{info.version}
             {info.commit ? <> · <code>{info.commit.slice(0, 7)}</code></> : null}
+          </p>
+        )}
+        {renderer && (
+          <p className="about__version" style={{ opacity: 0.75 }}>
+            Grafik: <code>{renderer}</code>
           </p>
         )}
         {info && <p className="about__credit">{info.credit}</p>}
