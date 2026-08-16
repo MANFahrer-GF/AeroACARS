@@ -409,7 +409,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
    *  nach dem Setzen der Daten zur Ruhe kommt, erfasst also auch das
    *  Zerlegen der Geometrie im Hintergrund. */
   const [netzZeit, setNetzZeit] = useState<
-    { abruf: number; zeichnen: number; erster: boolean } | null
+    { abruf: number; zeichnen: number | null; erster: boolean } | null
   >(null);
   const netzErsterRef = useRef(true);
 
@@ -539,14 +539,24 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         const tGesetzt = performance.now();
         const erster = netzErsterRef.current;
         netzErsterRef.current = false;
-        map.once("idle", () => {
-          if (beendet) return;
-          setNetzZeit({
-            abruf: Math.round(tGesetzt - tStart),
-            zeichnen: Math.round(performance.now() - tGesetzt),
-            erster,
-          });
-        });
+        const abruf = Math.round(tGesetzt - tStart);
+        // SOFORT anzeigen, mit noch offenem Zeichnen-Wert.
+        //
+        // Vorher hing die ganze Anzeige an `idle`. Kommt die Karte nie zur
+        // Ruhe — weil dauernd Kacheln nachladen —, erschien gar nichts, und
+        // die Messung schwieg genau dann, wenn es interessant wurde
+        // (Feldbefund Thomas: "habe ich nicht gesehen").
+        setNetzZeit({ abruf, zeichnen: null, erster });
+        let fertig = false;
+        const abschliessen = () => {
+          if (fertig || beendet) return;
+          fertig = true;
+          setNetzZeit({ abruf, zeichnen: Math.round(performance.now() - tGesetzt), erster });
+        };
+        map.once("idle", abschliessen);
+        // Sicherheitsnetz: kommt die Ruhe nicht, gilt der Wert nach 60 s
+        // als das, was er ist — mindestens so lange.
+        window.setTimeout(abschliessen, 60_000);
       } catch (e) {
         if (!beendet && (e as Error)?.name !== "AbortError") {
           console.warn("[vatsim] Abruf fehlgeschlagen:", e);
@@ -2578,7 +2588,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
               >
                 {netzZeit.erster ? "Netz (erstmals): " : "Netz: "}
                 {(netzZeit.abruf / 1000).toFixed(1)} s holen ·{" "}
-                {(netzZeit.zeichnen / 1000).toFixed(1)} s zeichnen
+                {netzZeit.zeichnen === null
+                  ? "zeichnet …"
+                  : `${(netzZeit.zeichnen / 1000).toFixed(1)} s zeichnen`}
               </span>
             )}
             <span className={`aa-livemap-sysline__dot aa-livemap-sysline__dot--${recorderState}`} aria-hidden="true" />
