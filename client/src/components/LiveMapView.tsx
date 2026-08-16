@@ -119,57 +119,50 @@ function hoehenfilterSetzen(m: maplibregl.Map, fl: number): void {
   }
 }
 
-/** Die Symbole der Kartenleiste — gezeichnet, nicht gesetzt.
+/** Die Symbole der Kartenleiste — Tabler Icons (MIT), eingebettet.
  *
- *  Erster Versuch waren Unicode-Zeichen. Das ging schief: sie stammen aus
- *  verschiedenen Schriftschnitten, sitzen unterschiedlich hoch und wirken
- *  zusammen wie zusammengesucht. Schlimmer noch stand `\u2708` doppelt
- *  drin — einmal fuer "Kurs oben", einmal fuer "VA-Verkehr". Zwei
- *  Bedeutungen, ein Zeichen.
+ *  Zwei Fehlversuche vorher, beide von Thomas kassiert: erst Unicode-
+ *  Zeichen (aus verschiedenen Schriftschnitten, unterschiedlich hoch, und
+ *  ein Motiv stand doppelt), dann selbst gezeichnete Pfade. Beides war
+ *  Ersatz fuer etwas, das laengst abgestimmt war — die Vorschau zeigte
+ *  Tabler-Symbole, und die gibt es als offene Pfade.
  *
- *  Eine Symbolschrift nachzuladen kommt nicht in Frage: die Leiste laeuft
- *  im Fenster einer Anwendung, das waere ein Netzzugriff fuer acht Glyphen
- *  samt der Frage, was bei Fehlschlag passiert. Also gezeichnet — gleiche
- *  Strichstaerke, gleiches Raster, faerbt sich mit dem Text.
+ *  Eingebettet statt nachgeladen: die Leiste laeuft im Fenster einer
+ *  Anwendung, ein Netzzugriff fuer acht Glyphen waere eine Abhaengigkeit
+ *  ohne Gegenwert. Quelle: github.com/tabler/tabler-icons, MIT.
  */
-function Sym({ d, fill }: { d: string; fill?: boolean }) {
+function Sym({ pfad }: { pfad: string }) {
   return (
     <svg
-      viewBox="0 0 16 16"
-      width="14"
-      height="14"
+      viewBox="0 0 24 24"
+      width="15"
+      height="15"
       aria-hidden="true"
       focusable="false"
       style={{ display: "block" }}
-      fill={fill ? "currentColor" : "none"}
+      fill="none"
       stroke="currentColor"
-      strokeWidth={fill ? 0 : 1.5}
+      strokeWidth={2}
       strokeLinecap="round"
       strokeLinejoin="round"
-    >
-      <path d={d} />
-    </svg>
+      dangerouslySetInnerHTML={{ __html: pfad }}
+    />
   );
 }
 
-const PFAD = {
-  /** Gefaltete Karte. */
-  karte: "M1.5 4.2 5.5 2.5v9.3L1.5 13.5V4.2ZM5.5 2.5l5 1.8v9.2l-5-1.7V2.5ZM10.5 4.3l4-1.8v9.3l-4 1.7V4.3Z",
-  /** Globus mit Bahn — das Satellitenbild. */
-  satellit: "M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM1.5 8h13M8 1.5c1.7 1.8 2.6 4 2.6 6.5S9.7 12.7 8 14.5C6.3 12.7 5.4 10.5 5.4 8S6.3 3.3 8 1.5Z",
-  /** Kompassnadel nach Norden. */
-  norden: "M8 14V2.5M8 2.5 4.5 6M8 2.5 11.5 6",
-  /** Flugzeug in Fahrtrichtung — Kurs oben. */
-  kurs: "M8 1.6 9.6 7l4.9 1.6-4.9 1.1-.7 4.7-.9-2.6-.9 2.6-.7-4.7L1.5 8.6 6.4 7 8 1.6Z",
-  /** Fadenkreuz. */
-  zentrieren: "M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3M8 5.4a2.6 2.6 0 1 0 0 5.2 2.6 2.6 0 0 0 0-5.2Z",
-  /** Zurueckgelegte Spur mit Punkt am Ende. */
-  track: "M1.8 13c2.2-.3 3.6-1.6 4.4-3.4.9-2 1.2-4.4 3-5.6M12.4 2.6l1.8 1.2-1.5 1.6",
-  /** Weiche — Rollwege. */
-  taxi: "M2 14V6.5C2 4 4 2 6.5 2H14M11.5 2 14 4.5 11.5 7M2 9.5h4",
-  /** Zwei Flugzeuge — Verkehr der eigenen VA. */
-  va: "M2.2 6.3 6 7.5l1.3-2.2-1-.6.4-.8 2.1.8 2.3-1.6c.4-.3.9-.2 1.1.2.2.4.1.9-.3 1.1L9.3 6l.8 2.1-.8.4-.6-1L6.5 8.8l1.2 3.8-.9.5-2.2-3.6-2.6.5-.4-1 2.1-1.1-1.5-1.6Z",
-} as const;
+/** Tabler Icons (MIT). Jedes Motiv genau einmal — ausser dem Flugzeug,
+ *  das sowohl "Kurs oben" als auch "VA-Verkehr" traegt; die beiden stehen
+ *  in verschiedenen Gruppen und sind durch Beschriftung getrennt. */
+const PFAD: Record<string, string> = {
+  karte: "<path d=\"M3 7l6 -3l6 3l6 -3v13l-6 3l-6 -3l-6 3v-13\" /> <path d=\"M9 4v13\" /> <path d=\"M15 7v13\" />",
+  satellit: "<path d=\"M3.707 6.293l2.586 -2.586a1 1 0 0 1 1.414 0l5.586 5.586a1 1 0 0 1 0 1.414l-2.586 2.586a1 1 0 0 1 -1.414 0l-5.586 -5.586a1 1 0 0 1 0 -1.414\" /> <path d=\"M6 10l-3 3l3 3l3 -3\" /> <path d=\"M10 6l3 -3l3 3l-3 3\" /> <path d=\"M12 12l1.5 1.5\" /> <path d=\"M14.5 17a2.5 2.5 0 0 0 2.5 -2.5\" /> <path d=\"M15 21a6 6 0 0 0 6 -6\" />",
+  norden: "<path d=\"M12 5l0 14\" /> <path d=\"M18 11l-6 -6\" /> <path d=\"M6 11l6 -6\" />",
+  kurs: "<path d=\"M16 10h4a2 2 0 0 1 0 4h-4l-4 7h-3l2 -7h-4l-2 2h-3l2 -4l-2 -4h3l2 2h4l-2 -7h3l4 7\" />",
+  zentrieren: "<path d=\"M4 8v-2a2 2 0 0 1 2 -2h2\" /> <path d=\"M4 16v2a2 2 0 0 0 2 2h2\" /> <path d=\"M16 4h2a2 2 0 0 1 2 2v2\" /> <path d=\"M16 20h2a2 2 0 0 0 2 -2v-2\" /> <path d=\"M9 12l6 0\" /> <path d=\"M12 9l0 6\" />",
+  track: "<path d=\"M3 19a2 2 0 1 0 4 0a2 2 0 0 0 -4 0\" /> <path d=\"M19 7a2 2 0 1 0 0 -4a2 2 0 0 0 0 4\" /> <path d=\"M11 19h5.5a3.5 3.5 0 0 0 0 -7h-8a3.5 3.5 0 0 1 0 -7h4.5\" />",
+  taxi: "<path d=\"M3.59 7h8.82a1 1 0 0 1 .902 1.433l-1.44 3a1 1 0 0 1 -.901 .567h-5.942a1 1 0 0 1 -.901 -.567l-1.44 -3a1 1 0 0 1 .901 -1.433\" /> <path d=\"M6 7l-.78 -2.342a.5 .5 0 0 1 .473 -.658h4.612a.5 .5 0 0 1 .475 .658l-.78 2.342\" /> <path d=\"M8 2v2\" /> <path d=\"M6 12v9h4v-9\" /> <path d=\"M3 21h18\" /> <path d=\"M22 5h-6l-1 -1\" /> <path d=\"M18 3l2 2l-2 2\" /> <path d=\"M10 17h7a2 2 0 0 1 2 2v2\" />",
+  va: "<path d=\"M16 10h4a2 2 0 0 1 0 4h-4l-4 7h-3l2 -7h-4l-2 2h-3l2 -4l-2 -4h3l2 2h4l-2 -7h3l4 7\" />",
+};
 
 /** Eine Kartenebene anlegen, ohne die uebrigen zu gefaehrden.
  *
@@ -2231,7 +2224,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   title={t("livemap.view_map")}
                   onClick={() => setBasemap("auto")}
                 >
-                  <Sym d={PFAD.karte} />
+                  <Sym pfad={PFAD.karte} />
                 </button>
                 <button
                   type="button"
@@ -2241,7 +2234,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   title={t("livemap.view_sat")}
                   onClick={() => setBasemap("sat")}
                 >
-                  <Sym d={PFAD.satellit} />
+                  <Sym pfad={PFAD.satellit} />
                 </button>
               </div>
             </div>
@@ -2256,7 +2249,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   title={t("livemap.orient_north")}
                   onClick={() => setTrackUp(false)}
                 >
-                  <Sym d={PFAD.norden} />
+                  <Sym pfad={PFAD.norden} />
                 </button>
                 <button
                   type="button"
@@ -2266,7 +2259,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   aria-label={t("livemap.orient_track")}
                   title={t("livemap.orient_track")}
                 >
-                  <Sym d={PFAD.kurs} fill />
+                  <Sym pfad={PFAD.kurs} />
                 </button>
               </div>
             </div>
@@ -2287,7 +2280,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   title={t("livemap.layer_track")}
                   onClick={() => setShowTrack((v) => !v)}
                 >
-                  <Sym d={PFAD.track} />
+                  <Sym pfad={PFAD.track} />
                   {showTrack && <span className="aa-livemap-toggle__wort">{t("livemap.layer_track")}</span>}
                 </button>
                 <button
@@ -2306,7 +2299,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   }
                   aria-label={t("livemap.layer_taxi")}
                 >
-                  <Sym d={PFAD.taxi} />
+                  <Sym pfad={PFAD.taxi} />
                   {showTaxi && <span className="aa-livemap-toggle__wort">{t("livemap.layer_taxi")}</span>}
                 </button>
                 <button
@@ -2317,7 +2310,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   aria-label={t("livemap.layer_va")}
                   title={t("livemap.layer_va")}
                 >
-                  <Sym d={PFAD.va} fill />
+                  <Sym pfad={PFAD.va} />
                   {showVa && <span className="aa-livemap-toggle__wort">{t("livemap.layer_va")}</span>}
                 </button>
                 {/* Netz-Umschalter statt zweier Schalter: so KANN nicht
@@ -2409,7 +2402,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                     map.easeTo({ center: [effAircraft.lon, effAircraft.lat], zoom: tz, duration: 500 });
                   }}
                 >
-                  <Sym d={PFAD.zentrieren} />
+                  <Sym pfad={PFAD.zentrieren} />
                 </button>
                 )}
                 {/* "Folgen" (continuous camera tracking) isn't in the

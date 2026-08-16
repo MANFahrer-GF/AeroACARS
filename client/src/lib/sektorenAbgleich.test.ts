@@ -123,10 +123,16 @@ describe("Darstellung wie auf der Live-Karte", () => {
     expect(quelle).toContain("{activeFlight && effAircraft && (");
   });
 
-  it("nutzt Symbole fuer die Zweier-Umschalter", () => {
-    for (const k of ["karte", "satellit", "norden", "kurs", "zentrieren"]) {
-      expect(quelle).toContain(`LEISTE_SYMBOL.${k}`);
+  it("nutzt die abgestimmten Symbole aus dem Tabler-Satz", () => {
+    // Zwei Fehlversuche gingen voraus: Unicode-Zeichen und selbst
+    // gezeichnete Pfade — beides Ersatz fuer etwas, das laengst abgestimmt
+    // war. Der Test haelt fest, dass die echten Pfade drin sind.
+    for (const k of ["karte", "satellit", "norden", "kurs", "zentrieren", "track", "taxi", "va"]) {
+      expect(quelle).toContain(`PFAD.${k}`);
     }
+    // Eingebettet, nicht nachgeladen: kein Netzzugriff fuer acht Glyphen.
+    expect(quelle).not.toMatch(/tabler-icons.*\.(css|woff|js)/);
+    expect(quelle).toContain("Tabler Icons (MIT)");
   });
 });
 
