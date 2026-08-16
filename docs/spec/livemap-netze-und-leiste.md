@@ -89,6 +89,17 @@ Umbau.
 
 - Symbol für „Taxiweg": im Entwurf ein Flughafen-Gebäude. Ein Rollweg-Motiv
   gibt der Symbolsatz nicht her; ein Straßen-Symbol kollidiert optisch mit
-  „Track". Vorschläge willkommen.
-- „VA-Verkehr" auf „VA" gekürzt — die einzige Stelle, wo Klarheit gegen Platz
-  getauscht wird.
+  „Track". Vorschläge willkommen. **Stand 16.08.2026: weiterhin offen.**
+
+## Entschieden nach dem Bau (16.08.2026, mit Thomas)
+
+- **„VA-Verkehr" bleibt ausgeschrieben.** Die hier geplante Kürzung auf „VA"
+  ist nie in den Code gegangen: alle drei Sprachen tragen seit dem
+  Design-System-Umbau (c17ffb6) die Langform — „VA-Verkehr" / „VA Traffic" /
+  „Traffico VA". Thomas hat die Langform bestätigt. Erledigt, nicht vergessen.
+- **Die Browser-Livemap (live.kant.ovh) bleibt ohne IVAO.** Der Recorder
+  liefert `netz=ivao` längst aus, `webapp/src` fragt aber weiter nur VATSIM
+  (181 Treffer gegen 0). Das ist so gewollt — IVAO ist eine Client-Funktion,
+  die beiden Karten dürfen sich hier unterscheiden.
+- **Feinere IVAO-Sektoren bleiben geparkt.** Die token-pflichtigen Endpunkte
+  werden erst angefasst, wenn die FIR-Näherung sich als zu grob erweist.
