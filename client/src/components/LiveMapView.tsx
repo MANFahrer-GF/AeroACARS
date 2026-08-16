@@ -413,13 +413,14 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   >(null);
   const netzErsterRef = useRef(true);
 
-  const [netz, setNetz] = useState<Netz>(() => {
-    if (typeof localStorage === "undefined") return "aus";
-    const gemerkt = localStorage.getItem("aaLivemapNetz");
-    if (gemerkt === "vatsim" || gemerkt === "ivao") return gemerkt;
-    // Uebergang von der alten Ein/Aus-Merkung.
-    return localStorage.getItem("aaLivemapVatsim") === "1" ? "vatsim" : "aus";
-  });
+  // Beim Start IMMER aus. Nicht gemerkt, bewusst.
+  //
+  // Ein Netz ist eine Zuschaltung fuer den Moment, kein Dauerzustand: die
+  // Karte gehoert zuerst dem eigenen Flug. Wer sie oeffnet, soll sehen,
+  // was er fliegt — und selbst entscheiden, ob fremder Verkehr dazukommt
+  // (Thomas, 16.08.2026). Nebenbei faellt damit die teuerste Arbeit weg,
+  // solange niemand sie angefordert hat.
+  const [netz, setNetz] = useState<Netz>("aus");
   const showVatsim = netz !== "aus";
   const vatsimPilotsRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
   const vatsimAtcRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
@@ -439,7 +440,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   const [theme, setTheme] = useState<"dark" | "light">(readTheme());
   // ── VATSIM-Overlay: Daten holen, solange es eingeschaltet ist ─────────
   useEffect(() => {
-    try { localStorage.setItem("aaLivemapNetz", netz); } catch { /* egal */ }
     const map = mapRef.current;
     if (!map || !mapReady) return;
 

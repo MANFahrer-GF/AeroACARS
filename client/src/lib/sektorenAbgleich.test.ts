@@ -137,5 +137,14 @@ describe("Darstellung wie auf der Live-Karte", () => {
     expect(quelle).not.toMatch(/tabler-icons.*\.(css|woff|js)/);
     expect(quelle).toContain("Tabler Icons (MIT)");
   });
+
+  it("startet immer auf Aus, ohne Merkung", () => {
+    // Ein Netz ist eine Zuschaltung fuer den Moment, kein Dauerzustand —
+    // die Karte gehoert zuerst dem eigenen Flug. Nebenbei faellt die
+    // teuerste Arbeit weg, solange niemand sie angefordert hat.
+    expect(quelle).toContain('useState<Netz>("aus")');
+    expect(quelle).not.toContain("aaLivemapNetz");
+    expect(quelle).not.toContain("aaLivemapVatsim");
+  });
 });
 
