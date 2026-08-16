@@ -87,11 +87,20 @@ Umbau.
 
 ## Offen
 
-- Symbol für „Taxiweg": im Entwurf ein Flughafen-Gebäude. Ein Rollweg-Motiv
-  gibt der Symbolsatz nicht her; ein Straßen-Symbol kollidiert optisch mit
-  „Track". Vorschläge willkommen. **Stand 16.08.2026: weiterhin offen.**
+Nichts mehr. Der letzte Punkt (Symbol für „Taxiweg") ist am 16.08.2026
+entschieden — siehe unten.
 
 ## Entschieden nach dem Bau (16.08.2026, mit Thomas)
+
+- **Symbol für „Taxiweg": `traffic-cone`.** Vorher stand dort Tabler
+  `building-airport` (verifiziert: alle acht Pfade identisch mit dem
+  Original). Das Motiv heißt aber „Flughafen", nicht „Rollweg", und lief bei
+  15 px zu einem Fleck zusammen. Ein Weg-Motiv verbietet sich weiterhin: der
+  nächstbeste Kandidat `arrow-guide` trägt Punkt und Knick wie das
+  Track-Symbol direkt daneben — genau die Kollision, vor der dieser Entwurf
+  gewarnt hat. `windsock` steht zwar am Flugplatz, meint aber Wind. Der Hut
+  meint den Bodenbereich statt des Weges; vier Striche, die auch klein noch
+  eine Silhouette haben.
 
 - **„VA-Verkehr" bleibt ausgeschrieben.** Die hier geplante Kürzung auf „VA"
   ist nie in den Code gegangen: alle drei Sprachen tragen seit dem

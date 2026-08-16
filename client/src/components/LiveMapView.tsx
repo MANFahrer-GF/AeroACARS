@@ -160,7 +160,13 @@ const PFAD: Record<string, string> = {
   kurs: "<path d=\"M16 10h4a2 2 0 0 1 0 4h-4l-4 7h-3l2 -7h-4l-2 2h-3l2 -4l-2 -4h3l2 2h4l-2 -7h3l4 7\" />",
   zentrieren: "<path d=\"M4 8v-2a2 2 0 0 1 2 -2h2\" /> <path d=\"M4 16v2a2 2 0 0 0 2 2h2\" /> <path d=\"M16 4h2a2 2 0 0 1 2 2v2\" /> <path d=\"M16 20h2a2 2 0 0 0 2 -2v-2\" /> <path d=\"M9 12l6 0\" /> <path d=\"M12 9l0 6\" />",
   track: "<path d=\"M3 19a2 2 0 1 0 4 0a2 2 0 0 0 -4 0\" /> <path d=\"M19 7a2 2 0 1 0 0 -4a2 2 0 0 0 0 4\" /> <path d=\"M11 19h5.5a3.5 3.5 0 0 0 0 -7h-8a3.5 3.5 0 0 1 0 -7h4.5\" />",
-  taxi: "<path d=\"M3.59 7h8.82a1 1 0 0 1 .902 1.433l-1.44 3a1 1 0 0 1 -.901 .567h-5.942a1 1 0 0 1 -.901 -.567l-1.44 -3a1 1 0 0 1 .901 -1.433\" /> <path d=\"M6 7l-.78 -2.342a.5 .5 0 0 1 .473 -.658h4.612a.5 .5 0 0 1 .475 .658l-.78 2.342\" /> <path d=\"M8 2v2\" /> <path d=\"M6 12v9h4v-9\" /> <path d=\"M3 21h18\" /> <path d=\"M22 5h-6l-1 -1\" /> <path d=\"M18 3l2 2l-2 2\" /> <path d=\"M10 17h7a2 2 0 0 1 2 2v2\" />",
+  // Rollweg: "traffic-cone". Vorher stand hier "building-airport" — das
+  // heisst aber "Flughafen", nicht "Rollweg", und seine acht Striche liefen
+  // bei 15 px zu einem Fleck zusammen. Ein Weg-Motiv verbietet sich: der
+  // naechstbeste Kandidat ("arrow-guide") traegt Punkt und Knick wie das
+  // Track-Symbol daneben. Der Hut meint den Bodenbereich, nicht den Weg —
+  // vier Striche, die auch klein noch eine Silhouette haben.
+  taxi: "<path d=\"M4 20l16 0\" /> <path d=\"M9.4 10l5.2 0\" /> <path d=\"M7.8 15l8.4 0\" /> <path d=\"M6 20l5 -15h2l5 15\" />",
   va: "<path d=\"M16 10h4a2 2 0 0 1 0 4h-4l-4 7h-3l2 -7h-4l-2 2h-3l2 -4l-2 -4h3l2 2h4l-2 -7h3l4 7\" />",
 };
 
