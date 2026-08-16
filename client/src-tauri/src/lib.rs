@@ -2988,6 +2988,17 @@ struct FlightStats {
     /// (siehe `KonfigKontext`).
     flaps_min_gesehen: Option<f32>,
     flaps_max_gesehen: Option<f32>,
+    /// Lief die Spanne oben schon, BEVOR das Flugzeug abgehoben ist?
+    ///
+    /// Nur dann heisst „hat sich nie bewegt" auch wirklich „der Kanal ist
+    /// tot". Nach einem App-Neustart faengt die Spanne bei Null an (die
+    /// beiden Felder stehen bewusst nicht in `PersistedFlightStats` — ein
+    /// gespeicherter Extremwert waere eine Behauptung ueber Ticks, die
+    /// dieser Prozess nie gesehen hat). Wer bei 1500 ft im Endanflug
+    /// neustartet und die Klappen schon gesetzt hat, haette sonst eine
+    /// korrekte Landekonfiguration verloren: min == max, also „tot", also
+    /// nicht bewertbar statt bestanden.
+    flaps_lueckenlos_beobachtet: bool,
     last_lat: Option<f64>,
     last_lon: Option<f64>,
     /// Zeitpunkt der Distanz-Basislinie — ohne ihn laesst sich ein Sprung
@@ -5267,6 +5278,13 @@ fn merke_klappen_spanne(stats: &mut FlightStats, flaps_position: f32) {
     if !flaps_position.is_finite() {
         return;
     }
+    if stats.flaps_min_gesehen.is_none() {
+        // Erster Messwert dieses Prozesses. Steht der Abheb-Zeitpunkt noch
+        // aus, haben wir den ganzen Klappen-Zyklus vor uns; ist er schon
+        // gesetzt, sind wir in einen laufenden Flug hineingeraten (Resume)
+        // und duerfen aus Stillstand nicht auf einen toten Kanal schliessen.
+        stats.flaps_lueckenlos_beobachtet = stats.takeoff_at.is_none();
+    }
     let v = flaps_position.clamp(0.0, 1.0);
     stats.flaps_min_gesehen = Some(stats.flaps_min_gesehen.map_or(v, |m| m.min(v)));
     stats.flaps_max_gesehen = Some(stats.flaps_max_gesehen.map_or(v, |m| m.max(v)));
@@ -5274,15 +5292,22 @@ fn merke_klappen_spanne(stats: &mut FlightStats, flaps_position: f32) {
 
 /// Baut den Musterwissen-Kontext fuer die Landekonfiguration.
 ///
-/// `muster` ist der ICAO-Code, gegen den auch die uebrigen Landegrenzen
-/// aufgeloest werden — Simulator zuerst, Buchung als Rueckfall.
-fn konfig_kontext(stats: &FlightStats, muster: &str) -> KonfigKontext {
-    let limits = aircraft_limits_for(muster);
+/// Nimmt die bereits aufgeloesten Grenzen entgegen statt sie selbst
+/// nachzuschlagen: der Aufrufer braucht sie ohnehin fuer die Wing-Strike-
+/// Wertung, und zwei Aufloesungen desselben Musters waeren zwei Quellen fuer
+/// dieselbe Vref.
+fn konfig_kontext(stats: &FlightStats, limits: &AircraftLimits) -> KonfigKontext {
     // Bewegt heisst: Spanne groesser als eine halbe Raststufe des feinsten im
     // Korpus beobachteten Rasters (1/9 ≈ 0,111 bei der Fokker 28). 0,02 liegt
     // klar darunter und klar ueber dem Rauschen animierter Klappen.
     let bewegt = match (stats.flaps_min_gesehen, stats.flaps_max_gesehen) {
-        (Some(min), Some(max)) => Some((max - min) > 0.02),
+        // Stillstand ist nur dann eine Aussage, wenn wir von Anfang an
+        // zugesehen haben — sonst bleibt die Frage offen (`None`), und die
+        // Bewertung faellt auf das Verhalten vor v1.6.6 zurueck.
+        (Some(min), Some(max)) if (max - min) <= 0.02 => {
+            if stats.flaps_lueckenlos_beobachtet { Some(false) } else { None }
+        }
+        (Some(_), Some(_)) => Some(true),
         _ => None,
     };
     KonfigKontext {
@@ -6317,10 +6342,11 @@ struct AircraftLimits {
     ///
     /// Die Tabelle ist eine Positivliste. Fehlt ein Muster, rechnete die
     /// Wing-Strike-Bewertung gegen generische 8° und die Vref-Abweichung
-    /// blieb leer — LAUTLOS. Gemessen am 16.08.2026 gegen die echte GSG-
-    /// Flotte: 31 von 84 geflogenen Mustern ohne Eintrag, 470 von 2978
-    /// Fluegen (16 %). Aufgefallen ist es erst nach Wochen, weil eine leere
-    /// Kennzahl aussieht wie "war halt nicht messbar".
+    /// blieb leer — LAUTLOS. Gemessen am 16.08.2026 gegen die gebuchte
+    /// GSG-Flotte (`phpvmspireps` JOIN `phpvmsaircraft`, 84 Muster ueber
+    /// 3794 PIREPs): 31 Muster ohne Eintrag, zusammen 496 Fluege (13 %).
+    /// Aufgefallen ist es erst nach Wochen, weil eine leere Kennzahl
+    /// aussieht wie "war halt nicht messbar".
     ///
     /// Der Code hat das schon dreimal nachgetragen (v0.8.3: King Air,
     /// Baron/Seneca, Bonanza) und die Klasse nie geschlossen. Deshalb
@@ -6341,8 +6367,11 @@ struct AircraftLimits {
 /// wuerde damit echte Designatoren beschaedigen — aus "B76F" (Tabellen-
 /// eintrag) wuerde "B76".
 ///
-/// Gemessen am 16.08.2026 ueber 827 aufgezeichnete Fluege: 130 (16 %)
-/// meldeten eine Schreibweise, die die Tabelle nicht kennt.
+/// Zweite, unabhaengige Messung am 16.08.2026 — diesmal ueber die 827
+/// aufgezeichneten Recorder-Logs, also ueber das, was der SIMULATOR meldet
+/// (die Zahlen an `AircraftLimits::is_fallback` zaehlen dagegen die
+/// gebuchten Muster): 130 der 827 Fluege (16 %) kamen mit einer
+/// Schreibweise an, die die Tabelle nicht kennt.
 fn muster_kandidaten(upper: &str) -> Vec<String> {
     let mut aus = Vec::new();
     let mut schieben = |k: String| {
@@ -6368,6 +6397,26 @@ fn muster_kandidaten(upper: &str) -> Vec<String> {
     }
     if zeichen.len() == 5 && zeichen[4].is_ascii_alphabetic() {
         schieben(zeichen[..4].iter().collect());
+    }
+    // Baureihe ohne Variante: der Sim meldet nur die Familie. Zugeordnet
+    // wird die Variante, die die Flotte tatsaechlich fliegt. Bewusst hier
+    // und nicht in `map_model_name_to_icao`: diese Codes sind schon
+    // vierstellig und plausibel, eine Zuordnung dort wuerde die
+    // Musteridentitaet des ganzen Clients gegen eine geratene Variante
+    // tauschen (Auto-Start-Abgleich, PIREP). Hier bestaetigt die Tabelle
+    // das Ergebnis, ein Fehlgriff kostet nichts.
+    let familie = match ohne_trenner.as_str() {
+        "A300" => Some("A306"),
+        "A330" => Some("A333"),
+        "A340" => Some("A343"),
+        "A380" => Some("A388"),
+        "B747" => Some("B744"),
+        "B777" => Some("B77W"),
+        "B787" => Some("B789"),
+        _ => None,
+    };
+    if let Some(f) = familie {
+        schieben(f.to_string());
     }
     // Fuehrende Werksnummer wie 414AW (Cessna 414) → C414.
     if zeichen.len() >= 3 && zeichen[..3].iter().all(char::is_ascii_digit) {
@@ -6448,7 +6497,7 @@ fn aircraft_limits_exakt(upper_str: &str) -> AircraftLimits {
 
         // ─── Nachgetragen 16.08.2026 nach Messung gegen die echte Flotte ──
         //
-        // 31 von 84 geflogenen Mustern fehlten, 470 von 2978 Fluegen (16 %).
+        // 31 von 84 gebuchten Mustern fehlten, 496 von 3794 Fluegen (13 %).
         // Vref recherchiert und mit Thomas abgestimmt; Bank-Grenzen aus der
         // jeweiligen Klasse wie im Bestand daruber.
         //
@@ -6770,7 +6819,9 @@ fn compute_approach_stability_v2(
                     }
                 }
             }
-            out.stable_config = Some(gear_ok && flaps_ok);
+            // `gear_ok` ist hier beweisbar true — der Zweig oben hat den
+            // Fall abgefangen.
+            out.stable_config = Some(flaps_ok);
         }
     }
 
@@ -21458,7 +21509,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                     let muster = sim_muster
                                         .as_deref()
                                         .unwrap_or(flight.aircraft_icao.trim());
-                                    let konfig = konfig_kontext(&stats, muster);
+                                    let konfig =
+                                        konfig_kontext(&stats, &aircraft_limits_for(muster));
                                     let stab_v2 = compute_approach_stability_v2(
                                         &stats.approach_buffer,
                                         stats.arr_airport_elevation_ft,
@@ -27545,7 +27597,7 @@ fn step_flight_at(
                     );
                     stats.unbekanntes_muster = Some(muster.to_string());
                 }
-                let konfig = konfig_kontext(&stats, muster);
+                let konfig = konfig_kontext(&stats, &limits);
                 let stab_v2 = compute_approach_stability_v2(
                     &stats.approach_buffer,
                     stats.arr_airport_elevation_ft,
@@ -40607,6 +40659,56 @@ mod sim_pause_tests {
         };
         let out = compute_approach_stability_v2(&buf, None, None, None, None, konfig);
         assert_eq!(out.stable_config, Some(false), "kein Vref → Schwelle bleibt absolut");
+    }
+
+    #[test]
+    fn klappen_stillstand_zaehlt_nur_bei_lueckenloser_beobachtung() {
+        // Normaler Flug: die Spanne laeuft ab dem Gate, also vor dem
+        // Abheben. Ruehrt sich der Wert danach nie, ist der Kanal tot.
+        let mut vom_gate = FlightStats::default();
+        merke_klappen_spanne(&mut vom_gate, 0.0);
+        merke_klappen_spanne(&mut vom_gate, 0.0);
+        assert_eq!(
+            konfig_kontext(&vom_gate, &aircraft_limits_for("A320")).flaps_bewegt,
+            Some(false),
+            "von Anfang an beobachtet → Stillstand heisst toter Kanal"
+        );
+
+        // Resume: die App startet mitten im Anflug neu, `takeoff_at` kommt
+        // aus dem gespeicherten Zustand. Die Klappen stehen schon auf FULL
+        // und bewegen sich bis zum Aufsetzen nicht mehr — das darf NICHT als
+        // toter Kanal gelten, sonst verliert eine korrekt geflogene
+        // Landekonfiguration ihr Urteil.
+        let mut nach_resume = FlightStats {
+            takeoff_at: Some(Utc::now()),
+            ..Default::default()
+        };
+        merke_klappen_spanne(&mut nach_resume, 1.0);
+        merke_klappen_spanne(&mut nach_resume, 1.0);
+        assert_eq!(
+            konfig_kontext(&nach_resume, &aircraft_limits_for("A320")).flaps_bewegt,
+            None,
+            "erst ab Anflug beobachtet → Frage bleibt offen"
+        );
+
+        // Und die Landekonfiguration selbst: offene Frage → alte, strenge
+        // Bewertung, kein stilles „nicht bewertbar".
+        let buf: std::collections::VecDeque<ApproachBufferSample> = [
+            approach_sample(900.0, 130.0, 132.0, -650.0, 1.0, 1.0),
+            approach_sample(600.0, 128.0, 130.0, -620.0, 1.0, 1.0),
+            approach_sample(300.0, 125.0, 128.0, -600.0, 1.0, 1.0),
+        ]
+        .into_iter()
+        .collect();
+        let out = compute_approach_stability_v2(
+            &buf,
+            None,
+            None,
+            None,
+            None,
+            konfig_kontext(&nach_resume, &aircraft_limits_for("A320")),
+        );
+        assert_eq!(out.stable_config, Some(true), "volle Klappen bleiben bestanden");
     }
 
     #[test]

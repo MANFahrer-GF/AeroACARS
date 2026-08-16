@@ -1625,19 +1625,18 @@ fn map_model_name_to_icao(s: &str) -> Option<String> {
         // "FALCON 50" und "A400M" fehlten komplett; beide ergaenzt.
         "FALCON 50" | "FALCON 50EX" | "DASSAULT FALCON 50" => "FA50",
         "A400M" | "A400M ATLAS" | "AIRBUS A400M" => "A400",
-        // Nachmessung 16.08.2026 (827 VPS-Flight-Logs): Baureihen ohne
-        // Variante. Der Sim meldet nur die Familie; zugeordnet wird die
-        // Variante, die die GSG-Flotte tatsaechlich fliegt. Ohne diese
-        // Zeilen bleibt der Code 4-stellig und „plausibel", geht also
-        // unveraendert durch — und trifft danach keine einzige Tabelle.
-        "A300" => "A306",
-        "A310" => "A310",
-        "A330" => "A333",
-        "A340" => "A343",
-        "A380" => "A388",
-        "B747" => "B744",
-        "B777" => "B77W",
-        "B787" => "B789",
+        // Nachmessung 16.08.2026 (827 VPS-Flight-Logs).
+        //
+        // Hier stehen NUR Namen, die ohne Zuordnung als unbekannt enden —
+        // was diese Funktion liefert, wird im MSFS-Adapter zu
+        // `SimSnapshot::aircraft_icao` und ist damit die Musteridentitaet
+        // des ganzen Clients (Kategorie-FSM, Auto-Start-Abgleich, PIREP).
+        // Baureihen ohne Variante ("A330", "B747") gehoeren deshalb NICHT
+        // hierher: sie sind schon vierstellig und plausibel, eine Zuordnung
+        // wuerde eine gueltige Identitaet gegen eine geratene Variante
+        // tauschen. Die Grenzen-Tabelle uebersetzt sie selbst, dort kostet
+        // ein Fehlgriff nichts, weil die Tabelle das Ergebnis bestaetigen
+        // muss (siehe `muster_kandidaten` in der App).
         "TYPHOON" | "EUROFIGHTER" | "EUROFIGHTER TYPHOON" => "EUFI",
         _ => {
             // Suffix-tolerante Sonderfaelle: reale Airline-/Addon-Custom-
