@@ -112,3 +112,9 @@ entschieden — siehe unten.
   die beiden Karten dürfen sich hier unterscheiden.
 - **Feinere IVAO-Sektoren bleiben geparkt.** Die token-pflichtigen Endpunkte
   werden erst angefasst, wenn die FIR-Näherung sich als zu grob erweist.
+- **Kein Rollwege-Schalter auf der Browser-Karte.** Aufgefallen beim
+  Symboltausch: die Webapp legt die OSM-Bodendaten als feste Ebenen an
+  (`ground-apron`, `ground-terminal`, sichtbar ab Zoom 12) und kennt kein
+  `showTaxi` — auf live lassen sich die Rollwege also nicht abschalten,
+  anders als im Client. Thomas braucht den Schalter dort vorerst nicht.
+  Bewusste Asymmetrie, keine Lücke; jederzeit nachrüstbar.
