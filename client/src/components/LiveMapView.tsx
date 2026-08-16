@@ -126,6 +126,14 @@ function hoehenfilterSetzen(m: maplibregl.Map, fl: number): void {
  *  Netzzugriff fuer drei Glyphen. Die Bedeutung traegt ohnehin der Text,
  *  sobald der Schalter an ist (Variante B).
  */
+const LEISTE_SYMBOL = {
+  karte: "\u25A6",     // gerastertes Quadrat — die gezeichnete Karte
+  satellit: "\u25C9",  // Ring mit Kern — das Satellitenbild
+  norden: "\u2191",    // Pfeil nach oben — Norden oben
+  kurs: "\u2708",      // Flugzeug — Kurs oben
+  zentrieren: "\u2316", // Fadenkreuz — auf den Flug zentrieren
+} as const;
+
 const EBENEN_SYMBOL = {
   track: "\u2933",   // Pfeil mit Bogen — die geflogene Spur
   taxi: "\u2387",    // Weiche — Rollwege
@@ -2177,52 +2185,62 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
               active) — the whole point is that today's unlabeled icon
               buttons didn't. */}
           <div className="aa-livemap-controls aa-livemap-overlay">
+            {/* Symbole statt Woerter: eine Ja/Nein-Entscheidung kostete
+                hier zwei breite Wörter plus Überschrift. Vertretbar, weil
+                bei einem Zweier-Umschalter immer eine Hälfte hell ist —
+                der Zustand bleibt eindeutig, anders als bei unabhängigen
+                Schaltern. Die Bedeutung trägt der Tooltip. */}
             <div className="aa-livemap-controls__group">
-              <span className="aa-livemap-controls__rubric">{t("livemap.group_view")}</span>
               <div className="aa-livemap-seg">
                 <button
                   type="button"
                   className={`aa-livemap-seg__btn ${basemap !== "sat" ? "aa-livemap-seg__btn--active" : ""}`}
                   aria-pressed={basemap !== "sat"}
+                  aria-label={t("livemap.view_map")}
+                  title={t("livemap.view_map")}
                   onClick={() => setBasemap("auto")}
                 >
-                  {t("livemap.view_map")}
+                  <span aria-hidden="true">{LEISTE_SYMBOL.karte}</span>
                 </button>
                 <button
                   type="button"
                   className={`aa-livemap-seg__btn ${basemap === "sat" ? "aa-livemap-seg__btn--active" : ""}`}
                   aria-pressed={basemap === "sat"}
+                  aria-label={t("livemap.view_sat")}
+                  title={t("livemap.view_sat")}
                   onClick={() => setBasemap("sat")}
                 >
-                  {t("livemap.view_sat")}
+                  <span aria-hidden="true">{LEISTE_SYMBOL.satellit}</span>
                 </button>
               </div>
             </div>
 
             <div className="aa-livemap-controls__group">
-              <span className="aa-livemap-controls__rubric">{t("livemap.group_orientation")}</span>
               <div className="aa-livemap-seg">
                 <button
                   type="button"
                   className={`aa-livemap-seg__btn ${!trackUp ? "aa-livemap-seg__btn--active" : ""}`}
                   aria-pressed={!trackUp}
+                  aria-label={t("livemap.orient_north")}
+                  title={t("livemap.orient_north")}
                   onClick={() => setTrackUp(false)}
                 >
-                  {t("livemap.orient_north")}
+                  <span aria-hidden="true">{LEISTE_SYMBOL.norden}</span>
                 </button>
                 <button
                   type="button"
                   className={`aa-livemap-seg__btn ${trackUp ? "aa-livemap-seg__btn--active" : ""}`}
                   aria-pressed={trackUp}
                   onClick={() => setTrackUp(true)}
+                  aria-label={t("livemap.orient_track")}
+                  title={t("livemap.orient_track")}
                 >
-                  {t("livemap.orient_track")}
+                  <span aria-hidden="true">{LEISTE_SYMBOL.kurs}</span>
                 </button>
               </div>
             </div>
 
             <div className="aa-livemap-controls__group">
-              <span className="aa-livemap-controls__rubric">{t("livemap.group_layers")}</span>
               <div className="aa-livemap-controls__row">
                 {/* Variante B: Symbol immer, Text nur wenn AN.
                     Diese drei sind unabhaengige Ein/Aus-Schalter, anders
@@ -2339,12 +2357,17 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
             </div>
 
             <div className="aa-livemap-controls__group">
-              <span className="aa-livemap-controls__rubric">{t("livemap.group_map")}</span>
               <div className="aa-livemap-controls__row">
+                {/* Nur bei laufendem Flug — ohne einen hat es keine Wirkung,
+                    und ein abgeblendeter Knopf belegt trotzdem Platz. Als
+                    Fadenkreuz statt als Satz: die Wirkung ist sofort
+                    ersichtlich, sobald man ihn einmal benutzt hat. */}
+                {activeFlight && effAircraft && (
                 <button
                   type="button"
-                  className="button button--secondary"
-                  disabled={!activeFlight || !effAircraft}
+                  className="aa-livemap-toggle"
+                  aria-label={t("livemap.center_on_flight")}
+                  title={t("livemap.center_on_flight")}
                   onClick={() => {
                     const map = mapRef.current;
                     if (!map || !effAircraft) return;
@@ -2355,8 +2378,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                     map.easeTo({ center: [effAircraft.lon, effAircraft.lat], zoom: tz, duration: 500 });
                   }}
                 >
-                  {t("livemap.center_on_flight")}
+                  <span aria-hidden="true">{LEISTE_SYMBOL.zentrieren}</span>
                 </button>
+                )}
                 {/* "Folgen" (continuous camera tracking) isn't in the
                     handoff's own control table — confirmed with the user
                     that it stays as its own switch, distinct from the

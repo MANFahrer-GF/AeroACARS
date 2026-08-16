@@ -8442,6 +8442,20 @@ input:disabled {
   flex-direction: column;
   gap: 4px;
 }
+/* Trennstriche statt Überschriften: "ANSICHT", "EBENEN" und so weiter
+   erklärten, was ohnehin sichtbar ist. Eine Haarlinie gruppiert genauso
+   gut und kostet ein Pixel statt achtzig. */
+.aa-livemap-controls__group + .aa-livemap-controls__group {
+  border-left: 1px solid var(--line);
+  padding-left: 10px;
+  margin-left: 4px;
+}
+/* Symbol-Schalter brauchen keine Wortbreite. */
+.aa-livemap-seg__btn > span[aria-hidden],
+.aa-livemap-toggle > span[aria-hidden] {
+  font-size: 13px;
+  line-height: 1;
+}
 .aa-livemap-controls__rubric {
   font-family: var(--font-mono);
   font-size: var(--fs-100);

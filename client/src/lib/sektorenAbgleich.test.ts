@@ -110,5 +110,23 @@ describe("Darstellung wie auf der Live-Karte", () => {
     expect(sektor).toBeGreaterThan(-1);
     expect(boden).toBeGreaterThan(sektor);
   });
+
+  it("hat keine Gruppen-Ueberschriften mehr", () => {
+    // "ANSICHT", "EBENEN" und so weiter erklaerten, was ohnehin sichtbar
+    // ist — Trennstriche gruppieren genauso gut und kosten ein Pixel.
+    expect(quelle).not.toContain("controls__rubric");
+  });
+
+  it("zeigt Zentrieren nur bei laufendem Flug", () => {
+    // Ohne Flug hat es keine Wirkung, ein abgeblendeter Knopf belegt
+    // trotzdem Platz.
+    expect(quelle).toContain("{activeFlight && effAircraft && (");
+  });
+
+  it("nutzt Symbole fuer die Zweier-Umschalter", () => {
+    for (const k of ["karte", "satellit", "norden", "kurs", "zentrieren"]) {
+      expect(quelle).toContain(`LEISTE_SYMBOL.${k}`);
+    }
+  });
 });
 
