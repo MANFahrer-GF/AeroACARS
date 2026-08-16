@@ -8470,42 +8470,39 @@ input:disabled {
 }
 /* Segmented control (ANSICHT/AUSRICHTUNG): two segments, no gap, one outer
    radius — active = --bg on --acc, inactive = --text-dim on --surface. */
+/* Der Rahmen gehoert dem Umschalter, nicht den Knoepfen.
+ *
+ * Vorher trug jeder Knopf seinen eigenen Rahmen, und Radien wurden ueber
+ * :first-child / :last-child verteilt. Das ging bei ZWEI Teilen gut und
+ * brach bei DREI: der aktive Knopf sass mit einer eckigen und einer runden
+ * Ecke im Verbund und sah aus wie hineingerutscht (Feldbefund Thomas,
+ * 16.08.2026, IVAO-Schalter). Jetzt schneidet der Behaelter ab — damit
+ * stimmen die Ecken bei jeder Anzahl und egal, welcher Teil aktiv ist. */
 .aa-livemap-seg {
   display: flex;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
 }
 .aa-livemap-seg__btn {
   appearance: none;
-  border: 1px solid var(--line);
+  border: none;
+  border-left: 1px solid var(--line);
   background: var(--surface);
   color: var(--text-dim);
   font-family: var(--font-sans);
-  font-size: 11px;                     /* was 12px */
+  font-size: 11px;
   font-weight: var(--fw-bold);
-  padding: 6px 11px;                   /* was 8px 14px */
+  padding: 6px 11px;
   cursor: pointer;
 }
 .aa-livemap-seg__btn:first-child {
-  border-radius: var(--r-md) 0 0 var(--r-md);
-}
-.aa-livemap-seg__btn:last-child {
-  border-radius: 0 var(--r-md) var(--r-md) 0;
-  border-left: none;
-}
-/* Bei DREI Teilen (Netz-Umschalter: Aus/VATSIM/IVAO) traegt auch das
-   mittlere keinen eigenen linken Rand — sonst steht dort ein doppelter
-   Strich. Die Regel oben griff nur fuer Zweier-Paare. */
-.aa-livemap-seg__btn:not(:first-child) {
   border-left: none;
 }
 .aa-livemap-seg__btn--active {
   background: var(--acc);
   color: var(--bg);
-  border-color: var(--acc);
 }
-/* Same illegible-on-hover bug class fixed repeatedly elsewhere this session
-   (Datalink §3/Briefing bid-card): an accent-filled control needs its OWN
-   hover, or the app-wide generic `button:hover` wins and leaves --bg text on
-   a --surface-2 background. */
 .aa-livemap-seg__btn--active:hover:not(:disabled) {
   background: color-mix(in srgb, var(--acc) 85%, black);
   color: var(--bg);

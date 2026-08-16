@@ -119,25 +119,56 @@ function hoehenfilterSetzen(m: maplibregl.Map, fl: number): void {
   }
 }
 
-/** Die Symbole der Ebenen-Schalter.
+/** Die Symbole der Kartenleiste — gezeichnet, nicht gesetzt.
  *
- *  Bewusst schlichte Zeichen statt einer Symbolschrift: die Leiste laeuft
- *  im Fenster einer Anwendung, eine Schriftart nachzuladen waere ein
- *  Netzzugriff fuer drei Glyphen. Die Bedeutung traegt ohnehin der Text,
- *  sobald der Schalter an ist (Variante B).
+ *  Erster Versuch waren Unicode-Zeichen. Das ging schief: sie stammen aus
+ *  verschiedenen Schriftschnitten, sitzen unterschiedlich hoch und wirken
+ *  zusammen wie zusammengesucht. Schlimmer noch stand `\u2708` doppelt
+ *  drin — einmal fuer "Kurs oben", einmal fuer "VA-Verkehr". Zwei
+ *  Bedeutungen, ein Zeichen.
+ *
+ *  Eine Symbolschrift nachzuladen kommt nicht in Frage: die Leiste laeuft
+ *  im Fenster einer Anwendung, das waere ein Netzzugriff fuer acht Glyphen
+ *  samt der Frage, was bei Fehlschlag passiert. Also gezeichnet — gleiche
+ *  Strichstaerke, gleiches Raster, faerbt sich mit dem Text.
  */
-const LEISTE_SYMBOL = {
-  karte: "\u25A6",     // gerastertes Quadrat — die gezeichnete Karte
-  satellit: "\u25C9",  // Ring mit Kern — das Satellitenbild
-  norden: "\u2191",    // Pfeil nach oben — Norden oben
-  kurs: "\u2708",      // Flugzeug — Kurs oben
-  zentrieren: "\u2316", // Fadenkreuz — auf den Flug zentrieren
-} as const;
+function Sym({ d, fill }: { d: string; fill?: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="14"
+      height="14"
+      aria-hidden="true"
+      focusable="false"
+      style={{ display: "block" }}
+      fill={fill ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth={fill ? 0 : 1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d={d} />
+    </svg>
+  );
+}
 
-const EBENEN_SYMBOL = {
-  track: "\u2933",   // Pfeil mit Bogen — die geflogene Spur
-  taxi: "\u2387",    // Weiche — Rollwege
-  va: "\u2708",      // Flugzeug — Verkehr der eigenen VA
+const PFAD = {
+  /** Gefaltete Karte. */
+  karte: "M1.5 4.2 5.5 2.5v9.3L1.5 13.5V4.2ZM5.5 2.5l5 1.8v9.2l-5-1.7V2.5ZM10.5 4.3l4-1.8v9.3l-4 1.7V4.3Z",
+  /** Globus mit Bahn — das Satellitenbild. */
+  satellit: "M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM1.5 8h13M8 1.5c1.7 1.8 2.6 4 2.6 6.5S9.7 12.7 8 14.5C6.3 12.7 5.4 10.5 5.4 8S6.3 3.3 8 1.5Z",
+  /** Kompassnadel nach Norden. */
+  norden: "M8 14V2.5M8 2.5 4.5 6M8 2.5 11.5 6",
+  /** Flugzeug in Fahrtrichtung — Kurs oben. */
+  kurs: "M8 1.6 9.6 7l4.9 1.6-4.9 1.1-.7 4.7-.9-2.6-.9 2.6-.7-4.7L1.5 8.6 6.4 7 8 1.6Z",
+  /** Fadenkreuz. */
+  zentrieren: "M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3M8 5.4a2.6 2.6 0 1 0 0 5.2 2.6 2.6 0 0 0 0-5.2Z",
+  /** Zurueckgelegte Spur mit Punkt am Ende. */
+  track: "M1.8 13c2.2-.3 3.6-1.6 4.4-3.4.9-2 1.2-4.4 3-5.6M12.4 2.6l1.8 1.2-1.5 1.6",
+  /** Weiche — Rollwege. */
+  taxi: "M2 14V6.5C2 4 4 2 6.5 2H14M11.5 2 14 4.5 11.5 7M2 9.5h4",
+  /** Zwei Flugzeuge — Verkehr der eigenen VA. */
+  va: "M2.2 6.3 6 7.5l1.3-2.2-1-.6.4-.8 2.1.8 2.3-1.6c.4-.3.9-.2 1.1.2.2.4.1.9-.3 1.1L9.3 6l.8 2.1-.8.4-.6-1L6.5 8.8l1.2 3.8-.9.5-2.2-3.6-2.6.5-.4-1 2.1-1.1-1.5-1.6Z",
 } as const;
 
 /** Eine Kartenebene anlegen, ohne die uebrigen zu gefaehrden.
@@ -2200,7 +2231,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   title={t("livemap.view_map")}
                   onClick={() => setBasemap("auto")}
                 >
-                  <span aria-hidden="true">{LEISTE_SYMBOL.karte}</span>
+                  <Sym d={PFAD.karte} />
                 </button>
                 <button
                   type="button"
@@ -2210,7 +2241,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   title={t("livemap.view_sat")}
                   onClick={() => setBasemap("sat")}
                 >
-                  <span aria-hidden="true">{LEISTE_SYMBOL.satellit}</span>
+                  <Sym d={PFAD.satellit} />
                 </button>
               </div>
             </div>
@@ -2225,7 +2256,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   title={t("livemap.orient_north")}
                   onClick={() => setTrackUp(false)}
                 >
-                  <span aria-hidden="true">{LEISTE_SYMBOL.norden}</span>
+                  <Sym d={PFAD.norden} />
                 </button>
                 <button
                   type="button"
@@ -2235,7 +2266,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   aria-label={t("livemap.orient_track")}
                   title={t("livemap.orient_track")}
                 >
-                  <span aria-hidden="true">{LEISTE_SYMBOL.kurs}</span>
+                  <Sym d={PFAD.kurs} fill />
                 </button>
               </div>
             </div>
@@ -2256,7 +2287,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   title={t("livemap.layer_track")}
                   onClick={() => setShowTrack((v) => !v)}
                 >
-                  <span aria-hidden="true">{EBENEN_SYMBOL.track}</span>
+                  <Sym d={PFAD.track} />
                   {showTrack && <span className="aa-livemap-toggle__wort">{t("livemap.layer_track")}</span>}
                 </button>
                 <button
@@ -2275,7 +2306,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   }
                   aria-label={t("livemap.layer_taxi")}
                 >
-                  <span aria-hidden="true">{EBENEN_SYMBOL.taxi}</span>
+                  <Sym d={PFAD.taxi} />
                   {showTaxi && <span className="aa-livemap-toggle__wort">{t("livemap.layer_taxi")}</span>}
                 </button>
                 <button
@@ -2286,7 +2317,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   aria-label={t("livemap.layer_va")}
                   title={t("livemap.layer_va")}
                 >
-                  <span aria-hidden="true">{EBENEN_SYMBOL.va}</span>
+                  <Sym d={PFAD.va} fill />
                   {showVa && <span className="aa-livemap-toggle__wort">{t("livemap.layer_va")}</span>}
                 </button>
                 {/* Netz-Umschalter statt zweier Schalter: so KANN nicht
@@ -2378,7 +2409,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                     map.easeTo({ center: [effAircraft.lon, effAircraft.lat], zoom: tz, duration: 500 });
                   }}
                 >
-                  <span aria-hidden="true">{LEISTE_SYMBOL.zentrieren}</span>
+                  <Sym d={PFAD.zentrieren} />
                 </button>
                 )}
                 {/* "Folgen" (continuous camera tracking) isn't in the
