@@ -14640,8 +14640,20 @@ fn fill_v2_rollout_fields(
     arr_airport: &str,
 ) {
     let rm = stats.runway_match.as_ref();
-    input.td_distance_from_threshold_m = rm
-        .map(|m| (m.touchdown_distance_from_threshold_ft as f64) * 0.3048);
+    // v1.6.7-QS: die um die Displaced Threshold KORRIGIERTE Distanz, nicht
+    // die pavement-relative. `runway_length_m - displaced` bildet unten den
+    // Nenner (LDA) — mit dem Rohwert im Zaehler haetten Zaehler und Nenner
+    // verschiedene Bezugspunkte, und das gesperrte Vorfeld zaehlte als
+    // genutzte Bahn. Auf einer 4000-m-Bahn mit 300 m Displaced Threshold
+    // waren das 8 Prozentpunkte zu viel, an der 60-%-Grenze ein ganzes Band.
+    // `assess_touchdown` rechnet die Korrektur ohnehin schon fuer den
+    // Payload — dieselbe Quelle nutzen statt eine zweite Wahrheit zu bauen.
+    // Sichtbar wird der Unterschied erst, wenn die Navdaten ueberhaupt
+    // Displaced Thresholds liefern (heute: keine einzige, siehe QS-Notiz).
+    // Negative Werte (Aufsetzen VOR der Schwelle) faengt `sub_rollout_v2`
+    // mit `raw_used.max(rollout)` ab — dafuer ist der Riegel da.
+    let assessed = assess_touchdown(stats);
+    input.td_distance_from_threshold_m = assessed.td_distance_from_threshold_m;
     input.landing_float_distance_m = stats.landing_float_distance_m;
     input.runway_length_m = rm.map(|m| (m.length_ft as f32) * 0.3048);
     // v0.19.x FIX: sourced from Navigraph-only `runway_nav_geometry`
@@ -14652,7 +14664,6 @@ fn fill_v2_rollout_fields(
     input.runway_displaced_threshold_ft = rm.map(|m| m.displaced_threshold_ft);
     // assess_touchdown(stats).dds.in_pre_threshold_zone — identisch zu
     // dem was im TouchdownPayload + LandingRecord landet (single source).
-    let assessed = assess_touchdown(stats);
     input.pre_displaced_threshold = assessed.dds.map(|d| d.in_pre_threshold_zone);
     let (trusted, _) = runway_geometry_trust_check(
         rm.map(|m| m.airport_ident.as_str()),

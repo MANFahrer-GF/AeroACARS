@@ -150,15 +150,24 @@ const OK_MARGIN_MAX_PCT: f32 = 80.0;
 /// Obere Grenze des "long_rollout"-Bands (25 Pkt).
 const TIGHT_MARGIN_MAX_PCT: f32 = 90.0;
 
-/// Ende der Aufsetzzone in Metern — ICAO-Definition: die ersten 900 m
-/// der Bahn, auf kurzen Bahnen das erste Drittel.
+/// Ende der Aufsetzzone in Metern — ICAO Annex 14: die ersten 900 m der
+/// Bahn, auf kurzen Bahnen das erste Drittel.
+///
+/// **Bezugsgroesse ist die physische Bahnlaenge, nicht die LDA** — exakt
+/// wie in `runway_assessment::classify_tdz` (App-Crate), aus dem das
+/// `td_in_tdz`-Feld im Payload kommt. Eine Landung darf nicht in der
+/// einen Ansicht in der Aufsetzzone liegen und in der anderen dahinter;
+/// auf einer 2800-m-Bahn mit 200 m Displaced Threshold waeren das 900 m
+/// gegen 866 m gewesen. Die Crate kann `runway_assessment` nicht
+/// importieren (App-Crate) — die Formel steht deshalb zweimal da, aber
+/// wenigstens identisch.
 ///
 /// Wird NUR fuer die Begruendung „spaet aufgesetzt" gebraucht und
 /// kostet selbst keine Punkte. Die Punkte kommen ausschliesslich aus
 /// der genutzten Bahnstrecke — ein spaeter Aufsetzpunkt zeigt sich dort
 /// von selbst, weil er die genutzte Strecke verlaengert.
-fn touchdown_zone_end_m(lda_m: f32) -> f32 {
-    (lda_m / 3.0).min(900.0)
+fn touchdown_zone_end_m(runway_length_m: f32) -> f32 {
+    (runway_length_m / 3.0).min(900.0)
 }
 
 /// Spec docs/spec/v0.10.0-runway-utilization-score.md (R5 ACCEPTED) +
@@ -293,7 +302,7 @@ pub fn sub_rollout_v2(input: &RolloutInput) -> SubScoreEntry {
     // top, nur spaet aufgesetzt" darf die Warnung nicht verdecken,
     // auch wenn beides zutrifft (QS-Befund: der Test zum Overrun-Gate
     // fiel genau darueber).
-    let touched_down_late = td_dist > touchdown_zone_end_m(lda_m);
+    let touched_down_late = td_dist > touchdown_zone_end_m(runway_m);
     let rollout_alone_full_marks = (rollout / lda_m) * 100.0 < FULL_MARGIN_MAX_PCT;
     let (final_points, final_rationale, final_band) = if !pre_displaced
         && !is_overrun

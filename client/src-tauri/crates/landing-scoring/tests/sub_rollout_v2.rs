@@ -445,6 +445,43 @@ fn touchdown_zone_scales_with_lda() {
 }
 
 #[test]
+fn displaced_threshold_uses_one_reference_frame() {
+    // v1.6.7-QS: Zaehler und Nenner muessen denselben Bezugspunkt haben.
+    // Bahn 4000 m, 984 ft (= 300 m) Displaced Threshold → LDA 3700 m.
+    // `td_distance_from_threshold_m` ist ab v1.6.7 die KORRIGIERTE
+    // Distanz (ab legaler Schwelle) — der Aufrufer in lib.rs liefert sie
+    // aus `assess_touchdown`. 300 m hinter der legalen Schwelle plus
+    // 1200 m Ausrollstrecke = 1500 m von 3700 m = 40,5 %.
+    // Mit dem alten Rohwert (600 m ab Pavement) waeren es 48,6 % gewesen
+    // — das gesperrte Vorfeld haette als genutzte Bahn gezaehlt.
+    let r = sub_rollout_v2(&ok_input(300.0, 1200.0, 4000.0, 984, "A320"));
+    assert_eq!(r.points, 100);
+    assert!(
+        r.value.as_deref().unwrap_or("").contains("1500 m / 3700 m"),
+        "Anzeige zeigt genutzte Strecke und LDA im selben Bezug: {:?}",
+        r.value
+    );
+    assert!(r.value.as_deref().unwrap_or("").contains("41 %"));
+}
+
+#[test]
+fn touchdown_zone_follows_physical_length_not_lda() {
+    // Die Aufsetzzone haengt an der PHYSISCHEN Bahnlaenge — wie in
+    // `runway_assessment::classify_tdz`, aus dem `td_in_tdz` im Payload
+    // kommt. Bahn 2800 m, 656 ft (= 200 m) displaced: Zone = min(900,
+    // 2800/3) = 900 m. Ein Aufsetzen bei 880 m liegt also DRIN und darf
+    // keine „spaet aufgesetzt"-Begruendung ausloesen (mit der LDA als
+    // Bezug waere die Zone 866 m gewesen und die Landung „dahinter").
+    let r = sub_rollout_v2(&ok_input(880.0, 900.0, 2800.0, 656, "A320"));
+    assert_eq!(r.points, 80, "1780 m von 2600 m LDA = 68,5 % genutzt");
+    assert_eq!(
+        r.rationale_key.as_deref(),
+        Some("landing.rat.good_stop"),
+        "880 m liegen in der 900-m-Aufsetzzone → keine long_float-Begruendung"
+    );
+}
+
+#[test]
 fn ewg2047_regression_full_marks() {
     // DER Ausloeser-Fall (16.08.2026, EWG 2047, EDDH→EDDS 25, A20N):
     // 286 m hinter der Schwelle aufgesetzt, 1553 m ausgerollt, 1839 m
