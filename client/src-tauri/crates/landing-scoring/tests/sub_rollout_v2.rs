@@ -123,61 +123,64 @@ fn negative_td_distance_clamped_to_rollout_only() {
     );
 }
 
-// ── Band-Grenzen / Banding (v0.12.0: effective_distance) ───────────────
-// HINWEIS v0.12.0: das Banding läuft auf der toleranzbereinigten
-// effective_distance. Damit kein Float die Band-Grenze verfälscht,
-// halten diese Tests td_dist INNERHALB der 20 %-Toleranz (effective_
-// float = 0 → effective_distance = rollout).
-//
-// v0.20.x: Toleranz 15→20 %, Bandgrenzen 30/50/70/90 → 40/60/80/95
-// (EXCELLENT_MAX_PCT/GOOD_MAX_PCT/OK_MAX_PCT/LONG_MAX_PCT). Alle
-// Boundary-Tests unten zielen jetzt auf die NEUEN Grenzen.
+// ── Band-Grenzen / Banding ─────────────────────────────────────────────
+// v1.6.7: gewertet wird die ECHTE genutzte Bahnstrecke (Aufsetzpunkt +
+// Ausrollstrecke) gegen die LDA. Keine toleranzbereinigte Zweitgroesse
+// mehr — die Zahl im Panel und die Zahl hinter den Punkten sind
+// dieselbe. Bandgrenzen 60/70/80/90 % (Landestrecken-Faktoren 1,67 /
+// 1,43 / 1,25 / 1,15).
 
 #[test]
 fn no_pre_rounding_at_band_boundary() {
-    // 39.5 % effective, Light (keine Allowance):
-    //   Wenn vorher gerundet wuerde: 40 → good_stop (80 PTS)
-    //   Mit Float-Banding: 39.5 < 40.0 (EXCELLENT_MAX_PCT) → excellent_margin (100 PTS)
-    // td 100 m liegt unter Toleranz (0.20*1000 = 200 m) → effective_float=0,
-    // effective_distance = rollout 395 m → 39.5 %.
-    let input = ok_input(100.0, 395.0, 1000.0, 0, "C172");
+    // 59.9 % genutzt, Light (keine Allowance): wuerde vorher gerundet,
+    // waere es 60 → good_stop (80). Ungerundet 59.9 < 60.0
+    // (FULL_MARGIN_MAX_PCT) → excellent_margin (100).
+    // td 100 + rollout 499 = 599 m von 1000 m LDA.
+    let input = ok_input(100.0, 499.0, 1000.0, 0, "C172");
     let r = sub_rollout_v2(&input);
     assert_eq!(r.points, 100);
     assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.excellent_margin"));
+    // Und einen Meter weiter kippt es sauber ins naechste Band.
+    let r = sub_rollout_v2(&ok_input(100.0, 500.0, 1000.0, 0, "C172"));
+    assert_eq!(r.points, 80);
+    assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.good_stop"));
 }
 
 #[test]
 fn heavy_allowance_5pp_at_band_boundary() {
-    // Heavy-Allowance an der 40 %-Bandgrenze (EXCELLENT_MAX_PCT). td 100 m
-    // < Toleranz 200 m → effective_float=0 → effective_distance = rollout.
-    //   Heavy, rollout 450 m / 1000 m LDA → 45 % − 5 pp = 40 %
-    //     → `40 < 40` false → `e if e < 60` → good_stop (80 PTS)
-    //   Heavy, rollout 440 m → 44 % − 5 pp = 39 % < 40 → excellent (100)
-    let r_heavy_45 = sub_rollout_v2(&ok_input(100.0, 450.0, 1000.0, 0, "A388"));
+    // Die 5-Prozentpunkte-Gutschrift fuer Widebodies (LE5) haengt an der
+    // 60 %-Grenze genauso wie vorher an der 40er.
+    //   Heavy, genutzt 650 m / 1000 m LDA → 65 % − 5 pp = 60 %
+    //     → `60 < 60` false → good_stop (80)
+    //   Heavy, genutzt 640 m → 64 % − 5 pp = 59 % < 60 → excellent (100)
+    let r_heavy_65 = sub_rollout_v2(&ok_input(100.0, 550.0, 1000.0, 0, "A388"));
     assert_eq!(
-        r_heavy_45.points, 80,
-        "Heavy 45% effective → 40% nach Allowance → good_stop"
+        r_heavy_65.points, 80,
+        "Heavy 65 % genutzt → 60 % nach Gutschrift → good_stop"
     );
-    let r_heavy_44 = sub_rollout_v2(&ok_input(100.0, 440.0, 1000.0, 0, "A388"));
+    let r_heavy_64 = sub_rollout_v2(&ok_input(100.0, 540.0, 1000.0, 0, "A388"));
     assert_eq!(
-        r_heavy_44.points, 100,
-        "Heavy 44% effective → 39% nach Allowance → excellent"
+        r_heavy_64.points, 100,
+        "Heavy 64 % genutzt → 59 % nach Gutschrift → excellent"
     );
 }
 
 #[test]
 fn medium_no_allowance() {
-    // A320 (Medium, keine Allowance): rollout 500 m / 1000 m LDA = 50 %
-    // effective → jetzt good_stop (80 PTS, GOOD_MAX_PCT=60). td 100 m <
-    // Toleranz → kein Float-Anteil.
-    let r = sub_rollout_v2(&ok_input(100.0, 500.0, 1000.0, 0, "A320"));
+    // A320 (Medium): dieselben 65 % wie oben, aber OHNE Gutschrift
+    // → 65 % faellt ins good_stop-Band (80). Zeigt, dass die Gutschrift
+    // wirklich nur an der Kategorie haengt.
+    let r = sub_rollout_v2(&ok_input(100.0, 550.0, 1000.0, 0, "A320"));
     assert_eq!(r.points, 80);
+    let r = sub_rollout_v2(&ok_input(100.0, 440.0, 1000.0, 0, "A320"));
+    assert_eq!(r.points, 100, "54 % genutzt ist auch ohne Gutschrift volle Punktzahl");
 }
 
 #[test]
 fn cessna_grass_strip_long_rollout() {
-    // 425 m Rollout / 500 m Bahn → 85 % → long_rollout (25 PTS,
-    // OK_MAX_PCT=80/LONG_MAX_PCT=95 — 70 % waere jetzt nur noch ok_stop).
+    // 425 m Ausrollstrecke auf 500 m Bahn → 85 % genutzt → 25 PTS.
+    // Auf der kurzen Bahn zeigt die Achse weiter Zaehne: 75 m Rest sind
+    // wenig, egal wie klein das Flugzeug ist.
     let r = sub_rollout_v2(&ok_input(0.0, 425.0, 500.0, 0, "C172"));
     assert_eq!(r.points, 25);
     assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.long_rollout"));
@@ -308,7 +311,12 @@ fn skip_invalid_lda() {
     assert_eq!(r.reason.as_deref(), Some("invalid_lda"));
 }
 
-// ── v0.12.0 (#runway-utilization-refinement) — Float-Toleranz Tests ────
+// ── Spaeter Aufsetzpunkt (Begruendung `long_float`) ────────────────────
+// v1.6.7: der Aufsetzpunkt wird nicht mehr gegen eine Toleranz
+// verrechnet — er verlaengert schlicht die genutzte Strecke. `long_float`
+// ist seither nur noch die ERKLAERUNG dafuer, wo die Punkte geblieben
+// sind: hinter der Aufsetzzone aufgesetzt (900 m / erstes Drittel),
+// waehrend die Ausrollstrecke allein volle Punkte gegeben haette.
 
 #[test]
 fn btx8815_real_case_long_float() {
@@ -316,20 +324,13 @@ fn btx8815_real_case_long_float() {
     // Werte. Exzellent gebremst (442 m), aber 540 m hinter der Schwelle
     // aufgesetzt.
     //
-    // v0.20.x: mit der breiteren 20 %-Toleranz liegt der Aufsetzpunkt
-    // jetzt VOLLSTAENDIG innerhalb der Toleranz — der long_float-
-    // Override (der frueher noetig war, um die Punktzahl zu erklaeren)
-    // greift gar nicht mehr, weil der Float selbst nicht mehr als
-    // "ueber Toleranz" zaehlt. Genau der Fall, den die breitere
-    // Toleranz beheben sollte: eine normale, komfortable Landung braucht
-    // keine Sonder-Erklaerung mehr, sie ist einfach "excellent_margin".
-    //   tolerance      = 0.20 * 2849.88 = 570.0 m
-    //   effective_float= max(540.85 - 570.0, 0) = 0 m
-    //   effective_dist = 442.50 + 0 = 442.50 m
-    //   effective_ratio= 442.50 / 2849.88 = 15.5 %  → < 40 → excellent (100)
-    //   float_over_tolerance: 540.85 > 570.0 → false → kein long_float-Override
+    // v1.6.7: 540.85 + 442.50 = 983 m von 2850 m LDA = 34,5 % genutzt
+    // → volle Punktzahl, und der Aufsetzpunkt liegt mit 541 m noch in
+    // der Aufsetzzone (900 m) → keine Sonder-Erklaerung noetig. Genau
+    // was der Pilot damals reklamiert hatte: eine normale, komfortable
+    // Landung ist einfach "excellent_margin".
     let r = sub_rollout_v2(&ok_input(540.85, 442.50, 2849.88, 0, "A319"));
-    assert_eq!(r.points, 100, "BTX8815: Float-Toleranz → 100 PT");
+    assert_eq!(r.points, 100, "BTX8815: 34,5 % genutzt → 100 PT");
     assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.excellent_margin"));
     assert!(!r.skipped);
     assert!(r.warning.is_none());
@@ -338,65 +339,135 @@ fn btx8815_real_case_long_float() {
 }
 
 #[test]
-fn float_within_tolerance_no_override() {
-    // Float UNTER der 15 %-Toleranz → kein long_float, normale Rationale.
-    // td 100 m < tolerance 0.15*1000 = 150 m. rollout 250 m → eff_dist 250
-    // → 25 % → excellent_margin, KEIN long_float (Float nicht über Tol.).
+fn touchdown_inside_zone_no_override() {
+    // Aufsetzen in der Aufsetzzone → normale Begruendung, kein
+    // long_float. LDA 1000 m → Zone = 1000/3 = 333 m; td 100 m liegt
+    // drin. 350 m von 1000 m genutzt → excellent_margin.
     let r = sub_rollout_v2(&ok_input(100.0, 250.0, 1000.0, 0, "A320"));
     assert_eq!(r.points, 100);
     assert_eq!(
         r.rationale_key.as_deref(),
         Some("landing.rat.excellent_margin"),
-        "Float in Toleranz → normale Rationale, NICHT long_float"
+        "Aufsetzen in der Zone → normale Begruendung, NICHT long_float"
     );
 }
 
 #[test]
-fn long_float_needs_excellent_rollout() {
-    // R1-P1-1: long_float NUR wenn der reine Bremsweg excellent waere
-    // (rollout/LDA < EXCELLENT_MAX_PCT). Hier: Float über Toleranz, aber
-    // rollout 400 m / 1000 m LDA = 40 % — mit v0.20.x GENAU an der neuen
-    // 40 %-Grenze (`< 40` ist false für 40) → KEIN long_float.
-    //   tolerance 200, effective_float = 300-200 = 100, eff_dist = 500,
-    //   eff_ratio 50 % → good_stop (80, GOOD_MAX_PCT=60). Band Good, aber
-    //   rollout_alone 40 % ist NICHT < 40 → Override greift trotzdem nicht.
-    let r = sub_rollout_v2(&ok_input(300.0, 400.0, 1000.0, 0, "A320"));
-    assert_eq!(r.points, 80);
+fn full_marks_never_get_long_float() {
+    // Selbst weit hinter der Aufsetzzone: wer volle Punktzahl hat, hat
+    // nichts zu erklaeren. LDA 4000 m → Zone 900 m; td 1200 m liegt
+    // dahinter, aber 1700 m genutzt = 42,5 % → 100 PT.
+    let r = sub_rollout_v2(&ok_input(1200.0, 500.0, 4000.0, 0, "A320"));
+    assert_eq!(r.points, 100);
     assert_eq!(
         r.rationale_key.as_deref(),
-        Some("landing.rat.good_stop"),
-        "Bremsweg nicht excellent → normale Rationale, kein long_float"
+        Some("landing.rat.excellent_margin"),
+        "100 Punkte brauchen keine Ausrede"
     );
 }
 
 #[test]
-fn overrun_still_on_raw_distance() {
-    // v0.12.0 LE3: Overrun-Gate bleibt auf der ECHTEN Distanz. Die
-    // Float-Toleranz darf ein echtes Overrun NICHT verstecken.
-    //   td 1500 + rollout 1100 = 2600 m auf 2500 m LDA → raw 104 % > 100
-    //   → overrun_risk, OBWOHL effective (mit Toleranz) < 100 % wäre.
+fn long_float_needs_a_comfortable_rollout() {
+    // long_float sagt „Bremsweg top, nur spaet aufgesetzt" — das darf
+    // nur stehen, wenn die Ausrollstrecke ALLEIN volle Punkte gaebe.
+    // LDA 1000 m → Zone 333 m, td 400 m liegt dahinter. Ausrollstrecke
+    // 600 m = 60 % der LDA → `< 60` ist false → die Aussage waere
+    // gelogen, also normale Begruendung.
+    //   genutzt 1000 m von 1000 m = 100 % → `> 100` false → 5 PT.
+    let r = sub_rollout_v2(&ok_input(400.0, 600.0, 1000.0, 0, "A320"));
+    assert_eq!(r.points, 5);
+    assert_eq!(
+        r.rationale_key.as_deref(),
+        Some("landing.rat.marginal_runway"),
+        "Bremsweg selbst war lang → keine long_float-Ausrede"
+    );
+}
+
+#[test]
+fn swr255_real_case_long_float() {
+    // Echter Fall aus dem Bestand: SWR 255, EDDH 15 (A20N). 2670 m
+    // hinter der Schwelle aufgesetzt, danach nur 684 m ausgerollt —
+    // 3354 m von 3666 m LDA genutzt, 312 m Restbahn.
+    // Alt: 55 PT (die Toleranz nahm dem Aufsetzpunkt die Wucht).
+    // Neu: 5 PT, und die Begruendung benennt die Ursache.
+    let r = sub_rollout_v2(&ok_input(2670.0, 684.0, 3666.0, 0, "A20N"));
+    assert_eq!(r.points, 5);
+    assert_eq!(
+        r.rationale_key.as_deref(),
+        Some("landing.rat.long_float"),
+        "Bremsweg 19 % der Bahn — die Punkte kostet der Aufsetzpunkt"
+    );
+}
+
+#[test]
+fn overrun_keeps_its_own_rationale() {
+    // Overrun-Gate unveraendert: td 1500 + rollout 1100 = 2600 m auf
+    // 2500 m LDA → 104 % → 0 PT. Frueher konnte die Float-Toleranz so
+    // etwas verwaessern; die Groesse ist jetzt ohnehin nur noch eine.
+    // Und: die Warnung darf NICHT von „Bremsweg top, spaet aufgesetzt"
+    // verdeckt werden, obwohl hier beides zutraefe.
     let r = sub_rollout_v2(&ok_input(1500.0, 1100.0, 2500.0, 0, "A320"));
     assert_eq!(r.points, 0);
     assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.overrun_risk"));
 }
 
 #[test]
-fn tolerance_scales_with_lda() {
-    // Toleranz ist FLOAT_TOLERANCE_FRACTION (20 %) der LDA — skaliert mit
-    // der Bahnlänge. Kurze Bahn 1500 m → Toleranz 300 m · lange Bahn
-    // 3500 m → 700 m. Gleicher Float 400 m: auf kurzer Bahn über
-    // Toleranz, auf langer drunter — rationale-Ausgang bleibt bei beiden
-    // Bahnlängen unveraendert ggue. v0.12.0 (nur die Zwischenwerte
-    // verschieben sich), deshalb bleiben die Assertions gleich.
-    let short = sub_rollout_v2(&ok_input(400.0, 300.0, 1500.0, 0, "A320"));
-    // tolerance 300, eff_float = 400-300 = 100, eff_dist = 400, ratio 26.7%
-    // → excellent_margin-Band. Float 400 > 300 ✓, rollout/LDA 300/1500 =
-    // 20 % < 40 (EXCELLENT_MAX_PCT) ✓, Band Good ✓ → Override → long_float.
-    assert_eq!(short.rationale_key.as_deref(), Some("landing.rat.long_float"));
-    let long = sub_rollout_v2(&ok_input(400.0, 300.0, 3500.0, 0, "A320"));
-    // tolerance 700, eff_float = max(400-700,0) = 0, eff_dist = 300,
-    // ratio 8.6 % → excellent_margin, Float 400 < 700 → kein long_float.
-    assert_eq!(long.rationale_key.as_deref(), Some("landing.rat.excellent_margin"));
+fn ezy2995_near_overrun_is_no_longer_forgiven() {
+    // Echter Fall: EZY 2995, LIRF 16L (A319). 3822 m von 3902 m LDA
+    // genutzt — 80 m Restbahn. Der alte Algorithmus gab dafuer 55 PT
+    // („OK — sportlich"), weil er die toleranzbereinigte Groesse
+    // bewertete und das Overrun-Gate erst ueber 100 % greift.
+    let r = sub_rollout_v2(&ok_input(760.0, 3062.0, 3902.0, 0, "A319"));
+    assert_eq!(r.points, 5, "98 % Bahnnutzung ist nicht 'sportlich'");
+    assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.marginal_runway"));
+}
+
+#[test]
+fn touchdown_zone_scales_with_lda() {
+    // Die Aufsetzzone ist 900 m — auf kurzen Bahnen das erste Drittel.
+    // Gleicher Aufsetzpunkt (400 m), zwei Bahnlaengen:
+    //   1500 m LDA → Zone 500 m → 400 m liegt DRIN
+    //   1000 m LDA → Zone 333 m → 400 m liegt DAHINTER
+    let kurz = sub_rollout_v2(&ok_input(400.0, 600.0, 1500.0, 0, "A320"));
+    assert_eq!(kurz.points, 80, "1000 m von 1500 m = 67 %");
+    assert_eq!(
+        kurz.rationale_key.as_deref(),
+        Some("landing.rat.good_stop"),
+        "Aufsetzpunkt in der Zone → keine long_float-Begruendung"
+    );
+    let kuerzer = sub_rollout_v2(&ok_input(400.0, 400.0, 1000.0, 0, "A320"));
+    assert_eq!(kuerzer.points, 25, "800 m von 1000 m = 80 % genutzt");
+    assert_eq!(
+        kuerzer.rationale_key.as_deref(),
+        Some("landing.rat.long_float"),
+        "hinter der Zone aufgesetzt, Bremsweg allein waere voll gewesen"
+    );
+}
+
+#[test]
+fn ewg2047_regression_full_marks() {
+    // DER Ausloeser-Fall (16.08.2026, EWG 2047, EDDH→EDDS 25, A20N):
+    // 286 m hinter der Schwelle aufgesetzt, 1553 m ausgerollt, 1839 m
+    // von 3345 m LDA genutzt — 1,5 km Bahn blieben uebrig. Alt: 80 PT.
+    let r = sub_rollout_v2(&ok_input(286.33, 1552.7, 3344.88, 0, "A20N"));
+    assert_eq!(r.points, 100, "1,5 km Restbahn sind kein Punktabzug");
+    assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.excellent_margin"));
+    assert!(r.value.as_deref().unwrap_or("").contains("55 %"));
+}
+
+#[test]
+fn nan_geometry_is_skipped_not_punished() {
+    // Lehre aus der Ausrichtungs-Achse (v1.6.2): `NaN < x` ist immer
+    // false — ohne Riegel faellt ein kaputter Messwert durch ALLE
+    // Baender und bekommt die haerteste Note, statt ehrlich „nicht
+    // bewertet" zu sagen.
+    let r = sub_rollout_v2(&ok_input(f64::NAN, 800.0, 3000.0, 0, "A320"));
+    assert!(r.skipped, "NaN darf nicht bewertet werden");
+    assert_eq!(r.reason.as_deref(), Some("invalid_geometry"));
+    let r = sub_rollout_v2(&ok_input(300.0, f32::NAN, 3000.0, 0, "A320"));
+    assert!(r.skipped);
+    let r = sub_rollout_v2(&ok_input(300.0, 800.0, f32::NAN, 0, "A320"));
+    assert!(r.skipped);
 }
 
 #[test]

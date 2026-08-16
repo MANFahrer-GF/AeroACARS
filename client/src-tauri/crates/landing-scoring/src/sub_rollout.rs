@@ -108,67 +108,108 @@ fn skip_reason(input: &RolloutInput) -> Option<&'static str> {
     if input.runway_length_m.is_none() {
         return Some("missing_length");
     }
-    // ── 3. LDA-Sanity ────────────────────────────────────────────────
+    // ── 3. Zahlen-Sanity (v1.6.7) ────────────────────────────────────
+    // NaN MUSS hier raus, nicht spaeter: `f32::max` gibt bei einem NaN
+    // stillschweigend den anderen Wert zurueck (`NaN.max(800.0) == 800`)
+    // — ein kaputter Aufsetzpunkt waere also unbemerkt zu einer
+    // plausiblen Zahl geworden. Pruefung und Rechnung an EINER Stelle,
+    // wie in der Ausrichtungs-Achse gelernt.
+    let td = input.td_distance_from_threshold_m.unwrap();
+    let rollout = input.rollout_distance_m.unwrap();
+    let length = input.runway_length_m.unwrap();
+    if !td.is_finite() || !rollout.is_finite() || !length.is_finite() {
+        return Some("invalid_geometry");
+    }
+    // ── 4. LDA-Sanity ────────────────────────────────────────────────
     let displaced_m = input.runway_displaced_threshold_ft.unwrap_or(0) as f32 * 0.3048;
-    let lda = input.runway_length_m.unwrap() - displaced_m;
+    let lda = length - displaced_m;
     if lda <= 0.0 {
         return Some("invalid_lda");
     }
     None
 }
 
-/// v0.20.x (Bahnauslastung-QS, score_algorithm_version 4→5): 15 % LDA
-/// erwies sich in der Praxis als zu knapp — ein Aufsetzpunkt, der noch
-/// deutlich innerhalb der normalen Touchdown-Zone liegt, konnte schon
-/// "Float über Toleranz" ausloesen. 20 % LDA gibt der normalen
-/// Aufsetzzone spuerbar mehr Raum, bevor ueberhaupt etwas gegen den
-/// Bremsweg gerechnet wird — siehe Spec-Errata zu v0.12.0-runway-
-/// utilization-refinement.md. Float bis zu diesem Anteil belastet das
-/// Punkte-Banding nicht, nur der Überschuss zählt (Spec LE1).
-const FLOAT_TOLERANCE_FRACTION: f32 = 0.20;
+/// Bandgrenzen der Bahn-Auslastung, in Prozent der LDA.
+///
+/// v1.6.7 (`score_algorithm_version` 8) — komplette Neuausrichtung der
+/// Achse, siehe die Doku an `sub_rollout_v2`. Die Zahlen sind keine
+/// Hausnummern mehr, sondern die Kehrwerte der Landestrecken-Faktoren
+/// aus dem echten Betrieb:
+///   * **60 %** — die Bahn ist das 1,67-fache der genutzten Strecke.
+///     Das ist der Dispatch-Faktor fuer trockene Bahnen (60-%-Regel):
+///     wer darunter bleibt, haette den Flug so auch planen duerfen.
+///   * **70 %** — Faktor 1,43. Noch reichlich.
+///   * **80 %** — Faktor 1,25. Sportlich, aber intakt.
+///   * **90 %** — Faktor 1,15, der Mindestfaktor des In-Flight-Landing-
+///     Distance-Assessment. Darunter ist die Bahn wirklich knapp.
+const FULL_MARGIN_MAX_PCT: f32 = 60.0;
+/// Obere Grenze des "good_stop"-Bands (80 Pkt).
+const GOOD_MARGIN_MAX_PCT: f32 = 70.0;
+/// Obere Grenze des "ok_stop"-Bands (55 Pkt).
+const OK_MARGIN_MAX_PCT: f32 = 80.0;
+/// Obere Grenze des "long_rollout"-Bands (25 Pkt).
+const TIGHT_MARGIN_MAX_PCT: f32 = 90.0;
 
-/// v0.20.x: obere Grenze des "excellent_margin"-Bands (100 Pkt) auf der
-/// toleranzbereinigten Auslastung. Vorher 30.0 — auf einer langen Bahn
-/// (z.B. 2850 m LDA) verlangte das einen Stopp innerhalb von ~855 m,
-/// was praktisch aggressives Bremsen/Reverse erzwingt, selbst bei einer
-/// vollkommen normalen, komfortablen Landung. Auch von
-/// `rollout_alone_excellent` (LE2 `long_float`-Override) genutzt, damit
-/// beide Stellen synchron bleiben.
-const EXCELLENT_MAX_PCT: f32 = 40.0;
-/// Obere Grenze des "good_stop"-Bands (80 Pkt). Vorher 50.0.
-const GOOD_MAX_PCT: f32 = 60.0;
-/// Obere Grenze des "ok_stop"-Bands (55 Pkt). Vorher 70.0.
-const OK_MAX_PCT: f32 = 80.0;
-/// Obere Grenze des "long_rollout"-Bands (25 Pkt). Vorher 90.0.
-const LONG_MAX_PCT: f32 = 95.0;
+/// Ende der Aufsetzzone in Metern — ICAO-Definition: die ersten 900 m
+/// der Bahn, auf kurzen Bahnen das erste Drittel.
+///
+/// Wird NUR fuer die Begruendung „spaet aufgesetzt" gebraucht und
+/// kostet selbst keine Punkte. Die Punkte kommen ausschliesslich aus
+/// der genutzten Bahnstrecke — ein spaeter Aufsetzpunkt zeigt sich dort
+/// von selbst, weil er die genutzte Strecke verlaengert.
+fn touchdown_zone_end_m(lda_m: f32) -> f32 {
+    (lda_m / 3.0).min(900.0)
+}
 
 /// Spec docs/spec/v0.10.0-runway-utilization-score.md (R5 ACCEPTED) +
 /// v0.12.0-runway-utilization-refinement.md (R2 ACCEPTED). Einzige
 /// Compute-Stelle (SSoT) für den Bahn-Auslastungs-Sub-Score. UI
 /// rendert NUR.
 ///
-/// v0.12.0-Änderungen (`score_algorithm_version` 3):
-///   - LE1: Float-Toleranz als Anteil der LDA — `effective_distance =
-///     rollout + max(0, td_dist - FLOAT_TOLERANCE_FRACTION*LDA)`. Float
-///     in der normalen Touchdown-Zone belastet das Banding nicht.
-///   - LE3: Banding auf `effective_ratio_pct`; Overrun-Gate bleibt auf
-///     der echten ungekürzten `raw_ratio_pct` (Toleranz darf ein echtes
-///     Overrun-Risiko nicht verstecken).
-///   - LE2: `long_float`-Rationale wenn Float über Toleranz UND der
-///     reine Bremsweg `< EXCELLENT_MAX_PCT` (= excellent-Niveau) UND
-///     Band good.
-///   - LE5: `extra` bleibt LEER — der TS-Renderer baut die Zeilen aus
-///     den Record-Feldern (i18n-fähig). value bleibt sprachneutral.
+/// # v1.6.7 — die Achse misst jetzt die Reserve, nicht den Bremsfleiss
 ///
-/// v0.20.x-Änderungen (Bahnauslastung-QS, `score_algorithm_version` 5):
-///   Beide Stellschrauben grosszuegiger gemacht, nachdem eine objektiv
-///   gute, komfortable Landung (583 m Aufsetzpunkt, 1379 m Rollout auf
-///   2850 m LDA = 53,8 % effektiv) nur „ok_stop" (55 Pkt) erreichte:
-///   - `FLOAT_TOLERANCE_FRACTION` 0.15 → 0.20 (mehr Aufsetzzone geschenkt)
-///   - Banding-Grenzen 30/50/70/90 → `EXCELLENT_MAX_PCT`/`GOOD_MAX_PCT`/
-///     `OK_MAX_PCT`/`LONG_MAX_PCT` (40/60/80/95) — ein normaler,
-///     komfortabler Stopp auf einer langen Bahn soll nicht aggressives
-///     Bremsen/Reverse erzwingen, um „excellent" zu erreichen.
+/// Ausloeser: EWG 2047 (EDDH→EDDS 25, A20N, 16.08.2026). Aufsetzpunkt
+/// 286 m hinter der Schwelle, 1553 m ausgerollt, 1839 m von 3345 m LDA
+/// genutzt — **1,5 km Bahn blieben uebrig**, und die Achse zog trotzdem
+/// 20 Punkte ab. Nachgerechnet ueber 630 echte Landungen: von 246
+/// Punktabzuegen entfielen **121 auf Landungen mit mehr als 1000 m
+/// Restbahn** — jeder zweite Abzug traf eine Landung ohne jedes
+/// Reserve-Problem. Umgekehrt bekam ein Anflug, der mit **80 m**
+/// Restbahn zum Stehen kam (EZY 2995, LIRF 16L, 3822 von 3902 m
+/// genutzt), noch 55 Punkte.
+///
+/// Beides hatte dieselbe Ursache: gewertet wurde eine
+/// *toleranzbereinigte* Groesse. Bis 20 % der LDA war der Aufsetzpunkt
+/// gratis, und die Baender begannen bei 40 % — auf einer 3-km-Bahn
+/// verlangte das einen Stopp innerhalb von 1200 m, also spuerbares
+/// Bremsen fuer eine voellig normale Landung. Gleichzeitig konnte die
+/// Toleranz einen echten Beinahe-Overrun verstecken, weil das
+/// Overrun-Gate erst ueber 100 % greift.
+///
+/// Jetzt wird die **tatsaechlich genutzte Bahnstrecke** gewertet
+/// (Aufsetzpunkt + Ausrollstrecke, gemessen bis Rollgeschwindigkeit
+/// oder Abrollen), gegen die LDA, mit den Baendern oben. Das ist
+/// dieselbe Groesse, die im Panel steht — Anzeige und Punkte kommen ab
+/// jetzt aus EINER Zahl.
+///
+/// **Bewusst entfernt** (nicht stillschweigend, sondern als Kern des
+/// Umbaus): die Float-Toleranz (`FLOAT_TOLERANCE_FRACTION`) und die
+/// daraus gerechnete `effective_ratio_pct`. Ein spaeter Aufsetzpunkt
+/// wird nicht mehr gesondert verrechnet — er verlaengert die genutzte
+/// Strecke und wirkt dadurch stufenlos, statt an einer Toleranzkante zu
+/// kippen. Die Begruendung `long_float` bleibt erhalten und sagt
+/// weiterhin „Bremsweg top, nur spaet aufgesetzt", jetzt an der echten
+/// Aufsetzzone (900 m / erstes Drittel) festgemacht.
+///
+/// **Unveraendert**: Skip-Gates (LE6), Overrun-Gate ueber 100 % LDA,
+/// Heavy-Allowance von 5 Prozentpunkten (LE5), der Cap bei Aufsetzen
+/// vor der Displaced-Threshold (LE3), der sprachneutrale Anzeige-Wert
+/// (LE9) und das leere `extra` (LE5, TS rendert).
+///
+/// Wirkung auf den Bestand (630 Landungen nachgerechnet): 512 unveraendert,
+/// 52 besser, 66 schlechter — die 66 sind ausnahmslos Landungen ab 70 %
+/// Bahnnutzung, die neun haertesten Faelle hatten unter 500 m Restbahn.
+/// Forward-only: alte PIREPs behalten ihren gespeicherten Score.
 pub fn sub_rollout_v2(input: &RolloutInput) -> SubScoreEntry {
     // ── Skip-Gate (v0.10.0 LE6) ──────────────────────────────────────
     if let Some(reason) = skip_reason(input) {
@@ -189,35 +230,33 @@ pub fn sub_rollout_v2(input: &RolloutInput) -> SubScoreEntry {
     // bekommt (würde Score künstlich verbessern).
     let raw_used = td_dist + rollout;
     let distance_used = raw_used.max(rollout);
-    // Echte Auslastung — Basis fürs Overrun-Gate UND fürs Display.
+    // Echte Auslastung — Basis fuer ALLES: Overrun-Gate, Punkte, Anzeige.
+    // v1.6.7: es gibt keine zweite, toleranzbereinigte Groesse mehr.
     let raw_ratio_pct: f32 = (distance_used / lda_m) * 100.0;
 
-    // ── v0.12.0 LE1: Float-Toleranz (FLOAT_TOLERANCE_FRACTION * LDA) ─
-    // Nur Float ÜBER der Toleranz belastet das Banding. Bei negativem
-    // td_dist (pre-displaced) ist `td_dist - tolerance` erst recht
-    // negativ → effective_float = 0 → effective_distance = rollout.
-    let float_tolerance_m = FLOAT_TOLERANCE_FRACTION * lda_m;
-    let effective_float_m = (td_dist - float_tolerance_m).max(0.0);
-    let effective_distance_m = rollout + effective_float_m;
-    let effective_ratio_pct: f32 = (effective_distance_m / lda_m) * 100.0;
+    // ── NaN-Riegel (Lehre aus der Ausrichtungs-Achse, v1.6.2) ────────
+    // `NaN < x` ist immer false — ohne diesen Riegel fiele ein kaputter
+    // Messwert durch alle Baender hindurch und bekaeme die HAERTESTE
+    // Note, statt ehrlich „nicht bewertet" zu sagen.
+    if !raw_ratio_pct.is_finite() {
+        return SubScoreEntry::skipped("rollout", "landing.sub.rollout", "invalid_geometry");
+    }
 
-    // ── Overrun-Check ZUERST auf der ECHTEN Distanz (v0.10.0 LE4 + ───
-    //    v0.12.0 LE3). Die Float-Toleranz darf ein echtes Overrun-
-    //    Risiko NICHT verstecken — wer wirklich > 100 % LDA braucht,
-    //    bekommt 0 PT, egal wie der Float aufgeteilt ist.
-    let (points, rationale, band) = if raw_ratio_pct > 100.0 {
+    // ── Overrun-Check ZUERST (v0.10.0 LE4). Wer mehr als die ganze ───
+    //    Bahn braucht, bekommt 0 PT — unabhaengig von allem anderen.
+    let is_overrun = raw_ratio_pct > 100.0;
+    let (points, rationale, band) = if is_overrun {
         (0u8, "overrun_risk", Band::Bad)
     } else {
-        // ── v0.12.0 LE3: Banding auf der toleranzbereinigten Distanz ─
         // Heavy-Allowance VOR Banding (v0.10.0 LE5, unverändert).
         let allowance_pp: f32 = if is_heavy(input.aircraft_icao) { 5.0 } else { 0.0 };
-        let banding_pct: f32 = effective_ratio_pct - allowance_pp;
+        let banding_pct: f32 = raw_ratio_pct - allowance_pp;
 
         match banding_pct {
-            e if e < EXCELLENT_MAX_PCT => (100, "excellent_margin", Band::Good),
-            e if e < GOOD_MAX_PCT => (80, "good_stop", Band::Good),
-            e if e < OK_MAX_PCT => (55, "ok_stop", Band::Ok),
-            e if e < LONG_MAX_PCT => (25, "long_rollout", Band::Bad),
+            e if e < FULL_MARGIN_MAX_PCT => (100, "excellent_margin", Band::Good),
+            e if e < GOOD_MARGIN_MAX_PCT => (80, "good_stop", Band::Good),
+            e if e < OK_MARGIN_MAX_PCT => (55, "ok_stop", Band::Ok),
+            e if e < TIGHT_MARGIN_MAX_PCT => (25, "long_rollout", Band::Bad),
             _ => (5, "marginal_runway", Band::Bad),
         }
     };
@@ -240,18 +279,27 @@ pub fn sub_rollout_v2(input: &RolloutInput) -> SubScoreEntry {
         (points, rationale, band)
     };
 
-    // ── v0.12.0 LE2: long_float-Rationale-Override ───────────────────
-    // Drei Bedingungen — „Bremsen war exzellent, nur spät aufgesetzt":
-    //   1. Float über der FLOAT_TOLERANCE_FRACTION-Toleranz
-    //   2. Ausrollstrecke ALLEIN wäre excellent_margin (rollout/LDA < EXCELLENT_MAX_PCT)
-    //   3. finaler Band ist Good (good_stop / excellent_margin)
-    // pre_displaced hat Vorrang (eigener Cap + eigene Rationale).
-    let float_over_tolerance = td_dist > float_tolerance_m;
-    let rollout_alone_excellent = (rollout / lda_m) * 100.0 < EXCELLENT_MAX_PCT;
+    // ── long_float-Begruendung (v0.12.0 LE2, v1.6.7 neu verankert) ───
+    // „Das Bremsen war top — die Punkte kostet der spaete Aufsetzpunkt."
+    // Drei Bedingungen:
+    //   1. Aufsetzen hinter der Aufsetzzone (900 m / erstes Drittel)
+    //   2. die Ausrollstrecke ALLEIN waere volle Punktzahl
+    //   3. es gibt ueberhaupt etwas zu erklaeren (Punkte < 100)
+    // Damit ist die Aussage per Konstruktion wahr: wenn der Bremsweg
+    // allein reichlich Reserve gelassen haette und trotzdem Punkte
+    // fehlen, war es der Aufsetzpunkt. pre_displaced hat Vorrang
+    // (eigener Cap + eigene Begruendung).
+    // Ein Overrun behaelt IMMER seine eigene Begruendung — „Bremsweg
+    // top, nur spaet aufgesetzt" darf die Warnung nicht verdecken,
+    // auch wenn beides zutrifft (QS-Befund: der Test zum Overrun-Gate
+    // fiel genau darueber).
+    let touched_down_late = td_dist > touchdown_zone_end_m(lda_m);
+    let rollout_alone_full_marks = (rollout / lda_m) * 100.0 < FULL_MARGIN_MAX_PCT;
     let (final_points, final_rationale, final_band) = if !pre_displaced
-        && float_over_tolerance
-        && rollout_alone_excellent
-        && matches!(capped_band, Band::Good)
+        && !is_overrun
+        && capped_points < 100
+        && touched_down_late
+        && rollout_alone_full_marks
     {
         (capped_points, "long_float", capped_band)
     } else {
@@ -265,7 +313,9 @@ pub fn sub_rollout_v2(input: &RolloutInput) -> SubScoreEntry {
     };
 
     // ── Display-Value (v0.10.0 LE9, v0.12.0 LE4) ─────────────────────
-    // SPRACHNEUTRAL — zeigt die ECHTE Auslastung (raw, nicht effective).
+    // SPRACHNEUTRAL — zeigt die ECHTE Auslastung. Seit v1.6.7 ist das
+    // exakt die Zahl, aus der auch die Punkte kommen (vorher wich die
+    // Anzeige von der gewerteten, toleranzbereinigten Groesse ab).
     // Labels („genutzt", „von LDA") baut der TS-Renderer drumherum.
     let display_pct = raw_ratio_pct.round() as i32;
     let value = format!(

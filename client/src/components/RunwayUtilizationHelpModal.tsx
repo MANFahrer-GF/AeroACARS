@@ -51,6 +51,9 @@ const SKIP_KEYS = [
   "untrusted_geometry",
   "off_airport",
   "invalid_lda",
+  // v1.6.7: NaN/Unendlich in der Bahn-Geometrie — lieber „nicht
+  // bewertet" als eine erfundene Zahl.
+  "invalid_geometry",
 ] as const;
 
 interface Props {
