@@ -96,6 +96,13 @@ Ab v0.10.0+ funktioniert das Auto-Update wieder normal (Modal-Hotfix in v0.10.0)
 
 ## 6b. Flow-Widget (MSFS-In-Sim-Panel) mitziehen
 
+> **Seit v1.6.5 haengt das Widget automatisch an jedem Release** (Job
+> `plugin-package` in `.github/workflows/release.yml`, Asset
+> `AeroACARS-MSFS-Flow-Widget-vX.Y.Z.zip`). Der Tauschordner bleibt als
+> zweiter Weg, ist aber nicht mehr der einzige — vorher hing es an KEINEM
+> Release, und wer es suchte, fand es nicht.
+
+
 Das Flow-Widget wird NICHT über den Updater verteilt, sondern als Zip im
 Nextcloud-Tauschordner (`~/Library/CloudStorage/Nextcloud-cloud.kant.ovh-
 ThomasKant/Daten Tausch Claude/`). Es veraltet deshalb lautlos, wenn man
