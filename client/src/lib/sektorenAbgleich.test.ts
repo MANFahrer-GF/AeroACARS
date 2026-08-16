@@ -49,7 +49,15 @@ describe("Kartenbild", () => {
 
   it("gibt das gewaehlte Netz an den Server weiter", () => {
     const aufruf = quelle.match(/ladeSektoren\([\s\S]{0,120}?\)/);
-    expect(aufruf?.[0]).toContain("netzRef.current");
+    expect(aufruf?.[0]).toContain("netz");
+  });
+
+  it("laedt beim Netzwechsel neu, ohne Umweg ueber Aus", () => {
+    // Der Effekt hing an der abgeleiteten Ja/Nein-Groesse. Die bleibt beim
+    // Wechsel VATSIM -> IVAO unveraendert wahr, also lief er nicht neu und
+    // man musste erst ausschalten. Die Abhaengigkeit muss das NETZ sein.
+    expect(quelle).toContain("}, [netz, mapReady]);");
+    expect(quelle).not.toContain("}, [showVatsim, mapReady]);");
   });
 
   it("bietet den Netz-Umschalter mit genau drei Zustaenden", () => {
@@ -76,12 +84,6 @@ describe("Kartenbild", () => {
       expect(quelle).toContain(id);
     }
   });
-
-  it("laedt beim Reglerbewegen nicht neu", () => {
-    // Der Abruf-Effekt darf nicht mehr an Regler-Zustaenden haengen.
-    expect(quelle).toContain("}, [showVatsim, mapReady]);");
-  });
-});
 
 describe("Darstellung wie auf der Live-Karte", () => {
   // Die Werte stammen wortgleich aus webapp/src/tabs/LiveMap.tsx auf

@@ -407,8 +407,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     return localStorage.getItem("aaLivemapVatsim") === "1" ? "vatsim" : "aus";
   });
   const showVatsim = netz !== "aus";
-  const netzRef = useRef<Netz>(netz);
-  useEffect(() => { netzRef.current = netz; }, [netz]);
   const vatsimPilotsRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
   const vatsimAtcRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
   const vatsimSectorsRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
@@ -472,7 +470,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         // Karte auf live.kant.ovh, damit beide dasselbe zeigen.
         // Alle Hoehenbaender auf einmal — gefiltert wird auf der Karte.
         const sektoren = await ladeSektoren(
-          "alle", abbruch.signal, undefined, netzRef.current,
+          "alle", abbruch.signal, undefined, netz,
         );
         if (beendet) return;
         setzen(
@@ -531,7 +529,13 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     return () => { beendet = true; abbruch.abort(); clearInterval(takt); };
     // Der Regler loest KEINEN neuen Abruf mehr aus: die Daten enthalten
     // ohnehin jedes Band, gefiltert wird im Effekt darunter.
-  }, [showVatsim, mapReady]);
+    //
+    // Abhaengig von `netz`, NICHT von `showVatsim`. Die abgeleitete
+    // Ja/Nein-Groesse bleibt beim Wechsel VATSIM -> IVAO unveraendert wahr;
+    // der Effekt lief dann nicht neu, und man musste erst auf "Aus" und
+    // zurueck (Feldbefund Thomas, 16.08.2026). Genau die Falle, die eine
+    // abgeleitete Groesse in einer Abhaengigkeitsliste aufmacht.
+  }, [netz, mapReady]);
 
   // Hoehenregler: wirkt augenblicklich auf die schon geladenen Sektoren.
   useEffect(() => {
