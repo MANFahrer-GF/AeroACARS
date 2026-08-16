@@ -2163,6 +2163,11 @@
     "sys_uplink_lost": "Connessione persa",
     "layer_vatsim": "VATSIM",
     "layer_vatsim_hint": "Settori per quota (VATGlasses, CC BY-NC-SA), controllori e altri piloti dalla rete VATSIM",
+    "netz": "Rete",
+    "netz_aus": "Off",
+    "netz_aus_hint": "Non mostrare nessuna rete online",
+    "netz_ivao_hint": "Controllori, ATIS e altri piloti dalla rete IVAO. Le aree derivano dai confini FIR — IVAO non pubblica settori propri.",
+    "netz_zeit_hint": "Recupero dei dati e disegno delle aree nell'ultimo ciclo",
     "fl_auto": "quota propria",
     "fl_auto_hint": "Mostra i settori alla propria quota",
     "fl_regler": "Livello di volo per i settori"

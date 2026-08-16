@@ -2170,6 +2170,11 @@
     "sys_uplink_lost": "Connection lost",
     "layer_vatsim": "VATSIM",
     "layer_vatsim_hint": "Sectors by altitude (VATGlasses, CC BY-NC-SA), controllers and other pilots from the VATSIM network",
+    "netz": "Network",
+    "netz_aus": "Off",
+    "netz_aus_hint": "Show no online network",
+    "netz_ivao_hint": "Controllers, ATIS and other pilots from the IVAO network. Areas come from the FIR boundaries — IVAO does not publish sectors of its own.",
+    "netz_zeit_hint": "Fetching the data and drawing the areas on the last run",
     "fl_auto": "own altitude",
     "fl_auto_hint": "Show sectors at your own flight level",
     "fl_regler": "Flight level for the sector view"
