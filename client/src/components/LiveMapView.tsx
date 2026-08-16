@@ -16,7 +16,7 @@ import { useTranslation } from "react-i18next";
 import {
   buildPilotFeatures, emptyFC, fetchVatsimData, esc as vatsimEsc,
 } from "../lib/vatsimKarte";
-import { ladeSektoren } from "../lib/vatglassesKarte";
+import { ladeSektoren, type Netz } from "../lib/vatglassesKarte";
 import maplibregl, { type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { invoke } from "../lib/ipc";
@@ -118,6 +118,19 @@ function hoehenfilterSetzen(m: maplibregl.Map, fl: number): void {
     }
   }
 }
+
+/** Die Symbole der Ebenen-Schalter.
+ *
+ *  Bewusst schlichte Zeichen statt einer Symbolschrift: die Leiste laeuft
+ *  im Fenster einer Anwendung, eine Schriftart nachzuladen waere ein
+ *  Netzzugriff fuer drei Glyphen. Die Bedeutung traegt ohnehin der Text,
+ *  sobald der Schalter an ist (Variante B).
+ */
+const EBENEN_SYMBOL = {
+  track: "\u2933",   // Pfeil mit Bogen — die geflogene Spur
+  taxi: "\u2387",    // Weiche — Rollwege
+  va: "\u2708",      // Flugzeug — Verkehr der eigenen VA
+} as const;
 
 /** Eine Kartenebene anlegen, ohne die uebrigen zu gefaehrden.
  *
@@ -349,9 +362,21 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   // VATSIM-Overlay (Sektoren + Lotsen + fremde Piloten). Standard AUS und
   // gemerkt: das ist eine bewusste Zuschaltung, kein Dauerzustand — die
   // Karte gehoert zuerst dem eigenen Flug.
-  const [showVatsim, setShowVatsim] = useState<boolean>(
-    () => typeof localStorage !== "undefined" && localStorage.getItem("aaLivemapVatsim") === "1",
-  );
+  // Welches Netz die Karte zeigt. Nie beide zugleich: zwei Netze
+  // uebereinander ergeben ein Bild, in dem niemand mehr erkennt, wer
+  // welchen Luftraum betreut. Die Ausschliesslichkeit steckt deshalb in
+  // der Bauform — ein Umschalter statt zweier Schalter, es GEHT nicht
+  // anders. Siehe docs/spec/livemap-netze-und-leiste.md.
+  const [netz, setNetz] = useState<Netz>(() => {
+    if (typeof localStorage === "undefined") return "aus";
+    const gemerkt = localStorage.getItem("aaLivemapNetz");
+    if (gemerkt === "vatsim" || gemerkt === "ivao") return gemerkt;
+    // Uebergang von der alten Ein/Aus-Merkung.
+    return localStorage.getItem("aaLivemapVatsim") === "1" ? "vatsim" : "aus";
+  });
+  const showVatsim = netz !== "aus";
+  const netzRef = useRef<Netz>(netz);
+  useEffect(() => { netzRef.current = netz; }, [netz]);
   const vatsimPilotsRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
   const vatsimAtcRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
   const vatsimSectorsRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
@@ -370,7 +395,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   const [theme, setTheme] = useState<"dark" | "light">(readTheme());
   // ── VATSIM-Overlay: Daten holen, solange es eingeschaltet ist ─────────
   useEffect(() => {
-    try { localStorage.setItem("aaLivemapVatsim", showVatsim ? "1" : "0"); } catch { /* egal */ }
+    try { localStorage.setItem("aaLivemapNetz", netz); } catch { /* egal */ }
     const map = mapRef.current;
     if (!map || !mapReady) return;
 
@@ -414,7 +439,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         // Die Sektoren rechnet der Live-Server — dieselbe Quelle wie die
         // Karte auf live.kant.ovh, damit beide dasselbe zeigen.
         // Alle Hoehenbaender auf einmal — gefiltert wird auf der Karte.
-        const sektoren = await ladeSektoren("alle", abbruch.signal);
+        const sektoren = await ladeSektoren(
+          "alle", abbruch.signal, undefined, netzRef.current,
+        );
         if (beendet) return;
         setzen(
           buildPilotFeatures(daten.pilots),
@@ -2197,13 +2224,22 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
             <div className="aa-livemap-controls__group">
               <span className="aa-livemap-controls__rubric">{t("livemap.group_layers")}</span>
               <div className="aa-livemap-controls__row">
+                {/* Variante B: Symbol immer, Text nur wenn AN.
+                    Diese drei sind unabhaengige Ein/Aus-Schalter, anders
+                    als die Paare darueber — bei reinen Symbolen haenge der
+                    Zustand allein an der Faerbung. Der Preis ist, dass die
+                    Leiste beim Umschalten um die Wortbreite zuckt; das ist
+                    bewusst so entschieden. */}
                 <button
                   type="button"
                   className={`aa-livemap-toggle ${showTrack ? "aa-livemap-toggle--active" : ""}`}
                   aria-pressed={showTrack}
+                  aria-label={t("livemap.layer_track")}
+                  title={t("livemap.layer_track")}
                   onClick={() => setShowTrack((v) => !v)}
                 >
-                  {t("livemap.layer_track")}
+                  <span aria-hidden="true">{EBENEN_SYMBOL.track}</span>
+                  {showTrack && <span className="aa-livemap-toggle__wort">{t("livemap.layer_track")}</span>}
                 </button>
                 <button
                   type="button"
@@ -2219,26 +2255,54 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                     // moved to this toggle's tooltip instead of disappearing.
                     groundLoaded.length > 0 ? t("livemap.taxi_loaded", { airports: groundLoaded.join(" · ") }) : undefined
                   }
+                  aria-label={t("livemap.layer_taxi")}
                 >
-                  {t("livemap.layer_taxi")}
+                  <span aria-hidden="true">{EBENEN_SYMBOL.taxi}</span>
+                  {showTaxi && <span className="aa-livemap-toggle__wort">{t("livemap.layer_taxi")}</span>}
                 </button>
                 <button
                   type="button"
                   className={`aa-livemap-toggle ${showVa ? "aa-livemap-toggle--active" : ""}`}
                   aria-pressed={showVa}
                   onClick={() => setShowVa((v) => !v)}
+                  aria-label={t("livemap.layer_va")}
+                  title={t("livemap.layer_va")}
                 >
-                  {t("livemap.layer_va")}
+                  <span aria-hidden="true">{EBENEN_SYMBOL.va}</span>
+                  {showVa && <span className="aa-livemap-toggle__wort">{t("livemap.layer_va")}</span>}
                 </button>
-                <button
-                  type="button"
-                  className={`aa-livemap-toggle ${showVatsim ? "aa-livemap-toggle--active" : ""}`}
-                  onClick={() => setShowVatsim((v) => !v)}
-                  title={t("livemap.layer_vatsim_hint", "Sektoren nach Höhe (VATGlasses, CC BY-NC-SA), Lotsen und fremde Piloten aus dem VATSIM-Netz")}
-                >
-                  {t("livemap.layer_vatsim", "VATSIM")}
-                </button>
-                {showVatsim && (
+                {/* Netz-Umschalter statt zweier Schalter: so KANN nicht
+                    beides zugleich an sein. Zwei Netze uebereinander
+                    ergeben ein Bild, in dem niemand mehr erkennt, wer
+                    welchen Luftraum betreut. */}
+                <span className="aa-livemap-seg" role="group" aria-label={t("livemap.netz", "Netz")}>
+                  {(["aus", "vatsim", "ivao"] as const).map((wert) => (
+                    <button
+                      key={wert}
+                      type="button"
+                      className={`aa-livemap-seg__btn ${netz === wert ? "aa-livemap-seg__btn--active" : ""}`}
+                      aria-pressed={netz === wert}
+                      onClick={() => setNetz(wert)}
+                      title={
+                        wert === "aus"
+                          ? t("livemap.netz_aus_hint", "Kein Online-Netz anzeigen")
+                          : wert === "vatsim"
+                            ? t("livemap.layer_vatsim_hint", "Sektoren nach Höhe (VATGlasses, CC BY-NC-SA), Lotsen und fremde Piloten aus dem VATSIM-Netz")
+                            : t("livemap.netz_ivao_hint", "Lotsen, ATIS und fremde Piloten aus dem IVAO-Netz. Flächen aus den FIR-Grenzen — IVAO gibt keine eigenen Sektoren heraus.")
+                      }
+                    >
+                      {wert === "aus"
+                        ? t("livemap.netz_aus", "Aus")
+                        : wert === "vatsim"
+                          ? "VATSIM"
+                          : "IVAO"}
+                    </button>
+                  ))}
+                </span>
+                {/* Nur bei VATSIM: IVAO liefert keine Hoehenbaender, dort
+                    gelten die Flaechen fuer den ganzen Luftraum — ein
+                    Regler ohne Wirkung waere eine Luege. */}
+                {netz === "vatsim" && (
                   <span className="aa-livemap-flwahl">
                     {/* Feldbefund: der Regler war hinter "eigene Hoehe"
                         versteckt — ein Bedienelement, das man suchen muss,

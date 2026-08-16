@@ -13,6 +13,11 @@
 
 const STANDARD_BASIS = "https://live.kant.ovh";
 
+/** Welches Netz die Karte zeigt. Nie beide zugleich — zwei Netze
+ *  uebereinander ergeben ein Bild, in dem niemand mehr erkennt, wer
+ *  welchen Luftraum betreut. */
+export type Netz = "aus" | "vatsim" | "ivao";
+
 export interface SektorenFuerKarte {
   flaechen: GeoJSON.FeatureCollection;
   marken: GeoJSON.FeatureCollection;
@@ -60,10 +65,15 @@ export async function ladeSektoren(
   fl: number | "alle",
   signal?: AbortSignal,
   basis: string = STANDARD_BASIS,
+  /** Welches Netz. IVAO laeuft ueber DIESELBE Route und dieselbe
+   *  Zuordnung, nur mit anderer Quelle — der Server entscheidet anhand
+   *  dieses Werts. Ohne Angabe bleibt es bei VATSIM. */
+  netz: Netz = "vatsim",
 ): Promise<SektorenFuerKarte> {
   try {
     const wert = fl === "alle" ? "alle" : String(Math.round(fl));
-    const res = await fetch(`${basis}/api/vatglasses?fl=${wert}`, { signal });
+    const q = netz === "ivao" ? `&netz=ivao` : "";
+    const res = await fetch(`${basis}/api/vatglasses?fl=${wert}${q}`, { signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const d = (await res.json()) as {
       flaechen?: GeoJSON.FeatureCollection;

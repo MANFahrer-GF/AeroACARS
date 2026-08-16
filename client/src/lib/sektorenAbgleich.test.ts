@@ -41,7 +41,27 @@ describe("Kartenbild", () => {
   const quelle = readFileSync("src/components/LiveMapView.tsx", "utf8");
 
   it("holt alle Hoehenbaender statt einer Flugflaeche", () => {
-    expect(quelle).toContain('ladeSektoren("alle"');
+    // Auf die Absicht pruefen, nicht auf die Schreibweise: der Aufruf ist
+    // mehrzeilig, seit das Netz mitgegeben wird.
+    const aufruf = quelle.match(/ladeSektoren\([\s\S]{0,120}?\)/);
+    expect(aufruf?.[0]).toContain('"alle"');
+  });
+
+  it("gibt das gewaehlte Netz an den Server weiter", () => {
+    const aufruf = quelle.match(/ladeSektoren\([\s\S]{0,120}?\)/);
+    expect(aufruf?.[0]).toContain("netzRef.current");
+  });
+
+  it("bietet den Netz-Umschalter mit genau drei Zustaenden", () => {
+    // Ein Umschalter statt zweier Schalter: so KANN nicht beides zugleich
+    // an sein. Die Ausschliesslichkeit steckt in der Bauform.
+    expect(quelle).toContain('(["aus", "vatsim", "ivao"] as const)');
+  });
+
+  it("zeigt die Hoehenwahl nur bei VATSIM", () => {
+    // IVAO liefert keine Hoehenbaender — ein Regler ohne Wirkung waere
+    // eine Luege.
+    expect(quelle).toContain('{netz === "vatsim" && (');
   });
 
   it("filtert die Hoehe auf der Karte", () => {

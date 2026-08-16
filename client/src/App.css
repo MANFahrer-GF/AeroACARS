@@ -8477,6 +8477,12 @@ input:disabled {
   border-radius: 0 var(--r-md) var(--r-md) 0;
   border-left: none;
 }
+/* Bei DREI Teilen (Netz-Umschalter: Aus/VATSIM/IVAO) traegt auch das
+   mittlere keinen eigenen linken Rand — sonst steht dort ein doppelter
+   Strich. Die Regel oben griff nur fuer Zweier-Paare. */
+.aa-livemap-seg__btn:not(:first-child) {
+  border-left: none;
+}
 .aa-livemap-seg__btn--active {
   background: var(--acc);
   color: var(--bg);
@@ -8502,6 +8508,12 @@ input:disabled {
   padding: 6px 11px;                   /* was 8px 14px */
   border-radius: var(--r-md);
   cursor: pointer;
+}
+/* Variante B: das Wort erscheint nur im aktiven Zustand, damit man bei
+   unabhaengigen Ein/Aus-Schaltern nicht raten muss. Der Abstand haengt am
+   Wort, nicht am Knopf — sonst bliebe im Aus-Zustand eine Luecke stehen. */
+.aa-livemap-toggle__wort {
+  margin-left: 6px;
 }
 .aa-livemap-toggle--active {
   background: var(--acc);
