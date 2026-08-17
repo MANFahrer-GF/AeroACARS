@@ -145,3 +145,59 @@ describe("buildRolloutValueLabel", () => {
     ).toBe(null);
   });
 });
+
+// ── v1.6.8: versetzte Schwelle — Anzeige und Punkte aus EINER Zahl ──────
+//
+// Der Client meldet den Versatz jetzt auch dann, wenn er in der
+// Navdaten-Geometrie steckt statt im Zahlenfeld. Die Kachel muss
+// dieselbe nutzbare Laenge und denselben Prozentsatz zeigen wie der
+// Score-Kern im Rust-Crate, sonst faellt beides wieder auseinander.
+describe("versetzte Schwelle in der Kachel", () => {
+  // EDDH 33 aus den aktiven Navdaten: 12028 ft Bahn, 1464 ft Versatz.
+  const EDDH_33: LandingRunwayMatch = {
+    airport_ident: "EDDH",
+    runway_ident: "33",
+    surface: "ASP",
+    length_ft: 12028,
+    centerline_distance_m: 0.4,
+    centerline_distance_abs_ft: 1,
+    side: "CENTER",
+    touchdown_distance_from_threshold_ft: 1969,
+    displaced_threshold_ft: 1464,
+  };
+  const r = record({
+    runway_match: EDDH_33,
+    td_distance_from_threshold_m: 600,
+    rollout_distance_m: 1400,
+  });
+
+  it("zieht den Versatz von der nutzbaren Laenge ab", () => {
+    // 12028 ft = 3666 m, minus 1464 ft = 446 m → 3220 m
+    expect(Math.round(rolloutLdaMeters(EDDH_33)!)).toBe(3220);
+  });
+
+  it("rechnet den Prozentsatz gegen die verkuerzte Bahn", () => {
+    // genutzt 600 + 1400 = 2000 m von 3220 m = 62 %
+    // (gegen die volle Bahn waeren es 55 % — ein Band besser)
+    const label = buildRolloutValueLabel(r, t)!;
+    expect(label).toContain("62 %");
+    expect(label).toContain("2000 m");
+    expect(label).toContain("3220 m");
+  });
+
+  it("nennt in der Bahn-Zeile dieselbe nutzbare Laenge", () => {
+    const zeilen = buildRolloutExtraLines(r, t);
+    const bahn = zeilen.find((z) => z.includes("EDDH"))!;
+    expect(bahn).toContain("3220");
+  });
+
+  it("ohne Versatz bleibt alles wie bisher", () => {
+    const ohne = record({
+      runway_match: { ...EDDH_33, displaced_threshold_ft: 0 },
+      td_distance_from_threshold_m: 600,
+      rollout_distance_m: 1400,
+    });
+    expect(Math.round(rolloutLdaMeters({ ...EDDH_33, displaced_threshold_ft: 0 })!)).toBe(3666);
+    expect(buildRolloutValueLabel(ohne, t)!).toContain("55 %");
+  });
+});
