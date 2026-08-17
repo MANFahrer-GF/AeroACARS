@@ -42596,6 +42596,50 @@ mod touchdown_metadata_stamp_tests {
         );
     }
 
+    /// v1.6.8-QS2: die 1200-m-Grenze fuer Aufsetzzonen-Markierungen gilt
+    /// fuer die LANDEBAHN, nicht fuer die Bahnflaeche. Eine 1300-m-Bahn
+    /// mit 150 m versetzter Schwelle hat 1150 m Landebahn — dort ist
+    /// keine Aufsetzzone gemalt, also darf der Client auch keine melden.
+    ///
+    /// Im Bestand betrifft das drei Landungen (TFFG 30, BIRK 31, EDWE 07):
+    /// die Angabe „in der Aufsetzzone" entfaellt dort kuenftig, statt eine
+    /// Markierung zu behaupten, die es nicht gibt.
+    #[test]
+    fn aufsetzzone_gilt_fuer_die_landebahn_nicht_die_bahnflaeche() {
+        let bahn = |displaced_ft: i32| runway::RunwayMatch {
+            airport_ident: "XXXX".to_string(),
+            runway_ident: "07".to_string(),
+            heading_true_deg: 70.0,
+            length_ft: 4265.0, // 1300 m
+            width_ft: 100.0,
+            surface: "ASP".to_string(),
+            threshold_lat: 50.0,
+            threshold_lon: 8.0,
+            end_lat: 50.0,
+            end_lon: 8.018,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            touchdown_distance_from_threshold_ft: 1300.0,
+            side: "CENTER".to_string(),
+            displaced_threshold_ft: displaced_ft,
+        };
+        // Ohne Versatz: 1300 m Landebahn → Aufsetzzone existiert.
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(bahn(0));
+        assert!(
+            assess_touchdown(&stats).tdz.is_some(),
+            "1300 m Landebahn traegt eine Aufsetzzone"
+        );
+        // Mit 492 ft (150 m) Versatz: 1150 m Landebahn → keine mehr.
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(bahn(492));
+        assert!(
+            assess_touchdown(&stats).tdz.is_none(),
+            "1150 m Landebahn traegt keine Aufsetzzone — auch wenn die \
+             Bahnflaeche 1300 m misst"
+        );
+    }
+
     /// v0.19.x FIX: a touchdown that lands ON the displaced-threshold
     /// paint (before the legal landing threshold, but past the physical
     /// runway start) must be flagged by `classify_displaced` — the bug
