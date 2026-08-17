@@ -423,7 +423,11 @@ pub fn geometry_hidden_displacement_ft(
     if treffer.len() > 1 && treffer.iter().any(|t| *t != treffer[0]) {
         return 0;
     }
-    for (eigen, gegen) in treffer.into_iter().take(1) {
+    // `if let` statt einer Schleife ueber einen Ein-Element-Iterator:
+    // letzteres ist zwar korrekt, aber clippy stuft „Schleife, die nie
+    // schleift" als Fehler ein — und hat damit recht, es liest sich wie
+    // eine Iteration, die keine ist.
+    if let Some((eigen, gegen)) = treffer.into_iter().next() {
         if eigen <= 0 {
             return 0;
         }
