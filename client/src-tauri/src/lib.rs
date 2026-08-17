@@ -13765,7 +13765,12 @@ fn assess_touchdown(stats: &FlightStats) -> AssessedTouchdown {
     // source, so this correction (and DDS classification below) applies
     // uniformly instead of being silently skipped for every OurAirports-
     // fallback landing.
-    let displaced_threshold_m = rm.displaced_threshold_ft as f64 / FT_PER_M;
+    // v1.6.8-QS4: nur der Anteil, der nicht schon in der Geometrie steckt
+    // (siehe `displacement_not_in_geometry_ft`). Im aktuellen Zyklus ist
+    // das dasselbe wie das rohe Feld (dort steht 0); der Unterschied
+    // greift erst, wenn eine Datenquelle beides gleichzeitig liefert.
+    let abzuziehen_ft = displacement_not_in_geometry_ft(rm);
+    let displaced_threshold_m = abzuziehen_ft as f64 / FT_PER_M;
     let td_m = td_raw_m - displaced_threshold_m;
     // v1.6.8: NUTZBARE Laenge, nicht die volle Bahn. Beide Funktionen
     // messen ausdruecklich „ab der Lande-Schwelle" (siehe ihre Doku) —
@@ -13783,9 +13788,13 @@ fn assess_touchdown(stats: &FlightStats) -> AssessedTouchdown {
     let nutzbare_laenge_m = length_m - (effective_displaced_threshold_ft(rm) as f64) / FT_PER_M;
     let tdz = runway_assessment::classify_tdz(td_m, nutzbare_laenge_m);
     let aim = Some(runway_assessment::classify_aim(td_m, nutzbare_laenge_m));
+    // Dieselbe Groesse wie oben: was in der Geometrie steckt, ist kein
+    // Sperrbereich mehr vor der gemessenen Distanz. Sonst gaelte auf
+    // einer solchen Bahn jedes Aufsetzen im ersten Stueck als Landung
+    // vor der Schwelle.
     let dds = Some(runway_assessment::classify_displaced(
         td_raw_m,
-        rm.displaced_threshold_ft as f64,
+        abzuziehen_ft as f64,
     ));
     // F5 TCH: nur klassifizieren wenn BOTH der nav-geometric tch_ft
     // AND der actual-measured tch_ft im Streamer-Tick vorhanden sind.
@@ -15102,6 +15111,41 @@ fn effective_displaced_threshold_ft(m: &runway::RunwayMatch) -> i32 {
         geometrie_m,
     );
     m.displaced_threshold_ft.max(versteckt)
+}
+
+/// v1.6.8-QS4 — der Anteil des Versatzes, der NOCH NICHT in der Geometrie
+/// steckt. Nur dieser darf von der gemessenen Aufsetzdistanz abgezogen
+/// werden.
+///
+/// Warum das eine eigene Funktion ist: die Aufsetzdistanz wird ab dem
+/// Schwellenpunkt der Navdaten gemessen. Liegt der schon versetzt (so
+/// liefert es der DFD-Export seit AIRAC 2608), ist die Distanz bereits
+/// ab der Lande-Schwelle — ein Abzug waere ein zweiter.
+///
+/// Heute faellt das nicht auf, weil derselbe Export das Zahlenfeld auf 0
+/// setzt. Ein kuenftiger Zyklus koennte aber BEIDES liefern: versetzte
+/// Geometrie UND einen Wert im Feld. Dann wuerde ein Aufsetzen 600 m
+/// hinter der Schwelle als 154 m gemeldet, die Einstufung des
+/// Aufsetzpunkts spraenge auf „Severe", und alles unterhalb des Versatzes
+/// gaelte als Landung vor der Schwelle. Ohne eine einzige Code-Aenderung,
+/// allein durch neue Daten — genau die Klasse Fehler, aus der dieser
+/// ganze Umbau entstanden ist.
+///
+/// Die Geometrie entscheidet: sagt `geometry_hidden_displacement_ft`,
+/// dass der Versatz dort schon drin ist, wird nichts mehr abgezogen.
+fn displacement_not_in_geometry_ft(m: &runway::RunwayMatch) -> i32 {
+    let geometrie_m = ::geo::distance_m(m.threshold_lat, m.threshold_lon, m.end_lat, m.end_lon);
+    let steckt_in_der_geometrie = runway::geometry_hidden_displacement_ft(
+        &m.airport_ident,
+        &m.runway_ident,
+        m.length_ft,
+        geometrie_m,
+    ) > 0;
+    if steckt_in_der_geometrie {
+        0
+    } else {
+        m.displaced_threshold_ft
+    }
 }
 
 /// Wire-format displaced-threshold value for a persisted `LandingRunwayMatch`
@@ -42594,6 +42638,61 @@ mod touchdown_metadata_stamp_tests {
             "Aufsetzzone = min(900, 2381/3) = 794 m, nicht min(900, 3600/3) = 900 m: {}",
             tdz.tdz_length_m
         );
+    }
+
+    /// v1.6.8-QS4: liefert eine kuenftige Navdaten-Ausgabe BEIDES —
+    /// versetzte Geometrie UND einen Wert im Zahlenfeld — darf der Versatz
+    /// nicht zweimal wirken. Ohne diesen Riegel meldete ein Aufsetzen
+    /// 600 m hinter der Schwelle nur 154 m, die Einstufung des
+    /// Aufsetzpunkts sprang auf „Severe", und alles unterhalb des
+    /// Versatzes galt als Landung vor der Schwelle. Allein durch neue
+    /// Daten, ohne eine Zeile Code-Aenderung.
+    #[test]
+    fn versatz_wirkt_nie_zweimal_egal_was_die_navdaten_liefern() {
+        let bahn = |feld_ft: i32| runway::RunwayMatch {
+            airport_ident: "EDDH".to_string(),
+            runway_ident: "33".to_string(),
+            heading_true_deg: 323.0,
+            length_ft: 12028.0,
+            width_ft: 150.0,
+            surface: "ASP".to_string(),
+            // Schwellenpunkt und Bahnende wie im aktiven Zyklus: der
+            // Versatz steckt in der Geometrie (3215 m statt 3666 m).
+            threshold_lat: 53.628681,
+            threshold_lon: 9.997447,
+            end_lat: 53.654411,
+            end_lon: 9.975211,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            // 650 m hinter der Lande-Schwelle aufgesetzt — bewusst weg
+            // von der 200-m-Bandgrenze der Aufsetzpunkt-Einstufung.
+            touchdown_distance_from_threshold_ft: 2132.5,
+            side: "CENTER".to_string(),
+            displaced_threshold_ft: feld_ft,
+        };
+        for feld in [0, 1464] {
+            let mut stats = FlightStats::default();
+            stats.runway_match = Some(bahn(feld));
+            let a = assess_touchdown(&stats);
+            let td = a.td_distance_from_threshold_m.expect("Bahn gematcht");
+            assert!(
+                (td - 650.0).abs() < 1.0,
+                "Feld={feld}: Aufsetzdistanz muss 650 m bleiben, war {td:.0} m"
+            );
+            assert!(
+                !a.dds.expect("dds").in_pre_threshold_zone,
+                "Feld={feld}: 650 m hinter der Schwelle ist kein Sperrbereich"
+            );
+            assert_eq!(
+                a.aim.expect("aim").class,
+                runway_assessment::AimClass::LongLanding,
+                "Feld={feld}: 650 m gegen 400 m Markierung = 250 m zu lang"
+            );
+        }
+        // Und fuer Anzeige und nutzbare Laenge steht der Versatz trotzdem
+        // zur Verfuegung — auch wenn das Feld schweigt.
+        assert_eq!(effective_displaced_threshold_ft(&bahn(0)), 1464);
+        assert_eq!(effective_displaced_threshold_ft(&bahn(1464)), 1464);
     }
 
     /// v1.6.8-QS2: die 1200-m-Grenze fuer Aufsetzzonen-Markierungen gilt
