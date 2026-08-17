@@ -60,10 +60,10 @@ Diese Erklärungen erscheinen 1:1 in der UI — als Tooltips auf Hover und im Gl
 | **Touchdown (TD)** | Aufsetzen | Der Moment, in dem die Räder den Bahnbelag berühren. |
 | **Centerline (CL)** | Mittellinie | Die gestrichelte weiße Linie genau in der Mitte der Bahn. |
 | **Centerline-Offset / XTD** | Seitenabweichung | Wie weit links oder rechts von der Mittellinie bist du aufgesetzt? Idealwert: 0 m. |
-| **TDZ — Touchdown Zone** | Aufsetzzone | Soll-Bereich zum Aufsetzen — proportional zur Bahnlänge, gedeckelt bei 900 m. Formel: TDZ-Länge = min(Bahnlänge ÷ 3, 900 m). 1500 m Bahn → 500 m TDZ; 2100 m → 700 m; ab 2700 m Bahn greift der 900 m Cap. ICAO Annex 14 mit Gruppen weißer Querstreifen entlang der Centerline. |
-| **AIM — Aim Point** | Ziel-Markierung | Zwei breite weiße Streifen auf der Bahn (symmetrisch zur Centerline, ICAO Annex 14 §5.2.6). Pilot zielt im Anflug optisch drauf, setzt durch den Flare 50–150 m DAHINTER auf (= Anfang der TDZ). Position (AeroACARS 2-Bucket-Logik, FAA AIM 8-9-1): Bahn ≥ 2400 m → 400 m hinter Schwelle, Bahn < 2400 m → 300 m hinter Schwelle. |
+| **TDZ — Touchdown Zone** | Aufsetzzone | Soll-Bereich zum Aufsetzen — proportional zur NUTZBAREN Bahnlänge (LDA, also hinter der versetzten Schwelle), gedeckelt bei 900 m. Formel: TDZ-Länge = min(LDA ÷ 3, 900 m). 1500 m LDA → 500 m TDZ; 2100 m → 700 m; ab 2700 m greift der 900-m-Cap. Ab 1200 m LDA überhaupt erst gemalt. ICAO Annex 14 mit Gruppen weißer Querstreifen entlang der Centerline. **v1.6.8:** vorher stand hier die volle Bahnlänge — auf versetzten Bahnen war die Zone dadurch zu lang. |
+| **AIM — Aim Point** | Ziel-Markierung | Zwei breite weiße Streifen auf der Bahn (symmetrisch zur Centerline, ICAO Annex 14 §5.2.6). Pilot zielt im Anflug optisch drauf, setzt durch den Flare 50–150 m DAHINTER auf (= Anfang der TDZ). Position (AeroACARS 2-Bucket-Logik, FAA AIM 8-9-1 / ICAO Annex 14): **LDA** ≥ 2400 m → 400 m hinter Schwelle, LDA < 2400 m → 300 m hinter Schwelle. Maßgeblich ist die nutzbare Länge, nicht die Bahnfläche — LICC 08 misst 2436 m, hat aber nur 2341 m LDA und damit die 300-m-Markierung. |
 | **TCH — Threshold Crossing Height** | Schwellen-Überflug-Höhe | Wie hoch warst du über dem Boden, als du die Schwelle überflogen hast? ILS-Anflug typisch 49 ft (≈ 15 m). Zu niedrig: Tail-Strike-Risiko. Zu hoch: Long-Landing. |
-| **DDS — Displaced Threshold** | Versetzte Schwelle | Manche Bahnen haben einen Bereich VOR der echten Landeschwelle, der für die Landung verboten ist (Pfeile auf der Bahn). Aufsetzen davor = illegal. Beispiel: OLBA RWY 35, 820 m DDS. |
+| **DDS — Displaced Threshold** | Versetzte Schwelle | Manche Bahnen haben einen Bereich VOR der echten Landeschwelle, der für die Landung verboten ist (Pfeile auf der Bahn). Aufsetzen davor = illegal. Beispiel: OLBA RWY 35, 820 m DDS. **Woher der Wert kommt (v1.6.8):** der Aerosoft-DFD-Export liefert ihn seit AIRAC 2608 nicht mehr als Zahl, sondern versetzt den Schwellenpunkt selbst — `displaced_threshold_ft` steht dann auf 0, `length_ft` bleibt die volle Bahn. Client und Recorder holen die Zahl deshalb aus der OurAirports-Tabelle und prüfen sie gegen die Geometrie (Bahnlänge minus BEIDE Versätze muss dem Abstand Schwelle→Bahnende entsprechen). Wichtig: die gemessene Aufsetzdistanz ist bei dieser Konvention bereits ab der Lande-Schwelle — sie darf NICHT ein zweites Mal um den Versatz gekürzt werden. |
 | **Glide Slope** | Anflug-Winkel | ILS-Standard 3°. Du sinkst 1 m für je 19 m vorwärts. |
 | **Rollout** | Ausrollstrecke | Wie viele Meter rollst du nach dem Aufsetzen, bis du auf ~40 kt abgebremst hast — das ist die typische High-Speed-Exit-Geschwindigkeit, mit der du am nächsten Rollwege-Abzweig die Bahn verlässt. Bis zum vollen Stand auf der Bahn rollt fast niemand aus (= ROLLOUT_STOP_GS_KT = 40 in src-tauri/src/lib.rs:4214). |
 | **Bahn-Auslastung** | — | Ausrollstrecke ÷ Bahnlänge × 100 %. 80 % = nur 20 % Bahn übrig (knapp). |
@@ -190,7 +190,10 @@ export type TchClass = "on_profile" | "slightly_low" | "slightly_high" | "high" 
 const props: RunwayDiagramV2Props = {
   airport_ident: record.runway_match.airport_ident,
   runway_ident: record.runway_match.runway_ident,
-  length_m: record.runway_match.length_ft * 0.3048,
+  // NUTZBARE Bahn (LDA) — der Versatz kommt als eigener Bereich davor,
+  // das Diagramm addiert beides zur physischen Bahn. Volle Länge hier
+  // hinein zu geben zeichnet die Bahn um den Versatz zu lang.
+  length_m: (record.runway_match.length_ft - (record.runway_match.displaced_threshold_ft ?? 0)) * 0.3048,
   surface: record.runway_match.surface ?? null,  // Pilot-Client ONLY
   source: record.runway_match.source ?? null,
   nav_cycle: record.runway_match.nav_cycle ?? null,
@@ -227,7 +230,11 @@ const props: RunwayDiagramV2Props = {
   airport_ident: (pl.runway_match_icao as string | null) ?? "—",
   airport_name: null,  // Webapp resolved that via separate airport-cache
   runway_ident: (pl.runway_match_ident as string | null) ?? "—",
-  length_m: (pl.runway_length_m as number | null) ?? 0,
+  // dito: `runway_length_m` im Wire-Format ist die VOLLE Bahn in Metern,
+  // der Versatz muss abgezogen werden (v1.6.8 — genau hier lag der Fehler,
+  // solange `runway_displaced_threshold_ft` immer 0 war und niemandem auffiel).
+  length_m: ((pl.runway_length_m as number | null) ?? 0)
+    - ((pl.runway_displaced_threshold_ft as number | null) ?? 0) * 0.3048,
   surface: null,  // ← bewusste Asymmetrie, siehe §Surface
   source: (pl.navdata_source as "navigraph" | "ourairports_fallback" | null) ?? null,
   nav_cycle: (pl.navdata_cycle as string | null) ?? null,
