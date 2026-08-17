@@ -201,3 +201,43 @@ describe("versetzte Schwelle in der Kachel", () => {
     expect(buildRolloutValueLabel(ohne, t)!).toContain("55 %");
   });
 });
+
+// ── v1.6.8-QS5: Altdatensaetze bleiben, wie sie gespeichert wurden ──────
+//
+// Die Kachel rechnet aus den Feldern DES DATENSATZES, nicht aus einer
+// Live-Abfrage. Ein vor v1.6.8 gespeicherter Flug traegt dort eine 0 als
+// Versatz — also muss er weiter die volle Bahn und denselben Prozentsatz
+// zeigen wie am Tag der Landung. Forward-only, wie bei den Punkten.
+describe("Altdatensaetze werden nicht nachgerechnet", () => {
+  const ALT_EDDH_33: LandingRunwayMatch = {
+    airport_ident: "EDDH",
+    runway_ident: "33",
+    surface: "ASP",
+    length_ft: 12028,
+    centerline_distance_m: 0.4,
+    centerline_distance_abs_ft: 1,
+    side: "CENTER",
+    touchdown_distance_from_threshold_ft: 1969,
+    displaced_threshold_ft: 0, // so gespeichert vor v1.6.8
+  };
+  const alt = record({
+    score_algorithm_version: 7,
+    runway_match: ALT_EDDH_33,
+    td_distance_from_threshold_m: 600,
+    rollout_distance_m: 1400,
+  });
+
+  it("zeigt weiter die volle Bahn", () => {
+    expect(Math.round(rolloutLdaMeters(ALT_EDDH_33)!)).toBe(3666);
+  });
+
+  it("zeigt weiter den alten Prozentsatz", () => {
+    // 2000 m von 3666 m = 55 % — genau wie am Tag der Landung.
+    expect(buildRolloutValueLabel(alt, t)!).toContain("55 %");
+  });
+
+  it("nennt in der Bahn-Zeile die gespeicherte Laenge", () => {
+    const bahn = buildRolloutExtraLines(alt, t).find((z) => z.includes("EDDH"))!;
+    expect(bahn).toContain("3666");
+  });
+});
