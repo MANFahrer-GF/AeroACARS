@@ -14187,7 +14187,7 @@ fn build_pirep_payload(
     };
     // v0.10.0 (#runway-utilization-score): LDA-basierter
     // Bahn-Auslastungs-Score. Markiert weiter unten am
-    // PirepPayload via score_algorithm_version: Some(8)
+    // PirepPayload via score_algorithm_version: Some(9)
     // (v0.12.0: Float-Toleranz-Refinement;
     //  v0.16.21: MSFS touchdown V/S SimVar-lag g-force-gated de-lag;
     //  v0.20.x: Bahnauslastung-QS — Float-Toleranz 15→20 % LDA, Banding
@@ -14368,12 +14368,15 @@ fn build_pirep_payload(
         // Ausrichtungs-Achse. Beides veraendert Punkte.
         // Forward-only wie alle Vorgaenger: alte Fluege behalten ihren
         // gespeicherten Score, es wird nichts nachgerechnet.
+        // v1.6.8: bump 8→9 — die nutzbare Bahnlaenge endet an der
+        // versetzten Schwelle; Aufsetzzone und Aufsetzpunkt-Markierung
+        // folgen ihr ebenfalls (ICAO Annex 14).
         // v1.6.7: bump 7→8 — zwei Achsen. Sprit: Minderverbrauch bis 15 %
         // unter Plan gibt volle Punkte (vorher 95 ab 5 %). Bahn-Auslastung:
         // gewertet wird die tatsaechlich genutzte Bahnstrecke gegen die LDA
         // (Baender 60/70/80/90 %), keine toleranzbereinigte Zweitgroesse
         // mehr — siehe `sub_rollout_v2`.
-        score_algorithm_version: Some(8),
+        score_algorithm_version: Some(9),
         client_health: build_client_health_report(&stats),
     }
 }
@@ -15598,7 +15601,7 @@ where
         // Banding grosszuegiger) + Sinkraten-Ziel-Korridor.
         // v1.6.7: bump 7→8 — Minderverbrauch bis 15 % voll bepunktet;
         // Bahn-Auslastung auf die echte genutzte Strecke umgestellt.
-        score_algorithm_version: Some(8),
+        score_algorithm_version: Some(9),
     })
 }
 
@@ -24064,7 +24067,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             // v1.6.7: bump 7→8 — Minderverbrauch bis 15 %
                             // voll bepunktet; Bahn-Auslastung auf die echte
                             // genutzte Strecke umgestellt.
-                            score_algorithm_version: Some(8),
+                            score_algorithm_version: Some(9),
                         }
                     })
                 };

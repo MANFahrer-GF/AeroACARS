@@ -360,13 +360,30 @@ describe("RunwayDiagramV2 — kurze Bahnen werden gezeichnet wie sie sind", () =
     expect((x - links) / breite).toBeCloseTo(0.5, 2);
   });
 
-  it("faengt einen unbrauchbaren Wert weiterhin ab", () => {
-    const { container } = render(
-      <RunwayDiagramV2
-        {...props({ length_m: 0, td_distance_from_threshold_m: 100, rollout_m: 100 })}
-      />,
-    );
-    // Kein Absturz, keine Division durch null — das ist der Zweck des Riegels.
-    expect(container.querySelector("svg")).toBeTruthy();
+  it("faengt unbrauchbare Werte weiterhin ab", () => {
+    // 0, negativ, NaN und Bruchteil-Meter: alle vier duerfen die
+    // Zeichnung nicht entarten lassen. Der Bruchteil-Fall kam aus dem
+    // Review — die erste Fassung des Riegels liess ihn durch.
+    for (const kaputt of [0, -50, NaN, 0.5]) {
+      const { container } = render(
+        <RunwayDiagramV2
+          {...props({
+            length_m: kaputt,
+            td_distance_from_threshold_m: 100,
+            rollout_m: 100,
+          })}
+        />,
+      );
+      expect(container.querySelector("svg"), `length_m=${kaputt}`).toBeTruthy();
+      const dot = container.querySelector('circle[fill="#22d3ee"][r="9"]');
+      const tarmac = container.querySelector("rect");
+      if (dot && tarmac) {
+        const anteil =
+          (parseFloat(dot.getAttribute("cx")!) - parseFloat(tarmac.getAttribute("x")!)) /
+          parseFloat(tarmac.getAttribute("width")!);
+        expect(anteil, `length_m=${kaputt}: Punkt muss im Bild bleiben`).toBeGreaterThanOrEqual(-0.01);
+        expect(anteil, `length_m=${kaputt}: Punkt muss im Bild bleiben`).toBeLessThanOrEqual(1.01);
+      }
+    }
   });
 });

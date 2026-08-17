@@ -137,7 +137,13 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   // LOAD …), und dort haette das Bild eine Bahn gezeichnet, die es nicht
   // gibt, mit dem Aufsetzpunkt an der falschen Stelle. Kurze Plaetze sind
   // ein unterstuetzter Fall, kein Datenfehler.
-  const lengthM = Number.isFinite(props.length_m) && props.length_m > 0 ? props.length_m : 500;
+  // Untergrenze 100 m: tief genug, dass keine echte Bahn sie beruehrt (die
+  // kuerzeste mit versetzter Schwelle in den Navdaten hat 292 m nutzbare
+  // Laenge), hoch genug, dass ein kaputter Kleinstwert die Zeichnung nicht
+  // entarten laesst — bei 0,5 m bildete `mToX` jeden Meter auf ein
+  // Vielfaches der Bahnbreite ab. Die alten 500 m waren dafuer zu grob:
+  // sie ueberschrieben echte kurze Plaetze (Review-Befund).
+  const lengthM = Number.isFinite(props.length_m) ? Math.max(100, props.length_m) : 500;
   const ddsM = props.displaced_threshold_m ?? 0;
   const ddsActive = ddsM > 0;
   const totalVisualM = lengthM + ddsM;

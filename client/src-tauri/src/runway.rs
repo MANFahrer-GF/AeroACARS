@@ -391,7 +391,19 @@ pub fn geometry_hidden_displacement_ft(
     const TOLERANZ_M: f64 = 40.0;
 
     let want = runway_ident.trim().to_uppercase();
-    if want.is_empty() || length_ft <= 0.0 || !geometry_len_m.is_finite() {
+    // `!length_ft.is_finite()` MUSS vor dem Groessenvergleich stehen: unter
+    // NaN ist `length_ft <= 0.0` false, und dann sind auch die beiden
+    // folgenden Riegel wirkungslos (`NaN * 0.5`, `(NaN - x).abs() > 40`
+    // sind ebenfalls false) — die Funktion haette den ungeprueften
+    // Tabellenwert zurueckgegeben. Dieselbe Falle, gegen die dieser
+    // Release an anderer Stelle einen Riegel eingebaut hat; hier fiel sie
+    // erst im Review auf, weil der Zufallstest den NaN-Fall von seiner
+    // Zusicherung ausgenommen hatte.
+    if want.is_empty()
+        || !length_ft.is_finite()
+        || length_ft <= 0.0
+        || !geometry_len_m.is_finite()
+    {
         return 0;
     }
     // v1.6.8-QS: erst ALLE Treffer sammeln. Die Tabelle enthaelt sieben
@@ -1977,6 +1989,11 @@ mod tests {
         assert_eq!(geometry_hidden_displacement_ft("EDDH", "", 12028.0, 3215.0), 0);
         assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", 0.0, 3215.0), 0);
         assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", 12028.0, f64::NAN), 0);
+        // Review-Befund: NaN-Bahnlaenge rutschte durch ALLE drei Riegel
+        // und lieferte den ungeprueften Tabellenwert zurueck.
+        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", f32::NAN, 3215.0), 0);
+        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", f32::INFINITY, 3215.0), 0);
+        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", -12028.0, 3215.0), 0);
     }
 
     #[test]
