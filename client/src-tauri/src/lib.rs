@@ -13767,9 +13767,22 @@ fn assess_touchdown(stats: &FlightStats) -> AssessedTouchdown {
     // fallback landing.
     let displaced_threshold_m = rm.displaced_threshold_ft as f64 / FT_PER_M;
     let td_m = td_raw_m - displaced_threshold_m;
+    // v1.6.8: NUTZBARE Laenge, nicht die volle Bahn. Beide Funktionen
+    // messen ausdruecklich „ab der Lande-Schwelle" (siehe ihre Doku) —
+    // die Aufsetzzone sind die ersten 900 m bzw. das erste Drittel DER
+    // LANDEBAHN, und der Aim-Point liegt 300/400 m hinter der Schwelle.
+    // Mit der vollen Bahn als Bezug wurde die Zone auf versetzten Bahnen
+    // zu lang angesetzt (LOWS 15: 900 statt 851 m) und der Aim-Point
+    // kippte an der 2400-m-Grenze zu frueh auf 400 m.
+    //
+    // `effective_displaced_threshold_ft` statt des rohen Feldes, weil der
+    // Versatz seit AIRAC 2608 in der Geometrie steckt. Fuer die
+    // Aufsetzdistanz oben bleibt es beim ROHEN Feld — dort ist die 0 der
+    // Neu-Konvention richtig, weil schon ab der Schwelle gemessen wird.
     let length_m = (rm.length_ft as f64) / FT_PER_M;
-    let tdz = runway_assessment::classify_tdz(td_m, length_m);
-    let aim = Some(runway_assessment::classify_aim(td_m, length_m));
+    let nutzbare_laenge_m = length_m - (effective_displaced_threshold_ft(rm) as f64) / FT_PER_M;
+    let tdz = runway_assessment::classify_tdz(td_m, nutzbare_laenge_m);
+    let aim = Some(runway_assessment::classify_aim(td_m, nutzbare_laenge_m));
     let dds = Some(runway_assessment::classify_displaced(
         td_raw_m,
         rm.displaced_threshold_ft as f64,
@@ -42531,13 +42544,22 @@ mod touchdown_metadata_stamp_tests {
     /// displacement before feeding TDZ/Aim — otherwise a textbook landing
     /// right on the standard aim point gets misclassified as a long/severe
     /// landing by the full displacement distance.
+    ///
+    /// v1.6.8: der Aufsetzpunkt dieser Bahn liegt bei 300 m, nicht bei
+    /// 400 m. Die Markierung haengt nach ICAO Annex 14 an der NUTZBAREN
+    /// Laenge, und die ist hier 3600 − 1219 = 2381 m, also unter der
+    /// 2400-m-Schwelle. Vorher rechnete die Einstufung mit der vollen
+    /// Bahn und erwartete die Markierung 100 m weiter hinten, als sie in
+    /// Wirklichkeit liegt. Die Aussage des Tests bleibt dieselbe: wer
+    /// genau auf der Markierung aufsetzt, darf nicht wegen der versetzten
+    /// Schwelle als „zu lang" gelten.
     #[test]
     fn assess_touchdown_corrects_tdz_and_aim_for_displaced_threshold() {
         const FT_PER_M: f64 = 3.280_839_895;
-        // 4000 ft displaced (per eddp_nav_fixture_displaced) + exactly the
-        // 400 m long-runway aim point past the LANDING threshold, expressed
-        // as raw pavement-start-relative feet.
-        let raw_ft = 4000.0 + 400.0 * FT_PER_M;
+        // 4000 ft displaced (per eddp_nav_fixture_displaced) + der
+        // Aufsetzpunkt dieser Bahn (300 m bei 2381 m nutzbarer Laenge),
+        // ausgedrueckt als rohe Distanz ab Bahnanfang.
+        let raw_ft = 4000.0 + 300.0 * FT_PER_M;
         let mut stats = FlightStats::default();
         stats.runway_match = Some(eddp_26r_match_with_raw_td_and_displacement(raw_ft, 4000));
         stats.runway_nav_geometry = eddp_nav_fixture_displaced().runways.into_iter().find(|r| r.designator == "26R");
@@ -42548,8 +42570,8 @@ mod touchdown_metadata_stamp_tests {
             .td_distance_from_threshold_m
             .expect("runway matched");
         assert!(
-            (td_m - 400.0).abs() < 0.5,
-            "expected ~400 m from the LANDING threshold, got {td_m}"
+            (td_m - 300.0).abs() < 0.5,
+            "expected ~300 m from the LANDING threshold, got {td_m}"
         );
         let aim = assessed.aim.expect("aim computed");
         assert_eq!(
@@ -42559,8 +42581,19 @@ mod touchdown_metadata_stamp_tests {
              because the runway has a displaced threshold (got delta={})",
             aim.delta_m
         );
+        assert!(
+            (aim.aim_point_m - 300.0).abs() < 0.5,
+            "Markierung folgt der nutzbaren Laenge (2381 m < 2400 m → 300 m), \
+             nicht der vollen Bahn: {}",
+            aim.aim_point_m
+        );
         let tdz = assessed.tdz.expect("runway long enough for TDZ");
-        assert!(tdz.in_tdz, "400 m past the landing threshold is inside the TDZ");
+        assert!(tdz.in_tdz, "300 m past the landing threshold is inside the TDZ");
+        assert!(
+            (tdz.tdz_length_m - 793.0).abs() < 2.0,
+            "Aufsetzzone = min(900, 2381/3) = 794 m, nicht min(900, 3600/3) = 900 m: {}",
+            tdz.tdz_length_m
+        );
     }
 
     /// v0.19.x FIX: a touchdown that lands ON the displaced-threshold

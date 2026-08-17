@@ -465,20 +465,28 @@ fn displaced_threshold_uses_one_reference_frame() {
 }
 
 #[test]
-fn touchdown_zone_follows_physical_length_not_lda() {
-    // Die Aufsetzzone haengt an der PHYSISCHEN Bahnlaenge — wie in
+fn touchdown_zone_folgt_der_nutzbaren_laenge() {
+    // v1.6.8: die Aufsetzzone gehoert zur LANDEBAHN, nicht zur
+    // Bahnflaeche inklusive gesperrtem Vorfeld — identisch zu
     // `runway_assessment::classify_tdz`, aus dem `td_in_tdz` im Payload
-    // kommt. Bahn 2800 m, 656 ft (= 200 m) displaced: Zone = min(900,
-    // 2800/3) = 900 m. Ein Aufsetzen bei 880 m liegt also DRIN und darf
-    // keine „spaet aufgesetzt"-Begruendung ausloesen (mit der LDA als
-    // Bezug waere die Zone 866 m gewesen und die Landung „dahinter").
+    // kommt. Bahn 2800 m, 656 ft (= 200 m) versetzt → LDA 2600 m →
+    // Zone = min(900, 2600/3) = 866 m.
+    //
+    // Ein Aufsetzen bei 880 m liegt damit DAHINTER (mit der vollen Bahn
+    // als Bezug waere die Zone 900 m gewesen und die Landung knapp drin).
+    // Die Ausrollstrecke allein waere volle Punktzahl → die Begruendung
+    // benennt den Aufsetzpunkt.
     let r = sub_rollout_v2(&ok_input(880.0, 900.0, 2800.0, 656, "A320"));
     assert_eq!(r.points, 80, "1780 m von 2600 m LDA = 68,5 % genutzt");
     assert_eq!(
         r.rationale_key.as_deref(),
-        Some("landing.rat.good_stop"),
-        "880 m liegen in der 900-m-Aufsetzzone → keine long_float-Begruendung"
+        Some("landing.rat.long_float"),
+        "880 m liegen hinter der 866-m-Aufsetzzone"
     );
+    // Und knapp davor bleibt es die normale Begruendung.
+    let r = sub_rollout_v2(&ok_input(850.0, 930.0, 2800.0, 656, "A320"));
+    assert_eq!(r.points, 80);
+    assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.good_stop"));
 }
 
 #[test]

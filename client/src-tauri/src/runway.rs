@@ -394,14 +394,24 @@ pub fn geometry_hidden_displacement_ft(
     if want.is_empty() || length_ft <= 0.0 || !geometry_len_m.is_finite() {
         return 0;
     }
+    // v1.6.8-QS: erst ALLE Treffer sammeln. Die Tabelle enthaelt sieben
+    // Flugplaetze, bei denen dieselbe Kennung mit verschiedenen Versaetzen
+    // doppelt vorkommt (leere Kennungen, „XX", Hubschrauber-Deck H2/H6).
+    // Wer einfach den ersten Treffer nimmt, macht das Ergebnis von der
+    // Zeilenreihenfolge der CSV abhaengig — bei widerspruechlichen Angaben
+    // gibt es hier gar nichts.
+    let mut treffer: Vec<(i32, i32)> = Vec::new();
     for row in rows_for_airport(airport_icao) {
-        let (eigen, gegen) = if row.le_ident.trim().to_uppercase() == want {
-            (row.le_displaced_threshold_ft, row.he_displaced_threshold_ft)
+        if row.le_ident.trim().to_uppercase() == want {
+            treffer.push((row.le_displaced_threshold_ft, row.he_displaced_threshold_ft));
         } else if row.he_ident.trim().to_uppercase() == want {
-            (row.he_displaced_threshold_ft, row.le_displaced_threshold_ft)
-        } else {
-            continue;
-        };
+            treffer.push((row.he_displaced_threshold_ft, row.le_displaced_threshold_ft));
+        }
+    }
+    if treffer.len() > 1 && treffer.iter().any(|t| *t != treffer[0]) {
+        return 0;
+    }
+    for (eigen, gegen) in treffer.into_iter().take(1) {
         if eigen <= 0 {
             return 0;
         }
@@ -1978,6 +1988,19 @@ mod tests {
         assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", 12028.0, 3000.0), 0);
         // Knapp innerhalb der Toleranz bleibt es dabei.
         assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", 12028.0, 3245.0), 1464);
+    }
+
+    #[test]
+    fn widerspruechliche_tabellenzeilen_liefern_null() {
+        // v1.6.8-QS: sieben Flugplaetze fuehren dieselbe Kennung doppelt
+        // mit verschiedenen Versaetzen (leere Kennungen, „XX",
+        // Hubschrauber-Decks). Ergebnis darf nicht von der
+        // Zeilenreihenfolge abhaengen — bei Widerspruch: nichts abziehen.
+        // LW75 „XX" traegt 1000 ft in der einen und 5566 ft in der
+        // anderen Zeile.
+        assert_eq!(geometry_hidden_displacement_ft("LW75", "XX", 6000.0, 1500.0), 0);
+        // Leere Kennung faengt schon der Riegel oben ab.
+        assert_eq!(geometry_hidden_displacement_ft("AR62", "", 3000.0, 800.0), 0);
     }
 
     #[test]
