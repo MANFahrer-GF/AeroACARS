@@ -126,7 +126,18 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   // - totalVisualM: gesamte physische Bahn (DDS + Lande-Bereich)
   // Das tarmac-Rect spannt die gesamte physische Bahn ab; mToX(0) liegt
   // beim Landethreshold (= NICHT am linken Rand der Bahn bei DDS > 0).
-  const lengthM = Math.max(500, props.length_m);
+  // v1.6.8-QS3: der Riegel schuetzt nur noch gegen unbrauchbare Werte
+  // (0, negativ, NaN) — er ueberschreibt keine echte kurze Bahn mehr.
+  //
+  // Dieselbe Untergrenze steckte frueher auch in der Prozent-Rechnung und
+  // machte dort aus einer knappen Landung eine komfortable (v0.19.x-Fix,
+  // siehe Test „ignores the SVG-geometry floor"). Im Bild blieb sie
+  // stehen — bis die versetzten Schwellen dazukamen: 19 Bahnen rutschen
+  // durch den Abzug unter 500 m nutzbare Laenge (EDKU, EDXZ, EDNG,
+  // LOAD …), und dort haette das Bild eine Bahn gezeichnet, die es nicht
+  // gibt, mit dem Aufsetzpunkt an der falschen Stelle. Kurze Plaetze sind
+  // ein unterstuetzter Fall, kein Datenfehler.
+  const lengthM = Number.isFinite(props.length_m) && props.length_m > 0 ? props.length_m : 500;
   const ddsM = props.displaced_threshold_m ?? 0;
   const ddsActive = ddsM > 0;
   const totalVisualM = lengthM + ddsM;

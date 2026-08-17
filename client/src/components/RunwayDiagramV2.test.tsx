@@ -326,3 +326,47 @@ describe("RunwayDiagramV2 — skin display flags actually hide/show elements", (
     expect(hidden.container.querySelector("polygon")).toBeNull();
   });
 });
+
+// v1.6.8-QS3: die 500-m-Untergrenze der SVG-Geometrie darf keine echte
+// kurze Bahn mehr ueberschreiben. Ausloeser: durch den Abzug der
+// versetzten Schwelle rutschen 19 Bahnen unter 500 m NUTZBARE Laenge
+// (EDKU 03/21, EDXZ 12/30, LOAD 25 …). Dort zeichnete das Bild eine
+// 500-m-Bahn und setzte den Aufsetzpunkt entsprechend falsch.
+describe("RunwayDiagramV2 — kurze Bahnen werden gezeichnet wie sie sind", () => {
+  it("setzt den Aufsetzpunkt auf einer 400-m-Bahn in die Mitte, nicht ins erste Fuenftel", () => {
+    const { container } = render(
+      <RunwayDiagramV2
+        {...props({
+          length_m: 400,
+          td_distance_from_threshold_m: 200,
+          rollout_m: 100,
+        })}
+      />,
+    );
+    // Gemessen am gezeichneten Punkt, nicht am Text: die Prozent-Zeile
+    // rechnet seit dem v0.19.x-Fix ohnehin ohne die Untergrenze — der
+    // Fehler steckte allein in der SVG-Geometrie.
+    //
+    // 200 m von 400 m = 50 % der Bahn → der Aufsetzpunkt sitzt in der
+    // Mitte des Bahn-Rechtecks. Mit der alten Untergrenze waeren es
+    // 200/500 = 40 % gewesen, also gut 100 px zu weit links.
+    const dot = container.querySelector('circle[fill="#22d3ee"][r="9"]');
+    const tarmac = container.querySelector("rect");
+    expect(dot, "Aufsetzpunkt muss gezeichnet sein").not.toBeNull();
+    expect(tarmac, "Bahn-Rechteck muss gezeichnet sein").not.toBeNull();
+    const x = parseFloat(dot!.getAttribute("cx")!);
+    const links = parseFloat(tarmac!.getAttribute("x")!);
+    const breite = parseFloat(tarmac!.getAttribute("width")!);
+    expect((x - links) / breite).toBeCloseTo(0.5, 2);
+  });
+
+  it("faengt einen unbrauchbaren Wert weiterhin ab", () => {
+    const { container } = render(
+      <RunwayDiagramV2
+        {...props({ length_m: 0, td_distance_from_threshold_m: 100, rollout_m: 100 })}
+      />,
+    );
+    // Kein Absturz, keine Division durch null — das ist der Zweck des Riegels.
+    expect(container.querySelector("svg")).toBeTruthy();
+  });
+});
