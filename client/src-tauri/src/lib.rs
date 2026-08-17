@@ -14661,7 +14661,23 @@ fn fill_v2_rollout_fields(
     // data from the OurAirports CSV too, so the LDA-based rollout-
     // utilization correction (sub_rollout_v2) no longer silently assumes
     // full runway length for every OurAirports-fallback landing.
-    input.runway_displaced_threshold_ft = rm.map(|m| m.displaced_threshold_ft);
+    // v1.6.8: fuer die NUTZBARE Laenge zaehlt der echte Versatz der
+    // Lande-Schwelle — auch wenn er in der Geometrie steckt statt im
+    // Zahlenfeld. Seit AIRAC 2608 liefert der DFD-Export den
+    // Schwellenpunkt bereits versetzt und das Feld auf 0, `length_ft`
+    // blieb aber die volle Bahn. Die Bewertung rechnete dadurch gegen zu
+    // viel Bahn (EDDH 33: 446 m zu viel). `geometry_hidden_displacement_ft`
+    // holt die Zahl aus der eingebetteten Tabelle und prueft sie gegen die
+    // Geometrie, statt ihr zu glauben.
+    //
+    // WICHTIG: das aendert NUR den Nenner. Die Aufsetzdistanz kommt
+    // weiter aus `assess_touchdown`, das seinerseits
+    // `RunwayMatch::displaced_threshold_ft` verwendet — dort steht
+    // bewusst 0, wenn die Geometrie den Versatz schon enthaelt. Wer die
+    // beiden Zahlen zusammenwirft, zieht den Versatz zweimal ab und
+    // erklaert korrekte Landungen zu Aufsetzern vor der Schwelle (an 25
+    // Fluegen des Bestands durchgerechnet, bevor es gebaut wurde).
+    input.runway_displaced_threshold_ft = rm.map(effective_displaced_threshold_ft);
     // assess_touchdown(stats).dds.in_pre_threshold_zone — identisch zu
     // dem was im TouchdownPayload + LandingRecord landet (single source).
     input.pre_displaced_threshold = assessed.dds.map(|d| d.in_pre_threshold_zone);
@@ -15046,6 +15062,35 @@ fn resolve_flight_ident(flight_number: &str, callsign: Option<&str>) -> String {
         .unwrap_or_else(|| flight_number.to_string())
 }
 
+/// v1.6.8 — der Versatz der Lande-Schwelle, wie ihn Anzeige UND Bewertung
+/// brauchen: der echte, egal ob er im Zahlenfeld oder in der Geometrie steht.
+///
+/// Der Aerosoft-DFD-Export hat die Konvention gewechselt. Bis Zyklus 2604
+/// lieferte er den Bahnanfang als Schwellenpunkt und den Versatz als Zahl,
+/// seit 2608 liegt der Schwellenpunkt selbst versetzt und die Zahl ist 0 —
+/// `length_ft` blieb beidesmal die volle Bahn. `RunwayMatch::
+/// displaced_threshold_ft` traegt deshalb nur noch den Anteil, der NICHT
+/// schon in der Geometrie steckt; `geometry_hidden_displacement_ft` holt
+/// den Rest aus der eingebetteten Tabelle und prueft ihn gegen die
+/// Geometrie. Das Maximum ist in beiden Konventionen der richtige Wert.
+///
+/// **Nicht fuer die Aufsetzdistanz verwenden.** `assess_touchdown` zieht
+/// `RunwayMatch::displaced_threshold_ft` von der gemessenen Distanz ab —
+/// dort ist die 0 der Neu-Konvention genau richtig, weil die Distanz schon
+/// ab der Lande-Schwelle gemessen wird. Wer stattdessen diesen Wert
+/// einsetzt, zieht den Versatz zweimal ab und macht aus korrekten
+/// Landungen Aufsetzer vor der Schwelle (im Bestand waeren es 25 gewesen).
+fn effective_displaced_threshold_ft(m: &runway::RunwayMatch) -> i32 {
+    let geometrie_m = ::geo::distance_m(m.threshold_lat, m.threshold_lon, m.end_lat, m.end_lon);
+    let versteckt = runway::geometry_hidden_displacement_ft(
+        &m.airport_ident,
+        &m.runway_ident,
+        m.length_ft,
+        geometrie_m,
+    );
+    m.displaced_threshold_ft.max(versteckt)
+}
+
 /// Wire-format displaced-threshold value for a persisted `LandingRunwayMatch`
 /// / live `TouchdownPayload`. Reads from the runway match's OWN field
 /// (`RunwayMatch::displaced_threshold_ft`), never from `runway_nav_geometry`.
@@ -15059,8 +15104,14 @@ fn resolve_flight_ident(flight_number: &str, callsign: Option<&str>) -> String {
 /// Reading from the match itself instead keeps what's persisted/displayed
 /// in sync with the score for the same landing. Extracted so this is
 /// directly unit-testable without needing a full `FlightStats` fixture.
+///
+/// v1.6.8: liefert den EFFEKTIVEN Versatz (siehe
+/// `effective_displaced_threshold_ft`). Ohne das zeigte die Kachel „1818 m
+/// von 3250 m · 56 %", waehrend die Punkte gegen 2952 m gerechnet wurden —
+/// genau das Auseinanderfallen von Anzeige und Bewertung, das v1.6.7
+/// gerade beseitigt hat.
 fn wire_displaced_threshold_ft(runway_match: Option<&runway::RunwayMatch>) -> Option<i32> {
-    runway_match.map(|m| m.displaced_threshold_ft)
+    runway_match.map(effective_displaced_threshold_ft)
 }
 
 fn build_landing_record<F>(
@@ -42597,6 +42648,43 @@ mod touchdown_metadata_stamp_tests {
             "must report the real displaced threshold even with zero Navigraph geometry \
              (this fixture has none) — an OurAirports-only match"
         );
+    }
+
+    /// v1.6.8: steckt der Versatz in der Geometrie statt im Zahlenfeld
+    /// (DFD-Konvention ab Zyklus 2608), muss der Wire-Wert ihn trotzdem
+    /// melden — sonst zeigt die Kachel die volle Bahn, waehrend die
+    /// Punkte gegen die verkuerzte rechnen.
+    #[test]
+    fn wire_displaced_threshold_ft_findet_den_versatz_auch_in_der_geometrie() {
+        // EDDH 33 aus den aktiven Navdaten: Bahn 12028 ft, Schwellenpunkt
+        // schon versetzt, Zahlenfeld 0. Abstand Schwelle→far_end 3215 m,
+        // Differenz zur Bahn = 451 m = beide Versaetze (33: 446, 15: 0).
+        let m = runway::RunwayMatch {
+            airport_ident: "EDDH".to_string(),
+            runway_ident: "33".to_string(),
+            heading_true_deg: 323.0,
+            length_ft: 12028.0,
+            width_ft: 150.0,
+            surface: "ASP".to_string(),
+            threshold_lat: 53.628681,
+            threshold_lon: 9.997447,
+            end_lat: 53.654411,
+            end_lon: 9.975211,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            touchdown_distance_from_threshold_ft: 1000.0,
+            side: "CENTER".to_string(),
+            displaced_threshold_ft: 0,
+        };
+        assert_eq!(
+            wire_displaced_threshold_ft(Some(&m)),
+            Some(1464),
+            "Versatz steckt in der Geometrie und muss trotzdem im Wire-Wert stehen"
+        );
+        // Und die Aufsetzdistanz bleibt unangetastet: `assess_touchdown`
+        // zieht weiter das ROHE Feld ab (0), nicht diesen Wert. Sonst
+        // waeren 1000 ft hinter der Schwelle ploetzlich 464 ft davor.
+        assert_eq!(m.displaced_threshold_ft, 0);
     }
 
     #[test]

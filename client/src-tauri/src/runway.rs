@@ -347,6 +347,81 @@ fn rows_for_airport(icao: &str) -> impl Iterator<Item = &'static RunwayRow> {
     idx.iter().map(move |i| &table[*i as usize])
 }
 
+/// Der Versatz der LANDE-Schwelle dieser Bahn in Fuss — aber nur, wenn
+/// er in der Bahnlaenge noch NICHT beruecksichtigt ist.
+///
+/// **Hintergrund (v1.6.8).** Der Aerosoft-DFD-Export hat zwischen zwei
+/// AIRAC-Zyklen die Konvention gewechselt. Bis 2604 lieferte er den
+/// Bahnanfang als Schwellenpunkt und den Versatz als Zahl (OLBA 35:
+/// Punkt = Bahnanfang, Feld = 2690 ft). Seit 2608 liegt der
+/// Schwellenpunkt selbst schon versetzt (derselbe Platz: 819 m weiter
+/// unten) und das Feld steht auf 0 — der Versatz steckt in der
+/// Geometrie. `length_ft` blieb dabei die VOLLE Bahnlaenge.
+///
+/// Fuer die Aufsetzdistanz ist damit alles richtig: sie wird vom
+/// Schwellenpunkt aus gemessen. Fuer die nutzbare Laenge nicht: die
+/// Bewertung rechnete gegen die ganze Bahn statt gegen den Teil hinter
+/// der Schwelle und war auf solchen Bahnen zu milde — bei EDDH 33 um
+/// 446 m, also 12 %.
+///
+/// Die Zahl steht in der eingebetteten OurAirports-Tabelle (4.287 der
+/// 48.143 Bahnen). Sie wird NICHT blind uebernommen, sondern gegen die
+/// Geometrie geprueft: `far_end` ist die GEGENUEBERLIEGENDE versetzte
+/// Schwelle, der Abstand Schwelle→far_end ist also um BEIDE Versaetze
+/// kuerzer als die Bahn. Nur wenn diese Rechnung aufgeht, ist die
+/// CSV-Zeile glaubwuerdig UND die Geometrie versetzt-basiert.
+///
+/// Damit erledigen sich beide Sonderfaelle von selbst:
+///   * Alte DFD-Konvention (Punkt = Bahnanfang): der Abstand entspricht
+///     der vollen Laenge, die Probe schlaegt fehl → 0. Richtig, denn
+///     dort traegt `RunwayMatch::displaced_threshold_ft` den Wert schon.
+///   * OurAirports-Pfad: dito, die Geometrie ist dort Bahnanfang zu
+///     Bahnende → 0, und das Feld traegt den Versatz ohnehin.
+///
+/// `geometry_len_m` ist der gemessene Abstand Schwelle→far_end.
+pub fn geometry_hidden_displacement_ft(
+    airport_icao: &str,
+    runway_ident: &str,
+    length_ft: f32,
+    geometry_len_m: f64,
+) -> i32 {
+    /// Wie weit Tabelle und Geometrie auseinanderliegen duerfen. Die
+    /// Stichprobe ueber 20 Bahnen lag bei 0-30 m (EDDH 23: 186 m
+    /// Geometrie-Delta gegen 156 m Tabelle — Rundung in beiden Quellen).
+    const TOLERANZ_M: f64 = 40.0;
+
+    let want = runway_ident.trim().to_uppercase();
+    if want.is_empty() || length_ft <= 0.0 || !geometry_len_m.is_finite() {
+        return 0;
+    }
+    for row in rows_for_airport(airport_icao) {
+        let (eigen, gegen) = if row.le_ident.trim().to_uppercase() == want {
+            (row.le_displaced_threshold_ft, row.he_displaced_threshold_ft)
+        } else if row.he_ident.trim().to_uppercase() == want {
+            (row.he_displaced_threshold_ft, row.le_displaced_threshold_ft)
+        } else {
+            continue;
+        };
+        if eigen <= 0 {
+            return 0;
+        }
+        // Plausibilitaet: eine Schwelle jenseits der halben Bahn waere
+        // ein Tippfehler. Freiwilligen-Daten, siehe
+        // `repair_corrupt_thresholds`.
+        if (eigen as f32) >= length_ft * 0.5 {
+            return 0;
+        }
+        // Die Probe: Laenge minus beide Versaetze muss die gemessene
+        // Geometrie ergeben.
+        let erwartet_m = (length_ft - (eigen + gegen.max(0)) as f32) as f64 * 0.3048;
+        if (erwartet_m - geometry_len_m).abs() > TOLERANZ_M {
+            return 0;
+        }
+        return eigen;
+    }
+    0
+}
+
 /// Parse the embedded CSV exactly once. The OnceLock means concurrent
 /// callers from a thread pool don't race on parsing — first one through
 /// the door does the work, everyone else waits on the lock and reads
@@ -1840,6 +1915,69 @@ mod tests {
             m.displaced_threshold_ft, 2788,
             "OLBA/35 has a real displaced threshold in the bundled CSV — must not silently read as 0"
         );
+    }
+
+    // ── v1.6.8: versteckter Versatz (DFD-Konventionswechsel 2604→2608) ──
+
+    #[test]
+    fn versteckter_versatz_wird_erkannt_wenn_die_geometrie_ihn_bestaetigt() {
+        // EDDH 33 im aktiven Zyklus: Bahn 12028 ft (3666 m), Geometrie
+        // Schwelle→far_end 3215 m. Die Differenz von 451 m ist die Summe
+        // beider Versaetze (33: 1464 ft = 446 m, 15: keiner) — die Probe
+        // geht auf, der Wert ist glaubwuerdig.
+        let ft = geometry_hidden_displacement_ft("EDDH", "33", 12028.0, 3215.0);
+        assert_eq!(ft, 1464, "EDDH 33 traegt 1464 ft Versatz in der Geometrie");
+        // Das Gegenende hat keinen — dort gibt es nichts abzuziehen.
+        assert_eq!(geometry_hidden_displacement_ft("EDDH", "15", 12028.0, 3215.0), 0);
+    }
+
+    #[test]
+    fn beide_enden_versetzt_geht_ebenfalls_auf() {
+        // EDDH 05/23: 978 + 512 ft = 454 m, Bahn 3250 m, Geometrie 2789 m
+        // (Delta 461 m — innerhalb der 40-m-Toleranz beider Quellen).
+        assert_eq!(geometry_hidden_displacement_ft("EDDH", "05", 10663.0, 2789.0), 978);
+        assert_eq!(geometry_hidden_displacement_ft("EDDH", "23", 10663.0, 2789.0), 512);
+    }
+
+    #[test]
+    fn alte_dfd_konvention_liefert_null() {
+        // Zyklus 2604 lieferte den Bahnanfang als Schwellenpunkt: die
+        // Geometrie ist dann die VOLLE Bahn. Die Probe schlaegt fehl →
+        // 0, denn dort traegt `displaced_threshold_ft` den Wert bereits.
+        // Doppelt abziehen waere der Bug, den das hier verhindert.
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDH", "33", 12028.0, 3666.0),
+            0,
+            "volle Bahn als Geometrie → Versatz steckt NICHT in der Geometrie"
+        );
+    }
+
+    #[test]
+    fn bahn_ohne_versatz_bleibt_unangetastet() {
+        // EDDS 25 (Thomas' Ausloeser-Flug): kein Versatz an diesem Ende.
+        assert_eq!(geometry_hidden_displacement_ft("EDDS", "25", 10974.0, 3036.0), 0);
+        // EDDB 06R/24L: beide Enden ohne Versatz, Geometrie = Bahn.
+        assert_eq!(geometry_hidden_displacement_ft("EDDB", "06R", 13123.0, 3988.0), 0);
+    }
+
+    #[test]
+    fn unbekannte_bahn_und_unsinnige_eingaben_liefern_null() {
+        assert_eq!(geometry_hidden_displacement_ft("XXXX", "33", 12028.0, 3215.0), 0);
+        assert_eq!(geometry_hidden_displacement_ft("EDDH", "99", 12028.0, 3215.0), 0);
+        assert_eq!(geometry_hidden_displacement_ft("EDDH", "", 12028.0, 3215.0), 0);
+        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", 0.0, 3215.0), 0);
+        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", 12028.0, f64::NAN), 0);
+    }
+
+    #[test]
+    fn geometrie_die_nicht_zur_tabelle_passt_wird_verworfen() {
+        // Weicht die gemessene Geometrie um mehr als 40 m von dem ab, was
+        // Laenge minus beide Versaetze ergibt, passen die Quellen nicht
+        // zusammen — dann lieber nichts abziehen als das Falsche.
+        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", 12028.0, 3400.0), 0);
+        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", 12028.0, 3000.0), 0);
+        // Knapp innerhalb der Toleranz bleibt es dabei.
+        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", 12028.0, 3245.0), 1464);
     }
 
     #[test]
