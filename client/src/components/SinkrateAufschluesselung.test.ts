@@ -98,3 +98,20 @@ describe("sinkrateHinweis", () => {
     expect(sinkrateHinweis({ vs_at_edge_fpm: -250 })).toBeNull();
   });
 });
+
+// QS-Runde: der Fall, den erst der Bestand gezeigt hat.
+describe("sinkrateHinweis — steigendes Flugzeug", () => {
+  it("liefert positives Eigensinken, wenn das Flugzeug im Fenster stieg", () => {
+    // K4S2 aus dem Bestand: gemessen −413, Gelände −451, eigen +38.
+    const h = sinkrateHinweis({
+      vs_at_edge_fpm: -413,
+      vs_gelaende_fpm: -451,
+      vs_eigensinken_fpm: 38,
+    })!;
+    expect(h.art).toBe("gelaende");
+    expect(h.eigensinken).toBe(38);
+    // Der Text entscheidet am Vorzeichen — die Zahl bleibt roh, damit die
+    // Oberfläche beide Formulierungen bauen kann.
+    expect(h.gelaende).toBe(451);
+  });
+});

@@ -426,7 +426,8 @@
       },
       "bucket_bewertet": "bewertet",
       "gelaende_hinweis": "Auf dieser Bahn steigt der Boden dem Flugzeug entgegen: {{gelaende}} fpm der gemessenen Sinkrate kommen vom Gelände, nicht von dir. Dein eigener Sinkflug lag bei {{eigensinken}} fpm. Für die Bewertung zählt weiterhin der gemessene Wert — der Hinweis steht hier, damit du ihn einordnen kannst.",
-      "sim_abstand_hinweis": "Der Simulator meldet für dieselbe Landung {{referenz}} fpm — {{abstand}} fpm Unterschied. So große Abstände entstehen bei Hopsern oder wenn das Fahrwerk anders misst als der Rumpf. Bewertet wird unser Wert; beide stehen hier nebeneinander, damit du es einordnen kannst."
+      "sim_abstand_hinweis": "Der Simulator meldet für dieselbe Landung {{referenz}} fpm — {{abstand}} fpm Unterschied. So große Abstände entstehen bei Hopsern oder wenn das Fahrwerk anders misst als der Rumpf. Bewertet wird unser Wert; beide stehen hier nebeneinander, damit du es einordnen kannst.",
+      "gelaende_hinweis_steigend": "Auf dieser Bahn steigt der Boden dem Flugzeug entgegen: die gemessenen {{gelaende}} fpm kommen vom Gelände, nicht von dir — im Messfenster bist du sogar noch mit {{eigensinken}} fpm gestiegen. Für die Bewertung zählt weiterhin der gemessene Wert."
     },
     "gforce_forensik": {
       "title": "💪 G-Kraft-Forensik",

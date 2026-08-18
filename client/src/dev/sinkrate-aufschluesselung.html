@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<title>Sinkrate — Aufschlüsselung (Entwurf)</title>
+<title>Sinkrate — Aufschlüsselung (Entwurf, korrigiert)</title>
 <style>
   :root{
     --bg:#0a0d10; --surface-2:#101620; --surface-3:#182029; --line:#2a3541;
@@ -96,6 +96,13 @@ Ein Teil davon ist erklärbar: die Sim-Referenz misst am Fahrwerk, unsere Kurve 
 Flugzeugs, und das Gelände steckt in beiden unterschiedlich drin. Genau deshalb der Vorschlag,
 die Bestandteile zu zeigen statt nur das Ergebnis.</p>
 
+<h2>1b · Das Vorzeichen — und warum es hier steht</h2>
+<p class="lead">Der Geländewert ist der <b>Beitrag zur gemessenen Zahl</b>, nicht die Bewegung des
+Bodens. Steigt der Boden mit 387 fpm entgegen, macht er die Messung um 387 fpm härter — der
+Beitrag ist also <b>−387</b>. Damit gilt immer <code>gemessen = eigener Sinkflug + Gelände</code>,
+und ein falsches Vorzeichen fällt auf, weil die Summe nicht aufgeht. Ein erster Entwurf dieses
+Blattes hatte es genau andersherum; gefunden hat es der Test, nicht das Auge.</p>
+
 <h2>2 · Drei Darstellungen für den Landebericht</h2>
 <p class="lead">Dieselben drei echten Landungen in jeder Variante: eine unauffällige, eine mit
 spürbarem Gelände, eine mit großem Abstand zur Sim-Referenz.</p>
@@ -106,17 +113,17 @@ spürbarem Gelände, eine mit großem Abstand zur Sim-Referenz.</p>
     <div class="kopf"><b>Sinkrate</b><span class="flug">OMDB 30R · A20N · MSFS</span></div>
     <div class="haupt"><span class="zahl">−100</span><span class="einheit">fpm</span></div>
     <div class="zeilen">
-      <div class="zeile"><span>Sinkflug des Flugzeugs</span><b>−100 fpm</b></div>
-      <div class="zeile"><span>Gelände unter dir</span><b>±0 fpm</b></div>
+      <div class="zeile"><span>dein Sinkflug</span><b>−100 fpm</b></div>
+      <div class="zeile"><span>Beitrag des Geländes</span><b>±0 fpm</b></div>
       <div class="zeile zeile--ref"><span>Referenz des Simulators</span><b>−101 fpm</b></div>
     </div>
   </div>
   <div class="karte">
     <div class="kopf"><b>Sinkrate</b><span class="flug">LIRN 24 · A320 · X-Plane</span></div>
-    <div class="haupt"><span class="zahl">−438</span><span class="einheit">fpm</span></div>
+    <div class="haupt"><span class="zahl">−553</span><span class="einheit">fpm</span></div>
     <div class="zeilen">
-      <div class="zeile"><span>Sinkflug des Flugzeugs</span><b>−825 fpm</b></div>
-      <div class="zeile"><span>Gelände unter dir</span><b style="color:var(--sem-warn)">+387 fpm</b></div>
+      <div class="zeile"><span>dein Sinkflug</span><b>−166 fpm</b></div>
+      <div class="zeile"><span>Beitrag des Geländes</span><b style="color:var(--sem-warn)">−387 fpm</b></div>
       <div class="zeile zeile--ref"><span>Referenz des Simulators</span><b>— (X-Plane)</b></div>
     </div>
   </div>
@@ -124,8 +131,8 @@ spürbarem Gelände, eine mit großem Abstand zur Sim-Referenz.</p>
     <div class="kopf"><b>Sinkrate</b><span class="flug">KEWR 04R · B738 · MSFS</span></div>
     <div class="haupt"><span class="zahl">−602</span><span class="einheit">fpm</span></div>
     <div class="zeilen">
-      <div class="zeile"><span>Sinkflug des Flugzeugs</span><b>−629 fpm</b></div>
-      <div class="zeile"><span>Gelände unter dir</span><b>+27 fpm</b></div>
+      <div class="zeile"><span>dein Sinkflug</span><b>−575 fpm</b></div>
+      <div class="zeile"><span>Beitrag des Geländes</span><b>−27 fpm</b></div>
       <div class="zeile zeile--ref"><span>Referenz des Simulators</span><b style="color:var(--sem-warn)">−108 fpm</b></div>
     </div>
   </div>
@@ -139,7 +146,7 @@ spürbarem Gelände, eine mit großem Abstand zur Sim-Referenz.</p>
     <div class="balken">
       <div class="bar"><i class="flug-anteil" style="width:100%"></i></div>
       <div class="legende">
-        <span><i style="background:#3a8fd6"></i>Flugzeug −100</span>
+        <span><i style="background:#3a8fd6"></i>dein Sinkflug −100</span>
         <span><i style="background:#8a6d2f"></i>Gelände ±0</span>
       </div>
     </div>
@@ -147,12 +154,12 @@ spürbarem Gelände, eine mit großem Abstand zur Sim-Referenz.</p>
   </div>
   <div class="karte">
     <div class="kopf"><b>Sinkrate</b><span class="flug">LIRN 24 · A320 · X-Plane</span></div>
-    <div class="haupt"><span class="zahl">−438</span><span class="einheit">fpm</span></div>
+    <div class="haupt"><span class="zahl">−553</span><span class="einheit">fpm</span></div>
     <div class="balken">
-      <div class="bar"><i class="flug-anteil" style="width:53%"></i><i class="gel-anteil" style="width:47%"></i></div>
+      <div class="bar"><i class="flug-anteil" style="width:30%"></i><i class="gel-anteil" style="width:70%"></i></div>
       <div class="legende">
-        <span><i style="background:#3a8fd6"></i>Flugzeug −825</span>
-        <span><i style="background:#8a6d2f"></i>Gelände +387 (Bahn steigt)</span>
+        <span><i style="background:#3a8fd6"></i>dein Sinkflug −166</span>
+        <span><i style="background:#8a6d2f"></i>Gelände −387 (Boden steigt entgegen)</span>
       </div>
     </div>
     <div class="ref-pille">Sim-Referenz nicht verfügbar (X-Plane)</div>
@@ -163,8 +170,8 @@ spürbarem Gelände, eine mit großem Abstand zur Sim-Referenz.</p>
     <div class="balken">
       <div class="bar"><i class="flug-anteil" style="width:96%"></i><i class="gel-anteil" style="width:4%"></i></div>
       <div class="legende">
-        <span><i style="background:#3a8fd6"></i>Flugzeug −629</span>
-        <span><i style="background:#8a6d2f"></i>Gelände +27</span>
+        <span><i style="background:#3a8fd6"></i>dein Sinkflug −575</span>
+        <span><i style="background:#8a6d2f"></i>Gelände −27</span>
       </div>
     </div>
     <div class="ref-pille weit">Sim-Referenz −108 fpm · Abweichung 494 fpm</div>
@@ -180,7 +187,7 @@ spürbarem Gelände, eine mit großem Abstand zur Sim-Referenz.</p>
   </div>
   <div class="karte">
     <div class="kopf"><b>Sinkrate</b><span class="flug">LIRN 24 · A320 · X-Plane</span></div>
-    <div class="haupt"><span class="zahl">−438</span><span class="einheit">fpm</span></div>
+    <div class="haupt"><span class="zahl">−553</span><span class="einheit">fpm</span></div>
     <div class="hinweis">Auf dieser Bahn steigt der Boden: <b>387 fpm</b> der gemessenen Sinkrate
       kommen vom Gelände, nicht von dir. Dein eigener Sinkflug lag bei −825 fpm.</div>
   </div>
@@ -199,13 +206,13 @@ Vorschlag: dieselbe Aufschlüsselung, aber als eine Zeile unter der Kennzahl.</p
 <div class="grid">
   <div class="karte karte--live">
     <div class="kopf"><b>Aufsetzen</b><span class="flug">LIRN 24 · 18.08.2026</span></div>
-    <div class="haupt"><span class="zahl">−438</span><span class="einheit">fpm</span></div>
-    <div class="note">davon Gelände +387 · Flugzeug −825 · Sim-Referenz —</div>
+    <div class="haupt"><span class="zahl">−553</span><span class="einheit">fpm</span></div>
+    <div class="note">davon Gelände −387 · eigener Sinkflug −166 · Sim-Referenz —</div>
   </div>
   <div class="karte karte--live">
     <div class="kopf"><b>Aufsetzen</b><span class="flug">OMDB 30R · 17.08.2026</span></div>
     <div class="haupt"><span class="zahl">−100</span><span class="einheit">fpm</span></div>
-    <div class="note">davon Gelände ±0 · Flugzeug −100 · Sim-Referenz −101</div>
+    <div class="note">davon Gelände ±0 · eigener Sinkflug −100 · Sim-Referenz −101</div>
   </div>
 </div>
 

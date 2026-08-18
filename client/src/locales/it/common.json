@@ -426,7 +426,8 @@
       },
       "bucket_bewertet": "valutato",
       "gelaende_hinweis": "Su questa pista il terreno sale verso l'aeromobile: {{gelaende}} fpm della velocità di discesa misurata vengono dal terreno, non da te. La tua discesa era di {{eigensinken}} fpm. La valutazione usa comunque il valore misurato — questa nota serve a contestualizzarlo.",
-      "sim_abstand_hinweis": "Il simulatore riporta {{referenz}} fpm per la stessa landata — {{abstand}} fpm di differenza. Scarti così grandi nascono da rimbalzi o quando il carrello misura diversamente dalla fusoliera. La valutazione usa il nostro valore; entrambi sono mostrati affiancati."
+      "sim_abstand_hinweis": "Il simulatore riporta {{referenz}} fpm per la stessa landata — {{abstand}} fpm di differenza. Scarti così grandi nascono da rimbalzi o quando il carrello misura diversamente dalla fusoliera. La valutazione usa il nostro valore; entrambi sono mostrati affiancati.",
+      "gelaende_hinweis_steigend": "Su questa pista il terreno sale verso l'aeromobile: i {{gelaende}} fpm misurati vengono dal terreno, non da te — nella finestra di misura stavi addirittura ancora salendo a {{eigensinken}} fpm. La valutazione usa comunque il valore misurato."
     },
     "gforce_forensik": {
       "title": "💪 Forensica forza-G",

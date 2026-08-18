@@ -328,10 +328,19 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
         return (
           <div className="sinkrate-aufschluesselung" role="note">
             {h.art === "gelaende"
-              ? t("landing.sinkrate_forensik.gelaende_hinweis", {
-                  gelaende: h.gelaende,
-                  eigensinken: h.eigensinken,
-                })
+              ? t(
+                  // QS: bei 7 von 95 Gelände-Hinweisen im Bestand ist das
+                  // Flugzeug im Messfenster sogar noch gestiegen (Skiathos,
+                  // K4S2, Ponta Delgada). „Dein Sinkflug lag bei +89 fpm"
+                  // wäre dort Unsinn — dafür ein eigener Satz.
+                  (h.eigensinken ?? 0) > 0
+                    ? "landing.sinkrate_forensik.gelaende_hinweis_steigend"
+                    : "landing.sinkrate_forensik.gelaende_hinweis",
+                  {
+                    gelaende: h.gelaende,
+                    eigensinken: Math.abs(h.eigensinken ?? 0),
+                  },
+                )
               : t("landing.sinkrate_forensik.sim_abstand_hinweis", {
                   referenz: h.simReferenz,
                   abstand: h.abstand,

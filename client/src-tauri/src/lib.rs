@@ -20697,6 +20697,33 @@ fn compute_landing_analysis(
         if spanne < AGL_MIN_SPANNE_S {
             return None;
         }
+        // Dieselben Riegel wie die Hoehenkurve selbst — eine eingefrorene
+        // Spur liest sich sonst als „kein Sinkflug" und schiebt die ganze
+        // Bewegung dem jeweils anderen Anteil zu. Der Vergleich mit dem
+        // Werkzeug von Arderos hat die Luecke aufgedeckt: es verlangt
+        // ausdruecklich fuenf UNTERSCHIEDLICHE Zeitstempel, meine erste
+        // Fassung zaehlte nur Messpunkte.
+        let verschiedene = punkte
+            .iter()
+            .map(|p| (p.1 * 1000.0).round() as i64)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        if verschiedene < AGL_MIN_VERSCHIEDENE {
+            return None;
+        }
+        let mut laengster_stillstand_ms = 0_i64;
+        let mut lauf_start = punkte[0].0;
+        for paar in punkte.windows(2) {
+            if (paar[1].1 - paar[0].1).abs() < 1e-4 {
+                let dauer = ((paar[1].0 - lauf_start) * 1000.0).round() as i64;
+                laengster_stillstand_ms = laengster_stillstand_ms.max(dauer);
+            } else {
+                lauf_start = paar[1].0;
+            }
+        }
+        if laengster_stillstand_ms > AGL_MAX_STILLSTAND_MS {
+            return None;
+        }
         let n = punkte.len() as f64;
         let mx = punkte.iter().map(|p| p.0).sum::<f64>() / n;
         let my = punkte.iter().map(|p| p.1).sum::<f64>() / n;
@@ -20726,12 +20753,37 @@ fn compute_landing_analysis(
     // Diese Form ist die einzige, die sich im Bericht ohne Kopfrechnen
     // lesen laesst, und die einzige, in der eine falsche Richtung sofort
     // auffaellt (die Summe geht dann nicht auf).
-    let (vs_gelaende, vs_eigensinken) = if vs_geometrie.is_some() {
+    let (vs_gelaende, vs_eigensinken) = if let Some(gemessen) = vs_geometrie {
         let boden_bewegung = steigung_ueber_fenster(&|s: &TouchdownWindowSample| {
             s.msl_ft.map(|m| m - s.agl_ft)
         });
         let msl = steigung_ueber_fenster(&|s: &TouchdownWindowSample| s.msl_ft);
-        (boden_bewegung.map(|b| -b), msl)
+        match (boden_bewegung, msl) {
+            (Some(boden), Some(eigen)) => {
+                let gelaende = -boden;
+                // Die Probe: die Aufschluesselung MUSS die gemessene Zahl
+                // ergeben. Geht sie nicht auf, stimmt an einer der drei
+                // Groessen etwas nicht (eingefrorene Spur, Gelaendesprung,
+                // Ausreisser im Bodenmodell) — dann zeigen wir lieber
+                // nichts als eine erfundene Erklaerung. Ein Werkzeug, das
+                // dieselbe Rechnung macht, saeubert stattdessen Ausreisser
+                // aus der Bodenspur; wir verwerfen, weil eine falsche
+                // Erklaerung im Landebericht schlimmer ist als keine.
+                const PROBE_TOLERANZ_FPM: f32 = 20.0;
+                // Ueber 3000 fpm ist es kein Gelaende mehr, sondern ein
+                // Sprung im Hoehenbezug — dieselbe Grenze wie bei der
+                // Hoehenkurve.
+                if (gemessen - (eigen + gelaende)).abs() > PROBE_TOLERANZ_FPM
+                    || gelaende.abs() > AGL_MAX_PLAUSIBEL_FPM.abs()
+                    || eigen.abs() > AGL_MAX_PLAUSIBEL_FPM.abs()
+                {
+                    (None, None)
+                } else {
+                    (Some(gelaende), Some(eigen))
+                }
+            }
+            _ => (None, None),
+        }
     } else {
         (None, None)
     };
@@ -45121,6 +45173,76 @@ mod msfs_agl_flare_tests {
             "die Aufschluesselung muss aufgehen: {gemessen} != {eigen} + {gelaende}"
         );
         assert_eq!(hole("vs_sim_referenz_fpm"), Some(-455.0));
+    }
+
+    /// QS gegen das Werkzeug von Arderos: es verlangt fuenf
+    /// UNTERSCHIEDLICHE Zeitstempel, bevor es eine Ausgleichsrechnung
+    /// zulaesst. Meine erste Fassung zaehlte nur Messpunkte — eine
+    /// eingefrorene Hoehenspur haette dann „kein Eigensinken, alles
+    /// Gelaende" gemeldet, also die Bewegung dem falschen Anteil
+    /// zugeschoben.
+    #[test]
+    fn eingefrorene_hoehenspur_liefert_keine_aufschluesselung() {
+        let b = Utc::now();
+        // AGL sinkt sauber, aber MSL steht ueber 200 ms still (der Boden
+        // „faellt" dadurch scheinbar genauso schnell wie die Hoehe).
+        let samples: Vec<TouchdownWindowSample> = (0..12)
+            .map(|i| {
+                let t = i as f32 * 0.025;
+                let agl = 100.0 - 10.0 * t;
+                // MSL friert nach dem vierten Messpunkt ein.
+                let msl = if i < 4 { 1000.0 - 10.0 * t } else { 1000.0 - 10.0 * 0.075 };
+                tw_msl(b, (t * 1000.0) as i64, agl, msl, 2.0, false, -600.0)
+            })
+            .collect();
+        let edge = b + chrono::Duration::milliseconds(275);
+        let a = compute_landing_analysis(&samples, edge, Simulator::Msfs2024, None);
+        assert!(
+            a.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).is_some(),
+            "die Hoehenkurve selbst traegt weiterhin"
+        );
+        assert!(
+            a.get("vs_eigensinken_fpm").map(|v| v.is_null()).unwrap_or(true),
+            "bei eingefrorener Hoehe darf keine Aufschluesselung erscheinen"
+        );
+        assert!(a.get("vs_gelaende_fpm").map(|v| v.is_null()).unwrap_or(true));
+    }
+
+    /// Die Probe ist der eigentliche Riegel: was nicht aufgeht, wird nicht
+    /// gezeigt. Hier springt die Bodenhoehe mitten im Fenster (Mesh-Kante,
+    /// Helipad-Dach) — die drei Groessen passen dann nicht mehr zusammen.
+    #[test]
+    fn gelaendesprung_faellt_durch_die_probe() {
+        let b = Utc::now();
+        let samples: Vec<TouchdownWindowSample> = (0..12)
+            .map(|i| {
+                let t = i as f32 * 0.025;
+                let msl = 1000.0 - 10.0 * t;
+                // Boden springt nach der Haelfte um 8 ft.
+                let boden = if i < 6 { 900.0 } else { 908.0 };
+                tw_msl(b, (t * 1000.0) as i64, msl - boden, msl, 2.0, false, -600.0)
+            })
+            .collect();
+        let edge = b + chrono::Duration::milliseconds(275);
+        let a = compute_landing_analysis(&samples, edge, Simulator::Msfs2024, None);
+        // Gegenprobe: ohne den Sprung geht dieselbe Konstellation durch.
+        let sauber: Vec<TouchdownWindowSample> = (0..12)
+            .map(|i| {
+                let t = i as f32 * 0.025;
+                let msl = 1000.0 - 10.0 * t;
+                let boden = 900.0 + 2.0 * t;
+                tw_msl(b, (t * 1000.0) as i64, msl - boden, msl, 2.0, false, -600.0)
+            })
+            .collect();
+        let a2 = compute_landing_analysis(&sauber, edge, Simulator::Msfs2024, None);
+        assert!(
+            a2.get("vs_gelaende_fpm").and_then(|v| v.as_f64()).is_some(),
+            "die saubere Gegenprobe muss eine Aufschluesselung liefern"
+        );
+        assert!(
+            a.get("vs_gelaende_fpm").map(|v| v.is_null()).unwrap_or(true),
+            "ein Sprung im Bodenmodell darf nicht als Gelaendeanteil verkauft werden"
+        );
     }
 
     /// Ohne Hoehe ueber dem Meeresspiegel (Aufzeichnungen vor v1.6.9)
