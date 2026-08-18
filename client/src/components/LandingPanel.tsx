@@ -3961,12 +3961,23 @@ export function LandingPanel() {
   // Landungen-Übersicht (7a) §4/§6 "Ortsnamen aus der Flughafentabelle" —
   // same cache-by-ICAO pattern as BidsList's dpt-airport lookup, just for
   // both ends of the route. Falls back to the bare ICAO if a lookup fails.
-  useEffect(() => {
-    const icaos = new Set<string>();
+  // QS-Runde 7: der Effekt hing an `records`. Das Array wird alle 5 s frisch
+  // geladen und hat damit jedes Mal eine neue Identitaet — der Effekt lief also
+  // alle 5 s neu und brach die noch laufende Warteschlange ab. Er haengt jetzt
+  // an der MENGE der Flughaefen: die aendert sich nur, wenn wirklich eine neue
+  // Landung dazukommt. Der `useMemo`-Schluessel ist eine Zeichenkette, damit der
+  // Vergleich ueber den Inhalt geht und nicht ueber die Objektidentitaet.
+  const icaoSchluessel = useMemo(() => {
+    const menge = new Set<string>();
     for (const r of records) {
-      if (r.dpt_airport) icaos.add(r.dpt_airport);
-      if (r.arr_airport) icaos.add(r.arr_airport);
+      if (r.dpt_airport) menge.add(r.dpt_airport);
+      if (r.arr_airport) menge.add(r.arr_airport);
     }
+    return [...menge].sort().join(",");
+  }, [records]);
+
+  useEffect(() => {
+    const icaos = icaoSchluessel ? icaoSchluessel.split(",") : [];
     // Nebenläufigkeit gedeckelt (Feldbefund 18.08.2026, BTI22): diese Schleife
     // startete FÜR JEDEN Flughafen sofort einen Abruf — bei einem Piloten mit
     // langer Historie waren das 89 gleichzeitig in zwei Sekunden. Jeder braucht
@@ -3991,7 +4002,7 @@ export function LandingPanel() {
       },
       (icao, name) => setAirportNames((prev) => ({ ...prev, [icao]: name })),
     );
-  }, [records]);
+  }, [icaoSchluessel]);
 
   async function handleDelete(id: string) {
     if (

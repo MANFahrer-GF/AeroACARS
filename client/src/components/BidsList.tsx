@@ -764,14 +764,18 @@ export function BidsList({
     // Buchungen, meist eine Handvoll), aber es ist dieselbe Fehlerklasse, die
     // dort 89 gleichzeitige Verbindungen erzeugt hat. Gemeinsamer Helfer, damit
     // die Buchhaltung nur an EINER Stelle stimmen muss.
-    const offen = [...uniqueIcaos].filter((i) => i && !airports[i]);
+    // Bewusst OHNE `airports`-Filter: das Gedaechtnis des Helfers weiss schon,
+    // was angefragt wurde. Der Filter waere nicht nur ueberfluessig — er zwaenge
+    // `airports` in die Abhaengigkeiten, und dann braeche JEDE beantwortete
+    // Abfrage die noch laufende Schlange ab und startete sie neu (QS-Runde 7).
+    const offen = [...uniqueIcaos].filter((i) => i);
     return ladeNamenGedeckelt<AirportInfo>(
       offen,
       nachladeGedaechtnisRef.current,
       (icao) => invoke<AirportInfo>("airport_get", { icao }),
       (icao, info) => setAirports((prev) => ({ ...prev, [icao]: info })),
     );
-  }, [state, airports]);
+  }, [state]);
 
   function handleSetMain(bid: Bid) {
     setMainBidId(bid.id);
