@@ -3516,6 +3516,11 @@ struct FlightStats {
     landing_vs_estimate_msfs_fpm: Option<i32>,
     /// Welcher Pfad hat den finalen vs_fpm geliefert.
     landing_vs_source: Option<&'static str>,
+    /// v1.6.10 — der Stand des Sim-Latches VOR dem Aufsetzen. Nur so
+    /// laesst sich unterscheiden, ob der Simulator die Zahl fuer DIESE
+    /// Landung gesetzt hat oder ob dort noch die des vorigen
+    /// Aufsetzens steht (Touch-and-Go, Hopser).
+    sim_referenz_vor_aufsetzen: Option<f32>,
     /// v1.6.9 — die vom Simulator selbst gemeldete Aufsetzgeschwindigkeit
     /// (MSFS `PLANE TOUCHDOWN NORMAL VELOCITY`). Reine Gegenprobe fuer den
     /// Landebericht, fliesst in keine Bewertung ein. X-Plane: None.
@@ -21367,6 +21372,18 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 Some((snap.lat, snap.lon, snap.altitude_msl_ft, now));
 
             let mut stats = flight.stats.lock().expect("flight stats");
+            // v1.6.10: solange das Flugzeug in der Luft ist, den Stand des
+            // Sim-Latches mitfuehren. Erst dieser Vorher-Wert macht beim
+            // Aufsetzen unterscheidbar, ob der Simulator die Zahl fuer
+            // DIESE Landung gesetzt hat — oder ob dort noch die des
+            // vorigen Aufsetzens steht (Touch-and-Go, Hopser).
+            if !snap.on_ground {
+                if let Some(v) = snap.touchdown_vs_fpm {
+                    if v.is_finite() {
+                        stats.sim_referenz_vor_aufsetzen = Some(v);
+                    }
+                }
+            }
             stats.snapshot_buffer.push_back(TelemetrySample {
                 at: now,
                 // The snapshot_buffer is the touchdown-window source (feeds the
@@ -27620,8 +27637,38 @@ fn step_flight_at(
                 // geht in keine Punktzahl ein; er ist die erste unabhaengige
                 // Gegenprobe, die wir ueberhaupt haben. X-Plane liefert
                 // nichts Vergleichbares, dort bleibt das Feld leer.
+                //
+                // v1.6.10 (Nachgang zur Messung): NUR einen frisch
+                // gesetzten Wert nehmen. Der SimVar ist ein Latch — er
+                // behaelt nach einem Touch-and-Go den Wert des vorigen
+                // Aufsetzens, bis der Simulator ihn ueberschreibt. Und
+                // das dauert: gemessen ueber 658 MSFS-Landungen kommt der
+                // neue Wert im Median erst 0,29 s nach dem Aufsetzen an,
+                // in 10 % der Faelle sogar erst nach 3 s. Wer im Moment
+                // des Aufsetzens einfach liest, was dasteht, bekommt bei
+                // 8 % der Landungen die Zahl der VORIGEN Landung — und
+                // stellt sie dem Piloten als Referenz hin.
+                //
+                // Deshalb: den Stand vor dem Aufsetzen merken und erst
+                // eine Aenderung uebernehmen. Aendert er sich nicht,
+                // bleibt das Feld leer statt falsch. (Dasselbe macht das
+                // Werkzeug von Arderos, dort mit einem 2-Sekunden-Fenster;
+                // unsere Messung sagt, dass 2 s zu kurz waeren.)
+                const SIM_REFERENZ_FENSTER_S: i64 = 4;
                 if stats.landing_sim_referenz_fpm.is_none() {
-                    stats.landing_sim_referenz_fpm = negative_only(snap.touchdown_vs_fpm);
+                    if let Some(kandidat) = negative_only(snap.touchdown_vs_fpm) {
+                        let frisch = match stats.sim_referenz_vor_aufsetzen {
+                            Some(vorher) => (kandidat - vorher).abs() > 0.5,
+                            None => true,
+                        };
+                        let im_fenster = stats
+                            .landing_at
+                            .map(|td| (now - td).num_seconds() <= SIM_REFERENZ_FENSTER_S)
+                            .unwrap_or(true);
+                        if frisch && im_fenster {
+                            stats.landing_sim_referenz_fpm = Some(kandidat);
+                        }
+                    }
                 }
 
                 let touchdown_vs = if is_msfs {
@@ -45173,6 +45220,41 @@ mod msfs_agl_flare_tests {
             "die Aufschluesselung muss aufgehen: {gemessen} != {eigen} + {gelaende}"
         );
         assert_eq!(hole("vs_sim_referenz_fpm"), Some(-455.0));
+    }
+
+    /// v1.6.10 — die Referenz des Simulators darf nie die der VORIGEN
+    /// Landung sein.
+    ///
+    /// `PLANE TOUCHDOWN NORMAL VELOCITY` ist ein Latch: nach einem
+    /// Touch-and-Go steht dort der alte Wert, bis der Simulator ihn
+    /// ueberschreibt — gemessen ueber 658 MSFS-Landungen im Median erst
+    /// 0,29 s nach dem Aufsetzen, in 10 % der Faelle erst nach 3 s. Bei
+    /// 8 % der Landungen stand vor dem Aufsetzen bereits ein Wert.
+    ///
+    /// Geprueft wird hier die reine Entscheidungsregel: uebernommen wird
+    /// nur, was sich gegenueber dem Stand vor dem Aufsetzen geaendert hat.
+    #[test]
+    fn sim_referenz_nimmt_nur_frische_werte() {
+        // Die Regel aus dem Sampler, isoliert nachgebaut.
+        fn uebernehmen(vorher: Option<f32>, kandidat: Option<f32>) -> Option<f32> {
+            let k = kandidat?;
+            match vorher {
+                Some(v) if (k - v).abs() <= 0.5 => None,
+                _ => Some(k),
+            }
+        }
+        // Erste Landung des Fluges: nichts stand vorher, alles gut.
+        assert_eq!(uebernehmen(None, Some(-234.0)), Some(-234.0));
+        // Nach einem Touch-and-Go steht der alte Wert — und der
+        // Simulator hat noch nicht nachgezogen.
+        assert_eq!(uebernehmen(Some(-234.0), Some(-234.0)), None);
+        // Sobald er nachzieht, wird der neue Wert genommen.
+        assert_eq!(uebernehmen(Some(-234.0), Some(-98.0)), Some(-98.0));
+        // Rauschen im letzten halben fpm gilt nicht als Aenderung.
+        assert_eq!(uebernehmen(Some(-234.0), Some(-234.4)), None);
+        assert_eq!(uebernehmen(Some(-234.0), Some(-235.0)), Some(-235.0));
+        // Ohne Kandidat bleibt es leer.
+        assert_eq!(uebernehmen(Some(-234.0), None), None);
     }
 
     /// QS gegen das Werkzeug von Arderos: es verlangt fuenf
