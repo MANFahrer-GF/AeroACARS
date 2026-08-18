@@ -2778,6 +2778,13 @@ struct TelemetrySample {
     /// AGL altitude — drives bounce detection (35 ft up / 5 ft return,
     /// BeatMyLanding-aligned). Sourced from `altitude_agl_ft` directly.
     agl_ft: f32,
+    /// v1.6.9: Hoehe ueber dem Meeresspiegel, parallel zur Hoehe ueber
+    /// Grund. Erst beide zusammen trennen den eigenen Sinkflug vom
+    /// Gelaende: Bodenhoehe = MSL − AGL, und deren Aenderung ist der
+    /// Anteil, den die Bahn selbst zur gemessenen Sinkrate beitraegt.
+    /// Gemessen ueber 818 Landungen: im Median 32 fpm, bei 12 % der
+    /// Landungen ueber 100 fpm, im Extremfall 451 fpm (K4S2).
+    msl_ft: f32,
     /// True heading at the moment of sample. Used at touchdown to
     /// reconstruct ground track from successive lat/lon pairs and
     /// derive sideslip / crab angle.
@@ -2874,6 +2881,7 @@ impl From<TelemetrySample> for TouchdownWindowSample {
             g_force: s.g_force,
             on_ground: s.on_ground,
             agl_ft: s.agl_ft,
+            msl_ft: Some(s.msl_ft),
             heading_true_deg: s.heading_true_deg,
             groundspeed_kt: s.groundspeed_kt,
             indicated_airspeed_kt: s.indicated_airspeed_kt,
@@ -3508,6 +3516,10 @@ struct FlightStats {
     landing_vs_estimate_msfs_fpm: Option<i32>,
     /// Welcher Pfad hat den finalen vs_fpm geliefert.
     landing_vs_source: Option<&'static str>,
+    /// v1.6.9 — die vom Simulator selbst gemeldete Aufsetzgeschwindigkeit
+    /// (MSFS `PLANE TOUCHDOWN NORMAL VELOCITY`). Reine Gegenprobe fuer den
+    /// Landebericht, fliesst in keine Bewertung ein. X-Plane: None.
+    landing_sim_referenz_fpm: Option<f32>,
     /// X-Plane Gear-Sampler peak gear_normal_force_n. None auf MSFS.
     landing_gear_force_peak_n: Option<f32>,
     /// Lua-Schaetzer Window-Groesse in ms (None wenn Pfad nicht gewann).
@@ -15463,6 +15475,10 @@ where
                     .map(str::to_owned)
             }),
         vs_simvar_edge_fpm: ana_f32(&stats.landing_analysis, "vs_simvar_edge_fpm"),
+        // v1.6.9 — Bestandteile der Sinkrate + Referenz des Simulators.
+        vs_gelaende_fpm: ana_f32(&stats.landing_analysis, "vs_gelaende_fpm"),
+        vs_eigensinken_fpm: ana_f32(&stats.landing_analysis, "vs_eigensinken_fpm"),
+        vs_sim_referenz_fpm: ana_f32(&stats.landing_analysis, "vs_sim_referenz_fpm"),
         vs_smoothed_250ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_250ms_fpm"),
         vs_smoothed_500ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_500ms_fpm"),
         vs_smoothed_1000ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_1000ms_fpm"),
@@ -20374,6 +20390,11 @@ fn compute_landing_analysis(
     samples: &[TouchdownWindowSample],
     edge_at: DateTime<Utc>,
     simulator: Simulator,
+    // v1.6.9 — die vom Simulator gemeldete Aufsetzgeschwindigkeit, falls
+    // vorhanden (MSFS). Wandert unveraendert in die Analyse, damit der
+    // Landebericht unsere Zahl und die des Simulators nebeneinander
+    // zeigen kann.
+    sim_referenz: Option<f32>,
 ) -> serde_json::Value {
     use serde_json::json;
     if samples.is_empty() {
@@ -20640,6 +20661,80 @@ fn compute_landing_analysis(
     // nicht schaden, ein FEHLENDER harter dagegen schon.
     let vs_geometrie_ungefiltert = vs_aus_hoehenkurve_mit(true);
     let vs_at_edge = vs_geometrie.or(vs_aus_simvar);
+
+    // ── v1.6.9: woraus die Sinkrate besteht ──────────────────────────
+    //
+    // Die Hoehenkurve misst die Annaeherung an die OBERFLAECHE. Steigt
+    // der Boden unter dem Flugzeug, steckt diese Bewegung mit in der
+    // Zahl. Ueber 818 aufgezeichnete Landungen traegt das Gelaende im
+    // Median 32 fpm bei, bei 12 % ueber 100 fpm, im Extremfall 451 fpm
+    // (K4S2) — bei Bandbreiten von 90-250 fpm ist das ein ganzes Band.
+    //
+    // Bodenhoehe = MSL − AGL. Dieselbe Ausgleichsgerade, dasselbe
+    // Fenster, dieselben Riegel wie oben — nur ueber eine andere Groesse.
+    // Beides wird NUR ANGEZEIGT und geht in keine Punktzahl ein: erst
+    // messen, dann entscheiden.
+    let steigung_ueber_fenster = |wert: &dyn Fn(&TouchdownWindowSample) -> Option<f32>| -> Option<f32> {
+        let lo = edge_ms - AGL_FENSTER_MS;
+        let punkte: Vec<(f64, f64)> = samples
+            .iter()
+            .filter(|s| {
+                let ts = s.at.timestamp_millis();
+                ts >= lo && ts <= edge_ms && !s.on_ground
+            })
+            .filter_map(|s| {
+                let y = wert(s)?;
+                if !y.is_finite() {
+                    return None;
+                }
+                Some((s.at.timestamp_millis() as f64 / 1000.0, y as f64))
+            })
+            .collect();
+        if punkte.len() < AGL_MIN_SAMPLES {
+            return None;
+        }
+        let spanne = punkte.last()?.0 - punkte.first()?.0;
+        if spanne < AGL_MIN_SPANNE_S {
+            return None;
+        }
+        let n = punkte.len() as f64;
+        let mx = punkte.iter().map(|p| p.0).sum::<f64>() / n;
+        let my = punkte.iter().map(|p| p.1).sum::<f64>() / n;
+        let sxx: f64 = punkte.iter().map(|p| (p.0 - mx).powi(2)).sum();
+        if sxx < 1e-9 {
+            return None;
+        }
+        let sxy: f64 = punkte.iter().map(|p| (p.0 - mx) * (p.1 - my)).sum();
+        let fpm = (sxy / sxx) * 60.0;
+        if fpm.is_finite() {
+            Some(fpm as f32)
+        } else {
+            None
+        }
+    };
+    // Nur wenn die Hoehenkurve selbst getragen hat — sonst waere die
+    // Aufschluesselung eine Erklaerung fuer eine Zahl, die gar nicht von
+    // ihr stammt.
+    //
+    // **Vorzeichen.** `vs_gelaende_fpm` ist der BEITRAG des Gelaendes zur
+    // gemessenen Zahl, nicht die Bewegung des Bodens. Steigt der Boden mit
+    // 300 fpm, macht er die gemessene Rate um 300 fpm haerter — der Beitrag
+    // ist also −300. Damit gilt immer:
+    //
+    //     gemessen = Eigensinken + Gelaendebeitrag
+    //
+    // Diese Form ist die einzige, die sich im Bericht ohne Kopfrechnen
+    // lesen laesst, und die einzige, in der eine falsche Richtung sofort
+    // auffaellt (die Summe geht dann nicht auf).
+    let (vs_gelaende, vs_eigensinken) = if vs_geometrie.is_some() {
+        let boden_bewegung = steigung_ueber_fenster(&|s: &TouchdownWindowSample| {
+            s.msl_ft.map(|m| m - s.agl_ft)
+        });
+        let msl = steigung_ueber_fenster(&|s: &TouchdownWindowSample| s.msl_ft);
+        (boden_bewegung.map(|b| -b), msl)
+    } else {
+        (None, None)
+    };
 
     // --- Peak G post-TD (Gear-Compression sucht nach Edge) ---
     let peak_g_window = |window_ms: i64| -> Option<f32> {
@@ -20972,6 +21067,19 @@ fn compute_landing_analysis(
         // nachträglich mit beiden Verfahren nachgerechnet werden kann —
         // das ersetzt ein Rollback-Werkzeug.
         "vs_geometrie_fpm": vs_geometrie,
+        // v1.6.9 — die Bestandteile der gemessenen Sinkrate. Positiver
+        // Gelaendewert = der Boden steigt dem Flugzeug entgegen und macht
+        // die gemessene Rate haerter, als der Pilot geflogen ist.
+        // `vs_eigensinken_fpm` ist die Bewegung des Flugzeugs gegen den
+        // Meeresspiegel, also ohne Gelaendeanteil.
+        "vs_gelaende_fpm": vs_gelaende,
+        "vs_eigensinken_fpm": vs_eigensinken,
+        // Die Referenz des Simulators (MSFS `PLANE TOUCHDOWN NORMAL
+        // VELOCITY`) — reine Gegenprobe, geht in keine Bewertung ein.
+        // Ueber 537 Landungen ohne Hopser: unsere Hoehenkurve liegt im
+        // Median +4 fpm daneben, 45 % innerhalb 50 fpm, 70 % innerhalb
+        // 100 fpm. X-Plane liefert nichts Vergleichbares.
+        "vs_sim_referenz_fpm": sim_referenz,
         // Ohne Stillstands-Riegel — Sicherheitsnetz der Unfall-Erkennung
         // und zugleich die Gegenprobe, mit der sich eine verworfene
         // Hoehenkurve nachtraeglich noch nachrechnen laesst.
@@ -21218,6 +21326,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 g_force: snap.g_force,
                 on_ground: snap.on_ground,
                 agl_ft: snap.altitude_agl_ft as f32,
+                msl_ft: snap.altitude_msl_ft as f32,
                 heading_true_deg: snap.heading_deg_true,
                 groundspeed_kt: snap.groundspeed_kt,
                 true_airspeed_kt: snap.true_airspeed_kt,
@@ -21899,7 +22008,12 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // direkt zur Verfuegung hat (anstatt aus der JSONL re-zu-parsen).
             let prepared_dump = if let Some((edge_at, samples)) = dump_payload {
                 let analysis =
-                    compute_landing_analysis(&samples, edge_at, snap.simulator);
+                    compute_landing_analysis(
+                        &samples,
+                        edge_at,
+                        snap.simulator,
+                        stats.landing_sim_referenz_fpm,
+                    );
                 // v1.6.3: die MSFS-Entlagung ist ERSATZLOS entfallen.
                 //
                 // Sie war ein Pflaster auf dem gedämpften SimVar-Kanal —
@@ -23909,6 +24023,19 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             vs_simvar_edge_fpm: ana_f32(
                                 &stats.landing_analysis,
                                 "vs_simvar_edge_fpm",
+                            ),
+                            // v1.6.9 — Bestandteile + Sim-Referenz.
+                            vs_gelaende_fpm: ana_f32(
+                                &stats.landing_analysis,
+                                "vs_gelaende_fpm",
+                            ),
+                            vs_eigensinken_fpm: ana_f32(
+                                &stats.landing_analysis,
+                                "vs_eigensinken_fpm",
+                            ),
+                            vs_sim_referenz_fpm: ana_f32(
+                                &stats.landing_analysis,
+                                "vs_sim_referenz_fpm",
                             ),
                             vs_smoothed_250ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_250ms_fpm"),
                             vs_smoothed_500ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_500ms_fpm"),
@@ -27430,6 +27557,20 @@ fn step_flight_at(
                 } else {
                     None
                 };
+
+                // v1.6.9: die Referenz des Simulators separat festhalten,
+                // unabhaengig davon, welcher Kandidat unten gewinnt. MSFS
+                // meldet mit `PLANE TOUCHDOWN NORMAL VELOCITY` seine eigene
+                // Aufsetzgeschwindigkeit; ueber 537 Landungen ohne Hopser
+                // liegt unsere Hoehenkurve dagegen im Median +4 fpm (also
+                // unverzerrt), streut aber deutlich — 45 % innerhalb 50 fpm,
+                // 70 % innerhalb 100 fpm. Der Wert wird NUR angezeigt und
+                // geht in keine Punktzahl ein; er ist die erste unabhaengige
+                // Gegenprobe, die wir ueberhaupt haben. X-Plane liefert
+                // nichts Vergleichbares, dort bleibt das Feld leer.
+                if stats.landing_sim_referenz_fpm.is_none() {
+                    stats.landing_sim_referenz_fpm = negative_only(snap.touchdown_vs_fpm);
+                }
 
                 let touchdown_vs = if is_msfs {
                     // MSFS: priority chain (v0.5.12 — validated against
@@ -38152,6 +38293,7 @@ mod touchdown_vs_estimator_tests {
             g_force: 1.0,
             on_ground: false,
             agl_ft,
+            msl_ft: agl_ft + 500.0,
             heading_true_deg: 0.0,
             groundspeed_kt: 130.0,
             indicated_airspeed_kt: 130.0,
@@ -41388,6 +41530,7 @@ mod merge_touchdown_profile_tests {
             g_force: 1.0,
             on_ground: t_ms >= 0,
             agl_ft: 0.0,
+            msl_ft: 0.0 + 500.0,
             heading_true_deg: 0.0,
             groundspeed_kt: 120.0,
             indicated_airspeed_kt: 120.0,
@@ -41479,6 +41622,7 @@ mod touchdown_metadata_stamp_tests {
             g_force: 1.4,
             on_ground,
             agl_ft: if on_ground { 0.0 } else { 12.0 },
+            msl_ft: if on_ground { 0.0 } else { 12.0 } + 500.0,
             heading_true_deg: 270.0,
             groundspeed_kt: 95.0,
             indicated_airspeed_kt: 100.0,
@@ -44342,6 +44486,7 @@ mod msfs_touchdown_delag_replay_golden {
             g_force: f("g_force"),
             on_ground: v.get("on_ground").and_then(|x| x.as_bool()).unwrap_or(false),
             agl_ft: f("agl_ft"),
+            msl_ft: f("agl_ft") + 500.0,
             heading_true_deg: f("heading_true_deg"),
             groundspeed_kt: f("groundspeed_kt"),
             indicated_airspeed_kt: f("indicated_airspeed_kt"),
@@ -44454,7 +44599,7 @@ mod msfs_touchdown_delag_replay_golden {
         let f = load_replay(datei);
         let samples: Vec<TouchdownWindowSample> =
             f.buffer.iter().cloned().map(Into::into).collect();
-        let analysis = compute_landing_analysis(&samples, f.edge_at, f.simulator);
+        let analysis = compute_landing_analysis(&samples, f.edge_at, f.simulator, None);
         let gescort = num(&analysis, "vs_at_edge_fpm").expect("vs_at_edge_fpm");
         let quelle = analysis
             .get("vs_at_edge_quelle")
@@ -44494,7 +44639,7 @@ mod msfs_touchdown_delag_replay_golden {
         let f = load_replay("dlh848_msfs_firm_control.jsonl.gz");
         let samples: Vec<TouchdownWindowSample> =
             f.buffer.iter().cloned().map(Into::into).collect();
-        let analysis = compute_landing_analysis(&samples, f.edge_at, f.simulator);
+        let analysis = compute_landing_analysis(&samples, f.edge_at, f.simulator, None);
         let geo = num(&analysis, "vs_geometrie_fpm").expect("Hoehenkurve fehlt");
         let simvar = num(&analysis, "vs_simvar_edge_fpm").expect("SimVar fehlt");
         assert!(
@@ -44525,7 +44670,7 @@ mod msfs_touchdown_delag_replay_golden {
         );
         let samples: Vec<TouchdownWindowSample> =
             f.buffer.iter().cloned().map(Into::into).collect();
-        let analysis = compute_landing_analysis(&samples, f.edge_at, f.simulator);
+        let analysis = compute_landing_analysis(&samples, f.edge_at, f.simulator, None);
         let geo = num(&analysis, "vs_geometrie_fpm").expect("Hoehenkurve fehlt");
         let simvar = num(&analysis, "vs_simvar_edge_fpm").expect("SimVar fehlt");
         assert!(
@@ -44550,7 +44695,7 @@ mod msfs_touchdown_delag_replay_golden {
             mit_boden > 0,
             "Fixture taugt nicht als Beleg: enthaelt keine Boden-Samples"
         );
-        let analysis = compute_landing_analysis(&samples, f.edge_at, f.simulator);
+        let analysis = compute_landing_analysis(&samples, f.edge_at, f.simulator, None);
         let geo = num(&analysis, "vs_geometrie_fpm").expect("Hoehenkurve fehlt");
         // Fahrwerkskompression liest immer HAERTER; ein Wert jenseits des
         // Plausiblen waere das Zeichen, dass der Filter nicht greift.
@@ -44572,6 +44717,22 @@ mod msfs_agl_flare_tests {
     /// with the given AGL (ft), pitch (deg), on_ground flag, and SimVar
     /// V/S (fpm). `vs_fpm` is what the LAGGED SimVar path reads; the AGL
     /// fit reads only `agl_ft` / `at` / `on_ground`.
+    /// wie `tw`, aber mit gesetzter Hoehe ueber dem Meeresspiegel.
+    #[allow(clippy::too_many_arguments)]
+    fn tw_msl(
+        base: DateTime<Utc>,
+        ms: i64,
+        agl_ft: f32,
+        msl_ft: f32,
+        pitch_deg: f32,
+        on_ground: bool,
+        vs_fpm: f32,
+    ) -> TouchdownWindowSample {
+        let mut s = tw(base, ms, agl_ft, pitch_deg, on_ground, vs_fpm);
+        s.msl_ft = Some(msl_ft);
+        s
+    }
+
     fn tw(base: DateTime<Utc>, ms: i64, agl_ft: f32, pitch_deg: f32, on_ground: bool, vs_fpm: f32) -> TouchdownWindowSample {
         TouchdownWindowSample {
             at: base + chrono::Duration::milliseconds(ms),
@@ -44579,6 +44740,7 @@ mod msfs_agl_flare_tests {
             g_force: 1.0,
             on_ground,
             agl_ft,
+            msl_ft: Some(agl_ft + 500.0),
             heading_true_deg: 0.0,
             groundspeed_kt: 120.0,
             indicated_airspeed_kt: 130.0,
@@ -44722,7 +44884,7 @@ mod msfs_agl_flare_tests {
         // SimVar deliberately lags (reads a different shallow value) so we
         // can prove the published endpoints came from AGL, not vs_fpm.
         let s = synth_trace(b, 16.0, &[(-2000, -380.0)], |_| 3.0);
-        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024, None);
         assert_eq!(a.get("flare_detected").and_then(|v| v.as_bool()), Some(false));
         assert_eq!(a.get("flare_vs_source").and_then(|v| v.as_str()), Some("msfs_agl"));
         // _raw keys present on MSFS.
@@ -44736,7 +44898,7 @@ mod msfs_agl_flare_tests {
     fn analysis_xplane_byte_identical_no_new_keys() {
         let b = base();
         let s = synth_trace(b, 16.0, &[(-2000, -560.0), (-900, -360.0)], |_| 3.0);
-        let a = compute_landing_analysis(&s, b, Simulator::XPlane12);
+        let a = compute_landing_analysis(&s, b, Simulator::XPlane12, None);
         assert!(a.get("flare_vs_source").is_none(), "X-Plane must add no source key");
         assert!(a.get("peak_vs_pre_flare_fpm_raw").is_none(), "X-Plane must add no _raw key");
         assert!(a.get("vs_at_flare_end_fpm_raw").is_none(), "X-Plane must add no _raw key");
@@ -44762,7 +44924,7 @@ mod msfs_agl_flare_tests {
             let frac = ((ms + 2000) as f32 / 2000.0).clamp(0.0, 1.0);
             2.5 + 2.7 * frac
         });
-        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024, None);
         assert_eq!(a.get("flare_vs_source").and_then(|v| v.as_str()), Some("msfs_agl"));
         let red = a.get("flare_reduction_fpm").and_then(|v| v.as_f64()).unwrap();
         let dvs = a.get("flare_dvs_dt_fpm_per_sec").and_then(|v| v.as_f64()).unwrap();
@@ -44778,7 +44940,7 @@ mod msfs_agl_flare_tests {
         // then-shallowing profile the SimVar dvs_dt is also positive, but the
         // point is it is computed from the SimVar pass — assert it is present
         // and finite (byte-identical path; no AGL involvement).
-        let ax = compute_landing_analysis(&s, b, Simulator::XPlane12);
+        let ax = compute_landing_analysis(&s, b, Simulator::XPlane12, None);
         let dvs_x = ax.get("flare_dvs_dt_fpm_per_sec").and_then(|v| v.as_f64());
         assert!(dvs_x.is_some_and(|v| v.is_finite()), "X-Plane dvs_dt must be SimVar-derived and present");
     }
@@ -44824,6 +44986,7 @@ mod msfs_agl_flare_tests {
                             g_force: f("g_force"),
                             on_ground: sv.get("on_ground").and_then(|x| x.as_bool()).unwrap_or(false),
                             agl_ft: f("agl_ft"),
+                            msl_ft: Some(f("agl_ft") + 500.0),
                             heading_true_deg: f("heading_true_deg"),
                             groundspeed_kt: f("groundspeed_kt"),
                             indicated_airspeed_kt: f("indicated_airspeed_kt"),
@@ -44858,7 +45021,7 @@ mod msfs_agl_flare_tests {
         );
 
         // Re-run with the v0.16.22 MSFS AGL path.
-        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024, None);
 
         let flare_detected = a.get("flare_detected").and_then(|v| v.as_bool()).unwrap();
         let reduction = a.get("flare_reduction_fpm").and_then(|v| v.as_f64()).unwrap();
@@ -44910,6 +45073,76 @@ mod msfs_agl_flare_tests {
     /// QS fand sie nur EINSEITIG belegt: sie schärfer zu stellen machte
     /// Tests rot, sie abzuschalten nicht. Ein Riegel, den man folgenlos
     /// entfernen kann, ist kein Riegel.
+    /// v1.6.9 — die Sinkrate in ihre Bestandteile zerlegt.
+    ///
+    /// Neapel 24 aus dem Bestand ist der Anschauungsfall: gemessene
+    /// −438 fpm, davon +387 fpm Gelaende. Der Pilot ist mit −825 fpm
+    /// gesunken, die ansteigende Bahn hat die Zahl geschoent. Hier
+    /// nachgebaut mit einer Bahn, die 300 fpm steigt.
+    #[test]
+    fn sinkrate_zerfaellt_in_eigensinken_und_gelaende() {
+        let b = Utc::now();
+        // Flugzeug sinkt mit 600 fpm gegen den Meeresspiegel (= 10 ft/s),
+        // der Boden steigt mit 300 fpm (= 5 ft/s). Die Hoehe ueber Grund
+        // schrumpft dadurch nur mit 300 fpm.
+        let samples: Vec<TouchdownWindowSample> = (0..12)
+            .map(|i| {
+                let t = i as f32 * 0.025; // 25 ms Takt = 40 Hz
+                let msl = 1000.0 - 10.0 * t;
+                let boden = 900.0 + 5.0 * t;
+                tw_msl(b, (t * 1000.0) as i64, msl - boden, msl, 2.0, false, -300.0)
+            })
+            .collect();
+        let edge = b + chrono::Duration::milliseconds(275);
+        let a = compute_landing_analysis(&samples, edge, Simulator::Msfs2024, Some(-455.0));
+        let hole = |k: &str| a.get(k).and_then(|v| v.as_f64()).map(|v| v as f32);
+
+        // Hoehe ueber Grund = (1000 − 10t) − (900 + 5t) = 100 − 15t,
+        // schrumpft also mit 15 ft/s = 900 fpm.
+        let gemessen = hole("vs_at_edge_fpm").expect("Hoehenkurve muss tragen");
+        assert!(
+            (gemessen + 900.0).abs() < 20.0,
+            "die gemessene Rate folgt der Hoehe ueber Grund: {gemessen}"
+        );
+        let eigen = hole("vs_eigensinken_fpm").expect("Eigensinken");
+        assert!(
+            (eigen + 600.0).abs() < 20.0,
+            "gegen den Meeresspiegel sinkt das Flugzeug nur mit 600 fpm: {eigen}"
+        );
+        let gelaende = hole("vs_gelaende_fpm").expect("Gelaendeanteil");
+        assert!(
+            (gelaende + 300.0).abs() < 20.0,
+            "der steigende Boden macht die Zahl um 300 fpm haerter, \
+             der Beitrag ist also NEGATIV: {gelaende}"
+        );
+        // Die Probe, an der ein falsches Vorzeichen sofort auffaellt.
+        assert!(
+            (gemessen - (eigen + gelaende)).abs() < 5.0,
+            "die Aufschluesselung muss aufgehen: {gemessen} != {eigen} + {gelaende}"
+        );
+        assert_eq!(hole("vs_sim_referenz_fpm"), Some(-455.0));
+    }
+
+    /// Ohne Hoehe ueber dem Meeresspiegel (Aufzeichnungen vor v1.6.9)
+    /// bleibt die Aufschluesselung leer — statt eine zu erfinden.
+    #[test]
+    fn ohne_msl_keine_aufschluesselung() {
+        let b = Utc::now();
+        let samples: Vec<TouchdownWindowSample> = (0..12)
+            .map(|i| {
+                let t = i as f32 * 0.025;
+                let mut s = tw_msl(b, (t * 1000.0) as i64, 100.0 - 5.0 * t, 0.0, 2.0, false, -300.0);
+                s.msl_ft = None;
+                s
+            })
+            .collect();
+        let edge = b + chrono::Duration::milliseconds(275);
+        let a = compute_landing_analysis(&samples, edge, Simulator::XPlane12, None);
+        assert!(a.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).is_some());
+        assert!(a.get("vs_gelaende_fpm").map(|v| v.is_null()).unwrap_or(true));
+        assert!(a.get("vs_eigensinken_fpm").map(|v| v.is_null()).unwrap_or(true));
+    }
+
     #[test]
     fn die_riegel_der_hoehenkurve_greifen_einzeln() {
         let b = base();
@@ -44922,7 +45155,7 @@ mod msfs_agl_flare_tests {
             tw(b, 0, 0.0, 2.0, true, -200.0),
             tw(b, 20, 0.0, 2.0, true, -190.0),
         ];
-        let a = compute_landing_analysis(&wenige, b, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&wenige, b, Simulator::Msfs2024, None);
         assert_eq!(
             a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
             Some("simvar_fallback"),
@@ -44938,7 +45171,7 @@ mod msfs_agl_flare_tests {
             tw(b, 0, 0.0, 2.0, true, -200.0),
             tw(b, 20, 0.0, 2.0, true, -190.0),
         ];
-        let a = compute_landing_analysis(&zwei_stufen, b, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&zwei_stufen, b, Simulator::Msfs2024, None);
         assert_eq!(
             a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
             Some("simvar_fallback"),
@@ -44960,13 +45193,13 @@ mod msfs_agl_flare_tests {
                 tw(b, 20, 0.0, 2.0, true, -190.0),
             ]
         };
-        let a = compute_landing_analysis(&mit_pause(120), b, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&mit_pause(120), b, Simulator::Msfs2024, None);
         assert_eq!(
             a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
             Some("hoehenkurve"),
             "120 ms Stillstand liegen noch im erlaubten Bereich"
         );
-        let a = compute_landing_analysis(&mit_pause(121), b, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&mit_pause(121), b, Simulator::Msfs2024, None);
         assert_eq!(
             a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
             Some("simvar_fallback"),
@@ -44993,7 +45226,7 @@ mod msfs_agl_flare_tests {
         }
         s.push(tw(b, 0, 0.0, 2.0, true, -200.0));
         s.push(tw(b, 20, 0.0, 2.0, true, -190.0));
-        let a = compute_landing_analysis(&s, b, Simulator::XPlane12);
+        let a = compute_landing_analysis(&s, b, Simulator::XPlane12, None);
         assert_eq!(
             a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
             Some("hoehenkurve"),
@@ -45013,7 +45246,7 @@ mod msfs_agl_flare_tests {
     #[test]
     fn verworfene_hoehenkurve_bleibt_der_unfallerkennung_erhalten() {
         let (edge_at, samples, _r) = load_flare_fixture("a320_vrnevnl_frozen_end.jsonl.gz");
-        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024, None);
         assert!(
             a.get("vs_geometrie_fpm").and_then(|v| v.as_f64()).is_none(),
             "Vorbedingung: der Score muss die Kurve hier verwerfen"
@@ -45051,7 +45284,7 @@ mod msfs_agl_flare_tests {
             samples.iter().any(|s| s.on_ground) && samples.iter().any(|s| !s.on_ground),
             "Fixture taugt nur als Beleg, wenn beide Sorten vorkommen"
         );
-        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024, None);
         assert!(
             a.get("vs_geometrie_fpm").and_then(|v| v.as_f64()).is_none(),
             "eingefrorene Hoehenspur darf keine Ausgleichsgerade liefern, war {:?}",
@@ -45083,7 +45316,7 @@ mod msfs_agl_flare_tests {
             ("dlh304.jsonl.gz", -337.8_f32),
         ] {
             let (edge_at, samples, _r) = load_flare_fixture(datei);
-            let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024);
+            let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024, None);
             let geo = a.get("vs_geometrie_fpm").and_then(|v| v.as_f64()).unwrap() as f32;
             assert!(
                 (geo - wahrheit).abs() < 8.0,
@@ -45109,7 +45342,7 @@ mod msfs_agl_flare_tests {
             tw(b, 0, 0.0, 2.0, true, -150.0),
             tw(b, 20, 0.0, 2.0, true, -140.0),
         ];
-        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024, None);
         assert_eq!(
             a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
             Some("simvar_fallback"),
@@ -45135,7 +45368,7 @@ mod msfs_agl_flare_tests {
             .collect();
         s.push(tw(b, 0, 2.0, 2.0, true, -200.0));
         s.push(tw(b, 20, 1.0, 2.0, true, -180.0));
-        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024, None);
         assert_eq!(
             a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
             Some("simvar_fallback"),
@@ -45190,6 +45423,7 @@ mod msfs_agl_flare_tests {
                             g_force: f("g_force"),
                             on_ground: sv.get("on_ground").and_then(|x| x.as_bool()).unwrap_or(false),
                             agl_ft: f("agl_ft"),
+                            msl_ft: Some(f("agl_ft") + 500.0),
                             heading_true_deg: f("heading_true_deg"),
                             groundspeed_kt: f("groundspeed_kt"),
                             indicated_airspeed_kt: f("indicated_airspeed_kt"),
@@ -45399,7 +45633,7 @@ mod msfs_agl_flare_tests {
         );
         // And the end-to-end JSON must NOT publish a phantom: source falls
         // back, no detection, no butter-100.
-        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024, None);
         assert_eq!(
             a.get("flare_vs_source").and_then(|v| v.as_str()),
             Some("simvar_agl_unreliable")
@@ -45446,7 +45680,7 @@ mod msfs_agl_flare_tests {
             "post-edge balloon must suppress the AGL path (Gate 2 extended)"
         );
         // End-to-end: no credited flare.
-        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&s, b, Simulator::Msfs2024, None);
         assert_eq!(
             a.get("flare_detected").and_then(|v| v.as_bool()),
             Some(false),
@@ -45494,7 +45728,7 @@ mod msfs_agl_flare_tests {
             recorded.get("flare_detected").and_then(|v| v.as_bool()),
             Some(false)
         );
-        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024, None);
         assert_eq!(
             a.get("flare_vs_source").and_then(|v| v.as_str()),
             Some("simvar_agl_unreliable"),
@@ -45522,7 +45756,7 @@ mod msfs_agl_flare_tests {
     #[test]
     fn vrnevnl_localized_frozen_end_phantom_suppressed() {
         let (edge_at, samples, _recorded) = load_flare_fixture("a320_vrnevnl_frozen_end.jsonl.gz");
-        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024, None);
         assert_eq!(
             a.get("flare_vs_source").and_then(|v| v.as_str()),
             Some("simvar_agl_unreliable"),
@@ -45549,7 +45783,7 @@ mod msfs_agl_flare_tests {
     #[test]
     fn da40_bounce_phantom_suppressed() {
         let (edge_at, samples, _recorded) = load_flare_fixture("da40_gsg2056_bounce.jsonl.gz");
-        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024);
+        let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024, None);
         assert_eq!(
             a.get("flare_detected").and_then(|v| v.as_bool()),
             Some(false),

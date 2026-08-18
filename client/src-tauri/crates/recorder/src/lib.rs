@@ -284,6 +284,11 @@ pub struct TouchdownWindowSample {
     pub g_force: f32,
     pub on_ground: bool,
     pub agl_ft: f32,
+    /// v1.6.9 — Hoehe ueber dem Meeresspiegel. Additiv: aeltere
+    /// Aufzeichnungen haben das Feld nicht, dann bleibt der
+    /// Gelaendeanteil schlicht unbekannt statt falsch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub msl_ft: Option<f32>,
     pub heading_true_deg: f32,
     pub groundspeed_kt: f32,
     pub indicated_airspeed_kt: f32,
@@ -592,6 +597,7 @@ mod scored_g_tests {
             g_force: g,
             on_ground: false,
             agl_ft: 0.0,
+            msl_ft: Some(0.0 + 500.0),
             heading_true_deg: 0.0,
             groundspeed_kt: 0.0,
             true_airspeed_kt: 0.0,

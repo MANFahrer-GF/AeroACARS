@@ -424,7 +424,9 @@
         "hoehenkurve": "Height trace",
         "simvar_fallback": "Instrument (fallback)"
       },
-      "bucket_bewertet": "scored"
+      "bucket_bewertet": "scored",
+      "gelaende_hinweis": "On this runway the ground rises towards the aircraft: {{gelaende}} fpm of the measured sink rate come from the terrain, not from you. Your own descent was {{eigensinken}} fpm. Scoring still uses the measured value — this note is here so you can put it in context.",
+      "sim_abstand_hinweis": "The simulator reports {{referenz}} fpm for the same landing — a difference of {{abstand}} fpm. Gaps this size come from bounces or from the gear measuring differently than the fuselage. Scoring uses our value; both are shown side by side so you can judge it."
     },
     "gforce_forensik": {
       "title": "💪 G-Force Forensics",

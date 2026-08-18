@@ -321,6 +321,24 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
   return (
     <section className="landing-section landing-section--sinkrate-forensik">
       <h3>{t("landing.sinkrate_forensik.title")}</h3>
+      {/* v1.6.9 — Variante C: nur wenn es etwas zu sagen gibt. */}
+      {(() => {
+        const h = sinkrateHinweis(record);
+        if (!h) return null;
+        return (
+          <div className="sinkrate-aufschluesselung" role="note">
+            {h.art === "gelaende"
+              ? t("landing.sinkrate_forensik.gelaende_hinweis", {
+                  gelaende: h.gelaende,
+                  eigensinken: h.eigensinken,
+                })
+              : t("landing.sinkrate_forensik.sim_abstand_hinweis", {
+                  referenz: h.simReferenz,
+                  abstand: h.abstand,
+                })}
+          </div>
+        );
+      })()}
 
       {/* Block [1] — Aufklaerungs-Block (cyan Border-Left) */}
       <div className="sinkrate-forensik-intro">
@@ -616,4 +634,75 @@ function ImpactTiles({ g500ms, g1000ms }: { g500ms: number; g1000ms: number | nu
       </div>
     </div>
   );
+}
+
+// ── v1.6.9: woraus die gemessene Sinkrate besteht ─────────────────────
+//
+// Variante C: der Bericht bleibt ruhig und meldet sich nur, wenn es
+// etwas zu sagen gibt. Zwei Anlässe, beide aus dem Bestand hergeleitet:
+//
+//   * Gelände ab 100 fpm Beitrag — trifft 12 % der Landungen. Bei 50 fpm
+//     wären es 36 % gewesen, das ist kein Hinweis mehr, das ist Rauschen.
+//   * Abstand zur Referenz des Simulators ab 200 fpm — trifft 8 % der
+//     MSFS-Landungen. Bei 100 fpm wären es 30 %, und die halbe Streuung
+//     erklärt sich ohnehin aus Gelände und Messpunkt.
+//
+// Beides ist reine Anzeige — in keine Punktzahl fließt etwas davon ein.
+export const GELAENDE_SCHWELLE_FPM = 100;
+export const SIM_ABSTAND_SCHWELLE_FPM = 200;
+
+export interface SinkrateHinweis {
+  art: "gelaende" | "sim_abstand";
+  /** gerundete Werte für die Textbausteine */
+  gemessen: number;
+  eigensinken?: number;
+  gelaende?: number;
+  simReferenz?: number;
+  abstand?: number;
+}
+
+/** Gibt es zur gemessenen Sinkrate etwas zu erklären? `null` = nein.
+ *
+ *  Das Gelände hat Vorrang: es erklärt die Zahl selbst, während der
+ *  Abstand zur Sim-Referenz nur sagt, dass zwei Messungen auseinander
+ *  liegen. Wer beides hat, will zuerst wissen, woran es liegt. */
+export function sinkrateHinweis(record: {
+  vs_at_edge_fpm?: number | null;
+  vs_gelaende_fpm?: number | null;
+  vs_eigensinken_fpm?: number | null;
+  vs_sim_referenz_fpm?: number | null;
+}): SinkrateHinweis | null {
+  const gemessen = record.vs_at_edge_fpm;
+  if (gemessen == null || !Number.isFinite(gemessen)) return null;
+
+  const gel = record.vs_gelaende_fpm;
+  const eigen = record.vs_eigensinken_fpm;
+  if (
+    gel != null &&
+    eigen != null &&
+    Number.isFinite(gel) &&
+    Number.isFinite(eigen) &&
+    Math.abs(gel) >= GELAENDE_SCHWELLE_FPM
+  ) {
+    return {
+      art: "gelaende",
+      gemessen: Math.round(gemessen),
+      eigensinken: Math.round(eigen),
+      gelaende: Math.round(Math.abs(gel)),
+    };
+  }
+
+  const ref = record.vs_sim_referenz_fpm;
+  if (ref != null && Number.isFinite(ref)) {
+    const abstand = Math.abs(gemessen - ref);
+    if (abstand >= SIM_ABSTAND_SCHWELLE_FPM) {
+      return {
+        art: "sim_abstand",
+        gemessen: Math.round(gemessen),
+        simReferenz: Math.round(ref),
+        abstand: Math.round(abstand),
+      };
+    }
+  }
+  return null;
 }

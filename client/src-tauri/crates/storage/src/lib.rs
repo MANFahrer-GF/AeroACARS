@@ -358,6 +358,18 @@ pub struct LandingRecord {
     /// meldet einen Trend, den es im Flug nicht gab.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vs_simvar_edge_fpm: Option<f32>,
+    /// v1.6.9 — Bestandteile der gemessenen Sinkrate; es gilt
+    /// `vs_at_edge_fpm = vs_eigensinken_fpm + vs_gelaende_fpm`. Der
+    /// Gelaendewert ist der BEITRAG zur Zahl (negativ = steigender Boden
+    /// macht sie haerter). Aeltere Datensaetze haben beide Felder nicht.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vs_gelaende_fpm: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vs_eigensinken_fpm: Option<f32>,
+    /// v1.6.9 — Aufsetzgeschwindigkeit laut Simulator (MSFS), reine
+    /// Gegenprobe ohne Einfluss auf die Bewertung.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vs_sim_referenz_fpm: Option<f32>,
     /// Mean V/S ueber 250 ms vor Edge (nur negative Samples).
     #[serde(default)]
     pub vs_smoothed_250ms_fpm: Option<f32>,

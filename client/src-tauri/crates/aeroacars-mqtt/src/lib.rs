@@ -695,6 +695,23 @@ pub struct TouchdownPayload {
     pub vs_geometrie_fpm: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vs_simvar_edge_fpm: Option<f32>,
+    /// v1.6.9 — woraus die gemessene Sinkrate besteht. Es gilt
+    /// `vs_at_edge_fpm = vs_eigensinken_fpm + vs_gelaende_fpm`.
+    ///
+    /// `vs_gelaende_fpm` ist der BEITRAG des Gelaendes zur gemessenen
+    /// Zahl: negativ, wenn der Boden dem Flugzeug entgegensteigt und die
+    /// Landung dadurch haerter aussieht, als sie geflogen wurde.
+    /// Gemessen ueber 818 Landungen: Median 32 fpm Betrag, 12 % ueber
+    /// 100 fpm, Extremfall 451 fpm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vs_gelaende_fpm: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vs_eigensinken_fpm: Option<f32>,
+    /// v1.6.9 — was der Simulator selbst als Aufsetzgeschwindigkeit
+    /// meldet (MSFS `PLANE TOUCHDOWN NORMAL VELOCITY`). Nur Vergleich,
+    /// keine Bewertung. X-Plane: None.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vs_sim_referenz_fpm: Option<f32>,
     /// Mean VS ueber 250 ms vor Edge (airborne-Samples).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vs_smoothed_250ms_fpm: Option<f32>,

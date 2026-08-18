@@ -141,6 +141,14 @@ export interface LandingRecord {
   /** v1.6.3: Instrument-Wert am Aufsetzpunkt. Nur fuer die Trend-Diagnose
    *  der Forensik — angezeigt wird der bewertete Wert. */
   vs_simvar_edge_fpm?: number | null;
+  /** v1.6.9 — Bestandteile der gemessenen Sinkrate.
+   *  Es gilt `vs_at_edge_fpm = vs_eigensinken_fpm + vs_gelaende_fpm`.
+   *  Der Geländewert ist der BEITRAG zur Zahl: negativ, wenn der Boden
+   *  entgegensteigt und die Landung härter aussehen lässt, als sie war. */
+  vs_gelaende_fpm?: number | null;
+  vs_eigensinken_fpm?: number | null;
+  /** v1.6.9 — Aufsetzgeschwindigkeit laut Simulator (nur MSFS). */
+  vs_sim_referenz_fpm?: number | null;
   vs_smoothed_250ms_fpm?: number | null;
   vs_smoothed_500ms_fpm?: number | null;
   vs_smoothed_1000ms_fpm?: number | null;

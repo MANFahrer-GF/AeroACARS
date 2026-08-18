@@ -10843,3 +10843,18 @@ input.datalink-block__input {
   line-height: 1.45;
   color: var(--fg-dim, #94a3b8);
 }
+
+/* v1.6.9 — Aufschlüsselung der Sinkrate (Variante C: erscheint nur,
+   wenn Gelände oder die Sim-Referenz etwas zu erklären haben). Ton wie
+   die übrigen Hinweisflächen: ruhig, nicht alarmierend — es ist eine
+   Einordnung, keine Warnung. */
+.sinkrate-aufschluesselung {
+  margin: 8px 0 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--sem-warn);
+  border-radius: 8px;
+  background: var(--sem-warn-bg);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  max-width: 76ch;
+}
