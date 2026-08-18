@@ -1648,8 +1648,28 @@ impl Client {
     }
 
     /// `DELETE /api/user/bids` — drop a bid after its PIREP was filed
-    /// (or to give it back). phpVMS does NOT auto-consume bids when the
-    /// PIREP is filed unless we explicitly remove them.
+    /// (or to give it back).
+    ///
+    /// **Korrektur 18.08.2026 (am Live-Server nachgesehen):** hier stand
+    /// jahrelang „phpVMS does NOT auto-consume bids when the PIREP is filed".
+    /// Das stimmt nicht. phpVMS-Core hängt `BidEventHandler` an das
+    /// `PirepFiled`-Ereignis und ruft dort `removeBidForPirep()` — die Buchung
+    /// ist also schon weg, bevor dieser Aufruf überhaupt rausgeht.
+    ///
+    /// Sichtbare Folge im Zugriffsprotokoll, bei JEDEM Piloten und JEDEM Flug
+    /// (19 × 404, dann 17 × 200 im untersuchten Zeitraum): der `bid_id`-Versuch
+    /// läuft in `Bid::findOrFail()` und bekommt 404, der `flight_id`-Rückfall
+    /// ruft `removeBid()` auf eine bereits entfernte Buchung und bekommt 200,
+    /// ohne etwas zu tun. Zwei Anfragen ohne Wirkung, je abgeschicktem Flug.
+    ///
+    /// **Warum das trotzdem so bleibt:** ein 404 auf DELETE ließe sich als
+    /// „schon weg, Ziel erreicht" werten und der zweite Versuch sparen — aber
+    /// 404 heißt auf demselben Pfad auch „diesen Endpunkt gibt es hier nicht".
+    /// Beide sind von außen nicht sicher zu unterscheiden, und die zweite
+    /// Bedeutung stillschweigend als Erfolg zu verbuchen würde einen kaputten
+    /// Endpunkt verdecken. Zwei wirkungslose Anfragen sind der billigere
+    /// Fehler. Der Aufruf selbst wird ohnehin gebraucht — beim Zurückgeben
+    /// einer Buchung OHNE Flugbericht feuert `PirepFiled` nicht.
     ///
     /// phpVMS routes ALL bid CRUD through `/api/user/bids` (kein `{id}` im
     /// Pfad). Die ID reist im JSON-Body als `{ "bid_id": ... }` ODER

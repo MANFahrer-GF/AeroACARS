@@ -778,9 +778,16 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   // PilotHeader.tsx's own zulu clock.
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
+    // QS-Befund 18.08.2026: seit die Karte ueber Reiterwechsel hinweg
+    // eingehaengt bleibt, haette dieser Takt die (sehr grosse) Komponente
+    // waehrend des GANZEN Fluges jede Sekunde neu gerendert — auch verdeckt.
+    // Genau die Grundlast, die der Umbau vermeiden sollte. Beim Auftauchen
+    // wird sofort einmal nachgestellt, damit die Uhr nicht nachgeht.
+    if (!sichtbar) return;
+    setNowMs(Date.now());
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [sichtbar]);
   const [routeFixes, setRouteFixes] = useState<RouteFix[]>([]);
   const [depArr, setDepArr] = useState<{ dep?: [number, number]; arr?: [number, number] }>({});
   const [vaFlights, setVaFlights] = useState<VaFlight[]>([]);
@@ -1842,6 +1849,10 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     const map = mapRef.current;
     if (!map) return;
     try { localStorage.setItem("aaLivemapTrackUp", trackUp ? "1" : "0"); } catch { /* egal */ }
+    // Merken ja, Kamera bewegen nein: `trackUpHeadingDeg` folgt der Telemetrie,
+    // ohne diese Sperre liefe verdeckt bei jedem Paket ein 400-ms-Schwenk auf
+    // einer 0x0-Leinwand (QS-Befund 18.08.2026).
+    if (!sichtbar) return;
     if (!trackUp) {
       map.easeTo({ bearing: 0, duration: 400 });
       return;
@@ -1849,13 +1860,20 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     if (trackUpHeadingDeg !== null) {
       map.easeTo({ bearing: trackUpHeadingDeg, duration: 400 });
     }
-  }, [trackUp, trackUpHeadingDeg]);
+  }, [trackUp, trackUpHeadingDeg, sichtbar]);
 
   // ---- Redraw: eigener Flug (Quellen + Flugzeug-Marker + Pins) ----
   // Läuft immer; VA-Flieger liegen als zusätzliche Marker mit drauf (eigene Effekte).
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
+    // QS-Befund 18.08.2026, der schwerste: dieser Effekt haengt an
+    // `simSnapshot` und lief als einziger grosser Effekt ungesperrt weiter.
+    // Mit der dauerhaft eingehaengten Karte haette er waehrend des GANZEN
+    // Fluges Marker verschoben und `easeTo`/`jumpTo` auf einer unsichtbaren
+    // Leinwand gefahren — MapLibre haelt dafuer eine Animationsschleife am
+    // Laufen. Beim Auftauchen laeuft er neu und zeichnet alles frisch.
+    if (!sichtbar) return;
     pushSources(map, { fixes: effFixes, track: effTrackLive, dep: effDep, arr: effArr, nextIdent: nav.nextIdent });
 
     // Flugzeug-Marker (kategorieabhängiges Icon wie VPS/Stratos)
@@ -1964,6 +1982,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     // bleibt (Sim-Pause/Resume), während sich die Phase noch ändert.
   }, [
     mapReady,
+    sichtbar,
     follow,
     simSnapshot,
     routeFixes,
@@ -2166,6 +2185,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   // echte Position). Gibt den Live-Eindruck ohne separaten Live-Endpoint.
   useEffect(() => {
     if (!mapReady) return;
+    // Koppelnavigation der VA-Blasen: verdeckt sinnlos, der Bestand wird beim
+    // Auftauchen ohnehin frisch geholt.
+    if (!sichtbar) return;
     const id = setInterval(() => {
       const dtH = (Date.now() - vaDrT0Ref.current) / 3600000; // Stunden seit Poll
       if (dtH <= 0) return;
@@ -2179,7 +2201,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       }
     }, 1000);
     return () => clearInterval(id);
-  }, [mapReady]);
+  }, [mapReady, sichtbar]);
 
   // README §3 EBENEN: Track / Taxiweg show/hide, two independent toggles
   // (field feedback, 2026-08-03 — split apart from the spec's original
@@ -2237,7 +2259,12 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     ? displayCallsign(activeFlight.airline_icao, activeFlight.flight_number, activeFlight.callsign)
     : null;
   const clock = new Date(nowMs).toISOString().slice(11, 19);
-  const { events } = useMapEvents(showOwnContent);
+  // QS-Runde 4: `useMapEvents` haengt zwei Takte an — das Aktivitaetsprotokoll
+  // (alle 2 s) und den Hoppie-Nachrichtenfaden. Beide hingen nur am aktiven
+  // Flug, liefen also mit der dauerhaft eingehaengten Karte den GANZEN Flug
+  // lang weiter, obwohl niemand hinsieht. Der Hoppie-Teil geht dabei sogar ins
+  // Netz. Beim Auftauchen wird ohnehin sofort einmal frisch geholt.
+  const { events } = useMapEvents(sichtbar && showOwnContent);
   const flyToPosition = (position: [number, number]) => {
     mapRef.current?.flyTo({ center: position, duration: 700 });
   };
@@ -2649,7 +2676,13 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                     uplink: recorderState === "ok" ? t("livemap.sys_uplink_ok") : t("livemap.sys_uplink_lost"),
                   })}
             </span>
-            {activeFlight && (
+            {/* QS-Runde 5: `sichtbar` gehoert hier dazu, nicht nur `activeFlight`.
+                LiveRecordingIndicator haelt einen eigenen Sekundentakt fuer sein
+                "vor X Sekunden" — mit der dauerhaft eingehaengten Karte liefe
+                der sonst den ganzen Flug lang in einem unsichtbaren Teilbaum.
+                Verdeckt gar nicht erst einhaengen ist billiger als jede Sperre
+                im Inneren, und beim Auftauchen steht sofort der aktuelle Wert. */}
+            {activeFlight && sichtbar && (
               <>
                 <span className="aa-livemap-sysline__sep" aria-hidden="true" />
                 <LiveRecordingIndicator

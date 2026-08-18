@@ -381,6 +381,13 @@ function App() {
   useEffect(() => {
     if (tab === "map") setKarteSchonGeoeffnet(true);
   }, [tab]);
+  // QS-Befund 18.08.2026: ohne das Zuruecksetzen bliebe das Merkmal ueber ein
+  // Ab- und Neuanmelden hinweg wahr. Die Karte haenge sich dann sofort im
+  // VERDECKTEN Zustand ein — MapLibre baute sich auf einem 0x0-Behaelter auf
+  // und holte den Kartenstil, obwohl der Pilot die Karte gar nicht sehen will.
+  useEffect(() => {
+    if (status.kind !== "loggedIn") setKarteSchonGeoeffnet(false);
+  }, [status.kind]);
 
   useEffect(() => {
     applyTheme(theme);

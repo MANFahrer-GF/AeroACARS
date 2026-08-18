@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, openExternal as openUrl } from "../lib/ipc";
+import {
+  ladeNamenGedeckelt,
+  leeresGedaechtnis,
+  type NachladeGedaechtnis,
+} from "../lib/namenNachladen";
 import { useTranslation } from "react-i18next";
 import { formatRefreshError } from "../lib/refreshErrorFormatter";
 import { resolveFlightIdent } from "../lib/callsign";
@@ -424,7 +429,7 @@ export function BidsList({
   /** Cached airport coords keyed by uppercase ICAO. */
   const [airports, setAirports] = useState<Record<string, AirportInfo>>({});
   /** Tracks ICAOs we've already requested so we don't fetch the same one twice. */
-  const requestedIcaosRef = useRef<Set<string>>(new Set());
+  const nachladeGedaechtnisRef = useRef<NachladeGedaechtnis>(leeresGedaechtnis());
 
   const fetchBids = useCallback(async () => {
     try {
@@ -754,21 +759,18 @@ export function BidsList({
     const uniqueIcaos = new Set(
       state.bids.map((b) => b.flight.dpt_airport_id.trim().toUpperCase()),
     );
-    for (const icao of uniqueIcaos) {
-      if (!icao || requestedIcaosRef.current.has(icao)) continue;
-      if (airports[icao]) continue;
-      requestedIcaosRef.current.add(icao);
-      void (async () => {
-        try {
-          const info = await invoke<AirportInfo>("airport_get", { icao });
-          setAirports((prev) => ({ ...prev, [icao]: info }));
-        } catch {
-          // Leave the icao un-cached; the user will still get a clear error
-          // if they try to start the flight (server-side check kicks in).
-          requestedIcaosRef.current.delete(icao);
-        }
-      })();
-    }
+    // QS 18.08.2026: hier stand dieselbe Bauart wie im Landungen-Reiter — je
+    // Flughafen sofort ein Abruf, ohne Deckel. Die Liste ist zwar kurz (offene
+    // Buchungen, meist eine Handvoll), aber es ist dieselbe Fehlerklasse, die
+    // dort 89 gleichzeitige Verbindungen erzeugt hat. Gemeinsamer Helfer, damit
+    // die Buchhaltung nur an EINER Stelle stimmen muss.
+    const offen = [...uniqueIcaos].filter((i) => i && !airports[i]);
+    return ladeNamenGedeckelt<AirportInfo>(
+      offen,
+      nachladeGedaechtnisRef.current,
+      (icao) => invoke<AirportInfo>("airport_get", { icao }),
+      (icao, info) => setAirports((prev) => ({ ...prev, [icao]: info })),
+    );
   }, [state, airports]);
 
   function handleSetMain(bid: Bid) {

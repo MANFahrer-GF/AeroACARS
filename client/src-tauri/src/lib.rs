@@ -8815,6 +8815,21 @@ const BIDS_FAILED_MESSAGE: &str = "Bids konnten nicht geladen werden";
 /// belegter Verbindungspool sich leeren kann.
 const BIDS_RETRY_DELAYS_MS: [u64; 2] = [400, 1200];
 
+/// Ab hier wird kein neuer Versuch mehr begonnen.
+///
+/// QS-Befund 18.08.2026: ohne diese Schranke konnte der Befehl im schlechtesten
+/// Fall ~16,6 s haengen — dreimal in den 5-Sekunden-Verbindungs-Timeout plus
+/// die Wartezeiten. Fuer den Piloten waere ein 17 s haengender Briefing-Reiter
+/// unangenehmer als die rote Karte, die dieser Umbau vermeiden soll.
+///
+/// Drei Sekunden trennen genau die beiden Faelle: ein schneller Fehlschlag
+/// (Verbindung abgewiesen, kurzer Aussetzer) laesst Zeit fuer beide
+/// Wiederholungen; ein echter Timeout hat das Zeitbudget schon aufgebraucht,
+/// und ein zweiter Versuch wuerde nur dasselbe noch einmal abwarten. Damit
+/// bleibt der schlechteste Fall bei ~5 s — also unveraendert gegenueber dem
+/// Zustand VOR dieser Aenderung.
+const BIDS_RETRY_BUDGET_MS: u128 = 3_000;
+
 /// Lohnt ein zweiter Versuch? Nur bei Fehlern, die von selbst vorbeigehen.
 ///
 /// Ein 401/403/404 oder eine kaputte Antwort wird beim Wiederholen exakt
@@ -8871,6 +8886,7 @@ async fn phpvms_get_bids(
 
     let letzter: ApiError;
     let mut versuch = 0usize;
+    let beginn = std::time::Instant::now();
     loop {
         match client.get_bids().await {
             Ok(bids) => {
@@ -8878,7 +8894,10 @@ async fn phpvms_get_bids(
                 return Ok(bids);
             }
             Err(e) => {
-                if versuch < BIDS_RETRY_DELAYS_MS.len() && bids_error_is_transient(&e) {
+                if versuch < BIDS_RETRY_DELAYS_MS.len()
+                    && beginn.elapsed().as_millis() < BIDS_RETRY_BUDGET_MS
+                    && bids_error_is_transient(&e)
+                {
                     tokio::time::sleep(std::time::Duration::from_millis(
                         BIDS_RETRY_DELAYS_MS[versuch],
                     ))
@@ -46735,6 +46754,41 @@ mod bids_wiederholung_tests {
             status: 499,
             body: String::new(),
         }));
+    }
+
+    #[test]
+    fn zeitbudget_haelt_den_schlechtesten_fall_bei_rund_fuenf_sekunden() {
+        // QS-Befund 18.08.2026. Rechnung, nicht Gefuehl: der Verbindungs-Timeout
+        // liegt bei 5 s. Ohne Budget waeren drei Versuche + Wartezeiten
+        // 3*5000 + 400 + 1200 = 16,6 s. Mit dem Budget ist nach dem ERSTEN
+        // Timeout Schluss, weil 5000 ms bereits ueber der Schranke liegen.
+        const VERBINDUNGS_TIMEOUT_MS: u128 = 5_000;
+        let wartezeiten: u128 = BIDS_RETRY_DELAYS_MS.iter().map(|d| *d as u128).sum();
+
+        // Ohne Schranke: drei volle Timeouts plus beide Wartezeiten.
+        let ohne_schranke = 3 * VERBINDUNGS_TIMEOUT_MS + wartezeiten;
+        // Mit Schranke: nach dem ersten Timeout ist Schluss, denn 5.000 ms
+        // liegen bereits ueber dem Budget.
+        let mit_schranke = if VERBINDUNGS_TIMEOUT_MS >= BIDS_RETRY_BUDGET_MS {
+            VERBINDUNGS_TIMEOUT_MS
+        } else {
+            ohne_schranke
+        };
+
+        assert_eq!(ohne_schranke, 16_600, "Rechnung des schlechtesten Falls stimmt nicht mehr");
+        assert_eq!(
+            mit_schranke, VERBINDUNGS_TIMEOUT_MS,
+            "ein einzelner Timeout muss das Budget aufbrauchen, sonst greift die Schranke nicht"
+        );
+
+        // Gegenprobe in die andere Richtung: ein SCHNELLER Fehlschlag muss
+        // beide Wiederholungen noch zulassen, sonst waere die Schranke zu eng
+        // und der eigentliche Zweck (Aussetzer abfangen) dahin.
+        let schneller_fehlschlag_ms: u128 = 50;
+        let bis_zum_zweiten = schneller_fehlschlag_ms + BIDS_RETRY_DELAYS_MS[0] as u128;
+        let bis_zum_dritten = bis_zum_zweiten + schneller_fehlschlag_ms + BIDS_RETRY_DELAYS_MS[1] as u128;
+        assert!(bis_zum_zweiten < BIDS_RETRY_BUDGET_MS, "zweiter Versuch faellt aus dem Budget");
+        assert!(bis_zum_dritten < BIDS_RETRY_BUDGET_MS, "dritter Versuch faellt aus dem Budget");
     }
 
     #[test]

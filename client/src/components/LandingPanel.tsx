@@ -2,6 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { invoke } from "../lib/ipc";
+import {
+  ladeNamenGedeckelt,
+  leeresGedaechtnis,
+  type NachladeGedaechtnis,
+} from "../lib/namenNachladen";
 import { Sentry } from "../lib/sentry";
 import { useConfirm } from "./ConfirmDialog";
 import { ForensicsBadge } from "./ForensicsBadge";
@@ -3911,7 +3916,7 @@ export function LandingPanel() {
   const [sortAsc, setSortAsc] = useState(false);
   const [visibleCount, setVisibleCount] = useState(OVERVIEW_PAGE_SIZE);
   const [airportNames, setAirportNames] = useState<Record<string, string>>({});
-  const requestedIcaosRef = useRef<Set<string>>(new Set());
+  const nachladeGedaechtnisRef = useRef<NachladeGedaechtnis>(leeresGedaechtnis());
   const stats = useOverviewStats(records);
 
   // QS 2026-08-04: `refresh` läuft alle 5 s. Dauert ein Abruf einmal
@@ -3973,37 +3978,19 @@ export function LandingPanel() {
     // Gesamtdauer leidet kaum: die Antworten sind winzig, und der Rust-Teil
     // puffert sie prozessweit — beim zweiten Öffnen des Reiters geht gar keine
     // Anfrage mehr raus.
-    const GLEICHZEITIG = 4;
-    const offen = [...icaos].filter((i) => !requestedIcaosRef.current.has(i));
-    for (const icao of offen) requestedIcaosRef.current.add(icao);
-
-    let abgebrochen = false;
-    void (async () => {
-      let naechster = 0;
-      const arbeiter = async () => {
-        while (!abgebrochen) {
-          const icao = offen[naechster++];
-          if (icao === undefined) return;
-          try {
-            const info = await invoke<{ name: string | null }>("airport_get", { icao });
-            if (abgebrochen) return;
-            if (info?.name) setAirportNames((prev) => ({ ...prev, [icao]: info.name! }));
-          } catch {
-            // stays unresolved — row falls back to the bare ICAO.
-            // Fehlschlag NICHT merken, damit ein Aussetzer sich nicht für die
-            // ganze Sitzung einbrennt (dieselbe Lehre wie in LiveMapView).
-            requestedIcaosRef.current.delete(icao);
-          }
-        }
-      };
-      await Promise.all(
-        Array.from({ length: Math.min(GLEICHZEITIG, offen.length) }, arbeiter),
-      );
-    })();
-
-    return () => {
-      abgebrochen = true;
-    };
+    // Die Buchhaltung steckt in `namenNachladen.ts` — Deckel, Abbruch-Freigabe
+    // und Versuchsgrenze hängen so eng zusammen, dass sie zusammen prüfbar sein
+    // müssen. Im Bauch dieser Komponente waren sie es nicht, und genau dort ist
+    // der schwerste Fehler dieser Runde entstanden (QS 18.08.2026).
+    return ladeNamenGedeckelt(
+      icaos,
+      nachladeGedaechtnisRef.current,
+      async (icao) => {
+        const info = await invoke<{ name: string | null }>("airport_get", { icao });
+        return info?.name ?? null;
+      },
+      (icao, name) => setAirportNames((prev) => ({ ...prev, [icao]: name })),
+    );
   }, [records]);
 
   async function handleDelete(id: string) {

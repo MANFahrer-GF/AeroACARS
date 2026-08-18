@@ -99,6 +99,17 @@ export async function fetchVatsimData(signal?: AbortSignal): Promise<VatsimData>
   // sein eigenes `beendet`-Flag.
   vatsimLaeuft = vatsimDatenHolen()
     .then((daten) => {
+      // QS-Befund 18.08.2026: mit dem Zwischenspeicher bekommen ALLE Aufrufer
+      // dasselbe Objekt statt je einen frischen Aufbau. Wuerde einer die Listen
+      // an Ort und Stelle sortieren oder filtern, saehen alle anderen das
+      // stillschweigend mit. Heute liest jeder nur — das flache Einfrieren
+      // haelt das so und macht einen kuenftigen Verstoss zu einem lauten
+      // Fehler statt zu einer stillen Verfaelschung. Kostet drei Aufrufe,
+      // nicht das Durchlaufen der 1,8 MB.
+      Object.freeze(daten.pilots);
+      Object.freeze(daten.controllers);
+      Object.freeze(daten.atis);
+      Object.freeze(daten);
       vatsimCache = { daten, zeit: Date.now() };
       return daten;
     })
