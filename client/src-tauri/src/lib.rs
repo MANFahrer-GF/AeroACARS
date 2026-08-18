@@ -8806,29 +8806,104 @@ async fn fetch_release_notes(version: String) -> Result<ReleaseNotes, UiError> {
         .map_err(|e| UiError::new("parse", e.to_string()))
 }
 
+/// Feste Beschriftung des Bids-Fehlers im Aktivitätsprotokoll. Als Konstante,
+/// weil `resolve_bids_activity_error` denselben Text wiederfinden muss.
+const BIDS_FAILED_MESSAGE: &str = "Bids konnten nicht geladen werden";
+
+/// Wartezeiten vor dem 2. und 3. Versuch. Kurz genug, dass der Pilot nichts
+/// merkt (in Summe 1,6 s bei zwei Fehlschlägen), lang genug, damit ein
+/// belegter Verbindungspool sich leeren kann.
+const BIDS_RETRY_DELAYS_MS: [u64; 2] = [400, 1200];
+
+/// Lohnt ein zweiter Versuch? Nur bei Fehlern, die von selbst vorbeigehen.
+///
+/// Ein 401/403/404 oder eine kaputte Antwort wird beim Wiederholen exakt
+/// genauso ausfallen — da ist die sofortige Meldung die richtige Antwort, und
+/// zwar mit der technischen Zeile, die der Pilot weitergeben kann. Ein
+/// Netzfehler oder ein 5xx dagegen ist typischerweise ein Aussetzer von
+/// Sekundenbruchteilen.
+fn bids_error_is_transient(err: &ApiError) -> bool {
+    match err {
+        ApiError::Network(_) => true,
+        ApiError::Server { status, .. } => *status >= 500,
+        _ => false,
+    }
+}
+
+/// Entwertet einen früheren Bids-Fehler, sobald der Abruf wieder klappt.
+///
+/// **Das ist der Kern des Feldbefunds vom 18.08.2026.** Ein einziger verlorener
+/// Abruf schrieb eine rote Fehlerzeile ins Protokoll — und die blieb dort
+/// stehen. Karte und Overlay rendern dieses Protokoll, also starrte den Piloten
+/// stundenlang ein Fehler an, der sich vier Sekunden später von selbst erledigt
+/// hatte. Der Eintrag wird nicht gelöscht (die Störung war echt), sondern auf
+/// `Info` heruntergestuft und als erledigt gekennzeichnet.
+fn resolve_bids_activity_error(state: &tauri::State<'_, AppState>) {
+    let mut log = state.activity_log.lock().expect("activity_log lock");
+    entwerte_bids_fehler(&mut log);
+}
+
+/// Der eigentliche Handgriff, getrennt von der Sperre — so ist er ohne
+/// Tauri-`State` prüfbar.
+fn entwerte_bids_fehler(log: &mut VecDeque<ActivityEntry>) {
+    for entry in log.iter_mut() {
+        if matches!(entry.level, ActivityLevel::Error) && entry.message == BIDS_FAILED_MESSAGE {
+            entry.level = ActivityLevel::Info;
+            entry.detail = Some(match entry.detail.take() {
+                Some(d) => format!("{d} — inzwischen wieder erreichbar"),
+                None => "inzwischen wieder erreichbar".to_string(),
+            });
+        }
+    }
+}
+
 /// `GET /api/user/bids` — the pilot's open bids.
+///
+/// Wiederholt vorübergehende Fehler still, bevor der Pilot etwas davon sieht:
+/// die Liste wird im Leerlauf im Sekundentakt abgefragt, ein einzelnes
+/// verlorenes Paket ist über einen langen Flug praktisch sicher und sagt
+/// nichts aus.
 #[tauri::command]
 async fn phpvms_get_bids(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<Bid>, UiError> {
     let client = current_client(&state)?;
-    match client.get_bids().await {
-        Ok(bids) => Ok(bids),
-        Err(e) => {
-            // Log to the activity feed so the pilot can paste the
-            // technical detail without having to dig through console
-            // logs. Particularly useful for the BadResponse case where
-            // a single malformed bid breaks the whole list — we show
-            // exactly which field/path tripped the decoder.
-            log_activity(
-                &state,
-                ActivityLevel::Error,
-                "Bids konnten nicht geladen werden",
-                Some(format!("{e}")),
-            );
-            Err(e.into())
+
+    let letzter: ApiError;
+    let mut versuch = 0usize;
+    loop {
+        match client.get_bids().await {
+            Ok(bids) => {
+                resolve_bids_activity_error(&state);
+                return Ok(bids);
+            }
+            Err(e) => {
+                if versuch < BIDS_RETRY_DELAYS_MS.len() && bids_error_is_transient(&e) {
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        BIDS_RETRY_DELAYS_MS[versuch],
+                    ))
+                    .await;
+                    versuch += 1;
+                    continue;
+                }
+                letzter = e;
+                break;
+            }
         }
     }
+
+    // Log to the activity feed so the pilot can paste the
+    // technical detail without having to dig through console
+    // logs. Particularly useful for the BadResponse case where
+    // a single malformed bid breaks the whole list — we show
+    // exactly which field/path tripped the decoder.
+    let detail = if versuch > 0 {
+        format!("{letzter} (nach {} Versuchen)", versuch + 1)
+    } else {
+        format!("{letzter}")
+    };
+    log_activity(&state, ActivityLevel::Error, BIDS_FAILED_MESSAGE, Some(detail));
+    Err(letzter.into())
 }
 
 /// v0.12.12-dev: `GET /api/news` — VA-News-Posts. Reuse den vorhandenen
@@ -46597,5 +46672,116 @@ mod v163_mutationsluecken {
         let leer = SimSnapshot::default();
         stamp_touchdown_metadata(&mut stats, &leer, Utc::now(), None);
         assert_eq!(stats.landing_wind_direction_deg, Some(250.0));
+    }
+}
+
+#[cfg(test)]
+mod bids_wiederholung_tests {
+    use super::*;
+
+    // v1.6.11 — welche Bids-Fehler einen zweiten Versuch wert sind.
+    //
+    // Feldbefund 18.08.2026 (BTI22): EIN verlorenes Paket im Reiseflug schrieb
+    // eine rote Fehlerzeile ins Aktivitaetsprotokoll — und die blieb dort
+    // stehen, obwohl der naechste Abruf vier Sekunden spaeter klappte. Karte
+    // und Overlay zeigen dieses Protokoll, also starrte den Piloten stundenlang
+    // ein laengst erledigter Fehler an.
+    //
+    // Der Zuschnitt ist der heikle Teil: WIEDERHOLEN darf nur, was von selbst
+    // vorbeigeht. Ein 401 wiederholt sich beliebig oft mit demselben Ergebnis —
+    // dort ist die sofortige Meldung samt technischer Zeile die richtige
+    // Antwort, und Wiederholen wuerde sie nur um 1,6 s verzoegern.
+
+    #[test]
+    fn netzfehler_und_5xx_sind_vorruebergehend() {
+        assert!(bids_error_is_transient(&ApiError::Network(
+            "error sending request".into()
+        )));
+        assert!(bids_error_is_transient(&ApiError::Server {
+            status: 500,
+            body: String::new(),
+        }));
+        assert!(bids_error_is_transient(&ApiError::Server {
+            status: 503,
+            body: String::new(),
+        }));
+    }
+
+    #[test]
+    fn dauerhafte_fehler_werden_nicht_wiederholt() {
+        // Gegenprobe zur Regel oben — ohne sie wuerde ein zu weiter Zuschnitt
+        // (etwa "alles ausser Ok") unbemerkt durchgehen.
+        assert!(!bids_error_is_transient(&ApiError::Unauthenticated));
+        assert!(!bids_error_is_transient(&ApiError::Forbidden));
+        assert!(!bids_error_is_transient(&ApiError::NotFound));
+        assert!(!bids_error_is_transient(&ApiError::BadResponse(
+            "field `flight_number` was a string".into()
+        )));
+        assert!(!bids_error_is_transient(&ApiError::InvalidUrl(
+            "nope".into()
+        )));
+    }
+
+    #[test]
+    fn vierhundert_ist_kein_serverfehler() {
+        // Die Grenze liegt bei 500. Ein 4xx kommt vom Client und wiederholt
+        // sich genauso — der frueher naheliegende `matches!(.., Server { .. })`
+        // ohne Statuspruefung waere hier falsch gewesen.
+        assert!(!bids_error_is_transient(&ApiError::Server {
+            status: 400,
+            body: String::new(),
+        }));
+        assert!(!bids_error_is_transient(&ApiError::Server {
+            status: 499,
+            body: String::new(),
+        }));
+    }
+
+    #[test]
+    fn hoechstens_zwei_wiederholungen_und_sie_sind_kurz() {
+        // In Summe unter zwei Sekunden: der Pilot soll den Aussetzer gar nicht
+        // erst mitbekommen. Waere die Wartezeit lang, wuerde die Liste im
+        // Briefing sichtbar haengen.
+        assert_eq!(BIDS_RETRY_DELAYS_MS.len(), 2);
+        let summe: u64 = BIDS_RETRY_DELAYS_MS.iter().sum();
+        assert!(summe < 2_000, "zu lange Gesamtwartezeit: {summe} ms");
+        assert!(
+            BIDS_RETRY_DELAYS_MS.windows(2).all(|w| w[0] < w[1]),
+            "die Wartezeiten sollen wachsen, nicht schrumpfen"
+        );
+    }
+
+    #[test]
+    fn erledigter_fehler_wird_heruntergestuft_statt_geloescht() {
+        // Der Eintrag verschwindet NICHT — die Stoerung war echt und gehoert
+        // ins Protokoll. Er hoert nur auf, rot zu sein.
+        let mut log: VecDeque<ActivityEntry> = VecDeque::new();
+        log.push_back(ActivityEntry {
+            timestamp: Utc::now(),
+            level: ActivityLevel::Error,
+            message: BIDS_FAILED_MESSAGE.to_string(),
+            detail: Some("network error".into()),
+        });
+        log.push_back(ActivityEntry {
+            timestamp: Utc::now(),
+            level: ActivityLevel::Error,
+            message: "Ein ganz anderer Fehler".to_string(),
+            detail: None,
+        });
+
+        entwerte_bids_fehler(&mut log);
+
+        assert!(matches!(log[0].level, ActivityLevel::Info));
+        assert_eq!(log[0].message, BIDS_FAILED_MESSAGE, "Text bleibt stehen");
+        assert!(log[0].detail.as_deref().unwrap().contains("network error"));
+        assert!(log[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("inzwischen wieder erreichbar"));
+
+        // Gegenprobe: fremde Eintraege bleiben unangetastet.
+        assert!(matches!(log[1].level, ActivityLevel::Error));
+        assert!(log[1].detail.is_none());
     }
 }

@@ -103,6 +103,10 @@ vi.mock("maplibre-gl", () => {
     }
     easeTo() { return this; }
     jumpTo() { return this; }
+    // v1.6.11: die Karte bleibt beim Reiterwechsel eingehaengt und misst sich
+    // beim Wiederauftauchen neu. Der Mock kannte `resize` nicht — echtes
+    // MapLibre hat es immer, die Luecke lag also im Mock, nicht im Code.
+    resize() { return this; }
     remove() { return this; }
   }
   return { default: { Map: FakeMap, Marker: FakeMarker, Popup: FakePopup, NavigationControl: FakeNav, LngLatBounds: FakeBounds } };

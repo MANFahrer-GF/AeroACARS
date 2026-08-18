@@ -53,7 +53,13 @@ serde_json = "1"
 serde_with = "3"
 
 # HTTP client (rustls — no OpenSSL on Windows/macOS)
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip"] }
+# "http2" seit v1.6.11: ohne das Merkmal fehlt `h2` komplett im Bau und der
+# Client spricht ausschliesslich HTTP/1.1 — jede Anfrage braucht dann eine
+# EIGENE TCP+TLS-Verbindung. Beim Oeffnen des Landungen-Reiters gehen ~90
+# Flughafen-Abfragen gleichzeitig raus; parallel laufende Abrufe bekamen
+# keine Verbindung mehr und liefen in CONNECT_TIMEOUT (Feldbefund
+# 18.08.2026, BTI22). Mit HTTP/2 laufen sie ueber EINE Verbindung.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip", "http2"] }
 url = "2"
 
 # Discord Rich Presence — IPC zu lokalem Discord-Client (Named Pipe

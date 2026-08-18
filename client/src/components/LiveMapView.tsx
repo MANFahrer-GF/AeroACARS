@@ -341,9 +341,21 @@ interface Props {
    *  the same value App.tsx's own sidebar status pill already shows. */
   simKind: string | undefined;
   onSwitchToBriefing: () => void;
+  /** Liegt der Karten-Reiter gerade vorn?
+   *
+   *  Die Karte bleibt seit v1.6.11 ueber Reiterwechsel hinweg eingehaengt —
+   *  sie neu aufzubauen kostete jedes Mal Stil, Schriften und Kacheln von
+   *  CARTO/ArcGIS, und genau das war die gemeldete Traegheit. Verdeckt braucht
+   *  sie aber nicht weiterzupollen: die Streckenaufzeichnung laeuft ohnehin im
+   *  Rust-Teil (`record_track_point`, fenster-unabhaengig), die Karte LIEST sie
+   *  nur. Pausieren verliert also keine Daten.
+   *
+   *  Optional mit Vorgabe `true`, damit Einbindungen ohne diese Angabe
+   *  (Tests, Vorschau) sich unveraendert verhalten. */
+  sichtbar?: boolean;
 }
 
-export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBriefing }: Props) {
+export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBriefing, sichtbar = true }: Props) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -444,10 +456,33 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   const simSnapshotRef = useRef<SimSnapshot | null>(null);
   useEffect(() => { simSnapshotRef.current = simSnapshot; });
   const [theme, setTheme] = useState<"dark" | "light">(readTheme());
+  // Wird der Reiter wieder vorgeholt, muss MapLibre seine Leinwand neu
+  // vermessen: verdeckt steht der Behaelter auf `display: none` und damit auf
+  // 0x0. Ohne dieses `resize` bliebe die Karte beim Zurueckkommen leer oder
+  // stark verzerrt — der klassische Fallstrick beim Verstecken statt Ausbauen.
+  //
+  // Zwei Bilder Verzoegerung, damit der Browser das Layout schon gerechnet hat:
+  // ein `resize` im selben Bild misst noch die alten 0x0.
+  useEffect(() => {
+    if (!sichtbar || !mapReady) return;
+    let id2 = 0;
+    const id1 = requestAnimationFrame(() => {
+      id2 = requestAnimationFrame(() => mapRef.current?.resize());
+    });
+    return () => {
+      cancelAnimationFrame(id1);
+      if (id2) cancelAnimationFrame(id2);
+    };
+  }, [sichtbar, mapReady]);
+
   // ── VATSIM-Overlay: Daten holen, solange es eingeschaltet ist ─────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
+    // Verdeckt kein 1,8-MB-Datafeed alle 30 s. Beim Wiederauftauchen laeuft der
+    // Effekt neu und holt sofort einmal; ist die Antwort noch frisch, kommt sie
+    // aus dem Zwischenspeicher in `fetchVatsimData` statt aus dem Netz.
+    if (!sichtbar) return;
 
     const setzen = (
       pilots: GeoJSON.FeatureCollection, atc: GeoJSON.FeatureCollection,
@@ -580,7 +615,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     // der Effekt lief dann nicht neu, und man musste erst auf "Aus" und
     // zurueck (Feldbefund Thomas, 16.08.2026). Genau die Falle, die eine
     // abgeleitete Groesse in einer Abhaengigkeitsliste aufmacht.
-  }, [netz, mapReady]);
+  }, [netz, mapReady, sichtbar]);
 
   // Hoehenregler: wirkt augenblicklich auf die schon geladenen Sektoren.
   useEffect(() => {
@@ -1593,6 +1628,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       setRouteFixes([]);
       return;
     }
+    if (!sichtbar) return;
     let cancelled = false;
     const sig = (fx: RouteFix[]) => fx.map((f) => `${f.ident}@${f.lat.toFixed(3)},${f.lon.toFixed(3)}`).join("|");
     const load = () =>
@@ -1611,7 +1647,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [pirepId]);
+  }, [pirepId, sichtbar]);
 
   // ---- geflogenen Track laden (Backend ist die Quelle) ----
   // v0.15.x: Lücken-Fix. Der Rust-Streamer akkumuliert den Track lückenlos
@@ -1628,6 +1664,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       setTrackPoints([]);
       return;
     }
+    if (!sichtbar) return;
     let cancelled = false;
     const load = () =>
       invoke<[number, number][]>("flight_get_track")
@@ -1666,7 +1703,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [pirepId]);
+  }, [pirepId, sichtbar]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1972,6 +2009,10 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       setVaFlights([]);
       return;
     }
+    // Verdeckt nicht weiterpollen — die Blasen der Kollegen sieht ohnehin
+    // niemand. Der Bestand bleibt stehen und wird beim Wiederauftauchen
+    // sofort einmal aufgefrischt.
+    if (!sichtbar) return;
     let cancelled = false;
     const poll = async () => {
       try {
@@ -1995,7 +2036,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       cancelled = true;
       clearInterval(id);
     };
-  }, [showVa]);
+  }, [showVa, sichtbar]);
 
   async function resolveAirportCoord(icao: string): Promise<[number, number] | null> {
     const cache = airportCoordCacheRef.current;

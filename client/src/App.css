@@ -635,9 +635,27 @@ body {
    unsichtbaren Kartenbereich). Mit fester Höhe scrollt das Log INTERN und die
    Karte passt exakt ins Fenster. Nur wenn die Live-Map im DOM ist (:has) —
    alle anderen Tabs bleiben unverändert (Seite scrollt wie gehabt). */
-.app:has(.aa-livemap) {
+.app:has(.aa-map-keepalive:not([hidden])) {
   height: 100%;
   overflow: hidden;
+}
+
+/* v1.6.11: Die Karte bleibt ueber Reiterwechsel hinweg im DOM (sonst kostet
+   jeder Wechsel Stil, Schriften und Kacheln neu). Zwei Dinge muessen dafuer
+   stimmen:
+
+   1. SICHTBAR muss der Wrapper fuer das Layout unsichtbar sein — `display:
+      contents` reicht ihn durch, sonst braeche die Hoehenkette zur Karte.
+   2. Die Regel oben darf NICHT mehr auf `.aa-livemap` im DOM pruefen. Sie
+      setzt `overflow: hidden` auf die ganze App; mit dauerhaft eingehaengter
+      Karte haette danach KEIN anderer Reiter mehr gescrollt. Sie haengt jetzt
+      daran, ob die Karte gerade auch WIRKLICH zu sehen ist. */
+.aa-map-keepalive {
+  display: contents;
+}
+
+.aa-map-keepalive[hidden] {
+  display: none;
 }
 
 /* Vertical red separator between the AeroACARS title and the

@@ -3962,18 +3962,48 @@ export function LandingPanel() {
       if (r.dpt_airport) icaos.add(r.dpt_airport);
       if (r.arr_airport) icaos.add(r.arr_airport);
     }
-    for (const icao of icaos) {
-      if (requestedIcaosRef.current.has(icao)) continue;
-      requestedIcaosRef.current.add(icao);
-      void (async () => {
-        try {
-          const info = await invoke<{ name: string | null }>("airport_get", { icao });
-          if (info?.name) setAirportNames((prev) => ({ ...prev, [icao]: info.name! }));
-        } catch {
-          // stays unresolved — row falls back to the bare ICAO
+    // Nebenläufigkeit gedeckelt (Feldbefund 18.08.2026, BTI22): diese Schleife
+    // startete FÜR JEDEN Flughafen sofort einen Abruf — bei einem Piloten mit
+    // langer Historie waren das 89 gleichzeitig in zwei Sekunden. Jeder braucht
+    // eine eigene Verbindung; ein parallel laufender Abruf (die Bid-Liste)
+    // bekam keine mehr und lief in den Verbindungs-Timeout. Der Pilot sah einen
+    // Netzwerkfehler mitten im Reiseflug.
+    //
+    // Vier gleichzeitig ist die übliche Browser-Hausnummer pro Gegenstelle. Die
+    // Gesamtdauer leidet kaum: die Antworten sind winzig, und der Rust-Teil
+    // puffert sie prozessweit — beim zweiten Öffnen des Reiters geht gar keine
+    // Anfrage mehr raus.
+    const GLEICHZEITIG = 4;
+    const offen = [...icaos].filter((i) => !requestedIcaosRef.current.has(i));
+    for (const icao of offen) requestedIcaosRef.current.add(icao);
+
+    let abgebrochen = false;
+    void (async () => {
+      let naechster = 0;
+      const arbeiter = async () => {
+        while (!abgebrochen) {
+          const icao = offen[naechster++];
+          if (icao === undefined) return;
+          try {
+            const info = await invoke<{ name: string | null }>("airport_get", { icao });
+            if (abgebrochen) return;
+            if (info?.name) setAirportNames((prev) => ({ ...prev, [icao]: info.name! }));
+          } catch {
+            // stays unresolved — row falls back to the bare ICAO.
+            // Fehlschlag NICHT merken, damit ein Aussetzer sich nicht für die
+            // ganze Sitzung einbrennt (dieselbe Lehre wie in LiveMapView).
+            requestedIcaosRef.current.delete(icao);
+          }
         }
-      })();
-    }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(GLEICHZEITIG, offen.length) }, arbeiter),
+      );
+    })();
+
+    return () => {
+      abgebrochen = true;
+    };
   }, [records]);
 
   async function handleDelete(id: string) {

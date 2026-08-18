@@ -59,9 +59,73 @@ const VATSPY_URL =
 // Live-Datafeed
 // ---------------------------------------------------------------------------
 
+/** Der Datafeed ist 1,8 MB gross und aendert sich serverseitig ohnehin nur
+ *  etwa alle 15 s. Ohne Zwischenspeicher zog JEDER Neuaufbau der Karte ihn neu
+ *  — und die Karte wird bei jedem Reiterwechsel komplett neu gebaut, weil
+ *  App.tsx die Reiter als `{tab === "…" && <Komponente/>}` rendert. Genau das
+ *  war die vom Piloten gemeldete Traegheit (18.08.2026).
+ *
+ *  Modul-Ebene, nicht Komponenten-Ebene: nur so ueberlebt er das Aus- und
+ *  Einhaengen. Die beiden Schwester-Funktionen weiter unten hatten so einen
+ *  Speicher von Anfang an — ausgerechnet die einzige noch benutzte nicht. */
+const VATSIM_CACHE_TTL_MS = 15_000;
+let vatsimCache: { daten: VatsimData; zeit: number } | null = null;
+let vatsimLaeuft: Promise<VatsimData> | null = null;
+
+/** Nur fuer Tests: setzt den Zwischenspeicher zurueck. */
+export function _vatsimCacheLeeren(): void {
+  vatsimCache = null;
+  vatsimLaeuft = null;
+}
+
 /** Holt den VATSIM-Live-Datafeed und reduziert ihn auf die Felder die wir
- *  brauchen. Wirft bei HTTP-Fehler/Abort weiter (Caller fängt + loggt). */
+ *  brauchen. Wirft bei HTTP-Fehler/Abort weiter (Caller fängt + loggt).
+ *
+ *  Antworten juenger als {@link VATSIM_CACHE_TTL_MS} kommen aus dem Speicher.
+ *  Laeuft bereits ein Abruf, haengen sich weitere Aufrufer an DENSELBEN an,
+ *  statt einen zweiten 1,8-MB-Download zu starten. */
 export async function fetchVatsimData(signal?: AbortSignal): Promise<VatsimData> {
+  if (signal?.aborted) throw abbruchFehler();
+
+  const jetzt = Date.now();
+  if (vatsimCache && jetzt - vatsimCache.zeit < VATSIM_CACHE_TTL_MS) {
+    return vatsimCache.daten;
+  }
+  if (vatsimLaeuft) return mitAbbruch(vatsimLaeuft, signal);
+
+  // Der laufende Abruf bekommt bewusst KEIN `signal`: er wird geteilt, und ein
+  // einzelner Aufrufer, der abbricht (Reiter gewechselt), duerfte den Abruf der
+  // anderen nicht mit abwuergen. Der Abbruch des Aufrufers wirkt weiter ueber
+  // sein eigenes `beendet`-Flag.
+  vatsimLaeuft = vatsimDatenHolen()
+    .then((daten) => {
+      vatsimCache = { daten, zeit: Date.now() };
+      return daten;
+    })
+    .finally(() => {
+      vatsimLaeuft = null;
+    });
+  return mitAbbruch(vatsimLaeuft, signal);
+}
+
+function abbruchFehler(): DOMException {
+  return new DOMException("Aborted", "AbortError");
+}
+
+/** Gibt dem einzelnen Aufrufer seinen Abbruch zurueck, OHNE den geteilten
+ *  Abruf abzuwuergen: wer den Reiter wechselt, bekommt sein AbortError — die
+ *  anderen Aufrufer warten ungestoert auf dieselbe Antwort weiter. Genau das
+ *  ginge verloren, wenn man das Signal einfach an `fetch` durchreichte. */
+function mitAbbruch<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return p;
+  return new Promise<T>((auf, ab) => {
+    const beiAbbruch = () => ab(abbruchFehler());
+    signal.addEventListener("abort", beiAbbruch, { once: true });
+    p.then(auf, ab).finally(() => signal.removeEventListener("abort", beiAbbruch));
+  });
+}
+
+async function vatsimDatenHolen(signal?: AbortSignal): Promise<VatsimData> {
   const res = await fetch(VATSIM_DATA_URL, { signal });
   if (!res.ok) throw new Error(`vatsim-data HTTP ${res.status}`);
   const json = (await res.json()) as {

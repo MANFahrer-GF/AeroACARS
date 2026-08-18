@@ -56,8 +56,16 @@ describe("Kartenbild", () => {
     // Der Effekt hing an der abgeleiteten Ja/Nein-Groesse. Die bleibt beim
     // Wechsel VATSIM -> IVAO unveraendert wahr, also lief er nicht neu und
     // man musste erst ausschalten. Die Abhaengigkeit muss das NETZ sein.
-    expect(quelle).toContain("}, [netz, mapReady]);");
-    expect(quelle).not.toContain("}, [showVatsim, mapReady]);");
+    //
+    // v1.6.11: `sichtbar` ist dazugekommen (die Karte bleibt beim Reiterwechsel
+    // eingehaengt und pausiert verdeckt). Der Test prueft deshalb nicht mehr
+    // den Wortlaut der Liste, sondern das, worum es ihm geht: `netz` MUSS
+    // drinstehen, die abgeleitete Ja/Nein-Groesse `showVatsim` darf es NICHT.
+    const liste = quelle.match(/\n  \}, \[([^\]]*)\]\);/g) ?? [];
+    const vatsimEffekt = liste.filter((l) => l.includes("netz"));
+    expect(vatsimEffekt).toHaveLength(1);
+    expect(vatsimEffekt[0]).toContain("mapReady");
+    expect(vatsimEffekt[0]).not.toContain("showVatsim");
   });
 
   it("bietet den Netz-Umschalter mit genau drei Zustaenden", () => {

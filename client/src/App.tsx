@@ -374,6 +374,14 @@ function App() {
   // damit nicht doppelt gegen GitHub gepollt wird.
   const updateChecker = useUpdateChecker();
 
+  // Einmal geoeffnet, bleibt die Karte eingehaengt (siehe Kommentar am
+  // Render-Ort). Vorher als Zustand statt als Ableitung aus `tab`, weil sie
+  // ja gerade AUCH dann stehen bleiben soll, wenn `tab` etwas anderes ist.
+  const [karteSchonGeoeffnet, setKarteSchonGeoeffnet] = useState(false);
+  useEffect(() => {
+    if (tab === "map") setKarteSchonGeoeffnet(true);
+  }, [tab]);
+
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
@@ -842,15 +850,25 @@ function App() {
 
       {status.kind === "loggedIn" && tab === "log" && <ActivityLogPanel />}
 
-      {status.kind === "loggedIn" && tab === "map" && (
-        <Suspense fallback={<div className="lazy-fallback">…</div>}>
-          <LiveMapView
-            activeFlight={activeFlight}
-            simSnapshot={simSnapshot}
-            simKind={simStatus?.kind}
-            onSwitchToBriefing={() => setTab("briefing")}
-          />
-        </Suspense>
+      {/* v1.6.11: Die Karte wird beim Reiterwechsel NICHT mehr ausgebaut.
+          Ein Neuaufbau kostete jedes Mal Kartenstil, Schriften und Kacheln von
+          CARTO/ArcGIS — das war die vom Piloten gemeldete Traegheit. Sie wird
+          erst beim ersten Oeffnen eingehaengt (der 1,7-MB-MapLibre-Brocken
+          bleibt also weiterhin nachgeladen) und danach nur noch versteckt.
+          Verdeckt pausieren ihre Netz-Abfragen — siehe `sichtbar` in
+          LiveMapView. */}
+      {status.kind === "loggedIn" && karteSchonGeoeffnet && (
+        <div className="aa-map-keepalive" hidden={tab !== "map"}>
+          <Suspense fallback={<div className="lazy-fallback">…</div>}>
+            <LiveMapView
+              activeFlight={activeFlight}
+              simSnapshot={simSnapshot}
+              simKind={simStatus?.kind}
+              onSwitchToBriefing={() => setTab("briefing")}
+              sichtbar={tab === "map"}
+            />
+          </Suspense>
+        </div>
       )}
 
       {status.kind === "loggedIn" && tab === "cpdlc" && (
