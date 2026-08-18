@@ -46,6 +46,8 @@ export interface VatsimData {
   atis: Array<{ callsign: string; frequency: string; code: string }>;
 }
 
+import { mitZeitgrenze } from "./abbruch";
+
 const VATSIM_DATA_URL = "https://data.vatsim.net/v3/vatsim-data.json";
 const BOUNDARIES_URL =
   "https://cdn.jsdelivr.net/gh/vatsimnetwork/vatspy-data-project@master/Boundaries.geojson";
@@ -136,8 +138,16 @@ function mitAbbruch<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
   });
 }
 
+/** Dieselbe Lehre wie beim Sektor-Abruf (18.08.2026): ein Abruf im Anfrageweg
+ *  der Karte ohne Zeitgrenze wartet im Zweifel unbegrenzt. Der Datafeed ist
+ *  1,8 MB gross, deshalb grosszuegige 15 s — der Takt liegt bei 30 s, es kann
+ *  also nie mehr als einer unterwegs sein. */
+const VATSIM_ZEITGRENZE_MS = 15_000;
+
 async function vatsimDatenHolen(signal?: AbortSignal): Promise<VatsimData> {
-  const res = await fetch(VATSIM_DATA_URL, { signal });
+  const res = await fetch(VATSIM_DATA_URL, {
+    signal: mitZeitgrenze(signal, VATSIM_ZEITGRENZE_MS),
+  });
   if (!res.ok) throw new Error(`vatsim-data HTTP ${res.status}`);
   const json = (await res.json()) as {
     pilots?: unknown[];

@@ -143,3 +143,31 @@ describe("fetchVatsimData — Zwischenspeicher", () => {
     expect(f).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("fetchVatsimData — Zeitgrenze (QS 18.08.2026)", () => {
+  beforeEach(() => _vatsimCacheLeeren());
+  afterEach(() => _vatsimCacheLeeren());
+
+  it("gibt dem Abruf eine Zeitgrenze mit", async () => {
+    // Thomas' Frage: „brauchen wir den Fix nicht auch im Client?" — ja. Auf dem
+    // Server hing ein toter Fremddienst OHNE Zeitgrenze im Anfrageweg und
+    // machte aus 1,2 s Kartenabruf 20,8 s. Hier war dieselbe Lücke: ohne
+    // Zeitgrenze wartet die Karte unbegrenzt, wenn der Weg dorthin klemmt.
+    let gesehen: AbortSignal | null | undefined;
+    const f = vi.fn(async (_u: unknown, init?: RequestInit) => {
+      gesehen = init?.signal;
+      return { ok: true, json: async () => ({ pilots: [], controllers: [], atis: [] }) };
+    }) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", f);
+
+    await fetchVatsimData();
+
+    expect(gesehen, "kein Abbruchsignal am fetch — die Zeitgrenze fehlt").toBeTruthy();
+    expect(gesehen!.aborted).toBe(false);
+  });
+
+  // Dass die Zeitgrenze auch WIRKT, prueft `abbruch.test.ts` am Baustein
+  // selbst — mit echten, winzigen Zeiten. Ein Versuch mit gefaelschten Timern
+  // lief hier in die Zeitueberschreitung: `AbortSignal.timeout` haengt nicht
+  // an der gestellten Uhr des Testlaufs und haette gar nichts bewiesen.
+});

@@ -11,6 +11,8 @@
 //
 // Datenquelle: github.com/lennycolton/vatglasses-data, CC BY-NC-SA 4.0.
 
+import { mitZeitgrenze } from "./abbruch";
+
 const STANDARD_BASIS = "https://live.kant.ovh";
 
 /** Welches Netz die Karte zeigt. Nie beide zugleich — zwei Netze
@@ -55,6 +57,20 @@ function leer(): SektorenFuerKarte {
  *  statt zu werfen: die Karte zeigt dann Flugzeuge und Plätze weiter,
  *  nur ohne Sektorflächen. Ein Abbruch (Kartenwechsel, Neuabfrage) wird
  *  durchgereicht, damit der Aufrufer ihn wie gewohnt verwerfen kann. */
+/** Wie lange die Karte auf die Sektoren wartet.
+ *
+ *  Feldbefund 18.08.2026, Thomas' Frage „brauchen wir den Fix nicht auch im
+ *  Client?": auf dem Live-Server hing ein toter Fremddienst OHNE Zeitgrenze im
+ *  Anfrageweg und machte aus 1,2 s Kartenabruf 20,8 s. Serverseitig behoben —
+ *  aber der Client hatte hier ebenfalls keine Zeitgrenze und haette
+ *  unbegrenzt mitgewartet. Die naechste Stoerung irgendwo auf dem Weg waere
+ *  derselbe Fehler.
+ *
+ *  15 s sind grosszuegig: die Antwort ist rund 1,2 MB (etwa 180 KB gepackt),
+ *  und der Takt der Karte liegt bei 30 s — es kann also nie mehr als ein
+ *  Abruf gleichzeitig unterwegs sein. */
+const SEKTOREN_ZEITGRENZE_MS = 15_000;
+
 export async function ladeSektoren(
   /** Flugflaeche, oder "alle" fuer jedes Hoehenband auf einmal. Mit "alle"
    *  filtert die Karte selbst und der Hoehenregler wirkt augenblicklich,
@@ -73,7 +89,9 @@ export async function ladeSektoren(
   try {
     const wert = fl === "alle" ? "alle" : String(Math.round(fl));
     const q = netz === "ivao" ? `&netz=ivao` : "";
-    const res = await fetch(`${basis}/api/vatglasses?fl=${wert}${q}`, { signal });
+    const res = await fetch(`${basis}/api/vatglasses?fl=${wert}${q}`, {
+      signal: mitZeitgrenze(signal, SEKTOREN_ZEITGRENZE_MS),
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const d = (await res.json()) as {
       flaechen?: GeoJSON.FeatureCollection;
