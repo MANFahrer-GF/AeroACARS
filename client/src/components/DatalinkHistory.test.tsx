@@ -56,6 +56,7 @@ const PDC_SENT: ThreadEntry = {
   closed: null,
   deferred: null,
   superseded: null,
+  station: null,
 };
 
 // Shaped like hoppie-protocol/tests/fixtures/pdc_request_reply.txt, with
@@ -72,6 +73,7 @@ const PDC_REPLY: ThreadEntry = {
   closed: null,
   deferred: null,
   superseded: null,
+  station: null,
 };
 
 // Shaped like hoppie-protocol/tests/fixtures/cpdlc_direct_to_sequence.txt
@@ -88,6 +90,7 @@ const CPDLC_UPLINK_OPEN: ThreadEntry = {
   closed: false,
   deferred: false,
   superseded: null,
+  station: null,
 };
 
 function renderHistory(messages: ThreadEntry[]) {
@@ -101,7 +104,7 @@ describe("DatalinkHistory — uplink parsing", () => {
     renderHistory([PDC_SENT, PDC_REPLY]);
     expect(screen.getByText("4231")).toBeInTheDocument(); // SQUAWK
     expect(screen.getByText("DOMUX2N")).toBeInTheDocument(); // SID
-    expect(screen.getByText("5000")).toBeInTheDocument(); // INITIAL CLIMB
+    expect(screen.getByText("5000FT")).toBeInTheDocument(); // INITIAL CLIMB
     expect(screen.getByText("121.150")).toBeInTheDocument(); // DEP FREQ
     expect(screen.getByText("14L")).toBeInTheDocument(); // RWY
     expect(screen.getByText("14:36z")).toBeInTheDocument(); // CTOT, formatted
@@ -113,11 +116,21 @@ describe("DatalinkHistory — uplink parsing", () => {
     renderHistory([PDC_SENT, PDC_REPLY]);
     const conditions = document.querySelector(".datalink-uplink__conditions p");
     expect(conditions?.textContent).toContain("SET SQUAWK BEFORE PUSH CONTACT EDDK_GND FOR PUSH");
-    expect(conditions?.textContent).toContain("CLD BTI4TK CLRD TO EDDM");
+    // v1.6.12: the destination is a field now, so only the part no rule
+    // claimed is left over — nothing is dropped, it just moved into the
+    // grid where a pilot can read it.
+    expect(conditions?.textContent).toContain("CLD BTI4TK");
+    expect(screen.getByText("EDDM")).toBeInTheDocument();
   });
 
-  it("keeps the full original telex visible and expanded by default", () => {
+  // v1.6.12 (#pdc-station): folded by default — a real clearance is
+  // almost entirely '@' line breaks and rendered fifteen one-word rows
+  // under a card that had already said all of it. Still never
+  // truncated, and still one click away.
+  it("keeps the full original telex one click away, never truncated", async () => {
     renderHistory([PDC_SENT, PDC_REPLY]);
+    expect(document.querySelector(".datalink-uplink__original-text")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: t("cpdlc.original_expand") }));
     expect(
       screen.getByText((_, el) => el?.className === "datalink-uplink__original-text" && el.textContent === PDC_REPLY.text),
     ).toBeInTheDocument();
@@ -166,6 +179,7 @@ describe("DatalinkHistory — answer row", () => {
       closed: null,
       deferred: null,
       superseded: null,
+      station: null,
     };
     const closedUplink: ThreadEntry = { ...CPDLC_UPLINK_OPEN, closed: true };
     renderHistory([closedUplink, reply]);
@@ -317,5 +331,65 @@ describe("DatalinkHistory — new-uplink fade-in (README §6)", () => {
     rerenderWith([PDC_SENT, CPDLC_UPLINK_OPEN]);
     const articleAgain = screen.getByLabelText(new RegExp(t("cpdlc.thread_received")));
     expect(articleAgain).not.toHaveClass("datalink-uplink--fresh");
+  });
+});
+
+// --- v1.6.12 (#pdc-station) ---
+//
+// Field case 19.08.2026: a clearance requested from LROP was answered by
+// LDZO. Every entry in the log was labelled with the composer's recipient
+// box instead of the station on the wire, and the acknowledgement went to
+// that same box — so the WILCO could only ever reach the station the
+// pilot happened to have typed, not the one waiting for it. ATC timed the
+// ACK out and cancelled the clearance.
+describe("DatalinkHistory — the station on the wire", () => {
+  const CLEARANCE_FROM_LDZO: ThreadEntry = {
+    kind: "telex",
+    direction: "received",
+    text: "WMT4TK CLRD TO EDDB OFF 08L VIA SOKRU1K CLIMB FL280 SQUAWK 1000",
+    at: "2026-08-19T08:44:08.000Z",
+    min: null,
+    mrn: null,
+    response: null,
+    element_id: null,
+    closed: null,
+    deferred: null,
+    superseded: null,
+    station: "LDZO",
+  };
+
+  it("labels an uplink with its own sender, not the composer's recipient", () => {
+    renderHistory([CLEARANCE_FROM_LDZO]);
+    const head = document.querySelector(".datalink-uplink__station");
+    expect(head?.textContent).toBe("LDZO");
+    expect(head?.textContent).not.toBe("EDDK_DEL");
+  });
+
+  it("addresses the acknowledgement to the station that sent the clearance", async () => {
+    renderHistory([CLEARANCE_FROM_LDZO]);
+    await userEvent.click(screen.getByRole("button", { name: t("cpdlc.response_readback") }));
+    await userEvent.click(screen.getByRole("button", { name: t("cpdlc.reply_send") }));
+    expect(invokeMock).toHaveBeenCalledWith("hoppie_send_telex", {
+      text: "WILCO",
+      recipient: "LDZO",
+    });
+  });
+
+  it("falls back to the configured station only for entries recorded without one", () => {
+    renderHistory([{ ...CLEARANCE_FROM_LDZO, station: null }]);
+    expect(document.querySelector(".datalink-uplink__station")?.textContent).toBe("EDDK_DEL");
+  });
+
+  it("says where a sent message actually went", () => {
+    const sent: ThreadEntry = {
+      ...CLEARANCE_FROM_LDZO,
+      direction: "sent",
+      text: "WILCO",
+      at: "2026-08-19T08:44:28.000Z",
+    };
+    renderHistory([CLEARANCE_FROM_LDZO, sent]);
+    expect(
+      screen.getByText(t("cpdlc.sent_to", { station: "LDZO", time: "08:44:28z" })),
+    ).toBeInTheDocument();
   });
 });

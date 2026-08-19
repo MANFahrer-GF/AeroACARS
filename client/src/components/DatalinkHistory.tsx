@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { syncedGet, syncedSet } from "../lib/syncedStorage";
 import { useTranslation } from "react-i18next";
 import { formatDatalinkText } from "../lib/datalink";
-import { parseUplink, formatCtot, type ParsedUplink } from "../lib/datalinkParse";
+import { parseUplink, formatCtot, formatHeader, type ParsedUplink } from "../lib/datalinkParse";
 import { CpdlcQuickReply, TelexQuickReply, REQUEST_TOKENS } from "./CpdlcQuickReply";
 import type { ThreadEntry } from "../hooks/useCpdlcMessages";
 
@@ -167,6 +167,23 @@ function ValueCell({ label, value, size, warn }: { label: string; value: string 
   );
 }
 
+/** Row 2 of the parse: the values a pilot checks once rather than dials
+ *  in. v1.6.12 (#pdc-station): these used to be four more full-height
+ *  grid cells with 22px numerals, which made every card taller than the
+ *  window on a message that mostly had dashes in them. Same information,
+ *  same fixed order (an empty cell still holds its place — the position
+ *  IS the label), one line. */
+function SecondaryCell({ label, value, warn }: { label: string; value: string | null; warn?: boolean }) {
+  return (
+    <div className="datalink-uplink__sec">
+      <span className="datalink-uplink__sec-label">{label}</span>
+      <span className={`datalink-uplink__sec-value ${warn && value ? "datalink-uplink__sec-value--warn" : ""}`}>
+        {value ?? "—"}
+      </span>
+    </div>
+  );
+}
+
 type Filter = "all" | "pdc" | "cpdlc";
 
 /** How many of the most recent entries in the current filter stay fully
@@ -188,7 +205,13 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
   const { t } = useTranslation();
   const [filter, setFilter] = useState<Filter>("all");
   const [showOlder, setShowOlder] = useState(false);
-  const [collapsedOriginal, setCollapsedOriginal] = useState<Set<string>>(new Set());
+  // v1.6.12 (#pdc-station): the original text is now folded by DEFAULT.
+  // Hoppie's '@' is a line break, and a controller's clearance is made
+  // almost entirely of them — the LROP clearance rendered fifteen lines
+  // of one-word rows under a card that had already said all of it in
+  // four cells. The wire text stays one click away, unabridged; it is
+  // the binding version of the message and is never truncated.
+  const [expandedOriginal, setExpandedOriginal] = useState<Set<string>>(new Set());
   const logRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const lastHeight = useRef(0);
@@ -217,6 +240,16 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
       if (m.direction === "received") seenUplinkAtRef.current!.add(m.at);
     }
   });
+
+  // v1.6.12 (#pdc-station): the station the message really crossed the
+  // wire with. The fallback is the old behaviour — the currently
+  // configured station — and only applies to entries recorded before
+  // this became per-message; it is deliberately NOT the primary source
+  // any more, because it changes retroactively while the pilot types in
+  // the recipient box and it silently mislabels a PDC that a different
+  // desk answered.
+  const stationOf = (m: ThreadEntry): string | null =>
+    m.station ?? (m.kind === "cpdlc" ? cpdlcStation : pdcRecipient);
 
   const unansweredUplink = findLatestUnansweredUplink(messages);
 
@@ -261,7 +294,7 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
   };
 
   const toggleOriginal = (key: string) => {
-    setCollapsedOriginal((prev) => {
+    setExpandedOriginal((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -270,7 +303,7 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
   };
 
   const renderUplinkCard = (m: ThreadEntry, key: string, station: string | null) => {
-    const parsed: ParsedUplink = parseUplink(m.text);
+    const parsed: ParsedUplink = parseUplink(m.text, callsign);
     const answered = isAnswered(m, messages);
     const reply = answered ? findReplyEntry(m, messages) : null;
     const showAnswerRow = m === unansweredUplink;
@@ -279,7 +312,7 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
       : parsed.squawk || parsed.rwy || parsed.sid
         ? t("cpdlc.uplink_title_clearance")
         : t("cpdlc.uplink_title_generic");
-    const originalCollapsed = collapsedOriginal.has(key);
+    const originalOpen = expandedOriginal.has(key);
     const conditionsText = parsed.conditions.join(" · ");
 
     const trailing = parsed.squawk ? <SquawkTakeover squawk={parsed.squawk} /> : undefined;
@@ -297,24 +330,30 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
           <span className="datalink-uplink__time">{formatUtcHms(m.at)}</span>
         </header>
 
+        {parsed.header && <p className="datalink-uplink__ref">{formatHeader(parsed.header)}</p>}
+
         {parsed.recognized ? (
           <>
+            {/* Row 1 is what the pilot actually sets before pushback —
+                transponder, runway, departure, level. Row 2 is checked
+                once. That split, not the old four-and-four, is why the
+                second row can be a single line. */}
             <div className="datalink-uplink__grid">
               <ValueCell label={t("cpdlc.field_squawk")} value={parsed.squawk} size="lg" />
+              <ValueCell label={t("cpdlc.field_rwy")} value={parsed.rwy} size="lg" />
               <ValueCell label={t("cpdlc.field_sid")} value={parsed.sid} size="md" />
-              <ValueCell label={t("cpdlc.field_initial_climb")} value={parsed.initialClimb} size="lg" />
-              <ValueCell label={t("cpdlc.field_dep_freq")} value={parsed.depFreq} size="md" />
+              <ValueCell label={t("cpdlc.field_initial_climb")} value={parsed.initialClimb} size="md" />
             </div>
-            <div className="datalink-uplink__grid datalink-uplink__grid--row2">
-              <ValueCell label={t("cpdlc.field_rwy")} value={parsed.rwy} size="md" />
-              <ValueCell
+            <div className="datalink-uplink__secondary">
+              <SecondaryCell label={t("cpdlc.field_dest")} value={parsed.dest} />
+              <SecondaryCell label={t("cpdlc.field_dep_freq")} value={parsed.depFreq} />
+              <SecondaryCell
                 label={t("cpdlc.field_ctot")}
                 value={parsed.ctot ? formatCtot(parsed.ctot) : null}
-                size="md"
                 warn
               />
-              <ValueCell label={t("cpdlc.field_qnh")} value={parsed.qnh} size="md" />
-              <ValueCell label={t("cpdlc.field_atis")} value={parsed.atis} size="md" />
+              <SecondaryCell label={t("cpdlc.field_qnh")} value={parsed.qnh} />
+              <SecondaryCell label={t("cpdlc.field_atis")} value={parsed.atis} />
             </div>
           </>
         ) : (
@@ -338,7 +377,16 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
               trailing={trailing}
             />
           ) : (
-            <TelexQuickReply recipient={pdcRecipient || null} clearance={m.text} onReplied={onChanged} trailing={trailing} />
+            <TelexQuickReply
+              /* The acknowledgement goes to whoever SENT the clearance —
+                 not to whatever the composer's recipient box currently
+                 says. Those differ exactly when it matters: a PDC
+                 requested from the airport and answered by a centre. */
+              recipient={stationOf(m) || null}
+              clearance={m.text}
+              onReplied={onChanged}
+              trailing={trailing}
+            />
           ))}
 
         {!showAnswerRow && answered && reply && (
@@ -356,10 +404,10 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
             <div className="datalink-uplink__original-head">
               <span>{t("cpdlc.original_label")}</span>
               <button type="button" className="datalink-uplink__original-toggle" onClick={() => toggleOriginal(key)}>
-                {originalCollapsed ? t("cpdlc.original_expand") : t("cpdlc.original_collapse")}
+                {originalOpen ? t("cpdlc.original_collapse") : t("cpdlc.original_expand")}
               </button>
             </div>
-            {!originalCollapsed && <p className="datalink-uplink__original-text">{formatDatalinkText(m.text)}</p>}
+            {originalOpen && <p className="datalink-uplink__original-text">{formatDatalinkText(m.text)}</p>}
           </div>
         )}
       </article>
@@ -370,10 +418,15 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
     <article key={key} className="datalink-downlink" aria-label={`${t("cpdlc.thread_sent")} ${station ?? ""} ${formatUtcHms(m.at)}`}>
       <p className="datalink-downlink__meta">
         <span>{t("cpdlc.sent_to", { station: station ?? "—", time: formatUtcHms(m.at) })}</span>
-        {/* The wire gives no send-in-progress/failed state to show here — a
-            send that fails throws before ever reaching this list (surfaced
-            instead as the composer's own error banner), so anything that
-            got this far genuinely reached the addressee's mailbox. */}
+        {/* v1.6.12 (#pdc-station): this used to read "ZUGESTELLT"
+            (delivered). Hoppie is a store-and-forward relay: an `ok` means
+            the network took the message, not that the station ever polled
+            it. A clearance cancelled for a missing ACK under a card
+            claiming delivery is exactly the kind of confident wording that
+            sends you looking in the wrong place. A failed send never
+            reaches this list at all (it throws, and — since v1.6.12 — is
+            rolled back in the thread as well), so what stands here is
+            genuinely on the network. */}
         <span className="datalink-downlink__delivered">{t("cpdlc.delivered")}</span>
       </p>
       <p className="datalink-downlink__text">{formatDatalinkText(m.text)}</p>
@@ -414,7 +467,7 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
           filtered.map((m, i) => {
             if (!olderIndices.has(i)) return null;
             const key = `${m.at}-${i}`;
-            const station = m.kind === "cpdlc" ? cpdlcStation : pdcRecipient;
+            const station = stationOf(m);
             return (
               <div key={key} className="datalink-older">
                 {renderOlderLine(m, key, station)}
@@ -424,7 +477,7 @@ export function DatalinkHistory({ callsign, cpdlcStation, pdcRecipient, messages
         {filtered.map((m, i) => {
           if (olderIndices.has(i)) return null;
           const key = `${m.at}-${i}`;
-          const station = m.kind === "cpdlc" ? cpdlcStation : pdcRecipient;
+          const station = stationOf(m);
           return m.direction === "received" ? renderUplinkCard(m, key, station) : renderDownlinkCard(m, key, station);
         })}
       </div>

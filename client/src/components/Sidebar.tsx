@@ -241,7 +241,7 @@ export function Sidebar({
             badge={
               cpdlcPendingCount > 0 ? (cpdlcPendingCount > 9 ? "9+" : cpdlcPendingCount) : undefined
             }
-            badgeLabel={t("cpdlc.banner_text", { count: cpdlcPendingCount })}
+            badgeLabel={t("cpdlc.badge_pending", { count: cpdlcPendingCount })}
             onClick={onCpdlcOpen}
           />
         )}

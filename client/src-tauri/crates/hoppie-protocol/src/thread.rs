@@ -190,6 +190,82 @@ impl CpdlcThread {
         (message, ThreadEvent::Sent { min })
     }
 
+    /// Undo a [`record_sent`](Self::record_sent) whose message never
+    /// made it onto the wire.
+    ///
+    /// v1.6.12 (#pdc-station): the wiring layer records a downlink
+    /// BEFORE it sends it — it has to, because the MIN this allocates is
+    /// part of the packet. Without this counterpart, a send that failed
+    /// (no network, Hoppie rejecting the logon code, a timeout) still
+    /// left the reply in the history AND closed the uplink it claimed to
+    /// answer. The pilot then read "WILCO gesendet" under a clearance
+    /// nobody had acknowledged, and ATC cancelled it for a missing ACK
+    /// with no trace of why on our side.
+    ///
+    /// Restores exactly what `record_sent` changed for the ordinary
+    /// answer/request case: the history entry, the open-response entry,
+    /// the MIN counter (only when nothing was numbered after it), and
+    /// the answered uplink's `closed`/`deferred` flags. Deliberately NOT
+    /// undone: `logged_on` after a LOGOFF. A logoff that failed to send
+    /// leaves us off the facility locally, which is the conservative
+    /// reading — claiming a session we may not have is the worse error.
+    pub fn rollback_sent(&mut self, min: u32) {
+        let Some(idx) = self
+            .history
+            .iter()
+            .rposition(|e| e.direction == Direction::Downlink && e.min == min)
+        else {
+            return;
+        };
+        let entry = self.history.remove(idx);
+        self.open.remove(&(Direction::Downlink, min));
+        // Only when this was the last MIN handed out — anything numbered
+        // after it is already on the wire and must keep its number.
+        if self.next_min == min + 1 {
+            self.next_min = min;
+        }
+        if self.logon_request_min == Some(min) {
+            self.logon_request_min = None;
+        }
+        let Some(answered) = entry.mrn else {
+            return;
+        };
+        let was_standby =
+            matches!(&entry.message.parsed, ParsedElement::Recognized(r) if r.spec_id == STANDBY_ID);
+        if was_standby {
+            // Another STANDBY may still legitimately hold the flag.
+            let still_deferred = self.history.iter().any(|e| {
+                e.direction == Direction::Downlink
+                    && e.mrn == Some(answered)
+                    && matches!(&e.message.parsed, ParsedElement::Recognized(r) if r.spec_id == STANDBY_ID)
+            });
+            if !still_deferred {
+                if let Some(uplink) = self.find_current_entry_mut(Direction::Uplink, answered) {
+                    uplink.deferred = false;
+                }
+            }
+            return;
+        }
+        let reopen = self
+            .find_current_entry_mut(Direction::Uplink, answered)
+            .filter(|uplink| uplink.closed)
+            .map(|uplink| {
+                uplink.closed = false;
+                uplink.message.response
+            });
+        if let Some(response) = reopen {
+            if response.requires_reply() {
+                self.open.insert(
+                    (Direction::Uplink, answered),
+                    PendingMessage {
+                        direction: Direction::Uplink,
+                        response,
+                    },
+                );
+            }
+        }
+    }
+
     /// Record an inbound uplink message (already decoded via
     /// [`crate::cpdlc::decode`] with `Direction::Uplink`).
     pub fn record_received(&mut self, message: CpdlcMessage) -> ThreadEvent {

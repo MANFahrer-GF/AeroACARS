@@ -160,14 +160,30 @@ async fn verify_logon(http: &HoppieHttp, logon: &str, callsign: &str) -> VerifyO
     }
 }
 
-/// When each message was sent or received, keyed by `(is_uplink, MIN)`.
+/// What we know about one CPDLC message beyond its GOLD content: when
+/// it crossed the wire and which station it crossed to/from.
+///
+/// v1.6.12 (#pdc-station): the station is recorded PER MESSAGE. It used
+/// to be reconstructed at render time from whatever station the UI had
+/// configured, which meant a reply's "sent to" label could change
+/// retroactively while the pilot typed in the recipient box — and left
+/// no way at all to check where an acknowledgement actually went after a
+/// clearance was cancelled for a missing ACK.
+#[derive(Debug, Clone)]
+pub(crate) struct MsgMeta {
+    pub at: chrono::DateTime<chrono::Utc>,
+    /// Sender for an uplink, addressee for our own downlink — the value
+    /// that was on the wire, never a UI field.
+    pub station: String,
+}
+
+/// Per-message metadata keyed by `(is_uplink, MIN)`.
 ///
 /// The direction is part of the key because the two MIN spaces are
 /// independent — ATC numbers uplinks, we number downlinks, and both
 /// typically start near 1. Sharing one key let an inbound message
 /// overwrite the timestamp of our own.
-pub(crate) type MinTimestamps =
-    std::collections::HashMap<(bool, u32), chrono::DateTime<chrono::Utc>>;
+pub(crate) type MinMeta = std::collections::HashMap<(bool, u32), MsgMeta>;
 
 /// One sent or received telex/PDC-request-reply line. CPDLC messages
 /// (MIN/MRN-threaded) live in `HoppieHandle::thread` instead — this is
@@ -178,6 +194,10 @@ pub(crate) struct TelexEntry {
     direction: &'static str,
     text: String,
     at: chrono::DateTime<chrono::Utc>,
+    /// Sender for a received telex, addressee for one we sent — read off
+    /// the wire, not off the composer's recipient field (see
+    /// [`MsgMeta::station`] for why that distinction cost a clearance).
+    station: String,
     /// True when this arrived on the CPDLC channel but carried no
     /// parseable `/data2/` header — vSMR sends STANDBY, "UNABLE CALL ON
     /// FREQ" and its logon refusal that way. It has no MIN/MRN so it
@@ -209,7 +229,7 @@ pub struct HoppieHandle {
     /// downlink MINs, and both commonly start near 1. A shared map let
     /// an inbound message overwrite the timestamp of our own — which
     /// reordered the log and could mask or fabricate a logon timeout.
-    min_timestamps: Arc<StdMutex<MinTimestamps>>,
+    min_meta: Arc<StdMutex<MinMeta>>,
     last_error: Arc<StdMutex<Option<String>>>,
     last_verify: Option<VerifyOutcome>,
     /// Resolved at connect time — reused by every send command so they
@@ -271,11 +291,11 @@ fn build_status(handle: &Option<HoppieHandle>) -> HoppieStatus {
             let logon_timed_out = thread
                 .pending_logon_min()
                 .and_then(|min| {
-                    h.min_timestamps
+                    h.min_meta
                         .lock()
-                        .expect("hoppie min_timestamps mutex")
+                        .expect("hoppie min_meta mutex")
                         .get(&(false, min))
-                        .copied()
+                        .map(|meta| meta.at)
                 })
                 .is_some_and(|sent| (chrono::Utc::now() - sent).num_seconds() > LOGON_TIMEOUT_SECS);
             HoppieStatus {
@@ -544,7 +564,7 @@ pub async fn hoppie_connect(
 
     let thread = Arc::new(StdMutex::new(hoppie_protocol::thread::CpdlcThread::new()));
     let telex_log = Arc::new(StdMutex::new(Vec::new()));
-    let min_timestamps = Arc::new(StdMutex::new(std::collections::HashMap::new()));
+    let min_meta = Arc::new(StdMutex::new(std::collections::HashMap::new()));
     let last_error = Arc::new(StdMutex::new(None));
     // Shared with the poller so an automatic sector handover re-points
     // both the poll loop and every send command at the new facility.
@@ -556,7 +576,7 @@ pub async fn hoppie_connect(
         Arc::clone(&http),
         Arc::clone(&thread),
         Arc::clone(&telex_log),
-        Arc::clone(&min_timestamps),
+        Arc::clone(&min_meta),
         Arc::clone(&last_error),
         from.clone(),
         logon,
@@ -570,7 +590,7 @@ pub async fn hoppie_connect(
         http,
         thread,
         telex_log,
-        min_timestamps,
+        min_meta,
         last_error,
         last_verify: Some(verify),
         from_callsign: from.clone(),
@@ -746,6 +766,31 @@ async fn send_cpdlc_element(
     let resolved = hoppie_protocol::elements::resolve(spec, &values)
         .map_err(|e| UiError::new("hoppie_element_resolve", e.to_string()))?;
     let filled_text = resolved.filled_text.clone();
+    // v1.6.12 (#pdc-station): an answer goes back to whoever SENT the
+    // message being answered, not to whatever station the connection is
+    // currently pointed at. Those are usually the same — but not when a
+    // clearance arrives from a facility we never logged on to (a
+    // delivery desk answering a PDC is exactly that case). `to_station`
+    // then still holds the last logon target, or its "SERVER" default,
+    // and the WILCO went there: ATC waits, times the ACK out, and
+    // cancels the clearance. The MRN is what makes this decidable — it
+    // names the uplink, and the uplink's sender is recorded per message.
+    let answered_station = mrn.and_then(|m| {
+        handle
+            .min_meta
+            .lock()
+            .expect("hoppie min_meta mutex")
+            .get(&(true, m))
+            .map(|meta| meta.station.clone())
+            .filter(|s| !s.trim().is_empty())
+    });
+    let to = answered_station.unwrap_or_else(|| {
+        handle
+            .to_station
+            .lock()
+            .expect("hoppie to_station mutex")
+            .clone()
+    });
     let (message, min) = {
         let mut t = handle.thread.lock().expect("hoppie thread mutex");
         // v0.19.x FIX: a handover supersedes any uplink the pilot hadn't
@@ -775,26 +820,52 @@ async fn send_cpdlc_element(
         (message, min)
     };
     handle
-        .min_timestamps
+        .min_meta
         .lock()
-        .expect("hoppie min_timestamps mutex")
-        .insert((false, min), chrono::Utc::now());
+        .expect("hoppie min_meta mutex")
+        .insert(
+            (false, min),
+            MsgMeta {
+                at: chrono::Utc::now(),
+                station: to.clone(),
+            },
+        );
 
     let packet = hoppie_protocol::cpdlc::encode(&message);
     let wire_req = hoppie_protocol::wire::HoppieRequest {
         logon,
         from: handle.from_callsign.clone(),
-        to: handle
-            .to_station
-            .lock()
-            .expect("hoppie to_station mutex")
-            .clone(),
+        to,
         kind: hoppie_protocol::wire::PacketKind::Cpdlc,
         packet: Some(packet),
     };
-    if let hoppie_protocol::wire::HoppieResponseLine::Error(reason) =
-        handle.http.send(&wire_req).await?
-    {
+    // v1.6.12 (#pdc-station): the thread was mutated BEFORE the send, so
+    // a send that never left the machine still closed the uplink it was
+    // answering — the card then read "WILCO gesendet 08:44:28z" and the
+    // reply row (which is where the error message is rendered) vanished
+    // with the next 15s refresh. A failed acknowledgement looked exactly
+    // like a delivered one, which is the one thing a datalink log must
+    // never do. Undo the record on every failure path so the instruction
+    // stays open and visibly unanswered.
+    let outcome = handle.http.send(&wire_req).await;
+    let rejected = match &outcome {
+        Ok(hoppie_protocol::wire::HoppieResponseLine::Error(reason)) => Some(reason.clone()),
+        _ => None,
+    };
+    if outcome.is_err() || rejected.is_some() {
+        handle
+            .thread
+            .lock()
+            .expect("hoppie thread mutex")
+            .rollback_sent(min);
+        handle
+            .min_meta
+            .lock()
+            .expect("hoppie min_meta mutex")
+            .remove(&(false, min));
+    }
+    outcome?;
+    if let Some(reason) = rejected {
         return Err(UiError::new("hoppie_cpdlc_rejected", reason));
     }
     // Only after the network accepted it — a rejected send never reached
@@ -1002,6 +1073,7 @@ pub async fn hoppie_send_telex(
             direction: "sent",
             text: trimmed.to_string(),
             at: chrono::Utc::now(),
+            station: wire_req.to.clone(),
             from_cpdlc_channel: false,
         });
     Ok(())
@@ -1220,6 +1292,7 @@ pub async fn hoppie_send_pdc_request(
             direction: "sent",
             text: text.clone(),
             at: now,
+            station: pdc_request.recipient.clone(),
             from_cpdlc_channel: false,
         });
 
@@ -1258,6 +1331,12 @@ pub struct ThreadEntryDto {
     /// backend also refuses to send a reply for it (see
     /// `send_cpdlc_element`) as defense-in-depth.
     pub superseded: Option<bool>,
+    /// The station on the wire: who sent an uplink, who we addressed a
+    /// downlink to. v1.6.12 (#pdc-station) — the UI used to label every
+    /// entry with the station currently configured in the composer,
+    /// which is a different question and, after a handover or a PDC
+    /// answered by another desk, a different answer.
+    pub station: Option<String>,
 }
 
 #[tauri::command]
@@ -1288,14 +1367,15 @@ pub async fn hoppie_get_thread(
             closed: None,
             deferred: None,
             superseded: None,
+            station: Some(e.station.clone()),
         }));
     }
     {
         let thread = handle.thread.lock().expect("hoppie thread mutex");
-        let timestamps = handle
-            .min_timestamps
+        let meta_by_min = handle
+            .min_meta
             .lock()
-            .expect("hoppie min_timestamps mutex");
+            .expect("hoppie min_meta mutex");
         entries.extend(thread.history().iter().map(|e| {
             let (element_id, text) = match &e.message.parsed {
                 hoppie_protocol::elements::ParsedElement::Recognized(r) => {
@@ -1303,14 +1383,15 @@ pub async fn hoppie_get_thread(
                 }
                 hoppie_protocol::elements::ParsedElement::Raw(t) => (None, t.clone()),
             };
-            let at = timestamps
-                .get(&(
-                    e.direction == hoppie_protocol::elements::Direction::Uplink,
-                    e.min,
-                ))
-                .copied()
+            let meta = meta_by_min.get(&(
+                e.direction == hoppie_protocol::elements::Direction::Uplink,
+                e.min,
+            ));
+            let at = meta
+                .map(|m| m.at)
                 .unwrap_or_else(chrono::Utc::now)
                 .to_rfc3339();
+            let station = meta.map(|m| m.station.clone());
             ThreadEntryDto {
                 kind: "cpdlc",
                 direction: match e.direction {
@@ -1326,6 +1407,7 @@ pub async fn hoppie_get_thread(
                 closed: Some(e.closed),
                 deferred: Some(e.deferred),
                 superseded: Some(e.superseded),
+                station,
             }
         }));
     }

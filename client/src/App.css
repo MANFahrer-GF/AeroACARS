@@ -10436,7 +10436,7 @@ input.datalink-block__input {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  padding: 11px 16px;
+  padding: 9px 14px;
   border-bottom: 1px solid var(--line);
 }
 .datalink-uplink__tag {
@@ -10474,11 +10474,8 @@ input.datalink-block__input {
 }
 .datalink-uplink__cell {
   background: var(--surface);
-  padding: 12px 16px;
+  padding: 9px 14px;
   min-width: 0;
-}
-.datalink-uplink__grid--row2 .datalink-uplink__cell {
-  padding: 10px 16px;
 }
 .datalink-uplink__cell-label {
   display: block;
@@ -10496,16 +10493,60 @@ input.datalink-block__input {
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
+/* v1.6.12 (#pdc-station): 36/30px filled the log with two cards and no
+   room for the third. Still the largest type on the screen — these are
+   the numbers read while taxiing — but no longer a headline. */
 .datalink-uplink__cell-value--lg {
-  font-size: 36px;
+  font-size: 26px;
 }
 .datalink-uplink__cell-value--md {
-  font-size: 22px;
-}
-.datalink-uplink__grid:not(.datalink-uplink__grid--row2) .datalink-uplink__cell-value--md {
-  font-size: 30px;
+  font-size: 20px;
 }
 .datalink-uplink__cell-value--warn {
+  color: var(--sem-warn);
+}
+
+/* The message's own reference line ("PDC 001 · LROP · 0843z"). Was part
+   of the conditions text, where it read like something ATC had asked of
+   the pilot. */
+.datalink-uplink__ref {
+  margin: 0;
+  padding: 6px 14px 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+/* Row 2: one line, fixed order, dashes hold their place. */
+.datalink-uplink__secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+}
+.datalink-uplink__sec {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.datalink-uplink__sec-label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-100);
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.datalink-uplink__sec-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: var(--fw-bold);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.datalink-uplink__sec-value--warn {
   color: var(--sem-warn);
 }
 
@@ -10523,7 +10564,7 @@ input.datalink-block__input {
 }
 
 .datalink-uplink__conditions {
-  padding: 11px 16px;
+  padding: 9px 14px;
   border-top: 1px solid var(--line);
 }
 .datalink-uplink__conditions-label {
@@ -10562,7 +10603,7 @@ input.datalink-block__input {
 }
 
 .datalink-uplink__original {
-  padding: 11px 16px;
+  padding: 8px 14px;
   border-top: 1px solid var(--line);
   background: var(--surface-2);
 }

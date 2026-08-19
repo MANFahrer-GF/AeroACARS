@@ -42,6 +42,13 @@ export interface ThreadEntry {
    *  refuses to send a reply for it, but the UI should never offer one
    *  in the first place. */
   superseded: boolean | null;
+  /** v1.6.12 (#pdc-station): the station this message actually came from
+   *  (uplink) or went to (downlink), as recorded on the wire. `null`
+   *  only for entries from a build that predates it. The screen used to
+   *  derive this from whatever station the composer had configured,
+   *  which is a different question — and after a PDC answered by another
+   *  desk, a different answer. */
+  station: string | null;
 }
 
 const POLL_MS = 15000;

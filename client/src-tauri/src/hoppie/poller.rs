@@ -16,7 +16,7 @@ use hoppie_protocol::elements::Direction;
 use hoppie_protocol::thread::CpdlcThread;
 use hoppie_protocol::wire::{self, HoppieRequest, HoppieResponseLine, PacketKind};
 
-use super::{HoppieHttp, MinTimestamps, TelexEntry};
+use super::{HoppieHttp, MinMeta, TelexEntry};
 use crate::{log_activity_handle, ActivityLevel};
 
 /// The official docs' recommended idle band
@@ -175,7 +175,7 @@ pub fn spawn(
     http: Arc<HoppieHttp>,
     thread: Arc<StdMutex<CpdlcThread>>,
     telex_log: Arc<StdMutex<Vec<TelexEntry>>>,
-    min_timestamps: Arc<StdMutex<MinTimestamps>>,
+    min_meta: Arc<StdMutex<MinMeta>>,
     last_error: Arc<StdMutex<Option<String>>>,
     from_callsign: String,
     logon: String,
@@ -202,7 +202,7 @@ pub fn spawn(
                     }
                 }
                 _ = tokio::time::sleep(interval) => {
-                    poll_once(&app, &http, &thread, &telex_log, &min_timestamps, &last_error, &from_callsign, &logon, &to_station, notify_os && !first_poll).await;
+                    poll_once(&app, &http, &thread, &telex_log, &min_meta, &last_error, &from_callsign, &logon, &to_station, notify_os && !first_poll).await;
                     first_poll = false;
                 }
             }
@@ -275,7 +275,7 @@ fn handover_sender_is_authorized(from: &str, current_station: &str) -> bool {
 async fn send_logon(
     http: &HoppieHttp,
     thread: &StdMutex<CpdlcThread>,
-    min_timestamps: &StdMutex<MinTimestamps>,
+    min_meta: &StdMutex<MinMeta>,
     from_callsign: &str,
     logon: &str,
     station: &str,
@@ -297,10 +297,13 @@ async fn send_logon(
         let min = message.min;
         (message, min)
     };
-    min_timestamps
-        .lock()
-        .expect("hoppie min_timestamps mutex")
-        .insert((false, min), chrono::Utc::now());
+    min_meta.lock().expect("hoppie min_meta mutex").insert(
+        (false, min),
+        crate::hoppie::MsgMeta {
+            at: chrono::Utc::now(),
+            station: station.to_string(),
+        },
+    );
 
     let req = HoppieRequest {
         logon: logon.to_string(),
@@ -335,7 +338,7 @@ async fn process_poll_payload(
     content: &str,
     thread: &StdMutex<CpdlcThread>,
     telex_log: &StdMutex<Vec<TelexEntry>>,
-    min_timestamps: &StdMutex<MinTimestamps>,
+    min_meta: &StdMutex<MinMeta>,
     from_callsign: &str,
     logon: &str,
     to_station: &StdMutex<String>,
@@ -385,6 +388,7 @@ async fn process_poll_payload(
                     direction: "received",
                     text: env.packet,
                     at: chrono::Utc::now(),
+                    station: from.clone(),
                     from_cpdlc_channel: false,
                 });
             if notify_os {
@@ -446,7 +450,7 @@ async fn process_poll_payload(
                             .mark_logged_off();
                         crate::hoppie::settings::clear_open_session(app);
                         *to_station.lock().expect("hoppie to_station mutex") = next.clone();
-                        send_logon(http, thread, min_timestamps, from_callsign, logon, &next)
+                        send_logon(http, thread, min_meta, from_callsign, logon, &next)
                             .await;
                         continue;
                     }
@@ -465,10 +469,15 @@ async fn process_poll_payload(
                     let station = to_station.lock().expect("hoppie to_station mutex").clone();
                     crate::hoppie::settings::set_open_session(app, &station);
                 }
-                min_timestamps
-                    .lock()
-                    .expect("hoppie min_timestamps mutex")
-                    .insert((true, min), chrono::Utc::now());
+                min_meta.lock().expect("hoppie min_meta mutex").insert(
+                    (true, min),
+                    crate::hoppie::MsgMeta {
+                        at: chrono::Utc::now(),
+                        // The sender off the wire — this is what a reply
+                        // to this uplink must be addressed to.
+                        station: env.from.clone(),
+                    },
+                );
                 if notify_os {
                     notify_new_message(app, &env.from);
                 }
@@ -497,6 +506,7 @@ async fn process_poll_payload(
                         direction: "received",
                         text: env.packet,
                         at: chrono::Utc::now(),
+                        station: env.from.clone(),
                         // Arrived on the CPDLC channel — belongs
                         // in the CPDLC log, not the PDC tab.
                         from_cpdlc_channel: true,
@@ -522,7 +532,7 @@ async fn poll_once(
     http: &HoppieHttp,
     thread: &StdMutex<CpdlcThread>,
     telex_log: &StdMutex<Vec<TelexEntry>>,
-    min_timestamps: &StdMutex<MinTimestamps>,
+    min_meta: &StdMutex<MinMeta>,
     last_error: &StdMutex<Option<String>>,
     from_callsign: &str,
     logon: &str,
@@ -549,7 +559,7 @@ async fn poll_once(
                 &content,
                 thread,
                 telex_log,
-                min_timestamps,
+                min_meta,
                 from_callsign,
                 logon,
                 to_station,
