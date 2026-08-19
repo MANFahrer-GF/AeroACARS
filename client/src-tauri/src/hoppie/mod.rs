@@ -892,6 +892,26 @@ async fn send_cpdlc_element(
             .lock()
             .expect("hoppie min_meta mutex")
             .remove(&(false, min));
+        // QS 19.08.2026: the whole reason the LROP question could not be
+        // answered afterwards is that no line anywhere recorded WHERE a
+        // reply went or WHETHER it left. The app keeps seven days of
+        // rotating log files — from now on this is in them.
+        tracing::warn!(
+            to = %wire_req.to,
+            min,
+            mrn,
+            element = %spec.id,
+            reason = %rejected.clone().unwrap_or_else(|| "Netzwerkfehler".to_string()),
+            "hoppie: CPDLC-Downlink NICHT gesendet — Buchung zurückgenommen"
+        );
+    } else {
+        tracing::info!(
+            to = %wire_req.to,
+            min,
+            mrn,
+            element = %spec.id,
+            "hoppie: CPDLC-Downlink gesendet"
+        );
     }
     outcome?;
     if let Some(reason) = rejected {
@@ -1082,8 +1102,10 @@ pub async fn hoppie_send_telex(
     if let hoppie_protocol::wire::HoppieResponseLine::Error(reason) =
         handle.http.send(&wire_req).await?
     {
+        tracing::warn!(to = %wire_req.to, reason = %reason, "hoppie: Telex abgelehnt");
         return Err(UiError::new("hoppie_telex_rejected", reason));
     }
+    tracing::info!(to = %wire_req.to, text = %trimmed, "hoppie: Telex gesendet");
     crate::record_datalink(
         &app,
         "downlink",
@@ -1298,8 +1320,10 @@ pub async fn hoppie_send_pdc_request(
     if let hoppie_protocol::wire::HoppieResponseLine::Error(reason) =
         handle.http.send(&wire_req).await?
     {
+        tracing::warn!(to = %wire_req.to, reason = %reason, "hoppie: PDC-Anfrage abgelehnt");
         return Err(UiError::new("hoppie_pdc_rejected", reason));
     }
+    tracing::info!(to = %wire_req.to, "hoppie: PDC-Anfrage gesendet");
 
     crate::record_datalink(
         &app,

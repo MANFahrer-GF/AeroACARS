@@ -390,6 +390,15 @@ async fn process_poll_payload(
     // Decoding twice for the metadata is cheap — one poll carries
     // a handful of messages at most, minutes apart.
     for env in &envelopes {
+        // Same reason as the downlink lines in mod.rs: the rotating log
+        // file is the only record that survives a restart, and "which
+        // station actually sent this" is the question that could not be
+        // answered after the LROP clearance was cancelled.
+        tracing::info!(
+            from = %env.from,
+            kind = %env.kind.as_wire_str(),
+            "hoppie: Uplink empfangen"
+        );
         let decoded = (env.kind == PacketKind::Cpdlc)
             .then(|| cpdlc::decode(&env.packet, Direction::Uplink).ok())
             .flatten();
