@@ -269,6 +269,15 @@ fn handover_sender_is_authorized(from: &str, current_station: &str) -> bool {
     !current_station.trim().is_empty() && from.trim().eq_ignore_ascii_case(current_station.trim())
 }
 
+/// Station ids on the wire are compared case-insensitively everywhere
+/// else in this module (see `handover_sender_is_authorized`), but a
+/// RECORDED station is also used as a send address later. Normalizing
+/// once, where it enters the app, keeps "ldzo " and "LDZO" from becoming
+/// two different addressees.
+fn normalize_station(raw: &str) -> String {
+    raw.trim().to_uppercase()
+}
+
 /// Fire `REQUEST LOGON` at `station` as part of an automatic handover.
 /// Best-effort: a failure here leaves the pilot on the old facility with
 /// a visible "not logged on" state rather than silently pretending.
@@ -312,10 +321,33 @@ async fn send_logon(
         kind: PacketKind::Cpdlc,
         packet: Some(cpdlc::encode(&message)),
     };
-    if let Err(e) = http.send(&req).await {
-        tracing::warn!(error = %e.message, station = %station, "hoppie: handover logon failed");
-    } else {
-        tracing::info!(station = %station, "hoppie: handed over to next facility");
+    // QS 19.08.2026, two findings in three lines:
+    //   1. A protocol-level rejection ("error {invalid logon code}") is
+    //      an Ok(...) here — this branch logged "handed over" for a
+    //      request the network had refused.
+    //   2. Either way the downlink stayed recorded as sent. That keeps
+    //      an unanswerable logon open forever, and `poll_interval` reads
+    //      exactly that count: the poller would sit at its 20s "reply
+    //      outstanding" cadence for the rest of the session, against a
+    //      free, volunteer-run service that asks for 45-75s.
+    let failure = match http.send(&req).await {
+        Err(e) => Some(e.message),
+        Ok(hoppie_protocol::wire::HoppieResponseLine::Error(reason)) => Some(reason),
+        Ok(_) => None,
+    };
+    match failure {
+        Some(reason) => {
+            thread
+                .lock()
+                .expect("hoppie thread mutex")
+                .rollback_sent(min);
+            min_meta
+                .lock()
+                .expect("hoppie min_meta mutex")
+                .remove(&(false, min));
+            tracing::warn!(error = %reason, station = %station, "hoppie: handover logon failed");
+        }
+        None => tracing::info!(station = %station, "hoppie: handed over to next facility"),
     }
 }
 
@@ -388,7 +420,7 @@ async fn process_poll_payload(
                     direction: "received",
                     text: env.packet,
                     at: chrono::Utc::now(),
-                    station: from.clone(),
+                    station: normalize_station(&from),
                     from_cpdlc_channel: false,
                 });
             if notify_os {
@@ -475,7 +507,7 @@ async fn process_poll_payload(
                         at: chrono::Utc::now(),
                         // The sender off the wire — this is what a reply
                         // to this uplink must be addressed to.
-                        station: env.from.clone(),
+                        station: normalize_station(&env.from),
                     },
                 );
                 if notify_os {
@@ -506,7 +538,7 @@ async fn process_poll_payload(
                         direction: "received",
                         text: env.packet,
                         at: chrono::Utc::now(),
-                        station: env.from.clone(),
+                        station: normalize_station(&env.from),
                         // Arrived on the CPDLC channel — belongs
                         // in the CPDLC log, not the PDC tab.
                         from_cpdlc_channel: true,

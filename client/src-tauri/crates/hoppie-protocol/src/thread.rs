@@ -246,13 +246,27 @@ impl CpdlcThread {
             }
             return;
         }
-        let reopen = self
-            .find_current_entry_mut(Direction::Uplink, answered)
-            .filter(|uplink| uplink.closed)
-            .map(|uplink| {
-                uplink.closed = false;
-                uplink.message.response
-            });
+        // QS 19.08.2026: only reopen when nothing ELSE still answers it.
+        // A second reply to the same uplink (a late UNABLE after a WILCO,
+        // or a resend over the LAN bridge) that fails to send must not
+        // reopen a clearance the first, delivered reply legitimately
+        // closed — that would put "waiting for your answer" back on a
+        // message ATC has already had an answer to.
+        let another_answer_stands = self.history.iter().any(|e| {
+            e.direction == Direction::Downlink
+                && e.mrn == Some(answered)
+                && !matches!(&e.message.parsed, ParsedElement::Recognized(r) if r.spec_id == STANDBY_ID)
+        });
+        let reopen = if another_answer_stands {
+            None
+        } else {
+            self.find_current_entry_mut(Direction::Uplink, answered)
+                .filter(|uplink| uplink.closed)
+                .map(|uplink| {
+                    uplink.closed = false;
+                    uplink.message.response
+                })
+        };
         if let Some(response) = reopen {
             if response.requires_reply() {
                 self.open.insert(

@@ -75,7 +75,14 @@ type FieldKey =
  *  otherwise-valid match. */
 const FIELD_SPECS: { key: FieldKey; regex: RegExp }[] = [
   { key: "squawk", regex: /SQUAWK\s+(\d{4})/g },
-  { key: "sid", regex: /VIA\s+([A-Z0-9]+)/g },
+  // QS 19.08.2026: "VIA <token>" alone read a taxi instruction's
+  // "TAXI VIA N4" as the SID "N4", and "CLIMB VIA SID" as the SID
+  // "SID". A published SID/STAR designator is a name plus a validity
+  // digit and optional suffix (ICAO Doc 8168): SOKRU1K, MARUN2F,
+  // DOMUX2N. Requiring that shape costs nothing — anything else stays
+  // in the conditions text, where it can be read but not mistaken for
+  // a departure.
+  { key: "sid", regex: /VIA\s+([A-Z]{2,7}\d[A-Z]?)(?![A-Z0-9])/g },
   // "CLIMB FL280", "CLIMB TO FL280", "INITIAL CLIMB 5000", "CLIMB 5000FT".
   // The unit stays in the value: FL280 and 5000 are not the same thing,
   // and rewriting either one is the parser deciding what ATC meant.
@@ -85,16 +92,29 @@ const FIELD_SPECS: { key: FieldKey; regex: RegExp }[] = [
   },
   { key: "depFreq", regex: /(?:NEXT|DEP|DEPARTURE)\s+FREQ\s+([\d.]+)/g },
   { key: "rwy", regex: /(?:OFF|RWY|RUNWAY)\s+(\d{1,2}[LRC]?)(?![\dA-Z])/g },
-  { key: "ctot", regex: /CTOT\s+(\d{4})/g },
-  { key: "qnh", regex: /QNH\s+(\d{3,4})/g },
+  // The trailing Z is optional but common ("CTOT 1436Z") — without it
+  // in the pattern, a lone "Z" was left behind as a condition.
+  { key: "ctot", regex: /CTOT\s+(\d{4})Z?/g },
+  // hPa or inHg — both are real, neither is rewritten into the other.
+  { key: "qnh", regex: /QNH\s+(\d{3,4}|\d{2}\.\d{2})/g },
   // The letter must stand alone. Without the lookahead, "ATIS REQ
   // STARTUP ON 121.855" reported ATIS "R" and left "EQ STARTUP ON
   // 121.855" behind as a condition.
-  { key: "atis", regex: /ATIS\s+([A-Z])(?![A-Z])/g },
-  // The sender glues the callsign to it ("WMT4TKCLRD TO EDDB"), so no
-  // word boundary in front.
-  { key: "dest", regex: /CL[ER]?A?R?E?D?\s+TO\s+([A-Z]{4})(?![A-Z])/g },
+  { key: "atis", regex: /ATIS\s+(?:INFO\s+)?([A-Z])(?![A-Z])/g },
+  // Spelled out rather than pattern-matched around "CL…": the loose
+  // version also matched things that only looked like it. The verbs are
+  // the same set the clearance detector uses (see DatalinkHistory's
+  // isTelexClearance). The sender glues the callsign to it
+  // ("WMT4TKCLRD TO EDDB"), so no word boundary in front.
+  { key: "dest", regex: /(?:CLEARED|CLRD|CLR|CLD|CL)\s+TO\s+([A-Z]{4})(?![A-Z])/g },
 ];
+
+/** Four-letter words that are NOT an airport, however much they look
+ *  like an ICAO code after "CLEARED TO". "CLEARED TO LAND RWY 08L" was
+ *  reporting a destination of "LAND". Same principle as the ATIS
+ *  lookahead: an empty cell is a gap, a wrong cell is a lie — and the
+ *  text itself is never dropped, it stays in the conditions line. */
+const NOT_AN_AIRPORT = new Set(["LAND", "TAXI", "HOLD", "PUSH", "STOP", "EXIT", "JOIN", "LINE"]);
 
 /** "CLD 0843 260819 LROP PDC 001" / "FSM 0853 260819 LROP WMT4TK" — the
  *  DCL message header. Same shape in both directions of that protocol;
@@ -150,6 +170,7 @@ export function parseUplink(rawInput: string, ownCallsign?: string | null): Pars
     regex.lastIndex = 0;
     const m = regex.exec(flat);
     if (m) {
+      if (key === "dest" && NOT_AN_AIRPORT.has(m[1])) continue;
       values[key] = m[1].replace(/\s+/g, "");
       spans.push({ start: m.index, end: m.index + m[0].length });
       fieldCount += 1;

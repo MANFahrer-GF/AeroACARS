@@ -174,6 +174,18 @@ pub(crate) struct MsgMeta {
     pub at: chrono::DateTime<chrono::Utc>,
     /// Sender for an uplink, addressee for our own downlink — the value
     /// that was on the wire, never a UI field.
+    ///
+    /// KNOWN LIMIT (QS 19.08.2026), inherited from `CpdlcThread`: the key
+    /// is `(direction, MIN)`, not `(station, direction, MIN)`. Two
+    /// facilities each numbering their uplinks from 1 therefore share a
+    /// slot, and the newer message wins — the same "newest entry for this
+    /// MIN is the live one" rule `CpdlcThread::find_current_entry_mut`
+    /// applies. Address resolution and thread bookkeeping thus always
+    /// agree with each other, which is what matters; keying both by
+    /// station is a protocol-crate change and is deliberately not done
+    /// here. In practice a second facility only enters the picture via a
+    /// handover, and a handover supersedes the old station's open
+    /// uplinks before its traffic can arrive.
     pub station: String,
 }
 
@@ -747,6 +759,22 @@ fn resolve_logon_code() -> Result<String, UiError> {
     }
 }
 
+/// Where a downlink goes: to the sender of the message it answers when
+/// it answers one, otherwise to the station the connection is pointed at.
+///
+/// Pure and separate because this single decision is what a cancelled
+/// LROP clearance came down to on 19.08.2026 — an acknowledgement can be
+/// perfectly formed, perfectly timed and still worthless if it is
+/// addressed to the wrong desk, and nothing in the app could be used to
+/// check afterwards where it had gone.
+pub(crate) fn resolve_reply_station(meta: &MinMeta, mrn: Option<u32>, fallback: &str) -> String {
+    mrn.and_then(|m| meta.get(&(true, m)))
+        .map(|m| m.station.trim())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| fallback.to_string())
+}
+
 /// Resolve + send a downlink CPDLC element: allocate a MIN via the
 /// thread state machine, encode it to the wire format, send it, stamp
 /// its timestamp. Shared by every CPDLC-send command below so the
@@ -775,22 +803,17 @@ async fn send_cpdlc_element(
     // and the WILCO went there: ATC waits, times the ACK out, and
     // cancels the clearance. The MRN is what makes this decidable — it
     // names the uplink, and the uplink's sender is recorded per message.
-    let answered_station = mrn.and_then(|m| {
-        handle
-            .min_meta
-            .lock()
-            .expect("hoppie min_meta mutex")
-            .get(&(true, m))
-            .map(|meta| meta.station.clone())
-            .filter(|s| !s.trim().is_empty())
-    });
-    let to = answered_station.unwrap_or_else(|| {
-        handle
-            .to_station
-            .lock()
-            .expect("hoppie to_station mutex")
-            .clone()
-    });
+    // Two locks, never nested — one guard at a time, so no ordering
+    // rule has to be remembered here at all.
+    let fallback = handle
+        .to_station
+        .lock()
+        .expect("hoppie to_station mutex")
+        .clone();
+    let to = {
+        let meta = handle.min_meta.lock().expect("hoppie min_meta mutex");
+        resolve_reply_station(&meta, mrn, &fallback)
+    };
     let (message, min) = {
         let mut t = handle.thread.lock().expect("hoppie thread mutex");
         // v0.19.x FIX: a handover supersedes any uplink the pilot hadn't
@@ -847,6 +870,12 @@ async fn send_cpdlc_element(
     // like a delivered one, which is the one thing a datalink log must
     // never do. Undo the record on every failure path so the instruction
     // stays open and visibly unanswered.
+    // An unparseable response body counts as a failure here too. It
+    // COULD mean the message went through and Hoppie answered oddly — but
+    // between "the pilot re-sends a WILCO ATC already has" (harmless, the
+    // controller side matches on substrings and tolerates a repeat) and
+    // "the pilot believes a clearance is acknowledged when it isn't"
+    // (what cost the LROP clearance), the choice is not close.
     let outcome = handle.http.send(&wire_req).await;
     let rejected = match &outcome {
         Ok(hoppie_protocol::wire::HoppieResponseLine::Error(reason)) => Some(reason.clone()),
@@ -1418,6 +1447,57 @@ pub async fn hoppie_get_thread(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn meta_with(entries: &[((bool, u32), &str)]) -> MinMeta {
+        entries
+            .iter()
+            .map(|(key, station)| {
+                (
+                    *key,
+                    MsgMeta {
+                        at: chrono::Utc::now(),
+                        station: (*station).to_string(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    // QS 19.08.2026 — the addressing decision, in the four shapes it
+    // actually occurs in.
+    #[test]
+    fn a_reply_goes_to_the_station_that_sent_the_message_it_answers() {
+        // The LROP case: clearance from LDZO, connection still pointed at
+        // whatever the last logon (or the "SERVER" default) left behind.
+        let meta = meta_with(&[((true, 4), "LDZO")]);
+        assert_eq!(resolve_reply_station(&meta, Some(4), "SERVER"), "LDZO");
+    }
+
+    #[test]
+    fn an_unsolicited_downlink_goes_to_the_connected_station() {
+        let meta = meta_with(&[((true, 4), "LDZO")]);
+        assert_eq!(resolve_reply_station(&meta, None, "EDGG"), "EDGG");
+    }
+
+    #[test]
+    fn a_reply_to_an_unknown_min_falls_back_rather_than_going_nowhere() {
+        let meta = meta_with(&[((true, 4), "LDZO")]);
+        assert_eq!(resolve_reply_station(&meta, Some(9), "EDGG"), "EDGG");
+    }
+
+    #[test]
+    fn our_own_downlink_min_is_never_mistaken_for_an_uplink_sender() {
+        // The two MIN spaces are independent and both start near 1 — a
+        // reply with MRN 4 must not resolve to the station of OUR MIN 4.
+        let meta = meta_with(&[((false, 4), "SERVER")]);
+        assert_eq!(resolve_reply_station(&meta, Some(4), "EDGG"), "EDGG");
+    }
+
+    #[test]
+    fn a_blank_recorded_station_is_not_used_as_an_address() {
+        let meta = meta_with(&[((true, 4), "   ")]);
+        assert_eq!(resolve_reply_station(&meta, Some(4), "EDGG"), "EDGG");
+    }
 
     #[test]
     fn build_status_when_disconnected_is_all_falsy() {

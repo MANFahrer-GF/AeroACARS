@@ -160,3 +160,55 @@ describe("parseUplink — LROP field case", () => {
     expect(fsm.header?.kind).toBe("FSM");
   });
 });
+
+// --- QS 19.08.2026: was sonst noch in die falsche Zelle lief ---
+//
+// Same class as the invented ATIS "R": a rule that matched something
+// that merely looked like its field. Each of these was reproduced
+// against real-world clearance wording before the rule was tightened.
+describe("parseUplink — misclassification guards", () => {
+  it("does not read a taxiway as the SID", () => {
+    const p = parseUplink("TAXI VIA N4 HOLD SHORT RWY 07R");
+    expect(p.sid).toBeNull();
+    expect(p.conditions).toContain("TAXI VIA N4 HOLD SHORT");
+  });
+
+  it("does not read the literal word SID as the SID", () => {
+    expect(parseUplink("CLRD TO EDDM CLIMB VIA SID MAINTAIN 5000").sid).toBeNull();
+  });
+
+  it("still reads a published SID designator", () => {
+    expect(parseUplink("VIA MARUN2F").sid).toBe("MARUN2F");
+    expect(parseUplink("VIA DOMUX2N").sid).toBe("DOMUX2N");
+    expect(parseUplink("VIA SOKRU1K").sid).toBe("SOKRU1K");
+  });
+
+  it("does not turn a landing clearance into a destination", () => {
+    const p = parseUplink("CLEARED TO LAND RWY 08L");
+    expect(p.dest).toBeNull();
+    expect(p.rwy).toBe("08L");
+  });
+
+  it("does not turn a crossing clearance into a destination", () => {
+    expect(parseUplink("CLEARED TO CROSS UDROS AT FL240").dest).toBeNull();
+  });
+
+  it("swallows the Z of a CTOT instead of leaving it behind", () => {
+    const p = parseUplink("CTOT 1436Z SQUAWK 1000");
+    expect(p.ctot).toBe("1436");
+    expect(p.conditions).toEqual([]);
+  });
+
+  it("reads an ATIS letter announced as INFO", () => {
+    expect(parseUplink("ATIS INFO D SQUAWK 1000").atis).toBe("D");
+  });
+
+  it("reads an inHg altimeter setting without rewriting it", () => {
+    expect(parseUplink("QNH 29.92").qnh).toBe("29.92");
+    expect(parseUplink("QNH 1013").qnh).toBe("1013");
+  });
+
+  it("does not read a time as a runway", () => {
+    expect(parseUplink("OFF BLOCK 1230").rwy).toBeNull();
+  });
+});

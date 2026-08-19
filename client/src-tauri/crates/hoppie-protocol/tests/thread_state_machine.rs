@@ -222,3 +222,25 @@ fn rollback_of_an_unknown_min_changes_nothing() {
     assert_eq!(thread.history().len(), 1);
     assert_eq!(thread.pending_uplink_count(), 1);
 }
+
+#[test]
+fn a_failed_second_reply_does_not_reopen_what_the_first_one_answered() {
+    // QS 19.08.2026: WILCO goes out and is delivered; a later UNABLE for
+    // the same clearance fails to send. Rolling that one back must not
+    // undo the first, real answer.
+    let mut thread = CpdlcThread::new();
+    recv(&mut thread, "/data2/4//WU/CLEARED TO EDDB");
+    send(&mut thread, "DM0", Some(4)); // WILCO — delivered
+    let failed = send(&mut thread, "DM1", Some(4)); // UNABLE — never sent
+    thread.rollback_sent(failed);
+
+    assert!(
+        thread.history()[0].closed,
+        "the delivered WILCO still answers this clearance"
+    );
+    assert_eq!(
+        thread.pending_uplink_count(),
+        0,
+        "ATC is not waiting on us — we answered once, successfully"
+    );
+}
