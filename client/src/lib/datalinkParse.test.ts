@@ -212,3 +212,17 @@ describe("parseUplink — misclassification guards", () => {
     expect(parseUplink("OFF BLOCK 1230").rwy).toBeNull();
   });
 });
+
+describe("parseUplink — Abflugfrequenz in fremder Formulierung", () => {
+  it("liest CONTACT DEPARTURE ON <freq> wie NEXT FREQ", () => {
+    const p = parseUplink("CLRD TO EDDM SQUAWK 1000 CONTACT DEPARTURE ON 121.900 AFTER AIRBORNE");
+    expect(p.depFreq).toBe("121.900");
+    expect(p.conditions).toEqual(["AFTER AIRBORNE"]);
+  });
+
+  it("verwechselt keine andere Stelle mit der Abflugfrequenz", () => {
+    const p = parseUplink("CONTACT GROUND ON 121.900 FOR PUSH");
+    expect(p.depFreq).toBeNull();
+    expect(p.conditions).toEqual(["CONTACT GROUND ON 121.900 FOR PUSH"]);
+  });
+});

@@ -90,7 +90,15 @@ const FIELD_SPECS: { key: FieldKey; regex: RegExp }[] = [
     key: "initialClimb",
     regex: /(?:INITIAL\s+)?CLIMB(?:\s+TO)?\s+(FL\s?\d{2,3}|\d{3,5}\s?(?:FT)?)(?![\dA-Z])/g,
   },
-  { key: "depFreq", regex: /(?:NEXT|DEP|DEPARTURE)\s+FREQ\s+([\d.]+)/g },
+  // QS-Runde 20.08.2026 (eigener Winkel: fremde Formulierungen derselben
+  // Sache): "CONTACT DEPARTURE ON 121.900" ist dieselbe Angabe wie "NEXT
+  // FREQ 121.900" und stand komplett in den Auflagen. Bewusst NUR
+  // DEPARTURE — "CONTACT GROUND ON …" ist eine andere Frequenz und darf
+  // nicht in dieser Zelle landen.
+  {
+    key: "depFreq",
+    regex: /(?:(?:NEXT|DEP|DEPARTURE)\s+FREQ|CONTACT\s+DEPARTURE(?:\s+ON)?)\s+([\d.]+)/g,
+  },
   { key: "rwy", regex: /(?:OFF|RWY|RUNWAY)\s+(\d{1,2}[LRC]?)(?![\dA-Z])/g },
   // The trailing Z is optional but common ("CTOT 1436Z") — without it
   // in the pattern, a lone "Z" was left behind as a condition.
