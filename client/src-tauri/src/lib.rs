@@ -195,6 +195,72 @@ fn adaptive_tick_interval(phase: FlightPhase, agl_ft: Option<f64>) -> Duration {
 /// kann — sonst springt das Dashboard direkt von Boarding auf Taxi
 /// ohne Pushback-Snapshot. Im Approach/Final 8s damit der inbound-
 /// Track präzise ist.
+/// v1.6.14 — Punktabstand fuer **phpVMS**, getrennt von der POST-Kadenz.
+///
+/// Zwei verschiedene Fragen, die bisher dieselbe Antwort hatten:
+/// * `position_interval` = wie oft wird gesendet (Netzverkehr, Aktualitaet)
+/// * hier = wie fein wird der Weg aufgezeichnet (Kartenaufloesung)
+///
+/// Am Boden muss der Weg erkennbar bleiben — Rollwege, Startlauf,
+/// Landerollen. In der Luft reicht deutlich weniger, im Reiseflug genuegt
+/// phpVMS' eigene Vorgabe von 60 s (`acars.update_interval`).
+///
+/// Zum Vergleich, was ein Intervall an Strecke bedeutet:
+/// 5 s beim Rollen (15 kt) = 38 m · 5 s im Startlauf (bis 150 kt) = 390 m ·
+/// 8 s im Endanflug (150 kt) = 600 m · 15 s im Steigflug (300 kt) = 2,3 km ·
+/// 60 s im Reiseflug (480 kt) = 15 km.
+fn phpvms_punkt_intervall(phase: FlightPhase) -> Duration {
+    let secs = match phase {
+        // Am Boden: der Weg soll auf der Karte nachvollziehbar sein —
+        // welches Gate, welcher Rollweg, welche Bahn.
+        FlightPhase::Preflight
+        | FlightPhase::Boarding
+        | FlightPhase::Pushback
+        | FlightPhase::TaxiOut
+        | FlightPhase::TaxiIn
+        | FlightPhase::TakeoffRoll
+        | FlightPhase::BlocksOn
+        | FlightPhase::Arrived => 5,
+        // Abheben und Aufsetzen sind kurz und der interessanteste Teil.
+        FlightPhase::Takeoff | FlightPhase::Landing => 5,
+        // Anflug: bei 150 kt sind 8 s 600 m — fein genug fuer den
+        // Anflugweg, ohne den Track zu fluten.
+        FlightPhase::Approach | FlightPhase::Final => 8,
+        // Steig- und Sinkflug: grosse Strecken, gleichmaessige Bewegung.
+        FlightPhase::Climb | FlightPhase::Descent => 15,
+        // Holding: die Kreise sollen als Kreise erkennbar bleiben.
+        FlightPhase::Holding => 30,
+        // Reiseflug: phpVMS' eigener Richtwert.
+        FlightPhase::Cruise => 60,
+        FlightPhase::PirepSubmitted => 60,
+    };
+    Duration::from_secs(secs)
+}
+
+/// v1.6.14 — Entscheidet, ob dieser Tick als Punkt an **phpVMS** geht.
+///
+/// Der VPS-Recorder und die JSONL-Forensik bekommen unabhaengig davon
+/// jeden Tick; hier geht es nur um die Zeilen in `phpvmsacars`.
+///
+/// Regeln:
+/// * Ein Phasenwechsel geht immer raus — sonst faellt z. B. der Touchdown
+///   in ein laufendes Intervall und fehlt auf der Karte.
+/// * Sonst nur, wenn das Phasen-Intervall abgelaufen ist (dieselbe
+///   Staffelung, nach der auch gepostet wird).
+fn phpvms_punkt_faellig(
+    phase: FlightPhase,
+    seit_letztem_push: Option<Duration>,
+    zuletzt_gepushte_phase: Option<FlightPhase>,
+) -> bool {
+    if zuletzt_gepushte_phase != Some(phase) {
+        return true;
+    }
+    match seit_letztem_push {
+        None => true,
+        Some(d) => d >= phpvms_punkt_intervall(phase),
+    }
+}
+
 fn position_interval(phase: FlightPhase) -> Duration {
     let secs = match phase {
         // Brief, critical events — sample a touch faster so the touchdown
@@ -16060,7 +16126,15 @@ fn spawn_phpvms_position_worker(
         // Per-Batch-Timeout: 50 Items + retries vom HTTP-Client koennen
         // schon mal 10s dauern. 15s ist grosszuegig genug, ohne den Tick
         // bei toter Verbindung minutenlang zu blockieren.
-        const BATCH_TIMEOUT: Duration = Duration::from_secs(15);
+        // v1.6.14: 15 -> 30 s. Der Wert war bisher WIRKUNGSLOS — der
+        // HTTP-Client darunter brach schon nach DEFAULT_TIMEOUT (10 s) ab,
+        // die hier dokumentierte Toleranz existierte also nie. Jetzt hat
+        // der Positions-POST seinen eigenen Timeout (25 s, siehe
+        // api_client::post_positions) und dieser Wert ist die aeussere
+        // Sicherung darueber: er greift nur noch, wenn der innere Timeout
+        // ausfaellt. Das Warten blockiert nichts — der Stop-Check laeuft
+        // waehrenddessen weiter (siehe select! unten).
+        const BATCH_TIMEOUT: Duration = Duration::from_secs(30);
         // TICK ist die Loop-Frequenz (Stop-Check + Outbox-Probe). Die
         // ECHTE POST-Cadence kommt aus position_interval(phase) und kann
         // bis 30s im Cruise sein — wir tracken last_post_at und posten
@@ -16072,6 +16146,16 @@ fn spawn_phpvms_position_worker(
         // Exponentiel-Backoff bei consecutive failures: 3s, 6s, 12s,
         // 24s, 48s, gecapped bei 60s. Reset bei erstem Erfolg.
         let mut consecutive_failures: u32 = 0;
+        // v1.6.14 — Sichtbarkeit. Requeues liefen bisher NUR in
+        // `tracing::warn` und tauchten damit weder im Aktivitaetslog des
+        // Piloten noch in GlitchTip auf. Der Dubletten-Befund vom
+        // 21.08.2026 musste deshalb rueckwaerts aus der phpVMS-Datenbank
+        // rekonstruiert werden. Jetzt: eine Warnung beim ersten Mal (nicht
+        // bei jedem — sonst flutet eine tote Leitung das Log) und eine
+        // Bilanz beim Flugende.
+        let mut requeue_events: u32 = 0;
+        let mut requeue_positions: u32 = 0;
+        let mut requeue_reported = false;
         // v0.6.1 — last successful POST timestamp fuer phase-aware
         // throttle (siehe position_interval). None = noch nie gepostet
         // (initial Position raus so schnell wie moeglich).
@@ -16160,7 +16244,31 @@ fn spawn_phpvms_position_worker(
                 // → in keinem Fall wollen wir Items aus dem aktuellen Pirep
                 //   nach dem Stop noch persistieren.
                 persist_outbox_clearing(&app, &flight);
-                tracing::info!(pirep_id = %flight.pirep_id, "phpvms-position-worker stopped");
+                if requeue_events > 0 {
+                    // Bilanz ins Aktivitaetslog: ohne sie bleibt unsichtbar,
+                    // wie oft die Verbindung gezuckt hat. Mit Positions-`id`
+                    // sind Wiederholungen folgenlos — die Zahl ist trotzdem
+                    // das Fruehwarnsignal fuer Server- oder Leitungsprobleme.
+                    log_activity_handle(
+                        &app,
+                        ActivityLevel::Info,
+                        format!(
+                            "phpVMS-Positionen: {requeue_events} Wiederholung(en), \
+                             {requeue_positions} Positionen erneut gesendet"
+                        ),
+                        Some(
+                            "Doppelte Zeilen entstehen dabei nicht — jede Position traegt \
+                             einen eindeutigen Schluessel."
+                                .to_string(),
+                        ),
+                    );
+                }
+                tracing::info!(
+                    pirep_id = %flight.pirep_id,
+                    requeue_events,
+                    requeue_positions,
+                    "phpvms-position-worker stopped"
+                );
                 break;
             }
             // Backoff-Check: bei consecutive failures haben wir ein
@@ -16212,8 +16320,35 @@ fn spawn_phpvms_position_worker(
             // einem POST pro Item — bei 50 items × 50ms RTT = 2.5s pro
             // Drain statt einer 70ms-Anfrage. Der phpVMS-Endpoint
             // /acars/position akzeptiert positions: [...] als Array.
+            // v1.6.14 — Der POST darf jetzt bis zu 25 s laufen (vorher brach
+            // der HTTP-Client nach 10 s ab und erzeugte damit die Requeues).
+            // Damit das Flugende nicht so lange haengt, wacht ein
+            // Stop-Waechter parallel mit: bricht der Pilot ab, verlassen wir
+            // den Aufruf sofort und die naechste Loop-Iteration geht in den
+            // regulaeren Stop-Pfad. Der abgebrochene Request kann
+            // serverseitig noch durchlaufen — dank der Positions-`id` ist
+            // das idempotent und erzeugt keine Dublette.
             let post_fut = client.post_positions(&flight.pirep_id, &batch);
-            match tokio::time::timeout(BATCH_TIMEOUT, post_fut).await {
+            let stop_watch = async {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    if flight.stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                }
+            };
+            let post_result = tokio::select! {
+                r = tokio::time::timeout(BATCH_TIMEOUT, post_fut) => r,
+                _ = stop_watch => {
+                    tracing::info!(
+                        pirep_id = %flight.pirep_id,
+                        batch_size = batch.len(),
+                        "phpvms-worker: Stop waehrend laufendem POST — Batch verworfen"
+                    );
+                    continue;
+                }
+            };
+            match post_result {
                 Ok(Ok(())) => {
                     // Success: queued_count = 0 (NICHT outbox.len()!).
                     //
@@ -16309,7 +16444,23 @@ fn spawn_phpvms_position_worker(
                         batch_size = batch.len(),
                         "phpvms-worker batch POST failed; queueing entire batch back"
                     );
+                    let n = batch.len() as u32;
                     requeue_batch(&flight, batch);
+                    requeue_events += 1;
+                    requeue_positions += n;
+                    if !requeue_reported {
+                        requeue_reported = true;
+                        log_activity_handle(
+                            &app,
+                            ActivityLevel::Warn,
+                            "phpVMS hat einen Positions-Block nicht bestaetigt — wird erneut gesendet",
+                            Some(format!(
+                                "{n} Positionen gehen noch einmal raus. Die Aufzeichnung \
+                                 laeuft normal weiter; auf der Live-Karte kann der Verlauf \
+                                 kurz nachhinken."
+                            )),
+                        );
+                    }
                     let outbox_len = flight.position_outbox.lock()
                         .expect("position_outbox lock").len();
                     {
@@ -16325,7 +16476,23 @@ fn spawn_phpvms_position_worker(
                         batch_size = batch.len(),
                         "phpvms-worker batch POST timed out (15s); queueing back"
                     );
+                    let n = batch.len() as u32;
                     requeue_batch(&flight, batch);
+                    requeue_events += 1;
+                    requeue_positions += n;
+                    if !requeue_reported {
+                        requeue_reported = true;
+                        log_activity_handle(
+                            &app,
+                            ActivityLevel::Warn,
+                            "phpVMS hat einen Positions-Block nicht bestaetigt — wird erneut gesendet",
+                            Some(format!(
+                                "{n} Positionen gehen noch einmal raus. Die Aufzeichnung \
+                                 laeuft normal weiter; auf der Live-Karte kann der Verlauf \
+                                 kurz nachhinken."
+                            )),
+                        );
+                    }
                     let outbox_len = flight.position_outbox.lock()
                         .expect("position_outbox lock").len();
                     {
@@ -16750,6 +16917,189 @@ mod rearm_background_task_guards_tests {
         assert!(!flight.streamer_spawned.load(Ordering::SeqCst));
         assert!(!flight.phpvms_worker_spawned.load(Ordering::SeqCst));
         assert!(!flight.touchdown_sampler_spawned.load(Ordering::SeqCst));
+    }
+}
+
+/// v1.6.14 — Idempotenz der phpVMS-Positionen.
+///
+/// Feldbefund 21.08.2026 (GSG, 6 Fluege geprueft): 19-122 doppelte
+/// Positionszeilen je Flug. Ursache war nicht die Erfassung — der
+/// MQTT-Strom zum VPS-Recorder war bei denselben Fluegen dublettenfrei
+/// (4.448 von 4.461 Punkten eindeutig) — sondern der Sendeweg zu phpVMS:
+/// ein als gescheitert gewerteter Batch-POST wandert komplett zurueck in
+/// die Outbox, wird erneut geschickt, und ohne Schluessel legt phpVMS
+/// dabei neue Zeilen an statt die vorhandenen zu aktualisieren.
+///
+/// Diese Tests sichern die eine Eigenschaft, auf der die Loesung steht:
+/// die `id` entsteht beim ERZEUGEN des Punktes und ueberlebt jeden
+/// Requeue und den Persistenz-Umweg unveraendert.
+#[cfg(test)]
+mod positions_idempotenz_tests {
+    use super::*;
+
+    fn flug() -> ActiveFlight {
+        ActiveFlight {
+            pirep_id: "test-pirep".into(),
+            bid_id: 0,
+            flight_id: String::new(),
+            bid_callsign: None,
+            pilot_callsign: None,
+            started_at: Utc::now(),
+            airline_icao: String::new(),
+            planned_registration: String::new(),
+            aircraft_icao: "C172".into(),
+            aircraft_name: String::new(),
+            flight_number: "1".into(),
+            dpt_airport: "EDDF".into(),
+            arr_airport: "ZZZZ".into(),
+            planned_flight_time_min: None,
+            airline_logo_url: None,
+            fares: Vec::new(),
+            stats: Mutex::new(FlightStats::new()),
+            stop: AtomicBool::new(false),
+            was_just_resumed: AtomicBool::new(false),
+            streamer_spawned: AtomicBool::new(false),
+            cancelled_remotely: AtomicBool::new(false),
+            position_outbox: Mutex::new(std::collections::VecDeque::new()),
+            phpvms_worker_spawned: AtomicBool::new(false),
+            touchdown_sampler_spawned: AtomicBool::new(false),
+            connection_state: std::sync::atomic::AtomicU8::new(CONN_STATE_LIVE),
+            navdata: Mutex::new(NavdataCache::default()),
+        }
+    }
+
+    fn punkt(lat: f64) -> api_client::PositionEntry {
+        let mut snap = SimSnapshot::default();
+        snap.lat = lat;
+        snapshot_to_position(&snap)
+    }
+
+    #[test]
+    fn jeder_erzeugte_punkt_bekommt_eine_eigene_id() {
+        let a = punkt(50.0);
+        let b = punkt(50.0);
+        assert_ne!(a.id, b.id, "zwei Punkte duerfen nie dieselbe id tragen");
+        // phpVMS' `acars`.`id` ist varchar(36) — eine UUID passt exakt.
+        assert_eq!(a.id.len(), 36, "id muss in varchar(36) passen: {}", a.id);
+    }
+
+    #[test]
+    fn requeue_erhaelt_ids_und_reihenfolge() {
+        let flight = flug();
+        let batch = vec![punkt(1.0), punkt(2.0), punkt(3.0)];
+        let ids: Vec<String> = batch.iter().map(|p| p.id.clone()).collect();
+
+        requeue_batch(&flight, batch);
+
+        let outbox = flight.position_outbox.lock().unwrap();
+        let danach: Vec<String> = outbox.iter().map(|p| p.id.clone()).collect();
+        assert_eq!(
+            danach, ids,
+            "der Requeue muss die IDs unveraendert und in Originalreihenfolge zurueckgeben"
+        );
+    }
+
+    #[test]
+    fn requeue_stellt_den_batch_vor_neu_eingetroffene_punkte() {
+        let flight = flug();
+        let spaeter = punkt(9.0);
+        let spaeter_id = spaeter.id.clone();
+        flight.position_outbox.lock().unwrap().push_back(spaeter);
+
+        let batch = vec![punkt(1.0), punkt(2.0)];
+        let batch_ids: Vec<String> = batch.iter().map(|p| p.id.clone()).collect();
+        requeue_batch(&flight, batch);
+
+        let outbox = flight.position_outbox.lock().unwrap();
+        let danach: Vec<String> = outbox.iter().map(|p| p.id.clone()).collect();
+        assert_eq!(danach, [batch_ids, vec![spaeter_id]].concat());
+    }
+
+    #[test]
+    fn cruise_laesst_nur_einen_punkt_je_intervall_durch() {
+        let p = FlightPhase::Cruise;
+        assert!(
+            phpvms_punkt_faellig(p, Some(Duration::from_secs(3)), Some(p)) == false,
+            "3 s nach dem letzten Punkt darf im Cruise keiner rausgehen"
+        );
+        assert!(phpvms_punkt_faellig(p, Some(phpvms_punkt_intervall(p)), Some(p)));
+    }
+
+    #[test]
+    fn phasenwechsel_geht_immer_raus() {
+        // Sonst faellt der Touchdown in ein laufendes Intervall und fehlt
+        // auf der Karte.
+        assert!(phpvms_punkt_faellig(
+            FlightPhase::Landing,
+            Some(Duration::from_millis(200)),
+            Some(FlightPhase::Final),
+        ));
+    }
+
+    #[test]
+    fn erster_punkt_geht_immer_raus() {
+        assert!(phpvms_punkt_faellig(FlightPhase::Boarding, None, None));
+    }
+
+    #[test]
+    fn anflug_bleibt_feiner_als_reiseflug() {
+        assert!(
+            phpvms_punkt_intervall(FlightPhase::Final)
+                < phpvms_punkt_intervall(FlightPhase::Cruise),
+            "der Anflug muss dichter aufgeloest bleiben als der Reiseflug"
+        );
+    }
+
+    /// Der Grund fuer die eigene Tabelle: am Boden muss der Weg erkennbar
+    /// bleiben. Die POST-Kadenz gibt `TakeoffRoll` 10 s — das waeren im
+    /// Startlauf ~770 m zwischen zwei Punkten.
+    #[test]
+    fn am_boden_bleibt_es_fein() {
+        for phase in [
+            FlightPhase::TaxiOut,
+            FlightPhase::TakeoffRoll,
+            FlightPhase::TaxiIn,
+            FlightPhase::Pushback,
+        ] {
+            assert!(
+                phpvms_punkt_intervall(phase) <= Duration::from_secs(5),
+                "{phase:?} muss am Boden hoechstens 5 s Abstand haben"
+            );
+        }
+    }
+
+    #[test]
+    fn nur_der_reiseflug_geht_auf_60_sekunden() {
+        assert_eq!(
+            phpvms_punkt_intervall(FlightPhase::Cruise),
+            Duration::from_secs(60)
+        );
+        for phase in [
+            FlightPhase::Climb,
+            FlightPhase::Descent,
+            FlightPhase::Approach,
+            FlightPhase::Final,
+            FlightPhase::Landing,
+            FlightPhase::TaxiIn,
+        ] {
+            assert!(
+                phpvms_punkt_intervall(phase) < Duration::from_secs(60),
+                "{phase:?} darf nicht auf den Reiseflug-Wert fallen"
+            );
+        }
+    }
+
+    #[test]
+    fn id_ueberlebt_den_persistenz_umweg() {
+        // Der Worker schreibt die Outbox bei Backlog/Stop nach
+        // `position_queue.json` und liest sie beim naechsten Start zurueck.
+        // Genau dort darf die id nicht verloren gehen — sonst waere ein
+        // Flug nach App-Neustart wieder unbeschuetzt.
+        let original = punkt(51.5);
+        let als_json = serde_json::to_value(&original).expect("serialisieren");
+        let zurueck: api_client::PositionEntry =
+            serde_json::from_value(als_json).expect("deserialisieren");
+        assert_eq!(zurueck.id, original.id);
     }
 }
 
@@ -22682,6 +23032,22 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // arrival-reference-position retries out over the flight instead of
         // burning them all in the first seconds.
         let mut tick_count: u32 = 0;
+        // v1.6.14 — Ausduennung fuer den phpVMS-Pfad. Bis hierher ging JEDER
+        // Streamer-Tick als eigene Zeile an phpVMS: gemessen ein Punkt alle
+        // 2,9 s, ein 77-Minuten-Flug ergab 1.610 Zeilen, die groessten Tracks
+        // in der GSG-Datenbank haben ueber 17.000. phpVMS' eigene Vorgabe
+        // (`acars.update_interval`) steht auf 60 s.
+        //
+        // Die Drosselung von v0.13.8 (Cruise 30 -> 60 s) wirkte nur auf die
+        // POST-Kadenz, nicht auf die Punktzahl — die Zeilen entstanden
+        // weiter im Tick-Takt, sie wurden nur groesser gebuendelt. Jetzt
+        // richtet sich auch der Punktabstand nach `position_interval`.
+        //
+        // Betrifft NUR phpVMS. Der VPS-Recorder (MQTT) und die
+        // JSONL-Forensik bekommen weiterhin jeden Tick — daran haengen
+        // Landebewertung, Live-Karte und Nachanalyse.
+        let mut letzter_phpvms_push: Option<std::time::Instant> = None;
+        let mut zuletzt_gepushte_phase: Option<FlightPhase> = None;
         // One warning per "sim is loading" episode, not one per tick.
         let mut null_island_logged = false;
         // Heartbeat tracker: ensures `POST /pireps/{id}/update` fires at
@@ -24666,7 +25032,21 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // bis 50 Items) bedient die Outbox entkoppelt. Bei Failure:
             // Worker queued den ganzen batch zurueck in die Outbox + bei
             // Backlog>=500 (mit 30s-Hysteresis) in `position_queue.json`.
-            {
+            // v1.6.14 — nur noch ein Punkt je Phasen-Intervall an phpVMS.
+            // Ein Phasenwechsel geht IMMER mit raus, damit Start, Landung
+            // und Durchstarten auf der Karte an der richtigen Stelle sitzen
+            // und nicht in ein Cruise-Intervall fallen.
+            let phase_jetzt = {
+                let stats = flight.stats.lock().expect("flight stats");
+                stats.phase
+            };
+            if phpvms_punkt_faellig(
+                phase_jetzt,
+                letzter_phpvms_push.map(|t| t.elapsed()),
+                zuletzt_gepushte_phase,
+            ) {
+                letzter_phpvms_push = Some(std::time::Instant::now());
+                zuletzt_gepushte_phase = Some(phase_jetzt);
                 let mut outbox = flight.position_outbox.lock()
                     .expect("position_outbox lock");
                 outbox.push_back(position.clone());
@@ -34479,6 +34859,14 @@ fn log_bool_change(
 
 fn snapshot_to_position(snap: &SimSnapshot) -> PositionEntry {
     PositionEntry {
+        // v1.6.14 — Idempotenz-Schluessel. Wird GENAU HIER vergeben, beim
+        // Erzeugen des Punktes, und wandert danach unveraendert durch
+        // Outbox, Persistenz und jeden Requeue. Nur so ist ein erneuter
+        // Versand derselbe Punkt fuer phpVMS statt ein neuer.
+        //
+        // Nicht beim Senden vergeben — dann bekaeme jeder Retry eine neue
+        // ID und der Schluessel waere wertlos.
+        id: uuid::Uuid::new_v4().to_string(),
         lat: snap.lat,
         lon: snap.lon,
         // v0.16.15: `altitude` = Altimeter-Anzeige (was der Pilot sieht,

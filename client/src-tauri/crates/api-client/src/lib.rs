@@ -143,6 +143,9 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+/// v1.6.14 — Timeout speziell fuer den Positions-Batch-POST. Siehe
+/// [`Client::post_positions`] fuer die Messwerte, auf denen der Wert steht.
+const POSITION_POST_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// v0.16.17: server-side IN_PROGRESS filter (phpVMS PirepState 0). Const so
 /// the URL test below pins the exact path + query the client sends — see
@@ -764,6 +767,23 @@ pub struct PrefileBody {
 /// field per item.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PositionEntry {
+    /// v1.6.14 — Idempotenz-Schluessel, EINMAL beim Erzeugen des Punktes
+    /// vergeben (siehe `snapshot_to_position`) und danach unveraendert
+    /// durch Outbox, `position_queue.json` und jeden Requeue getragen.
+    ///
+    /// Hintergrund (Feldbefund 21.08.2026): schlaegt ein Batch-POST fehl,
+    /// legt der Worker den KOMPLETTEN Batch zurueck in die Outbox und
+    /// schickt ihn erneut. Der Server hatte ihn aber meist laengst
+    /// verarbeitet (er merkt einen Client-Abbruch nicht, `ignore_user_abort`
+    /// wirkt erst bei Output) — ohne Schluessel legt phpVMS dabei NEUE
+    /// Zeilen an. Messung ueber 6 Fluege: 19-122 Dubletten je Flug.
+    ///
+    /// phpVMS' `AcarsController::acars_store` kennt beide Zweige: mit
+    /// gesetzter `id` aktualisiert es die vorhandene Zeile, ohne legt es
+    /// eine neue an. Leer = altes Verhalten, deshalb `skip_serializing_if`
+    /// (aeltere `position_queue.json`-Eintraege haben kein Feld).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
     pub lat: f64,
     pub lon: f64,
     pub altitude: f64,
@@ -1618,16 +1638,29 @@ impl Client {
 
     /// POST and ignore the response body (status-check only).
     async fn post_void<B: Serialize>(&self, path: &str, body: &B) -> Result<(), ApiError> {
+        self.post_void_with_timeout(path, body, None).await
+    }
+
+    /// Wie [`post_void`], aber mit optionalem Per-Request-Timeout, der den
+    /// Client-Default (`DEFAULT_TIMEOUT`) ueberschreibt. Gedacht fuer
+    /// Aufrufe im Hintergrund-Worker, wo Robustheit vor Reaktionszeit geht.
+    async fn post_void_with_timeout<B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+        timeout: Option<Duration>,
+    ) -> Result<(), ApiError> {
         let url = self.endpoint(path)?;
-        let response = self
+        let mut req = self
             .http
             .post(url)
             .header("X-API-Key", &self.conn.api_key)
             .header(header::ACCEPT, "application/json")
-            .json(body)
-            .send()
-            .await
-            .map_err(ApiError::from)?;
+            .json(body);
+        if let Some(t) = timeout {
+            req = req.timeout(t);
+        }
+        let response = req.send().await.map_err(ApiError::from)?;
         let _ = check_status(response, path).await?;
         Ok(())
     }
@@ -1969,6 +2002,19 @@ impl Client {
     }
 
     /// `POST /api/pireps/{pirep_id}/acars/position` — push a batch of positions.
+    ///
+    /// v1.6.14: eigener, groesserer Timeout statt `DEFAULT_TIMEOUT` (10 s).
+    /// Gemessen am GSG-Live-Server (21.08.2026, 377 POSTs eines Fluges):
+    /// Median 1 s, p90 2 s, **Maximum 11 s** — dazu 1,3 s reine
+    /// phpVMS-Bootstrap-Zeit pro Request und eine wiederkehrende
+    /// Lastspitze durch den Minuten-Cron (80 % der gescheiterten POSTs
+    /// fielen in das Fenster :40-:09, waehrend alle Zeilen ueber die
+    /// Minute gleichverteilt sind). Die 10 s trafen also regelmaessig
+    /// Requests, die der Server gleich darauf erfolgreich abschloss.
+    ///
+    /// Der Positions-POST laeuft im entkoppelten Worker und blockiert
+    /// weder Streamer-Tick noch UI — laenger warten kostet hier nichts,
+    /// aufgeben dagegen erzeugt Dubletten.
     pub async fn post_positions(
         &self,
         pirep_id: &str,
@@ -1979,7 +2025,8 @@ impl Client {
             positions: &'a [PositionEntry],
         }
         let path = format!("/api/pireps/{pirep_id}/acars/position");
-        self.post_void(&path, &Body { positions }).await
+        self.post_void_with_timeout(&path, &Body { positions }, Some(POSITION_POST_TIMEOUT))
+            .await
     }
 
     /// `POST /api/pireps/{pirep_id}/file` — submit the PIREP.
@@ -2592,6 +2639,65 @@ fn extract_navlog_fixes(xml: &str) -> Vec<RouteFix> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod positions_wire_tests {
+    use super::*;
+
+    /// v1.6.14 — der Idempotenz-Schluessel muss im Body landen, sonst geht
+    /// phpVMS in den `Acars::create()`-Zweig und jeder Requeue erzeugt
+    /// eine neue Zeile (Feldbefund 21.08.2026).
+    #[test]
+    fn gesetzte_id_geht_mit_auf_die_leitung() {
+        let p = PositionEntry {
+            id: "0f1d5a2c-4b6e-4c8a-9d3f-77c1e2b40a55".into(),
+            lat: 50.0,
+            lon: 8.5,
+            altitude: 3000.0,
+            sim_time: "2026-08-21T20:01:32+00:00".into(),
+            ..Default::default()
+        };
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(
+            v.get("id").and_then(|x| x.as_str()),
+            Some("0f1d5a2c-4b6e-4c8a-9d3f-77c1e2b40a55")
+        );
+    }
+
+    /// Eine leere id darf NICHT gesendet werden: phpVMS pruefte mit
+    /// `!empty($position['id'])`, ein leerer String waere also folgenlos —
+    /// aber der Query-Builder-Zweig setzt keine Timestamps, und ein
+    /// versehentlich leerer Schluessel wuerde dort `created_at` auf NULL
+    /// ziehen. Weglassen ist die sichere Variante.
+    #[test]
+    fn leere_id_bleibt_aus_dem_body() {
+        let p = PositionEntry {
+            lat: 50.0,
+            lon: 8.5,
+            sim_time: "2026-08-21T20:01:32+00:00".into(),
+            ..Default::default()
+        };
+        let v = serde_json::to_value(&p).unwrap();
+        assert!(v.get("id").is_none(), "leere id darf nicht mitgeschickt werden");
+    }
+
+    /// Rueckwaertskompatibilitaet: `position_queue.json` eines aelteren
+    /// Standes hat kein `id`-Feld. Ohne `serde(default)` wuerde das
+    /// Einlesen scheitern und ein Pilot verlaere beim Update auf diese
+    /// Version die gepufferten Positionen seines laufenden Fluges.
+    #[test]
+    fn alter_queue_eintrag_ohne_id_laesst_sich_lesen() {
+        let alt = serde_json::json!({
+            "lat": 50.0,
+            "lon": 8.5,
+            "altitude": 3000.0,
+            "sim_time": "2026-08-21T20:01:32+00:00"
+        });
+        let p: PositionEntry = serde_json::from_value(alt).expect("alte Form muss lesbar bleiben");
+        assert!(p.id.is_empty());
+        assert_eq!(p.lat, 50.0);
+    }
 }
 
 #[cfg(test)]

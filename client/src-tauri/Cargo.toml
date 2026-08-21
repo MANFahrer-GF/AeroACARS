@@ -163,6 +163,11 @@ chrono.workspace = true
 # dep; we just need it directly here for `fetch_release_notes`.
 reqwest.workspace = true
 
+# v1.6.14: Idempotenz-Schluessel fuer phpVMS-Positionen (siehe
+# snapshot_to_position). Nur v4 — kein Zeitstempel-Anteil noetig, die
+# ID muss lediglich stabil und kollisionsfrei sein.
+uuid = { version = "1", features = ["v4"] }
+
 # v0.7.13: discord-rich-presence Workspace-Dep entfernt (Cleanup, RP-Code raus).
 
 # Bundled CSV parser for the embedded ourairports runway table
