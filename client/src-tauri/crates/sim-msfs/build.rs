@@ -107,6 +107,12 @@ fn generate_bindings(manifest_dir: &PathBuf, out_path: &PathBuf) {
         // dwSendID — needed to attribute inspector-watch registration
         // failures to the right watch entry (see register_inspector).
         .allowlist_function("SimConnect_GetLastSentPacketID")
+        // v1.6.12 — Flow-Ereignisse: der Simulator meldet Replay, Teleport und
+        // Vorspulen selbst. Ohne diese drei Eintraege erzeugt bindgen die
+        // Symbole NICHT, obwohl `SimConnect.h` sie deklariert — die Liste hier
+        // ist eine Positivliste, kein Filter gegen Unerwuenschtes. Genau daran
+        // ist der erste Anlauf in der Windows-CI gescheitert (19.08.2026).
+        .allowlist_function("SimConnect_SubscribeToFlowEvent")
         // --- Receiver structs we actually inspect ---
         .allowlist_type("SIMCONNECT_RECV")
         .allowlist_type("SIMCONNECT_RECV_ID")
@@ -121,6 +127,11 @@ fn generate_bindings(manifest_dir: &PathBuf, out_path: &PathBuf) {
         // System state events for PMDG aircraft change detection.
         .allowlist_type("SIMCONNECT_RECV_SYSTEM_STATE")
         .allowlist_type("SIMCONNECT_RECV_EVENT")
+        // Flow-Ereignis-Empfaenger und sein Enum. `SIMCONNECT_RECV_ID` steht
+        // schon oben, deshalb kam ausgerechnet die RECV_ID-Variante durch und
+        // alles andere nicht — ein irrefuehrend halbes Bild.
+        .allowlist_type("SIMCONNECT_RECV_FLOW_EVENT")
+        .allowlist_type("SIMCONNECT_FLOW_EVENT")
         .allowlist_type("SIMCONNECT_EXCEPTION")
         .allowlist_type("SIMCONNECT_DATATYPE")
         .allowlist_type("SIMCONNECT_PERIOD")
