@@ -657,7 +657,21 @@ function ImpactTiles({ g500ms, g1000ms }: { g500ms: number; g1000ms: number | nu
 //     erklärt sich ohnehin aus Gelände und Messpunkt.
 //
 // Beides ist reine Anzeige — in keine Punktzahl fließt etwas davon ein.
-export const GELAENDE_SCHWELLE_FPM = 100;
+/**
+ * Ab welchem Geländebeitrag der Bericht überhaupt etwas dazu sagt.
+ *
+ * v1.6.13 (nachgemessen 21.08.2026): von 100 auf 75 fpm gesenkt. Über den
+ * Bestand liegt der Geländebeitrag im Median bei 32 fpm, p75 bei 60, p90 bei
+ * 108. Bei 100 fpm meldete sich der Bericht in 11,5 % der Landungen; die
+ * Absenkung auf 75 kostet rund 4 % mehr Hinweise.
+ *
+ * Ausgelöst hat es ein Pilot, dessen Landung 93 fpm Geländebeitrag hatte —
+ * bei einer Landerate von rund 360 fpm ein Viertel der angezeigten Zahl. Er
+ * hat genau deshalb nachgefragt, und der Bericht schwieg. Ein Hinweis, der
+ * eine überraschende Zahl erklären soll, darf bei einem Viertel nicht
+ * schweigen.
+ */
+export const GELAENDE_SCHWELLE_FPM = 75;
 export const SIM_ABSTAND_SCHWELLE_FPM = 200;
 
 export interface SinkrateHinweis {

@@ -115,3 +115,33 @@ describe("sinkrateHinweis — steigendes Flugzeug", () => {
     expect(h.gelaende).toBe(451);
   });
 });
+
+describe("Geländeschwelle (v1.6.13, nachgemessen 21.08.2026)", () => {
+  it("meldet sich bei Peters 93 fpm — vorher schwieg der Bericht", () => {
+    // Der Auslöser: 93 fpm Geländebeitrag bei rund 360 fpm Landerate, also ein
+    // Viertel der angezeigten Zahl. Bei der alten Schwelle von 100 kam nichts.
+    const h = sinkrateHinweis({
+      vs_at_edge_fpm: -362,
+      vs_gelaende_fpm: -93,
+      vs_eigensinken_fpm: -269,
+      vs_sim_referenz_fpm: -370,
+    } as never);
+    expect(h, "bei 93 fpm muss der Hinweis kommen").not.toBeNull();
+  });
+
+  it("schweigt weiterhin bei kleinen Beiträgen", () => {
+    // Gegenprobe: die Absenkung darf den Hinweis nicht zum Dauergast machen.
+    // Der Median über den Bestand liegt bei 32 fpm — dort muss Ruhe sein.
+    const h = sinkrateHinweis({
+      vs_at_edge_fpm: -300,
+      vs_gelaende_fpm: -32,
+      vs_eigensinken_fpm: -268,
+      vs_sim_referenz_fpm: -305,
+    } as never);
+    expect(h, "beim Median darf nichts kommen").toBeNull();
+  });
+
+  it("die Schwelle liegt bei 75", () => {
+    expect(GELAENDE_SCHWELLE_FPM).toBe(75);
+  });
+});
