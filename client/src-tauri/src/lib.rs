@@ -25050,7 +25050,11 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 let mut outbox = flight.position_outbox.lock()
                     .expect("position_outbox lock");
                 outbox.push_back(position.clone());
-                // Cap auf 5000 — das sind ca. 8 Stunden Cruise-Daten.
+                // Cap auf 5000. Vor v1.6.14 (ein Punkt je Tick) waren das ca.
+                // 4 Stunden Cruise; seit der phasenabhaengigen Ausduennung
+                // deckt derselbe Cap ein Vielfaches davon ab (im Reiseflug
+                // ein Punkt je 60 s). Der Wert bleibt, er ist jetzt nur
+                // grosszuegiger als er aussieht.
                 // Wenn die Verbindung so lange tot ist: aelteste positions
                 // werden aus dem Live-Stream gedroppt (Live-Map verliert
                 // Anfang des Tracks), aber die JSONL-SoT hat sie alle —
