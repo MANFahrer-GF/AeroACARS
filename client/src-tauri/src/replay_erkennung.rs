@@ -38,12 +38,6 @@
 //! [`MIN_PAARE`] Belege. Am gesamten Bestand (875 Fluege, kein einziger Replay)
 //! schlaegt das Verfahren **null Mal** an — siehe `replay_erkennung_tests`.
 
-// Noch NICHT verdrahtet: das Modul ist geprueft, aber der Aufrufer fehlt. Wo
-// es laufen soll, ist eine Entwurfsfrage — unser Aufsetzpuffer reicht mit 2,5 s
-// vor Bodenkontakt NICHT (Arderos nutzt 15 s), es gehoert also an den laufenden
-// Telemetriestrom, so wie X-Plane es mit `is_in_replay` haelt.
-#![allow(dead_code)]
-
 /// Eine Probe, so wie der Telemetriestrom sie liefert.
 #[derive(Debug, Clone, Copy)]
 pub struct ReplayProbe {
@@ -105,7 +99,7 @@ fn median(mut werte: Vec<f64>) -> Option<f64> {
     }
     werte.sort_by(|a, b| a.partial_cmp(b).expect("keine NaN mehr"));
     let m = werte.len() / 2;
-    Some(if werte.len() % 2 == 0 {
+    Some(if werte.len().is_multiple_of(2) {
         (werte[m - 1] + werte[m]) / 2.0
     } else {
         werte[m]
@@ -315,5 +309,48 @@ mod tests {
         }
         let b = pruefe_replay(&p);
         assert!(!b.ist_replay, "20 % Aussetzer duerfen nicht reichen: {b:?}");
+    }
+}
+
+/// Wächter über die Verdrahtung (QS 19.08.2026).
+///
+/// Die Modul-Tests darüber prüfen das Verfahren. Diese hier prüfen, dass es
+/// auch **angeschlossen** ist — genau daran wäre der ganze Aufwand sonst
+/// vorbeigegangen: ein makelloses, nie aufgerufenes Modul.
+#[cfg(test)]
+mod verdrahtung {
+    use std::fs;
+
+    fn lib_rs() -> String {
+        fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
+            .expect("lib.rs lesbar")
+    }
+
+    #[test]
+    fn die_erkennung_wird_aufgerufen() {
+        let s = lib_rs();
+        assert!(
+            s.contains("replay_erkennung::pruefe_replay("),
+            "das Modul ist nicht verdrahtet — ein nie aufgerufener Pruefer prueft nichts"
+        );
+    }
+
+    #[test]
+    fn der_verdacht_friert_die_phasen_engine_ein() {
+        let s = lib_rs();
+        assert!(
+            s.contains("snap.paused || snap.slew_mode || stats.replay_verdacht"),
+            "der Verdacht haengt nicht am Pause-Riegel — er bliebe folgenlos"
+        );
+    }
+
+    #[test]
+    fn der_puffer_ist_gedeckelt() {
+        let s = lib_rs();
+        assert!(s.contains("REPLAY_PROBEN_MAX"), "keine Obergrenze fuer den Ringpuffer");
+        assert!(
+            s.contains("stats.replay_proben.pop_front()"),
+            "der Puffer wird nie beschnitten"
+        );
     }
 }

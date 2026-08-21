@@ -2822,6 +2822,11 @@ const TOUCHDOWN_BUFFER_SECS: i64 = 5;
 /// ergibt einen TouchdownWindow von ~15 s, gedumpt als ein Event.
 const TOUCHDOWN_POST_WINDOW_MS: i64 = 10_000;
 
+/// Wieviele Telemetrieproben die Replay-Erkennung vorhaelt. Bei der
+/// Reiseflug-Kadenz sind das gut anderthalb Minuten — weit mehr als das
+/// Fenster braucht, und immer noch winzig.
+const REPLAY_PROBEN_MAX: usize = 64;
+
 // ---- In-App-Live-Map: geflogener Track (Backend-Akkumulation) ----
 //
 // PARITÄT mit dem Frontend: Diese drei Werte spiegeln client/src/lib/
@@ -2987,6 +2992,16 @@ struct PauseSegment {
 
 #[derive(Default)]
 struct FlightStats {
+    /// v1.6.12 — die letzten Telemetrieproben fuer die Replay-Erkennung.
+    ///
+    /// Der Aufsetzpuffer taugt dafuer nicht: er reicht nur 2,5 s vor den
+    /// Bodenkontakt, das Verfahren braucht ein laengeres Fenster. Hier
+    /// laeuft es mit, solange geflogen wird.
+    replay_proben: std::collections::VecDeque<replay_erkennung::ReplayProbe>,
+    /// Steht der Sim gerade im Verdacht, eine Aufzeichnung abzuspielen?
+    /// Wird wie eine Pause behandelt — dieselbe Entscheidung wie im
+    /// X-Plane-Adapter fuer `sim/time/is_in_replay`.
+    replay_verdacht: bool,
     // Position tracking.
     /// Muster, das in `aircraft_limits_for` fehlte — fuer den Health-Report.
     /// Siehe `ClientHealthReport::unknown_aircraft_icao`.
@@ -26858,7 +26873,48 @@ fn step_flight_at(
     // current state with current snapshot values. Any pending dwell
     // timers (Holding, Touch-and-Go, Go-Around) keep their last
     // value and continue from there.
-    if snap.paused || snap.slew_mode {
+    // v1.6.12 — Replay-Erkennung ueber die Telemetrie.
+    //
+    // Zweite Verteidigungslinie: der MSFS-Adapter meldet Replay seit v1.6.12
+    // ueber die Flow-Ereignisse des SDK und faltet es in `snap.paused`. Das
+    // greift aber nur, wenn der Simulator diese Ereignisse ueberhaupt sendet
+    // (MSFS 2024) und das Abonnement geklappt hat. Diese Pruefung braucht
+    // nichts davon — sie sieht nur, dass sich Position und gemeldete
+    // Geschwindigkeit widersprechen, und gilt damit fuer JEDE Anbindung.
+    //
+    // Gemessen am eigenen Bestand, bevor sie gebaut wurde: 0 von 875 Fluegen
+    // schlagen an. Ein Fehlalarm waere teurer als eine verpasste Erkennung.
+    if !snap.on_ground {
+        stats.replay_proben.push_back(replay_erkennung::ReplayProbe {
+            t_s: now.timestamp_millis() as f64 / 1000.0,
+            lat: snap.lat,
+            lon: snap.lon,
+            msl_ft: snap.altitude_msl_ft as f64,
+            groundspeed_kt: snap.groundspeed_kt as f64,
+            ias_kt: snap.indicated_airspeed_kt as f64,
+            vs_fps: snap.vertical_speed_fpm as f64 / 60.0,
+            on_ground: snap.on_ground,
+        });
+        // 90 s reichen weit ueber das Fenster hinaus und bleiben winzig
+        // (bei 2-s-Takt rund 45 Eintraege).
+        while stats.replay_proben.len() > REPLAY_PROBEN_MAX {
+            stats.replay_proben.pop_front();
+        }
+        let proben: Vec<_> = stats.replay_proben.iter().copied().collect();
+        let befund = replay_erkennung::pruefe_replay(&proben);
+        if befund.ist_replay != stats.replay_verdacht {
+            tracing::warn!(
+                verdacht = befund.ist_replay,
+                belege = befund.belege,
+                errechnet_kt = ?befund.median_errechnete_gs_kt,
+                gemeldet_kt = ?befund.median_gemeldete_gs_kt,
+                "Replay-Verdacht aus der Telemetrie geaendert"
+            );
+        }
+        stats.replay_verdacht = befund.ist_replay;
+    }
+
+    if snap.paused || snap.slew_mode || stats.replay_verdacht {
         // QS-Runde 1 (Pause-Loch): die Versöhner-Uhr ist Wanduhr — eine
         // Sim-Pause unterhalb der Reload-Gap-Schwelle (bis 150 s bei
         // Cruise-Kadenz!) liefe sonst voll in den Dwell ein, und der erste

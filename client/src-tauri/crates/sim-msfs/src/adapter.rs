@@ -7,7 +7,7 @@
 //! of the application doesn't need to change.
 
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -81,6 +81,24 @@ const PAUSE_EX1_EVENT_ID: u32 = 301;
 /// SDK-Doku siehe oben SubscribeToSystemEvent Link.
 const CRASHED_EVENT_ID: u32 = 302;
 const CRASH_RESET_EVENT_ID: u32 = 303;
+/// Flow-Ereignisse, bei denen die Telemetrie nicht den geflogenen Zustand
+/// beschreibt. Werte aus `SimConnect.h`, Enum `SIMCONNECT_FLOW_EVENT`.
+///
+/// Bewusst ueber die bindgen-Konstanten und nicht ueber Zahlen: die
+/// Reihenfolge im Enum ist SDK-Sache und darf sich aendern.
+const FLOW_REPLAY_START: u32 =
+    sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_REPLAY_START as u32;
+const FLOW_REPLAY_END: u32 =
+    sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_REPLAY_END as u32;
+const FLOW_TELEPORT_START: u32 =
+    sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_TELEPORT_START as u32;
+const FLOW_TELEPORT_DONE: u32 =
+    sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_TELEPORT_DONE as u32;
+const FLOW_SKIP_START: u32 =
+    sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_SKIP_START as u32;
+const FLOW_SKIP_DONE: u32 =
+    sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_SKIP_DONE as u32;
+
 const STALE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Public connection state mirrored to the frontend.
@@ -111,6 +129,20 @@ struct Shared {
     /// Pfad lesen kann (= keine zweite IPC-Schiene noetig). Default
     /// false bis der Sim das erste Mal pausiert.
     sim_paused: AtomicBool,
+    /// v1.6.12 — der Simulator spielt eine Aufzeichnung ab oder versetzt das
+    /// Flugzeug, statt es fliegen zu lassen.
+    ///
+    /// Quelle sind die Flow-Ereignisse des SimConnect-SDK
+    /// (`REPLAY_START`/`REPLAY_END`, `TELEPORT_START`/`TELEPORT_DONE`,
+    /// `SKIP_START`/`SKIP_DONE`). Behandelt wird das wie eine Pause — genau so
+    /// haelt es der X-Plane-Adapter seit Spec v0.7.15 F6 mit
+    /// `sim/time/is_in_replay`: aus AeroACARS-Sicht ist das „die Telemetrie ist
+    /// gerade nicht echt".
+    ///
+    /// Zaehler statt Ja/Nein: die Ereignisse koennen sich ueberlappen (ein
+    /// Teleport waehrend eines Replays). Ein einzelnes `..._DONE` wuerde sonst
+    /// den noch laufenden anderen Vorgang mit abraeumen.
+    sim_unecht_tiefe: AtomicI32,
     /// v0.7.19 GAF-707 Accident-Detection: SimConnect-`Crashed`-
     /// System-Event setzt das Atomic. Wird beim Snapshot-Build in
     /// `snap.crashed` gelesen. `CrashReset` (= MSFS-UI Cut-Scene
@@ -569,6 +601,7 @@ impl MsfsAdapter {
                 snapshot: Mutex::new(None),
                 last_error: Mutex::new(None),
                 sim_paused: AtomicBool::new(false),
+                sim_unecht_tiefe: AtomicI32::new(0),
                 sim_crashed: AtomicBool::new(false),
                 touchdown: Mutex::new(None),
                 inspector: Mutex::new(InspectorState::default()),
@@ -997,7 +1030,13 @@ fn run_dispatch(
                             // Loop in lib.rs ausgewertet damit der Pause-
                             // Akkumulator auch waehrend MSFS-Esc-Pause
                             // (= eingefrorene Snapshots) korrekt zaehlt.
-                            snap.paused = shared.sim_paused.load(Ordering::Relaxed);
+                            // v1.6.12: Replay/Teleport/Vorspulen zaehlen wie
+                            // Pause. Der Streamer in lib.rs friert damit die
+                            // Phasen-Engine ein, statt eine abgespielte
+                            // Aufzeichnung als Flug zu werten — dieselbe
+                            // Behandlung wie im X-Plane-Adapter.
+                            snap.paused = shared.sim_paused.load(Ordering::Relaxed)
+                                || shared.sim_unecht_tiefe.load(Ordering::Relaxed) > 0;
                             // v0.7.19 GAF-707: Crash-Latch aus dem Shared-
                             // State in den Snapshot mergen. Caller in
                             // lib.rs/step_flight reagiert auf den Flip
@@ -1184,6 +1223,39 @@ fn run_dispatch(
                             g.subscribed = false;
                             g.last_packet_at = None;
                         }
+                    }
+                }
+                Ok(Some(DispatchMsg::FlowEvent { event })) => {
+                    // Der Simulator sagt uns selbst, dass die Telemetrie
+                    // gerade nicht den geflogenen Zustand beschreibt. Behandelt
+                    // wie eine Pause — dieselbe Entscheidung wie im X-Plane-
+                    // Adapter fuer `sim/time/is_in_replay`.
+                    //
+                    // Tiefenzaehler statt Ja/Nein: die Vorgaenge koennen sich
+                    // ueberlappen (Teleport waehrend eines Replays). Ein
+                    // einzelnes _DONE wuerde sonst den noch laufenden anderen
+                    // Vorgang mit abraeumen. Nie unter null, damit ein
+                    // verpasstes _START (Abonnement erst mitten im Replay) den
+                    // Zaehler nicht negativ und damit taub macht.
+                    let (delta, name): (i32, &str) = match event {
+                        e if e == FLOW_REPLAY_START => (1, "Replay"),
+                        e if e == FLOW_REPLAY_END => (-1, "Replay"),
+                        e if e == FLOW_TELEPORT_START => (1, "Teleport"),
+                        e if e == FLOW_TELEPORT_DONE => (-1, "Teleport"),
+                        e if e == FLOW_SKIP_START => (1, "Vorspulen"),
+                        e if e == FLOW_SKIP_DONE => (-1, "Vorspulen"),
+                        _ => (0, ""),
+                    };
+                    if delta != 0 {
+                        let vorher = shared.sim_unecht_tiefe.load(Ordering::Relaxed);
+                        let nachher = (vorher + delta).max(0);
+                        shared.sim_unecht_tiefe.store(nachher, Ordering::Relaxed);
+                        tracing::info!(
+                            vorgang = name,
+                            beginnt = delta > 0,
+                            tiefe = nachher,
+                            "Sim meldet: Telemetrie gerade nicht echt"
+                        );
                     }
                 }
                 Ok(Some(DispatchMsg::SystemEvent { event_id, data })) => {
@@ -1780,6 +1852,22 @@ impl Connection {
                 "SubscribeToSystemEvent(CrashReset) returned 0x{hr:08X}"
             ));
         }
+        // v1.6.12 — Flow-Ereignisse des SDK: der Simulator meldet selbst,
+        // wenn er eine Aufzeichnung abspielt, das Flugzeug versetzt oder
+        // vorspult. Autoritativer als jede Ableitung aus der Telemetrie.
+        //
+        // BEWUSST NICHT FATAL: MSFS 2020 kennt diese Ereignisse nicht. Ein
+        // `return Err` haette dort die ganze Verbindung gerissen — fuer einen
+        // Zugewinn, den es auf 2020 ohnehin nicht gibt. Schlaegt es fehl,
+        // bleibt der kinematische Rueckfall (`replay_erkennung`) zustaendig.
+        let hr = unsafe { sys::SimConnect_SubscribeToFlowEvent(self.handle) };
+        if hr != 0 {
+            tracing::info!(
+                hr = format!("0x{hr:08X}"),
+                "SubscribeToFlowEvent nicht verfuegbar (aelteres SimConnect) —                  Replay-Erkennung laeuft ueber die Telemetrie"
+            );
+        }
+
         Ok(())
     }
 
@@ -1885,6 +1973,10 @@ impl Connection {
                 let evt = unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_EVENT) };
                 Some(DispatchMsg::SystemEvent { event_id: evt.uEventID, data: evt.dwData })
             }
+            id if id == SIMCONNECT_RECV_ID_FLOW_EVENT => {
+                let evt = unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_FLOW_EVENT) };
+                Some(DispatchMsg::FlowEvent { event: evt.FlowEvent as u32 })
+            }
             _ => None,
         };
         Ok(msg)
@@ -1901,6 +1993,8 @@ const SIMCONNECT_RECV_ID_SYSTEM_STATE: sys::DWORD =
     sys::SIMCONNECT_RECV_ID_SIMCONNECT_RECV_ID_SYSTEM_STATE as sys::DWORD;
 const SIMCONNECT_RECV_ID_EVENT: sys::DWORD =
     sys::SIMCONNECT_RECV_ID_SIMCONNECT_RECV_ID_EVENT as sys::DWORD;
+const SIMCONNECT_RECV_ID_FLOW_EVENT: sys::DWORD =
+    sys::SIMCONNECT_RECV_ID_SIMCONNECT_RECV_ID_FLOW_EVENT as sys::DWORD;
 
 impl Drop for Connection {
     fn drop(&mut self) {
@@ -1931,6 +2025,12 @@ enum DispatchMsg {
     /// subscribe to additional channels). RECV_ID is
     /// `SIMCONNECT_RECV_ID_CLIENT_DATA = 16`. Same byte-layout as
     /// SimObjectData but a different RECV_ID.
+    /// v1.6.12 — Flow-Ereignis des SDK (RECV_ID 27). Der Simulator meldet
+    /// Replay, Teleport, Vorspulen und aehnliche Vorgaenge, waehrend derer
+    /// die Telemetrie nicht den geflogenen Zustand beschreibt.
+    FlowEvent {
+        event: u32,
+    },
     ClientData {
         request_id: u32,
         bytes: Vec<u8>,
