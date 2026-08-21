@@ -4630,7 +4630,20 @@ mod tests {
                 FieldKind::String256 => buf.extend_from_slice(&[0u8; 256]),
             }
         }
-        // v1.5.3: erst die drei neuen Schwanzfelder weg (3*8) ...
+        // v1.6.12: die beiden Echtheits-Felder sind jetzt der Schwanz —
+        // erst die weg (f64 8 + i32 4). Ohne diesen Schritt schnitte der
+        // naechste `- 24` mitten in die Klappenfelder, und die Kette darunter
+        // pruefte ploetzlich etwas anderes als frueher. Genau daran ist die
+        // Windows-CI nach dem Anhaengen gescheitert (19.08.2026) — der
+        // pattern_buffer-Test allein haette es NICHT gefangen, der prueft nur
+        // die Gesamtgroesse und einzelne Stichproben.
+        buf.truncate(buf.len() - 12);
+        let t = Telemetry::from_block(&buf);
+        assert_eq!(t.flap_num_positions, 1298.0, "letztes Klappenfeld intakt");
+        assert_eq!(t.simulation_rate, 0.0, "fehlender Schwanz = sicherer Default");
+        assert!(!t.slew_active, "fehlender Schwanz = sicherer Default");
+
+        // v1.5.3: dann die drei Schwanzfelder davor weg (3*8) ...
         buf.truncate(buf.len() - 24);
         let t = Telemetry::from_block(&buf);
         assert_eq!(t.syn_no_smoking_sign, 1295.0); // letztes A220-Feld intakt
