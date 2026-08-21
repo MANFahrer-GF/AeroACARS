@@ -62,9 +62,26 @@ pub struct ReplayProbe {
 /// und 140 kt liegen zwei Proben 1,2 m auseinander, da schlaegt jede
 /// Nachkommastelle durch.
 const MIN_PAARDAUER_S: f64 = 0.5;
-/// Laengster Abstand. Darueber ist die Gerade zwischen zwei Punkten keine
-/// brauchbare Naeherung der geflogenen Bahn mehr.
-const MAX_PAARDAUER_S: f64 = 1.5;
+/// Laengster Abstand zweier Proben, aus denen ein Beleg gebildet wird.
+///
+/// ⚠️ QS-Befund 21.08.2026: hier standen 1,5 s — der Wert aus der Vorlage, die
+/// mit einer viel hoeheren Abtastrate arbeitet. Unser Streamer tickt aber
+/// adaptiv nach Hoehe und im Reiseflug nur alle
+/// [`crate::MQTT_PUBLISH_INTERVAL_SECS`] Sekunden. Damit lag JEDES Paar
+/// oberhalb von rund 2000 ft ueber der Grenze und wurde verworfen: die
+/// Erkennung sammelte dort **nie einen einzigen Beleg** und konnte gar nicht
+/// anschlagen. Ein Verfahren, das nur in einem Hoehenband wirkt, ohne dass das
+/// irgendwo steht.
+///
+/// Der Wert muss also ueber der langsamsten Kadenz liegen. Vier Sekunden geben
+/// Luft nach oben und kosten nichts an Genauigkeit: die Sehne zwischen zwei
+/// Punkten unterschaetzt eine gefloge Kurve, macht die errechnete
+/// Geschwindigkeit also KLEINER — das kann nur Fehlalarme verhindern, nie
+/// welche erzeugen.
+///
+/// `replay_erkennung::tests::fenster_passt_zur_langsamsten_kadenz` haelt den
+/// Zusammenhang fest, damit eine Aenderung der Taktrate hier laut auffaellt.
+const MAX_PAARDAUER_S: f64 = 4.0;
 /// So viele Belege muessen zusammenkommen, sonst wird nicht geurteilt.
 pub const MIN_PAARE: usize = 8;
 
@@ -133,6 +150,11 @@ pub struct ReplayBefund {
 /// Erwartet Proben in zeitlicher Reihenfolge. Bodenproben zaehlen nicht mit —
 /// am Boden ist „gemeldete Geschwindigkeit nahe null" der Normalfall und kein
 /// Widerspruch.
+///
+/// Der Aufrufer in `lib.rs` legt heute ohnehin nur Luftproben in den Puffer,
+/// diese Filterung ist dort also der zweite Boden. Sie bleibt trotzdem: wer
+/// den Puffer spaeter aufs Ausrollen ausdehnt, soll sich darauf verlassen
+/// koennen (QS-Befund 21.08.2026 — die Zustaendigkeit war unklar verteilt).
 pub fn pruefe_replay(proben: &[ReplayProbe]) -> ReplayBefund {
     let leer = ReplayBefund {
         ist_replay: false,
@@ -234,6 +256,74 @@ mod tests {
             });
         }
         v
+    }
+
+    #[test]
+    fn fenster_passt_zur_langsamsten_kadenz() {
+        // Der QS-Befund vom 21.08.2026 in Testform. Das Paarfenster MUSS ueber
+        // der langsamsten Streamer-Kadenz liegen, sonst entsteht oberhalb des
+        // betroffenen Hoehenbands nie ein Beleg und die Erkennung ist dort
+        // blind — ohne dass irgendetwas rot wird.
+        let langsamster_takt = crate::MQTT_PUBLISH_INTERVAL_SECS as f64;
+        assert!(
+            MAX_PAARDAUER_S > langsamster_takt,
+            "Paarfenster {MAX_PAARDAUER_S} s liegt nicht ueber der langsamsten \
+             Kadenz {langsamster_takt} s — die Erkennung waere im Reiseflug blind"
+        );
+        // Und der schnellste Takt (500 ms im Flare) muss ebenfalls noch Paare
+        // bilden. Als Verhaltensprobe statt als Behauptung ueber Konstanten —
+        // die waere wegoptimiert worden und haette nichts geprueft.
+        let flare_takt = 0.5_f64;
+        let mut v = Vec::new();
+        let mut lat = 50.0_f64;
+        for i in 0..30 {
+            lat += 140.0 / 3600.0 / 60.0 * flare_takt;
+            v.push(ReplayProbe {
+                t_s: i as f64 * flare_takt,
+                lat,
+                lon: 8.0,
+                msl_ft: 500.0 - i as f64 * 5.0,
+                groundspeed_kt: 140.0,
+                ias_kt: 130.0,
+                vs_fps: -10.0,
+                on_ground: false,
+            });
+        }
+        assert!(
+            pruefe_replay(&v).belege >= MIN_PAARE,
+            "beim 500-ms-Takt im Flare entstehen keine Belege"
+        );
+    }
+
+    #[test]
+    fn belege_entstehen_auch_bei_reiseflug_kadenz() {
+        // Verhaltensprobe zum Test darueber: mit dem echten Reiseflug-Takt
+        // muessen Belege zusammenkommen. Genau das war vorher nicht der Fall.
+        let takt = crate::MQTT_PUBLISH_INTERVAL_SECS as f64;
+        let mut v = Vec::new();
+        let mut lat = 50.0_f64;
+        let mut msl = 35000.0_f64;
+        for i in 0..40 {
+            lat += 460.0 / 3600.0 / 60.0 * takt;
+            msl -= 10.0 * takt;
+            v.push(ReplayProbe {
+                t_s: i as f64 * takt,
+                lat,
+                lon: 8.0,
+                msl_ft: msl,
+                groundspeed_kt: 0.0,
+                ias_kt: 0.0,
+                vs_fps: 0.0,
+                on_ground: false,
+            });
+        }
+        let b = pruefe_replay(&v);
+        assert!(
+            b.belege >= MIN_PAARE,
+            "bei {takt}-s-Takt kamen nur {} Belege zusammen — die Erkennung ist dort blind",
+            b.belege
+        );
+        assert!(b.ist_replay, "gestellter Replay bei Reiseflug-Kadenz nicht erkannt: {b:?}");
     }
 
     #[test]

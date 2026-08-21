@@ -1247,6 +1247,15 @@ fn run_dispatch(
                         _ => (0, ""),
                     };
                     if delta != 0 {
+                        // Getrenntes Lesen und Schreiben, KEIN atomares
+                        // Aendern: zulaessig nur, weil genau dieser eine
+                        // Dispatch-Faden schreibt. Kommt je ein zweiter dazu
+                        // (weitere Ereignisquelle, Ruecksetzen beim
+                        // Verbindungsabbruch), muss das auf `fetch_add` mit
+                        // Klemmen umgestellt werden — sonst ueberschreiben
+                        // sich zwei Aenderungen, der Zaehler bleibt auf 1 und
+                        // die Telemetrie gilt fuer immer als unecht
+                        // (QS-Befund 21.08.2026).
                         let vorher = shared.sim_unecht_tiefe.load(Ordering::Relaxed);
                         let nachher = (vorher + delta).max(0);
                         shared.sim_unecht_tiefe.store(nachher, Ordering::Relaxed);
@@ -1864,7 +1873,7 @@ impl Connection {
         if hr != 0 {
             tracing::info!(
                 hr = format!("0x{hr:08X}"),
-                "SubscribeToFlowEvent nicht verfuegbar (aelteres SimConnect) —                  Replay-Erkennung laeuft ueber die Telemetrie"
+                "SubscribeToFlowEvent nicht verfuegbar (aelteres SimConnect) — Replay-Erkennung laeuft ueber die Telemetrie"
             );
         }
 

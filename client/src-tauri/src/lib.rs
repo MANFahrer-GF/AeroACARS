@@ -2823,8 +2823,8 @@ const TOUCHDOWN_BUFFER_SECS: i64 = 5;
 const TOUCHDOWN_POST_WINDOW_MS: i64 = 10_000;
 
 /// Wieviele Telemetrieproben die Replay-Erkennung vorhaelt. Bei der
-/// Reiseflug-Kadenz sind das gut anderthalb Minuten — weit mehr als das
-/// Fenster braucht, und immer noch winzig.
+/// langsamsten Kadenz (3 s im Reiseflug) sind das rund drei Minuten — weit
+/// mehr als das Verfahren braucht, und immer noch winzig.
 const REPLAY_PROBEN_MAX: usize = 64;
 
 // ---- In-App-Live-Map: geflogener Track (Backend-Akkumulation) ----
@@ -26884,7 +26884,21 @@ fn step_flight_at(
     //
     // Gemessen am eigenen Bestand, bevor sie gebaut wurde: 0 von 875 Fluegen
     // schlagen an. Ein Fehlalarm waere teurer als eine verpasste Erkennung.
-    if !snap.on_ground {
+    if snap.on_ground {
+        // QS-Befund 21.08.2026, der schwerste: das Urteil wurde NUR in der Luft
+        // gesetzt. Stand es einmal auf wahr, blieb es nach dem Aufsetzen fuer
+        // immer stehen — und der Riegel darunter fror die Phasen-Engine fuer
+        // den ganzen Rest des Fluges ein. Ein einziger Fehlalarm im Endanflug
+        // haette den Flugbericht unabschliessbar gemacht: kein Uebergang mehr
+        // nach Landing, TaxiIn oder Arrived, keine Blockzeit.
+        //
+        // Am Boden liefert das Verfahren ohnehin keine Belege — dort ist
+        // "gemeldete Geschwindigkeit nahe null" der Normalfall und kein
+        // Widerspruch. Also beides zuruecksetzen. Ein Replay, das am Boden
+        // laeuft, faengt Stufe 1 ab (die Flow-Ereignisse des Simulators).
+        stats.replay_proben.clear();
+        stats.replay_verdacht = false;
+    } else {
         stats.replay_proben.push_back(replay_erkennung::ReplayProbe {
             t_s: now.timestamp_millis() as f64 / 1000.0,
             lat: snap.lat,
@@ -26893,10 +26907,11 @@ fn step_flight_at(
             groundspeed_kt: snap.groundspeed_kt as f64,
             ias_kt: snap.indicated_airspeed_kt as f64,
             vs_fps: snap.vertical_speed_fpm as f64 / 60.0,
-            on_ground: snap.on_ground,
+            on_ground: false,
         });
-        // 90 s reichen weit ueber das Fenster hinaus und bleiben winzig
-        // (bei 2-s-Takt rund 45 Eintraege).
+        // 64 Proben sind bei der langsamsten Kadenz (3 s im Reiseflug) rund
+        // drei Minuten — weit mehr als das Verfahren braucht, und immer noch
+        // winzig.
         while stats.replay_proben.len() > REPLAY_PROBEN_MAX {
             stats.replay_proben.pop_front();
         }
@@ -31020,6 +31035,58 @@ mod enroute_reconcile_replay_tests {
             let snap = stopped_at(38.7830, -9.1327);
             let change = step_flight_at(&flight, &snap, Utc::now());
             assert_eq!(change, Some(FlightPhase::BlocksOn));
+        }
+
+        /// QS-Befund 21.08.2026, der schwerste: der Replay-Verdacht wurde NUR
+        /// in der Luft ausgewertet. Stand er einmal auf wahr, blieb er nach dem
+        /// Aufsetzen fuer immer stehen — und der Riegel fror die Phasen-Engine
+        /// fuer den Rest des Fluges ein. Kein Uebergang mehr nach TaxiIn, keine
+        /// Blockzeit, der Flugbericht unabschliessbar.
+        #[test]
+        fn replay_verdacht_wird_am_boden_geloescht_und_blockiert_nicht() {
+            let flight = taxi_in_flight(Some(lppt_stands()));
+            {
+                let mut stats = flight.stats.lock().unwrap();
+                stats.phase = FlightPhase::BlocksOn;
+                stats.blocks_on_reached = true;
+                stats.block_on_at = Some(Utc::now());
+                stats.arr_gate = Some("203".into());
+                stats.arr_gate_icao = Some("ZZZZ".into());
+                // Der Verdacht, wie ihn ein Fehlalarm im Endanflug hinterlaesst.
+                stats.replay_verdacht = true;
+                stats.replay_proben.push_back(replay_erkennung::ReplayProbe {
+                    t_s: 0.0,
+                    lat: 38.78,
+                    lon: -9.13,
+                    msl_ft: 300.0,
+                    groundspeed_kt: 0.0,
+                    ias_kt: 0.0,
+                    vs_fps: 0.0,
+                    on_ground: false,
+                });
+            }
+            let snap = SimSnapshot {
+                lat: 38.7830,
+                lon: -9.1327,
+                on_ground: true,
+                parking_brake: false,
+                groundspeed_kt: 12.0,
+                engines_running: 2,
+                ..SimSnapshot::default()
+            };
+
+            let change = step_flight_at(&flight, &snap, Utc::now());
+
+            // Der Uebergang muss stattfinden — vorher blockierte ihn der
+            // stehengebliebene Verdacht.
+            assert_eq!(
+                change,
+                Some(FlightPhase::TaxiIn),
+                "der Flug bleibt haengen: der Replay-Verdacht friert die Phasen-Engine ein"
+            );
+            let stats = flight.stats.lock().unwrap();
+            assert!(!stats.replay_verdacht, "Verdacht am Boden nicht geloescht");
+            assert!(stats.replay_proben.is_empty(), "Puffer am Boden nicht geleert");
         }
 
         #[test]
