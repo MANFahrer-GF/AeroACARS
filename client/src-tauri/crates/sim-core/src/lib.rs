@@ -1531,9 +1531,20 @@ pub fn clean_atc_model(raw: &str) -> Option<String> {
     if s.is_empty() {
         return None;
     }
-    if let Some(start) = s.find("AC_MODEL") {
-        let after = &s[start + "AC_MODEL".len()..];
-        let after = after.trim_start_matches(|c: char| c == '_' || c == ' ');
+    // Zwei Schreibweisen im Feld, nicht eine (Korpus-Auswertung 21.08.2026):
+    //   `ATCCOM.AC_MODEL A320.0.text`     — Leerzeichen, MSFS-Standard
+    //   `ATCCOM.AC_MODEL_BE58.0.text`     — Unterstrich
+    //   `AIRCRAFT.ATC_MODEL_SF50.0.text`  — ANDERES Praefix, anderes Token
+    // Die dritte Form fiel bis hierher durch: sie enthaelt `ATC_MODEL`, nicht
+    // `AC_MODEL`, landete deshalb unten im `.TEXT`-Zweig und wurde als Muell
+    // verworfen. `ATC_MODEL` zuerst pruefen — es ist das laengere Token und
+    // die beiden ueberschneiden sich nicht.
+    let token = ["ATC_MODEL", "AC_MODEL"]
+        .into_iter()
+        .find_map(|t| s.find(t).map(|i| (i, t)));
+    if let Some((start, t)) = token {
+        let after = &s[start + t.len()..];
+        let after = after.trim_start_matches(['_', ' ']);
         if let Some(end) = after.find('.') {
             let model = &after[..end];
             if !model.is_empty() {
@@ -1624,6 +1635,15 @@ fn map_model_name_to_icao(s: &str) -> Option<String> {
         // v0.18.x (Health-Report-Nachmessung, cross-session 2026-07-06):
         // "FALCON 50" und "A400M" fehlten komplett; beide ergaenzt.
         "FALCON 50" | "FALCON 50EX" | "DASSAULT FALCON 50" => "FA50",
+        // v1.6.13 (Korpus-Auswertung 21.08.2026): beide traten im Feld auf und
+        // blieben ungereinigt.
+        //
+        // ⚠️ C680+ ist die Sovereign+ und traegt weiterhin C680. C68A waere die
+        // Citation Latitude — ein anderes Flugzeug. Nachgeschlagen statt
+        // geraten, weil eine falsche Kennung das Profil-Matching und damit die
+        // Gewichte verzieht.
+        "C680+" | "CITATION SOVEREIGN+" => "C680",
+        "GA-8" | "GA8 AIRVAN" | "AIRVAN" => "GA8",
         "A400M" | "A400M ATLAS" | "AIRBUS A400M" => "A400",
         // Nachmessung 16.08.2026 (827 VPS-Flight-Logs).
         //
