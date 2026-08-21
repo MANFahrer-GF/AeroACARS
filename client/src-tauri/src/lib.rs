@@ -8,6 +8,7 @@
 // v0.7.14: `mod discord` entfernt — Pilot-Client postet keine Discord-Events
 // mehr. Recorder auf live.kant.ovh macht das jetzt zentral (eine Quelle,
 // VA-Owner-kontrolliert via Webapp-Admin-Settings). Audit Q4-2026-05 (C1).
+mod replay_erkennung;
 mod accident;
 mod arrival;
 mod runway;

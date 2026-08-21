@@ -768,6 +768,24 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // gezogen zu werden ("Flaps 5" -> "1+F", Thomas' Flug 11.08.2026).
     F::f64("FLAPS HANDLE INDEX", "Number"),
     F::f64("FLAPS NUM HANDLE POSITIONS", "Number"),
+
+    // ---- Echtheit der Aufzeichnung (v1.6.12) ----
+    // Bis hierher standen beide Werte im Snapshot FEST auf ihrem Ruhewert
+    // (`simulation_rate: 1.0`, `slew_mode: false`) und wurden nie gefragt.
+    // Die Flug-Logs zeigten deshalb ueberall 1.0 — nicht weil der Zeitraffer
+    // aus war, sondern weil wir nie hingesehen haben.
+    //
+    // Zeitraffer verzerrt jede Rate, die wir gegen die WANDUHR bilden (unser
+    // 50-Hz-Aufsetzpuffer stempelt mit `Utc::now()`). Slew bewegt das Flugzeug
+    // ohne Flug — die beiden Sperren in lib.rs, die dann die Phasen-Engine
+    // einfrieren, liefen bei direkter MSFS-Anbindung ins Leere, weil
+    // `slew_mode` nur ueber die Stratos-Bruecke gesetzt wurde.
+    //
+    // ANHAENGEN, nicht einfuegen: die Reihenfolge dieser Tabelle IST das
+    // Byte-Layout. `pattern_buffer_proves_field_offsets` beweist das Feld fuer
+    // Feld und faellt bei jeder Verschiebung um.
+    F::f64("SIMULATION RATE", "Number"),
+    F::bool("IS SLEW ACTIVE"),
 ];
 
 // Helper builders so the table above stays compact.
@@ -1191,6 +1209,11 @@ pub struct Telemetry {
     /// v1.5.3 (#ifly-audit): Klappenhebel-Rastenindex + Rastenanzahl.
     pub flap_handle_index: f64,
     pub flap_num_positions: f64,
+
+    /// v1.6.12 — Zeitraffer des Simulators (1.0 = Echtzeit).
+    pub simulation_rate: f64,
+    /// v1.6.12 — Slew-Modus: das Flugzeug wird bewegt, nicht geflogen.
+    pub slew_active: bool,
 }
 
 // ---- Touchdown sample (separate data definition #2) ----
@@ -1819,6 +1842,9 @@ impl Telemetry {
         pull_f64!(t.ifly_park_brake_sw);
         pull_f64!(t.flap_handle_index);
         pull_f64!(t.flap_num_positions);
+
+        pull_f64!(t.simulation_rate);
+        pull_i32!(t.slew_active);
 
         // Silence the unused-assignment warning the last `pull_*!`
         // emits (the macro always advances `off`, but the very last
@@ -3596,8 +3622,14 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         stall_warning: t.stall_warning,
         overspeed_warning: t.overspeed_warning,
         paused: false,
-        slew_mode: false,
-        simulation_rate: 1.0,
+        // v1.6.12: endlich aus dem Simulator statt fest verdrahtet. `paused`
+        // bleibt hier false — das kommt korrekt aus dem Pause_EX1-Ereignis
+        // und wird in adapter.rs nachtraeglich gesetzt.
+        slew_mode: t.slew_active,
+        // Ein Sim, der die Variable nicht liefert, meldet 0.0. Das waere als
+        // "Zeit steht" gelesen worden; 0 gilt deshalb als unbekannt und wird
+        // auf Echtzeit gehoben.
+        simulation_rate: if t.simulation_rate > 0.0 { t.simulation_rate as f32 } else { 1.0 },
         gear_position,
         flaps_position,
         engines_running,
@@ -4322,7 +4354,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(buf.len(), 3004, "total block size"); // v1.5.3: +8 (ifly_park_brake_sw) +16 (flap raster)
+        assert_eq!(buf.len(), 3016, "total block size"); // v1.5.3: +8 (ifly_park_brake_sw) +16 (flap raster); v1.6.12: +8 (SIMULATION RATE) +4 (IS SLEW ACTIVE)
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
