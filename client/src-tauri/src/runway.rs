@@ -72,6 +72,71 @@ const BBOX_HALF_DEG: f64 = 0.05;
 /// confidently mis-attribute the landing.
 const DEFAULT_MAX_DISTANCE_M: f64 = 3000.0;
 
+/// Projiziert einen Punkt auf die Bahnachse und liefert Längs- und Querabstand.
+///
+/// # Warum es diese Funktion gibt
+///
+/// Dieselbe Kugelmathematik stand bis v1.7.0 **viermal** im Modul, die
+/// Kreuzabweichung zweimal zeichengleich. Solange alle Kopien dasselbe rechnen,
+/// fällt das nicht auf — genau bis jemand eine davon anfasst. Das ist die
+/// Fehlerklasse, die bei den Zweitimplementierungen ausserhalb des Clients
+/// schon zugeschlagen hat (siehe `docs/spec/v1.7.0-bahndisziplin.md` §9).
+///
+/// Ab v1.7.0 braucht die Bahndisziplin-Achse die Projektion ausserdem nicht mehr
+/// nur für den Aufsetzpunkt, sondern für **jede Position des Rollwegs**. Damit
+/// wird aus der Kopie eine gemeinsame Funktion.
+///
+/// # Die Achse kommt aus der Geometrie
+///
+/// Gebildet wird sie aus `threshold → end` der Navdaten, **nicht** aus dem
+/// gemeldeten `true_course`. Das war schon immer so und ist der Grund, warum die
+/// Werte belastbar sind: Ein gerundeter Kurs erzeugt über 3 km Bahn schnell
+/// zweistellige Meterfehler, die wie seitliche Bewegung aussehen.
+///
+/// # Vorzeichen
+///
+/// * `laengs_m` — positiv in Landerichtung ab der Schwelle, negativ davor
+///   (Aufsetzen vor der Schwelle).
+/// * `quer_m` — **positiv = rechts** der Achse in Landerichtung.
+pub fn projiziere_auf_bahn(
+    threshold_lat: f64,
+    threshold_lon: f64,
+    end_lat: f64,
+    end_lon: f64,
+    lat: f64,
+    lon: f64,
+) -> (f64, f64) {
+    let theta_ab = initial_bearing_rad(threshold_lat, threshold_lon, end_lat, end_lon);
+    let theta_ac = initial_bearing_rad(threshold_lat, threshold_lon, lat, lon);
+    let d_ab = haversine_m(threshold_lat, threshold_lon, lat, lon);
+
+    // Kreuzabweichung ueber die Kugel — signiert ueber sin() der
+    // Peilungsdifferenz. Positiv = rechts der Achse in Landerichtung.
+    let xtd = (d_ab / EARTH_RADIUS_M).sin() * (theta_ac - theta_ab).sin();
+    let quer_m = xtd.asin() * EARTH_RADIUS_M;
+
+    // Laengsabstand: Betrag ueber die Kugel, Vorzeichen ueber die
+    // Peilungsdifferenz. acos() liefert nie negativ — ohne das Vorzeichen
+    // laesen sich Undershoot und Overshoot nicht unterscheiden.
+    let cos_arg = ((d_ab / EARTH_RADIUS_M).cos() / (quer_m / EARTH_RADIUS_M).cos()).clamp(-1.0, 1.0);
+    let laengs_betrag = cos_arg.acos() * EARTH_RADIUS_M;
+
+    let mut diff = theta_ac - theta_ab;
+    while diff > std::f64::consts::PI {
+        diff -= 2.0 * std::f64::consts::PI;
+    }
+    while diff <= -std::f64::consts::PI {
+        diff += 2.0 * std::f64::consts::PI;
+    }
+    let laengs_m = if diff.abs() > std::f64::consts::FRAC_PI_2 {
+        -laengs_betrag
+    } else {
+        laengs_betrag
+    };
+
+    (laengs_m, quer_m)
+}
+
 /// "On the centerline" tolerance for the side classification. 2 m matches
 /// what BeatMyLanding uses and roughly the precision of the SimConnect
 /// position fix at low altitude.
@@ -1148,49 +1213,10 @@ pub fn lookup_runway(
         }
 
         // Centerline math (great-circle cross-track / along-track).
-        let theta_ab = initial_bearing_rad(threshold_lat, threshold_lon, end_lat, end_lon);
-        let theta_ac = initial_bearing_rad(threshold_lat, threshold_lon, lat, lon);
-        let d_ab = d_threshold; // m
-        // Cross-track distance: signed by the sin() of the bearing
-        // difference. Positive = right of track in the landing direction
-        // (because we measure from threshold toward the far end).
-        let xtd_m = (d_ab / EARTH_RADIUS_M).sin() * (theta_ac - theta_ab).sin();
-        let xtd_m = xtd_m.asin() * EARTH_RADIUS_M;
-        // Along-track distance magnitude: how far along the centerline
-        // the touchdown projects from the threshold.
-        let cos_arg = (d_ab / EARTH_RADIUS_M).cos() / (xtd_m / EARTH_RADIUS_M).cos();
-        // Clamp to [-1,1] — small floating-point drift can push it out
-        // of range when the pilot lands ~exactly on the threshold.
-        let cos_arg = cos_arg.clamp(-1.0, 1.0);
-        let along_m = cos_arg.acos() * EARTH_RADIUS_M;
-        // v0.5.20: signed along-track. The acos() above always returns
-        // a non-negative value, so undershoots before the threshold
-        // and overshoots past the threshold both reported as positive
-        // distances pre-v0.5.20 — the doc-string promised negative =
-        // undershoot, but the math couldn't deliver that. Server-side
-        // analysis (Volanta-style "where on the runway did the pilot
-        // touch") needs the sign to distinguish "landed 4 m past
-        // threshold" (= chevron landing, dramatic but legal) from
-        // "touched 4 m short of threshold" (= undershoot, bad).
-        //
-        // Sign by bearing diff: if the bearing from threshold to
-        // touchdown is within ±90° of the runway heading, the
-        // touchdown is on the runway side of the threshold (positive,
-        // overshoot); otherwise it's on the approach side (negative,
-        // undershoot).
-        let mut bearing_diff = theta_ac - theta_ab;
-        // Normalise to (-π, π].
-        while bearing_diff > std::f64::consts::PI {
-            bearing_diff -= 2.0 * std::f64::consts::PI;
-        }
-        while bearing_diff <= -std::f64::consts::PI {
-            bearing_diff += 2.0 * std::f64::consts::PI;
-        }
-        let along_signed_m = if bearing_diff.abs() > std::f64::consts::FRAC_PI_2 {
-            -along_m
-        } else {
-            along_m
-        };
+        // v1.7.0: eine gemeinsame Projektion statt vier Kopien der
+        // Kugelmathematik — siehe `projiziere_auf_bahn`.
+        let (along_signed_m, xtd_m) =
+            projiziere_auf_bahn(threshold_lat, threshold_lon, end_lat, end_lon, lat, lon);
         let along_ft = along_signed_m * 3.280_839_895;
 
         let centerline_distance_abs_ft = xtd_m.abs() * 3.280_839_895;
@@ -1396,28 +1422,12 @@ pub fn lookup_runway_in_nav(
             continue;
         }
 
-        // Same cross-track / along-track math as the CSV path. Kept
-        // verbatim so MS713-equivalent calls reproduce identical signs.
-        let theta_ab = initial_bearing_rad(threshold_lat, threshold_lon, end_lat, end_lon);
-        let theta_ac = initial_bearing_rad(threshold_lat, threshold_lon, lat, lon);
-        let d_ab = d_threshold;
-        let xtd_m = (d_ab / EARTH_RADIUS_M).sin() * (theta_ac - theta_ab).sin();
-        let xtd_m = xtd_m.asin() * EARTH_RADIUS_M;
-        let cos_arg = (d_ab / EARTH_RADIUS_M).cos() / (xtd_m / EARTH_RADIUS_M).cos();
-        let cos_arg = cos_arg.clamp(-1.0, 1.0);
-        let along_m = cos_arg.acos() * EARTH_RADIUS_M;
-        let mut bearing_diff = theta_ac - theta_ab;
-        while bearing_diff > std::f64::consts::PI {
-            bearing_diff -= 2.0 * std::f64::consts::PI;
-        }
-        while bearing_diff <= -std::f64::consts::PI {
-            bearing_diff += 2.0 * std::f64::consts::PI;
-        }
-        let along_signed_m = if bearing_diff.abs() > std::f64::consts::FRAC_PI_2 {
-            -along_m
-        } else {
-            along_m
-        };
+        // v1.7.0: dieselbe gemeinsame Projektion wie der CSV-Pfad. Der
+        // Kommentar hier lautete "Kept verbatim so MS713-equivalent calls
+        // reproduce identical signs" — genau diese Zusicherung haelt eine
+        // gemeinsame Funktion besser als zwei zeichengleiche Kopien.
+        let (along_signed_m, xtd_m) =
+            projiziere_auf_bahn(threshold_lat, threshold_lon, end_lat, end_lon, lat, lon);
         let along_ft = along_signed_m * 3.280_839_895;
         let centerline_distance_abs_ft = xtd_m.abs() * 3.280_839_895;
         let side = if xtd_m.abs() < CENTERLINE_TOLERANCE_M {
@@ -2653,4 +2663,77 @@ mod tests {
         let past = 50.0 + 3500.0 / 111_320.0;
         assert!(predict_landing_runway(&rws, past, 8.0, 360.0).is_none());
     }
+
+// ── projiziere_auf_bahn: an echten Bahndaten geprueft ────────────────────
+
+/// EHAM 06 aus den Navdaten (AIRAC 2608), Schwelle -> Bahnende.
+const EHAM06: (f64, f64, f64, f64) = (52.289106, 4.737225, 52.304350, 4.776925);
+
+/// Hinweis zur Aussagekraft: Dieser Test allein faengt einen Winkelfehler
+/// NICHT — bei 327 m Abstand schlaegt ein halbes Zehntelgrad nur mit 0,3 m
+/// durch. Gegengeprueft am 23.08.2026 durch Ersetzen der Geometrie-Achse
+/// durch einen festen Kurs von 58,0 Grad: dieser Test blieb gruen, sechs
+/// andere wurden rot (darunter `bahnende_liegt_bei_der_nutzbaren_laenge`,
+/// das ueber die volle Bahnlaenge misst). Die Absicherung traegt also das
+/// Bundel, nicht dieser Fall.
+#[test]
+fn mph9_aufsetzpunkt_trifft_den_gemeldeten_wert() {
+    // MPH 9, 22.08.2026. Der Client meldete im Touchdown-Payload
+    // td_distance_from_threshold_m = 327,13 und einen Mittellinienversatz
+    // von 1,04 m links. Beides muss aus der Geometrie herauskommen.
+    let (laengs, quer) = projiziere_auf_bahn(
+        EHAM06.0, EHAM06.1, EHAM06.2, EHAM06.3,
+        52.290678868045866, 4.741289635870915,
+    );
+    assert!(
+        (laengs - 327.1).abs() < 2.0,
+        "laengs {laengs:.1} m, erwartet ~327 m"
+    );
+    assert!(
+        quer < 0.0 && quer.abs() < 3.0,
+        "quer {quer:.2} m — erwartet knapp links (negativ)"
+    );
+}
+
+#[test]
+fn vorzeichen_rechts_ist_positiv() {
+    // Punkt 50 m rechts der Achse, 1000 m hinter der Schwelle.
+    // EHAM 06 laeuft nach Nordosten (~58 Grad), rechts davon ist Suedosten.
+    let kurs = 58.06_f64.to_radians();
+    let (lat0, lon0) = (EHAM06.0, EHAM06.1);
+    let cosf = lat0.to_radians().cos();
+    // 1000 m entlang + 50 m rechts
+    let dn = 1000.0 * kurs.cos() + 50.0 * (kurs + std::f64::consts::FRAC_PI_2).cos();
+    let de = 1000.0 * kurs.sin() + 50.0 * (kurs + std::f64::consts::FRAC_PI_2).sin();
+    let lat = lat0 + dn / 110_540.0;
+    let lon = lon0 + de / (111_320.0 * cosf);
+    let (laengs, quer) = projiziere_auf_bahn(EHAM06.0, EHAM06.1, EHAM06.2, EHAM06.3, lat, lon);
+    assert!((laengs - 1000.0).abs() < 5.0, "laengs {laengs:.1}");
+    assert!(quer > 0.0, "rechts muss positiv sein, ist {quer:.2}");
+    assert!((quer - 50.0).abs() < 2.0, "quer {quer:.2}, erwartet ~50");
+}
+
+#[test]
+fn vor_der_schwelle_ist_negativ() {
+    // 200 m VOR der Schwelle auf der Achse — muss negativ herauskommen,
+    // sonst laesst sich Undershoot nicht von Overshoot unterscheiden.
+    let kurs = 58.06_f64.to_radians();
+    let lat = EHAM06.0 - 200.0 * kurs.cos() / 110_540.0;
+    let lon = EHAM06.1 - 200.0 * kurs.sin() / (111_320.0 * EHAM06.0.to_radians().cos());
+    let (laengs, _) = projiziere_auf_bahn(EHAM06.0, EHAM06.1, EHAM06.2, EHAM06.3, lat, lon);
+    assert!(laengs < 0.0, "vor der Schwelle muss negativ sein, ist {laengs:.1}");
+    assert!((laengs + 200.0).abs() < 5.0, "laengs {laengs:.1}, erwartet ~-200");
+}
+
+#[test]
+fn bahnende_liegt_bei_der_nutzbaren_laenge() {
+    // Der Endpunkt der Achse muss die Bahnlaenge ergeben. Navigraph fuehrt
+    // EHAM 06 mit bereits versetzter Schwelle, daher ~3185 m (LDA), nicht
+    // die vollen 3439 m. Genau diese Konvention traegt die ganze Bewertung.
+    let (laengs, quer) =
+        projiziere_auf_bahn(EHAM06.0, EHAM06.1, EHAM06.2, EHAM06.3, EHAM06.2, EHAM06.3);
+    assert!((laengs - 3185.0).abs() < 15.0, "laengs {laengs:.0} m, erwartet ~3185");
+    assert!(quer.abs() < 0.5, "das Bahnende liegt auf der Achse, quer {quer:.2}");
+}
+
 }
