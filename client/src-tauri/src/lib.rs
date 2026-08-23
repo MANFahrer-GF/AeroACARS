@@ -14950,6 +14950,15 @@ fn fill_v2_rollout_fields(
     stats: &FlightStats,
     arr_airport: &str,
 ) {
+    // v1.7.0: Ziel-Markierung und Aufsetzzone kommen aus `assess_touchdown` —
+    // derselben Quelle, die auch den Touchdown-Payload und die Anzeige speist.
+    // Die Achse rechnet sie ausdruecklich NICHT selbst nach: die Regeln (300/400 m
+    // ab 2400 m Bahnlaenge; Zone min(900 m, Drittel) ab 1200 m) leben in
+    // `runway_assessment`, und dort bleiben sie.
+    let bewertet = assess_touchdown(stats);
+    input.aim_point_m = bewertet.aim.map(|a| a.aim_point_m);
+    input.tdz_end_m = bewertet.tdz.map(|t| t.tdz_length_m);
+
     let rm = stats.runway_match.as_ref();
     // v1.6.7-QS: die um die Displaced Threshold KORRIGIERTE Distanz, nicht
     // die pavement-relative. `runway_length_m - displaced` bildet unten den
