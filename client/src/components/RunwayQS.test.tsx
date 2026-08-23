@@ -571,4 +571,60 @@ describe("QS — Vollständigkeit", () => {
       "zwei weitere Ausfahrten liegen dort und werden nicht angedeutet",
     ).toContain("+2");
   });
+  /**
+   * Das Bewertungsende liegt nie hinter dem Räumpunkt.
+   *
+   * Zwei Punkte aus zwei Quellen: `scoring_cutoff_m` vom Kurswechsel
+   * (Ausschwenken beginnt), `clearance_point_m` vom Kantenübertritt (Bahn
+   * verlassen). Das Ausschwenken geht dem Verlassen immer voraus — eine
+   * andere Reihenfolge gibt es in der Wirklichkeit nicht.
+   *
+   * Im Client fielen dabei zwei Wege auseinander: Die Kante wurde auch bei
+   * offenem Messfenster gesetzt (ein kurzer Ausritt über die Kante ergab
+   * einen Räumpunkt mitten auf der Bahn), und die Interpolation konnte
+   * eine Ausdünnungslücke überbrücken und vor dem Räumpunkt landen.
+   *
+   * Diese Prüfung steht auf der Anzeigeseite, weil hier der Schaden
+   * entsteht: Die gestrichelte Linie liefe rückwärts, und die Marke
+   * behauptet eine Ausfahrt, die es nicht gab.
+   */
+  it("setzt das Bewertungsende nie hinter den Räumpunkt", () => {
+    const verdreht: string[] = [];
+    for (const o of MOCK_LANDING_OPTIONS) {
+      const p = mapLandingRecordToV2Props(o.build());
+      if (!p) continue;
+      const cut = p.scoring_cutoff_m;
+      const clear = p.clearance_point_m;
+      if (cut != null && clear != null && cut > clear + 0.1) {
+        verdreht.push(
+          `${o.key}: Bewertungsende ${cut.toFixed(0)} m liegt hinter dem ` +
+            `Räumpunkt ${clear.toFixed(0)} m`,
+        );
+      }
+    }
+    expect(verdreht).toEqual([]);
+  });
+  /**
+   * Was im Bild gestrichelt ist, wird in der Legende erklärt.
+   *
+   * Die gestrichelte Spur hängt allein am Räumpunkt; die Legende hing
+   * zusätzlich an der Ausfahrtsseite. Die ist aber bewusst oft leer — sie
+   * wird nur gesetzt, wenn Kurs UND Querbewegung dasselbe sagen (§8.6).
+   * War die Richtung unklar, stand eine gestrichelte Linie ohne Erklärung
+   * im Bild.
+   */
+  it("erklärt die gestrichelte Spur auch ohne bekannte Ausfahrtsseite", () => {
+    const r = MOCK_LANDING_OPTIONS.map((o) => o.build()).find(
+      (x) => x.clearance_point_m != null && (x.lateral_samples?.length ?? 0) > 2,
+    );
+    expect(r, "keine Variante mit Räumpunkt und Spur").toBeDefined();
+    // Genau der Fall: Räumpunkt bekannt, Richtung nicht eindeutig.
+    r!.clearance_side = null;
+    const props = mapLandingRecordToV2Props(r!);
+    const markup = renderToStaticMarkup(<RunwayDiagramV2 {...props!} />);
+    expect(
+      markup,
+      "die gestrichelte Spur wird gezeichnet, aber nirgends erklärt",
+    ).toContain("nicht mehr gewertet");
+  });
 });

@@ -27240,26 +27240,57 @@ fn spur_fortschreiben(
     }
     stats.bahn_spur_laeuft = true;
 
-    // Der Kantenuebertritt: einmal, beim ersten Mal.
+    // Der Kantenuebertritt — aber nur, wenn die Ausfahrt schon eingeleitet
+    // ist.
     //
-    // Interpoliert zwischen dem letzten Punkt innerhalb und diesem hier —
-    // sonst laege die Marke bis zu zehn Meter daneben, und zwar immer
-    // ausserhalb, weil die Aufzeichnung erst nach dem Uebertritt misst.
-    if stats.bahn_kante_laengs_m.is_none() && quer_m.abs() > halbe_breite_m {
-        stats.bahn_kante_laengs_m = Some(
-            match stats.bahn_spur.last() {
-                Some((lg, qr)) if (*qr as f64).abs() <= halbe_breite_m => {
-                    let spanne = quer_m.abs() - (*qr as f64).abs();
-                    if spanne > 1e-6 {
-                        let t = (halbe_breite_m - (*qr as f64).abs()) / spanne;
-                        *lg as f64 + t * (laengs_m - *lg as f64)
-                    } else {
-                        laengs_m
-                    }
+    // # Warum die Bedingung dazugehoert
+    //
+    // Diese Funktion laeuft auch bei OFFENEM Messfenster, also waehrend das
+    // Flugzeug noch auf der Bahn gewertet wird. Ohne den Riegel bekaeme
+    // jede Landung, die kurz ueber die Kante geraet und zurueckkommt, einen
+    // „Bahn geraeumt"-Punkt mitten im Ausrollen — an einer Stelle, an der
+    // das Flugzeug die Bahn gar nicht verlassen hat.
+    //
+    // Im Korpus sind das die neunzehn Landungen mit „Rad neben der Bahn":
+    // Genau dort waere die Marke falsch gesetzt worden, und zwar VOR dem
+    // Bewertungsende. Die Anzeige haette die gestrichelte Linie rueckwaerts
+    // gezeichnet.
+    //
+    // Interpoliert wird zwischen dem letzten Punkt innerhalb und diesem
+    // hier — sonst laege die Marke bis zu zehn Meter daneben, und zwar
+    // immer ausserhalb, weil die Aufzeichnung erst nach dem Uebertritt
+    // misst.
+    if stats.bahn_fenster_zu
+        && stats.bahn_kante_laengs_m.is_none()
+        && quer_m.abs() > halbe_breite_m
+    {
+        let interpoliert = match stats.bahn_spur.last() {
+            Some((lg, qr)) if (*qr as f64).abs() <= halbe_breite_m => {
+                let spanne = quer_m.abs() - (*qr as f64).abs();
+                if spanne > 1e-6 {
+                    let t = (halbe_breite_m - (*qr as f64).abs()) / spanne;
+                    *lg as f64 + t * (laengs_m - *lg as f64)
+                } else {
+                    laengs_m
                 }
-                _ => laengs_m,
-            },
-        );
+            }
+            _ => laengs_m,
+        };
+        // Nicht hinter das Bewertungsende zurueck.
+        //
+        // Die Interpolation greift auf den letzten abgelegten Spurpunkt
+        // zurueck, und der kann durch die Ausduennung hunderte Meter
+        // zurueckliegen. Ueberbrueckt sie diese Luecke, landet der
+        // Kantenuebertritt vor dem Ausschwenken — also vor dem Punkt, an
+        // dem die Ausfahrt ueberhaupt begann. Beim Pruefen kam so 1557 m
+        // heraus, waehrend der Raeumpunkt bei 1600 m lag.
+        //
+        // Das ist keine Rundungsfrage: Die Marke „Bahn geraeumt" saesse
+        // damit VOR der gestrichelten Linie, die sie beenden soll.
+        stats.bahn_kante_laengs_m = Some(match stats.bahn_raeum_laengs_m {
+            Some(raeum) => interpoliert.max(raeum),
+            None => interpoliert,
+        });
         stats.bahn_kante_gs_kt = Some(snap.groundspeed_kt as f64);
     }
     // Der Abstand, wie er GEZEICHNET wird — nicht wie er gefahren wurde.
@@ -45937,6 +45968,61 @@ mod v0_16_6_bush_completeness_tests {
                 "die Aussenkante liegt nicht weiter aussen als die Bein-Mitte — \
                  rechnet die Anzeige noch mit `spur / 2.0`?"
             );
+        }
+
+        // Der Raeumpunkt darf nicht VOR dem Bewertungsende liegen.
+        //
+        // Beides kommt aus derselben Landung, aber aus zwei Quellen:
+        // `scoring_cutoff_m` vom Kurswechsel (Ausschwenken beginnt),
+        // `clearance_point_m` vom Kantenuebertritt (Bahn verlassen). Das
+        // Ausschwenken geht dem Verlassen immer voraus — eine andere
+        // Reihenfolge gibt es in der Wirklichkeit nicht.
+        //
+        // Ohne Riegel setzte `spur_fortschreiben` die Kante auch bei noch
+        // OFFENEM Messfenster: Ein Flugzeug, das kurz ueber die Kante
+        // geraet und zurueckkommt, bekam einen „Bahn geraeumt"-Punkt
+        // mitten im Ausrollen, hunderte Meter vor dem Abbiegen. Die
+        // Anzeige haette die gestrichelte Linie rueckwaerts gezeichnet,
+        // und die Marke behauptet eine Ausfahrt, die es nicht gab.
+        {
+            let halbe = 23.0;
+            let mut stats = FlightStats::default();
+            let mut snap = SimSnapshot {
+                groundspeed_kt: 80.0,
+                ..Default::default()
+            };
+
+            // Fenster OFFEN, Flugzeug kurz ueber der Kante.
+            spur_fortschreiben(&mut stats, &snap, 900.0, 24.0, halbe);
+            assert!(
+                stats.bahn_kante_laengs_m.is_none(),
+                "Kante bei offenem Messfenster gesetzt — das waere ein \
+                 Raeumpunkt mitten auf der Bahn"
+            );
+
+            // Wieder auf der Bahn, dann Ausfahrt eingeleitet.
+            spur_fortschreiben(&mut stats, &snap, 1000.0, 5.0, halbe);
+            stats.bahn_fenster_zu = true;
+            stats.bahn_raeum_laengs_m = Some(1600.0);
+            snap.groundspeed_kt = 30.0;
+            spur_fortschreiben(&mut stats, &snap, 1650.0, 26.0, halbe);
+
+            let kante = stats.bahn_kante_laengs_m.expect("Kante nach der Ausfahrt");
+            assert!(
+                kante >= stats.bahn_raeum_laengs_m.unwrap(),
+                "Raeumpunkt {kante} liegt vor dem Bewertungsende {:?}",
+                stats.bahn_raeum_laengs_m
+            );
+
+            // Und die abgeleiteten Felder halten die Reihenfolge ein.
+            let f = bahn_felder(&stats, Some("A320"));
+            match (f.scoring_cutoff_m, f.clearance_point_m) {
+                (Some(cut), Some(clear)) => assert!(
+                    cut <= clear,
+                    "Bewertungsende {cut} liegt hinter dem Raeumpunkt {clear}"
+                ),
+                _ => panic!("beide Punkte muessen hier vorliegen"),
+            }
         }
 
         // Eine Bodenkarte vom FALSCHEN Flughafen darf nichts liefern.

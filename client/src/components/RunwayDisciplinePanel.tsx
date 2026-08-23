@@ -327,7 +327,18 @@ function QuerLegende({ props }: { props: RunwayDiagramV2Props }) {
       }),
     },
   ];
-  if (props.clearance_point_m != null && props.clearance_side != null) {
+  // Nur am Räumpunkt, NICHT an der Ausfahrtsseite.
+  //
+  // Die gestrichelte Spur im Bild hängt allein an `clearance_point_m`
+  // (siehe `trennIdx` in RunwayCrossSection). Hing die Legende zusätzlich
+  // an der Seite, fehlte die Erklärung genau dann, wenn die Richtung nicht
+  // eindeutig war — und im Bild stand eine gestrichelte Linie, die
+  // niemand deutet.
+  //
+  // Die Richtung ist bewusst oft leer: Sie wird nur gesetzt, wenn Kurs UND
+  // Querbewegung dasselbe sagen (Spec §8.6). Das ist der Normalfall für
+  // eine unklare Ausfahrt, nicht die Ausnahme.
+  if (props.clearance_point_m != null) {
     eintraege.push({
       farbe: "#38bdf8",
       gestrichelt: true,
