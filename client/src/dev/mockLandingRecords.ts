@@ -191,14 +191,33 @@ function bastelSpur(
   return out;
 }
 
-/** Graspiste: kurz, schmal, mit mehr seitlichem Spiel. */
+/**
+ * Graspiste: kurz, schmal, mit mehr seitlichem Spiel — und am Ende
+ * heruntergerollt.
+ *
+ * Bei 30 m Bahnbreite liegt die Kante bei 15 m. Die Spur läuft am Schluss
+ * darüber hinaus, sonst behauptet die Marke „Bahn geräumt" etwas, das im
+ * Bild nicht zu sehen ist.
+ */
 function grasSpur() {
-  return bastelSpur([[110, -1.2], [260, 2.6], [420, -0.4], [560, -2.1]], 0.7);
+  return bastelSpur(
+    [[110, -1.2], [260, 2.6], [420, -0.4], [520, -4.0], [575, -16.0], [600, -34.0]],
+    0.7,
+  );
 }
 
-/** Wasserlandung: kaum Bremsweg, langer Auslauf. */
+/**
+ * Wasserlandung: kaum Bremsweg, langer Auslauf, dann seitlich zum Steg.
+ *
+ * Auch hier läuft die Spur am Ende über die gedachte Kante — ein
+ * Wasserlandeplatz hat zwar keine befestigte Fläche, aber ein Ende hat der
+ * Auslauf trotzdem, und die Anzeige muss zeigen, wohin.
+ */
 function wasserSpur() {
-  return bastelSpur([[180, 0.8], [420, -1.6], [700, -0.5]], 0.5);
+  return bastelSpur(
+    [[180, 0.8], [420, -1.6], [700, -0.5], [820, -8.0], [900, -26.0], [960, -44.0]],
+    0.5,
+  );
 }
 
 /**
@@ -222,9 +241,21 @@ function overrunSpur() {
   );
 }
 
-/** Kurze Bahn: früh aufgesetzt, zügig geräumt. */
+/**
+ * Kurze Bahn: früh aufgesetzt, dann nach rechts von der Bahn gerollt.
+ *
+ * Die alte Fassung endete bei 700 m mit 0,6 m Versatz — mitten auf der
+ * Bahn — und behauptete trotzdem „Bahn geräumt · rechts". Die Marke stand
+ * dadurch im Nichts, und man konnte nicht sehen, wie das Flugzeug dorthin
+ * gekommen sein soll.
+ *
+ * Bei 23 m Bahnbreite liegt die Kante bei 11,5 m; die Spur läuft bis 31 m.
+ */
 function kurzeBahnSpur() {
-  return bastelSpur([[140, 0.5], [330, 3.4], [520, 1.1], [700, -0.6]], 0.35);
+  return bastelSpur(
+    [[140, 0.5], [330, 3.4], [520, 1.1], [640, 4.0], [700, 13.0], [740, 31.0]],
+    0.35,
+  );
 }
 
 /** Holt eine echte Spur. Wirft, wenn sie fehlt — eine stumm leere Demo-
@@ -260,24 +291,42 @@ function bahn(
   const spurweite = o.spur ?? null;
   const quelle = o.spurVon ? echteSpur(o.spurVon) : null;
   const punkte = quelle ? quelle.punkte : o.punkte ?? [];
-  // Der grösste Versatz zählt nur bis zum Räumpunkt.
+  // ── Reihenfolge: erst die Grenzen, dann der Versatz ────────────────
   //
-  // Danach ist das Flugzeug auf dem Weg zur Ausfahrt, und dort sind
-  // vierzig Meter neben der Mittellinie normal, nicht auffällig. Rechnet man
-  // die ganze Spur, ist der „grösste Versatz" immer die Ausfahrt selbst —
-  // die Marke ② sitzt dann auf der Marke ③, und die Bewertung würde ein
-  // reguläres Abrollen als Fehler zählen.
-  //
-  // Der Client macht es genauso: `bahn_max_querversatz_m` wird nur
-  // fortgeschrieben, solange das Messfenster offen ist.
-  // Für die Bewertung zählt der Beginn des Ausschwenkens, nicht die Kante.
-  const raeumGrenze = quelle?.raeum?.m ?? Infinity;
-  const gewertet = punkte.filter((x) => x.laengs_m < raeumGrenze);
+  // Der grösste Versatz zählt nur bis zum Beginn des Ausschwenkens. Wer
+  // ihn vorher rechnet, bekommt bei konstruierten Spuren den Wert der
+  // Ausfahrt — vierzig Meter neben der Mittellinie, wo das normal ist.
+  const halbeBahn = breite / 2;
+  let kante: { laengs_m: number; quer_m: number } | null = null;
+  for (let i = 1; i < punkte.length; i++) {
+    if (
+      Math.abs(punkte[i]!.quer_m) > halbeBahn &&
+      Math.abs(punkte[i - 1]!.quer_m) <= halbeBahn &&
+      punkte.slice(i).every((x) => Math.abs(x.quer_m) > halbeBahn)
+    ) {
+      kante = punkte[i]!;
+      break;
+    }
+  }
+  let cutoff: number | null = null;
+  if (kante) {
+    let j = punkte.indexOf(kante);
+    while (j > 0 && Math.abs(punkte[j - 1]!.quer_m) < Math.abs(punkte[j]!.quer_m)) {
+      j--;
+    }
+    cutoff = punkte[j]!.laengs_m;
+  }
+  // Bei echten Spuren stammen beide Werte aus der Messung im Export.
+  const kanteM = quelle ? (quelle.raeum?.kante_m ?? null) : (kante?.laengs_m ?? null);
+  const cutoffM = quelle ? (quelle.raeum?.m ?? null) : cutoff;
+
+  const gewertet = punkte.filter((x) => cutoffM == null || x.laengs_m < cutoffM);
   const basis = gewertet.length > 0 ? gewertet : punkte;
   const max =
     basis.length > 0
       ? basis.reduce((a, b) => (Math.abs(b.quer_m) > Math.abs(a.quer_m) ? b : a)).quer_m
       : null;
+
   r.runway_width_m = breite;
   r.track_width_m = spurweite;
   r.track_width_source = spurweite != null ? "type_table" : null;
@@ -292,34 +341,38 @@ function bahn(
       ? breite / 2 - (Math.abs(max) + spurweite / 2)
       : null;
   r.surface_paved = o.belag === undefined ? true : o.belag;
-  // Der Räumpunkt ist das ENDE der Spur, nicht ein freier Wert.
+  // Räumpunkt und Bewertungsgrenze — beide oben bestimmt, hier gesetzt.
   //
-  // Dort, wo das Messfenster zuging, hat das Flugzeug die Bahn verlassen —
-  // beides ist derselbe Moment. Ein erfundener Räumpunkt hinter dem letzten
-  // Spurpunkt erzeugt in der Grafik eine Marke im Nichts: Die Spur endet auf
-  // der Mittellinie, und dreihundert Meter weiter sitzt „Bahn geräumt" an der
-  // Kante, ohne dass irgendetwas dazwischen liegt. Das Flugzeug wäre dorthin
-  // gesprungen.
-  // Bei echten Spuren stammt er aus der Messung: die letzte Überschreitung
-  // der Bahnkante, nach der das Flugzeug draussen bleibt. Bei konstruierten
-  // Spuren (Gras, Wasser, kurze Bahn) aus den Angaben der Variante.
-  if (quelle) {
-    // „Bahn geräumt" ist die KANTE, nicht der Beginn des Ausschwenkens.
-    // Beides in ein Feld zu legen war der Fehler: Die Spur wurde dann schon
-    // mitten auf der Bahn gestrichelt gezeichnet, weil das Ausschwenken
-    // dort begann — und eine gestrichelte Linie auf der Bahn ist nicht zu
-    // erklären.
-    r.clearance_point_m = quelle.raeum?.kante_m ?? quelle.raeum?.m ?? null;
-    r.scoring_cutoff_m = quelle.raeum?.m ?? null;
-    r.clearance_speed_kt = quelle.raeum?.kt ?? null;
-    r.clearance_side = quelle.raeum?.seite ?? null;
-  } else {
-    const letzter = punkte.length ? punkte[punkte.length - 1]!.laengs_m : null;
-    r.clearance_point_m = o.raeumSeite != null ? letzter : null;
-    r.clearance_speed_kt = o.raeumSeite != null ? (o.raeumKt ?? null) : null;
-    r.clearance_side = o.raeumSeite ?? null;
-  }
-  r.overrun_m = o.overrun ?? null;
+  // „Bahn geräumt" ist die KANTE. Die Bewertungsgrenze liegt davor, beim
+  // Beginn des Ausschwenkens. Beides in ein Feld zu legen war der Fehler,
+  // der die Spur schon mitten auf der Bahn gestrichelt zeichnete.
+  r.clearance_point_m = kanteM;
+  r.scoring_cutoff_m = cutoffM;
+  r.clearance_side =
+    (quelle?.raeum?.seite ?? (kante ? (kante.quer_m > 0 ? "right" : "left") : null)) ?? null;
+  r.clearance_speed_kt = kanteM != null ? (quelle?.raeum?.kt ?? o.raeumKt ?? null) : null;
+
+  // ── Aufsetzzone und Zielpunkt nach denselben Regeln wie der Client ──
+  //
+  // Sonst trägt jede Variante die Werte der Vorlage weiter, und die passen
+  // nur zu deren Bahn. Aufgefallen an ⑩: „AUFSETZZONE (TDZ) 900 m" auf
+  // einer 900-m-Bahn — die Zone wäre so lang wie die ganze Bahn gewesen.
+  //
+  // Die Regeln stehen in `runway_assessment` (ICAO Annex 14):
+  //   * Aufsetzzone = min(900 m, Länge / 3); unter 1200 m Bahnlänge gibt
+  //     es GAR KEINE Markierung.
+  //   * Zielpunkt 400 m ab 2400 m Bahnlänge, sonst 300 m (FAA AIM 8-9-1).
+  const lda = (r.runway_match!.length_ft - (r.runway_match!.displaced_threshold_ft ?? 0)) * 0.3048;
+  r.td_tdz_length_m = lda >= 1200 ? Math.min(900, lda / 3) : null;
+  r.aim_point_m = lda >= 2400 ? 400 : 300;
+  r.td_in_tdz =
+    r.td_tdz_length_m != null
+      ? r.td_distance_from_threshold_m! > 0 &&
+        r.td_distance_from_threshold_m! <= r.td_tdz_length_m
+      : null;
+  r.td_third = (Math.min(3, Math.floor((r.td_distance_from_threshold_m! / lda) * 3) + 1) ||
+    1) as 1 | 2 | 3;
+  r.aim_delta_m = Math.round(r.td_distance_from_threshold_m! - r.aim_point_m);
   // Ausfahrten aus der OSM-Bodenkarte, nach Platz und Bahn. Sie machen die
   // Bewertung nachvollziehbar: Man sieht, welche Ausfahrt vor der genutzten
   // lag und wie weit davor.
@@ -472,6 +525,11 @@ export const MOCK_LANDING_OPTIONS: MockOption[] = [
       r.runway_match!.side = "LEFT";
       r.runway_match!.touchdown_distance_from_threshold_ft = -164; // ~ -50 m
       r.runway_match!.displaced_threshold_ft = 2690;
+      // Die Aufsetzzone gehoert zur LANDEBAHN, nicht zur Bahnflaeche:
+      // 10663 ft minus 2690 ft Versatz sind 2430 m, davon ein Drittel
+      // ergibt 810 m. Der Wert der Vorlage (900 m) galt fuer die
+      // unversetzte Bahn und war hier zu gross.
+      r.td_tdz_length_m = 810;
       r.runway_match!.true_course_deg = 356.94;
       r.runway_match!.tch_expected_ft = 50;
       r.td_distance_from_threshold_m = -50;
@@ -630,11 +688,6 @@ export const MOCK_LANDING_OPTIONS: MockOption[] = [
       });
       r.aircraft_icao = "C208";
       r.aircraft_title = "Cessna 208B Grand Caravan";
-      r.td_distance_from_threshold_m = 140;
-      r.td_in_tdz = true;
-      r.td_third = 1;
-      r.aim_point_m = 300;
-      r.aim_delta_m = -160;
       return r;
     },
   },

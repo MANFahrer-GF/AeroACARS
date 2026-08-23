@@ -191,6 +191,57 @@ describe("QS — Spur und Marken der Queransicht", () => {
     expect(befunde, befunde.join("\n")).toEqual([]);
   });
 
+  it("markiert das Räumen nur, wo die Spur die Kante erreicht", () => {
+    // Die Marke ③ sitzt an der Bahnkante. Endet die Spur mittig, steht sie
+    // im Nichts — man sieht nicht, wie das Flugzeug dorthin gekommen sein
+    // soll. Genau das war bei ⑩ zu sehen: Die konstruierte Spur endete bei
+    // 700 m mit 0,6 m Versatz und behauptete trotzdem „geräumt · rechts".
+    const befunde: string[] = [];
+    for (const v of VARIANTEN) {
+      const kante = v.props.clearance_point_m;
+      const breite = v.props.runway_width_m;
+      const s = v.props.lateral_samples ?? [];
+      if (kante == null || breite == null || s.length < 2) continue;
+      // Der Versatz am Räumpunkt muss die Kante erreicht haben.
+      const dort = s.reduce((a, b) =>
+        Math.abs(b.laengs_m - kante) < Math.abs(a.laengs_m - kante) ? b : a,
+      );
+      if (Math.abs(dort.quer_m) < breite / 2 - 1) {
+        befunde.push(
+          `${v.key}: geräumt bei ${kante.toFixed(0)} m, dort aber nur ${dort.quer_m.toFixed(
+            1,
+          )} m Versatz — die Kante liegt bei ${(breite / 2).toFixed(1)} m`,
+        );
+      }
+    }
+    expect(befunde, befunde.join("\n")).toEqual([]);
+  });
+
+  it("gibt der Aufsetzzone nie mehr als ein Drittel der Bahn", () => {
+    // ICAO Annex 14: Aufsetzzone = min(900 m, Länge / 3), und unter 1200 m
+    // Bahnlänge gibt es GAR KEINE Markierung.
+    //
+    // Der Fall: ⑩ zeigte „AUFSETZZONE (TDZ) 900 m" auf einer 900-m-Bahn —
+    // die Zone wäre so lang gewesen wie die ganze Bahn. Ursache war eine
+    // Demo-Variante, die den Wert der Vorlage weitertrug, statt ihn für
+    // ihre eigene Bahn zu rechnen.
+    const befunde: string[] = [];
+    for (const v of VARIANTEN) {
+      const tdz = v.props.td_tdz_length_m;
+      if (tdz == null) continue;
+      if (v.props.length_m < 1200) {
+        befunde.push(
+          `${v.key}: Aufsetzzone auf einer ${v.props.length_m.toFixed(0)}-m-Bahn — unter 1200 m gibt es keine`,
+        );
+      } else if (tdz > v.props.length_m / 3 + 1 || tdz > 901) {
+        befunde.push(
+          `${v.key}: Aufsetzzone ${tdz.toFixed(0)} m bei ${v.props.length_m.toFixed(0)} m Bahn`,
+        );
+      }
+    }
+    expect(befunde, befunde.join("\n")).toEqual([]);
+  });
+
   it("führt jede Nummer der Liste auch als Marke im Bild", () => {
     const befunde: string[] = [];
     for (const v of VARIANTEN) {
