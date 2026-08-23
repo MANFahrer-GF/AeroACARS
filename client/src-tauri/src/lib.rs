@@ -15729,8 +15729,18 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>) -> BahnFelder {
     // Nur wenn ALLE drei Groessen bekannt sind. Ein geschaetzter Randabstand
     // waere eine Behauptung ueber die Bahnkante, die die Daten nicht decken —
     // und er stuende in der Anzeige neben echten Messwerten, ununterscheidbar.
+    // Dieselbe Rechnung wie in `sub_bahndisziplin` — bis auf die letzte
+    // Stelle. Die Anzeige zeigt den Wert, an dem die Bewertung haengt;
+    // zwei Zahlen fuer dieselbe Landung waeren schlimmer als eine
+    // fehlende.
+    //
+    // Insbesondere dieselbe Aussenkante: bis zum aeusseren Rand des
+    // aeussersten REIFENS, nicht bis zur Bein-Mitte.
     let rand_m = match (breite_m, spur_m, versatz_m) {
-        (Some(b), Some(sp), Some(v)) => Some(b / 2.0 - (v.abs() + sp / 2.0)),
+        (Some(b), Some(sp), Some(v)) => Some(
+            b / 2.0
+                - (v.abs() + landing_scoring::spurweite::aussenkante_halb_aus_spur(sp)),
+        ),
         _ => None,
     };
 
@@ -45914,9 +45924,63 @@ mod v0_16_6_bush_completeness_tests {
             let spur = f.track_width_m.expect("A320 steht in der Tabelle");
             let rand = f.min_edge_clearance_m.expect("alle drei Groessen da");
             let halbe = 151.0 * 0.3048 / 2.0;
+            // Bis zur AUSSENKANTE des aeusseren Reifens, nicht zur
+            // Bein-Mitte: Die Herstellerspurweite misst von Bein zu Bein,
+            // das Radpaket steht noch eine halbe Breite weiter draussen.
+            let aussen = landing_scoring::spurweite::aussenkante_halb_aus_spur(spur);
             assert!(
-                (rand - (halbe - (3.0 + spur / 2.0))).abs() < 0.01,
-                "Randabstand {rand} passt nicht zu halber Breite {halbe} und Spur {spur}"
+                (rand - (halbe - (3.0 + aussen))).abs() < 0.01,
+                "Randabstand {rand} passt nicht zu halber Breite {halbe} und Aussenkante {aussen}"
+            );
+            assert!(
+                aussen > spur / 2.0,
+                "die Aussenkante liegt nicht weiter aussen als die Bein-Mitte — \
+                 rechnet die Anzeige noch mit `spur / 2.0`?"
+            );
+        }
+
+        // Eine Bodenkarte vom FALSCHEN Flughafen darf nichts liefern.
+        //
+        // Der Fall ist real: Bei einem Divert liegt die Karte des
+        // geplanten Ziels im Zwischenspeicher, waehrend das Flugzeug
+        // woanders aufsetzt. Ausfahrten aus Hamburg an einer Frankfurter
+        // Bahn waeren nicht als Fehler erkennbar — sie saehen aus wie
+        // Rollwege, die es dort gibt.
+        //
+        // Der Schutz steckt in den Filtern von `ausfahrten_fuer_bahn`
+        // (Laengsbereich und Kantenabstand); diese Pruefung haelt fest,
+        // dass er wirkt, statt sich darauf zu verlassen.
+        {
+            let mut stats = FlightStats::default();
+            // Bahn in EDDF, Karte aus EDDH — 400 km entfernt.
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDF".to_string(),
+                runway_ident: "07C".to_string(),
+                heading_true_deg: 69.0,
+                length_ft: 13123.0,
+                width_ft: 197.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 50.034_9,
+                threshold_lon: 8.523_2,
+                end_lat: 50.040_5,
+                end_lon: 8.579_1,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 400.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+            stats.arr_ground_geojson = Some(
+                r#"{"features":[
+                  {"properties":{"k":"taxiway","r":"S4"},
+                   "geometry":{"type":"LineString",
+                     "coordinates":[[9.982400,53.627218],[9.983079,53.626734]]}}
+                ]}"#
+                .to_string(),
+            );
+            assert!(
+                bahn_felder(&stats, Some("A320")).runway_exits.is_empty(),
+                "Rollwege aus Hamburg landen an einer Frankfurter Bahn"
             );
         }
 

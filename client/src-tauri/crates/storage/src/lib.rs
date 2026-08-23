@@ -1614,4 +1614,69 @@ mod deleted_landings_tombstone_tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
+    /// Ein Datensatz von VOR v1.7.0 muss weiter lesbar sein.
+    ///
+    /// `landings.json` liegt auf der Platte des Piloten und wird beim
+    /// Start eingelesen. Ist die Datei unlesbar, faengt der Client bei
+    /// null an — die ganze Landungshistorie waere weg, und der Log-Eintrag
+    /// dazu liest niemand.
+    ///
+    /// Jedes v1.7.0-Feld traegt deshalb `#[serde(default)]`. Diese
+    /// Pruefung geht durch den echten Deserialisierer, statt es zu
+    /// glauben: Ein vergessenes Attribut faellt sonst erst beim ersten
+    /// Piloten auf, der die neue Fassung installiert.
+    #[test]
+    fn v16_datensatz_bleibt_lesbar() {
+        // Der kleinste Datensatz, den v1.6 geschrieben haben kann:
+        // die Pflichtfelder, sonst nichts.
+        let alt = r#"{
+            "pirep_id": "abc123",
+            "touchdown_at": "2026-08-11T17:34:42Z",
+            "recorded_at": "2026-08-11T17:40:00Z",
+            "flight_number": "GSG123",
+            "airline_icao": "GSG",
+            "dpt_airport": "EDDH",
+            "arr_airport": "EDDF",
+            "score_numeric": 92,
+            "score_label": "SMOOTH",
+            "grade_letter": "A",
+            "landing_rate_fpm": -240.0,
+            "bounce_count": 0
+        }"#;
+        let r: Result<LandingRecord, _> = serde_json::from_str(alt);
+        let r = r.expect("v1.6-Datensatz nicht mehr lesbar — Historie waere weg");
+        assert!(r.clearance_point_m.is_none());
+        assert!(r.scoring_cutoff_m.is_none());
+        assert!(r.track_width_m.is_none());
+        assert!(r.lateral_samples.is_empty());
+        assert!(r.runway_exits.is_empty(), "Ausfahrten aus dem Nichts");
+        assert!(r.surface_paved.is_none());
+    }
+
+    /// Und der Weg zurueck: Was v1.7.0 schreibt, liest v1.7.0 wieder.
+    #[test]
+    fn v170_datensatz_ueberlebt_hin_und_zurueck() {
+        let mut r: LandingRecord = serde_json::from_str(
+            r#"{"pirep_id":"x","touchdown_at":"2026-08-11T17:34:42Z",
+                "recorded_at":"2026-08-11T17:40:00Z","flight_number":"GSG1",
+                "airline_icao":"GSG","dpt_airport":"EDDH","arr_airport":"EDDF",
+                "score_numeric":90,"score_label":"SMOOTH","grade_letter":"A",
+                "landing_rate_fpm":-200.0,"bounce_count":0}"#,
+        )
+        .unwrap();
+        r.clearance_point_m = Some(1831.6);
+        r.scoring_cutoff_m = Some(1642.0);
+        r.lateral_samples = vec![LateralSample { laengs_m: 523.2, quer_m: -5.7 }];
+        r.runway_exits = vec![RunwayExit {
+            name: "S4".to_string(),
+            laengs_m: 1831.6,
+            seite: "left".to_string(),
+        }];
+        let zurueck: LandingRecord =
+            serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(zurueck.scoring_cutoff_m, Some(1642.0));
+        assert_eq!(zurueck.runway_exits.len(), 1);
+        assert_eq!(zurueck.runway_exits[0].name, "S4");
+        assert_eq!(zurueck.lateral_samples.len(), 1);
+    }
 }

@@ -87,8 +87,23 @@ pub fn spannweite_m(icao: Option<&str>) -> Option<f64> {
 /// zu grosser Zuschlag würde Landungen als „neben der Bahn" melden, die es
 /// nicht waren. Die Kantentoleranz von 1,5 m (§5.4) deckt den Restfehler ab.
 pub fn aussenkante_halb_m(icao: Option<&str>) -> Option<f64> {
-    let spur = spurweite_m(icao)?;
-    Some(spur / 2.0 + radpaket_m(spur) / 2.0)
+    Some(aussenkante_halb_aus_spur(spurweite_m(icao)?))
+}
+
+/// Wie `aussenkante_halb_m`, aber aus einer **gegebenen** Spurweite.
+///
+/// # Warum es diese zweite Fassung braucht
+///
+/// Seit v1.7.0 kann die Spurweite aus der Flugzeugdatei stammen statt aus
+/// der Typtabelle (Spec §5.3 C) — bei einem Add-on, das vom Realmuster
+/// abweicht, ist sie die genauere Quelle. `aussenkante_halb_m` schlägt
+/// aber in der Tabelle nach und würde den Wert aus der Datei still
+/// übergehen. Zwei Quellen für dieselbe Größe, und die Anzeige zeigte die
+/// eine, die Bewertung die andere.
+///
+/// Wer eine Spurweite in der Hand hat, nimmt deshalb diese Funktion.
+pub fn aussenkante_halb_aus_spur(spurweite_m: f64) -> f64 {
+    spurweite_m / 2.0 + radpaket_m(spurweite_m) / 2.0
 }
 
 /// Breite des Radpakets eines Hauptfahrwerksbeins, nach Baugrösse.

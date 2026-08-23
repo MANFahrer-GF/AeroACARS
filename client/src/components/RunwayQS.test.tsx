@@ -533,4 +533,42 @@ describe("QS — Vollständigkeit", () => {
     }
     expect(verkehrt, "das breitere Fahrwerk bekommt das schmalere Band").toEqual([]);
   });
+  /**
+   * Eine Ausfahrt, die nicht ins Bild passt, wird gezählt — nicht verschwiegen.
+   *
+   * In Frankfurt und Köln liegen drei Rollwege innerhalb weniger Meter an
+   * der Bahn. Die Gruppierung fasst zwei Namen zusammen („R11/M19"); die
+   * dritte fiel bis 23.08.2026 stillschweigend weg. Gemessen über alle 660
+   * Bahnen mit Bodenkarte traf das 38 Ausfahrten.
+   *
+   * Wer die Ausfahrt sucht, die er genommen hat, findet sie dann nicht —
+   * und hält die Karte für unvollständig statt die Grafik für gedrängt.
+   */
+  it("zählt Ausfahrten, die nicht ins Bild passen", () => {
+    const r = MOCK_LANDING_OPTIONS[0].build();
+    // Vier Ausfahrten auf derselben Seite, alle an derselben Stelle —
+    // enger als der Mindestabstand der Gruppierung.
+    r.runway_width_m = 46;
+    r.track_width_m = 7.6;
+    r.surface_paved = true;
+    r.lateral_samples = [
+      { laengs_m: 300, quer_m: -1 },
+      { laengs_m: 900, quer_m: -2 },
+      { laengs_m: 1500, quer_m: -3 },
+    ];
+    r.runway_exits = [
+      { name: "R11", laengs_m: 1690, seite: "left" },
+      { name: "M19", laengs_m: 1691, seite: "left" },
+      { name: "R13", laengs_m: 1692, seite: "left" },
+      { name: "M15", laengs_m: 1693, seite: "left" },
+    ];
+    const props = mapLandingRecordToV2Props(r);
+    const markup = renderToStaticMarkup(<RunwayDiagramV2 {...props!} />);
+
+    expect(markup, "die zusammengefassten Namen fehlen").toContain("R11/M19");
+    expect(
+      markup,
+      "zwei weitere Ausfahrten liegen dort und werden nicht angedeutet",
+    ).toContain("+2");
+  });
 });

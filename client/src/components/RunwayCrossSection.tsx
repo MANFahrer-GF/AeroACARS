@@ -812,8 +812,21 @@ function gruppiere(liste: Ausfahrt[], proj: Projektion): Ausfahrt[] {
     if (nachbar) {
       // Namen verbinden, aber nicht endlos: Drei Kennungen an einer Stelle
       // sind kein Name mehr, sondern eine Aufzaehlung.
-      if (nachbar.name.split("/").length < 2) {
+      //
+      // Was darueber hinausgeht, wird GEZAEHLT, nicht verschwiegen.
+      // Gemessen über alle 660 Bahnen mit Bodenkarte (23.08.2026) trifft
+      // das 38 Ausfahrten — in Frankfurt und Köln liegen drei Rollwege
+      // innerhalb weniger Meter an der Bahn. Vorher stand dort „R11/M19"
+      // und R13 fehlte, ohne dass die Grafik es andeutete: Wer nach der
+      // Ausfahrt sucht, die er genommen hat, findet sie nicht und hält
+      // die Karte für unvollständig.
+      if (nachbar.name.split("/").length < 2 && !nachbar.name.includes("+")) {
         nachbar.name = `${nachbar.name}/${a.name}`;
+      } else {
+        const m = /\+(\d+)$/.exec(nachbar.name);
+        nachbar.name = m
+          ? nachbar.name.replace(/\+\d+$/, `+${Number(m[1]) + 1}`)
+          : `${nachbar.name} +1`;
       }
     } else {
       out.push({ ...a });

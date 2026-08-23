@@ -64,7 +64,27 @@ const ANTEIL_AUSSEN: f64 = 0.90;
 /// allein durch die Wahl der Bahnquelle. Dazu ist die Bahnbreite eine gerundete
 /// Angabe und die Spurweite stammt aus einer Typtabelle. Ohne diese Toleranz
 /// entscheidet die Datenquelle über die Note, nicht der Pilot.
-const KANTEN_TOLERANZ_M: f64 = 1.5;
+///
+/// # Warum 2,1 m und nicht mehr 1,5
+///
+/// Seit der QS am 23.08.2026 misst die Rechnung bis zur **Reifen-Aussenkante**
+/// statt bis zur Bein-Mitte (`aussenkante_halb_aus_spur`). Beide Werte der
+/// Tabelle oben ruecken damit um eine halbe Radpaketbreite nach aussen — bei
+/// MPH 9 um 0,55 m auf +1,74 m und +0,64 m.
+///
+/// Mit der alten Toleranz von 1,5 m faellt der Fall wieder auseinander, für
+/// den sie gebaut wurde: Navigraph 20 Punkte, OpenStreetMap 55. Die
+/// **Differenz** zwischen den Quellen ist unveraendert 1,10 m; nur die
+/// Schwelle lag danach mitten in ihr.
+///
+/// Die Toleranz deckt jetzt beides:
+///
+/// * die gemessene Differenz der Bahnquellen (1,10 m bei MPH 9), und
+/// * den Naeherungsfehler des Radpaket-Zuschlags (bis 0,55 m, weil er nach
+///   Baugroesse geschaetzt wird und keine Herstellerangabe je Muster ist).
+///
+/// Am Korpus nachgerechnet: siehe den Test `korpus_kein_regress`.
+const KANTEN_TOLERANZ_M: f64 = 2.1;
 
 /// Ab wie weit jenseits der Kante die Messung als **fragwürdig** gilt.
 ///
@@ -175,7 +195,23 @@ pub fn sub_bahndisziplin(input: &BahndisziplinInput) -> SubScoreEntry {
         return SubScoreEntry::skipped(KEY, LABEL, "implausible_lateral_track");
     }
 
-    let aussenkante_m = versatz.abs() + spur / 2.0;
+    // Die Aussenkante des aeusseren REIFENS, nicht die Bein-Mitte.
+    //
+    // Die Spurweite in den Herstellerangaben misst von Bein-Mitte zu
+    // Bein-Mitte; der aeussere Rand des aeussersten Rades liegt noch eine
+    // halbe Radpaketbreite weiter draussen. Fuer die Frage „lief ein Rad
+    // neben der befestigten Flaeche" zaehlt genau dieser Rand.
+    //
+    // `aussenkante_halb_aus_spur` war gebaut und wurde bis zur QS am
+    // 23.08.2026 **nirgends aufgerufen** — Bewertung und Anzeige rechneten
+    // beide mit `spur / 2.0`.
+    //
+    // Am Korpus gemessen (781 Landungen mit Muster und Bahnbreite):
+    // fuenf wechseln das Band, alle in die strengere Richtung, alle
+    // Grenzfaelle — etwa 0,13 m Randabstand statt −0,32 m bei einer 737
+    // mit 17,0 m Versatz auf einer 40-m-Bahn. Genau dort kommt es darauf
+    // an, ob das Rad noch auf dem Asphalt stand.
+    let aussenkante_m = versatz.abs() + crate::spurweite::aussenkante_halb_aus_spur(spur);
     let anteil = aussenkante_m / halbe;
     let rand_abstand_m = halbe - aussenkante_m;
 
@@ -239,17 +275,28 @@ mod tests {
 
     #[test]
     fn baender_der_reihe_nach() {
-        // halbe Breite 22,55 m; aeusseres Rad = Versatz + 5,35 m.
-        // 75 % -> 16,91 m Rad -> Versatz 11,56
-        // 90 % -> 20,30 m Rad -> Versatz 14,95
+        // halbe Breite 22,55 m; aeusseres RAD = Versatz + 5,90 m.
+        //
+        // Die 5,90 sind die halbe Spurweite (5,35) plus die halbe
+        // Radpaketbreite (0,55): Gemessen wird bis zum aeusseren Rand des
+        // aeussersten Reifens, nicht bis zur Bein-Mitte. Bis zur QS am
+        // 23.08.2026 stand hier 5,35 — `aussenkante_halb_aus_spur` war
+        // gebaut und wurde nirgends aufgerufen.
+        //
+        // Die Bandgrenzen ruecken dadurch um 0,55 m nach innen:
+        // 75 % -> 16,91 m Rad -> Versatz 11,01 (war 11,56)
+        // 90 % -> 20,30 m Rad -> Versatz 14,40 (war 14,95)
+        //
+        // Die Faelle liegen bewusst knapp beidseits jeder Grenze — ein
+        // Test in der Bandmitte haette die Verschiebung nicht bemerkt.
         for (versatz, erwartet, grund) in [
             (0.0, 100u8, "centered"),
-            (11.0, 100, "centered"),
-            (12.0, 85, "outboard"),
-            (14.5, 85, "outboard"),
-            (15.5, 55, "edge_reached"),
-            (18.7, 55, "edge_reached"), // Rand -1,5 m: noch in der Toleranz
-            (20.0, 20, "off_pavement"), // Rand -2,8 m: eindeutig daneben
+            (10.9, 100, "centered"),      // Anteil 0,745
+            (11.2, 85, "outboard"),       // Anteil 0,758
+            (14.2, 85, "outboard"),       // Anteil 0,891
+            (14.6, 55, "edge_reached"),   // Anteil 0,909
+            (18.4, 55, "edge_reached"),   // Rand -1,74 m: in der Toleranz
+            (19.0, 20, "off_pavement"),   // Rand -2,35 m: darueber hinaus
         ] {
             let r = sub_bahndisziplin(&eham06(versatz));
             assert_eq!(r.points, erwartet, "bei {versatz} m Versatz");
@@ -422,8 +469,9 @@ mod kette {
             b.label_key, "landing.sub.runway_discipline",
             "es muss die Disziplin-Achse sein, nicht die Auslastung"
         );
-        // 18,39 m Versatz + 5,35 m halbe Spur = 23,74 m gegen 22,55 m Kante,
-        // also 1,19 m drueber — innerhalb der 1,5-m-Toleranz.
+        // 18,39 m Versatz + 5,90 m bis zur Reifen-Aussenkante = 24,29 m
+        // gegen 22,55 m Kante, also 1,74 m drueber — innerhalb der
+        // 2,1-m-Toleranz.
         assert_eq!(b.points, 55);
         assert_eq!(b.rationale_key.as_deref(), Some("landing.rat.edge_reached"));
     }
