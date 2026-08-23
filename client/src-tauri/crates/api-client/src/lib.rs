@@ -1013,8 +1013,13 @@ pub struct UpdateBody {
 /// have to remember the magic numbers. Values match the upstream
 /// `App\Models\Enums\PirepSource` constants.
 pub mod pirep_source {
-    pub const ACARS: i32 = 0;
-    pub const MANUAL: i32 = 1;
+    // phpVMS `App\Enums\PirepSource`: MANUAL = 0, ACARS = 1. These two were
+    // swapped until v1.7.0, so every "flip this PIREP to MANUAL" wrote ACARS —
+    // the manual-file path silently kept asking for the ACARS auto-approve rule
+    // it was trying to avoid. Verified against phpvms@dev and the live GSG
+    // database on 23.08.2026.
+    pub const MANUAL: i32 = 0;
+    pub const ACARS: i32 = 1;
 }
 
 /// Single text log line posted to `POST /api/pireps/{id}/acars/logs`. Used
