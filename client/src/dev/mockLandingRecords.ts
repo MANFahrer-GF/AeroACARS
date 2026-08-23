@@ -111,13 +111,97 @@ function baseRecord(): LandingRecord {
   };
 }
 
+// ─── v1.7.0 Bahndisziplin — die zehn Pflichtvarianten aus Spec §11 ────
+//
+// Sie sind kein Nebenprodukt, sondern die Stufe, an der die Bandgrenzen aus
+// §4 und §5.4 entschieden werden: Am Schreibtisch lässt sich nicht sinnvoll
+// festlegen, was 3 m Randabstand gegenüber 15 m kosten soll — man muss es
+// nebeneinander sehen.
+
+/**
+ * Erzeugt einen gefahrenen Streifen aus Stützstellen.
+ *
+ * Zwischen den Stützstellen wird linear interpoliert, im Abstand von zehn
+ * Metern — genau die Auflösung, die der Client aufzeichnet
+ * (`BAHN_SPUR_MIN_ABSTAND_M`). Eine feinere Demo-Spur würde eine Genauigkeit
+ * vortäuschen, die im Feld nicht ankommt.
+ */
+function spur(
+  stuetzen: Array<[laengs: number, quer: number]>,
+): Array<{ laengs_m: number; quer_m: number }> {
+  const out: Array<{ laengs_m: number; quer_m: number }> = [];
+  for (let i = 0; i < stuetzen.length - 1; i++) {
+    const [l0, q0] = stuetzen[i]!;
+    const [l1, q1] = stuetzen[i + 1]!;
+    const schritte = Math.max(1, Math.round((l1 - l0) / 10));
+    for (let k = 0; k < schritte; k++) {
+      const f = k / schritte;
+      out.push({ laengs_m: l0 + (l1 - l0) * f, quer_m: q0 + (q1 - q0) * f });
+    }
+  }
+  const letzte = stuetzen[stuetzen.length - 1]!;
+  out.push({ laengs_m: letzte[0], quer_m: letzte[1] });
+  return out;
+}
+
+/** Setzt die Bahndisziplin-Felder eines Datensatzes in einem Zug. */
+function bahn(
+  r: LandingRecord,
+  o: {
+    breite?: number;
+    spur?: number;
+    spann?: number;
+    punkte?: Array<[number, number]>;
+    belag?: boolean | null;
+    raeumM?: number | null;
+    raeumKt?: number | null;
+    raeumSeite?: "left" | "right" | null;
+    overrun?: number | null;
+  },
+): LandingRecord {
+  const breite = o.breite ?? 45;
+  const spurweite = o.spur ?? null;
+  const punkte = o.punkte ? spur(o.punkte) : [];
+  const max =
+    punkte.length > 0
+      ? punkte.reduce((a, b) => (Math.abs(b.quer_m) > Math.abs(a.quer_m) ? b : a)).quer_m
+      : null;
+  r.runway_width_m = breite;
+  r.track_width_m = spurweite;
+  r.track_width_source = spurweite != null ? "type_table" : null;
+  r.wingspan_m = o.spann ?? null;
+  r.lateral_samples = punkte;
+  r.max_lateral_offset_m = max;
+  // Derselbe Ausdruck wie in `bahn_felder` auf der Rust-Seite: halbe
+  // Bahnbreite minus das äussere Rad. Weicht die Demo hier ab, zeigt sie
+  // etwas anderes als das Produkt.
+  r.min_edge_clearance_m =
+    max != null && spurweite != null
+      ? breite / 2 - (Math.abs(max) + spurweite / 2)
+      : null;
+  r.surface_paved = o.belag === undefined ? true : o.belag;
+  r.clearance_point_m = o.raeumM ?? null;
+  r.clearance_speed_kt = o.raeumKt ?? null;
+  r.clearance_side = o.raeumSeite ?? null;
+  r.overrun_m = o.overrun ?? null;
+  return r;
+}
+
 export type MockKey =
   | "ms713"
   | "perfect"
   | "long_landing"
   | "dds_violation"
   | "ourairports_fallback"
-  | "pre_v080";
+  | "pre_v080"
+  | "d_mittig"
+  | "d_kante"
+  | "d_daneben"
+  | "d_overrun"
+  | "d_gras"
+  | "d_ohne_spurweite"
+  | "d_wasser"
+  | "d_kurze_bahn";
 
 export interface MockOption {
   key: MockKey;
@@ -250,4 +334,177 @@ export const MOCK_LANDING_OPTIONS: MockOption[] = [
       return r;
     },
   },
+
+  // ─── v1.7.0 Bahndisziplin — Spec §11 ────────────────────────────────
+  //
+  // Die Nummern entsprechen der Liste in der Spezifikation. Fünf und neun
+  // decken die vorhandenen Varianten `dds_violation` und `pre_v080` ab.
+  {
+    key: "d_mittig",
+    label: "① Mittig, in der Aufsetzzone (EDDH 23, A321)",
+    hint: "Der Normalfall: 100 Punkte auf der Disziplin-Achse. Aufsetzen 1,2 m links, Spur bleibt innerhalb von 3 m, Ausfahrt nach links bei 1740 m.",
+    build: () =>
+      bahn(rwyEDDH(baseRecord()), {
+        breite: 46,
+        spur: 7.59,
+        spann: 35.8,
+        punkte: [[420, -1.2], [900, 2.4], [1400, -0.8], [1740, -2.6]],
+        raeumM: 1740,
+        raeumKt: 42,
+        raeumSeite: "left",
+      }),
+  },
+  {
+    key: "d_kante",
+    label: "② Rad erreicht die Bahnkante (EDDH 23, A321)",
+    hint: "Der Grenzfall: äusseres Rad kommt bis auf 1 m an die Kante, bleibt aber darauf. 55 Punkte — kein Fehler, aber knapp.",
+    build: () =>
+      bahn(rwyEDDH(baseRecord()), {
+        breite: 46,
+        spur: 7.59,
+        spann: 35.8,
+        punkte: [[420, -1.0], [880, 12.0], [1150, 18.2], [1500, 9.0], [1800, 1.5]],
+        raeumM: 1800,
+        raeumKt: 44,
+        raeumSeite: "left",
+      }),
+  },
+  {
+    key: "d_daneben",
+    label: "③ Rad neben der befestigten Bahn (EDDH 23, A320)",
+    hint: "Der echte Fall raKOnJD1XgNbP06q vom 23.07.: 26,9 m Versatz auf einer 46-m-Bahn, äusseres Rad 7,6 m im Gras. 20 Punkte.",
+    build: () =>
+      bahn(rwyEDDH(baseRecord()), {
+        breite: 46,
+        spur: 7.59,
+        spann: 35.8,
+        punkte: [[517, -8.7], [860, 20.6], [1002, 26.8], [1160, 19.6], [1400, 8.0]],
+        raeumM: null,
+      }),
+  },
+  {
+    key: "d_overrun",
+    label: "④ Über das Bahnende hinaus (EDDH 23, B738)",
+    hint: "Das Bahnende überschossen — 0 Punkte, unabhängig von allem Seitlichen. Die Overrun-Prüfung läuft VOR den seitlichen Regeln.",
+    build: () =>
+      bahn(rwyEDDH(baseRecord()), {
+        breite: 46,
+        spur: 5.72,
+        spann: 34.32,
+        punkte: [[1850, 0.4], [2400, 1.8], [2900, 2.2], [3094, 3.0]],
+        overrun: 84,
+      }),
+  },
+  {
+    key: "d_gras",
+    label: "⑥ Graspiste — seitliche Bewertung ausgesetzt (EDXF, C172)",
+    hint: "Auf Gras ist der Rand fliessend. Die Queransicht entfällt sichtbar, mit Grund. Aufsetzpunkt und Bahnende werden weiter bewertet.",
+    build: () => {
+      const r = bahn(rwyKlein(baseRecord(), "EDXF", "08", 2296, 30), {
+        breite: 30,
+        spur: 2.5,
+        spann: 11.0,
+        punkte: [[120, -1.0], [300, 2.0], [500, -1.5]],
+        belag: false,
+      });
+      r.runway_match!.surface = "GRS";
+      r.aircraft_icao = "C172";
+      r.aircraft_title = "Cessna 172 Skyhawk";
+      return r;
+    },
+  },
+  {
+    key: "d_ohne_spurweite",
+    label: "⑦ Spurweite unbekannt — Verzicht sichtbar (EDDH 23)",
+    hint: "Ein Muster, das nicht in der Typtabelle steht. Ohne Spurweite lässt sich die Lage der Räder nicht bestimmen — der Verzicht steht da, statt eines geratenen Werts.",
+    build: () => {
+      const r = bahn(rwyEDDH(baseRecord()), {
+        breite: 46,
+        spur: undefined,
+        punkte: [[430, -2.0], [900, 6.0], [1400, 1.0]],
+      });
+      r.aircraft_icao = "ZZZZ";
+      r.aircraft_title = "Ein Muster ohne Eintrag";
+      return r;
+    },
+  },
+  {
+    key: "d_wasser",
+    label: "⑧ Wasserlandung — keine Bahn, keine Kante",
+    hint: "Ein Wasserlandeplatz hat weder befestigte Fläche noch Kante. Alles Seitliche entfällt; die Landung wird trotzdem bewertet.",
+    build: () => {
+      const r = bahn(rwyKlein(baseRecord(), "FA12", "18W", 3000, 60), {
+        breite: 60,
+        spur: 3.3,
+        spann: 14.6,
+        punkte: [[200, 1.0], [400, -2.0]],
+        belag: false,
+      });
+      r.runway_match!.surface = "WATER";
+      r.aircraft_icao = "DHC2";
+      r.aircraft_title = "DHC-2 Beaver Amphibian";
+      return r;
+    },
+  },
+  {
+    key: "d_kurze_bahn",
+    label: "⑩ Sehr kurze Bahn — Aufsetzzone = erstes Drittel (EDXB 26, C208)",
+    hint: "Unter 1200 m gibt es keine Aufsetzzone nach Annex 14. Die Zone wird zum ersten Drittel, der Zielpunkt rückt von 400 m auf 300 m.",
+    build: () => {
+      const r = bahn(rwyKlein(baseRecord(), "EDXB", "26", 900, 23), {
+        breite: 23,
+        spur: 3.6,
+        spann: 15.88,
+        punkte: [[140, 0.5], [320, 3.2], [520, 1.0], [700, -0.5]],
+        raeumM: 700,
+        raeumKt: 30,
+        raeumSeite: "right",
+      });
+      r.aircraft_icao = "C208";
+      r.aircraft_title = "Cessna 208B Grand Caravan";
+      r.td_distance_from_threshold_m = 140;
+      r.td_in_tdz = true;
+      r.td_third = 1;
+      r.aim_point_m = 300;
+      r.aim_delta_m = -160;
+      return r;
+    },
+  },
 ];
+
+// ─── Bahn-Vorlagen für die Disziplin-Varianten ────────────────────────
+
+/** EDDH 23 — die Bahn aus der Gegenprobe: 3094 m nutzbar, 46 m breit. */
+function rwyEDDH(r: LandingRecord): LandingRecord {
+  r.runway_match!.airport_ident = "EDDH";
+  r.runway_match!.runway_ident = "23";
+  r.runway_match!.surface = "ASP";
+  r.runway_match!.length_ft = 10663;
+  // 512 ft versetzte Schwelle — genau der Wert, den die Gegenprobe am
+  // 23.08.2026 gegen OSM und OurAirports bestätigt hat.
+  r.runway_match!.displaced_threshold_ft = 512;
+  r.runway_match!.true_course_deg = 230.21;
+  r.arr_airport = "EDDH";
+  r.touchdown_airport = "EDDH";
+  r.aircraft_icao = "A321";
+  r.aircraft_title = "FenixA321 CFM SL SC";
+  return r;
+}
+
+/** Eine kleine Bahn mit frei wählbarer Länge und Breite. */
+function rwyKlein(
+  r: LandingRecord,
+  icao: string,
+  ident: string,
+  laengeM: number,
+  breiteM: number,
+): LandingRecord {
+  r.runway_match!.airport_ident = icao;
+  r.runway_match!.runway_ident = ident;
+  r.runway_match!.length_ft = Math.round(laengeM / 0.3048);
+  r.runway_match!.displaced_threshold_ft = 0;
+  r.arr_airport = icao;
+  r.touchdown_airport = icao;
+  void breiteM; // die Breite steht in `runway_width_m`, nicht im Match
+  return r;
+}

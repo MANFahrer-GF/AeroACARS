@@ -125,6 +125,10 @@ export interface LandingRecord {
   clearance_side?: "left" | "right" | null;
   track_width_m?: number | null;
   track_width_source?: "type_table" | "aircraft_file" | null;
+  /** Spannweite in Metern — für den Grössenvergleich unter der Grafik. */
+  wingspan_m?: number | null;
+  /** Bahnbreite in Metern — Grundlage der Queransicht. */
+  runway_width_m?: number | null;
   min_edge_clearance_m?: number | null;
   max_lateral_offset_m?: number | null;
   lateral_samples?: Array<{ laengs_m: number; quer_m: number }> | null;

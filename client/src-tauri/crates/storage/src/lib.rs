@@ -237,6 +237,21 @@ pub struct LandingRunwayMatch {
 }
 
 /// One landing record — written once when the PIREP is filed.
+/// Ein Punkt des gefahrenen Streifens, fuer die Queransicht des Diagramms.
+///
+/// Bewusst zwei Zahlen statt eines Koordinatenpaares: Das Diagramm zeichnet
+/// die Bahn, nicht die Erde. Wer hier Breiten- und Laengengrad ablegte,
+/// muesste in der Anzeige ein zweites Mal projizieren — und genau daraus
+/// entsteht die Fehlerklasse, gegen die §8.4 der Spezifikation eine
+/// gemeinsame Projektionsfunktion vorschreibt.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct LateralSample {
+    /// Distanz ab der Landeschwelle, in Metern.
+    pub laengs_m: f32,
+    /// Versatz zur Mittellinie, in Metern. Positiv = rechts in Landerichtung.
+    pub quer_m: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LandingRecord {
     /// PIREP id (phpVMS UUID). Doubles as the record's primary key.
@@ -319,6 +334,55 @@ pub struct LandingRecord {
 
     // Runway
     pub runway_match: Option<LandingRunwayMatch>,
+
+    // ─── v1.7.0 Bahndisziplin ────────────────────────────────────────
+    //
+    // Alles optional und mit `serde(default)`: Fluege von vor v1.7.0 haben
+    // diese Felder nicht, und ihre Datensaetze muessen weiter lesbar bleiben.
+    // Die Anzeige zeigt fehlende Werte ehrlich als „fuer diesen Flug nicht
+    // erfasst" — sie malt keine leere Querachse, die wie eine Messung
+    // aussieht.
+    /// Laengsposition, an der die Bahn geraeumt wurde, in Metern ab der
+    /// Landeschwelle. Leer, wenn das Flugzeug bis zum Stillstand auf der
+    /// Bahn blieb.
+    #[serde(default)]
+    pub clearance_point_m: Option<f64>,
+    /// Geschwindigkeit beim Raeumen, in Knoten.
+    #[serde(default)]
+    pub clearance_speed_kt: Option<f64>,
+    /// Seite der Ausfahrt: `"left"` oder `"right"`. Nur gesetzt, wenn
+    /// Kursaenderung UND Querbewegung dasselbe sagen (Spec §8.6).
+    #[serde(default)]
+    pub clearance_side: Option<String>,
+    /// Spurweite des Hauptfahrwerks, in Metern.
+    #[serde(default)]
+    pub track_width_m: Option<f64>,
+    /// Woher die Spurweite stammt: `"type_table"` oder `"aircraft_file"`.
+    #[serde(default)]
+    pub track_width_source: Option<String>,
+    /// Spannweite, in Metern — fuer den Groessenvergleich unter der Grafik.
+    #[serde(default)]
+    pub wingspan_m: Option<f64>,
+    /// Bahnbreite, in Metern.
+    #[serde(default)]
+    pub runway_width_m: Option<f64>,
+    /// Kleinster Abstand des aeusseren Rades zur Bahnkante, in Metern.
+    /// Negativ heisst: das Rad war jenseits der befestigten Flaeche.
+    #[serde(default)]
+    pub min_edge_clearance_m: Option<f64>,
+    /// Groesster seitlicher Versatz zur Mittellinie im Messfenster.
+    /// Vorzeichen: positiv = rechts in Landerichtung.
+    #[serde(default)]
+    pub max_lateral_offset_m: Option<f64>,
+    /// Der gefahrene Streifen, ausgeduennt. Fuer die Queransicht.
+    #[serde(default)]
+    pub lateral_samples: Vec<LateralSample>,
+    /// Ist der Belag befestigt? Auf Gras entfaellt die seitliche Bewertung.
+    #[serde(default)]
+    pub surface_paved: Option<bool>,
+    /// Strecke jenseits des Bahnendes, in Metern.
+    #[serde(default)]
+    pub overrun_m: Option<f64>,
 
     // Touchdown profile (V/S + G curve, ~150 samples)
     #[serde(default)]

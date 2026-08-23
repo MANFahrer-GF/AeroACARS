@@ -38,173 +38,200 @@
 ///
 /// `None`, wenn das Muster nicht in der Tabelle steht.
 pub fn spurweite_m(icao: Option<&str>) -> Option<f64> {
+    eintrag(icao).map(|(_, spur, _)| spur)
+}
+
+/// Spannweite in Metern, nach ICAO-Typcode.
+///
+/// `None`, wenn das Muster nicht in der Tabelle steht.
+///
+/// # Wozu die Spannweite gebraucht wird
+///
+/// Sie geht **nicht** in die Bewertung ein — sie erklärt sie. Im Grössen-
+/// vergleich unter dem Diagramm steht sie neben Bahnbreite und Spurweite
+/// (Spec §8.3): Bahnbreite 45,1 m · Spannweite MD-11 51,66 m · Spurweite
+/// 10,7 m. Die Spannweite ragt dort sichtbar über die Bahnbreite hinaus, und
+/// erst dadurch versteht man, warum die Fahrspur so schmal wirkt: Ein
+/// Flugzeug, dessen Flügel breiter sind als die Bahn, fährt trotzdem auf
+/// einem Streifen von zehn Metern.
+pub fn spannweite_m(icao: Option<&str>) -> Option<f64> {
+    eintrag(icao).map(|(_, _, spann)| spann)
+}
+
+/// Der Tabelleneintrag zu einem Typcode — eine Suche für beide Masse.
+fn eintrag(icao: Option<&str>) -> Option<(&'static str, f64, f64)> {
     let icao = icao?.trim().to_ascii_uppercase();
     TABELLE
         .iter()
-        .find(|(code, _)| *code == icao)
-        .map(|(_, m)| *m)
+        .find(|(code, _, _)| *code == icao)
+        .copied()
 }
 
-/// ICAO-Typcode → Spurweite Hauptfahrwerk in Metern.
+/// ICAO-Typcode → (Spurweite Hauptfahrwerk, Spannweite), beide in Metern.
 ///
 /// Sortiert nach Hersteller und Grösse, damit Lücken beim Lesen auffallen.
-/// Quelle: Airport Planning Manuals der Hersteller.
-const TABELLE: &[(&str, f64)] = &[
+/// Quelle: Airport Planning Manuals der Hersteller, ICAO Doc 8643.
+///
+/// **Ein Eintrag je Muster, nicht zwei Tabellen.** Zwei getrennte Listen
+/// driften auseinander, sobald jemand nur eine davon ergänzt — dieselbe
+/// Fehlerklasse, gegen die §8.4 der Spezifikation eine gemeinsame
+/// Projektionsfunktion vorschreibt. Ein Test hält beide Spalten zusammen.
+const TABELLE: &[(&str, f64, f64)] = &[
     // ── Airbus ────────────────────────────────────────────────────────
-    ("A318", 7.59),
-    ("A319", 7.59),
-    ("A320", 7.59),
-    ("A321", 7.59),
-    ("A19N", 7.59),
-    ("A20N", 7.59),
-    ("A21N", 7.59),
-    ("A332", 10.69),
-    ("A333", 10.69),
-    ("A338", 10.69),
-    ("A339", 10.69),
-    ("A342", 10.69),
-    ("A343", 10.69),
-    ("A345", 12.60),
-    ("A346", 12.60),
-    ("A359", 10.70),
-    ("A35K", 10.70),
-    ("A388", 14.30),
-    ("BCS1", 6.00), // A220-100
-    ("BCS3", 6.00), // A220-300
+    ("A318", 7.59, 34.10),
+    ("A319", 7.59, 35.80),
+    ("A320", 7.59, 35.80),
+    ("A321", 7.59, 35.80),
+    ("A19N", 7.59, 35.80),
+    ("A20N", 7.59, 35.80),
+    ("A21N", 7.59, 35.80),
+    ("A332", 10.69, 60.30),
+    ("A333", 10.69, 60.30),
+    ("A338", 10.69, 64.00),
+    ("A339", 10.69, 64.00),
+    ("A342", 10.69, 60.30),
+    ("A343", 10.69, 60.30),
+    ("A345", 12.60, 63.45),
+    ("A346", 12.60, 63.45),
+    ("A359", 10.70, 64.75),
+    ("A35K", 10.70, 64.75),
+    ("A388", 14.30, 79.75),
+    ("BCS1", 6.00, 35.10), // A220-100
+    ("BCS3", 6.00, 35.10), // A220-300
     // ── Boeing ────────────────────────────────────────────────────────
-    ("B712", 5.03),
-    ("B733", 5.23),
-    ("B734", 5.23),
-    ("B735", 5.23),
-    ("B736", 5.72),
-    ("B737", 5.72),
-    ("B738", 5.72),
-    ("B739", 5.72),
-    ("B37M", 5.72),
-    ("B38M", 5.72),
-    ("B39M", 5.72),
-    ("B741", 11.00),
-    ("B742", 11.00),
-    ("B743", 11.00),
-    ("B744", 11.00),
-    ("B748", 12.60),
-    ("B752", 7.32),
-    ("B753", 7.32),
-    ("B762", 9.30),
-    ("B763", 9.30),
-    ("B764", 9.30),
-    ("B772", 10.97),
-    ("B773", 10.97),
-    ("B77F", 10.97),
-    ("B77L", 10.97),
-    ("B77W", 10.97),
-    ("B788", 9.75),
-    ("B789", 9.75),
-    ("B78X", 9.75),
+    ("B712", 5.03, 28.45),
+    ("B733", 5.23, 28.88),
+    ("B734", 5.23, 28.88),
+    ("B735", 5.23, 28.88),
+    ("B736", 5.72, 34.32),
+    ("B737", 5.72, 34.32),
+    ("B738", 5.72, 34.32),
+    ("B739", 5.72, 34.32),
+    ("B37M", 5.72, 35.92),
+    ("B38M", 5.72, 35.92),
+    ("B39M", 5.72, 35.92),
+    ("B741", 11.00, 59.64),
+    ("B742", 11.00, 59.64),
+    ("B743", 11.00, 59.64),
+    ("B744", 11.00, 64.44),
+    ("B748", 12.60, 68.40),
+    ("B752", 7.32, 38.05),
+    ("B753", 7.32, 38.05),
+    ("B762", 9.30, 47.57),
+    ("B763", 9.30, 47.57),
+    ("B764", 9.30, 51.92),
+    ("B772", 10.97, 60.93),
+    ("B773", 10.97, 60.93),
+    ("B77F", 10.97, 64.80),
+    ("B77L", 10.97, 64.80),
+    ("B77W", 10.97, 64.80),
+    ("B788", 9.75, 60.12),
+    ("B789", 9.75, 60.12),
+    ("B78X", 9.75, 60.12),
     // ── McDonnell Douglas ─────────────────────────────────────────────
-    ("MD11", 10.70), // der MPH-9-Fall
-    ("MD1F", 10.70),
-    ("MD82", 5.08),
-    ("MD83", 5.08),
-    ("MD88", 5.08),
-    ("MD90", 5.08),
+    ("MD11", 10.70, 51.66), // der MPH-9-Fall
+    ("MD1F", 10.70, 51.66),
+    ("MD82", 5.08, 32.85),
+    ("MD83", 5.08, 32.85),
+    ("MD88", 5.08, 32.85),
+    ("MD90", 5.08, 32.87),
     // ── Embraer / Bombardier / Regional ───────────────────────────────
-    ("E170", 5.30),
-    ("E75L", 5.30),
-    ("E75S", 5.30),
-    ("E190", 5.30),
-    ("E195", 5.30),
-    ("E290", 5.30),
-    ("E295", 5.30),
-    ("CRJ2", 3.54),
-    ("CRJ7", 4.24),
-    ("CRJ9", 4.24),
-    ("CRJX", 4.24),
-    ("AT43", 4.10),
-    ("AT45", 4.10),
-    ("AT72", 4.10),
-    ("AT76", 4.10),
-    ("DH8A", 7.87),
-    ("DH8C", 7.87),
-    ("DH8D", 7.87),
-    ("SF34", 6.71),
+    ("E170", 5.30, 26.00),
+    ("E75L", 5.30, 26.00),
+    ("E75S", 5.30, 26.00),
+    ("E190", 5.30, 28.72),
+    ("E195", 5.30, 28.72),
+    ("E290", 5.30, 33.72),
+    ("E295", 5.30, 35.10),
+    ("CRJ2", 3.54, 21.21),
+    ("CRJ7", 4.24, 23.24),
+    ("CRJ9", 4.24, 24.85),
+    ("CRJX", 4.24, 26.18),
+    ("AT43", 4.10, 24.57),
+    ("AT45", 4.10, 24.57),
+    ("AT72", 4.10, 27.05),
+    ("AT76", 4.10, 27.05),
+    ("DH8A", 7.87, 25.91),
+    ("DH8C", 7.87, 27.43),
+    ("DH8D", 7.87, 28.42),
+    ("SF34", 6.71, 21.44),
     // ── Frachter / Sonstige Grossflugzeuge ────────────────────────────
-    ("A124", 8.00),
-    ("A225", 8.00),
-    ("IL96", 10.40),
-    ("L101", 12.75),
+    ("A124", 8.00, 73.30),
+    ("A225", 8.00, 88.40),
+    ("IL96", 10.40, 60.11),
+    ("L101", 12.75, 47.35),
     // ── Geschäftsreise ────────────────────────────────────────────────
-    ("C25A", 3.30),
-    ("C25B", 3.30),
-    ("C25C", 3.30),
-    ("C510", 2.90),
-    ("C680", 4.11),
-    ("C700", 4.30),
-    ("CL30", 3.00),
-    ("CL35", 3.00),
-    ("CL60", 3.20),
-    ("E55P", 3.20),
-    ("FA50", 3.60),
-    ("FA7X", 4.20),
-    ("GLF5", 4.30),
-    ("GLF6", 4.30),
-    ("P180", 3.30),
-    ("SF50", 3.20),
+    ("C25A", 3.30, 15.90),
+    ("C25B", 3.30, 16.98),
+    ("C25C", 3.30, 17.20),
+    ("C510", 2.90, 12.37),
+    ("C680", 4.11, 19.24),
+    ("C700", 4.30, 21.00),
+    ("CL30", 3.00, 19.46),
+    ("CL35", 3.00, 21.00),
+    ("CL60", 3.20, 19.61),
+    ("E55P", 3.20, 16.20),
+    ("FA50", 3.60, 18.86),
+    ("FA7X", 4.20, 26.21),
+    ("GLF5", 4.30, 28.50),
+    ("GLF6", 4.30, 30.36),
+    ("P180", 3.30, 14.03),
+    ("SF50", 3.20, 11.76),
     // ── Nachtrag aus dem Korpus-Lauf 23.08.2026 ───────────────────────
     // Diese Muster tauchten im Bestand auf und fehlten. Ohne sie entfiel die
     // seitliche Bewertung — im ersten Lauf waren das 27,8 % aller Landungen.
-    ("A306", 10.69),  // A300-600
-    ("A310", 10.69),
-    ("A30B", 10.69),
-    ("A400", 8.50),   // A400M
-    ("F28", 5.80),    // Fokker F28
-    ("F70", 5.04),
-    ("F100", 5.04),
-    ("C750", 5.61),   // Citation X
-    ("HA4T", 3.00),   // HondaJet HA-420
-    ("AC11", 2.90),   // Commander 114
-    ("AEST", 3.30),   // Aerostar
-    ("PA24", 3.10),   // Comanche
-    ("PA34", 3.60),   // Seneca
-    ("PA44", 3.20),   // Seminole
-    ("BE24", 3.00),   // Sierra
-    ("BE36", 3.10),   // Bonanza A36
-    ("BE33", 3.00),
-    ("BE9L", 4.30),   // King Air 90
-    ("B350", 5.30),   // King Air 350
-    ("C25M", 3.30),
-    ("C56X", 5.28),   // Citation Excel
-    ("C525", 3.20),
-    ("E50P", 3.20),   // Phenom 100
-    ("LJ35", 2.50),
-    ("LJ45", 2.60),
-    ("H25B", 3.10),   // Hawker 800
-    ("EA50", 2.20),   // Eclipse
-    ("SR20", 2.70),
-    ("C210", 3.10),
-    ("C206", 2.80),
-    ("C185", 2.50),
-    ("PC12", 4.50),
-    ("PC24", 4.20),
-    ("TBM8", 3.90),
-    ("DHC6", 4.30),   // Twin Otter
-    ("DHC2", 3.30),   // Beaver
-    ("AN2", 3.36),
-    ("RV10", 2.70),
-    ("M20P", 2.70),   // Mooney
-    ("BL8", 1.80),    // Bellanca Decathlon
+    ("A306", 10.69, 44.84),  // A300-600
+    ("A310", 10.69, 43.90),
+    ("A30B", 10.69, 44.84),
+    ("A400", 8.50, 42.40),   // A400M
+    ("F28", 5.80, 25.07),    // Fokker F28
+    ("F70", 5.04, 28.08),
+    ("F100", 5.04, 28.08),
+    ("C750", 5.61, 19.38),   // Citation X
+    ("HA4T", 3.00, 12.12),   // HondaJet HA-420
+    ("AC11", 2.90, 9.75),   // Commander 114
+    ("AEST", 3.30, 10.67),   // Aerostar
+    ("PA24", 3.10, 10.97),   // Comanche
+    ("PA34", 3.60, 11.85),   // Seneca
+    ("PA44", 3.20, 11.75),   // Seminole
+    ("BE24", 3.00, 10.00),   // Sierra
+    ("BE36", 3.10, 10.21),   // Bonanza A36
+    ("BE33", 3.00, 10.21),
+    ("BE9L", 4.30, 15.32),   // King Air 90
+    ("B350", 5.30, 17.65),   // King Air 350
+    ("C25M", 3.30, 15.90),
+    ("C56X", 5.28, 17.17),   // Citation Excel
+    ("C525", 3.20, 14.26),
+    ("E50P", 3.20, 12.30),   // Phenom 100
+    ("LJ35", 2.50, 12.04),
+    ("LJ45", 2.60, 14.58),
+    ("H25B", 3.10, 15.66),   // Hawker 800
+    ("EA50", 2.20, 11.43),   // Eclipse
+    ("SR20", 2.70, 11.68),
+    ("C210", 3.10, 11.20),
+    ("C206", 2.80, 10.92),
+    ("C185", 2.50, 10.92),
+    ("PC12", 4.50, 16.28),
+    ("PC24", 4.20, 17.00),
+    ("TBM8", 3.90, 12.68),
+    ("DHC6", 4.30, 19.81),   // Twin Otter
+    ("DHC2", 3.30, 14.63),   // Beaver
+    ("AN2", 3.36, 18.18),
+    ("RV10", 2.70, 9.63),
+    ("M20P", 2.70, 10.67),   // Mooney
+    ("BL8", 1.80, 9.75),    // Bellanca Decathlon
     // ── Leichtflugzeuge ───────────────────────────────────────────────
-    ("C152", 2.30),
-    ("C172", 2.50),
-    ("C182", 2.90),
-    ("C208", 3.60),
-    ("BE20", 5.30),
-    ("BE58", 3.20),
-    ("DA40", 2.30),
-    ("DA42", 2.60),
-    ("P28A", 3.00),
-    ("SR22", 2.70),
-    ("TBM9", 3.90),
+    ("C152", 2.30, 10.00),
+    ("C172", 2.50, 11.00),
+    ("C182", 2.90, 10.97),
+    ("C208", 3.60, 15.88),
+    ("BE20", 5.30, 16.61),
+    ("BE58", 3.20, 11.53),
+    ("DA40", 2.30, 11.94),
+    ("DA42", 2.60, 13.55),
+    ("P28A", 3.00, 10.67),
+    ("SR22", 2.70, 11.68),
+    ("TBM9", 3.90, 12.82),
 ];
 
 #[cfg(test)]
@@ -247,6 +274,50 @@ mod tests {
     }
 
     #[test]
+    fn spannweite_passt_zur_spurweite() {
+        // Die Spannweite ist IMMER groesser als die Spurweite -- und zwar
+        // deutlich. Faktor 2 ist die konservative Untergrenze: Beim A388
+        // (14,30 m Spur, 79,75 m Spannweite) sind es 5,6, beim engsten
+        // Muster der Tabelle noch immer ueber 2.
+        for (code, spur, spann) in TABELLE {
+            assert!(
+                *spann > *spur * 2.0,
+                "{code}: Spannweite {spann} m gegen Spurweite {spur} m -- \
+                 vertauscht oder vertippt?"
+            );
+            // Obergrenze: die An-225 hatte 88,4 m. Alles darueber ist ein
+            // Tippfehler, kein Flugzeug.
+            assert!(
+                (5.0..=90.0).contains(spann),
+                "{code}: {spann} m ist keine plausible Spannweite"
+            );
+        }
+    }
+
+    #[test]
+    fn spannweite_der_bekannten_muster() {
+        // Stichproben gegen die Herstellerangaben. Die MD-11 ist der
+        // MPH-9-Fall und steht im Groessenvergleich der Spezifikation.
+        assert_eq!(spannweite_m(Some("MD11")), Some(51.66));
+        assert_eq!(spannweite_m(Some("A388")), Some(79.75));
+        assert_eq!(spannweite_m(Some("C172")), Some(11.00));
+        assert_eq!(spannweite_m(Some("md11")), Some(51.66), "Kleinschreibung");
+        assert_eq!(spannweite_m(Some("XXXX")), None, "unbekannt liefert nichts");
+    }
+
+    #[test]
+    fn die_md11_ragt_ueber_die_bahn() {
+        // Der Grund, warum die Spannweite ueberhaupt angezeigt wird: Bei
+        // EDDH (46 m breit) ist die MD-11 mit 51,66 m breiter als die Bahn.
+        // Geht dieser Vergleich verloren, verliert der Groessenbalken unter
+        // dem Diagramm seine Aussage.
+        let spann = spannweite_m(Some("MD11")).unwrap();
+        assert!(spann > 46.0, "MD-11 {spann} m gegen 46 m Bahnbreite");
+        let spur = spurweite_m(Some("MD11")).unwrap();
+        assert!(spur < 46.0 / 2.0, "die Fahrspur passt trotzdem bequem");
+    }
+
+    #[test]
     fn plausibel_gross_und_klein() {
         // Die Ordnung muss stimmen: je grösser das Muster, desto breiter die Spur.
         let a388 = spurweite_m(Some("A388")).unwrap();
@@ -254,7 +325,7 @@ mod tests {
         let c172 = spurweite_m(Some("C172")).unwrap();
         assert!(a388 > b738 && b738 > c172, "{a388} > {b738} > {c172}");
         // Kein Wert darf ausserhalb des physikalisch Sinnvollen liegen.
-        for (code, m) in TABELLE {
+        for (code, m, _) in TABELLE {
             assert!(
                 // Untergrenze 1,5 m: die Bellanca Decathlon hat real 1,80 m.
                 // Die Schranke prueft Tippfehler, nicht die Physik kleiner
@@ -275,7 +346,7 @@ mod tests {
 
     #[test]
     fn keine_doppelten_eintraege() {
-        let mut codes: Vec<&str> = TABELLE.iter().map(|(c, _)| *c).collect();
+        let mut codes: Vec<&str> = TABELLE.iter().map(|(c, _, _)| *c).collect();
         let vorher = codes.len();
         codes.sort_unstable();
         codes.dedup();

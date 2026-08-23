@@ -3759,6 +3759,27 @@ struct FlightStats {
     /// v1.7.0 — true, sobald das Messfenster geschlossen ist (Ausfahrt
     /// eingeleitet oder unter die Messgeschwindigkeit gefallen).
     bahn_fenster_zu: bool,
+    /// v1.7.0 — der gefahrene Streifen als (laengs_m, quer_m), fuer die
+    /// Queransicht des Diagramms (Spec §8.3).
+    ///
+    /// Ausgeduennt auf einen Punkt je `BAHN_SPUR_MIN_ABSTAND_M` und hart
+    /// begrenzt auf `BAHN_SPUR_MAX_PUNKTE`. Ohne beides waeren es bei
+    /// 50 Hz und dreissig Sekunden Ausrollen fuenfzehnhundert Punkte je
+    /// Landung — in jedem gespeicherten Datensatz, in jedem Upload und in
+    /// jedem Diagramm, das sie zeichnen soll.
+    bahn_spur: Vec<(f32, f32)>,
+    /// v1.7.0 — wo die Bahn geraeumt wurde: Laengsposition in Metern.
+    /// `None`, solange das Fenster nicht wegen einer Ausfahrt zuging.
+    bahn_raeum_laengs_m: Option<f64>,
+    /// v1.7.0 — Geschwindigkeit beim Raeumen, in Knoten.
+    bahn_raeum_gs_kt: Option<f64>,
+    /// v1.7.0 — Seite der Ausfahrt, `"left"` oder `"right"`.
+    ///
+    /// Nur gesetzt, wenn **zwei unabhaengige Groessen** dasselbe sagen:
+    /// die Kursaenderung und die Querbewegung. Stimmt nur eine davon,
+    /// bleibt das Feld leer — dann liegt vermutlich ein Achsenfehler vor,
+    /// und eine Richtung zu behaupten waere schlimmer als keine (§8.6).
+    bahn_raeum_seite: Option<String>,
     /// True once `rollout_distance_m` has been finalised. Stops the
     /// per-tick accumulation in step_flight from continuing past
     /// the actual stop.
@@ -15492,6 +15513,89 @@ fn wire_displaced_threshold_ft(runway_match: Option<&runway::RunwayMatch>) -> Op
     runway_match.map(effective_displaced_threshold_ft)
 }
 
+/// Die Bahndisziplin-Felder fuer den Datensatz — an **einer** Stelle
+/// abgeleitet.
+///
+/// Warum das eine eigene Funktion ist und nicht zwoelf Zeilen im
+/// Initialisierer: Dieselben Werte gehen in den lokalen Datensatz, in den
+/// Server-Upload und in die Bewertung. Drei Stellen, die dasselbe rechnen,
+/// driften auseinander — das ist die Fehlerklasse aus §9 der Spezifikation,
+/// und sie hat in diesem Projekt schon zweimal zugeschlagen (die vier
+/// Kopien der Bahnprojektion, die zwei Prozentzahlen fuer dieselbe Bahn).
+/// `icao` ist der **aufgeloeste** Typcode aus der Kette Sim → Buchung →
+/// Server → Titel (Schritt 1 der Bauliste), nicht der rohe Sim-Wert. Wer
+/// hier `stats` erneut befragte, umginge genau die Kette, die der MPH-9-Fall
+/// erzwungen hat: Die TFDi MD-11 meldet keinen Typ, und ohne Kette fiel die
+/// Bewertung auf „Light" zurueck — 55 statt 80 Punkte.
+fn bahn_felder(stats: &FlightStats, icao: Option<&str>) -> BahnFelder {
+    let rm = stats.runway_match.as_ref();
+    let spur_m = landing_scoring::spurweite::spurweite_m(icao);
+    let breite_m = rm
+        .map(|m| m.width_ft as f64 * 0.3048)
+        .filter(|w| *w > 0.0);
+    let versatz_m = stats.bahn_max_querversatz_m;
+
+    // Kleinster Randabstand: halbe Bahnbreite minus das aeussere Rad.
+    // Negativ heisst, das Rad war jenseits der befestigten Flaeche.
+    //
+    // Nur wenn ALLE drei Groessen bekannt sind. Ein geschaetzter Randabstand
+    // waere eine Behauptung ueber die Bahnkante, die die Daten nicht decken —
+    // und er stuende in der Anzeige neben echten Messwerten, ununterscheidbar.
+    let rand_m = match (breite_m, spur_m, versatz_m) {
+        (Some(b), Some(sp), Some(v)) => Some(b / 2.0 - (v.abs() + sp / 2.0)),
+        _ => None,
+    };
+
+    let belag = landing_scoring::belag::belag_aus_angabe(rm.map(|m| m.surface.as_str()));
+
+    BahnFelder {
+        clearance_point_m: stats.bahn_raeum_laengs_m,
+        clearance_speed_kt: stats.bahn_raeum_gs_kt,
+        clearance_side: stats.bahn_raeum_seite.clone(),
+        track_width_m: spur_m,
+        // Solange die Spurweite aus der Typtabelle kommt, ist die Quelle
+        // fest. Schritt 11 der Bauliste liest sie aus der Flugzeugdatei —
+        // dann entscheidet sich hier, welcher Wert gewonnen hat.
+        track_width_source: spur_m.map(|_| "type_table".to_string()),
+        wingspan_m: landing_scoring::spurweite::spannweite_m(icao),
+        runway_width_m: breite_m,
+        min_edge_clearance_m: rand_m,
+        max_lateral_offset_m: versatz_m,
+        lateral_samples: stats
+            .bahn_spur
+            .iter()
+            .map(|(lg, qr)| storage::LateralSample {
+                laengs_m: *lg,
+                quer_m: *qr,
+            })
+            .collect(),
+        // `Unbekannt` ist NICHT „unbefestigt" — es ist „wir wissen es
+        // nicht". Beide fuehren zum selben Verzicht auf die seitliche
+        // Bewertung, aber die Anzeige muss sie auseinanderhalten koennen.
+        surface_paved: match belag {
+            landing_scoring::belag::Belag::Unbekannt => None,
+            b => Some(b.seitlich_bewertbar()),
+        },
+        overrun_m: stats.bahn_overrun_m,
+    }
+}
+
+/// Traeger der abgeleiteten Bahndisziplin-Werte — siehe `bahn_felder`.
+struct BahnFelder {
+    clearance_point_m: Option<f64>,
+    clearance_speed_kt: Option<f64>,
+    clearance_side: Option<String>,
+    track_width_m: Option<f64>,
+    track_width_source: Option<String>,
+    wingspan_m: Option<f64>,
+    runway_width_m: Option<f64>,
+    min_edge_clearance_m: Option<f64>,
+    max_lateral_offset_m: Option<f64>,
+    lateral_samples: Vec<storage::LateralSample>,
+    surface_paved: Option<bool>,
+    overrun_m: Option<f64>,
+}
+
 fn build_landing_record<F>(
     flight: &ActiveFlight,
     stats: &FlightStats,
@@ -15680,7 +15784,22 @@ where
     // einsetzen.
     let assessed = assess_touchdown(stats);
 
+    // v1.7.0 Bahndisziplin — an einer Stelle abgeleitet, siehe `bahn_felder`.
+    let bahn = bahn_felder(stats, aircraft_icao);
+
     Some(LandingRecord {
+        clearance_point_m: bahn.clearance_point_m,
+        clearance_speed_kt: bahn.clearance_speed_kt,
+        clearance_side: bahn.clearance_side,
+        track_width_m: bahn.track_width_m,
+        track_width_source: bahn.track_width_source,
+        wingspan_m: bahn.wingspan_m,
+        runway_width_m: bahn.runway_width_m,
+        min_edge_clearance_m: bahn.min_edge_clearance_m,
+        max_lateral_offset_m: bahn.max_lateral_offset_m,
+        lateral_samples: bahn.lateral_samples,
+        surface_paved: bahn.surface_paved,
+        overrun_m: bahn.overrun_m,
         pirep_id: flight.pirep_id.clone(),
         touchdown_at,
         recorded_at: Utc::now(),
@@ -26817,6 +26936,64 @@ const BAHN_MESS_MIN_GS_KT: f32 = 60.0;
 /// dann zaehlt.
 ///
 /// Siehe `docs/spec/v1.7.0-bahndisziplin.md` §5.2.
+/// Mindestabstand zwischen zwei gespeicherten Spurpunkten, in Metern.
+///
+/// Zehn Meter sind fein genug, dass die Queransicht bei 3000 m Bahn rund
+/// dreihundert Stuetzpunkte bekommt — mehr, als ein Diagramm von 1100 px
+/// Breite aufloesen kann.
+const BAHN_SPUR_MIN_ABSTAND_M: f64 = 10.0;
+
+/// Harte Obergrenze fuer die gespeicherte Spur.
+///
+/// Greift, wenn der Mindestabstand nicht greift: beim Stehen auf der Bahn
+/// mit laufender Messung, oder wenn die Projektion springt. Ohne diese
+/// Grenze waechst der Datensatz unbeschraenkt.
+const BAHN_SPUR_MAX_PUNKTE: usize = 400;
+
+/// Wie weit zurueck die Querbewegung fuer die Richtungsprobe gelesen wird.
+const BAHN_RICHTUNG_FENSTER_M: f32 = 100.0;
+
+/// Ab welcher Querbewegung die Richtungsprobe ueberhaupt etwas aussagt.
+///
+/// Unter zwei Metern ist der Unterschied zwischen „nach links gezogen" und
+/// „gerade geblieben" nicht messbar — dann bleibt die Seite leer.
+const BAHN_RICHTUNG_MIN_VERSATZ_M: f32 = 2.0;
+
+/// Bestimmt die Ausfahrtsseite aus **zwei** unabhaengigen Groessen.
+///
+/// Spec §8.6: „Die Ausfahrtsrichtung wird über zwei unabhängige Größen
+/// bestätigt, nie über eine: fallender Kurs *und* wachsender Querversatz in
+/// dieselbe Richtung. Stimmt nur eine der beiden, liegt vermutlich ein
+/// Achsenfehler vor und die Richtung wird nicht angezeigt."
+///
+/// `kurs_diff` ist die Kursabweichung zum Aufsetzkurs in Grad, positiv nach
+/// rechts. `spur` ist der bisher gefahrene Streifen.
+fn bahn_raeum_seite(kurs_diff: f64, spur: &[(f32, f32)]) -> Option<String> {
+    // Erste Groesse: der Kurs.
+    let kurs_seite = if kurs_diff > 0.0 { "right" } else { "left" };
+
+    // Zweite Groesse: die Querbewegung ueber die letzten Meter. Bewusst NICHT
+    // der absolute Versatz — ein Flugzeug kann links der Mitte stehen und
+    // trotzdem nach rechts abbiegen.
+    let letzter = spur.last()?;
+    let frueher = spur
+        .iter()
+        .rev()
+        .find(|(lg, _)| letzter.0 - *lg >= BAHN_RICHTUNG_FENSTER_M)?;
+    let bewegung = letzter.1 - frueher.1;
+    if bewegung.abs() < BAHN_RICHTUNG_MIN_VERSATZ_M {
+        return None;
+    }
+    let quer_seite = if bewegung > 0.0 { "right" } else { "left" };
+
+    // Nur wenn beide dasselbe sagen.
+    if kurs_seite == quer_seite {
+        Some(kurs_seite.to_string())
+    } else {
+        None
+    }
+}
+
 fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     let Some(rm) = stats.runway_match.as_ref() else {
         return;
@@ -26875,7 +27052,13 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
             diff += 360.0;
         }
         if diff.abs() > BAHN_KURS_AUSFAHRT_GRAD {
+            // Das ist eine Ausfahrt, kein Abbremsen — hier gehoert der
+            // Raeumpunkt hin. Beim Schliessen wegen zu geringer Fahrt
+            // dagegen NICHT: dort rollt das Flugzeug noch auf der Bahn.
             stats.bahn_fenster_zu = true;
+            stats.bahn_raeum_laengs_m = Some(laengs_m);
+            stats.bahn_raeum_gs_kt = Some(snap.groundspeed_kt as f64);
+            stats.bahn_raeum_seite = bahn_raeum_seite(diff as f64, &stats.bahn_spur);
             return;
         }
     }
@@ -26893,6 +27076,15 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
         stats.bahn_max_querversatz_m = Some(quer_m);
     }
     stats.bahn_proben = stats.bahn_proben.saturating_add(1);
+
+    // Spur fuer die Queransicht — ausgeduennt und begrenzt.
+    let weit_genug = stats
+        .bahn_spur
+        .last()
+        .is_none_or(|(lg, _)| (laengs_m - *lg as f64).abs() >= BAHN_SPUR_MIN_ABSTAND_M);
+    if weit_genug && stats.bahn_spur.len() < BAHN_SPUR_MAX_PUNKTE {
+        stats.bahn_spur.push((laengs_m as f32, quer_m as f32));
+    }
 }
 
 fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {

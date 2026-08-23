@@ -15,6 +15,8 @@
 //   4. 4 Detail-Karten (Aufsetz-Bewertung / Position / Anflug-Profil / Datenquelle)
 
 import { useMemo, useState } from "react";
+import { erzeugeProjektion } from "../lib/runwayProjection";
+import { RunwayDisciplinePanel } from "./RunwayDisciplinePanel";
 import { useTranslation } from "react-i18next";
 import { GlossaryModal } from "./RunwayGlossaryModal";
 import { useV2Skin } from "./SkinContext";
@@ -67,6 +69,10 @@ export interface RunwayDiagramV2Props {
   clearance_side?: "left" | "right" | null;
   track_width_m?: number | null;
   track_width_source?: "type_table" | "aircraft_file" | null;
+  /** Spannweite in Metern — für den Grössenvergleich unter der Grafik. */
+  wingspan_m?: number | null;
+  /** Bahnbreite in Metern — Grundlage der Queransicht. */
+  runway_width_m?: number | null;
   min_edge_clearance_m?: number | null;
   max_lateral_offset_m?: number | null;
   lateral_samples?: Array<{ laengs_m: number; quer_m: number }> | null;
@@ -155,21 +161,29 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   // entarten laesst — bei 0,5 m bildete `mToX` jeden Meter auf ein
   // Vielfaches der Bahnbreite ab. Die alten 500 m waren dafuer zu grob:
   // sie ueberschrieben echte kurze Plaetze (Review-Befund).
-  const lengthM = Number.isFinite(props.length_m) ? Math.max(100, props.length_m) : 500;
-  const ddsM = props.displaced_threshold_m ?? 0;
+  // v1.7.0: Die Projektion kommt aus `lib/runwayProjection` -- dieselbe
+  // Funktion, die die Queransicht benutzt. Vorher stand sie hier inline, und
+  // die Queransicht haette eine zweite gebraucht. Genau daraus entsteht die
+  // Fehlerklasse aus Spec §8.4: zwei Stellen, die dasselbe rechnen sollen,
+  // driften auseinander -- im ersten Entwurf stand der Aim-Marker 209 m falsch.
+  const projektion = erzeugeProjektion({
+    lengthM: props.length_m,
+    ddsM: props.displaced_threshold_m ?? 0,
+    padX,
+    innerW,
+  });
+  const lengthM = projektion.lengthM;
+  const ddsM = projektion.ddsM;
   const ddsActive = ddsM > 0;
-  const totalVisualM = lengthM + ddsM;
 
   // thresholdX = Pixel-Position des Landethresholds.
   //   ohne DDS: thresholdX == padX (Bahn-Anfang IS Threshold)
   //   mit DDS:  thresholdX > padX (DDS-Bereich beansprucht erste ddsM)
-  const thresholdX = padX + (ddsM / totalVisualM) * innerW;
+  const thresholdX = projektion.thresholdX;
 
   // Meter → X-Pixel. Eingabe m ist Distanz VOM LANDETHRESHOLD (signed).
   // Negative m → vor dem Threshold (= in der DDS-Zone).
-  const mToX = (m: number) =>
-    thresholdX +
-    (Math.max(-ddsM, Math.min(lengthM, m)) / totalVisualM) * innerW;
+  const mToX = projektion.mToX;
 
   // Centerline-Offset → Y. ±widthM/2 → ±(innerH/2 - safetyMargin).
   // widthM = 45 m typisch, aber wir stretchen für Sichtbarkeit (sonst
@@ -922,6 +936,30 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             })}
           </g>
         </svg>
+
+        {/* ─── 2b. QUERANSICHT + EREIGNISSE + GROESSENVERGLEICH ────────
+            v1.7.0, Spec §8.3. Im SELBEN Container wie die Laengsansicht,
+            damit beide dieselbe Breite haben und die Kanten fluchten -- der
+            Aufsetzpunkt oben muss senkrecht ueber der Marke unten liegen.
+            Zwei getrennte SVGs statt eines grossen: So kann aus der einen
+            Ansicht nichts in die andere ragen (§8.6.4), und der Zwischenraum
+            bleibt ohne Zutun frei. */}
+        <div style={{ marginTop: 14 }}>
+          <RunwayDisciplinePanel
+            props={props}
+            projektion={projektion}
+            width={W}
+            tokens={{
+              tarmac: TOKENS.tarmac,
+              tarmacBorder: TOKENS.tarmacBorder,
+              centerline: TOKENS.centerline,
+              rollout: TOKENS.rollout,
+              tdPerfect: TOKENS.tdPerfect,
+              tdWarn: TOKENS.tdWarn,
+              tdSevere: TOKENS.tdSevere,
+            }}
+          />
+        </div>
       </div>
 
       {/* ─── 3. LEGENDE ─────────────────────────────────────────────── */}

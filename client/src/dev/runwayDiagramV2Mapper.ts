@@ -77,6 +77,13 @@ export function mapLandingRecordToV2Props(
     track_width_m: record.track_width_m ?? null,
     track_width_source:
       (record.track_width_source ?? null) as "type_table" | "aircraft_file" | null,
+    wingspan_m: record.wingspan_m ?? null,
+    // Die Bahnbreite kommt aus dem Datensatz, NICHT aus `runway_match`:
+    // dort steht keine. Fehlt sie, entfaellt die Queransicht sichtbar --
+    // eine Bahn ohne bekannte Breite laesst sich nicht massstaeblich
+    // zeichnen, und eine geratene Breite waere eine Behauptung ueber die
+    // Kante, an der die Bewertung haengt.
+    runway_width_m: record.runway_width_m ?? null,
     min_edge_clearance_m: record.min_edge_clearance_m ?? null,
     max_lateral_offset_m: record.max_lateral_offset_m ?? null,
     lateral_samples: record.lateral_samples ?? null,
