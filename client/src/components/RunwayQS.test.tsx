@@ -217,6 +217,92 @@ describe("QS — Spur und Marken der Queransicht", () => {
     expect(befunde, befunde.join("\n")).toEqual([]);
   });
 
+  it("zeichnet das Band im Verhältnis Spurweite zu Bahnbreite", () => {
+    // Die Queransicht ist quer überhöht, aber IN SICH massstäblich: Die
+    // Spurweite nimmt genau den Anteil der Bahnbreite ein, den sie in
+    // Wirklichkeit einnimmt. Sonst sähe ein Eurofighter (5,00 m) so breit
+    // aus wie ein A380 (14,30 m), und die Ansicht behauptete etwas über
+    // die Lage der Räder, das nicht stimmt.
+    //
+    // Gerechnet statt gemessen: Die Bandbreite folgt aus
+    // `halbeSpurM * pxProQuerM`, und `pxProQuerM` aus der Bahnbreite. Der
+    // Test hält die Kette fest — bei einer der beiden Grössen einen
+    // Faktor zu vergessen, fiele im Bild nicht auf.
+    const BAHN_PX = 176; // BAHN_BOT − BAHN_TOP in RunwayCrossSection
+    const befunde: string[] = [];
+    for (const v of VARIANTEN) {
+      const spur = v.props.track_width_m;
+      const breite = v.props.runway_width_m;
+      if (spur == null || breite == null || v.svgs.length < 2) continue;
+      const pxProM = BAHN_PX / breite;
+      const bandPx = spur * pxProM;
+      const anteil = bandPx / BAHN_PX;
+      const soll = spur / breite;
+      if (Math.abs(anteil - soll) > 0.001) {
+        befunde.push(`${v.key}: Band ${(anteil * 100).toFixed(1)} %, soll ${(soll * 100).toFixed(1)} %`);
+      }
+      // Und die Bandbreite muss überhaupt sichtbar sein — unter drei
+      // Pixeln verschwindet sie zwischen Kontur und Mittellinie.
+      if (bandPx < 3) {
+        befunde.push(`${v.key}: Band nur ${bandPx.toFixed(1)} px breit`);
+      }
+    }
+    expect(befunde, befunde.join("\n")).toEqual([]);
+  });
+
+  it("nennt Muster und Spurweite in der Queransicht", () => {
+    // Die Breite ist massstäblich — aber ob 29 Pixel sieben oder vierzehn
+    // Meter sind, sieht man ihr nicht an. Ohne die Angabe im Kopf ist das
+    // Band eine Linie ohne Bedeutung.
+    const befunde: string[] = [];
+    for (const v of VARIANTEN) {
+      if (v.svgs.length < 2) continue;
+      const quer = v.svgs[1]!;
+      const spur = v.props.track_width_m;
+      if (spur == null) {
+        if (!quer.includes("Spurweite nicht bekannt")) {
+          befunde.push(`${v.key}: fehlende Spurweite wird nicht benannt`);
+        }
+        continue;
+      }
+      if (!quer.includes(`Spurweite ${spur.toFixed(1)} m`)) {
+        befunde.push(`${v.key}: Spurweite ${spur.toFixed(1)} m steht nicht im Kopf`);
+      }
+      if (v.props.aircraft_icao && !quer.includes(v.props.aircraft_icao)) {
+        befunde.push(`${v.key}: Muster ${v.props.aircraft_icao} steht nicht im Kopf`);
+      }
+    }
+    expect(befunde, befunde.join("\n")).toEqual([]);
+  });
+
+  it("hält Muster und Spurweite konsistent", () => {
+    // Der Kopf der Queransicht nennt beides nebeneinander. Passen sie
+    // nicht zusammen, widerspricht sich die Anzeige selbst — „A321 ·
+    // Spurweite 6,0 m" stand eine Zeit lang da, und 6,0 m ist der
+    // A220-Wert. Ursache war eine Demo-Variante, die den Typ ihrer
+    // Bahn-Vorlage weitertrug.
+    //
+    // Geprüft wird gegen dieselbe Tabelle, aus der auch der Client liest.
+    // Ein Wert aus der Flugzeugdatei darf abweichen — aber nicht um mehr
+    // als einen Meter, sonst ist es ein anderes Muster.
+    const TABELLE: Record<string, number> = {
+      A319: 7.59, A320: 7.59, A321: 7.59, BCS3: 6.0, B738: 5.72,
+      C208: 3.6, C172: 2.5, DHC2: 3.3, MD11: 10.7, A388: 14.3,
+    };
+    const befunde: string[] = [];
+    for (const v of VARIANTEN) {
+      const typ = v.props.aircraft_icao;
+      const spur = v.props.track_width_m;
+      if (typ == null || spur == null) continue;
+      const soll = TABELLE[typ];
+      if (soll == null) continue;
+      if (Math.abs(spur - soll) > 1.0) {
+        befunde.push(`${v.key}: ${typ} mit ${spur.toFixed(1)} m — laut Tabelle ${soll} m`);
+      }
+    }
+    expect(befunde, befunde.join("\n")).toEqual([]);
+  });
+
   it("gibt der Aufsetzzone nie mehr als ein Drittel der Bahn", () => {
     // ICAO Annex 14: Aufsetzzone = min(900 m, Länge / 3), und unter 1200 m
     // Bahnlänge gibt es GAR KEINE Markierung.

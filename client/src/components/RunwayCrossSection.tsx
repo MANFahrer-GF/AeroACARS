@@ -63,6 +63,8 @@ export interface QueransichtProps {
   overrunM?: number | null;
   /** Rollwege, die die Bahn treffen (OSM). Optional. */
   ausfahrten?: Ausfahrt[] | null;
+  /** ICAO-Typcode — steht mit der Spurweite im Kopf der Ansicht. */
+  aircraftIcao?: string | null;
   /** Breite des SVG in Benutzereinheiten (muss der Längsansicht gleichen). */
   width: number;
   tokens: {
@@ -363,6 +365,20 @@ export function RunwayCrossSection(p: QueransichtProps) {
       <text x={0} y={14} fontSize={10.5} letterSpacing={1.4} fill="#8B95A8">
         {t("runway_v2.cross_title", { defaultValue: "QUER — WO DIE RÄDER LIEFEN" })}
       </text>
+      {/* Muster und Spurweite — ohne sie ist das Band eine Linie ohne
+          Bedeutung. Die Breite ist massstäblich zur Bahn, aber ob 29 Pixel
+          nun sieben oder vierzehn Meter sind, sieht man ihr nicht an. */}
+      <text x={p.width / 2} y={14} fontSize={10.5} textAnchor="middle" fill="#9AA5B5">
+        {p.trackWidthM != null
+          ? t("runway_v2.cross_aircraft", {
+              defaultValue: "{{typ}} · Spurweite {{m}} m",
+              typ: p.aircraftIcao ?? "",
+              m: p.trackWidthM.toFixed(1),
+            }).trim()
+          : t("runway_v2.cross_aircraft_unknown", {
+              defaultValue: "Spurweite nicht bekannt",
+            })}
+      </text>
       <text x={p.width} y={14} fontSize={10} textAnchor="end" fill="#66707E">
         {t("runway_v2.cross_exaggeration", {
           defaultValue: "quer {{f}}× überhöht · in sich maßstäblich",
@@ -471,8 +487,19 @@ export function RunwayCrossSection(p: QueransichtProps) {
       />
 
       {/* Der gefahrene Streifen: Fläche zwischen den Rädern, Achse betont. */}
+      {/* Kontur um das Band: Ohne sie verläuft die Fläche bei 22 % Deckung
+          im Untergrund, und die Spurweite — die eigentliche Aussage dieser
+          Ansicht — ist nicht abzulesen. Die Ränder SIND die Radspuren. */}
       {bandPfad && (
-        <path d={bandPfad} fill={bandFarbe} fillOpacity={0.22} stroke="none" />
+        <path
+          d={bandPfad}
+          fill={bandFarbe}
+          fillOpacity={0.22}
+          stroke={bandFarbe}
+          strokeWidth={1}
+          strokeOpacity={0.65}
+          strokeLinejoin="round"
+        />
       )}
       {mittelPfad && (
         <path
@@ -509,35 +536,16 @@ export function RunwayCrossSection(p: QueransichtProps) {
         />
       ))}
 
-      {/* Die gestrichelte Spur zur Ausfahrt — sie zeigt, WOHIN gerollt
-          wurde. §8.3: „die gestrichelte Spur danach folgt der echten
-          Ausfahrtsrichtung."
+      {/* Der gezeichnete Ausfahrt-Bogen ist entfallen.
 
-          Ohne sie endet das Band abrupt an der Marke ③, und die Richtung
-          steht nur als Wort in der Liste. Die Richtung ist aber genau das,
-          was die Queransicht zeigen kann und die Längsansicht nicht.
+          Er war ein Behelf aus der Zeit, als die Aufzeichnung an der
+          Bahnkante endete: Die Spur brach dort ab, und ein gestrichelter
+          Bogen deutete an, wohin es weiterging. Seit die Spur bis zum
+          Übergang in den Rollweg durchläuft, zeigt sie das selbst — und
+          zwar gemessen statt gezeichnet.
 
-          Gezeichnet wird sie nur bei bekannter Seite: Stimmen Kursänderung
-          und Querbewegung nicht überein, wäre jede gezeichnete Richtung eine
-          Behauptung (§8.6). */}
-      {p.clearanceM != null && p.clearanceSide != null && (() => {
-        const x0 = p.projektion.mToX(p.clearanceM);
-        const dy = p.clearanceSide === "left" ? -1 : 1;
-        const y0 = querZuY(p.clearanceSide === "left" ? -halbeBahnM : halbeBahnM);
-        const x1 = Math.min(x0 + 110, p.width - 6);
-        return (
-          <path
-            d={`M ${x0} ${y0} C ${x0 + 38} ${y0 + dy * 6}, ${x0 + 72} ${y0 + dy * 16}, ${x1} ${
-              y0 + dy * (GRUEN_H + 10)
-            }`}
-            fill="none"
-            stroke={bandFarbe}
-            strokeWidth={1.5}
-            strokeDasharray="3 4"
-            opacity={0.5}
-          />
-        );
-      })()}
+          Zwei Linien für dieselbe Aussage sind eine zu viel, und die
+          erfundene wäre die auffälligere gewesen. */}
 
       {/* Marken — nur Ziffern, der Text steht in der Liste darunter (§8.5). */}
       {marken.map((m) => (

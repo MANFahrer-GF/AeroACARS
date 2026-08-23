@@ -1979,14 +1979,16 @@
     "at_position": "at {{m}} m",
     "width_label": "{{m}} m wide",
     "legend_track": "Track — {{n}} measured samples",
-    "legend_exit_arc": "Exit — direction is measured, nothing scored past here",
+    "legend_exit_arc": "after vacating — measured, no longer scored",
     "legend_exits": "Exits (OSM) · the one used is highlighted",
     "legend_unpaved": "unpaved",
     "legend_edge": "Runway edge",
     "mark_slowed": "Down to taxi speed",
     "mark_track_end": "End of recording",
     "legend_after": "after vacating — measured, not scored",
-    "rollout_end": "ROLLOUT END"
+    "rollout_end": "ROLLOUT END",
+    "cross_aircraft": "{{typ}} · track width {{m}} m",
+    "cross_aircraft_unknown": "track width unknown"
   },
   "ascan": {
     "title": "🔬 Submit aircraft for analysis (Aircraft Scan)",

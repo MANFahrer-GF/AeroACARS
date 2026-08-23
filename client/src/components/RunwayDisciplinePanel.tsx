@@ -71,6 +71,7 @@ export function RunwayDisciplinePanel({
           maxLateralOffsetM={props.max_lateral_offset_m}
           overrunM={props.overrun_m}
           ausfahrten={props.runway_exits}
+          aircraftIcao={props.aircraft_icao}
           width={width}
           tokens={tokens}
         />

@@ -1972,14 +1972,16 @@
     "at_position": "a {{m}} m",
     "width_label": "larga {{m}} m",
     "legend_track": "Traccia — {{n}} punti misurati",
-    "legend_exit_arc": "Uscita — direzione misurata, oltre non si valuta",
+    "legend_exit_arc": "dopo aver liberato — misurato, non più valutato",
     "legend_exits": "Uscite (OSM) · evidenziata quella usata",
     "legend_unpaved": "non pavimentata",
     "legend_edge": "Bordo pista",
     "mark_slowed": "A velocità di rullaggio",
     "mark_track_end": "Fine della registrazione",
     "legend_after": "dopo aver liberato — misurato, non valutato",
-    "rollout_end": "FINE RULLAGGIO"
+    "rollout_end": "FINE RULLAGGIO",
+    "cross_aircraft": "{{typ}} · carreggiata {{m}} m",
+    "cross_aircraft_unknown": "carreggiata sconosciuta"
   },
   "ascan": {
     "title": "🔬 Invia aereo per l'analisi (Aircraft Scan)",

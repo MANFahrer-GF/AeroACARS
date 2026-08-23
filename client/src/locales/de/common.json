@@ -1979,14 +1979,16 @@
     "at_position": "bei {{m}} m",
     "width_label": "{{m}} m breit",
     "legend_track": "Spur — {{n}} gemessene Stützpunkte",
-    "legend_exit_arc": "Ausfahrt — Richtung echt, ab hier nicht mehr gewertet",
+    "legend_exit_arc": "nach dem Räumen — gemessen, nicht mehr gewertet",
     "legend_exits": "Ausfahrten (OSM) · genutzte hervorgehoben",
     "legend_unpaved": "unbefestigt",
     "legend_edge": "Bahnkante",
     "mark_slowed": "Auf Rollgeschwindigkeit",
     "mark_track_end": "Ende der Aufzeichnung",
     "legend_after": "nach dem Räumen — gemessen, nicht gewertet",
-    "rollout_end": "AUSROLLEN ENDE"
+    "rollout_end": "AUSROLLEN ENDE",
+    "cross_aircraft": "{{typ}} · Spurweite {{m}} m",
+    "cross_aircraft_unknown": "Spurweite nicht bekannt"
   },
   "ascan": {
     "title": "🔬 Flugzeug zur Analyse einreichen (Aircraft-Scan)",

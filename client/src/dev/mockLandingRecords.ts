@@ -282,6 +282,15 @@ function bahn(
     belag?: boolean | null;
     /** Nicht mehr gesetzt — der Räumpunkt kommt aus dem Spurende. */
     raeumM?: number | null;
+    /**
+     * ICAO-Typ, wenn er von dem der Bahn-Vorlage abweicht.
+     *
+     * Muss zur Spurweite passen: Ein Kopf, der „A321 · Spurweite 6,0 m"
+     * zeigt, widerspricht sich selbst — 6,0 m ist der A220-Wert.
+     */
+    icao?: string;
+    /** Anzeigename des Musters. */
+    titel?: string;
     raeumKt?: number | null;
     raeumSeite?: "left" | "right" | null;
     overrun?: number | null;
@@ -341,6 +350,9 @@ function bahn(
       ? breite / 2 - (Math.abs(max) + spurweite / 2)
       : null;
   r.surface_paved = o.belag === undefined ? true : o.belag;
+  r.overrun_m = o.overrun ?? null;
+  if (o.icao) r.aircraft_icao = o.icao;
+  if (o.titel) r.aircraft_title = o.titel;
   // Räumpunkt und Bewertungsgrenze — beide oben bestimmt, hier gesetzt.
   //
   // „Bahn geräumt" ist die KANTE. Die Bewertungsgrenze liegt davor, beim
@@ -562,9 +574,9 @@ export const MOCK_LANDING_OPTIONS: MockOption[] = [
         spur: 7.59,
         spann: 35.8,
         spurVon: "a3V0DXnWr6054VO6",
-        raeumM: 1795,
         raeumKt: 58,
-        raeumSeite: "left",
+        icao: "A319",
+        titel: "FenixA319 IAE WF SD",
       }),
   },
   {
@@ -580,9 +592,9 @@ export const MOCK_LANDING_OPTIONS: MockOption[] = [
         spur: 6.0,
         spann: 35.1,
         spurVon: "0Ab3v9EvNN1LKZ8z",
-        raeumM: 1830,
         raeumKt: 61,
-        raeumSeite: "right",
+        icao: "BCS3",
+        titel: "A220-300",
       }),
   },
   {
@@ -595,7 +607,8 @@ export const MOCK_LANDING_OPTIONS: MockOption[] = [
         spur: 7.59,
         spann: 35.8,
         spurVon: "raKOnJD1XgNbP06q",
-        raeumM: null,
+        icao: "A320",
+        titel: "FenixA320 CFM WF",
       }),
   },
   {
