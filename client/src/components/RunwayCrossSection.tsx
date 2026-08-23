@@ -372,7 +372,9 @@ export function RunwayCrossSection(p: QueransichtProps) {
 
   return (
     <svg
-      onWheel={p.zoom?.aufRad}
+      // Nicht `onWheel` — React bindet Rad-Ereignisse passiv, dort ist
+      // `preventDefault()` wirkungslos und der Browser zoomt die Seite mit.
+      ref={p.zoom?.radAnschluss}
       onMouseDown={p.zoom?.aufZiehStart}
       onMouseMove={p.zoom?.aufZiehen}
       onMouseUp={p.zoom?.aufZiehEnde}

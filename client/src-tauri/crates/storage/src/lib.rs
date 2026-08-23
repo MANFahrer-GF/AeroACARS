@@ -347,6 +347,17 @@ pub struct LandingRecord {
     /// Bahn blieb.
     #[serde(default)]
     pub clearance_point_m: Option<f64>,
+    /// Laengsposition, ab der nicht mehr bewertet wird — der Beginn des
+    /// Ausschwenkens zur Ausfahrt, nicht die Kante.
+    ///
+    /// Ein Flugzeug zieht hunderte Meter vor der Ausfahrt nach aussen.
+    /// Faellt die Bewertungsgrenze mit der Kante zusammen, zaehlt dieses
+    /// Ausschwenken als Fehler des Piloten: bei `0Ab3v9EvNN1LKZ8z`
+    /// (EDDH 05) wurden 21,95 m gemeldet, auf einer Bahn mit 23 m
+    /// Halbbreite, unmittelbar vor dem Abbiegen. Auf der Bahn hatte das
+    /// Flugzeug 13,4 m.
+    #[serde(default)]
+    pub scoring_cutoff_m: Option<f64>,
     /// Geschwindigkeit beim Raeumen, in Knoten.
     #[serde(default)]
     pub clearance_speed_kt: Option<f64>,

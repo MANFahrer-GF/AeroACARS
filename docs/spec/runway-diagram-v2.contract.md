@@ -299,9 +299,48 @@ const props: RunwayDiagramV2Props = {
   tch_class: pl.tch_class as TchClass | null,
   pre_displaced_threshold: pl.pre_displaced_threshold as boolean | null,
   rollout_m: pl.rollout_distance_m as number | null,
+
+  // ── v1.7.0 Bahndisziplin ────────────────────────────────────────────
+  // Gelesen, nicht gerechnet — siehe unten.
+  clearance_point_m: pl.clearance_point_m as number | null,
+  scoring_cutoff_m: pl.scoring_cutoff_m as number | null,
+  clearance_speed_kt: pl.clearance_speed_kt as number | null,
+  clearance_side: pl.clearance_side as "left" | "right" | null,
+  track_width_m: pl.track_width_m as number | null,
+  track_width_source: pl.track_width_source as "type_table" | "aircraft_file" | null,
+  wingspan_m: pl.wingspan_m as number | null,
+  runway_width_m: pl.runway_width_m as number | null,
+  min_edge_clearance_m: pl.min_edge_clearance_m as number | null,
+  max_lateral_offset_m: pl.max_lateral_offset_m as number | null,
+  lateral_samples: pl.lateral_samples as Array<{laengs_m: number; quer_m: number}> | null,
+  surface_paved: pl.surface_paved as boolean | null,
+  overrun_m: pl.overrun_m as number | null,
+  runway_exits: null,   // steht in der OSM-Bodenkarte, die der Server hat
+
   locale: "de",
 };
 ```
+
+**Der Client rechnet, der Server zeigt an.**
+
+Keine der v1.7.0-Größen wird serverseitig hergeleitet. Sie entstehen im
+Pilot-Client aus dem 5-Hz-Rollout-Fenster, das nur er sieht; der Server hat
+die Positionen im Grundtakt von drei Sekunden und käme damit zwangsläufig auf
+andere Zahlen. **Zwei Zahlen für dieselbe Landung sind schlimmer als eine
+fehlende.**
+
+Fehlen sie — Flüge von vor v1.7.0, oder Stratos-Landungen über die Brücke, die
+keine Rollspur liefern —, bleibt es bei `null`, und die Anzeige sagt „für diesen
+Flug nicht erfasst". Sie malt dann keine leere Querachse, die wie ein Messwert
+aussieht.
+
+**Auf der Leitung liegen die Felder flach.** Im Rust-Client sind sie als eine
+Gruppe gefasst (`BahnWire`, `#[serde(flatten)]`), damit die Payload-Konstruktion
+nicht dreizehn Zeilen an jeder Stelle braucht — der Server sieht davon nichts.
+Ein Test hält das fest (`bahnfelder_liegen_flach_auf_der_leitung`); ohne das
+Attribut läge alles unter einem Schlüssel `bahn`, der Mapper fände nichts, und
+die Anzeige zeigte für jede Landung „nicht erfasst", ohne dass irgendwo ein
+Fehler auftaucht.
 
 **Verifizierte Wire-Felder (im TouchdownPayload präsent):**
 - `runway_match_icao`, `runway_match_ident`, `runway_match_distance_m`, `runway_match_centerline_offset_m`, `runway_length_m`
@@ -312,6 +351,17 @@ const props: RunwayDiagramV2Props = {
 - `tch_actual_ft`, `tch_delta_ft`, `tch_class`
 - `pre_displaced_threshold`
 - `rollout_distance_m`
+- **v1.7.0:** `clearance_point_m`, `scoring_cutoff_m`, `clearance_speed_kt`, `clearance_side`, `track_width_m`, `track_width_source`, `wingspan_m`, `runway_width_m`, `min_edge_clearance_m`, `max_lateral_offset_m`, `lateral_samples`, `surface_paved`, `overrun_m`
+
+**`clearance_point_m` und `scoring_cutoff_m` sind nicht dasselbe.** Ein Flugzeug
+schwenkt hunderte Meter vor der Ausfahrt nach außen. `scoring_cutoff_m` markiert
+den Beginn dieses Ausschwenkens — ab dort wird nicht mehr **bewertet**, weil die
+seitliche Lage an der Anweisung des Lotsen hängt. **Verlassen** hat es die Bahn
+erst bei `clearance_point_m`, an der Kante. Bis v1.7.0 lieferte der Client nur
+einen Wert für beides; die Marke „Bahn geräumt" saß dadurch mitten auf der Bahn,
+und das Ausschwenken zählte als Fehler des Piloten (bei `0Ab3v9EvNN1LKZ8z`,
+EDDH 05: 21,95 m gemeldet auf einer Bahn mit 23 m Halbbreite — auf der Bahn
+selbst waren es 13,4 m).
 
 **NICHT im Wire-Format:** `runway_surface_code`. Webapp kann surface nicht anzeigen — Pilot-Client-only.
 

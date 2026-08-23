@@ -27,8 +27,19 @@ export interface BahnZoom {
   bisM: number | undefined;
   /** Ist hineingezoomt? Steuert den Zurücksetzen-Knopf. */
   gezoomt: boolean;
-  /** Auf das Mausrad reagieren — an `onWheel` beider Ansichten hängen. */
-  aufRad: (e: React.WheelEvent<SVGSVGElement>) => void;
+  /**
+   * An das `ref` des SVG hängen — **nicht** an `onWheel`.
+   *
+   * React registriert Rad-Ereignisse als *passive* Zuhörer. In einem
+   * passiven Zuhörer ist `preventDefault()` wirkungslos: Der Zoom griff,
+   * und der Browser zoomte die ganze Seite gleich mit, weil Strg + Rad
+   * seine eigene Bedeutung hat. Gemessen am 23.08.2026 — der Aufruf lief,
+   * das Ereignis blieb trotzdem unverhindert.
+   *
+   * Deshalb hängt der Zuhörer hier von Hand am Element, mit
+   * `{ passive: false }`.
+   */
+  radAnschluss: (el: SVGSVGElement | null) => (() => void) | undefined;
   /** Ziehen zum Verschieben. */
   aufZiehStart: (e: React.MouseEvent<SVGSVGElement>) => void;
   aufZiehen: (e: React.MouseEvent<SVGSVGElement>) => void;
@@ -67,7 +78,7 @@ export function useBahnZoom(ganzVonM: number, ganzBisM: number): BahnZoom {
   );
 
   const aufRad = useCallback(
-    (e: React.WheelEvent<SVGSVGElement>) => {
+    (e: WheelEvent) => {
       // NUR mit Strg oder Cmd. Ohne diese Bedingung verschluckt die Grafik
       // jedes Mausrad-Ereignis, das über ihr auftritt — und die Seite lässt
       // sich nicht mehr scrollen, sobald der Zeiger darüber steht. Genau
@@ -77,29 +88,50 @@ export function useBahnZoom(ganzVonM: number, ganzBisM: number): BahnZoom {
       // gutem Grund verbreitet: Scrollen ist die häufigere Absicht.
       if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
-      const el = e.currentTarget;
+      const el = e.currentTarget as SVGSVGElement;
       const kasten = el.getBoundingClientRect();
       // Wo unter dem Zeiger liegt der Ausschnitt? Dorthin wird gezoomt —
       // sonst wandert der Punkt, den man sich ansehen will, aus dem Bild.
       const anteil = kasten.width > 0 ? (e.clientX - kasten.left) / kasten.width : 0.5;
 
-      const aktuell = sicht ?? { von: ganzVonM, bis: ganzBisM };
-      const breite = aktuell.bis - aktuell.von;
-      const unterZeiger = aktuell.von + anteil * breite;
-      const neueBreite =
-        e.deltaY < 0 ? breite / SCHRITT : breite * SCHRITT;
-      const von = unterZeiger - anteil * neueBreite;
-      const g = grenzen(von, von + neueBreite);
-      // Auf die ganze Bahn herausgezoomt: den Zustand loswerden, damit die
-      // Ansicht wieder ohne Ausschnitt rechnet.
-      if (g.bis - g.von >= ganzBisM - ganzVonM - 0.5) {
-        setSicht(null);
-      } else {
-        setSicht(g);
-      }
+      // Wie bei `stufe`: aus dem vorigen Zustand rechnen. Ein Mausrad
+      // liefert mehrere Ereignisse pro Umdrehung, und sie kommen schneller
+      // als React rendert.
+      setSicht((vorher) => {
+        const aktuell = vorher ?? { von: ganzVonM, bis: ganzBisM };
+        const breite = aktuell.bis - aktuell.von;
+        const unterZeiger = aktuell.von + anteil * breite;
+        const neueBreite = e.deltaY < 0 ? breite / SCHRITT : breite * SCHRITT;
+        const von = unterZeiger - anteil * neueBreite;
+        const g = grenzen(von, von + neueBreite);
+        // Auf die ganze Bahn herausgezoomt: den Zustand loswerden, damit
+        // die Ansicht wieder ohne Ausschnitt rechnet.
+        return g.bis - g.von >= ganzBisM - ganzVonM - 0.5 ? null : g;
+      });
     },
-    [sicht, ganzVonM, ganzBisM, grenzen],
+    [ganzVonM, ganzBisM, grenzen],
   );
+
+  // Der Zuhörer hängt von Hand am Element, nicht über `onWheel` — siehe
+  // `radAnschluss` oben.
+  //
+  // Er ruft über `radRef` auf und bleibt dadurch selbst unverändert: Ein
+  // Zuhörer, der bei jedem Zoomschritt ab- und wieder angemeldet wird,
+  // verliert die Ereignisse, die genau dazwischen eintreffen — und ein
+  // Mausrad liefert mehrere pro Umdrehung.
+  const radRef = useRef(aufRad);
+  radRef.current = aufRad;
+
+  // Ein Anschluss für BEIDE Ansichten. Längs- und Queransicht teilen sich
+  // den Zoomzustand (sonst fluchten sie nicht mehr), also hängen beide
+  // hier — die Aufräumfunktion aus React 19 hält auseinander, welches
+  // Element gerade geht.
+  const radAnschluss = useCallback((el: SVGSVGElement | null) => {
+    if (!el) return;
+    const zuhoerer = (e: WheelEvent) => radRef.current(e);
+    el.addEventListener("wheel", zuhoerer, { passive: false });
+    return () => el.removeEventListener("wheel", zuhoerer);
+  }, []);
 
   const aufZiehStart = useCallback(
     (e: React.MouseEvent<SVGSVGElement>) => {
@@ -140,22 +172,32 @@ export function useBahnZoom(ganzVonM: number, ganzBisM: number): BahnZoom {
    */
   const stufe = useCallback(
     (richtung: 1 | -1) => {
-      const aktuell = sicht ?? { von: ganzVonM, bis: ganzBisM };
-      const breite = aktuell.bis - aktuell.von;
-      const mitte = (aktuell.von + aktuell.bis) / 2;
-      const neueBreite = richtung > 0 ? breite / SCHRITT : breite * SCHRITT;
-      const g = grenzen(mitte - neueBreite / 2, mitte + neueBreite / 2);
-      if (g.bis - g.von >= ganzBisM - ganzVonM - 0.5) setSicht(null);
-      else setSicht(g);
+      // Aus dem VORIGEN Zustand rechnen, nicht aus `sicht`.
+      //
+      // `sicht` stammt aus dem Render, in dem der Knopf gezeichnet wurde.
+      // Wer zweimal schnell drückt, löst beide Klicks vor dem nächsten
+      // Render aus — beide lesen denselben Ausgangswert, und der zweite
+      // Schritt geht verloren. Beim Prüfen sah das aus, als reagiere der
+      // Knopf überhaupt nicht.
+      setSicht((vorher) => {
+        const aktuell = vorher ?? { von: ganzVonM, bis: ganzBisM };
+        const breite = aktuell.bis - aktuell.von;
+        const mitte = (aktuell.von + aktuell.bis) / 2;
+        const neueBreite = richtung > 0 ? breite / SCHRITT : breite * SCHRITT;
+        const g = grenzen(mitte - neueBreite / 2, mitte + neueBreite / 2);
+        // Ganz herausgezoomt: den Zustand loswerden, damit die Ansicht
+        // wieder ohne Ausschnitt rechnet.
+        return g.bis - g.von >= ganzBisM - ganzVonM - 0.5 ? null : g;
+      });
     },
-    [sicht, ganzVonM, ganzBisM, grenzen],
+    [ganzVonM, ganzBisM, grenzen],
   );
 
   return {
     vonM: sicht?.von,
     bisM: sicht?.bis,
     gezoomt: sicht != null,
-    aufRad,
+    radAnschluss,
     aufZiehStart,
     aufZiehen,
     aufZiehEnde,

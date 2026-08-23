@@ -469,7 +469,10 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
         }}
       >
         <svg
-          onWheel={zoom.aufRad}
+          // Nicht `onWheel`: React bindet Rad-Ereignisse passiv, und dort
+          // ist `preventDefault()` wirkungslos — der Browser hätte die
+          // ganze Seite mitgezoomt. Siehe `radAnschluss`.
+          ref={zoom.radAnschluss}
           onMouseDown={zoom.aufZiehStart}
           onMouseMove={zoom.aufZiehen}
           onMouseUp={zoom.aufZiehEnde}
@@ -793,6 +796,22 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 fontFamily="monospace"
               >
                 {t("runway_v2.aim_point_prefix")} {props.aim_point_m?.toFixed(0)} m
+              </text>
+              {/* Was der Marker BEDEUTET, nicht nur wo er liegt.
+                  „AIM 400 m" allein sagt niemandem, dass dort das
+                  Aufsetzen geplant ist. Die Zeile stand in der Webapp-
+                  Fassung und fehlte hier — beim Zusammenführen der beiden
+                  Anzeigen wäre sie sonst lautlos verschwunden. */}
+              <text
+                x={aimX}
+                y={rwyBot + 32}
+                textAnchor="middle"
+                fontSize="9.5"
+                fill={TOKENS.aimMarker}
+                fontFamily="monospace"
+                opacity="0.85"
+              >
+                {t("runway_v2.aim_subtitle")}
               </text>
               <title>{t("runway_v2.tooltip_aim_point", { m: props.aim_point_m?.toFixed(0) })}</title>
             </g>

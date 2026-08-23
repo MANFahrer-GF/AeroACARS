@@ -3865,6 +3865,25 @@ struct FlightStats {
     /// auf 3,01 s ein — mitten in der Kurve, weil dort die Phase von
     /// `Landing` auf `TaxiIn` wechselt.
     bahn_spur_laeuft: bool,
+    /// Laengsposition, an der die Spur die Bahnkante gequert hat.
+    ///
+    /// # Warum das nicht dasselbe ist wie `bahn_raeum_laengs_m`
+    ///
+    /// Beides hiess bis hierher „Raeumpunkt", und die Anzeige hat es
+    /// auseinandergehalten, der Client nicht. Ein Flugzeug schwenkt
+    /// hunderte Meter vor der Ausfahrt nach aussen: `bahn_raeum_laengs_m`
+    /// markiert den Beginn dieses Ausschwenkens (Kursabweichung ueber
+    /// `BAHN_KURS_AUSFAHRT_GRAD`) — ab dort wird nicht mehr **bewertet**,
+    /// weil die seitliche Lage an der Anweisung des Lotsen haengt.
+    /// **Verlassen** hat das Flugzeug die Bahn erst hier, an der Kante.
+    ///
+    /// Die Anzeige braucht beide: die Marke „Bahn geraeumt" gehoert an
+    /// die Kante, die gestrichelte Linie beginnt am Ausschwenken. Mit nur
+    /// einem Wert sass die Marke mitten auf der Bahn.
+    bahn_kante_laengs_m: Option<f64>,
+    /// Fahrt beim Queren der Kante — die Groesse, die der Vertrag
+    /// `clearance_speed_kt` nennt („Geschwindigkeit dort").
+    bahn_kante_gs_kt: Option<f64>,
     /// v1.7.0 — wo die Bahn geraeumt wurde: Laengsposition in Metern.
     /// `None`, solange das Fenster nicht wegen einer Ausfahrt zuging.
     bahn_raeum_laengs_m: Option<f64>,
@@ -15707,8 +15726,21 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>) -> BahnFelder {
     let belag = landing_scoring::belag::belag_aus_angabe(rm.map(|m| m.surface.as_str()));
 
     BahnFelder {
-        clearance_point_m: stats.bahn_raeum_laengs_m,
-        clearance_speed_kt: stats.bahn_raeum_gs_kt,
+        // Zwei Punkte, zwei Bedeutungen — siehe `bahn_kante_laengs_m`.
+        //
+        // `clearance_point_m` ist die Stelle des VERLASSENS (Kante), denn
+        // dort setzt die Anzeige die Marke „Bahn geraeumt". Fehlt sie —
+        // etwa weil das Flugzeug auf der Bahn zum Stehen kam —, faellt sie
+        // auf den Beginn des Ausschwenkens zurueck; das ist dann der
+        // letzte belegte Punkt und keine Erfindung.
+        clearance_point_m: stats.bahn_kante_laengs_m.or(stats.bahn_raeum_laengs_m),
+        clearance_speed_kt: stats.bahn_kante_gs_kt.or(stats.bahn_raeum_gs_kt),
+        // Ab hier wird nicht mehr bewertet: der Beginn des Ausschwenkens.
+        // Ohne dieses Feld fiel die Bewertungsgrenze mit der Kante
+        // zusammen, und das Ausschwenken zaehlte als Fehler des Piloten —
+        // bei `0Ab3v9EvNN1LKZ8z` (EDDH 05) 21,95 m auf einer Bahn mit
+        // 23 m Halbbreite, gemessen unmittelbar vor dem Abbiegen.
+        scoring_cutoff_m: stats.bahn_raeum_laengs_m,
         clearance_side: stats.bahn_raeum_seite.clone(),
         track_width_m: spur_m,
         // Solange die Spurweite aus der Typtabelle kommt, ist die Quelle
@@ -15744,9 +15776,51 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>) -> BahnFelder {
     }
 }
 
+impl BahnFelder {
+    /// Dieselben Werte, fuer die Leitung.
+    ///
+    /// **Der Client rechnet, der Server zeigt an.** Diese Funktion ist die
+    /// einzige Uebersetzung zwischen beiden Welten; wer ein Feld ergaenzt,
+    /// ergaenzt es hier und ist an allen Stellen fertig.
+    ///
+    /// Leere Spuren werden zu `None`, nicht zu `Some(vec![])`: Eine leere
+    /// Liste sieht in der Anzeige aus wie eine Messung, die nichts
+    /// gefunden hat, und ist von „nicht erfasst" nicht zu unterscheiden.
+    fn wire(&self) -> aeroacars_mqtt::BahnWire {
+        aeroacars_mqtt::BahnWire {
+            clearance_point_m: self.clearance_point_m,
+            scoring_cutoff_m: self.scoring_cutoff_m,
+            clearance_speed_kt: self.clearance_speed_kt,
+            clearance_side: self.clearance_side.clone(),
+            track_width_m: self.track_width_m,
+            track_width_source: self.track_width_source.clone(),
+            wingspan_m: self.wingspan_m,
+            runway_width_m: self.runway_width_m,
+            min_edge_clearance_m: self.min_edge_clearance_m,
+            max_lateral_offset_m: self.max_lateral_offset_m,
+            lateral_samples: if self.lateral_samples.is_empty() {
+                None
+            } else {
+                Some(
+                    self.lateral_samples
+                        .iter()
+                        .map(|s| aeroacars_mqtt::LateralSampleWire {
+                            laengs_m: s.laengs_m,
+                            quer_m: s.quer_m,
+                        })
+                        .collect(),
+                )
+            },
+            surface_paved: self.surface_paved,
+            overrun_m: self.overrun_m,
+        }
+    }
+}
+
 /// Traeger der abgeleiteten Bahndisziplin-Werte — siehe `bahn_felder`.
 struct BahnFelder {
     clearance_point_m: Option<f64>,
+    scoring_cutoff_m: Option<f64>,
     clearance_speed_kt: Option<f64>,
     clearance_side: Option<String>,
     track_width_m: Option<f64>,
@@ -15953,6 +16027,7 @@ where
 
     Some(LandingRecord {
         clearance_point_m: bahn.clearance_point_m,
+        scoring_cutoff_m: bahn.scoring_cutoff_m,
         clearance_speed_kt: bahn.clearance_speed_kt,
         clearance_side: bahn.clearance_side,
         track_width_m: bahn.track_width_m,
@@ -18046,7 +18121,7 @@ async fn flight_end(
     );
     // ONE path for every arrival, divert included.
     //
-    // Until v1.6.15 a divert took a separate route: it never called /file and
+    // Until v1.7.0 a divert took a separate route: it never called /file and
     // instead mass-assigned state=PENDING through the update endpoint, so the
     // VA admin had to release it by hand. That skipped `PirepService::submit()`
     // and with it EVERYTHING hanging off the `PirepFiled` event — phpVMS' own
@@ -18709,7 +18784,13 @@ async fn flight_end_manual(
         // manuellen Filen `100` in der Spalte, waehrend Custom-Field und
         // Landungs-Tab "B (acceptable) — 78/100" zeigten.
         let score = canonical_landing_verdict(&flight, &stats, effective_arr).map(|v| v.numeric);
-        let fields = build_pirep_fields(&flight, &stats, effective_arr);
+        let mut fields = build_pirep_fields(&flight, &stats, effective_arr);
+        // Same rule as the regular path: the divert airport travels in the
+        // custom field phpVMS keys on (slug `diversion-airport`), never in
+        // `arr_airport_id`. One semantic for both filing paths.
+        if let Some(actual) = divert_to.as_deref() {
+            fields.insert("Diversion Airport".to_string(), actual.trim().to_uppercase());
+        }
         let mut notes = build_pirep_notes(&flight, &stats, effective_arr);
         notes.push_str("\n\n[MANUAL FILE — auto-validation bypassed by pilot.]");
         if let Some(divert) = divert_to
@@ -18790,14 +18871,10 @@ async fn flight_end_manual(
             notes: Some(notes),
             fares,
             fields: Some(fields),
-            // The manual flow already had a `divert_to` parameter for
-            // notes — pre-fix it only annotated the notes block and left
-            // the admin to update arr_airport_id by hand. Now we override
-            // the field directly too, same way the auto-divert flow does.
-            arr_airport_id: divert_to
-                .as_ref()
-                .map(|s| s.trim().to_uppercase())
-                .filter(|s| !s.is_empty()),
+            // Left to phpVMS, exactly like the regular path: it rewrites the
+            // arrival out of the `Diversion Airport` field above and keeps the
+            // planned destination as `alt_airport_id`.
+            arr_airport_id: None,
             // Block times — incl. the manual overrides applied to `stats`
             // above. Until now the overrides only annotated the notes block;
             // the values themselves never reached phpVMS.
@@ -18808,7 +18885,7 @@ async fn flight_end_manual(
                 .map(|t| t.to_rfc3339()),
         }
     };
-    // Flip the PIREP `source` to MANUAL (1) before submitting. PhpVMS's
+    // Flip the PIREP `source` to MANUAL (0) before submitting. PhpVMS's
     // PirepService::submit() decides ACCEPTED-vs-PENDING based on
     // (source, rank.auto_approve_acars, rank.auto_approve_manual). With
     // source=MANUAL and the VA having `auto_approve_manual=false` on the
@@ -18883,12 +18960,11 @@ async fn flight_end_manual(
             // Forensik-Logfile hoch. Vorher tat dieser Pfad keins von
             // beidem → manuell gefilte Flüge (z.B. Diverts) fehlten
             // dauerhaft in den VPS-Reports und es gab kein Logfile.
-            // `effective_arr` = das Divert-ICAO falls gesetzt (steht
-            // schon uppercase im `body.arr_airport_id`), sonst das
+            // `effective_arr` = das Divert-ICAO falls gesetzt (der Aufruf
+            // normalisiert es oben auf Grossbuchstaben), sonst das
             // geplante Ziel.
             {
-                let effective_arr = body
-                    .arr_airport_id
+                let effective_arr = divert_to
                     .as_deref()
                     .unwrap_or(&flight.arr_airport);
                 let mut pirep_payload = build_pirep_payload(
@@ -24995,6 +25071,21 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             // voll bepunktet; Bahn-Auslastung auf die echte
                             // genutzte Strecke umgestellt.
                             score_algorithm_version: Some(9),
+                            // ── v1.7.0 Bahndisziplin ─────────────────
+                            //
+                            // Dieselbe Ableitung wie fuer die Anzeige im
+                            // Client: `bahn_felder()` ist die eine Stelle,
+                            // an der aus dem Rollout-Fenster Zahlen
+                            // werden. Der Server rechnet nichts nach — er
+                            // bekaeme aus groberen Daten zwangslaeufig
+                            // andere Werte, und zwei Zahlen fuer dieselbe
+                            // Landung sind schlimmer als eine fehlende.
+                            bahn: bahn_felder(
+                                &stats,
+                                Some(flight.aircraft_icao.as_str())
+                                    .filter(|s| !s.is_empty()),
+                            )
+                            .wire(),
                         }
                     })
                 };
@@ -27058,6 +27149,29 @@ fn spur_fortschreiben(
         return;
     }
     stats.bahn_spur_laeuft = true;
+
+    // Der Kantenuebertritt: einmal, beim ersten Mal.
+    //
+    // Interpoliert zwischen dem letzten Punkt innerhalb und diesem hier —
+    // sonst laege die Marke bis zu zehn Meter daneben, und zwar immer
+    // ausserhalb, weil die Aufzeichnung erst nach dem Uebertritt misst.
+    if stats.bahn_kante_laengs_m.is_none() && quer_m.abs() > halbe_breite_m {
+        stats.bahn_kante_laengs_m = Some(
+            match stats.bahn_spur.last() {
+                Some((lg, qr)) if (*qr as f64).abs() <= halbe_breite_m => {
+                    let spanne = quer_m.abs() - (*qr as f64).abs();
+                    if spanne > 1e-6 {
+                        let t = (halbe_breite_m - (*qr as f64).abs()) / spanne;
+                        *lg as f64 + t * (laengs_m - *lg as f64)
+                    } else {
+                        laengs_m
+                    }
+                }
+                _ => laengs_m,
+            },
+        );
+        stats.bahn_kante_gs_kt = Some(snap.groundspeed_kt as f64);
+    }
     // Der Abstand, wie er GEZEICHNET wird — nicht wie er gefahren wurde.
     //
     // Zwei Fehler stecken hier hintereinander, beide von Thomas gefunden:
@@ -39115,6 +39229,106 @@ mod flight_cancel_outcome_wire_format_tests {
         let json: serde_json::Value = serde_json::to_value(v).unwrap();
         assert_eq!(json["kind"], "cancelled");
         assert_eq!(json["pirep_id"], "pirep_789");
+    }
+}
+
+#[cfg(test)]
+mod divert_filing_contract_tests {
+    //! A divert is a normal arrival at a different field.
+    //!
+    //! Until v1.7.0 it was not: `flight_end` had a second, parallel filing path
+    //! that never called `/file` and instead mass-assigned `state=PENDING`
+    //! through the update endpoint. Two things followed from that, and both bit
+    //! on 23.08.2026 (EJA9 EHAM->EDSB, gear failure, back to EHAM):
+    //!
+    //!  * Nothing hanging off phpVMS' `PirepFiled` event ever ran — not its own
+    //!    divert bookkeeping, not the bid cleanup, not the integrity gate, and
+    //!    not the per-rank auto-approve. The PIREP sat waiting for an admin and
+    //!    the pilot was locked out of the dispatch hub for an hour.
+    //!  * It depended on phpVMS forwarding unvalidated request input straight
+    //!    into mass-assignment — an upstream internal, not a contract.
+    //!
+    //! These are source-text invariants, in the same spirit as
+    //! `display_and_filing_paths_never_read_raw_vs_fields`: the rule stood in a
+    //! comment before and a comment enforces nothing.
+
+    const SRC: &str = include_str!("lib.rs");
+
+    /// Body of one filing path, comment lines dropped — comments may well name
+    /// the forbidden shapes, they are what explains them.
+    fn filing_path(from: &str, to: &str) -> String {
+        let start = SRC
+            .find(from)
+            .unwrap_or_else(|| panic!("Filing-Pfad nicht mehr gefunden: {from} — Test anpassen, nicht loeschen"));
+        let rest = &SRC[start..];
+        let end = rest
+            .find(to)
+            .unwrap_or_else(|| panic!("Ende des Filing-Pfads nicht mehr gefunden: {to}"));
+        rest[..end]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn regulaerer_pfad() -> String {
+        filing_path("async fn flight_end(", "async fn flight_end_manual(")
+    }
+
+    fn manueller_pfad() -> String {
+        filing_path("async fn flight_end_manual(", "\nasync fn flight_resume_check_position(")
+    }
+
+    #[test]
+    fn divert_reist_im_feld_nicht_in_arr_airport_id() {
+        // phpVMS keys its divert handling on the custom field whose slug is
+        // `diversion-airport`, derived from the field NAME. Overriding
+        // arr_airport_id ourselves on top of it makes phpVMS rewrite the divert
+        // airport to itself and file it as its own alternate.
+        for (name, body) in [("flight_end", regulaerer_pfad()), ("flight_end_manual", manueller_pfad())] {
+            assert!(
+                body.contains(r#"fields.insert("Diversion Airport""#),
+                "{name} schickt das Divert-Feld nicht mehr mit — phpVMS erfaehrt \
+                 dann nichts von der Ausweichlandung (kein alt_airport_id, \
+                 Flugzeug und Pilot bleiben am geplanten Ziel stehen)."
+            );
+            assert!(
+                !body.contains("arr_airport_id: divert_to"),
+                "{name} ueberschreibt arr_airport_id wieder selbst. Zusammen mit \
+                 dem Divert-Feld schreibt phpVMS daraus EHAM->EHAM."
+            );
+        }
+    }
+
+    #[test]
+    fn kein_zweiter_filing_weg_am_file_endpunkt_vorbei() {
+        let body = regulaerer_pfad();
+        assert!(
+            !body.contains("state: Some(1)"),
+            "flight_end setzt den PIREP-Status wieder von Hand auf PENDING. Genau \
+             das hat den Piloten am 23.08.2026 eine Stunde ausgesperrt: ohne \
+             /file feuert PirepFiled nie, also laeuft weder die Divert-Behandlung \
+             noch der Auto-Approve nach Rang."
+        );
+        assert!(
+            !body.contains("pirep_source::MANUAL"),
+            "flight_end faelscht die PIREP-Quelle wieder auf MANUAL, um am \
+             Auto-Approve vorbeizukommen. Ein Divert braucht keine Freigabe."
+        );
+        assert_eq!(
+            body.matches("file_pirep_with_retry(").count(),
+            1,
+            "es darf genau EINEN Aufruf des /file-Endpunkts in flight_end geben — \
+             Divert und normale Ankunft laufen denselben Weg."
+        );
+    }
+
+    #[test]
+    fn quellen_konstanten_stimmen_mit_phpvms_ueberein() {
+        // phpVMS App\Enums\PirepSource. Waren bis v1.7.0 vertauscht, wodurch
+        // jedes "auf MANUAL setzen" in Wahrheit ACARS schrieb.
+        assert_eq!(api_client::pirep_source::MANUAL, 0);
+        assert_eq!(api_client::pirep_source::ACARS, 1);
     }
 }
 
