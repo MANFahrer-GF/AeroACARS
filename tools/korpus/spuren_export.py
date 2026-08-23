@@ -102,6 +102,38 @@ def spur(pid, icao, ident):
         if len(punkte) >= MAX_PUNKTE: break
         if not punkte or abs(lg - punkte[-1]["laengs_m"]) >= MIN_ABSTAND_M:
             punkte.append(dict(laengs_m=round(lg,1), quer_m=round(q,2)))
+    # ── Raeumpunkt und Bewertungsgrenze ──────────────────────────────
+    #
+    # Zwei verschiedene Stellen, und sie duerfen nicht verwechselt werden:
+    #
+    #   kante_m  Wo die Spur die Bahnkante ueberschreitet und NICHT
+    #            zurueckkommt. Das ist „Bahn geraeumt". Die blosse
+    #            Ueberschreitung reicht nicht: Bei raKOnJD1XgNbP06q
+    #            (EDDH 23) brach das Flugzeug mitten auf der Bahn auf
+    #            26,9 m aus -- jenseits der 23-m-Kante -- und kam zurueck.
+    #            Das ist der Befund, um den es geht, aber keine Ausfahrt.
+    #
+    #   m        Wo das Ausschwenken BEGANN. Ab hier wird nicht mehr
+    #            bewertet, denn ein Flugzeug zieht Hunderte Meter vor der
+    #            Ausfahrt nach aussen. Gemessen an 0Ab3v9EvNN1LKZ8z
+    #            (EDDH 05): Mit der Kante als Grenze wurden 21,95 m
+    #            gemeldet, direkt vor dem Raeumpunkt, auf einer Bahn mit
+    #            23 m Halbbreite -- das war schon das Abrollen.
+    if raeum is None:
+        for i in range(1, len(punkte)):
+            if abs(punkte[i]["quer_m"]) > halbe and abs(punkte[i-1]["quer_m"]) <= halbe:
+                if all(abs(x["quer_m"]) > halbe for x in punkte[i:]):
+                    # Rueckwaerts, solange der Betrag monoton faellt: Der
+                    # erste Punkt, an dem er wieder steigt, ist der
+                    # Umkehrpunkt -- dort begann das Ausschwenken.
+                    j = i
+                    while j > 0 and abs(punkte[j-1]["quer_m"]) < abs(punkte[j]["quer_m"]):
+                        j -= 1
+                    raeum = dict(m=punkte[j]["laengs_m"], kt=None,
+                                 kante_m=punkte[i]["laengs_m"],
+                                 seite=("right" if punkte[i]["quer_m"] > 0 else "left"))
+                    break
+
     return dict(pirep=pid, icao=icao, rwy=ident, titel=titel, lda_m=round(lda,1),
                 breite_m=round((g["width_ft"] or 0)*0.3048,1), belag=g["surface"],
                 dds_ft=g["dds_ft"], raeum=raeum, punkte=punkte)
