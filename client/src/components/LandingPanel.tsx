@@ -117,6 +117,19 @@ export interface LandingRecord {
   approach_vs_stddev_fpm: number | null;
   approach_bank_stddev_deg: number | null;
   rollout_distance_m: number | null;
+  // ── v1.7.0 Bahndisziplin ──────────────────────────────────────────
+  // Optional, weil Fluege von vor v1.7.0 sie nicht haben. Die Anzeige
+  // zeigt das ehrlich an, statt eine leere Querachse zu malen.
+  clearance_point_m?: number | null;
+  clearance_speed_kt?: number | null;
+  clearance_side?: "left" | "right" | null;
+  track_width_m?: number | null;
+  track_width_source?: "type_table" | "aircraft_file" | null;
+  min_edge_clearance_m?: number | null;
+  max_lateral_offset_m?: number | null;
+  lateral_samples?: Array<{ laengs_m: number; quer_m: number }> | null;
+  surface_paved?: boolean | null;
+  overrun_m?: number | null;
 
   planned_block_fuel_kg: number | null;
   planned_burn_kg: number | null;

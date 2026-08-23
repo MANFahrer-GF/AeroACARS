@@ -150,6 +150,49 @@ const TABELLE: &[(&str, f64)] = &[
     ("GLF6", 4.30),
     ("P180", 3.30),
     ("SF50", 3.20),
+    // ── Nachtrag aus dem Korpus-Lauf 23.08.2026 ───────────────────────
+    // Diese Muster tauchten im Bestand auf und fehlten. Ohne sie entfiel die
+    // seitliche Bewertung — im ersten Lauf waren das 27,8 % aller Landungen.
+    ("A306", 10.69),  // A300-600
+    ("A310", 10.69),
+    ("A30B", 10.69),
+    ("A400", 8.50),   // A400M
+    ("F28", 5.80),    // Fokker F28
+    ("F70", 5.04),
+    ("F100", 5.04),
+    ("C750", 5.61),   // Citation X
+    ("HA4T", 3.00),   // HondaJet HA-420
+    ("AC11", 2.90),   // Commander 114
+    ("AEST", 3.30),   // Aerostar
+    ("PA24", 3.10),   // Comanche
+    ("PA34", 3.60),   // Seneca
+    ("PA44", 3.20),   // Seminole
+    ("BE24", 3.00),   // Sierra
+    ("BE36", 3.10),   // Bonanza A36
+    ("BE33", 3.00),
+    ("BE9L", 4.30),   // King Air 90
+    ("B350", 5.30),   // King Air 350
+    ("C25M", 3.30),
+    ("C56X", 5.28),   // Citation Excel
+    ("C525", 3.20),
+    ("E50P", 3.20),   // Phenom 100
+    ("LJ35", 2.50),
+    ("LJ45", 2.60),
+    ("H25B", 3.10),   // Hawker 800
+    ("EA50", 2.20),   // Eclipse
+    ("SR20", 2.70),
+    ("C210", 3.10),
+    ("C206", 2.80),
+    ("C185", 2.50),
+    ("PC12", 4.50),
+    ("PC24", 4.20),
+    ("TBM8", 3.90),
+    ("DHC6", 4.30),   // Twin Otter
+    ("DHC2", 3.30),   // Beaver
+    ("AN2", 3.36),
+    ("RV10", 2.70),
+    ("M20P", 2.70),   // Mooney
+    ("BL8", 1.80),    // Bellanca Decathlon
     // ── Leichtflugzeuge ───────────────────────────────────────────────
     ("C152", 2.30),
     ("C172", 2.50),
@@ -213,7 +256,10 @@ mod tests {
         // Kein Wert darf ausserhalb des physikalisch Sinnvollen liegen.
         for (code, m) in TABELLE {
             assert!(
-                (2.0..=16.0).contains(m),
+                // Untergrenze 1,5 m: die Bellanca Decathlon hat real 1,80 m.
+                // Die Schranke prueft Tippfehler, nicht die Physik kleiner
+                // Muster.
+                (1.5..=16.0).contains(m),
                 "{code}: {m} m ist keine plausible Spurweite"
             );
         }

@@ -26835,7 +26835,24 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     // auch dann, wenn er vorher schon abgebogen waere.
     let nutzbare_laenge_m =
         (rm.length_ft as f64 - effective_displaced_threshold_ft(rm) as f64) / 3.280_839_895;
-    if nutzbare_laenge_m > 300.0 && laengs_m > nutzbare_laenge_m && snap.groundspeed_kt > 15.0 {
+    // Seitliche Schranke: Ohne sie zaehlt jedes Rollen zum Terminal als
+    // Overrun, sobald die Projektion hinter dem Bahnende landet. Im
+    // Korpus-Export waren das 506 von 802 Landungen — offensichtlicher Unsinn,
+    // der hier ebenso zugeschlagen haette, sobald `rollout_finalized` einmal
+    // nicht greift.
+    // Overrun heisst: beim AUSROLLEN geradeaus ueber das Ende geschossen —
+    // nicht irgendwann spaeter hinter dem Bahnende gerollt. Deshalb nur
+    // solange das Messfenster offen ist und die Spur auf der Bahnachse liegt.
+    // Ohne diese Einschraenkung meldete der Korpus-Export 506 von 802
+    // Landungen als Overrun (jedes Rollen zum Terminal), mit reiner
+    // Seitenschranke immer noch 72.
+    let halbe_breite_m = (rm.width_ft as f64 * 0.3048 / 2.0).max(15.0);
+    if !stats.bahn_fenster_zu
+        && nutzbare_laenge_m > 300.0
+        && laengs_m > nutzbare_laenge_m
+        && snap.groundspeed_kt > 15.0
+        && quer_m.abs() <= halbe_breite_m + 10.0
+    {
         let ueber = laengs_m - nutzbare_laenge_m;
         stats.bahn_overrun_m = Some(stats.bahn_overrun_m.unwrap_or(0.0).max(ueber));
     }

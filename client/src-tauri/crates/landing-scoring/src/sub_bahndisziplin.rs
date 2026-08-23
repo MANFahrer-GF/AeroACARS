@@ -66,6 +66,22 @@ const ANTEIL_AUSSEN: f64 = 0.90;
 /// entscheidet die Datenquelle über die Note, nicht der Pilot.
 const KANTEN_TOLERANZ_M: f64 = 1.5;
 
+/// Ab wie weit jenseits der Kante die Messung als **fragwürdig** gilt.
+///
+/// Ein Rad kann neben der Bahn laufen — aber nicht 30 m daneben, ohne dass das
+/// Flugzeug längst im Gelände stünde. Wer dort landet, hat kein
+/// Bahndisziplin-Problem, sondern die Messung hat eins: falsch zugeordnete
+/// Parallelbahn, unsauberer Bahn-Match, kaputte Geometrie.
+///
+/// **Gemessen am Korpus (802 Landungen, 23.08.2026):** Die Extremfälle waren
+/// 513 m Versatz auf EDDH 15, 56,9 m auf LGKO 32 und 52,6 m auf EDDL 23L — eine
+/// Bahn mit Parallelbahn. Ohne diese Schranke bekämen genau diese Piloten
+/// 20 Punkte für einen Fehler, den nicht sie gemacht haben.
+///
+/// Jenseits der Schranke wird **übersprungen**, nicht bewertet — nach demselben
+/// Grundsatz wie überall: Datenmangel darf nie zur härteren Note führen.
+const MESSUNG_FRAGWUERDIG_AB_M: f64 = 30.0;
+
 /// Eingabe der Bahndisziplin-Achse.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BahndisziplinInput {
@@ -153,6 +169,12 @@ pub fn sub_bahndisziplin(input: &BahndisziplinInput) -> SubScoreEntry {
 
     // ── Lage des äusseren Rades ──────────────────────────────────────
     let halbe = breite / 2.0;
+
+    // Plausibilität vor Bewertung: siehe MESSUNG_FRAGWUERDIG_AB_M.
+    if versatz.abs() > halbe + MESSUNG_FRAGWUERDIG_AB_M {
+        return SubScoreEntry::skipped(KEY, LABEL, "implausible_lateral_track");
+    }
+
     let aussenkante_m = versatz.abs() + spur / 2.0;
     let anteil = aussenkante_m / halbe;
     let rand_abstand_m = halbe - aussenkante_m;
@@ -280,6 +302,23 @@ mod tests {
         assert!(r.skipped);
         assert_eq!(r.reason.as_deref(), Some("unpaved_runway"));
         assert_eq!(r.points, 0, "Skip erzeugt keine Note");
+    }
+
+    #[test]
+    fn unmoegliche_messwerte_werden_nicht_bestraft() {
+        // Aus dem Korpus: 513 m Versatz auf EDDH 15, 56,9 m auf LGKO 32,
+        // 52,6 m auf EDDL 23L (Bahn mit Parallelbahn). Das ist kein Rad
+        // neben der Bahn, das ist ein Bahn-Match-Fehler.
+        for versatz in [52.6, 56.9, 513.0, -60.0] {
+            let r = sub_bahndisziplin(&eham06(versatz));
+            assert!(r.skipped, "{versatz} m ist keine Landung, sondern ein Messfehler");
+            assert_eq!(r.reason.as_deref(), Some("implausible_lateral_track"));
+            assert_eq!(r.points, 0, "Skip erzeugt keine Note");
+        }
+        // Direkt darunter wird weiter bewertet — die Schranke ist grosszuegig,
+        // nicht willkuerlich.
+        let grenzfall = sub_bahndisziplin(&eham06(50.0));
+        assert!(!grenzfall.skipped, "50 m liegen noch innerhalb der Schranke");
     }
 
     #[test]

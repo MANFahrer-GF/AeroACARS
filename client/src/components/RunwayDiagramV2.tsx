@@ -61,6 +61,18 @@ export interface RunwayDiagramV2Props {
 
   // Optional Aircraft-Daten für die Landeeinschätzung. Wenn nichts
   // gesetzt → FLUGZEUG-Pill wird nicht gerendert.
+  // ── v1.7.0 Bahndisziplin (siehe docs/spec/runway-diagram-v2.contract.md) ──
+  clearance_point_m?: number | null;
+  clearance_speed_kt?: number | null;
+  clearance_side?: "left" | "right" | null;
+  track_width_m?: number | null;
+  track_width_source?: "type_table" | "aircraft_file" | null;
+  min_edge_clearance_m?: number | null;
+  max_lateral_offset_m?: number | null;
+  lateral_samples?: Array<{ laengs_m: number; quer_m: number }> | null;
+  surface_paved?: boolean | null;
+  overrun_m?: number | null;
+
   aircraft_icao?: string | null;
   aircraft_title?: string | null;
   aircraft_registration?: string | null;

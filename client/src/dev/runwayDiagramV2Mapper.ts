@@ -67,6 +67,21 @@ export function mapLandingRecordToV2Props(
     tch_class: (record.tch_class ?? null) as TchClass | null,
     pre_displaced_threshold: record.pre_displaced_threshold ?? null,
     rollout_m: record.rollout_distance_m ?? null,
+    // ── v1.7.0 Bahndisziplin ──────────────────────────────────────────
+    // Alle optional: Fluege von vor v1.7.0 haben sie nicht. Die Anzeige
+    // muss das ehrlich zeigen ("fuer diesen Flug nicht erfasst") statt eine
+    // leere Querachse zu malen, die wie ein Messwert aussieht.
+    clearance_point_m: record.clearance_point_m ?? null,
+    clearance_speed_kt: record.clearance_speed_kt ?? null,
+    clearance_side: (record.clearance_side ?? null) as "left" | "right" | null,
+    track_width_m: record.track_width_m ?? null,
+    track_width_source:
+      (record.track_width_source ?? null) as "type_table" | "aircraft_file" | null,
+    min_edge_clearance_m: record.min_edge_clearance_m ?? null,
+    max_lateral_offset_m: record.max_lateral_offset_m ?? null,
+    lateral_samples: record.lateral_samples ?? null,
+    surface_paved: record.surface_paved ?? null,
+    overrun_m: record.overrun_m ?? null,
     // Aircraft-Daten für die Landeeinschätzung
     aircraft_icao: record.aircraft_icao ?? null,
     aircraft_title: record.aircraft_title ?? null,
