@@ -15746,6 +15746,49 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>) -> BahnFelder {
 
     let belag = landing_scoring::belag::belag_aus_angabe(rm.map(|m| m.surface.as_str()));
 
+    // ── Der Kantenuebertritt, aus der GANZEN Spur ────────────────────────
+    //
+    // `bahn_kante_laengs_m` entsteht live, beim ersten Uebertritt nach dem
+    // Schliessen des Messfensters. Live laesst sich nicht wissen, ob das
+    // Flugzeug draussen BLEIBT — und genau darauf kommt es an: Ein
+    // Ausbrechen ueber die Kante mit anschliessender Korrektur ist kein
+    // Raeumen der Bahn.
+    //
+    // Hier liegt die ganze Spur vor, also wird die Stelle nachgerechnet:
+    // der erste Uebertritt, nach dem kein Punkt mehr innerhalb liegt.
+    //
+    // Am Korpus gemessen (772 Landungen, bei denen beide Regeln ein
+    // Ergebnis liefern): 763 stimmen ueberein, **neun weichen ab** — und
+    // zwar erheblich, bei HAGN 35 um 1533 m (2616 gegen 1083). Dort
+    // markierte die Live-Regel ein Ausbrechen als Ausfahrt.
+    //
+    // Dieselbe Regel benutzt das Pruefwerkzeug `tools/korpus/spuren_export.py`.
+    // Zwei Stellen, eine Regel — sonst misst der Korpus etwas anderes als
+    // der Client tut, und alle daraus abgeleiteten Zahlen sind schief.
+    let kante_aus_spur = breite_m.and_then(|b| {
+        let halbe = b / 2.0;
+        let spur = &stats.bahn_spur;
+        (1..spur.len()).find_map(|i| {
+            let drin_davor = (spur[i - 1].1 as f64).abs() <= halbe;
+            let draussen = (spur[i].1 as f64).abs() > halbe;
+            let bleibt_draussen =
+                spur[i..].iter().all(|(_, q)| (*q as f64).abs() > halbe);
+            (drin_davor && draussen && bleibt_draussen).then(|| spur[i].0 as f64)
+        })
+    });
+
+    // Die Fahrt gehoert zu der Stelle, an der sie gemessen wurde.
+    //
+    // Verschiebt die Nachrechnung den Uebertritt, passt der live gemessene
+    // Wert nicht mehr dorthin — die Spur traegt keine Geschwindigkeit, also
+    // gibt es fuer die neue Stelle keine. Dann lieber nichts als eine Zahl,
+    // die zu einem anderen Punkt gehoert.
+    let kante_m = kante_aus_spur.or(stats.bahn_kante_laengs_m);
+    let kante_gs = match (kante_m, stats.bahn_kante_laengs_m, stats.bahn_kante_gs_kt) {
+        (Some(k), Some(live), Some(gs)) if (k - live).abs() < 25.0 => Some(gs),
+        _ => None,
+    };
+
     // Die Ausfahrten aus der Bodenkarte, die der Anflug ohnehin geladen hat.
     //
     // Ohne Karte bleibt die Liste leer — das ist NICHT dasselbe wie „diese
@@ -15779,8 +15822,8 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>) -> BahnFelder {
         // etwa weil das Flugzeug auf der Bahn zum Stehen kam —, faellt sie
         // auf den Beginn des Ausschwenkens zurueck; das ist dann der
         // letzte belegte Punkt und keine Erfindung.
-        clearance_point_m: stats.bahn_kante_laengs_m.or(stats.bahn_raeum_laengs_m),
-        clearance_speed_kt: stats.bahn_kante_gs_kt.or(stats.bahn_raeum_gs_kt),
+        clearance_point_m: kante_m.or(stats.bahn_raeum_laengs_m),
+        clearance_speed_kt: kante_gs.or(stats.bahn_raeum_gs_kt),
         // Ab hier wird nicht mehr bewertet: der Beginn des Ausschwenkens.
         // Ohne dieses Feld fiel die Bewertungsgrenze mit der Kante
         // zusammen, und das Ausschwenken zaehlte als Fehler des Piloten —
@@ -45967,6 +46010,59 @@ mod v0_16_6_bush_completeness_tests {
                 aussen > spur / 2.0,
                 "die Aussenkante liegt nicht weiter aussen als die Bein-Mitte — \
                  rechnet die Anzeige noch mit `spur / 2.0`?"
+            );
+        }
+
+        // Ein Ausbrechen ueber die Kante ist kein Raeumen der Bahn.
+        //
+        // Live laesst sich nicht wissen, ob das Flugzeug draussen BLEIBT.
+        // `bahn_felder` rechnet die Stelle darum aus der ganzen Spur nach —
+        // dieselbe Regel, die auch das Pruefwerkzeug benutzt.
+        //
+        // Am Korpus gemessen: 763 von 772 Landungen stimmen mit der
+        // Live-Regel ueberein, neun weichen ab. Bei HAGN 35 um 1533 Meter.
+        {
+            let mut stats = FlightStats::default();
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0, // halbe Breite 23,0 m
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636011,
+                threshold_lon: 9.999656,
+                end_lat: 53.619958,
+                end_lon: 9.967167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+            // Ausbrechen bei 800 m (26 m quer), zurueck auf die Bahn,
+            // echte Ausfahrt erst bei 1600 m.
+            stats.bahn_spur = vec![
+                (600.0, -2.0),
+                (800.0, -26.0), // Ausbrechen — jenseits der Kante
+                (900.0, -8.0),  // wieder drauf
+                (1500.0, -12.0),
+                (1600.0, -25.0), // ab hier bleibt es draussen
+                (1650.0, -60.0),
+            ];
+            // Die Live-Messung haette das Ausbrechen erwischt.
+            stats.bahn_kante_laengs_m = Some(800.0);
+            stats.bahn_kante_gs_kt = Some(70.0);
+
+            let f = bahn_felder(&stats, Some("A320"));
+            assert_eq!(
+                f.clearance_point_m,
+                Some(1600.0),
+                "das Ausbrechen bei 800 m wird als Raeumpunkt gemeldet"
+            );
+            assert!(
+                f.clearance_speed_kt.is_none(),
+                "die Fahrt vom Ausbrechen gehoert nicht an die neue Stelle"
             );
         }
 

@@ -137,6 +137,23 @@ def spur(pid, icao, ident):
     #            (EDDH 05): Mit der Kante als Grenze wurden 21,95 m
     #            gemeldet, direkt vor dem Raeumpunkt, auf einer Bahn mit
     #            23 m Halbbreite -- das war schon das Abrollen.
+    # Die KANTE wird immer aus der ganzen Spur bestimmt, auch wenn der
+    # Kurswechsel schon einen Raeumpunkt geliefert hat.
+    #
+    # Bis zur QS-Runde 19 lief dieser Block nur, wenn `raeum is None` —
+    # bei erkanntem Kurswechsel fehlte `kante_m` also ganz, und die Demo
+    # zeigte dort keinen Kantenuebertritt, waehrend der Client ihn liefert.
+    # Zwei Stellen, eine Regel: Der Client rechnet in `bahn_felder` genau
+    # dies nach (`kante_aus_spur`).
+    kante_aus_spur = None
+    for i in range(1, len(punkte)):
+        if abs(punkte[i]["quer_m"]) > halbe and abs(punkte[i-1]["quer_m"]) <= halbe:
+            if all(abs(x["quer_m"]) > halbe for x in punkte[i:]):
+                kante_aus_spur = punkte[i]["laengs_m"]
+                break
+    if raeum is not None and kante_aus_spur is not None:
+        raeum["kante_m"] = kante_aus_spur
+
     if raeum is None:
         for i in range(1, len(punkte)):
             if abs(punkte[i]["quer_m"]) > halbe and abs(punkte[i-1]["quer_m"]) <= halbe:
