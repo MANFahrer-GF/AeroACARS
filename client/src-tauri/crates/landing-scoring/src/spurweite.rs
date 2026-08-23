@@ -86,9 +86,19 @@ pub fn spannweite_m(icao: Option<&str>) -> Option<f64> {
 /// Muster. Sie ist bewusst grob und liegt eher zu klein als zu gross: Ein
 /// zu grosser Zuschlag würde Landungen als „neben der Bahn" melden, die es
 /// nicht waren. Die Kantentoleranz von 1,5 m (§5.4) deckt den Restfehler ab.
-pub fn aussenkante_halb_m(icao: Option<&str>) -> Option<f64> {
-    Some(aussenkante_halb_aus_spur(spurweite_m(icao)?))
-}
+// Hier stand ein `aussenkante_halb_m(icao)`, das die Spurweite selbst in
+// der Typtabelle nachschlug. Es ist entfernt, und zwar nicht nur weil es
+// niemand rief:
+//
+// Seit v1.7.0 kann die Spurweite aus der **Flugzeugdatei** stammen (Spec
+// §5.3 C) und weicht dann bewusst vom Realmuster ab. Eine Funktion, die
+// nur den ICAO-Code nimmt, kann diesen Wert gar nicht sehen — sie hätte
+// still die Tabelle benutzt, während die Anzeige daneben den Wert aus der
+// Datei zeigt. Zwei Zahlen für dieselbe Landung, und die bequemere von
+// beiden ist die falsche.
+//
+// Wer die Aussenkante braucht, hat eine Spurweite in der Hand und nimmt
+// `aussenkante_halb_aus_spur`.
 
 /// Wie `aussenkante_halb_m`, aber aus einer **gegebenen** Spurweite.
 ///
@@ -512,7 +522,7 @@ mod tests {
         // Bein-Mitte. Der Reifenrand liegt weiter draussen — bei der
         // 737-800 um 0,45 m, weil sie zwei Räder je Bein trägt.
         let spur = spurweite_m(Some("B738")).unwrap();
-        let aussen = aussenkante_halb_m(Some("B738")).unwrap();
+        let aussen = aussenkante_halb_aus_spur(spurweite_m(Some("B738")).unwrap());
         assert!((spur - 5.72).abs() < 0.01);
         assert!(
             (aussen - (2.86 + 0.45)).abs() < 0.01,
@@ -526,9 +536,9 @@ mod tests {
         // Ein Kleinflugzeug hat ein Rad je Bein, ein Verkehrsflugzeug zwei,
         // ein Grossraumflugzeug einen Bogie. Der Zuschlag muss dieser
         // Ordnung folgen — sonst bekaeme eine C172 denselben wie eine 747.
-        let c172 = aussenkante_halb_m(Some("C172")).unwrap() - spurweite_m(Some("C172")).unwrap() / 2.0;
-        let b738 = aussenkante_halb_m(Some("B738")).unwrap() - spurweite_m(Some("B738")).unwrap() / 2.0;
-        let b744 = aussenkante_halb_m(Some("B744")).unwrap() - spurweite_m(Some("B744")).unwrap() / 2.0;
+        let c172 = aussenkante_halb_aus_spur(spurweite_m(Some("C172")).unwrap()) - spurweite_m(Some("C172")).unwrap() / 2.0;
+        let b738 = aussenkante_halb_aus_spur(spurweite_m(Some("B738")).unwrap()) - spurweite_m(Some("B738")).unwrap() / 2.0;
+        let b744 = aussenkante_halb_aus_spur(spurweite_m(Some("B744")).unwrap()) - spurweite_m(Some("B744")).unwrap() / 2.0;
         assert!(c172 < b738, "{c172} < {b738}");
         assert!(b738 < b744, "{b738} < {b744}");
         // Und keiner ist so gross, dass er die Bewertung tragen wuerde:
@@ -569,8 +579,12 @@ mod tests {
     fn ohne_muster_keine_aussenkante() {
         // Dieselbe Regel wie bei der Spurweite: Im Zweifel nichts, damit
         // die seitliche Bewertung sichtbar entfaellt statt zu raten.
-        assert_eq!(aussenkante_halb_m(Some("XXXX")), None);
-        assert_eq!(aussenkante_halb_m(None), None);
+        //
+        // Die Kette ist jetzt zweistufig — erst die Spurweite finden, dann
+        // die Aussenkante daraus rechnen. Ohne Muster endet sie schon im
+        // ersten Schritt, und der zweite wird gar nicht erreicht.
+        assert_eq!(spurweite_m(Some("XXXX")), None);
+        assert_eq!(spurweite_m(None), None);
     }
 
     #[test]
