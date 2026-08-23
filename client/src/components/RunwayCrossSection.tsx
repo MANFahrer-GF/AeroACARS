@@ -214,17 +214,26 @@ export function RunwayCrossSection(p: QueransichtProps) {
   const mittelPfad = gewertet.length >= 2 ? weicherPfad(gewertet) : null;
   const nachPfad = danach.length >= 2 ? weicherPfad(danach) : null;
 
-  // Farbe des Bandes nach dem kleinsten Randabstand — dieselbe Aussage wie
-  // die Note, nicht eine zweite.
+  // ── Farbe des Bandes — dieselbe Rangfolge wie die Bewertung ──────────
+  //
+  // `sub_bahndisziplin` prüft das Überrollen VOR allen seitlichen Regeln
+  // und vergibt dafür null Punkte. Die Farbe muss derselben Ordnung folgen,
+  // sonst zeigt das Bild grün, während die Note rot ist: Bei Variante ④
+  // liegt der seitliche Randabstand bei 17,2 m — vorbildlich — und das
+  // Flugzeug ist trotzdem über das Bahnende geschossen.
+  //
+  // Erst danach zählt die seitliche Lage.
   const rand = p.minEdgeClearanceM;
-  const bandFarbe =
-    rand == null
-      ? p.tokens.rollout
-      : rand < 0
-      ? p.tokens.tdSevere
-      : rand < 3
-      ? p.tokens.tdWarn
-      : p.tokens.tdPerfect;
+  const ueberrollt = (p.overrunM ?? 0) > 0;
+  const bandFarbe = ueberrollt
+    ? p.tokens.tdSevere
+    : rand == null
+    ? p.tokens.rollout
+    : rand < 0
+    ? p.tokens.tdSevere
+    : rand < 3
+    ? p.tokens.tdWarn
+    : p.tokens.tdPerfect;
 
   // ── Marken ───────────────────────────────────────────────────────────
   const marken: Array<{ n: number; x: number; y: number; farbe: string }> = [

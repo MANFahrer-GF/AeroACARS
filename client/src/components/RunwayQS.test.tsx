@@ -275,6 +275,32 @@ describe("QS — Spur und Marken der Queransicht", () => {
     expect(befunde, befunde.join("\n")).toEqual([]);
   });
 
+  it("färbt ein Überrollen rot, egal wie mittig gefahren wurde", () => {
+    // `sub_bahndisziplin` prüft das Überrollen VOR allen seitlichen Regeln
+    // und vergibt null Punkte. Die Farbe muss derselben Ordnung folgen.
+    //
+    // Der Fall: Bei ④ liegt der seitliche Randabstand bei 17,2 m —
+    // vorbildlich mittig — und das Band war deshalb grün, während die Note
+    // null ist. Ein Bild, das grün zeigt und rot meint, ist schlimmer als
+    // gar keins.
+    const ROT = "#ef4444";
+    const befunde: string[] = [];
+    for (const v of VARIANTEN) {
+      if ((v.props.overrun_m ?? 0) <= 0 || v.svgs.length < 2) continue;
+      const quer = v.svgs[1]!;
+      const band = /<path[^>]*fill-opacity="0.22"[^>]*fill="([^"]+)"/.exec(quer)
+        ?? /<path[^>]*fill="([^"]+)"[^>]*fill-opacity="0.22"/.exec(quer);
+      if (!band) {
+        befunde.push(`${v.key}: kein Band gefunden`);
+        continue;
+      }
+      if (band[1] !== ROT) {
+        befunde.push(`${v.key}: Band ${band[1]} statt ${ROT} trotz ${v.props.overrun_m} m Überrollen`);
+      }
+    }
+    expect(befunde, befunde.join("\n")).toEqual([]);
+  });
+
   it("hält Muster und Spurweite konsistent", () => {
     // Der Kopf der Queransicht nennt beides nebeneinander. Passen sie
     // nicht zusammen, widerspricht sich die Anzeige selbst — „A321 ·
