@@ -11912,12 +11912,66 @@ async fn flight_start(
         .to_string();
     // v0.3.0: Aircraft-ICAO + Name aus dem expected_aircraft ziehen für
     // den PIREP-Custom-Field "Aircraft Type".
-    let aircraft_icao = expected_aircraft
+    //
+    // v1.7.0 (Spec §8.1b): Der Server ist die beste Quelle — er hat das
+    // Flugzeug über seine ID aufgelöst und kennt den Typ aus dem Datensatz
+    // der Registrierung. Liefert er ihn ausnahmsweise NICHT, darf hier kein
+    // leerer String stehenbleiben: `flight.aircraft_icao` ist die Quelle für
+    // die gesamte Bewertung, und leer bedeutet dort „Light-Kategorie" statt
+    // „unbekannt". MPH 9 (22.08.2026) kostete das 25 Punkte — PH-MCU steht in
+    // der Datenbank mit `icao = MD11`, im aktiven Flug kam trotzdem nichts an.
+    //
+    // Deshalb zwei Dinge: der Titel des tatsächlich geladenen Flugzeugs als
+    // Netz, und eine sichtbare Meldung im Aktivitätsprotokoll. Ein stiller
+    // Rückfall ist genau der Fehler, den wir gerade beheben.
+    let aircraft_icao = match expected_aircraft
         .icao
         .as_deref()
-        .unwrap_or("")
-        .trim()
-        .to_string();
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(vom_server) => vom_server.to_string(),
+        None => {
+            let aus_titel = sim_core::icao_aus_titel(&sim_title);
+            match &aus_titel {
+                Some(typ) => {
+                    tracing::warn!(
+                        aircraft_id,
+                        registration = %planned_registration,
+                        abgeleitet = %typ,
+                        "phpVMS liefert keinen ICAO-Typ — aus dem Flugzeug-Titel abgeleitet"
+                    );
+                    log_activity_handle(
+                        &app,
+                        ActivityLevel::Warn,
+                        format!(
+                            "Flugzeugtyp fehlt in phpVMS für {planned_registration} — \
+                             aus dem Simulator-Titel abgeleitet: {typ}"
+                        ),
+                        None,
+                    );
+                }
+                None => {
+                    tracing::warn!(
+                        aircraft_id,
+                        registration = %planned_registration,
+                        "phpVMS liefert keinen ICAO-Typ und der Titel gibt nichts her — \
+                         die Landebewertung rechnet ohne Musterbezug"
+                    );
+                    log_activity_handle(
+                        &app,
+                        ActivityLevel::Warn,
+                        format!(
+                            "Flugzeugtyp unbekannt für {planned_registration} — \
+                             die Landebewertung rechnet ohne Musterbezug"
+                        ),
+                        None,
+                    );
+                }
+            }
+            aus_titel.unwrap_or_default()
+        }
+    };
     let aircraft_name = expected_aircraft
         .name
         .as_deref()
@@ -12782,12 +12836,42 @@ async fn flight_start_manual(
         .unwrap_or_default()
         .trim()
         .to_string();
-    let aircraft_icao = aircraft_details
+    // v1.7.0 (Spec §8.1b): wie im Haupt-Startpfad — ein leerer Typ bedeutet
+    // in der Bewertung "Light-Kategorie", nicht "unbekannt". Deshalb der
+    // Titel als Netz und eine sichtbare Meldung statt eines stillen Rückfalls.
+    let aircraft_icao = match aircraft_details
         .as_ref()
-        .and_then(|a| a.icao.clone())
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+        .and_then(|a| a.icao.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(vom_server) => vom_server.to_string(),
+        None => {
+            let titel = snapshot.aircraft_title.as_deref().unwrap_or("");
+            let aus_titel = sim_core::icao_aus_titel(titel);
+            match &aus_titel {
+                Some(typ) => log_activity_handle(
+                    &app,
+                    ActivityLevel::Warn,
+                    format!(
+                        "Flugzeugtyp fehlt in phpVMS für {planned_registration} — \
+                         aus dem Simulator-Titel abgeleitet: {typ}"
+                    ),
+                    None,
+                ),
+                None => log_activity_handle(
+                    &app,
+                    ActivityLevel::Warn,
+                    format!(
+                        "Flugzeugtyp unbekannt für {planned_registration} — \
+                         die Landebewertung rechnet ohne Musterbezug"
+                    ),
+                    None,
+                ),
+            }
+            aus_titel.unwrap_or_default()
+        }
+    };
     let aircraft_name = aircraft_details
         .as_ref()
         .and_then(|a| a.name.clone())
