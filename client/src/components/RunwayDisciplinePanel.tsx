@@ -48,6 +48,23 @@ export function RunwayDisciplinePanel({
   // schlimmer als gar keine: Sie sähe aus wie eine Messung, die „nichts
   // Auffälliges" ergeben hat, und genau das steht dann nicht fest.
   const grund = ((): string | null => {
+    // ZUERST: Trägt dieser Flug überhaupt v1.7.0-Daten?
+    //
+    // Sonst greift die nächste Prüfung und behauptet etwas über die BAHN,
+    // was gar nicht an ihr liegt. Live gesehen am 23.08.2026 bei EDDS 07
+    // (Flug #1062): „Für diese Bahn ist keine Breite hinterlegt" — EDDS 07
+    // ist 45 m breit und steht mit Breite in den Navdaten. Der Flug kam nur
+    // von einem Client vor v1.7.0, der nichts davon sendet.
+    //
+    // Eine Meldung, die den falschen Grund nennt, schickt die Suche in die
+    // falsche Richtung: Wer sie liest, prüft die Navdaten und findet nichts.
+    const traegtBahndaten =
+      props.runway_width_m != null ||
+      props.track_width_m != null ||
+      props.clearance_point_m != null ||
+      samples.length > 0;
+    if (!traegtBahndaten) return "no_lateral_track";
+
     if (breite == null || breite <= 0) return "runway_width_unknown";
     if (samples.length < 2) return "no_lateral_track";
     if (props.surface_paved === false) return "unpaved_runway";

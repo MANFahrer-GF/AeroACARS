@@ -451,4 +451,34 @@ describe("QS — Vollständigkeit", () => {
     }
     expect(befunde, befunde.join("\n")).toEqual([]);
   });
+  /**
+   * Ein Flug von vor v1.7.0 darf nicht der BAHN anlasten, was am Flug liegt.
+   *
+   * Live gesehen am 23.08.2026 (EDDS 07, Flug #1062): „Für diese Bahn ist
+   * keine Breite hinterlegt." EDDS 07 ist 45 m breit und steht mit Breite
+   * in den Navdaten — der Flug kam nur von einem älteren Client. Wer die
+   * Meldung liest, prüft die Navdaten und findet dort nichts.
+   */
+  it("nennt bei alten Flügen den Flug als Grund, nicht die Bahn", () => {
+    const alt = MOCK_LANDING_OPTIONS[0].build();
+    // Genau der Zustand eines v1.6-Datensatzes: keins der neuen Felder.
+    for (const feld of [
+      "runway_width_m",
+      "track_width_m",
+      "clearance_point_m",
+      "scoring_cutoff_m",
+      "lateral_samples",
+      "min_edge_clearance_m",
+      "surface_paved",
+    ] as const) {
+      (alt as Record<string, unknown>)[feld] = undefined;
+    }
+    const props = mapLandingRecordToV2Props(alt);
+    const markup = renderToStaticMarkup(<RunwayDiagramV2 {...props!} />);
+    expect(markup).toContain("vor v1.7.0");
+    expect(
+      markup,
+      "die Meldung schiebt es auf die Bahn, obwohl es am Flug liegt",
+    ).not.toContain("keine Breite hinterlegt");
+  });
 });
