@@ -287,21 +287,29 @@ describe("RunwayDiagramV2 — skin display flags actually hide/show elements", (
     // jedem Piloten mit gecachtem Skin wieder da — und niemand haette den
     // Zusammenhang gesehen. Deshalb: An IST er weg, und auf ausdruecklichen
     // Wunsch bleibt er weg.
+    // Die Texte stehen hier WOERTLICH, nicht als Verweis auf die
+    // Sprachdatei.
+    //
+    // Der Test las sie zuerst aus `deCommon.runway_v2.bremspunkt_title`.
+    // Als die toten Schluessel bei der QS entfernt wurden, war der Wert
+    // `undefined` — und `not.toContain(undefined)` prueft nichts mehr; der
+    // Test brach mit einer Matcher-Meldung ab statt still gruen zu werden,
+    // aber das war Glueck. Ein Test, der sich am Verschwindenden
+    // festhaelt, verschwindet mit ihm.
+    const BREMSPUNKT = "Bremspunkt";
+    const BREMSPUNKT_LEGENDE = "Bremspunkt (40 kt)";
+
     const p = props({ rollout_m: 500 });
     withDisplay({ show_brakepoint: true });
     const an = render(<RunwayDiagramV2 {...p} />);
-    expect(screen.queryByText(deCommon.runway_v2.legend_brakepoint)).toBeNull();
-    expect(an.container.textContent).not.toContain(
-      deCommon.runway_v2.bremspunkt_title,
-    );
+    expect(screen.queryByText(BREMSPUNKT_LEGENDE)).toBeNull();
+    expect(an.container.textContent).not.toContain(BREMSPUNKT);
     an.unmount();
 
     withDisplay({ show_brakepoint: false });
     const aus = render(<RunwayDiagramV2 {...p} />);
-    expect(screen.queryByText(deCommon.runway_v2.legend_brakepoint)).toBeNull();
-    expect(aus.container.textContent).not.toContain(
-      deCommon.runway_v2.bremspunkt_title,
-    );
+    expect(screen.queryByText(BREMSPUNKT_LEGENDE)).toBeNull();
+    expect(aus.container.textContent).not.toContain(BREMSPUNKT);
   });
 
   it("show_opposite_runway toggles the opposite-runway designator text", () => {

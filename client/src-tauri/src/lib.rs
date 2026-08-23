@@ -204,10 +204,6 @@ const ROLLOUT_TICK_MS: u64 = 200;
 /// keine dreissig Sekunden, und der Tick liest nur einen Schnappschuss.
 const ROLLOUT_TICK_MIN_GS_KT: f64 = BAHN_SPUR_STOP_GS_KT as f64;
 
-fn adaptive_tick_interval(phase: FlightPhase, agl_ft: Option<f64>) -> Duration {
-    adaptive_tick_interval_v2(phase, agl_ft, None, None, false)
-}
-
 /// Wie `adaptive_tick_interval`, kennt aber zusaetzlich Bodenkontakt und
 /// Fahrt — beides braucht es, um das Ausrollen von allem anderen zu
 /// unterscheiden.
@@ -3884,6 +3880,21 @@ struct FlightStats {
     /// Fahrt beim Queren der Kante — die Groesse, die der Vertrag
     /// `clearance_speed_kt` nennt („Geschwindigkeit dort").
     bahn_kante_gs_kt: Option<f64>,
+    /// Rohe Bodenkarte des Ankunftsflughafens, für die Ausfahrten.
+    ///
+    /// # Warum sie hier liegt
+    ///
+    /// Sie kommt im Anflug (die Stand-Erkennung holt sie ohnehin), die
+    /// gematchte Bahn erst beim Aufsetzen. Ohne Zwischenspeicher liesse
+    /// sich beides nie zusammenbringen — und genau das war der Zustand:
+    /// `ausfahrten::ausfahrten_fuer_bahn` war gebaut, getestet und wurde
+    /// **nirgends aufgerufen**. Die Anzeige hatte den Platz dafür, bekam
+    /// aber nie Daten.
+    ///
+    /// Grösse: im Mittel 91 KB, im schlimmsten gemessenen Fall 577 KB
+    /// (ZSPD). Für die Dauer eines Fluges vertretbar; sie wird beim
+    /// Zurücksetzen mit allem anderen frei.
+    arr_ground_geojson: Option<String>,
     /// v1.7.0 — wo die Bahn geraeumt wurde: Laengsposition in Metern.
     /// `None`, solange das Fenster nicht wegen einer Ausfahrt zuging.
     bahn_raeum_laengs_m: Option<f64>,
@@ -15725,6 +15736,31 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>) -> BahnFelder {
 
     let belag = landing_scoring::belag::belag_aus_angabe(rm.map(|m| m.surface.as_str()));
 
+    // Die Ausfahrten aus der Bodenkarte, die der Anflug ohnehin geladen hat.
+    //
+    // Ohne Karte bleibt die Liste leer — das ist NICHT dasselbe wie „diese
+    // Bahn hat keine Ausfahrten", aber es sieht in der Anzeige so aus.
+    // Deshalb zeichnet sie Stummel nur, wenn wirklich welche gefunden
+    // wurden, und behauptet nie das Gegenteil.
+    let ausfahrten: Vec<storage::RunwayExit> = match (rm, stats.arr_ground_geojson.as_deref()) {
+        (Some(m), Some(karte)) if m.width_ft > 0.0 => ausfahrten::ausfahrten_fuer_bahn(
+            karte,
+            m.threshold_lat,
+            m.threshold_lon,
+            m.end_lat,
+            m.end_lon,
+            m.width_ft as f64 * 0.3048,
+        )
+        .into_iter()
+        .map(|a| storage::RunwayExit {
+            name: a.name,
+            laengs_m: a.laengs_m,
+            seite: a.seite,
+        })
+        .collect(),
+        _ => Vec::new(),
+    };
+
     BahnFelder {
         // Zwei Punkte, zwei Bedeutungen — siehe `bahn_kante_laengs_m`.
         //
@@ -15773,7 +15809,16 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>) -> BahnFelder {
             b => Some(b.seitlich_bewertbar()),
         },
         overrun_m: stats.bahn_overrun_m,
+        runway_exits: ausfahrten,
     }
+}
+
+/// Auf einen Dezimeter runden, für die Leitung.
+///
+/// Als `f64`, weil ein gerundetes `f32` sich beim Serialisieren wieder
+/// aufbläht: `523.2f32` schreibt sich als `523.2000122070312`.
+fn dezimeter(m: f32) -> f64 {
+    (m as f64 * 10.0).round() / 10.0
 }
 
 impl BahnFelder {
@@ -15805,14 +15850,47 @@ impl BahnFelder {
                     self.lateral_samples
                         .iter()
                         .map(|s| aeroacars_mqtt::LateralSampleWire {
-                            laengs_m: s.laengs_m,
-                            quer_m: s.quer_m,
+                            // Auf einen Dezimeter gerundet — und zwar als
+                            // f64, sonst bringt es nichts.
+                            //
+                            // Ein `f32` mit dem Wert 523,2 serialisiert als
+                            // `523.2000122070312`: achtzehn Zeichen fuer
+                            // eine Groesse, die auf zehn Zentimeter gemeint
+                            // ist und deren Quelle (GPS im Simulator) auf
+                            // etwa einen Meter genau misst.
+                            //
+                            // Gemessen an einer vollen Spur mit 400 Punkten:
+                            // 23 KB roh, 13 KB gerundet. Der Broker verwirft
+                            // Pakete ueber 64 KB (`max_packet_size` in der
+                            // mosquitto-Konfiguration), und derselbe Payload
+                            // liegt danach in der Datenbank und im
+                            // Flugprotokoll — dreimal derselbe Ballast.
+                            laengs_m: dezimeter(s.laengs_m),
+                            quer_m: dezimeter(s.quer_m),
                         })
                         .collect(),
                 )
             },
             surface_paved: self.surface_paved,
             overrun_m: self.overrun_m,
+            // Wie bei der Spur: leer heisst weglassen, nicht `[]`. Eine
+            // leere Liste sieht in der Anzeige aus wie „diese Bahn hat
+            // keine Ausfahrten" — das ist etwas anderes als „wir hatten
+            // keine Bodenkarte".
+            runway_exits: if self.runway_exits.is_empty() {
+                None
+            } else {
+                Some(
+                    self.runway_exits
+                        .iter()
+                        .map(|a| aeroacars_mqtt::RunwayExitWire {
+                            name: a.name.clone(),
+                            laengs_m: a.laengs_m,
+                            seite: a.seite.clone(),
+                        })
+                        .collect(),
+                )
+            },
         }
     }
 }
@@ -15832,6 +15910,7 @@ struct BahnFelder {
     lateral_samples: Vec<storage::LateralSample>,
     surface_paved: Option<bool>,
     overrun_m: Option<f64>,
+    runway_exits: Vec<storage::RunwayExit>,
 }
 
 fn build_landing_record<F>(
@@ -16028,6 +16107,7 @@ where
     Some(LandingRecord {
         clearance_point_m: bahn.clearance_point_m,
         scoring_cutoff_m: bahn.scoring_cutoff_m,
+        runway_exits: bahn.runway_exits.clone(),
         clearance_speed_kt: bahn.clearance_speed_kt,
         clearance_side: bahn.clearance_side,
         track_width_m: bahn.track_width_m,
@@ -27434,10 +27514,29 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     stats.approach_stable_at_da = None;
     stats.approach_stall_warning_count = 0;
     stats.rollout_distance_m = None;
+    // ── Bahndisziplin: ALLES, nicht nur die Zahlen ───────────────────
+    //
+    // Diese Funktion läuft beim erneuten Aufsetzen nach einem Durchstarten
+    // oder Touch-and-Go. Bis hierher setzte sie die Kennzahlen zurück und
+    // liess die **Spur** stehen: Das zweite Aufsetzen bekam die Punkte des
+    // ersten mit, und dazu dessen Räumpunkt.
+    //
+    // In der Anzeige wäre das nicht als Fehler erkennbar gewesen, sondern
+    // als eine Landung, bei der das Flugzeug zweimal über die Bahn lief.
     stats.bahn_max_querversatz_m = None;
     stats.bahn_overrun_m = None;
     stats.bahn_proben = 0;
     stats.bahn_fenster_zu = false;
+    stats.bahn_spur.clear();
+    stats.bahn_spur_laeuft = false;
+    stats.bahn_raeum_laengs_m = None;
+    stats.bahn_raeum_gs_kt = None;
+    stats.bahn_raeum_seite = None;
+    stats.bahn_kante_laengs_m = None;
+    stats.bahn_kante_gs_kt = None;
+    // `arr_ground_geojson` bleibt: Die Bodenkarte gehört zum Flughafen,
+    // nicht zur Landung. Sie erneut zu holen wäre eine Netzanfrage im
+    // ungünstigsten Moment — kurz nach einem Durchstarten.
     stats.rollout_finalized = false;
     stats.rollout_last_lat = None;
     stats.rollout_last_lon = None;
@@ -33719,6 +33818,14 @@ fn maybe_spawn_stand_fetch(
                 return;
             }
         };
+        // Dieselbe Karte trägt die Rollwege — und damit die Ausfahrten der
+        // Bahn. Sie wird für die Ankunft aufgehoben, weil die gematchte Bahn
+        // erst beim Aufsetzen feststeht (siehe `arr_ground_geojson`).
+        if matches!(dir, Dir::Arrival) {
+            let mut stats = flight.stats.lock().expect("flight stats");
+            stats.arr_ground_geojson = Some(ground.geojson.clone());
+        }
+
         let list = stands::parse_stands(&ground.geojson);
         tracing::info!(%icao, stands = list.len(), "parking stands loaded for stand detection");
         if list.is_empty() {
@@ -45718,6 +45825,197 @@ mod v0_16_6_bush_completeness_tests {
             "in der Kurve {in_kurve} Punkte, auf der Geraden {auf_gerade} — \
              das Quergewicht wirkt nicht"
         );
+
+        // Die Spur muss auf der LEITUNG gerundet ankommen.
+        //
+        // Der Groessentest im mqtt-Crate prueft nur die Werte, die er
+        // selbst erzeugt — er wuerde nicht merken, wenn `wire()` das
+        // Runden vergisst. Diese Pruefung geht durch die echte
+        // Umrechnung.
+        //
+        // Ein `f32` mit dem Wert 523,2 serialisiert als
+        // `523.2000122070312`: achtzehn Zeichen fuer eine Groesse, die
+        // auf zehn Zentimeter gemeint ist. Ueber 400 Punkte sind das
+        // 23 KB statt 13 — und derselbe Payload liegt danach in der
+        // Datenbank und im Flugprotokoll.
+        {
+            let mut stats = FlightStats::default();
+            stats.bahn_spur = vec![(523.2, -5.7), (1907.35, -80.04)];
+            let wire = bahn_felder(&stats, None).wire();
+            let spur = wire.lateral_samples.expect("Spur liegt vor");
+            let text = serde_json::to_string(&spur).unwrap();
+            assert!(
+                !text.contains("0000") && !text.contains("9999"),
+                "die Spur geht ungerundet auf die Leitung: {text}"
+            );
+            assert_eq!(spur[0].laengs_m, 523.2);
+            assert_eq!(spur[1].quer_m, -80.0, "35 mm werden nicht uebertragen");
+            // Und die Rundung darf nichts Sichtbares kosten: ein Dezimeter
+            // ist in der Zeichnung weniger als ein Pixel.
+            assert!((spur[1].laengs_m - 1907.35).abs() <= 0.05);
+        }
+
+        // Entartete Eingaben duerfen keine Zahlen erfinden.
+        //
+        // Runde 3 der QS, mit dem Winkel „was passiert bei Unsinn".
+        // Die Werte hier kommen aus dem Simulator und aus Navdaten; beide
+        // liefern gelegentlich Nullen, und eine Rechnung, die daraus einen
+        // Randabstand macht, stellt eine Behauptung neben echte Messwerte,
+        // die von ihnen nicht zu unterscheiden ist.
+        {
+            let mut stats = FlightStats::default();
+
+            // Gar keine Bahn: Alles leer, nichts geraten.
+            let f = bahn_felder(&stats, Some("A320"));
+            assert!(f.runway_width_m.is_none(), "Bahnbreite ohne Bahntreffer");
+            assert!(f.min_edge_clearance_m.is_none(), "Randabstand ohne Bahn");
+            assert!(f.runway_exits.is_empty());
+
+            // Bahnbreite null — kommt in OurAirports vor.
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "XXXX".to_string(),
+                runway_ident: "09".to_string(),
+                heading_true_deg: 90.0,
+                length_ft: 4000.0,
+                width_ft: 0.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 50.0,
+                threshold_lon: 8.0,
+                end_lat: 50.0,
+                end_lon: 8.017,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 300.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+            stats.bahn_max_querversatz_m = Some(3.0);
+            let f = bahn_felder(&stats, Some("A320"));
+            assert!(
+                f.runway_width_m.is_none(),
+                "Breite 0 muss als unbekannt durchgehen, nicht als Bahn ohne Breite"
+            );
+            assert!(
+                f.min_edge_clearance_m.is_none(),
+                "ohne Breite darf kein Randabstand entstehen — er stuende \
+                 neben echten Messwerten und waere nicht davon zu unterscheiden"
+            );
+
+            // Unbekanntes Muster: keine Spurweite, also auch kein Randabstand.
+            stats.runway_match.as_mut().unwrap().width_ft = 151.0;
+            let f = bahn_felder(&stats, Some("ZZZZ"));
+            assert!(f.track_width_m.is_none(), "erfundene Spurweite fuer ZZZZ");
+            assert!(f.track_width_source.is_none(), "Quelle ohne Wert");
+            assert!(f.min_edge_clearance_m.is_none());
+
+            // Mit Muster: jetzt darf gerechnet werden — und das Ergebnis
+            // muss zur Geometrie passen.
+            let f = bahn_felder(&stats, Some("A320"));
+            let spur = f.track_width_m.expect("A320 steht in der Tabelle");
+            let rand = f.min_edge_clearance_m.expect("alle drei Groessen da");
+            let halbe = 151.0 * 0.3048 / 2.0;
+            assert!(
+                (rand - (halbe - (3.0 + spur / 2.0))).abs() < 0.01,
+                "Randabstand {rand} passt nicht zu halber Breite {halbe} und Spur {spur}"
+            );
+        }
+
+        // Ein Durchstarten darf nichts vom ersten Aufsetzen mitnehmen.
+        //
+        // `clear_approach_stability_and_rollout` setzte die Kennzahlen
+        // zurueck und liess die SPUR stehen. Das zweite Aufsetzen bekam die
+        // Punkte des ersten mit, dazu dessen Raeumpunkt. In der Anzeige
+        // haette das nicht nach einem Fehler ausgesehen, sondern nach einer
+        // Landung, bei der das Flugzeug zweimal ueber die Bahn lief.
+        {
+            let mut stats = FlightStats::default();
+            stats.bahn_spur = vec![(500.0, -2.0), (900.0, -4.0), (1400.0, -30.0)];
+            stats.bahn_spur_laeuft = true;
+            stats.bahn_raeum_laengs_m = Some(1400.0);
+            stats.bahn_raeum_gs_kt = Some(28.0);
+            stats.bahn_raeum_seite = Some("left".to_string());
+            stats.bahn_kante_laengs_m = Some(1460.0);
+            stats.bahn_kante_gs_kt = Some(22.0);
+            stats.bahn_max_querversatz_m = Some(-30.0);
+            stats.bahn_overrun_m = Some(12.0);
+            stats.bahn_proben = 91;
+            stats.bahn_fenster_zu = true;
+
+            clear_approach_stability_and_rollout(&mut stats);
+
+            assert!(stats.bahn_spur.is_empty(), "die Spur des ersten Aufsetzens bleibt stehen");
+            assert!(!stats.bahn_spur_laeuft);
+            assert!(stats.bahn_raeum_laengs_m.is_none(), "alter Raeumpunkt bleibt");
+            assert!(stats.bahn_raeum_gs_kt.is_none());
+            assert!(stats.bahn_raeum_seite.is_none());
+            assert!(stats.bahn_kante_laengs_m.is_none(), "alter Kantenuebertritt bleibt");
+            assert!(stats.bahn_kante_gs_kt.is_none());
+            assert!(stats.bahn_max_querversatz_m.is_none());
+            assert!(stats.bahn_overrun_m.is_none());
+            assert_eq!(stats.bahn_proben, 0);
+            assert!(!stats.bahn_fenster_zu);
+        }
+
+        // Die Ausfahrten muessen den ganzen Weg gehen.
+        //
+        // `ausfahrten::ausfahrten_fuer_bahn` war gebaut, mit sieben Tests
+        // abgedeckt — und wurde **nirgends aufgerufen**. Die Anzeige hatte
+        // den Platz dafuer, beide Mapper lasen das Feld, und der Client
+        // fuellte es nie. Gefunden erst beim Abgleich der ganzen Feldkette;
+        // kein Test war rot, kein Bau schlug fehl.
+        //
+        // Diese Pruefung geht durch `bahn_felder` — die Verdrahtung, nicht
+        // die Funktion. Ein Test, der `ausfahrten_fuer_bahn` direkt aufruft,
+        // waere waehrend des ganzen Fehlers gruen geblieben.
+        {
+            let mut stats = FlightStats::default();
+            // EDDH 23 — echte Schwelle und echtes Bahnende, damit die
+            // Projektion der Testkarte etwas Sinnvolles ergibt.
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                // Die ECHTE Geometrie aus den Navdaten (AIRAC 2608).
+                // Der erste Anlauf hatte geratene Koordinaten — sie
+                // ergaben einen Bahnkurs von 131 statt 230 Grad, also gar
+                // nicht EDDH 23. Ein Test auf einer erfundenen Bahn prueft
+                // die Rechnung, nicht die Wirklichkeit.
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636011,
+                threshold_lon: 9.999656,
+                end_lat: 53.619958,
+                end_lon: 9.967167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+            stats.arr_ground_geojson = Some(
+                r#"{"features":[
+                  {"properties":{"k":"taxiway","r":"S4"},
+                   "geometry":{"type":"LineString",
+                     "coordinates":[[9.982400,53.627218],[9.983079,53.626734]]}}
+                ]}"#
+                .to_string(),
+            );
+            let felder = bahn_felder(&stats, Some("A320"));
+            assert!(
+                !felder.runway_exits.is_empty(),
+                "die Bodenkarte liegt vor und die Bahn ist gematcht, \
+                 trotzdem kommen keine Ausfahrten an — der Aufruf in \
+                 `bahn_felder` fehlt"
+            );
+
+            // Und ohne Karte bleibt es leer, statt etwas zu behaupten.
+            stats.arr_ground_geojson = None;
+            assert!(
+                bahn_felder(&stats, Some("A320")).runway_exits.is_empty(),
+                "ohne Bodenkarte duerfen keine Ausfahrten entstehen"
+            );
+        }
 
         // Und der Takt darf in der Ausfahrt nicht einbrechen.
         //

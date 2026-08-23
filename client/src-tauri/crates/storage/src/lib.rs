@@ -244,7 +244,20 @@ pub struct LandingRunwayMatch {
 /// muesste in der Anzeige ein zweites Mal projizieren — und genau daraus
 /// entsteht die Fehlerklasse, gegen die §8.4 der Spezifikation eine
 /// gemeinsame Projektionsfunktion vorschreibt.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+/// Eine Ausfahrt der Bahn: wo ein benannter Rollweg die Kante trifft.
+///
+/// Kein `Copy` wie `LateralSample` daneben — der Name ist ein `String`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunwayExit {
+    /// Kennung des Rollwegs, z. B. `S4`.
+    pub name: String,
+    /// Distanz ab der Landeschwelle, in Metern.
+    pub laengs_m: f64,
+    /// `"left"` oder `"right"` in Landerichtung.
+    pub seite: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LateralSample {
     /// Distanz ab der Landeschwelle, in Metern.
     pub laengs_m: f32,
@@ -358,6 +371,13 @@ pub struct LandingRecord {
     /// Flugzeug 13,4 m.
     #[serde(default)]
     pub scoring_cutoff_m: Option<f64>,
+    /// Die Ausfahrten dieser Bahn, aus der OSM-Bodenkarte.
+    ///
+    /// Leer, wenn keine Bodenkarte vorlag — nicht, wenn die Bahn keine
+    /// Ausfahrten hat. Beides sieht in der Anzeige gleich aus, deshalb
+    /// zeichnet sie Stummel nur, wenn wirklich welche gefunden wurden.
+    #[serde(default)]
+    pub runway_exits: Vec<RunwayExit>,
     /// Geschwindigkeit beim Raeumen, in Knoten.
     #[serde(default)]
     pub clearance_speed_kt: Option<f64>,

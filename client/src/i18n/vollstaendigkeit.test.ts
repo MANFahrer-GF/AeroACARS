@@ -121,4 +121,47 @@ describe("Sprachdateien", () => {
       }
     }
   });
+  /**
+   * Und umgekehrt: kein Schlüssel ohne Stelle, die ihn benutzt.
+   *
+   * Ein Eintrag in drei Sprachdateien, den niemand aufruft, ist ein
+   * Vertrag, den niemand einhält. Er sieht nach gepflegter Übersetzung aus
+   * und ist doch nur Ballast — schlimmer noch, er täuscht vor, dass es die
+   * Beschriftung im Bild gibt.
+   *
+   * Gefunden bei der QS am 23.08.2026: **elf** tote `runway_v2`-Schlüssel.
+   * Zwei davon Reste des gestrichenen Bremspunkt-Markers, fünf wörtliche
+   * Doppelungen benutzter Einträge („nach dem Räumen — gemessen, nicht
+   * gewertet" stand zweimal da, unter zwei Namen).
+   */
+  it("hat keinen runway_v2-Schlüssel, den niemand benutzt", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("node:fs") as typeof import("node:fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require("node:path") as typeof import("node:path");
+
+    const wurzel = path.resolve(__dirname, "..");
+    const quellen: string[] = [];
+    const sammle = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name !== "locales" && e.name !== "node_modules") sammle(p);
+        } else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name)) {
+          quellen.push(fs.readFileSync(p, "utf-8"));
+        }
+      }
+    };
+    sammle(wurzel);
+    const alles = quellen.join("\n");
+
+    const rv = (de as Record<string, Record<string, unknown>>).runway_v2;
+    const tot = Object.keys(rv).filter(
+      (k) => !alles.includes(`runway_v2.${k}`),
+    );
+    expect(
+      tot,
+      "Diese Beschriftungen stehen in drei Sprachen und erscheinen nirgends.",
+    ).toEqual([]);
+  });
 });

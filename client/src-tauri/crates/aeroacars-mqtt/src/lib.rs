@@ -963,6 +963,29 @@ pub struct BahnWire {
     pub surface_paved: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overrun_m: Option<f64>,
+    /// Die Ausfahrten dieser Bahn.
+    ///
+    /// # Warum sie über die Leitung gehen
+    ///
+    /// Sie stehen in der OSM-Bodenkarte, die auch der Server hat — er
+    /// könnte sie also selbst rechnen. Genau das soll er nicht: Zwei
+    /// Herleitungen derselben Grösse driften auseinander, und die Anzeige
+    /// auf beiden Seiten muss dieselbe sein. Der Client hat die Karte im
+    /// Anflug ohnehin geladen und rechnet einmal.
+    ///
+    /// Klein genug dafür: typisch vier bis zwölf Einträge je Bahn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runway_exits: Option<Vec<RunwayExitWire>>,
+}
+
+/// Eine Ausfahrt auf der Leitung. Eigener Typ, weil dieses Crate nicht von
+/// `storage` abhängt — die Abhängigkeit läuft andersherum.
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
+pub struct RunwayExitWire {
+    pub name: String,
+    pub laengs_m: f64,
+    /// `"left"` oder `"right"` in Landerichtung.
+    pub seite: String,
 }
 
 /// Ein Stuetzpunkt der Rollspur auf der Leitung.
@@ -972,10 +995,11 @@ pub struct BahnWire {
 /// heissen gleich, damit Vertrag und Anzeige denselben Namen sehen.
 #[derive(Clone, Copy, Debug, Serialize, serde::Deserialize)]
 pub struct LateralSampleWire {
-    /// Distanz ab der Landeschwelle, in Metern.
-    pub laengs_m: f32,
-    /// Versatz zur Mittellinie, in Metern. Positiv = rechts in Landerichtung.
-    pub quer_m: f32,
+    /// Distanz ab der Landeschwelle, in Metern, auf einen Dezimeter gerundet.
+    pub laengs_m: f64,
+    /// Versatz zur Mittellinie, in Metern, auf einen Dezimeter gerundet.
+    /// Positiv = rechts in Landerichtung.
+    pub quer_m: f64,
 }
 
 fn is_false(b: &bool) -> bool { !*b }
@@ -2392,6 +2416,7 @@ mod tests {
             ]),
             surface_paved: Some(true),
             overrun_m: None,
+            runway_exits: None,
         };
         let j: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
@@ -2406,6 +2431,60 @@ mod tests {
         // unterscheidet beides nicht, aber der Datensatz bleibt kleiner
         // und alte Server stolpern nicht ueber unbekannte Schluessel.
         assert!(j.get("overrun_m").is_none(), "leere Felder gehen nicht auf die Leitung");
+    }
+
+    /// Der Payload muss durch den Broker passen.
+    ///
+    /// `max_packet_size 65536` steht in der mosquitto-Konfiguration auf
+    /// dem Live-Server. Was darueber liegt, wird verworfen — die Landung
+    /// kaeme nie an, und zwar ohne Fehlermeldung beim Piloten.
+    ///
+    /// Gemessen am 23.08.2026: Die bisherigen Touchdown-Payloads sind im
+    /// Mittel 3,9 KB gross, im schlimmsten Fall 5,0 KB (1022 Landungen).
+    /// Eine volle Spur mit 400 Punkten kommt gerundet auf 13 KB dazu, die
+    /// Ausfahrten auf 0,6 KB. Zusammen bleibt genug Luft — aber wer die
+    /// Punktzahl erhoeht oder die Rundung wieder herausnimmt, sollte diese
+    /// Rechnung sehen.
+    #[test]
+    fn volle_spur_passt_durch_den_broker() {
+        const BROKER_GRENZE: usize = 65_536;
+        let spur: Vec<LateralSampleWire> = (0..400)
+            .map(|i| LateralSampleWire {
+                laengs_m: (5232 + i * 73) as f64 / 10.0,
+                quer_m: -(57 + i * 37) as f64 / 10.0,
+            })
+            .collect();
+        let w = BahnWire {
+            lateral_samples: Some(spur),
+            runway_exits: Some(
+                (0..12)
+                    .map(|i| RunwayExitWire {
+                        name: format!("S{i}"),
+                        laengs_m: 1831.6,
+                        seite: "left".to_string(),
+                    })
+                    .collect(),
+            ),
+            clearance_point_m: Some(1831.6),
+            ..Default::default()
+        };
+        let bytes = serde_json::to_string(&w).unwrap().len();
+        // Grosszuegig gerechnet: der Rest des Payloads obendrauf.
+        let gesamt = bytes + 6 * 1024;
+        assert!(
+            gesamt < BROKER_GRENZE,
+            "Bahndaten {} KB + 6 KB Rest = {} KB, der Broker nimmt {} KB",
+            bytes / 1024,
+            gesamt / 1024,
+            BROKER_GRENZE / 1024
+        );
+
+        // Und die Rundung muss wirken: ungerundet waeren es rund 23 KB.
+        assert!(
+            bytes < 16 * 1024,
+            "die Spur ist {} KB gross — wird sie noch auf Dezimeter gerundet?",
+            bytes / 1024
+        );
     }
 
     /// Eine leere Spur wird weggelassen, nicht als `[]` gesendet.

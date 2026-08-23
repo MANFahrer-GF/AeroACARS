@@ -34,11 +34,16 @@ pub enum Quelle {
     MsfsContactPoints,
 }
 
-impl Quelle {
-    pub fn als_text(self) -> &'static str {
-        "aircraft_file"
-    }
-}
+// Beide Varianten gelten nach aussen als `"aircraft_file"` — der Vertrag
+// (`docs/spec/runway-diagram-v2.contract.md`) kennt für `track_width_source`
+// nur `"type_table"` und `"aircraft_file"`, und ob der Wert aus einer
+// `.acf` oder aus `flight_model.cfg` stammt, ändert für den Piloten nichts.
+//
+// Hier stand dafür ein `Quelle::als_text()`. Es nahm `self`, ignorierte es
+// und gab die Konstante zurück — und wurde nie aufgerufen: `bahn_felder`
+// entscheidet anhand von `Option::is_some`, ob überhaupt eine Datei
+// gelesen wurde. Eine Methode, die ihren Empfänger nicht benutzt und die
+// niemand ruft, sieht aus wie eine Unterscheidung, die es nicht gibt.
 
 /// Ergebnis eines Lesevorgangs.
 #[derive(Debug, Clone, Copy, PartialEq)]
