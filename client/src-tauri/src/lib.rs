@@ -178,17 +178,34 @@ const MQTT_PUBLISH_INTERVAL_SECS: u64 = 3;
 /// Die teuren Wege — MQTT-Publish und der phpVMS-Punktabstand — haengen
 /// seit v0.6.0 bzw. v1.6.14 an eigenen Kadenzen und werden davon **nicht**
 /// beruehrt. Das Fenster ist ausserdem kurz: Ausrollen dauert dreissig bis
-/// sechzig Sekunden, danach faellt die Geschwindigkeit unter die Schwelle
-/// und das Intervall geht auf 2 Hz zurueck.
+/// sechzig Sekunden, danach steht das Flugzeug auf dem Rollweg und das
+/// Intervall geht auf 2 Hz zurueck.
 const ROLLOUT_TICK_MS: u64 = 200;
 
-/// Ab dieser Fahrt gilt „am Ausrollen" — dieselbe Schwelle, unter der auch
-/// das Messfenster der Bahndisziplin schliesst. Ein Flugzeug, das langsamer
-/// rollt, wird nicht mehr bewertet und braucht auch keine feine Spur.
-const ROLLOUT_TICK_MIN_GS_KT: f64 = BAHN_MESS_MIN_GS_KT as f64;
+/// Ab dieser Fahrt gilt „am Ausrollen".
+///
+/// # Warum das die Spur-Schwelle ist und nicht die Bewertungs-Schwelle
+///
+/// Bis v1.7.0 stand hier `BAHN_MESS_MIN_GS_KT` (60 kt) — dieselbe Schwelle,
+/// unter der das **Bewertungs**fenster schliesst. Die Begruendung klang
+/// schluessig: Wer langsamer rollt, wird nicht mehr bewertet und braucht
+/// keine feine Spur.
+///
+/// Sie war falsch, und Thomas hat es an der Zeichnung gesehen: Die
+/// Ausfahrt wird mit fuenfzehn bis dreissig Knoten gefahren. Genau dort
+/// bog das Flugzeug ab, genau dort kruemmt sich die Spur am staerksten —
+/// und genau dort fiel der Takt von fuenf Hertz auf zwei. Bei zwanzig
+/// Knoten sind das statt 2,1 Metern je Punkt deren 5,1, und die Kurve, um
+/// derentwillen die feine Taktung ueberhaupt eingebaut wurde, bekam die
+/// wenigsten Punkte von allen.
+///
+/// Aufgezeichnet wird bis `BAHN_SPUR_STOP_GS_KT`; so lange laeuft jetzt
+/// auch der Takt. Das kostet wenig: Zwischen 60 und 5 Knoten vergehen
+/// keine dreissig Sekunden, und der Tick liest nur einen Schnappschuss.
+const ROLLOUT_TICK_MIN_GS_KT: f64 = BAHN_SPUR_STOP_GS_KT as f64;
 
 fn adaptive_tick_interval(phase: FlightPhase, agl_ft: Option<f64>) -> Duration {
-    adaptive_tick_interval_v2(phase, agl_ft, None, None)
+    adaptive_tick_interval_v2(phase, agl_ft, None, None, false)
 }
 
 /// Wie `adaptive_tick_interval`, kennt aber zusaetzlich Bodenkontakt und
@@ -199,13 +216,29 @@ fn adaptive_tick_interval_v2(
     agl_ft: Option<f64>,
     on_ground: Option<bool>,
     groundspeed_kt: Option<f64>,
+    spur_laeuft: bool,
 ) -> Duration {
     // Ausrollen zuerst: Es ist der einzige Zustand, in dem die seitliche
     // Lage laufend gemessen wird, und der einzige, dessen Aufloesung an der
     // Fahrt haengt statt an der Hoehe.
-    if matches!(phase, FlightPhase::Landing)
-        && on_ground == Some(true)
-        && groundspeed_kt.is_some_and(|gs| gs >= ROLLOUT_TICK_MIN_GS_KT)
+    //
+    // Zwei Wege fuehren hierher, und es braucht beide:
+    //
+    // * `spur_laeuft` — die Aufzeichnung selbst meldet, dass sie laeuft.
+    //   Das deckt die Ausfahrt ab, in der die Phase schon auf `TaxiIn`
+    //   gesprungen ist, die Spur aber noch gezeichnet wird.
+    // * Die Phasen-Bedingung — sie deckt das offene Messfenster ab, in dem
+    //   `spur_fortschreiben` noch gar nicht gerufen wird und das Flag
+    //   folglich false ist.
+    //
+    // Bis v1.7.0 gab es nur den zweiten. Gemessen an neun echten
+    // Landungen fiel die Kadenz dadurch bei dreissig Knoten von 0,51 s
+    // auf 3,01 s — 34,9 Meter zwischen zwei Punkten, und das genau in der
+    // Kurve. Die Ausfahrt bekam die wenigsten Punkte der ganzen Landung.
+    if spur_laeuft
+        || (matches!(phase, FlightPhase::Landing)
+            && on_ground == Some(true)
+            && groundspeed_kt.is_some_and(|gs| gs >= ROLLOUT_TICK_MIN_GS_KT))
     {
         return Duration::from_millis(ROLLOUT_TICK_MS);
     }
@@ -3823,6 +3856,15 @@ struct FlightStats {
     /// Landung — in jedem gespeicherten Datensatz, in jedem Upload und in
     /// jedem Diagramm, das sie zeichnen soll.
     bahn_spur: Vec<(f32, f32)>,
+    /// Laeuft die Spuraufzeichnung gerade?
+    ///
+    /// Steuert den Aufzeichnungstakt (`adaptive_tick_interval_v2`). Ohne
+    /// dieses Feld musste der Takt an einer Fahrt- oder Phasenschwelle
+    /// haengen, und beides traf die Ausfahrt nicht: gemessen an neun
+    /// echten Landungen brach die Kadenz bei dreissig Knoten von 0,51 s
+    /// auf 3,01 s ein — mitten in der Kurve, weil dort die Phase von
+    /// `Landing` auf `TaxiIn` wechselt.
+    bahn_spur_laeuft: bool,
     /// v1.7.0 — wo die Bahn geraeumt wurde: Laengsposition in Metern.
     /// `None`, solange das Fenster nicht wegen einer Ausfahrt zuging.
     bahn_raeum_laengs_m: Option<f64>,
@@ -17798,7 +17840,7 @@ async fn flight_end(
 
     // Snapshot all stats inside a single short-lived guard to avoid holding
     // the Mutex across an `await`.
-    let (body, block_on_iso) = {
+    let body = {
         let mut stats = flight.stats.lock().expect("flight stats");
         // v0.16.24 (QS-6): upgrade the runway correlation to the best
         // available (Navigraph) BEFORE building the PIREP body, so the native
@@ -17903,7 +17945,18 @@ async fn flight_end(
             .map(|m| m as i32)
             .or_else(|| stats.landing_score.map(|s| s.numeric()));
         let distance_nm = stats.distance_nm;
-        let fields = build_pirep_fields(&flight, &stats, effective_arr);
+        let mut fields = build_pirep_fields(&flight, &stats, effective_arr);
+        // phpVMS does its own divert bookkeeping — but only if the PIREP carries
+        // this custom field. `PirepService::handleDiversion()` looks it up by the
+        // slug `diversion-airport`, which phpVMS derives from the field NAME via
+        // `Str::slug()` — so the string below is load-bearing, not cosmetic.
+        // With it, phpVMS moves the arrival to that ICAO, keeps the planned
+        // destination in `alt_airport_id`, relocates aircraft and pilot and posts
+        // its divert notification. Without it a divert is invisible to the server:
+        // on 23.08.2026 (EJA9 EHAM->EDSB, back to EHAM) none of that happened.
+        if let Some(actual) = divert_to.as_deref() {
+            fields.insert("Diversion Airport".to_string(), actual.to_string());
+        }
         let mut notes = build_pirep_notes(&flight, &stats, effective_arr);
         // v0.19.3: the pilot told us he ended up at the planned field although
         // the FSM did not place him there. That statement is why this PIREP is
@@ -17956,7 +18009,12 @@ async fn flight_end(
             notes: Some(notes),
             fares,
             fields: Some(fields),
-            arr_airport_id: divert_to.clone(),
+            // Deliberately NOT the divert ICAO: phpVMS rewrites `arr_airport_id`
+            // itself out of the `Diversion Airport` field above and moves the
+            // planned destination into `alt_airport_id`. Sending the divert here
+            // as well would make it rewrite EHAM->EHAM and file the divert field
+            // as its own alternate.
+            arr_airport_id: None,
             // Block times from the FSM. phpVMS derives NEITHER on its own:
             // its own fallback in PirepService::create() is defeated by
             // CarbonCast (NULL reads back as "now", so the `if (!$pirep->
@@ -17968,227 +18026,15 @@ async fn flight_end(
                 .or(stats.landing_at)
                 .map(|t| t.to_rfc3339()),
         };
-        // Block-on time = touchdown timestamp captured by the FSM.
-        // Needed by the divert-finalize path because we skip /file
-        // entirely there, so phpVMS won't auto-set this column.
-        let block_on_iso = stats.landing_at.map(|t| t.to_rfc3339());
-        (body, block_on_iso)
+        body
     };
-    // v0.3.1: Divert finalization bypasses /file entirely.
-    //
-    // Background: earlier versions tried to route diverts into PENDING via
-    // (a) a pre-file source=MANUAL "smuggle" through the update endpoint,
-    // and (b) a post-file state=PENDING update. Both are dead on real
-    // phpVMS deployments:
-    //   * Acars\PirepController::file() ignores the stored source field
-    //     and always evaluates auto_approve_acars on the rank, so (a)
-    //     does not route through auto_approve_manual.
-    //   * Once the PIREP is ACCEPTED, PirepController::checkReadOnly()
-    //     blocks any further state-update, so (b) returns "PIREP is
-    //     read-only" (verified against german-sky-group.eu, 2026-05-04).
-    //
-    // The path that actually works: while the PIREP is still IN_PROGRESS
-    // (not read-only), mass-assign EVERYTHING /file would have written —
-    // including state=PENDING, source=MANUAL, arr_airport_id, all final
-    // stats — through a single update_pirep call. This bypasses
-    // PirepService::submit() and the auto-approve check entirely. The
-    // PIREP shows up in the admin's PENDING queue with the correct
-    // arrival airport and divert notes.
-    //
-    // Strategy verified against phpvms@dev: PirepController::update +
-    // parsePirep() pass the full request payload to mass-assignment, and
-    // (source, state, arr_airport_id, landing_rate, score, submitted_at,
-    // block_on_time) are all in Pirep $fillable. Acars\UpdateRequest
-    // doesn't strip non-validated keys.
-    if divert_to.is_some() {
-        let now_iso = Utc::now().to_rfc3339();
-        let finalize = api_client::UpdateBody {
-            state: Some(1),                                   // PirepState::PENDING
-            source: Some(api_client::pirep_source::MANUAL),   // 1
-            status: Some("ONB".to_string()),                  // PirepStatus::ARRIVED
-            flight_time: body.flight_time,
-            distance: body.distance,
-            fuel_used: body.fuel_used,
-            block_fuel: body.block_fuel,
-            level: body.level,
-            landing_rate: body.landing_rate,
-            score: body.score,
-            source_name: body.source_name.clone(),
-            notes: body.notes.clone(),
-            arr_airport_id: divert_to.clone(),
-            submitted_at: Some(now_iso.clone()),
-            block_on_time: block_on_iso.clone(),
-            updated_at: Some(now_iso),
-        };
-        match client.update_pirep(&flight.pirep_id, &finalize).await {
-            Ok(()) => tracing::info!(
-                pirep_id = %flight.pirep_id,
-                "divert finalize update OK — PIREP mass-assigned to MANUAL/PENDING"
-            ),
-            Err(e) => {
-                log_activity(
-                    &state,
-                    ActivityLevel::Error,
-                    "Divert: Finalisierung fehlgeschlagen".to_string(),
-                    Some(format!("{} — Flug bleibt aktiv für Retry", e)),
-                );
-                restore_flight_for_retry(&app, state.inner(), &client, flight);
-                return Err(e.into());
-            }
-        }
-        // Custom PIREP fields live in `pirep_field_values` (separate
-        // table from `pireps`) — they don't go through Pirep
-        // mass-assignment. Push them via the dedicated endpoint.
-        // Failures are non-fatal: the main PIREP is already in PENDING.
-        if let Some(fields_map) = body.fields.as_ref() {
-            if let Err(e) = client.post_pirep_fields(&flight.pirep_id, fields_map).await {
-                tracing::warn!(
-                    pirep_id = %flight.pirep_id,
-                    error = %e,
-                    "post_pirep_fields after divert finalize failed (non-fatal)"
-                );
-            }
-        }
-        // Verify the PIREP actually landed in PENDING. The mass-assign
-        // strategy is well-trodden but the verification is cheap and
-        // gives us loud feedback if a future phpVMS upgrade changes the
-        // semantics. Failure here doesn't unwind the file — it just
-        // surfaces a warning so the pilot knows to ping the VA admin.
-        match client.get_pirep(&flight.pirep_id).await {
-            Ok(p) => {
-                let s = p.state.unwrap_or(-1);
-                if s == 1 {
-                    tracing::info!(
-                        pirep_id = %flight.pirep_id,
-                        "verified: divert PIREP state == PENDING"
-                    );
-                } else {
-                    tracing::warn!(
-                        pirep_id = %flight.pirep_id,
-                        actual_state = s,
-                        "divert PIREP did NOT land in PENDING — phpVMS semantics changed?"
-                    );
-                    log_activity(
-                        &state,
-                        ActivityLevel::Error,
-                        "Divert: konnte NICHT für Admin-Review markiert werden".to_string(),
-                        Some(format!(
-                            "Server-Status nach Divert-Finalize: {} (erwartet: 1=PENDING). Bitte VA-Admin manuell informieren.",
-                            s
-                        )),
-                    );
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    pirep_id = %flight.pirep_id,
-                    error = %e,
-                    "post-divert state verify failed"
-                );
-            }
-        }
-        // Local snapshot + activity log + bid cleanup, mirroring the
-        // /file success path so downstream UI (Landung-Tab, Activity)
-        // sees the same state for divert and normal arrivals.
-        {
-            let mut stats = flight.stats.lock().expect("flight stats");
-            // v0.15.x: Divert → effektiver Landeflughafen für den Geometrie-Trust.
-            record_landing_for_filed_flight(
-                &app,
-                &flight,
-                &mut stats,
-                divert_to.as_deref().unwrap_or(&flight.arr_airport),
-            );
-        }
-        clear_persisted_flight(&app);
-        log_activity(
-            &state,
-            ActivityLevel::Info,
-            format!(
-                "PIREP filed: {} {} → {} (DIVERT, planned {})",
-                format_callsign(&flight.airline_icao, &flight.flight_number),
-                flight.dpt_airport,
-                divert_to.as_deref().unwrap_or(&flight.arr_airport),
-                flight.arr_airport,
-            ),
-            {
-                let dist = body.distance.unwrap_or(0.0);
-                let fuel = body.fuel_used.unwrap_or(0.0);
-                let stats_line = if fuel > 0.0 {
-                    format!("Distance {dist:.1} nm, fuel {fuel:.0} lb")
-                } else {
-                    format!("Distance {dist:.1} nm")
-                };
-                Some(format!("{stats_line} · MANUAL/PENDING (admin review)"))
-            },
-        );
-        record_event(
-            &app,
-            &flight.pirep_id,
-            &FlightLogEvent::FlightEnded {
-                timestamp: Utc::now(),
-                pirep_id: flight.pirep_id.clone(),
-                outcome: FlightOutcome::Filed,
-            },
-        );
-        // v0.12.5 (Spec v0.12.5-divert-and-manual-pirep.md, Bug A/B):
-        // Divert-Pfad publisht jetzt — wie der normale /file-Pfad — das
-        // MQTT-PIREP-Event und lädt das JSONL-Forensik-Logfile hoch.
-        // Vorher kehrte dieser Branch via `return Ok(())` zurück OHNE
-        // beides → diverted Flüge fehlten dauerhaft in den VPS-Reports
-        // und es gab kein Logfile. `effective_arr_icao` = das Divert-
-        // ICAO, `planned_arr_icao` = das ursprüngliche Ziel → der
-        // Helper setzt `divert`/`diverted_to` korrekt.
-        {
-            let effective_arr = divert_to
-                .as_deref()
-                .unwrap_or(&flight.arr_airport);
-            let mut pirep_payload = build_pirep_payload(
-                &flight,
-                &body,
-                effective_arr,
-                &flight.arr_airport,
-            );
-            // v0.12.5 (LE2): Divert-Begründung auch ins MQTT-Payload
-            // (Audit) — der Recorder/JSONL hält damit den Grund.
-            pirep_payload.notes = divert_reason.clone();
-            let pirep_payload_json = serde_json::to_value(&pirep_payload)
-                .unwrap_or(serde_json::Value::Null);
-            // QS-P1: JSONL-PirepFiled IMMER schreiben, MQTT-Publish nur
-            // wenn ein Handle da ist.
-            let mqtt = state.mqtt.lock().await;
-            finalize_filed_pirep(
-                &app,
-                mqtt.as_ref(),
-                &flight.pirep_id,
-                pirep_payload_json,
-            );
-        }
-        // v0.12.5 (LE7-QS): LandingFinalized-JSONL-Event auch beim Divert
-        // — vor dem Upload, damit es im hochgeladenen Logfile steht.
-        emit_landing_finalized(&app, &flight);
-        // v0.12.5 (Bug A): Forensik-Upload auch beim Divert — gzip +
-        // POST des kompletten JSONL-Logfiles an aeroacars-live.
-        spawn_flight_log_upload(&app, flight.pirep_id.clone());
-        // v0.7.14: Pilot-Client-Discord-Post fuer Divert entfernt — Recorder
-        // postet das jetzt zentral (= eine Quelle, kein Doppel-Post). Die
-        // Divert-Info ist im PirepPayload (divert + diverted_to) und kommt
-        // automatisch beim Recorder an wenn der MQTT-PIREP-Event publisht.
-        // Audit Q4-2026-05 (C1).
-        // v0.7.19 (QS-R1 Finding 1): Bei delete_bid-fail in pending_bid_cleanup.
-        // QS-R2 Finding 2: flight_id-Fallback mitgeben.
-        consume_bid_best_effort(
-            &app,
-            &client,
-            &flight.pirep_id,
-            flight.bid_id,
-            Some(flight.flight_id.as_str()),
-            "divert_filed",
-        ).await;
-        // Drop the in-memory active flight: divert is finalized.
-        let _ = state.active_flight.lock().expect("active_flight lock").take();
-        return Ok(());
-    }
+    // The airport the aircraft actually parked at: the planned arrival on every
+    // normal flight, the pilot-confirmed field on a divert. phpVMS learns it from
+    // the `Diversion Airport` custom field; everything local (landing record, MQTT
+    // payload, activity log) reads it from here.
+    let effective_arr_icao: String = divert_to
+        .clone()
+        .unwrap_or_else(|| flight.arr_airport.clone());
     tracing::info!(
         pirep_id = %flight.pirep_id,
         flight_time = body.flight_time.unwrap_or(0),
@@ -18198,8 +18044,19 @@ async fn flight_end(
         custom_fields = body.fields.as_ref().map(|f| f.len()).unwrap_or(0),
         "filing PIREP"
     );
-    // Non-divert path. (Diverts return early above via the dedicated
-    // mass-assign-to-PENDING flow; only normal arrivals reach /file.)
+    // ONE path for every arrival, divert included.
+    //
+    // Until v1.6.15 a divert took a separate route: it never called /file and
+    // instead mass-assigned state=PENDING through the update endpoint, so the
+    // VA admin had to release it by hand. That skipped `PirepService::submit()`
+    // and with it EVERYTHING hanging off the `PirepFiled` event — phpVMS' own
+    // divert handling, the bid cleanup, the integrity gate, the per-rank
+    // auto-approve — and it leaned on phpVMS forwarding unvalidated request
+    // input into mass-assignment, an upstream internal that could vanish in any
+    // release. On 23.08.2026 a pilot sat blocked for an hour behind exactly that
+    // (EJA9 EHAM->EDSB). A divert is a normal arrival at a different field; it
+    // is filed like one, and the `Diversion Airport` custom field tells phpVMS
+    // the rest.
     //
     // v0.5.49 — file_pirep_with_retry: 3 attempts mit 5s+30s Backoff
     // bei TRANSIENTEM Fehler (Netz, Timeout, 5xx, 429). Bei 3× Fail
@@ -18215,12 +18072,13 @@ async fn flight_end(
             // and the in-memory FlightStats goes out of scope.
             {
                 let mut stats = flight.stats.lock().expect("flight stats");
-                // v0.15.x: tatsächlicher Landeflughafen (= gefilte arr) für Trust.
+                // v0.15.x: tatsächlicher Landeflughafen für Trust — auf einem
+                // Divert das bestätigte Ausweichfeld, sonst das geplante Ziel.
                 record_landing_for_filed_flight(
                     &app,
                     &flight,
                     &mut stats,
-                    body.arr_airport_id.as_deref().unwrap_or(&flight.arr_airport),
+                    &effective_arr_icao,
                 );
             }
             clear_persisted_flight(&app);
@@ -18228,10 +18086,15 @@ async fn flight_end(
                 &state,
                 ActivityLevel::Info,
                 format!(
-                    "PIREP filed: {} {} → {}",
+                    "PIREP filed: {} {} → {}{}",
                     format_callsign(&flight.airline_icao, &flight.flight_number),
                     flight.dpt_airport,
-                    flight.arr_airport,
+                    effective_arr_icao,
+                    if divert_to.is_some() {
+                        format!(" (DIVERT, planned {})", flight.arr_airport)
+                    } else {
+                        String::new()
+                    },
                 ),
                 {
                     let dist = body.distance.unwrap_or(0.0);
@@ -18261,14 +18124,19 @@ async fn flight_end(
             {
                 // v0.12.5 (Spec v0.12.5-divert-and-manual-pirep.md, LE1):
                 // Der MQTT-PirepPayload-Build ist in `build_pirep_payload`
-                // ausgelagert — eine Stelle für alle Filing-Pfade. Normaler
-                // /file-Pfad: effective == planned == flight.arr_airport.
-                let pirep_payload = build_pirep_payload(
+                // ausgelagert — eine Stelle für alle Filing-Pfade. Ohne Divert
+                // ist effective == planned == flight.arr_airport, der Payload
+                // also byte-gleich zu vorher; mit Divert setzt der Helper
+                // `divert`/`diverted_to` und der Recorder hat den Grund.
+                let mut pirep_payload = build_pirep_payload(
                     &flight,
                     &body,
-                    &flight.arr_airport,
+                    &effective_arr_icao,
                     &flight.arr_airport,
                 );
+                if divert_to.is_some() {
+                    pirep_payload.notes = divert_reason.clone();
+                }
                 // v0.12.5 (LE1): JSONL-Forensik + MQTT-Publish über den
                 // zentralen Finalizer — gleicher Pfad wie Divert/Manual/Queue.
                 // QS-P1: JSONL-PirepFiled IMMER, MQTT nur bei Handle.
@@ -18298,7 +18166,9 @@ async fn flight_end(
             // in pending_bid_cleanup eingereiht und vom Background-Worker
             // retried — keine haengenden Aircraft/Bid mehr nach Accident-
             // FILED. Reason-String spiegelt die Filing-Variante.
-            let bid_reason = if flight.stats.lock().expect("stats lock").accident_detected {
+            let bid_reason = if divert_to.is_some() {
+                "divert_filed"
+            } else if flight.stats.lock().expect("stats lock").accident_detected {
                 "accident_filed"
             } else {
                 "normal_filed"
@@ -18327,14 +18197,18 @@ async fn flight_end(
                 // mit-persistieren — der Queue-Worker publisht es nach
                 // erfolgreichem /file. Normaler /file-Pfad: effective ==
                 // planned == flight.arr_airport.
-                let pirep_payload_json = serde_json::to_value(
-                    build_pirep_payload(
+                let pirep_payload_json = serde_json::to_value({
+                    let mut queued_payload = build_pirep_payload(
                         &flight,
                         &body,
+                        &effective_arr_icao,
                         &flight.arr_airport,
-                        &flight.arr_airport,
-                    ),
-                )
+                    );
+                    if divert_to.is_some() {
+                        queued_payload.notes = divert_reason.clone();
+                    }
+                    queued_payload
+                })
                 .unwrap_or(serde_json::Value::Null);
                 let queued = pirep_queue::QueuedPirep {
                     pirep_id: flight.pirep_id.clone(),
@@ -18370,12 +18244,13 @@ async fn flight_end(
                 // Erfolgreich gequeued → Landing-Snapshot, clear, Activity-Log
                 {
                     let mut stats = flight.stats.lock().expect("flight stats");
-                    // v0.15.x: tatsächlicher Landeflughafen (= gefilte arr) für Trust.
+                    // v0.15.x: tatsächlicher Landeflughafen für Trust — auf einem
+                    // Divert das bestätigte Ausweichfeld, sonst das geplante Ziel.
                     record_landing_for_filed_flight(
                         &app,
                         &flight,
                         &mut stats,
-                        body.arr_airport_id.as_deref().unwrap_or(&flight.arr_airport),
+                        &effective_arr_icao,
                     );
                 }
                 clear_persisted_flight(&app);
@@ -23481,11 +23356,14 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // 10s Mean-Interval und peak_vs_fpm=-33 statt realer ~-350.
             // phpVMS POST throttled separately further down (8-30s).
             let tick_interval = {
-                let phase = flight.stats.lock().expect("flight stats").phase;
+                let (phase, spur_laeuft) = {
+                    let st = flight.stats.lock().expect("flight stats");
+                    (st.phase, st.bahn_spur_laeuft)
+                };
                 let agl = last_good_snap.as_ref().map(|s| s.altitude_agl_ft);
                 let og = last_good_snap.as_ref().map(|s| s.on_ground);
                 let gs = last_good_snap.as_ref().map(|s| s.groundspeed_kt as f64);
-                adaptive_tick_interval_v2(phase, agl, og, gs)
+                adaptive_tick_interval_v2(phase, agl, og, gs, spur_laeuft)
             };
             tokio::time::sleep(tick_interval).await;
             if flight.stop.load(Ordering::Relaxed) {
@@ -27067,6 +26945,18 @@ const BAHN_MESS_MIN_GS_KT: f32 = 60.0;
 /// Breite aufloesen kann.
 const BAHN_SPUR_MIN_ABSTAND_M: f64 = 10.0;
 
+/// Wie stark der Querweg bei der Ausduennung zaehlt.
+///
+/// Die Queransicht ist rund zwoelffach ueberhoeht. Ein Gewicht von vier
+/// naehert das an, ohne es voll auszureizen: Bei reiner Querbewegung wird
+/// dann alle 2,5 m ein Punkt abgelegt statt alle zehn — fein genug fuer
+/// eine glatte Kurve, grob genug, dass die Ablage nicht volllaeuft.
+///
+/// Das volle Verhaeltnis waere zu fein: In der Ausfahrt kaemen dann alle
+/// achtzig Zentimeter Punkte, und `BAHN_SPUR_MAX_PUNKTE` waere nach der
+/// halben Kurve erschoepft.
+const BAHN_SPUR_QUER_GEWICHT: f64 = 4.0;
+
 /// Harte Obergrenze fuer die gespeicherte Spur.
 ///
 /// Greift, wenn der Mindestabstand nicht greift: beim Stehen auf der Bahn
@@ -27156,32 +27046,47 @@ fn spur_fortschreiben(
     // laesst sich nicht ausleihen. Ein f64 loest das ohne Kopie.
     halbe_breite_m: f64,
 ) {
-    if snap.groundspeed_kt < BAHN_SPUR_STOP_GS_KT {
+    // Jedes dieser drei Kriterien beendet die Aufzeichnung — und mit ihr
+    // den feinen Takt. Das Flag ist die einzige Stelle, an der beides
+    // zusammenhaengt; deshalb wird es hier gesetzt und nirgends sonst.
+    if snap.groundspeed_kt < BAHN_SPUR_STOP_GS_KT
+        || quer_m.abs() > halbe_breite_m + BAHN_SPUR_RAND_M
+        || laengs_m < -50.0
+        || stats.bahn_spur.len() >= BAHN_SPUR_MAX_PUNKTE
+    {
+        stats.bahn_spur_laeuft = false;
         return;
     }
-    if quer_m.abs() > halbe_breite_m + BAHN_SPUR_RAND_M {
-        return;
-    }
-    // Rueckwaerts oder weit vor der Schwelle: das ist kein Ausrollen mehr.
-    if laengs_m < -50.0 {
-        return;
-    }
-    // Der ECHTE Abstand, nicht nur der Laengsabstand.
+    stats.bahn_spur_laeuft = true;
+    // Der Abstand, wie er GEZEICHNET wird — nicht wie er gefahren wurde.
     //
-    // In der Ausfahrt faehrt das Flugzeug quer: Die Laengsposition aendert
-    // sich ueber zwanzig Meter kaum, der Querversatz um dutzende. Wer nur
-    // laengs misst, verwirft dort jeden Punkt — und die Spur endet genau
-    // dort, wo sie am meisten zu sagen haette. Gemessen an
-    // raKOnJD1XgNbP06q (EDDH 23): Die Punkte bei 1907 m (−80 m quer) und
-    // 1898 m (−109 m quer) lagen sechs bzw. neun Meter hinter ihrem
-    // Vorgaenger und fielen beide weg. Im Diagramm brach die Spur an der
-    // Bahnkante ab.
+    // Zwei Fehler stecken hier hintereinander, beide von Thomas gefunden:
+    //
+    // 1. Nur laengs zu messen verwirft in der Ausfahrt jeden Punkt. Dort
+    //    faehrt das Flugzeug quer: Die Laengsposition aendert sich ueber
+    //    zwanzig Meter kaum, der Querversatz um dutzende. Gemessen an
+    //    raKOnJD1XgNbP06q (EDDH 23) fielen die Punkte bei 1907 m (−80 m
+    //    quer) und 1898 m (−109 m quer) beide weg, und die Spur brach an
+    //    der Bahnkante ab.
+    //
+    // 2. Auch der echte Weg reicht nicht. Die Queransicht ist rund
+    //    zwoelffach ueberhoeht — zehn Meter laengs sind dort 3,4 Pixel,
+    //    zehn Meter quer aber vierzig. Bei einer 30-Grad-Ausfahrt liegen
+    //    Punkte im Abstand von zehn Metern Weg in der Zeichnung
+    //    neunundzwanzig Pixel auseinander, auf der Geraden nur 3,4. Genau
+    //    dort, wo die Kurve am staerksten kruemmt, wird sie also am
+    //    groebsten — und sie sieht eckig aus.
+    //
+    // Deshalb wird der Querweg mit `BAHN_SPUR_QUER_GEWICHT` gewichtet: Die
+    // Ausduennung misst damit annaehernd den Abstand im Bild statt auf dem
+    // Boden. Auf der Geraden aendert das nichts; in der Kurve legt sie
+    // mehr Punkte ab, dort wo sie gebraucht werden.
     let weit_genug = stats.bahn_spur.last().is_none_or(|(lg, qr)| {
         let d_laengs = laengs_m - *lg as f64;
-        let d_quer = quer_m - *qr as f64;
+        let d_quer = (quer_m - *qr as f64) * BAHN_SPUR_QUER_GEWICHT;
         d_laengs.hypot(d_quer) >= BAHN_SPUR_MIN_ABSTAND_M
     });
-    if weit_genug && stats.bahn_spur.len() < BAHN_SPUR_MAX_PUNKTE {
+    if weit_genug {
         stats.bahn_spur.push((laengs_m as f32, quer_m as f32));
     }
 }
@@ -45565,6 +45470,77 @@ mod v0_16_6_bush_completeness_tests {
             "kein Punkt der Ausfahrt darf verloren gehen"
         );
 
+        // Und in der Kurve muss es DICHTER werden als auf der Geraden.
+        //
+        // Die Queransicht ist ueberhoeht: Zehn Meter laengs sind dort 3,4
+        // Pixel, zehn Meter quer vierzig. Ohne das Quergewicht liegen die
+        // Punkte genau dort am weitesten auseinander, wo die Kurve am
+        // staerksten kruemmt.
+        let quer_weg: Vec<(f64, f64)> = (0..12).map(|i| (1900.0 + i as f64 * 2.0, i as f64 * -8.0)).collect();
+        let mut in_kurve = 0;
+        let mut letzter: Option<(f64, f64)> = None;
+        for (lg, qr) in &quer_weg {
+            let nimm = letzter.is_none_or(|(l, q)| {
+                (lg - l).hypot((qr - q) * BAHN_SPUR_QUER_GEWICHT) >= BAHN_SPUR_MIN_ABSTAND_M
+            });
+            if nimm {
+                in_kurve += 1;
+                letzter = Some((*lg, *qr));
+            }
+        }
+        // Dieselben zwoelf Punkte auf der Geraden: dort greift die
+        // Ausduennung staerker, weil zwei Meter Laengsweg wenig sind.
+        let mut auf_gerade = 0;
+        let mut letzter: Option<f64> = None;
+        for i in 0..12 {
+            let lg = 1900.0 + i as f64 * 2.0;
+            if letzter.is_none_or(|l| (lg - l as f64).abs() >= BAHN_SPUR_MIN_ABSTAND_M) {
+                auf_gerade += 1;
+                letzter = Some(lg);
+            }
+        }
+        assert!(
+            in_kurve > auf_gerade,
+            "in der Kurve {in_kurve} Punkte, auf der Geraden {auf_gerade} — \
+             das Quergewicht wirkt nicht"
+        );
+
+        // Und der Takt darf in der Ausfahrt nicht einbrechen.
+        //
+        // Gemessen an neun echten Landungen fiel die Kadenz bei dreissig
+        // Knoten von 0,51 s auf 3,01 s — 34,9 Meter zwischen zwei Punkten,
+        // mitten in der Kurve. Ursache war nicht die Fahrt, sondern die
+        // Phase: Beim Abbiegen springt sie von `Landing` auf `TaxiIn`,
+        // und damit fiel jede Sonderregel weg.
+        for gs in [55.0, 30.0, 15.0, 8.0] {
+            let t = adaptive_tick_interval_v2(
+                FlightPhase::TaxiIn,
+                Some(0.0),
+                Some(true),
+                Some(gs),
+                true, // die Aufzeichnung laeuft noch
+            );
+            assert_eq!(
+                t,
+                Duration::from_millis(ROLLOUT_TICK_MS),
+                "bei {gs} kt in der Ausfahrt taktet die Aufzeichnung mit \
+                 {t:?} statt {ROLLOUT_TICK_MS} ms — die Spur wird grob"
+            );
+        }
+        // Rollt das Flugzeug zum Gate, ist die Spur zu Ende — und mit ihr
+        // der feine Takt. Sonst liefe er die ganze Rollzeit weiter.
+        assert!(
+            adaptive_tick_interval_v2(
+                FlightPhase::TaxiIn,
+                Some(0.0),
+                Some(true),
+                Some(20.0),
+                false,
+            ) > Duration::from_millis(ROLLOUT_TICK_MS),
+            "auf dem Rollweg laeuft der 5-Hz-Takt weiter"
+        );
+
+
         // Gegenprobe: Mit reiner Laengsmessung waeren es weniger -- genau
         // die beiden letzten faehlen dann.
         let mut nur_laengs: Vec<f64> = Vec::new();
@@ -45593,6 +45569,7 @@ mod v0_16_6_bush_completeness_tests {
             Some(0.0),
             Some(true),
             Some(100.0),
+            false,
         );
         assert_eq!(ausrollen, Duration::from_millis(200), "5 Hz beim Ausrollen");
 
@@ -45611,16 +45588,32 @@ mod v0_16_6_bush_completeness_tests {
         // Sie darf NICHT im Flare greifen -- dort ist die Hoehe das
         // Kriterium, und der 50-Hz-Sampler liefert die Feinheit ohnehin.
         assert_eq!(
-            adaptive_tick_interval_v2(FlightPhase::Landing, Some(20.0), Some(false), Some(140.0)),
+            adaptive_tick_interval_v2(FlightPhase::Landing, Some(20.0), Some(false), Some(140.0), false),
             Duration::from_millis(500),
             "in der Luft bleibt es bei 2 Hz"
         );
-        // Und nicht mehr, sobald das Flugzeug unter die Messgrenze faellt:
-        // Was nicht mehr bewertet wird, braucht keine feine Spur.
+        // Frueher stand hier: „Unter 60 kt zurueck auf 2 Hz — was nicht
+        // mehr bewertet wird, braucht keine feine Spur."
+        //
+        // Das war falsch, und der Test hat den Fehler festgehalten statt
+        // ihn zu finden. Bewertet wird bis 60 kt, GEZEICHNET bis 5 kt.
+        // Die Ausfahrt liegt dazwischen — sie ist der Teil der Spur, der
+        // sich am staerksten kruemmt, und bekam die wenigsten Punkte.
+        //
+        // Massgeblich ist jetzt, ob die Aufzeichnung laeuft.
         assert_eq!(
-            adaptive_tick_interval_v2(FlightPhase::Landing, Some(0.0), Some(true), Some(30.0)),
-            Duration::from_millis(500),
-            "unter 60 kt zurueck auf 2 Hz"
+            adaptive_tick_interval_v2(FlightPhase::Landing, Some(0.0), Some(true), Some(30.0), true),
+            Duration::from_millis(200),
+            "solange die Spur laeuft, bleibt es bei 5 Hz"
+        );
+        // Drei Sekunden, nicht 500 ms: `TaxiIn` steht in keiner der
+        // Hoehenregeln, es gilt der Grundtakt. Genau dieser Wert wurde im
+        // Korpus gemessen — 3,01 s Median unter dreissig Knoten, ueber
+        // 311 Messpunkte. Das war der Einbruch, um den es hier geht.
+        assert_eq!(
+            adaptive_tick_interval_v2(FlightPhase::TaxiIn, Some(0.0), Some(true), Some(30.0), false),
+            Duration::from_secs(MQTT_PUBLISH_INTERVAL_SECS),
+            "ist die Spur zu Ende, faellt der Takt auf den Grundtakt zurueck"
         );
         // Und nicht in anderen Phasen -- ein Startlauf ist kein Ausrollen.
         assert_eq!(
@@ -45628,7 +45621,8 @@ mod v0_16_6_bush_completeness_tests {
                 FlightPhase::TakeoffRoll,
                 Some(0.0),
                 Some(true),
-                Some(100.0)
+                Some(100.0),
+                false,
             ),
             Duration::from_millis(500),
             "der Startlauf bleibt bei 2 Hz"

@@ -35,6 +35,8 @@ export interface BahnZoom {
   aufZiehEnde: () => void;
   /** Zurück auf die ganze Bahn. */
   zuruecksetzen: () => void;
+  /** Eine Stufe näher (1) oder weiter weg (−1) — für Knöpfe. */
+  stufe: (richtung: 1 | -1) => void;
   /** Wird gerade gezogen? Für den Mauszeiger. */
   zieht: boolean;
 }
@@ -66,6 +68,14 @@ export function useBahnZoom(ganzVonM: number, ganzBisM: number): BahnZoom {
 
   const aufRad = useCallback(
     (e: React.WheelEvent<SVGSVGElement>) => {
+      // NUR mit Strg oder Cmd. Ohne diese Bedingung verschluckt die Grafik
+      // jedes Mausrad-Ereignis, das über ihr auftritt — und die Seite lässt
+      // sich nicht mehr scrollen, sobald der Zeiger darüber steht. Genau
+      // das ist beim ersten Anlauf passiert.
+      //
+      // Dieselbe Regel benutzen Karten in Dokumenten, und sie ist aus
+      // gutem Grund verbreitet: Scrollen ist die häufigere Absicht.
+      if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
       const el = e.currentTarget;
       const kasten = el.getBoundingClientRect();
@@ -121,6 +131,26 @@ export function useBahnZoom(ganzVonM: number, ganzBisM: number): BahnZoom {
 
   const zuruecksetzen = useCallback(() => setSicht(null), []);
 
+  /**
+   * Zoomen ohne Tastatur — für die Knöpfe neben der Grafik.
+   *
+   * Zoomt auf die Mitte des aktuellen Ausschnitts. Wer eine bestimmte
+   * Stelle vergrössern will, nimmt Strg und das Rad; die Knöpfe sind für
+   * den Fall, dass man nur schnell näher heran möchte.
+   */
+  const stufe = useCallback(
+    (richtung: 1 | -1) => {
+      const aktuell = sicht ?? { von: ganzVonM, bis: ganzBisM };
+      const breite = aktuell.bis - aktuell.von;
+      const mitte = (aktuell.von + aktuell.bis) / 2;
+      const neueBreite = richtung > 0 ? breite / SCHRITT : breite * SCHRITT;
+      const g = grenzen(mitte - neueBreite / 2, mitte + neueBreite / 2);
+      if (g.bis - g.von >= ganzBisM - ganzVonM - 0.5) setSicht(null);
+      else setSicht(g);
+    },
+    [sicht, ganzVonM, ganzBisM, grenzen],
+  );
+
   return {
     vonM: sicht?.von,
     bisM: sicht?.bis,
@@ -130,6 +160,7 @@ export function useBahnZoom(ganzVonM: number, ganzBisM: number): BahnZoom {
     aufZiehen,
     aufZiehEnde,
     zuruecksetzen,
+    stufe,
     zieht,
   };
 }

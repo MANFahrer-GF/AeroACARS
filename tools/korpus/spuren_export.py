@@ -19,6 +19,7 @@ def kurs(a,b,c,d):
 con = sqlite3.connect("/var/lib/aeroacars-recorder/aeroacars-live.db")
 
 MIN_ABSTAND_M = 10.0
+QUER_GEWICHT  = 4.0
 MAX_PUNKTE    = 400
 RAND_M        = 80.0
 STOP_GS_KT    = 5.0
@@ -100,7 +101,24 @@ def spur(pid, icao, ident):
         if abs(q) > halbe + RAND_M: break
         if lg < -50: break
         if len(punkte) >= MAX_PUNKTE: break
-        if not punkte or abs(lg - punkte[-1]["laengs_m"]) >= MIN_ABSTAND_M:
+        # Der Abstand, wie er GEZEICHNET wird — nicht wie er gefahren wurde.
+        #
+        # Zwei Fehler stecken hier hintereinander:
+        #
+        # 1. Nur laengs zu messen verwirft in der Ausfahrt jeden Punkt.
+        #    Dort faehrt das Flugzeug quer, und die Laengsposition aendert
+        #    sich ueber zwanzig Meter kaum. Die Spur brach an der
+        #    Bahnkante ab.
+        # 2. Auch der echte Weg reicht nicht: Die Queransicht ist rund
+        #    zwoelffach ueberhoeht. Punkte im Abstand von zehn Metern Weg
+        #    liegen in einer 30-Grad-Ausfahrt neunundzwanzig Pixel
+        #    auseinander, auf der Geraden nur 3,4 — die Kurve wird genau
+        #    dort am groebsten, wo sie am staerksten kruemmt.
+        #
+        # Gewicht 4, wie BAHN_SPUR_QUER_GEWICHT im Client.
+        if not punkte or math.hypot(
+                lg - punkte[-1]["laengs_m"],
+                (q - punkte[-1]["quer_m"]) * QUER_GEWICHT) >= MIN_ABSTAND_M:
             punkte.append(dict(laengs_m=round(lg,1), quer_m=round(q,2)))
     # ── Raeumpunkt und Bewertungsgrenze ──────────────────────────────
     #

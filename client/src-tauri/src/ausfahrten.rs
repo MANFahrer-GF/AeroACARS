@@ -293,6 +293,6 @@ mod tests {
             (p2.to_degrees(), l2.to_degrees())
         };
         let (a, b) = vor(T.0, T.1, laengs, kurs);
-        vor(a, b, quer.abs(), kurs + if quer >= 0.0 { 1.5708 } else { -1.5708 })
+        vor(a, b, quer.abs(), kurs + if quer >= 0.0 { std::f64::consts::FRAC_PI_2 } else { -std::f64::consts::FRAC_PI_2 })
     }
 }

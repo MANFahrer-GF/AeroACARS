@@ -104,7 +104,8 @@ function seite(inhalt: string): string {
      Vorgabe auf, mit der Flex-Kinder ihre Inhaltsbreite erzwingen.
      ACHTUNG: keine Backticks in diesem Block — das CSS steht in einem
      Template-Literal, und ein Backtick beendet es mitten im String. */
-  .panel { min-width: 0; max-width: 100%; overflow-x: hidden; }
+  .panel { min-width: 0; max-width: 100%; }
+  .panel, .panel * { box-sizing: border-box; }
   .panel > * { min-width: 0; max-width: 100%; }
   svg { max-width: 100%; height: auto; }
 </style></head><body>

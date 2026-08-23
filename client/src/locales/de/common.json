@@ -1992,7 +1992,9 @@
     "exits_none": "Für diesen Platz sind keine Rollwege hinterlegt",
     "track_scale": "Spur {{m}} m",
     "zoom_reset": "Ganze Bahn",
-    "zoom_hint": "Mausrad zoomt · Ziehen verschiebt"
+    "zoom_hint": "Strg + Mausrad zoomt · Ziehen verschiebt",
+    "zoom_in": "Näher",
+    "zoom_out": "Weiter weg"
   },
   "ascan": {
     "title": "🔬 Flugzeug zur Analyse einreichen (Aircraft-Scan)",

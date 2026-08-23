@@ -1985,7 +1985,9 @@
     "exits_none": "Nessuna via di rullaggio registrata per questo aeroporto",
     "track_scale": "carreggiata {{m}} m",
     "zoom_reset": "Pista intera",
-    "zoom_hint": "La rotella ingrandisce · trascina per spostare"
+    "zoom_hint": "Ctrl + rotella ingrandisce · trascina per spostare",
+    "zoom_in": "Ingrandisci",
+    "zoom_out": "Riduci"
   },
   "ascan": {
     "title": "🔬 Invia aereo per l'analisi (Aircraft Scan)",

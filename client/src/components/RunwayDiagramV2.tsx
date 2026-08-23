@@ -350,11 +350,18 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
         display: "flex",
         flexDirection: "column",
         gap: 12,
-        // `min-width: 0` und `max-width: 100%`: Ein Flex-Container schrumpft
-        // sonst nicht unter die Inhaltsbreite seiner Kinder, und die Anzeige
-        // sprengt jeden Platz, der ihr zugewiesen wird. Gemessen: 654 statt
-        // 618 Pixel — der umgebende Container scrollte waagerecht, was
-        // §8.6.5 ausdrücklich verbietet.
+        // Drei Regeln, damit die Anzeige in jeden Platz passt, den sie
+        // bekommt — §8.6.5 verbietet waagerechtes Scrollen.
+        //
+        // `box-sizing: border-box` ist die entscheidende: Das Stylesheet gibt
+        // der Sektion links und rechts je 19 Pixel Innenabstand, und unter
+        // `content-box` kommen die zur Breite DAZU. Gemessen: berechnete
+        // Breite 603 Pixel, tatsächliche 641 — achtunddreissig zu viel, und
+        // der Container schnitt sie ab.
+        //
+        // `min-width: 0` bricht die Vorgabe auf, mit der Flex-Kinder ihre
+        // Inhaltsbreite erzwingen; `max-width: 100%` deckelt den Rest.
+        boxSizing: "border-box",
         minWidth: 0,
         maxWidth: "100%",
       }}
@@ -1181,29 +1188,40 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             marginTop: 4,
           }}
         >
-          {zoom.gezoomt ? (
-            <>
-              <span>
-                {projektion.sichtVonM.toFixed(0)}–{projektion.sichtBisM.toFixed(0)} m
-              </span>
-              <button
-                type="button"
-                onClick={zoom.zuruecksetzen}
-                style={{
-                  background: "rgba(255,255,255,0.06)",
-                  border: "1px solid rgba(255,255,255,0.15)",
-                  borderRadius: 4,
-                  color: "#cbd5e1",
-                  fontSize: "0.72rem",
-                  padding: "2px 8px",
-                  cursor: "pointer",
-                }}
-              >
-                {t("runway_v2.zoom_reset", { defaultValue: "Ganze Bahn" })}
-              </button>
-            </>
-          ) : (
-            <span>{t("runway_v2.zoom_hint", { defaultValue: "Mausrad zoomt · Ziehen verschiebt" })}</span>
+          <span>
+            {zoom.gezoomt
+              ? `${projektion.sichtVonM.toFixed(0)}–${projektion.sichtBisM.toFixed(0)} m`
+              : t("runway_v2.zoom_hint", {
+                  defaultValue: "Strg + Mausrad zoomt · Ziehen verschiebt",
+                })}
+          </span>
+          {/* Knöpfe für alle, die nicht mit Tastatur und Rad hantieren
+              wollen. Sie zoomen auf die Mitte des Ausschnitts. */}
+          <button
+            type="button"
+            onClick={() => zoom.stufe(-1)}
+            disabled={!zoom.gezoomt}
+            title={t("runway_v2.zoom_out", { defaultValue: "Weiter weg" })}
+            style={zoomKnopf(!zoom.gezoomt)}
+          >
+            −
+          </button>
+          <button
+            type="button"
+            onClick={() => zoom.stufe(1)}
+            title={t("runway_v2.zoom_in", { defaultValue: "Näher" })}
+            style={zoomKnopf(false)}
+          >
+            +
+          </button>
+          {zoom.gezoomt && (
+            <button
+              type="button"
+              onClick={zoom.zuruecksetzen}
+              style={{ ...zoomKnopf(false), padding: "2px 8px" }}
+            >
+              {t("runway_v2.zoom_reset", { defaultValue: "Ganze Bahn" })}
+            </button>
           )}
         </div>
 
@@ -1384,6 +1402,20 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
 }
 
 // ─── Kleine UI-Helpers ──────────────────────────────────────────────
+
+/** Einheitlicher Stil für die Zoom-Knöpfe. */
+function zoomKnopf(aus: boolean): React.CSSProperties {
+  return {
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.15)",
+    borderRadius: 4,
+    color: aus ? "#475569" : "#cbd5e1",
+    fontSize: "0.8rem",
+    lineHeight: 1,
+    padding: "3px 8px",
+    cursor: aus ? "default" : "pointer",
+  };
+}
 
 // FlugzeugBar — eine Pill-Höhen-große Box, voll Breite (flex 1 1 100%),
 // die ALLE Aircraft-Daten inline trägt. Wenn die Werte für eine Zeile
