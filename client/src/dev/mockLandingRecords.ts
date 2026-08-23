@@ -118,30 +118,102 @@ function baseRecord(): LandingRecord {
 // festlegen, was 3 m Randabstand gegenüber 15 m kosten soll — man muss es
 // nebeneinander sehen.
 
+import ECHTE_SPUREN from "./echteSpuren.json";
+import AUSFAHRTEN from "./ausfahrten.json";
+
 /**
- * Erzeugt einen gefahrenen Streifen aus Stützstellen.
+ * Die echten Rollspuren aus dem Bestand, nach PIREP.
  *
- * Zwischen den Stützstellen wird linear interpoliert, im Abstand von zehn
- * Metern — genau die Auflösung, die der Client aufzeichnet
- * (`BAHN_SPUR_MIN_ABSTAND_M`). Eine feinere Demo-Spur würde eine Genauigkeit
- * vortäuschen, die im Feld nicht ankommt.
+ * # Warum echte Spuren und keine konstruierten
+ *
+ * Der erste Entwurf interpolierte zwischen vier Stützstellen. Das ergab
+ * Geraden mit Knicken — und damit ein Bild, das die Anzeige besser aussehen
+ * liess, als sie ist: Eine echte Spur ist nie gerade. Sie schwankt, sie
+ * korrigiert, sie hat Rauschen. Genau daran entscheidet sich, ob das Band in
+ * der Queransicht lesbar bleibt.
+ *
+ * Die Daten stammen aus den Flug-Protokollen auf dem VPS, exportiert mit
+ * demselben Messfenster, das der Client fährt (ab dem Aufsetzen, bis 60 kt
+ * oder 10° Kursabweichung). Elf bis siebenunddreissig Abtastpunkte je
+ * Landung — das ist die Auflösung, die im Feld ankommt.
  */
-function spur(
+interface EchteSpur {
+  pirep: string;
+  punkte: Array<{ laengs_m: number; quer_m: number }>;
+  raeum: {
+    /** Beginn des Ausschwenkens — Grenze der Bewertung. */
+    m: number;
+    kt: number | null;
+    /** Überschreitung der Bahnkante — hier ist die Bahn geräumt. */
+    kante_m?: number;
+    seite: "left" | "right";
+  } | null;
+}
+const SPUR_NACH_PIREP: Record<string, EchteSpur> = Object.fromEntries(
+  (ECHTE_SPUREN as EchteSpur[]).map((e) => [e.pirep, e]),
+);
+
+/**
+ * Konstruierte Spuren für die drei Fälle, für die es im Bestand keine
+ * Landung gibt: Graspiste, Wasser, sehr kurze Bahn.
+ *
+ * Sie sind bewusst als das gekennzeichnet, was sie sind. Damit sie sich von
+ * den echten nicht unterscheiden lassen, tragen sie deren Auflösung (etwa
+ * dreissig Meter Abstand) und deren Rauschen — eine glatte Linie wäre eine
+ * Behauptung darüber, wie ruhig ein Flugzeug rollt.
+ */
+function bastelSpur(
   stuetzen: Array<[laengs: number, quer: number]>,
+  rauschen = 0.4,
 ): Array<{ laengs_m: number; quer_m: number }> {
   const out: Array<{ laengs_m: number; quer_m: number }> = [];
+  let z = 12345; // fester Startwert: die Demo muss reproduzierbar sein
+  const zufall = () => {
+    z = (z * 1103515245 + 12345) % 2147483648;
+    return z / 2147483648 - 0.5;
+  };
   for (let i = 0; i < stuetzen.length - 1; i++) {
     const [l0, q0] = stuetzen[i]!;
     const [l1, q1] = stuetzen[i + 1]!;
-    const schritte = Math.max(1, Math.round((l1 - l0) / 10));
+    const schritte = Math.max(1, Math.round((l1 - l0) / 30));
     for (let k = 0; k < schritte; k++) {
       const f = k / schritte;
-      out.push({ laengs_m: l0 + (l1 - l0) * f, quer_m: q0 + (q1 - q0) * f });
+      // Weiche Überblendung statt Knick an der Stützstelle.
+      const g = f * f * (3 - 2 * f);
+      out.push({
+        laengs_m: Math.round((l0 + (l1 - l0) * f) * 10) / 10,
+        quer_m: Math.round((q0 + (q1 - q0) * g + zufall() * rauschen) * 100) / 100,
+      });
     }
   }
   const letzte = stuetzen[stuetzen.length - 1]!;
   out.push({ laengs_m: letzte[0], quer_m: letzte[1] });
   return out;
+}
+
+/** Graspiste: kurz, schmal, mit mehr seitlichem Spiel. */
+function grasSpur() {
+  return bastelSpur([[110, -1.2], [260, 2.6], [420, -0.4], [560, -2.1]], 0.7);
+}
+
+/** Wasserlandung: kaum Bremsweg, langer Auslauf. */
+function wasserSpur() {
+  return bastelSpur([[180, 0.8], [420, -1.6], [700, -0.5]], 0.5);
+}
+
+/** Kurze Bahn: früh aufgesetzt, zügig geräumt. */
+function kurzeBahnSpur() {
+  return bastelSpur([[140, 0.5], [330, 3.4], [520, 1.1], [700, -0.6]], 0.35);
+}
+
+/** Holt eine echte Spur. Wirft, wenn sie fehlt — eine stumm leere Demo-
+ *  Variante wäre schlimmer als ein Fehler beim Bauen. */
+function echteSpur(pirep: string): EchteSpur {
+  const s = SPUR_NACH_PIREP[pirep];
+  if (!s || s.punkte.length < 5) {
+    throw new Error(`Keine echte Spur für ${pirep} in echteSpuren.json`);
+  }
+  return s;
 }
 
 /** Setzt die Bahndisziplin-Felder eines Datensatzes in einem Zug. */
@@ -151,8 +223,12 @@ function bahn(
     breite?: number;
     spur?: number;
     spann?: number;
-    punkte?: Array<[number, number]>;
+    /** PIREP einer echten Spur aus `echteSpuren.json`. */
+    spurVon?: string;
+    /** Oder eine eigene Spur, wenn es keine echte gibt (Gras, Wasser). */
+    punkte?: Array<{ laengs_m: number; quer_m: number }>;
     belag?: boolean | null;
+    /** Nicht mehr gesetzt — der Räumpunkt kommt aus dem Spurende. */
     raeumM?: number | null;
     raeumKt?: number | null;
     raeumSeite?: "left" | "right" | null;
@@ -161,10 +237,25 @@ function bahn(
 ): LandingRecord {
   const breite = o.breite ?? 45;
   const spurweite = o.spur ?? null;
-  const punkte = o.punkte ? spur(o.punkte) : [];
+  const quelle = o.spurVon ? echteSpur(o.spurVon) : null;
+  const punkte = quelle ? quelle.punkte : o.punkte ?? [];
+  // Der grösste Versatz zählt nur bis zum Räumpunkt.
+  //
+  // Danach ist das Flugzeug auf dem Weg zur Ausfahrt, und dort sind
+  // vierzig Meter neben der Mittellinie normal, nicht auffällig. Rechnet man
+  // die ganze Spur, ist der „grösste Versatz" immer die Ausfahrt selbst —
+  // die Marke ② sitzt dann auf der Marke ③, und die Bewertung würde ein
+  // reguläres Abrollen als Fehler zählen.
+  //
+  // Der Client macht es genauso: `bahn_max_querversatz_m` wird nur
+  // fortgeschrieben, solange das Messfenster offen ist.
+  // Für die Bewertung zählt der Beginn des Ausschwenkens, nicht die Kante.
+  const raeumGrenze = quelle?.raeum?.m ?? Infinity;
+  const gewertet = punkte.filter((x) => x.laengs_m < raeumGrenze);
+  const basis = gewertet.length > 0 ? gewertet : punkte;
   const max =
-    punkte.length > 0
-      ? punkte.reduce((a, b) => (Math.abs(b.quer_m) > Math.abs(a.quer_m) ? b : a)).quer_m
+    basis.length > 0
+      ? basis.reduce((a, b) => (Math.abs(b.quer_m) > Math.abs(a.quer_m) ? b : a)).quer_m
       : null;
   r.runway_width_m = breite;
   r.track_width_m = spurweite;
@@ -180,10 +271,53 @@ function bahn(
       ? breite / 2 - (Math.abs(max) + spurweite / 2)
       : null;
   r.surface_paved = o.belag === undefined ? true : o.belag;
-  r.clearance_point_m = o.raeumM ?? null;
-  r.clearance_speed_kt = o.raeumKt ?? null;
-  r.clearance_side = o.raeumSeite ?? null;
+  // Der Räumpunkt ist das ENDE der Spur, nicht ein freier Wert.
+  //
+  // Dort, wo das Messfenster zuging, hat das Flugzeug die Bahn verlassen —
+  // beides ist derselbe Moment. Ein erfundener Räumpunkt hinter dem letzten
+  // Spurpunkt erzeugt in der Grafik eine Marke im Nichts: Die Spur endet auf
+  // der Mittellinie, und dreihundert Meter weiter sitzt „Bahn geräumt" an der
+  // Kante, ohne dass irgendetwas dazwischen liegt. Das Flugzeug wäre dorthin
+  // gesprungen.
+  // Bei echten Spuren stammt er aus der Messung: die letzte Überschreitung
+  // der Bahnkante, nach der das Flugzeug draussen bleibt. Bei konstruierten
+  // Spuren (Gras, Wasser, kurze Bahn) aus den Angaben der Variante.
+  if (quelle) {
+    // „Bahn geräumt" ist die KANTE, nicht der Beginn des Ausschwenkens.
+    // Beides in ein Feld zu legen war der Fehler: Die Spur wurde dann schon
+    // mitten auf der Bahn gestrichelt gezeichnet, weil das Ausschwenken
+    // dort begann — und eine gestrichelte Linie auf der Bahn ist nicht zu
+    // erklären.
+    r.clearance_point_m = quelle.raeum?.kante_m ?? quelle.raeum?.m ?? null;
+    r.scoring_cutoff_m = quelle.raeum?.m ?? null;
+    r.clearance_speed_kt = quelle.raeum?.kt ?? null;
+    r.clearance_side = quelle.raeum?.seite ?? null;
+  } else {
+    const letzter = punkte.length ? punkte[punkte.length - 1]!.laengs_m : null;
+    r.clearance_point_m = o.raeumSeite != null ? letzter : null;
+    r.clearance_speed_kt = o.raeumSeite != null ? (o.raeumKt ?? null) : null;
+    r.clearance_side = o.raeumSeite ?? null;
+  }
   r.overrun_m = o.overrun ?? null;
+  // Ausfahrten aus der OSM-Bodenkarte, nach Platz und Bahn. Sie machen die
+  // Bewertung nachvollziehbar: Man sieht, welche Ausfahrt vor der genutzten
+  // lag und wie weit davor.
+  const bahnSchluessel = `${r.runway_match!.airport_ident}/${r.runway_match!.runway_ident}`;
+  r.runway_exits =
+    (AUSFAHRTEN as Record<string, Array<{ name: string; laengs_m: number; seite: "left" | "right" }>>)[
+      bahnSchluessel
+    ] ?? null;
+  // Marke ① muss auf dem Band sitzen. Im Protokoll liegt der erste
+  // Bodenpunkt bis zu zweihundert Meter hinter dem erkannten Aufsetzer
+  // (die Positionen kommen mit rund einem Hertz, der Aufsetzer aus dem
+  // 50-Hz-Sampler). Im Client faengt die Aufzeichnung dagegen mit der
+  // Landephase an -- fuer die Demo wird das hier nachgezogen.
+  if (punkte.length > 0) {
+    r.td_distance_from_threshold_m = punkte[0]!.laengs_m;
+    r.runway_match!.touchdown_distance_from_threshold_ft =
+      punkte[0]!.laengs_m / 0.3048;
+    r.runway_match!.centerline_distance_m = punkte[0]!.quer_m;
+  }
   return r;
 }
 
@@ -341,70 +475,73 @@ export const MOCK_LANDING_OPTIONS: MockOption[] = [
   // decken die vorhandenen Varianten `dds_violation` und `pre_v080` ab.
   {
     key: "d_mittig",
-    label: "① Mittig, in der Aufsetzzone (EDDH 23, A321)",
-    hint: "Der Normalfall: 100 Punkte auf der Disziplin-Achse. Aufsetzen 1,2 m links, Spur bleibt innerhalb von 3 m, Ausfahrt nach links bei 1740 m.",
+    label: "① Mittig, in der Aufsetzzone — EDDH 23, Fenix A319",
+    hint: "Echte Spur (a3V0DXnWr6054VO6, 37 Messpunkte): Der Normalfall. Die Spur bleibt über den ganzen Rollweg innerhalb von 3 m um die Mittellinie — 100 Punkte auf der Disziplin-Achse.",
     build: () =>
       bahn(rwyEDDH(baseRecord()), {
         breite: 46,
         spur: 7.59,
         spann: 35.8,
-        punkte: [[420, -1.2], [900, 2.4], [1400, -0.8], [1740, -2.6]],
-        raeumM: 1740,
-        raeumKt: 42,
+        spurVon: "a3V0DXnWr6054VO6",
+        raeumM: 1795,
+        raeumKt: 58,
         raeumSeite: "left",
       }),
   },
   {
     key: "d_kante",
-    label: "② Rad erreicht die Bahnkante (EDDH 23, A321)",
-    hint: "Der Grenzfall: äusseres Rad kommt bis auf 1 m an die Kante, bleibt aber darauf. 55 Punkte — kein Fehler, aber knapp.",
+    label: "② Deutlich aussermittig — EDDH 05, A220-300",
+    hint: "Echte Spur (0Ab3v9EvNN1LKZ8z, 27 Messpunkte): wandert bis 13,4 m nach rechts und kommt zurück. Das äussere Rad bleibt gut 5 m von der Kante — noch kein Fehler, aber sichtbar aussermittig.",
     build: () =>
-      bahn(rwyEDDH(baseRecord()), {
+      // Die Bahn muss zur Spur passen: Diese Landung fand auf der 05 statt,
+      // nicht auf der 23. Sonst zeigt die Ausfahrtenliste die Rollwege der
+      // Gegenrichtung -- und die Laengspositionen waeren gespiegelt.
+      bahn(rwyEDDH(baseRecord(), "05"), {
         breite: 46,
-        spur: 7.59,
-        spann: 35.8,
-        punkte: [[420, -1.0], [880, 12.0], [1150, 18.2], [1500, 9.0], [1800, 1.5]],
-        raeumM: 1800,
-        raeumKt: 44,
-        raeumSeite: "left",
+        spur: 6.0,
+        spann: 35.1,
+        spurVon: "0Ab3v9EvNN1LKZ8z",
+        raeumM: 1830,
+        raeumKt: 61,
+        raeumSeite: "right",
       }),
   },
   {
     key: "d_daneben",
-    label: "③ Rad neben der befestigten Bahn (EDDH 23, A320)",
-    hint: "Der echte Fall raKOnJD1XgNbP06q vom 23.07.: 26,9 m Versatz auf einer 46-m-Bahn, äusseres Rad 7,6 m im Gras. 20 Punkte.",
+    label: "③ Rad neben der befestigten Bahn — EDDH 23, Fenix A320",
+    hint: "Echte Spur (raKOnJD1XgNbP06q, 23.07., 20 Messpunkte): 26,9 m Versatz auf einer 46-m-Bahn, äusseres Rad 7,6 m im Gras. 20 Punkte. Die Bahngeometrie wurde am 23.08. gegen OSM gegengeprüft — der Versatz ist echt.",
     build: () =>
       bahn(rwyEDDH(baseRecord()), {
         breite: 46,
         spur: 7.59,
         spann: 35.8,
-        punkte: [[517, -8.7], [860, 20.6], [1002, 26.8], [1160, 19.6], [1400, 8.0]],
+        spurVon: "raKOnJD1XgNbP06q",
         raeumM: null,
       }),
   },
   {
     key: "d_overrun",
-    label: "④ Über das Bahnende hinaus (EDDH 23, B738)",
-    hint: "Das Bahnende überschossen — 0 Punkte, unabhängig von allem Seitlichen. Die Overrun-Prüfung läuft VOR den seitlichen Regeln.",
+    label: "④ Über das Bahnende hinaus — EDDL 05R, A321",
+    hint: "Echte Spur (zR4a18JGxVKZ84de, 21 Messpunkte), der Überroll-Wert ist konstruiert: Im ganzen Bestand von 802 Landungen ist niemand über das Bahnende geschossen. 0 Punkte, unabhängig von allem Seitlichen — die Prüfung läuft VOR den seitlichen Regeln.",
     build: () =>
-      bahn(rwyEDDH(baseRecord()), {
-        breite: 46,
-        spur: 5.72,
-        spann: 34.32,
-        punkte: [[1850, 0.4], [2400, 1.8], [2900, 2.2], [3094, 3.0]],
+      bahn(rwyEDDL05R(baseRecord()), {
+        breite: 45,
+        spur: 7.59,
+        spann: 35.8,
+        spurVon: "zR4a18JGxVKZ84de",
         overrun: 84,
       }),
   },
   {
     key: "d_gras",
     label: "⑥ Graspiste — seitliche Bewertung ausgesetzt (EDXF, C172)",
-    hint: "Auf Gras ist der Rand fliessend. Die Queransicht entfällt sichtbar, mit Grund. Aufsetzpunkt und Bahnende werden weiter bewertet.",
+    hint: "Konstruiert — im Bestand gibt es keine Graslandung. Auf Gras ist der Rand fliessend, die Queransicht entfällt sichtbar mit Grund. Aufsetzpunkt und Bahnende werden weiter bewertet.",
     build: () => {
       const r = bahn(rwyKlein(baseRecord(), "EDXF", "08", 2296, 30), {
         breite: 30,
         spur: 2.5,
         spann: 11.0,
-        punkte: [[120, -1.0], [300, 2.0], [500, -1.5]],
+        punkte: grasSpur(),
         belag: false,
       });
       r.runway_match!.surface = "GRS";
@@ -416,12 +553,12 @@ export const MOCK_LANDING_OPTIONS: MockOption[] = [
   {
     key: "d_ohne_spurweite",
     label: "⑦ Spurweite unbekannt — Verzicht sichtbar (EDDH 23)",
-    hint: "Ein Muster, das nicht in der Typtabelle steht. Ohne Spurweite lässt sich die Lage der Räder nicht bestimmen — der Verzicht steht da, statt eines geratenen Werts.",
+    hint: "Echte Spur (y75RLelRGWq7ogA3), aber ein Muster ohne Eintrag in der Typtabelle. Ohne Spurweite lässt sich die Lage der Räder nicht bestimmen — der Verzicht steht da, statt eines geratenen Werts.",
     build: () => {
       const r = bahn(rwyEDDH(baseRecord()), {
         breite: 46,
         spur: undefined,
-        punkte: [[430, -2.0], [900, 6.0], [1400, 1.0]],
+        spurVon: "y75RLelRGWq7ogA3",
       });
       r.aircraft_icao = "ZZZZ";
       r.aircraft_title = "Ein Muster ohne Eintrag";
@@ -431,13 +568,13 @@ export const MOCK_LANDING_OPTIONS: MockOption[] = [
   {
     key: "d_wasser",
     label: "⑧ Wasserlandung — keine Bahn, keine Kante",
-    hint: "Ein Wasserlandeplatz hat weder befestigte Fläche noch Kante. Alles Seitliche entfällt; die Landung wird trotzdem bewertet.",
+    hint: "Konstruiert — im Bestand gibt es keine Wasserlandung. Weder befestigte Fläche noch Kante: Alles Seitliche entfällt, die Landung wird trotzdem bewertet.",
     build: () => {
       const r = bahn(rwyKlein(baseRecord(), "FA12", "18W", 3000, 60), {
         breite: 60,
         spur: 3.3,
         spann: 14.6,
-        punkte: [[200, 1.0], [400, -2.0]],
+        punkte: wasserSpur(),
         belag: false,
       });
       r.runway_match!.surface = "WATER";
@@ -449,13 +586,13 @@ export const MOCK_LANDING_OPTIONS: MockOption[] = [
   {
     key: "d_kurze_bahn",
     label: "⑩ Sehr kurze Bahn — Aufsetzzone = erstes Drittel (EDXB 26, C208)",
-    hint: "Unter 1200 m gibt es keine Aufsetzzone nach Annex 14. Die Zone wird zum ersten Drittel, der Zielpunkt rückt von 400 m auf 300 m.",
+    hint: "Konstruiert, mit der Auflösung echter Daten. Unter 1200 m gibt es keine Aufsetzzone nach Annex 14 — die Zone wird zum ersten Drittel, der Zielpunkt rückt von 400 m auf 300 m.",
     build: () => {
       const r = bahn(rwyKlein(baseRecord(), "EDXB", "26", 900, 23), {
         breite: 23,
         spur: 3.6,
         spann: 15.88,
-        punkte: [[140, 0.5], [320, 3.2], [520, 1.0], [700, -0.5]],
+        punkte: kurzeBahnSpur(),
         raeumM: 700,
         raeumKt: 30,
         raeumSeite: "right",
@@ -474,20 +611,37 @@ export const MOCK_LANDING_OPTIONS: MockOption[] = [
 
 // ─── Bahn-Vorlagen für die Disziplin-Varianten ────────────────────────
 
-/** EDDH 23 — die Bahn aus der Gegenprobe: 3094 m nutzbar, 46 m breit. */
-function rwyEDDH(r: LandingRecord): LandingRecord {
+/** EDDH — die Bahn aus der Gegenprobe: 46 m breit, versetzte Schwelle. */
+function rwyEDDH(r: LandingRecord, richtung: "23" | "05" = "23"): LandingRecord {
   r.runway_match!.airport_ident = "EDDH";
-  r.runway_match!.runway_ident = "23";
+  r.runway_match!.runway_ident = richtung;
   r.runway_match!.surface = "ASP";
   r.runway_match!.length_ft = 10663;
-  // 512 ft versetzte Schwelle — genau der Wert, den die Gegenprobe am
-  // 23.08.2026 gegen OSM und OurAirports bestätigt hat.
-  r.runway_match!.displaced_threshold_ft = 512;
-  r.runway_match!.true_course_deg = 230.21;
+  // Versetzte Schwelle — genau die Werte, die die Gegenprobe am 23.08.2026
+  // gegen OSM und OurAirports bestätigt hat: 512 ft für die 23, 978 ft für
+  // die 05. Zusammen 454 m, und genau um diesen Betrag ist die
+  // Navigraph-Geometrie kürzer als die Bahnlänge.
+  r.runway_match!.displaced_threshold_ft = richtung === "23" ? 512 : 978;
+  r.runway_match!.true_course_deg = richtung === "23" ? 230.21 : 50.2;
   r.arr_airport = "EDDH";
   r.touchdown_airport = "EDDH";
   r.aircraft_icao = "A321";
   r.aircraft_title = "FenixA321 CFM SL SC";
+  return r;
+}
+
+/** EDDL 05R — 2997 m, 45 m breit, 300 m versetzte Schwelle. */
+function rwyEDDL05R(r: LandingRecord): LandingRecord {
+  r.runway_match!.airport_ident = "EDDL";
+  r.runway_match!.runway_ident = "05R";
+  r.runway_match!.surface = "CON";
+  r.runway_match!.length_ft = 9833;
+  r.runway_match!.displaced_threshold_ft = 984;
+  r.runway_match!.true_course_deg = 52.5;
+  r.arr_airport = "EDDL";
+  r.touchdown_airport = "EDDL";
+  r.aircraft_icao = "A321";
+  r.aircraft_title = "FenixA321 IAE WF SC";
   return r;
 }
 

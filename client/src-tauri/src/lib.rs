@@ -153,7 +153,58 @@ const MQTT_PUBLISH_INTERVAL_SECS: u64 = 3;
 ///   AGL <1500 ft  → 1000 ms (1 Hz)  — Final-Approach (war: 1000-500ft = 1s)
 ///   AGL <2000 ft  → 1500 ms         — kurz vor Final
 ///   sonst         → 3000 ms (default)
+/// Abtastintervall waehrend des Ausrollens.
+///
+/// # Warum das Ausrollen ein eigenes Intervall braucht
+///
+/// Der Rollweg lief bisher mit denselben 2 Hz wie der Flare. Bei 100 kt
+/// (51 m/s) ist das ein Messpunkt alle **25 Meter** — und damit eine Spur,
+/// die aus fuenfzehn bis dreissig Punkten besteht. Fuer die Frage „wie weit
+/// war das Rad von der Kante" reicht das gerade so; fuer die Frage „wie hat
+/// sich das Flugzeug auf der Bahn verhalten" nicht. Ein Ausbrechen und
+/// Zurueckziehen ueber vierzig Meter faellt zwischen zwei Punkte.
+///
+/// Bei 5 Hz sind es zehn Meter je Punkt — genau der Mindestabstand, mit dem
+/// `bahndisziplin_tick` die Spur ohnehin ausduennt. Damit ist die
+/// Aufzeichnung so fein, wie die Ablage es zulaesst, und nicht feiner.
+///
+/// # Was das kostet
+///
+/// Der Tick selbst ist billig: Er liest einen Schnappschuss und rechnet.
+/// Die teuren Wege — MQTT-Publish und der phpVMS-Punktabstand — haengen
+/// seit v0.6.0 bzw. v1.6.14 an eigenen Kadenzen und werden davon **nicht**
+/// beruehrt. Das Fenster ist ausserdem kurz: Ausrollen dauert dreissig bis
+/// sechzig Sekunden, danach faellt die Geschwindigkeit unter die Schwelle
+/// und das Intervall geht auf 2 Hz zurueck.
+const ROLLOUT_TICK_MS: u64 = 200;
+
+/// Ab dieser Fahrt gilt „am Ausrollen" — dieselbe Schwelle, unter der auch
+/// das Messfenster der Bahndisziplin schliesst. Ein Flugzeug, das langsamer
+/// rollt, wird nicht mehr bewertet und braucht auch keine feine Spur.
+const ROLLOUT_TICK_MIN_GS_KT: f64 = BAHN_MESS_MIN_GS_KT as f64;
+
 fn adaptive_tick_interval(phase: FlightPhase, agl_ft: Option<f64>) -> Duration {
+    adaptive_tick_interval_v2(phase, agl_ft, None, None)
+}
+
+/// Wie `adaptive_tick_interval`, kennt aber zusaetzlich Bodenkontakt und
+/// Fahrt — beides braucht es, um das Ausrollen von allem anderen zu
+/// unterscheiden.
+fn adaptive_tick_interval_v2(
+    phase: FlightPhase,
+    agl_ft: Option<f64>,
+    on_ground: Option<bool>,
+    groundspeed_kt: Option<f64>,
+) -> Duration {
+    // Ausrollen zuerst: Es ist der einzige Zustand, in dem die seitliche
+    // Lage laufend gemessen wird, und der einzige, dessen Aufloesung an der
+    // Fahrt haengt statt an der Hoehe.
+    if matches!(phase, FlightPhase::Landing)
+        && on_ground == Some(true)
+        && groundspeed_kt.is_some_and(|gs| gs >= ROLLOUT_TICK_MIN_GS_KT)
+    {
+        return Duration::from_millis(ROLLOUT_TICK_MS);
+    }
     if let (Some(agl), true) = (
         agl_ft,
         matches!(
@@ -23361,7 +23412,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             let tick_interval = {
                 let phase = flight.stats.lock().expect("flight stats").phase;
                 let agl = last_good_snap.as_ref().map(|s| s.altitude_agl_ft);
-                adaptive_tick_interval(phase, agl)
+                let og = last_good_snap.as_ref().map(|s| s.on_ground);
+                let gs = last_good_snap.as_ref().map(|s| s.groundspeed_kt as f64);
+                adaptive_tick_interval_v2(phase, agl, og, gs)
             };
             tokio::time::sleep(tick_interval).await;
             if flight.stop.load(Ordering::Relaxed) {
@@ -26994,6 +27047,74 @@ fn bahn_raeum_seite(kurs_diff: f64, spur: &[(f32, f32)]) -> Option<String> {
     }
 }
 
+/// Wie weit neben der Bahn die Spur noch aufgezeichnet wird.
+///
+/// # Warum achtzig Meter und nicht fuenfundzwanzig
+///
+/// Die erste Fassung brach bei fuenfundzwanzig Metern ab — und traf damit
+/// mitten in die Ausfahrtskurve. Gemessen an raKOnJD1XgNbP06q (EDDH 23):
+/// Das Flugzeug verlaesst die Bahn ueber 1879 m (−18,6 m), 1901 m (−46,7 m),
+/// 1907 m (−80,0 m) und rollt dann parallel zur Bahn bei −180 m weiter. Die
+/// Aufzeichnung endete beim dritten dieser Punkte, und im Diagramm sah es
+/// aus, als loese sich die Spur in Luft auf.
+///
+/// Achtzig Meter zeigen die Ausfahrt vollstaendig — bis zu dem Punkt, an dem
+/// die Kurve in den Rollweg uebergeht. Was danach kommt, ist Rollverkehr und
+/// gehoert nicht mehr zur Landung. Die Anzeige klemmt die Spur ohnehin am
+/// Bildrand; dass sie dort hinauslaeuft, IST die Aussage.
+const BAHN_SPUR_RAND_M: f64 = 80.0;
+
+/// Ab welcher Fahrt das Aufzeichnen endet.
+///
+/// Unter fuenf Knoten steht das Flugzeug praktisch — jeder weitere Punkt
+/// waere derselbe Punkt.
+const BAHN_SPUR_STOP_GS_KT: f32 = 5.0;
+
+/// Schreibt die Spur fort, ohne zu bewerten.
+///
+/// Laeuft NACH dem Schliessen des Messfensters weiter, damit die Anzeige
+/// zeigen kann, wohin das Flugzeug die Bahn verlassen hat. Endet, sobald es
+/// steht, seitlich weit genug weg ist oder die Ablage voll ist.
+fn spur_fortschreiben(
+    stats: &mut FlightStats,
+    snap: &SimSnapshot,
+    laengs_m: f64,
+    quer_m: f64,
+    // Die halbe Bahnbreite statt des ganzen `RunwayMatch`: Der liegt in
+    // `stats`, und ihn hineinzureichen waehrend `stats` veraendert wird,
+    // laesst sich nicht ausleihen. Ein f64 loest das ohne Kopie.
+    halbe_breite_m: f64,
+) {
+    if snap.groundspeed_kt < BAHN_SPUR_STOP_GS_KT {
+        return;
+    }
+    if quer_m.abs() > halbe_breite_m + BAHN_SPUR_RAND_M {
+        return;
+    }
+    // Rueckwaerts oder weit vor der Schwelle: das ist kein Ausrollen mehr.
+    if laengs_m < -50.0 {
+        return;
+    }
+    // Der ECHTE Abstand, nicht nur der Laengsabstand.
+    //
+    // In der Ausfahrt faehrt das Flugzeug quer: Die Laengsposition aendert
+    // sich ueber zwanzig Meter kaum, der Querversatz um dutzende. Wer nur
+    // laengs misst, verwirft dort jeden Punkt — und die Spur endet genau
+    // dort, wo sie am meisten zu sagen haette. Gemessen an
+    // raKOnJD1XgNbP06q (EDDH 23): Die Punkte bei 1907 m (−80 m quer) und
+    // 1898 m (−109 m quer) lagen sechs bzw. neun Meter hinter ihrem
+    // Vorgaenger und fielen beide weg. Im Diagramm brach die Spur an der
+    // Bahnkante ab.
+    let weit_genug = stats.bahn_spur.last().is_none_or(|(lg, qr)| {
+        let d_laengs = laengs_m - *lg as f64;
+        let d_quer = quer_m - *qr as f64;
+        d_laengs.hypot(d_quer) >= BAHN_SPUR_MIN_ABSTAND_M
+    });
+    if weit_genug && stats.bahn_spur.len() < BAHN_SPUR_MAX_PUNKTE {
+        stats.bahn_spur.push((laengs_m as f32, quer_m as f32));
+    }
+}
+
 fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     let Some(rm) = stats.runway_match.as_ref() else {
         return;
@@ -27034,7 +27155,22 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
         stats.bahn_overrun_m = Some(stats.bahn_overrun_m.unwrap_or(0.0).max(ueber));
     }
 
+    // ── Die Spur laeuft weiter, die BEWERTUNG nicht ──────────────────
+    //
+    // Messen und bewerten sind zwei verschiedene Dinge. Das Messfenster
+    // schliesst, sobald die Ausfahrt eingeleitet ist — ab da haengt die
+    // seitliche Lage an der Anweisung des Lotsen und nicht mehr am Piloten,
+    // und es waere falsch, sie zu benoten.
+    //
+    // Aufzeichnen muss man sie trotzdem: Sonst endet die Spur im Diagramm
+    // mitten auf der Bahn, waehrend die Marke „Bahn geraeumt" dreihundert
+    // Meter weiter an der Kante sitzt — dazwischen nichts. Das Flugzeug
+    // waere dorthin gesprungen.
+    //
+    // Der gezeichnete Teil hinter dem Raeumpunkt wird in der Anzeige
+    // abgesetzt dargestellt („Richtung echt, ab hier nicht mehr gewertet").
     if stats.bahn_fenster_zu {
+        spur_fortschreiben(stats, snap, laengs_m, quer_m, halbe_breite_m);
         return;
     }
 
@@ -27062,9 +27198,12 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
             return;
         }
     }
-    // Ausserhalb der Bahn laengs: nichts mehr zu messen.
+    // Ausserhalb der Bahn laengs: nichts mehr zu BEWERTEN. Die Spur laeuft
+    // weiter — beim Ueberrollen ist gerade der Teil hinter dem Bahnende der
+    // interessante.
     if laengs_m < 0.0 || (nutzbare_laenge_m > 300.0 && laengs_m > nutzbare_laenge_m) {
         stats.bahn_fenster_zu = true;
+        spur_fortschreiben(stats, snap, laengs_m, quer_m, halbe_breite_m);
         return;
     }
 
@@ -27077,14 +27216,9 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     }
     stats.bahn_proben = stats.bahn_proben.saturating_add(1);
 
-    // Spur fuer die Queransicht — ausgeduennt und begrenzt.
-    let weit_genug = stats
-        .bahn_spur
-        .last()
-        .is_none_or(|(lg, _)| (laengs_m - *lg as f64).abs() >= BAHN_SPUR_MIN_ABSTAND_M);
-    if weit_genug && stats.bahn_spur.len() < BAHN_SPUR_MAX_PUNKTE {
-        stats.bahn_spur.push((laengs_m as f32, quer_m as f32));
-    }
+    // Spur fuer die Queransicht — dieselbe Funktion wie nach dem Schliessen
+    // des Fensters, damit die Ausduennung nicht an zwei Stellen lebt.
+    spur_fortschreiben(stats, snap, laengs_m, quer_m, halbe_breite_m);
 }
 
 fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
@@ -45327,6 +45461,108 @@ mod v0_16_6_bush_completeness_tests {
     }
 
     // ─── (5) sampler-path rollout: gate + accumulate-to-full-stop ────────
+
+    #[test]
+    fn die_spur_reisst_in_der_ausfahrt_nicht_ab() {
+        // Der Fall aus dem Feld (raKOnJD1XgNbP06q, EDDH 23): In der
+        // Ausfahrt faehrt das Flugzeug quer. Die Laengsposition aendert
+        // sich ueber zwanzig Meter kaum, der Querversatz um dutzende.
+        //
+        // Mit einer Ausduennung, die nur laengs misst, faellt dort JEDER
+        // Punkt weg -- die Spur endet an der Bahnkante, und im Diagramm
+        // sieht es aus, als loese sie sich auf. Der Abstand muss deshalb
+        // ueber beide Achsen gehen.
+        let echte_punkte: &[(f64, f64)] = &[
+            (1848.0, 0.6),
+            (1879.0, -18.6),
+            (1901.0, -46.7),
+            (1907.0, -80.0),   // nur 6 m laengs weiter -- aber 33 m quer
+            (1898.0, -109.4),  // laengs sogar rueckwaerts, 30 m quer
+        ];
+        let mut abgelegt: Vec<(f32, f32)> = Vec::new();
+        for (lg, qr) in echte_punkte {
+            let weit_genug = abgelegt.last().is_none_or(|(l, q)| {
+                (lg - *l as f64).hypot(qr - *q as f64) >= BAHN_SPUR_MIN_ABSTAND_M
+            });
+            if weit_genug {
+                abgelegt.push((*lg as f32, *qr as f32));
+            }
+        }
+        assert_eq!(
+            abgelegt.len(),
+            echte_punkte.len(),
+            "kein Punkt der Ausfahrt darf verloren gehen"
+        );
+
+        // Gegenprobe: Mit reiner Laengsmessung waeren es weniger -- genau
+        // die beiden letzten faehlen dann.
+        let mut nur_laengs: Vec<f64> = Vec::new();
+        for (lg, _) in echte_punkte {
+            if nur_laengs
+                .last()
+                .is_none_or(|l| (lg - l).abs() >= BAHN_SPUR_MIN_ABSTAND_M)
+            {
+                nur_laengs.push(*lg);
+            }
+        }
+        assert!(
+            nur_laengs.len() < echte_punkte.len(),
+            "die Gegenprobe muss Punkte verlieren, sonst prueft der Test nichts"
+        );
+    }
+
+    #[test]
+    fn ausrollen_wird_fuenfmal_so_fein_abgetastet() {
+        // Der Rollweg lief bisher mit denselben 2 Hz wie der Flare: bei
+        // 100 kt ein Punkt alle 25 m. Eine Spur aus fuenfzehn Punkten kann
+        // nicht zeigen, wie sich das Flugzeug auf der Bahn verhalten hat --
+        // ein Ausbrechen und Zurueckziehen faellt zwischen zwei Messungen.
+        let ausrollen = adaptive_tick_interval_v2(
+            FlightPhase::Landing,
+            Some(0.0),
+            Some(true),
+            Some(100.0),
+        );
+        assert_eq!(ausrollen, Duration::from_millis(200), "5 Hz beim Ausrollen");
+
+        // Bei 100 kt sind 200 ms genau zehn Meter -- der Mindestabstand,
+        // mit dem `bahndisziplin_tick` die Spur ohnehin ausduennt. Feiner
+        // abzutasten brächte nichts, weil die Punkte dann verworfen werden.
+        let meter_je_tick = 100.0 * 0.514_444 * 0.2;
+        assert!(
+            (meter_je_tick - BAHN_SPUR_MIN_ABSTAND_M).abs() < 1.0,
+            "{meter_je_tick} m je Tick gegen {BAHN_SPUR_MIN_ABSTAND_M} m Mindestabstand"
+        );
+    }
+
+    #[test]
+    fn feine_abtastung_nur_beim_ausrollen() {
+        // Sie darf NICHT im Flare greifen -- dort ist die Hoehe das
+        // Kriterium, und der 50-Hz-Sampler liefert die Feinheit ohnehin.
+        assert_eq!(
+            adaptive_tick_interval_v2(FlightPhase::Landing, Some(20.0), Some(false), Some(140.0)),
+            Duration::from_millis(500),
+            "in der Luft bleibt es bei 2 Hz"
+        );
+        // Und nicht mehr, sobald das Flugzeug unter die Messgrenze faellt:
+        // Was nicht mehr bewertet wird, braucht keine feine Spur.
+        assert_eq!(
+            adaptive_tick_interval_v2(FlightPhase::Landing, Some(0.0), Some(true), Some(30.0)),
+            Duration::from_millis(500),
+            "unter 60 kt zurueck auf 2 Hz"
+        );
+        // Und nicht in anderen Phasen -- ein Startlauf ist kein Ausrollen.
+        assert_eq!(
+            adaptive_tick_interval_v2(
+                FlightPhase::TakeoffRoll,
+                Some(0.0),
+                Some(true),
+                Some(100.0)
+            ),
+            Duration::from_millis(500),
+            "der Startlauf bleibt bei 2 Hz"
+        );
+    }
 
     #[test]
     fn sampler_path_rollout_accumulates_and_finalizes_at_full_stop() {

@@ -65,16 +65,20 @@ export function RunwayDisciplinePanel({
           touchdownM={props.td_distance_from_threshold_m}
           touchdownOffsetM={props.td_centerline_offset_m}
           clearanceM={props.clearance_point_m}
+          scoringCutoffM={props.scoring_cutoff_m}
           clearanceSide={props.clearance_side}
           minEdgeClearanceM={props.min_edge_clearance_m}
           maxLateralOffsetM={props.max_lateral_offset_m}
           overrunM={props.overrun_m}
+          ausfahrten={props.runway_exits}
           width={width}
           tokens={tokens}
         />
       )}
 
       <Ereignisliste props={props} />
+
+      {grund == null && <QuerLegende props={props} />}
 
       {breite != null && breite > 0 && <Groessenvergleich props={props} breiteM={breite} />}
     </div>
@@ -152,12 +156,26 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
             defaultValue: "äusseres Rad {{m}} m vor der Kante",
             m: rand.toFixed(1),
           })}`;
+    // Die Laengsposition gehoert dazu: „26,9 m rechts" allein sagt nicht,
+    // ob das kurz nach dem Aufsetzen passierte oder erst beim Abbiegen.
+    const bewertungsEnde = props.scoring_cutoff_m ?? props.clearance_point_m;
+    const wo = (props.lateral_samples ?? [])
+      .filter((x) => bewertungsEnde == null || x.laengs_m < bewertungsEnde)
+      .reduce<
+      { laengs_m: number; quer_m: number } | null
+    >((a, b) => (a == null || Math.abs(b.quer_m - max) < Math.abs(a.quer_m - max) ? b : a), null);
+    const beiM =
+      wo != null
+        ? `${t("runway_v2.at_position", {
+            defaultValue: "bei {{m}} m",
+            m: wo.laengs_m.toFixed(0),
+          })} · `
+        : "";
     eintraege.push({
       n: 2,
-      text: `${t("runway_v2.mark.max_offset", { defaultValue: "Grösster Versatz" })} · ${seite(
-        max,
-        t,
-      )}${zusatz}`,
+      text: `${t("runway_v2.mark.max_offset", {
+        defaultValue: "Grösster Versatz",
+      })} · ${beiM}${seite(max, t)}${zusatz}`,
     });
   }
 
@@ -181,6 +199,27 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
         props.clearance_point_m,
       )} m${tempo} · ${seiteTxt}`,
     });
+  }
+
+  // Endpunkt ohne Ausfahrt — dieselbe Bedingung wie die Marke in der
+  // Grafik, damit Bild und Liste dieselben Nummern führen.
+  if (props.clearance_point_m == null) {
+    const s = props.lateral_samples ?? [];
+    const letzter = s.length >= 2 ? s[s.length - 1]! : null;
+    const max = props.max_lateral_offset_m;
+    const beiMax =
+      max != null && letzter != null && Math.abs(letzter.quer_m - max) < 0.5;
+    if (letzter && !beiMax) {
+      eintraege.push({
+        n: eintraege.length + 1,
+        text: `${t("runway_v2.mark_track_end", {
+          defaultValue: "Ende der Aufzeichnung",
+        })} · ${fmt(letzter.laengs_m)} m · ${seite(letzter.quer_m, t)} · ${t(
+          "runway_v2.mark_slowed",
+          { defaultValue: "Auf Rollgeschwindigkeit" },
+        )}`,
+      });
+    }
   }
 
   if (props.overrun_m != null && props.overrun_m > 0) {
@@ -239,6 +278,81 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
   );
 }
 
+// ─── Legende der Queransicht ───────────────────────────────────────────
+//
+// Die vorhandene Legende gehört zur Längsansicht und erklärt Schwelle,
+// Aufsetzzone und Zielmarkierung. Die Queransicht zeigt anderes: den
+// gefahrenen Streifen, seine Messpunkte, die Ausfahrten und den Bogen zur
+// genutzten. Ohne eigene Legende muss man raten, was die dünnen Striche am
+// Rand bedeuten.
+
+function QuerLegende({ props }: { props: RunwayDiagramV2Props }) {
+  const { t } = useTranslation();
+  const n = props.lateral_samples?.length ?? 0;
+  const eintraege: Array<{ farbe: string; text: string; gestrichelt?: boolean }> = [
+    {
+      farbe: "#22c55e",
+      text: t("runway_v2.legend_td", { defaultValue: "Aufsetzpunkt (TD)" }),
+    },
+    {
+      farbe: "#38bdf8",
+      text: t("runway_v2.legend_track", {
+        defaultValue: "Spur — {{n}} gemessene Stützpunkte",
+        n,
+      }),
+    },
+  ];
+  if (props.clearance_point_m != null && props.clearance_side != null) {
+    eintraege.push({
+      farbe: "#38bdf8",
+      gestrichelt: true,
+      text: t("runway_v2.legend_exit_arc", {
+        defaultValue: "Ausfahrt — Richtung echt, ab hier nicht mehr gewertet",
+      }),
+    });
+  }
+  if ((props.runway_exits?.length ?? 0) > 0) {
+    eintraege.push({
+      farbe: "#4E6350",
+      text: t("runway_v2.legend_exits", {
+        defaultValue: "Ausfahrten (OSM) · genutzte hervorgehoben",
+      }),
+    });
+  }
+  eintraege.push({
+    farbe: "#3F6B4A",
+    text: t("runway_v2.legend_unpaved", { defaultValue: "unbefestigt" }),
+  });
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "5px 18px",
+        fontSize: "0.72rem",
+        color: "#94a3b8",
+      }}
+    >
+      {eintraege.map((e) => (
+        <span key={e.text} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span
+            style={{
+              display: "inline-block",
+              width: 11,
+              height: e.gestrichelt ? 0 : 11,
+              borderRadius: e.gestrichelt ? 0 : 2,
+              background: e.gestrichelt ? "none" : e.farbe,
+              borderTop: e.gestrichelt ? `2px dashed ${e.farbe}` : undefined,
+            }}
+          />
+          {e.text}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // ─── Grössenvergleich ──────────────────────────────────────────────────
 //
 // §8.3: „Das Grössenverhältnis gehört als massstäblicher Balkenvergleich unter
@@ -264,7 +378,12 @@ function Groessenvergleich({
       farbe: "#64748b",
     },
     props.wingspan_m != null && {
-      label: t("runway_v2.scale.wingspan", { defaultValue: "Spannweite" }),
+      // Mit dem Muster dahinter: „Spannweite 51,7 m" ist eine Zahl,
+      // „Spannweite MD-11 51,7 m" ist eine Aussage — man erkennt sofort,
+      // ob der Vergleich zum eigenen Flugzeug passt.
+      label: props.aircraft_icao
+        ? `${t("runway_v2.scale.wingspan", { defaultValue: "Spannweite" })} ${props.aircraft_icao}`
+        : t("runway_v2.scale.wingspan", { defaultValue: "Spannweite" }),
       m: props.wingspan_m,
       farbe: "#38bdf8",
     },
@@ -281,14 +400,27 @@ function Groessenvergleich({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
       {zeilen.map((z) => (
+        // Raster statt Flexbox, und `minmax(0, 1fr)` für die Balkenspalte.
+        //
+        // Mit `flex: 0 0 88px` für den Namen lief die Zeile über, sobald der
+        // Name länger war als seine Spalte — „Spannweite A321" braucht mehr,
+        // und Flex-Elemente schrumpfen nicht unter ihre Inhaltsbreite. Der
+        // Block ragte damit achtunddreissig Pixel über seinen Container
+        // hinaus, und die Zahlen rechts wurden abgeschnitten (§8.6.5). Die
+        // Referenzgrafik löst es mit demselben Raster: 132 / minmax(0,1fr) / 58.
         <div
           key={z.label}
-          style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.75rem" }}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "132px minmax(0, 1fr) 58px",
+            alignItems: "center",
+            gap: 10,
+            fontSize: "0.75rem",
+          }}
         >
-          <span style={{ flex: "0 0 88px", color: "#94a3b8" }}>{z.label}</span>
+          <span style={{ color: "#94a3b8", minWidth: 0 }}>{z.label}</span>
           <span
             style={{
-              flex: "1 1 auto",
               minWidth: 0,
               height: 8,
               background: "rgba(148,163,184,0.10)",
@@ -309,8 +441,8 @@ function Groessenvergleich({
           </span>
           <span
             style={{
-              flex: "0 0 auto",
               color: "#cbd5e1",
+              textAlign: "right",
               fontVariantNumeric: "tabular-nums",
             }}
           >

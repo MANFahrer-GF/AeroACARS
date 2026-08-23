@@ -121,35 +121,6 @@ describe("RunwayDiagramV2 — hover tooltips follow the active locale", () => {
 // The old code had it backwards: the arrow visually pointed BACK toward
 // the touchdown dot instead of away from it in the LEFT/RIGHT direction
 // stated by the text label right next to it.
-describe("RunwayDiagramV2 — lateral-offset arrowhead points away from the touchdown dot", () => {
-  it("points LEFT (tip has the smallest x) when the touchdown is left of centerline", () => {
-    const { container } = render(
-      <RunwayDiagramV2
-        {...props({ aim_point_m: null, td_distance_from_threshold_m: 2000, td_centerline_offset_m: -5 })}
-      />,
-    );
-    const polygon = container.querySelector("polygon");
-    expect(polygon, "offset arrowhead must render for |offset| > 0.5 m").not.toBeNull();
-    const xs = polygonPoints(polygon!).map((p) => p[0]);
-    // The tip is the vertex whose x is unique; the base pair shares one x.
-    const tipX = xs.find((x) => xs.filter((v) => v === x).length === 1)!;
-    const baseX = xs.find((x) => xs.filter((v) => v === x).length === 2)!;
-    expect(tipX, `tip=${tipX} base=${baseX}`).toBeLessThan(baseX);
-  });
-
-  it("points RIGHT (tip has the largest x) when the touchdown is right of centerline", () => {
-    const { container } = render(
-      <RunwayDiagramV2
-        {...props({ aim_point_m: null, td_distance_from_threshold_m: 2000, td_centerline_offset_m: 5 })}
-      />,
-    );
-    const polygon = container.querySelector("polygon");
-    const xs = polygonPoints(polygon!).map((p) => p[0]);
-    const tipX = xs.find((x) => xs.filter((v) => v === x).length === 1)!;
-    const baseX = xs.find((x) => xs.filter((v) => v === x).length === 2)!;
-    expect(tipX, `tip=${tipX} base=${baseX}`).toBeGreaterThan(baseX);
-  });
-});
 
 describe("RunwayDiagramV2 — runway-utilization percentage ignores the SVG-geometry floor", () => {
   it("computes utilization against the real (sub-500m) LDA, not the floored value", () => {
@@ -191,22 +162,37 @@ describe("RunwayDiagramV2 — runway-utilization percentage ignores the SVG-geom
 // deployed VPS skin's thresholds would have had zero effect. These prove
 // a non-default skin's thresholds now actually change what the pilot sees.
 describe("RunwayDiagramV2 — skin thresholds are actually read, not just hardcoded copies", () => {
-  it("re-tones the runway-utilization pill when the skin raises the warn threshold", () => {
-    // 90% utilization: DEFAULT_SKIN.thresholds.bahn_auslastung_warn_above
-    // is 85, so this must read "warn" (amber) by default...
+  it("faerbt die Auslastung nicht mehr — egal was der Skin sagt", () => {
+    // v1.7.0: Die Achse bewertet nicht mehr, wie viel Bahn jemand gebraucht
+    // hat. Eine gelbe Pill neben einer Landung mit voller Punktzahl waere
+    // ein Widerspruch, den niemand aufloesen kann.
+    //
+    // Frueher pruefte dieser Test das Gegenteil: dass die Pill die
+    // Skin-Schwelle `bahn_auslastung_warn_above` liest. Die Schwelle ist
+    // jetzt wirkungslos — und weil Skins vom VPS kommen und dort noch
+    // Werte tragen, prueft der Test die schaerfere Aussage: Auch ein Skin,
+    // der eine Schwelle setzt, faerbt nichts mehr ein.
     const p = props({ length_m: 1000, td_distance_from_threshold_m: 0, rollout_m: 900, aim_point_m: null });
     const def = render(<RunwayDiagramV2 {...p} />);
-    expect(screen.getByText("90 %")).toHaveStyle({ color: "#fbbf24" });
+    expect(screen.getByText("90 %")).not.toHaveStyle({ color: "#fbbf24" });
+    expect(screen.getByText("90 %")).not.toHaveStyle({ color: "#22c55e" });
     def.unmount();
 
-    // ...but with a skin that raises the threshold to 95, the SAME 90%
-    // must read as "good" (green) instead.
     skinBox.current = {
       ...DEFAULT_SKIN,
       thresholds: { ...DEFAULT_SKIN.thresholds, bahn_auslastung_warn_above: 95 },
     };
     render(<RunwayDiagramV2 {...p} />);
-    expect(screen.getByText("90 %")).toHaveStyle({ color: "#22c55e" });
+    expect(screen.getByText("90 %")).not.toHaveStyle({ color: "#22c55e" });
+  });
+
+  it("faerbt ein Ueberrollen weiterhin rot", () => {
+    // Ueber 100 % ist kein Auslastungsgrad mehr, sondern ein Ueberrollen --
+    // und das IST ein Kriterium (Spec §5.4). Ohne diesen Test waere die
+    // Aenderung oben eine stille Entschaerfung.
+    const p = props({ length_m: 1000, td_distance_from_threshold_m: 0, rollout_m: 1200, aim_point_m: null });
+    render(<RunwayDiagramV2 {...p} />);
+    expect(screen.getByText("120 %")).toHaveStyle({ color: "#ef4444" });
   });
 
   it("re-tones the peak-G readout in the aircraft bar when the skin lowers peak_g_warn", () => {
@@ -269,15 +255,53 @@ describe("RunwayDiagramV2 — skin display flags actually hide/show elements", (
     expect(screen.queryByText(deCommon.runway_v2.legend_tdz)).toBeNull();
   });
 
-  it("show_brakepoint toggles the brake-point marker and its legend entry", () => {
+  it("nennt den Versatz als Wort statt als Pfeil", () => {
+    // v1.7.0: Der L/R-Pfeil unter der Bahn ist entfallen. Er lief in die
+    // TD-Beschriftung hinein, und bei wenigen Metern Versatz war seine
+    // Richtung nicht zu erkennen. Die Aussage steht jetzt in der TD-Zeile.
+    //
+    // Geprueft wird beides: dass der Pfeil weg ist UND dass die Aussage
+    // nicht mit ihm verschwunden ist. Ein Test nur auf „Pfeil weg" waere
+    // auch dann gruen, wenn der Versatz gar nicht mehr angezeigt wird.
+    const links = render(<RunwayDiagramV2 {...props({ td_centerline_offset_m: -6.6 })} />);
+    expect(links.container.textContent).toContain("6.6 m links");
+    links.unmount();
+
+    const rechts = render(<RunwayDiagramV2 {...props({ td_centerline_offset_m: 6.6 })} />);
+    expect(rechts.container.textContent).toContain("6.6 m rechts");
+    rechts.unmount();
+
+    // Auf der Mittellinie steht weder links noch rechts.
+    const mitte = render(<RunwayDiagramV2 {...props({ td_centerline_offset_m: 0.1 })} />);
+    expect(mitte.container.textContent).not.toContain("m links");
+    expect(mitte.container.textContent).not.toContain("m rechts");
+  });
+
+  it("zeigt den Bremspunkt nicht mehr — auch nicht auf Wunsch des Skins", () => {
+    // v1.7.0: Der Marker „Bremspunkt 40 kt" entfaellt ERSATZLOS
+    // (docs/spec/runway-diagram-v2.contract.md, Abschnitt v1.7.0).
+    //
+    // Der Test prueft die schaerfere Aussage, nicht nur den Normalfall: Der
+    // Skin kommt vom VPS, und ein aelterer Skin dort traegt weiterhin
+    // `show_brakepoint: true`. Wuerde der Marker daran haengen, waere er bei
+    // jedem Piloten mit gecachtem Skin wieder da — und niemand haette den
+    // Zusammenhang gesehen. Deshalb: An IST er weg, und auf ausdruecklichen
+    // Wunsch bleibt er weg.
     const p = props({ rollout_m: 500 });
-    const shown = render(<RunwayDiagramV2 {...p} />);
-    expect(screen.getByText(deCommon.runway_v2.legend_brakepoint)).toBeTruthy();
-    shown.unmount();
+    withDisplay({ show_brakepoint: true });
+    const an = render(<RunwayDiagramV2 {...p} />);
+    expect(screen.queryByText(deCommon.runway_v2.legend_brakepoint)).toBeNull();
+    expect(an.container.textContent).not.toContain(
+      deCommon.runway_v2.bremspunkt_title,
+    );
+    an.unmount();
 
     withDisplay({ show_brakepoint: false });
-    render(<RunwayDiagramV2 {...p} />);
+    const aus = render(<RunwayDiagramV2 {...p} />);
     expect(screen.queryByText(deCommon.runway_v2.legend_brakepoint)).toBeNull();
+    expect(aus.container.textContent).not.toContain(
+      deCommon.runway_v2.bremspunkt_title,
+    );
   });
 
   it("show_opposite_runway toggles the opposite-runway designator text", () => {
@@ -313,18 +337,6 @@ describe("RunwayDiagramV2 — skin display flags actually hide/show elements", (
     expect(screen.queryByText(deCommon.runway_v2.flugzeug_label)).toBeNull();
   });
 
-  it("show_lr_offset_arrow toggles the L/R offset arrow", () => {
-    // aim_point_m: null — the aim marker has its own <polygon> arrow;
-    // without this the two would be ambiguous to tell apart by query.
-    const p = props({ aim_point_m: null, td_distance_from_threshold_m: 2000, td_centerline_offset_m: -5 });
-    const shown = render(<RunwayDiagramV2 {...p} />);
-    expect(shown.container.querySelector("polygon")).not.toBeNull();
-    shown.unmount();
-
-    withDisplay({ show_lr_offset_arrow: false });
-    const hidden = render(<RunwayDiagramV2 {...p} />);
-    expect(hidden.container.querySelector("polygon")).toBeNull();
-  });
 });
 
 // v1.6.8-QS3: die 500-m-Untergrenze der SVG-Geometrie darf keine echte

@@ -221,8 +221,12 @@ describe("§8.6 — Lesbarkeit", () => {
     expect(linksY).toBeLessThan(rechtsY);
 
     // Und die Marke des Aufsetzpunkts (15 m links) liegt oberhalb der Mitte.
+    // Die Mitte kommt aus dem viewBox, nicht als feste Zahl: Sonst haengt
+    // der Test an der Bildhoehe und wird beim naechsten Vergroessern rot,
+    // ohne dass sich am Verhalten etwas geaendert haette.
+    const [, , , vbH] = svg.getAttribute("viewBox")!.split(" ").map(Number);
     const kreis = svg.querySelector("circle")!;
-    expect(Number(kreis.getAttribute("cy"))).toBeLessThan(102);
+    expect(Number(kreis.getAttribute("cy"))).toBeLessThan(vbH! / 2);
   });
 
   it("gibt jeder Nummer der Liste eine Marke im Bild", () => {

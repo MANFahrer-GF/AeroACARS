@@ -20,18 +20,25 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { writeFileSync } from "node:fs";
 import { MOCK_LANDING_OPTIONS } from "./mockLandingRecords";
 import { mapLandingRecordToV2Props } from "./runwayDiagramV2Mapper";
-import { RunwayDisciplinePanel } from "../components/RunwayDisciplinePanel";
-import { erzeugeProjektion } from "../lib/runwayProjection";
+import { RunwayDiagramV2 } from "../components/RunwayDiagramV2";
+// Die ECHTEN Sprachdateien, nicht nur die `defaultValue`-Rückfälle: Ohne
+// initialisiertes i18next rendert jedes `t("runway_v2.…")` ohne Vorgabewert
+// den rohen Schlüssel — die erste Fassung dieser Demo war voll davon
+// („runway_v2.flugzeug_label" statt „Flugzeug"), und weil die Vorgabewerte
+// meiner eigenen Bausteine griffen, sah es nach einem halb fertigen Bau aus
+// statt nach einem fehlenden Aufruf.
+import i18n from "i18next";
+import { initReactI18next } from "react-i18next";
+import deCommon from "../locales/de/common.json";
 
-const TOKENS = {
-  tarmac: "#1e293b",
-  tarmacBorder: "#475569",
-  centerline: "#e2e8f0",
-  rollout: "#38bdf8",
-  tdPerfect: "#22c55e",
-  tdWarn: "#f59e0b",
-  tdSevere: "#ef4444",
-};
+void i18n.use(initReactI18next).init({
+  resources: { de: { common: deCommon } },
+  lng: "de",
+  fallbackLng: "de",
+  ns: ["common"],
+  defaultNS: "common",
+  interpolation: { escapeValue: false },
+});
 
 describe("Bahndisziplin-Demo", () => {
   it("rendert jede Variante ohne Absturz", () => {
@@ -42,21 +49,13 @@ describe("Bahndisziplin-Demo", () => {
       const props = mapLandingRecordToV2Props(record);
       expect(props, `${opt.key}: kein Mapping`).not.toBeNull();
 
-      const projektion = erzeugeProjektion({
-        lengthM: props!.length_m,
-        ddsM: props!.displaced_threshold_m ?? 0,
-        padX: 70,
-        innerW: 1060,
-      });
-
-      const markup = renderToStaticMarkup(
-        <RunwayDisciplinePanel
-          props={props!}
-          projektion={projektion}
-          width={1200}
-          tokens={TOKENS}
-        />,
-      );
+      // Die GANZE Grafik, nicht nur der Disziplin-Block: Laengs- und
+      // Queransicht muessen untereinander stehen, sonst laesst sich nicht
+      // pruefen, ob sie fluchten -- und genau daran ist der Aim-Marker im
+      // ersten Entwurf um 209 m danebengegangen, ohne dass es auffiel.
+      // `useV2Skin` faellt ohne Provider auf DEFAULT_SKIN zurueck, deshalb
+      // laeuft das hier ohne Tauri und ohne VPS.
+      const markup = renderToStaticMarkup(<RunwayDiagramV2 {...props!} />);
       expect(markup.length, `${opt.key}: leer gerendert`).toBeGreaterThan(50);
 
       bloecke.push(

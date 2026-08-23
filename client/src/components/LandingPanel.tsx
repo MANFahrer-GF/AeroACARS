@@ -120,7 +120,22 @@ export interface LandingRecord {
   // ── v1.7.0 Bahndisziplin ──────────────────────────────────────────
   // Optional, weil Fluege von vor v1.7.0 sie nicht haben. Die Anzeige
   // zeigt das ehrlich an, statt eine leere Querachse zu malen.
+  /**
+   * Wo die Bahn verlassen wurde — die Stelle, an der die Spur die Bahnkante
+   * überschreitet und nicht zurückkommt. Das ist „Bahn geräumt".
+   */
   clearance_point_m?: number | null;
+  /**
+   * Wo die **Bewertung** endet: der Beginn des Ausschwenkens zur Ausfahrt.
+   *
+   * Nicht dasselbe wie `clearance_point_m` und deshalb ein eigenes Feld.
+   * Ein Flugzeug zieht Hunderte Meter vor der Kante nach aussen; dieser
+   * Teil gehört zum Abrollen und darf nicht als seitlicher Versatz
+   * gewertet werden. Gezeichnet wird die Spur dort aber weiter
+   * durchgezogen — sie ist gemessen, sie ist auf der Bahn, und eine
+   * gestrichelte Linie mitten auf der Bahn wäre nicht zu erklären.
+   */
+  scoring_cutoff_m?: number | null;
   clearance_speed_kt?: number | null;
   clearance_side?: "left" | "right" | null;
   track_width_m?: number | null;
@@ -129,6 +144,14 @@ export interface LandingRecord {
   wingspan_m?: number | null;
   /** Bahnbreite in Metern — Grundlage der Queransicht. */
   runway_width_m?: number | null;
+  /**
+   * Rollwege, die die Bahn treffen (OpenStreetMap-Bodenkarte).
+   *
+   * Machen die Bewertung nachvollziehbar: Man sieht, welche Ausfahrt vor der
+   * genutzten lag und wie weit davor. Optional — ohne sie zeigt die
+   * Queransicht einfach keine Stummel.
+   */
+  runway_exits?: Array<{ name: string; laengs_m: number; seite: "left" | "right" }> | null;
   min_edge_clearance_m?: number | null;
   max_lateral_offset_m?: number | null;
   lateral_samples?: Array<{ laengs_m: number; quer_m: number }> | null;

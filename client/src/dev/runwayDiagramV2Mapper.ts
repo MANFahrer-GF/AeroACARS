@@ -72,6 +72,7 @@ export function mapLandingRecordToV2Props(
     // muss das ehrlich zeigen ("fuer diesen Flug nicht erfasst") statt eine
     // leere Querachse zu malen, die wie ein Messwert aussieht.
     clearance_point_m: record.clearance_point_m ?? null,
+    scoring_cutoff_m: record.scoring_cutoff_m ?? null,
     clearance_speed_kt: record.clearance_speed_kt ?? null,
     clearance_side: (record.clearance_side ?? null) as "left" | "right" | null,
     track_width_m: record.track_width_m ?? null,
@@ -84,6 +85,7 @@ export function mapLandingRecordToV2Props(
     // zeichnen, und eine geratene Breite waere eine Behauptung ueber die
     // Kante, an der die Bewertung haengt.
     runway_width_m: record.runway_width_m ?? null,
+    runway_exits: record.runway_exits ?? null,
     min_edge_clearance_m: record.min_edge_clearance_m ?? null,
     max_lateral_offset_m: record.max_lateral_offset_m ?? null,
     lateral_samples: record.lateral_samples ?? null,
