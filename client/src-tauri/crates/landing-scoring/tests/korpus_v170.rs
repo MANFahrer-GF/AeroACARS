@@ -11,12 +11,17 @@
 //! CSV als Eingabe:
 //!
 //! ```text
-//! # auf dem VPS:
-//! python3 /tmp/korpus_export.py          # erzeugt /tmp/korpus_v170.csv
-//! # lokal:
+//! # das Werkzeug liegt im Repo, nicht auf dem VPS:
+//! scp tools/korpus/korpus_export.py live:/tmp/
+//! ssh live python3 /tmp/korpus_export.py     # erzeugt /tmp/korpus_v170.csv
 //! scp live:/tmp/korpus_v170.csv /tmp/
 //! KORPUS=/tmp/korpus_v170.csv cargo test -p landing-scoring --test korpus_v170 -- --ignored --nocapture
 //! ```
+//!
+//! ⚠ **Das Werkzeug gehört ins Repo, nicht nach `/tmp`.** Zwei Fehler darin
+//! haben je ein Drittel bzw. ein Viertel aller Landungen falsch gemessen und
+//! dabei einen grünen Test erzeugt — siehe §12.6 der Spezifikation. Ein
+//! Prüfwerkzeug muss so lesbar und versioniert sein wie der Code, den es prüft.
 //!
 //! Die CSV enthält je Landung die Eingangsgrössen; die **Projektion** dort ist
 //! zeichengleich zu `runway::projiziere_auf_bahn` (Kugelformel, nicht ebene
@@ -47,6 +52,8 @@ struct Zeile {
     max_quer_m: Option<f64>,
     overrun_m: Option<f64>,
     proben: usize,
+    gs_start: Option<f64>,
+    gs_ende: Option<f64>,
     alt_punkte: Option<u8>,
 }
 
@@ -69,6 +76,7 @@ fn lies_korpus(pfad: &str) -> Vec<Zeile> {
         idx("proben"),
         idx("alt_punkte"),
     );
+    let (i_gs0, i_gs1) = (idx("gs_start"), idx("gs_ende"));
     zeilen
         .filter(|l| !l.trim().is_empty())
         .map(|l| {
@@ -87,6 +95,8 @@ fn lies_korpus(pfad: &str) -> Vec<Zeile> {
                 max_quer_m: n(i_q),
                 overrun_m: n(i_o),
                 proben: n(i_pr).unwrap_or(0.0) as usize,
+                gs_start: n(i_gs0),
+                gs_ende: n(i_gs1),
                 alt_punkte: n(i_alt).map(|v| v as u8),
             }
         })
@@ -99,6 +109,48 @@ fn korpus_nachrechnung() {
     let pfad = std::env::var("KORPUS").expect("KORPUS=<csv> setzen");
     let zeilen = lies_korpus(&pfad);
     assert!(!zeilen.is_empty(), "Korpus ist leer");
+
+    // ── Zuerst: taugen die Eingangsdaten überhaupt? ──────────────────
+    //
+    // Warum das VOR jeder Auswertung steht: Beim ersten Lauf war dieser Test
+    // grün, während das Prüfwerkzeug bei **281 von 802 Landungen (35 %)** den
+    // Startlauf statt des Landerollens gemessen hatte (Spec §12.6, Fehler 1).
+    // Ein grüner Test auf falschen Daten ist schlimmer als ein roter — er
+    // erzeugt Vertrauen, das nicht gedeckt ist.
+    //
+    // Die Prüfung ist physikalisch, nicht statistisch: Beim Ausrollen wird
+    // ein Flugzeug **langsamer**. Steigt die Geschwindigkeit über das
+    // Messfenster hinweg, misst das Fenster etwas anderes als eine Landung.
+    // Die 10 kt Spielraum decken Messrauschen und einen kurzen Schub beim
+    // Verlassen der Bahn ab; der EDDL-Fall stieg um 26 kt.
+    {
+        let mut beschleunigt: Vec<String> = Vec::new();
+        for z in &zeilen {
+            if let (Some(a), Some(e)) = (z.gs_start, z.gs_ende) {
+                if e > a + 10.0 {
+                    beschleunigt.push(format!(
+                        "{} {} {} — {a:.0} → {e:.0} kt (+{:.0})",
+                        z.pirep,
+                        z.icao,
+                        z.rwy,
+                        e - a
+                    ));
+                }
+            }
+        }
+        if !beschleunigt.is_empty() {
+            println!("\nMessfenster, in denen das Flugzeug SCHNELLER wurde:");
+            for b in beschleunigt.iter().take(15) {
+                println!("   {b}");
+            }
+            panic!(
+                "{} von {} Messfenstern zeigen Beschleunigung — das ist kein \
+                 Ausrollen. Der Korpus-Export misst am falschen Punkt.",
+                beschleunigt.len(),
+                zeilen.len()
+            );
+        }
+    }
 
     let mut disziplin: BTreeMap<&str, usize> = BTreeMap::new();
     let mut aufsetz: BTreeMap<&str, usize> = BTreeMap::new();
