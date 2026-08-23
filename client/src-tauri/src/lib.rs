@@ -7877,11 +7877,20 @@ fn landing_get_current(
     } else {
         Some(bid_icao)
     };
+    let aircraft_title = snapshot.as_ref().and_then(|s| s.aircraft_title.as_deref());
+    // v1.7.0: DRITTE Stufe — der Flugzeug-Titel. Etliche Add-ons fuellen
+    // `ATC MODEL` nicht, und ohne Buchung greift auch der Bid-Fallback nicht.
+    // Dann fehlte der Typ komplett, und alles was darauf keyed fiel still auf
+    // einen Default zurueck. MPH 9 (22.08.2026) kostete das 25 Punkte: das
+    // TFDi MD-11F meldete kein ATC-Modell, die Heavy-Gutschrift entfiel, aus
+    // 80 wurden 55. Der Titel stand die ganze Zeit da.
+    // Betrifft im Bestand 65 von 895 Fluegen (7,3 %).
+    let titel_icao = aircraft_title.and_then(sim_core::icao_aus_titel);
     let aircraft_icao = snapshot
         .as_ref()
         .and_then(|s| s.aircraft_icao.as_deref())
-        .or(bid_icao_opt);
-    let aircraft_title = snapshot.as_ref().and_then(|s| s.aircraft_title.as_deref());
+        .or(bid_icao_opt)
+        .or(titel_icao.as_deref());
     // v0.7.18 (B-012): airport_lookup-Closure aus dem AppState.airports-Cache.
     let airport_lookup_data: std::collections::HashMap<String, (f64, f64)> = {
         let guard = state.airports.lock().expect("airports lock");
@@ -15852,11 +15861,20 @@ fn record_landing_for_filed_flight(
     } else {
         Some(bid_icao)
     };
+    let aircraft_title = snapshot.as_ref().and_then(|s| s.aircraft_title.as_deref());
+    // v1.7.0: DRITTE Stufe — der Flugzeug-Titel. Etliche Add-ons fuellen
+    // `ATC MODEL` nicht, und ohne Buchung greift auch der Bid-Fallback nicht.
+    // Dann fehlte der Typ komplett, und alles was darauf keyed fiel still auf
+    // einen Default zurueck. MPH 9 (22.08.2026) kostete das 25 Punkte: das
+    // TFDi MD-11F meldete kein ATC-Modell, die Heavy-Gutschrift entfiel, aus
+    // 80 wurden 55. Der Titel stand die ganze Zeit da.
+    // Betrifft im Bestand 65 von 895 Fluegen (7,3 %).
+    let titel_icao = aircraft_title.and_then(sim_core::icao_aus_titel);
     let aircraft_icao = snapshot
         .as_ref()
         .and_then(|s| s.aircraft_icao.as_deref())
-        .or(bid_icao_opt);
-    let aircraft_title = snapshot.as_ref().and_then(|s| s.aircraft_title.as_deref());
+        .or(bid_icao_opt)
+        .or(titel_icao.as_deref());
 
     // v0.7.18 (B-012): airport_lookup-Closure aus dem AppState.airports-Cache.
     let airport_lookup_data: std::collections::HashMap<String, (f64, f64)> = {

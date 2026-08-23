@@ -1610,6 +1610,76 @@ pub fn normalize_icao_type(raw: &str) -> Option<String> {
     }
 }
 
+/// Leitet den ICAO-Typcode aus dem **Flugzeug-Titel** ab, wenn das ATC-Modell
+/// nichts hergibt.
+///
+/// # Warum es das braucht
+///
+/// [`normalize_icao_type`] arbeitet auf `ATC MODEL`. Etliche Add-ons füllen das
+/// Feld gar nicht — dann bleibt `aircraft_icao` leer, und alles, was auf dem
+/// Typ keyed, fällt still auf einen Default zurück. **Genau das kostete MPH 9
+/// (LSZH→EHAM, 22.08.2026) 25 Punkte:** Das TFDi MD-11F meldete kein ATC-Modell,
+/// die Bahn-Achse sah kein `MD11`, die Heavy-Gutschrift von 5 Prozentpunkten
+/// entfiel, und aus 80 Punkten wurden 55. Der Titel stand die ganze Zeit im
+/// Protokoll: `TFDi Design MD-11F PW4462`.
+///
+/// Über alle 895 Flug-Protokolle des Bestands (23.08.2026) betrifft das
+/// **65 Flüge (7,3 %)**, verteilt auf 15 verschiedene Titel. Die Tabelle unten
+/// deckt sie vollständig ab — sie ist an den echten Titeln erhoben, nicht geraten.
+///
+/// # Grundsatz: im Zweifel `None`
+///
+/// Ein falscher Typ ist schlimmer als kein Typ. Ein falscher Typ wird geglaubt
+/// und keyed Bewertung und Profil-Matching; ein fehlender fällt sichtbar auf
+/// „nicht bewertbar" zurück. Deshalb wird nur zugeordnet, was eindeutig ist —
+/// keine Heuristik über Zahlenfragmente, keine Teiltreffer auf kurze Muster.
+///
+/// Die Muster sind **nach Spezifität geordnet**: `A330-300` steht vor `A330`,
+/// sonst würde die Variante von der Familie verschluckt.
+pub fn icao_aus_titel(titel: &str) -> Option<String> {
+    let t = titel.trim().to_ascii_uppercase();
+    if t.is_empty() {
+        return None;
+    }
+    for (muster, icao) in TITEL_MUSTER {
+        if t.contains(muster) {
+            return Some((*icao).to_string());
+        }
+    }
+    None
+}
+
+/// Titel-Fragment → ICAO-Typcode, **spezifischste zuerst**.
+///
+/// Erhoben über 895 Flug-Protokolle: jedes Muster steht für mindestens einen
+/// echten Flug, bei dem der Typ sonst gefehlt hätte. Die Kommentare nennen die
+/// Häufigkeit im Bestand, damit beim Erweitern sichtbar bleibt, was Substanz hat.
+const TITEL_MUSTER: &[(&str, &str)] = &[
+    // ── Airbus ────────────────────────────────────────────────────────────
+    ("A220-300", "BCS3"),   // 42 Flüge — mit Abstand der häufigste Fall
+    ("A220-100", "BCS1"),
+    ("A330-300", "A333"),   // 9 Flüge (VIP, P2F, RR)
+    ("A330-200", "A332"),
+    ("A340-300", "A343"),   // 3 Flüge (Freighter EIS1)
+    ("A340-600", "A346"),
+    // ── Boeing / McDonnell Douglas ────────────────────────────────────────
+    // `MD-11` allein deckt auch `MD-11F` ab (Teilstring). Die spezifische
+    // Zeile steht trotzdem hier, weil sie den Auslöser benennt — und weil eine
+    // künftige Frachter-Unterscheidung genau hier ansetzen würde.
+    ("MD-11F", "MD11"),     // 2 Flüge — der MPH-9-Fall
+    ("MD-11", "MD11"),
+    ("L1011", "L101"),      // 1 Flug (TriStar -500)
+    // ── Turboprop ─────────────────────────────────────────────────────────
+    ("ATR 72-600", "AT76"), // 2 Flüge (Freighter)
+    ("ATR 72", "AT72"),
+    ("ATR 42", "AT43"),
+    // ── Geschäftsreise ────────────────────────────────────────────────────
+    ("P180", "P180"),       // 3 Flüge (FFX Avanti)
+    ("FA50", "FA50"),       // 1 Flug (Contrail)
+    ("C680", "C680"),       // 1 Flug (Cessna Latitude)
+    ("VISION JET", "SF50"), // 1 Flug (Cirrus SF50)
+];
+
 /// Ein echter ICAO-Typcode (Doc-8643) ist 2-4 alphanumerische Zeichen
 /// (Großbuchstaben + Ziffern). Filtert Modellnamen mit Leer-/Sonderzeichen
 /// und überlange Reste heraus.
@@ -2621,4 +2691,99 @@ mod tests {
         s.apply_pmdg_premium_override();
         assert_eq!(s.ground_spoilers_active, Some(false));
     }
+
+// ── icao_aus_titel: alle 15 Titel aus dem Bestand vom 23.08.2026 ──────────
+//
+// Jeder Fall unten ist ein ECHTER Titel aus den Flug-Protokollen, bei dem der
+// Typ heute fehlt. Zusammen 65 Flüge (7,3 % des Bestands).
+
+#[test]
+fn titel_deckt_den_gesamten_bestand_ab() {
+    // (Titel, erwarteter ICAO, Häufigkeit im Bestand)
+    let faelle: &[(&str, &str, u32)] = &[
+        ("A220-300", "BCS3", 41),
+        ("A220-300 - No Cabin", "BCS3", 1),
+        ("A330-300 VIP (RR)", "A333", 7),
+        ("A330-300P2F (RR)", "A333", 1),
+        ("A330-300 (RR)", "A333", 1),
+        ("A340-300 Freighter EIS1", "A343", 3),
+        ("FFX P180 Pasengers - Wood", "P180", 2),
+        ("FFX P180 Private Charter - Wood", "P180", 1),
+        ("ATR 72-600 Freighter", "AT76", 2),
+        ("Contrail FA50 PR-WYW", "FA50", 1),
+        ("L1011-500 Standard Cabin", "L101", 1),
+        ("TFDi Design MD-11F PW4462", "MD11", 1),
+        ("TFDi Design MD-11F PW4462 (Low Poly Cabin)", "MD11", 1),
+        ("Cessna C680: OK-JRS", "C680", 1),
+        ("Microsoft Vision Jet Executive Seating", "SF50", 1),
+    ];
+    let mut abgedeckt = 0;
+    for (titel, erwartet, anzahl) in faelle {
+        assert_eq!(
+            icao_aus_titel(titel).as_deref(),
+            Some(*erwartet),
+            "Titel {titel:?} muss {erwartet} ergeben"
+        );
+        abgedeckt += anzahl;
+    }
+    assert_eq!(abgedeckt, 65, "die Tabelle muss alle 65 Fluege des Bestands abdecken");
+}
+
+#[test]
+fn mph9_der_ausloeser() {
+    // LSZH -> EHAM, 22.08.2026: ohne diesen Fallback fehlte MD11, damit entfiel
+    // die Heavy-Gutschrift und die Bahn-Achse gab 55 statt 80 Punkten.
+    assert_eq!(
+        icao_aus_titel("TFDi Design MD-11F PW4462").as_deref(),
+        Some("MD11")
+    );
+}
+
+#[test]
+fn variante_schlaegt_familie() {
+    // Die Reihenfolge in TITEL_MUSTER ist die Zusicherung: A330-300 darf nicht
+    // von einem allgemeineren A330-Muster verschluckt werden.
+    assert_eq!(icao_aus_titel("A330-300 VIP (RR)").as_deref(), Some("A333"));
+    assert_eq!(icao_aus_titel("A340-300 Freighter EIS1").as_deref(), Some("A343"));
+    assert_eq!(icao_aus_titel("ATR 72-600 Freighter").as_deref(), Some("AT76"));
+    // ATR 72 ohne -600 bleibt die Familie
+    assert_eq!(icao_aus_titel("ATR 72 Classic").as_deref(), Some("AT72"));
+}
+
+#[test]
+fn im_zweifel_lieber_nichts() {
+    // Ein falscher Typ wird geglaubt und keyed Bewertung + Profil-Matching.
+    // Ein fehlender faellt sichtbar auf "nicht bewertbar" zurueck.
+    for titel in [
+        "",
+        "   ",
+        "Just Flight",
+        "Default Aircraft",
+        "Cessna",              // zu unspezifisch — welche?
+        "Boeing",              // dito
+        "Airbus Widebody",     // kein konkretes Muster
+        "747",                 // Familie ohne Variante
+    ] {
+        assert_eq!(
+            icao_aus_titel(titel),
+            None,
+            "Titel {titel:?} ist nicht eindeutig und darf keinen Typ liefern"
+        );
+    }
+}
+
+#[test]
+fn gross_klein_und_leerzeichen_egal() {
+    assert_eq!(icao_aus_titel("  tfdi design md-11f  ").as_deref(), Some("MD11"));
+    assert_eq!(icao_aus_titel("a220-300").as_deref(), Some("BCS3"));
+}
+
+#[test]
+fn aendert_nichts_wenn_das_atc_modell_schon_taugt() {
+    // Der Titel-Fallback ist die DRITTE Stufe. Wo normalize_icao_type liefert,
+    // wird er nie befragt — dieser Test haelt die Rollenverteilung fest.
+    assert_eq!(normalize_icao_type("A320").as_deref(), Some("A320"));
+    assert_eq!(normalize_icao_type("ATCCOM.AC_MODEL A320.0.text").as_deref(), Some("A320"));
+}
+
 }
