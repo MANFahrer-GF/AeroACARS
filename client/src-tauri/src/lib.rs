@@ -3748,6 +3748,17 @@ struct FlightStats {
     /// Landing arm). None until first touchdown. Resumed flights mid-
     /// rollout finalise on the next trigger or never (accepted imprecision).
     rollout_distance_m: Option<f64>,
+    /// v1.7.0 Bahndisziplin — groesster Betrag des seitlichen Versatzes zur
+    /// Bahnmittellinie waehrend des GEWERTETEN Rollwegs, in Metern.
+    bahn_max_querversatz_m: Option<f64>,
+    /// v1.7.0 — Strecke jenseits des Bahnendes, falls dort noch Fahrt war.
+    bahn_overrun_m: Option<f64>,
+    /// v1.7.0 — Zahl der Positionsproben im Messfenster. Unter 3 ist die
+    /// seitliche Aussage nicht belastbar.
+    bahn_proben: u32,
+    /// v1.7.0 — true, sobald das Messfenster geschlossen ist (Ausfahrt
+    /// eingeleitet oder unter die Messgeschwindigkeit gefallen).
+    bahn_fenster_zu: bool,
     /// True once `rollout_distance_m` has been finalised. Stops the
     /// per-tick accumulation in step_flight from continuing past
     /// the actual stop.
@@ -14958,6 +14969,18 @@ fn fill_v2_rollout_fields(
     let bewertet = assess_touchdown(stats);
     input.aim_point_m = bewertet.aim.map(|a| a.aim_point_m);
     input.tdz_end_m = bewertet.tdz.map(|t| t.tdz_length_m);
+
+    // v1.7.0 Bahndisziplin: seitliche Lage und Overrun aus dem Rollweg,
+    // fortgeschrieben von `bahndisziplin_tick`. Der Belag kommt aus dem
+    // Runway-Match (OurAirports-Angabe) — `nav_runways.surface_code` ist
+    // durchgaengig leer und darf nicht verwendet werden.
+    input.bahn_max_querversatz_m = stats.bahn_max_querversatz_m;
+    input.bahn_overrun_m = stats.bahn_overrun_m;
+    input.bahn_proben = Some(stats.bahn_proben as usize);
+    input.runway_surface = stats
+        .runway_match
+        .as_ref()
+        .map(|rm| rm.surface.clone());
 
     let rm = stats.runway_match.as_ref();
     // v1.6.7-QS: die um die Displaced Threshold KORRIGIERTE Distanz, nicht
@@ -26770,6 +26793,91 @@ fn stamp_landing_weight(stats: &mut FlightStats, snap: &SimSnapshot) {
 /// `rollout_finalized` + `rollout_finalize_reason`. No-op once finalised.
 /// Survives a Tauri restart because (last_lat, last_lon, distance,
 /// finalized) persist in `PersistedFlightStats`.
+/// Kursabweichung, ab der die Ausfahrt als eingeleitet gilt.
+///
+/// **Gemessen, nicht gesetzt.** Drei Auswertungslaeufe ueber den Bestand waren
+/// noetig: ohne Trennkriterium meldeten 68,7 % der Landungen "Rad neben der
+/// Bahn", mit 20 Grad Kursabweichung 25,2 %, erst mit 10 Grad plus dem
+/// Geschwindigkeitsriegel unten 1,6 % — plausibel. Ohne die Riegel faerbt
+/// jedes normale Ausfahren die Messung ein.
+const BAHN_KURS_AUSFAHRT_GRAD: f32 = 10.0;
+
+/// Untergrenze der seitlichen Messung.
+///
+/// Niemand biegt mit 60 kt ab, und genau dort ist seitliches Abkommen
+/// gefaehrlich. Unterhalb wird nicht mehr gemessen — das ist der zweite
+/// Riegel gegen die Verwechslung von Abbiegen und Abkommen.
+const BAHN_MESS_MIN_GS_KT: f32 = 60.0;
+
+/// Schreibt die seitliche Lage und einen etwaigen Overrun fort.
+///
+/// Laeuft bei jedem Snapshot des Ausrollens. Das Messfenster schliesst sich,
+/// sobald die Ausfahrt eingeleitet ist — danach wird nichts mehr gewertet, aber
+/// der Overrun-Check laeuft weiter, weil ein Ueberschiessen des Bahnendes auch
+/// dann zaehlt.
+///
+/// Siehe `docs/spec/v1.7.0-bahndisziplin.md` §5.2.
+fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
+    let Some(rm) = stats.runway_match.as_ref() else {
+        return;
+    };
+    let (laengs_m, quer_m) = runway::projiziere_auf_bahn(
+        rm.threshold_lat,
+        rm.threshold_lon,
+        rm.end_lat,
+        rm.end_lon,
+        snap.lat,
+        snap.lon,
+    );
+
+    // Overrun: jenseits des Bahnendes mit nennenswerter Fahrt. Bewusst
+    // AUSSERHALB des Messfensters — wer ueber das Ende hinausrollt, tut das
+    // auch dann, wenn er vorher schon abgebogen waere.
+    let nutzbare_laenge_m =
+        (rm.length_ft as f64 - effective_displaced_threshold_ft(rm) as f64) / 3.280_839_895;
+    if nutzbare_laenge_m > 300.0 && laengs_m > nutzbare_laenge_m && snap.groundspeed_kt > 15.0 {
+        let ueber = laengs_m - nutzbare_laenge_m;
+        stats.bahn_overrun_m = Some(stats.bahn_overrun_m.unwrap_or(0.0).max(ueber));
+    }
+
+    if stats.bahn_fenster_zu {
+        return;
+    }
+
+    // ── Messfenster schliessen? ──────────────────────────────────────
+    if snap.groundspeed_kt < BAHN_MESS_MIN_GS_KT {
+        stats.bahn_fenster_zu = true;
+        return;
+    }
+    if let Some(td_heading) = stats.landing_heading_true_deg {
+        let mut diff = snap.heading_deg_true - td_heading;
+        while diff > 180.0 {
+            diff -= 360.0;
+        }
+        while diff <= -180.0 {
+            diff += 360.0;
+        }
+        if diff.abs() > BAHN_KURS_AUSFAHRT_GRAD {
+            stats.bahn_fenster_zu = true;
+            return;
+        }
+    }
+    // Ausserhalb der Bahn laengs: nichts mehr zu messen.
+    if laengs_m < 0.0 || (nutzbare_laenge_m > 300.0 && laengs_m > nutzbare_laenge_m) {
+        stats.bahn_fenster_zu = true;
+        return;
+    }
+
+    // ── Fortschreiben ────────────────────────────────────────────────
+    let bisher = stats.bahn_max_querversatz_m.unwrap_or(0.0);
+    if quer_m.abs() > bisher.abs() {
+        stats.bahn_max_querversatz_m = Some(quer_m);
+    } else if stats.bahn_max_querversatz_m.is_none() {
+        stats.bahn_max_querversatz_m = Some(quer_m);
+    }
+    stats.bahn_proben = stats.bahn_proben.saturating_add(1);
+}
+
 fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     if !stats.rollout_finalized {
         if let (Some(prev_lat), Some(prev_lon)) =
@@ -26795,6 +26903,8 @@ fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
         }
         stats.rollout_last_lat = Some(snap.lat);
         stats.rollout_last_lon = Some(snap.lon);
+
+        bahndisziplin_tick(stats, snap);
 
         // Three independent finalisation triggers — whichever
         // fires first wins. See the constants near the top of
@@ -26891,6 +27001,10 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     stats.approach_stable_at_da = None;
     stats.approach_stall_warning_count = 0;
     stats.rollout_distance_m = None;
+    stats.bahn_max_querversatz_m = None;
+    stats.bahn_overrun_m = None;
+    stats.bahn_proben = 0;
+    stats.bahn_fenster_zu = false;
     stats.rollout_finalized = false;
     stats.rollout_last_lat = None;
     stats.rollout_last_lon = None;

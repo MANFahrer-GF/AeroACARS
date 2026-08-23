@@ -18,6 +18,7 @@ pub mod gate;
 pub mod belag;
 pub mod spurweite;
 pub mod sub_alignment;
+pub mod sub_bahndisziplin;
 pub mod sub_bounces;
 pub mod sub_fuel;
 pub mod sub_g_force;
@@ -233,6 +234,15 @@ pub struct LandingScoringInput {
     /// gerechnet: die Regel (300 m / 400 m ab 2400 m Bahnlänge) lebt an genau
     /// einer Stelle.
     pub aim_point_m: Option<f64>,
+    /// v1.7.0 Bahndisziplin — groesster seitlicher Versatz ueber den
+    /// gewerteten Rollweg, in Metern von der Mittellinie.
+    pub bahn_max_querversatz_m: Option<f64>,
+    /// v1.7.0 — Strecke jenseits des Bahnendes, `None`/0 = kein Overrun.
+    pub bahn_overrun_m: Option<f64>,
+    /// v1.7.0 — Positionsproben im Messfenster.
+    pub bahn_proben: Option<usize>,
+    /// v1.7.0 — Bahnbelag als Rohangabe (OurAirports `runways.surface`).
+    pub runway_surface: Option<String>,
     /// v1.7.0 — Ende der Aufsetzzone ab der Schwelle, aus `classify_tdz`.
     /// `None` = Bahn unter 1200 m, hat laut Annex 14 keine Zonenmarkierung.
     pub tdz_end_m: Option<f64>,
@@ -329,24 +339,41 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
     // oder Test-Fixture ohne Touchdown-Forensik), fallen wir auf den
     // alten meter-only `sub_rollout` zurück damit pre-v0.10 Code-Pfade
     // (Bin-Tools, alte Tests) unverändert weiterlaufen.
+    // v1.7.0: Die Bahn-Achse bewertet nicht mehr die AUSLASTUNG, sondern die
+    // DISZIPLIN — nur noch, was ohne Kontextwissen eindeutig falsch ist. Die
+    // Begruendung steht in `sub_bahndisziplin`; kurz: 80 % der alten Abzuege
+    // trafen Landungen ohne jedes Reserve-Problem.
+    //
+    // Der alte `sub_rollout_v2` bleibt vorerst im Baum, wird aber nicht mehr
+    // aufgerufen. Er faellt, sobald die Anzeige umgestellt ist — bis dahin
+    // dient er als Vergleichsmassstab beim Nachrechnen ueber den Korpus.
     if scoring_input_has_v2_fields(input) {
-        out.push(sub_rollout::sub_rollout_v2(&sub_rollout::RolloutInput {
-            td_distance_from_threshold_m: input.td_distance_from_threshold_m,
-            rollout_distance_m: input.rollout_distance_m,
-            landing_float_distance_m: input.landing_float_distance_m,
-            runway_length_m: input.runway_length_m,
-            runway_displaced_threshold_ft: input.runway_displaced_threshold_ft,
-            pre_displaced_threshold: input.pre_displaced_threshold,
-            runway_geometry_trusted: input.runway_geometry_trusted,
-            airport_source: input.airport_source.as_deref(),
-            runway_match_icao: input.runway_match_icao.as_deref(),
-            runway_match_ident: input.runway_match_ident.as_deref(),
-            aircraft_icao: input.aircraft_icao.as_deref(),
-        }));
-    } else if let Some(ro) =
-        sub_rollout::sub_rollout(input.rollout_distance_m, input.aircraft_icao.as_deref())
-    {
-        out.push(ro);
+        out.push(sub_bahndisziplin::sub_bahndisziplin(
+            &sub_bahndisziplin::BahndisziplinInput {
+                max_querversatz_m: input.bahn_max_querversatz_m,
+                bahnbreite_m: input.runway_width_m.map(|w| w as f64),
+                spurweite_m: spurweite::spurweite_m(input.aircraft_icao.as_deref()),
+                overrun_m: input.bahn_overrun_m,
+                belag: Some(belag::belag_aus_angabe(input.runway_surface.as_deref())),
+                airport_source: match input.airport_source.as_deref() {
+                    Some("runway_match") => Some("runway_match"),
+                    _ => None,
+                },
+                runway_geometry_trusted: input.runway_geometry_trusted,
+                proben: input.bahn_proben,
+            },
+        ));
+    }
+
+    // v1.7.0: Der alte meter-only `sub_rollout` bleibt fuer nicht-migrierte
+    // Aufrufer (Bin-Tools, alte Fixtures ohne Touchdown-Forensik).
+    if !scoring_input_has_v2_fields(input) {
+
+        if let Some(ro) =
+            sub_rollout::sub_rollout(input.rollout_distance_m, input.aircraft_icao.as_deref())
+        {
+            out.push(ro);
+        }
     }
 
     // v1.6.2: Ausrichtung — WO und wie gerade wurde aufgesetzt. Laeuft nur
@@ -803,6 +830,10 @@ mod tests {
             // besetzten Input, damit jeder Zweig feuert.
             aim_point_m: Some(400.0),
             tdz_end_m: Some(900.0),
+            bahn_max_querversatz_m: Some(3.0),
+            bahn_overrun_m: None,
+            bahn_proben: Some(30),
+            runway_surface: Some("ASP".into()),
             vs_fpm: Some(-150.0),
             peak_g_load: Some(1.4),
             scored_g_load: Some(1.3),
