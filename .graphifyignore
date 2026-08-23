@@ -1,0 +1,16 @@
+# graphify scan exclusions fuer das AeroACARS-Repo.
+#
+# docs/release-notes/ sind 177 der 289 Doku-Dateien — und sie haben den
+# naechtlichen Doku-Lauf ein Jahr lang lahmgelegt: Gemini gibt fuer die meisten
+# von ihnen nichts zurueck ("The model returned a response but omitted them",
+# zuletzt 30 von 44 angefragten). Dadurch wurde der zusammengefuehrte Graph
+# kleiner als der Bestand, die Schutzsperre gegen schrumpfende Graphen verweigerte
+# das Schreiben, das Manifest blieb stehen — und in der naechsten Nacht galten
+# dieselben Dateien wieder als geaendert. Zwischen dem 24.07. und dem 23.08.2026
+# ist der Doku-Teil dieses Repos deshalb 30 Naechte in Folge nicht aktualisiert
+# worden, ohne dass es jemand gemerkt hat.
+#
+# Inhaltlich ist der Verlust gering: Release-Notes beschreiben Versionen, nicht
+# Struktur. Die Feature-Historie steht weiter in CHANGELOG.md (bleibt in scope)
+# und im Gedaechtnis. Siehe [[graph-auto-refresh]], Nachtrag 23.08.2026.
+docs/release-notes/
