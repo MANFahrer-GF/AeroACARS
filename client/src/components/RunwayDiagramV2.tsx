@@ -797,22 +797,20 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               >
                 {t("runway_v2.aim_point_prefix")} {props.aim_point_m?.toFixed(0)} m
               </text>
-              {/* Was der Marker BEDEUTET, nicht nur wo er liegt.
-                  „AIM 400 m" allein sagt niemandem, dass dort das
-                  Aufsetzen geplant ist. Die Zeile stand in der Webapp-
-                  Fassung und fehlte hier — beim Zusammenführen der beiden
-                  Anzeigen wäre sie sonst lautlos verschwunden. */}
-              <text
-                x={aimX}
-                y={rwyBot + 32}
-                textAnchor="middle"
-                fontSize="9.5"
-                fill={TOKENS.aimMarker}
-                fontFamily="monospace"
-                opacity="0.85"
-              >
-                {t("runway_v2.aim_subtitle")}
-              </text>
+              {/* Hier stand bis 23.08.2026 eine zweite Zeile
+                  „↓ Soll-Aufsetz-Stelle". Sie kam aus der Webapp-Fassung
+                  und wurde beim Zusammenführen der beiden Anzeigen
+                  mitgenommen, damit nichts lautlos verschwindet.
+
+                  Thomas hat sie in der Demo gesehen und gefragt, ob das
+                  nicht doppelt sei. Es war doppelt UND falsch: Auf den
+                  Aim-Point wird gezielt, aufgesetzt wird durch den Flare
+                  typisch 50–150 m dahinter — der Tooltip an genau diesem
+                  Marker sagt es selbst. Eine Beschriftung, die dem
+                  Erklärtext daneben widerspricht, ist schlimmer als keine.
+
+                  Was der Marker bedeutet, steht im Tooltip und im
+                  Glossar. */}
               <title>{t("runway_v2.tooltip_aim_point", { m: props.aim_point_m?.toFixed(0) })}</title>
             </g>
           )}

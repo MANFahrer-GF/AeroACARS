@@ -107,6 +107,38 @@ const BAHN_TOP = 74;
  * („lieber höher als enger").
  */
 const BAHN_BOT = 338;
+/**
+ * Bahnbreite, die die volle Höhe füllt — der feste Massstab der Ansicht.
+ *
+ * # Warum es diesen Wert gibt
+ *
+ * Bis hierher skalierte die Ansicht **immer** auf die Bahnbreite: Jede
+ * Bahn füllte die Höhe, egal ob dreiundzwanzig oder sechzig Meter breit.
+ * Das Band der Radspuren stand damit in jeder Grafik in einem anderen
+ * Massstab — und drehte das Verhältnis um. Gemessen am 23.08.2026 über
+ * die Demo-Varianten:
+ *
+ *     C208   Spur 3,6 m   Bahn 23 m   ->   Band 41,3 px
+ *     B738   Spur 5,7 m   Bahn 45 m   ->   Band 33,6 px
+ *
+ * Die Cessna bekam ein breiteres Band als die 737. Thomas hat es gesehen
+ * („5,7 B738 und 3 m bei einer Challenger sieht die Rollspur gleich breit
+ * aus") — es war nicht gleich breit, es war verkehrt herum.
+ *
+ * Sechzig Meter, weil fünfundneunzig Prozent aller Bahnen im
+ * Navdatenbestand darunter liegen (85 058 Bahnen: Median 30 m, 75 % ≤ 45,
+ * 95 % ≤ 60). Breitere werden gestaucht — das betrifft eine von zwanzig,
+ * und dort ist die Bahn so breit, dass es auf ein paar Pixel nicht ankommt.
+ */
+const REFERENZ_BREITE_M = 60;
+/**
+ * Kleinste gezeichnete Bahnhöhe.
+ *
+ * Ohne sie waere eine 9-m-Graspiste vierzig Pixel hoch — Band, Spur und
+ * Randabstand liessen sich darin nicht mehr auseinanderhalten. Wo diese
+ * Grenze greift, ist die Ansicht gedehnt, und die Kopfzeile sagt es.
+ */
+const MIN_BAHN_H = 120;
 /** Höhe des Grünstreifens beidseits. */
 const GRUEN_H = 13;
 /** Abstand der Querskala-Striche in Metern. */
@@ -131,7 +163,23 @@ export function RunwayCrossSection(p: QueransichtProps) {
 
   const halbeBahnM = p.runwayWidthM / 2;
   const mitteY = (BAHN_TOP + BAHN_BOT) / 2;
-  const pxProQuerM = (BAHN_BOT - BAHN_TOP) / 2 / halbeBahnM;
+
+  // ── Fester Massstab statt „jede Bahn füllt die Höhe" ─────────────────
+  //
+  // Siehe `REFERENZ_BREITE_M`. Die Bahn bekommt so viel Höhe, wie ihr
+  // zusteht; schmale Bahnen werden schmal gezeichnet, und das Band der
+  // Radspuren ist zwischen zwei Landungen vergleichbar.
+  //
+  // `dehnung` ist der Faktor, um den eine sehr schmale Bahn dennoch
+  // aufgezogen wurde, damit sie lesbar bleibt. Er steht in der Kopfzeile —
+  // eine Grafik, die stillschweigend dehnt, behauptet einen Massstab, den
+  // sie nicht einhält.
+  const bahnHRoh = (p.runwayWidthM / REFERENZ_BREITE_M) * (BAHN_BOT - BAHN_TOP);
+  const bahnH = Math.min(BAHN_BOT - BAHN_TOP, Math.max(MIN_BAHN_H, bahnHRoh));
+  const dehnung = bahnH / bahnHRoh;
+  const bahnTop = mitteY - bahnH / 2;
+  const bahnBot = mitteY + bahnH / 2;
+  const pxProQuerM = bahnH / 2 / halbeBahnM;
   /** Wie weit über die Kante hinaus gezeichnet wird. */
   const sichtbarM = halbeBahnM + GRUEN_H / pxProQuerM;
 
@@ -366,8 +414,8 @@ export function RunwayCrossSection(p: QueransichtProps) {
     p.projektion,
   );
 
-  const gruenTop = BAHN_TOP - GRUEN_H;
-  const gruenBot = BAHN_BOT;
+  const gruenTop = bahnTop - GRUEN_H;
+  const gruenBot = bahnBot;
   const idGruen = "quer-gruen";
 
   return (
@@ -420,11 +468,26 @@ export function RunwayCrossSection(p: QueransichtProps) {
               defaultValue: "Spurweite nicht bekannt",
             })}
       </text>
+      {/* Die Überhöhung quer zur Länge — und, falls sie greift, die
+          Dehnung der Bahnbreite selbst.
+
+          Ohne den zweiten Teil behauptet die Grafik einen festen Massstab,
+          den sie bei sehr schmalen Bahnen nicht einhält: Eine 9-m-Piste
+          waere nach Massstab vierzig Pixel hoch und darin nicht mehr
+          lesbar, also wird sie aufgezogen. Das darf sie — aber nicht
+          stillschweigend. */}
       <text x={p.width} y={14} fontSize={10} textAnchor="end" fill="#66707E">
-        {t("runway_v2.cross_exaggeration", {
-          defaultValue: "quer {{f}}× überhöht · in sich maßstäblich",
-          f: ueberhoehung.toFixed(1),
-        })}
+        {dehnung > 1.02
+          ? t("runway_v2.cross_exaggeration_stretched", {
+              defaultValue:
+                "quer {{f}}× überhöht · schmale Bahn {{d}}× aufgezogen",
+              f: ueberhoehung.toFixed(1),
+              d: dehnung.toFixed(1),
+            })
+          : t("runway_v2.cross_exaggeration", {
+              defaultValue: "quer {{f}}× überhöht · in sich maßstäblich",
+              f: ueberhoehung.toFixed(1),
+            })}
       </text>
 
       {/* Ausfahrten: Beschriftung ausserhalb, Stummel am Rand. */}
@@ -475,9 +538,9 @@ export function RunwayCrossSection(p: QueransichtProps) {
       {/* Die befestigte Fläche. */}
       <rect
         x={p.projektion.bahnAnfangX}
-        y={BAHN_TOP}
+        y={bahnTop}
         width={p.projektion.bahnEndeX - p.projektion.bahnAnfangX}
-        height={BAHN_BOT - BAHN_TOP}
+        height={bahnH}
         fill={p.tokens.tarmac}
       />
       {/* Zone vor der Landeschwelle — hier darf nicht aufgesetzt werden. */}
@@ -485,16 +548,16 @@ export function RunwayCrossSection(p: QueransichtProps) {
         <>
           <rect
             x={p.projektion.bahnAnfangX}
-            y={BAHN_TOP}
+            y={bahnTop}
             width={p.projektion.thresholdX - p.projektion.bahnAnfangX}
-            height={BAHN_BOT - BAHN_TOP}
+            height={bahnH}
             fill="#2E1614"
           />
           <line
             x1={p.projektion.thresholdX}
-            y1={BAHN_TOP}
+            y1={bahnTop}
             x2={p.projektion.thresholdX}
-            y2={BAHN_BOT}
+            y2={bahnBot}
             stroke={p.tokens.tdSevere}
             strokeWidth={1.5}
             opacity={0.75}
@@ -503,7 +566,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
       )}
 
       {/* Kanten betont — das ist die Linie, an der die Note hängt. */}
-      {[BAHN_TOP, BAHN_BOT].map((y, i) => (
+      {[bahnTop, bahnBot].map((y, i) => (
         <line
           key={i}
           x1={p.projektion.bahnAnfangX}
@@ -607,7 +670,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
 
       {/* Skalenachse links, ausserhalb der Bahn. */}
       <g stroke="#4A5769" strokeWidth={1}>
-        <line x1={SKALA_X} y1={BAHN_TOP} x2={SKALA_X} y2={BAHN_BOT} />
+        <line x1={SKALA_X} y1={bahnTop} x2={SKALA_X} y2={bahnBot} />
         {skalaWerte(halbeBahnM).map((m) => (
           <line
             key={m}
@@ -670,13 +733,13 @@ export function RunwayCrossSection(p: QueransichtProps) {
           der Bahnfläche siebzig Einheiten, und die Seite steht ohnehin
           links an der Skala. „Kante links" lief bei sechzehn Einheiten
           Abstand über den Rand hinaus. */}
-      <text x={p.projektion.bahnEndeX + 10} y={BAHN_TOP + 4} fontSize={9.5} fill="#8B95A8">
+      <text x={p.projektion.bahnEndeX + 10} y={bahnTop + 4} fontSize={9.5} fill="#8B95A8">
         {t("runway_v2.edge_left", { defaultValue: "Kante links" })}
       </text>
       <text x={p.projektion.bahnEndeX + 10} y={mitteY + 4} fontSize={9.5} fill="#66707E">
         {t("runway_v2.centre", { defaultValue: "Mitte" })}
       </text>
-      <text x={p.projektion.bahnEndeX + 10} y={BAHN_BOT + 4} fontSize={9.5} fill="#8B95A8">
+      <text x={p.projektion.bahnEndeX + 10} y={bahnBot + 4} fontSize={9.5} fill="#8B95A8">
         {t("runway_v2.edge_right", { defaultValue: "Kante rechts" })}
       </text>
     </svg>

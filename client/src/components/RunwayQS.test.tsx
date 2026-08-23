@@ -481,4 +481,56 @@ describe("QS — Vollständigkeit", () => {
       "die Meldung schiebt es auf die Bahn, obwohl es am Flug liegt",
     ).not.toContain("keine Breite hinterlegt");
   });
+  /**
+   * Ein breiteres Fahrwerk muss ein breiteres Band bekommen — immer.
+   *
+   * Bis 23.08.2026 skalierte die Queransicht auf die Bahnbreite: Jede Bahn
+   * füllte die Höhe, also war der Massstab in jeder Grafik ein anderer.
+   * Gemessen über die Demo-Varianten kehrte sich das Verhältnis um:
+   *
+   *     C208   Spur 3,6 m   Bahn 23 m   ->   Band 41,3 px
+   *     B738   Spur 5,7 m   Bahn 45 m   ->   Band 33,6 px
+   *
+   * Die Cessna bekam ein breiteres Band als die 737. Thomas hat es an der
+   * Demo gesehen; die Zahlen bestätigten es schlimmer als vermutet — nicht
+   * gleich breit, sondern verkehrt herum, in drei Paarungen.
+   */
+  it("zeichnet breitere Fahrwerke breiter — über alle Varianten", () => {
+    // Dieselbe Rechnung wie in RunwayCrossSection: feste Referenzbreite,
+    // Untergrenze für sehr schmale Bahnen.
+    const H = 264;
+    const REFERENZ_M = 60;
+    const MIN_H = 120;
+    const bandPx = (spurM: number, bahnM: number) => {
+      const roh = (bahnM / REFERENZ_M) * H;
+      const bahnH = Math.min(H, Math.max(MIN_H, roh));
+      return spurM * (bahnH / bahnM);
+    };
+
+    const gemessen = MOCK_LANDING_OPTIONS.map((o) => mapLandingRecordToV2Props(o.build()))
+      .filter((p): p is NonNullable<typeof p> => p != null)
+      .filter((p) => p.track_width_m != null && p.runway_width_m != null)
+      .map((p) => ({
+        typ: p.aircraft_icao ?? "?",
+        spur: p.track_width_m!,
+        px: bandPx(p.track_width_m!, p.runway_width_m!),
+      }));
+
+    expect(gemessen.length, "keine Variante mit Spurweite").toBeGreaterThan(3);
+
+    const verkehrt: string[] = [];
+    for (const a of gemessen) {
+      for (const b of gemessen) {
+        // Deutlich breiteres Fahrwerk (mehr als ein Fünftel), aber
+        // schmaleres Band: Das ist die Umkehr, um die es geht.
+        if (a.spur > b.spur * 1.2 && a.px < b.px) {
+          verkehrt.push(
+            `${a.typ} ${a.spur.toFixed(1)} m -> ${a.px.toFixed(0)} px, ` +
+              `aber ${b.typ} ${b.spur.toFixed(1)} m -> ${b.px.toFixed(0)} px`,
+          );
+        }
+      }
+    }
+    expect(verkehrt, "das breitere Fahrwerk bekommt das schmalere Band").toEqual([]);
+  });
 });

@@ -1852,7 +1852,6 @@
   "runway_v2": {
     "aufsetzzone_prefix": "ZONA DI ATTERRAGGIO (TDZ)",
     "aim_point_prefix": "PUNTO DI MIRA",
-    "aim_subtitle": "↓ Punto di tocco previsto",
     "bremspunkt_title": "Punto di frenata",
     "bremspunkt_speed": "40 kt",
     "td_prefix": "TD",
@@ -1987,7 +1986,8 @@
     "zoom_reset": "Pista intera",
     "zoom_hint": "Ctrl + rotella ingrandisce · trascina per spostare",
     "zoom_in": "Ingrandisci",
-    "zoom_out": "Riduci"
+    "zoom_out": "Riduci",
+    "cross_exaggeration_stretched": "{{f}}× esagerazione laterale · pista stretta ingrandita {{d}}×"
   },
   "ascan": {
     "title": "🔬 Invia aereo per l'analisi (Aircraft Scan)",

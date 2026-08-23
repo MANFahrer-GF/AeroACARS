@@ -1859,7 +1859,6 @@
   "runway_v2": {
     "aufsetzzone_prefix": "AUFSETZZONE (TDZ)",
     "aim_point_prefix": "AIM-POINT",
-    "aim_subtitle": "↓ Soll-Aufsetz-Stelle",
     "bremspunkt_title": "Bremspunkt",
     "bremspunkt_speed": "40 kt",
     "td_prefix": "TD",
@@ -1994,7 +1993,8 @@
     "zoom_reset": "Ganze Bahn",
     "zoom_hint": "Strg + Mausrad zoomt · Ziehen verschiebt",
     "zoom_in": "Näher",
-    "zoom_out": "Weiter weg"
+    "zoom_out": "Weiter weg",
+    "cross_exaggeration_stretched": "quer {{f}}× überhöht · schmale Bahn {{d}}× aufgezogen"
   },
   "ascan": {
     "title": "🔬 Flugzeug zur Analyse einreichen (Aircraft-Scan)",

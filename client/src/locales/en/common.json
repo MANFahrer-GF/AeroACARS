@@ -1859,7 +1859,6 @@
   "runway_v2": {
     "aufsetzzone_prefix": "TOUCHDOWN ZONE (TDZ)",
     "aim_point_prefix": "AIM POINT",
-    "aim_subtitle": "↓ Target Touchdown",
     "bremspunkt_title": "Brake Point",
     "bremspunkt_speed": "40 kt",
     "td_prefix": "TD",
@@ -1994,7 +1993,8 @@
     "zoom_reset": "Whole runway",
     "zoom_hint": "Ctrl + wheel zooms · drag pans",
     "zoom_in": "Zoom in",
-    "zoom_out": "Zoom out"
+    "zoom_out": "Zoom out",
+    "cross_exaggeration_stretched": "{{f}}× vertical stretch · narrow runway scaled up {{d}}×"
   },
   "ascan": {
     "title": "🔬 Submit aircraft for analysis (Aircraft Scan)",
