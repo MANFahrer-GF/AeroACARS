@@ -203,7 +203,9 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
 
   // Endpunkt ohne Ausfahrt — dieselbe Bedingung wie die Marke in der
   // Grafik, damit Bild und Liste dieselben Nummern führen.
-  if (props.clearance_point_m == null) {
+  // Dieselbe Bedingung wie die Marke in der Grafik — auch das Überrollen
+  // schliesst den Endpunkt aus, denn Marke ④ sitzt bereits am Bahnende.
+  if (props.clearance_point_m == null && (props.overrun_m ?? 0) <= 0) {
     const s = props.lateral_samples ?? [];
     const letzter = s.length >= 2 ? s[s.length - 1]! : null;
     const max = props.max_lateral_offset_m;

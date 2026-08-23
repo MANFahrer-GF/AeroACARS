@@ -1968,8 +1968,8 @@
       "track_width_unknown": "Die Spurweite dieses Musters ist nicht hinterlegt; ohne sie lässt sich die Lage der Räder nicht bestimmen."
     },
     "exits_title": "Ausfahrten (OSM)",
-    "edge_left": "Kante links",
-    "edge_right": "Kante rechts",
+    "edge_left": "Kante",
+    "edge_right": "Kante",
     "centre": "Mitte",
     "exits_note": "Ausfahrten aus der OpenStreetMap-Bodenkarte · genutzte hervorgehoben",
     "laengs_title": "LÄNGS — WO AUFGESETZT, WO GERÄUMT",

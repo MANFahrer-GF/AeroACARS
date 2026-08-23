@@ -162,8 +162,16 @@ export function RunwayCrossSection(p: QueransichtProps) {
       const dy = nach.y - vor.y;
       const len = Math.hypot(dx, dy) || 1;
       // Normale = Tangente um 90° gedreht.
+      //
+      // In x geklemmt: Bei einer steilen Kurve am Bahnende hat die Normale
+      // eine nennenswerte x-Komponente und schiebt den Bandrand über die
+      // Bahnfläche hinaus. Das ist nicht nur ein Zeichenfehler — dort ist
+      // keine Bahn mehr, und die Beschriftung am rechten Rand lag darauf.
       return {
-        x: q.x + (vorzeichen * -dy * halbeSpurPx) / len,
+        x: Math.max(
+          p.projektion.bahnAnfangX,
+          Math.min(p.projektion.bahnEndeX, q.x + (vorzeichen * -dy * halbeSpurPx) / len),
+        ),
         y: q.y + (vorzeichen * dx * halbeSpurPx) / len,
       };
     });
@@ -264,7 +272,10 @@ export function RunwayCrossSection(p: QueransichtProps) {
   // geblieben ist. Es gibt immer einen Endpunkt: entweder die Ausfahrt
   // (Marke ③) oder die Stelle, an der es auf Rollgeschwindigkeit war und
   // nicht mehr gemessen wurde.
-  if (p.clearanceM == null && punkte.length >= 2) {
+  // Kein zusätzlicher Endpunkt, wenn schon ein Überrollen markiert ist:
+  // Die Marke ④ sitzt am Bahnende, und dort endet auch die Spur — zwei
+  // Marken übereinander, und die Liste nennt denselben Punkt zweimal.
+  if (p.clearanceM == null && (p.overrunM ?? 0) <= 0 && punkte.length >= 2) {
     const letzter = punkte[punkte.length - 1]!;
     const x = p.projektion.mToX(letzter.laengs_m);
     const y = querZuY(letzter.quer_m);
@@ -594,14 +605,19 @@ export function RunwayCrossSection(p: QueransichtProps) {
       </text>
 
       {/* Kanten und Mitte rechts benannt — sonst muss man die Skala lesen,
-          um zu wissen, welche Linie die Kante ist. */}
-      <text x={p.projektion.bahnEndeX + 6} y={BAHN_TOP + 4} fontSize={9.5} fill="#8B95A8">
+          um zu wissen, welche Linie die Kante ist.
+
+          Kurz gehalten („Kante", nicht „Kante links"): Rechts bleiben nach
+          der Bahnfläche siebzig Einheiten, und die Seite steht ohnehin
+          links an der Skala. „Kante links" lief bei sechzehn Einheiten
+          Abstand über den Rand hinaus. */}
+      <text x={p.projektion.bahnEndeX + 10} y={BAHN_TOP + 4} fontSize={9.5} fill="#8B95A8">
         {t("runway_v2.edge_left", { defaultValue: "Kante links" })}
       </text>
-      <text x={p.projektion.bahnEndeX + 6} y={mitteY + 4} fontSize={9.5} fill="#66707E">
+      <text x={p.projektion.bahnEndeX + 10} y={mitteY + 4} fontSize={9.5} fill="#66707E">
         {t("runway_v2.centre", { defaultValue: "Mitte" })}
       </text>
-      <text x={p.projektion.bahnEndeX + 6} y={BAHN_BOT + 4} fontSize={9.5} fill="#8B95A8">
+      <text x={p.projektion.bahnEndeX + 10} y={BAHN_BOT + 4} fontSize={9.5} fill="#8B95A8">
         {t("runway_v2.edge_right", { defaultValue: "Kante rechts" })}
       </text>
     </svg>

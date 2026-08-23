@@ -1968,8 +1968,8 @@
       "track_width_unknown": "The track width of this type is not on record; without it the position of the wheels cannot be determined."
     },
     "exits_title": "Exits (OSM)",
-    "edge_left": "Left edge",
-    "edge_right": "Right edge",
+    "edge_left": "Edge",
+    "edge_right": "Edge",
     "centre": "Centre",
     "exits_note": "Exits from the OpenStreetMap ground chart · the one used is highlighted",
     "laengs_title": "ALONG — WHERE IT TOUCHED DOWN, WHERE IT VACATED",

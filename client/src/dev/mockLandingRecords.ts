@@ -201,6 +201,27 @@ function wasserSpur() {
   return bastelSpur([[180, 0.8], [420, -1.6], [700, -0.5]], 0.5);
 }
 
+/**
+ * Überrollen: spät aufgesetzt auf kurzer Bahn, die Spur läuft über das
+ * Bahnende hinaus.
+ *
+ * Die 1700-m-Bahn ist bei 1700 zu Ende; die Spur geht bis 1784 — das sind
+ * die 84 m, die als `overrun_m` gemeldet werden. Beides muss
+ * zusammenpassen, sonst zeigt das Bild etwas anderes als die Zahl daneben.
+ */
+function overrunSpur() {
+  return bastelSpur(
+    [
+      [780, 0.8],
+      [1100, -2.4],
+      [1400, -1.0],
+      [1700, 1.6],
+      [1784, 2.2],
+    ],
+    0.3,
+  );
+}
+
 /** Kurze Bahn: früh aufgesetzt, zügig geräumt. */
 function kurzeBahnSpur() {
   return bastelSpur([[140, 0.5], [330, 3.4], [520, 1.1], [700, -0.6]], 0.35);
@@ -521,16 +542,26 @@ export const MOCK_LANDING_OPTIONS: MockOption[] = [
   },
   {
     key: "d_overrun",
-    label: "④ Über das Bahnende hinaus — EDDL 05R, A321",
-    hint: "Echte Spur (zR4a18JGxVKZ84de, 21 Messpunkte), der Überroll-Wert ist konstruiert: Im ganzen Bestand von 802 Landungen ist niemand über das Bahnende geschossen. 0 Punkte, unabhängig von allem Seitlichen — die Prüfung läuft VOR den seitlichen Regeln.",
-    build: () =>
-      bahn(rwyEDDL05R(baseRecord()), {
+    label: "④ Über das Bahnende hinaus — EDLW 24, B738",
+    hint: "Vollständig konstruiert: Im ganzen Bestand von 802 Landungen ist niemand über das Bahnende geschossen, es gibt dafür also keine echte Spur. Die Bahn ist mit 1700 m kurz genug, dass der Fall plausibel wird — spät aufgesetzt, die Spur läuft bis über das Bahnende hinaus. 0 Punkte, unabhängig von allem Seitlichen: Die Überroll-Prüfung läuft VOR den seitlichen Regeln.",
+    build: () => {
+      // Die frühere Fassung nahm die echte EDDL-Spur und setzte einen
+      // Überroll-Wert daneben. Das passte nicht zusammen: Jene Spur endet
+      // bei 1711 m und schwenkt dort zur Ausfahrt, während die Bahn
+      // 2697 m lang ist — ein Überrollen tausend Meter vor dem Bahnende.
+      // Eine Demo-Variante, deren Bild der eigenen Beschriftung
+      // widerspricht, ist schlimmer als keine.
+      const r = bahn(rwyKlein(baseRecord(), "EDLW", "24", 1700, 45), {
         breite: 45,
-        spur: 7.59,
-        spann: 35.8,
-        spurVon: "zR4a18JGxVKZ84de",
+        spur: 5.72,
+        spann: 34.32,
+        punkte: overrunSpur(),
         overrun: 84,
-      }),
+      });
+      r.aircraft_icao = "B738";
+      r.aircraft_title = "737-800 PAX";
+      return r;
+    },
   },
   {
     key: "d_gras",
@@ -627,21 +658,6 @@ function rwyEDDH(r: LandingRecord, richtung: "23" | "05" = "23"): LandingRecord 
   r.touchdown_airport = "EDDH";
   r.aircraft_icao = "A321";
   r.aircraft_title = "FenixA321 CFM SL SC";
-  return r;
-}
-
-/** EDDL 05R — 2997 m, 45 m breit, 300 m versetzte Schwelle. */
-function rwyEDDL05R(r: LandingRecord): LandingRecord {
-  r.runway_match!.airport_ident = "EDDL";
-  r.runway_match!.runway_ident = "05R";
-  r.runway_match!.surface = "CON";
-  r.runway_match!.length_ft = 9833;
-  r.runway_match!.displaced_threshold_ft = 984;
-  r.runway_match!.true_course_deg = 52.5;
-  r.arr_airport = "EDDL";
-  r.touchdown_airport = "EDDL";
-  r.aircraft_icao = "A321";
-  r.aircraft_title = "FenixA321 IAE WF SC";
   return r;
 }
 

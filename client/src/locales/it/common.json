@@ -1961,8 +1961,8 @@
       "track_width_unknown": "La carreggiata di questo tipo non è registrata; senza di essa la posizione delle ruote non è determinabile."
     },
     "exits_title": "Uscite (OSM)",
-    "edge_left": "Bordo sinistro",
-    "edge_right": "Bordo destro",
+    "edge_left": "Bordo",
+    "edge_right": "Bordo",
     "centre": "Centro",
     "exits_note": "Uscite dalla mappa OpenStreetMap · evidenziata quella usata",
     "laengs_title": "LONGITUDINALE — DOVE HA TOCCATO, DOVE HA LIBERATO",
