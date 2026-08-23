@@ -481,6 +481,70 @@ fn sorted_subdirs(dir: &Path) -> Vec<std::fs::DirEntry> {
 /// Thomas K., 05.07.2026: "mein X-Plane-Ordner wird nicht gefunden"). MSFS-
 /// Community-Ordner sind flach — für sie ist der zweite Blick ein billiges,
 /// folgenloses Read-Dir auf Ordner, die ohnehin schon kein Paket waren.
+/// Der Paketordner zu einem Flugzeug-Titel, wie der Simulator ihn meldet.
+///
+/// # Wofür
+///
+/// Schritt 11 der v1.7.0-Bauliste liest die Spurweite aus der
+/// Flugzeugdatei. Dazu muss der Ordner des **geflogenen** Flugzeugs bekannt
+/// sein — der Simulator liefert aber nur den Titel (`TITLE` bei MSFS,
+/// `acf/_name` bei X-Plane).
+///
+/// # Warum der Vergleich unscharf ist
+///
+/// Titel sind uneinheitlich geschrieben: „FenixA321 CFM SL SC" gegen
+/// „Fenix A321 CFM", Bindestriche statt Leerzeichen, angehängte
+/// Bemalungsnamen. Verglichen wird deshalb über eine normalisierte Form —
+/// Grossbuchstaben, nur Buchstaben und Ziffern. Bleibt es mehrdeutig
+/// (mehrere Pakete passen), gibt die Funktion **nichts** zurück: Ein
+/// geratener Ordner liefert die Spurweite eines anderen Flugzeugs, und die
+/// entscheidet mit darüber, ob ein Rad neben der Bahn war.
+///
+/// Der Scan geht über dieselben Wurzeln wie die Flugzeugliste und ist
+/// entsprechend teuer — er gehört an den Flugbeginn, nicht in einen Tick.
+pub fn paket_zu_titel(titel: &str) -> Option<PathBuf> {
+    let gesucht = normalisiere_titel(titel);
+    if gesucht.len() < 4 {
+        return None;
+    }
+    let roots = select_roots(None).ok()?;
+    let (_, gefunden) = scan_roots(&roots);
+
+    // Erst exakt, dann als Präfix. Ein Präfix-Treffer deckt den häufigen
+    // Fall ab, dass der Simulator den Titel um eine Bemalung erweitert.
+    let mut treffer: Vec<&FoundAircraft> = gefunden
+        .iter()
+        .filter(|a| normalisiere_titel(&a.title) == gesucht)
+        .collect();
+    if treffer.is_empty() {
+        treffer = gefunden
+            .iter()
+            .filter(|a| {
+                let n = normalisiere_titel(&a.title);
+                n.len() >= 6 && (gesucht.starts_with(&n) || n.starts_with(&gesucht))
+            })
+            .collect();
+    }
+    if treffer.len() != 1 {
+        return None;
+    }
+    // `source_dir` ist für die Anzeige gekürzt; den echten Pfad hat nur
+    // `scan_roots` in seinem Paket-Vektor. Erneut suchen ist billiger als
+    // die Struktur umzubauen — der teure Teil war das Verzeichnis-Lesen.
+    let index = treffer[0].index;
+    let (pakete, _) = scan_roots(&roots);
+    pakete.get(index).map(|p| p.dir.clone())
+}
+
+/// Titel auf eine vergleichbare Form bringen: Grossbuchstaben, nur
+/// Buchstaben und Ziffern.
+fn normalisiere_titel(t: &str) -> String {
+    t.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_uppercase())
+        .collect()
+}
+
 fn scan_roots(roots: &[(PathBuf, String)]) -> (Vec<ScanPackage>, Vec<FoundAircraft>) {
     let mut packages: Vec<ScanPackage> = Vec::new();
     let mut found: Vec<FoundAircraft> = Vec::new();

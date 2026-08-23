@@ -15,6 +15,8 @@ mod runway;
 mod stands;
 mod ui_state;
 mod runway_assessment;
+/// v1.7.0 Schritt 11 — Spurweite aus der Flugzeugdatei (Spec §5.3 B).
+mod fahrwerk;
 mod xplane_plugin_install;
 // v0.9.0 (#GlitchTip): Sentry-Init + Allowlist + Redaction. Opt-In, Default OFF.
 // Spec: docs/spec/v0.9.0-glitchtip-self-hosted.md
@@ -3824,6 +3826,13 @@ struct FlightStats {
     bahn_raeum_laengs_m: Option<f64>,
     /// v1.7.0 — Geschwindigkeit beim Raeumen, in Knoten.
     bahn_raeum_gs_kt: Option<f64>,
+    /// v1.7.0 Schritt 11 — Spurweite aus der Flugzeugdatei, in Metern.
+    ///
+    /// EINMAL beim Flugbeginn gelesen, nicht je Tick: Der Weg dorthin geht
+    /// ueber einen Verzeichnis-Scan der Flugzeug-Pakete. `None` heisst, dass
+    /// die Datei nicht eindeutig zuzuordnen war — dann gilt die Typtabelle,
+    /// und das ist der Normalfall, nicht der Ausnahmefall.
+    fahrwerk_spurweite_m: Option<f64>,
     /// v1.7.0 — Seite der Ausfahrt, `"left"` oder `"right"`.
     ///
     /// Nur gesetzt, wenn **zwei unabhaengige Groessen** dasselbe sagen:
@@ -12055,6 +12064,7 @@ async fn flight_start(
             aus_titel.unwrap_or_default()
         }
     };
+
     let aircraft_name = expected_aircraft
         .name
         .as_deref()
@@ -12287,6 +12297,50 @@ async fn flight_start(
     });
 
     save_active_flight(&app, &flight);
+
+    // v1.7.0 Schritt 11 — Spurweite aus der Flugzeugdatei (Spec §5.3 B).
+    //
+    // EINMAL hier, nicht je Tick: Der Weg dorthin geht ueber einen
+    // Verzeichnis-Scan der Flugzeug-Pakete, und der kostet je nach
+    // Installation Sekunden. Am Flugbeginn faellt das nicht auf; in der
+    // Schleife waere es untragbar. Deshalb im Hintergrund, damit der
+    // Flugbeginn nicht darauf wartet.
+    //
+    // Schlaegt es fehl — kein eindeutiges Paket, verschluesselte Datei,
+    // unplausibler Wert — bleibt es bei der Typtabelle. Das ist der
+    // Normalfall und kein Mangel: Die Tabelle deckt 98 % des Bestands ab.
+    {
+        let titel = sim_title.clone();
+        let app_fuer_meldung = app.clone();
+        // `ActiveFlight` liegt als `Arc` vor — der Klon ist der Zeiger,
+        // nicht der Zustand. Denselben Weg nimmt `spawn_navdata_fetch`.
+        let flug = flight.clone();
+        tauri::async_runtime::spawn(async move {
+            let gelesen = tauri::async_runtime::spawn_blocking(move || {
+                aircraft_scan::paket_zu_titel(&titel)
+                    .and_then(|dir| fahrwerk::spurweite_aus_paket(&dir))
+            })
+            .await
+            .ok()
+            .flatten();
+            if let Some(f) = gelesen {
+                if let Ok(mut s) = flug.stats.lock() {
+                    s.fahrwerk_spurweite_m = Some(f.spurweite_m);
+                }
+                tracing::info!(
+                    spurweite_m = f.spurweite_m,
+                    quelle = ?f.quelle,
+                    "Spurweite aus der Flugzeugdatei gelesen"
+                );
+                log_activity_handle(
+                    &app_fuer_meldung,
+                    ActivityLevel::Info,
+                    format!("Spurweite aus der Flugzeugdatei: {:.2} m", f.spurweite_m),
+                    None,
+                );
+            }
+        });
+    }
     // v0.8.0: parallel-fetch dep/arr/alt-Navdata vom VPS. Non-blocking
     // (Background-Task), Failure → OurAirports-Fallback (transparent).
     // flight_start (SimBrief): Alternate kommt aus dem Bid; spätere
@@ -15580,7 +15634,16 @@ fn wire_displaced_threshold_ft(runway_match: Option<&runway::RunwayMatch>) -> Op
 /// Bewertung auf „Light" zurueck — 55 statt 80 Punkte.
 fn bahn_felder(stats: &FlightStats, icao: Option<&str>) -> BahnFelder {
     let rm = stats.runway_match.as_ref();
-    let spur_m = landing_scoring::spurweite::spurweite_m(icao);
+    // Reihenfolge nach Spec §5.3: Die Flugzeugdatei ist die Verfeinerung,
+    // die Typtabelle die Basis. Liegt ein aus der Datei gelesener Wert vor,
+    // hat er Vorrang — er beschreibt das tatsaechlich geflogene Add-on und
+    // nicht das Realmuster.
+    //
+    // Vorrang heisst aber NICHT blind: `spurweite_aus_paket` liefert nur
+    // dann etwas, wenn die Zuordnung eindeutig und der Wert plausibel war.
+    // Alles andere faellt auf die Tabelle zurueck.
+    let aus_datei = stats.fahrwerk_spurweite_m;
+    let spur_m = aus_datei.or_else(|| landing_scoring::spurweite::spurweite_m(icao));
     let breite_m = rm
         .map(|m| m.width_ft as f64 * 0.3048)
         .filter(|w| *w > 0.0);
@@ -15607,7 +15670,13 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>) -> BahnFelder {
         // Solange die Spurweite aus der Typtabelle kommt, ist die Quelle
         // fest. Schritt 11 der Bauliste liest sie aus der Flugzeugdatei —
         // dann entscheidet sich hier, welcher Wert gewonnen hat.
-        track_width_source: spur_m.map(|_| "type_table".to_string()),
+        track_width_source: spur_m.map(|_| {
+            if aus_datei.is_some() {
+                "aircraft_file".to_string()
+            } else {
+                "type_table".to_string()
+            }
+        }),
         wingspan_m: landing_scoring::spurweite::spannweite_m(icao),
         runway_width_m: breite_m,
         min_edge_clearance_m: rand_m,
