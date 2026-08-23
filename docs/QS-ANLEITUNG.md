@@ -232,3 +232,54 @@ dann greppen.
 | MSFS `flight_model.cfg` gegen eine echte Datei | X-Plane ist verifiziert, MSFS nicht |
 | Drei Entscheidungen in §13 der Spec | Gewichtung der Achse, Bandgrenzen, kleine Plätze ohne Navdaten |
 | **Export / PDF-Export** | von Thomas angemeldet, noch nicht angefasst |
+
+---
+
+## 9. Nachtrag aus Runde 20: Prüfungen, die nichts prüfen
+
+Thomas' Gegenprüfung von `75abdc6` fand zwei fachliche Fehler in grünem
+Code. Beide Male lag es nicht an einem falschen Test, sondern an einem
+**blinden**.
+
+**Ein Test mit unvollständigem Ausgangszustand prüft nur die Hälfte, die
+er kennt.** Der Test zum stillen Rückfall setzte `bahn_raeum_gs_kt` nicht
+— und genau über dieses Feld lief der Rückfall. Ergebnis `None`, Test
+grün, Fehler unentdeckt.
+
+> Deshalb: Bei Zuständen mit mehreren optionalen Eingängen **alle
+> Kombinationen** durchgehen, nicht die drei, an die man beim Bauen
+> gedacht hat. Für `bahn_felder` sind das acht — der Test dazu steht in
+> `src/lib.rs` und prüft je Kombination drei Regeln, die immer gelten
+> müssen.
+
+**Ein Riegel gilt nur auf dem Weg, auf dem er steht.** Die Invariante
+„Ausschwenken vor Kante" war im Live-Pfad abgesichert; die Nachrechnung
+umging ihn. Der Test von damals lief durch den Live-Pfad und sah nichts.
+
+> Wer eine Regel auf einem zweiten Weg noch einmal braucht, hat eine
+> Zweitimplementierung gebaut — auch wenn es nur drei Zeilen sind.
+
+**Und die Auswertung des Testlaufs kann selbst lügen.** Dieser Befehl
+meldete „grün", obwohl der Build rot war:
+
+```bash
+cargo test --workspace 2>&1 | grep -E "test result:" \
+  | awk '{p+=$4} END{print "gruen:",p}'
+```
+
+Bricht die Übersetzung ab, gibt es **keine** `test result`-Zeile — `awk`
+summiert nichts und druckt trotzdem sein Ergebnis. Also immer die **Zahl**
+prüfen, nicht nur, dass ein Kommando durchgelaufen ist:
+
+```bash
+cargo test --workspace 2>&1 | grep -E "test result|^error" \
+  | sed 's/.*ok\. \([0-9]*\) passed.*/GRUEN \1/' \
+  | awk '/GRUEN/{s+=$2} /error|FAILED/{print} END{print "Rust gruen:", s}'
+```
+
+**Und: `git checkout <datei>` ist keine Gegenprobe-Rücknahme.** Bei einer
+Gegenprobe wird eine Datei verändert und danach zurückgestellt — dafür
+gehört eine Kopie angelegt (`cp datei /tmp/x.bak`) und zurückgespielt.
+`git checkout` setzt auf den letzten Commit zurück und nimmt jede
+uncommittete Arbeit mit. Genau das ist in Runde 20 passiert; gerettet hat
+nur eine Sicherung von zehn Minuten vorher.

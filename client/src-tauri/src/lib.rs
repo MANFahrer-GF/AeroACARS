@@ -15177,6 +15177,12 @@ fn fill_v2_rollout_fields(
     input.bahn_max_querversatz_m = stats.bahn_max_querversatz_m;
     input.bahn_overrun_m = stats.bahn_overrun_m;
     input.bahn_proben = Some(stats.bahn_proben as usize);
+    // Die Spurweite aus der Flugzeugdatei, falls gelesen — dieselbe
+    // Quelle, aus der die Anzeige ihren Randabstand rechnet. Ohne diese
+    // Zeile zeigt die Grafik einen anderen Wert, als die Note benutzt:
+    // Bei einem Add-on mit 2 m breiterem Fahrwerk gemessen 8,8 gegen
+    // 7,7 m Randabstand.
+    input.fahrwerk_spurweite_m = stats.fahrwerk_spurweite_m;
     input.runway_surface = stats
         .runway_match
         .as_ref()
@@ -15765,28 +15771,60 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>) -> BahnFelder {
     // Dieselbe Regel benutzt das Pruefwerkzeug `tools/korpus/spuren_export.py`.
     // Zwei Stellen, eine Regel — sonst misst der Korpus etwas anderes als
     // der Client tut, und alle daraus abgeleiteten Zahlen sind schief.
+    // Gesucht wird erst AB dem Beginn des Ausschwenkens.
+    //
+    // Ein Ausbrechen, das vor dem Kurswechsel liegt und danach draussen
+    // bleibt, waere sonst der Raeumpunkt — und laege damit VOR dem
+    // Bewertungsende. Der Live-Pfad hat diesen Riegel seit Runde 18; der
+    // Nachrechnung fehlte er, und der Test von damals ging durch den
+    // Live-Pfad und sah es nicht.
+    let ab_m = stats.bahn_raeum_laengs_m.unwrap_or(f64::NEG_INFINITY);
     let kante_aus_spur = breite_m.and_then(|b| {
         let halbe = b / 2.0;
         let spur = &stats.bahn_spur;
         (1..spur.len()).find_map(|i| {
             let drin_davor = (spur[i - 1].1 as f64).abs() <= halbe;
             let draussen = (spur[i].1 as f64).abs() > halbe;
+            let nach_dem_ausschwenken = spur[i].0 as f64 >= ab_m;
             let bleibt_draussen =
                 spur[i..].iter().all(|(_, q)| (*q as f64).abs() > halbe);
-            (drin_davor && draussen && bleibt_draussen).then(|| spur[i].0 as f64)
+            (drin_davor && draussen && nach_dem_ausschwenken && bleibt_draussen)
+                .then(|| spur[i].0 as f64)
         })
     });
 
-    // Die Fahrt gehoert zu der Stelle, an der sie gemessen wurde.
+    // ── Punkt und Fahrt gehoeren zusammen ────────────────────────────────
     //
-    // Verschiebt die Nachrechnung den Uebertritt, passt der live gemessene
-    // Wert nicht mehr dorthin — die Spur traegt keine Geschwindigkeit, also
-    // gibt es fuer die neue Stelle keine. Dann lieber nichts als eine Zahl,
-    // die zu einem anderen Punkt gehoert.
-    let kante_m = kante_aus_spur.or(stats.bahn_kante_laengs_m);
-    let kante_gs = match (kante_m, stats.bahn_kante_laengs_m, stats.bahn_kante_gs_kt) {
-        (Some(k), Some(live), Some(gs)) if (k - live).abs() < 25.0 => Some(gs),
-        _ => None,
+    // Die Fahrt gehoert zu der Stelle, an der sie gemessen wurde. Deshalb
+    // werden beide **hier zusammen** bestimmt und nicht getrennt: Ein
+    // `.or()` auf den Geschwindigkeitswert allein greift sonst auf einen
+    // anderen Punkt zu.
+    //
+    // Genau das stand hier: `kante_gs.or(stats.bahn_raeum_gs_kt)`. War der
+    // Uebertritt nachgerechnet und verschoben, fiel die Fahrt still auf die
+    // des KURSWECHSELS zurueck — also auf den Punkt, den `scoring_cutoff_m`
+    // meldet, hunderte Meter frueher und deutlich schneller. Der Kommentar
+    // daneben sagte das Gegenteil, und der Test sah es nicht, weil er
+    // `bahn_raeum_gs_kt` gar nicht setzte.
+    let (kante_m, kante_gs) = match kante_aus_spur {
+        // Nachgerechnet: die live gemessene Fahrt nur, wenn sie zu dieser
+        // Stelle gehoert. Die Spur traegt keine Geschwindigkeit, also gibt
+        // es fuer eine verschobene Stelle keine.
+        Some(k) => {
+            let gs = match (stats.bahn_kante_laengs_m, stats.bahn_kante_gs_kt) {
+                (Some(live), Some(gs)) if (k - live).abs() < 25.0 => Some(gs),
+                _ => None,
+            };
+            (Some(k), gs)
+        }
+        // Keine Nachrechnung moeglich: der live gemessene Uebertritt mit
+        // seiner eigenen Fahrt.
+        None => match stats.bahn_kante_laengs_m {
+            Some(live) => (Some(live), stats.bahn_kante_gs_kt),
+            // Gar kein Uebertritt: Es bleibt der Beginn des Ausschwenkens —
+            // und dazu gehoert dessen Fahrt.
+            None => (stats.bahn_raeum_laengs_m, stats.bahn_raeum_gs_kt),
+        },
     };
 
     // Die Ausfahrten aus der Bodenkarte, die der Anflug ohnehin geladen hat.
@@ -15822,8 +15860,10 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>) -> BahnFelder {
         // etwa weil das Flugzeug auf der Bahn zum Stehen kam —, faellt sie
         // auf den Beginn des Ausschwenkens zurueck; das ist dann der
         // letzte belegte Punkt und keine Erfindung.
-        clearance_point_m: kante_m.or(stats.bahn_raeum_laengs_m),
-        clearance_speed_kt: kante_gs.or(stats.bahn_raeum_gs_kt),
+        // Beide kommen aus derselben Entscheidung weiter oben — kein
+        // `.or()` mehr auf einem der beiden allein.
+        clearance_point_m: kante_m,
+        clearance_speed_kt: kante_gs,
         // Ab hier wird nicht mehr bewertet: der Beginn des Ausschwenkens.
         // Ohne dieses Feld fiel die Bewertungsgrenze mit der Kante
         // zusammen, und das Ausschwenken zaehlte als Fehler des Piloten —
@@ -46053,6 +46093,16 @@ mod v0_16_6_bush_completeness_tests {
             // Die Live-Messung haette das Ausbrechen erwischt.
             stats.bahn_kante_laengs_m = Some(800.0);
             stats.bahn_kante_gs_kt = Some(70.0);
+            // UND der Kurswechsel hat seine eigene Fahrt.
+            //
+            // Ohne diese Zeile ist der Test blind fuer den eigentlichen
+            // Fehler: `clearance_speed_kt` fiel still auf den Wert des
+            // Kurswechsels zurueck, sobald die Nachrechnung den Uebertritt
+            // verschob. Mit `bahn_raeum_gs_kt = None` kam trotzdem `None`
+            // heraus, und die Pruefung war gruen. Thomas' Gegenpruefung hat
+            // genau das gefunden.
+            stats.bahn_raeum_laengs_m = Some(1500.0);
+            stats.bahn_raeum_gs_kt = Some(45.0);
 
             let f = bahn_felder(&stats, Some("A320"));
             assert_eq!(
@@ -46062,7 +46112,57 @@ mod v0_16_6_bush_completeness_tests {
             );
             assert!(
                 f.clearance_speed_kt.is_none(),
-                "die Fahrt vom Ausbrechen gehoert nicht an die neue Stelle"
+                "die Fahrt gehoert nicht an die nachgerechnete Stelle — \
+                 gemeldet wurde {:?}",
+                f.clearance_speed_kt
+            );
+        }
+
+        // Ein Ausbrechen VOR dem Ausschwenken darf die Reihenfolge nicht
+        // verdrehen.
+        //
+        // Die Nachrechnung suchte den Uebertritt ueber die ganze Spur. Ein
+        // flacher Ausritt, der vor dem Kurswechsel beginnt und danach
+        // draussen bleibt, wurde damit zum Raeumpunkt — und lag VOR dem
+        // Bewertungsende. Der Live-Pfad hat den Riegel seit Runde 18; der
+        // Test von damals lief durch den Live-Pfad und sah es nicht.
+        {
+            let mut stats = FlightStats::default();
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0, // halbe Breite 23,0 m
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636011,
+                threshold_lon: 9.999656,
+                end_lat: 53.619958,
+                end_lon: 9.967167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+            // Ueber die Kante schon bei 700 m — und nie wieder zurueck.
+            stats.bahn_spur = vec![
+                (600.0, -10.0),
+                (700.0, -25.0),
+                (1200.0, -28.0),
+                (1600.0, -40.0),
+                (1700.0, -70.0),
+            ];
+            // Das Ausschwenken beginnt aber erst bei 1500 m.
+            stats.bahn_raeum_laengs_m = Some(1500.0);
+            stats.bahn_raeum_gs_kt = Some(40.0);
+
+            let f = bahn_felder(&stats, Some("A320"));
+            let cut = f.scoring_cutoff_m.expect("Bewertungsende");
+            let clear = f.clearance_point_m.expect("Raeumpunkt");
+            assert!(
+                cut <= clear,
+                "Bewertungsende {cut} liegt hinter dem Raeumpunkt {clear}"
             );
         }
 
@@ -46118,6 +46218,199 @@ mod v0_16_6_bush_completeness_tests {
                     "Bewertungsende {cut} liegt hinter dem Raeumpunkt {clear}"
                 ),
                 _ => panic!("beide Punkte muessen hier vorliegen"),
+            }
+        }
+
+        // Bewertung und Anzeige benutzen DIESELBE Spurweite.
+        //
+        // Die Anzeige nimmt seit Schritt 11 die Spurweite aus der
+        // Flugzeugdatei, wenn eine gelesen wurde — sie beschreibt das
+        // tatsaechlich geflogene Add-on. Die Bewertung nahm bis zur
+        // QS-Runde 20 unverdrossen `spurweite_m(icao)`, also die Tabelle.
+        //
+        // Gemessen an einem Add-on mit 2 m breiterem Fahrwerk: Die Note
+        // meldete 8,8 m Randabstand, die Anzeige 7,7 m. Dazu behauptete
+        // die Herkunftsangabe daneben „aus der Flugzeugdatei". Genau die
+        // Falle, wegen der `aussenkante_halb_m(icao)` entfernt wurde —
+        // sie steckte an dieser Stelle weiter.
+        {
+            let mut stats = FlightStats::default();
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636011,
+                threshold_lon: 9.999656,
+                end_lat: 53.619958,
+                end_lon: 9.967167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+            stats.bahn_max_querversatz_m = Some(10.0);
+            stats.bahn_proben = 30;
+            let aus_tabelle =
+                landing_scoring::spurweite::spurweite_m(Some("A320")).expect("A320");
+            let aus_datei = aus_tabelle + 2.0;
+            stats.fahrwerk_spurweite_m = Some(aus_datei);
+
+            let f = bahn_felder(&stats, Some("A320"));
+            assert_eq!(f.track_width_m, Some(aus_datei), "Anzeige nimmt die Datei");
+            assert_eq!(f.track_width_source.as_deref(), Some("aircraft_file"));
+
+            // Und die BEWERTUNG muss denselben Wert benutzen. Der Weg geht
+            // durch `LandingScoringInput`, so wie im Betrieb.
+            let mut eingang = landing_scoring::LandingScoringInput::default();
+            eingang.aircraft_icao = Some("A320".to_string());
+            eingang.bahn_max_querversatz_m = stats.bahn_max_querversatz_m;
+            eingang.bahn_proben = Some(30);
+            eingang.runway_width_m = Some((151.0 * 0.3048) as f32);
+            eingang.runway_surface = Some("ASP".to_string());
+            eingang.airport_source = Some("runway_match".to_string());
+            eingang.runway_geometry_trusted = Some(true);
+            eingang.fahrwerk_spurweite_m = stats.fahrwerk_spurweite_m;
+
+            let erwartet_rand = 151.0 * 0.3048 / 2.0
+                - (10.0 + landing_scoring::spurweite::aussenkante_halb_aus_spur(aus_datei));
+            assert!(
+                (f.min_edge_clearance_m.expect("Randabstand") - erwartet_rand).abs() < 0.01,
+                "die Anzeige rechnet mit {:?}, erwartet {erwartet_rand:.2}",
+                f.min_edge_clearance_m
+            );
+
+            let mit_datei = landing_scoring::sub_bahndisziplin::sub_bahndisziplin(
+                &landing_scoring::sub_bahndisziplin::BahndisziplinInput {
+                    max_querversatz_m: eingang.bahn_max_querversatz_m,
+                    bahnbreite_m: eingang.runway_width_m.map(|w| w as f64),
+                    spurweite_m: eingang
+                        .fahrwerk_spurweite_m
+                        .or_else(|| landing_scoring::spurweite::spurweite_m(Some("A320"))),
+                    overrun_m: None,
+                    belag: Some(landing_scoring::belag::Belag::Befestigt),
+                    airport_source: Some("runway_match"),
+                    runway_geometry_trusted: Some(true),
+                    proben: Some(30),
+                },
+            );
+            let wert = mit_datei.value.clone().unwrap_or_default();
+            assert!(
+                wert.contains(&format!("{erwartet_rand:.1}")),
+                "die Note meldet {wert:?}, erwartet war ein Randabstand von {erwartet_rand:.1} m aus der Datei-Spurweite {aus_datei:.2} m"
+            );
+        }
+
+        // Alle Kombinationen der optionalen Eingaenge — nicht nur die,
+        // an die ich beim Bauen gedacht habe.
+        //
+        // # Warum das eine eigene Pruefung ist
+        //
+        // Thomas' Gegenpruefung von `75abdc6` fand einen Fehler, den mein
+        // Test nicht sah: Er setzte `bahn_raeum_gs_kt` nicht, und genau
+        // ueber dieses Feld lief der stille Rueckfall. Der Test war nicht
+        // falsch — er war **blind**, weil sein Ausgangszustand unvollstaendig
+        // war.
+        //
+        // Ein Test mit halb gesetztem Zustand prueft nur die Haelfte, die
+        // er kennt. Deshalb hier alle acht Kombinationen, und fuer jede die
+        // Regeln, die immer gelten muessen.
+        {
+            let rm = || runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0, // halbe Breite 23,0 m
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636011,
+                threshold_lon: 9.999656,
+                end_lat: 53.619958,
+                end_lon: 9.967167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            };
+            // Eine Spur, die bei 1600 m nach aussen geht und draussen bleibt.
+            let spur_mit_uebertritt = vec![
+                (600.0f32, -2.0f32),
+                (1200.0, -8.0),
+                (1600.0, -25.0),
+                (1700.0, -60.0),
+            ];
+            // Und eine, die auf der Bahn bleibt.
+            let spur_ohne = vec![(600.0f32, -2.0f32), (1200.0, -8.0), (1600.0, -12.0)];
+
+            for hat_spur_uebertritt in [false, true] {
+                for hat_live_kante in [false, true] {
+                    for hat_raeum in [false, true] {
+                        let mut stats = FlightStats::default();
+                        stats.runway_match = Some(rm());
+                        stats.bahn_spur = if hat_spur_uebertritt {
+                            spur_mit_uebertritt.clone()
+                        } else {
+                            spur_ohne.clone()
+                        };
+                        if hat_live_kante {
+                            stats.bahn_kante_laengs_m = Some(1610.0);
+                            stats.bahn_kante_gs_kt = Some(30.0);
+                        }
+                        if hat_raeum {
+                            stats.bahn_raeum_laengs_m = Some(1500.0);
+                            stats.bahn_raeum_gs_kt = Some(45.0);
+                        }
+                        let f = bahn_felder(&stats, Some("A320"));
+                        let lage = format!(
+                            "Spur-Uebertritt={hat_spur_uebertritt} \
+                             Live-Kante={hat_live_kante} Raeumpunkt={hat_raeum}"
+                        );
+
+                        // 1. Reihenfolge: Das Ausschwenken geht dem
+                        //    Verlassen voraus.
+                        if let (Some(cut), Some(clear)) =
+                            (f.scoring_cutoff_m, f.clearance_point_m)
+                        {
+                            assert!(
+                                cut <= clear + 0.001,
+                                "{lage}: Bewertungsende {cut} hinter Raeumpunkt {clear}"
+                            );
+                        }
+
+                        // 2. Keine Fahrt ohne Punkt.
+                        if f.clearance_point_m.is_none() {
+                            assert!(
+                                f.clearance_speed_kt.is_none(),
+                                "{lage}: Fahrt ohne Raeumpunkt"
+                            );
+                        }
+
+                        // 3. Die Fahrt gehoert zu IHREM Punkt. Sie darf nur
+                        //    aus einer Messung stammen, deren Stelle mit dem
+                        //    gemeldeten Punkt zusammenfaellt.
+                        if let (Some(gs), Some(punkt)) =
+                            (f.clearance_speed_kt, f.clearance_point_m)
+                        {
+                            let passt_zur_kante = stats
+                                .bahn_kante_laengs_m
+                                .is_some_and(|k| (k - punkt).abs() < 25.0)
+                                && stats.bahn_kante_gs_kt == Some(gs);
+                            let passt_zum_raeumen = stats
+                                .bahn_raeum_laengs_m
+                                .is_some_and(|r| (r - punkt).abs() < 0.001)
+                                && stats.bahn_raeum_gs_kt == Some(gs);
+                            assert!(
+                                passt_zur_kante || passt_zum_raeumen,
+                                "{lage}: Fahrt {gs} kt gehoert zu keinem \
+                                 gemeldeten Punkt {punkt} m"
+                            );
+                        }
+                    }
+                }
             }
         }
 

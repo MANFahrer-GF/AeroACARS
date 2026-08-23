@@ -241,6 +241,24 @@ pub struct LandingScoringInput {
     pub bahn_overrun_m: Option<f64>,
     /// v1.7.0 — Positionsproben im Messfenster.
     pub bahn_proben: Option<usize>,
+    /// v1.7.0 — Spurweite aus der **Flugzeugdatei**, falls gelesen.
+    ///
+    /// # Warum die Bewertung sie kennen muss
+    ///
+    /// Seit Schritt 11 der Bauliste liest der Client die Spurweite bei
+    /// Bedarf aus der `.acf` bzw. `flight_model.cfg` des geladenen
+    /// Musters. Sie hat Vorrang vor der Typtabelle, weil sie das
+    /// tatsaechlich geflogene Add-on beschreibt und nicht das Realmuster.
+    ///
+    /// Bis zur QS-Runde 20 kam dieser Wert **nur in der Anzeige** an: Die
+    /// Bewertung rechnete unverdrossen mit `spurweite_m(icao)`. Bei einem
+    /// Add-on, dessen Fahrwerk vom Realmuster abweicht, zeigte die Grafik
+    /// damit einen anderen Randabstand, als die Note benutzte — und die
+    /// Herkunftsangabe daneben behauptete „aus der Flugzeugdatei".
+    ///
+    /// `None` heisst „keine Datei gelesen", nicht „keine Spurweite": Dann
+    /// gilt die Tabelle.
+    pub fahrwerk_spurweite_m: Option<f64>,
     /// v1.7.0 — Bahnbelag als Rohangabe (OurAirports `runways.surface`).
     pub runway_surface: Option<String>,
     /// v1.7.0 — Ende der Aufsetzzone ab der Schwelle, aus `classify_tdz`.
@@ -352,7 +370,11 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
             &sub_bahndisziplin::BahndisziplinInput {
                 max_querversatz_m: input.bahn_max_querversatz_m,
                 bahnbreite_m: input.runway_width_m.map(|w| w as f64),
-                spurweite_m: spurweite::spurweite_m(input.aircraft_icao.as_deref()),
+                // Dieselbe Rangfolge wie in der Anzeige (`bahn_felder`):
+                // die Flugzeugdatei zuerst, die Typtabelle als Rueckfall.
+                spurweite_m: input
+                    .fahrwerk_spurweite_m
+                    .or_else(|| spurweite::spurweite_m(input.aircraft_icao.as_deref())),
                 overrun_m: input.bahn_overrun_m,
                 belag: Some(belag::belag_aus_angabe(input.runway_surface.as_deref())),
                 airport_source: match input.airport_source.as_deref() {
@@ -833,6 +855,7 @@ mod tests {
             bahn_max_querversatz_m: Some(3.0),
             bahn_overrun_m: None,
             bahn_proben: Some(30),
+            fahrwerk_spurweite_m: None,
             runway_surface: Some("ASP".into()),
             vs_fpm: Some(-150.0),
             peak_g_load: Some(1.4),
