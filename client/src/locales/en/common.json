@@ -1988,7 +1988,11 @@
     "legend_after": "after vacating — measured, not scored",
     "rollout_end": "ROLLOUT END",
     "cross_aircraft": "{{typ}} · track width {{m}} m",
-    "cross_aircraft_unknown": "track width unknown"
+    "cross_aircraft_unknown": "track width unknown",
+    "exits_none": "No taxiways on record for this airport",
+    "track_scale": "track {{m}} m",
+    "zoom_reset": "Whole runway",
+    "zoom_hint": "Wheel zooms · drag pans"
   },
   "ascan": {
     "title": "🔬 Submit aircraft for analysis (Aircraft Scan)",

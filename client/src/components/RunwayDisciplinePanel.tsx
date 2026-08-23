@@ -9,11 +9,14 @@
 import { useTranslation } from "react-i18next";
 import { RunwayCrossSection } from "./RunwayCrossSection";
 import type { Projektion } from "../lib/runwayProjection";
+import type { BahnZoom } from "../lib/useBahnZoom";
 import type { RunwayDiagramV2Props } from "./RunwayDiagramV2";
 
 export interface DisziplinProps {
   props: RunwayDiagramV2Props;
   projektion: Projektion;
+  /** Derselbe Zoom-Zustand wie die Längsansicht — nicht ein zweiter. */
+  zoom?: BahnZoom;
   width: number;
   tokens: {
     tarmac: string;
@@ -29,6 +32,7 @@ export interface DisziplinProps {
 export function RunwayDisciplinePanel({
   props,
   projektion,
+  zoom,
   width,
   tokens,
 }: DisziplinProps) {
@@ -73,6 +77,7 @@ export function RunwayDisciplinePanel({
           ausfahrten={props.runway_exits}
           aircraftIcao={props.aircraft_icao}
           width={width}
+          zoom={zoom}
           tokens={tokens}
         />
       )}
@@ -314,11 +319,25 @@ function QuerLegende({ props }: { props: RunwayDiagramV2Props }) {
       }),
     });
   }
+  // Ausfahrten: entweder erklären, was die Stummel bedeuten — oder sagen,
+  // warum keine da sind.
+  //
+  // Kleine Plätze haben oft keine OpenStreetMap-Bodenkarte; EDXB und EDXF
+  // etwa sind gar nicht erfasst. Ohne Hinweis liest sich das wie „hier gibt
+  // es keine Ausfahrten", und das ist etwas anderes als „wir wissen es
+  // nicht".
   if ((props.runway_exits?.length ?? 0) > 0) {
     eintraege.push({
       farbe: "#4E6350",
       text: t("runway_v2.legend_exits", {
         defaultValue: "Ausfahrten (OSM) · genutzte hervorgehoben",
+      }),
+    });
+  } else {
+    eintraege.push({
+      farbe: "#334155",
+      text: t("runway_v2.exits_none", {
+        defaultValue: "Für diesen Platz sind keine Rollwege hinterlegt",
       }),
     });
   }

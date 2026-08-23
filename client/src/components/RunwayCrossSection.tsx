@@ -27,6 +27,7 @@
 
 import { useTranslation } from "react-i18next";
 import type { Projektion } from "../lib/runwayProjection";
+import type { BahnZoom } from "../lib/useBahnZoom";
 
 /** Eine Ausfahrt: wo ein Rollweg die Bahnkante trifft. */
 export interface Ausfahrt {
@@ -67,6 +68,8 @@ export interface QueransichtProps {
   aircraftIcao?: string | null;
   /** Breite des SVG in Benutzereinheiten (muss der Längsansicht gleichen). */
   width: number;
+  /** Derselbe Zoom wie die Längsansicht. Beide Ansichten, ein Zustand. */
+  zoom?: BahnZoom;
   tokens: {
     tarmac: string;
     tarmacBorder: string;
@@ -87,17 +90,36 @@ export interface QueransichtProps {
  * unterscheiden war. Die Ansicht existiert aber genau dafür. Die
  * Referenzgrafik gibt der Bahnfläche 176 Einheiten; dieselbe Höhe steht hier.
  */
-const H = 300;
+const H = 390;
 /** Oberkante der befestigten Fläche. */
 const BAHN_TOP = 74;
-/** Unterkante der befestigten Fläche. */
-const BAHN_BOT = 250;
+/**
+ * Unterkante der befestigten Fläche.
+ *
+ * 264 statt 176 Einheiten Bahnhöhe. Der Grund ist das Seitenverhältnis:
+ * Bei 1130 Einheiten Bildbreite wirkt alles Senkrechte klein, und die
+ * Spurweite eines A320 — 7,59 m auf einer 46-m-Bahn, also 16,5 % — kam auf
+ * neunundzwanzig Pixel. Rechnerisch richtig, aber nicht ablesbar: Dass da
+ * sieben Meter stehen, sah man ihnen nicht an.
+ *
+ * Mit 264 Einheiten sind es dreiundvierzig Pixel. Das Verhältnis bleibt
+ * unverändert — die Ansicht bekommt nur mehr Raum, wie es §8.6.6 vorsieht
+ * („lieber höher als enger").
+ */
+const BAHN_BOT = 338;
 /** Höhe des Grünstreifens beidseits. */
 const GRUEN_H = 13;
 /** Abstand der Querskala-Striche in Metern. */
 const SKALA_SCHRITT_M = 10;
-/** X der Skalenachse, links ausserhalb der Bahn. */
-const SKALA_X = 30;
+/**
+ * X der Skalenachse, links ausserhalb der Bahn.
+ *
+ * Achtundvierzig statt dreissig: Die äussersten Werte tragen die Einheit
+ * („23 m"), und rechtsbündig an der Achse begann dieser Text bei x = −2 —
+ * zwei Pixel ausserhalb des Zeichenbereichs. Die Lesbarkeitsprüfung hatte
+ * ihn nicht gemeldet, weil sie die Textbreite zu knapp schätzte.
+ */
+const SKALA_X = 48;
 
 /**
  * Queransicht. Gibt `null` zurück, wenn die Bahnbreite fehlt — eine geratene
@@ -350,13 +372,21 @@ export function RunwayCrossSection(p: QueransichtProps) {
 
   return (
     <svg
+      onWheel={p.zoom?.aufRad}
+      onMouseDown={p.zoom?.aufZiehStart}
+      onMouseMove={p.zoom?.aufZiehen}
+      onMouseUp={p.zoom?.aufZiehEnde}
+      onMouseLeave={p.zoom?.aufZiehEnde}
       viewBox={`0 0 ${p.width} ${H}`}
       width="100%"
       role="img"
       aria-label={t("runway_v2.cross_section_aria", {
         defaultValue: "Queransicht der Bahn mit dem gefahrenen Streifen",
       })}
-      style={{ display: "block" }}
+      style={{
+        display: "block",
+        cursor: p.zoom?.zieht ? "grabbing" : p.zoom?.gezoomt ? "grab" : "default",
+      }}
     >
       <defs>
         <pattern
@@ -620,6 +650,16 @@ export function RunwayCrossSection(p: QueransichtProps) {
       >
         {t("runway_v2.side_right", { defaultValue: "RECHTS" })}
       </text>
+
+      {/* Eine Bemassung der Spurbreite im Bild wäre naheliegend — und
+          verletzt §8.6.3: „Keine Beschriftung auf der Bahnfläche."
+          Der Doppelpfeil sass zwangsläufig dort, wo die Spur ist, also
+          mitten auf der Bahn. Die Lesbarkeitsprüfung hat ihn gemeldet.
+
+          Die Breite ist stattdessen auf drei Wegen ablesbar: Das Band hat
+          eine Kontur, der Kopf nennt Muster und Spurweite, und der
+          Grössenvergleich unter der Grafik stellt sie neben Bahnbreite und
+          Spannweite. */}
 
       {/* Kanten und Mitte rechts benannt — sonst muss man die Skala lesen,
           um zu wissen, welche Linie die Kante ist.

@@ -100,7 +100,12 @@ function seite(inhalt: string): string {
   }
   h2 { font-size: 1rem; margin: 0 0 4px; font-weight: 600; }
   .hint { color: #94a3b8; font-size: 0.84rem; margin: 0 0 14px; max-width: 78ch; }
-  .panel { overflow-x: auto; }
+  /* Kein waagerechtes Scrollen (Spec 8.6.5). min-width 0 bricht die
+     Vorgabe auf, mit der Flex-Kinder ihre Inhaltsbreite erzwingen.
+     ACHTUNG: keine Backticks in diesem Block — das CSS steht in einem
+     Template-Literal, und ein Backtick beendet es mitten im String. */
+  .panel { min-width: 0; max-width: 100%; overflow-x: hidden; }
+  .panel > * { min-width: 0; max-width: 100%; }
   svg { max-width: 100%; height: auto; }
 </style></head><body>
 <h1>Bahndisziplin — die Varianten aus §11</h1>

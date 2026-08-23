@@ -15,6 +15,8 @@ mod runway;
 mod stands;
 mod ui_state;
 mod runway_assessment;
+/// v1.7.0 — Ausfahrten aus der OSM-Bodenkarte (Spec §8.6).
+mod ausfahrten;
 /// v1.7.0 Schritt 11 — Spurweite aus der Flugzeugdatei (Spec §5.3 B).
 mod fahrwerk;
 mod xplane_plugin_install;

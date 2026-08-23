@@ -206,5 +206,24 @@
    "seite": "right",
    "laengs_m": 3294.9
   }
- ]
+ ],
+ "EDLW/24": [
+  {
+   "name": "C",
+   "seite": "left",
+   "laengs_m": 28.8
+  },
+  {
+   "name": "B",
+   "seite": "right",
+   "laengs_m": 1333.4
+  },
+  {
+   "name": "B",
+   "seite": "left",
+   "laengs_m": 1375.1
+  }
+ ],
+ "EDXB/26": [],
+ "EDXF/08": []
 }

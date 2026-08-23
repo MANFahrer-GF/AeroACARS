@@ -1988,7 +1988,11 @@
     "legend_after": "nach dem Räumen — gemessen, nicht gewertet",
     "rollout_end": "AUSROLLEN ENDE",
     "cross_aircraft": "{{typ}} · Spurweite {{m}} m",
-    "cross_aircraft_unknown": "Spurweite nicht bekannt"
+    "cross_aircraft_unknown": "Spurweite nicht bekannt",
+    "exits_none": "Für diesen Platz sind keine Rollwege hinterlegt",
+    "track_scale": "Spur {{m}} m",
+    "zoom_reset": "Ganze Bahn",
+    "zoom_hint": "Mausrad zoomt · Ziehen verschiebt"
   },
   "ascan": {
     "title": "🔬 Flugzeug zur Analyse einreichen (Aircraft-Scan)",

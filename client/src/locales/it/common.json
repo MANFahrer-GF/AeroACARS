@@ -1981,7 +1981,11 @@
     "legend_after": "dopo aver liberato — misurato, non valutato",
     "rollout_end": "FINE RULLAGGIO",
     "cross_aircraft": "{{typ}} · carreggiata {{m}} m",
-    "cross_aircraft_unknown": "carreggiata sconosciuta"
+    "cross_aircraft_unknown": "carreggiata sconosciuta",
+    "exits_none": "Nessuna via di rullaggio registrata per questo aeroporto",
+    "track_scale": "carreggiata {{m}} m",
+    "zoom_reset": "Pista intera",
+    "zoom_hint": "La rotella ingrandisce · trascina per spostare"
   },
   "ascan": {
     "title": "🔬 Invia aereo per l'analisi (Aircraft Scan)",

@@ -16,6 +16,7 @@
 
 import { useMemo, useState } from "react";
 import { erzeugeProjektion } from "../lib/runwayProjection";
+import { useBahnZoom } from "../lib/useBahnZoom";
 import { RunwayDisciplinePanel } from "./RunwayDisciplinePanel";
 import { useTranslation } from "react-i18next";
 import { GlossaryModal } from "./RunwayGlossaryModal";
@@ -189,11 +190,20 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   // die Queransicht haette eine zweite gebraucht. Genau daraus entsteht die
   // Fehlerklasse aus Spec §8.4: zwei Stellen, die dasselbe rechnen sollen,
   // driften auseinander -- im ersten Entwurf stand der Aim-Marker 209 m falsch.
+  // Zoom — EIN Zustand für beide Ansichten. Getrennte Zustände wären der
+  // Fehler, gegen den §8.4 die gemeinsame Projektion vorschreibt: Zwei
+  // Ansichten, die nicht mehr fluchten, sind schlimmer als eine.
+  const zoom = useBahnZoom(
+    -(props.displaced_threshold_m ?? 0),
+    Number.isFinite(props.length_m) ? Math.max(100, props.length_m) : 500,
+  );
   const projektion = erzeugeProjektion({
     lengthM: props.length_m,
     ddsM: props.displaced_threshold_m ?? 0,
     padX,
     innerW,
+    sichtVonM: zoom.vonM,
+    sichtBisM: zoom.bisM,
   });
   const lengthM = projektion.lengthM;
   const ddsM = projektion.ddsM;
@@ -335,7 +345,19 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
     <section
       className="rwy-v2"
       aria-label="Landebahn-Analyse"
-      style={{ width: "100%", display: "flex", flexDirection: "column", gap: 12 }}
+      style={{
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+        // `min-width: 0` und `max-width: 100%`: Ein Flex-Container schrumpft
+        // sonst nicht unter die Inhaltsbreite seiner Kinder, und die Anzeige
+        // sprengt jeden Platz, der ihr zugewiesen wird. Gemessen: 654 statt
+        // 618 Pixel — der umgebende Container scrollte waagerecht, was
+        // §8.6.5 ausdrücklich verbietet.
+        minWidth: 0,
+        maxWidth: "100%",
+      }}
     >
       {/* ─── 1. HEADER ─────────────────────────────────────────────── */}
       <header
@@ -431,12 +453,28 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           background: "rgba(0,0,0,0.25)",
           borderRadius: 8,
           padding: "12px 8px 4px 8px",
+          // Ohne `border-box` kommen die sechzehn Pixel Innenabstand zur
+          // Breite dazu: Der Wrapper wurde 634 statt 618 breit, und sein
+          // Container scrollte waagerecht. §8.6.5 verbietet genau das.
+          boxSizing: "border-box",
+          maxWidth: "100%",
+          overflowX: "hidden",
         }}
       >
         <svg
+          onWheel={zoom.aufRad}
+          onMouseDown={zoom.aufZiehStart}
+          onMouseMove={zoom.aufZiehen}
+          onMouseUp={zoom.aufZiehEnde}
+          onMouseLeave={zoom.aufZiehEnde}
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="xMidYMid meet"
-          style={{ width: "100%", height: "auto", display: "block" }}
+          style={{
+            width: "100%",
+            height: "auto",
+            display: "block",
+            cursor: zoom.zieht ? "grabbing" : zoom.gezoomt ? "grab" : "default",
+          }}
           role="img"
           aria-label="Bahn-Geometrie mit Aufsetzpunkt"
         >
@@ -829,8 +867,16 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 strokeWidth="1"
                 opacity="0.35"
               />
+              {/* Am Bildrand geklemmt — dieselbe Regel wie bei der
+                  TD-Beschriftung: Eine mittig gesetzte Zeile, die einem
+                  beweglichen Punkt folgt, läuft am Rand hinaus. Bei einem
+                  Ausrollende nahe der Bahnkante endete sie bei x = 1201,
+                  einen Pixel ausserhalb. */}
               <text
-                x={rolloutEndeX}
+                x={Math.min(
+                  Math.max(rolloutEndeX, padX + 70),
+                  padX + innerW - 70,
+                )}
                 y={rwyTop - 36}
                 textAnchor="middle"
                 fontSize="10"
@@ -1121,6 +1167,46 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           </g>
         </svg>
 
+        {/* Bedienung: Der Hinweis steht nur da, solange nicht gezoomt ist —
+            danach erklärt sich der Zustand selbst, und der Platz gehört dem
+            Zurücksetzen. */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            alignItems: "center",
+            gap: 10,
+            fontSize: "0.72rem",
+            color: "#64748b",
+            marginTop: 4,
+          }}
+        >
+          {zoom.gezoomt ? (
+            <>
+              <span>
+                {projektion.sichtVonM.toFixed(0)}–{projektion.sichtBisM.toFixed(0)} m
+              </span>
+              <button
+                type="button"
+                onClick={zoom.zuruecksetzen}
+                style={{
+                  background: "rgba(255,255,255,0.06)",
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  borderRadius: 4,
+                  color: "#cbd5e1",
+                  fontSize: "0.72rem",
+                  padding: "2px 8px",
+                  cursor: "pointer",
+                }}
+              >
+                {t("runway_v2.zoom_reset", { defaultValue: "Ganze Bahn" })}
+              </button>
+            </>
+          ) : (
+            <span>{t("runway_v2.zoom_hint", { defaultValue: "Mausrad zoomt · Ziehen verschiebt" })}</span>
+          )}
+        </div>
+
         {/* ─── 2b. QUERANSICHT + EREIGNISSE + GROESSENVERGLEICH ────────
             v1.7.0, Spec §8.3. Im SELBEN Container wie die Laengsansicht,
             damit beide dieselbe Breite haben und die Kanten fluchten -- der
@@ -1132,6 +1218,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           <RunwayDisciplinePanel
             props={props}
             projektion={projektion}
+            zoom={zoom}
             width={W}
             tokens={{
               tarmac: TOKENS.tarmac,
@@ -1152,6 +1239,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           display: "flex",
           gap: 18,
           flexWrap: "wrap",
+          minWidth: 0,
           fontSize: "0.78rem",
           opacity: 0.85,
           padding: "0 4px",

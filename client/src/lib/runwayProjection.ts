@@ -32,6 +32,17 @@ export interface ProjektionsEingang {
   padX: number;
   /** Breite des Zeichenbereichs, in Pixeln. */
   innerW: number;
+  /**
+   * Sichtbarer Ausschnitt in Metern ab der Landeschwelle.
+   *
+   * Ohne Angabe wird die ganze Bahn gezeigt. Beim Hineinzoomen bekommen
+   * **beide** Ansichten denselben Ausschnitt — dieselbe Projektion, also
+   * dieselben Kanten. Getrennte Zoomzustände wären genau der Fehler, gegen
+   * den §8.4 diese Funktion vorschreibt: Zwei Ansichten, die nicht mehr
+   * fluchten, sind schlimmer als eine.
+   */
+  sichtVonM?: number;
+  sichtBisM?: number;
 }
 
 /** Die Projektion — für beide Ansichten identisch. */
@@ -56,6 +67,11 @@ export interface Projektion {
   /** Die bereinigten Eingangswerte (nach Untergrenze). */
   lengthM: number;
   ddsM: number;
+  /** Der gezeigte Ausschnitt in Metern — für Bedienelemente und Tests. */
+  sichtVonM: number;
+  sichtBisM: number;
+  /** Ist überhaupt hineingezoomt? */
+  gezoomt: boolean;
 }
 
 /**
@@ -82,22 +98,40 @@ export function erzeugeProjektion(e: ProjektionsEingang): Projektion {
     : ERSATZ_LAENGE_M;
   const ddsM = Number.isFinite(e.ddsM) ? Math.max(0, e.ddsM) : 0;
   const totalVisualM = lengthM + ddsM;
-  const pxProMeter = e.innerW / totalVisualM;
 
-  const thresholdX = e.padX + ddsM * pxProMeter;
+  // Der Ausschnitt: ohne Angabe die ganze Bahn, sonst der gewählte
+  // Bereich — auf die Bahn begrenzt und mit einer Mindestbreite, damit
+  // ein versehentlicher Vollzoom die Projektion nicht entarten lässt.
+  const MIN_SICHT_M = 50;
+  const ganzVon = -ddsM;
+  const ganzBis = lengthM;
+  let von = Number.isFinite(e.sichtVonM ?? NaN) ? e.sichtVonM! : ganzVon;
+  let bis = Number.isFinite(e.sichtBisM ?? NaN) ? e.sichtBisM! : ganzBis;
+  von = Math.max(ganzVon, Math.min(von, ganzBis - MIN_SICHT_M));
+  bis = Math.min(ganzBis, Math.max(bis, von + MIN_SICHT_M));
+  const sichtM = bis - von;
+
+  const pxProMeter = e.innerW / sichtM;
+  // X der Landeschwelle: dort, wo Meter 0 im Ausschnitt liegt.
+  const thresholdX = e.padX + (0 - von) * pxProMeter;
   const mToXUnbegrenzt = (m: number) => thresholdX + m * pxProMeter;
-  const mToX = (m: number) =>
-    mToXUnbegrenzt(Math.max(-ddsM, Math.min(lengthM, m)));
+  const mToX = (m: number) => mToXUnbegrenzt(Math.max(von, Math.min(bis, m)));
 
   return {
     mToX,
     mToXUnbegrenzt,
     thresholdX,
-    bahnAnfangX: e.padX,
-    bahnEndeX: e.padX + e.innerW,
+    // Bahnanfang und -ende liegen ausserhalb des Zeichenbereichs, sobald
+    // hineingezoomt ist. Sie werden geklemmt, damit die Flächen an den
+    // Bildrändern enden statt darüber hinaus.
+    bahnAnfangX: Math.max(e.padX, mToXUnbegrenzt(ganzVon)),
+    bahnEndeX: Math.min(e.padX + e.innerW, mToXUnbegrenzt(ganzBis)),
     totalVisualM,
     pxProMeter,
     lengthM,
     ddsM,
+    sichtVonM: von,
+    sichtBisM: bis,
+    gezoomt: von > ganzVon + 0.5 || bis < ganzBis - 0.5,
   };
 }

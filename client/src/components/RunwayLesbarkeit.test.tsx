@@ -42,10 +42,14 @@ interface Kasten {
  * Textkästen aus dem Markup schätzen.
  *
  * Die Breite kommt aus Zeichenzahl mal Schriftgrösse — jsdom rechnet kein
- * Layout, also gibt es keine echte Textmetrik. Der Faktor 0,55 liegt leicht
- * über der mittleren Zeichenbreite serifenloser Schriften; die Prüfung ist
- * damit etwas strenger als die Wirklichkeit, und das ist die richtige
- * Richtung: Ein knapp bestandener Fall soll auffallen.
+ * Layout, also gibt es keine echte Textmetrik.
+ *
+ * Der Faktor war 0,55 und damit zu knapp: „23 m" bei neun Punkt ergab
+ * geschätzte 19,8 statt gemessener 22 Pixel, und ein Text, der zwei Pixel
+ * links aus dem Bild lief, kam durch. 0,62 liegt über der mittleren
+ * Zeichenbreite serifenloser Schriften — die Prüfung ist damit strenger als
+ * die Wirklichkeit, und das ist die richtige Richtung: Ein knapp
+ * bestandener Fall soll auffallen, nicht durchrutschen.
  */
 function textKaesten(svg: string): Kasten[] {
   const out: Kasten[] = [];
@@ -61,7 +65,7 @@ function textKaesten(svg: string): Kasten[] {
     };
     const fs = zahl("font-size", 10);
     const anker = /text-anchor="(\w+)"/.exec(attr)?.[1] ?? "start";
-    const b = text.length * fs * 0.55;
+    const b = text.length * fs * 0.62;
     let x = zahl("x", 0);
     if (anker === "middle") x -= b / 2;
     else if (anker === "end") x -= b;

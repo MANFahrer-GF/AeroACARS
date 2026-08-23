@@ -58,6 +58,50 @@ pub fn spannweite_m(icao: Option<&str>) -> Option<f64> {
     eintrag(icao).map(|(_, _, spann)| spann)
 }
 
+/// Halbe Breite des Fahrwerks bis zur **Reifen-Aussenkante**, in Metern.
+///
+/// # Warum das nicht die halbe Spurweite ist
+///
+/// Die Spurweite in den Herstellerangaben ist der Abstand von **Bein-Mitte
+/// zu Bein-Mitte**. Der äussere Rand des äussersten Reifens liegt noch eine
+/// halbe Radpaketbreite weiter draussen — bei der 737-800 sind das 0,45 m,
+/// denn sie trägt zwei Räder nebeneinander je Bein.
+///
+/// Für die Frage „lief ein Rad neben der befestigten Fläche" zählt genau
+/// dieser äussere Rand, nicht die Bein-Mitte. Ohne den Zuschlag meldet die
+/// Anzeige „äusseres Rad 7,6 m von der Mitte", wo es in Wirklichkeit 8,0 m
+/// sind.
+///
+/// # Woher die Radpaketbreite kommt
+///
+/// Aus der Zahl der Räder je Bein, und die hängt an der Grösse:
+///
+/// | Spurweite | Bauart | Radpaket |
+/// |---|---|---|
+/// | bis 4 m | ein Rad je Bein | 0,30 m |
+/// | 4–8 m | zwei Räder nebeneinander | 0,90 m |
+/// | über 8 m | Bogie, zwei Räder quer | 1,10 m |
+///
+/// Das ist eine **Näherung nach Baugrösse**, keine Herstellerangabe je
+/// Muster. Sie ist bewusst grob und liegt eher zu klein als zu gross: Ein
+/// zu grosser Zuschlag würde Landungen als „neben der Bahn" melden, die es
+/// nicht waren. Die Kantentoleranz von 1,5 m (§5.4) deckt den Restfehler ab.
+pub fn aussenkante_halb_m(icao: Option<&str>) -> Option<f64> {
+    let spur = spurweite_m(icao)?;
+    Some(spur / 2.0 + radpaket_m(spur) / 2.0)
+}
+
+/// Breite des Radpakets eines Hauptfahrwerksbeins, nach Baugrösse.
+fn radpaket_m(spurweite_m: f64) -> f64 {
+    if spurweite_m < 4.0 {
+        0.30
+    } else if spurweite_m <= 8.0 {
+        0.90
+    } else {
+        1.10
+    }
+}
+
 /// Der Tabelleneintrag zu einem Typcode — eine Suche für beide Masse.
 fn eintrag(icao: Option<&str>) -> Option<(&'static str, f64, f64)> {
     let icao = icao?.trim().to_ascii_uppercase();
@@ -68,6 +112,26 @@ fn eintrag(icao: Option<&str>) -> Option<(&'static str, f64, f64)> {
 }
 
 /// ICAO-Typcode → (Spurweite Hauptfahrwerk, Spannweite), beide in Metern.
+///
+/// # Welche Spurweite, wenn es mehrere Fahrwerke gibt
+///
+/// Die **äusserste**. Mehrere Muster tragen mehr als ein Hauptfahrwerkspaar:
+///
+/// | Muster | Hauptbeine | massgeblich |
+/// |---|---|---|
+/// | A380 | zwei am Flügel, zwei am Rumpf | die Flügelbeine, 14,30 m |
+/// | B777 | zwei, je sechs Räder | 10,97 m |
+/// | A340-600 | zwei aussen, eines mittig | die äusseren, 12,60 m |
+/// | B747 | vier, zwei je Seite hintereinander | 11,00 m |
+///
+/// Der Grund ist die Frage, die diese Achse stellt: Lief ein Rad neben der
+/// befestigten Fläche? Das entscheidet immer das äusserste Rad. Ein
+/// mittleres oder inneres Bein steht weiter innen und kann die Kante nicht
+/// zuerst erreichen — es ist für diese Bewertung ohne Belang.
+///
+/// Die Leseroutine für Flugzeugdateien (`fahrwerk::spurweite_aus_beinen`)
+/// folgt derselben Regel: Sie nimmt den Abstand der äusseren Spuren, nicht
+/// den der inneren und nicht die Spannweite aller Räder.
 ///
 /// Sortiert nach Hersteller und Grösse, damit Lücken beim Lesen auffallen.
 /// Quelle: Airport Planning Manuals der Hersteller, ICAO Doc 8643.
@@ -425,6 +489,73 @@ mod tests {
             .filter(|z| !z.trim().is_empty() && !z.trim_start().starts_with('#'))
             .count();
         assert!(muster > 50, "nur {muster} Muster in der Flottenliste");
+    }
+
+    #[test]
+    fn die_aussenkante_liegt_hinter_der_halben_spurweite() {
+        // Der Punkt, den Thomas gefunden hat: 5,72 m ist Bein-Mitte zu
+        // Bein-Mitte. Der Reifenrand liegt weiter draussen — bei der
+        // 737-800 um 0,45 m, weil sie zwei Räder je Bein trägt.
+        let spur = spurweite_m(Some("B738")).unwrap();
+        let aussen = aussenkante_halb_m(Some("B738")).unwrap();
+        assert!((spur - 5.72).abs() < 0.01);
+        assert!(
+            (aussen - (2.86 + 0.45)).abs() < 0.01,
+            "{aussen} m — erwartet 3,31 m"
+        );
+        assert!(aussen > spur / 2.0, "die Aussenkante liegt immer weiter draussen");
+    }
+
+    #[test]
+    fn der_zuschlag_waechst_mit_der_baugroesse() {
+        // Ein Kleinflugzeug hat ein Rad je Bein, ein Verkehrsflugzeug zwei,
+        // ein Grossraumflugzeug einen Bogie. Der Zuschlag muss dieser
+        // Ordnung folgen — sonst bekaeme eine C172 denselben wie eine 747.
+        let c172 = aussenkante_halb_m(Some("C172")).unwrap() - spurweite_m(Some("C172")).unwrap() / 2.0;
+        let b738 = aussenkante_halb_m(Some("B738")).unwrap() - spurweite_m(Some("B738")).unwrap() / 2.0;
+        let b744 = aussenkante_halb_m(Some("B744")).unwrap() - spurweite_m(Some("B744")).unwrap() / 2.0;
+        assert!(c172 < b738, "{c172} < {b738}");
+        assert!(b738 < b744, "{b738} < {b744}");
+        // Und keiner ist so gross, dass er die Bewertung tragen wuerde:
+        // Der groesste Zuschlag liegt unter der Kantentoleranz von 1,5 m.
+        assert!(b744 < 1.5, "{b744} m Zuschlag ist zu viel");
+    }
+
+    #[test]
+    fn mehrfache_fahrwerke_fuehren_die_aeussersten() {
+        // Wo mehrere Hauptbeine stehen, zaehlt das aeusserste — es
+        // entscheidet, ob ein Rad neben der Bahn lief.
+        //
+        // A380: zwei Beine am Fluegel, zwei am Rumpf. Die Fluegelbeine
+        // stehen aussen, ihre Spurweite betraegt 14,30 m. Waere hier der
+        // engere Rumpfabstand eingetragen, meldete die Achse ein Rad auf
+        // der Bahn, das im Gras lief.
+        let a388 = spurweite_m(Some("A388")).unwrap();
+        assert!((a388 - 14.30).abs() < 0.01, "{a388}");
+        // Und er muss der breiteste Eintrag der Tabelle sein: Kein Muster
+        // im Bestand hat ein breiteres Fahrwerk.
+        let breitester = TABELLE
+            .iter()
+            .map(|(_, spur, _)| *spur)
+            .fold(f64::MIN, f64::max);
+        assert!(
+            (a388 - breitester).abs() < 0.01,
+            "A388 {a388} gegen den breitesten Eintrag {breitester}"
+        );
+
+        // A340-600: ein zusaetzliches Bein MITTIG. Es darf die Spurweite
+        // nicht verkleinern — massgeblich sind die aeusseren.
+        let a346 = spurweite_m(Some("A346")).unwrap();
+        assert!((a346 - 12.60).abs() < 0.01, "{a346}");
+        assert!(a346 > spurweite_m(Some("A343")).unwrap(), "die -600 steht breiter");
+    }
+
+    #[test]
+    fn ohne_muster_keine_aussenkante() {
+        // Dieselbe Regel wie bei der Spurweite: Im Zweifel nichts, damit
+        // die seitliche Bewertung sichtbar entfaellt statt zu raten.
+        assert_eq!(aussenkante_halb_m(Some("XXXX")), None);
+        assert_eq!(aussenkante_halb_m(None), None);
     }
 
     #[test]
