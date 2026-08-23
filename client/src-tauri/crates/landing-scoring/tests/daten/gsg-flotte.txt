@@ -1,0 +1,111 @@
+# Die Muster der GSG-Flotte, aus phpVMS.
+#
+# Erzeugt am 23.08.2026 aus 656 Subfleets. Jede Zeile: ICAO-Muster
+# und die Zahl der Flugzeuge, die es fuehren.
+#
+# Wofuer: `spurweite.rs` ist der RUECKFALL, wenn die Spurweite nicht
+# aus der Flugzeugdatei zu lesen ist. Fehlt dort ein Muster, entfaellt
+# die seitliche Bewertung, und der Pilot sieht „Spurweite nicht
+# hinterlegt" statt einer Note. Der Test `jedes_flottenmuster_hat_
+# einen_eintrag` prueft die Tabelle gegen diese Liste.
+#
+# Neu erzeugen (Rezept siehe [[gsg-production-server]]):
+#   ssh gsg '…mariadb… SELECT UPPER(TRIM(s.type)), COUNT(a.id)
+#     FROM phpvmssubfleets s LEFT JOIN phpvmsaircraft a
+#     ON a.subfleet_id=s.id GROUP BY 1;'
+#   Das Muster steht im ZWEITEN Segment des Subfleet-Codes
+#   (z. B. „AFR-BCS3-…" -> BCS3).
+
+748 1
+A109 1
+A139 1
+A20 5
+A20N 84
+A21N 43
+A306 2
+A319 66
+A320 124
+A321 70
+A332 10
+A333 18
+A339 35
+A343 7
+A346 22
+A359 40
+A35K 8
+A388 11
+A400 2
+AC11 1
+AEST 1
+AT76 3
+B350 1
+B36 1
+B38M 24
+B463 1
+B58T 0
+B735 1
+B736 6
+B737 8
+B738 112
+B739 1
+B742 17
+B744 1
+B748 4
+B752 11
+B753 2
+B757 3
+B762 2
+B763 14
+B764 1
+B767 5
+B772 18
+B777 3
+B77L 28
+B77W 17
+B789 12
+B78X 2
+BCS3 437
+BE24 2
+BE35 5
+BE36 2
+BE58 2
+C152 1
+C172 3
+C182 1
+C185 1
+C208 3
+C414 1
+C525 2
+C680 2
+C750 6
+CJ4 2
+CL60 4
+CONC 1
+DH8D 27
+E135 2
+E13L 1
+E145 1
+E170 1
+E175 1
+E190 12
+E195 4
+E55P 18
+EUFI 2
+F28 1
+FA50 4
+GLF5 1
+GLF6 6
+H145 1
+HDJT 1
+L101 8
+MD11 21
+MD88 1
+MU2 1
+P180 1
+P28R 3
+PA24 1
+PA34 1
+RJ85 1
+SF50 1
+TBM9 1
+VL3 1

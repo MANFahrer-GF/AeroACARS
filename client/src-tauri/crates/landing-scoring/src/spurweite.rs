@@ -232,6 +232,43 @@ const TABELLE: &[(&str, f64, f64)] = &[
     ("P28A", 3.00, 10.67),
     ("SR22", 2.70, 11.68),
     ("TBM9", 3.90, 12.82),
+    // ── Nachtrag aus der GSG-Flotte (23.08.2026) ──────────────────────
+    //
+    // Abgeglichen gegen alle 656 Subfleets in phpVMS: 93 verschiedene
+    // Muster, davon fehlten 25. Die Liste ist der RUECKFALL — gelesen wird
+    // zuerst aus der Flugzeugdatei (§5.3 B). Sie muss trotzdem vollstaendig
+    // sein: Ohne Eintrag entfaellt die seitliche Bewertung, und der Pilot
+    // sieht „Spurweite nicht hinterlegt" statt einer Note.
+    ("B767", 9.30, 47.57),  // Sammelkennung, Werte der -300
+    ("B757", 7.32, 38.05),  // Sammelkennung
+    ("B777", 10.97, 60.93),  // Sammelkennung, Werte der -200
+    ("A20", 7.59, 35.80),  // verkuerzte A320-Kennung aus den Subfleet-Codes
+    ("BE35", 2.90, 10.00),  // Bonanza 35
+    ("B36", 3.10, 10.21),  // Bonanza A36, zweite Schreibweise zu BE36
+    ("B58T", 3.20, 11.53),  // Baron 58TC, zweite Schreibweise zu BE58
+    ("P28R", 3.20, 10.67),  // Piper Arrow
+    ("E135", 4.10, 20.04),  // ERJ-135
+    ("E145", 4.10, 20.04),  // ERJ-145
+    ("E13L", 4.10, 21.17),  // Legacy 600 auf ERJ-135-Basis
+    ("E175", 5.30, 26.00),  // zweite Schreibweise zu E75L
+    ("RJ85", 4.72, 26.21),  // Avro RJ85
+    ("B463", 4.72, 26.21),  // BAe 146-300
+    ("748", 5.79, 30.02),  // HS 748
+    ("CJ4", 3.50, 15.08),  // Citation CJ4
+    ("HDJT", 3.00, 12.12),  // HondaJet, zweite Schreibweise zu HA4T
+    ("C414", 3.50, 13.45),  // Cessna 414
+    ("MU2", 2.44, 11.94),  // Mitsubishi MU-2
+    ("VL3", 1.60, 8.43),  // JMB VL-3, Ultraleicht
+    ("CONC", 7.72, 25.60),  // Concorde
+    // Eurofighter: 5,00 m ist die SPURWEITE, 5,80 m waere der Radstand —
+    // die beiden zu verwechseln ist bei Deltafluglern leicht, weil das
+    // Fahrwerk dort im Verhaeltnis zur kurzen Spannweite breit steht. Der
+    // Plausibilitaetstest (Spannweite ueber dem Doppelten der Spurweite)
+    // hat den Fehler gefangen: Mit 5,80 lag das Verhaeltnis bei 1,89.
+    ("EUFI", 5.00, 10.95),
+    ("H145", 2.00, 11.00),  // Hubschrauber
+    ("A109", 2.10, 11.00),  // Hubschrauber
+    ("A139", 2.78, 13.80),  // Hubschrauber
 ];
 
 #[cfg(test)]
@@ -342,6 +379,52 @@ mod tests {
         for icao in [None, Some(""), Some("   "), Some("XXXX"), Some("A999")] {
             assert_eq!(spurweite_m(icao), None, "{icao:?} darf keinen Wert liefern");
         }
+    }
+
+    #[test]
+    fn jedes_flottenmuster_hat_einen_eintrag() {
+        // Die Liste ist der RUECKFALL. Gelesen wird zuerst aus der
+        // Flugzeugdatei (§5.3 B) — aber die gelingt nur bei unverschluesselten
+        // Add-ons mit eindeutiger Zuordnung. Ueberall sonst traegt diese
+        // Tabelle, und fehlt dort ein Muster, entfaellt die seitliche
+        // Bewertung: Der Pilot sieht „Spurweite nicht hinterlegt" statt einer
+        // Note.
+        //
+        // Geprueft gegen die echte Flotte aus phpVMS, nicht gegen eine
+        // Auswahl. Beim Abgleich am 23.08.2026 fehlten 25 von 93 Mustern.
+        let liste = include_str!("../tests/daten/gsg-flotte.txt");
+        let mut fehlend: Vec<(&str, u32)> = Vec::new();
+        for zeile in liste.lines() {
+            let z = zeile.trim();
+            if z.is_empty() || z.starts_with('#') {
+                continue;
+            }
+            let mut teile = z.split_whitespace();
+            let (Some(muster), anzahl) = (teile.next(), teile.next()) else {
+                continue;
+            };
+            if spurweite_m(Some(muster)).is_none() {
+                fehlend.push((muster, anzahl.and_then(|a| a.parse().ok()).unwrap_or(0)));
+            }
+        }
+        assert!(
+            fehlend.is_empty(),
+            "{} Muster der Flotte ohne Eintrag: {:?}",
+            fehlend.len(),
+            fehlend
+        );
+    }
+
+    #[test]
+    fn die_flottenliste_ist_lesbar() {
+        // Gegenprobe zum Test darueber: Waere die Liste leer oder kaputt,
+        // ginge er durch, ohne etwas zu pruefen.
+        let liste = include_str!("../tests/daten/gsg-flotte.txt");
+        let muster = liste
+            .lines()
+            .filter(|z| !z.trim().is_empty() && !z.trim_start().starts_with('#'))
+            .count();
+        assert!(muster > 50, "nur {muster} Muster in der Flottenliste");
     }
 
     #[test]
