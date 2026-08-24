@@ -27543,6 +27543,18 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     // ── Messfenster schliessen? ──────────────────────────────────────
     if snap.groundspeed_kt < BAHN_MESS_MIN_GS_KT {
         stats.bahn_fenster_zu = true;
+        // Diesen Punkt trotzdem noch aufzeichnen.
+        //
+        // Der Tick, in dem das Fenster schliesst, verwarf bis hierher
+        // seine eigene Position: `return` stand vor `spur_fortschreiben`.
+        // Gemessen ueber den echten Landeweg fiel damit genau der Punkt
+        // weg, an dem die Bewertung endet und die Aufzeichnung uebernimmt
+        // — bei grober Taktung ein Loch von mehreren hundert Metern
+        // mitten in der Spur.
+        //
+        // Bewertet wird er nicht mehr; die Bewertung ist in diesem Zweig
+        // schon abgeschlossen.
+        spur_fortschreiben(stats, snap, laengs_m, quer_m, halbe_breite_m);
         return;
     }
     if let Some(td_heading) = stats.landing_heading_true_deg {
@@ -29655,6 +29667,27 @@ fn step_flight_at(
             // drive the same logic from the streamer — this call sits at
             // the exact position the inline code used to.
             rollout_tick(&mut stats, snap);
+
+            // ── Die Rollspur, unabhaengig von der Ausrollstrecke ──────
+            //
+            // `rollout_tick` bricht ab, sobald `rollout_finalized` steht —
+            // und das faellt bei vierzig Knoten, denn dort ist die
+            // AUSROLLSTRECKE fertig. Die Spur ist es nicht: Ihr Vertrag
+            // laesst sie bis fuenf Knoten laufen, bis zur Ausfahrt oder
+            // bis achtzig Meter neben die Bahn.
+            //
+            // Der Aufruf stand bis zur QS-Runde 25 IN `rollout_tick` und
+            // wurde dort herausgezogen, damit er die vierzig Knoten
+            // ueberlebt. Er landete dabei nur im Sampler-Pfad — und der
+            // kehrt bei `FlightPhase::Landing` ausdruecklich zurueck.
+            // Folge: Bei jeder normalen Landung wurde ueberhaupt keine
+            // Spur mehr aufgezeichnet. Der 39-kt-Test lief ueber `TaxiIn`
+            // und sah diesen Weg nicht.
+            //
+            // Deshalb hier, genau einmal je Tick, nach der
+            // Streckenzaehlung: Die eigenen Riegel in
+            // `spur_fortschreiben` beenden die Aufzeichnung.
+            bahndisziplin_tick(&mut stats, snap);
 
             // Touchdown analyzer windows (BeatMyLanding-aligned):
             //   * Peak G refined for TOUCHDOWN_G_WINDOW_MS (1500 ms)
@@ -43469,6 +43502,92 @@ mod touchdown_metadata_stamp_tests {
 
     /// Minimal ActiveFlight for `correlate_touchdown_runway` (only
     /// `navdata` + `arr_airport` are read by it).
+    /// Der NORMALE Landeweg schreibt die Rollspur fort — bis zum Ende.
+    ///
+    /// # Der Regress, den dieser Test faengt
+    ///
+    /// `bahndisziplin_tick` stand urspruenglich IN `rollout_tick`. Damit
+    /// endete die Spur bei vierzig Knoten, wo `rollout_finalized` faellt —
+    /// obwohl ihr Vertrag sie bis fuenf Knoten laufen laesst.
+    ///
+    /// Beim Herausziehen landete der Aufruf nur im **Sampler-Pfad**, und
+    /// der kehrt bei `FlightPhase::Landing` ausdruecklich zurueck. Folge:
+    /// Bei jeder normalen Landung wurde ueberhaupt keine Spur mehr
+    /// aufgezeichnet — schlimmer als der Zustand davor.
+    ///
+    /// Die damalige Gegenprobe lief ueber `TaxiIn` und sah diesen Weg
+    /// nicht. Dieser Test geht durch `step_flight_at`, also den echten
+    /// Hauptpfad, und prueft alle drei Fahrtbereiche.
+    #[test]
+    fn normale_landung_zeichnet_die_spur_bis_zum_ende_auf() {
+        let flight = flight_fixture("EDDH");
+        {
+            let mut stats = flight.stats.lock().expect("stats");
+            stats.phase = FlightPhase::Landing;
+            stats.landing_at = Some(Utc::now());
+            stats.landing_lat = Some(53.636_011);
+            stats.landing_lon = Some(9.999_656);
+            stats.rollout_last_lat = Some(53.636_011);
+            stats.rollout_last_lon = Some(9.999_656);
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636_011,
+                threshold_lon: 9.999_656,
+                end_lat: 53.619_958,
+                end_lon: 9.967_167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+        }
+
+        // Drei Punkte entlang EDDH 23, jeweils leicht links der Mitte —
+        // ausgerechnet, weil das geo-Crate nur Abstaende kann.
+        //   1000 m / 80 kt   — Messfenster offen
+        //   1500 m / 39 kt   — unter ROLLOUT_EXIT_GS_KT, Spur laeuft weiter
+        //   1800 m / 12 kt   — kurz vor dem Ende
+        let punkte = [
+            (53.630_236_f64, 9.988_105_f64, 80.0_f32),
+            (53.627_335, 9.982_235, 39.0),
+            (53.625_594, 9.978_713, 12.0),
+        ];
+        let mut gesehen = Vec::new();
+        for (lat, lon, gs) in punkte {
+            let snap = SimSnapshot {
+                lat,
+                lon,
+                groundspeed_kt: gs,
+                on_ground: true,
+                ..Default::default()
+            };
+            step_flight_at(&flight, &snap, Utc::now());
+            let stats = flight.stats.lock().expect("stats");
+            gesehen.push((gs, stats.bahn_spur.len()));
+        }
+
+        // Nach dem ersten Punkt muss aufgezeichnet sein.
+        assert!(
+            gesehen[0].1 > 0,
+            "ueber 40 kt wird nichts aufgezeichnet: {gesehen:?}"
+        );
+        // Und danach WEITER — hier hing der Regress.
+        assert!(
+            gesehen[1].1 > gesehen[0].1,
+            "bei 39 kt bricht die Spur ab (normaler Landeweg): {gesehen:?}"
+        );
+        assert!(
+            gesehen[2].1 > gesehen[1].1,
+            "bei 12 kt bricht die Spur ab: {gesehen:?}"
+        );
+    }
+
     fn flight_fixture(arr: &str) -> ActiveFlight {
         ActiveFlight {
             pirep_id: "test-pirep".into(),
