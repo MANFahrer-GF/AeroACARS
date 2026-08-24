@@ -3880,6 +3880,15 @@ struct FlightStats {
     /// Fahrt beim Queren der Kante — die Groesse, die der Vertrag
     /// `clearance_speed_kt` nennt („Geschwindigkeit dort").
     bahn_kante_gs_kt: Option<f64>,
+    /// Kursabweichung beim Ausschwenken, in Grad (positiv = rechts).
+    ///
+    /// Gespeichert, weil die SEITE der Ausfahrt sich im Moment des
+    /// Kurswechsels noch nicht bestimmen laesst: Der Vertrag verlangt zwei
+    /// uebereinstimmende Groessen (fallender Kurs UND wachsender
+    /// Querversatz), und die Querbewegung ist dort naturgemaess erst
+    /// wenige Meter gross. `bahn_felder` rechnet sie nach, wenn die ganze
+    /// Spur vorliegt.
+    bahn_raeum_kurs_diff: Option<f64>,
     /// Rohe Bodenkarte des Ankunftsflughafens, für die Ausfahrten.
     ///
     /// # Warum sie hier liegt
@@ -15887,7 +15896,17 @@ fn bahn_felder(
         // bei `0Ab3v9EvNN1LKZ8z` (EDDH 05) 21,95 m auf einer Bahn mit
         // 23 m Halbbreite, gemessen unmittelbar vor dem Abbiegen.
         scoring_cutoff_m: stats.bahn_raeum_laengs_m,
-        clearance_side: stats.bahn_raeum_seite.clone(),
+        // Die Ausfahrtsseite, notfalls nachgerechnet.
+        //
+        // Live gelingt sie selten: Im Moment des Kurswechsels ist die
+        // Querbewegung erst wenige Meter gross, und der Vertrag verlangt
+        // zwei uebereinstimmende Groessen. Mit der ganzen Spur ist sie
+        // sichtbar.
+        clearance_side: stats.bahn_raeum_seite.clone().or_else(|| {
+            stats
+                .bahn_raeum_kurs_diff
+                .and_then(|d| bahn_raeum_seite(d, &stats.bahn_spur))
+        }),
         track_width_m: spur_m,
         // Solange die Spurweite aus der Typtabelle kommt, ist die Quelle
         // fest. Schritt 11 der Bauliste liest sie aus der Flugzeugdatei —
@@ -27482,6 +27501,27 @@ fn spur_fortschreiben(
 }
 
 fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
+    // ── Warum diese Funktion aus unabhaengigen Schritten besteht ─────
+    //
+    // Sie war eine Kaskade aus sechs `return`-Pfaden, und jeder davon
+    // uebersprang etwas anderes. Drei Fehler in Folge hatten dieselbe
+    // Ursache:
+    //
+    // * Der Tick, der das Messfenster schloss, verwarf seine eigene
+    //   Spurposition — `return` stand vor `spur_fortschreiben`.
+    // * War das Fenster einmal zu, wurde der Kurswechsel **nie mehr**
+    //   geprueft. Eine ganz normale Ausfahrt (65 kt geradeaus, 55 kt
+    //   geradeaus, dann bei 25 kt abbiegen) bekam damit keinen
+    //   Raeumpunkt: `scoring_cutoff_m` und die Ausfahrtsseite blieben
+    //   leer, und die Anzeige nahm ersatzweise die spaetere Bahnkante —
+    //   also genau den Wert, gegen den `scoring_cutoff_m` gebaut wurde.
+    // * Und beim Herausziehen der Spur landete der Aufruf im falschen
+    //   Pfad.
+    //
+    // Die Schritte laufen jetzt hintereinander und jeder fuer sich. Kein
+    // `return` mehr ausser dem einen, wenn es gar keine Bahn gibt: Was
+    // ein Schritt nicht tun darf, entscheidet er selbst — nicht ein
+    // Sprung weiter oben.
     let Some(rm) = stats.runway_match.as_ref() else {
         return;
     };
@@ -27494,23 +27534,18 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
         snap.lon,
     );
 
-    // Overrun: jenseits des Bahnendes mit nennenswerter Fahrt. Bewusst
-    // AUSSERHALB des Messfensters — wer ueber das Ende hinausrollt, tut das
-    // auch dann, wenn er vorher schon abgebogen waere.
+    // Die nutzbare Laenge endet an der versetzten Schwelle (ICAO Annex 14).
     let nutzbare_laenge_m =
         (rm.length_ft as f64 - effective_displaced_threshold_ft(rm) as f64) / 3.280_839_895;
-    // Seitliche Schranke: Ohne sie zaehlt jedes Rollen zum Terminal als
-    // Overrun, sobald die Projektion hinter dem Bahnende landet. Im
-    // Korpus-Export waren das 506 von 802 Landungen — offensichtlicher Unsinn,
-    // der hier ebenso zugeschlagen haette, sobald `rollout_finalized` einmal
-    // nicht greift.
-    // Overrun heisst: beim AUSROLLEN geradeaus ueber das Ende geschossen —
-    // nicht irgendwann spaeter hinter dem Bahnende gerollt. Deshalb nur
-    // solange das Messfenster offen ist und die Spur auf der Bahnachse liegt.
-    // Ohne diese Einschraenkung meldete der Korpus-Export 506 von 802
-    // Landungen als Overrun (jedes Rollen zum Terminal), mit reiner
-    // Seitenschranke immer noch 72.
     let halbe_breite_m = (rm.width_ft as f64 * 0.3048 / 2.0).max(15.0);
+
+    // ── 1. Ueberrollen ───────────────────────────────────────────────
+    //
+    // Overrun heisst: beim AUSROLLEN geradeaus ueber das Ende geschossen —
+    // nicht irgendwann spaeter hinter dem Bahnende gerollt. Ohne die
+    // seitliche Schranke meldete der Korpus-Export 506 von 802 Landungen
+    // als Overrun (jedes Rollen zum Terminal), mit reiner Seitenschranke
+    // immer noch 72.
     if !stats.bahn_fenster_zu
         && nutzbare_laenge_m > 300.0
         && laengs_m > nutzbare_laenge_m
@@ -27521,81 +27556,77 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
         stats.bahn_overrun_m = Some(stats.bahn_overrun_m.unwrap_or(0.0).max(ueber));
     }
 
-    // ── Die Spur laeuft weiter, die BEWERTUNG nicht ──────────────────
+    // ── 2. Der Raeumpunkt — unabhaengig vom Messfenster ──────────────
     //
-    // Messen und bewerten sind zwei verschiedene Dinge. Das Messfenster
-    // schliesst, sobald die Ausfahrt eingeleitet ist — ab da haengt die
-    // seitliche Lage an der Anweisung des Lotsen und nicht mehr am Piloten,
-    // und es waere falsch, sie zu benoten.
+    // Das Ausschwenken zur Ausfahrt beginnt oft LANGE nachdem die
+    // Bewertung geschlossen hat: Wer unter sechzig Knoten faellt und erst
+    // danach abbiegt, ist der Normalfall, nicht die Ausnahme.
     //
-    // Aufzeichnen muss man sie trotzdem: Sonst endet die Spur im Diagramm
-    // mitten auf der Bahn, waehrend die Marke „Bahn geraeumt" dreihundert
-    // Meter weiter an der Kante sitzt — dazwischen nichts. Das Flugzeug
-    // waere dorthin gesprungen.
+    // Deshalb haengt dieser Schritt nicht am Messfenster, sondern an
+    // seiner eigenen Verriegelung: Er greift genau einmal, beim ERSTEN
+    // Kurswechsel ueber die Schwelle.
     //
-    // Der gezeichnete Teil hinter dem Raeumpunkt wird in der Anzeige
-    // abgesetzt dargestellt („Richtung echt, ab hier nicht mehr gewertet").
-    if stats.bahn_fenster_zu {
-        spur_fortschreiben(stats, snap, laengs_m, quer_m, halbe_breite_m);
-        return;
+    // Er schliesst das Messfenster mit — ein Ausschwenken beendet die
+    // Bewertung, egal bei welcher Fahrt.
+    if stats.bahn_raeum_laengs_m.is_none() {
+        if let Some(td_heading) = stats.landing_heading_true_deg {
+            let mut diff = snap.heading_deg_true - td_heading;
+            while diff > 180.0 {
+                diff -= 360.0;
+            }
+            while diff <= -180.0 {
+                diff += 360.0;
+            }
+            if diff.abs() > BAHN_KURS_AUSFAHRT_GRAD {
+                // Das ist eine Ausfahrt, kein Abbremsen — hier gehoert der
+                // Raeumpunkt hin. Beim Schliessen wegen zu geringer Fahrt
+                // dagegen NICHT: dort rollt das Flugzeug noch auf der Bahn.
+                stats.bahn_fenster_zu = true;
+                stats.bahn_raeum_laengs_m = Some(laengs_m);
+                stats.bahn_raeum_gs_kt = Some(snap.groundspeed_kt as f64);
+                stats.bahn_raeum_kurs_diff = Some(diff as f64);
+                // Live-Versuch; er gelingt nur, wenn die Querbewegung
+                // schon sichtbar ist. `bahn_felder` rechnet sie sonst aus
+                // der ganzen Spur nach.
+                stats.bahn_raeum_seite = bahn_raeum_seite(diff as f64, &stats.bahn_spur);
+            }
+        }
     }
 
-    // ── Messfenster schliessen? ──────────────────────────────────────
-    if snap.groundspeed_kt < BAHN_MESS_MIN_GS_KT {
+    // ── 3. Das Messfenster schliessen ────────────────────────────────
+    //
+    // Zwei Gruende ausser dem Ausschwenken: zu geringe Fahrt, oder
+    // ausserhalb der Bahn laengs. In beiden Faellen ist nichts mehr zu
+    // BEWERTEN — die Spur laeuft weiter (Schritt 5).
+    if !stats.bahn_fenster_zu
+        && (snap.groundspeed_kt < BAHN_MESS_MIN_GS_KT
+            || laengs_m < 0.0
+            || (nutzbare_laenge_m > 300.0 && laengs_m > nutzbare_laenge_m))
+    {
         stats.bahn_fenster_zu = true;
-        // Diesen Punkt trotzdem noch aufzeichnen.
-        //
-        // Der Tick, in dem das Fenster schliesst, verwarf bis hierher
-        // seine eigene Position: `return` stand vor `spur_fortschreiben`.
-        // Gemessen ueber den echten Landeweg fiel damit genau der Punkt
-        // weg, an dem die Bewertung endet und die Aufzeichnung uebernimmt
-        // — bei grober Taktung ein Loch von mehreren hundert Metern
-        // mitten in der Spur.
-        //
-        // Bewertet wird er nicht mehr; die Bewertung ist in diesem Zweig
-        // schon abgeschlossen.
-        spur_fortschreiben(stats, snap, laengs_m, quer_m, halbe_breite_m);
-        return;
-    }
-    if let Some(td_heading) = stats.landing_heading_true_deg {
-        let mut diff = snap.heading_deg_true - td_heading;
-        while diff > 180.0 {
-            diff -= 360.0;
-        }
-        while diff <= -180.0 {
-            diff += 360.0;
-        }
-        if diff.abs() > BAHN_KURS_AUSFAHRT_GRAD {
-            // Das ist eine Ausfahrt, kein Abbremsen — hier gehoert der
-            // Raeumpunkt hin. Beim Schliessen wegen zu geringer Fahrt
-            // dagegen NICHT: dort rollt das Flugzeug noch auf der Bahn.
-            stats.bahn_fenster_zu = true;
-            stats.bahn_raeum_laengs_m = Some(laengs_m);
-            stats.bahn_raeum_gs_kt = Some(snap.groundspeed_kt as f64);
-            stats.bahn_raeum_seite = bahn_raeum_seite(diff as f64, &stats.bahn_spur);
-            return;
-        }
-    }
-    // Ausserhalb der Bahn laengs: nichts mehr zu BEWERTEN. Die Spur laeuft
-    // weiter — beim Ueberrollen ist gerade der Teil hinter dem Bahnende der
-    // interessante.
-    if laengs_m < 0.0 || (nutzbare_laenge_m > 300.0 && laengs_m > nutzbare_laenge_m) {
-        stats.bahn_fenster_zu = true;
-        spur_fortschreiben(stats, snap, laengs_m, quer_m, halbe_breite_m);
-        return;
     }
 
-    // ── Fortschreiben ────────────────────────────────────────────────
-    let bisher = stats.bahn_max_querversatz_m.unwrap_or(0.0);
-    if quer_m.abs() > bisher.abs() {
-        stats.bahn_max_querversatz_m = Some(quer_m);
-    } else if stats.bahn_max_querversatz_m.is_none() {
-        stats.bahn_max_querversatz_m = Some(quer_m);
+    // ── 4. Bewerten, solange das Fenster offen ist ───────────────────
+    if !stats.bahn_fenster_zu {
+        let bisher = stats.bahn_max_querversatz_m.unwrap_or(0.0);
+        if quer_m.abs() > bisher.abs() {
+            stats.bahn_max_querversatz_m = Some(quer_m);
+        } else if stats.bahn_max_querversatz_m.is_none() {
+            stats.bahn_max_querversatz_m = Some(quer_m);
+        }
+        stats.bahn_proben = stats.bahn_proben.saturating_add(1);
     }
-    stats.bahn_proben = stats.bahn_proben.saturating_add(1);
 
-    // Spur fuer die Queransicht — dieselbe Funktion wie nach dem Schliessen
-    // des Fensters, damit die Ausduennung nicht an zwei Stellen lebt.
+    // ── 5. Die Spur — IMMER ──────────────────────────────────────────
+    //
+    // Messen und bewerten sind zwei verschiedene Dinge. Die Aufzeichnung
+    // laeuft weiter, wenn die Bewertung schliesst: Sonst endet die Spur im
+    // Diagramm mitten auf der Bahn, waehrend die Marke „Bahn geraeumt"
+    // dreihundert Meter weiter an der Kante sitzt — dazwischen nichts. Das
+    // Flugzeug waere dorthin gesprungen.
+    //
+    // `spur_fortschreiben` hat seine eigenen Riegel: unter fuenf Knoten,
+    // jenseits des Randes, oder wenn die Ablage voll ist.
     spur_fortschreiben(stats, snap, laengs_m, quer_m, halbe_breite_m);
 }
 
@@ -27764,6 +27795,7 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     stats.bahn_raeum_seite = None;
     stats.bahn_kante_laengs_m = None;
     stats.bahn_kante_gs_kt = None;
+    stats.bahn_raeum_kurs_diff = None;
     // `arr_ground_geojson` bleibt: Die Bodenkarte gehört zum Flughafen,
     // nicht zur Landung. Sie erneut zu holen wäre eine Netzanfrage im
     // ungünstigsten Moment — kurz nach einem Durchstarten.
@@ -43502,6 +43534,108 @@ mod touchdown_metadata_stamp_tests {
 
     /// Minimal ActiveFlight for `correlate_touchdown_runway` (only
     /// `navdata` + `arr_airport` are read by it).
+    /// Eine langsame Ausfahrt bekommt ihren Bewertungsendpunkt.
+    ///
+    /// # Der Befund
+    ///
+    /// `bahn_fenster_zu` fiel, sobald die Fahrt unter sechzig Knoten sank.
+    /// Jeder spaetere Tick kehrte danach zurueck, BEVOR der Kurswechsel
+    /// geprueft wurde.
+    ///
+    /// Eine ganz normale Folge — 65 kt geradeaus, 55 kt geradeaus, bei
+    /// 25 kt abbiegen — setzte damit nie `bahn_raeum_laengs_m`.
+    /// `scoring_cutoff_m` und die Ausfahrtsseite blieben leer, und die
+    /// Anzeige nahm ersatzweise die spaetere Bahnkante: genau den Wert,
+    /// gegen den `scoring_cutoff_m` ueberhaupt gebaut wurde.
+    ///
+    /// Das ist der Normalfall, nicht die Ausnahme: Wer unter sechzig
+    /// Knoten faellt und erst danach abbiegt, tut das auf jedem grossen
+    /// Platz.
+    #[test]
+    fn langsame_ausfahrt_bekommt_ihren_raeumpunkt() {
+        let flight = flight_fixture("EDDH");
+        {
+            let mut stats = flight.stats.lock().expect("stats");
+            stats.phase = FlightPhase::Landing;
+            stats.landing_at = Some(Utc::now());
+            stats.landing_lat = Some(53.636_011);
+            stats.landing_lon = Some(9.999_656);
+            stats.rollout_last_lat = Some(53.636_011);
+            stats.rollout_last_lon = Some(9.999_656);
+            // Der Kurs beim Aufsetzen — die Ausfahrt misst sich daran.
+            stats.landing_heading_true_deg = Some(230.21);
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636_011,
+                threshold_lon: 9.999_656,
+                end_lat: 53.619_958,
+                end_lon: 9.967_167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+        }
+
+        // 65 kt geradeaus → 55 kt geradeaus (Fenster schliesst) → 25 kt
+        // abbiegen. Der Kurswechsel kommt also ERST NACH dem 60-kt-Tick.
+        let folge = [
+            (53.630_234_f64, 9.988_032_f64, 65.0_f32, 230.21_f32),
+            (53.627_925, 9.983_381, 55.0, 230.21),
+            (53.625_854, 9.979_381, 25.0, 195.0), // 35 Grad Kursaenderung
+        ];
+        for (lat, lon, gs, kurs) in folge {
+            let snap = SimSnapshot {
+                lat,
+                lon,
+                groundspeed_kt: gs,
+                heading_deg_true: kurs,
+                on_ground: true,
+                ..Default::default()
+            };
+            step_flight_at(&flight, &snap, Utc::now());
+        }
+
+        let stats = flight.stats.lock().expect("stats");
+        let raeum = stats.bahn_raeum_laengs_m.expect(
+            "kein Raeumpunkt — der Kurswechsel nach dem 60-kt-Tick wurde nie geprueft",
+        );
+        assert!(
+            (1600.0..1900.0).contains(&raeum),
+            "Raeumpunkt bei {raeum} m — erwartet um 1750 m"
+        );
+        assert!(
+            stats.bahn_raeum_gs_kt.is_some(),
+            "die Fahrt beim Ausschwenken fehlt"
+        );
+
+        // Die SEITE wird abgeleitet, nicht roh gespeichert: Im Moment des
+        // Kurswechsels ist die Querbewegung erst wenige Meter gross, und
+        // die Bestimmung verlangt zwei uebereinstimmende Groessen. Deshalb
+        // ueber `bahn_felder`, das die ganze Spur sieht.
+        //
+        // Kurs 230 -> 195 Grad ist eine LINKSkurve, und der Querversatz
+        // geht ins Negative — beide sagen links. Der erste Anlauf dieses
+        // Tests erwartete „right" und hatte schlicht die Vorzeichen
+        // verwechselt.
+        let felder = bahn_felder(&stats, Some("A320"), None);
+        assert_eq!(
+            felder.clearance_side.as_deref(),
+            Some("left"),
+            "die Ausfahrtsseite fehlt oder zeigt falsch"
+        );
+        assert!(
+            felder.scoring_cutoff_m.is_some(),
+            "das Bewertungsende fehlt — genau der gemeldete Fehler"
+        );
+    }
+
     /// Der NORMALE Landeweg schreibt die Rollspur fort — bis zum Ende.
     ///
     /// # Der Regress, den dieser Test faengt
