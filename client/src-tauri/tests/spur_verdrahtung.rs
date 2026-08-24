@@ -115,3 +115,64 @@ fn der_nachtrag_baut_keine_zweite_spur_logik() {
         );
     }
 }
+
+/// `touchdown_complete` darf sich nicht als endgültig ausgeben.
+///
+/// # Der Fall
+///
+/// EDDB 06L, 24.08.2026 (Landung 1079): Zwölf von dreizehn Landungen des
+/// Tages bekamen ihre Finalisierung, diese eine nicht. Der Bericht zeigte
+/// deshalb den Zwischenstand von neun Sekunden nach dem Aufsetzen — und
+/// zwar so, als wäre er das Endergebnis:
+///
+///   * 482 m Ausrollstrecke (nachgerechnet 0,42 g — mehr, als ein
+///     Verkehrsflugzeug bremsen kann),
+///   * eine Spur, die mitten auf der 3600-m-Bahn aufhört,
+///   * kein Räumpunkt.
+///
+/// Nichts davon war falsch gemessen. Es war nur noch nicht fertig, und
+/// niemand konnte das sehen.
+///
+/// `rollout_final` unterscheidet beides. Diese Prüfung hält fest, dass
+/// die zwei Sendestellen es richtig herum setzen — vertauscht wäre der
+/// Zustand schlimmer als vorher: Dann behauptete die Finalisierung, sie
+/// sei vorläufig, und der Zwischenstand, er sei fertig.
+#[test]
+fn der_zwischenstand_gibt_sich_nicht_als_endgueltig_aus() {
+    let quelle = fs::read_to_string("src/lib.rs").expect("lib.rs");
+
+    let mut vorlaeufig = 0;
+    let mut endgueltig = 0;
+    for zeile in quelle.lines() {
+        if zeile.contains(".wire(false)") {
+            vorlaeufig += 1;
+        }
+        if zeile.contains(".wire(true)") {
+            endgueltig += 1;
+        }
+    }
+    assert!(
+        vorlaeufig >= 1,
+        "Keine Sendestelle markiert ihren Stand als vorläufig. \
+         `touchdown_complete` geht neun Sekunden nach dem Aufsetzen raus — \
+         da rollt das Flugzeug noch."
+    );
+    assert!(
+        endgueltig >= 1,
+        "Keine Sendestelle markiert ihren Stand als endgültig — dann gilt \
+         jeder Bericht als vorläufig und der Hinweis verliert seine Aussage."
+    );
+
+    // Und die Zuordnung muss stimmen: Der Aufruf im Finalisierungs-Zweig
+    // trägt `true`, der daneben `false`.
+    let final_zweig = rumpf(&quelle, "if stats.rollout_finalized && spur_fertig {");
+    assert!(
+        final_zweig.contains(".wire(true)"),
+        "Der Finalisierungs-Zweig sendet nicht `wire(true)` — dann gilt das \
+         Endergebnis als Zwischenstand."
+    );
+    assert!(
+        !final_zweig.contains(".wire(false)"),
+        "Im Finalisierungs-Zweig steht `wire(false)` — vertauscht."
+    );
+}

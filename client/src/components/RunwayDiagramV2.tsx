@@ -124,6 +124,20 @@ export interface RunwayDiagramV2Props {
   lateral_samples?: Array<{ laengs_m: number; quer_m: number }> | null;
   /** Warum die seitliche Bewertung entfiel — der Grund aus der BEWERTUNG. */
   lateral_skip_reason?: string | null;
+  /**
+   * Steht das Ausrollen fest — oder ist das ein Zwischenstand?
+   *
+   * `touchdown_complete` geht rund neun Sekunden nach dem Aufsetzen raus;
+   * da rollt das Flugzeug noch. Bleibt die Finalisierung aus, sind alle
+   * Bahnwerte vorläufig — und sahen bis dahin aus wie fertige.
+   *
+   * EDDB 06L am 24.08.2026: 482 m Ausrollstrecke (das wären 0,42 g), eine
+   * Spur, die mitten auf der 3600-m-Bahn aufhört, kein Räumpunkt. Nichts
+   * davon war falsch gemessen — es war nur noch nicht fertig.
+   *
+   * `undefined` = Flug von vor dieser Fassung; dann wird nichts behauptet.
+   */
+  rollout_final?: boolean;
   surface_paved?: boolean | null;
   overrun_m?: number | null;
 

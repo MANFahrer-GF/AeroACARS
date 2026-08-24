@@ -984,6 +984,26 @@ pub struct BahnWire {
     ///
     /// Klein genug dafür: typisch vier bis zwölf Einträge je Bahn.
     pub runway_exits: Option<Vec<RunwayExitWire>>,
+    /// Steht das Ausrollen fest — oder ist das ein Zwischenstand?
+    ///
+    /// `touchdown_complete` geht rund neun Sekunden nach dem Aufsetzen
+    /// raus. Zu diesem Zeitpunkt rollt das Flugzeug noch: Die Spur
+    /// waechst, der Raeumpunkt ist nicht erreicht, die Ausrollstrecke
+    /// steht nicht fest. Erst `touchdown_rollout_finalized` traegt das
+    /// Endergebnis nach.
+    ///
+    /// **Kommt dieses Ereignis nicht an, sah der Bericht bisher aus wie
+    /// ein fertiger.** Am 24.08.2026 traf es EDDB 06L (Landung 1079):
+    /// zwoelf von dreizehn Landungen wurden finalisiert, diese eine
+    /// nicht. Der Bericht zeigte 482 m Ausrollstrecke — nachgerechnet
+    /// waeren das 0,42 g Verzoegerung, mehr als ein Verkehrsflugzeug
+    /// bremsen kann — eine Spur, die mitten auf der Bahn aufhoert, und
+    /// keinen Raeumpunkt. Alles davon war schlicht der Zwischenstand.
+    ///
+    /// `false` heisst: vorlaeufig. Die Anzeige muss das sagen, statt
+    /// Zahlen zu zeigen, die noch nicht gelten.
+    #[serde(default)]
+    pub rollout_final: bool,
 }
 
 /// Eine Ausfahrt auf der Leitung. Eigener Typ, weil dieses Crate nicht von
@@ -2429,6 +2449,7 @@ mod tests {
     #[test]
     fn bahnfelder_liegen_flach_auf_der_leitung() {
         let w = BahnWire {
+            rollout_final: true,
             clearance_point_m: Some(1831.6),
             scoring_cutoff_m: Some(1642.0),
             clearance_speed_kt: Some(24.0),
@@ -2495,6 +2516,7 @@ mod tests {
             })
             .collect();
         let w = BahnWire {
+            rollout_final: true,
             lateral_samples: Some(spur),
             runway_exits: Some(
                 (0..12)
@@ -2541,9 +2563,21 @@ mod tests {
         .unwrap();
         let o = j.as_object().unwrap();
         assert!(!o.is_empty(), "die Gruppe darf nicht leer serialisieren");
+        // `rollout_final` ist eine KENNZEICHNUNG, keine Messung: `false`
+        // heisst „Zwischenstand", und das ist eine Aussage, kein
+        // fehlender Wert. Alle uebrigen Felder sind Messwerte — dort ist
+        // `null` das ehrliche „nicht gemessen".
+        let messwerte: Vec<(&String, &serde_json::Value)> =
+            o.iter().filter(|(k, _)| *k != "rollout_final").collect();
         assert!(
-            o.values().all(|v| v.is_null()),
-            "ein leeres BahnWire darf nur Nullwerte tragen: {j}"
+            messwerte.iter().all(|(_, v)| v.is_null()),
+            "ein leeres BahnWire darf ausser der Kennzeichnung nur \
+             Nullwerte tragen: {j}"
+        );
+        assert_eq!(
+            o.get("rollout_final"),
+            Some(&serde_json::Value::Bool(false)),
+            "ein leeres BahnWire muss sich als Zwischenstand ausweisen"
         );
         assert!(
             o["lateral_samples"].is_null(),

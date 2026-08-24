@@ -16018,8 +16018,12 @@ impl BahnFelder {
     /// Leere Spuren werden zu `None`, nicht zu `Some(vec![])`: Eine leere
     /// Liste sieht in der Anzeige aus wie eine Messung, die nichts
     /// gefunden hat, und ist von „nicht erfasst" nicht zu unterscheiden.
-    fn wire(&self) -> aeroacars_mqtt::BahnWire {
+    /// `final_` sagt, ob das Ausrollen feststeht. Bei `touchdown_complete`
+    /// ist es `false` — dort rollt das Flugzeug noch. Siehe
+    /// `BahnWire::rollout_final`.
+    fn wire(&self, final_: bool) -> aeroacars_mqtt::BahnWire {
         aeroacars_mqtt::BahnWire {
+            rollout_final: final_,
             clearance_point_m: self.clearance_point_m,
             scoring_cutoff_m: self.scoring_cutoff_m,
             clearance_speed_kt: self.clearance_speed_kt,
@@ -24744,7 +24748,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                         .filter(|s| !s.is_empty()),
                                     None,
                                 )
-                                .wire(),
+                                .wire(true),
                             )
                         })
                     } else {
@@ -25396,7 +25400,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // `sub_scores` des PIREP.
                                 None,
                             )
-                            .wire(),
+                            .wire(false),
                         }
                     })
                 };
@@ -46602,7 +46606,7 @@ mod v0_16_6_bush_completeness_tests {
         {
             let mut stats = FlightStats::default();
             stats.bahn_spur = vec![(523.2, -5.7), (1907.35, -80.04)];
-            let wire = bahn_felder(&stats, None, None).wire();
+            let wire = bahn_felder(&stats, None, None).wire(true);
             let spur = wire.lateral_samples.expect("Spur liegt vor");
             let text = serde_json::to_string(&spur).unwrap();
             assert!(

@@ -158,7 +158,7 @@ describe("Feldkette der Bahndisziplin", () => {
       // die Begründung, warum dort nichts stehen kann — beim ersten Anlauf
       // waren 400 Zeichen zu wenig, und der Test schlug an, obwohl der
       // Code richtig war. Falscher Alarm ist so schädlich wie keiner.
-      /bahn_felder\([\s\S]{0,1200}?None,\s*\)\s*\.wire\(\)/.test(rust),
+      /bahn_felder\([\s\S]{0,1200}?None,\s*\)\s*\.wire\((true|false)\)/.test(rust),
       "die MQTT-Publish-Stelle gibt einen Skip-Grund mit, obwohl die " +
         "Bewertung dort noch nicht gelaufen ist",
     ).toBe(true);
@@ -168,7 +168,7 @@ describe("Feldkette der Bahndisziplin", () => {
     // Die Umrechnung `BahnFelder::wire()` ist die einzige Übersetzung
     // zwischen Client-Rechnung und Leitung. Fehlt dort ein Feld, ist es
     // berechnet, gespeichert — und wird nicht gesendet.
-    const rumpf = inhalt("src-tauri/src/lib.rs", /fn wire\(&self\)[\s\S]*?\n    \}\n/);
+    const rumpf = inhalt("src-tauri/src/lib.rs", /fn wire\(&self, final_: bool\)[\s\S]*?\n    \}\n/);
     const luecken = FELDER.filter((f) => !rumpf.includes(f)).map(
       (f) => `${f} wird nicht auf die Leitung gelegt`,
     );

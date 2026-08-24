@@ -1977,6 +1977,7 @@
     "mark_track_end": "Fine della registrazione",
     "rollout_end": "FINE RULLAGGIO",
     "rollout_end_beyond": "oltre fine pista",
+    "rollout_vorlaeufig": "Provvisorio: il rullaggio non era concluso al momento dell'invio. Traccia, punto di liberazione e distanza di rullaggio non sono definitivi.",
     "cross_aircraft": "{{typ}} · carreggiata {{m}} m",
     "cross_aircraft_unknown": "carreggiata sconosciuta",
     "exits_none": "Nessuna via di rullaggio registrata per questo aeroporto",

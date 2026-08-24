@@ -1984,6 +1984,7 @@
     "mark_track_end": "Ende der Aufzeichnung",
     "rollout_end": "AUSROLLEN ENDE",
     "rollout_end_beyond": "hinter dem Bahnende",
+    "rollout_vorlaeufig": "Zwischenstand: Das Ausrollen war beim Absenden noch nicht abgeschlossen. Spur, Räumpunkt und Ausrollstrecke sind vorläufig.",
     "cross_aircraft": "{{typ}} · Spurweite {{m}} m",
     "cross_aircraft_unknown": "Spurweite nicht bekannt",
     "exits_none": "Für diesen Platz sind keine Rollwege hinterlegt",

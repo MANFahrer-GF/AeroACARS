@@ -88,6 +88,29 @@ export function RunwayDisciplinePanel({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {/* Zwischenstand kenntlich machen — VOR allem anderen.
+
+          Bleibt die Finalisierung aus, sind alle Bahnwerte vorläufig: Die
+          Spur bricht mitten im Ausrollen ab, der Räumpunkt fehlt, die
+          Ausrollstrecke ist die bis dahin gefahrene. Bis v1.7.1 sah das
+          aus wie ein fertiger Bericht.
+
+          EDDB 06L am 24.08.2026: 482 m Ausrollstrecke — nachgerechnet
+          0,42 g, mehr als ein Verkehrsflugzeug bremsen kann. Nichts davon
+          war falsch gemessen, es war nur noch nicht fertig.
+
+          `undefined` heisst „Flug von vor dieser Fassung" — dann wird
+          nichts behauptet. Nur ein ausdrückliches `false` meldet sich. */}
+      {props.rollout_final === false && (
+        <Hinweis
+          text={t("runway_v2.rollout_vorlaeufig", {
+            defaultValue:
+              "Zwischenstand: Das Ausrollen war beim Absenden noch nicht " +
+              "abgeschlossen. Spur, Räumpunkt und Ausrollstrecke sind " +
+              "vorläufig.",
+          })}
+        />
+      )}
       {grund ? (
         <Hinweis text={t(`runway_v2.discipline_skip.${grund}`, skipText(grund))} />
       ) : (
