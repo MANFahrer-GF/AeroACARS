@@ -18,6 +18,25 @@ def kurs(a,b,c,d):
     return math.atan2(y,x)
 con = sqlite3.connect("/var/lib/aeroacars-recorder/aeroacars-live.db")
 
+# ── Gleichlauf mit dem Client ────────────────────────────────────────
+#
+# Dieses Werkzeug ist eine Zweitimplementierung von `bahndisziplin_tick`.
+# Aendert sich dort die Logik, muss sie hier mit — sonst misst der Korpus
+# etwas anderes, als der Client tut, und alle daraus abgeleiteten
+# Entscheidungen stehen auf einem falschen Boden.
+#
+# Was zuletzt angeglichen wurde (QS-Runde 28):
+#
+#   * Der Raeumpunkt haengt NICHT am Messfenster. Wer unter sechzig Knoten
+#     faellt und erst danach abbiegt, ist der Normalfall.
+#   * Er wird erst UNTER sechzig Knoten gesucht. Darueber ist eine
+#     Kursabweichung ein Ausbrechen (Crab-Ausgleich nach dem Aufsetzen),
+#     kein Abbiegen.
+#   * Die Ausfahrtsseite misst das Segment AB dem Raeumpunkt, nicht am
+#     Spurende: Danach rollt das Flugzeug oft parallel weiter.
+#   * Die Kante ist der erste Uebertritt, nach dem die Spur draussen
+#     bleibt — und wird immer bestimmt, auch bei erkanntem Kurswechsel.
+
 MIN_ABSTAND_M = 10.0
 QUER_GEWICHT  = 4.0
 MAX_PUNKTE    = 400
@@ -84,16 +103,35 @@ def spur(pid, icao, ident):
         if not laeuft:
             if not og or gs < 40.0 or lg < 0 or lg > lda or abs(q) > 30: continue
             laeuft=True
-        elif not fenster_zu:
+
+        # ── Der Raeumpunkt haengt NICHT am Messfenster ────────────────
+        #
+        # Das Ausschwenken zur Ausfahrt beginnt oft lange nachdem die
+        # Bewertung geschlossen hat: Wer unter sechzig Knoten faellt und
+        # erst danach abbiegt, ist der Normalfall.
+        #
+        # Bis zur QS-Runde 28 stand diese Pruefung im `elif not
+        # fenster_zu`-Zweig — genau wie im Client, und mit demselben
+        # Fehler. Der Client ist korrigiert; ohne diese Aenderung liefern
+        # beide fuer dieselbe Landung verschiedene Raeumpunkte, und der
+        # Korpus misst etwas anderes, als der Client tut.
+        # Und erst unterhalb der Bewertungsschwelle: Ein Flugzeug setzt bei
+        # Seitenwind schraeg auf und richtet sich danach aus — gegenueber dem
+        # AUFSETZKURS bleibt dadurch eine dauerhafte Differenz. Am Korpus
+        # gemessen ueberschreiten 13 von 854 Landungen die zehn Grad, waehrend
+        # sie noch ueber sechzig Knoten schnell sind, bei bis zu 141 kt.
+        # Dieselbe Regel wie im Client.
+        if raeum is None and gs < MESS_MIN_GS and hd is not None and kurs_td is not None:
+            diff = (hd - kurs_td + 180) % 360 - 180
+            if abs(diff) > KURS_AUSFAHRT:
+                fenster_zu = True
+                raeum = dict(m=round(lg,1), kt=round(gs,1),
+                             kurs_diff=round(diff,1), seite=None)
+
+        if not fenster_zu:
             # Messfenster: hier wird BEWERTET.
             if lg < letzte - 60: fenster_zu = True
             elif gs < MESS_MIN_GS: fenster_zu = True
-            elif hd is not None and kurs_td is not None and \
-                 abs((hd - kurs_td + 180) % 360 - 180) > KURS_AUSFAHRT:
-                diff = (hd - kurs_td + 180) % 360 - 180
-                fenster_zu = True
-                raeum = dict(m=round(lg,1), kt=round(gs,1),
-                             seite=("right" if diff > 0 else "left"))
             elif lg < 0 or lg > lda: fenster_zu = True
         letzte = max(letzte, lg)
         # AUFZEICHNEN laeuft weiter, auch nach dem Schliessen.
@@ -137,6 +175,34 @@ def spur(pid, icao, ident):
     #            (EDDH 05): Mit der Kante als Grenze wurden 21,95 m
     #            gemeldet, direkt vor dem Raeumpunkt, auf einer Bahn mit
     #            23 m Halbbreite -- das war schon das Abrollen.
+    # ── Die Seite der Ausfahrt, aus dem Segment AB dem Raeumpunkt ────
+    #
+    # Zwei uebereinstimmende Groessen (Spec §8.6): fallender Kurs UND
+    # wachsender Querversatz in dieselbe Richtung. Gemessen wird das
+    # Segment ab dem Raeumpunkt — am Spurende ist nach einer Ausfahrt
+    # oft kein Querversatz mehr, weil das Flugzeug parallel weiterrollt.
+    #
+    # Dieselbe Regel wie `bahn_raeum_seite` im Client.
+    RICHTUNG_FENSTER_M = 100.0
+    RICHTUNG_MIN_VERSATZ_M = 2.0
+    if raeum is not None and raeum.get("seite") is None and punkte:
+        ab = raeum["m"]
+        basis = None
+        for pt in punkte:
+            if pt["laengs_m"] <= ab: basis = pt
+        if basis is None: basis = punkte[0]
+        vergleich = next((pt for pt in punkte
+                          if pt["laengs_m"] - basis["laengs_m"] >= RICHTUNG_FENSTER_M), None)
+        if vergleich is None and punkte[-1]["laengs_m"] > basis["laengs_m"]:
+            vergleich = punkte[-1]
+        if vergleich is not None:
+            bewegung = vergleich["quer_m"] - basis["quer_m"]
+            if abs(bewegung) >= RICHTUNG_MIN_VERSATZ_M:
+                kurs_seite = "right" if raeum.get("kurs_diff", 0) > 0 else "left"
+                quer_seite = "right" if bewegung > 0 else "left"
+                if kurs_seite == quer_seite:
+                    raeum["seite"] = kurs_seite
+
     # Die KANTE wird immer aus der ganzen Spur bestimmt, auch wenn der
     # Kurswechsel schon einen Raeumpunkt geliefert hat.
     #

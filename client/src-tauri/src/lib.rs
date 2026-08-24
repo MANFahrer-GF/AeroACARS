@@ -27591,7 +27591,32 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     //
     // Er schliesst das Messfenster mit — ein Ausschwenken beendet die
     // Bewertung, egal bei welcher Fahrt.
-    if stats.bahn_raeum_laengs_m.is_none() {
+    // Und erst unterhalb der Bewertungsschwelle.
+    //
+    // # Warum eine Kursaenderung ueber sechzig Knoten keine Ausfahrt ist
+    //
+    // Ein Flugzeug setzt bei Seitenwind schraeg auf und richtet sich danach
+    // auf die Bahnachse aus. Gegenueber dem AUFSETZKURS bleibt dadurch eine
+    // dauerhafte Differenz — kein Abbiegen, sondern dessen Korrektur.
+    //
+    // Am Korpus gemessen (854 Landungen mit 50-Hz-Fenster): 13 ueberschreiten
+    // die zehn Grad, waehrend sie noch ueber sechzig Knoten schnell sind —
+    // bei bis zu 141 kt und 100 von 100 folgenden Proben. Dort biegt niemand
+    // auf einen Rollweg ab.
+    //
+    // Gegen die BAHNRICHTUNG zu messen waere naheliegend und ist schlechter:
+    // Dieselbe Messung ergab damit 27 statt 13 Faelle, weil manche Landungen
+    // dauerhaft schraeg zur gematchten Bahn rollen. Der Aufsetzkurs ist der
+    // stabilere Bezug.
+    //
+    // Sechzig Knoten sind keine neue Zahl: Es ist dieselbe Schwelle, unter
+    // der das Messfenster ohnehin schliesst. Darueber ist eine seitliche
+    // Abweichung ein Ausbrechen — und das ist genau das, was die Achse
+    // bewerten SOLL, nicht ihr Ende. High-Speed-Exits werden mit bis zu
+    // sechzig Knoten genommen und liegen damit im Bereich.
+    if stats.bahn_raeum_laengs_m.is_none()
+        && snap.groundspeed_kt < BAHN_MESS_MIN_GS_KT
+    {
         if let Some(td_heading) = stats.landing_heading_true_deg {
             let mut diff = snap.heading_deg_true - td_heading;
             while diff > 180.0 {
@@ -43558,6 +43583,83 @@ mod touchdown_metadata_stamp_tests {
 
     /// Minimal ActiveFlight for `correlate_touchdown_runway` (only
     /// `navdata` + `arr_airport` are read by it).
+    /// Ein Ausbrechen bei hoher Fahrt ist keine Ausfahrt.
+    ///
+    /// # Der Befund
+    ///
+    /// Ein Flugzeug setzt bei Seitenwind schraeg auf und richtet sich
+    /// danach auf die Bahnachse aus. Gegenueber dem AUFSETZKURS bleibt
+    /// dadurch eine dauerhafte Differenz von zehn Grad und mehr — kein
+    /// Abbiegen, sondern dessen Korrektur.
+    ///
+    /// Am Korpus gemessen (854 Landungen mit 50-Hz-Fenster): 13
+    /// ueberschreiten die Schwelle, waehrend sie noch ueber sechzig Knoten
+    /// schnell sind, bei bis zu 141 kt und 100 von 100 folgenden Proben.
+    /// Dort biegt niemand auf einen Rollweg ab — und die Bewertung waere
+    /// beendet gewesen, bevor sie angefangen hat.
+    ///
+    /// Ueber sechzig Knoten ist eine seitliche Abweichung ein Ausbrechen,
+    /// und das ist genau das, was diese Achse bewerten SOLL.
+    #[test]
+    fn ausbrechen_bei_hoher_fahrt_setzt_keinen_raeumpunkt() {
+        let flight = flight_fixture("EDDH");
+        {
+            let mut stats = flight.stats.lock().expect("stats");
+            stats.phase = FlightPhase::Landing;
+            stats.landing_at = Some(Utc::now());
+            stats.landing_lat = Some(53.636_011);
+            stats.landing_lon = Some(9.999_656);
+            stats.rollout_last_lat = Some(53.636_011);
+            stats.rollout_last_lon = Some(9.999_656);
+            stats.landing_heading_true_deg = Some(230.21);
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636_011,
+                threshold_lon: 9.999_656,
+                end_lat: 53.619_958,
+                end_lon: 9.967_167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+        }
+
+        // 115 kt, Nase 14 Grad schraeg — der Crab-Ausgleich nach dem
+        // Aufsetzen, gemessen am echten Bestand.
+        let snap = SimSnapshot {
+            lat: 53.630_234,
+            lon: 9.988_032,
+            groundspeed_kt: 115.0,
+            heading_deg_true: 216.0,
+            on_ground: true,
+            ..Default::default()
+        };
+        step_flight_at(&flight, &snap, Utc::now());
+
+        let stats = flight.stats.lock().expect("stats");
+        assert!(
+            stats.bahn_raeum_laengs_m.is_none(),
+            "bei 115 kt wurde ein Raeumpunkt gesetzt — das ist ein \
+             Ausbrechen, keine Ausfahrt"
+        );
+        assert!(
+            !stats.bahn_fenster_zu,
+            "die Bewertung wurde beendet, bevor sie angefangen hat"
+        );
+        // Und der Versatz wird weiter gemessen — genau darum geht es.
+        assert!(
+            stats.bahn_max_querversatz_m.is_some(),
+            "das Ausbrechen wird gar nicht bewertet"
+        );
+    }
+
     /// Die Ausfahrtsseite ueberlebt paralleles Weiterrollen.
     ///
     /// # Der Befund
