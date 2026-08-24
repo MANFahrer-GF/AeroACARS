@@ -15903,9 +15903,10 @@ fn bahn_felder(
         // zwei uebereinstimmende Groessen. Mit der ganzen Spur ist sie
         // sichtbar.
         clearance_side: stats.bahn_raeum_seite.clone().or_else(|| {
-            stats
-                .bahn_raeum_kurs_diff
-                .and_then(|d| bahn_raeum_seite(d, &stats.bahn_spur))
+            match (stats.bahn_raeum_kurs_diff, stats.bahn_raeum_laengs_m) {
+                (Some(d), Some(ab)) => bahn_raeum_seite(d, &stats.bahn_spur, ab),
+                _ => None,
+            }
         }),
         track_width_m: spur_m,
         // Solange die Spurweite aus der Typtabelle kommt, ist die Quelle
@@ -27337,19 +27338,41 @@ const BAHN_RICHTUNG_MIN_VERSATZ_M: f32 = 2.0;
 ///
 /// `kurs_diff` ist die Kursabweichung zum Aufsetzkurs in Grad, positiv nach
 /// rechts. `spur` ist der bisher gefahrene Streifen.
-fn bahn_raeum_seite(kurs_diff: f64, spur: &[(f32, f32)]) -> Option<String> {
+fn bahn_raeum_seite(
+    kurs_diff: f64,
+    spur: &[(f32, f32)],
+    ab_laengs_m: f64,
+) -> Option<String> {
     // Erste Groesse: der Kurs.
     let kurs_seite = if kurs_diff > 0.0 { "right" } else { "left" };
 
-    // Zweite Groesse: die Querbewegung ueber die letzten Meter. Bewusst NICHT
-    // der absolute Versatz — ein Flugzeug kann links der Mitte stehen und
+    // Zweite Groesse: die Querbewegung **beim Ausschwenken**.
+    //
+    // # Warum ab dem Raeumpunkt und nicht am Spurende
+    //
+    // Bis hierher verglich diese Funktion den letzten Spurpunkt mit einem
+    // hundert Meter davor. Das misst die Bewegung dort, wo die Spur
+    // AUFHOERT — und nach einer Ausfahrt rollt das Flugzeug oft noch
+    // hunderte Meter parallel zur Bahn weiter. Dort ist kein Querversatz
+    // mehr, und eine voellig eindeutige Linkskurve wurde wieder zu `None`.
+    //
+    // Gemessen wird jetzt genau das Segment, um das es geht: vom
+    // Raeumpunkt aus die naechsten hundert Meter. Bewusst NICHT der
+    // absolute Versatz — ein Flugzeug kann links der Mitte stehen und
     // trotzdem nach rechts abbiegen.
-    let letzter = spur.last()?;
-    let frueher = spur
+    let basis = spur
         .iter()
         .rev()
-        .find(|(lg, _)| letzter.0 - *lg >= BAHN_RICHTUNG_FENSTER_M)?;
-    let bewegung = letzter.1 - frueher.1;
+        .find(|(lg, _)| (*lg as f64) <= ab_laengs_m)
+        .or_else(|| spur.first())?;
+    let vergleich = spur
+        .iter()
+        .find(|(lg, _)| *lg - basis.0 >= BAHN_RICHTUNG_FENSTER_M)
+        // Reicht die Spur nicht mehr hundert Meter weit — etwa weil das
+        // Flugzeug kurz danach stand —, zaehlt ihr letzter Punkt.
+        .or_else(|| spur.last().filter(|(lg, _)| *lg > basis.0))?;
+
+    let bewegung = vergleich.1 - basis.1;
     if bewegung.abs() < BAHN_RICHTUNG_MIN_VERSATZ_M {
         return None;
     }
@@ -27588,7 +27611,8 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
                 // Live-Versuch; er gelingt nur, wenn die Querbewegung
                 // schon sichtbar ist. `bahn_felder` rechnet sie sonst aus
                 // der ganzen Spur nach.
-                stats.bahn_raeum_seite = bahn_raeum_seite(diff as f64, &stats.bahn_spur);
+                stats.bahn_raeum_seite =
+                    bahn_raeum_seite(diff as f64, &stats.bahn_spur, laengs_m);
             }
         }
     }
@@ -43534,6 +43558,80 @@ mod touchdown_metadata_stamp_tests {
 
     /// Minimal ActiveFlight for `correlate_touchdown_runway` (only
     /// `navdata` + `arr_airport` are read by it).
+    /// Die Ausfahrtsseite ueberlebt paralleles Weiterrollen.
+    ///
+    /// # Der Befund
+    ///
+    /// Die Richtungsprobe verglich den LETZTEN Spurpunkt mit einem
+    /// hundert Meter davor — also die Bewegung dort, wo die Spur aufhoert.
+    /// Nach einer Ausfahrt rollt ein Flugzeug aber oft noch hunderte Meter
+    /// parallel zur Bahn weiter. Dort ist kein Querversatz mehr, und eine
+    /// voellig eindeutige Linkskurve wurde wieder zu `null`.
+    ///
+    /// Gemessen wird jetzt das Segment ab dem Raeumpunkt.
+    #[test]
+    fn ausfahrtsseite_ueberlebt_paralleles_weiterrollen() {
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(runway::RunwayMatch {
+            airport_ident: "EDDH".to_string(),
+            runway_ident: "23".to_string(),
+            heading_true_deg: 230.21,
+            length_ft: 10663.0,
+            width_ft: 151.0,
+            surface: "ASP".to_string(),
+            threshold_lat: 53.636_011,
+            threshold_lon: 9.999_656,
+            end_lat: 53.619_958,
+            end_lon: 9.967_167,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            touchdown_distance_from_threshold_ft: 720.0,
+            side: "left".to_string(),
+            displaced_threshold_ft: 0,
+        });
+        // Ausschwenken bei 1700 m nach LINKS (quer wird negativ), danach
+        // ab 1850 m parallel weiter — dort aendert sich nichts mehr.
+        stats.bahn_spur = vec![
+            (1500.0, -2.0),
+            (1600.0, -3.0),
+            (1700.0, -5.0),
+            (1750.0, -18.0),
+            (1800.0, -34.0),
+            (1850.0, -46.0),
+            (1950.0, -47.0),
+            (2050.0, -47.5),
+            (2150.0, -48.0),
+        ];
+        stats.bahn_raeum_laengs_m = Some(1700.0);
+        stats.bahn_raeum_kurs_diff = Some(-35.0); // Linkskurve
+        // Die Live-Bestimmung ist leer — genau der Normalfall.
+        stats.bahn_raeum_seite = None;
+
+        let f = bahn_felder(&stats, Some("A320"), None);
+        assert_eq!(
+            f.clearance_side.as_deref(),
+            Some("left"),
+            "die eindeutige Linkskurve geht im parallelen Weiterrollen verloren"
+        );
+
+        // Gegenprobe zur Gegenprobe: Ohne Ausschwenken bleibt es leer.
+        //
+        // `FlightStats` ist nicht `Clone` (es haelt Kanaele), deshalb wird
+        // hier dieselbe Struktur weiterverwendet und nur die Spur getauscht.
+        stats.bahn_spur = vec![
+            (1700.0, -5.0),
+            (1800.0, -5.2),
+            (1900.0, -5.4),
+            (2000.0, -5.6),
+        ];
+        assert!(
+            bahn_felder(&stats, Some("A320"), None)
+                .clearance_side
+                .is_none(),
+            "ohne Querbewegung darf keine Richtung behauptet werden"
+        );
+    }
+
     /// Eine langsame Ausfahrt bekommt ihren Bewertungsendpunkt.
     ///
     /// # Der Befund
