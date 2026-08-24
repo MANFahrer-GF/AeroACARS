@@ -157,6 +157,66 @@ describe("PDF-Bericht der Landeanalyse", () => {
     expect(befunde).toEqual([]);
   });
 
+  /**
+   * Was die PDF-Messung gefunden hat, darf nicht zurückkommen.
+   *
+   * `npm run bericht:pdf` misst das Echte — aber es braucht Chrome und
+   * läuft deshalb nicht im normalen Testlauf. Diese Prüfungen halten die
+   * Struktur fest, an der die Befunde hingen.
+   */
+  it("gibt der Bahn-Grafik eine Querformat-Seite", () => {
+    const css = readFileSync(resolve(__dirname, "..", "App.css"), "utf-8");
+    const druck = css.slice(css.indexOf("@media print"));
+    expect(
+      /@page\s+bahn\s*\{[^}]*size:\s*A4\s+landscape/.test(druck),
+      "Ohne Querformat-Seite landen die Beschriftungen der Grafik bei " +
+        "4,3 pt — unter der Lesbarkeitsschwelle. Gemessen, nicht geschätzt.",
+    ).toBe(true);
+    expect(
+      /\.report-bahn-quer\s*\{[^}]*page:\s*bahn/.test(druck),
+      "Die Seite ist definiert, aber kein Element benutzt sie.",
+    ).toBe(true);
+    // Die Grafik muss auch wirklich in dem Behälter stecken.
+    expect(bericht("d_kante")).toContain("report-bahn-quer");
+  });
+
+  it("zeigt keinen leeren Verlaufs-Abschnitt", () => {
+    // Nach dem Querformat-Umbau zählte `hasCharts` die Bahn-Grafik noch
+    // mit, obwohl sie den Abschnitt verlassen hatte: „Profile & Verläufe"
+    // rendert dann als Überschrift mit grauem Kasten und nichts darin.
+    const quelle = readFileSync(resolve(__dirname, "LandingPanel.tsx"), "utf-8");
+    const zeile = /const hasCharts = [^;]+;/.exec(quelle);
+    expect(zeile, "hasCharts nicht gefunden").not.toBeNull();
+    expect(
+      zeile![0].includes("v2Props"),
+      "`hasCharts` zählt die Bahn-Grafik mit, die längst eine eigene Seite " +
+        "hat — der Abschnitt rendert dann leer.",
+    ).toBe(false);
+  });
+
+  it("titelt die Bahn-Grafik nur einmal", () => {
+    const zeilen = texte(bericht("d_kante"));
+    const titel = zeilen.filter((z) => /^Bahn-Diagramm$/i.test(z));
+    expect(
+      titel.length,
+      "Abschnittstitel UND Kartenüberschrift trugen denselben Text; der " +
+        "Abschnittstitel landete allein auf einer sonst leeren Seite.",
+    ).toBeLessThanOrEqual(1);
+  });
+
+  it("setzt die Fußzeile vor den Querformat-Anhang", () => {
+    const markup = bericht("d_kante");
+    const fuss = markup.indexOf("report-footer");
+    const anhang = markup.indexOf("report-bahn-quer");
+    expect(fuss, "keine Fußzeile im Bericht").toBeGreaterThan(-1);
+    expect(anhang, "kein Querformat-Anhang").toBeGreaterThan(-1);
+    expect(
+      fuss < anhang,
+      "Hinter dem Querformat bekommt die Fußzeile ein eigenes, sonst " +
+        "leeres Blatt — vierzig Zeichen auf einer Seite.",
+    ).toBe(true);
+  });
+
   it("stellt zwei Bahnlängen nicht unbeschriftet nebeneinander", () => {
     const zeilen = texte(bericht("d_kante"));
     // Alle „NNNN m"-Angaben im Bericht, die eine Bahnlänge sein könnten.
