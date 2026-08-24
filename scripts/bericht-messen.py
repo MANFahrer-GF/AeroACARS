@@ -11,11 +11,15 @@ PDF und braucht keine Annahme mehr.
 Schwelle: 6 pt. Darunter ist Kleindruck auf Papier nicht mehr zu
 entziffern; 7 bis 8 pt liest sich bequem.
 """
-import sys, collections
+import sys, collections, pathlib
 import fitz
 
 SCHWELLE_PT = 6.0
-pfad = sys.argv[1] if len(sys.argv) > 1 else "client/bericht-dist/bericht.pdf"
+# Der Vorgabepfad haengt am SKRIPT, nicht am Aufrufort. Aus `client/`
+# gestartet (so laeuft `npm run bericht:pdf`) ging der relative Pfad ins
+# Leere, und die Messung brach ab, statt zu messen.
+STANDARD = pathlib.Path(__file__).resolve().parent.parent / "client" / "bericht-dist" / "bericht.pdf"
+pfad = sys.argv[1] if len(sys.argv) > 1 else str(STANDARD)
 doc = fitz.open(pfad)
 
 print(f"{pfad}")
