@@ -24649,13 +24649,33 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 td.timestamp_millis(),
                                 stats.rollout_distance_m.unwrap_or(0.0),
                                 stats.rollout_finalize_reason.clone(),
+                                // Die Bahnwerte in ihrem FINALEN Stand.
+                                //
+                                // Beim `touchdown_complete` neun Sekunden
+                                // nach dem Aufsetzen waechst die Spur noch,
+                                // der Raeumpunkt ist nicht erreicht und der
+                                // Kantenuebertritt erst recht nicht. Ohne
+                                // diesen Nachtrag blieben Recorder und
+                                // Webapp beim vorlaeufigen Stand: eine Spur,
+                                // die mitten im Ausrollen abbricht.
+                                //
+                                // Kein Skip-Grund: Die Bewertung laeuft erst
+                                // beim Einreichen des PIREP. Die Webapp
+                                // liest ihn aus den `sub_scores`.
+                                bahn_felder(
+                                    &stats,
+                                    Some(flight.aircraft_icao.as_str())
+                                        .filter(|s| !s.is_empty()),
+                                    None,
+                                )
+                                .wire(),
                             )
                         })
                     } else {
                         None
                     }
                 };
-                if let Some((touchdown_at, rollout_m, reason)) = finalized {
+                if let Some((touchdown_at, rollout_m, reason, bahn)) = finalized {
                     if last_published_rollout_ts != Some(touchdown_at) {
                         let app_state = app.state::<AppState>();
                         let mqtt = app_state.mqtt.lock().await;
@@ -24667,6 +24687,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     touchdown_at,
                                     rollout_distance_m: rollout_m,
                                     finalize_reason: reason,
+                                    bahn,
                                 },
                             );
                         }

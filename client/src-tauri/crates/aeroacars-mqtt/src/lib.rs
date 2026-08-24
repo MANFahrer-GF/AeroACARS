@@ -1360,6 +1360,27 @@ pub struct TouchdownRolloutFinalizedPayload {
     /// Grund nicht mehr bekannt (transient) — das Event geht trotzdem raus.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finalize_reason: Option<String>,
+
+    // ── v1.7.0: die Bahndisziplin-Werte, final ───────────────────────
+    //
+    // # Warum sie hier noch einmal kommen
+    //
+    // `touchdown_complete` geht rund neun Sekunden nach dem Aufsetzen
+    // raus. Zu diesem Zeitpunkt waechst die Rollspur weiter, der
+    // Raeumpunkt ist noch nicht erreicht und der Kantenuebertritt erst
+    // recht nicht — genau wie `rollout_distance_m`, um dessentwillen
+    // dieses Event ueberhaupt existiert.
+    //
+    // Bis v1.7.0 trug es nur die Ausrollstrecke nach. Alle uebrigen
+    // Bahnwerte blieben im Recorder und in der Webapp beim vorlaeufigen
+    // Stand: eine Spur, die mitten im Ausrollen abbricht, und ein
+    // Raeumpunkt, den es zu dem Zeitpunkt noch gar nicht gab.
+    //
+    // Die Gruppe ist dieselbe wie im `TouchdownPayload` — ein Typ, eine
+    // Umrechnung (`BahnFelder::wire()`), damit der Nachtrag nicht
+    // auseinanderlaufen kann.
+    #[serde(flatten)]
+    pub bahn: BahnWire,
 }
 
 /// Was der Client sendet, wenn jemand etwas zuruft.
