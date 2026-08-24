@@ -412,6 +412,38 @@ fn rows_for_airport(icao: &str) -> impl Iterator<Item = &'static RunwayRow> {
     idx.iter().map(move |i| &table[*i as usize])
 }
 
+/// Der Belag dieser Bahn aus der eingebetteten OurAirports-Tabelle.
+///
+/// # Warum das gebraucht wird
+///
+/// Die Navdaten tragen ein `surface`-Feld, und der Server fuellt es aus
+/// `nav_runways.surface_code`. Dieses Feld ist **in allen 85.058 Zeilen
+/// leer** — am 24.08.2026 auf dem Live-Server nachgezaehlt, null Treffer.
+///
+/// Auf dem Navigraph-Pfad wurde daraus per `unwrap_or_default()` der
+/// leere String. Der faellt durch jede Belagspruefung, ergibt
+/// `Belag::Unbekannt` und damit `surface_unknown` — die seitliche
+/// Bewertung entfiel. Nicht bei Sonderfaellen, sondern bei **jedem** Flug
+/// zu einem Flughafen, der in den Navdaten steht, also praktisch bei
+/// jedem echten Flug. Gemeldet am ersten Live-Tag von v1.7.0, EDDL.
+///
+/// Die richtige Angabe lag die ganze Zeit daneben: `EDDL` steht in
+/// `data/ourairports-runways.csv` mit `CON`, und 47.658 der 48.162
+/// Bahnen dort haben einen Belag. Der CSV-Pfad las sie immer; der
+/// Navigraph-Pfad nie.
+///
+/// Die Bahnkennung wird beidseitig verglichen, weil eine Zeile beide
+/// Enden fuehrt (`05L` und `23R`) — der Belag gilt fuer die ganze Bahn.
+fn belag_aus_tabelle(icao: &str, bahn: &str) -> Option<String> {
+    let gesucht = bahn.trim().to_uppercase();
+    rows_for_airport(icao)
+        .find(|r| {
+            r.le_ident.to_uppercase() == gesucht || r.he_ident.to_uppercase() == gesucht
+        })
+        .map(|r| r.surface.clone())
+        .filter(|s| !s.trim().is_empty())
+}
+
 /// Der Versatz der LANDE-Schwelle dieser Bahn in Fuss — aber nur, wenn
 /// er in der Bahnlaenge noch NICHT beruecksichtigt ist.
 ///
@@ -1415,7 +1447,15 @@ pub fn lookup_runway_in_nav(
         let runway_heading = rwy.true_course as f32;
         let length_ft = rwy.length_ft as f32;
         let width_ft = rwy.width_ft.unwrap_or(0) as f32;
-        let surface = rwy.surface.clone().unwrap_or_default();
+        // Der Belag aus den Navdaten — und wenn er fehlt, aus der
+        // eingebetteten Tabelle. Er fehlt IMMER: `nav_runways.surface_code`
+        // ist in allen 85.058 Zeilen leer (siehe `belag_aus_tabelle`).
+        let surface = rwy
+            .surface
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| belag_aus_tabelle(&airport.icao, &rwy.designator))
+            .unwrap_or_default();
 
         let d_threshold = haversine_m(threshold_lat, threshold_lon, lat, lon);
         if d_threshold > DEFAULT_MAX_DISTANCE_M + (length_ft as f64 * 0.3048) {
@@ -2160,6 +2200,85 @@ mod tests {
     // additionally carries phantom "06C"/"24C" entries — same heading,
     // shorter, threshold ~300-420 m further down the same physical
     // strip. OurAirports has never heard of "06C"/"24C" for EFTP.
+    /// EDDL, so wie die Navdaten es wirklich liefern: **ohne Belag**.
+    ///
+    /// Die Geometrie stammt aus `data/ourairports-runways.csv`, damit der
+    /// Treffer sitzt; `surface: None` ist der Punkt. Genau so kommt jede
+    /// Bahn aus dem Navdaten-Endpunkt — `nav_runways.surface_code` ist in
+    /// allen 85.058 Zeilen leer.
+    fn eddl_nav_ohne_belag() -> NavAirport {
+        let rwy = |des: &str, tc: f64, t: (f64, f64), e: (f64, f64)| NavRunway {
+            designator: des.to_string(),
+            magnetic_course: 0.0,
+            true_course: tc,
+            length_ft: 9842,
+            width_ft: Some(148),
+            // DER PUNKT: die Navdaten tragen hier nichts.
+            surface: None,
+            threshold: NavPoint { lat: t.0, lon: t.1, elev_ft: None },
+            far_end: NavPoint { lat: e.0, lon: e.1, elev_ft: None },
+            displaced_threshold_ft: 0,
+            ils: None,
+            glideslope_angle: 3.0,
+            tch_ft: 50,
+        };
+        NavAirport {
+            cycle: "2604".to_string(),
+            valid_to: "2026-09-03".to_string(),
+            icao: "EDDL".to_string(),
+            name: "Düsseldorf".to_string(),
+            latitude: 51.289,
+            longitude: 6.767,
+            elevation_ft: Some(147),
+            runways: vec![
+                rwy("05R", 53.0, (51.279598, 6.751990), (51.295898, 6.786220)),
+                rwy("23L", 233.0, (51.295898, 6.786220), (51.279598, 6.751990)),
+            ],
+        }
+    }
+
+    /// Der Befund vom ersten Live-Tag: EDDL ohne Belag, keine Querbewertung.
+    ///
+    /// Die Navdaten liefern `surface: None`, `unwrap_or_default()` machte
+    /// daraus den leeren String, und der ergibt `Belag::Unbekannt` →
+    /// `surface_unknown`. Betroffen war nicht EDDL, sondern **jeder**
+    /// Flughafen in den Navdaten — also praktisch jeder echte Flug.
+    ///
+    /// Die Angabe lag daneben in der eingebetteten Tabelle: EDDL = `CON`.
+    #[test]
+    fn eddl_holt_den_belag_aus_der_tabelle_wenn_die_navdaten_keinen_haben() {
+        let apt = eddl_nav_ohne_belag();
+        // Aufsetzen auf 05R, kurz hinter der Schwelle, auf Bahnkurs.
+        let m = lookup_runway_in_nav(51.2805, 6.7535, 53.0, &apt)
+            .expect("EDDL 05R muss getroffen werden");
+        assert_eq!(m.runway_ident, "05R");
+        assert_eq!(
+            m.surface, "CON",
+            "Die Navdaten tragen keinen Belag; er muss aus der eingebetteten \
+             OurAirports-Tabelle kommen. Ohne diesen Rückgriff steht hier der \
+             leere String, und die seitliche Bewertung entfällt — bei jedem \
+             Flug zu einem Navdaten-Flughafen."
+        );
+        // Und die Kette bis zur Bewertung.
+        let belag = landing_scoring::belag::belag_aus_angabe(Some(&m.surface));
+        assert!(
+            belag.seitlich_bewertbar(),
+            "EDDL ist Beton — die Querbewertung muss laufen"
+        );
+    }
+
+    /// Die Gegenrichtung: Trägt die Navdaten-Zeile einen Belag, gilt der.
+    #[test]
+    fn navdaten_belag_hat_vorrang_vor_der_tabelle() {
+        let mut apt = eddl_nav_ohne_belag();
+        apt.runways[0].surface = Some("GRS".to_string());
+        let m = lookup_runway_in_nav(51.2805, 6.7535, 53.0, &apt).expect("Treffer");
+        assert_eq!(
+            m.surface, "GRS",
+            "Ein vorhandener Navdaten-Belag darf nicht überschrieben werden"
+        );
+    }
+
     fn eftp_nav_fixture() -> NavAirport {
         let rwy = |des: &str, tc: f64, length_ft: i32, t: (f64, f64), e: (f64, f64)| NavRunway {
             designator: des.to_string(),
