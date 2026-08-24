@@ -187,9 +187,36 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
     )}`,
   });
 
-  const max = props.max_lateral_offset_m;
+  // ── Welcher Verzicht entwertet welche Zahl ───────────────────────────
+  //
+  // Die Ereignisliste lief bis Runde 22 IMMER — auch wenn die Bewertung
+  // die seitliche Lage verworfen hatte. Sie zeigte dann „äusseres Rad
+  // 3,2 m vor der Kante" neben einem Hinweis, der genau das für
+  // unbrauchbar erklärt.
+  //
+  // Es sind aber nicht alle Gründe gleich: Auf einer Graspiste ist der
+  // gemessene VERSATZ in Ordnung, nur die Kante ist fliessend. Deshalb
+  // wird unterschieden, statt pauschal alles wegzulassen — sonst
+  // verschwände eine Messung, die stimmt.
+  const versatzEntwertet = [
+    // Der Versatz selbst ist unglaubwürdig.
+    "implausible_lateral_track",
+    // Die Bahnachse, auf die projiziert wurde, ist es nicht.
+    "untrusted_geometry",
+    "off_airport_landing",
+    // Aus zwei, drei Proben lässt sich kein Grösstwert ablesen.
+    "insufficient_samples",
+  ].includes(props.lateral_skip_reason ?? "");
+  // Die Kante trägt zusätzlich dann nicht, wenn sie keine feste Grenze ist.
+  const kanteEntwertet =
+    versatzEntwertet ||
+    ["unpaved_runway", "surface_unknown", "water_runway"].includes(
+      props.lateral_skip_reason ?? "",
+    );
+
+  const max = versatzEntwertet ? null : props.max_lateral_offset_m;
   if (max != null) {
-    const rand = props.min_edge_clearance_m;
+    const rand = kanteEntwertet ? null : props.min_edge_clearance_m;
     const zusatz =
       rand == null
         ? ""

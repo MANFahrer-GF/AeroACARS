@@ -661,4 +661,65 @@ describe("QS — Vollständigkeit", () => {
       "die Queransicht wird trotz verworfener Bewertung gezeichnet",
     ).not.toContain("QUER —");
   });
+  /**
+   * Verworfene Zahlen verschwinden — geprüfte bleiben stehen.
+   *
+   * Die Ereignisliste lief bis Runde 22 immer, auch wenn die Bewertung die
+   * seitliche Lage verworfen hatte. Sie zeigte dann „äusseres Rad 3,2 m vor
+   * der Kante" direkt neben einem Hinweis, der genau das für unbrauchbar
+   * erklärt.
+   *
+   * Es sind aber nicht alle Gründe gleich: Auf einer Graspiste ist der
+   * gemessene Versatz in Ordnung, nur die Kante ist fliessend. Ein
+   * pauschales Weglassen hätte eine Messung verschwinden lassen, die
+   * stimmt.
+   */
+  it.each([
+    // Grund, Versatz sichtbar?, Randabstand sichtbar?
+    ["implausible_lateral_track", false, false],
+    ["untrusted_geometry", false, false],
+    ["insufficient_samples", false, false],
+    ["unpaved_runway", true, false],
+    ["surface_unknown", true, false],
+  ])("bei %s: Versatz=%s Randabstand=%s", (grund, versatzDa, randDa) => {
+    const r = MOCK_LANDING_OPTIONS.map((o) => o.build()).find(
+      (x) =>
+        (x.lateral_samples?.length ?? 0) > 2 &&
+        x.runway_width_m != null &&
+        x.max_lateral_offset_m != null &&
+        x.min_edge_clearance_m != null,
+    );
+    expect(r, "keine Variante mit Versatz und Randabstand").toBeDefined();
+    r!.lateral_skip_reason = grund;
+    const props = mapLandingRecordToV2Props(r!);
+    const markup = renderToStaticMarkup(<RunwayDiagramV2 {...props!} />);
+    const text = markup.replace(/<[^>]+>/g, " ");
+
+    // „Grösster Versatz" ist die Überschrift des Eintrags in der
+    // Ereignisliste. Der erste Anlauf suchte „von der Mittellinie" — das
+    // steht in der Queransicht, die bei jedem dieser Gründe ohnehin
+    // entfällt. Der Test war damit für die Liste blind und meldete
+    // trotzdem etwas.
+    // Auf „ter Versatz" statt auf den ganzen Text: Die Sprachdatei
+    // schreibt „Größter", der `defaultValue` im Code „Grösster". Der
+    // zweite Anlauf dieses Tests suchte den `defaultValue` und war
+    // dadurch immer noch blind — die Sprachdatei gewinnt zur Laufzeit.
+    expect(
+      text.includes("ter Versatz"),
+      versatzDa
+        ? `bei „${grund}" ist der Versatz gemessen und muss stehen bleiben`
+        : `bei „${grund}" hat die Bewertung den Versatz verworfen — er darf nicht als Zahl dastehen`,
+    ).toBe(versatzDa);
+
+    expect(
+      text.includes("vor der Kante") || text.includes("neben der befestigten"),
+      randDa
+        ? `bei „${grund}" muss der Randabstand stehen bleiben`
+        : `bei „${grund}" trägt die Kante nicht — der Randabstand darf nicht als Zahl dastehen`,
+    ).toBe(randDa);
+
+    // Und der Aufsetzpunkt bleibt IMMER: Er ist eine eigene Messung und
+    // hat mit der seitlichen Lage im Rollweg nichts zu tun.
+    expect(text, "der Aufsetz-Eintrag ist verschwunden").toContain("Aufsetzen");
+  });
 });
