@@ -3156,6 +3156,13 @@ struct FlightStats {
     /// Muster, das in `aircraft_limits_for` fehlte — fuer den Health-Report.
     /// Siehe `ClientHealthReport::unknown_aircraft_icao`.
     unbekanntes_muster: Option<String>,
+    /// Das aufgeloeste Flugzeugmuster — EINMAL bestimmt, ueberall gelesen.
+    ///
+    /// Die MQTT-Pfade haben keinen Sim-Schnappschuss zur Hand und kamen
+    /// deshalb nur an die Buchung. Bei EWG248 war die leer, und mit ihr
+    /// fielen Spurweite, Spannweite und Randabstand aus — obwohl der
+    /// Flugzeugtitel dagewesen waere. Siehe `sim_core::muster_aufloesen`.
+    aufgeloestes_muster: Option<String>,
     /// Kleinste und groesste Klappenstellung des ganzen Fluges. Zusammen sagen
     /// sie, ob sich der Kanal ueberhaupt bewegt hat und wo das Raster dieses
     /// Musters endet — beides braucht die Landekonfiguration am 1000-ft-Tor
@@ -8046,26 +8053,19 @@ fn landing_get_current(
     // `aircraft_icao=None` → sub_rollout fiel auf Light-GA-Schwellen
     // zurueck → Pilot sah inkonsistente Cockpit-Vorschau-Scores gegenueber
     // dem spaeter persistierten LandingRecord. QS-Round-1 Befund.
-    let bid_icao = flight.aircraft_icao.trim();
-    let bid_icao_opt: Option<&str> = if bid_icao.is_empty() {
-        None
-    } else {
-        Some(bid_icao)
-    };
     let aircraft_title = snapshot.as_ref().and_then(|s| s.aircraft_title.as_deref());
-    // v1.7.0: DRITTE Stufe — der Flugzeug-Titel. Etliche Add-ons fuellen
-    // `ATC MODEL` nicht, und ohne Buchung greift auch der Bid-Fallback nicht.
-    // Dann fehlte der Typ komplett, und alles was darauf keyed fiel still auf
-    // einen Default zurueck. MPH 9 (22.08.2026) kostete das 25 Punkte: das
-    // TFDi MD-11F meldete kein ATC-Modell, die Heavy-Gutschrift entfiel, aus
-    // 80 wurden 55. Der Titel stand die ganze Zeit da.
-    // Betrifft im Bestand 65 von 895 Fluegen (7,3 %).
-    let titel_icao = aircraft_title.and_then(sim_core::icao_aus_titel);
-    let aircraft_icao = snapshot
-        .as_ref()
-        .and_then(|s| s.aircraft_icao.as_deref())
-        .or(bid_icao_opt)
-        .or(titel_icao.as_deref());
+    // Sim → Buchung → Flugzeugtitel, an EINER Stelle (siehe
+    // `sim_core::muster_aufloesen`). Diese Kette stand hier und an einer
+    // zweiten Stelle wortgleich, waehrend drei weitere Stellen kuerzere
+    // Ketten benutzten — daran ist EWG248 gescheitert.
+    let aufgeloest = stats.aufgeloestes_muster.clone().or_else(|| {
+        sim_core::muster_aufloesen(
+            snapshot.as_ref().and_then(|s| s.aircraft_icao.as_deref()),
+            &flight.aircraft_icao,
+            aircraft_title,
+        )
+    });
+    let aircraft_icao = aufgeloest.as_deref();
     // v0.7.18 (B-012): airport_lookup-Closure aus dem AppState.airports-Cache.
     let airport_lookup_data: std::collections::HashMap<String, (f64, f64)> = {
         let guard = state.airports.lock().expect("airports lock");
@@ -14304,8 +14304,19 @@ fn assess_touchdown(stats: &FlightStats) -> AssessedTouchdown {
     ));
     // F5 TCH: nur klassifizieren wenn BOTH der nav-geometric tch_ft
     // AND der actual-measured tch_ft im Streamer-Tick vorhanden sind.
+    // Die erwartete Schwellenueberflughoehe muss auch WIRKLICH da sein.
+    //
+    // `tch_ft` ist in **9.804 der 85.058 Navdaten-Bahnen null** (11,5 %,
+    // am 24.08.2026 auf dem Live-Server gezaehlt). `classify_tch` rechnet
+    // `actual - expected`; gegen 0 wird aus einem sauberen Anflug mit
+    // 47 ft ein Delta von +47 ft und die Einstufung „viel zu hoch".
+    //
+    // Dieselbe Fehlerklasse wie beim Belag (`nav_runways.surface_code`,
+    // 0 von 85.058): ein Feld, das oft leer ist, wird ungeprueft
+    // weiterverwendet und behauptet dann etwas Falsches, statt zu
+    // schweigen. Ohne Erwartungswert gibt es keine Einstufung.
     let tch = match (stats.runway_nav_geometry.as_ref(), stats.runway_tch_actual_ft) {
-        (Some(g), Some(actual)) => Some(runway_assessment::classify_tch(
+        (Some(g), Some(actual)) if g.tch_ft > 0 => Some(runway_assessment::classify_tch(
             actual as f64,
             g.tch_ft as f64,
         )),
@@ -15425,7 +15436,7 @@ fn canonical_landing_verdict(
 ) -> Option<LandingVerdict> {
     let touchdown_class = stats.landing_score?;
     let aggregate =
-        compute_aggregate_master_score(stats, Some(&flight.aircraft_icao), effective_arr_icao);
+        compute_aggregate_master_score(stats, muster_fuer_landung(stats, &flight.aircraft_icao), effective_arr_icao);
     let (label, numeric) = match aggregate {
         Some(m) => (aggregate_score_label(m), m as i32),
         None => (touchdown_class.label(), touchdown_class.numeric()),
@@ -15732,6 +15743,31 @@ fn bahn_skip_grund(sub_scores: &[landing_scoring::SubScoreEntry]) -> Option<Stri
         .iter()
         .find(|s| s.key == "rollout" && s.skipped)
         .and_then(|s| s.reason.clone())
+}
+
+/// Das Flugzeugmuster fuer eine abgeschlossene Landung.
+///
+/// Nimmt das waehrend des Fluges aufgeloeste Muster (Sim → Buchung →
+/// Flugzeugtitel, siehe `sim_core::muster_aufloesen`) und faellt nur auf
+/// die Buchung zurueck, wenn es keins gibt — etwa bei einem Flug, der vor
+/// dieser Fassung begonnen hat.
+///
+/// # Warum das nicht jede Stelle selbst macht
+///
+/// Am 24.08.2026 gab es SIEBEN Stellen mit vier verschiedenen Ketten. Die
+/// beiden wichtigsten — das Landeurteil und die maßgebliche
+/// PIREP-Bewertung — fragten **nur die Buchung**. Bei EWG248 (EDDL) war
+/// die leer: keine Spurweite, keine Spannweite, Bank-Grenze und Vref aus
+/// dem Rueckfall, und die Querbewertung fiel aus.
+/// `tests/musterquelle.rs` haelt fest, dass es dabei bleibt.
+fn muster_fuer_landung<'a>(
+    stats: &'a FlightStats,
+    buchung_icao: &'a str,
+) -> Option<&'a str> {
+    stats
+        .aufgeloestes_muster
+        .as_deref()
+        .or_else(|| Some(buchung_icao.trim()).filter(|s| !s.is_empty()))
 }
 
 fn bahn_felder(
@@ -16547,26 +16583,19 @@ fn record_landing_for_filed_flight(
     // Bid-Wert (`flight.aircraft_icao`) der beim Flugstart aus dem
     // phpVMS-Bid persistiert wurde und über die gesamte Flight-Dauer
     // stabil bleibt. Webapp benutzt denselben Wert → konsistent.
-    let bid_icao = flight.aircraft_icao.trim();
-    let bid_icao_opt: Option<&str> = if bid_icao.is_empty() {
-        None
-    } else {
-        Some(bid_icao)
-    };
     let aircraft_title = snapshot.as_ref().and_then(|s| s.aircraft_title.as_deref());
-    // v1.7.0: DRITTE Stufe — der Flugzeug-Titel. Etliche Add-ons fuellen
-    // `ATC MODEL` nicht, und ohne Buchung greift auch der Bid-Fallback nicht.
-    // Dann fehlte der Typ komplett, und alles was darauf keyed fiel still auf
-    // einen Default zurueck. MPH 9 (22.08.2026) kostete das 25 Punkte: das
-    // TFDi MD-11F meldete kein ATC-Modell, die Heavy-Gutschrift entfiel, aus
-    // 80 wurden 55. Der Titel stand die ganze Zeit da.
-    // Betrifft im Bestand 65 von 895 Fluegen (7,3 %).
-    let titel_icao = aircraft_title.and_then(sim_core::icao_aus_titel);
-    let aircraft_icao = snapshot
-        .as_ref()
-        .and_then(|s| s.aircraft_icao.as_deref())
-        .or(bid_icao_opt)
-        .or(titel_icao.as_deref());
+    // Sim → Buchung → Flugzeugtitel, an EINER Stelle (siehe
+    // `sim_core::muster_aufloesen`). Diese Kette stand hier und an einer
+    // zweiten Stelle wortgleich, waehrend drei weitere Stellen kuerzere
+    // Ketten benutzten — daran ist EWG248 gescheitert.
+    let aufgeloest = stats.aufgeloestes_muster.clone().or_else(|| {
+        sim_core::muster_aufloesen(
+            snapshot.as_ref().and_then(|s| s.aircraft_icao.as_deref()),
+            &flight.aircraft_icao,
+            aircraft_title,
+        )
+    });
+    let aircraft_icao = aufgeloest.as_deref();
 
     // v0.7.18 (B-012): airport_lookup-Closure aus dem AppState.airports-Cache.
     let airport_lookup_data: std::collections::HashMap<String, (f64, f64)> = {
@@ -18234,7 +18263,8 @@ async fn flight_end(
         // autoritative PIREP-Score wich vom Record ab. On-Plan: `divert_to`=None
         // → effective_arr == arr_airport → BYTE-IDENTISCH.
         let effective_arr = divert_to.as_deref().unwrap_or(&flight.arr_airport);
-        let score = compute_aggregate_master_score(&stats, Some(&flight.aircraft_icao), effective_arr)
+        let score =
+            compute_aggregate_master_score(&stats, muster_fuer_landung(&stats, &flight.aircraft_icao), effective_arr)
             .map(|m| m as i32)
             .or_else(|| stats.landing_score.map(|s| s.numeric()));
         let distance_nm = stats.distance_nm;
@@ -22817,8 +22847,12 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                         .aircraft_icao
                                         .as_deref()
                                         .and_then(clean_atc_model);
-                                    let muster = sim_muster
+                                    // Dieselbe Auflösung wie überall —
+                                    // vorher fehlte hier die dritte Stufe.
+                                    let muster = stats
+                                        .aufgeloestes_muster
                                         .as_deref()
+                                        .or(sim_muster.as_deref())
                                         .unwrap_or(flight.aircraft_icao.trim());
                                     let konfig =
                                         konfig_kontext(&stats, &aircraft_limits_for(muster));
@@ -24702,7 +24736,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // liest ihn aus den `sub_scores`.
                                 bahn_felder(
                                     &stats,
-                                    Some(flight.aircraft_icao.as_str())
+                                    stats
+                                        .aufgeloestes_muster
+                                        .as_deref()
+                                        .or(Some(flight.aircraft_icao.as_str()))
                                         .filter(|s| !s.is_empty()),
                                     None,
                                 )
@@ -25339,7 +25376,15 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             // Landung sind schlimmer als eine fehlende.
                             bahn: bahn_felder(
                                 &stats,
-                                Some(flight.aircraft_icao.as_str())
+                                // Das aufgeloeste Muster (Sim → Buchung →
+                                // Titel), nicht nur die Buchung. Hier stand
+                                // vorher allein `flight.aircraft_icao`; war
+                                // die leer, verlor die Landung Spurweite,
+                                // Spannweite und Randabstand.
+                                stats
+                                    .aufgeloestes_muster
+                                    .as_deref()
+                                    .or(Some(flight.aircraft_icao.as_str()))
                                     .filter(|s| !s.is_empty()),
                                 // Kein Skip-Grund: Die Bewertung laeuft
                                 // erst nach diesem Publish (siehe den
@@ -29573,10 +29618,20 @@ fn step_flight_at(
                 // Sim-Wert haengt — zwei Antworten auf dieselbe Frage. Wer
                 // anders fliegt als gebucht, bekam Bank-Grenze und Vref des
                 // gebuchten Musters und die Kategorie des geflogenen.
-                let sim_muster = snap.aircraft_icao.as_deref().and_then(clean_atc_model);
-                let muster = sim_muster
-                    .as_deref()
-                    .unwrap_or(flight.aircraft_icao.trim());
+                // Alle drei Stufen, an EINER Stelle — und das Ergebnis
+                // bleibt im Flugzustand stehen, damit die MQTT-Pfade
+                // dieselbe Antwort bekommen statt einer eigenen.
+                let aufgeloest = sim_core::muster_aufloesen(
+                    snap.aircraft_icao.as_deref(),
+                    &flight.aircraft_icao,
+                    snap.aircraft_title.as_deref(),
+                );
+                if let Some(m) = aufgeloest.as_deref() {
+                    if stats.aufgeloestes_muster.as_deref() != Some(m) {
+                        stats.aufgeloestes_muster = Some(m.to_string());
+                    }
+                }
+                let muster = aufgeloest.as_deref().unwrap_or("");
                 let limits = aircraft_limits_for(muster);
                 if limits.is_fallback && !muster.is_empty() && stats.unbekanntes_muster.is_none() {
                     // Einmal pro Flug — nicht je Landung.

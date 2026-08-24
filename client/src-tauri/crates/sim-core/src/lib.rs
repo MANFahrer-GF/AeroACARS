@@ -1636,6 +1636,55 @@ pub fn normalize_icao_type(raw: &str) -> Option<String> {
 ///
 /// Die Muster sind **nach Spezifität geordnet**: `A330-300` steht vor `A330`,
 /// sonst würde die Variante von der Familie verschluckt.
+/// Das Flugzeugmuster als ICAO — aus allen drei Quellen, in fester Reihenfolge.
+///
+/// # Warum das eine Funktion sein muss
+///
+/// Am 24.08.2026 gab es im Client **vier** Stellen, die den Typ auflösten,
+/// mit **drei verschiedenen** Ketten:
+///
+/// | Stelle                     | Sim | Buchung | Titel |
+/// |----------------------------|-----|---------|-------|
+/// | Vorschau                   |  ✓  |    ✓    |   ✓   |
+/// | Bewertung (Grenzen, Vref)  |  ✓  |    ✓    |   ✗   |
+/// | MQTT-Touchdown → Server    |  ✗  |    ✓    |   ✗   |
+/// | MQTT, zweiter Pfad         |  ✗  |    ✓    |   ✗   |
+///
+/// Die dritte Stufe — der Flugzeugtitel — wurde in v1.7.0 eigens gebaut,
+/// weil etliche Add-ons `ATC MODEL` nicht füllen und ohne Buchung auch
+/// der zweite Rückgriff nicht greift (65 von 895 Flügen im Bestand,
+/// 7,3 %). Sie kam nur in die Vorschau.
+///
+/// Am ersten Live-Tag von v1.7.0 traf es EWG248, EDDL: Sim und Buchung
+/// lieferten beide nichts, der Titel wäre dagewesen. Ergebnis — keine
+/// Spurweite, keine Spannweite, Bank-Grenze und Vref aus dem Rückfall.
+/// Belegt am Datensatz: `landing_vref_source: "unknown"` entsteht nur,
+/// wenn die Grenzen-Tabelle nichts fand; BCS3 steht dort mit 128 kt.
+///
+/// # Die Reihenfolge
+///
+/// 1. **Der Simulator.** Was tatsächlich fliegt, schlägt was gebucht war —
+///    wer anders fliegt als gebucht, soll die Grenzen des geflogenen
+///    Musters bekommen.
+/// 2. **Die Buchung.** Verlässlich, solange der Pilot nach Plan fliegt.
+/// 3. **Der Flugzeugtitel.** Die Notlösung: „Airbus A320neo Lufthansa"
+///    ergibt A20N. Ungenauer als die beiden anderen, aber besser als
+///    nichts — und „nichts" heisst hier: stille Rückfallwerte.
+pub fn muster_aufloesen(
+    sim_atc_model: Option<&str>,
+    buchung_icao: &str,
+    flugzeug_titel: Option<&str>,
+) -> Option<String> {
+    if let Some(m) = sim_atc_model.and_then(clean_atc_model) {
+        return Some(m);
+    }
+    let gebucht = buchung_icao.trim();
+    if !gebucht.is_empty() {
+        return Some(gebucht.to_ascii_uppercase());
+    }
+    flugzeug_titel.and_then(icao_aus_titel)
+}
+
 pub fn icao_aus_titel(titel: &str) -> Option<String> {
     let t = titel.trim().to_ascii_uppercase();
     if t.is_empty() {
@@ -2786,4 +2835,58 @@ fn aendert_nichts_wenn_das_atc_modell_schon_taugt() {
     assert_eq!(normalize_icao_type("ATCCOM.AC_MODEL A320.0.text").as_deref(), Some("A320"));
 }
 
+}
+
+#[cfg(test)]
+mod muster_tests {
+    use super::*;
+
+    /// Der Befund vom ersten Live-Tag: EWG248, EDDL, A220-300.
+    ///
+    /// Sim und Buchung lieferten beide nichts. Der Flugzeugtitel war da —
+    /// nur fragte ihn auf diesem Weg niemand. Ergebnis: keine Spurweite,
+    /// keine Spannweite, Bank-Grenze und Vref aus dem Rückfall.
+    #[test]
+    fn dritte_stufe_rettet_den_flug_ohne_sim_und_ohne_buchung() {
+        assert_eq!(
+            muster_aufloesen(None, "", Some("Airbus A220-300 Air Baltic")),
+            Some("BCS3".to_string()),
+            "der Flugzeugtitel ist die dritte Stufe und muss greifen"
+        );
+        // Und ohne alles bleibt es ehrlich leer.
+        assert_eq!(muster_aufloesen(None, "", None), None);
+        assert_eq!(muster_aufloesen(None, "   ", Some("")), None);
+    }
+
+    /// Die Reihenfolge ist die Aussage: Was fliegt, schlägt was gebucht war.
+    #[test]
+    fn der_simulator_schlaegt_die_buchung_schlaegt_den_titel() {
+        assert_eq!(
+            muster_aufloesen(Some("A20N"), "B738", Some("Boeing 747-8")),
+            Some("A20N".to_string()),
+            "der Simulator hat Vorrang"
+        );
+        assert_eq!(
+            muster_aufloesen(None, "B738", Some("Boeing 747-8")),
+            Some("B738".to_string()),
+            "ohne Sim gilt die Buchung"
+        );
+        assert_eq!(
+            muster_aufloesen(Some("   "), "b738", None),
+            Some("B738".to_string()),
+            "Buchung wird auf Grossbuchstaben gebracht"
+        );
+    }
+
+    /// Ein unbrauchbarer Sim-Wert darf die späteren Stufen nicht sperren.
+    #[test]
+    fn unbrauchbarer_sim_wert_faellt_durch_statt_zu_blockieren() {
+        for roh in ["", "   ", "TT:ATCCOM.AC_MODEL_A320.0.text"] {
+            let r = muster_aufloesen(Some(roh), "", Some("Airbus A220-300"));
+            assert!(
+                r.is_some(),
+                "Sim-Wert {roh:?} blockiert die dritte Stufe statt durchzufallen"
+            );
+        }
+    }
 }
