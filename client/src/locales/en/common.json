@@ -191,7 +191,9 @@
       "rollout": "Runway used",
       "fuel": "OFP compliance",
       "loadsheet": "Loadsheet",
-      "alignment": "Alignment"
+      "alignment": "Alignment",
+      "runway_discipline": "Runway discipline",
+      "touchdown_point": "Touchdown point"
     },
     "info": {
       "landing_rate": "Vertical speed at the moment of touchdown, in feet per minute. Negative = descending. The target corridor of 90–250 fpm is deliberate — a professional standard, not “as soft as possible”: well below 90 fpm usually means a long float that delays braking and spoiler deployment. Beyond 600 fpm of sink a real hard-landing inspection would be due.\n\nSince v1.6.3 this is measured from the actual height trace over the final third of a second before touchdown, no longer from the simulator's vertical speed indicator, which is sluggish like a real cockpit instrument. If the simulator freezes the altitude readout, no calculation is done and the instrument value is used instead.",

@@ -191,7 +191,9 @@
       "rollout": "Bahn-Auslastung",
       "fuel": "OFP-Treue",
       "loadsheet": "Loadsheet",
-      "alignment": "Ausrichtung"
+      "alignment": "Ausrichtung",
+      "runway_discipline": "Bahndisziplin",
+      "touchdown_point": "Aufsetzpunkt"
     },
     "info": {
       "landing_rate": "Vertikalgeschwindigkeit im Moment des Aufsetzens, in Fuß pro Minute. Negativ = sinkend. Der Zielkorridor 90–250 fpm gilt als fest, positiv aufgesetzt — professioneller Standard, nicht „so weich wie möglich“: deutlich unter 90 fpm bedeutet meist ein langes Abfangen, das Bremsen und Spoiler-Ausfahren verzögert. Ab 600 fpm Sinken ist real eine Hard-Landing-Inspektion fällig.\n\nGemessen wird seit v1.6.3 aus dem tatsächlichen Höhenverlauf der letzten Drittelsekunde vor dem Aufsetzen, nicht mehr vom Sinkgeschwindigkeitsmesser des Simulators — der ist träge wie ein echtes Cockpit-Instrument. Steht die Höhe im Simulator zeitweise still, wird nicht gerechnet, sondern der Instrumentenwert genommen.",

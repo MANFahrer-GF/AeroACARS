@@ -191,7 +191,9 @@
       "rollout": "Pista utilizzata",
       "fuel": "Aderenza OFP",
       "loadsheet": "Loadsheet",
-      "alignment": "Allineamento"
+      "alignment": "Allineamento",
+      "runway_discipline": "Disciplina di pista",
+      "touchdown_point": "Punto di tocco"
     },
     "info": {
       "landing_rate": "Velocità verticale nell'istante del contatto, in piedi al minuto. Negativa = in discesa. Il corridoio obiettivo di 90–250 fpm è voluto — standard professionale, non «il più morbido possibile»: ben sotto i 90 fpm significa di solito una lunga richiamata che ritarda frenata e spoiler. Oltre 600 fpm di discesa sarebbe dovuta un'ispezione per atterraggio duro.\n\nDalla v1.6.3 la misura viene dall'andamento reale della quota nell'ultimo terzo di secondo prima del contatto, non più dal variometro del simulatore, lento come uno strumento di bordo reale. Se il simulatore blocca temporaneamente la lettura della quota, non si calcola nulla e si usa il valore dello strumento.",

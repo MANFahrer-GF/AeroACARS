@@ -112,4 +112,46 @@ describe("Skip-Gründe der Landebewertung", () => {
         "oder schlimmer: sie zeichnet weiter, als wäre nichts.",
     ).toEqual([]);
   });
+  /**
+   * Jede Achse muss ihre eigene Beschriftung haben — in allen drei Sprachen.
+   *
+   * Der Schlüssel `rollout` trägt seit v1.7.0 eine andere Bewertung als
+   * vorher: erst Bahn-Auslastung, jetzt Bahndisziplin. Er wurde bewusst
+   * beibehalten, damit alte Datensätze nicht brechen — und sagt seither
+   * nichts mehr darüber, was gemessen wurde.
+   *
+   * Jeder Datensatz trägt sein `label_key` mit. Bis Runde 23 las es
+   * niemand: Client, Webapp und Monitor bauten `landing.sub.${key}` selbst
+   * zusammen. Die Folge im Client war die verkehrte Beschriftung —
+   * **„Bahn-Auslastung" über der neuen Bewertung** —, und die
+   * Aufsetzpunkt-Achse hatte gar keinen Eintrag.
+   */
+  it("beschriftet jede Achse, die die Bewertung schreibt", () => {
+    const dateien = readdirSync(SCORING).filter((d) => d.endsWith(".rs"));
+    const schluessel = new Set<string>();
+    for (const d of dateien) {
+      const text = readFileSync(resolve(SCORING, d), "utf-8");
+      for (const m of text.matchAll(/"landing\.sub\.([a-z_]+)"/g)) {
+        schluessel.add(m[1]);
+      }
+    }
+    expect(schluessel.size, "keine Achsen gefunden — Muster geändert?").toBeGreaterThan(5);
+
+    const fehlend: string[] = [];
+    for (const spr of ["de", "en", "it"]) {
+      const roh = readFileSync(
+        resolve(__dirname, "..", "locales", spr, "common.json"),
+        "utf-8",
+      );
+      const sub = (JSON.parse(roh) as { landing?: { sub?: Record<string, string> } })
+        .landing?.sub ?? {};
+      for (const k of schluessel) {
+        if (!sub[k]) fehlend.push(`${spr}: landing.sub.${k}`);
+      }
+    }
+    expect(
+      fehlend.sort(),
+      "Diese Achsen zeigen dem Piloten den rohen Schlüssel oder ein fremdes Label.",
+    ).toEqual([]);
+  });
 });

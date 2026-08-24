@@ -355,6 +355,38 @@ export interface GateWindow {
 /// v0.7.1 SubScoreEntry — voll ausgebautes Wire-Format aus der
 /// landing-scoring Crate (Spec §5.4 P1.5-A). Spiegel des Rust-Typs.
 /// UI rendert direkt aus diesen Felder, kein Recompute.
+
+/**
+ * Die Beschriftung einer Achse — aus dem Datensatz, nicht aus dem Schlüssel.
+ *
+ * # Warum das nicht `achsenLabel(t, s)` sein darf
+ *
+ * Der Schlüssel `rollout` trägt seit v1.7.0 eine andere Bewertung als
+ * vorher: erst die Bahn-Auslastung, jetzt die Bahndisziplin. Er wurde
+ * bewusst beibehalten, damit alte Datensätze nicht brechen — und genau
+ * deshalb sagt er nichts mehr darüber, was gemessen wurde.
+ *
+ * Jeder Datensatz trägt sein eigenes `label_key` mit: alte
+ * `landing.sub.rollout`, neue `landing.sub.runway_discipline`. Bis
+ * Runde 23 hat es niemand gelesen — die Anzeige baute den Schlüssel selbst
+ * zusammen und zeigte damit über der neuen Bewertung die alte
+ * Beschriftung „Bahn-Auslastung".
+ *
+ * Der Rückfall deckt Datensätze vor v0.7.1 ab, die noch kein `label_key`
+ * haben.
+ */
+function achsenLabel(
+  t: (k: string, o?: Record<string, unknown>) => string,
+  s: { key: string; label_key?: string | null },
+): string {
+  const aus_schluessel = `landing.sub.${s.key}`;
+  const k = s.label_key && s.label_key.length > 0 ? s.label_key : aus_schluessel;
+  // Der Rückfall geht auf den Schlüssel, NICHT wieder auf diese Funktion.
+  // Beim Umstellen hat die Ersetzung sich selbst getroffen; der Testlauf
+  // meldete es als Endlosrekursion.
+  return t(k, { defaultValue: t(aus_schluessel) });
+}
+
 export interface SubScoreEntry {
   key: string;             // "landing_rate" | "g_force" | "bounces" | ...
   score: number;           // 0-100
@@ -1479,7 +1511,7 @@ function ScoreBreakdown({
             >
               <div className="landing-subscore__head">
                 <span className="landing-subscore__label">
-                  {t(`landing.sub.${s.key}`)}
+                  {achsenLabel(t, s)}
                   {/* v0.11.0-dev: kein i-Tooltip für rollout — der
                       "🛬 Wie wird das berechnet?"-Button am Boden öffnet
                       bereits das ausführliche Modal. Zwei Erklärungen
@@ -1530,7 +1562,7 @@ function ScoreBreakdown({
           >
             <div className="landing-subscore__head">
               <span className="landing-subscore__label">
-                {t(`landing.sub.${s.key}`)}
+                {achsenLabel(t, s)}
                 {/* v0.11.0-dev: kein i-Tooltip für rollout — der
                     "🛬 Wie wird das berechnet?"-Button am Boden öffnet
                     bereits das ausführliche Modal. */}
@@ -1635,7 +1667,7 @@ function CoachTip({ subs }: { subs: SubScore[] }) {
     >
       <div className="landing-coach__head">
         {t("landing.coach_title")} ·{" "}
-        <strong>{t(`landing.sub.${worst.key}`)}</strong>
+        <strong>{achsenLabel(t, worst)}</strong>
       </div>
       <p className="landing-coach__body">{t(tipKey)}</p>
     </div>
@@ -2388,7 +2420,7 @@ function LandingReport({ record }: { record: LandingRecord }) {
             <div key={s.key} className="report-bar">
               <div className="report-bar__head">
                 <span className="report-bar__label">
-                  {t(`landing.sub.${s.key}`)}
+                  {achsenLabel(t, s)}
                 </span>
                 <span className="report-bar__pts">
                   {s.skipped
@@ -2416,7 +2448,7 @@ function LandingReport({ record }: { record: LandingRecord }) {
         <ReportSection title={t("landing.report.coach")}>
           <div className="report-coach">
             <div className="report-coach__focus">
-              {t(`landing.sub.${worst.key}`)}
+              {achsenLabel(t, worst)}
             </div>
             <p className="report-coach__body">
               {t(coachTipKey(worst.rationale))}
