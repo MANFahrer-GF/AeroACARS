@@ -1978,7 +1978,6 @@
     "legend_track": "Spur — {{n}} gemessene Stützpunkte",
     "legend_exit_arc": "nach dem Räumen — gemessen, nicht mehr gewertet",
     "legend_exits": "Ausfahrten (OSM) · genutzte hervorgehoben",
-    "legend_unpaved": "unbefestigt",
     "mark_slowed": "Auf Rollgeschwindigkeit",
     "mark_track_end": "Ende der Aufzeichnung",
     "rollout_end": "AUSROLLEN ENDE",
@@ -1989,7 +1988,8 @@
     "zoom_hint": "Strg + Mausrad zoomt · Ziehen verschiebt",
     "zoom_in": "Näher",
     "zoom_out": "Weiter weg",
-    "cross_exaggeration_stretched": "quer {{f}}× überhöht · schmale Bahn {{d}}× aufgezogen"
+    "cross_exaggeration_stretched": "quer {{f}}× überhöht · schmale Bahn {{d}}× aufgezogen",
+    "legend_shoulder": "neben der Bahn — unbefestigt"
   },
   "ascan": {
     "title": "🔬 Flugzeug zur Analyse einreichen (Aircraft-Scan)",

@@ -1978,7 +1978,6 @@
     "legend_track": "Track — {{n}} measured samples",
     "legend_exit_arc": "after vacating — measured, no longer scored",
     "legend_exits": "Exits (OSM) · the one used is highlighted",
-    "legend_unpaved": "unpaved",
     "mark_slowed": "Down to taxi speed",
     "mark_track_end": "End of recording",
     "rollout_end": "ROLLOUT END",
@@ -1989,7 +1988,8 @@
     "zoom_hint": "Ctrl + wheel zooms · drag pans",
     "zoom_in": "Zoom in",
     "zoom_out": "Zoom out",
-    "cross_exaggeration_stretched": "{{f}}× vertical stretch · narrow runway scaled up {{d}}×"
+    "cross_exaggeration_stretched": "{{f}}× vertical stretch · narrow runway scaled up {{d}}×",
+    "legend_shoulder": "beside the runway — unpaved"
   },
   "ascan": {
     "title": "🔬 Submit aircraft for analysis (Aircraft Scan)",

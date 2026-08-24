@@ -419,9 +419,20 @@ function QuerLegende({ props }: { props: RunwayDiagramV2Props }) {
       }),
     });
   }
+  // Der Grünstreifen NEBEN der Bahn — nicht die Bahn selbst.
+  //
+  // Der Eintrag hiess „unbefestigt" und stand unter einer Legende, die
+  // sonst nur von der Bahn handelt. Bei EDLW 24 (Asphalt, B738) las sich
+  // das als Aussage über die Landebahn.
+  //
+  // Verkehrt war es doppelt: Er erschien bei allen fünf Varianten mit
+  // befestigter Bahn — und gerade NICHT bei Gras und Wasser, weil dort
+  // die Queransicht mitsamt Legende entfällt.
   eintraege.push({
     farbe: "#3F6B4A",
-    text: t("runway_v2.legend_unpaved", { defaultValue: "unbefestigt" }),
+    text: t("runway_v2.legend_shoulder", {
+      defaultValue: "neben der Bahn — unbefestigt",
+    }),
   });
 
   return (

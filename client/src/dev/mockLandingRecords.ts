@@ -450,7 +450,64 @@ export interface MockOption {
   build: () => LandingRecord;
 }
 
-export const MOCK_LANDING_OPTIONS: MockOption[] = [
+/**
+ * Der Grund, aus dem die Bewertung die seitliche Lage verwirft.
+ *
+ * Im Betrieb kommt er aus den `sub_scores` — die Achse hat entschieden.
+ * Die Demo hat keine Bewertung, also wird er hier aus denselben
+ * Bedingungen abgeleitet, die `sub_bahndisziplin` prüft.
+ *
+ * # Warum am Ende und nicht in `bahn()`
+ *
+ * Der Belag wird von manchen Varianten NACH dem Aufbau gesetzt
+ * (`r.runway_match.surface = "WATER"`). Eine Ableitung mitten im Aufbau
+ * sah deshalb noch „GRS" statt „WATER" und vergab `unpaved_runway` an
+ * eine Wasserlandung.
+ *
+ * Deshalb läuft sie hier, nach jedem `build()` — und zwar über den
+ * Wrapper unten, damit keine Variante sie vergessen kann.
+ *
+ * # Für Tests, die Rohwerte ändern
+ *
+ * Wer nach dem `build()` an `surface_paved` oder `track_width_m` dreht,
+ * muss sie erneut aufrufen — im Betrieb läuft die Bewertung ja auch nach
+ * den Daten. Sonst zeigt die Anzeige den Grund vom Ausgangszustand.
+ */
+export function skipGrundAbleiten(r: LandingRecord): LandingRecord {
+  // Wasser am BELAG-Code erkennen, nicht an der Bahnbreite: Ein
+  // Wasserlandeplatz hat durchaus eine. `belag_aus_angabe` prüft
+  // dasselbe Präfix.
+  // Ein Datensatz ohne v1.7.0-Daten wurde nie mit dieser Achse bewertet —
+  // für ihn gibt es keinen Grund, sondern gar keine Bewertung. Ohne diese
+  // Schranke bekam ein alter Flug „surface_unknown" verpasst, und die
+  // Anzeige nannte das statt „für diesen Flug nicht erfasst".
+  const traegtBahndaten =
+    r.runway_width_m != null ||
+    r.track_width_m != null ||
+    r.clearance_point_m != null ||
+    (r.lateral_samples?.length ?? 0) > 0;
+  if (!traegtBahndaten) {
+    r.lateral_skip_reason = null;
+    return r;
+  }
+
+  const belag = (r.runway_match?.surface ?? "").toUpperCase();
+  const istWasser = belag.startsWith("WAT");
+  // Reihenfolge wie in der Achse: Belag vor Spurweite.
+  r.lateral_skip_reason =
+    r.surface_paved === false
+      ? istWasser
+        ? "water_runway"
+        : "unpaved_runway"
+      : r.surface_paved == null
+        ? "surface_unknown"
+        : r.track_width_m == null
+          ? "track_width_unknown"
+          : null;
+  return r;
+}
+
+const ROH_OPTIONEN: MockOption[] = [
   {
     key: "ms713",
     label: "MS713 (OLBA 17, 6.6 m left, aim short −80 m)",
@@ -725,6 +782,17 @@ export const MOCK_LANDING_OPTIONS: MockOption[] = [
     },
   },
 ];
+
+/**
+ * Die Varianten, wie die Demo sie benutzt.
+ *
+ * Jedes `build()` läuft durch `skipGrundAbleiten` — ein Wrapper statt
+ * vierzehn Aufrufen, damit keine Variante ihn vergessen kann.
+ */
+export const MOCK_LANDING_OPTIONS: MockOption[] = ROH_OPTIONEN.map((o) => ({
+  ...o,
+  build: () => skipGrundAbleiten(o.build()),
+}));
 
 // ─── Bahn-Vorlagen für die Disziplin-Varianten ────────────────────────
 

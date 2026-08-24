@@ -1971,7 +1971,6 @@
     "legend_track": "Traccia — {{n}} punti misurati",
     "legend_exit_arc": "dopo aver liberato — misurato, non più valutato",
     "legend_exits": "Uscite (OSM) · evidenziata quella usata",
-    "legend_unpaved": "non pavimentata",
     "mark_slowed": "A velocità di rullaggio",
     "mark_track_end": "Fine della registrazione",
     "rollout_end": "FINE RULLAGGIO",
@@ -1982,7 +1981,8 @@
     "zoom_hint": "Ctrl + rotella ingrandisce · trascina per spostare",
     "zoom_in": "Ingrandisci",
     "zoom_out": "Riduci",
-    "cross_exaggeration_stretched": "{{f}}× esagerazione laterale · pista stretta ingrandita {{d}}×"
+    "cross_exaggeration_stretched": "{{f}}× esagerazione laterale · pista stretta ingrandita {{d}}×",
+    "legend_shoulder": "a lato della pista — non asfaltato"
   },
   "ascan": {
     "title": "🔬 Invia aereo per l'analisi (Aircraft Scan)",

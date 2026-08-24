@@ -23,7 +23,7 @@
 
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MOCK_LANDING_OPTIONS } from "../dev/mockLandingRecords";
+import { MOCK_LANDING_OPTIONS, skipGrundAbleiten } from "../dev/mockLandingRecords";
 import { mapLandingRecordToV2Props } from "../dev/runwayDiagramV2Mapper";
 import { RunwayDiagramV2, type RunwayDiagramV2Props } from "./RunwayDiagramV2";
 
@@ -473,6 +473,11 @@ describe("QS — Vollständigkeit", () => {
     ] as const) {
       (alt as Record<string, unknown>)[feld] = undefined;
     }
+    // Nach dem Aendern der Rohwerte neu ableiten — im Betrieb laeuft die
+    // Bewertung ja auch nach den Daten. Ohne das traegt der Datensatz den
+    // Grund vom Ausgangszustand.
+    (alt as Record<string, unknown>).lateral_skip_reason = undefined;
+    skipGrundAbleiten(alt);
     const props = mapLandingRecordToV2Props(alt);
     const markup = renderToStaticMarkup(<RunwayDiagramV2 {...props!} />);
     expect(markup).toContain("vor v1.7.0");
@@ -755,5 +760,57 @@ describe("QS — Vollständigkeit", () => {
       "Diese Varianten zeigen eine Geschwindigkeit an einem Punkt, an dem " +
         "sie nicht gemessen wurde.",
     ).toEqual([]);
+  });
+  /**
+   * Die Legende beschriftet den Grünstreifen, nicht die Bahn.
+   *
+   * Der Eintrag hiess „unbefestigt" und stand unter einer Legende, die
+   * sonst nur von der Bahn handelt. Bei EDLW 24 (Asphalt) las sich das als
+   * Aussage über die Landebahn.
+   *
+   * Verkehrt war es doppelt: Er erschien bei allen fünf Varianten mit
+   * BEFESTIGTER Bahn — und gerade nicht bei Gras und Wasser, weil dort die
+   * Queransicht mitsamt Legende entfällt.
+   */
+  it("nennt eine Asphaltbahn nicht unbefestigt", () => {
+    const falsch: string[] = [];
+    for (const o of MOCK_LANDING_OPTIONS) {
+      const p = mapLandingRecordToV2Props(o.build());
+      if (!p || p.surface_paved !== true) continue;
+      const text = renderToStaticMarkup(<RunwayDiagramV2 {...p} />).replace(
+        /<[^>]+>/g,
+        " ",
+      );
+      // Das Wort darf vorkommen — aber nur mit dem Bezug „neben der Bahn".
+      const roh = / unbefestigt/.test(text);
+      const mitBezug = /neben der Bahn\s*—\s*unbefestigt/.test(text);
+      if (roh && !mitBezug) {
+        falsch.push(`${o.key} (Belag ${p.surface ?? "?"})`);
+      }
+    }
+    expect(
+      falsch,
+      "Diese Varianten haben eine befestigte Bahn und beschriften sie als " +
+        "unbefestigt.",
+    ).toEqual([]);
+  });
+
+  /**
+   * Die Skip-Varianten tragen den Grund, den sie zeigen sollen.
+   *
+   * Er kam in ALLEN vierzehn Varianten als `null` an — auch in den dreien,
+   * die genau diese Fälle darstellen. Die Anzeige fiel dort auf ihre
+   * eigene Herleitung zurück, und der Weg, den der Betrieb nimmt (Grund
+   * aus den `sub_scores`), wurde von der Demo nie gezeigt.
+   */
+  it.each([
+    ["d_gras", "unpaved_runway"],
+    ["d_wasser", "water_runway"],
+    ["d_ohne_spurweite", "track_width_unknown"],
+  ])("%s trägt den Grund %s", (key, grund) => {
+    const o = MOCK_LANDING_OPTIONS.find((x) => x.key === key);
+    expect(o, `Variante ${key} fehlt`).toBeDefined();
+    const p = mapLandingRecordToV2Props(o!.build());
+    expect(p?.lateral_skip_reason).toBe(grund);
   });
 });
