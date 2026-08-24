@@ -2368,7 +2368,12 @@ export function LandingReport({ record }: { record: LandingRecord }) {
     record.runway_match && (record.runway_geometry_trusted ?? true)
       ? mapLandingRecordToV2Props(record)
       : null;
-  const hasCharts = hasApproach || hasCloseup || v2Props != null;
+  // Die Bahn-Grafik zählt hier NICHT mehr mit: Sie hat seit dem
+  // Querformat-Umbau eine eigene Seite und steht nicht mehr in diesem
+  // Abschnitt. Blieb sie in der Bedingung, rendert „Profile & Verläufe"
+  // als leere Überschrift mit grauem Kasten darunter — im gedruckten PDF
+  // gesehen, nicht vermutet.
+  const hasCharts = hasApproach || hasCloseup;
 
   // Score-Label: bei Confirmed Accident → "ABSTURZ ERKANNT".
   // QS 2026-08-04: liest bewusst ueber `recordCategory`/`rateCategoryWord`
@@ -2896,23 +2901,50 @@ export function LandingReport({ record }: { record: LandingRecord }) {
                   <VsCurveChart profile={record.touchdown_profile} />
                 </ReportChartCard>
               )}
-              {v2Props && (
-                <ReportChartCard
-                  caption={t("landing.report.runway_diagram")}
-                >
-                  <RunwayDiagramV2
-                    {...v2Props}
-                    schriftMindest={BERICHT_SCHRIFT_MINDEST}
-                  />
-                </ReportChartCard>
-              )}
             </div>
           </ReportSection>
         </div>
       )}
 
-      {/* v0.12.8-dev: EINE Fußzeile am Dokumentende. */}
+      {/* EINE Fußzeile — am Ende des Fließtextes, VOR dem Anhang.
+
+          Hinter der Querformat-Grafik bekam sie eine eigene, sonst leere
+          Seite: vierzig Zeichen auf einem Blatt. Was nach einem benannten
+          `@page` kommt, braucht wieder eine eigene Seite. Die Grafik ist
+          jetzt ein abgesetzter Anhang, die Fußzeile schliesst den
+          Fließtext ab. */}
       <ReportFooter />
+
+      {/* Die Bahn-Grafik bekommt eine eigene QUERFORMAT-Seite.
+
+          Gemessen im gedruckten PDF (`scripts/bericht-messen.py`): In der
+          hochkant gesetzten Textspalte landeten ihre Beschriftungen bei
+          **4,3 pt** — als einzige Stelle im ganzen Bericht unter der
+          Lesbarkeitsschwelle; alles andere lag bei 7,1 pt und darüber.
+
+          Der Grund ist Geometrie, kein Fehler: Das SVG skaliert auf die
+          Spaltenbreite, und die Schrift darin skaliert mit. Hochkant sind
+          das 170 mm, quer 273 mm — Faktor 1,6.
+
+          Die Schrift anzuheben hat nicht gereicht: Für 6,8 pt bräuchte es
+          17 SVG-Einheiten, und dabei zerfällt das Layout an 31 Stellen
+          (siehe `BERICHT_SCHRIFT_MINDEST`). Die Seite zu drehen ändert die
+          Geometrie statt das Layout. */}
+      {v2Props && (
+        // Nur die Karte, kein zusaetzlicher Abschnitt: Beide trugen
+        // denselben Titel, und der Abschnittstitel landete allein auf
+        // einer sonst leeren Seite, weil der Inhalt darunter nicht mehr
+        // draufpasste. Gemessen im gedruckten PDF, nicht vermutet.
+        <div className="report-bahn-quer">
+          <ReportChartCard caption={t("landing.report.runway_diagram")}>
+            <RunwayDiagramV2
+              {...v2Props}
+              schriftMindest={BERICHT_SCHRIFT_MINDEST}
+            />
+          </ReportChartCard>
+        </div>
+      )}
+
     </div>
   );
 }

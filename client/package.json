@@ -3,9 +3,11 @@
   "private": true,
   "version": "1.7.0",
   "type": "module",
-  "description": "AeroACARS desktop client \u2014 Tauri 2 + React + TypeScript",
+  "description": "AeroACARS desktop client — Tauri 2 + React + TypeScript",
   "scripts": {
     "dev": "vite",
+    "bericht": "node ../scripts/bericht-bauen.mjs",
+    "bericht:pdf": "node ../scripts/bericht-bauen.mjs && node ../scripts/bericht-drucken.mjs && python3 ../scripts/bericht-messen.py",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "tauri": "tauri",

@@ -163,3 +163,6 @@ graphify-out/
 # Bündel der Bahndisziplin-Demo — wird mit `node scripts/demo-bauen.mjs`
 # erzeugt und ist nichts, was versioniert gehört.
 client/demo-dist/
+
+# Druckvorschau des Landungs-Berichts (wird bei Bedarf gebaut)
+client/bericht-dist/

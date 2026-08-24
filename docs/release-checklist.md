@@ -78,6 +78,36 @@ Klingt trivial, hätte aber den Svenny-Bug gefangen. Vor JEDEM Release:
 
 Alternative falls Mock-Injection zu aufwändig: Manuell auf zweitem PC mit alter Version installieren, neuen Tag rauspushen, abwarten bis Updater anbietet, Modal aufmachen und durchklicken.
 
+## 4b. PDF-Bericht messen (wenn die Bahn-Anzeige oder der Bericht angefasst wurde)
+
+```bash
+cd client && npm run bericht:pdf
+```
+
+Baut die Druckvorschau, druckt sie kopflos mit Chrome und misst die
+Schriftgrössen im fertigen PDF. Grün heisst: **keine Textstelle unter
+6 pt**.
+
+Warum das eine eigene Stufe ist: Wie gross eine Schrift auf dem Papier
+wird, ergibt sich erst beim Drucken — aus Seitenrand, Spaltenbreite und
+dem viewBox der Grafik. Am 24.08.2026 lagen die Beschriftungen der
+Bahn-Grafik bei **4,3 pt**, als einzige Stelle im ganzen Bericht unter
+der Schwelle. Kein Test war rot, kein Bau schlug fehl; es fällt nur auf,
+wenn jemand den Ausdruck in die Hand nimmt. Behoben durch eine
+Querformat-Seite für die Grafik (170 mm → 273 mm), gemessen 6,7 pt.
+
+Nebenbefunde derselben Messung, alle vorher unsichtbar:
+
+- Der Abschnitt „Profile & Verläufe" rendert als leere Überschrift, wenn
+  er keine Diagramme hat.
+- Die Fußzeile bekam hinter der Querformat-Seite ein eigenes, sonst
+  leeres Blatt (vierzig Zeichen).
+- Ein Abschnittstitel landete allein auf einer Seite, weil der Inhalt
+  darunter nicht mehr draufpasste.
+
+Die Messung schaut sich auch als Bild an, nicht nur als Zahl:
+`python3 -c "import fitz; fitz.open('client/bericht-dist/bericht.pdf')[3].get_pixmap(dpi=110).save('/tmp/s4.png')"`
+
 ## 5. Wire-Compat (wenn Score-/Payload-/DB-Änderungen drin sind)
 
 - [ ] `aeroacars-live` Branch existiert mit Mirror-Implementation

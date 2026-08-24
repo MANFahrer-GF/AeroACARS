@@ -7953,6 +7953,42 @@ input:disabled {
   .bahn-nur-bildschirm {
     display: none !important;
   }
+
+  /* Die Bahn-Grafik auf einer Querformat-Seite.
+
+     Gemessen im gedruckten PDF: In der hochkanten Textspalte landeten die
+     Beschriftungen der Grafik bei 4,3 pt — als einzige Stelle im ganzen
+     Bericht unter der Lesbarkeitsschwelle. Das SVG skaliert auf die
+     Spaltenbreite, die Schrift skaliert mit; hochkant sind das 170 mm,
+     quer 273 mm.
+
+     Ein benannter `@page` gilt fuer die Seiten, auf denen das Element
+     liegt. Kann der Browser das nicht, bleibt die Seite hochkant — dann
+     ist der Ausdruck wie vorher, nicht kaputt. */
+  @page bahn {
+    size: A4 landscape;
+    margin: 12mm;
+  }
+  .report-bahn-quer {
+    page: bahn;
+    break-before: page;
+    page-break-before: always;
+  }
+  /* KEIN `break-inside: avoid` auf dem Behaelter: Laengsansicht,
+     Queransicht, Ereignisliste und Kennzahlen passen zusammen nicht auf
+     eine Querformat-Seite. Ein `avoid` schiebt dann alles weiter und
+     hinterlaesst eine leere Seite, statt sauber umzubrechen.
+
+     Die einzelnen Grafiken sollen dagegen sehr wohl zusammenbleiben —
+     eine in der Mitte durchgeschnittene Bahn ist unbrauchbar. */
+  .report-bahn-quer svg {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .report-bahn-quer .report-chart-card {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
   .landing-report-print {
     display: block !important;
   }
