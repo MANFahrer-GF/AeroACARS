@@ -125,7 +125,20 @@ def spur(pid, icao, ident):
                 pos.append((e.get("timestamp",""), s))
                 if titel is None and s.get("aircraft_title"): titel=s["aircraft_title"]
         elif t=="touchdown_detected":
-            td_ts=e.get("timestamp") or ""; kurs_td=(e.get("payload") or e).get("heading_true_deg")
+            td_ts=e.get("timestamp") or ""
+        elif t=="touchdown_complete":
+            # Der Landekurs steht HIER, nicht in `touchdown_detected`.
+            #
+            # Bis zur QS-Runde 30 las dieses Werkzeug ihn aus
+            # `touchdown_detected` — dort gibt es kein `heading_true_deg`,
+            # `kurs_td` blieb also immer None, und der Kurswechsel-Zweig
+            # konnte nie greifen. Alle neun Demo-Spuren kamen aus dem
+            # geometrischen Rueckfall: ohne `kurs_diff`, ohne gemessene
+            # Geschwindigkeit.
+            #
+            # Ein stiller Rueckfall, der jahrelang plausibel aussah — die
+            # Zahlen waren ja da.
+            kurs_td=(e.get("payload") or {}).get("heading_true_deg")
     pos.sort()
     if td_ts is None: return None
 

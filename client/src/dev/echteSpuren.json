@@ -10,9 +10,10 @@
   "dds_ft": 512,
   "raeum": {
    "m": 1831.6,
-   "kt": null,
-   "kante_m": 1889.4,
-   "seite": "left"
+   "kt": 25.4,
+   "kurs_diff": -14.9,
+   "seite": "left",
+   "kante_m": 1889.4
   },
   "punkte": [
    {
@@ -227,10 +228,11 @@
   "belag": "ASP",
   "dds_ft": 512,
   "raeum": {
-   "m": 1848.3,
-   "kt": null,
-   "kante_m": 1901.0,
-   "seite": "left"
+   "m": 1264.7,
+   "kt": 57.9,
+   "kurs_diff": -11.0,
+   "seite": "left",
+   "kante_m": 1901.0
   },
   "punkte": [
    {
@@ -422,9 +424,10 @@
   "dds_ft": 512,
   "raeum": {
    "m": 1846.1,
-   "kt": null,
-   "kante_m": 1911.0,
-   "seite": "left"
+   "kt": 31.2,
+   "kurs_diff": -14.1,
+   "seite": "left",
+   "kante_m": 1911.0
   },
   "punkte": [
    {
@@ -691,10 +694,11 @@
   "belag": "ASP",
   "dds_ft": 512,
   "raeum": {
-   "m": 1680.7,
-   "kt": null,
-   "kante_m": 1893.3,
-   "seite": "left"
+   "m": 1868.5,
+   "kt": 19.3,
+   "kurs_diff": -23.3,
+   "seite": "left",
+   "kante_m": 1893.3
   },
   "punkte": [
    {
@@ -921,10 +925,11 @@
   "belag": "ASP",
   "dds_ft": 213,
   "raeum": {
-   "m": 1397.8,
-   "kt": null,
-   "kante_m": 1460.2,
-   "seite": "right"
+   "m": 1460.2,
+   "kt": 11.5,
+   "kurs_diff": 22.3,
+   "seite": "right",
+   "kante_m": 1460.2
   },
   "punkte": [
    {
@@ -1031,9 +1036,9 @@
   "belag": "concrete",
   "dds_ft": 0,
   "raeum": {
-   "m": 2074.1,
-   "kt": null,
-   "kante_m": 2201.5,
+   "m": 2231.1,
+   "kt": 39.0,
+   "kurs_diff": -10.0,
    "seite": "left"
   },
   "punkte": [
@@ -1310,9 +1315,10 @@
   "dds_ft": 984,
   "raeum": {
    "m": 1644.5,
-   "kt": null,
-   "kante_m": 1684.9,
-   "seite": "right"
+   "kt": 17.7,
+   "kurs_diff": 21.5,
+   "seite": "right",
+   "kante_m": 1684.9
   },
   "punkte": [
    {
@@ -1487,10 +1493,11 @@
   "belag": "ASP",
   "dds_ft": 978,
   "raeum": {
-   "m": 2018.3,
-   "kt": null,
-   "kante_m": 2295.7,
-   "seite": "right"
+   "m": 2240.3,
+   "kt": 19.8,
+   "kurs_diff": 18.0,
+   "seite": "right",
+   "kante_m": 2295.7
   },
   "punkte": [
    {
@@ -1741,10 +1748,11 @@
   "belag": "ASP",
   "dds_ft": 0,
   "raeum": {
-   "m": 2575.7,
-   "kt": null,
-   "kante_m": 2672.9,
-   "seite": "left"
+   "m": 2609.6,
+   "kt": 22.2,
+   "kurs_diff": -14.1,
+   "seite": "left",
+   "kante_m": 2672.9
   },
   "punkte": [
    {

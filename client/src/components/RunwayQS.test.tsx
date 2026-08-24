@@ -722,4 +722,38 @@ describe("QS — Vollständigkeit", () => {
     // hat mit der seitlichen Lage im Rollweg nichts zu tun.
     expect(text, "der Aufsetz-Eintrag ist verschwunden").toContain("Aufsetzen");
   });
+  /**
+   * Die Fahrt gehört zu der Stelle, an der sie gemessen wurde.
+   *
+   * `raeum.kt` ist die Geschwindigkeit beim KURSWECHSEL. Liegt der
+   * Kantenübertritt woanders, gehört sie nicht an `clearance_point_m`.
+   *
+   * Genau dieser Fehler war im Client bereits behoben und stand in der
+   * Demo noch. Aus den echten Daten: Räumpunkt 1264,7 m bei 57,9 kt,
+   * Kante bei 1901,0 m — dort ist das Flugzeug längst langsamer.
+   */
+  it("hängt die Fahrt nicht an einen anderen Punkt", () => {
+    const verdaechtig: string[] = [];
+    for (const o of MOCK_LANDING_OPTIONS) {
+      const p = mapLandingRecordToV2Props(o.build());
+      if (!p) continue;
+      const gs = p.clearance_speed_kt;
+      const punkt = p.clearance_point_m;
+      const cut = p.scoring_cutoff_m;
+      if (gs == null || punkt == null) continue;
+      // Es gibt genau eine Stelle, an der gemessen wurde: der
+      // Ausschwenkpunkt. Fällt der Räumpunkt nicht mit ihm zusammen,
+      // darf keine Fahrt dastehen.
+      if (cut != null && Math.abs(punkt - cut) >= 25) {
+        verdaechtig.push(
+          `${o.key}: ${gs} kt an ${punkt.toFixed(0)} m, gemessen bei ${cut.toFixed(0)} m`,
+        );
+      }
+    }
+    expect(
+      verdaechtig,
+      "Diese Varianten zeigen eine Geschwindigkeit an einem Punkt, an dem " +
+        "sie nicht gemessen wurde.",
+    ).toEqual([]);
+  });
 });

@@ -362,7 +362,27 @@ function bahn(
   r.scoring_cutoff_m = cutoffM;
   r.clearance_side =
     (quelle?.raeum?.seite ?? (kante ? (kante.quer_m > 0 ? "right" : "left") : null)) ?? null;
-  r.clearance_speed_kt = kanteM != null ? (quelle?.raeum?.kt ?? o.raeumKt ?? null) : null;
+  // Die Fahrt gehört zu der Stelle, an der sie gemessen wurde.
+  //
+  // `raeum.kt` ist die Geschwindigkeit beim KURSWECHSEL (`raeum.m`), nicht
+  // an der Kante. Liegen beide auseinander, gehört sie nicht an
+  // `clearance_point_m` — die Spur trägt für die neue Stelle keine
+  // Geschwindigkeit.
+  //
+  // Genau derselbe Fehler war im Client schon behoben (`bahn_felder`,
+  // 25-m-Toleranz) und stand hier noch. Ein Beispiel aus den echten
+  // Daten: Räumpunkt 1264,7 m bei 57,9 kt, Kante bei 1901,0 m — dort ist
+  // das Flugzeug längst langsamer.
+  const KANTE_TOLERANZ_M = 25;
+  const raeumM = quelle?.raeum?.m ?? null;
+  const gemesseneFahrt = quelle?.raeum?.kt ?? o.raeumKt ?? null;
+  r.clearance_speed_kt =
+    kanteM != null &&
+    gemesseneFahrt != null &&
+    raeumM != null &&
+    Math.abs(kanteM - raeumM) < KANTE_TOLERANZ_M
+      ? gemesseneFahrt
+      : null;
 
   // ── Aufsetzzone und Zielpunkt nach denselben Regeln wie der Client ──
   //
