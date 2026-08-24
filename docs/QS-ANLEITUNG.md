@@ -320,3 +320,30 @@ Quelle`), mit einer gepflegten Liste solcher Felder.
 Publish-Stelle im Rust-Code hatte ein Fenster von 400 Zeichen — die
 Begründung dazwischen ist länger. Der Test schlug an, obwohl der Code
 richtig war. *Falscher Alarm ist so schädlich wie keiner.*
+
+---
+
+## 11. Nachtrag aus Runde 26: der Weg, den der Betrieb nimmt
+
+**Ein Test, der einen anderen Weg nimmt als der Betrieb, prüft den
+Betrieb nicht.**
+
+Beim Herausziehen von `bahndisziplin_tick` aus `rollout_tick` landete der
+Aufruf nur im Sampler-Pfad — und der kehrt bei `FlightPhase::Landing`
+ausdrücklich zurück. Bei **jeder normalen Landung** wurde damit gar keine
+Spur mehr aufgezeichnet, schlimmer als der Zustand davor.
+
+Die Gegenprobe dazu lief über `TaxiIn` und war grün.
+
+> **Winkel 14: der Hauptweg.** Wenn eine Funktion aus mehreren Pfaden
+> gerufen wird, muss der Test den nehmen, den der Betrieb nimmt — nicht
+> den, der sich am leichtesten aufbauen lässt. Im Zweifel den echten
+> Einstieg fahren (`step_flight_at`, `handle`, `actions.*`), auch wenn
+> dafür eine Fixture nötig ist.
+
+Der Test, der über den echten Einstieg lief, fand sofort einen zweiten
+Fehler: Der Tick, in dem das Messfenster schliesst, verwarf seine eigene
+Position — `return` stand vor `spur_fortschreiben`.
+
+**Das ist das Muster dieser ganzen QS:** Fast jeder Test, der eine Ebene
+näher an den Betrieb rückte, fand etwas Neues.
