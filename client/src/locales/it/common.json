@@ -1974,6 +1974,7 @@
     "mark_slowed": "A velocità di rullaggio",
     "mark_track_end": "Fine della registrazione",
     "rollout_end": "FINE RULLAGGIO",
+    "rollout_end_beyond": "oltre fine pista",
     "cross_aircraft": "{{typ}} · carreggiata {{m}} m",
     "cross_aircraft_unknown": "carreggiata sconosciuta",
     "exits_none": "Nessuna via di rullaggio registrata per questo aeroporto",

@@ -813,4 +813,61 @@ describe("QS — Vollständigkeit", () => {
     const p = mapLandingRecordToV2Props(o!.build());
     expect(p?.lateral_skip_reason).toBe(grund);
   });
+
+  /**
+   * Jede Zahl an der Längsachse nennt eine STELLE ab der Schwelle.
+   *
+   * Das Lineal tut es, „TD 780 m" tut es, „BAHN GERÄUMT · 700 m" tut es —
+   * und die Ausroll-Endmarke tat es nicht. Sie trug `rollout_m`, die
+   * gefahrene Strecke ab dem Aufsetzpunkt. Beim Überrollfall stand sie
+   * damit am Bahnende einer 1700-m-Bahn und war mit „1100 m" beschriftet,
+   * während das Lineal an derselben Stelle 1500 m zeigte.
+   *
+   * Die Zahl war für sich richtig und im Zusammenhang falsch — die
+   * Fehlerklasse, die kein Typ und kein Bau bemerkt.
+   */
+  it("beschriftet die Ausroll-Endmarke mit ihrer Stelle, nicht mit der Strecke", () => {
+    const falsch: string[] = [];
+    for (const v of VARIANTEN) {
+      const laengs = v.svgs[0];
+      if (!laengs) continue;
+      const marke = texte(laengs).find((t) => /AUSROLLEN ENDE|ROLLOUT END/.test(t));
+      if (!marke) continue; // Marke entfällt, sobald ein Räumpunkt bekannt ist.
+
+      const zahl = /·\s*(-?[\d.]+)\s*m/.exec(marke);
+      const td = v.props.td_distance_from_threshold_m;
+      const roll = v.props.rollout_m;
+      if (roll == null) continue;
+      const ungeklemmt = td + roll;
+      const stelle = Math.min(v.props.length_m, ungeklemmt);
+
+      if (ungeklemmt > v.props.length_m) {
+        // Hinter dem Bahnende gibt es keine Stelle AUF der Bahn.
+        if (zahl) {
+          falsch.push(
+            `${v.key}: nennt „${zahl[1]} m", obwohl die Aufzeichnung ` +
+              `${ungeklemmt.toFixed(0)} m erreicht — hinter dem Bahnende ` +
+              `(${v.props.length_m} m)`,
+          );
+        }
+        continue;
+      }
+      if (!zahl) {
+        falsch.push(`${v.key}: Marke ohne Stellenangabe`);
+        continue;
+      }
+      const genannt = Number(zahl[1]);
+      if (Math.abs(genannt - stelle) > 1) {
+        falsch.push(
+          `${v.key}: nennt ${genannt} m, steht aber bei ${stelle.toFixed(0)} m ` +
+            `(Aufsetzpunkt ${td} + Ausrollen ${roll})`,
+        );
+      }
+    }
+    expect(
+      falsch,
+      "Eine Stelle und eine Strecke sehen als Zahl gleich aus. Auf einer " +
+        "Achse voller Stellen liest sich eine Strecke als Stelle.",
+    ).toEqual([]);
+  });
 });

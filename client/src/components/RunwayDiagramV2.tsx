@@ -290,6 +290,15 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
    * Ausrollstrecke.
    */
   const rolloutEndeX = raeumX ?? exitX;
+  // Die UNGEKLEMMTE Endstelle. `exitDistM` ist fuer die Geometrie an der
+  // Bahnlaenge gekappt; fuer die Beschriftung ist genau der Unterschied
+  // die Aussage: Endet die Aufzeichnung hinter dem Bahnende, gibt es
+  // keine Stelle AUF der Bahn, die man nennen koennte.
+  const ausrollEndeM =
+    props.rollout_m != null
+      ? props.td_distance_from_threshold_m + props.rollout_m
+      : null;
+  const ausrollEndeUeberBahn = ausrollEndeM != null && ausrollEndeM > lengthM;
   // Die Ausfahrt, über die geräumt wurde — für die Beschriftung. Nur wenn
   // die Seite feststeht: Ohne Seite gibt es keine eindeutige Zuordnung,
   // und einen Namen zu raten wäre schlimmer als keiner (§8.6).
@@ -910,7 +919,25 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 fontFamily="monospace"
               >
                 {t("runway_v2.rollout_end", { defaultValue: "AUSROLLEN ENDE" })}
-                {props.rollout_m != null ? ` · ${props.rollout_m.toFixed(0)} m` : ""}
+                {/* Die STELLE, nicht die gefahrene Strecke.
+
+                    Vorher stand hier `rollout_m` — die Strecke ab dem
+                    Aufsetzpunkt. Auf einer Achse, deren Lineal und deren
+                    andere Marken („TD 780 m", „BAHN GERAEUMT · 700 m")
+                    durchweg Stellen ab der Schwelle nennen, liest sich
+                    diese eine Zahl zwangslaeufig auch als Stelle. Bei
+                    einem Aufsetzpunkt von 780 m und 1100 m Ausrollen
+                    stand die Marke am Bahnende und war mit „1100 m"
+                    beschriftet, waehrend das Lineal darunter 1500 m
+                    zeigte. Die gefahrene Strecke steht weiter in der
+                    Kennzahlen-Zeile, wo sie hingehoert. */}
+                {ausrollEndeUeberBahn
+                  ? ` · ${t("runway_v2.rollout_end_beyond", {
+                      defaultValue: "hinter dem Bahnende",
+                    })}`
+                  : exitDistM != null
+                    ? ` · ${exitDistM.toFixed(0)} m`
+                    : ""}
               </text>
             </g>
           )}

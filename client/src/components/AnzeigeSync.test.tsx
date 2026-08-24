@@ -20,7 +20,12 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-expect-error — reines JS-Werkzeug ohne Typen, bewusst.
-import { vergleiche, DATEIEN, AUSNAHMEN } from "../../../scripts/anzeige-sync.mjs";
+import {
+  vergleiche,
+  fehlendeSchluessel,
+  DATEIEN,
+  AUSNAHMEN,
+} from "../../../scripts/anzeige-sync.mjs";
 
 const WEBAPP = resolve(
   __dirname,
@@ -50,6 +55,35 @@ describe("Anzeige Client ↔ Webapp", () => {
     expect(
       drift.map((d) => `${d.rel}: ${d.grund}`),
       "Die Anzeige ist auseinandergelaufen. Abgleich:\n" +
+        "  node scripts/anzeige-sync.mjs --schreiben",
+    ).toEqual([]);
+  });
+
+  /**
+   * Gleiche Datei ist nicht gleiche Anzeige.
+   *
+   * Am 24.08.2026 waren alle sieben Dateien byteweise identisch — und in
+   * der Webapp fehlten **46 von 108** Beschriftungen des
+   * `runway_v2`-Blocks. `t()` fällt bei einem fehlenden Schlüssel
+   * stillschweigend auf seinen `defaultValue` zurück, und der ist im
+   * Quelltext deutsch. Ein englischsprachiger Pilot las in der
+   * Landeanalyse „AUSROLLEN ENDE" neben „ROLLOUT".
+   *
+   * Der Datei-Abgleich darüber konnte das nicht sehen: Sprachdateien
+   * stehen nicht in seiner Liste und dürfen es nicht — beide Repos führen
+   * eigene Texte ausserhalb der Grafik. Geprüft wird die Schnittmenge,
+   * die die Grafik wirklich anfasst.
+   */
+  it("hat beidseitig jede Beschriftung, die die Grafik benutzt", () => {
+    const luecken = fehlendeSchluessel() as Array<{
+      seite: string;
+      sprache: string;
+      schluessel: string;
+    }>;
+    expect(
+      luecken.map((l) => `${l.seite}/${l.sprache}: ${l.schluessel}`),
+      "Ein fehlender Schlüssel wird nicht gemeldet — die Zeile erscheint " +
+        "still in der Vorgabesprache (Deutsch). Abgleich:\n" +
         "  node scripts/anzeige-sync.mjs --schreiben",
     ).toEqual([]);
   });

@@ -1981,6 +1981,7 @@
     "mark_slowed": "Down to taxi speed",
     "mark_track_end": "End of recording",
     "rollout_end": "ROLLOUT END",
+    "rollout_end_beyond": "beyond runway end",
     "cross_aircraft": "{{typ}} · track width {{m}} m",
     "cross_aircraft_unknown": "track width unknown",
     "exits_none": "No taxiways on record for this airport",

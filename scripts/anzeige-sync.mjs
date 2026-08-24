@@ -84,7 +84,124 @@ export const AUSNAHMEN = {
     "Sprachdateien liegen",
 };
 
+/** Die drei Sprachen, die beide Seiten führen. */
+export const SPRACHEN = ["de", "en", "it"];
+
 const summe = (t) => createHash("sha256").update(t).digest("hex").slice(0, 16);
+
+/**
+ * Die i18n-Schlüssel, die die synchronisierten Bauteile benutzen.
+ *
+ * Gleiche Datei heisst nicht gleiche Anzeige. Am 24.08.2026 waren die
+ * sieben Dateien oben byteweise identisch — und in der Webapp fehlten
+ * **46 von 108** Schlüsseln des `runway_v2`-Blocks. `t()` fällt bei einem
+ * fehlenden Schlüssel stillschweigend auf seinen `defaultValue` zurück,
+ * und der ist im Quelltext deutsch. Ein englischsprachiger Pilot sah in
+ * der Landeanalyse die halbe Grafik auf Deutsch: „AUSROLLEN ENDE" neben
+ * „ROLLOUT". Kein Fehler, kein roter Test, keine Meldung.
+ *
+ * Der Bauteil-Abgleich konnte das nicht sehen — er vergleicht Dateien,
+ * und die Sprachdateien stehen nicht in seiner Liste. Sie DÜRFEN auch
+ * nicht drin stehen: Beide Repos haben eigene Beschriftungen ausserhalb
+ * der Grafik. Geprüft wird deshalb die Schnittmenge, die die Grafik
+ * wirklich anfasst.
+ */
+function schluesselAusQuelltext(text) {
+  const raus = new Set();
+  // t("a.b") und t("a.b", { … }) — beide Anführungsformen.
+  for (const m of text.matchAll(/\bt\(\s*["'`]([\w.]+)["'`]/g)) raus.add(m[1]);
+  return raus;
+}
+
+function sprachdatei(wurzel, sprache) {
+  const p = resolve(wurzel, "locales", sprache, "common.json");
+  return existsSync(p) ? JSON.parse(readFileSync(p, "utf-8")) : null;
+}
+
+function hatSchluessel(baum, punktpfad) {
+  let k = baum;
+  for (const teil of punktpfad.split(".")) {
+    if (k == null || typeof k !== "object" || !(teil in k)) return false;
+    k = k[teil];
+  }
+  return typeof k === "string";
+}
+
+/** Welche Schlüssel die Grafik braucht — aus dem kanonischen Quelltext. */
+export function benoetigteSchluessel() {
+  const alle = new Set();
+  for (const rel of DATEIEN) {
+    const p = resolve(CLIENT, rel);
+    if (!existsSync(p)) continue;
+    for (const k of schluesselAusQuelltext(readFileSync(p, "utf-8"))) alle.add(k);
+  }
+  return [...alle].sort();
+}
+
+/**
+ * Fehlt eine Beschriftung — auf welcher Seite auch immer?
+ *
+ * Auch der Client wird geprüft. Ein `defaultValue` im Quelltext ist eine
+ * deutsche Notlösung, kein Ersatz für einen Eintrag: Solange er trägt,
+ * ist die Zeile in EN und IT still deutsch.
+ */
+export function fehlendeSchluessel() {
+  const noetig = benoetigteSchluessel();
+  const luecken = [];
+  const seiten = [{ name: "Client", wurzel: CLIENT }];
+  if (existsSync(WEBAPP)) seiten.push({ name: "Webapp", wurzel: WEBAPP });
+  for (const seite of seiten) {
+    for (const sprache of SPRACHEN) {
+      const baum = sprachdatei(seite.wurzel, sprache);
+      if (baum == null) {
+        luecken.push({ seite: seite.name, sprache, schluessel: "(Sprachdatei fehlt)" });
+        continue;
+      }
+      for (const k of noetig) {
+        if (!hatSchluessel(baum, k)) {
+          luecken.push({ seite: seite.name, sprache, schluessel: k });
+        }
+      }
+    }
+  }
+  return luecken;
+}
+
+/** Die fehlenden Einträge aus dem Client in die Webapp übernehmen. */
+function schreibeSchluessel() {
+  if (!existsSync(WEBAPP)) return 0;
+  const noetig = benoetigteSchluessel();
+  let n = 0;
+  for (const sprache of SPRACHEN) {
+    const quelle = sprachdatei(CLIENT, sprache);
+    const ziel = sprachdatei(WEBAPP, sprache);
+    if (quelle == null || ziel == null) continue;
+    let geaendert = 0;
+    for (const k of noetig) {
+      if (hatSchluessel(ziel, k) || !hatSchluessel(quelle, k)) continue;
+      const teile = k.split(".");
+      let q = quelle;
+      let z = ziel;
+      for (const t of teile.slice(0, -1)) {
+        q = q[t];
+        if (z[t] == null || typeof z[t] !== "object") z[t] = {};
+        z = z[t];
+      }
+      z[teile[teile.length - 1]] = q[teile[teile.length - 1]];
+      geaendert++;
+    }
+    if (geaendert > 0) {
+      writeFileSync(
+        resolve(WEBAPP, "locales", sprache, "common.json"),
+        JSON.stringify(ziel, null, 2) + "\n",
+        "utf-8",
+      );
+      console.log(`  ergaenzt ${geaendert} Beschriftung(en) in locales/${sprache}`);
+      n += geaendert;
+    }
+  }
+  return n;
+}
 
 export function vergleiche() {
   if (!existsSync(WEBAPP)) return { erreichbar: false, drift: [] };
@@ -122,7 +239,9 @@ function schreibe() {
       n++;
     }
   }
-  console.log(n === 0 ? "Nichts zu tun — die Anzeige ist gleich." : `${n} Datei(en) übernommen.`);
+  const k = schreibeSchluessel();
+  if (n === 0 && k === 0) console.log("Nichts zu tun — die Anzeige ist gleich.");
+  else console.log(`${n} Datei(en) übernommen, ${k} Beschriftung(en) ergänzt.`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
@@ -134,6 +253,16 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     schreibe();
   } else {
     const { drift } = vergleiche();
+    const luecken = fehlendeSchluessel();
+    if (luecken.length > 0) {
+      console.error("Beschriftungen fehlen:\n");
+      for (const l of luecken.slice(0, 30)) {
+        console.error(`  ${l.seite}/${l.sprache}: ${l.schluessel}`);
+      }
+      if (luecken.length > 30) console.error(`  … und ${luecken.length - 30} weitere`);
+      console.error("\n  node scripts/anzeige-sync.mjs --schreiben");
+      process.exit(1);
+    }
     if (drift.length === 0) {
       console.log("Die Anzeige ist auf beiden Seiten gleich.");
     } else {
