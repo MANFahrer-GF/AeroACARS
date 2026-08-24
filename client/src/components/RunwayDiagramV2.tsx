@@ -15,6 +15,9 @@
 //   4. 4 Detail-Karten (Aufsetz-Bewertung / Position / Anflug-Profil / Datenquelle)
 
 import { useMemo, useState } from "react";
+import { erzeugeProjektion } from "../lib/runwayProjection";
+import { useBahnZoom } from "../lib/useBahnZoom";
+import { RunwayDisciplinePanel } from "./RunwayDisciplinePanel";
 import { useTranslation } from "react-i18next";
 import { GlossaryModal } from "./RunwayGlossaryModal";
 import { useV2Skin } from "./SkinContext";
@@ -36,6 +39,28 @@ export type TchClass =
   | "below_profile";
 
 export interface RunwayDiagramV2Props {
+  /**
+   * Mindest-Schriftgrösse in SVG-Einheiten — für den Druck.
+   *
+   * Auf Papier skaliert das SVG auf die Spaltenbreite (`width: 100%`),
+   * und jede Schrift darin schrumpft mit. Gemessen am 24.08.2026 landeten
+   * die Beschriftungen im A4-Bericht bei **3,6 bis 4,4 pt**; lesbar ist
+   * Druck etwa ab 6 pt. Die halbe Grafik war auf dem Ausdruck nicht zu
+   * entziffern, ohne dass irgendwo etwas fehlgeschlagen wäre.
+   *
+   * # Warum eine Untergrenze und kein Faktor
+   *
+   * Der erste Versuch multiplizierte alles mit 1,9. Die kleinen Zeilen
+   * wurden lesbar — und die grossen sprengten das Bild: Die Bahnkennungen
+   * (28 Einheiten) und die Längenangabe (20) liefen aus dem viewBox
+   * heraus und übereinander, 78 Kollisionen. Sie waren nie das Problem;
+   * sie drucken schon bei 8 bis 11 pt.
+   *
+   * Eine Untergrenze hebt nur an, was zu klein ist, und lässt den Rest
+   * in Ruhe. Die Reihenfolge der Grössen bleibt erhalten.
+   */
+  schriftMindest?: number;
+
   airport_ident: string;
   airport_name?: string | null;
   runway_ident: string;
@@ -61,6 +86,47 @@ export interface RunwayDiagramV2Props {
 
   // Optional Aircraft-Daten für die Landeeinschätzung. Wenn nichts
   // gesetzt → FLUGZEUG-Pill wird nicht gerendert.
+  // ── v1.7.0 Bahndisziplin (siehe docs/spec/runway-diagram-v2.contract.md) ──
+  /**
+   * Wo die Bahn verlassen wurde — die Stelle, an der die Spur die Bahnkante
+   * überschreitet und nicht zurückkommt. Das ist „Bahn geräumt".
+   */
+  clearance_point_m?: number | null;
+  /**
+   * Wo die **Bewertung** endet: der Beginn des Ausschwenkens zur Ausfahrt.
+   *
+   * Nicht dasselbe wie `clearance_point_m` und deshalb ein eigenes Feld.
+   * Ein Flugzeug zieht Hunderte Meter vor der Kante nach aussen; dieser
+   * Teil gehört zum Abrollen und darf nicht als seitlicher Versatz
+   * gewertet werden. Gezeichnet wird die Spur dort aber weiter
+   * durchgezogen — sie ist gemessen, sie ist auf der Bahn, und eine
+   * gestrichelte Linie mitten auf der Bahn wäre nicht zu erklären.
+   */
+  scoring_cutoff_m?: number | null;
+  clearance_speed_kt?: number | null;
+  clearance_side?: "left" | "right" | null;
+  track_width_m?: number | null;
+  track_width_source?: "type_table" | "aircraft_file" | null;
+  /** Spannweite in Metern — für den Grössenvergleich unter der Grafik. */
+  wingspan_m?: number | null;
+  /** Bahnbreite in Metern — Grundlage der Queransicht. */
+  runway_width_m?: number | null;
+  /**
+   * Rollwege, die die Bahn treffen (OpenStreetMap-Bodenkarte).
+   *
+   * Machen die Bewertung nachvollziehbar: Man sieht, welche Ausfahrt vor der
+   * genutzten lag und wie weit davor. Optional — ohne sie zeigt die
+   * Queransicht einfach keine Stummel.
+   */
+  runway_exits?: Array<{ name: string; laengs_m: number; seite: "left" | "right" }> | null;
+  min_edge_clearance_m?: number | null;
+  max_lateral_offset_m?: number | null;
+  lateral_samples?: Array<{ laengs_m: number; quer_m: number }> | null;
+  /** Warum die seitliche Bewertung entfiel — der Grund aus der BEWERTUNG. */
+  lateral_skip_reason?: string | null;
+  surface_paved?: boolean | null;
+  overrun_m?: number | null;
+
   aircraft_icao?: string | null;
   aircraft_title?: string | null;
   aircraft_registration?: string | null;
@@ -104,6 +170,19 @@ function tdColor(p: RunwayDiagramV2Props, tokens: { tdSevere: string; tdPerfect:
 // ─── Component ───────────────────────────────────────────────────────
 
 export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
+  // Auf dem Bildschirm 0 (wirkungslos), im Druck die Untergrenze.
+  const schriftMindest = props.schriftMindest ?? 0;
+  const sf = (g: number) => Math.max(g, schriftMindest);
+  /**
+   * Zeilenabstand einer gestapelten Beschriftung — folgt der Schrift.
+   *
+   * Die Abstände standen als feste Zahlen im Layout (11 bzw. 13
+   * Einheiten), abgestimmt auf die Schriftgrössen von damals. Sobald
+   * der Druck die Schrift anhebt, sitzen die Zeilen ineinander:
+   * „BAHN GERÄUMT" lag auf „2296 m · Ausfahrt D9 rechts". Gemessen an
+   * der Demo waren es fünfzehn solche Paare.
+   */
+  const zeile = (g: number) => sf(g) * 1.18;
   const skin = useV2Skin();
   const TOKENS = skin.tokens;
   const display = skin.display;
@@ -143,21 +222,38 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   // entarten laesst — bei 0,5 m bildete `mToX` jeden Meter auf ein
   // Vielfaches der Bahnbreite ab. Die alten 500 m waren dafuer zu grob:
   // sie ueberschrieben echte kurze Plaetze (Review-Befund).
-  const lengthM = Number.isFinite(props.length_m) ? Math.max(100, props.length_m) : 500;
-  const ddsM = props.displaced_threshold_m ?? 0;
+  // v1.7.0: Die Projektion kommt aus `lib/runwayProjection` -- dieselbe
+  // Funktion, die die Queransicht benutzt. Vorher stand sie hier inline, und
+  // die Queransicht haette eine zweite gebraucht. Genau daraus entsteht die
+  // Fehlerklasse aus Spec §8.4: zwei Stellen, die dasselbe rechnen sollen,
+  // driften auseinander -- im ersten Entwurf stand der Aim-Marker 209 m falsch.
+  // Zoom — EIN Zustand für beide Ansichten. Getrennte Zustände wären der
+  // Fehler, gegen den §8.4 die gemeinsame Projektion vorschreibt: Zwei
+  // Ansichten, die nicht mehr fluchten, sind schlimmer als eine.
+  const zoom = useBahnZoom(
+    -(props.displaced_threshold_m ?? 0),
+    Number.isFinite(props.length_m) ? Math.max(100, props.length_m) : 500,
+  );
+  const projektion = erzeugeProjektion({
+    lengthM: props.length_m,
+    ddsM: props.displaced_threshold_m ?? 0,
+    padX,
+    innerW,
+    sichtVonM: zoom.vonM,
+    sichtBisM: zoom.bisM,
+  });
+  const lengthM = projektion.lengthM;
+  const ddsM = projektion.ddsM;
   const ddsActive = ddsM > 0;
-  const totalVisualM = lengthM + ddsM;
 
   // thresholdX = Pixel-Position des Landethresholds.
   //   ohne DDS: thresholdX == padX (Bahn-Anfang IS Threshold)
   //   mit DDS:  thresholdX > padX (DDS-Bereich beansprucht erste ddsM)
-  const thresholdX = padX + (ddsM / totalVisualM) * innerW;
+  const thresholdX = projektion.thresholdX;
 
   // Meter → X-Pixel. Eingabe m ist Distanz VOM LANDETHRESHOLD (signed).
   // Negative m → vor dem Threshold (= in der DDS-Zone).
-  const mToX = (m: number) =>
-    thresholdX +
-    (Math.max(-ddsM, Math.min(lengthM, m)) / totalVisualM) * innerW;
+  const mToX = projektion.mToX;
 
   // Centerline-Offset → Y. ±widthM/2 → ±(innerH/2 - safetyMargin).
   // widthM = 45 m typisch, aber wir stretchen für Sichtbarkeit (sonst
@@ -170,6 +266,11 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   );
   const tdY = rwyCl + (clampedOffset / (widthM / 2)) * yMaxOffset;
   const tdX = mToX(props.td_distance_from_threshold_m);
+  // Halbe Breite der TD-Beschriftung, geschaetzt aus Zeichenzahl und
+  // Schriftgroesse (13 px, Monospace ~0,6 em je Zeichen). Nur fuer die
+  // Klemmung am Rand -- auf den Pixel kommt es dabei nicht an.
+  const tdLabelHalb =
+    (`TD ${props.td_distance_from_threshold_m.toFixed(0)} m`.length + 14) * 13 * 0.6 * 0.5;
   const dotColor = tdColor(props, TOKENS);
 
   // Skala-Ticks anhand Bahn-Länge: 0/300/600/900/1200/1500/1800/2400 etc.
@@ -196,6 +297,54 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
       ? Math.min(lengthM, props.td_distance_from_threshold_m + props.rollout_m)
       : null;
   const exitX = exitDistM != null ? mToX(exitDistM) : null;
+  // ⚠ `exitDistM` (aus `rollout_m`) und `clearance_point_m` sind ZWEI
+  // Quellen fuer dasselbe Ende, und sie stimmen nicht ueberein:
+  // `rollout_m` ist die gefahrene Strecke bis zum Stillstand, der
+  // Raeumpunkt die Stelle, an der die Bahn verlassen wurde. Wer beides
+  // zeichnet, bekommt eine Linie, die ueber ihre eigene Endmarke
+  // hinauslaeuft. Die Linie endet deshalb IMMER am Raeumpunkt, sobald
+  // einer bekannt ist -- siehe `rolloutEndeX`.
+
+  // ── Räumpunkt (v1.7.0) ─────────────────────────────────────────────
+  //
+  // Spec §8.3: „Räumpunkt statt Bremspunkt; die gestrichelte Spur danach
+  // folgt der ECHTEN Ausfahrtsrichtung."
+  //
+  // Der Unterschied zum alten Bremspunkt ist nicht kosmetisch. Der
+  // Bremspunkt behauptete, bei 40 kt sei etwas Bewertbares passiert — was
+  // von der Anweisung des Lotsen abhängt, nicht vom Piloten. Der Räumpunkt
+  // dagegen ist eine Messung: Hier hat das Flugzeug die Bahn verlassen,
+  // hier endet das Messfenster, ab hier wird nichts mehr gewertet.
+  const raeumM = props.clearance_point_m ?? null;
+  const raeumX = raeumM != null ? mToX(raeumM) : null;
+  /**
+   * Wo die Ausroll-Linie endet — eine Groesse, nicht zwei.
+   *
+   * Der Raeumpunkt hat Vorrang: Er ist gemessen und traegt die Endmarke.
+   * Nur wenn keiner vorliegt (Fluege vor v1.7.0), endet die Linie an der
+   * Ausrollstrecke.
+   */
+  const rolloutEndeX = raeumX ?? exitX;
+  // Die UNGEKLEMMTE Endstelle. `exitDistM` ist fuer die Geometrie an der
+  // Bahnlaenge gekappt; fuer die Beschriftung ist genau der Unterschied
+  // die Aussage: Endet die Aufzeichnung hinter dem Bahnende, gibt es
+  // keine Stelle AUF der Bahn, die man nennen koennte.
+  const ausrollEndeM =
+    props.rollout_m != null
+      ? props.td_distance_from_threshold_m + props.rollout_m
+      : null;
+  const ausrollEndeUeberBahn = ausrollEndeM != null && ausrollEndeM > lengthM;
+  // Die Ausfahrt, über die geräumt wurde — für die Beschriftung. Nur wenn
+  // die Seite feststeht: Ohne Seite gibt es keine eindeutige Zuordnung,
+  // und einen Namen zu raten wäre schlimmer als keiner (§8.6).
+  const raeumAusfahrt =
+    raeumM != null && props.clearance_side != null
+      ? (props.runway_exits ?? [])
+          .filter((e) => e.seite === props.clearance_side)
+          .map((e) => ({ e, d: Math.abs(e.laengs_m - raeumM) }))
+          .filter((x) => x.d < 120)
+          .sort((a, b) => a.d - b.d)[0]?.e ?? null
+      : null;
 
   // Bahn-Auslastung.
   //
@@ -242,7 +391,26 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
     <section
       className="rwy-v2"
       aria-label="Landebahn-Analyse"
-      style={{ width: "100%", display: "flex", flexDirection: "column", gap: 12 }}
+      style={{
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+        // Drei Regeln, damit die Anzeige in jeden Platz passt, den sie
+        // bekommt — §8.6.5 verbietet waagerechtes Scrollen.
+        //
+        // `box-sizing: border-box` ist die entscheidende: Das Stylesheet gibt
+        // der Sektion links und rechts je 19 Pixel Innenabstand, und unter
+        // `content-box` kommen die zur Breite DAZU. Gemessen: berechnete
+        // Breite 603 Pixel, tatsächliche 641 — achtunddreissig zu viel, und
+        // der Container schnitt sie ab.
+        //
+        // `min-width: 0` bricht die Vorgabe auf, mit der Flex-Kinder ihre
+        // Inhaltsbreite erzwingen; `max-width: 100%` deckelt den Rest.
+        boxSizing: "border-box",
+        minWidth: 0,
+        maxWidth: "100%",
+      }}
     >
       {/* ─── 1. HEADER ─────────────────────────────────────────────── */}
       <header
@@ -279,6 +447,20 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             <strong style={{ fontSize: "1.05rem" }}>{t("runway_v2.rwy_label_prefix")} {props.runway_ident}</strong>
             <span style={{ opacity: 0.5 }}>·</span>
             <span>{props.length_m.toFixed(0)} m</span>
+            {/* Die Breite gehoert in den Kopf: Sie ist der Massstab der
+                Queransicht und die Groesse, an der „Rad neben der Bahn"
+                haengt. Wer die Note nachvollziehen will, braucht sie. */}
+            {props.runway_width_m != null && props.runway_width_m > 0 && (
+              <>
+                <span aria-hidden>·</span>
+                <span>
+                  {t("runway_v2.width_label", {
+                    defaultValue: "{{m}} m breit",
+                    m: props.runway_width_m.toFixed(0),
+                  })}
+                </span>
+              </>
+            )}
             {props.surface ? (
               <>
                 <span style={{ opacity: 0.5 }}>·</span>
@@ -300,6 +482,10 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
         </div>
         <button
           type="button"
+          // `nur-bildschirm`: Bedienelemente gehören nicht aufs Papier.
+          // Im Druck (Bericht-Export) stand hier ein Knopf, den niemand
+          // drücken kann — siehe die Regel in App.css.
+          className="bahn-nur-bildschirm"
           onClick={() => setGlossaryOpen(true)}
           aria-label="Begriffe erklärt — Glossar öffnen"
           style={{
@@ -324,12 +510,31 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           background: "rgba(0,0,0,0.25)",
           borderRadius: 8,
           padding: "12px 8px 4px 8px",
+          // Ohne `border-box` kommen die sechzehn Pixel Innenabstand zur
+          // Breite dazu: Der Wrapper wurde 634 statt 618 breit, und sein
+          // Container scrollte waagerecht. §8.6.5 verbietet genau das.
+          boxSizing: "border-box",
+          maxWidth: "100%",
+          overflowX: "hidden",
         }}
       >
         <svg
+          // Nicht `onWheel`: React bindet Rad-Ereignisse passiv, und dort
+          // ist `preventDefault()` wirkungslos — der Browser hätte die
+          // ganze Seite mitgezoomt. Siehe `radAnschluss`.
+          ref={zoom.radAnschluss}
+          onMouseDown={zoom.aufZiehStart}
+          onMouseMove={zoom.aufZiehen}
+          onMouseUp={zoom.aufZiehEnde}
+          onMouseLeave={zoom.aufZiehEnde}
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="xMidYMid meet"
-          style={{ width: "100%", height: "auto", display: "block" }}
+          style={{
+            width: "100%",
+            height: "auto",
+            display: "block",
+            cursor: zoom.zieht ? "grabbing" : zoom.gezoomt ? "grab" : "default",
+          }}
           role="img"
           aria-label="Bahn-Geometrie mit Aufsetzpunkt"
         >
@@ -388,36 +593,46 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               >
                 <title>{t("runway_v2.tooltip_pre_threshold", { m: ddsM.toFixed(0) })}</title>
               </rect>
-              {/* DDS-Label am UNTEREN Rand der Zone — sodass es nicht
-                  mit der AUFSETZZONE-Beschriftung kollidiert die am
-                  oberen Rand der TDZ-Box rechts davon sitzt. */}
+              {/* Beschriftung UNTER der Bahn, nicht darin.
+                  §8.6.3: „Keine Beschriftung auf der Bahnfläche, ausser den
+                  Bahnkennungen."
+
+                  Vorher stand sie mittig in der Verbotszone. Bei EDDH 23 ist
+                  diese Zone 156 m lang — bei 3250 m Bahn rund 51 Pixel breit,
+                  während „LANDUNG VERBOTEN" bei elf Punkt Schriftgrösse
+                  siebenundneunzig Pixel braucht. Der Text ragte also fast um
+                  das Doppelte über seine eigene Zone hinaus und lag dabei auf
+                  der roten Schraffur: rot auf rot, unlesbar. Ein Konturrand
+                  (`stroke` + `paintOrder`) sollte das auffangen und machte es
+                  eher schlimmer.
+
+                  Die Referenzgrafik setzt beide Zeilen unter die Bahn. Dort
+                  ist beliebig viel Platz, und der Zusammenhang zur Zone bleibt
+                  über die gemeinsame Mitte erhalten. */}
+              {/* Linksbuendig am Bahnanfang, nicht mittig in der Zone.
+
+                  Mittig ist nur solange richtig, wie die Zone schmal ist.
+                  Bei OLBA 35 ist sie 820 m lang, ihre Mitte liegt damit weit
+                  in der Bahn hinein — und genau dort steht die
+                  Versatz-Beschriftung des Aufsetzpunkts. Am Bahnanfang
+                  verankert ist die Position unabhaengig von der Zonenbreite. */}
               <text
-                x={(padX + thresholdX) / 2}
-                y={rwyBot - 12}
-                textAnchor="middle"
-                fontSize="12"
-                fill="#fecaca"
-                fontWeight="800"
+                x={padX}
+                y={rwyBot + 18}
+                fontSize={sf(9.5)}
+                fill={TOKENS.tdSevere}
                 fontFamily="monospace"
-                stroke="#7c1d1d"
-                strokeWidth="2.5"
-                paintOrder="stroke"
-              >
-                {t("runway_v2.dds_prefix")} {ddsM.toFixed(0)} m
-              </text>
-              <text
-                x={(padX + thresholdX) / 2}
-                y={rwyBot - 26}
-                textAnchor="middle"
-                fontSize="11"
-                fill="#fecaca"
-                fontWeight="700"
-                fontFamily="monospace"
-                stroke="#7c1d1d"
-                strokeWidth="2.5"
-                paintOrder="stroke"
               >
                 {t("runway_v2.dds_forbidden")}
+              </text>
+              <text
+                x={padX}
+                y={rwyBot + 18 + zeile(9.5)}
+                fontSize={sf(9.5)}
+                fill={TOKENS.tdSevere}
+                fontFamily="monospace"
+              >
+                {t("runway_v2.dds_prefix")} {ddsM.toFixed(0)} m
               </text>
             </g>
           )}
@@ -517,12 +732,47 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               >
                 <title>{t("runway_v2.tooltip_tdz", { m: props.td_tdz_length_m?.toFixed(0) })}</title>
               </rect>
+              {/* Klammer OBERHALB der Bahn, Beschriftung darueber.
+
+                  §8.3: „Aufsetzzone als gefuellte Flaeche mit Klammer
+                  oberhalb der Bahn, nicht als zarte Schraffur darin — sie
+                  ging auf dem dunklen Grund unter."
+                  §8.6.3: „Keine Beschriftung auf der Bahnflaeche."
+
+                  Vorher stand der Text in der Flaeche, gelb auf gelber
+                  Schraffur. Die Klammer macht ausserdem sichtbar, WO die Zone
+                  anfaengt und aufhoert — das leistet eine Schraffur ohne
+                  Randmarken nicht. */}
+              <line
+                x1={thresholdX}
+                y1={rwyTop - 14}
+                x2={tdzEndX}
+                y2={rwyTop - 14}
+                stroke={TOKENS.tdzStroke}
+                strokeWidth="1.5"
+              />
+              <line
+                x1={thresholdX}
+                y1={rwyTop - 14}
+                x2={thresholdX}
+                y2={rwyTop - 6}
+                stroke={TOKENS.tdzStroke}
+                strokeWidth="1.5"
+              />
+              <line
+                x1={tdzEndX}
+                y1={rwyTop - 14}
+                x2={tdzEndX}
+                y2={rwyTop - 6}
+                stroke={TOKENS.tdzStroke}
+                strokeWidth="1.5"
+              />
               <text
-                x={thresholdX + 24 + (tdzEndX - thresholdX - 24) / 2}
-                y={rwyTop + 18}
-                fontSize="12"
+                x={(thresholdX + tdzEndX) / 2}
+                y={rwyTop - 20}
+                fontSize={sf(11)}
                 fill={TOKENS.tdzStroke}
-                fontWeight="700"
+                fontWeight="600"
                 fontFamily="monospace"
                 textAnchor="middle"
               >
@@ -574,39 +824,54 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 points={`${aimX - 7},${rwyTop - 14} ${aimX + 7},${rwyTop - 14} ${aimX},${rwyTop - 4}`}
                 fill={TOKENS.aimMarker}
               />
+              {/* Beschriftung UNTER der Bahn — der Platz darueber gehoert
+                  jetzt der Aufsetzzonen-Klammer, und der Zielpunkt liegt
+                  IN der Aufsetzzone: Beides oben haette einander
+                  ueberdeckt. Die Referenzgrafik ordnet es ebenso an. */}
+              <line
+                x1={aimX}
+                y1={rwyBot + 2}
+                x2={aimX}
+                y2={rwyBot + 9}
+                stroke={TOKENS.aimMarker}
+                strokeWidth="1.5"
+              />
               <text
                 x={aimX}
-                y={rwyTop - 32}
+                y={rwyBot + 20}
                 textAnchor="middle"
-                fontSize="13"
+                fontSize={sf(10.5)}
                 fill={TOKENS.aimMarker}
-                fontWeight="700"
+                fontWeight="600"
                 fontFamily="monospace"
               >
                 {t("runway_v2.aim_point_prefix")} {props.aim_point_m?.toFixed(0)} m
               </text>
-              <text
-                x={aimX}
-                y={rwyTop - 19}
-                textAnchor="middle"
-                fontSize="10"
-                fill={TOKENS.aimMarker}
-                fontFamily="monospace"
-                opacity="0.85"
-              >
-                {t("runway_v2.aim_subtitle")}
-              </text>
+              {/* Hier stand bis 23.08.2026 eine zweite Zeile
+                  „↓ Soll-Aufsetz-Stelle". Sie kam aus der Webapp-Fassung
+                  und wurde beim Zusammenführen der beiden Anzeigen
+                  mitgenommen, damit nichts lautlos verschwindet.
+
+                  Thomas hat sie in der Demo gesehen und gefragt, ob das
+                  nicht doppelt sei. Es war doppelt UND falsch: Auf den
+                  Aim-Point wird gezielt, aufgesetzt wird durch den Flare
+                  typisch 50–150 m dahinter — der Tooltip an genau diesem
+                  Marker sagt es selbst. Eine Beschriftung, die dem
+                  Erklärtext daneben widerspricht, ist schlimmer als keine.
+
+                  Was der Marker bedeutet, steht im Tooltip und im
+                  Glossar. */}
               <title>{t("runway_v2.tooltip_aim_point", { m: props.aim_point_m?.toFixed(0) })}</title>
             </g>
           )}
 
-          {/* Rollout-Linie (Glow + Solid). */}
-          {exitX != null && (
+          {/* Ausroll-Linie (Schein + Kern) — endet an `rolloutEndeX`. */}
+          {rolloutEndeX != null && rolloutEndeX > tdX && (
             <g>
               <line
                 x1={tdX}
                 y1={tdY}
-                x2={exitX}
+                x2={rolloutEndeX}
                 y2={tdY}
                 stroke={TOKENS.rolloutGlow}
                 strokeWidth="14"
@@ -614,12 +879,201 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               <line
                 x1={tdX}
                 y1={tdY}
-                x2={exitX}
+                x2={rolloutEndeX}
                 y2={tdY}
                 stroke={TOKENS.rollout}
                 strokeWidth="3"
                 opacity="0.75"
               />
+            </g>
+          )}
+
+          {/* Titel der Ansicht — beide Ansichten tragen einen, sonst ist
+              beim Blick auf zwei Bahnrechtecke nicht klar, was welche zeigt. */}
+          <text x={padX} y={16} fontSize={sf(10.5)} letterSpacing={1.4} fill="#8B95A8">
+            {t("runway_v2.laengs_title", {
+              defaultValue: "LÄNGS — WO AUFGESETZT, WO GERÄUMT",
+            })}
+          </text>
+
+          {/* „BAHN-ENDE" unter der Sperrfläche am Bahnende — das
+              Gegenstück zur Verbotszone vorne (§8.3). Ohne Beschriftung
+              liest sich der rote Streifen rechts wie ein zweiter
+              Landeverbotsbereich. */}
+          <text
+            x={padX + innerW}
+            y={rwyBot + 18}
+            textAnchor="end"
+            fontSize={sf(9.5)}
+            fill={TOKENS.tdSevere}
+            fontFamily="monospace"
+          >
+            {t("runway_v2.runway_end", { defaultValue: "BAHN-ENDE" })}
+          </text>
+
+          {/* Ende der Ausrollstrecke, wenn KEIN Räumpunkt bekannt ist.
+
+              Eine Linie ohne Endpunkt hoert im Nichts auf, und der Leser
+              fragt sich, wo das Flugzeug geblieben ist. Der alte
+              Bremspunkt-Marker leistete das nebenbei; er ist mit v1.7.0
+              entfallen, weil seine AUSSAGE („bei 40 kt ist etwas Bewertbares
+              passiert") nicht haltbar war. Das Ende der Linie zu markieren
+              ist etwas anderes: Es behauptet nichts, es zeigt, wo die
+              Aufzeichnung endet.
+
+              Bei Fluegen ab v1.7.0 uebernimmt das der Raeumpunkt darunter.
+              Bei aelteren gibt es nur `rollout_m` — dann steht hier die
+              Marke, ohne Geschwindigkeit und ohne Seite, weil beides nicht
+              erfasst wurde. */}
+          {raeumX == null && rolloutEndeX != null && (
+            <g>
+              <path
+                d={`M ${rolloutEndeX} ${tdY - 9} l 8 9 l -8 9 l -8 -9 z`}
+                fill={TOKENS.rollout}
+                opacity="0.85"
+              />
+              <line
+                x1={rolloutEndeX}
+                y1={rwyTop - 30}
+                x2={rolloutEndeX}
+                y2={tdY - 13}
+                stroke={TOKENS.rollout}
+                strokeWidth="1"
+                opacity="0.35"
+              />
+              {/* Am Bildrand geklemmt — dieselbe Regel wie bei der
+                  TD-Beschriftung: Eine mittig gesetzte Zeile, die einem
+                  beweglichen Punkt folgt, läuft am Rand hinaus. Bei einem
+                  Ausrollende nahe der Bahnkante endete sie bei x = 1201,
+                  einen Pixel ausserhalb. */}
+              <text
+                x={Math.min(
+                  Math.max(rolloutEndeX, padX + 70),
+                  padX + innerW - 70,
+                )}
+                y={rwyTop - 36}
+                textAnchor="middle"
+                fontSize={sf(10)}
+                fill="#8B95A8"
+                fontFamily="monospace"
+              >
+                {t("runway_v2.rollout_end", { defaultValue: "AUSROLLEN ENDE" })}
+                {/* Die STELLE, nicht die gefahrene Strecke.
+
+                    Vorher stand hier `rollout_m` — die Strecke ab dem
+                    Aufsetzpunkt. Auf einer Achse, deren Lineal und deren
+                    andere Marken („TD 780 m", „BAHN GERAEUMT · 700 m")
+                    durchweg Stellen ab der Schwelle nennen, liest sich
+                    diese eine Zahl zwangslaeufig auch als Stelle. Bei
+                    einem Aufsetzpunkt von 780 m und 1100 m Ausrollen
+                    stand die Marke am Bahnende und war mit „1100 m"
+                    beschriftet, waehrend das Lineal darunter 1500 m
+                    zeigte. Die gefahrene Strecke steht weiter in der
+                    Kennzahlen-Zeile, wo sie hingehoert. */}
+                {ausrollEndeUeberBahn
+                  ? ` · ${t("runway_v2.rollout_end_beyond", {
+                      defaultValue: "hinter dem Bahnende",
+                    })}`
+                  : exitDistM != null
+                    ? ` · ${exitDistM.toFixed(0)} m`
+                    : ""}
+              </text>
+            </g>
+          )}
+
+          {/* Räumpunkt: Raute auf der Bahn, Beschriftung darüber, und die
+              gestrichelte Spur in die ECHTE Ausfahrtsrichtung.
+
+              Die Richtung ist keine Zierde: Sie steht nur da, wenn zwei
+              unabhängige Größen sie bestätigen — Kursänderung UND
+              Querbewegung (§8.6). Fehlt `clearance_side`, läuft die Spur
+              gerade weiter, statt eine Seite zu behaupten. */}
+          {raeumX != null && (
+            <g>
+              {(() => {
+                // Nach oben = links in Landerichtung, dieselbe Konvention
+                // wie in der Queransicht. Ohne bekannte Seite: waagerecht.
+                const dy =
+                  props.clearance_side === "left"
+                    ? -1
+                    : props.clearance_side === "right"
+                    ? 1
+                    : 0;
+                const ende = Math.min(raeumX + 90, W - padX / 2);
+                const bogen = `M ${raeumX} ${tdY} C ${raeumX + 32} ${tdY + dy * 3}, ${
+                  raeumX + 58
+                } ${tdY + dy * 14}, ${ende} ${tdY + dy * 42}`;
+                return (
+                  <path
+                    d={bogen}
+                    fill="none"
+                    stroke={TOKENS.rollout}
+                    strokeWidth="1.5"
+                    strokeDasharray="3 4"
+                    opacity="0.45"
+                  />
+                );
+              })()}
+              <path
+                d={`M ${raeumX} ${tdY - 11} l 10 11 l -10 11 l -10 -11 z`}
+                fill={TOKENS.rollout}
+              />
+              <line
+                x1={raeumX}
+                y1={rwyTop - 44}
+                x2={raeumX}
+                y2={tdY - 15}
+                stroke={TOKENS.rollout}
+                strokeWidth="1"
+                opacity="0.45"
+              />
+              <text
+                x={raeumX}
+                y={rwyTop - 52}
+                textAnchor="middle"
+                fontSize={sf(11)}
+                fontWeight="600"
+                fill={TOKENS.rollout}
+                fontFamily="monospace"
+              >
+                {t("runway_v2.cleared_title", { defaultValue: "BAHN GERÄUMT" })}
+              </text>
+              <text
+                x={raeumX}
+                y={rwyTop - 52 + zeile(11)}
+                textAnchor="middle"
+                fontSize={sf(10)}
+                fill="#8B95A8"
+                fontFamily="monospace"
+              >
+                {[
+                  `${raeumM!.toFixed(0)} m`,
+                  props.clearance_speed_kt != null
+                    ? `${props.clearance_speed_kt.toFixed(0)} kt`
+                    : null,
+                  raeumAusfahrt
+                    ? t("runway_v2.cleared_via", {
+                        defaultValue: "Ausfahrt {{name}} {{seite}}",
+                        name: raeumAusfahrt.name,
+                        seite: t(
+                          props.clearance_side === "left"
+                            ? "runway_v2.side_left_word"
+                            : "runway_v2.side_right_word",
+                          { defaultValue: props.clearance_side === "left" ? "links" : "rechts" },
+                        ),
+                      })
+                    : props.clearance_side != null
+                    ? t(
+                        props.clearance_side === "left"
+                          ? "runway_v2.side_left_word"
+                          : "runway_v2.side_right_word",
+                        { defaultValue: props.clearance_side === "left" ? "links" : "rechts" },
+                      )
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </text>
             </g>
           )}
 
@@ -634,82 +1088,18 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               Bahn-Fläche, damit es nicht hinter den AIM-Quadraten
               verschwindet wenn TD und Aim-Position fast übereinander
               liegen. Nur wenn |offset| > 0.5 m. */}
-          {Math.abs(props.td_centerline_offset_m) > 0.5 && display.show_lr_offset_arrow && (() => {
-            const isLeftOffset = props.td_centerline_offset_m < 0;
-            // Pfeil-Group direkt unter der Bahn — über dem TD-Distanz-Label.
-            const arrowY = rwyBot + 22;
-            const arrowLen = 56;
-            // Pfeil-Richtung folgt dem Offset (LINKS-Offset → Pfeil zeigt
-            // nach links). ABER: wenn der TD-Dot sehr nah am linken oder
-            // rechten SVG-Rand sitzt, würde das Label aus dem SVG raus
-            // gerendert und abgeschnitten werden. In dem Fall klappen
-            // wir die ganze Group horizontal um (Pfeil zeigt auf die
-            // gegenüberliegende Seite des Dots, Label sitzt drin).
-            const labelW = 110; // grobe Pixel-Breite "6.6 m LINKS"
-            const wouldClipLeft = isLeftOffset && (tdX - arrowLen / 2 - labelW) < 0;
-            const wouldClipRight = !isLeftOffset && (tdX + arrowLen / 2 + labelW) > W;
-            const flipped = wouldClipLeft || wouldClipRight;
-            // arrowDir = wo die Spitze hin zeigt (true = nach links)
-            const arrowDir = flipped ? !isLeftOffset : isLeftOffset;
-            const ax1 = arrowDir ? tdX + arrowLen / 2 : tdX - arrowLen / 2;
-            const ax2 = arrowDir ? tdX - arrowLen / 2 : tdX + arrowLen / 2;
-            const isLeft = arrowDir;
-            return (
-              <g>
-                {/* Dünne Anker-Linie vom TD-Dot zum Pfeil */}
-                <line
-                  x1={tdX}
-                  y1={tdY}
-                  x2={tdX}
-                  y2={arrowY - 8}
-                  stroke={dotColor}
-                  strokeWidth="1"
-                  strokeDasharray="2,3"
-                  opacity="0.5"
-                />
-                {/* Großer Pfeil-Schaft */}
-                <line
-                  x1={ax1}
-                  y1={arrowY}
-                  x2={ax2}
-                  y2={arrowY}
-                  stroke={dotColor}
-                  strokeWidth="3.5"
-                />
-                {/* Große Pfeilspitze.
-                    v0.19.x FIX: die Basis-/Spitze-Punkte waren vertauscht —
-                    die Spitze (der Einzelpunkt) lag auf der SCHAFT-Seite von
-                    `ax2`, die flache Basis ragte darüber hinaus. Eine
-                    Pfeilspitze zeigt in die Richtung, in der IHR Einzelpunkt
-                    am weitesten liegt; mit vertauschten Punkten zeigte der
-                    Pfeil zurück zum TD-Punkt statt in die gelabelte
-                    LINKS/RECHTS-Richtung — das genaue Gegenteil vom
-                    Text-Label daneben. */}
-                <polygon
-                  points={
-                    isLeft
-                      ? `${ax2 + 10},${arrowY - 8} ${ax2},${arrowY} ${ax2 + 10},${arrowY + 8}`
-                      : `${ax2 - 10},${arrowY - 8} ${ax2},${arrowY} ${ax2 - 10},${arrowY + 8}`
-                  }
-                  fill={dotColor}
-                />
-                {/* Großes Label neben dem Pfeil — Label-Text zeigt die
-                    Offset-Richtung (LINKS/RECHTS), unabhängig davon ob
-                    der Pfeil aus Platzgründen geklappt wurde. */}
-                <text
-                  x={isLeft ? ax2 - 14 : ax2 + 14}
-                  y={arrowY + 5}
-                  fontSize="15"
-                  fill={dotColor}
-                  fontWeight="800"
-                  fontFamily="monospace"
-                  textAnchor={isLeft ? "end" : "start"}
-                >
-                  {Math.abs(props.td_centerline_offset_m).toFixed(1)} m {isLeftOffset ? t("runway_v2.centerline_left") : t("runway_v2.centerline_right")}
-                </text>
-              </g>
-            );
-          })()}
+          {/* Der L/R-Pfeil unter der Bahn ist entfallen.
+
+              Er zeigte den Versatz als waagerechten Doppelpfeil von der
+              Mittellinie zum Aufsetzpunkt, mit der Meterzahl daneben — und
+              lief dabei regelmaessig in die TD-Beschriftung hinein, weil
+              beide unter der Bahn an fast derselben Stelle sitzen. Bei
+              einem Versatz von wenigen Metern war der Pfeil ausserdem so
+              kurz, dass links und rechts nicht zu unterscheiden waren.
+
+              Die Aussage steht jetzt IN der TD-Zeile, als Wort: „TD 320 m ·
+              6,6 m links". Ein Wort ist eindeutig, braucht keinen Platz
+              neben dem Aufsetzpunkt und kann mit nichts kollidieren. */}
 
           {/* Touchdown-Punkt — Doppel-Glow + Solid Dot. */}
           <g>
@@ -736,84 +1126,27 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             </title>
           </g>
 
-          {/* Bremspunkt (40 kt) — adaptive Label-Platzierung:
-              - normaler Fall (Rollout ≥ ~80 px) → Labels ÜBER dem Dot,
-                gestapelt, mit ausreichend Abstand zum Kreis (kein
-                Overlap mit der Circle r=11)
-              - kurzer Rollout (Labels würden mit dem TD-Dot Bereich
-                kollidieren) → Labels RECHTS vom Bremspunkt-Dot
-              Reines Overlap-Hygiene-Detail, kein User-sichtbares
-              Verhalten ändert sich beim normalen Fall. */}
-          {exitX != null && display.show_brakepoint && (() => {
-            // 3-Modi-Anti-Overlap:
-            // 1. "right": Wenn Rollout sehr kurz (< 80 px) → Labels rechts
-            //    vom Bremspunkt-Dot, nicht drüber (sonst crashen sie in
-            //    den TD-Dot-Bereich).
-            // 2. "below": Wenn der TD-Dot durch großen XTD-Offset weit
-            //    oben sitzt (tdY < rwyTop + 60), würden Labels über dem
-            //    Dot in die AUFSETZZONE-Beschriftung crashen → Labels
-            //    UNTER den Bremspunkt-Dot.
-            // 3. "above": Standard-Fall, Labels über dem Dot.
-            const exitGap = exitX - tdX;
-            const mode: "right" | "below" | "above" =
-              exitGap < 80
-                ? "right"
-                : tdY < rwyTop + 60
-                ? "below"
-                : "above";
-            const textProps = {
-              fill: TOKENS.exitDot,
-              fontWeight: "800" as const,
-              fontFamily: "monospace",
-              stroke: "#0c1628",
-              strokeWidth: "3",
-              paintOrder: "stroke" as const,
-            };
-            return (
-              <g>
-                <circle cx={exitX} cy={tdY} r="11" fill={TOKENS.exitDot} opacity="0.25" />
-                <circle cx={exitX} cy={tdY} r="6" fill={TOKENS.exitDot} stroke="#0c1628" strokeWidth="1.5" />
-                {mode === "right" && (
-                  <>
-                    <text x={exitX + 18} y={tdY - 4} textAnchor="start" fontSize="14" {...textProps}>
-                      {t("runway_v2.bremspunkt_title")}
-                    </text>
-                    <text x={exitX + 18} y={tdY + 12} textAnchor="start" fontSize="13" {...textProps}>
-                      40 kt
-                    </text>
-                  </>
-                )}
-                {mode === "below" && (
-                  <>
-                    <text x={exitX} y={tdY + 22} textAnchor="middle" fontSize="14" {...textProps}>
-                      {t("runway_v2.bremspunkt_title")}
-                    </text>
-                    <text x={exitX} y={tdY + 38} textAnchor="middle" fontSize="13" {...textProps}>
-                      40 kt
-                    </text>
-                  </>
-                )}
-                {mode === "above" && (
-                  <>
-                    <text x={exitX} y={tdY - 36} textAnchor="middle" fontSize="14" {...textProps}>
-                      {t("runway_v2.bremspunkt_title")}
-                    </text>
-                    <text x={exitX} y={tdY - 20} textAnchor="middle" fontSize="13" {...textProps}>
-                      40 kt
-                    </text>
-                  </>
-                )}
-                <title>{t("runway_v2.tooltip_brake_point")}</title>
-              </g>
-            );
-          })()}
+          {/* Der Marker „Bremspunkt 40 kt" ist mit v1.7.0 ERSATZLOS
+              entfallen — so steht es im Vertrag
+              (docs/spec/runway-diagram-v2.contract.md, Abschnitt v1.7.0).
+
+              Warum: Er behauptete eine Aussage, die die Achse nicht mehr
+              trifft. Wie stark jemand bremst, hängt an der Anweisung des
+              Lotsen, am Verkehr dahinter und an der Lage der Ausfahrten —
+              alles Dinge, die der Recorder nicht kennt. Wer bis zum Ende
+              der Bahn rollen soll, bremst nicht auf 40 kt herunter.
+
+              Er nahm ausserdem den Platz oberhalb der Bahn ein, den die
+              Aufsetzzonen-Klammer braucht, und brachte dafür eine
+              dreistufige Ausweichlogik für seine eigenen Beschriftungen
+              mit. Wo die Ausfahrten stehen, zeigt jetzt die Queransicht. */}
 
           {/* RWY-Designator (groß links) — die Landerichtung. */}
           <text
             x={padX / 2 - 4}
             y={rwyCl + 10}
             textAnchor="middle"
-            fontSize="28"
+            fontSize={sf(28)}
             fill="#f1f5f9"
             fontWeight="800"
             fontFamily="monospace"
@@ -829,7 +1162,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               x={W - padX / 2 + 8}
               y={rwyCl - 2}
               textAnchor="middle"
-              fontSize="20"
+              fontSize={sf(20)}
               fill="#94a3b8"
               fontWeight="700"
               fontFamily="monospace"
@@ -843,7 +1176,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               x={W - padX / 2 + 8}
               y={rwyCl + 18}
               textAnchor="middle"
-              fontSize="11"
+              fontSize={sf(11)}
               fill="#64748b"
               fontFamily="monospace"
             >
@@ -859,17 +1192,32 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               großen L/R-Pfeil oben dargestellt. Bei Offset < 0.5 m
               steht hier zusätzlich "auf CL". */}
           <g>
+            {/* Am Bildrand geklemmt: Bei einem Aufsetzpunkt direkt auf der
+                Schwelle steht die Beschriftung mittig ueber x = padX, und
+                ihre linke Haelfte liegt dann ausserhalb des Zeichenbereichs
+                (§8.6.2). Dieselbe Klemmung braucht jede mittig gesetzte
+                Beschriftung, die einem beweglichen Punkt folgt. */}
             <text
-              x={tdX}
+              x={Math.min(
+                Math.max(tdX, padX + tdLabelHalb),
+                padX + innerW - tdLabelHalb,
+              )}
               y={rwyBot + 46}
               textAnchor="middle"
-              fontSize="13"
+              fontSize={sf(13)}
               fill={dotColor}
               fontWeight="700"
               fontFamily="monospace"
             >
               TD {props.td_distance_from_threshold_m.toFixed(0)} m
-              {Math.abs(props.td_centerline_offset_m) < 0.5 ? " · " + t("runway_v2.auf_cl") : ""}
+              {Math.abs(props.td_centerline_offset_m) < 0.5
+                ? " · " + t("runway_v2.auf_cl")
+                : ` · ${Math.abs(props.td_centerline_offset_m).toFixed(1)} m ${t(
+                    props.td_centerline_offset_m < 0
+                      ? "runway_v2.side_left_word"
+                      : "runway_v2.side_right_word",
+                    { defaultValue: props.td_centerline_offset_m < 0 ? "links" : "rechts" },
+                  )}`}
             </text>
           </g>
 
@@ -899,7 +1247,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                     x={x}
                     y={rwyBot + 80}
                     textAnchor="middle"
-                    fontSize="10"
+                    fontSize={sf(10)}
                     fill="rgba(255,255,255,0.55)"
                     fontFamily="monospace"
                   >
@@ -910,6 +1258,88 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             })}
           </g>
         </svg>
+
+        {/* Bedienung: Der Hinweis steht nur da, solange nicht gezoomt ist —
+            danach erklärt sich der Zustand selbst, und der Platz gehört dem
+            Zurücksetzen. */}
+        <div
+          // Zoom-Hinweis und -Knöpfe: auf Papier sinnlos. Sie hatten
+          // keinen Klassennamen und waren deshalb für das Druck-CSS
+          // unerreichbar — im exportierten Bericht stand mitten in der
+          // Grafik „Strg + Mausrad zoomt · Ziehen verschieben" mit zwei
+          // Knöpfen daneben.
+          className="bahn-nur-bildschirm"
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            alignItems: "center",
+            gap: 10,
+            fontSize: "0.72rem",
+            color: "#64748b",
+            marginTop: 4,
+          }}
+        >
+          <span>
+            {zoom.gezoomt
+              ? `${projektion.sichtVonM.toFixed(0)}–${projektion.sichtBisM.toFixed(0)} m`
+              : t("runway_v2.zoom_hint", {
+                  defaultValue: "Strg + Mausrad zoomt · Ziehen verschiebt",
+                })}
+          </span>
+          {/* Knöpfe für alle, die nicht mit Tastatur und Rad hantieren
+              wollen. Sie zoomen auf die Mitte des Ausschnitts. */}
+          <button
+            type="button"
+            onClick={() => zoom.stufe(-1)}
+            disabled={!zoom.gezoomt}
+            title={t("runway_v2.zoom_out", { defaultValue: "Weiter weg" })}
+            style={zoomKnopf(!zoom.gezoomt)}
+          >
+            −
+          </button>
+          <button
+            type="button"
+            onClick={() => zoom.stufe(1)}
+            title={t("runway_v2.zoom_in", { defaultValue: "Näher" })}
+            style={zoomKnopf(false)}
+          >
+            +
+          </button>
+          {zoom.gezoomt && (
+            <button
+              type="button"
+              onClick={zoom.zuruecksetzen}
+              style={{ ...zoomKnopf(false), padding: "2px 8px" }}
+            >
+              {t("runway_v2.zoom_reset", { defaultValue: "Ganze Bahn" })}
+            </button>
+          )}
+        </div>
+
+        {/* ─── 2b. QUERANSICHT + EREIGNISSE + GROESSENVERGLEICH ────────
+            v1.7.0, Spec §8.3. Im SELBEN Container wie die Laengsansicht,
+            damit beide dieselbe Breite haben und die Kanten fluchten -- der
+            Aufsetzpunkt oben muss senkrecht ueber der Marke unten liegen.
+            Zwei getrennte SVGs statt eines grossen: So kann aus der einen
+            Ansicht nichts in die andere ragen (§8.6.4), und der Zwischenraum
+            bleibt ohne Zutun frei. */}
+        <div style={{ marginTop: 14 }}>
+          <RunwayDisciplinePanel
+            props={props}
+            projektion={projektion}
+            zoom={zoom}
+            width={W}
+            tokens={{
+              tarmac: TOKENS.tarmac,
+              tarmacBorder: TOKENS.tarmacBorder,
+              centerline: TOKENS.centerline,
+              rollout: TOKENS.rollout,
+              tdPerfect: TOKENS.tdPerfect,
+              tdWarn: TOKENS.tdWarn,
+              tdSevere: TOKENS.tdSevere,
+            }}
+          />
+        </div>
       </div>
 
       {/* ─── 3. LEGENDE ─────────────────────────────────────────────── */}
@@ -918,6 +1348,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
           display: "flex",
           gap: 18,
           flexWrap: "wrap",
+          minWidth: 0,
           fontSize: "0.78rem",
           opacity: 0.85,
           padding: "0 4px",
@@ -927,7 +1358,6 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
         {tdzEndX && display.show_aufsetzzone_box && <LegendItem swatch={TOKENS.tdzStroke} label={t("runway_v2.legend_tdz")} />}
         {aimX && display.show_aim_marker && <LegendItem swatch={TOKENS.aimMarker} label={t("runway_v2.legend_aim")} />}
         <LegendDot color={dotColor} label={t("runway_v2.legend_td")} />
-        {exitX && display.show_brakepoint && <LegendDot color={TOKENS.exitDot} label={t("runway_v2.legend_brakepoint")} />}
         {ddsActive && <LegendItem swatch={TOKENS.ddsBorder} label={t("runway_v2.legend_pre_threshold")} />}
       </div>
 
@@ -989,13 +1419,18 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             value={
               bahnUsedPct > 200 ? "> 200 %" : `${bahnUsedPct.toFixed(0)} %`
             }
-            tone={
-              bahnUsedPct > 100
-                ? "bad"
-                : bahnUsedPct > skin.thresholds.bahn_auslastung_warn_above
-                ? "warn"
-                : "good"
-            }
+            // v1.7.0: KEINE Bewertungsfarbe mehr auf der Auslastung.
+            //
+            // Die Achse bewertet nicht mehr, wie viel Bahn jemand gebraucht
+            // hat -- das haengt an der Anweisung des Lotsen, am Verkehr
+            // dahinter und an der Lage der Ausfahrten, alles Dinge, die der
+            // Recorder nicht kennt. Eine gelbe Pill neben einer Landung mit
+            // voller Punktzahl waere ein Widerspruch, den niemand aufloesen
+            // kann: Der Wert bleibt als Information stehen, die Wertung faellt.
+            //
+            // Ueber 100 % bleibt rot -- das ist kein Auslastungsgrad mehr,
+            // sondern ein Ueberrollen, und das IST ein Kriterium (Spec §5.4).
+            tone={bahnUsedPct > 100 ? "bad" : "neutral"}
           />
         )}
         {props.td_in_tdz != null && (
@@ -1058,6 +1493,20 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
 }
 
 // ─── Kleine UI-Helpers ──────────────────────────────────────────────
+
+/** Einheitlicher Stil für die Zoom-Knöpfe. */
+function zoomKnopf(aus: boolean): React.CSSProperties {
+  return {
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.15)",
+    borderRadius: 4,
+    color: aus ? "#475569" : "#cbd5e1",
+    fontSize: "0.8rem",
+    lineHeight: 1,
+    padding: "3px 8px",
+    cursor: aus ? "default" : "pointer",
+  };
+}
 
 // FlugzeugBar — eine Pill-Höhen-große Box, voll Breite (flex 1 1 100%),
 // die ALLE Aircraft-Daten inline trägt. Wenn die Werte für eine Zeile

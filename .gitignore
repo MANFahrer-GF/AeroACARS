@@ -159,3 +159,7 @@ corpus-arrivals.csv
 
 # Wissensgraph — wird lokal gebaut (post-commit-Hook), gehoert nicht ins Repo
 graphify-out/
+
+# Bündel der Bahndisziplin-Demo — wird mit `node scripts/demo-bauen.mjs`
+# erzeugt und ist nichts, was versioniert gehört.
+client/demo-dist/

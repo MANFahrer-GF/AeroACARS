@@ -894,6 +894,120 @@ pub struct TouchdownPayload {
     /// LE11.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score_algorithm_version: Option<u8>,
+
+    // ── v1.7.0 Bahndisziplin ─────────────────────────────────────────
+    //
+    // Spec: `docs/spec/v1.7.0-bahndisziplin.md` §8.1, Vertrag:
+    // `docs/spec/runway-diagram-v2.contract.md`.
+    //
+    // Ohne diese Felder auf der Leitung zeigt die Webapp fuer JEDE
+    // Landung „fuer diesen Flug nicht erfasst" — der Pilot-Client hat die
+    // Werte, der Server sieht sie nie. Genau das war der Zustand, bis
+    // Schritt 10 sie hier eingetragen hat.
+    //
+    // # Warum EIN Feld und nicht dreizehn
+    //
+    // Es gibt zwei Stellen im Client, die einen `TouchdownPayload` bauen.
+    // Dreizehn Einzelfelder heisst dreizehn Zeilen an jeder der beiden —
+    // und irgendwann eine Zeile, die nur an einer Stelle nachgezogen
+    // wird. Das ist die Fehlerklasse, an der die Bahnmathematik schon
+    // viermal auseinandergelaufen ist.
+    //
+    // `flatten` legt die Felder auf der Leitung trotzdem flach ab, genau
+    // wie der Vertrag sie beschreibt. Der Server sieht keinen Unterschied.
+    #[serde(flatten)]
+    pub bahn: BahnWire,
+}
+
+/// Die Bahndisziplin-Werte auf der Leitung.
+///
+/// # Warum hier NICHTS uebersprungen wird
+///
+/// Die Felder trugen bis hierher `skip_serializing_if = "Option::is_none"`.
+/// Das spart ein paar hundert Byte und macht den Nachtrag unmoeglich:
+///
+/// Der Recorder patcht die Touchdown-Zeile mit `json_patch` (RFC 7396).
+/// Dort loescht ein `null` das Feld — ein FEHLENDES Feld laesst den alten
+/// Wert stehen. Genau das war der Fehler: Verschiebt die Nachrechnung den
+/// Kantenuebertritt um mehr als fuenfundzwanzig Meter, wird
+/// `clearance_speed_kt` bewusst `None` — die Spur traegt keine
+/// Geschwindigkeit fuer die neue Stelle. Uebersprungen erreicht dieses
+/// `None` den Server nie, und die alte, vorlaeufige Fahrt blieb stehen.
+///
+/// Ein `None` muss loeschen koennen. Die Kosten sind dreizehn `null` je
+/// Landung gegen dreizehn Kilobyte Rollspur.
+///
+/// **Der Client rechnet, der Server zeigt an.** Keine dieser Groessen wird
+/// serverseitig nachgerechnet: Sie stammen aus dem 5-Hz-Rollout-Fenster,
+/// das nur der Client sieht, und eine zweite Herleitung aus groberen
+/// Daten kaeme zwangslaeufig auf andere Zahlen. Zwei Zahlen fuer dieselbe
+/// Landung sind schlimmer als eine fehlende.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
+pub struct BahnWire {
+    /// Laengsposition beim Verlassen der Bahn (an der Kante).
+    pub clearance_point_m: Option<f64>,
+    /// Laengsposition, ab der nicht mehr bewertet wird — der Beginn des
+    /// Ausschwenkens. NICHT dasselbe wie `clearance_point_m`.
+    pub scoring_cutoff_m: Option<f64>,
+    pub clearance_speed_kt: Option<f64>,
+    pub clearance_side: Option<String>,
+    pub track_width_m: Option<f64>,
+    pub track_width_source: Option<String>,
+    pub wingspan_m: Option<f64>,
+    /// Bahnbreite in Metern. Ohne sie laesst sich die Queransicht nicht
+    /// massstaeblich zeichnen — eine geratene Breite waere eine
+    /// Behauptung ueber die Kante, an der die Bewertung haengt.
+    pub runway_width_m: Option<f64>,
+    pub min_edge_clearance_m: Option<f64>,
+    pub max_lateral_offset_m: Option<f64>,
+    /// Der Spurverlauf — die groesste Nutzlast dieser Gruppe. Leer wird
+    /// sie weggelassen, nicht als `[]` gesendet: Ein leeres Feld sieht in
+    /// der Anzeige aus wie eine Messung, die nichts gefunden hat.
+    pub lateral_samples: Option<Vec<LateralSampleWire>>,
+    pub surface_paved: Option<bool>,
+    pub overrun_m: Option<f64>,
+    /// Warum die seitliche Bewertung entfiel. `None` = bewertet.
+    ///
+    /// Der Grund kommt aus der Bewertung selbst (`sub_scores`), damit die
+    /// Anzeige ihn nicht ein zweites Mal herleitet. Zwei Herleitungen
+    /// desselben Urteils driften auseinander.
+    pub lateral_skip_reason: Option<String>,
+    /// Die Ausfahrten dieser Bahn.
+    ///
+    /// # Warum sie über die Leitung gehen
+    ///
+    /// Sie stehen in der OSM-Bodenkarte, die auch der Server hat — er
+    /// könnte sie also selbst rechnen. Genau das soll er nicht: Zwei
+    /// Herleitungen derselben Grösse driften auseinander, und die Anzeige
+    /// auf beiden Seiten muss dieselbe sein. Der Client hat die Karte im
+    /// Anflug ohnehin geladen und rechnet einmal.
+    ///
+    /// Klein genug dafür: typisch vier bis zwölf Einträge je Bahn.
+    pub runway_exits: Option<Vec<RunwayExitWire>>,
+}
+
+/// Eine Ausfahrt auf der Leitung. Eigener Typ, weil dieses Crate nicht von
+/// `storage` abhängt — die Abhängigkeit läuft andersherum.
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
+pub struct RunwayExitWire {
+    pub name: String,
+    pub laengs_m: f64,
+    /// `"left"` oder `"right"` in Landerichtung.
+    pub seite: String,
+}
+
+/// Ein Stuetzpunkt der Rollspur auf der Leitung.
+///
+/// Eigener Typ statt `storage::LateralSample`, weil dieses Crate nicht von
+/// `storage` abhaengt — die Abhaengigkeit laeuft andersherum. Die Felder
+/// heissen gleich, damit Vertrag und Anzeige denselben Namen sehen.
+#[derive(Clone, Copy, Debug, Serialize, serde::Deserialize)]
+pub struct LateralSampleWire {
+    /// Distanz ab der Landeschwelle, in Metern, auf einen Dezimeter gerundet.
+    pub laengs_m: f64,
+    /// Versatz zur Mittellinie, in Metern, auf einen Dezimeter gerundet.
+    /// Positiv = rechts in Landerichtung.
+    pub quer_m: f64,
 }
 
 fn is_false(b: &bool) -> bool { !*b }
@@ -1247,6 +1361,27 @@ pub struct TouchdownRolloutFinalizedPayload {
     /// Grund nicht mehr bekannt (transient) — das Event geht trotzdem raus.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finalize_reason: Option<String>,
+
+    // ── v1.7.0: die Bahndisziplin-Werte, final ───────────────────────
+    //
+    // # Warum sie hier noch einmal kommen
+    //
+    // `touchdown_complete` geht rund neun Sekunden nach dem Aufsetzen
+    // raus. Zu diesem Zeitpunkt waechst die Rollspur weiter, der
+    // Raeumpunkt ist noch nicht erreicht und der Kantenuebertritt erst
+    // recht nicht — genau wie `rollout_distance_m`, um dessentwillen
+    // dieses Event ueberhaupt existiert.
+    //
+    // Bis v1.7.0 trug es nur die Ausrollstrecke nach. Alle uebrigen
+    // Bahnwerte blieben im Recorder und in der Webapp beim vorlaeufigen
+    // Stand: eine Spur, die mitten im Ausrollen abbricht, und ein
+    // Raeumpunkt, den es zu dem Zeitpunkt noch gar nicht gab.
+    //
+    // Die Gruppe ist dieselbe wie im `TouchdownPayload` — ein Typ, eine
+    // Umrechnung (`BahnFelder::wire()`), damit der Nachtrag nicht
+    // auseinanderlaufen kann.
+    #[serde(flatten)]
+    pub bahn: BahnWire,
 }
 
 /// Was der Client sendet, wenn jemand etwas zuruft.
@@ -2283,5 +2418,144 @@ mod tests {
         // leidet.
         assert!(POLL_SILENCE_TIMEOUT > Duration::from_secs(120));
         assert!(POLL_SILENCE_TIMEOUT <= Duration::from_secs(300));
+    }
+    /// Die Bahndisziplin-Werte muessen auf der Leitung FLACH liegen.
+    ///
+    /// `flatten` ist bequem, aber es ist auch die Art von Bequemlichkeit,
+    /// die man erst bemerkt, wenn sie schiefgeht: Ohne das Attribut lande
+    /// alles unter einem Schluessel `bahn`, der Webapp-Mapper faende
+    /// nichts, und die Anzeige zeigte fuer jede Landung „nicht erfasst" —
+    /// ohne dass irgendwo ein Fehler auftaucht.
+    #[test]
+    fn bahnfelder_liegen_flach_auf_der_leitung() {
+        let w = BahnWire {
+            clearance_point_m: Some(1831.6),
+            scoring_cutoff_m: Some(1642.0),
+            clearance_speed_kt: Some(24.0),
+            clearance_side: Some("left".to_string()),
+            track_width_m: Some(7.59),
+            track_width_source: Some("aircraft_file".to_string()),
+            wingspan_m: Some(35.8),
+            runway_width_m: Some(46.0),
+            min_edge_clearance_m: Some(9.2),
+            max_lateral_offset_m: Some(-13.4),
+            lateral_samples: Some(vec![
+                LateralSampleWire { laengs_m: 523.2, quer_m: -5.7 },
+                LateralSampleWire { laengs_m: 561.0, quer_m: -6.1 },
+            ]),
+            surface_paved: Some(true),
+            overrun_m: None,
+            lateral_skip_reason: None,
+            runway_exits: None,
+        };
+        let j: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
+
+        assert!(j.get("bahn").is_none(), "die Gruppe darf nicht verschachtelt sein");
+        assert_eq!(j["clearance_point_m"], 1831.6);
+        assert_eq!(j["scoring_cutoff_m"], 1642.0);
+        assert_eq!(j["clearance_side"], "left");
+        assert_eq!(j["track_width_source"], "aircraft_file");
+        assert_eq!(j["lateral_samples"][1]["quer_m"], -6.1);
+        // Nicht erfasst heisst `null`, nicht FEHLT.
+        //
+        // Hier stand das Gegenteil, mit der Begruendung „der Datensatz
+        // bleibt kleiner". Der Preis dafuer war, dass ein Nachtrag nichts
+        // loeschen kann: Der Recorder patcht mit `json_patch` (RFC 7396),
+        // dort loescht `null` das Feld und ein fehlendes Feld laesst den
+        // alten Wert stehen.
+        //
+        // Konkret blieb `clearance_speed_kt` auf dem vorlaeufigen Wert
+        // stehen, obwohl die Nachrechnung ihn bewusst verworfen hatte.
+        assert!(
+            j.get("overrun_m").is_some_and(|v| v.is_null()),
+            "leere Felder muessen als null gehen, sonst koennen sie nichts loeschen"
+        );
+    }
+
+    /// Der Payload muss durch den Broker passen.
+    ///
+    /// `max_packet_size 65536` steht in der mosquitto-Konfiguration auf
+    /// dem Live-Server. Was darueber liegt, wird verworfen — die Landung
+    /// kaeme nie an, und zwar ohne Fehlermeldung beim Piloten.
+    ///
+    /// Gemessen am 23.08.2026: Die bisherigen Touchdown-Payloads sind im
+    /// Mittel 3,9 KB gross, im schlimmsten Fall 5,0 KB (1022 Landungen).
+    /// Eine volle Spur mit 400 Punkten kommt gerundet auf 13 KB dazu, die
+    /// Ausfahrten auf 0,6 KB. Zusammen bleibt genug Luft — aber wer die
+    /// Punktzahl erhoeht oder die Rundung wieder herausnimmt, sollte diese
+    /// Rechnung sehen.
+    #[test]
+    fn volle_spur_passt_durch_den_broker() {
+        const BROKER_GRENZE: usize = 65_536;
+        let spur: Vec<LateralSampleWire> = (0..400)
+            .map(|i| LateralSampleWire {
+                laengs_m: (5232 + i * 73) as f64 / 10.0,
+                quer_m: -(57 + i * 37) as f64 / 10.0,
+            })
+            .collect();
+        let w = BahnWire {
+            lateral_samples: Some(spur),
+            runway_exits: Some(
+                (0..12)
+                    .map(|i| RunwayExitWire {
+                        name: format!("S{i}"),
+                        laengs_m: 1831.6,
+                        seite: "left".to_string(),
+                    })
+                    .collect(),
+            ),
+            clearance_point_m: Some(1831.6),
+            ..Default::default()
+        };
+        let bytes = serde_json::to_string(&w).unwrap().len();
+        // Grosszuegig gerechnet: der Rest des Payloads obendrauf.
+        let gesamt = bytes + 6 * 1024;
+        assert!(
+            gesamt < BROKER_GRENZE,
+            "Bahndaten {} KB + 6 KB Rest = {} KB, der Broker nimmt {} KB",
+            bytes / 1024,
+            gesamt / 1024,
+            BROKER_GRENZE / 1024
+        );
+
+        // Und die Rundung muss wirken: ungerundet waeren es rund 23 KB.
+        assert!(
+            bytes < 16 * 1024,
+            "die Spur ist {} KB gross — wird sie noch auf Dezimeter gerundet?",
+            bytes / 1024
+        );
+    }
+
+    /// Eine leere Spur geht als `null`, nicht als `[]`.
+    ///
+    /// Ein leeres Array sieht in der Anzeige aus wie eine Messung, die
+    /// nichts gefunden hat — von „fuer diesen Flug nicht erfasst" ist es
+    /// nicht zu unterscheiden. `null` dagegen loescht beim Nachtrag einen
+    /// vorlaeufigen Wert, statt ihn stehen zu lassen.
+    #[test]
+    fn leere_spur_geht_als_null_auf_die_leitung() {
+        let j: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&BahnWire::default()).unwrap(),
+        )
+        .unwrap();
+        let o = j.as_object().unwrap();
+        assert!(!o.is_empty(), "die Gruppe darf nicht leer serialisieren");
+        assert!(
+            o.values().all(|v| v.is_null()),
+            "ein leeres BahnWire darf nur Nullwerte tragen: {j}"
+        );
+        assert!(
+            o["lateral_samples"].is_null(),
+            "eine leere Spur darf nicht als [] gehen"
+        );
+    }
+
+    /// Ein Datensatz von VOR v1.7.0 muss weiter lesbar sein.
+    #[test]
+    fn alter_payload_ohne_bahnfelder_bleibt_lesbar() {
+        let w: BahnWire = serde_json::from_str("{}").unwrap();
+        assert!(w.clearance_point_m.is_none());
+        assert!(w.lateral_samples.is_none());
     }
 }

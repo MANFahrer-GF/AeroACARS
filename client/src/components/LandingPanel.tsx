@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import i18n from "../i18n";
 import { invoke } from "../lib/ipc";
 import {
   ladeNamenGedeckelt,
@@ -117,6 +118,47 @@ export interface LandingRecord {
   approach_vs_stddev_fpm: number | null;
   approach_bank_stddev_deg: number | null;
   rollout_distance_m: number | null;
+  // ── v1.7.0 Bahndisziplin ──────────────────────────────────────────
+  // Optional, weil Fluege von vor v1.7.0 sie nicht haben. Die Anzeige
+  // zeigt das ehrlich an, statt eine leere Querachse zu malen.
+  /**
+   * Wo die Bahn verlassen wurde — die Stelle, an der die Spur die Bahnkante
+   * überschreitet und nicht zurückkommt. Das ist „Bahn geräumt".
+   */
+  clearance_point_m?: number | null;
+  /**
+   * Wo die **Bewertung** endet: der Beginn des Ausschwenkens zur Ausfahrt.
+   *
+   * Nicht dasselbe wie `clearance_point_m` und deshalb ein eigenes Feld.
+   * Ein Flugzeug zieht Hunderte Meter vor der Kante nach aussen; dieser
+   * Teil gehört zum Abrollen und darf nicht als seitlicher Versatz
+   * gewertet werden. Gezeichnet wird die Spur dort aber weiter
+   * durchgezogen — sie ist gemessen, sie ist auf der Bahn, und eine
+   * gestrichelte Linie mitten auf der Bahn wäre nicht zu erklären.
+   */
+  scoring_cutoff_m?: number | null;
+  lateral_skip_reason?: string | null;
+  clearance_speed_kt?: number | null;
+  clearance_side?: "left" | "right" | null;
+  track_width_m?: number | null;
+  track_width_source?: "type_table" | "aircraft_file" | null;
+  /** Spannweite in Metern — für den Grössenvergleich unter der Grafik. */
+  wingspan_m?: number | null;
+  /** Bahnbreite in Metern — Grundlage der Queransicht. */
+  runway_width_m?: number | null;
+  /**
+   * Rollwege, die die Bahn treffen (OpenStreetMap-Bodenkarte).
+   *
+   * Machen die Bewertung nachvollziehbar: Man sieht, welche Ausfahrt vor der
+   * genutzten lag und wie weit davor. Optional — ohne sie zeigt die
+   * Queransicht einfach keine Stummel.
+   */
+  runway_exits?: Array<{ name: string; laengs_m: number; seite: "left" | "right" }> | null;
+  min_edge_clearance_m?: number | null;
+  max_lateral_offset_m?: number | null;
+  lateral_samples?: Array<{ laengs_m: number; quer_m: number }> | null;
+  surface_paved?: boolean | null;
+  overrun_m?: number | null;
 
   planned_block_fuel_kg: number | null;
   planned_burn_kg: number | null;
@@ -314,6 +356,38 @@ export interface GateWindow {
 /// v0.7.1 SubScoreEntry — voll ausgebautes Wire-Format aus der
 /// landing-scoring Crate (Spec §5.4 P1.5-A). Spiegel des Rust-Typs.
 /// UI rendert direkt aus diesen Felder, kein Recompute.
+
+/**
+ * Die Beschriftung einer Achse — aus dem Datensatz, nicht aus dem Schlüssel.
+ *
+ * # Warum das nicht `achsenLabel(t, s)` sein darf
+ *
+ * Der Schlüssel `rollout` trägt seit v1.7.0 eine andere Bewertung als
+ * vorher: erst die Bahn-Auslastung, jetzt die Bahndisziplin. Er wurde
+ * bewusst beibehalten, damit alte Datensätze nicht brechen — und genau
+ * deshalb sagt er nichts mehr darüber, was gemessen wurde.
+ *
+ * Jeder Datensatz trägt sein eigenes `label_key` mit: alte
+ * `landing.sub.rollout`, neue `landing.sub.runway_discipline`. Bis
+ * Runde 23 hat es niemand gelesen — die Anzeige baute den Schlüssel selbst
+ * zusammen und zeigte damit über der neuen Bewertung die alte
+ * Beschriftung „Bahn-Auslastung".
+ *
+ * Der Rückfall deckt Datensätze vor v0.7.1 ab, die noch kein `label_key`
+ * haben.
+ */
+function achsenLabel(
+  t: (k: string, o?: Record<string, unknown>) => string,
+  s: { key: string; label_key?: string | null },
+): string {
+  const aus_schluessel = `landing.sub.${s.key}`;
+  const k = s.label_key && s.label_key.length > 0 ? s.label_key : aus_schluessel;
+  // Der Rückfall geht auf den Schlüssel, NICHT wieder auf diese Funktion.
+  // Beim Umstellen hat die Ersetzung sich selbst getroffen; der Testlauf
+  // meldete es als Endlosrekursion.
+  return t(k, { defaultValue: t(aus_schluessel) });
+}
+
 export interface SubScoreEntry {
   key: string;             // "landing_rate" | "g_force" | "bounces" | ...
   score: number;           // 0-100
@@ -630,10 +704,19 @@ function fmtSigned(v: number | null | undefined, digits = 0, unit = ""): string 
   return `${sign}${v.toFixed(digits)}${unit ? ` ${unit}` : ""}`;
 }
 
+/**
+ * Datum und Uhrzeit in der Sprache, die der Pilot eingestellt hat.
+ *
+ * `toLocaleString()` ohne Angabe nimmt die Sprache des Betriebssystems,
+ * nicht die der App. Auf einem englischsprachigen Windows stand im
+ * deutschen Bericht „5/13/2026, 7:42:00 PM" — ein amerikanisches Datum
+ * zwischen deutschen Beschriftungen, und bei Tagen unter 13 nicht einmal
+ * als falsch erkennbar (05.12. oder 12.05.?).
+ */
 function fmtDateTime(iso: string): string {
   try {
     const d = new Date(iso);
-    return d.toLocaleString();
+    return d.toLocaleString(i18n.language || undefined);
   } catch {
     return iso;
   }
@@ -1438,7 +1521,7 @@ function ScoreBreakdown({
             >
               <div className="landing-subscore__head">
                 <span className="landing-subscore__label">
-                  {t(`landing.sub.${s.key}`)}
+                  {achsenLabel(t, s)}
                   {/* v0.11.0-dev: kein i-Tooltip für rollout — der
                       "🛬 Wie wird das berechnet?"-Button am Boden öffnet
                       bereits das ausführliche Modal. Zwei Erklärungen
@@ -1489,7 +1572,7 @@ function ScoreBreakdown({
           >
             <div className="landing-subscore__head">
               <span className="landing-subscore__label">
-                {t(`landing.sub.${s.key}`)}
+                {achsenLabel(t, s)}
                 {/* v0.11.0-dev: kein i-Tooltip für rollout — der
                     "🛬 Wie wird das berechnet?"-Button am Boden öffnet
                     bereits das ausführliche Modal. */}
@@ -1594,7 +1677,7 @@ function CoachTip({ subs }: { subs: SubScore[] }) {
     >
       <div className="landing-coach__head">
         {t("landing.coach_title")} ·{" "}
-        <strong>{t(`landing.sub.${worst.key}`)}</strong>
+        <strong>{achsenLabel(t, worst)}</strong>
       </div>
       <p className="landing-coach__body">{t(tipKey)}</p>
     </div>
@@ -2108,15 +2191,72 @@ function FuelComparisonBar({
 // Scores, ApproachChart, VsCurveChart, RunwayDiagramV2 …), darum lebt er
 // hier in-file statt in einer eigenen Datei.
 
-/** App-Version, die in der Report-Fußzeile erscheint. */
-const REPORT_APP_VERSION = "0.12.8";
+/**
+ * Mindest-Schriftgrösse der Bahn-Grafik im Bericht, in SVG-Einheiten.
+ *
+ * # Das Problem
+ *
+ * Im Bericht skaliert das SVG auf die Spaltenbreite (`width: 100%`), und
+ * jede Schrift darin schrumpft mit:
+ *
+ *   A4 hoch, `@page margin: 14mm 15mm`  →  180 mm Spalte
+ *   minus 2 × 5 mm Polster der Karte    →  170 mm Zeichenbreite
+ *   viewBox der Grafik                  →  1200 Einheiten
+ *   also  1 Einheit = 170/1200 mm       =  0,4016 pt
+ *
+ * Gemessen am 24.08.2026 landeten die Beschriftungen damit bei 3,6 bis
+ * 4,4 pt. Lesbar ist Druck etwa ab 6 pt.
+ *
+ * # Warum 11 und nicht mehr
+ *
+ * Für 6,8 pt bräuchte es 17 Einheiten. Bei 17 zerfällt das Layout: In der
+ * Demo (alle vierzehn Varianten, echter SVG-Motor) waren es 31 Befunde —
+ * Beschriftungen, die sich überlappen oder aus dem Bild laufen. Das
+ * Layout ist auf die Schriftgrössen von damals abgestimmt, und die
+ * waagerechten Abstände lassen sich nicht durch Anheben lösen, sondern
+ * nur durch ein anderes Layout.
+ *
+ * Abgetastet ergab sich: 17 → 31 Befunde, 13 → 15, 12 → 3, **11 → 0**.
+ * Elf ist damit der grösste Wert, der nachweislich sauber bleibt: 4,4 pt
+ * statt 3,6 pt.
+ *
+ * # Was das bedeutet — und was nicht
+ *
+ * Die Beschriftungen IM BILD bleiben auf Papier klein. Verloren geht
+ * dadurch nichts: Jeder gemessene Wert steht als normaler HTML-Text
+ * neben der Grafik (Ereignisliste, Kennzahlen-Zeile, Legende) und druckt
+ * in gewohnter Grösse. Das Bild zeigt die Lage, die Liste die Zahlen.
+ *
+ * Wirklich lesbar würde das Bild erst auf einer Querformat-Seite
+ * (269 mm statt 170 mm → 1,58×, mit dieser Untergrenze rund 7 pt). Das
+ * ist eine Layout-Entscheidung und steht offen.
+ *
+ * `LandingReport.test.tsx` rechnet die Herleitung nach, statt sie zu
+ * glauben.
+ */
+const BERICHT_SCHRIFT_MINDEST = 11;
+
+/**
+ * App-Version für die Report-Fußzeile — aus dem Paket, nicht von Hand.
+ *
+ * Hier stand eine getippte Konstante: `"0.12.8"`. Die App war bei 1.7.0,
+ * und jeder ausgedruckte Bericht behauptete seit fünf Versionen einen
+ * falschen Stand. Genau dafür ist ein Bericht da — jemand legt ihn zur
+ * Seite und sieht später nach, womit er erzeugt wurde.
+ *
+ * `__APP_VERSION__` setzt Vite aus `package.json` (siehe
+ * `vite.config.ts`). Im Testlauf ohne Vite-Define fehlt es, deshalb der
+ * Rückfall.
+ */
+const REPORT_APP_VERSION =
+  typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0";
 
 /** v0.12.8-dev: Fußzeile — EINMAL am Ende des fließenden Dokuments
  *  (vorher pro Seite). Generierungs-Datum + App-Version. */
 function ReportFooter() {
   const { t } = useTranslation();
   const generated = t("landing.report.generated", {
-    date: new Date().toLocaleDateString(),
+    date: new Date().toLocaleDateString(i18n.language || undefined),
     version: REPORT_APP_VERSION,
   });
   return (
@@ -2205,7 +2345,9 @@ function ReportTile({ label, value }: { label: string; value: string }) {
  * Bug). Ausgewählte Section-Gruppen starten via `.report-break-before`
  * auf einer frischen Seite. Nur sichtbar im `@media print`.
  */
-function LandingReport({ record }: { record: LandingRecord }) {
+/** Exportiert für die Prüfung — der Bericht ist sonst nur über
+ *  `window.print()` erreichbar, und das lässt sich nicht lesen. */
+export function LandingReport({ record }: { record: LandingRecord }) {
   const { t } = useTranslation();
 
   const callsign = record.airline_icao
@@ -2347,7 +2489,7 @@ function LandingReport({ record }: { record: LandingRecord }) {
             <div key={s.key} className="report-bar">
               <div className="report-bar__head">
                 <span className="report-bar__label">
-                  {t(`landing.sub.${s.key}`)}
+                  {achsenLabel(t, s)}
                 </span>
                 <span className="report-bar__pts">
                   {s.skipped
@@ -2375,7 +2517,7 @@ function LandingReport({ record }: { record: LandingRecord }) {
         <ReportSection title={t("landing.report.coach")}>
           <div className="report-coach">
             <div className="report-coach__focus">
-              {t(`landing.sub.${worst.key}`)}
+              {achsenLabel(t, worst)}
             </div>
             <p className="report-coach__body">
               {t(coachTipKey(worst.rationale))}
@@ -2588,6 +2730,27 @@ function LandingReport({ record }: { record: LandingRecord }) {
                 label={t("landing.report.rwy_length")}
                 value={fmtNumber(rm.length_ft * 0.3048, 0, "m")}
               />
+              {/* Die landbare Länge — aber nur, wenn sie abweicht.
+
+                  Auf derselben Seite standen zwei verschiedene
+                  Bahnlängen: hier 3250 m (die bauliche), in der Grafik
+                  darunter 2952 m (nach der versetzten Schwelle). Beide
+                  stimmen, keine sagte welche sie ist, und der Leser
+                  hatte keine Möglichkeit, sie zu vereinbaren.
+
+                  Bei einer Bahn ohne versetzte Schwelle sind sie gleich
+                  — dann wäre eine zweite Kachel nur Rauschen. */}
+              {(() => {
+                const lda = rolloutLdaMeters(rm);
+                const voll = rm.length_ft * 0.3048;
+                if (lda == null || Math.abs(voll - lda) < 1) return null;
+                return (
+                  <ReportTile
+                    label={t("landing.report.rwy_lda")}
+                    value={fmtNumber(lda, 0, "m")}
+                  />
+                );
+              })()}
               <ReportTile
                 label={t("landing.report.rwy_surface")}
                 value={rm.surface || "—"}
@@ -2737,7 +2900,10 @@ function LandingReport({ record }: { record: LandingRecord }) {
                 <ReportChartCard
                   caption={t("landing.report.runway_diagram")}
                 >
-                  <RunwayDiagramV2 {...v2Props} />
+                  <RunwayDiagramV2
+                    {...v2Props}
+                    schriftMindest={BERICHT_SCHRIFT_MINDEST}
+                  />
                 </ReportChartCard>
               )}
             </div>

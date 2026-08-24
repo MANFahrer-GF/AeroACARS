@@ -4,8 +4,27 @@
     {
       "name": "aeroacars-client-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "client", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "client",
+        "run",
+        "dev"
+      ],
       "port": 1420
+    },
+    {
+      "name": "bahndisziplin-demo",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "--prefix",
+        "client",
+        "vite",
+        "--config",
+        "client/vite.demo.config.mjs",
+        "--port",
+        "1421"
+      ],
+      "port": 1421
     }
   ]
 }

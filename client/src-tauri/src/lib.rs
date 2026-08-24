@@ -15,6 +15,10 @@ mod runway;
 mod stands;
 mod ui_state;
 mod runway_assessment;
+/// v1.7.0 — Ausfahrten aus der OSM-Bodenkarte (Spec §8.6).
+mod ausfahrten;
+/// v1.7.0 Schritt 11 — Spurweite aus der Flugzeugdatei (Spec §5.3 B).
+mod fahrwerk;
 mod xplane_plugin_install;
 // v0.9.0 (#GlitchTip): Sentry-Init + Allowlist + Redaction. Opt-In, Default OFF.
 // Spec: docs/spec/v0.9.0-glitchtip-self-hosted.md
@@ -153,7 +157,87 @@ const MQTT_PUBLISH_INTERVAL_SECS: u64 = 3;
 ///   AGL <1500 ft  → 1000 ms (1 Hz)  — Final-Approach (war: 1000-500ft = 1s)
 ///   AGL <2000 ft  → 1500 ms         — kurz vor Final
 ///   sonst         → 3000 ms (default)
-fn adaptive_tick_interval(phase: FlightPhase, agl_ft: Option<f64>) -> Duration {
+/// Abtastintervall waehrend des Ausrollens.
+///
+/// # Warum das Ausrollen ein eigenes Intervall braucht
+///
+/// Der Rollweg lief bisher mit denselben 2 Hz wie der Flare. Bei 100 kt
+/// (51 m/s) ist das ein Messpunkt alle **25 Meter** — und damit eine Spur,
+/// die aus fuenfzehn bis dreissig Punkten besteht. Fuer die Frage „wie weit
+/// war das Rad von der Kante" reicht das gerade so; fuer die Frage „wie hat
+/// sich das Flugzeug auf der Bahn verhalten" nicht. Ein Ausbrechen und
+/// Zurueckziehen ueber vierzig Meter faellt zwischen zwei Punkte.
+///
+/// Bei 5 Hz sind es zehn Meter je Punkt — genau der Mindestabstand, mit dem
+/// `bahndisziplin_tick` die Spur ohnehin ausduennt. Damit ist die
+/// Aufzeichnung so fein, wie die Ablage es zulaesst, und nicht feiner.
+///
+/// # Was das kostet
+///
+/// Der Tick selbst ist billig: Er liest einen Schnappschuss und rechnet.
+/// Die teuren Wege — MQTT-Publish und der phpVMS-Punktabstand — haengen
+/// seit v0.6.0 bzw. v1.6.14 an eigenen Kadenzen und werden davon **nicht**
+/// beruehrt. Das Fenster ist ausserdem kurz: Ausrollen dauert dreissig bis
+/// sechzig Sekunden, danach steht das Flugzeug auf dem Rollweg und das
+/// Intervall geht auf 2 Hz zurueck.
+const ROLLOUT_TICK_MS: u64 = 200;
+
+/// Ab dieser Fahrt gilt „am Ausrollen".
+///
+/// # Warum das die Spur-Schwelle ist und nicht die Bewertungs-Schwelle
+///
+/// Bis v1.7.0 stand hier `BAHN_MESS_MIN_GS_KT` (60 kt) — dieselbe Schwelle,
+/// unter der das **Bewertungs**fenster schliesst. Die Begruendung klang
+/// schluessig: Wer langsamer rollt, wird nicht mehr bewertet und braucht
+/// keine feine Spur.
+///
+/// Sie war falsch, und Thomas hat es an der Zeichnung gesehen: Die
+/// Ausfahrt wird mit fuenfzehn bis dreissig Knoten gefahren. Genau dort
+/// bog das Flugzeug ab, genau dort kruemmt sich die Spur am staerksten —
+/// und genau dort fiel der Takt von fuenf Hertz auf zwei. Bei zwanzig
+/// Knoten sind das statt 2,1 Metern je Punkt deren 5,1, und die Kurve, um
+/// derentwillen die feine Taktung ueberhaupt eingebaut wurde, bekam die
+/// wenigsten Punkte von allen.
+///
+/// Aufgezeichnet wird bis `BAHN_SPUR_STOP_GS_KT`; so lange laeuft jetzt
+/// auch der Takt. Das kostet wenig: Zwischen 60 und 5 Knoten vergehen
+/// keine dreissig Sekunden, und der Tick liest nur einen Schnappschuss.
+const ROLLOUT_TICK_MIN_GS_KT: f64 = BAHN_SPUR_STOP_GS_KT as f64;
+
+/// Wie `adaptive_tick_interval`, kennt aber zusaetzlich Bodenkontakt und
+/// Fahrt — beides braucht es, um das Ausrollen von allem anderen zu
+/// unterscheiden.
+fn adaptive_tick_interval_v2(
+    phase: FlightPhase,
+    agl_ft: Option<f64>,
+    on_ground: Option<bool>,
+    groundspeed_kt: Option<f64>,
+    spur_laeuft: bool,
+) -> Duration {
+    // Ausrollen zuerst: Es ist der einzige Zustand, in dem die seitliche
+    // Lage laufend gemessen wird, und der einzige, dessen Aufloesung an der
+    // Fahrt haengt statt an der Hoehe.
+    //
+    // Zwei Wege fuehren hierher, und es braucht beide:
+    //
+    // * `spur_laeuft` — die Aufzeichnung selbst meldet, dass sie laeuft.
+    //   Das deckt die Ausfahrt ab, in der die Phase schon auf `TaxiIn`
+    //   gesprungen ist, die Spur aber noch gezeichnet wird.
+    // * Die Phasen-Bedingung — sie deckt das offene Messfenster ab, in dem
+    //   `spur_fortschreiben` noch gar nicht gerufen wird und das Flag
+    //   folglich false ist.
+    //
+    // Bis v1.7.0 gab es nur den zweiten. Gemessen an neun echten
+    // Landungen fiel die Kadenz dadurch bei dreissig Knoten von 0,51 s
+    // auf 3,01 s — 34,9 Meter zwischen zwei Punkten, und das genau in der
+    // Kurve. Die Ausfahrt bekam die wenigsten Punkte der ganzen Landung.
+    if spur_laeuft
+        || (matches!(phase, FlightPhase::Landing)
+            && on_ground == Some(true)
+            && groundspeed_kt.is_some_and(|gs| gs >= ROLLOUT_TICK_MIN_GS_KT))
+    {
+        return Duration::from_millis(ROLLOUT_TICK_MS);
+    }
     if let (Some(agl), true) = (
         agl_ft,
         matches!(
@@ -3748,6 +3832,97 @@ struct FlightStats {
     /// Landing arm). None until first touchdown. Resumed flights mid-
     /// rollout finalise on the next trigger or never (accepted imprecision).
     rollout_distance_m: Option<f64>,
+    /// v1.7.0 Bahndisziplin — groesster Betrag des seitlichen Versatzes zur
+    /// Bahnmittellinie waehrend des GEWERTETEN Rollwegs, in Metern.
+    bahn_max_querversatz_m: Option<f64>,
+    /// v1.7.0 — Strecke jenseits des Bahnendes, falls dort noch Fahrt war.
+    bahn_overrun_m: Option<f64>,
+    /// v1.7.0 — Zahl der Positionsproben im Messfenster. Unter 3 ist die
+    /// seitliche Aussage nicht belastbar.
+    bahn_proben: u32,
+    /// v1.7.0 — true, sobald das Messfenster geschlossen ist (Ausfahrt
+    /// eingeleitet oder unter die Messgeschwindigkeit gefallen).
+    bahn_fenster_zu: bool,
+    /// v1.7.0 — der gefahrene Streifen als (laengs_m, quer_m), fuer die
+    /// Queransicht des Diagramms (Spec §8.3).
+    ///
+    /// Ausgeduennt auf einen Punkt je `BAHN_SPUR_MIN_ABSTAND_M` und hart
+    /// begrenzt auf `BAHN_SPUR_MAX_PUNKTE`. Ohne beides waeren es bei
+    /// 50 Hz und dreissig Sekunden Ausrollen fuenfzehnhundert Punkte je
+    /// Landung — in jedem gespeicherten Datensatz, in jedem Upload und in
+    /// jedem Diagramm, das sie zeichnen soll.
+    bahn_spur: Vec<(f32, f32)>,
+    /// Laeuft die Spuraufzeichnung gerade?
+    ///
+    /// Steuert den Aufzeichnungstakt (`adaptive_tick_interval_v2`). Ohne
+    /// dieses Feld musste der Takt an einer Fahrt- oder Phasenschwelle
+    /// haengen, und beides traf die Ausfahrt nicht: gemessen an neun
+    /// echten Landungen brach die Kadenz bei dreissig Knoten von 0,51 s
+    /// auf 3,01 s ein — mitten in der Kurve, weil dort die Phase von
+    /// `Landing` auf `TaxiIn` wechselt.
+    bahn_spur_laeuft: bool,
+    /// Laengsposition, an der die Spur die Bahnkante gequert hat.
+    ///
+    /// # Warum das nicht dasselbe ist wie `bahn_raeum_laengs_m`
+    ///
+    /// Beides hiess bis hierher „Raeumpunkt", und die Anzeige hat es
+    /// auseinandergehalten, der Client nicht. Ein Flugzeug schwenkt
+    /// hunderte Meter vor der Ausfahrt nach aussen: `bahn_raeum_laengs_m`
+    /// markiert den Beginn dieses Ausschwenkens (Kursabweichung ueber
+    /// `BAHN_KURS_AUSFAHRT_GRAD`) — ab dort wird nicht mehr **bewertet**,
+    /// weil die seitliche Lage an der Anweisung des Lotsen haengt.
+    /// **Verlassen** hat das Flugzeug die Bahn erst hier, an der Kante.
+    ///
+    /// Die Anzeige braucht beide: die Marke „Bahn geraeumt" gehoert an
+    /// die Kante, die gestrichelte Linie beginnt am Ausschwenken. Mit nur
+    /// einem Wert sass die Marke mitten auf der Bahn.
+    bahn_kante_laengs_m: Option<f64>,
+    /// Fahrt beim Queren der Kante — die Groesse, die der Vertrag
+    /// `clearance_speed_kt` nennt („Geschwindigkeit dort").
+    bahn_kante_gs_kt: Option<f64>,
+    /// Kursabweichung beim Ausschwenken, in Grad (positiv = rechts).
+    ///
+    /// Gespeichert, weil die SEITE der Ausfahrt sich im Moment des
+    /// Kurswechsels noch nicht bestimmen laesst: Der Vertrag verlangt zwei
+    /// uebereinstimmende Groessen (fallender Kurs UND wachsender
+    /// Querversatz), und die Querbewegung ist dort naturgemaess erst
+    /// wenige Meter gross. `bahn_felder` rechnet sie nach, wenn die ganze
+    /// Spur vorliegt.
+    bahn_raeum_kurs_diff: Option<f64>,
+    /// Rohe Bodenkarte des Ankunftsflughafens, für die Ausfahrten.
+    ///
+    /// # Warum sie hier liegt
+    ///
+    /// Sie kommt im Anflug (die Stand-Erkennung holt sie ohnehin), die
+    /// gematchte Bahn erst beim Aufsetzen. Ohne Zwischenspeicher liesse
+    /// sich beides nie zusammenbringen — und genau das war der Zustand:
+    /// `ausfahrten::ausfahrten_fuer_bahn` war gebaut, getestet und wurde
+    /// **nirgends aufgerufen**. Die Anzeige hatte den Platz dafür, bekam
+    /// aber nie Daten.
+    ///
+    /// Grösse: im Mittel 91 KB, im schlimmsten gemessenen Fall 577 KB
+    /// (ZSPD). Für die Dauer eines Fluges vertretbar; sie wird beim
+    /// Zurücksetzen mit allem anderen frei.
+    arr_ground_geojson: Option<String>,
+    /// v1.7.0 — wo die Bahn geraeumt wurde: Laengsposition in Metern.
+    /// `None`, solange das Fenster nicht wegen einer Ausfahrt zuging.
+    bahn_raeum_laengs_m: Option<f64>,
+    /// v1.7.0 — Geschwindigkeit beim Raeumen, in Knoten.
+    bahn_raeum_gs_kt: Option<f64>,
+    /// v1.7.0 Schritt 11 — Spurweite aus der Flugzeugdatei, in Metern.
+    ///
+    /// EINMAL beim Flugbeginn gelesen, nicht je Tick: Der Weg dorthin geht
+    /// ueber einen Verzeichnis-Scan der Flugzeug-Pakete. `None` heisst, dass
+    /// die Datei nicht eindeutig zuzuordnen war — dann gilt die Typtabelle,
+    /// und das ist der Normalfall, nicht der Ausnahmefall.
+    fahrwerk_spurweite_m: Option<f64>,
+    /// v1.7.0 — Seite der Ausfahrt, `"left"` oder `"right"`.
+    ///
+    /// Nur gesetzt, wenn **zwei unabhaengige Groessen** dasselbe sagen:
+    /// die Kursaenderung und die Querbewegung. Stimmt nur eine davon,
+    /// bleibt das Feld leer — dann liegt vermutlich ein Achsenfehler vor,
+    /// und eine Richtung zu behaupten waere schlimmer als keine (§8.6).
+    bahn_raeum_seite: Option<String>,
     /// True once `rollout_distance_m` has been finalised. Stops the
     /// per-tick accumulation in step_flight from continuing past
     /// the actual stop.
@@ -7877,11 +8052,20 @@ fn landing_get_current(
     } else {
         Some(bid_icao)
     };
+    let aircraft_title = snapshot.as_ref().and_then(|s| s.aircraft_title.as_deref());
+    // v1.7.0: DRITTE Stufe — der Flugzeug-Titel. Etliche Add-ons fuellen
+    // `ATC MODEL` nicht, und ohne Buchung greift auch der Bid-Fallback nicht.
+    // Dann fehlte der Typ komplett, und alles was darauf keyed fiel still auf
+    // einen Default zurueck. MPH 9 (22.08.2026) kostete das 25 Punkte: das
+    // TFDi MD-11F meldete kein ATC-Modell, die Heavy-Gutschrift entfiel, aus
+    // 80 wurden 55. Der Titel stand die ganze Zeit da.
+    // Betrifft im Bestand 65 von 895 Fluegen (7,3 %).
+    let titel_icao = aircraft_title.and_then(sim_core::icao_aus_titel);
     let aircraft_icao = snapshot
         .as_ref()
         .and_then(|s| s.aircraft_icao.as_deref())
-        .or(bid_icao_opt);
-    let aircraft_title = snapshot.as_ref().and_then(|s| s.aircraft_title.as_deref());
+        .or(bid_icao_opt)
+        .or(titel_icao.as_deref());
     // v0.7.18 (B-012): airport_lookup-Closure aus dem AppState.airports-Cache.
     let airport_lookup_data: std::collections::HashMap<String, (f64, f64)> = {
         let guard = state.airports.lock().expect("airports lock");
@@ -11903,12 +12087,67 @@ async fn flight_start(
         .to_string();
     // v0.3.0: Aircraft-ICAO + Name aus dem expected_aircraft ziehen für
     // den PIREP-Custom-Field "Aircraft Type".
-    let aircraft_icao = expected_aircraft
+    //
+    // v1.7.0 (Spec §8.1b): Der Server ist die beste Quelle — er hat das
+    // Flugzeug über seine ID aufgelöst und kennt den Typ aus dem Datensatz
+    // der Registrierung. Liefert er ihn ausnahmsweise NICHT, darf hier kein
+    // leerer String stehenbleiben: `flight.aircraft_icao` ist die Quelle für
+    // die gesamte Bewertung, und leer bedeutet dort „Light-Kategorie" statt
+    // „unbekannt". MPH 9 (22.08.2026) kostete das 25 Punkte — PH-MCU steht in
+    // der Datenbank mit `icao = MD11`, im aktiven Flug kam trotzdem nichts an.
+    //
+    // Deshalb zwei Dinge: der Titel des tatsächlich geladenen Flugzeugs als
+    // Netz, und eine sichtbare Meldung im Aktivitätsprotokoll. Ein stiller
+    // Rückfall ist genau der Fehler, den wir gerade beheben.
+    let aircraft_icao = match expected_aircraft
         .icao
         .as_deref()
-        .unwrap_or("")
-        .trim()
-        .to_string();
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(vom_server) => vom_server.to_string(),
+        None => {
+            let aus_titel = sim_core::icao_aus_titel(&sim_title);
+            match &aus_titel {
+                Some(typ) => {
+                    tracing::warn!(
+                        aircraft_id,
+                        registration = %planned_registration,
+                        abgeleitet = %typ,
+                        "phpVMS liefert keinen ICAO-Typ — aus dem Flugzeug-Titel abgeleitet"
+                    );
+                    log_activity_handle(
+                        &app,
+                        ActivityLevel::Warn,
+                        format!(
+                            "Flugzeugtyp fehlt in phpVMS für {planned_registration} — \
+                             aus dem Simulator-Titel abgeleitet: {typ}"
+                        ),
+                        None,
+                    );
+                }
+                None => {
+                    tracing::warn!(
+                        aircraft_id,
+                        registration = %planned_registration,
+                        "phpVMS liefert keinen ICAO-Typ und der Titel gibt nichts her — \
+                         die Landebewertung rechnet ohne Musterbezug"
+                    );
+                    log_activity_handle(
+                        &app,
+                        ActivityLevel::Warn,
+                        format!(
+                            "Flugzeugtyp unbekannt für {planned_registration} — \
+                             die Landebewertung rechnet ohne Musterbezug"
+                        ),
+                        None,
+                    );
+                }
+            }
+            aus_titel.unwrap_or_default()
+        }
+    };
+
     let aircraft_name = expected_aircraft
         .name
         .as_deref()
@@ -12141,6 +12380,50 @@ async fn flight_start(
     });
 
     save_active_flight(&app, &flight);
+
+    // v1.7.0 Schritt 11 — Spurweite aus der Flugzeugdatei (Spec §5.3 B).
+    //
+    // EINMAL hier, nicht je Tick: Der Weg dorthin geht ueber einen
+    // Verzeichnis-Scan der Flugzeug-Pakete, und der kostet je nach
+    // Installation Sekunden. Am Flugbeginn faellt das nicht auf; in der
+    // Schleife waere es untragbar. Deshalb im Hintergrund, damit der
+    // Flugbeginn nicht darauf wartet.
+    //
+    // Schlaegt es fehl — kein eindeutiges Paket, verschluesselte Datei,
+    // unplausibler Wert — bleibt es bei der Typtabelle. Das ist der
+    // Normalfall und kein Mangel: Die Tabelle deckt 98 % des Bestands ab.
+    {
+        let titel = sim_title.clone();
+        let app_fuer_meldung = app.clone();
+        // `ActiveFlight` liegt als `Arc` vor — der Klon ist der Zeiger,
+        // nicht der Zustand. Denselben Weg nimmt `spawn_navdata_fetch`.
+        let flug = flight.clone();
+        tauri::async_runtime::spawn(async move {
+            let gelesen = tauri::async_runtime::spawn_blocking(move || {
+                aircraft_scan::paket_zu_titel(&titel)
+                    .and_then(|dir| fahrwerk::spurweite_aus_paket(&dir))
+            })
+            .await
+            .ok()
+            .flatten();
+            if let Some(f) = gelesen {
+                if let Ok(mut s) = flug.stats.lock() {
+                    s.fahrwerk_spurweite_m = Some(f.spurweite_m);
+                }
+                tracing::info!(
+                    spurweite_m = f.spurweite_m,
+                    quelle = ?f.quelle,
+                    "Spurweite aus der Flugzeugdatei gelesen"
+                );
+                log_activity_handle(
+                    &app_fuer_meldung,
+                    ActivityLevel::Info,
+                    format!("Spurweite aus der Flugzeugdatei: {:.2} m", f.spurweite_m),
+                    None,
+                );
+            }
+        });
+    }
     // v0.8.0: parallel-fetch dep/arr/alt-Navdata vom VPS. Non-blocking
     // (Background-Task), Failure → OurAirports-Fallback (transparent).
     // flight_start (SimBrief): Alternate kommt aus dem Bid; spätere
@@ -12773,12 +13056,42 @@ async fn flight_start_manual(
         .unwrap_or_default()
         .trim()
         .to_string();
-    let aircraft_icao = aircraft_details
+    // v1.7.0 (Spec §8.1b): wie im Haupt-Startpfad — ein leerer Typ bedeutet
+    // in der Bewertung "Light-Kategorie", nicht "unbekannt". Deshalb der
+    // Titel als Netz und eine sichtbare Meldung statt eines stillen Rückfalls.
+    let aircraft_icao = match aircraft_details
         .as_ref()
-        .and_then(|a| a.icao.clone())
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+        .and_then(|a| a.icao.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(vom_server) => vom_server.to_string(),
+        None => {
+            let titel = snapshot.aircraft_title.as_deref().unwrap_or("");
+            let aus_titel = sim_core::icao_aus_titel(titel);
+            match &aus_titel {
+                Some(typ) => log_activity_handle(
+                    &app,
+                    ActivityLevel::Warn,
+                    format!(
+                        "Flugzeugtyp fehlt in phpVMS für {planned_registration} — \
+                         aus dem Simulator-Titel abgeleitet: {typ}"
+                    ),
+                    None,
+                ),
+                None => log_activity_handle(
+                    &app,
+                    ActivityLevel::Warn,
+                    format!(
+                        "Flugzeugtyp unbekannt für {planned_registration} — \
+                         die Landebewertung rechnet ohne Musterbezug"
+                    ),
+                    None,
+                ),
+            }
+            aus_titel.unwrap_or_default()
+        }
+    };
     let aircraft_name = aircraft_details
         .as_ref()
         .and_then(|a| a.name.clone())
@@ -14857,6 +15170,33 @@ fn fill_v2_rollout_fields(
     stats: &FlightStats,
     arr_airport: &str,
 ) {
+    // v1.7.0: Ziel-Markierung und Aufsetzzone kommen aus `assess_touchdown` —
+    // derselben Quelle, die auch den Touchdown-Payload und die Anzeige speist.
+    // Die Achse rechnet sie ausdruecklich NICHT selbst nach: die Regeln (300/400 m
+    // ab 2400 m Bahnlaenge; Zone min(900 m, Drittel) ab 1200 m) leben in
+    // `runway_assessment`, und dort bleiben sie.
+    let bewertet = assess_touchdown(stats);
+    input.aim_point_m = bewertet.aim.map(|a| a.aim_point_m);
+    input.tdz_end_m = bewertet.tdz.map(|t| t.tdz_length_m);
+
+    // v1.7.0 Bahndisziplin: seitliche Lage und Overrun aus dem Rollweg,
+    // fortgeschrieben von `bahndisziplin_tick`. Der Belag kommt aus dem
+    // Runway-Match (OurAirports-Angabe) — `nav_runways.surface_code` ist
+    // durchgaengig leer und darf nicht verwendet werden.
+    input.bahn_max_querversatz_m = stats.bahn_max_querversatz_m;
+    input.bahn_overrun_m = stats.bahn_overrun_m;
+    input.bahn_proben = Some(stats.bahn_proben as usize);
+    // Die Spurweite aus der Flugzeugdatei, falls gelesen — dieselbe
+    // Quelle, aus der die Anzeige ihren Randabstand rechnet. Ohne diese
+    // Zeile zeigt die Grafik einen anderen Wert, als die Note benutzt:
+    // Bei einem Add-on mit 2 m breiterem Fahrwerk gemessen 8,8 gegen
+    // 7,7 m Randabstand.
+    input.fahrwerk_spurweite_m = stats.fahrwerk_spurweite_m;
+    input.runway_surface = stats
+        .runway_match
+        .as_ref()
+        .map(|rm| rm.surface.clone());
+
     let rm = stats.runway_match.as_ref();
     // v1.6.7-QS: die um die Displaced Threshold KORRIGIERTE Distanz, nicht
     // die pavement-relative. `runway_length_m - displaced` bildet unten den
@@ -15367,6 +15707,345 @@ fn wire_displaced_threshold_ft(runway_match: Option<&runway::RunwayMatch>) -> Op
     runway_match.map(effective_displaced_threshold_ft)
 }
 
+/// Die Bahndisziplin-Felder fuer den Datensatz — an **einer** Stelle
+/// abgeleitet.
+///
+/// Warum das eine eigene Funktion ist und nicht zwoelf Zeilen im
+/// Initialisierer: Dieselben Werte gehen in den lokalen Datensatz, in den
+/// Server-Upload und in die Bewertung. Drei Stellen, die dasselbe rechnen,
+/// driften auseinander — das ist die Fehlerklasse aus §9 der Spezifikation,
+/// und sie hat in diesem Projekt schon zweimal zugeschlagen (die vier
+/// Kopien der Bahnprojektion, die zwei Prozentzahlen fuer dieselbe Bahn).
+/// `icao` ist der **aufgeloeste** Typcode aus der Kette Sim → Buchung →
+/// Server → Titel (Schritt 1 der Bauliste), nicht der rohe Sim-Wert. Wer
+/// hier `stats` erneut befragte, umginge genau die Kette, die der MPH-9-Fall
+/// erzwungen hat: Die TFDi MD-11 meldet keinen Typ, und ohne Kette fiel die
+/// Bewertung auf „Light" zurueck — 55 statt 80 Punkte.
+/// Der Grund, aus dem die Bahndisziplin-Achse nicht gewertet hat.
+///
+/// Ausgelesen, nicht hergeleitet: Die Achse hat schon entschieden, und die
+/// Anzeige soll genau diese Entscheidung zeigen. Eine zweite Herleitung in
+/// der Grafik waere eine Zweitimplementierung des Urteils — und die driften
+/// auseinander, sobald jemand eine Schwelle anfasst.
+fn bahn_skip_grund(sub_scores: &[landing_scoring::SubScoreEntry]) -> Option<String> {
+    sub_scores
+        .iter()
+        .find(|s| s.key == "rollout" && s.skipped)
+        .and_then(|s| s.reason.clone())
+}
+
+fn bahn_felder(
+    stats: &FlightStats,
+    icao: Option<&str>,
+    skip_grund: Option<String>,
+) -> BahnFelder {
+    let rm = stats.runway_match.as_ref();
+    // Reihenfolge nach Spec §5.3: Die Flugzeugdatei ist die Verfeinerung,
+    // die Typtabelle die Basis. Liegt ein aus der Datei gelesener Wert vor,
+    // hat er Vorrang — er beschreibt das tatsaechlich geflogene Add-on und
+    // nicht das Realmuster.
+    //
+    // Vorrang heisst aber NICHT blind: `spurweite_aus_paket` liefert nur
+    // dann etwas, wenn die Zuordnung eindeutig und der Wert plausibel war.
+    // Alles andere faellt auf die Tabelle zurueck.
+    let aus_datei = stats.fahrwerk_spurweite_m;
+    let spur_m = aus_datei.or_else(|| landing_scoring::spurweite::spurweite_m(icao));
+    let breite_m = rm
+        .map(|m| m.width_ft as f64 * 0.3048)
+        .filter(|w| *w > 0.0);
+    let versatz_m = stats.bahn_max_querversatz_m;
+
+    // Kleinster Randabstand: halbe Bahnbreite minus das aeussere Rad.
+    // Negativ heisst, das Rad war jenseits der befestigten Flaeche.
+    //
+    // Nur wenn ALLE drei Groessen bekannt sind. Ein geschaetzter Randabstand
+    // waere eine Behauptung ueber die Bahnkante, die die Daten nicht decken —
+    // und er stuende in der Anzeige neben echten Messwerten, ununterscheidbar.
+    // Dieselbe Rechnung wie in `sub_bahndisziplin` — bis auf die letzte
+    // Stelle. Die Anzeige zeigt den Wert, an dem die Bewertung haengt;
+    // zwei Zahlen fuer dieselbe Landung waeren schlimmer als eine
+    // fehlende.
+    //
+    // Insbesondere dieselbe Aussenkante: bis zum aeusseren Rand des
+    // aeussersten REIFENS, nicht bis zur Bein-Mitte.
+    let rand_m = match (breite_m, spur_m, versatz_m) {
+        (Some(b), Some(sp), Some(v)) => Some(
+            b / 2.0
+                - (v.abs() + landing_scoring::spurweite::aussenkante_halb_aus_spur(sp)),
+        ),
+        _ => None,
+    };
+
+    let belag = landing_scoring::belag::belag_aus_angabe(rm.map(|m| m.surface.as_str()));
+
+    // ── Der Kantenuebertritt, aus der GANZEN Spur ────────────────────────
+    //
+    // `bahn_kante_laengs_m` entsteht live, beim ersten Uebertritt nach dem
+    // Schliessen des Messfensters. Live laesst sich nicht wissen, ob das
+    // Flugzeug draussen BLEIBT — und genau darauf kommt es an: Ein
+    // Ausbrechen ueber die Kante mit anschliessender Korrektur ist kein
+    // Raeumen der Bahn.
+    //
+    // Hier liegt die ganze Spur vor, also wird die Stelle nachgerechnet:
+    // der erste Uebertritt, nach dem kein Punkt mehr innerhalb liegt.
+    //
+    // Am Korpus gemessen (772 Landungen, bei denen beide Regeln ein
+    // Ergebnis liefern): 763 stimmen ueberein, **neun weichen ab** — und
+    // zwar erheblich, bei HAGN 35 um 1533 m (2616 gegen 1083). Dort
+    // markierte die Live-Regel ein Ausbrechen als Ausfahrt.
+    //
+    // Dieselbe Regel benutzt das Pruefwerkzeug `tools/korpus/spuren_export.py`.
+    // Zwei Stellen, eine Regel — sonst misst der Korpus etwas anderes als
+    // der Client tut, und alle daraus abgeleiteten Zahlen sind schief.
+    // Gesucht wird erst AB dem Beginn des Ausschwenkens.
+    //
+    // Ein Ausbrechen, das vor dem Kurswechsel liegt und danach draussen
+    // bleibt, waere sonst der Raeumpunkt — und laege damit VOR dem
+    // Bewertungsende. Der Live-Pfad hat diesen Riegel seit Runde 18; der
+    // Nachrechnung fehlte er, und der Test von damals ging durch den
+    // Live-Pfad und sah es nicht.
+    let ab_m = stats.bahn_raeum_laengs_m.unwrap_or(f64::NEG_INFINITY);
+    let kante_aus_spur = breite_m.and_then(|b| {
+        let halbe = b / 2.0;
+        let spur = &stats.bahn_spur;
+        (1..spur.len()).find_map(|i| {
+            let drin_davor = (spur[i - 1].1 as f64).abs() <= halbe;
+            let draussen = (spur[i].1 as f64).abs() > halbe;
+            let nach_dem_ausschwenken = spur[i].0 as f64 >= ab_m;
+            let bleibt_draussen =
+                spur[i..].iter().all(|(_, q)| (*q as f64).abs() > halbe);
+            (drin_davor && draussen && nach_dem_ausschwenken && bleibt_draussen)
+                .then(|| spur[i].0 as f64)
+        })
+    });
+
+    // ── Punkt und Fahrt gehoeren zusammen ────────────────────────────────
+    //
+    // Die Fahrt gehoert zu der Stelle, an der sie gemessen wurde. Deshalb
+    // werden beide **hier zusammen** bestimmt und nicht getrennt: Ein
+    // `.or()` auf den Geschwindigkeitswert allein greift sonst auf einen
+    // anderen Punkt zu.
+    //
+    // Genau das stand hier: `kante_gs.or(stats.bahn_raeum_gs_kt)`. War der
+    // Uebertritt nachgerechnet und verschoben, fiel die Fahrt still auf die
+    // des KURSWECHSELS zurueck — also auf den Punkt, den `scoring_cutoff_m`
+    // meldet, hunderte Meter frueher und deutlich schneller. Der Kommentar
+    // daneben sagte das Gegenteil, und der Test sah es nicht, weil er
+    // `bahn_raeum_gs_kt` gar nicht setzte.
+    let (kante_m, kante_gs) = match kante_aus_spur {
+        // Nachgerechnet: die live gemessene Fahrt nur, wenn sie zu dieser
+        // Stelle gehoert. Die Spur traegt keine Geschwindigkeit, also gibt
+        // es fuer eine verschobene Stelle keine.
+        Some(k) => {
+            let gs = match (stats.bahn_kante_laengs_m, stats.bahn_kante_gs_kt) {
+                (Some(live), Some(gs)) if (k - live).abs() < 25.0 => Some(gs),
+                _ => None,
+            };
+            (Some(k), gs)
+        }
+        // Keine Nachrechnung moeglich: der live gemessene Uebertritt mit
+        // seiner eigenen Fahrt.
+        None => match stats.bahn_kante_laengs_m {
+            Some(live) => (Some(live), stats.bahn_kante_gs_kt),
+            // Gar kein Uebertritt: Es bleibt der Beginn des Ausschwenkens —
+            // und dazu gehoert dessen Fahrt.
+            None => (stats.bahn_raeum_laengs_m, stats.bahn_raeum_gs_kt),
+        },
+    };
+
+    // Die Ausfahrten aus der Bodenkarte, die der Anflug ohnehin geladen hat.
+    //
+    // Ohne Karte bleibt die Liste leer — das ist NICHT dasselbe wie „diese
+    // Bahn hat keine Ausfahrten", aber es sieht in der Anzeige so aus.
+    // Deshalb zeichnet sie Stummel nur, wenn wirklich welche gefunden
+    // wurden, und behauptet nie das Gegenteil.
+    let ausfahrten: Vec<storage::RunwayExit> = match (rm, stats.arr_ground_geojson.as_deref()) {
+        (Some(m), Some(karte)) if m.width_ft > 0.0 => ausfahrten::ausfahrten_fuer_bahn(
+            karte,
+            m.threshold_lat,
+            m.threshold_lon,
+            m.end_lat,
+            m.end_lon,
+            m.width_ft as f64 * 0.3048,
+        )
+        .into_iter()
+        .map(|a| storage::RunwayExit {
+            name: a.name,
+            laengs_m: a.laengs_m,
+            seite: a.seite,
+        })
+        .collect(),
+        _ => Vec::new(),
+    };
+
+    BahnFelder {
+        // Zwei Punkte, zwei Bedeutungen — siehe `bahn_kante_laengs_m`.
+        //
+        // `clearance_point_m` ist die Stelle des VERLASSENS (Kante), denn
+        // dort setzt die Anzeige die Marke „Bahn geraeumt". Fehlt sie —
+        // etwa weil das Flugzeug auf der Bahn zum Stehen kam —, faellt sie
+        // auf den Beginn des Ausschwenkens zurueck; das ist dann der
+        // letzte belegte Punkt und keine Erfindung.
+        // Beide kommen aus derselben Entscheidung weiter oben — kein
+        // `.or()` mehr auf einem der beiden allein.
+        clearance_point_m: kante_m,
+        clearance_speed_kt: kante_gs,
+        // Ab hier wird nicht mehr bewertet: der Beginn des Ausschwenkens.
+        // Ohne dieses Feld fiel die Bewertungsgrenze mit der Kante
+        // zusammen, und das Ausschwenken zaehlte als Fehler des Piloten —
+        // bei `0Ab3v9EvNN1LKZ8z` (EDDH 05) 21,95 m auf einer Bahn mit
+        // 23 m Halbbreite, gemessen unmittelbar vor dem Abbiegen.
+        scoring_cutoff_m: stats.bahn_raeum_laengs_m,
+        // Die Ausfahrtsseite, notfalls nachgerechnet.
+        //
+        // Live gelingt sie selten: Im Moment des Kurswechsels ist die
+        // Querbewegung erst wenige Meter gross, und der Vertrag verlangt
+        // zwei uebereinstimmende Groessen. Mit der ganzen Spur ist sie
+        // sichtbar.
+        clearance_side: stats.bahn_raeum_seite.clone().or_else(|| {
+            match (stats.bahn_raeum_kurs_diff, stats.bahn_raeum_laengs_m) {
+                (Some(d), Some(ab)) => bahn_raeum_seite(d, &stats.bahn_spur, ab),
+                _ => None,
+            }
+        }),
+        track_width_m: spur_m,
+        // Solange die Spurweite aus der Typtabelle kommt, ist die Quelle
+        // fest. Schritt 11 der Bauliste liest sie aus der Flugzeugdatei —
+        // dann entscheidet sich hier, welcher Wert gewonnen hat.
+        track_width_source: spur_m.map(|_| {
+            if aus_datei.is_some() {
+                "aircraft_file".to_string()
+            } else {
+                "type_table".to_string()
+            }
+        }),
+        wingspan_m: landing_scoring::spurweite::spannweite_m(icao),
+        runway_width_m: breite_m,
+        min_edge_clearance_m: rand_m,
+        max_lateral_offset_m: versatz_m,
+        lateral_samples: stats
+            .bahn_spur
+            .iter()
+            .map(|(lg, qr)| storage::LateralSample {
+                laengs_m: *lg,
+                quer_m: *qr,
+            })
+            .collect(),
+        // `Unbekannt` ist NICHT „unbefestigt" — es ist „wir wissen es
+        // nicht". Beide fuehren zum selben Verzicht auf die seitliche
+        // Bewertung, aber die Anzeige muss sie auseinanderhalten koennen.
+        surface_paved: match belag {
+            landing_scoring::belag::Belag::Unbekannt => None,
+            b => Some(b.seitlich_bewertbar()),
+        },
+        overrun_m: stats.bahn_overrun_m,
+        lateral_skip_reason: skip_grund,
+        runway_exits: ausfahrten,
+    }
+}
+
+/// Auf einen Dezimeter runden, für die Leitung.
+///
+/// Als `f64`, weil ein gerundetes `f32` sich beim Serialisieren wieder
+/// aufbläht: `523.2f32` schreibt sich als `523.2000122070312`.
+fn dezimeter(m: f32) -> f64 {
+    (m as f64 * 10.0).round() / 10.0
+}
+
+impl BahnFelder {
+    /// Dieselben Werte, fuer die Leitung.
+    ///
+    /// **Der Client rechnet, der Server zeigt an.** Diese Funktion ist die
+    /// einzige Uebersetzung zwischen beiden Welten; wer ein Feld ergaenzt,
+    /// ergaenzt es hier und ist an allen Stellen fertig.
+    ///
+    /// Leere Spuren werden zu `None`, nicht zu `Some(vec![])`: Eine leere
+    /// Liste sieht in der Anzeige aus wie eine Messung, die nichts
+    /// gefunden hat, und ist von „nicht erfasst" nicht zu unterscheiden.
+    fn wire(&self) -> aeroacars_mqtt::BahnWire {
+        aeroacars_mqtt::BahnWire {
+            clearance_point_m: self.clearance_point_m,
+            scoring_cutoff_m: self.scoring_cutoff_m,
+            clearance_speed_kt: self.clearance_speed_kt,
+            clearance_side: self.clearance_side.clone(),
+            track_width_m: self.track_width_m,
+            track_width_source: self.track_width_source.clone(),
+            wingspan_m: self.wingspan_m,
+            runway_width_m: self.runway_width_m,
+            min_edge_clearance_m: self.min_edge_clearance_m,
+            max_lateral_offset_m: self.max_lateral_offset_m,
+            lateral_samples: if self.lateral_samples.is_empty() {
+                None
+            } else {
+                Some(
+                    self.lateral_samples
+                        .iter()
+                        .map(|s| aeroacars_mqtt::LateralSampleWire {
+                            // Auf einen Dezimeter gerundet — und zwar als
+                            // f64, sonst bringt es nichts.
+                            //
+                            // Ein `f32` mit dem Wert 523,2 serialisiert als
+                            // `523.2000122070312`: achtzehn Zeichen fuer
+                            // eine Groesse, die auf zehn Zentimeter gemeint
+                            // ist und deren Quelle (GPS im Simulator) auf
+                            // etwa einen Meter genau misst.
+                            //
+                            // Gemessen an einer vollen Spur mit 400 Punkten:
+                            // 23 KB roh, 13 KB gerundet. Der Broker verwirft
+                            // Pakete ueber 64 KB (`max_packet_size` in der
+                            // mosquitto-Konfiguration), und derselbe Payload
+                            // liegt danach in der Datenbank und im
+                            // Flugprotokoll — dreimal derselbe Ballast.
+                            laengs_m: dezimeter(s.laengs_m),
+                            quer_m: dezimeter(s.quer_m),
+                        })
+                        .collect(),
+                )
+            },
+            surface_paved: self.surface_paved,
+            overrun_m: self.overrun_m,
+            lateral_skip_reason: self.lateral_skip_reason.clone(),
+            // Wie bei der Spur: leer heisst weglassen, nicht `[]`. Eine
+            // leere Liste sieht in der Anzeige aus wie „diese Bahn hat
+            // keine Ausfahrten" — das ist etwas anderes als „wir hatten
+            // keine Bodenkarte".
+            runway_exits: if self.runway_exits.is_empty() {
+                None
+            } else {
+                Some(
+                    self.runway_exits
+                        .iter()
+                        .map(|a| aeroacars_mqtt::RunwayExitWire {
+                            name: a.name.clone(),
+                            laengs_m: a.laengs_m,
+                            seite: a.seite.clone(),
+                        })
+                        .collect(),
+                )
+            },
+        }
+    }
+}
+
+/// Traeger der abgeleiteten Bahndisziplin-Werte — siehe `bahn_felder`.
+struct BahnFelder {
+    clearance_point_m: Option<f64>,
+    scoring_cutoff_m: Option<f64>,
+    clearance_speed_kt: Option<f64>,
+    clearance_side: Option<String>,
+    track_width_m: Option<f64>,
+    track_width_source: Option<String>,
+    wingspan_m: Option<f64>,
+    runway_width_m: Option<f64>,
+    min_edge_clearance_m: Option<f64>,
+    max_lateral_offset_m: Option<f64>,
+    lateral_samples: Vec<storage::LateralSample>,
+    surface_paved: Option<bool>,
+    overrun_m: Option<f64>,
+    lateral_skip_reason: Option<String>,
+    runway_exits: Vec<storage::RunwayExit>,
+}
+
 fn build_landing_record<F>(
     flight: &ActiveFlight,
     stats: &FlightStats,
@@ -15555,7 +16234,29 @@ where
     // einsetzen.
     let assessed = assess_touchdown(stats);
 
+    // v1.7.0 Bahndisziplin — an einer Stelle abgeleitet, siehe `bahn_felder`.
+    let bahn = bahn_felder(
+        stats,
+        aircraft_icao,
+        bahn_skip_grund(&computed_sub_scores),
+    );
+
     Some(LandingRecord {
+        clearance_point_m: bahn.clearance_point_m,
+        scoring_cutoff_m: bahn.scoring_cutoff_m,
+        lateral_skip_reason: bahn.lateral_skip_reason.clone(),
+        runway_exits: bahn.runway_exits.clone(),
+        clearance_speed_kt: bahn.clearance_speed_kt,
+        clearance_side: bahn.clearance_side,
+        track_width_m: bahn.track_width_m,
+        track_width_source: bahn.track_width_source,
+        wingspan_m: bahn.wingspan_m,
+        runway_width_m: bahn.runway_width_m,
+        min_edge_clearance_m: bahn.min_edge_clearance_m,
+        max_lateral_offset_m: bahn.max_lateral_offset_m,
+        lateral_samples: bahn.lateral_samples,
+        surface_paved: bahn.surface_paved,
+        overrun_m: bahn.overrun_m,
         pirep_id: flight.pirep_id.clone(),
         touchdown_at,
         recorded_at: Utc::now(),
@@ -15852,11 +16553,20 @@ fn record_landing_for_filed_flight(
     } else {
         Some(bid_icao)
     };
+    let aircraft_title = snapshot.as_ref().and_then(|s| s.aircraft_title.as_deref());
+    // v1.7.0: DRITTE Stufe — der Flugzeug-Titel. Etliche Add-ons fuellen
+    // `ATC MODEL` nicht, und ohne Buchung greift auch der Bid-Fallback nicht.
+    // Dann fehlte der Typ komplett, und alles was darauf keyed fiel still auf
+    // einen Default zurueck. MPH 9 (22.08.2026) kostete das 25 Punkte: das
+    // TFDi MD-11F meldete kein ATC-Modell, die Heavy-Gutschrift entfiel, aus
+    // 80 wurden 55. Der Titel stand die ganze Zeit da.
+    // Betrifft im Bestand 65 von 895 Fluegen (7,3 %).
+    let titel_icao = aircraft_title.and_then(sim_core::icao_aus_titel);
     let aircraft_icao = snapshot
         .as_ref()
         .and_then(|s| s.aircraft_icao.as_deref())
-        .or(bid_icao_opt);
-    let aircraft_title = snapshot.as_ref().and_then(|s| s.aircraft_title.as_deref());
+        .or(bid_icao_opt)
+        .or(titel_icao.as_deref());
 
     // v0.7.18 (B-012): airport_lookup-Closure aus dem AppState.airports-Cache.
     let airport_lookup_data: std::collections::HashMap<String, (f64, f64)> = {
@@ -17423,7 +18133,7 @@ async fn flight_end(
 
     // Snapshot all stats inside a single short-lived guard to avoid holding
     // the Mutex across an `await`.
-    let (body, block_on_iso) = {
+    let body = {
         let mut stats = flight.stats.lock().expect("flight stats");
         // v0.16.24 (QS-6): upgrade the runway correlation to the best
         // available (Navigraph) BEFORE building the PIREP body, so the native
@@ -17528,7 +18238,18 @@ async fn flight_end(
             .map(|m| m as i32)
             .or_else(|| stats.landing_score.map(|s| s.numeric()));
         let distance_nm = stats.distance_nm;
-        let fields = build_pirep_fields(&flight, &stats, effective_arr);
+        let mut fields = build_pirep_fields(&flight, &stats, effective_arr);
+        // phpVMS does its own divert bookkeeping — but only if the PIREP carries
+        // this custom field. `PirepService::handleDiversion()` looks it up by the
+        // slug `diversion-airport`, which phpVMS derives from the field NAME via
+        // `Str::slug()` — so the string below is load-bearing, not cosmetic.
+        // With it, phpVMS moves the arrival to that ICAO, keeps the planned
+        // destination in `alt_airport_id`, relocates aircraft and pilot and posts
+        // its divert notification. Without it a divert is invisible to the server:
+        // on 23.08.2026 (EJA9 EHAM->EDSB, back to EHAM) none of that happened.
+        if let Some(actual) = divert_to.as_deref() {
+            fields.insert("Diversion Airport".to_string(), actual.to_string());
+        }
         let mut notes = build_pirep_notes(&flight, &stats, effective_arr);
         // v0.19.3: the pilot told us he ended up at the planned field although
         // the FSM did not place him there. That statement is why this PIREP is
@@ -17581,7 +18302,12 @@ async fn flight_end(
             notes: Some(notes),
             fares,
             fields: Some(fields),
-            arr_airport_id: divert_to.clone(),
+            // Deliberately NOT the divert ICAO: phpVMS rewrites `arr_airport_id`
+            // itself out of the `Diversion Airport` field above and moves the
+            // planned destination into `alt_airport_id`. Sending the divert here
+            // as well would make it rewrite EHAM->EHAM and file the divert field
+            // as its own alternate.
+            arr_airport_id: None,
             // Block times from the FSM. phpVMS derives NEITHER on its own:
             // its own fallback in PirepService::create() is defeated by
             // CarbonCast (NULL reads back as "now", so the `if (!$pirep->
@@ -17593,227 +18319,15 @@ async fn flight_end(
                 .or(stats.landing_at)
                 .map(|t| t.to_rfc3339()),
         };
-        // Block-on time = touchdown timestamp captured by the FSM.
-        // Needed by the divert-finalize path because we skip /file
-        // entirely there, so phpVMS won't auto-set this column.
-        let block_on_iso = stats.landing_at.map(|t| t.to_rfc3339());
-        (body, block_on_iso)
+        body
     };
-    // v0.3.1: Divert finalization bypasses /file entirely.
-    //
-    // Background: earlier versions tried to route diverts into PENDING via
-    // (a) a pre-file source=MANUAL "smuggle" through the update endpoint,
-    // and (b) a post-file state=PENDING update. Both are dead on real
-    // phpVMS deployments:
-    //   * Acars\PirepController::file() ignores the stored source field
-    //     and always evaluates auto_approve_acars on the rank, so (a)
-    //     does not route through auto_approve_manual.
-    //   * Once the PIREP is ACCEPTED, PirepController::checkReadOnly()
-    //     blocks any further state-update, so (b) returns "PIREP is
-    //     read-only" (verified against german-sky-group.eu, 2026-05-04).
-    //
-    // The path that actually works: while the PIREP is still IN_PROGRESS
-    // (not read-only), mass-assign EVERYTHING /file would have written —
-    // including state=PENDING, source=MANUAL, arr_airport_id, all final
-    // stats — through a single update_pirep call. This bypasses
-    // PirepService::submit() and the auto-approve check entirely. The
-    // PIREP shows up in the admin's PENDING queue with the correct
-    // arrival airport and divert notes.
-    //
-    // Strategy verified against phpvms@dev: PirepController::update +
-    // parsePirep() pass the full request payload to mass-assignment, and
-    // (source, state, arr_airport_id, landing_rate, score, submitted_at,
-    // block_on_time) are all in Pirep $fillable. Acars\UpdateRequest
-    // doesn't strip non-validated keys.
-    if divert_to.is_some() {
-        let now_iso = Utc::now().to_rfc3339();
-        let finalize = api_client::UpdateBody {
-            state: Some(1),                                   // PirepState::PENDING
-            source: Some(api_client::pirep_source::MANUAL),   // 1
-            status: Some("ONB".to_string()),                  // PirepStatus::ARRIVED
-            flight_time: body.flight_time,
-            distance: body.distance,
-            fuel_used: body.fuel_used,
-            block_fuel: body.block_fuel,
-            level: body.level,
-            landing_rate: body.landing_rate,
-            score: body.score,
-            source_name: body.source_name.clone(),
-            notes: body.notes.clone(),
-            arr_airport_id: divert_to.clone(),
-            submitted_at: Some(now_iso.clone()),
-            block_on_time: block_on_iso.clone(),
-            updated_at: Some(now_iso),
-        };
-        match client.update_pirep(&flight.pirep_id, &finalize).await {
-            Ok(()) => tracing::info!(
-                pirep_id = %flight.pirep_id,
-                "divert finalize update OK — PIREP mass-assigned to MANUAL/PENDING"
-            ),
-            Err(e) => {
-                log_activity(
-                    &state,
-                    ActivityLevel::Error,
-                    "Divert: Finalisierung fehlgeschlagen".to_string(),
-                    Some(format!("{} — Flug bleibt aktiv für Retry", e)),
-                );
-                restore_flight_for_retry(&app, state.inner(), &client, flight);
-                return Err(e.into());
-            }
-        }
-        // Custom PIREP fields live in `pirep_field_values` (separate
-        // table from `pireps`) — they don't go through Pirep
-        // mass-assignment. Push them via the dedicated endpoint.
-        // Failures are non-fatal: the main PIREP is already in PENDING.
-        if let Some(fields_map) = body.fields.as_ref() {
-            if let Err(e) = client.post_pirep_fields(&flight.pirep_id, fields_map).await {
-                tracing::warn!(
-                    pirep_id = %flight.pirep_id,
-                    error = %e,
-                    "post_pirep_fields after divert finalize failed (non-fatal)"
-                );
-            }
-        }
-        // Verify the PIREP actually landed in PENDING. The mass-assign
-        // strategy is well-trodden but the verification is cheap and
-        // gives us loud feedback if a future phpVMS upgrade changes the
-        // semantics. Failure here doesn't unwind the file — it just
-        // surfaces a warning so the pilot knows to ping the VA admin.
-        match client.get_pirep(&flight.pirep_id).await {
-            Ok(p) => {
-                let s = p.state.unwrap_or(-1);
-                if s == 1 {
-                    tracing::info!(
-                        pirep_id = %flight.pirep_id,
-                        "verified: divert PIREP state == PENDING"
-                    );
-                } else {
-                    tracing::warn!(
-                        pirep_id = %flight.pirep_id,
-                        actual_state = s,
-                        "divert PIREP did NOT land in PENDING — phpVMS semantics changed?"
-                    );
-                    log_activity(
-                        &state,
-                        ActivityLevel::Error,
-                        "Divert: konnte NICHT für Admin-Review markiert werden".to_string(),
-                        Some(format!(
-                            "Server-Status nach Divert-Finalize: {} (erwartet: 1=PENDING). Bitte VA-Admin manuell informieren.",
-                            s
-                        )),
-                    );
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    pirep_id = %flight.pirep_id,
-                    error = %e,
-                    "post-divert state verify failed"
-                );
-            }
-        }
-        // Local snapshot + activity log + bid cleanup, mirroring the
-        // /file success path so downstream UI (Landung-Tab, Activity)
-        // sees the same state for divert and normal arrivals.
-        {
-            let mut stats = flight.stats.lock().expect("flight stats");
-            // v0.15.x: Divert → effektiver Landeflughafen für den Geometrie-Trust.
-            record_landing_for_filed_flight(
-                &app,
-                &flight,
-                &mut stats,
-                divert_to.as_deref().unwrap_or(&flight.arr_airport),
-            );
-        }
-        clear_persisted_flight(&app);
-        log_activity(
-            &state,
-            ActivityLevel::Info,
-            format!(
-                "PIREP filed: {} {} → {} (DIVERT, planned {})",
-                format_callsign(&flight.airline_icao, &flight.flight_number),
-                flight.dpt_airport,
-                divert_to.as_deref().unwrap_or(&flight.arr_airport),
-                flight.arr_airport,
-            ),
-            {
-                let dist = body.distance.unwrap_or(0.0);
-                let fuel = body.fuel_used.unwrap_or(0.0);
-                let stats_line = if fuel > 0.0 {
-                    format!("Distance {dist:.1} nm, fuel {fuel:.0} lb")
-                } else {
-                    format!("Distance {dist:.1} nm")
-                };
-                Some(format!("{stats_line} · MANUAL/PENDING (admin review)"))
-            },
-        );
-        record_event(
-            &app,
-            &flight.pirep_id,
-            &FlightLogEvent::FlightEnded {
-                timestamp: Utc::now(),
-                pirep_id: flight.pirep_id.clone(),
-                outcome: FlightOutcome::Filed,
-            },
-        );
-        // v0.12.5 (Spec v0.12.5-divert-and-manual-pirep.md, Bug A/B):
-        // Divert-Pfad publisht jetzt — wie der normale /file-Pfad — das
-        // MQTT-PIREP-Event und lädt das JSONL-Forensik-Logfile hoch.
-        // Vorher kehrte dieser Branch via `return Ok(())` zurück OHNE
-        // beides → diverted Flüge fehlten dauerhaft in den VPS-Reports
-        // und es gab kein Logfile. `effective_arr_icao` = das Divert-
-        // ICAO, `planned_arr_icao` = das ursprüngliche Ziel → der
-        // Helper setzt `divert`/`diverted_to` korrekt.
-        {
-            let effective_arr = divert_to
-                .as_deref()
-                .unwrap_or(&flight.arr_airport);
-            let mut pirep_payload = build_pirep_payload(
-                &flight,
-                &body,
-                effective_arr,
-                &flight.arr_airport,
-            );
-            // v0.12.5 (LE2): Divert-Begründung auch ins MQTT-Payload
-            // (Audit) — der Recorder/JSONL hält damit den Grund.
-            pirep_payload.notes = divert_reason.clone();
-            let pirep_payload_json = serde_json::to_value(&pirep_payload)
-                .unwrap_or(serde_json::Value::Null);
-            // QS-P1: JSONL-PirepFiled IMMER schreiben, MQTT-Publish nur
-            // wenn ein Handle da ist.
-            let mqtt = state.mqtt.lock().await;
-            finalize_filed_pirep(
-                &app,
-                mqtt.as_ref(),
-                &flight.pirep_id,
-                pirep_payload_json,
-            );
-        }
-        // v0.12.5 (LE7-QS): LandingFinalized-JSONL-Event auch beim Divert
-        // — vor dem Upload, damit es im hochgeladenen Logfile steht.
-        emit_landing_finalized(&app, &flight);
-        // v0.12.5 (Bug A): Forensik-Upload auch beim Divert — gzip +
-        // POST des kompletten JSONL-Logfiles an aeroacars-live.
-        spawn_flight_log_upload(&app, flight.pirep_id.clone());
-        // v0.7.14: Pilot-Client-Discord-Post fuer Divert entfernt — Recorder
-        // postet das jetzt zentral (= eine Quelle, kein Doppel-Post). Die
-        // Divert-Info ist im PirepPayload (divert + diverted_to) und kommt
-        // automatisch beim Recorder an wenn der MQTT-PIREP-Event publisht.
-        // Audit Q4-2026-05 (C1).
-        // v0.7.19 (QS-R1 Finding 1): Bei delete_bid-fail in pending_bid_cleanup.
-        // QS-R2 Finding 2: flight_id-Fallback mitgeben.
-        consume_bid_best_effort(
-            &app,
-            &client,
-            &flight.pirep_id,
-            flight.bid_id,
-            Some(flight.flight_id.as_str()),
-            "divert_filed",
-        ).await;
-        // Drop the in-memory active flight: divert is finalized.
-        let _ = state.active_flight.lock().expect("active_flight lock").take();
-        return Ok(());
-    }
+    // The airport the aircraft actually parked at: the planned arrival on every
+    // normal flight, the pilot-confirmed field on a divert. phpVMS learns it from
+    // the `Diversion Airport` custom field; everything local (landing record, MQTT
+    // payload, activity log) reads it from here.
+    let effective_arr_icao: String = divert_to
+        .clone()
+        .unwrap_or_else(|| flight.arr_airport.clone());
     tracing::info!(
         pirep_id = %flight.pirep_id,
         flight_time = body.flight_time.unwrap_or(0),
@@ -17823,8 +18337,19 @@ async fn flight_end(
         custom_fields = body.fields.as_ref().map(|f| f.len()).unwrap_or(0),
         "filing PIREP"
     );
-    // Non-divert path. (Diverts return early above via the dedicated
-    // mass-assign-to-PENDING flow; only normal arrivals reach /file.)
+    // ONE path for every arrival, divert included.
+    //
+    // Until v1.7.0 a divert took a separate route: it never called /file and
+    // instead mass-assigned state=PENDING through the update endpoint, so the
+    // VA admin had to release it by hand. That skipped `PirepService::submit()`
+    // and with it EVERYTHING hanging off the `PirepFiled` event — phpVMS' own
+    // divert handling, the bid cleanup, the integrity gate, the per-rank
+    // auto-approve — and it leaned on phpVMS forwarding unvalidated request
+    // input into mass-assignment, an upstream internal that could vanish in any
+    // release. On 23.08.2026 a pilot sat blocked for an hour behind exactly that
+    // (EJA9 EHAM->EDSB). A divert is a normal arrival at a different field; it
+    // is filed like one, and the `Diversion Airport` custom field tells phpVMS
+    // the rest.
     //
     // v0.5.49 — file_pirep_with_retry: 3 attempts mit 5s+30s Backoff
     // bei TRANSIENTEM Fehler (Netz, Timeout, 5xx, 429). Bei 3× Fail
@@ -17840,12 +18365,13 @@ async fn flight_end(
             // and the in-memory FlightStats goes out of scope.
             {
                 let mut stats = flight.stats.lock().expect("flight stats");
-                // v0.15.x: tatsächlicher Landeflughafen (= gefilte arr) für Trust.
+                // v0.15.x: tatsächlicher Landeflughafen für Trust — auf einem
+                // Divert das bestätigte Ausweichfeld, sonst das geplante Ziel.
                 record_landing_for_filed_flight(
                     &app,
                     &flight,
                     &mut stats,
-                    body.arr_airport_id.as_deref().unwrap_or(&flight.arr_airport),
+                    &effective_arr_icao,
                 );
             }
             clear_persisted_flight(&app);
@@ -17853,10 +18379,15 @@ async fn flight_end(
                 &state,
                 ActivityLevel::Info,
                 format!(
-                    "PIREP filed: {} {} → {}",
+                    "PIREP filed: {} {} → {}{}",
                     format_callsign(&flight.airline_icao, &flight.flight_number),
                     flight.dpt_airport,
-                    flight.arr_airport,
+                    effective_arr_icao,
+                    if divert_to.is_some() {
+                        format!(" (DIVERT, planned {})", flight.arr_airport)
+                    } else {
+                        String::new()
+                    },
                 ),
                 {
                     let dist = body.distance.unwrap_or(0.0);
@@ -17886,14 +18417,19 @@ async fn flight_end(
             {
                 // v0.12.5 (Spec v0.12.5-divert-and-manual-pirep.md, LE1):
                 // Der MQTT-PirepPayload-Build ist in `build_pirep_payload`
-                // ausgelagert — eine Stelle für alle Filing-Pfade. Normaler
-                // /file-Pfad: effective == planned == flight.arr_airport.
-                let pirep_payload = build_pirep_payload(
+                // ausgelagert — eine Stelle für alle Filing-Pfade. Ohne Divert
+                // ist effective == planned == flight.arr_airport, der Payload
+                // also byte-gleich zu vorher; mit Divert setzt der Helper
+                // `divert`/`diverted_to` und der Recorder hat den Grund.
+                let mut pirep_payload = build_pirep_payload(
                     &flight,
                     &body,
-                    &flight.arr_airport,
+                    &effective_arr_icao,
                     &flight.arr_airport,
                 );
+                if divert_to.is_some() {
+                    pirep_payload.notes = divert_reason.clone();
+                }
                 // v0.12.5 (LE1): JSONL-Forensik + MQTT-Publish über den
                 // zentralen Finalizer — gleicher Pfad wie Divert/Manual/Queue.
                 // QS-P1: JSONL-PirepFiled IMMER, MQTT nur bei Handle.
@@ -17923,7 +18459,9 @@ async fn flight_end(
             // in pending_bid_cleanup eingereiht und vom Background-Worker
             // retried — keine haengenden Aircraft/Bid mehr nach Accident-
             // FILED. Reason-String spiegelt die Filing-Variante.
-            let bid_reason = if flight.stats.lock().expect("stats lock").accident_detected {
+            let bid_reason = if divert_to.is_some() {
+                "divert_filed"
+            } else if flight.stats.lock().expect("stats lock").accident_detected {
                 "accident_filed"
             } else {
                 "normal_filed"
@@ -17952,14 +18490,18 @@ async fn flight_end(
                 // mit-persistieren — der Queue-Worker publisht es nach
                 // erfolgreichem /file. Normaler /file-Pfad: effective ==
                 // planned == flight.arr_airport.
-                let pirep_payload_json = serde_json::to_value(
-                    build_pirep_payload(
+                let pirep_payload_json = serde_json::to_value({
+                    let mut queued_payload = build_pirep_payload(
                         &flight,
                         &body,
+                        &effective_arr_icao,
                         &flight.arr_airport,
-                        &flight.arr_airport,
-                    ),
-                )
+                    );
+                    if divert_to.is_some() {
+                        queued_payload.notes = divert_reason.clone();
+                    }
+                    queued_payload
+                })
                 .unwrap_or(serde_json::Value::Null);
                 let queued = pirep_queue::QueuedPirep {
                     pirep_id: flight.pirep_id.clone(),
@@ -17995,12 +18537,13 @@ async fn flight_end(
                 // Erfolgreich gequeued → Landing-Snapshot, clear, Activity-Log
                 {
                     let mut stats = flight.stats.lock().expect("flight stats");
-                    // v0.15.x: tatsächlicher Landeflughafen (= gefilte arr) für Trust.
+                    // v0.15.x: tatsächlicher Landeflughafen für Trust — auf einem
+                    // Divert das bestätigte Ausweichfeld, sonst das geplante Ziel.
                     record_landing_for_filed_flight(
                         &app,
                         &flight,
                         &mut stats,
-                        body.arr_airport_id.as_deref().unwrap_or(&flight.arr_airport),
+                        &effective_arr_icao,
                     );
                 }
                 clear_persisted_flight(&app);
@@ -18459,7 +19002,13 @@ async fn flight_end_manual(
         // manuellen Filen `100` in der Spalte, waehrend Custom-Field und
         // Landungs-Tab "B (acceptable) — 78/100" zeigten.
         let score = canonical_landing_verdict(&flight, &stats, effective_arr).map(|v| v.numeric);
-        let fields = build_pirep_fields(&flight, &stats, effective_arr);
+        let mut fields = build_pirep_fields(&flight, &stats, effective_arr);
+        // Same rule as the regular path: the divert airport travels in the
+        // custom field phpVMS keys on (slug `diversion-airport`), never in
+        // `arr_airport_id`. One semantic for both filing paths.
+        if let Some(actual) = divert_to.as_deref() {
+            fields.insert("Diversion Airport".to_string(), actual.trim().to_uppercase());
+        }
         let mut notes = build_pirep_notes(&flight, &stats, effective_arr);
         notes.push_str("\n\n[MANUAL FILE — auto-validation bypassed by pilot.]");
         if let Some(divert) = divert_to
@@ -18540,14 +19089,10 @@ async fn flight_end_manual(
             notes: Some(notes),
             fares,
             fields: Some(fields),
-            // The manual flow already had a `divert_to` parameter for
-            // notes — pre-fix it only annotated the notes block and left
-            // the admin to update arr_airport_id by hand. Now we override
-            // the field directly too, same way the auto-divert flow does.
-            arr_airport_id: divert_to
-                .as_ref()
-                .map(|s| s.trim().to_uppercase())
-                .filter(|s| !s.is_empty()),
+            // Left to phpVMS, exactly like the regular path: it rewrites the
+            // arrival out of the `Diversion Airport` field above and keeps the
+            // planned destination as `alt_airport_id`.
+            arr_airport_id: None,
             // Block times — incl. the manual overrides applied to `stats`
             // above. Until now the overrides only annotated the notes block;
             // the values themselves never reached phpVMS.
@@ -18558,7 +19103,7 @@ async fn flight_end_manual(
                 .map(|t| t.to_rfc3339()),
         }
     };
-    // Flip the PIREP `source` to MANUAL (1) before submitting. PhpVMS's
+    // Flip the PIREP `source` to MANUAL (0) before submitting. PhpVMS's
     // PirepService::submit() decides ACCEPTED-vs-PENDING based on
     // (source, rank.auto_approve_acars, rank.auto_approve_manual). With
     // source=MANUAL and the VA having `auto_approve_manual=false` on the
@@ -18633,12 +19178,11 @@ async fn flight_end_manual(
             // Forensik-Logfile hoch. Vorher tat dieser Pfad keins von
             // beidem → manuell gefilte Flüge (z.B. Diverts) fehlten
             // dauerhaft in den VPS-Reports und es gab kein Logfile.
-            // `effective_arr` = das Divert-ICAO falls gesetzt (steht
-            // schon uppercase im `body.arr_airport_id`), sonst das
+            // `effective_arr` = das Divert-ICAO falls gesetzt (der Aufruf
+            // normalisiert es oben auf Grossbuchstaben), sonst das
             // geplante Ziel.
             {
-                let effective_arr = body
-                    .arr_airport_id
+                let effective_arr = divert_to
                     .as_deref()
                     .unwrap_or(&flight.arr_airport);
                 let mut pirep_payload = build_pirep_payload(
@@ -23106,9 +23650,14 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // 10s Mean-Interval und peak_vs_fpm=-33 statt realer ~-350.
             // phpVMS POST throttled separately further down (8-30s).
             let tick_interval = {
-                let phase = flight.stats.lock().expect("flight stats").phase;
+                let (phase, spur_laeuft) = {
+                    let st = flight.stats.lock().expect("flight stats");
+                    (st.phase, st.bahn_spur_laeuft)
+                };
                 let agl = last_good_snap.as_ref().map(|s| s.altitude_agl_ft);
-                adaptive_tick_interval(phase, agl)
+                let og = last_good_snap.as_ref().map(|s| s.on_ground);
+                let gs = last_good_snap.as_ref().map(|s| s.groundspeed_kt as f64);
+                adaptive_tick_interval_v2(phase, agl, og, gs, spur_laeuft)
             };
             tokio::time::sleep(tick_interval).await;
             if flight.stop.load(Ordering::Relaxed) {
@@ -24112,7 +24661,25 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             {
                 let finalized = {
                     let stats = flight.stats.lock().expect("flight stats");
-                    if stats.rollout_finalized {
+                    // Erst senden, wenn BEIDES fertig ist.
+                    //
+                    // `rollout_finalized` faellt bei vierzig Knoten — die
+                    // Ausrollstrecke steht dann fest. Die Rollspur laeuft
+                    // weiter (bis fuenf Knoten, zur Ausfahrt oder ueber den
+                    // Rand), und mit ihr Raeumpunkt und Kantenuebertritt.
+                    //
+                    // Wird hier zu frueh gesendet, traegt das Ereignis
+                    // dieselbe abgebrochene Spur wie `touchdown_complete`,
+                    // nur mit dem Anspruch, final zu sein.
+                    //
+                    // `bahn_spur_laeuft` wird von `spur_fortschreiben`
+                    // gepflegt: true, solange aufgezeichnet wird, false,
+                    // sobald ein Abbruchkriterium greift. Vor dem ersten
+                    // Aufruf ist es ebenfalls false — deshalb zusaetzlich
+                    // die Bedingung, dass ueberhaupt eine Spur vorliegt.
+                    let spur_fertig =
+                        !stats.bahn_spur_laeuft && !stats.bahn_spur.is_empty();
+                    if stats.rollout_finalized && spur_fertig {
                         // `landing_at` None (z.B. direkt nach einem T&G) →
                         // kein Publish; der nächste Touchdown setzt es neu.
                         stats.landing_at.map(|td| {
@@ -24120,13 +24687,33 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 td.timestamp_millis(),
                                 stats.rollout_distance_m.unwrap_or(0.0),
                                 stats.rollout_finalize_reason.clone(),
+                                // Die Bahnwerte in ihrem FINALEN Stand.
+                                //
+                                // Beim `touchdown_complete` neun Sekunden
+                                // nach dem Aufsetzen waechst die Spur noch,
+                                // der Raeumpunkt ist nicht erreicht und der
+                                // Kantenuebertritt erst recht nicht. Ohne
+                                // diesen Nachtrag blieben Recorder und
+                                // Webapp beim vorlaeufigen Stand: eine Spur,
+                                // die mitten im Ausrollen abbricht.
+                                //
+                                // Kein Skip-Grund: Die Bewertung laeuft erst
+                                // beim Einreichen des PIREP. Die Webapp
+                                // liest ihn aus den `sub_scores`.
+                                bahn_felder(
+                                    &stats,
+                                    Some(flight.aircraft_icao.as_str())
+                                        .filter(|s| !s.is_empty()),
+                                    None,
+                                )
+                                .wire(),
                             )
                         })
                     } else {
                         None
                     }
                 };
-                if let Some((touchdown_at, rollout_m, reason)) = finalized {
+                if let Some((touchdown_at, rollout_m, reason, bahn)) = finalized {
                     if last_published_rollout_ts != Some(touchdown_at) {
                         let app_state = app.state::<AppState>();
                         let mqtt = app_state.mqtt.lock().await;
@@ -24138,6 +24725,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     touchdown_at,
                                     rollout_distance_m: rollout_m,
                                     finalize_reason: reason,
+                                    bahn,
                                 },
                             );
                         }
@@ -24740,6 +25328,29 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             // voll bepunktet; Bahn-Auslastung auf die echte
                             // genutzte Strecke umgestellt.
                             score_algorithm_version: Some(9),
+                            // ── v1.7.0 Bahndisziplin ─────────────────
+                            //
+                            // Dieselbe Ableitung wie fuer die Anzeige im
+                            // Client: `bahn_felder()` ist die eine Stelle,
+                            // an der aus dem Rollout-Fenster Zahlen
+                            // werden. Der Server rechnet nichts nach — er
+                            // bekaeme aus groberen Daten zwangslaeufig
+                            // andere Werte, und zwei Zahlen fuer dieselbe
+                            // Landung sind schlimmer als eine fehlende.
+                            bahn: bahn_felder(
+                                &stats,
+                                Some(flight.aircraft_icao.as_str())
+                                    .filter(|s| !s.is_empty()),
+                                // Kein Skip-Grund: Die Bewertung laeuft
+                                // erst nach diesem Publish (siehe den
+                                // Hinweis zum nachgelagerten
+                                // `sub_scores`-Array weiter oben). Hier
+                                // etwas zu behaupten waere geraten — die
+                                // Webapp liest den Grund ohnehin aus den
+                                // `sub_scores` des PIREP.
+                                None,
+                            )
+                            .wire(),
                         }
                     })
                 };
@@ -26659,6 +27270,415 @@ fn stamp_landing_weight(stats: &mut FlightStats, snap: &SimSnapshot) {
 /// `rollout_finalized` + `rollout_finalize_reason`. No-op once finalised.
 /// Survives a Tauri restart because (last_lat, last_lon, distance,
 /// finalized) persist in `PersistedFlightStats`.
+/// Kursabweichung, ab der die Ausfahrt als eingeleitet gilt.
+///
+/// **Gemessen, nicht gesetzt.** Drei Auswertungslaeufe ueber den Bestand waren
+/// noetig: ohne Trennkriterium meldeten 68,7 % der Landungen "Rad neben der
+/// Bahn", mit 20 Grad Kursabweichung 25,2 %, erst mit 10 Grad plus dem
+/// Geschwindigkeitsriegel unten 1,6 % — plausibel. Ohne die Riegel faerbt
+/// jedes normale Ausfahren die Messung ein.
+const BAHN_KURS_AUSFAHRT_GRAD: f32 = 10.0;
+
+/// Untergrenze der seitlichen Messung.
+///
+/// Niemand biegt mit 60 kt ab, und genau dort ist seitliches Abkommen
+/// gefaehrlich. Unterhalb wird nicht mehr gemessen — das ist der zweite
+/// Riegel gegen die Verwechslung von Abbiegen und Abkommen.
+const BAHN_MESS_MIN_GS_KT: f32 = 60.0;
+
+/// Schreibt die seitliche Lage und einen etwaigen Overrun fort.
+///
+/// Laeuft bei jedem Snapshot des Ausrollens. Das Messfenster schliesst sich,
+/// sobald die Ausfahrt eingeleitet ist — danach wird nichts mehr gewertet, aber
+/// der Overrun-Check laeuft weiter, weil ein Ueberschiessen des Bahnendes auch
+/// dann zaehlt.
+///
+/// Siehe `docs/spec/v1.7.0-bahndisziplin.md` §5.2.
+/// Mindestabstand zwischen zwei gespeicherten Spurpunkten, in Metern.
+///
+/// Zehn Meter sind fein genug, dass die Queransicht bei 3000 m Bahn rund
+/// dreihundert Stuetzpunkte bekommt — mehr, als ein Diagramm von 1100 px
+/// Breite aufloesen kann.
+const BAHN_SPUR_MIN_ABSTAND_M: f64 = 10.0;
+
+/// Wie stark der Querweg bei der Ausduennung zaehlt.
+///
+/// Die Queransicht ist rund zwoelffach ueberhoeht. Ein Gewicht von vier
+/// naehert das an, ohne es voll auszureizen: Bei reiner Querbewegung wird
+/// dann alle 2,5 m ein Punkt abgelegt statt alle zehn — fein genug fuer
+/// eine glatte Kurve, grob genug, dass die Ablage nicht volllaeuft.
+///
+/// Das volle Verhaeltnis waere zu fein: In der Ausfahrt kaemen dann alle
+/// achtzig Zentimeter Punkte, und `BAHN_SPUR_MAX_PUNKTE` waere nach der
+/// halben Kurve erschoepft.
+const BAHN_SPUR_QUER_GEWICHT: f64 = 4.0;
+
+/// Harte Obergrenze fuer die gespeicherte Spur.
+///
+/// Greift, wenn der Mindestabstand nicht greift: beim Stehen auf der Bahn
+/// mit laufender Messung, oder wenn die Projektion springt. Ohne diese
+/// Grenze waechst der Datensatz unbeschraenkt.
+const BAHN_SPUR_MAX_PUNKTE: usize = 400;
+
+/// Wie weit zurueck die Querbewegung fuer die Richtungsprobe gelesen wird.
+const BAHN_RICHTUNG_FENSTER_M: f32 = 100.0;
+
+/// Ab welcher Querbewegung die Richtungsprobe ueberhaupt etwas aussagt.
+///
+/// Unter zwei Metern ist der Unterschied zwischen „nach links gezogen" und
+/// „gerade geblieben" nicht messbar — dann bleibt die Seite leer.
+const BAHN_RICHTUNG_MIN_VERSATZ_M: f32 = 2.0;
+
+/// Bestimmt die Ausfahrtsseite aus **zwei** unabhaengigen Groessen.
+///
+/// Spec §8.6: „Die Ausfahrtsrichtung wird über zwei unabhängige Größen
+/// bestätigt, nie über eine: fallender Kurs *und* wachsender Querversatz in
+/// dieselbe Richtung. Stimmt nur eine der beiden, liegt vermutlich ein
+/// Achsenfehler vor und die Richtung wird nicht angezeigt."
+///
+/// `kurs_diff` ist die Kursabweichung zum Aufsetzkurs in Grad, positiv nach
+/// rechts. `spur` ist der bisher gefahrene Streifen.
+fn bahn_raeum_seite(
+    kurs_diff: f64,
+    spur: &[(f32, f32)],
+    ab_laengs_m: f64,
+) -> Option<String> {
+    // Erste Groesse: der Kurs.
+    let kurs_seite = if kurs_diff > 0.0 { "right" } else { "left" };
+
+    // Zweite Groesse: die Querbewegung **beim Ausschwenken**.
+    //
+    // # Warum ab dem Raeumpunkt und nicht am Spurende
+    //
+    // Bis hierher verglich diese Funktion den letzten Spurpunkt mit einem
+    // hundert Meter davor. Das misst die Bewegung dort, wo die Spur
+    // AUFHOERT — und nach einer Ausfahrt rollt das Flugzeug oft noch
+    // hunderte Meter parallel zur Bahn weiter. Dort ist kein Querversatz
+    // mehr, und eine voellig eindeutige Linkskurve wurde wieder zu `None`.
+    //
+    // Gemessen wird jetzt genau das Segment, um das es geht: vom
+    // Raeumpunkt aus die naechsten hundert Meter. Bewusst NICHT der
+    // absolute Versatz — ein Flugzeug kann links der Mitte stehen und
+    // trotzdem nach rechts abbiegen.
+    let basis = spur
+        .iter()
+        .rev()
+        .find(|(lg, _)| (*lg as f64) <= ab_laengs_m)
+        .or_else(|| spur.first())?;
+    let vergleich = spur
+        .iter()
+        .find(|(lg, _)| *lg - basis.0 >= BAHN_RICHTUNG_FENSTER_M)
+        // Reicht die Spur nicht mehr hundert Meter weit — etwa weil das
+        // Flugzeug kurz danach stand —, zaehlt ihr letzter Punkt.
+        .or_else(|| spur.last().filter(|(lg, _)| *lg > basis.0))?;
+
+    let bewegung = vergleich.1 - basis.1;
+    if bewegung.abs() < BAHN_RICHTUNG_MIN_VERSATZ_M {
+        return None;
+    }
+    let quer_seite = if bewegung > 0.0 { "right" } else { "left" };
+
+    // Nur wenn beide dasselbe sagen.
+    if kurs_seite == quer_seite {
+        Some(kurs_seite.to_string())
+    } else {
+        None
+    }
+}
+
+/// Wie weit neben der Bahn die Spur noch aufgezeichnet wird.
+///
+/// # Warum achtzig Meter und nicht fuenfundzwanzig
+///
+/// Die erste Fassung brach bei fuenfundzwanzig Metern ab — und traf damit
+/// mitten in die Ausfahrtskurve. Gemessen an raKOnJD1XgNbP06q (EDDH 23):
+/// Das Flugzeug verlaesst die Bahn ueber 1879 m (−18,6 m), 1901 m (−46,7 m),
+/// 1907 m (−80,0 m) und rollt dann parallel zur Bahn bei −180 m weiter. Die
+/// Aufzeichnung endete beim dritten dieser Punkte, und im Diagramm sah es
+/// aus, als loese sich die Spur in Luft auf.
+///
+/// Achtzig Meter zeigen die Ausfahrt vollstaendig — bis zu dem Punkt, an dem
+/// die Kurve in den Rollweg uebergeht. Was danach kommt, ist Rollverkehr und
+/// gehoert nicht mehr zur Landung. Die Anzeige klemmt die Spur ohnehin am
+/// Bildrand; dass sie dort hinauslaeuft, IST die Aussage.
+const BAHN_SPUR_RAND_M: f64 = 80.0;
+
+/// Ab welcher Fahrt das Aufzeichnen endet.
+///
+/// Unter fuenf Knoten steht das Flugzeug praktisch — jeder weitere Punkt
+/// waere derselbe Punkt.
+const BAHN_SPUR_STOP_GS_KT: f32 = 5.0;
+
+/// Schreibt die Spur fort, ohne zu bewerten.
+///
+/// Laeuft NACH dem Schliessen des Messfensters weiter, damit die Anzeige
+/// zeigen kann, wohin das Flugzeug die Bahn verlassen hat. Endet, sobald es
+/// steht, seitlich weit genug weg ist oder die Ablage voll ist.
+fn spur_fortschreiben(
+    stats: &mut FlightStats,
+    snap: &SimSnapshot,
+    laengs_m: f64,
+    quer_m: f64,
+    // Die halbe Bahnbreite statt des ganzen `RunwayMatch`: Der liegt in
+    // `stats`, und ihn hineinzureichen waehrend `stats` veraendert wird,
+    // laesst sich nicht ausleihen. Ein f64 loest das ohne Kopie.
+    halbe_breite_m: f64,
+) {
+    // Jedes dieser drei Kriterien beendet die Aufzeichnung — und mit ihr
+    // den feinen Takt. Das Flag ist die einzige Stelle, an der beides
+    // zusammenhaengt; deshalb wird es hier gesetzt und nirgends sonst.
+    if snap.groundspeed_kt < BAHN_SPUR_STOP_GS_KT
+        || quer_m.abs() > halbe_breite_m + BAHN_SPUR_RAND_M
+        || laengs_m < -50.0
+        || stats.bahn_spur.len() >= BAHN_SPUR_MAX_PUNKTE
+    {
+        stats.bahn_spur_laeuft = false;
+        return;
+    }
+    stats.bahn_spur_laeuft = true;
+
+    // Der Kantenuebertritt — aber nur, wenn die Ausfahrt schon eingeleitet
+    // ist.
+    //
+    // # Warum die Bedingung dazugehoert
+    //
+    // Diese Funktion laeuft auch bei OFFENEM Messfenster, also waehrend das
+    // Flugzeug noch auf der Bahn gewertet wird. Ohne den Riegel bekaeme
+    // jede Landung, die kurz ueber die Kante geraet und zurueckkommt, einen
+    // „Bahn geraeumt"-Punkt mitten im Ausrollen — an einer Stelle, an der
+    // das Flugzeug die Bahn gar nicht verlassen hat.
+    //
+    // Im Korpus sind das die neunzehn Landungen mit „Rad neben der Bahn":
+    // Genau dort waere die Marke falsch gesetzt worden, und zwar VOR dem
+    // Bewertungsende. Die Anzeige haette die gestrichelte Linie rueckwaerts
+    // gezeichnet.
+    //
+    // Interpoliert wird zwischen dem letzten Punkt innerhalb und diesem
+    // hier — sonst laege die Marke bis zu zehn Meter daneben, und zwar
+    // immer ausserhalb, weil die Aufzeichnung erst nach dem Uebertritt
+    // misst.
+    if stats.bahn_fenster_zu
+        && stats.bahn_kante_laengs_m.is_none()
+        && quer_m.abs() > halbe_breite_m
+    {
+        let interpoliert = match stats.bahn_spur.last() {
+            Some((lg, qr)) if (*qr as f64).abs() <= halbe_breite_m => {
+                let spanne = quer_m.abs() - (*qr as f64).abs();
+                if spanne > 1e-6 {
+                    let t = (halbe_breite_m - (*qr as f64).abs()) / spanne;
+                    *lg as f64 + t * (laengs_m - *lg as f64)
+                } else {
+                    laengs_m
+                }
+            }
+            _ => laengs_m,
+        };
+        // Nicht hinter das Bewertungsende zurueck.
+        //
+        // Die Interpolation greift auf den letzten abgelegten Spurpunkt
+        // zurueck, und der kann durch die Ausduennung hunderte Meter
+        // zurueckliegen. Ueberbrueckt sie diese Luecke, landet der
+        // Kantenuebertritt vor dem Ausschwenken — also vor dem Punkt, an
+        // dem die Ausfahrt ueberhaupt begann. Beim Pruefen kam so 1557 m
+        // heraus, waehrend der Raeumpunkt bei 1600 m lag.
+        //
+        // Das ist keine Rundungsfrage: Die Marke „Bahn geraeumt" saesse
+        // damit VOR der gestrichelten Linie, die sie beenden soll.
+        stats.bahn_kante_laengs_m = Some(match stats.bahn_raeum_laengs_m {
+            Some(raeum) => interpoliert.max(raeum),
+            None => interpoliert,
+        });
+        stats.bahn_kante_gs_kt = Some(snap.groundspeed_kt as f64);
+    }
+    // Der Abstand, wie er GEZEICHNET wird — nicht wie er gefahren wurde.
+    //
+    // Zwei Fehler stecken hier hintereinander, beide von Thomas gefunden:
+    //
+    // 1. Nur laengs zu messen verwirft in der Ausfahrt jeden Punkt. Dort
+    //    faehrt das Flugzeug quer: Die Laengsposition aendert sich ueber
+    //    zwanzig Meter kaum, der Querversatz um dutzende. Gemessen an
+    //    raKOnJD1XgNbP06q (EDDH 23) fielen die Punkte bei 1907 m (−80 m
+    //    quer) und 1898 m (−109 m quer) beide weg, und die Spur brach an
+    //    der Bahnkante ab.
+    //
+    // 2. Auch der echte Weg reicht nicht. Die Queransicht ist rund
+    //    zwoelffach ueberhoeht — zehn Meter laengs sind dort 3,4 Pixel,
+    //    zehn Meter quer aber vierzig. Bei einer 30-Grad-Ausfahrt liegen
+    //    Punkte im Abstand von zehn Metern Weg in der Zeichnung
+    //    neunundzwanzig Pixel auseinander, auf der Geraden nur 3,4. Genau
+    //    dort, wo die Kurve am staerksten kruemmt, wird sie also am
+    //    groebsten — und sie sieht eckig aus.
+    //
+    // Deshalb wird der Querweg mit `BAHN_SPUR_QUER_GEWICHT` gewichtet: Die
+    // Ausduennung misst damit annaehernd den Abstand im Bild statt auf dem
+    // Boden. Auf der Geraden aendert das nichts; in der Kurve legt sie
+    // mehr Punkte ab, dort wo sie gebraucht werden.
+    let weit_genug = stats.bahn_spur.last().is_none_or(|(lg, qr)| {
+        let d_laengs = laengs_m - *lg as f64;
+        let d_quer = (quer_m - *qr as f64) * BAHN_SPUR_QUER_GEWICHT;
+        d_laengs.hypot(d_quer) >= BAHN_SPUR_MIN_ABSTAND_M
+    });
+    if weit_genug {
+        stats.bahn_spur.push((laengs_m as f32, quer_m as f32));
+    }
+}
+
+fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
+    // ── Warum diese Funktion aus unabhaengigen Schritten besteht ─────
+    //
+    // Sie war eine Kaskade aus sechs `return`-Pfaden, und jeder davon
+    // uebersprang etwas anderes. Drei Fehler in Folge hatten dieselbe
+    // Ursache:
+    //
+    // * Der Tick, der das Messfenster schloss, verwarf seine eigene
+    //   Spurposition — `return` stand vor `spur_fortschreiben`.
+    // * War das Fenster einmal zu, wurde der Kurswechsel **nie mehr**
+    //   geprueft. Eine ganz normale Ausfahrt (65 kt geradeaus, 55 kt
+    //   geradeaus, dann bei 25 kt abbiegen) bekam damit keinen
+    //   Raeumpunkt: `scoring_cutoff_m` und die Ausfahrtsseite blieben
+    //   leer, und die Anzeige nahm ersatzweise die spaetere Bahnkante —
+    //   also genau den Wert, gegen den `scoring_cutoff_m` gebaut wurde.
+    // * Und beim Herausziehen der Spur landete der Aufruf im falschen
+    //   Pfad.
+    //
+    // Die Schritte laufen jetzt hintereinander und jeder fuer sich. Kein
+    // `return` mehr ausser dem einen, wenn es gar keine Bahn gibt: Was
+    // ein Schritt nicht tun darf, entscheidet er selbst — nicht ein
+    // Sprung weiter oben.
+    let Some(rm) = stats.runway_match.as_ref() else {
+        return;
+    };
+    let (laengs_m, quer_m) = runway::projiziere_auf_bahn(
+        rm.threshold_lat,
+        rm.threshold_lon,
+        rm.end_lat,
+        rm.end_lon,
+        snap.lat,
+        snap.lon,
+    );
+
+    // Die nutzbare Laenge endet an der versetzten Schwelle (ICAO Annex 14).
+    let nutzbare_laenge_m =
+        (rm.length_ft as f64 - effective_displaced_threshold_ft(rm) as f64) / 3.280_839_895;
+    let halbe_breite_m = (rm.width_ft as f64 * 0.3048 / 2.0).max(15.0);
+
+    // ── 1. Ueberrollen ───────────────────────────────────────────────
+    //
+    // Overrun heisst: beim AUSROLLEN geradeaus ueber das Ende geschossen —
+    // nicht irgendwann spaeter hinter dem Bahnende gerollt. Ohne die
+    // seitliche Schranke meldete der Korpus-Export 506 von 802 Landungen
+    // als Overrun (jedes Rollen zum Terminal), mit reiner Seitenschranke
+    // immer noch 72.
+    if !stats.bahn_fenster_zu
+        && nutzbare_laenge_m > 300.0
+        && laengs_m > nutzbare_laenge_m
+        && snap.groundspeed_kt > 15.0
+        && quer_m.abs() <= halbe_breite_m + 10.0
+    {
+        let ueber = laengs_m - nutzbare_laenge_m;
+        stats.bahn_overrun_m = Some(stats.bahn_overrun_m.unwrap_or(0.0).max(ueber));
+    }
+
+    // ── 2. Der Raeumpunkt — unabhaengig vom Messfenster ──────────────
+    //
+    // Das Ausschwenken zur Ausfahrt beginnt oft LANGE nachdem die
+    // Bewertung geschlossen hat: Wer unter sechzig Knoten faellt und erst
+    // danach abbiegt, ist der Normalfall, nicht die Ausnahme.
+    //
+    // Deshalb haengt dieser Schritt nicht am Messfenster, sondern an
+    // seiner eigenen Verriegelung: Er greift genau einmal, beim ERSTEN
+    // Kurswechsel ueber die Schwelle.
+    //
+    // Er schliesst das Messfenster mit — ein Ausschwenken beendet die
+    // Bewertung, egal bei welcher Fahrt.
+    // Und erst unterhalb der Bewertungsschwelle.
+    //
+    // # Warum eine Kursaenderung ueber sechzig Knoten keine Ausfahrt ist
+    //
+    // Ein Flugzeug setzt bei Seitenwind schraeg auf und richtet sich danach
+    // auf die Bahnachse aus. Gegenueber dem AUFSETZKURS bleibt dadurch eine
+    // dauerhafte Differenz — kein Abbiegen, sondern dessen Korrektur.
+    //
+    // Am Korpus gemessen (854 Landungen mit 50-Hz-Fenster): 13 ueberschreiten
+    // die zehn Grad, waehrend sie noch ueber sechzig Knoten schnell sind —
+    // bei bis zu 141 kt und 100 von 100 folgenden Proben. Dort biegt niemand
+    // auf einen Rollweg ab.
+    //
+    // Gegen die BAHNRICHTUNG zu messen waere naheliegend und ist schlechter:
+    // Dieselbe Messung ergab damit 27 statt 13 Faelle, weil manche Landungen
+    // dauerhaft schraeg zur gematchten Bahn rollen. Der Aufsetzkurs ist der
+    // stabilere Bezug.
+    //
+    // Sechzig Knoten sind keine neue Zahl: Es ist dieselbe Schwelle, unter
+    // der das Messfenster ohnehin schliesst. Darueber ist eine seitliche
+    // Abweichung ein Ausbrechen — und das ist genau das, was die Achse
+    // bewerten SOLL, nicht ihr Ende. High-Speed-Exits werden mit bis zu
+    // sechzig Knoten genommen und liegen damit im Bereich.
+    if stats.bahn_raeum_laengs_m.is_none()
+        && snap.groundspeed_kt < BAHN_MESS_MIN_GS_KT
+    {
+        if let Some(td_heading) = stats.landing_heading_true_deg {
+            let mut diff = snap.heading_deg_true - td_heading;
+            while diff > 180.0 {
+                diff -= 360.0;
+            }
+            while diff <= -180.0 {
+                diff += 360.0;
+            }
+            if diff.abs() > BAHN_KURS_AUSFAHRT_GRAD {
+                // Das ist eine Ausfahrt, kein Abbremsen — hier gehoert der
+                // Raeumpunkt hin. Beim Schliessen wegen zu geringer Fahrt
+                // dagegen NICHT: dort rollt das Flugzeug noch auf der Bahn.
+                stats.bahn_fenster_zu = true;
+                stats.bahn_raeum_laengs_m = Some(laengs_m);
+                stats.bahn_raeum_gs_kt = Some(snap.groundspeed_kt as f64);
+                stats.bahn_raeum_kurs_diff = Some(diff as f64);
+                // Live-Versuch; er gelingt nur, wenn die Querbewegung
+                // schon sichtbar ist. `bahn_felder` rechnet sie sonst aus
+                // der ganzen Spur nach.
+                stats.bahn_raeum_seite =
+                    bahn_raeum_seite(diff as f64, &stats.bahn_spur, laengs_m);
+            }
+        }
+    }
+
+    // ── 3. Das Messfenster schliessen ────────────────────────────────
+    //
+    // Zwei Gruende ausser dem Ausschwenken: zu geringe Fahrt, oder
+    // ausserhalb der Bahn laengs. In beiden Faellen ist nichts mehr zu
+    // BEWERTEN — die Spur laeuft weiter (Schritt 5).
+    if !stats.bahn_fenster_zu
+        && (snap.groundspeed_kt < BAHN_MESS_MIN_GS_KT
+            || laengs_m < 0.0
+            || (nutzbare_laenge_m > 300.0 && laengs_m > nutzbare_laenge_m))
+    {
+        stats.bahn_fenster_zu = true;
+    }
+
+    // ── 4. Bewerten, solange das Fenster offen ist ───────────────────
+    if !stats.bahn_fenster_zu {
+        let bisher = stats.bahn_max_querversatz_m.unwrap_or(0.0);
+        if quer_m.abs() > bisher.abs() {
+            stats.bahn_max_querversatz_m = Some(quer_m);
+        } else if stats.bahn_max_querversatz_m.is_none() {
+            stats.bahn_max_querversatz_m = Some(quer_m);
+        }
+        stats.bahn_proben = stats.bahn_proben.saturating_add(1);
+    }
+
+    // ── 5. Die Spur — IMMER ──────────────────────────────────────────
+    //
+    // Messen und bewerten sind zwei verschiedene Dinge. Die Aufzeichnung
+    // laeuft weiter, wenn die Bewertung schliesst: Sonst endet die Spur im
+    // Diagramm mitten auf der Bahn, waehrend die Marke „Bahn geraeumt"
+    // dreihundert Meter weiter an der Kante sitzt — dazwischen nichts. Das
+    // Flugzeug waere dorthin gesprungen.
+    //
+    // `spur_fortschreiben` hat seine eigenen Riegel: unter fuenf Knoten,
+    // jenseits des Randes, oder wenn die Ablage voll ist.
+    spur_fortschreiben(stats, snap, laengs_m, quer_m, halbe_breite_m);
+}
+
 fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     if !stats.rollout_finalized {
         if let (Some(prev_lat), Some(prev_lon)) =
@@ -26744,12 +27764,36 @@ fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
 ///     the rollout fields with the FSM's own values, so this pre-Landing
 ///     accumulation is discarded there — byte-identical to before.
 fn sampler_path_rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
-    if stats.sampler_touchdown_at.is_some()
-        && !stats.rollout_finalized
-        && !matches!(stats.phase, FlightPhase::Landing)
-    {
+    if stats.sampler_touchdown_at.is_none() || matches!(stats.phase, FlightPhase::Landing) {
+        return;
+    }
+    if !stats.rollout_finalized {
         rollout_tick(stats, snap);
     }
+
+    // ── Die Spur laeuft weiter, die Ausrollstrecke nicht ─────────────
+    //
+    // `rollout_finalized` faellt bei **vierzig** Knoten
+    // (`ROLLOUT_EXIT_GS_KT`) — das ist der Moment, in dem die
+    // Ausrollstrecke feststeht: Wer so langsam ist, bremst nicht mehr,
+    // sondern rollt.
+    //
+    // Die Rollspur endet dort NICHT. Ihr eigener Vertrag laesst sie bis
+    // fuenf Knoten laufen, bis zur Ausfahrt oder bis achtzig Meter neben
+    // die Bahn (`BAHN_SPUR_STOP_GS_KT`, `BAHN_SPUR_RAND_M`) — und genau
+    // dazwischen liegt alles, was sie zeigen soll: Der Raeumpunkt wird
+    // typisch bei zwanzig bis dreissig Knoten erreicht, der
+    // Kantenuebertritt noch spaeter.
+    //
+    // Bis hierher hing `bahndisziplin_tick` im selben `if` wie die
+    // Streckenzaehlung. Die „finale" Spur brach damit bei vierzig Knoten
+    // ab, mitten auf der Bahn, und `clearance_point_m` blieb in den
+    // meisten Faellen leer — obwohl das Flugzeug kurz darauf abgebogen
+    // ist.
+    //
+    // Die eigenen Riegel in `spur_fortschreiben` beenden sie: unter fuenf
+    // Knoten, jenseits des Randes, oder wenn die Ablage voll ist.
+    bahndisziplin_tick(stats, snap);
 }
 
 /// v0.16.6: per-episode reset of the approach-stability stats + rollout
@@ -26780,6 +27824,30 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     stats.approach_stable_at_da = None;
     stats.approach_stall_warning_count = 0;
     stats.rollout_distance_m = None;
+    // ── Bahndisziplin: ALLES, nicht nur die Zahlen ───────────────────
+    //
+    // Diese Funktion läuft beim erneuten Aufsetzen nach einem Durchstarten
+    // oder Touch-and-Go. Bis hierher setzte sie die Kennzahlen zurück und
+    // liess die **Spur** stehen: Das zweite Aufsetzen bekam die Punkte des
+    // ersten mit, und dazu dessen Räumpunkt.
+    //
+    // In der Anzeige wäre das nicht als Fehler erkennbar gewesen, sondern
+    // als eine Landung, bei der das Flugzeug zweimal über die Bahn lief.
+    stats.bahn_max_querversatz_m = None;
+    stats.bahn_overrun_m = None;
+    stats.bahn_proben = 0;
+    stats.bahn_fenster_zu = false;
+    stats.bahn_spur.clear();
+    stats.bahn_spur_laeuft = false;
+    stats.bahn_raeum_laengs_m = None;
+    stats.bahn_raeum_gs_kt = None;
+    stats.bahn_raeum_seite = None;
+    stats.bahn_kante_laengs_m = None;
+    stats.bahn_kante_gs_kt = None;
+    stats.bahn_raeum_kurs_diff = None;
+    // `arr_ground_geojson` bleibt: Die Bodenkarte gehört zum Flughafen,
+    // nicht zur Landung. Sie erneut zu holen wäre eine Netzanfrage im
+    // ungünstigsten Moment — kurz nach einem Durchstarten.
     stats.rollout_finalized = false;
     stats.rollout_last_lat = None;
     stats.rollout_last_lon = None;
@@ -28680,6 +29748,27 @@ fn step_flight_at(
             // drive the same logic from the streamer — this call sits at
             // the exact position the inline code used to.
             rollout_tick(&mut stats, snap);
+
+            // ── Die Rollspur, unabhaengig von der Ausrollstrecke ──────
+            //
+            // `rollout_tick` bricht ab, sobald `rollout_finalized` steht —
+            // und das faellt bei vierzig Knoten, denn dort ist die
+            // AUSROLLSTRECKE fertig. Die Spur ist es nicht: Ihr Vertrag
+            // laesst sie bis fuenf Knoten laufen, bis zur Ausfahrt oder
+            // bis achtzig Meter neben die Bahn.
+            //
+            // Der Aufruf stand bis zur QS-Runde 25 IN `rollout_tick` und
+            // wurde dort herausgezogen, damit er die vierzig Knoten
+            // ueberlebt. Er landete dabei nur im Sampler-Pfad — und der
+            // kehrt bei `FlightPhase::Landing` ausdruecklich zurueck.
+            // Folge: Bei jeder normalen Landung wurde ueberhaupt keine
+            // Spur mehr aufgezeichnet. Der 39-kt-Test lief ueber `TaxiIn`
+            // und sah diesen Weg nicht.
+            //
+            // Deshalb hier, genau einmal je Tick, nach der
+            // Streckenzaehlung: Die eigenen Riegel in
+            // `spur_fortschreiben` beenden die Aufzeichnung.
+            bahndisziplin_tick(&mut stats, snap);
 
             // Touchdown analyzer windows (BeatMyLanding-aligned):
             //   * Peak G refined for TOUCHDOWN_G_WINDOW_MS (1500 ms)
@@ -33061,6 +34150,14 @@ fn maybe_spawn_stand_fetch(
                 return;
             }
         };
+        // Dieselbe Karte trägt die Rollwege — und damit die Ausfahrten der
+        // Bahn. Sie wird für die Ankunft aufgehoben, weil die gematchte Bahn
+        // erst beim Aufsetzen feststeht (siehe `arr_ground_geojson`).
+        if matches!(dir, Dir::Arrival) {
+            let mut stats = flight.stats.lock().expect("flight stats");
+            stats.arr_ground_geojson = Some(ground.geojson.clone());
+        }
+
         let list = stands::parse_stands(&ground.geojson);
         tracing::info!(%icao, stands = list.len(), "parking stands loaded for stand detection");
         if list.is_empty() {
@@ -38575,6 +39672,106 @@ mod flight_cancel_outcome_wire_format_tests {
 }
 
 #[cfg(test)]
+mod divert_filing_contract_tests {
+    //! A divert is a normal arrival at a different field.
+    //!
+    //! Until v1.7.0 it was not: `flight_end` had a second, parallel filing path
+    //! that never called `/file` and instead mass-assigned `state=PENDING`
+    //! through the update endpoint. Two things followed from that, and both bit
+    //! on 23.08.2026 (EJA9 EHAM->EDSB, gear failure, back to EHAM):
+    //!
+    //!  * Nothing hanging off phpVMS' `PirepFiled` event ever ran — not its own
+    //!    divert bookkeeping, not the bid cleanup, not the integrity gate, and
+    //!    not the per-rank auto-approve. The PIREP sat waiting for an admin and
+    //!    the pilot was locked out of the dispatch hub for an hour.
+    //!  * It depended on phpVMS forwarding unvalidated request input straight
+    //!    into mass-assignment — an upstream internal, not a contract.
+    //!
+    //! These are source-text invariants, in the same spirit as
+    //! `display_and_filing_paths_never_read_raw_vs_fields`: the rule stood in a
+    //! comment before and a comment enforces nothing.
+
+    const SRC: &str = include_str!("lib.rs");
+
+    /// Body of one filing path, comment lines dropped — comments may well name
+    /// the forbidden shapes, they are what explains them.
+    fn filing_path(from: &str, to: &str) -> String {
+        let start = SRC
+            .find(from)
+            .unwrap_or_else(|| panic!("Filing-Pfad nicht mehr gefunden: {from} — Test anpassen, nicht loeschen"));
+        let rest = &SRC[start..];
+        let end = rest
+            .find(to)
+            .unwrap_or_else(|| panic!("Ende des Filing-Pfads nicht mehr gefunden: {to}"));
+        rest[..end]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn regulaerer_pfad() -> String {
+        filing_path("async fn flight_end(", "async fn flight_end_manual(")
+    }
+
+    fn manueller_pfad() -> String {
+        filing_path("async fn flight_end_manual(", "\nasync fn flight_resume_check_position(")
+    }
+
+    #[test]
+    fn divert_reist_im_feld_nicht_in_arr_airport_id() {
+        // phpVMS keys its divert handling on the custom field whose slug is
+        // `diversion-airport`, derived from the field NAME. Overriding
+        // arr_airport_id ourselves on top of it makes phpVMS rewrite the divert
+        // airport to itself and file it as its own alternate.
+        for (name, body) in [("flight_end", regulaerer_pfad()), ("flight_end_manual", manueller_pfad())] {
+            assert!(
+                body.contains(r#"fields.insert("Diversion Airport""#),
+                "{name} schickt das Divert-Feld nicht mehr mit — phpVMS erfaehrt \
+                 dann nichts von der Ausweichlandung (kein alt_airport_id, \
+                 Flugzeug und Pilot bleiben am geplanten Ziel stehen)."
+            );
+            assert!(
+                !body.contains("arr_airport_id: divert_to"),
+                "{name} ueberschreibt arr_airport_id wieder selbst. Zusammen mit \
+                 dem Divert-Feld schreibt phpVMS daraus EHAM->EHAM."
+            );
+        }
+    }
+
+    #[test]
+    fn kein_zweiter_filing_weg_am_file_endpunkt_vorbei() {
+        let body = regulaerer_pfad();
+        assert!(
+            !body.contains("state: Some(1)"),
+            "flight_end setzt den PIREP-Status wieder von Hand auf PENDING. Genau \
+             das hat den Piloten am 23.08.2026 eine Stunde ausgesperrt: ohne \
+             /file feuert PirepFiled nie, also laeuft weder die Divert-Behandlung \
+             noch der Auto-Approve nach Rang."
+        );
+        assert!(
+            !body.contains("pirep_source::MANUAL"),
+            "flight_end faelscht die PIREP-Quelle wieder auf MANUAL, um am \
+             Auto-Approve vorbeizukommen. Ein Divert braucht keine Freigabe."
+        );
+        assert_eq!(
+            body.matches("file_pirep_with_retry(").count(),
+            1,
+            "es darf genau EINEN Aufruf des /file-Endpunkts in flight_end geben — \
+             Divert und normale Ankunft laufen denselben Weg."
+        );
+    }
+
+    #[test]
+    fn quellen_konstanten_stimmen_mit_phpvms_ueberein() {
+        // phpVMS App\Enums\PirepSource. Waren bis v1.7.0 vertauscht, wodurch
+        // jedes "auf MANUAL setzen" in Wahrheit ACARS schrieb.
+        assert_eq!(api_client::pirep_source::MANUAL, 0);
+        assert_eq!(api_client::pirep_source::ACARS, 1);
+    }
+}
+
+#[cfg(test)]
 mod touch_and_go_go_around_tests {
     use super::*;
     use chrono::TimeZone;
@@ -42386,6 +43583,345 @@ mod touchdown_metadata_stamp_tests {
 
     /// Minimal ActiveFlight for `correlate_touchdown_runway` (only
     /// `navdata` + `arr_airport` are read by it).
+    /// Ein Ausbrechen bei hoher Fahrt ist keine Ausfahrt.
+    ///
+    /// # Der Befund
+    ///
+    /// Ein Flugzeug setzt bei Seitenwind schraeg auf und richtet sich
+    /// danach auf die Bahnachse aus. Gegenueber dem AUFSETZKURS bleibt
+    /// dadurch eine dauerhafte Differenz von zehn Grad und mehr — kein
+    /// Abbiegen, sondern dessen Korrektur.
+    ///
+    /// Am Korpus gemessen (854 Landungen mit 50-Hz-Fenster): 13
+    /// ueberschreiten die Schwelle, waehrend sie noch ueber sechzig Knoten
+    /// schnell sind, bei bis zu 141 kt und 100 von 100 folgenden Proben.
+    /// Dort biegt niemand auf einen Rollweg ab — und die Bewertung waere
+    /// beendet gewesen, bevor sie angefangen hat.
+    ///
+    /// Ueber sechzig Knoten ist eine seitliche Abweichung ein Ausbrechen,
+    /// und das ist genau das, was diese Achse bewerten SOLL.
+    #[test]
+    fn ausbrechen_bei_hoher_fahrt_setzt_keinen_raeumpunkt() {
+        let flight = flight_fixture("EDDH");
+        {
+            let mut stats = flight.stats.lock().expect("stats");
+            stats.phase = FlightPhase::Landing;
+            stats.landing_at = Some(Utc::now());
+            stats.landing_lat = Some(53.636_011);
+            stats.landing_lon = Some(9.999_656);
+            stats.rollout_last_lat = Some(53.636_011);
+            stats.rollout_last_lon = Some(9.999_656);
+            stats.landing_heading_true_deg = Some(230.21);
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636_011,
+                threshold_lon: 9.999_656,
+                end_lat: 53.619_958,
+                end_lon: 9.967_167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+        }
+
+        // 115 kt, Nase 14 Grad schraeg — der Crab-Ausgleich nach dem
+        // Aufsetzen, gemessen am echten Bestand.
+        let snap = SimSnapshot {
+            lat: 53.630_234,
+            lon: 9.988_032,
+            groundspeed_kt: 115.0,
+            heading_deg_true: 216.0,
+            on_ground: true,
+            ..Default::default()
+        };
+        step_flight_at(&flight, &snap, Utc::now());
+
+        let stats = flight.stats.lock().expect("stats");
+        assert!(
+            stats.bahn_raeum_laengs_m.is_none(),
+            "bei 115 kt wurde ein Raeumpunkt gesetzt — das ist ein \
+             Ausbrechen, keine Ausfahrt"
+        );
+        assert!(
+            !stats.bahn_fenster_zu,
+            "die Bewertung wurde beendet, bevor sie angefangen hat"
+        );
+        // Und der Versatz wird weiter gemessen — genau darum geht es.
+        assert!(
+            stats.bahn_max_querversatz_m.is_some(),
+            "das Ausbrechen wird gar nicht bewertet"
+        );
+    }
+
+    /// Die Ausfahrtsseite ueberlebt paralleles Weiterrollen.
+    ///
+    /// # Der Befund
+    ///
+    /// Die Richtungsprobe verglich den LETZTEN Spurpunkt mit einem
+    /// hundert Meter davor — also die Bewegung dort, wo die Spur aufhoert.
+    /// Nach einer Ausfahrt rollt ein Flugzeug aber oft noch hunderte Meter
+    /// parallel zur Bahn weiter. Dort ist kein Querversatz mehr, und eine
+    /// voellig eindeutige Linkskurve wurde wieder zu `null`.
+    ///
+    /// Gemessen wird jetzt das Segment ab dem Raeumpunkt.
+    #[test]
+    fn ausfahrtsseite_ueberlebt_paralleles_weiterrollen() {
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(runway::RunwayMatch {
+            airport_ident: "EDDH".to_string(),
+            runway_ident: "23".to_string(),
+            heading_true_deg: 230.21,
+            length_ft: 10663.0,
+            width_ft: 151.0,
+            surface: "ASP".to_string(),
+            threshold_lat: 53.636_011,
+            threshold_lon: 9.999_656,
+            end_lat: 53.619_958,
+            end_lon: 9.967_167,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            touchdown_distance_from_threshold_ft: 720.0,
+            side: "left".to_string(),
+            displaced_threshold_ft: 0,
+        });
+        // Ausschwenken bei 1700 m nach LINKS (quer wird negativ), danach
+        // ab 1850 m parallel weiter — dort aendert sich nichts mehr.
+        stats.bahn_spur = vec![
+            (1500.0, -2.0),
+            (1600.0, -3.0),
+            (1700.0, -5.0),
+            (1750.0, -18.0),
+            (1800.0, -34.0),
+            (1850.0, -46.0),
+            (1950.0, -47.0),
+            (2050.0, -47.5),
+            (2150.0, -48.0),
+        ];
+        stats.bahn_raeum_laengs_m = Some(1700.0);
+        stats.bahn_raeum_kurs_diff = Some(-35.0); // Linkskurve
+        // Die Live-Bestimmung ist leer — genau der Normalfall.
+        stats.bahn_raeum_seite = None;
+
+        let f = bahn_felder(&stats, Some("A320"), None);
+        assert_eq!(
+            f.clearance_side.as_deref(),
+            Some("left"),
+            "die eindeutige Linkskurve geht im parallelen Weiterrollen verloren"
+        );
+
+        // Gegenprobe zur Gegenprobe: Ohne Ausschwenken bleibt es leer.
+        //
+        // `FlightStats` ist nicht `Clone` (es haelt Kanaele), deshalb wird
+        // hier dieselbe Struktur weiterverwendet und nur die Spur getauscht.
+        stats.bahn_spur = vec![
+            (1700.0, -5.0),
+            (1800.0, -5.2),
+            (1900.0, -5.4),
+            (2000.0, -5.6),
+        ];
+        assert!(
+            bahn_felder(&stats, Some("A320"), None)
+                .clearance_side
+                .is_none(),
+            "ohne Querbewegung darf keine Richtung behauptet werden"
+        );
+    }
+
+    /// Eine langsame Ausfahrt bekommt ihren Bewertungsendpunkt.
+    ///
+    /// # Der Befund
+    ///
+    /// `bahn_fenster_zu` fiel, sobald die Fahrt unter sechzig Knoten sank.
+    /// Jeder spaetere Tick kehrte danach zurueck, BEVOR der Kurswechsel
+    /// geprueft wurde.
+    ///
+    /// Eine ganz normale Folge — 65 kt geradeaus, 55 kt geradeaus, bei
+    /// 25 kt abbiegen — setzte damit nie `bahn_raeum_laengs_m`.
+    /// `scoring_cutoff_m` und die Ausfahrtsseite blieben leer, und die
+    /// Anzeige nahm ersatzweise die spaetere Bahnkante: genau den Wert,
+    /// gegen den `scoring_cutoff_m` ueberhaupt gebaut wurde.
+    ///
+    /// Das ist der Normalfall, nicht die Ausnahme: Wer unter sechzig
+    /// Knoten faellt und erst danach abbiegt, tut das auf jedem grossen
+    /// Platz.
+    #[test]
+    fn langsame_ausfahrt_bekommt_ihren_raeumpunkt() {
+        let flight = flight_fixture("EDDH");
+        {
+            let mut stats = flight.stats.lock().expect("stats");
+            stats.phase = FlightPhase::Landing;
+            stats.landing_at = Some(Utc::now());
+            stats.landing_lat = Some(53.636_011);
+            stats.landing_lon = Some(9.999_656);
+            stats.rollout_last_lat = Some(53.636_011);
+            stats.rollout_last_lon = Some(9.999_656);
+            // Der Kurs beim Aufsetzen — die Ausfahrt misst sich daran.
+            stats.landing_heading_true_deg = Some(230.21);
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636_011,
+                threshold_lon: 9.999_656,
+                end_lat: 53.619_958,
+                end_lon: 9.967_167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+        }
+
+        // 65 kt geradeaus → 55 kt geradeaus (Fenster schliesst) → 25 kt
+        // abbiegen. Der Kurswechsel kommt also ERST NACH dem 60-kt-Tick.
+        let folge = [
+            (53.630_234_f64, 9.988_032_f64, 65.0_f32, 230.21_f32),
+            (53.627_925, 9.983_381, 55.0, 230.21),
+            (53.625_854, 9.979_381, 25.0, 195.0), // 35 Grad Kursaenderung
+        ];
+        for (lat, lon, gs, kurs) in folge {
+            let snap = SimSnapshot {
+                lat,
+                lon,
+                groundspeed_kt: gs,
+                heading_deg_true: kurs,
+                on_ground: true,
+                ..Default::default()
+            };
+            step_flight_at(&flight, &snap, Utc::now());
+        }
+
+        let stats = flight.stats.lock().expect("stats");
+        let raeum = stats.bahn_raeum_laengs_m.expect(
+            "kein Raeumpunkt — der Kurswechsel nach dem 60-kt-Tick wurde nie geprueft",
+        );
+        assert!(
+            (1600.0..1900.0).contains(&raeum),
+            "Raeumpunkt bei {raeum} m — erwartet um 1750 m"
+        );
+        assert!(
+            stats.bahn_raeum_gs_kt.is_some(),
+            "die Fahrt beim Ausschwenken fehlt"
+        );
+
+        // Die SEITE wird abgeleitet, nicht roh gespeichert: Im Moment des
+        // Kurswechsels ist die Querbewegung erst wenige Meter gross, und
+        // die Bestimmung verlangt zwei uebereinstimmende Groessen. Deshalb
+        // ueber `bahn_felder`, das die ganze Spur sieht.
+        //
+        // Kurs 230 -> 195 Grad ist eine LINKSkurve, und der Querversatz
+        // geht ins Negative — beide sagen links. Der erste Anlauf dieses
+        // Tests erwartete „right" und hatte schlicht die Vorzeichen
+        // verwechselt.
+        let felder = bahn_felder(&stats, Some("A320"), None);
+        assert_eq!(
+            felder.clearance_side.as_deref(),
+            Some("left"),
+            "die Ausfahrtsseite fehlt oder zeigt falsch"
+        );
+        assert!(
+            felder.scoring_cutoff_m.is_some(),
+            "das Bewertungsende fehlt — genau der gemeldete Fehler"
+        );
+    }
+
+    /// Der NORMALE Landeweg schreibt die Rollspur fort — bis zum Ende.
+    ///
+    /// # Der Regress, den dieser Test faengt
+    ///
+    /// `bahndisziplin_tick` stand urspruenglich IN `rollout_tick`. Damit
+    /// endete die Spur bei vierzig Knoten, wo `rollout_finalized` faellt —
+    /// obwohl ihr Vertrag sie bis fuenf Knoten laufen laesst.
+    ///
+    /// Beim Herausziehen landete der Aufruf nur im **Sampler-Pfad**, und
+    /// der kehrt bei `FlightPhase::Landing` ausdruecklich zurueck. Folge:
+    /// Bei jeder normalen Landung wurde ueberhaupt keine Spur mehr
+    /// aufgezeichnet — schlimmer als der Zustand davor.
+    ///
+    /// Die damalige Gegenprobe lief ueber `TaxiIn` und sah diesen Weg
+    /// nicht. Dieser Test geht durch `step_flight_at`, also den echten
+    /// Hauptpfad, und prueft alle drei Fahrtbereiche.
+    #[test]
+    fn normale_landung_zeichnet_die_spur_bis_zum_ende_auf() {
+        let flight = flight_fixture("EDDH");
+        {
+            let mut stats = flight.stats.lock().expect("stats");
+            stats.phase = FlightPhase::Landing;
+            stats.landing_at = Some(Utc::now());
+            stats.landing_lat = Some(53.636_011);
+            stats.landing_lon = Some(9.999_656);
+            stats.rollout_last_lat = Some(53.636_011);
+            stats.rollout_last_lon = Some(9.999_656);
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636_011,
+                threshold_lon: 9.999_656,
+                end_lat: 53.619_958,
+                end_lon: 9.967_167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+        }
+
+        // Drei Punkte entlang EDDH 23, jeweils leicht links der Mitte —
+        // ausgerechnet, weil das geo-Crate nur Abstaende kann.
+        //   1000 m / 80 kt   — Messfenster offen
+        //   1500 m / 39 kt   — unter ROLLOUT_EXIT_GS_KT, Spur laeuft weiter
+        //   1800 m / 12 kt   — kurz vor dem Ende
+        let punkte = [
+            (53.630_236_f64, 9.988_105_f64, 80.0_f32),
+            (53.627_335, 9.982_235, 39.0),
+            (53.625_594, 9.978_713, 12.0),
+        ];
+        let mut gesehen = Vec::new();
+        for (lat, lon, gs) in punkte {
+            let snap = SimSnapshot {
+                lat,
+                lon,
+                groundspeed_kt: gs,
+                on_ground: true,
+                ..Default::default()
+            };
+            step_flight_at(&flight, &snap, Utc::now());
+            let stats = flight.stats.lock().expect("stats");
+            gesehen.push((gs, stats.bahn_spur.len()));
+        }
+
+        // Nach dem ersten Punkt muss aufgezeichnet sein.
+        assert!(
+            gesehen[0].1 > 0,
+            "ueber 40 kt wird nichts aufgezeichnet: {gesehen:?}"
+        );
+        // Und danach WEITER — hier hing der Regress.
+        assert!(
+            gesehen[1].1 > gesehen[0].1,
+            "bei 39 kt bricht die Spur ab (normaler Landeweg): {gesehen:?}"
+        );
+        assert!(
+            gesehen[2].1 > gesehen[1].1,
+            "bei 12 kt bricht die Spur ab: {gesehen:?}"
+        );
+    }
+
     fn flight_fixture(arr: &str) -> ActiveFlight {
         ActiveFlight {
             pirep_id: "test-pirep".into(),
@@ -44893,6 +46429,871 @@ mod v0_16_6_bush_completeness_tests {
     }
 
     // ─── (5) sampler-path rollout: gate + accumulate-to-full-stop ────────
+
+    #[test]
+    fn die_spur_reisst_in_der_ausfahrt_nicht_ab() {
+        // Der Fall aus dem Feld (raKOnJD1XgNbP06q, EDDH 23): In der
+        // Ausfahrt faehrt das Flugzeug quer. Die Laengsposition aendert
+        // sich ueber zwanzig Meter kaum, der Querversatz um dutzende.
+        //
+        // Mit einer Ausduennung, die nur laengs misst, faellt dort JEDER
+        // Punkt weg -- die Spur endet an der Bahnkante, und im Diagramm
+        // sieht es aus, als loese sie sich auf. Der Abstand muss deshalb
+        // ueber beide Achsen gehen.
+        let echte_punkte: &[(f64, f64)] = &[
+            (1848.0, 0.6),
+            (1879.0, -18.6),
+            (1901.0, -46.7),
+            (1907.0, -80.0),   // nur 6 m laengs weiter -- aber 33 m quer
+            (1898.0, -109.4),  // laengs sogar rueckwaerts, 30 m quer
+        ];
+        let mut abgelegt: Vec<(f32, f32)> = Vec::new();
+        for (lg, qr) in echte_punkte {
+            let weit_genug = abgelegt.last().is_none_or(|(l, q)| {
+                (lg - *l as f64).hypot(qr - *q as f64) >= BAHN_SPUR_MIN_ABSTAND_M
+            });
+            if weit_genug {
+                abgelegt.push((*lg as f32, *qr as f32));
+            }
+        }
+        assert_eq!(
+            abgelegt.len(),
+            echte_punkte.len(),
+            "kein Punkt der Ausfahrt darf verloren gehen"
+        );
+
+        // Und in der Kurve muss es DICHTER werden als auf der Geraden.
+        //
+        // Die Queransicht ist ueberhoeht: Zehn Meter laengs sind dort 3,4
+        // Pixel, zehn Meter quer vierzig. Ohne das Quergewicht liegen die
+        // Punkte genau dort am weitesten auseinander, wo die Kurve am
+        // staerksten kruemmt.
+        let quer_weg: Vec<(f64, f64)> = (0..12).map(|i| (1900.0 + i as f64 * 2.0, i as f64 * -8.0)).collect();
+        let mut in_kurve = 0;
+        let mut letzter: Option<(f64, f64)> = None;
+        for (lg, qr) in &quer_weg {
+            let nimm = letzter.is_none_or(|(l, q)| {
+                (lg - l).hypot((qr - q) * BAHN_SPUR_QUER_GEWICHT) >= BAHN_SPUR_MIN_ABSTAND_M
+            });
+            if nimm {
+                in_kurve += 1;
+                letzter = Some((*lg, *qr));
+            }
+        }
+        // Dieselben zwoelf Punkte auf der Geraden: dort greift die
+        // Ausduennung staerker, weil zwei Meter Laengsweg wenig sind.
+        let mut auf_gerade = 0;
+        let mut letzter: Option<f64> = None;
+        for i in 0..12 {
+            let lg = 1900.0 + i as f64 * 2.0;
+            if letzter.is_none_or(|l| (lg - l as f64).abs() >= BAHN_SPUR_MIN_ABSTAND_M) {
+                auf_gerade += 1;
+                letzter = Some(lg);
+            }
+        }
+        assert!(
+            in_kurve > auf_gerade,
+            "in der Kurve {in_kurve} Punkte, auf der Geraden {auf_gerade} — \
+             das Quergewicht wirkt nicht"
+        );
+
+        // Die Spur muss auf der LEITUNG gerundet ankommen.
+        //
+        // Der Groessentest im mqtt-Crate prueft nur die Werte, die er
+        // selbst erzeugt — er wuerde nicht merken, wenn `wire()` das
+        // Runden vergisst. Diese Pruefung geht durch die echte
+        // Umrechnung.
+        //
+        // Ein `f32` mit dem Wert 523,2 serialisiert als
+        // `523.2000122070312`: achtzehn Zeichen fuer eine Groesse, die
+        // auf zehn Zentimeter gemeint ist. Ueber 400 Punkte sind das
+        // 23 KB statt 13 — und derselbe Payload liegt danach in der
+        // Datenbank und im Flugprotokoll.
+        {
+            let mut stats = FlightStats::default();
+            stats.bahn_spur = vec![(523.2, -5.7), (1907.35, -80.04)];
+            let wire = bahn_felder(&stats, None, None).wire();
+            let spur = wire.lateral_samples.expect("Spur liegt vor");
+            let text = serde_json::to_string(&spur).unwrap();
+            assert!(
+                !text.contains("0000") && !text.contains("9999"),
+                "die Spur geht ungerundet auf die Leitung: {text}"
+            );
+            assert_eq!(spur[0].laengs_m, 523.2);
+            assert_eq!(spur[1].quer_m, -80.0, "35 mm werden nicht uebertragen");
+            // Und die Rundung darf nichts Sichtbares kosten: ein Dezimeter
+            // ist in der Zeichnung weniger als ein Pixel.
+            assert!((spur[1].laengs_m - 1907.35).abs() <= 0.05);
+        }
+
+        // Entartete Eingaben duerfen keine Zahlen erfinden.
+        //
+        // Runde 3 der QS, mit dem Winkel „was passiert bei Unsinn".
+        // Die Werte hier kommen aus dem Simulator und aus Navdaten; beide
+        // liefern gelegentlich Nullen, und eine Rechnung, die daraus einen
+        // Randabstand macht, stellt eine Behauptung neben echte Messwerte,
+        // die von ihnen nicht zu unterscheiden ist.
+        {
+            let mut stats = FlightStats::default();
+
+            // Gar keine Bahn: Alles leer, nichts geraten.
+            let f = bahn_felder(&stats, Some("A320"), None);
+            assert!(f.runway_width_m.is_none(), "Bahnbreite ohne Bahntreffer");
+            assert!(f.min_edge_clearance_m.is_none(), "Randabstand ohne Bahn");
+            assert!(f.runway_exits.is_empty());
+
+            // Bahnbreite null — kommt in OurAirports vor.
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "XXXX".to_string(),
+                runway_ident: "09".to_string(),
+                heading_true_deg: 90.0,
+                length_ft: 4000.0,
+                width_ft: 0.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 50.0,
+                threshold_lon: 8.0,
+                end_lat: 50.0,
+                end_lon: 8.017,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 300.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+            stats.bahn_max_querversatz_m = Some(3.0);
+            let f = bahn_felder(&stats, Some("A320"), None);
+            assert!(
+                f.runway_width_m.is_none(),
+                "Breite 0 muss als unbekannt durchgehen, nicht als Bahn ohne Breite"
+            );
+            assert!(
+                f.min_edge_clearance_m.is_none(),
+                "ohne Breite darf kein Randabstand entstehen — er stuende \
+                 neben echten Messwerten und waere nicht davon zu unterscheiden"
+            );
+
+            // Unbekanntes Muster: keine Spurweite, also auch kein Randabstand.
+            stats.runway_match.as_mut().unwrap().width_ft = 151.0;
+            let f = bahn_felder(&stats, Some("ZZZZ"), None);
+            assert!(f.track_width_m.is_none(), "erfundene Spurweite fuer ZZZZ");
+            assert!(f.track_width_source.is_none(), "Quelle ohne Wert");
+            assert!(f.min_edge_clearance_m.is_none());
+
+            // Mit Muster: jetzt darf gerechnet werden — und das Ergebnis
+            // muss zur Geometrie passen.
+            let f = bahn_felder(&stats, Some("A320"), None);
+            let spur = f.track_width_m.expect("A320 steht in der Tabelle");
+            let rand = f.min_edge_clearance_m.expect("alle drei Groessen da");
+            let halbe = 151.0 * 0.3048 / 2.0;
+            // Bis zur AUSSENKANTE des aeusseren Reifens, nicht zur
+            // Bein-Mitte: Die Herstellerspurweite misst von Bein zu Bein,
+            // das Radpaket steht noch eine halbe Breite weiter draussen.
+            let aussen = landing_scoring::spurweite::aussenkante_halb_aus_spur(spur);
+            assert!(
+                (rand - (halbe - (3.0 + aussen))).abs() < 0.01,
+                "Randabstand {rand} passt nicht zu halber Breite {halbe} und Aussenkante {aussen}"
+            );
+            assert!(
+                aussen > spur / 2.0,
+                "die Aussenkante liegt nicht weiter aussen als die Bein-Mitte — \
+                 rechnet die Anzeige noch mit `spur / 2.0`?"
+            );
+        }
+
+        // Bei 39 Knoten ist die Spur noch NICHT fertig.
+        //
+        // `rollout_finalized` faellt bei vierzig Knoten — dort steht die
+        // Ausrollstrecke fest. Die Spur laeuft weiter: bis fuenf Knoten,
+        // bis zur Ausfahrt oder bis achtzig Meter neben die Bahn.
+        //
+        // Bis zur QS-Runde 25 hing `bahndisziplin_tick` im selben `if` wie
+        // die Streckenzaehlung. Die „finale" Spur brach damit bei vierzig
+        // Knoten ab, mitten auf der Bahn — und der Raeumpunkt, der typisch
+        // bei zwanzig bis dreissig Knoten erreicht wird, blieb leer.
+        {
+            let mut stats = FlightStats::default();
+            stats.sampler_touchdown_at = Some(Utc::now());
+            stats.phase = FlightPhase::TaxiIn;
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636011,
+                threshold_lon: 9.999656,
+                end_lat: 53.619958,
+                end_lon: 9.967167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+            // Die Ausrollstrecke ist schon finalisiert (unter 40 kt).
+            stats.rollout_finalized = true;
+            stats.bahn_fenster_zu = true;
+            let vorher = stats.bahn_spur.len();
+
+            // 39 Knoten, noch auf der Bahn: 1500 m entlang, 6 m links.
+            let mut snap = SimSnapshot {
+                groundspeed_kt: 39.0,
+                on_ground: true,
+                ..Default::default()
+            };
+            // 1500 m entlang der Bahn, 6 m links der Mittellinie —
+            // ausgerechnet, weil das geo-Crate nur Abstaende kann.
+            snap.lat = 53.627_335;
+            snap.lon = 9.982_235;
+            sampler_path_rollout_tick(&mut stats, &snap);
+
+            assert!(
+                stats.bahn_spur.len() > vorher,
+                "bei 39 kt wird nicht mehr aufgezeichnet — die Spur bricht \
+                 mitten auf der Bahn ab"
+            );
+        }
+
+        // Ein Ausbrechen ueber die Kante ist kein Raeumen der Bahn.
+        //
+        // Live laesst sich nicht wissen, ob das Flugzeug draussen BLEIBT.
+        // `bahn_felder` rechnet die Stelle darum aus der ganzen Spur nach —
+        // dieselbe Regel, die auch das Pruefwerkzeug benutzt.
+        //
+        // Am Korpus gemessen: 763 von 772 Landungen stimmen mit der
+        // Live-Regel ueberein, neun weichen ab. Bei HAGN 35 um 1533 Meter.
+        {
+            let mut stats = FlightStats::default();
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0, // halbe Breite 23,0 m
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636011,
+                threshold_lon: 9.999656,
+                end_lat: 53.619958,
+                end_lon: 9.967167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+            // Ausbrechen bei 800 m (26 m quer), zurueck auf die Bahn,
+            // echte Ausfahrt erst bei 1600 m.
+            stats.bahn_spur = vec![
+                (600.0, -2.0),
+                (800.0, -26.0), // Ausbrechen — jenseits der Kante
+                (900.0, -8.0),  // wieder drauf
+                (1500.0, -12.0),
+                (1600.0, -25.0), // ab hier bleibt es draussen
+                (1650.0, -60.0),
+            ];
+            // Die Live-Messung haette das Ausbrechen erwischt.
+            stats.bahn_kante_laengs_m = Some(800.0);
+            stats.bahn_kante_gs_kt = Some(70.0);
+            // UND der Kurswechsel hat seine eigene Fahrt.
+            //
+            // Ohne diese Zeile ist der Test blind fuer den eigentlichen
+            // Fehler: `clearance_speed_kt` fiel still auf den Wert des
+            // Kurswechsels zurueck, sobald die Nachrechnung den Uebertritt
+            // verschob. Mit `bahn_raeum_gs_kt = None` kam trotzdem `None`
+            // heraus, und die Pruefung war gruen. Thomas' Gegenpruefung hat
+            // genau das gefunden.
+            stats.bahn_raeum_laengs_m = Some(1500.0);
+            stats.bahn_raeum_gs_kt = Some(45.0);
+
+            let f = bahn_felder(&stats, Some("A320"), None);
+            assert_eq!(
+                f.clearance_point_m,
+                Some(1600.0),
+                "das Ausbrechen bei 800 m wird als Raeumpunkt gemeldet"
+            );
+            assert!(
+                f.clearance_speed_kt.is_none(),
+                "die Fahrt gehoert nicht an die nachgerechnete Stelle — \
+                 gemeldet wurde {:?}",
+                f.clearance_speed_kt
+            );
+        }
+
+        // Ein Ausbrechen VOR dem Ausschwenken darf die Reihenfolge nicht
+        // verdrehen.
+        //
+        // Die Nachrechnung suchte den Uebertritt ueber die ganze Spur. Ein
+        // flacher Ausritt, der vor dem Kurswechsel beginnt und danach
+        // draussen bleibt, wurde damit zum Raeumpunkt — und lag VOR dem
+        // Bewertungsende. Der Live-Pfad hat den Riegel seit Runde 18; der
+        // Test von damals lief durch den Live-Pfad und sah es nicht.
+        {
+            let mut stats = FlightStats::default();
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0, // halbe Breite 23,0 m
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636011,
+                threshold_lon: 9.999656,
+                end_lat: 53.619958,
+                end_lon: 9.967167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+            // Ueber die Kante schon bei 700 m — und nie wieder zurueck.
+            stats.bahn_spur = vec![
+                (600.0, -10.0),
+                (700.0, -25.0),
+                (1200.0, -28.0),
+                (1600.0, -40.0),
+                (1700.0, -70.0),
+            ];
+            // Das Ausschwenken beginnt aber erst bei 1500 m.
+            stats.bahn_raeum_laengs_m = Some(1500.0);
+            stats.bahn_raeum_gs_kt = Some(40.0);
+
+            let f = bahn_felder(&stats, Some("A320"), None);
+            let cut = f.scoring_cutoff_m.expect("Bewertungsende");
+            let clear = f.clearance_point_m.expect("Raeumpunkt");
+            assert!(
+                cut <= clear,
+                "Bewertungsende {cut} liegt hinter dem Raeumpunkt {clear}"
+            );
+            // Und der GLEICHLAUF mit dem Pruefwerkzeug: Dort liefert
+            // `kante_index(punkte, halbe, ab_laengs_m=1500)` fuer dieselbe
+            // Spur `None`, weil es ab dem Ausschwenkpunkt keinen Uebertritt
+            // von innen nach aussen mehr gibt — die Spur ist da laengst
+            // draussen. Der Raeumpunkt faellt deshalb beidseits auf den
+            // Ausschwenkpunkt zurueck.
+            //
+            // `tools/korpus/spuren_export.py --selbsttest` prueft dieselbe
+            // Aussage von der anderen Seite.
+            assert_eq!(
+                clear, 1500.0,
+                "Client und Pruefwerkzeug muessen hier denselben Wert liefern"
+            );
+        }
+
+        // Der Raeumpunkt darf nicht VOR dem Bewertungsende liegen.
+        //
+        // Beides kommt aus derselben Landung, aber aus zwei Quellen:
+        // `scoring_cutoff_m` vom Kurswechsel (Ausschwenken beginnt),
+        // `clearance_point_m` vom Kantenuebertritt (Bahn verlassen). Das
+        // Ausschwenken geht dem Verlassen immer voraus — eine andere
+        // Reihenfolge gibt es in der Wirklichkeit nicht.
+        //
+        // Ohne Riegel setzte `spur_fortschreiben` die Kante auch bei noch
+        // OFFENEM Messfenster: Ein Flugzeug, das kurz ueber die Kante
+        // geraet und zurueckkommt, bekam einen „Bahn geraeumt"-Punkt
+        // mitten im Ausrollen, hunderte Meter vor dem Abbiegen. Die
+        // Anzeige haette die gestrichelte Linie rueckwaerts gezeichnet,
+        // und die Marke behauptet eine Ausfahrt, die es nicht gab.
+        {
+            let halbe = 23.0;
+            let mut stats = FlightStats::default();
+            let mut snap = SimSnapshot {
+                groundspeed_kt: 80.0,
+                ..Default::default()
+            };
+
+            // Fenster OFFEN, Flugzeug kurz ueber der Kante.
+            spur_fortschreiben(&mut stats, &snap, 900.0, 24.0, halbe);
+            assert!(
+                stats.bahn_kante_laengs_m.is_none(),
+                "Kante bei offenem Messfenster gesetzt — das waere ein \
+                 Raeumpunkt mitten auf der Bahn"
+            );
+
+            // Wieder auf der Bahn, dann Ausfahrt eingeleitet.
+            spur_fortschreiben(&mut stats, &snap, 1000.0, 5.0, halbe);
+            stats.bahn_fenster_zu = true;
+            stats.bahn_raeum_laengs_m = Some(1600.0);
+            snap.groundspeed_kt = 30.0;
+            spur_fortschreiben(&mut stats, &snap, 1650.0, 26.0, halbe);
+
+            let kante = stats.bahn_kante_laengs_m.expect("Kante nach der Ausfahrt");
+            assert!(
+                kante >= stats.bahn_raeum_laengs_m.unwrap(),
+                "Raeumpunkt {kante} liegt vor dem Bewertungsende {:?}",
+                stats.bahn_raeum_laengs_m
+            );
+
+            // Und die abgeleiteten Felder halten die Reihenfolge ein.
+            let f = bahn_felder(&stats, Some("A320"), None);
+            match (f.scoring_cutoff_m, f.clearance_point_m) {
+                (Some(cut), Some(clear)) => assert!(
+                    cut <= clear,
+                    "Bewertungsende {cut} liegt hinter dem Raeumpunkt {clear}"
+                ),
+                _ => panic!("beide Punkte muessen hier vorliegen"),
+            }
+        }
+
+        // Bewertung und Anzeige benutzen DIESELBE Spurweite.
+        //
+        // Die Anzeige nimmt seit Schritt 11 die Spurweite aus der
+        // Flugzeugdatei, wenn eine gelesen wurde — sie beschreibt das
+        // tatsaechlich geflogene Add-on. Die Bewertung nahm bis zur
+        // QS-Runde 20 unverdrossen `spurweite_m(icao)`, also die Tabelle.
+        //
+        // Gemessen an einem Add-on mit 2 m breiterem Fahrwerk: Die Note
+        // meldete 8,8 m Randabstand, die Anzeige 7,7 m. Dazu behauptete
+        // die Herkunftsangabe daneben „aus der Flugzeugdatei". Genau die
+        // Falle, wegen der `aussenkante_halb_m(icao)` entfernt wurde —
+        // sie steckte an dieser Stelle weiter.
+        {
+            let mut stats = FlightStats::default();
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636011,
+                threshold_lon: 9.999656,
+                end_lat: 53.619958,
+                end_lon: 9.967167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+            stats.bahn_max_querversatz_m = Some(10.0);
+            stats.bahn_proben = 30;
+            let aus_tabelle =
+                landing_scoring::spurweite::spurweite_m(Some("A320")).expect("A320");
+            let aus_datei = aus_tabelle + 2.0;
+            stats.fahrwerk_spurweite_m = Some(aus_datei);
+
+            let f = bahn_felder(&stats, Some("A320"), None);
+            assert_eq!(f.track_width_m, Some(aus_datei), "Anzeige nimmt die Datei");
+            assert_eq!(f.track_width_source.as_deref(), Some("aircraft_file"));
+
+            // Und die BEWERTUNG muss denselben Wert benutzen. Der Weg geht
+            // durch `LandingScoringInput`, so wie im Betrieb.
+            let mut eingang = landing_scoring::LandingScoringInput::default();
+            eingang.aircraft_icao = Some("A320".to_string());
+            eingang.bahn_max_querversatz_m = stats.bahn_max_querversatz_m;
+            eingang.bahn_proben = Some(30);
+            eingang.runway_width_m = Some((151.0 * 0.3048) as f32);
+            eingang.runway_surface = Some("ASP".to_string());
+            eingang.airport_source = Some("runway_match".to_string());
+            eingang.runway_geometry_trusted = Some(true);
+            eingang.fahrwerk_spurweite_m = stats.fahrwerk_spurweite_m;
+
+            let erwartet_rand = 151.0 * 0.3048 / 2.0
+                - (10.0 + landing_scoring::spurweite::aussenkante_halb_aus_spur(aus_datei));
+            assert!(
+                (f.min_edge_clearance_m.expect("Randabstand") - erwartet_rand).abs() < 0.01,
+                "die Anzeige rechnet mit {:?}, erwartet {erwartet_rand:.2}",
+                f.min_edge_clearance_m
+            );
+
+            let mit_datei = landing_scoring::sub_bahndisziplin::sub_bahndisziplin(
+                &landing_scoring::sub_bahndisziplin::BahndisziplinInput {
+                    max_querversatz_m: eingang.bahn_max_querversatz_m,
+                    bahnbreite_m: eingang.runway_width_m.map(|w| w as f64),
+                    spurweite_m: eingang
+                        .fahrwerk_spurweite_m
+                        .or_else(|| landing_scoring::spurweite::spurweite_m(Some("A320"))),
+                    overrun_m: None,
+                    belag: Some(landing_scoring::belag::Belag::Befestigt),
+                    airport_source: Some("runway_match"),
+                    runway_geometry_trusted: Some(true),
+                    proben: Some(30),
+                },
+            );
+            let wert = mit_datei.value.clone().unwrap_or_default();
+            assert!(
+                wert.contains(&format!("{erwartet_rand:.1}")),
+                "die Note meldet {wert:?}, erwartet war ein Randabstand von {erwartet_rand:.1} m aus der Datei-Spurweite {aus_datei:.2} m"
+            );
+        }
+
+        // Alle Kombinationen der optionalen Eingaenge — nicht nur die,
+        // an die ich beim Bauen gedacht habe.
+        //
+        // # Warum das eine eigene Pruefung ist
+        //
+        // Thomas' Gegenpruefung von `75abdc6` fand einen Fehler, den mein
+        // Test nicht sah: Er setzte `bahn_raeum_gs_kt` nicht, und genau
+        // ueber dieses Feld lief der stille Rueckfall. Der Test war nicht
+        // falsch — er war **blind**, weil sein Ausgangszustand unvollstaendig
+        // war.
+        //
+        // Ein Test mit halb gesetztem Zustand prueft nur die Haelfte, die
+        // er kennt. Deshalb hier alle acht Kombinationen, und fuer jede die
+        // Regeln, die immer gelten muessen.
+        {
+            let rm = || runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0, // halbe Breite 23,0 m
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636011,
+                threshold_lon: 9.999656,
+                end_lat: 53.619958,
+                end_lon: 9.967167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            };
+            // Eine Spur, die bei 1600 m nach aussen geht und draussen bleibt.
+            let spur_mit_uebertritt = vec![
+                (600.0f32, -2.0f32),
+                (1200.0, -8.0),
+                (1600.0, -25.0),
+                (1700.0, -60.0),
+            ];
+            // Und eine, die auf der Bahn bleibt.
+            let spur_ohne = vec![(600.0f32, -2.0f32), (1200.0, -8.0), (1600.0, -12.0)];
+
+            for hat_spur_uebertritt in [false, true] {
+                for hat_live_kante in [false, true] {
+                    for hat_raeum in [false, true] {
+                        let mut stats = FlightStats::default();
+                        stats.runway_match = Some(rm());
+                        stats.bahn_spur = if hat_spur_uebertritt {
+                            spur_mit_uebertritt.clone()
+                        } else {
+                            spur_ohne.clone()
+                        };
+                        if hat_live_kante {
+                            stats.bahn_kante_laengs_m = Some(1610.0);
+                            stats.bahn_kante_gs_kt = Some(30.0);
+                        }
+                        if hat_raeum {
+                            stats.bahn_raeum_laengs_m = Some(1500.0);
+                            stats.bahn_raeum_gs_kt = Some(45.0);
+                        }
+                        let f = bahn_felder(&stats, Some("A320"), None);
+                        let lage = format!(
+                            "Spur-Uebertritt={hat_spur_uebertritt} \
+                             Live-Kante={hat_live_kante} Raeumpunkt={hat_raeum}"
+                        );
+
+                        // 1. Reihenfolge: Das Ausschwenken geht dem
+                        //    Verlassen voraus.
+                        if let (Some(cut), Some(clear)) =
+                            (f.scoring_cutoff_m, f.clearance_point_m)
+                        {
+                            assert!(
+                                cut <= clear + 0.001,
+                                "{lage}: Bewertungsende {cut} hinter Raeumpunkt {clear}"
+                            );
+                        }
+
+                        // 2. Keine Fahrt ohne Punkt.
+                        if f.clearance_point_m.is_none() {
+                            assert!(
+                                f.clearance_speed_kt.is_none(),
+                                "{lage}: Fahrt ohne Raeumpunkt"
+                            );
+                        }
+
+                        // 3. Die Fahrt gehoert zu IHREM Punkt. Sie darf nur
+                        //    aus einer Messung stammen, deren Stelle mit dem
+                        //    gemeldeten Punkt zusammenfaellt.
+                        if let (Some(gs), Some(punkt)) =
+                            (f.clearance_speed_kt, f.clearance_point_m)
+                        {
+                            let passt_zur_kante = stats
+                                .bahn_kante_laengs_m
+                                .is_some_and(|k| (k - punkt).abs() < 25.0)
+                                && stats.bahn_kante_gs_kt == Some(gs);
+                            let passt_zum_raeumen = stats
+                                .bahn_raeum_laengs_m
+                                .is_some_and(|r| (r - punkt).abs() < 0.001)
+                                && stats.bahn_raeum_gs_kt == Some(gs);
+                            assert!(
+                                passt_zur_kante || passt_zum_raeumen,
+                                "{lage}: Fahrt {gs} kt gehoert zu keinem \
+                                 gemeldeten Punkt {punkt} m"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Eine Bodenkarte vom FALSCHEN Flughafen darf nichts liefern.
+        //
+        // Der Fall ist real: Bei einem Divert liegt die Karte des
+        // geplanten Ziels im Zwischenspeicher, waehrend das Flugzeug
+        // woanders aufsetzt. Ausfahrten aus Hamburg an einer Frankfurter
+        // Bahn waeren nicht als Fehler erkennbar — sie saehen aus wie
+        // Rollwege, die es dort gibt.
+        //
+        // Der Schutz steckt in den Filtern von `ausfahrten_fuer_bahn`
+        // (Laengsbereich und Kantenabstand); diese Pruefung haelt fest,
+        // dass er wirkt, statt sich darauf zu verlassen.
+        {
+            let mut stats = FlightStats::default();
+            // Bahn in EDDF, Karte aus EDDH — 400 km entfernt.
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDF".to_string(),
+                runway_ident: "07C".to_string(),
+                heading_true_deg: 69.0,
+                length_ft: 13123.0,
+                width_ft: 197.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 50.034_9,
+                threshold_lon: 8.523_2,
+                end_lat: 50.040_5,
+                end_lon: 8.579_1,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 400.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+            stats.arr_ground_geojson = Some(
+                r#"{"features":[
+                  {"properties":{"k":"taxiway","r":"S4"},
+                   "geometry":{"type":"LineString",
+                     "coordinates":[[9.982400,53.627218],[9.983079,53.626734]]}}
+                ]}"#
+                .to_string(),
+            );
+            assert!(
+                bahn_felder(&stats, Some("A320"), None).runway_exits.is_empty(),
+                "Rollwege aus Hamburg landen an einer Frankfurter Bahn"
+            );
+        }
+
+        // Ein Durchstarten darf nichts vom ersten Aufsetzen mitnehmen.
+        //
+        // `clear_approach_stability_and_rollout` setzte die Kennzahlen
+        // zurueck und liess die SPUR stehen. Das zweite Aufsetzen bekam die
+        // Punkte des ersten mit, dazu dessen Raeumpunkt. In der Anzeige
+        // haette das nicht nach einem Fehler ausgesehen, sondern nach einer
+        // Landung, bei der das Flugzeug zweimal ueber die Bahn lief.
+        {
+            let mut stats = FlightStats::default();
+            stats.bahn_spur = vec![(500.0, -2.0), (900.0, -4.0), (1400.0, -30.0)];
+            stats.bahn_spur_laeuft = true;
+            stats.bahn_raeum_laengs_m = Some(1400.0);
+            stats.bahn_raeum_gs_kt = Some(28.0);
+            stats.bahn_raeum_seite = Some("left".to_string());
+            stats.bahn_kante_laengs_m = Some(1460.0);
+            stats.bahn_kante_gs_kt = Some(22.0);
+            stats.bahn_max_querversatz_m = Some(-30.0);
+            stats.bahn_overrun_m = Some(12.0);
+            stats.bahn_proben = 91;
+            stats.bahn_fenster_zu = true;
+
+            clear_approach_stability_and_rollout(&mut stats);
+
+            assert!(stats.bahn_spur.is_empty(), "die Spur des ersten Aufsetzens bleibt stehen");
+            assert!(!stats.bahn_spur_laeuft);
+            assert!(stats.bahn_raeum_laengs_m.is_none(), "alter Raeumpunkt bleibt");
+            assert!(stats.bahn_raeum_gs_kt.is_none());
+            assert!(stats.bahn_raeum_seite.is_none());
+            assert!(stats.bahn_kante_laengs_m.is_none(), "alter Kantenuebertritt bleibt");
+            assert!(stats.bahn_kante_gs_kt.is_none());
+            assert!(stats.bahn_max_querversatz_m.is_none());
+            assert!(stats.bahn_overrun_m.is_none());
+            assert_eq!(stats.bahn_proben, 0);
+            assert!(!stats.bahn_fenster_zu);
+        }
+
+        // Die Ausfahrten muessen den ganzen Weg gehen.
+        //
+        // `ausfahrten::ausfahrten_fuer_bahn` war gebaut, mit sieben Tests
+        // abgedeckt — und wurde **nirgends aufgerufen**. Die Anzeige hatte
+        // den Platz dafuer, beide Mapper lasen das Feld, und der Client
+        // fuellte es nie. Gefunden erst beim Abgleich der ganzen Feldkette;
+        // kein Test war rot, kein Bau schlug fehl.
+        //
+        // Diese Pruefung geht durch `bahn_felder` — die Verdrahtung, nicht
+        // die Funktion. Ein Test, der `ausfahrten_fuer_bahn` direkt aufruft,
+        // waere waehrend des ganzen Fehlers gruen geblieben.
+        {
+            let mut stats = FlightStats::default();
+            // EDDH 23 — echte Schwelle und echtes Bahnende, damit die
+            // Projektion der Testkarte etwas Sinnvolles ergibt.
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                // Die ECHTE Geometrie aus den Navdaten (AIRAC 2608).
+                // Der erste Anlauf hatte geratene Koordinaten — sie
+                // ergaben einen Bahnkurs von 131 statt 230 Grad, also gar
+                // nicht EDDH 23. Ein Test auf einer erfundenen Bahn prueft
+                // die Rechnung, nicht die Wirklichkeit.
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636011,
+                threshold_lon: 9.999656,
+                end_lat: 53.619958,
+                end_lon: 9.967167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+            stats.arr_ground_geojson = Some(
+                r#"{"features":[
+                  {"properties":{"k":"taxiway","r":"S4"},
+                   "geometry":{"type":"LineString",
+                     "coordinates":[[9.982400,53.627218],[9.983079,53.626734]]}}
+                ]}"#
+                .to_string(),
+            );
+            let felder = bahn_felder(&stats, Some("A320"), None);
+            assert!(
+                !felder.runway_exits.is_empty(),
+                "die Bodenkarte liegt vor und die Bahn ist gematcht, \
+                 trotzdem kommen keine Ausfahrten an — der Aufruf in \
+                 `bahn_felder` fehlt"
+            );
+
+            // Und ohne Karte bleibt es leer, statt etwas zu behaupten.
+            stats.arr_ground_geojson = None;
+            assert!(
+                bahn_felder(&stats, Some("A320"), None).runway_exits.is_empty(),
+                "ohne Bodenkarte duerfen keine Ausfahrten entstehen"
+            );
+        }
+
+        // Und der Takt darf in der Ausfahrt nicht einbrechen.
+        //
+        // Gemessen an neun echten Landungen fiel die Kadenz bei dreissig
+        // Knoten von 0,51 s auf 3,01 s — 34,9 Meter zwischen zwei Punkten,
+        // mitten in der Kurve. Ursache war nicht die Fahrt, sondern die
+        // Phase: Beim Abbiegen springt sie von `Landing` auf `TaxiIn`,
+        // und damit fiel jede Sonderregel weg.
+        for gs in [55.0, 30.0, 15.0, 8.0] {
+            let t = adaptive_tick_interval_v2(
+                FlightPhase::TaxiIn,
+                Some(0.0),
+                Some(true),
+                Some(gs),
+                true, // die Aufzeichnung laeuft noch
+            );
+            assert_eq!(
+                t,
+                Duration::from_millis(ROLLOUT_TICK_MS),
+                "bei {gs} kt in der Ausfahrt taktet die Aufzeichnung mit \
+                 {t:?} statt {ROLLOUT_TICK_MS} ms — die Spur wird grob"
+            );
+        }
+        // Rollt das Flugzeug zum Gate, ist die Spur zu Ende — und mit ihr
+        // der feine Takt. Sonst liefe er die ganze Rollzeit weiter.
+        assert!(
+            adaptive_tick_interval_v2(
+                FlightPhase::TaxiIn,
+                Some(0.0),
+                Some(true),
+                Some(20.0),
+                false,
+            ) > Duration::from_millis(ROLLOUT_TICK_MS),
+            "auf dem Rollweg laeuft der 5-Hz-Takt weiter"
+        );
+
+
+        // Gegenprobe: Mit reiner Laengsmessung waeren es weniger -- genau
+        // die beiden letzten faehlen dann.
+        let mut nur_laengs: Vec<f64> = Vec::new();
+        for (lg, _) in echte_punkte {
+            if nur_laengs
+                .last()
+                .is_none_or(|l| (lg - l).abs() >= BAHN_SPUR_MIN_ABSTAND_M)
+            {
+                nur_laengs.push(*lg);
+            }
+        }
+        assert!(
+            nur_laengs.len() < echte_punkte.len(),
+            "die Gegenprobe muss Punkte verlieren, sonst prueft der Test nichts"
+        );
+    }
+
+    #[test]
+    fn ausrollen_wird_fuenfmal_so_fein_abgetastet() {
+        // Der Rollweg lief bisher mit denselben 2 Hz wie der Flare: bei
+        // 100 kt ein Punkt alle 25 m. Eine Spur aus fuenfzehn Punkten kann
+        // nicht zeigen, wie sich das Flugzeug auf der Bahn verhalten hat --
+        // ein Ausbrechen und Zurueckziehen faellt zwischen zwei Messungen.
+        let ausrollen = adaptive_tick_interval_v2(
+            FlightPhase::Landing,
+            Some(0.0),
+            Some(true),
+            Some(100.0),
+            false,
+        );
+        assert_eq!(ausrollen, Duration::from_millis(200), "5 Hz beim Ausrollen");
+
+        // Bei 100 kt sind 200 ms genau zehn Meter -- der Mindestabstand,
+        // mit dem `bahndisziplin_tick` die Spur ohnehin ausduennt. Feiner
+        // abzutasten brächte nichts, weil die Punkte dann verworfen werden.
+        let meter_je_tick = 100.0 * 0.514_444 * 0.2;
+        assert!(
+            (meter_je_tick - BAHN_SPUR_MIN_ABSTAND_M).abs() < 1.0,
+            "{meter_je_tick} m je Tick gegen {BAHN_SPUR_MIN_ABSTAND_M} m Mindestabstand"
+        );
+    }
+
+    #[test]
+    fn feine_abtastung_nur_beim_ausrollen() {
+        // Sie darf NICHT im Flare greifen -- dort ist die Hoehe das
+        // Kriterium, und der 50-Hz-Sampler liefert die Feinheit ohnehin.
+        assert_eq!(
+            adaptive_tick_interval_v2(FlightPhase::Landing, Some(20.0), Some(false), Some(140.0), false),
+            Duration::from_millis(500),
+            "in der Luft bleibt es bei 2 Hz"
+        );
+        // Frueher stand hier: „Unter 60 kt zurueck auf 2 Hz — was nicht
+        // mehr bewertet wird, braucht keine feine Spur."
+        //
+        // Das war falsch, und der Test hat den Fehler festgehalten statt
+        // ihn zu finden. Bewertet wird bis 60 kt, GEZEICHNET bis 5 kt.
+        // Die Ausfahrt liegt dazwischen — sie ist der Teil der Spur, der
+        // sich am staerksten kruemmt, und bekam die wenigsten Punkte.
+        //
+        // Massgeblich ist jetzt, ob die Aufzeichnung laeuft.
+        assert_eq!(
+            adaptive_tick_interval_v2(FlightPhase::Landing, Some(0.0), Some(true), Some(30.0), true),
+            Duration::from_millis(200),
+            "solange die Spur laeuft, bleibt es bei 5 Hz"
+        );
+        // Drei Sekunden, nicht 500 ms: `TaxiIn` steht in keiner der
+        // Hoehenregeln, es gilt der Grundtakt. Genau dieser Wert wurde im
+        // Korpus gemessen — 3,01 s Median unter dreissig Knoten, ueber
+        // 311 Messpunkte. Das war der Einbruch, um den es hier geht.
+        assert_eq!(
+            adaptive_tick_interval_v2(FlightPhase::TaxiIn, Some(0.0), Some(true), Some(30.0), false),
+            Duration::from_secs(MQTT_PUBLISH_INTERVAL_SECS),
+            "ist die Spur zu Ende, faellt der Takt auf den Grundtakt zurueck"
+        );
+        // Und nicht in anderen Phasen -- ein Startlauf ist kein Ausrollen.
+        assert_eq!(
+            adaptive_tick_interval_v2(
+                FlightPhase::TakeoffRoll,
+                Some(0.0),
+                Some(true),
+                Some(100.0),
+                false,
+            ),
+            Duration::from_millis(500),
+            "der Startlauf bleibt bei 2 Hz"
+        );
+    }
 
     #[test]
     fn sampler_path_rollout_accumulates_and_finalizes_at_full_stop() {

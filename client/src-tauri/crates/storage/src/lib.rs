@@ -237,6 +237,34 @@ pub struct LandingRunwayMatch {
 }
 
 /// One landing record — written once when the PIREP is filed.
+/// Ein Punkt des gefahrenen Streifens, fuer die Queransicht des Diagramms.
+///
+/// Bewusst zwei Zahlen statt eines Koordinatenpaares: Das Diagramm zeichnet
+/// die Bahn, nicht die Erde. Wer hier Breiten- und Laengengrad ablegte,
+/// muesste in der Anzeige ein zweites Mal projizieren — und genau daraus
+/// entsteht die Fehlerklasse, gegen die §8.4 der Spezifikation eine
+/// gemeinsame Projektionsfunktion vorschreibt.
+/// Eine Ausfahrt der Bahn: wo ein benannter Rollweg die Kante trifft.
+///
+/// Kein `Copy` wie `LateralSample` daneben — der Name ist ein `String`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunwayExit {
+    /// Kennung des Rollwegs, z. B. `S4`.
+    pub name: String,
+    /// Distanz ab der Landeschwelle, in Metern.
+    pub laengs_m: f64,
+    /// `"left"` oder `"right"` in Landerichtung.
+    pub seite: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LateralSample {
+    /// Distanz ab der Landeschwelle, in Metern.
+    pub laengs_m: f32,
+    /// Versatz zur Mittellinie, in Metern. Positiv = rechts in Landerichtung.
+    pub quer_m: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LandingRecord {
     /// PIREP id (phpVMS UUID). Doubles as the record's primary key.
@@ -319,6 +347,85 @@ pub struct LandingRecord {
 
     // Runway
     pub runway_match: Option<LandingRunwayMatch>,
+
+    // ─── v1.7.0 Bahndisziplin ────────────────────────────────────────
+    //
+    // Alles optional und mit `serde(default)`: Fluege von vor v1.7.0 haben
+    // diese Felder nicht, und ihre Datensaetze muessen weiter lesbar bleiben.
+    // Die Anzeige zeigt fehlende Werte ehrlich als „fuer diesen Flug nicht
+    // erfasst" — sie malt keine leere Querachse, die wie eine Messung
+    // aussieht.
+    /// Laengsposition, an der die Bahn geraeumt wurde, in Metern ab der
+    /// Landeschwelle. Leer, wenn das Flugzeug bis zum Stillstand auf der
+    /// Bahn blieb.
+    #[serde(default)]
+    pub clearance_point_m: Option<f64>,
+    /// Laengsposition, ab der nicht mehr bewertet wird — der Beginn des
+    /// Ausschwenkens zur Ausfahrt, nicht die Kante.
+    ///
+    /// Ein Flugzeug zieht hunderte Meter vor der Ausfahrt nach aussen.
+    /// Faellt die Bewertungsgrenze mit der Kante zusammen, zaehlt dieses
+    /// Ausschwenken als Fehler des Piloten: bei `0Ab3v9EvNN1LKZ8z`
+    /// (EDDH 05) wurden 21,95 m gemeldet, auf einer Bahn mit 23 m
+    /// Halbbreite, unmittelbar vor dem Abbiegen. Auf der Bahn hatte das
+    /// Flugzeug 13,4 m.
+    #[serde(default)]
+    pub scoring_cutoff_m: Option<f64>,
+    /// Warum die seitliche Bewertung entfiel — der Grund, den die
+    /// BEWERTUNG gefaellt hat, nicht ein zweiter aus der Anzeige.
+    ///
+    /// Die Anzeige kannte bis v1.7.0 nur fuenf der sieben Gruende. Bei
+    /// `untrusted_geometry` und `implausible_lateral_track` wertete die
+    /// Achse nicht — und die Grafik daneben zeichnete seelenruhig ein Band
+    /// mit Randabstand, auf einer Geometrie, der die Bewertung nicht traut,
+    /// oder aus einem Versatz, den sie als Messfehler verworfen hat.
+    ///
+    /// `None` heisst „bewertet", nicht „kein Grund bekannt".
+    #[serde(default)]
+    pub lateral_skip_reason: Option<String>,
+    /// Die Ausfahrten dieser Bahn, aus der OSM-Bodenkarte.
+    ///
+    /// Leer, wenn keine Bodenkarte vorlag — nicht, wenn die Bahn keine
+    /// Ausfahrten hat. Beides sieht in der Anzeige gleich aus, deshalb
+    /// zeichnet sie Stummel nur, wenn wirklich welche gefunden wurden.
+    #[serde(default)]
+    pub runway_exits: Vec<RunwayExit>,
+    /// Geschwindigkeit beim Raeumen, in Knoten.
+    #[serde(default)]
+    pub clearance_speed_kt: Option<f64>,
+    /// Seite der Ausfahrt: `"left"` oder `"right"`. Nur gesetzt, wenn
+    /// Kursaenderung UND Querbewegung dasselbe sagen (Spec §8.6).
+    #[serde(default)]
+    pub clearance_side: Option<String>,
+    /// Spurweite des Hauptfahrwerks, in Metern.
+    #[serde(default)]
+    pub track_width_m: Option<f64>,
+    /// Woher die Spurweite stammt: `"type_table"` oder `"aircraft_file"`.
+    #[serde(default)]
+    pub track_width_source: Option<String>,
+    /// Spannweite, in Metern — fuer den Groessenvergleich unter der Grafik.
+    #[serde(default)]
+    pub wingspan_m: Option<f64>,
+    /// Bahnbreite, in Metern.
+    #[serde(default)]
+    pub runway_width_m: Option<f64>,
+    /// Kleinster Abstand des aeusseren Rades zur Bahnkante, in Metern.
+    /// Negativ heisst: das Rad war jenseits der befestigten Flaeche.
+    #[serde(default)]
+    pub min_edge_clearance_m: Option<f64>,
+    /// Groesster seitlicher Versatz zur Mittellinie im Messfenster.
+    /// Vorzeichen: positiv = rechts in Landerichtung.
+    #[serde(default)]
+    pub max_lateral_offset_m: Option<f64>,
+    /// Der gefahrene Streifen, ausgeduennt. Fuer die Queransicht.
+    #[serde(default)]
+    pub lateral_samples: Vec<LateralSample>,
+    /// Ist der Belag befestigt? Auf Gras entfaellt die seitliche Bewertung.
+    #[serde(default)]
+    pub surface_paved: Option<bool>,
+    /// Strecke jenseits des Bahnendes, in Metern.
+    #[serde(default)]
+    pub overrun_m: Option<f64>,
 
     // Touchdown profile (V/S + G curve, ~150 samples)
     #[serde(default)]
@@ -1518,5 +1625,70 @@ mod deleted_landings_tombstone_tests {
             "a locally-deleted record must not be resurrected by the next backup merge"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    /// Ein Datensatz von VOR v1.7.0 muss weiter lesbar sein.
+    ///
+    /// `landings.json` liegt auf der Platte des Piloten und wird beim
+    /// Start eingelesen. Ist die Datei unlesbar, faengt der Client bei
+    /// null an — die ganze Landungshistorie waere weg, und der Log-Eintrag
+    /// dazu liest niemand.
+    ///
+    /// Jedes v1.7.0-Feld traegt deshalb `#[serde(default)]`. Diese
+    /// Pruefung geht durch den echten Deserialisierer, statt es zu
+    /// glauben: Ein vergessenes Attribut faellt sonst erst beim ersten
+    /// Piloten auf, der die neue Fassung installiert.
+    #[test]
+    fn v16_datensatz_bleibt_lesbar() {
+        // Der kleinste Datensatz, den v1.6 geschrieben haben kann:
+        // die Pflichtfelder, sonst nichts.
+        let alt = r#"{
+            "pirep_id": "abc123",
+            "touchdown_at": "2026-08-11T17:34:42Z",
+            "recorded_at": "2026-08-11T17:40:00Z",
+            "flight_number": "GSG123",
+            "airline_icao": "GSG",
+            "dpt_airport": "EDDH",
+            "arr_airport": "EDDF",
+            "score_numeric": 92,
+            "score_label": "SMOOTH",
+            "grade_letter": "A",
+            "landing_rate_fpm": -240.0,
+            "bounce_count": 0
+        }"#;
+        let r: Result<LandingRecord, _> = serde_json::from_str(alt);
+        let r = r.expect("v1.6-Datensatz nicht mehr lesbar — Historie waere weg");
+        assert!(r.clearance_point_m.is_none());
+        assert!(r.scoring_cutoff_m.is_none());
+        assert!(r.track_width_m.is_none());
+        assert!(r.lateral_samples.is_empty());
+        assert!(r.runway_exits.is_empty(), "Ausfahrten aus dem Nichts");
+        assert!(r.surface_paved.is_none());
+    }
+
+    /// Und der Weg zurueck: Was v1.7.0 schreibt, liest v1.7.0 wieder.
+    #[test]
+    fn v170_datensatz_ueberlebt_hin_und_zurueck() {
+        let mut r: LandingRecord = serde_json::from_str(
+            r#"{"pirep_id":"x","touchdown_at":"2026-08-11T17:34:42Z",
+                "recorded_at":"2026-08-11T17:40:00Z","flight_number":"GSG1",
+                "airline_icao":"GSG","dpt_airport":"EDDH","arr_airport":"EDDF",
+                "score_numeric":90,"score_label":"SMOOTH","grade_letter":"A",
+                "landing_rate_fpm":-200.0,"bounce_count":0}"#,
+        )
+        .unwrap();
+        r.clearance_point_m = Some(1831.6);
+        r.scoring_cutoff_m = Some(1642.0);
+        r.lateral_samples = vec![LateralSample { laengs_m: 523.2, quer_m: -5.7 }];
+        r.runway_exits = vec![RunwayExit {
+            name: "S4".to_string(),
+            laengs_m: 1831.6,
+            seite: "left".to_string(),
+        }];
+        let zurueck: LandingRecord =
+            serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(zurueck.scoring_cutoff_m, Some(1642.0));
+        assert_eq!(zurueck.runway_exits.len(), 1);
+        assert_eq!(zurueck.runway_exits[0].name, "S4");
+        assert_eq!(zurueck.lateral_samples.len(), 1);
     }
 }

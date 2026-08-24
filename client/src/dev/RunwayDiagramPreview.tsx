@@ -6,12 +6,17 @@
 //
 //   1. cd client && npm run tauri dev
 //   2. Tab "🧪 Preview" oben anklicken
-//   3. Mock-Variante im Picker auswählen (6 Varianten)
+//   3. Mock-Variante im Picker auswählen (14 Varianten, davon 10 die
+//      Pflichtvarianten aus docs/spec/v1.7.0-bahndisziplin.md §11)
 //   4. Container-Breite mit Slider verändern → Responsive testen
 //   5. Edits in RunwayDiagramV2.tsx oder RunwayGlossaryModal.tsx →
 //      Vite Hot-Reload, KEIN Tauri-Rebuild
 //
 // Spec: docs/spec/runway-diagram-v2.contract.md
+//       docs/spec/v1.7.0-bahndisziplin.md §11 -- die Demo ist dort KEIN
+//       Nebenprodukt, sondern die Abnahmestufe, an der die Bandgrenzen aus
+//       §4 und §5.4 entschieden werden. Am Schreibtisch laesst sich nicht
+//       sinnvoll festlegen, was 3 m Randabstand gegenueber 15 m kosten soll.
 
 import { useMemo, useState } from "react";
 import { RunwayDiagramV2 } from "../components/RunwayDiagramV2";

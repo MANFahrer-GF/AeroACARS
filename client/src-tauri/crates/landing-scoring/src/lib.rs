@@ -15,7 +15,10 @@
 use serde::{Deserialize, Serialize};
 
 pub mod gate;
+pub mod belag;
+pub mod spurweite;
 pub mod sub_alignment;
+pub mod sub_bahndisziplin;
 pub mod sub_bounces;
 pub mod sub_fuel;
 pub mod sub_g_force;
@@ -23,6 +26,7 @@ pub mod sub_landing_rate;
 pub mod sub_loadsheet;
 pub mod sub_rollout;
 pub mod sub_stability;
+pub mod sub_touchdown_point;
 
 /// Score-Band — 1:1 aus TS `Band`. NICHT umbenennen, bestehende UI
 /// erwartet exakt diese Werte (siehe Spec §5.4 K1).
@@ -225,6 +229,41 @@ pub struct LandingScoringInput {
     pub landing_float_distance_m: Option<f32>,
     pub runway_length_m: Option<f32>,
     pub runway_displaced_threshold_ft: Option<i32>,
+    /// v1.7.0 — Ziel-Markierung ab der Lande-Schwelle, aus
+    /// `runway_assessment::classify_aim`. Bewusst als Eingabe statt hier
+    /// gerechnet: die Regel (300 m / 400 m ab 2400 m Bahnlänge) lebt an genau
+    /// einer Stelle.
+    pub aim_point_m: Option<f64>,
+    /// v1.7.0 Bahndisziplin — groesster seitlicher Versatz ueber den
+    /// gewerteten Rollweg, in Metern von der Mittellinie.
+    pub bahn_max_querversatz_m: Option<f64>,
+    /// v1.7.0 — Strecke jenseits des Bahnendes, `None`/0 = kein Overrun.
+    pub bahn_overrun_m: Option<f64>,
+    /// v1.7.0 — Positionsproben im Messfenster.
+    pub bahn_proben: Option<usize>,
+    /// v1.7.0 — Spurweite aus der **Flugzeugdatei**, falls gelesen.
+    ///
+    /// # Warum die Bewertung sie kennen muss
+    ///
+    /// Seit Schritt 11 der Bauliste liest der Client die Spurweite bei
+    /// Bedarf aus der `.acf` bzw. `flight_model.cfg` des geladenen
+    /// Musters. Sie hat Vorrang vor der Typtabelle, weil sie das
+    /// tatsaechlich geflogene Add-on beschreibt und nicht das Realmuster.
+    ///
+    /// Bis zur QS-Runde 20 kam dieser Wert **nur in der Anzeige** an: Die
+    /// Bewertung rechnete unverdrossen mit `spurweite_m(icao)`. Bei einem
+    /// Add-on, dessen Fahrwerk vom Realmuster abweicht, zeigte die Grafik
+    /// damit einen anderen Randabstand, als die Note benutzte — und die
+    /// Herkunftsangabe daneben behauptete „aus der Flugzeugdatei".
+    ///
+    /// `None` heisst „keine Datei gelesen", nicht „keine Spurweite": Dann
+    /// gilt die Tabelle.
+    pub fahrwerk_spurweite_m: Option<f64>,
+    /// v1.7.0 — Bahnbelag als Rohangabe (OurAirports `runways.surface`).
+    pub runway_surface: Option<String>,
+    /// v1.7.0 — Ende der Aufsetzzone ab der Schwelle, aus `classify_tdz`.
+    /// `None` = Bahn unter 1200 m, hat laut Annex 14 keine Zonenmarkierung.
+    pub tdz_end_m: Option<f64>,
     pub pre_displaced_threshold: Option<bool>,
     pub runway_geometry_trusted: Option<bool>,
     pub airport_source: Option<String>,
@@ -318,24 +357,45 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
     // oder Test-Fixture ohne Touchdown-Forensik), fallen wir auf den
     // alten meter-only `sub_rollout` zurück damit pre-v0.10 Code-Pfade
     // (Bin-Tools, alte Tests) unverändert weiterlaufen.
+    // v1.7.0: Die Bahn-Achse bewertet nicht mehr die AUSLASTUNG, sondern die
+    // DISZIPLIN — nur noch, was ohne Kontextwissen eindeutig falsch ist. Die
+    // Begruendung steht in `sub_bahndisziplin`; kurz: 80 % der alten Abzuege
+    // trafen Landungen ohne jedes Reserve-Problem.
+    //
+    // Der alte `sub_rollout_v2` bleibt vorerst im Baum, wird aber nicht mehr
+    // aufgerufen. Er faellt, sobald die Anzeige umgestellt ist — bis dahin
+    // dient er als Vergleichsmassstab beim Nachrechnen ueber den Korpus.
     if scoring_input_has_v2_fields(input) {
-        out.push(sub_rollout::sub_rollout_v2(&sub_rollout::RolloutInput {
-            td_distance_from_threshold_m: input.td_distance_from_threshold_m,
-            rollout_distance_m: input.rollout_distance_m,
-            landing_float_distance_m: input.landing_float_distance_m,
-            runway_length_m: input.runway_length_m,
-            runway_displaced_threshold_ft: input.runway_displaced_threshold_ft,
-            pre_displaced_threshold: input.pre_displaced_threshold,
-            runway_geometry_trusted: input.runway_geometry_trusted,
-            airport_source: input.airport_source.as_deref(),
-            runway_match_icao: input.runway_match_icao.as_deref(),
-            runway_match_ident: input.runway_match_ident.as_deref(),
-            aircraft_icao: input.aircraft_icao.as_deref(),
-        }));
-    } else if let Some(ro) =
-        sub_rollout::sub_rollout(input.rollout_distance_m, input.aircraft_icao.as_deref())
-    {
-        out.push(ro);
+        out.push(sub_bahndisziplin::sub_bahndisziplin(
+            &sub_bahndisziplin::BahndisziplinInput {
+                max_querversatz_m: input.bahn_max_querversatz_m,
+                bahnbreite_m: input.runway_width_m.map(|w| w as f64),
+                // Dieselbe Rangfolge wie in der Anzeige (`bahn_felder`):
+                // die Flugzeugdatei zuerst, die Typtabelle als Rueckfall.
+                spurweite_m: input
+                    .fahrwerk_spurweite_m
+                    .or_else(|| spurweite::spurweite_m(input.aircraft_icao.as_deref())),
+                overrun_m: input.bahn_overrun_m,
+                belag: Some(belag::belag_aus_angabe(input.runway_surface.as_deref())),
+                airport_source: match input.airport_source.as_deref() {
+                    Some("runway_match") => Some("runway_match"),
+                    _ => None,
+                },
+                runway_geometry_trusted: input.runway_geometry_trusted,
+                proben: input.bahn_proben,
+            },
+        ));
+    }
+
+    // v1.7.0: Der alte meter-only `sub_rollout` bleibt fuer nicht-migrierte
+    // Aufrufer (Bin-Tools, alte Fixtures ohne Touchdown-Forensik).
+    if !scoring_input_has_v2_fields(input) {
+
+        if let Some(ro) =
+            sub_rollout::sub_rollout(input.rollout_distance_m, input.aircraft_icao.as_deref())
+        {
+            out.push(ro);
+        }
     }
 
     // v1.6.2: Ausrichtung — WO und wie gerade wurde aufgesetzt. Laeuft nur
@@ -356,6 +416,30 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
             wind_speed_kt: input.landing_wind_speed_kt,
             bezugsgeschwindigkeit_kt: input.landing_groundspeed_kt,
         }));
+    }
+
+    // v1.7.0: Aufsetzpunkt — WO laengs aufgesetzt wurde. Wie die Ausrichtung
+    // nur im v2-Datenpfad, weil dieselbe Bahn-Geometrie gebraucht wird. Die
+    // nutzbare Laenge wird hier EINMAL gebildet (Bahnlaenge minus versetzte
+    // Schwelle) und ist dieselbe Groesse, die `sub_rollout_v2` verwendet.
+    if scoring_input_has_v2_fields(input) {
+        let lda_m = input.runway_length_m.map(|len| {
+            let displaced = input.runway_displaced_threshold_ft.unwrap_or(0) as f64 * 0.3048;
+            len as f64 - displaced
+        });
+        out.push(sub_touchdown_point::sub_touchdown_point(
+            &sub_touchdown_point::TouchdownPointInput {
+                td_distance_from_threshold_m: input.td_distance_from_threshold_m,
+                aim_point_m: input.aim_point_m,
+                tdz_end_m: input.tdz_end_m,
+                lda_m,
+                airport_source: match input.airport_source.as_deref() {
+                    Some("runway_match") => Some("runway_match"),
+                    _ => None,
+                },
+                runway_geometry_trusted: input.runway_geometry_trusted,
+            },
+        ));
     }
 
     // v0.7.1 Phase 2 F2 + F3: ersetzt sub_fuel_legacy durch
@@ -426,6 +510,16 @@ pub fn aggregate_master_score(subs: &[SubScoreEntry]) -> Option<u8> {
             // ueberhaupt, soll dort aber spuerbar sein. Explizit gelistet,
             // damit sie nicht still ueber den `_`-Default mitlaeuft.
             "alignment" => 1.0,
+            // v1.7.0: Aufsetzpunkt. Gewicht 1 — bewusst konservativ, obwohl
+            // die Achse fachlich mehr wiegt als der Bremsweg. Grund: Sie
+            // ersetzt eine Bewertung, die bisher INDIREKT ueber `rollout`
+            // (Gewicht 1) lief. Mit Gewicht 1 verschiebt sich der Gesamtscore
+            // fuer eine unveraenderte Landung minimal; mit 2 oder 3 waere der
+            // Umbau ein Bruch fuer jeden Piloten. Anheben ist jederzeit
+            // moeglich — dann aber bewusst und ueber den Korpus nachgerechnet.
+            // Explizit gelistet, damit sie nicht still ueber den `_`-Default
+            // mitlaeuft.
+            "touchdown_point" => 1.0,
             "fuel" => 1.0,
             "loadsheet" => 1.0, // NEU v0.7.1
             "flare" => 1.0,     // NEU v0.7.1
@@ -754,6 +848,15 @@ mod tests {
     #[test]
     fn compute_sub_scores_never_emits_flare() {
         let rich = LandingScoringInput {
+            // v1.7.0: Aufsetzpunkt-Achse — der Test laeuft ueber einen VOLL
+            // besetzten Input, damit jeder Zweig feuert.
+            aim_point_m: Some(400.0),
+            tdz_end_m: Some(900.0),
+            bahn_max_querversatz_m: Some(3.0),
+            bahn_overrun_m: None,
+            bahn_proben: Some(30),
+            fahrwerk_spurweite_m: None,
+            runway_surface: Some("ASP".into()),
             vs_fpm: Some(-150.0),
             peak_g_load: Some(1.4),
             scored_g_load: Some(1.3),

@@ -1,0 +1,776 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>Bahndisziplin statt Auslastung</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+:root{
+  --ground:#F2F4F7;
+  --surface:#FFFFFF;
+  --sunk:#E8ECF2;
+  --ink:#141A22;
+  --ink-2:#39434F;
+  --muted:#66707E;
+  --line:#DDE3EA;
+  --line-strong:#C3CCD6;
+  --accent:#0E7490;
+  --accent-soft:#DFF1F6;
+  --ok:#0F7A4F;
+  --ok-soft:#DFF3E9;
+  --warn:#8A5A06;
+  --warn-soft:#FBF0DA;
+  --crit:#A62A22;
+  --crit-soft:#FAE8E6;
+
+  --display:"IBM Plex Sans Condensed",ui-sans-serif,system-ui,sans-serif;
+  --body:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+
+  /* Das Bahn-Display bleibt in BEIDEN Themes dunkel — es bildet ein
+     Cockpit-Panel ab, das im Client ebenfalls dunkel ist. */
+  --sc-bg:#0B0F17;
+  --sc-pave:#1C2534;
+  --sc-pave-edge:#333F52;
+  --sc-line:#5A6678;
+  --sc-ink:#E6EAF2;
+  --sc-muted:#8B95A8;
+  --sc-track:#22D3EE;
+  --sc-td:#34D399;
+  --sc-aim:#F5B93B;
+  --sc-crit:#EF4444;
+  --sc-tdz:#8A7B3F;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0B0F17;
+    --surface:#131A26;
+    --sunk:#0F1621;
+    --ink:#E6EAF2;
+    --ink-2:#BAC3D2;
+    --muted:#8B95A8;
+    --line:#222C3B;
+    --line-strong:#334053;
+    --accent:#38BDF8;
+    --accent-soft:#122534;
+    --ok:#4ADE9B;
+    --ok-soft:#0F2620;
+    --warn:#F0B429;
+    --warn-soft:#2A2211;
+    --crit:#FF8B7C;
+    --crit-soft:#2E1917;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0B0F17;
+  --surface:#131A26;
+  --sunk:#0F1621;
+  --ink:#E6EAF2;
+  --ink-2:#BAC3D2;
+  --muted:#8B95A8;
+  --line:#222C3B;
+  --line-strong:#334053;
+  --accent:#38BDF8;
+  --accent-soft:#122534;
+  --ok:#4ADE9B;
+  --ok-soft:#0F2620;
+  --warn:#F0B429;
+  --warn-soft:#2A2211;
+  --crit:#FF8B7C;
+  --crit-soft:#2E1917;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--ground);
+  color:var(--ink);
+  font-family:var(--body);
+  font-size:16px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:56px 24px 96px;display:flex;flex-direction:column;gap:52px}
+
+/* ---------- Kopf ---------- */
+.head{display:flex;flex-direction:column;gap:14px;border-bottom:1px solid var(--line);padding-bottom:28px}
+.eyebrow{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+}
+.eyebrow .sep{color:var(--line-strong)}
+h1{
+  font-family:var(--display);font-weight:700;font-size:clamp(34px,5.2vw,52px);
+  line-height:1.04;letter-spacing:-.015em;margin:0;text-wrap:balance;
+}
+.lede{font-size:18px;color:var(--ink-2);max-width:64ch;margin:0}
+
+/* ---------- Abschnitte ---------- */
+section{display:flex;flex-direction:column;gap:18px}
+h2{
+  font-family:var(--display);font-weight:600;font-size:26px;letter-spacing:-.01em;
+  margin:0;text-wrap:balance;display:flex;align-items:baseline;gap:12px;
+}
+h2 .num{
+  font-family:var(--mono);font-size:12px;font-weight:500;color:var(--accent);
+  letter-spacing:.08em;padding-top:2px;
+}
+h3{font-family:var(--display);font-weight:600;font-size:18px;margin:8px 0 0;letter-spacing:-.005em}
+p{margin:0;max-width:68ch}
+p+p{margin-top:-4px}
+strong{font-weight:600;color:var(--ink)}
+code{font-family:var(--mono);font-size:.88em;background:var(--sunk);padding:1px 5px;border-radius:3px;border:1px solid var(--line)}
+
+/* ---------- Kennzahlen ---------- */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.stat{background:var(--surface);padding:14px 16px;display:flex;flex-direction:column;gap:5px}
+.stat .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stat .v{font-family:var(--mono);font-size:21px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.stat .n{font-size:12.5px;color:var(--muted);line-height:1.35}
+.v.ok{color:var(--ok)} .v.warn{color:var(--warn)} .v.crit{color:var(--crit)}
+
+/* ---------- Tabellen ---------- */
+.tblwrap{overflow-x:auto;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:520px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+thead th{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);font-weight:500;background:var(--sunk);
+}
+tbody tr:last-child td{border-bottom:none}
+td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+td.mono{font-family:var(--mono);font-size:13px}
+
+/* ---------- Zustandsmarken ---------- */
+.pill{
+  display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;
+  letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:99px;
+  border:1px solid currentColor;white-space:nowrap;
+}
+.pill.ok{color:var(--ok);background:var(--ok-soft)}
+.pill.warn{color:var(--warn);background:var(--warn-soft)}
+.pill.crit{color:var(--crit);background:var(--crit-soft)}
+.pill.info{color:var(--accent);background:var(--accent-soft)}
+
+/* ---------- Notiz ---------- */
+.note{
+  border-left:2px solid var(--accent);background:var(--surface);
+  padding:14px 18px;display:flex;flex-direction:column;gap:8px;border-radius:0 5px 5px 0;
+}
+.note .t{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+.note.crit{border-left-color:var(--crit)} .note.crit .t{color:var(--crit)}
+.note.warn{border-left-color:var(--warn)} .note.warn .t{color:var(--warn)}
+
+/* ---------- Display ---------- */
+.screen{
+  background:var(--sc-bg);border:1px solid var(--line-strong);border-radius:8px;
+  padding:20px 18px 14px;overflow-x:auto;
+}
+.screen svg{display:block;min-width:900px;width:100%;height:auto}
+.legend{
+  display:flex;flex-wrap:wrap;gap:6px 20px;margin-top:14px;padding-top:12px;
+  border-top:1px solid #232D3D;font-family:var(--mono);font-size:11px;color:var(--sc-muted);
+}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.caption{font-size:13px;color:var(--muted);max-width:68ch}
+.marken{margin-top:14px;padding-top:13px;border-top:1px solid #232D3D;display:flex;flex-direction:column;gap:8px}
+.marke{display:flex;align-items:flex-start;gap:10px}
+.mk{flex-shrink:0;width:19px;height:19px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-family:var(--mono);font-size:11px;font-weight:600;color:#0B0F17}
+.mtxt{font-family:var(--mono);font-size:12px;color:var(--sc-ink);line-height:1.5}
+.mtxt b{color:#FFF;font-weight:600}
+@media (max-width:560px){.mtxt{font-size:11px}}
+.massstab{margin-top:14px;padding-top:13px;border-top:1px solid #232D3D;display:flex;flex-direction:column;gap:6px;overflow:hidden}
+.ms-titel{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--sc-muted);margin-bottom:3px}
+.ms-zeile{display:grid;grid-template-columns:132px minmax(0,1fr) 58px;align-items:center;gap:10px}
+.ms-name{font-family:var(--mono);font-size:11px;color:var(--sc-muted)}
+.ms-bar{height:9px;border-radius:2px;display:block;max-width:100%}
+.ms-wert{font-family:var(--mono);font-size:11px;color:var(--sc-ink);text-align:right;font-variant-numeric:tabular-nums}
+.ms-hinweis{font-size:12px;color:var(--sc-muted);margin:5px 0 0;max-width:66ch;line-height:1.45}
+@media (max-width:560px){.ms-zeile{grid-template-columns:104px minmax(0,1fr) 52px;gap:7px}}
+
+/* ---------- Liste ---------- */
+ul.clean{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:11px}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;font-size:15px;color:var(--ink-2)}
+ul.clean li .m{
+  font-family:var(--mono);font-size:11px;color:var(--muted);
+  min-width:22px;padding-top:3px;letter-spacing:.05em;
+}
+ol.steps{margin:0;padding-left:0;list-style:none;counter-reset:s;display:flex;flex-direction:column;gap:14px}
+ol.steps li{counter-increment:s;display:flex;gap:14px;align-items:flex-start}
+ol.steps li::before{
+  content:counter(s);font-family:var(--mono);font-size:11px;color:var(--accent);
+  border:1px solid var(--line-strong);border-radius:4px;min-width:24px;height:24px;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;
+}
+
+footer{border-top:1px solid var(--line);padding-top:22px;color:var(--muted);font-size:13px;display:flex;flex-direction:column;gap:6px}
+a{color:var(--accent)}
+@media (max-width:640px){
+  .wrap{padding:36px 16px 64px;gap:40px}
+  h2{font-size:22px}
+}
+</style>
+
+<div class="wrap">
+
+<header class="head">
+  <div class="eyebrow">
+    <span>Landebewertung</span><span class="sep">/</span>
+    <span>Bahn-Achse</span><span class="sep">/</span>
+    <span>Entwurf 23.08.2026</span><span class="sep">/</span>
+    <span>vor dem Bau</span>
+  </div>
+  <h1>Bahndisziplin statt Auslastung</h1>
+  <p class="lede">Die Achse hört auf zu bewerten, wie viel Bahn jemand gebraucht hat, und bewertet stattdessen, ob er auf ihr geblieben ist. Was hier steht, ist der Stand vor dem Umbau: Befunde, Messungen am Bestand, die neue Anzeige und die offenen Punkte.</p>
+</header>
+
+<!-- ===================== 1 ===================== -->
+<section>
+  <h2><span class="num">01</span>Der Anlass</h2>
+  <p><strong>MPH 9</strong>, LSZH → EHAM, PH-MCU (MD-11F), 22.08.2026. Ein neuer Pilot bekam auf der Bahn-Achse <strong>55 von 100 Punkten</strong>. Nachgerechnet war die Landung unauffällig:</p>
+
+  <div class="stats">
+    <div class="stat"><span class="k">Aufsetzpunkt</span><span class="v ok">327 m</span><span class="n">in der Aufsetzzone, erstes Drittel</span></div>
+    <div class="stat"><span class="k">Mittellinie</span><span class="v ok">1,0 m</span><span class="n">links, bei 45 m Bahnbreite</span></div>
+    <div class="stat"><span class="k">Restbahn</span><span class="v ok">883 m</span><span class="n">beim Verlassen der Bahn</span></div>
+    <div class="stat"><span class="k">Verzögerung</span><span class="v">0,16 g</span><span class="n">Autobrake MED wären ~0,30 g</span></div>
+    <div class="stat"><span class="k">Reserve</span><span class="v ok">2,53 ×</span><span class="n">knappster Moment des Ausrollens</span></div>
+    <div class="stat"><span class="k">Bahn verlassen</span><span class="v">2273 m</span><span class="n">mit 48 kt, erste erreichbare Ausfahrt</span></div>
+  </div>
+
+  <p>Die vorherige Ausfahrt lag bei 1536 m — dort war er mit <strong>99 kt</strong> unterwegs. Um sie zu erwischen, hätte er mit 0,27 g bremsen müssen, auf einer trockenen 3,2-km-Bahn. Er hat also die erste Ausfahrt genommen, die bei vernünftigem Bremsen erreichbar war, und dafür 45 Punkte verloren.</p>
+</section>
+
+<!-- ===================== 2 ===================== -->
+<section>
+  <h2><span class="num">02</span>Zwei getrennte Fehler</h2>
+
+  <h3>Fehler 1 — der Flugzeugtyp kam nie an <span class="pill crit">Bug</span></h3>
+  <p>Im gesamten Flugprotokoll steht <code>MD11</code> kein einziges Mal. Das TFDi-Modell meldet dem Simulator keinen brauchbaren ICAO-Typcode, und Kevin hatte <strong>keine Buchung</strong> — der vorhandene Fallback zieht den Typ aber genau aus der Buchung. Ohne Typ entfällt die 5-Prozentpunkte-Gutschrift für schwere Muster.</p>
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>Durch den echten Rust-Code gefahren</th><th>Punkte</th><th>Band</th><th>Anzeige</th></tr></thead>
+      <tbody>
+        <tr><td>ohne Typ — <em>so wurde gewertet</em></td><td class="num">55</td><td class="mono">ok_stop</td><td class="mono">2306 m / 3189 m · 72 %</td></tr>
+        <tr><td>mit <code>MD11</code> — <em>wie es hätte sein sollen</em></td><td class="num">80</td><td class="mono">good_stop</td><td class="mono">2306 m / 3189 m · 72 %</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>25 Punkte allein durch die Datenlücke.</strong> Der Typ war die ganze Zeit bekannt: Der PIREP trägt <code>aircraft_id 849</code> → PH-MCU → MD11. Der Client fragt beim Bewerten nur die falsche Quelle ab — die Buchung statt das tatsächlich gewählte Flugzeug.</p>
+
+  <h3>Fehler 2 — die Achse misst etwas, das sie nicht beurteilen kann <span class="pill warn">Konzept</span></h3>
+  <p>Die verbleibenden 20 Punkte sind kein Bug, sondern das eigentliche Thema. Die Achse rechnet <em>genutzte Bahnstrecke ÷ nutzbare Länge</em> und schließt daraus auf Sicherheit. Wie viel Bahn jemand nutzt, hängt aber an Dingen, die wir nicht kennen: der Anweisung des Lotsen, dem Verkehr hinter ihm, der Lage der Ausfahrten. Ein <em>long rollout</em> von ATC macht langes Rollen zur Pflicht — und niemand bremst dann auf 40 kt ab, um den Rest der Bahn im Schritttempo zu kriechen.</p>
+</section>
+
+<!-- ===================== 3 ===================== -->
+<section>
+  <h2><span class="num">03</span>Was der Bestand dazu sagt</h2>
+  <p>Ausgewertet wurden <strong>765 Landungen</strong> aus den Recorder-Protokollen (895 Flüge, der Rest ohne Bahnbezug oder ohne Touchdown). Von den 142 Landungen, die heute Punktabzug bekommen:</p>
+
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>Wie knapp war es wirklich?</th><th>Landungen</th><th>Anteil</th></tr></thead>
+      <tbody>
+        <tr><td>reichlich Reserve (Faktor ≥ 3,0)</td><td class="num">63</td><td class="num">44,4 %</td></tr>
+        <tr><td>ausreichend (2,0 – 3,0)</td><td class="num">51</td><td class="num">35,9 %</td></tr>
+        <tr><td>eng (1,5 – 2,0)</td><td class="num">18</td><td class="num">12,7 %</td></tr>
+        <tr><td><strong>wirklich knapp (&lt; 1,5)</strong></td><td class="num">10</td><td class="num">7,0 %</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>80 % der Abzüge treffen Landungen ohne jedes Reserve-Problem.</strong></p>
+
+  <div class="note crit">
+    <span class="t">Und was sie übersieht</span>
+    <p>Drei Landungen mit heute <strong>voller Punktzahl</strong>: <code>WMBT</code> — 913 m Bahn, mit 121 kt aufgesetzt, nur durch eine Vollbremsung von rund 0,44 g gehalten. <code>LIPB</code> — bei 99,1 % der Bahnlänge herausgerollt. <code>LGKR 34</code> — 797 m hinter der Schwelle aufgesetzt, mit 147 kt. Die heutige Rechnung sieht alle drei als perfekt, weil die Geschwindigkeit in ihr nicht vorkommt.</p>
+  </div>
+</section>
+
+<!-- ===================== 4 ===================== -->
+<section>
+  <h2><span class="num">04</span>Was künftig bewertet wird</h2>
+  <p>Nur was <strong>ohne Kontextwissen eindeutig falsch</strong> ist. Alles, was auf der Bahn an Rollstrategie passiert, bekommt volle Punktzahl.</p>
+
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>Kriterium</th><th>Bewertung</th><th>Im Bestand</th><th>Braucht</th></tr></thead>
+      <tbody>
+        <tr><td>Vor der Schwelle aufgesetzt</td><td><span class="pill crit">Fehler</span></td><td class="num">0,1 %</td><td>Schwellengeometrie <span class="pill ok">da</span></td></tr>
+        <tr><td>Rad neben der befestigten Bahn</td><td><span class="pill crit">Fehler</span></td><td class="num">1,6 %</td><td>Bahnbreite + Spurweite</td></tr>
+        <tr><td>Über das Bahnende hinausgerollt</td><td><span class="pill crit">Fehler</span></td><td class="num">0,3 %</td><td>Bahnende <span class="pill ok">da</span></td></tr>
+        <tr><td>Seitlicher Versatz beim Rollen</td><td><span class="pill warn">graduell</span></td><td class="num">Median 5,7 m</td><td>Bahnachse + Breite</td></tr>
+        <tr><td>Ausrollstrecke, Ausfahrtenwahl, Bremsstärke</td><td><span class="pill ok">100 Punkte</span></td><td class="num">—</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Gemessen am Bestand schlägt die Achse damit bei rund <strong>2 % der Landungen</strong> an. Das ist gewollt: Sie meldet sich nur, wenn wirklich etwas schiefging.</p>
+
+  <div class="note">
+    <span class="t">Bewusst in Kauf genommen</span>
+    <p>Der <code>WMBT</code>-Fall bekäme künftig 100 Punkte — er blieb auf der Bahn. Das ist vertretbar, weil eine zu schnelle, zu weite Landung ein Problem des <em>Anflugs</em> ist und dort bewertet gehört, nicht beim Ausrollen.</p>
+  </div>
+</section>
+
+<!-- ===================== 5 ===================== -->
+<section>
+  <h2><span class="num">05</span>Die neue Anzeige</h2>
+  <p class="caption">Zwei Ansichten statt einer. Oben die Längsachse wie bisher, aber ohne Bewertungsfarbe auf der Auslastung. Unten neu: die Spur über die echte Bahnbreite, mit den Radspuren statt nur dem Mittelpunkt. Werte aus MPH 9.</p>
+  <div class="note">
+    <span class="t">Die Ausfahrten in der Querachse — und ihr Haken</span>
+    <p>Die Stummel am Bahnrand markieren, wo Rollwege die Bahn treffen, aus der OSM-Bodenkarte. Damit wird die Bewertung erst plausibel: Kevin verlässt die Bahn bei <strong>S4, 2248 m links</strong> — und die vorherige linke Ausfahrt war <strong>S3 bei 1629 m</strong>, wo er noch mit 97 kt unterwegs war. Man sieht auf einen Blick, dass er die erste erreichbare genommen hat.</p>
+    <p><strong>Der Haken:</strong> Bei 14,9-facher Überhöhung wäre ein echter 30°-Schnellabrollweg fast senkrecht gezeichnet. Deshalb sind es <em>Stummel</em> und keine Rollwege — sie markieren die Position, behaupten aber keinen Winkel. Wer die echte Geometrie sehen will, braucht die unverzerrte Karte.</p>
+    <p>Ob das in die Pilotenansicht gehört, ist eine offene Frage: Es erklärt die Bewertung, macht die Grafik aber voller. Ein Vorschlag wäre, die Ausfahrten nur einzublenden, wenn die Achse überhaupt Punkte abzieht — dann, wenn der Pilot wissen will, warum.</p>
+  </div>
+
+  <div class="note crit">
+    <span class="t">Die Spur ist echt — dreifach geprüft</span>
+    <p>Die Querachse zeichnet <strong>30 gemessene Stützpunkte</strong> statt einer geraden Linie. Damit wird sichtbar, was in allen bisherigen Zahlen unterging: Kevin wandert nach dem Aufsetzen auf gut <strong>17 m nach links</strong> ab und korrigiert zurück zur Mittellinie. Die naheliegende Vermutung wäre ein Messfehler. Sie ist es nicht:</p>
+    <div class="tblwrap" style="margin-top:4px">
+      <table>
+        <thead><tr><th>Prüfung</th><th>Ergebnis</th></tr></thead>
+        <tbody>
+          <tr><td>Zwei unabhängige Bahnquellen — Navigraph gegen OpenStreetMap</td><td>stimmen auf 2–4 m überein, Kursdifferenz 0,1°</td></tr>
+          <tr><td>Ist die Bahn krumm und täuscht eine Spur vor?</td><td>21 OSM-Stützpunkte, größte Abweichung von der Geraden <strong>0,12 m</strong> auf 3188 m</td></tr>
+          <tr><td>Bestätigt eine zweite Messgröße die Bewegung?</td><td>ja — aus der Querrate errechneter Kurs gegen gemessenen: 55,1° / 55,4° · 56,0° / 56,4° · 58,9° / 58,8° · 60,8° / 60,8°</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Die dritte Prüfung ist die stärkste: Position und Steuerkurs sind getrennte Messgrößen, und sie liefern auf Zehntelgrad dasselbe Ergebnis. Ein Achsenfehler kann das nicht. Ursache ist vermutlich ein Ausbrechen bei den gemeldeten 9 kt Seitenwind, gefolgt von einer Korrektur.</p>
+  </div>
+
+  <div class="note warn">
+    <span class="t">Und das deckt einen Fehler in meiner Punktevergabe auf</span>
+    <p>Wie weit das äußere Rad jenseits der Kante lag, hängt davon ab, <em>welche Bahnquelle</em> man nimmt:</p>
+    <div class="tblwrap" style="margin-top:4px">
+      <table>
+        <thead><tr><th>Bahnquelle</th><th>Versatz</th><th>äußeres Rad</th><th>Kante</th><th>Differenz</th><th>Punkte</th></tr></thead>
+        <tbody>
+          <tr><td>Navigraph</td><td class="num">18,39 m</td><td class="num">23,74 m</td><td class="num">22,55 m</td><td class="num">+1,19 m</td><td class="num">20</td></tr>
+          <tr><td>OpenStreetMap</td><td class="num">17,29 m</td><td class="num">22,64 m</td><td class="num">22,55 m</td><td class="num">+0,09 m</td><td class="num">55</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>Dieselbe Landung, dieselben Positionsdaten, 35 Punkte Unterschied</strong> — allein durch die Wahl der Datenquelle. Dazu kommt, dass die Bahnbreite eine gerundete Angabe ist (148 ft) und die Spurweite aus einer Typtabelle stammt.</p>
+    <p>Deshalb neu in der Spezifikation: eine <strong>Kantentoleranz von 1,5 m zugunsten des Piloten</strong>, bevor „neben der Bahn" greift. Damit ergeben beide Quellen dasselbe Ergebnis — <code>edge_reached</code>, 55 Punkte. Ohne die Toleranz entscheidet die Datenquelle über die Note, nicht der Pilot.</p>
+  </div>
+
+  <div class="note crit">
+    <span class="t">Seitenkonvention — gilt für beide Ansichten</span>
+    <p><strong>Oben = links in Landerichtung.</strong> Die Längsansicht ist eine Draufsicht mit Landerichtung nach rechts, dort liegt links vom Flugzeug oben. Die Querachse muss derselben Regel folgen, sonst zeigt dieselbe Seite in einer Ansicht oben und in der anderen unten — genau dieser Widerspruch steckte im ersten Entwurf. Die Skala ist deshalb mit <em>links</em> und <em>rechts</em> beschriftet statt mit Vorzeichen: Ein Pilot denkt in Seiten, nicht in Koordinaten.</p>
+    <p>Intern bleibt es bei <code>quer &gt; 0 = rechts</code>. Die Umrechnung passiert einmal in der Anzeige, nicht verstreut.</p>
+  </div>
+
+  <div class="note">
+    <span class="t">Zum Maßstab der Querachse</span>
+    <p>Die Bahn ist 3189 m lang und 45 m breit — im gleichen Maßstab wäre sie ein Strich. Die Querachse ist deshalb <strong>14,9-fach überhöht</strong>, aber in sich maßstäblich: Die 10,7 m Spurweite der MD-11 nehmen genau den Anteil der 45 m Bahnbreite ein, den sie in Wirklichkeit einnehmen (knapp ein Viertel). Die Skala links macht es ablesbar, damit ein seitlicher Versatz von wenigen Metern nicht dramatischer aussieht, als er ist.</p>
+  </div>
+
+  <div class="screen">
+    <svg viewBox="-52 0 1084 600" role="img" aria-label="Bahnauswertung EHAM 06 mit Längsansicht und Spurverlauf">
+      <defs>
+        <pattern id="tdz" width="9" height="9" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+          <line x1="0" y1="0" x2="0" y2="9" stroke="#D6BE6A" stroke-width="3" opacity=".7"/>
+        </pattern>
+        <pattern id="verboten" width="9" height="9" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+          <line x1="0" y1="0" x2="0" y2="9" stroke="#EF4444" stroke-width="3" opacity=".65"/>
+        </pattern>
+        <pattern id="gruen" width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+          <line x1="0" y1="0" x2="0" y2="7" stroke="#3F6B4A" stroke-width="3" opacity=".5"/>
+        </pattern>
+      </defs>
+
+      <!-- ======== Kopfzeile ======== -->
+      <text x="-52" y="14" fill="#E6EAF2" font-family="IBM Plex Mono, monospace" font-size="13" font-weight="600">EHAM · Bahn 06</text>
+      <text x="80" y="14" fill="#8B95A8" font-family="IBM Plex Mono, monospace" font-size="12">3189 m nutzbar · 45 m breit · Asphalt</text>
+      <text x="1026" y="14" fill="#8B95A8" font-family="IBM Plex Mono, monospace" font-size="11" text-anchor="end">Navdata AIRAC 2608 · OurAirports</text>
+
+      <text x="-52" y="46" fill="#8B95A8" font-family="IBM Plex Mono, monospace" font-size="10.5" letter-spacing="1.4">LÄNGS — WO AUFGESETZT, WO GERÄUMT</text>
+      <line x1="112.0" y1="78" x2="347.4" y2="78" stroke="#D6BE6A" stroke-width="1.5"/>
+      <line x1="112.0" y1="78" x2="112.0" y2="86" stroke="#D6BE6A" stroke-width="1.5"/>
+      <line x1="347.4" y1="78" x2="347.4" y2="86" stroke="#D6BE6A" stroke-width="1.5"/>
+      <text x="229.7" y="70" fill="#E8D28A" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" text-anchor="middle">AUFSETZZONE 900 m</text>
+      <text x="687.9" y="56" fill="#22D3EE" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" text-anchor="middle">BAHN GERÄUMT</text>
+      <text x="687.9" y="70" fill="#8B95A8" font-family="IBM Plex Mono, monospace" font-size="10" text-anchor="middle">2202 m · 48 kt · Ausfahrt S4 links</text>
+      <rect x="46.6" y="92.0" width="899.4" height="78.0" fill="#1C2534" stroke="#3B4A61" stroke-width="1.5"/>
+      <rect x="46.6" y="92.0" width="65.4" height="78.0" fill="#2E1614"/>
+      <rect x="46.6" y="92.0" width="65.4" height="78.0" fill="url(#verboten)"/>
+      <rect x="46.6" y="92.0" width="65.4" height="78.0" fill="none" stroke="#EF4444" stroke-width="1.5" opacity=".75"/>
+      <g fill="#DCE3EE">
+        <rect x="114.0" y="97" width="7" height="11"/><rect x="114.0" y="112" width="7" height="11"/>
+        <rect x="114.0" y="127" width="7" height="11"/><rect x="114.0" y="142" width="7" height="11"/>
+        <rect x="114.0" y="157" width="7" height="9"/>
+      </g>
+      <rect x="112.0" y="92.0" width="235.4" height="78.0" fill="#3A3418"/>
+      <rect x="112.0" y="92.0" width="235.4" height="78.0" fill="url(#tdz)"/>
+      <line x1="347.4" y1="92.0" x2="347.4" y2="170.0" stroke="#D6BE6A" stroke-width="1.5"/>
+      <line x1="112.0" y1="131.0" x2="946.0" y2="131.0" stroke="#6C7A8F" stroke-width="1" stroke-dasharray="16 12"/>
+      <rect x="946.0" y="92.0" width="30" height="78.0" fill="#2E1614"/>
+      <rect x="946.0" y="92.0" width="30" height="78.0" fill="url(#verboten)"/>
+      <line x1="946.0" y1="92.0" x2="946.0" y2="170.0" stroke="#EF4444" stroke-width="1.5" opacity=".75"/>
+      <rect x="209.6" y="110" width="14" height="14" fill="#F5B93B"/>
+      <rect x="209.6" y="138" width="14" height="14" fill="#F5B93B"/>
+      <line x1="197.5" y1="131.0" x2="687.9" y2="131.0" stroke="#22D3EE" stroke-width="3" opacity=".95"/>
+      <path d="M687.9 131.0 C 718.7 129.0, 744.9 119.0, 771.0 94.0" fill="none" stroke="#22D3EE" stroke-width="1.5" stroke-dasharray="3 4" opacity=".45"/>
+      <circle cx="197.5" cy="131.0" r="8" fill="#34D399"/>
+      <path d="M687.9 120.0 l10 11 l-10 11 l-10 -11 z" fill="#22D3EE"/>
+      <line x1="687.9" y1="76" x2="687.9" y2="116.0" stroke="#22D3EE" stroke-width="1" opacity=".45"/>
+      <text x="40.6" y="135.0" fill="#DCE3EE" font-family="IBM Plex Sans Condensed, sans-serif" font-size="23" font-weight="700" text-anchor="end">06</text>
+      <text x="982.0" y="135.0" fill="#8B95A8" font-family="IBM Plex Sans Condensed, sans-serif" font-size="23" font-weight="700">24</text>
+      <text x="79.3" y="188" fill="#EF4444" font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="middle">LANDUNG VERBOTEN</text>
+      <text x="79.3" y="199" fill="#EF4444" font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="middle">DDS 250 m</text>
+      <text x="961.0" y="188" fill="#EF4444" font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="middle">BAHN-</text>
+      <text x="961.0" y="199" fill="#EF4444" font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="middle">ENDE</text>
+      <line x1="112.0" y1="188" x2="197.5" y2="188" stroke="#34D399" stroke-width="1.5"/>
+      <line x1="112.0" y1="184" x2="112.0" y2="192" stroke="#34D399" stroke-width="1.5"/>
+      <path d="M197.5 188 l-6 -4 v8 z" fill="#34D399"/>
+      <text x="207.5" y="192" fill="#34D399" font-family="IBM Plex Mono, monospace" font-size="10.5">TD 327 m</text>
+      <text x="228.6" y="209" fill="#F5B93B" font-family="IBM Plex Mono, monospace" font-size="10.5">AIM 400 m</text>
+      <line x1="216.6" y1="200" x2="216.6" y2="206" stroke="#F5B93B" stroke-width="1.5"/>
+      <line x1="112.0" y1="228" x2="946.0" y2="228" stroke="#3B4A61" stroke-width="1"/>
+      <g fill="#7C8698" font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="middle">
+        <line x1="112.0" y1="228" x2="112.0" y2="234" stroke="#3B4A61"/><text x="112.0" y="246">0</text>
+        <line x1="242.8" y1="228" x2="242.8" y2="234" stroke="#3B4A61"/><text x="242.8" y="246">500</text>
+        <line x1="373.5" y1="228" x2="373.5" y2="234" stroke="#3B4A61"/><text x="373.5" y="246">1000</text>
+        <line x1="504.3" y1="228" x2="504.3" y2="234" stroke="#3B4A61"/><text x="504.3" y="246">1500</text>
+        <line x1="635.0" y1="228" x2="635.0" y2="234" stroke="#3B4A61"/><text x="635.0" y="246">2000</text>
+        <line x1="765.8" y1="228" x2="765.8" y2="234" stroke="#3B4A61"/><text x="765.8" y="246">2500</text>
+        <line x1="896.6" y1="228" x2="896.6" y2="234" stroke="#3B4A61"/><text x="896.6" y="246">3000 m</text>
+      </g>
+      <line x1="-52" y1="330" x2="1026" y2="330" stroke="#232D3D" stroke-width="1"/>
+      <text x="-52" y="352" fill="#8B95A8" font-family="IBM Plex Mono, monospace" font-size="10.5" letter-spacing="1.4">QUER — WO DIE RÄDER LIEFEN</text>
+      <text x="1026" y="352" fill="#66707E" font-family="IBM Plex Mono, monospace" font-size="10" text-anchor="end">quer 14,9× überhöht · in sich maßstäblich</text>
+      <text x="268.4" y="364.0" fill="#4E6350" font-family="IBM Plex Mono, monospace" font-size="9" text-anchor="middle">S1</text>
+      <text x="268.4" y="584.0" fill="#4E6350" font-family="IBM Plex Mono, monospace" font-size="9" text-anchor="middle">S10</text>
+      <text x="442.0" y="364.0" fill="#4E6350" font-family="IBM Plex Mono, monospace" font-size="9" text-anchor="middle">S2</text>
+      <text x="468.5" y="584.0" fill="#4E6350" font-family="IBM Plex Mono, monospace" font-size="9" text-anchor="middle">S9</text>
+      <text x="538.0" y="364.0" fill="#4E6350" font-family="IBM Plex Mono, monospace" font-size="9" text-anchor="middle">S3</text>
+      <text x="699.9" y="364.0" fill="#22D3EE" font-family="IBM Plex Mono, monospace" font-size="9" text-anchor="middle">S4</text>
+      <text x="867.8" y="364.0" fill="#4E6350" font-family="IBM Plex Mono, monospace" font-size="9" text-anchor="middle">S5/S6</text>
+      <text x="872.5" y="584.0" fill="#4E6350" font-family="IBM Plex Mono, monospace" font-size="9" text-anchor="middle">S8</text>
+      <text x="920.1" y="364.0" fill="#4E6350" font-family="IBM Plex Mono, monospace" font-size="9" text-anchor="middle">S7W</text>
+      <line x1="268.4" y1="382.0" x2="268.4" y2="368.0" stroke="#4E6350" stroke-width="1.6"/>
+      <line x1="268.4" y1="558.0" x2="268.4" y2="572.0" stroke="#4E6350" stroke-width="1.6"/>
+      <line x1="442.0" y1="382.0" x2="442.0" y2="368.0" stroke="#4E6350" stroke-width="1.6"/>
+      <line x1="468.5" y1="558.0" x2="468.5" y2="572.0" stroke="#4E6350" stroke-width="1.6"/>
+      <line x1="538.0" y1="382.0" x2="538.0" y2="368.0" stroke="#4E6350" stroke-width="1.6"/>
+      <line x1="699.9" y1="382.0" x2="699.9" y2="368.0" stroke="#22D3EE" stroke-width="2.6"/>
+      <line x1="867.8" y1="382.0" x2="867.8" y2="368.0" stroke="#4E6350" stroke-width="1.6"/>
+      <line x1="872.5" y1="558.0" x2="872.5" y2="572.0" stroke="#4E6350" stroke-width="1.6"/>
+      <line x1="920.1" y1="382.0" x2="920.1" y2="368.0" stroke="#4E6350" stroke-width="1.6"/>
+      <rect x="46.6" y="369.0" width="929.4" height="13" fill="url(#gruen)"/>
+      <rect x="46.6" y="558.0" width="929.4" height="13" fill="url(#gruen)"/>
+      <rect x="46.6" y="382.0" width="899.4" height="176.0" fill="#1C2534"/>
+      <rect x="46.6" y="382.0" width="65.4" height="176.0" fill="#2E1614"/>
+      <rect x="46.6" y="382.0" width="65.4" height="176.0" fill="url(#verboten)"/>
+      <line x1="112.0" y1="382.0" x2="112.0" y2="558.0" stroke="#EF4444" stroke-width="1.5" opacity=".75"/>
+      <rect x="946.0" y="382.0" width="30" height="176.0" fill="#2E1614"/>
+      <rect x="946.0" y="382.0" width="30" height="176.0" fill="url(#verboten)"/>
+      <line x1="946.0" y1="382.0" x2="946.0" y2="558.0" stroke="#EF4444" stroke-width="1.5" opacity=".75"/>
+      <line x1="46.6" y1="382.0" x2="976.0" y2="382.0" stroke="#C9D2E0" stroke-width="1.6" opacity=".8"/>
+      <line x1="46.6" y1="558.0" x2="976.0" y2="558.0" stroke="#C9D2E0" stroke-width="1.6" opacity=".8"/>
+      <text x="952" y="386.0" fill="#8B95A8" font-family="IBM Plex Mono, monospace" font-size="9.5">Kante links</text>
+      <text x="952" y="562.0" fill="#8B95A8" font-family="IBM Plex Mono, monospace" font-size="9.5">Kante rechts</text>
+      <line x1="112.0" y1="470.0" x2="946.0" y2="470.0" stroke="#6C7A8F" stroke-width="1" stroke-dasharray="16 12"/>
+      <text x="952" y="474.0" fill="#66707E" font-family="IBM Plex Mono, monospace" font-size="9.5">Mitte</text>
+      <g stroke="#4A5769" stroke-width="1">
+        <line x1="30" y1="382.0" x2="30" y2="558.0"/>
+        <line x1="25" y1="382.0" x2="35" y2="382.0"/>
+        <line x1="27" y1="431.0" x2="33" y2="431.0"/>
+        <line x1="25" y1="470.0" x2="35" y2="470.0"/>
+        <line x1="27" y1="509.0" x2="33" y2="509.0"/>
+        <line x1="25" y1="558.0" x2="35" y2="558.0"/>
+      </g>
+      <g fill="#7C8698" font-family="IBM Plex Mono, monospace" font-size="9" text-anchor="end">
+        <text x="20" y="385.0">22 m</text><text x="20" y="434.0">10</text>
+        <text x="20" y="473.0">0</text><text x="20" y="512.0">10</text>
+        <text x="20" y="561.0">22 m</text>
+      </g>
+      <text x="20" y="368.0" fill="#9AA5B5" font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="end" font-weight="600">LINKS</text>
+      <text x="20" y="584.0" fill="#9AA5B5" font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="end" font-weight="600">RECHTS</text>
+      <polygon points="198.3,444.8 267.3,421.7 286.7,407.0 306.3,392.5 325.4,380.9 343.4,377.4 361.0,380.4 378.5,382.5 395.2,381.8 424.5,391.0 440.0,405.4 454.3,419.5 469.0,428.2 482.6,433.9 495.9,437.7 509.5,439.7 523.1,440.8 536.5,442.9 549.5,444.6 562.3,443.1 574.9,442.4 587.2,443.5 599.7,444.7 611.5,444.9 623.5,444.1 635.3,443.2 646.6,440.7 657.5,432.5 668.0,421.5 687.9,394.5 687.9,436.2 668.0,463.3 657.5,474.3 646.6,482.5 635.3,484.9 623.5,485.9 611.5,486.6 599.7,486.5 587.2,485.3 574.9,484.2 562.3,484.8 549.5,486.3 536.5,484.7 523.1,482.6 509.5,481.5 495.9,479.4 482.6,475.7 469.0,469.9 454.3,461.3 440.0,447.2 424.5,432.7 395.2,423.5 378.5,424.3 361.0,422.1 343.4,419.1 325.4,422.6 306.3,434.2 286.7,448.7 267.3,463.5 198.3,486.5" fill="#22D3EE" opacity=".22"/>
+      <polyline points="198.3,465.6 267.3,442.6 286.7,427.9 306.3,413.3 325.4,401.7 343.4,398.2 361.0,401.2 378.5,403.4 395.2,402.6 424.5,411.9 440.0,426.3 454.3,440.4 469.0,449.0 482.6,454.8 495.9,458.6 509.5,460.6 523.1,461.7 536.5,463.8 549.5,465.4 562.3,464.0 574.9,463.3 587.2,464.4 599.7,465.6 611.5,465.7 623.5,465.0 635.3,464.0 646.6,461.6 657.5,453.4 668.0,442.4 687.9,415.4" fill="none" stroke="#22D3EE" stroke-width="2.4"/>
+      <path d="M687.9 415.4 C 718.7 403.7, 744.9 388.0, 771.0 368.5" fill="none" stroke="#22D3EE" stroke-width="1.5" stroke-dasharray="3 4" opacity=".5"/>
+      <circle cx="198.3" cy="465.6" r="9" fill="#34D399"/><text x="198.3" y="469.4" fill="#0B0F17" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" text-anchor="middle">1</text>
+      <circle cx="343.4" cy="398.2" r="9" fill="#F5B93B"/><text x="343.4" y="402.0" fill="#0B0F17" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" text-anchor="middle">2</text>
+      <circle cx="687.9" cy="415.4" r="9" fill="#22D3EE"/><text x="687.9" y="419.2" fill="#0B0F17" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" text-anchor="middle">3</text>
+    </svg>
+
+    <div class="legend">
+      <span><i style="background:#34D399"></i>Aufsetzpunkt</span>
+      <span><i style="background:#22D3EE"></i>Spur — 30 gemessene Stützpunkte</span>
+      <span><i style="background:#22D3EE;opacity:.45"></i>Ausfahrt — Richtung echt, ab hier nicht mehr gewertet</span>
+      <span><i style="background:#F5B93B"></i>Ziel-Markierung / Versatz</span>
+      <span><i style="background:#8A7B3F"></i>Aufsetzzone</span>
+      <span><i style="background:#EF4444"></i>Landung verboten / Bahnende</span>
+      <span><i style="background:#3F6B4A"></i>unbefestigt</span>
+      <span><i style="background:#4E6350"></i>Ausfahrten (OSM) · genutzte hervorgehoben</span>
+    </div>
+
+    <div class="marken">
+      <div class="marke">
+        <span class="mk" style="background:#34D399">1</span>
+        <span class="mtxt"><b>Aufsetzen</b> · 330 m hinter der Schwelle · 1,1 m links</span>
+      </div>
+      <div class="marke">
+        <span class="mk" style="background:#F5B93B">2</span>
+        <span class="mtxt"><b>Größter Versatz</b> · bei 885 m · 17,3–18,4 m links · äußeres Rad erreicht die Kante</span>
+      </div>
+      <div class="marke">
+        <span class="mk" style="background:#22D3EE">3</span>
+        <span class="mtxt"><b>Bahn geräumt</b> · 2202 m · 48 kt · Ausfahrt S4 links</span>
+      </div>
+    </div>
+
+    <div class="massstab">
+      <div class="ms-titel">Größenverhältnis · maßstäblich</div>
+      <div class="ms-zeile">
+        <span class="ms-name">Bahnbreite</span>
+        <span class="ms-bar" style="width:87.2%;background:#3B4A61"></span>
+        <span class="ms-wert">45,1 m</span>
+      </div>
+      <div class="ms-zeile">
+        <span class="ms-name">Spannweite MD-11</span>
+        <span class="ms-bar" style="width:100%;background:#4A5769"></span>
+        <span class="ms-wert">51,7 m</span>
+      </div>
+      <div class="ms-zeile">
+        <span class="ms-name">Spurweite</span>
+        <span class="ms-bar" style="width:20.7%;background:#22D3EE"></span>
+        <span class="ms-wert">10,7 m</span>
+      </div>
+      <p class="ms-hinweis">Die Spannweite ist der längste Balken — sie überragt die Bahnbreite. Für „neben der Bahn" zählt aber allein die Spurweite, der kürzeste. Deshalb wirkt die Fahrspur so schmal.</p>
+    </div>
+  </div>
+
+  <h3>Punktevergabe — Vorschlag</h3>
+  <p>Die Bandgrenzen kommen <strong>nicht</strong> aus dem Bestand. Die Querwerte tragen noch den Achsenfehler aus Punkt 1 — sie melden 28 Landungen mit dem Rad neben der Bahn, darunter Versätze von 34 m auf einer 46-m-Bahn. Das ist Messfehler, nicht Wirklichkeit.</p>
+  <p>Es gibt aber eine bessere Vorlage als eine Setzung: <strong>die Ausrichtungs-Achse, die wir seit v1.6.2 haben.</strong> Sie löst dasselbe Problem bereits sauber — sie misst den Versatz nicht in Metern, sondern als <em>Anteil an der halben Bahnbreite</em>. 1,0 heißt: Das Flugzeug steht genau am Bahnrand. Das ist fair über alle Bahnbreiten hinweg und war das Ergebnis einer Messung über 915 Landungen.</p>
+
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>Bestehende Ausrichtungs-Achse — bleibt unverändert</th><th>Punkte</th></tr></thead>
+      <tbody>
+        <tr><td>Versatz ≤ 25 % der halben Bahnbreite · Kurs ≤ 3°</td><td class="num">100</td></tr>
+        <tr><td>≤ 50 % · ≤ 6°</td><td class="num">85</td></tr>
+        <tr><td>≤ 75 % · ≤ 10°</td><td class="num">65</td></tr>
+        <tr><td>≤ 100 % — Flugzeug am Bahnrand · ≤ 15°</td><td class="num">40</td></tr>
+        <tr><td>darüber — <strong>neben der Bahn aufgesetzt</strong></td><td class="num">15</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Damit ist „neben der Bahn aufsetzen" schon heute bewertet.</strong> Was fehlt, ist der Fall danach: neben der Bahn <em>rollen</em>. Die neue Achse übernimmt deshalb dieselbe Skala — ein Pilot soll nicht zwei verschiedene Maßstäbe für dieselbe Sache lernen müssen.</p>
+
+  <h3>Die drei Achsen, sauber getrennt</h3>
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>Achse</th><th>misst</th><th>wann</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Ausrichtung</strong> <span class="pill ok">unverändert</span></td><td>Versatz zur Mittellinie und Kursabweichung</td><td>im Moment des Aufsetzens</td></tr>
+        <tr><td><strong>Aufsetzpunkt</strong> <span class="pill info">neu</span></td><td>wo längs auf der Bahn aufgesetzt wurde</td><td>im Moment des Aufsetzens</td></tr>
+        <tr><td><strong>Bahndisziplin</strong> <span class="pill info">umgebaut</span></td><td>seitliche Lage über den Rollweg, Bahnende</td><td>vom Aufsetzen bis zum Räumen</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Bahndisziplin — konkrete Punkte</h3>
+  <p>Gemessen wird der <strong>größte Anteil des äußeren Hauptrades an der halben Bahnbreite</strong> über den gesamten Rollweg. Die Stufen sind gegenüber der Ausrichtung um eine Position gemildert, weil hier ein Maximum über eine ganze Strecke steht und nicht ein einzelner Moment.</p>
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>Lage des äußeren Rades</th><th>Punkte</th><th>Bedeutung</th></tr></thead>
+      <tbody>
+        <tr><td>bis 75 % der halben Bahnbreite</td><td class="num">100</td><td>normal, kein Thema</td></tr>
+        <tr><td>bis 90 %</td><td class="num">85</td><td>weit außen, aber sicher</td></tr>
+        <tr><td>bis 100 % — Rad erreicht die Kante</td><td class="num">55</td><td>Bahnrand berührt</td></tr>
+        <tr><td>über 100 % — <strong>Rad neben der Bahn</strong></td><td class="num">20</td><td>eindeutiger Fehler</td></tr>
+        <tr><td><strong>über das Bahnende hinausgerollt</strong></td><td class="num">0</td><td>Overrun — überschreibt alles</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Aufsetzpunkt — konkrete Punkte</h3>
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>Aufsetzpunkt längs</th><th>Punkte</th><th>Grundlage</th></tr></thead>
+      <tbody>
+        <tr><td>innerhalb ±150 m um die Ziel-Markierung</td><td class="num">100</td><td>Aim-Point nach Bahnlänge</td></tr>
+        <tr><td>sonst in der Aufsetzzone</td><td class="num">85</td><td>Annex 14 — erste 900 m bzw. erstes Drittel</td></tr>
+        <tr><td>hinter der Zone, vor der Bahnmitte</td><td class="num">55</td><td>Setzung</td></tr>
+        <tr><td>hinter der Bahnmitte</td><td class="num">25</td><td>Setzung</td></tr>
+        <tr><td><strong>vor der Schwelle aufgesetzt</strong></td><td class="num">0</td><td>regelwidrig</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>„Zu früh" gehört damit eindeutig zu <em>einer</em> Achse — dem Aufsetzpunkt. Die Bahndisziplin kümmert sich ausschließlich um den Rollweg und das Bahnende. Keine Doppelbestrafung.</p>
+
+  <div class="note warn">
+    <span class="t">Graspisten — Vorschlag: seitlich gar nicht bewerten</span>
+    <p>Auf einer befestigten Bahn ist die Kante eindeutig; auf einer Gras- oder Naturpiste ist der Übergang zum Randstreifen fließend, oft ohne erkennbare Grenze, und die Bahnbreite in den Daten ist eine Näherung. Dort ein Rad zu bewerten, das „neben der Bahn" war, hieße eine Genauigkeit zu behaupten, die es nicht gibt.</p>
+    <p>Deshalb: Bei unbefestigtem Belag (<code>TURF</code>, <code>GRS</code>, <code>GRE</code>, <code>Earth</code>, <code>GVL</code> …) setzt die seitliche Bewertung aus — sichtbar, mit Begründung im Bericht. Bewertet werden dort nur Aufsetzpunkt und Bahnende. Das betrifft einen erheblichen Teil der Plätze: Gras- und Naturbahnen sind in den Daten etwa so häufig wie Asphaltbahnen.</p>
+  </div>
+
+  <div class="note">
+    <span class="t">Was daran Setzung ist</span>
+    <p>Normiert sind die Aufsetzzone (900 m), der Aim-Point und der Anteilsmaßstab (der stammt aus der bestehenden Ausrichtungs-Achse und ist an 915 Landungen gemessen). <strong>Gesetzt</strong> sind die Punktwerte selbst, die Milderung um eine Stufe und die beiden hinteren Bänder des Aufsetzpunkts. Genau die gehören in der Demo gegen echte Fälle geprüft, bevor sie festgeschrieben werden.</p>
+  </div>
+
+  <h3>Was sich gegenüber heute ändert</h3>
+  <ul class="clean">
+    <li><span class="m">01</span><span><strong>Der Bremspunkt bei 40 kt verschwindet.</strong> Er war nie ein betrieblicher Punkt, sondern eine Messkonvention — und bei MPH 9 lag er bereits auf der Abrollbahn. An seine Stelle tritt der <strong>Räumpunkt</strong>: wo das Flugzeug die Bahn tatsächlich verlassen hat.</span></li>
+    <li><span class="m">02</span><span><strong>Die Bahn-Auslastung bleibt, verliert aber die Note.</strong> Sie steht weiter als Zahl im Bericht, ohne Ampelfarbe und ohne Punkte.</span></li>
+    <li><span class="m">03</span><span><strong>Die Querachse wird echt.</strong> Bisher gab es nur einen Zahlenwert beim Aufsetzen. Neu ist die Bahnbreite maßstäblich, mit beiden Radspuren und dem kleinsten Randabstand über den ganzen Rollweg.</span></li>
+    <li><span class="m">04</span><span><strong>Am Bahnende steht jetzt eine Sperrfläche</strong>, so wie vorne die Pre-Threshold-Zone. Wer dort landet, sieht sofort warum.</span></li>
+    <li><span class="m">05</span><span><strong>Die Ausfahrt zeigt die echte Richtung.</strong> Die gestrichelte Spur nach dem Räumpunkt ist nicht mehr Dekoration, sondern folgt der gemessenen Kurve — bei MPH 9 nach links, erkennbar am Kurs, der von 57,8° auf 29,5° fällt, während der Querversatz auf −54 m geht. Ab dem Räumpunkt wird nicht mehr bewertet, aber man sieht, wohin er gefahren ist.</span></li>
+    <li><span class="m">06</span><span><strong>Der Belag steht im Kopf.</strong> Nötig, damit eine Graspiste nicht als „neben der Bahn" gilt.</span></li>
+  </ul>
+</section>
+
+<!-- ===================== 6 ===================== -->
+<section>
+  <h2><span class="num">06</span>Woher die Spurweite kommt</h2>
+  <p>Ohne sie kennen wir nur den Mittelpunkt des Flugzeugs und können nicht sagen, ob ein Rad neben der Bahn lief. Drei Quellen, die sich gegenseitig prüfen:</p>
+
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>Weg</th><th>Deckt ab</th><th>Stand</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>C — Typtabelle nach ICAO</strong><br><span style="color:var(--muted);font-size:13px">Spurweite ist eine Eigenschaft des realen Musters, nicht des Add-ons</span></td>
+          <td>alles, auch verschlüsselte Flugzeuge, beide Simulatoren</td>
+          <td><span class="pill info">Basis</span></td>
+        </tr>
+        <tr>
+          <td><strong>B — Flugzeugdatei</strong><br><span style="color:var(--muted);font-size:13px">X-Plane <code>.acf</code> · MSFS <code>flight_model.cfg</code></span></td>
+          <td>unverschlüsselte Add-ons</td>
+          <td>X-Plane <span class="pill ok">verifiziert</span> · MSFS <span class="pill warn">ungeprüft</span></td>
+        </tr>
+        <tr>
+          <td><strong>A — Untergrund</strong><br><span style="color:var(--muted);font-size:13px">Wechsel von Asphalt auf Gras</span></td>
+          <td>überall, wo die SimVar existiert</td>
+          <td><span class="pill warn">nicht verdrahtet</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <span class="t">X-Plane — am Bestand geprüft</span>
+    <p>Die <code>.acf</code> ist reiner ASCII-Text. Die Schlüssel <code>_gear/N/_gear_x|y|z</code> liefern jedes Fahrwerksbein in Fuß:</p>
+    <div class="tblwrap" style="margin-top:4px">
+      <table>
+        <thead><tr><th>Muster</th><th>aus der Datei</th><th>umgerechnet</th><th>real</th></tr></thead>
+        <tbody>
+          <tr><td>Zibo 737-800</td><td class="num">18,90 ft</td><td class="num">5,76 m</td><td class="num">5,72 m</td></tr>
+          <tr><td>ToLiss A320</td><td class="num">24,90 ft</td><td class="num">7,59 m</td><td class="num">7,59 m</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:14px">Auch der Radstand stimmt: Bugbein bei 13,41 ft, Hauptfahrwerk bei 64,51 ft → 15,6 m, exakt der 737-800-Wert.</p>
+  </div>
+
+  <div class="note warn">
+    <span class="t">MSFS — Blaupause vorhanden, aber Lizenzfrage</span>
+    <p>Das Referenzwerkzeug löst die <code>flight_model.cfg</code> vollständig auf: Store- und Steam-Installation über <code>UserCfg.opt</code>, <code>base_container</code>-Vererbung, die Modularebenen von MSFS 2024 in der offiziellen Merge-Reihenfolge, nur Radpunkte vom Typ 1, und ein sauberer Rückfall, wenn die Datei verschlüsselt oder mehrdeutig ist. Die Spurweite berechnet es dabei sogar schon — als Plausibilitätsprüfung, danach verwirft es sie.</p>
+    <p><strong>Das Repo steht unter GPL v2.</strong> Nutzbar ist die dokumentierte Methodik (die Merge-Regeln stammen ohnehin aus Microsofts eigener Dokumentation), nicht der Code. Thomas fragt beim Autor an.</p>
+  </div>
+</section>
+
+<!-- ===================== 7 ===================== -->
+<section>
+  <h2><span class="num">07</span>Offene Punkte vor dem Bau</h2>
+  <p>Nichts davon ist ein Hindernis — aber jeder Punkt kostet eine Runde, wenn er erst beim Bauen auffällt.</p>
+
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>#</th><th>Punkt</th><th>Warum es zählt</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td><strong>Bahnachse aus der Geometrie, nicht aus dem Kurs</strong></td><td>Bei MPH 9 lief meine aus <code>true_course</code> gerechnete Achse um 16 m über 670 m auseinander — ein Winkelfehler von 1,4°, der wie seitliche Bewegung aussieht. Für eine Achse, die Meter bewertet, ist das disqualifizierend. Schwellen- und Endkoordinate stehen in <code>nav_runways</code>.</td><td><span class="pill crit">offen</span></td></tr>
+        <tr><td class="num">2</td><td><strong>Abbiegen von Abkommen trennen</strong></td><td>Drei Anläufe nötig: ohne Kriterium 68,7 % „neben der Bahn", mit 20° Kursabweichung 25,2 %, erst mit 10° plus 60-kt-Riegel 1,6 %. Das Kriterium gehört in die Spezifikation, nicht in ein Auswertungsskript.</td><td><span class="pill warn">Verfahren steht</span></td></tr>
+        <tr><td class="num">3</td><td><strong>Graspisten</strong></td><td>Gras- und Naturbahnen sind etwa so häufig wie Asphaltbahnen (TURF 7489, GRS 2243, GRE 1537, Turf 1312 gegen ASP 11371). Ohne Belagsprüfung wäre jede Landung dort ein Fehlalarm.</td><td><span class="pill warn">Quelle da</span></td></tr>
+        <tr><td class="num">4</td><td><strong>Belag nur aus OurAirports</strong></td><td><code>nav_runways.surface_code</code> ist in allen 85.058 Zeilen leer. Der Belag steht nur in <code>runways.surface</code> — mit uneinheitlicher Schreibweise (<code>ASP</code>/<code>ASPH</code>, <code>CON</code>/<code>CONC</code>, <code>TURF</code>/<code>Turf</code>/<code>TURF-G</code>), die normalisiert werden muss.</td><td><span class="pill warn">offen</span></td></tr>
+        <tr><td class="num">5</td><td><strong>Zwei Quellen für die versetzte Schwelle</strong></td><td>Für EHAM 06 meldet <code>nav_runways</code> 0 ft, der Touchdown-Datensatz 820 ft. Die Regel dazu existiert seit v1.6.8, sie muss hier bewusst mitgezogen werden.</td><td><span class="pill warn">Regel da</span></td></tr>
+        <tr><td class="num">6</td><td><strong>Typquelle korrigieren</strong></td><td>Nicht die Buchung, sondern das tatsächlich gewählte Flugzeug. Sonst bleibt der 25-Punkte-Fehler bestehen, auch nach dem Umbau.</td><td><span class="pill crit">offen</span></td></tr>
+        <tr><td class="num">7</td><td><strong>Aufsetzpunkt bekommt eine eigene Achse</strong></td><td>Er hatte bisher keine — er lebte ausschließlich in der Bahn-Achse. <em>Entschieden am 23.08.: eigene Achse.</em> Damit steigt die Zahl der Achsen von acht auf neun, siehe Punkt 11.</td><td><span class="pill ok">entschieden</span></td></tr>
+        <tr><td class="num">8</td><td><strong>Ausrichtung bleibt getrennt</strong></td><td>Die bestehende Achse misst Mittellinie und Kurs <em>beim Aufsetzen</em> und bleibt unangetastet. Der neue Querverlauf <em>während des Rollens</em> gehört zur Bahndisziplin. Zwei verschiedene Momente, zwei Achsen — keine Doppelbestrafung.</td><td><span class="pill ok">entschieden</span></td></tr>
+        <tr><td class="num">9</td><td><strong>Zweitimplementierungen</strong></td><td>Dieselbe Bahnrechnung lebt an mehreren Stellen — Recorder, Stratos, Mapper, Diagramm-Vertrag. Vor der Änderung durchgehen.</td><td><span class="pill warn">Liste da</span></td></tr>
+        <tr><td class="num">10</td><td><strong>Version und Altbestand</strong></td><td><code>score_algorithm_version</code> steht bei 9. Der Umbau ist forward-only: alte PIREPs behalten ihren gespeicherten Wert, es wird nichts nachgerechnet.</td><td><span class="pill ok">geklärt</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Was durch die Entscheidungen neu dazukommt</h3>
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>#</th><th>Punkt</th><th>Warum es zählt</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td class="num">11</td><td><strong>Gewichtung im Gesamtscore</strong></td><td>Aus acht Achsen werden neun. Damit ändert sich der Gesamtscore für <em>jeden</em> Piloten, auch für den, dessen Landung völlig unverändert bleibt. Die neue Gewichtung muss festgelegt und gegen den Korpus gerechnet werden, bevor irgendetwas rausgeht.</td><td><span class="pill crit">offen</span></td></tr>
+        <tr><td class="num">12</td><td><strong>Punktebänder der beiden neuen Achsen</strong></td><td>Bahndisziplin: Ist „Rad neben der Bahn" gleich null Punkte oder gestaffelt nach Dauer und Tiefe? Ab welchem Randabstand beginnt der graduelle Abzug? Aufsetzpunkt: Der Aim-Point liegt bei 400 m, die Zone reicht bis 900 m — zu früh ist genauso falsch wie zu spät. Ohne festgelegte Bänder ist die Achse nicht baubar.</td><td><span class="pill crit">offen</span></td></tr>
+        <tr><td class="num">13</td><td><strong>Skip-Regeln</strong></td><td>Was passiert ohne Bahnbreite, ohne Spurweite, ohne <code>runway_match</code>? Die heutige Achse hat dafür ein sauberes Skip-Gate mit sprechenden Gründen — die neue braucht ein eigenes. Grundsatz aus dem Bestand: Datenmangel darf nie zur härteren Note führen.</td><td><span class="pill crit">offen</span></td></tr>
+        <tr><td class="num">14</td><td><strong>Sonderfälle: Hubschrauber, Wasser, Buschflug</strong></td><td>Ein Hubschrauber hat keine Bahnmitte, ein Wasserflugzeug keine befestigte Fläche, ein Buschflieger landet planmäßig auf Gras. Die Kategorie-Logik existiert bereits — sie muss für die neue Achse ausdrücklich mitgezogen werden, sonst produziert genau diese Gruppe die ersten Fehlalarme.</td><td><span class="pill warn">Logik da</span></td></tr>
+        <tr><td class="num">15</td><td><strong>Weg zur Live-Ansicht</strong></td><td>Gerechnet wird im Client, angezeigt auch auf der Live-Seite. Die neuen Größen — Räumpunkt, Randabstand, Spurweite, Belag — müssen durch das Übertragungsformat. Das heißt Recorder-Deploy und Versionsabgleich, nicht nur ein Client-Release.</td><td><span class="pill warn">offen</span></td></tr>
+        <tr><td class="num">16</td><td><strong>Anzeige alter Flüge</strong></td><td>Flüge von vor dem Umbau haben die neuen Felder nicht. Die Grafik braucht einen ehrlichen Rückfall — „für diesen Flug nicht erfasst" statt einer leeren Bahn, die wie ein Messwert aussieht.</td><td><span class="pill warn">offen</span></td></tr>
+        <tr><td class="num">18</td><td><strong>Fehlender Bahn-Match — Altlast, kein aktueller Fehler</strong> <span class="pill ok">geklärt</span></td><td>76 Flüge ohne Bahnzuordnung, davon 66 nachweislich mitten auf der Bahn (0,0–2,4 m zur Mittellinie: EDDF 25L, EGLL 27L, EDDM 26L, VHHH 25C …). Nach Client-Versionen aufgeschlüsselt: <strong>alle 69 stammen aus Protokollen ohne Versionsangabe</strong>, also aus sehr alten Clients. <em>Jede</em> benannte Version — von 0.11.2 über 0.16.x und 0.19.x bis 1.6.14 — hat eine Ausfallquote von <strong>0 %</strong>. Der Bahn-Match arbeitet heute zuverlässig; nichts zu tun.</td><td><span class="pill ok">erledigt</span></td></tr>
+        <tr><td class="num">19</td><td><strong>Lücke in den Navdaten bei kleinen Plätzen</strong> <span class="pill warn">unser Problem</span></td><td>Die neun Flüge mit 4–11 km Abstand sind C172, C182 und DA40 auf Oregon-Plätzen. Ihre <em>geplanten</em> Ziele heißen 7OR6, 49OR, OG20, 5OR0, 2OR3 — die kennt unsere Navdatenbank nicht. Der Client fällt dann auf <code>nearest_25nm</code> zurück und trägt den nächsten <em>bekannten</em> Flughafen ein; daher der Abstand. Die Piloten sind korrekt auf ihrem Zielplatz gelandet. Zu klären ist, ob wir kleine Plätze nachziehen oder solche Landungen sichtbar als „Platz nicht in den Navdaten" führen — bewerten dürfen wir sie so jedenfalls nicht.</td><td><span class="pill warn">Entscheidung</span></td></tr>
+        <tr><td class="num">17</td><td><strong>Demo mit allen Varianten</strong></td><td>Lokal in AeroACARS, bevor irgendetwas live geht: normale Landung, Rad neben der Bahn, Overrun, vor der Schwelle, Graspiste, fehlende Spurweite, Hubschrauber. Das ist zugleich der Ort, an dem sich die Bänder aus Punkt 12 ansehen und festlegen lassen.</td><td><span class="pill info">gewünscht</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== 7b ===================== -->
+<section>
+  <h2><span class="num">07b</span>Was geht, was nicht</h2>
+  <p>Der ehrliche Stand, sortiert nach Machbarkeit statt nach Wunsch.</p>
+
+  <h3>Geht sofort, ohne neue Daten</h3>
+  <ul class="clean">
+    <li><span class="m">✓</span><span><strong>Typquelle korrigieren</strong> — das gewählte Flugzeug statt der Buchung. Behebt Kevins 25 Punkte.</span></li>
+    <li><span class="m">✓</span><span><strong>Bahnachse aus der Geometrie</strong> statt aus dem Kurs. Schwellen- und Endkoordinate liegen in <code>nav_runways</code>.</span></li>
+    <li><span class="m">✓</span><span><strong>Aufsetzpunkt als eigene Achse</strong> — alle Größen werden bereits gemessen, sie werden heute nur nicht getrennt ausgewiesen.</span></li>
+    <li><span class="m">✓</span><span><strong>Bahnende und Overrun</strong> — Bahnlänge und Position sind vorhanden.</span></li>
+    <li><span class="m">✓</span><span><strong>Belag anzeigen und Graspisten ausnehmen</strong> — <code>runways.surface</code> ist befüllt, es braucht nur eine Normalisierung der Schreibweisen.</span></li>
+  </ul>
+
+  <h3>Geht, braucht aber einen Baustein</h3>
+  <ul class="clean">
+    <li><span class="m">~</span><span><strong>Spurweite</strong> — Typtabelle ist schnell gebaut und deckt alles ab. Die Flugzeugdatei als Verfeinerung ist für X-Plane verifiziert, für MSFS beschrieben, aber ungeprüft.</span></li>
+    <li><span class="m">~</span><span><strong>Weg zur Live-Ansicht</strong> — die neuen Größen müssen durch das Übertragungsformat. Recorder-Deploy, nicht nur Client-Release.</span></li>
+    <li><span class="m">~</span><span><strong>Demo mit allen Varianten</strong> — der Ort, an dem die gesetzten Bänder entschieden werden.</span></li>
+  </ul>
+
+  <h3>Geht noch nicht — offene Entscheidungen</h3>
+  <ul class="clean">
+    <li><span class="m">✕</span><span><strong>Gewichtung im Gesamtscore.</strong> Aus acht Achsen werden neun. Jeder Score verschiebt sich, auch bei unveränderter Landung. Muss festgelegt und gegen den Korpus gerechnet werden.</span></li>
+    <li><span class="m">✕</span><span><strong>Kleine Plätze in den Navdaten.</strong> Solange 7OR6, 49OR, OG20 und 5OR0 fehlen, sind Landungen dort nicht bewertbar — sie müssen sichtbar ausgenommen werden, nicht stillschweigend falsch bewertet.</span></li>
+    <li><span class="m">✕</span><span><strong>Untergrund über die SimVar.</strong> Weder wir noch das Referenzwerkzeug erfassen ihn. Die Anbindung ist eine Lockstep-Änderung am Telemetriepfad und ohne laufenden Simulator nicht prüfbar. Als dritte Gegenprobe wünschenswert, für den Start nicht nötig.</span></li>
+  </ul>
+
+  <h3>Geht gar nicht — und das ist in Ordnung</h3>
+  <ul class="clean">
+    <li><span class="m">—</span><span><strong>Beurteilen, ob langes Rollen berechtigt war.</strong> ATC-Anweisung, Verkehr, gesperrte Ausfahrten stehen nirgends in unseren Daten. Deshalb wird es gar nicht erst bewertet.</span></li>
+    <li><span class="m">—</span><span><strong>Ein einzelnes Rad exakt orten.</strong> Wir kennen den Referenzpunkt des Flugzeugs und rechnen die Räder über die Spurweite dazu. Das ist eine gute Näherung, keine Messung — deshalb wird zugunsten des Piloten gerundet.</span></li>
+  </ul>
+</section>
+
+<!-- ===================== 8 ===================== -->
+<section>
+  <h2><span class="num">08</span>Reihenfolge</h2>
+  <ol class="steps">
+    <li><span><strong>Typquelle korrigieren.</strong> Klein, isoliert, unabhängig vom Rest — und behebt sofort 25 der 45 Punkte, die Kevin verloren hat.</span></li>
+    <li><span><strong>Bahnachse auf Geometrie umstellen</strong> und das Trennkriterium Abbiegen/Abkommen in die Spezifikation schreiben. Alles Weitere hängt daran, dass die Querwerte stimmen.</span></li>
+    <li><span><strong>Spurweite anbinden</strong> — Typtabelle zuerst, danach die Flugzeugdatei als Verfeinerung.</span></li>
+    <li><span><strong>Belag und Graspisten-Absicherung.</strong></span></li>
+    <li><span><strong>Achse umbauen</strong>, gegen den Korpus von 765 Landungen nachrechnen und zeigen, wer gewinnt und wer verliert — vor der Auslieferung.</span></li>
+    <li><span><strong>Anzeige umbauen</strong> und die Zweitimplementierungen nachziehen.</span></li>
+  </ol>
+</section>
+
+<footer>
+  <p>Grundlage: 895 Recorder-Flugprotokolle, davon 765 mit auswertbarer Bahngeometrie · Navdaten AIRAC 2608 · OurAirports · Landebewertung <code>score_algorithm_version 9</code></p>
+  <p>Stand 23.08.2026 — Entwurf zur Abstimmung, noch nichts gebaut.</p>
+</footer>
+
+</div>
+
+</body></html>
