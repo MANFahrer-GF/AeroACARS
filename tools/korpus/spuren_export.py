@@ -16,7 +16,15 @@ def kurs(a,b,c,d):
     p1,p2=math.radians(a),math.radians(c); dl=math.radians(d-b)
     y=math.sin(dl)*math.cos(p2); x=math.cos(p1)*math.sin(p2)-math.sin(p1)*math.cos(p2)*math.cos(dl)
     return math.atan2(y,x)
-con = sqlite3.connect("/var/lib/aeroacars-recorder/aeroacars-live.db")
+# Die Datenbank liegt nur auf dem Server. Der Selbsttest kommt ohne sie
+# aus und laeuft deshalb VOR der Verbindung — sonst waere er auf dem Mac
+# nicht ausfuehrbar, und eine Gegenprobe, die man nicht fahren kann, ist
+# keine.
+_SELBSTTEST = "--selbsttest" in sys.argv
+
+con = None if _SELBSTTEST else sqlite3.connect(
+    "/var/lib/aeroacars-recorder/aeroacars-live.db"
+)
 
 # ── Gleichlauf mit dem Client ────────────────────────────────────────
 #
@@ -63,6 +71,33 @@ def bahn(icao, ident):
             return dict(T=(r[0],r[1],r[2],r[3]), len_ft=r[4], width_ft=r[5],
                         surface=(surf[0] if surf else None), dds_ft=dds)
     return None
+
+def kante_index(punkte, halbe, ab_laengs_m=None):
+    """Index des Punktes, ab dem die Spur die Bahn dauerhaft verlassen hat.
+
+    Der erste Uebertritt ueber die Kante, nach dem KEIN Punkt mehr
+    innerhalb liegt. Die blosse Ueberschreitung reicht nicht: Bei
+    raKOnJD1XgNbP06q (EDDH 23) brach das Flugzeug mitten auf der Bahn auf
+    26,9 m aus -- jenseits der 23-m-Kante -- und kam zurueck. Das ist der
+    Befund, um den es geht, aber keine Ausfahrt.
+
+    `ab_laengs_m` riegelt die Suche zusaetzlich ab: Liegt ein
+    Ausschwenkpunkt vor, kann die Bahn nicht davor geraeumt worden sein.
+    Ohne diesen Riegel meldete das Werkzeug fuer einen flachen Ausritt,
+    der vor dem Kurswechsel beginnt und danach draussen bleibt, eine
+    Kante VOR dem Bewertungsende — und verdrehte damit die Reihenfolge,
+    die der Client seit QS-Runde 20 einhaelt.
+
+    Dieselbe Regel wie `kante_aus_spur` in `bahn_felder`.
+    """
+    for i in range(1, len(punkte)):
+        if ab_laengs_m is not None and punkte[i]["laengs_m"] < ab_laengs_m:
+            continue
+        if abs(punkte[i]["quer_m"]) > halbe and abs(punkte[i-1]["quer_m"]) <= halbe:
+            if all(abs(x["quer_m"]) > halbe for x in punkte[i:]):
+                return i
+    return None
+
 
 def spur(pid, icao, ident):
     g = bahn(icao, ident)
@@ -211,39 +246,105 @@ def spur(pid, icao, ident):
     # zeigte dort keinen Kantenuebertritt, waehrend der Client ihn liefert.
     # Zwei Stellen, eine Regel: Der Client rechnet in `bahn_felder` genau
     # dies nach (`kante_aus_spur`).
-    kante_aus_spur = None
-    for i in range(1, len(punkte)):
-        if abs(punkte[i]["quer_m"]) > halbe and abs(punkte[i-1]["quer_m"]) <= halbe:
-            if all(abs(x["quer_m"]) > halbe for x in punkte[i:]):
-                kante_aus_spur = punkte[i]["laengs_m"]
-                break
-    if raeum is not None and kante_aus_spur is not None:
-        raeum["kante_m"] = kante_aus_spur
+    kante_idx = kante_index(punkte, halbe, raeum["m"] if raeum else None)
+    if raeum is not None and kante_idx is not None:
+        raeum["kante_m"] = punkte[kante_idx]["laengs_m"]
 
-    if raeum is None:
-        for i in range(1, len(punkte)):
-            if abs(punkte[i]["quer_m"]) > halbe and abs(punkte[i-1]["quer_m"]) <= halbe:
-                if all(abs(x["quer_m"]) > halbe for x in punkte[i:]):
-                    # Rueckwaerts, solange der Betrag monoton faellt: Der
-                    # erste Punkt, an dem er wieder steigt, ist der
-                    # Umkehrpunkt -- dort begann das Ausschwenken.
-                    j = i
-                    while j > 0 and abs(punkte[j-1]["quer_m"]) < abs(punkte[j]["quer_m"]):
-                        j -= 1
-                    raeum = dict(m=punkte[j]["laengs_m"], kt=None,
-                                 kante_m=punkte[i]["laengs_m"],
-                                 seite=("right" if punkte[i]["quer_m"] > 0 else "left"))
-                    break
+    if raeum is None and kante_idx is not None:
+        # Ohne erkannten Kurswechsel wird der Ausschwenkpunkt aus der Spur
+        # geholt: rueckwaerts vom Kantenuebertritt, solange der Betrag des
+        # Versatzes monoton faellt. Der erste Punkt, an dem er wieder
+        # steigt, ist der Umkehrpunkt — dort begann das Ausschwenken.
+        j = kante_idx
+        while j > 0 and abs(punkte[j-1]["quer_m"]) < abs(punkte[j]["quer_m"]):
+            j -= 1
+        raeum = dict(m=punkte[j]["laengs_m"], kt=None,
+                     kante_m=punkte[kante_idx]["laengs_m"],
+                     seite=("right" if punkte[kante_idx]["quer_m"] > 0 else "left"))
 
     return dict(pirep=pid, icao=icao, rwy=ident, titel=titel, lda_m=round(lda,1),
                 breite_m=round((g["width_ft"] or 0)*0.3048,1), belag=g["surface"],
                 dds_ft=g["dds_ft"], raeum=raeum, punkte=punkte)
+
+def selbsttest():
+    """Die Regeln, die dieses Werkzeug mit dem Client teilt.
+
+    Aufruf: `python3 spuren_export.py --selbsttest` — laeuft ohne
+    Datenbank und ohne Flugprotokolle, also auch auf dem Mac.
+
+    Es gibt hier keine Testablage; ein Werkzeug, das die Client-Logik
+    nachbaut, braucht trotzdem eine Gegenprobe. Sonst faellt eine
+    Abweichung erst auf, wenn jemand die Korpus-Zahlen anzweifelt.
+    """
+    fehler = 0
+
+    def pruefe(name, ist, soll):
+        nonlocal fehler
+        if ist == soll:
+            print(f"  ok   {name}")
+        else:
+            print(f"  FEHL {name}: {ist!r} statt {soll!r}")
+            fehler += 1
+
+    halbe = 23.0
+    P = lambda lg, q: dict(laengs_m=lg, quer_m=q)
+
+    # 1. Ein Ausbrechen mit Rueckkehr ist kein Raeumen.
+    ausbruch = [P(600,-2), P(800,-26), P(900,-8), P(1500,-12),
+                P(1600,-25), P(1650,-60)]
+    i = kante_index(ausbruch, halbe)
+    pruefe("Ausbrechen zaehlt nicht als Kante",
+           ausbruch[i]["laengs_m"] if i is not None else None, 1600)
+
+    # 2. Die Kante darf nie VOR dem Ausschwenkpunkt liegen.
+    #
+    # Ein flacher Ausritt ab 700 m, der draussen bleibt, waehrend der
+    # Kurswechsel erst bei 1500 m kommt. Ohne den Riegel meldete das
+    # Werkzeug hier 700 und verdrehte die Reihenfolge.
+    flach = [P(600,-10), P(700,-25), P(1200,-28), P(1600,-40), P(1700,-70)]
+    i = kante_index(flach, halbe, ab_laengs_m=1500.0)
+    # `None` ist richtig, nicht 1600: Ab dem Ausschwenkpunkt gibt es
+    # keinen Uebertritt von INNEN nach aussen mehr — die Spur ist da
+    # laengst draussen. Der Raeumpunkt faellt dann auf den
+    # Ausschwenkpunkt zurueck, und genau das tut der Client auch
+    # (Rust-Test `die_spur_reisst...`, Abschnitt „Gleichlauf").
+    #
+    # Der erste Anlauf dieses Selbsttests erwartete 1600 und war damit
+    # falsch — gefunden hat es der Selbsttest selbst, beim ersten Lauf.
+    pruefe("Kante nicht vor dem Bewertungsende",
+           flach[i]["laengs_m"] if i is not None else None, None)
+    i_ohne = kante_index(flach, halbe)
+    pruefe("ohne Riegel waere es der fruehe Ausritt",
+           flach[i_ohne]["laengs_m"] if i_ohne is not None else None, 700)
+
+    # Und der Fall, um den es eigentlich geht: Ausritt vor dem
+    # Ausschwenken, aber die Spur kommt zurueck und geht erst danach
+    # endgueltig raus.
+    gemischt = [P(600,-10), P(700,-26), P(900,-15), P(1400,-18),
+                P(1600,-30), P(1700,-70)]
+    i = kante_index(gemischt, halbe, ab_laengs_m=1500.0)
+    pruefe("Kante nach dem Ausschwenken",
+           gemischt[i]["laengs_m"] if i is not None else None, 1600)
+
+    # 3. Bleibt die Spur auf der Bahn, gibt es keine Kante.
+    pruefe("keine Kante ohne Uebertritt",
+           kante_index([P(600,-2), P(900,-4), P(1500,-6)], halbe), None)
+
+    if fehler:
+        print(f"\n{fehler} Fehler")
+        raise SystemExit(1)
+    print("Selbsttest gruen")
+
 
 FAELLE = [("9K7B0OooywyjJ5jE","EDDH","23"),("raKOnJD1XgNbP06q","EDDH","23"),
           ("a3V0DXnWr6054VO6","EDDH","23"),("y75RLelRGWq7ogA3","EDDH","23"),
           ("G5K1Wb9DoWNLGme3","LGKR","34"),("85g91JXoQ0lDxgnX","KORD","27C"),
           ("zR4a18JGxVKZ84de","EDDL","05R"),("0Ab3v9EvNN1LKZ8z","EDDH","05"),
           ("qZozxjvMKd6lDQj6","EDDH","15")]
+if "--selbsttest" in sys.argv:
+    selbsttest()
+    raise SystemExit(0)
+
 out=[]
 for pid, ic, rw in FAELLE:
     r = spur(pid, ic, rw)

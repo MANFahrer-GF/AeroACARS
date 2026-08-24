@@ -117,7 +117,23 @@ Begründungen stehen im Kopf des Skripts.
 
 **Diese Werkzeuge sind selbst Zweitimplementierungen.** Ändert sich die
 Client-Logik, müssen sie mit — sonst misst der Korpus etwas anderes als
-der Client tut. Genau das war Befund 19.
+der Client tut. Genau das war Befund 19, und in Runde 28/29 gleich
+zweimal wieder.
+
+`spuren_export.py` hat deshalb eine Gegenprobe, die **ohne Datenbank**
+läuft und damit auch auf dem Mac:
+
+```bash
+python3 tools/korpus/spuren_export.py --selbsttest
+```
+
+Sie prüft die Regeln, die das Werkzeug mit `bahndisziplin_tick` teilt.
+Beim ersten Lauf hat sie sofort einen Denkfehler in ihrer eigenen
+Erwartung gefunden — genau ihr Zweck. Der Kopf des Werkzeugs führt Liste,
+was zuletzt angeglichen wurde.
+
+> Ein Prüfwerkzeug ohne eigene Gegenprobe fällt erst auf, wenn jemand die
+> Zahlen anzweifelt, die man damit begründet hat.
 
 ---
 

@@ -46766,6 +46766,19 @@ mod v0_16_6_bush_completeness_tests {
                 cut <= clear,
                 "Bewertungsende {cut} liegt hinter dem Raeumpunkt {clear}"
             );
+            // Und der GLEICHLAUF mit dem Pruefwerkzeug: Dort liefert
+            // `kante_index(punkte, halbe, ab_laengs_m=1500)` fuer dieselbe
+            // Spur `None`, weil es ab dem Ausschwenkpunkt keinen Uebertritt
+            // von innen nach aussen mehr gibt — die Spur ist da laengst
+            // draussen. Der Raeumpunkt faellt deshalb beidseits auf den
+            // Ausschwenkpunkt zurueck.
+            //
+            // `tools/korpus/spuren_export.py --selbsttest` prueft dieselbe
+            // Aussage von der anderen Seite.
+            assert_eq!(
+                clear, 1500.0,
+                "Client und Pruefwerkzeug muessen hier denselben Wert liefern"
+            );
         }
 
         // Der Raeumpunkt darf nicht VOR dem Bewertungsende liegen.
