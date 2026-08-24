@@ -921,6 +921,22 @@ pub struct TouchdownPayload {
 
 /// Die Bahndisziplin-Werte auf der Leitung.
 ///
+/// # Warum hier NICHTS uebersprungen wird
+///
+/// Die Felder trugen bis hierher `skip_serializing_if = "Option::is_none"`.
+/// Das spart ein paar hundert Byte und macht den Nachtrag unmoeglich:
+///
+/// Der Recorder patcht die Touchdown-Zeile mit `json_patch` (RFC 7396).
+/// Dort loescht ein `null` das Feld — ein FEHLENDES Feld laesst den alten
+/// Wert stehen. Genau das war der Fehler: Verschiebt die Nachrechnung den
+/// Kantenuebertritt um mehr als fuenfundzwanzig Meter, wird
+/// `clearance_speed_kt` bewusst `None` — die Spur traegt keine
+/// Geschwindigkeit fuer die neue Stelle. Uebersprungen erreicht dieses
+/// `None` den Server nie, und die alte, vorlaeufige Fahrt blieb stehen.
+///
+/// Ein `None` muss loeschen koennen. Die Kosten sind dreizehn `null` je
+/// Landung gegen dreizehn Kilobyte Rollspur.
+///
 /// **Der Client rechnet, der Server zeigt an.** Keine dieser Groessen wird
 /// serverseitig nachgerechnet: Sie stammen aus dem 5-Hz-Rollout-Fenster,
 /// das nur der Client sieht, und eine zweite Herleitung aus groberen
@@ -929,46 +945,32 @@ pub struct TouchdownPayload {
 #[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
 pub struct BahnWire {
     /// Laengsposition beim Verlassen der Bahn (an der Kante).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub clearance_point_m: Option<f64>,
     /// Laengsposition, ab der nicht mehr bewertet wird — der Beginn des
     /// Ausschwenkens. NICHT dasselbe wie `clearance_point_m`.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub scoring_cutoff_m: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub clearance_speed_kt: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub clearance_side: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub track_width_m: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub track_width_source: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub wingspan_m: Option<f64>,
     /// Bahnbreite in Metern. Ohne sie laesst sich die Queransicht nicht
     /// massstaeblich zeichnen — eine geratene Breite waere eine
     /// Behauptung ueber die Kante, an der die Bewertung haengt.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub runway_width_m: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub min_edge_clearance_m: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_lateral_offset_m: Option<f64>,
     /// Der Spurverlauf — die groesste Nutzlast dieser Gruppe. Leer wird
     /// sie weggelassen, nicht als `[]` gesendet: Ein leeres Feld sieht in
     /// der Anzeige aus wie eine Messung, die nichts gefunden hat.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub lateral_samples: Option<Vec<LateralSampleWire>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub surface_paved: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub overrun_m: Option<f64>,
     /// Warum die seitliche Bewertung entfiel. `None` = bewertet.
     ///
     /// Der Grund kommt aus der Bewertung selbst (`sub_scores`), damit die
     /// Anzeige ihn nicht ein zweites Mal herleitet. Zwei Herleitungen
     /// desselben Urteils driften auseinander.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub lateral_skip_reason: Option<String>,
     /// Die Ausfahrten dieser Bahn.
     ///
@@ -981,7 +983,6 @@ pub struct BahnWire {
     /// Anflug ohnehin geladen und rechnet einmal.
     ///
     /// Klein genug dafür: typisch vier bis zwölf Einträge je Bahn.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub runway_exits: Option<Vec<RunwayExitWire>>,
 }
 
@@ -2456,10 +2457,20 @@ mod tests {
         assert_eq!(j["clearance_side"], "left");
         assert_eq!(j["track_width_source"], "aircraft_file");
         assert_eq!(j["lateral_samples"][1]["quer_m"], -6.1);
-        // Nicht erfasst heisst FEHLT, nicht `null`: Der Mapper
-        // unterscheidet beides nicht, aber der Datensatz bleibt kleiner
-        // und alte Server stolpern nicht ueber unbekannte Schluessel.
-        assert!(j.get("overrun_m").is_none(), "leere Felder gehen nicht auf die Leitung");
+        // Nicht erfasst heisst `null`, nicht FEHLT.
+        //
+        // Hier stand das Gegenteil, mit der Begruendung „der Datensatz
+        // bleibt kleiner". Der Preis dafuer war, dass ein Nachtrag nichts
+        // loeschen kann: Der Recorder patcht mit `json_patch` (RFC 7396),
+        // dort loescht `null` das Feld und ein fehlendes Feld laesst den
+        // alten Wert stehen.
+        //
+        // Konkret blieb `clearance_speed_kt` auf dem vorlaeufigen Wert
+        // stehen, obwohl die Nachrechnung ihn bewusst verworfen hatte.
+        assert!(
+            j.get("overrun_m").is_some_and(|v| v.is_null()),
+            "leere Felder muessen als null gehen, sonst koennen sie nichts loeschen"
+        );
     }
 
     /// Der Payload muss durch den Broker passen.
@@ -2516,18 +2527,28 @@ mod tests {
         );
     }
 
-    /// Eine leere Spur wird weggelassen, nicht als `[]` gesendet.
+    /// Eine leere Spur geht als `null`, nicht als `[]`.
     ///
     /// Ein leeres Array sieht in der Anzeige aus wie eine Messung, die
     /// nichts gefunden hat — von „fuer diesen Flug nicht erfasst" ist es
-    /// nicht zu unterscheiden.
+    /// nicht zu unterscheiden. `null` dagegen loescht beim Nachtrag einen
+    /// vorlaeufigen Wert, statt ihn stehen zu lassen.
     #[test]
-    fn leere_spur_geht_nicht_auf_die_leitung() {
+    fn leere_spur_geht_als_null_auf_die_leitung() {
         let j: serde_json::Value = serde_json::from_str(
             &serde_json::to_string(&BahnWire::default()).unwrap(),
         )
         .unwrap();
-        assert_eq!(j.as_object().unwrap().len(), 0, "leere Gruppe: {j}");
+        let o = j.as_object().unwrap();
+        assert!(!o.is_empty(), "die Gruppe darf nicht leer serialisieren");
+        assert!(
+            o.values().all(|v| v.is_null()),
+            "ein leeres BahnWire darf nur Nullwerte tragen: {j}"
+        );
+        assert!(
+            o["lateral_samples"].is_null(),
+            "eine leere Spur darf nicht als [] gehen"
+        );
     }
 
     /// Ein Datensatz von VOR v1.7.0 muss weiter lesbar sein.

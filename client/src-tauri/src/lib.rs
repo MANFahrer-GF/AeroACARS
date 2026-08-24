@@ -24641,7 +24641,25 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             {
                 let finalized = {
                     let stats = flight.stats.lock().expect("flight stats");
-                    if stats.rollout_finalized {
+                    // Erst senden, wenn BEIDES fertig ist.
+                    //
+                    // `rollout_finalized` faellt bei vierzig Knoten — die
+                    // Ausrollstrecke steht dann fest. Die Rollspur laeuft
+                    // weiter (bis fuenf Knoten, zur Ausfahrt oder ueber den
+                    // Rand), und mit ihr Raeumpunkt und Kantenuebertritt.
+                    //
+                    // Wird hier zu frueh gesendet, traegt das Ereignis
+                    // dieselbe abgebrochene Spur wie `touchdown_complete`,
+                    // nur mit dem Anspruch, final zu sein.
+                    //
+                    // `bahn_spur_laeuft` wird von `spur_fortschreiben`
+                    // gepflegt: true, solange aufgezeichnet wird, false,
+                    // sobald ein Abbruchkriterium greift. Vor dem ersten
+                    // Aufruf ist es ebenfalls false — deshalb zusaetzlich
+                    // die Bedingung, dass ueberhaupt eine Spur vorliegt.
+                    let spur_fertig =
+                        !stats.bahn_spur_laeuft && !stats.bahn_spur.is_empty();
+                    if stats.rollout_finalized && spur_fertig {
                         // `landing_at` None (z.B. direkt nach einem T&G) →
                         // kein Publish; der nächste Touchdown setzt es neu.
                         stats.landing_at.map(|td| {
@@ -27595,8 +27613,6 @@ fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
         stats.rollout_last_lat = Some(snap.lat);
         stats.rollout_last_lon = Some(snap.lon);
 
-        bahndisziplin_tick(stats, snap);
-
         // Three independent finalisation triggers — whichever
         // fires first wins. See the constants near the top of
         // this file for the rationale on each threshold.
@@ -27656,12 +27672,36 @@ fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
 ///     the rollout fields with the FSM's own values, so this pre-Landing
 ///     accumulation is discarded there — byte-identical to before.
 fn sampler_path_rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
-    if stats.sampler_touchdown_at.is_some()
-        && !stats.rollout_finalized
-        && !matches!(stats.phase, FlightPhase::Landing)
-    {
+    if stats.sampler_touchdown_at.is_none() || matches!(stats.phase, FlightPhase::Landing) {
+        return;
+    }
+    if !stats.rollout_finalized {
         rollout_tick(stats, snap);
     }
+
+    // ── Die Spur laeuft weiter, die Ausrollstrecke nicht ─────────────
+    //
+    // `rollout_finalized` faellt bei **vierzig** Knoten
+    // (`ROLLOUT_EXIT_GS_KT`) — das ist der Moment, in dem die
+    // Ausrollstrecke feststeht: Wer so langsam ist, bremst nicht mehr,
+    // sondern rollt.
+    //
+    // Die Rollspur endet dort NICHT. Ihr eigener Vertrag laesst sie bis
+    // fuenf Knoten laufen, bis zur Ausfahrt oder bis achtzig Meter neben
+    // die Bahn (`BAHN_SPUR_STOP_GS_KT`, `BAHN_SPUR_RAND_M`) — und genau
+    // dazwischen liegt alles, was sie zeigen soll: Der Raeumpunkt wird
+    // typisch bei zwanzig bis dreissig Knoten erreicht, der
+    // Kantenuebertritt noch spaeter.
+    //
+    // Bis hierher hing `bahndisziplin_tick` im selben `if` wie die
+    // Streckenzaehlung. Die „finale" Spur brach damit bei vierzig Knoten
+    // ab, mitten auf der Bahn, und `clearance_point_m` blieb in den
+    // meisten Faellen leer — obwohl das Flugzeug kurz darauf abgebogen
+    // ist.
+    //
+    // Die eigenen Riegel in `spur_fortschreiben` beenden sie: unter fuenf
+    // Knoten, jenseits des Randes, oder wenn die Ablage voll ist.
+    bahndisziplin_tick(stats, snap);
 }
 
 /// v0.16.6: per-episode reset of the approach-stability stats + rollout
@@ -46104,6 +46144,61 @@ mod v0_16_6_bush_completeness_tests {
                 aussen > spur / 2.0,
                 "die Aussenkante liegt nicht weiter aussen als die Bein-Mitte — \
                  rechnet die Anzeige noch mit `spur / 2.0`?"
+            );
+        }
+
+        // Bei 39 Knoten ist die Spur noch NICHT fertig.
+        //
+        // `rollout_finalized` faellt bei vierzig Knoten — dort steht die
+        // Ausrollstrecke fest. Die Spur laeuft weiter: bis fuenf Knoten,
+        // bis zur Ausfahrt oder bis achtzig Meter neben die Bahn.
+        //
+        // Bis zur QS-Runde 25 hing `bahndisziplin_tick` im selben `if` wie
+        // die Streckenzaehlung. Die „finale" Spur brach damit bei vierzig
+        // Knoten ab, mitten auf der Bahn — und der Raeumpunkt, der typisch
+        // bei zwanzig bis dreissig Knoten erreicht wird, blieb leer.
+        {
+            let mut stats = FlightStats::default();
+            stats.sampler_touchdown_at = Some(Utc::now());
+            stats.phase = FlightPhase::TaxiIn;
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDH".to_string(),
+                runway_ident: "23".to_string(),
+                heading_true_deg: 230.21,
+                length_ft: 10663.0,
+                width_ft: 151.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 53.636011,
+                threshold_lon: 9.999656,
+                end_lat: 53.619958,
+                end_lon: 9.967167,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 720.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+            // Die Ausrollstrecke ist schon finalisiert (unter 40 kt).
+            stats.rollout_finalized = true;
+            stats.bahn_fenster_zu = true;
+            let vorher = stats.bahn_spur.len();
+
+            // 39 Knoten, noch auf der Bahn: 1500 m entlang, 6 m links.
+            let mut snap = SimSnapshot {
+                groundspeed_kt: 39.0,
+                on_ground: true,
+                ..Default::default()
+            };
+            // 1500 m entlang der Bahn, 6 m links der Mittellinie —
+            // ausgerechnet, weil das geo-Crate nur Abstaende kann.
+            snap.lat = 53.627_335;
+            snap.lon = 9.982_235;
+            sampler_path_rollout_tick(&mut stats, &snap);
+
+            assert!(
+                stats.bahn_spur.len() > vorher,
+                "bei 39 kt wird nicht mehr aufgezeichnet — die Spur bricht \
+                 mitten auf der Bahn ab"
             );
         }
 
