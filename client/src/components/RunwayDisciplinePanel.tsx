@@ -92,6 +92,8 @@ export function RunwayDisciplinePanel({
         <Hinweis text={t(`runway_v2.discipline_skip.${grund}`, skipText(grund))} />
       ) : (
         <RunwayCrossSection
+          // Der Maßstab reist mit `props` — eine Quelle, kein zweiter Weg.
+          schriftMindest={props.schriftMindest}
           projektion={projektion}
           runwayWidthM={breite!}
           trackWidthM={props.track_width_m ?? null}

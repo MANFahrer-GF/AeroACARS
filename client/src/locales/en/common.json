@@ -792,6 +792,7 @@
       "rollout_dist": "Rollout distance",
       "rwy_surface": "Surface",
       "rwy_length": "Runway length",
+      "rwy_lda": "Landable portion",
       "yes": "yes",
       "no": "no"
     },

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import i18n from "../i18n";
 import { invoke } from "../lib/ipc";
 import {
   ladeNamenGedeckelt,
@@ -703,10 +704,19 @@ function fmtSigned(v: number | null | undefined, digits = 0, unit = ""): string 
   return `${sign}${v.toFixed(digits)}${unit ? ` ${unit}` : ""}`;
 }
 
+/**
+ * Datum und Uhrzeit in der Sprache, die der Pilot eingestellt hat.
+ *
+ * `toLocaleString()` ohne Angabe nimmt die Sprache des Betriebssystems,
+ * nicht die der App. Auf einem englischsprachigen Windows stand im
+ * deutschen Bericht „5/13/2026, 7:42:00 PM" — ein amerikanisches Datum
+ * zwischen deutschen Beschriftungen, und bei Tagen unter 13 nicht einmal
+ * als falsch erkennbar (05.12. oder 12.05.?).
+ */
 function fmtDateTime(iso: string): string {
   try {
     const d = new Date(iso);
-    return d.toLocaleString();
+    return d.toLocaleString(i18n.language || undefined);
   } catch {
     return iso;
   }
@@ -2181,15 +2191,72 @@ function FuelComparisonBar({
 // Scores, ApproachChart, VsCurveChart, RunwayDiagramV2 …), darum lebt er
 // hier in-file statt in einer eigenen Datei.
 
-/** App-Version, die in der Report-Fußzeile erscheint. */
-const REPORT_APP_VERSION = "0.12.8";
+/**
+ * Mindest-Schriftgrösse der Bahn-Grafik im Bericht, in SVG-Einheiten.
+ *
+ * # Das Problem
+ *
+ * Im Bericht skaliert das SVG auf die Spaltenbreite (`width: 100%`), und
+ * jede Schrift darin schrumpft mit:
+ *
+ *   A4 hoch, `@page margin: 14mm 15mm`  →  180 mm Spalte
+ *   minus 2 × 5 mm Polster der Karte    →  170 mm Zeichenbreite
+ *   viewBox der Grafik                  →  1200 Einheiten
+ *   also  1 Einheit = 170/1200 mm       =  0,4016 pt
+ *
+ * Gemessen am 24.08.2026 landeten die Beschriftungen damit bei 3,6 bis
+ * 4,4 pt. Lesbar ist Druck etwa ab 6 pt.
+ *
+ * # Warum 11 und nicht mehr
+ *
+ * Für 6,8 pt bräuchte es 17 Einheiten. Bei 17 zerfällt das Layout: In der
+ * Demo (alle vierzehn Varianten, echter SVG-Motor) waren es 31 Befunde —
+ * Beschriftungen, die sich überlappen oder aus dem Bild laufen. Das
+ * Layout ist auf die Schriftgrössen von damals abgestimmt, und die
+ * waagerechten Abstände lassen sich nicht durch Anheben lösen, sondern
+ * nur durch ein anderes Layout.
+ *
+ * Abgetastet ergab sich: 17 → 31 Befunde, 13 → 15, 12 → 3, **11 → 0**.
+ * Elf ist damit der grösste Wert, der nachweislich sauber bleibt: 4,4 pt
+ * statt 3,6 pt.
+ *
+ * # Was das bedeutet — und was nicht
+ *
+ * Die Beschriftungen IM BILD bleiben auf Papier klein. Verloren geht
+ * dadurch nichts: Jeder gemessene Wert steht als normaler HTML-Text
+ * neben der Grafik (Ereignisliste, Kennzahlen-Zeile, Legende) und druckt
+ * in gewohnter Grösse. Das Bild zeigt die Lage, die Liste die Zahlen.
+ *
+ * Wirklich lesbar würde das Bild erst auf einer Querformat-Seite
+ * (269 mm statt 170 mm → 1,58×, mit dieser Untergrenze rund 7 pt). Das
+ * ist eine Layout-Entscheidung und steht offen.
+ *
+ * `LandingReport.test.tsx` rechnet die Herleitung nach, statt sie zu
+ * glauben.
+ */
+const BERICHT_SCHRIFT_MINDEST = 11;
+
+/**
+ * App-Version für die Report-Fußzeile — aus dem Paket, nicht von Hand.
+ *
+ * Hier stand eine getippte Konstante: `"0.12.8"`. Die App war bei 1.7.0,
+ * und jeder ausgedruckte Bericht behauptete seit fünf Versionen einen
+ * falschen Stand. Genau dafür ist ein Bericht da — jemand legt ihn zur
+ * Seite und sieht später nach, womit er erzeugt wurde.
+ *
+ * `__APP_VERSION__` setzt Vite aus `package.json` (siehe
+ * `vite.config.ts`). Im Testlauf ohne Vite-Define fehlt es, deshalb der
+ * Rückfall.
+ */
+const REPORT_APP_VERSION =
+  typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0";
 
 /** v0.12.8-dev: Fußzeile — EINMAL am Ende des fließenden Dokuments
  *  (vorher pro Seite). Generierungs-Datum + App-Version. */
 function ReportFooter() {
   const { t } = useTranslation();
   const generated = t("landing.report.generated", {
-    date: new Date().toLocaleDateString(),
+    date: new Date().toLocaleDateString(i18n.language || undefined),
     version: REPORT_APP_VERSION,
   });
   return (
@@ -2278,7 +2345,9 @@ function ReportTile({ label, value }: { label: string; value: string }) {
  * Bug). Ausgewählte Section-Gruppen starten via `.report-break-before`
  * auf einer frischen Seite. Nur sichtbar im `@media print`.
  */
-function LandingReport({ record }: { record: LandingRecord }) {
+/** Exportiert für die Prüfung — der Bericht ist sonst nur über
+ *  `window.print()` erreichbar, und das lässt sich nicht lesen. */
+export function LandingReport({ record }: { record: LandingRecord }) {
   const { t } = useTranslation();
 
   const callsign = record.airline_icao
@@ -2661,6 +2730,27 @@ function LandingReport({ record }: { record: LandingRecord }) {
                 label={t("landing.report.rwy_length")}
                 value={fmtNumber(rm.length_ft * 0.3048, 0, "m")}
               />
+              {/* Die landbare Länge — aber nur, wenn sie abweicht.
+
+                  Auf derselben Seite standen zwei verschiedene
+                  Bahnlängen: hier 3250 m (die bauliche), in der Grafik
+                  darunter 2952 m (nach der versetzten Schwelle). Beide
+                  stimmen, keine sagte welche sie ist, und der Leser
+                  hatte keine Möglichkeit, sie zu vereinbaren.
+
+                  Bei einer Bahn ohne versetzte Schwelle sind sie gleich
+                  — dann wäre eine zweite Kachel nur Rauschen. */}
+              {(() => {
+                const lda = rolloutLdaMeters(rm);
+                const voll = rm.length_ft * 0.3048;
+                if (lda == null || Math.abs(voll - lda) < 1) return null;
+                return (
+                  <ReportTile
+                    label={t("landing.report.rwy_lda")}
+                    value={fmtNumber(lda, 0, "m")}
+                  />
+                );
+              })()}
               <ReportTile
                 label={t("landing.report.rwy_surface")}
                 value={rm.surface || "—"}
@@ -2810,7 +2900,10 @@ function LandingReport({ record }: { record: LandingRecord }) {
                 <ReportChartCard
                   caption={t("landing.report.runway_diagram")}
                 >
-                  <RunwayDiagramV2 {...v2Props} />
+                  <RunwayDiagramV2
+                    {...v2Props}
+                    schriftMindest={BERICHT_SCHRIFT_MINDEST}
+                  />
                 </ReportChartCard>
               )}
             </div>

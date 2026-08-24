@@ -7938,6 +7938,21 @@ input:disabled {
   body > #root {
     display: none !important;
   }
+
+  /* Bedienelemente gehören nicht aufs Papier.
+
+     Die Bahn-Grafik wandert unverändert in den Bericht — mitsamt
+     Zoom-Hinweis („Strg + Mausrad zoomt · Ziehen verschiebt"), den
+     Knöpfen − und + und dem Glossar-Knopf „ⓘ Begriffe erklärt". Auf
+     dem Bildschirm sind das Werkzeuge, auf Papier sind es Anweisungen
+     ins Leere.
+
+     Sie hatten keinen Klassennamen — inline gestylt und damit für jede
+     Druckregel unerreichbar. Der Haken war also nicht die fehlende
+     Regel, sondern der fehlende Griff. */
+  .bahn-nur-bildschirm {
+    display: none !important;
+  }
   .landing-report-print {
     display: block !important;
   }

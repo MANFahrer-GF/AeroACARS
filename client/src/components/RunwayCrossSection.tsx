@@ -56,6 +56,27 @@ export interface QueransichtProps {
   /** Wo die Bewertung endet (Beginn des Ausschwenkens). */
   scoringCutoffM?: number | null;
   clearanceSide?: "left" | "right" | null;
+  /**
+   * Mindest-Schriftgrösse in SVG-Einheiten — für den Druck.
+   *
+   * Auf Papier skaliert das SVG auf die Spaltenbreite (`width: 100%`),
+   * und jede Schrift darin schrumpft mit. Gemessen am 24.08.2026 landeten
+   * die Beschriftungen im A4-Bericht bei **3,6 bis 4,4 pt**; lesbar ist
+   * Druck etwa ab 6 pt. Die halbe Grafik war auf dem Ausdruck nicht zu
+   * entziffern, ohne dass irgendwo etwas fehlgeschlagen wäre.
+   *
+   * # Warum eine Untergrenze und kein Faktor
+   *
+   * Der erste Versuch multiplizierte alles mit 1,9. Die kleinen Zeilen
+   * wurden lesbar — und die grossen sprengten das Bild: Die Bahnkennungen
+   * (28 Einheiten) und die Längenangabe (20) liefen aus dem viewBox
+   * heraus und übereinander, 78 Kollisionen. Sie waren nie das Problem;
+   * sie drucken schon bei 8 bis 11 pt.
+   *
+   * Eine Untergrenze hebt nur an, was zu klein ist, und lässt den Rest
+   * in Ruhe. Die Reihenfolge der Grössen bleibt erhalten.
+   */
+  schriftMindest?: number;
   /** Kleinster Randabstand des äusseren Rades. Negativ = neben der Bahn. */
   minEdgeClearanceM?: number | null;
   /** Grösster Versatz — für die Marke ②. */
@@ -159,6 +180,8 @@ const SKALA_X = 48;
  */
 export function RunwayCrossSection(p: QueransichtProps) {
   const { t } = useTranslation();
+  const schriftMindest = p.schriftMindest ?? 0;
+  const sf = (g: number) => Math.max(g, schriftMindest);
   if (!Number.isFinite(p.runwayWidthM) || p.runwayWidthM <= 0) return null;
 
   const halbeBahnM = p.runwayWidthM / 2;
@@ -451,13 +474,13 @@ export function RunwayCrossSection(p: QueransichtProps) {
       </defs>
 
       {/* Überschrift und Massstabsangabe — beide ausserhalb der Flächen. */}
-      <text x={0} y={14} fontSize={10.5} letterSpacing={1.4} fill="#8B95A8">
+      <text x={0} y={14} fontSize={sf(10.5)} letterSpacing={1.4} fill="#8B95A8">
         {t("runway_v2.cross_title", { defaultValue: "QUER — WO DIE RÄDER LIEFEN" })}
       </text>
       {/* Muster und Spurweite — ohne sie ist das Band eine Linie ohne
           Bedeutung. Die Breite ist massstäblich zur Bahn, aber ob 29 Pixel
           nun sieben oder vierzehn Meter sind, sieht man ihr nicht an. */}
-      <text x={p.width / 2} y={14} fontSize={10.5} textAnchor="middle" fill="#9AA5B5">
+      <text x={p.width / 2} y={14} fontSize={sf(10.5)} textAnchor="middle" fill="#9AA5B5">
         {p.trackWidthM != null
           ? t("runway_v2.cross_aircraft", {
               defaultValue: "{{typ}} · Spurweite {{m}} m",
@@ -476,7 +499,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
           waere nach Massstab vierzig Pixel hoch und darin nicht mehr
           lesbar, also wird sie aufgezogen. Das darf sie — aber nicht
           stillschweigend. */}
-      <text x={p.width} y={14} fontSize={10} textAnchor="end" fill="#66707E">
+      <text x={p.width} y={14} fontSize={sf(10)} textAnchor="end" fill="#66707E">
         {dehnung > 1.02
           ? t("runway_v2.cross_exaggeration_stretched", {
               defaultValue:
@@ -501,7 +524,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
               x={x}
               y={oben ? 34 : H - 6}
               textAnchor="middle"
-              fontSize={9}
+              fontSize={sf(9)}
               fill={an ? bandFarbe : "#4E6350"}
               fontWeight={an ? 600 : 400}
             >
@@ -659,7 +682,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
             x={m.x}
             y={m.y + 3.8}
             textAnchor="middle"
-            fontSize={11}
+            fontSize={sf(11)}
             fontWeight={600}
             fill="#0B0F17"
           >
@@ -681,7 +704,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
           />
         ))}
       </g>
-      <g fill="#7C8698" fontSize={9} textAnchor="end">
+      <g fill="#7C8698" fontSize={sf(9)} textAnchor="end">
         {skalaWerte(halbeBahnM).map((m) => (
           <text
             key={m}
@@ -700,7 +723,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
       <text
         x={0}
         y={gruenTop - 4}
-        fontSize={9.5}
+        fontSize={sf(9.5)}
         fontWeight={600}
         fill="#9AA5B5"
       >
@@ -709,7 +732,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
       <text
         x={0}
         y={gruenBot + GRUEN_H + 11}
-        fontSize={9.5}
+        fontSize={sf(9.5)}
         fontWeight={600}
         fill="#9AA5B5"
       >
@@ -733,13 +756,13 @@ export function RunwayCrossSection(p: QueransichtProps) {
           der Bahnfläche siebzig Einheiten, und die Seite steht ohnehin
           links an der Skala. „Kante links" lief bei sechzehn Einheiten
           Abstand über den Rand hinaus. */}
-      <text x={p.projektion.bahnEndeX + 10} y={bahnTop + 4} fontSize={9.5} fill="#8B95A8">
+      <text x={p.projektion.bahnEndeX + 10} y={bahnTop + 4} fontSize={sf(9.5)} fill="#8B95A8">
         {t("runway_v2.edge_left", { defaultValue: "Kante links" })}
       </text>
-      <text x={p.projektion.bahnEndeX + 10} y={mitteY + 4} fontSize={9.5} fill="#66707E">
+      <text x={p.projektion.bahnEndeX + 10} y={mitteY + 4} fontSize={sf(9.5)} fill="#66707E">
         {t("runway_v2.centre", { defaultValue: "Mitte" })}
       </text>
-      <text x={p.projektion.bahnEndeX + 10} y={bahnBot + 4} fontSize={9.5} fill="#8B95A8">
+      <text x={p.projektion.bahnEndeX + 10} y={bahnBot + 4} fontSize={sf(9.5)} fill="#8B95A8">
         {t("runway_v2.edge_right", { defaultValue: "Kante rechts" })}
       </text>
     </svg>

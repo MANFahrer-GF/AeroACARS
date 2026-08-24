@@ -39,6 +39,28 @@ export type TchClass =
   | "below_profile";
 
 export interface RunwayDiagramV2Props {
+  /**
+   * Mindest-Schriftgrösse in SVG-Einheiten — für den Druck.
+   *
+   * Auf Papier skaliert das SVG auf die Spaltenbreite (`width: 100%`),
+   * und jede Schrift darin schrumpft mit. Gemessen am 24.08.2026 landeten
+   * die Beschriftungen im A4-Bericht bei **3,6 bis 4,4 pt**; lesbar ist
+   * Druck etwa ab 6 pt. Die halbe Grafik war auf dem Ausdruck nicht zu
+   * entziffern, ohne dass irgendwo etwas fehlgeschlagen wäre.
+   *
+   * # Warum eine Untergrenze und kein Faktor
+   *
+   * Der erste Versuch multiplizierte alles mit 1,9. Die kleinen Zeilen
+   * wurden lesbar — und die grossen sprengten das Bild: Die Bahnkennungen
+   * (28 Einheiten) und die Längenangabe (20) liefen aus dem viewBox
+   * heraus und übereinander, 78 Kollisionen. Sie waren nie das Problem;
+   * sie drucken schon bei 8 bis 11 pt.
+   *
+   * Eine Untergrenze hebt nur an, was zu klein ist, und lässt den Rest
+   * in Ruhe. Die Reihenfolge der Grössen bleibt erhalten.
+   */
+  schriftMindest?: number;
+
   airport_ident: string;
   airport_name?: string | null;
   runway_ident: string;
@@ -148,6 +170,19 @@ function tdColor(p: RunwayDiagramV2Props, tokens: { tdSevere: string; tdPerfect:
 // ─── Component ───────────────────────────────────────────────────────
 
 export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
+  // Auf dem Bildschirm 0 (wirkungslos), im Druck die Untergrenze.
+  const schriftMindest = props.schriftMindest ?? 0;
+  const sf = (g: number) => Math.max(g, schriftMindest);
+  /**
+   * Zeilenabstand einer gestapelten Beschriftung — folgt der Schrift.
+   *
+   * Die Abstände standen als feste Zahlen im Layout (11 bzw. 13
+   * Einheiten), abgestimmt auf die Schriftgrössen von damals. Sobald
+   * der Druck die Schrift anhebt, sitzen die Zeilen ineinander:
+   * „BAHN GERÄUMT" lag auf „2296 m · Ausfahrt D9 rechts". Gemessen an
+   * der Demo waren es fünfzehn solche Paare.
+   */
+  const zeile = (g: number) => sf(g) * 1.18;
   const skin = useV2Skin();
   const TOKENS = skin.tokens;
   const display = skin.display;
@@ -447,6 +482,10 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
         </div>
         <button
           type="button"
+          // `nur-bildschirm`: Bedienelemente gehören nicht aufs Papier.
+          // Im Druck (Bericht-Export) stand hier ein Knopf, den niemand
+          // drücken kann — siehe die Regel in App.css.
+          className="bahn-nur-bildschirm"
           onClick={() => setGlossaryOpen(true)}
           aria-label="Begriffe erklärt — Glossar öffnen"
           style={{
@@ -580,7 +619,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               <text
                 x={padX}
                 y={rwyBot + 18}
-                fontSize="9.5"
+                fontSize={sf(9.5)}
                 fill={TOKENS.tdSevere}
                 fontFamily="monospace"
               >
@@ -588,8 +627,8 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               </text>
               <text
                 x={padX}
-                y={rwyBot + 29}
-                fontSize="9.5"
+                y={rwyBot + 18 + zeile(9.5)}
+                fontSize={sf(9.5)}
                 fill={TOKENS.tdSevere}
                 fontFamily="monospace"
               >
@@ -731,7 +770,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               <text
                 x={(thresholdX + tdzEndX) / 2}
                 y={rwyTop - 20}
-                fontSize="11"
+                fontSize={sf(11)}
                 fill={TOKENS.tdzStroke}
                 fontWeight="600"
                 fontFamily="monospace"
@@ -801,7 +840,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 x={aimX}
                 y={rwyBot + 20}
                 textAnchor="middle"
-                fontSize="10.5"
+                fontSize={sf(10.5)}
                 fill={TOKENS.aimMarker}
                 fontWeight="600"
                 fontFamily="monospace"
@@ -851,7 +890,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
 
           {/* Titel der Ansicht — beide Ansichten tragen einen, sonst ist
               beim Blick auf zwei Bahnrechtecke nicht klar, was welche zeigt. */}
-          <text x={padX} y={16} fontSize="10.5" letterSpacing={1.4} fill="#8B95A8">
+          <text x={padX} y={16} fontSize={sf(10.5)} letterSpacing={1.4} fill="#8B95A8">
             {t("runway_v2.laengs_title", {
               defaultValue: "LÄNGS — WO AUFGESETZT, WO GERÄUMT",
             })}
@@ -865,7 +904,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             x={padX + innerW}
             y={rwyBot + 18}
             textAnchor="end"
-            fontSize="9.5"
+            fontSize={sf(9.5)}
             fill={TOKENS.tdSevere}
             fontFamily="monospace"
           >
@@ -914,7 +953,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 )}
                 y={rwyTop - 36}
                 textAnchor="middle"
-                fontSize="10"
+                fontSize={sf(10)}
                 fill="#8B95A8"
                 fontFamily="monospace"
               >
@@ -992,7 +1031,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                 x={raeumX}
                 y={rwyTop - 52}
                 textAnchor="middle"
-                fontSize="11"
+                fontSize={sf(11)}
                 fontWeight="600"
                 fill={TOKENS.rollout}
                 fontFamily="monospace"
@@ -1001,9 +1040,9 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               </text>
               <text
                 x={raeumX}
-                y={rwyTop - 39}
+                y={rwyTop - 52 + zeile(11)}
                 textAnchor="middle"
-                fontSize="10"
+                fontSize={sf(10)}
                 fill="#8B95A8"
                 fontFamily="monospace"
               >
@@ -1107,7 +1146,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             x={padX / 2 - 4}
             y={rwyCl + 10}
             textAnchor="middle"
-            fontSize="28"
+            fontSize={sf(28)}
             fill="#f1f5f9"
             fontWeight="800"
             fontFamily="monospace"
@@ -1123,7 +1162,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               x={W - padX / 2 + 8}
               y={rwyCl - 2}
               textAnchor="middle"
-              fontSize="20"
+              fontSize={sf(20)}
               fill="#94a3b8"
               fontWeight="700"
               fontFamily="monospace"
@@ -1137,7 +1176,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               x={W - padX / 2 + 8}
               y={rwyCl + 18}
               textAnchor="middle"
-              fontSize="11"
+              fontSize={sf(11)}
               fill="#64748b"
               fontFamily="monospace"
             >
@@ -1165,7 +1204,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               )}
               y={rwyBot + 46}
               textAnchor="middle"
-              fontSize="13"
+              fontSize={sf(13)}
               fill={dotColor}
               fontWeight="700"
               fontFamily="monospace"
@@ -1208,7 +1247,7 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
                     x={x}
                     y={rwyBot + 80}
                     textAnchor="middle"
-                    fontSize="10"
+                    fontSize={sf(10)}
                     fill="rgba(255,255,255,0.55)"
                     fontFamily="monospace"
                   >
@@ -1224,6 +1263,12 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
             danach erklärt sich der Zustand selbst, und der Platz gehört dem
             Zurücksetzen. */}
         <div
+          // Zoom-Hinweis und -Knöpfe: auf Papier sinnlos. Sie hatten
+          // keinen Klassennamen und waren deshalb für das Druck-CSS
+          // unerreichbar — im exportierten Bericht stand mitten in der
+          // Grafik „Strg + Mausrad zoomt · Ziehen verschieben" mit zwei
+          // Knöpfen daneben.
+          className="bahn-nur-bildschirm"
           style={{
             display: "flex",
             justifyContent: "flex-end",

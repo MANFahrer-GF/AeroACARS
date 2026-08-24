@@ -792,6 +792,7 @@
       "rollout_dist": "Distanza di rullaggio",
       "rwy_surface": "Superficie",
       "rwy_length": "Lunghezza pista",
+      "rwy_lda": "Porzione atterrabile",
       "yes": "sì",
       "no": "no"
     },

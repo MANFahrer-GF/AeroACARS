@@ -792,6 +792,7 @@
       "rollout_dist": "Ausrollstrecke",
       "rwy_surface": "Belag",
       "rwy_length": "Bahnlänge",
+      "rwy_lda": "Davon landbar",
       "yes": "ja",
       "no": "nein"
     },

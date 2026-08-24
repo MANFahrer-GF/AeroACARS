@@ -39,10 +39,32 @@ void i18n.use(initReactI18next).init({
   interpolation: { escapeValue: false },
 });
 
+/**
+ * Druck-Untergrenze über `?mindest=17` — die Fassung, die im PDF landet.
+ *
+ * Im Bericht skaliert das SVG auf die A4-Spalte, und jede Schrift darin
+ * schrumpft mit (gemessen 3,6–4,4 pt). Der Bericht setzt deshalb einen
+ * Schriftmaßstab. Ob die grössere Schrift sich überlappt, kann kein
+ * jsdom-Test beantworten — dafür braucht es einen echten SVG-Motor.
+ * Hier ist er.
+ */
+function mindestAusAdresse(): number {
+  const p = new URLSearchParams(window.location.search).get("mindest");
+  const n = p == null ? NaN : Number(p);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 function Demo() {
+  const mindest = mindestAusAdresse();
   return (
     <>
       <h1>Bahndisziplin — die Varianten aus §11</h1>
+      {mindest > 0 && (
+        <p className="hinweis">
+          <strong>Druck-Untergrenze {mindest} Einheiten</strong> — so erscheint die Grafik im
+          PDF-Bericht. <a href="?">zurück auf Bildschirmgröße</a>
+        </p>
+      )}
       <p className="lead">
         Gerendert aus denselben Bausteinen, die im Client laufen — und seit
         dem Abgleich auch in der Webapp. Die Spuren sind echte
@@ -55,7 +77,8 @@ function Demo() {
         das Rad die Seite — sonst bliebe man über der Grafik hängen.
       </p>
       {MOCK_LANDING_OPTIONS.map((opt) => {
-        const props = mapLandingRecordToV2Props(opt.build());
+        const roh = mapLandingRecordToV2Props(opt.build());
+        const props = roh ? { ...roh, schriftMindest: mindest } : roh;
         return (
           <section key={opt.key} className="variante">
             <h2>
