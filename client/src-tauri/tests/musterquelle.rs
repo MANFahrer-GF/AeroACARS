@@ -57,6 +57,21 @@ fn rumpf(text: &str, ab: usize) -> String {
 /// „welches Muster ist geflogen?".
 const AUSNAHMEN: &[(&str, &str)] = &[
     (
+        "aircraft_icao: flight.aircraft_icao.clone(),",
+        "Buchungsangaben an die Oberflaeche — hier soll stehen, was GEBUCHT \
+         wurde, nicht was geflogen wird.",
+    ),
+    (
+        "last_known_aircraft_icao: if was_just_resumed",
+        "merkt sich die BUCHUNG fuer den Wiederaufnahme-Dialog.",
+    ),
+    (
+        "let resolved_icao = if !flight.aircraft_icao.trim().is_empty()",
+        "Live-Karte: zeigt bewusst zuerst die Buchung. Reine Anzeige — \
+         beeinflusst keine Bewertung. (Ordnet Buchung VOR Sim, anders als \
+         `muster_aufloesen`; bei einer Vereinheitlichung der Anzeige mitnehmen.)",
+    ),
+    (
         "let bid_icao = flight.aircraft_icao.trim().to_uppercase();",
         "Alias-Abgleich: sucht, welches gebuchte Flugzeug zum Sim-Modell \
          passt. Hier ist die BUCHUNG die Frage, nicht das Muster.",
@@ -98,13 +113,31 @@ fn niemand_baut_seine_eigene_musterkette() {
         {
             continue;
         }
-        // Auch erlaubt: rein anzeigende oder speichernde Verwendungen.
-        if z.contains("aircraft_icao:") || z.contains("clone()") || z.contains("is_empty()") {
+        // Nur `is_empty()` ist harmlos — es fragt, OB etwas da ist, nicht
+        // WAS geflogen wurde.
+        //
+        // Die erste Fassung nahm zusaetzlich `aircraft_icao:` und `clone()`
+        // aus. Das war zu grob und hat die achte Stelle verdeckt:
+        //
+        //     aircraft_icao: Some(flight.aircraft_icao.clone()),
+        //
+        // in `build_pirep_payload` — die Eingabe der Bahndisziplin-Achse.
+        // Live gesehen am 24.08.2026 bei LGAV 03R (v1.7.1): Datensatz mit
+        // `track_width_m: 7.59`, Achse trotzdem `track_width_unknown`.
+        // Eine Pruefung, die ihren Hauptfall wegfiltert, ist keine.
+        if z.contains("is_empty()") {
             continue;
         }
         // Begründete Ausnahmen. Jede braucht einen Grund — sonst ist die
         // Liste nur ein Weg, diese Prüfung ruhigzustellen.
-        if AUSNAHMEN.iter().any(|(muster, _grund)| z.contains(muster)) {
+        //
+        // Gesucht wird im FENSTER, nicht in der Zeile: Ein `if`-Kopf steht
+        // eine Zeile über seinem Rumpf, und gemeldet wird der Rumpf. Wer
+        // nur die Zeile prüft, trifft die Ausnahme nie.
+        if AUSNAHMEN
+            .iter()
+            .any(|(muster, _grund)| fenster.contains(muster))
+        {
             continue;
         }
         treffer.push(format!("  lib.rs:{}: {z}", nr + 1));
@@ -202,4 +235,79 @@ fn leere_navdaten_felder_bleiben_abgeriegelt() {
     }
 
     assert!(fehlt.is_empty(), "{}", fehlt.join("\n  "));
+}
+
+/// Es gibt EINE Bewertungs-Eingabe — nicht vier.
+///
+/// # Der Befund dahinter
+///
+/// Am 24.08.2026 stand derselbe Block **viermal** im Quelltext:
+/// `build_pirep_payload`, `compute_aggregate_master_score`,
+/// `build_landing_record`, `build_pirep_notes`. Zwölf Felder, in allen
+/// vier dieselben, in allen vier dieselben Werte.
+///
+/// Ihre eigenen Kommentare sagten „muss identische Inputs nutzen wie der
+/// echte PIREP-Pfad" — die Absicht war immer EINE Eingabe. Vier Kopien
+/// halten das nur, solange jemand alle vier mitpflegt. Zwei hielten es
+/// schon nicht mehr: eine hatte `actual_burn_for_record` von Hand
+/// nachgebaut, und in einer stand der Flugzeugtyp aus der Buchung statt
+/// aus der Musterkette. Live gesehen bei LGAV 03R (v1.7.1): Datensatz
+/// mit `track_width_m: 7.59`, Achse trotzdem `track_width_unknown`.
+///
+/// Ab hier baut nur `scoring_eingang` diese Struktur.
+#[test]
+fn nur_eine_stelle_baut_die_bewertungs_eingabe() {
+    let quelle = std::fs::read_to_string("src/lib.rs").expect("lib.rs");
+
+    // Testmodule bauen ihre Eingaben absichtlich von Hand. Sie stehen
+    // hinter `#[cfg(test)]` — davon gibt es in dieser Datei mehrere, also
+    // wird zeilenweise mitgezaehlt statt einen einzigen Schnitt zu suchen.
+    let mut im_test = false;
+    let mut test_tiefe = 0i32;
+    let mut tiefe = 0i32;
+    let mut stellen: Vec<String> = Vec::new();
+
+    for (n, z) in quelle.lines().enumerate() {
+        let vorher = tiefe;
+        tiefe += z.matches('{').count() as i32 - z.matches('}').count() as i32;
+
+        if im_test && vorher <= test_tiefe && tiefe <= test_tiefe {
+            im_test = false;
+        }
+        if z.trim() == "#[cfg(test)]" {
+            im_test = true;
+            test_tiefe = tiefe;
+            continue;
+        }
+        if im_test {
+            continue;
+        }
+        // Die Signaturzeile `) -> …LandingScoringInput {` ist kein Bau.
+        if z.contains("LandingScoringInput {") && !z.contains("->") {
+            stellen.push(format!("  lib.rs:{}: {}", n + 1, z.trim()));
+        }
+    }
+
+    assert_eq!(
+        stellen.len(),
+        1,
+        "Die Bewertungs-Eingabe wird an {} Stellen gebaut. Genau eine ist \
+         richtig (`scoring_eingang`); jede weitere driftet, sobald jemand \
+         ein Feld ergaenzt und die anderen vergisst:\n{}",
+        stellen.len(),
+        stellen.join("\n")
+    );
+
+    // Und diese eine muss in `scoring_eingang` liegen.
+    let bau = quelle
+        .find("landing_scoring::LandingScoringInput {")
+        .filter(|_| true)
+        .expect("Bau-Stelle nicht gefunden");
+    let davor = &quelle[..bau];
+    let fn_start = davor.rfind("fn ").unwrap_or(0);
+    assert!(
+        davor[fn_start..].starts_with("fn scoring_eingang"),
+        "die Bau-Stelle liegt in `{}`, nicht in `scoring_eingang`",
+        davor[fn_start..].lines().next().unwrap_or("?")
+    );
 }

@@ -2920,7 +2920,7 @@ impl PersistedFlightStats {
 // to derive sideslip from successive positions for a sim that
 // doesn't expose body velocity.
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 struct TelemetrySample {
     at: DateTime<Utc>,
     vs_fpm: f32,
@@ -14679,29 +14679,7 @@ fn build_pirep_payload(
     // dann sowohl als sub_scores ins Payload als auch
     // als landing_score (gewichteter Aggregate) nutzen.
     let actual_burn = actual_burn_for_record(&stats);
-    let mut scoring_input = landing_scoring::LandingScoringInput {
-        // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang.
-        vs_fpm: score_basis_vs_fpm(&stats),
-        // v0.20 (QS-Fix, fallback_zero-Score-Bug): beide zusammen gaten —
-        // sonst wuerde compute_sub_scores' `.or(peak_g_load)`-Fallback die
-        // erfundene Zahl trotzdem aufgreifen, wenn nur scored_g_load None ist.
-        peak_g_load: stats.canonical_peak_g_force(),
-        scored_g_load: scored_g_fuer_punkte(&stats),
-        // v0.7.6 P2-B: zentraler Helper statt direkten Read.
-        bounce_count: Some(scored_bounce_count_for_score(&stats)),
-        approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
-        approach_bank_stddev_deg: stats.canonical_bank_stddev_deg(),
-        rollout_distance_m: stats
-            .rollout_distance_m
-            .map(|m| m as f32),
-        planned_burn_kg: stats.planned_burn_kg,
-        actual_trip_burn_kg: actual_burn,
-        planned_zfw_kg: stats.planned_zfw_kg,
-        planned_tow_kg: stats.planned_tow_kg,
-        // v0.7.17 (N-002): aircraft-aware rollout score
-        aircraft_icao: Some(flight.aircraft_icao.clone()),
-        ..Default::default()
-    };
+    let mut scoring_input = scoring_eingang(&stats, muster_fuer_landung(&stats, &flight.aircraft_icao));
     // v0.10.0 (#runway-utilization-score): LDA-basierter
     // Bahn-Auslastungs-Score. Markiert weiter unten am
     // PirepPayload via score_algorithm_version: Some(9)
@@ -15346,29 +15324,7 @@ fn compute_aggregate_master_score(
     aircraft_icao: Option<&str>,
     arr_airport: &str,
 ) -> Option<u8> {
-    let actual_burn = actual_burn_for_record(stats);
-    let mut scoring_input = landing_scoring::LandingScoringInput {
-        // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang — siehe
-        // `score_basis_vs_fpm()` Doc.
-        vs_fpm: score_basis_vs_fpm(stats),
-        // v0.20 (QS-Fix, fallback_zero-Score-Bug): beide zusammen gaten.
-        peak_g_load: stats.canonical_peak_g_force(),
-        scored_g_load: scored_g_fuer_punkte(stats),
-        // v0.7.6 P2-B: zentraler Helper statt direkten Read.
-        bounce_count: Some(scored_bounce_count_for_score(stats)),
-        approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
-        approach_bank_stddev_deg: stats.canonical_bank_stddev_deg(),
-        rollout_distance_m: stats.rollout_distance_m.map(|m| m as f32),
-        planned_burn_kg: stats.planned_burn_kg,
-        actual_trip_burn_kg: actual_burn,
-        planned_zfw_kg: stats.planned_zfw_kg,
-        planned_tow_kg: stats.planned_tow_kg,
-        // v0.7.17 (N-002): Aircraft-ICAO fuer den aircraft-category-
-        // sensitiven Bahn-Auslastung-Score. None → Light-Default-
-        // Schwellen (konservativ).
-        aircraft_icao: aircraft_icao.map(str::to_string),
-        ..Default::default()
-    };
+    let mut scoring_input = scoring_eingang(stats, aircraft_icao);
     // v0.10.0: v2-RolloutInput-Felder mit-füllen damit der LDA-basierte
     // Sub-Score gerechnet wird (siehe spec docs/spec/v0.10.0-runway-
     // utilization-score.md).
@@ -15770,6 +15726,55 @@ fn muster_fuer_landung<'a>(
         .or_else(|| Some(buchung_icao.trim()).filter(|s| !s.is_empty()))
 }
 
+/// Die Eingabe der Landungsbewertung — an EINER Stelle gebaut.
+///
+/// # Warum das eine Funktion ist
+///
+/// Dieser Block stand am 24.08.2026 **viermal** im Quelltext: in
+/// `build_pirep_payload`, `compute_aggregate_master_score`,
+/// `build_landing_record` und `build_pirep_notes`. Zwölf Felder, in allen
+/// vier dieselben, in allen vier dieselben Werte — abgeschrieben.
+///
+/// Die Kommentare dort sagten es selbst: „muss identische Inputs nutzen
+/// wie der echte PIREP-Pfad". Die Absicht war immer EINE Eingabe. Vier
+/// Kopien halten diese Absicht nur so lange, wie jemand alle vier
+/// mitpflegt — und genau daran ist v1.7.0 gescheitert, an anderer Stelle
+/// derselben Art: Die Musterauflösung lag an sieben Stellen mit vier
+/// verschiedenen Ketten, und die beiden wichtigsten fragten die Buchung
+/// allein.
+///
+/// Was hier fehlt, fehlt überall; was hier dazukommt, kommt überall an.
+/// `tests/musterquelle.rs` hält fest, dass niemand daneben eine eigene
+/// Eingabe baut.
+fn scoring_eingang(
+    stats: &FlightStats,
+    muster: Option<&str>,
+) -> landing_scoring::LandingScoringInput {
+    landing_scoring::LandingScoringInput {
+        // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang — siehe
+        // `score_basis_vs_fpm()` Doc.
+        vs_fpm: score_basis_vs_fpm(stats),
+        // v0.20 (QS-Fix, fallback_zero-Score-Bug): beide zusammen gaten.
+        peak_g_load: stats.canonical_peak_g_force(),
+        scored_g_load: scored_g_fuer_punkte(stats),
+        // v0.7.6 P2-B: zentraler Helper statt direkten Read.
+        bounce_count: Some(scored_bounce_count_for_score(stats)),
+        approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
+        approach_bank_stddev_deg: stats.canonical_bank_stddev_deg(),
+        rollout_distance_m: stats.rollout_distance_m.map(|m| m as f32),
+        planned_burn_kg: stats.planned_burn_kg,
+        actual_trip_burn_kg: actual_burn_for_record(stats),
+        planned_zfw_kg: stats.planned_zfw_kg,
+        planned_tow_kg: stats.planned_tow_kg,
+        // v0.7.17 (N-002): Aircraft-ICAO fuer den aircraft-category-
+        // sensitiven Bahn-Score. None → Light-Default-Schwellen
+        // (konservativ). Das Muster kommt aus `muster_fuer_landung`,
+        // nicht aus der Buchung allein — siehe dort.
+        aircraft_icao: muster.map(str::to_string),
+        ..Default::default()
+    }
+}
+
 fn bahn_felder(
     stats: &FlightStats,
     icao: Option<&str>,
@@ -16115,26 +16120,7 @@ where
     // Zahl aus Aggregate) — fuer Pilot verwirrend.
     // Fallback auf Touchdown-Klassifikation wenn keine Sub-Scores
     // berechnet werden konnten (Edge-Case Schutz).
-    let mut scoring_input = landing_scoring::LandingScoringInput {
-        // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang — siehe
-        // `score_basis_vs_fpm()` Doc.
-        vs_fpm: score_basis_vs_fpm(stats),
-        // v0.20 (QS-Fix, fallback_zero-Score-Bug): beide zusammen gaten.
-        peak_g_load: stats.canonical_peak_g_force(),
-        scored_g_load: scored_g_fuer_punkte(stats),
-        // v0.7.6 P2-B: zentraler Helper statt direkten Read.
-        bounce_count: Some(scored_bounce_count_for_score(stats)),
-        approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
-        approach_bank_stddev_deg: stats.canonical_bank_stddev_deg(),
-        rollout_distance_m: stats.rollout_distance_m.map(|m| m as f32),
-        planned_burn_kg: stats.planned_burn_kg,
-        actual_trip_burn_kg: actual_burn_for_record(stats),
-        planned_zfw_kg: stats.planned_zfw_kg,
-        planned_tow_kg: stats.planned_tow_kg,
-        // v0.7.17 (N-002): Aircraft-Category aware rollout-Score.
-        aircraft_icao: aircraft_icao.map(str::to_string),
-        ..Default::default()
-    };
+    let mut scoring_input = scoring_eingang(stats, aircraft_icao);
     // v0.10.0 (#runway-utilization-score): LDA-basierten Bahn-Auslastungs-
     // Score aktivieren. Wenn alle benötigten Felder vorhanden → neuer
     // Algorithmus, sonst skipped mit konkretem Reason (KEIN Rollback auf
@@ -27065,6 +27051,15 @@ fn correlate_touchdown_runway(
         );
         stats.runway_match = Some(rw);
         stats.runway_source = Some(source);
+        // Die Sekunden zwischen Aufsetzen und Bestaetigung nachtragen —
+        // sonst fehlt der Spur genau die Aufsetzzone. Siehe
+        // `spur_aus_puffer_nachtragen`.
+        let halbe_breite_m = stats
+            .runway_match
+            .as_ref()
+            .map(|m| (m.width_ft as f64 * 0.3048 / 2.0).max(15.0))
+            .unwrap_or(15.0);
+        spur_aus_puffer_nachtragen(stats, halbe_breite_m);
         stats.runway_nav_cycle = if matches!(source, runway::RunwaySource::Navigraph) {
             nav_cycle
         } else {
@@ -27459,9 +27454,62 @@ const BAHN_SPUR_STOP_GS_KT: f32 = 5.0;
 /// Laeuft NACH dem Schliessen des Messfensters weiter, damit die Anzeige
 /// zeigen kann, wohin das Flugzeug die Bahn verlassen hat. Endet, sobald es
 /// steht, seitlich weit genug weg ist oder die Ablage voll ist.
+/// Traegt die Rollspur ab dem Aufsetzpunkt nach — aus dem Schnappschuss-Puffer.
+///
+/// # Warum das noetig ist
+///
+/// Die Spur kann erst laufen, wenn `stats.runway_match` steht. Der
+/// entsteht in `correlate_touchdown_runway`, und die wird erst gerufen,
+/// wenn der Aufsetzer bestaetigt ist — `elapsed_ms >= 1100`. Dazu kommen
+/// zwei, drei Ticks im langsamen Takt, bis die Phase auf `Landing`
+/// steht und der 200-ms-Takt greift.
+///
+/// Gemessen an **allen neun** Landungen der ersten v1.7.1-Nacht begann
+/// die Spur dadurch konstant **185 bis 251 Meter hinter dem
+/// Aufsetzpunkt** — es fehlte ausgerechnet die Aufsetzzone, der Teil, um
+/// dessentwillen die Achse gebaut wurde. Die Marke „Aufsetzen" stand in
+/// der Queransicht im Leeren, ohne Spur darunter.
+///
+/// Die Daten dafuer sind da: `stats.snapshot_buffer` haelt rund zehn
+/// Sekunden Telemetrie mit Zeitstempel, Position und Geschwindigkeit.
+/// Sie wurden nur nie benutzt.
+///
+/// Der Nachtrag laeuft durch dieselbe `spur_fortschreiben` wie der
+/// Live-Takt — gleiche Ausduennung, gleiche Abbruchgruende, gleiche
+/// Kantenerkennung. Eine zweite Spur-Logik waere genau die
+/// Zweitimplementierung, die dieses Projekt schon mehrfach teuer
+/// bezahlt hat.
+fn spur_aus_puffer_nachtragen(stats: &mut FlightStats, halbe_breite_m: f64) {
+    let Some(td_at) = stats.landing_at else {
+        return;
+    };
+    let Some(rm) = stats.runway_match.as_ref() else {
+        return;
+    };
+    // Die Bahnachse einmal kopieren — `stats` wird gleich veraendert.
+    let (t_lat, t_lon, e_lat, e_lon) =
+        (rm.threshold_lat, rm.threshold_lon, rm.end_lat, rm.end_lon);
+
+    // Nur Eintraege ab dem Aufsetzzeitpunkt, in ihrer Reihenfolge.
+    let proben: Vec<(f64, f64, f32)> = stats
+        .snapshot_buffer
+        .iter()
+        .filter(|p| p.at >= td_at && p.on_ground)
+        .map(|p| (p.lat, p.lon, p.groundspeed_kt))
+        .collect();
+
+    for (lat, lon, gs) in proben {
+        let (laengs_m, quer_m) = runway::projiziere_auf_bahn(t_lat, t_lon, e_lat, e_lon, lat, lon);
+        spur_fortschreiben(stats, gs, laengs_m, quer_m, halbe_breite_m);
+    }
+}
+
 fn spur_fortschreiben(
     stats: &mut FlightStats,
-    snap: &SimSnapshot,
+    // Nur die Geschwindigkeit statt des ganzen Schnappschusses: Diese
+    // Funktion laeuft seit dem Nachtrag auch ueber Puffer-Eintraege, und
+    // die sind kein `SimSnapshot`.
+    groundspeed_kt: f32,
     laengs_m: f64,
     quer_m: f64,
     // Die halbe Bahnbreite statt des ganzen `RunwayMatch`: Der liegt in
@@ -27472,7 +27520,7 @@ fn spur_fortschreiben(
     // Jedes dieser drei Kriterien beendet die Aufzeichnung — und mit ihr
     // den feinen Takt. Das Flag ist die einzige Stelle, an der beides
     // zusammenhaengt; deshalb wird es hier gesetzt und nirgends sonst.
-    if snap.groundspeed_kt < BAHN_SPUR_STOP_GS_KT
+    if groundspeed_kt < BAHN_SPUR_STOP_GS_KT
         || quer_m.abs() > halbe_breite_m + BAHN_SPUR_RAND_M
         || laengs_m < -50.0
         || stats.bahn_spur.len() >= BAHN_SPUR_MAX_PUNKTE
@@ -27533,7 +27581,7 @@ fn spur_fortschreiben(
             Some(raeum) => interpoliert.max(raeum),
             None => interpoliert,
         });
-        stats.bahn_kante_gs_kt = Some(snap.groundspeed_kt as f64);
+        stats.bahn_kante_gs_kt = Some(groundspeed_kt as f64);
     }
     // Der Abstand, wie er GEZEICHNET wird — nicht wie er gefahren wurde.
     //
@@ -27721,7 +27769,7 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     //
     // `spur_fortschreiben` hat seine eigenen Riegel: unter fuenf Knoten,
     // jenseits des Randes, oder wenn die Ablage voll ist.
-    spur_fortschreiben(stats, snap, laengs_m, quer_m, halbe_breite_m);
+    spur_fortschreiben(stats, snap.groundspeed_kt, laengs_m, quer_m, halbe_breite_m);
 }
 
 fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
@@ -33837,39 +33885,11 @@ fn build_pirep_notes(
     // Phase 2 Update: nutzt jetzt planned_burn + actual_trip_burn
     // (statt fuel_efficiency_pct Legacy-Pfad), planned_zfw + planned_tow
     // damit sub_loadsheet skipped/scored werden kann.
-    let actual_burn = match (stats.takeoff_fuel_kg, stats.landing_fuel_kg) {
-        (Some(toff), Some(land))
-            if toff > land && toff > 0.0 && land >= 0.0 =>
-        {
-            Some(toff - land)
-        }
-        _ => None,
-    };
-    let mut crate_input = landing_scoring::LandingScoringInput {
-        // v0.7.1 Phase 0 Schatten-Validation muss identische Inputs nutzen
-        // wie der echte PIREP-Pfad (build_landing_record + PirepPayload).
-        // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang — siehe
-        // `score_basis_vs_fpm()` Doc.
-        vs_fpm: score_basis_vs_fpm(stats),
-        // v0.20 (QS-Fix, fallback_zero-Score-Bug): beide zusammen gaten.
-        peak_g_load: stats.canonical_peak_g_force(),
-        scored_g_load: scored_g_fuer_punkte(stats),
-        // v0.7.6 P2-B: zentraler Helper statt direkten Read.
-        bounce_count: Some(scored_bounce_count_for_score(stats)),
-        approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
-        approach_bank_stddev_deg: stats.canonical_bank_stddev_deg(),
-        rollout_distance_m: stats.rollout_distance_m.map(|m| m as f32),
-        planned_burn_kg: stats.planned_burn_kg,
-        actual_trip_burn_kg: actual_burn,
-        planned_zfw_kg: stats.planned_zfw_kg,
-        planned_tow_kg: stats.planned_tow_kg,
-        // v0.10.0 QS-Code-R1 P2-1 Fix: ohne aircraft_icao rechnete die
-        // Shadow-Validation für A388/A320 mit Light-Default-Schwellen
-        // (Heavy-Allowance fehlte) → Drift gegen die echten Pfade
-        // → falsche Audit-Logs. Identisch zu den anderen 3 Sites.
-        aircraft_icao: Some(flight.aircraft_icao.clone()),
-        ..Default::default()
-    };
+    // Der Sprit-Wert stand hier als handgeschriebene Kopie von
+    // `actual_burn_for_record` — byteweise dieselbe Rechnung. Er kommt
+    // jetzt aus `scoring_eingang`, wie überall.
+    let mut crate_input =
+        scoring_eingang(stats, muster_fuer_landung(stats, &flight.aircraft_icao));
     // v0.10.0 (#runway-utilization-score): Shadow-Validation muss den
     // gleichen Algorithmus rechnen wie der echte PIREP-Pfad — sonst
     // hätten wir Drift gegen uns selbst.
@@ -46655,6 +46675,207 @@ mod v0_16_6_bush_completeness_tests {
             );
         }
 
+        // Die Spur beginnt am AUFSETZPUNKT, nicht zweihundert Meter danach.
+        //
+        // # Der Befund
+        //
+        // Gemessen an allen neun Landungen der ersten v1.7.1-Nacht:
+        //
+        //   LGAV 218 m · LEPA 251 · SGAS 213 · EDDK 216 · LOWW 213
+        //   EPWA 222 · EDDN 439 · EDDB 185 · LSZH 228
+        //
+        // Konstant zweihundert Meter hinter dem Aufsetzpunkt — es fehlte
+        // die Aufsetzzone, also genau der Teil, um dessentwillen die Achse
+        // gebaut wurde. In der Queransicht stand die Marke „Aufsetzen" im
+        // Leeren, ohne Spur darunter.
+        //
+        // Ursache: Die Spur braucht `runway_match`, und der entsteht erst,
+        // wenn der Aufsetzer nach 1,1 s bestaetigt ist — plus zwei, drei
+        // Ticks im langsamen Takt. Bei 130 kt sind das gut zweihundert
+        // Meter.
+        {
+            let td = Utc::now();
+            let mut stats = FlightStats::default();
+            stats.landing_at = Some(td);
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "XXXX".to_string(),
+                runway_ident: "09".to_string(),
+                heading_true_deg: 90.0,
+                length_ft: 10000.0,
+                width_ft: 148.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 50.0,
+                threshold_lon: 8.0,
+                end_lat: 50.0,
+                end_lon: 8.0426,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 1600.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+
+            // Fuenf Sekunden Telemetrie ab dem Aufsetzen, 200 ms Takt,
+            // rund 67 m/s — so schnell rollt eine Verkehrsmaschine kurz
+            // nach dem Aufsetzen. Start bei 500 m hinter der Schwelle.
+            let meter_je_grad_lon = 111_320.0 * (50.0f64).to_radians().cos();
+            for i in 0..25 {
+                let laengs = 500.0 + 13.4 * i as f64;
+                stats.snapshot_buffer.push_back(TelemetrySample {
+                    at: td + chrono::Duration::milliseconds(200 * i),
+                    on_ground: true,
+                    groundspeed_kt: 130.0,
+                    lat: 50.0,
+                    lon: 8.0 + laengs / meter_je_grad_lon,
+                    ..Default::default()
+                });
+            }
+
+            let halbe = 148.0 * 0.3048 / 2.0;
+            spur_aus_puffer_nachtragen(&mut stats, halbe);
+
+            let spur = &stats.bahn_spur;
+            assert!(
+                !spur.is_empty(),
+                "der Nachtrag hat nichts geschrieben — die Spur beginnt \
+                 weiterhin erst beim ersten Live-Tick, gut zweihundert \
+                 Meter hinter dem Aufsetzpunkt"
+            );
+            let erster = spur[0].0;
+            assert!(
+                (erster - 500.0).abs() < 25.0,
+                "die Spur beginnt bei {erster:.0} m statt am Aufsetzpunkt \
+                 (500 m) — es fehlen {:.0} m",
+                erster - 500.0
+            );
+            // Und die Ausduennung greift wie im Live-Takt: bei 13,4 m
+            // Probenabstand und 10 m Mindestabstand bleibt fast jede.
+            assert!(
+                spur.len() >= 20,
+                "nur {} von 25 Proben uebernommen — die Ausduennung wirft \
+                 im Nachtrag mehr weg als im Live-Takt",
+                spur.len()
+            );
+        }
+
+        // Anzeige und Bewertung müssen dieselben Zahlen sehen.
+        //
+        // # Warum das eine eigene Prüfung braucht
+        //
+        // Beide leiten Spurweite, Bahnbreite, Belag und Versatz aus
+        // demselben `stats` ab — aber über ZWEI Ausdrücke an zwei Stellen:
+        // `bahn_felder` für die Anzeige, `BahndisziplinInput` für die Note.
+        // Heute stimmen sie überein. Das ist kein Zustand, den man
+        // absichern kann, indem man ihn einmal prüft: Wer eine der beiden
+        // Formeln anfasst, merkt vom anderen Weg nichts.
+        //
+        // Live gesehen am 24.08.2026 bei LGAV 03R (v1.7.1): Der Datensatz
+        // trug `track_width_m: 7.59`, die Bewertung sagte
+        // `track_width_unknown`. Zwei Antworten auf dieselbe Frage — und
+        // niemand hat es bemerkt, bis ein Pilot den Bericht aufmachte.
+        //
+        // Diese Prüfung geht über viele Eingaben statt über ein Beispiel:
+        // Breiten von null bis absurd, Spurweiten mit und ohne
+        // Flugzeugdatei, jeder Belag, jeder Versatz.
+        {
+            let belaege = ["ASP", "CON", "GRS", "WATER", "", "TURF-G"];
+            let breiten_ft = [0.0f32, 20.0, 98.0, 148.0, 197.0, 500.0];
+            let muster = [Some("A320"), Some("BCS3"), Some("ZZZZ"), None];
+            let aus_datei = [None, Some(9.9f64)];
+
+            let mut geprueft = 0;
+            for belag in belaege {
+                for breite in breiten_ft {
+                    for m in muster {
+                        for datei in aus_datei {
+                            let mut stats = FlightStats::default();
+                            stats.runway_match = Some(runway::RunwayMatch {
+                                airport_ident: "XXXX".to_string(),
+                                runway_ident: "09".to_string(),
+                                heading_true_deg: 90.0,
+                                length_ft: 8000.0,
+                                width_ft: breite,
+                                surface: belag.to_string(),
+                                threshold_lat: 50.0,
+                                threshold_lon: 8.0,
+                                end_lat: 50.0,
+                                end_lon: 8.034,
+                                centerline_distance_m: 0.0,
+                                centerline_distance_abs_ft: 0.0,
+                                touchdown_distance_from_threshold_ft: 300.0,
+                                side: "left".to_string(),
+                                displaced_threshold_ft: 0,
+                            });
+                            stats.bahn_max_querversatz_m = Some(4.2);
+                            stats.fahrwerk_spurweite_m = datei;
+                            stats.bahn_proben = 40;
+
+                            // Weg 1: die Anzeige.
+                            let anzeige = bahn_felder(&stats, m, None);
+
+                            // Weg 2: die Bewertung, über denselben
+                            // Eingang, den der Betrieb benutzt.
+                            let mut eingang = scoring_eingang(&stats, m);
+                            fill_v2_rollout_fields(&mut eingang, &stats, "XXXX");
+
+                            let b_spur = eingang
+                                .fahrwerk_spurweite_m
+                                .or_else(|| {
+                                    landing_scoring::spurweite::spurweite_m(
+                                        eingang.aircraft_icao.as_deref(),
+                                    )
+                                });
+                            let b_belag = landing_scoring::belag::belag_aus_angabe(
+                                eingang.runway_surface.as_deref(),
+                            );
+                            let a_belag = landing_scoring::belag::belag_aus_angabe(
+                                Some(belag),
+                            );
+
+                            let lage = format!(
+                                "Belag={belag:?} Breite={breite} Muster={m:?} Datei={datei:?}"
+                            );
+                            assert_eq!(
+                                anzeige.track_width_m, b_spur,
+                                "Spurweite weicht ab — {lage}"
+                            );
+                            // ⚠ Die Anzeige fuehrt die Breite als `f64`,
+                            // die Bewertung als `f32` — beim Schreiben
+                            // dieser Pruefung aufgefallen, weil der
+                            // Vergleich sich nicht uebersetzen liess.
+                            // Fachlich harmlos (eine Bahnbreite braucht
+                            // keine achtzehn Stellen), aber es sind zwei
+                            // Zahlen fuer dieselbe Groesse. Verglichen
+                            // wird deshalb mit der Genauigkeit von `f32`.
+                            match (anzeige.runway_width_m, eingang.runway_width_m) {
+                                (Some(a), Some(b)) => assert!(
+                                    (a - b as f64).abs() < 0.001,
+                                    "Bahnbreite weicht ab: {a} gegen {b} — {lage}"
+                                ),
+                                (a, b) => assert_eq!(
+                                    a.is_none(),
+                                    b.is_none(),
+                                    "Bahnbreite: einer kennt sie, der andere nicht — {lage}"
+                                ),
+                            }
+                            assert_eq!(b_belag, a_belag, "Belag weicht ab — {lage}");
+                            assert_eq!(
+                                anzeige.max_lateral_offset_m,
+                                eingang.bahn_max_querversatz_m,
+                                "Versatz weicht ab — {lage}"
+                            );
+                            geprueft += 1;
+                        }
+                    }
+                }
+            }
+            assert_eq!(
+                geprueft,
+                belaege.len() * breiten_ft.len() * muster.len() * aus_datei.len(),
+                "die Schleife hat nicht alle Kombinationen durchlaufen"
+            );
+        }
+
         // Bei 39 Knoten ist die Spur noch NICHT fertig.
         //
         // `rollout_finalized` faellt bei vierzig Knoten — dort steht die
@@ -46859,7 +47080,7 @@ mod v0_16_6_bush_completeness_tests {
             };
 
             // Fenster OFFEN, Flugzeug kurz ueber der Kante.
-            spur_fortschreiben(&mut stats, &snap, 900.0, 24.0, halbe);
+            spur_fortschreiben(&mut stats, snap.groundspeed_kt, 900.0, 24.0, halbe);
             assert!(
                 stats.bahn_kante_laengs_m.is_none(),
                 "Kante bei offenem Messfenster gesetzt — das waere ein \
@@ -46867,11 +47088,11 @@ mod v0_16_6_bush_completeness_tests {
             );
 
             // Wieder auf der Bahn, dann Ausfahrt eingeleitet.
-            spur_fortschreiben(&mut stats, &snap, 1000.0, 5.0, halbe);
+            spur_fortschreiben(&mut stats, snap.groundspeed_kt, 1000.0, 5.0, halbe);
             stats.bahn_fenster_zu = true;
             stats.bahn_raeum_laengs_m = Some(1600.0);
             snap.groundspeed_kt = 30.0;
-            spur_fortschreiben(&mut stats, &snap, 1650.0, 26.0, halbe);
+            spur_fortschreiben(&mut stats, snap.groundspeed_kt, 1650.0, 26.0, halbe);
 
             let kante = stats.bahn_kante_laengs_m.expect("Kante nach der Ausfahrt");
             assert!(
