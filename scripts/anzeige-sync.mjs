@@ -113,6 +113,41 @@ function schluesselAusQuelltext(text) {
   return raus;
 }
 
+/**
+ * Zusammengesetzte Schlüssel: t(`a.b.${x}`).
+ *
+ * Die erste Fassung dieser Prüfung kannte nur feste Namen und war eine
+ * Stunde nach ihrer Einführung schon einmal blind: Die Begründungen,
+ * warum die Queransicht entfällt, stehen unter
+ * `runway_v2.discipline_skip.${grund}` — in der Webapp fehlten fünf der
+ * elf, darunter die vier häufigsten (Graspiste, Belag unbekannt,
+ * Spurweite unbekannt, kein Rollweg). Der Wächter war grün.
+ *
+ * Ein zusammengesetzter Name lässt sich nicht auflösen, ohne den Code
+ * auszuführen. Prüfbar ist aber der VORSPANN: Was der Client unter
+ * `runway_v2.discipline_skip` führt, muss die Webapp auch führen — sonst
+ * fällt genau der Fall, den der Client kennt, drüben auf den deutschen
+ * Vorgabetext zurück.
+ */
+function vorspaenneAusQuelltext(text) {
+  const raus = new Set();
+  for (const m of text.matchAll(/\bt\(\s*`([\w.]+)\.\$\{/g)) raus.add(m[1]);
+  return raus;
+}
+
+/** Alle Blattpfade unterhalb eines Vorspanns. */
+function blaetter(baum, pfad) {
+  let k = baum;
+  for (const teil of pfad.split(".")) {
+    if (k == null || typeof k !== "object") return [];
+    k = k[teil];
+  }
+  if (k == null || typeof k !== "object") return [];
+  return Object.keys(k)
+    .filter((n) => typeof k[n] === "string")
+    .map((n) => `${pfad}.${n}`);
+}
+
 function sprachdatei(wurzel, sprache) {
   const p = resolve(wurzel, "locales", sprache, "common.json");
   return existsSync(p) ? JSON.parse(readFileSync(p, "utf-8")) : null;
@@ -130,10 +165,20 @@ function hatSchluessel(baum, punktpfad) {
 /** Welche Schlüssel die Grafik braucht — aus dem kanonischen Quelltext. */
 export function benoetigteSchluessel() {
   const alle = new Set();
+  const vorspaenne = new Set();
   for (const rel of DATEIEN) {
     const p = resolve(CLIENT, rel);
     if (!existsSync(p)) continue;
-    for (const k of schluesselAusQuelltext(readFileSync(p, "utf-8"))) alle.add(k);
+    const text = readFileSync(p, "utf-8");
+    for (const k of schluesselAusQuelltext(text)) alle.add(k);
+    for (const v of vorspaenneAusQuelltext(text)) vorspaenne.add(v);
+  }
+  // Unter einem zusammengesetzten Namen zählt jeder Eintrag, den die
+  // kanonische Seite kennt — die deutsche Datei ist dafür der Massstab,
+  // weil sie den Bestand führt.
+  const de = sprachdatei(CLIENT, "de");
+  if (de != null) {
+    for (const v of vorspaenne) for (const b of blaetter(de, v)) alle.add(b);
   }
   return [...alle].sort();
 }
