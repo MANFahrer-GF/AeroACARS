@@ -283,3 +283,40 @@ gehört eine Kopie angelegt (`cp datei /tmp/x.bak`) und zurückgespielt.
 `git checkout` setzt auf den letzten Commit zurück und nimmt jede
 uncommittete Arbeit mit. Genau das ist in Runde 20 passiert; gerettet hat
 nur eine Sicherung von zehn Minuten vorher.
+
+---
+
+## 10. Nachtrag aus Runde 24: die Systemgrenze
+
+**Eine Behauptung im Kommentar ist keine Prüfung.**
+
+In Runde 21 stand im Webapp-Mapper:
+
+> „Beim Touchdown-Publish ist er noch nicht bekannt. Der Wert kommt dann
+> aus den `sub_scores` des PIREP, die `landingScoring.ts` ohnehin liest."
+
+Der erste Satz stimmte. Der zweite war eine Annahme — der Mapper las das
+Direktfeld, das nie ankommt. Die Korrektur wirkte im Pilot-Client und in
+der Webapp **gar nicht**.
+
+Die Kette, die das erzwingt:
+
+1. Der Client publiziert den Touchdown, **bevor** die Bewertung läuft.
+2. Der Recorder ergänzt später ausschliesslich `sub_scores`.
+3. `LandingAnalysis` besitzt diese `sub_scores`.
+4. Der Mapper ignorierte sie und las das nicht vorhandene Direktfeld.
+
+> **Winkel 13: die Systemgrenze.** Für jeden Wert, der über eine
+> Prozessgrenze geht — prüfen, ob er zu dem Zeitpunkt, an dem er
+> übertragen wird, überhaupt existiert. Was erst nach dem Senden
+> entsteht, kommt nie an.
+
+Der Feldketten-Test war grün, weil er nur prüfte, **dass der Name
+vorkommt** — nicht, aus welcher Quelle. Er prüft jetzt beides
+(`liest Felder, die erst nach dem Publish entstehen, aus der richtigen
+Quelle`), mit einer gepflegten Liste solcher Felder.
+
+**Und wieder falscher Alarm beim ersten Anlauf:** Das Suchmuster für die
+Publish-Stelle im Rust-Code hatte ein Fenster von 400 Zeichen — die
+Begründung dazwischen ist länger. Der Test schlug an, obwohl der Code
+richtig war. *Falscher Alarm ist so schädlich wie keiner.*

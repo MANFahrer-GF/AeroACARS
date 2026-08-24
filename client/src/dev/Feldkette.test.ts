@@ -107,6 +107,63 @@ describe("Feldkette der Bahndisziplin", () => {
     ).toEqual([]);
   });
 
+  /**
+   * Und der Name allein genügt nicht: Die QUELLE muss stimmen.
+   *
+   * Der Pilot-Client publiziert den Touchdown, **bevor** die Bewertung
+   * läuft. Alles, was erst danach entsteht, ist im Touchdown-Payload
+   * zwangsläufig leer — der Recorder ergänzt später nur `sub_scores`.
+   *
+   * Genau daran ist Runde 23 gescheitert: `lateral_skip_reason` stand im
+   * Webapp-Mapper (der Name war da, diese Prüfung war grün) und wurde aus
+   * `pl.lateral_skip_reason` gelesen, also aus dem Feld, das nie ankommt.
+   * Die Korrektur wirkte im Pilot-Client und in der Webapp gar nicht.
+   *
+   * Für diese Felder muss der Mapper eine zweite Quelle haben.
+   */
+  it("liest Felder, die erst nach dem Publish entstehen, aus der richtigen Quelle", () => {
+    if (!existsSync(WEBAPP)) return;
+    const mapper = readFileSync(
+      resolve(WEBAPP, "src/components/runwayDiagramV2Mapper.ts"),
+      "utf-8",
+    );
+
+    // Feld → woher es in der Webapp kommen MUSS.
+    const ERST_NACH_DEM_PUBLISH: Record<string, string> = {
+      lateral_skip_reason: "subScores",
+    };
+
+    const falsch: string[] = [];
+    for (const [feld, quelle] of Object.entries(ERST_NACH_DEM_PUBLISH)) {
+      // Die Zuweisung im Mapper — mitsamt dem, was rechts davon steht.
+      const stelle = new RegExp(`${feld}:[\\s\\S]{0,240}?,\\n`).exec(mapper);
+      if (!stelle) {
+        falsch.push(`${feld}: keine Zuweisung im Webapp-Mapper gefunden`);
+        continue;
+      }
+      if (!stelle[0].includes(quelle)) {
+        falsch.push(
+          `${feld} wird nicht aus \`${quelle}\` gelesen — der ` +
+            `Touchdown-Payload trägt es nie`,
+        );
+      }
+    }
+    expect(falsch).toEqual([]);
+
+    // Und im Client muss die Publish-Stelle es ausdrücklich leer lassen —
+    // sonst behauptet sie einen Wert, den sie nicht haben kann.
+    const rust = readFileSync(resolve(CLIENT, "src-tauri/src/lib.rs"), "utf-8");
+    expect(
+      // Grosszuegiges Fenster: Zwischen dem Aufruf und dem `None` steht
+      // die Begründung, warum dort nichts stehen kann — beim ersten Anlauf
+      // waren 400 Zeichen zu wenig, und der Test schlug an, obwohl der
+      // Code richtig war. Falscher Alarm ist so schädlich wie keiner.
+      /bahn_felder\([\s\S]{0,1200}?None,\s*\)\s*\.wire\(\)/.test(rust),
+      "die MQTT-Publish-Stelle gibt einen Skip-Grund mit, obwohl die " +
+        "Bewertung dort noch nicht gelaufen ist",
+    ).toBe(true);
+  });
+
   it("lässt kein Feld auf der Leitung liegen", () => {
     // Die Umrechnung `BahnFelder::wire()` ist die einzige Übersetzung
     // zwischen Client-Rechnung und Leitung. Fehlt dort ein Feld, ist es
