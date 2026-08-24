@@ -70,4 +70,46 @@ describe("Skip-Gründe der Landebewertung", () => {
       "Diese Gründe erscheinen dem Piloten als „nicht bewertet“ — ohne den Grund.",
     ).toEqual([]);
   });
+  /**
+   * Und die ANZEIGE muss jeden Grund der Bahn-Achse ausschreiben können.
+   *
+   * Die Bewertung kennt sieben Gründe, aus denen die seitliche Lage nicht
+   * gewertet wird. Die Grafik kannte fünf. Bei `untrusted_geometry` und
+   * `implausible_lateral_track` wertete die Achse nicht — und die
+   * Queransicht daneben zeichnete seelenruhig ein Band mit Randabstand,
+   * auf einer Geometrie, der die Bewertung nicht traut, oder aus einem
+   * Versatz, den sie als Messfehler verworfen hat.
+   *
+   * Das ist schlimmer als eine fehlende Anzeige: Die Zahl steht neben
+   * echten Messwerten und ist von ihnen nicht zu unterscheiden.
+   */
+  it("schreibt jeden Grund der Bahn-Achse aus", () => {
+    const panel = readFileSync(
+      resolve(__dirname, "..", "components", "RunwayDisciplinePanel.tsx"),
+      "utf-8",
+    );
+    const achse = readFileSync(
+      resolve(SCORING, "sub_bahndisziplin.rs"),
+      "utf-8",
+    );
+    const gruende = new Set<string>();
+    for (const m of achse.matchAll(/skipped\(KEY, LABEL, "([a-z_]+)"\)/g)) {
+      gruende.add(m[1]);
+    }
+    // Über den Belag entscheidet `Belag::seitlich_bewertbar`; die Gründe
+    // stehen dort als eigene Zeichenketten.
+    for (const g of ["unpaved_runway", "surface_unknown", "water_runway"]) {
+      if (achse.includes(g)) gruende.add(g);
+    }
+    expect(gruende.size, "keine Gründe gefunden — Muster geändert?").toBeGreaterThan(5);
+
+    const fehlend = [...gruende]
+      .filter((g) => !new RegExp(`case "${g}":`).test(panel))
+      .sort();
+    expect(
+      fehlend,
+      "Für diese Gründe zeigt die Grafik einen Rückfalltext statt der Ursache — " +
+        "oder schlimmer: sie zeichnet weiter, als wäre nichts.",
+    ).toEqual([]);
+  });
 });

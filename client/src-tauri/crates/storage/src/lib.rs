@@ -371,6 +371,18 @@ pub struct LandingRecord {
     /// Flugzeug 13,4 m.
     #[serde(default)]
     pub scoring_cutoff_m: Option<f64>,
+    /// Warum die seitliche Bewertung entfiel — der Grund, den die
+    /// BEWERTUNG gefaellt hat, nicht ein zweiter aus der Anzeige.
+    ///
+    /// Die Anzeige kannte bis v1.7.0 nur fuenf der sieben Gruende. Bei
+    /// `untrusted_geometry` und `implausible_lateral_track` wertete die
+    /// Achse nicht — und die Grafik daneben zeichnete seelenruhig ein Band
+    /// mit Randabstand, auf einer Geometrie, der die Bewertung nicht traut,
+    /// oder aus einem Versatz, den sie als Messfehler verworfen hat.
+    ///
+    /// `None` heisst „bewertet", nicht „kein Grund bekannt".
+    #[serde(default)]
+    pub lateral_skip_reason: Option<String>,
     /// Die Ausfahrten dieser Bahn, aus der OSM-Bodenkarte.
     ///
     /// Leer, wenn keine Bodenkarte vorlag — nicht, wenn die Bahn keine

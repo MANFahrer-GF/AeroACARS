@@ -48,6 +48,19 @@ export function RunwayDisciplinePanel({
   // schlimmer als gar keine: Sie sähe aus wie eine Messung, die „nichts
   // Auffälliges" ergeben hat, und genau das steht dann nicht fest.
   const grund = ((): string | null => {
+    // ZUERST der Grund, den die BEWERTUNG gefällt hat.
+    //
+    // Sie kennt sieben Gründe, die Anzeige kannte fünf. Bei
+    // `untrusted_geometry` und `implausible_lateral_track` wertete die
+    // Achse nicht — und die Grafik daneben zeichnete seelenruhig ein Band
+    // mit Randabstand, auf einer Geometrie, der die Bewertung nicht traut,
+    // oder aus einem Versatz, den sie als Messfehler verworfen hat.
+    //
+    // Ausgelesen, nicht hergeleitet: Die Achse hat schon entschieden. Eine
+    // zweite Herleitung hier wäre eine Zweitimplementierung des Urteils,
+    // und die driftet, sobald jemand eine Schwelle anfasst.
+    if (props.lateral_skip_reason) return props.lateral_skip_reason;
+
     // ZUERST: Trägt dieser Flug überhaupt v1.7.0-Daten?
     //
     // Sonst greift die nächste Prüfung und behauptet etwas über die BAHN,
@@ -121,6 +134,16 @@ function skipText(grund: string): string {
       return "Der Belag dieser Bahn ist nicht bekannt — ohne ihn ist die Kante keine belastbare Grenze.";
     case "track_width_unknown":
       return "Die Spurweite dieses Musters ist nicht hinterlegt; ohne sie lässt sich die Lage der Räder nicht bestimmen.";
+    case "insufficient_samples":
+      return "Zu wenige Messpunkte auf der Bahn — aus zwei oder drei Proben lässt sich kein Verlauf ablesen.";
+    case "untrusted_geometry":
+      return "Die Bahndaten dieser Landung sind nicht verlässlich — ohne sie ist die Kante keine belastbare Grenze.";
+    case "implausible_lateral_track":
+      return "Der gemessene Versatz kann nicht stimmen — vermutlich ein Messfehler, deshalb keine seitliche Bewertung.";
+    case "off_airport_landing":
+      return "Keine erkannte Bahn — ohne sie gibt es keine Kante, zu der ein Abstand messbar wäre.";
+    case "missing_lateral_track":
+      return "Für diesen Flug ist kein Rollweg erfasst. Flüge von vor v1.7.0 haben ihn nicht.";
     default:
       return "Die Queransicht steht für diesen Flug nicht zur Verfügung.";
   }

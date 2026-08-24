@@ -1949,7 +1949,13 @@
       "no_lateral_track": "Per questo volo non è registrata alcuna corsa di rullaggio. I voli precedenti alla v1.7.0 non ne hanno.",
       "unpaved_runway": "Pista in erba o naturale: il bordo è sfumato e non è misurabile.",
       "surface_unknown": "La superficie di questa pista non è nota — senza di essa il bordo non è un limite affidabile.",
-      "track_width_unknown": "La carreggiata di questo tipo non è registrata; senza di essa la posizione delle ruote non è determinabile."
+      "track_width_unknown": "La carreggiata di questo tipo non è registrata; senza di essa la posizione delle ruote non è determinabile.",
+      "untrusted_geometry": "I dati di pista di questo atterraggio non sono affidabili — senza di essi il bordo non è un limite attendibile.",
+      "implausible_lateral_track": "Lo scostamento misurato non può essere corretto — probabilmente un errore di misura, quindi nessuna valutazione laterale.",
+      "off_airport_landing": "Nessuna pista riconosciuta — senza di essa non c'è un bordo da cui misurare una distanza.",
+      "missing_lateral_track": "Per questo volo non è registrata alcuna traccia di rullaggio. I voli precedenti alla v1.7.0 non ce l'hanno.",
+      "insufficient_samples": "Troppo pochi campioni sulla pista — due o tre punti non mostrano un andamento.",
+      "water_runway": "Ammaraggio — non c'è un bordo pavimentato da cui misurare una distanza."
     },
     "edge_left": "Bordo",
     "edge_right": "Bordo",

@@ -89,6 +89,7 @@ export function mapLandingRecordToV2Props(
     min_edge_clearance_m: record.min_edge_clearance_m ?? null,
     max_lateral_offset_m: record.max_lateral_offset_m ?? null,
     lateral_samples: record.lateral_samples ?? null,
+    lateral_skip_reason: record.lateral_skip_reason ?? null,
     surface_paved: record.surface_paved ?? null,
     overrun_m: record.overrun_m ?? null,
     // Aircraft-Daten für die Landeeinschätzung

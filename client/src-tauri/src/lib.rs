@@ -15712,7 +15712,24 @@ fn wire_displaced_threshold_ft(runway_match: Option<&runway::RunwayMatch>) -> Op
 /// hier `stats` erneut befragte, umginge genau die Kette, die der MPH-9-Fall
 /// erzwungen hat: Die TFDi MD-11 meldet keinen Typ, und ohne Kette fiel die
 /// Bewertung auf „Light" zurueck — 55 statt 80 Punkte.
-fn bahn_felder(stats: &FlightStats, icao: Option<&str>) -> BahnFelder {
+/// Der Grund, aus dem die Bahndisziplin-Achse nicht gewertet hat.
+///
+/// Ausgelesen, nicht hergeleitet: Die Achse hat schon entschieden, und die
+/// Anzeige soll genau diese Entscheidung zeigen. Eine zweite Herleitung in
+/// der Grafik waere eine Zweitimplementierung des Urteils — und die driften
+/// auseinander, sobald jemand eine Schwelle anfasst.
+fn bahn_skip_grund(sub_scores: &[landing_scoring::SubScoreEntry]) -> Option<String> {
+    sub_scores
+        .iter()
+        .find(|s| s.key == "rollout" && s.skipped)
+        .and_then(|s| s.reason.clone())
+}
+
+fn bahn_felder(
+    stats: &FlightStats,
+    icao: Option<&str>,
+    skip_grund: Option<String>,
+) -> BahnFelder {
     let rm = stats.runway_match.as_ref();
     // Reihenfolge nach Spec §5.3: Die Flugzeugdatei ist die Verfeinerung,
     // die Typtabelle die Basis. Liegt ein aus der Datei gelesener Wert vor,
@@ -15902,6 +15919,7 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>) -> BahnFelder {
             b => Some(b.seitlich_bewertbar()),
         },
         overrun_m: stats.bahn_overrun_m,
+        lateral_skip_reason: skip_grund,
         runway_exits: ausfahrten,
     }
 }
@@ -15966,6 +15984,7 @@ impl BahnFelder {
             },
             surface_paved: self.surface_paved,
             overrun_m: self.overrun_m,
+            lateral_skip_reason: self.lateral_skip_reason.clone(),
             // Wie bei der Spur: leer heisst weglassen, nicht `[]`. Eine
             // leere Liste sieht in der Anzeige aus wie „diese Bahn hat
             // keine Ausfahrten" — das ist etwas anderes als „wir hatten
@@ -16003,6 +16022,7 @@ struct BahnFelder {
     lateral_samples: Vec<storage::LateralSample>,
     surface_paved: Option<bool>,
     overrun_m: Option<f64>,
+    lateral_skip_reason: Option<String>,
     runway_exits: Vec<storage::RunwayExit>,
 }
 
@@ -16195,11 +16215,16 @@ where
     let assessed = assess_touchdown(stats);
 
     // v1.7.0 Bahndisziplin — an einer Stelle abgeleitet, siehe `bahn_felder`.
-    let bahn = bahn_felder(stats, aircraft_icao);
+    let bahn = bahn_felder(
+        stats,
+        aircraft_icao,
+        bahn_skip_grund(&computed_sub_scores),
+    );
 
     Some(LandingRecord {
         clearance_point_m: bahn.clearance_point_m,
         scoring_cutoff_m: bahn.scoring_cutoff_m,
+        lateral_skip_reason: bahn.lateral_skip_reason.clone(),
         runway_exits: bahn.runway_exits.clone(),
         clearance_speed_kt: bahn.clearance_speed_kt,
         clearance_side: bahn.clearance_side,
@@ -25257,6 +25282,14 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 &stats,
                                 Some(flight.aircraft_icao.as_str())
                                     .filter(|s| !s.is_empty()),
+                                // Kein Skip-Grund: Die Bewertung laeuft
+                                // erst nach diesem Publish (siehe den
+                                // Hinweis zum nachgelagerten
+                                // `sub_scores`-Array weiter oben). Hier
+                                // etwas zu behaupten waere geraten — die
+                                // Webapp liest den Grund ohnehin aus den
+                                // `sub_scores` des PIREP.
+                                None,
                             )
                             .wire(),
                         }
@@ -45965,7 +45998,7 @@ mod v0_16_6_bush_completeness_tests {
         {
             let mut stats = FlightStats::default();
             stats.bahn_spur = vec![(523.2, -5.7), (1907.35, -80.04)];
-            let wire = bahn_felder(&stats, None).wire();
+            let wire = bahn_felder(&stats, None, None).wire();
             let spur = wire.lateral_samples.expect("Spur liegt vor");
             let text = serde_json::to_string(&spur).unwrap();
             assert!(
@@ -45990,7 +46023,7 @@ mod v0_16_6_bush_completeness_tests {
             let mut stats = FlightStats::default();
 
             // Gar keine Bahn: Alles leer, nichts geraten.
-            let f = bahn_felder(&stats, Some("A320"));
+            let f = bahn_felder(&stats, Some("A320"), None);
             assert!(f.runway_width_m.is_none(), "Bahnbreite ohne Bahntreffer");
             assert!(f.min_edge_clearance_m.is_none(), "Randabstand ohne Bahn");
             assert!(f.runway_exits.is_empty());
@@ -46014,7 +46047,7 @@ mod v0_16_6_bush_completeness_tests {
                 displaced_threshold_ft: 0,
             });
             stats.bahn_max_querversatz_m = Some(3.0);
-            let f = bahn_felder(&stats, Some("A320"));
+            let f = bahn_felder(&stats, Some("A320"), None);
             assert!(
                 f.runway_width_m.is_none(),
                 "Breite 0 muss als unbekannt durchgehen, nicht als Bahn ohne Breite"
@@ -46027,14 +46060,14 @@ mod v0_16_6_bush_completeness_tests {
 
             // Unbekanntes Muster: keine Spurweite, also auch kein Randabstand.
             stats.runway_match.as_mut().unwrap().width_ft = 151.0;
-            let f = bahn_felder(&stats, Some("ZZZZ"));
+            let f = bahn_felder(&stats, Some("ZZZZ"), None);
             assert!(f.track_width_m.is_none(), "erfundene Spurweite fuer ZZZZ");
             assert!(f.track_width_source.is_none(), "Quelle ohne Wert");
             assert!(f.min_edge_clearance_m.is_none());
 
             // Mit Muster: jetzt darf gerechnet werden — und das Ergebnis
             // muss zur Geometrie passen.
-            let f = bahn_felder(&stats, Some("A320"));
+            let f = bahn_felder(&stats, Some("A320"), None);
             let spur = f.track_width_m.expect("A320 steht in der Tabelle");
             let rand = f.min_edge_clearance_m.expect("alle drei Groessen da");
             let halbe = 151.0 * 0.3048 / 2.0;
@@ -46104,7 +46137,7 @@ mod v0_16_6_bush_completeness_tests {
             stats.bahn_raeum_laengs_m = Some(1500.0);
             stats.bahn_raeum_gs_kt = Some(45.0);
 
-            let f = bahn_felder(&stats, Some("A320"));
+            let f = bahn_felder(&stats, Some("A320"), None);
             assert_eq!(
                 f.clearance_point_m,
                 Some(1600.0),
@@ -46157,7 +46190,7 @@ mod v0_16_6_bush_completeness_tests {
             stats.bahn_raeum_laengs_m = Some(1500.0);
             stats.bahn_raeum_gs_kt = Some(40.0);
 
-            let f = bahn_felder(&stats, Some("A320"));
+            let f = bahn_felder(&stats, Some("A320"), None);
             let cut = f.scoring_cutoff_m.expect("Bewertungsende");
             let clear = f.clearance_point_m.expect("Raeumpunkt");
             assert!(
@@ -46211,7 +46244,7 @@ mod v0_16_6_bush_completeness_tests {
             );
 
             // Und die abgeleiteten Felder halten die Reihenfolge ein.
-            let f = bahn_felder(&stats, Some("A320"));
+            let f = bahn_felder(&stats, Some("A320"), None);
             match (f.scoring_cutoff_m, f.clearance_point_m) {
                 (Some(cut), Some(clear)) => assert!(
                     cut <= clear,
@@ -46259,7 +46292,7 @@ mod v0_16_6_bush_completeness_tests {
             let aus_datei = aus_tabelle + 2.0;
             stats.fahrwerk_spurweite_m = Some(aus_datei);
 
-            let f = bahn_felder(&stats, Some("A320"));
+            let f = bahn_felder(&stats, Some("A320"), None);
             assert_eq!(f.track_width_m, Some(aus_datei), "Anzeige nimmt die Datei");
             assert_eq!(f.track_width_source.as_deref(), Some("aircraft_file"));
 
@@ -46364,7 +46397,7 @@ mod v0_16_6_bush_completeness_tests {
                             stats.bahn_raeum_laengs_m = Some(1500.0);
                             stats.bahn_raeum_gs_kt = Some(45.0);
                         }
-                        let f = bahn_felder(&stats, Some("A320"));
+                        let f = bahn_felder(&stats, Some("A320"), None);
                         let lage = format!(
                             "Spur-Uebertritt={hat_spur_uebertritt} \
                              Live-Kante={hat_live_kante} Raeumpunkt={hat_raeum}"
@@ -46454,7 +46487,7 @@ mod v0_16_6_bush_completeness_tests {
                 .to_string(),
             );
             assert!(
-                bahn_felder(&stats, Some("A320")).runway_exits.is_empty(),
+                bahn_felder(&stats, Some("A320"), None).runway_exits.is_empty(),
                 "Rollwege aus Hamburg landen an einer Frankfurter Bahn"
             );
         }
@@ -46540,7 +46573,7 @@ mod v0_16_6_bush_completeness_tests {
                 ]}"#
                 .to_string(),
             );
-            let felder = bahn_felder(&stats, Some("A320"));
+            let felder = bahn_felder(&stats, Some("A320"), None);
             assert!(
                 !felder.runway_exits.is_empty(),
                 "die Bodenkarte liegt vor und die Bahn ist gematcht, \
@@ -46551,7 +46584,7 @@ mod v0_16_6_bush_completeness_tests {
             // Und ohne Karte bleibt es leer, statt etwas zu behaupten.
             stats.arr_ground_geojson = None;
             assert!(
-                bahn_felder(&stats, Some("A320")).runway_exits.is_empty(),
+                bahn_felder(&stats, Some("A320"), None).runway_exits.is_empty(),
                 "ohne Bodenkarte duerfen keine Ausfahrten entstehen"
             );
         }

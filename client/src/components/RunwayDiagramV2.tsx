@@ -100,6 +100,8 @@ export interface RunwayDiagramV2Props {
   min_edge_clearance_m?: number | null;
   max_lateral_offset_m?: number | null;
   lateral_samples?: Array<{ laengs_m: number; quer_m: number }> | null;
+  /** Warum die seitliche Bewertung entfiel — der Grund aus der BEWERTUNG. */
+  lateral_skip_reason?: string | null;
   surface_paved?: boolean | null;
   overrun_m?: number | null;
 

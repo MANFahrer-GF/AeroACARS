@@ -627,4 +627,38 @@ describe("QS — Vollständigkeit", () => {
       "die gestrichelte Spur wird gezeichnet, aber nirgends erklärt",
     ).toContain("nicht mehr gewertet");
   });
+  /**
+   * Verwirft die Bewertung die seitliche Lage, zeichnet die Grafik kein Band.
+   *
+   * Der Text allein genügt nicht: Ein Hinweis unter einer weiter
+   * gezeichneten Queransicht liest sich wie eine Fussnote, nicht wie ein
+   * Verzicht. Die Zahl im Bild stünde neben echten Messwerten und wäre von
+   * ihnen nicht zu unterscheiden.
+   *
+   * Geprüft für die zwei Gründe, die die Anzeige bis Runde 21 gar nicht
+   * kannte — sie zeichnete dabei ein Band mit Randabstand, auf einer
+   * Geometrie, der die Bewertung nicht traut, oder aus einem Versatz, den
+   * sie als Messfehler verworfen hat.
+   */
+  it.each([
+    ["untrusted_geometry", "nicht verlässlich"],
+    ["implausible_lateral_track", "kann nicht stimmen"],
+    ["insufficient_samples", "Zu wenige Messpunkte"],
+  ])("verzichtet sichtbar bei %s", (grund, textstueck) => {
+    const r = MOCK_LANDING_OPTIONS.map((o) => o.build()).find(
+      (x) => (x.lateral_samples?.length ?? 0) > 2 && x.runway_width_m != null,
+    );
+    expect(r, "keine Variante mit Spur und Bahnbreite").toBeDefined();
+    r!.lateral_skip_reason = grund;
+    const props = mapLandingRecordToV2Props(r!);
+    const markup = renderToStaticMarkup(<RunwayDiagramV2 {...props!} />);
+
+    expect(markup, `der Grund „${grund}" wird nicht ausgeschrieben`).toContain(
+      textstueck,
+    );
+    expect(
+      markup,
+      "die Queransicht wird trotz verworfener Bewertung gezeichnet",
+    ).not.toContain("QUER —");
+  });
 });

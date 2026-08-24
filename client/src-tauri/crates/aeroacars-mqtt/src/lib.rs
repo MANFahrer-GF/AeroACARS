@@ -963,6 +963,13 @@ pub struct BahnWire {
     pub surface_paved: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overrun_m: Option<f64>,
+    /// Warum die seitliche Bewertung entfiel. `None` = bewertet.
+    ///
+    /// Der Grund kommt aus der Bewertung selbst (`sub_scores`), damit die
+    /// Anzeige ihn nicht ein zweites Mal herleitet. Zwei Herleitungen
+    /// desselben Urteils driften auseinander.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lateral_skip_reason: Option<String>,
     /// Die Ausfahrten dieser Bahn.
     ///
     /// # Warum sie über die Leitung gehen
@@ -2416,6 +2423,7 @@ mod tests {
             ]),
             surface_paved: Some(true),
             overrun_m: None,
+            lateral_skip_reason: None,
             runway_exits: None,
         };
         let j: serde_json::Value =

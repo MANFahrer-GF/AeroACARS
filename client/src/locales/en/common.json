@@ -1956,7 +1956,13 @@
       "no_lateral_track": "No rollout track recorded for this flight. Flights before v1.7.0 do not have one.",
       "unpaved_runway": "Grass or natural strip: the edge is gradual and cannot be measured against.",
       "surface_unknown": "The surface of this runway is unknown — without it the edge is not a reliable boundary.",
-      "track_width_unknown": "The track width of this type is not on record; without it the position of the wheels cannot be determined."
+      "track_width_unknown": "The track width of this type is not on record; without it the position of the wheels cannot be determined.",
+      "untrusted_geometry": "The runway data for this landing is not reliable — without it the edge is not a dependable boundary.",
+      "implausible_lateral_track": "The measured offset cannot be right — most likely a measurement error, so no lateral assessment.",
+      "off_airport_landing": "No runway identified — without one there is no edge to measure a distance to.",
+      "missing_lateral_track": "No roll-out track recorded for this flight. Flights from before v1.7.0 do not have one.",
+      "insufficient_samples": "Too few samples on the runway — two or three points do not show a track.",
+      "water_runway": "Water landing — there is no paved edge to measure a distance to."
     },
     "edge_left": "Edge",
     "edge_right": "Edge",

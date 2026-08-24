@@ -46,6 +46,7 @@ const FELDER = [
   "surface_paved",
   "overrun_m",
   "runway_exits",
+  "lateral_skip_reason",
 ];
 
 /** Die Glieder der Kette, in der Reihenfolge, in der ein Wert sie durchläuft. */
