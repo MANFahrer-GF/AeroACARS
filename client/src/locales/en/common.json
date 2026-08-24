@@ -1961,6 +1961,7 @@
       "surface_unknown": "The surface of this runway is unknown — without it the edge is not a reliable boundary.",
       "track_width_unknown": "The track width of this type is not on record; without it the position of the wheels cannot be determined.",
       "untrusted_geometry": "The runway data for this landing is not reliable — without it the edge is not a dependable boundary.",
+      "runway_axis_mismatch": "The runway axis in the nav data does not match the runway in the simulator — the roll-out track runs at an angle to it. A lateral offset against this axis would not be a pilot error but a scenery mismatch.",
       "implausible_lateral_track": "The measured offset cannot be right — most likely a measurement error, so no lateral assessment.",
       "off_airport_landing": "No runway identified — without one there is no edge to measure a distance to.",
       "missing_lateral_track": "No roll-out track recorded for this flight. Flights from before v1.7.0 do not have one.",

@@ -241,6 +241,8 @@ pub struct LandingScoringInput {
     pub bahn_overrun_m: Option<f64>,
     /// v1.7.0 — Positionsproben im Messfenster.
     pub bahn_proben: Option<usize>,
+    /// Winkel der Rollspur zur Bahnachse in Grad — Szenerie gegen Navdaten.
+    pub bahn_achsen_abweichung_grad: Option<f64>,
     /// v1.7.0 — Spurweite aus der **Flugzeugdatei**, falls gelesen.
     ///
     /// # Warum die Bewertung sie kennen muss
@@ -383,6 +385,9 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
                 },
                 runway_geometry_trusted: input.runway_geometry_trusted,
                 proben: input.bahn_proben,
+                // Der Winkel wird dort gerechnet, wo die Spur liegt
+                // (lib.rs), nicht hier — die Achse bekommt das Ergebnis.
+                achsen_abweichung_grad: input.bahn_achsen_abweichung_grad,
             },
         ));
     }
@@ -848,6 +853,7 @@ mod tests {
     #[test]
     fn compute_sub_scores_never_emits_flare() {
         let rich = LandingScoringInput {
+            bahn_achsen_abweichung_grad: None,
             // v1.7.0: Aufsetzpunkt-Achse — der Test laeuft ueber einen VOLL
             // besetzten Input, damit jeder Zweig feuert.
             aim_point_m: Some(400.0),

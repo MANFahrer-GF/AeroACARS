@@ -102,6 +102,74 @@ const KANTEN_TOLERANZ_M: f64 = 2.1;
 /// Grundsatz wie überall: Datenmangel darf nie zur härteren Note führen.
 const MESSUNG_FRAGWUERDIG_AB_M: f64 = 30.0;
 
+/// Ab welchem Winkel zur Bahnachse die ACHSE nicht stimmen kann.
+///
+/// # Der Fall, der das erzwungen hat
+///
+/// FACT 19 (Kapstadt), 24.08.2026, A340-600 in X-Plane: Der Bericht sagte
+/// „Aufsetzen 24,6 m links" auf einer 61 m breiten Bahn und „grösster
+/// Versatz 35,3 m links" — ein Rad weit im Gras. Das Bildschirmfoto des
+/// Piloten zeigt die Maschine mittig auf der Bahn.
+///
+/// Nachgerechnet stimmte die Zahl: Gegen die Navdaten-Achse WAR die
+/// Maschine 24,6 m links. Nur läuft die Rollspur auf dem geraden Teil
+/// **1,95° zu dieser Achse** — und ein rollendes Flugzeug folgt der
+/// aufgemalten Mittellinie. Also ist die Achse falsch, nicht die Spur:
+/// Die X-Plane-Szenerie von FACT ist gegenüber dem AIRAC-Stand verdreht.
+/// Auf 3201 m Bahnlänge macht das 109 m Querfehler.
+///
+/// **Gemessen an 12 Landungen desselben Tages** (Winkel der
+/// Ausgleichsgeraden über den Teil vor dem Ausschwenken):
+///
+/// ```text
+/// Median 0,29°  ·  alle ausser FACT unter 0,66°  ·  FACT 1,55°
+/// ```
+///
+/// Ein Grad lässt beiden Seiten Luft: gut das Dreifache des Normalfalls,
+/// deutlich unter dem Störfall.
+///
+/// Jenseits davon wird **übersprungen**, nicht bewertet — nach demselben
+/// Grundsatz wie überall: Datenmangel darf nie zur härteren Note führen,
+/// und ein Szenerie-Versatz ist kein Pilotenfehler.
+const ACHSE_FRAGWUERDIG_AB_GRAD: f64 = 1.0;
+
+/// Der Winkel der Rollspur zur Bahnachse, in Grad.
+///
+/// Ausgleichsgerade über die Punkte bis `bis_laengs_m` — also über den
+/// Teil, auf dem das Flugzeug noch der Bahn folgt. Danach beginnt das
+/// Ausschwenken, und das ist kein Achsenfehler, sondern eine Ausfahrt.
+///
+/// `None`, wenn zu wenige Punkte da sind oder alle auf derselben
+/// Längsposition liegen (dann hat die Gerade keine Steigung).
+pub fn achsen_abweichung_grad(
+    proben: &[(f64, f64)],
+    bis_laengs_m: f64,
+) -> Option<f64> {
+    let auf: Vec<(f64, f64)> = proben
+        .iter()
+        .copied()
+        .filter(|(lg, qr)| *lg <= bis_laengs_m && lg.is_finite() && qr.is_finite())
+        .collect();
+    // Unter zehn Punkten ist eine Gerade Zufall.
+    if auf.len() < 10 {
+        return None;
+    }
+    let n = auf.len() as f64;
+    let sx: f64 = auf.iter().map(|(x, _)| *x).sum();
+    let sy: f64 = auf.iter().map(|(_, y)| *y).sum();
+    let sxx: f64 = auf.iter().map(|(x, _)| x * x).sum();
+    let sxy: f64 = auf.iter().map(|(x, y)| x * y).sum();
+    let nenner = n * sxx - sx * sx;
+    if nenner.abs() < 1e-9 {
+        return None;
+    }
+    let steigung = (n * sxy - sx * sy) / nenner;
+    if !steigung.is_finite() {
+        return None;
+    }
+    Some(steigung.atan().to_degrees())
+}
+
 /// Eingabe der Bahndisziplin-Achse.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BahndisziplinInput {
@@ -125,6 +193,9 @@ pub struct BahndisziplinInput {
     /// Anzahl der Positionsproben im Messfenster. Unter 3 ist die Aussage
     /// nicht belastbar.
     pub proben: Option<usize>,
+    /// Winkel der Rollspur zur Bahnachse, in Grad — siehe
+    /// `ACHSE_FRAGWUERDIG_AB_GRAD`. `None` = nicht bestimmbar.
+    pub achsen_abweichung_grad: Option<f64>,
 }
 
 /// Bewertet die Bahndisziplin.
@@ -190,6 +261,16 @@ pub fn sub_bahndisziplin(input: &BahndisziplinInput) -> SubScoreEntry {
     // ── Lage des äusseren Rades ──────────────────────────────────────
     let halbe = breite / 2.0;
 
+    // Stimmt die ACHSE? Ein rollendes Flugzeug folgt der Mittellinie —
+    // läuft die Spur schräg dazu, ist unsere Achse falsch, nicht die Spur.
+    // Siehe `ACHSE_FRAGWUERDIG_AB_GRAD` (FACT 19, 24.08.2026).
+    if input
+        .achsen_abweichung_grad
+        .is_some_and(|w| w.abs() > ACHSE_FRAGWUERDIG_AB_GRAD)
+    {
+        return SubScoreEntry::skipped(KEY, LABEL, "runway_axis_mismatch");
+    }
+
     // Plausibilität vor Bewertung: siehe MESSUNG_FRAGWUERDIG_AB_M.
     if versatz.abs() > halbe + MESSUNG_FRAGWUERDIG_AB_M {
         return SubScoreEntry::skipped(KEY, LABEL, "implausible_lateral_track");
@@ -250,8 +331,8 @@ mod tests {
             overrun_m: None,
             belag: Some(Belag::Befestigt),
             airport_source: Some("runway_match"),
-            runway_geometry_trusted: Some(true),
-            proben: Some(30),
+            runway_geometry_trusted: Some(true),            achsen_abweichung_grad: None,
+        proben: Some(30),
         }
     }
 

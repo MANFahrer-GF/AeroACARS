@@ -1961,6 +1961,7 @@
       "surface_unknown": "Der Belag dieser Bahn ist nicht bekannt — ohne ihn ist die Kante keine belastbare Grenze.",
       "track_width_unknown": "Die Spurweite dieses Musters ist nicht hinterlegt; ohne sie lässt sich die Lage der Räder nicht bestimmen.",
       "untrusted_geometry": "Die Bahndaten dieser Landung sind nicht verlässlich — ohne sie ist die Kante keine belastbare Grenze.",
+      "runway_axis_mismatch": "Die Bahnachse in den Navdaten passt nicht zur Bahn im Simulator — die Rollspur läuft schräg dazu. Ein Querversatz gegen diese Achse wäre kein Pilotenfehler, sondern ein Szenerie-Versatz.",
       "implausible_lateral_track": "Der gemessene Versatz kann nicht stimmen — vermutlich ein Messfehler, deshalb keine seitliche Bewertung.",
       "off_airport_landing": "Keine erkannte Bahn — ohne sie gibt es keine Kante, zu der ein Abstand messbar wäre.",
       "missing_lateral_track": "Für diesen Flug ist kein Rollweg erfasst. Flüge von vor v1.7.0 haben ihn nicht.",

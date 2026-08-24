@@ -169,8 +169,8 @@ fn korpus_nachrechnung() {
             overrun_m: z.overrun_m,
             belag: Some(belag_aus_angabe(Some(&z.belag))),
             airport_source: Some("runway_match"),
-            runway_geometry_trusted: Some(true),
-            proben: Some(z.proben),
+            runway_geometry_trusted: Some(true),            achsen_abweichung_grad: None,
+        proben: Some(z.proben),
         });
 
         // Aim/TDZ nach denselben Regeln wie `runway_assessment`.

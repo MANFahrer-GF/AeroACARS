@@ -15175,6 +15175,21 @@ fn fill_v2_rollout_fields(
     input.bahn_max_querversatz_m = stats.bahn_max_querversatz_m;
     input.bahn_overrun_m = stats.bahn_overrun_m;
     input.bahn_proben = Some(stats.bahn_proben as usize);
+    // Läuft die Rollspur schräg zur Bahnachse? Dann stimmt die ACHSE
+    // nicht — ein rollendes Flugzeug folgt der Mittellinie. Gemessen
+    // wird nur bis zum Bewertungsende; danach ist Ausschwenken, und das
+    // ist kein Achsenfehler. Siehe `ACHSE_FRAGWUERDIG_AB_GRAD`.
+    input.bahn_achsen_abweichung_grad = stats
+        .bahn_kante_laengs_m
+        .or(stats.bahn_raeum_laengs_m)
+        .and_then(|bis| {
+            let proben: Vec<(f64, f64)> = stats
+                .bahn_spur
+                .iter()
+                .map(|(lg, qr)| (*lg as f64, *qr as f64))
+                .collect();
+            landing_scoring::sub_bahndisziplin::achsen_abweichung_grad(&proben, bis as f64)
+        });
     // Die Spurweite aus der Flugzeugdatei, falls gelesen — dieselbe
     // Quelle, aus der die Anzeige ihren Randabstand rechnet. Ohne diese
     // Zeile zeigt die Grafik einen anderen Wert, als die Note benutzt:
@@ -47176,6 +47191,7 @@ mod v0_16_6_bush_completeness_tests {
 
             let mit_datei = landing_scoring::sub_bahndisziplin::sub_bahndisziplin(
                 &landing_scoring::sub_bahndisziplin::BahndisziplinInput {
+                    achsen_abweichung_grad: None,
                     max_querversatz_m: eingang.bahn_max_querversatz_m,
                     bahnbreite_m: eingang.runway_width_m.map(|w| w as f64),
                     spurweite_m: eingang

@@ -138,6 +138,8 @@ function skipText(grund: string): string {
       return "Die Spurweite dieses Musters ist nicht hinterlegt; ohne sie lässt sich die Lage der Räder nicht bestimmen.";
     case "insufficient_samples":
       return "Zu wenige Messpunkte auf der Bahn — aus zwei oder drei Proben lässt sich kein Verlauf ablesen.";
+    case "runway_axis_mismatch":
+      return "Die Bahnachse in den Navdaten passt nicht zur Bahn im Simulator — die Rollspur läuft schräg dazu. Ein Querversatz gegen diese Achse wäre kein Pilotenfehler, sondern ein Szenerie-Versatz.";
     case "untrusted_geometry":
       return "Die Bahndaten dieser Landung sind nicht verlässlich — ohne sie ist die Kante keine belastbare Grenze.";
     case "implausible_lateral_track":
