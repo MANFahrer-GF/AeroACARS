@@ -100,7 +100,11 @@ fn der_nachtrag_haengt_dort_wo_der_bahntreffer_entsteht() {
 #[test]
 fn der_nachtrag_baut_keine_zweite_spur_logik() {
     let quelle = fs::read_to_string("src/lib.rs").expect("lib.rs");
-    let nachtrag = rumpf(&quelle, "fn spur_aus_puffer_nachtragen(");
+    // Seit dem fortlaufenden Abschoepfen reicht `spur_aus_puffer_nachtragen`
+    // nur noch weiter. Geprueft wird die Stelle, die die Arbeit macht —
+    // die Absicht des Waechters ist dieselbe geblieben: EINE Ausduennung,
+    // nicht zwei, die gegeneinander driften.
+    let nachtrag = rumpf(&quelle, "fn spur_aus_puffer_abschoepfen(");
 
     assert!(
         nachtrag.contains("spur_fortschreiben("),
@@ -174,5 +178,91 @@ fn der_zwischenstand_gibt_sich_nicht_als_endgueltig_aus() {
     assert!(
         !final_zweig.contains(".wire(false)"),
         "Im Finalisierungs-Zweig steht `wire(false)` — vertauscht."
+    );
+}
+
+// ── Die Aufloesung der Spur haengt am Abtaster, nicht am Sendetakt ───
+//
+// # Der Befund (Thomas, 25.08.2026)
+//
+// „Aber die Datenpunkte-Wolke ist auch nicht gut → zum Anfang und Ende
+// kaum welche." Nachgemessen an Flug #1081 (KDAL/13L):
+//
+// ```text
+//  740–1038 m (Aufsetzzone)    7 Punkte   42,6 m Abstand
+// 1038–1336 m                 23 Punkte   13,0 m
+// 1932–2230 m                 49 Punkte    6,1 m
+// groesste Luecke                        222,4 m
+// ```
+//
+// Ueber fuenfzehn Landungen des Live-Korpus: Median 13–14 m in den
+// ersten dreihundert Metern, groesste Luecke je Fassung 73–96 m.
+//
+// Ursache: Die Spur wurde aus dem Streamer-Tick gefuettert (zwei Hertz
+// vor dem Aufsetzen, fuenf im erkannten Ausrollen). Der 50-Hz-Puffer,
+// aus dem der Aufsetzer selbst erkannt wird, wurde nur EINMAL angezapft
+// — beim Nachtrag nach der Bahnzuordnung, und der deckt kaum eine
+// Sekunde ab.
+
+#[test]
+fn der_puffer_wird_fortlaufend_abgeschoepft_nicht_nur_einmal() {
+    let q = fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let tick = rumpf(&q, "fn bahndisziplin_tick(");
+    assert!(
+        tick.contains("spur_aus_puffer_abschoepfen("),
+        "der Takt schoepft den 50-Hz-Puffer nicht nach — die Spur haengt \
+         wieder am Sendetakt, und die Aufsetzzone bekommt die wenigsten \
+         Punkte der ganzen Landung"
+    );
+}
+
+#[test]
+fn erst_der_puffer_dann_der_aktuelle_wert() {
+    // Der Puffer traegt die Werte ZWISCHEN dem letzten Tick und jetzt.
+    // Kaemen sie danach, liefen die Punkte rueckwaerts und die Zeichnung
+    // zeigte einen Zickzack, den es nie gab.
+    let q = fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let tick = rumpf(&q, "fn bahndisziplin_tick(");
+    let puffer = tick
+        .find("spur_aus_puffer_abschoepfen(")
+        .expect("Abschoepfen vorhanden");
+    let jetzt = tick
+        .find("spur_fortschreiben(stats, snap.groundspeed_kt")
+        .expect("Fortschreibung vorhanden");
+    assert!(
+        puffer < jetzt,
+        "der aktuelle Wert wird VOR dem Puffer gelegt — die Punkte laufen \
+         rueckwaerts"
+    );
+}
+
+#[test]
+fn der_merker_verhindert_das_doppelte_durchrechnen() {
+    // Ohne ihn wuerde bei jedem Tick der ganze Ringpuffer neu
+    // durchgerechnet. Falsche Punkte gaebe das nicht (der Mindestabstand
+    // faengt das ab), aber es waere Arbeit fuer nichts, fuenfmal je
+    // Sekunde.
+    let q = fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let f = rumpf(&q, "fn spur_aus_puffer_abschoepfen(");
+    assert!(
+        f.contains("bahn_spur_bis"),
+        "kein Merker — der Puffer wird bei jedem Tick komplett neu gelesen"
+    );
+    assert!(
+        f.contains("stats.bahn_spur_bis = Some(at)"),
+        "der Merker wird nie fortgeschrieben"
+    );
+}
+
+#[test]
+fn der_nachtrag_geht_denselben_weg() {
+    // Zwei Wege in dieselbe Ablage waeren zwei Stellen, an denen die
+    // Reihenfolge kaputtgehen kann. Der Nachtrag ist deshalb nur noch
+    // ein Aufruf des Abschoepfens.
+    let q = fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let f = rumpf(&q, "fn spur_aus_puffer_nachtragen(");
+    assert!(
+        f.contains("spur_aus_puffer_abschoepfen("),
+        "der Nachtrag hat wieder eine eigene Schleife"
     );
 }

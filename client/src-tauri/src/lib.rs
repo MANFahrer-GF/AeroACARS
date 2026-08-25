@@ -4244,6 +4244,14 @@ struct FlightStats {
     /// snapshot rate or SimConnect's PLANE TOUCHDOWN * latching.
     snapshot_buffer: std::collections::VecDeque<TelemetrySample>,
 
+    /// Bis wohin der 50-Hz-Puffer schon in die Spur gelegt wurde.
+    ///
+    /// Ohne diesen Merker wuerde bei jedem Tick der ganze Ringpuffer
+    /// (fuenf Sekunden, rund zweihundertfuenfzig Werte) neu durchgerechnet.
+    /// Falsche Punkte gaebe das nicht — der Mindestabstand faengt das ab —
+    /// aber es waere Arbeit fuer nichts, fuenfmal je Sekunde.
+    bahn_spur_bis: Option<DateTime<Utc>>,
+
     /// v0.5.39: post-touchdown sample collection. Wenn der Sampler den
     /// on_ground-Edge erkennt, sammelt er Samples in diesem Buffer
     /// für TOUCHDOWN_POST_WINDOW_SECS sec. Sobald gefüllt → wird
@@ -27544,6 +27552,44 @@ const BAHN_SPUR_STOP_GS_KT: f32 = 5.0;
 /// Zweitimplementierung, die dieses Projekt schon mehrfach teuer
 /// bezahlt hat.
 fn spur_aus_puffer_nachtragen(stats: &mut FlightStats, halbe_breite_m: f64) {
+    spur_aus_puffer_abschoepfen(stats, halbe_breite_m);
+}
+
+/// Alles aus dem 50-Hz-Puffer in die Spur legen, was noch nicht drin ist.
+///
+/// # Warum das fortlaufend passiert und nicht nur einmal
+///
+/// Die Spur hing am **Veroeffentlichungstakt** des Streamers, nicht am
+/// Abtaster. Der Streamer tickt vor dem Aufsetzen mit zwei Hertz und
+/// erst im erkannten Ausrollen mit fuenf — bei 140 Knoten sind das
+/// sechsunddreissig Meter zwischen zwei Punkten, und zwar genau in der
+/// Aufsetzzone.
+///
+/// Gemessen an fuenfzehn Landungen des Live-Korpus (25.08.2026), Abstand
+/// der Stuetzpunkte in den ersten dreihundert Metern nach dem Aufsetzen:
+///
+/// ```text
+/// Median ueber alle           13–14 m
+/// groesste Luecke je Fassung  73–96 m
+/// Ausreisser KDAL/13L (#1081) 42,9 m im Mittel, groesste Luecke 222 m
+/// ```
+///
+/// Der Puffer, aus dem der Aufsetzer selbst erkannt wird, laeuft mit
+/// fuenfzig Hertz — bei 140 Knoten alle anderthalb Meter ein Wert. Die
+/// Daten waren also die ganze Zeit da; sie wurden nur EINMAL angezapft,
+/// beim Nachtrag nach der Bahnzuordnung, und der deckt kaum eine
+/// Sekunde ab.
+///
+/// Diese Fassung schoepft bei jedem Tick nach. Kein neuer Takt, keine
+/// zusaetzlichen Positionsmeldungen, kein Eingriff in die
+/// Veroeffentlichung — nur die Aufloesung, die der Abtaster ohnehin
+/// misst.
+///
+/// Doppelte Punkte kann es dabei nicht geben: `spur_fortschreiben` nimmt
+/// einen Wert erst ab `BAHN_SPUR_MIN_ABSTAND_M` Abstand zum letzten.
+/// Der Merker `bahn_spur_bis` sorgt nur dafuer, dass nicht bei jedem Tick
+/// fuenf Sekunden Puffer neu durchgerechnet werden.
+fn spur_aus_puffer_abschoepfen(stats: &mut FlightStats, halbe_breite_m: f64) {
     let Some(td_at) = stats.landing_at else {
         return;
     };
@@ -27554,17 +27600,21 @@ fn spur_aus_puffer_nachtragen(stats: &mut FlightStats, halbe_breite_m: f64) {
     let (t_lat, t_lon, e_lat, e_lon) =
         (rm.threshold_lat, rm.threshold_lon, rm.end_lat, rm.end_lon);
 
-    // Nur Eintraege ab dem Aufsetzzeitpunkt, in ihrer Reihenfolge.
-    let proben: Vec<(f64, f64, f32)> = stats
+    // Ab dem Aufsetzzeitpunkt — oder ab dem, was beim letzten Mal schon
+    // verarbeitet war. Was frueher liegt, ist entweder Anflug oder
+    // laengst gezeichnet.
+    let ab = stats.bahn_spur_bis.unwrap_or(td_at).max(td_at);
+    let proben: Vec<(f64, f64, f32, DateTime<Utc>)> = stats
         .snapshot_buffer
         .iter()
-        .filter(|p| p.at >= td_at && p.on_ground)
-        .map(|p| (p.lat, p.lon, p.groundspeed_kt))
+        .filter(|p| p.at >= ab && p.on_ground)
+        .map(|p| (p.lat, p.lon, p.groundspeed_kt, p.at))
         .collect();
 
-    for (lat, lon, gs) in proben {
+    for (lat, lon, gs, at) in proben {
         let (laengs_m, quer_m) = runway::projiziere_auf_bahn(t_lat, t_lon, e_lat, e_lon, lat, lon);
         spur_fortschreiben(stats, gs, laengs_m, quer_m, halbe_breite_m);
+        stats.bahn_spur_bis = Some(at);
     }
 }
 
@@ -27833,6 +27883,19 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     //
     // `spur_fortschreiben` hat seine eigenen Riegel: unter fuenf Knoten,
     // jenseits des Randes, oder wenn die Ablage voll ist.
+    // ERST den 50-Hz-Puffer nachschoepfen, DANN den Wert dieses Ticks.
+    //
+    // Die Reihenfolge ist keine Geschmacksfrage: Der Puffer traegt die
+    // Werte ZWISCHEN dem letzten Tick und jetzt. Kaemen sie danach,
+    // liefen die Punkte in der Ablage rueckwaerts, und die Zeichnung
+    // zeigte einen Zickzack, den es nie gab.
+    //
+    // Was das bringt: Die Spur hing bis hierher am Veroeffentlichungstakt
+    // (zwei Hertz vor dem Aufsetzen, fuenf im erkannten Ausrollen). Bei
+    // 140 Knoten sind zwei Hertz sechsunddreissig Meter — genau in der
+    // Aufsetzzone, dem wichtigsten Stueck. Der Abtaster misst dort
+    // ohnehin mit fuenfzig Hertz.
+    spur_aus_puffer_abschoepfen(stats, halbe_breite_m);
     spur_fortschreiben(stats, snap.groundspeed_kt, laengs_m, quer_m, halbe_breite_m);
 }
 
