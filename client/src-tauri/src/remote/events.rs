@@ -44,13 +44,9 @@ pub async fn handle_socket(
     // the live panel without waiting for the next shared tick.
     let initial = crate::remote::current_flight_status_value(&ctx.app);
     let initial_json = initial.to_string();
-    if send_event(
-        &mut socket,
-        crate::remote::FLIGHT_STATUS_EVENT,
-        &initial_json,
-    )
-    .await
-    .is_err()
+    if send_event(&mut socket, crate::remote::FLIGHT_STATUS_EVENT, &initial_json)
+        .await
+        .is_err()
     {
         return;
     }

@@ -100,17 +100,13 @@ pub fn ausfahrten_fuer_bahn(
         if geom.and_then(|g| g.get("type")).and_then(|t| t.as_str()) != Some("LineString") {
             continue;
         }
-        let Some(punkte) = geom
-            .and_then(|g| g.get("coordinates"))
-            .and_then(|c| c.as_array())
+        let Some(punkte) = geom.and_then(|g| g.get("coordinates")).and_then(|c| c.as_array())
         else {
             continue;
         };
 
         for p in punkte {
-            let Some((lon, lat)) = lonlat(p) else {
-                continue;
-            };
+            let Some((lon, lat)) = lonlat(p) else { continue };
             let (laengs, quer) = crate::runway::projiziere_auf_bahn(
                 threshold_lat,
                 threshold_lon,
@@ -136,7 +132,12 @@ pub fn ausfahrten_fuer_bahn(
                     eintrag.3 = kantenabstand;
                 }
                 Some(_) => {}
-                None => beste.push((name.to_string(), seite.to_string(), laengs, kantenabstand)),
+                None => beste.push((
+                    name.to_string(),
+                    seite.to_string(),
+                    laengs,
+                    kantenabstand,
+                )),
             }
         }
     }
@@ -242,11 +243,7 @@ mod tests {
     fn beide_seiten_werden_unterschieden() {
         let (la, lo) = punkt_auf_bahn(900.0, -23.0);
         let (ra, ro) = punkt_auf_bahn(1200.0, 23.0);
-        let g = karte(&format!(
-            "{},{}",
-            rollweg("D8", la, lo),
-            rollweg("D7", ra, ro)
-        ));
+        let g = karte(&format!("{},{}", rollweg("D8", la, lo), rollweg("D7", ra, ro)));
         let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
         assert_eq!(a.len(), 2, "{a:?}");
         // Nach Laengsposition sortiert.
@@ -258,10 +255,7 @@ mod tests {
     #[test]
     fn kaputte_karte_liefert_nichts_statt_zu_stuerzen() {
         for g in ["", "{}", "nicht json", r#"{"features":"x"}"#] {
-            assert!(
-                ausfahrten_fuer_bahn(g, T.0, T.1, T.2, T.3, 46.0).is_empty(),
-                "{g}"
-            );
+            assert!(ausfahrten_fuer_bahn(g, T.0, T.1, T.2, T.3, 46.0).is_empty(), "{g}");
         }
     }
 
@@ -299,15 +293,6 @@ mod tests {
             (p2.to_degrees(), l2.to_degrees())
         };
         let (a, b) = vor(T.0, T.1, laengs, kurs);
-        vor(
-            a,
-            b,
-            quer.abs(),
-            kurs + if quer >= 0.0 {
-                std::f64::consts::FRAC_PI_2
-            } else {
-                -std::f64::consts::FRAC_PI_2
-            },
-        )
+        vor(a, b, quer.abs(), kurs + if quer >= 0.0 { std::f64::consts::FRAC_PI_2 } else { -std::f64::consts::FRAC_PI_2 })
     }
 }

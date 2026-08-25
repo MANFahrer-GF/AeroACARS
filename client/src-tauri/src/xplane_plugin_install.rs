@@ -235,21 +235,16 @@ pub async fn install_plugin(xplane_root: &Path) -> Result<PluginInstallResult, S
             ));
         }
     }
-    fs::create_dir_all(&target_root).map_err(|e| {
-        format!(
-            "could not create plugin folder {}: {}",
-            target_root.display(),
-            e
-        )
-    })?;
+    fs::create_dir_all(&target_root)
+        .map_err(|e| format!("could not create plugin folder {}: {}", target_root.display(), e))?;
 
     // ---- Extract ----
     // The zip's top-level entry is `AeroACARS/...`. We strip that
     // prefix so files land directly under the user's chosen
     // `<x-plane>/Resources/plugins/AeroACARS/` folder.
     let cursor = std::io::Cursor::new(body);
-    let mut archive =
-        zip::ZipArchive::new(cursor).map_err(|e| format!("plugin zip is malformed: {e}"))?;
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|e| format!("plugin zip is malformed: {e}"))?;
 
     let mut bytes_written: u64 = 0;
     let mut files_written: u32 = 0;

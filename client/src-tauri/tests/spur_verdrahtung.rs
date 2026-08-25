@@ -33,9 +33,9 @@ use std::fs;
 
 /// Der Rumpf einer Funktion ab ihrer Signatur, ueber die Klammerbilanz.
 fn rumpf<'a>(text: &'a str, signatur: &str) -> &'a str {
-    let start = text
-        .find(signatur)
-        .unwrap_or_else(|| panic!("Funktion `{signatur}` nicht gefunden — wurde sie umbenannt?"));
+    let start = text.find(signatur).unwrap_or_else(|| {
+        panic!("Funktion `{signatur}` nicht gefunden — wurde sie umbenannt?")
+    });
     let rest = &text[start..];
     let mut tiefe = 0i32;
     let mut begonnen = false;
@@ -107,11 +107,7 @@ fn der_nachtrag_baut_keine_zweite_spur_logik() {
         "Der Nachtrag ruft `spur_fortschreiben` nicht — er baut seine \
          eigene Ausduennung, und die driftet gegen den Live-Takt."
     );
-    for verboten in [
-        "bahn_spur.push",
-        "BAHN_SPUR_MIN_ABSTAND_M",
-        "bahn_kante_m =",
-    ] {
+    for verboten in ["bahn_spur.push", "BAHN_SPUR_MIN_ABSTAND_M", "bahn_kante_m ="] {
         assert!(
             !nachtrag.contains(verboten),
             "Der Nachtrag fasst `{verboten}` selbst an, statt es \

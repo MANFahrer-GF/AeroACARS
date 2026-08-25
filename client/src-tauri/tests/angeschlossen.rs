@@ -134,8 +134,8 @@ fn jede_oeffentliche_funktion_wird_auch_gerufen() {
 
     for modul in MODULE {
         let pfad = w.join(modul);
-        let text =
-            fs::read_to_string(&pfad).unwrap_or_else(|e| panic!("{modul} nicht lesbar: {e}"));
+        let text = fs::read_to_string(&pfad)
+            .unwrap_or_else(|e| panic!("{modul} nicht lesbar: {e}"));
 
         for name in oeffentliche_funktionen(&text) {
             // Aufrufe in ANDEREN Dateien. Die eigene zählt nicht: Dort
@@ -159,7 +159,8 @@ fn jede_oeffentliche_funktion_wird_auch_gerufen() {
                 // nichts.
                 p != &pfad && produktiv(t).contains(&format!("{name}("))
             });
-            let intern_ausserhalb_tests = produktiv(&text).matches(&format!("{name}(")).count() > 1;
+            let intern_ausserhalb_tests =
+                produktiv(&text).matches(&format!("{name}(")).count() > 1;
             if !anderswo && !intern_ausserhalb_tests {
                 tot.insert(format!("{name}  ({modul})"));
             }

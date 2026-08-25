@@ -10,8 +10,5 @@ description = "AeroACARS landing-score sub-score & master-score algorithm. Singl
 serde.workspace = true
 serde_json.workspace = true
 
-[dev-dependencies]
-csv = "1"
-
 [lints]
 workspace = true

@@ -2547,7 +2547,6 @@ dependencies = [
 name = "landing-scoring"
 version = "1.7.2"
 dependencies = [
- "csv",
  "serde",
  "serde_json",
 ]

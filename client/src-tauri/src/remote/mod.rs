@@ -755,10 +755,9 @@ pub async fn remote_server_revoke_pairing(
     match guard.as_ref() {
         Some(h) => {
             h.auth.rotate_token(TOKEN_ACCOUNT);
-            state.remote_events.send(RemoteEvent::new(
-                PAIRING_REVOKED_EVENT,
-                serde_json::json!({}),
-            ));
+            state
+                .remote_events
+                .send(RemoteEvent::new(PAIRING_REVOKED_EVENT, serde_json::json!({})));
             let status = build_status(true, h.port, Some(&h.auth));
             drop(guard);
             Ok(status)
@@ -1033,8 +1032,8 @@ mod tests {
         let _c3 = tokio::net::TcpStream::connect(addr)
             .await
             .expect("client 3 connects (OS backlog, not our accept)");
-        let blocked =
-            tokio::time::timeout(std::time::Duration::from_millis(200), limited.accept()).await;
+        let blocked = tokio::time::timeout(std::time::Duration::from_millis(200), limited.accept())
+            .await;
         assert!(
             blocked.is_err(),
             "accept() must block once MAX_TCP_CONNECTIONS-equivalent slots are exhausted"

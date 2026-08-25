@@ -491,7 +491,8 @@ async fn process_poll_payload(
                             .mark_logged_off();
                         crate::hoppie::settings::clear_open_session(app);
                         *to_station.lock().expect("hoppie to_station mutex") = next.clone();
-                        send_logon(http, thread, min_meta, from_callsign, logon, &next).await;
+                        send_logon(http, thread, min_meta, from_callsign, logon, &next)
+                            .await;
                         continue;
                     }
                 }
@@ -793,11 +794,7 @@ mod tests {
         ";
 
         let parsed = wire::parse_poll_envelopes(raw_poll_body);
-        assert_eq!(
-            parsed.len(),
-            3,
-            "the real parser must find all three envelopes"
-        );
+        assert_eq!(parsed.len(), 3, "the real parser must find all three envelopes");
 
         let reordered = reorder_same_batch_envelopes(parsed);
         let decoded: Vec<_> = reordered
@@ -817,10 +814,7 @@ mod tests {
         // a_brace_survives_intact` in wire.rs guards against) as long as
         // the numbers came out in the right slots.
         assert_eq!(decoded[0].element_text, "LOGON ACCEPTED");
-        assert_eq!(
-            decoded[1].element_text,
-            "CURRENT ATC UNIT _ LBSR _ SOFIA CTR"
-        );
+        assert_eq!(decoded[1].element_text, "CURRENT ATC UNIT _ LBSR _ SOFIA CTR");
         assert_eq!(decoded[2].element_text, "PROCEED DIRECT TO NIKTI");
     }
 
@@ -833,10 +827,7 @@ mod tests {
             cpdlc_env("EDGG", 5, "AN", "CONFIRM ASSIGNED ALTITUDE"),
         ];
         let reordered = reorder_same_batch_envelopes(batch.clone());
-        assert_eq!(
-            reordered, batch,
-            "no reordering needed when nothing is NE/N"
-        );
+        assert_eq!(reordered, batch, "no reordering needed when nothing is NE/N");
     }
 
     #[test]
@@ -846,10 +837,7 @@ mod tests {
             cpdlc_env("EDGG", 2, "N", "MONITOR UNICOM 122.8"),
         ];
         let reordered = reorder_same_batch_envelopes(batch.clone());
-        assert_eq!(
-            reordered, batch,
-            "both are already 'no reply owed' and in order"
-        );
+        assert_eq!(reordered, batch, "both are already 'no reply owed' and in order");
     }
 
     #[test]
@@ -866,10 +854,7 @@ mod tests {
             cpdlc_env("LBSR", 3, "NE", "LOGON ACCEPTED"),
         ];
         let reordered = reorder_same_batch_envelopes(batch.clone());
-        assert_eq!(
-            reordered, batch,
-            "telex present → whole batch stays as received"
-        );
+        assert_eq!(reordered, batch, "telex present → whole batch stays as received");
     }
 
     #[test]
@@ -926,11 +911,7 @@ mod tests {
             .iter()
             .map(|e| cpdlc::decode(&e.packet, Direction::Uplink).unwrap().min)
             .collect();
-        assert_eq!(
-            mins,
-            vec![20, 21],
-            "already in the desired order, and not blocked"
-        );
+        assert_eq!(mins, vec![20, 21], "already in the desired order, and not blocked");
     }
 
     #[test]
@@ -956,40 +937,22 @@ mod tests {
         // Guards against this file quietly drifting from
         // ResponseRequirement::requires_reply if that ever changes.
         assert!(!requires_reply_for_batch_order(&cpdlc_env(
-            "x",
-            1,
-            "NE",
-            "LOGON ACCEPTED"
+            "x", 1, "NE", "LOGON ACCEPTED"
         )));
         assert!(!requires_reply_for_batch_order(&cpdlc_env(
-            "x",
-            1,
-            "N",
-            "MONITOR UNICOM 122.8"
+            "x", 1, "N", "MONITOR UNICOM 122.8"
         )));
         assert!(requires_reply_for_batch_order(&cpdlc_env(
-            "x",
-            1,
-            "WU",
-            "CLIMB TO FL240"
+            "x", 1, "WU", "CLIMB TO FL240"
         )));
         assert!(requires_reply_for_batch_order(&cpdlc_env(
-            "x",
-            1,
-            "AN",
-            "CONFIRM ASSIGNED ALTITUDE"
+            "x", 1, "AN", "CONFIRM ASSIGNED ALTITUDE"
         )));
         assert!(requires_reply_for_batch_order(&cpdlc_env(
-            "x",
-            1,
-            "R",
-            "ROGER TEST"
+            "x", 1, "R", "ROGER TEST"
         )));
         assert!(requires_reply_for_batch_order(&cpdlc_env(
-            "x",
-            1,
-            "Y",
-            "FREE TEXT"
+            "x", 1, "Y", "FREE TEXT"
         )));
     }
 }

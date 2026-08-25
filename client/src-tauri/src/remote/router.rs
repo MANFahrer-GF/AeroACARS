@@ -163,7 +163,12 @@ async fn serve_from_fs(spa_dir: &std::path::Path, req_path: &str) -> Option<Resp
         let index = spa_dir.join("index.html");
         let bytes = tokio::fs::read(&index).await.ok()?;
         return Some(
-            (StatusCode::OK, [(header::CONTENT_TYPE, "text/html")], bytes).into_response(),
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/html")],
+                bytes,
+            )
+                .into_response(),
         );
     }
 
@@ -270,11 +275,7 @@ fn reject_non_private(peer: SocketAddr) -> Option<Response> {
 /// (including the SPA fallback), so the static bundle isn't reachable from a
 /// forwarded/public port. Runs before the route handlers; the per-handler
 /// `reject_non_private` checks remain as redundant defense-in-depth.
-async fn lan_only(
-    ConnectInfo(crate::remote::PeerAddr(peer)): ConnectInfo<crate::remote::PeerAddr>,
-    req: Request,
-    next: Next,
-) -> Response {
+async fn lan_only(ConnectInfo(crate::remote::PeerAddr(peer)): ConnectInfo<crate::remote::PeerAddr>, req: Request, next: Next) -> Response {
     if let Some(r) = reject_non_private(peer) {
         return r;
     }
@@ -311,11 +312,9 @@ async fn auth_handler(
     // lock out pairing from a legitimate tablet on a different IP.
     match ctx.auth.try_pin(peer.ip(), &body.pin) {
         Ok(token) => (StatusCode::OK, Json(json!({ "token": token }))).into_response(),
-        Err(AuthError::BadPin) => (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": "bad_pin" })),
-        )
-            .into_response(),
+        Err(AuthError::BadPin) => {
+            (StatusCode::UNAUTHORIZED, Json(json!({ "error": "bad_pin" }))).into_response()
+        }
         Err(AuthError::RateLimited) => (
             StatusCode::TOO_MANY_REQUESTS,
             Json(json!({ "error": "rate_limited" })),
@@ -379,9 +378,7 @@ async fn cmd_handler(
         }
         bridge::Dispatch::Unknown => (
             StatusCode::NOT_FOUND,
-            Json(
-                json!({ "code": "unknown_command", "message": format!("unknown command: {name}") }),
-            ),
+            Json(json!({ "code": "unknown_command", "message": format!("unknown command: {name}") })),
         )
             .into_response(),
     }
@@ -574,7 +571,10 @@ mod tests {
     fn foreign_origin_rejected_same_allowed() {
         let mut same = HeaderMap::new();
         same.insert(header::HOST, "192.168.1.10:8765".parse().unwrap());
-        same.insert(header::ORIGIN, "http://192.168.1.10:8765".parse().unwrap());
+        same.insert(
+            header::ORIGIN,
+            "http://192.168.1.10:8765".parse().unwrap(),
+        );
         assert!(reject_foreign_origin(&same).is_none());
 
         let mut foreign = HeaderMap::new();
@@ -608,10 +608,7 @@ mod tests {
         // zu `{}`. (Der `Some(Value::Null)`-Zweig dort ist Guertel und
         // Hosentraeger; er kostet nichts und faengt eine kuenftige
         // Umstellung auf `#[serde(deserialize_with = ...)]` ab.)
-        assert!(
-            eintraege[2].args.is_none(),
-            "ausdrueckliches null zaehlt wie fehlend"
-        );
+        assert!(eintraege[2].args.is_none(), "ausdrueckliches null zaehlt wie fehlend");
     }
 
     // Die Obergrenze ist die Bremse gegen eine Anfrage, die den Client

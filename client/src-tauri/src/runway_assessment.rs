@@ -251,9 +251,8 @@ pub fn classify_displaced(td_distance_m: f64, displaced_threshold_ft: f64) -> Di
     let displaced_threshold_m = displaced_threshold_ft / FT_PER_M;
     // On the pavement (>= physical runway start) but short of the
     // legal landing threshold.
-    let in_pre_threshold_zone = displaced_threshold_m > 0.0
-        && td_distance_m >= 0.0
-        && td_distance_m < displaced_threshold_m;
+    let in_pre_threshold_zone =
+        displaced_threshold_m > 0.0 && td_distance_m >= 0.0 && td_distance_m < displaced_threshold_m;
     DisplacedResult {
         in_pre_threshold_zone,
         displaced_threshold_m,

@@ -8,18 +8,18 @@
 // v0.7.14: `mod discord` entfernt — Pilot-Client postet keine Discord-Events
 // mehr. Recorder auf live.kant.ovh macht das jetzt zentral (eine Quelle,
 // VA-Owner-kontrolliert via Webapp-Admin-Settings). Audit Q4-2026-05 (C1).
+mod replay_erkennung;
 mod accident;
 mod arrival;
+mod runway;
+mod stands;
+mod navdata_cache;
+mod ui_state;
+mod runway_assessment;
 /// v1.7.0 — Ausfahrten aus der OSM-Bodenkarte (Spec §8.6).
 mod ausfahrten;
 /// v1.7.0 Schritt 11 — Spurweite aus der Flugzeugdatei (Spec §5.3 B).
 mod fahrwerk;
-mod navdata_cache;
-mod replay_erkennung;
-mod runway;
-mod runway_assessment;
-mod stands;
-mod ui_state;
 mod xplane_plugin_install;
 // v0.9.0 (#GlitchTip): Sentry-Init + Allowlist + Redaction. Opt-In, Default OFF.
 // Spec: docs/spec/v0.9.0-glitchtip-self-hosted.md
@@ -62,8 +62,8 @@ mod remote;
 // server for the MSFS in-sim panel. Deliberately separate from `remote`
 // (opt-in, LAN-reachable, configurable port, PIN-gated) — see the module
 // doc for why sharing that server caused two real bugs.
-mod aircraft_scan;
 mod panel_server;
+mod aircraft_scan;
 // v1.3.0 (#Hoppie-PDC-CPDLC): PDC/CPDLC client over the Hoppie ACARS
 // network. Opt-in, default OFF. Protocol/data logic lives in the pure
 // `hoppie-protocol` crate; this module is the thin Tauri wiring layer.
@@ -81,14 +81,14 @@ use api_client::{
     PrefileBody, Profile, SimBriefDirectError, SimBriefOfp, UpdateBody,
 };
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use metar::{MetarError, MetarSnapshot};
 use recorder::{FlightLogEvent, FlightOutcome, FlightRecorder, TouchdownWindowSample};
-use serde::{Deserialize, Serialize};
-use sim_core::{FlightPhase, SimKind, SimSnapshot, Simulator};
 use storage::{
     ApproachSample, DeletedLandingsTombstone, GateWindow, LandingProfilePoint, LandingRecord,
     LandingRunwayMatch, LandingStore, PositionQueue, QueuedPosition,
 };
+use sim_core::{FlightPhase, SimKind, SimSnapshot, Simulator};
 // v0.7.0 — re-export fuer Replay-Acceptance-Tests in tests/touchdown_v2_replay.rs
 pub use sim_core::SimKind as PublicSimKind;
 use tauri::{AppHandle, Manager};
@@ -448,7 +448,10 @@ fn boarding_real_movement(
     prev_gs_over_threshold: bool,
     moved_m: f64,
 ) -> bool {
-    on_surface && gs_over_threshold && prev_gs_over_threshold && moved_m > MIN_BOARDING_MOVEMENT_M
+    on_surface
+        && gs_over_threshold
+        && prev_gs_over_threshold
+        && moved_m > MIN_BOARDING_MOVEMENT_M
 }
 
 /// v0.15.13: Schwelle (fps) ab der die körperfeste Längs-Geschwindigkeit
@@ -1028,14 +1031,8 @@ mod resume_discontinuity_tests {
         let prev = paused_snapshot(49.4955, 11.0752, 1200.0, 4117.4, false);
         let cur = sim_snapshot(49.4955, 11.0752, 1027.0, 11800.7, true);
         let d = compute_resume_discontinuity(&prev, &cur);
-        assert!(
-            d.fuel_delta_kg > 0.0,
-            "fuel delta must be signed positive on increase"
-        );
-        assert!(
-            !d.both_grounded,
-            "prev was airborne, so both_grounded must be false"
-        );
+        assert!(d.fuel_delta_kg > 0.0, "fuel delta must be signed positive on increase");
+        assert!(!d.both_grounded, "prev was airborne, so both_grounded must be false");
         assert!(is_impossible_discontinuity(&d));
     }
 
@@ -1198,10 +1195,7 @@ fn title_mentions_icao_with_extra(
         return true;
     }
     if let Some(extra) = vps_aliases.get(&icao_upper) {
-        if extra
-            .iter()
-            .any(|alias| title_upper.contains(alias.as_str()))
-        {
+        if extra.iter().any(|alias| title_upper.contains(alias.as_str())) {
             return true;
         }
     }
@@ -1293,7 +1287,7 @@ fn aircraft_aliases(code: &str) -> &'static [&'static str] {
         // v0.7.4: " FREIGHTER" Long-Form ergaenzt (Round-1 Review)
         // weil manche Sim-Addons den Title als "747-400 Freighter"
         // ohne den F-Suffix-Kompakt schreiben.
-        "B74F" => &["747-400F", "747-400 FREIGHTER", "B74F"],
+        "B74F"  => &["747-400F", "747-400 FREIGHTER", "B74F"],
         "B748F" => &["747-8F", "747-8 FREIGHTER", "B748F"],
         // 757
         "B752" => &["757-200"],
@@ -1324,7 +1318,7 @@ fn aircraft_aliases(code: &str) -> &'static [&'static str] {
         // weil TFDi Design im Sim "MD-11F" meldet. Cargo-Bids fliegen
         // legitim auch die F-Variante; "MD11" alias matched daher
         // sowohl "MD-11" als auch "MD11F"-Substring im Title).
-        "MD11" => &["MD-11", "MD11"],
+        "MD11"  => &["MD-11", "MD11"],
         "MD11F" => &["MD-11F", "MD11F"],
 
         // ---- Embraer ----
@@ -1382,12 +1376,8 @@ fn aircraft_types_match_with_extra(
     // Either side might be the short ICAO form, the other the
     // long marketing form. Check both directions against the
     // hardcoded table first (= offline-safe baseline).
-    if aircraft_aliases(&exp)
-        .iter()
-        .any(|alias| act.contains(alias))
-        || aircraft_aliases(&act)
-            .iter()
-            .any(|alias| exp.contains(alias))
+    if aircraft_aliases(&exp).iter().any(|alias| act.contains(alias))
+        || aircraft_aliases(&act).iter().any(|alias| exp.contains(alias))
     {
         return true;
     }
@@ -2020,9 +2010,12 @@ async fn fetch_navdata_for_flight(
         let base = base_override.clone();
         let token = auth_token.clone();
         handles.push(tokio::spawn(async move {
-            let res =
-                aeroacars_mqtt::navdata::get_airport(&icao, base.as_deref(), token.as_deref())
-                    .await;
+            let res = aeroacars_mqtt::navdata::get_airport(
+                &icao,
+                base.as_deref(),
+                token.as_deref(),
+            )
+            .await;
             (icao, res)
         }));
     }
@@ -2047,8 +2040,7 @@ async fn fetch_navdata_for_flight(
                 // JEDER Konsument von `flight.navdata` (Touchdown-Matcher UND der
                 // Approach-Gleitwinkel in `runway_glideslope_for`) automatisch die
                 // bereinigte Liste sieht, statt dass jeder Aufrufer selbst dedupen muss.
-                airport.runways =
-                    runway::dedupe_near_duplicate_nav_runways(&airport.icao, airport.runways);
+                airport.runways = runway::dedupe_near_duplicate_nav_runways(&airport.icao, airport.runways);
                 let mut cache = flight.navdata.lock().expect("navdata lock");
                 cache.airports.insert(icao.clone(), airport);
                 if cache.cycle.is_none() {
@@ -2186,7 +2178,10 @@ async fn fetch_aircraft_aliases_into_state(
                     cache.insert(icao_up, aliases);
                 }
             }
-            tracing::info!(count = cache.len(), "aircraft_aliases: VPS-Liste geladen");
+            tracing::info!(
+                count = cache.len(),
+                "aircraft_aliases: VPS-Liste geladen"
+            );
         }
         Err(e) => {
             tracing::debug!(
@@ -2235,7 +2230,9 @@ fn spawn_navdata_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, icaos: Vec<S
         return;
     }
     let icaos = missing;
-    let token = secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten();
+    let token = secrets::load_api_key(MQTT_KEYRING_PASSWORD)
+        .ok()
+        .flatten();
     let app_clone = app.clone();
     let flight_arc = Arc::clone(flight);
     tokio::spawn(async move {
@@ -3121,6 +3118,7 @@ struct TouchdownProfilePoint {
     pitch_deg: f32,
     bank_deg: f32,
 }
+
 
 /// v0.4.1: Snapshot der letzten bekannten Sim-Werte zum Zeitpunkt
 /// als der Streamer den Sim-Disconnect detektiert hat. Gezeigt im
@@ -5075,20 +5073,9 @@ mod panel_ete_tests {
             groundspeed_kt: 20.0,
             ..Default::default()
         };
-        assert_eq!(
-            panel_ete_min(&snap, "EDDB", None),
-            None,
-            "unter 30 kt kein ETE"
-        );
-        let snap2 = SimSnapshot {
-            groundspeed_kt: 400.0,
-            ..snap
-        };
-        assert_eq!(
-            panel_ete_min(&snap2, "XXXX", None),
-            None,
-            "unbekanntes Ziel"
-        );
+        assert_eq!(panel_ete_min(&snap, "EDDB", None), None, "unter 30 kt kein ETE");
+        let snap2 = SimSnapshot { groundspeed_kt: 400.0, ..snap };
+        assert_eq!(panel_ete_min(&snap2, "XXXX", None), None, "unbekanntes Ziel");
     }
 
     /// v1.5.3: der Plausibilitaets-Deckel — im Steigflug mit halber
@@ -5644,11 +5631,7 @@ fn konfig_kontext(stats: &FlightStats, limits: &AircraftLimits) -> KonfigKontext
         // zugesehen haben — sonst bleibt die Frage offen (`None`), und die
         // Bewertung faellt auf das Verhalten vor v1.6.6 zurueck.
         (Some(min), Some(max)) if (max - min) <= 0.02 => {
-            if stats.flaps_lueckenlos_beobachtet {
-                Some(false)
-            } else {
-                None
-            }
+            if stats.flaps_lueckenlos_beobachtet { Some(false) } else { None }
         }
         (Some(_), Some(_)) => Some(true),
         _ => None,
@@ -5718,7 +5701,12 @@ fn update_predicted_runway(flight: &ActiveFlight, stats: &mut FlightStats, snap:
             Err(_) => return,
         };
         cache.get(&flight.arr_airport).and_then(|apt| {
-            runway::predict_landing_runway(&apt.runways, snap.lat, snap.lon, snap.heading_deg_true)
+            runway::predict_landing_runway(
+                &apt.runways,
+                snap.lat,
+                snap.lon,
+                snap.heading_deg_true,
+            )
         })
     };
     match predicted {
@@ -5888,7 +5876,8 @@ fn check_descent_transition(
         .unwrap_or(false);
     let low_alt_thresh = if is_light_ga { 1000.0 } else { 500.0 };
     let near_ground_thresh = if is_light_ga { 1200.0 } else { 800.0 };
-    let standard_tod = snap.vertical_speed_fpm < -500.0 && lost_from_peak > 200.0;
+    let standard_tod = snap.vertical_speed_fpm < -500.0
+        && lost_from_peak > 200.0;
     let low_altitude_descent = snap.vertical_speed_fpm < -100.0
         && snap.altitude_agl_ft < 3000.0
         && lost_from_peak > low_alt_thresh;
@@ -6066,7 +6055,11 @@ const TAKEOFF_ROLL_N1_PCT: f64 = 80.0;
 ///
 /// The 30 kt floor stays, because a Cessna rotates at ~50 kt and its TakeoffRoll
 /// phase must not be skipped.
-fn takeoff_roll_detected(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) -> bool {
+fn takeoff_roll_detected(
+    stats: &mut FlightStats,
+    snap: &SimSnapshot,
+    now: DateTime<Utc>,
+) -> bool {
     if !snap.on_ground || !engines_effectively_running(stats, snap, now) {
         stats.takeoff_roll_gs_ref = None;
         // QS round 7: the COUNTER has to go too. Leaving it set meant a single
@@ -6146,11 +6139,7 @@ fn takeoff_roll_detected(stats: &mut FlightStats, snap: &SimSnapshot, now: DateT
     let takeoff_thrust = snap
         .eng_n1_pct
         .as_ref()
-        .and_then(|n1| {
-            n1.iter()
-                .cloned()
-                .fold(None::<f64>, |m, v| Some(m.map_or(v, |m| m.max(v))))
-        })
+        .and_then(|n1| n1.iter().cloned().fold(None::<f64>, |m, v| Some(m.map_or(v, |m| m.max(v)))))
         .is_some_and(|max_n1| max_n1 >= TAKEOFF_ROLL_N1_PCT);
 
     takeoff_thrust || accelerating
@@ -6279,7 +6268,11 @@ fn rescue_landing_at_from_sampler(stats: &mut FlightStats, now: DateTime<Utc>) {
 /// resets so brief intermediate level segments during a 360° turn
 /// don't accidentally fire (banked → level → banked is normal at
 /// hold turn entry/exit).
-fn check_holding_entry(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) -> bool {
+fn check_holding_entry(
+    stats: &mut FlightStats,
+    snap: &SimSnapshot,
+    now: DateTime<Utc>,
+) -> bool {
     let in_hold_pattern = snap.bank_deg.abs() > HOLDING_BANK_THRESHOLD_DEG
         && snap.vertical_speed_fpm.abs() < HOLDING_VS_THRESHOLD_FPM;
     if in_hold_pattern {
@@ -6377,7 +6370,8 @@ fn estimate_xplane_touchdown_vs_from_agl(
         // pre-touchdown sample. Strict AGL ≤ 5 ft alone would reject
         // every MSFS touchdown.
         let last = samples.last()?;
-        let is_at_touchdown = last.on_ground || last.agl_ft <= TD_AGL_MAX_AT_TOUCHDOWN_FT;
+        let is_at_touchdown =
+            last.on_ground || last.agl_ft <= TD_AGL_MAX_AT_TOUCHDOWN_FT;
         if !is_at_touchdown {
             continue;
         }
@@ -6391,8 +6385,10 @@ fn estimate_xplane_touchdown_vs_from_agl(
         // (LandingRate-1.lua method). For a linear descent the avg
         // is the time-midpoint; the rate from midpoint → now over
         // (timespan / 2) is the geometric descent rate.
-        let avg_agl: f32 = samples.iter().map(|s| s.agl_ft).sum::<f32>() / samples.len() as f32;
-        let timespan_sec = (last.at - first.at).num_milliseconds() as f32 / 1000.0;
+        let avg_agl: f32 =
+            samples.iter().map(|s| s.agl_ft).sum::<f32>() / samples.len() as f32;
+        let timespan_sec =
+            (last.at - first.at).num_milliseconds() as f32 / 1000.0;
         if timespan_sec < 0.2 {
             continue;
         }
@@ -6490,7 +6486,8 @@ fn estimate_xplane_touchdown_vs_lua_style(
 
     // Touchdown sample (latest) must really be at the ground.
     let last = *recent.last()?;
-    let is_at_touchdown = last.on_ground || last.agl_ft <= TD_AGL_MAX_AT_TOUCHDOWN_FT;
+    let is_at_touchdown =
+        last.on_ground || last.agl_ft <= TD_AGL_MAX_AT_TOUCHDOWN_FT;
     if !is_at_touchdown {
         return None;
     }
@@ -6501,8 +6498,10 @@ fn estimate_xplane_touchdown_vs_lua_style(
         return None;
     }
 
-    let avg_agl: f32 = recent.iter().map(|s| s.agl_ft).sum::<f32>() / take as f32;
-    let timespan_sec = (last.at - first.at).num_milliseconds() as f32 / 1000.0;
+    let avg_agl: f32 =
+        recent.iter().map(|s| s.agl_ft).sum::<f32>() / take as f32;
+    let timespan_sec =
+        (last.at - first.at).num_milliseconds() as f32 / 1000.0;
     if timespan_sec < 0.2 {
         return None;
     }
@@ -6634,8 +6633,7 @@ fn compute_approach_stddev(
     buf: &std::collections::VecDeque<ApproachBufferSample>,
     td_ts: Option<DateTime<Utc>>,
 ) -> (Option<f32>, Option<f32>) {
-    let filtered: Vec<&ApproachBufferSample> = buf
-        .iter()
+    let filtered: Vec<&ApproachBufferSample> = buf.iter()
         .filter(|s| {
             let in_agl_band = s.agl_ft > 0.0 && s.agl_ft <= APPROACH_STABILITY_AGL_CAP_FT;
             let pre_flare = match td_ts {
@@ -6781,155 +6779,47 @@ fn aircraft_limits_for(icao: &str) -> AircraftLimits {
 fn aircraft_limits_exakt(upper_str: &str) -> AircraftLimits {
     match upper_str {
         // Heavy / Wide-Body
-        "B741" | "B742" | "B743" | "B744" | "B748" => AircraftLimits {
-            max_bank_landing_deg: 9.0,
-            typical_vref_kt: Some(160.0),
-            is_fallback: false,
-        },
-        "B772" | "B773" | "B77L" | "B77W" | "B778" | "B779" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(150.0),
-            is_fallback: false,
-        },
-        "B788" | "B789" | "B78X" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(145.0),
-            is_fallback: false,
-        },
-        "A332" | "A333" | "A338" | "A339" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(140.0),
-            is_fallback: false,
-        },
-        "A359" | "A35K" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(140.0),
-            is_fallback: false,
-        },
-        "A388" => AircraftLimits {
-            max_bank_landing_deg: 7.0,
-            typical_vref_kt: Some(145.0),
-            is_fallback: false,
-        },
+        "B741" | "B742" | "B743" | "B744" | "B748" => AircraftLimits { max_bank_landing_deg: 9.0, typical_vref_kt: Some(160.0), is_fallback: false },
+        "B772" | "B773" | "B77L" | "B77W" | "B778" | "B779" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(150.0), is_fallback: false },
+        "B788" | "B789" | "B78X" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(145.0), is_fallback: false },
+        "A332" | "A333" | "A338" | "A339" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0), is_fallback: false },
+        "A359" | "A35K" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0), is_fallback: false },
+        "A388" => AircraftLimits { max_bank_landing_deg: 7.0, typical_vref_kt: Some(145.0), is_fallback: false },
         // Narrow-Body Jets
-        "A318" | "A319" | "A320" | "A20N" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(135.0),
-            is_fallback: false,
-        },
-        "A321" | "A21N" => AircraftLimits {
-            max_bank_landing_deg: 7.0,
-            typical_vref_kt: Some(140.0),
-            is_fallback: false,
-        }, // A321 tail-strike-prone
-        "B736" | "B737" | "B738" | "B739" | "B73X" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(140.0),
-            is_fallback: false,
-        },
-        "B38M" | "B39M" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(140.0),
-            is_fallback: false,
-        },
-        "B752" | "B753" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(140.0),
-            is_fallback: false,
-        },
-        "B762" | "B763" | "B764" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(140.0),
-            is_fallback: false,
-        },
+        "A318" | "A319" | "A320" | "A20N" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(135.0), is_fallback: false },
+        "A321" | "A21N" => AircraftLimits { max_bank_landing_deg: 7.0, typical_vref_kt: Some(140.0), is_fallback: false }, // A321 tail-strike-prone
+        "B736" | "B737" | "B738" | "B739" | "B73X" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0), is_fallback: false },
+        "B38M" | "B39M" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0), is_fallback: false },
+        "B752" | "B753" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0), is_fallback: false },
+        "B762" | "B763" | "B764" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0), is_fallback: false },
         // Regional Jets
-        "E170" | "E175" | "E190" | "E195" | "E290" | "E295" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(130.0),
-            is_fallback: false,
-        },
-        "CRJ7" | "CRJ9" | "CRJX" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(135.0),
-            is_fallback: false,
-        },
+        "E170" | "E175" | "E190" | "E195" | "E290" | "E295" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(130.0), is_fallback: false },
+        "CRJ7" | "CRJ9" | "CRJX" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(135.0), is_fallback: false },
         // Business Jets
-        "CL30" | "CL35" | "CL60" | "CL64" | "CL65" => AircraftLimits {
-            max_bank_landing_deg: 6.0,
-            typical_vref_kt: Some(115.0),
-            is_fallback: false,
-        },
-        "GLF5" | "GLF6" | "GLEX" | "G280" | "GL5T" | "GL7T" => AircraftLimits {
-            max_bank_landing_deg: 7.0,
-            typical_vref_kt: Some(120.0),
-            is_fallback: false,
-        },
-        "C25A" | "C25B" | "C25C" | "C525" | "C56X" | "C68A" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(105.0),
-            is_fallback: false,
-        },
+        "CL30" | "CL35" | "CL60" | "CL64" | "CL65" => AircraftLimits { max_bank_landing_deg: 6.0, typical_vref_kt: Some(115.0), is_fallback: false },
+        "GLF5" | "GLF6" | "GLEX" | "G280" | "GL5T" | "GL7T" => AircraftLimits { max_bank_landing_deg: 7.0, typical_vref_kt: Some(120.0), is_fallback: false },
+        "C25A" | "C25B" | "C25C" | "C525" | "C56X" | "C68A" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(105.0), is_fallback: false },
         // Turboprops — Regional/Commuter
-        "DH8A" | "DH8B" | "DH8C" | "DH8D" | "AT43" | "AT72" | "AT75" | "AT76" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(110.0),
-            is_fallback: false,
-        },
+        "DH8A" | "DH8B" | "DH8C" | "DH8D" | "AT43" | "AT72" | "AT75" | "AT76" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(110.0), is_fallback: false },
         // Beechcraft King Air family (turboprop). v0.8.3: duplicate B190
         // removed, BE9L/BE10/BE20/BE30 hinzugefuegt — vorher fielen alle
         // King-Air-Varianten ausser B190/B350 auf den 8°/None-Fallback.
-        "B190" | "B350" | "BE9L" | "BE10" | "BE20" | "BE30" => AircraftLimits {
-            max_bank_landing_deg: 10.0,
-            typical_vref_kt: Some(95.0),
-            is_fallback: false,
-        },
+        "B190" | "B350" | "BE9L" | "BE10" | "BE20" | "BE30" => AircraftLimits { max_bank_landing_deg: 10.0, typical_vref_kt: Some(95.0), is_fallback: false },
         // GA Twins (piston). v0.8.3: BE58 (Baron) + PA34 (Seneca) +
         // AEST (Aerostar) hinzugefuegt — Reports zeigten GSG-Piloten mit
         // Baron/Seneca landeten mit Airliner-Bank-Limits (8° statt 15°).
-        "BE58" | "BE76" | "PA34" | "PA44" | "AEST" => AircraftLimits {
-            max_bank_landing_deg: 15.0,
-            typical_vref_kt: Some(85.0),
-            is_fallback: false,
-        },
+        "BE58" | "BE76" | "PA34" | "PA44" | "AEST" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(85.0), is_fallback: false },
         // GA Singles
-        "C172" | "C152" | "C150" | "C162" => AircraftLimits {
-            max_bank_landing_deg: 15.0,
-            typical_vref_kt: Some(65.0),
-            is_fallback: false,
-        },
-        "C182" | "C206" | "C208" => AircraftLimits {
-            max_bank_landing_deg: 12.0,
-            typical_vref_kt: Some(75.0),
-            is_fallback: false,
-        },
-        "DA40" | "DA42" | "DA62" => AircraftLimits {
-            max_bank_landing_deg: 12.0,
-            typical_vref_kt: Some(75.0),
-            is_fallback: false,
-        },
-        "P28A" | "PA28" | "PA32" | "PA46" | "P28R" | "PA24" => AircraftLimits {
-            max_bank_landing_deg: 12.0,
-            typical_vref_kt: Some(75.0),
-            is_fallback: false,
-        },
-        "SR20" | "SR22" | "SR2T" => AircraftLimits {
-            max_bank_landing_deg: 12.0,
-            typical_vref_kt: Some(80.0),
-            is_fallback: false,
-        },
+        "C172" | "C152" | "C150" | "C162" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(65.0), is_fallback: false },
+        "C182" | "C206" | "C208" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(75.0), is_fallback: false },
+        "DA40" | "DA42" | "DA62" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(75.0), is_fallback: false },
+        "P28A" | "PA28" | "PA32" | "PA46" | "P28R" | "PA24" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(75.0), is_fallback: false },
+        "SR20" | "SR22" | "SR2T" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(80.0), is_fallback: false },
         // Beechcraft Bonanza family (single-engine piston, Svenny's Bird).
         // v0.8.3: zuvor war BE36 nicht aufgelistet → Airliner-Fallback.
-        "BE33" | "BE35" | "BE36" => AircraftLimits {
-            max_bank_landing_deg: 15.0,
-            typical_vref_kt: Some(75.0),
-            is_fallback: false,
-        },
+        "BE33" | "BE35" | "BE36" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(75.0), is_fallback: false },
         // Mooney + andere High-Performance Singles
-        "M20P" | "M20T" | "MU2" => AircraftLimits {
-            max_bank_landing_deg: 12.0,
-            typical_vref_kt: Some(80.0),
-            is_fallback: false,
-        },
+        "M20P" | "M20T" | "MU2" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(80.0), is_fallback: false },
 
         // ─── Nachgetragen 16.08.2026 nach Messung gegen die echte Flotte ──
         //
@@ -6938,129 +6828,33 @@ fn aircraft_limits_exakt(upper_str: &str) -> AircraftLimits {
         // jeweiligen Klasse wie im Bestand daruber.
         //
         // Bizjets
-        "E55P" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(110.0),
-            is_fallback: false,
-        }, // Phenom 300: Anflug 109 kt (AOPA/FlyRadius)
-        "C750" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(115.0),
-            is_fallback: false,
-        },
-        "C680" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(108.0),
-            is_fallback: false,
-        },
-        "HDJT" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(110.0),
-            is_fallback: false,
-        },
-        "FA50" => AircraftLimits {
-            max_bank_landing_deg: 7.0,
-            typical_vref_kt: Some(113.0),
-            is_fallback: false,
-        },
-        "SF50" => AircraftLimits {
-            max_bank_landing_deg: 12.0,
-            typical_vref_kt: Some(88.0),
-            is_fallback: false,
-        },
+        "E55P" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(110.0), is_fallback: false }, // Phenom 300: Anflug 109 kt (AOPA/FlyRadius)
+        "C750" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(115.0), is_fallback: false },
+        "C680" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(108.0), is_fallback: false },
+        "HDJT" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(110.0), is_fallback: false },
+        "FA50" => AircraftLimits { max_bank_landing_deg: 7.0, typical_vref_kt: Some(113.0), is_fallback: false },
+        "SF50" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(88.0), is_fallback: false },
         // Grossraum / aeltere Muster
-        "MD11" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(155.0),
-            is_fallback: false,
-        }, // Boeing nennt 155 kt
-        "A346" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(145.0),
-            is_fallback: false,
-        },
-        "A343" | "A342" | "A345" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(138.0),
-            is_fallback: false,
-        },
-        "A306" | "A30B" | "A310" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(138.0),
-            is_fallback: false,
-        },
-        "L101" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(138.0),
-            is_fallback: false,
-        },
-        "MD81" | "MD82" | "MD83" | "MD87" | "MD88" | "MD90" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(138.0),
-            is_fallback: false,
-        },
-        "B76F" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(140.0),
-            is_fallback: false,
-        },
+        "MD11" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(155.0), is_fallback: false }, // Boeing nennt 155 kt
+        "A346" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(145.0), is_fallback: false },
+        "A343" | "A342" | "A345" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(138.0), is_fallback: false },
+        "A306" | "A30B" | "A310" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(138.0), is_fallback: false },
+        "L101" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(138.0), is_fallback: false },
+        "MD81" | "MD82" | "MD83" | "MD87" | "MD88" | "MD90" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(138.0), is_fallback: false },
+        "B76F" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(140.0), is_fallback: false },
         // Narrow-Body / Regional
-        "BCS1" | "BCS3" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(128.0),
-            is_fallback: false,
-        }, // A220: 125-130
-        "RJ85" | "RJ1H" | "B461" | "B462" | "B463" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(122.0),
-            is_fallback: false,
-        },
-        "F28" | "F70" | "F100" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(122.0),
-            is_fallback: false,
-        },
-        "E135" | "E145" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(128.0),
-            is_fallback: false,
-        },
+        "BCS1" | "BCS3" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(128.0), is_fallback: false }, // A220: 125-130
+        "RJ85" | "RJ1H" | "B461" | "B462" | "B463" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(122.0), is_fallback: false },
+        "F28" | "F70" | "F100" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(122.0), is_fallback: false },
+        "E135" | "E145" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(128.0), is_fallback: false },
         // Turboprop / GA
-        "P180" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: Some(112.0),
-            is_fallback: false,
-        },
-        "TBM7" | "TBM8" | "TBM9" => AircraftLimits {
-            max_bank_landing_deg: 12.0,
-            typical_vref_kt: Some(85.0),
-            is_fallback: false,
-        },
-        "AC11" | "AC90" => AircraftLimits {
-            max_bank_landing_deg: 12.0,
-            typical_vref_kt: Some(78.0),
-            is_fallback: false,
-        },
-        "C414" | "C421" | "C310" | "C340" => AircraftLimits {
-            max_bank_landing_deg: 12.0,
-            typical_vref_kt: Some(98.0),
-            is_fallback: false,
-        },
-        "BE23" | "BE24" => AircraftLimits {
-            max_bank_landing_deg: 15.0,
-            typical_vref_kt: Some(70.0),
-            is_fallback: false,
-        },
-        "C185" | "C180" | "C170" => AircraftLimits {
-            max_bank_landing_deg: 15.0,
-            typical_vref_kt: Some(68.0),
-            is_fallback: false,
-        },
-        "GA8" => AircraftLimits {
-            max_bank_landing_deg: 15.0,
-            typical_vref_kt: Some(68.0),
-            is_fallback: false,
-        },
+        "P180" => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: Some(112.0), is_fallback: false },
+        "TBM7" | "TBM8" | "TBM9" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(85.0), is_fallback: false },
+        "AC11" | "AC90" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(78.0), is_fallback: false },
+        "C414" | "C421" | "C310" | "C340" => AircraftLimits { max_bank_landing_deg: 12.0, typical_vref_kt: Some(98.0), is_fallback: false },
+        "BE23" | "BE24" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(70.0), is_fallback: false },
+        "C185" | "C180" | "C170" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(68.0), is_fallback: false },
+        "GA8" => AircraftLimits { max_bank_landing_deg: 15.0, typical_vref_kt: Some(68.0), is_fallback: false },
 
         // BEWUSST OHNE Vref, aber MIT Eintrag: fuer diese Muster gibt es
         // keine belastbare oeffentliche Zahl. Ein geratener Wert in einer
@@ -7071,24 +6865,14 @@ fn aircraft_limits_exakt(upper_str: &str) -> AircraftLimits {
         // Hubschrauber: Wing-Strike wird fuer sie ohnehin uebersprungen
         // (siehe `category.is_rotorcraft()`), und ein Vref ergibt hier
         // keinen Sinn.
-        "A109" | "A139" | "H145" | "EC35" | "EC45" | "H125" | "H135" => AircraftLimits {
-            max_bank_landing_deg: 20.0,
-            typical_vref_kt: None,
-            is_fallback: false,
-        },
+        "A109" | "A139" | "H145" | "EC35" | "EC45" | "H125" | "H135" =>
+            AircraftLimits { max_bank_landing_deg: 20.0, typical_vref_kt: None, is_fallback: false },
         // Militaer und Sonderfaelle
-        "A400" | "EUFI" | "CONC" => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: None,
-            is_fallback: false,
-        },
+        "A400" | "EUFI" | "CONC" =>
+            AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: None, is_fallback: false },
 
         // Fallback fuer unbekannte — ab hier wird gemeldet, nicht geschwiegen.
-        _ => AircraftLimits {
-            max_bank_landing_deg: 8.0,
-            typical_vref_kt: None,
-            is_fallback: true,
-        },
+        _ => AircraftLimits { max_bank_landing_deg: 8.0, typical_vref_kt: None, is_fallback: true },
     }
 }
 
@@ -7206,8 +6990,7 @@ fn compute_approach_stability_v2(
     // Pilot-Pull in den letzten 3 sec vor TD ist ein Manoever, kein
     // Stabilitaets-Indikator. Wenn td_ts None (= Berechnung mid-flight
     // bevor TD erreicht), nur Hoehen-Filter.
-    let gate_samples: Vec<&ApproachBufferSample> = buf
-        .iter()
+    let gate_samples: Vec<&ApproachBufferSample> = buf.iter()
         .filter(|s| {
             let h = height_for(s);
             let in_height_band = h > 0.0 && h <= 1000.0;
@@ -7244,9 +7027,9 @@ fn compute_approach_stability_v2(
         changes
     };
     let in_vector_window = |t: DateTime<Utc>| -> bool {
-        runway_changes
-            .iter()
-            .any(|&change| (t - change).num_milliseconds().abs() <= 5_000)
+        runway_changes.iter().any(|&change| {
+            (t - change).num_milliseconds().abs() <= 5_000
+        })
     };
 
     // 3) V/S-Jerk (PRIMAER): mean |Δvs| sample-to-sample.
@@ -7262,11 +7045,9 @@ fn compute_approach_stability_v2(
     // 4) IAS-Stddev (Speed-Stability).
     let n = gate_samples.len() as f64;
     let mean_ias = gate_samples.iter().map(|s| s.ias_kt as f64).sum::<f64>() / n;
-    let var_ias = gate_samples
-        .iter()
+    let var_ias = gate_samples.iter()
         .map(|s| (s.ias_kt as f64 - mean_ias).powi(2))
-        .sum::<f64>()
-        / n;
+        .sum::<f64>() / n;
     out.ias_stddev_kt = Some(var_ias.sqrt() as f32);
 
     // 5) Excessive-Sink-Flag. v0.15.17: Schwelle mit dem Gleitwinkel skaliert —
@@ -7281,16 +7062,11 @@ fn compute_approach_stability_v2(
 
     // 6) Stable-Config: Gear+Flaps am 1000-ft-Sample (= aeltester
     //    Sample im Gate, = der mit hoechster Hoehe).
-    if let Some(gate_entry) = gate_samples
-        .iter()
+    if let Some(gate_entry) = gate_samples.iter()
         // NaN-safe: a missing/unreadable SimVar height yields NaN, and
         // `partial_cmp` returns None on NaN — `.unwrap()` would PANIC mid-scoring.
         // Treat NaN as Equal (no reorder) instead, like the sort at the IAS path.
-        .max_by(|a, b| {
-            height_for(a)
-                .partial_cmp(&height_for(b))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
+        .max_by(|a, b| height_for(a).partial_cmp(&height_for(b)).unwrap_or(std::cmp::Ordering::Equal))
     {
         let gear_ok = gate_entry.gear_position >= 0.99;
         // v0.12.1 (Stream C LE11): detect an unreadable flaps dataref.
@@ -7314,8 +7090,9 @@ fn compute_approach_stability_v2(
         let flaps_all_implausible = gate_samples
             .iter()
             .all(|s| s.flaps_position < FLAPS_IMPLAUSIBLE_BELOW);
-        let flaps_unreadable =
-            flaps_all_implausible && gear_ok && gate_entry.ias_kt < FLAPS_UNREADABLE_MAX_IAS_KT;
+        let flaps_unreadable = flaps_all_implausible
+            && gear_ok
+            && gate_entry.ias_kt < FLAPS_UNREADABLE_MAX_IAS_KT;
 
         // v1.6.6: der allgemeine Fall des Obigen. Wenn sich der Klappenwert im
         // GANZEN Flug kein einziges Mal bewegt hat, traegt der Kanal keine
@@ -7361,7 +7138,8 @@ fn compute_approach_stability_v2(
                 {
                     let am_eigenen_maximum = gate_entry.flaps_position >= max_im_flug - 0.01
                         && gate_entry.flaps_position >= FLAPS_IMPLAUSIBLE_BELOW;
-                    if am_eigenen_maximum && gate_entry.ias_kt <= vref + STABILISIERT_UEBER_VREF_KT
+                    if am_eigenen_maximum
+                        && gate_entry.ias_kt <= vref + STABILISIERT_UEBER_VREF_KT
                     {
                         flaps_ok = true;
                     }
@@ -7412,29 +7190,27 @@ fn compute_approach_stability_v2(
         .filter(|s| !in_vector_window(s.at))
         .copied()
         .collect();
-    out.bank_stddev_filtered_deg = stability_stddev(vector_filtered.iter().map(|s| s.bank_deg));
-    out.vs_stddev_filtered_fpm = stability_stddev(vector_filtered.iter().map(|s| s.vs_fpm));
+    out.bank_stddev_filtered_deg =
+        stability_stddev(vector_filtered.iter().map(|s| s.bank_deg));
+    out.vs_stddev_filtered_fpm =
+        stability_stddev(vector_filtered.iter().map(|s| s.vs_fpm));
 
     // 9) Composite Stable-At-Gate Indikator.
     //    PRIMARY-Maße: jerk < 100 AND bank_sd < 5 AND ias_sd < 10
     //                AND no_excessive_sink AND stable_config
     let jerk_ok = out.vs_jerk_fpm.map(|j| j < 100.0).unwrap_or(false);
-    let bank_ok = out
-        .bank_stddev_filtered_deg
-        .map(|b| b < 5.0)
-        .unwrap_or(true);
+    let bank_ok = out.bank_stddev_filtered_deg.map(|b| b < 5.0).unwrap_or(true);
     let ias_ok = out.ias_stddev_kt.map(|i| i < 10.0).unwrap_or(true);
     let config_ok = out.stable_config.unwrap_or(true); // None = unbekannt, kein blocker
-                                                       // At this point in the function we are always past the `gate_samples.len()
-                                                       // < 3` early return, so `out.excessive_sink` is always `Some` (set just
-                                                       // above) — `unwrap_or(false)` is a defensive fallback, never actually hit.
+    // At this point in the function we are always past the `gate_samples.len()
+    // < 3` early return, so `out.excessive_sink` is always `Some` (set just
+    // above) — `unwrap_or(false)` is a defensive fallback, never actually hit.
     let stable = jerk_ok && bank_ok && ias_ok && !out.excessive_sink.unwrap_or(false) && config_ok;
     out.stable_at_gate = Some(stable);
 
     // 10) v0.5.26: Stable-At-DA (200 ft) — gleicher Composite-Check
     //     aber mit den Samples die im 200-ft-Gate lagen (= subset).
-    let da_samples: Vec<&ApproachBufferSample> = buf
-        .iter()
+    let da_samples: Vec<&ApproachBufferSample> = buf.iter()
         .filter(|s| {
             let h = height_for(s);
             h > 0.0 && h <= 200.0
@@ -7449,28 +7225,21 @@ fn compute_approach_stability_v2(
         }
         let da_jerk = jerk_sum / (da_samples.len() - 1) as f64;
         // Bank-σ im 200-ft-Gate (gefiltert)
-        let da_bank: Vec<f32> = da_samples
-            .iter()
+        let da_bank: Vec<f32> = da_samples.iter()
             .filter(|s| !in_vector_window(s.at))
             .map(|s| s.bank_deg)
             .collect();
         let da_bank_sd = if da_bank.len() >= 3 {
             let mean = da_bank.iter().map(|&b| b as f64).sum::<f64>() / da_bank.len() as f64;
-            let var = da_bank
-                .iter()
+            let var = da_bank.iter()
                 .map(|&b| (b as f64 - mean).powi(2))
-                .sum::<f64>()
-                / da_bank.len() as f64;
+                .sum::<f64>() / da_bank.len() as f64;
             var.sqrt() as f32
-        } else {
-            0.0
-        };
+        } else { 0.0 };
         let da_ias_mean = da_samples.iter().map(|s| s.ias_kt as f64).sum::<f64>() / n_da;
-        let da_ias_var = da_samples
-            .iter()
+        let da_ias_var = da_samples.iter()
             .map(|s| (s.ias_kt as f64 - da_ias_mean).powi(2))
-            .sum::<f64>()
-            / n_da;
+            .sum::<f64>() / n_da;
         let da_ias_sd = da_ias_var.sqrt() as f32;
         // v0.15.18: dieselbe Gleitwinkel-Skalierung wie das 1000-ft-Gate
         // (excessive_sink_threshold oben). Der v0.15.17-London-Fix skalierte
@@ -7483,7 +7252,10 @@ fn compute_approach_stability_v2(
             .iter()
             .any(|s| f64::from(s.vs_fpm) < excessive_sink_threshold);
         // Strenger Cutoff bei DA: jerk < 80, bank < 3°, ias < 8 kt
-        let da_stable = da_jerk < 80.0 && da_bank_sd < 3.0 && da_ias_sd < 8.0 && !da_excess_sink;
+        let da_stable = da_jerk < 80.0
+            && da_bank_sd < 3.0
+            && da_ias_sd < 8.0
+            && !da_excess_sink;
         out.stable_at_da = Some(da_stable);
     }
 
@@ -7613,24 +7385,28 @@ fn log_fuel_weight_at_phase(
                 )),
             )
         }
-        FlightPhase::Takeoff => (
-            "Fuel & Weight @ Takeoff".to_string(),
-            Some(format!(
-                "Takeoff fuel {} | TOW {} | Block fuel was {}",
-                fmt_kg(takeoff_fuel),
-                fmt_kg_f64(takeoff_weight),
-                fmt_kg(block_fuel),
-            )),
-        ),
-        FlightPhase::Landing => (
-            "Fuel & Weight @ Landing".to_string(),
-            Some(format!(
-                "Landing fuel {} | LDW {} | TOW was {}",
-                fmt_kg(landing_fuel),
-                fmt_kg_f64(landing_weight),
-                fmt_kg_f64(takeoff_weight),
-            )),
-        ),
+        FlightPhase::Takeoff => {
+            (
+                "Fuel & Weight @ Takeoff".to_string(),
+                Some(format!(
+                    "Takeoff fuel {} | TOW {} | Block fuel was {}",
+                    fmt_kg(takeoff_fuel),
+                    fmt_kg_f64(takeoff_weight),
+                    fmt_kg(block_fuel),
+                )),
+            )
+        }
+        FlightPhase::Landing => {
+            (
+                "Fuel & Weight @ Landing".to_string(),
+                Some(format!(
+                    "Landing fuel {} | LDW {} | TOW was {}",
+                    fmt_kg(landing_fuel),
+                    fmt_kg_f64(landing_weight),
+                    fmt_kg_f64(takeoff_weight),
+                )),
+            )
+        }
         FlightPhase::BlocksOn => {
             // Fuel Used = block fuel (peak before takeoff) minus
             // current fuel. Only show when both are valid and
@@ -7997,19 +7773,11 @@ fn log_activity(
         }
         ActivityLevel::Warn => {
             tracing::warn!(message = %entry.message, detail = ?entry.detail, "activity");
-            sentry_init::capture_activity(
-                &entry.message,
-                entry.detail.as_deref(),
-                sentry::Level::Warning,
-            );
+            sentry_init::capture_activity(&entry.message, entry.detail.as_deref(), sentry::Level::Warning);
         }
         ActivityLevel::Error => {
             tracing::error!(message = %entry.message, detail = ?entry.detail, "activity");
-            sentry_init::capture_activity(
-                &entry.message,
-                entry.detail.as_deref(),
-                sentry::Level::Error,
-            );
+            sentry_init::capture_activity(&entry.message, entry.detail.as_deref(), sentry::Level::Error);
         }
     }
     let mut log = state.activity_log.lock().expect("activity_log lock");
@@ -8049,19 +7817,11 @@ pub(crate) fn log_activity_handle(
         }
         ActivityLevel::Warn => {
             tracing::warn!(message = %entry.message, detail = ?entry.detail, "activity");
-            sentry_init::capture_activity(
-                &entry.message,
-                entry.detail.as_deref(),
-                sentry::Level::Warning,
-            );
+            sentry_init::capture_activity(&entry.message, entry.detail.as_deref(), sentry::Level::Warning);
         }
         ActivityLevel::Error => {
             tracing::error!(message = %entry.message, detail = ?entry.detail, "activity");
-            sentry_init::capture_activity(
-                &entry.message,
-                entry.detail.as_deref(),
-                sentry::Level::Error,
-            );
+            sentry_init::capture_activity(&entry.message, entry.detail.as_deref(), sentry::Level::Error);
         }
     }
     let mut log = state.activity_log.lock().expect("activity_log lock");
@@ -8236,11 +7996,9 @@ fn panel_server_get_enabled(app: AppHandle) -> bool {
 
 #[tauri::command]
 fn panel_server_set_enabled(app: AppHandle, enabled: bool) -> Result<bool, UiError> {
-    panel_server::set_enabled(&app, enabled).map_err(|e| UiError::new("panel_server_config", e))?;
-    tracing::info!(
-        enabled,
-        "panel_server: setting changed (takes effect on next start)"
-    );
+    panel_server::set_enabled(&app, enabled)
+        .map_err(|e| UiError::new("panel_server_config", e))?;
+    tracing::info!(enabled, "panel_server: setting changed (takes effect on next start)");
     Ok(enabled)
 }
 
@@ -8317,7 +8075,10 @@ fn landing_list(app: AppHandle) -> Vec<LandingRecord> {
 /// wait for the PIREP to be filed. Returns None when there is no
 /// active flight or when the touchdown hasn't happened yet.
 #[tauri::command]
-fn landing_get_current(app: AppHandle, state: tauri::State<'_, AppState>) -> Option<LandingRecord> {
+fn landing_get_current(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Option<LandingRecord> {
     let flight = {
         let guard = state.active_flight.lock().expect("active_flight lock");
         guard.as_ref().cloned()
@@ -8361,7 +8122,8 @@ fn landing_get_current(app: AppHandle, state: tauri::State<'_, AppState>) -> Opt
             })
             .collect()
     };
-    let airport_lookup = |icao: &str| airport_lookup_data.get(&icao.to_uppercase()).copied();
+    let airport_lookup =
+        |icao: &str| airport_lookup_data.get(&icao.to_uppercase()).copied();
     build_landing_record(
         &flight,
         &stats,
@@ -8382,10 +8144,7 @@ fn landing_get_current(app: AppHandle, state: tauri::State<'_, AppState>) -> Opt
 #[tauri::command]
 fn landing_delete(app: AppHandle, pirep_id: String) -> Result<(), UiError> {
     let Some(store) = open_landing_store(&app) else {
-        return Err(UiError::new(
-            "landing_store",
-            "could not open landing store",
-        ));
+        return Err(UiError::new("landing_store", "could not open landing store"));
     };
     let mut all = store
         .list()
@@ -8429,16 +8188,18 @@ fn read_site_config(app: &AppHandle) -> Result<Option<SiteConfig>, UiError> {
     if !path.exists() {
         return Ok(None);
     }
-    let bytes = std::fs::read(&path).map_err(|e| UiError::new("config_read", e.to_string()))?;
-    let cfg: SiteConfig =
-        serde_json::from_slice(&bytes).map_err(|e| UiError::new("config_parse", e.to_string()))?;
+    let bytes =
+        std::fs::read(&path).map_err(|e| UiError::new("config_read", e.to_string()))?;
+    let cfg: SiteConfig = serde_json::from_slice(&bytes)
+        .map_err(|e| UiError::new("config_parse", e.to_string()))?;
     Ok(Some(cfg))
 }
 
 fn write_site_config(app: &AppHandle, cfg: &SiteConfig) -> Result<(), UiError> {
     let path = site_config_path(app)?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| UiError::new("config_write", e.to_string()))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| UiError::new("config_write", e.to_string()))?;
     }
     let json = serde_json::to_vec_pretty(cfg)
         .map_err(|e| UiError::new("config_serialize", e.to_string()))?;
@@ -8448,7 +8209,8 @@ fn write_site_config(app: &AppHandle, cfg: &SiteConfig) -> Result<(), UiError> {
 fn clear_site_config(app: &AppHandle) -> Result<(), UiError> {
     let path = site_config_path(app)?;
     if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| UiError::new("config_remove", e.to_string()))?;
+        std::fs::remove_file(&path)
+            .map_err(|e| UiError::new("config_remove", e.to_string()))?;
     }
     Ok(())
 }
@@ -8540,17 +8302,15 @@ async fn phpvms_login(
     // blocked does not keep live-tracking from a stale cache (LE7).
     if let Some(reason) = pilot_state_block_reason(&profile) {
         clear_mqtt_credentials_cache();
-        return Err(UiError::new(reason, format!("pilot state gate: {reason}")));
+        return Err(UiError::new(
+            reason,
+            format!("pilot state gate: {reason}"),
+        ));
     }
 
     secrets::store_api_key(KEYRING_ACCOUNT, api_key.trim())
         .map_err(|e| UiError::new("keyring", e.to_string()))?;
-    write_site_config(
-        &app,
-        &SiteConfig {
-            url: locked_url.clone(),
-        },
-    )?;
+    write_site_config(&app, &SiteConfig { url: locked_url.clone() })?;
 
     // v0.5.11: kick off live-tracking provisioning in the background.
     // Non-blocking — login completes regardless of whether the
@@ -8592,10 +8352,7 @@ fn cache_pilot(state: &tauri::State<'_, AppState>, profile: &api_client::Profile
             Some((ident, profile.name.clone()));
     }
     // v0.7.8 v1.5: Profile.callsign cachen fuer SimBrief-direct-Match.
-    *state
-        .cached_pilot_callsign
-        .lock()
-        .expect("cached_pilot_callsign lock") =
+    *state.cached_pilot_callsign.lock().expect("cached_pilot_callsign lock") =
         profile.callsign.clone().filter(|s| !s.trim().is_empty());
 
     // v0.16.23: SimBrief-Identifier aus dem phpVMS-Profil auto-sourcen.
@@ -8611,10 +8368,7 @@ fn cache_pilot(state: &tauri::State<'_, AppState>, profile: &api_client::Profile
     // (Pilot tippt in Settings) ueberschreibt diesen Auto-Wert spaeter
     // problemlos wieder.
     maybe_autosource_simbrief_username(
-        &mut state
-            .simbrief_settings
-            .lock()
-            .expect("simbrief_settings lock"),
+        &mut state.simbrief_settings.lock().expect("simbrief_settings lock"),
         profile.simbrief_username.as_deref(),
     );
 }
@@ -8700,23 +8454,19 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
     {
         let guard = state.mqtt.lock().await;
         if guard.is_some() {
-            tracing::debug!("live-tracking: publisher already running, skipping re-init");
+            tracing::debug!(
+                "live-tracking: publisher already running, skipping re-init"
+            );
             return;
         }
     }
 
     // Check cache first.
     let cached = (|| -> Option<MqttConfig> {
-        let user = secrets::load_api_key(MQTT_KEYRING_USERNAME)
-            .ok()
-            .flatten()?;
-        let pw = secrets::load_api_key(MQTT_KEYRING_PASSWORD)
-            .ok()
-            .flatten()?;
+        let user = secrets::load_api_key(MQTT_KEYRING_USERNAME).ok().flatten()?;
+        let pw = secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten()?;
         let va = secrets::load_api_key(MQTT_KEYRING_VA).ok().flatten()?;
-        let pilot_id = secrets::load_api_key(MQTT_KEYRING_PILOT_ID)
-            .ok()
-            .flatten()?;
+        let pilot_id = secrets::load_api_key(MQTT_KEYRING_PILOT_ID).ok().flatten()?;
         let broker = secrets::load_api_key(MQTT_KEYRING_BROKER).ok().flatten()?;
         Some(MqttConfig {
             broker_url: broker,
@@ -8855,9 +8605,13 @@ fn clear_mqtt_credentials_cache() {
 /// Forget the current session. Removes the keyring entry and site config,
 /// clears the in-memory client.
 #[tauri::command]
-async fn phpvms_logout(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), UiError> {
+async fn phpvms_logout(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), UiError> {
     *state.client.lock().expect("client mutex") = None;
-    secrets::delete_api_key(KEYRING_ACCOUNT).map_err(|e| UiError::new("keyring", e.to_string()))?;
+    secrets::delete_api_key(KEYRING_ACCOUNT)
+        .map_err(|e| UiError::new("keyring", e.to_string()))?;
     // v0.5.11: stop the MQTT publisher and forget cached credentials
     // so the next login provisions fresh (handles the case where
     // a different pilot logs in on the same machine).
@@ -8907,7 +8661,8 @@ async fn phpvms_load_session(
                 log_activity_handle(
                     &app,
                     ActivityLevel::Warn,
-                    "AeroACARS-Sitzung beendet — GSG-Account nicht aktiv".to_string(),
+                    "AeroACARS-Sitzung beendet — GSG-Account nicht aktiv"
+                        .to_string(),
                     Some(format!(
                         "Status-Gate: {reason}. Bitte neu einloggen oder \
                          die VA-Leitung kontaktieren."
@@ -8978,7 +8733,8 @@ async fn phpvms_load_session(
                 ActivityLevel::Warn,
                 "phpVMS hat dich abgemeldet — Account gesperrt, inaktiv oder API-Key revoked",
                 Some(
-                    "Bitte VA-Admin kontaktieren. Nach Freigabe einfach neu einloggen.".to_string(),
+                    "Bitte VA-Admin kontaktieren. Nach Freigabe einfach neu einloggen."
+                        .to_string(),
                 ),
             );
             Ok(None)
@@ -9006,7 +8762,10 @@ fn current_client(state: &tauri::State<'_, AppState>) -> Result<Client, UiError>
 /// after a restart). Cheap atomic flip — the actual close-handler
 /// just reads the flag at the moment a CloseRequested fires.
 #[tauri::command]
-fn set_minimize_to_tray(state: tauri::State<'_, AppState>, enabled: bool) -> Result<(), UiError> {
+fn set_minimize_to_tray(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), UiError> {
     let was = state
         .minimize_to_tray_enabled
         .swap(enabled, std::sync::atomic::Ordering::Relaxed);
@@ -9081,26 +8840,15 @@ fn set_simbrief_settings(
 ) -> Result<(), UiError> {
     let username = username.and_then(|s| {
         let t = s.trim().to_string();
-        if t.is_empty() {
-            None
-        } else {
-            Some(t)
-        }
+        if t.is_empty() { None } else { Some(t) }
     });
     let user_id = user_id.and_then(|s| {
         // Numerische User-IDs — Frontend filtert schon non-digit raus,
         // aber defensiv hier auch nochmal trimmen.
         let t = s.trim().to_string();
-        if t.is_empty() {
-            None
-        } else {
-            Some(t)
-        }
+        if t.is_empty() { None } else { Some(t) }
     });
-    let mut guard = state
-        .simbrief_settings
-        .lock()
-        .expect("simbrief_settings lock");
+    let mut guard = state.simbrief_settings.lock().expect("simbrief_settings lock");
     let was_set = guard.username.is_some() || guard.user_id.is_some();
     let now_set = username.is_some() || user_id.is_some();
     *guard = SimBriefSettings { username, user_id };
@@ -9129,19 +8877,11 @@ async fn verify_simbrief_identifier(
 ) -> Result<VerifySimBriefResult, UiError> {
     let username = username.and_then(|s| {
         let t = s.trim().to_string();
-        if t.is_empty() {
-            None
-        } else {
-            Some(t)
-        }
+        if t.is_empty() { None } else { Some(t) }
     });
     let user_id = user_id.and_then(|s| {
         let t = s.trim().to_string();
-        if t.is_empty() {
-            None
-        } else {
-            Some(t)
-        }
+        if t.is_empty() { None } else { Some(t) }
     });
     if username.is_none() && user_id.is_none() {
         return Err(UiError::new(
@@ -9158,10 +8898,7 @@ async fn verify_simbrief_identifier(
     // vom phpVMS-Endpoint ist.
     let client = current_client(&state)?;
 
-    match client
-        .fetch_simbrief_direct(user_id.as_deref(), username.as_deref())
-        .await
-    {
+    match client.fetch_simbrief_direct(user_id.as_deref(), username.as_deref()).await {
         Ok(ofp) => Ok(VerifySimBriefResult {
             ok: true,
             origin: Some(ofp.ofp_origin_icao),
@@ -9347,7 +9084,9 @@ async fn fetch_release_notes(version: String) -> Result<ReleaseNotes, UiError> {
     } else {
         format!("v{version}")
     };
-    let url = format!("https://api.github.com/repos/MANFahrer-GF/AeroACARS/releases/tags/{tag}");
+    let url = format!(
+        "https://api.github.com/repos/MANFahrer-GF/AeroACARS/releases/tags/{tag}"
+    );
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .user_agent(concat!("AeroACARS/", env!("CARGO_PKG_VERSION")))
@@ -9451,7 +9190,9 @@ fn entwerte_bids_fehler(log: &mut VecDeque<ActivityEntry>) {
 /// verlorenes Paket ist über einen langen Flug praktisch sicher und sagt
 /// nichts aus.
 #[tauri::command]
-async fn phpvms_get_bids(state: tauri::State<'_, AppState>) -> Result<Vec<Bid>, UiError> {
+async fn phpvms_get_bids(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<Bid>, UiError> {
     let client = current_client(&state)?;
 
     let letzter: ApiError;
@@ -9491,12 +9232,7 @@ async fn phpvms_get_bids(state: tauri::State<'_, AppState>) -> Result<Vec<Bid>, 
     } else {
         format!("{letzter}")
     };
-    log_activity(
-        &state,
-        ActivityLevel::Error,
-        BIDS_FAILED_MESSAGE,
-        Some(detail),
-    );
+    log_activity(&state, ActivityLevel::Error, BIDS_FAILED_MESSAGE, Some(detail));
     Err(letzter.into())
 }
 
@@ -9504,7 +9240,9 @@ async fn phpvms_get_bids(state: tauri::State<'_, AppState>) -> Result<Vec<Bid>, 
 /// phpVMS-Client (gleicher API-Key, gleiches Auth-Handling). Per-page
 /// hardcoded auf 20 — der News-Tab zeigt nur Page 1 ohne Pagination.
 #[tauri::command]
-async fn news_fetch(state: tauri::State<'_, AppState>) -> Result<Vec<NewsItem>, UiError> {
+async fn news_fetch(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<NewsItem>, UiError> {
     let client = current_client(&state)?;
     client.get_news(20).await.map_err(Into::into)
 }
@@ -9526,7 +9264,9 @@ async fn news_fetch(state: tauri::State<'_, AppState>) -> Result<Vec<NewsItem>, 
 /// nach jedem `flight_refresh_simbrief` um zu prueefen ob das Warning-
 /// Banner gezeigt werden soll.
 #[tauri::command]
-fn ofp_callsign_warning_get(state: tauri::State<AppState>) -> Option<OfpCallsignWarning> {
+fn ofp_callsign_warning_get(
+    state: tauri::State<AppState>,
+) -> Option<OfpCallsignWarning> {
     state
         .ofp_callsign_warning
         .lock()
@@ -9579,10 +9319,12 @@ async fn bid_simbrief_preview(
             format!("Bid-Liste konnte nicht geholt werden: {e}"),
         )
     })?;
-    let bid = bids
-        .iter()
-        .find(|b| b.id == bid_id)
-        .ok_or_else(|| UiError::new("bid_not_found", "Bid in der phpVMS-Liste nicht gefunden"))?;
+    let bid = bids.iter().find(|b| b.id == bid_id).ok_or_else(|| {
+        UiError::new(
+            "bid_not_found",
+            "Bid in der phpVMS-Liste nicht gefunden",
+        )
+    })?;
 
     let active_airline_icao = bid
         .flight
@@ -9610,10 +9352,7 @@ async fn bid_simbrief_preview(
     {
         Ok(ofp) => ofp,
         Err(SimBriefDirectError::NoIdentifier) => {
-            return Err(UiError::new(
-                "no_simbrief_settings",
-                "kein SimBrief-Identifier",
-            ));
+            return Err(UiError::new("no_simbrief_settings", "kein SimBrief-Identifier"));
         }
         Err(SimBriefDirectError::UserNotFound) => {
             return Err(UiError::new(
@@ -9866,11 +9605,7 @@ async fn flight_refresh_simbrief(
     // versuche Direct zuerst. Bei Mismatch HARD-Block. Bei
     // Netzwerk/Unavailable-Fehler SOFT-Fallback auf Pointer, aber
     // Direct-Error fuer compose_failure merken.
-    let simbrief_settings = state
-        .simbrief_settings
-        .lock()
-        .expect("simbrief_settings lock")
-        .clone();
+    let simbrief_settings = state.simbrief_settings.lock().expect("simbrief_settings lock").clone();
     let has_direct = simbrief_settings.user_id.is_some() || simbrief_settings.username.is_some();
     let client = current_client(&state)?;
 
@@ -9884,9 +9619,7 @@ async fn flight_refresh_simbrief(
             &active_flight_number,
             active_bid_callsign.as_deref(),
             active_pilot_callsign.as_deref(),
-        )
-        .await
-        {
+        ).await {
             DirectOutcome::Match { ofp } => {
                 // v0.7.8: Im Direct-Pfad ist `request_id` aus dem XML die
                 // canonical OFP-ID (NICHT die phpVMS-bid.simbrief.id).
@@ -9894,16 +9627,10 @@ async fn flight_refresh_simbrief(
                 // inhaltsgleichem Plan — danach stabil. Spec §3.
                 // v0.7.9: clean Match → eventuelles altes Callsign-Warning
                 // loeschen.
-                *state
-                    .ofp_callsign_warning
-                    .lock()
-                    .expect("ofp_callsign_warning lock") = None;
+                *state.ofp_callsign_warning.lock().expect("ofp_callsign_warning lock") = None;
                 (ofp.request_id.clone(), ofp)
             }
-            DirectOutcome::MatchWithCallsignWarning {
-                ofp,
-                simbrief_callsign,
-            } => {
+            DirectOutcome::MatchWithCallsignWarning { ofp, simbrief_callsign } => {
                 // v0.7.9: DEP+ARR matchen, nur Callsign abweicht. OFP laden,
                 // aber Warning ans Frontend signalisieren via AppState-Flag.
                 // Spec docs/spec/v0.7.9-ofp-callsign-soft-warn.md.
@@ -9923,21 +9650,15 @@ async fn flight_refresh_simbrief(
                     active_callsigns = %active_callsigns_display,
                     "SimBrief OFP geladen mit Callsign-Mismatch — Warning angezeigt"
                 );
-                *state
-                    .ofp_callsign_warning
-                    .lock()
-                    .expect("ofp_callsign_warning lock") = Some(OfpCallsignWarning {
-                    sb_callsign: simbrief_callsign,
-                    active_callsigns: active_callsigns_display,
-                    issued_at: Utc::now(),
-                });
+                *state.ofp_callsign_warning.lock().expect("ofp_callsign_warning lock") =
+                    Some(OfpCallsignWarning {
+                        sb_callsign: simbrief_callsign,
+                        active_callsigns: active_callsigns_display,
+                        issued_at: Utc::now(),
+                    });
                 (ofp.request_id.clone(), ofp)
             }
-            DirectOutcome::Mismatch {
-                simbrief_origin,
-                simbrief_dest,
-                simbrief_callsign,
-            } => {
+            DirectOutcome::Mismatch { simbrief_origin, simbrief_dest, simbrief_callsign } => {
                 // v0.7.8 HARD-Block bei Mismatch (Spec v1.1 P1-2).
                 // v1.5.1: strukturierte Details als JSON im message-Feld
                 // damit Frontend einen reichen i18n-Notice rendern kann.
@@ -10054,12 +9775,7 @@ async fn flight_refresh_simbrief(
     log_activity(
         &state,
         ActivityLevel::Info,
-        if changed {
-            "OFP refreshed"
-        } else {
-            "OFP unchanged"
-        }
-        .to_string(),
+        if changed { "OFP refreshed" } else { "OFP unchanged" }.to_string(),
         Some(format!(
             "{} → {} ({}). Block {:.0} kg, TOW {:.0} kg, LDW {:.0} kg",
             previous_ofp_id.as_deref().unwrap_or("—"),
@@ -10230,7 +9946,8 @@ async fn flight_refresh_route_only(
     )
     .await
     {
-        DirectOutcome::Match { ofp } | DirectOutcome::MatchWithCallsignWarning { ofp, .. } => ofp,
+        DirectOutcome::Match { ofp }
+        | DirectOutcome::MatchWithCallsignWarning { ofp, .. } => ofp,
         DirectOutcome::Mismatch {
             simbrief_origin,
             simbrief_dest,
@@ -10412,7 +10129,10 @@ async fn try_simbrief_direct_with_match(
     active_pilot_callsign: Option<&str>,
 ) -> DirectOutcome {
     match client
-        .fetch_simbrief_direct(settings.user_id.as_deref(), settings.username.as_deref())
+        .fetch_simbrief_direct(
+            settings.user_id.as_deref(),
+            settings.username.as_deref(),
+        )
         .await
     {
         Ok(ofp) => {
@@ -10420,14 +10140,8 @@ async fn try_simbrief_direct_with_match(
             //   1. DEP/ARR matchen → OFP wird geladen
             //   2. Callsign-Check als ZUSAETZLICHES Signal, aber kein
             //      Hard-Block mehr.
-            let dpt_ok = ofp
-                .ofp_origin_icao
-                .trim()
-                .eq_ignore_ascii_case(active_dpt.trim());
-            let arr_ok = ofp
-                .ofp_destination_icao
-                .trim()
-                .eq_ignore_ascii_case(active_arr.trim());
+            let dpt_ok = ofp.ofp_origin_icao.trim().eq_ignore_ascii_case(active_dpt.trim());
+            let arr_ok = ofp.ofp_destination_icao.trim().eq_ignore_ascii_case(active_arr.trim());
 
             if !dpt_ok || !arr_ok {
                 // Route-Mismatch = klar ein anderer Flug. Hard-Block.
@@ -10469,7 +10183,10 @@ async fn try_simbrief_direct_with_match(
 /// Faellt bei `bid_not_found` (W5: Bid weg nach Prefile) mit klarem
 /// Error. Returns (sb_id, ofp) auf Erfolg.
 /// Spec docs/spec/ofp-refresh-during-boarding.md §5 + §5.1.
-async fn fetch_via_pointer(client: &Client, bid_id: i64) -> Result<(String, SimBriefOfp), UiError> {
+async fn fetch_via_pointer(
+    client: &Client,
+    bid_id: i64,
+) -> Result<(String, SimBriefOfp), UiError> {
     let bids = client.get_bids().await.map_err(|e| {
         UiError::new(
             "bids_fetch_failed",
@@ -10482,22 +10199,14 @@ async fn fetch_via_pointer(client: &Client, bid_id: i64) -> Result<(String, SimB
             "current bid is no longer in your bid list — cannot refresh OFP",
         )
     })?;
-    let sb_id = bid
-        .flight
-        .simbrief
-        .as_ref()
-        .map(|s| s.id.clone())
-        .ok_or_else(|| {
-            UiError::new(
-                "no_simbrief_link",
-                "bid has no SimBrief OFP linked — generate one on simbrief.com first",
-            )
-        })?;
-    let ofp = client.fetch_simbrief_ofp(&sb_id).await.map_err(|e| {
+    let sb_id = bid.flight.simbrief.as_ref().map(|s| s.id.clone()).ok_or_else(|| {
         UiError::new(
-            "ofp_fetch_failed",
-            format!("SimBrief OFP fetch failed: {e}"),
+            "no_simbrief_link",
+            "bid has no SimBrief OFP linked — generate one on simbrief.com first",
         )
+    })?;
+    let ofp = client.fetch_simbrief_ofp(&sb_id).await.map_err(|e| {
+        UiError::new("ofp_fetch_failed", format!("SimBrief OFP fetch failed: {e}"))
     })?;
     let ofp = ofp.ok_or_else(|| {
         UiError::new(
@@ -10511,7 +10220,10 @@ async fn fetch_via_pointer(client: &Client, bid_id: i64) -> Result<(String, SimB
 /// v0.7.8: Composite-Failure wenn BEIDE Pfade tot — Direct-Error
 /// priorisieren damit Pilot den actionable Hinweis kriegt
 /// ("Username falsch" beats "Bid weg"). Spec §5.1.
-fn compose_simbrief_failure(direct: SimBriefDirectError, pointer: UiError) -> UiError {
+fn compose_simbrief_failure(
+    direct: SimBriefDirectError,
+    pointer: UiError,
+) -> UiError {
     match direct {
         SimBriefDirectError::UserNotFound => UiError::new(
             "simbrief_user_not_found",
@@ -10654,7 +10366,8 @@ fn active_flight_path(app: &AppHandle) -> Result<PathBuf, UiError> {
 fn write_persisted_flight(app: &AppHandle, flight: &PersistedFlight) -> Result<(), UiError> {
     let path = active_flight_path(app)?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| UiError::new("config_write", e.to_string()))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| UiError::new("config_write", e.to_string()))?;
     }
     let bytes = serde_json::to_vec_pretty(flight)
         .map_err(|e| UiError::new("config_serialize", e.to_string()))?;
@@ -10691,20 +10404,14 @@ fn run_sentinel_present(app: &AppHandle) -> bool {
 /// presence/absence is what matters). Best-effort: a write failure just
 /// means we lose the signal for this run, never a hard error.
 fn write_run_sentinel(app: &AppHandle) {
-    let Ok(path) = run_sentinel_path(app) else {
-        return;
-    };
+    let Ok(path) = run_sentinel_path(app) else { return };
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
             tracing::warn!(error = %e, "could not ensure run-sentinel parent dir");
             return;
         }
     }
-    let content = format!(
-        "pid={}\nstarted_at={}\n",
-        std::process::id(),
-        Utc::now().to_rfc3339()
-    );
+    let content = format!("pid={}\nstarted_at={}\n", std::process::id(), Utc::now().to_rfc3339());
     if let Err(e) = std::fs::write(&path, content) {
         tracing::warn!(error = %e, "could not write run sentinel");
     }
@@ -10768,9 +10475,7 @@ fn clear_activity_log_for_new_flight(app: &AppHandle) {
 /// activity log is informational, not safety-critical, and we'd
 /// rather drop a write than crash the streamer.
 fn save_activity_log(log: &VecDeque<ActivityEntry>) {
-    let Some(Some(path)) = ACTIVITY_LOG_PATH.get() else {
-        return;
-    };
+    let Some(Some(path)) = ACTIVITY_LOG_PATH.get() else { return };
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
             tracing::warn!(error = %e, "could not ensure activity-log parent dir");
@@ -10826,24 +10531,17 @@ fn load_persisted_activity_log() -> VecDeque<ActivityEntry> {
 /// them to a PIREP that's already gone or moved on, so we clear them
 /// out cleanly. Other flights' queued rows stay put.
 fn discard_queued_positions_for(app: &AppHandle, pirep_id: &str) {
-    let Some(q) = open_position_queue(app) else {
-        return;
-    };
+    let Some(q) = open_position_queue(app) else { return; };
     let items = match q.read_all() {
         Ok(v) => v,
         Err(_) => return,
     };
-    let kept: Vec<_> = items
-        .into_iter()
-        .filter(|i| i.pirep_id != pirep_id)
-        .collect();
+    let kept: Vec<_> = items.into_iter().filter(|i| i.pirep_id != pirep_id).collect();
     let _ = q.replace(&kept);
 }
 
 fn clear_persisted_flight(app: &AppHandle) {
-    let Ok(path) = active_flight_path(app) else {
-        return;
-    };
+    let Ok(path) = active_flight_path(app) else { return };
     if path.exists() {
         let _ = std::fs::remove_file(&path);
     }
@@ -10942,7 +10640,9 @@ async fn airport_ground_get(
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|s| serde_json::from_str(&s).ok());
 
-    let token = secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten();
+    let token = secrets::load_api_key(MQTT_KEYRING_PASSWORD)
+        .ok()
+        .flatten();
     let known_etag = cached.as_ref().and_then(|c| c.etag.clone());
 
     match aeroacars_mqtt::navdata::get_airport_ground(
@@ -11007,7 +10707,9 @@ async fn airport_ground_get(
 /// und liegen danach im lokalen Zwischenspeicher.
 #[tauri::command]
 async fn airport_ground_index() -> Result<Vec<aeroacars_mqtt::navdata::GroundIndexEntry>, UiError> {
-    let token = secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten();
+    let token = secrets::load_api_key(MQTT_KEYRING_PASSWORD)
+        .ok()
+        .flatten();
     match aeroacars_mqtt::navdata::get_ground_index(None, token.as_deref()).await {
         Ok(i) => Ok(i),
         // Kein Netz, kein Token: dann eben keine Karte. Kein Grund, das Cockpit
@@ -11066,10 +10768,7 @@ fn runway_glideslope_for(
     runways: &[aeroacars_mqtt::navdata::NavRunway],
     approach_runway: &str,
 ) -> Option<f64> {
-    let want = approach_runway
-        .trim()
-        .trim_start_matches("RW")
-        .to_uppercase();
+    let want = approach_runway.trim().trim_start_matches("RW").to_uppercase();
     if want.is_empty() {
         return None;
     }
@@ -11098,10 +10797,7 @@ fn runway_glideslope_for(
 /// Cache (beim Flugstart befüllt, daher im Anflug ohne Netz verfügbar). Sperrt
 /// NUR `navdata` — der Aufrufer hält dabei KEINE andere Sperre (siehe
 /// `flight_info`), um Lock-Order-Probleme zu vermeiden.
-fn resolve_approach_glideslope_deg(
-    flight: &ActiveFlight,
-    approach_runway: Option<&str>,
-) -> Option<f64> {
+fn resolve_approach_glideslope_deg(flight: &ActiveFlight, approach_runway: Option<&str>) -> Option<f64> {
     let rw = approach_runway?;
     let cache = flight.navdata.lock().ok()?;
     let apt = cache.get(&flight.arr_airport)?;
@@ -11117,11 +10813,7 @@ fn flight_info(
     // den Runway-String, dann navdata-Lock. So werden stats + navdata NIE
     // gleichzeitig gehalten (keine Lock-Order-Inversion ggü. step_flight).
     let approach_glideslope_angle = {
-        let rw = flight
-            .stats
-            .lock()
-            .ok()
-            .and_then(|s| s.approach_runway.clone());
+        let rw = flight.stats.lock().ok().and_then(|s| s.approach_runway.clone());
         resolve_approach_glideslope_deg(flight, rw.as_deref())
     }
     // v1.5.0 (#msfs-hud): Fällt die ATC-Bahn aus — was bei MSFS IMMER der
@@ -11164,7 +10856,9 @@ fn flight_info(
         // Cutover == `phase`; die frühere dezente „v2:"-UI-Zeile deaktiviert
         // sich dadurch selbst und wird im Frontend entfernt.
         shadow_phase: stats.shadow_phase.map(|p| phase_to_snake(p).to_string()),
-        shadow_segment: stats.shadow_segment.map(|s| s.as_snake_str().to_string()),
+        shadow_segment: stats
+            .shadow_segment
+            .map(|s| s.as_snake_str().to_string()),
         block_off_at: stats.block_off_at.map(|t| t.to_rfc3339()),
         takeoff_at: stats.takeoff_at.map(|t| t.to_rfc3339()),
         landing_at: stats.landing_at.map(|t| t.to_rfc3339()),
@@ -11184,36 +10878,16 @@ fn flight_info(
         // Live-Active-Flight-Panel sie nicht sieht.
         // alt_ft nicht in FlightStats (nur lat/lon) → wir lassen es leer,
         // die Position allein reicht für die Repositionierung.
-        last_known_lat: if was_just_resumed {
-            stats.last_lat
-        } else {
-            None
-        },
-        last_known_lon: if was_just_resumed {
-            stats.last_lon
-        } else {
-            None
-        },
+        last_known_lat: if was_just_resumed { stats.last_lat } else { None },
+        last_known_lon: if was_just_resumed { stats.last_lon } else { None },
         last_known_alt_ft: None,
         // v0.13.0 Stream F: Fuel/Weight/Aircraft aus dem letzten Sim-Snapshot
         // (vor dem Disconnect/Crash). MSFS setzt Fuel beim Reload oft auf
         // Default — der Pilot sieht jetzt den Soll-Wert und kann ihn manuell
         // nachstellen, BEVOR er auf "Position prüfen + fortsetzen" klickt.
-        last_known_fuel_kg: if was_just_resumed {
-            stats.last_fuel_kg
-        } else {
-            None
-        },
-        last_known_zfw_kg: if was_just_resumed {
-            stats.last_zfw_kg
-        } else {
-            None
-        },
-        last_known_total_weight_kg: if was_just_resumed {
-            stats.last_total_weight_kg
-        } else {
-            None
-        },
+        last_known_fuel_kg: if was_just_resumed { stats.last_fuel_kg } else { None },
+        last_known_zfw_kg: if was_just_resumed { stats.last_zfw_kg } else { None },
+        last_known_total_weight_kg: if was_just_resumed { stats.last_total_weight_kg } else { None },
         last_known_aircraft_icao: if was_just_resumed && !flight.aircraft_icao.is_empty() {
             Some(flight.aircraft_icao.clone())
         } else {
@@ -11285,9 +10959,9 @@ fn flight_info(
             } else {
                 None
             },
-            cruise_level_ft: stats
-                .peak_altitude_ft
-                .map(|ft| (((ft / 100.0).round() * 100.0) as i32).max(0)),
+            cruise_level_ft: stats.peak_altitude_ft.map(|ft| {
+                (((ft / 100.0).round() * 100.0) as i32).max(0)
+            }),
             flight_time_minutes: match (stats.takeoff_at, stats.landing_at) {
                 (Some(t), Some(l)) if l > t => Some((l - t).num_minutes() as i32),
                 _ => None,
@@ -11525,12 +11199,7 @@ async fn vdgs_fenster_oeffnen(app: AppHandle) -> Result<(), UiError> {
         .min_inner_size(700.0, 520.0)
         .resizable(true)
         .build()
-        .map_err(|e| {
-            UiError::new(
-                "window_failed",
-                format!("Fenster ließ sich nicht öffnen: {e}"),
-            )
-        })?;
+        .map_err(|e| UiError::new("window_failed", format!("Fenster ließ sich nicht öffnen: {e}")))?;
 
     Ok(())
 }
@@ -11580,7 +11249,10 @@ async fn logbook_pirep(
 }
 
 #[tauri::command]
-fn flight_status(app: AppHandle, state: tauri::State<'_, AppState>) -> Option<ActiveFlightInfo> {
+fn flight_status(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Option<ActiveFlightInfo> {
     let guard = state.active_flight.lock().expect("active_flight lock");
     let flight = guard.as_ref()?;
     // v0.12.1 (Stream E): while the resume banner is up, check on every
@@ -11598,7 +11270,13 @@ fn flight_status(app: AppHandle, state: tauri::State<'_, AppState>) -> Option<Ac
                     };
                     (stats.phase, pos)
                 };
-                is_resume_position_suspect(phase, pos, snap.on_ground, snap.lat, snap.lon)
+                is_resume_position_suspect(
+                    phase,
+                    pos,
+                    snap.on_ground,
+                    snap.lat,
+                    snap.lon,
+                )
             }
             None => false,
         }
@@ -11636,10 +11314,7 @@ fn flight_logs_stats(app: AppHandle) -> Result<FlightLogStatsDto, UiError> {
         .app_data_dir()
         .map_err(|_| UiError::new("no_app_data_dir", "no app data dir"))?;
     let s = recorder::flight_logs_stats(dir).map_err(|e| {
-        UiError::new(
-            "flight_logs_stats_failed",
-            format!("could not read flight logs dir: {e}"),
-        )
+        UiError::new("flight_logs_stats_failed", format!("could not read flight logs dir: {e}"))
     })?;
     Ok(FlightLogStatsDto {
         count: s.count,
@@ -11663,10 +11338,7 @@ fn flight_logs_delete_all(app: AppHandle) -> Result<DeletedDto, UiError> {
         .app_data_dir()
         .map_err(|_| UiError::new("no_app_data_dir", "no app data dir"))?;
     let n = recorder::flight_logs_delete_all(dir).map_err(|e| {
-        UiError::new(
-            "flight_logs_delete_failed",
-            format!("could not delete flight logs: {e}"),
-        )
+        UiError::new("flight_logs_delete_failed", format!("could not delete flight logs: {e}"))
     })?;
     tracing::info!(deleted = n, "flight logs purged (manual)");
     Ok(DeletedDto { deleted: n })
@@ -11676,26 +11348,16 @@ fn flight_logs_delete_all(app: AppHandle) -> Result<DeletedDto, UiError> {
 /// Called from the JS layer once per app launch when the user has the
 /// auto-purge toggle on (default 30 days).
 #[tauri::command]
-fn flight_logs_purge_older_than(
-    app: AppHandle,
-    older_than_days: u32,
-) -> Result<DeletedDto, UiError> {
+fn flight_logs_purge_older_than(app: AppHandle, older_than_days: u32) -> Result<DeletedDto, UiError> {
     let dir = app
         .path()
         .app_data_dir()
         .map_err(|_| UiError::new("no_app_data_dir", "no app data dir"))?;
     let n = recorder::flight_logs_purge_older_than(dir, older_than_days).map_err(|e| {
-        UiError::new(
-            "flight_logs_purge_failed",
-            format!("could not purge flight logs: {e}"),
-        )
+        UiError::new("flight_logs_purge_failed", format!("could not purge flight logs: {e}"))
     })?;
     if n > 0 {
-        tracing::info!(
-            deleted = n,
-            days = older_than_days,
-            "flight logs purged (auto)"
-        );
+        tracing::info!(deleted = n, days = older_than_days, "flight logs purged (auto)");
     }
     Ok(DeletedDto { deleted: n })
 }
@@ -12102,7 +11764,8 @@ async fn flight_start(
     // (Error-Code "aircraft_mismatch_warning"), bei Some(true) wird der
     // Check uebersprungen — analog `flight_start_manual`. Erlaubt
     // Wetlease-Workflows (PaxStudio-Loadsheet) ohne Hard-Block.
-    #[allow(non_snake_case)] acknowledgeAircraftMismatch: Option<bool>,
+    #[allow(non_snake_case)]
+    acknowledgeAircraftMismatch: Option<bool>,
 ) -> Result<ActiveFlightInfo, UiError> {
     let ack_aircraft_mismatch = acknowledgeAircraftMismatch.unwrap_or(false);
     // Same race protection as flight_adopt: a double-click on "Start flight"
@@ -12148,10 +11811,7 @@ async fn flight_start(
 
     // ---- Pre-flight gating: must be on the ground at the departure airport ----
     let snapshot = current_snapshot(&app).ok_or_else(|| {
-        UiError::new(
-            "no_sim_snapshot",
-            "no sim snapshot yet — is the simulator connected?",
-        )
+        UiError::new("no_sim_snapshot", "no sim snapshot yet — is the simulator connected?")
     })?;
     if !snapshot.on_ground {
         return Err(UiError::new(
@@ -12177,7 +11837,8 @@ async fn flight_start(
         }
     };
     if let (Some(lat), Some(lon)) = (dpt_airport.lat, dpt_airport.lon) {
-        let distance_nm = ::geo::distance_m(snapshot.lat, snapshot.lon, lat, lon) / 1852.0;
+        let distance_nm =
+            ::geo::distance_m(snapshot.lat, snapshot.lon, lat, lon) / 1852.0;
         if distance_nm > MAX_START_DISTANCE_NM {
             return Err(UiError::new(
                 "not_at_departure",
@@ -12199,12 +11860,9 @@ async fn flight_start(
         );
     }
 
-    let airline_id = bid
-        .flight
-        .airline
-        .as_ref()
-        .map(|a| a.id)
-        .ok_or_else(|| UiError::new("missing_airline", "bid has no airline relation"))?;
+    let airline_id = bid.flight.airline.as_ref().map(|a| a.id).ok_or_else(|| {
+        UiError::new("missing_airline", "bid has no airline relation")
+    })?;
     let aircraft_id = bid
         .flight
         .simbrief
@@ -12228,8 +11886,15 @@ async fn flight_start(
         .as_ref()
         .map(|s| s.trim().to_uppercase())
         .filter(|s| !s.is_empty());
-    let sim_icao = snapshot.aircraft_icao.as_deref().and_then(clean_atc_model);
-    let sim_title = snapshot.aircraft_title.as_deref().unwrap_or("").to_string();
+    let sim_icao = snapshot
+        .aircraft_icao
+        .as_deref()
+        .and_then(clean_atc_model);
+    let sim_title = snapshot
+        .aircraft_title
+        .as_deref()
+        .unwrap_or("")
+        .to_string();
     if let (Some(expected), Some(actual)) = (expected_icao.as_ref(), sim_icao.as_ref()) {
         // v0.13.16: sicherstellen, dass der frische VPS-Alias-Pull (oben
         // nebenläufig gestartet) abgeschlossen ist, BEVOR das Gate
@@ -12254,7 +11919,10 @@ async fn flight_start(
             &sim_title,
             &vps_aliases,
         ) {
-            let registration = expected_aircraft.registration.as_deref().unwrap_or("?");
+            let registration = expected_aircraft
+                .registration
+                .as_deref()
+                .unwrap_or("?");
             // v0.8.3 (#7): von Hard-Block zu Warning-with-Acknowledge.
             // Vorher: Aircraft-Mismatch im Standard-Flow (SimBrief) war
             // ein harter „aircraft_mismatch"-Error, der den Flugstart
@@ -12353,60 +12021,59 @@ async fn flight_start(
     let pirep = if let Some(adopt) = adoptable {
         api_client::PirepCreated { id: adopt.id }
     } else {
-        match client.prefile_pirep(&body).await {
-            Ok(p) => p,
-            Err(ApiError::Server {
-                status: 400,
-                body: err_body,
-            }) if err_body.contains("aircraft-not-available") => {
-                // Diagnose: fetch aircraft details to tell the user *why* it's
-                // unavailable (wrong airport, "in use" by an orphan PIREP, etc.).
-                let detail = match client.get_aircraft(aircraft_id).await {
-                    Ok(a) => {
-                        let reg = a
-                            .registration
-                            .as_deref()
-                            .or(a.name.as_deref())
-                            .unwrap_or("?");
-                        let where_ = a.airport_id.as_deref().unwrap_or("?");
-                        let state = match a.state {
-                            Some(0) => "parked",
-                            Some(1) => "in use",
-                            Some(2) => "in flight",
-                            _ => "unknown",
-                        };
-                        format!(
+    match client.prefile_pirep(&body).await {
+        Ok(p) => p,
+        Err(ApiError::Server { status: 400, body: err_body })
+            if err_body.contains("aircraft-not-available") =>
+        {
+            // Diagnose: fetch aircraft details to tell the user *why* it's
+            // unavailable (wrong airport, "in use" by an orphan PIREP, etc.).
+            let detail = match client.get_aircraft(aircraft_id).await {
+                Ok(a) => {
+                    let reg = a
+                        .registration
+                        .as_deref()
+                        .or(a.name.as_deref())
+                        .unwrap_or("?");
+                    let where_ = a.airport_id.as_deref().unwrap_or("?");
+                    let state = match a.state {
+                        Some(0) => "parked",
+                        Some(1) => "in use",
+                        Some(2) => "in flight",
+                        _ => "unknown",
+                    };
+                    format!(
                         "{reg} (id {}): currently at {where_}, state '{state}'. Wanted at {dpt_icao}.",
                         a.id
                     )
-                    }
-                    Err(e) => format!("could not fetch aircraft {} details: {e}", aircraft_id),
-                };
-                tracing::warn!(aircraft_id, %detail, "aircraft not available");
-                return Err(UiError::new(
-                    "aircraft_not_available",
-                    format!("Aircraft not available — {detail}"),
-                ));
-            }
-            Err(ApiError::Server {
-                status,
-                body: err_body,
-            }) => {
-                // Try to extract a human-readable message from a phpVMS JSON error body.
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&err_body) {
-                    if let Some(title) = json.get("title").and_then(|v| v.as_str()) {
-                        return Err(UiError::new(
-                            "phpvms_error",
-                            format!("phpVMS rejected the flight (HTTP {status}): {title}"),
-                        ));
-                    }
                 }
-                return Err(UiError::new(
-                    "phpvms_error",
-                    format!("phpVMS rejected the flight (HTTP {status})"),
-                ));
+                Err(e) => format!(
+                    "could not fetch aircraft {} details: {e}",
+                    aircraft_id
+                ),
+            };
+            tracing::warn!(aircraft_id, %detail, "aircraft not available");
+            return Err(UiError::new(
+                "aircraft_not_available",
+                format!("Aircraft not available — {detail}"),
+            ));
+        }
+        Err(ApiError::Server { status, body: err_body }) => {
+            // Try to extract a human-readable message from a phpVMS JSON error body.
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&err_body) {
+                if let Some(title) = json.get("title").and_then(|v| v.as_str()) {
+                    return Err(UiError::new(
+                        "phpvms_error",
+                        format!("phpVMS rejected the flight (HTTP {status}): {title}"),
+                    ));
+                }
             }
-            Err(e) => return Err(e.into()),
+            return Err(UiError::new(
+                "phpvms_error",
+                format!("phpVMS rejected the flight (HTTP {status})"),
+            ));
+        }
+        Err(e) => return Err(e.into()),
         }
     };
 
@@ -12587,7 +12254,8 @@ async fn flight_start(
         )
         .await
         {
-            DirectOutcome::Match { ofp } | DirectOutcome::MatchWithCallsignWarning { ofp, .. } => {
+            DirectOutcome::Match { ofp }
+            | DirectOutcome::MatchWithCallsignWarning { ofp, .. } => {
                 tracing::info!(
                     sb_id = %ofp.request_id,
                     plan_burn_kg = ofp.planned_burn_kg,
@@ -12647,7 +12315,9 @@ async fn flight_start(
                     "SimBrief OFP geladen".to_string(),
                     Some(format!(
                         "Plan-Block {:.0} kg · Trip {:.0} kg · TOW {:.0} kg",
-                        ofp.planned_block_fuel_kg, ofp.planned_burn_kg, ofp.planned_tow_kg
+                        ofp.planned_block_fuel_kg,
+                        ofp.planned_burn_kg,
+                        ofp.planned_tow_kg
                     )),
                 );
                 Some(ofp)
@@ -12706,7 +12376,11 @@ async fn flight_start(
         flight_id: bid.flight_id.clone(),
         // v0.7.8 v1.5: Bid.flight.callsign + cached Profile.callsign
         // fuer SimBrief-direct Match-Kandidatenliste (Spec §6.1.2).
-        bid_callsign: bid.flight.callsign.clone().filter(|s| !s.trim().is_empty()),
+        bid_callsign: bid
+            .flight
+            .callsign
+            .clone()
+            .filter(|s| !s.trim().is_empty()),
         pilot_callsign: state
             .cached_pilot_callsign
             .lock()
@@ -12882,7 +12556,11 @@ async fn flight_start(
         // die SimBrief-OFP-ID die wir gerade geholt haben; ofp_generated_at
         // ist der raw <params><time_generated>-String aus dem XML.
         // Spec docs/spec/ofp-refresh-during-boarding.md §6.1.
-        stats.simbrief_ofp_id = bid.flight.simbrief.as_ref().map(|sb| sb.id.clone());
+        stats.simbrief_ofp_id = bid
+            .flight
+            .simbrief
+            .as_ref()
+            .map(|sb| sb.id.clone());
         stats.simbrief_ofp_generated_at = if ofp.ofp_generated_at.is_empty() {
             None
         } else {
@@ -13119,9 +12797,7 @@ async fn fleet_list_at_airport(
         match (a_here, b_here) {
             (true, false) => std::cmp::Ordering::Less,
             (false, true) => std::cmp::Ordering::Greater,
-            _ => a
-                .state
-                .cmp(&b.state)
+            _ => a.state.cmp(&b.state)
                 .then_with(|| a.icao.cmp(&b.icao))
                 .then_with(|| a.registration.cmp(&b.registration)),
         }
@@ -13214,9 +12890,9 @@ async fn flight_start_manual(
         _ => None,
     };
     let _ = planned_zfw; // Wird unten bei Manual-TOW-Zuweisung benutzt
-                         // Noisy-cast-Hinweis: NaN-Faelle werden vom is-pattern-match
-                         // in der `Some(v)` arm abgedeckt (NaN ist niemals > 0.0 noch <= 0.0,
-                         // also Some-NaN faellt in den catchall `_` und wird wie None behandelt).
+    // Noisy-cast-Hinweis: NaN-Faelle werden vom is-pattern-match
+    // in der `Some(v)` arm abgedeckt (NaN ist niemals > 0.0 noch <= 0.0,
+    // also Some-NaN faellt in den catchall `_` und wird wie None behandelt).
 
     let setup_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
 
@@ -13255,10 +12931,7 @@ async fn flight_start_manual(
 
     // Pre-flight gating: ground + departure-airport (gleicher Code wie flight_start)
     let snapshot = current_snapshot(&app).ok_or_else(|| {
-        UiError::new(
-            "no_sim_snapshot",
-            "no sim snapshot yet — is the simulator connected?",
-        )
+        UiError::new("no_sim_snapshot", "no sim snapshot yet — is the simulator connected?")
     })?;
     if !snapshot.on_ground {
         return Err(UiError::new(
@@ -13281,7 +12954,8 @@ async fn flight_start_manual(
         }
     };
     if let (Some(lat), Some(lon)) = (dpt_airport.lat, dpt_airport.lon) {
-        let distance_nm = ::geo::distance_m(snapshot.lat, snapshot.lon, lat, lon) / 1852.0;
+        let distance_nm =
+            ::geo::distance_m(snapshot.lat, snapshot.lon, lat, lon) / 1852.0;
         if distance_nm > MAX_START_DISTANCE_NM {
             return Err(UiError::new(
                 "not_at_departure",
@@ -13293,12 +12967,9 @@ async fn flight_start_manual(
         }
     }
 
-    let airline_id = bid
-        .flight
-        .airline
-        .as_ref()
-        .map(|a| a.id)
-        .ok_or_else(|| UiError::new("missing_airline", "bid has no airline relation"))?;
+    let airline_id = bid.flight.airline.as_ref().map(|a| a.id).ok_or_else(|| {
+        UiError::new("missing_airline", "bid has no airline relation")
+    })?;
     let aircraft_id = plan.aircraft_id;
 
     // Aircraft-mismatch-Gate gegen Sim-loaded Aircraft
@@ -13308,8 +12979,15 @@ async fn flight_start_manual(
         .as_ref()
         .map(|s| s.trim().to_uppercase())
         .filter(|s| !s.is_empty());
-    let sim_icao = snapshot.aircraft_icao.as_deref().and_then(clean_atc_model);
-    let sim_title = snapshot.aircraft_title.as_deref().unwrap_or("").to_string();
+    let sim_icao = snapshot
+        .aircraft_icao
+        .as_deref()
+        .and_then(clean_atc_model);
+    let sim_title = snapshot
+        .aircraft_title
+        .as_deref()
+        .unwrap_or("")
+        .to_string();
     // v0.5.36: VFR/Manual-Mode → Aircraft-Mismatch ist eine WARNUNG,
     // kein Hard-Block. Pilot hat im Picker bewusst eine Aircraft gewählt;
     // wir vertrauen ihm. Auf Erst-Anfrage liefern wir den Mismatch als
@@ -13332,7 +13010,10 @@ async fn flight_start_manual(
             &vps_aliases,
         ) {
             if !plan.acknowledge_aircraft_mismatch {
-                let registration = expected_aircraft.registration.as_deref().unwrap_or("?");
+                let registration = expected_aircraft
+                    .registration
+                    .as_deref()
+                    .unwrap_or("?");
                 return Err(UiError::new(
                     "aircraft_mismatch_warning",
                     format!(
@@ -13359,9 +13040,7 @@ async fn flight_start_manual(
         flight_number: bid.flight.flight_number.clone(),
         dpt_airport_id: bid.flight.dpt_airport_id.clone(),
         arr_airport_id: bid.flight.arr_airport_id.clone(),
-        alt_airport_id: plan
-            .alt_airport_id
-            .clone()
+        alt_airport_id: plan.alt_airport_id.clone()
             .or(bid.flight.alt_airport_id.clone()),
         flight_type: bid.flight.flight_type.clone(),
         route_code: bid.flight.route_code.clone(),
@@ -13380,10 +13059,7 @@ async fn flight_start_manual(
     // v0.16.17: server-seitig auf IN_PROGRESS gefiltert (?state=0) statt
     // page-1-fetch-then-filter (siehe flight_start) + Selbstheilung: alte
     // Orphans (>24 h) werden vor dem Adopt-/Collision-Check weggeräumt.
-    let existing = client
-        .get_user_pireps_in_progress()
-        .await
-        .unwrap_or_default();
+    let existing = client.get_user_pireps_in_progress().await.unwrap_or_default();
     let existing = sweep_stale_orphans_before_prefile(&app, &client, existing).await;
     let adoptable = existing.into_iter().find(|p| {
         // state-Check defensiv — Server hat bereits gefiltert.
@@ -13479,7 +13155,11 @@ async fn flight_start_manual(
         // v0.7.7: flight_id aus Bid (Manual-Mode-Variante).
         flight_id: bid.flight_id.clone(),
         // v0.7.8 v1.5: Match-Kandidaten (Manual-Mode-Variante).
-        bid_callsign: bid.flight.callsign.clone().filter(|s| !s.trim().is_empty()),
+        bid_callsign: bid
+            .flight
+            .callsign
+            .clone()
+            .filter(|s| !s.trim().is_empty()),
         pilot_callsign: state
             .cached_pilot_callsign
             .lock()
@@ -13487,9 +13167,7 @@ async fn flight_start_manual(
             .clone(),
         started_at: Utc::now(),
         airline_icao: airline.map(|a| a.icao.clone()).unwrap_or_default(),
-        airline_logo_url: airline
-            .and_then(|a| a.logo.clone())
-            .filter(|s| !s.is_empty()),
+        airline_logo_url: airline.and_then(|a| a.logo.clone()).filter(|s| !s.is_empty()),
         planned_registration,
         aircraft_icao,
         aircraft_name,
@@ -13554,7 +13232,10 @@ async fn flight_start_manual(
         stats.flight_plan_source = Some("manual");
         // v0.16.12 (#phase-v2): VFR-/Manual-Reise-Level (bereits in ft)
         // als `cruise_ref` für die Schatten-Engine.
-        stats.planned_cruise_alt_ft = plan.cruise_level_ft.filter(|&l| l > 0).map(f64::from);
+        stats.planned_cruise_alt_ft = plan
+            .cruise_level_ft
+            .filter(|&l| l > 0)
+            .map(f64::from);
         drop(stats);
         save_active_flight(&app, &flight);
     }
@@ -13724,23 +13405,16 @@ mod pirep_queue {
     fn file_path(app: &AppHandle, pirep_id: &str) -> Option<PathBuf> {
         // pirep_id ist alphanumerisch in phpVMS — kein Sanitizing nötig,
         // aber wir bauen den Pfad sicher zusammen.
-        let safe: String = pirep_id
-            .chars()
+        let safe: String = pirep_id.chars()
             .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
             .collect();
-        if safe.is_empty() {
-            return None;
-        }
+        if safe.is_empty() { return None; }
         Some(dir(app)?.join(format!("{safe}.json")))
     }
 
     pub fn enqueue(app: &AppHandle, q: &QueuedPirep) -> Result<(), std::io::Error> {
-        let path = file_path(app, &q.pirep_id).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "no app_data_dir or invalid pirep_id",
-            )
-        })?;
+        let path = file_path(app, &q.pirep_id)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "no app_data_dir or invalid pirep_id"))?;
         let json = serde_json::to_string_pretty(q)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
         std::fs::write(path, json)
@@ -13753,21 +13427,13 @@ mod pirep_queue {
     }
 
     pub fn list_all(app: &AppHandle) -> Vec<QueuedPirep> {
-        let Some(d) = dir(app) else {
-            return vec![];
-        };
-        let Ok(rd) = std::fs::read_dir(&d) else {
-            return vec![];
-        };
+        let Some(d) = dir(app) else { return vec![]; };
+        let Ok(rd) = std::fs::read_dir(&d) else { return vec![]; };
         let mut out = Vec::new();
         for entry in rd.flatten() {
             let p = entry.path();
-            if p.extension().and_then(|s| s.to_str()) != Some("json") {
-                continue;
-            }
-            let Ok(content) = std::fs::read_to_string(&p) else {
-                continue;
-            };
+            if p.extension().and_then(|s| s.to_str()) != Some("json") { continue; }
+            let Ok(content) = std::fs::read_to_string(&p) else { continue; };
             if let Ok(q) = serde_json::from_str::<QueuedPirep>(&content) {
                 out.push(q);
             }
@@ -13814,9 +13480,7 @@ async fn file_pirep_with_retry(
             }
         }
     }
-    Err(last_err.unwrap_or(ApiError::Network(
-        "file_pirep_with_retry: no error captured".into(),
-    )))
+    Err(last_err.unwrap_or(ApiError::Network("file_pirep_with_retry: no error captured".into())))
 }
 
 /// True wenn der Fehler nach Backoff retried werden soll (Netz, Timeout, 5xx, 408, 429).
@@ -13865,10 +13529,12 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
             // Client aus dem AppState holen — könnte fehlen wenn Pilot
             // nicht eingeloggt ist (= keine Connection). Dann skippen.
             let state = app.state::<AppState>();
-            let client_opt = state.client.lock().expect("client lock").clone();
-            let Some(client) = client_opt else {
-                continue;
-            };
+            let client_opt = state
+                .client
+                .lock()
+                .expect("client lock")
+                .clone();
+            let Some(client) = client_opt else { continue; };
 
             // v0.7.19 GAF-707 (QS-R1 Finding 1): Pending-Bid-Cleanup-Queue
             // bei jedem Tick mit drainen — unabhaengig davon ob auch
@@ -13877,9 +13543,7 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
             // bis zufaellig ein anderer PIREP queued wird.
             drain_pending_bid_cleanup(&app, &client).await;
 
-            if queued.is_empty() {
-                continue;
-            }
+            if queued.is_empty() { continue; }
             tracing::info!(queued_count = queued.len(), "PIREP-queue worker tick");
             for mut q in queued {
                 if q.attempt_count >= MAX_ATTEMPTS {
@@ -13901,10 +13565,7 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                                 q.dpt_airport,
                                 q.arr_airport,
                             ),
-                            Some(format!(
-                                "Nach {} Versuch(en) — Verbindung war wieder da",
-                                q.attempt_count
-                            )),
+                            Some(format!("Nach {} Versuch(en) — Verbindung war wieder da", q.attempt_count)),
                         );
                         // Best-effort Bid-Cleanup. v0.7.19 (QS-R1 Finding 1):
                         // transientes Scheitern landet in pending_bid_cleanup
@@ -13918,8 +13579,7 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                             // aus dem persistierten QueuedPirep mitgeben.
                             Some(q.flight_id.as_str()),
                             "queued_filed",
-                        )
-                        .await;
+                        ).await;
                         // Selber Tick: Pending-Bid-Cleanup-Queue drainen
                         drain_pending_bid_cleanup(&app, &client).await;
                         // v0.12.5 (LE1b): JSONL-PirepFiled-Event schreiben
@@ -14014,10 +13674,7 @@ fn friendly_net_error(e: &ApiError) -> String {
     let s_lower = s.to_lowercase();
     if s.contains("1236") || s_lower.contains("connection invalid") {
         "Verbindung wurde unterbrochen (1236 — Router-NAT-Eviction o.ä.). Wiederversuch automatisch.".to_string()
-    } else if s.contains("10053")
-        || s_lower.contains("connection abort")
-        || s_lower.contains("software caused")
-    {
+    } else if s.contains("10053") || s_lower.contains("connection abort") || s_lower.contains("software caused") {
         "Verbindung lokal abgebrochen (10053). Wiederversuch automatisch.".to_string()
     } else if s.contains("10054") || s_lower.contains("connection reset") {
         "Verbindung vom Server beendet (10054). Wiederversuch automatisch.".to_string()
@@ -14148,7 +13805,10 @@ mod arrived_standstill_tests {
 /// alter Pending-State aus einer frueheren Phase wurde mitgeschleppt.
 ///
 /// Regel: bei jedem Phase-Wechsel der NICHT `→ Holding` ist, Pending-Reset.
-pub fn should_reset_holding_pending(prev_phase: FlightPhase, next_phase: FlightPhase) -> bool {
+pub fn should_reset_holding_pending(
+    prev_phase: FlightPhase,
+    next_phase: FlightPhase,
+) -> bool {
     next_phase != prev_phase && next_phase != FlightPhase::Holding
 }
 
@@ -14374,9 +14034,7 @@ pub fn ofp_matches_active_flight(
 ) -> bool {
     // 1. Origin / Destination MUESSEN matchen (case-insensitive).
     let dpt_ok = ofp_origin.trim().eq_ignore_ascii_case(active_dpt.trim());
-    let arr_ok = ofp_destination
-        .trim()
-        .eq_ignore_ascii_case(active_arr.trim());
+    let arr_ok = ofp_destination.trim().eq_ignore_ascii_case(active_arr.trim());
     if !dpt_ok || !arr_ok {
         return false;
     }
@@ -14702,10 +14360,7 @@ fn assess_touchdown(stats: &FlightStats) -> AssessedTouchdown {
     // 0 von 85.058): ein Feld, das oft leer ist, wird ungeprueft
     // weiterverwendet und behauptet dann etwas Falsches, statt zu
     // schweigen. Ohne Erwartungswert gibt es keine Einstufung.
-    let tch = match (
-        stats.runway_nav_geometry.as_ref(),
-        stats.runway_tch_actual_ft,
-    ) {
+    let tch = match (stats.runway_nav_geometry.as_ref(), stats.runway_tch_actual_ft) {
         (Some(g), Some(actual)) if g.tch_ft > 0 => Some(runway_assessment::classify_tch(
             actual as f64,
             g.tch_ft as f64,
@@ -14772,7 +14427,9 @@ where
 {
     let planned_coords = airport_lookup(planned_arr_airport);
     let dist_to_planned = |lat: f64, lon: f64| -> Option<f32> {
-        planned_coords.map(|(plat, plon)| (geo::distance_m(lat, lon, plat, plon) / 1852.0) as f32)
+        planned_coords.map(|(plat, plon)| {
+            (geo::distance_m(lat, lon, plat, plon) / 1852.0) as f32
+        })
     };
 
     if let Some(rw) = runway_match {
@@ -14790,13 +14447,20 @@ where
 
     if let (Some(lat), Some(lon)) = (landing_lat, landing_lon) {
         const TD_NEAREST_RADIUS_NM: f64 = 25.0;
-        let nearest = runway::find_nearest_airports(lat, lon, TD_NEAREST_RADIUS_NM * 1852.0, 1);
+        let nearest = runway::find_nearest_airports(
+            lat,
+            lon,
+            TD_NEAREST_RADIUS_NM * 1852.0,
+            1,
+        );
         if let Some(closest) = nearest.first() {
             return TouchdownAirportResolution {
                 icao: closest.icao.clone(),
                 source: TouchdownAirportSource::Nearest25Nm,
                 distance_to_destination_nm: dist_to_planned(lat, lon),
-                nearest_distance_nm: Some((closest.distance_m / 1852.0) as f32),
+                nearest_distance_nm: Some(
+                    (closest.distance_m / 1852.0) as f32,
+                ),
             };
         }
         return TouchdownAirportResolution {
@@ -15060,8 +14724,7 @@ fn build_pirep_payload(
     // dann sowohl als sub_scores ins Payload als auch
     // als landing_score (gewichteter Aggregate) nutzen.
     let actual_burn = actual_burn_for_record(&stats);
-    let mut scoring_input =
-        scoring_eingang(&stats, muster_fuer_landung(&stats, &flight.aircraft_icao));
+    let mut scoring_input = scoring_eingang(&stats, muster_fuer_landung(&stats, &flight.aircraft_icao));
     // v0.10.0 (#runway-utilization-score): LDA-basierter
     // Bahn-Auslastungs-Score. Markiert weiter unten am
     // PirepPayload via score_algorithm_version: Some(9)
@@ -15071,8 +14734,10 @@ fn build_pirep_payload(
     //  30/50/70/90 → 40/60/80/95; Sinkraten-Score von monotoner
     //  "weicher=besser"-Kurve auf Ziel-Korridor 90-250 fpm umgestellt).
     fill_v2_rollout_fields(&mut scoring_input, &stats, effective_arr_icao);
-    let payload_sub_scores = landing_scoring::compute_sub_scores(&scoring_input);
-    let aggregate_master = landing_scoring::aggregate_master_score(&payload_sub_scores);
+    let payload_sub_scores =
+        landing_scoring::compute_sub_scores(&scoring_input);
+    let aggregate_master =
+        landing_scoring::aggregate_master_score(&payload_sub_scores);
     let payload_landing_score = aggregate_master
         .map(|m| m as i32)
         .or_else(|| stats.landing_score.map(|s| s.numeric()));
@@ -15083,7 +14748,10 @@ fn build_pirep_payload(
         // Touchdown-Join zeigen kann.
         client_version: Some(env!("CARGO_PKG_VERSION")),
         pirep_id: flight.pirep_id.clone(),
-        flight_number: format_callsign(&flight.airline_icao, &flight.flight_number),
+        flight_number: format_callsign(
+            &flight.airline_icao,
+            &flight.flight_number,
+        ),
         dep: flight.dpt_airport.clone(),
         arr: effective_arr_icao.to_string(),
         block_time_min: body.flight_time,
@@ -15117,7 +14785,8 @@ fn build_pirep_payload(
         // gibt es nur noch eine.
         landing_score_label: payload_landing_score
             .map(|s| aggregate_score_label(s.clamp(0, 100) as u8).to_string()),
-        landing_score_grade: payload_landing_score.map(|s| letter_grade(s).to_string()),
+        landing_score_grade: payload_landing_score
+            .map(|s| letter_grade(s).to_string()),
         go_around_count: Some(stats.go_around_count),
         touchdown_count: Some(touchdown_count),
         dep_gate: stats.dep_gate.clone(),
@@ -15176,18 +14845,12 @@ fn build_pirep_payload(
         // function Check + reason-string ins Payload.
         runway_geometry_trusted: {
             let (trusted, _) = runway_geometry_trust_check(
-                stats
-                    .runway_match
-                    .as_ref()
+                stats.runway_match.as_ref()
                     .map(|m| m.airport_ident.as_str()),
                 effective_arr_icao,
-                stats
-                    .divert_hint
-                    .as_ref()
+                stats.divert_hint.as_ref()
                     .and_then(|h| h.actual_icao.as_deref()),
-                stats
-                    .runway_match
-                    .as_ref()
+                stats.runway_match.as_ref()
                     .map(|m| m.centerline_distance_m as f32),
                 stats.landing_float_distance_m,
             );
@@ -15195,18 +14858,12 @@ fn build_pirep_payload(
         },
         runway_geometry_reason: {
             let (_, reason) = runway_geometry_trust_check(
-                stats
-                    .runway_match
-                    .as_ref()
+                stats.runway_match.as_ref()
                     .map(|m| m.airport_ident.as_str()),
                 effective_arr_icao,
-                stats
-                    .divert_hint
-                    .as_ref()
+                stats.divert_hint.as_ref()
                     .and_then(|h| h.actual_icao.as_deref()),
-                stats
-                    .runway_match
-                    .as_ref()
+                stats.runway_match.as_ref()
                     .map(|m| m.centerline_distance_m as f32),
                 stats.landing_float_distance_m,
             );
@@ -15214,20 +14871,29 @@ fn build_pirep_payload(
         },
         // v0.7.19 GAF-707 Accident-Detection: Accident-Felder
         // gelatcht; Sentinel wird IMMER gesetzt.
-        accident_classifier_version: Some(accident::ACCIDENT_CLASSIFIER_VERSION.into()),
+        accident_classifier_version: Some(
+            accident::ACCIDENT_CLASSIFIER_VERSION.into(),
+        ),
         accident: if stats.accident_detected {
             Some(true)
         } else {
             None
         },
         accident_kind: stats.accident_kind.clone(),
-        accident_confidence: stats.accident_confidence.clone(),
-        accident_reasons: if stats.accident_reasons.is_empty() {
+        accident_confidence: stats
+            .accident_confidence
+            .clone(),
+        accident_reasons: if stats
+            .accident_reasons
+            .is_empty()
+        {
             None
         } else {
             Some(stats.accident_reasons.clone())
         },
-        accident_at: stats.accident_at.map(|t| t.timestamp_millis()),
+        accident_at: stats
+            .accident_at
+            .map(|t| t.timestamp_millis()),
         // v0.10.0 (#runway-utilization-score): markiert
         // dass die sub_scores oben vom LDA-basierten
         // Bahn-Auslastungs-Algorithmus stammen.
@@ -15426,7 +15092,9 @@ fn emit_landing_finalized(app: &AppHandle, flight: &ActiveFlight) {
 /// + aggregate_master_score den gleichen Wert nutzen.
 fn actual_burn_for_record(stats: &FlightStats) -> Option<f32> {
     match (stats.takeoff_fuel_kg, stats.landing_fuel_kg) {
-        (Some(toff), Some(land)) if toff > land && toff > 0.0 && land >= 0.0 => Some(toff - land),
+        (Some(toff), Some(land)) if toff > land && toff > 0.0 && land >= 0.0 => {
+            Some(toff - land)
+        }
         _ => None,
     }
 }
@@ -15471,10 +15139,20 @@ mod trip_burn_efficiency_tests {
     /// diese Regression darf NICHT zurückkommen.
     #[test]
     fn dlh1386_uses_trip_burn_not_block_fuel() {
-        let pct = trip_burn_efficiency_pct(Some(7341.383), Some(3862.3726), Some(3340.0))
-            .expect("alle Inputs vorhanden");
-        assert!((pct - 4.16).abs() < 0.15, "erwartet ~+4.2 %, war {pct}");
-        assert!(pct < 6.0, "block-fuel-Regression (+9.5 %) zurück: {pct}");
+        let pct = trip_burn_efficiency_pct(
+            Some(7341.383),
+            Some(3862.3726),
+            Some(3340.0),
+        )
+        .expect("alle Inputs vorhanden");
+        assert!(
+            (pct - 4.16).abs() < 0.15,
+            "erwartet ~+4.2 %, war {pct}"
+        );
+        assert!(
+            pct < 6.0,
+            "block-fuel-Regression (+9.5 %) zurück: {pct}"
+        );
     }
 
     #[test]
@@ -15500,7 +15178,8 @@ mod trip_burn_efficiency_tests {
     #[test]
     fn under_burn_is_negative() {
         // Trip-Burn 2900 vs planned 3000 → −3.33 %.
-        let pct = trip_burn_efficiency_pct(Some(6000.0), Some(3100.0), Some(3000.0)).unwrap();
+        let pct = trip_burn_efficiency_pct(Some(6000.0), Some(3100.0), Some(3000.0))
+            .unwrap();
         assert!((pct - (-3.333)).abs() < 0.05, "war {pct}");
     }
 }
@@ -15562,7 +15241,10 @@ fn fill_v2_rollout_fields(
     // Bei einem Add-on mit 2 m breiterem Fahrwerk gemessen 8,8 gegen
     // 7,7 m Randabstand.
     input.fahrwerk_spurweite_m = stats.fahrwerk_spurweite_m;
-    input.runway_surface = stats.runway_match.as_ref().map(|rm| rm.surface.clone());
+    input.runway_surface = stats
+        .runway_match
+        .as_ref()
+        .map(|rm| rm.surface.clone());
 
     let rm = stats.runway_match.as_ref();
     // v1.6.7-QS: die um die Displaced Threshold KORRIGIERTE Distanz, nicht
@@ -15609,10 +15291,7 @@ fn fill_v2_rollout_fields(
     let (trusted, _) = runway_geometry_trust_check(
         rm.map(|m| m.airport_ident.as_str()),
         arr_airport,
-        stats
-            .divert_hint
-            .as_ref()
-            .and_then(|h| h.actual_icao.as_deref()),
+        stats.divert_hint.as_ref().and_then(|h| h.actual_icao.as_deref()),
         rm.map(|m| m.centerline_distance_m as f32),
         stats.landing_float_distance_m,
     );
@@ -15670,8 +15349,9 @@ fn fill_v2_rollout_fields(
     // er tatsaechlich fliegen musste — ausgerechnet die Klasse, die unter
     // Seitenwind am meisten leidet.
     const MIN_BEZUGSGESCHWINDIGKEIT_KT: f32 = 25.0;
-    let brauchbar =
-        |v: Option<f32>| v.filter(|x| x.is_finite() && *x > MIN_BEZUGSGESCHWINDIGKEIT_KT);
+    let brauchbar = |v: Option<f32>| {
+        v.filter(|x| x.is_finite() && *x > MIN_BEZUGSGESCHWINDIGKEIT_KT)
+    };
     input.landing_groundspeed_kt = brauchbar(stats.landing_true_airspeed_kt)
         .or_else(|| {
             match (
@@ -15771,11 +15451,8 @@ fn canonical_landing_verdict(
     effective_arr_icao: &str,
 ) -> Option<LandingVerdict> {
     let touchdown_class = stats.landing_score?;
-    let aggregate = compute_aggregate_master_score(
-        stats,
-        muster_fuer_landung(stats, &flight.aircraft_icao),
-        effective_arr_icao,
-    );
+    let aggregate =
+        compute_aggregate_master_score(stats, muster_fuer_landung(stats, &flight.aircraft_icao), effective_arr_icao);
     let (label, numeric) = match aggregate {
         Some(m) => (aggregate_score_label(m), m as i32),
         None => (touchdown_class.label(), touchdown_class.numeric()),
@@ -15834,9 +15511,12 @@ fn build_storage_gate_window(approach_samples: &[ApproachSample]) -> Option<Gate
 /// Berechnet die gleichen is_scored_gate-Flags wie in
 /// build_landing_record (height in 0..=1000 ft AGL minus letzte 3s
 /// vor TD) und liefert das resultierende Window.
-fn build_mqtt_gate_window_from_stats(stats: &FlightStats) -> Option<aeroacars_mqtt::GateWindow> {
+fn build_mqtt_gate_window_from_stats(
+    stats: &FlightStats,
+) -> Option<aeroacars_mqtt::GateWindow> {
     use landing_scoring::gate::{
-        STABILITY_GATE_FLARE_CUTOFF_MS, STABILITY_GATE_MAX_HEIGHT_FT, STABILITY_GATE_MIN_HEIGHT_FT,
+        STABILITY_GATE_FLARE_CUTOFF_MS, STABILITY_GATE_MAX_HEIGHT_FT,
+        STABILITY_GATE_MIN_HEIGHT_FT,
     };
     let td_ts = stats.landing_at?;
     let scored: Vec<(&ApproachBufferSample, i32)> = stats
@@ -15844,11 +15524,12 @@ fn build_mqtt_gate_window_from_stats(stats: &FlightStats) -> Option<aeroacars_mq
         .iter()
         .filter_map(|s| {
             let height = s.agl_ft;
-            let in_height_band =
-                height > STABILITY_GATE_MIN_HEIGHT_FT && height <= STABILITY_GATE_MAX_HEIGHT_FT;
+            let in_height_band = height > STABILITY_GATE_MIN_HEIGHT_FT
+                && height <= STABILITY_GATE_MAX_HEIGHT_FT;
             let dt_ms = (s.at - td_ts).num_milliseconds() as i32;
             let ms_before_td = (-dt_ms) as i64;
-            let in_flare = ms_before_td >= 0 && ms_before_td < STABILITY_GATE_FLARE_CUTOFF_MS;
+            let in_flare =
+                ms_before_td >= 0 && ms_before_td < STABILITY_GATE_FLARE_CUTOFF_MS;
             if in_height_band && !in_flare {
                 Some((s, dt_ms))
             } else {
@@ -16095,7 +15776,10 @@ fn bahn_skip_grund(sub_scores: &[landing_scoring::SubScoreEntry]) -> Option<Stri
 /// die leer: keine Spurweite, keine Spannweite, Bank-Grenze und Vref aus
 /// dem Rueckfall, und die Querbewertung fiel aus.
 /// `tests/musterquelle.rs` haelt fest, dass es dabei bleibt.
-fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Option<&'a str> {
+fn muster_fuer_landung<'a>(
+    stats: &'a FlightStats,
+    buchung_icao: &'a str,
+) -> Option<&'a str> {
     stats
         .aufgeloestes_muster
         .as_deref()
@@ -16151,7 +15835,11 @@ fn scoring_eingang(
     }
 }
 
-fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<String>) -> BahnFelder {
+fn bahn_felder(
+    stats: &FlightStats,
+    icao: Option<&str>,
+    skip_grund: Option<String>,
+) -> BahnFelder {
     let rm = stats.runway_match.as_ref();
     // Reihenfolge nach Spec §5.3: Die Flugzeugdatei ist die Verfeinerung,
     // die Typtabelle die Basis. Liegt ein aus der Datei gelesener Wert vor,
@@ -16163,7 +15851,9 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     // Alles andere faellt auf die Tabelle zurueck.
     let aus_datei = stats.fahrwerk_spurweite_m;
     let spur_m = aus_datei.or_else(|| landing_scoring::spurweite::spurweite_m(icao));
-    let breite_m = rm.map(|m| m.width_ft as f64 * 0.3048).filter(|w| *w > 0.0);
+    let breite_m = rm
+        .map(|m| m.width_ft as f64 * 0.3048)
+        .filter(|w| *w > 0.0);
     let versatz_m = stats.bahn_max_querversatz_m;
 
     // Kleinster Randabstand: halbe Bahnbreite minus das aeussere Rad.
@@ -16180,9 +15870,10 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     // Insbesondere dieselbe Aussenkante: bis zum aeusseren Rand des
     // aeussersten REIFENS, nicht bis zur Bein-Mitte.
     let rand_m = match (breite_m, spur_m, versatz_m) {
-        (Some(b), Some(sp), Some(v)) => {
-            Some(b / 2.0 - (v.abs() + landing_scoring::spurweite::aussenkante_halb_aus_spur(sp)))
-        }
+        (Some(b), Some(sp), Some(v)) => Some(
+            b / 2.0
+                - (v.abs() + landing_scoring::spurweite::aussenkante_halb_aus_spur(sp)),
+        ),
         _ => None,
     };
 
@@ -16222,7 +15913,8 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
             let drin_davor = (spur[i - 1].1 as f64).abs() <= halbe;
             let draussen = (spur[i].1 as f64).abs() > halbe;
             let nach_dem_ausschwenken = spur[i].0 as f64 >= ab_m;
-            let bleibt_draussen = spur[i..].iter().all(|(_, q)| (*q as f64).abs() > halbe);
+            let bleibt_draussen =
+                spur[i..].iter().all(|(_, q)| (*q as f64).abs() > halbe);
             (drin_davor && draussen && nach_dem_ausschwenken && bleibt_draussen)
                 .then(|| spur[i].0 as f64)
         })
@@ -16500,7 +16192,8 @@ where
     // v0.15.x: effektiven Landeflughafen (Divert-aware) statt geplantes Ziel.
     fill_v2_rollout_fields(&mut scoring_input, stats, effective_arr_icao);
     let computed_sub_scores = landing_scoring::compute_sub_scores(&scoring_input);
-    let aggregate_master = landing_scoring::aggregate_master_score(&computed_sub_scores);
+    let aggregate_master =
+        landing_scoring::aggregate_master_score(&computed_sub_scores);
     let score_numeric = aggregate_master
         .map(|m| m as i32)
         .unwrap_or_else(|| touchdown_class.numeric());
@@ -16578,21 +16271,22 @@ where
     // compute_approach_stability_v2. Phase 3 kann das praezisieren wenn
     // noetig; fuer das Chart-Rendering ist agl_ft genau genug.
     use landing_scoring::gate::{
-        STABILITY_GATE_FLARE_CUTOFF_MS, STABILITY_GATE_MAX_HEIGHT_FT, STABILITY_GATE_MIN_HEIGHT_FT,
+        STABILITY_GATE_FLARE_CUTOFF_MS, STABILITY_GATE_MAX_HEIGHT_FT,
+        STABILITY_GATE_MIN_HEIGHT_FT,
     };
     let approach_samples: Vec<ApproachSample> = stats
         .approach_buffer
         .iter()
         .map(|s| {
             let height = s.agl_ft;
-            let in_height_band =
-                height > STABILITY_GATE_MIN_HEIGHT_FT && height <= STABILITY_GATE_MAX_HEIGHT_FT;
+            let in_height_band = height > STABILITY_GATE_MIN_HEIGHT_FT
+                && height <= STABILITY_GATE_MAX_HEIGHT_FT;
             let (t_ms, in_flare) = match stats.landing_at {
                 Some(td_ts) => {
                     let dt_ms = (s.at - td_ts).num_milliseconds() as i32;
                     let ms_before_td = -dt_ms as i64;
-                    let in_flare =
-                        ms_before_td >= 0 && ms_before_td < STABILITY_GATE_FLARE_CUTOFF_MS;
+                    let in_flare = ms_before_td >= 0
+                        && ms_before_td < STABILITY_GATE_FLARE_CUTOFF_MS;
                     (Some(dt_ms), in_flare)
                 }
                 None => (None, false),
@@ -16627,7 +16321,11 @@ where
     let assessed = assess_touchdown(stats);
 
     // v1.7.0 Bahndisziplin — an einer Stelle abgeleitet, siehe `bahn_felder`.
-    let bahn = bahn_felder(stats, aircraft_icao, bahn_skip_grund(&computed_sub_scores));
+    let bahn = bahn_felder(
+        stats,
+        aircraft_icao,
+        bahn_skip_grund(&computed_sub_scores),
+    );
 
     Some(LandingRecord {
         clearance_point_m: bahn.clearance_point_m,
@@ -16659,16 +16357,16 @@ where
         // ueber die `td_resolution`-Bindung weiter unten in der `..` -
         // Erweiterung gesetzt. Hier nur Hauptfelder; siehe unten.
         touchdown_airport: Some(td_resolution.icao.clone()),
-        touchdown_airport_source: Some(td_resolution.source.as_wire_str().to_string()),
-        touchdown_distance_to_destination_nm: td_resolution.distance_to_destination_nm,
+        touchdown_airport_source: Some(
+            td_resolution.source.as_wire_str().to_string(),
+        ),
+        touchdown_distance_to_destination_nm:
+            td_resolution.distance_to_destination_nm,
         touchdown_nearest_distance_nm: td_resolution.nearest_distance_nm,
-        aircraft_registration: Some(flight.planned_registration.clone()).filter(|s| !s.is_empty()),
-        aircraft_icao: aircraft_icao
-            .map(|s| s.to_string())
+        aircraft_registration: Some(flight.planned_registration.clone())
             .filter(|s| !s.is_empty()),
-        aircraft_title: aircraft_title
-            .map(|s| s.to_string())
-            .filter(|s| !s.is_empty()),
+        aircraft_icao: aircraft_icao.map(|s| s.to_string()).filter(|s| !s.is_empty()),
+        aircraft_title: aircraft_title.map(|s| s.to_string()).filter(|s| !s.is_empty()),
         sim_kind: sim_kind_label.map(|s| s.to_string()),
 
         score_numeric,
@@ -16812,7 +16510,8 @@ where
         // braucht sie aber. Alte landing_history.json bleibt via
         // serde(default) lesbar.
         approach_vs_deviation_fpm: stats.approach_vs_deviation_fpm,
-        approach_max_vs_deviation_below_500_fpm: stats.approach_max_vs_deviation_below_500_fpm,
+        approach_max_vs_deviation_below_500_fpm: stats
+            .approach_max_vs_deviation_below_500_fpm,
         approach_used_hat: Some(stats.approach_used_hat),
         // P1.5 + Phase 2 F1/F2/F3 + P1.3-Fix: sub_scores wurden oben
         // schon berechnet damit aggregate_master_score → score_numeric
@@ -16825,38 +16524,20 @@ where
         // payload-consistency.md §3 P1-3.
         runway_geometry_trusted: {
             let (trusted, _) = runway_geometry_trust_check(
-                stats
-                    .runway_match
-                    .as_ref()
-                    .map(|m| m.airport_ident.as_str()),
+                stats.runway_match.as_ref().map(|m| m.airport_ident.as_str()),
                 effective_arr_icao,
-                stats
-                    .divert_hint
-                    .as_ref()
-                    .and_then(|h| h.actual_icao.as_deref()),
-                stats
-                    .runway_match
-                    .as_ref()
-                    .map(|m| m.centerline_distance_m as f32),
+                stats.divert_hint.as_ref().and_then(|h| h.actual_icao.as_deref()),
+                stats.runway_match.as_ref().map(|m| m.centerline_distance_m as f32),
                 stats.landing_float_distance_m,
             );
             Some(trusted)
         },
         runway_geometry_reason: {
             let (_, reason) = runway_geometry_trust_check(
-                stats
-                    .runway_match
-                    .as_ref()
-                    .map(|m| m.airport_ident.as_str()),
+                stats.runway_match.as_ref().map(|m| m.airport_ident.as_str()),
                 effective_arr_icao,
-                stats
-                    .divert_hint
-                    .as_ref()
-                    .and_then(|h| h.actual_icao.as_deref()),
-                stats
-                    .runway_match
-                    .as_ref()
-                    .map(|m| m.centerline_distance_m as f32),
+                stats.divert_hint.as_ref().and_then(|h| h.actual_icao.as_deref()),
+                stats.runway_match.as_ref().map(|m| m.centerline_distance_m as f32),
                 stats.landing_float_distance_m,
             );
             reason.map(String::from)
@@ -16978,7 +16659,8 @@ fn record_landing_for_filed_flight(
             })
             .collect()
     };
-    let airport_lookup = |icao: &str| airport_lookup_data.get(&icao.to_uppercase()).copied();
+    let airport_lookup =
+        |icao: &str| airport_lookup_data.get(&icao.to_uppercase()).copied();
 
     let Some(record) = build_landing_record(
         flight,
@@ -17084,11 +16766,7 @@ async fn upload_landing_backup(app: AppHandle) -> Result<usize, String> {
     let res = aeroacars_mqtt::backup::put_landings(None, &token, &stripped)
         .await
         .map_err(|e| e.to_string())?;
-    tracing::info!(
-        count = res.count,
-        bytes = res.bytes,
-        "landing backup uploaded"
-    );
+    tracing::info!(count = res.count, bytes = res.bytes, "landing backup uploaded");
     Ok(res.count)
 }
 
@@ -17224,7 +16902,11 @@ fn record_event(app: &AppHandle, pirep_id: &str, event: &FlightLogEvent) {
 /// reingeladen. Datenverlust nur wenn `phpvms_worker_spawned` panics —
 /// dann sind die in-memory items weg, aber JSONL-Forensik ist komplett
 /// und der Forensik-Upload nach PIREP-Filing bringt sie zurueck.
-fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, client: Client) {
+fn spawn_phpvms_position_worker(
+    app: AppHandle,
+    flight: Arc<ActiveFlight>,
+    client: Client,
+) {
     // Guard gegen Doppel-Spawn (mehrere flight_resume etc.)
     if flight.phpvms_worker_spawned.swap(true, Ordering::SeqCst) {
         return;
@@ -17279,13 +16961,13 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
         if let Some(q) = open_position_queue(&app) {
             match q.read_all() {
                 Ok(items) if !items.is_empty() => {
-                    let mut outbox = flight.position_outbox.lock().expect("position_outbox lock");
+                    let mut outbox = flight.position_outbox.lock()
+                        .expect("position_outbox lock");
                     let mut recovered = 0usize;
                     let mut deserialize_failed = 0usize;
                     for item in items {
                         if item.pirep_id == flight.pirep_id {
-                            match serde_json::from_value::<api_client::PositionEntry>(item.position)
-                            {
+                            match serde_json::from_value::<api_client::PositionEntry>(item.position) {
                                 Ok(p) => {
                                     outbox.push_back(p);
                                     recovered += 1;
@@ -17407,7 +17089,8 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
             // Bis MAX_BATCH Items aus der Outbox ziehen — std::sync::Mutex,
             // synchroner Block, kein await innen.
             let batch: Vec<api_client::PositionEntry> = {
-                let mut outbox = flight.position_outbox.lock().expect("position_outbox lock");
+                let mut outbox = flight.position_outbox.lock()
+                    .expect("position_outbox lock");
                 let n = outbox.len().min(MAX_BATCH);
                 outbox.drain(..n).collect()
             };
@@ -17478,13 +17161,15 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                     }
                     consecutive_failures = 0;
                     last_post_at = Some(std::time::Instant::now());
-                    flight
-                        .connection_state
-                        .store(CONN_STATE_LIVE, Ordering::Relaxed);
+                    flight.connection_state.store(CONN_STATE_LIVE, Ordering::Relaxed);
                 }
                 Ok(Err(ApiError::NotFound)) => {
                     // PIREP serverseitig geloescht — terminiert sauber.
-                    handle_remote_cancellation(&app, &flight, "phpvms-worker POST");
+                    handle_remote_cancellation(
+                        &app,
+                        &flight,
+                        "phpvms-worker POST",
+                    );
                     flight.phpvms_worker_spawned.store(false, Ordering::SeqCst);
                     return;
                 }
@@ -17510,17 +17195,15 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                     // Schmeisse den Batch und die noch in der Outbox
                     // wartenden Items weg — retry sinnlos.
                     {
-                        let mut outbox =
-                            flight.position_outbox.lock().expect("position_outbox lock");
+                        let mut outbox = flight.position_outbox.lock()
+                            .expect("position_outbox lock");
                         outbox.clear();
                     }
                     {
                         let mut stats = flight.stats.lock().expect("flight stats");
                         stats.queued_position_count = 0;
                     }
-                    flight
-                        .connection_state
-                        .store(CONN_STATE_BLOCKED, Ordering::Relaxed);
+                    flight.connection_state.store(CONN_STATE_BLOCKED, Ordering::Relaxed);
                     tracing::error!(
                         pirep_id = %flight.pirep_id,
                         http_code = http_code,
@@ -17567,19 +17250,14 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                             )),
                         );
                     }
-                    let outbox_len = flight
-                        .position_outbox
-                        .lock()
-                        .expect("position_outbox lock")
-                        .len();
+                    let outbox_len = flight.position_outbox.lock()
+                        .expect("position_outbox lock").len();
                     {
                         let mut stats = flight.stats.lock().expect("flight stats");
                         stats.queued_position_count = outbox_len as u32;
                     }
                     consecutive_failures = consecutive_failures.saturating_add(1);
-                    flight
-                        .connection_state
-                        .store(CONN_STATE_FAILING, Ordering::Relaxed);
+                    flight.connection_state.store(CONN_STATE_FAILING, Ordering::Relaxed);
                 }
                 Err(_timeout) => {
                     tracing::warn!(
@@ -17604,30 +17282,22 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                             )),
                         );
                     }
-                    let outbox_len = flight
-                        .position_outbox
-                        .lock()
-                        .expect("position_outbox lock")
-                        .len();
+                    let outbox_len = flight.position_outbox.lock()
+                        .expect("position_outbox lock").len();
                     {
                         let mut stats = flight.stats.lock().expect("flight stats");
                         stats.queued_position_count = outbox_len as u32;
                     }
                     consecutive_failures = consecutive_failures.saturating_add(1);
-                    flight
-                        .connection_state
-                        .store(CONN_STATE_FAILING, Ordering::Relaxed);
+                    flight.connection_state.store(CONN_STATE_FAILING, Ordering::Relaxed);
                 }
             }
             // Outbox-Groesse fuer Persist-Check (kein queued_count-Update mehr
             // hier — das wurde im match-arm korrekt mit der richtigen Semantik
             // gesetzt. Vorher war hier ein unconditional update das den
             // success-arm-0-Wert mit dem Race-Condition-Wert ueberschrieb).
-            let total_after = flight
-                .position_outbox
-                .lock()
-                .expect("position_outbox lock")
-                .len();
+            let total_after = flight.position_outbox.lock()
+                .expect("position_outbox lock").len();
             // Persist-Trigger: alle PERSIST_INTERVAL (30s) wenn die Outbox
             // nicht leer ist. Das begrenzt den Crash-Verlust für phpVMS
             // Live-Map auf max ~30s an Positions (= 1-10 Items je nach
@@ -17661,7 +17331,9 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
             // bis dahin — so bleibt der stop-Check responsive (1s Tick).
             if consecutive_failures > 0 {
                 let extra_secs = (3u64 << (consecutive_failures - 1).min(5)).min(60);
-                backoff_until = Some(std::time::Instant::now() + Duration::from_secs(extra_secs));
+                backoff_until = Some(
+                    std::time::Instant::now() + Duration::from_secs(extra_secs)
+                );
                 tracing::debug!(
                     pirep_id = %flight.pirep_id,
                     consecutive_failures,
@@ -17681,7 +17353,8 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
 /// originale Reihenfolge: batch=[a,b,c] -> push_front c, b, a ->
 /// outbox = [a, b, c, ...].
 fn requeue_batch(flight: &ActiveFlight, batch: Vec<api_client::PositionEntry>) {
-    let mut outbox = flight.position_outbox.lock().expect("position_outbox lock");
+    let mut outbox = flight.position_outbox.lock()
+        .expect("position_outbox lock");
     for position in batch.into_iter().rev() {
         outbox.push_front(position);
     }
@@ -17731,9 +17404,8 @@ fn persist_outbox_inner(app: &AppHandle, flight: &ActiveFlight, clear_first: boo
         if clear_first {
             outbox.clear();
         }
-        outbox
-            .iter()
-            .filter_map(|p| match serde_json::to_value(p) {
+        outbox.iter().filter_map(|p| {
+            match serde_json::to_value(p) {
                 Ok(v) => Some(QueuedPosition {
                     pirep_id: flight.pirep_id.clone(),
                     position: v,
@@ -17746,14 +17418,13 @@ fn persist_outbox_inner(app: &AppHandle, flight: &ActiveFlight, clear_first: boo
                     );
                     None
                 }
-            })
-            .collect()
+            }
+        }).collect()
     };
     // Bestehende queue.json lesen, items des aktuellen pirep
     // ausfiltern (= überschreiben), Items anderer pireps behalten.
     let existing_other_pirep: Vec<QueuedPosition> = match queue.read_all() {
-        Ok(items) => items
-            .into_iter()
+        Ok(items) => items.into_iter()
             .filter(|i| i.pirep_id != flight.pirep_id)
             .collect(),
         Err(e) => {
@@ -17966,9 +17637,7 @@ async fn compute_distance_to_airport(
 fn rearm_background_task_guards(flight: &ActiveFlight) {
     flight.streamer_spawned.store(false, Ordering::SeqCst);
     flight.phpvms_worker_spawned.store(false, Ordering::SeqCst);
-    flight
-        .touchdown_sampler_spawned
-        .store(false, Ordering::SeqCst);
+    flight.touchdown_sampler_spawned.store(false, Ordering::SeqCst);
 }
 
 fn restore_flight_for_retry(
@@ -18142,11 +17811,7 @@ mod positions_idempotenz_tests {
             phpvms_punkt_faellig(p, Some(Duration::from_secs(3)), Some(p)) == false,
             "3 s nach dem letzten Punkt darf im Cruise keiner rausgehen"
         );
-        assert!(phpvms_punkt_faellig(
-            p,
-            Some(phpvms_punkt_intervall(p)),
-            Some(p)
-        ));
+        assert!(phpvms_punkt_faellig(p, Some(phpvms_punkt_intervall(p)), Some(p)));
     }
 
     #[test]
@@ -18542,11 +18207,7 @@ async fn flight_end(
     // Upload (file_pirep-Anhang) enthält die JSONL mit allen Position-
     // Events, kein Datenverlust. Verhindert dass der Worker beim
     // letzten Tick orphan items in position_queue.json persistiert.
-    flight
-        .position_outbox
-        .lock()
-        .expect("position_outbox lock")
-        .clear();
+    flight.position_outbox.lock().expect("position_outbox lock").clear();
     flight.stop.store(true, Ordering::Relaxed);
 
     // Snapshot all stats inside a single short-lived guard to avoid holding
@@ -18576,7 +18237,8 @@ async fn flight_end(
             (Some(t), Some(l)) if l > t => (l - t).num_minutes() as i32,
             _ => ((Utc::now() - flight.started_at).num_minutes() as i32).max(0),
         };
-        let pause_min = (stats.pause_total_duration_secs / 60).clamp(0, i32::MAX as i64) as i32;
+        let pause_min =
+            (stats.pause_total_duration_secs / 60).clamp(0, i32::MAX as i64) as i32;
         let flight_time = Some(raw_flight_time_min.saturating_sub(pause_min).max(0));
 
         let fares = if flight.fares.is_empty() {
@@ -18629,7 +18291,9 @@ async fn flight_end(
         // landing_rate_fpm), seit Fix: -194 (vs_at_edge_fpm). Diese
         // Zeile war die letzte uebersehene Stelle aus dem v0.7.17
         // B-015a-Sweep.
-        let landing_rate = stats.canonical_landing_rate_fpm().map(|v| v as f64);
+        let landing_rate = stats
+            .canonical_landing_rate_fpm()
+            .map(|v| v as f64);
         // v0.7.1 P1 (Round-2 Review): phpVMS bekommt jetzt den
         // GLEICHEN gewichteten Aggregate-Score wie App/Web/MQTT
         // (siehe build_landing_record P1.3-Fix). Vorher landete der
@@ -18649,13 +18313,10 @@ async fn flight_end(
         // autoritative PIREP-Score wich vom Record ab. On-Plan: `divert_to`=None
         // → effective_arr == arr_airport → BYTE-IDENTISCH.
         let effective_arr = divert_to.as_deref().unwrap_or(&flight.arr_airport);
-        let score = compute_aggregate_master_score(
-            &stats,
-            muster_fuer_landung(&stats, &flight.aircraft_icao),
-            effective_arr,
-        )
-        .map(|m| m as i32)
-        .or_else(|| stats.landing_score.map(|s| s.numeric()));
+        let score =
+            compute_aggregate_master_score(&stats, muster_fuer_landung(&stats, &flight.aircraft_icao), effective_arr)
+            .map(|m| m as i32)
+            .or_else(|| stats.landing_score.map(|s| s.numeric()));
         let distance_nm = stats.distance_nm;
         let mut fields = build_pirep_fields(&flight, &stats, effective_arr);
         // phpVMS does its own divert bookkeeping — but only if the PIREP carries
@@ -18786,7 +18447,12 @@ async fn flight_end(
                 let mut stats = flight.stats.lock().expect("flight stats");
                 // v0.15.x: tatsächlicher Landeflughafen für Trust — auf einem
                 // Divert das bestätigte Ausweichfeld, sonst das geplante Ziel.
-                record_landing_for_filed_flight(&app, &flight, &mut stats, &effective_arr_icao);
+                record_landing_for_filed_flight(
+                    &app,
+                    &flight,
+                    &mut stats,
+                    &effective_arr_icao,
+                );
             }
             clear_persisted_flight(&app);
             log_activity(
@@ -18835,18 +18501,27 @@ async fn flight_end(
                 // ist effective == planned == flight.arr_airport, der Payload
                 // also byte-gleich zu vorher; mit Divert setzt der Helper
                 // `divert`/`diverted_to` und der Recorder hat den Grund.
-                let mut pirep_payload =
-                    build_pirep_payload(&flight, &body, &effective_arr_icao, &flight.arr_airport);
+                let mut pirep_payload = build_pirep_payload(
+                    &flight,
+                    &body,
+                    &effective_arr_icao,
+                    &flight.arr_airport,
+                );
                 if divert_to.is_some() {
                     pirep_payload.notes = divert_reason.clone();
                 }
                 // v0.12.5 (LE1): JSONL-Forensik + MQTT-Publish über den
                 // zentralen Finalizer — gleicher Pfad wie Divert/Manual/Queue.
                 // QS-P1: JSONL-PirepFiled IMMER, MQTT nur bei Handle.
-                let pirep_payload_json =
-                    serde_json::to_value(&pirep_payload).unwrap_or(serde_json::Value::Null);
+                let pirep_payload_json = serde_json::to_value(&pirep_payload)
+                    .unwrap_or(serde_json::Value::Null);
                 let mqtt = state.mqtt.lock().await;
-                finalize_filed_pirep(&app, mqtt.as_ref(), &flight.pirep_id, pirep_payload_json);
+                finalize_filed_pirep(
+                    &app,
+                    mqtt.as_ref(),
+                    &flight.pirep_id,
+                    pirep_payload_json,
+                );
             }
             // v0.7.0 — emit landing_finalized mit dem finalen Score
             // (Spec docs/spec/touchdown-forensics-v2.md Sektion 7.2).
@@ -18878,8 +18553,7 @@ async fn flight_end(
                 flight.bid_id,
                 Some(flight.flight_id.as_str()),
                 bid_reason,
-            )
-            .await;
+            ).await;
             Ok(())
         }
         Err(e) => {
@@ -18935,10 +18609,7 @@ async fn flight_end(
                         &state,
                         ActivityLevel::Error,
                         "PIREP file failed",
-                        Some(format!(
-                            "{} — Queue ebenfalls kaputt, Flug bleibt aktiv für Retry",
-                            e
-                        )),
+                        Some(format!("{} — Queue ebenfalls kaputt, Flug bleibt aktiv für Retry", e)),
                     );
                     restore_flight_for_retry(&app, state.inner(), &client, flight);
                     return Err(e.into());
@@ -18948,7 +18619,12 @@ async fn flight_end(
                     let mut stats = flight.stats.lock().expect("flight stats");
                     // v0.15.x: tatsächlicher Landeflughafen für Trust — auf einem
                     // Divert das bestätigte Ausweichfeld, sonst das geplante Ziel.
-                    record_landing_for_filed_flight(&app, &flight, &mut stats, &effective_arr_icao);
+                    record_landing_for_filed_flight(
+                        &app,
+                        &flight,
+                        &mut stats,
+                        &effective_arr_icao,
+                    );
                 }
                 clear_persisted_flight(&app);
                 log_activity(
@@ -19022,7 +18698,9 @@ pub(crate) fn resolve_bid_cleanup_args(
     bid_id: i64,
     flight_id: Option<&str>,
 ) -> Option<(Option<i64>, Option<String>)> {
-    let flight_id_opt = flight_id.filter(|s| !s.is_empty()).map(|s| s.to_string());
+    let flight_id_opt = flight_id
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
     if bid_id <= 0 && flight_id_opt.is_none() {
         return None;
     }
@@ -19043,7 +18721,9 @@ async fn consume_bid_best_effort(
     // Pfad still verschluckt. Im Orphan-Cleanup-/Accident-Filing-Pfad
     // kann es legitim vorkommen dass nur die phpVMS-flight_id bekannt
     // ist (z. B. bei VAs ohne separates bid_id-Feld).
-    let Some((bid_id_opt, flight_id_owned)) = resolve_bid_cleanup_args(bid_id, flight_id) else {
+    let Some((bid_id_opt, flight_id_owned)) =
+        resolve_bid_cleanup_args(bid_id, flight_id)
+    else {
         return;
     };
     let flight_id_opt = flight_id_owned.as_deref();
@@ -19061,7 +18741,13 @@ async fn consume_bid_best_effort(
                 error = %e,
                 "delete_bid failed — enqueueing for pending_bid_cleanup retry"
             );
-            enqueue_pending_bid_cleanup(app, pirep_id, bid_id_opt, flight_id_owned.clone(), reason);
+            enqueue_pending_bid_cleanup(
+                app,
+                pirep_id,
+                bid_id_opt,
+                flight_id_owned.clone(),
+                reason,
+            );
         }
     }
 }
@@ -19127,12 +18813,8 @@ fn enqueue_pending_bid_cleanup(
 /// und wird ueber den B-011 Orphan-Cleanup-Flow sichtbar.
 async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client) {
     const MAX_ATTEMPTS: u32 = 8;
-    let Ok(dir) = app.path().app_data_dir() else {
-        return;
-    };
-    let Ok(queue) = storage::PendingBidCleanupQueue::open(dir) else {
-        return;
-    };
+    let Ok(dir) = app.path().app_data_dir() else { return; };
+    let Ok(queue) = storage::PendingBidCleanupQueue::open(dir) else { return; };
     let entries = match queue.read_all() {
         Ok(v) => v,
         Err(e) => {
@@ -19239,11 +18921,7 @@ async fn flight_end_manual(
             .ok_or_else(|| UiError::new("no_active_flight", "no flight is active"))?
     };
     // v0.6.0: Outbox VOR stop=true leeren — siehe flight_end Begründung.
-    flight
-        .position_outbox
-        .lock()
-        .expect("position_outbox lock")
-        .clear();
+    flight.position_outbox.lock().expect("position_outbox lock").clear();
     flight.stop.store(true, Ordering::Relaxed);
 
     // Same normalization as `flight_end`: a "divert" to the planned
@@ -19261,24 +18939,28 @@ async fn flight_end_manual(
     // Parse RFC-3339 block-off/on overrides if present. Anything that
     // doesn't parse cleanly is dropped — we don't want a typo to
     // silently file a PIREP with a bogus "1970" timestamp.
-    let block_off_override: Option<DateTime<Utc>> = block_off_at_iso.as_deref().and_then(|s| {
-        if s.trim().is_empty() {
-            None
-        } else {
-            DateTime::parse_from_rfc3339(s.trim())
-                .ok()
-                .map(|dt| dt.with_timezone(&Utc))
-        }
-    });
-    let block_on_override: Option<DateTime<Utc>> = block_on_at_iso.as_deref().and_then(|s| {
-        if s.trim().is_empty() {
-            None
-        } else {
-            DateTime::parse_from_rfc3339(s.trim())
-                .ok()
-                .map(|dt| dt.with_timezone(&Utc))
-        }
-    });
+    let block_off_override: Option<DateTime<Utc>> = block_off_at_iso
+        .as_deref()
+        .and_then(|s| {
+            if s.trim().is_empty() {
+                None
+            } else {
+                DateTime::parse_from_rfc3339(s.trim())
+                    .ok()
+                    .map(|dt| dt.with_timezone(&Utc))
+            }
+        });
+    let block_on_override: Option<DateTime<Utc>> = block_on_at_iso
+        .as_deref()
+        .and_then(|s| {
+            if s.trim().is_empty() {
+                None
+            } else {
+                DateTime::parse_from_rfc3339(s.trim())
+                    .ok()
+                    .map(|dt| dt.with_timezone(&Utc))
+            }
+        });
 
     let body = {
         let mut stats = flight.stats.lock().expect("flight stats");
@@ -19322,8 +19004,8 @@ async fn flight_end_manual(
                     (Some(t), Some(l)) if l > t => (l - t).num_minutes() as i32,
                     _ => ((Utc::now() - flight.started_at).num_minutes() as i32).max(0),
                 };
-                let pause_min =
-                    (stats.pause_total_duration_secs / 60).clamp(0, i32::MAX as i64) as i32;
+                let pause_min = (stats.pause_total_duration_secs / 60)
+                    .clamp(0, i32::MAX as i64) as i32;
                 Some(raw_min.saturating_sub(pause_min).max(0))
             }
         };
@@ -19350,7 +19032,9 @@ async fn flight_end_manual(
         // (oben gesetzt falls `block_fuel_kg`-Param > 0).
         let fuel_used = {
             let from_remaining = match (stats.block_fuel_kg, remaining_fuel_kg) {
-                (Some(block), Some(rem)) if rem >= 0.0 && block > rem => Some((block - rem) as f64),
+                (Some(block), Some(rem)) if rem >= 0.0 && block > rem => {
+                    Some((block - rem) as f64)
+                }
                 _ => None,
             };
             from_remaining
@@ -19391,7 +19075,8 @@ async fn flight_end_manual(
             .as_ref()
             .map(|s| s.trim().to_uppercase())
             .filter(|s| !s.is_empty());
-        let effective_arr = effective_arr_norm.as_deref().unwrap_or(&flight.arr_airport);
+        let effective_arr =
+            effective_arr_norm.as_deref().unwrap_or(&flight.arr_airport);
         // v0.20.0: die phpVMS-`score`-Spalte bekommt die EINE Bewertung — nicht
         // mehr die Touchdown-Klasse (nur 100/80/60/30/0). Vorher stand beim
         // manuellen Filen `100` in der Spalte, waehrend Custom-Field und
@@ -19402,10 +19087,7 @@ async fn flight_end_manual(
         // custom field phpVMS keys on (slug `diversion-airport`), never in
         // `arr_airport_id`. One semantic for both filing paths.
         if let Some(actual) = divert_to.as_deref() {
-            fields.insert(
-                "Diversion Airport".to_string(),
-                actual.trim().to_uppercase(),
-            );
+            fields.insert("Diversion Airport".to_string(), actual.trim().to_uppercase());
         }
         let mut notes = build_pirep_notes(&flight, &stats, effective_arr);
         notes.push_str("\n\n[MANUAL FILE — auto-validation bypassed by pilot.]");
@@ -19420,7 +19102,11 @@ async fn flight_end_manual(
                 actual = divert,
             ));
         }
-        if let Some(r) = reason.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        if let Some(r) = reason
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
             notes.push_str("\n\nReason: ");
             notes.push_str(r);
         }
@@ -19454,7 +19140,10 @@ async fn flight_end_manual(
             overrides.push("block_on_time");
         }
         if !overrides.is_empty() {
-            notes.push_str(&format!("\n\n[MANUAL OVERRIDES] {}", overrides.join(", ")));
+            notes.push_str(&format!(
+                "\n\n[MANUAL OVERRIDES] {}",
+                overrides.join(", ")
+            ));
         }
 
         if let Some(extra) = notes_override
@@ -19473,7 +19162,10 @@ async fn flight_end_manual(
             level,
             landing_rate,
             score,
-            source_name: Some(format!("AeroACARS/{} (manual)", env!("CARGO_PKG_VERSION"))),
+            source_name: Some(format!(
+                "AeroACARS/{} (manual)",
+                env!("CARGO_PKG_VERSION")
+            )),
             notes: Some(notes),
             fares,
             fields: Some(fields),
@@ -19570,9 +19262,15 @@ async fn flight_end_manual(
             // normalisiert es oben auf Grossbuchstaben), sonst das
             // geplante Ziel.
             {
-                let effective_arr = divert_to.as_deref().unwrap_or(&flight.arr_airport);
-                let mut pirep_payload =
-                    build_pirep_payload(&flight, &body, effective_arr, &flight.arr_airport);
+                let effective_arr = divert_to
+                    .as_deref()
+                    .unwrap_or(&flight.arr_airport);
+                let mut pirep_payload = build_pirep_payload(
+                    &flight,
+                    &body,
+                    effective_arr,
+                    &flight.arr_airport,
+                );
                 // v0.12.5 (LE2-QS): die manuelle Begründung auch ins
                 // MQTT-Payload (notes) — konsistent mit dem
                 // `flight_end`-Divert-Pfad, damit Recorder/JSONL den
@@ -19582,10 +19280,16 @@ async fn flight_end_manual(
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty());
                 let pirep_payload_json =
-                    serde_json::to_value(&pirep_payload).unwrap_or(serde_json::Value::Null);
+                    serde_json::to_value(&pirep_payload)
+                        .unwrap_or(serde_json::Value::Null);
                 // QS-P1: JSONL-PirepFiled IMMER, MQTT nur bei Handle.
                 let mqtt = state.mqtt.lock().await;
-                finalize_filed_pirep(&app, mqtt.as_ref(), &flight.pirep_id, pirep_payload_json);
+                finalize_filed_pirep(
+                    &app,
+                    mqtt.as_ref(),
+                    &flight.pirep_id,
+                    pirep_payload_json,
+                );
             }
             // v0.12.5 (LE7-QS): LandingFinalized-JSONL-Event auch beim
             // manuellen File — vor dem Upload.
@@ -19600,8 +19304,7 @@ async fn flight_end_manual(
                 flight.bid_id,
                 Some(flight.flight_id.as_str()),
                 "manual_filed",
-            )
-            .await;
+            ).await;
             Ok(())
         }
         Err(e) => {
@@ -19702,10 +19405,7 @@ async fn flight_resume_check_position(
     }
 
     let snap = current_snapshot(&app).ok_or_else(|| {
-        UiError::new(
-            "sim_disconnected",
-            "Sim ist nicht verbunden — bitte erst den Sim wieder starten und positionieren",
-        )
+        UiError::new("sim_disconnected", "Sim ist nicht verbunden — bitte erst den Sim wieder starten und positionieren")
     })?;
 
     let (persisted_phase, persisted_pos) = {
@@ -19853,10 +19553,7 @@ async fn flight_cancel(
         // PIREP-ID merken bevor flight_end den active_flight-Slot räumt
         let pirep_id_for_outcome = {
             let guard = state.active_flight.lock().expect("active_flight lock");
-            guard
-                .as_ref()
-                .map(|f| f.pirep_id.clone())
-                .unwrap_or_default()
+            guard.as_ref().map(|f| f.pirep_id.clone()).unwrap_or_default()
         };
 
         // Best-Effort: erst zu filen versuchen via flight_end-Pfad.
@@ -19980,11 +19677,7 @@ async fn flight_cancel(
     // gepufferten Positions zurück in position_queue.json. Bei einem
     // Cancel will der Pilot aber explizit dass NICHTS mehr an phpVMS
     // gesendet wird.
-    flight
-        .position_outbox
-        .lock()
-        .expect("position_outbox lock")
-        .clear();
+    flight.position_outbox.lock().expect("position_outbox lock").clear();
     flight.stop.store(true, Ordering::Relaxed);
     let client = current_client(&state)?;
     let result = client.cancel_pirep(&flight.pirep_id).await;
@@ -20118,8 +19811,16 @@ fn spawn_resume_sim_gate(app: AppHandle, flight: Arc<ActiveFlight>, client: Clie
                 if age_secs.abs() <= SIM_GATE_FRESH_SECS {
                     // Sim liefert frische Daten → jetzt scharfschalten.
                     flight.was_just_resumed.store(false, Ordering::Relaxed);
-                    spawn_phpvms_position_worker(app.clone(), Arc::clone(&flight), client.clone());
-                    spawn_position_streamer(app.clone(), Arc::clone(&flight), client.clone());
+                    spawn_phpvms_position_worker(
+                        app.clone(),
+                        Arc::clone(&flight),
+                        client.clone(),
+                    );
+                    spawn_position_streamer(
+                        app.clone(),
+                        Arc::clone(&flight),
+                        client.clone(),
+                    );
                     spawn_touchdown_sampler(app.clone(), Arc::clone(&flight));
                     tracing::info!(
                         pirep_id = %flight.pirep_id,
@@ -20144,7 +19845,10 @@ fn spawn_resume_sim_gate(app: AppHandle, flight: Arc<ActiveFlight>, client: Clie
 /// stored PIREP is orphaned/dead on the server side and the user wants a
 /// clean slate.
 #[tauri::command]
-async fn flight_forget(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), UiError> {
+async fn flight_forget(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), UiError> {
     if let Some(flight) = state
         .active_flight
         .lock()
@@ -20152,11 +19856,7 @@ async fn flight_forget(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
         .take()
     {
         // v0.6.0: Outbox VOR stop=true leeren — siehe flight_cancel.
-        flight
-            .position_outbox
-            .lock()
-            .expect("position_outbox lock")
-            .clear();
+        flight.position_outbox.lock().expect("position_outbox lock").clear();
         flight.stop.store(true, Ordering::Relaxed);
         tracing::info!(pirep_id = %flight.pirep_id, "active flight forgotten (no phpVMS call)");
         discard_queued_positions_for(&app, &flight.pirep_id);
@@ -20227,10 +19927,12 @@ fn should_auto_cleanup(
     if active_pirep_id == Some(candidate_id) {
         return false;
     }
-    let Some(created) = created_at.and_then(|s| DateTime::parse_from_rfc3339(s).ok()) else {
+    let Some(created) = created_at.and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+    else {
         return false;
     };
-    now - created.with_timezone(&Utc) > chrono::Duration::hours(ORPHAN_AUTO_CLEANUP_MIN_AGE_HOURS)
+    now - created.with_timezone(&Utc)
+        > chrono::Duration::hours(ORPHAN_AUTO_CLEANUP_MIN_AGE_HOURS)
 }
 
 /// v0.16.17 (Selbstheilung beim Flugstart): cancelt best-effort alle
@@ -20293,7 +19995,9 @@ async fn sweep_stale_orphans_before_prefile(
                 log_activity_handle(
                     app,
                     ActivityLevel::Info,
-                    format!("Verwaister Flug {nr} ({dep}→{arr}, {alter}) automatisch aufgeräumt"),
+                    format!(
+                        "Verwaister Flug {nr} ({dep}→{arr}, {alter}) automatisch aufgeräumt"
+                    ),
                     Some(format!(
                         "PIREP {} server-seitig gecancelt (Selbstheilung beim Flugstart)",
                         p.id
@@ -20495,14 +20199,18 @@ async fn flight_list_orphans(
 
             // Aircraft-Anreicherung: erst aus PIREP-Summary direkt
             // probieren, dann Fleet-Lookup als Fallback.
-            let (aircraft_icao, aircraft_registration) =
-                if p.aircraft_icao.is_some() || p.aircraft_registration.is_some() {
-                    (p.aircraft_icao.clone(), p.aircraft_registration.clone())
-                } else if let Some(aid) = p.aircraft_id {
-                    aircraft_lookup.get(&aid).cloned().unwrap_or((None, None))
-                } else {
-                    (None, None)
-                };
+            let (aircraft_icao, aircraft_registration) = if p.aircraft_icao.is_some()
+                || p.aircraft_registration.is_some()
+            {
+                (p.aircraft_icao.clone(), p.aircraft_registration.clone())
+            } else if let Some(aid) = p.aircraft_id {
+                aircraft_lookup
+                    .get(&aid)
+                    .cloned()
+                    .unwrap_or((None, None))
+            } else {
+                (None, None)
+            };
 
             // Age berechnen wenn created_at parsebar ist
             let (started_at, age_minutes) = match p
@@ -20753,9 +20461,8 @@ fn apply_pause_resume(
     {
         let mut stats = flight.stats.lock().expect("flight stats");
         if count_toward_accumulator {
-            stats.pause_total_duration_secs = stats
-                .pause_total_duration_secs
-                .saturating_add(duration_secs);
+            stats.pause_total_duration_secs =
+                stats.pause_total_duration_secs.saturating_add(duration_secs);
             stats.pause_segments.push(segment.clone());
         }
         stats.paused_since = None;
@@ -21062,13 +20769,7 @@ fn spawn_flight_log_upload(app: &AppHandle, pirep_id: String) {
         };
         let safe_pirep = pirep_id
             .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                    c
-                } else {
-                    '_'
-                }
-            })
+            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
             .collect::<String>();
         let log_path = app_data_dir
             .join("flight_logs")
@@ -21096,11 +20797,12 @@ fn spawn_flight_log_upload(app: &AppHandle, pirep_id: String) {
 
         // 3. Hochladen.
         match aeroacars_mqtt::log_upload::upload_flight_log(
-            &log_path, &pirep_id, &username, &password,
+            &log_path,
+            &pirep_id,
+            &username,
+            &password,
             None, // default endpoint = https://live.kant.ovh/api/flight-logs/upload
-        )
-        .await
-        {
+        ).await {
             Ok(stats) => {
                 tracing::info!(
                     pirep_id = %pirep_id,
@@ -21137,10 +20839,7 @@ fn spawn_flight_log_upload(app: &AppHandle, pirep_id: String) {
                     &app,
                     ActivityLevel::Warn,
                     "Flight log upload failed (non-fatal)",
-                    Some(format!(
-                        "{} — Log liegt lokal in flight_logs/{}.jsonl",
-                        e, pirep_id
-                    )),
+                    Some(format!("{} — Log liegt lokal in flight_logs/{}.jsonl", e, pirep_id)),
                 );
             }
         }
@@ -21244,9 +20943,7 @@ fn score_g_for_stats(stats: &FlightStats) -> Option<recorder::ScoredG> {
             method,
         });
     }
-    stats
-        .canonical_peak_g_force()
-        .map(recorder::scored_g_raw_fallback)
+    stats.canonical_peak_g_force().map(recorder::scored_g_raw_fallback)
 }
 
 /// Der G-Wert **fuer die Punktevergabe** — `score_g_for_stats` plus die
@@ -21700,7 +21397,8 @@ fn evaluate_msfs_flare_gates(
     let end_span_flat = end_agl_span
         .map(|sp| sp < MSFS_FLARE_MIN_END_AGL_SPAN_FT)
         .unwrap_or(false);
-    let end_frozen = (n_end_distinct > 0 && n_end_distinct < MSFS_FLARE_MIN_END_FIT_DISTINCT_AGL)
+    let end_frozen = (n_end_distinct > 0
+        && n_end_distinct < MSFS_FLARE_MIN_END_FIT_DISTINCT_AGL)
         || end_span_flat;
     let dq_reject = n_distinct < MSFS_FLARE_MIN_DISTINCT_AGL
         || median_dt > MSFS_FLARE_MAX_MEDIAN_DT_MS
@@ -21810,11 +21508,7 @@ fn compute_landing_analysis(
                 n += 1;
             }
         }
-        if n > 0 {
-            Some((sum / n as f64) as f32)
-        } else {
-            None
-        }
+        if n > 0 { Some((sum / n as f64) as f32) } else { None }
     };
     let vs_250 = mean_vs_window(250);
     let vs_500 = mean_vs_window(500);
@@ -21959,12 +21653,13 @@ fn compute_landing_analysis(
             let mut best = 0i64;
             let mut start = 0usize;
             for i in 1..fenster.len() {
-                let gleich = ((fenster[i].agl_ft - fenster[i - 1].agl_ft).abs() * 1000.0).round()
-                    as i64
+                let gleich = ((fenster[i].agl_ft - fenster[i - 1].agl_ft).abs() * 1000.0)
+                    .round() as i64
                     == 0;
                 if gleich {
                     best = best.max(
-                        fenster[i].at.timestamp_millis() - fenster[start].at.timestamp_millis(),
+                        fenster[i].at.timestamp_millis()
+                            - fenster[start].at.timestamp_millis(),
                     );
                 } else {
                     start = i;
@@ -22068,72 +21763,71 @@ fn compute_landing_analysis(
     // Fenster, dieselben Riegel wie oben — nur ueber eine andere Groesse.
     // Beides wird NUR ANGEZEIGT und geht in keine Punktzahl ein: erst
     // messen, dann entscheiden.
-    let steigung_ueber_fenster =
-        |wert: &dyn Fn(&TouchdownWindowSample) -> Option<f32>| -> Option<f32> {
-            let lo = edge_ms - AGL_FENSTER_MS;
-            let punkte: Vec<(f64, f64)> = samples
-                .iter()
-                .filter(|s| {
-                    let ts = s.at.timestamp_millis();
-                    ts >= lo && ts <= edge_ms && !s.on_ground
-                })
-                .filter_map(|s| {
-                    let y = wert(s)?;
-                    if !y.is_finite() {
-                        return None;
-                    }
-                    Some((s.at.timestamp_millis() as f64 / 1000.0, y as f64))
-                })
-                .collect();
-            if punkte.len() < AGL_MIN_SAMPLES {
-                return None;
-            }
-            let spanne = punkte.last()?.0 - punkte.first()?.0;
-            if spanne < AGL_MIN_SPANNE_S {
-                return None;
-            }
-            // Dieselben Riegel wie die Hoehenkurve selbst — eine eingefrorene
-            // Spur liest sich sonst als „kein Sinkflug" und schiebt die ganze
-            // Bewegung dem jeweils anderen Anteil zu. Der Vergleich mit dem
-            // Werkzeug von Arderos hat die Luecke aufgedeckt: es verlangt
-            // ausdruecklich fuenf UNTERSCHIEDLICHE Zeitstempel, meine erste
-            // Fassung zaehlte nur Messpunkte.
-            let verschiedene = punkte
-                .iter()
-                .map(|p| (p.1 * 1000.0).round() as i64)
-                .collect::<std::collections::BTreeSet<_>>()
-                .len();
-            if verschiedene < AGL_MIN_VERSCHIEDENE {
-                return None;
-            }
-            let mut laengster_stillstand_ms = 0_i64;
-            let mut lauf_start = punkte[0].0;
-            for paar in punkte.windows(2) {
-                if (paar[1].1 - paar[0].1).abs() < 1e-4 {
-                    let dauer = ((paar[1].0 - lauf_start) * 1000.0).round() as i64;
-                    laengster_stillstand_ms = laengster_stillstand_ms.max(dauer);
-                } else {
-                    lauf_start = paar[1].0;
+    let steigung_ueber_fenster = |wert: &dyn Fn(&TouchdownWindowSample) -> Option<f32>| -> Option<f32> {
+        let lo = edge_ms - AGL_FENSTER_MS;
+        let punkte: Vec<(f64, f64)> = samples
+            .iter()
+            .filter(|s| {
+                let ts = s.at.timestamp_millis();
+                ts >= lo && ts <= edge_ms && !s.on_ground
+            })
+            .filter_map(|s| {
+                let y = wert(s)?;
+                if !y.is_finite() {
+                    return None;
                 }
-            }
-            if laengster_stillstand_ms > AGL_MAX_STILLSTAND_MS {
-                return None;
-            }
-            let n = punkte.len() as f64;
-            let mx = punkte.iter().map(|p| p.0).sum::<f64>() / n;
-            let my = punkte.iter().map(|p| p.1).sum::<f64>() / n;
-            let sxx: f64 = punkte.iter().map(|p| (p.0 - mx).powi(2)).sum();
-            if sxx < 1e-9 {
-                return None;
-            }
-            let sxy: f64 = punkte.iter().map(|p| (p.0 - mx) * (p.1 - my)).sum();
-            let fpm = (sxy / sxx) * 60.0;
-            if fpm.is_finite() {
-                Some(fpm as f32)
+                Some((s.at.timestamp_millis() as f64 / 1000.0, y as f64))
+            })
+            .collect();
+        if punkte.len() < AGL_MIN_SAMPLES {
+            return None;
+        }
+        let spanne = punkte.last()?.0 - punkte.first()?.0;
+        if spanne < AGL_MIN_SPANNE_S {
+            return None;
+        }
+        // Dieselben Riegel wie die Hoehenkurve selbst — eine eingefrorene
+        // Spur liest sich sonst als „kein Sinkflug" und schiebt die ganze
+        // Bewegung dem jeweils anderen Anteil zu. Der Vergleich mit dem
+        // Werkzeug von Arderos hat die Luecke aufgedeckt: es verlangt
+        // ausdruecklich fuenf UNTERSCHIEDLICHE Zeitstempel, meine erste
+        // Fassung zaehlte nur Messpunkte.
+        let verschiedene = punkte
+            .iter()
+            .map(|p| (p.1 * 1000.0).round() as i64)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        if verschiedene < AGL_MIN_VERSCHIEDENE {
+            return None;
+        }
+        let mut laengster_stillstand_ms = 0_i64;
+        let mut lauf_start = punkte[0].0;
+        for paar in punkte.windows(2) {
+            if (paar[1].1 - paar[0].1).abs() < 1e-4 {
+                let dauer = ((paar[1].0 - lauf_start) * 1000.0).round() as i64;
+                laengster_stillstand_ms = laengster_stillstand_ms.max(dauer);
             } else {
-                None
+                lauf_start = paar[1].0;
             }
-        };
+        }
+        if laengster_stillstand_ms > AGL_MAX_STILLSTAND_MS {
+            return None;
+        }
+        let n = punkte.len() as f64;
+        let mx = punkte.iter().map(|p| p.0).sum::<f64>() / n;
+        let my = punkte.iter().map(|p| p.1).sum::<f64>() / n;
+        let sxx: f64 = punkte.iter().map(|p| (p.0 - mx).powi(2)).sum();
+        if sxx < 1e-9 {
+            return None;
+        }
+        let sxy: f64 = punkte.iter().map(|p| (p.0 - mx) * (p.1 - my)).sum();
+        let fpm = (sxy / sxx) * 60.0;
+        if fpm.is_finite() {
+            Some(fpm as f32)
+        } else {
+            None
+        }
+    };
     // Nur wenn die Hoehenkurve selbst getragen hat — sonst waere die
     // Aufschluesselung eine Erklaerung fuer eine Zahl, die gar nicht von
     // ihr stammt.
@@ -22149,8 +21843,9 @@ fn compute_landing_analysis(
     // lesen laesst, und die einzige, in der eine falsche Richtung sofort
     // auffaellt (die Summe geht dann nicht auf).
     let (vs_gelaende, vs_eigensinken) = if let Some(gemessen) = vs_geometrie {
-        let boden_bewegung =
-            steigung_ueber_fenster(&|s: &TouchdownWindowSample| s.msl_ft.map(|m| m - s.agl_ft));
+        let boden_bewegung = steigung_ueber_fenster(&|s: &TouchdownWindowSample| {
+            s.msl_ft.map(|m| m - s.agl_ft)
+        });
         let msl = steigung_ueber_fenster(&|s: &TouchdownWindowSample| s.msl_ft);
         match (boden_bewegung, msl) {
             (Some(boden), Some(eigen)) => {
@@ -22190,17 +21885,11 @@ fn compute_landing_analysis(
         for s in samples {
             let ts = s.at.timestamp_millis();
             if ts >= edge_ms && ts <= hi {
-                if s.g_force > peak {
-                    peak = s.g_force;
-                }
+                if s.g_force > peak { peak = s.g_force; }
                 found = true;
             }
         }
-        if found {
-            Some(peak)
-        } else {
-            None
-        }
+        if found { Some(peak) } else { None }
     };
     let pg_500 = peak_g_window(500);
     let pg_1000 = peak_g_window(1000);
@@ -22245,16 +21934,12 @@ fn compute_landing_analysis(
 
     // Mean / Median / 95p — robuste Statistiken.
     fn mean_of(xs: &[f32]) -> Option<f32> {
-        if xs.is_empty() {
-            return None;
-        }
+        if xs.is_empty() { return None; }
         let sum: f64 = xs.iter().map(|x| *x as f64).sum();
         Some((sum / xs.len() as f64) as f32)
     }
     fn percentile_of(xs: &[f32], p: f32) -> Option<f32> {
-        if xs.is_empty() {
-            return None;
-        }
+        if xs.is_empty() { return None; }
         let mut sorted: Vec<f32> = xs.to_vec();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let idx = ((sorted.len() as f32 - 1.0) * p).round() as usize;
@@ -22284,11 +21969,7 @@ fn compute_landing_analysis(
                 }
             }
         }
-        if found {
-            Some(peak)
-        } else {
-            None
-        }
+        if found { Some(peak) } else { None }
     };
 
     // --- Flare-Analyse ---
@@ -22299,7 +21980,7 @@ fn compute_landing_analysis(
     // SimVar pass (pitch-corrected `s.vs_fpm`). On X-Plane/Other this is
     // the published flare metric; on MSFS it lags the airframe and is
     // kept only as the `_raw` forensic provenance (see v0.16.22 block).
-    let mut peak_vs_pre_simvar: Option<f32> = None; // most negative
+    let mut peak_vs_pre_simvar: Option<f32> = None;     // most negative
     let mut vs_at_flare_end_simvar: Option<f32> = None; // VS am ts nahe -100ms
     let mut min_dist_to_end = i64::MAX;
     let mut earliest_in_window: Option<&TouchdownWindowSample> = None;
@@ -22317,10 +21998,7 @@ fn compute_landing_analysis(
                 min_dist_to_end = dist_to_end;
                 vs_at_flare_end_simvar = Some(vs_corrected);
             }
-            if earliest_in_window
-                .map(|e| ts < e.at.timestamp_millis())
-                .unwrap_or(true)
-            {
+            if earliest_in_window.map(|e| ts < e.at.timestamp_millis()).unwrap_or(true) {
                 earliest_in_window = Some(s);
             }
         }
@@ -22368,11 +22046,7 @@ fn compute_landing_analysis(
     } else if is_msfs && flare_gates.unreliable_source {
         // A data-quality gate tripped: mark the fallback distinctly so the
         // provenance shows WHY we did not use the AGL geometry.
-        (
-            peak_vs_pre_simvar,
-            vs_at_flare_end_simvar,
-            "simvar_agl_unreliable",
-        )
+        (peak_vs_pre_simvar, vs_at_flare_end_simvar, "simvar_agl_unreliable")
     } else {
         (peak_vs_pre_simvar, vs_at_flare_end_simvar, "simvar")
     };
@@ -22455,28 +22129,16 @@ fn compute_landing_analysis(
         (Some(red), Some(final_vs)) => {
             let red = red as f64;
             let final_vs = final_vs as f64;
-            let endpoint: f64 = if final_vs > -75.0 {
-                100.0
-            } else if final_vs > -150.0 {
-                80.0
-            } else if final_vs > -300.0 {
-                60.0
-            } else if final_vs > -500.0 {
-                40.0
-            } else {
-                20.0
-            };
-            let bonus: f64 = if red > 400.0 {
-                20.0
-            } else if red > 200.0 {
-                15.0
-            } else if red > 100.0 {
-                10.0
-            } else if red > 50.0 {
-                5.0
-            } else {
-                0.0
-            };
+            let endpoint: f64 = if final_vs > -75.0 { 100.0 }
+                else if final_vs > -150.0 { 80.0 }
+                else if final_vs > -300.0 { 60.0 }
+                else if final_vs > -500.0 { 40.0 }
+                else { 20.0 };
+            let bonus: f64 = if red > 400.0 { 20.0 }
+                else if red > 200.0 { 15.0 }
+                else if red > 100.0 { 10.0 }
+                else if red > 50.0 { 5.0 }
+                else { 0.0 };
             let score = (endpoint + bonus).max(0.0).min(100.0) as i32;
             // Detection floor. MSFS_FLARE_DETECT_FLOOR_FPM == 50.0, so the
             // value here is byte-identical to the previous `red > 50.0` for
@@ -22508,9 +22170,7 @@ fn compute_landing_analysis(
     let mut current_bounce_max: f32 = 0.0;
     for s in samples {
         let ts = s.at.timestamp_millis();
-        if ts < edge_ms {
-            continue;
-        }
+        if ts < edge_ms { continue; }
         if !s.on_ground {
             if !in_bounce {
                 in_bounce = true;
@@ -22533,10 +22193,7 @@ fn compute_landing_analysis(
         }
     }
 
-    let pre_count = samples
-        .iter()
-        .filter(|s| s.at.timestamp_millis() < edge_ms)
-        .count();
+    let pre_count = samples.iter().filter(|s| s.at.timestamp_millis() < edge_ms).count();
     let post_count = samples.len() - pre_count;
 
     // v0.12.3 (LE1–LE3): FOQA-konformer gescorter G-Wert — EMA-geglätteter
@@ -22654,8 +22311,9 @@ fn landung_episode_zuruecksetzen(stats: &mut FlightStats) {
 }
 
 fn open_touchdown_capture_window(stats: &mut FlightStats, now: DateTime<Utc>) {
-    stats.landing_critical_until =
-        Some(now + chrono::Duration::milliseconds(TOUCHDOWN_POST_WINDOW_MS));
+    stats.landing_critical_until = Some(
+        now + chrono::Duration::milliseconds(TOUCHDOWN_POST_WINDOW_MS),
+    );
     stats.post_touchdown_buffer.clear();
     for s in &stats.snapshot_buffer {
         stats.post_touchdown_buffer.push_back(*s);
@@ -22672,10 +22330,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
     // unabhaengige Aufrufer von flight_resume_confirm (z. B. das
     // Hauptfenster UND ein via LAN-Fernbedienung verbundenes Tablet, siehe
     // remote/bridge.rs) zwei parallele Sampler fuer denselben Flug starten.
-    if flight
-        .touchdown_sampler_spawned
-        .swap(true, Ordering::SeqCst)
-    {
+    if flight.touchdown_sampler_spawned.swap(true, Ordering::SeqCst) {
         return;
     }
     tauri::async_runtime::spawn(async move {
@@ -22744,13 +22399,14 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // (`RESET_LIMITS`: 10 NM flach, 10.000 ft, bis 2 s Abstand).
             // Vorher stand die Pruefung dreimal im Code, in drei Fassungen;
             // eine davon zaehlte einen Sprung von 4900 NM als geflogen.
-            let is_null_island =
-                snap.lat.abs() < RESET_NULL_ISLAND_DEG && snap.lon.abs() < RESET_NULL_ISLAND_DEG;
+            let is_null_island = snap.lat.abs() < RESET_NULL_ISLAND_DEG
+                && snap.lon.abs() < RESET_NULL_ISLAND_DEG;
             let (alt_jump, dist_jump_nm, urteil) = match prev_sample_for_reset_check {
                 Some((p_lat, p_lon, p_alt, p_at)) => {
                     let dt = (now - p_at).num_milliseconds() as f64 / 1000.0;
                     let alt_diff = (snap.altitude_msl_ft - p_alt).abs();
-                    let dist_nm = ::geo::distance_m(p_lat, p_lon, snap.lat, snap.lon) / 1852.0;
+                    let dist_nm =
+                        ::geo::distance_m(p_lat, p_lon, snap.lat, snap.lon) / 1852.0;
                     let u = classify_segment(
                         (p_lat, p_lon),
                         (snap.lat, snap.lon),
@@ -22796,7 +22452,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
 
             // Sample ist OK ODER dt war zu gross (Resume-Fall) →
             // prev_state mit dem aktuellen Sample neu setzen.
-            prev_sample_for_reset_check = Some((snap.lat, snap.lon, snap.altitude_msl_ft, now));
+            prev_sample_for_reset_check =
+                Some((snap.lat, snap.lon, snap.altitude_msl_ft, now));
 
             let mut stats = flight.stats.lock().expect("flight stats");
             // v1.6.10: solange das Flugzeug in der Luft ist, den Stand des
@@ -22850,9 +22507,14 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // (estimate_xplane_touchdown_vs_from_agl) is the primary
             // source. low_agl_vs_min_fpm is used when the estimator
             // can't find a valid window (extremely sparse RREF, etc.).
-            let approach_or_final =
-                matches!(stats.phase, FlightPhase::Approach | FlightPhase::Final);
-            if approach_or_final && !snap.on_ground && snap.altitude_agl_ft <= 250.0 {
+            let approach_or_final = matches!(
+                stats.phase,
+                FlightPhase::Approach | FlightPhase::Final
+            );
+            if approach_or_final
+                && !snap.on_ground
+                && snap.altitude_agl_ft <= 250.0
+            {
                 let pitch_rad = (snap.pitch_deg as f32) * std::f32::consts::PI / 180.0;
                 // Touchdown VS fallback → raw, lag-free signal (X-Plane local_vy),
                 // NOT the display VVI, so the landing rate stays responsive.
@@ -23013,7 +22675,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // `sampler_takeoff_at.is_none()` verhindert Re-Trigger bei
             // Touch-and-Go im Pattern (= zweiter Wheels-Up nach erstem
             // Touchdown ueberschreibt nicht den initialen Takeoff-Wert).
-            let takeoff_edge_detected = matches!(prev_in_air, Some(false)) && in_air_now;
+            let takeoff_edge_detected =
+                matches!(prev_in_air, Some(false)) && in_air_now;
             if takeoff_edge_detected && stats.sampler_takeoff_at.is_none() {
                 stats.sampler_takeoff_at = Some(now);
                 stats.sampler_takeoff_pitch_deg = Some(snap.pitch_deg);
@@ -23047,7 +22710,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // and the once-guard blocks rollout bumps after it; a mid-air
             // on_ground glitch is rejected by validate_candidate (low-AGL +
             // sustained-ground fail at altitude / on a single tick).
-            let capturable_phase = is_touchdown_capturable_phase(stats.phase, stats.was_airborne);
+            let capturable_phase =
+                is_touchdown_capturable_phase(stats.phase, stats.was_airborne);
             // v0.7.0 — P0 Fix: Edge-Detection setzt jetzt nur `pending_td_at`.
             // Die echte Validation (touchdown_v2::validate_candidate) folgt 1.1 sec
             // spaeter wenn genug post-edge samples im Buffer sind. False-edges
@@ -23057,11 +22721,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // Vorher (Bug): erster Edge wurde direkt als TD akzeptiert. DAH 3181
             // Float-Streifschuss mit vs=+104 fpm wurde gescort, der echte TD
             // 4 sec spaeter wurde ignoriert (single-shot is_none() Guard).
-            if edge_detected
-                && stats.sampler_touchdown_at.is_none()
-                && stats.pending_td_at.is_none()
-                && capturable_phase
-            {
+            if edge_detected && stats.sampler_touchdown_at.is_none()
+                && stats.pending_td_at.is_none() && capturable_phase {
                 stats.pending_td_at = Some(now);
                 tracing::info!(
                     pirep_id = %flight.pirep_id,
@@ -23102,12 +22763,11 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                             edge_total_weight_kg: cand_sample.total_weight_kg,
                         };
                         // Compute impact_frame fuer A3/B4 (vs_negative_at_impact)
-                        let impact_for_validation =
-                            touchdown_v2::compute_impact_frame(&v2_samples, candidate.edge_at);
+                        let impact_for_validation = touchdown_v2::compute_impact_frame(
+                            &v2_samples, candidate.edge_at,
+                        );
                         let impact_vs = impact_for_validation
-                            .as_ref()
-                            .map(|r| r.impact_vs_fpm)
-                            .unwrap_or(0.0);
+                            .as_ref().map(|r| r.impact_vs_fpm).unwrap_or(0.0);
                         // sim from snap (Simulator → SimKind)
                         let sim = match snap.simulator {
                             Simulator::Msfs2020 => SimKind::Msfs2020,
@@ -23120,11 +22780,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         // rotorcraft / seaplane soft set-down has no force/G/vs
                         // spike, so the fixed-wing anchors would drop it.
                         let validation = touchdown_v2::validate_candidate(
-                            &candidate,
-                            &v2_samples,
-                            sim,
-                            impact_vs,
-                            category,
+                            &candidate, &v2_samples, sim, impact_vs, category,
                         );
                         match validation {
                             touchdown_v2::ValidationResult::Validated { result } => {
@@ -23217,8 +22873,9 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                     // above keeps this stamp first-touchdown-
                                     // only, the FSM arm has no guard).
                                     let td_ts = Some(pending_at);
-                                    let stab_window =
-                                        chrono::Duration::seconds(SAMPLER_STABILITY_WINDOW_SECS);
+                                    let stab_window = chrono::Duration::seconds(
+                                        SAMPLER_STABILITY_WINDOW_SECS,
+                                    );
                                     let windowed_buf = approach_buffer_window(
                                         &stats.approach_buffer,
                                         pending_at,
@@ -23236,8 +22893,10 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                     stats.approach_vs_stddev_fpm = vs_sd;
                                     stats.approach_bank_stddev_deg = bank_sd;
                                     // Musterquelle wie im FSM-Pfad: Sim zuerst.
-                                    let sim_muster =
-                                        snap.aircraft_icao.as_deref().and_then(clean_atc_model);
+                                    let sim_muster = snap
+                                        .aircraft_icao
+                                        .as_deref()
+                                        .and_then(clean_atc_model);
                                     // Dieselbe Auflösung wie überall —
                                     // vorher fehlte hier die dritte Stufe.
                                     let muster = stats
@@ -23313,14 +22972,11 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                 // Cascade (vorher: confidence falsch = sim-string,
                                 // source hardcoded, vs_fpm nur impact_vs ohne
                                 // Cascade-Fallbacks).
-                                let landing_rate = impact_for_validation.as_ref().and_then(|ir| {
-                                    touchdown_v2::compute_landing_rate(&v2_samples, ir, category)
-                                        .ok()
-                                });
-                                let impact_at_v = impact_for_validation
+                                let landing_rate = impact_for_validation
                                     .as_ref()
-                                    .map(|r| r.impact_at)
-                                    .unwrap_or(pending_at);
+                                    .and_then(|ir| touchdown_v2::compute_landing_rate(&v2_samples, ir, category).ok());
+                                let impact_at_v = impact_for_validation
+                                    .as_ref().map(|r| r.impact_at).unwrap_or(pending_at);
                                 let (final_vs, final_src, final_conf) = match &landing_rate {
                                     Some(lr) => (
                                         lr.vs_fpm,
@@ -23496,7 +23152,11 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             };
 
             let cutoff = now - chrono::Duration::seconds(TOUCHDOWN_BUFFER_SECS);
-            while stats.snapshot_buffer.front().is_some_and(|s| s.at < cutoff) {
+            while stats
+                .snapshot_buffer
+                .front()
+                .is_some_and(|s| s.at < cutoff)
+            {
                 stats.snapshot_buffer.pop_front();
             }
 
@@ -23504,12 +23164,13 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // damit der Touchdown-Payload-Builder im Streamer-Tick die Felder
             // direkt zur Verfuegung hat (anstatt aus der JSONL re-zu-parsen).
             let prepared_dump = if let Some((edge_at, samples)) = dump_payload {
-                let analysis = compute_landing_analysis(
-                    &samples,
-                    edge_at,
-                    snap.simulator,
-                    stats.landing_sim_referenz_fpm,
-                );
+                let analysis =
+                    compute_landing_analysis(
+                        &samples,
+                        edge_at,
+                        snap.simulator,
+                        stats.landing_sim_referenz_fpm,
+                    );
                 // v1.6.3: die MSFS-Entlagung ist ERSATZLOS entfallen.
                 //
                 // Sie war ein Pflaster auf dem gedämpften SimVar-Kanal —
@@ -23604,12 +23265,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // fixed-wing acceptance floor in the cascade is relaxed.
                 let v2_result = touchdown_v2::compute_impact_frame(&samples_for_v2, edge_at)
                     .and_then(|impact_result| {
-                        touchdown_v2::compute_landing_rate(
-                            &samples_for_v2,
-                            &impact_result,
-                            category,
-                        )
-                        .ok()
+                        touchdown_v2::compute_landing_rate(&samples_for_v2, &impact_result, category).ok()
                     });
 
                 // v0.7.11: Edge-Wert aus dem 50-Hz-Buffer als kanonische
@@ -23635,10 +23291,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     .map(|x| x as f32)
                     .filter(|v| v.is_finite() && *v < 0.0);
 
-                let pg_500 = analysis
-                    .get("peak_g_post_500ms")
-                    .and_then(|v| v.as_f64())
-                    .map(|x| x as f32);
+                let pg_500 = analysis.get("peak_g_post_500ms").and_then(|v| v.as_f64()).map(|x| x as f32);
                 {
                     let mut s = flight.stats.lock().expect("flight stats");
                     // v0.20.0 (PIA3452): Edge gewinnt vor v2 — dieselbe
@@ -23674,8 +23327,10 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         );
                         if let Some(ref v2) = v2_result {
                             // Forensik-Spur: v2s Fenster-Minimum nicht verlieren.
-                            if let Some(map) =
-                                s.landing_analysis.as_mut().and_then(|a| a.as_object_mut())
+                            if let Some(map) = s
+                                .landing_analysis
+                                .as_mut()
+                                .and_then(|a| a.as_object_mut())
                             {
                                 map.insert(
                                     "vs_at_impact_frame_fpm".to_string(),
@@ -23707,7 +23362,12 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         // Kanonik faellt in diesem Fall ohnehin auf
                         // `landing_peak_vs_fpm` durch, also bleibt alles konsistent.
                         let conf_str = format!("{:?}", v2.confidence);
-                        finalize_landing_rate(&mut s, v2.vs_fpm, Some(&conf_str), Some(&v2.source));
+                        finalize_landing_rate(
+                            &mut s,
+                            v2.vs_fpm,
+                            Some(&conf_str),
+                            Some(&v2.source),
+                        );
                         tracing::info!(
                             pirep_id = %flight.pirep_id,
                             vs_fpm = v2.vs_fpm,
@@ -23729,9 +23389,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         // Nur ueberschreiben wenn der Buffer-Peak hoeher ist als
                         // der bisher gemessene (= echter Gear-Compression-Spike).
                         let cur = s.landing_peak_g_force.unwrap_or(0.0);
-                        if g > cur {
-                            s.landing_peak_g_force = Some(g);
-                        }
+                        if g > cur { s.landing_peak_g_force = Some(g); }
                     }
                     // Re-Klassifizierung mit den neuen Werten
                     // BUG #6 fix: bounce_count from analysis (50Hz Sampler-Wahrheit),
@@ -23749,18 +23407,14 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     // Fix: scored_bounce_count zurueck in s.bounce_count damit
                     // das Sub-Score-Aggregat konsistent ist mit der Forensik.
                     // Spec docs/spec/v0.7.6-landing-payload-consistency.md §3 P1-2.
-                    let scored_bounce: u8 = analysis
-                        .get("scored_bounce_count")
+                    let scored_bounce: u8 = analysis.get("scored_bounce_count")
                         .and_then(|v| v.as_u64())
                         .map(|n| n.min(u8::MAX as u64) as u8)
                         // Fallback fuer alte Analysis-JSONs ohne neues Feld
                         // (Replays, JSONL-Recovery): Legacy bounce_count.
-                        .or_else(|| {
-                            analysis
-                                .get("bounce_count")
-                                .and_then(|v| v.as_u64())
-                                .map(|n| n.min(u8::MAX as u64) as u8)
-                        })
+                        .or_else(|| analysis.get("bounce_count")
+                            .and_then(|v| v.as_u64())
+                            .map(|n| n.min(u8::MAX as u64) as u8))
                         .unwrap_or(s.bounce_count);
                     s.bounce_count = scored_bounce;
                     // v0.20.0: ueber die Kanonik lesen, nicht das Rohfeld — die
@@ -23782,14 +23436,10 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     s.landing_score_announced = false;
                 }
 
-                let flare_score = analysis
-                    .get("flare_quality_score")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(-1);
-                let smooth_500 = analysis
-                    .get("vs_smoothed_500ms_fpm")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(f64::NAN);
+                let flare_score = analysis.get("flare_quality_score")
+                    .and_then(|v| v.as_i64()).unwrap_or(-1);
+                let smooth_500 = analysis.get("vs_smoothed_500ms_fpm")
+                    .and_then(|v| v.as_f64()).unwrap_or(f64::NAN);
                 tracing::info!(
                     pirep_id = %flight.pirep_id,
                     sample_count = count,
@@ -23885,13 +23535,11 @@ fn derive_fuel_flow_kg_per_h(prev_fob_kg: f32, cur_fob_kg: f32, dt_secs: f32) ->
     }
     let dt_h = dt_secs / 3600.0;
     let rate = (prev_fob_kg - cur_fob_kg) / dt_h;
-    Some(
-        if rate.is_finite() && (0.0..=FF_MAX_KG_PER_H).contains(&rate) {
-            rate
-        } else {
-            0.0
-        },
-    )
+    Some(if rate.is_finite() && (0.0..=FF_MAX_KG_PER_H).contains(&rate) {
+        rate
+    } else {
+        0.0
+    })
 }
 
 // ---- v0.16.10 Fuel-Used-Fallback (Task B) ----
@@ -24034,7 +23682,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // least every `HEARTBEAT_INTERVAL` so phpVMS's RemoveExpiredLiveFlights
         // cron never reaches the inactivity threshold. Initialised one
         // interval in the past so the first eligible tick triggers it.
-        let mut last_heartbeat: std::time::Instant = std::time::Instant::now() - HEARTBEAT_INTERVAL;
+        let mut last_heartbeat: std::time::Instant =
+            std::time::Instant::now() - HEARTBEAT_INTERVAL;
         // Phase-adaptive cadence: re-read the current phase on every tick so
         // the sleep matches what the aircraft is actually doing right now
         // (5 s during takeoff/landing, 8 s on approach/final, 10 s on the
@@ -24125,7 +23774,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             Ok(()) => {
                                 last_heartbeat = std::time::Instant::now();
                                 {
-                                    let mut stats = flight.stats.lock().expect("flight stats");
+                                    let mut stats =
+                                        flight.stats.lock().expect("flight stats");
                                     stats.last_heartbeat_at = Some(Utc::now());
                                 }
                                 tracing::debug!(
@@ -24274,9 +23924,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // Position-Distance ist NICHT geprueft weil XP12-Crash-Recovery
             // am NAECHSTEN Airport (typisch 10-20 km vom Cruise-Punkt) eine
             // Drift unter Schwellenwert haben kann (RESUME_DRIFT_WARN_NM=50nm).
-            if let (Some(prev), Some(curr)) =
-                (previous_snap_for_recovery.as_ref(), snapshot.as_ref())
-            {
+            if let (Some(prev), Some(curr)) = (previous_snap_for_recovery.as_ref(), snapshot.as_ref()) {
                 if is_mid_session_sim_crash_recovery(
                     current_phase,
                     prev.on_ground,
@@ -24369,8 +24017,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         log_activity_handle(
                             &app,
                             ActivityLevel::Info,
-                            "⏸ Simulator pausiert — AeroACARS pausiert die Aufzeichnung."
-                                .to_string(),
+                            "⏸ Simulator pausiert — AeroACARS pausiert die Aufzeichnung.".to_string(),
                             Some(detail),
                         );
                         save_active_flight(&app, &flight);
@@ -24428,7 +24075,12 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             .current_pause_reason
                             .unwrap_or(PauseReason::SimDisconnect)
                     };
-                    let _ = apply_pause_resume(&app, &flight, snapshot.as_ref(), resume_reason);
+                    let _ = apply_pause_resume(
+                        &app,
+                        &flight,
+                        snapshot.as_ref(),
+                        resume_reason,
+                    );
                     // fall-through zum naechsten Code-Pfad
                 } else {
                     // Sim liefert keine Daten → weiter pausieren.
@@ -24470,7 +24122,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 Ok(()) => {
                                     last_heartbeat = std::time::Instant::now();
                                     {
-                                        let mut stats = flight.stats.lock().expect("flight stats");
+                                        let mut stats =
+                                            flight.stats.lock().expect("flight stats");
                                         stats.last_heartbeat_at = Some(Utc::now());
                                     }
                                     tracing::debug!(
@@ -24484,11 +24137,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     // phpVMS hat den PIREP soft-deleted —
                                     // gleiches Verhalten wie im Standard-
                                     // Heartbeat-Pfad weiter unten.
-                                    handle_remote_cancellation(
-                                        &app,
-                                        &flight,
-                                        "POST update (paused)",
-                                    );
+                                    handle_remote_cancellation(&app, &flight, "POST update (paused)");
                                     break;
                                 }
                                 Err(e) => {
@@ -24550,7 +24199,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             stats.paused_last_known = Some(paused.clone());
                             // Spec v0.7.15 F5: Reason setzen damit der
                             // Resume-Helper weiss welcher Trigger es war.
-                            stats.current_pause_reason = Some(PauseReason::SimDisconnect);
+                            stats.current_pause_reason =
+                                Some(PauseReason::SimDisconnect);
                             stats.disconnect_sim_liveness = liveness;
                         }
                     }
@@ -24810,13 +24460,21 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         Ok(airport) => {
                             {
                                 let app_state = app.state::<AppState>();
-                                let mut guard = app_state.airports.lock().expect("airports lock");
+                                let mut guard =
+                                    app_state.airports.lock().expect("airports lock");
                                 guard.insert(key.clone(), airport.clone());
                             }
-                            if let Some(pos) = airport.lat.zip(airport.lon).filter(|(la, lo)| {
-                                !(*la == 0.0 && *lo == 0.0) && la.is_finite() && lo.is_finite()
-                            }) {
-                                let mut stats_g = flight.stats.lock().expect("flight stats");
+                            if let Some(pos) = airport
+                                .lat
+                                .zip(airport.lon)
+                                .filter(|(la, lo)| {
+                                    !(*la == 0.0 && *lo == 0.0)
+                                        && la.is_finite()
+                                        && lo.is_finite()
+                                })
+                            {
+                                let mut stats_g =
+                                    flight.stats.lock().expect("flight stats");
                                 stats_g.planned_arr_ref_pos = Some(pos);
                                 // v0.19.3: record WHICH source this is. Without it
                                 // the position kept `ARR_REF_SOURCE_NONE`, and the
@@ -24901,15 +24559,14 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 {
                     let mut stats = flight.stats.lock().expect("flight stats");
                     if stats.arr_gate.is_none() {
-                        let fund =
-                            match (stats.arr_stands.as_deref(), stats.arr_stands_icao.clone()) {
-                                (Some(list), Some(list_icao)) => {
-                                    stands::benannter_stand_bei(list, snap.lat, snap.lon)
-                                        .and_then(|(st, _)| st.name.clone())
-                                        .map(|n| (n, list_icao))
-                                }
-                                _ => None,
-                            };
+                        let fund = match (stats.arr_stands.as_deref(), stats.arr_stands_icao.clone()) {
+                            (Some(list), Some(list_icao)) => {
+                                stands::benannter_stand_bei(list, snap.lat, snap.lon)
+                                    .and_then(|(st, _)| st.name.clone())
+                                    .map(|n| (n, list_icao))
+                            }
+                            _ => None,
+                        };
                         if let Some((name, list_icao)) = fund {
                             tracing::info!(stand = %name, at = %list_icao, "arrival stand captured on retry tick");
                             stats.arr_gate = Some(name);
@@ -24927,13 +24584,19 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     {
                         let mut stats = flight.stats.lock().expect("flight stats");
                         if !stats.dep_gate_field_posted {
-                            if let Some(g) = stats.dep_gate.clone().filter(|s| !s.is_empty()) {
+                            if let Some(g) =
+                                stats.dep_gate.clone().filter(|s| !s.is_empty())
+                            {
                                 stats.dep_gate_field_posted = true;
                                 posts.insert("Departure Gate".into(), g);
                             }
                         }
-                        if !stats.arr_gate_field_posted && stats.phase == FlightPhase::BlocksOn {
-                            if let Some(g) = stats.arr_gate.clone().filter(|s| !s.is_empty()) {
+                        if !stats.arr_gate_field_posted
+                            && stats.phase == FlightPhase::BlocksOn
+                        {
+                            if let Some(g) =
+                                stats.arr_gate.clone().filter(|s| !s.is_empty())
+                            {
                                 stats.arr_gate_field_posted = true;
                                 posts.insert("Arrival Gate".into(), g);
                             }
@@ -24943,7 +24606,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         let client = client.clone();
                         let pirep_id = flight.pirep_id.clone();
                         tauri::async_runtime::spawn(async move {
-                            if let Err(e) = client.post_pirep_fields(&pirep_id, &posts).await {
+                            if let Err(e) =
+                                client.post_pirep_fields(&pirep_id, &posts).await
+                            {
                                 tracing::warn!(
                                     error = %e,
                                     "live stand field post failed (non-fatal)"
@@ -25031,7 +24696,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 let dt_secs = stats
                     .shadow_last_tick_at
                     .map(|prev| {
-                        ((shadow_now - prev).num_milliseconds() as f64 / 1000.0).clamp(0.0, 10.0)
+                        ((shadow_now - prev).num_milliseconds() as f64 / 1000.0)
+                            .clamp(0.0, 10.0)
                     })
                     .unwrap_or(0.0);
                 stats.shadow_last_tick_at = Some(shadow_now);
@@ -25061,7 +24727,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // Der alte VPS-Recorder speichert sie verbatim mit — NULL
                 // Recorder-Änderungen nötig.
                 snap.shadow_phase = Some(phase_to_snake(shadow_phase).to_string());
-                snap.shadow_segment = Some(shadow_segment.as_snake_str().to_string());
+                snap.shadow_segment =
+                    Some(shadow_segment.as_snake_str().to_string());
             }
 
             // v0.12.4 (Spec docs/spec/v0.12.4-score-consistency.md, LE4):
@@ -25094,7 +24761,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     // sobald ein Abbruchkriterium greift. Vor dem ersten
                     // Aufruf ist es ebenfalls false — deshalb zusaetzlich
                     // die Bedingung, dass ueberhaupt eine Spur vorliegt.
-                    let spur_fertig = !stats.bahn_spur_laeuft && !stats.bahn_spur.is_empty();
+                    let spur_fertig =
+                        !stats.bahn_spur_laeuft && !stats.bahn_spur.is_empty();
                     if stats.rollout_finalized && spur_fertig {
                         // `landing_at` None (z.B. direkt nach einem T&G) →
                         // kein Publish; der nächste Touchdown setzt es neu.
@@ -25202,7 +24870,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     let stats = flight.stats.lock().expect("flight stats");
                     if prev_takeoff_at.is_none() && stats.takeoff_at.is_some() {
                         Some(aeroacars_mqtt::TakeoffPayload {
-                            ts: stats.takeoff_at.map(|t| t.timestamp_millis()).unwrap_or(0),
+                            ts: stats
+                                .takeoff_at
+                                .map(|t| t.timestamp_millis())
+                                .unwrap_or(0),
                             takeoff_weight_kg: stats.takeoff_weight_kg.map(|w| w as f32),
                             takeoff_fuel_kg: stats.takeoff_fuel_kg,
                             takeoff_lat: Some(snap.lat),
@@ -25286,531 +24957,497 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     // no_touchdown → INT hold (GSG308/GSG301). `sampler_touchdown_at`
                     // is set the instant the touchdown validates, in any phase, so
                     // the publish now fires on the same tick the score is announced.
-                    stats
-                        .sampler_touchdown_at
-                        .or(stats.landing_at)
-                        .map(|td_ts| {
-                            let rwy_match = stats.runway_match.as_ref();
-                            // B-012: Touchdown-Airport via Cascade aufloesen.
-                            let td_resolution = resolve_touchdown_airport(
-                                rwy_match,
-                                stats.landing_lat,
-                                stats.landing_lon,
+                    stats.sampler_touchdown_at.or(stats.landing_at).map(|td_ts| {
+                        let rwy_match = stats.runway_match.as_ref();
+                        // B-012: Touchdown-Airport via Cascade aufloesen.
+                        let td_resolution = resolve_touchdown_airport(
+                            rwy_match,
+                            stats.landing_lat,
+                            stats.landing_lon,
+                            &flight.arr_airport,
+                            |icao| {
+                                airport_lookup_data
+                                    .get(&icao.to_uppercase())
+                                    .copied()
+                            },
+                        );
+                        // v0.19.3: welches Feld liegt unter den Rädern? Der
+                        // Trust-Check fragt „gehört die gematchte Runway zu dem
+                        // Flughafen, auf dem wir tatsächlich sind" — das ist eine
+                        // Frage nach dem ECHTEN Landeplatz, nicht nach dem Plan.
+                        //
+                        // Bisher bekam er hier den PLANflughafen plus
+                        // `stats.divert_hint`, der zum Touchdown-Zeitpunkt noch
+                        // `None` ist (der Hint entsteht erst im Stillstand). Bei
+                        // jedem echten Divert lief der Check deshalb auf
+                        // `icao_mismatch` → `runway_geometry_trusted=false` und
+                        // die Touchdown-Zone wurde unterdrückt — während derselbe
+                        // Check beim Einreichen mit dem bestätigten Ausweichfeld
+                        // `trusted=true` ergab. Der Recorder speicherte für EINE
+                        // Landung ein sich widersprechendes Paar, und der Pilot
+                        // sah für eine saubere Divert-Landung ein
+                        // „Geometrie nicht vertrauenswürdig"-Pill.
+                        //
+                        // `arrival::locate` an den Touchdown-Koordinaten liefert
+                        // dieselbe Antwort, die der Divert-Hint später liefert —
+                        // nur eben schon jetzt.
+                        let td_actual_icao: Option<String> = match (
+                            stats.landing_lat,
+                            stats.landing_lon,
+                        ) {
+                            (Some(la), Some(lo)) => match arrival::locate(
                                 &flight.arr_airport,
-                                |icao| airport_lookup_data.get(&icao.to_uppercase()).copied(),
-                            );
-                            // v0.19.3: welches Feld liegt unter den Rädern? Der
-                            // Trust-Check fragt „gehört die gematchte Runway zu dem
-                            // Flughafen, auf dem wir tatsächlich sind" — das ist eine
-                            // Frage nach dem ECHTEN Landeplatz, nicht nach dem Plan.
+                                la,
+                                lo,
+                                stats.planned_arr_ref_pos,
+                            ) {
+                                arrival::ArrivalSite::AtOtherAirport { icao, .. } => Some(icao),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        // v0.8.0: identische Assessment-Werte wie
+                        // im LandingRecord (single source: assess_touchdown).
+                        let payload_assessed = assess_touchdown(&stats);
+                        // v0.20.0: EIN Verdict — Punkte, Klasse und Note stammen
+                        // aus demselben Aufruf. Die Webapp leitet nichts mehr ab.
+                        let payload_verdict = canonical_landing_verdict(
+                            flight.as_ref(),
+                            &stats,
+                            td_actual_icao.as_deref().unwrap_or(&flight.arr_airport),
+                        );
+                        aeroacars_mqtt::TouchdownPayload {
+                            ts: td_ts.timestamp_millis(),
+                            // v0.11.1: Pilot-Client-Version aus dem Cargo-
+                            // Manifest in jeden Touchdown mitsenden, damit
+                            // die Webapp-Reports-Liste + LandingAnalysis-
+                            // Header die Version direkt anzeigen koennen
+                            // (vorher war client_version nur in FlightMeta,
+                            // landete also nie in der Touchdown-DB-Row).
+                            client_version: Some(env!("CARGO_PKG_VERSION")),
+                            // v0.7.19 (QS-R2 Finding 1): Recorder/Webapp
+                            // targeted Korrektur-Events per pirep_id auf
+                            // den exakten Touchdown-Row.
+                            pirep_id: Some(flight.pirep_id.clone()),
+                            // v0.7.17 (B-015a QS-Round-2): Edge-Wert hat
+                            // Vorrang — siehe `score_basis_vs_fpm()` Doc.
+                            // Live-Touchdown-MQTT-Top-Level-Wert war
+                            // bisher der einzige verbleibende Pfad mit
+                            // der alten `landing_rate_fpm.or(peak)`-
+                            // Cascade. Konsumenten (Recorder-DB
+                            // `touchdowns.vs_fpm`, Discord-Touchdown-
+                            // Posts, Live-Hardlanding-Notifications)
+                            // bekommen jetzt durchgaengig den Edge-Wert.
+                            vs_fpm: score_basis_vs_fpm(&stats)
+                                .map(|v| v.round() as i32)
+                                .unwrap_or(0),
+                            ias_kt: stats
+                                .landing_speed_kt
+                                .map(|v| v.round() as i32)
+                                .unwrap_or(0),
+                            // v0.5.17: GS captured separately from IAS,
+                            // falls aware of head/tailwind.
+                            gs_kt: stats
+                                .landing_groundspeed_kt
+                                .map(|v| v.round() as i32),
+                            pitch_deg: stats.landing_pitch_deg,
+                            // v0.5.17: bank at touchdown (= "Landing
+                            // Roll" in maintenance-plugin lingo,
+                            // captured in v0.5.16 alongside pitch).
+                            bank_deg: stats.landing_bank_deg,
+                            // g_load/peak_g_load bleiben roh (Forensik-Display,
+                            // nicht Teil von compute_sub_scores) — unveraendert.
+                            g_load: stats.landing_g_force,
+                            peak_g_load: stats.landing_peak_g_force,
+                            // v0.20 (QS-Fix, fallback_zero-Score-Bug): der
+                            // "faire" EMA-Score wird None statt einer erfundenen
+                            // Zahl, wenn keine echte Quelle je einen Wert lieferte.
+                            scored_g_load: scored_g_fuer_punkte(&stats),
+                            scored_g_method: score_g_for_stats(&stats)
+                                .map(|s| s.method.as_str().to_string()),
+                            sideslip_deg: stats.touchdown_sideslip_deg,
+                            headwind_kt: stats.landing_headwind_kt,
+                            crosswind_kt: stats.landing_crosswind_kt,
+                            // `score` bleibt die diskrete Touchdown-Klasse
+                            // (100/80/60/30/0) — das ist die Wire-Semantik, auf
+                            // die der Recorder und die Webapp gebaut sind. Den
+                            // Composite propagiert der Recorder separat aus der
+                            // PIREP-Zeile in die Spalte `landing_score`.
+                            score: stats.landing_score.map(|s| s.numeric()),
+                            // v0.20.0: das EINGEFRORENE Urteil zum Composite —
+                            // Klasse und Note, wie der Client sie zeigt. Die
+                            // Webapp leitete das Wort bisher selbst aus einer
+                            // Zahl ab, mit einer eigenen Leiter (90/70/45) neben
+                            // unserer (88/75/50). Zwei Kopien derselben Regel
+                            // driften — genau die PIA3452-Krankheit. Jetzt
+                            // klassifiziert der Client, die Webapp zeigt an.
+                            score_label: payload_verdict
+                                .as_ref()
+                                .map(|v| v.label.to_string()),
+                            score_grade: payload_verdict
+                                .as_ref()
+                                .map(|v| v.grade.to_string()),
+                            bounce: Some(stats.bounce_count > 0),
+                            bounce_count: Some(stats.bounce_count),
+                            // v0.16.6 (Daten-Audit 2026-06-11): `approach_runway`
+                            // ist praktisch nie gesetzt → das Top-Level-Feld war
+                            // bei 407/407 VPS-Flügen None, und die Webapp-Anzeigen
+                            // (Stats/Heatmap/Pilots + Live-Notifications), die
+                            // `touchdowns.runway` lesen, zeigten NIE eine Runway —
+                            // obwohl der Korrelations-Match (97,5 % Trefferquote)
+                            // direkt daneben im Payload steht. Fallback auf den
+                            // Match-Ident füllt die DB-Spalte für neue Flüge.
+                            runway: stats.approach_runway.clone().or_else(|| {
+                                stats
+                                    .runway_match
+                                    .as_ref()
+                                    .map(|m| m.runway_ident.clone())
+                            }),
+                            // v0.7.18 (B-012): aufgelöster Touchdown-Airport
+                            // statt blind auf flight.arr_airport zu setzen.
+                            airport: Some(td_resolution.icao.clone()),
+                            airport_source: Some(
+                                td_resolution.source.as_wire_str().to_string(),
+                            ),
+                            airport_distance_to_destination_nm:
+                                td_resolution.distance_to_destination_nm,
+                            airport_nearest_distance_nm:
+                                td_resolution.nearest_distance_nm,
+                            // v0.7.18 (R1-4): Plan-Destination mit-publishen
+                            // damit die Webapp den Off-airport-Banner gegen
+                            // den echten geplanten Wert vergleichen kann.
+                            planned_arr_airport: Some(flight.arr_airport.clone()),
+                            lat: stats.landing_lat,
+                            lon: stats.landing_lon,
+                            heading_true_deg: stats.landing_heading_true_deg,
+                            heading_mag_deg: stats.landing_heading_deg,
+                            landing_weight_kg: stats.landing_weight_kg.map(|w| w as f32),
+                            landing_fuel_kg: stats.landing_fuel_kg,
+                            // v0.7.17 (B-015d): OFP-Plan-Werte ans MQTT-
+                            // Touchdown-Payload anhängen damit die Webapp
+                            // den Loadsheet-Sub-Score genauso berechnen
+                            // kann wie der Pilot-Client.
+                            planned_zfw_kg: stats.planned_zfw_kg,
+                            planned_tow_kg: stats.planned_tow_kg,
+                            rollout_distance_m: stats.rollout_distance_m.map(|d| d as f32),
+                            approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
+                            approach_bank_stddev_deg: stats.canonical_bank_stddev_deg(),
+                            go_around_count: Some(stats.go_around_count),
+                            arr_metar: stats.arr_metar_raw.clone(),
+                            runway_match_icao: rwy_match.map(|m| m.airport_ident.clone()),
+                            runway_match_ident: rwy_match.map(|m| m.runway_ident.clone()),
+                            runway_match_distance_m: rwy_match
+                                .map(|m| (m.touchdown_distance_from_threshold_ft as f32) * 0.3048),
+                            runway_match_centerline_offset_m: rwy_match
+                                .map(|m| m.centerline_distance_m as f32),
+                            // v0.5.23: Touchdown-Forensik — alle Schaetzer-
+                            // Zwischenergebnisse fuer Server-seitige
+                            // Algorithmus-Vergleiche (siehe stats Felder
+                            // landing_vs_estimate_*_fpm + landing_vs_source).
+                            simulator: stats.landing_simulator
+                                .map(|s| s.to_string()),
+                            vs_estimate_xp_fpm: stats.landing_vs_estimate_xp_fpm,
+                            vs_estimate_msfs_fpm: stats.landing_vs_estimate_msfs_fpm,
+                            vs_source: stats.landing_vs_source
+                                .map(|s| s.to_string()),
+                            gear_force_peak_n: stats.landing_gear_force_peak_n,
+                            estimate_window_ms: stats.landing_estimate_window_ms,
+                            estimate_sample_count: stats.landing_estimate_sample_count,
+                            // v0.5.25: Approach-Stability v2 — Stable-Approach-
+                            // Gate-konform mit HAT-statt-AGL, V/S-Jerk,
+                            // IAS-σ, Excessive-Sink, Stable-Config.
+                            approach_vs_deviation_fpm: stats.approach_vs_deviation_fpm,
+                            approach_max_vs_deviation_below_500_fpm: stats
+                                .approach_max_vs_deviation_below_500_fpm,
+                            approach_bank_stddev_filtered_deg: stats
+                                .approach_bank_stddev_filtered_deg,
+                            approach_runway_changed_late: stats.approach_runway_changed_late,
+                            approach_stable_at_gate: stats.approach_stable_at_gate,
+                            approach_window_sample_count: stats.approach_window_sample_count,
+                            approach_vs_jerk_fpm: stats.approach_vs_jerk_fpm,
+                            approach_ias_stddev_kt: stats.approach_ias_stddev_kt,
+                            approach_excessive_sink: stats.approach_excessive_sink,
+                            approach_stable_config: stats.approach_stable_config,
+                            approach_used_hat: Some(stats.approach_used_hat),
+                            // v0.5.26
+                            landing_wing_strike_severity_pct: stats.landing_wing_strike_severity_pct,
+                            // v0.7.6 P1-3: Raw-Wert bleibt im Payload
+                            // (interne Diagnostik), Web blendet bei
+                            // runway_geometry_trusted=false aus.
+                            landing_float_distance_m: stats.landing_float_distance_m,
+                            // v0.7.6 P1-3: Bei untrusted Runway-Geometrie
+                            // auf None setzen (kein "TD Zone 1" auf Basis
+                            // einer falschen Runway-Geometrie wie GSG303
+                            // v0.7.5: K5S9 statt OR66, 3.5 km Centerline-
+                            // Offset). Spec docs/spec/v0.7.6-landing-
+                            // payload-consistency.md §3 P1-3.
+                            landing_touchdown_zone: {
+                                let (trusted, _) = runway_geometry_trust_check(
+                                    rwy_match.map(|m| m.airport_ident.as_str()),
+                                    &flight.arr_airport,
+                                    td_actual_icao.as_deref(),
+                                    rwy_match.map(|m| m.centerline_distance_m as f32),
+                                    stats.landing_float_distance_m,
+                                );
+                                if trusted { stats.landing_touchdown_zone } else { None }
+                            },
+                            landing_vref_deviation_kt: stats.landing_vref_deviation_kt,
+                            landing_vref_source: stats.landing_vref_source.map(|s| s.to_string()),
+                            approach_stable_at_da: stats.approach_stable_at_da,
+                            approach_stall_warning_count: Some(stats.approach_stall_warning_count),
+                            landing_yaw_rate_deg_per_sec: stats.landing_yaw_rate_deg_per_sec,
+                            landing_brake_energy_proxy: stats.landing_brake_energy_proxy,
+                            // v0.5.22: feeds the live-monitor's "Bahn-
+                            // Auslastung"-sub-score so it matches the
+                            // in-app PIREP value 1:1.
+                            runway_length_m: rwy_match
+                                .map(|m| m.length_ft * 0.3048),
+                            // v0.12.4 (Spec docs/spec/v0.12.4-score-
+                            // consistency.md, LE5): prozentuale Abweichung
+                            // des **tatsächlichen Trip-Burn** (takeoff_fuel −
+                            // landing_fuel) vom geplanten OFP-Trip-Burn
+                            // (planned_burn_kg). Positiv = Mehrverbrauch.
                             //
-                            // Bisher bekam er hier den PLANflughafen plus
-                            // `stats.divert_hint`, der zum Touchdown-Zeitpunkt noch
-                            // `None` ist (der Hint entsteht erst im Stillstand). Bei
-                            // jedem echten Divert lief der Check deshalb auf
-                            // `icao_mismatch` → `runway_geometry_trusted=false` und
-                            // die Touchdown-Zone wurde unterdrückt — während derselbe
-                            // Check beim Einreichen mit dem bestätigten Ausweichfeld
-                            // `trusted=true` ergab. Der Recorder speicherte für EINE
-                            // Landung ein sich widersprechendes Paar, und der Pilot
-                            // sah für eine saubere Divert-Landung ein
-                            // „Geometrie nicht vertrauenswürdig"-Pill.
+                            // Vorher (bis v0.12.3) fälschlich block-fuel-basiert
+                            // (block_fuel − landing_fuel) — das zählt den Taxi-
+                            // out-Sprit mit und wich daher vom v0.7.1-Sub-Score
+                            // ab (SAS9987: -2.28% hier vs -5.0% im sub_scores;
+                            // DLH 1386: +9.5% statt korrekt +4.2%). Jetzt
+                            // identische Basis wie `LandingRecord.
+                            // fuel_efficiency_pct` und `sub_scores[].fuel`.
+                            fuel_efficiency_pct: trip_burn_efficiency_pct(
+                                stats.takeoff_fuel_kg,
+                                stats.landing_fuel_kg,
+                                stats.planned_burn_kg,
+                            ),
+                            // v0.5.39: 50-Hz-Forensik aus dem Sampler-Buffer.
+                            // landing_analysis ist ein serde_json::Value das
+                            // von compute_landing_analysis() im Sampler-Loop
+                            // geschrieben wird. Wenn None (Sampler hat noch
+                            // nicht 10s post-TD gesehen, oder Touchdown vor
+                            // Buffer-Init), bleiben alle Felder None.
+                            vs_at_edge_fpm: ana_f32(&stats.landing_analysis, "vs_at_edge_fpm"),
+                            // Herkunft der bewerteten Sinkrate plus beide
+                            // Rohwerte — damit im Feld nachrechenbar ist,
+                            // welche Quelle gegriffen hat.
+                            vs_at_edge_quelle: stats
+                                .landing_analysis
+                                .as_ref()
+                                .and_then(|a| a.get("vs_at_edge_quelle"))
+                                .and_then(|v| v.as_str())
+                                .map(str::to_owned),
+                            vs_geometrie_fpm: ana_f32(
+                                &stats.landing_analysis,
+                                "vs_geometrie_fpm",
+                            ),
+                            vs_simvar_edge_fpm: ana_f32(
+                                &stats.landing_analysis,
+                                "vs_simvar_edge_fpm",
+                            ),
+                            // v1.6.9 — Bestandteile + Sim-Referenz.
+                            vs_gelaende_fpm: ana_f32(
+                                &stats.landing_analysis,
+                                "vs_gelaende_fpm",
+                            ),
+                            vs_eigensinken_fpm: ana_f32(
+                                &stats.landing_analysis,
+                                "vs_eigensinken_fpm",
+                            ),
+                            vs_sim_referenz_fpm: ana_f32(
+                                &stats.landing_analysis,
+                                "vs_sim_referenz_fpm",
+                            ),
+                            vs_smoothed_250ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_250ms_fpm"),
+                            vs_smoothed_500ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_500ms_fpm"),
+                            vs_smoothed_1000ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_1000ms_fpm"),
+                            vs_smoothed_1500ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_1500ms_fpm"),
+                            peak_g_post_500ms: ana_f32(&stats.landing_analysis, "peak_g_post_500ms"),
+                            peak_g_post_1000ms: ana_f32(&stats.landing_analysis, "peak_g_post_1000ms"),
+                            // v0.7.17 (B-009): G-Force-Forensik
+                            g_at_edge: ana_f32(&stats.landing_analysis, "g_at_edge"),
+                            g_smoothed_250ms_post: ana_f32(&stats.landing_analysis, "g_smoothed_250ms_post"),
+                            g_median_post_500ms: ana_f32(&stats.landing_analysis, "g_median_post_500ms"),
+                            g_p95_post_500ms: ana_f32(&stats.landing_analysis, "g_p95_post_500ms"),
+                            max_gear_force_n: ana_f32(&stats.landing_analysis, "max_gear_force_n"),
+                            peak_vs_pre_flare_fpm: ana_f32(&stats.landing_analysis, "peak_vs_pre_flare_fpm"),
+                            vs_at_flare_end_fpm: ana_f32(&stats.landing_analysis, "vs_at_flare_end_fpm"),
+                            flare_reduction_fpm: ana_f32(&stats.landing_analysis, "flare_reduction_fpm"),
+                            flare_dvs_dt_fpm_per_sec: ana_f32(&stats.landing_analysis, "flare_dvs_dt_fpm_per_sec"),
+                            flare_quality_score: ana_i32(&stats.landing_analysis, "flare_quality_score"),
+                            flare_detected: ana_bool(&stats.landing_analysis, "flare_detected"),
+                            bounce_max_agl_ft: ana_f32(&stats.landing_analysis, "bounce_max_agl_ft"),
+                            forensic_sample_count: ana_u32(&stats.landing_analysis, "sample_count"),
+                            // v0.8.3 (#8): Forensic + scored Counts mit-publizieren.
+                            // Quelle: touchdown_v2::compute_landing_analysis schreibt
+                            // beide ins analysis-JSON (Zeile ~12863). aeroacars-live
+                            // (recorder) + LandingPanel.tsx (Pilot-Client) sehen so
+                            // den UnterschiedDes zwischen forensic (5 ft) und scored
+                            // (15 ft) und koennen score-freie Hopser dezent surface.
+                            forensic_bounce_count: ana_u32(&stats.landing_analysis, "forensic_bounce_count")
+                                .map(|n| n.min(u8::MAX as u32) as u8),
+                            scored_bounce_count: ana_u32(&stats.landing_analysis, "scored_bounce_count")
+                                .map(|n| n.min(u8::MAX as u32) as u8),
+                            // v0.7.6 P1-3: Trust-Status auch in den
+                            // touchdown_complete-Payload damit aeroacars-
+                            // live (Touchdown-Tab) und ggf. Pilot-Client-
+                            // Replay-View den Hinweis-Pill rendern koennen.
+                            // Pure-function Check, gleiche Inputs wie bei
+                            // landing_touchdown_zone (siehe oben).
+                            runway_geometry_trusted: {
+                                let (trusted, _) = runway_geometry_trust_check(
+                                    rwy_match.map(|m| m.airport_ident.as_str()),
+                                    &flight.arr_airport,
+                                    td_actual_icao.as_deref(),
+                                    rwy_match.map(|m| m.centerline_distance_m as f32),
+                                    stats.landing_float_distance_m,
+                                );
+                                Some(trusted)
+                            },
+                            runway_geometry_reason: {
+                                // Dieselben Eingaben wie `runway_geometry_trusted`
+                                // direkt darüber — sonst liefert derselbe Check
+                                // zwei Antworten über EINE Landung
+                                // (trusted=true + reason="icao_mismatch").
+                                let (_, reason) = runway_geometry_trust_check(
+                                    rwy_match.map(|m| m.airport_ident.as_str()),
+                                    &flight.arr_airport,
+                                    td_actual_icao.as_deref(),
+                                    rwy_match.map(|m| m.centerline_distance_m as f32),
+                                    stats.landing_float_distance_m,
+                                );
+                                reason.map(String::from)
+                            },
+                            // v0.7.19 GAF-707 Accident-Detection.
+                            // `accident_classifier_version` ist der
+                            // Sentinel — v0.7.19+ setzt ihn IMMER, auch
+                            // wenn kein Accident erkannt wurde. Webapp
+                            // unterscheidet damit "Classifier lief, kein
+                            // Accident" von "historischer Payload, bitte
+                            // nachklassifizieren".
+                            accident_classifier_version: Some(
+                                accident::ACCIDENT_CLASSIFIER_VERSION.into(),
+                            ),
+                            accident: if stats.accident_detected {
+                                Some(true)
+                            } else {
+                                None
+                            },
+                            accident_kind: stats.accident_kind.clone(),
+                            accident_confidence: stats
+                                .accident_confidence
+                                .clone(),
+                            accident_reasons: if stats
+                                .accident_reasons
+                                .is_empty()
+                            {
+                                None
+                            } else {
+                                Some(stats.accident_reasons.clone())
+                            },
+                            accident_at: stats
+                                .accident_at
+                                .map(|t| t.timestamp_millis()),
+                            // v0.8.0: Pure-Function-Assessment in den
+                            // Live-MQTT-Payload. Identische Werte wie
+                            // im LandingRecord (record_landing_for_filed_
+                            // flight) — Spec verlangt Field-Symmetrie.
+                            navdata_source: stats
+                                .runway_source
+                                .map(|s| runway_source_wire(s).to_string()),
+                            navdata_cycle: stats.runway_nav_cycle.clone(),
+                            runway_true_course_deg: stats
+                                .runway_nav_geometry
+                                .as_ref()
+                                .map(|g| g.true_course),
+                            runway_displaced_threshold_ft: wire_displaced_threshold_ft(
+                                stats.runway_match.as_ref(),
+                            ),
+                            runway_tch_expected_ft: stats
+                                .runway_nav_geometry
+                                .as_ref()
+                                .map(|g| g.tch_ft),
+                            runway_glideslope_angle_deg: stats
+                                .runway_nav_geometry
+                                .as_ref()
+                                .map(|g| g.glideslope_angle),
+                            td_distance_from_threshold_m: payload_assessed
+                                .td_distance_from_threshold_m,
+                            td_in_tdz: payload_assessed.tdz.map(|t| t.in_tdz),
+                            td_third: payload_assessed.tdz.map(|t| t.third),
+                            td_tdz_length_m: payload_assessed
+                                .tdz
+                                .map(|t| t.tdz_length_m),
+                            aim_delta_m: payload_assessed
+                                .aim
+                                .as_ref()
+                                .map(|a| a.delta_m),
+                            aim_class: payload_assessed.aim.as_ref().map(|a| {
+                                aim_class_wire(a.class).to_string()
+                            }),
+                            aim_point_m: payload_assessed
+                                .aim
+                                .as_ref()
+                                .map(|a| a.aim_point_m),
+                            tch_actual_ft: payload_assessed
+                                .tch
+                                .as_ref()
+                                .map(|t| t.actual_ft),
+                            tch_delta_ft: payload_assessed
+                                .tch
+                                .as_ref()
+                                .map(|t| t.delta_ft),
+                            tch_class: payload_assessed.tch.as_ref().map(|t| {
+                                tch_class_wire(t.class).to_string()
+                            }),
+                            pre_displaced_threshold: payload_assessed
+                                .dds
+                                .map(|d| d.in_pre_threshold_zone),
+                            // v0.10.0 (#runway-utilization-score): Marker
+                            // dass das nachgelagert berechnete sub_scores-
+                            // Array via sub_rollout_v2 (LDA-basiert)
+                            // entstanden ist.
+                            // v0.16.21: bump 3→4 — MSFS touchdown V/S
+                            // SimVar-lag corrected (g-force-gated de-lag).
+                            // v0.20.x: bump 4→5 — Bahnauslastung-QS
+                            // (Float-Toleranz + Banding grosszuegiger) +
+                            // Sinkraten-Ziel-Korridor.
+                            // v1.6.7: bump 7→8 — Minderverbrauch bis 15 %
+                            // voll bepunktet; Bahn-Auslastung auf die echte
+                            // genutzte Strecke umgestellt.
+                            score_algorithm_version: Some(9),
+                            // ── v1.7.0 Bahndisziplin ─────────────────
                             //
-                            // `arrival::locate` an den Touchdown-Koordinaten liefert
-                            // dieselbe Antwort, die der Divert-Hint später liefert —
-                            // nur eben schon jetzt.
-                            let td_actual_icao: Option<String> =
-                                match (stats.landing_lat, stats.landing_lon) {
-                                    (Some(la), Some(lo)) => match arrival::locate(
-                                        &flight.arr_airport,
-                                        la,
-                                        lo,
-                                        stats.planned_arr_ref_pos,
-                                    ) {
-                                        arrival::ArrivalSite::AtOtherAirport { icao, .. } => {
-                                            Some(icao)
-                                        }
-                                        _ => None,
-                                    },
-                                    _ => None,
-                                };
-                            // v0.8.0: identische Assessment-Werte wie
-                            // im LandingRecord (single source: assess_touchdown).
-                            let payload_assessed = assess_touchdown(&stats);
-                            // v0.20.0: EIN Verdict — Punkte, Klasse und Note stammen
-                            // aus demselben Aufruf. Die Webapp leitet nichts mehr ab.
-                            let payload_verdict = canonical_landing_verdict(
-                                flight.as_ref(),
+                            // Dieselbe Ableitung wie fuer die Anzeige im
+                            // Client: `bahn_felder()` ist die eine Stelle,
+                            // an der aus dem Rollout-Fenster Zahlen
+                            // werden. Der Server rechnet nichts nach — er
+                            // bekaeme aus groberen Daten zwangslaeufig
+                            // andere Werte, und zwei Zahlen fuer dieselbe
+                            // Landung sind schlimmer als eine fehlende.
+                            bahn: bahn_felder(
                                 &stats,
-                                td_actual_icao.as_deref().unwrap_or(&flight.arr_airport),
-                            );
-                            aeroacars_mqtt::TouchdownPayload {
-                                ts: td_ts.timestamp_millis(),
-                                // v0.11.1: Pilot-Client-Version aus dem Cargo-
-                                // Manifest in jeden Touchdown mitsenden, damit
-                                // die Webapp-Reports-Liste + LandingAnalysis-
-                                // Header die Version direkt anzeigen koennen
-                                // (vorher war client_version nur in FlightMeta,
-                                // landete also nie in der Touchdown-DB-Row).
-                                client_version: Some(env!("CARGO_PKG_VERSION")),
-                                // v0.7.19 (QS-R2 Finding 1): Recorder/Webapp
-                                // targeted Korrektur-Events per pirep_id auf
-                                // den exakten Touchdown-Row.
-                                pirep_id: Some(flight.pirep_id.clone()),
-                                // v0.7.17 (B-015a QS-Round-2): Edge-Wert hat
-                                // Vorrang — siehe `score_basis_vs_fpm()` Doc.
-                                // Live-Touchdown-MQTT-Top-Level-Wert war
-                                // bisher der einzige verbleibende Pfad mit
-                                // der alten `landing_rate_fpm.or(peak)`-
-                                // Cascade. Konsumenten (Recorder-DB
-                                // `touchdowns.vs_fpm`, Discord-Touchdown-
-                                // Posts, Live-Hardlanding-Notifications)
-                                // bekommen jetzt durchgaengig den Edge-Wert.
-                                vs_fpm: score_basis_vs_fpm(&stats)
-                                    .map(|v| v.round() as i32)
-                                    .unwrap_or(0),
-                                ias_kt: stats
-                                    .landing_speed_kt
-                                    .map(|v| v.round() as i32)
-                                    .unwrap_or(0),
-                                // v0.5.17: GS captured separately from IAS,
-                                // falls aware of head/tailwind.
-                                gs_kt: stats.landing_groundspeed_kt.map(|v| v.round() as i32),
-                                pitch_deg: stats.landing_pitch_deg,
-                                // v0.5.17: bank at touchdown (= "Landing
-                                // Roll" in maintenance-plugin lingo,
-                                // captured in v0.5.16 alongside pitch).
-                                bank_deg: stats.landing_bank_deg,
-                                // g_load/peak_g_load bleiben roh (Forensik-Display,
-                                // nicht Teil von compute_sub_scores) — unveraendert.
-                                g_load: stats.landing_g_force,
-                                peak_g_load: stats.landing_peak_g_force,
-                                // v0.20 (QS-Fix, fallback_zero-Score-Bug): der
-                                // "faire" EMA-Score wird None statt einer erfundenen
-                                // Zahl, wenn keine echte Quelle je einen Wert lieferte.
-                                scored_g_load: scored_g_fuer_punkte(&stats),
-                                scored_g_method: score_g_for_stats(&stats)
-                                    .map(|s| s.method.as_str().to_string()),
-                                sideslip_deg: stats.touchdown_sideslip_deg,
-                                headwind_kt: stats.landing_headwind_kt,
-                                crosswind_kt: stats.landing_crosswind_kt,
-                                // `score` bleibt die diskrete Touchdown-Klasse
-                                // (100/80/60/30/0) — das ist die Wire-Semantik, auf
-                                // die der Recorder und die Webapp gebaut sind. Den
-                                // Composite propagiert der Recorder separat aus der
-                                // PIREP-Zeile in die Spalte `landing_score`.
-                                score: stats.landing_score.map(|s| s.numeric()),
-                                // v0.20.0: das EINGEFRORENE Urteil zum Composite —
-                                // Klasse und Note, wie der Client sie zeigt. Die
-                                // Webapp leitete das Wort bisher selbst aus einer
-                                // Zahl ab, mit einer eigenen Leiter (90/70/45) neben
-                                // unserer (88/75/50). Zwei Kopien derselben Regel
-                                // driften — genau die PIA3452-Krankheit. Jetzt
-                                // klassifiziert der Client, die Webapp zeigt an.
-                                score_label: payload_verdict.as_ref().map(|v| v.label.to_string()),
-                                score_grade: payload_verdict.as_ref().map(|v| v.grade.to_string()),
-                                bounce: Some(stats.bounce_count > 0),
-                                bounce_count: Some(stats.bounce_count),
-                                // v0.16.6 (Daten-Audit 2026-06-11): `approach_runway`
-                                // ist praktisch nie gesetzt → das Top-Level-Feld war
-                                // bei 407/407 VPS-Flügen None, und die Webapp-Anzeigen
-                                // (Stats/Heatmap/Pilots + Live-Notifications), die
-                                // `touchdowns.runway` lesen, zeigten NIE eine Runway —
-                                // obwohl der Korrelations-Match (97,5 % Trefferquote)
-                                // direkt daneben im Payload steht. Fallback auf den
-                                // Match-Ident füllt die DB-Spalte für neue Flüge.
-                                runway: stats.approach_runway.clone().or_else(|| {
-                                    stats.runway_match.as_ref().map(|m| m.runway_ident.clone())
-                                }),
-                                // v0.7.18 (B-012): aufgelöster Touchdown-Airport
-                                // statt blind auf flight.arr_airport zu setzen.
-                                airport: Some(td_resolution.icao.clone()),
-                                airport_source: Some(
-                                    td_resolution.source.as_wire_str().to_string(),
-                                ),
-                                airport_distance_to_destination_nm: td_resolution
-                                    .distance_to_destination_nm,
-                                airport_nearest_distance_nm: td_resolution.nearest_distance_nm,
-                                // v0.7.18 (R1-4): Plan-Destination mit-publishen
-                                // damit die Webapp den Off-airport-Banner gegen
-                                // den echten geplanten Wert vergleichen kann.
-                                planned_arr_airport: Some(flight.arr_airport.clone()),
-                                lat: stats.landing_lat,
-                                lon: stats.landing_lon,
-                                heading_true_deg: stats.landing_heading_true_deg,
-                                heading_mag_deg: stats.landing_heading_deg,
-                                landing_weight_kg: stats.landing_weight_kg.map(|w| w as f32),
-                                landing_fuel_kg: stats.landing_fuel_kg,
-                                // v0.7.17 (B-015d): OFP-Plan-Werte ans MQTT-
-                                // Touchdown-Payload anhängen damit die Webapp
-                                // den Loadsheet-Sub-Score genauso berechnen
-                                // kann wie der Pilot-Client.
-                                planned_zfw_kg: stats.planned_zfw_kg,
-                                planned_tow_kg: stats.planned_tow_kg,
-                                rollout_distance_m: stats.rollout_distance_m.map(|d| d as f32),
-                                approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
-                                approach_bank_stddev_deg: stats.canonical_bank_stddev_deg(),
-                                go_around_count: Some(stats.go_around_count),
-                                arr_metar: stats.arr_metar_raw.clone(),
-                                runway_match_icao: rwy_match.map(|m| m.airport_ident.clone()),
-                                runway_match_ident: rwy_match.map(|m| m.runway_ident.clone()),
-                                runway_match_distance_m: rwy_match.map(|m| {
-                                    (m.touchdown_distance_from_threshold_ft as f32) * 0.3048
-                                }),
-                                runway_match_centerline_offset_m: rwy_match
-                                    .map(|m| m.centerline_distance_m as f32),
-                                // v0.5.23: Touchdown-Forensik — alle Schaetzer-
-                                // Zwischenergebnisse fuer Server-seitige
-                                // Algorithmus-Vergleiche (siehe stats Felder
-                                // landing_vs_estimate_*_fpm + landing_vs_source).
-                                simulator: stats.landing_simulator.map(|s| s.to_string()),
-                                vs_estimate_xp_fpm: stats.landing_vs_estimate_xp_fpm,
-                                vs_estimate_msfs_fpm: stats.landing_vs_estimate_msfs_fpm,
-                                vs_source: stats.landing_vs_source.map(|s| s.to_string()),
-                                gear_force_peak_n: stats.landing_gear_force_peak_n,
-                                estimate_window_ms: stats.landing_estimate_window_ms,
-                                estimate_sample_count: stats.landing_estimate_sample_count,
-                                // v0.5.25: Approach-Stability v2 — Stable-Approach-
-                                // Gate-konform mit HAT-statt-AGL, V/S-Jerk,
-                                // IAS-σ, Excessive-Sink, Stable-Config.
-                                approach_vs_deviation_fpm: stats.approach_vs_deviation_fpm,
-                                approach_max_vs_deviation_below_500_fpm: stats
-                                    .approach_max_vs_deviation_below_500_fpm,
-                                approach_bank_stddev_filtered_deg: stats
-                                    .approach_bank_stddev_filtered_deg,
-                                approach_runway_changed_late: stats.approach_runway_changed_late,
-                                approach_stable_at_gate: stats.approach_stable_at_gate,
-                                approach_window_sample_count: stats.approach_window_sample_count,
-                                approach_vs_jerk_fpm: stats.approach_vs_jerk_fpm,
-                                approach_ias_stddev_kt: stats.approach_ias_stddev_kt,
-                                approach_excessive_sink: stats.approach_excessive_sink,
-                                approach_stable_config: stats.approach_stable_config,
-                                approach_used_hat: Some(stats.approach_used_hat),
-                                // v0.5.26
-                                landing_wing_strike_severity_pct: stats
-                                    .landing_wing_strike_severity_pct,
-                                // v0.7.6 P1-3: Raw-Wert bleibt im Payload
-                                // (interne Diagnostik), Web blendet bei
-                                // runway_geometry_trusted=false aus.
-                                landing_float_distance_m: stats.landing_float_distance_m,
-                                // v0.7.6 P1-3: Bei untrusted Runway-Geometrie
-                                // auf None setzen (kein "TD Zone 1" auf Basis
-                                // einer falschen Runway-Geometrie wie GSG303
-                                // v0.7.5: K5S9 statt OR66, 3.5 km Centerline-
-                                // Offset). Spec docs/spec/v0.7.6-landing-
-                                // payload-consistency.md §3 P1-3.
-                                landing_touchdown_zone: {
-                                    let (trusted, _) = runway_geometry_trust_check(
-                                        rwy_match.map(|m| m.airport_ident.as_str()),
-                                        &flight.arr_airport,
-                                        td_actual_icao.as_deref(),
-                                        rwy_match.map(|m| m.centerline_distance_m as f32),
-                                        stats.landing_float_distance_m,
-                                    );
-                                    if trusted {
-                                        stats.landing_touchdown_zone
-                                    } else {
-                                        None
-                                    }
-                                },
-                                landing_vref_deviation_kt: stats.landing_vref_deviation_kt,
-                                landing_vref_source: stats
-                                    .landing_vref_source
-                                    .map(|s| s.to_string()),
-                                approach_stable_at_da: stats.approach_stable_at_da,
-                                approach_stall_warning_count: Some(
-                                    stats.approach_stall_warning_count,
-                                ),
-                                landing_yaw_rate_deg_per_sec: stats.landing_yaw_rate_deg_per_sec,
-                                landing_brake_energy_proxy: stats.landing_brake_energy_proxy,
-                                // v0.5.22: feeds the live-monitor's "Bahn-
-                                // Auslastung"-sub-score so it matches the
-                                // in-app PIREP value 1:1.
-                                runway_length_m: rwy_match.map(|m| m.length_ft * 0.3048),
-                                // v0.12.4 (Spec docs/spec/v0.12.4-score-
-                                // consistency.md, LE5): prozentuale Abweichung
-                                // des **tatsächlichen Trip-Burn** (takeoff_fuel −
-                                // landing_fuel) vom geplanten OFP-Trip-Burn
-                                // (planned_burn_kg). Positiv = Mehrverbrauch.
-                                //
-                                // Vorher (bis v0.12.3) fälschlich block-fuel-basiert
-                                // (block_fuel − landing_fuel) — das zählt den Taxi-
-                                // out-Sprit mit und wich daher vom v0.7.1-Sub-Score
-                                // ab (SAS9987: -2.28% hier vs -5.0% im sub_scores;
-                                // DLH 1386: +9.5% statt korrekt +4.2%). Jetzt
-                                // identische Basis wie `LandingRecord.
-                                // fuel_efficiency_pct` und `sub_scores[].fuel`.
-                                fuel_efficiency_pct: trip_burn_efficiency_pct(
-                                    stats.takeoff_fuel_kg,
-                                    stats.landing_fuel_kg,
-                                    stats.planned_burn_kg,
-                                ),
-                                // v0.5.39: 50-Hz-Forensik aus dem Sampler-Buffer.
-                                // landing_analysis ist ein serde_json::Value das
-                                // von compute_landing_analysis() im Sampler-Loop
-                                // geschrieben wird. Wenn None (Sampler hat noch
-                                // nicht 10s post-TD gesehen, oder Touchdown vor
-                                // Buffer-Init), bleiben alle Felder None.
-                                vs_at_edge_fpm: ana_f32(&stats.landing_analysis, "vs_at_edge_fpm"),
-                                // Herkunft der bewerteten Sinkrate plus beide
-                                // Rohwerte — damit im Feld nachrechenbar ist,
-                                // welche Quelle gegriffen hat.
-                                vs_at_edge_quelle: stats
-                                    .landing_analysis
-                                    .as_ref()
-                                    .and_then(|a| a.get("vs_at_edge_quelle"))
-                                    .and_then(|v| v.as_str())
-                                    .map(str::to_owned),
-                                vs_geometrie_fpm: ana_f32(
-                                    &stats.landing_analysis,
-                                    "vs_geometrie_fpm",
-                                ),
-                                vs_simvar_edge_fpm: ana_f32(
-                                    &stats.landing_analysis,
-                                    "vs_simvar_edge_fpm",
-                                ),
-                                // v1.6.9 — Bestandteile + Sim-Referenz.
-                                vs_gelaende_fpm: ana_f32(
-                                    &stats.landing_analysis,
-                                    "vs_gelaende_fpm",
-                                ),
-                                vs_eigensinken_fpm: ana_f32(
-                                    &stats.landing_analysis,
-                                    "vs_eigensinken_fpm",
-                                ),
-                                vs_sim_referenz_fpm: ana_f32(
-                                    &stats.landing_analysis,
-                                    "vs_sim_referenz_fpm",
-                                ),
-                                vs_smoothed_250ms_fpm: ana_f32(
-                                    &stats.landing_analysis,
-                                    "vs_smoothed_250ms_fpm",
-                                ),
-                                vs_smoothed_500ms_fpm: ana_f32(
-                                    &stats.landing_analysis,
-                                    "vs_smoothed_500ms_fpm",
-                                ),
-                                vs_smoothed_1000ms_fpm: ana_f32(
-                                    &stats.landing_analysis,
-                                    "vs_smoothed_1000ms_fpm",
-                                ),
-                                vs_smoothed_1500ms_fpm: ana_f32(
-                                    &stats.landing_analysis,
-                                    "vs_smoothed_1500ms_fpm",
-                                ),
-                                peak_g_post_500ms: ana_f32(
-                                    &stats.landing_analysis,
-                                    "peak_g_post_500ms",
-                                ),
-                                peak_g_post_1000ms: ana_f32(
-                                    &stats.landing_analysis,
-                                    "peak_g_post_1000ms",
-                                ),
-                                // v0.7.17 (B-009): G-Force-Forensik
-                                g_at_edge: ana_f32(&stats.landing_analysis, "g_at_edge"),
-                                g_smoothed_250ms_post: ana_f32(
-                                    &stats.landing_analysis,
-                                    "g_smoothed_250ms_post",
-                                ),
-                                g_median_post_500ms: ana_f32(
-                                    &stats.landing_analysis,
-                                    "g_median_post_500ms",
-                                ),
-                                g_p95_post_500ms: ana_f32(
-                                    &stats.landing_analysis,
-                                    "g_p95_post_500ms",
-                                ),
-                                max_gear_force_n: ana_f32(
-                                    &stats.landing_analysis,
-                                    "max_gear_force_n",
-                                ),
-                                peak_vs_pre_flare_fpm: ana_f32(
-                                    &stats.landing_analysis,
-                                    "peak_vs_pre_flare_fpm",
-                                ),
-                                vs_at_flare_end_fpm: ana_f32(
-                                    &stats.landing_analysis,
-                                    "vs_at_flare_end_fpm",
-                                ),
-                                flare_reduction_fpm: ana_f32(
-                                    &stats.landing_analysis,
-                                    "flare_reduction_fpm",
-                                ),
-                                flare_dvs_dt_fpm_per_sec: ana_f32(
-                                    &stats.landing_analysis,
-                                    "flare_dvs_dt_fpm_per_sec",
-                                ),
-                                flare_quality_score: ana_i32(
-                                    &stats.landing_analysis,
-                                    "flare_quality_score",
-                                ),
-                                flare_detected: ana_bool(&stats.landing_analysis, "flare_detected"),
-                                bounce_max_agl_ft: ana_f32(
-                                    &stats.landing_analysis,
-                                    "bounce_max_agl_ft",
-                                ),
-                                forensic_sample_count: ana_u32(
-                                    &stats.landing_analysis,
-                                    "sample_count",
-                                ),
-                                // v0.8.3 (#8): Forensic + scored Counts mit-publizieren.
-                                // Quelle: touchdown_v2::compute_landing_analysis schreibt
-                                // beide ins analysis-JSON (Zeile ~12863). aeroacars-live
-                                // (recorder) + LandingPanel.tsx (Pilot-Client) sehen so
-                                // den UnterschiedDes zwischen forensic (5 ft) und scored
-                                // (15 ft) und koennen score-freie Hopser dezent surface.
-                                forensic_bounce_count: ana_u32(
-                                    &stats.landing_analysis,
-                                    "forensic_bounce_count",
-                                )
-                                .map(|n| n.min(u8::MAX as u32) as u8),
-                                scored_bounce_count: ana_u32(
-                                    &stats.landing_analysis,
-                                    "scored_bounce_count",
-                                )
-                                .map(|n| n.min(u8::MAX as u32) as u8),
-                                // v0.7.6 P1-3: Trust-Status auch in den
-                                // touchdown_complete-Payload damit aeroacars-
-                                // live (Touchdown-Tab) und ggf. Pilot-Client-
-                                // Replay-View den Hinweis-Pill rendern koennen.
-                                // Pure-function Check, gleiche Inputs wie bei
-                                // landing_touchdown_zone (siehe oben).
-                                runway_geometry_trusted: {
-                                    let (trusted, _) = runway_geometry_trust_check(
-                                        rwy_match.map(|m| m.airport_ident.as_str()),
-                                        &flight.arr_airport,
-                                        td_actual_icao.as_deref(),
-                                        rwy_match.map(|m| m.centerline_distance_m as f32),
-                                        stats.landing_float_distance_m,
-                                    );
-                                    Some(trusted)
-                                },
-                                runway_geometry_reason: {
-                                    // Dieselben Eingaben wie `runway_geometry_trusted`
-                                    // direkt darüber — sonst liefert derselbe Check
-                                    // zwei Antworten über EINE Landung
-                                    // (trusted=true + reason="icao_mismatch").
-                                    let (_, reason) = runway_geometry_trust_check(
-                                        rwy_match.map(|m| m.airport_ident.as_str()),
-                                        &flight.arr_airport,
-                                        td_actual_icao.as_deref(),
-                                        rwy_match.map(|m| m.centerline_distance_m as f32),
-                                        stats.landing_float_distance_m,
-                                    );
-                                    reason.map(String::from)
-                                },
-                                // v0.7.19 GAF-707 Accident-Detection.
-                                // `accident_classifier_version` ist der
-                                // Sentinel — v0.7.19+ setzt ihn IMMER, auch
-                                // wenn kein Accident erkannt wurde. Webapp
-                                // unterscheidet damit "Classifier lief, kein
-                                // Accident" von "historischer Payload, bitte
-                                // nachklassifizieren".
-                                accident_classifier_version: Some(
-                                    accident::ACCIDENT_CLASSIFIER_VERSION.into(),
-                                ),
-                                accident: if stats.accident_detected {
-                                    Some(true)
-                                } else {
-                                    None
-                                },
-                                accident_kind: stats.accident_kind.clone(),
-                                accident_confidence: stats.accident_confidence.clone(),
-                                accident_reasons: if stats.accident_reasons.is_empty() {
-                                    None
-                                } else {
-                                    Some(stats.accident_reasons.clone())
-                                },
-                                accident_at: stats.accident_at.map(|t| t.timestamp_millis()),
-                                // v0.8.0: Pure-Function-Assessment in den
-                                // Live-MQTT-Payload. Identische Werte wie
-                                // im LandingRecord (record_landing_for_filed_
-                                // flight) — Spec verlangt Field-Symmetrie.
-                                navdata_source: stats
-                                    .runway_source
-                                    .map(|s| runway_source_wire(s).to_string()),
-                                navdata_cycle: stats.runway_nav_cycle.clone(),
-                                runway_true_course_deg: stats
-                                    .runway_nav_geometry
-                                    .as_ref()
-                                    .map(|g| g.true_course),
-                                runway_displaced_threshold_ft: wire_displaced_threshold_ft(
-                                    stats.runway_match.as_ref(),
-                                ),
-                                runway_tch_expected_ft: stats
-                                    .runway_nav_geometry
-                                    .as_ref()
-                                    .map(|g| g.tch_ft),
-                                runway_glideslope_angle_deg: stats
-                                    .runway_nav_geometry
-                                    .as_ref()
-                                    .map(|g| g.glideslope_angle),
-                                td_distance_from_threshold_m: payload_assessed
-                                    .td_distance_from_threshold_m,
-                                td_in_tdz: payload_assessed.tdz.map(|t| t.in_tdz),
-                                td_third: payload_assessed.tdz.map(|t| t.third),
-                                td_tdz_length_m: payload_assessed.tdz.map(|t| t.tdz_length_m),
-                                aim_delta_m: payload_assessed.aim.as_ref().map(|a| a.delta_m),
-                                aim_class: payload_assessed
-                                    .aim
-                                    .as_ref()
-                                    .map(|a| aim_class_wire(a.class).to_string()),
-                                aim_point_m: payload_assessed.aim.as_ref().map(|a| a.aim_point_m),
-                                tch_actual_ft: payload_assessed.tch.as_ref().map(|t| t.actual_ft),
-                                tch_delta_ft: payload_assessed.tch.as_ref().map(|t| t.delta_ft),
-                                tch_class: payload_assessed
-                                    .tch
-                                    .as_ref()
-                                    .map(|t| tch_class_wire(t.class).to_string()),
-                                pre_displaced_threshold: payload_assessed
-                                    .dds
-                                    .map(|d| d.in_pre_threshold_zone),
-                                // v0.10.0 (#runway-utilization-score): Marker
-                                // dass das nachgelagert berechnete sub_scores-
-                                // Array via sub_rollout_v2 (LDA-basiert)
-                                // entstanden ist.
-                                // v0.16.21: bump 3→4 — MSFS touchdown V/S
-                                // SimVar-lag corrected (g-force-gated de-lag).
-                                // v0.20.x: bump 4→5 — Bahnauslastung-QS
-                                // (Float-Toleranz + Banding grosszuegiger) +
-                                // Sinkraten-Ziel-Korridor.
-                                // v1.6.7: bump 7→8 — Minderverbrauch bis 15 %
-                                // voll bepunktet; Bahn-Auslastung auf die echte
-                                // genutzte Strecke umgestellt.
-                                score_algorithm_version: Some(9),
-                                // ── v1.7.0 Bahndisziplin ─────────────────
-                                //
-                                // Dieselbe Ableitung wie fuer die Anzeige im
-                                // Client: `bahn_felder()` ist die eine Stelle,
-                                // an der aus dem Rollout-Fenster Zahlen
-                                // werden. Der Server rechnet nichts nach — er
-                                // bekaeme aus groberen Daten zwangslaeufig
-                                // andere Werte, und zwei Zahlen fuer dieselbe
-                                // Landung sind schlimmer als eine fehlende.
-                                bahn: bahn_felder(
-                                    &stats,
-                                    // Das aufgeloeste Muster (Sim → Buchung →
-                                    // Titel), nicht nur die Buchung. Hier stand
-                                    // vorher allein `flight.aircraft_icao`; war
-                                    // die leer, verlor die Landung Spurweite,
-                                    // Spannweite und Randabstand.
-                                    stats
-                                        .aufgeloestes_muster
-                                        .as_deref()
-                                        .or(Some(flight.aircraft_icao.as_str()))
-                                        .filter(|s| !s.is_empty()),
-                                    // Kein Skip-Grund: Die Bewertung laeuft
-                                    // erst nach diesem Publish (siehe den
-                                    // Hinweis zum nachgelagerten
-                                    // `sub_scores`-Array weiter oben). Hier
-                                    // etwas zu behaupten waere geraten — die
-                                    // Webapp liest den Grund ohnehin aus den
-                                    // `sub_scores` des PIREP.
-                                    None,
-                                )
-                                .wire(false),
-                            }
-                        })
+                                // Das aufgeloeste Muster (Sim → Buchung →
+                                // Titel), nicht nur die Buchung. Hier stand
+                                // vorher allein `flight.aircraft_icao`; war
+                                // die leer, verlor die Landung Spurweite,
+                                // Spannweite und Randabstand.
+                                stats
+                                    .aufgeloestes_muster
+                                    .as_deref()
+                                    .or(Some(flight.aircraft_icao.as_str()))
+                                    .filter(|s| !s.is_empty()),
+                                // Kein Skip-Grund: Die Bewertung laeuft
+                                // erst nach diesem Publish (siehe den
+                                // Hinweis zum nachgelagerten
+                                // `sub_scores`-Array weiter oben). Hier
+                                // etwas zu behaupten waere geraten — die
+                                // Webapp liest den Grund ohnehin aus den
+                                // `sub_scores` des PIREP.
+                                None,
+                            )
+                            .wire(false),
+                        }
+                    })
                 };
                 if let Some(payload) = payload_opt {
                     // v0.5.34: gleicher Forensik-Payload landet ins JSONL.
@@ -25931,7 +25568,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             {
                 let mut stats = flight.stats.lock().expect("flight stats");
                 if !stats.pending_acars_logs.is_empty() {
-                    let drained: Vec<String> = std::mem::take(&mut stats.pending_acars_logs);
+                    let drained: Vec<String> =
+                        std::mem::take(&mut stats.pending_acars_logs);
                     drop(stats);
                     let now_ts = Utc::now().to_rfc3339();
                     for line in drained {
@@ -25942,7 +25580,12 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         // 5 s dedupe window is fine here — successive
                         // T&Gs are >1 min apart (FSM has to descend
                         // back to Approach in between).
-                        log_activity_handle(&app, ActivityLevel::Info, line.clone(), None);
+                        log_activity_handle(
+                            &app,
+                            ActivityLevel::Info,
+                            line.clone(),
+                            None,
+                        );
                         acars_log_entries.push(api_client::LogEntry {
                             log: line,
                             lat: Some(snap.lat),
@@ -26002,7 +25645,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // Stand hat.
             {
                 let app_state = app.state::<AppState>();
-                let mqtt = app_state.mqtt.lock().await;
+                    let mqtt = app_state.mqtt.lock().await;
                 if let Some(handle) = mqtt.as_ref() {
                     // v0.5.44: aircraft_icao mit Fallback-Cascade.
                     //
@@ -26030,7 +25673,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         (stats.dep_gate.clone(), stats.arr_gate.clone())
                     };
                     let meta = aeroacars_mqtt::FlightMeta {
-                        callsign: format_callsign(&flight.airline_icao, &flight.flight_number),
+                        callsign: format_callsign(
+                            &flight.airline_icao,
+                            &flight.flight_number,
+                        ),
                         aircraft_icao: resolved_icao,
                         dep_icao: flight.dpt_airport.clone(),
                         arr_icao: flight.arr_airport.clone(),
@@ -26107,7 +25753,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             ) {
                 letzter_phpvms_push = Some(std::time::Instant::now());
                 zuletzt_gepushte_phase = Some(phase_jetzt);
-                let mut outbox = flight.position_outbox.lock().expect("position_outbox lock");
+                let mut outbox = flight.position_outbox.lock()
+                    .expect("position_outbox lock");
                 outbox.push_back(position.clone());
                 // Cap auf 5000. Vor v1.6.14 (ein Punkt je Tick) waren das ca.
                 // 4 Stunden Cruise; seit der phasenabhaengigen Ausduennung
@@ -26267,7 +25914,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         let flight_af = Arc::clone(&flight);
                         tauri::async_runtime::spawn(async move {
                             let st = app_af.state::<AppState>();
-                            match flight_end(app_af.clone(), st, None, None, None).await {
+                            match flight_end(app_af.clone(), st, None, None, None)
+                                .await
+                            {
                                 Ok(()) => {
                                     // LE7-Erfolgs-Banner: das Frontend
                                     // hört auf dieses Event und zeigt das
@@ -26315,8 +25964,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // monotonic flight_time / distance also guarantees the row is
             // dirty so Eloquent always writes UPDATE and bumps updated_at.
             // #phase-v2 Cutover: phpVMS-Live-Status = v2-Phase.
-            let phase_for_heartbeat =
-                effective_display_phase(phase_change.unwrap_or(current_phase), tick_shadow_phase);
+            let phase_for_heartbeat = effective_display_phase(
+                phase_change.unwrap_or(current_phase),
+                tick_shadow_phase,
+            );
             let due_for_heartbeat = last_heartbeat.elapsed() >= HEARTBEAT_INTERVAL;
             if phase_change.is_some() || due_for_heartbeat {
                 let body = {
@@ -26514,9 +26165,7 @@ fn current_premium_touchdown(app: &AppHandle) -> Option<sim_xplane::PremiumTouch
 /// zurueck auf die ersten 8 Zeichen, gefiltert auf alphanumerisch.
 fn extract_icao_code(raw: &str) -> Option<String> {
     let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
+    if raw.is_empty() { return None; }
     // Regex on-demand kompilieren — wird selten genutzt, nicht kritisch
     // genug fuer eine static.
     use regex::Regex;
@@ -26527,17 +26176,12 @@ fn extract_icao_code(raw: &str) -> Option<String> {
         }
     }
     // Fallback: erste 8 alphanumerische Chars uppercase
-    let cleaned: String = raw
-        .chars()
+    let cleaned: String = raw.chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .take(8)
         .collect::<String>()
         .to_uppercase();
-    if cleaned.is_empty() {
-        None
-    } else {
-        Some(cleaned)
-    }
+    if cleaned.is_empty() { None } else { Some(cleaned) }
 }
 
 /// v0.7.19 GAF-707 Accident-Detection (Heuristik-Pfad).
@@ -26624,7 +26268,9 @@ fn apply_accident_heuristic(stats: &mut FlightStats, analysis: &serde_json::Valu
     match decision {
         accident::AccidentDecision::None => {}
         accident::AccidentDecision::Suspected { kind, reasons } => {
-            if !stats.accident_detected && stats.accident_confidence.is_none() {
+            if !stats.accident_detected
+                && stats.accident_confidence.is_none()
+            {
                 // Erste Suspected-Klassifikation. Nicht als accident_detected
                 // (das bleibt fuer Confirmed reserviert), aber Felder zur
                 // UI/Webapp-Banner-Anzeige setzen.
@@ -26691,14 +26337,8 @@ fn apply_accident_heuristic(stats: &mut FlightStats, analysis: &serde_json::Valu
     }
 }
 
-fn engines_effectively_running(
-    stats: &FlightStats,
-    snap: &SimSnapshot,
-    now: DateTime<Utc>,
-) -> bool {
-    if snap.engines_running > 0 {
-        return true;
-    }
+fn engines_effectively_running(stats: &FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) -> bool {
+    if snap.engines_running > 0 { return true; }
     stats
         .last_engines_running_above_zero_at
         .map(|t| (now - t).num_milliseconds() < 2000)
@@ -26755,7 +26395,11 @@ fn latch_takeoff_stats(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTim
 /// * Fuel/Weight vom Rescue-Snapshot (≤ 500 ft AGL): Burn seit Rotation ist
 ///   < 1 % des Trip-Burns — für die OFP-Treue-Bewertung präzise genug, und
 ///   unendlich besser als „nicht bewertbar".
-fn latch_takeoff_stats_if_missing(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) {
+fn latch_takeoff_stats_if_missing(
+    stats: &mut FlightStats,
+    snap: &SimSnapshot,
+    now: DateTime<Utc>,
+) {
     if stats.takeoff_at.is_none() {
         stats.takeoff_at = Some(stats.sampler_takeoff_at.unwrap_or(now));
     }
@@ -26990,7 +26634,8 @@ fn stamp_touchdown_metadata(
         snap.touchdown_heading_mag_deg
             .or_else(|| {
                 td_buf_sample.map(|s| {
-                    let magvar = snap.heading_deg_true - snap.heading_deg_magnetic;
+                    let magvar =
+                        snap.heading_deg_true - snap.heading_deg_magnetic;
                     s.heading_true_deg - magvar
                 })
             })
@@ -27045,8 +26690,16 @@ fn stamp_touchdown_metadata(
     // (MKJS RWY 07: pilot reported 3 m left, app showed
     // 2.7 m right). Buffer fallback to `snap` only when
     // the buffer is empty (resumed flight).
-    stats.landing_lat = Some(td_buf_sample.map(|s| s.lat).unwrap_or(snap.lat));
-    stats.landing_lon = Some(td_buf_sample.map(|s| s.lon).unwrap_or(snap.lon));
+    stats.landing_lat = Some(
+        td_buf_sample
+            .map(|s| s.lat)
+            .unwrap_or(snap.lat),
+    );
+    stats.landing_lon = Some(
+        td_buf_sample
+            .map(|s| s.lon)
+            .unwrap_or(snap.lon),
+    );
     stats.landing_heading_true_deg = Some(
         td_buf_sample
             .map(|s| s.heading_true_deg)
@@ -27083,8 +26736,13 @@ fn stamp_touchdown_metadata(
     // from successive lat/lon. None when the SimVar isn't
     // wired or the aircraft is essentially stopped (Z<3 fps
     // ≈ 1.8 kt, vector noise dominates below that).
-    stats.touchdown_sideslip_deg = match (snap.velocity_body_x_fps, snap.velocity_body_z_fps) {
-        (Some(x), Some(z)) if z.abs() > 3.0 => Some(x.atan2(z).to_degrees()),
+    stats.touchdown_sideslip_deg = match (
+        snap.velocity_body_x_fps,
+        snap.velocity_body_z_fps,
+    ) {
+        (Some(x), Some(z)) if z.abs() > 3.0 => {
+            Some(x.atan2(z).to_degrees())
+        }
         _ => None,
     };
 
@@ -27385,8 +27043,12 @@ fn correlate_touchdown_runway(
     // finalize-with-best re-correlation + diagnostics.
     stats.runway_correlation_icao = Some(actual_icao.clone());
 
-    let lookup_result =
-        runway::lookup_runway_with_fallback(rw_lat, rw_lon, rw_hdg_true, nav_opt.as_ref());
+    let lookup_result = runway::lookup_runway_with_fallback(
+        rw_lat,
+        rw_lon,
+        rw_hdg_true,
+        nav_opt.as_ref(),
+    );
     if let Some((rw, source)) = lookup_result {
         // Wenn der Match aus Navigraph kam, finde die
         // konkrete NavRunway-Geometrie (designator-Match)
@@ -27519,11 +27181,7 @@ fn tch_actual_from_buffer(
             saw_pre_threshold = true;
             continue;
         }
-        return if saw_pre_threshold {
-            Some(s.agl_ft)
-        } else {
-            None
-        };
+        return if saw_pre_threshold { Some(s.agl_ft) } else { None };
     }
     None
 }
@@ -27784,7 +27442,11 @@ const BAHN_RICHTUNG_MIN_VERSATZ_M: f32 = 2.0;
 ///
 /// `kurs_diff` ist die Kursabweichung zum Aufsetzkurs in Grad, positiv nach
 /// rechts. `spur` ist der bisher gefahrene Streifen.
-fn bahn_raeum_seite(kurs_diff: f64, spur: &[(f32, f32)], ab_laengs_m: f64) -> Option<String> {
+fn bahn_raeum_seite(
+    kurs_diff: f64,
+    spur: &[(f32, f32)],
+    ab_laengs_m: f64,
+) -> Option<String> {
     // Erste Groesse: der Kurs.
     let kurs_seite = if kurs_diff > 0.0 { "right" } else { "left" };
 
@@ -27889,7 +27551,8 @@ fn spur_aus_puffer_nachtragen(stats: &mut FlightStats, halbe_breite_m: f64) {
         return;
     };
     // Die Bahnachse einmal kopieren — `stats` wird gleich veraendert.
-    let (t_lat, t_lon, e_lat, e_lon) = (rm.threshold_lat, rm.threshold_lon, rm.end_lat, rm.end_lon);
+    let (t_lat, t_lon, e_lat, e_lon) =
+        (rm.threshold_lat, rm.threshold_lon, rm.end_lat, rm.end_lon);
 
     // Nur Eintraege ab dem Aufsetzzeitpunkt, in ihrer Reihenfolge.
     let proben: Vec<(f64, f64, f32)> = stats
@@ -27951,7 +27614,9 @@ fn spur_fortschreiben(
     // hier — sonst laege die Marke bis zu zehn Meter daneben, und zwar
     // immer ausserhalb, weil die Aufzeichnung erst nach dem Uebertritt
     // misst.
-    if stats.bahn_fenster_zu && stats.bahn_kante_laengs_m.is_none() && quer_m.abs() > halbe_breite_m
+    if stats.bahn_fenster_zu
+        && stats.bahn_kante_laengs_m.is_none()
+        && quer_m.abs() > halbe_breite_m
     {
         let interpoliert = match stats.bahn_spur.last() {
             Some((lg, qr)) if (*qr as f64).abs() <= halbe_breite_m => {
@@ -28106,7 +27771,9 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     // Abweichung ein Ausbrechen — und das ist genau das, was die Achse
     // bewerten SOLL, nicht ihr Ende. High-Speed-Exits werden mit bis zu
     // sechzig Knoten genommen und liegen damit im Bereich.
-    if stats.bahn_raeum_laengs_m.is_none() && snap.groundspeed_kt < BAHN_MESS_MIN_GS_KT {
+    if stats.bahn_raeum_laengs_m.is_none()
+        && snap.groundspeed_kt < BAHN_MESS_MIN_GS_KT
+    {
         if let Some(td_heading) = stats.landing_heading_true_deg {
             let mut diff = snap.heading_deg_true - td_heading;
             while diff > 180.0 {
@@ -28126,7 +27793,8 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
                 // Live-Versuch; er gelingt nur, wenn die Querbewegung
                 // schon sichtbar ist. `bahn_felder` rechnet sie sonst aus
                 // der ganzen Spur nach.
-                stats.bahn_raeum_seite = bahn_raeum_seite(diff as f64, &stats.bahn_spur, laengs_m);
+                stats.bahn_raeum_seite =
+                    bahn_raeum_seite(diff as f64, &stats.bahn_spur, laengs_m);
             }
         }
     }
@@ -28170,7 +27838,9 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
 
 fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     if !stats.rollout_finalized {
-        if let (Some(prev_lat), Some(prev_lon)) = (stats.rollout_last_lat, stats.rollout_last_lon) {
+        if let (Some(prev_lat), Some(prev_lon)) =
+            (stats.rollout_last_lat, stats.rollout_last_lon)
+        {
             let delta = ::geo::distance_m(prev_lat, prev_lon, snap.lat, snap.lon);
             // Dieselbe Regel wie die Streckenzaehlung: hier gab es GAR keinen
             // Riegel, nicht einmal die 5-Meter-Untergrenze. Ein Versetzen
@@ -28185,7 +27855,8 @@ fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
                 ODOMETER_LIMITS,
             ) == SegmentVerdict::Flown
             {
-                stats.rollout_distance_m = Some(stats.rollout_distance_m.unwrap_or(0.0) + delta);
+                stats.rollout_distance_m =
+                    Some(stats.rollout_distance_m.unwrap_or(0.0) + delta);
             }
         }
         stats.rollout_last_lat = Some(snap.lat);
@@ -28194,7 +27865,8 @@ fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
         // Three independent finalisation triggers — whichever
         // fires first wins. See the constants near the top of
         // this file for the rationale on each threshold.
-        let exit_speed_reached = snap.groundspeed_kt < ROLLOUT_EXIT_GS_KT && snap.on_ground;
+        let exit_speed_reached =
+            snap.groundspeed_kt < ROLLOUT_EXIT_GS_KT && snap.on_ground;
         let full_stop = snap.groundspeed_kt < ROLLOUT_STOP_GS_KT && snap.on_ground;
         let turned_off_runway = match stats.landing_heading_true_deg {
             Some(td_heading) => {
@@ -28623,13 +28295,8 @@ fn step_flight_at(
         stats.accident_at = Some(now);
         stats.accident_kind = Some(accident::AccidentKind::SimCrash.as_wire_str().to_string());
         stats.accident_confidence = Some("high".into());
-        let source = snap
-            .crash_source
-            .clone()
-            .unwrap_or_else(|| "sim_event".into());
-        stats
-            .accident_reasons
-            .push(format!("crash_source={source}"));
+        let source = snap.crash_source.clone().unwrap_or_else(|| "sim_event".into());
+        stats.accident_reasons.push(format!("crash_source={source}"));
         tracing::warn!(
             crash_source = %source,
             "v0.7.19: simulator crash event latched on active flight"
@@ -28754,12 +28421,15 @@ fn step_flight_at(
     //      that produces sane-looking but pre-flight airborne values.
     //   3. Conditions must hold for WAS_AIRBORNE_DWELL_TICKS in a
     //      row — single-tick glitches don't poison the flag.
-    let airborne_now = !snap.on_ground && stats.block_off_at.is_some() && {
-        let agl = snap.altitude_agl_ft as f32;
-        agl > WAS_AIRBORNE_AGL_FT && agl < WAS_AIRBORNE_AGL_MAX_FT
-    };
+    let airborne_now = !snap.on_ground
+        && stats.block_off_at.is_some()
+        && {
+            let agl = snap.altitude_agl_ft as f32;
+            agl > WAS_AIRBORNE_AGL_FT && agl < WAS_AIRBORNE_AGL_MAX_FT
+        };
     if airborne_now {
-        stats.airborne_dwell_ticks = stats.airborne_dwell_ticks.saturating_add(1);
+        stats.airborne_dwell_ticks =
+            stats.airborne_dwell_ticks.saturating_add(1);
         if stats.airborne_dwell_ticks >= WAS_AIRBORNE_DWELL_TICKS {
             stats.was_airborne = true;
         }
@@ -28838,18 +28508,16 @@ fn step_flight_at(
         stats.replay_proben.clear();
         stats.replay_verdacht = false;
     } else {
-        stats
-            .replay_proben
-            .push_back(replay_erkennung::ReplayProbe {
-                t_s: now.timestamp_millis() as f64 / 1000.0,
-                lat: snap.lat,
-                lon: snap.lon,
-                msl_ft: snap.altitude_msl_ft as f64,
-                groundspeed_kt: snap.groundspeed_kt as f64,
-                ias_kt: snap.indicated_airspeed_kt as f64,
-                vs_fps: snap.vertical_speed_fpm as f64 / 60.0,
-                on_ground: false,
-            });
+        stats.replay_proben.push_back(replay_erkennung::ReplayProbe {
+            t_s: now.timestamp_millis() as f64 / 1000.0,
+            lat: snap.lat,
+            lon: snap.lon,
+            msl_ft: snap.altitude_msl_ft as f64,
+            groundspeed_kt: snap.groundspeed_kt as f64,
+            ias_kt: snap.indicated_airspeed_kt as f64,
+            vs_fps: snap.vertical_speed_fpm as f64 / 60.0,
+            on_ground: false,
+        });
         // 64 Proben sind bei der langsamsten Kadenz (3 s im Reiseflug) rund
         // drei Minuten — weit mehr als das Verfahren braucht, und immer noch
         // winzig.
@@ -29001,7 +28669,8 @@ fn step_flight_at(
             // genuinely at surface level (not low-level approach,
             // which is past Boarding anyway, but defensive).
             let on_surface = snap.on_ground
-                || (snap.altitude_agl_ft < 5.0 && snap.vertical_speed_fpm.abs() < 50.0);
+                || (snap.altitude_agl_ft < 5.0
+                    && snap.vertical_speed_fpm.abs() < 50.0);
             // v0.12.1 (Stream A LE1+LE2): de-glitch the Boarding→Pushback
             // / TaxiOut trigger. A single `groundspeed_kt > 0.5` sample is
             // NOT enough — a sim-reload glitch can spike groundspeed while
@@ -29023,7 +28692,9 @@ fn step_flight_at(
                 }
                 let moved_m = stats
                     .boarding_ref_pos
-                    .map(|(rlat, rlon)| ::geo::distance_m(rlat, rlon, snap.lat, snap.lon))
+                    .map(|(rlat, rlon)| {
+                        ::geo::distance_m(rlat, rlon, snap.lat, snap.lon)
+                    })
                     .unwrap_or(0.0);
                 let moved = boarding_real_movement(
                     on_surface,
@@ -29094,12 +28765,13 @@ fn step_flight_at(
                 // auf TaxiOut. Liefert der Sim kein vbz, bleibt es beim alten
                 // engines==0-Kriterium. Block-Off-Zeit ist davon UNBERÜHRT (oben
                 // bereits gesetzt) — es geht nur ums Phasen-Label.
-                next_phase =
-                    if snap.engines_running == 0 || moving_backward(snap.velocity_body_z_fps) {
-                        FlightPhase::Pushback
-                    } else {
-                        FlightPhase::TaxiOut
-                    };
+                next_phase = if snap.engines_running == 0
+                    || moving_backward(snap.velocity_body_z_fps)
+                {
+                    FlightPhase::Pushback
+                } else {
+                    FlightPhase::TaxiOut
+                };
             }
             // v0.5.10/11: pure-hover / glider direct-launch escape hatch.
             // Aircraft that lift off straight from the gate without
@@ -29175,7 +28847,8 @@ fn step_flight_at(
                 snap.velocity_body_z_fps,
             );
             // tug_done greift nur wenn der State MAL aktiv (≠3) war
-            let tug_done = snap.pushback_state == Some(3) && stats.saw_pushback_state_active;
+            let tug_done = snap.pushback_state == Some(3)
+                && stats.saw_pushback_state_active;
             let no_tug_ever = snap.pushback_state.is_none()
                 || (snap.pushback_state == Some(3) && !stats.saw_pushback_state_active);
 
@@ -29280,7 +28953,9 @@ fn step_flight_at(
                 if stats.pmdg_takeoff_flaps_planned.is_none() {
                     stats.pmdg_takeoff_flaps_planned = p.fmc_takeoff_flaps_deg;
                 }
-                if let (Some(v1), Some(vr), Some(v2)) = (p.fmc_v1_kt, p.fmc_vr_kt, p.fmc_v2_kt) {
+                if let (Some(v1), Some(vr), Some(v2)) =
+                    (p.fmc_v1_kt, p.fmc_vr_kt, p.fmc_v2_kt)
+                {
                     if stats.pmdg_v_speeds_takeoff.is_none() {
                         stats.pmdg_v_speeds_takeoff = Some((v1, vr, v2));
                     }
@@ -29288,8 +28963,11 @@ fn step_flight_at(
                 if p.takeoff_config_warning {
                     stats.pmdg_takeoff_config_warning_seen = true;
                 }
-                if stats.pmdg_fmc_flight_number.is_none() && !p.fmc_flight_number.is_empty() {
-                    stats.pmdg_fmc_flight_number = Some(p.fmc_flight_number.clone());
+                if stats.pmdg_fmc_flight_number.is_none()
+                    && !p.fmc_flight_number.is_empty()
+                {
+                    stats.pmdg_fmc_flight_number =
+                        Some(p.fmc_flight_number.clone());
                 }
             }
 
@@ -29368,7 +29046,8 @@ fn step_flight_at(
             // (pitch-corrections + turbulence rarely exceed this) but
             // is well below any real top-of-descent (which loses
             // thousands of feet quickly).
-            let lost_from_peak = stats.climb_peak_msl.unwrap_or(0.0) - snap.altitude_msl_ft as f32;
+            let lost_from_peak =
+                stats.climb_peak_msl.unwrap_or(0.0) - snap.altitude_msl_ft as f32;
 
             // Climb → Descent triggers in any of three scenarios:
             //   (a) Standard TOD: sustained sink (-500 fpm) AND
@@ -29387,7 +29066,9 @@ fn step_flight_at(
             // Schwellen. Siehe check_descent_transition() Doc.
             if let Some(p) = check_descent_transition(&mut stats, snap, now, lost_from_peak) {
                 next_phase = p;
-            } else if snap.vertical_speed_fpm.abs() < 200.0 && snap.altitude_agl_ft > 5000.0 {
+            } else if snap.vertical_speed_fpm.abs() < 200.0
+                && snap.altitude_agl_ft > 5000.0
+            {
                 next_phase = FlightPhase::Cruise;
             }
             // v0.5.11: removed low-altitude Cruise alternative path.
@@ -29430,7 +29111,8 @@ fn step_flight_at(
             //       AGL < 3000 ft + sinking is unambiguous approach
             //       territory regardless of cruise altitude; allow
             //       the transition.
-            let lost_alt = stats.cruise_peak_msl.unwrap_or(0.0) - snap.altitude_msl_ft as f32;
+            let lost_alt =
+                stats.cruise_peak_msl.unwrap_or(0.0) - snap.altitude_msl_ft as f32;
             let sinking = snap.vertical_speed_fpm < -500.0;
             let big_drop = lost_alt > 5000.0;
             let close_to_ground = snap.altitude_agl_ft < 3000.0;
@@ -29452,7 +29134,8 @@ fn step_flight_at(
             //   3. Sustained straight-and-level (bank < 5° for
             //      HOLDING_EXIT_DWELL_SECS) — resumed normal flight.
             //      Restore the phase we came from (Cruise or Approach).
-            let descent_resumed = snap.vertical_speed_fpm < -300.0 && snap.altitude_agl_ft < 5000.0;
+            let descent_resumed = snap.vertical_speed_fpm < -300.0
+                && snap.altitude_agl_ft < 5000.0;
             if descent_resumed {
                 next_phase = FlightPhase::Approach;
                 stats.holding_pending_since = None;
@@ -29493,7 +29176,9 @@ fn step_flight_at(
                 // gets a clean per-attempt picture.
                 stats.low_agl_vs_min_fpm = None;
                 stats.last_low_agl_vs_fpm = None;
-            } else if snap.vertical_speed_fpm.abs() < 200.0 && snap.altitude_agl_ft > 5000.0 {
+            } else if snap.vertical_speed_fpm.abs() < 200.0
+                && snap.altitude_agl_ft > 5000.0
+            {
                 // v0.7.17 (B-003): Descent → Cruise Recovery. Wenn der
                 // Sink stoppt UND wir wieder hoch genug sind, war das
                 // wahrscheinlich ein ATC-Step-Down oder ein V/S-Spike
@@ -29529,7 +29214,8 @@ fn step_flight_at(
                 // Autobrake: keep capturing until touchdown so we
                 // record the LAST setting before landing.
                 if !p.autobrake_label.is_empty() && p.autobrake_label != "?" {
-                    stats.pmdg_autobrake_at_landing = Some(p.autobrake_label.clone());
+                    stats.pmdg_autobrake_at_landing =
+                        Some(p.autobrake_label.clone());
                 }
             }
 
@@ -29661,8 +29347,14 @@ fn step_flight_at(
                 }
                 let actual_td_at = stats.landing_at.unwrap_or(actual_td_at);
 
-                let is_msfs = matches!(snap.simulator, Simulator::Msfs2020 | Simulator::Msfs2024);
-                let is_xplane = matches!(snap.simulator, Simulator::XPlane11 | Simulator::XPlane12);
+                let is_msfs = matches!(
+                    snap.simulator,
+                    Simulator::Msfs2020 | Simulator::Msfs2024
+                );
+                let is_xplane = matches!(
+                    snap.simulator,
+                    Simulator::XPlane11 | Simulator::XPlane12
+                );
 
                 // v0.5.13: AGL-derivative estimators run once.
                 //
@@ -29681,14 +29373,20 @@ fn step_flight_at(
                 // to sample density automatically; the time-tier
                 // method walks fixed time windows.
                 let agl_estimate_xp =
-                    estimate_xplane_touchdown_vs_lua_style(&stats.snapshot_buffer, actual_td_at);
-                let agl_estimate_msfs =
-                    estimate_xplane_touchdown_vs_from_agl(&stats.snapshot_buffer, actual_td_at);
+                    estimate_xplane_touchdown_vs_lua_style(
+                        &stats.snapshot_buffer,
+                        actual_td_at,
+                    );
+                let agl_estimate_msfs = estimate_xplane_touchdown_vs_from_agl(
+                    &stats.snapshot_buffer,
+                    actual_td_at,
+                );
 
                 // Tight buffer-window scan (used by both paths as a
                 // fallback — AGL ≤ 250 ft filter prevents pre-flare
                 // contamination).
-                let half_window = chrono::Duration::milliseconds(TOUCHDOWN_VS_WINDOW_MS / 2);
+                let half_window =
+                    chrono::Duration::milliseconds(TOUCHDOWN_VS_WINDOW_MS / 2);
                 let vs_window_start = actual_td_at - half_window;
                 let vs_window_end = actual_td_at + half_window;
                 let buffered_vs_min_raw: f32 = stats
@@ -29876,10 +29574,8 @@ fn step_flight_at(
                     // - "agl_estimate_xp_plausible" = Estimator-Window <3s
                     // - "last_low_agl_vs" = letztes airborne Sample (sparse-Sampling-Rettung)
                     // - "agl_estimate_xp_implausible" = Estimator-Window ≥3s, also wahrscheinlich Spread-Artifact (= reported als low confidence)
-                    let est_plausible =
-                        agl_estimate_xp.map(|e| e.window_ms < 3000).unwrap_or(false);
-                    let last_low_recent = stats
-                        .last_low_agl_vs_fpm
+                    let est_plausible = agl_estimate_xp.map(|e| e.window_ms < 3000).unwrap_or(false);
+                    let last_low_recent = stats.last_low_agl_vs_fpm
                         .map(|(_, ts)| (now - ts).num_seconds() <= 15)
                         .unwrap_or(false);
                     if est_plausible && last_low_recent {
@@ -29910,7 +29606,8 @@ fn step_flight_at(
                 } else {
                     "other"
                 });
-                stats.landing_vs_estimate_xp_fpm = agl_estimate_xp.map(|e| e.fpm.round() as i32);
+                stats.landing_vs_estimate_xp_fpm =
+                    agl_estimate_xp.map(|e| e.fpm.round() as i32);
                 stats.landing_vs_estimate_msfs_fpm =
                     agl_estimate_msfs.map(|e| e.fpm.round() as i32);
                 stats.landing_vs_source = Some(vs_source);
@@ -29945,7 +29642,12 @@ fn step_flight_at(
                 // hier nochmal feuert, wird Confidence uebergeschrieben — das
                 // ist OK, weil der Streamer-Tick die "endgueltige" Quelle
                 // gegenueber dem Edge-Wert ist (Smoothed-Fallback).
-                finalize_landing_rate(&mut stats, touchdown_vs, None, Some(vs_source));
+                finalize_landing_rate(
+                    &mut stats,
+                    touchdown_vs,
+                    None,
+                    Some(vs_source),
+                );
 
                 // G capture: prefer sampler-side (v0.4.4) wenn verfügbar.
                 // Sonst peak G from full buffer (5 s of pre-touchdown
@@ -29972,8 +29674,18 @@ fn step_flight_at(
                 // is behaviour-identical to the pre-extraction inline code;
                 // it deliberately OVERWRITES any earlier sampler-path stamp
                 // with the FSM-tick values, exactly as before.
-                stamp_touchdown_metadata(&mut stats, snap, actual_td_at, td_buf_sample.as_ref());
-                correlate_touchdown_runway(&mut stats, snap, flight, td_buf_sample.as_ref());
+                stamp_touchdown_metadata(
+                    &mut stats,
+                    snap,
+                    actual_td_at,
+                    td_buf_sample.as_ref(),
+                );
+                correlate_touchdown_runway(
+                    &mut stats,
+                    snap,
+                    flight,
+                    td_buf_sample.as_ref(),
+                );
 
                 // Reset bounce state for the new analyzer window.
                 stats.bounce_armed_above_threshold = false;
@@ -30061,8 +29773,7 @@ fn step_flight_at(
                     konfig,
                 );
                 stats.approach_vs_deviation_fpm = stab_v2.vs_deviation_fpm;
-                stats.approach_max_vs_deviation_below_500_fpm =
-                    stab_v2.max_vs_deviation_below_500_fpm;
+                stats.approach_max_vs_deviation_below_500_fpm = stab_v2.max_vs_deviation_below_500_fpm;
                 stats.approach_bank_stddev_filtered_deg = stab_v2.bank_stddev_filtered_deg;
                 stats.approach_vs_stddev_filtered_fpm = stab_v2.vs_stddev_filtered_fpm;
                 stats.approach_runway_changed_late = stab_v2.runway_changed_late;
@@ -30114,13 +29825,9 @@ fn step_flight_at(
                     // Zone 3 = drittes Drittel der Bahn)
                     if total_m > 0.0 {
                         let third = total_m / 3.0;
-                        let zone = if past_threshold_m <= third {
-                            1
-                        } else if past_threshold_m <= 2.0 * third {
-                            2
-                        } else {
-                            3
-                        };
+                        let zone = if past_threshold_m <= third { 1 }
+                                   else if past_threshold_m <= 2.0 * third { 2 }
+                                   else { 3 };
                         stats.landing_touchdown_zone = Some(zone);
                     }
                 }
@@ -30142,9 +29849,7 @@ fn step_flight_at(
                 // Yaw-Rate am TD: heading-Aenderung pro Sekunde im
                 // letzten 1-sec-Fenster vor TD.
                 let yaw_window_start = actual_td_at - chrono::Duration::milliseconds(1000);
-                let yaw_samples: Vec<(DateTime<Utc>, f32)> = stats
-                    .snapshot_buffer
-                    .iter()
+                let yaw_samples: Vec<(DateTime<Utc>, f32)> = stats.snapshot_buffer.iter()
                     .filter(|s| s.at >= yaw_window_start && s.at <= actual_td_at)
                     .map(|s| (s.at, s.heading_true_deg))
                     .collect();
@@ -30152,12 +29857,8 @@ fn step_flight_at(
                     let first = yaw_samples.first().unwrap();
                     let last = yaw_samples.last().unwrap();
                     let mut delta = last.1 - first.1;
-                    while delta > 180.0 {
-                        delta -= 360.0;
-                    }
-                    while delta < -180.0 {
-                        delta += 360.0;
-                    }
+                    while delta > 180.0 { delta -= 360.0; }
+                    while delta < -180.0 { delta += 360.0; }
                     let dt_sec = (last.0 - first.0).num_milliseconds() as f32 / 1000.0;
                     if dt_sec > 0.1 {
                         stats.landing_yaw_rate_deg_per_sec = Some(delta.abs() / dt_sec);
@@ -30168,9 +29869,7 @@ fn step_flight_at(
                 // Vereinfacht: ohne mass = (ias²) / rollout — damit
                 // auch ohne LDW-SimVar berechenbar. Skaliert wenn mass
                 // verfuegbar.
-                if let (Some(ias), Some(rollout)) =
-                    (stats.landing_speed_kt, stats.rollout_distance_m)
-                {
+                if let (Some(ias), Some(rollout)) = (stats.landing_speed_kt, stats.rollout_distance_m) {
                     if rollout > 50.0 && ias > 0.0 {
                         let ias_ms = ias * 0.5144; // kt → m/s
                         let mass = stats.landing_weight_kg.unwrap_or(50_000.0);
@@ -30322,9 +30021,7 @@ fn step_flight_at(
                     if let Some(peak_vs) = stats.canonical_landing_rate_fpm() {
                         // v0.12.3 (LE8/QS-P1): classify on the scored G
                         // (raw_fallback here — no forensics window).
-                        let scored_g = score_g_for_stats(&stats)
-                            .map(|sg| sg.scored_g)
-                            .unwrap_or(0.0);
+                        let scored_g = score_g_for_stats(&stats).map(|sg| sg.scored_g).unwrap_or(0.0);
                         let score = LandingScore::classify(peak_vs, scored_g, stats.bounce_count);
                         stats.landing_score = Some(score);
                     } else {
@@ -30709,7 +30406,10 @@ fn step_flight_at(
         next_phase,
         FlightPhase::Arrived | FlightPhase::PirepSubmitted
     );
-    let pre_block_off = matches!(next_phase, FlightPhase::Preflight | FlightPhase::Boarding);
+    let pre_block_off = matches!(
+        next_phase,
+        FlightPhase::Preflight | FlightPhase::Boarding
+    );
     // GATE: only run the universal Arrived-fallback (and the divert
     // detection inside it) if the aircraft has actually been airborne
     // at some point. Without this, GSX/sim ground-handling jitter at
@@ -31365,10 +31065,10 @@ mod null_island_tests {
     #[test]
     fn real_positions_are_accepted() {
         for (lat, lon) in [
-            (50.0333, 8.5706), // EDDF
-            (0.0, 32.4),       // on the equator (Entebbe-ish)
-            (51.5, 0.0),       // on the prime meridian (London)
-            (-33.9, 151.2),    // Sydney
+            (50.0333, 8.5706),  // EDDF
+            (0.0, 32.4),        // on the equator (Entebbe-ish)
+            (51.5, 0.0),        // on the prime meridian (London)
+            (-33.9, 151.2),     // Sydney
         ] {
             let snap = SimSnapshot {
                 lat,
@@ -31512,10 +31212,7 @@ mod takeoff_roll_tests {
             }
         }
         let gs = gs_when_fired.expect("a bush takeoff roll must be detected");
-        assert!(
-            gs < 45.0,
-            "must fire before rotation (~45 kt), fired at {gs} kt"
-        );
+        assert!(gs < 45.0, "must fire before rotation (~45 kt), fired at {gs} kt");
     }
 
     /// No taxi reaches 60 kt. No evidence required.
@@ -31552,8 +31249,11 @@ mod takeoff_roll_tests {
         let t0 = Utc::now();
         let mut fired = false;
         for i in 0..8 {
-            fired |=
-                takeoff_roll_detected(&mut stats, &snap, t0 + chrono::Duration::seconds(i * 2));
+            fired |= takeoff_roll_detected(
+                &mut stats,
+                &snap,
+                t0 + chrono::Duration::seconds(i * 2),
+            );
         }
         assert!(!fired, "idling at taxi speed is taxiing");
     }
@@ -31648,10 +31348,7 @@ mod takeoff_roll_tests {
             let now = t0 + chrono::Duration::seconds(4 + i * 5);
             fired |= takeoff_roll_detected(&mut stats, &taxiing(5.0 + 4.7 * i as f64), now);
         }
-        assert!(
-            !fired,
-            "a slow creep back up to taxi speed is not a takeoff roll"
-        );
+        assert!(!fired, "a slow creep back up to taxi speed is not a takeoff roll");
     }
 }
 
@@ -31790,16 +31487,14 @@ mod arrived_fallback_geometry_tests {
         snap_at_gate.groundspeed_kt = 0.0;
 
         // Normal arrival: TaxiIn → BlocksOn sets the flag.
-        assert_eq!(
-            step_flight(&flight, &snap_at_gate),
-            Some(FlightPhase::BlocksOn)
-        );
+        assert_eq!(step_flight(&flight, &snap_at_gate), Some(FlightPhase::BlocksOn));
         assert!(flight.stats.lock().unwrap().blocks_on_reached);
 
         // Round-trip through persistence (what a resume does).
         let snapshot = PersistedFlightStats::snapshot_from(&flight.stats.lock().unwrap());
         let json = serde_json::to_string(&snapshot).expect("snapshot serializes");
-        let restored: PersistedFlightStats = serde_json::from_str(&json).expect("snapshot parses");
+        let restored: PersistedFlightStats =
+            serde_json::from_str(&json).expect("snapshot parses");
         let mut fresh = FlightStats::new();
         restored.apply_to(&mut fresh);
         assert!(
@@ -31965,7 +31660,8 @@ mod enroute_reconcile_tests {
         on_ground: bool,
         end_secs_ago: i64,
     ) -> FlightPhase {
-        let start = Utc::now() - chrono::Duration::seconds(3 * n as i64 + end_secs_ago);
+        let start =
+            Utc::now() - chrono::Duration::seconds(3 * n as i64 + end_secs_ago);
         let mut phase = old_phase;
         for i in 0..n {
             let t = start + chrono::Duration::seconds(3 * i as i64);
@@ -32065,10 +31761,7 @@ mod enroute_reconcile_tests {
         }
         // ... und Holding ist auch als ZIEL tabu (v2 erzeugt es nie —
         // defensive Absicherung, falls sich das je ändert).
-        assert!(!enroute_reconcile_eligible(
-            FlightPhase::Cruise,
-            FlightPhase::Holding
-        ));
+        assert!(!enroute_reconcile_eligible(FlightPhase::Cruise, FlightPhase::Holding));
     }
 
     #[test]
@@ -32089,10 +31782,7 @@ mod enroute_reconcile_tests {
             FlightPhase::BlocksOn,
             FlightPhase::Arrived,
         ] {
-            assert!(
-                !enroute_reconcile_eligible(v1, FlightPhase::Descent),
-                "{v1:?}"
-            );
+            assert!(!enroute_reconcile_eligible(v1, FlightPhase::Descent), "{v1:?}");
         }
     }
 
@@ -32105,10 +31795,7 @@ mod enroute_reconcile_tests {
             FlightPhase::BlocksOn,
             FlightPhase::Arrived,
         ] {
-            assert!(
-                !enroute_reconcile_eligible(FlightPhase::Climb, v2),
-                "{v2:?}"
-            );
+            assert!(!enroute_reconcile_eligible(FlightPhase::Climb, v2), "{v2:?}");
         }
     }
 
@@ -32131,20 +31818,11 @@ mod enroute_reconcile_tests {
         // Climb: nur ein sinkendes oder bodenständiges Fenster widerlegt
         // einen Steigflug — nie Level (TOC-Wartezeit, Restrictions) oder
         // Climbing (er steigt ja gerade, per Definition kein Widerspruch).
-        assert!(segment_contradicts_v1(
-            FlightPhase::Climb,
-            Segment::Descending
-        ));
+        assert!(segment_contradicts_v1(FlightPhase::Climb, Segment::Descending));
         assert!(segment_contradicts_v1(FlightPhase::Climb, Segment::Ground));
-        assert!(!segment_contradicts_v1(
-            FlightPhase::Climb,
-            Segment::Climbing
-        ));
+        assert!(!segment_contradicts_v1(FlightPhase::Climb, Segment::Climbing));
         assert!(!segment_contradicts_v1(FlightPhase::Climb, Segment::Level));
-        assert!(!segment_contradicts_v1(
-            FlightPhase::Climb,
-            Segment::Insufficient
-        ));
+        assert!(!segment_contradicts_v1(FlightPhase::Climb, Segment::Insufficient));
 
         // Cruise: BEWUSST nur Ground (Absurditäts-Guard). NICHT Descending
         // — v1s eigener single-tick −500-fpm-Trigger deckt jeden echten
@@ -32153,14 +31831,8 @@ mod enroute_reconcile_tests {
         // Recovery-Zyklus bei ATC-Step-Downs. Diese Zeile hält die
         // Absicht fest — NICHT versehentlich auf Descending erweitern.
         assert!(segment_contradicts_v1(FlightPhase::Cruise, Segment::Ground));
-        assert!(!segment_contradicts_v1(
-            FlightPhase::Cruise,
-            Segment::Descending
-        ));
-        assert!(!segment_contradicts_v1(
-            FlightPhase::Cruise,
-            Segment::Climbing
-        ));
+        assert!(!segment_contradicts_v1(FlightPhase::Cruise, Segment::Descending));
+        assert!(!segment_contradicts_v1(FlightPhase::Cruise, Segment::Climbing));
         assert!(!segment_contradicts_v1(FlightPhase::Cruise, Segment::Level));
 
         // Descent/Approach/Final: nur ein steigendes oder bodenständiges
@@ -32168,11 +31840,7 @@ mod enroute_reconcile_tests {
         // verpasste Touchdown-Kante) — nie Level (Zwischen-Level-Off,
         // v1s B-003-Recovery übernimmt eigenständig bei |V/S|<200) oder
         // Descending (konsistent mit der eigenen Phase).
-        for p in [
-            FlightPhase::Descent,
-            FlightPhase::Approach,
-            FlightPhase::Final,
-        ] {
+        for p in [FlightPhase::Descent, FlightPhase::Approach, FlightPhase::Final] {
             assert!(segment_contradicts_v1(p, Segment::Climbing), "{p:?}");
             assert!(segment_contradicts_v1(p, Segment::Ground), "{p:?}");
             assert!(!segment_contradicts_v1(p, Segment::Descending), "{p:?}");
@@ -32181,10 +31849,7 @@ mod enroute_reconcile_tests {
 
         // Außerhalb des Luft-Bands (z. B. Holding) widerspricht nichts —
         // der Versöhner ist dort ohnehin nicht eligible.
-        assert!(!segment_contradicts_v1(
-            FlightPhase::Holding,
-            Segment::Descending
-        ));
+        assert!(!segment_contradicts_v1(FlightPhase::Holding, Segment::Descending));
     }
 
     #[test]
@@ -32221,65 +31886,31 @@ mod enroute_reconcile_tests {
                 -480.0,
                 false,
             );
-            assert_eq!(
-                v2,
-                FlightPhase::Descent,
-                "test setup: v2 resolves sustained descent"
-            );
-            assert_eq!(
-                stats.shadow_engine.current_segment(),
-                phase_v2::Segment::Descending
-            );
+            assert_eq!(v2, FlightPhase::Descent, "test setup: v2 resolves sustained descent");
+            assert_eq!(stats.shadow_engine.current_segment(), phase_v2::Segment::Descending);
             stats.enroute_divergence_since = Some((
                 FlightPhase::Cruise,
                 Utc::now() - chrono::Duration::seconds(ENROUTE_RECONCILE_DWELL_SECS + 500),
             ));
         }
         let result = step_flight(&flight, &snap);
-        assert_eq!(
-            result, None,
-            "Cruise must never be pulled to Descent by the reconciler"
-        );
+        assert_eq!(result, None, "Cruise must never be pulled to Descent by the reconciler");
         assert_eq!(flight.stats.lock().unwrap().phase, FlightPhase::Cruise);
     }
 
     #[test]
     fn pull_direction_follows_the_flight_arc() {
         // Vorwärts (kurzer Dwell): v2 ist im Bogen weiter als v1.
-        assert!(enroute_reconcile_is_forward(
-            FlightPhase::Climb,
-            FlightPhase::Descent
-        ));
-        assert!(enroute_reconcile_is_forward(
-            FlightPhase::Climb,
-            FlightPhase::Landing
-        ));
-        assert!(enroute_reconcile_is_forward(
-            FlightPhase::Final,
-            FlightPhase::Landing
-        ));
-        assert!(enroute_reconcile_is_forward(
-            FlightPhase::Cruise,
-            FlightPhase::Approach
-        ));
+        assert!(enroute_reconcile_is_forward(FlightPhase::Climb, FlightPhase::Descent));
+        assert!(enroute_reconcile_is_forward(FlightPhase::Climb, FlightPhase::Landing));
+        assert!(enroute_reconcile_is_forward(FlightPhase::Final, FlightPhase::Landing));
+        assert!(enroute_reconcile_is_forward(FlightPhase::Cruise, FlightPhase::Approach));
         // Rückwärts (langer Dwell): v2 hängt hinter v1.
-        assert!(!enroute_reconcile_is_forward(
-            FlightPhase::Descent,
-            FlightPhase::Cruise
-        ));
-        assert!(!enroute_reconcile_is_forward(
-            FlightPhase::Final,
-            FlightPhase::Approach
-        ));
-        assert!(!enroute_reconcile_is_forward(
-            FlightPhase::Cruise,
-            FlightPhase::Climb
-        ));
+        assert!(!enroute_reconcile_is_forward(FlightPhase::Descent, FlightPhase::Cruise));
+        assert!(!enroute_reconcile_is_forward(FlightPhase::Final, FlightPhase::Approach));
+        assert!(!enroute_reconcile_is_forward(FlightPhase::Cruise, FlightPhase::Climb));
         // Gleichstand ist keine Richtung.
-        assert!(!enroute_reconcile_is_forward(
-            FlightPhase::Cruise,
-            FlightPhase::Cruise
-        ));
+        assert!(!enroute_reconcile_is_forward(FlightPhase::Cruise, FlightPhase::Cruise));
     }
 
     // ---- Integration über step_flight ----
@@ -32295,17 +31926,15 @@ mod enroute_reconcile_tests {
             // descent_pending bei diesem Snapshot ohnehin jeden Tick,
             // die anderen beiden räumt NUR der Versöhner).
             let mut stats = flight.stats.lock().unwrap();
-            stats.go_around_climb_pending_since = Some(Utc::now() - chrono::Duration::seconds(3));
+            stats.go_around_climb_pending_since =
+                Some(Utc::now() - chrono::Duration::seconds(3));
             stats.touch_and_go_pending_since = Some(Utc::now() - chrono::Duration::seconds(3));
         }
         let result = step_flight(&flight, &snap);
         assert_eq!(result, Some(FlightPhase::Descent));
         let stats = flight.stats.lock().unwrap();
         assert_eq!(stats.phase, FlightPhase::Descent);
-        assert!(
-            stats.enroute_divergence_since.is_none(),
-            "fired — clock cleared"
-        );
+        assert!(stats.enroute_divergence_since.is_none(), "fired — clock cleared");
         assert!(
             stats.descent_pending_since.is_none(),
             "primary-path dwell must not carry stale arming into Descent"
@@ -32370,11 +31999,7 @@ mod enroute_reconcile_tests {
                     800.0,
                     false,
                 );
-                assert_eq!(
-                    v2,
-                    FlightPhase::Climb,
-                    "test setup: v2 resolves the sustained climb"
-                );
+                assert_eq!(v2, FlightPhase::Climb, "test setup: v2 resolves the sustained climb");
                 assert_eq!(
                     stats.shadow_engine.current_segment(),
                     phase_v2::Segment::Climbing,
@@ -32391,10 +32016,7 @@ mod enroute_reconcile_tests {
         // Vorwärts-Dwell überschritten, Rückwärts-Dwell nicht → kein Zug.
         let (flight, snap) = descent_stuck_flight(ENROUTE_RECONCILE_FORWARD_DWELL_SECS + 1);
         let result = step_flight(&flight, &snap);
-        assert_eq!(
-            result, None,
-            "backward pull must not borrow the short forward dwell"
-        );
+        assert_eq!(result, None, "backward pull must not borrow the short forward dwell");
         assert_eq!(flight.stats.lock().unwrap().phase, FlightPhase::Descent);
 
         // Rückwärts-Dwell voll → jetzt zieht v2 die festgefahrene v1.
@@ -32451,11 +32073,7 @@ mod enroute_reconcile_tests {
                 0.0,
                 false,
             );
-            assert_eq!(
-                v2,
-                FlightPhase::Descent,
-                "test setup: v2 holds Descent on level-off"
-            );
+            assert_eq!(v2, FlightPhase::Descent, "test setup: v2 holds Descent on level-off");
             assert_eq!(
                 stats.shadow_engine.current_segment(),
                 phase_v2::Segment::Level,
@@ -32470,10 +32088,7 @@ mod enroute_reconcile_tests {
         assert_eq!(result, None, "a healthy level Cruise must never be pulled");
         let stats = flight.stats.lock().unwrap();
         assert_eq!(stats.phase, FlightPhase::Cruise);
-        assert!(
-            stats.enroute_divergence_since.is_none(),
-            "no contradiction — clock discarded"
-        );
+        assert!(stats.enroute_divergence_since.is_none(), "no contradiction — clock discarded");
     }
 
     #[test]
@@ -32508,21 +32123,14 @@ mod enroute_reconcile_tests {
                 0.0,
                 false,
             );
-            assert_eq!(
-                v2,
-                FlightPhase::Climb,
-                "test setup: v2 still on Climb before 240s"
-            );
+            assert_eq!(v2, FlightPhase::Climb, "test setup: v2 still on Climb before 240s");
             stats.enroute_divergence_since = Some((
                 FlightPhase::Cruise,
                 Utc::now() - chrono::Duration::seconds(ENROUTE_RECONCILE_DWELL_SECS + 100),
             ));
         }
         let result = step_flight(&flight, &snap);
-        assert_eq!(
-            result, None,
-            "healthy TOC cruise must never be pulled back to Climb"
-        );
+        assert_eq!(result, None, "healthy TOC cruise must never be pulled back to Climb");
         assert_eq!(flight.stats.lock().unwrap().phase, FlightPhase::Cruise);
     }
 
@@ -32560,11 +32168,7 @@ mod enroute_reconcile_tests {
                 400.0,
                 false,
             );
-            assert_eq!(
-                v2,
-                FlightPhase::Final,
-                "test setup: v2 still holds Final during climb-out"
-            );
+            assert_eq!(v2, FlightPhase::Final, "test setup: v2 still holds Final during climb-out");
             assert_eq!(
                 stats.shadow_engine.current_segment(),
                 phase_v2::Segment::Climbing,
@@ -32576,10 +32180,7 @@ mod enroute_reconcile_tests {
             ));
         }
         let result = step_flight(&flight, &snap);
-        assert_eq!(
-            result, None,
-            "a genuine climb-out must never be pulled back to Final"
-        );
+        assert_eq!(result, None, "a genuine climb-out must never be pulled back to Final");
         assert_eq!(flight.stats.lock().unwrap().phase, FlightPhase::Climb);
     }
 
@@ -32593,12 +32194,7 @@ mod enroute_reconcile_tests {
         let result = step_flight(&flight, &snap);
         assert_eq!(result, None);
         assert!(
-            flight
-                .stats
-                .lock()
-                .unwrap()
-                .enroute_divergence_since
-                .is_none(),
+            flight.stats.lock().unwrap().enroute_divergence_since.is_none(),
             "a paused tick must discard the divergence clock"
         );
     }
@@ -32680,10 +32276,7 @@ mod enroute_reconcile_tests {
             ));
         }
         let result = step_flight(&flight, &snap);
-        assert_eq!(
-            result, None,
-            "a clock armed for another v1 phase must not fire"
-        );
+        assert_eq!(result, None, "a clock armed for another v1 phase must not fire");
         let stats = flight.stats.lock().unwrap();
         let (p1, since) = stats.enroute_divergence_since.expect("re-armed");
         assert_eq!(p1, FlightPhase::Climb);
@@ -32706,11 +32299,7 @@ mod enroute_reconcile_tests {
             stats.climb_peak_msl = Some(snap.altitude_msl_ft as f32);
         }
         let result = step_flight(&flight, &snap);
-        assert_eq!(
-            result,
-            Some(FlightPhase::Cruise),
-            "the normal path always wins"
-        );
+        assert_eq!(result, Some(FlightPhase::Cruise), "the normal path always wins");
         let stats = flight.stats.lock().unwrap();
         assert!(
             stats.enroute_divergence_since.is_none(),
@@ -32827,11 +32416,7 @@ mod enroute_reconcile_tests {
                 0.0,
                 true,
             );
-            assert_eq!(
-                v2,
-                FlightPhase::Landing,
-                "test setup: v2 still says Landing"
-            );
+            assert_eq!(v2, FlightPhase::Landing, "test setup: v2 still says Landing");
             stats.enroute_divergence_since = Some((
                 FlightPhase::Climb,
                 Utc::now() - chrono::Duration::seconds(ENROUTE_RECONCILE_DWELL_SECS + 100),
@@ -32892,9 +32477,7 @@ mod enroute_reconcile_replay_tests {
         let mut out = Vec::new();
         for line in r.lines() {
             let Ok(line) = line else { continue };
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
-                continue;
-            };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v["type"].as_str() != Some("position") {
                 continue;
             }
@@ -33111,18 +32694,16 @@ mod enroute_reconcile_replay_tests {
                 stats.arr_gate_icao = Some("ZZZZ".into());
                 // Der Verdacht, wie ihn ein Fehlalarm im Endanflug hinterlaesst.
                 stats.replay_verdacht = true;
-                stats
-                    .replay_proben
-                    .push_back(replay_erkennung::ReplayProbe {
-                        t_s: 0.0,
-                        lat: 38.78,
-                        lon: -9.13,
-                        msl_ft: 300.0,
-                        groundspeed_kt: 0.0,
-                        ias_kt: 0.0,
-                        vs_fps: 0.0,
-                        on_ground: false,
-                    });
+                stats.replay_proben.push_back(replay_erkennung::ReplayProbe {
+                    t_s: 0.0,
+                    lat: 38.78,
+                    lon: -9.13,
+                    msl_ft: 300.0,
+                    groundspeed_kt: 0.0,
+                    ias_kt: 0.0,
+                    vs_fps: 0.0,
+                    on_ground: false,
+                });
             }
             let snap = SimSnapshot {
                 lat: 38.7830,
@@ -33145,10 +32726,7 @@ mod enroute_reconcile_replay_tests {
             );
             let stats = flight.stats.lock().unwrap();
             assert!(!stats.replay_verdacht, "Verdacht am Boden nicht geloescht");
-            assert!(
-                stats.replay_proben.is_empty(),
-                "Puffer am Boden nicht geleert"
-            );
+            assert!(stats.replay_proben.is_empty(), "Puffer am Boden nicht geleert");
         }
 
         #[test]
@@ -33285,9 +32863,10 @@ mod enroute_reconcile_replay_tests {
         // 15:11:13. Mit dem Versöhner muss v1 den Climb VOR dem Touchdown
         // verlassen und der Flug über die reguläre Kette enden.
         let arc = run_v1_arc("phase_stuck_climb_be24.jsonl.gz");
-        let touchdown = DateTime::parse_from_rfc3339("2026-07-11T15:11:13.795049900Z")
-            .unwrap()
-            .with_timezone(&Utc);
+        let touchdown =
+            DateTime::parse_from_rfc3339("2026-07-11T15:11:13.795049900Z")
+                .unwrap()
+                .with_timezone(&Utc);
 
         // Abflug-Kette unangetastet (der Versöhner greift erst im
         // Luft-Band): Boarding→TaxiOut→TakeoffRoll→Takeoff→Climb wie im
@@ -33355,11 +32934,7 @@ mod enroute_reconcile_replay_tests {
                 "no invented en-route phase on a sub-gate bush hop; arc: {phases:?}"
             );
         }
-        assert_eq!(
-            phases.last(),
-            Some(&FlightPhase::Arrived),
-            "arc: {phases:?}"
-        );
+        assert_eq!(phases.last(), Some(&FlightPhase::Arrived), "arc: {phases:?}");
     }
 }
 
@@ -33452,7 +33027,9 @@ fn build_heartbeat_body(
     // remaining-fuel display reads as "−<fuel_used>" (bug reported by
     // pilot on 2026-05-04: "−17008 kg" mid-cruise). Same kg→lb round-
     // trip as fuel_used so the dashboard shows clean integer values.
-    let block_fuel = stats.block_fuel_kg.map(|b| (b as f64).round() * KG_TO_LB);
+    let block_fuel = stats
+        .block_fuel_kg
+        .map(|b| (b as f64).round() * KG_TO_LB);
     UpdateBody {
         state: None,
         source: None,
@@ -33491,11 +33068,7 @@ fn handle_remote_cancellation(app: &AppHandle, flight: &Arc<ActiveFlight>, sourc
     // v0.6.0: Outbox leeren — PIREP existiert serverseitig nicht mehr,
     // weiteres POSTen würde 404 liefern. Verhindert orphan-persist im
     // worker-stop-branch.
-    flight
-        .position_outbox
-        .lock()
-        .expect("position_outbox lock")
-        .clear();
+    flight.position_outbox.lock().expect("position_outbox lock").clear();
     flight.stop.store(true, Ordering::Relaxed);
     log_activity_handle(
         app,
@@ -33516,10 +33089,7 @@ fn handle_remote_cancellation(app: &AppHandle, flight: &Arc<ActiveFlight>, sourc
     // v0.16.0 (#LAN-Remote): fan out to LAN WS subscribers.
     app.state::<AppState>()
         .remote_events
-        .send(remote::RemoteEvent::new(
-            "pirep_cancelled_remotely",
-            payload,
-        ));
+        .send(remote::RemoteEvent::new("pirep_cancelled_remotely", payload));
 }
 
 /// Build the custom-fields map sent in `POST /api/pireps/{id}/file`. Field
@@ -33571,7 +33141,10 @@ fn build_pirep_fields(
             f.insert("Accident Confidence".into(), c.into());
         }
         if !stats.accident_reasons.is_empty() {
-            f.insert("Accident Reasons".into(), stats.accident_reasons.join(", "));
+            f.insert(
+                "Accident Reasons".into(),
+                stats.accident_reasons.join(", "),
+            );
         }
         if let Some(t) = stats.accident_at {
             f.insert(
@@ -33840,11 +33413,7 @@ fn build_pirep_fields(
     if let Some(label) = stats.pmdg_variant_label.as_deref() {
         f.insert("PMDG Aircraft".into(), label.to_string());
     }
-    if let Some(fnum) = stats
-        .pmdg_fmc_flight_number
-        .as_deref()
-        .filter(|s| !s.is_empty())
-    {
+    if let Some(fnum) = stats.pmdg_fmc_flight_number.as_deref().filter(|s| !s.is_empty()) {
         f.insert("PMDG FMC Flight #".into(), fnum.to_string());
     }
     if let Some((v1, vr, v2)) = stats.pmdg_v_speeds_takeoff {
@@ -33876,16 +33445,9 @@ fn build_pirep_fields(
     // ECL like NG3).
     if let Some(ecl) = stats.pmdg_ecl_phases_complete {
         let labels = [
-            "Preflight",
-            "BeforeStart",
-            "BeforeTaxi",
-            "BeforeTakeoff",
-            "AfterTakeoff",
-            "Descent",
-            "Approach",
-            "Landing",
-            "Shutdown",
-            "Secure",
+            "Preflight", "BeforeStart", "BeforeTaxi", "BeforeTakeoff",
+            "AfterTakeoff", "Descent", "Approach", "Landing",
+            "Shutdown", "Secure",
         ];
         let done: Vec<&str> = ecl
             .iter()
@@ -34046,8 +33608,11 @@ fn build_pirep_notes(
                 "off_airport_impact" => accident::AccidentKind::OffAirportImpact,
                 _ => accident::AccidentKind::Impact,
             };
-            let banner =
-                accident::build_accident_notes(kind_enum, confidence, &stats.accident_reasons);
+            let banner = accident::build_accident_notes(
+                kind_enum,
+                confidence,
+                &stats.accident_reasons,
+            );
             s.push_str("=== ACCIDENT DETECTED ===\n");
             s.push_str(&banner);
             s.push_str("\n=========================\n\n");
@@ -34312,10 +33877,7 @@ fn build_pirep_notes(
     // Abschnitts-Überschrift ohne Inhalt.
     let any_atc = stats.dep_gate.as_ref().is_some_and(|v| !v.is_empty())
         || arr_gate_for(stats, effective_arr_icao).is_some_and(|v| !v.is_empty())
-        || stats
-            .approach_runway
-            .as_ref()
-            .is_some_and(|v| !v.is_empty());
+        || stats.approach_runway.as_ref().is_some_and(|v| !v.is_empty());
     if any_atc {
         start_section(&mut s, "GATES & ATC");
         wrote_section = true;
@@ -34390,7 +33952,8 @@ fn build_pirep_notes(
     // Der Sprit-Wert stand hier als handgeschriebene Kopie von
     // `actual_burn_for_record` — byteweise dieselbe Rechnung. Er kommt
     // jetzt aus `scoring_eingang`, wie überall.
-    let mut crate_input = scoring_eingang(stats, muster_fuer_landung(stats, &flight.aircraft_icao));
+    let mut crate_input =
+        scoring_eingang(stats, muster_fuer_landung(stats, &flight.aircraft_icao));
     // v0.10.0 (#runway-utilization-score): Shadow-Validation muss den
     // gleichen Algorithmus rechnen wie der echte PIREP-Pfad — sonst
     // hätten wir Drift gegen uns selbst.
@@ -34697,13 +34260,11 @@ fn maybe_spawn_stand_fetch(
             }
             let attempts = match dir {
                 Dir::Departure => {
-                    stats.dep_stand_fetch_attempts =
-                        stats.dep_stand_fetch_attempts.saturating_add(1);
+                    stats.dep_stand_fetch_attempts = stats.dep_stand_fetch_attempts.saturating_add(1);
                     stats.dep_stand_fetch_attempts
                 }
                 Dir::Arrival => {
-                    stats.arr_stand_fetch_attempts =
-                        stats.arr_stand_fetch_attempts.saturating_add(1);
+                    stats.arr_stand_fetch_attempts = stats.arr_stand_fetch_attempts.saturating_add(1);
                     stats.arr_stand_fetch_attempts
                 }
             };
@@ -34849,11 +34410,7 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
         LandingScore::Hard | LandingScore::Severe => ActivityLevel::Warn,
     };
     let bounce_part = if bounces > 0 {
-        format!(
-            ", {} bounce{}",
-            bounces,
-            if bounces == 1 { "" } else { "s" }
-        )
+        format!(", {} bounce{}", bounces, if bounces == 1 { "" } else { "s" })
     } else {
         String::new()
     };
@@ -34866,8 +34423,10 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     // als nackter Buchstabe wirkten sie widersprüchlich: „Touchdown B" vs „A".)
     // v0.8.0: Per-Touchdown Navdata-Source + DDS-Warnung sammeln,
     // bevor wir `stats` droppen.
-    let nav_source_msg: Option<(ActivityLevel, String)> =
-        stats.runway_match.as_ref().and_then(|rm| {
+    let nav_source_msg: Option<(ActivityLevel, String)> = stats
+        .runway_match
+        .as_ref()
+        .and_then(|rm| {
             let src = stats.runway_source?;
             let label = match src {
                 runway::RunwaySource::Navigraph => format!(
@@ -34994,24 +34553,27 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         // MSFS 2024 hands out for some PMDG liveries), fall back to
         // the PMDG-variant family ICAO. That's accurate to the family
         // (B738/B77W) even if not to the sub-variant.
-        let pmdg_fallback_icao: Option<&'static str> = snap.pmdg.as_ref().and_then(|_| {
-            // Aircraft path tells us which PMDG family is active.
-            // We don't know it from snap.pmdg.variant_label alone,
-            // but we do know "PMDG SDK is active" — so we fall
-            // back via the variant_label string content.
-            let label = &snap.pmdg.as_ref()?.variant_label;
-            if label.contains("737") {
-                Some("B738")
-            } else if label.contains("777") {
-                // Pick the most-common 777 variant as default;
-                // exact -200LR / -300ER / 777F can't be inferred
-                // from the variant label alone (that's a richer
-                // mapping we may add later).
-                Some("B77W")
-            } else {
-                None
-            }
-        });
+        let pmdg_fallback_icao: Option<&'static str> = snap
+            .pmdg
+            .as_ref()
+            .and_then(|_| {
+                // Aircraft path tells us which PMDG family is active.
+                // We don't know it from snap.pmdg.variant_label alone,
+                // but we do know "PMDG SDK is active" — so we fall
+                // back via the variant_label string content.
+                let label = &snap.pmdg.as_ref()?.variant_label;
+                if label.contains("737") {
+                    Some("B738")
+                } else if label.contains("777") {
+                    // Pick the most-common 777 variant as default;
+                    // exact -200LR / -300ER / 777F can't be inferred
+                    // from the variant label alone (that's a richer
+                    // mapping we may add later).
+                    Some("B77W")
+                } else {
+                    None
+                }
+            });
         let icao = if icao_raw.contains('.') || icao_raw.is_empty() {
             pmdg_fallback_icao.unwrap_or("?")
         } else {
@@ -35035,7 +34597,11 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         // misleading "Default (standard SimVars)" right before the
         // "PMDG SDK aktiv" entry one tick later.
         let profile_label = if let Some(pmdg) = snap.pmdg.as_ref() {
-            format!("{} + {}", snap.aircraft_profile.label(), pmdg.variant_label)
+            format!(
+                "{} + {}",
+                snap.aircraft_profile.label(),
+                pmdg.variant_label
+            )
         } else {
             snap.aircraft_profile.label().to_string()
         };
@@ -35105,7 +34671,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     // `transponder_mode` DataRef. Logged as a separate entry so the
     // squawk-code log keeps its original semantics.
     if let Some(mode) = snap.xpdr_mode_label.as_ref() {
-        if !mode.is_empty() && stats.last_logged_pmdg_xpdr_mode.as_deref() != Some(mode.as_str()) {
+        if !mode.is_empty()
+            && stats.last_logged_pmdg_xpdr_mode.as_deref() != Some(mode.as_str())
+        {
             // Skip first tick on a "boring" STBY/OFF value to avoid noise
             // when the pilot loads cold-and-dark.
             if !first_tick || (mode != "STBY" && mode != "OFF") {
@@ -35265,7 +34833,10 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                         log_activity_handle(
                             app,
                             ActivityLevel::Info,
-                            format!("Autopilot {}", if ap.master { "ENGAGED" } else { "OFF" }),
+                            format!(
+                                "Autopilot {}",
+                                if ap.master { "ENGAGED" } else { "OFF" }
+                            ),
                             None,
                         );
                         stats.last_logged_ap = Some(ap);
@@ -35338,11 +34909,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                                     // v1.5.3 (#ifly-audit): iFly liefert den
                                     // ARM-Schalter, kein Engagement — am Gate
                                     // stand sonst "ENGAGED" (Thomas' Protokoll).
-                                    if snap.autothrottle_is_arm {
-                                        "ARMED"
-                                    } else {
-                                        "ENGAGED"
-                                    }
+                                    if snap.autothrottle_is_arm { "ARMED" } else { "ENGAGED" }
                                 } else {
                                     "OFF"
                                 }
@@ -35370,11 +34937,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                 ActivityLevel::Info,
                 format!(
                     "Parking brake {}",
-                    if snap.parking_brake {
-                        "SET"
-                    } else {
-                        "RELEASED"
-                    }
+                    if snap.parking_brake { "SET" } else { "RELEASED" }
                 ),
                 None,
             );
@@ -35399,14 +34962,20 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                         log_activity_handle(
                             app,
                             ActivityLevel::Info,
-                            format!("Engine started — {} running", snap.engines_running),
+                            format!(
+                                "Engine started — {} running",
+                                snap.engines_running
+                            ),
                             None,
                         );
                     } else if prev > snap.engines_running {
                         log_activity_handle(
                             app,
                             ActivityLevel::Info,
-                            format!("Engine shutdown — {} running", snap.engines_running),
+                            format!(
+                                "Engine shutdown — {} running",
+                                snap.engines_running
+                            ),
                             None,
                         );
                     }
@@ -35532,10 +35101,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                 app,
                 ActivityLevel::Warn,
                 "Stall warning".to_string(),
-                Some(format!(
-                    "IAS {:.0} kt, AGL {:.0} ft",
-                    snap.indicated_airspeed_kt, snap.altitude_agl_ft
-                )),
+                Some(format!("IAS {:.0} kt, AGL {:.0} ft", snap.indicated_airspeed_kt, snap.altitude_agl_ft)),
             );
         }
         stats.last_logged_stall = Some(snap.stall_warning);
@@ -35697,7 +35263,12 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         if stats.last_logged_autobrake.as_ref() != Some(ab) {
             if let Some(prev) = stats.last_logged_autobrake.as_ref() {
                 if prev != ab {
-                    log_activity_handle(app, ActivityLevel::Info, format!("Autobrake {ab}"), None);
+                    log_activity_handle(
+                        app,
+                        ActivityLevel::Info,
+                        format!("Autobrake {ab}"),
+                        None,
+                    );
                 }
             }
             stats.last_logged_autobrake = Some(ab.clone());
@@ -35739,9 +35310,12 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         // Pilots typically enter these via FMC PERF-INIT page; the
         // banner timestamps when the perf-init was completed.
         if !stats.pmdg_v_speeds_logged {
-            if let (Some(v1), Some(vr), Some(v2), Some(vref)) =
-                (p.fmc_v1_kt, p.fmc_vr_kt, p.fmc_v2_kt, p.fmc_vref_kt)
-            {
+            if let (Some(v1), Some(vr), Some(v2), Some(vref)) = (
+                p.fmc_v1_kt,
+                p.fmc_vr_kt,
+                p.fmc_v2_kt,
+                p.fmc_vref_kt,
+            ) {
                 stats.pmdg_v_speeds_logged = true;
                 log_activity_handle(
                     app,
@@ -35872,14 +35446,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                 log_activity_handle(
                     app,
                     ActivityLevel::Info,
-                    format!(
-                        "A/P {}",
-                        if p.ap_engaged {
-                            "engaged"
-                        } else {
-                            "disengaged"
-                        }
-                    ),
+                    format!("A/P {}", if p.ap_engaged { "engaged" } else { "disengaged" }),
                     None,
                 );
             }
@@ -35897,7 +35464,8 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         // thrust-limit field) — skip there, NG3 derives MCP_annunN1
         // for similar purpose elsewhere.
         if !p.thrust_limit_mode.is_empty()
-            && stats.last_logged_pmdg_thrust_mode.as_deref() != Some(p.thrust_limit_mode.as_str())
+            && stats.last_logged_pmdg_thrust_mode.as_deref()
+                != Some(p.thrust_limit_mode.as_str())
         {
             if stats.last_logged_pmdg_thrust_mode.is_some() {
                 log_activity_handle(
@@ -36088,17 +35656,17 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         )
     {
         if let Some(line) = fmt_approach_speeds_line(snap.vapp_kt, snap.vls_kt, snap.vref_kt) {
-            let bucket = |v: Option<f64>| v.map(|x| (x / APPROACH_SPEEDS_BUCKET_KT).round() as i64);
+            let bucket =
+                |v: Option<f64>| v.map(|x| (x / APPROACH_SPEEDS_BUCKET_KT).round() as i64);
             let key = (
                 bucket(snap.vapp_kt),
                 bucket(snap.vls_kt),
                 bucket(snap.vref_kt),
             );
-            if stats.premium_approach_speeds.update_first_logs(
-                key,
-                now,
-                APPROACH_SPEEDS_DEBOUNCE_SECS,
-            ) {
+            if stats
+                .premium_approach_speeds
+                .update_first_logs(key, now, APPROACH_SPEEDS_DEBOUNCE_SECS)
+            {
                 log_activity_handle(app, ActivityLevel::Info, line, None);
             }
         }
@@ -36118,19 +35686,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             .update(mc, now, MASTER_ANNUNCIATOR_DEBOUNCE_SECS)
         {
             if mc {
-                log_activity_handle(
-                    app,
-                    ActivityLevel::Warn,
-                    "⚠ MASTER CAUTION".to_string(),
-                    None,
-                );
+                log_activity_handle(app, ActivityLevel::Warn, "⚠ MASTER CAUTION".to_string(), None);
             } else {
-                log_activity_handle(
-                    app,
-                    ActivityLevel::Info,
-                    "MASTER CAUTION aus".to_string(),
-                    None,
-                );
+                log_activity_handle(app, ActivityLevel::Info, "MASTER CAUTION aus".to_string(), None);
             }
         }
     }
@@ -36140,19 +35698,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             .update(mw, now, MASTER_ANNUNCIATOR_DEBOUNCE_SECS)
         {
             if mw {
-                log_activity_handle(
-                    app,
-                    ActivityLevel::Error,
-                    "🔴 MASTER WARNING".to_string(),
-                    None,
-                );
+                log_activity_handle(app, ActivityLevel::Error, "🔴 MASTER WARNING".to_string(), None);
             } else {
-                log_activity_handle(
-                    app,
-                    ActivityLevel::Info,
-                    "MASTER WARNING aus".to_string(),
-                    None,
-                );
+                log_activity_handle(app, ActivityLevel::Info, "MASTER WARNING aus".to_string(), None);
             }
         }
     }
@@ -36326,12 +35874,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             .premium_thrust_gate
             .update(gate.clone(), now, THRUST_GATE_DEBOUNCE_SECS)
         {
-            log_activity_handle(
-                app,
-                ActivityLevel::Info,
-                format!("Schubhebel: {gate}"),
-                None,
-            );
+            log_activity_handle(app, ActivityLevel::Info, format!("Schubhebel: {gate}"), None);
         }
     }
 }
@@ -36513,7 +36056,12 @@ fn log_three_state_change(
                 2 => "ON",
                 _ => return,
             };
-            log_activity_handle(app, ActivityLevel::Info, format!("{label} {state}"), None);
+            log_activity_handle(
+                app,
+                ActivityLevel::Info,
+                format!("{label} {state}"),
+                None,
+            );
         }
         *last_logged = Some(v);
     }
@@ -36645,7 +36193,8 @@ fn read_sim_config(app: &AppHandle) -> SimConfig {
 fn write_sim_config(app: &AppHandle, cfg: &SimConfig) -> Result<(), UiError> {
     let path = sim_config_path(app)?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| UiError::new("config_write", e.to_string()))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| UiError::new("config_write", e.to_string()))?;
     }
     let json = serde_json::to_vec_pretty(cfg)
         .map_err(|e| UiError::new("config_serialize", e.to_string()))?;
@@ -36722,12 +36271,7 @@ fn sim_set_kind(
         "msfs2024" => SimKind::Msfs2024,
         "xplane11" => SimKind::XPlane11,
         "xplane12" => SimKind::XPlane12,
-        _ => {
-            return Err(UiError::new(
-                "invalid_sim_kind",
-                format!("unknown kind: {kind}"),
-            ))
-        }
+        _ => return Err(UiError::new("invalid_sim_kind", format!("unknown kind: {kind}"))),
     };
     write_sim_config(&app, &SimConfig { kind: parsed })?;
     apply_sim_kind(&state, parsed);
@@ -36949,7 +36493,10 @@ fn inspector_add(
 }
 
 #[tauri::command]
-fn inspector_remove(_state: tauri::State<'_, AppState>, id: u32) -> Result<(), UiError> {
+fn inspector_remove(
+    _state: tauri::State<'_, AppState>,
+    id: u32,
+) -> Result<(), UiError> {
     #[cfg(target_os = "windows")]
     {
         let adapter = _state.msfs.lock().expect("msfs lock");
@@ -37016,7 +36563,8 @@ fn xplane_inspector_list(state: tauri::State<'_, AppState>) -> Vec<serde_json::V
 #[tauri::command]
 async fn xplane_detect_install_path() -> Option<String> {
     tauri::async_runtime::spawn_blocking(|| {
-        xplane_plugin_install::detect_install_path().map(|p| p.to_string_lossy().into_owned())
+        xplane_plugin_install::detect_install_path()
+            .map(|p| p.to_string_lossy().into_owned())
     })
     .await
     .unwrap_or(None)
@@ -37074,7 +36622,11 @@ fn xplane_premium_status(state: tauri::State<'_, AppState>) -> serde_json::Value
 /// On login or session restore, check the on-disk active-flight file. If it's
 /// recent enough, recreate the in-memory ActiveFlight and restart position
 /// streaming — picks up exactly where the previous run left off.
-async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, client: &Client) {
+async fn try_resume_flight(
+    app: &AppHandle,
+    state: &tauri::State<'_, AppState>,
+    client: &Client,
+) {
     let Some(persisted) = read_persisted_flight(app) else {
         return;
     };
@@ -37222,8 +36774,11 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
                         .and_then(|sb| sb.aircraft_id)
                     {
                         if let Ok(details) = client.get_aircraft(id).await {
-                            planned_registration =
-                                details.registration.unwrap_or_default().trim().to_string();
+                            planned_registration = details
+                                .registration
+                                .unwrap_or_default()
+                                .trim()
+                                .to_string();
                         }
                     }
                 }
@@ -37318,7 +36873,7 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
         flight_number: persisted.flight_number.clone(),
         dpt_airport: persisted.dpt_airport.clone(),
         arr_airport: persisted.arr_airport.clone(),
-        planned_flight_time_min: None, /* Resume: Planzeit nicht persistiert */
+        planned_flight_time_min: None /* Resume: Planzeit nicht persistiert */,
         fares: persisted.fares.clone(),
         stats: Mutex::new(restored_stats),
         stop: AtomicBool::new(false),
@@ -37418,9 +36973,7 @@ fn read_auto_start_persisted(app: &AppHandle) -> bool {
 }
 
 fn write_auto_start_persisted(app: &AppHandle, enabled: bool) {
-    let Some(path) = auto_start_settings_path(app) else {
-        return;
-    };
+    let Some(path) = auto_start_settings_path(app) else { return };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -37437,7 +36990,9 @@ fn write_auto_start_persisted(app: &AppHandle, enabled: bool) {
 /// Liefert `None` wenn alles passt (kein Skip kürzlich) oder Auto-
 /// Start aus ist.
 #[tauri::command]
-fn auto_start_skip_status(state: tauri::State<'_, AppState>) -> Option<AutoStartSkipDto> {
+fn auto_start_skip_status(
+    state: tauri::State<'_, AppState>,
+) -> Option<AutoStartSkipDto> {
     if !state.auto_start_enabled.load(Ordering::Relaxed) {
         return None;
     }
@@ -37482,10 +37037,7 @@ fn auto_start_set_enabled(
             &app,
             ActivityLevel::Info,
             "Auto-Start aktiviert".to_string(),
-            Some(
-                "Watcher prüft alle 3 s ob ein Bid + Departure-Airport zueinander passen"
-                    .to_string(),
-            ),
+            Some("Watcher prüft alle 3 s ob ein Bid + Departure-Airport zueinander passen".to_string()),
         );
     } else if !enabled && was {
         log_activity_handle(
@@ -37591,7 +37143,8 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     .is_none_or(|at| (now - at).num_seconds() >= refresh_due_secs);
                 if due {
                     alias_warm_attempt_at = Some(now);
-                    let token = secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten();
+                    let token =
+                        secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten();
                     let _ = tokio::time::timeout(
                         Duration::from_secs(5),
                         fetch_aircraft_aliases_into_state(app.clone(), None, token),
@@ -37636,40 +37189,31 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 .map(|s| s.trim().is_empty())
                 .unwrap_or(true);
             let fuel_zero = snap.fuel_total_kg <= 1.0;
-            let warm_reason: Option<(&'static str, &'static str)> = if title_missing
-                && matches!(
-                    snap.simulator,
-                    sim_core::Simulator::XPlane11 | sim_core::Simulator::XPlane12
-                ) {
-                Some((
+            let warm_reason: Option<(&'static str, &'static str)> =
+                if title_missing && matches!(snap.simulator, sim_core::Simulator::XPlane11 | sim_core::Simulator::XPlane12) {
+                    Some((
                         "title_missing_xplane",
                         "Auto-Start wartet auf Sim-Daten: Aircraft-Titel fehlt. In X-Plane Settings → Network → Web API einschalten, damit AeroACARS den Flugzeug-Namen lesen kann.",
                     ))
-            } else if title_missing {
-                Some((
+                } else if title_missing {
+                    Some((
                         "title_missing",
                         "Auto-Start wartet auf Sim-Daten: Aircraft-Titel fehlt. Sim ist noch im Boot oder das Flugzeug ist nicht voll geladen.",
                     ))
-            } else if fuel_zero {
-                Some((
+                } else if fuel_zero {
+                    Some((
                         "fuel_zero",
                         "Auto-Start wartet auf Sim-Daten: Fuel = 0. Tank ist leer (Cold & Dark ohne Sprit) oder Sim noch im Boot.",
                     ))
-            } else {
-                None
-            };
+                } else {
+                    None
+                };
             let skip_reason: Option<(&'static str, &'static str)> = if let Some(r) = warm_reason {
                 Some(r)
             } else if !snap.on_ground {
-                Some((
-                    "airborne",
-                    "Du bist in der Luft — Auto-Start funktioniert nur am Boden",
-                ))
+                Some(("airborne", "Du bist in der Luft — Auto-Start funktioniert nur am Boden"))
             } else if snap.groundspeed_kt > 5.0 {
-                Some((
-                    "moving",
-                    "Flugzeug rollt schon — Auto-Start greift nur am Stand",
-                ))
+                Some(("moving", "Flugzeug rollt schon — Auto-Start greift nur am Stand"))
             } else if snap.engines_running > 0 {
                 Some(("engines_on", "Triebwerke sind an — Auto-Start greift nur bei kalt/stehendem Flugzeug. Manuell 'Flug starten' nutzen."))
             } else {
@@ -37684,7 +37228,11 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     let log_it = match g.as_ref() {
                         None => true,
                         Some((_, last_code)) if last_code != reason_code => true,
-                        Some((last_at, _)) if (now - *last_at).num_seconds() >= 60 => true,
+                        Some((last_at, _))
+                            if (now - *last_at).num_seconds() >= 60 =>
+                        {
+                            true
+                        }
                         _ => false,
                     };
                     if log_it {
@@ -37734,7 +37282,9 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 // Kraft gesetzt → Sekundentakt-Spam.)
                 let should_log = {
                     let mut g = state.auto_start_skip_reason.lock().unwrap();
-                    let log_it = g.as_ref().map_or(true, |(_, code)| code != "no_bids");
+                    let log_it = g
+                        .as_ref()
+                        .map_or(true, |(_, code)| code != "no_bids");
                     if log_it {
                         *g = Some((now, "no_bids".to_string()));
                     }
@@ -37745,10 +37295,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                         &app,
                         ActivityLevel::Info,
                         "Auto-Start: keine Bids verfuegbar".to_string(),
-                        Some(
-                            "Im phpVMS-Bid-Tab steht aktuell nichts gebucht. Logged-in?"
-                                .to_string(),
-                        ),
+                        Some("Im phpVMS-Bid-Tab steht aktuell nichts gebucht. Logged-in?".to_string()),
                     );
                 }
                 continue;
@@ -37782,7 +37329,8 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     let g = state.auto_start_fail.lock().unwrap();
                     if let Some((at, fbid, _code)) = g.as_ref() {
                         if *fbid == bid.id
-                            && (Utc::now() - *at).num_seconds() < AUTO_START_FAIL_COOLDOWN_SECS
+                            && (Utc::now() - *at).num_seconds()
+                                < AUTO_START_FAIL_COOLDOWN_SECS
                         {
                             continue;
                         }
@@ -37803,7 +37351,8 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     let airport = match cached {
                         Some(a) => Some(a),
                         None => {
-                            let client = state.client.lock().expect("client mutex").clone();
+                            let client =
+                                state.client.lock().expect("client mutex").clone();
                             match client {
                                 Some(c) => match c.get_airport(&dpt_icao).await {
                                     Ok(a) => {
@@ -37970,7 +37519,11 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     if let Err(e) =
                         flight_start(app_for_call.clone(), state_ref, bid_id, None).await
                     {
-                        tracing::warn!(?e, bid_id, "auto-start: flight_start command failed");
+                        tracing::warn!(
+                            ?e,
+                            bid_id,
+                            "auto-start: flight_start command failed"
+                        );
                         let s = app_for_call.state::<AppState>();
                         // v0.15.13: Fehler-Cooldown setzen, BEVOR last_bid_id
                         // gecleart wird. Der Loop-Cooldown-Check verhindert
@@ -38012,45 +37565,46 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 // warm, aber Flugzeug passt nicht) hat Vorrang vor dem
                 // generischen „kein Match"-Hint — sonst stünde irreführend
                 // „Kein Bid passt zur Position", obwohl die Position passt.
-                let (reason_code, title, reason_msg) =
-                    if let Some((flight_no, exp, act)) = &mismatch_info {
-                        (
-                            "aircraft_mismatch",
-                            "Auto-Start: Flugzeug passt nicht",
-                            format!(
-                                "Bid {flight_no} erwartet {exp}, im Sim ist {act} geladen. \
+                let (reason_code, title, reason_msg) = if let Some((flight_no, exp, act)) =
+                    &mismatch_info
+                {
+                    (
+                        "aircraft_mismatch",
+                        "Auto-Start: Flugzeug passt nicht",
+                        format!(
+                            "Bid {flight_no} erwartet {exp}, im Sim ist {act} geladen. \
                              Auto-Start greift hier nicht — bitte manuell „Trotzdem starten\" \
                              (Wetlease) oder das passende Flugzeug laden. Tipp: passt der Typ \
                              eigentlich (nur anderer Name)? Dann fehlt ein Aircraft-Type-Alias \
                              auf dem VPS.",
-                            ),
-                        )
-                    } else if !any_match_attempt {
-                        // Bid-Liste war zwar nicht leer, aber das einzige Bid
-                        // ist bereits durchs last_bid_id-Lock blockiert.
-                        (
-                            "bid_already_started",
-                            "Auto-Start: kein Match",
-                            format!(
-                                "Bid {} wurde diese Session schon mal auto-gestartet. \
+                        ),
+                    )
+                } else if !any_match_attempt {
+                    // Bid-Liste war zwar nicht leer, aber das einzige Bid
+                    // ist bereits durchs last_bid_id-Lock blockiert.
+                    (
+                        "bid_already_started",
+                        "Auto-Start: kein Match",
+                        format!(
+                            "Bid {} wurde diese Session schon mal auto-gestartet. \
                              Neu-Starten via Manual-Toggle oder anderem Bid.",
-                                last_bid.map_or("?".to_string(), |id| id.to_string())
-                            ),
-                        )
-                    } else {
-                        let dist_text = closest_nm
-                            .map(|nm| format!("{:.1} nm zum naechsten Departure-Airport", nm))
-                            .unwrap_or_else(|| "kein Departure-Airport in Reichweite".to_string());
-                        (
-                            "no_bid_match",
-                            "Auto-Start: kein Match",
-                            format!(
-                                "Kein Bid passt zur aktuellen Position ({}). Auto-Start \
+                            last_bid.map_or("?".to_string(), |id| id.to_string())
+                        ),
+                    )
+                } else {
+                    let dist_text = closest_nm
+                        .map(|nm| format!("{:.1} nm zum naechsten Departure-Airport", nm))
+                        .unwrap_or_else(|| "kein Departure-Airport in Reichweite".to_string());
+                    (
+                        "no_bid_match",
+                        "Auto-Start: kein Match",
+                        format!(
+                            "Kein Bid passt zur aktuellen Position ({}). Auto-Start \
                              greift nur am Stand des Departure-Airports.",
-                                dist_text
-                            ),
-                        )
-                    };
+                            dist_text
+                        ),
+                    )
+                };
                 let should_log = {
                     let mut g = state.auto_start_skip_reason.lock().unwrap();
                     let log_it = g.as_ref().map_or(true, |(at, code)| {
@@ -38202,7 +37756,9 @@ fn compute_tray_display(app: &AppHandle) -> TrayDisplay {
 
     let s = if cancelled {
         TrayState::Error
-    } else if heartbeat_age_s > TRAY_HEARTBEAT_STALE_SECS || queue >= TRAY_QUEUE_WARN_THRESHOLD {
+    } else if heartbeat_age_s > TRAY_HEARTBEAT_STALE_SECS
+        || queue >= TRAY_QUEUE_WARN_THRESHOLD
+    {
         TrayState::Warning
     } else {
         TrayState::Active
@@ -38511,9 +38067,7 @@ fn log_dir() -> Option<PathBuf> {
 /// Test unten die Konfiguration wirklich ausführt: eine ungültige
 /// Rotations-Einstellung würde sonst lautlos im Fehlerzweig landen und wir
 /// hätten eine Protokollierung, die nichts protokolliert.
-fn build_log_appender(
-    dir: &std::path::Path,
-) -> Option<tracing_appender::rolling::RollingFileAppender> {
+fn build_log_appender(dir: &std::path::Path) -> Option<tracing_appender::rolling::RollingFileAppender> {
     if let Err(e) = std::fs::create_dir_all(dir) {
         eprintln!("could not create log dir {}: {e}", dir.display());
         return None;
@@ -39237,16 +38791,15 @@ mod takeoff_roll_demote_tests {
         let t0 = Utc::now();
         // Erster langsamer Tick am Boden: Dwell startet, noch KEIN Demote.
         let (demote, slow) = takeoff_roll_demote(true, 0.0, None, t0);
-        assert_eq!(
-            demote, None,
-            "erster langsamer Tick darf nicht sofort demoten"
-        );
+        assert_eq!(demote, None, "erster langsamer Tick darf nicht sofort demoten");
         assert!(slow.is_some(), "Dwell-Start muss gestempelt sein");
         // Innerhalb des Dwells (2 s): weiter TakeoffRoll.
-        let (demote, slow) = takeoff_roll_demote(true, 3.0, slow, t0 + Duration::seconds(2));
+        let (demote, slow) =
+            takeoff_roll_demote(true, 3.0, slow, t0 + Duration::seconds(2));
         assert_eq!(demote, None);
         // Nach dem Dwell (4 s ≥ 3 s): zurück zu TaxiOut + Dwell zurückgesetzt.
-        let (demote, slow2) = takeoff_roll_demote(true, 1.0, slow, t0 + Duration::seconds(4));
+        let (demote, slow2) =
+            takeoff_roll_demote(true, 1.0, slow, t0 + Duration::seconds(4));
         assert_eq!(demote, Some(FlightPhase::TaxiOut));
         assert_eq!(slow2, None, "Dwell nach Demote zurückgesetzt");
     }
@@ -39275,7 +38828,8 @@ mod takeoff_roll_demote_tests {
         assert_eq!(demote, None);
         assert!(slow.is_some());
         // Nächster Tick: GS wieder hoch → Dwell verworfen, kein Demote.
-        let (demote, slow) = takeoff_roll_demote(true, 80.0, slow, t0 + Duration::seconds(1));
+        let (demote, slow) =
+            takeoff_roll_demote(true, 80.0, slow, t0 + Duration::seconds(1));
         assert_eq!(demote, None);
         assert_eq!(slow, None, "GS-Erholung verwirft den Dwell");
     }
@@ -39304,7 +38858,7 @@ mod takeoff_roll_stall_tests {
     fn backtrack_plateau_demotes_after_dwell() {
         let t0 = Utc::now();
         let peak = 30.0f32; // Eintritt bei 30 kt
-                            // Plateau: GS setzt keine neuen Höchstwerte → Dwell startet.
+        // Plateau: GS setzt keine neuen Höchstwerte → Dwell startet.
         let (d, peak, stall) = takeoff_roll_stall_check(true, 29.0, peak, None, t0);
         assert_eq!(d, None, "erster Plateau-Tick demotet nicht sofort");
         assert!(stall.is_some(), "Plateau startet den Dwell");
@@ -39315,11 +38869,7 @@ mod takeoff_roll_stall_tests {
         // Nach dem Dwell (12 s) ohne neuen Peak → Backtrack erkannt.
         let (d, _p, _s) =
             takeoff_roll_stall_check(true, 30.0, peak, stall, t0 + Duration::seconds(12));
-        assert_eq!(
-            d,
-            Some(FlightPhase::TaxiOut),
-            "Backtrack nach Dwell → TaxiOut"
-        );
+        assert_eq!(d, Some(FlightPhase::TaxiOut), "Backtrack nach Dwell → TaxiOut");
     }
 
     /// Echte Startrolle: jeder Tick ein neuer GS-Höchstwert → Dwell wird nie
@@ -39355,10 +38905,7 @@ mod takeoff_roll_stall_tests {
             let gs = 30.0 + i as f32; // 31,32,…,45
             let (d, p, s) =
                 takeoff_roll_stall_check(true, gs, peak, stall, t0 + Duration::seconds(i));
-            assert_eq!(
-                d, None,
-                "träge aber stetige Startrolle darf nie demoten (t={i}s)"
-            );
+            assert_eq!(d, None, "träge aber stetige Startrolle darf nie demoten (t={i}s)");
             peak = p;
             stall = s;
         }
@@ -39502,7 +39049,9 @@ mod canonical_landing_rate_fpm_tests {
         // Das ist der Wert der bei phpVMS als "Landungsrate" landen
         // soll, und derselbe den der Pilot-Client Tab "Landung" zeigt.
         let stats = ms713_live_stats();
-        let rounded = stats.canonical_landing_rate_fpm().map(|v| v.round() as i32);
+        let rounded = stats
+            .canonical_landing_rate_fpm()
+            .map(|v| v.round() as i32);
         assert_eq!(rounded, Some(-194));
     }
 
@@ -39641,15 +39190,9 @@ mod canonical_landing_rate_fpm_tests {
         r.score_label = "acceptable".to_string(); // Ergebnis der ALTEN Regel
         r.grade_letter = "A".to_string();
         let n = normalize_derived_scores(r);
-        assert_eq!(
-            n.score_label, "smooth",
-            "Label muss der AKTUELLEN Regel folgen"
-        );
+        assert_eq!(n.score_label, "smooth", "Label muss der AKTUELLEN Regel folgen");
         assert_eq!(n.grade_letter, "A");
-        assert_eq!(
-            n.score_numeric, 88,
-            "die Punktzahl selbst bleibt unangetastet"
-        );
+        assert_eq!(n.score_numeric, 88, "die Punktzahl selbst bleibt unangetastet");
     }
 
     /// Gegenprobe: ein bereits korrekter Datensatz darf sich nicht aendern,
@@ -39691,6 +39234,7 @@ mod canonical_landing_rate_fpm_tests {
         high.score_numeric = 250;
         assert_eq!(normalize_derived_scores(high).score_label, "smooth");
     }
+
 
     #[test]
     fn canonical_peak_g_force_rejects_fallback_zero() {
@@ -39781,16 +39325,10 @@ mod canonical_landing_rate_fpm_tests {
         snap.bank_deg = 2.0;
 
         snap.vertical_speed_fpm = -750.0;
-        assert!(
-            approach_sample_is_plausible(&snap),
-            "normaler Anflug muss rein"
-        );
+        assert!(approach_sample_is_plausible(&snap), "normaler Anflug muss rein");
 
         snap.vertical_speed_fpm = -30_000.0;
-        assert!(
-            !approach_sample_is_plausible(&snap),
-            "Slew/Teleport muss raus"
-        );
+        assert!(!approach_sample_is_plausible(&snap), "Slew/Teleport muss raus");
 
         snap.vertical_speed_fpm = f32::NAN;
         assert!(!approach_sample_is_plausible(&snap), "NaN muss raus");
@@ -39809,10 +39347,7 @@ mod canonical_landing_rate_fpm_tests {
 
         snap.vertical_speed_fpm = -750.0;
         snap.bank_deg = 179.0;
-        assert!(
-            !approach_sample_is_plausible(&snap),
-            "Rueckenlage im Anflug = Artefakt"
-        );
+        assert!(!approach_sample_is_plausible(&snap), "Rueckenlage im Anflug = Artefakt");
     }
 
     #[test]
@@ -39843,17 +39378,11 @@ mod canonical_landing_rate_fpm_tests {
             compute_approach_stddev(&buf, None)
         };
         let (vs_thin, bank_thin) = mk(STABILITY_MIN_SAMPLES - 1);
-        assert_eq!(
-            vs_thin, None,
-            "zu duenne Stichprobe darf keinen Wert liefern"
-        );
+        assert_eq!(vs_thin, None, "zu duenne Stichprobe darf keinen Wert liefern");
         assert_eq!(bank_thin, None);
 
         let (vs_ok, bank_ok) = mk(STABILITY_MIN_SAMPLES + 5);
-        assert!(
-            vs_ok.is_some(),
-            "ausreichende Stichprobe muss bewertet werden"
-        );
+        assert!(vs_ok.is_some(), "ausreichende Stichprobe muss bewertet werden");
         assert!(bank_ok.is_some());
     }
 
@@ -39949,7 +39478,8 @@ mod canonical_landing_rate_fpm_tests {
 
         let persisted = PersistedFlightStats::snapshot_from(&stats);
         let json = serde_json::to_string(&persisted).expect("serialisierbar");
-        let back: PersistedFlightStats = serde_json::from_str(&json).expect("deserialisierbar");
+        let back: PersistedFlightStats =
+            serde_json::from_str(&json).expect("deserialisierbar");
 
         let mut restored = FlightStats::default();
         back.apply_to(&mut restored);
@@ -40109,10 +39639,7 @@ mod canonical_landing_rate_fpm_tests {
         ] {
             let body = body_of(SRC, needle);
             for (raw, canonical) in [
-                (
-                    "stats.approach_bank_stddev_deg",
-                    "canonical_bank_stddev_deg()",
-                ),
+                ("stats.approach_bank_stddev_deg", "canonical_bank_stddev_deg()"),
                 ("stats.approach_vs_stddev_fpm", "canonical_vs_stddev_fpm()"),
             ] {
                 assert!(
@@ -40130,7 +39657,10 @@ mod canonical_landing_rate_fpm_tests {
         // NICHT die Bewertung — sie ist ein Teil davon. Wer sie direkt ausgibt,
         // schreibt "A+ (SMOOTH, 100/100)" neben ein Feld, in dem "A (smooth) —
         // 92/100" steht. Genau das stand auf Thomas' phpVMS-Seite.
-        for needle in ["fn build_pirep_notes(", "fn build_pirep_fields("] {
+        for needle in [
+            "fn build_pirep_notes(",
+            "fn build_pirep_fields(",
+        ] {
             let body = body_of(SRC, needle);
             assert!(
                 body.contains("canonical_landing_verdict(")
@@ -40320,9 +39850,9 @@ mod divert_filing_contract_tests {
     /// Body of one filing path, comment lines dropped — comments may well name
     /// the forbidden shapes, they are what explains them.
     fn filing_path(from: &str, to: &str) -> String {
-        let start = SRC.find(from).unwrap_or_else(|| {
-            panic!("Filing-Pfad nicht mehr gefunden: {from} — Test anpassen, nicht loeschen")
-        });
+        let start = SRC
+            .find(from)
+            .unwrap_or_else(|| panic!("Filing-Pfad nicht mehr gefunden: {from} — Test anpassen, nicht loeschen"));
         let rest = &SRC[start..];
         let end = rest
             .find(to)
@@ -40339,10 +39869,7 @@ mod divert_filing_contract_tests {
     }
 
     fn manueller_pfad() -> String {
-        filing_path(
-            "async fn flight_end_manual(",
-            "\nasync fn flight_resume_check_position(",
-        )
+        filing_path("async fn flight_end_manual(", "\nasync fn flight_resume_check_position(")
     }
 
     #[test]
@@ -40351,10 +39878,7 @@ mod divert_filing_contract_tests {
         // `diversion-airport`, derived from the field NAME. Overriding
         // arr_airport_id ourselves on top of it makes phpVMS rewrite the divert
         // airport to itself and file it as its own alternate.
-        for (name, body) in [
-            ("flight_end", regulaerer_pfad()),
-            ("flight_end_manual", manueller_pfad()),
-        ] {
+        for (name, body) in [("flight_end", regulaerer_pfad()), ("flight_end_manual", manueller_pfad())] {
             assert!(
                 body.contains(r#"fields.insert("Diversion Airport""#),
                 "{name} schickt das Divert-Feld nicht mehr mit — phpVMS erfaehrt \
@@ -40583,10 +40107,7 @@ mod touch_and_go_go_around_tests {
         let snap = descent_snap(8000.0, -800.0, Some(60000.0));
         let lost_from_peak = 300.0; // > 200 → standard_tod TRUE
         let out = check_descent_transition(&mut stats, &snap, t0(), lost_from_peak);
-        assert!(
-            out.is_none(),
-            "single tick must not transition (dwell not elapsed)"
-        );
+        assert!(out.is_none(), "single tick must not transition (dwell not elapsed)");
         // Timer ist armed
         assert!(stats.descent_pending_since.is_some());
     }
@@ -40599,7 +40120,7 @@ mod touch_and_go_go_around_tests {
         let now = t0();
         let trigger = descent_snap(8000.0, -600.0, Some(60000.0)); // Heavy
         let lost = 300.0; // > 200 fuer standard_tod
-                          // Tick 1: Bedingung erfuellt → Timer started
+        // Tick 1: Bedingung erfuellt → Timer started
         let out1 = check_descent_transition(&mut stats, &trigger, now, lost);
         assert!(out1.is_none());
         assert!(stats.descent_pending_since.is_some());
@@ -40650,10 +40171,7 @@ mod touch_and_go_go_around_tests {
             t0() + chrono::Duration::seconds(DESCENT_DWELL_SECS + 10),
             600.0,
         );
-        assert!(
-            out.is_none(),
-            "Light-GA bei 600 ft lost darf nicht triggern"
-        );
+        assert!(out.is_none(), "Light-GA bei 600 ft lost darf nicht triggern");
 
         // Gleicher Snap aber Heavy (60.000 kg) → MUSS arm dann triggern.
         let mut stats2 = FlightStats::default();
@@ -41082,10 +40600,7 @@ mod aircraft_alias_tests {
         // Inverse: Bid (HA420 — falls eine VA das so führt) gegen sim (HDJT)
         assert!(aircraft_types_match("HA420", "HDJT"));
         // Bid HDJT gegen Sim-TITLE (Substring-Match auf Long-Form)
-        assert!(aircraft_types_match(
-            "HDJT",
-            "mg hjet ha420 [Preset Default]"
-        ));
+        assert!(aircraft_types_match("HDJT", "mg hjet ha420 [Preset Default]"));
         assert!(aircraft_types_match("HDJT", "Asobo HondaJet HA-420"));
         // HA-420 (mit Bindestrich, wie Honda offiziell schreibt)
         assert!(aircraft_types_match("HDJT", "HA-420"));
@@ -41094,9 +40609,9 @@ mod aircraft_alias_tests {
     #[test]
     fn hdjt_does_not_match_unrelated_jets() {
         // HondaJet darf NICHT mit anderen Light-Jets matchen
-        assert!(!aircraft_types_match("HDJT", "C25A")); // CitationJet
-        assert!(!aircraft_types_match("HDJT", "E50P")); // Phenom 100
-        assert!(!aircraft_types_match("HDJT", "TBM9")); // TBM 930
+        assert!(!aircraft_types_match("HDJT", "C25A"));   // CitationJet
+        assert!(!aircraft_types_match("HDJT", "E50P"));   // Phenom 100
+        assert!(!aircraft_types_match("HDJT", "TBM9"));   // TBM 930
     }
 
     /// v0.8.1: Vendor-Tag-Prefix-Strip im clean_atc_model. Live-Bug
@@ -41287,23 +40802,13 @@ mod aircraft_alias_tests {
         use super::aircraft_type_matches_sim;
         let empty = std::collections::HashMap::new();
         // expected unbekannt (get_aircraft fehlgeschlagen) → permissiv.
-        assert!(aircraft_type_matches_sim(
-            None,
-            Some("PHENOM 300E"),
-            "x",
-            &empty
-        ));
+        assert!(aircraft_type_matches_sim(None, Some("PHENOM 300E"), "x", &empty));
         // sim-icao unbekannt (clean_atc_model lieferte None) → permissiv.
         assert!(aircraft_type_matches_sim(Some("E55P"), None, "x", &empty));
         // beide unbekannt → permissiv.
         assert!(aircraft_type_matches_sim(None, None, "", &empty));
         // Echter, beidseitig bekannter Mismatch bleibt blockiert.
-        assert!(!aircraft_type_matches_sim(
-            Some("B738"),
-            Some("A320"),
-            "",
-            &empty
-        ));
+        assert!(!aircraft_type_matches_sim(Some("B738"), Some("A320"), "", &empty));
     }
 
     /// v0.13.17: Airborne-Rescue-Bedingung. Greift NUR in Boden-/Pre-Takeoff-
@@ -41475,10 +40980,7 @@ mod aircraft_alias_tests {
         use super::fuel_used_effective_kg as fu;
         let mut initial: Option<f32> = Some(8_000.0);
         // SimVar lebt (1234 kg) → authoritativ, kein Delta-Override.
-        assert_eq!(
-            fu(&mut initial, 1_234.0, 6_500.0, false, Some(6_510.0)),
-            1_234.0
-        );
+        assert_eq!(fu(&mut initial, 1_234.0, 6_500.0, false, Some(6_510.0)), 1_234.0);
         // Knapp unter der Alive-Schwelle (< 0.5) zählt als tot → Delta.
         let used = fu(&mut initial, 0.4, 6_500.0, false, Some(6_500.0));
         assert!((used - 1_500.0).abs() < 0.01, "erwartete 1500, war {used}");
@@ -41598,7 +41100,7 @@ mod aircraft_alias_tests {
         let t0 = chrono::Utc::now();
         let mut s: DebouncedLogState<bool> = DebouncedLogState::default();
         assert!(!s.update(false, t0, 2)); // stumm gelatcht
-                                          // Puls: true für 1 s, dann wieder false.
+        // Puls: true für 1 s, dann wieder false.
         assert!(!s.update(true, t0 + Duration::seconds(5), 2));
         assert!(!s.update(false, t0 + Duration::seconds(6), 2));
         // Zurück auf dem gelatchten Wert → Pending verworfen; auch ein
@@ -41703,10 +41205,7 @@ mod aircraft_alias_tests {
             fmt_fma_line(Some("LOC"), None, Some("SPEED")),
             Some("LOC | SPEED".to_string())
         );
-        assert_eq!(
-            fmt_fma_line(None, Some("G/S"), None),
-            Some("G/S".to_string())
-        );
+        assert_eq!(fmt_fma_line(None, Some("G/S"), None), Some("G/S".to_string()));
         assert_eq!(fmt_fma_line(None, None, None), None);
         // Leere/Whitespace-Strings zählen wie None.
         assert_eq!(fmt_fma_line(Some(""), Some("  "), None), None);
@@ -41831,10 +41330,7 @@ mod aircraft_alias_tests {
         assert!(!edge(Some(false), true, false, &mut last_seen, &mut logged));
         // Taxi-Check: Reverser kurz gezogen bei 15 kt → kein Log…
         assert!(!edge(Some(true), true, false, &mut last_seen, &mut logged));
-        assert!(
-            !logged,
-            "Taxi-Check darf den Einmal-Latch nicht verbrauchen"
-        );
+        assert!(!logged, "Taxi-Check darf den Einmal-Latch nicht verbrauchen");
         assert!(!edge(Some(false), true, false, &mut last_seen, &mut logged));
         // …die echte Landung später loggt normal (airborne → Touchdown
         // → Reverser bei Rollout-Speed).
@@ -41853,59 +41349,17 @@ mod aircraft_alias_tests {
         let mut logged = false;
         let mut clear_since: Option<chrono::DateTime<chrono::Utc>> = None;
         // Erster Wert (false) latcht stumm.
-        assert!(!gs(
-            false,
-            t0,
-            &mut last_seen,
-            &mut logged,
-            &mut clear_since
-        ));
+        assert!(!gs(false, t0, &mut last_seen, &mut logged, &mut clear_since));
         // Alert feuert → loggt.
-        assert!(gs(
-            true,
-            t0 + Duration::seconds(5),
-            &mut last_seen,
-            &mut logged,
-            &mut clear_since
-        ));
+        assert!(gs(true, t0 + Duration::seconds(5), &mut last_seen, &mut logged, &mut clear_since));
         // Flackern (clear < 30 s, wieder true) → kein zweites Log.
-        assert!(!gs(
-            false,
-            t0 + Duration::seconds(10),
-            &mut last_seen,
-            &mut logged,
-            &mut clear_since
-        ));
-        assert!(!gs(
-            true,
-            t0 + Duration::seconds(15),
-            &mut last_seen,
-            &mut logged,
-            &mut clear_since
-        ));
+        assert!(!gs(false, t0 + Duration::seconds(10), &mut last_seen, &mut logged, &mut clear_since));
+        assert!(!gs(true, t0 + Duration::seconds(15), &mut last_seen, &mut logged, &mut clear_since));
         // Alert klärt sich und BLEIBT > 30 s clear → re-arm…
-        assert!(!gs(
-            false,
-            t0 + Duration::seconds(20),
-            &mut last_seen,
-            &mut logged,
-            &mut clear_since
-        ));
-        assert!(!gs(
-            false,
-            t0 + Duration::seconds(55),
-            &mut last_seen,
-            &mut logged,
-            &mut clear_since
-        ));
+        assert!(!gs(false, t0 + Duration::seconds(20), &mut last_seen, &mut logged, &mut clear_since));
+        assert!(!gs(false, t0 + Duration::seconds(55), &mut last_seen, &mut logged, &mut clear_since));
         // …der nächste Alert loggt wieder.
-        assert!(gs(
-            true,
-            t0 + Duration::seconds(60),
-            &mut last_seen,
-            &mut logged,
-            &mut clear_since
-        ));
+        assert!(gs(true, t0 + Duration::seconds(60), &mut last_seen, &mut logged, &mut clear_since));
     }
 
     /// Below-G/S: beim Connect bereits aktiver Alert zählt als geloggt
@@ -41922,20 +41376,8 @@ mod aircraft_alias_tests {
         assert!(!gs(true, t0, &mut last_seen, &mut logged, &mut clear_since));
         assert!(logged);
         // Kurzes clear + wieder true (< 30 s) → weiter still.
-        assert!(!gs(
-            false,
-            t0 + Duration::seconds(5),
-            &mut last_seen,
-            &mut logged,
-            &mut clear_since
-        ));
-        assert!(!gs(
-            true,
-            t0 + Duration::seconds(10),
-            &mut last_seen,
-            &mut logged,
-            &mut clear_since
-        ));
+        assert!(!gs(false, t0 + Duration::seconds(5), &mut last_seen, &mut logged, &mut clear_since));
+        assert!(!gs(true, t0 + Duration::seconds(10), &mut last_seen, &mut logged, &mut clear_since));
     }
 
     // ─── v0.7.3 Cargo-Aliases (Spec §4 HOHE-Prio Arbeitsliste) ──────
@@ -41998,7 +41440,7 @@ mod aircraft_alias_tests {
     /// (manche Sim-Addons schreiben "757-200 Freighter" statt nur "F").
     #[test]
     fn cargo_aliases_match_freighter_long_form() {
-        assert!(aircraft_types_match("B74F", "747-400 Freighter"));
+        assert!(aircraft_types_match("B74F",  "747-400 Freighter"));
         assert!(aircraft_types_match("B748F", "747-8 Freighter"));
         assert!(aircraft_types_match("B752F", "757-200 Freighter"));
         assert!(aircraft_types_match("B763F", "767-300 Freighter"));
@@ -42013,7 +41455,7 @@ mod aircraft_alias_tests {
     #[test]
     fn cargo_bid_strict_against_pax_sim() {
         // Cargo-Bid → Pax-Sim BLOCKIERT
-        assert!(!aircraft_types_match("B74F", "747-400"));
+        assert!(!aircraft_types_match("B74F",  "747-400"));
         assert!(!aircraft_types_match("B748F", "747-8"));
         assert!(!aircraft_types_match("B752F", "757-200"));
         assert!(!aircraft_types_match("B763F", "767-300"));
@@ -42070,8 +41512,8 @@ mod v0_7_6_payload_consistency_tests {
             Some("ENSB"),
             "ENSB",
             None,
-            Some(2.0),   // 2 m centerline offset
-            Some(320.0), // 320 m past threshold
+            Some(2.0),    // 2 m centerline offset
+            Some(320.0),  // 320 m past threshold
         );
         assert!(trusted);
         assert!(reason.is_none());
@@ -42080,8 +41522,13 @@ mod v0_7_6_payload_consistency_tests {
     #[test]
     fn runway_trust_blocks_on_icao_mismatch() {
         // GSG303-Klasse: arr=OR66 aber Match war K5S9 (3.5 km daneben)
-        let (trusted, reason) =
-            runway_geometry_trust_check(Some("K5S9"), "OR66", None, Some(3464.0), Some(-613.0));
+        let (trusted, reason) = runway_geometry_trust_check(
+            Some("K5S9"),
+            "OR66",
+            None,
+            Some(3464.0),
+            Some(-613.0),
+        );
         assert!(!trusted);
         // ICAO-Check kommt zuerst
         assert_eq!(reason, Some("icao_mismatch"));
@@ -42183,13 +41630,23 @@ mod v0_7_6_payload_consistency_tests {
     #[test]
     fn runway_trust_at_centerline_threshold_boundary() {
         // 200.0 m exakt: <= MAX → trusted
-        let (trusted, _) =
-            runway_geometry_trust_check(Some("EDDM"), "EDDM", None, Some(200.0), Some(400.0));
+        let (trusted, _) = runway_geometry_trust_check(
+            Some("EDDM"),
+            "EDDM",
+            None,
+            Some(200.0),
+            Some(400.0),
+        );
         assert!(trusted, "200 m exakt darf noch trusted sein");
 
         // 200.01 m: > MAX → not trusted
-        let (trusted, reason) =
-            runway_geometry_trust_check(Some("EDDM"), "EDDM", None, Some(200.01), Some(400.0));
+        let (trusted, reason) = runway_geometry_trust_check(
+            Some("EDDM"),
+            "EDDM",
+            None,
+            Some(200.01),
+            Some(400.0),
+        );
         assert!(!trusted);
         assert_eq!(reason, Some("centerline_offset_too_large"));
     }
@@ -42197,8 +41654,13 @@ mod v0_7_6_payload_consistency_tests {
     #[test]
     fn runway_trust_blocks_on_negative_float_distance() {
         // GSG303: float_distance = -613 m (Touchdown weit vor Threshold).
-        let (trusted, reason) =
-            runway_geometry_trust_check(Some("OR66"), "OR66", None, Some(50.0), Some(-613.0));
+        let (trusted, reason) = runway_geometry_trust_check(
+            Some("OR66"),
+            "OR66",
+            None,
+            Some(50.0),
+            Some(-613.0),
+        );
         assert!(!trusted);
         assert_eq!(reason, Some("negative_float_distance"));
     }
@@ -42207,13 +41669,23 @@ mod v0_7_6_payload_consistency_tests {
     fn runway_trust_at_float_threshold_boundary() {
         // -100.0 m exakt: >= MIN → trusted (legitim wenn Runway-DB
         // TDZ-Marker statt Threshold nutzt).
-        let (trusted, _) =
-            runway_geometry_trust_check(Some("EDDM"), "EDDM", None, Some(50.0), Some(-100.0));
+        let (trusted, _) = runway_geometry_trust_check(
+            Some("EDDM"),
+            "EDDM",
+            None,
+            Some(50.0),
+            Some(-100.0),
+        );
         assert!(trusted, "-100 m exakt darf noch trusted sein");
 
         // -100.01 m: < MIN → not trusted
-        let (trusted, reason) =
-            runway_geometry_trust_check(Some("EDDM"), "EDDM", None, Some(50.0), Some(-100.01));
+        let (trusted, reason) = runway_geometry_trust_check(
+            Some("EDDM"),
+            "EDDM",
+            None,
+            Some(50.0),
+            Some(-100.01),
+        );
         assert!(!trusted);
         assert_eq!(reason, Some("negative_float_distance"));
     }
@@ -42224,8 +41696,13 @@ mod v0_7_6_payload_consistency_tests {
         // Bei Privatplaetzen / Bush-Strips ohne ourairports-DB-Eintrag
         // ist None das normale Verhalten. UI darf das NICHT als
         // alarmierende "Falscher Flughafen erkannt"-Warnung zeigen.
-        let (trusted, reason) =
-            runway_geometry_trust_check(None, "EDDM", None, Some(50.0), Some(400.0));
+        let (trusted, reason) = runway_geometry_trust_check(
+            None,
+            "EDDM",
+            None,
+            Some(50.0),
+            Some(400.0),
+        );
         assert!(!trusted);
         assert_eq!(reason, Some("no_runway_match"));
     }
@@ -42235,8 +41712,13 @@ mod v0_7_6_payload_consistency_tests {
         // v0.7.6 P3-Refinement: ICAOs koennten aus externen Quellen
         // mit Mixed-Case kommen (phpVMS-Imports, OFP-Snapshots).
         // Match "EDDM" gegen arr "eddm" muss trusted sein.
-        let (trusted, reason) =
-            runway_geometry_trust_check(Some("EDDM"), "eddm", None, Some(50.0), Some(400.0));
+        let (trusted, reason) = runway_geometry_trust_check(
+            Some("EDDM"),
+            "eddm",
+            None,
+            Some(50.0),
+            Some(400.0),
+        );
         assert!(trusted, "EDDM/eddm muss case-insensitive matchen");
         assert!(reason.is_none());
 
@@ -42251,8 +41733,13 @@ mod v0_7_6_payload_consistency_tests {
         assert!(trusted, "divert ICAO muss case-insensitive matchen");
 
         // Sanity: echte unterschiedliche Codes bleiben mismatch
-        let (trusted, reason) =
-            runway_geometry_trust_check(Some("EDDF"), "EDDM", None, Some(50.0), Some(400.0));
+        let (trusted, reason) = runway_geometry_trust_check(
+            Some("EDDF"),
+            "EDDM",
+            None,
+            Some(50.0),
+            Some(400.0),
+        );
         assert!(!trusted);
         assert_eq!(reason, Some("icao_mismatch"));
     }
@@ -42261,8 +41748,13 @@ mod v0_7_6_payload_consistency_tests {
     fn runway_trust_empty_match_string_returns_no_runway_match() {
         // Defensive Variante: Leerer String wird wie None behandelt
         // (verteidigt gegen Adapter die "" statt None liefern).
-        let (trusted, reason) =
-            runway_geometry_trust_check(Some(""), "EDDM", None, Some(50.0), Some(400.0));
+        let (trusted, reason) = runway_geometry_trust_check(
+            Some(""),
+            "EDDM",
+            None,
+            Some(50.0),
+            Some(400.0),
+        );
         assert!(!trusted);
         assert_eq!(reason, Some("no_runway_match"));
     }
@@ -42271,7 +41763,13 @@ mod v0_7_6_payload_consistency_tests {
     fn runway_trust_handles_missing_offsets_gracefully() {
         // Diagnostische Felder fehlen aber ICAO matcht → trusted
         // (wir bestrafen nicht das Fehlen einer optionalen Diagnostik).
-        let (trusted, reason) = runway_geometry_trust_check(Some("EDDM"), "EDDM", None, None, None);
+        let (trusted, reason) = runway_geometry_trust_check(
+            Some("EDDM"),
+            "EDDM",
+            None,
+            None,
+            None,
+        );
         assert!(trusted);
         assert!(reason.is_none());
     }
@@ -42302,7 +41800,10 @@ mod v0_7_6_payload_consistency_tests {
         // Sanity: scored MUSS strikt groesser sein als forensic, sonst
         // ist der ganze "kleine Hopser sichtbar, nicht bestraft"-Trick
         // sinnlos.
-        assert!(touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT > touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT);
+        assert!(
+            touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT
+                > touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT
+        );
     }
 
     #[test]
@@ -42390,8 +41891,8 @@ mod v0_7_7_ofp_refresh_tests {
         // Minimaler JSON ohne simbrief_ofp_id / simbrief_ofp_generated_at —
         // wie ein pre-v0.7.7 Snapshot aussehen wuerde.
         let legacy_json = r#"{"distance_nm": 100.0}"#;
-        let parsed: PersistedFlightStats =
-            serde_json::from_str(legacy_json).expect("legacy stats JSON must still deserialise");
+        let parsed: PersistedFlightStats = serde_json::from_str(legacy_json)
+            .expect("legacy stats JSON must still deserialise");
         assert_eq!(parsed.simbrief_ofp_id, None);
         assert_eq!(parsed.simbrief_ofp_generated_at, None);
     }
@@ -42573,15 +42074,9 @@ mod v0_7_8_simbrief_direct_match_tests {
 
     #[test]
     fn split_callsign_separates_prefix_and_number() {
-        assert_eq!(
-            split_callsign("DLH100"),
-            ("DLH".to_string(), "100".to_string())
-        );
+        assert_eq!(split_callsign("DLH100"), ("DLH".to_string(), "100".to_string()));
         assert_eq!(split_callsign("100"), ("".to_string(), "100".to_string()));
-        assert_eq!(
-            split_callsign("GSG100A"),
-            ("GSG".to_string(), "100A".to_string())
-        );
+        assert_eq!(split_callsign("GSG100A"), ("GSG".to_string(), "100A".to_string()));
         assert_eq!(split_callsign(""), ("".to_string(), "".to_string()));
         assert_eq!(split_callsign("DLH"), ("DLH".to_string(), "".to_string()));
     }
@@ -42589,7 +42084,9 @@ mod v0_7_8_simbrief_direct_match_tests {
     #[test]
     fn ofp_matches_when_callsigns_exact() {
         assert!(ofp_matches_active_flight(
-            "EDDM", "LFPG", "DLH100", "EDDM", "LFPG", "DLH", "100", None, None,
+            "EDDM", "LFPG", "DLH100",
+            "EDDM", "LFPG", "DLH", "100",
+            None, None,
         ));
     }
 
@@ -42597,17 +42094,23 @@ mod v0_7_8_simbrief_direct_match_tests {
     fn ofp_matches_when_simbrief_callsign_is_number_only() {
         // SimBrief liefert nur "100", AeroACARS aktiv "DLH100" → match
         assert!(ofp_matches_active_flight(
-            "EDDM", "LFPG", "100", "EDDM", "LFPG", "DLH", "100", None, None,
+            "EDDM", "LFPG", "100",
+            "EDDM", "LFPG", "DLH", "100",
+            None, None,
         ));
     }
 
     #[test]
     fn ofp_matches_case_insensitive_icao() {
         assert!(ofp_matches_active_flight(
-            "eddm", "lfpg", "DLH100", "EDDM", "LFPG", "DLH", "100", None, None,
+            "eddm", "lfpg", "DLH100",
+            "EDDM", "LFPG", "DLH", "100",
+            None, None,
         ));
         assert!(ofp_matches_active_flight(
-            "EDDM", "LFPG", "DLH100", "eddm", "LfPg", "DLH", "100", None, None,
+            "EDDM", "LFPG", "DLH100",
+            "eddm", "LfPg", "DLH", "100",
+            None, None,
         ));
     }
 
@@ -42620,36 +42123,48 @@ mod v0_7_8_simbrief_direct_match_tests {
         // SimBrief-OFP = "DLH1100" fuer einen anderen Flug
         // AeroACARS-aktiv = "DLH100"
         assert!(!ofp_matches_active_flight(
-            "EDDM", "LFPG", "DLH1100", "EDDM", "LFPG", "DLH", "100", None, None,
+            "EDDM", "LFPG", "DLH1100",
+            "EDDM", "LFPG", "DLH", "100",
+            None, None,
         ));
         // Auch umgekehrt
         assert!(!ofp_matches_active_flight(
-            "EDDM", "LFPG", "DLH100", "EDDM", "LFPG", "DLH", "1100", None, None,
+            "EDDM", "LFPG", "DLH100",
+            "EDDM", "LFPG", "DLH", "1100",
+            None, None,
         ));
         // Und auch wenn SimBrief number-only liefert
         assert!(!ofp_matches_active_flight(
-            "EDDM", "LFPG", "1100", "EDDM", "LFPG", "DLH", "100", None, None,
+            "EDDM", "LFPG", "1100",
+            "EDDM", "LFPG", "DLH", "100",
+            None, None,
         ));
     }
 
     #[test]
     fn ofp_rejects_when_callsign_completely_different() {
         assert!(!ofp_matches_active_flight(
-            "EDDM", "LFPG", "AFR300", "EDDM", "LFPG", "DLH", "100", None, None,
+            "EDDM", "LFPG", "AFR300",
+            "EDDM", "LFPG", "DLH", "100",
+            None, None,
         ));
     }
 
     #[test]
     fn ofp_rejects_when_dpt_wrong() {
         assert!(!ofp_matches_active_flight(
-            "EDDF", "LFPG", "DLH100", "EDDM", "LFPG", "DLH", "100", None, None,
+            "EDDF", "LFPG", "DLH100",
+            "EDDM", "LFPG", "DLH", "100",
+            None, None,
         ));
     }
 
     #[test]
     fn ofp_rejects_when_arr_wrong() {
         assert!(!ofp_matches_active_flight(
-            "EDDM", "LFRS", "DLH100", "EDDM", "LFPG", "DLH", "100", None, None,
+            "EDDM", "LFRS", "DLH100",
+            "EDDM", "LFPG", "DLH", "100",
+            None, None,
         ));
     }
 
@@ -42657,7 +42172,9 @@ mod v0_7_8_simbrief_direct_match_tests {
     fn ofp_tolerates_empty_simbrief_callsign() {
         // SimBrief OFP ohne <atc><callsign> → dpt+arr genuegen.
         assert!(ofp_matches_active_flight(
-            "EDDM", "LFPG", "", "EDDM", "LFPG", "DLH", "100", None, None,
+            "EDDM", "LFPG", "",
+            "EDDM", "LFPG", "DLH", "100",
+            None, None,
         ));
     }
 
@@ -42666,8 +42183,8 @@ mod v0_7_8_simbrief_direct_match_tests {
         // "DLH-100" wird normalisiert zu "DLH100", matched dann
         // SimBrief "DLH100" exakt.
         assert!(ofp_matches_active_flight(
-            "EDDM", "LFPG", "DLH100", "EDDM", "LFPG", "DLH",
-            "-100", // Pilot hat Bindestrich getippt
+            "EDDM", "LFPG", "DLH100",
+            "EDDM", "LFPG", "DLH", "-100",  // Pilot hat Bindestrich getippt
             None, None,
         ));
     }
@@ -42676,7 +42193,9 @@ mod v0_7_8_simbrief_direct_match_tests {
     fn ofp_matches_with_whitespace_in_simbrief() {
         // SimBrief liefert "DLH 100" mit Leerzeichen — normalisiert auf "DLH100"
         assert!(ofp_matches_active_flight(
-            "EDDM", "LFPG", "DLH 100", "EDDM", "LFPG", "DLH", "100", None, None,
+            "EDDM", "LFPG", "DLH 100",
+            "EDDM", "LFPG", "DLH", "100",
+            None, None,
         ));
     }
 
@@ -42689,15 +42208,10 @@ mod v0_7_8_simbrief_direct_match_tests {
     #[test]
     fn ofp_matches_pilot_callsign_with_airline_prefix() {
         assert!(ofp_matches_active_flight(
-            "EDDF",
-            "GCTS",
-            "CFG4TK",
-            "EDDF",
-            "GCTS",
-            "CFG",
-            "1504",
-            None,        // bid_callsign leer
-            Some("4TK"), // pilot_callsign aus Profile
+            "EDDF", "GCTS", "CFG4TK",
+            "EDDF", "GCTS", "CFG", "1504",
+            None,                  // bid_callsign leer
+            Some("4TK"),           // pilot_callsign aus Profile
         ));
     }
 
@@ -42706,13 +42220,8 @@ mod v0_7_8_simbrief_direct_match_tests {
     #[test]
     fn ofp_matches_pilot_callsign_number_only() {
         assert!(ofp_matches_active_flight(
-            "EDDF",
-            "GCTS",
-            "4TK",
-            "EDDF",
-            "GCTS",
-            "CFG",
-            "1504",
+            "EDDF", "GCTS", "4TK",
+            "EDDF", "GCTS", "CFG", "1504",
             None,
             Some("4TK"),
         ));
@@ -42724,15 +42233,10 @@ mod v0_7_8_simbrief_direct_match_tests {
     #[test]
     fn ofp_matches_bid_callsign_directly() {
         assert!(ofp_matches_active_flight(
-            "EDDF",
-            "GCTS",
-            "CFG4TK",
-            "EDDF",
-            "GCTS",
-            "CFG",
-            "1504",
-            Some("CFG4TK"), // bid.flight.callsign befuellt
-            None,           // pilot_callsign leer
+            "EDDF", "GCTS", "CFG4TK",
+            "EDDF", "GCTS", "CFG", "1504",
+            Some("CFG4TK"),        // bid.flight.callsign befuellt
+            None,                  // pilot_callsign leer
         ));
     }
 
@@ -42744,13 +42248,8 @@ mod v0_7_8_simbrief_direct_match_tests {
         // gehoert zu CFG2000 (anderer Flug, gleiche Airline, KEIN
         // 4TK-Callsign) → MISMATCH.
         assert!(!ofp_matches_active_flight(
-            "EDDF",
-            "GCTS",
-            "CFG2000",
-            "EDDF",
-            "GCTS",
-            "CFG",
-            "1504",
+            "EDDF", "GCTS", "CFG2000",
+            "EDDF", "GCTS", "CFG", "1504",
             None,
             Some("4TK"),
         ));
@@ -42763,13 +42262,8 @@ mod v0_7_8_simbrief_direct_match_tests {
         // MISMATCH weil airline-prefix in den Kandidaten "CFG4TK"/"4TK"
         // ist, NICHT "DLH4TK".
         assert!(!ofp_matches_active_flight(
-            "EDDF",
-            "GCTS",
-            "DLH4TK",
-            "EDDF",
-            "GCTS",
-            "CFG",
-            "1504",
+            "EDDF", "GCTS", "DLH4TK",
+            "EDDF", "GCTS", "CFG", "1504",
             None,
             Some("4TK"),
         ));
@@ -42778,7 +42272,12 @@ mod v0_7_8_simbrief_direct_match_tests {
     /// v1.5: build_candidate_callsigns-Test direkt.
     #[test]
     fn build_candidate_callsigns_full_set() {
-        let candidates = build_candidate_callsigns("CFG", "1504", Some("CFG4TK"), Some("4TK"));
+        let candidates = build_candidate_callsigns(
+            "CFG",
+            "1504",
+            Some("CFG4TK"),
+            Some("4TK"),
+        );
         // Sollte enthalten: CFG1504, 1504, CFG4TK (Kand 3+4 dedupe), 4TK
         assert!(candidates.contains(&"CFG1504".to_string()));
         assert!(candidates.contains(&"1504".to_string()));
@@ -43083,7 +42582,7 @@ mod sim_pause_tests {
         assert!(is_resume_position_suspect(
             FlightPhase::Cruise,
             Some((52.0, 10.0)),
-            true, // on_ground
+            true,  // on_ground
             52.0,
             10.0,
         ));
@@ -43269,70 +42768,20 @@ mod sim_pause_tests {
     /// sie wurde nachgetragen, wenn jemand ein Muster vermisste, nie
     /// abgeglichen mit dem, was wirklich fliegt.
     const GEFLOGENE_FLOTTE: &[(&str, u32)] = &[
-        ("A320", 136),
-        ("A321", 71),
-        ("B738", 59),
-        ("A21N", 54),
-        ("A20N", 52),
-        ("PHENOM 300E", 51),
-        ("A319", 32),
-        ("E55P", 23),
-        ("HA420", 20),
-        ("BE58", 20),
-        ("B77L", 18),
-        ("DH8D", 18),
-        ("DA40", 17),
-        ("C172", 17),
-        ("BE36", 15),
-        ("A350-900", 14),
-        ("AC11", 12),
-        ("CL60", 12),
-        ("A346", 10),
-        ("C208", 9),
-        ("C182Q", 8),
-        ("AEST", 7),
-        ("FALCON 50", 6),
-        ("PA24", 5),
-        ("C680+", 5),
-        ("B77W", 5),
-        ("C750", 4),
-        ("A300", 4),
-        ("B752", 4),
-        ("BE24", 4),
-        ("A330", 3),
-        ("A380", 3),
-        ("A400M", 3),
-        ("B763", 3),
-        ("PA34", 3),
-        ("A339", 3),
-        ("A359", 3),
-        ("MD11F", 2),
-        ("A350-900 ULR", 2),
-        ("B789", 2),
-        ("A340-300", 2),
-        ("A350-1000", 2),
-        ("F28", 2),
-        ("FA50", 2),
-        ("B736", 1),
-        ("414AW", 1),
-        ("GA-8", 1),
-        ("B772", 1),
-        ("C185", 1),
-        ("A343", 1),
-        ("E170", 1),
-        ("E190F", 1),
-        ("MU2", 1),
-        ("MD88", 1),
-        ("RJ85", 1),
-        ("TYPHOON", 1),
-        ("B762", 1),
-        ("E195", 1),
-        ("B748", 1),
-        ("B742", 1),
-        ("C152", 1),
-        ("MD11", 1),
-        ("A109", 1),
-        ("P28R", 1),
+        ("A320", 136), ("A321", 71), ("B738", 59), ("A21N", 54), ("A20N", 52),
+        ("PHENOM 300E", 51), ("A319", 32), ("E55P", 23), ("HA420", 20),
+        ("BE58", 20), ("B77L", 18), ("DH8D", 18), ("DA40", 17), ("C172", 17),
+        ("BE36", 15), ("A350-900", 14), ("AC11", 12), ("CL60", 12), ("A346", 10),
+        ("C208", 9), ("C182Q", 8), ("AEST", 7), ("FALCON 50", 6), ("PA24", 5),
+        ("C680+", 5), ("B77W", 5), ("C750", 4), ("A300", 4), ("B752", 4),
+        ("BE24", 4), ("A330", 3), ("A380", 3), ("A400M", 3), ("B763", 3),
+        ("PA34", 3), ("A339", 3), ("A359", 3), ("MD11F", 2),
+        ("A350-900 ULR", 2), ("B789", 2), ("A340-300", 2), ("A350-1000", 2),
+        ("F28", 2), ("FA50", 2), ("B736", 1), ("414AW", 1), ("GA-8", 1),
+        ("B772", 1), ("C185", 1), ("A343", 1), ("E170", 1), ("E190F", 1),
+        ("MU2", 1), ("MD88", 1), ("RJ85", 1), ("TYPHOON", 1), ("B762", 1),
+        ("E195", 1), ("B748", 1), ("B742", 1), ("C152", 1), ("MD11", 1),
+        ("A109", 1), ("P28R", 1),
     ];
 
     /// Die gebuchte Flotte: `phpvmsaircraft.icao` ueber alle 3794 PIREPs,
@@ -43340,90 +42789,23 @@ mod sim_pause_tests {
     /// die Bewertung beide Wege kennt — der Simulator meldet ein Muster, die
     /// Buchung ein anderes, und beide landen in derselben Tabelle.
     const GEBUCHTE_FLOTTE: &[(&str, u32)] = &[
-        ("A320", 929),
-        ("A321", 397),
-        ("B738", 270),
-        ("A319", 265),
-        ("A20N", 202),
-        ("A359", 129),
-        ("A21N", 126),
-        ("B77L", 117),
-        ("A339", 109),
-        ("E55P", 106),
-        ("MD11", 81),
-        ("A346", 77),
-        ("CL60", 53),
-        ("B772", 53),
-        ("A388", 52),
-        ("A333", 46),
-        ("DH8D", 45),
-        ("B763", 40),
-        ("B77W", 35),
-        ("B38M", 35),
-        ("BCS3", 35),
-        ("A35K", 31),
-        ("A343", 30),
-        ("BE58", 29),
-        ("C750", 26),
-        ("B742", 25),
-        ("BE36", 24),
-        ("B752", 24),
-        ("C208", 24),
-        ("DA40", 23),
-        ("HDJT", 20),
-        ("P28R", 19),
-        ("B789", 18),
-        ("AEST", 18),
-        ("C172", 17),
-        ("B748", 15),
-        ("A332", 15),
-        ("E190", 14),
-        ("B737", 14),
-        ("B744", 14),
-        ("B736", 13),
-        ("C680", 13),
-        ("AC11", 12),
-        ("A139", 11),
-        ("FA50", 10),
-        ("SF50", 9),
-        ("C182", 8),
-        ("PA24", 7),
-        ("A400", 7),
-        ("A109", 7),
-        ("B350", 6),
-        ("GA8", 6),
-        ("A306", 6),
-        ("C152", 6),
-        ("P180", 5),
-        ("L101", 5),
-        ("PA34", 4),
-        ("BE24", 4),
-        ("E195", 4),
-        ("C525", 3),
-        ("MD88", 3),
-        ("B76F", 3),
-        ("RJ85", 3),
-        ("TBM9", 3),
-        ("AT76", 3),
-        ("B762", 3),
-        ("B78X", 2),
-        ("B463", 2),
-        ("CONC", 2),
-        ("H145", 2),
-        ("B753", 2),
-        ("MU2", 2),
-        ("F28", 2),
-        ("C25C", 2),
-        ("C185", 2),
-        ("C414", 2),
-        ("E135", 1),
-        ("GLF5", 1),
-        ("B739", 1),
-        ("BE35", 1),
-        ("DA42", 1),
-        ("EUFI", 1),
-        ("GLF6", 1),
-        ("E170", 1),
+        ("A320", 929), ("A321", 397), ("B738", 270), ("A319", 265), ("A20N", 202),
+        ("A359", 129), ("A21N", 126), ("B77L", 117), ("A339", 109), ("E55P", 106),
+        ("MD11", 81), ("A346", 77), ("CL60", 53), ("B772", 53), ("A388", 52),
+        ("A333", 46), ("DH8D", 45), ("B763", 40), ("B77W", 35), ("B38M", 35),
+        ("BCS3", 35), ("A35K", 31), ("A343", 30), ("BE58", 29), ("C750", 26),
+        ("B742", 25), ("BE36", 24), ("B752", 24), ("C208", 24), ("DA40", 23),
+        ("HDJT", 20), ("P28R", 19), ("B789", 18), ("AEST", 18), ("C172", 17),
+        ("B748", 15), ("A332", 15), ("E190", 14), ("B737", 14), ("B744", 14),
+        ("B736", 13), ("C680", 13), ("AC11", 12), ("A139", 11), ("FA50", 10),
+        ("SF50", 9), ("C182", 8), ("PA24", 7), ("A400", 7), ("A109", 7),
+        ("B350", 6), ("GA8", 6), ("A306", 6), ("C152", 6), ("P180", 5),
+        ("L101", 5), ("PA34", 4), ("BE24", 4), ("E195", 4), ("C525", 3),
+        ("MD88", 3), ("B76F", 3), ("RJ85", 3), ("TBM9", 3), ("AT76", 3),
+        ("B762", 3), ("B78X", 2), ("B463", 2), ("CONC", 2), ("H145", 2),
+        ("B753", 2), ("MU2", 2), ("F28", 2), ("C25C", 2), ("C185", 2),
+        ("C414", 2), ("E135", 1), ("GLF5", 1), ("B739", 1), ("BE35", 1),
+        ("DA42", 1), ("EUFI", 1), ("GLF6", 1), ("E170", 1),
     ];
 
     #[test]
@@ -43454,9 +42836,7 @@ mod sim_pause_tests {
             let l = aircraft_limits_for(muster);
             println!(
                 "DUMP\t{muster}\t{}\t{}",
-                l.typical_vref_kt
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "-".into()),
+                l.typical_vref_kt.map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
                 l.is_fallback
             );
         }
@@ -43466,10 +42846,7 @@ mod sim_pause_tests {
     fn muster_kandidaten_uebersetzen_die_sim_schreibweisen() {
         // Airbus-Langform und Familie ohne Variante.
         assert_eq!(aircraft_limits_for("A350-900").typical_vref_kt, Some(140.0));
-        assert_eq!(
-            aircraft_limits_for("A350-1000").typical_vref_kt,
-            Some(140.0)
-        );
+        assert_eq!(aircraft_limits_for("A350-1000").typical_vref_kt, Some(140.0));
         assert_eq!(aircraft_limits_for("A340-300").typical_vref_kt, Some(138.0));
         assert!(!aircraft_limits_for("A380").is_fallback);
         // Frachter-Suffix, Bindestrich, Varianten-Anhang, fuehrende Zahl.
@@ -43479,10 +42856,7 @@ mod sim_pause_tests {
         assert!(!aircraft_limits_for("C182Q").is_fallback);
         assert!(!aircraft_limits_for("414AW").is_fallback);
         // Marketingname.
-        assert_eq!(
-            aircraft_limits_for("PHENOM 300E").typical_vref_kt,
-            Some(110.0)
-        );
+        assert_eq!(aircraft_limits_for("PHENOM 300E").typical_vref_kt, Some(110.0));
 
         // Und die Gegenprobe: ein echter Designator darf NICHT durch die
         // Varianten-Regel zerlegt werden, und Unbekanntes bleibt unbekannt.
@@ -43572,11 +42946,7 @@ mod sim_pause_tests {
             flaps_max_im_flug: Some(0.667),
         };
         let out = compute_approach_stability_v2(&buf, None, None, None, None, konfig);
-        assert_eq!(
-            out.stable_config,
-            Some(true),
-            "fremdes Raster → Landekonfiguration"
-        );
+        assert_eq!(out.stable_config, Some(true), "fremdes Raster → Landekonfiguration");
     }
 
     #[test]
@@ -43599,11 +42969,7 @@ mod sim_pause_tests {
             flaps_max_im_flug: Some(0.5),
         };
         let out = compute_approach_stability_v2(&buf, None, None, None, None, konfig);
-        assert_eq!(
-            out.stable_config,
-            Some(false),
-            "Vref+59 mit halben Klappen → durchgefallen"
-        );
+        assert_eq!(out.stable_config, Some(false), "Vref+59 mit halben Klappen → durchgefallen");
     }
 
     #[test]
@@ -43626,11 +42992,7 @@ mod sim_pause_tests {
             flaps_max_im_flug: Some(0.5),
         };
         let out = compute_approach_stability_v2(&buf, None, None, None, None, konfig);
-        assert_eq!(
-            out.stable_config,
-            Some(false),
-            "kein Vref → Schwelle bleibt absolut"
-        );
+        assert_eq!(out.stable_config, Some(false), "kein Vref → Schwelle bleibt absolut");
     }
 
     #[test]
@@ -43680,21 +43042,14 @@ mod sim_pause_tests {
             None,
             konfig_kontext(&nach_resume, &aircraft_limits_for("A320")),
         );
-        assert_eq!(
-            out.stable_config,
-            Some(true),
-            "volle Klappen bleiben bestanden"
-        );
+        assert_eq!(out.stable_config, Some(true), "volle Klappen bleiben bestanden");
     }
 
     #[test]
     fn klappen_spanne_ignoriert_kaputte_messwerte() {
         let mut stats = FlightStats::default();
         merke_klappen_spanne(&mut stats, f32::NAN);
-        assert_eq!(
-            stats.flaps_max_gesehen, None,
-            "NaN darf die Spanne nicht oeffnen"
-        );
+        assert_eq!(stats.flaps_max_gesehen, None, "NaN darf die Spanne nicht oeffnen");
         merke_klappen_spanne(&mut stats, 0.0);
         merke_klappen_spanne(&mut stats, 1.5);
         merke_klappen_spanne(&mut stats, -0.3);
@@ -43817,28 +43172,17 @@ mod sim_pause_tests {
         .collect();
 
         // Ohne Gleitwinkel (3°-Fallback): fälschlich „excessive".
-        let out_3deg =
-            compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
-        assert_eq!(
-            out_3deg.excessive_sink,
-            Some(true),
-            "gegen 3° gilt der Steilanflug als excessive"
-        );
+        let out_3deg = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
+        assert_eq!(out_3deg.excessive_sink, Some(true), "gegen 3° gilt der Steilanflug als excessive");
 
         // Mit echtem 5,5°-Gleitwinkel: NICHT excessive + kleine V/S-Abweichung.
-        let out_55 =
-            compute_approach_stability_v2(&buf, None, None, Some(5.5), None, Default::default());
-        assert_eq!(
-            out_55.excessive_sink,
-            Some(false),
-            "5,5°-Steilanflug ist nicht excessive"
-        );
+        let out_55 = compute_approach_stability_v2(&buf, None, None, Some(5.5), None, Default::default());
+        assert_eq!(out_55.excessive_sink, Some(false), "5,5°-Steilanflug ist nicht excessive");
         let dev = out_55.vs_deviation_fpm.expect("deviation vorhanden");
         assert!(dev < 200.0, "Abweichung vs 5,5°-Profil klein, war {dev}");
 
         // AUDIT-Invariante 1: None == exakt 3,0° (bit-identisch, keine Regression).
-        let out_explicit_3 =
-            compute_approach_stability_v2(&buf, None, None, Some(3.0), None, Default::default());
+        let out_explicit_3 = compute_approach_stability_v2(&buf, None, None, Some(3.0), None, Default::default());
         assert_eq!(
             out_3deg.excessive_sink, out_explicit_3.excessive_sink,
             "None und 3,0° müssen identisch sein"
@@ -43847,8 +43191,7 @@ mod sim_pause_tests {
 
         // AUDIT-Invariante 2: unplausibler Gleitwinkel (außerhalb 2–7,5°) →
         // Fallback 3° (= None-Verhalten), kein Müll-Scaling.
-        let out_garbage =
-            compute_approach_stability_v2(&buf, None, None, Some(15.0), None, Default::default());
+        let out_garbage = compute_approach_stability_v2(&buf, None, None, Some(15.0), None, Default::default());
         assert_eq!(
             out_3deg.excessive_sink, out_garbage.excessive_sink,
             "Müll-Gleitwinkel → 3°-Fallback"
@@ -43880,8 +43223,7 @@ mod sim_pause_tests {
         );
 
         // 5,5°-Gleitwinkel: Schwelle ~−1834 fpm → die −1120…−1150 sind sauber.
-        let out_55 =
-            compute_approach_stability_v2(&buf, None, None, Some(5.5), None, Default::default());
+        let out_55 = compute_approach_stability_v2(&buf, None, None, Some(5.5), None, Default::default());
         assert_eq!(
             out_55.stable_at_da,
             Some(true),
@@ -43889,8 +43231,7 @@ mod sim_pause_tests {
         );
 
         // AUDIT-Invariante: bei exakt 3,0° identisch zum None-Fallback.
-        let out_3_explicit =
-            compute_approach_stability_v2(&buf, None, None, Some(3.0), None, Default::default());
+        let out_3_explicit = compute_approach_stability_v2(&buf, None, None, Some(3.0), None, Default::default());
         assert_eq!(out_3.stable_at_da, out_3_explicit.stable_at_da);
     }
 
@@ -43923,10 +43264,7 @@ mod sim_pause_tests {
         assert!(!is_touchdown_capturable_phase(FlightPhase::TaxiIn, true));
         assert!(!is_touchdown_capturable_phase(FlightPhase::Boarding, true));
         assert!(!is_touchdown_capturable_phase(FlightPhase::Arrived, true));
-        assert!(!is_touchdown_capturable_phase(
-            FlightPhase::TakeoffRoll,
-            true
-        ));
+        assert!(!is_touchdown_capturable_phase(FlightPhase::TakeoffRoll, true));
     }
 
     #[test]
@@ -43935,59 +43273,19 @@ mod sim_pause_tests {
         // Seaplane on water (on_ground=false, no gear force): airborne above the
         // water-contact AGL, on the surface below it → the edge that captures a
         // water touchdown the wheeled signal would miss.
-        assert!(sampler_in_air_now(
-            AircraftCategory::Seaplane,
-            false,
-            20.0,
-            None
-        ));
-        assert!(!sampler_in_air_now(
-            AircraftCategory::Seaplane,
-            false,
-            1.0,
-            None
-        ));
-        assert!(sampler_in_air_now(
-            AircraftCategory::Amphibian,
-            false,
-            10.0,
-            None
-        ));
+        assert!(sampler_in_air_now(AircraftCategory::Seaplane, false, 20.0, None));
+        assert!(!sampler_in_air_now(AircraftCategory::Seaplane, false, 1.0, None));
+        assert!(sampler_in_air_now(AircraftCategory::Amphibian, false, 10.0, None));
         // A seaplane ON A RUNWAY (on_ground=true) uses the wheeled signal, not
         // the water surface → on the ground = not in air.
-        assert!(!sampler_in_air_now(
-            AircraftCategory::Seaplane,
-            true,
-            1.0,
-            None
-        ));
+        assert!(!sampler_in_air_now(AircraftCategory::Seaplane, true, 1.0, None));
         // Fixed-wing / helicopter are NOT water-capable → byte-identical to the
         // wheeled signal: low AGL over water does NOT make them "on the surface".
-        assert!(sampler_in_air_now(
-            AircraftCategory::FixedWing,
-            false,
-            1.0,
-            None
-        ));
-        assert!(sampler_in_air_now(
-            AircraftCategory::Helicopter,
-            false,
-            1.0,
-            None
-        ));
+        assert!(sampler_in_air_now(AircraftCategory::FixedWing, false, 1.0, None));
+        assert!(sampler_in_air_now(AircraftCategory::Helicopter, false, 1.0, None));
         // Wheeled gear-force branch unchanged: spike → on ground; unloaded → air.
-        assert!(!sampler_in_air_now(
-            AircraftCategory::FixedWing,
-            false,
-            50.0,
-            Some(5000.0)
-        ));
-        assert!(sampler_in_air_now(
-            AircraftCategory::FixedWing,
-            false,
-            50.0,
-            Some(0.5)
-        ));
+        assert!(!sampler_in_air_now(AircraftCategory::FixedWing, false, 50.0, Some(5000.0)));
+        assert!(sampler_in_air_now(AircraftCategory::FixedWing, false, 50.0, Some(0.5)));
     }
 
     #[test]
@@ -44079,20 +43377,8 @@ mod sim_pause_tests {
         // BODEN-/Departure-Phasen → AUSGESCHLOSSEN. Das IST der Phantom-Schutz:
         // ein Gear-Force-Wackler beim Taxi/am Boden darf NIE als Touchdown
         // durchgehen. Diese Invariante sichert v0.5.45 ab.
-        for p in [
-            Boarding,
-            Pushback,
-            TaxiOut,
-            TakeoffRoll,
-            Takeoff,
-            TaxiIn,
-            BlocksOn,
-            Arrived,
-        ] {
-            assert!(
-                !is_flight_phase(p),
-                "{p:?} darf KEINE Flug-Phase sein (Phantom-Schutz)"
-            );
+        for p in [Boarding, Pushback, TaxiOut, TakeoffRoll, Takeoff, TaxiIn, BlocksOn, Arrived] {
+            assert!(!is_flight_phase(p), "{p:?} darf KEINE Flug-Phase sein (Phantom-Schutz)");
         }
     }
 
@@ -44247,10 +43533,7 @@ mod divert_marker_tests {
         // darf der Recorder daraus keinen Divert machen.
         let h = hint(Some("LOWW"));
         let m = divert_payload_markers("EDDF", "EDDF", Some(&h));
-        assert_eq!(
-            m.divert, None,
-            "a suspicion must never be reported as a filed divert"
-        );
+        assert_eq!(m.divert, None, "a suspicion must never be reported as a filed divert");
         assert_eq!(m.diverted_to, None);
         // Der Verdacht geht als Diagnose mit — er verschwindet nicht.
         assert_eq!(m.divert_suspected, Some(true));
@@ -44326,7 +43609,8 @@ mod merge_touchdown_profile_tests {
     #[test]
     fn extends_to_ten_seconds_without_overlap_duplicates() {
         // Snapshot: -4000..+500 in 500-ms-Schritten (Streamer-Tick-Slice).
-        let snapshot: Vec<TouchdownProfilePoint> = (-8..=1).map(|i| pp(i * 500, -200.0)).collect();
+        let snapshot: Vec<TouchdownProfilePoint> =
+            (-8..=1).map(|i| pp(i * 500, -200.0)).collect();
         assert_eq!(snapshot.last().unwrap().t_ms, 500);
 
         // Post-Buffer: -5000..+10000 in 200-ms-Schritten (50-Hz-Sampler, hier
@@ -44342,10 +43626,7 @@ mod merge_touchdown_profile_tests {
 
         // Reicht jetzt bis ~10 s statt nur +500 ms.
         let max_t = merged.iter().map(|p| p.t_ms).max().unwrap();
-        assert!(
-            max_t >= 9_800,
-            "profile should extend to ~10 s, got {max_t} ms"
-        );
+        assert!(max_t >= 9_800, "profile should extend to ~10 s, got {max_t} ms");
 
         // Nichts ueber dem 10-s-Fenster.
         assert!(merged.iter().all(|p| p.t_ms <= POST_TD_PROFILE_MS));
@@ -44355,11 +43636,7 @@ mod merge_touchdown_profile_tests {
         let len_before = ts.len();
         ts.sort_unstable();
         ts.dedup();
-        assert_eq!(
-            ts.len(),
-            len_before,
-            "no duplicate t_ms allowed in the overlap"
-        );
+        assert_eq!(ts.len(), len_before, "no duplicate t_ms allowed in the overlap");
 
         // Monoton steigend (Pre-TD-snapshot, dann angehaengte Post-TD-Samples).
         assert!(merged.windows(2).all(|w| w[0].t_ms < w[1].t_ms));
@@ -44368,12 +43645,16 @@ mod merge_touchdown_profile_tests {
     /// Ohne post_buffer bleibt es beim snapshot — kein Absturz, keine Aenderung.
     #[test]
     fn empty_post_buffer_keeps_snapshot_only() {
-        let snapshot: Vec<TouchdownProfilePoint> = (-8..=0).map(|i| pp(i * 500, -200.0)).collect();
-        let merged = merge_touchdown_profile(&snapshot, &VecDeque::new(), td(), POST_TD_PROFILE_MS);
+        let snapshot: Vec<TouchdownProfilePoint> =
+            (-8..=0).map(|i| pp(i * 500, -200.0)).collect();
+        let merged =
+            merge_touchdown_profile(&snapshot, &VecDeque::new(), td(), POST_TD_PROFILE_MS);
         assert_eq!(merged.len(), snapshot.len());
         assert_eq!(merged.last().unwrap().t_ms, 0);
     }
 }
+
+
 
 #[cfg(test)]
 mod touchdown_metadata_stamp_tests {
@@ -44444,15 +43725,13 @@ mod touchdown_metadata_stamp_tests {
     /// rollout. The FIRST on-ground sample is the touchdown moment.
     fn stats_with_buffer() -> FlightStats {
         let mut stats = FlightStats::default();
-        stats.snapshot_buffer.push_back(buf_sample(
-            td_at() - chrono::Duration::milliseconds(500),
-            false,
-        ));
+        stats
+            .snapshot_buffer
+            .push_back(buf_sample(td_at() - chrono::Duration::milliseconds(500), false));
         stats.snapshot_buffer.push_back(buf_sample(td_at(), true));
-        stats.snapshot_buffer.push_back(buf_sample(
-            td_at() + chrono::Duration::milliseconds(500),
-            true,
-        ));
+        stats
+            .snapshot_buffer
+            .push_back(buf_sample(td_at() + chrono::Duration::milliseconds(500), true));
         stats
     }
 
@@ -44581,7 +43860,7 @@ mod touchdown_metadata_stamp_tests {
         ];
         stats.bahn_raeum_laengs_m = Some(1700.0);
         stats.bahn_raeum_kurs_diff = Some(-35.0); // Linkskurve
-                                                  // Die Live-Bestimmung ist leer — genau der Normalfall.
+        // Die Live-Bestimmung ist leer — genau der Normalfall.
         stats.bahn_raeum_seite = None;
 
         let f = bahn_felder(&stats, Some("A320"), None);
@@ -44678,9 +43957,9 @@ mod touchdown_metadata_stamp_tests {
         }
 
         let stats = flight.stats.lock().expect("stats");
-        let raeum = stats
-            .bahn_raeum_laengs_m
-            .expect("kein Raeumpunkt — der Kurswechsel nach dem 60-kt-Tick wurde nie geprueft");
+        let raeum = stats.bahn_raeum_laengs_m.expect(
+            "kein Raeumpunkt — der Kurswechsel nach dem 60-kt-Tick wurde nie geprueft",
+        );
         assert!(
             (1600.0..1900.0).contains(&raeum),
             "Raeumpunkt bei {raeum} m — erwartet um 1750 m"
@@ -45151,10 +44430,7 @@ mod touchdown_metadata_stamp_tests {
     /// Linear lat/lon interpolation — plenty accurate over one runway
     /// length for these tests.
     fn point_along(thr: (f64, f64), end: (f64, f64), frac: f64) -> (f64, f64) {
-        (
-            thr.0 + (end.0 - thr.0) * frac,
-            thr.1 + (end.1 - thr.1) * frac,
-        )
+        (thr.0 + (end.0 - thr.0) * frac, thr.1 + (end.1 - thr.1) * frac)
     }
 
     fn tch_sample(lat: f64, lon: f64, agl_ft: f32) -> TelemetrySample {
@@ -45166,11 +44442,7 @@ mod touchdown_metadata_stamp_tests {
     }
 
     fn eddp_26r_runway() -> aeroacars_mqtt::navdata::NavRunway {
-        eddp_nav_fixture()
-            .runways
-            .into_iter()
-            .next()
-            .expect("26R fixture")
+        eddp_nav_fixture().runways.into_iter().next().expect("26R fixture")
     }
 
     /// v0.19.x FIX — the exact bug: the buffer's chronologically FIRST
@@ -45213,10 +44485,7 @@ mod touchdown_metadata_stamp_tests {
     #[test]
     fn tch_actual_from_buffer_none_for_empty_buffer() {
         let rw = eddp_26r_runway();
-        assert_eq!(
-            tch_actual_from_buffer(&rw, &std::collections::VecDeque::new()),
-            None
-        );
+        assert_eq!(tch_actual_from_buffer(&rw, &std::collections::VecDeque::new()), None);
     }
 
     #[test]
@@ -45293,11 +44562,7 @@ mod touchdown_metadata_stamp_tests {
         assert_eq!(stats_new.runway_nav_cycle.as_deref(), Some("2604"));
         let old_geom = nav_opt
             .as_ref()
-            .and_then(|a| {
-                a.runways
-                    .iter()
-                    .find(|r| r.designator == old_match.runway_ident)
-            })
+            .and_then(|a| a.runways.iter().find(|r| r.designator == old_match.runway_ident))
             .cloned();
         assert_eq!(stats_new.runway_nav_geometry, old_geom);
         // The fallback flag must be false on an on-plan Navigraph match.
@@ -45420,10 +44685,7 @@ mod touchdown_metadata_stamp_tests {
             Some(runway::RunwaySource::Navigraph)
         ));
         assert_eq!(
-            finalized
-                .runway_match
-                .as_ref()
-                .map(|m| m.runway_ident.as_str()),
+            finalized.runway_match.as_ref().map(|m| m.runway_ident.as_str()),
             Some("26R")
         );
         assert!(finalized.runway_nav_geometry.is_some());
@@ -45451,10 +44713,7 @@ mod touchdown_metadata_stamp_tests {
             Some(runway::RunwaySource::OurAirportsFallback)
         ));
         assert_eq!(
-            finalized
-                .runway_match
-                .as_ref()
-                .map(|m| m.airport_ident.as_str()),
+            finalized.runway_match.as_ref().map(|m| m.airport_ident.as_str()),
             Some("EDDP")
         );
     }
@@ -45609,9 +44868,7 @@ mod touchdown_metadata_stamp_tests {
     /// Runway-match fixture with an explicit RAW (pavement-start-relative)
     /// touchdown distance, for exercising `assess_touchdown`'s displaced-
     /// threshold correction directly.
-    fn eddp_26r_match_with_raw_td(
-        touchdown_distance_from_threshold_ft: f64,
-    ) -> runway::RunwayMatch {
+    fn eddp_26r_match_with_raw_td(touchdown_distance_from_threshold_ft: f64) -> runway::RunwayMatch {
         eddp_26r_match_with_raw_td_and_displacement(touchdown_distance_from_threshold_ft, 0)
     }
 
@@ -45641,6 +44898,7 @@ mod touchdown_metadata_stamp_tests {
             displaced_threshold_ft,
         }
     }
+
 
     /// **Die 25-kt-Grenze, diesmal im Erzeuger geprüft.** Runde 4 fand,
     /// dass die Senkung im Score-Kern wirkungslos war, weil dieselbe
@@ -45835,10 +45093,7 @@ mod touchdown_metadata_stamp_tests {
         // Der Pilot muss seinen GEMESSENEN Winkel wiederfinden, nicht den
         // heruntergerechneten — sonst widerspricht die Kachel der Karte.
         assert!(
-            mit_wind
-                .value
-                .as_deref()
-                .is_some_and(|v| v.contains("15.7°")),
+            mit_wind.value.as_deref().is_some_and(|v| v.contains("15.7°")),
             "die Anzeige muss den gemessenen Winkel auf die Nachkommastelle tragen, war {:?}",
             mit_wind.value
         );
@@ -45897,10 +45152,7 @@ mod touchdown_metadata_stamp_tests {
         let raw_ft = 4000.0 + 300.0 * FT_PER_M;
         let mut stats = FlightStats::default();
         stats.runway_match = Some(eddp_26r_match_with_raw_td_and_displacement(raw_ft, 4000));
-        stats.runway_nav_geometry = eddp_nav_fixture_displaced()
-            .runways
-            .into_iter()
-            .find(|r| r.designator == "26R");
+        stats.runway_nav_geometry = eddp_nav_fixture_displaced().runways.into_iter().find(|r| r.designator == "26R");
 
         let assessed = assess_touchdown(&stats);
 
@@ -45926,10 +45178,7 @@ mod touchdown_metadata_stamp_tests {
             aim.aim_point_m
         );
         let tdz = assessed.tdz.expect("runway long enough for TDZ");
-        assert!(
-            tdz.in_tdz,
-            "300 m past the landing threshold is inside the TDZ"
-        );
+        assert!(tdz.in_tdz, "300 m past the landing threshold is inside the TDZ");
         assert!(
             (tdz.tdz_length_m - 793.0).abs() < 2.0,
             "Aufsetzzone = min(900, 2381/3) = 794 m, nicht min(900, 3600/3) = 900 m: {}",
@@ -46049,10 +45298,7 @@ mod touchdown_metadata_stamp_tests {
         let raw_ft = 600.0 * FT_PER_M;
         let mut stats = FlightStats::default();
         stats.runway_match = Some(eddp_26r_match_with_raw_td_and_displacement(raw_ft, 4000));
-        stats.runway_nav_geometry = eddp_nav_fixture_displaced()
-            .runways
-            .into_iter()
-            .find(|r| r.designator == "26R");
+        stats.runway_nav_geometry = eddp_nav_fixture_displaced().runways.into_iter().find(|r| r.designator == "26R");
 
         let assessed = assess_touchdown(&stats);
 
@@ -46081,16 +45327,13 @@ mod touchdown_metadata_stamp_tests {
         let mut stats = FlightStats::default();
         stats.runway_match = Some(eddp_26r_match_with_raw_td_and_displacement(raw_ft, 4000));
         stats.runway_source = Some(runway::RunwaySource::OurAirportsFallback);
-        assert!(
-            stats.runway_nav_geometry.is_none(),
-            "this test's whole point is zero nav geometry"
-        );
+        assert!(stats.runway_nav_geometry.is_none(), "this test's whole point is zero nav geometry");
 
         let assessed = assess_touchdown(&stats);
 
-        let dds = assessed.dds.expect(
-            "DDS must be classifiable from RunwayMatch alone, no Navigraph geometry needed",
-        );
+        let dds = assessed
+            .dds
+            .expect("DDS must be classifiable from RunwayMatch alone, no Navigraph geometry needed");
         assert!(
             dds.in_pre_threshold_zone,
             "OurAirports-only match with a real displaced threshold must still detect the violation"
@@ -46109,9 +45352,7 @@ mod touchdown_metadata_stamp_tests {
 
         let assessed = assess_touchdown(&stats);
 
-        let dds = assessed
-            .dds
-            .expect("DDS classifiable without Navigraph geometry");
+        let dds = assessed.dds.expect("DDS classifiable without Navigraph geometry");
         assert!(!dds.in_pre_threshold_zone);
     }
 
@@ -46180,22 +45421,14 @@ mod touchdown_metadata_stamp_tests {
     fn assess_touchdown_unaffected_when_no_displaced_threshold() {
         let mut stats = FlightStats::default();
         stats.runway_match = Some(eddp_26r_match_with_raw_td(980.0));
-        stats.runway_nav_geometry = eddp_nav_fixture()
-            .runways
-            .into_iter()
-            .find(|r| r.designator == "26R");
+        stats.runway_nav_geometry = eddp_nav_fixture().runways.into_iter().find(|r| r.designator == "26R");
 
         let assessed = assess_touchdown(&stats);
 
-        let td_m = assessed
-            .td_distance_from_threshold_m
-            .expect("runway matched");
+        let td_m = assessed.td_distance_from_threshold_m.expect("runway matched");
         assert!((td_m - 980.0 / 3.280_839_895).abs() < 1e-9);
         let dds = assessed.dds.expect("nav geometry present");
-        assert!(
-            !dds.in_pre_threshold_zone,
-            "no displaced threshold → never flagged"
-        );
+        assert!(!dds.in_pre_threshold_zone, "no displaced threshold → never flagged");
     }
 
     /// Populate a divert touchdown (planned EDDF, wheels at EDDP/26R) with
@@ -46261,7 +45494,8 @@ mod touchdown_metadata_stamp_tests {
             Some(runway::RunwaySource::OurAirportsFallback)
         ));
         // The PIREP score the OLD ordering would have filed (provisional).
-        let provisional_score = compute_aggregate_master_score(&stats, Some("A320"), eff);
+        let provisional_score =
+            compute_aggregate_master_score(&stats, Some("A320"), eff);
         let provisional_field = landing_score_field(&flight, &stats, eff);
 
         // The on-demand fetch completes: EDDP navdata (with a displaced
@@ -46335,9 +45569,9 @@ mod touchdown_metadata_stamp_tests {
     #[test]
     fn divert_pirep_score_trusts_geometry_via_effective_arr_without_divert_hint() {
         let flight = flight_fixture("EDDF"); // planned EDDF
-                                             // Warm the EDDP navdata (with a displaced threshold) so the runway
-                                             // correlation lands on Navigraph — the rollout/LDA sub-score can only
-                                             // differ from the no-geometry case when the geometry is TRUSTED.
+        // Warm the EDDP navdata (with a displaced threshold) so the runway
+        // correlation lands on Navigraph — the rollout/LDA sub-score can only
+        // differ from the no-geometry case when the geometry is TRUSTED.
         flight
             .navdata
             .lock()
@@ -46364,7 +45598,8 @@ mod touchdown_metadata_stamp_tests {
         // OLD (buggy) behaviour: feeding the PLANNED arr with no divert hint →
         // the trust check sees matched=EDDP != arr=EDDF and no divert match →
         // icao_mismatch → the rollout/LDA sub-score is SKIPPED.
-        let buggy_planned_arr_score = compute_aggregate_master_score(&stats, Some("A320"), "EDDF");
+        let buggy_planned_arr_score =
+            compute_aggregate_master_score(&stats, Some("A320"), "EDDF");
         // FIXED behaviour: feeding the EFFECTIVE arrival (the divert EDDP) →
         // matched=EDDP == effective=EDDP → geometry trusted → the rollout/LDA
         // sub-score COMPUTES. This is what the native score now passes.
@@ -46385,8 +45620,8 @@ mod touchdown_metadata_stamp_tests {
         // arrival, so they must agree. (The custom field is the numeric in the
         // "G (label) — N/100" string.)
         let native_score = fixed_effective_arr_score.expect("aggregate computes");
-        let field =
-            landing_score_field(&flight, &stats, "EDDP").expect("Landing Score field present");
+        let field = landing_score_field(&flight, &stats, "EDDP")
+            .expect("Landing Score field present");
         assert!(
             field.contains(&format!("{native_score}/100")),
             "the Landing Score custom field ({field}) must carry the same numeric \
@@ -46429,14 +45664,17 @@ mod touchdown_metadata_stamp_tests {
         });
         stats.runway_source = Some(runway::RunwaySource::OurAirportsFallback);
         stats.runway_nav_cycle = Some("2604".to_string());
-        stats.runway_nav_geometry = eddp_nav_fixture_displaced().runways.first().cloned();
+        stats.runway_nav_geometry =
+            eddp_nav_fixture_displaced().runways.first().cloned();
         stats.runway_correlation_icao = Some("EDDP".to_string());
         stats.runway_fallback_at_touchdown = true;
 
         let persisted = PersistedFlightStats::snapshot_from(&stats);
         // Round-trip through JSON too, to prove (de)serialisation preserves them.
-        let json = serde_json::to_string(&persisted).expect("PersistedFlightStats must serialise");
-        let reparsed: PersistedFlightStats = serde_json::from_str(&json).expect("re-deserialise");
+        let json = serde_json::to_string(&persisted)
+            .expect("PersistedFlightStats must serialise");
+        let reparsed: PersistedFlightStats =
+            serde_json::from_str(&json).expect("re-deserialise");
 
         let mut restored = FlightStats::default();
         reparsed.apply_to(&mut restored);
@@ -46450,10 +45688,7 @@ mod touchdown_metadata_stamp_tests {
         assert_eq!(restored.runway_correlation_icao.as_deref(), Some("EDDP"));
         assert!(restored.runway_fallback_at_touchdown);
         assert_eq!(
-            restored
-                .runway_match
-                .as_ref()
-                .map(|m| m.airport_ident.as_str()),
+            restored.runway_match.as_ref().map(|m| m.airport_ident.as_str()),
             Some("EDDP")
         );
     }
@@ -46483,7 +45718,8 @@ mod touchdown_metadata_stamp_tests {
         // ── Suspend → resume: persist, then rebuild stats from scratch. ──
         let persisted = PersistedFlightStats::snapshot_from(&pre_stats);
         let json = serde_json::to_string(&persisted).expect("serialise");
-        let reparsed: PersistedFlightStats = serde_json::from_str(&json).expect("deserialise");
+        let reparsed: PersistedFlightStats =
+            serde_json::from_str(&json).expect("deserialise");
         let mut resumed_stats = FlightStats::new(); // fresh, as a real resume does
         reparsed.apply_to(&mut resumed_stats);
         // The fallback state survived the restart (this is what FIX B adds).
@@ -46539,10 +45775,7 @@ mod touchdown_metadata_stamp_tests {
             stats.runway_source,
             Some(runway::RunwaySource::OurAirportsFallback)
         ));
-        assert_eq!(
-            before, after,
-            "graceful: score unchanged when the fetch never lands"
-        );
+        assert_eq!(before, after, "graceful: score unchanged when the fetch never lands");
     }
 
     /// FIX 1 on-plan: applying the finalize write-back before the PIREP body
@@ -46577,10 +45810,7 @@ mod touchdown_metadata_stamp_tests {
         apply_finalized_runway_correlation(&flight, &mut stats); // must be a no-op
         let after = compute_aggregate_master_score(&stats, Some("A320"), "EDDP");
         let after_field = landing_score_field(&flight, &stats, "EDDP");
-        assert_eq!(
-            before, after,
-            "on-plan PIREP score must be unchanged by finalize"
-        );
+        assert_eq!(before, after, "on-plan PIREP score must be unchanged by finalize");
         assert_eq!(before_field, after_field);
         assert!(matches!(
             stats.runway_source,
@@ -46693,10 +45923,7 @@ mod touchdown_metadata_stamp_tests {
         // Level (not descending past the sink threshold).
         snap.vertical_speed_fpm = 0.0;
         let t0 = td_at();
-        assert_eq!(
-            divert_prefetch_decision(&mut stats, &snap, "EDDF", t0),
-            None
-        );
+        assert_eq!(divert_prefetch_decision(&mut stats, &snap, "EDDF", t0), None);
         assert!(stats.divert_prefetch_stable_since.is_none());
     }
 
@@ -46744,11 +45971,7 @@ mod touchdown_metadata_stamp_tests {
             "EDDF",
             t0 + chrono::Duration::seconds(DIVERT_PREFETCH_STABLE_SECS),
         );
-        assert_eq!(
-            fired.as_deref(),
-            Some("EDDP"),
-            "fires once the candidate is stable"
-        );
+        assert_eq!(fired.as_deref(), Some("EDDP"), "fires once the candidate is stable");
     }
 
     /// An unknown planned ICAO keeps the INFINITY-distance fallback: "never near
@@ -46780,8 +46003,16 @@ mod touchdown_metadata_stamp_tests {
     /// Byte-for-byte copy of the PRE-extraction FSM Landing-arm inline code
     /// (metadata + weight, v0.15.23). If the extracted helpers ever drift
     /// from this, normal flights would no longer be behaviour-identical.
-    fn old_inline_stamp(stats: &mut FlightStats, snap: &SimSnapshot, actual_td_at: DateTime<Utc>) {
-        let td_buf_sample = stats.snapshot_buffer.iter().find(|s| s.on_ground).cloned();
+    fn old_inline_stamp(
+        stats: &mut FlightStats,
+        snap: &SimSnapshot,
+        actual_td_at: DateTime<Utc>,
+    ) {
+        let td_buf_sample = stats
+            .snapshot_buffer
+            .iter()
+            .find(|s| s.on_ground)
+            .cloned();
         stats.landing_pitch_deg = Some(
             snap.touchdown_pitch_deg
                 .or_else(|| td_buf_sample.as_ref().map(|s| s.pitch_deg))
@@ -46796,7 +46027,8 @@ mod touchdown_metadata_stamp_tests {
             snap.touchdown_heading_mag_deg
                 .or_else(|| {
                     td_buf_sample.as_ref().map(|s| {
-                        let magvar = snap.heading_deg_true - snap.heading_deg_magnetic;
+                        let magvar =
+                            snap.heading_deg_true - snap.heading_deg_magnetic;
                         s.heading_true_deg - magvar
                     })
                 })
@@ -46815,8 +46047,18 @@ mod touchdown_metadata_stamp_tests {
                 .unwrap_or(snap.groundspeed_kt),
         );
         stats.landing_fuel_kg = Some(snap.fuel_total_kg);
-        stats.landing_lat = Some(td_buf_sample.as_ref().map(|s| s.lat).unwrap_or(snap.lat));
-        stats.landing_lon = Some(td_buf_sample.as_ref().map(|s| s.lon).unwrap_or(snap.lon));
+        stats.landing_lat = Some(
+            td_buf_sample
+                .as_ref()
+                .map(|s| s.lat)
+                .unwrap_or(snap.lat),
+        );
+        stats.landing_lon = Some(
+            td_buf_sample
+                .as_ref()
+                .map(|s| s.lon)
+                .unwrap_or(snap.lon),
+        );
         stats.landing_heading_true_deg = Some(
             td_buf_sample
                 .as_ref()
@@ -46839,8 +46081,13 @@ mod touchdown_metadata_stamp_tests {
                 bank_deg: s.bank_deg,
             })
             .collect();
-        stats.touchdown_sideslip_deg = match (snap.velocity_body_x_fps, snap.velocity_body_z_fps) {
-            (Some(x), Some(z)) if z.abs() > 3.0 => Some(x.atan2(z).to_degrees()),
+        stats.touchdown_sideslip_deg = match (
+            snap.velocity_body_x_fps,
+            snap.velocity_body_z_fps,
+        ) {
+            (Some(x), Some(z)) if z.abs() > 3.0 => {
+                Some(x.atan2(z).to_degrees())
+            }
             _ => None,
         };
         stats.landing_headwind_kt = snap.aircraft_wind_z_kt.map(|z| -z);
@@ -46898,52 +46145,35 @@ mod touchdown_metadata_stamp_tests {
             stamp_touchdown_metadata(&mut new_stats, &snap, td_at(), td_buf.as_ref());
             stamp_landing_weight(&mut new_stats, &snap);
 
+            assert_eq!(old_stats.landing_pitch_deg, new_stats.landing_pitch_deg, "cfg {i}");
+            assert_eq!(old_stats.landing_bank_deg, new_stats.landing_bank_deg, "cfg {i}");
+            assert_eq!(old_stats.landing_heading_deg, new_stats.landing_heading_deg, "cfg {i}");
+            assert_eq!(old_stats.landing_speed_kt, new_stats.landing_speed_kt, "cfg {i}");
             assert_eq!(
-                old_stats.landing_pitch_deg, new_stats.landing_pitch_deg,
+                old_stats.landing_groundspeed_kt,
+                new_stats.landing_groundspeed_kt,
                 "cfg {i}"
             );
-            assert_eq!(
-                old_stats.landing_bank_deg, new_stats.landing_bank_deg,
-                "cfg {i}"
-            );
-            assert_eq!(
-                old_stats.landing_heading_deg, new_stats.landing_heading_deg,
-                "cfg {i}"
-            );
-            assert_eq!(
-                old_stats.landing_speed_kt, new_stats.landing_speed_kt,
-                "cfg {i}"
-            );
-            assert_eq!(
-                old_stats.landing_groundspeed_kt, new_stats.landing_groundspeed_kt,
-                "cfg {i}"
-            );
-            assert_eq!(
-                old_stats.landing_fuel_kg, new_stats.landing_fuel_kg,
-                "cfg {i}"
-            );
+            assert_eq!(old_stats.landing_fuel_kg, new_stats.landing_fuel_kg, "cfg {i}");
             assert_eq!(old_stats.landing_lat, new_stats.landing_lat, "cfg {i}");
             assert_eq!(old_stats.landing_lon, new_stats.landing_lon, "cfg {i}");
             assert_eq!(
-                old_stats.landing_heading_true_deg, new_stats.landing_heading_true_deg,
+                old_stats.landing_heading_true_deg,
+                new_stats.landing_heading_true_deg,
                 "cfg {i}"
             );
             assert_eq!(
-                old_stats.touchdown_sideslip_deg, new_stats.touchdown_sideslip_deg,
+                old_stats.touchdown_sideslip_deg,
+                new_stats.touchdown_sideslip_deg,
                 "cfg {i}"
             );
+            assert_eq!(old_stats.landing_headwind_kt, new_stats.landing_headwind_kt, "cfg {i}");
             assert_eq!(
-                old_stats.landing_headwind_kt, new_stats.landing_headwind_kt,
+                old_stats.landing_crosswind_kt,
+                new_stats.landing_crosswind_kt,
                 "cfg {i}"
             );
-            assert_eq!(
-                old_stats.landing_crosswind_kt, new_stats.landing_crosswind_kt,
-                "cfg {i}"
-            );
-            assert_eq!(
-                old_stats.landing_weight_kg, new_stats.landing_weight_kg,
-                "cfg {i}"
-            );
+            assert_eq!(old_stats.landing_weight_kg, new_stats.landing_weight_kg, "cfg {i}");
             // Profile: same length + identical serialised content
             // (TouchdownProfilePoint has no PartialEq).
             assert_eq!(
@@ -47054,9 +46284,7 @@ mod v0_16_6_bush_completeness_tests {
         // too high
         assert!(!should_push_approach_sample(p, true, false, 2500.0, -300.0));
         // never airborne (taxi gear-bumps / pre-flight)
-        assert!(!should_push_approach_sample(
-            p, false, false, 1500.0, -300.0
-        ));
+        assert!(!should_push_approach_sample(p, false, false, 1500.0, -300.0));
     }
 
     // ─── (3) stability-v2 time window ─────────────────────────────────────
@@ -47067,43 +46295,15 @@ mod v0_16_6_bush_completeness_tests {
     fn windowed_buf() -> std::collections::VecDeque<ApproachBufferSample> {
         let mut buf = std::collections::VecDeque::new();
         // poison: old low-level manoeuvring, wildly unstable V/S
-        buf.push_back(sample_at(
-            td() - chrono::Duration::seconds(1010),
-            900.0,
-            -1500.0,
-        ));
-        buf.push_back(sample_at(
-            td() - chrono::Duration::seconds(1005),
-            600.0,
-            800.0,
-        ));
-        buf.push_back(sample_at(
-            td() - chrono::Duration::seconds(1000),
-            300.0,
-            -1200.0,
-        ));
+        buf.push_back(sample_at(td() - chrono::Duration::seconds(1010), 900.0, -1500.0));
+        buf.push_back(sample_at(td() - chrono::Duration::seconds(1005), 600.0, 800.0));
+        buf.push_back(sample_at(td() - chrono::Duration::seconds(1000), 300.0, -1200.0));
         // the actual approach, inside the window, calm
-        buf.push_back(sample_at(
-            td() - chrono::Duration::seconds(120),
-            900.0,
-            -600.0,
-        ));
-        buf.push_back(sample_at(
-            td() - chrono::Duration::seconds(60),
-            600.0,
-            -610.0,
-        ));
-        buf.push_back(sample_at(
-            td() - chrono::Duration::seconds(20),
-            300.0,
-            -590.0,
-        ));
+        buf.push_back(sample_at(td() - chrono::Duration::seconds(120), 900.0, -600.0));
+        buf.push_back(sample_at(td() - chrono::Duration::seconds(60), 600.0, -610.0));
+        buf.push_back(sample_at(td() - chrono::Duration::seconds(20), 300.0, -590.0));
         // post-touchdown sample (e.g. T&G climb-out) — must never count
-        buf.push_back(sample_at(
-            td() + chrono::Duration::seconds(10),
-            200.0,
-            -400.0,
-        ));
+        buf.push_back(sample_at(td() + chrono::Duration::seconds(10), 200.0, -400.0));
         buf
     }
 
@@ -47128,8 +46328,7 @@ mod v0_16_6_bush_completeness_tests {
         // -1500 fpm poison sample is outside the window
         assert_eq!(windowed.excessive_sink, Some(false));
 
-        let unwindowed =
-            compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
+        let unwindowed = compute_approach_stability_v2(&buf, None, None, None, None, Default::default());
         assert_eq!(
             unwindowed.window_sample_count, 7,
             "None = old behaviour: every gate-band sample counts"
@@ -47238,10 +46437,7 @@ mod v0_16_6_bush_completeness_tests {
         assert_eq!(reset(BER, BER_NAH, None, 0.02), SegmentVerdict::Flown);
         assert_eq!(reset(BER, BER_NAH, None, 2.0), SegmentVerdict::Flown);
         // Berlin -> Frankfurt sind 232 NM — deutlich ueber 10.
-        assert!(matches!(
-            reset(BER, FRA, None, 1.0),
-            SegmentVerdict::Jump(_)
-        ));
+        assert!(matches!(reset(BER, FRA, None, 1.0), SegmentVerdict::Jump(_)));
     }
 
     #[test]
@@ -47285,33 +46481,21 @@ mod v0_16_6_bush_completeness_tests {
         assert_eq!(urteil(BER, BER_NAH, Some(0.2)), SegmentVerdict::Flown);
         assert_eq!(urteil(BER, BER_NAH, Some(4.0)), SegmentVerdict::Flown);
         // Ein echter Sprung faellt auch im selben kurzen Abstand durch.
-        assert!(matches!(
-            urteil(BER, FRA, Some(0.2)),
-            SegmentVerdict::Jump(_)
-        ));
+        assert!(matches!(urteil(BER, FRA, Some(0.2)), SegmentVerdict::Jump(_)));
     }
 
     #[test]
     fn segment_versetzen_zaehlt_nicht() {
         // Michaels Fall in klein: Berlin -> Frankfurt in einem Tick.
-        assert!(matches!(
-            urteil(BER, FRA, Some(4.0)),
-            SegmentVerdict::Jump(_)
-        ));
+        assert!(matches!(urteil(BER, FRA, Some(4.0)), SegmentVerdict::Jump(_)));
     }
 
     #[test]
     fn segment_null_position_sprung_zaehlt_nicht() {
         // Null Island -> Berlin, der haeufigste Fall vor v0.19.3 — und
         // ebenso der Rueckweg, wenn der Simulator kurz zurueckfaellt.
-        assert!(matches!(
-            urteil(NULL_ISLAND, BER, Some(2.0)),
-            SegmentVerdict::Jump(_)
-        ));
-        assert!(matches!(
-            urteil(BER, NULL_ISLAND, Some(2.0)),
-            SegmentVerdict::Jump(_)
-        ));
+        assert!(matches!(urteil(NULL_ISLAND, BER, Some(2.0)), SegmentVerdict::Jump(_)));
+        assert!(matches!(urteil(BER, NULL_ISLAND, Some(2.0)), SegmentVerdict::Jump(_)));
     }
 
     #[test]
@@ -47340,10 +46524,7 @@ mod v0_16_6_bush_completeness_tests {
         rollout_tick(&mut stats, &snap);
         let expected = ::geo::distance_m(50.0, 8.0, 50.0, 8.001);
         let got = stats.rollout_distance_m.expect("distance accumulated");
-        assert!(
-            (got - expected).abs() < 0.01,
-            "got {got}, expected {expected}"
-        );
+        assert!((got - expected).abs() < 0.01, "got {got}, expected {expected}");
         assert!(!stats.rollout_finalized, "gs 80 kt must not finalise");
         assert_eq!(stats.rollout_last_lat, Some(50.0));
         assert_eq!(stats.rollout_last_lon, Some(8.001));
@@ -47417,8 +46598,8 @@ mod v0_16_6_bush_completeness_tests {
             (1848.0, 0.6),
             (1879.0, -18.6),
             (1901.0, -46.7),
-            (1907.0, -80.0),  // nur 6 m laengs weiter -- aber 33 m quer
-            (1898.0, -109.4), // laengs sogar rueckwaerts, 30 m quer
+            (1907.0, -80.0),   // nur 6 m laengs weiter -- aber 33 m quer
+            (1898.0, -109.4),  // laengs sogar rueckwaerts, 30 m quer
         ];
         let mut abgelegt: Vec<(f32, f32)> = Vec::new();
         for (lg, qr) in echte_punkte {
@@ -47441,9 +46622,7 @@ mod v0_16_6_bush_completeness_tests {
         // Pixel, zehn Meter quer vierzig. Ohne das Quergewicht liegen die
         // Punkte genau dort am weitesten auseinander, wo die Kurve am
         // staerksten kruemmt.
-        let quer_weg: Vec<(f64, f64)> = (0..12)
-            .map(|i| (1900.0 + i as f64 * 2.0, i as f64 * -8.0))
-            .collect();
+        let quer_weg: Vec<(f64, f64)> = (0..12).map(|i| (1900.0 + i as f64 * 2.0, i as f64 * -8.0)).collect();
         let mut in_kurve = 0;
         let mut letzter: Option<(f64, f64)> = None;
         for (lg, qr) in &quer_weg {
@@ -47718,15 +46897,19 @@ mod v0_16_6_bush_completeness_tests {
                             let mut eingang = scoring_eingang(&stats, m);
                             fill_v2_rollout_fields(&mut eingang, &stats, "XXXX");
 
-                            let b_spur = eingang.fahrwerk_spurweite_m.or_else(|| {
-                                landing_scoring::spurweite::spurweite_m(
-                                    eingang.aircraft_icao.as_deref(),
-                                )
-                            });
+                            let b_spur = eingang
+                                .fahrwerk_spurweite_m
+                                .or_else(|| {
+                                    landing_scoring::spurweite::spurweite_m(
+                                        eingang.aircraft_icao.as_deref(),
+                                    )
+                                });
                             let b_belag = landing_scoring::belag::belag_aus_angabe(
                                 eingang.runway_surface.as_deref(),
                             );
-                            let a_belag = landing_scoring::belag::belag_aus_angabe(Some(belag));
+                            let a_belag = landing_scoring::belag::belag_aus_angabe(
+                                Some(belag),
+                            );
 
                             let lage = format!(
                                 "Belag={belag:?} Breite={breite} Muster={m:?} Datei={datei:?}"
@@ -47756,7 +46939,8 @@ mod v0_16_6_bush_completeness_tests {
                             }
                             assert_eq!(b_belag, a_belag, "Belag weicht ab — {lage}");
                             assert_eq!(
-                                anzeige.max_lateral_offset_m, eingang.bahn_max_querversatz_m,
+                                anzeige.max_lateral_offset_m,
+                                eingang.bahn_max_querversatz_m,
                                 "Versatz weicht ab — {lage}"
                             );
                             geprueft += 1;
@@ -48040,7 +47224,8 @@ mod v0_16_6_bush_completeness_tests {
             });
             stats.bahn_max_querversatz_m = Some(10.0);
             stats.bahn_proben = 30;
-            let aus_tabelle = landing_scoring::spurweite::spurweite_m(Some("A320")).expect("A320");
+            let aus_tabelle =
+                landing_scoring::spurweite::spurweite_m(Some("A320")).expect("A320");
             let aus_datei = aus_tabelle + 2.0;
             stats.fahrwerk_spurweite_m = Some(aus_datei);
 
@@ -48158,7 +47343,8 @@ mod v0_16_6_bush_completeness_tests {
 
                         // 1. Reihenfolge: Das Ausschwenken geht dem
                         //    Verlassen voraus.
-                        if let (Some(cut), Some(clear)) = (f.scoring_cutoff_m, f.clearance_point_m)
+                        if let (Some(cut), Some(clear)) =
+                            (f.scoring_cutoff_m, f.clearance_point_m)
                         {
                             assert!(
                                 cut <= clear + 0.001,
@@ -48177,7 +47363,8 @@ mod v0_16_6_bush_completeness_tests {
                         // 3. Die Fahrt gehoert zu IHREM Punkt. Sie darf nur
                         //    aus einer Messung stammen, deren Stelle mit dem
                         //    gemeldeten Punkt zusammenfaellt.
-                        if let (Some(gs), Some(punkt)) = (f.clearance_speed_kt, f.clearance_point_m)
+                        if let (Some(gs), Some(punkt)) =
+                            (f.clearance_speed_kt, f.clearance_point_m)
                         {
                             let passt_zur_kante = stats
                                 .bahn_kante_laengs_m
@@ -48238,9 +47425,7 @@ mod v0_16_6_bush_completeness_tests {
                 .to_string(),
             );
             assert!(
-                bahn_felder(&stats, Some("A320"), None)
-                    .runway_exits
-                    .is_empty(),
+                bahn_felder(&stats, Some("A320"), None).runway_exits.is_empty(),
                 "Rollwege aus Hamburg landen an einer Frankfurter Bahn"
             );
         }
@@ -48268,21 +47453,12 @@ mod v0_16_6_bush_completeness_tests {
 
             clear_approach_stability_and_rollout(&mut stats);
 
-            assert!(
-                stats.bahn_spur.is_empty(),
-                "die Spur des ersten Aufsetzens bleibt stehen"
-            );
+            assert!(stats.bahn_spur.is_empty(), "die Spur des ersten Aufsetzens bleibt stehen");
             assert!(!stats.bahn_spur_laeuft);
-            assert!(
-                stats.bahn_raeum_laengs_m.is_none(),
-                "alter Raeumpunkt bleibt"
-            );
+            assert!(stats.bahn_raeum_laengs_m.is_none(), "alter Raeumpunkt bleibt");
             assert!(stats.bahn_raeum_gs_kt.is_none());
             assert!(stats.bahn_raeum_seite.is_none());
-            assert!(
-                stats.bahn_kante_laengs_m.is_none(),
-                "alter Kantenuebertritt bleibt"
-            );
+            assert!(stats.bahn_kante_laengs_m.is_none(), "alter Kantenuebertritt bleibt");
             assert!(stats.bahn_kante_gs_kt.is_none());
             assert!(stats.bahn_max_querversatz_m.is_none());
             assert!(stats.bahn_overrun_m.is_none());
@@ -48346,9 +47522,7 @@ mod v0_16_6_bush_completeness_tests {
             // Und ohne Karte bleibt es leer, statt etwas zu behaupten.
             stats.arr_ground_geojson = None;
             assert!(
-                bahn_felder(&stats, Some("A320"), None)
-                    .runway_exits
-                    .is_empty(),
+                bahn_felder(&stats, Some("A320"), None).runway_exits.is_empty(),
                 "ohne Bodenkarte duerfen keine Ausfahrten entstehen"
             );
         }
@@ -48387,6 +47561,7 @@ mod v0_16_6_bush_completeness_tests {
             ) > Duration::from_millis(ROLLOUT_TICK_MS),
             "auf dem Rollweg laeuft der 5-Hz-Takt weiter"
         );
+
 
         // Gegenprobe: Mit reiner Laengsmessung waeren es weniger -- genau
         // die beiden letzten faehlen dann.
@@ -48435,13 +47610,7 @@ mod v0_16_6_bush_completeness_tests {
         // Sie darf NICHT im Flare greifen -- dort ist die Hoehe das
         // Kriterium, und der 50-Hz-Sampler liefert die Feinheit ohnehin.
         assert_eq!(
-            adaptive_tick_interval_v2(
-                FlightPhase::Landing,
-                Some(20.0),
-                Some(false),
-                Some(140.0),
-                false
-            ),
+            adaptive_tick_interval_v2(FlightPhase::Landing, Some(20.0), Some(false), Some(140.0), false),
             Duration::from_millis(500),
             "in der Luft bleibt es bei 2 Hz"
         );
@@ -48455,13 +47624,7 @@ mod v0_16_6_bush_completeness_tests {
         //
         // Massgeblich ist jetzt, ob die Aufzeichnung laeuft.
         assert_eq!(
-            adaptive_tick_interval_v2(
-                FlightPhase::Landing,
-                Some(0.0),
-                Some(true),
-                Some(30.0),
-                true
-            ),
+            adaptive_tick_interval_v2(FlightPhase::Landing, Some(0.0), Some(true), Some(30.0), true),
             Duration::from_millis(200),
             "solange die Spur laeuft, bleibt es bei 5 Hz"
         );
@@ -48470,13 +47633,7 @@ mod v0_16_6_bush_completeness_tests {
         // Korpus gemessen — 3,01 s Median unter dreissig Knoten, ueber
         // 311 Messpunkte. Das war der Einbruch, um den es hier geht.
         assert_eq!(
-            adaptive_tick_interval_v2(
-                FlightPhase::TaxiIn,
-                Some(0.0),
-                Some(true),
-                Some(30.0),
-                false
-            ),
+            adaptive_tick_interval_v2(FlightPhase::TaxiIn, Some(0.0), Some(true), Some(30.0), false),
             Duration::from_secs(MQTT_PUBLISH_INTERVAL_SECS),
             "ist die Spur zu Ende, faellt der Takt auf den Grundtakt zurueck"
         );
@@ -48511,10 +47668,7 @@ mod v0_16_6_bush_completeness_tests {
             + ::geo::distance_m(50.0, 8.001, 50.0, 8.002)
             + ::geo::distance_m(50.0, 8.002, 50.0, 8.003);
         let got = stats.rollout_distance_m.expect("distance accumulated");
-        assert!(
-            (got - expected).abs() < 0.01,
-            "got {got}, expected {expected}"
-        );
+        assert!((got - expected).abs() < 0.01, "got {got}, expected {expected}");
         assert!(stats.rollout_finalized, "GS < 5 kt must finalise");
         assert_eq!(stats.rollout_finalize_reason.as_deref(), Some("full_stop"));
     }
@@ -48527,11 +47681,7 @@ mod v0_16_6_bush_completeness_tests {
         stats.phase = FlightPhase::Landing;
         stats.sampler_touchdown_at = Some(td());
         sampler_path_rollout_tick(&mut stats, &rollout_snap(50.0, 8.001, 60.0, 90.0, true));
-        assert_eq!(
-            stats.rollout_distance_m,
-            Some(0.0),
-            "Landing phase owns the tick"
-        );
+        assert_eq!(stats.rollout_distance_m, Some(0.0), "Landing phase owns the tick");
         assert_eq!(stats.rollout_last_lat, Some(50.0));
     }
 
@@ -48679,19 +47829,10 @@ mod light_flicker_tests {
     #[test]
     fn a_normal_switch_is_still_logged() {
         let mut st = HashMap::new();
-        assert_eq!(
-            flicker_verdict(&mut st, "Landing", at(0)),
-            FlickerVerdict::Log
-        );
+        assert_eq!(flicker_verdict(&mut st, "Landing", at(0)), FlickerVerdict::Log);
         // Zweiter Wechsel eine Minute später — neues Fenster.
-        assert_eq!(
-            flicker_verdict(&mut st, "Landing", at(60)),
-            FlickerVerdict::Log
-        );
-        assert_eq!(
-            flicker_verdict(&mut st, "Landing", at(400)),
-            FlickerVerdict::Log
-        );
+        assert_eq!(flicker_verdict(&mut st, "Landing", at(60)), FlickerVerdict::Log);
+        assert_eq!(flicker_verdict(&mut st, "Landing", at(400)), FlickerVerdict::Log);
     }
 
     /// Der Feldfall: FLASH-Modus auf einer Boeing. Gemessen am Flug
@@ -48714,10 +47855,7 @@ mod light_flicker_tests {
         }
         assert_eq!(announced, 1, "Blinken genau einmal benennen");
         assert!(logged <= 3, "hoechstens die ersten Flanken, war {logged}");
-        assert!(
-            suppressed > 90,
-            "der Rest muss geschluckt werden, war {suppressed}"
-        );
+        assert!(suppressed > 90, "der Rest muss geschluckt werden, war {suppressed}");
     }
 
     /// Blinken an EINER Lampe darf normale Schaltvorgaenge an einer anderen
@@ -48759,6 +47897,7 @@ mod msfs_touchdown_delag_replay_golden {
     use std::collections::VecDeque;
     use std::io::{BufRead, BufReader};
     use std::path::Path;
+
 
     fn fixture_path(name: &str) -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -48811,10 +47950,7 @@ mod msfs_touchdown_delag_replay_golden {
             at: parse_rfc3339(v["at"].as_str().expect("sample.at")),
             vs_fpm: f("vs_fpm"),
             g_force: f("g_force"),
-            on_ground: v
-                .get("on_ground")
-                .and_then(|x| x.as_bool())
-                .unwrap_or(false),
+            on_ground: v.get("on_ground").and_then(|x| x.as_bool()).unwrap_or(false),
             agl_ft: f("agl_ft"),
             msl_ft: f("agl_ft") + 500.0,
             heading_true_deg: f("heading_true_deg"),
@@ -48848,8 +47984,8 @@ mod msfs_touchdown_delag_replay_golden {
 
     fn load_replay(name: &str) -> ReplayFlight {
         let path = fixture_path(name);
-        let file =
-            std::fs::File::open(&path).unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
+        let file = std::fs::File::open(&path)
+            .unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
         let reader = BufReader::new(GzDecoder::new(file));
 
         let mut simulator: Option<Simulator> = None;
@@ -48872,7 +48008,10 @@ mod msfs_touchdown_delag_replay_golden {
                     }
                 }
                 "touchdown_window" => {
-                    edge_at = v.get("edge_at").and_then(|x| x.as_str()).map(parse_rfc3339);
+                    edge_at = v
+                        .get("edge_at")
+                        .and_then(|x| x.as_str())
+                        .map(parse_rfc3339);
                     for sv in v
                         .get("samples")
                         .and_then(|x| x.as_array())
@@ -48883,7 +48022,10 @@ mod msfs_touchdown_delag_replay_golden {
                 }
                 "landing_analysis" => {
                     if edge_at.is_none() {
-                        edge_at = v.get("edge_at").and_then(|x| x.as_str()).map(parse_rfc3339);
+                        edge_at = v
+                            .get("edge_at")
+                            .and_then(|x| x.as_str())
+                            .map(parse_rfc3339);
                     }
                     analysis = v.get("analysis").cloned();
                     if let Some(a) = &analysis {
@@ -49057,14 +48199,7 @@ mod msfs_agl_flare_tests {
         s
     }
 
-    fn tw(
-        base: DateTime<Utc>,
-        ms: i64,
-        agl_ft: f32,
-        pitch_deg: f32,
-        on_ground: bool,
-        vs_fpm: f32,
-    ) -> TouchdownWindowSample {
+    fn tw(base: DateTime<Utc>, ms: i64, agl_ft: f32, pitch_deg: f32, on_ground: bool, vs_fpm: f32) -> TouchdownWindowSample {
         TouchdownWindowSample {
             at: base + chrono::Duration::milliseconds(ms),
             vs_fpm,
@@ -49149,10 +48284,7 @@ mod msfs_agl_flare_tests {
         let edge_ms = b.timestamp_millis();
         // fit at -1000ms should read ~-300 (×cos(3°) ≈ ×0.9986 ⇒ ~-299.6)
         let v = agl_geometric_vs_fpm_at(&s, edge_ms - 1000, 3.0, None).expect("fit");
-        assert!(
-            (v - (-300.0 * (3.0_f32).to_radians().cos())).abs() < 8.0,
-            "got {v}"
-        );
+        assert!((v - (-300.0 * (3.0_f32).to_radians().cos())).abs() < 8.0, "got {v}");
     }
 
     /// Too few samples (or all above the AGL ceiling) → None, never a wild
@@ -49192,18 +48324,9 @@ mod msfs_agl_flare_tests {
         let peak = peak.expect("peak");
         let end = end.expect("end");
         let red = end - peak;
-        assert!(
-            peak < -500.0,
-            "peak should reflect the steep early sink, got {peak}"
-        );
-        assert!(
-            end > -420.0,
-            "end should reflect the shallow late sink, got {end}"
-        );
-        assert!(
-            red > 100.0,
-            "real flare must show a reduction > 100 fpm, got {red}"
-        );
+        assert!(peak < -500.0, "peak should reflect the steep early sink, got {peak}");
+        assert!(end > -420.0, "end should reflect the shallow late sink, got {end}");
+        assert!(red > 100.0, "real flare must show a reduction > 100 fpm, got {red}");
     }
 
     /// NO flare: constant sink the whole window (firm, pilot never pulled)
@@ -49215,10 +48338,7 @@ mod msfs_agl_flare_tests {
         let s = synth_trace(b, 16.0, &[(-2000, -380.0)], |_| 3.0);
         let (peak, end) = compute_msfs_agl_flare_endpoints(&s, edge_ms - 2000, edge_ms - 100);
         let red = end.unwrap() - peak.unwrap();
-        assert!(
-            red.abs() < 50.0,
-            "constant sink must NOT register a flare, got reduction {red}"
-        );
+        assert!(red.abs() < 50.0, "constant sink must NOT register a flare, got reduction {red}");
     }
 
     /// End-to-end on the JSON: a constant-sink MSFS trace must report
@@ -49231,14 +48351,8 @@ mod msfs_agl_flare_tests {
         // can prove the published endpoints came from AGL, not vs_fpm.
         let s = synth_trace(b, 16.0, &[(-2000, -380.0)], |_| 3.0);
         let a = compute_landing_analysis(&s, b, Simulator::Msfs2024, None);
-        assert_eq!(
-            a.get("flare_detected").and_then(|v| v.as_bool()),
-            Some(false)
-        );
-        assert_eq!(
-            a.get("flare_vs_source").and_then(|v| v.as_str()),
-            Some("msfs_agl")
-        );
+        assert_eq!(a.get("flare_detected").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(a.get("flare_vs_source").and_then(|v| v.as_str()), Some("msfs_agl"));
         // _raw keys present on MSFS.
         assert!(a.get("peak_vs_pre_flare_fpm_raw").is_some());
         assert!(a.get("vs_at_flare_end_fpm_raw").is_some());
@@ -49251,24 +48365,12 @@ mod msfs_agl_flare_tests {
         let b = base();
         let s = synth_trace(b, 16.0, &[(-2000, -560.0), (-900, -360.0)], |_| 3.0);
         let a = compute_landing_analysis(&s, b, Simulator::XPlane12, None);
-        assert!(
-            a.get("flare_vs_source").is_none(),
-            "X-Plane must add no source key"
-        );
-        assert!(
-            a.get("peak_vs_pre_flare_fpm_raw").is_none(),
-            "X-Plane must add no _raw key"
-        );
-        assert!(
-            a.get("vs_at_flare_end_fpm_raw").is_none(),
-            "X-Plane must add no _raw key"
-        );
+        assert!(a.get("flare_vs_source").is_none(), "X-Plane must add no source key");
+        assert!(a.get("peak_vs_pre_flare_fpm_raw").is_none(), "X-Plane must add no _raw key");
+        assert!(a.get("vs_at_flare_end_fpm_raw").is_none(), "X-Plane must add no _raw key");
         // The published endpoints equal the SimVar pitch-corrected values.
         // (cos(3°) ≈ 0.99863; vs_fpm at the flare-window samples.)
-        let peak = a
-            .get("peak_vs_pre_flare_fpm")
-            .and_then(|v| v.as_f64())
-            .unwrap();
+        let peak = a.get("peak_vs_pre_flare_fpm").and_then(|v| v.as_f64()).unwrap();
         assert!(peak < -500.0, "X-Plane peak from SimVar, got {peak}");
     }
 
@@ -49284,28 +48386,14 @@ mod msfs_agl_flare_tests {
         // additionally check the SIGN agrees with the AGL reduction.
         let b = base();
         // Real flare: steep early -560 → shallow late -360, pitch rising.
-        let s = synth_trace(
-            b,
-            16.0,
-            &[(-2000, -560.0), (-900, -460.0), (-400, -360.0)],
-            |ms| {
-                let frac = ((ms + 2000) as f32 / 2000.0).clamp(0.0, 1.0);
-                2.5 + 2.7 * frac
-            },
-        );
+        let s = synth_trace(b, 16.0, &[(-2000, -560.0), (-900, -460.0), (-400, -360.0)], |ms| {
+            let frac = ((ms + 2000) as f32 / 2000.0).clamp(0.0, 1.0);
+            2.5 + 2.7 * frac
+        });
         let a = compute_landing_analysis(&s, b, Simulator::Msfs2024, None);
-        assert_eq!(
-            a.get("flare_vs_source").and_then(|v| v.as_str()),
-            Some("msfs_agl")
-        );
-        let red = a
-            .get("flare_reduction_fpm")
-            .and_then(|v| v.as_f64())
-            .unwrap();
-        let dvs = a
-            .get("flare_dvs_dt_fpm_per_sec")
-            .and_then(|v| v.as_f64())
-            .unwrap();
+        assert_eq!(a.get("flare_vs_source").and_then(|v| v.as_str()), Some("msfs_agl"));
+        let red = a.get("flare_reduction_fpm").and_then(|v| v.as_f64()).unwrap();
+        let dvs = a.get("flare_dvs_dt_fpm_per_sec").and_then(|v| v.as_f64()).unwrap();
         assert!(red > 100.0, "real flare reduction expected, got {red}");
         // The KEY assertion: dvs_dt sign agrees with the AGL reduction.
         // Pre-v0.16.22 FIX 4 this could disagree (SimVar end vs AGL reduction).
@@ -49320,10 +48408,7 @@ mod msfs_agl_flare_tests {
         // and finite (byte-identical path; no AGL involvement).
         let ax = compute_landing_analysis(&s, b, Simulator::XPlane12, None);
         let dvs_x = ax.get("flare_dvs_dt_fpm_per_sec").and_then(|v| v.as_f64());
-        assert!(
-            dvs_x.is_some_and(|v| v.is_finite()),
-            "X-Plane dvs_dt must be SimVar-derived and present"
-        );
+        assert!(dvs_x.is_some_and(|v| v.is_finite()), "X-Plane dvs_dt must be SimVar-derived and present");
     }
 
     /// Real-fixture golden: the committed trimmed JBU323 flight. The
@@ -49365,10 +48450,7 @@ mod msfs_agl_flare_tests {
                                 .with_timezone(&Utc),
                             vs_fpm: f("vs_fpm"),
                             g_force: f("g_force"),
-                            on_ground: sv
-                                .get("on_ground")
-                                .and_then(|x| x.as_bool())
-                                .unwrap_or(false),
+                            on_ground: sv.get("on_ground").and_then(|x| x.as_bool()).unwrap_or(false),
                             agl_ft: f("agl_ft"),
                             msl_ft: Some(f("agl_ft") + 500.0),
                             heading_true_deg: f("heading_true_deg"),
@@ -49408,14 +48490,8 @@ mod msfs_agl_flare_tests {
         let a = compute_landing_analysis(&samples, edge_at, Simulator::Msfs2024, None);
 
         let flare_detected = a.get("flare_detected").and_then(|v| v.as_bool()).unwrap();
-        let reduction = a
-            .get("flare_reduction_fpm")
-            .and_then(|v| v.as_f64())
-            .unwrap();
-        assert!(
-            flare_detected,
-            "JBU323 flare must flip to TRUE on AGL geometry"
-        );
+        let reduction = a.get("flare_reduction_fpm").and_then(|v| v.as_f64()).unwrap();
+        assert!(flare_detected, "JBU323 flare must flip to TRUE on AGL geometry");
         assert!(
             (100.0..=260.0).contains(&reduction),
             "JBU323 AGL flare reduction should land ~100-200 fpm, got {reduction}"
@@ -49439,10 +48515,7 @@ mod msfs_agl_flare_tests {
         // ausfallen" und hätte die Korrektur zurück auf die Ausgleichs-
         // gerade blockiert. Die belastbare Zusage ist NICHT „härter",
         // sondern „bei steilem Anflug deckungsgleich".
-        let edge_recorded = recorded
-            .get("vs_at_edge_fpm")
-            .and_then(|v| v.as_f64())
-            .unwrap();
+        let edge_recorded = recorded.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).unwrap();
         let edge_new = a.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).unwrap();
         assert_eq!(
             a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
@@ -49457,18 +48530,9 @@ mod msfs_agl_flare_tests {
 
         // The lagged SimVar values are preserved as forensic provenance and
         // match the recorded (lagged) endpoints.
-        let raw_peak = a
-            .get("peak_vs_pre_flare_fpm_raw")
-            .and_then(|v| v.as_f64())
-            .unwrap();
-        let rec_peak = recorded
-            .get("peak_vs_pre_flare_fpm")
-            .and_then(|v| v.as_f64())
-            .unwrap();
-        assert!(
-            (raw_peak - rec_peak).abs() < 1.0,
-            "raw peak must equal recorded lagged peak"
-        );
+        let raw_peak = a.get("peak_vs_pre_flare_fpm_raw").and_then(|v| v.as_f64()).unwrap();
+        let rec_peak = recorded.get("peak_vs_pre_flare_fpm").and_then(|v| v.as_f64()).unwrap();
+        assert!((raw_peak - rec_peak).abs() < 1.0, "raw peak must equal recorded lagged peak");
     }
 
     /// Die Riegel der Höhenkurve, jeder für sich festgenagelt. Runde 4 der
@@ -49576,11 +48640,7 @@ mod msfs_agl_flare_tests {
                 let t = i as f32 * 0.025;
                 let agl = 100.0 - 10.0 * t;
                 // MSL friert nach dem vierten Messpunkt ein.
-                let msl = if i < 4 {
-                    1000.0 - 10.0 * t
-                } else {
-                    1000.0 - 10.0 * 0.075
-                };
+                let msl = if i < 4 { 1000.0 - 10.0 * t } else { 1000.0 - 10.0 * 0.075 };
                 tw_msl(b, (t * 1000.0) as i64, agl, msl, 2.0, false, -600.0)
             })
             .collect();
@@ -49591,15 +48651,10 @@ mod msfs_agl_flare_tests {
             "die Hoehenkurve selbst traegt weiterhin"
         );
         assert!(
-            a.get("vs_eigensinken_fpm")
-                .map(|v| v.is_null())
-                .unwrap_or(true),
+            a.get("vs_eigensinken_fpm").map(|v| v.is_null()).unwrap_or(true),
             "bei eingefrorener Hoehe darf keine Aufschluesselung erscheinen"
         );
-        assert!(a
-            .get("vs_gelaende_fpm")
-            .map(|v| v.is_null())
-            .unwrap_or(true));
+        assert!(a.get("vs_gelaende_fpm").map(|v| v.is_null()).unwrap_or(true));
     }
 
     /// Die Probe ist der eigentliche Riegel: was nicht aufgeht, wird nicht
@@ -49634,9 +48689,7 @@ mod msfs_agl_flare_tests {
             "die saubere Gegenprobe muss eine Aufschluesselung liefern"
         );
         assert!(
-            a.get("vs_gelaende_fpm")
-                .map(|v| v.is_null())
-                .unwrap_or(true),
+            a.get("vs_gelaende_fpm").map(|v| v.is_null()).unwrap_or(true),
             "ein Sprung im Bodenmodell darf nicht als Gelaendeanteil verkauft werden"
         );
     }
@@ -49649,15 +48702,7 @@ mod msfs_agl_flare_tests {
         let samples: Vec<TouchdownWindowSample> = (0..12)
             .map(|i| {
                 let t = i as f32 * 0.025;
-                let mut s = tw_msl(
-                    b,
-                    (t * 1000.0) as i64,
-                    100.0 - 5.0 * t,
-                    0.0,
-                    2.0,
-                    false,
-                    -300.0,
-                );
+                let mut s = tw_msl(b, (t * 1000.0) as i64, 100.0 - 5.0 * t, 0.0, 2.0, false, -300.0);
                 s.msl_ft = None;
                 s
             })
@@ -49665,14 +48710,8 @@ mod msfs_agl_flare_tests {
         let edge = b + chrono::Duration::milliseconds(275);
         let a = compute_landing_analysis(&samples, edge, Simulator::XPlane12, None);
         assert!(a.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).is_some());
-        assert!(a
-            .get("vs_gelaende_fpm")
-            .map(|v| v.is_null())
-            .unwrap_or(true));
-        assert!(a
-            .get("vs_eigensinken_fpm")
-            .map(|v| v.is_null())
-            .unwrap_or(true));
+        assert!(a.get("vs_gelaende_fpm").map(|v| v.is_null()).unwrap_or(true));
+        assert!(a.get("vs_eigensinken_fpm").map(|v| v.is_null()).unwrap_or(true));
     }
 
     #[test]
@@ -49765,6 +48804,7 @@ mod msfs_agl_flare_tests {
             "verdoppelte Messpunkte dürfen die Kurve nicht verwerfen"
         );
     }
+
 
     /// **Die verworfene Höhenkurve bleibt der Unfall-Erkennung erhalten.**
     /// Der Score verwirft sie bei eingefrorener Höhenspur, weil sie dort zu
@@ -49952,10 +48992,7 @@ mod msfs_agl_flare_tests {
                                 .with_timezone(&Utc),
                             vs_fpm: f("vs_fpm"),
                             g_force: f("g_force"),
-                            on_ground: sv
-                                .get("on_ground")
-                                .and_then(|x| x.as_bool())
-                                .unwrap_or(false),
+                            on_ground: sv.get("on_ground").and_then(|x| x.as_bool()).unwrap_or(false),
                             agl_ft: f("agl_ft"),
                             msl_ft: Some(f("agl_ft") + 500.0),
                             heading_true_deg: f("heading_true_deg"),
@@ -49983,11 +49020,7 @@ mod msfs_agl_flare_tests {
                 _ => {}
             }
         }
-        (
-            edge_at.expect("edge_at"),
-            samples,
-            recorded.expect("recorded"),
-        )
+        (edge_at.expect("edge_at"), samples, recorded.expect("recorded"))
     }
 
     /// Gate 1 (data quality): a synthetic FROZEN-AGL trace (the AGL value
@@ -50020,10 +49053,7 @@ mod msfs_agl_flare_tests {
             .collect();
         let g = evaluate_msfs_flare_gates(&s, edge_ms - 2000, edge_ms - 100);
         assert!(!g.agl_reliable, "degraded rate must be unreliable");
-        assert!(
-            g.unreliable_source,
-            "degraded rate is a data-quality reject"
-        );
+        assert!(g.unreliable_source, "degraded rate is a data-quality reject");
     }
 
     /// Gate 2 (bounce): an on_ground=true sample inside the window
@@ -50034,16 +49064,7 @@ mod msfs_agl_flare_tests {
         let b = base();
         let edge_ms = b.timestamp_millis();
         let mut s: Vec<_> = (0..100)
-            .map(|i| {
-                tw(
-                    b,
-                    -2000 + i * 20,
-                    20.0 - i as f32 * 0.15,
-                    3.0,
-                    false,
-                    -300.0,
-                )
-            })
+            .map(|i| tw(b, -2000 + i * 20, 20.0 - i as f32 * 0.15, 3.0, false, -300.0))
             .collect();
         // Force an on_ground touch mid-window (a bounce).
         s[30].on_ground = true;
@@ -50188,18 +49209,9 @@ mod msfs_agl_flare_tests {
             a.get("flare_vs_source").and_then(|v| v.as_str()),
             Some("simvar_agl_unreliable")
         );
-        assert_eq!(
-            a.get("flare_detected").and_then(|v| v.as_bool()),
-            Some(false)
-        );
-        let score = a
-            .get("flare_quality_score")
-            .and_then(|v| v.as_i64())
-            .unwrap();
-        assert!(
-            score < 100,
-            "no butter-100 on a noisy-freeze phantom (got {score})"
-        );
+        assert_eq!(a.get("flare_detected").and_then(|v| v.as_bool()), Some(false));
+        let score = a.get("flare_quality_score").and_then(|v| v.as_i64()).unwrap();
+        assert!(score < 100, "no butter-100 on a noisy-freeze phantom (got {score})");
     }
 
     /// FIX 2 (post-edge bounce contamination): a clean descent to a touchdown
@@ -50258,37 +49270,17 @@ mod msfs_agl_flare_tests {
         let nose_down: Vec<_> = (0..100)
             .map(|i| {
                 let frac = i as f32 / 99.0;
-                tw(
-                    b,
-                    -2000 + i * 20,
-                    20.0 - i as f32 * 0.15,
-                    3.0 - 7.0 * frac,
-                    false,
-                    -300.0,
-                )
+                tw(b, -2000 + i * 20, 20.0 - i as f32 * 0.15, 3.0 - 7.0 * frac, false, -300.0)
             })
             .collect();
         let g = evaluate_msfs_flare_gates(&nose_down, edge_ms - 2000, edge_ms - 100);
-        assert!(
-            g.agl_reliable,
-            "data is clean — only the pitch veto applies"
-        );
-        assert!(
-            g.pitch_nose_down,
-            "strong nose-down trend must set the veto"
-        );
+        assert!(g.agl_reliable, "data is clean — only the pitch veto applies");
+        assert!(g.pitch_nose_down, "strong nose-down trend must set the veto");
         // A held/nose-up flare must NOT trip the veto.
         let nose_up: Vec<_> = (0..100)
             .map(|i| {
                 let frac = i as f32 / 99.0;
-                tw(
-                    b,
-                    -2000 + i * 20,
-                    20.0 - i as f32 * 0.15,
-                    3.0 + 2.0 * frac,
-                    false,
-                    -300.0,
-                )
+                tw(b, -2000 + i * 20, 20.0 - i as f32 * 0.15, 3.0 + 2.0 * frac, false, -300.0)
             })
             .collect();
         let g2 = evaluate_msfs_flare_gates(&nose_up, edge_ms - 2000, edge_ms - 100);
@@ -50320,22 +49312,10 @@ mod msfs_agl_flare_tests {
         );
         // The published reduction is the SimVar (lagged) value, NOT the
         // bare-AGL phantom 742. And the score is not a butter 100.
-        let red = a
-            .get("flare_reduction_fpm")
-            .and_then(|v| v.as_f64())
-            .unwrap();
-        assert!(
-            red < 200.0,
-            "frozen phantom reduction must NOT publish (got {red})"
-        );
-        let score = a
-            .get("flare_quality_score")
-            .and_then(|v| v.as_i64())
-            .unwrap();
-        assert!(
-            score < 100,
-            "no butter-100 on a firm frozen-data arrival (got {score})"
-        );
+        let red = a.get("flare_reduction_fpm").and_then(|v| v.as_f64()).unwrap();
+        assert!(red < 200.0, "frozen phantom reduction must NOT publish (got {red})");
+        let score = a.get("flare_quality_score").and_then(|v| v.as_i64()).unwrap();
+        assert!(score < 100, "no butter-100 on a firm frozen-data arrival (got {score})");
     }
 
     /// vrNEVnl A320 real fixture (LOCALIZED frozen end). 25 distinct AGL
@@ -50360,10 +49340,7 @@ mod msfs_agl_flare_tests {
         );
         // The published reduction is the honest SimVar value (~8 fpm), not
         // the bare-AGL phantom ~168.
-        let red = a
-            .get("flare_reduction_fpm")
-            .and_then(|v| v.as_f64())
-            .unwrap();
+        let red = a.get("flare_reduction_fpm").and_then(|v| v.as_f64()).unwrap();
         assert!(
             red < 100.0,
             "frozen-end phantom reduction (~168) must NOT publish (got {red})"
@@ -50389,6 +49366,7 @@ mod msfs_agl_flare_tests {
             "bounce falls back to SimVar (data quality is fine, not 'unreliable')"
         );
     }
+
 }
 
 // ─── v0.16.23 Route-Only-Refresh Tests ─────────────────────────────────
@@ -50602,10 +49580,7 @@ mod v0_16_23_route_only_refresh_tests {
             user_id: None,
         };
         let filled = maybe_autosource_simbrief_username(&mut settings, Some("profile_user"));
-        assert!(
-            !filled,
-            "expliziter Username darf NICHT ueberschrieben werden"
-        );
+        assert!(!filled, "expliziter Username darf NICHT ueberschrieben werden");
         assert_eq!(settings.username.as_deref(), Some("manual_user"));
     }
 
@@ -50619,10 +49594,7 @@ mod v0_16_23_route_only_refresh_tests {
             user_id: Some("612345".to_string()),
         };
         let filled = maybe_autosource_simbrief_username(&mut settings, Some("profile_user"));
-        assert!(
-            !filled,
-            "gesetzte User-ID blockt Auto-Source des Usernamens"
-        );
+        assert!(!filled, "gesetzte User-ID blockt Auto-Source des Usernamens");
         assert_eq!(settings.username, None);
         assert_eq!(settings.user_id.as_deref(), Some("612345"));
     }
@@ -50640,10 +49612,7 @@ mod v0_16_23_route_only_refresh_tests {
         assert_eq!(s2.username, None);
         // Trim wird angewandt
         let mut s3 = SimBriefSettings::default();
-        assert!(maybe_autosource_simbrief_username(
-            &mut s3,
-            Some("  trimmed  ")
-        ));
+        assert!(maybe_autosource_simbrief_username(&mut s3, Some("  trimmed  ")));
         assert_eq!(s3.username.as_deref(), Some("trimmed"));
     }
 
@@ -50930,7 +49899,10 @@ mod v163_mutationsluecken {
                 panic!("{funktion} nicht mehr gefunden — Test anpassen, nicht löschen")
             });
             let rest = &ohne_kommentare[start..];
-            let ende = rest[1..].find("\nfn ").map(|i| i + 1).unwrap_or(rest.len());
+            let ende = rest[1..]
+                .find("\nfn ")
+                .map(|i| i + 1)
+                .unwrap_or(rest.len());
             assert!(
                 rest[..ende].contains("landung_episode_zuruecksetzen("),
                 "{funktion} räumt die Landung nicht mehr ab — nach einem \
@@ -50982,15 +49954,10 @@ mod v163_mutationsluecken {
         };
         stamp_touchdown_metadata(&mut stats, &erst, Utc::now(), None);
         assert_eq!(stats.landing_wind_direction_deg, Some(10.0));
-        let zweit = SimSnapshot {
-            wind_direction_deg: Some(250.0),
-            wind_speed_kt: Some(18.0),
-            ..SimSnapshot::default()
-        };
+        let zweit = SimSnapshot { wind_direction_deg: Some(250.0), wind_speed_kt: Some(18.0), ..SimSnapshot::default() };
         stamp_touchdown_metadata(&mut stats, &zweit, Utc::now(), None);
         assert_eq!(
-            stats.landing_wind_direction_deg,
-            Some(250.0),
+            stats.landing_wind_direction_deg, Some(250.0),
             "der zweite Stempel muss den Wind ueberschreiben (kein is_none()-Latch)"
         );
         // Gegenprobe: ein Tick OHNE Windmeldung darf den guten Wert nicht loeschen.
@@ -51081,10 +50048,7 @@ mod bids_wiederholung_tests {
             ohne_schranke
         };
 
-        assert_eq!(
-            ohne_schranke, 16_600,
-            "Rechnung des schlechtesten Falls stimmt nicht mehr"
-        );
+        assert_eq!(ohne_schranke, 16_600, "Rechnung des schlechtesten Falls stimmt nicht mehr");
         assert_eq!(
             mit_schranke, VERBINDUNGS_TIMEOUT_MS,
             "ein einzelner Timeout muss das Budget aufbrauchen, sonst greift die Schranke nicht"
@@ -51095,16 +50059,9 @@ mod bids_wiederholung_tests {
         // und der eigentliche Zweck (Aussetzer abfangen) dahin.
         let schneller_fehlschlag_ms: u128 = 50;
         let bis_zum_zweiten = schneller_fehlschlag_ms + BIDS_RETRY_DELAYS_MS[0] as u128;
-        let bis_zum_dritten =
-            bis_zum_zweiten + schneller_fehlschlag_ms + BIDS_RETRY_DELAYS_MS[1] as u128;
-        assert!(
-            bis_zum_zweiten < BIDS_RETRY_BUDGET_MS,
-            "zweiter Versuch faellt aus dem Budget"
-        );
-        assert!(
-            bis_zum_dritten < BIDS_RETRY_BUDGET_MS,
-            "dritter Versuch faellt aus dem Budget"
-        );
+        let bis_zum_dritten = bis_zum_zweiten + schneller_fehlschlag_ms + BIDS_RETRY_DELAYS_MS[1] as u128;
+        assert!(bis_zum_zweiten < BIDS_RETRY_BUDGET_MS, "zweiter Versuch faellt aus dem Budget");
+        assert!(bis_zum_dritten < BIDS_RETRY_BUDGET_MS, "dritter Versuch faellt aus dem Budget");
     }
 
     #[test]

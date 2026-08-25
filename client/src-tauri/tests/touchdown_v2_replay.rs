@@ -61,11 +61,7 @@ fn load_fixture(name: &str) -> FixtureFlight {
 
         if t == "position" && matches!(sim, SimKind::Off) {
             // Sim aus dem ersten position-snapshot raten
-            if let Some(s) = v
-                .get("snapshot")
-                .and_then(|s| s.get("simulator"))
-                .and_then(|s| s.as_str())
-            {
+            if let Some(s) = v.get("snapshot").and_then(|s| s.get("simulator")).and_then(|s| s.as_str()) {
                 sim = match s {
                     "Msfs2024" => SimKind::Msfs2024,
                     "Msfs2020" => SimKind::Msfs2020,
@@ -77,16 +73,13 @@ fn load_fixture(name: &str) -> FixtureFlight {
         }
 
         if t == "touchdown_window" {
-            edge_at = v
-                .get("edge_at")
+            edge_at = v.get("edge_at")
                 .and_then(|x| x.as_str())
                 .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                 .map(|d| d.with_timezone(&Utc));
             if let Some(arr) = v.get("samples").and_then(|x| x.as_array()) {
                 for sv in arr {
-                    if let Ok(s) =
-                        serde_json::from_value::<recorder::TouchdownWindowSample>(sv.clone())
-                    {
+                    if let Ok(s) = serde_json::from_value::<recorder::TouchdownWindowSample>(sv.clone()) {
                         samples.push(s);
                     }
                 }
@@ -94,11 +87,7 @@ fn load_fixture(name: &str) -> FixtureFlight {
         }
     }
 
-    FixtureFlight {
-        sim,
-        samples,
-        edge_at,
-    }
+    FixtureFlight { sim, samples, edge_at }
 }
 
 /// Helper: full pipeline Layer 1+2+3 fuer einen einzelnen Touch — gibt
@@ -113,21 +102,14 @@ fn run_pipeline(fixture: &FixtureFlight) -> Vec<EpisodeOutcome> {
 
     for (idx, sample) in fixture.samples.iter().enumerate() {
         // Edge-Detection (Layer 1)
-        let prev = if idx > 0 {
-            Some(&fixture.samples[idx - 1])
-        } else {
-            None
-        };
+        let prev = if idx > 0 { Some(&fixture.samples[idx - 1]) } else { None };
         let candidate = detect_td_candidate(prev, sample, idx, fixture.sim);
 
         if let Some(cand) = candidate {
             candidates_seen += 1;
             // impact_frame berechnen damit Validation A3/B4 echten Wert hat
             let impact_result = compute_impact_frame(&fixture.samples, cand.edge_at);
-            let impact_vs = impact_result
-                .as_ref()
-                .map(|r| r.impact_vs_fpm)
-                .unwrap_or(0.0);
+            let impact_vs = impact_result.as_ref().map(|r| r.impact_vs_fpm).unwrap_or(0.0);
 
             // Validation (Layer 2)
             let validation = validate_candidate(
@@ -139,20 +121,17 @@ fn run_pipeline(fixture: &FixtureFlight) -> Vec<EpisodeOutcome> {
             );
             eprintln!(
                 "DBG candidate idx={} at={} agl={} vs={} impact_vs={} -> {}",
-                idx,
-                cand.edge_at.format("%H:%M:%S%.3f"),
-                cand.edge_agl_ft,
-                cand.edge_vs_fpm,
-                impact_vs,
+                idx, cand.edge_at.format("%H:%M:%S%.3f"),
+                cand.edge_agl_ft, cand.edge_vs_fpm, impact_vs,
                 match &validation {
-                    ValidationResult::Validated { .. } => "VALIDATED",
-                    ValidationResult::FalseEdge { reason: _, result } => {
+                    ValidationResult::Validated{..} => "VALIDATED",
+                    ValidationResult::FalseEdge{reason: _, result} => {
                         eprintln!("    detail: gear_pass={} g_pass={:?} sustained_pass={:?} low_agl_pass={} vs_neg_pass={}",
                             result.gear_force_pass, result.g_force_pass,
                             result.sustained_ground_pass, result.low_agl_persistence_pass,
                             result.vs_negative_pass);
                         "FALSE_EDGE"
-                    }
+                    },
                 }
             );
 
@@ -160,24 +139,32 @@ fn run_pipeline(fixture: &FixtureFlight) -> Vec<EpisodeOutcome> {
                 ValidationResult::Validated { result } => {
                     validations_passed += 1;
                     // VS-Cascade (Layer 3)
-                    let lr = impact_result.as_ref().and_then(|ir| {
-                        compute_landing_rate(&fixture.samples, ir, AircraftCategory::FixedWing).ok()
-                    });
+                    let lr = impact_result.as_ref()
+                        .and_then(|ir| {
+                            compute_landing_rate(&fixture.samples, ir, AircraftCategory::FixedWing)
+                                .ok()
+                        });
 
                     if let (Some(ir), Some(lr)) = (impact_result, lr) {
                         match current_episode {
                             None => {
                                 // Neue Episode mit contact
-                                current_episode =
-                                    Some(EpisodeBuilder::new(cand, ir, lr, result, fixture.sim));
+                                current_episode = Some(EpisodeBuilder::new(
+                                    cand,
+                                    ir,
+                                    lr,
+                                    result,
+                                    fixture.sim,
+                                ));
                             }
                             Some(ref mut ep) => {
                                 if !ep.has_contact() {
                                     // Episode war pending (nur false_edges) — promote
                                     // diesen ersten validated TD zum initial contact.
                                     let mut taken = current_episode.take().unwrap();
-                                    let mut new_ep =
-                                        EpisodeBuilder::new(cand, ir, lr, result, fixture.sim);
+                                    let mut new_ep = EpisodeBuilder::new(
+                                        cand, ir, lr, result, fixture.sim,
+                                    );
                                     // Bewahre die false_edges aus der pending phase
                                     new_ep.false_edges.append(&mut taken.false_edges);
                                     current_episode = Some(new_ep);
@@ -186,11 +173,7 @@ fn run_pipeline(fixture: &FixtureFlight) -> Vec<EpisodeOutcome> {
                                     let finished = current_episode.take().unwrap();
                                     episodes.push(finished.build());
                                     current_episode = Some(EpisodeBuilder::new(
-                                        cand,
-                                        ir,
-                                        lr,
-                                        result,
-                                        fixture.sim,
+                                        cand, ir, lr, result, fixture.sim,
                                     ));
                                 } else {
                                     // Innerhalb der Episode → low_level_touch (Bounce)
@@ -239,14 +222,12 @@ fn run_pipeline(fixture: &FixtureFlight) -> Vec<EpisodeOutcome> {
                 ep.observe_post_contact_agl(sample.agl_ft);
             }
         }
+
     }
 
     eprintln!(
         "DBG total: candidates={} validated={} false_edge={} samples={}",
-        candidates_seen,
-        validations_passed,
-        validations_failed,
-        fixture.samples.len()
+        candidates_seen, validations_passed, validations_failed, fixture.samples.len()
     );
 
     if let Some(ep) = current_episode {
@@ -354,7 +335,8 @@ impl EpisodeBuilder {
 
         let classification = classify_episode(EpisodePostContactState {
             max_agl_ft_after_contact: self.max_post_contact_agl,
-            settled_under_50ft_for_30s: self.max_post_contact_agl < 50.0 && self.has_contact(),
+            settled_under_50ft_for_30s: self.max_post_contact_agl < 50.0
+                && self.has_contact(),
             current_gs_kt: 0.0,
         });
 
@@ -413,11 +395,7 @@ fn pto105_msfs_smooth_55fpm() {
     let ep = &eps[0];
     assert!(matches!(ep.sim, SimKind::Msfs2024 | SimKind::Msfs2020));
     let lr = ep.landing_rate_vs_fpm.expect("landing_rate");
-    assert!(
-        lr >= -60.0 && lr <= -50.0,
-        "lr ∈ [-60, -50] expected, got {}",
-        lr
-    );
+    assert!(lr >= -60.0 && lr <= -50.0, "lr ∈ [-60, -50] expected, got {}", lr);
     assert_eq!(ep.false_edge_count, 0);
 }
 
@@ -429,11 +407,7 @@ fn dlh304_msfs_acceptable() {
 
     assert_eq!(eps.len(), 1);
     let lr = eps[0].landing_rate_vs_fpm.expect("landing_rate");
-    assert!(
-        lr >= -362.0 && lr <= -352.0,
-        "lr ∈ [-362, -352], got {}",
-        lr
-    );
+    assert!(lr >= -362.0 && lr <= -352.0, "lr ∈ [-362, -352], got {}", lr);
 }
 
 #[test]
@@ -444,11 +418,7 @@ fn cfg785_msfs_smooth() {
 
     assert_eq!(eps.len(), 1);
     let lr = eps[0].landing_rate_vs_fpm.expect("landing_rate");
-    assert!(
-        lr >= -147.0 && lr <= -137.0,
-        "lr ∈ [-147, -137], got {}",
-        lr
-    );
+    assert!(lr >= -147.0 && lr <= -137.0, "lr ∈ [-147, -137], got {}", lr);
 }
 
 #[test]
@@ -459,11 +429,7 @@ fn dlh742_msfs_smooth() {
 
     assert_eq!(eps.len(), 1);
     let lr = eps[0].landing_rate_vs_fpm.expect("landing_rate");
-    assert!(
-        lr >= -196.0 && lr <= -186.0,
-        "lr ∈ [-196, -186], got {}",
-        lr
-    );
+    assert!(lr >= -196.0 && lr <= -186.0, "lr ∈ [-196, -186], got {}", lr);
 }
 
 // ─── LIVE-Sampler-Integration Tests (P1.1 fix) ──────────────────────────
@@ -485,10 +451,7 @@ struct LiveSamplerSim {
 ///   - pending_td_at wird gesetzt wenn neuer Edge + kein pending + kein samp_td
 ///   - 1.1 sec spaeter validation via touchdown_v2 → VALIDATED → samp_td_at;
 ///     FALSE_EDGE → pending_td_at = None
-fn simulate_live_sampler(
-    samples: &[recorder::TouchdownWindowSample],
-    sim: SimKind,
-) -> LiveSamplerSim {
+fn simulate_live_sampler(samples: &[recorder::TouchdownWindowSample], sim: SimKind) -> LiveSamplerSim {
     let mut state = LiveSamplerSim {
         sampler_touchdown_at: None,
         pending_td_at: None,
@@ -497,11 +460,7 @@ fn simulate_live_sampler(
     };
 
     for (idx, current) in samples.iter().enumerate() {
-        let prev = if idx > 0 {
-            Some(&samples[idx - 1])
-        } else {
-            None
-        };
+        let prev = if idx > 0 { Some(&samples[idx - 1]) } else { None };
 
         // Edge-Detection (Layer 1)
         let candidate = detect_td_candidate(prev, current, idx, sim);
@@ -597,8 +556,8 @@ fn live_sampler_dah3181_promotes_real_td_skips_float() {
     // Plus: berechne den finalen VS am echten contact_frame —
     // exakt das was im Production-Dump-Pfad passieren wuerde
     let impact = compute_impact_frame(&f.samples, td_at).expect("impact_frame");
-    let landing_rate = compute_landing_rate(&f.samples, &impact, AircraftCategory::FixedWing)
-        .expect("landing_rate");
+    let landing_rate =
+        compute_landing_rate(&f.samples, &impact, AircraftCategory::FixedWing).expect("landing_rate");
     eprintln!(
         "DAH 3181 LIVE final: vs={} src={} conf={:?}",
         landing_rate.vs_fpm, landing_rate.source, landing_rate.confidence
@@ -614,12 +573,7 @@ fn live_sampler_dah3181_promotes_real_td_skips_float() {
 fn live_sampler_msfs_unchanged_for_clean_landings() {
     // Alle 4 MSFS-Fluege: live-Sampler sollte direkten validated TD geben
     // (kein false_edge, keine Bouncer in der ersten Episode).
-    for fname in &[
-        "pto105.jsonl.gz",
-        "dlh304.jsonl.gz",
-        "cfg785.jsonl.gz",
-        "dlh742.jsonl.gz",
-    ] {
+    for fname in &["pto105.jsonl.gz", "dlh304.jsonl.gz", "cfg785.jsonl.gz", "dlh742.jsonl.gz"] {
         let f = load_fixture(fname);
         let state = simulate_live_sampler(&f.samples, f.sim);
         eprintln!(
@@ -628,8 +582,7 @@ fn live_sampler_msfs_unchanged_for_clean_landings() {
         );
         assert!(
             state.sampler_touchdown_at.is_some(),
-            "{}: sampler_touchdown_at expected for clean MSFS landing",
-            fname
+            "{}: sampler_touchdown_at expected for clean MSFS landing", fname
         );
     }
 }

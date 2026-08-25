@@ -323,10 +323,7 @@ mod tests {
             "bei {takt}-s-Takt kamen nur {} Belege zusammen — die Erkennung ist dort blind",
             b.belege
         );
-        assert!(
-            b.ist_replay,
-            "gestellter Replay bei Reiseflug-Kadenz nicht erkannt: {b:?}"
-        );
+        assert!(b.ist_replay, "gestellter Replay bei Reiseflug-Kadenz nicht erkannt: {b:?}");
     }
 
     #[test]
@@ -366,10 +363,7 @@ mod tests {
     #[test]
     fn langsames_rollen_in_der_luft_ist_kein_replay() {
         let b = pruefe_replay(&anflug(200, 20.0, -1.0, true));
-        assert!(
-            !b.ist_replay,
-            "langsamer Flug faelschlich als Replay: {b:?}"
-        );
+        assert!(!b.ist_replay, "langsamer Flug faelschlich als Replay: {b:?}");
     }
 
     #[test]
@@ -443,10 +437,7 @@ mod verdrahtung {
     #[test]
     fn der_puffer_ist_gedeckelt() {
         let s = lib_rs();
-        assert!(
-            s.contains("REPLAY_PROBEN_MAX"),
-            "keine Obergrenze fuer den Ringpuffer"
-        );
+        assert!(s.contains("REPLAY_PROBEN_MAX"), "keine Obergrenze fuer den Ringpuffer");
         assert!(
             s.contains("stats.replay_proben.pop_front()"),
             "der Puffer wird nie beschnitten"

@@ -1425,7 +1425,10 @@ pub async fn hoppie_get_thread(
     }
     {
         let thread = handle.thread.lock().expect("hoppie thread mutex");
-        let meta_by_min = handle.min_meta.lock().expect("hoppie min_meta mutex");
+        let meta_by_min = handle
+            .min_meta
+            .lock()
+            .expect("hoppie min_meta mutex");
         entries.extend(thread.history().iter().map(|e| {
             let (element_id, text) = match &e.message.parsed {
                 hoppie_protocol::elements::ParsedElement::Recognized(r) => {
