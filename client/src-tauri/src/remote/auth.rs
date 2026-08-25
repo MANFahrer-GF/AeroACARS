@@ -127,7 +127,9 @@ impl AuthState {
             tracing::warn!(error = %e, "remote: failed to persist rotated bearer token");
         }
         *self.token.lock().expect("auth token poisoned") = fresh.clone();
-        tracing::warn!("remote: pairing token revoked — all previously paired devices must re-pair");
+        tracing::warn!(
+            "remote: pairing token revoked — all previously paired devices must re-pair"
+        );
         fresh
     }
 
@@ -419,8 +421,14 @@ mod tests {
 
         let fresh = auth.rotate_token("test-account-rotate-1");
 
-        assert!(!auth.verify_token("old-token"), "old token must stop working");
-        assert!(auth.verify_token(&fresh), "the freshly minted token must work");
+        assert!(
+            !auth.verify_token("old-token"),
+            "old token must stop working"
+        );
+        assert!(
+            auth.verify_token(&fresh),
+            "the freshly minted token must work"
+        );
         assert_ne!(fresh, "old-token");
     }
 

@@ -159,7 +159,10 @@ struct PanelConfig {
 }
 
 fn config_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join(CONFIG_FILE))
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join(CONFIG_FILE))
 }
 
 /// Pure Variante für Tests: liest die Einstellung von einem Pfad.
@@ -186,7 +189,9 @@ fn write_enabled_to(path: &Path, enabled: bool) -> std::io::Result<()> {
 /// Ist der Panel-Server eingeschaltet? (Persistierte Einstellung;
 /// Standard: ja.)
 pub fn is_enabled(app: &AppHandle) -> bool {
-    config_path(app).map(|p| read_enabled_from(&p)).unwrap_or(true)
+    config_path(app)
+        .map(|p| read_enabled_from(&p))
+        .unwrap_or(true)
 }
 
 /// Schreibt die Einstellung. Wirkt beim NÄCHSTEN App-Start — bewusst kein
@@ -206,8 +211,7 @@ pub fn set_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
 
 /// Absender des Stopp-Signals, gesetzt von [`spawn`], ausgelöst von
 /// [`shutdown`]. `OnceLock` dient zugleich als Doppelstart-Sperre.
-static SHUTDOWN: std::sync::OnceLock<tokio::sync::watch::Sender<bool>> =
-    std::sync::OnceLock::new();
+static SHUTDOWN: std::sync::OnceLock<tokio::sync::watch::Sender<bool>> = std::sync::OnceLock::new();
 
 /// Fährt den Panel-Server geordnet herunter. Wird AUSSCHLIESSLICH aus dem
 /// `RunEvent::Exit`-Zweig in `lib.rs` gerufen (nicht `ExitRequested` —
@@ -437,8 +441,10 @@ fn reject_non_loopback(peer: SocketAddr) -> Option<Response> {
 /// ACAO costs nothing here: there is no token/ambient credential for CORS
 /// to meaningfully protect.
 fn cors_open(mut resp: Response) -> Response {
-    resp.headers_mut()
-        .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    resp.headers_mut().insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
     resp
 }
 
@@ -473,9 +479,14 @@ async fn status_handler(
 /// callsign, sonst + flight_number), nur mit Leerzeichen als Trenner —
 /// so wie es die App seit jeher anzeigt.
 fn with_display_callsign(value: &mut serde_json::Value) {
-    let Some(obj) = value.as_object_mut() else { return };
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
     let s = |v: Option<&serde_json::Value>| {
-        v.and_then(|x| x.as_str()).map(str::trim).unwrap_or("").to_string()
+        v.and_then(|x| x.as_str())
+            .map(str::trim)
+            .unwrap_or("")
+            .to_string()
     };
     let airline = s(obj.get("airline_icao"));
     let raw_callsign = s(obj.get("callsign"));
@@ -596,7 +607,10 @@ mod tests {
     #[test]
     fn the_second_address_is_just_as_loopback_only_as_the_first() {
         let v6_loopback: SocketAddr = "[::1]:5000".parse().unwrap();
-        assert!(reject_non_loopback(v6_loopback).is_none(), "::1 muss durchkommen");
+        assert!(
+            reject_non_loopback(v6_loopback).is_none(),
+            "::1 muss durchkommen"
+        );
 
         let v6_public: SocketAddr = "[2001:db8::1]:5000".parse().unwrap();
         assert!(reject_non_loopback(v6_public).is_some());
@@ -632,7 +646,10 @@ mod tests {
         let (tx2, rx2) = tokio::sync::watch::channel(false);
         let mut recv = rx2.clone();
         drop(tx2);
-        assert!(recv.changed().await.is_err(), "weggefallener Absender = Stopp");
+        assert!(
+            recv.changed().await.is_err(),
+            "weggefallener Absender = Stopp"
+        );
     }
 
     /// Der Kern der Härtung: eine abgelaufene Verbindung liefert auf der
@@ -686,9 +703,11 @@ mod tests {
         let (_held, _) = limited.accept().await;
 
         let _c2 = tokio::net::TcpStream::connect(addr).await.unwrap();
-        let blocked =
-            tokio::time::timeout(Duration::from_millis(200), limited.accept()).await;
-        assert!(blocked.is_err(), "zweite Verbindung darf den Deckel nicht passieren");
+        let blocked = tokio::time::timeout(Duration::from_millis(200), limited.accept()).await;
+        assert!(
+            blocked.is_err(),
+            "zweite Verbindung darf den Deckel nicht passieren"
+        );
     }
 
     /// Die Ein/Aus-Einstellung: Standard ist AN (fehlende/kaputte Datei),
@@ -762,6 +781,9 @@ mod tests {
 
         let mut leer = serde_json::json!({ "airline_icao": "GSG" });
         with_display_callsign(&mut leer);
-        assert!(leer.get("callsign").is_none(), "ohne Identifikator kein Feld erfinden");
+        assert!(
+            leer.get("callsign").is_none(),
+            "ohne Identifikator kein Feld erfinden"
+        );
     }
 }

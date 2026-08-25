@@ -178,8 +178,14 @@ mod tests {
             map.entry(k).or_insert(v);
         }
 
-        assert_eq!(map.get("simbrief_username").map(String::as_str), Some("thomas"));
-        assert_eq!(map.get("aeroacars.readNewsIds").map(String::as_str), Some("[1,2]"));
+        assert_eq!(
+            map.get("simbrief_username").map(String::as_str),
+            Some("thomas")
+        );
+        assert_eq!(
+            map.get("aeroacars.readNewsIds").map(String::as_str),
+            Some("[1,2]")
+        );
         assert!(!map.contains_key("leer"), "leere Werte werden nicht gesät");
     }
 }

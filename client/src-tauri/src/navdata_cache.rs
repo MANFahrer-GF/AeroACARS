@@ -86,7 +86,9 @@ impl GespeicherterFlugplatz {
     /// gegen den 1. Januar 1970 und meldet dann für JEDEN Eintrag „0 Tage
     /// alt" — die Meldung, die genau das verschweigt, wofür sie da ist.
     pub fn alter_tage(&self, jetzt: u64) -> Option<u64> {
-        jetzt.checked_sub(self.geholt_am).map(|d| d / SEKUNDEN_JE_TAG)
+        jetzt
+            .checked_sub(self.geholt_am)
+            .map(|d| d / SEKUNDEN_JE_TAG)
     }
 
     /// Alter in ganzen Tagen gegen die Systemuhr.
@@ -260,7 +262,11 @@ mod tests {
         assert_eq!(frisch.alter_tage_jetzt(), 0);
         let alt = eintrag(jetzt_unix().saturating_sub(30 * SEKUNDEN_JE_TAG));
         assert_eq!(alt.alter_tage_jetzt(), 30, "das Alter wird nicht gemeldet");
-        assert_eq!(alt.alter_tage(0), None, "gegen 1970 gerechnet ist kein Alter");
+        assert_eq!(
+            alt.alter_tage(0),
+            None,
+            "gegen 1970 gerechnet ist kein Alter"
+        );
     }
 
     #[test]

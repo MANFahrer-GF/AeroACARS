@@ -118,7 +118,8 @@ pub fn projiziere_auf_bahn(
     // Laengsabstand: Betrag ueber die Kugel, Vorzeichen ueber die
     // Peilungsdifferenz. acos() liefert nie negativ — ohne das Vorzeichen
     // laesen sich Undershoot und Overshoot nicht unterscheiden.
-    let cos_arg = ((d_ab / EARTH_RADIUS_M).cos() / (quer_m / EARTH_RADIUS_M).cos()).clamp(-1.0, 1.0);
+    let cos_arg =
+        ((d_ab / EARTH_RADIUS_M).cos() / (quer_m / EARTH_RADIUS_M).cos()).clamp(-1.0, 1.0);
     let laengs_betrag = cos_arg.acos() * EARTH_RADIUS_M;
 
     let mut diff = theta_ac - theta_ab;
@@ -437,9 +438,7 @@ fn rows_for_airport(icao: &str) -> impl Iterator<Item = &'static RunwayRow> {
 fn belag_aus_tabelle(icao: &str, bahn: &str) -> Option<String> {
     let gesucht = bahn.trim().to_uppercase();
     rows_for_airport(icao)
-        .find(|r| {
-            r.le_ident.to_uppercase() == gesucht || r.he_ident.to_uppercase() == gesucht
-        })
+        .find(|r| r.le_ident.to_uppercase() == gesucht || r.he_ident.to_uppercase() == gesucht)
         .map(|r| r.surface.clone())
         .filter(|s| !s.trim().is_empty())
 }
@@ -496,10 +495,7 @@ pub fn geometry_hidden_displacement_ft(
     // Release an anderer Stelle einen Riegel eingebaut hat; hier fiel sie
     // erst im Review auf, weil der Zufallstest den NaN-Fall von seiner
     // Zusicherung ausgenommen hatte.
-    if want.is_empty()
-        || !length_ft.is_finite()
-        || length_ft <= 0.0
-        || !geometry_len_m.is_finite()
+    if want.is_empty() || !length_ft.is_finite() || length_ft <= 0.0 || !geometry_len_m.is_finite()
     {
         return 0;
     }
@@ -905,14 +901,9 @@ fn heading_from_ident(ident: &str) -> Option<f64> {
 /// Point reached by travelling `distance_m` from (lat, lon) along `bearing_deg`.
 fn project(lat: f64, lon: f64, bearing_deg: f64, distance_m: f64) -> (f64, f64) {
     let ang = distance_m / EARTH_RADIUS_M;
-    let (br, p1, l1) = (
-        bearing_deg.to_radians(),
-        lat.to_radians(),
-        lon.to_radians(),
-    );
+    let (br, p1, l1) = (bearing_deg.to_radians(), lat.to_radians(), lon.to_radians());
     let p2 = (p1.sin() * ang.cos() + p1.cos() * ang.sin() * br.cos()).asin();
-    let l2 = l1
-        + (br.sin() * ang.sin() * p1.cos()).atan2(ang.cos() - p1.sin() * p2.sin());
+    let l2 = l1 + (br.sin() * ang.sin() * p1.cos()).atan2(ang.cos() - p1.sin() * p2.sin());
     (p2.to_degrees(), l2.to_degrees())
 }
 
@@ -1114,8 +1105,7 @@ fn find_nearest(
         }
         let approx_lat = (row.le_lat + row.he_lat) / 2.0;
         let approx_lon = (row.le_lon + row.he_lon) / 2.0;
-        if (approx_lat - lat).abs() > lat_span_deg
-            || lon_delta_deg(approx_lon, lon) > lon_span_deg
+        if (approx_lat - lat).abs() > lat_span_deg || lon_delta_deg(approx_lon, lon) > lon_span_deg
         {
             continue;
         }
@@ -1177,11 +1167,7 @@ fn find_nearest(
 /// is closest to the aircraft heading wins.
 ///
 /// Returns `None` when no runway is within ~3 km of the point.
-pub fn lookup_runway(
-    lat: f64,
-    lon: f64,
-    aircraft_heading_true_deg: f32,
-) -> Option<RunwayMatch> {
+pub fn lookup_runway(lat: f64, lon: f64, aircraft_heading_true_deg: f32) -> Option<RunwayMatch> {
     let table = runways();
 
     // Bounding-box prefilter. With ~48k rows and a 0.1° square window
@@ -1213,28 +1199,35 @@ pub fn lookup_runway(
         // heading is closer to the aircraft heading at touchdown.
         let le_diff = heading_diff(aircraft_heading_true_deg, row.le_heading_true);
         let he_diff = heading_diff(aircraft_heading_true_deg, row.he_heading_true);
-        let (threshold_lat, threshold_lon, end_lat, end_lon, runway_ident, runway_heading, displaced_threshold_ft) =
-            if le_diff <= he_diff {
-                (
-                    row.le_lat,
-                    row.le_lon,
-                    row.he_lat,
-                    row.he_lon,
-                    row.le_ident.clone(),
-                    row.le_heading_true,
-                    row.le_displaced_threshold_ft,
-                )
-            } else {
-                (
-                    row.he_lat,
-                    row.he_lon,
-                    row.le_lat,
-                    row.le_lon,
-                    row.he_ident.clone(),
-                    row.he_heading_true,
-                    row.he_displaced_threshold_ft,
-                )
-            };
+        let (
+            threshold_lat,
+            threshold_lon,
+            end_lat,
+            end_lon,
+            runway_ident,
+            runway_heading,
+            displaced_threshold_ft,
+        ) = if le_diff <= he_diff {
+            (
+                row.le_lat,
+                row.le_lon,
+                row.he_lat,
+                row.he_lon,
+                row.le_ident.clone(),
+                row.le_heading_true,
+                row.le_displaced_threshold_ft,
+            )
+        } else {
+            (
+                row.he_lat,
+                row.he_lon,
+                row.le_lat,
+                row.le_lon,
+                row.he_ident.clone(),
+                row.he_heading_true,
+                row.he_displaced_threshold_ft,
+            )
+        };
 
         // Cheap rejection: if the threshold itself is more than ~5 km
         // away the pilot definitely didn't land here, regardless of
@@ -1395,7 +1388,8 @@ pub(crate) fn dedupe_near_duplicate_nav_runways(
 fn ourairports_has_runway_designator_for(icao: &str, designator: &str) -> bool {
     let designator = designator.trim().to_uppercase();
     rows_for_airport(icao).any(|r| {
-        r.le_ident.trim().to_uppercase() == designator || r.he_ident.trim().to_uppercase() == designator
+        r.le_ident.trim().to_uppercase() == designator
+            || r.he_ident.trim().to_uppercase() == designator
     })
 }
 
@@ -1553,8 +1547,8 @@ pub fn along_track_m_signed(
     let theta_ac = initial_bearing_rad(threshold_lat, threshold_lon, sample_lat, sample_lon);
     let xtd = (d_threshold / EARTH_RADIUS_M).sin() * (theta_ac - theta_ab).sin();
     let xtd = xtd.asin() * EARTH_RADIUS_M;
-    let cos_arg = ((d_threshold / EARTH_RADIUS_M).cos() / (xtd / EARTH_RADIUS_M).cos())
-        .clamp(-1.0, 1.0);
+    let cos_arg =
+        ((d_threshold / EARTH_RADIUS_M).cos() / (xtd / EARTH_RADIUS_M).cos()).clamp(-1.0, 1.0);
     let along_m = cos_arg.acos() * EARTH_RADIUS_M;
     let mut bearing_diff = theta_ac - theta_ab;
     while bearing_diff > std::f64::consts::PI {
@@ -1741,10 +1735,7 @@ mod geo_search_tests {
         // And every one of its thresholds must now sit ON the field. KCLE's
         // reference point is 41.4117/-81.8498.
         for r in rows {
-            for (lat, lon, end) in [
-                (r.le_lat, r.le_lon, "06R"),
-                (r.he_lat, r.he_lon, "24L"),
-            ] {
+            for (lat, lon, end) in [(r.le_lat, r.le_lon, "06R"), (r.he_lat, r.he_lon, "24L")] {
                 let off_nm = haversine_m(lat, lon, 41.4117, -81.8498) / 1852.0;
                 assert!(
                     off_nm < 2.0,
@@ -1755,9 +1746,8 @@ mod geo_search_tests {
 
         // The bad coordinate must no longer make a point 4 nm off the field
         // look like "at KCLE".
-        let phantom_nm = distance_to_airport_m("KCLE", 41.300, -81.800)
-            .expect("KCLE has geometry")
-            / 1852.0;
+        let phantom_nm =
+            distance_to_airport_m("KCLE", 41.300, -81.800).expect("KCLE has geometry") / 1852.0;
         assert!(
             phantom_nm > 2.0,
             "the phantom threshold still makes a point {phantom_nm:.2} nm off the field read as on-field"
@@ -1825,9 +1815,8 @@ mod geo_search_tests {
         }
         // And the phantom must no longer answer "yes, you're at UUMU" for an
         // aircraft parked in Belgorod.
-        let belgorod_nm = distance_to_airport_m("UUMU", 50.6485, 36.5757)
-            .expect("UUMU has geometry")
-            / 1852.0;
+        let belgorod_nm =
+            distance_to_airport_m("UUMU", 50.6485, 36.5757).expect("UUMU has geometry") / 1852.0;
         assert!(
             belgorod_nm > 100.0,
             "Belgorod still reads as {belgorod_nm:.0} nm from UUMU"
@@ -1941,7 +1930,10 @@ mod geo_search_tests {
             near_line.iter().any(|a| a.lon > 170.0),
             "a search just east of the dateline must reach airports west of it \
              (got: {:?})",
-            near_line.iter().map(|a| (&a.icao, a.lon)).collect::<Vec<_>>()
+            near_line
+                .iter()
+                .map(|a| (&a.icao, a.lon))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -2004,15 +1996,24 @@ mod tests {
         let ft = geometry_hidden_displacement_ft("EDDH", "33", 12028.0, 3215.0);
         assert_eq!(ft, 1464, "EDDH 33 traegt 1464 ft Versatz in der Geometrie");
         // Das Gegenende hat keinen — dort gibt es nichts abzuziehen.
-        assert_eq!(geometry_hidden_displacement_ft("EDDH", "15", 12028.0, 3215.0), 0);
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDH", "15", 12028.0, 3215.0),
+            0
+        );
     }
 
     #[test]
     fn beide_enden_versetzt_geht_ebenfalls_auf() {
         // EDDH 05/23: 978 + 512 ft = 454 m, Bahn 3250 m, Geometrie 2789 m
         // (Delta 461 m — innerhalb der 40-m-Toleranz beider Quellen).
-        assert_eq!(geometry_hidden_displacement_ft("EDDH", "05", 10663.0, 2789.0), 978);
-        assert_eq!(geometry_hidden_displacement_ft("EDDH", "23", 10663.0, 2789.0), 512);
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDH", "05", 10663.0, 2789.0),
+            978
+        );
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDH", "23", 10663.0, 2789.0),
+            512
+        );
     }
 
     #[test]
@@ -2031,23 +2032,53 @@ mod tests {
     #[test]
     fn bahn_ohne_versatz_bleibt_unangetastet() {
         // EDDS 25 (Thomas' Ausloeser-Flug): kein Versatz an diesem Ende.
-        assert_eq!(geometry_hidden_displacement_ft("EDDS", "25", 10974.0, 3036.0), 0);
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDS", "25", 10974.0, 3036.0),
+            0
+        );
         // EDDB 06R/24L: beide Enden ohne Versatz, Geometrie = Bahn.
-        assert_eq!(geometry_hidden_displacement_ft("EDDB", "06R", 13123.0, 3988.0), 0);
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDB", "06R", 13123.0, 3988.0),
+            0
+        );
     }
 
     #[test]
     fn unbekannte_bahn_und_unsinnige_eingaben_liefern_null() {
-        assert_eq!(geometry_hidden_displacement_ft("XXXX", "33", 12028.0, 3215.0), 0);
-        assert_eq!(geometry_hidden_displacement_ft("EDDH", "99", 12028.0, 3215.0), 0);
-        assert_eq!(geometry_hidden_displacement_ft("EDDH", "", 12028.0, 3215.0), 0);
-        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", 0.0, 3215.0), 0);
-        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", 12028.0, f64::NAN), 0);
+        assert_eq!(
+            geometry_hidden_displacement_ft("XXXX", "33", 12028.0, 3215.0),
+            0
+        );
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDH", "99", 12028.0, 3215.0),
+            0
+        );
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDH", "", 12028.0, 3215.0),
+            0
+        );
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDH", "33", 0.0, 3215.0),
+            0
+        );
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDH", "33", 12028.0, f64::NAN),
+            0
+        );
         // Review-Befund: NaN-Bahnlaenge rutschte durch ALLE drei Riegel
         // und lieferte den ungeprueften Tabellenwert zurueck.
-        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", f32::NAN, 3215.0), 0);
-        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", f32::INFINITY, 3215.0), 0);
-        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", -12028.0, 3215.0), 0);
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDH", "33", f32::NAN, 3215.0),
+            0
+        );
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDH", "33", f32::INFINITY, 3215.0),
+            0
+        );
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDH", "33", -12028.0, 3215.0),
+            0
+        );
     }
 
     #[test]
@@ -2055,10 +2086,19 @@ mod tests {
         // Weicht die gemessene Geometrie um mehr als 40 m von dem ab, was
         // Laenge minus beide Versaetze ergibt, passen die Quellen nicht
         // zusammen — dann lieber nichts abziehen als das Falsche.
-        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", 12028.0, 3400.0), 0);
-        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", 12028.0, 3000.0), 0);
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDH", "33", 12028.0, 3400.0),
+            0
+        );
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDH", "33", 12028.0, 3000.0),
+            0
+        );
         // Knapp innerhalb der Toleranz bleibt es dabei.
-        assert_eq!(geometry_hidden_displacement_ft("EDDH", "33", 12028.0, 3245.0), 1464);
+        assert_eq!(
+            geometry_hidden_displacement_ft("EDDH", "33", 12028.0, 3245.0),
+            1464
+        );
     }
 
     #[test]
@@ -2069,9 +2109,15 @@ mod tests {
         // Zeilenreihenfolge abhaengen — bei Widerspruch: nichts abziehen.
         // LW75 „XX" traegt 1000 ft in der einen und 5566 ft in der
         // anderen Zeile.
-        assert_eq!(geometry_hidden_displacement_ft("LW75", "XX", 6000.0, 1500.0), 0);
+        assert_eq!(
+            geometry_hidden_displacement_ft("LW75", "XX", 6000.0, 1500.0),
+            0
+        );
         // Leere Kennung faengt schon der Riegel oben ab.
-        assert_eq!(geometry_hidden_displacement_ft("AR62", "", 3000.0, 800.0), 0);
+        assert_eq!(
+            geometry_hidden_displacement_ft("AR62", "", 3000.0, 800.0),
+            0
+        );
     }
 
     #[test]
@@ -2120,12 +2166,10 @@ mod tests {
         let landing_bearing = (EDDP_26R_HEADING as f64).to_radians();
         let right_bearing = landing_bearing + std::f64::consts::FRAC_PI_2;
 
-        let (lat1, lon1) =
-            destination(EDDP_26R_THR_LAT, EDDP_26R_THR_LON, landing_bearing, 1000.0);
+        let (lat1, lon1) = destination(EDDP_26R_THR_LAT, EDDP_26R_THR_LON, landing_bearing, 1000.0);
         let (lat2, lon2) = destination(lat1, lon1, right_bearing, 10.0);
 
-        let m = lookup_runway(lat2, lon2, EDDP_26R_HEADING)
-            .expect("should resolve to EDDP/26R");
+        let m = lookup_runway(lat2, lon2, EDDP_26R_HEADING).expect("should resolve to EDDP/26R");
         assert_eq!(m.airport_ident, "EDDP");
         assert_eq!(m.runway_ident, "26R");
         assert_eq!(m.side, "RIGHT");
@@ -2155,8 +2199,7 @@ mod tests {
         let phi1 = lat.to_radians();
         let lam1 = lon.to_radians();
         let delta = dist_m / EARTH_RADIUS_M;
-        let phi2 =
-            (phi1.sin() * delta.cos() + phi1.cos() * delta.sin() * bearing_rad.cos()).asin();
+        let phi2 = (phi1.sin() * delta.cos() + phi1.cos() * delta.sin() * bearing_rad.cos()).asin();
         let lam2 = lam1
             + (bearing_rad.sin() * delta.sin() * phi1.cos())
                 .atan2(delta.cos() - phi1.sin() * phi2.sin());
@@ -2174,12 +2217,7 @@ mod tests {
         // the runway heading (= bearing + 180°) from the threshold.
         let landing_bearing = (EDDP_26R_HEADING as f64).to_radians();
         let approach_bearing = landing_bearing + std::f64::consts::PI;
-        let (lat, lon) = destination(
-            EDDP_26R_THR_LAT,
-            EDDP_26R_THR_LON,
-            approach_bearing,
-            200.0,
-        );
+        let (lat, lon) = destination(EDDP_26R_THR_LAT, EDDP_26R_THR_LON, approach_bearing, 200.0);
         let m = lookup_runway(lat, lon, EDDP_26R_HEADING)
             .expect("should still resolve to EDDP/26R (pilot mid-final, 200 m short)");
         // 200 m → ~656.17 ft. Negative because pilot is on the
@@ -2215,8 +2253,16 @@ mod tests {
             width_ft: Some(148),
             // DER PUNKT: die Navdaten tragen hier nichts.
             surface: None,
-            threshold: NavPoint { lat: t.0, lon: t.1, elev_ft: None },
-            far_end: NavPoint { lat: e.0, lon: e.1, elev_ft: None },
+            threshold: NavPoint {
+                lat: t.0,
+                lon: t.1,
+                elev_ft: None,
+            },
+            far_end: NavPoint {
+                lat: e.0,
+                lon: e.1,
+                elev_ft: None,
+            },
             displaced_threshold_ft: 0,
             ils: None,
             glideslope_angle: 3.0,
@@ -2287,8 +2333,16 @@ mod tests {
             length_ft,
             width_ft: Some(148),
             surface: Some("ASP".to_string()),
-            threshold: NavPoint { lat: t.0, lon: t.1, elev_ft: None },
-            far_end: NavPoint { lat: e.0, lon: e.1, elev_ft: None },
+            threshold: NavPoint {
+                lat: t.0,
+                lon: t.1,
+                elev_ft: None,
+            },
+            far_end: NavPoint {
+                lat: e.0,
+                lon: e.1,
+                elev_ft: None,
+            },
             displaced_threshold_ft: 0,
             ils: None,
             glideslope_angle: 3.0,
@@ -2303,10 +2357,34 @@ mod tests {
             longitude: 23.604,
             elevation_ft: Some(390),
             runways: vec![
-                rwy("06", 64.4049516350735, 8858, (61.408922, 23.581586), (61.419369, 23.627208)),
-                rwy("06C", 64.4098729375956, 7470, (61.410561, 23.588731), (61.418208, 23.622125)),
-                rwy("24", 244.445012365508, 8858, (61.419369, 23.627208), (61.408922, 23.581586)),
-                rwy("24C", 244.439196313664, 7871, (61.418208, 23.622125), (61.410561, 23.588731)),
+                rwy(
+                    "06",
+                    64.4049516350735,
+                    8858,
+                    (61.408922, 23.581586),
+                    (61.419369, 23.627208),
+                ),
+                rwy(
+                    "06C",
+                    64.4098729375956,
+                    7470,
+                    (61.410561, 23.588731),
+                    (61.418208, 23.622125),
+                ),
+                rwy(
+                    "24",
+                    244.445012365508,
+                    8858,
+                    (61.419369, 23.627208),
+                    (61.408922, 23.581586),
+                ),
+                rwy(
+                    "24C",
+                    244.439196313664,
+                    7871,
+                    (61.418208, 23.622125),
+                    (61.410561, 23.588731),
+                ),
             ],
         }
     }
@@ -2316,7 +2394,11 @@ mod tests {
         let apt = eftp_nav_fixture();
         let kept = dedupe_near_duplicate_nav_runways(&apt.icao, apt.runways);
         let idents: Vec<&str> = kept.iter().map(|r| r.designator.as_str()).collect();
-        assert_eq!(idents, vec!["06", "24"], "06C/24C are phantom entries unknown to OurAirports and must be dropped");
+        assert_eq!(
+            idents,
+            vec!["06", "24"],
+            "06C/24C are phantom entries unknown to OurAirports and must be dropped"
+        );
     }
 
     #[test]
@@ -2339,7 +2421,10 @@ mod tests {
             "must match the real runway 24, not the phantom 24C \
              (pre-fix behaviour matched 24C because of its closer XTD)"
         );
-        assert_eq!(m.length_ft, 8858.0, "must carry the real runway's length, not 24C's shorter phantom length");
+        assert_eq!(
+            m.length_ft, 8858.0,
+            "must carry the real runway's length, not 24C's shorter phantom length"
+        );
     }
 
     #[test]
@@ -2354,19 +2439,41 @@ mod tests {
             length_ft: 4510,
             width_ft: Some(75),
             surface: Some("ASP".to_string()),
-            threshold: NavPoint { lat: t.0, lon: t.1, elev_ft: None },
-            far_end: NavPoint { lat: e.0, lon: e.1, elev_ft: None },
+            threshold: NavPoint {
+                lat: t.0,
+                lon: t.1,
+                elev_ft: None,
+            },
+            far_end: NavPoint {
+                lat: e.0,
+                lon: e.1,
+                elev_ft: None,
+            },
             displaced_threshold_ft: 0,
             ils: None,
             glideslope_angle: 3.0,
             tch_ft: 50,
         };
         let runways = vec![
-            rwy("20", 31.0669516863285, (64.815556, -147.856389), (64.803889, -147.849722)),
-            rwy("20L", 31.0669516863285, (64.815, -147.855), (64.803, -147.848)),
+            rwy(
+                "20",
+                31.0669516863285,
+                (64.815556, -147.856389),
+                (64.803889, -147.849722),
+            ),
+            rwy(
+                "20L",
+                31.0669516863285,
+                (64.815, -147.855),
+                (64.803, -147.848),
+            ),
         ];
         let kept = dedupe_near_duplicate_nav_runways("PAFA", runways);
-        assert_eq!(kept.len(), 2, "both are real, OurAirports-confirmed runways — dedupe must not touch them");
+        assert_eq!(
+            kept.len(),
+            2,
+            "both are real, OurAirports-confirmed runways — dedupe must not touch them"
+        );
     }
 
     #[test]
@@ -2381,8 +2488,16 @@ mod tests {
             length_ft: 2000,
             width_ft: Some(60),
             surface: Some("GRS".to_string()),
-            threshold: NavPoint { lat: t.0, lon: t.1, elev_ft: None },
-            far_end: NavPoint { lat: e.0, lon: e.1, elev_ft: None },
+            threshold: NavPoint {
+                lat: t.0,
+                lon: t.1,
+                elev_ft: None,
+            },
+            far_end: NavPoint {
+                lat: e.0,
+                lon: e.1,
+                elev_ft: None,
+            },
             displaced_threshold_ft: 0,
             ils: None,
             glideslope_angle: 3.0,
@@ -2393,7 +2508,11 @@ mod tests {
             rwy("09C", (0.0001, 0.0), (0.0001, 0.01)),
         ];
         let kept = dedupe_near_duplicate_nav_runways("ZZZZ", runways);
-        assert_eq!(kept.len(), 2, "neither confirmed nor refuted by OurAirports — must not guess");
+        assert_eq!(
+            kept.len(),
+            2,
+            "neither confirmed nor refuted by OurAirports — must not guess"
+        );
     }
 
     #[test]
@@ -2486,8 +2605,8 @@ mod tests {
         assert!(m.touchdown_distance_from_threshold_ft.abs() < 5.0);
 
         // Aircraft heading 355° → RWY 35 (true_course 356.94).
-        let m = lookup_runway_in_nav(33.809_288, 35.488_861, 355.0, &apt)
-            .expect("RWY 35 threshold");
+        let m =
+            lookup_runway_in_nav(33.809_288, 35.488_861, 355.0, &apt).expect("RWY 35 threshold");
         assert_eq!(m.runway_ident, "35");
     }
 
@@ -2530,9 +2649,8 @@ mod tests {
     #[test]
     fn fallback_uses_navigraph_when_available() {
         let apt = olba_nav_fixture();
-        let (m, src) =
-            lookup_runway_with_fallback(33.838_364, 35.486_978, 175.0, Some(&apt))
-                .expect("should match Navigraph runway");
+        let (m, src) = lookup_runway_with_fallback(33.838_364, 35.486_978, 175.0, Some(&apt))
+            .expect("should match Navigraph runway");
         assert_eq!(src, RunwaySource::Navigraph);
         assert_eq!(m.runway_ident, "17");
     }
@@ -2541,13 +2659,9 @@ mod tests {
     fn fallback_uses_ourairports_when_nav_none() {
         // No NavAirport provided → falls back to bundled CSV. EDDP/26R
         // is in OurAirports, so we get a match flagged as fallback.
-        let (m, src) = lookup_runway_with_fallback(
-            EDDP_26R_THR_LAT,
-            EDDP_26R_THR_LON,
-            EDDP_26R_HEADING,
-            None,
-        )
-        .expect("OurAirports has EDDP");
+        let (m, src) =
+            lookup_runway_with_fallback(EDDP_26R_THR_LAT, EDDP_26R_THR_LON, EDDP_26R_HEADING, None)
+                .expect("OurAirports has EDDP");
         assert_eq!(src, RunwaySource::OurAirportsFallback);
         assert_eq!(m.airport_ident, "EDDP");
         assert_eq!(m.runway_ident, "26R");
@@ -2570,8 +2684,7 @@ mod tests {
         // Parallel 520 m nach Süden (= rechts der 07L Landerichtung,
         // bearing + 90° = 160°).
         let perp_right = landing_bearing + std::f64::consts::FRAC_PI_2;
-        let (thr_07r_lat, thr_07r_lon) =
-            destination(thr_07l_lat, thr_07l_lon, perp_right, 520.0);
+        let (thr_07r_lat, thr_07r_lon) = destination(thr_07l_lat, thr_07l_lon, perp_right, 520.0);
         let (end_07r_lat, end_07r_lon) =
             destination(thr_07r_lat, thr_07r_lon, landing_bearing, length_m);
 
@@ -2621,11 +2734,9 @@ mod tests {
         let landing_bearing = 70.0_f64.to_radians();
         let right_perp = landing_bearing + std::f64::consts::FRAC_PI_2;
         // First reach 07R threshold (520 m perp from 07L)…
-        let (thr_07r_lat, thr_07r_lon) =
-            destination(50.05, 8.55, right_perp, 520.0);
+        let (thr_07r_lat, thr_07r_lon) = destination(50.05, 8.55, right_perp, 520.0);
         // …then 1000 m down 07R…
-        let (along_lat, along_lon) =
-            destination(thr_07r_lat, thr_07r_lon, landing_bearing, 1000.0);
+        let (along_lat, along_lon) = destination(thr_07r_lat, thr_07r_lon, landing_bearing, 1000.0);
         // …then 5 m right of the 07R centerline.
         let (td_lat, td_lon) = destination(along_lat, along_lon, right_perp, 5.0);
 
@@ -2653,8 +2764,7 @@ mod tests {
         let landing_bearing = 70.0_f64.to_radians();
         let right_perp = landing_bearing + std::f64::consts::FRAC_PI_2;
         // 1000 m down 07L, 3 m LEFT of 07L centerline.
-        let (along_lat, along_lon) =
-            destination(50.05, 8.55, landing_bearing, 1000.0);
+        let (along_lat, along_lon) = destination(50.05, 8.55, landing_bearing, 1000.0);
         let (td_lat, td_lon) =
             destination(along_lat, along_lon, right_perp - std::f64::consts::PI, 3.0);
 
@@ -2694,7 +2804,10 @@ mod tests {
             (thr_lat + 3000.0 / 111_320.0, thr_lon)
         } else {
             // 090° — nach Osten.
-            (thr_lat, thr_lon + 3000.0 / (111_320.0 * thr_lat.to_radians().cos()))
+            (
+                thr_lat,
+                thr_lon + 3000.0 / (111_320.0 * thr_lat.to_radians().cos()),
+            )
         };
         NavRunway {
             designator: designator.to_string(),
@@ -2703,8 +2816,16 @@ mod tests {
             length_ft: 9843, // 3000 m
             width_ft: Some(150),
             surface: Some("ASP".into()),
-            threshold: NavPoint { lat: thr_lat, lon: thr_lon, elev_ft: None },
-            far_end: NavPoint { lat: end_lat, lon: end_lon, elev_ft: None },
+            threshold: NavPoint {
+                lat: thr_lat,
+                lon: thr_lon,
+                elev_ft: None,
+            },
+            far_end: NavPoint {
+                lat: end_lat,
+                lon: end_lon,
+                elev_ft: None,
+            },
             displaced_threshold_ft: 0,
             ils: None,
             glideslope_angle: gs,
@@ -2722,7 +2843,11 @@ mod tests {
             .expect("aligned final should predict a runway");
         assert_eq!(p.designator, "36");
         assert_eq!(p.glideslope_angle, Some(3.0));
-        assert!(p.centerline_offset_m.abs() < 50.0, "offset {}", p.centerline_offset_m);
+        assert!(
+            p.centerline_offset_m.abs() < 50.0,
+            "offset {}",
+            p.centerline_offset_m
+        );
     }
 
     #[test]
@@ -2783,76 +2908,91 @@ mod tests {
         assert!(predict_landing_runway(&rws, past, 8.0, 360.0).is_none());
     }
 
-// ── projiziere_auf_bahn: an echten Bahndaten geprueft ────────────────────
+    // ── projiziere_auf_bahn: an echten Bahndaten geprueft ────────────────────
 
-/// EHAM 06 aus den Navdaten (AIRAC 2608), Schwelle -> Bahnende.
-const EHAM06: (f64, f64, f64, f64) = (52.289106, 4.737225, 52.304350, 4.776925);
+    /// EHAM 06 aus den Navdaten (AIRAC 2608), Schwelle -> Bahnende.
+    const EHAM06: (f64, f64, f64, f64) = (52.289106, 4.737225, 52.304350, 4.776925);
 
-/// Hinweis zur Aussagekraft: Dieser Test allein faengt einen Winkelfehler
-/// NICHT — bei 327 m Abstand schlaegt ein halbes Zehntelgrad nur mit 0,3 m
-/// durch. Gegengeprueft am 23.08.2026 durch Ersetzen der Geometrie-Achse
-/// durch einen festen Kurs von 58,0 Grad: dieser Test blieb gruen, sechs
-/// andere wurden rot (darunter `bahnende_liegt_bei_der_nutzbaren_laenge`,
-/// das ueber die volle Bahnlaenge misst). Die Absicherung traegt also das
-/// Bundel, nicht dieser Fall.
-#[test]
-fn mph9_aufsetzpunkt_trifft_den_gemeldeten_wert() {
-    // MPH 9, 22.08.2026. Der Client meldete im Touchdown-Payload
-    // td_distance_from_threshold_m = 327,13 und einen Mittellinienversatz
-    // von 1,04 m links. Beides muss aus der Geometrie herauskommen.
-    let (laengs, quer) = projiziere_auf_bahn(
-        EHAM06.0, EHAM06.1, EHAM06.2, EHAM06.3,
-        52.290678868045866, 4.741289635870915,
-    );
-    assert!(
-        (laengs - 327.1).abs() < 2.0,
-        "laengs {laengs:.1} m, erwartet ~327 m"
-    );
-    assert!(
-        quer < 0.0 && quer.abs() < 3.0,
-        "quer {quer:.2} m — erwartet knapp links (negativ)"
-    );
-}
+    /// Hinweis zur Aussagekraft: Dieser Test allein faengt einen Winkelfehler
+    /// NICHT — bei 327 m Abstand schlaegt ein halbes Zehntelgrad nur mit 0,3 m
+    /// durch. Gegengeprueft am 23.08.2026 durch Ersetzen der Geometrie-Achse
+    /// durch einen festen Kurs von 58,0 Grad: dieser Test blieb gruen, sechs
+    /// andere wurden rot (darunter `bahnende_liegt_bei_der_nutzbaren_laenge`,
+    /// das ueber die volle Bahnlaenge misst). Die Absicherung traegt also das
+    /// Bundel, nicht dieser Fall.
+    #[test]
+    fn mph9_aufsetzpunkt_trifft_den_gemeldeten_wert() {
+        // MPH 9, 22.08.2026. Der Client meldete im Touchdown-Payload
+        // td_distance_from_threshold_m = 327,13 und einen Mittellinienversatz
+        // von 1,04 m links. Beides muss aus der Geometrie herauskommen.
+        let (laengs, quer) = projiziere_auf_bahn(
+            EHAM06.0,
+            EHAM06.1,
+            EHAM06.2,
+            EHAM06.3,
+            52.290678868045866,
+            4.741289635870915,
+        );
+        assert!(
+            (laengs - 327.1).abs() < 2.0,
+            "laengs {laengs:.1} m, erwartet ~327 m"
+        );
+        assert!(
+            quer < 0.0 && quer.abs() < 3.0,
+            "quer {quer:.2} m — erwartet knapp links (negativ)"
+        );
+    }
 
-#[test]
-fn vorzeichen_rechts_ist_positiv() {
-    // Punkt 50 m rechts der Achse, 1000 m hinter der Schwelle.
-    // EHAM 06 laeuft nach Nordosten (~58 Grad), rechts davon ist Suedosten.
-    let kurs = 58.06_f64.to_radians();
-    let (lat0, lon0) = (EHAM06.0, EHAM06.1);
-    let cosf = lat0.to_radians().cos();
-    // 1000 m entlang + 50 m rechts
-    let dn = 1000.0 * kurs.cos() + 50.0 * (kurs + std::f64::consts::FRAC_PI_2).cos();
-    let de = 1000.0 * kurs.sin() + 50.0 * (kurs + std::f64::consts::FRAC_PI_2).sin();
-    let lat = lat0 + dn / 110_540.0;
-    let lon = lon0 + de / (111_320.0 * cosf);
-    let (laengs, quer) = projiziere_auf_bahn(EHAM06.0, EHAM06.1, EHAM06.2, EHAM06.3, lat, lon);
-    assert!((laengs - 1000.0).abs() < 5.0, "laengs {laengs:.1}");
-    assert!(quer > 0.0, "rechts muss positiv sein, ist {quer:.2}");
-    assert!((quer - 50.0).abs() < 2.0, "quer {quer:.2}, erwartet ~50");
-}
+    #[test]
+    fn vorzeichen_rechts_ist_positiv() {
+        // Punkt 50 m rechts der Achse, 1000 m hinter der Schwelle.
+        // EHAM 06 laeuft nach Nordosten (~58 Grad), rechts davon ist Suedosten.
+        let kurs = 58.06_f64.to_radians();
+        let (lat0, lon0) = (EHAM06.0, EHAM06.1);
+        let cosf = lat0.to_radians().cos();
+        // 1000 m entlang + 50 m rechts
+        let dn = 1000.0 * kurs.cos() + 50.0 * (kurs + std::f64::consts::FRAC_PI_2).cos();
+        let de = 1000.0 * kurs.sin() + 50.0 * (kurs + std::f64::consts::FRAC_PI_2).sin();
+        let lat = lat0 + dn / 110_540.0;
+        let lon = lon0 + de / (111_320.0 * cosf);
+        let (laengs, quer) = projiziere_auf_bahn(EHAM06.0, EHAM06.1, EHAM06.2, EHAM06.3, lat, lon);
+        assert!((laengs - 1000.0).abs() < 5.0, "laengs {laengs:.1}");
+        assert!(quer > 0.0, "rechts muss positiv sein, ist {quer:.2}");
+        assert!((quer - 50.0).abs() < 2.0, "quer {quer:.2}, erwartet ~50");
+    }
 
-#[test]
-fn vor_der_schwelle_ist_negativ() {
-    // 200 m VOR der Schwelle auf der Achse — muss negativ herauskommen,
-    // sonst laesst sich Undershoot nicht von Overshoot unterscheiden.
-    let kurs = 58.06_f64.to_radians();
-    let lat = EHAM06.0 - 200.0 * kurs.cos() / 110_540.0;
-    let lon = EHAM06.1 - 200.0 * kurs.sin() / (111_320.0 * EHAM06.0.to_radians().cos());
-    let (laengs, _) = projiziere_auf_bahn(EHAM06.0, EHAM06.1, EHAM06.2, EHAM06.3, lat, lon);
-    assert!(laengs < 0.0, "vor der Schwelle muss negativ sein, ist {laengs:.1}");
-    assert!((laengs + 200.0).abs() < 5.0, "laengs {laengs:.1}, erwartet ~-200");
-}
+    #[test]
+    fn vor_der_schwelle_ist_negativ() {
+        // 200 m VOR der Schwelle auf der Achse — muss negativ herauskommen,
+        // sonst laesst sich Undershoot nicht von Overshoot unterscheiden.
+        let kurs = 58.06_f64.to_radians();
+        let lat = EHAM06.0 - 200.0 * kurs.cos() / 110_540.0;
+        let lon = EHAM06.1 - 200.0 * kurs.sin() / (111_320.0 * EHAM06.0.to_radians().cos());
+        let (laengs, _) = projiziere_auf_bahn(EHAM06.0, EHAM06.1, EHAM06.2, EHAM06.3, lat, lon);
+        assert!(
+            laengs < 0.0,
+            "vor der Schwelle muss negativ sein, ist {laengs:.1}"
+        );
+        assert!(
+            (laengs + 200.0).abs() < 5.0,
+            "laengs {laengs:.1}, erwartet ~-200"
+        );
+    }
 
-#[test]
-fn bahnende_liegt_bei_der_nutzbaren_laenge() {
-    // Der Endpunkt der Achse muss die Bahnlaenge ergeben. Navigraph fuehrt
-    // EHAM 06 mit bereits versetzter Schwelle, daher ~3185 m (LDA), nicht
-    // die vollen 3439 m. Genau diese Konvention traegt die ganze Bewertung.
-    let (laengs, quer) =
-        projiziere_auf_bahn(EHAM06.0, EHAM06.1, EHAM06.2, EHAM06.3, EHAM06.2, EHAM06.3);
-    assert!((laengs - 3185.0).abs() < 15.0, "laengs {laengs:.0} m, erwartet ~3185");
-    assert!(quer.abs() < 0.5, "das Bahnende liegt auf der Achse, quer {quer:.2}");
-}
-
+    #[test]
+    fn bahnende_liegt_bei_der_nutzbaren_laenge() {
+        // Der Endpunkt der Achse muss die Bahnlaenge ergeben. Navigraph fuehrt
+        // EHAM 06 mit bereits versetzter Schwelle, daher ~3185 m (LDA), nicht
+        // die vollen 3439 m. Genau diese Konvention traegt die ganze Bewertung.
+        let (laengs, quer) =
+            projiziere_auf_bahn(EHAM06.0, EHAM06.1, EHAM06.2, EHAM06.3, EHAM06.2, EHAM06.3);
+        assert!(
+            (laengs - 3185.0).abs() < 15.0,
+            "laengs {laengs:.0} m, erwartet ~3185"
+        );
+        assert!(
+            quer.abs() < 0.5,
+            "das Bahnende liegt auf der Achse, quer {quer:.2}"
+        );
+    }
 }

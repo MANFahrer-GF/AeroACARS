@@ -118,6 +118,12 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
     let result: Result<Value, UiError> = match name {
         // ============================ READS ==============================
         "app_info" => ok_json(crate::app_info()),
+        // Reine Auskunft ueber die Platte des Hosts. Ueber die Bruecke
+        // erlaubt, weil das Tablet dieselbe Frage stellen darf wie der
+        // PC — es liest nichts, was der Pilot nicht ohnehin sieht.
+        "navdata_zwischenspeicher_bestand" => {
+            ok_json(crate::navdata_zwischenspeicher_bestand(app.clone()))
+        }
         "sim_status" => ok_json(crate::sim_status(app.clone(), st!())),
         "sim_get_kind" => ok_json(crate::sim_get_kind(app.clone())),
         "pmdg_status" => ok_json(crate::pmdg_status(st!())),
@@ -300,8 +306,13 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
             }
             match parse_args::<A>(body) {
                 Ok(a) => from_uierr(
-                    crate::flight_start(app.clone(), st!(), a.bid_id, a.acknowledge_aircraft_mismatch)
-                        .await,
+                    crate::flight_start(
+                        app.clone(),
+                        st!(),
+                        a.bid_id,
+                        a.acknowledge_aircraft_mismatch,
+                    )
+                    .await,
                 ),
                 Err(e) => Err(e),
             }
@@ -314,9 +325,9 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 plan: crate::ManualFlightPlan,
             }
             match parse_args::<A>(body) {
-                Ok(a) => {
-                    from_uierr(crate::flight_start_manual(app.clone(), st!(), a.bid_id, a.plan).await)
-                }
+                Ok(a) => from_uierr(
+                    crate::flight_start_manual(app.clone(), st!(), a.bid_id, a.plan).await,
+                ),
                 Err(e) => Err(e),
             }
         }
@@ -446,8 +457,14 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
             }
             match parse_args::<A>(body) {
                 Ok(a) => from_uierr(
-                    crate::flight_cancel_orphan(app.clone(), st!(), a.pirep_id, a.bid_id, a.flight_id)
-                        .await,
+                    crate::flight_cancel_orphan(
+                        app.clone(),
+                        st!(),
+                        a.pirep_id,
+                        a.bid_id,
+                        a.flight_id,
+                    )
+                    .await,
                 ),
                 Err(e) => Err(e),
             }
@@ -475,7 +492,9 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 api_key: String,
             }
             match parse_args::<A>(body) {
-                Ok(a) => from_uierr(crate::phpvms_login(app.clone(), st!(), a.url, a.api_key).await),
+                Ok(a) => {
+                    from_uierr(crate::phpvms_login(app.clone(), st!(), a.url, a.api_key).await)
+                }
                 Err(e) => Err(e),
             }
         }
@@ -484,9 +503,7 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         // The frontend's startup login-check (App.tsx) calls this; bridging it
         // means the tablet skips the API-key login page (the backend already
         // holds the session). Returns Option<LoginResult> (profile, NOT the key).
-        "phpvms_load_session" => {
-            from_uierr(crate::phpvms_load_session(app.clone(), st!()).await)
-        }
+        "phpvms_load_session" => from_uierr(crate::phpvms_load_session(app.clone(), st!()).await),
 
         // ========================== SETTINGS =============================
         // v1.5.6 (#lan-bruecke-1zu1): gespiegelter UI-Zustand — ohne die
@@ -708,7 +725,10 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 older_than_days: u32,
             }
             match parse_args::<A>(body) {
-                Ok(a) => from_uierr(crate::flight_logs_purge_older_than(app.clone(), a.older_than_days)),
+                Ok(a) => from_uierr(crate::flight_logs_purge_older_than(
+                    app.clone(),
+                    a.older_than_days,
+                )),
                 Err(e) => Err(e),
             }
         }
@@ -776,7 +796,9 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 lost: bool,
             }
             match parse_args::<A>(body) {
-                Ok(a) => from_string_err(crate::discord_rpc::discord_rpc_set_sim_lost(a.lost).await),
+                Ok(a) => {
+                    from_string_err(crate::discord_rpc::discord_rpc_set_sim_lost(a.lost).await)
+                }
                 Err(e) => Err(e),
             }
         }
@@ -815,9 +837,13 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         "hoppie_has_logon_code" => from_uierr(crate::hoppie::hoppie_has_logon_code()),
         "hoppie_clear_logon_code" => from_uierr(crate::hoppie::hoppie_clear_logon_code()),
         "hoppie_connect" => from_uierr(crate::hoppie::hoppie_connect(app.clone(), st!()).await),
-        "hoppie_disconnect" => from_uierr(crate::hoppie::hoppie_disconnect(app.clone(), st!()).await),
+        "hoppie_disconnect" => {
+            from_uierr(crate::hoppie::hoppie_disconnect(app.clone(), st!()).await)
+        }
         "hoppie_status" => from_uierr(crate::hoppie::hoppie_status(st!()).await),
-        "hoppie_get_flight_context" => ok_json(crate::hoppie::hoppie_get_flight_context(app.clone())),
+        "hoppie_get_flight_context" => {
+            ok_json(crate::hoppie::hoppie_get_flight_context(app.clone()))
+        }
         "hoppie_ping_station" => {
             #[derive(Deserialize)]
             struct A {
@@ -841,7 +867,9 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 Err(e) => Err(e),
             }
         }
-        "hoppie_send_logoff" => from_uierr(crate::hoppie::hoppie_send_logoff(app.clone(), st!()).await),
+        "hoppie_send_logoff" => {
+            from_uierr(crate::hoppie::hoppie_send_logoff(app.clone(), st!()).await)
+        }
         "hoppie_send_telex" => {
             #[derive(Deserialize)]
             struct A {
@@ -864,9 +892,9 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 mrn: Option<u32>,
             }
             match parse_args::<A>(body) {
-                Ok(a) => {
-                    from_uierr(crate::hoppie::hoppie_send_free_text(app.clone(), st!(), a.text, a.mrn).await)
-                }
+                Ok(a) => from_uierr(
+                    crate::hoppie::hoppie_send_free_text(app.clone(), st!(), a.text, a.mrn).await,
+                ),
                 Err(e) => Err(e),
             }
         }
@@ -899,9 +927,9 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 request: crate::hoppie::PdcRequestArgs,
             }
             match parse_args::<A>(body) {
-                Ok(a) => {
-                    from_uierr(crate::hoppie::hoppie_send_pdc_request(app.clone(), st!(), a.request).await)
-                }
+                Ok(a) => from_uierr(
+                    crate::hoppie::hoppie_send_pdc_request(app.clone(), st!(), a.request).await,
+                ),
                 Err(e) => Err(e),
             }
         }
@@ -923,9 +951,7 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         // Aktion selbst ist trotzdem korrekt ausgefuehrt. Wer den Schalter
         // am Tablet umlegt, will genau das. Zum Zurueckholen fuehrt der
         // Weg dann ueber den PC — wie beim Ausschalten jeder Fernbedienung.
-        "remote_server_start" => {
-            from_uierr(crate::remote::remote_server_start(app.clone()).await)
-        }
+        "remote_server_start" => from_uierr(crate::remote::remote_server_start(app.clone()).await),
         "remote_server_stop" => {
             from_uierr(crate::remote::remote_server_stop(app.clone(), st!()).await)
         }
@@ -986,7 +1012,12 @@ mod tests {
         }
         let body = json!({ "icao": "EDDF" });
         let a: A = parse_args(&body).unwrap();
-        assert_eq!(a, A { icao: "EDDF".into() });
+        assert_eq!(
+            a,
+            A {
+                icao: "EDDF".into()
+            }
+        );
     }
 
     #[test]
@@ -1124,7 +1155,9 @@ mod tests {
             .expect("generate_handler! list must exist in lib.rs")
             + "tauri::generate_handler![".len();
         let rest = &lib_src[start..];
-        let end = rest.find("\n        ])").expect("generate_handler! list must close with `])`");
+        let end = rest
+            .find("\n        ])")
+            .expect("generate_handler! list must close with `])`");
         let list = &rest[..end];
 
         let bridge_src = include_str!("bridge.rs");

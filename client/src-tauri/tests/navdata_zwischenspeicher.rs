@@ -19,8 +19,7 @@
 use std::fs;
 
 fn lib_rs() -> String {
-    fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
-        .expect("lib.rs lesbar")
+    fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs")).expect("lib.rs lesbar")
 }
 
 /// Der Ausschnitt einer Funktion, von ihrer Signatur bis zur naechsten
@@ -69,9 +68,13 @@ fn abgelegt_wird_im_erfolgs_und_gelesen_im_fehlerzweig() {
     // lesen, was wir gerade frisch in der Hand halten.
     let q = lib_rs();
     let f = funktion(&q, "async fn fetch_navdata_for_flight(");
-    let ablegen = f.find("navdata_cache::ablegen(").expect("ablegen vorhanden");
+    let ablegen = f
+        .find("navdata_cache::ablegen(")
+        .expect("ablegen vorhanden");
     let holen = f.find("navdata_cache::holen(").expect("holen vorhanden");
-    let erfolg = f.find("Ok(mut airport) =>").expect("Erfolgszweig vorhanden");
+    let erfolg = f
+        .find("Ok(mut airport) =>")
+        .expect("Erfolgszweig vorhanden");
 
     assert!(
         ablegen > erfolg,

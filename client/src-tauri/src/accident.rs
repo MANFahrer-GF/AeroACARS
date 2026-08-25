@@ -117,16 +117,9 @@ pub fn classify_accident_heuristic(input: &AccidentHeuristicInput) -> AccidentDe
 
     // ── Confirmed Path 2: Off-Airport Impact ────────────────────────
     // |V/S| >= 1000 fpm UND kein Runway-Match UND mind. 2 rote Marker
-    let off_airport_markers = count_off_airport_markers(
-        g,
-        abs_sideslip,
-        wing,
-        stalls,
-        rollout,
-    );
-    let off_airport_impact = matches!(abs_vs, Some(v) if v >= 1000.0)
-        && no_runway
-        && off_airport_markers >= 2;
+    let off_airport_markers = count_off_airport_markers(g, abs_sideslip, wing, stalls, rollout);
+    let off_airport_impact =
+        matches!(abs_vs, Some(v) if v >= 1000.0) && no_runway && off_airport_markers >= 2;
 
     if extreme_impact || off_airport_impact {
         // Reasons fuer beide Pfade sammeln
@@ -171,13 +164,7 @@ pub fn classify_accident_heuristic(input: &AccidentHeuristicInput) -> AccidentDe
 
     // ── Suspected Path ──────────────────────────────────────────────
     // |V/S| >= 1000 fpm UND mind. 2 Suspected-Marker
-    let suspected_markers = count_suspected_markers(
-        g,
-        abs_sideslip,
-        wing,
-        stalls,
-        no_runway,
-    );
+    let suspected_markers = count_suspected_markers(g, abs_sideslip, wing, stalls, no_runway);
     if matches!(abs_vs, Some(v) if v >= 1000.0) && suspected_markers >= 2 {
         if let Some(v) = abs_vs {
             suspected_reasons.push(format!("vs_at_edge_fpm={:.1}", -v));
@@ -265,11 +252,7 @@ fn count_suspected_markers(
 }
 
 /// PIREP-Notes-Kurzfassung. Pilot-/VA-Admin-lesbar.
-pub fn build_accident_notes(
-    kind: AccidentKind,
-    confidence: &str,
-    reasons: &[String],
-) -> String {
+pub fn build_accident_notes(kind: AccidentKind, confidence: &str, reasons: &[String]) -> String {
     let kind_label = match kind {
         AccidentKind::SimCrash => "simulator crash event",
         AccidentKind::Impact => "impact",
@@ -314,9 +297,7 @@ mod tests {
                 // Off-airport-Pfad triggert auch, aber Path 1 gewinnt ueber kind.
                 assert!(matches!(kind, AccidentKind::Impact));
                 assert!(reasons.iter().any(|r| r.contains("peak_g_load=4.41")));
-                assert!(reasons
-                    .iter()
-                    .any(|r| r.contains("vs_at_edge_fpm=-2249.9")));
+                assert!(reasons.iter().any(|r| r.contains("vs_at_edge_fpm=-2249.9")));
                 assert!(reasons.iter().any(|r| r == "no_runway_match"));
             }
             other => panic!("expected Confirmed(Impact), got {other:?}"),
@@ -386,7 +367,13 @@ mod tests {
             rollout_distance_m: Some(400.0),
         };
         let r = classify_accident_heuristic(&i);
-        assert!(matches!(r, AccidentDecision::Confirmed { kind: AccidentKind::Impact, .. }));
+        assert!(matches!(
+            r,
+            AccidentDecision::Confirmed {
+                kind: AccidentKind::Impact,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -510,9 +497,7 @@ mod tests {
                 assert!(reasons.iter().any(|r| r.contains("peak_g_load")));
                 assert!(reasons.iter().any(|r| r.contains("no_runway_match")));
             }
-            other => panic!(
-                "GAF 707 crash fixture should be Confirmed(Impact), got {other:?}"
-            ),
+            other => panic!("GAF 707 crash fixture should be Confirmed(Impact), got {other:?}"),
         }
     }
 

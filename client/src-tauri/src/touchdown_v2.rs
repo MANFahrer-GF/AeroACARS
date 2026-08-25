@@ -312,9 +312,7 @@ pub fn validate_candidate(
         // the SAME 4-of-4 voting fallback below instead of discarding
         // the candidate outright.
         const MIN_GEAR_FORCE_SAMPLES_IN_WINDOW: usize = 2;
-        let any_gear_force_data = samples
-            .iter()
-            .any(|s| s.gear_normal_force_n.is_some());
+        let any_gear_force_data = samples.iter().any(|s| s.gear_normal_force_n.is_some());
         let gear_force_data_sufficient =
             any_gear_force_data && gear_force_sample_count >= MIN_GEAR_FORCE_SAMPLES_IN_WINDOW;
 
@@ -401,7 +399,9 @@ fn evaluate_gear_force_test(
         .iter()
         .filter_map(|s| s.gear_normal_force_n)
         .filter(|f| f.is_finite())
-        .fold(None::<f32>, |acc, f| Some(acc.map(|a| a.max(f)).unwrap_or(f)));
+        .fold(None::<f32>, |acc, f| {
+            Some(acc.map(|a| a.max(f)).unwrap_or(f))
+        });
 
     // P2-Fix: Suche den LAENGSTEN CONTINUOUS RUN von samples mit
     // gear_force >= threshold. Reset bei Gap (= sample mit force < threshold
@@ -427,8 +427,11 @@ fn evaluate_gear_force_test(
                 current_run_count += 1;
             }
             // Update best wenn dieser run laenger
-            let run_ms = (s.at - current_run_start.unwrap()).num_milliseconds().max(0) as u64;
-            if run_ms > best_run_ms || (run_ms == best_run_ms && current_run_count > best_run_count) {
+            let run_ms = (s.at - current_run_start.unwrap())
+                .num_milliseconds()
+                .max(0) as u64;
+            if run_ms > best_run_ms || (run_ms == best_run_ms && current_run_count > best_run_count)
+            {
                 best_run_ms = run_ms;
                 best_run_count = current_run_count;
             }
@@ -440,7 +443,12 @@ fn evaluate_gear_force_test(
     }
 
     let pass = best_run_ms >= 60 && best_run_count >= 2;
-    (pass, peak_in_window, Some(best_run_ms), sample_count_in_window)
+    (
+        pass,
+        peak_in_window,
+        Some(best_run_ms),
+        sample_count_in_window,
+    )
 }
 
 /// peak g_force im Window [edge_at, edge_at + 500ms]
@@ -546,8 +554,8 @@ pub struct ImpactFrameResult {
     pub contact_at: DateTime<Utc>,
     pub impact_at: DateTime<Utc>,
     pub impact_vs_fpm: f32,
-    pub initial_load_peak_n: Option<f32>,   // X-Plane
-    pub initial_load_peak_g: f32,           // beide
+    pub initial_load_peak_n: Option<f32>, // X-Plane
+    pub initial_load_peak_g: f32,         // beide
 }
 
 /// Berechne impact_frame + initial_load_peak aus dem Buffer um den contact_frame.
@@ -902,11 +910,7 @@ mod tests {
     fn gear_force_threshold_dynamic_for_a330() {
         // DAH 3181 A330 250t → 250000*9.80665*0.03 = ~73550N
         let t = gear_force_threshold_n(Some(250000.0));
-        assert!(
-            (t - 73549.875).abs() < 1.0,
-            "expected ~73550, got {}",
-            t
-        );
+        assert!((t - 73549.875).abs() < 1.0, "expected ~73550, got {}", t);
     }
 
     #[test]
@@ -928,10 +932,7 @@ mod tests {
 
     #[test]
     fn finalize_vs_rejects_implausibly_high() {
-        assert_eq!(
-            finalize_vs(-3500.0),
-            Err(RejectionReason::ImplausiblyHigh)
-        );
+        assert_eq!(finalize_vs(-3500.0), Err(RejectionReason::ImplausiblyHigh));
     }
 
     #[test]
@@ -1260,28 +1261,33 @@ mod tests {
         // P2-Fix: Sample 0 above, 1 below, 2 above → run-laenge = 1 sample.
         // Vorher (BUG) waere span 0→2 = 40ms = pass. Jetzt: korrekt fail.
         let samples = vec![
-            make_sample(1000, Some(50000.0)),  // above
-            make_sample(1020, Some(100.0)),    // below threshold (gap!)
-            make_sample(1040, Some(50000.0)),  // above wieder
+            make_sample(1000, Some(50000.0)), // above
+            make_sample(1020, Some(100.0)),   // below threshold (gap!)
+            make_sample(1040, Some(50000.0)), // above wieder
         ];
         let edge_at = samples[0].at;
         let (pass, _peak, sustained, _count) = evaluate_gear_force_test(&samples, edge_at, 21478.0);
         // Best run hat nur 1 sample bzw 0ms span -> fail
-        assert!(!pass, "gap in middle must NOT count as sustained, got sustained={:?}", sustained);
+        assert!(
+            !pass,
+            "gap in middle must NOT count as sustained, got sustained={:?}",
+            sustained
+        );
     }
 
     #[test]
     fn gear_force_continuous_pass_when_long_run_after_gap() {
         // Sample 0 above (single), gap, dann 5 samples sustained → pass
         let mut samples = vec![
-            make_sample(1000, Some(50000.0)),  // single above
-            make_sample(1020, Some(100.0)),    // gap
+            make_sample(1000, Some(50000.0)), // single above
+            make_sample(1020, Some(100.0)),   // gap
         ];
         for i in 0..5 {
             samples.push(make_sample(1100 + i * 20, Some(50000.0)));
         }
         let edge_at = samples[0].at;
-        let (pass, _peak, _sustained, _count) = evaluate_gear_force_test(&samples, edge_at, 21478.0);
+        let (pass, _peak, _sustained, _count) =
+            evaluate_gear_force_test(&samples, edge_at, 21478.0);
         assert!(pass, "long sustained run after gap should pass");
     }
 
@@ -1289,7 +1295,9 @@ mod tests {
     /// entries' `gear_normal_force_n` (the rest `None`) — enough span to
     /// satisfy sustained-ground (500 ms) and low-AGL persistence (1000 ms)
     /// on their own, so only the gear_force test's own data density varies.
-    fn hard_landing_with_sparse_gear_force(gear_ns: &[Option<f32>]) -> (Vec<TouchdownWindowSample>, TdCandidate) {
+    fn hard_landing_with_sparse_gear_force(
+        gear_ns: &[Option<f32>],
+    ) -> (Vec<TouchdownWindowSample>, TdCandidate) {
         let samples: Vec<TouchdownWindowSample> = (0..60)
             .map(|i| {
                 let gear_n = gear_ns.get(i as usize).copied().unwrap_or(None);
@@ -1320,7 +1328,13 @@ mod tests {
     #[test]
     fn sparse_gear_force_window_falls_back_to_voting_instead_of_discarding_a_real_hard_landing() {
         let (samples, cand) = hard_landing_with_sparse_gear_force(&[Some(50000.0)]);
-        match validate_candidate(&cand, &samples, SimKind::XPlane12, -1200.0, AircraftCategory::FixedWing) {
+        match validate_candidate(
+            &cand,
+            &samples,
+            SimKind::XPlane12,
+            -1200.0,
+            AircraftCategory::FixedWing,
+        ) {
             ValidationResult::Validated { result } => {
                 assert_eq!(
                     result.gear_force_sample_count_in_window, 1,
@@ -1344,7 +1358,13 @@ mod tests {
         // so `any_gear_force_data` is true but the window itself is empty.
         samples.push(make_sample(1000 + 800 * 20, Some(50000.0)));
         assert!(matches!(
-            validate_candidate(&cand, &samples, SimKind::XPlane12, -1200.0, AircraftCategory::FixedWing),
+            validate_candidate(
+                &cand,
+                &samples,
+                SimKind::XPlane12,
+                -1200.0,
+                AircraftCategory::FixedWing
+            ),
             ValidationResult::Validated { .. }
         ));
     }
@@ -1376,7 +1396,13 @@ mod tests {
             edge_total_weight_kg: Some(73000.0),
         };
         assert!(matches!(
-            validate_candidate(&cand, &samples, SimKind::XPlane12, -1200.0, AircraftCategory::FixedWing),
+            validate_candidate(
+                &cand,
+                &samples,
+                SimKind::XPlane12,
+                -1200.0,
+                AircraftCategory::FixedWing
+            ),
             ValidationResult::FalseEdge { .. }
         ));
     }
@@ -1386,8 +1412,8 @@ mod tests {
         // Below-threshold samples still count toward the density figure —
         // it measures "how much data do we have", not "how much passed".
         let samples = vec![
-            make_sample(1000, Some(100.0)),  // below threshold
-            make_sample(1020, Some(200.0)),  // below threshold
+            make_sample(1000, Some(100.0)), // below threshold
+            make_sample(1020, Some(200.0)), // below threshold
         ];
         let edge_at = samples[0].at;
         let (pass, _peak, _sustained, count) = evaluate_gear_force_test(&samples, edge_at, 21478.0);
@@ -1413,7 +1439,10 @@ mod tests {
     fn low_agl_persistence_fails_on_a_totally_empty_window() {
         let edge_at = DateTime::<Utc>::from_timestamp_millis(1000).unwrap();
         let (pass, ms) = evaluate_low_agl_persistence(&[], edge_at);
-        assert!(!pass, "zero samples must not confirm 1000ms of low-AGL persistence");
+        assert!(
+            !pass,
+            "zero samples must not confirm 1000ms of low-AGL persistence"
+        );
         assert_eq!(ms, 0);
     }
 
@@ -1433,7 +1462,10 @@ mod tests {
     fn sustained_ground_fails_on_a_totally_empty_window() {
         let edge_at = DateTime::<Utc>::from_timestamp_millis(1000).unwrap();
         let (pass, ms) = evaluate_sustained_ground(&[], edge_at);
-        assert!(!pass, "zero samples must not confirm 500ms of sustained ground contact");
+        assert!(
+            !pass,
+            "zero samples must not confirm 500ms of sustained ground contact"
+        );
         assert_eq!(ms, 0);
     }
 
