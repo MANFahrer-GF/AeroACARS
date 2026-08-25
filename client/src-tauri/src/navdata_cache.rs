@@ -131,10 +131,6 @@ fn datei_in(dir: &std::path::Path, icao: &str) -> Option<PathBuf> {
     Some(dir.join(format!("{sauber}.json")))
 }
 
-fn datei(app: &AppHandle, icao: &str) -> Option<PathBuf> {
-    ordner(app).and_then(|d| datei_in(&d, icao))
-}
-
 /// Einen erfolgreich geholten Flugplatz ablegen.
 ///
 /// Fehler sind nie fatal — schlägt das Schreiben fehl, fliegt der Pilot
@@ -242,7 +238,7 @@ pub fn bestand(app: &AppHandle) -> (usize, u64) {
 
 /// Wie `bestand`, aber für einen gegebenen Ordner — prüfbar ohne Tauri.
 pub fn bestand_in(dir: &std::path::Path) -> (usize, u64) {
-    let Ok(eintraege) = std::fs::read_dir(&dir) else {
+    let Ok(eintraege) = std::fs::read_dir(dir) else {
         return (0, 0);
     };
     let mut n = 0usize;
