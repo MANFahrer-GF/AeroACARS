@@ -103,6 +103,9 @@ export interface RunwayDiagramV2Props {
    * gestrichelte Linie mitten auf der Bahn wäre nicht zu erklären.
    */
   scoring_cutoff_m?: number | null;
+  /// Bis wohin der Höchstwert mitgewachsen ist — das Messfenster
+  /// schliesst unter 60 kt, `scoring_cutoff_m` erst beim Kurswechsel.
+  mess_ende_laengs_m?: number | null;
   clearance_speed_kt?: number | null;
   clearance_side?: "left" | "right" | null;
   track_width_m?: number | null;
@@ -1351,6 +1354,8 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
               tdPerfect: TOKENS.tdPerfect,
               tdWarn: TOKENS.tdWarn,
               tdSevere: TOKENS.tdSevere,
+              rollweg: TOKENS.rollweg,
+              rollwegRand: TOKENS.rollwegRand,
             }}
           />
         </div>

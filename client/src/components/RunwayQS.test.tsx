@@ -133,16 +133,37 @@ describe("QS — Spur und Marken der Queransicht", () => {
       // Massgeblich ist die BEWERTUNGSGRENZE (Beginn des Ausschwenkens),
       // nicht der Räumpunkt (Bahnkante). Zwischen beiden liegen Hunderte
       // Meter, in denen das Flugzeug schon nach aussen zieht.
-      const raeum = v.props.scoring_cutoff_m ?? v.props.clearance_point_m;
+      //
+      // Es gibt ZWEI Grenzen, und sie fallen auseinander:
+      //
+      //   `scoring_cutoff_m`   — wo der KURS abwich
+      //   `mess_ende_laengs_m` — wo das Messfenster schloss (unter 60 kt)
+      //
+      // Bei DLH369 (EDDM 26L) lagen 600 Meter dazwischen: Fenster zu bei
+      // rund 1.695 m, Kurswechsel erst bei 2.251 m. Wer gegen den
+      // Kurswechsel prüft, verlangt vom Client einen Höchstwert aus
+      // einem Bereich, den er gar nicht mehr gemessen hat.
+      const fenster = v.props.mess_ende_laengs_m;
+      const raeum =
+        fenster ?? v.props.scoring_cutoff_m ?? v.props.clearance_point_m;
       if (max == null || raeum == null || s.length < 2) continue;
       const gewertet = s.filter((x) => x.laengs_m < raeum);
       if (!gewertet.length) continue;
       const echterMax = gewertet.reduce((a, b) =>
         Math.abs(b.quer_m) > Math.abs(a.quer_m) ? b : a,
       ).quer_m;
-      if (Math.abs(Math.abs(max) - Math.abs(echterMax)) > 0.5) {
+      const ab = Math.abs(max) - Math.abs(echterMax);
+      // Zu WENIG zu melden ist nur dann ein Fehler, wenn wir das
+      // Fensterende kennen — sonst kann die Untertreibung schlicht
+      // daher kommen, dass das Fenster früher schloss als der Kurs
+      // abwich. Zu VIEL zu melden ist immer der gesuchte Fehler: dann
+      // ist die Ausfahrt mitgewertet worden.
+      const schranke = fenster != null ? Math.abs(ab) : ab;
+      if (schranke > 0.5) {
         befunde.push(
-          `${v.key}: gemeldet ${max.toFixed(1)} m, im gewerteten Teil ${echterMax.toFixed(1)} m`,
+          `${v.key}: gemeldet ${max.toFixed(1)} m, im gewerteten Teil ` +
+            `${echterMax.toFixed(1)} m (Grenze ${raeum.toFixed(0)} m, ` +
+            `${fenster != null ? "Fensterende" : "Kurswechsel"})`,
         );
       }
     }
@@ -869,5 +890,119 @@ describe("QS — Vollständigkeit", () => {
       "Eine Stelle und eine Strecke sehen als Zahl gleich aus. Auf einer " +
         "Achse voller Stellen liest sich eine Strecke als Stelle.",
     ).toEqual([]);
+  });
+});
+
+/**
+ * Der Mapper muss jedes Feld tragen, das die Anzeige erklärt.
+ *
+ * # Warum es diese Prüfung gibt
+ *
+ * `mess_ende_laengs_m` war am 25.08.2026 in der Bewertung gesetzt, in der
+ * Meldung übertragen, im Anzeige-Typ erklärt — und der Mapper liess es
+ * fallen. Die Anzeige sah nur `undefined` und fiel auf den Kurswechsel
+ * zurück: eine Grenze 550 Meter weiter hinten, gegen die der gemeldete
+ * Höchstwert nie stimmen konnte.
+ *
+ * Das Tückische war nicht der Fehler, sondern seine Stille. Der Test, der
+ * ihn hätte fangen sollen, hatte für den Fall ohne das Feld einen
+ * Rückfallpfad — und lief auf dem grün durch. Ich habe die Mapper-Zeile
+ * probeweise wieder gelöscht: 36 von 36 grün.
+ *
+ * Darum prüft das hier die VERDRAHTUNG selbst, nicht ihre Wirkung.
+ */
+describe("Mapper und Anzeige kennen dieselben Felder", () => {
+  it("lässt kein Feld der Anzeige unbefüllt", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const lies = (rel: string) =>
+      readFileSync(resolve(__dirname, rel), "utf-8");
+    const anzeige = lies("RunwayDiagramV2.tsx");
+    const mapper = lies("../dev/runwayDiagramV2Mapper.ts");
+
+    // Die Felder aus dem Props-Block der Anzeige.
+    const block = anzeige.match(
+      /export interface RunwayDiagramV2Props \{([\s\S]*?)\n\}/,
+    );
+    expect(block, "Props-Block von RunwayDiagramV2 nicht gefunden").toBeTruthy();
+    const felder = [...block![1]!.matchAll(/^\s{2}(\w+)\??:/gm)].map((m) => m[1]!);
+    // Wenn die Regex ins Leere greift, prüft der Test nichts mehr.
+    expect(felder.length).toBeGreaterThan(15);
+
+    /**
+     * Felder, die der Mapper bewusst NICHT aus dem Datensatz füllt.
+     *
+     * Jede Zeile braucht einen eigenen Grund. Eine Sammelbegründung
+     * („Anzeigekram") macht die Liste zum Abstellgleis.
+     */
+    const ausgenommen: Record<string, string> = {
+      lang: "Sprache kommt aus der Oberfläche, nicht aus dem Flug",
+      t: "Übersetzungsfunktion, kein Messwert",
+      onSelectMark: "Rückruf der Oberfläche",
+      compact: "Platzverhältnisse des Fensters",
+      skin: "Farbtabelle, kein Messwert",
+      schriftMindest:
+        "Mindestschriftgrösse des Fensters — hängt an der Bildschirmbreite, " +
+        "nicht am Flug",
+    };
+
+    // `feld:` UND die Kurzschreibweise `feld,` — der Mapper nutzt beides.
+    // Nur auf den Doppelpunkt zu prüfen meldete `source` und
+    // `td_distance_from_threshold_m` als fehlend, obwohl sie gesetzt sind.
+    const fehlt = felder.filter(
+      (f) => !ausgenommen[f] && !new RegExp(`\\b${f}\\s*[,:]`).test(mapper),
+    );
+    expect(
+      fehlt,
+      `Der Mapper füllt diese Felder nicht: ${fehlt.join(", ")}`,
+    ).toEqual([]);
+  });
+});
+
+/**
+ * Die Beschriftung der Ausfahrten bleibt ein Name, keine Aufzaehlung.
+ *
+ * Hoechstens zwei Kennungen ausgeschrieben, alles weitere gezaehlt. Die
+ * Regel stand seit Monaten im Code — geprueft hat sie niemand. Als das
+ * Zusammenlegen einen zweiten Durchgang bekam (damit eine breiter
+ * gewordene Beschriftung nicht ihren Nachbarn ueberdeckt), legte der
+ * zwei fertige Gruppen zusammen, ohne mitzuzaehlen: In Muenchen stand
+ * „B3/B2/B1" im Bild, drei Kennungen an einer Stelle.
+ *
+ * Gefunden hat das kein Test, sondern ein Blick auf das fertige Bild.
+ * Diese Pruefung schliesst die Luecke.
+ */
+describe("Ausfahrts-Beschriftungen", () => {
+  it("schreibt höchstens zwei Kennungen aus", () => {
+    const befunde: string[] = [];
+    for (const v of VARIANTEN) {
+      for (const svg of v.svgs) {
+        for (const t of texte(svg)) {
+          // Nur Beschriftungen, die wie zusammengelegte Namen aussehen.
+          if (!t.includes("/")) continue;
+          // Die Bahnkennungen selbst („26L/08R") sind keine Ausfahrten.
+          if (/^\d{2}[LRC]?\//.test(t)) continue;
+          const namen = t.replace(/\s*\+\d+$/, "").split("/").filter(Boolean);
+          if (namen.length > 2) {
+            befunde.push(`${v.key}: „${t}" nennt ${namen.length} Kennungen`);
+          }
+        }
+      }
+    }
+    expect(befunde, befunde.join("\n")).toEqual([]);
+  });
+
+  it("zählt weggelassene Kennungen, statt sie zu verschweigen", () => {
+    // Gegenstueck zur Regel oben: Wer kuerzt, muss sagen, wie viel.
+    // Sonst sucht der Pilot die Ausfahrt, die er genommen hat, und
+    // haelt die Karte fuer unvollstaendig.
+    const mitPlus = VARIANTEN.flatMap((v) =>
+      v.svgs.flatMap((svg) => texte(svg).filter((t) => /\+\d+$/.test(t))),
+    );
+    for (const t of mitPlus) {
+      expect(t, `„${t}" zählt, nennt aber keine Kennung`).toMatch(
+        /^\S+.*\s\+\d+$/,
+      );
+    }
   });
 });

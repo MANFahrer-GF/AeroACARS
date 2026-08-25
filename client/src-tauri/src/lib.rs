@@ -3895,6 +3895,26 @@ struct FlightStats {
     /// v1.7.0 — true, sobald das Messfenster geschlossen ist (Ausfahrt
     /// eingeleitet oder unter die Messgeschwindigkeit gefallen).
     bahn_fenster_zu: bool,
+
+    /// Bei welcher Distanz das seitliche Messfenster geschlossen hat.
+    ///
+    /// # Warum das eine eigene Zahl ist
+    ///
+    /// `bahn_raeum_laengs_m` sagt, wo der KURS abwich — dort endet die
+    /// Bewertung. Das Messfenster schliesst aber frueher, naemlich unter
+    /// sechzig Knoten (`BAHN_MESS_MIN_GS_KT`), und ab da waechst der
+    /// groesste Querversatz nicht mehr mit.
+    ///
+    /// Bei DLH369 (EDDM 26L, 25.08.2026) lagen zwischen beiden 600 Meter:
+    /// Kurswechsel bei 2.251 m, Fenster zu bei rund 1.650 m. Die Anzeige
+    /// zeichnete die Bewertungsgrenze bei 2.251 m und daneben einen
+    /// Hoechstwert von 12,9 m — waehrend die Spur innerhalb dieser Grenze
+    /// bis 15,2 m lief. Beides stimmte fuer sich und widersprach sich
+    /// zusammen.
+    ///
+    /// Mit dieser Zahl kann die Anzeige zeigen, bis WOHIN wirklich
+    /// gemessen wurde.
+    bahn_fenster_zu_laengs_m: Option<f64>,
     /// v1.7.0 — der gefahrene Streifen als (laengs_m, quer_m), fuer die
     /// Queransicht des Diagramms (Spec §8.3).
     ///
@@ -16005,6 +16025,7 @@ fn bahn_felder(
         // bei `0Ab3v9EvNN1LKZ8z` (EDDH 05) 21,95 m auf einer Bahn mit
         // 23 m Halbbreite, gemessen unmittelbar vor dem Abbiegen.
         scoring_cutoff_m: stats.bahn_raeum_laengs_m,
+        mess_ende_laengs_m: stats.bahn_fenster_zu_laengs_m,
         // Die Ausfahrtsseite, notfalls nachgerechnet.
         //
         // Live gelingt sie selten: Im Moment des Kurswechsels ist die
@@ -16079,6 +16100,7 @@ impl BahnFelder {
             rollout_final: final_,
             clearance_point_m: self.clearance_point_m,
             scoring_cutoff_m: self.scoring_cutoff_m,
+            mess_ende_laengs_m: self.mess_ende_laengs_m,
             clearance_speed_kt: self.clearance_speed_kt,
             clearance_side: self.clearance_side.clone(),
             track_width_m: self.track_width_m,
@@ -16144,6 +16166,13 @@ impl BahnFelder {
 struct BahnFelder {
     clearance_point_m: Option<f64>,
     scoring_cutoff_m: Option<f64>,
+
+    /// Bis wohin der groesste Querversatz mitgewachsen ist.
+    ///
+    /// Siehe `bahn_fenster_zu_laengs_m`: liegt regelmaessig VOR
+    /// `scoring_cutoff_m`, weil das Messfenster unter sechzig Knoten
+    /// schliesst, der Kurs aber erst spaeter abweicht.
+    mess_ende_laengs_m: Option<f64>,
     clearance_speed_kt: Option<f64>,
     clearance_side: Option<String>,
     track_width_m: Option<f64>,
@@ -16338,6 +16367,7 @@ where
     Some(LandingRecord {
         clearance_point_m: bahn.clearance_point_m,
         scoring_cutoff_m: bahn.scoring_cutoff_m,
+        mess_ende_laengs_m: bahn.mess_ende_laengs_m,
         lateral_skip_reason: bahn.lateral_skip_reason.clone(),
         runway_exits: bahn.runway_exits.clone(),
         clearance_speed_kt: bahn.clearance_speed_kt,
@@ -27837,6 +27867,7 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
                 // Raeumpunkt hin. Beim Schliessen wegen zu geringer Fahrt
                 // dagegen NICHT: dort rollt das Flugzeug noch auf der Bahn.
                 stats.bahn_fenster_zu = true;
+                stats.bahn_fenster_zu_laengs_m.get_or_insert(laengs_m);
                 stats.bahn_raeum_laengs_m = Some(laengs_m);
                 stats.bahn_raeum_gs_kt = Some(snap.groundspeed_kt as f64);
                 stats.bahn_raeum_kurs_diff = Some(diff as f64);
@@ -27860,6 +27891,7 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
             || (nutzbare_laenge_m > 300.0 && laengs_m > nutzbare_laenge_m))
     {
         stats.bahn_fenster_zu = true;
+        stats.bahn_fenster_zu_laengs_m.get_or_insert(laengs_m);
     }
 
     // ── 4. Bewerten, solange das Fenster offen ist ───────────────────
@@ -47071,6 +47103,105 @@ mod v0_16_6_bush_completeness_tests {
                 "bei 39 kt wird nicht mehr aufgezeichnet — die Spur bricht \
                  mitten auf der Bahn ab"
             );
+        }
+
+        // Das Fensterende wird festgehalten — und liegt VOR dem
+        // Kurswechsel, wenn die Fahrt zuerst faellt.
+        //
+        // # Warum das eine eigene Zahl braucht
+        //
+        // Bei DLH369 (EDDM 26L, 25.08.2026) meldete der Client einen
+        // groessten Querversatz von 12,9 m, waehrend die Spur innerhalb
+        // der Bewertungsgrenze noch bis 15,2 m lief. Beides stimmte: der
+        // Hoechstwert waechst nur, solange das Messfenster offen ist, und
+        // das schliesst unter sechzig Knoten — rund 600 Meter vor dem
+        // Kurswechsel, an dem `scoring_cutoff_m` haengt. Die Anzeige
+        // zeichnete die Grenze an der falschen Stelle und stellte damit
+        // zwei richtige Zahlen als Widerspruch dar.
+        //
+        // # Warum der Test den echten Tick faehrt
+        //
+        // Ein erster Entwurf setzte `bahn_fenster_zu_laengs_m` von Hand
+        // und prueste dann, dass `bahn_felder` es durchreicht. Der war
+        // gruen, ohne eine einzige Zeile der Messung zu beruehren — er
+        // haette auch gehalten, wenn `bahndisziplin_tick` die Zahl nie
+        // schreibt. Deshalb laeuft hier der echte Weg.
+        {
+            // Bahn entlang des Aequators nach Osten, 4.000 m lang: ein
+            // Grad Laenge sind dort 111.320 m, das rechnet sich im Kopf
+            // nach und macht die Sollwerte pruefbar.
+            const GRAD_M: f64 = 111_320.0;
+            let mut stats = FlightStats::default();
+            stats.runway_match = Some(runway::RunwayMatch {
+                airport_ident: "EDDM".to_string(),
+                runway_ident: "26L".to_string(),
+                heading_true_deg: 90.0,
+                length_ft: (4000.0 * 3.280_839_895) as f32,
+                width_ft: 197.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 0.0,
+                threshold_lon: 0.0,
+                end_lat: 0.0,
+                end_lon: 4000.0 / GRAD_M,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 2300.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            });
+            stats.landing_heading_true_deg = Some(90.0);
+
+            let tick = |stats: &mut FlightStats, laengs: f64, gs: f32, kurs: f32| {
+                let mut snap = SimSnapshot::default();
+                snap.lat = 0.0;
+                snap.lon = laengs / GRAD_M;
+                snap.groundspeed_kt = gs;
+                snap.heading_deg_true = kurs;
+                bahndisziplin_tick(stats, &snap);
+            };
+
+            // Auf der Bahn, schnell, geradeaus — Fenster offen.
+            tick(&mut stats, 1000.0, 80.0, 90.0);
+            assert!(
+                stats.bahn_fenster_zu_laengs_m.is_none(),
+                "bei 80 kt darf noch nichts geschlossen sein",
+            );
+
+            // Fahrt faellt unter sechzig, Kurs noch gerade: HIER endet
+            // die Messung, nicht erst beim Abbiegen.
+            tick(&mut stats, 1662.0, 55.0, 90.0);
+            let fenster = stats
+                .bahn_fenster_zu_laengs_m
+                .expect("Fensterende muss beim Unterschreiten stehen");
+            assert!(
+                (fenster - 1662.0).abs() < 5.0,
+                "Fenster schloss bei {fenster:.0} m, erwartet rund 1.662 m",
+            );
+
+            // Erst deutlich spaeter der Kurswechsel — der setzt den
+            // Raeumpunkt und darf das Fensterende NICHT verschieben.
+            tick(&mut stats, 2251.0, 48.0, 60.0);
+            assert_eq!(
+                stats.bahn_fenster_zu_laengs_m.map(|v| (v as i64) / 10),
+                Some(166),
+                "der Kurswechsel hat das Fensterende ueberschrieben",
+            );
+
+            let f = bahn_felder(&stats, Some("BCS3"), None);
+            let durchgereicht = f
+                .mess_ende_laengs_m
+                .expect("Fensterende muss in den Feldern stehen");
+            assert!(
+                (durchgereicht - fenster).abs() < 0.001,
+                "Feld traegt {durchgereicht:.1}, gemessen war {fenster:.1}",
+            );
+            if let Some(cut) = f.scoring_cutoff_m {
+                assert!(
+                    durchgereicht < cut,
+                    "Fensterende {durchgereicht:.0} m muss vor dem \
+                     Kurswechsel {cut:.0} m liegen",
+                );
+            }
         }
 
         // Ein Ausbrechen ueber die Kante ist kein Raeumen der Bahn.

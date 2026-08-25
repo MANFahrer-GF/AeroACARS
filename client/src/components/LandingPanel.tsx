@@ -137,6 +137,9 @@ export interface LandingRecord {
    * gestrichelte Linie mitten auf der Bahn wäre nicht zu erklären.
    */
   scoring_cutoff_m?: number | null;
+  /// Bis wohin der Höchstwert mitgewachsen ist — das Messfenster
+  /// schliesst unter 60 kt, `scoring_cutoff_m` erst beim Kurswechsel.
+  mess_ende_laengs_m?: number | null;
   lateral_skip_reason?: string | null;
   clearance_speed_kt?: number | null;
   clearance_side?: "left" | "right" | null;

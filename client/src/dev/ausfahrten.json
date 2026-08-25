@@ -1,229 +1,301 @@
 {
- "EDDH/23": [
-  {
-   "name": "E1",
-   "seite": "left",
-   "laengs_m": 96.4
-  },
-  {
-   "name": "E1",
-   "seite": "right",
-   "laengs_m": 103.1
-  },
-  {
-   "name": "D9",
-   "seite": "left",
-   "laengs_m": 560.5
-  },
-  {
-   "name": "D8",
-   "seite": "left",
-   "laengs_m": 882.1
-  },
-  {
-   "name": "D7",
-   "seite": "left",
-   "laengs_m": 1253.3
-  },
-  {
-   "name": "D6",
-   "seite": "left",
-   "laengs_m": 1403.6
-  },
-  {
-   "name": "D4",
-   "seite": "left",
-   "laengs_m": 1917.0
-  },
-  {
-   "name": "D3",
-   "seite": "left",
-   "laengs_m": 2251.4
-  },
-  {
-   "name": "D1",
-   "seite": "right",
-   "laengs_m": 2976.9
-  }
- ],
- "EDDH/05": [
-  {
-   "name": "D3",
-   "seite": "right",
-   "laengs_m": 537.2
-  },
-  {
-   "name": "D4",
-   "seite": "right",
-   "laengs_m": 871.6
-  },
-  {
-   "name": "D6",
-   "seite": "right",
-   "laengs_m": 1385.0
-  },
-  {
-   "name": "D7",
-   "seite": "right",
-   "laengs_m": 1535.3
-  },
-  {
-   "name": "D8",
-   "seite": "right",
-   "laengs_m": 1906.4
-  },
-  {
-   "name": "D9",
-   "seite": "right",
-   "laengs_m": 2228.1
-  },
-  {
-   "name": "E1",
-   "seite": "left",
-   "laengs_m": 2685.5
-  },
-  {
-   "name": "E1",
-   "seite": "right",
-   "laengs_m": 2692.2
-  }
- ],
- "EDDL/05R": [
-  {
-   "name": "L8",
-   "seite": "right",
-   "laengs_m": 23.3
-  },
-  {
-   "name": "L6",
-   "seite": "right",
-   "laengs_m": 357.8
-  },
-  {
-   "name": "K3",
-   "seite": "right",
-   "laengs_m": 358.1
-  },
-  {
-   "name": "L5",
-   "seite": "right",
-   "laengs_m": 937.8
-  },
-  {
-   "name": "L4",
-   "seite": "right",
-   "laengs_m": 1719.9
-  },
-  {
-   "name": "K2",
-   "seite": "right",
-   "laengs_m": 2229.6
-  },
-  {
-   "name": "L3",
-   "seite": "right",
-   "laengs_m": 2229.6
-  },
-  {
-   "name": "L2",
-   "seite": "right",
-   "laengs_m": 2549.6
-  }
- ],
- "EHAM/06": [
-  {
-   "name": "S10",
-   "seite": "right",
-   "laengs_m": 598.1
-  },
-  {
-   "name": "S1",
-   "seite": "left",
-   "laengs_m": 599.2
-  },
-  {
-   "name": "S10",
-   "seite": "left",
-   "laengs_m": 609.5
-  },
-  {
-   "name": "S9",
-   "seite": "left",
-   "laengs_m": 1364.3
-  },
-  {
-   "name": "S2",
-   "seite": "left",
-   "laengs_m": 1408.0
-  },
-  {
-   "name": "S3",
-   "seite": "left",
-   "laengs_m": 1630.1
-  },
-  {
-   "name": "S4",
-   "seite": "left",
-   "laengs_m": 2249.7
-  },
-  {
-   "name": "S6",
-   "seite": "left",
-   "laengs_m": 2872.7
-  },
-  {
-   "name": "S8",
-   "seite": "left",
-   "laengs_m": 2910.0
-  },
-  {
-   "name": "S5",
-   "seite": "left",
-   "laengs_m": 2949.8
-  },
-  {
-   "name": "S8",
-   "seite": "right",
-   "laengs_m": 2980.8
-  },
-  {
-   "name": "S7W",
-   "seite": "left",
-   "laengs_m": 3092.1
-  },
-  {
-   "name": "S7E",
-   "seite": "left",
-   "laengs_m": 3159.7
-  },
-  {
-   "name": "E1",
-   "seite": "right",
-   "laengs_m": 3251.2
-  },
-  {
-   "name": "E10",
-   "seite": "right",
-   "laengs_m": 3294.9
-  }
- ],
- "EDLW/24": [
-  {
-   "name": "C",
-   "seite": "left",
-   "laengs_m": 28.8
-  },
-  {
-   "name": "B",
-   "seite": "right",
-   "laengs_m": 1333.4
-  },
-  {
-   "name": "B",
-   "seite": "left",
-   "laengs_m": 1375.1
-  }
- ],
- "EDXB/26": [],
- "EDXF/08": []
+  "EDDH/23": [
+    {
+      "name": "E1",
+      "seite": "left",
+      "laengs_m": 96.4
+    },
+    {
+      "name": "E1",
+      "seite": "right",
+      "laengs_m": 103.1
+    },
+    {
+      "name": "D9",
+      "seite": "left",
+      "laengs_m": 560.5
+    },
+    {
+      "name": "D8",
+      "seite": "left",
+      "laengs_m": 882.1
+    },
+    {
+      "name": "D7",
+      "seite": "left",
+      "laengs_m": 1253.3
+    },
+    {
+      "name": "D6",
+      "seite": "left",
+      "laengs_m": 1403.6
+    },
+    {
+      "name": "D4",
+      "seite": "left",
+      "laengs_m": 1917.0
+    },
+    {
+      "name": "D3",
+      "seite": "left",
+      "laengs_m": 2251.4
+    },
+    {
+      "name": "D1",
+      "seite": "right",
+      "laengs_m": 2976.9
+    }
+  ],
+  "EDDH/05": [
+    {
+      "name": "D3",
+      "seite": "right",
+      "laengs_m": 537.2
+    },
+    {
+      "name": "D4",
+      "seite": "right",
+      "laengs_m": 871.6
+    },
+    {
+      "name": "D6",
+      "seite": "right",
+      "laengs_m": 1385.0
+    },
+    {
+      "name": "D7",
+      "seite": "right",
+      "laengs_m": 1535.3
+    },
+    {
+      "name": "D8",
+      "seite": "right",
+      "laengs_m": 1906.4
+    },
+    {
+      "name": "D9",
+      "seite": "right",
+      "laengs_m": 2228.1
+    },
+    {
+      "name": "E1",
+      "seite": "left",
+      "laengs_m": 2685.5
+    },
+    {
+      "name": "E1",
+      "seite": "right",
+      "laengs_m": 2692.2
+    }
+  ],
+  "EDDL/05R": [
+    {
+      "name": "L8",
+      "seite": "right",
+      "laengs_m": 23.3
+    },
+    {
+      "name": "L6",
+      "seite": "right",
+      "laengs_m": 357.8
+    },
+    {
+      "name": "K3",
+      "seite": "right",
+      "laengs_m": 358.1
+    },
+    {
+      "name": "L5",
+      "seite": "right",
+      "laengs_m": 937.8
+    },
+    {
+      "name": "L4",
+      "seite": "right",
+      "laengs_m": 1719.9
+    },
+    {
+      "name": "K2",
+      "seite": "right",
+      "laengs_m": 2229.6
+    },
+    {
+      "name": "L3",
+      "seite": "right",
+      "laengs_m": 2229.6
+    },
+    {
+      "name": "L2",
+      "seite": "right",
+      "laengs_m": 2549.6
+    }
+  ],
+  "EHAM/06": [
+    {
+      "name": "S10",
+      "seite": "right",
+      "laengs_m": 598.1
+    },
+    {
+      "name": "S1",
+      "seite": "left",
+      "laengs_m": 599.2
+    },
+    {
+      "name": "S10",
+      "seite": "left",
+      "laengs_m": 609.5
+    },
+    {
+      "name": "S9",
+      "seite": "left",
+      "laengs_m": 1364.3
+    },
+    {
+      "name": "S2",
+      "seite": "left",
+      "laengs_m": 1408.0
+    },
+    {
+      "name": "S3",
+      "seite": "left",
+      "laengs_m": 1630.1
+    },
+    {
+      "name": "S4",
+      "seite": "left",
+      "laengs_m": 2249.7
+    },
+    {
+      "name": "S6",
+      "seite": "left",
+      "laengs_m": 2872.7
+    },
+    {
+      "name": "S8",
+      "seite": "left",
+      "laengs_m": 2910.0
+    },
+    {
+      "name": "S5",
+      "seite": "left",
+      "laengs_m": 2949.8
+    },
+    {
+      "name": "S8",
+      "seite": "right",
+      "laengs_m": 2980.8
+    },
+    {
+      "name": "S7W",
+      "seite": "left",
+      "laengs_m": 3092.1
+    },
+    {
+      "name": "S7E",
+      "seite": "left",
+      "laengs_m": 3159.7
+    },
+    {
+      "name": "E1",
+      "seite": "right",
+      "laengs_m": 3251.2
+    },
+    {
+      "name": "E10",
+      "seite": "right",
+      "laengs_m": 3294.9
+    }
+  ],
+  "EDLW/24": [
+    {
+      "name": "C",
+      "seite": "left",
+      "laengs_m": 28.8
+    },
+    {
+      "name": "B",
+      "seite": "right",
+      "laengs_m": 1333.4
+    },
+    {
+      "name": "B",
+      "seite": "left",
+      "laengs_m": 1375.1
+    }
+  ],
+  "EDXB/26": [],
+  "EDXF/08": [],
+  "EDDM/26L": [
+    {
+      "name": "B15",
+      "laengs_m": 23.4,
+      "seite": "right"
+    },
+    {
+      "name": "B14",
+      "laengs_m": 85.3,
+      "seite": "right"
+    },
+    {
+      "name": "B13",
+      "laengs_m": 143,
+      "seite": "right"
+    },
+    {
+      "name": "B12",
+      "laengs_m": 1051.7,
+      "seite": "right"
+    },
+    {
+      "name": "B11",
+      "laengs_m": 1336.4,
+      "seite": "right"
+    },
+    {
+      "name": "B10",
+      "laengs_m": 1655.6,
+      "seite": "right"
+    },
+    {
+      "name": "B8",
+      "laengs_m": 1790.3,
+      "seite": "right"
+    },
+    {
+      "name": "B9",
+      "laengs_m": 1859.7,
+      "seite": "right"
+    },
+    {
+      "name": "B7",
+      "laengs_m": 2258.7,
+      "seite": "right"
+    },
+    {
+      "name": "B6",
+      "laengs_m": 2367.5,
+      "seite": "right"
+    },
+    {
+      "name": "B4",
+      "laengs_m": 2987.9,
+      "seite": "right"
+    },
+    {
+      "name": "B3",
+      "laengs_m": 3843.6,
+      "seite": "right"
+    },
+    {
+      "name": "B2",
+      "laengs_m": 3914.8,
+      "seite": "right"
+    },
+    {
+      "name": "B1",
+      "laengs_m": 3946.2,
+      "seite": "right"
+    }
+  ]
 }

@@ -73,6 +73,7 @@ export function mapLandingRecordToV2Props(
     // leere Querachse zu malen, die wie ein Messwert aussieht.
     clearance_point_m: record.clearance_point_m ?? null,
     scoring_cutoff_m: record.scoring_cutoff_m ?? null,
+    mess_ende_laengs_m: record.mess_ende_laengs_m ?? null,
     clearance_speed_kt: record.clearance_speed_kt ?? null,
     clearance_side: (record.clearance_side ?? null) as "left" | "right" | null,
     track_width_m: record.track_width_m ?? null,

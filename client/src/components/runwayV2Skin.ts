@@ -52,6 +52,16 @@ export interface V2Skin {
     tdAcceptable: string;
     tdWarn: string;
     tdSevere: string;
+
+    /**
+     * Der genutzte Rollweg in der Queransicht — Fläche und Rand.
+     *
+     * Blau, weil er der Untergrund ist, auf dem die grüne Spur läuft:
+     * Zwei Grüntöne wären nicht auseinanderzuhalten, und die Frage lautet
+     * ja gerade „lief die Spur IM Rollweg".
+     */
+    rollweg: string;
+    rollwegRand: string;
   };
 
   // ─── SVG-Geometrie ─────────────────────────────────────────────────
@@ -111,6 +121,8 @@ export const DEFAULT_SKIN: V2Skin = {
     tdAcceptable: "#22d3ee",
     tdWarn: "#fbbf24",
     tdSevere: "#ef4444",
+    rollweg: "#3b82f6",
+    rollwegRand: "#7dd3fc",
   },
   geometry: {
     svgWidth: 1200,

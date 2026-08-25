@@ -31,6 +31,13 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Ein Punkt des Rollwegs, in Bahn-Koordinaten.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct Verlaufspunkt {
+    pub laengs_m: f64,
+    pub quer_m: f64,
+}
+
 /// Eine Ausfahrt: wo ein benannter Rollweg die Bahnkante trifft.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Ausfahrt {
@@ -40,7 +47,45 @@ pub struct Ausfahrt {
     pub laengs_m: f64,
     /// Auf welcher Seite: `"left"` oder `"right"` in Landerichtung.
     pub seite: String,
+    /// Wie der Rollweg wirklich verläuft — in Bahn-Koordinaten.
+    ///
+    /// # Warum das mitkommt
+    ///
+    /// Bis hierher trug eine Ausfahrt nur ihre Position. Die Queransicht
+    /// setzte deshalb einen Stummel an den Bahnrand, und das war richtig
+    /// so: Bei sechzehnfacher Überhöhung wäre ein 25°-Schnellabrollweg
+    /// fast senkrecht gezeichnet worden.
+    ///
+    /// Für eine massstabstreue Ansicht dreht sich das um. Thomas zu
+    /// DLH369 (EDDM 26L, 25.08.2026): „auf B6 abgerollt, aber das
+    /// Abrollen sieht auf der Darstellung ganz anders aus, B6 hat einen
+    /// anderen Verlauf." Nachgemessen: Die Ausfahrt lief mit 19,4°, B6
+    /// selbst hat 23,7°, gezeichnet waren 80,3°.
+    ///
+    /// Ohne den Verlauf kann keine Ansicht das richtigstellen — die
+    /// Geometrie liegt hier, beim Rechnen, und wurde bisher verworfen.
+    ///
+    /// Leer, wenn die Bodenkarte für diesen Rollweg nichts hergibt; der
+    /// Verbraucher faellt dann auf den Stummel zurueck.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub verlauf: Vec<Verlaufspunkt>,
 }
+
+/// Mindestabstand zweier Verlaufspunkte, in Metern.
+///
+/// Rollwege in OpenStreetMap haben teils Stützpunkte im Meterabstand. Für
+/// eine Zeichnung reicht deutlich weniger, und jede Landung traegt diese
+/// Punkte durch die Leitung — bei vierzehn Ausfahrten summiert sich das.
+const VERLAUF_MIN_ABSTAND_M: f64 = 8.0;
+
+/// Wie weit der Verlauf vor und hinter der Kante mitgenommen wird.
+///
+/// Vierhundert Meter hinter der Kante: So weit reicht ein
+/// Schnellabrollweg, bis er in den parallelen Rollweg einmündet — bei
+/// EDDM B6 sind es rund dreihundert. Davor genügen fünfzig; weiter
+/// vorn liegt der Rollweg auf der Bahn und ist dort nicht zu zeichnen.
+const VERLAUF_VOR_M: f64 = 50.0;
+const VERLAUF_NACH_M: f64 = 400.0;
 
 /// Wie nah ein Stützpunkt an der Bahnkante liegen muss, um als Ausfahrt zu
 /// zählen, in Metern.
@@ -81,7 +126,7 @@ pub fn ausfahrten_fuer_bahn(
     //
     // Ein Rollweg berührt die Bahn oft mit mehreren Stützpunkten; ohne diese
     // Auswahl bekäme derselbe Rollweg mehrere Stummel nebeneinander.
-    let mut beste: Vec<(String, String, f64, f64)> = Vec::new();
+    let mut beste: Vec<(String, String, f64, f64, Vec<(f64, f64)>)> = Vec::new();
     for m in merkmale {
         let props = m.get("properties");
         if props.and_then(|p| p.get("k")).and_then(|k| k.as_str()) != Some("taxiway") {
@@ -105,16 +150,24 @@ pub fn ausfahrten_fuer_bahn(
             continue;
         };
 
-        for p in punkte {
-            let Some((lon, lat)) = lonlat(p) else { continue };
-            let (laengs, quer) = crate::runway::projiziere_auf_bahn(
-                threshold_lat,
-                threshold_lon,
-                end_lat,
-                end_lon,
-                lat,
-                lon,
-            );
+        // Den ganzen Weg EINMAL projizieren — er wird zweimal gebraucht:
+        // fuer den Kantentreffer und fuer den Verlauf.
+        let projiziert: Vec<(f64, f64)> = punkte
+            .iter()
+            .filter_map(lonlat)
+            .map(|(lon, lat)| {
+                crate::runway::projiziere_auf_bahn(
+                    threshold_lat,
+                    threshold_lon,
+                    end_lat,
+                    end_lon,
+                    lat,
+                    lon,
+                )
+            })
+            .collect();
+
+        for &(laengs, quer) in &projiziert {
             if laengs < 20.0 || laengs > bahnlaenge + HINTER_DEM_ENDE_M {
                 continue;
             }
@@ -125,11 +178,12 @@ pub fn ausfahrten_fuer_bahn(
             let seite = if quer > 0.0 { "right" } else { "left" };
             match beste
                 .iter_mut()
-                .find(|(n, s, _, _)| n == name && s == seite)
+                .find(|(n, s, _, _, _)| n == name && s == seite)
             {
                 Some(eintrag) if kantenabstand < eintrag.3 => {
                     eintrag.2 = laengs;
                     eintrag.3 = kantenabstand;
+                    eintrag.4 = projiziert.clone();
                 }
                 Some(_) => {}
                 None => beste.push((
@@ -137,6 +191,7 @@ pub fn ausfahrten_fuer_bahn(
                     seite.to_string(),
                     laengs,
                     kantenabstand,
+                    projiziert.clone(),
                 )),
             }
         }
@@ -145,12 +200,43 @@ pub fn ausfahrten_fuer_bahn(
     beste.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
     beste
         .into_iter()
-        .map(|(name, seite, laengs_m, _)| Ausfahrt {
+        .map(|(name, seite, laengs_m, _, roh)| Ausfahrt {
             name,
             laengs_m: (laengs_m * 10.0).round() / 10.0,
             seite,
+            verlauf: verlauf_ausduennen(&roh, laengs_m),
         })
         .collect()
+}
+
+/// Den Verlauf auf das beschneiden, was gezeichnet wird — und ausduennen.
+///
+/// Beschnitten wird um die KANTE herum, nicht um die ganze Bahn: Was
+/// zweihundert Meter vor der Ausfahrt neben der Bahn liegt, gehoert zu
+/// einem anderen Teil des Rollwegs und wuerde die Zeichnung nur
+/// zukleistern.
+fn verlauf_ausduennen(roh: &[(f64, f64)], kante_laengs: f64) -> Vec<Verlaufspunkt> {
+    let mut aus: Vec<Verlaufspunkt> = Vec::new();
+    for &(laengs, quer) in roh {
+        if laengs < kante_laengs - VERLAUF_VOR_M || laengs > kante_laengs + VERLAUF_NACH_M {
+            continue;
+        }
+        if let Some(letzter) = aus.last() {
+            let d = (laengs - letzter.laengs_m).hypot(quer - letzter.quer_m);
+            if d < VERLAUF_MIN_ABSTAND_M {
+                continue;
+            }
+        }
+        aus.push(Verlaufspunkt {
+            laengs_m: (laengs * 10.0).round() / 10.0,
+            quer_m: (quer * 10.0).round() / 10.0,
+        });
+    }
+    // Ein einzelner Punkt ist keine Linie.
+    if aus.len() < 2 {
+        aus.clear();
+    }
+    aus
 }
 
 fn lonlat(v: &serde_json::Value) -> Option<(f64, f64)> {
@@ -177,6 +263,137 @@ mod tests {
             lon2 = lon + 0.002,
             lat2 = lat + 0.002,
         )
+    }
+
+    /// Ein Rollweg aus beliebig vielen Punkten in Bahn-Koordinaten.
+    fn rollweg_aus(name: &str, punkte: &[(f64, f64)]) -> String {
+        let ko: Vec<String> = punkte
+            .iter()
+            .map(|&(lg, qr)| {
+                let (lat, lon) = punkt_auf_bahn(lg, qr);
+                format!("[{lon},{lat}]")
+            })
+            .collect();
+        format!(
+            r#"{{"type":"Feature","properties":{{"k":"taxiway","r":"{name}"}},
+                 "geometry":{{"type":"LineString","coordinates":[{}]}}}}"#,
+            ko.join(",")
+        )
+    }
+
+    // ── Der Verlauf ──────────────────────────────────────────────────
+    //
+    // Befund Thomas zu DLH369 (EDDM 26L, 25.08.2026): „auf B6 abgerollt,
+    // aber das Abrollen sieht auf der Darstellung ganz anders aus, B6 hat
+    // einen anderen Verlauf." Gemessen lief die Ausfahrt mit 19,4°, B6
+    // selbst hat 23,7° — gezeichnet waren 80,3°, weil die Queransicht
+    // sechzehnfach ueberhoeht ist.
+    //
+    // Ohne den Verlauf kann keine Ansicht das richtigstellen. Er liegt
+    // hier, beim Rechnen, und wurde bisher verworfen.
+
+    #[test]
+    fn der_verlauf_kommt_mit() {
+        // Ein Schnellabrollweg, wie B6 ihn hat: an der Kante beginnend,
+        // dann flach nach aussen.
+        let g = karte(&rollweg_aus(
+            "B6",
+            &[
+                (880.0, -20.0),
+                (920.0, -30.0),
+                (960.0, -45.0),
+                (1010.0, -65.0),
+                (1080.0, -95.0),
+            ],
+        ));
+        let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
+        assert_eq!(a.len(), 1, "{a:?}");
+        assert!(
+            a[0].verlauf.len() >= 4,
+            "nur {} Verlaufspunkte — die Geometrie wird verworfen",
+            a[0].verlauf.len()
+        );
+        // Der Verlauf muss NACH AUSSEN laufen, nicht zurueck.
+        let erst = a[0].verlauf.first().unwrap();
+        let letzt = a[0].verlauf.last().unwrap();
+        assert!(letzt.laengs_m > erst.laengs_m);
+        assert!(letzt.quer_m.abs() > erst.quer_m.abs());
+    }
+
+    #[test]
+    fn der_verlauf_traegt_den_echten_winkel() {
+        // Das ist der Punkt der ganzen Uebung: Ein 25-Grad-Rollweg muss
+        // als 25 Grad ankommen, nicht als 80.
+        let g = karte(&rollweg_aus(
+            "B6",
+            &[(900.0, -23.0), (1000.0, -69.6), (1100.0, -116.2)],
+        ));
+        let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
+        let v = &a[0].verlauf;
+        let dl = v.last().unwrap().laengs_m - v.first().unwrap().laengs_m;
+        let dq = v.last().unwrap().quer_m - v.first().unwrap().quer_m;
+        let grad = dq.abs().atan2(dl).to_degrees();
+        assert!(
+            (grad - 25.0).abs() < 3.0,
+            "{grad:.1}° statt 25° — der Verlauf ist verzerrt"
+        );
+    }
+
+    #[test]
+    fn dichte_stuetzpunkte_werden_ausgeduennt() {
+        // OpenStreetMap hat teils Punkte im Meterabstand. Jede Landung
+        // traegt sie durch die Leitung; bei vierzehn Ausfahrten summiert
+        // sich das.
+        let dicht: Vec<(f64, f64)> = (0..120)
+            .map(|i| (900.0 + i as f64 * 2.0, -23.0 - i as f64 * 1.0))
+            .collect();
+        let g = karte(&rollweg_aus("B6", &dicht));
+        let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
+        let v = &a[0].verlauf;
+        assert!(v.len() < 40, "{} Punkte — zu dicht", v.len());
+        assert!(v.len() > 5, "{} Punkte — zu duenn", v.len());
+        for w in v.windows(2) {
+            let d = (w[1].laengs_m - w[0].laengs_m).hypot(w[1].quer_m - w[0].quer_m);
+            assert!(d >= VERLAUF_MIN_ABSTAND_M - 0.5, "{d:.1} m Abstand");
+        }
+    }
+
+    #[test]
+    fn weit_entferntes_wird_abgeschnitten() {
+        // Was zweihundert Meter VOR der Ausfahrt neben der Bahn liegt,
+        // gehoert zu einem anderen Teil des Rollwegs und wuerde die
+        // Zeichnung zukleistern.
+        let g = karte(&rollweg_aus(
+            "B6",
+            &[
+                (100.0, -80.0),   // weit davor — muss weg
+                (900.0, -23.0),   // die Kante
+                (1000.0, -60.0),
+                (2500.0, -300.0), // weit dahinter — muss weg
+            ],
+        ));
+        let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
+        for v in &a[0].verlauf {
+            assert!(
+                v.laengs_m > 800.0 && v.laengs_m < 1400.0,
+                "{} m liegt ausserhalb des Ausschnitts",
+                v.laengs_m
+            );
+        }
+    }
+
+    #[test]
+    fn ein_einzelner_punkt_ist_keine_linie() {
+        // Bleibt nach dem Beschneiden nur ein Punkt uebrig, gibt es
+        // nichts zu zeichnen — dann lieber gar keinen Verlauf als einen,
+        // den die Anzeige zu einer Linie verlaengert.
+        let (lat, lon) = punkt_auf_bahn(900.0, -23.0);
+        let g = karte(&rollweg("D8", lat, lon));
+        let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
+        assert_eq!(a.len(), 1);
+        // Der Zwei-Punkte-Helfer legt den zweiten Punkt weit weg —
+        // entweder er faellt aus dem Ausschnitt, oder es sind zwei.
+        assert!(a[0].verlauf.is_empty() || a[0].verlauf.len() >= 2);
     }
 
     #[test]

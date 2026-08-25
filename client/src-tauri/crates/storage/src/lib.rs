@@ -371,6 +371,16 @@ pub struct LandingRecord {
     /// Flugzeug 13,4 m.
     #[serde(default)]
     pub scoring_cutoff_m: Option<f64>,
+    /// Bis wohin der groesste Querversatz mitgewachsen ist.
+    ///
+    /// Das Messfenster schliesst unter sechzig Knoten, `scoring_cutoff_m`
+    /// erst beim Kurswechsel — bei DLH369 (EDDM 26L) lagen 600 Meter
+    /// dazwischen. Ohne diese Zahl zeichnet die Anzeige die
+    /// Bewertungsgrenze bei 2.251 m und daneben einen Hoechstwert, der
+    /// nur bis 1.650 m gilt: beides fuer sich richtig, zusammen ein
+    /// Widerspruch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mess_ende_laengs_m: Option<f64>,
     /// Warum die seitliche Bewertung entfiel — der Grund, den die
     /// BEWERTUNG gefaellt hat, nicht ein zweiter aus der Anzeige.
     ///

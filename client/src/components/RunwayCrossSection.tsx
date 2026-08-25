@@ -37,6 +37,13 @@ export interface Ausfahrt {
   laengs_m: number;
   /** Auf welcher Seite der Bahn. */
   seite: "left" | "right";
+  /**
+   * Wie der Rollweg wirklich verläuft — in Bahn-Koordinaten.
+   *
+   * Kommt seit v1.7.4 aus den Bodendaten mit (`ausfahrten.rs`). Ältere
+   * Flüge haben ihn nicht; dann bleibt es beim Stummel.
+   */
+  verlauf?: Array<{ laengs_m: number; quer_m: number }> | null;
 }
 
 export interface QueransichtProps {
@@ -99,6 +106,9 @@ export interface QueransichtProps {
     tdPerfect: string;
     tdWarn: string;
     tdSevere: string;
+    /** Der genutzte Rollweg — Flaeche und Rand. Siehe `runwayV2Skin.ts`. */
+    rollweg: string;
+    rollwegRand: string;
   };
 }
 
@@ -249,10 +259,22 @@ export function RunwayCrossSection(p: QueransichtProps) {
   // Wirklichkeit als die verzerrte Projektion, denn die Verzerrung stammt
   // allein aus der Überhöhung der Querachse.
   const halbeSpurPx = halbeSpurM * pxProQuerM;
-  const versetzt = (vorzeichen: 1 | -1) =>
-    achsePunkte.map((q, i) => {
-      const vor = achsePunkte[Math.max(0, i - 1)]!;
-      const nach = achsePunkte[Math.min(achsePunkte.length - 1, i + 1)]!;
+  /**
+   * Ein Band konstanter Breite entlang einer Kurve.
+   *
+   * Aus der Spur-Berechnung herausgezogen, weil der Rollweg dasselbe
+   * braucht: Auch er darf beim Ausschwenken nicht schmaler werden, nur
+   * weil die Querachse überhöht ist. Zwei Fassungen desselben
+   * Gedankengangs würden gegeneinander driften.
+   */
+  const bandRand = (
+    achse: Array<{ x: number; y: number }>,
+    halbPx: number,
+    vorzeichen: 1 | -1,
+  ) =>
+    achse.map((q, i) => {
+      const vor = achse[Math.max(0, i - 1)]!;
+      const nach = achse[Math.min(achse.length - 1, i + 1)]!;
       const dx = nach.x - vor.x;
       const dy = nach.y - vor.y;
       const len = Math.hypot(dx, dy) || 1;
@@ -265,11 +287,13 @@ export function RunwayCrossSection(p: QueransichtProps) {
       return {
         x: Math.max(
           p.projektion.bahnAnfangX,
-          Math.min(p.projektion.bahnEndeX, q.x + (vorzeichen * -dy * halbeSpurPx) / len),
+          Math.min(p.projektion.bahnEndeX, q.x + (vorzeichen * -dy * halbPx) / len),
         ),
-        y: q.y + (vorzeichen * dx * halbeSpurPx) / len,
+        y: q.y + (vorzeichen * dx * halbPx) / len,
       };
     });
+  const versetzt = (vorzeichen: 1 | -1) =>
+    bandRand(achsePunkte, halbeSpurPx, vorzeichen);
   const linksPunkte = versetzt(-1);
   const rechtsPunkte = versetzt(1);
 
@@ -427,6 +451,53 @@ export function RunwayCrossSection(p: QueransichtProps) {
   // 2230 m — zwei Beschriftungen an derselben x-Position, die einander
   // ueberdecken. Die Referenzgrafik loest das mit `S5/S6`, und genau das
   // passiert hier: Ein Stummel, ein Name aus beiden.
+  // ── Der genutzte Rollweg, als Korridor unter der Spur ────────────────
+  //
+  // §8.6 verbot Rollwege in dieser Ansicht: „Bei 15-facher Überhöhung wäre
+  // ein 30°-Schnellabrollweg fast senkrecht gezeichnet — das wäre eine
+  // Behauptung, die der Massstab nicht hergibt."
+  //
+  // Die Regel war richtig für einen Rollweg ALLEIN. Zusammen mit der Spur
+  // beantwortet er eine andere Frage — und die beantwortet er richtig:
+  // Beide sind gleich überhöht, also ist ablesbar, OB die Räder im
+  // Rollweg blieben. Nur der absolute Winkel bleibt unlesbar, und der
+  // steht deshalb als Zahl in der Marke.
+  //
+  // Feldbefund Thomas zu DLH369 (EDDM 26L, 25.08.2026): „auf B6 abgerollt,
+  // aber das Abrollen sieht auf der Darstellung ganz anders aus." Gemessen
+  // 19,4°, B6 selbst 23,7°, gezeichnet 80,3°.
+  //
+  // Gezeichnet wird NUR der genutzte Rollweg. Alle nebeneinander wären ein
+  // Liniengewirr, und die Frage lautet „bin ich meinem Rollweg gefolgt",
+  // nicht „welche gibt es".
+  const rollwegKorridor = ((): string | null => {
+    const genutzteAusfahrt = (p.ausfahrten ?? []).find(
+      (a) => genutzt(a) && (a.verlauf?.length ?? 0) >= 2,
+    );
+    if (!genutzteAusfahrt?.verlauf) return null;
+    const achse = genutzteAusfahrt.verlauf
+      .filter(
+        (v) =>
+          Number.isFinite(v.laengs_m) &&
+          Number.isFinite(v.quer_m) &&
+          v.laengs_m >= 0 &&
+          v.laengs_m <= p.projektion.lengthM &&
+          Math.abs(v.quer_m) <= sichtbarM,
+      )
+      .map((v) => xy({ laengs_m: v.laengs_m, quer_m: v.quer_m }));
+    if (achse.length < 2) return null;
+    // 23 m: die uebliche Breite eines Schnellabrollwegs. Die Bodenkarte
+    // fuehrt Rollwege als Mittellinie, eine echte Breite steht dort nicht.
+    const halbRollwegPx = (23 / 2) * pxProQuerM;
+    const oben = bandRand(achse, halbRollwegPx, -1);
+    const unten = bandRand(achse, halbRollwegPx, 1);
+    return `${weicherPfad(oben)} L ${unten
+      .slice()
+      .reverse()
+      .map((q) => `${q.x.toFixed(1)} ${q.y.toFixed(1)}`)
+      .join(" L ")} Z`;
+  })();
+
   const ausfahrten = gruppiere(
     (p.ausfahrten ?? []).filter(
       (a) =>
@@ -435,6 +506,10 @@ export function RunwayCrossSection(p: QueransichtProps) {
         a.laengs_m <= p.projektion.lengthM,
     ),
     p.projektion,
+    // Dieselbe Groesse, mit der die Namen weiter unten gesetzt werden.
+    // Steht sie hier anders, fasst die Anzeige nach einem Mass zusammen
+    // und zeichnet nach einem anderen.
+    sf(9),
   );
 
   const gruenTop = bahnTop - GRUEN_H;
@@ -617,6 +692,22 @@ export function RunwayCrossSection(p: QueransichtProps) {
       {/* Kontur um das Band: Ohne sie verläuft die Fläche bei 22 % Deckung
           im Untergrund, und die Spurweite — die eigentliche Aussage dieser
           Ansicht — ist nicht abzulesen. Die Ränder SIND die Radspuren. */}
+      {/* Der genutzte Rollweg — UNTER der Spur, damit sie oben liegt.
+          Nur eine Fläche mit gestricheltem Rand: Er ist der Untergrund, auf
+          dem die Spur läuft, nicht selbst eine Messung. */}
+      {rollwegKorridor && (
+        <path
+          d={rollwegKorridor}
+          fill={p.tokens.rollweg}
+          fillOpacity={0.22}
+          stroke={p.tokens.rollwegRand}
+          strokeWidth={1.1}
+          strokeOpacity={0.75}
+          strokeDasharray="6 5"
+          strokeLinejoin="round"
+          pointerEvents="none"
+        />
+      )}
       {bandPfad && (
         <path
           d={bandPfad}
@@ -816,46 +907,142 @@ function r(n: number): string {
 }
 
 /**
+ * Wie weit zwei Ausfahrtsnamen auseinanderstehen muessen.
+ *
+ * # Warum das keine feste Zahl mehr ist
+ *
+ * Vorher standen hier achtzehn Pixel — die Breite eines zweistelligen
+ * Namens. Das stimmt fuer „B6" und stimmt nicht mehr, sobald das
+ * Zusammenfassen selbst den Namen verbreitert: „B2/B1" ist fuenf Zeichen
+ * und damit knapp achtundzwanzig Pixel breit. In Muenchen (EDDM 26L, 14
+ * Ausfahrten) lag „B3" achtzehn Pixel neben „B2/B1" — nach der alten
+ * Regel weit genug, auf dem Bild uebereinander.
+ *
+ * Zwei mittig gesetzte Beschriftungen beruehren sich, wenn ihr
+ * Mittenabstand unter die halbe Summe ihrer Breiten faellt. Genau das
+ * rechnet diese Funktion, plus etwas Luft.
+ *
+ * Der Faktor 0,62 ist dieselbe Annahme, mit der die Lesbarkeitspruefung
+ * (`RunwayLesbarkeit.test.tsx`) die Textkaesten aufspannt — beide muessen
+ * dieselbe Breite meinen, sonst prueft der Test etwas anderes, als die
+ * Anzeige baut.
+ */
+const ZEICHENBREITE = 0.62;
+const LUFT_PX = 3;
+
+function mindestAbstandPx(links: string, rechts: string, schrift: number): number {
+  const halb = (n: string) => (n.length * schrift * ZEICHENBREITE) / 2;
+  return halb(links) + halb(rechts) + LUFT_PX;
+}
+
+/**
  * Fasst Ausfahrten zusammen, deren Stummel sich sonst ueberdecken.
  *
  * Massgeblich ist der **Pixelabstand**, nicht der Meterabstand: Auf einer
  * kurzen Bahn liegen dieselben zwanzig Meter viel weiter auseinander als auf
- * einer langen. Achtzehn Pixel entsprechen etwa der Breite eines
- * zweistelligen Namens bei neun Punkt Schriftgroesse.
+ * einer langen. Wie viele Pixel noetig sind, haengt am Namen selbst —
+ * siehe `mindestAbstandPx`.
  */
-function gruppiere(liste: Ausfahrt[], proj: Projektion): Ausfahrt[] {
-  const MIN_ABSTAND_PX = 18;
+function gruppiere(
+  liste: Ausfahrt[],
+  proj: Projektion,
+  schrift: number,
+): Ausfahrt[] {
   const out: Ausfahrt[] = [];
   for (const a of [...liste].sort((x, y) => x.laengs_m - y.laengs_m)) {
     const nachbar = out.find(
       (b) =>
         b.seite === a.seite &&
-        Math.abs(proj.mToX(b.laengs_m) - proj.mToX(a.laengs_m)) < MIN_ABSTAND_PX,
+        Math.abs(proj.mToX(b.laengs_m) - proj.mToX(a.laengs_m)) <
+          mindestAbstandPx(b.name, a.name, schrift),
     );
-    if (nachbar) {
-      // Namen verbinden, aber nicht endlos: Drei Kennungen an einer Stelle
-      // sind kein Name mehr, sondern eine Aufzaehlung.
-      //
-      // Was darueber hinausgeht, wird GEZAEHLT, nicht verschwiegen.
-      // Gemessen über alle 660 Bahnen mit Bodenkarte (23.08.2026) trifft
-      // das 38 Ausfahrten — in Frankfurt und Köln liegen drei Rollwege
-      // innerhalb weniger Meter an der Bahn. Vorher stand dort „R11/M19"
-      // und R13 fehlte, ohne dass die Grafik es andeutete: Wer nach der
-      // Ausfahrt sucht, die er genommen hat, findet sie nicht und hält
-      // die Karte für unvollständig.
-      if (nachbar.name.split("/").length < 2 && !nachbar.name.includes("+")) {
-        nachbar.name = `${nachbar.name}/${a.name}`;
-      } else {
-        const m = /\+(\d+)$/.exec(nachbar.name);
-        nachbar.name = m
-          ? nachbar.name.replace(/\+\d+$/, `+${Number(m[1]) + 1}`)
-          : `${nachbar.name} +1`;
-      }
-    } else {
-      out.push({ ...a });
-    }
+    if (nachbar) verbinde(nachbar, a.name);
+    else out.push({ ...a });
+  }
+
+  // Nachziehen, bis nichts mehr kollidiert.
+  //
+  // # Warum ein Durchgang nicht reicht
+  //
+  // Der erste Durchgang prueft jede Ausfahrt gegen den Stand, den die
+  // Liste in DIESEM Moment hat. Verbindet er spaeter zwei Namen, wird die
+  // Beschriftung breiter — und kann etwas ueberdecken, das vorher weit
+  // genug entfernt lag und schon abgelegt war.
+  //
+  // Genau so entstand der Befund in Muenchen (EDDM 26L): B3 stand fest,
+  // dann wuchs der Nachbar von „B2" auf „B2/B1" und schob sich darunter.
+  // Niemand hat B3 je wieder angesehen.
+  //
+  // Die Schranke ist kein Sicherheitsnetz, sondern eine Aussage: jede
+  // Runde verbindet mindestens zwei Eintraege, also kann es nie mehr
+  // Runden geben als Eintraege.
+  for (let runde = 0; runde < out.length; runde++) {
+    const i = out.findIndex((b, k) =>
+      out.some(
+        (c, l) =>
+          l > k &&
+          c.seite === b.seite &&
+          Math.abs(proj.mToX(b.laengs_m) - proj.mToX(c.laengs_m)) <
+            mindestAbstandPx(b.name, c.name, schrift),
+      ),
+    );
+    if (i < 0) break;
+    const j = out.findIndex(
+      (c, l) =>
+        l > i &&
+        c.seite === out[i]!.seite &&
+        Math.abs(proj.mToX(out[i]!.laengs_m) - proj.mToX(c.laengs_m)) <
+          mindestAbstandPx(out[i]!.name, c.name, schrift),
+    );
+    verbinde(out[i]!, out[j]!.name);
+    out.splice(j, 1);
   }
   return out;
+}
+
+/**
+ * Einen Namen an eine bestehende Beschriftung anhaengen.
+ *
+ * Namen verbinden, aber nicht endlos: Drei Kennungen an einer Stelle sind
+ * kein Name mehr, sondern eine Aufzaehlung.
+ *
+ * Was darueber hinausgeht, wird GEZAEHLT, nicht verschwiegen. Gemessen
+ * ueber alle 660 Bahnen mit Bodenkarte (23.08.2026) trifft das 38
+ * Ausfahrten — in Frankfurt und Koeln liegen drei Rollwege innerhalb
+ * weniger Meter an der Bahn. Vorher stand dort „R11/M19" und R13 fehlte,
+ * ohne dass die Grafik es andeutete: Wer nach der Ausfahrt sucht, die er
+ * genommen hat, findet sie nicht und haelt die Karte fuer unvollstaendig.
+ */
+function verbinde(ziel: Ausfahrt, name: string): void {
+  const a = zerlege(ziel.name);
+  const b = zerlege(name);
+  ziel.name = setze([...a.namen, ...b.namen], a.weitere + b.weitere);
+}
+
+/** Eine Beschriftung wieder in ihre Bestandteile zerlegen. */
+function zerlege(label: string): { namen: string[]; weitere: number } {
+  const m = /^(.*?)\s*\+(\d+)$/.exec(label);
+  const rumpf = m ? m[1]! : label;
+  return {
+    namen: rumpf.split("/").filter(Boolean),
+    weitere: m ? Number(m[2]) : 0,
+  };
+}
+
+/**
+ * Aus Namen und Restzahl wieder eine Beschriftung machen.
+ *
+ * Hoechstens zwei Kennungen ausschreiben; was darueber liegt, wird
+ * gezaehlt. Das Zusammenlegen zweier fertiger Gruppen ging vorher an
+ * dieser Regel vorbei: „B3" und „B2/B1" ergaben stumpf „B3/B2/B1" —
+ * drei Kennungen an einer Stelle, genau die Aufzaehlung, die die Regel
+ * verhindern soll. In Muenchen stand das so im Bild.
+ */
+function setze(namen: string[], weitere: number): string {
+  const eindeutig = [...new Set(namen)];
+  const rest = weitere + Math.max(0, eindeutig.length - 2);
+  const kopf = eindeutig.slice(0, 2).join("/");
+  return rest > 0 ? `${kopf} +${rest}` : kopf;
 }
 
 /**

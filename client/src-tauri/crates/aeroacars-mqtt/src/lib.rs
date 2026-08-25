@@ -949,6 +949,16 @@ pub struct BahnWire {
     /// Laengsposition, ab der nicht mehr bewertet wird — der Beginn des
     /// Ausschwenkens. NICHT dasselbe wie `clearance_point_m`.
     pub scoring_cutoff_m: Option<f64>,
+    /// Bis wohin der groesste Querversatz mitgewachsen ist.
+    ///
+    /// Das Messfenster schliesst unter sechzig Knoten, `scoring_cutoff_m`
+    /// erst beim Kurswechsel — bei DLH369 (EDDM 26L) lagen 600 Meter
+    /// dazwischen. Ohne diese Zahl zeichnet die Anzeige die
+    /// Bewertungsgrenze bei 2.251 m und daneben einen Hoechstwert, der
+    /// nur bis 1.650 m gilt: beides fuer sich richtig, zusammen ein
+    /// Widerspruch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mess_ende_laengs_m: Option<f64>,
     pub clearance_speed_kt: Option<f64>,
     pub clearance_side: Option<String>,
     pub track_width_m: Option<f64>,

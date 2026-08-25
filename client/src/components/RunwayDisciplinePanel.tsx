@@ -26,6 +26,8 @@ export interface DisziplinProps {
     tdPerfect: string;
     tdWarn: string;
     tdSevere: string;
+    rollweg: string;
+    rollwegRand: string;
   };
 }
 
@@ -271,10 +273,22 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
             m: wo.laengs_m.toFixed(0),
           })} · `
         : "";
+    // ⚠ „bis auf 60 kt" gehört in den Text, nicht in eine Fußnote.
+    //
+    // Die seitliche Messung endet unter sechzig Knoten
+    // (`BAHN_MESS_MIN_GS_KT`): Wer langsamer rollt, biegt ab, und ein
+    // Abbiegen ist kein Abkommen. Die Schwelle ist richtig — ohne sie
+    // meldeten 25 % der Landungen „Rad neben der Bahn".
+    //
+    // Ohne den Zusatz liest sich die Marke aber als größter Versatz der
+    // GANZEN Landung, und das ist sie nicht. Bei DLH369 (EDDM 26L) stand
+    // dort 12,9 m bei 1.646 m, während die Spur noch geradeaus bis
+    // 15,2 m bei 1.907 m weiterlief. Über zwanzig Landungen gemessen
+    // fehlten so bis zu 2,3 m; betroffen war rund ein Drittel.
     eintraege.push({
       n: 2,
       text: `${t("runway_v2.mark.max_offset", {
-        defaultValue: "Grösster Versatz",
+        defaultValue: "Grösster Versatz bis auf 60 kt",
       })} · ${beiM}${seite(max, t)}${zusatz}`,
     });
   }

@@ -454,3 +454,92 @@ describe("Update-Dialog mit den Release-Notes der aktuellen Version", () => {
     }
   });
 });
+
+/**
+ * Die Notizen DIESER Auslieferung durch den echten Dialog.
+ *
+ * # Warum zusaetzlich zur Vorlage oben
+ *
+ * `REALISTIC_LONG_BODY_v092` ist eingefroren: Sie prueft den Dialog gegen
+ * einen Text von damals. Was ein Pilot heute Abend zu sehen bekommt, hat
+ * sie noch nie gesehen — und genau dort entstand der Fehler, den sie
+ * verhindern soll (Svenny1974, v0.9.2: rohe Markdown-Zeichen im Fenster).
+ *
+ * Diese Pruefung liest die NEUESTE Notizdatei aus `docs/release-notes/`
+ * und schickt sie durch dieselbe Anzeige. Sie gilt damit automatisch fuer
+ * jede kuenftige Auslieferung, ohne dass jemand daran denken muss.
+ */
+describe("Update-Dialog mit den Notizen dieser Version", () => {
+  const neueste = (() => {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = require("node:path") as typeof import("node:path");
+    const ordner = path.resolve(__dirname, "..", "..", "..", "docs", "release-notes");
+    const dateien = fs
+      .readdirSync(ordner)
+      .filter((f: string) => /^v\d+\.\d+\.\d+\.md$/.test(f))
+      .sort((a: string, b: string) => {
+        const z = (s: string) =>
+          s.slice(1, -3).split(".").map(Number) as [number, number, number];
+        const [a1, a2, a3] = z(a);
+        const [b1, b2, b3] = z(b);
+        return a1 - b1 || a2 - b2 || a3 - b3;
+      });
+    const datei = dateien.at(-1)!;
+    return { datei, text: fs.readFileSync(path.join(ordner, datei), "utf-8") };
+  })();
+
+  it("zeigt keine rohen Markdown-Zeichen", () => {
+    render(<UpdateButton checker={makeChecker(neueste.text) as never} />);
+    fireEvent.click(screen.getByRole("button", { name: /update/i }));
+    const dialog = screen.getByRole("dialog");
+    const sichtbar = dialog.textContent ?? "";
+
+    // Zuerst: greift die Pruefung ueberhaupt den richtigen Text ab?
+    //
+    // Ohne diesen Riegel bestuende der Test auch dann, wenn `dialog`
+    // leer waere oder die Notizen gar nicht ankommen — er wuerde dann
+    // nur feststellen, dass in nichts keine rohen Zeichen stehen.
+    // Ein Wort aus der Ueberschrift muss ankommen.
+    const erstesWort = /^##\s*\S*\s*(\w+)/m.exec(neueste.text)?.[1] ?? "";
+    expect(erstesWort.length, "keine Ueberschrift in den Notizen").toBeGreaterThan(2);
+    expect(
+      sichtbar.includes(erstesWort),
+      `${neueste.datei}: „${erstesWort}" kommt im Fenster gar nicht an — ` +
+        `die Pruefung liest den falschen Bereich`,
+    ).toBe(true);
+
+    // `**` und `###` duerfen im gerenderten Text nicht mehr vorkommen.
+    // Ein einzelnes `#` ist erlaubt (etwa in „#13"), ein Zeilenanfang
+    // mit `#` nicht.
+    for (const marker of ["**", "###", "|---|"]) {
+      expect(
+        sichtbar.includes(marker),
+        `${neueste.datei}: „${marker}" steht roh im Fenster`,
+      ).toBe(false);
+    }
+    expect(
+      /(^|\n)#{1,6}\s/.test(sichtbar),
+      `${neueste.datei}: eine Überschrift wurde nicht gerendert`,
+    ).toBe(false);
+  });
+
+  it("trägt beide Sprachen", () => {
+    // Regel aus dem Gedächtnis: Release-Notes sind immer DE + EN.
+    // Eine Version, die das vergisst, faellt hier auf.
+    expect(neueste.text, `${neueste.datei}: kein deutscher Block`).toMatch(
+      /🇩🇪|Deutsch/,
+    );
+    expect(neueste.text, `${neueste.datei}: kein englischer Block`).toMatch(
+      /🇬🇧|English/,
+    );
+  });
+
+  it("nennt die Bedienknöpfe auch bei diesem Text", () => {
+    render(<UpdateButton checker={makeChecker(neueste.text) as never} />);
+    fireEvent.click(screen.getByRole("button", { name: /update/i }));
+    expect(
+      screen.getByRole("button", { name: /installieren|jetzt/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /später|spaeter/i })).toBeInTheDocument();
+  });
+});
