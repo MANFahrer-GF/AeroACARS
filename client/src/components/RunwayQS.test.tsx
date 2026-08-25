@@ -1006,3 +1006,69 @@ describe("Ausfahrts-Beschriftungen", () => {
     }
   });
 });
+
+/**
+ * Marke ② sitzt dort, wo wirklich gemessen wurde.
+ *
+ * # Was hier geprüft wird — und was nicht
+ *
+ * Die Marke wird nicht an den Höchstwert gesetzt, sondern an den
+ * Spurpunkt, der ihm am NÄCHSTEN kommt. Solange das Suchfenster stimmt,
+ * ist das dasselbe. Ist es zu weit, kann die Suche einen Punkt aus der
+ * Ausfahrt finden, dessen Querwert zufällig ähnlich liegt.
+ *
+ * Bei DLH369 (EDDM 26L) passiert das NICHT: Die Spur kommt nach dem
+ * Fensterende nie wieder so nah an −12,9 m heran, also liefern beide
+ * Grenzen denselben Punkt. Ich habe es gemessen, statt es anzunehmen —
+ * ein Test, der hier eine Verschiebung behauptet, wäre falsch.
+ *
+ * Geprüft wird deshalb die EIGENSCHAFT, nicht ein Einzelfall: Die Marke
+ * darf nie hinter dem Punkt liegen, bis zu dem gemessen wurde. Das gilt
+ * für jeden künftigen Datensatz, auch für die, bei denen es einen
+ * Unterschied macht.
+ */
+describe("Marke des grössten Versatzes", () => {
+  it("liegt nie hinter dem Ende der Messung", () => {
+    const befunde: string[] = [];
+    let geprueft = 0;
+    for (const v of VARIANTEN) {
+      const grenze = v.props.mess_ende_laengs_m;
+      const s = v.props.lateral_samples ?? [];
+      const max = v.props.max_lateral_offset_m;
+      if (grenze == null || max == null || !s.length) continue;
+      geprueft++;
+
+      // Dieselbe Suche wie die Anzeige.
+      const gewaehlt = s
+        .filter((x) => x.laengs_m < grenze)
+        .reduce((a, b) =>
+          Math.abs(b.quer_m - max) < Math.abs(a.quer_m - max) ? b : a,
+        );
+      if (gewaehlt.laengs_m > grenze) {
+        befunde.push(
+          `${v.key}: Marke bei ${gewaehlt.laengs_m.toFixed(0)} m, ` +
+            `gemessen wurde nur bis ${grenze.toFixed(0)} m`,
+        );
+      }
+      // Und die Anzeige muss genau diesen Punkt NENNEN.
+      //
+      // Ein blosses `markup.includes("880")` reicht nicht: Die Zahl
+      // steht auch in Skalen und Koordinaten, der Test wäre grün, egal
+      // welche Grenze die Anzeige benutzt. Genau das ist mir hier
+      // passiert. Die Marke sagt ihre Stelle aber im Klartext —
+      // „bei 880 m" —, und das ist eindeutig.
+      const genannt = /·\s*bei\s+(\d+)\s*m\s*·/.exec(v.markup)?.[1];
+      if (genannt == null) {
+        befunde.push(`${v.key}: die Marke nennt gar keine Stelle`);
+      } else if (Math.abs(Number(genannt) - gewaehlt.laengs_m) > 1) {
+        befunde.push(
+          `${v.key}: die Anzeige nennt ${genannt} m, gemessen wurde bis ` +
+            `${grenze.toFixed(0)} m — dort liegt ${gewaehlt.laengs_m.toFixed(0)} m`,
+        );
+      }
+    }
+    // Ohne eine Variante mit dem Feld prüft die Schleife gar nichts.
+    expect(geprueft, "keine Variante trägt mess_ende_laengs_m").toBeGreaterThan(0);
+    expect(befunde, befunde.join("\n")).toEqual([]);
+  });
+});

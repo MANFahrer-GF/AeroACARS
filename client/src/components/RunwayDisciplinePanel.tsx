@@ -127,6 +127,7 @@ export function RunwayDisciplinePanel({
           touchdownOffsetM={props.td_centerline_offset_m}
           clearanceM={props.clearance_point_m}
           scoringCutoffM={props.scoring_cutoff_m}
+          messEndeM={props.mess_ende_laengs_m}
           clearanceSide={props.clearance_side}
           minEdgeClearanceM={props.min_edge_clearance_m}
           maxLateralOffsetM={props.max_lateral_offset_m}
@@ -260,7 +261,12 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
           })}`;
     // Die Laengsposition gehoert dazu: „26,9 m rechts" allein sagt nicht,
     // ob das kurz nach dem Aufsetzen passierte oder erst beim Abbiegen.
-    const bewertungsEnde = props.scoring_cutoff_m ?? props.clearance_point_m;
+    // Dieselbe Grenze wie in der Queransicht — sonst nennt der Text
+    // eine andere Stelle als die Marke im Bild zeigt.
+    const bewertungsEnde =
+      props.mess_ende_laengs_m ??
+      props.scoring_cutoff_m ??
+      props.clearance_point_m;
     const wo = (props.lateral_samples ?? [])
       .filter((x) => bewertungsEnde == null || x.laengs_m < bewertungsEnde)
       .reduce<

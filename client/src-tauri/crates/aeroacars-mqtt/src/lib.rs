@@ -2462,6 +2462,9 @@ mod tests {
             rollout_final: true,
             clearance_point_m: Some(1831.6),
             scoring_cutoff_m: Some(1642.0),
+            // Das Messfenster schliesst frueher als der Kurswechsel —
+            // siehe die Herleitung am Feld selbst.
+            mess_ende_laengs_m: Some(1210.0),
             clearance_speed_kt: Some(24.0),
             clearance_side: Some("left".to_string()),
             track_width_m: Some(7.59),
@@ -2485,6 +2488,9 @@ mod tests {
         assert!(j.get("bahn").is_none(), "die Gruppe darf nicht verschachtelt sein");
         assert_eq!(j["clearance_point_m"], 1831.6);
         assert_eq!(j["scoring_cutoff_m"], 1642.0);
+        // Und das Fensterende daneben. Ohne diese Zeile faellt nur auf,
+        // dass das Feld existiert — nicht, dass es die Leitung erreicht.
+        assert_eq!(j["mess_ende_laengs_m"], 1210.0);
         assert_eq!(j["clearance_side"], "left");
         assert_eq!(j["track_width_source"], "aircraft_file");
         assert_eq!(j["lateral_samples"][1]["quer_m"], -6.1);

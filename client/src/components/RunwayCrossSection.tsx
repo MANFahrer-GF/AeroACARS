@@ -62,6 +62,8 @@ export interface QueransichtProps {
   clearanceM?: number | null;
   /** Wo die Bewertung endet (Beginn des Ausschwenkens). */
   scoringCutoffM?: number | null;
+  /** Wo das Messfenster schloss — siehe `messEnde` weiter unten. */
+  messEndeM?: number | null;
   clearanceSide?: "left" | "right" | null;
   /**
    * Mindest-Schriftgrösse in SVG-Einheiten — für den Druck.
@@ -366,9 +368,19 @@ export function RunwayCrossSection(p: QueransichtProps) {
   // die betragsmässig grösser sind als der gemeldete Höchstwert — das
   // Abrollen selbst. Ohne diese Grenze findet die Suche dort einen Punkt,
   // und die Marke ② landet auf der Marke ③.
-  // Die Marke des grössten Versatzes gehört in den GEWERTETEN Teil — der
-  // endet am Beginn des Ausschwenkens, nicht erst an der Kante.
-  const bewertungsEnde = p.scoringCutoffM ?? p.clearanceM;
+  // Die Marke des grössten Versatzes gehört in den GEMESSENEN Teil.
+  //
+  // Und der endet frueher als der gewertete: Das Messfenster schliesst
+  // unter sechzig Knoten, der Kurswechsel kommt spaeter. Bei DLH369
+  // (EDDM 26L) lagen 600 Meter dazwischen — und in diesen 600 Metern
+  // laeuft die Spur durch Querwerte, die dem gemeldeten Hoechstwert
+  // naeher kommen als der Punkt, an dem er wirklich gemessen wurde.
+  // Die Marke wandert dann dorthin und behauptet eine Stelle, an der
+  // gar nicht mehr gemessen wurde.
+  //
+  // Ohne das Feld (Client vor v1.7.4) bleibt es beim Kurswechsel: Das
+  // ist die alte, etwas zu weite Grenze — aber besser als die Kante.
+  const bewertungsEnde = p.messEndeM ?? p.scoringCutoffM ?? p.clearanceM;
   const gewerteteP = punkte.filter(
     (s) => bewertungsEnde == null || s.laengs_m < bewertungsEnde,
   );

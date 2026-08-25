@@ -440,6 +440,7 @@ export type MockKey =
   | "d_daneben"
   | "d_overrun"
   | "d_gras"
+  | "d_messfenster"
   | "d_ohne_spurweite"
   | "d_wasser"
   | "d_kurze_bahn";
@@ -961,6 +962,105 @@ const ROH_OPTIONEN: MockOption[] = [
       r.runway_match!.surface = "GRS";
       r.aircraft_icao = "C172";
       r.aircraft_title = "Cessna 172 Skyhawk";
+      return r;
+    },
+  },
+  {
+    key: "d_messfenster",
+    label: "⑧ Messfenster endet vor dem Kurswechsel (konstruiert, EDDH 23)",
+    hint:
+      "KONSTRUIERT, und zwar mit Absicht. Bei DLH369 macht die engere " +
+      "Grenze keinen Unterschied — die Spur kommt nach dem Fensterende " +
+      "nie wieder nah an den Höchstwert heran, beide Grenzen liefern " +
+      "denselben Punkt. Damit lässt sich nicht prüfen, ob die Anzeige " +
+      "die richtige Grenze benutzt. Hier läuft die Spur nach dem " +
+      "Fensterende (900 m) noch einmal durch genau denselben Querwert " +
+      "(1.500 m), und zwar einen Hauch näher am gemeldeten Höchstwert " +
+      "als der echte Punkt bei 880 m — sonst behielte die Suche bei " +
+      "Gleichstand ohnehin den früheren, und die Falle schnappte nicht. " +
+      "Wer die falsche Grenze nimmt, setzt die Marke auf 1.500 m.",
+    build: () => {
+      const r = bahn(rwyEDDH(baseRecord()), {
+        breite: 46,
+        spur: 7.6,
+        spann: 34.1,
+        icao: "A320",
+        titel: "A320",
+        raeumKt: 42,
+        raeumSeite: "right",
+        punkte: [
+          { laengs_m: 400, quer_m: -2.00 },
+          { laengs_m: 420, quer_m: -2.40 },
+          { laengs_m: 440, quer_m: -2.80 },
+          { laengs_m: 460, quer_m: -3.20 },
+          { laengs_m: 480, quer_m: -3.60 },
+          { laengs_m: 500, quer_m: -4.00 },
+          { laengs_m: 520, quer_m: -4.40 },
+          { laengs_m: 540, quer_m: -4.80 },
+          { laengs_m: 560, quer_m: -5.20 },
+          { laengs_m: 580, quer_m: -5.60 },
+          { laengs_m: 600, quer_m: -6.00 },
+          { laengs_m: 620, quer_m: -6.30 },
+          { laengs_m: 640, quer_m: -6.60 },
+          { laengs_m: 660, quer_m: -6.90 },
+          { laengs_m: 680, quer_m: -7.20 },
+          { laengs_m: 700, quer_m: -7.50 },
+          { laengs_m: 720, quer_m: -7.80 },
+          { laengs_m: 740, quer_m: -8.10 },
+          { laengs_m: 760, quer_m: -8.40 },
+          { laengs_m: 780, quer_m: -8.70 },
+          { laengs_m: 800, quer_m: -9.00 },
+          { laengs_m: 820, quer_m: -9.10 },
+          { laengs_m: 840, quer_m: -9.20 },
+          { laengs_m: 860, quer_m: -9.30 },
+          { laengs_m: 880, quer_m: -9.35 },
+          { laengs_m: 900, quer_m: -8.83 },
+          { laengs_m: 920, quer_m: -8.27 },
+          { laengs_m: 940, quer_m: -7.70 },
+          { laengs_m: 960, quer_m: -7.13 },
+          { laengs_m: 980, quer_m: -6.57 },
+          { laengs_m: 1000, quer_m: -6.00 },
+          { laengs_m: 1020, quer_m: -5.70 },
+          { laengs_m: 1040, quer_m: -5.40 },
+          { laengs_m: 1060, quer_m: -5.10 },
+          { laengs_m: 1080, quer_m: -4.80 },
+          { laengs_m: 1100, quer_m: -4.50 },
+          { laengs_m: 1120, quer_m: -4.20 },
+          { laengs_m: 1140, quer_m: -3.90 },
+          { laengs_m: 1160, quer_m: -3.60 },
+          { laengs_m: 1180, quer_m: -3.30 },
+          { laengs_m: 1200, quer_m: -3.00 },
+          { laengs_m: 1220, quer_m: -3.43 },
+          { laengs_m: 1240, quer_m: -3.85 },
+          { laengs_m: 1260, quer_m: -4.28 },
+          { laengs_m: 1280, quer_m: -4.71 },
+          { laengs_m: 1300, quer_m: -5.13 },
+          { laengs_m: 1320, quer_m: -5.56 },
+          { laengs_m: 1340, quer_m: -5.99 },
+          { laengs_m: 1360, quer_m: -6.41 },
+          { laengs_m: 1380, quer_m: -6.84 },
+          { laengs_m: 1400, quer_m: -7.27 },
+          { laengs_m: 1420, quer_m: -7.69 },
+          { laengs_m: 1440, quer_m: -8.12 },
+          { laengs_m: 1460, quer_m: -8.55 },
+          { laengs_m: 1480, quer_m: -8.97 },
+          { laengs_m: 1500, quer_m: -9.40 },
+          { laengs_m: 1520, quer_m: -10.46 },
+          { laengs_m: 1540, quer_m: -11.52 },
+          { laengs_m: 1560, quer_m: -12.58 },
+          { laengs_m: 1580, quer_m: -13.64 },
+          { laengs_m: 1600, quer_m: -14.70 },
+          { laengs_m: 1620, quer_m: -15.76 },
+          { laengs_m: 1640, quer_m: -16.82 },
+          { laengs_m: 1660, quer_m: -17.88 },
+          { laengs_m: 1680, quer_m: -18.94 },
+          { laengs_m: 1700, quer_m: -20.00 },
+        ],
+      });
+      r.max_lateral_offset_m = -9.4;
+      r.mess_ende_laengs_m = 900;
+      // Der Kurs weicht erst viel später ab.
+      r.scoring_cutoff_m = 1600;
       return r;
     },
   },
