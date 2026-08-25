@@ -108,14 +108,18 @@ fn ordner(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_config_dir().ok().map(|p| p.join("navdata"))
 }
 
-/// Der Dateiname zu einem ICAO.
+/// Der Dateiname zu einem ICAO, unterhalb eines gegebenen Ordners.
 ///
 /// Der ICAO wird auf A–Z und 0–9 verengt, bevor er in einen Pfad geht.
 /// Nicht aus Ordnungsliebe: Ein Kürzel wie `../../x` käme sonst aus dem
 /// Ordner heraus. Die Kürzel stammen zwar aus unserem eigenen Flugplan,
 /// aber ein Pfad, dessen Sicherheit von der Herkunft der Eingabe abhängt,
 /// ist nur so lange sicher, bis jemand die Herkunft ändert.
-fn datei(app: &AppHandle, icao: &str) -> Option<PathBuf> {
+///
+/// Diese Fassung nimmt den Ordner als Argument, damit die Dateiarbeit
+/// ohne laufende Tauri-App prüfbar ist — die Fassung mit `AppHandle`
+/// daneben reicht nur den Ordner durch.
+fn datei_in(dir: &std::path::Path, icao: &str) -> Option<PathBuf> {
     let sauber: String = icao
         .chars()
         .filter(|c| c.is_ascii_alphanumeric())
@@ -124,7 +128,11 @@ fn datei(app: &AppHandle, icao: &str) -> Option<PathBuf> {
     if sauber.len() < 3 || sauber.len() > 4 {
         return None;
     }
-    ordner(app).map(|d| d.join(format!("{sauber}.json")))
+    Some(dir.join(format!("{sauber}.json")))
+}
+
+fn datei(app: &AppHandle, icao: &str) -> Option<PathBuf> {
+    ordner(app).and_then(|d| datei_in(&d, icao))
 }
 
 /// Einen erfolgreich geholten Flugplatz ablegen.
@@ -133,10 +141,20 @@ fn datei(app: &AppHandle, icao: &str) -> Option<PathBuf> {
 /// mit den Serverdaten weiter, die er ja gerade bekommen hat. Nur beim
 /// NÄCHSTEN Mal ohne Netz fehlt der Rückfall.
 pub fn ablegen(app: &AppHandle, icao: &str, airport: &NavAirport, zyklus: &str) {
-    let Some(pfad) = datei(app, icao) else {
+    let Some(dir) = ordner(app) else { return };
+    ablegen_in(&dir, icao, airport, zyklus);
+}
+
+/// Wie `ablegen`, aber in einen gegebenen Ordner — prüfbar ohne Tauri.
+pub fn ablegen_in(
+    dir: &std::path::Path,
+    icao: &str,
+    airport: &NavAirport,
+    zyklus: &str,
+) {
+    let Some(pfad) = datei_in(dir, icao) else {
         return;
     };
-    let Some(dir) = pfad.parent() else { return };
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
@@ -183,7 +201,20 @@ pub fn holen_mit_zeit(
     icao: &str,
     jetzt: u64,
 ) -> Result<GespeicherterFlugplatz, KeinTreffer> {
-    let Some(pfad) = datei(app, icao) else {
+    let Some(dir) = ordner(app) else {
+        return Err(KeinTreffer::Nichts);
+    };
+    holen_in(&dir, icao, jetzt)
+}
+
+/// Wie `holen_mit_zeit`, aber aus einem gegebenen Ordner — prüfbar ohne
+/// Tauri.
+pub fn holen_in(
+    dir: &std::path::Path,
+    icao: &str,
+    jetzt: u64,
+) -> Result<GespeicherterFlugplatz, KeinTreffer> {
+    let Some(pfad) = datei_in(dir, icao) else {
         return Err(KeinTreffer::Nichts);
     };
     let Ok(roh) = std::fs::read_to_string(&pfad) else {
@@ -206,6 +237,11 @@ pub fn bestand(app: &AppHandle) -> (usize, u64) {
     let Some(dir) = ordner(app) else {
         return (0, 0);
     };
+    bestand_in(&dir)
+}
+
+/// Wie `bestand`, aber für einen gegebenen Ordner — prüfbar ohne Tauri.
+pub fn bestand_in(dir: &std::path::Path) -> (usize, u64) {
     let Ok(eintraege) = std::fs::read_dir(&dir) else {
         return (0, 0);
     };
@@ -242,6 +278,128 @@ mod tests {
             zyklus: "2608".into(),
             geholt_am,
         }
+    }
+
+    /// Ein eigener Ordner je Prüfung. Kein `tempfile`-Zusatzpaket:
+    /// Der Name traegt Prozess-Nummer und Zaehler, das genuegt.
+    fn probeordner(name: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static N: AtomicU32 = AtomicU32::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "aeroacars-navcache-{}-{}-{}",
+            name,
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("Probeordner");
+        d
+    }
+
+    #[test]
+    fn abgelegt_und_wieder_gelesen() {
+        let d = probeordner("rundlauf");
+        ablegen_in(&d, "EDDF", &eintrag(0).airport, "2608");
+        let zurueck = holen_in(&d, "EDDF", jetzt_unix()).expect("wieder da");
+        assert_eq!(zurueck.airport.icao, "EDDF");
+        assert_eq!(zurueck.zyklus, "2608");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn kleinschreibung_und_leerzeichen_finden_dieselbe_datei() {
+        // Der Aufrufer normalisiert nicht immer — und zwei Dateien fuer
+        // denselben Platz waeren zwei Staende, von denen einer altert.
+        let d = probeordner("normalisierung");
+        ablegen_in(&d, "eddf", &eintrag(0).airport, "2608");
+        assert!(holen_in(&d, "EDDF", jetzt_unix()).is_ok());
+        assert!(holen_in(&d, " eddf ", jetzt_unix()).is_ok());
+        assert_eq!(bestand_in(&d).0, 1, "es liegen mehrere Dateien fuer einen Platz");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn ein_boeses_kuerzel_kommt_nicht_aus_dem_ordner() {
+        // `../../x` wuerde sonst ausserhalb schreiben. Die Kuerzel stammen
+        // heute aus unserem eigenen Flugplan — ein Pfad, dessen Sicherheit
+        // an der Herkunft der Eingabe haengt, ist nur so lange sicher, bis
+        // jemand die Herkunft aendert.
+        let d = probeordner("pfad");
+        for boese in ["../../x", "..", "/etc/passwd", "a/../../b", ""] {
+            ablegen_in(&d, boese, &eintrag(0).airport, "2608");
+        }
+        assert_eq!(bestand_in(&d).0, 0, "ein boeses Kuerzel hat eine Datei angelegt");
+        // Und es entstand auch nichts NEBEN dem Ordner.
+        let daneben = d.parent().expect("Elternordner").join("x.json");
+        assert!(!daneben.exists(), "es wurde ausserhalb des Ordners geschrieben");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn eine_halbe_datei_wird_nicht_als_bestand_ausgegeben() {
+        // Abgebrochener Schreibvorgang, geaendertes Format, halb kopiert:
+        // Das Ergebnis darf kein Absturz und kein Unsinn sein.
+        let d = probeordner("kaputt");
+        std::fs::write(d.join("EDDF.json"), "{\"airport\": {\"icao\"").unwrap();
+        assert_eq!(holen_in(&d, "EDDF", jetzt_unix()).err(), Some(KeinTreffer::Unlesbar));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn ein_leerer_ordner_meldet_keinen_treffer_statt_zu_stuerzen() {
+        let d = probeordner("leer");
+        assert_eq!(holen_in(&d, "EDDF", jetzt_unix()).err(), Some(KeinTreffer::Nichts));
+        assert_eq!(bestand_in(&d), (0, 0));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn ein_zu_alter_eintrag_wird_gemeldet_und_nicht_geliefert() {
+        let d = probeordner("alt");
+        ablegen_in(&d, "EDDF", &eintrag(0).airport, "2608");
+        let jetzt = jetzt_unix() + (HOECHSTALTER_TAGE + 5) * SEKUNDEN_JE_TAG;
+        match holen_in(&d, "EDDF", jetzt) {
+            Err(KeinTreffer::ZuAlt { tage }) => {
+                assert!(tage > HOECHSTALTER_TAGE, "{tage} Tage gelten noch als jung");
+            }
+            anderes => panic!("erwartet ZuAlt, bekommen {anderes:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn ein_zweites_ablegen_ersetzt_statt_zu_haeufen() {
+        let d = probeordner("ersetzen");
+        ablegen_in(&d, "EDDF", &eintrag(0).airport, "2607");
+        ablegen_in(&d, "EDDF", &eintrag(0).airport, "2608");
+        assert_eq!(bestand_in(&d).0, 1);
+        assert_eq!(holen_in(&d, "EDDF", jetzt_unix()).unwrap().zyklus, "2608");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn keine_zwischendatei_bleibt_liegen() {
+        // Geschrieben wird erst daneben, dann umbenannt. Bliebe die
+        // `.tmp` liegen, zaehlte sie beim naechsten Start mit.
+        let d = probeordner("tmp");
+        ablegen_in(&d, "EDDF", &eintrag(0).airport, "2608");
+        let reste: Vec<_> = std::fs::read_dir(&d)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().to_string_lossy().contains(".tmp"))
+            .collect();
+        assert!(reste.is_empty(), "{} Zwischendatei(en) liegengeblieben", reste.len());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn drei_stellige_kuerzel_gehen_auch() {
+        // FAA-Plaetze wie `K7S` sind dreistellig — sie kommen ueber
+        // SkyAdventures im Flugplan vor.
+        let d = probeordner("dreistellig");
+        ablegen_in(&d, "K7S", &eintrag(0).airport, "2608");
+        assert!(holen_in(&d, "K7S", jetzt_unix()).is_ok());
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

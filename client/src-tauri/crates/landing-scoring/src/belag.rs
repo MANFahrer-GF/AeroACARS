@@ -100,9 +100,23 @@ pub fn belag_aus_angabe(angabe: Option<&str>) -> Belag {
         }
     }
     // Unbefestigt: Gras, Erde, Kies, Sand, Schnee, Eis, Koralle.
+    //
+    // ⚠ `GRVL` und `GRV` fehlten hier, obwohl `GRAV` und `GVL` dastanden.
+    // Gemessen ueber die eingebettete Tabelle: 482 Bahnen — 319 `GRVL`,
+    // 79 `GRVL-G`, 47 `GRVL-F`, 37 `GRV` — wurden dadurch als
+    // „Belag unbekannt" gemeldet statt als Kiespiste. Die Bewertung war
+    // dieselbe (auf beidem wird nicht seitlich bewertet), die Begruendung
+    // im Bericht aber falsch.
+    //
+    // `PIARRA` ist Piçarra, brasilianischer Lateritkies (108 Bahnen). Das
+    // Ç faellt bei der Normalisierung weg, deshalb steht hier die Form
+    // OHNE Cedille.
+    //
+    // `MET` sind Metallplatten — dieselbe Bauart wie `PSP`, das schon
+    // laenger hier steht.
     for p in [
-        "TURF", "GRS", "GRE", "GRASS", "GRAV", "GVL", "DIRT", "EARTH", "SAND", "SNOW", "ICE",
-        "CLAY", "CORAL", "SOIL", "GRD", "MATS", "PSP",
+        "TURF", "GRS", "GRE", "GRASS", "GRAV", "GRVL", "GRV", "GVL", "DIRT", "EARTH", "SAND",
+        "SNOW", "ICE", "CLAY", "CORAL", "SOIL", "GRD", "MATS", "PSP", "MET", "PIARRA",
     ] {
         if n.starts_with(p) {
             return Belag::Unbefestigt;

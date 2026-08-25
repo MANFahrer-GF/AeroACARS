@@ -436,12 +436,67 @@ fn rows_for_airport(icao: &str) -> impl Iterator<Item = &'static RunwayRow> {
 /// Enden fuehrt (`05L` und `23R`) — der Belag gilt fuer die ganze Bahn.
 fn belag_aus_tabelle(icao: &str, bahn: &str) -> Option<String> {
     let gesucht = bahn.trim().to_uppercase();
-    rows_for_airport(icao)
-        .find(|r| {
-            r.le_ident.to_uppercase() == gesucht || r.he_ident.to_uppercase() == gesucht
-        })
-        .map(|r| r.surface.clone())
-        .filter(|s| !s.trim().is_empty())
+    belaege()
+        .get(&(icao.trim().to_uppercase(), gesucht))
+        .cloned()
+}
+
+/// Belag je (Flugplatz, Bahn) — aus **allen** Zeilen der Tabelle.
+///
+/// # Warum das eine EIGENE Tabelle ist
+///
+/// `runways()` verwirft jede Zeile ohne Koordinaten an beiden Enden.
+/// Für die Bahnzuordnung ist das richtig — ohne Punkte ist eine Bahn
+/// nicht zu treffen. Für den BELAG ist es falsch: Der steht in der
+/// Zeile, ganz gleich ob Koordinaten dabei sind.
+///
+/// Ausgezählt über die eingebettete Tabelle (25.08.2026):
+///
+/// ```text
+/// 48.143 Bahnen gesamt
+/// 32.488 ohne Koordinaten  (67,5 %)  → fielen ganz heraus
+/// 32.034 davon MIT Belagsangabe, an 29.520 Flugplätzen
+/// ```
+///
+/// Zwei Drittel der Belagsangaben waren damit unerreichbar. Aufgefallen
+/// an GSG1321 (EDBH→EDHE, 25.08.2026): EDHE/Uetersen ist eine Graspiste,
+/// OurAirports führt sie als `GRASS` — und der Bericht meldete „Belag
+/// unbekannt", weil die EDHE-Zeile keine Koordinaten hat.
+///
+/// Der Schlüssel enthält beide Bahnenden, weil eine Zeile beide führt
+/// (`09` und `27`) und der Belag für die ganze Bahn gilt.
+fn belaege() -> &'static std::collections::HashMap<(String, String), String> {
+    static CELL: OnceLock<std::collections::HashMap<(String, String), String>> =
+        OnceLock::new();
+    CELL.get_or_init(|| {
+        let mut map = std::collections::HashMap::with_capacity(64_000);
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .from_reader(RUNWAYS_CSV.as_bytes());
+        for record in rdr.records().flatten() {
+            // Geschlossene Bahnen bleiben draussen — auf ihnen landet
+            // niemand, und ihr Belag wuerde eine offene Bahn gleichen
+            // Namens ueberschreiben.
+            if record.get(7).unwrap_or("0") == "1" {
+                continue;
+            }
+            let belag = record.get(5).unwrap_or("").trim();
+            if belag.is_empty() {
+                continue;
+            }
+            let icao = record.get(2).unwrap_or("").trim().to_uppercase();
+            if icao.is_empty() {
+                continue;
+            }
+            for spalte in [8usize, 14usize] {
+                let bahn = record.get(spalte).unwrap_or("").trim().to_uppercase();
+                if !bahn.is_empty() {
+                    map.insert((icao.clone(), bahn), belag.to_string());
+                }
+            }
+        }
+        map
+    })
 }
 
 /// Der Versatz der LANDE-Schwelle dieser Bahn in Fuss — aber nur, wenn
@@ -2855,4 +2910,122 @@ fn bahnende_liegt_bei_der_nutzbaren_laenge() {
     assert!(quer.abs() < 0.5, "das Bahnende liegt auf der Achse, quer {quer:.2}");
 }
 
+}
+
+
+#[cfg(test)]
+mod belag_ohne_koordinaten {
+    //! Der Belag haengt NICHT an den Koordinaten.
+    //!
+    //! Befund an GSG1321 (EDBH→EDHE, 25.08.2026): EDHE/Uetersen ist eine
+    //! Graspiste, OurAirports fuehrt sie als `GRASS` — und der Bericht
+    //! meldete „Belag unbekannt". Ursache: Die EDHE-Zeile hat keine
+    //! Koordinaten, und `runways()` verwirft solche Zeilen. Fuer die
+    //! Bahnzuordnung richtig, fuer den Belag falsch.
+    //!
+    //! Ausmass: 32.488 der 48.143 Zeilen haben keine Koordinaten, davon
+    //! 32.034 MIT Belagsangabe an 29.520 Flugplaetzen. Zwei Drittel aller
+    //! Belagsangaben waren unerreichbar.
+    use super::*;
+
+    #[test]
+    fn edhe_ist_gras_obwohl_die_zeile_keine_koordinaten_hat() {
+        assert_eq!(belag_aus_tabelle("EDHE", "09").as_deref(), Some("GRASS"));
+        assert_eq!(belag_aus_tabelle("EDHE", "27").as_deref(), Some("GRASS"));
+        // Und die Zeile faellt weiterhin aus der Bahnzuordnung — dort
+        // waere sie ohne Punkte auch nutzlos.
+        assert_eq!(rows_for_airport("EDHE").count(), 0);
+    }
+
+    #[test]
+    fn beide_bahnenden_finden_denselben_belag() {
+        // Eine Zeile fuehrt beide Enden; der Belag gilt fuer die ganze
+        // Bahn. Wer nur ein Ende einträgt, verliert die Haelfte.
+        for (icao, a, b) in [("EDDF", "07C", "25C"), ("EDDL", "05R", "23L")] {
+            let x = belag_aus_tabelle(icao, a);
+            let y = belag_aus_tabelle(icao, b);
+            assert!(x.is_some(), "{icao} {a} ohne Belag");
+            assert_eq!(x, y, "{icao}: {a} und {b} melden verschiedene Belaege");
+        }
+    }
+
+    #[test]
+    fn kleinschreibung_und_leerzeichen_stoeren_nicht() {
+        assert_eq!(belag_aus_tabelle("edhe", " 09 ").as_deref(), Some("GRASS"));
+    }
+
+    #[test]
+    fn ein_unbekannter_platz_liefert_nichts() {
+        assert_eq!(belag_aus_tabelle("XXXX", "09"), None);
+        assert_eq!(belag_aus_tabelle("EDHE", "18"), None);
+    }
+
+    #[test]
+    fn deutlich_mehr_belaege_als_zuordenbare_bahnen() {
+        // Die Zahl, um die es geht: Der Belag-Nachschlag muss die
+        // koordinatenlosen Zeilen enthalten, sonst ist er nur eine
+        // umstaendlichere Fassung des alten Wegs.
+        let mit_koordinaten = runways().len();
+        let mit_belag = belaege().len();
+        assert!(
+            mit_belag > mit_koordinaten,
+            "nur {mit_belag} Belaege gegen {mit_koordinaten} zuordenbare Bahnen — \
+             die koordinatenlosen Zeilen fehlen"
+        );
+    }
+
+    #[test]
+    fn geschlossene_bahnen_bleiben_draussen() {
+        // Sonst ueberschreibt eine stillgelegte Bahn den Belag einer
+        // offenen mit demselben Namen.
+        //
+        // ⚠ Geprueft wird gegen die ROHTABELLE, nicht gegen
+        // `rows_for_airport`. Die erste Fassung suchte die offene
+        // Gegen-Bahn dort — und `rows_for_airport` kennt nur Zeilen MIT
+        // Koordinaten, also genau die, um die es hier nicht geht. Sie
+        // meldete prompt einen Treffer, den es nicht gab.
+        use std::collections::{HashMap, HashSet};
+        let mut offen: HashSet<(String, String)> = HashSet::new();
+        let mut nur_geschlossen: HashMap<(String, String), String> = HashMap::new();
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .from_reader(RUNWAYS_CSV.as_bytes());
+        for record in rdr.records().flatten() {
+            let icao = record.get(2).unwrap_or("").trim().to_uppercase();
+            if icao.is_empty() {
+                continue;
+            }
+            let zu = record.get(7).unwrap_or("0") == "1";
+            let belag = record.get(5).unwrap_or("").trim().to_string();
+            for spalte in [8usize, 14usize] {
+                let bahn = record.get(spalte).unwrap_or("").trim().to_uppercase();
+                if bahn.is_empty() {
+                    continue;
+                }
+                if zu {
+                    if !belag.is_empty() {
+                        nur_geschlossen.insert((icao.clone(), bahn), belag.clone());
+                    }
+                } else {
+                    offen.insert((icao.clone(), bahn));
+                }
+            }
+        }
+        let durchgerutscht: Vec<_> = nur_geschlossen
+            .keys()
+            .filter(|k| !offen.contains(*k) && belaege().contains_key(*k))
+            .take(5)
+            .collect();
+        assert!(
+            durchgerutscht.is_empty(),
+            "geschlossene Bahnen im Belag-Nachschlag: {durchgerutscht:?}"
+        );
+        // Gegenprobe: Es GIBT solche Faelle, der Test laeuft also nicht
+        // ins Leere. Gemessen 1.984 Schluessel, die es nur geschlossen gibt.
+        let nur_zu = nur_geschlossen.keys().filter(|k| !offen.contains(*k)).count();
+        assert!(
+            nur_zu > 1_000,
+            "nur {nur_zu} rein geschlossene Bahnen — pruefe die Tabelle"
+        );
+    }
 }
