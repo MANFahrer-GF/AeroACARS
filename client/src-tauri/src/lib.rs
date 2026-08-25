@@ -13,6 +13,7 @@ mod accident;
 mod arrival;
 mod runway;
 mod stands;
+mod navdata_cache;
 mod ui_state;
 mod runway_assessment;
 /// v1.7.0 — Ausfahrten aus der OSM-Bodenkarte (Spec §8.6).
@@ -2030,6 +2031,10 @@ async fn fetch_navdata_for_flight(
         match res {
             Ok(mut airport) => {
                 let cycle = airport.cycle.clone();
+                // Auf die Platte, bevor irgendetwas anderes passiert.
+                // Beim naechsten Flug ohne Netz ist genau das der
+                // Unterschied zwischen Navigraph und OurAirports.
+                navdata_cache::ablegen(&app, &icao, &airport, &cycle);
                 // Phantom-Bahn-Duplikate (siehe `runway::dedupe_near_duplicate_nav_runways`)
                 // hier EINMAL pro Airport rausfiltern — vor dem Cache-Insert, damit
                 // JEDER Konsument von `flight.navdata` (Touchdown-Matcher UND der
@@ -2048,17 +2053,57 @@ async fn fetch_navdata_for_flight(
                 );
             }
             Err(aeroacars_mqtt::navdata::NavdataError::NotFound(_)) => {
+                // Der Platz steht nicht im aktiven Zyklus. Ein abgelegter
+                // Stand hilft hier NICHT weiter: Wenn Navigraph ihn heute
+                // nicht kennt, ist ein alter Eintrag keine bessere
+                // Auskunft, sondern eine ueberholte.
                 tracing::debug!(
                     icao = %icao,
                     "navdata: ICAO nicht im aktiven Cycle, OurAirports-Fallback aktiv"
                 );
             }
             Err(e) => {
-                tracing::warn!(
-                    icao = %icao,
-                    error = %e,
-                    "navdata: VPS-Fetch fehlgeschlagen, OurAirports-Fallback"
-                );
+                // Server nicht erreichbar — hier zaehlt der abgelegte
+                // Stand. Er ist die ZWEITE Wahl, nie die erste: Solange
+                // der Server antwortet, gilt der Server, sonst haetten
+                // wir einen Bestand, der sich selbst bestaetigt.
+                match navdata_cache::holen(&app, &icao) {
+                    Ok(eintrag) => {
+                        let tage = eintrag.alter_tage_jetzt();
+                        let mut airport = eintrag.airport;
+                        airport.runways = runway::dedupe_near_duplicate_nav_runways(
+                            &airport.icao,
+                            airport.runways,
+                        );
+                        let zyklus = eintrag.zyklus.clone();
+                        {
+                            let mut cache = flight.navdata.lock().expect("navdata lock");
+                            cache.airports.insert(icao.clone(), airport);
+                            if cache.cycle.is_none() {
+                                cache.cycle = Some(zyklus.clone());
+                            }
+                        }
+                        // Bewusst `warn`, nicht `info`: Eine Bewertung auf
+                        // altem Stand darf im Protokoll nicht so aussehen
+                        // wie eine auf heutigem — sonst sucht man den
+                        // Fehler spaeter ueberall ausser hier.
+                        tracing::warn!(
+                            icao = %icao,
+                            error = %e,
+                            cycle = %zyklus,
+                            alter_tage = tage,
+                            "navdata: Server nicht erreichbar, benutze abgelegten Stand"
+                        );
+                    }
+                    Err(grund) => {
+                        tracing::warn!(
+                            icao = %icao,
+                            error = %e,
+                            grund = ?grund,
+                            "navdata: VPS-Fetch fehlgeschlagen, OurAirports-Fallback"
+                        );
+                    }
+                }
             }
         }
     }
@@ -37014,6 +37059,20 @@ fn set_auto_file_enabled(enabled: bool, state: tauri::State<'_, AppState>) {
     state.auto_file_enabled.store(enabled, Ordering::Relaxed);
 }
 
+/// Wie viele Flugplaetze liegen abgelegt, und wie viel Platz belegen sie?
+///
+/// Ein Zwischenspeicher, den niemand sehen kann, verrottet unbemerkt:
+/// Man merkt erst beim naechsten Flug ohne Netz, dass er leer war.
+/// Deshalb ist er abfragbar — auch wenn ihn im Alltag niemand braucht.
+#[tauri::command]
+fn navdata_zwischenspeicher_bestand(app: AppHandle) -> serde_json::Value {
+    let (anzahl, bytes) = navdata_cache::bestand(&app);
+    serde_json::json!({
+        "flugplaetze": anzahl,
+        "bytes": bytes,
+    })
+}
+
 /// Spawn the auto-start watcher task. Idempotent in practice:
 /// the body checks `auto_start_enabled` on every tick and returns
 /// when false, so spawning twice just means one drops out quickly.
@@ -38493,6 +38552,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             vdgs_fenster_oeffnen,
             vdgs_fenster_offen,
+            navdata_zwischenspeicher_bestand,
             landing_backup_now,
             landing_backup_restore,
             app_info,
