@@ -294,13 +294,21 @@ export function RunwayCrossSection(p: QueransichtProps) {
         y: q.y + (vorzeichen * dx * halbPx) / len,
       };
     });
+  // Das Band folgt derselben Regel wie die Linie: es endet am Bildrand.
+  //
+  // Ohne den Schnitt lief es mit seinem geklemmten Ende unter die
+  // Kantenlinie und lag dort als grünes Rechteck neben den Ausfahrten —
+  // an einer Stelle, an der keine Bahn mehr ist. Die Linie allein zu
+  // schneiden reicht nicht: Das Band ist das Auffälligere von beiden.
+  const spurSichtbar = amRandAbschneiden(punkte, sichtbarM);
+  const achseSichtbar = spurSichtbar.map((q) => xy(q));
   const versetzt = (vorzeichen: 1 | -1) =>
-    bandRand(achsePunkte, halbeSpurPx, vorzeichen);
+    bandRand(achseSichtbar, halbeSpurPx, vorzeichen);
   const linksPunkte = versetzt(-1);
   const rechtsPunkte = versetzt(1);
 
   const bandPfad =
-    punkte.length >= 2 && halbeSpurM > 0
+    spurSichtbar.length >= 2 && halbeSpurM > 0
       ? `${weicherPfad(linksPunkte)} L ${rechtsPunkte
           .slice()
           .reverse()
@@ -329,9 +337,28 @@ export function RunwayCrossSection(p: QueransichtProps) {
       ? Math.max(1, punkte.findIndex((s) => s.laengs_m >= p.clearanceM!))
       : punkte.length;
   const gewertet = trennIdx >= punkte.length ? achsePunkte : achsePunkte.slice(0, trennIdx + 1);
-  const danach = trennIdx >= punkte.length ? [] : achsePunkte.slice(trennIdx);
   const mittelPfad = gewertet.length >= 2 ? weicherPfad(gewertet) : null;
-  const nachPfad = danach.length >= 2 ? weicherPfad(danach) : null;
+  // Die Spur endet am Bildrand — sie legt sich nicht an ihn.
+  //
+  // # Der Befund (Thomas, 26.08.2026): „nach der RWY wieder so ein nicht
+  // passender grüner Verlauf"
+  //
+  // `querZuY` begrenzt auf den sichtbaren Streifen. Das verhindert, dass
+  // eine Spur aus dem Bild läuft — aber jeder Punkt jenseits der Grenze
+  // landet auf DERSELBEN Höhe. Bei DLH369 zog das Flugzeug nach dem
+  // Räumen bis 107,8 m nach rechts; die Ansicht zeigt rund 33. Von
+  // vierundneunzig Punkten lagen **neunzig** exakt auf der Kantenlinie,
+  // gezeichnet als fünfundvierzig Pixel waagerechter Lauf.
+  //
+  // Das ist keine Ungenauigkeit, sondern eine falsche Aussage: Es liest
+  // sich, als wäre das Flugzeug die Bahnkante entlanggerollt. Wohin es
+  // wirklich gefahren ist, zeigt die Längsansicht.
+  // In METERN abschneiden, dann erst umrechnen — siehe `amRandAbschneiden`.
+  const danachRoh =
+    trennIdx >= punkte.length ? [] : punkte.slice(trennIdx);
+  const danachSichtbar = amRandAbschneiden(danachRoh, sichtbarM).map((s) => xy(s));
+  const nachPfad =
+    danachSichtbar.length >= 2 ? weicherPfad(danachSichtbar) : null;
 
   // ── Farbe des Bandes — dieselbe Rangfolge wie die Bewertung ──────────
   //
@@ -769,16 +796,21 @@ export function RunwayCrossSection(p: QueransichtProps) {
       {/* Die Messpunkte selbst — sonst ist nicht zu sehen, worauf die Kurve
           beruht. Ein geglätteter Verlauf ohne sichtbare Stützstellen sieht
           aus wie ein Modell; er ist aber eine Messung. */}
-      {punkte.map((s, i) => (
-        <circle
-          key={i}
-          cx={p.projektion.mToX(s.laengs_m)}
-          cy={querZuY(s.quer_m)}
-          r={1.8}
-          fill={bandFarbe}
-          fillOpacity={0.9}
-        />
-      ))}
+      {punkte
+        // Punkte ausserhalb des Streifens liegen alle auf derselben
+        // Höhe — eine Perlenkette auf der Kantenlinie, die eine Fahrt
+        // entlang der Kante behauptet. Sie gehören nicht ins Bild.
+        .filter((s) => Math.abs(s.quer_m) <= sichtbarM)
+        .map((s, i) => (
+          <circle
+            key={i}
+            cx={p.projektion.mToX(s.laengs_m)}
+            cy={querZuY(s.quer_m)}
+            r={1.8}
+            fill={bandFarbe}
+            fillOpacity={0.9}
+          />
+        ))}
 
       {/* Der gezeichnete Ausfahrt-Bogen ist entfallen.
 
@@ -1081,6 +1113,46 @@ function beschriftung(namen: string[]): string {
   const rest = Math.max(0, eindeutig.length - 2);
   const kopf = eindeutig.slice(0, 2).join("/");
   return rest > 0 ? `${kopf} +${rest}` : kopf;
+}
+
+/**
+ * Eine Spur dort enden lassen, wo sie das Bild verlässt.
+ *
+ * Gerechnet wird in METERN, vor der Umrechnung in Bildkoordinaten. Das
+ * ist der Punkt: `querZuY` begrenzt bereits auf den sichtbaren Streifen,
+ * und danach liegt jeder Punkt jenseits der Grenze scheinbar innerhalb —
+ * ein Schnitt auf den umgerechneten Werten schneidet nichts ab. Genau so
+ * ist mein erster Anlauf ins Leere gelaufen, mit unverändertem Bild.
+ *
+ * Behalten wird, was innerhalb liegt; beim Austritt kommt ein Punkt
+ * genau auf der Grenze dazu, damit die Linie den Rand berührt statt
+ * davor aufzuhören. Danach ist Schluss — auch wenn die Spur später
+ * zurückkäme: Eine Linie, die über die Lücke hinweg weiterläuft,
+ * verbindet zwei Stellen, zwischen denen nichts gezeichnet ist.
+ */
+function amRandAbschneiden(
+  spur: Array<{ laengs_m: number; quer_m: number }>,
+  sichtbarM: number,
+): Array<{ laengs_m: number; quer_m: number }> {
+  const aus: Array<{ laengs_m: number; quer_m: number }> = [];
+  for (let i = 0; i < spur.length; i++) {
+    const q = spur[i]!;
+    if (Math.abs(q.quer_m) <= sichtbarM) {
+      aus.push(q);
+      continue;
+    }
+    const vorher = spur[i - 1];
+    if (vorher && Math.abs(vorher.quer_m) <= sichtbarM) {
+      const grenze = q.quer_m > 0 ? sichtbarM : -sichtbarM;
+      const t = (grenze - vorher.quer_m) / (q.quer_m - vorher.quer_m);
+      aus.push({
+        laengs_m: vorher.laengs_m + t * (q.laengs_m - vorher.laengs_m),
+        quer_m: grenze,
+      });
+    }
+    break;
+  }
+  return aus;
 }
 
 /**

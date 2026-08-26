@@ -1243,3 +1243,88 @@ describe("Korridor der genommenen Ausfahrt", () => {
     ).toBeGreaterThan(Math.max(...xsB7) + 1);
   });
 });
+
+/**
+ * Nichts von der Spur wird an den Bildrand geklebt.
+ *
+ * # Der Befund (Thomas, 26.08.2026): „nach der RWY wieder so ein nicht
+ * passender grüner Verlauf"
+ *
+ * `querZuY` begrenzt auf den sichtbaren Streifen — sinnvoll, damit ein
+ * unmöglicher Messwert die Grafik nicht sprengt. Die Nebenwirkung ist
+ * schlimmer als das, was sie verhindert: JEDER Punkt jenseits der Grenze
+ * landet auf derselben Höhe.
+ *
+ * Bei DLH369 zog das Flugzeug nach dem Räumen bis 107,8 m nach rechts,
+ * die Ansicht zeigt rund 33. Von 94 Punkten des Nach-Räum-Pfads lagen
+ * **90** exakt auf der Kantenlinie — gezeichnet als 45 Pixel waagerechter
+ * Lauf, dazu das Band als grünes Rechteck darunter und eine Perlenkette
+ * aus Messpunkten.
+ *
+ * Das ist keine Ungenauigkeit, sondern eine falsche Aussage: Es liest
+ * sich, als wäre das Flugzeug die Bahnkante entlanggerollt.
+ *
+ * Geprüft wird deshalb die Eigenschaft: Was gezeichnet wird, endet am
+ * Rand — es legt sich nicht an ihn.
+ */
+describe("Spur am Bildrand", () => {
+  /** Die y-Werte eines Pfads oder einer Punktliste. */
+  const yWerte = (d: string) =>
+    [...d.matchAll(/-?\d+(?:\.\d+)?[, ]\s*(-?\d+(?:\.\d+)?)/g)].map((m) =>
+      Number(m[1]),
+    );
+
+  it("klebt weder Linie noch Band noch Messpunkte an die Kante", () => {
+    const befunde: string[] = [];
+    for (const v of VARIANTEN) {
+      const quer = v.svgs.at(-1);
+      if (!quer) continue;
+
+      // Die Kantenlinien der Ansicht: die beiden äussersten Werte der
+      // Querskala. Sie stehen als Beschriftung „Kante" im Bild; ihre
+      // y-Lage lesen wir aus den Messpunkten heraus, indem wir die
+      // extremsten nehmen — eine feste Zahl wäre eine zweite Wahrheit.
+      const kreise = [...quer.matchAll(/<circle[^>]*cy="([-\d.]+)"[^>]*r="1\.8"/g)]
+        .map((m) => Number(m[1]));
+      if (kreise.length < 5) continue;
+
+      // Wie oft liegt derselbe y-Wert mehrfach hintereinander? Ein
+      // geklemmter Verlauf erzeugt genau das.
+      const zaehlen = new Map<string, number>();
+      for (const y of kreise) {
+        const k = y.toFixed(1);
+        zaehlen.set(k, (zaehlen.get(k) ?? 0) + 1);
+      }
+      const haeufigster = [...zaehlen.entries()].sort((a, b) => b[1] - a[1])[0]!;
+      // Eine echte Spur trifft denselben Zehntelpixel selten oft. Zehn
+      // Punkte auf exakt derselben Höhe sind eine Klemmung, keine Messung.
+      if (haeufigster[1] >= 10) {
+        befunde.push(
+          `${v.key}: ${haeufigster[1]} Messpunkte auf y=${haeufigster[0]} — geklemmt`,
+        );
+      }
+
+      // Und dasselbe für die gezeichneten Pfade der Spur.
+      for (const m of quer.matchAll(/<path([^>]*)\/?>/g)) {
+        const attr = m[1]!;
+        // Nur die Spur selbst — nicht Schraffuren oder der Korridor.
+        if (!/stroke="#(22c55e|f59e0b|ef4444|eab308)"/.test(attr)) continue;
+        const d = /d="([^"]+)"/.exec(attr)?.[1] ?? "";
+        const ys = yWerte(d);
+        if (ys.length < 10) continue;
+        const zaehl = new Map<string, number>();
+        for (const y of ys) {
+          const k = y.toFixed(1);
+          zaehl.set(k, (zaehl.get(k) ?? 0) + 1);
+        }
+        const oft = [...zaehl.entries()].sort((a, b) => b[1] - a[1])[0]!;
+        if (oft[1] >= 20) {
+          befunde.push(
+            `${v.key}: ${oft[1]} Pfadpunkte auf y=${oft[0]} — an den Rand geklebt`,
+          );
+        }
+      }
+    }
+    expect(befunde, befunde.join("\n")).toEqual([]);
+  });
+});
