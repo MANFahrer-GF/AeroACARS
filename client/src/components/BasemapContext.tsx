@@ -100,11 +100,28 @@ const SCHLUESSELPFLICHTIG = "cartocdn.com";
  *
  * Ohne Schlüssel wird nichts angefasst; dann läuft es wie bisher.
  */
-export function kartenAnfrage(schluessel: string) {
-  const s = schluessel.trim();
-  if (!s) return undefined;
+export function kartenAnfrage(schluessel: string | (() => string)) {
+  // ⚠ Der Schlüssel wird bei JEDER Anfrage gelesen, nicht beim Bau der
+  // Karte eingefroren.
+  //
+  // Die Karte entsteht in einem `useEffect(…, [])` — einmalig, beim
+  // ersten Rendern. Der Schlüssel kommt aber erst danach vom Server
+  // (`/api/basemap`). Beim allerersten Start nach der Installation ist
+  // der lokale Zwischenspeicher leer, und die Karte wäre für die ganze
+  // Sitzung ohne Schlüssel gelaufen — genau der Fall, für den diese
+  // Fassung gebaut ist. Erst der zweite Start hätte gestimmt.
+  //
+  // Als Nebenwirkung wirkt auch ein GETAUSCHTER Schlüssel sofort, ohne
+  // dass der Pilot die Anwendung neu starten muss.
+  //
+  // Deshalb wird immer eine Funktion zurückgegeben, auch wenn im Moment
+  // kein Schlüssel vorliegt: Ob einer da ist, entscheidet sich erst bei
+  // der Anfrage.
+  const lies = typeof schluessel === "function" ? schluessel : () => schluessel;
   return (url: string): { url: string } | undefined => {
     if (!url.includes(SCHLUESSELPFLICHTIG)) return undefined;
+    const s = (lies() ?? "").trim();
+    if (!s) return undefined;
     // Schon vorhanden? Nicht doppelt anhängen — MapLibre reicht Adressen
     // aus Antworten erneut durch diesen Weg.
     if (/[?&]key=/.test(url)) return { url };

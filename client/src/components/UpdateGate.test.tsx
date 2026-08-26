@@ -126,10 +126,31 @@ describe("Pflicht-Riegel: wann er sich zurückhält", () => {
     }
   });
 
-  it("bleibt aus, wenn der Notaus gesetzt ist", () => {
+  it("bleibt aus, wenn der Betreiber-Notaus gesetzt ist", () => {
     localStorage.setItem("aeroacars.update.gate_off", "1");
     render(<UpdateGate checker={checker()} activePhase={null} />);
     expect(riegel()).toBeNull();
+  });
+
+  it("bleibt aus für die Version, an der die Installation scheiterte", () => {
+    localStorage.setItem("aeroacars.update.gate_skip_version", "1.7.7");
+    render(<UpdateGate checker={checker()} activePhase={null} />);
+    expect(riegel()).toBeNull();
+  });
+
+  it("greift wieder, sobald eine NEUERE Version erscheint", () => {
+    // Der Kern der Sache: Ein Fehlschlag darf den Riegel nicht dauerhaft
+    // ausbauen. Der Ausweg gilt nur fuer die Version, die nicht durchkam.
+    localStorage.setItem("aeroacars.update.gate_skip_version", "1.7.7");
+    render(
+      <UpdateGate
+        checker={checker({
+          update: { version: "1.7.8", body: "" } as UseUpdateCheckerResult["update"],
+        })}
+        activePhase={null}
+      />,
+    );
+    expect(riegel()).not.toBeNull();
   });
 });
 
@@ -150,6 +171,25 @@ describe("Pflicht-Riegel: der Ausweg", () => {
     );
     expect(document.querySelector(".update-gate__continue")).not.toBeNull();
     expect(screen.getByText(/Trotzdem fortfahren/)).toBeTruthy();
+  });
+
+  it("merkt sich beim Ausweg die VERSION, nicht ein pauschales Aus", () => {
+    // Sonst schaltet ein einziger Fehlschlag den Riegel fuer immer ab.
+    const nachladen = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload: nachladen },
+    });
+    render(
+      <UpdateGate
+        checker={checker({ installationGescheitert: true })}
+        activePhase={null}
+      />,
+    );
+    fireEvent.click(screen.getByText(/Trotzdem fortfahren/));
+    expect(localStorage.getItem("aeroacars.update.gate_skip_version")).toBe("1.7.7");
+    expect(localStorage.getItem("aeroacars.update.gate_off")).toBeNull();
+    expect(nachladen).toHaveBeenCalled();
   });
 });
 

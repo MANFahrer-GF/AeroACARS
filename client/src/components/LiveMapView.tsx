@@ -364,6 +364,11 @@ interface Props {
 
 export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBriefing, sichtbar = true }: Props) {
   const grundlage = useKartengrundlage();
+  // Die Karte wird einmalig gebaut; der Schlüssel kommt erst danach vom
+  // Server. Über diesen Verweis liest `kartenAnfrage` bei jeder Kachel
+  // den aktuellen Stand — siehe dort.
+  const grundlageRef = useRef(grundlage);
+  grundlageRef.current = grundlage;
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -918,7 +923,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       // Der Schlüssel gehört an JEDE Anfrage, nicht nur an die
       // Stil-Adresse — die style.json verweist selbst weiter auf
       // TileJSON, Kacheln, Schriften und Sprites. Siehe `kartenAnfrage`.
-      transformRequest: kartenAnfrage(grundlage.schluessel),
+      transformRequest: kartenAnfrage(() => grundlageRef.current.schluessel),
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     // Field feedback (2026-08-03): the attribution's `compact: true` reads

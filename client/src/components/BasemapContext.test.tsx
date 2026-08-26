@@ -153,11 +153,20 @@ describe("Schlüssel an jeder Anfrage", () => {
   });
 
   it("ohne Schlüssel wird gar nichts umgeschrieben", () => {
-    // Der heutige Zustand: kein Schlüssel hinterlegt, alles läuft wie
-    // bisher. Ein Umschreiber, der leere Schlüssel anhängt, würde jede
+    // Der Zustand ohne hinterlegten Schlüssel: alles läuft wie bisher.
+    // Ein Umschreiber, der einen leeren Schlüssel anhängt, würde jede
     // Anfrage kaputtmachen.
+    //
+    // ⚠ Geprüft wird das VERHALTEN, nicht die Form. Vorher stand hier
+    // `expect(kartenAnfrage("")).toBeUndefined()` — das hing daran, dass
+    // die Funktion bei leerem Schlüssel gar nichts zurückgab. Seit der
+    // Schlüssel erst zur Anfragezeit gelesen wird, gibt es immer eine
+    // Funktion; sie lässt die Adresse nur in Ruhe. Dieselbe Aussage,
+    // ohne den Bauplan festzuschreiben.
+    const adresse = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
     for (const leer of ["", "   "]) {
-      expect(kartenAnfrage(leer)).toBeUndefined();
+      expect(kartenAnfrage(leer)?.(adresse)).toBeUndefined();
+      expect(kartenAnfrage(() => leer)?.(adresse)).toBeUndefined();
     }
   });
 });
@@ -208,5 +217,37 @@ describe("Verdrahtung der Karten", () => {
       }
     }
     expect(befunde, befunde.join("\n")).toEqual([]);
+  });
+});
+
+describe("Schluessel, der erst nach dem Kartenbau eintrifft", () => {
+  // Der Fall beim allerersten Start: localStorage leer, Karte entsteht
+  // sofort, /api/basemap antwortet erst danach. Vorher fror die Karte
+  // den leeren Schluessel fuer die ganze Sitzung ein.
+  it("wirkt, sobald er da ist — ohne Neustart", () => {
+    let schluessel = "";
+    const f = kartenAnfrage(() => schluessel);
+    const url = "https://tiles.basemaps.cartocdn.com/vector/carto.streets/v1/0/0/0.mvt";
+
+    // Moment 1: Karte gebaut, Server hat noch nicht geantwortet.
+    expect(f?.(url)).toBeUndefined();
+
+    // Moment 2: Antwort da.
+    schluessel = "cb1_test";
+    expect(f?.(url)?.url).toContain("?key=cb1_test");
+
+    // Moment 3: Betreiber tauscht den Schluessel im laufenden Betrieb.
+    schluessel = "cb1_neu";
+    expect(f?.(url)?.url).toContain("?key=cb1_neu");
+  });
+
+  it("laesst Fremdadressen auch dann in Ruhe", () => {
+    const f = kartenAnfrage(() => "cb1_test");
+    expect(f?.("https://server.arcgisonline.com/x/1/2/3")).toBeUndefined();
+  });
+
+  it("nimmt weiterhin eine feste Zeichenkette", () => {
+    const f = kartenAnfrage("cb1_fest");
+    expect(f?.("https://basemaps.cartocdn.com/a.json")?.url).toContain("key=cb1_fest");
   });
 });

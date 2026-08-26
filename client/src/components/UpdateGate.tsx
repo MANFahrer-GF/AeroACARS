@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { FlightPhase } from "../types";
 import type { UseUpdateCheckerResult } from "../hooks/useUpdateChecker";
@@ -82,9 +83,28 @@ interface Props {
   ausgeschaltet?: boolean;
 }
 
-function riegelAbgeschaltet(): boolean {
+/** Der dauerhafte Schalter — nur für den Betrieb, von Hand gesetzt. */
+const NOTAUS = "aeroacars.update.gate_off";
+
+/**
+ * Der Ausweg nach einem Fehlschlag — an die VERSION gebunden.
+ *
+ * ⚠ Hier stand zuerst derselbe dauerhafte Schalter wie oben. Damit
+ * hätte ein einziger gescheiterter Versuch den Riegel auf diesem
+ * Rechner FÜR IMMER abgeschaltet — lautlos, und niemand hätte je
+ * erfahren, dass der Pilot seither ungehindert auf alten Ständen
+ * fliegt. Ein Notausgang darf die Tür nicht ausbauen.
+ *
+ * Jetzt gilt er nur für die Version, die nicht durchkam. Erscheint
+ * eine neuere, greift der Riegel wieder — dann ist es ein anderer
+ * Versuch, und vielleicht klappt er.
+ */
+const AUSWEG_VERSION = "aeroacars.update.gate_skip_version";
+
+function riegelAbgeschaltet(version: string): boolean {
   try {
-    return localStorage.getItem("aeroacars.update.gate_off") === "1";
+    if (localStorage.getItem(NOTAUS) === "1") return true;
+    return localStorage.getItem(AUSWEG_VERSION) === version;
   } catch {
     return false;
   }
@@ -92,6 +112,23 @@ function riegelAbgeschaltet(): boolean {
 
 export function UpdateGate({ checker, activePhase, ausgeschaltet }: Props) {
   const { t } = useTranslation();
+  const knopfRef = useRef<HTMLButtonElement>(null);
+
+  // Den Blick dorthin lenken, wo die einzige Handlung liegt.
+  //
+  // Der Riegel faengt Mausklicks (er liegt ueber allem), aber die
+  // Tastatur nicht: Ohne das hier stuende der Fokus weiter irgendwo in
+  // der verdeckten Oberflaeche, und wer mit Tab arbeitet, taebbte ins
+  // Unsichtbare. Ein vollstaendiger Fokusfang waere mehr Code, als der
+  // Fall hergibt — der Einstiegspunkt ist der Gewinn.
+  //
+  // ⚠ Der Hook steht VOR den Abbruchbedingungen — sonst waere die Zahl
+  // der Hooks je nach Zustand verschieden, und React bricht ab. Rendert
+  // der Riegel gerade nicht, ist `knopfRef.current` schlicht leer.
+  useEffect(() => {
+    knopfRef.current?.focus();
+  }, []);
+
   const {
     update,
     pflichtUpdate,
@@ -101,9 +138,10 @@ export function UpdateGate({ checker, activePhase, ausgeschaltet }: Props) {
     installationGescheitert,
   } = checker;
 
-  if (ausgeschaltet ?? riegelAbgeschaltet()) return null;
-  // Ausnahmen 1 und 2.
+  // Ausnahmen 1 und 2 zuerst — ohne `update` gibt es keine Version, an
+  // der der Ausweg hängen könnte.
   if (!update || !pflichtUpdate) return null;
+  if (ausgeschaltet ?? riegelAbgeschaltet(update.version)) return null;
   // Ausnahme 3.
   if (activePhase != null && AKTIVE_FLUGPHASEN.has(activePhase)) return null;
 
@@ -121,6 +159,7 @@ export function UpdateGate({ checker, activePhase, ausgeschaltet }: Props) {
         {progress && <p className="update-gate__progress">{progress}</p>}
 
         <button
+          ref={knopfRef}
           type="button"
           className="update-gate__install"
           onClick={() => void installAndRelaunch()}
@@ -138,7 +177,7 @@ export function UpdateGate({ checker, activePhase, ausgeschaltet }: Props) {
               className="update-gate__continue"
               onClick={() => {
                 try {
-                  localStorage.setItem("aeroacars.update.gate_off", "1");
+                  localStorage.setItem(AUSWEG_VERSION, update.version);
                 } catch {
                   /* Ohne Speicher kommt der Riegel beim nächsten Start
                      wieder — unschön, aber diese Sitzung läuft. */

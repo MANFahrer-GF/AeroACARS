@@ -116,6 +116,11 @@ const esc = (s: unknown) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&a
 
 export function LogbookView() {
   const grundlage = useKartengrundlage();
+  // Die Karte wird einmalig gebaut; der Schlüssel kommt erst danach vom
+  // Server. Über diesen Verweis liest `kartenAnfrage` bei jeder Kachel
+  // den aktuellen Stand — siehe dort.
+  const grundlageRef = useRef(grundlage);
+  grundlageRef.current = grundlage;
   const { t, i18n } = useTranslation();
   const [stats, setStats] = useState<Stats | null>(null);
   const [items, setItems] = useState<Item[]>([]);
@@ -188,7 +193,7 @@ export function LogbookView() {
       // Der Schlüssel gehört an JEDE Anfrage, nicht nur an die
       // Stil-Adresse — die style.json verweist selbst weiter auf
       // TileJSON, Kacheln, Schriften und Sprites. Siehe `kartenAnfrage`.
-      transformRequest: kartenAnfrage(grundlage.schluessel),
+      transformRequest: kartenAnfrage(() => grundlageRef.current.schluessel),
     });
     mapRef.current = map;
     const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#0a84ff";
