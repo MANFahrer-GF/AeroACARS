@@ -286,6 +286,16 @@ export function RunwayCrossSection(p: QueransichtProps) {
       // eine nennenswerte x-Komponente und schiebt den Bandrand über die
       // Bahnfläche hinaus. Das ist nicht nur ein Zeichenfehler — dort ist
       // keine Bahn mehr, und die Beschriftung am rechten Rand lag darauf.
+      //
+      // ⚠ Dieselbe Klemmung, die in der Querrichtung eine falsche Aussage
+      // erzeugte (siehe `amRandAbschneiden`). Hier gemessen, statt sie
+      // anzunehmen: Über alle Demo-Varianten trifft der Anschlag nur
+      // `d_overrun`, dort neun von 138 Bandpunkten am Bahnende. Neun
+      // Punkte sind ein kurzer Stummel an einer Stelle, die ohnehin als
+      // Überrollen ausgewiesen ist — die Querrichtung hatte NEUNZIG.
+      //
+      // Deshalb bleibt es hier bei der Klemmung. Sollte sich das ändern,
+      // ist der Weg derselbe: in Metern schneiden, vor der Umrechnung.
       return {
         x: Math.max(
           p.projektion.bahnAnfangX,
