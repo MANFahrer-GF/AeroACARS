@@ -29,7 +29,7 @@ import { simKindLabel } from "../lib/simKind";
 import { useMapEvents, LiveMapEventList } from "./LiveMapEvents";
 import { LiveMapEmptyState, nextBidInfo, type NextBidInfo } from "./LiveMapEmptyState";
 import { LiveRecordingIndicator } from "./LiveRecordingIndicator";
-import { useKartengrundlage } from "./BasemapContext";
+import { kartenAnfrage, useKartengrundlage } from "./BasemapContext";
 
 // Die Stil-Adressen kommen vom Server — siehe `BasemapContext`. CARTO
 // verlangt seit dem 26.08.2026 einen Schlüssel, und der soll austauschbar
@@ -915,6 +915,10 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       center: [6, 48],
       zoom: 4,
       attributionControl: { compact: true },
+      // Der Schlüssel gehört an JEDE Anfrage, nicht nur an die
+      // Stil-Adresse — die style.json verweist selbst weiter auf
+      // TileJSON, Kacheln, Schriften und Sprites. Siehe `kartenAnfrage`.
+      transformRequest: kartenAnfrage(grundlage.schluessel),
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     // Field feedback (2026-08-03): the attribution's `compact: true` reads

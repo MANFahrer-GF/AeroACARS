@@ -9,7 +9,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { invoke } from "../lib/ipc";
 import { FlightProfile } from "./FlightProfile";
-import { useKartengrundlage } from "./BasemapContext";
+import { kartenAnfrage, useKartengrundlage } from "./BasemapContext";
 
 // Die Stil-Adressen kommen vom Server, damit ein Schluesselwechsel bei
 // CARTO kein Release kostet — siehe `BasemapContext`. Die eingebauten
@@ -185,6 +185,10 @@ export function LogbookView() {
       center: route.length ? [route[Math.floor(route.length / 2)].lon, route[Math.floor(route.length / 2)].lat] : [6, 48],
       zoom: 5,
       attributionControl: { compact: true },
+      // Der Schlüssel gehört an JEDE Anfrage, nicht nur an die
+      // Stil-Adresse — die style.json verweist selbst weiter auf
+      // TileJSON, Kacheln, Schriften und Sprites. Siehe `kartenAnfrage`.
+      transformRequest: kartenAnfrage(grundlage.schluessel),
     });
     mapRef.current = map;
     const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#0a84ff";

@@ -88,6 +88,7 @@ const ReleaseNotesModal = lazy(loadReleaseNotesModal);
 const CpdlcPanel = lazy(loadCpdlcPanel);
 import { UpdateButton } from "./components/UpdateButton";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { UpdateGate } from "./components/UpdateGate";
 import { ErrorReportingFirstRunBanner } from "./components/ErrorReportingFirstRunBanner";
 import { IntegrityBanner } from "./components/IntegrityBanner";
 import { CpdlcMessageBanner } from "./components/CpdlcMessageBanner";
@@ -733,6 +734,15 @@ function App() {
           Update >= 3 Tage gesehen, (b) kein aktiver Flug, (c) nicht
           gerade snoozed. Sonst rendert die Komponente selbst null. */}
       <UpdateBanner
+        checker={updateChecker}
+        activePhase={activeFlight?.phase ?? null}
+      />
+      {/* v1.7.6 — Pflicht-Riegel. Sperrt die Oberfläche, wenn beim Start
+          eine neuere Version vorlag: erst aktualisieren, dann fliegen.
+          Hält sich selbst zurück bei fehlendem Netz, bei einem Update,
+          das erst mitten in der Sitzung auftaucht, und in jeder aktiven
+          Flugphase — die Gründe stehen in UpdateGate.tsx. */}
+      <UpdateGate
         checker={updateChecker}
         activePhase={activeFlight?.phase ?? null}
       />

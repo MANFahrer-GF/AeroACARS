@@ -405,8 +405,22 @@ describe("Update-Dialog mit den Release-Notes der aktuellen Version", () => {
     const neueste = dateien[dateien.length - 1];
     const koerper = fs.readFileSync(path.join(verzeichnis, neueste), "utf-8");
 
-    // Vorbedingung: der Test taugt nur, wenn die Notiz wirklich lang ist.
-    expect(koerper.length).toBeGreaterThan(3000);
+    // Vorbedingung: der Test taugt nur, wenn die Notiz wirklich eine ist.
+    //
+    // Die Zahl soll einen STUMMEL ausschliessen — eine Notiz mit drei
+    // Zeilen prüft am Modal nichts. Sie soll nicht vorschreiben, wie
+    // lang eine Version zu sein hat: v1.7.6 kam mit 2.939 Zeichen und
+    // liess den Test fallen, obwohl die Notiz vollständig war. Eine
+    // Notiz künstlich zu strecken, damit ein Test grün wird, wäre die
+    // falsche Antwort gewesen.
+    //
+    // Wie lang der Notiz-Bereich wirklich sein kann, prüft ohnehin
+    // `REALISTIC_LONG_BODY_v092` mit einem eingefrorenen Langtext.
+    expect(
+      koerper.length,
+      `${neueste} hat nur ${koerper.length} Zeichen — das sieht nach ` +
+        `einem Stummel aus, nicht nach Release-Notes.`,
+    ).toBeGreaterThan(1200);
 
     const checker = makeChecker(koerper);
     const { container } = render(<UpdateButton checker={checker as never} />);

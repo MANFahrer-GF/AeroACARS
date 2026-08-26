@@ -875,7 +875,14 @@
     "later": "Später",
     "snooze_hint": "Banner wird für 4 Stunden ausgeblendet — der Header-Button bleibt sichtbar",
     "banner_title": "Neue Version v{{version}} ist verfügbar",
-    "banner_subtitle": "Du hängst seit ein paar Tagen auf einer älteren Version. Installation dauert weniger als eine Minute, die App startet danach automatisch neu."
+    "banner_subtitle": "Du hängst seit ein paar Tagen auf einer älteren Version. Installation dauert weniger als eine Minute, die App startet danach automatisch neu.",
+    "gate_title": "Update erforderlich — v{{version}}",
+    "gate_lead": "Für diese Sitzung ist eine neuere Version nötig. Die Installation dauert weniger als eine Minute, danach startet AeroACARS von selbst neu — offene Flüge und Buchungen bleiben erhalten.",
+    "gate_install": "Update durchführen",
+    "gate_installing": "Wird installiert…",
+    "gate_failed": "Das Update ließ sich nicht installieren. Häufigste Ursachen: fehlende Rechte, ein Virenscanner oder ein gesperrtes Netz. Du kannst vorerst weiterarbeiten und es später erneut versuchen.",
+    "gate_continue": "Trotzdem fortfahren",
+    "gate_hint": "Warum verpflichtend: AeroACARS bewertet Landungen und reicht Flüge ein. Ein alter Stand liefert Werte, die sich später nicht mehr zuordnen lassen."
   },
   "recording": {
     "status": {

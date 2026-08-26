@@ -43,6 +43,13 @@ export interface Kartengrundlage {
   /** Schriftschnitte für die Beschriftung der Vektorkarte. */
   glyphen: string;
   /**
+   * Der Schlüssel, roh. Leer heisst: keiner hinterlegt.
+   *
+   * Er wird NICHT in die Adressen eingebaut, sondern über
+   * `kartenAnfrage` an jede einzelne Anfrage gehängt — siehe dort.
+   */
+  schluessel: string;
+  /**
    * Die Nennung, die auf der Karte stehen muss.
    *
    * Bedingung des freien Schlüssels, nicht Höflichkeit: „CARTO and
@@ -62,8 +69,48 @@ export const EINGEBAUTE_GRUNDLAGE: Kartengrundlage = {
   dunkel: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
   hell: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
   glyphen: "https://tiles.basemaps.cartocdn.com/fonts/{fontstack}/{range}.pbf",
+  schluessel: "",
   nennung: "© CARTO · © OpenStreetMap-Mitwirkende",
 };
+
+/** Adressen, die den Schlüssel brauchen. */
+const SCHLUESSELPFLICHTIG = "cartocdn.com";
+
+/**
+ * Den Schlüssel an JEDE Anfrage hängen, die zu CARTO geht.
+ *
+ * # Warum nicht einfach an die Stil-Adresse
+ *
+ * Weil das nicht reicht, und zwar nachweislich. Die `style.json` von
+ * CARTO enthält selbst weitere Adressen:
+ *
+ * ```text
+ * glyphs:  tiles.basemaps.cartocdn.com/fonts/{fontstack}/{range}.pbf
+ * sprite:  tiles.basemaps.cartocdn.com/gl/dark-matter-gl-style/sprite
+ * source:  tiles.basemaps.cartocdn.com/vector/carto.streets/v1/tiles.json
+ * ```
+ *
+ * Und diese `tiles.json` verweist wiederum auf die eigentlichen
+ * Kachel-Adressen. Ein Schlüssel an der `style.json` erreicht davon
+ * nichts — ausgerechnet die Kacheln, die CARTO zählt, liefen ohne.
+ *
+ * Deshalb greift der Schlüssel hier, an der Stelle, an der MapLibre
+ * JEDE Anfrage stellt: Stil, TileJSON, Kacheln, Schriften, Sprites — auch
+ * die, die erst zur Laufzeit aus einer Antwort auftauchen.
+ *
+ * Ohne Schlüssel wird nichts angefasst; dann läuft es wie bisher.
+ */
+export function kartenAnfrage(schluessel: string) {
+  const s = schluessel.trim();
+  if (!s) return undefined;
+  return (url: string): { url: string } | undefined => {
+    if (!url.includes(SCHLUESSELPFLICHTIG)) return undefined;
+    // Schon vorhanden? Nicht doppelt anhängen — MapLibre reicht Adressen
+    // aus Antworten erneut durch diesen Weg.
+    if (/[?&]key=/.test(url)) return { url };
+    return { url: `${url}${url.includes("?") ? "&" : "?"}key=${encodeURIComponent(s)}` };
+  };
+}
 
 const SPEICHER = "aeroacars.basemap.cache.v1";
 
@@ -84,6 +131,7 @@ export function ausAntwort(roh: unknown): Kartengrundlage {
     dunkel: text("dunkel", EINGEBAUTE_GRUNDLAGE.dunkel),
     hell: text("hell", EINGEBAUTE_GRUNDLAGE.hell),
     glyphen: text("glyphen", EINGEBAUTE_GRUNDLAGE.glyphen),
+    schluessel: typeof o.schluessel === "string" ? o.schluessel : "",
     nennung: text("nennung", EINGEBAUTE_GRUNDLAGE.nennung),
   };
 }

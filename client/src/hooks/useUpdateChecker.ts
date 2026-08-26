@@ -66,6 +66,21 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const THREE_DAYS_MS = 3 * ONE_DAY_MS;
 const SNOOZE_DURATION_MS = FOUR_HOURS_MS;
 
+/**
+ * Wie lange nach dem Start ein gefundenes Update noch als „beim Start
+ * da gewesen" gilt.
+ *
+ * Der Pflicht-Riegel darf NUR am Anfang zuschlagen. Ein Update, das
+ * vier Stunden später im Turnus auftaucht, würde den Piloten sonst
+ * mitten in der Sitzung aussperren — womöglich zwischen zwei Flügen,
+ * mit einer offenen Buchung.
+ *
+ * Zehn Minuten, nicht null: Der erste Versuch scheitert oft, weil beim
+ * Anmelden am Rechner das Netz noch nicht steht. Dieser Fall gehört
+ * noch zum Start.
+ */
+const STARTFENSTER_MS = 10 * 60 * 1000;
+
 export type UpdateStage = "none" | "fresh" | "pulse" | "banner";
 
 export interface UseUpdateCheckerResult {
@@ -82,6 +97,22 @@ export interface UseUpdateCheckerResult {
   bannerSnoozed: boolean;
   /** Manuell installieren + relaunchen. */
   installAndRelaunch: () => Promise<void>;
+  /**
+   * True, wenn beim Start eine neuere Version vorlag.
+   *
+   * Trägt den Pflicht-Riegel (`UpdateGate`). Bewusst getrennt von
+   * `update != null`: Ein Update, das erst im Vier-Stunden-Turnus
+   * gefunden wird, ist NICHT startbezogen und darf nicht sperren.
+   */
+  pflichtUpdate: boolean;
+  /**
+   * True, sobald ein Installationsversuch gescheitert ist.
+   *
+   * Erst dann darf der Riegel einen Ausweg anbieten. Ohne das würde
+   * ein kaputter Updater den Client unbenutzbar machen — der Pilot
+   * käme an einer Meldung nicht vorbei, die er nicht erfüllen kann.
+   */
+  installationGescheitert: boolean;
 }
 
 function readNum(key: string): number | null {
@@ -155,6 +186,8 @@ function computeStage(
 
 export function useUpdateChecker(): UseUpdateCheckerResult {
   const [update, setUpdate] = useState<Update | null>(null);
+  const [pflichtUpdate, setPflichtUpdate] = useState(false);
+  const [installationGescheitert, setInstallationGescheitert] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   // tick zwingt Re-Compute der Stage einmal pro Minute. Nötig weil
@@ -164,6 +197,12 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
   // Lock damit zwei parallele check()-Calls (z.B. Mount + Focus
   // gleichzeitig nach Sleep) nicht doppeln.
   const checkInFlight = useRef(false);
+  // Für den Pflicht-Riegel: Wann startete die App, und hat der erste
+  // GELUNGENE Check schon stattgefunden? Ein gescheiterter Check (kein
+  // Netz) zählt nicht — sonst entschiede die Netzlage darüber, ob der
+  // Riegel je greift.
+  const startZeit = useRef(Date.now());
+  const ersterCheckGelungen = useRef(false);
 
   const performCheck = useCallback(async () => {
     // Browser-Build (LAN-Tablet): kein Updater — Hook bleibt no-op.
@@ -173,6 +212,14 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
     try {
       const u = await tauriCheckForUpdate();
       writeNum(LAST_CHECK_KEY, Date.now());
+      // Den Riegel scharfschalten — aber nur einmal, und nur wenn
+      // dieser erste gelungene Check noch ins Startfenster fällt.
+      if (!ersterCheckGelungen.current) {
+        ersterCheckGelungen.current = true;
+        if (u != null && Date.now() - startZeit.current < STARTFENSTER_MS) {
+          setPflichtUpdate(true);
+        }
+      }
       if (u) {
         setUpdate(u);
         // Erste Sichtung dieser Version → Timestamp setzen.
@@ -185,6 +232,7 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
         // Kein Update mehr → eventuelle alte first_seen-Einträge
         // löschen, dann State zurücksetzen.
         setUpdate(null);
+        setPflichtUpdate(false);
         clearKey(DISMISS_KEY);
       }
     } catch {
@@ -266,6 +314,9 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
     } catch (err) {
       setProgress(`Fehler: ${err}`);
       setInstalling(false);
+      // Ab hier darf der Riegel einen Ausweg zeigen. Siehe
+      // `installationGescheitert` in der Schnittstelle.
+      setInstallationGescheitert(true);
     }
   }, [update, installing]);
 
@@ -277,5 +328,7 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
     snoozeBanner,
     bannerSnoozed,
     installAndRelaunch,
+    pflichtUpdate,
+    installationGescheitert,
   };
 }

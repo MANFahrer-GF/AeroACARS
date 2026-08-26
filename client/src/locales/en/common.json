@@ -875,7 +875,14 @@
     "later": "Later",
     "snooze_hint": "Banner is hidden for 4 hours — the header button stays visible",
     "banner_title": "New version v{{version}} is available",
-    "banner_subtitle": "You've been on an older version for a few days. Install takes less than a minute and the app restarts automatically."
+    "banner_subtitle": "You've been on an older version for a few days. Install takes less than a minute and the app restarts automatically.",
+    "gate_title": "Update required — v{{version}}",
+    "gate_lead": "This session needs a newer version. Installing takes less than a minute, after which AeroACARS restarts by itself — open flights and bookings are kept.",
+    "gate_install": "Install update",
+    "gate_installing": "Installing…",
+    "gate_failed": "The update could not be installed. The usual causes are missing permissions, an antivirus tool, or a restricted network. You can carry on for now and try again later.",
+    "gate_continue": "Continue anyway",
+    "gate_hint": "Why this is mandatory: AeroACARS scores landings and files flights. An outdated build produces figures that cannot be attributed later."
   },
   "recording": {
     "status": {

@@ -875,7 +875,14 @@
     "later": "Più tardi",
     "snooze_hint": "Il banner è nascosto per 4 ore — il pulsante nell'header rimane visibile",
     "banner_title": "Nuova versione v{{version}} disponibile",
-    "banner_subtitle": "Sei su una versione precedente da qualche giorno. L'installazione richiede meno di un minuto e l'app si riavvia automaticamente."
+    "banner_subtitle": "Sei su una versione precedente da qualche giorno. L'installazione richiede meno di un minuto e l'app si riavvia automaticamente.",
+    "gate_title": "Aggiornamento necessario — v{{version}}",
+    "gate_lead": "Questa sessione richiede una versione più recente. L'installazione richiede meno di un minuto, poi AeroACARS si riavvia da solo — voli e prenotazioni aperti vengono mantenuti.",
+    "gate_install": "Esegui l'aggiornamento",
+    "gate_installing": "Installazione in corso…",
+    "gate_failed": "Non è stato possibile installare l'aggiornamento. Le cause più comuni sono permessi mancanti, un antivirus o una rete con restrizioni. Per ora puoi continuare e riprovare più tardi.",
+    "gate_continue": "Continua comunque",
+    "gate_hint": "Perché è obbligatorio: AeroACARS valuta gli atterraggi e registra i voli. Una versione datata produce valori che in seguito non sono più attribuibili."
   },
   "recording": {
     "status": {
