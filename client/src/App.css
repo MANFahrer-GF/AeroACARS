@@ -11035,13 +11035,19 @@ input.datalink-block__input {
   color: var(--sem-info);
   font-variant-numeric: tabular-nums;
 }
+/* ⚠ `--accent` / `--on-acc`, NICHT `--sem-info` mit festem Weiss.
+   `--sem-info` ist eine VORDERGRUND-Farbe: im Dunkelmodus wird sie zu
+   einem hellen Blau (#7fa8c9), und weisse Schrift darauf kam auf
+   Kontrast 2,52 — nötig sind 4,5. Gemessen an der gerenderten Karte,
+   nicht geschätzt. Das Paar --accent/--on-acc gibt es genau dafür und
+   es dreht sich mit dem Theme mit. */
 .update-gate__install {
   width: 100%;
   padding: var(--sp-3) var(--sp-4);
-  border: 1px solid var(--sem-info);
+  border: 1px solid var(--accent);
   border-radius: 7px;
-  background: var(--sem-info);
-  color: #fff;
+  background: var(--accent);
+  color: var(--on-acc);
   font-size: var(--fs-400);
   font-weight: 600;
   cursor: pointer;
@@ -11055,7 +11061,7 @@ input.datalink-block__input {
 }
 .update-gate__install:focus-visible,
 .update-gate__continue:focus-visible {
-  outline: 2px solid var(--sem-info);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 /* Der Ausweg — erscheint erst nach einem gescheiterten Versuch und ist

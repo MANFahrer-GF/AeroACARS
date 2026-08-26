@@ -22,12 +22,20 @@ import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../locales/de/common.json";
 import enCommon from "../locales/en/common.json";
+// ⚠ Italienisch gehoert hierher, auch wenn kein Test es heute braucht.
+// Fehlt eine Sprache, faellt i18next lautlos auf `fallbackLng` zurueck:
+// Ein Test, der italienischen Text prueft, bekaeme deutschen — und
+// waere gruen. Genau darauf bin ich am 27.08.2026 hereingefallen, als
+// die Vorschau des Pflicht-Riegels den italienischen Block auf Deutsch
+// zeigte und ich den Fehler zuerst in der Komponente suchte.
+import itCommon from "../locales/it/common.json";
 
 if (!i18next.isInitialized) {
   void i18next.use(initReactI18next).init({
     resources: {
       de: { common: deCommon },
       en: { common: enCommon },
+      it: { common: itCommon },
     },
     lng: "de",
     fallbackLng: "de",
