@@ -483,9 +483,23 @@ export function RunwayCrossSection(p: QueransichtProps) {
   // Liniengewirr, und die Frage lautet „bin ich meinem Rollweg gefolgt",
   // nicht „welche gibt es".
   const rollwegKorridor = ((): string | null => {
-    const genutzteAusfahrt = (p.ausfahrten ?? []).find(
-      (a) => genutzt(a) && (a.verlauf?.length ?? 0) >= 2,
-    );
+    // Die NAECHSTE, nicht die erste.
+    //
+    // `find` nahm die erste Ausfahrt, die ins Fenster passt — und das
+    // Fenster ist 120 Meter breit. In Muenchen liegen darin zwei: B7 bei
+    // 2.259 m und B6 bei 2.368 m. Thomas' Raeumpunkt war 2.345 m, also
+    // 23 Meter von B6 und 86 von B7 entfernt — gezeichnet worden waere
+    // B7, weil sie in der nach Laengs sortierten Liste vorne steht.
+    //
+    // Das ist genau der Einwand, mit dem diese ganze Arbeit angefangen
+    // hat: „auf B6 abgerollt, aber das Abrollen sieht ganz anders aus."
+    const genutzteAusfahrt = (p.ausfahrten ?? [])
+      .filter((a) => genutzt(a) && (a.verlauf?.length ?? 0) >= 2)
+      .sort(
+        (x, y) =>
+          Math.abs(x.laengs_m - (p.clearanceM ?? 0)) -
+          Math.abs(y.laengs_m - (p.clearanceM ?? 0)),
+      )[0];
     if (!genutzteAusfahrt?.verlauf) return null;
     const achse = genutzteAusfahrt.verlauf
       .filter(
@@ -960,16 +974,45 @@ function gruppiere(
   proj: Projektion,
   schrift: number,
 ): Ausfahrt[] {
-  const out: Ausfahrt[] = [];
+  // Intern wird GEZAEHLT, nicht an Zeichenketten herumgeschnitten.
+  //
+  // # Warum das der Umbau wert war
+  //
+  // Die erste Fassung baute den Namen bei jedem Verbinden neu aus dem
+  // vorherigen Text zusammen und las das „+N" wieder heraus. Das geht
+  // gut, solange der Text von dieser Funktion stammt — ein Rollweg, der
+  // in OSM selbst „A+1" heisst, wurde aber als „A und ein weiterer"
+  // gelesen. Aus „A+1", „A/B" und „C" wurde „A/B +2": vier behauptete
+  // Ausfahrten, drei tatsaechliche.
+  //
+  // Der Name wird deshalb erst ganz am Schluss gesetzt.
+  type Haufen = { a: Ausfahrt; namen: string[]; label: string };
+  const machen = (a: Ausfahrt): Haufen => ({
+    a,
+    namen: a.name ? [a.name] : [],
+    label: a.name,
+  });
+  // Der angezeigte Text — und damit der Platzbedarf — haengt am Stand
+  // des Haufens. Beides muss zusammen fortgeschrieben werden, sonst
+  // misst die Kollisionspruefung eine Beschriftung, die es nicht gibt.
+  const setzen = (h: Haufen) => {
+    h.label = beschriftung(h.namen);
+  };
+  const legen = (ziel: Haufen, quelle: Haufen) => {
+    ziel.namen.push(...quelle.namen);
+    setzen(ziel);
+  };
+  const kollidiert = (x: Haufen, y: Haufen) =>
+    x.a.seite === y.a.seite &&
+    Math.abs(proj.mToX(x.a.laengs_m) - proj.mToX(y.a.laengs_m)) <
+      mindestAbstandPx(x.label, y.label, schrift);
+
+  const haufen: Haufen[] = [];
   for (const a of [...liste].sort((x, y) => x.laengs_m - y.laengs_m)) {
-    const nachbar = out.find(
-      (b) =>
-        b.seite === a.seite &&
-        Math.abs(proj.mToX(b.laengs_m) - proj.mToX(a.laengs_m)) <
-          mindestAbstandPx(b.name, a.name, schrift),
-    );
-    if (nachbar) verbinde(nachbar, a.name);
-    else out.push({ ...a });
+    const h = machen(a);
+    const nachbar = haufen.find((b) => kollidiert(b, h));
+    if (nachbar) legen(nachbar, h);
+    else haufen.push(h);
   }
 
   // Nachziehen, bis nichts mehr kollidiert.
@@ -986,73 +1029,56 @@ function gruppiere(
   // Niemand hat B3 je wieder angesehen.
   //
   // Die Schranke ist kein Sicherheitsnetz, sondern eine Aussage: jede
-  // Runde verbindet mindestens zwei Eintraege, also kann es nie mehr
-  // Runden geben als Eintraege.
-  for (let runde = 0; runde < out.length; runde++) {
-    const i = out.findIndex((b, k) =>
-      out.some(
-        (c, l) =>
-          l > k &&
-          c.seite === b.seite &&
-          Math.abs(proj.mToX(b.laengs_m) - proj.mToX(c.laengs_m)) <
-            mindestAbstandPx(b.name, c.name, schrift),
-      ),
-    );
+  // Runde legt zwei Haufen zusammen, also kann es nie mehr Runden geben
+  // als Haufen.
+  for (let runde = 0; runde < haufen.length; runde++) {
+    let i = -1;
+    let j = -1;
+    for (let k = 0; k < haufen.length && i < 0; k++) {
+      for (let l = k + 1; l < haufen.length; l++) {
+        if (kollidiert(haufen[k]!, haufen[l]!)) {
+          i = k;
+          j = l;
+          break;
+        }
+      }
+    }
     if (i < 0) break;
-    const j = out.findIndex(
-      (c, l) =>
-        l > i &&
-        c.seite === out[i]!.seite &&
-        Math.abs(proj.mToX(out[i]!.laengs_m) - proj.mToX(c.laengs_m)) <
-          mindestAbstandPx(out[i]!.name, c.name, schrift),
-    );
-    verbinde(out[i]!, out[j]!.name);
-    out.splice(j, 1);
+    legen(haufen[i]!, haufen[j]!);
+    haufen.splice(j, 1);
   }
-  return out;
+
+  return haufen.map((h) => ({ ...h.a, name: h.label }));
 }
 
 /**
- * Einen Namen an eine bestehende Beschriftung anhaengen.
+ * Aus den Namen eines Haufens eine Beschriftung machen.
  *
- * Namen verbinden, aber nicht endlos: Drei Kennungen an einer Stelle sind
- * kein Name mehr, sondern eine Aufzaehlung.
+ * Hoechstens zwei Kennungen ausschreiben; was darueber hinausgeht, wird
+ * GEZAEHLT, nicht verschwiegen. Gemessen ueber alle 660 Bahnen mit
+ * Bodenkarte (23.08.2026) trifft das 38 Ausfahrten — in Frankfurt und
+ * Koeln liegen drei Rollwege innerhalb weniger Meter an der Bahn. Vorher
+ * stand dort „R11/M19" und R13 fehlte, ohne dass die Grafik es
+ * andeutete: Wer nach der Ausfahrt sucht, die er genommen hat, findet
+ * sie nicht und haelt die Karte fuer unvollstaendig.
  *
- * Was darueber hinausgeht, wird GEZAEHLT, nicht verschwiegen. Gemessen
- * ueber alle 660 Bahnen mit Bodenkarte (23.08.2026) trifft das 38
- * Ausfahrten — in Frankfurt und Koeln liegen drei Rollwege innerhalb
- * weniger Meter an der Bahn. Vorher stand dort „R11/M19" und R13 fehlte,
- * ohne dass die Grafik es andeutete: Wer nach der Ausfahrt sucht, die er
- * genommen hat, findet sie nicht und haelt die Karte fuer unvollstaendig.
+ * Gleiche Namen zaehlen einmal. In OSM ist ein Rollweg oft in mehrere
+ * Stuecke geteilt, die alle „B6" heissen — daraus „B6 +4" zu machen
+ * waere schlicht falsch.
+ *
+ * # Bekannte Grenze
+ *
+ * Traegt ein Rollweg den Schraegstrich im eigenen Namen, wird die
+ * Beschriftung mehrdeutig: „X/Y" und „Z" ergeben „X/Y/Z", was sich wie
+ * drei Kennungen liest. Die ZAHL stimmt trotzdem — es sind zwei Namen —,
+ * und jede Kennung ist zu sehen. Ein anderes Trennzeichen wuerde das
+ * aufloesen, aber das Bild ist so abgenommen; gemessen ueber alle 199
+ * Flughaefen mit Bodenkarte kommt der Fall selten vor. Bewusst so
+ * gelassen, nicht uebersehen.
  */
-function verbinde(ziel: Ausfahrt, name: string): void {
-  const a = zerlege(ziel.name);
-  const b = zerlege(name);
-  ziel.name = setze([...a.namen, ...b.namen], a.weitere + b.weitere);
-}
-
-/** Eine Beschriftung wieder in ihre Bestandteile zerlegen. */
-function zerlege(label: string): { namen: string[]; weitere: number } {
-  const m = /^(.*?)\s*\+(\d+)$/.exec(label);
-  const rumpf = m ? m[1]! : label;
-  return {
-    namen: rumpf.split("/").filter(Boolean),
-    weitere: m ? Number(m[2]) : 0,
-  };
-}
-
-/**
- * Aus Namen und Restzahl wieder eine Beschriftung machen.
- *
- * Hoechstens zwei Kennungen ausschreiben; was darueber liegt, wird
- * gezaehlt. Das Zusammenlegen zweier fertiger Gruppen ging vorher an
- * dieser Regel vorbei: „B3" und „B2/B1" ergaben stumpf „B3/B2/B1" —
- * drei Kennungen an einer Stelle, genau die Aufzaehlung, die die Regel
- * verhindern soll. In Muenchen stand das so im Bild.
- */
-function setze(namen: string[], weitere: number): string {
+function beschriftung(namen: string[]): string {
   const eindeutig = [...new Set(namen)];
-  const rest = weitere + Math.max(0, eindeutig.length - 2);
+  const rest = Math.max(0, eindeutig.length - 2);
   const kopf = eindeutig.slice(0, 2).join("/");
   return rest > 0 ? `${kopf} +${rest}` : kopf;
 }

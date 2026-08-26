@@ -229,73 +229,113 @@
   "EDDM/26L": [
     {
       "name": "B15",
-      "laengs_m": 23.4,
-      "seite": "right"
+      "seite": "right",
+      "laengs_m": 23.4
     },
     {
       "name": "B14",
-      "laengs_m": 85.3,
-      "seite": "right"
+      "seite": "right",
+      "laengs_m": 85.3
     },
     {
       "name": "B13",
-      "laengs_m": 143,
-      "seite": "right"
+      "seite": "right",
+      "laengs_m": 143.0
     },
     {
       "name": "B12",
-      "laengs_m": 1051.7,
-      "seite": "right"
+      "seite": "right",
+      "laengs_m": 1051.7
     },
     {
       "name": "B11",
-      "laengs_m": 1336.4,
-      "seite": "right"
+      "seite": "right",
+      "laengs_m": 1336.4
     },
     {
       "name": "B10",
-      "laengs_m": 1655.6,
-      "seite": "right"
+      "seite": "right",
+      "laengs_m": 1655.6
     },
     {
       "name": "B8",
-      "laengs_m": 1790.3,
-      "seite": "right"
+      "seite": "right",
+      "laengs_m": 1790.3
     },
     {
       "name": "B9",
-      "laengs_m": 1859.7,
-      "seite": "right"
+      "seite": "right",
+      "laengs_m": 1859.7
     },
     {
       "name": "B7",
+      "seite": "right",
       "laengs_m": 2258.7,
-      "seite": "right"
+      "verlauf": [
+        {
+          "laengs_m": 2394.3,
+          "quer_m": 1.1
+        },
+        {
+          "laengs_m": 2360.4,
+          "quer_m": 4.5
+        },
+        {
+          "laengs_m": 2336.2,
+          "quer_m": 8.1
+        },
+        {
+          "laengs_m": 2310.0,
+          "quer_m": 13.6
+        },
+        {
+          "laengs_m": 2278.4,
+          "quer_m": 21.8
+        },
+        {
+          "laengs_m": 2258.7,
+          "quer_m": 27.9
+        },
+        {
+          "laengs_m": 2236.0,
+          "quer_m": 35.8
+        }
+      ]
     },
     {
       "name": "B6",
+      "seite": "right",
       "laengs_m": 2367.5,
-      "seite": "right"
+      "verlauf": [
+        {
+          "laengs_m": 2342.8,
+          "quer_m": 22.6
+        },
+        {
+          "laengs_m": 2367.5,
+          "quer_m": 30.8
+        }
+      ]
     },
     {
       "name": "B4",
-      "laengs_m": 2987.9,
-      "seite": "right"
+      "seite": "right",
+      "laengs_m": 2987.9
     },
     {
       "name": "B3",
-      "laengs_m": 3843.6,
-      "seite": "right"
+      "seite": "right",
+      "laengs_m": 3843.6
     },
     {
       "name": "B2",
-      "laengs_m": 3914.8,
-      "seite": "right"
+      "seite": "right",
+      "laengs_m": 3914.8
     },
     {
       "name": "B1",
-      "laengs_m": 3946.2,
-      "seite": "right"
+      "seite": "right",
+      "laengs_m": 3946.2
     }
   ]
 }

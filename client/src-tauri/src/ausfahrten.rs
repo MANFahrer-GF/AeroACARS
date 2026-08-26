@@ -87,6 +87,28 @@ const VERLAUF_MIN_ABSTAND_M: f64 = 8.0;
 const VERLAUF_VOR_M: f64 = 50.0;
 const VERLAUF_NACH_M: f64 = 400.0;
 
+/// Wie weit der Verlauf ueber die Bahnkante hinaus mitgenommen wird.
+///
+/// # Warum das noetig wurde
+///
+/// Bis zur QS am 26.08.2026 war der Verlauf nur LAENGS beschnitten. Quer
+/// lief er, so weit die Bodenkarte reichte: In Muenchen begann B6 bei
+/// 219,5 Metern neben der Mittellinie, tief im Vorfeld. Die Queransicht
+/// zeigt rund dreissig Meter — der Korridor waere zu sieben Achteln
+/// ausserhalb des Bildes gewesen.
+///
+/// Wie viel darueber hinaus sinnvoll ist, sagt die ZEICHNUNG, nicht das
+/// Gefuehl: Die Queransicht zeigt neben der Kante nur den gruenen
+/// Streifen, `GRUEN_H = 13` Pixel — bei Muenchener Massstab rund drei
+/// Meter. Alles Weitere klemmt `querZuY` auf den Rand und laege dort als
+/// waagerechter Strich, also als Behauptung, der Rollweg fuehre die Kante
+/// entlang.
+///
+/// Sechs Meter: knapp das Doppelte des Sichtbaren, damit der Korridor den
+/// Rand erkennbar erreicht, ohne einen langen unsichtbaren Schwanz
+/// mitzuschleppen.
+const VERLAUF_QUER_UEBER_KANTE_M: f64 = 6.0;
+
 /// Wie nah ein Stützpunkt an der Bahnkante liegen muss, um als Ausfahrt zu
 /// zählen, in Metern.
 ///
@@ -204,7 +226,7 @@ pub fn ausfahrten_fuer_bahn(
             name,
             laengs_m: (laengs_m * 10.0).round() / 10.0,
             seite,
-            verlauf: verlauf_ausduennen(&roh, laengs_m),
+            verlauf: verlauf_ausduennen(&roh, laengs_m, halbe_breite),
         })
         .collect()
 }
@@ -215,10 +237,19 @@ pub fn ausfahrten_fuer_bahn(
 /// zweihundert Meter vor der Ausfahrt neben der Bahn liegt, gehoert zu
 /// einem anderen Teil des Rollwegs und wuerde die Zeichnung nur
 /// zukleistern.
-fn verlauf_ausduennen(roh: &[(f64, f64)], kante_laengs: f64) -> Vec<Verlaufspunkt> {
+fn verlauf_ausduennen(
+    roh: &[(f64, f64)],
+    kante_laengs: f64,
+    halbe_breite_m: f64,
+) -> Vec<Verlaufspunkt> {
+    let quer_max = halbe_breite_m + VERLAUF_QUER_UEBER_KANTE_M;
     let mut aus: Vec<Verlaufspunkt> = Vec::new();
     for &(laengs, quer) in roh {
         if laengs < kante_laengs - VERLAUF_VOR_M || laengs > kante_laengs + VERLAUF_NACH_M {
+            continue;
+        }
+        // Und quer: was weit neben der Bahn liegt, wird nie gezeichnet.
+        if quer.abs() > quer_max {
             continue;
         }
         if let Some(letzter) = aus.last() {
@@ -235,6 +266,26 @@ fn verlauf_ausduennen(roh: &[(f64, f64)], kante_laengs: f64) -> Vec<Verlaufspunk
     // Ein einzelner Punkt ist keine Linie.
     if aus.len() < 2 {
         aus.clear();
+        return aus;
+    }
+
+    // Von der Bahn WEG, nicht auf sie zu.
+    //
+    // Die Reihenfolge kommt aus der Bodenkarte und meint nichts: OSM
+    // zeichnet einen Rollweg mal vom Vorfeld zur Bahn, mal andersherum.
+    // In Muenchen lief B6 von aussen nach innen, B7 andersherum — auf
+    // demselben Flughafen, an derselben Bahn.
+    //
+    // Fuer die Anzeige ist die Richtung nicht gleichgueltig: Der
+    // Korridor soll dort beginnen, wo das Flugzeug die Bahn verlaesst.
+    // Die Punktfolge wird deshalb umgedreht, wenn ihr Ende naeher an der
+    // Mittellinie liegt als ihr Anfang. Die Geometrie bleibt dabei
+    // unangetastet — es wird nicht sortiert, nur gedreht.
+    let (Some(erster), Some(letzter)) = (aus.first(), aus.last()) else {
+        return aus;
+    };
+    if letzter.quer_m.abs() < erster.quer_m.abs() {
+        aus.reverse();
     }
     aus
 }
@@ -296,14 +347,19 @@ mod tests {
     fn der_verlauf_kommt_mit() {
         // Ein Schnellabrollweg, wie B6 ihn hat: an der Kante beginnend,
         // dann flach nach aussen.
+        // Die Punkte liegen im gezeichneten Bereich: Bahnhalbbreite 23 m
+        // plus sechs. Was weiter aussen liegt, wird bewusst verworfen —
+        // die Queransicht zeigt es nicht (siehe
+        // `VERLAUF_QUER_UEBER_KANTE_M`).
         let g = karte(&rollweg_aus(
             "B6",
             &[
-                (880.0, -20.0),
-                (920.0, -30.0),
-                (960.0, -45.0),
-                (1010.0, -65.0),
-                (1080.0, -95.0),
+                (860.0, -4.0),
+                (880.0, -10.0),
+                (900.0, -16.0),
+                (920.0, -22.0),
+                (945.0, -28.0),
+                (980.0, -40.0),
             ],
         ));
         let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
@@ -324,9 +380,15 @@ mod tests {
     fn der_verlauf_traegt_den_echten_winkel() {
         // Das ist der Punkt der ganzen Uebung: Ein 25-Grad-Rollweg muss
         // als 25 Grad ankommen, nicht als 80.
+        // Ein 25-Grad-Rollweg, aufgeloest im gezeichneten Bereich.
         let g = karte(&rollweg_aus(
             "B6",
-            &[(900.0, -23.0), (1000.0, -69.6), (1100.0, -116.2)],
+            &[
+                (880.0, -4.0),
+                (900.0, -13.3),
+                (920.0, -22.6),
+                (933.0, -28.7),
+            ],
         ));
         let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
         let v = &a[0].verlauf;
@@ -344,8 +406,11 @@ mod tests {
         // OpenStreetMap hat teils Punkte im Meterabstand. Jede Landung
         // traegt sie durch die Leitung; bei vierzehn Ausfahrten summiert
         // sich das.
+        // Der Rollweg laeuft flach nach aussen und bleibt dabei im
+        // gezeichneten Bereich — sonst prueft der Test die
+        // Querbeschneidung statt der Ausduennung.
         let dicht: Vec<(f64, f64)> = (0..120)
-            .map(|i| (900.0 + i as f64 * 2.0, -23.0 - i as f64 * 1.0))
+            .map(|i| (860.0 + i as f64 * 2.0, -(i as f64) * 0.24))
             .collect();
         let g = karte(&rollweg_aus("B6", &dicht));
         let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
@@ -511,5 +576,104 @@ mod tests {
         };
         let (a, b) = vor(T.0, T.1, laengs, kurs);
         vor(a, b, quer.abs(), kurs + if quer >= 0.0 { std::f64::consts::FRAC_PI_2 } else { -std::f64::consts::FRAC_PI_2 })
+    }
+}
+
+#[cfg(test)]
+mod qs_eddm {
+/// Der Verlauf an einer ECHTEN Bodenkarte — Muenchen 26L.
+///
+/// Braucht `/tmp/eddm_ground.json` (vom Live-Server). Ohne die Datei
+/// uebersprungen, deshalb `#[ignore]`: In der CI liegt sie nicht, und ein
+/// Test, der dort still nichts prueft, waere schlimmer als keiner.
+///
+/// Lauf: `cargo test -p aeroacars-app --lib qs_eddm -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn qs_eddm_verlauf_am_echten_flughafen() {
+    let Ok(karte) = std::fs::read_to_string("/tmp/eddm_ground.json") else {
+        println!("keine EDDM-Karte in /tmp — uebersprungen");
+        return;
+    };
+    // EDDM 26L, echte Geometrie.
+    let alle = super::ausfahrten_fuer_bahn(
+        &karte, 48.34479722, 11.80461389, 48.34066944, 11.75101667, 60.0,
+    );
+    let mit = alle.iter().filter(|a| !a.verlauf.is_empty()).count();
+    let punkte: usize = alle.iter().map(|a| a.verlauf.len()).sum();
+    let voll = serde_json::to_string(&alle).unwrap().len();
+    let mut nur_eine = alle.clone();
+    // So wie `bahn_felder` zuschneidet: nur die genommene Ausfahrt.
+    let raeum = 2345.0_f64;
+    for a in nur_eine.iter_mut() {
+        if a.seite != "right" || (a.laengs_m - raeum).abs() > 200.0 {
+            a.verlauf.clear();
+        }
+    }
+    let knapp = serde_json::to_string(&nur_eine).unwrap().len();
+    println!("EDDM 26L: {} Ausfahrten, {} mit Verlauf, {} Punkte", alle.len(), mit, punkte);
+    println!("  ungekuerzt: {} B   zugeschnitten: {} B", voll, knapp);
+    for a in alle.iter().take(6) {
+        println!("  {:>8} bei {:>7.0} m {:>5}  Verlauf {} Punkte",
+                 a.name, a.laengs_m, a.seite, a.verlauf.len());
+    }
+    // Fuer die Anzeige-Pruefung herausschreiben.
+    std::fs::write("/tmp/eddm_ausfahrten.json", serde_json::to_string(&nur_eine).unwrap()).ok();
+    assert!(!alle.is_empty(), "keine Ausfahrten aus der echten Karte");
+    assert!(mit > 0, "keine einzige Ausfahrt traegt einen Verlauf");
+}
+
+    /// Wie viel Korridor der echte Bestand hergibt.
+    ///
+    /// Laeuft nur, wenn `/tmp/korridor_stich.json` daliegt (vom
+    /// Live-Server gezogen). Kein Teil der normalen Reihe.
+    #[test]
+    #[ignore]
+    fn qs_korridor_am_bestand() {
+        let Ok(roh) = std::fs::read_to_string("/tmp/korridor_stich.json") else {
+            println!("keine Stichprobe — uebersprungen");
+            return;
+        };
+        let daten: serde_json::Value = serde_json::from_str(&roh).unwrap();
+        let mut bahnen = 0usize;
+        let mut ausfahrten_gesamt = 0usize;
+        let mut mit_verlauf = 0usize;
+        let mut erreicht_mitte = 0usize;
+        let mut punkte: Vec<usize> = Vec::new();
+        for z in daten.as_array().unwrap() {
+            let karte = z["geojson"].as_str().unwrap();
+            let (tlat, tlon) = (z["tlat"].as_f64().unwrap(), z["tlon"].as_f64().unwrap());
+            let (elat, elon) = (z["elat"].as_f64().unwrap(), z["elon"].as_f64().unwrap());
+            let breite = z["width_ft"].as_f64().unwrap() * 0.3048;
+            let a = super::ausfahrten_fuer_bahn(karte, tlat, tlon, elat, elon, breite);
+            if a.is_empty() {
+                continue;
+            }
+            bahnen += 1;
+            for x in &a {
+                ausfahrten_gesamt += 1;
+                if x.verlauf.len() >= 2 {
+                    mit_verlauf += 1;
+                    punkte.push(x.verlauf.len());
+                    // „Voller" Korridor: reicht bis in die Naehe der Mitte.
+                    if x.verlauf.iter().any(|v| v.quer_m.abs() <= 10.0) {
+                        erreicht_mitte += 1;
+                    }
+                }
+            }
+        }
+        punkte.sort_unstable();
+        let median = punkte.get(punkte.len() / 2).copied().unwrap_or(0);
+        println!("Bahnen mit Ausfahrten:      {bahnen}");
+        println!("Ausfahrten gesamt:          {ausfahrten_gesamt}");
+        println!(
+            "davon mit Korridor (>=2 P): {mit_verlauf}  ({:.0} %)",
+            100.0 * mit_verlauf as f64 / ausfahrten_gesamt.max(1) as f64
+        );
+        println!(
+            "davon bis zur Mitte:        {erreicht_mitte}  ({:.0} % aller)",
+            100.0 * erreicht_mitte as f64 / ausfahrten_gesamt.max(1) as f64
+        );
+        println!("Punkte je Korridor, Median: {median}");
     }
 }

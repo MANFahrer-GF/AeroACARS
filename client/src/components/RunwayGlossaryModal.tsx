@@ -32,6 +32,11 @@ const ENTRY_KEYS = [
   "airac",
   "vps_navdata",
   "ourairports",
+  // Die beiden Bodendaten-Quellen. Ihre Nennung ist Lizenzbedingung —
+  // OSM verlangt sie nach ODbL, X-Plane nach GPL. Siehe
+  // `AboutPanel.lizenzen.test.tsx`.
+  "osm_ground",
+  "xplane_apt",
   "agl",
   "fpm",
   "kt",

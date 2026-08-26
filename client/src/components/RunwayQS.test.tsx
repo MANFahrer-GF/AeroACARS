@@ -1072,3 +1072,174 @@ describe("Marke des grössten Versatzes", () => {
     expect(befunde, befunde.join("\n")).toEqual([]);
   });
 });
+
+/**
+ * Das Bild darf nie mehr oder weniger Ausfahrten behaupten, als es gibt.
+ *
+ * # Warum diese Prüfung gebaut wurde
+ *
+ * Die Zusammenfassung hat zwei Aufgaben, die einander widersprechen:
+ * lesbar bleiben und nichts verschweigen. Sie löst das, indem sie
+ * höchstens zwei Kennungen ausschreibt und den Rest zählt.
+ *
+ * Die erste Fassung setzte den Namen bei jedem Verbinden aus dem
+ * vorherigen TEXT neu zusammen und las das „+N" wieder heraus. Solange
+ * der Text von ihr selbst stammte, ging das gut. Ein Rollweg, der in OSM
+ * „A+1" heisst, wurde aber als „A und ein weiterer" gelesen — aus drei
+ * Ausfahrten wurden vier behauptete. Gefunden in einer QS-Runde mit
+ * bösartigen Namen, nicht im Betrieb.
+ *
+ * Seither wird intern gezählt und der Name erst am Schluss gesetzt.
+ */
+describe("Ausfahrten: die Zahl im Bild", () => {
+  /** Nur die Ausfahrtsbeschriftungen — die Skala trägt dieselben Ziffern. */
+  const ausfahrtsTexte = (mk: string) =>
+    [...mk.matchAll(/<text[^>]*font-size="9"[^>]*>([\s\S]*?)<\/text>/g)]
+      .map((m) => m[1]!.replace(/<[^>]+>/g, "").trim())
+      .filter(Boolean);
+
+  const FAELLE: Array<{ name: string; exits: unknown[]; erwartet: number }> = [
+    {
+      name: "vierzig auf sechzig Meter",
+      exits: Array.from({ length: 40 }, (_, i) => ({
+        name: `T${i}`, laengs_m: 500 + i * 1.5, seite: "right",
+      })),
+      erwartet: 40,
+    },
+    {
+      // OSM teilt einen Rollweg oft in Stücke, die alle gleich heissen.
+      name: "derselbe Name vierzigmal",
+      exits: Array.from({ length: 40 }, (_, i) => ({
+        name: "NP1", laengs_m: 500 + i * 1.5, seite: "right",
+      })),
+      erwartet: 1,
+    },
+    {
+      name: "ohne Namen",
+      exits: [
+        { name: "", laengs_m: 500, seite: "right" },
+        { name: "", laengs_m: 505, seite: "right" },
+      ],
+      erwartet: 0,
+    },
+    {
+      name: "eine einzige",
+      exits: [{ name: "A1", laengs_m: 900, seite: "left" }],
+      erwartet: 1,
+    },
+    {
+      name: "beide Seiten am selben Punkt",
+      exits: [
+        { name: "L1", laengs_m: 800, seite: "left" },
+        { name: "R1", laengs_m: 800, seite: "right" },
+      ],
+      erwartet: 2,
+    },
+    {
+      name: "lange Namen",
+      exits: [
+        { name: "ALPHA-BRAVO-CHARLIE", laengs_m: 500, seite: "left" },
+        { name: "DELTA-ECHO-FOXTROT", laengs_m: 520, seite: "left" },
+      ],
+      erwartet: 2,
+    },
+  ];
+
+  it("behauptet genau so viele, wie es gibt", () => {
+    const basis = VARIANTEN.find((v) => v.key === "dlh369")!.props;
+    const befunde: string[] = [];
+    for (const f of FAELLE) {
+      const mk = renderToStaticMarkup(
+        <RunwayDiagramV2 {...basis} runway_exits={f.exits as never} />,
+      );
+      let behauptet = 0;
+      for (const s of ausfahrtsTexte(mk)) {
+        const m = /\+(\d+)$/.exec(s);
+        behauptet +=
+          s.replace(/\s*\+\d+$/, "").split("/").filter(Boolean).length +
+          (m ? Number(m[1]) : 0);
+      }
+      if (behauptet !== f.erwartet) {
+        befunde.push(
+          `${f.name}: Bild behauptet ${behauptet}, tatsächlich ${f.erwartet}`,
+        );
+      }
+    }
+    expect(befunde, befunde.join("\n")).toEqual([]);
+  });
+});
+
+/**
+ * Der Korridor gehört zu der Ausfahrt, die genommen wurde.
+ *
+ * # Der Befund
+ *
+ * Das Fenster um den Räumpunkt ist 120 Meter breit, und in München
+ * liegen darin zwei Ausfahrten: B7 bei 2.259 m und B6 bei 2.368 m.
+ * Thomas' Räumpunkt war 2.345 m — 23 Meter von B6, 86 von B7. Gezeichnet
+ * wurde B7, weil `find` die erste Passende nimmt und die Liste nach
+ * Längsposition sortiert ist.
+ *
+ * Das ist genau der Einwand, mit dem diese Arbeit angefangen hat: „auf B6
+ * abgerollt, aber das Abrollen sieht auf der Darstellung ganz anders aus."
+ * Der Korridor hätte den falschen Rollweg gezeigt.
+ */
+describe("Korridor der genommenen Ausfahrt", () => {
+  it("nimmt die nächstgelegene, nicht die erste", () => {
+    const basis = VARIANTEN.find((v) => v.key === "dlh369")!.props;
+    // Zwei Ausfahrten im 120-Meter-Fenster, beide mit Verlauf. Die
+    // weiter entfernte steht vorn — so liegt es in der echten Liste.
+    const exits = [
+      {
+        name: "B7", laengs_m: 2259, seite: "right",
+        verlauf: [
+          { laengs_m: 2259, quer_m: 2 },
+          { laengs_m: 2300, quer_m: 28 },
+        ],
+      },
+      {
+        name: "B6", laengs_m: 2368, seite: "right",
+        verlauf: [
+          { laengs_m: 2368, quer_m: 22 },
+          { laengs_m: 2400, quer_m: 31 },
+        ],
+      },
+    ];
+    const mk = renderToStaticMarkup(
+      <RunwayDiagramV2 {...basis} runway_exits={exits as never} />,
+    );
+
+    // Der Korridor wird als eigener Pfad gezeichnet. Welcher der beiden
+    // es ist, verrät seine Längslage: B7 endet bei 2.300 m, B6 bei 2.400.
+    // Die Marke ③ steht am Räumpunkt und ist für beide gleich, taugt
+    // also nicht zur Unterscheidung — deshalb wird hier der gezeichnete
+    // Korridor selbst gesucht.
+    const korridor = /<path[^>]*fill="#3b82f6"[^>]*d="([^"]+)"/.exec(mk)?.[1]
+      ?? /<path[^>]*d="([^"]+)"[^>]*fill="#3b82f6"/.exec(mk)?.[1];
+    expect(
+      korridor,
+      "es wird gar kein Korridor gezeichnet — der Test prüft nichts",
+    ).toBeTruthy();
+
+    // Die x-Werte des Pfads in Metern zurückrechnen ist umständlich;
+    // einfacher und ebenso eindeutig: Der Korridor von B6 reicht weiter
+    // nach rechts als der von B7.
+    const xs = [...korridor!.matchAll(/(-?\d+(?:\.\d+)?)[, ]/g)]
+      .map((m) => Number(m[1]))
+      .filter((n, i) => i % 2 === 0);
+    const maxX = Math.max(...xs);
+    const nurB7 = renderToStaticMarkup(
+      <RunwayDiagramV2 {...basis} runway_exits={[exits[0]] as never} />,
+    );
+    const kB7 = /<path[^>]*fill="#3b82f6"[^>]*d="([^"]+)"/.exec(nurB7)?.[1]
+      ?? /<path[^>]*d="([^"]+)"[^>]*fill="#3b82f6"/.exec(nurB7)?.[1];
+    const xsB7 = [...(kB7 ?? "").matchAll(/(-?\d+(?:\.\d+)?)[, ]/g)]
+      .map((m) => Number(m[1]))
+      .filter((n, i) => i % 2 === 0);
+    expect(xsB7.length, "B7 allein zeichnet keinen Korridor").toBeGreaterThan(0);
+    expect(
+      maxX,
+      "der gezeichnete Korridor ist der von B7 — die erste, nicht die nächste",
+    ).toBeGreaterThan(Math.max(...xsB7) + 1);
+  });
+});

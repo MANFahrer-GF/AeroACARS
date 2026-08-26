@@ -118,6 +118,41 @@ export function AboutPanel({ onShowReleaseNotes }: Props) {
         <p className="about__hint">{t("about.acknowledgements_intro")}</p>
         <ul className="about__list">
           <li>
+            <strong>OpenStreetMap</strong> — Taxiway and stand geometry
+            for the ground charts, © OpenStreetMap contributors,
+            available under the{" "}
+            <a
+              href="https://opendatacommons.org/licenses/odbl/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open Database License
+            </a>
+            .
+          </li>
+          <li>
+            <strong>X-Plane Airport Data (apt.dat)</strong> — Taxiway
+            designators for airports where OpenStreetMap carries none.
+            Copyright © Robin A. Peel, released under the{" "}
+            <a
+              href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html"
+              target="_blank"
+              rel="noreferrer"
+            >
+              GNU General Public License
+            </a>
+            , obtained via the{" "}
+            <a
+              href="https://gateway.x-plane.com/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              X-Plane Scenery Gateway
+            </a>
+            . Only the designators are used; the geometry stays
+            OpenStreetMap's.
+          </li>
+          <li>
             <strong>OurAirports</strong> — Public-domain runway dataset
             powering the centerline/threshold correlation.{" "}
             <a

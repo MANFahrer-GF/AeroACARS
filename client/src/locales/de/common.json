@@ -559,6 +559,16 @@
           "abbr": "kt",
           "full": "Knots / Knoten",
           "explanation": "Geschwindigkeitseinheit, ≈ 1.852 km/h."
+        },
+        "osm_ground": {
+          "abbr": "OSM",
+          "full": "OpenStreetMap",
+          "explanation": "Rollwege, Haltepunkte und Standplätze der Bodenkarte stammen aus OpenStreetMap, © OpenStreetMap-Mitwirkende, unter der Open Database License (ODbL)."
+        },
+        "xplane_apt": {
+          "abbr": "apt.dat",
+          "full": "X-Plane Airport Data",
+          "explanation": "An Plätzen, für die OpenStreetMap keine Rollweg-Bezeichnungen führt, stammen die Namen aus den Flughafendaten von X-Plane — Copyright © Robin A. Peel, GNU General Public License, bezogen über das X-Plane Scenery Gateway. Übernommen werden nur die Bezeichnungen; die Linien bleiben die von OpenStreetMap."
         }
       }
     },

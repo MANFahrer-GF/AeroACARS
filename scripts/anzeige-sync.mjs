@@ -209,7 +209,45 @@ export function fehlendeSchluessel() {
       }
     }
   }
+
+  // Und: dieselbe Beschriftung darf nicht zwei verschiedene Texte haben.
+  //
+  // # Warum das dazugehoert
+  //
+  // Bis zum 26.08.2026 hat der Abgleich nur ERGAENZT. Wer den Text eines
+  // vorhandenen Schluessels aenderte, aenderte ihn nur im Client — die
+  // Webapp behielt still den alten. So stand auf live.kant.ovh weiter
+  // „Grösster Versatz", waehrend der Client schon „Grösster Versatz bis
+  // auf 60 kt" sagte: genau die angeforderte Berichtigung kam dort nie
+  // an, und nichts hat es gemeldet.
+  if (existsSync(WEBAPP)) {
+    for (const sprache of SPRACHEN) {
+      const a = sprachdatei(CLIENT, sprache);
+      const b = sprachdatei(WEBAPP, sprache);
+      if (a == null || b == null) continue;
+      for (const k of noetig) {
+        if (!hatSchluessel(a, k) || !hatSchluessel(b, k)) continue;
+        if (wert(a, k) !== wert(b, k)) {
+          luecken.push({
+            seite: "Webapp",
+            sprache,
+            schluessel: `${k} (Text weicht ab: „${wert(b, k)}" statt „${wert(a, k)}")`,
+          });
+        }
+      }
+    }
+  }
   return luecken;
+}
+
+/** Den Wert eines punktgetrennten Schluessels holen. */
+function wert(baum, k) {
+  let z = baum;
+  for (const t of k.split(".")) {
+    if (z == null || typeof z !== "object") return undefined;
+    z = z[t];
+  }
+  return z;
 }
 
 /** Die fehlenden Einträge aus dem Client in die Webapp übernehmen. */
@@ -223,7 +261,10 @@ function schreibeSchluessel() {
     if (quelle == null || ziel == null) continue;
     let geaendert = 0;
     for (const k of noetig) {
-      if (hatSchluessel(ziel, k) || !hatSchluessel(quelle, k)) continue;
+      if (!hatSchluessel(quelle, k)) continue;
+      // Vorhanden UND gleich → nichts zu tun. Vorhanden und ANDERS →
+      // ueberschreiben: Der Client ist die Quelle der Wahrheit.
+      if (hatSchluessel(ziel, k) && wert(ziel, k) === wert(quelle, k)) continue;
       const teile = k.split(".");
       let q = quelle;
       let z = ziel;
@@ -241,7 +282,7 @@ function schreibeSchluessel() {
         JSON.stringify(ziel, null, 2) + "\n",
         "utf-8",
       );
-      console.log(`  ergaenzt ${geaendert} Beschriftung(en) in locales/${sprache}`);
+      console.log(`  ${geaendert} Beschriftung(en) in locales/${sprache} übernommen`);
       n += geaendert;
     }
   }

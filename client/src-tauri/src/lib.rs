@@ -16002,10 +16002,65 @@ fn bahn_felder(
             name: a.name,
             laengs_m: a.laengs_m,
             seite: a.seite,
+            // Der Verlauf gehoert dazu — aus ihm zeichnet die
+            // Queransicht den Korridor des genommenen Rollwegs.
+            //
+            // Er fehlte hier bis zur QS-Runde 8 am 26.08.2026: berechnet,
+            // mit zwoelf Tests abgedeckt, und beim Umkopieren in einer
+            // Feldliste vergessen. Der Korridor erschien deshalb NUR in
+            // der Vorschau, wo ich ihn von Hand gesetzt hatte, und bei
+            // keinem einzigen echten Flug.
+            verlauf: a
+                .verlauf
+                .into_iter()
+                .map(|v| storage::Verlaufspunkt {
+                    laengs_m: v.laengs_m,
+                    quer_m: v.quer_m,
+                })
+                .collect(),
         })
         .collect(),
         _ => Vec::new(),
     };
+
+    // Den Verlauf nur dort behalten, wo die Anzeige ihn zeichnet.
+    //
+    // # Warum das noetig ist
+    //
+    // Die Queransicht zeichnet den Korridor NUR fuer die genommene
+    // Ausfahrt — Raeumseite, hoechstens 120 Meter vom Raeumpunkt. Alle
+    // anderen Verlaeufe wuerden mitreisen, ohne je gezeichnet zu werden.
+    //
+    // In Muenchen (26L) sind das 14 Ausfahrten mit je bis zu 57 Punkten:
+    // rund 36 Kilobyte je Landung, mehr als die Rollspur selbst. Auf
+    // eine Ausfahrt eingekuerzt bleiben davon rund 2,5.
+    //
+    // Die Reserve von 200 statt 120 Metern ist Absicht: Das Fenster der
+    // Anzeige muss VOLLSTAENDIG in dem liegen, was hier durchkommt.
+    // Waeren beide Zahlen gleich, wuerde jede kuenftige Lockerung dort
+    // stillschweigend ins Leere greifen — der Korridor verschwaende, und
+    // niemand wuesste warum.
+    const VERLAUF_BEHALTEN_M: f64 = 200.0;
+    // Dieselbe Ableitung wie unten in `clearance_side` — einmal
+    // gerechnet, damit beide nicht auseinanderlaufen koennen.
+    let raeum_seite: Option<String> = stats.bahn_raeum_seite.clone().or_else(|| {
+        match (stats.bahn_raeum_kurs_diff, stats.bahn_raeum_laengs_m) {
+            (Some(d), Some(ab)) => bahn_raeum_seite(d, &stats.bahn_spur, ab),
+            _ => None,
+        }
+    });
+    let mut ausfahrten = ausfahrten;
+    for a in ausfahrten.iter_mut() {
+        let nah = match (stats.bahn_raeum_laengs_m, raeum_seite.as_deref()) {
+            (Some(r), Some(seite)) => {
+                a.seite == seite && (a.laengs_m - r).abs() <= VERLAUF_BEHALTEN_M
+            }
+            _ => false,
+        };
+        if !nah {
+            a.verlauf.clear();
+        }
+    }
 
     BahnFelder {
         // Zwei Punkte, zwei Bedeutungen — siehe `bahn_kante_laengs_m`.
@@ -16032,12 +16087,7 @@ fn bahn_felder(
         // Querbewegung erst wenige Meter gross, und der Vertrag verlangt
         // zwei uebereinstimmende Groessen. Mit der ganzen Spur ist sie
         // sichtbar.
-        clearance_side: stats.bahn_raeum_seite.clone().or_else(|| {
-            match (stats.bahn_raeum_kurs_diff, stats.bahn_raeum_laengs_m) {
-                (Some(d), Some(ab)) => bahn_raeum_seite(d, &stats.bahn_spur, ab),
-                _ => None,
-            }
-        }),
+        clearance_side: raeum_seite.clone(),
         track_width_m: spur_m,
         // Solange die Spurweite aus der Typtabelle kommt, ist die Quelle
         // fest. Schritt 11 der Bauliste liest sie aus der Flugzeugdatei —
@@ -16154,6 +16204,14 @@ impl BahnFelder {
                             name: a.name.clone(),
                             laengs_m: a.laengs_m,
                             seite: a.seite.clone(),
+                            verlauf: a
+                                .verlauf
+                                .iter()
+                                .map(|v| aeroacars_mqtt::VerlaufspunktWire {
+                                    laengs_m: v.laengs_m,
+                                    quer_m: v.quer_m,
+                                })
+                                .collect(),
                         })
                         .collect(),
                 )
@@ -28089,6 +28147,11 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     stats.bahn_overrun_m = None;
     stats.bahn_proben = 0;
     stats.bahn_fenster_zu = false;
+    // Auch das Fensterende — `get_or_insert` weiter unten schreibt nur,
+    // wenn hier None steht. Bliebe der alte Wert stehen, bekaeme die
+    // zweite Landung die Messgrenze der ersten, und die Anzeige zeichnete
+    // sie an einer Stelle, an der dieses Flugzeug nie gemessen hat.
+    stats.bahn_fenster_zu_laengs_m = None;
     stats.bahn_spur.clear();
     stats.bahn_spur_laeuft = false;
     stats.bahn_raeum_laengs_m = None;
@@ -47644,6 +47707,7 @@ mod v0_16_6_bush_completeness_tests {
             stats.bahn_overrun_m = Some(12.0);
             stats.bahn_proben = 91;
             stats.bahn_fenster_zu = true;
+            stats.bahn_fenster_zu_laengs_m = Some(1180.0);
 
             clear_approach_stability_and_rollout(&mut stats);
 
@@ -47658,6 +47722,18 @@ mod v0_16_6_bush_completeness_tests {
             assert!(stats.bahn_overrun_m.is_none());
             assert_eq!(stats.bahn_proben, 0);
             assert!(!stats.bahn_fenster_zu);
+            // ⚠ Diese Pruefung zaehlt jedes Feld einzeln auf — sie ist
+            // deshalb nur so vollstaendig wie ihre Liste. Genau hier fiel
+            // `bahn_fenster_zu_laengs_m` am 26.08.2026 durch: Das Feld war
+            // neu, der Ruecksetzer kannte es nicht, und dieser Test auch
+            // nicht. Die zweite Landung haette die Messgrenze der ersten
+            // bekommen, und `get_or_insert` haette sie nie ueberschrieben.
+            //
+            // Wer ein `bahn_*`-Feld ergaenzt, ergaenzt BEIDE Listen.
+            assert!(
+                stats.bahn_fenster_zu_laengs_m.is_none(),
+                "das Fensterende des ersten Aufsetzens bleibt stehen",
+            );
         }
 
         // Die Ausfahrten muessen den ganzen Weg gehen.
@@ -47697,11 +47773,34 @@ mod v0_16_6_bush_completeness_tests {
                 side: "left".to_string(),
                 displaced_threshold_ft: 0,
             });
+            // Rollweg D4 aus der ECHTEN Bodenkarte von EDDH.
+            //
+            // Vorher stand hier eine erfundene Zwei-Punkte-Linie. Sie
+            // reichte, solange nur „kommen Ausfahrten an?" geprueft
+            // wurde — fuer den VERLAUF taugt sie nicht: Sie lag ganz
+            // ausserhalb des Streifens, den die Queransicht zeigt, und
+            // wurde damit zu Recht verworfen. Ein Test auf erfundener
+            // Geometrie prueft die Rechnung, nicht die Wirklichkeit.
+            //
+            // D4 trifft die Bahn bei rund 1.950 m und laeuft von der
+            // Mittellinie nach aussen — genau der Fall, den die Anzeige
+            // zeichnet.
+            //
+            // ⚠ OSM teilt Rollwege in Stuecke, die ALLE denselben Namen
+            // tragen. „D4" gibt es in Hamburg dreimal; zwei Segmente
+            // liegen ganz ausserhalb des gezeichneten Streifens. Wer das
+            // erste nimmt, das er findet, bekommt eine Linie 64 bis 201
+            // Meter neben der Mittellinie — mir genau so passiert.
             stats.arr_ground_geojson = Some(
                 r#"{"features":[
-                  {"properties":{"k":"taxiway","r":"S4"},
+                  {"properties":{"k":"taxiway","r":"D4"},
                    "geometry":{"type":"LineString",
-                     "coordinates":[[9.982400,53.627218],[9.983079,53.626734]]}}
+                     "coordinates":[[9.976905,53.624765],[9.976979,53.624791],
+                       [9.977071,53.624815],[9.977195,53.624835],
+                       [9.977291,53.624842],[9.977414,53.62484],
+                       [9.97753,53.624826],[9.977643,53.624802],
+                       [9.977733,53.624771],[9.97781,53.62474],
+                       [9.977883,53.624694],[9.978041,53.62458]]}}
                 ]}"#
                 .to_string(),
             );
@@ -47711,6 +47810,55 @@ mod v0_16_6_bush_completeness_tests {
                 "die Bodenkarte liegt vor und die Bahn ist gematcht, \
                  trotzdem kommen keine Ausfahrten an — der Aufruf in \
                  `bahn_felder` fehlt"
+            );
+
+            // Und der VERLAUF muss mitkommen — fuer die GENOMMENE
+            // Ausfahrt.
+            //
+            // Er wird bewusst nur dort behalten: Die Queransicht
+            // zeichnet den Korridor nur fuer sie, alle anderen
+            // Verlaeufe reisten ungezeichnet mit (in Muenchen rund 36
+            // Kilobyte je Landung). Ohne Raeumpunkt ist deshalb KEIN
+            // Verlauf zu erwarten — das ist kein Fehler, sondern der
+            // Zuschnitt.
+            assert!(
+                felder.runway_exits.iter().all(|a| a.verlauf.is_empty()),
+                "ohne Raeumpunkt reisen Verlaeufe mit, die nie \
+                 gezeichnet werden"
+            );
+
+            // Jetzt mit Raeumpunkt auf der Ausfahrt selbst.
+            let ziel = felder.runway_exits[0].clone();
+            stats.bahn_raeum_laengs_m = Some(ziel.laengs_m);
+            stats.bahn_raeum_seite = Some(ziel.seite.clone());
+            let felder = bahn_felder(&stats, Some("A320"), None);
+
+            //
+            // Genau derselbe Fehler, eine Ebene tiefer: `ausfahrten.rs`
+            // rechnete ihn aus, zwoelf Tests deckten ihn ab — und beim
+            // Umkopieren nach `storage::RunwayExit` stand er in keiner
+            // Feldliste. Die Queransicht zeichnete den Korridor deshalb
+            // NUR in der Vorschau, wo er von Hand gesetzt war, und bei
+            // keinem einzigen echten Flug.
+            //
+            // Auch das faellt nur auf, wenn man durch `bahn_felder` geht:
+            // `ausfahrten_fuer_bahn` allein war die ganze Zeit gruen.
+            assert!(
+                felder.runway_exits.iter().any(|a| !a.verlauf.is_empty()),
+                "die Ausfahrten kommen an, aber ohne Verlauf — der \
+                 Korridor der Queransicht bleibt leer"
+            );
+            // Und er muss in Bahnkoordinaten stehen, nicht in Graden.
+            let v = &felder
+                .runway_exits
+                .iter()
+                .find(|a| !a.verlauf.is_empty())
+                .expect("Ausfahrt mit Verlauf")
+                .verlauf;
+            assert!(
+                v.iter().all(|p| p.laengs_m.abs() < 20_000.0 && p.quer_m.abs() < 2_000.0),
+                "der Verlauf traegt keine Bahnkoordinaten: {:?}",
+                &v[..v.len().min(3)],
             );
 
             // Und ohne Karte bleibt es leer, statt etwas zu behaupten.

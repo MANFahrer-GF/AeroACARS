@@ -559,6 +559,16 @@
           "abbr": "kt",
           "full": "Nodi",
           "explanation": "Unità di velocità, ≈ 1.852 km/h."
+        },
+        "osm_ground": {
+          "abbr": "OSM",
+          "full": "OpenStreetMap",
+          "explanation": "Vie di rullaggio, punti d'attesa e piazzole della mappa di terra provengono da OpenStreetMap, © contributori OpenStreetMap, secondo la Open Database License (ODbL)."
+        },
+        "xplane_apt": {
+          "abbr": "apt.dat",
+          "full": "X-Plane Airport Data",
+          "explanation": "Negli aeroporti dove OpenStreetMap non riporta le sigle delle vie di rullaggio, i nomi provengono dai dati aeroportuali di X-Plane — Copyright © Robin A. Peel, GNU General Public License, ottenuti dall'X-Plane Scenery Gateway. Si usano solo le sigle; le linee restano quelle di OpenStreetMap."
         }
       }
     },

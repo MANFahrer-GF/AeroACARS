@@ -255,6 +255,21 @@ pub struct RunwayExit {
     pub laengs_m: f64,
     /// `"left"` oder `"right"` in Landerichtung.
     pub seite: String,
+    /// Wie der Rollweg von der Bahn wegfuehrt — in Bahnkoordinaten.
+    ///
+    /// Leer bei Fluegen vor v1.7.5 und ueberall dort, wo die Bodenkarte
+    /// den Rollweg nicht als Linienzug fuehrt.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub verlauf: Vec<Verlaufspunkt>,
+}
+
+/// Ein Stuetzpunkt eines Rollwegs, wie er gespeichert wird.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct Verlaufspunkt {
+    /// Distanz ab der Landeschwelle, in Metern.
+    pub laengs_m: f64,
+    /// Abstand zur Mittellinie, in Metern.
+    pub quer_m: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -379,7 +394,7 @@ pub struct LandingRecord {
     /// Bewertungsgrenze bei 2.251 m und daneben einen Hoechstwert, der
     /// nur bis 1.650 m gilt: beides fuer sich richtig, zusammen ein
     /// Widerspruch.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub mess_ende_laengs_m: Option<f64>,
     /// Warum die seitliche Bewertung entfiel — der Grund, den die
     /// BEWERTUNG gefaellt hat, nicht ein zweiter aus der Anzeige.
@@ -1693,10 +1708,22 @@ mod deleted_landings_tombstone_tests {
             name: "S4".to_string(),
             laengs_m: 1831.6,
             seite: "left".to_string(),
+            verlauf: vec![
+                Verlaufspunkt { laengs_m: 1820.0, quer_m: 2.0 },
+                Verlaufspunkt { laengs_m: 1900.0, quer_m: 44.0 },
+            ],
         }];
         let zurueck: LandingRecord =
             serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
         assert_eq!(zurueck.scoring_cutoff_m, Some(1642.0));
+        // Der Verlauf muss die Runde ueberleben — aus ihm zeichnet die
+        // Queransicht den Korridor. Er fiel bis v1.7.5 beim Umkopieren
+        // heraus und erschien deshalb bei keinem echten Flug.
+        assert_eq!(
+            zurueck.runway_exits[0].verlauf.len(),
+            2,
+            "der Verlauf ueberlebt das Speichern nicht",
+        );
         assert_eq!(zurueck.runway_exits.len(), 1);
         assert_eq!(zurueck.runway_exits[0].name, "S4");
         assert_eq!(zurueck.lateral_samples.len(), 1);

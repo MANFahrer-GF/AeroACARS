@@ -957,7 +957,18 @@ pub struct BahnWire {
     /// Bewertungsgrenze bei 2.251 m und daneben einen Hoechstwert, der
     /// nur bis 1.650 m gilt: beides fuer sich richtig, zusammen ein
     /// Widerspruch.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ///
+    /// # Warum hier KEIN `skip_serializing_if`
+    ///
+    /// Alle Geschwister in dieser Struktur werden immer gesendet, auch
+    /// als `null`. Das ist Absicht: Der Recorder patcht per RFC 7396,
+    /// dort LOESCHT ein `null` das Feld, und ein fehlendes laesst es
+    /// stehen. Ein Feld, das sich nie als `null` zeigt, kann einen alt
+    /// gewordenen Wert also nie mehr raeumen.
+    ///
+    /// Ich hatte hier zuerst `skip_serializing_if` stehen — aus Gewohnheit,
+    /// nicht aus einem Grund. Damit waere dieses eine Feld das einzige
+    /// gewesen, das sich nicht zuruecknehmen laesst.
     pub mess_ende_laengs_m: Option<f64>,
     pub clearance_speed_kt: Option<f64>,
     pub clearance_side: Option<String>,
@@ -1024,6 +1035,22 @@ pub struct RunwayExitWire {
     pub laengs_m: f64,
     /// `"left"` oder `"right"` in Landerichtung.
     pub seite: String,
+    /// Wie der Rollweg von der Bahn wegfuehrt — in Bahnkoordinaten.
+    ///
+    /// Daraus zeichnet die Queransicht den Korridor unter der Spur. Leer
+    /// heisst „keine Bodenkarte fuer diesen Rollweg", nicht „gerade".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub verlauf: Vec<VerlaufspunktWire>,
+}
+
+/// Ein Stuetzpunkt eines Rollwegs auf der Leitung.
+///
+/// Eigener Typ aus demselben Grund wie `LateralSampleWire`: Dieses Crate
+/// haengt nicht von `storage` ab, die Abhaengigkeit laeuft andersherum.
+#[derive(Clone, Copy, Debug, Serialize, serde::Deserialize)]
+pub struct VerlaufspunktWire {
+    pub laengs_m: f64,
+    pub quer_m: f64,
 }
 
 /// Ein Stuetzpunkt der Rollspur auf der Leitung.
@@ -2491,6 +2518,21 @@ mod tests {
         // Und das Fensterende daneben. Ohne diese Zeile faellt nur auf,
         // dass das Feld existiert — nicht, dass es die Leitung erreicht.
         assert_eq!(j["mess_ende_laengs_m"], 1210.0);
+        // Und als `null`, wenn es keinen Wert gibt — sonst kann der
+        // Recorder einen alt gewordenen Wert nie mehr raeumen (RFC 7396:
+        // `null` loescht, fehlend laesst stehen). Diese Zeile haelt das
+        // Feld bei seinen Geschwistern.
+        {
+            let mut leer = w.clone();
+            leer.mess_ende_laengs_m = None;
+            let jl: serde_json::Value =
+                serde_json::from_str(&serde_json::to_string(&leer).unwrap()).unwrap();
+            assert!(
+                jl.get("mess_ende_laengs_m").is_some(),
+                "Feld faellt bei None ganz aus der Nachricht",
+            );
+            assert!(jl["mess_ende_laengs_m"].is_null());
+        }
         assert_eq!(j["clearance_side"], "left");
         assert_eq!(j["track_width_source"], "aircraft_file");
         assert_eq!(j["lateral_samples"][1]["quer_m"], -6.1);
@@ -2540,6 +2582,7 @@ mod tests {
                         name: format!("S{i}"),
                         laengs_m: 1831.6,
                         seite: "left".to_string(),
+                        verlauf: vec![VerlaufspunktWire { laengs_m: 1820.0, quer_m: 2.0 }],
                     })
                     .collect(),
             ),
