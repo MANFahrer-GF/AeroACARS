@@ -5,6 +5,7 @@ import "./i18n";
 import "./App.css";
 import { applyTheme, getInitialTheme } from "./theme";
 import { SkinProvider } from "./components/SkinContext";
+import { BasemapProvider } from "./components/BasemapContext";
 import { initSentry, getConsent, Sentry } from "./lib/sentry";
 import {
   invoke,
@@ -133,7 +134,9 @@ function Root() {
 
   return (
     <SkinProvider>
-      <App />
+      <BasemapProvider>
+        <App />
+      </BasemapProvider>
     </SkinProvider>
   );
 }

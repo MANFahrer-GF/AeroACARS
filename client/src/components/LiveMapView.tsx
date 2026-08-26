@@ -29,15 +29,22 @@ import { simKindLabel } from "../lib/simKind";
 import { useMapEvents, LiveMapEventList } from "./LiveMapEvents";
 import { LiveMapEmptyState, nextBidInfo, type NextBidInfo } from "./LiveMapEmptyState";
 import { LiveRecordingIndicator } from "./LiveRecordingIndicator";
+import { useKartengrundlage } from "./BasemapContext";
 
-const BASEMAP_DARK = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
-const BASEMAP_LIGHT = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+// Die Stil-Adressen kommen vom Server — siehe `BasemapContext`. CARTO
+// verlangt seit dem 26.08.2026 einen Schlüssel, und der soll austauschbar
+// sein, ohne dass jeder Pilot ein Update braucht.
+//
 // Satellit (Esri World Imagery + Namens-Overlay, kein API-Key). Manuell wählbar
 // über den Karten-Toggle. glyphs auf die CARTO-Fonts (führen "Noto Sans Regular"
 // wie dark/light — demotiles hat den Font NICHT, sonst fehlten Waypoint-Namen).
-const BASEMAP_SAT: StyleSpecification = {
+//
+// ⚠ Auch die SCHRIFTEN kommen von CARTO. Der Satellitenstil braucht den
+// Schlüssel deshalb genauso, obwohl seine Kacheln von Esri stammen —
+// sonst fehlten dort eines Tages alle Beschriftungen.
+const satStil = (glyphen: string): StyleSpecification => ({
   version: 8,
-  glyphs: "https://tiles.basemaps.cartocdn.com/fonts/{fontstack}/{range}.pbf",
+  glyphs: glyphen,
   sources: {
     "esri-imagery": {
       type: "raster",
@@ -57,7 +64,7 @@ const BASEMAP_SAT: StyleSpecification = {
     { id: "esri-imagery", type: "raster", source: "esri-imagery" },
     { id: "esri-reference", type: "raster", source: "esri-reference" },
   ],
-};
+});
 
 interface RouteFix {
   ident: string;
@@ -356,6 +363,7 @@ interface Props {
 }
 
 export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBriefing, sichtbar = true }: Props) {
+  const grundlage = useKartengrundlage();
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -898,7 +906,12 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     if (!containerRef.current || mapRef.current) return;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: basemapRef.current === "sat" ? BASEMAP_SAT : readTheme() === "dark" ? BASEMAP_DARK : BASEMAP_LIGHT,
+      style:
+        basemapRef.current === "sat"
+          ? satStil(grundlage.glyphen)
+          : readTheme() === "dark"
+            ? grundlage.dunkel
+            : grundlage.hell,
       center: [6, 48],
       zoom: 4,
       attributionControl: { compact: true },
@@ -990,7 +1003,13 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     // unabhängig. Unmount-/Re-Run-sicher (cancelled + mapRef-Check).
     const map = mapRef.current;
     if (!map) return;
-    map.setStyle(basemap === "sat" ? BASEMAP_SAT : theme === "dark" ? BASEMAP_DARK : BASEMAP_LIGHT);
+    map.setStyle(
+      basemap === "sat"
+        ? satStil(grundlage.glyphen)
+        : theme === "dark"
+          ? grundlage.dunkel
+          : grundlage.hell,
+    );
     let cancelled = false;
     let elapsed = 0;
     const ensureOverlays = () => {

@@ -9,9 +9,11 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { invoke } from "../lib/ipc";
 import { FlightProfile } from "./FlightProfile";
+import { useKartengrundlage } from "./BasemapContext";
 
-const BASEMAP_DARK = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
-const BASEMAP_LIGHT = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+// Die Stil-Adressen kommen vom Server, damit ein Schluesselwechsel bei
+// CARTO kein Release kostet — siehe `BasemapContext`. Die eingebauten
+// Werte greifen, solange der Server nichts gesagt hat.
 const PAGE = 25;
 
 interface Stats {
@@ -113,6 +115,7 @@ const badge = (s: string | undefined, t: TFunction) =>
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
 
 export function LogbookView() {
+  const grundlage = useKartengrundlage();
   const { t, i18n } = useTranslation();
   const [stats, setStats] = useState<Stats | null>(null);
   const [items, setItems] = useState<Item[]>([]);
@@ -178,7 +181,7 @@ export function LogbookView() {
     const dark = document.documentElement.dataset.theme === "dark";
     const map = new maplibregl.Map({
       container: mapElRef.current,
-      style: dark ? BASEMAP_DARK : BASEMAP_LIGHT,
+      style: dark ? grundlage.dunkel : grundlage.hell,
       center: route.length ? [route[Math.floor(route.length / 2)].lon, route[Math.floor(route.length / 2)].lat] : [6, 48],
       zoom: 5,
       attributionControl: { compact: true },
