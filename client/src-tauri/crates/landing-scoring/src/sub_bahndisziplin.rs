@@ -145,6 +145,24 @@ pub fn achsen_abweichung_grad(
     proben: &[(f64, f64)],
     bis_laengs_m: f64,
 ) -> Option<f64> {
+    achsen_befund(proben, bis_laengs_m).map(|b| b.winkel_grad)
+}
+
+/// Was die Rollspur im gewerteten Fenster über die Achse aussagt.
+///
+/// Der blosse Winkel reicht nicht, um „unsere Achse ist falsch" von „das
+/// Flugzeug fuhr schräg" zu unterscheiden — siehe `achse_fragwuerdig`.
+#[derive(Debug, Clone, Copy)]
+pub struct AchsenBefund {
+    /// Winkel der Ausgleichsgeraden zur Bahnachse, in Grad.
+    pub winkel_grad: f64,
+    /// Wechselt die Querlage im Fenster das Vorzeichen?
+    pub kreuzt_mitte: bool,
+    /// Grösster Betrag der Querlage im Fenster, in Metern.
+    pub groesster_betrag_m: f64,
+}
+
+pub fn achsen_befund(proben: &[(f64, f64)], bis_laengs_m: f64) -> Option<AchsenBefund> {
     let auf: Vec<(f64, f64)> = proben
         .iter()
         .copied()
@@ -167,7 +185,94 @@ pub fn achsen_abweichung_grad(
     if !steigung.is_finite() {
         return None;
     }
-    Some(steigung.atan().to_degrees())
+    let kleinste = auf.iter().map(|(_, y)| *y).fold(f64::INFINITY, f64::min);
+    let groesste = auf.iter().map(|(_, y)| *y).fold(f64::NEG_INFINITY, f64::max);
+    Some(AchsenBefund {
+        winkel_grad: steigung.atan().to_degrees(),
+        kreuzt_mitte: kleinste < 0.0 && groesste > 0.0,
+        groesster_betrag_m: kleinste.abs().max(groesste.abs()),
+    })
+}
+
+/// Wie weit von der Mitte darf eine kreuzende Spur wandern und trotzdem
+/// als Manöver gelten — als Anteil der BAHNBREITE.
+///
+/// 0,25 heisst: Die Spur blieb in der mittleren Hälfte der Bahn. Das ist
+/// keine angepasste Zahl, sondern eine geometrische Aussage — wer die
+/// Mittellinie kreuzt und dabei die mittlere Hälfte nie verlässt, kann
+/// nicht Opfer einer verdrehten Achse sein: Eine Drehung, die über den
+/// Rollweg mehr als ein Grad ausmacht, traegt das Flugzeug weit aus der
+/// Mitte heraus und wechselt dabei nicht das Vorzeichen.
+///
+/// Am Korpus (46 Landungen mit Rollspur, 37 Plätze, 27.08.2026):
+///
+/// ```text
+/// EDDM  9,2 m / 60 m = 0,15   kreuzt   -> Manöver, wird bewertet
+/// SLVR 12,9 m / 45 m = 0,29   kreuzt   -> bleibt uebersprungen
+/// FACT 35,3 m / 61 m = 0,58   kreuzt   -> bleibt uebersprungen
+/// EDHE 45,7 m / 45 m = 1,02   einseitig -> bleibt uebersprungen
+/// ```
+const MANOEVER_ANTEIL_BREITE: f64 = 0.25;
+
+/// Bis wohin die Ausgleichsgerade fuer den Achsenwinkel gelegt wird.
+///
+/// # Warum das eine eigene Funktion ist
+///
+/// Weil die Reihenfolge der eigentliche Fehler war und niemand sie sah.
+/// Am Aufrufer stand `kante.or(raeum)` — die KANTE zuerst, also die
+/// Stelle, an der das Flugzeug die Bahn VERLASSEN hat. Die Gerade lief
+/// damit ueber das ganze Ausschwenken zur Ausfahrt und stand schraeg;
+/// gemeldet wurde „Szenerie-Versatz", an Plaetzen mit Standardszenerie
+/// wie EDDK und EGBB nachweislich falsch.
+///
+/// Als Ausdruck am Aufrufer konnte kein Test das festhalten. Als
+/// Funktion schon — siehe `fenster_tests`.
+///
+/// # Die Rangfolge
+///
+/// 1. **Messfensterende** — der Teil, auf dem das Flugzeug noch der Bahn
+///    folgt. Genau das, was diese Rechnung braucht.
+/// 2. **Ausschwenken** (`raeum`) — ab hier haengt die seitliche Lage an
+///    der Anweisung des Lotsen, aber die Bahn ist noch nicht verlassen.
+/// 3. **Kante** — nur als Notnagel. Besser eine Gerade ueber zu viel als
+///    gar keine Aussage.
+pub fn achsen_fenster_bis_m(
+    mess_ende_laengs_m: Option<f64>,
+    raeum_laengs_m: Option<f64>,
+    kante_laengs_m: Option<f64>,
+) -> Option<f64> {
+    mess_ende_laengs_m
+        .or(raeum_laengs_m)
+        .or(kante_laengs_m)
+        .filter(|v| v.is_finite() && *v > 0.0)
+}
+
+/// Ist die Achse fragwürdig — oder fuhr das Flugzeug einfach schräg?
+///
+/// # Warum das getrennt werden muss
+///
+/// Die Meldung an den Piloten lautet „Szenerie-Versatz". Das ist eine
+/// Aussage über die DATEN, und sie war am 27.08.2026 bei EDDK, EDDM und
+/// EGBB nachweislich falsch — Standard-Szenerie an bestens kartierten
+/// Plätzen. Dort fuhr das Flugzeug glatt über die Mittellinie:
+///
+/// ```text
+/// EDDM 08R:  1544 m: -5,5 m  ->  1695 m: 0,0 m  ->  1793 m: +9,2 m
+/// ```
+///
+/// Ein verdrehter Bahnbezug sieht anders aus: Der Versatz waechst
+/// einseitig und wird gross (FACT 24,6 -> 35,3 m). Deshalb zwei
+/// Bedingungen statt einer.
+pub fn achse_fragwuerdig(befund: AchsenBefund, bahnbreite_m: Option<f64>) -> bool {
+    if befund.winkel_grad.abs() <= ACHSE_FRAGWUERDIG_AB_GRAD {
+        return false;
+    }
+    if let Some(breite) = bahnbreite_m.filter(|b| *b > 0.0) {
+        if befund.kreuzt_mitte && befund.groesster_betrag_m <= MANOEVER_ANTEIL_BREITE * breite {
+            return false;
+        }
+    }
+    true
 }
 
 /// Eingabe der Bahndisziplin-Achse.
@@ -196,6 +301,13 @@ pub struct BahndisziplinInput {
     /// Winkel der Rollspur zur Bahnachse, in Grad — siehe
     /// `ACHSE_FRAGWUERDIG_AB_GRAD`. `None` = nicht bestimmbar.
     pub achsen_abweichung_grad: Option<f64>,
+    /// Wechselt die Querlage im gewerteten Fenster das Vorzeichen?
+    ///
+    /// Zusammen mit `achsen_groesster_betrag_m` trennt das ein Manöver von
+    /// einem echten Achsenfehler — siehe `achse_fragwuerdig`.
+    pub achsen_kreuzt_mitte: Option<bool>,
+    /// Grösster Betrag der Querlage im gewerteten Fenster, in Metern.
+    pub achsen_groesster_betrag_m: Option<f64>,
 }
 
 /// Bewertet die Bahndisziplin.
@@ -264,11 +376,19 @@ pub fn sub_bahndisziplin(input: &BahndisziplinInput) -> SubScoreEntry {
     // Stimmt die ACHSE? Ein rollendes Flugzeug folgt der Mittellinie —
     // läuft die Spur schräg dazu, ist unsere Achse falsch, nicht die Spur.
     // Siehe `ACHSE_FRAGWUERDIG_AB_GRAD` (FACT 19, 24.08.2026).
-    if input
-        .achsen_abweichung_grad
-        .is_some_and(|w| w.abs() > ACHSE_FRAGWUERDIG_AB_GRAD)
-    {
-        return SubScoreEntry::skipped(KEY, LABEL, "runway_axis_mismatch");
+    if let Some(winkel) = input.achsen_abweichung_grad {
+        let befund = AchsenBefund {
+            winkel_grad: winkel,
+            // Fehlen die beiden Begleitwerte (alte Datensaetze), bleibt es
+            // beim reinen Winkel — dann ist `kreuzt_mitte` falsch und die
+            // Ausnahme greift nicht. Lieber uebersprungen als zu Unrecht
+            // benotet.
+            kreuzt_mitte: input.achsen_kreuzt_mitte.unwrap_or(false),
+            groesster_betrag_m: input.achsen_groesster_betrag_m.unwrap_or(f64::INFINITY),
+        };
+        if achse_fragwuerdig(befund, Some(breite)) {
+            return SubScoreEntry::skipped(KEY, LABEL, "runway_axis_mismatch");
+        }
     }
 
     // Plausibilität vor Bewertung: siehe MESSUNG_FRAGWUERDIG_AB_M.
@@ -331,7 +451,9 @@ mod tests {
             overrun_m: None,
             belag: Some(Belag::Befestigt),
             airport_source: Some("runway_match"),
-            runway_geometry_trusted: Some(true),            achsen_abweichung_grad: None,
+            runway_geometry_trusted: Some(true),            achsen_kreuzt_mitte: None,
+            achsen_groesster_betrag_m: None,
+            achsen_abweichung_grad: None,
         proben: Some(30),
         }
     }
@@ -453,35 +575,43 @@ mod tests {
     fn datenmangel_wird_uebersprungen_nie_bestraft() {
         for (bau, grund) in [
             (
-                BahndisziplinInput { airport_source: None, ..eham06(5.0) },
+                BahndisziplinInput { airport_source: None, ..eham06(5.0)
+        },
                 "off_airport_landing",
             ),
             (
-                BahndisziplinInput { runway_geometry_trusted: Some(false), ..eham06(5.0) },
+                BahndisziplinInput { runway_geometry_trusted: Some(false), ..eham06(5.0)
+        },
                 "untrusted_geometry",
             ),
             (
-                BahndisziplinInput { bahnbreite_m: None, ..eham06(5.0) },
+                BahndisziplinInput { bahnbreite_m: None, ..eham06(5.0)
+        },
                 "runway_width_unknown",
             ),
             (
-                BahndisziplinInput { bahnbreite_m: Some(500.0), ..eham06(5.0) },
+                BahndisziplinInput { bahnbreite_m: Some(500.0), ..eham06(5.0)
+        },
                 "runway_width_unknown",
             ),
             (
-                BahndisziplinInput { spurweite_m: None, ..eham06(5.0) },
+                BahndisziplinInput { spurweite_m: None, ..eham06(5.0)
+        },
                 "track_width_unknown",
             ),
             (
-                BahndisziplinInput { proben: Some(2), ..eham06(5.0) },
+                BahndisziplinInput { proben: Some(2), ..eham06(5.0)
+        },
                 "insufficient_samples",
             ),
             (
-                BahndisziplinInput { max_querversatz_m: None, ..eham06(5.0) },
+                BahndisziplinInput { max_querversatz_m: None, ..eham06(5.0)
+        },
                 "missing_lateral_track",
             ),
             (
-                BahndisziplinInput { belag: Some(Belag::Unbekannt), ..eham06(5.0) },
+                BahndisziplinInput { belag: Some(Belag::Unbekannt), ..eham06(5.0)
+        },
                 "surface_unknown",
             ),
         ] {
@@ -586,5 +716,181 @@ mod kette {
         );
         assert!(bewertet.contains(&"rollout"), "Bahndisziplin fehlt: {bewertet:?}");
         assert!(bewertet.contains(&"alignment"), "Ausrichtung fehlt: {bewertet:?}");
+    }
+}
+
+#[cfg(test)]
+mod achse_tests {
+    use super::*;
+
+    /// Eine Spur bauen: Start-Querlage, Steigung in m je 100 m, n Punkte.
+    fn spur(start_quer: f64, steigung_pro_100m: f64, n: usize) -> Vec<(f64, f64)> {
+        (0..n)
+            .map(|i| {
+                let x = 1000.0 + i as f64 * 10.0;
+                (x, start_quer + (x - 1000.0) * steigung_pro_100m / 100.0)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn winkel_wird_ueber_das_uebergebene_fenster_gerechnet() {
+        // Gerade bis 1250 m, danach knickt sie scharf weg — genau das, was
+        // die Ausfahrt tut. Das Fenster muss darueber entscheiden.
+        let mut p = spur(0.0, 0.5, 26); // 0,5 m je 100 m ≈ 0,29°
+        for i in 0..30 {
+            let x = 1260.0 + i as f64 * 10.0;
+            p.push((x, 1.25 + (x - 1250.0) * 0.30));
+        }
+        let eng = achsen_befund(&p, 1250.0).unwrap();
+        let weit = achsen_befund(&p, 1560.0).unwrap();
+        assert!(eng.winkel_grad.abs() < 0.5, "eng: {}", eng.winkel_grad);
+        assert!(weit.winkel_grad.abs() > 5.0, "weit: {}", weit.winkel_grad);
+    }
+
+    #[test]
+    fn kreuzende_spur_mit_kleinen_betraegen_ist_ein_manoever() {
+        // EDDM 08R, 27.08.2026: -5,5 m -> +9,2 m ueber 250 m, Bahn 60 m.
+        let p: Vec<(f64, f64)> = (0..26)
+            .map(|i| (1544.0 + i as f64 * 10.0, -5.5 + i as f64 * 0.588))
+            .collect();
+        let b = achsen_befund(&p, 1794.0).unwrap();
+        assert!(b.winkel_grad.abs() > ACHSE_FRAGWUERDIG_AB_GRAD);
+        assert!(b.kreuzt_mitte);
+        assert!(b.groesster_betrag_m < 15.0);
+        assert!(
+            !achse_fragwuerdig(b, Some(60.0)),
+            "EDDM darf nicht als Szenerie-Versatz gelten"
+        );
+    }
+
+    #[test]
+    fn einseitig_und_gross_bleibt_ein_achsenfehler() {
+        // FACT, der Fall, fuer den die Pruefung gebaut wurde: 24,6 -> 35,3 m
+        // auf 61 m Breite, immer dieselbe Seite.
+        // 1,95 Grad — der gemessene Winkel von FACT, nicht geschaetzt:
+        // tan(1,95 Grad) * 20 m = 0.681 m je Schritt.
+        let p: Vec<(f64, f64)> = (0..40)
+            .map(|i| (500.0 + i as f64 * 20.0, 24.6 + i as f64 * 0.681))
+            .collect();
+        let b = achsen_befund(&p, 1300.0).unwrap();
+        assert!(!b.kreuzt_mitte);
+        assert!(
+            achse_fragwuerdig(b, Some(61.0)),
+            "FACT muss uebersprungen bleiben"
+        );
+    }
+
+    #[test]
+    fn kreuzend_aber_weit_draussen_bleibt_ein_achsenfehler() {
+        // Die Ausnahme darf nicht dadurch aufgehen, dass die Spur irgendwo
+        // einmal die Mitte streift. Nur die mittlere Haelfte zaehlt.
+        let p: Vec<(f64, f64)> = (0..30)
+            .map(|i| (1000.0 + i as f64 * 10.0, -20.0 + i as f64 * 1.6))
+            .collect();
+        let b = achsen_befund(&p, 1290.0).unwrap();
+        assert!(b.kreuzt_mitte);
+        assert!(b.groesster_betrag_m > 0.25 * 45.0);
+        assert!(achse_fragwuerdig(b, Some(45.0)));
+    }
+
+    #[test]
+    fn ohne_bahnbreite_bleibt_es_beim_winkel() {
+        // Kein Mass, keine Ausnahme — lieber uebersprungen als zu Unrecht
+        // benotet.
+        let p: Vec<(f64, f64)> = (0..20)
+            .map(|i| (1000.0 + i as f64 * 10.0, -3.0 + i as f64 * 0.4))
+            .collect();
+        let b = achsen_befund(&p, 1190.0).unwrap();
+        assert!(b.winkel_grad.abs() > ACHSE_FRAGWUERDIG_AB_GRAD);
+        assert!(achse_fragwuerdig(b, None));
+    }
+
+    #[test]
+    fn gerade_spur_ist_nie_fragwuerdig() {
+        let p = spur(2.0, 0.0, 20);
+        let b = achsen_befund(&p, 1190.0).unwrap();
+        assert!(!achse_fragwuerdig(b, Some(45.0)));
+        assert!(!b.kreuzt_mitte);
+    }
+
+    #[test]
+    fn alter_datensatz_ohne_begleitwerte_wird_uebersprungen() {
+        // `achsen_kreuzt_mitte` und `achsen_groesster_betrag_m` fehlen —
+        // dann darf die Manoever-Ausnahme NICHT greifen.
+        let input = BahndisziplinInput {
+            max_querversatz_m: Some(9.0),
+            bahnbreite_m: Some(60.0),
+            spurweite_m: Some(7.6),
+            belag: Some(Belag::Befestigt),
+            airport_source: Some("runway_match"),
+            runway_geometry_trusted: Some(true),
+            proben: Some(40),
+            achsen_abweichung_grad: Some(3.4),
+            achsen_kreuzt_mitte: None,
+            achsen_groesster_betrag_m: None,
+            ..Default::default()
+        };
+        let e = sub_bahndisziplin(&input);
+        assert_eq!(e.reason.as_deref(), Some("runway_axis_mismatch"));
+    }
+
+    #[test]
+    fn eddm_wird_mit_begleitwerten_bewertet_statt_uebersprungen() {
+        let input = BahndisziplinInput {
+            max_querversatz_m: Some(9.2),
+            bahnbreite_m: Some(60.0),
+            spurweite_m: Some(7.6),
+            belag: Some(Belag::Befestigt),
+            airport_source: Some("runway_match"),
+            runway_geometry_trusted: Some(true),
+            proben: Some(40),
+            achsen_abweichung_grad: Some(3.39),
+            achsen_kreuzt_mitte: Some(true),
+            achsen_groesster_betrag_m: Some(9.2),
+            ..Default::default()
+        };
+        let e = sub_bahndisziplin(&input);
+        assert_ne!(e.reason.as_deref(), Some("runway_axis_mismatch"));
+    }
+}
+
+
+#[cfg(test)]
+mod fenster_tests {
+    use super::*;
+
+    #[test]
+    fn das_messfenster_hat_vorrang_vor_allem() {
+        // Der Fehler, der das alles ausgeloest hat: Stand die Kante vorn,
+        // lief die Gerade ueber das Ausschwenken.
+        assert_eq!(
+            achsen_fenster_bis_m(Some(1796.0), Some(2084.0), Some(2494.0)),
+            Some(1796.0)
+        );
+    }
+
+    #[test]
+    fn ohne_messfenster_gilt_das_ausschwenken_nicht_die_kante() {
+        assert_eq!(
+            achsen_fenster_bis_m(None, Some(2084.0), Some(2494.0)),
+            Some(2084.0)
+        );
+    }
+
+    #[test]
+    fn die_kante_ist_nur_der_notnagel() {
+        assert_eq!(achsen_fenster_bis_m(None, None, Some(2494.0)), Some(2494.0));
+    }
+
+    #[test]
+    fn ohne_alles_gibt_es_keine_aussage() {
+        assert_eq!(achsen_fenster_bis_m(None, None, None), None);
+    }
+
+    #[test]
+    fn unsinnige_werte_zaehlen_nicht_als_fenster() {
+        assert_eq!(achsen_fenster_bis_m(Some(0.0), Some(2084.0), None), None);
+        assert_eq!(achsen_fenster_bis_m(Some(f64::NAN), None, None), None);
     }
 }

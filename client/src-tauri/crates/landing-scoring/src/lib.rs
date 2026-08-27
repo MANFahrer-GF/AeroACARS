@@ -243,6 +243,10 @@ pub struct LandingScoringInput {
     pub bahn_proben: Option<usize>,
     /// Winkel der Rollspur zur Bahnachse in Grad — Szenerie gegen Navdaten.
     pub bahn_achsen_abweichung_grad: Option<f64>,
+    /// Kreuzt die Rollspur im gewerteten Fenster die Mittellinie?
+    pub bahn_achsen_kreuzt_mitte: Option<bool>,
+    /// Grösster Betrag der Querlage im gewerteten Fenster, in Metern.
+    pub bahn_achsen_groesster_betrag_m: Option<f64>,
     /// v1.7.0 — Spurweite aus der **Flugzeugdatei**, falls gelesen.
     ///
     /// # Warum die Bewertung sie kennen muss
@@ -388,6 +392,8 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
                 // Der Winkel wird dort gerechnet, wo die Spur liegt
                 // (lib.rs), nicht hier — die Achse bekommt das Ergebnis.
                 achsen_abweichung_grad: input.bahn_achsen_abweichung_grad,
+                achsen_kreuzt_mitte: input.bahn_achsen_kreuzt_mitte,
+                achsen_groesster_betrag_m: input.bahn_achsen_groesster_betrag_m,
             },
         ));
     }
@@ -854,6 +860,8 @@ mod tests {
     fn compute_sub_scores_never_emits_flare() {
         let rich = LandingScoringInput {
             bahn_achsen_abweichung_grad: None,
+            bahn_achsen_kreuzt_mitte: None,
+            bahn_achsen_groesster_betrag_m: None,
             // v1.7.0: Aufsetzpunkt-Achse — der Test laeuft ueber einen VOLL
             // besetzten Input, damit jeder Zweig feuert.
             aim_point_m: Some(400.0),

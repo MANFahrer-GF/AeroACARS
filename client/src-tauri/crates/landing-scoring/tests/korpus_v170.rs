@@ -169,7 +169,9 @@ fn korpus_nachrechnung() {
             overrun_m: z.overrun_m,
             belag: Some(belag_aus_angabe(Some(&z.belag))),
             airport_source: Some("runway_match"),
-            runway_geometry_trusted: Some(true),            achsen_abweichung_grad: None,
+            runway_geometry_trusted: Some(true),            achsen_kreuzt_mitte: None,
+            achsen_groesster_betrag_m: None,
+            achsen_abweichung_grad: None,
         proben: Some(z.proben),
         });
 

@@ -15252,17 +15252,44 @@ fn fill_v2_rollout_fields(
     // nicht — ein rollendes Flugzeug folgt der Mittellinie. Gemessen
     // wird nur bis zum Bewertungsende; danach ist Ausschwenken, und das
     // ist kein Achsenfehler. Siehe `ACHSE_FRAGWUERDIG_AB_GRAD`.
-    input.bahn_achsen_abweichung_grad = stats
-        .bahn_kante_laengs_m
-        .or(stats.bahn_raeum_laengs_m)
-        .and_then(|bis| {
-            let proben: Vec<(f64, f64)> = stats
-                .bahn_spur
-                .iter()
-                .map(|(lg, qr)| (*lg as f64, *qr as f64))
-                .collect();
-            landing_scoring::sub_bahndisziplin::achsen_abweichung_grad(&proben, bis as f64)
-        });
+    //
+    // ⚠ Die Reihenfolge ist der Kern der Sache.
+    //
+    // Hier stand `bahn_kante_laengs_m.or(bahn_raeum_laengs_m)` — die
+    // KANTE zuerst. Die Kante ist die Stelle, an der das Flugzeug die Bahn
+    // VERLASSEN hat; die Ausgleichsgerade lief also ueber das gesamte
+    // Ausschwenken zur Ausfahrt und stand dann natuerlich schraeg. Der
+    // Befund lautete „Szenerie-Versatz" — an Plaetzen mit
+    // Standard-Szenerie wie EDDK und EGBB nachweislich falsch.
+    //
+    // Am Korpus vom 27.08.2026 (46 Landungen, 37 Plaetze): 9 von 46
+    // uebersprungen, davon 4 allein durch diese Reihenfolge.
+    //
+    // Richtig ist das MESSFENSTER: der Teil, auf dem das Flugzeug noch der
+    // Bahn folgt — genau das, was der Kommentar an `achsen_befund` schon
+    // immer versprochen hat. Danach das Ausschwenken (`raeum`), und erst
+    // als letzter Notnagel die Kante.
+    input.bahn_achsen_abweichung_grad = None;
+    input.bahn_achsen_kreuzt_mitte = None;
+    input.bahn_achsen_groesster_betrag_m = None;
+    if let Some(bis) = landing_scoring::sub_bahndisziplin::achsen_fenster_bis_m(
+        stats.bahn_fenster_zu_laengs_m.map(|v| v as f64),
+        stats.bahn_raeum_laengs_m.map(|v| v as f64),
+        stats.bahn_kante_laengs_m.map(|v| v as f64),
+    ) {
+        let proben: Vec<(f64, f64)> = stats
+            .bahn_spur
+            .iter()
+            .map(|(lg, qr)| (*lg as f64, *qr as f64))
+            .collect();
+        if let Some(befund) =
+            landing_scoring::sub_bahndisziplin::achsen_befund(&proben, bis)
+        {
+            input.bahn_achsen_abweichung_grad = Some(befund.winkel_grad);
+            input.bahn_achsen_kreuzt_mitte = Some(befund.kreuzt_mitte);
+            input.bahn_achsen_groesster_betrag_m = Some(befund.groesster_betrag_m);
+        }
+    }
     // Die Spurweite aus der Flugzeugdatei, falls gelesen — dieselbe
     // Quelle, aus der die Anzeige ihren Randabstand rechnet. Ohne diese
     // Zeile zeigt die Grafik einen anderen Wert, als die Note benutzt:
@@ -47513,6 +47540,8 @@ mod v0_16_6_bush_completeness_tests {
             let mit_datei = landing_scoring::sub_bahndisziplin::sub_bahndisziplin(
                 &landing_scoring::sub_bahndisziplin::BahndisziplinInput {
                     achsen_abweichung_grad: None,
+                    achsen_kreuzt_mitte: None,
+                    achsen_groesster_betrag_m: None,
                     max_querversatz_m: eingang.bahn_max_querversatz_m,
                     bahnbreite_m: eingang.runway_width_m.map(|w| w as f64),
                     spurweite_m: eingang
