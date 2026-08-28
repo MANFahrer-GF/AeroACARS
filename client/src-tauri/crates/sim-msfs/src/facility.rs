@@ -213,6 +213,88 @@ fn versetze(punkt: (f64, f64), kurs_grad: f64, strecke_m: f64) -> (f64, f64) {
     (lat2.to_degrees(), lon2.to_degrees())
 }
 
+/// Ein Wert aus einem Facility-Datenblock.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Wert {
+    F64(f64),
+    F32(f32),
+    I32(i32),
+}
+
+impl Wert {
+    pub fn als_f64(self) -> f64 {
+        match self {
+            Wert::F64(v) => v,
+            Wert::F32(v) => v as f64,
+            Wert::I32(v) => v as f64,
+        }
+    }
+    pub fn als_i32(self) -> i32 {
+        match self {
+            Wert::F64(v) => v as i32,
+            Wert::F32(v) => v as i32,
+            Wert::I32(v) => v,
+        }
+    }
+}
+
+/// Einen Datenblock nach einer Felddefinition zerlegen.
+///
+/// # Warum das hier steht und nicht im Windows-Teil
+///
+/// Weil es die einzige Stelle ist, an der etwas still schiefgehen kann,
+/// ohne dass ein Fehler auftritt: Ein Feld zu viel, eines zu wenig oder
+/// eine falsche Groesse verschiebt alles danach — und heraus kommen
+/// plausible Zahlen an falschen Stellen. Der FFI-Aufruf drumherum
+/// scheitert dagegen laut.
+///
+/// Hier ist es ohne Simulator pruefbar, auf jedem Rechner.
+///
+/// ⚠ SimConnect richtet die Werte an ihrer eigenen Groesse aus: ein
+/// `f64` beginnt an einer durch 8 teilbaren Stelle. Wer stumpf
+/// aneinanderreiht, liest ab dem ersten `f64` nach einem `f32` Unsinn.
+pub fn zerlege(felder: &[(&str, FeldTyp)], bytes: &[u8]) -> Option<Vec<Wert>> {
+    let mut aus = Vec::with_capacity(felder.len());
+    let mut pos = 0usize;
+    for (_, typ) in felder {
+        let g = typ.groesse();
+        // Ausrichtung auf die eigene Groesse.
+        pos = pos.div_ceil(g) * g;
+        if pos + g > bytes.len() {
+            return None;
+        }
+        let scheibe = &bytes[pos..pos + g];
+        aus.push(match typ {
+            FeldTyp::F64 => Wert::F64(f64::from_le_bytes(scheibe.try_into().ok()?)),
+            FeldTyp::F32 => Wert::F32(f32::from_le_bytes(scheibe.try_into().ok()?)),
+            FeldTyp::I32 => Wert::I32(i32::from_le_bytes(scheibe.try_into().ok()?)),
+        });
+        pos += g;
+    }
+    Some(aus)
+}
+
+/// Aus einem zerlegten Bahn-Datenblock das Bahnenpaar bauen.
+pub fn bahn_aus_werten(w: &[Wert]) -> Option<[SzenerieBahn; 2]> {
+    if w.len() < BAHN_FELDER.len() {
+        return None;
+    }
+    let mitte = (w[0].als_f64(), w[1].als_f64());
+    let kurs = w[3].als_f64();
+    let laenge = w[4].als_f64();
+    let breite = w[5].als_f64();
+    let belag = belag_code(w[6].als_i32());
+    Some(bahn_paar(
+        mitte,
+        kurs,
+        laenge,
+        breite,
+        belag,
+        (w[7].als_i32(), w[8].als_i32(), w[11].als_f64()),
+        (w[9].als_i32(), w[10].als_i32(), w[12].als_f64()),
+    ))
+}
+
 /// Einen Rollwegpunkt aus `BIAS_X`/`BIAS_Z` in Koordinaten umrechnen.
 ///
 /// ⚠ MSFS gibt Rollwegpunkte NICHT als Länge und Breite, sondern als
@@ -442,6 +524,205 @@ mod feldnamen_tests {
             ((q.0 - referenz.0) - 0.00899).abs() < 0.0005,
             "Breitenzuwachs {:.5}",
             q.0 - referenz.0
+        );
+    }
+}
+
+#[cfg(test)]
+mod zerleger_tests {
+    use super::*;
+
+    /// Einen Datenblock so bauen, wie SimConnect ihn liefert —
+    /// einschliesslich Ausrichtung.
+    fn baue(felder: &[(&str, FeldTyp)], werte: &[Wert]) -> Vec<u8> {
+        let mut b: Vec<u8> = Vec::new();
+        for ((_, typ), w) in felder.iter().zip(werte) {
+            let g = typ.groesse();
+            while b.len() % g != 0 {
+                b.push(0);
+            }
+            match (typ, w) {
+                (FeldTyp::F64, Wert::F64(v)) => b.extend_from_slice(&v.to_le_bytes()),
+                (FeldTyp::F32, Wert::F32(v)) => b.extend_from_slice(&v.to_le_bytes()),
+                (FeldTyp::I32, Wert::I32(v)) => b.extend_from_slice(&v.to_le_bytes()),
+                _ => panic!("Testdaten passen nicht zur Definition"),
+            }
+        }
+        b
+    }
+
+    fn eddh_werte() -> Vec<Wert> {
+        vec![
+            Wert::F64(53.6304), // LATITUDE  (Mitte)
+            Wert::F64(9.9882),  // LONGITUDE
+            Wert::F64(16.0),    // ALTITUDE
+            Wert::F32(52.5),    // HEADING
+            Wert::F32(3250.0),  // LENGTH
+            Wert::F32(46.0),    // WIDTH
+            Wert::I32(0),       // SURFACE (Beton)
+            Wert::I32(5),       // PRIMARY_NUMBER
+            Wert::I32(0),       // PRIMARY_DESIGNATOR
+            Wert::I32(23),      // SECONDARY_NUMBER
+            Wert::I32(0),       // SECONDARY_DESIGNATOR
+            Wert::F32(120.0),   // PRIMARY_THRESHOLD
+            Wert::F32(0.0),     // SECONDARY_THRESHOLD
+        ]
+    }
+
+    #[test]
+    fn zerlegen_gibt_die_werte_zurueck_die_hineingingen() {
+        // ⚠ Die eigentliche Gefahr: Ein Feld zu viel oder zu wenig
+        // verschiebt ALLES danach, und heraus kommen plausible Zahlen an
+        // falschen Stellen. Kein Fehler, kein Log — nur eine Bahn, die
+        // 46 Meter breit ist, weil dort zufaellig die Laenge stand.
+        let werte = eddh_werte();
+        let bytes = baue(BAHN_FELDER, &werte);
+        let zurueck = zerlege(BAHN_FELDER, &bytes).expect("zerlegbar");
+        assert_eq!(zurueck.len(), werte.len());
+        for (i, (a, b)) in werte.iter().zip(zurueck.iter()).enumerate() {
+            assert_eq!(a, b, "Feld {} ({})", i, BAHN_FELDER[i].0);
+        }
+    }
+
+    #[test]
+    fn ausrichtung_wird_beachtet() {
+        // Ein f64 beginnt an einer durch 8 teilbaren Stelle. Wer stumpf
+        // aneinanderreiht, liest ab dem ersten f64 nach einem f32
+        // Unsinn — und zwar ohne Fehlermeldung.
+        let felder: &[(&str, FeldTyp)] = &[
+            ("A", FeldTyp::F32),
+            ("B", FeldTyp::F64),
+            ("C", FeldTyp::I32),
+        ];
+        let werte = vec![Wert::F32(1.5), Wert::F64(2.25), Wert::I32(7)];
+        let bytes = baue(felder, &werte);
+        // 4 Byte f32 + 4 Byte Fuellung + 8 Byte f64 + 4 Byte i32
+        assert_eq!(bytes.len(), 20, "Ausrichtung nicht wie erwartet");
+        assert_eq!(zerlege(felder, &bytes).unwrap(), werte);
+    }
+
+    #[test]
+    fn zu_kurzer_block_gibt_nichts_statt_muell() {
+        let bytes = baue(BAHN_FELDER, &eddh_werte());
+        let kurz = &bytes[..bytes.len() - 4];
+        assert!(
+            zerlege(BAHN_FELDER, kurz).is_none(),
+            "abgeschnittener Block muss abgelehnt werden, nicht halb gelesen"
+        );
+    }
+
+    #[test]
+    fn aus_werten_wird_ein_bahnenpaar() {
+        let werte = eddh_werte();
+        let [a, b] = bahn_aus_werten(&werte).expect("Bahnenpaar");
+        assert_eq!(a.bezeichner, "05");
+        assert_eq!(b.bezeichner, "23");
+        assert!((a.kurs_grad - 52.5).abs() < 1e-6);
+        assert!((b.kurs_grad - 232.5).abs() < 1e-6);
+        assert!((a.breite_m - 46.0).abs() < 1e-6);
+        assert!((a.versetzte_schwelle_m - 120.0).abs() < 1e-6);
+        assert!((b.versetzte_schwelle_m - 0.0).abs() < 1e-6);
+        assert_eq!(a.belag_code, 1, "Beton muss befestigt sein");
+    }
+
+    #[test]
+    fn ein_verschobenes_feld_faellt_auf() {
+        // Gegenprobe zur Gegenprobe: Wenn die Definition um ein Feld
+        // verschoben ist, muessen die Werte NICHT mehr stimmen. Sonst
+        // prueft der Test oben nichts.
+        let werte = eddh_werte();
+        let bytes = baue(BAHN_FELDER, &werte);
+        let verschoben: Vec<(&str, FeldTyp)> = std::iter::once(("EXTRA", FeldTyp::I32))
+            .chain(BAHN_FELDER.iter().copied())
+            .collect();
+        let zurueck = zerlege(&verschoben, &bytes);
+        match zurueck {
+            None => {}
+            Some(v) => assert_ne!(
+                v[1].als_f64(),
+                53.6304,
+                "verschobene Definition liefert trotzdem den richtigen Wert — \
+                 dann prueft der Round-Trip-Test nichts"
+            ),
+        }
+    }
+}
+
+#[cfg(test)]
+mod verdrahtung_tests {
+    //! ⚠ Prüfungen über den Quelltext des Windows-Teils.
+    //!
+    //! `adapter.rs` wird auf macOS und Linux gar nicht übersetzt — dort
+    //! kann kein normaler Test hineinschauen. Ein Quelltext-Vergleich
+    //! kann es, und er fängt genau die Fehler, die sonst erst auf einer
+    //! Windows-Maschine auffallen würden.
+    //!
+    //! Das ersetzt die CI nicht. Es verkürzt nur die Schleife.
+
+    const ADAPTER: &str = include_str!("adapter.rs");
+
+    fn ohne_leerraum(s: &str) -> String {
+        s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    #[test]
+    fn die_definition_benutzt_die_feldliste() {
+        // Eine von Hand abgeschriebene Liste im Adapter waere eine
+        // zweite Wahrheit — und sie würde beim ersten Zusatzfeld
+        // auseinanderlaufen, ohne dass etwas anschlägt.
+        let a = ohne_leerraum(ADAPTER);
+        assert!(
+            a.contains("facility::BAHN_FELDER"),
+            "register_facility baut die Definition nicht aus BAHN_FELDER"
+        );
+    }
+
+    #[test]
+    fn die_klammern_der_definition_stehen_vollstaendig() {
+        // Ohne OPEN/CLOSE-Paare liefert SimConnect nichts oder etwas
+        // anderes, als man erwartet — und die Antwort sähe leer aus,
+        // nicht falsch.
+        for marke in [
+            "\"OPEN AIRPORT\"",
+            "\"OPEN RUNWAY\"",
+            "\"CLOSE RUNWAY\"",
+            "\"CLOSE AIRPORT\"",
+        ] {
+            assert!(
+                ADAPTER.contains(marke),
+                "{marke} fehlt in der Facility-Definition"
+            );
+        }
+    }
+
+    #[test]
+    fn ein_abgelehntes_feld_ist_ein_harter_fehler() {
+        // Fehlt WIDTH, kommt die Bahn ohne Breite zurueck — und die
+        // Breite ist genau das Mass, mit dem entschieden wird, ob eine
+        // Rollspur die befestigte Flaeche verlaesst. Ein „best effort"
+        // waere hier ein stiller Datenverlust.
+        let a = ohne_leerraum(ADAPTER);
+        assert!(
+            a.contains("AddToFacilityDefinitionfuer"),
+            "kein Fehlertext fuer ein abgelehntes Feld — dann faellt ein \
+             falscher Feldname nur im Log auf, wenn ueberhaupt"
+        );
+        assert!(
+            a.contains("returnErr(format!(\"AddToFacilityDefinition"),
+            "abgelehntes Feld wird nicht als Fehler zurueckgegeben"
+        );
+    }
+
+    #[test]
+    fn die_facility_hat_eigene_kennungen() {
+        // Teilte sie sich die Kennung mit der Telemetrie, wuerde ein
+        // abgelehnter Feldname deren Layout verschieben.
+        assert!(ADAPTER.contains("FACILITY_DEFINITION_ID"));
+        assert!(ADAPTER.contains("FACILITY_REQUEST_ID"));
+        let a = ohne_leerraum(ADAPTER);
+        assert!(
+            a.contains("FACILITY_DEFINITION_ID:sys::SIMCONNECT_DATA_DEFINITION_ID=10"),
+            "Facility-Definition benutzt nicht ihre eigene Kennung"
         );
     }
 }

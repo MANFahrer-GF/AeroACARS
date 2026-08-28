@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::facility;
 use chrono::Utc;
 use serde::Serialize;
 use sim_core::{AircraftProfile, SimKind, SimSnapshot, Simulator};
@@ -38,6 +39,12 @@ const TOUCHDOWN_REQUEST_ID: sys::SIMCONNECT_DATA_REQUEST_ID = 2;
 /// SimVar name can't take down the per-tick telemetry.
 const INSPECTOR_DEFINITION_ID: sys::SIMCONNECT_DATA_DEFINITION_ID = 3;
 const INSPECTOR_REQUEST_ID: sys::SIMCONNECT_DATA_REQUEST_ID = 3;
+/// Definition #10: Bahnen und Rollwege aus der geladenen Szenerie
+/// (v1.7.8). Eigener Platz, damit ein abgelehnter Feldname weder die
+/// Telemetrie noch die Aufsetzprobe verschiebt — dieselbe Ueberlegung
+/// wie bei der Trennung von Telemetrie und Touchdown.
+const FACILITY_DEFINITION_ID: sys::SIMCONNECT_DATA_DEFINITION_ID = 10;
+const FACILITY_REQUEST_ID: sys::SIMCONNECT_DATA_REQUEST_ID = 10;
 
 // ---- PMDG SDK ClientData IDs (Phase H.4) ----
 //
@@ -1492,6 +1499,76 @@ impl Connection {
         Ok(())
     }
 
+    /// Die Facility-Definition zusammensetzen — Bahnen und Rollwege.
+    ///
+    /// # Wie die Schnittstelle arbeitet
+    ///
+    /// Die Definition besteht aus Feldnamen und Klammern:
+    /// `OPEN AIRPORT` … `OPEN RUNWAY` … `CLOSE RUNWAY` … `CLOSE AIRPORT`.
+    /// Danach liefert `RequestFacilityData` die Elemente einzeln, in der
+    /// Reihenfolge der Definition, als rohe Datenbloecke.
+    ///
+    /// ⚠ Die Feldnamen stehen NICHT in `SimConnect.h`, sondern in der
+    /// SDK-Dokumentation, und sie sind GROSS_MIT_UNTERSTRICH. Ich hatte
+    /// sie zuerst als `Latitude`/`Heading` geraten — jeder dieser Namen
+    /// waere hier abgelehnt worden, und zwar erst zur Laufzeit.
+    ///
+    /// Ein abgelehntes Feld ist deshalb ein **harter** Fehler und kein
+    /// „best effort": Faehlt `WIDTH`, kommt die Bahn ohne Breite zurueck
+    /// — und die Breite ist genau das Mass, mit dem entschieden wird, ob
+    /// eine Rollspur die befestigte Flaeche verlaesst.
+    fn register_facility(&mut self) -> Result<(), String> {
+        let mut eintraege: Vec<&str> = vec!["OPEN AIRPORT"];
+        eintraege.push("OPEN RUNWAY");
+        eintraege.extend(facility::BAHN_FELDER.iter().map(|(n, _)| *n));
+        eintraege.push("CLOSE RUNWAY");
+        eintraege.push("CLOSE AIRPORT");
+
+        for name in eintraege {
+            let cname =
+                std::ffi::CString::new(name).map_err(|_| "Feldname enthielt NUL".to_string())?;
+            let hr = unsafe {
+                sys::SimConnect_AddToFacilityDefinition(
+                    self.handle,
+                    FACILITY_DEFINITION_ID,
+                    cname.as_ptr(),
+                )
+            };
+            if hr != 0 {
+                return Err(format!(
+                    "AddToFacilityDefinition fuer \"{name}\" gab 0x{hr:08X} zurueck — \
+                     Feldname pruefen (SDK-Doku, GROSS_MIT_UNTERSTRICH)"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Die Bahnen eines Flughafens anfordern.
+    ///
+    /// Die Antworten kommen asynchron ueber die Empfangsschleife als
+    /// `DispatchMsg::FacilityData`, abgeschlossen von
+    /// `FacilityDataEnde`. Der Aufruf selbst kehrt sofort zurueck.
+    fn request_facility(&mut self, icao: &str) -> Result<(), String> {
+        let cicao = std::ffi::CString::new(icao).map_err(|_| "ICAO enthielt NUL".to_string())?;
+        let leer = std::ffi::CString::new("").expect("leere Zeichenkette");
+        let hr = unsafe {
+            sys::SimConnect_RequestFacilityData(
+                self.handle,
+                FACILITY_DEFINITION_ID,
+                FACILITY_REQUEST_ID,
+                cicao.as_ptr(),
+                leer.as_ptr(),
+            )
+        };
+        if hr != 0 {
+            return Err(format!(
+                "RequestFacilityData({icao}) gab 0x{hr:08X} zurueck"
+            ));
+        }
+        Ok(())
+    }
+
     /// Register the touchdown sample fields under definition #2.
     /// Best-effort: we already log per-field exceptions in the
     /// dispatch loop, so a partial registration here is recoverable.
@@ -1996,6 +2073,36 @@ impl Connection {
                     event: evt.FlowEvent as u32,
                 })
             }
+            // v1.7.8 — ein Element der Facility-Lieferung (Bahn,
+            // Rollwegpunkt, …). Die Nutzdaten haengen als variabler
+            // Schwanz hinter der Struktur; `SIMCONNECT_DATAV` ist ein
+            // Ein-Element-Feld, das in Wahrheit weiterlaeuft.
+            //
+            // ⚠ `dwSize` ist die GESAMTgroesse der Nachricht. Die
+            // Nutzdaten beginnen dort, wo das Feld `Data` liegt — nicht
+            // am Ende der Struktur, denn `Data` IST schon Teil von ihr.
+            id if id == sys::SIMCONNECT_RECV_ID_FACILITY_DATA => {
+                let fd = unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_FACILITY_DATA) };
+                let kopf = std::mem::offset_of!(sys::SIMCONNECT_RECV_FACILITY_DATA, Data);
+                let gesamt = fd._base.dwSize as usize;
+                let laenge = gesamt.saturating_sub(kopf);
+                let bytes =
+                    unsafe { std::slice::from_raw_parts((p_data as *const u8).add(kopf), laenge) }
+                        .to_vec();
+                Some(DispatchMsg::FacilityData {
+                    request_id: fd.UserRequestId,
+                    typ: fd.Type,
+                    ist_listeneintrag: fd.IsListItem != 0,
+                    index: fd.ItemIndex,
+                    bytes,
+                })
+            }
+            id if id == sys::SIMCONNECT_RECV_ID_FACILITY_DATA_END => {
+                let fd = unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_FACILITY_DATA_END) };
+                Some(DispatchMsg::FacilityDataEnde {
+                    request_id: fd.RequestId,
+                })
+            }
             _ => None,
         };
         Ok(msg)
@@ -2049,6 +2156,20 @@ enum DispatchMsg {
     /// die Telemetrie nicht den geflogenen Zustand beschreibt.
     FlowEvent {
         event: u32,
+    },
+    /// v1.7.8 — ein Element aus einer Facility-Lieferung. `typ` ist eine
+    /// `SIMCONNECT_FACILITY_DATA_TYPE`; `bytes` folgt der Definition,
+    /// die wir vorher zusammengesetzt haben.
+    FacilityData {
+        request_id: u32,
+        typ: u32,
+        ist_listeneintrag: bool,
+        index: u32,
+        bytes: Vec<u8>,
+    },
+    /// Ende einer Facility-Lieferung.
+    FacilityDataEnde {
+        request_id: u32,
     },
     ClientData {
         request_id: u32,
