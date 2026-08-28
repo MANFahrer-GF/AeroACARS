@@ -16439,7 +16439,27 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     // Bahn hat keine Ausfahrten", aber es sieht in der Anzeige so aus.
     // Deshalb zeichnet sie Stummel nur, wenn wirklich welche gefunden
     // wurden, und behauptet nie das Gegenteil.
-    let ausfahrten: Vec<storage::RunwayExit> = match (rm, stats.arr_ground_geojson.as_deref()) {
+    // v1.7.8 — die Rollwege der Szenerie haben Vorrang.
+    //
+    // Die Serverkarte kommt aus OpenStreetMap, also aus einer dritten
+    // Welt: 167 namenlose Ausfahrten an 68 Plaetzen, sieben Plaetze ganz
+    // ohne. Die Szenerie kennt sie — allein die installierte
+    // X-Plane-Szenerie fuehrt 243.945 benannte Rollwegkanten an 6.114
+    // Flughaefen.
+    //
+    // Nur wenn die Szenerie welche hat; sonst bleibt es bei der
+    // Serverkarte. Eine leere Szenerie-Karte waere schlechter als eine
+    // gute OSM-Karte.
+    let szenerie_karte = stats
+        .szenerie_auskunft
+        .as_ref()
+        .filter(|a| !a.rollwege.is_empty())
+        .map(|a| szenerie_bahn::rollwege_als_bodenkarte(&a.rollwege));
+    let boden_karte = szenerie_karte
+        .as_deref()
+        .or(stats.arr_ground_geojson.as_deref());
+
+    let ausfahrten: Vec<storage::RunwayExit> = match (rm, boden_karte) {
         (Some(m), Some(karte)) if m.width_ft > 0.0 => ausfahrten::ausfahrten_fuer_bahn(
             karte,
             m.threshold_lat,
@@ -27669,13 +27689,19 @@ fn correlate_touchdown_runway(
     // als 0,0 oder 360,0 — bei 3.329 davon widerspricht das der eigenen
     // Bahnnummer. Dort messen wir gegen eine Achse, die es im Simulator
     // nicht gibt.
-    let (nav_opt, szenerie_bericht) = szenerie_bahn::ergaenze_aus_szenerie(
+    let (nav_opt, szenerie_bericht, benutzte_szenerie) = szenerie_bahn::ergaenze_aus_szenerie(
         snap.simulator,
         &actual_icao,
         nav_opt,
         stats.szenerie_auskunft.clone(),
     );
     stats.szenerie_uebernahme = szenerie_bericht;
+    // Bei X-Plane wird die Szenerie hier erst gelesen; ohne diese Zeile
+    // kaemen ihre Rollwege nie bei den Ausfahrten an — die Bahn waere
+    // korrigiert, die Ausfahrten kaemen weiter aus OpenStreetMap.
+    if let Some(sz) = benutzte_szenerie {
+        stats.szenerie_auskunft = Some(sz);
+    }
 
     let lookup_result =
         runway::lookup_runway_with_fallback(rw_lat, rw_lon, rw_hdg_true, nav_opt.as_ref());

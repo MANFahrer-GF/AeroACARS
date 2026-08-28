@@ -1095,6 +1095,14 @@ fn run_dispatch(
         // eine halbe Bahnliste saehe aus wie ein Flughafen mit einer
         // Bahn.
         let mut facility_sammler: Vec<sim_core::szenerie::SzenerieBahn> = Vec::new();
+        // Rollwege: drei Listen, die ueber Indizes zusammenhaengen. Sie
+        // muessen in der Reihenfolge der Lieferung gesammelt werden —
+        // `START`/`END`/`NAME_INDEX` sind Positionen in genau diesen
+        // Listen. Wer sortiert oder filtert, verschiebt die Verweise.
+        let mut facility_referenz: Option<(f64, f64)> = None;
+        let mut facility_punkte: Vec<(f64, f64)> = Vec::new();
+        let mut facility_namen: Vec<String> = Vec::new();
+        let mut facility_kanten: Vec<(usize, usize, usize)> = Vec::new();
 
         // Drain whatever messages SimConnect has queued for us.
         loop {
@@ -1119,7 +1127,36 @@ fn run_dispatch(
                     bytes,
                     ..
                 })) => {
-                    if request_id == FACILITY_REQUEST_ID && typ == sys::FACILITY_DATA_RUNWAY {
+                    if request_id != FACILITY_REQUEST_ID {
+                    } else if typ == sys::FACILITY_DATA_AIRPORT {
+                        // Der Referenzpunkt — ohne ihn sind die
+                        // Rollwegpunkte nicht umrechenbar.
+                        if let Some(w) = facility::zerlege(facility::FLUGHAFEN_FELDER, &bytes) {
+                            facility_referenz = Some((w[0].als_f64(), w[1].als_f64()));
+                        }
+                    } else if typ == sys::FACILITY_DATA_TAXI_POINT {
+                        // ⚠ Auch ein unlesbarer Punkt muss einen Platz
+                        // belegen. `START`/`END` sind POSITIONEN in
+                        // dieser Liste — wer einen Eintrag auslaesst,
+                        // verschiebt jede Kante danach auf einen anderen
+                        // Punkt. Lieber ein unmoeglicher Punkt, den der
+                        // Zusammenbau verwirft, als eine verschobene
+                        // Liste.
+                        match facility::zerlege(facility::ROLLWEG_PUNKT_FELDER, &bytes) {
+                            Some(w) => facility_punkte.push((w[1].als_f64(), w[2].als_f64())),
+                            None => facility_punkte.push((f64::NAN, f64::NAN)),
+                        }
+                    } else if typ == sys::FACILITY_DATA_TAXI_NAME {
+                        // Ebenso: Der Index zaehlt, nicht der Inhalt.
+                        facility_namen.push(facility::name_aus_bytes(&bytes));
+                    } else if typ == sys::FACILITY_DATA_TAXI_PATH {
+                        if let Some(w) = facility::zerlege(facility::ROLLWEG_KANTE_FELDER, &bytes) {
+                            let (a, b, n) = (w[2].als_i32(), w[3].als_i32(), w[4].als_i32());
+                            if a >= 0 && b >= 0 && n >= 0 {
+                                facility_kanten.push((a as usize, b as usize, n as usize));
+                            }
+                        }
+                    } else if typ == sys::FACILITY_DATA_RUNWAY {
                         match facility::zerlege(facility::BAHN_FELDER, &bytes)
                             .and_then(|w| facility::bahn_aus_werten(&w))
                         {
@@ -1150,12 +1187,37 @@ fn run_dispatch(
                         );
                         // Erst JETZT sichtbar machen — vorher waere es
                         // eine halbe Wahrheit.
+                        // Rollwege erst hier zusammensetzen: Vorher
+                        // sind die drei Listen nicht vollstaendig, und
+                        // eine Kante koennte auf einen Punkt zeigen, der
+                        // noch nicht eingetroffen ist.
+                        let rollwege = match facility_referenz {
+                            Some(r) => facility::rollwege_zusammensetzen(
+                                r,
+                                &facility_punkte,
+                                &facility_namen,
+                                &facility_kanten,
+                            ),
+                            None => {
+                                if !facility_punkte.is_empty() {
+                                    tracing::warn!(
+                                        "Rollwegpunkte ohne Referenzpunkt — nicht umrechenbar"
+                                    );
+                                }
+                                Vec::new()
+                            }
+                        };
+                        tracing::info!(rollwege = rollwege.len(), "Rollwege zusammengesetzt");
                         *shared.szenerie.lock() = Some(sim_core::szenerie::SzenerieFlughafen {
                             icao,
                             bahnen: std::mem::take(&mut facility_sammler),
-                            rollwege: Vec::new(),
+                            rollwege,
                             quelle: "msfs".to_string(),
                         });
+                        facility_referenz = None;
+                        facility_punkte.clear();
+                        facility_namen.clear();
+                        facility_kanten.clear();
                     }
                 }
                 Ok(Some(DispatchMsg::Exception {

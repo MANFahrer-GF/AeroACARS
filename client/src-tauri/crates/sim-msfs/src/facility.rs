@@ -972,3 +972,78 @@ mod anschluss_verdrahtung_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod rollweg_verdrahtung_tests {
+    //! Wachen über den Rollweg-Einsammler im Windows-Teil.
+
+    const ADAPTER: &str = include_str!("adapter.rs");
+
+    fn ohne_leerraum(s: &str) -> String {
+        s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    #[test]
+    fn alle_drei_listen_werden_eingesammelt() {
+        let a = ohne_leerraum(ADAPTER);
+        for marke in [
+            "sys::FACILITY_DATA_AIRPORT",
+            "sys::FACILITY_DATA_TAXI_POINT",
+            "sys::FACILITY_DATA_TAXI_NAME",
+            "sys::FACILITY_DATA_TAXI_PATH",
+        ] {
+            assert!(
+                a.contains(&ohne_leerraum(marke)),
+                "{marke} wird nicht eingesammelt — die Rollwege blieben leer"
+            );
+        }
+    }
+
+    #[test]
+    fn ein_unlesbarer_punkt_belegt_trotzdem_seinen_platz() {
+        // ⚠ `START`/`END` sind POSITIONEN in der Punktliste. Wer einen
+        // unlesbaren Eintrag auslaesst, verschiebt jede Kante danach auf
+        // einen anderen Punkt — und heraus kommen Rollwege, die es gibt,
+        // nur woanders.
+        let a = ohne_leerraum(ADAPTER);
+        assert!(
+            a.contains("None=>facility_punkte.push((f64::NAN,f64::NAN))"),
+            "ein unlesbarer Rollwegpunkt wird uebersprungen statt platzhaltend \
+             eingefuegt — die Indizes verschieben sich"
+        );
+    }
+
+    #[test]
+    fn zusammengesetzt_wird_erst_am_ende() {
+        // Vorher sind die drei Listen nicht vollstaendig: Eine Kante
+        // koennte auf einen Punkt zeigen, der noch nicht da ist.
+        let a = ohne_leerraum(ADAPTER);
+        let ende = a
+            .find("DispatchMsg::FacilityDataEnde")
+            .expect("Ende-Zweig fehlt");
+        let zusammenbau = a
+            .find("facility::rollwege_zusammensetzen(")
+            .expect("Zusammenbau fehlt");
+        assert!(
+            zusammenbau > ende,
+            "die Rollwege werden zusammengesetzt, bevor die Lieferung vollstaendig ist"
+        );
+    }
+
+    #[test]
+    fn die_listen_werden_nach_der_lieferung_geleert() {
+        // Sonst truege der naechste Flughafen die Punkte des vorigen —
+        // und die Indizes der neuen Kanten zeigten mitten hinein.
+        let a = ohne_leerraum(ADAPTER);
+        for marke in [
+            "facility_punkte.clear();",
+            "facility_namen.clear();",
+            "facility_kanten.clear();",
+        ] {
+            assert!(
+                a.contains(&ohne_leerraum(marke)),
+                "{marke} fehlt — die Listen wachsen ueber Flughaefen hinweg"
+            );
+        }
+    }
+}

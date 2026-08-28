@@ -490,17 +490,21 @@ pub fn ergaenze_aus_szenerie(
     icao: &str,
     nav: Option<NavAirport>,
     msfs_auskunft: Option<sim_core::szenerie::SzenerieFlughafen>,
-) -> (Option<NavAirport>, Option<UebernahmeBericht>) {
+) -> (
+    Option<NavAirport>,
+    Option<UebernahmeBericht>,
+    Option<sim_core::szenerie::SzenerieFlughafen>,
+) {
     let quelle = quelle_fuer(simulator);
     if quelle == Quelle::Keine {
-        return (nav, None);
+        return (nav, None, None);
     }
     let Some(nav) = nav else {
         // Ohne Navdaten gibt es nichts zu ergaenzen. Einen Flughafen
         // ALLEIN aus der Szenerie zu bauen waere moeglich, aber dann
         // fehlten ILS, Gleitwinkel und Schwellenhoehe — und die Anzeige
         // haette stillschweigend weniger als vorher.
-        return (None, None);
+        return (None, None, None);
     };
     let auskunft = match quelle {
         Quelle::XPlaneDatei => szenerie_flughafen(icao),
@@ -513,11 +517,15 @@ pub fn ergaenze_aus_szenerie(
         Quelle::Keine => None,
     };
     let Some(sz) = auskunft else {
-        return (Some(nav), None);
+        return (Some(nav), None, None);
     };
     let (ergaenzt, bericht) = uebernimm_szenerie(&nav, &sz);
     if bericht.uebernommen.is_empty() {
-        return (Some(nav), Some(bericht));
+        // ⚠ Die Szenerie wird TROTZDEM zurueckgegeben: Auch wenn keine
+        // Bahn uebernommen wurde, koennen ihre Rollwege die Ausfahrten
+        // speisen. Sie hier fallen zu lassen waere ein stiller Verlust
+        // — die Bahn ist nur ein Teil der Auskunft.
+        return (Some(nav), Some(bericht), Some(sz));
     }
     tracing::info!(
         icao,
@@ -528,7 +536,7 @@ pub fn ergaenze_aus_szenerie(
         quelle = %sz.quelle,
         "Bahngeometrie aus der Szenerie uebernommen"
     );
-    (Some(ergaenzt), Some(bericht))
+    (Some(ergaenzt), Some(bericht), Some(sz))
 }
 
 #[cfg(test)]
@@ -548,7 +556,8 @@ mod anschluss_tests {
         // aussieht und falsch ist.
         for sim in [Simulator::Msfs2020, Simulator::Msfs2024, Simulator::Other] {
             let vorher = nav_edhe();
-            let (nachher, bericht) = ergaenze_aus_szenerie(sim, "EDHE", Some(vorher.clone()), None);
+            let (nachher, bericht, _) =
+                ergaenze_aus_szenerie(sim, "EDHE", Some(vorher.clone()), None);
             assert!(
                 bericht.is_none(),
                 "{sim:?}: Bericht trotz falschem Simulator"
@@ -567,7 +576,7 @@ mod anschluss_tests {
         // moeglich — dann fehlten aber ILS, Gleitwinkel und
         // Schwellenhoehe, und die Anzeige haette stillschweigend
         // weniger als vorher.
-        let (nachher, bericht) = ergaenze_aus_szenerie(Simulator::XPlane12, "EDHE", None, None);
+        let (nachher, bericht, _) = ergaenze_aus_szenerie(Simulator::XPlane12, "EDHE", None, None);
         assert!(nachher.is_none());
         assert!(bericht.is_none());
     }
@@ -605,7 +614,7 @@ mod anschluss_tests {
     #[test]
     fn msfs_nimmt_die_angeforderte_auskunft() {
         let vorher = nav_edhe();
-        let (nachher, bericht) = ergaenze_aus_szenerie(
+        let (nachher, bericht, _) = ergaenze_aus_szenerie(
             Simulator::Msfs2024,
             "EDHE",
             Some(vorher),
@@ -621,7 +630,7 @@ mod anschluss_tests {
         // ⚠ Nach einem Divert liegt sonst die Auskunft des GEPLANTEN
         // Ziels da — plausible Zahlen, falscher Flughafen.
         let vorher = nav_edhe();
-        let (nachher, bericht) = ergaenze_aus_szenerie(
+        let (nachher, bericht, _) = ergaenze_aus_szenerie(
             Simulator::Msfs2024,
             "EDHE",
             Some(vorher.clone()),
@@ -637,13 +646,61 @@ mod anschluss_tests {
     #[test]
     fn msfs_ohne_auskunft_bleibt_bei_den_navdaten() {
         let vorher = nav_edhe();
-        let (nachher, bericht) =
+        let (nachher, bericht, _) =
             ergaenze_aus_szenerie(Simulator::Msfs2024, "EDHE", Some(vorher.clone()), None);
         assert!(bericht.is_none());
         assert_eq!(
             nachher.unwrap().runways[0].true_course,
             vorher.runways[0].true_course
         );
+    }
+
+    #[test]
+    fn die_benutzte_szenerie_wird_zurueckgegeben() {
+        // ⚠ Ohne sie kaemen die Rollwege nie bei den Ausfahrten an: Die
+        // Bahn waere korrigiert, die Ausfahrten kaemen weiter aus
+        // OpenStreetMap. Bei X-Plane liest die Funktion die Datei
+        // selbst — der Aufrufer hat sie sonst gar nicht.
+        if sim_xplane::szenerie::installationen().is_empty() {
+            eprintln!("uebersprungen: keine X-Plane-Installation");
+            return;
+        }
+        let (_, _, sz) = ergaenze_aus_szenerie(Simulator::XPlane12, "EDDH", Some(nav_edhe()), None);
+        let sz = sz.expect("die gelesene Szenerie muss zurueckkommen");
+        assert!(!sz.rollwege.is_empty(), "EDDH ohne Rollwege?");
+    }
+
+    #[test]
+    fn auch_ohne_uebernommene_bahn_kommt_die_szenerie_zurueck() {
+        // Die Bahn ist nur ein Teil der Auskunft. Passt keine, sind die
+        // Rollwege trotzdem brauchbar.
+        let nav = nav_edhe();
+        let (_, bericht, sz) = ergaenze_aus_szenerie(
+            Simulator::Msfs2024,
+            "EDHE",
+            Some(nav),
+            Some(sim_core::szenerie::SzenerieFlughafen {
+                icao: "EDHE".into(),
+                quelle: "msfs".into(),
+                bahnen: vec![SzenerieBahn {
+                    bezeichner: "27".into(),
+                    kurs_grad: 273.0,
+                    breite_m: 55.0,
+                    laenge_m: 1100.0,
+                    versetzte_schwelle_m: 0.0,
+                    schwelle: (53.6459, 9.7142),
+                    gegenende: (53.6459, 9.6942),
+                    belag_code: 1,
+                }],
+                rollwege: vec![sim_core::szenerie::SzenerieRollweg {
+                    name: "B3".into(),
+                    punkte: vec![(53.6459, 9.70), (53.6465, 9.701)],
+                }],
+            }),
+        );
+        assert!(bericht.is_some_and(|b| b.uebernommen.is_empty()));
+        let sz = sz.expect("Szenerie trotz nicht uebernommener Bahn");
+        assert_eq!(sz.rollwege.len(), 1);
     }
 
     #[test]
@@ -654,7 +711,7 @@ mod anschluss_tests {
             eprintln!("uebersprungen: keine X-Plane-Installation");
             return;
         }
-        let (nachher, _) = ergaenze_aus_szenerie(
+        let (nachher, _, _) = ergaenze_aus_szenerie(
             Simulator::XPlane12,
             "EDHE",
             Some(nav_edhe()),
@@ -677,7 +734,7 @@ mod anschluss_tests {
             return;
         }
         let vorher = nav_edhe();
-        let (nachher, bericht) =
+        let (nachher, bericht, _) =
             ergaenze_aus_szenerie(Simulator::XPlane12, "EDHE", Some(vorher.clone()), None);
         let Some(b) = bericht else {
             panic!("kein Bericht — Szenerie nicht gefunden?");
@@ -698,6 +755,179 @@ mod anschluss_tests {
             b.groesste_kursabweichung_grad > 3.0,
             "gemeldete Abweichung zu klein: {}",
             b.groesste_kursabweichung_grad
+        );
+    }
+}
+
+/// Die Rollwege der Szenerie in die Bodenkarten-Form bringen.
+///
+/// # Warum
+///
+/// Die Ausfahrten werden heute aus einer GeoJSON-Bodenkarte gelesen, die
+/// der Server aus OpenStreetMap baut — einer **dritten** Welt, die weder
+/// mit unseren Navdaten noch mit der Szenerie identisch ist. Der Pilot
+/// rollt auf „B3" und der Bericht sagt „RWY Ende", weil OSM den Weg
+/// nicht kennt: 167 namenlose Ausfahrten an 68 Plätzen, sieben Plätze
+/// ganz ohne.
+///
+/// Die Szenerie kennt sie. In der installierten X-Plane-Szenerie stehen
+/// 243.945 benannte Rollwegkanten an 6.114 Flughäfen — das Dreissigfache
+/// unseres bisherigen Bestands. Bringt man sie in dieselbe Form, liest
+/// die vorhandene Ausfahrtserkennung sie unverändert.
+///
+/// ⚠ **GeoJSON ist `[Länge, Breite]`**, unsere Punkte sind
+/// `(Breite, Länge)`. Vertauscht landet jeder Rollweg im Golf von
+/// Guinea, und die Ausfahrtserkennung findet schlicht nichts — kein
+/// Fehler, keine Meldung, nur eine leere Liste. Dieselbe Klasse, die
+/// heute schon 75.610 Bahnen verworfen hat.
+pub fn rollwege_als_bodenkarte(rollwege: &[sim_core::szenerie::SzenerieRollweg]) -> String {
+    let mut merkmale: Vec<String> = Vec::with_capacity(rollwege.len());
+    for r in rollwege {
+        if r.name.trim().is_empty() || r.punkte.len() < 2 {
+            continue;
+        }
+        let punkte: Vec<String> = r
+            .punkte
+            .iter()
+            // (Breite, Länge) -> [Länge, Breite]
+            .map(|(lat, lon)| format!("[{lon},{lat}]"))
+            .collect();
+        let name = r.name.replace('\\', "").replace('"', "");
+        merkmale.push(format!(
+            r#"{{"type":"Feature","properties":{{"k":"taxiway","r":"{name}"}},"geometry":{{"type":"LineString","coordinates":[{}]}}}}"#,
+            punkte.join(",")
+        ));
+    }
+    format!(
+        r#"{{"type":"FeatureCollection","features":[{}]}}"#,
+        merkmale.join(",")
+    )
+}
+
+#[cfg(test)]
+mod bodenkarte_tests {
+    use super::*;
+    use sim_core::szenerie::SzenerieRollweg;
+
+    fn weg(name: &str) -> SzenerieRollweg {
+        SzenerieRollweg {
+            name: name.to_string(),
+            // (Breite, Länge) — Hamburg.
+            punkte: vec![(53.6304, 9.9882), (53.6310, 9.9890)],
+        }
+    }
+
+    #[test]
+    fn koordinaten_werden_gedreht() {
+        // ⚠ GeoJSON ist [Länge, Breite]. Vertauscht liegt der Rollweg im
+        // Golf von Guinea, und die Ausfahrtserkennung findet nichts —
+        // ohne Fehler, ohne Meldung.
+        let g = rollwege_als_bodenkarte(&[weg("B3")]);
+        assert!(
+            g.contains("[9.9882,53.6304]"),
+            "Koordinaten nicht als [Länge, Breite]: {g}"
+        );
+        assert!(
+            !g.contains("[53.6304,9.9882]"),
+            "Koordinaten stehen vertauscht drin"
+        );
+    }
+
+    #[test]
+    fn die_vorhandene_ausfahrtserkennung_liest_das_ergebnis() {
+        // Der eigentliche Beweis: nicht dass es gültiges JSON ist,
+        // sondern dass der bestehende Leser damit etwas findet.
+        let g = rollwege_als_bodenkarte(&[weg("B3"), weg("A1")]);
+        let gefunden = crate::ausfahrten::ausfahrten_fuer_bahn(
+            &g, 53.6280, 9.9860, // Schwelle
+            53.6340, 9.9920, // Bahnende
+            45.0,
+        );
+        assert!(
+            !gefunden.is_empty(),
+            "die Ausfahrtserkennung findet in der erzeugten Karte nichts"
+        );
+        assert!(gefunden.iter().any(|a| a.name == "B3"));
+    }
+
+    #[test]
+    fn namenlose_und_zu_kurze_wege_fallen_weg() {
+        let leer = SzenerieRollweg {
+            name: "".into(),
+            punkte: vec![(53.6, 9.9), (53.61, 9.91)],
+        };
+        let kurz = SzenerieRollweg {
+            name: "C".into(),
+            punkte: vec![(53.6, 9.9)],
+        };
+        let g = rollwege_als_bodenkarte(&[leer, kurz]);
+        assert_eq!(g, r#"{"type":"FeatureCollection","features":[]}"#);
+    }
+
+    #[test]
+    fn anfuehrungszeichen_im_namen_zerlegen_das_json_nicht() {
+        let g = rollwege_als_bodenkarte(&[SzenerieRollweg {
+            name: "A\"1".into(),
+            punkte: vec![(53.6, 9.9), (53.61, 9.91)],
+        }]);
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&g).is_ok(),
+            "erzeugtes JSON ist ungueltig: {g}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod ausfahrt_verdrahtung_tests {
+    //! Wachen über den Anschluss der Szenerie-Rollwege an die Ausfahrten.
+
+    const LIB: &str = include_str!("lib.rs");
+
+    fn ohne_leerraum(s: &str) -> String {
+        s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    #[test]
+    fn die_szenerie_rollwege_werden_benutzt() {
+        // Ohne diesen Anschluss waeren sie eingesammelt und nutzlos —
+        // die Ausfahrten kaemen weiter aus OpenStreetMap.
+        let a = ohne_leerraum(LIB);
+        assert!(
+            a.contains("szenerie_bahn::rollwege_als_bodenkarte("),
+            "die Szenerie-Rollwege erreichen die Ausfahrtserkennung nicht"
+        );
+    }
+
+    #[test]
+    fn die_gelesene_szenerie_wird_am_flug_abgelegt() {
+        // ⚠ Ohne diese Zeile bliebe die Rueckgabe liegen: Bei X-Plane
+        // liest `ergaenze_aus_szenerie` die Datei selbst, und wenn der
+        // Aufrufer sie nicht behaelt, kommen ihre Rollwege nie bei den
+        // Ausfahrten an. Die Bahn waere korrigiert, die Ausfahrten
+        // kaemen weiter aus OpenStreetMap — und niemand saehe warum.
+        //
+        // Genau das ist beim Bauen passiert, und keine Wache hat es
+        // gefangen. Diese hier tut es.
+        let a = ohne_leerraum(LIB);
+        assert!(
+            a.contains("stats.szenerie_auskunft=Some(sz);"),
+            "die von `ergaenze_aus_szenerie` gelesene Szenerie wird nicht am Flug abgelegt"
+        );
+    }
+
+    #[test]
+    fn eine_leere_szenerie_verdraengt_die_serverkarte_nicht() {
+        // ⚠ Eine leere Szenerie-Karte waere schlechter als eine gute
+        // OSM-Karte: Die Anzeige zeigte dann gar keine Ausfahrten und
+        // saehe aus wie „diese Bahn hat keine".
+        let a = ohne_leerraum(LIB);
+        assert!(
+            a.contains(".filter(|a|!a.rollwege.is_empty())"),
+            "eine leere Rollwegliste wuerde die Serverkarte verdraengen"
+        );
+        assert!(
+            a.contains(".or(stats.arr_ground_geojson.as_deref())"),
+            "ohne Szenerie faellt es nicht auf die Serverkarte zurueck"
         );
     }
 }
