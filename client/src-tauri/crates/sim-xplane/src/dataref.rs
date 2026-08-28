@@ -673,10 +673,7 @@ fn wind_body_kt(
     let nach_vorn = north * psi.cos() + east * psi.sin();
     let nach_rechts = east * psi.cos() - north * psi.sin();
     // „Von vorn" ist das Gegenteil von „weht nach vorn"; dasselbe seitlich.
-    (
-        Some(-nach_vorn * KT_PER_MS),
-        Some(-nach_rechts * KT_PER_MS),
-    )
+    (Some(-nach_vorn * KT_PER_MS), Some(-nach_rechts * KT_PER_MS))
 }
 
 /// Mutable parsed state — populated as RREF responses arrive. Held
@@ -936,7 +933,8 @@ impl XPlaneState {
         // that gap stays open; this closes the high-end/unit-mixup
         // case using data we already have, no aircraft-type reference
         // needed.
-        let physically_possible = self.total_weight_kg <= 0.0 || self.empty_weight_kg < self.total_weight_kg;
+        let physically_possible =
+            self.total_weight_kg <= 0.0 || self.empty_weight_kg < self.total_weight_kg;
         let oew = if self.empty_weight_kg > 0.0 && physically_possible {
             Some(self.empty_weight_kg)
         } else {
@@ -1071,7 +1069,11 @@ impl XPlaneState {
             },
             outside_air_temp_c: Some(self.oat_c),
             total_air_temp_c: None,
-            mach: if self.mach > 0.0 { Some(self.mach) } else { None },
+            mach: if self.mach > 0.0 {
+                Some(self.mach)
+            } else {
+                None
+            },
             empty_weight_kg: oew,
             aircraft_title: None,
             aircraft_icao: None,
@@ -1293,7 +1295,7 @@ mod airspeed_unit_tests {
     fn true_airspeed_is_not_below_indicated_at_a_realistic_cruise_value() {
         let mut s = XPlaneState::default();
         s.apply_field(FieldId::IndicatedAirspeedKt, 300.0); // already kt, no conversion
-        // 480 kt real TAS, expressed as the m/s raw dataref value.
+                                                            // 480 kt real TAS, expressed as the m/s raw dataref value.
         s.apply_field(FieldId::TrueAirspeedKt, 480.0 / KT_PER_MS);
         let snap = s.to_snapshot(Simulator::XPlane11);
         assert!(
@@ -1338,7 +1340,10 @@ mod body_velocity_tests {
     #[test]
     fn tug_push_reads_backward() {
         let (fwd, _) = body_velocity_fps(0.0, 2.0, 0.0, 2.0);
-        assert!(fwd.unwrap() < -1.0, "tug push must read backward, got {fwd:?}");
+        assert!(
+            fwd.unwrap() < -1.0,
+            "tug push must read backward, got {fwd:?}"
+        );
     }
 
     /// The sign test must hold at EVERY heading (the world→body rotation is
@@ -1499,12 +1504,7 @@ mod toliss_autoflight_tests {
     fn catalog_subscribes_the_documented_toliss_datarefs() {
         // Guard the dataref-name ↔ FieldId pairing (a typo here would
         // be silently dead: X-Plane just never answers).
-        let find = |field: FieldId| {
-            CATALOG
-                .iter()
-                .find(|e| e.field == field)
-                .map(|e| e.name)
-        };
+        let find = |field: FieldId| CATALOG.iter().find(|e| e.field == field).map(|e| e.name);
         assert_eq!(find(FieldId::TolissAp1), Some("AirbusFBW/AP1Engage"));
         assert_eq!(find(FieldId::TolissAp2), Some("AirbusFBW/AP2Engage"));
         assert_eq!(find(FieldId::TolissAthrMode), Some("AirbusFBW/ATHRmode"));
@@ -1529,7 +1529,10 @@ mod empty_weight_plausibility_tests {
         s.apply_field(FieldId::EmptyWeightKg, 250_000.0); // impossible
         let snap = s.to_snapshot(Simulator::XPlane12);
         assert_eq!(snap.empty_weight_kg, None);
-        assert_eq!(snap.payload_kg, None, "an impossible OEW must not leak into payload math");
+        assert_eq!(
+            snap.payload_kg, None,
+            "an impossible OEW must not leak into payload math"
+        );
     }
 
     #[test]

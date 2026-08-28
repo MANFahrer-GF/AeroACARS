@@ -138,18 +138,11 @@ impl WebApiClient {
     }
 
     /// Look up the numeric id for one DataRef name. Cached.
-    fn discover_id(
-        &self,
-        cache: &mut DrefIdCache,
-        name: &'static str,
-    ) -> Result<i64, WebApiError> {
+    fn discover_id(&self, cache: &mut DrefIdCache, name: &'static str) -> Result<i64, WebApiError> {
         if let Some(id) = cache.ids.get(name).copied() {
             return Ok(id);
         }
-        let url = format!(
-            "{}/api/v1/datarefs?filter[name]={}",
-            self.base_url, name,
-        );
+        let url = format!("{}/api/v1/datarefs?filter[name]={}", self.base_url, name,);
         let body: DiscoveryResponse = self
             .agent
             .get(&url)
@@ -223,9 +216,8 @@ impl WebApiClient {
             }
         }
         if !any_succeeded {
-            return Err(last_err.unwrap_or_else(|| {
-                WebApiError::Http("no aircraft datarefs reachable".into())
-            }));
+            return Err(last_err
+                .unwrap_or_else(|| WebApiError::Http("no aircraft datarefs reachable".into())));
         }
         Ok(info)
     }
@@ -358,10 +350,9 @@ mod tests {
 
     #[test]
     fn discovery_response_parses() {
-        let r: DiscoveryResponse = serde_json::from_str(
-            r#"{"data":[{"id":12345,"name":"sim/aircraft/view/acf_ICAO"}]}"#,
-        )
-        .unwrap();
+        let r: DiscoveryResponse =
+            serde_json::from_str(r#"{"data":[{"id":12345,"name":"sim/aircraft/view/acf_ICAO"}]}"#)
+                .unwrap();
         assert_eq!(r.data.len(), 1);
         assert_eq!(r.data[0].id, 12345);
     }

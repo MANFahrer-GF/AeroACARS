@@ -258,10 +258,7 @@ impl PremiumListener {
         PremiumStatus {
             ever_seen: self.shared.ever_seen.load(Ordering::Relaxed),
             active,
-            packet_count: self
-                .shared
-                .packet_count
-                .load(Ordering::Relaxed),
+            packet_count: self.shared.packet_count.load(Ordering::Relaxed),
         }
     }
 
@@ -269,10 +266,7 @@ impl PremiumListener {
     /// Called from the flight sampler after each tick. Returns
     /// `None` until the next plugin-emitted touchdown.
     pub fn take_touchdown(&self) -> Option<PremiumTouchdown> {
-        self.shared
-            .pending_touchdown
-            .lock()
-            .take()
+        self.shared.pending_touchdown.lock().take()
     }
 
     pub fn last_error(&self) -> Option<String> {
@@ -380,9 +374,7 @@ fn handle_packet(bytes: &[u8], shared: &Arc<PremiumShared>) {
     // ---- Heartbeat (any valid packet counts) ----
     *shared.last_packet_at.lock() = Some(Instant::now());
     shared.ever_seen.store(true, Ordering::Relaxed);
-    shared
-        .packet_count
-        .fetch_add(1, Ordering::Relaxed);
+    shared.packet_count.fetch_add(1, Ordering::Relaxed);
 
     match env.kind.as_str() {
         "telemetry" => {
@@ -390,27 +382,25 @@ fn handle_packet(bytes: &[u8], shared: &Arc<PremiumShared>) {
             // stream is authoritative for live telemetry. Future:
             // overlay vs_fpm, g_normal etc. for the live ribbon.
         }
-        "touchdown" => {
-            match serde_json::from_slice::<PremiumTouchdown>(trimmed) {
-                Ok(mut td) => {
-                    td.received_at = Some(std::time::SystemTime::now());
-                    tracing::info!(
-                        vs_fpm = td.captured_vs_fpm,
-                        g = td.captured_g_normal,
-                        ias_kt = td.captured_ias_kt,
-                        pitch_deg = td.captured_pitch_deg,
-                        "premium: touchdown event received from plugin"
-                    );
-                    *shared.pending_touchdown.lock() = Some(td);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "premium: touchdown packet decode failed (heartbeat still counted)"
-                    );
-                }
+        "touchdown" => match serde_json::from_slice::<PremiumTouchdown>(trimmed) {
+            Ok(mut td) => {
+                td.received_at = Some(std::time::SystemTime::now());
+                tracing::info!(
+                    vs_fpm = td.captured_vs_fpm,
+                    g = td.captured_g_normal,
+                    ias_kt = td.captured_ias_kt,
+                    pitch_deg = td.captured_pitch_deg,
+                    "premium: touchdown event received from plugin"
+                );
+                *shared.pending_touchdown.lock() = Some(td);
             }
-        }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "premium: touchdown packet decode failed (heartbeat still counted)"
+                );
+            }
+        },
         other => {
             tracing::debug!(
                 kind = %other,

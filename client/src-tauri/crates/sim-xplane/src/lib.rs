@@ -48,6 +48,7 @@ mod premium;
 mod probe;
 mod profile;
 mod rref;
+pub mod szenerie;
 mod web_api;
 
 pub use adapter::{ConnectionState, XPlaneAdapter};

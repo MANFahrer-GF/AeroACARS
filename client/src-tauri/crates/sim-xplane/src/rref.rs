@@ -49,10 +49,7 @@ pub fn encode_request(freq: i32, index: i32, dataref: &str) -> Vec<u8> {
     buf[5..9].copy_from_slice(&freq.to_le_bytes());
     buf[9..13].copy_from_slice(&index.to_le_bytes());
     let name_bytes = dataref.as_bytes();
-    assert!(
-        name_bytes.len() < 400,
-        "dataref name too long: {dataref}"
-    );
+    assert!(name_bytes.len() < 400, "dataref name too long: {dataref}");
     buf[13..13 + name_bytes.len()].copy_from_slice(name_bytes);
     // Remainder of the 400-byte name field stays 0 (NUL padding).
     buf

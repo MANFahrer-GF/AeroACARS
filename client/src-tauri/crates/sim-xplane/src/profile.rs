@@ -181,13 +181,11 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
         name: "Rotate MD-11",
         title_match: &["rotate", "md-11"],
         probe_dataref: "Rotate/aircraft/systems/flaps_cmd_pos_deg",
-        overrides: &[
-            DatarefOverride {
-                field: FieldId::FlapsHandle,
-                dataref: "Rotate/aircraft/systems/flaps_cmd_pos_deg",
-                mapping: ValueMapping::DegreeTable(MD11_FLAP_DEGREES),
-            },
-        ],
+        overrides: &[DatarefOverride {
+            field: FieldId::FlapsHandle,
+            dataref: "Rotate/aircraft/systems/flaps_cmd_pos_deg",
+            mapping: ValueMapping::DegreeTable(MD11_FLAP_DEGREES),
+        }],
     },
     // v0.17.x (#aircraft-scan): Laminar/Zibo Boeing 737-800(X). Die
     // `laminar/B738/autopilot/*_status`-Datarefs sind X-Plane-KERN (Laminars
@@ -453,13 +451,22 @@ mod tests {
             .expect("Zibo 737 profile present");
         let active = build_active_catalog(Some(z));
         // AP-Modus-Felder auf die 737-echten laminar/B738-Datarefs gebogen.
-        let hdg = active.iter().find(|e| e.field == FieldId::ApHeading).unwrap();
+        let hdg = active
+            .iter()
+            .find(|e| e.field == FieldId::ApHeading)
+            .unwrap();
         assert_eq!(hdg.name, "laminar/B738/autopilot/hdg_sel_status");
-        let app = active.iter().find(|e| e.field == FieldId::ApApproach).unwrap();
+        let app = active
+            .iter()
+            .find(|e| e.field == FieldId::ApApproach)
+            .unwrap();
         assert_eq!(app.name, "laminar/B738/autopilot/app_status");
         // ApMaster bewusst NICHT ueberschrieben — bleibt auf servos_on
         // (faengt CMD A ODER B).
-        let master = active.iter().find(|e| e.field == FieldId::ApMaster).unwrap();
+        let master = active
+            .iter()
+            .find(|e| e.field == FieldId::ApMaster)
+            .unwrap();
         assert_eq!(master.name, "sim/cockpit2/autopilot/servos_on");
         // Lockstep: gleiche Katalog-Laenge (nur bestehende Felder gebogen).
         assert_eq!(active.len(), CATALOG.len());
@@ -486,7 +493,10 @@ mod tests {
             .iter()
             .find(|e| e.field == FieldId::FlapsHandle)
             .expect("FlapsHandle in catalog");
-        assert_eq!(flaps.name, "abus/CL650/ARINC429/L-DCU-7/words/FCTL/0/FLAPS_LVR");
+        assert_eq!(
+            flaps.name,
+            "abus/CL650/ARINC429/L-DCU-7/words/FCTL/0/FLAPS_LVR"
+        );
         assert!(matches!(flaps.mapping, ValueMapping::DetentTable(_)));
         // a non-overridden field keeps its base dataref.
         let lat = active

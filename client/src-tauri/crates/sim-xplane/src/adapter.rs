@@ -152,7 +152,10 @@ impl XPlaneAdapter {
     /// (the `kind` may have changed between calls).
     pub fn start(&mut self, kind: SimKind) {
         if !kind.is_xplane() {
-            tracing::warn!(?kind, "XPlaneAdapter::start called with non-XPlane kind, ignoring");
+            tracing::warn!(
+                ?kind,
+                "XPlaneAdapter::start called with non-XPlane kind, ignoring"
+            );
             return;
         }
         self.stop();
@@ -504,7 +507,12 @@ fn run_listener(shared: Arc<AdapterShared>) {
                     }
                 }
             }
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
                 // No data this tick — check stale timeout + resubscribe-
                 // due timer below, then loop.
             }
@@ -546,9 +554,9 @@ fn run_listener(shared: Arc<AdapterShared>) {
                     },
                     "X-Plane: aircraft DataRef profile activated"
                 ),
-                None => tracing::info!(
-                    "X-Plane: aircraft changed — resetting to base DataRef catalog"
-                ),
+                None => {
+                    tracing::info!("X-Plane: aircraft changed — resetting to base DataRef catalog")
+                }
             }
             active_profile = desired;
             // Rebuild the active catalog (LE6) and re-subscribe with
@@ -713,7 +721,10 @@ mod tests {
     #[test]
     fn title_match_activates_profile() {
         // Initial discovery: title matches, probe has not answered yet.
-        assert_eq!(desired_profile(Some(CL650_TITLE), &[false], &[false]), Some(0));
+        assert_eq!(
+            desired_profile(Some(CL650_TITLE), &[false], &[false]),
+            Some(0)
+        );
     }
 
     #[test]
@@ -725,13 +736,19 @@ mod tests {
     #[test]
     fn no_signal_yields_base_catalog() {
         assert_eq!(desired_profile(None, &[false], &[false]), None);
-        assert_eq!(desired_profile(Some("Cessna 172"), &[false], &[false]), None);
+        assert_eq!(
+            desired_profile(Some("Cessna 172"), &[false], &[false]),
+            None
+        );
     }
 
     #[test]
     fn probe_wins_when_title_does_not_match() {
         // A title that matches no profile must not veto a fresh probe.
-        assert_eq!(desired_profile(Some("Cessna 172"), &[true], &[true]), Some(0));
+        assert_eq!(
+            desired_profile(Some("Cessna 172"), &[true], &[true]),
+            Some(0)
+        );
     }
 
     /// QS-R4/P1: the regression the old `last_title`-diff logic missed —
@@ -758,6 +775,9 @@ mod tests {
         // probe seen earlier, now stale; title still says CL650 → base.
         assert_eq!(desired_profile(Some(CL650_TITLE), &[false], &[true]), None);
         // sanity: same title, but probe fresh again (swapped back) → active.
-        assert_eq!(desired_profile(Some(CL650_TITLE), &[true], &[true]), Some(0));
+        assert_eq!(
+            desired_profile(Some(CL650_TITLE), &[true], &[true]),
+            Some(0)
+        );
     }
 }
