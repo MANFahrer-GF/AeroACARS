@@ -427,8 +427,7 @@ use std::sync::{Mutex, OnceLock};
 /// waere das absurd, pro Programmlauf ist es nichts — und wenn der Pilot
 /// zwischendurch ein Add-on installiert, faellt das ueber Groesse und
 /// Aenderungszeit der Quelldateien auf, und es wird neu gebaut.
-static VERZEICHNIS: OnceLock<Mutex<Option<sim_xplane::szenerie::SzenerieIndex>>> =
-    OnceLock::new();
+static VERZEICHNIS: OnceLock<Mutex<Option<sim_xplane::szenerie::SzenerieIndex>>> = OnceLock::new();
 
 /// Den Flughafen aus der Szenerie holen, mit Verzeichnis.
 fn szenerie_flughafen(icao: &str) -> Option<sim_xplane::szenerie::SzenerieFlughafen> {
@@ -521,9 +520,11 @@ mod anschluss_tests {
         // aussieht und falsch ist.
         for sim in [Simulator::Msfs2020, Simulator::Msfs2024, Simulator::Other] {
             let vorher = nav_edhe();
-            let (nachher, bericht) =
-                ergaenze_aus_szenerie(sim, "EDHE", Some(vorher.clone()));
-            assert!(bericht.is_none(), "{sim:?}: Bericht trotz falschem Simulator");
+            let (nachher, bericht) = ergaenze_aus_szenerie(sim, "EDHE", Some(vorher.clone()));
+            assert!(
+                bericht.is_none(),
+                "{sim:?}: Bericht trotz falschem Simulator"
+            );
             assert_eq!(
                 nachher.unwrap().runways[0].true_course,
                 vorher.runways[0].true_course,

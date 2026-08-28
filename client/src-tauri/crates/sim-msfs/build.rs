@@ -50,12 +50,10 @@ fn main() {
             eprintln!("warning: could not copy {file} to OUT_DIR: {e}");
         }
     }
-    if let Some(target_dir) = out_path
-        .ancestors()
-        .nth(3)
-        // ancestors yields self, so skip(0)→OUT_DIR, skip(1)→out's parent, etc.
-        // We want target/<profile>; that's three levels up from the
-        // ".../build/<crate>-<hash>/out" leaf.
+    if let Some(target_dir) = out_path.ancestors().nth(3)
+    // ancestors yields self, so skip(0)→OUT_DIR, skip(1)→out's parent, etc.
+    // We want target/<profile>; that's three levels up from the
+    // ".../build/<crate>-<hash>/out" leaf.
     {
         let dll_dst = target_dir.join("SimConnect.dll");
         match std::fs::copy(lib_dir.join("SimConnect.dll"), &dll_dst) {
@@ -113,6 +111,18 @@ fn generate_bindings(manifest_dir: &PathBuf, out_path: &PathBuf) {
         // ist eine Positivliste, kein Filter gegen Unerwuenschtes. Genau daran
         // ist der erste Anlauf in der Windows-CI gescheitert (19.08.2026).
         .allowlist_function("SimConnect_SubscribeToFlowEvent")
+        // v1.7.8 — Bahn- und Rollwegdaten aus der SZENERIE, nicht aus
+        // den Navdaten. Der Pilot fliegt, was installiert ist; die
+        // Facility-Schnittstelle liefert genau das, Add-ons
+        // eingeschlossen.
+        //
+        // ⚠ Wieder die Positivliste: Ohne diese Eintraege erzeugt
+        // bindgen die Symbole NICHT, obwohl `SimConnect.h` sie
+        // deklariert — dieselbe Falle wie bei den Flow-Ereignissen
+        // eine Zeile darueber, und sie faellt erst in der Windows-CI auf.
+        .allowlist_function("SimConnect_RequestFacilityData")
+        .allowlist_function("SimConnect_AddToFacilityDefinition")
+        .allowlist_function("SimConnect_ClearAllFacilityDataDefinitionFilters")
         // --- Receiver structs we actually inspect ---
         .allowlist_type("SIMCONNECT_RECV")
         .allowlist_type("SIMCONNECT_RECV_ID")
@@ -132,6 +142,12 @@ fn generate_bindings(manifest_dir: &PathBuf, out_path: &PathBuf) {
         // alles andere nicht — ein irrefuehrend halbes Bild.
         .allowlist_type("SIMCONNECT_RECV_FLOW_EVENT")
         .allowlist_type("SIMCONNECT_FLOW_EVENT")
+        // v1.7.8 Facility-Empfaenger. `SIMCONNECT_RECV_ID` steht schon
+        // oben — genau deshalb kaeme sonst nur die RECV_ID-Variante
+        // durch und alles andere nicht, ein irrefuehrend halbes Bild.
+        .allowlist_type("SIMCONNECT_RECV_FACILITY_DATA")
+        .allowlist_type("SIMCONNECT_RECV_FACILITY_DATA_END")
+        .allowlist_type("SIMCONNECT_FACILITY_DATA_TYPE")
         .allowlist_type("SIMCONNECT_EXCEPTION")
         .allowlist_type("SIMCONNECT_DATATYPE")
         .allowlist_type("SIMCONNECT_PERIOD")

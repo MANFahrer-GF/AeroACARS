@@ -180,13 +180,11 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("ENG FUEL FLOW PPH:2", "pounds per hour"),
     F::f64("ENG FUEL FLOW PPH:3", "pounds per hour"),
     F::f64("ENG FUEL FLOW PPH:4", "pounds per hour"),
-
     // ---- Surfaces ----
     // 0..1, position of the spoiler / speed-brake handle.
     F::f64("SPOILERS HANDLE POSITION", "percent over 100"),
     // Auto-spoilers armed for landing (separate from physical handle).
     F::bool("SPOILERS ARMED"),
-
     // ---- Pushback ----
     // Enum: 0 = Straight, 1 = Left, 2 = Right, 3 = No Pushback.
     // MSFS itself drives this — we use it as the authoritative
@@ -196,7 +194,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // disconnected (or the pilot used Ctrl+P to stop), which is
     // when we should advance to TaxiOut.
     F::f64("PUSHBACK STATE", "Enum"),
-
     // ---- Systems ----
     // APU master switch (0 = off, 1 = on).
     F::bool("APU SWITCH"),
@@ -215,7 +212,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::bool("ENG ANTI ICE:4"),
     // Wing / structural deice (Airbus calls this WING ANTI ICE).
     F::bool("STRUCTURAL DEICE SWITCH"),
-
     // ---- FBW A32NX LVars ----
     // LVars don't get rejected by SimConnect — non-FBW aircraft just
     // read 0 from them, so adding them universally is safe. The
@@ -230,7 +226,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:A32NX_AUTOPILOT_APPR_MODE_ACTIVE", "Bool"),
     // FBW total fuel quantity, kg — the documented "live" total.
     F::f64("L:A32NX_TOTAL_FUEL_QUANTITY", "Number"),
-
     // ---- Fenix A320 LVars ----
     // Names verified against the Axis-and-Ohs Fenix script bundle
     // shipped at docs/vendor/FENIX_A3XX_AxisAndOhs_Scripts.xml — each
@@ -258,29 +253,24 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:S_OH_EXT_LT_NAV_LOGO", "Number"),
     // Parking brake on Fenix MIP: 0 = released, 1 = set.
     F::f64("L:S_MIP_PARKING_BRAKE", "Number"),
-
     // Cabin signs: real A320 has 3-pos toggles (OFF/AUTO/ON);
     // Fenix exposes them under the SIGNS namespace, NOT under
     // INT_LT as my first guess assumed.
     F::f64("L:S_OH_SIGNS", "Number"),
     F::f64("L:S_OH_SIGNS_SMOKING", "Number"),
-
     // APU electrical pushbuttons.
     F::f64("L:S_OH_ELEC_APU_MASTER", "Number"),
     F::f64("L:S_OH_ELEC_APU_START", "Number"),
-
     // Anti-ice (engine + wing). The PROBE/WINDOW HEAT switch lives
     // outside the PNEUMATIC namespace by Fenix's convention.
     F::f64("L:S_OH_PNEUMATIC_ENG1_ANTI_ICE", "Number"),
     F::f64("L:S_OH_PNEUMATIC_ENG2_ANTI_ICE", "Number"),
     F::f64("L:S_OH_PNEUMATIC_WING_ANTI_ICE", "Number"),
     F::f64("L:S_OH_PROBE_HEAT", "Number"),
-
     // Electric panel.
     F::f64("L:S_OH_ELEC_BAT1", "Number"),
     F::f64("L:S_OH_ELEC_BAT2", "Number"),
     F::f64("L:S_OH_ELEC_EXT_PWR", "Number"),
-
     // FCU button states — replace the unreliable `L:I_FCU_*` lamp
     // LVars from earlier sessions. The S_ prefix is the button
     // press state, which actually toggles cleanly.
@@ -288,7 +278,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:S_FCU_AP2", "Number"),
     F::f64("L:S_FCU_APPR", "Number"),
     F::f64("L:S_FCU_ATHR", "Number"),
-
     // FCU encoder displays — what the pilot has selected on the
     // glareshield. Used to log "Selected ALT 36000" / "Selected
     // HDG 280" / etc. as the pilot tunes them.
@@ -296,12 +285,10 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:E_FCU_HEADING", "Number"),
     F::f64("L:E_FCU_SPEED", "Number"),
     F::f64("L:E_FCU_VS", "Number"),
-
     // Autobrake setting indicators (lamp LVars on the MIP).
     F::f64("L:I_MIP_AUTOBRAKE_LO_L", "Number"),
     F::f64("L:I_MIP_AUTOBRAKE_MED_L", "Number"),
     F::f64("L:I_MIP_AUTOBRAKE_MAX_L", "Number"),
-
     // ---- Fenix A32x Beta LVars (v0.7.16) ----
     // Read from the verified `FNX32X_Interior.xml` shipped with
     // fnx-aircraft-320 / fnx-aircraft-319-321. All names cross-checked
@@ -336,7 +323,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // adds the lever *detent* as a cross-check value the activity log
     // can pin against (e.g. "Lever 1+F" vs the percentage).
     F::f64("L:S_FC_FLAPS", "Number"),
-
     // ---- FSReborn Phenom 300E LVars (v0.13.13) ----
     // Pilot-Befund Michael 2026-05-26: AeroACARS Auto-Start scheiterte mit
     // "Triebwerke sind an" obwohl FSR Phenom 300E Cold&Dark stand. Standard
@@ -354,7 +340,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // docs/dev/lvar-discovery-hubhop.md fuer den vollen LVar-Katalog.
     F::f64("L:FSR_300E_ENGINE1_KNOB_POS", "Number"),
     F::f64("L:FSR_300E_ENGINE2_KNOB_POS", "Number"),
-
     // ---- Aerosoft A340-600 (ToLiss port) — WASM-Analyse 2026-06-10 ----
     // Strings-Analyse der `MSFS_ToLiss_Plugin.wasm` (Aerosoft A346 Pro =
     // ToLiss-Port) hat bewiesen, dass das Aircraft NICHT die plain
@@ -388,7 +373,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:AB_AP_ATHR_LIGHT_ON", "Number"),
     F::f64("L:AB_AP_APPR_LIGHT_ON", "Number"),
     F::f64("L:AB_AP_LOC_LIGHT_ON", "Number"),
-
     // ---- Aerosoft A340-600 full profile (v0.16.4, WASM-Analyse
     // 2026-06-10) ----
     // Komfort-/System-LVars analog zur Fenix-Abdeckung weiter oben.
@@ -439,7 +423,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:INI_ATHR_LIGHT", "Number"),
     F::f64("L:INI_MCU_LAND_LIGHT", "Number"),
     F::f64("L:INI_MCU_LOC_LIGHT", "Number"),
-
     // ================================================================
     // v0.16.10 (#Premium): Cockpit-Tiefendaten — 5 LVar-Gruppen.
     // LOCKSTEP: append-only am Tabellen-Ende, gleiche Reihenfolge in
@@ -477,7 +460,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // das Activity-Log lebt von master_warning.
     F::f64("L:I_ENG_FIRE_1", "Number"),
     F::f64("L:I_ENG_FIRE_2", "Number"),
-
     // ---- Gruppe B: FBW-A32NX-Familie (FBW-Doku) ----
     // Quelle: open-source FBW-Doku (fbw-a32nx/docs/a320-simvars.md).
     // Deckt FBW A32NX + FBW A380X + Headwind A339 ab (gleiche
@@ -505,7 +487,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:A32NX_FCU_SPD_MANAGED_DOT", "Number"),
     F::f64("L:A32NX_FCU_HDG_MANAGED_DOT", "Number"),
     F::f64("L:A32NX_FCU_ALT_MANAGED", "Number"),
-
     // ---- Gruppe C: iniBuilds A350/A340 Premium (WASM-strings) ----
     // Quelle: WASM-Strings-Dump der iniBuilds A350 — ALLE Namen
     // woertlich gegen den Dump verifiziert (2026-06-11). Dieselben
@@ -546,7 +527,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:INI_FUEL_FLOW4_KG", "Number"),
     // A340-Extra: Autobrake-Selector (HubHop: 3=MED, 4=MAX, 5=LO).
     F::f64("L:INI_AUTOBRAKE_LEVEL", "Number"),
-
     // ---- Gruppe D: Aerosoft A346 Premium-Extras (WASM-strings) ----
     // Quelle: Strings der MSFS_ToLiss_Plugin.wasm — alle Namen
     // woertlich verifiziert (Inventar 2026-06-11).
@@ -569,7 +549,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:TLS_ENG2_REVERSER_RATIO", "Number"),
     F::f64("L:TLS_ENG3_REVERSER_RATIO", "Number"),
     F::f64("L:TLS_ENG4_REVERSER_RATIO", "Number"),
-
     // ---- Gruppe E: TFDi MD-11 (TFDi-Doku + WASM-strings) ----
     // Quelle: offizielle TFDi-Doku + WASM-Dump — alle Namen woertlich
     // gegen den Dump verifiziert (2026-06-11).
@@ -594,7 +573,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:MD11_ENG3_N1", "Number"),
     // Autobrake-Selector: Positions-Enum undokumentiert → "#{n}".
     F::f64("L:MD11_CTR_AUTOBRAKE_SW", "Number"),
-
     // ---- iFly 737 MAX 8 (v0.16.11) — WASM-strings + HubHop ----
     // Quelle: WASM-Strings-Dump + INTERIOR.xml-Behaviors des iFly-Pakets.
     // ⚠️ iFly-Namensschema (Sweep v1.5.4): pro Lampen-Objekt existieren
@@ -604,17 +582,19 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // A/T ARM heissen schon `*_LIGHT_VAL` (Objekt = SW_LIGHT, treibt
     // EMISSIVE direkt, keine Doppel-Variante). Nur bei
     // AircraftProfile::IflyMax8 gemappt.
-    F::f64("L:VC_CMD_A_SW_LIGHT_VAL", "Number"),   // AP CMD A LED (EMISSIVE, verifiziert)
-    F::f64("L:VC_CMD_B_SW_LIGHT_VAL", "Number"),   // AP CMD B LED (EMISSIVE, verifiziert)
-    F::f64("L:VC_AT_ARM_LIGHT_VAL", "Number"),     // A/T ARM light (ARM-Semantik wie PMDG NG3)
+    F::f64("L:VC_CMD_A_SW_LIGHT_VAL", "Number"), // AP CMD A LED (EMISSIVE, verifiziert)
+    F::f64("L:VC_CMD_B_SW_LIGHT_VAL", "Number"), // AP CMD B LED (EMISSIVE, verifiziert)
+    F::f64("L:VC_AT_ARM_LIGHT_VAL", "Number"),   // A/T ARM light (ARM-Semantik wie PMDG NG3)
     F::f64("L:VC_Master_Caution_Light_1_LIGHT_VAL", "Number"), // Capt-Seite, EMISSIVE
-    F::f64("L:VC_Fire_Warning_Light_1_LIGHT_VAL", "Number"),   // 737: Fire-Warn = rote Master-Klasse
+    F::f64("L:VC_Fire_Warning_Light_1_LIGHT_VAL", "Number"), // 737: Fire-Warn = rote Master-Klasse
     F::f64("L:VC_WARNING_LIGHT_CABIN_ALTITUDE_L_LIGHT_VAL", "Number"),
-    F::f64("L:Animation_Engine_1_Reverser_VAL", "Number"),  // 0..1 Reverser-STELLUNG (ANIM gewollt)
+    F::f64("L:Animation_Engine_1_Reverser_VAL", "Number"), // 0..1 Reverser-STELLUNG (ANIM gewollt)
     F::f64("L:Animation_Engine_2_Reverser_VAL", "Number"),
-    F::f64("L:VC_FLTCTRL_LIGHT_SPEEDBRAKES_EXTENDED_LIGHT_VAL", "Number"),
-    F::f64("L:VC_Autobrake_SW_VAL", "Number"),     // Selektor-Enum unbekannt → "#n"
-
+    F::f64(
+        "L:VC_FLTCTRL_LIGHT_SPEEDBRAKES_EXTENDED_LIGHT_VAL",
+        "Number",
+    ),
+    F::f64("L:VC_Autobrake_SW_VAL", "Number"), // Selektor-Enum unbekannt → "#n"
     // ---- FSLabs A321 (ceo+neo, v0.16.14) — HubHop-Output-Presets ----
     // FSL faehrt die Systeme in einem EXTERNEN Prozess (Paket-WASMs sind
     // Stubs) — die LVars existieren nur zur Laufzeit; HubHop ist die
@@ -643,7 +623,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:VC_MIP_BRAKES_AUTOBRK_LO_Button_BOT", "Number"),
     F::f64("L:VC_MIP_BRAKES_AUTOBRK_MED_Button_BOT", "Number"),
     F::f64("L:VC_MIP_BRAKES_AUTOBRK_MAX_Button_BOT", "Number"),
-
     // ---- FSLabs A321 PREMIUM (v0.16.20) — echte LVars aus dem
     //      WinWing/StreamDeck-Forum-Profil (FSLabsA3x_Scripts.xml) ----
     // Quelle: /tmp/fsl_all_lvars.txt (202 Vars) + die Read-Kontexte der
@@ -713,7 +692,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:CTL_FA50_LIGHT_WARN_FIRE_ENG1", "Bool"),
     F::f64("L:CTL_FA50_LIGHT_WARN_FIRE_ENG2", "Bool"),
     F::f64("L:CTL_FA50_LIGHT_WARN_FIRE_ENG3", "Bool"),
-
     // ---- Gruppe I: Synaptic A220 (-100/-300) — offizielle Vendor-Doku
     // docs.synapticsim.com/pilots/simvars, noch KEIN Live-Flug zur
     // Verifikation (Profil aus Doku gebaut, 2026-07-28). Nur bei
@@ -733,7 +711,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:A22X Warning PBA", "Bool"),
     F::f64("L:A22X Autobrake", "Enum"),
     F::f64("L:A22X Flight Stage", "Enum"),
-
     // ---- Gruppe I Erweiterung (v1.3.5 #Premium, Feldbefund 31.07.2026) ----
     // Vollständiger Doku-Abgleich (docs.synapticsim.com/pilots/simvars)
     // gegen einen echten Flug, nachdem die Klappen-Diskrepanz auffiel —
@@ -747,7 +724,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:A22X AT Master", "Bool"),
     F::f64("L:A22X Seat Belt Lights", "Enum"),
     F::f64("L:A22X No PED Lights", "Enum"),
-
     // ---- iFly 737 MAX 8, Nachzuegler (v1.5.3) ----
     // WASM-Strings des iFly-Pakets (11.08.2026, direkt vom Community-
     // Share gezogen): `VC_Parking_Brake_SW_VAL` ist der HEBELzustand.
@@ -760,7 +736,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // VC_Parking_Brake_LIGHT_VAL waere die Warnleuchte — die haengt an
     // der Elektrik und taugt darum nicht als Hebel-Wahrheit.
     F::f64("L:VC_Parking_Brake_SW_VAL", "Number"),
-
     // ---- Rasterbewusste Klappen-Labels (v1.5.3, #ifly-audit) ----
     // Generische SimVars (kein Addon-Special): Rasten-Index des Hebels
     // und Rastenanzahl. Damit heissen die Boeing-Stufen endlich Boeing
@@ -768,7 +743,6 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // gezogen zu werden ("Flaps 5" -> "1+F", Thomas' Flug 11.08.2026).
     F::f64("FLAPS HANDLE INDEX", "Number"),
     F::f64("FLAPS NUM HANDLE POSITIONS", "Number"),
-
     // ---- Echtheit der Aufzeichnung (v1.6.12) ----
     // Bis hierher standen beide Werte im Snapshot FEST auf ihrem Ruhewert
     // (`simulation_rate: 1.0`, `slew_mode: false`) und wurden nie gefragt.
@@ -1249,17 +1223,29 @@ impl Touchdown {
     pub fn from_block(bytes: &[u8]) -> Self {
         let mut t = Touchdown::default();
         let mut off = 0usize;
-        if let Some(v) = read_f64(bytes, off) { t.vs_fps = v; }
+        if let Some(v) = read_f64(bytes, off) {
+            t.vs_fps = v;
+        }
         off += 8;
-        if let Some(v) = read_f64(bytes, off) { t.pitch_deg = v; }
+        if let Some(v) = read_f64(bytes, off) {
+            t.pitch_deg = v;
+        }
         off += 8;
-        if let Some(v) = read_f64(bytes, off) { t.bank_deg = v; }
+        if let Some(v) = read_f64(bytes, off) {
+            t.bank_deg = v;
+        }
         off += 8;
-        if let Some(v) = read_f64(bytes, off) { t.heading_mag_deg = v; }
+        if let Some(v) = read_f64(bytes, off) {
+            t.heading_mag_deg = v;
+        }
         off += 8;
-        if let Some(v) = read_f64(bytes, off) { t.lat_rad = v; }
+        if let Some(v) = read_f64(bytes, off) {
+            t.lat_rad = v;
+        }
         off += 8;
-        if let Some(v) = read_f64(bytes, off) { t.lon_rad = v; }
+        if let Some(v) = read_f64(bytes, off) {
+            t.lon_rad = v;
+        }
         let _ = off;
         t
     }
@@ -1430,7 +1416,10 @@ impl InspectorState {
 /// specific `AddToDataDefinition` call — this is the only reliable way
 /// to attribute the failure to one watch out of many sharing the same
 /// data definition.
-pub fn inspector_watch_for_exception(send_ids: &[(u32, u32)], exception_send_id: u32) -> Option<u32> {
+pub fn inspector_watch_for_exception(
+    send_ids: &[(u32, u32)],
+    exception_send_id: u32,
+) -> Option<u32> {
     send_ids
         .iter()
         .find(|(id, _)| *id == exception_send_id)
@@ -1871,7 +1860,11 @@ pub fn parse(bytes: &[u8], simulator: Simulator) -> SimSnapshot {
 /// genuine zero is meaningless (frequencies, percentages) so we can
 /// tell "this addon doesn't wire it" from "it's actually zero".
 fn positive_or_none(v: f32) -> Option<f32> {
-    if v > 0.0 { Some(v) } else { None }
+    if v > 0.0 {
+        Some(v)
+    } else {
+        None
+    }
 }
 
 fn read_f64(bytes: &[u8], off: usize) -> Option<f64> {
@@ -1936,7 +1929,11 @@ fn a346_gear_position_from_lever(lever: f64) -> f32 {
 /// f64-Pendant zu `positive_or_none` — fuer die Premium-V-Speeds und
 /// FLEX-Temp: 0.0 heisst "noch nicht im FMS eingegeben" → None.
 fn positive_f64_or_none(v: f64) -> Option<f64> {
-    if v > 0.0 { Some(v) } else { None }
+    if v > 0.0 {
+        Some(v)
+    } else {
+        None
+    }
 }
 
 /// Roh-Enum-Durchreicher fuer Mode-/Phase-LVars mit UNBEKANNTER
@@ -2276,8 +2273,15 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // Ankunftssignal, das die Auto-End-FSM braucht.
     const FSL_MSTR_ON: f64 = 15.0;
     let engines_running = if is_fsl {
-        (if t.fsl_eng1_mstr_switch >= FSL_MSTR_ON { 1u8 } else { 0 })
-            + (if t.fsl_eng2_mstr_switch >= FSL_MSTR_ON { 1u8 } else { 0 })
+        (if t.fsl_eng1_mstr_switch >= FSL_MSTR_ON {
+            1u8
+        } else {
+            0
+        }) + (if t.fsl_eng2_mstr_switch >= FSL_MSTR_ON {
+            1u8
+        } else {
+            0
+        })
     } else if is_fsr_phenom {
         (if t.fsr_phenom_eng1_knob > 0.5 { 1u8 } else { 0 })
             + (if t.fsr_phenom_eng2_knob > 0.5 { 1u8 } else { 0 })
@@ -2365,7 +2369,11 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             Some(gw) => kg < gw,
             None => true,
         };
-        if kg > 0.0 && physically_possible { Some(kg) } else { None }
+        if kg > 0.0 && physically_possible {
+            Some(kg)
+        } else {
+            None
+        }
     };
 
     // Payload = ZFW − OEW. No MSFS SimVar exposes payload directly
@@ -2514,15 +2522,11 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // konservativ, nur das verifiziert Vorhandene mappen. Falls
         // der Standard doch mal wired ist, gewinnt er per ODER.
         (
-            t.a346_ap1_light as i32 != 0
-                || t.a346_ap2_light as i32 != 0
-                || t.ap_master,
+            t.a346_ap1_light as i32 != 0 || t.a346_ap2_light as i32 != 0 || t.ap_master,
             t.ap_heading,
             t.ap_altitude,
             t.ap_nav,
-            t.a346_appr_light as i32 != 0
-                || t.a346_loc_light as i32 != 0
-                || t.ap_approach,
+            t.a346_appr_light as i32 != 0 || t.a346_loc_light as i32 != 0 || t.ap_approach,
         )
     } else if is_a350 {
         // iniBuilds A350 (v0.16.8): FCU-LED-LVars aus der HubHop-DB —
@@ -2530,15 +2534,11 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // APPR/LOC analog zur A346-Semantik. HDG/ALT/NAV konservativ
         // auf den Standard-SimVars; Standard gewinnt per ODER.
         (
-            t.a350_ap1_on as i32 != 0
-                || t.a350_ap2_on as i32 != 0
-                || t.ap_master,
+            t.a350_ap1_on as i32 != 0 || t.a350_ap2_on as i32 != 0 || t.ap_master,
             t.ap_heading,
             t.ap_altitude,
             t.ap_nav,
-            t.a350_appr_light as i32 != 0
-                || t.a350_loc_light as i32 != 0
-                || t.ap_approach,
+            t.a350_appr_light as i32 != 0 || t.a350_loc_light as i32 != 0 || t.ap_approach,
         )
     } else if is_ifly {
         // iFly 737 MAX 8 (v0.16.11): CMD-A-/CMD-B-LEDs am MCP
@@ -2549,9 +2549,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // bleiben konservativ auf den Standard-SimVars — auf dem iFly
         // ungetestet, nicht raten.
         (
-            t.ifly_cmd_a_light != 0.0
-                || t.ifly_cmd_b_light != 0.0
-                || t.ap_master,
+            t.ifly_cmd_a_light != 0.0 || t.ifly_cmd_b_light != 0.0 || t.ap_master,
             t.ap_heading,
             t.ap_altitude,
             t.ap_nav,
@@ -2568,15 +2566,11 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // auf den Standard-SimVars — fuer FSL nicht katalogisiert,
         // nicht raten.
         (
-            fsl_led_lit(t.fsl_ap1_light)
-                || fsl_led_lit(t.fsl_ap2_light)
-                || t.ap_master,
+            fsl_led_lit(t.fsl_ap1_light) || fsl_led_lit(t.fsl_ap2_light) || t.ap_master,
             t.ap_heading,
             t.ap_altitude,
             t.ap_nav,
-            fsl_led_lit(t.fsl_appr_light)
-                || fsl_led_lit(t.fsl_loc_light)
-                || t.ap_approach,
+            fsl_led_lit(t.fsl_appr_light) || fsl_led_lit(t.fsl_loc_light) || t.ap_approach,
         )
     } else if is_synaptic_a220 {
         // Synaptic A220 (v1.3.5 #Premium, Feldbefund 31.07.2026): die
@@ -3160,7 +3154,11 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     } else if is_ini {
         raw_enum_label(t.ini_pitch_mode)
     } else if is_contrail_fa50 {
-        contrail_fma_combined(t.contrail_fma_vert_active, t.contrail_fma_vert_armed1, false)
+        contrail_fma_combined(
+            t.contrail_fma_vert_active,
+            t.contrail_fma_vert_armed1,
+            false,
+        )
     } else if is_synaptic_a220 {
         synaptic_a220_fma_vertical(
             t.syn_fg_altitude,
@@ -3324,11 +3322,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // Skript `0 !=`=aktiv) ODER eine Triebwerks-Feuer-Lampe
         // (`VC_PED_ENGFIRE_{1,2}_LT_TOP` — Feuer ist eine rote
         // Master-Klasse-Bedingung).
-        Some(
-            t.fsl_master_warning != 0.0
-                || t.fsl_engfire1_lt != 0.0
-                || t.fsl_engfire2_lt != 0.0,
-        )
+        Some(t.fsl_master_warning != 0.0 || t.fsl_engfire1_lt != 0.0 || t.fsl_engfire2_lt != 0.0)
     } else if is_contrail_fa50 {
         // Contrail FA50 (v0.17.x Phase 2b): die 3 Triebwerks-Feuerlampen
         // (`L:CTL_FA50_LIGHT_WARN_FIRE_ENG{1,2,3}`) sind die rote
@@ -3629,7 +3623,11 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // Ein Sim, der die Variable nicht liefert, meldet 0.0. Das waere als
         // "Zeit steht" gelesen worden; 0 gilt deshalb als unbekannt und wird
         // auf Echtzeit gehoben.
-        simulation_rate: if t.simulation_rate > 0.0 { t.simulation_rate as f32 } else { 1.0 },
+        simulation_rate: if t.simulation_rate > 0.0 {
+            t.simulation_rate as f32
+        } else {
+            1.0
+        },
         gear_position,
         flaps_position,
         engines_running,
@@ -3818,12 +3816,7 @@ mod tests {
     /// Build a minimal Fenix-profile Telemetry with the standard
     /// SimVars showing "all lights off" and a specific set of Fenix
     /// extension LVAR values. Used by the beta-mapping tests below.
-    fn fenix_telemetry(
-        landing_l: f64,
-        landing_r: f64,
-        nose: f64,
-        wing: f64,
-    ) -> Telemetry {
+    fn fenix_telemetry(landing_l: f64, landing_r: f64, nose: f64, wing: f64) -> Telemetry {
         let mut t = Telemetry::default();
         t.title = "FenixA320 CFM SL".into();
         t.atc_model = "A320".into();
@@ -3843,29 +3836,21 @@ mod tests {
         // v0.7.17 (F-001): Fenix-Profil immer default-on. Either
         // side at position 2 ("on") counts as landing-on. The
         // 0/1 positions (retracted/off) both stay off.
-        let snap_l_only = telemetry_to_snapshot(
-            fenix_telemetry(2.0, 0.0, 0.0, 0.0),
-            Simulator::Msfs2024,
-        );
+        let snap_l_only =
+            telemetry_to_snapshot(fenix_telemetry(2.0, 0.0, 0.0, 0.0), Simulator::Msfs2024);
         assert_eq!(snap_l_only.light_landing, Some(true));
 
-        let snap_r_only = telemetry_to_snapshot(
-            fenix_telemetry(0.0, 2.0, 0.0, 0.0),
-            Simulator::Msfs2024,
-        );
+        let snap_r_only =
+            telemetry_to_snapshot(fenix_telemetry(0.0, 2.0, 0.0, 0.0), Simulator::Msfs2024);
         assert_eq!(snap_r_only.light_landing, Some(true));
 
-        let snap_off_with_off_position = telemetry_to_snapshot(
-            fenix_telemetry(1.0, 1.0, 0.0, 0.0),
-            Simulator::Msfs2024,
-        );
+        let snap_off_with_off_position =
+            telemetry_to_snapshot(fenix_telemetry(1.0, 1.0, 0.0, 0.0), Simulator::Msfs2024);
         // Position 1 = "off" (not retracted), still no landing light.
         assert_eq!(snap_off_with_off_position.light_landing, Some(false));
 
-        let snap_retracted = telemetry_to_snapshot(
-            fenix_telemetry(0.0, 0.0, 0.0, 0.0),
-            Simulator::Msfs2024,
-        );
+        let snap_retracted =
+            telemetry_to_snapshot(fenix_telemetry(0.0, 0.0, 0.0, 0.0), Simulator::Msfs2024);
         assert_eq!(snap_retracted.light_landing, Some(false));
     }
 
@@ -3873,37 +3858,27 @@ mod tests {
     fn fenix_maps_taxi_from_nose_lvar() {
         // 0 = off, 1 = taxi, 2 = T.O. — both 1 and 2 count as on
         // for the binary taxi-light snapshot pill.
-        let snap_off = telemetry_to_snapshot(
-            fenix_telemetry(0.0, 0.0, 0.0, 0.0),
-            Simulator::Msfs2024,
-        );
+        let snap_off =
+            telemetry_to_snapshot(fenix_telemetry(0.0, 0.0, 0.0, 0.0), Simulator::Msfs2024);
         assert_eq!(snap_off.light_taxi, Some(false));
 
-        let snap_taxi = telemetry_to_snapshot(
-            fenix_telemetry(0.0, 0.0, 1.0, 0.0),
-            Simulator::Msfs2024,
-        );
+        let snap_taxi =
+            telemetry_to_snapshot(fenix_telemetry(0.0, 0.0, 1.0, 0.0), Simulator::Msfs2024);
         assert_eq!(snap_taxi.light_taxi, Some(true));
 
-        let snap_takeoff = telemetry_to_snapshot(
-            fenix_telemetry(0.0, 0.0, 2.0, 0.0),
-            Simulator::Msfs2024,
-        );
+        let snap_takeoff =
+            telemetry_to_snapshot(fenix_telemetry(0.0, 0.0, 2.0, 0.0), Simulator::Msfs2024);
         assert_eq!(snap_takeoff.light_taxi, Some(true));
     }
 
     #[test]
     fn fenix_maps_wing_light_from_lvar() {
-        let snap_off = telemetry_to_snapshot(
-            fenix_telemetry(0.0, 0.0, 0.0, 0.0),
-            Simulator::Msfs2024,
-        );
+        let snap_off =
+            telemetry_to_snapshot(fenix_telemetry(0.0, 0.0, 0.0, 0.0), Simulator::Msfs2024);
         assert_eq!(snap_off.light_wing, Some(false));
 
-        let snap_on = telemetry_to_snapshot(
-            fenix_telemetry(0.0, 0.0, 0.0, 1.0),
-            Simulator::Msfs2024,
-        );
+        let snap_on =
+            telemetry_to_snapshot(fenix_telemetry(0.0, 0.0, 0.0, 1.0), Simulator::Msfs2024);
         assert_eq!(snap_on.light_wing, Some(true));
     }
 
@@ -4064,7 +4039,10 @@ mod tests {
         // GSX-Richtung: SimVar klemmt auf gesetzt, Hebel ist geloest.
         assert!(!fall(IFLY, true, 0.0), "Hebel geloest muss gewinnen");
         // Nicht-iFly bleibt beim Standard-SimVar.
-        assert!(fall("737-800 PAX BW SC", true, 0.0), "Default liest den SimVar");
+        assert!(
+            fall("737-800 PAX BW SC", true, 0.0),
+            "Default liest den SimVar"
+        );
     }
 
     #[test]
@@ -4555,7 +4533,7 @@ mod tests {
         assert_eq!(t.contrail_fma_lat_armed, 1272.0); // idx 272
         assert_eq!(t.contrail_fma_vert_active, 1273.0); // idx 273
         assert_eq!(t.contrail_fma_vert_armed1, 1274.0); // idx 274
-        // Phase 2b: Autothrottle + Feuerlampen (idx 275..278).
+                                                        // Phase 2b: Autothrottle + Feuerlampen (idx 275..278).
         assert_eq!(t.contrail_autothrottle_active, 1275.0); // idx 275
         assert_eq!(t.contrail_fire_eng1, 1276.0); // idx 276
         assert_eq!(t.contrail_fire_eng2, 1277.0); // idx 277
@@ -4640,7 +4618,10 @@ mod tests {
         buf.truncate(buf.len() - 12);
         let t = Telemetry::from_block(&buf);
         assert_eq!(t.flap_num_positions, 1298.0, "letztes Klappenfeld intakt");
-        assert_eq!(t.simulation_rate, 0.0, "fehlender Schwanz = sicherer Default");
+        assert_eq!(
+            t.simulation_rate, 0.0,
+            "fehlender Schwanz = sicherer Default"
+        );
         assert!(!t.slew_active, "fehlender Schwanz = sicherer Default");
 
         // v1.5.3: dann die drei Schwanzfelder davor weg (3*8) ...
@@ -4650,7 +4631,7 @@ mod tests {
         assert_eq!(t.ifly_park_brake_sw, 0.0); // fehlender Schwanz = sicherer Default
         assert_eq!(t.flap_handle_index, 0.0);
         assert_eq!(t.flap_num_positions, 0.0); // 0 Rasten -> Mapping liefert None
-        // v1.3.5: drop the 5 Synaptic A220 extension tail fields (5*8).
+                                               // v1.3.5: drop the 5 Synaptic A220 extension tail fields (5*8).
         buf.truncate(buf.len() - 40);
         let t = Telemetry::from_block(&buf);
         assert_eq!(t.syn_flight_stage, 1290.0); // last original A220 field intact
@@ -4705,7 +4686,7 @@ mod tests {
         let t = Telemetry::from_block(&buf);
         assert_eq!(t.a350_loc_light, 1150.0); // last v0.16.8 field intact
         assert_eq!(t.a346_gear_lever, 1145.0); // v0.16.4 layer intact
-        // Premium tail = safe defaults (first + last of each group).
+                                               // Premium tail = safe defaults (first + last of each group).
         assert_eq!(t.fnx_perf_v1, 0.0);
         assert_eq!(t.fnx_eng2_fire, 0.0);
         assert_eq!(t.fbw_ap1_active, 0.0);
@@ -4844,8 +4825,7 @@ mod tests {
     // Same fix, same bug pattern, on the Fenix A320 path.
     #[test]
     fn fenix_pitot_heat_auto_is_off_cold_and_dark() {
-        let snap =
-            telemetry_to_snapshot(fenix_telemetry(0.0, 0.0, 0.0, 0.0), Simulator::Msfs2024);
+        let snap = telemetry_to_snapshot(fenix_telemetry(0.0, 0.0, 0.0, 0.0), Simulator::Msfs2024);
         assert_eq!(snap.pitot_heat, Some(false));
     }
 
@@ -4921,7 +4901,10 @@ mod tests {
         t.gear_position = 1.0; // Standard-SimVar klemmt auf down
         t.a346_gear_lever = 0.0; // Lever = UP
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.gear_position, 0.0, "lever up must win over stuck SimVar");
+        assert_eq!(
+            snap.gear_position, 0.0,
+            "lever up must win over stuck SimVar"
+        );
 
         let mut t = a346_telemetry();
         t.gear_position = 1.0;
@@ -5325,8 +5308,7 @@ mod tests {
     #[test]
     fn fenix_premium_vspeeds_and_flex_zero_to_none() {
         // PERF-Page leer (0) → None, kein Phantom "V1 0 kt".
-        let snap =
-            telemetry_to_snapshot(fenix_premium_telemetry(), Simulator::Msfs2024);
+        let snap = telemetry_to_snapshot(fenix_premium_telemetry(), Simulator::Msfs2024);
         assert_eq!(snap.v1_kt, None);
         assert_eq!(snap.vr_kt, None);
         assert_eq!(snap.v2_kt, None);
@@ -5365,8 +5347,7 @@ mod tests {
         assert_eq!(snap.baro_std, Some(true));
 
         // Fenix LIEFERT die Lampen → Some(false), nicht None.
-        let snap =
-            telemetry_to_snapshot(fenix_premium_telemetry(), Simulator::Msfs2024);
+        let snap = telemetry_to_snapshot(fenix_premium_telemetry(), Simulator::Msfs2024);
         assert_eq!(snap.master_caution, Some(false));
         assert_eq!(snap.master_warning, Some(false));
         assert_eq!(snap.baro_std, Some(false));
@@ -5487,11 +5468,7 @@ mod tests {
             let mut t = md11_telemetry();
             t.md11_ap_state = state;
             let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-            assert_eq!(
-                snap.autopilot_master,
-                Some(true),
-                "MD11_AP_STATE={state}"
-            );
+            assert_eq!(snap.autopilot_master, Some(true), "MD11_AP_STATE={state}");
         }
         let snap = telemetry_to_snapshot(md11_telemetry(), Simulator::Msfs2024);
         assert_eq!(snap.autopilot_master, Some(false));
@@ -5713,7 +5690,10 @@ mod tests {
         let result = normalize_n1_group([0.6648, 0.6643, 0.6645, 0.6649]);
         let expected = [66.48, 66.43, 66.45, 66.49];
         for (r, e) in result.iter().zip(expected.iter()) {
-            assert!((r - e).abs() < 0.001, "expected {expected:?}, got {result:?}");
+            assert!(
+                (r - e).abs() < 0.001,
+                "expected {expected:?}, got {result:?}"
+            );
         }
     }
 
@@ -5766,7 +5746,10 @@ mod tests {
         t.empty_weight_lb = 551_000.0; // ~250000 kg — impossible
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.empty_weight_kg, None);
-        assert_eq!(snap.payload_kg, None, "an impossible OEW must not leak into payload math");
+        assert_eq!(
+            snap.payload_kg, None,
+            "an impossible OEW must not leak into payload math"
+        );
     }
 
     #[test]
@@ -6012,8 +5995,8 @@ mod tests {
         assert_eq!(snap.engine_anti_ice, Some(false)); // FSL-Anti-Ice leakt nicht
         assert_eq!(snap.spoilers_armed, Some(false)); // FSL-SPD_BRK leakt nicht
         assert_eq!(snap.xpdr_mode_label, None); // FSL-XPDR-Modus leakt nicht
-        // master_caution/master_warning/baro_std bereits oben als None
-        // geprueft — die FSL-Slots duerfen sie nicht auf Some heben.
+                                                // master_caution/master_warning/baro_std bereits oben als None
+                                                // geprueft — die FSL-Slots duerfen sie nicht auf Some heben.
     }
 
     // ---- v0.16.11: iFly 737 MAX 8 Premium-Mappings ----
@@ -6716,13 +6699,19 @@ mod tests {
         let mut t = synaptic_a220_telemetry();
         t.syn_flap_lever = 1.0; // voller Hebel, wie am 12.08. aufgezeichnet
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.flaps_position, 1.0, "voller Hebel darf nie wieder als 0.2 enden");
+        assert_eq!(
+            snap.flaps_position, 1.0,
+            "voller Hebel darf nie wieder als 0.2 enden"
+        );
 
         let mut t = synaptic_a220_telemetry();
         t.syn_flap_lever = 0.8; // Stufe 4 auf der beobachteten Skala
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert!((snap.flaps_position - 0.8).abs() < 1e-6);
-        assert!(snap.flaps_position >= 0.70, "Stufe 4 muss als konfiguriert gelten");
+        assert!(
+            snap.flaps_position >= 0.70,
+            "Stufe 4 muss als konfiguriert gelten"
+        );
 
         let mut t = synaptic_a220_telemetry();
         t.syn_flap_lever = 0.0; // hochgefahren
@@ -6829,7 +6818,11 @@ mod tests {
     #[test]
     fn inspector_state_set_error_flags_only_the_matching_watch_id() {
         let mut state = InspectorState::default();
-        let good = state.add("PLANE ALTITUDE".to_string(), "feet".to_string(), WatchKind::Number);
+        let good = state.add(
+            "PLANE ALTITUDE".to_string(),
+            "feet".to_string(),
+            WatchKind::Number,
+        );
         let bad = state.add(
             "L:TYPO_NOT_A_REAL_LVAR".to_string(),
             "number".to_string(),
@@ -6855,8 +6848,16 @@ mod tests {
     #[test]
     fn inspector_state_set_error_distinguishes_two_watches_with_the_same_name() {
         let mut state = InspectorState::default();
-        let as_number = state.add("L:AMBIGUOUS_LVAR".to_string(), "number".to_string(), WatchKind::Number);
-        let as_bool = state.add("L:AMBIGUOUS_LVAR".to_string(), "bool".to_string(), WatchKind::Bool);
+        let as_number = state.add(
+            "L:AMBIGUOUS_LVAR".to_string(),
+            "number".to_string(),
+            WatchKind::Number,
+        );
+        let as_bool = state.add(
+            "L:AMBIGUOUS_LVAR".to_string(),
+            "bool".to_string(),
+            WatchKind::Bool,
+        );
 
         // Only the SECOND watch (as_bool) actually failed.
         state.set_error(as_bool, "SimConnect exception #3".to_string());
@@ -6876,7 +6877,11 @@ mod tests {
         // removed the watch from the UI — must not panic or affect other
         // entries.
         let mut state = InspectorState::default();
-        state.add("PLANE ALTITUDE".to_string(), "feet".to_string(), WatchKind::Number);
+        state.add(
+            "PLANE ALTITUDE".to_string(),
+            "feet".to_string(),
+            WatchKind::Number,
+        );
         state.set_error(9999, "SimConnect exception #3".to_string());
         assert!(state.watches.iter().all(|w| w.error.is_none()));
     }
@@ -6884,7 +6889,11 @@ mod tests {
     #[test]
     fn inspector_state_clear_errors_resets_every_watch_for_a_fresh_registration_attempt() {
         let mut state = InspectorState::default();
-        let id = state.add("L:TYPO_NOT_A_REAL_LVAR".to_string(), "number".to_string(), WatchKind::Number);
+        let id = state.add(
+            "L:TYPO_NOT_A_REAL_LVAR".to_string(),
+            "number".to_string(),
+            WatchKind::Number,
+        );
         state.set_error(id, "SimConnect exception #3".to_string());
         assert!(state.watches[0].error.is_some());
 

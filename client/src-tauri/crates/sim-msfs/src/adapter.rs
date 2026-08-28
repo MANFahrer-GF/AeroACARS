@@ -86,18 +86,14 @@ const CRASH_RESET_EVENT_ID: u32 = 303;
 ///
 /// Bewusst ueber die bindgen-Konstanten und nicht ueber Zahlen: die
 /// Reihenfolge im Enum ist SDK-Sache und darf sich aendern.
-const FLOW_REPLAY_START: u32 =
-    sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_REPLAY_START as u32;
-const FLOW_REPLAY_END: u32 =
-    sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_REPLAY_END as u32;
+const FLOW_REPLAY_START: u32 = sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_REPLAY_START as u32;
+const FLOW_REPLAY_END: u32 = sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_REPLAY_END as u32;
 const FLOW_TELEPORT_START: u32 =
     sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_TELEPORT_START as u32;
 const FLOW_TELEPORT_DONE: u32 =
     sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_TELEPORT_DONE as u32;
-const FLOW_SKIP_START: u32 =
-    sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_SKIP_START as u32;
-const FLOW_SKIP_DONE: u32 =
-    sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_SKIP_DONE as u32;
+const FLOW_SKIP_START: u32 = sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_SKIP_START as u32;
+const FLOW_SKIP_DONE: u32 = sys::SIMCONNECT_FLOW_EVENT_SIMCONNECT_FLOW_EVENT_SKIP_DONE as u32;
 
 const STALE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -365,11 +361,7 @@ fn x777_to_pmdg_state(s: &crate::pmdg::x777::Pmdg777XSnapshot) -> sim_core::Pmdg
     // Speed-mode label. 777 doesn't have a separate "N1" annunciator
     // (uses FMC ThrustLimitMode for that). When AT is engaged + AP
     // is engaged, FMA usually shows the active sub-mode label.
-    let fma_speed_mode = if s.fma.at {
-        "SPD"
-    } else {
-        ""
-    };
+    let fma_speed_mode = if s.fma.at { "SPD" } else { "" };
     // Roll-mode priority: APP > LOC > LNAV > HDG HOLD.
     let fma_roll_mode = if s.fma.app {
         "APP"
@@ -390,7 +382,11 @@ fn x777_to_pmdg_state(s: &crate::pmdg::x777::Pmdg777XSnapshot) -> sim_core::Pmdg
     } else if s.fma.alt_hold {
         "ALT HOLD"
     } else if s.fma.vs_fpa {
-        if s.mcp_dial_in_fpa_mode { "FPA" } else { "V/S" }
+        if s.mcp_dial_in_fpa_mode {
+            "FPA"
+        } else {
+            "V/S"
+        }
     } else {
         ""
     };
@@ -482,10 +478,8 @@ fn x777_to_pmdg_state(s: &crate::pmdg::x777::Pmdg777XSnapshot) -> sim_core::Pmdg
         xpdr_mode_label: crate::pmdg::pmdg_xpdr_mode_label(s.xpdr_mode).to_string(),
 
         // 777-specific extras (Phase 5.5b — wider integration).
-        thrust_limit_mode: crate::pmdg::x777::x777_thrust_limit_label(
-            s.fmc_thrust_limit_mode,
-        )
-        .to_string(),
+        thrust_limit_mode: crate::pmdg::x777::x777_thrust_limit_label(s.fmc_thrust_limit_mode)
+            .to_string(),
         ecl_complete: Some(s.ecl_complete),
         apu_running: Some(s.apu_running),
         wheel_chocks_set: Some(s.wheel_chocks_set),
@@ -558,8 +552,7 @@ impl PmdgStatus {
     /// True when PMDG aircraft is loaded but no data is flowing.
     /// Drives the "SDK probably not enabled" hint in the UI.
     pub fn looks_like_sdk_disabled(&self) -> bool {
-        self.variant.is_some() && self.subscribed && !self.ever_received
-            && self.stale_secs > 5
+        self.variant.is_some() && self.subscribed && !self.ever_received && self.stale_secs > 5
     }
 }
 
@@ -676,24 +669,48 @@ impl MsfsAdapter {
         // wheel_well in the override path? actually it does; 777
         // doesn't — `light_wheel_well` is only set when present).
         if let Some(pmdg) = snap.pmdg.as_ref() {
-            if let Some(v) = pmdg.light_landing  { snap.light_landing  = Some(v); }
-            if let Some(v) = pmdg.light_beacon   { snap.light_beacon   = Some(v); }
-            if let Some(v) = pmdg.light_strobe   { snap.light_strobe   = Some(v); }
-            if let Some(v) = pmdg.light_taxi     { snap.light_taxi     = Some(v); }
-            if let Some(v) = pmdg.light_nav      { snap.light_nav      = Some(v); }
-            if let Some(v) = pmdg.light_logo     { snap.light_logo     = Some(v); }
+            if let Some(v) = pmdg.light_landing {
+                snap.light_landing = Some(v);
+            }
+            if let Some(v) = pmdg.light_beacon {
+                snap.light_beacon = Some(v);
+            }
+            if let Some(v) = pmdg.light_strobe {
+                snap.light_strobe = Some(v);
+            }
+            if let Some(v) = pmdg.light_taxi {
+                snap.light_taxi = Some(v);
+            }
+            if let Some(v) = pmdg.light_nav {
+                snap.light_nav = Some(v);
+            }
+            if let Some(v) = pmdg.light_logo {
+                snap.light_logo = Some(v);
+            }
             // SimSnapshot has no top-level light_wing — only PMDG
             // exposes it; downstream reads it from snap.pmdg.
-            if let Some(v) = pmdg.wing_anti_ice  { snap.wing_anti_ice  = Some(v); }
-            if let Some(v) = pmdg.engine_anti_ice{ snap.engine_anti_ice= Some(v); }
-            if let Some(v) = pmdg.pitot_heat     { snap.pitot_heat     = Some(v); }
-            if let Some(v) = pmdg.battery_master { snap.battery_master = Some(v); }
-            if let Some(v) = pmdg.parking_brake  { snap.parking_brake  = v; }
+            if let Some(v) = pmdg.wing_anti_ice {
+                snap.wing_anti_ice = Some(v);
+            }
+            if let Some(v) = pmdg.engine_anti_ice {
+                snap.engine_anti_ice = Some(v);
+            }
+            if let Some(v) = pmdg.pitot_heat {
+                snap.pitot_heat = Some(v);
+            }
+            if let Some(v) = pmdg.battery_master {
+                snap.battery_master = Some(v);
+            }
+            if let Some(v) = pmdg.parking_brake {
+                snap.parking_brake = v;
+            }
             // APU: SimSnapshot stores `apu_switch` (selector ON?)
             // and `apu_pct_rpm` (rising/running heuristic). PMDG's
             // `apu_running` is the cockpit-truth boolean — surface
             // it via apu_switch so the FSM picks it up.
-            if let Some(v) = pmdg.apu_running    { snap.apu_switch     = Some(v); }
+            if let Some(v) = pmdg.apu_running {
+                snap.apu_switch = Some(v);
+            }
             // Spoilers/autobrake: PMDG has cockpit-exact values for
             // `speedbrake_armed` and `autobrake_label`. Mirror them
             // into the standard fields so generic consumers benefit.
@@ -715,8 +732,12 @@ impl MsfsAdapter {
             // top-level SimSnapshot fields (the same fields X-Plane
             // also fills). Lets the generic activity-log code share
             // a single path across simulators.
-            if let Some(v) = pmdg.light_wing       { snap.light_wing       = Some(v); }
-            if let Some(v) = pmdg.light_wheel_well { snap.light_wheel_well = Some(v); }
+            if let Some(v) = pmdg.light_wing {
+                snap.light_wing = Some(v);
+            }
+            if let Some(v) = pmdg.light_wheel_well {
+                snap.light_wheel_well = Some(v);
+            }
             if !pmdg.xpdr_mode_label.is_empty() {
                 snap.xpdr_mode_label = Some(pmdg.xpdr_mode_label.clone());
             }
@@ -1152,14 +1173,17 @@ fn run_dispatch(
                                 // copy is safe. We Box it because the struct
                                 // is ~1 KB and we don't want it on the stack.
                                 let raw: Box<crate::pmdg::ng3::Pmdg738RawData> = unsafe {
-                                    let mut b: Box<std::mem::MaybeUninit<crate::pmdg::ng3::Pmdg738RawData>> =
-                                        Box::new(std::mem::MaybeUninit::uninit());
+                                    let mut b: Box<
+                                        std::mem::MaybeUninit<crate::pmdg::ng3::Pmdg738RawData>,
+                                    > = Box::new(std::mem::MaybeUninit::uninit());
                                     std::ptr::copy_nonoverlapping(
                                         bytes.as_ptr(),
                                         b.as_mut_ptr() as *mut u8,
                                         expected_len,
                                     );
-                                    Box::from_raw(Box::into_raw(b) as *mut crate::pmdg::ng3::Pmdg738RawData)
+                                    Box::from_raw(
+                                        Box::into_raw(b) as *mut crate::pmdg::ng3::Pmdg738RawData
+                                    )
                                 };
                                 let mut g = shared.pmdg.lock();
                                 g.ng3_raw = Some(raw);
@@ -1177,15 +1201,16 @@ fn run_dispatch(
                                 );
                             } else {
                                 let raw: Box<crate::pmdg::x777::Pmdg777XRawData> = unsafe {
-                                    let mut b: Box<std::mem::MaybeUninit<crate::pmdg::x777::Pmdg777XRawData>> =
-                                        Box::new(std::mem::MaybeUninit::uninit());
+                                    let mut b: Box<
+                                        std::mem::MaybeUninit<crate::pmdg::x777::Pmdg777XRawData>,
+                                    > = Box::new(std::mem::MaybeUninit::uninit());
                                     std::ptr::copy_nonoverlapping(
                                         bytes.as_ptr(),
                                         b.as_mut_ptr() as *mut u8,
                                         expected_len,
                                     );
                                     Box::from_raw(
-                                        Box::into_raw(b) as *mut crate::pmdg::x777::Pmdg777XRawData,
+                                        Box::into_raw(b) as *mut crate::pmdg::x777::Pmdg777XRawData
                                     )
                                 };
                                 let mut g = shared.pmdg.lock();
@@ -1194,17 +1219,16 @@ fn run_dispatch(
                             }
                         }
                         other => {
-                            tracing::trace!(
-                                request_id = other,
-                                "unknown ClientData request_id"
-                            );
+                            tracing::trace!(request_id = other, "unknown ClientData request_id");
                         }
                     }
                 }
-                Ok(Some(DispatchMsg::SystemState { request_id, air_path })) => {
+                Ok(Some(DispatchMsg::SystemState {
+                    request_id,
+                    air_path,
+                })) => {
                     if request_id == AIRCRAFT_LOADED_REQUEST_ID {
-                        let detected =
-                            crate::pmdg::PmdgVariant::detect_from_air_path(&air_path);
+                        let detected = crate::pmdg::PmdgVariant::detect_from_air_path(&air_path);
                         let mut g = shared.pmdg.lock();
                         if g.variant != detected {
                             tracing::info!(
@@ -1509,9 +1533,8 @@ impl Connection {
     /// no per-field "remove" call. An empty watchlist is valid (just
     /// clears the definition and skips the request).
     fn register_inspector(&mut self, watches: &[InspectorWatch]) -> Result<(), String> {
-        let hr = unsafe {
-            sys::SimConnect_ClearDataDefinition(self.handle, INSPECTOR_DEFINITION_ID)
-        };
+        let hr =
+            unsafe { sys::SimConnect_ClearDataDefinition(self.handle, INSPECTOR_DEFINITION_ID) };
         // ClearDataDefinition returns S_OK even when the definition
         // didn't exist yet — non-zero is a real error.
         if hr != 0 {
@@ -1685,7 +1708,7 @@ impl Connection {
                 PMDG_NG3_DEFINITION_ID,
                 0, // offset 0 — entire struct in one shot
                 std::mem::size_of::<crate::pmdg::ng3::Pmdg738RawData>() as sys::DWORD,
-                0.0,    // fEpsilon (unused for this layout)
+                0.0,      // fEpsilon (unused for this layout)
                 u32::MAX, // DatumID (unused)
             )
         };
@@ -1781,8 +1804,8 @@ impl Connection {
     /// one-shot request (so we know what's loaded right now) and as
     /// a subscription to "SimStart" for live aircraft changes.
     fn subscribe_aircraft_loaded(&mut self) -> Result<(), String> {
-        let cstate = std::ffi::CString::new("AircraftLoaded")
-            .expect("AircraftLoaded is plain ASCII");
+        let cstate =
+            std::ffi::CString::new("AircraftLoaded").expect("AircraftLoaded is plain ASCII");
         let hr = unsafe {
             sys::SimConnect_RequestSystemState(
                 self.handle,
@@ -1796,14 +1819,9 @@ impl Connection {
             ));
         }
 
-        let cevent = std::ffi::CString::new("SimStart")
-            .expect("SimStart is plain ASCII");
+        let cevent = std::ffi::CString::new("SimStart").expect("SimStart is plain ASCII");
         let hr = unsafe {
-            sys::SimConnect_SubscribeToSystemEvent(
-                self.handle,
-                SIM_START_EVENT_ID,
-                cevent.as_ptr(),
-            )
+            sys::SimConnect_SubscribeToSystemEvent(self.handle, SIM_START_EVENT_ID, cevent.as_ptr())
         };
         if hr != 0 {
             return Err(format!(
@@ -1819,11 +1837,7 @@ impl Connection {
         // waehrend MSFS schon pausiert ist.
         let cevent = std::ffi::CString::new("Pause_EX1").expect("ASCII");
         let hr = unsafe {
-            sys::SimConnect_SubscribeToSystemEvent(
-                self.handle,
-                PAUSE_EX1_EVENT_ID,
-                cevent.as_ptr(),
-            )
+            sys::SimConnect_SubscribeToSystemEvent(self.handle, PAUSE_EX1_EVENT_ID, cevent.as_ptr())
         };
         if hr != 0 {
             return Err(format!(
@@ -1837,11 +1851,7 @@ impl Connection {
         // im MSFS-UI quittiert wird.
         let cevent = std::ffi::CString::new("Crashed").expect("ASCII");
         let hr = unsafe {
-            sys::SimConnect_SubscribeToSystemEvent(
-                self.handle,
-                CRASHED_EVENT_ID,
-                cevent.as_ptr(),
-            )
+            sys::SimConnect_SubscribeToSystemEvent(self.handle, CRASHED_EVENT_ID, cevent.as_ptr())
         };
         if hr != 0 {
             return Err(format!(
@@ -1938,11 +1948,9 @@ impl Connection {
                 // SimObjectData. bindgen represents the C++ class
                 // inheritance as `_base` — `_base.dwRequestID` is
                 // the field on the parent SIMOBJECT_DATA struct.
-                let recv_data =
-                    unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_CLIENT_DATA) };
+                let recv_data = unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_CLIENT_DATA) };
                 let request_id = recv_data._base.dwRequestID;
-                let header_size =
-                    std::mem::size_of::<sys::SIMCONNECT_RECV_CLIENT_DATA>();
+                let header_size = std::mem::size_of::<sys::SIMCONNECT_RECV_CLIENT_DATA>();
                 let total = cb_data as usize;
                 if total < header_size {
                     return Ok(None);
@@ -1964,14 +1972,11 @@ impl Connection {
                 // AircraftLoaded that's the .air file path (Windows
                 // path with backslashes). We read it as a NUL-
                 // terminated C-string.
-                let recv =
-                    unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_SYSTEM_STATE) };
+                let recv = unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_SYSTEM_STATE) };
                 let request_id = recv.dwRequestID;
                 // szString length is implementation-defined in the
                 // SDK; SimConnect docs guarantee NUL-termination.
-                let cstr = unsafe {
-                    std::ffi::CStr::from_ptr(recv.szString.as_ptr())
-                };
+                let cstr = unsafe { std::ffi::CStr::from_ptr(recv.szString.as_ptr()) };
                 let air_path = cstr.to_string_lossy().to_string();
                 Some(DispatchMsg::SystemState {
                     request_id,
@@ -1980,11 +1985,16 @@ impl Connection {
             }
             id if id == SIMCONNECT_RECV_ID_EVENT => {
                 let evt = unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_EVENT) };
-                Some(DispatchMsg::SystemEvent { event_id: evt.uEventID, data: evt.dwData })
+                Some(DispatchMsg::SystemEvent {
+                    event_id: evt.uEventID,
+                    data: evt.dwData,
+                })
             }
             id if id == SIMCONNECT_RECV_ID_FLOW_EVENT => {
                 let evt = unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_FLOW_EVENT) };
-                Some(DispatchMsg::FlowEvent { event: evt.FlowEvent as u32 })
+                Some(DispatchMsg::FlowEvent {
+                    event: evt.FlowEvent as u32,
+                })
             }
             _ => None,
         };
@@ -2059,7 +2069,10 @@ enum DispatchMsg {
     /// aus `SIMCONNECT_RECV_EVENT` — Bedeutung event-spezifisch.
     /// Fuer `Pause_EX1` ist es das Flag-Set (siehe PAUSE_EX1_EVENT_ID-
     /// Konstanten-Doku), fuer `SimStart` u.a. 0.
-    SystemEvent { event_id: u32, data: u32 },
+    SystemEvent {
+        event_id: u32,
+        data: u32,
+    },
 }
 
 // Marker so the file always references kind/Utc when stub'd out.

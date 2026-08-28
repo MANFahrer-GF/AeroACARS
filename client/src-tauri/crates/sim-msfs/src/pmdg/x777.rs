@@ -291,26 +291,26 @@ pub struct Pmdg777XRawData {
     pub EFIS_TERR_Sw_Pushed: [u8; 2],
 
     // ---- MCP ----
-    pub MCP_IASMach: f32,         // Mach if < 10.0
+    pub MCP_IASMach: f32, // Mach if < 10.0
     pub MCP_IASBlank: u8,
     pub MCP_Heading: u16,
     pub MCP_Altitude: u16,
     pub MCP_VertSpeed: i16,
-    pub MCP_FPA: f32,             // Flight Path Angle (777-specific)
+    pub MCP_FPA: f32, // Flight Path Angle (777-specific)
     pub MCP_VertSpeedBlank: u8,
 
     pub MCP_FD_Sw_On: [u8; 2],
     pub MCP_ATArm_Sw_On: [u8; 2],
-    pub MCP_BankLimitSel: u8,     // 0=AUTO 1=5 .. 5=25
+    pub MCP_BankLimitSel: u8, // 0=AUTO 1=5 .. 5=25
     pub MCP_AltIncrSel: u8,
     pub MCP_DisengageBar: u8,
-    pub MCP_Speed_Dial: u8,       // 0..99
+    pub MCP_Speed_Dial: u8, // 0..99
     pub MCP_Heading_Dial: u8,
     pub MCP_Altitude_Dial: u8,
     pub MCP_VS_Wheel: u8,
 
-    pub MCP_HDGDial_Mode: u8,     // 0=HDG 1=TRK
-    pub MCP_VSDial_Mode: u8,      // 0=VS 1=FPA
+    pub MCP_HDGDial_Mode: u8, // 0=HDG 1=TRK
+    pub MCP_VSDial_Mode: u8,  // 0=VS 1=FPA
 
     // MCP momentary push-button switches
     pub MCP_AP_Sw_Pushed: [u8; 2],
@@ -415,7 +415,7 @@ pub struct Pmdg777XRawData {
     // TCAS Panel
     pub XPDR_XpndrSelector_R: u8,
     pub XPDR_AltSourceSel_ALTN: u8,
-    pub XPDR_ModeSel: u8,         // 0=STBY .. 4=TA/RA
+    pub XPDR_ModeSel: u8, // 0=STBY .. 4=TA/RA
     pub XPDR_Ident_Sw_Pushed: u8,
 
     // Engine Fire
@@ -447,15 +447,15 @@ pub struct Pmdg777XRawData {
     // Additional variables
     // ============================================================
     pub ENG_StartValve: [u8; 2],
-    pub AIR_DuctPress: [f32; 2],   // PSI
-    pub FUEL_QtyCenter: f32,       // LBS
+    pub AIR_DuctPress: [f32; 2], // PSI
+    pub FUEL_QtyCenter: f32,     // LBS
     pub FUEL_QtyLeft: f32,
     pub FUEL_QtyRight: f32,
-    pub FUEL_QtyAux: f32,          // 777-specific (no equivalent in NG3)
+    pub FUEL_QtyAux: f32, // 777-specific (no equivalent in NG3)
     pub IRS_aligned: u8,
 
     pub EFIS_BaroMinimumsSet: [u8; 2],
-    pub EFIS_BaroMinimums: [i32; 2],   // C++ `int`
+    pub EFIS_BaroMinimums: [i32; 2], // C++ `int`
     pub EFIS_RadioMinimumsSet: [u8; 2],
     pub EFIS_RadioMinimums: [i32; 2],
 
@@ -612,7 +612,13 @@ impl Pmdg777XPathVariant {
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pmdg777XAutobrake {
-    Rto, Off, Disarm, One, Two, Three, FourMaxAuto,
+    Rto,
+    Off,
+    Disarm,
+    One,
+    Two,
+    Three,
+    FourMaxAuto,
     Unknown(u8),
 }
 
@@ -791,8 +797,8 @@ pub struct Pmdg777XSnapshot {
     pub light_nav: bool,
     pub light_logo: bool,
     pub light_wing: bool,
-    pub wing_anti_ice: bool,    // 0=OFF 1=AUTO 2=ON → not OFF = active
-    pub engine_anti_ice: bool,  // either eng on
+    pub wing_anti_ice: bool,   // 0=OFF 1=AUTO 2=ON → not OFF = active
+    pub engine_anti_ice: bool, // either eng on
     pub battery_master: bool,
     /// 777 has window heat (incl. BackUp_Sw_OFF) but no separate
     /// pitot/probe heat switch in the SDK — pitot heat is part
@@ -918,8 +924,7 @@ impl Pmdg777XSnapshot {
             light_wing: raw.LTS_Wing_Sw_ON != 0,
             // 777 anti-ice: 0=OFF 1=AUTO 2=ON. Active = not OFF.
             wing_anti_ice: raw.ICE_WingAntiIceSw != 0,
-            engine_anti_ice: raw.ICE_EngAntiIceSw[0] != 0
-                || raw.ICE_EngAntiIceSw[1] != 0,
+            engine_anti_ice: raw.ICE_EngAntiIceSw[0] != 0 || raw.ICE_EngAntiIceSw[1] != 0,
             // Battery: ELEC_Battery_Sw_ON is direct boolean.
             battery_master: raw.ELEC_Battery_Sw_ON != 0,
             // 777 has 4 window-heat switches (L-Side/L-Fwd/R-Fwd/
@@ -998,10 +1003,22 @@ mod tests {
 
     #[test]
     fn aircraft_model_decoding() {
-        assert_eq!(Pmdg777XAircraftModel::from_byte(4), Pmdg777XAircraftModel::B777_200LR);
-        assert_eq!(Pmdg777XAircraftModel::from_byte(5), Pmdg777XAircraftModel::B777F);
-        assert_eq!(Pmdg777XAircraftModel::from_byte(6), Pmdg777XAircraftModel::B777_300ER);
-        assert_eq!(Pmdg777XAircraftModel::from_byte(99), Pmdg777XAircraftModel::Unknown(99));
+        assert_eq!(
+            Pmdg777XAircraftModel::from_byte(4),
+            Pmdg777XAircraftModel::B777_200LR
+        );
+        assert_eq!(
+            Pmdg777XAircraftModel::from_byte(5),
+            Pmdg777XAircraftModel::B777F
+        );
+        assert_eq!(
+            Pmdg777XAircraftModel::from_byte(6),
+            Pmdg777XAircraftModel::B777_300ER
+        );
+        assert_eq!(
+            Pmdg777XAircraftModel::from_byte(99),
+            Pmdg777XAircraftModel::Unknown(99)
+        );
     }
 
     #[test]
@@ -1015,7 +1032,9 @@ mod tests {
     #[test]
     fn path_variant_detection() {
         assert_eq!(
-            Pmdg777XPathVariant::from_air_path("E:\\MSFS24_Community\\Community\\pmdg-aircraft-77er\\..."),
+            Pmdg777XPathVariant::from_air_path(
+                "E:\\MSFS24_Community\\Community\\pmdg-aircraft-77er\\..."
+            ),
             Pmdg777XPathVariant::B777_300ER
         );
         assert_eq!(
@@ -1070,7 +1089,7 @@ mod tests {
         assert_eq!(s.flap_handle_label, "UP");
         assert!(!s.fma.vnav);
         assert!(!s.gear_lever_down); // 0 = UP
-        // Autobrake: byte 0 = RTO (per SDK comment "0: RTO")
+                                     // Autobrake: byte 0 = RTO (per SDK comment "0: RTO")
         assert_eq!(s.autobrake, Pmdg777XAutobrake::Rto);
         // v0.16.10: zeroed raw → premium defaults
         assert!(!s.master_caution);

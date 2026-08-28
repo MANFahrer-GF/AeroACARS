@@ -60,53 +60,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-/// Ein Bahnende, so wie die Szenerie es beschreibt.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SzenerieBahn {
-    /// Bezeichner dieses Endes, etwa `"27R"`.
-    pub bezeichner: String,
-    /// Wahrer Kurs in Grad, aus den Schwellen gerechnet.
-    pub kurs_grad: f64,
-    /// Breite der befestigten Fläche in Metern.
-    pub breite_m: f64,
-    /// Länge zwischen den beiden Schwellen in Metern.
-    pub laenge_m: f64,
-    /// Versetzte Schwelle an diesem Ende, in Metern.
-    pub versetzte_schwelle_m: f64,
-    /// Koordinaten dieses Endes, **(Breite, Länge)**.
-    ///
-    /// ⚠ Die Reihenfolge ist im ganzen Modul (Breite, Länge) — auch bei
-    /// den Rollweg-Punkten. Am 28.08.2026 lag hier einmal (Länge, Breite)
-    /// für die Rollwege und (Breite, Länge) für die Bahnen, und der
-    /// Abnehmer griff entsprechend daneben: **75.610 von 86.674 Bahnen
-    /// wurden als „liegt woanders" verworfen**, bei einem tatsächlichen
-    /// Median von 0,03°. Aufgefallen ist es nur, weil der Korpus-Lauf
-    /// eine Obergrenze für Verwerfungen hat.
-    pub schwelle: (f64, f64),
-    /// Koordinaten des gegenüberliegenden Endes, **(Breite, Länge)**.
-    pub gegenende: (f64, f64),
-    /// Belagsschlüssel der `apt.dat` (1 = Asphalt, 2 = Beton, …).
-    pub belag_code: u8,
-}
-
-/// Ein benanntes Rollwegstück.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SzenerieRollweg {
-    pub name: String,
-    /// **(Breite, Länge)** je Punkt — siehe `SzenerieBahn::schwelle`.
-    pub punkte: Vec<(f64, f64)>,
-}
-
-/// Was ein Flughafen in der Szenerie hergibt.
-#[derive(Debug, Clone, Default)]
-pub struct SzenerieFlughafen {
-    pub icao: String,
-    pub bahnen: Vec<SzenerieBahn>,
-    pub rollwege: Vec<SzenerieRollweg>,
-    /// Aus welchem Paket die Angaben stammen — für den Bericht und die
-    /// Fehlersuche. Ein Add-on-Flughafen sieht anders aus als der globale.
-    pub quelle: String,
-}
+// Die Typen stehen in `sim-core`, weil MSFS dieselben liefert — siehe
+// dort. Hier nur der Leser fuer die installierte `apt.dat`.
+pub use sim_core::szenerie::{SzenerieBahn, SzenerieFlughafen, SzenerieRollweg};
 
 /// Wo X-Plane installiert ist.
 ///

@@ -37,6 +37,7 @@
 
 #[cfg(target_os = "windows")]
 mod adapter;
+pub mod facility;
 
 #[cfg(target_os = "windows")]
 pub use adapter::*;

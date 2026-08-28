@@ -9,11 +9,12 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+pub mod process_probe;
 /// v0.20 (Process-Integrity): cross-platform "is the sim's OS process
 /// still alive?" probe, keyed off `SimKind`. Lives here (not in
 /// `sim-msfs`/`sim-xplane`) so both adapters' heterogeneous disconnect
 /// signals can be disambiguated from one shared, cross-platform place.
-pub mod process_probe;
+pub mod szenerie;
 
 /// One sample of simulator telemetry.
 ///
@@ -676,7 +677,8 @@ impl SimSnapshot {
     /// `vertical_speed_fpm` is the curvature-free value for display / phase-FSM /
     /// approach-stability.
     pub fn touchdown_vs_source_fpm(&self) -> f32 {
-        self.vertical_speed_raw_fpm.unwrap_or(self.vertical_speed_fpm)
+        self.vertical_speed_raw_fpm
+            .unwrap_or(self.vertical_speed_fpm)
     }
 
     /// Premium-First override for the autoflight booleans (v0.16.7).
@@ -1199,7 +1201,8 @@ impl AircraftProfile {
         // Aerosoft-specific LVars (`L:AB_*`) that don't exist on the
         // iniBuilds airframe, most of which have no standard-SimVar OR
         // fallback (unlike the Fenix/A346 autopilot mapping, which does).
-        if t.contains("inibuilds") && (t.contains("a346") || t.contains("a340-600"))
+        if t.contains("inibuilds")
+            && (t.contains("a346") || t.contains("a340-600"))
             && t.contains("pro")
         {
             return Self::IniA346Pro;
@@ -1225,9 +1228,7 @@ impl AircraftProfile {
         // deliberately AFTER the INIBuilds branches above, so an
         // iniBuilds A340-600 Pro (which may also report ICAO A346) keeps
         // its own profile via its title.
-        if t.starts_with("aerosoft a346")
-            || clean_atc_model(icao).as_deref() == Some("A346")
-        {
+        if t.starts_with("aerosoft a346") || clean_atc_model(icao).as_deref() == Some("A346") {
             return Self::AerosoftA346;
         }
         // v0.16.10 (#Premium): FBW-ICAO-Fallback fuer Repaints/Liveries
@@ -1268,7 +1269,10 @@ impl AircraftProfile {
         // und "MD11F" (Freighter) landen beide auf EINEM Profil
         // (identische Premium-Quellen laut 7-Agent-Inventar).
         if (t.contains("tfdi") && t.contains("md-11"))
-            || matches!(clean_atc_model(icao).as_deref(), Some("MD11") | Some("MD11F"))
+            || matches!(
+                clean_atc_model(icao).as_deref(),
+                Some("MD11") | Some("MD11F")
+            )
         {
             return Self::TfdiMd11;
         }
@@ -1568,8 +1572,8 @@ pub fn clean_atc_model(raw: &str) -> Option<String> {
     if let Some(colon_pos) = upper.find(':') {
         if colon_pos <= 4 {
             let prefix = &upper[..colon_pos];
-            let is_vendor_tag = !prefix.is_empty()
-                && !prefix.chars().any(|c| c.is_ascii_alphanumeric());
+            let is_vendor_tag =
+                !prefix.is_empty() && !prefix.chars().any(|c| c.is_ascii_alphanumeric());
             if is_vendor_tag {
                 let stripped = upper[colon_pos + 1..].trim().to_string();
                 if !stripped.is_empty() {
@@ -1705,19 +1709,19 @@ pub fn icao_aus_titel(titel: &str) -> Option<String> {
 /// Häufigkeit im Bestand, damit beim Erweitern sichtbar bleibt, was Substanz hat.
 const TITEL_MUSTER: &[(&str, &str)] = &[
     // ── Airbus ────────────────────────────────────────────────────────────
-    ("A220-300", "BCS3"),   // 42 Flüge — mit Abstand der häufigste Fall
+    ("A220-300", "BCS3"), // 42 Flüge — mit Abstand der häufigste Fall
     ("A220-100", "BCS1"),
-    ("A330-300", "A333"),   // 9 Flüge (VIP, P2F, RR)
+    ("A330-300", "A333"), // 9 Flüge (VIP, P2F, RR)
     ("A330-200", "A332"),
-    ("A340-300", "A343"),   // 3 Flüge (Freighter EIS1)
+    ("A340-300", "A343"), // 3 Flüge (Freighter EIS1)
     ("A340-600", "A346"),
     // ── Boeing / McDonnell Douglas ────────────────────────────────────────
     // `MD-11` allein deckt auch `MD-11F` ab (Teilstring). Die spezifische
     // Zeile steht trotzdem hier, weil sie den Auslöser benennt — und weil eine
     // künftige Frachter-Unterscheidung genau hier ansetzen würde.
-    ("MD-11F", "MD11"),     // 2 Flüge — der MPH-9-Fall
+    ("MD-11F", "MD11"), // 2 Flüge — der MPH-9-Fall
     ("MD-11", "MD11"),
-    ("L1011", "L101"),      // 1 Flug (TriStar -500)
+    ("L1011", "L101"), // 1 Flug (TriStar -500)
     // ── Turboprop ─────────────────────────────────────────────────────────
     ("ATR 72-600", "AT76"), // 2 Flüge (Freighter)
     ("ATR 72", "AT72"),
@@ -1734,7 +1738,9 @@ const TITEL_MUSTER: &[(&str, &str)] = &[
 /// und überlange Reste heraus.
 fn is_plausible_icao(s: &str) -> bool {
     let len = s.len();
-    (2..=4).contains(&len) && s.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    (2..=4).contains(&len)
+        && s.chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
 /// Bekannte MSFS-Modell-/Marketing-Namen → ICAO-Typcode (Doc-8643).
@@ -1900,8 +1906,14 @@ mod tests {
     fn normalize_icao_type_fixes_health_report_garbage() {
         // Reale Kaputt-Werte aus 614 VPS-Flight-Logs (Health-Report).
         // ATCCOM-Lokalisierungs-String → sauberer Typcode.
-        assert_eq!(normalize_icao_type("ATCCOM.AC_MODEL A320.0.text").as_deref(), Some("A320"));
-        assert_eq!(normalize_icao_type("ATCCOM.AC_MODEL A321.0.text").as_deref(), Some("A321"));
+        assert_eq!(
+            normalize_icao_type("ATCCOM.AC_MODEL A320.0.text").as_deref(),
+            Some("A320")
+        );
+        assert_eq!(
+            normalize_icao_type("ATCCOM.AC_MODEL A321.0.text").as_deref(),
+            Some("A321")
+        );
         // Marketing-/Modellnamen → ICAO-Designator.
         assert_eq!(normalize_icao_type("PHENOM 300E").as_deref(), Some("E55P"));
         assert_eq!(normalize_icao_type("A350-900").as_deref(), Some("A359"));
@@ -1928,8 +1940,14 @@ mod tests {
     #[test]
     fn normalize_icao_type_passes_clean_codes_through() {
         // Bereits saubere ICAO-Codes bleiben unverändert.
-        for c in ["A320", "B738", "E55P", "A359", "MD11", "FA50", "C172", "DH8D"] {
-            assert_eq!(normalize_icao_type(c).as_deref(), Some(c), "{c} sollte durchgehen");
+        for c in [
+            "A320", "B738", "E55P", "A359", "MD11", "FA50", "C172", "DH8D",
+        ] {
+            assert_eq!(
+                normalize_icao_type(c).as_deref(),
+                Some(c),
+                "{c} sollte durchgehen"
+            );
         }
     }
 
@@ -2034,7 +2052,10 @@ mod tests {
 
     #[test]
     fn label_fsr_phenom_300e_is_human_readable() {
-        assert_eq!(AircraftProfile::FsrPhenom300e.label(), "FSReborn Phenom 300E");
+        assert_eq!(
+            AircraftProfile::FsrPhenom300e.label(),
+            "FSReborn Phenom 300E"
+        );
     }
 
     #[test]
@@ -2070,10 +2091,7 @@ mod tests {
         let p = AircraftProfile::detect("Custom A340-600 Repaint", "A346");
         assert_eq!(p, AircraftProfile::AerosoftA346);
         // Auch wenn der Sim den ICAO als Localization-Token liefert.
-        let p = AircraftProfile::detect(
-            "Custom A340-600 Repaint",
-            "ATCCOM.AC_MODEL A346.0.text",
-        );
+        let p = AircraftProfile::detect("Custom A340-600 Repaint", "ATCCOM.AC_MODEL A346.0.text");
         assert_eq!(p, AircraftProfile::AerosoftA346);
     }
 
@@ -2136,7 +2154,7 @@ mod tests {
     fn touchdown_vs_source_prefers_raw_then_falls_back() {
         let mut s = SimSnapshot::default();
         s.vertical_speed_fpm = -50.0; // display value (e.g. the X-Plane VVI)
-        // No raw signal (MSFS) → touchdown falls back to the display V/S.
+                                      // No raw signal (MSFS) → touchdown falls back to the display V/S.
         assert_eq!(s.vertical_speed_raw_fpm, None);
         assert_eq!(s.touchdown_vs_source_fpm(), -50.0);
         // Raw present (X-Plane local_vy) → touchdown uses the raw, responsive
@@ -2322,7 +2340,8 @@ mod tests {
         let mut v = serde_json::to_value(&s).expect("serialize");
         let obj = v.as_object_mut().expect("object");
         for key in PREMIUM_SNAPSHOT_KEYS {
-            obj.remove(key).expect("premium key present after serialize");
+            obj.remove(key)
+                .expect("premium key present after serialize");
         }
         let restored: SimSnapshot =
             serde_json::from_value(v).expect("old JSONL without premium keys must deserialize");
@@ -2355,7 +2374,8 @@ mod tests {
             "minimums_baro_ft",
             "gnd_prox_warning",
         ] {
-            obj.remove(key).expect("premium key present after serialize");
+            obj.remove(key)
+                .expect("premium key present after serialize");
         }
         let restored: PmdgState =
             serde_json::from_value(v).expect("old PmdgState JSON must deserialize");
@@ -2375,7 +2395,10 @@ mod tests {
         assert_eq!(s.shadow_phase, None);
         assert_eq!(s.shadow_segment, None);
         let v = serde_json::to_value(&s).expect("serialize");
-        assert!(v.get("shadow_phase").is_none(), "None darf nicht serialisieren");
+        assert!(
+            v.get("shadow_phase").is_none(),
+            "None darf nicht serialisieren"
+        );
         assert!(v.get("shadow_segment").is_none());
 
         // Alte JSONL-Replays (ohne die Keys) deserialisieren weiter.
@@ -2457,10 +2480,7 @@ mod tests {
     fn detect_ifly_max8_from_title() {
         // aircraft.cfg-Title (atc_model ist ein nutzloser generischer
         // ATCCOM-B737-Token — darf keine Rolle spielen).
-        let p = AircraftProfile::detect(
-            "iFly 737-MAX8 (178Seat)",
-            "ATCCOM.AC_MODEL B737.0.text",
-        );
+        let p = AircraftProfile::detect("iFly 737-MAX8 (178Seat)", "ATCCOM.AC_MODEL B737.0.text");
         assert_eq!(p, AircraftProfile::IflyMax8);
         assert_eq!(p.label(), "iFly 737 MAX 8");
         // Livery-Title — behaelt den "iFly … MAX"-Stamm.
@@ -2741,100 +2761,114 @@ mod tests {
         assert_eq!(s.ground_spoilers_active, Some(false));
     }
 
-// ── icao_aus_titel: alle 15 Titel aus dem Bestand vom 23.08.2026 ──────────
-//
-// Jeder Fall unten ist ein ECHTER Titel aus den Flug-Protokollen, bei dem der
-// Typ heute fehlt. Zusammen 65 Flüge (7,3 % des Bestands).
+    // ── icao_aus_titel: alle 15 Titel aus dem Bestand vom 23.08.2026 ──────────
+    //
+    // Jeder Fall unten ist ein ECHTER Titel aus den Flug-Protokollen, bei dem der
+    // Typ heute fehlt. Zusammen 65 Flüge (7,3 % des Bestands).
 
-#[test]
-fn titel_deckt_den_gesamten_bestand_ab() {
-    // (Titel, erwarteter ICAO, Häufigkeit im Bestand)
-    let faelle: &[(&str, &str, u32)] = &[
-        ("A220-300", "BCS3", 41),
-        ("A220-300 - No Cabin", "BCS3", 1),
-        ("A330-300 VIP (RR)", "A333", 7),
-        ("A330-300P2F (RR)", "A333", 1),
-        ("A330-300 (RR)", "A333", 1),
-        ("A340-300 Freighter EIS1", "A343", 3),
-        ("FFX P180 Pasengers - Wood", "P180", 2),
-        ("FFX P180 Private Charter - Wood", "P180", 1),
-        ("ATR 72-600 Freighter", "AT76", 2),
-        ("Contrail FA50 PR-WYW", "FA50", 1),
-        ("L1011-500 Standard Cabin", "L101", 1),
-        ("TFDi Design MD-11F PW4462", "MD11", 1),
-        ("TFDi Design MD-11F PW4462 (Low Poly Cabin)", "MD11", 1),
-        ("Cessna C680: OK-JRS", "C680", 1),
-        ("Microsoft Vision Jet Executive Seating", "SF50", 1),
-    ];
-    let mut abgedeckt = 0;
-    for (titel, erwartet, anzahl) in faelle {
+    #[test]
+    fn titel_deckt_den_gesamten_bestand_ab() {
+        // (Titel, erwarteter ICAO, Häufigkeit im Bestand)
+        let faelle: &[(&str, &str, u32)] = &[
+            ("A220-300", "BCS3", 41),
+            ("A220-300 - No Cabin", "BCS3", 1),
+            ("A330-300 VIP (RR)", "A333", 7),
+            ("A330-300P2F (RR)", "A333", 1),
+            ("A330-300 (RR)", "A333", 1),
+            ("A340-300 Freighter EIS1", "A343", 3),
+            ("FFX P180 Pasengers - Wood", "P180", 2),
+            ("FFX P180 Private Charter - Wood", "P180", 1),
+            ("ATR 72-600 Freighter", "AT76", 2),
+            ("Contrail FA50 PR-WYW", "FA50", 1),
+            ("L1011-500 Standard Cabin", "L101", 1),
+            ("TFDi Design MD-11F PW4462", "MD11", 1),
+            ("TFDi Design MD-11F PW4462 (Low Poly Cabin)", "MD11", 1),
+            ("Cessna C680: OK-JRS", "C680", 1),
+            ("Microsoft Vision Jet Executive Seating", "SF50", 1),
+        ];
+        let mut abgedeckt = 0;
+        for (titel, erwartet, anzahl) in faelle {
+            assert_eq!(
+                icao_aus_titel(titel).as_deref(),
+                Some(*erwartet),
+                "Titel {titel:?} muss {erwartet} ergeben"
+            );
+            abgedeckt += anzahl;
+        }
         assert_eq!(
-            icao_aus_titel(titel).as_deref(),
-            Some(*erwartet),
-            "Titel {titel:?} muss {erwartet} ergeben"
-        );
-        abgedeckt += anzahl;
-    }
-    assert_eq!(abgedeckt, 65, "die Tabelle muss alle 65 Fluege des Bestands abdecken");
-}
-
-#[test]
-fn mph9_der_ausloeser() {
-    // LSZH -> EHAM, 22.08.2026: ohne diesen Fallback fehlte MD11, damit entfiel
-    // die Heavy-Gutschrift und die Bahn-Achse gab 55 statt 80 Punkten.
-    assert_eq!(
-        icao_aus_titel("TFDi Design MD-11F PW4462").as_deref(),
-        Some("MD11")
-    );
-}
-
-#[test]
-fn variante_schlaegt_familie() {
-    // Die Reihenfolge in TITEL_MUSTER ist die Zusicherung: A330-300 darf nicht
-    // von einem allgemeineren A330-Muster verschluckt werden.
-    assert_eq!(icao_aus_titel("A330-300 VIP (RR)").as_deref(), Some("A333"));
-    assert_eq!(icao_aus_titel("A340-300 Freighter EIS1").as_deref(), Some("A343"));
-    assert_eq!(icao_aus_titel("ATR 72-600 Freighter").as_deref(), Some("AT76"));
-    // ATR 72 ohne -600 bleibt die Familie
-    assert_eq!(icao_aus_titel("ATR 72 Classic").as_deref(), Some("AT72"));
-}
-
-#[test]
-fn im_zweifel_lieber_nichts() {
-    // Ein falscher Typ wird geglaubt und keyed Bewertung + Profil-Matching.
-    // Ein fehlender faellt sichtbar auf "nicht bewertbar" zurueck.
-    for titel in [
-        "",
-        "   ",
-        "Just Flight",
-        "Default Aircraft",
-        "Cessna",              // zu unspezifisch — welche?
-        "Boeing",              // dito
-        "Airbus Widebody",     // kein konkretes Muster
-        "747",                 // Familie ohne Variante
-    ] {
-        assert_eq!(
-            icao_aus_titel(titel),
-            None,
-            "Titel {titel:?} ist nicht eindeutig und darf keinen Typ liefern"
+            abgedeckt, 65,
+            "die Tabelle muss alle 65 Fluege des Bestands abdecken"
         );
     }
-}
 
-#[test]
-fn gross_klein_und_leerzeichen_egal() {
-    assert_eq!(icao_aus_titel("  tfdi design md-11f  ").as_deref(), Some("MD11"));
-    assert_eq!(icao_aus_titel("a220-300").as_deref(), Some("BCS3"));
-}
+    #[test]
+    fn mph9_der_ausloeser() {
+        // LSZH -> EHAM, 22.08.2026: ohne diesen Fallback fehlte MD11, damit entfiel
+        // die Heavy-Gutschrift und die Bahn-Achse gab 55 statt 80 Punkten.
+        assert_eq!(
+            icao_aus_titel("TFDi Design MD-11F PW4462").as_deref(),
+            Some("MD11")
+        );
+    }
 
-#[test]
-fn aendert_nichts_wenn_das_atc_modell_schon_taugt() {
-    // Der Titel-Fallback ist die DRITTE Stufe. Wo normalize_icao_type liefert,
-    // wird er nie befragt — dieser Test haelt die Rollenverteilung fest.
-    assert_eq!(normalize_icao_type("A320").as_deref(), Some("A320"));
-    assert_eq!(normalize_icao_type("ATCCOM.AC_MODEL A320.0.text").as_deref(), Some("A320"));
-}
+    #[test]
+    fn variante_schlaegt_familie() {
+        // Die Reihenfolge in TITEL_MUSTER ist die Zusicherung: A330-300 darf nicht
+        // von einem allgemeineren A330-Muster verschluckt werden.
+        assert_eq!(icao_aus_titel("A330-300 VIP (RR)").as_deref(), Some("A333"));
+        assert_eq!(
+            icao_aus_titel("A340-300 Freighter EIS1").as_deref(),
+            Some("A343")
+        );
+        assert_eq!(
+            icao_aus_titel("ATR 72-600 Freighter").as_deref(),
+            Some("AT76")
+        );
+        // ATR 72 ohne -600 bleibt die Familie
+        assert_eq!(icao_aus_titel("ATR 72 Classic").as_deref(), Some("AT72"));
+    }
 
+    #[test]
+    fn im_zweifel_lieber_nichts() {
+        // Ein falscher Typ wird geglaubt und keyed Bewertung + Profil-Matching.
+        // Ein fehlender faellt sichtbar auf "nicht bewertbar" zurueck.
+        for titel in [
+            "",
+            "   ",
+            "Just Flight",
+            "Default Aircraft",
+            "Cessna",          // zu unspezifisch — welche?
+            "Boeing",          // dito
+            "Airbus Widebody", // kein konkretes Muster
+            "747",             // Familie ohne Variante
+        ] {
+            assert_eq!(
+                icao_aus_titel(titel),
+                None,
+                "Titel {titel:?} ist nicht eindeutig und darf keinen Typ liefern"
+            );
+        }
+    }
+
+    #[test]
+    fn gross_klein_und_leerzeichen_egal() {
+        assert_eq!(
+            icao_aus_titel("  tfdi design md-11f  ").as_deref(),
+            Some("MD11")
+        );
+        assert_eq!(icao_aus_titel("a220-300").as_deref(), Some("BCS3"));
+    }
+
+    #[test]
+    fn aendert_nichts_wenn_das_atc_modell_schon_taugt() {
+        // Der Titel-Fallback ist die DRITTE Stufe. Wo normalize_icao_type liefert,
+        // wird er nie befragt — dieser Test haelt die Rollenverteilung fest.
+        assert_eq!(normalize_icao_type("A320").as_deref(), Some("A320"));
+        assert_eq!(
+            normalize_icao_type("ATCCOM.AC_MODEL A320.0.text").as_deref(),
+            Some("A320")
+        );
+    }
 }
 
 #[cfg(test)]

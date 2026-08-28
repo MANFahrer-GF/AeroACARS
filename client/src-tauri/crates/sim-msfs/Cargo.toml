@@ -28,3 +28,8 @@ bindgen = "0.69"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# Nur fuer die Gegenprobe: Die MSFS-Umrechnung wird gegen die installierte
+# X-Plane-Szenerie gehalten — beide beschreiben denselben echten Flughafen.
+sim-xplane = { path = "../sim-xplane" }

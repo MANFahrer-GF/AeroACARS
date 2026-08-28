@@ -20,7 +20,7 @@
 //! `pmdg-aircraft-738/Documentation/SDK/PMDG_NG3_SDK.h`.
 
 #![allow(non_snake_case)] // Field names mirror the C++ header verbatim.
-#![allow(dead_code)]      // Many fields are read for layout, not consumed.
+#![allow(dead_code)] // Many fields are read for layout, not consumed.
 
 // ---------------------------------------------------------------
 // SimConnect ClientData identifiers — must match the header exactly.
@@ -56,17 +56,17 @@ pub struct Pmdg738RawData {
     // ============================================================
 
     // ADIRU
-    pub IRS_DisplaySelector: u8,            // 0..4
-    pub IRS_SysDisplay_R: u8,               // bool: false=L, true=R
+    pub IRS_DisplaySelector: u8, // 0..4
+    pub IRS_SysDisplay_R: u8,    // bool: false=L, true=R
     pub IRS_annunGPS: u8,
     pub IRS_annunALIGN: [u8; 2],
     pub IRS_annunON_DC: [u8; 2],
     pub IRS_annunFAULT: [u8; 2],
     pub IRS_annunDC_FAIL: [u8; 2],
-    pub IRS_ModeSelector: [u8; 2],          // 0=OFF 1=ALIGN 2=NAV 3=ATT
+    pub IRS_ModeSelector: [u8; 2], // 0=OFF 1=ALIGN 2=NAV 3=ATT
     pub IRS_aligned: u8,
-    pub IRS_DisplayLeft: [u8; 7],           // zero-terminated
-    pub IRS_DisplayRight: [u8; 8],          // zero-terminated
+    pub IRS_DisplayLeft: [u8; 7],  // zero-terminated
+    pub IRS_DisplayRight: [u8; 8], // zero-terminated
     pub IRS_DisplayShowsDots: u8,
 
     // AFS
@@ -81,7 +81,7 @@ pub struct Pmdg738RawData {
     pub COMM_ServiceInterphoneSw: u8,
 
     // Lights
-    pub LTS_DomeWhiteSw: u8,                // 0=DIM 1=OFF 2=BRIGHT
+    pub LTS_DomeWhiteSw: u8, // 0=DIM 1=OFF 2=BRIGHT
 
     // Engine
     pub ENG_EECSwitch: [u8; 2],
@@ -91,7 +91,7 @@ pub struct Pmdg738RawData {
     pub ENG_StartValve: [u8; 2],
 
     // Oxygen
-    pub OXY_Needle: u8,                     // 0..240
+    pub OXY_Needle: u8, // 0..240
     pub OXY_SwNormal: u8,
     pub OXY_annunPASS_OXY_ON: u8,
 
@@ -111,11 +111,11 @@ pub struct Pmdg738RawData {
     // ============================================================
 
     // Flight Controls
-    pub FCTL_FltControl_Sw: [u8; 2],        // 0=STBY/RUD 1=OFF 2=ON
+    pub FCTL_FltControl_Sw: [u8; 2], // 0=STBY/RUD 1=OFF 2=ON
     pub FCTL_Spoiler_Sw: [u8; 2],
     pub FCTL_YawDamper_Sw: u8,
     pub FCTL_AltnFlaps_Sw_ARM: u8,
-    pub FCTL_AltnFlaps_Control_Sw: u8,      // 0=UP 1=OFF 2=DOWN
+    pub FCTL_AltnFlaps_Control_Sw: u8, // 0=UP 1=OFF 2=DOWN
     pub FCTL_annunFC_LOW_PRESSURE: [u8; 2],
     pub FCTL_annunYAW_DAMPER: u8,
     pub FCTL_annunLOW_QUANTITY: u8,
@@ -127,12 +127,12 @@ pub struct Pmdg738RawData {
     pub FCTL_annunAUTO_SLAT_FAIL: u8,
 
     // Navigation/Displays
-    pub NAVDIS_VHFNavSelector: u8,          // 0=BOTH ON 1, 1=NORMAL, 2=BOTH ON 2
+    pub NAVDIS_VHFNavSelector: u8, // 0=BOTH ON 1, 1=NORMAL, 2=BOTH ON 2
     pub NAVDIS_IRSSelector: u8,
     pub NAVDIS_FMCSelector: u8,
     pub NAVDIS_SourceSelector: u8,
     pub NAVDIS_ControlPaneSelector: u8,
-    pub ADF_StandbyFrequency: u32,          // standby freq * 10
+    pub ADF_StandbyFrequency: u32, // standby freq * 10
 
     // Fuel
     pub FUEL_FuelTempNeedle: f32,
@@ -152,9 +152,9 @@ pub struct Pmdg738RawData {
     pub FUEL_annunLOWPRESS_Fwd: [u8; 2],
     pub FUEL_annunLOWPRESS_Aft: [u8; 2],
     pub FUEL_annunLOWPRESS_Ctr: [u8; 2],
-    pub FUEL_QtyCenter: f32,                // LBS
-    pub FUEL_QtyLeft: f32,                  // LBS
-    pub FUEL_QtyRight: f32,                 // LBS
+    pub FUEL_QtyCenter: f32, // LBS
+    pub FUEL_QtyLeft: f32,   // LBS
+    pub FUEL_QtyRight: f32,  // LBS
 
     // Electrical
     pub ELEC_annunBAT_DISCHARGE: u8,
@@ -162,13 +162,13 @@ pub struct Pmdg738RawData {
     pub ELEC_annunELEC: u8,
     pub ELEC_DCMeterSelector: u8,
     pub ELEC_ACMeterSelector: u8,
-    pub ELEC_BatSelector: u8,               // 0=OFF 1=BAT 2=ON
+    pub ELEC_BatSelector: u8, // 0=OFF 1=BAT 2=ON
     pub ELEC_CabUtilSw: u8,
     pub ELEC_IFEPassSeatSw: u8,
     pub ELEC_annunDRIVE: [u8; 2],
     pub ELEC_annunSTANDBY_POWER_OFF: u8,
     pub ELEC_IDGDisconnectSw: [u8; 2],
-    pub ELEC_StandbyPowerSelector: u8,      // 0=BAT 1=OFF 2=AUTO
+    pub ELEC_StandbyPowerSelector: u8, // 0=BAT 1=OFF 2=AUTO
     pub ELEC_annunGRD_POWER_AVAILABLE: u8,
     pub ELEC_GrdPwrSw: u8,
     pub ELEC_BusTransSw_AUTO: u8,
@@ -225,7 +225,7 @@ pub struct Pmdg738RawData {
     pub ICE_annunCOWL_VALVE_OPEN: [u8; 2],
     pub ICE_WingAntiIceSw: u8,
     pub ICE_EngAntiIceSw: [u8; 2],
-    pub ICE_WindowHeatTestSw: i32,          // header: int
+    pub ICE_WindowHeatTestSw: i32, // header: int
 
     // Hydraulics
     pub HYD_annunLOW_PRESS_eng: [u8; 2],
@@ -242,10 +242,10 @@ pub struct Pmdg738RawData {
     pub AIR_annunRamDoorL: u8,
     pub AIR_annunRamDoorR: u8,
     pub AIR_RecircFanSwitch: [u8; 2],
-    pub AIR_PackSwitch: [u8; 2],            // 0=OFF 1=AUTO 2=HIGH
+    pub AIR_PackSwitch: [u8; 2], // 0=OFF 1=AUTO 2=HIGH
     pub AIR_BleedAirSwitch: [u8; 2],
     pub AIR_APUBleedAirSwitch: u8,
-    pub AIR_IsolationValveSwitch: u8,       // 0=CLOSE 1=AUTO 2=OPEN
+    pub AIR_IsolationValveSwitch: u8, // 0=CLOSE 1=AUTO 2=OPEN
     pub AIR_annunPackTripOff: [u8; 2],
     pub AIR_annunWingBodyOverheat: [u8; 2],
     pub AIR_annunBleedTripOff: [u8; 2],
@@ -253,13 +253,13 @@ pub struct Pmdg738RawData {
     pub AIR_annunOFFSCHED_DESCENT: u8,
     pub AIR_annunALTN: u8,
     pub AIR_annunMANUAL: u8,
-    pub AIR_DuctPress: [f32; 2],            // PSI
+    pub AIR_DuctPress: [f32; 2], // PSI
     pub AIR_DuctPressNeedle: [f32; 2],
-    pub AIR_CabinAltNeedle: f32,            // ft
-    pub AIR_CabinDPNeedle: f32,             // PSI
-    pub AIR_CabinVSNeedle: f32,             // ft/min
-    pub AIR_CabinValveNeedle: f32,          // 0..1
-    pub AIR_TemperatureNeedle: f32,         // °C
+    pub AIR_CabinAltNeedle: f32,    // ft
+    pub AIR_CabinDPNeedle: f32,     // PSI
+    pub AIR_CabinVSNeedle: f32,     // ft/min
+    pub AIR_CabinValveNeedle: f32,  // 0..1
+    pub AIR_TemperatureNeedle: f32, // °C
     pub AIR_DisplayFltAlt: [u8; 6],
     pub AIR_DisplayLandAlt: [u8; 6],
 
@@ -277,8 +277,8 @@ pub struct Pmdg738RawData {
     pub DOOR_annunAFT_ENTRY: u8,
     pub DOOR_annunAFT_SERVICE: u8,
 
-    pub AIR_FltAltWindow: u32,              // obsolete
-    pub AIR_LandAltWindow: u32,             // obsolete
+    pub AIR_FltAltWindow: u32,  // obsolete
+    pub AIR_LandAltWindow: u32, // obsolete
     pub AIR_OutflowValveSwitch: u32,
     pub AIR_PressurizationModeSelector: u32,
 
@@ -287,8 +287,8 @@ pub struct Pmdg738RawData {
     pub LTS_LandingLtFixedSw: [u8; 2],
     pub LTS_RunwayTurnoffSw: [u8; 2],
     pub LTS_TaxiSw: u8,
-    pub APU_Selector: u8,                   // 0=OFF 1=ON 2=START
-    pub ENG_StartSelector: [u8; 2],         // 0=GRD 1=OFF 2=CONT 3=FLT
+    pub APU_Selector: u8,           // 0=OFF 1=ON 2=START
+    pub ENG_StartSelector: [u8; 2], // 0=GRD 1=OFF 2=CONT 3=FLT
     pub ENG_IgnitionSelector: u8,
     pub LTS_LogoSw: u8,
     pub LTS_PositionSw: u8,
@@ -321,25 +321,25 @@ pub struct Pmdg738RawData {
     pub EFIS_BaroSelHPA: [u8; 2],
     pub EFIS_VORADFSel1: [u8; 2],
     pub EFIS_VORADFSel2: [u8; 2],
-    pub EFIS_ModeSel: [u8; 2],              // 0=APP 1=VOR 2=MAP 3=PLAN
-    pub EFIS_RangeSel: [u8; 2],             // 0=5 .. 7=640
+    pub EFIS_ModeSel: [u8; 2],  // 0=APP 1=VOR 2=MAP 3=PLAN
+    pub EFIS_RangeSel: [u8; 2], // 0=5 .. 7=640
 
     // ============================================================
     // Mode control panel — INTERESTING for AeroACARS
     // ============================================================
     pub MCP_Course: [u16; 2],
-    pub MCP_IASMach: f32,                   // Mach if < 10.0, else knots
+    pub MCP_IASMach: f32, // Mach if < 10.0, else knots
     pub MCP_IASBlank: u8,
     pub MCP_IASOverspeedFlash: u8,
     pub MCP_IASUnderspeedFlash: u8,
     pub MCP_Heading: u16,
     pub MCP_Altitude: u16,
-    pub MCP_VertSpeed: i16,                 // signed
+    pub MCP_VertSpeed: i16, // signed
     pub MCP_VertSpeedBlank: u8,
 
     pub MCP_FDSw: [u8; 2],
     pub MCP_ATArmSw: u8,
-    pub MCP_BankLimitSel: u8,               // 0=10 .. 4=30
+    pub MCP_BankLimitSel: u8, // 0=10 .. 4=30
     pub MCP_DisengageBar: u8,
 
     pub MCP_annunFD: [u8; 2],
@@ -384,15 +384,15 @@ pub struct Pmdg738RawData {
     pub MAIN_N1SetSelector: u8,
     pub MAIN_SpdRefSelector: u8,
     pub MAIN_FuelFlowSelector: u8,
-    pub MAIN_AutobrakeSelector: u8,         // 0=RTO 1=OFF 2=1 3=2 4=3 5=MAX
+    pub MAIN_AutobrakeSelector: u8, // 0=RTO 1=OFF 2=1 3=2 4=3 5=MAX
     pub MAIN_annunANTI_SKID_INOP: u8,
     pub MAIN_annunAUTO_BRAKE_DISARM: u8,
     pub MAIN_annunLE_FLAPS_TRANSIT: u8,
     pub MAIN_annunLE_FLAPS_EXT: u8,
-    pub MAIN_TEFlapsNeedle: [f32; 2],       // ★ flap angle in degrees
+    pub MAIN_TEFlapsNeedle: [f32; 2], // ★ flap angle in degrees
     pub MAIN_annunGEAR_transit: [u8; 3],
     pub MAIN_annunGEAR_locked: [u8; 3],
-    pub MAIN_GearLever: u8,                 // 0=UP 1=OFF 2=DOWN
+    pub MAIN_GearLever: u8, // 0=UP 1=OFF 2=DOWN
     pub MAIN_BrakePressNeedle: f32,
     pub MAIN_annunCABIN_ALTITUDE: u8,
     pub MAIN_annunTAKEOFF_CONFIG: u8,
@@ -439,7 +439,7 @@ pub struct Pmdg738RawData {
     pub COMM_Attend_PressCount: u8,
     pub COMM_GrdCall_PressCount: u8,
     pub COMM_SelectedMic: [u8; 3],
-    pub COMM_ReceiverSwitches: [u32; 3],    // bit-flags
+    pub COMM_ReceiverSwitches: [u32; 3], // bit-flags
     pub TRIM_StabTrimMainElecSw_NORMAL: u8,
     pub TRIM_StabTrimAutoPilotSw_NORMAL: u8,
     pub PED_annunParkingBrake: u8,
@@ -472,7 +472,7 @@ pub struct Pmdg738RawData {
 
     pub XPDR_XpndrSelector_2: u8,
     pub XPDR_AltSourceSel_2: u8,
-    pub XPDR_ModeSel: u8,                   // 0=STBY 1=ALT_RPTG_OFF .. 4=TA/RA
+    pub XPDR_ModeSel: u8, // 0=STBY 1=ALT_RPTG_OFF .. 4=TA/RA
     pub XPDR_annunFAIL: u8,
 
     pub LTS_PedFloodKnob: u8,
@@ -486,25 +486,25 @@ pub struct Pmdg738RawData {
     // ============================================================
     // FMS — INTERESTING for AeroACARS
     // ============================================================
-    pub FMC_TakeoffFlaps: u8,               // degrees, 0 if not set
-    pub FMC_V1: u8,                         // knots, 0 if not set
+    pub FMC_TakeoffFlaps: u8, // degrees, 0 if not set
+    pub FMC_V1: u8,           // knots, 0 if not set
     pub FMC_VR: u8,
     pub FMC_V2: u8,
     pub FMC_LandingFlaps: u8,
     pub FMC_LandingVREF: u8,
-    pub FMC_CruiseAlt: u16,                 // ft, 0 if not set
-    pub FMC_LandingAltitude: i16,           // -32767 if n/a
+    pub FMC_CruiseAlt: u16,       // ft, 0 if not set
+    pub FMC_LandingAltitude: i16, // -32767 if n/a
     pub FMC_TransitionAlt: u16,
     pub FMC_TransitionLevel: u16,
     pub FMC_PerfInputComplete: u8,
-    pub FMC_DistanceToTOD: f32,             // nm; negative if n/a
+    pub FMC_DistanceToTOD: f32, // nm; negative if n/a
     pub FMC_DistanceToDest: f32,
     pub FMC_flightNumber: [u8; 9],
 
     // ============================================================
     // General and misc
     // ============================================================
-    pub AircraftModel: u16,                 // 1=600, 5=800, 8=900, etc.
+    pub AircraftModel: u16, // 1=600, 5=800, 8=900, etc.
 
     pub WeightInKg: u8,
     pub GPWS_V1CallEnabled: u8,
@@ -533,10 +533,17 @@ const _: () = {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pmdg738Variant {
     B737_600,
-    B737_700, B737_700_BW, B737_700_SSW,
-    B737_800, B737_800_BW, B737_800_SSW,
-    B737_900, B737_900_BW, B737_900_SSW,
-    B737_900ER_BW, B737_900ER_SSW,
+    B737_700,
+    B737_700_BW,
+    B737_700_SSW,
+    B737_800,
+    B737_800_BW,
+    B737_800_SSW,
+    B737_900,
+    B737_900_BW,
+    B737_900_SSW,
+    B737_900ER_BW,
+    B737_900ER_SSW,
     Bdsf(u16), // BDSF / BCF / BBJ — encode the raw model number
     Unknown(u16),
 }
@@ -545,10 +552,17 @@ impl Pmdg738Variant {
     pub fn from_model_id(id: u16) -> Self {
         match id {
             1 => Self::B737_600,
-            2 => Self::B737_700, 3 => Self::B737_700_BW, 4 => Self::B737_700_SSW,
-            5 => Self::B737_800, 6 => Self::B737_800_BW, 7 => Self::B737_800_SSW,
-            8 => Self::B737_900, 9 => Self::B737_900_BW, 10 => Self::B737_900_SSW,
-            11 => Self::B737_900ER_BW, 12 => Self::B737_900ER_SSW,
+            2 => Self::B737_700,
+            3 => Self::B737_700_BW,
+            4 => Self::B737_700_SSW,
+            5 => Self::B737_800,
+            6 => Self::B737_800_BW,
+            7 => Self::B737_800_SSW,
+            8 => Self::B737_900,
+            9 => Self::B737_900_BW,
+            10 => Self::B737_900_SSW,
+            11 => Self::B737_900ER_BW,
+            12 => Self::B737_900ER_SSW,
             13..=22 => Self::Bdsf(id),
             _ => Self::Unknown(id),
         }
@@ -593,15 +607,24 @@ pub struct Pmdg738FmaState {
 /// Autobrake selector positions (737 NG).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pmdg738Autobrake {
-    Rto, Off, One, Two, Three, Max,
+    Rto,
+    Off,
+    One,
+    Two,
+    Three,
+    Max,
     Unknown(u8),
 }
 
 impl Pmdg738Autobrake {
     pub fn from_byte(v: u8) -> Self {
         match v {
-            0 => Self::Rto, 1 => Self::Off, 2 => Self::One,
-            3 => Self::Two, 4 => Self::Three, 5 => Self::Max,
+            0 => Self::Rto,
+            1 => Self::Off,
+            2 => Self::One,
+            3 => Self::Two,
+            4 => Self::Three,
+            5 => Self::Max,
             other => Self::Unknown(other),
         }
     }
@@ -704,7 +727,7 @@ pub struct Pmdg738Snapshot {
     pub apu_running: bool,
 
     // Comm + Misc
-    pub xpdr_mode: u8,                  // 0=STBY 1=ALT_RPTG_OFF .. 4=TA/RA
+    pub xpdr_mode: u8, // 0=STBY 1=ALT_RPTG_OFF .. 4=TA/RA
 
     // ---- v0.16.10 (#Premium): deep-data annunciators + fuel ----
     /// Any engine's REVERSER annunciator lit (`ENG_annunREVERSER[0|1]`).
@@ -904,12 +927,10 @@ impl Pmdg738Snapshot {
 
             // Anti-ice
             wing_anti_ice: raw.ICE_WingAntiIceSw != 0,
-            engine_anti_ice: raw.ICE_EngAntiIceSw[0] != 0
-                || raw.ICE_EngAntiIceSw[1] != 0,
+            engine_anti_ice: raw.ICE_EngAntiIceSw[0] != 0 || raw.ICE_EngAntiIceSw[1] != 0,
             // Pitot heat: NG3 has 2 probe heat switches
             // (Capt + F/O). ANY on = pitot heat on for our purpose.
-            pitot_heat: raw.ICE_ProbeHeatSw[0] != 0
-                || raw.ICE_ProbeHeatSw[1] != 0,
+            pitot_heat: raw.ICE_ProbeHeatSw[0] != 0 || raw.ICE_ProbeHeatSw[1] != 0,
 
             // Battery: BatSelector 0=OFF 1=BAT 2=ON. Anything
             // non-zero = battery providing power.
@@ -920,14 +941,11 @@ impl Pmdg738Snapshot {
             // ---- v0.16.10 (#Premium) deep-data fields ----
             // Two-channel annunciators (Capt/FO or Eng1/Eng2): OR —
             // "the light is on" is what the cockpit shows.
-            reverser_deployed: raw.ENG_annunREVERSER[0] != 0
-                || raw.ENG_annunREVERSER[1] != 0,
+            reverser_deployed: raw.ENG_annunREVERSER[0] != 0 || raw.ENG_annunREVERSER[1] != 0,
             master_caution: raw.WARN_annunMASTER_CAUTION[0] != 0
                 || raw.WARN_annunMASTER_CAUTION[1] != 0,
-            fire_warn: raw.WARN_annunFIRE_WARN[0] != 0
-                || raw.WARN_annunFIRE_WARN[1] != 0,
-            below_gs: raw.MAIN_annunBELOW_GS[0] != 0
-                || raw.MAIN_annunBELOW_GS[1] != 0,
+            fire_warn: raw.WARN_annunFIRE_WARN[0] != 0 || raw.WARN_annunFIRE_WARN[1] != 0,
+            below_gs: raw.MAIN_annunBELOW_GS[0] != 0 || raw.MAIN_annunBELOW_GS[1] != 0,
             cabin_altitude_warning: raw.MAIN_annunCABIN_ALTITUDE != 0,
             // Order: [left, center, right]. SDK floats follow the
             // pilot's weight-unit option (WeightInKg flag) — convert
@@ -990,7 +1008,10 @@ mod tests {
     #[test]
     fn variant_decoding() {
         assert_eq!(Pmdg738Variant::from_model_id(5), Pmdg738Variant::B737_800);
-        assert_eq!(Pmdg738Variant::from_model_id(7), Pmdg738Variant::B737_800_SSW);
+        assert_eq!(
+            Pmdg738Variant::from_model_id(7),
+            Pmdg738Variant::B737_800_SSW
+        );
         assert_eq!(
             Pmdg738Variant::from_model_id(99),
             Pmdg738Variant::Unknown(99)

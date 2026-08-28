@@ -93,9 +93,7 @@ impl PmdgVariant {
             || p.contains("pmdg 739")
         {
             Some(Self::Ng3)
-        } else if p.contains("pmdg-aircraft-77")
-            || p.contains("pmdg 777")
-        {
+        } else if p.contains("pmdg-aircraft-77") || p.contains("pmdg 777") {
             Some(Self::X777)
         } else {
             None
