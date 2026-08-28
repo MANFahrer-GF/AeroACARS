@@ -79,6 +79,23 @@ pub const BAHN_FELDER: &[(&str, FeldTyp)] = &[
     ("SECONDARY_THRESHOLD", FeldTyp::F32),
 ];
 
+/// Der Referenzpunkt des Flughafens.
+///
+/// ⚠ Pflicht, sobald Rollwege angefordert werden: `TAXI_POINT` liefert
+/// nur einen Versatz in Metern gegen diesen Punkt, keine Koordinaten.
+pub const FLUGHAFEN_FELDER: &[(&str, FeldTyp)] = &[
+    ("LATITUDE", FeldTyp::F64),
+    ("LONGITUDE", FeldTyp::F64),
+    ("ALTITUDE", FeldTyp::F64),
+];
+
+/// Die Namensliste. `TAXI_PATH::NAME_INDEX` zeigt hierhin.
+///
+/// ⚠ `NAME` ist eine Zeichenkette und liegt NICHT im festen Raster der
+/// übrigen Felder — sie wird deshalb getrennt gelesen, siehe
+/// `name_aus_bytes`.
+pub const ROLLWEG_NAME_FELDER: &[(&str, FeldTyp)] = &[("NAME", FeldTyp::Text)];
+
 /// Die Felder der Rollwege — drei Listen, die zusammengehören.
 ///
 /// MSFS beschreibt sie wie X-Planes `1201`/`1202`: Punkte, Kanten mit
@@ -110,6 +127,10 @@ pub enum FeldTyp {
     F64,
     F32,
     I32,
+    /// Eine Zeichenkette. Sie hat keine feste Groesse und darf deshalb
+    /// nur als LETZTES Feld einer Liste stehen — sonst laesst sich
+    /// nicht sagen, wo das naechste beginnt.
+    Text,
 }
 
 impl FeldTyp {
@@ -118,6 +139,8 @@ impl FeldTyp {
             FeldTyp::F64 => 8,
             FeldTyp::F32 => 4,
             FeldTyp::I32 => 4,
+            // Nicht sinnvoll bestimmbar — siehe `Text`.
+            FeldTyp::Text => 0,
         }
     }
 }
@@ -257,6 +280,11 @@ pub fn zerlege(felder: &[(&str, FeldTyp)], bytes: &[u8]) -> Option<Vec<Wert>> {
     let mut aus = Vec::with_capacity(felder.len());
     let mut pos = 0usize;
     for (_, typ) in felder {
+        if *typ == FeldTyp::Text {
+            // Eine Zeichenkette hat keine feste Groesse; sie gehoert
+            // nicht in dieses Raster. `name_aus_bytes` liest sie.
+            return None;
+        }
         let g = typ.groesse();
         // Ausrichtung auf die eigene Groesse.
         pos = pos.div_ceil(g) * g;
@@ -268,6 +296,9 @@ pub fn zerlege(felder: &[(&str, FeldTyp)], bytes: &[u8]) -> Option<Vec<Wert>> {
             FeldTyp::F64 => Wert::F64(f64::from_le_bytes(scheibe.try_into().ok()?)),
             FeldTyp::F32 => Wert::F32(f32::from_le_bytes(scheibe.try_into().ok()?)),
             FeldTyp::I32 => Wert::I32(i32::from_le_bytes(scheibe.try_into().ok()?)),
+            // Oben schon abgewiesen — hier nur, damit der Uebersetzer
+            // sieht, dass der Fall behandelt ist.
+            FeldTyp::Text => return None,
         });
         pos += g;
     }
@@ -748,6 +779,196 @@ mod verdrahtung_tests {
         assert!(
             a.contains("FACILITY_DEFINITION_ID:sys::SIMCONNECT_DATA_DEFINITION_ID=10"),
             "Facility-Definition benutzt nicht ihre eigene Kennung"
+        );
+    }
+}
+
+/// Einen Namen aus einem `TAXI_NAME`-Block lesen.
+///
+/// SimConnect liefert Zeichenketten null-terminiert. Alles hinter der
+/// ersten Null gehoert nicht dazu — wer den ganzen Puffer nimmt,
+/// bekommt Namen mit Fuellbytes daran.
+pub fn name_aus_bytes(bytes: &[u8]) -> String {
+    let ende = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..ende]).trim().to_string()
+}
+
+/// Die drei Rollweg-Listen zu benannten Strecken zusammensetzen.
+///
+/// # Warum das eine eigene Funktion ist
+///
+/// Weil hier drei Indexräume aufeinandertreffen: Kanten verweisen über
+/// `START`/`END` auf Punkte und über `NAME_INDEX` auf Namen. Ein
+/// Index daneben ergibt eine Strecke, die es nicht gibt — mit
+/// plausiblen Koordinaten.
+///
+/// Kanten ohne Namen fallen weg: Für die Frage „auf welcher Ausfahrt
+/// bin ich abgerollt?" tragen sie nichts bei.
+pub fn rollwege_zusammensetzen(
+    referenz: (f64, f64),
+    punkte_versatz: &[(f64, f64)],
+    namen: &[String],
+    kanten: &[(usize, usize, usize)],
+) -> Vec<sim_core::szenerie::SzenerieRollweg> {
+    let punkte: Vec<(f64, f64)> = punkte_versatz
+        .iter()
+        .map(|(ost, nord)| punkt_aus_versatz(referenz, *ost, *nord))
+        .collect();
+    let mut aus = Vec::new();
+    for (a, b, n) in kanten {
+        let (Some(pa), Some(pb)) = (punkte.get(*a), punkte.get(*b)) else {
+            continue;
+        };
+        let Some(name) = namen.get(*n) else { continue };
+        if name.is_empty() {
+            continue;
+        }
+        aus.push(sim_core::szenerie::SzenerieRollweg {
+            name: name.clone(),
+            punkte: vec![*pa, *pb],
+        });
+    }
+    aus
+}
+
+#[cfg(test)]
+mod rollweg_tests {
+    use super::*;
+
+    #[test]
+    fn namen_enden_an_der_null() {
+        // SimConnect liefert Zeichenketten null-terminiert. Wer den
+        // ganzen Puffer nimmt, bekommt Namen mit Fuellbytes daran — und
+        // „B3\0\0\0" ist nicht „B3".
+        assert_eq!(name_aus_bytes(b"B3\0\0\0\0"), "B3");
+        assert_eq!(name_aus_bytes(b"TWY ALPHA\0"), "TWY ALPHA");
+        assert_eq!(name_aus_bytes(b""), "");
+        assert_eq!(name_aus_bytes(b"  A1  \0"), "A1");
+    }
+
+    #[test]
+    fn kanten_werden_ueber_indizes_verknuepft() {
+        let referenz = (53.6304, 9.9882);
+        let punkte = vec![(0.0, 0.0), (500.0, 0.0), (500.0, 500.0)];
+        let namen = vec!["A".to_string(), "B3".to_string()];
+        let kanten = vec![(0usize, 1usize, 1usize), (1, 2, 0)];
+        let r = rollwege_zusammensetzen(referenz, &punkte, &namen, &kanten);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].name, "B3");
+        assert_eq!(r[1].name, "A");
+        // Erster Punkt der ersten Kante ist der Referenzpunkt selbst.
+        assert!((r[0].punkte[0].0 - referenz.0).abs() < 1e-9);
+        assert!((r[0].punkte[0].1 - referenz.1).abs() < 1e-9);
+        // Und der zweite liegt oestlich davon.
+        assert!(r[0].punkte[1].1 > referenz.1);
+    }
+
+    #[test]
+    fn ein_index_daneben_erzeugt_keine_strecke() {
+        // ⚠ Drei Indexraeume treffen aufeinander. Ein Index daneben
+        // ergaebe eine Strecke, die es nicht gibt — mit plausiblen
+        // Koordinaten. Lieber nichts als etwas Erfundenes.
+        let referenz = (53.6304, 9.9882);
+        let punkte = vec![(0.0, 0.0), (500.0, 0.0)];
+        let namen = vec!["A".to_string()];
+        for kante in [(0usize, 9usize, 0usize), (9, 0, 0), (0, 1, 9)] {
+            let r = rollwege_zusammensetzen(referenz, &punkte, &namen, &[kante]);
+            assert!(
+                r.is_empty(),
+                "Kante {kante:?} haette verworfen werden muessen"
+            );
+        }
+    }
+
+    #[test]
+    fn namenlose_kanten_fallen_weg() {
+        // Fuer die Frage „auf welcher Ausfahrt bin ich abgerollt?"
+        // tragen sie nichts bei, und eine leere Beschriftung in der
+        // Anzeige ist schlechter als keine Strecke.
+        let r = rollwege_zusammensetzen(
+            (53.6304, 9.9882),
+            &[(0.0, 0.0), (100.0, 0.0)],
+            &["".to_string()],
+            &[(0, 1, 0)],
+        );
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn text_gehoert_nicht_ins_feste_raster() {
+        // Eine Zeichenkette hat keine feste Groesse. Wuerde `zerlege`
+        // sie mitrechnen, verschoebe sich alles danach.
+        let felder: &[(&str, FeldTyp)] = &[("NAME", FeldTyp::Text)];
+        assert!(zerlege(felder, b"B3\0").is_none());
+    }
+}
+
+#[cfg(test)]
+mod anschluss_verdrahtung_tests {
+    //! Wachen ueber den Windows-Teil, die auch ohne Windows laufen.
+
+    const ADAPTER: &str = include_str!("adapter.rs");
+
+    fn ohne_leerraum(s: &str) -> String {
+        s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    #[test]
+    fn die_definition_wird_auch_registriert() {
+        // ⚠ Genau die Luecke, die ich gebaut hatte: `register_facility`
+        // war definiert und nirgends aufgerufen. Ohne den Aufruf gaebe
+        // es die Definition nicht — und jede Anfrage liefe ins Leere,
+        // OHNE Fehler: `RequestFacilityData` scheitert dann nicht, es
+        // kommt nur nie eine Antwort.
+        let a = ohne_leerraum(ADAPTER);
+        assert!(
+            a.contains("conn.register_facility()"),
+            "register_facility wird nirgends aufgerufen"
+        );
+    }
+
+    #[test]
+    fn die_anfrage_laeuft_im_verbindungsfaden() {
+        // `szenerie_anfordern` laeuft im Aufrufer-Faden und darf
+        // SimConnect nicht anfassen. Der Griff gehoert dem Faden.
+        let a = ohne_leerraum(ADAPTER);
+        assert!(
+            a.contains("conn.request_facility(&icao)"),
+            "die Anfrage wird nicht im Verbindungsfaden gestellt"
+        );
+        assert!(
+            a.contains("szenerie_offen.swap(false,Ordering::Relaxed)"),
+            "die ausstehende Anfrage wird nicht abgeholt"
+        );
+    }
+
+    #[test]
+    fn ein_neuer_platz_verwirft_die_alte_auskunft() {
+        // Sonst wuerde nach einem Divert die Bahn des GEPLANTEN Ziels
+        // benutzt — plausible Zahlen, falscher Flughafen.
+        let a = ohne_leerraum(ADAPTER);
+        assert!(
+            a.contains("*self.shared.szenerie.lock()=None;"),
+            "beim Anfordern eines anderen Platzes bleibt die alte Auskunft stehen"
+        );
+    }
+
+    #[test]
+    fn die_rollwege_stehen_in_der_definition() {
+        for marke in [
+            "\"OPEN TAXI_POINT\"",
+            "\"CLOSE TAXI_POINT\"",
+            "\"OPEN TAXI_NAME\"",
+            "\"OPEN TAXI_PATH\"",
+        ] {
+            assert!(ADAPTER.contains(marke), "{marke} fehlt in der Definition");
+        }
+        // Und der Referenzpunkt, ohne den die Punkte nicht umrechenbar
+        // sind.
+        let a = ohne_leerraum(ADAPTER);
+        assert!(
+            a.contains("facility::FLUGHAFEN_FELDER"),
+            "ohne den Referenzpunkt sind BIAS_X/BIAS_Z nutzlos"
         );
     }
 }

@@ -134,6 +134,8 @@ struct Shared {
     szenerie: Mutex<Option<sim_core::szenerie::SzenerieFlughafen>>,
     /// Der Platz, dessen Auskunft gerade angefordert ist.
     szenerie_angefordert: Mutex<Option<String>>,
+    /// Steht eine Anfrage aus, die der Verbindungsfaden noch stellen muss?
+    szenerie_offen: AtomicBool,
     /// Spec v0.7.15 F5: SimConnect-`Paused`/`Unpaused`-System-Events
     /// setzen dieses Atomic. Wird beim Bauen jedes `SimSnapshot` in
     /// `telemetry::parse` zurueck nach `snap.paused` kopiert, damit
@@ -611,6 +613,7 @@ impl MsfsAdapter {
                 last_error: Mutex::new(None),
                 szenerie: Mutex::new(None),
                 szenerie_angefordert: Mutex::new(None),
+                szenerie_offen: AtomicBool::new(false),
                 sim_paused: AtomicBool::new(false),
                 sim_unecht_tiefe: AtomicI32::new(0),
                 sim_crashed: AtomicBool::new(false),
@@ -852,6 +855,42 @@ impl MsfsAdapter {
         tracing::info!("MSFS snapshot cleared by user (force-resync)");
     }
 
+    /// v1.7.8 — die Szenerie-Auskunft fuer einen Flughafen anfordern.
+    ///
+    /// Der Aufruf hinterlegt nur den Wunsch; die Anfrage stellt der
+    /// Verbindungsfaden beim naechsten Durchlauf, und die Antwort kommt
+    /// asynchron. `szenerie()` liefert sie, sobald sie vollstaendig ist.
+    ///
+    /// Gedacht fuer den Anflug: Dann ist das Ziel bekannt, es ist Zeit
+    /// im Ueberfluss, und beim Aufsetzen liegt die Auskunft bereit.
+    /// Beim Aufsetzen anzufordern waere zu spaet — die Antwort kommt
+    /// stueckweise ueber mehrere Durchlaeufe.
+    pub fn szenerie_anfordern(&self, icao: &str) {
+        let icao = icao.trim().to_ascii_uppercase();
+        if icao.is_empty() {
+            return;
+        }
+        let mut wunsch = self.shared.szenerie_angefordert.lock();
+        if wunsch.as_deref() == Some(icao.as_str()) {
+            return; // schon unterwegs oder erledigt
+        }
+        *wunsch = Some(icao);
+        // Die alte Auskunft gilt nicht mehr — sie gehoert zu einem
+        // anderen Platz. Sie stehen zu lassen waere schlimmer als
+        // nichts zu haben.
+        *self.shared.szenerie.lock() = None;
+        self.shared.szenerie_offen.store(true, Ordering::Relaxed);
+    }
+
+    /// Die zuletzt vollstaendig gelieferte Szenerie-Auskunft.
+    ///
+    /// `None` heisst: nicht angefordert, noch unterwegs, oder der
+    /// Simulator kennt den Platz nicht. In allen drei Faellen bleibt es
+    /// bei den Navdaten.
+    pub fn szenerie(&self) -> Option<sim_core::szenerie::SzenerieFlughafen> {
+        self.shared.szenerie.lock().clone()
+    }
+
     pub fn last_error(&self) -> Option<String> {
         self.shared.last_error.lock().clone()
     }
@@ -907,6 +946,21 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 // proceed.
                 if let Err(e) = conn.register_touchdown() {
                     tracing::warn!(error = %e, "register_touchdown failed — touchdown values will stay None");
+                }
+                // v1.7.8 — die Facility-Definition einmal je Verbindung
+                // registrieren. Ohne diesen Aufruf gaebe es die
+                // Definition nicht, und jede Anfrage liefe ins Leere —
+                // still, denn `RequestFacilityData` scheitert dann nicht,
+                // es kommt nur nie eine Antwort.
+                //
+                // Ein Fehlschlag ist hier kein Grund, die Verbindung
+                // aufzugeben: Die Navdaten bleiben der Rueckfall, und
+                // Telemetrie und Aufsetzprobe sind davon unberuehrt.
+                if let Err(e) = conn.register_facility() {
+                    tracing::warn!(
+                        error = %e,
+                        "register_facility fehlgeschlagen — Bahndaten kommen weiter aus den Navdaten"
+                    );
                 }
                 if let Err(e) = conn.request_data_per_second() {
                     set_error(&shared, format!("RequestDataOnSimObject failed: {e}"));
@@ -1011,6 +1065,26 @@ fn run_dispatch(
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "register_inspector failed; will retry");
+                }
+            }
+        }
+
+        // v1.7.8 — eine ausstehende Szenerie-Anfrage stellen.
+        //
+        // Erst hier, im Faden mit dem Verbindungsgriff: `szenerie_anfordern`
+        // laeuft im Aufrufer-Faden und darf SimConnect nicht anfassen.
+        if shared.szenerie_offen.swap(false, Ordering::Relaxed) {
+            let icao = shared.szenerie_angefordert.lock().clone();
+            if let Some(icao) = icao {
+                match conn.request_facility(&icao) {
+                    Ok(()) => tracing::info!(%icao, "Szenerie-Auskunft angefordert"),
+                    Err(e) => {
+                        // Nicht erneut versuchen: Ein Platz, den der
+                        // Simulator nicht kennt, wird beim naechsten
+                        // Durchlauf auch nicht bekannt. Die Navdaten
+                        // bleiben, und das ist der richtige Rueckfall.
+                        tracing::warn!(%icao, error = %e, "Szenerie-Anfrage abgelehnt");
+                    }
                 }
             }
         }
@@ -1588,9 +1662,24 @@ impl Connection {
     /// eine Rollspur die befestigte Flaeche verlaesst.
     fn register_facility(&mut self) -> Result<(), String> {
         let mut eintraege: Vec<&str> = vec!["OPEN AIRPORT"];
+        // Der Referenzpunkt des Platzes — ohne ihn sind die
+        // Rollwegpunkte nicht umrechenbar, sie kommen als Versatz in
+        // Metern (`BIAS_X`/`BIAS_Z`).
+        eintraege.extend(facility::FLUGHAFEN_FELDER.iter().map(|(n, _)| *n));
         eintraege.push("OPEN RUNWAY");
         eintraege.extend(facility::BAHN_FELDER.iter().map(|(n, _)| *n));
         eintraege.push("CLOSE RUNWAY");
+        // Rollwege: Punkte, Kanten, Namen — drei Listen, die ueber
+        // Indizes zusammenhaengen, genau wie X-Planes 1201/1202.
+        eintraege.push("OPEN TAXI_POINT");
+        eintraege.extend(facility::ROLLWEG_PUNKT_FELDER.iter().map(|(n, _)| *n));
+        eintraege.push("CLOSE TAXI_POINT");
+        eintraege.push("OPEN TAXI_NAME");
+        eintraege.extend(facility::ROLLWEG_NAME_FELDER.iter().map(|(n, _)| *n));
+        eintraege.push("CLOSE TAXI_NAME");
+        eintraege.push("OPEN TAXI_PATH");
+        eintraege.extend(facility::ROLLWEG_KANTE_FELDER.iter().map(|(n, _)| *n));
+        eintraege.push("CLOSE TAXI_PATH");
         eintraege.push("CLOSE AIRPORT");
 
         for name in eintraege {
