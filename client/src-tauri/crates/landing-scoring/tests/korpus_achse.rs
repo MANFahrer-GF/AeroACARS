@@ -27,6 +27,9 @@ use landing_scoring::sub_bahndisziplin::{
     achse_fragwuerdig, achsen_befund, achsen_fenster_bis_m,
 };
 
+/// Ab wann ein Rückwärtsschritt kein Messrauschen mehr ist.
+const GROSSER_RUECKSPRUNG_M: f64 = 50.0;
+
 struct Landung {
     platz: String,
     breite_m: Option<f64>,
@@ -95,23 +98,74 @@ fn urteil(l: &Landung) -> Option<bool> {
 #[test]
 fn der_vorrat_ist_vollstaendig() {
     let k = lies_korpus();
-    assert_eq!(k.len(), 46, "Korpus unerwartet gross/klein");
+    assert_eq!(k.len(), 56, "Korpus unerwartet gross/klein");
     assert!(
         k.iter().all(|l| l.proben.len() >= 10),
         "eine Landung hat zu wenige Proben — Leser kaputt?"
     );
-    // Gegen einen stillen Lesefehler: Die Proben müssen aufsteigende
-    // Längspositionen und plausible Querlagen haben.
+    // Gegen einen stillen Lesefehler: plausible Querlagen.
     for l in &k {
-        let (x0, _) = l.proben[0];
-        let (x1, _) = l.proben[l.proben.len() - 1];
-        assert!(x1 > x0, "{}: Längsachse läuft nicht vorwärts", l.platz);
         assert!(
             l.proben.iter().all(|(_, q)| q.abs() < 500.0),
             "{}: unplausible Querlage",
             l.platz
         );
     }
+
+    // ⚠ Die Längsachse läuft NICHT überall vorwärts — und das ist echt.
+    //
+    // In EKVG (Vágar) fährt das Flugzeug nach der Landung auf der Bahn
+    // zurück; der Platz hat kaum Ausfahrten. Und in LEPA stand viermal
+    // exakt derselbe Punkt (465,2 m / +2,2 m) zwischen fortlaufenden
+    // Proben — ein stecken gebliebener Messwert.
+    //
+    // Beides am 28.08.2026 aufgefallen, als der Vorrat wuchs. Statt die
+    // Daten zu beanstanden, ordnet und entdoppelt `achsen_befund` jetzt
+    // selbst. Geprüft wird deshalb die EIGENSCHAFT, die das garantiert:
+    // Das Urteil darf nicht davon abhängen, in welcher Reihenfolge die
+    // Proben eintrafen.
+    let mut rueckwaerts_faelle = 0;
+    for l in &k {
+        let mut umgedreht = l.proben.clone();
+        umgedreht.reverse();
+        let bis = achsen_fenster_bis_m(l.mess_ende_m, l.raeum_m, None);
+        let a = bis.and_then(|b| achsen_befund(&l.proben, b));
+        let b = bis.and_then(|b| achsen_befund(&umgedreht, b));
+        match (a, b) {
+            (Some(x), Some(y)) => assert!(
+                (x.winkel_grad - y.winkel_grad).abs() < 1e-9,
+                "{}: Urteil haengt an der Reihenfolge ({} gegen {})",
+                l.platz,
+                x.winkel_grad,
+                y.winkel_grad
+            ),
+            (None, None) => {}
+            _ => panic!("{}: einmal Urteil, einmal nicht — Reihenfolge zaehlt", l.platz),
+        }
+        // ⚠ Nur GROSSE Rücksprünge zählen.
+        //
+        // Am Korpus gemessen (28.08.2026): 18 von 56 Landungen laufen
+        // streckenweise rückwärts — aber 15 davon um weniger als 5 m.
+        // Das ist Messrauschen beim langsamen Ausrollen und völlig
+        // normal; eine Wache dagegen wäre nur lästig.
+        //
+        // Die drei grossen sind etwas anderes: 929 m und 308 m in EKVG
+        // (Zurückrollen auf der Bahn) und 207 m in LEPA (ein stecken
+        // gebliebener Messpunkt). Werden das plötzlich viele, stimmt
+        // etwas mit der Projektion nicht.
+        if l
+            .proben
+            .windows(2)
+            .any(|w| w[0].0 - w[1].0 >= GROSSER_RUECKSPRUNG_M)
+        {
+            rueckwaerts_faelle += 1;
+        }
+    }
+    assert!(
+        rueckwaerts_faelle <= 5,
+        "{rueckwaerts_faelle} von {} Landungen springen um mehr als {GROSSER_RUECKSPRUNG_M} m zurück",
+        k.len()
+    );
 }
 
 #[test]
@@ -124,8 +178,11 @@ fn nur_wenige_landungen_gelten_als_achsenfehler() {
         .collect();
     // Vor der Korrektur waren es 9 von 46 (20 %) — darunter EDDK, EDDM
     // und EGBB mit Standardszenerie. Danach 4.
+    // Vor der Korrektur 9 von 46 (20 %); nach dem Fensterfix 5; nach der
+    // Regel „bleibt die Spur auf der befestigten Fläche" noch 2 von 56 —
+    // und das sind EDHE und FACT, beide mit bekannt kaputter Geometrie.
     assert!(
-        auffaellig.len() <= 5,
+        auffaellig.len() <= 3,
         "zu viele Landungen als Szenerie-Versatz eingestuft: {auffaellig:?}"
     );
 }
@@ -136,7 +193,10 @@ fn plaetze_mit_standardszenerie_werden_nicht_beschuldigt() {
     // eine Aussage ueber die DATEN — an solchen Plaetzen darf sie nicht
     // fallen, solange die Spur in der mittleren Bahnhaelfte bleibt.
     let k = lies_korpus();
-    for platz in ["EDDK", "EDDM", "EGBB"] {
+    // EDDV kam am 28.08.2026 dazu: dort wurde EWG6850 um 0,3 m verworfen,
+    // weil die erste Fassung der Regel auf den Höchstbetrag statt auf die
+    // befestigte Fläche schaute.
+    for platz in ["EDDK", "EDDM", "EGBB", "EDDV"] {
         for l in k.iter().filter(|l| l.platz == platz) {
             assert_ne!(
                 urteil(l),
@@ -161,6 +221,27 @@ fn bekannt_falsch_kartierte_bahnen_bleiben_geschuetzt() {
             urteil(l),
             Some(true),
             "EDHE muss uebersprungen bleiben"
+        );
+    }
+}
+
+#[test]
+fn nur_wer_die_befestigte_flaeche_verlaesst_gilt_als_achsenfehler() {
+    // Der Kern der Regel, an echten Daten: Jede uebersprungene Landung
+    // MUSS behaupten, das Flugzeug sei neben der Bahn weitergerollt.
+    // Sonst ist die Spur schlicht moeglich — und dann ist ein schraeger
+    // Verlauf ein Manoever, kein Szenerie-Versatz.
+    let k = lies_korpus();
+    for l in k.iter().filter(|l| urteil(l) == Some(true)) {
+        let bis = achsen_fenster_bis_m(l.mess_ende_m, l.raeum_m, None).unwrap();
+        let b = achsen_befund(&l.proben, bis).unwrap();
+        let halbe = l.breite_m.unwrap_or(0.0) / 2.0;
+        assert!(
+            b.groesster_betrag_m > halbe,
+            "{}: uebersprungen, obwohl die Spur mit {:.1} m auf der {:.1} m breiten Bahn blieb",
+            l.platz,
+            b.groesster_betrag_m,
+            halbe * 2.0
         );
     }
 }

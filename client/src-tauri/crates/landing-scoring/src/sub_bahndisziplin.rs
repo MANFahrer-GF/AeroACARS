@@ -163,11 +163,30 @@ pub struct AchsenBefund {
 }
 
 pub fn achsen_befund(proben: &[(f64, f64)], bis_laengs_m: f64) -> Option<AchsenBefund> {
-    let auf: Vec<(f64, f64)> = proben
+    let mut auf: Vec<(f64, f64)> = proben
         .iter()
         .copied()
         .filter(|(lg, qr)| *lg <= bis_laengs_m && lg.is_finite() && qr.is_finite())
         .collect();
+    // ⚠ Sortieren und Dubletten werfen, bevor gerechnet wird.
+    //
+    // Die Spur kommt nicht immer geordnet an. In LEPA (06L, 28.08.2026)
+    // stand viermal exakt derselbe Punkt (465,2 m / +2,2 m) zwischen
+    // fortlaufenden Proben — ein stecken gebliebener Messwert, dieselbe
+    // Klasse wie die doppelten Positionszeilen in phpVMS. Vier identische
+    // Punkte ziehen eine Ausgleichsgerade an derselben Stelle fest.
+    //
+    // Und in EKVG faehrt das Flugzeug nach der Landung auf der Bahn
+    // ZURUECK, weil der Platz kaum Ausfahrten hat. Dort sinkt die
+    // Laengsposition wieder — eine Gerade ueber Hin- und Rueckweg ist
+    // sinnlos.
+    //
+    // Beides kostet nichts, wenn die Punkte vorher geordnet und
+    // entdoppelt werden. Danach haengt das Ergebnis nicht mehr an der
+    // Reihenfolge, in der die Proben eintrafen — festgehalten in
+    // `reihenfolge_ist_egal`.
+    auf.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    auf.dedup_by(|a, b| a.0 == b.0);
     // Unter zehn Punkten ist eine Gerade Zufall.
     if auf.len() < 10 {
         return None;
@@ -193,26 +212,6 @@ pub fn achsen_befund(proben: &[(f64, f64)], bis_laengs_m: f64) -> Option<AchsenB
         groesster_betrag_m: kleinste.abs().max(groesste.abs()),
     })
 }
-
-/// Wie weit von der Mitte darf eine kreuzende Spur wandern und trotzdem
-/// als Manöver gelten — als Anteil der BAHNBREITE.
-///
-/// 0,25 heisst: Die Spur blieb in der mittleren Hälfte der Bahn. Das ist
-/// keine angepasste Zahl, sondern eine geometrische Aussage — wer die
-/// Mittellinie kreuzt und dabei die mittlere Hälfte nie verlässt, kann
-/// nicht Opfer einer verdrehten Achse sein: Eine Drehung, die über den
-/// Rollweg mehr als ein Grad ausmacht, traegt das Flugzeug weit aus der
-/// Mitte heraus und wechselt dabei nicht das Vorzeichen.
-///
-/// Am Korpus (46 Landungen mit Rollspur, 37 Plätze, 27.08.2026):
-///
-/// ```text
-/// EDDM  9,2 m / 60 m = 0,15   kreuzt   -> Manöver, wird bewertet
-/// SLVR 12,9 m / 45 m = 0,29   kreuzt   -> bleibt uebersprungen
-/// FACT 35,3 m / 61 m = 0,58   kreuzt   -> bleibt uebersprungen
-/// EDHE 45,7 m / 45 m = 1,02   einseitig -> bleibt uebersprungen
-/// ```
-const MANOEVER_ANTEIL_BREITE: f64 = 0.25;
 
 /// Bis wohin die Ausgleichsgerade fuer den Achsenwinkel gelegt wird.
 ///
@@ -249,30 +248,56 @@ pub fn achsen_fenster_bis_m(
 
 /// Ist die Achse fragwürdig — oder fuhr das Flugzeug einfach schräg?
 ///
-/// # Warum das getrennt werden muss
+/// # Die Frage, die wirklich trennt
 ///
-/// Die Meldung an den Piloten lautet „Szenerie-Versatz". Das ist eine
-/// Aussage über die DATEN, und sie war am 27.08.2026 bei EDDK, EDDM und
-/// EGBB nachweislich falsch — Standard-Szenerie an bestens kartierten
-/// Plätzen. Dort fuhr das Flugzeug glatt über die Mittellinie:
+/// **Behauptet die Spur, das Flugzeug sei neben der befestigten Fläche
+/// weitergerollt?** Wenn ja, kann nicht die Spur stimmen: Ein Verkehrs-
+/// flugzeug rollt nicht mit Fahrt durchs Gras und danach weiter. Dann ist
+/// unsere Bezugsachse falsch — und ein Querversatz gegen sie ist kein
+/// Pilotenfehler.
+///
+/// Bleibt die Spur dagegen auf der Bahn, ist sie schlicht möglich. Dann
+/// ist ein schräger Verlauf ein Manöver und gehört bewertet.
+///
+/// # Was hier zuerst stand, und warum es falsch war
+///
+/// Zuerst: „kreuzt die Mittellinie und bleibt in der mittleren Hälfte".
+/// Das hat am 28.08.2026 **EWG6850 in EDDV um 0,3 m** verworfen — 11,6 m
+/// Versatz auf einer 45,1 m breiten Bahn, Spur von +5,6 auf −1,5 m,
+/// Standardszenerie. Eine Grenze, die auf einen Dreißig-Zentimeter-Rand
+/// hinausläuft, misst nicht die Sache, sondern sich selbst.
+///
+/// Dann der Gedanke „kam die Spur je nahe an die Mittellinie?". Der ist
+/// **nachweislich falsch**: Eine verdrehte Achse kreuzt die Mitte
+/// ebenfalls — am Drehpunkt. Am Korpus geprüft hätte er FACT
+/// durchgelassen, genau den Fall, für den diese Prüfung gebaut wurde.
+///
+/// # Am Korpus (56 Landungen, 28.08.2026)
 ///
 /// ```text
-/// EDDM 08R:  1544 m: -5,5 m  ->  1695 m: 0,0 m  ->  1793 m: +9,2 m
+/// EDDV  11,6 m / halbe 22,6   auf der Bahn  -> bewertet
+/// SLVR  12,9 m / halbe 22,6   auf der Bahn  -> bewertet
+/// KJFK  24,2 m / halbe 30,5   auf der Bahn  -> bewertet
+/// FACT  35,3 m / halbe 30,5   AUSSERHALB    -> Achse fragwürdig
+/// EDHE  45,7 m / halbe 20,0   AUSSERHALB    -> Achse fragwürdig
 /// ```
 ///
-/// Ein verdrehter Bahnbezug sieht anders aus: Der Versatz waechst
-/// einseitig und wird gross (FACT 24,6 -> 35,3 m). Deshalb zwei
-/// Bedingungen statt einer.
+/// Von fünf Verdächtigungen bleiben zwei — und es sind die beiden mit
+/// bekannt kaputter Bahngeometrie.
+///
+/// ⚠ Ohne Bahnbreite gibt es kein Maß. Dann bleibt es beim Winkel allein,
+/// und im Zweifel wird übersprungen: Datenmangel darf nie zur härteren
+/// Note führen.
 pub fn achse_fragwuerdig(befund: AchsenBefund, bahnbreite_m: Option<f64>) -> bool {
     if befund.winkel_grad.abs() <= ACHSE_FRAGWUERDIG_AB_GRAD {
         return false;
     }
-    if let Some(breite) = bahnbreite_m.filter(|b| *b > 0.0) {
-        if befund.kreuzt_mitte && befund.groesster_betrag_m <= MANOEVER_ANTEIL_BREITE * breite {
-            return false;
-        }
+    match bahnbreite_m.filter(|b| *b > 0.0) {
+        // Spur bleibt auf der befestigten Fläche -> möglich, also Manöver.
+        Some(breite) => befund.groesster_betrag_m > breite / 2.0,
+        // Kein Maß, keine Aussage — im Zweifel überspringen.
+        None => true,
     }
-    true
 }
 
 /// Eingabe der Bahndisziplin-Achse.
@@ -892,5 +917,52 @@ mod fenster_tests {
     fn unsinnige_werte_zaehlen_nicht_als_fenster() {
         assert_eq!(achsen_fenster_bis_m(Some(0.0), Some(2084.0), None), None);
         assert_eq!(achsen_fenster_bis_m(Some(f64::NAN), None, None), None);
+    }
+}
+
+
+#[cfg(test)]
+mod ordnung_tests {
+    use super::*;
+
+    fn spur() -> Vec<(f64, f64)> {
+        (0..40)
+            .map(|i| (500.0 + i as f64 * 10.0, -4.0 + i as f64 * 0.2))
+            .collect()
+    }
+
+    #[test]
+    fn reihenfolge_ist_egal() {
+        let gerade = spur();
+        let mut gemischt = gerade.clone();
+        gemischt.reverse();
+        let a = achsen_befund(&gerade, 900.0).unwrap();
+        let b = achsen_befund(&gemischt, 900.0).unwrap();
+        assert!((a.winkel_grad - b.winkel_grad).abs() < 1e-9);
+        assert_eq!(a.kreuzt_mitte, b.kreuzt_mitte);
+    }
+
+    #[test]
+    fn stecken_gebliebene_punkte_ziehen_die_gerade_nicht() {
+        // Der LEPA-Fall: derselbe Punkt viermal, eingestreut.
+        let mut mit_dubletten = spur();
+        for _ in 0..4 {
+            mit_dubletten.push((465.2, 2.2));
+        }
+        let ohne = achsen_befund(&spur(), 900.0).unwrap();
+        let mit = achsen_befund(&mit_dubletten, 900.0).unwrap();
+        // Der eine zusaetzliche Punkt darf zaehlen — aber nur EINMAL.
+        let mit_einem = {
+            let mut v = spur();
+            v.push((465.2, 2.2));
+            achsen_befund(&v, 900.0).unwrap()
+        };
+        assert!(
+            (mit.winkel_grad - mit_einem.winkel_grad).abs() < 1e-9,
+            "vier gleiche Punkte wirken wie vier statt wie einer: {} gegen {}",
+            mit.winkel_grad,
+            mit_einem.winkel_grad
+        );
+        assert!(ohne.winkel_grad.is_finite());
     }
 }
