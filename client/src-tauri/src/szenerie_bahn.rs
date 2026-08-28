@@ -32,8 +32,9 @@
 //! Bahnen werden umbenannt, wenn die Missweisung wandert. Eine „09" in
 //! den Navdaten kann in der Szenerie eine andere Bahn desselben Platzes
 //! sein — bei Parallelbahnen liegen sie hunderte Meter auseinander.
-//! Deshalb wird nicht nur der Bezeichner verglichen, sondern auch
-//! geprüft, ob Schwelle und Kurs überhaupt zusammenpassen können.
+//! Deshalb entscheidet nicht der Bezeichner über die Identität, sondern
+//! die LAGE der Schwelle. Der Kurs darf das nicht mitentscheiden — siehe
+//! die Notiz zum entfernten Kurs-Riegel weiter unten.
 
 use aeroacars_mqtt::navdata::{NavAirport, NavRunway};
 use sim_xplane::szenerie::{SzenerieBahn, SzenerieFlughafen};
