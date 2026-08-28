@@ -714,6 +714,31 @@ mod verdrahtung_tests {
     }
 
     #[test]
+    fn die_lieferung_wird_erst_am_ende_sichtbar() {
+        // ⚠ Die Antworten kommen stueckweise. Wuerde der Sammler schon
+        // zwischendurch veroeffentlicht, saehe ein Flughafen mit sechs
+        // Bahnen zeitweise aus wie einer mit einer — und die Bewertung
+        // maesse gegen die falsche, ohne dass etwas anschlaegt.
+        let a = ohne_leerraum(ADAPTER);
+        assert!(
+            a.contains("*shared.szenerie.lock()=Some("),
+            "die Szenerie wird nirgends veroeffentlicht"
+        );
+        // Die Veroeffentlichung muss im ENDE-Zweig stehen, nicht im
+        // Element-Zweig.
+        let ende = a
+            .find("DispatchMsg::FacilityDataEnde")
+            .expect("Ende-Zweig fehlt");
+        let veroeffentlichung = a
+            .find("*shared.szenerie.lock()=Some(")
+            .expect("Veroeffentlichung fehlt");
+        assert!(
+            veroeffentlichung > ende,
+            "die Szenerie wird veroeffentlicht, bevor die Lieferung vollstaendig ist"
+        );
+    }
+
+    #[test]
     fn die_facility_hat_eigene_kennungen() {
         // Teilte sie sich die Kennung mit der Telemetrie, wuerde ein
         // abgelehnter Feldname deren Layout verschieben.

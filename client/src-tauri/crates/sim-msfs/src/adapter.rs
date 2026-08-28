@@ -125,6 +125,15 @@ struct Shared {
     state: Mutex<ConnectionState>,
     snapshot: Mutex<Option<SimSnapshot>>,
     last_error: Mutex<Option<String>>,
+    /// v1.7.8 — die zuletzt vollstaendig gelieferte Szenerie-Auskunft.
+    ///
+    /// ⚠ Wird ERST bei `FacilityDataEnde` gefuellt. Die Lieferung kommt
+    /// stueckweise; eine halbe Bahnliste saehe aus wie ein Flughafen mit
+    /// einer Bahn — und die Bewertung wuerde gegen die falsche messen,
+    /// ohne dass etwas anschlaegt.
+    szenerie: Mutex<Option<sim_core::szenerie::SzenerieFlughafen>>,
+    /// Der Platz, dessen Auskunft gerade angefordert ist.
+    szenerie_angefordert: Mutex<Option<String>>,
     /// Spec v0.7.15 F5: SimConnect-`Paused`/`Unpaused`-System-Events
     /// setzen dieses Atomic. Wird beim Bauen jedes `SimSnapshot` in
     /// `telemetry::parse` zurueck nach `snap.paused` kopiert, damit
@@ -600,6 +609,8 @@ impl MsfsAdapter {
                 state: Mutex::new(ConnectionState::Disconnected),
                 snapshot: Mutex::new(None),
                 last_error: Mutex::new(None),
+                szenerie: Mutex::new(None),
+                szenerie_angefordert: Mutex::new(None),
                 sim_paused: AtomicBool::new(false),
                 sim_unecht_tiefe: AtomicI32::new(0),
                 sim_crashed: AtomicBool::new(false),
@@ -1004,6 +1015,13 @@ fn run_dispatch(
             }
         }
 
+        // v1.7.8 — Sammelplatz fuer die Facility-Lieferung. Sie kommt
+        // stueckweise; erst `FacilityDataEnde` sagt, dass sie
+        // vollstaendig ist. Vorher darf nichts davon benutzt werden —
+        // eine halbe Bahnliste saehe aus wie ein Flughafen mit einer
+        // Bahn.
+        let mut facility_sammler: Vec<sim_core::szenerie::SzenerieBahn> = Vec::new();
+
         // Drain whatever messages SimConnect has queued for us.
         loop {
             match conn.get_next_dispatch() {
@@ -1014,6 +1032,57 @@ fn run_dispatch(
                 Ok(Some(DispatchMsg::Quit)) => {
                     tracing::warn!("SimConnect sent QUIT — dropping connection");
                     return;
+                }
+                // v1.7.8 — ein Element aus der Facility-Lieferung.
+                //
+                // Gesammelt wird nur, was wir angefordert haben; alles
+                // andere wird verworfen statt geraten. Der Sammler
+                // liegt im ungattierten Teil, damit das Zerlegen ohne
+                // Simulator pruefbar bleibt.
+                Ok(Some(DispatchMsg::FacilityData {
+                    request_id,
+                    typ,
+                    bytes,
+                    ..
+                })) => {
+                    if request_id == FACILITY_REQUEST_ID && typ == sys::FACILITY_DATA_RUNWAY {
+                        match facility::zerlege(facility::BAHN_FELDER, &bytes)
+                            .and_then(|w| facility::bahn_aus_werten(&w))
+                        {
+                            Some(paar) => facility_sammler.extend(paar),
+                            None => {
+                                // Kein stiller Verlust: Ein Block, der
+                                // nicht zur Definition passt, heisst,
+                                // dass die Feldliste nicht stimmt.
+                                tracing::warn!(
+                                    laenge = bytes.len(),
+                                    "Facility-Bahnblock passt nicht zur Definition —                                      Feldliste pruefen"
+                                );
+                            }
+                        }
+                    }
+                }
+                Ok(Some(DispatchMsg::FacilityDataEnde { request_id })) => {
+                    if request_id == FACILITY_REQUEST_ID {
+                        let icao = shared
+                            .szenerie_angefordert
+                            .lock()
+                            .clone()
+                            .unwrap_or_default();
+                        tracing::info!(
+                            %icao,
+                            bahnen = facility_sammler.len(),
+                            "Facility-Lieferung vollstaendig"
+                        );
+                        // Erst JETZT sichtbar machen — vorher waere es
+                        // eine halbe Wahrheit.
+                        *shared.szenerie.lock() = Some(sim_core::szenerie::SzenerieFlughafen {
+                            icao,
+                            bahnen: std::mem::take(&mut facility_sammler),
+                            rollwege: Vec::new(),
+                            quelle: "msfs".to_string(),
+                        });
+                    }
                 }
                 Ok(Some(DispatchMsg::Exception {
                     exception,
