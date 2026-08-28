@@ -213,7 +213,7 @@ mod tests {
     }
 
     /// EDHE 09, wie es am 28.08.2026 in unseren Navdaten stand.
-    fn edhe_nav() -> NavAirport {
+    pub(super) fn edhe_nav() -> NavAirport {
         NavAirport {
             cycle: "2608".into(),
             valid_to: "2026-09-24".into(),
@@ -412,5 +412,176 @@ pub fn test_navairport(icao: &str, zeilen: &[Vec<String>]) -> NavAirport {
                 tch_ft: 50,
             })
             .collect(),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Anschluss an den Flug
+// ─────────────────────────────────────────────────────────────────────
+
+use std::sync::{Mutex, OnceLock};
+
+/// Das Verzeichnis der installierten Szenerie, einmal gebaut.
+///
+/// Der Aufbau kostet rund eine halbe Sekunde ueber 380 MB. Pro Landung
+/// waere das absurd, pro Programmlauf ist es nichts — und wenn der Pilot
+/// zwischendurch ein Add-on installiert, faellt das ueber Groesse und
+/// Aenderungszeit der Quelldateien auf, und es wird neu gebaut.
+static VERZEICHNIS: OnceLock<Mutex<Option<sim_xplane::szenerie::SzenerieIndex>>> =
+    OnceLock::new();
+
+/// Den Flughafen aus der Szenerie holen, mit Verzeichnis.
+fn szenerie_flughafen(icao: &str) -> Option<sim_xplane::szenerie::SzenerieFlughafen> {
+    let zelle = VERZEICHNIS.get_or_init(|| Mutex::new(None));
+    let mut halter = zelle.lock().ok()?;
+    let neu_bauen = match halter.as_ref() {
+        Some(idx) => !idx.gueltig(),
+        None => true,
+    };
+    if neu_bauen {
+        let wurzel = sim_xplane::szenerie::installationen().into_iter().next()?;
+        let t = std::time::Instant::now();
+        let idx = sim_xplane::szenerie::SzenerieIndex::bauen(&wurzel);
+        tracing::info!(
+            flughaefen = idx.anzahl(),
+            dauer_ms = t.elapsed().as_millis(),
+            "Szenerie-Verzeichnis gebaut"
+        );
+        *halter = Some(idx);
+    }
+    halter.as_ref()?.flughafen(icao)
+}
+
+/// Gilt die Szenerie fuer diesen Simulator?
+///
+/// ⚠ Nur bei X-Plane. Die `apt.dat` beschreibt die X-Plane-Welt; wer
+/// MSFS fliegt, hat eine andere Szenerie, und die hier zu benutzen waere
+/// schlimmer als gar keine Korrektur. Fuer MSFS kommt der eigene Weg
+/// ueber die SimConnect-Facility-Schnittstelle.
+pub fn gilt_fuer(simulator: sim_core::Simulator) -> bool {
+    matches!(
+        simulator,
+        sim_core::Simulator::XPlane11 | sim_core::Simulator::XPlane12
+    )
+}
+
+/// Der Anschluss: Navdaten mit der Szenerie ergaenzen, wenn beides passt.
+///
+/// Gibt den (moeglicherweise ergaenzten) Flughafen und den Bericht
+/// zurueck. Passiert nichts, ist der Bericht leer und der Flughafen
+/// unveraendert — der Rueckfall ist immer der bisherige Stand.
+pub fn ergaenze_aus_szenerie(
+    simulator: sim_core::Simulator,
+    icao: &str,
+    nav: Option<NavAirport>,
+) -> (Option<NavAirport>, Option<UebernahmeBericht>) {
+    if !gilt_fuer(simulator) {
+        return (nav, None);
+    }
+    let Some(nav) = nav else {
+        // Ohne Navdaten gibt es nichts zu ergaenzen. Einen Flughafen
+        // ALLEIN aus der Szenerie zu bauen waere moeglich, aber dann
+        // fehlten ILS, Gleitwinkel und Schwellenhoehe — und die Anzeige
+        // haette stillschweigend weniger als vorher.
+        return (None, None);
+    };
+    let Some(sz) = szenerie_flughafen(icao) else {
+        return (Some(nav), None);
+    };
+    let (ergaenzt, bericht) = uebernimm_szenerie(&nav, &sz);
+    if bericht.uebernommen.is_empty() {
+        return (Some(nav), Some(bericht));
+    }
+    tracing::info!(
+        icao,
+        uebernommen = bericht.uebernommen.len(),
+        verworfen = bericht.verworfen.len(),
+        kurs_grad = bericht.groesste_kursabweichung_grad,
+        breite_m = bericht.groesste_breitenabweichung_m,
+        quelle = %sz.quelle,
+        "Bahngeometrie aus der Szenerie uebernommen"
+    );
+    (Some(ergaenzt), Some(bericht))
+}
+
+#[cfg(test)]
+mod anschluss_tests {
+    use super::*;
+    use sim_core::Simulator;
+
+    fn nav_edhe() -> NavAirport {
+        super::tests::edhe_nav()
+    }
+
+    #[test]
+    fn bei_msfs_passiert_nichts() {
+        // ⚠ Die `apt.dat` beschreibt die X-Plane-Welt. Wer MSFS fliegt,
+        // hat eine andere Szenerie — die hier zu benutzen waere
+        // schlimmer als gar keine Korrektur, weil sie plausibel
+        // aussieht und falsch ist.
+        for sim in [Simulator::Msfs2020, Simulator::Msfs2024, Simulator::Other] {
+            let vorher = nav_edhe();
+            let (nachher, bericht) =
+                ergaenze_aus_szenerie(sim, "EDHE", Some(vorher.clone()));
+            assert!(bericht.is_none(), "{sim:?}: Bericht trotz falschem Simulator");
+            assert_eq!(
+                nachher.unwrap().runways[0].true_course,
+                vorher.runways[0].true_course,
+                "{sim:?}: Kurs veraendert"
+            );
+        }
+    }
+
+    #[test]
+    fn ohne_navdaten_wird_nichts_erfunden() {
+        // Einen Flughafen ALLEIN aus der Szenerie zu bauen waere
+        // moeglich — dann fehlten aber ILS, Gleitwinkel und
+        // Schwellenhoehe, und die Anzeige haette stillschweigend
+        // weniger als vorher.
+        let (nachher, bericht) = ergaenze_aus_szenerie(Simulator::XPlane12, "EDHE", None);
+        assert!(nachher.is_none());
+        assert!(bericht.is_none());
+    }
+
+    #[test]
+    fn gilt_fuer_trennt_die_simulatoren() {
+        assert!(gilt_fuer(Simulator::XPlane11));
+        assert!(gilt_fuer(Simulator::XPlane12));
+        assert!(!gilt_fuer(Simulator::Msfs2020));
+        assert!(!gilt_fuer(Simulator::Msfs2024));
+        assert!(!gilt_fuer(Simulator::Other));
+    }
+
+    #[test]
+    fn mit_xplane_wird_der_kurs_wirklich_korrigiert() {
+        // Gegen die hier installierte Szenerie. Ohne Installation
+        // ueberspringt sich der Test — sichtbar, nicht still.
+        if sim_xplane::szenerie::installationen().is_empty() {
+            eprintln!("uebersprungen: keine X-Plane-Installation");
+            return;
+        }
+        let vorher = nav_edhe();
+        let (nachher, bericht) =
+            ergaenze_aus_szenerie(Simulator::XPlane12, "EDHE", Some(vorher.clone()));
+        let Some(b) = bericht else {
+            panic!("kein Bericht — Szenerie nicht gefunden?");
+        };
+        assert!(
+            b.uebernommen.contains(&"09".to_string()),
+            "EDHE 09 nicht uebernommen: {b:?}"
+        );
+        let n = nachher.unwrap();
+        // Unsere Navdaten fuehren 89,996 Grad (aus 87,0 magnetisch
+        // abgeleitet), die installierte Szenerie 93,72.
+        assert!(
+            (n.runways[0].true_course - 93.72).abs() < 0.2,
+            "Kurs nach der Uebernahme: {}",
+            n.runways[0].true_course
+        );
+        assert!(
+            b.groesste_kursabweichung_grad > 3.0,
+            "gemeldete Abweichung zu klein: {}",
+            b.groesste_kursabweichung_grad
+        );
     }
 }

@@ -782,6 +782,27 @@ pub struct TouchdownPayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runway_geometry_reason: Option<String>,
 
+    // ─── v1.7.8 Bahngeometrie aus der Simulator-Szenerie ─────────────
+    //
+    // Die Bahn, gegen die gemessen wurde, kommt bei X-Plane aus der
+    // installierten Szenerie des Piloten statt aus den Navdaten. Diese
+    // drei Felder halten fest, OB und WIE STARK das gewirkt hat —
+    // damit sich der Quellenwechsel im Bestand messen laesst statt ihn
+    // zu glauben.
+    //
+    // Grund: 3.836 Bahnen des neuesten AIRAC-Zyklus fuehren
+    // `true_course` als 0,0 oder 360,0; bei 3.329 davon widerspricht das
+    // der eigenen Bahnnummer.
+    /// Woher die Bahngeometrie stammt: `"szenerie"` oder `"navdaten"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bahn_geometrie_quelle: Option<String>,
+    /// Um wie viel Grad der Kurs korrigiert wurde. 0 = kein Unterschied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bahn_kurs_korrektur_grad: Option<f64>,
+    /// Um wie viel Meter die Breite korrigiert wurde.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bahn_breiten_korrektur_m: Option<f64>,
+
     // ─── v0.7.19 GAF-707 Accident-Detection ──────────────────────────
     //
     // Spec docs/spec/v0.7.19-gaf707-crash-accident-detection.md.
@@ -1260,6 +1281,22 @@ pub struct PirepPayload {
     /// - "negative_float_distance"   — < -100 m
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runway_geometry_reason: Option<String>,
+
+    // ─── v1.7.8 Bahngeometrie aus der Simulator-Szenerie ─────────────
+    //
+    // Dieselben Felder wie am TouchdownPayload — sie stehen an BEIDEN,
+    // weil der Recorder die Teilnoten aus dem PIREP auf die Landezeile
+    // propagiert. Stuende die Herkunft nur an einer, waere sie nach der
+    // Propagation wieder weg.
+    /// Woher die Bahngeometrie stammt: `"szenerie"` oder `"navdaten"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bahn_geometrie_quelle: Option<String>,
+    /// Um wie viel Grad der Kurs korrigiert wurde.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bahn_kurs_korrektur_grad: Option<f64>,
+    /// Um wie viel Meter die Breite korrigiert wurde.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bahn_breiten_korrektur_m: Option<f64>,
 
     // ─── v0.7.19 GAF-707 Accident-Detection ──────────────────────────
     //

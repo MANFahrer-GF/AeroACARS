@@ -3764,6 +3764,13 @@ struct FlightStats {
     /// computed; None also when no runway is within ~3 km of the
     /// touchdown coordinate.
     runway_match: Option<runway::RunwayMatch>,
+    /// v1.7.8: Was die Übernahme aus der Simulator-Szenerie bewirkt hat.
+    ///
+    /// `None` heisst: nicht versucht (anderer Simulator, keine
+    /// Installation) oder nichts gefunden. Wandert in die Nutzlast,
+    /// damit sich der Wechsel der Quelle **messen** laesst statt ihn zu
+    /// glauben — dieselbe Ueberlegung wie beim Korpus-Lauf.
+    szenerie_uebernahme: Option<szenerie_bahn::UebernahmeBericht>,
     /// v0.8.0: Quelle der `runway_match`-Daten. `Navigraph` wenn der
     /// per VPS geladene NavAirport eine Match-fähige RWY lieferte;
     /// `OurAirportsFallback` wenn auf die eingebaute CSV gefallen
@@ -15203,6 +15210,26 @@ fn build_pirep_payload(
         sub_scores: payload_sub_scores,
         // v0.7.6 P1-3: Runway-Geometry-Trust. Pure-
         // function Check + reason-string ins Payload.
+        // v1.7.8: Woher die Bahngeometrie kam. Ohne diese drei Felder
+        // waere die Umstellung im Bestand unsichtbar — und ein
+        // Quellenwechsel, den niemand nachmessen kann, ist ein Glaube.
+        bahn_geometrie_quelle: Some(
+            match stats.szenerie_uebernahme.as_ref() {
+                Some(b) if !b.uebernommen.is_empty() => "szenerie",
+                _ => "navdaten",
+            }
+            .to_string(),
+        ),
+        bahn_kurs_korrektur_grad: stats
+            .szenerie_uebernahme
+            .as_ref()
+            .filter(|b| !b.uebernommen.is_empty())
+            .map(|b| b.groesste_kursabweichung_grad),
+        bahn_breiten_korrektur_m: stats
+            .szenerie_uebernahme
+            .as_ref()
+            .filter(|b| !b.uebernommen.is_empty())
+            .map(|b| b.groesste_breitenabweichung_m),
         runway_geometry_trusted: {
             let (trusted, _) = runway_geometry_trust_check(
                 stats
@@ -25467,6 +25494,28 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 td_actual_icao.as_deref().unwrap_or(&flight.arr_airport),
                             );
                             aeroacars_mqtt::TouchdownPayload {
+                                // v1.7.8: Woher die Bahngeometrie kam.
+                                // Steht auch am PirepPayload — der
+                                // Recorder propagiert die Teilnoten aus
+                                // dem PIREP auf diese Zeile, und dann
+                                // muss die Herkunft an beiden haengen.
+                                bahn_geometrie_quelle: Some(
+                                    match stats.szenerie_uebernahme.as_ref() {
+                                        Some(b) if !b.uebernommen.is_empty() => "szenerie",
+                                        _ => "navdaten",
+                                    }
+                                    .to_string(),
+                                ),
+                                bahn_kurs_korrektur_grad: stats
+                                    .szenerie_uebernahme
+                                    .as_ref()
+                                    .filter(|b| !b.uebernommen.is_empty())
+                                    .map(|b| b.groesste_kursabweichung_grad),
+                                bahn_breiten_korrektur_m: stats
+                                    .szenerie_uebernahme
+                                    .as_ref()
+                                    .filter(|b| !b.uebernommen.is_empty())
+                                    .map(|b| b.groesste_breitenabweichung_m),
                                 ts: td_ts.timestamp_millis(),
                                 // v0.11.1: Pilot-Client-Version aus dem Cargo-
                                 // Manifest in jeden Touchdown mitsenden, damit
@@ -27506,6 +27555,20 @@ fn correlate_touchdown_runway(
     // Record the actual landing airport for the on-demand fetch + the
     // finalize-with-best re-correlation + diagnostics.
     stats.runway_correlation_icao = Some(actual_icao.clone());
+
+    // v1.7.8: Die Bahngeometrie aus der Szenerie des Piloten, wenn er
+    // X-Plane fliegt. Ergaenzt nur Kurs, Breite, Laenge, Schwellen und
+    // Belag — ILS, Gleitwinkel und Schwellenhoehe bleiben aus den
+    // Navdaten, die kennt die `apt.dat` nicht.
+    //
+    // Warum ueberhaupt: Am 28.08.2026 gegen die installierte Szenerie
+    // gemessen, 3.836 Bahnen des neuesten Zyklus fuehren `true_course`
+    // als 0,0 oder 360,0 — bei 3.329 davon widerspricht das der eigenen
+    // Bahnnummer. Dort messen wir gegen eine Achse, die es im Simulator
+    // nicht gibt.
+    let (nav_opt, szenerie_bericht) =
+        szenerie_bahn::ergaenze_aus_szenerie(snap.simulator, &actual_icao, nav_opt);
+    stats.szenerie_uebernahme = szenerie_bericht;
 
     let lookup_result =
         runway::lookup_runway_with_fallback(rw_lat, rw_lon, rw_hdg_true, nav_opt.as_ref());
@@ -40518,6 +40581,27 @@ mod divert_filing_contract_tests {
             .join("\n")
     }
 
+    /// Wie `filing_path`, aber ohne jeden Leerraum.
+    ///
+    /// ⚠ Diese Pruefungen suchen Quelltext. Ein Muster wie
+    /// `fields.insert("Diversion Airport"` haengt damit an der
+    /// FORMATIERUNG — und die gehoert nicht uns, sondern `rustfmt`.
+    ///
+    /// Am 28.08.2026 genau so passiert: Ein `cargo fmt` brach den Aufruf
+    /// im manuellen Pfad ueber drei Zeilen um, und die Wache schlug an,
+    /// obwohl sich am Verhalten nichts geaendert hatte. Eine Wache, die
+    /// bei einem Formatierungslauf rot wird, verliert genau das
+    /// Vertrauen, das sie braucht.
+    ///
+    /// Ohne Leerraum ist der Vergleich davon unabhaengig. Die Suchmuster
+    /// muessen entsprechend ebenfalls leerraumfrei geschrieben werden.
+    fn filing_path_ohne_leerraum(from: &str, to: &str) -> String {
+        filing_path(from, to)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
+    }
+
     fn regulaerer_pfad() -> String {
         filing_path("async fn flight_end(", "async fn flight_end_manual(")
     }
@@ -40536,11 +40620,20 @@ mod divert_filing_contract_tests {
         // arr_airport_id ourselves on top of it makes phpVMS rewrite the divert
         // airport to itself and file it as its own alternate.
         for (name, body) in [
-            ("flight_end", regulaerer_pfad()),
-            ("flight_end_manual", manueller_pfad()),
+            (
+                "flight_end",
+                filing_path_ohne_leerraum("async fn flight_end(", "async fn flight_end_manual("),
+            ),
+            (
+                "flight_end_manual",
+                filing_path_ohne_leerraum(
+                    "async fn flight_end_manual(",
+                    "\nasync fn flight_resume_check_position(",
+                ),
+            ),
         ] {
             assert!(
-                body.contains(r#"fields.insert("Diversion Airport""#),
+                body.contains(r#"fields.insert("DiversionAirport""#),
                 "{name} schickt das Divert-Feld nicht mehr mit — phpVMS erfaehrt \
                  dann nichts von der Ausweichlandung (kein alt_airport_id, \
                  Flugzeug und Pilot bleiben am geplanten Ziel stehen)."
