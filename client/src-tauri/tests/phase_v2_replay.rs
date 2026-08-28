@@ -72,7 +72,9 @@ fn load_replay(name: &str) -> (FlightPhase, Vec<ReplayEvent>) {
     let mut initial_old: Option<FlightPhase> = None;
     for line in r.lines() {
         let Ok(line) = line else { continue };
-        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
         match v["type"].as_str().unwrap_or("") {
             "phase_changed" => {
                 if initial_old.is_none() {
@@ -119,7 +121,13 @@ fn run_shadow(name: &str) -> Vec<(DateTime<Utc>, FlightPhase)> {
     for ev in events {
         match ev {
             ReplayEvent::OldPhase(p) => old_phase = p,
-            ReplayEvent::Position { t, alt_msl_ft, agl_ft, vs_fpm, on_ground } => {
+            ReplayEvent::Position {
+                t,
+                alt_msl_ft,
+                agl_ft,
+                vs_fpm,
+                on_ground,
+            } => {
                 let (shadow, _segment) =
                     engine.step(t, alt_msl_ft, agl_ft, vs_fpm, on_ground, old_phase, None);
                 if arc.last().map(|(_, p)| *p) != Some(shadow) {
@@ -142,11 +150,10 @@ fn arc_string(arc: &[(DateTime<Utc>, FlightPhase)]) -> String {
 /// Cruise→Descent binnen < 5 min darf NIRGENDS vorkommen.
 fn assert_no_descent_cruise_flap(name: &str, arc: &[(DateTime<Utc>, FlightPhase)]) {
     for w in arc.windows(3) {
-        let [(_, a), (t1, b), (t2, c)] = w else { continue };
-        if *a == FlightPhase::Descent
-            && *b == FlightPhase::Cruise
-            && *c == FlightPhase::Descent
-        {
+        let [(_, a), (t1, b), (t2, c)] = w else {
+            continue;
+        };
+        if *a == FlightPhase::Descent && *b == FlightPhase::Cruise && *c == FlightPhase::Descent {
             let secs = (*t2 - *t1).num_seconds();
             assert!(
                 secs >= 300,
@@ -160,8 +167,14 @@ fn assert_no_descent_cruise_flap(name: &str, arc: &[(DateTime<Utc>, FlightPhase)
 /// muss auch der Schatten-Bogen Approach + Landing enthalten.
 fn assert_terminal_arc(name: &str, arc: &[(DateTime<Utc>, FlightPhase)]) {
     let has = |p: FlightPhase| arc.iter().any(|(_, q)| *q == p);
-    assert!(has(FlightPhase::Approach), "{name}: Schatten-Bogen ohne Approach");
-    assert!(has(FlightPhase::Landing), "{name}: Schatten-Bogen ohne Landing");
+    assert!(
+        has(FlightPhase::Approach),
+        "{name}: Schatten-Bogen ohne Approach"
+    );
+    assert!(
+        has(FlightPhase::Landing),
+        "{name}: Schatten-Bogen ohne Landing"
+    );
 }
 
 /// (c) Golden Arc: kompletter Schatten-Bogen als Erwartungs-String.
@@ -275,10 +288,7 @@ fn golden_arc_phase_holding_pending_leak() {
     // (`GA_CONFIRM_FT` = 700 ft) — der Balloon-Guard hält deshalb korrekt
     // Final, statt einen 207-ft-Blip als Climb zu latchen. Der echte,
     // ausgeflogene Go-Around ist in `pto705` abgedeckt (+1219 ft → Climb).
-    let arc = assert_golden(
-        "phase_holding_pending_leak.jsonl.gz",
-        "Approach>Final",
-    );
+    let arc = assert_golden("phase_holding_pending_leak.jsonl.gz", "Approach>Final");
     assert!(!arc.iter().any(|(_, p)| *p == FlightPhase::Holding));
 }
 

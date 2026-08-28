@@ -73,9 +73,17 @@ pub struct SzenerieBahn {
     pub laenge_m: f64,
     /// Versetzte Schwelle an diesem Ende, in Metern.
     pub versetzte_schwelle_m: f64,
-    /// Koordinaten dieses Endes.
+    /// Koordinaten dieses Endes, **(Breite, Länge)**.
+    ///
+    /// ⚠ Die Reihenfolge ist im ganzen Modul (Breite, Länge) — auch bei
+    /// den Rollweg-Punkten. Am 28.08.2026 lag hier einmal (Länge, Breite)
+    /// für die Rollwege und (Breite, Länge) für die Bahnen, und der
+    /// Abnehmer griff entsprechend daneben: **75.610 von 86.674 Bahnen
+    /// wurden als „liegt woanders" verworfen**, bei einem tatsächlichen
+    /// Median von 0,03°. Aufgefallen ist es nur, weil der Korpus-Lauf
+    /// eine Obergrenze für Verwerfungen hat.
     pub schwelle: (f64, f64),
-    /// Koordinaten des gegenüberliegenden Endes.
+    /// Koordinaten des gegenüberliegenden Endes, **(Breite, Länge)**.
     pub gegenende: (f64, f64),
     /// Belagsschlüssel der `apt.dat` (1 = Asphalt, 2 = Beton, …).
     pub belag_code: u8,
@@ -85,6 +93,7 @@ pub struct SzenerieBahn {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SzenerieRollweg {
     pub name: String,
+    /// **(Breite, Länge)** je Punkt — siehe `SzenerieBahn::schwelle`.
     pub punkte: Vec<(f64, f64)>,
 }
 
@@ -278,7 +287,9 @@ fn lies_aus_strom<R: BufRead>(leser: R, datei: &Path, icao: &str) -> Option<Szen
             }
             "1201" if t.len() >= 5 => {
                 if let (Ok(lat), Ok(lon)) = (t[1].parse::<f64>(), t[2].parse::<f64>()) {
-                    knoten.insert(t[4].to_string(), (lon, lat));
+                    // (lat, lon) — dieselbe Reihenfolge wie bei den
+                    // Schwellen. Siehe die Warnung an `SzenerieBahn::schwelle`.
+                    knoten.insert(t[4].to_string(), (lat, lon));
                 }
             }
             "1202" if t.len() >= 6 => {

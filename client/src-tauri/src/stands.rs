@@ -101,36 +101,55 @@ pub fn parse_stands(geojson: &str) -> Vec<ParkingStand> {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
-        let Some(geom) = f.get("geometry") else { continue };
+        let Some(geom) = f.get("geometry") else {
+            continue;
+        };
         let gtype = geom.get("type").and_then(|t| t.as_str()).unwrap_or("");
         let coords = geom.get("coordinates");
         // Punkt: die Stopp-Position selbst. Linie: letzter Stützpunkt als
         // Repräsentant, aber die VOLLE Linie wandert mit in den Stand —
         // Flugzeuge stehen auf dem ganzen Lead-in, nicht nur am Ende
         // (EDDF-Befund, s. Struct-Doku). Polygon: Außenring wie eine Linie.
-        let (point, linie): (Option<(f64, f64)>, Option<Vec<(f64, f64)>>) =
-            match (gtype, coords) {
-                ("Point", Some(c)) => (lonlat(c), None),
-                ("LineString", Some(c)) => {
-                    let pts = linien_punkte(c);
-                    // Degenerierte Ein-Punkt-"Linie": als Punkt-Stand
-                    // weiterleben lassen (QS-Befund — vorher fiel er weg).
-                    let punkt = pts
-                        .as_ref()
-                        .and_then(|p| p.last().copied())
-                        .or_else(|| c.as_array().and_then(|a| a.last()).and_then(lonlat).map(|(lon, lat)| (lat, lon)))
-                        .map(|(la, lo)| (lo, la));
-                    (punkt, pts)
-                }
-                ("Polygon", Some(c)) => {
-                    let pts = c.as_array().and_then(|rings| rings.first()).and_then(linien_punkte);
-                    (pts.as_ref().and_then(|p| p.last().copied().map(|(la, lo)| (lo, la))), pts)
-                }
-                _ => (None, None),
-            };
+        let (point, linie): (Option<(f64, f64)>, Option<Vec<(f64, f64)>>) = match (gtype, coords) {
+            ("Point", Some(c)) => (lonlat(c), None),
+            ("LineString", Some(c)) => {
+                let pts = linien_punkte(c);
+                // Degenerierte Ein-Punkt-"Linie": als Punkt-Stand
+                // weiterleben lassen (QS-Befund — vorher fiel er weg).
+                let punkt = pts
+                    .as_ref()
+                    .and_then(|p| p.last().copied())
+                    .or_else(|| {
+                        c.as_array()
+                            .and_then(|a| a.last())
+                            .and_then(lonlat)
+                            .map(|(lon, lat)| (lat, lon))
+                    })
+                    .map(|(la, lo)| (lo, la));
+                (punkt, pts)
+            }
+            ("Polygon", Some(c)) => {
+                let pts = c
+                    .as_array()
+                    .and_then(|rings| rings.first())
+                    .and_then(linien_punkte);
+                (
+                    pts.as_ref()
+                        .and_then(|p| p.last().copied().map(|(la, lo)| (lo, la))),
+                    pts,
+                )
+            }
+            _ => (None, None),
+        };
         if let Some((lon, lat)) = point {
             let flaeche = gtype == "Polygon";
-            stands.push(ParkingStand { name, lat, lon, linie, flaeche });
+            stands.push(ParkingStand {
+                name,
+                lat,
+                lon,
+                linie,
+                flaeche,
+            });
         }
     }
     stands
@@ -146,7 +165,11 @@ fn linien_punkte(c: &serde_json::Value) -> Option<Vec<(f64, f64)>> {
         .filter_map(lonlat)
         .map(|(lon, lat)| (lat, lon))
         .collect();
-    if pts.len() >= 2 { Some(pts) } else { None }
+    if pts.len() >= 2 {
+        Some(pts)
+    } else {
+        None
+    }
 }
 
 /// Abstand Flugzeug → Stand in Metern: gegen die volle Geometrie.
@@ -193,9 +216,7 @@ fn punkt_in_ring(p: (f64, f64), ring: &[(f64, f64)]) -> bool {
     for i in 0..ring.len() {
         let (xi, yi) = ring[i];
         let (xj, yj) = ring[j];
-        if ((yi > py) != (yj > py))
-            && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)
-        {
+        if ((yi > py) != (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi) {
             drin = !drin;
         }
         j = i;
@@ -345,8 +366,20 @@ mod tests {
         // naeherer unbenannter Stand, steht in
         // `naeherer_unbenannter_stand_verwirft_den_nachbarnamen`.)
         let stands = vec![
-            ParkingStand { name: None, lat: 50.00009, lon: 8.0, linie: None, flaeche: false },
-            ParkingStand { name: Some("A22".into()), lat: 50.000_135, lon: 8.0, linie: None, flaeche: false },
+            ParkingStand {
+                name: None,
+                lat: 50.00009,
+                lon: 8.0,
+                linie: None,
+                flaeche: false,
+            },
+            ParkingStand {
+                name: Some("A22".into()),
+                lat: 50.000_135,
+                lon: 8.0,
+                linie: None,
+                flaeche: false,
+            },
         ];
         let bei = stand_at(&stands, 50.0, 8.0).expect("in Standnähe");
         assert_eq!(bei.name, None, "die Naehe-Frage gewinnt der naechste Punkt");
@@ -367,8 +400,20 @@ mod tests {
         // Live-Beleg LGAV/C37: der benannte Stand war der NAECHSTE Kandidat
         // ueberhaupt, nur 40 m weg — kein naeherer unbenannter dazwischen.
         let stands = vec![
-            ParkingStand { name: Some("C37".into()), lat: 50.00036, lon: 8.0, linie: None, flaeche: false },
-            ParkingStand { name: Some("C39".into()), lat: 50.00057, lon: 8.0, linie: None, flaeche: false },
+            ParkingStand {
+                name: Some("C37".into()),
+                lat: 50.00036,
+                lon: 8.0,
+                linie: None,
+                flaeche: false,
+            },
+            ParkingStand {
+                name: Some("C39".into()),
+                lat: 50.00057,
+                lon: 8.0,
+                linie: None,
+                flaeche: false,
+            },
         ];
         assert!(stand_at(&stands, 50.0, 8.0).is_some(), "Naehe ja");
         let (s, _) = benannter_stand_bei(&stands, 50.0, 8.0).expect("Name im Capture-Radius");
@@ -380,8 +425,20 @@ mod tests {
         // Dichtes Vorfeld: Flieger steht auf einer ungetaggten Position,
         // benannter Nachbar 45 m weiter. Der Name gehoert NICHT ins PIREP.
         let stands = vec![
-            ParkingStand { name: None, lat: 50.0, lon: 8.0, linie: None, flaeche: false },
-            ParkingStand { name: Some("B10".into()), lat: 50.00041, lon: 8.0, linie: None, flaeche: false },
+            ParkingStand {
+                name: None,
+                lat: 50.0,
+                lon: 8.0,
+                linie: None,
+                flaeche: false,
+            },
+            ParkingStand {
+                name: Some("B10".into()),
+                lat: 50.00041,
+                lon: 8.0,
+                linie: None,
+                flaeche: false,
+            },
         ];
         assert!(stand_at(&stands, 50.0, 8.0).is_some(), "Naehe ja");
         assert!(

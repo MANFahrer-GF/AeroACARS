@@ -256,8 +256,7 @@ impl KinematicSegmenter {
         // Trim: älteste Samples raus, solange das Fenster auch ohne sie
         // noch ≥ WINDOW_SECS abdeckt — dann hartes Cap.
         while self.samples.len() >= 2 {
-            let span_without_front =
-                (t - self.samples[1].t).num_milliseconds() as f64 / 1000.0;
+            let span_without_front = (t - self.samples[1].t).num_milliseconds() as f64 / 1000.0;
             if span_without_front >= WINDOW_SECS {
                 self.samples.pop_front();
             } else {
@@ -466,7 +465,9 @@ impl ShadowPhaseEngine {
         old_phase: FlightPhase,
         cruise_ref_ft: Option<f64>,
     ) -> (FlightPhase, Segment) {
-        let mut segment = self.segmenter.push(t, alt_msl_ft, agl_ft, vs_fpm, on_ground);
+        let mut segment = self
+            .segmenter
+            .push(t, alt_msl_ft, agl_ft, vs_fpm, on_ground);
         if segment != self.current_segment || self.segment_since.is_none() {
             self.current_segment = segment;
             self.segment_since = Some(t);
@@ -593,8 +594,7 @@ impl ShadowPhaseEngine {
         cruise_ref_ft: Option<f64>,
     ) -> FlightPhase {
         // „Am/über dem geplanten Cruise-Level" (Band: ref − 1000 ft).
-        let near_or_above_ref =
-            |alt: f64| cruise_ref_ft.map(|r| alt >= r - CRUISE_REF_BAND_FT);
+        let near_or_above_ref = |alt: f64| cruise_ref_ft.map(|r| alt >= r - CRUISE_REF_BAND_FT);
         // Ref-lose Cruise-Entscheidung im SINKFLUG: Observed-Cruise-Ref
         // (höchste erreichte Höhe) schlägt den Dauer-Fallback. Nur im
         // Sinkflug korrekt — der Aufrufer nutzt das nur im Descent-Zweig.
@@ -646,9 +646,7 @@ impl ShadowPhaseEngine {
                         // FALLBACK_SECS), ist es ein echter Tief-/Zwischen-
                         // Reiseflug → doch Cruise. Kurze ATC-Restriktionen
                         // (< 10 min) bleiben Climb.
-                        Some(false) => {
-                            seg_held_secs >= LEVEL_BELOW_REF_TO_CRUISE_FALLBACK_SECS
-                        }
+                        Some(false) => seg_held_secs >= LEVEL_BELOW_REF_TO_CRUISE_FALLBACK_SECS,
                         // ref unbekannt: Dauer-Heuristik. BEWUSST NICHT
                         // obsref — im Steigflug ist obsref == aktuelle Höhe,
                         // das würde jede Level-Restriction sofort fälschlich
@@ -997,8 +995,7 @@ mod tests {
             seg.push(t, 10000.0 + f64::from(i) * 10.0, 10000.0, 600.0, false);
         }
         assert!(seg.samples.len() <= MAX_SAMPLES);
-        let span = (seg.samples.back().unwrap().t - seg.samples.front().unwrap().t)
-            .num_seconds();
+        let span = (seg.samples.back().unwrap().t - seg.samples.front().unwrap().t).num_seconds();
         assert!(span >= MIN_SPAN_SECS as i64, "span={span}");
     }
 
@@ -1035,7 +1032,7 @@ mod tests {
         sim.depart();
         sim.alt = 500.0;
         sim.fly(300, 2200.0, FlightPhase::Climb); // ~11.5k ft
-        // 3 min Level: unter dem 240-s-Fallback → Climb + Level.
+                                                  // 3 min Level: unter dem 240-s-Fallback → Climb + Level.
         let (p, s) = sim.fly(180, 0.0, FlightPhase::Climb);
         assert_eq!(p, FlightPhase::Climb);
         assert_eq!(s, Segment::Level);
@@ -1420,8 +1417,13 @@ mod tests {
     #[test]
     fn final_promotes_to_landing_via_ground_evidence_even_when_old_fsm_stuck() {
         let mut sim = sim_at_final();
-        let (p, s) =
-            sim.fly_with_tick(GROUND_MAJORITY_SETTLE_SECS, 5, 0.0, FlightPhase::Climb, true);
+        let (p, s) = sim.fly_with_tick(
+            GROUND_MAJORITY_SETTLE_SECS,
+            5,
+            0.0,
+            FlightPhase::Climb,
+            true,
+        );
         assert_eq!(
             p,
             FlightPhase::Landing,
@@ -1438,9 +1440,18 @@ mod tests {
     #[test]
     fn landing_holds_indefinitely_while_old_fsm_remains_stuck() {
         let mut sim = sim_at_final();
-        let (p, _) =
-            sim.fly_with_tick(GROUND_MAJORITY_SETTLE_SECS, 5, 0.0, FlightPhase::Climb, true);
-        assert_eq!(p, FlightPhase::Landing, "setup precondition: promotion must have happened");
+        let (p, _) = sim.fly_with_tick(
+            GROUND_MAJORITY_SETTLE_SECS,
+            5,
+            0.0,
+            FlightPhase::Climb,
+            true,
+        );
+        assert_eq!(
+            p,
+            FlightPhase::Landing,
+            "setup precondition: promotion must have happened"
+        );
         let (p, _) = sim.fly_with_tick(240, 5, 0.0, FlightPhase::Climb, true);
         assert_eq!(
             p,
@@ -1457,9 +1468,18 @@ mod tests {
     #[test]
     fn landing_self_heals_once_old_fsm_finally_reaches_arrived() {
         let mut sim = sim_at_final();
-        let (p, _) =
-            sim.fly_with_tick(GROUND_MAJORITY_SETTLE_SECS, 5, 0.0, FlightPhase::Climb, true);
-        assert_eq!(p, FlightPhase::Landing, "setup precondition: promotion must have happened");
+        let (p, _) = sim.fly_with_tick(
+            GROUND_MAJORITY_SETTLE_SECS,
+            5,
+            0.0,
+            FlightPhase::Climb,
+            true,
+        );
+        assert_eq!(
+            p,
+            FlightPhase::Landing,
+            "setup precondition: promotion must have happened"
+        );
         let (p, _) = sim.fly_with_tick(10, 5, 0.0, FlightPhase::Arrived, true);
         assert_eq!(p, FlightPhase::Arrived);
     }
@@ -1474,9 +1494,18 @@ mod tests {
         let mut sim = sim_at_final();
         // Alte FSM haengt bei Approach fest (noch nicht mal Final) waehrend
         // wir schon selbst auf Landing promoten.
-        let (p, _) =
-            sim.fly_with_tick(GROUND_MAJORITY_SETTLE_SECS, 5, 0.0, FlightPhase::Approach, true);
-        assert_eq!(p, FlightPhase::Landing, "self-promoted trotz haengender alter FSM");
+        let (p, _) = sim.fly_with_tick(
+            GROUND_MAJORITY_SETTLE_SECS,
+            5,
+            0.0,
+            FlightPhase::Approach,
+            true,
+        );
+        assert_eq!(
+            p,
+            FlightPhase::Landing,
+            "self-promoted trotz haengender alter FSM"
+        );
         // Fresh Transition: alte FSM meldet jetzt (verspätet) Climb — z. B.
         // ein spät erkannter Touch-and-Go/Rejected-Landing.
         let (p, _) = sim.fly(5, 1800.0, FlightPhase::Climb);
@@ -1498,9 +1527,18 @@ mod tests {
     #[test]
     fn stuck_old_fsm_flip_between_enroute_phases_does_not_leave_landing_while_grounded() {
         let mut sim = sim_at_final();
-        let (p, _) =
-            sim.fly_with_tick(GROUND_MAJORITY_SETTLE_SECS, 5, 0.0, FlightPhase::Climb, true);
-        assert_eq!(p, FlightPhase::Landing, "setup precondition: promotion must have happened");
+        let (p, _) = sim.fly_with_tick(
+            GROUND_MAJORITY_SETTLE_SECS,
+            5,
+            0.0,
+            FlightPhase::Climb,
+            true,
+        );
+        assert_eq!(
+            p,
+            FlightPhase::Landing,
+            "setup precondition: promotion must have happened"
+        );
         // Alte FSM springt auf einen ANDEREN En-Route-Wert — aber der
         // Flieger steht die ganze Zeit am Boden (on_ground=true durchgehend).
         let (p, _) = sim.fly_with_tick(10, 5, 0.0, FlightPhase::Approach, true);
@@ -1529,7 +1567,11 @@ mod tests {
         // 10 min Level-Off auf 8000 ft (Restriktion tief im Sinkflug),
         // ref-los. Ohne obsref → 240-s-Fallback → Cruise (falsch).
         let (p, s) = sim.fly(600, 0.0, FlightPhase::Descent);
-        assert_eq!(p, FlightPhase::Descent, "Restriktion tief im Sinkflug ≠ Cruise");
+        assert_eq!(
+            p,
+            FlightPhase::Descent,
+            "Restriktion tief im Sinkflug ≠ Cruise"
+        );
         assert_eq!(s, Segment::Level);
     }
 
@@ -1546,7 +1588,11 @@ mod tests {
         // Moderater Sinkflug unter 5000 AGL (NICHT Fast-Path: agl > 3000).
         sim.alt = 4500.0;
         let (p, _) = sim.fly(10, -300.0, FlightPhase::Descent);
-        assert_eq!(p, FlightPhase::Approach, "Cruise <5000 AGL + sinkend → Approach");
+        assert_eq!(
+            p,
+            FlightPhase::Approach,
+            "Cruise <5000 AGL + sinkend → Approach"
+        );
     }
 
     /// E2 (Balloon-Guard): ein kurzer, schwacher Steig-Blip im Final
@@ -1566,7 +1612,11 @@ mod tests {
         // ein Climbing-Segment, aber solange < 700 ft ab Anker gewonnen sind,
         // bleibt es Final (Balloon-Guard). +400 fpm × 60 s = 400 ft < 700.
         let (p, _) = sim.fly(60, 400.0, FlightPhase::Climb);
-        assert_eq!(p, FlightPhase::Final, "Balloon <700 ft AGL darf nicht Climb latchen");
+        assert_eq!(
+            p,
+            FlightPhase::Final,
+            "Balloon <700 ft AGL darf nicht Climb latchen"
+        );
         // Echter Go-Around-Steigflug (+2500 fpm) → > 700 ft Gewinn → Climb.
         let mut reached = false;
         for _ in 0..12 {

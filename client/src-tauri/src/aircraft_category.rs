@@ -78,16 +78,54 @@ impl AircraftCategory {
 fn is_heli_icao(code: &str) -> bool {
     matches!(
         code,
-        "EC20" | "EC30" | "EC35" | "EC45" | "EC55" | "EC75"
-            | "AS50" | "AS55" | "AS65" | "AS32" | "AS3B"
-            | "B06" | "B06T" | "B212" | "B412" | "B429" | "B407" | "B505"
-            | "R22" | "R44" | "R66"
-            | "S61" | "S70" | "S76" | "S92"
-            | "H125" | "H135" | "H145" | "H155" | "H160" | "H175" | "H215" | "H225"
-            | "MI8" | "MI17" | "MI24" | "MI26" | "MI28"
-            | "CH47" | "CH53"
-            | "UH60" | "UH72"
-            | "A109" | "A119" | "A139" | "A149" | "A169" | "A189"
+        "EC20"
+            | "EC30"
+            | "EC35"
+            | "EC45"
+            | "EC55"
+            | "EC75"
+            | "AS50"
+            | "AS55"
+            | "AS65"
+            | "AS32"
+            | "AS3B"
+            | "B06"
+            | "B06T"
+            | "B212"
+            | "B412"
+            | "B429"
+            | "B407"
+            | "B505"
+            | "R22"
+            | "R44"
+            | "R66"
+            | "S61"
+            | "S70"
+            | "S76"
+            | "S92"
+            | "H125"
+            | "H135"
+            | "H145"
+            | "H155"
+            | "H160"
+            | "H175"
+            | "H215"
+            | "H225"
+            | "MI8"
+            | "MI17"
+            | "MI24"
+            | "MI26"
+            | "MI28"
+            | "CH47"
+            | "CH53"
+            | "UH60"
+            | "UH72"
+            | "A109"
+            | "A119"
+            | "A139"
+            | "A149"
+            | "A169"
+            | "A189"
     )
 }
 
@@ -104,7 +142,7 @@ fn is_seaplane_icao(code: &str) -> bool {
             | "G21"       // Grumman G-21 Goose
             | "G44"       // Grumman G-44 Widgeon
             | "G73"       // Grumman G-73 Mallard
-            | "PBY"       // Consolidated PBY Catalina
+            | "PBY" // Consolidated PBY Catalina
     )
 }
 
@@ -218,8 +256,14 @@ mod tests {
 
     #[test]
     fn icao_handles_case_whitespace_and_none() {
-        assert_eq!(category_from_icao(Some(" a109 ")), AircraftCategory::Helicopter);
-        assert_eq!(category_from_icao(Some("r44")), AircraftCategory::Helicopter);
+        assert_eq!(
+            category_from_icao(Some(" a109 ")),
+            AircraftCategory::Helicopter
+        );
+        assert_eq!(
+            category_from_icao(Some("r44")),
+            AircraftCategory::Helicopter
+        );
         assert_eq!(category_from_icao(None), AircraftCategory::FixedWing);
         assert_eq!(category_from_icao(Some("")), AircraftCategory::FixedWing);
     }
@@ -272,7 +316,13 @@ mod tests {
     fn icao_heli_with_wheels_no_skid_still_helicopter() {
         // Wheel-equipped heli (e.g. H225) reported as wheels, not skids.
         assert_eq!(
-            resolve_category(Some("H225"), Some(false), Some(false), Some(true), Some(false)),
+            resolve_category(
+                Some("H225"),
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(false)
+            ),
             AircraftCategory::Helicopter
         );
     }
@@ -280,7 +330,13 @@ mod tests {
     #[test]
     fn plain_fixed_wing_with_wheels_unchanged() {
         assert_eq!(
-            resolve_category(Some("A320"), Some(false), Some(false), Some(true), Some(false)),
+            resolve_category(
+                Some("A320"),
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(false)
+            ),
             AircraftCategory::FixedWing
         );
     }

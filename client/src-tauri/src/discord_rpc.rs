@@ -46,7 +46,9 @@ fn load_settings(app: &AppHandle) -> DiscordPresenceSettings {
 
 /// Settings auf Disk schreiben. Best-effort — ein Schreibfehler ist non-fatal.
 fn save_settings(settings: &DiscordPresenceSettings) {
-    let Some(path) = SETTINGS_PATH.get() else { return };
+    let Some(path) = SETTINGS_PATH.get() else {
+        return;
+    };
     if let Ok(json) = serde_json::to_string_pretty(settings) {
         let _ = std::fs::write(path, json);
     }

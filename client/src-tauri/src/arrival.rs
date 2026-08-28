@@ -183,8 +183,7 @@ pub fn locate(
     // would otherwise generate a false divert for every single pilot who flies
     // there. The repair pass in `runway.rs` catches what it can prove; this
     // catches the rest.
-    let by_runway_nm =
-        runway::distance_to_airport_m(planned, lat, lon).map(|m| m / 1852.0);
+    let by_runway_nm = runway::distance_to_airport_m(planned, lat, lon).map(|m| m / 1852.0);
     let by_ref_nm = planned_ref_pos.and_then(|(rlat, rlon)| {
         // phpVMS ships (0,0) for airports whose coordinates were never filled
         // in. That is "unknown", not the Gulf of Guinea.
@@ -220,9 +219,9 @@ pub fn locate(
     // Off the planned field. Which field, if any, are we on instead?
     let nearest =
         runway::find_nearest_icao_airports(lat, lon, NEAREST_SEARCH_RADIUS_NM * 1852.0, 1)
-        .into_iter()
-        .next()
-        .filter(|na| na.distance_m / 1852.0 <= ON_FIELD_RADIUS_NM);
+            .into_iter()
+            .next()
+            .filter(|na| na.distance_m / 1852.0 <= ON_FIELD_RADIUS_NM);
 
     match nearest {
         // Same metric as the planned probe above, so this branch is
@@ -368,9 +367,8 @@ mod tests {
     fn the_on_field_probe_measures_thresholds_not_the_runway_centroid() {
         let (lat, lon) = EDDF_TERMINAL_2;
 
-        let threshold_nm = runway::distance_to_airport_m("EDDF", lat, lon)
-            .expect("EDDF is in the table")
-            / 1852.0;
+        let threshold_nm =
+            runway::distance_to_airport_m("EDDF", lat, lon).expect("EDDF is in the table") / 1852.0;
         let (c_lat, c_lon) = runway::airport_position("EDDF").expect("EDDF centroid");
         let centroid_nm = runway::distance_m(lat, lon, c_lat, c_lon) / 1852.0;
 
@@ -388,7 +386,8 @@ mod tests {
         // And the distance we report to the pilot is the honest one.
         let site = locate("EDDF", lat, lon, None);
         assert_eq!(
-            site.distance_from_planned_nm().map(|d| d <= ON_FIELD_RADIUS_NM),
+            site.distance_from_planned_nm()
+                .map(|d| d <= ON_FIELD_RADIUS_NM),
             Some(true),
             "the reported distance must be the on-field one, not the centroid's"
         );
@@ -518,7 +517,11 @@ mod tests {
                 .position(|h| h.trim() == name)
                 .unwrap_or_else(|| panic!("corpus is missing the `{name}` column"))
         };
-        let (c_pirep, c_flight, c_planned) = (col("pirep_id"), col("flight_number"), col("planned_arr_icao"));
+        let (c_pirep, c_flight, c_planned) = (
+            col("pirep_id"),
+            col("flight_number"),
+            col("planned_arr_icao"),
+        );
         let (c_plat, c_plon) = (col("planned_arr_lat"), col("planned_arr_lon"));
         let (c_flat, c_flon) = (col("final_lat"), col("final_lon"));
         // The corpus is raw on purpose, so the filtering is visible here rather
@@ -556,7 +559,10 @@ mod tests {
                 (f[c_pirep].trim(), f[c_flight].trim(), f[c_planned].trim());
 
             // Only gradeable rows — see the note at the column indices above.
-            let filed = f.get(c_actual).map(|s| !s.trim().is_empty()).unwrap_or(false);
+            let filed = f
+                .get(c_actual)
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
             let arrived = f
                 .get(c_phase)
                 .map(|s| s.trim().eq_ignore_ascii_case("ARRIVED"))
@@ -633,12 +639,18 @@ mod tests {
         println!("corpus: {checked} flights graded against independent airport coordinates");
         println!("  parked AT the planned airport (≤{TRUTH_AT_AIRPORT_NM} nm): {at_airport}");
         println!("  parked ELSEWHERE (≥{TRUTH_ELSEWHERE_NM} nm)            : {elsewhere}");
-        println!("  ambiguous band (reported, not asserted)      : {}", ambiguous.len());
+        println!(
+            "  ambiguous band (reported, not asserted)      : {}",
+            ambiguous.len()
+        );
         for e in &ambiguous {
             println!("    ~ {e}");
         }
 
-        assert!(checked > 100, "corpus looks too small ({checked} rows) — bad export?");
+        assert!(
+            checked > 100,
+            "corpus looks too small ({checked} rows) — bad export?"
+        );
         assert!(
             false_positives.is_empty(),
             "an aircraft parked at its planned airport must NEVER be told it diverted. \
@@ -700,7 +712,10 @@ mod tests {
         // Parked ON the field → still a normal arrival. The fallback must not
         // buy divert detection at the price of false alarms.
         let there = locate("EDLD", eddl_ref.0 + 0.005, eddl_ref.1, Some(eddl_ref));
-        assert!(there.is_at_planned(), "on the field is AtPlanned, got {there:?}");
+        assert!(
+            there.is_at_planned(),
+            "on the field is AtPlanned, got {there:?}"
+        );
         assert!(DivertHint::from_site(&there, "EDLD", None).is_none());
     }
 
@@ -727,9 +742,10 @@ mod tests {
         let ref_pos = far_from_runways; // phpVMS says: this IS the airport
 
         // Runway geometry alone would call this a divert…
-        let by_runway_nm = runway::distance_to_airport_m("EDDF", far_from_runways.0, far_from_runways.1)
-            .expect("EDDF has geometry")
-            / 1852.0;
+        let by_runway_nm =
+            runway::distance_to_airport_m("EDDF", far_from_runways.0, far_from_runways.1)
+                .expect("EDDF has geometry")
+                / 1852.0;
         assert!(
             by_runway_nm > ON_FIELD_RADIUS_NM,
             "test precondition: the runway probe must disagree ({by_runway_nm:.2} nm)"
@@ -737,7 +753,12 @@ mod tests {
 
         // …but the reference point says the aircraft is at the airport, and that
         // is enough.
-        let site = locate("EDDF", far_from_runways.0, far_from_runways.1, Some(ref_pos));
+        let site = locate(
+            "EDDF",
+            far_from_runways.0,
+            far_from_runways.1,
+            Some(ref_pos),
+        );
         assert!(
             site.is_at_planned(),
             "one source saying 'you are at your destination' must be enough, got {site:?}"

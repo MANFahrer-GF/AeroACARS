@@ -180,7 +180,9 @@ fn read_xplane_acf(pkg_dir: &Path) -> Option<(String, Option<String>)> {
     for entry in std::fs::read_dir(pkg_dir).ok()?.flatten() {
         let p = entry.path();
         if p.is_file()
-            && p.extension().map(|x| x.eq_ignore_ascii_case("acf")).unwrap_or(false)
+            && p.extension()
+                .map(|x| x.eq_ignore_ascii_case("acf"))
+                .unwrap_or(false)
         {
             acf_path = Some(p);
             break;
@@ -240,9 +242,11 @@ fn xplane_aircraft_dirs() -> Vec<(PathBuf, &'static str)> {
             install_files.push(PathBuf::from(&local).join(format!("x-plane_install_{ver}.txt")));
         }
         if let Ok(home) = std::env::var("HOME") {
+            install_files.push(
+                PathBuf::from(&home).join(format!("Library/Preferences/x-plane_install_{ver}.txt")),
+            );
             install_files
-                .push(PathBuf::from(&home).join(format!("Library/Preferences/x-plane_install_{ver}.txt")));
-            install_files.push(PathBuf::from(&home).join(format!(".x-plane/x-plane_install_{ver}.txt")));
+                .push(PathBuf::from(&home).join(format!(".x-plane/x-plane_install_{ver}.txt")));
         }
     }
     let mut out: Vec<(PathBuf, &'static str)> = Vec::new();
@@ -292,8 +296,20 @@ fn is_excluded_dir(name: &str) -> bool {
     let base = lower.split('.').next().unwrap_or(&lower);
     matches!(
         base,
-        "texture" | "textures" | "sound" | "soundai" | "effects" | "autogen" | "scenery" | "cgl"
-            | "font" | "fonts" | "objects" | "liveries" | "cockpit" | "cockpit_3d"
+        "texture"
+            | "textures"
+            | "sound"
+            | "soundai"
+            | "effects"
+            | "autogen"
+            | "scenery"
+            | "cgl"
+            | "font"
+            | "fonts"
+            | "objects"
+            | "liveries"
+            | "cockpit"
+            | "cockpit_3d"
     )
 }
 
@@ -315,10 +331,18 @@ fn whitelist_verdict(rel_path: &str, size: u64, in_model_dir: bool) -> Verdict {
         return Verdict::No;
     }
     if is_wasm_ext(name) {
-        return if size <= MAX_WASM_FILE { Verdict::Yes } else { Verdict::TooLarge };
+        return if size <= MAX_WASM_FILE {
+            Verdict::Yes
+        } else {
+            Verdict::TooLarge
+        };
     }
     if is_text_ext(name) {
-        return if size <= MAX_TEXT_FILE { Verdict::Yes } else { Verdict::TooLarge };
+        return if size <= MAX_TEXT_FILE {
+            Verdict::Yes
+        } else {
+            Verdict::TooLarge
+        };
     }
     Verdict::No
 }
@@ -351,7 +375,11 @@ fn collect_files(pkg_dir: &Path) -> Result<CollectResult, String> {
                 return Ok(());
             }
             let name = entry.file_name().to_string_lossy().to_string();
-            let rel = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+            let rel = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
             let Ok(ft) = entry.file_type() else { continue };
             if ft.is_dir() {
                 if is_excluded_dir(&name) {
@@ -364,7 +392,10 @@ fn collect_files(pkg_dir: &Path) -> Result<CollectResult, String> {
                 match whitelist_verdict(&rel, meta.len(), in_model) {
                     Verdict::Yes => {
                         *total += meta.len();
-                        files.push(CollectedFile { path: rel, size: meta.len() });
+                        files.push(CollectedFile {
+                            path: rel,
+                            size: meta.len(),
+                        });
                     }
                     Verdict::TooLarge => skipped.push(rel),
                     Verdict::No => {}
@@ -374,9 +405,20 @@ fn collect_files(pkg_dir: &Path) -> Result<CollectResult, String> {
         Ok(())
     }
 
-    walk(pkg_dir, "", false, &mut files, &mut skipped_large, &mut total)?;
+    walk(
+        pkg_dir,
+        "",
+        false,
+        &mut files,
+        &mut skipped_large,
+        &mut total,
+    )?;
     files.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(CollectResult { files, total_bytes: total, skipped_large })
+    Ok(CollectResult {
+        files,
+        total_bytes: total,
+        skipped_large,
+    })
 }
 
 /// ZIP (deflate) aus der Collect-Auswahl bauen.
@@ -406,7 +448,9 @@ fn build_zip(pkg_dir: &Path, folder: &str, collected: &CollectResult) -> Result<
             .and_then(|()| writer.write_all(&buf).map_err(zip::result::ZipError::Io))
             .map_err(|e| format!("ZIP-Fehler bei {}: {e}", f.path))?;
     }
-    let cursor = writer.finish().map_err(|e| format!("ZIP-Finish-Fehler: {e}"))?;
+    let cursor = writer
+        .finish()
+        .map_err(|e| format!("ZIP-Finish-Fehler: {e}"))?;
     Ok(cursor.into_inner())
 }
 
@@ -453,14 +497,19 @@ pub async fn ascan_list_aircraft(
         .await
         .map_err(|e| format!("Scan-Task abgebrochen: {e}"))?;
 
-    *state.packages.lock().map_err(|_| "state poisoned".to_string())? = packages;
+    *state
+        .packages
+        .lock()
+        .map_err(|_| "state poisoned".to_string())? = packages;
     Ok(found)
 }
 
 /// Sortierte, direkte Unterordner von `dir` (best-effort — Lesefehler ergeben
 /// eine leere Liste statt eines Absturzes).
 fn sorted_subdirs(dir: &Path) -> Vec<std::fs::DirEntry> {
-    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
     let mut dirs: Vec<_> = entries
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
@@ -560,7 +609,10 @@ fn scan_roots(roots: &[(PathBuf, String)]) -> (Vec<ScanPackage>, Vec<FoundAircra
                     creator,
                     source_dir: format!("{} — {}", label, root.display()),
                 });
-                packages.push(ScanPackage { dir: pkg_dir, folder });
+                packages.push(ScanPackage {
+                    dir: pkg_dir,
+                    folder,
+                });
                 continue;
             }
             for sd in sorted_subdirs(&pkg_dir) {
@@ -579,7 +631,10 @@ fn scan_roots(roots: &[(PathBuf, String)]) -> (Vec<ScanPackage>, Vec<FoundAircra
                             d.file_name().to_string_lossy()
                         ),
                     });
-                    packages.push(ScanPackage { dir: sub_pkg_dir, folder });
+                    packages.push(ScanPackage {
+                        dir: sub_pkg_dir,
+                        folder,
+                    });
                 }
             }
         }
@@ -597,7 +652,10 @@ fn scan_roots(roots: &[(PathBuf, String)]) -> (Vec<ScanPackage>, Vec<FoundAircra
                 creator,
                 source_dir: format!("{} — {}", label, root.display()),
             });
-            packages.push(ScanPackage { dir: root.clone(), folder });
+            packages.push(ScanPackage {
+                dir: root.clone(),
+                folder,
+            });
         }
     }
     found.sort_by_key(|a| a.title.to_lowercase());
@@ -614,8 +672,14 @@ pub async fn ascan_collect(
     index: usize,
 ) -> Result<CollectResult, String> {
     let pkg = {
-        let guard = state.packages.lock().map_err(|_| "state poisoned".to_string())?;
-        guard.get(index).cloned().ok_or("Unbekanntes Paket — bitte neu suchen")?
+        let guard = state
+            .packages
+            .lock()
+            .map_err(|_| "state poisoned".to_string())?;
+        guard
+            .get(index)
+            .cloned()
+            .ok_or("Unbekanntes Paket — bitte neu suchen")?
     };
     tauri::async_runtime::spawn_blocking(move || collect_files(&pkg.dir))
         .await
@@ -632,8 +696,14 @@ pub async fn ascan_submit(
     endpoint: Option<String>,
 ) -> Result<SubmitResult, String> {
     let pkg = {
-        let guard = state.packages.lock().map_err(|_| "state poisoned".to_string())?;
-        guard.get(index).cloned().ok_or("Unbekanntes Paket — bitte neu suchen")?
+        let guard = state
+            .packages
+            .lock()
+            .map_err(|_| "state poisoned".to_string())?;
+        guard
+            .get(index)
+            .cloned()
+            .ok_or("Unbekanntes Paket — bitte neu suchen")?
     };
     let api_key = crate::secrets_load_phpvms_key()
         .ok_or("Kein phpVMS-API-Key hinterlegt — bitte zuerst anmelden")?;
@@ -682,7 +752,10 @@ pub async fn ascan_submit(
     Ok(SubmitResult {
         ok: body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
         id: body.get("id").and_then(|v| v.as_str()).map(String::from),
-        status: body.get("status").and_then(|v| v.as_str()).map(String::from),
+        status: body
+            .get("status")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         zip_bytes: zip_len,
         icao: report
             .and_then(|r| r.pointer("/aircraft/icao_type"))
@@ -697,7 +770,11 @@ pub async fn ascan_submit(
         warnings: report
             .and_then(|r| r.get("warnings"))
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|w| w.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|w| w.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default(),
     })
 }
@@ -718,21 +795,43 @@ mod tests {
 
     #[test]
     fn whitelist_mirrors_server_rules() {
-        assert!(matches!(whitelist_verdict("aircraft.cfg", 100, false), Verdict::Yes));
-        assert!(matches!(whitelist_verdict("panel/sys.wasm", 100, false), Verdict::Yes));
+        assert!(matches!(
+            whitelist_verdict("aircraft.cfg", 100, false),
+            Verdict::Yes
+        ));
+        assert!(matches!(
+            whitelist_verdict("panel/sys.wasm", 100, false),
+            Verdict::Yes
+        ));
         assert!(matches!(
             whitelist_verdict("panel/sys.wasm", MAX_WASM_FILE + 1, false),
             Verdict::TooLarge
         ));
-        assert!(matches!(whitelist_verdict("texture/a.dds", 100, false), Verdict::No));
+        assert!(matches!(
+            whitelist_verdict("texture/a.dds", 100, false),
+            Verdict::No
+        ));
         // model-Ordner: nur XML
-        assert!(matches!(whitelist_verdict("model/behaviors.xml", 100, true), Verdict::Yes));
-        assert!(matches!(whitelist_verdict("model/a320.bin.json", 100, true), Verdict::No));
+        assert!(matches!(
+            whitelist_verdict("model/behaviors.xml", 100, true),
+            Verdict::Yes
+        ));
+        assert!(matches!(
+            whitelist_verdict("model/a320.bin.json", 100, true),
+            Verdict::No
+        ));
     }
 
     #[test]
     fn excluded_dirs_match_web_scanner() {
-        for d in ["texture", "TEXTURE.FLEET", "sound", "SoundAI", "effects", "cgl"] {
+        for d in [
+            "texture",
+            "TEXTURE.FLEET",
+            "sound",
+            "SoundAI",
+            "effects",
+            "cgl",
+        ] {
             assert!(is_excluded_dir(d), "{d} muss ausgeschlossen sein");
         }
         // X-Plane-Gigabyte-Ordner ebenfalls ausschliessen.
@@ -747,15 +846,30 @@ mod tests {
     #[test]
     fn xplane_whitelist_and_acf_detection() {
         // Whitelist: X-Plane-Dateitypen akzeptiert.
-        assert!(matches!(whitelist_verdict("777.acf", 100, false), Verdict::Yes));
-        assert!(matches!(whitelist_verdict("modules/auto_thr.lua", 100, false), Verdict::Yes));
-        assert!(matches!(whitelist_verdict("plugins/sys/win.xpl", 100, false), Verdict::Yes));
-        assert!(matches!(whitelist_verdict("objects/skin.obj", 100, false), Verdict::No));
+        assert!(matches!(
+            whitelist_verdict("777.acf", 100, false),
+            Verdict::Yes
+        ));
+        assert!(matches!(
+            whitelist_verdict("modules/auto_thr.lua", 100, false),
+            Verdict::Yes
+        ));
+        assert!(matches!(
+            whitelist_verdict("plugins/sys/win.xpl", 100, false),
+            Verdict::Yes
+        ));
+        assert!(matches!(
+            whitelist_verdict("objects/skin.obj", 100, false),
+            Verdict::No
+        ));
 
         // .acf-Property-Parser.
         let acf = "I\n800 version\nP acf/_ICAO B77W\nP acf/_name Boeing 777-300ER\nP acf/_studio Stratosphere\n";
         assert_eq!(acf_prop(acf, "acf/_ICAO").as_deref(), Some("B77W"));
-        assert_eq!(acf_prop(acf, "acf/_name").as_deref(), Some("Boeing 777-300ER"));
+        assert_eq!(
+            acf_prop(acf, "acf/_name").as_deref(),
+            Some("Boeing 777-300ER")
+        );
         assert_eq!(acf_prop(acf, "acf/_missing"), None);
 
         // read_xplane_acf erkennt einen Ordner mit .acf, liefert Name+Studio.
@@ -793,12 +907,20 @@ mod tests {
             "I\n1100 version\nP acf/_name Cessna 172SP\n",
         )
         .unwrap();
-        std::fs::write(zibo.join("B738.acf"), "I\n1100 version\nP acf/_name Zibo 737-800X\n").unwrap();
+        std::fs::write(
+            zibo.join("B738.acf"),
+            "I\n1100 version\nP acf/_name Zibo 737-800X\n",
+        )
+        .unwrap();
 
         let roots = vec![(tmp.clone(), "X-Plane (Aircraft-Ordner)".to_string())];
         let (packages, found) = scan_roots(&roots);
 
-        assert_eq!(found.len(), 2, "beide verschachtelten Flugzeuge muessen gefunden werden");
+        assert_eq!(
+            found.len(),
+            2,
+            "beide verschachtelten Flugzeuge muessen gefunden werden"
+        );
         let titles: Vec<&str> = found.iter().map(|a| a.title.as_str()).collect();
         assert!(titles.contains(&"Cessna 172SP"));
         assert!(titles.contains(&"Zibo 737-800X"));
@@ -848,12 +970,17 @@ mod tests {
         // (auf dieser Linux-Testumgebung waeren die zwar ohnehin leer, das
         // ist aber Zufall der Umgebung, nicht der Beweis — deshalb pruefen
         // wir die Laenge explizit statt nur "enthaelt X").
-        let tmp = std::env::temp_dir().join(format!("ascan-manual-exclusive-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("ascan-manual-exclusive-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
 
         let roots = select_roots(Some(tmp.to_str().unwrap())).unwrap();
-        assert_eq!(roots.len(), 1, "manueller Pfad muss die EINZIGE Wurzel sein, nicht eine zusaetzliche");
+        assert_eq!(
+            roots.len(),
+            1,
+            "manueller Pfad muss die EINZIGE Wurzel sein, nicht eine zusaetzliche"
+        );
         assert_eq!(roots[0].0, tmp);
         assert_eq!(roots[0].1, "manuell gewaehlt");
 
@@ -873,9 +1000,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(tmp.join("SimObjects/Airplanes/X/panel")).unwrap();
         std::fs::create_dir_all(tmp.join("texture")).unwrap();
-        std::fs::write(tmp.join("manifest.json"), "{\"content_type\":\"AIRCRAFT\",\"title\":\"T\"}").unwrap();
-        std::fs::write(tmp.join("SimObjects/Airplanes/X/aircraft.cfg"), "[GENERAL]\n").unwrap();
-        std::fs::write(tmp.join("SimObjects/Airplanes/X/panel/sys.wasm"), vec![0u8; 128]).unwrap();
+        std::fs::write(
+            tmp.join("manifest.json"),
+            "{\"content_type\":\"AIRCRAFT\",\"title\":\"T\"}",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("SimObjects/Airplanes/X/aircraft.cfg"),
+            "[GENERAL]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("SimObjects/Airplanes/X/panel/sys.wasm"),
+            vec![0u8; 128],
+        )
+        .unwrap();
         std::fs::write(tmp.join("texture/big.dds"), vec![0u8; 4096]).unwrap();
 
         let collected = collect_files(&tmp).unwrap();
@@ -883,7 +1022,10 @@ mod tests {
         assert!(paths.contains(&"manifest.json"));
         assert!(paths.contains(&"SimObjects/Airplanes/X/aircraft.cfg"));
         assert!(paths.contains(&"SimObjects/Airplanes/X/panel/sys.wasm"));
-        assert!(!paths.iter().any(|p| p.ends_with(".dds")), "dds darf nie mit");
+        assert!(
+            !paths.iter().any(|p| p.ends_with(".dds")),
+            "dds darf nie mit"
+        );
 
         let zip_bytes = build_zip(&tmp, "pkg", &collected).unwrap();
         assert!(zip_bytes.len() > 100);
@@ -921,7 +1063,11 @@ mod tests {
         // dann je 2 Byte version/flags/method/modtime/moddate (=10 Byte),
         // dann 4 Byte CRC32, dann 4 Byte compressed size, dann 4 Byte
         // uncompressed size — bei Offset 22.
-        assert_eq!(&zip_bytes[0..4], b"PK\x03\x04", "muss mit Local-File-Header-Signatur beginnen");
+        assert_eq!(
+            &zip_bytes[0..4],
+            b"PK\x03\x04",
+            "muss mit Local-File-Header-Signatur beginnen"
+        );
         let uncompressed_size = u32::from_le_bytes(zip_bytes[22..26].try_into().unwrap());
         assert_ne!(
             uncompressed_size, 0xFFFF_FFFF,
@@ -937,7 +1083,11 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("ascan-mani-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
-        std::fs::write(tmp.join("manifest.json"), "{\"content_type\":\"SCENERY\",\"title\":\"S\"}").unwrap();
+        std::fs::write(
+            tmp.join("manifest.json"),
+            "{\"content_type\":\"SCENERY\",\"title\":\"S\"}",
+        )
+        .unwrap();
         assert!(read_aircraft_manifest(&tmp).is_none());
         std::fs::write(
             tmp.join("manifest.json"),

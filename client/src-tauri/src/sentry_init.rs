@@ -142,10 +142,16 @@ fn create_and_bind() -> bool {
         return true;
     }
     let Some(options) = build_options() else {
-        tracing::info!("[sentry] no DSN configured (AEROACARS_SENTRY_DSN at build-time); skipping init");
+        tracing::info!(
+            "[sentry] no DSN configured (AEROACARS_SENTRY_DSN at build-time); skipping init"
+        );
         return false;
     };
-    let release_tag = options.release.as_ref().map(|c| c.to_string()).unwrap_or_default();
+    let release_tag = options
+        .release
+        .as_ref()
+        .map(|c| c.to_string())
+        .unwrap_or_default();
 
     // QS-Hotfix F17 (Runde 6): apply_defaults() MUSS vor Client::from() laufen.
     // sentry::init() macht das normalerweise hinter den Kulissen, aber wir
@@ -179,7 +185,8 @@ fn create_and_bind() -> bool {
     });
     tracing::info!(
         "[sentry] client bound for release {} (enabled={})",
-        release_tag, enabled
+        release_tag,
+        enabled
     );
     if !enabled {
         tracing::warn!(

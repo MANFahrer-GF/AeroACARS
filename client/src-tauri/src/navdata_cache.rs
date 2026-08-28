@@ -142,12 +142,7 @@ pub fn ablegen(app: &AppHandle, icao: &str, airport: &NavAirport, zyklus: &str) 
 }
 
 /// Wie `ablegen`, aber in einen gegebenen Ordner — prüfbar ohne Tauri.
-pub fn ablegen_in(
-    dir: &std::path::Path,
-    icao: &str,
-    airport: &NavAirport,
-    zyklus: &str,
-) {
+pub fn ablegen_in(dir: &std::path::Path, icao: &str, airport: &NavAirport, zyklus: &str) {
     let Some(pfad) = datei_in(dir, icao) else {
         return;
     };
@@ -310,7 +305,11 @@ mod tests {
         ablegen_in(&d, "eddf", &eintrag(0).airport, "2608");
         assert!(holen_in(&d, "EDDF", jetzt_unix()).is_ok());
         assert!(holen_in(&d, " eddf ", jetzt_unix()).is_ok());
-        assert_eq!(bestand_in(&d).0, 1, "es liegen mehrere Dateien fuer einen Platz");
+        assert_eq!(
+            bestand_in(&d).0,
+            1,
+            "es liegen mehrere Dateien fuer einen Platz"
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -324,10 +323,17 @@ mod tests {
         for boese in ["../../x", "..", "/etc/passwd", "a/../../b", ""] {
             ablegen_in(&d, boese, &eintrag(0).airport, "2608");
         }
-        assert_eq!(bestand_in(&d).0, 0, "ein boeses Kuerzel hat eine Datei angelegt");
+        assert_eq!(
+            bestand_in(&d).0,
+            0,
+            "ein boeses Kuerzel hat eine Datei angelegt"
+        );
         // Und es entstand auch nichts NEBEN dem Ordner.
         let daneben = d.parent().expect("Elternordner").join("x.json");
-        assert!(!daneben.exists(), "es wurde ausserhalb des Ordners geschrieben");
+        assert!(
+            !daneben.exists(),
+            "es wurde ausserhalb des Ordners geschrieben"
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -337,14 +343,20 @@ mod tests {
         // Das Ergebnis darf kein Absturz und kein Unsinn sein.
         let d = probeordner("kaputt");
         std::fs::write(d.join("EDDF.json"), "{\"airport\": {\"icao\"").unwrap();
-        assert_eq!(holen_in(&d, "EDDF", jetzt_unix()).err(), Some(KeinTreffer::Unlesbar));
+        assert_eq!(
+            holen_in(&d, "EDDF", jetzt_unix()).err(),
+            Some(KeinTreffer::Unlesbar)
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
     fn ein_leerer_ordner_meldet_keinen_treffer_statt_zu_stuerzen() {
         let d = probeordner("leer");
-        assert_eq!(holen_in(&d, "EDDF", jetzt_unix()).err(), Some(KeinTreffer::Nichts));
+        assert_eq!(
+            holen_in(&d, "EDDF", jetzt_unix()).err(),
+            Some(KeinTreffer::Nichts)
+        );
         assert_eq!(bestand_in(&d), (0, 0));
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -384,7 +396,11 @@ mod tests {
             .flatten()
             .filter(|e| e.path().to_string_lossy().contains(".tmp"))
             .collect();
-        assert!(reste.is_empty(), "{} Zwischendatei(en) liegengeblieben", reste.len());
+        assert!(
+            reste.is_empty(),
+            "{} Zwischendatei(en) liegengeblieben",
+            reste.len()
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 

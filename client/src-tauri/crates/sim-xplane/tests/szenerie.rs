@@ -30,8 +30,19 @@ I
 100 30.00 1 0 0.25 1 0 0 18  50.0000  8.0000 0 0 2 0 0 1 36  50.1000  8.0000 0 0 2 0 0 1
 ";
 
-fn schreibe_ausschnitt() -> std::path::PathBuf {
-    let p = std::env::temp_dir().join("aeroacars_szenerie_test_apt.dat");
+/// ⚠ Jeder Aufruf bekommt eine EIGENE Datei.
+///
+/// Hier stand ein fester Name im Temp-Verzeichnis. Vier Tests schrieben
+/// ihn, und `cargo test` laesst sie parallel laufen: Einer las, waehrend
+/// ein anderer schrieb. Ergebnis war ein Test, der beim zweiten Anlauf
+/// gruen wurde — und das ist schlimmer als einer, der rot bleibt, weil
+/// man ihm irgendwann nicht mehr glaubt.
+fn schreibe_ausschnitt(marke: &str) -> std::path::PathBuf {
+    let p = std::env::temp_dir().join(format!(
+        "aeroacars_szenerie_{}_{}.apt.dat",
+        marke,
+        std::process::id()
+    ));
     let mut f = std::fs::File::create(&p).expect("Testdatei");
     f.write_all(AUSSCHNITT.as_bytes()).expect("schreiben");
     p
@@ -39,7 +50,7 @@ fn schreibe_ausschnitt() -> std::path::PathBuf {
 
 #[test]
 fn liest_bahn_und_rechnet_den_kurs() {
-    let p = schreibe_ausschnitt();
+    let p = schreibe_ausschnitt("liest_bahn_und_rechnet_den_kurs");
     let a = lies_flughafen(&p, "TEST").expect("TEST muss gefunden werden");
     assert_eq!(a.bahnen.len(), 2, "beide Bahnenden");
     let b09 = a.bahnen.iter().find(|b| b.bezeichner == "09").unwrap();
@@ -69,7 +80,7 @@ fn liest_bahn_und_rechnet_den_kurs() {
 fn hoert_beim_naechsten_flughafen_auf() {
     // Sonst liefe der Leser durch die ganze 380-MB-Datei und saugte
     // fremde Bahnen mit ein.
-    let p = schreibe_ausschnitt();
+    let p = schreibe_ausschnitt("hoert_auf");
     let a = lies_flughafen(&p, "TEST").unwrap();
     assert!(
         a.bahnen.iter().all(|b| b.bezeichner != "18"),
@@ -79,7 +90,7 @@ fn hoert_beim_naechsten_flughafen_auf() {
 
 #[test]
 fn nur_benannte_rollwege_und_nur_taxiways() {
-    let p = schreibe_ausschnitt();
+    let p = schreibe_ausschnitt("nur_benannte_rollwege_und_nur_taxiways");
     let a = lies_flughafen(&p, "TEST").unwrap();
     assert_eq!(a.rollwege.len(), 1, "nur die benannte taxiway-Kante");
     assert_eq!(a.rollwege[0].name, "B3");
@@ -87,7 +98,7 @@ fn nur_benannte_rollwege_und_nur_taxiways() {
 
 #[test]
 fn unbekannter_platz_gibt_nichts() {
-    let p = schreibe_ausschnitt();
+    let p = schreibe_ausschnitt("unbekannter_platz_gibt_nichts");
     assert!(lies_flughafen(&p, "XXXX").is_none());
 }
 
@@ -256,5 +267,48 @@ fn verzeichnis_haelt_die_rangfolge_ein() {
         !a.quelle.contains("Global Scenery"),
         "das Verzeichnis zeigt auf die globale Szenerie statt aufs Zusatzpaket: {}",
         a.quelle
+    );
+}
+
+#[test]
+fn koordinaten_stehen_als_breite_dann_laenge() {
+    // ⚠ Wache gegen ein Vertauschen von Breite und Länge.
+    //
+    // Am 28.08.2026 stand im Leser für die Rollweg-Punkte (Länge, Breite)
+    // und für die Bahnschwellen (Breite, Länge). Der Abnehmer griff
+    // entsprechend daneben und verwarf 75.610 von 86.674 Bahnen als
+    // „liegt woanders" — bei einem echten Median von 0,03°.
+    //
+    // Ein vertauschtes Paar sieht wie eine gültige Koordinate aus. Nur
+    // ein Ort, dessen beide Werte sich klar unterscheiden, fängt das:
+    // FACT liegt bei −33,97 / +18,60. Vertauscht läge es im Atlantik
+    // nördlich von Afrika.
+    let Some(_) = echte_installation() else {
+        eprintln!("übersprungen: keine X-Plane-Installation gefunden");
+        return;
+    };
+    let a = flughafen("FACT").expect("FACT");
+    let b = a.bahnen.first().expect("mindestens eine Bahn");
+    assert!(
+        (b.schwelle.0 - (-33.97)).abs() < 0.1,
+        "Breite von FACT ist {}, erwartet ≈ −33,97 — vertauscht?",
+        b.schwelle.0
+    );
+    assert!(
+        (b.schwelle.1 - 18.60).abs() < 0.1,
+        "Länge von FACT ist {}, erwartet ≈ +18,60 — vertauscht?",
+        b.schwelle.1
+    );
+    // Und dieselbe Reihenfolge bei den Rollwegen.
+    let eddh = flughafen("EDDH").expect("EDDH");
+    let p = eddh
+        .rollwege
+        .first()
+        .and_then(|r| r.punkte.first())
+        .copied()
+        .expect("ein Rollwegpunkt");
+    assert!(
+        (p.0 - 53.63).abs() < 0.2 && (p.1 - 9.99).abs() < 0.2,
+        "EDDH-Rollwegpunkt {p:?} — erwartet ≈ (53,63 / 9,99)"
     );
 }

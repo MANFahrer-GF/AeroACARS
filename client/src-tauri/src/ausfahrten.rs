@@ -167,7 +167,9 @@ pub fn ausfahrten_fuer_bahn(
         if geom.and_then(|g| g.get("type")).and_then(|t| t.as_str()) != Some("LineString") {
             continue;
         }
-        let Some(punkte) = geom.and_then(|g| g.get("coordinates")).and_then(|c| c.as_array())
+        let Some(punkte) = geom
+            .and_then(|g| g.get("coordinates"))
+            .and_then(|c| c.as_array())
         else {
             continue;
         };
@@ -431,8 +433,8 @@ mod tests {
         let g = karte(&rollweg_aus(
             "B6",
             &[
-                (100.0, -80.0),   // weit davor — muss weg
-                (900.0, -23.0),   // die Kante
+                (100.0, -80.0), // weit davor — muss weg
+                (900.0, -23.0), // die Kante
                 (1000.0, -60.0),
                 (2500.0, -300.0), // weit dahinter — muss weg
             ],
@@ -525,7 +527,11 @@ mod tests {
     fn beide_seiten_werden_unterschieden() {
         let (la, lo) = punkt_auf_bahn(900.0, -23.0);
         let (ra, ro) = punkt_auf_bahn(1200.0, 23.0);
-        let g = karte(&format!("{},{}", rollweg("D8", la, lo), rollweg("D7", ra, ro)));
+        let g = karte(&format!(
+            "{},{}",
+            rollweg("D8", la, lo),
+            rollweg("D7", ra, ro)
+        ));
         let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
         assert_eq!(a.len(), 2, "{a:?}");
         // Nach Laengsposition sortiert.
@@ -537,7 +543,10 @@ mod tests {
     #[test]
     fn kaputte_karte_liefert_nichts_statt_zu_stuerzen() {
         for g in ["", "{}", "nicht json", r#"{"features":"x"}"#] {
-            assert!(ausfahrten_fuer_bahn(g, T.0, T.1, T.2, T.3, 46.0).is_empty(), "{g}");
+            assert!(
+                ausfahrten_fuer_bahn(g, T.0, T.1, T.2, T.3, 46.0).is_empty(),
+                "{g}"
+            );
         }
     }
 
@@ -575,53 +584,81 @@ mod tests {
             (p2.to_degrees(), l2.to_degrees())
         };
         let (a, b) = vor(T.0, T.1, laengs, kurs);
-        vor(a, b, quer.abs(), kurs + if quer >= 0.0 { std::f64::consts::FRAC_PI_2 } else { -std::f64::consts::FRAC_PI_2 })
+        vor(
+            a,
+            b,
+            quer.abs(),
+            kurs + if quer >= 0.0 {
+                std::f64::consts::FRAC_PI_2
+            } else {
+                -std::f64::consts::FRAC_PI_2
+            },
+        )
     }
 }
 
 #[cfg(test)]
 mod qs_eddm {
-/// Der Verlauf an einer ECHTEN Bodenkarte — Muenchen 26L.
-///
-/// Braucht `/tmp/eddm_ground.json` (vom Live-Server). Ohne die Datei
-/// uebersprungen, deshalb `#[ignore]`: In der CI liegt sie nicht, und ein
-/// Test, der dort still nichts prueft, waere schlimmer als keiner.
-///
-/// Lauf: `cargo test -p aeroacars-app --lib qs_eddm -- --ignored --nocapture`
-#[test]
-#[ignore]
-fn qs_eddm_verlauf_am_echten_flughafen() {
-    let Ok(karte) = std::fs::read_to_string("/tmp/eddm_ground.json") else {
-        println!("keine EDDM-Karte in /tmp — uebersprungen");
-        return;
-    };
-    // EDDM 26L, echte Geometrie.
-    let alle = super::ausfahrten_fuer_bahn(
-        &karte, 48.34479722, 11.80461389, 48.34066944, 11.75101667, 60.0,
-    );
-    let mit = alle.iter().filter(|a| !a.verlauf.is_empty()).count();
-    let punkte: usize = alle.iter().map(|a| a.verlauf.len()).sum();
-    let voll = serde_json::to_string(&alle).unwrap().len();
-    let mut nur_eine = alle.clone();
-    // So wie `bahn_felder` zuschneidet: nur die genommene Ausfahrt.
-    let raeum = 2345.0_f64;
-    for a in nur_eine.iter_mut() {
-        if a.seite != "right" || (a.laengs_m - raeum).abs() > 200.0 {
-            a.verlauf.clear();
+    /// Der Verlauf an einer ECHTEN Bodenkarte — Muenchen 26L.
+    ///
+    /// Braucht `/tmp/eddm_ground.json` (vom Live-Server). Ohne die Datei
+    /// uebersprungen, deshalb `#[ignore]`: In der CI liegt sie nicht, und ein
+    /// Test, der dort still nichts prueft, waere schlimmer als keiner.
+    ///
+    /// Lauf: `cargo test -p aeroacars-app --lib qs_eddm -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn qs_eddm_verlauf_am_echten_flughafen() {
+        let Ok(karte) = std::fs::read_to_string("/tmp/eddm_ground.json") else {
+            println!("keine EDDM-Karte in /tmp — uebersprungen");
+            return;
+        };
+        // EDDM 26L, echte Geometrie.
+        let alle = super::ausfahrten_fuer_bahn(
+            &karte,
+            48.34479722,
+            11.80461389,
+            48.34066944,
+            11.75101667,
+            60.0,
+        );
+        let mit = alle.iter().filter(|a| !a.verlauf.is_empty()).count();
+        let punkte: usize = alle.iter().map(|a| a.verlauf.len()).sum();
+        let voll = serde_json::to_string(&alle).unwrap().len();
+        let mut nur_eine = alle.clone();
+        // So wie `bahn_felder` zuschneidet: nur die genommene Ausfahrt.
+        let raeum = 2345.0_f64;
+        for a in nur_eine.iter_mut() {
+            if a.seite != "right" || (a.laengs_m - raeum).abs() > 200.0 {
+                a.verlauf.clear();
+            }
         }
+        let knapp = serde_json::to_string(&nur_eine).unwrap().len();
+        println!(
+            "EDDM 26L: {} Ausfahrten, {} mit Verlauf, {} Punkte",
+            alle.len(),
+            mit,
+            punkte
+        );
+        println!("  ungekuerzt: {} B   zugeschnitten: {} B", voll, knapp);
+        for a in alle.iter().take(6) {
+            println!(
+                "  {:>8} bei {:>7.0} m {:>5}  Verlauf {} Punkte",
+                a.name,
+                a.laengs_m,
+                a.seite,
+                a.verlauf.len()
+            );
+        }
+        // Fuer die Anzeige-Pruefung herausschreiben.
+        std::fs::write(
+            "/tmp/eddm_ausfahrten.json",
+            serde_json::to_string(&nur_eine).unwrap(),
+        )
+        .ok();
+        assert!(!alle.is_empty(), "keine Ausfahrten aus der echten Karte");
+        assert!(mit > 0, "keine einzige Ausfahrt traegt einen Verlauf");
     }
-    let knapp = serde_json::to_string(&nur_eine).unwrap().len();
-    println!("EDDM 26L: {} Ausfahrten, {} mit Verlauf, {} Punkte", alle.len(), mit, punkte);
-    println!("  ungekuerzt: {} B   zugeschnitten: {} B", voll, knapp);
-    for a in alle.iter().take(6) {
-        println!("  {:>8} bei {:>7.0} m {:>5}  Verlauf {} Punkte",
-                 a.name, a.laengs_m, a.seite, a.verlauf.len());
-    }
-    // Fuer die Anzeige-Pruefung herausschreiben.
-    std::fs::write("/tmp/eddm_ausfahrten.json", serde_json::to_string(&nur_eine).unwrap()).ok();
-    assert!(!alle.is_empty(), "keine Ausfahrten aus der echten Karte");
-    assert!(mit > 0, "keine einzige Ausfahrt traegt einen Verlauf");
-}
 
     /// Wie viel Korridor der echte Bestand hergibt.
     ///

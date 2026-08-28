@@ -141,9 +141,7 @@ fn fixture_uro913_shows_engines_off_while_rolling() {
     // Snapshots (on_ground=true + engines_running=0 + groundspeed > 1) wirklich da sind.
     // Damit ist sichergestellt: der Real-Bug existiert in den Fixture-Daten und der
     // Code-Fix (arrived_fallback_conditions_basic mit gs<1) wuerde ihn jetzt blocken.
-    let events = read_jsonl_gz(&fixture_path(
-        "phase_arrived_fallback_rolling.jsonl.gz",
-    ));
+    let events = read_jsonl_gz(&fixture_path("phase_arrived_fallback_rolling.jsonl.gz"));
     assert!(!events.is_empty(), "fixture leer");
 
     let rolling_with_engines_off: Vec<_> = events
@@ -184,9 +182,7 @@ fn fixture_pto105_shows_short_holding_episode() {
     // Lade PTO105-Fixture und verifiziere: Approach -> Holding -> Approach
     // mit ungewoehnlich kurzer Holding-Dauer (< 90s, der erwarteten Dwell).
     // Das ist das Bug-Symptom — echtes Holding muesste >= 90s sein.
-    let events = read_jsonl_gz(&fixture_path(
-        "phase_holding_pending_leak.jsonl.gz",
-    ));
+    let events = read_jsonl_gz(&fixture_path("phase_holding_pending_leak.jsonl.gz"));
     assert!(!events.is_empty(), "PTO105 fixture leer");
 
     let holding_entries: Vec<_> = events
@@ -209,14 +205,10 @@ fn fixture_pto105_shows_short_holding_episode() {
 
     // Pruefe dass mindestens eine Holding-Episode kuerzer als 90s war
     use chrono::DateTime;
-    let entry_ts = DateTime::parse_from_rfc3339(
-        holding_entries[0]["timestamp"].as_str().unwrap(),
-    )
-    .unwrap();
-    let exit_ts = DateTime::parse_from_rfc3339(
-        holding_exits[0]["timestamp"].as_str().unwrap(),
-    )
-    .unwrap();
+    let entry_ts =
+        DateTime::parse_from_rfc3339(holding_entries[0]["timestamp"].as_str().unwrap()).unwrap();
+    let exit_ts =
+        DateTime::parse_from_rfc3339(holding_exits[0]["timestamp"].as_str().unwrap()).unwrap();
     let duration_secs = (exit_ts - entry_ts).num_seconds();
     assert!(
         duration_secs < 90,
@@ -350,7 +342,10 @@ fn fixtures_have_exactly_one_flight_started() {
         "phase_valid_holding.jsonl.gz",
     ] {
         let events = read_jsonl_gz(&fixture_path(fname));
-        let n = events.iter().filter(|e| e["type"] == "flight_started").count();
+        let n = events
+            .iter()
+            .filter(|e| e["type"] == "flight_started")
+            .count();
         assert_eq!(
             n, 1,
             "Fixture {} muss genau 1 flight_started haben, hat {}",
@@ -380,14 +375,10 @@ fn fixture_dlh742_valid_holding_episode() {
 
     // Pruefe dass die Holding-Episode "echt" war (>= 90s Dwell)
     use chrono::DateTime;
-    let entry_ts = DateTime::parse_from_rfc3339(
-        holding_entries[0]["timestamp"].as_str().unwrap(),
-    )
-    .unwrap();
-    let exit_ts = DateTime::parse_from_rfc3339(
-        holding_exits[0]["timestamp"].as_str().unwrap(),
-    )
-    .unwrap();
+    let entry_ts =
+        DateTime::parse_from_rfc3339(holding_entries[0]["timestamp"].as_str().unwrap()).unwrap();
+    let exit_ts =
+        DateTime::parse_from_rfc3339(holding_exits[0]["timestamp"].as_str().unwrap()).unwrap();
     let duration_secs = (exit_ts - entry_ts).num_seconds();
     assert!(
         duration_secs >= 90,

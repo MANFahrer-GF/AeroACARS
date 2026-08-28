@@ -350,10 +350,7 @@ mod tests {
     #[test]
     fn xplane_zibo_stimmt_mit_der_messung() {
         let m = spurweite_aus_acf(&zibo_acf()).expect("Spurweite");
-        assert!(
-            (m - 5.76).abs() < 0.02,
-            "{m} m gegen die gemessenen 5,76 m"
-        );
+        assert!((m - 5.76).abs() < 0.02, "{m} m gegen die gemessenen 5,76 m");
         // …und liegt bei der Typtabelle (5,72 m) in der Toleranz, mit der
         // die Achse ohnehin rechnet.
         let tabelle = landing_scoring::spurweite::spurweite_m(Some("B738")).unwrap();
@@ -460,7 +457,10 @@ mod tests {
         ]
         .join("\n");
         let m = spurweite_aus_flight_model(&cfg).unwrap();
-        assert!((m - 7.59).abs() < 0.02, "{m} — die LIGHTS-Zeile hat gezählt");
+        assert!(
+            (m - 7.59).abs() < 0.02,
+            "{m} — die LIGHTS-Zeile hat gezählt"
+        );
     }
 
     #[test]
@@ -493,7 +493,11 @@ mod tests {
             "P _gear/2/_gear_z -25.0",
         ]
         .join("\n");
-        assert_eq!(spurweite_aus_acf(&zu_breit), None, "24 m sind kein Fahrwerk");
+        assert_eq!(
+            spurweite_aus_acf(&zu_breit),
+            None,
+            "24 m sind kein Fahrwerk"
+        );
 
         let zu_schmal = [
             "P _gear/0/_gear_x 0.0",
@@ -504,7 +508,11 @@ mod tests {
             "P _gear/2/_gear_z -3.0",
         ]
         .join("\n");
-        assert_eq!(spurweite_aus_acf(&zu_schmal), None, "0,6 m sind kein Fahrwerk");
+        assert_eq!(
+            spurweite_aus_acf(&zu_schmal),
+            None,
+            "0,6 m sind kein Fahrwerk"
+        );
     }
 
     #[test]
@@ -537,7 +545,12 @@ mod tests {
 
     #[test]
     fn leeres_und_unsinniges_liefert_nichts() {
-        for text in ["", "kein Fahrwerk hier", "[CONTACT_POINTS]", "P _gear/0/_gear_x abc"] {
+        for text in [
+            "",
+            "kein Fahrwerk hier",
+            "[CONTACT_POINTS]",
+            "P _gear/0/_gear_x abc",
+        ] {
             assert_eq!(spurweite_aus_acf(text), None, "{text:?}");
             assert_eq!(spurweite_aus_flight_model(text), None, "{text:?}");
         }
