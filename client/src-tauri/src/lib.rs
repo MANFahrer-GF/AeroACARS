@@ -2213,7 +2213,90 @@ async fn fetch_aircraft_aliases_into_state(
 /// Helper safe to call mehrfach — ein nach-Plan-Init-Aufruf der
 /// erstmals den Alternate kennt, fetcht nur den Alternate; alle
 /// schon geladenen Airports werden übersprungen.
+/// Die Szenerie-Auskunft des Simulators für einen Zielflughafen anfordern.
+///
+/// Nur MSFS: Dort muss über SimConnect gefragt werden, und die Antwort
+/// kommt asynchron über mehrere Durchläufe. X-Plane braucht das nicht —
+/// dort liegt die Szenerie als Datei auf der Platte und wird beim
+/// Aufsetzen in unter einer Millisekunde gelesen.
+///
+/// ⚠ Beim Aufsetzen anzufordern wäre zu spät. Deshalb hängt der Aufruf
+/// an `spawn_navdata_fetch`, also an jedem Moment, in dem ein Ziel
+/// bekannt wird.
+fn szenerie_anfordern_fuer(app: &AppHandle, icaos: &[String]) {
+    #[cfg(target_os = "windows")]
+    {
+        let state = app.state::<AppState>();
+        let msfs = state.msfs.lock().expect("msfs lock");
+        for icao in icaos {
+            let i = icao.trim().to_ascii_uppercase();
+            if i.len() == 4 {
+                msfs.szenerie_anfordern(&i);
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, icaos);
+    }
+}
+
+/// Die MSFS-Szenerie-Auskunft vom Adapter an den Flug reichen.
+///
+/// Der Adapter fuellt sie asynchron, sobald die Lieferung vollstaendig
+/// ist. Hier wird sie einmal uebernommen und liegt dann beim Aufsetzen
+/// bereit.
+///
+/// ⚠ Nur uebernehmen, wenn noch nichts da ist ODER ein anderer Platz
+/// geliefert wurde. Sonst wuerde eine spaetere, leere Auskunft eine
+/// gute ueberschreiben.
+fn szenerie_auskunft_uebernehmen(app: &AppHandle, flight: &Arc<ActiveFlight>) {
+    #[cfg(target_os = "windows")]
+    {
+        let neu = {
+            let state = app.state::<AppState>();
+            let Ok(msfs) = state.msfs.lock() else { return };
+            msfs.szenerie()
+        };
+        let Some(neu) = neu else { return };
+        let Ok(mut stats) = flight.stats.lock() else {
+            return;
+        };
+        let schon_da = stats
+            .szenerie_auskunft
+            .as_ref()
+            .is_some_and(|a| a.icao.eq_ignore_ascii_case(&neu.icao));
+        if !schon_da {
+            tracing::info!(
+                icao = %neu.icao,
+                bahnen = neu.bahnen.len(),
+                rollwege = neu.rollwege.len(),
+                "Szenerie-Auskunft am Flug abgelegt"
+            );
+            stats.szenerie_auskunft = Some(neu);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, flight);
+    }
+}
+
 fn spawn_navdata_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, icaos: Vec<String>) {
+    // v1.7.8 — die Szenerie-Auskunft am selben Auslöser anfordern.
+    //
+    // Hier, weil diese Funktion für ALLE Fälle läuft, in denen ein
+    // Zielflughafen bekannt wird: Flugbeginn, Anflug-Vorabruf,
+    // Divert, Ausweichflughafen. Ein eigener Auslöser wäre eine
+    // zweite Stelle, die man vergessen kann.
+    //
+    // Vor dem Filter gegen den Zwischenspeicher: Der gilt für die
+    // Navdaten, nicht für die Szenerie. Ein Platz, dessen Navdaten
+    // schon liegen, braucht die Szenerie unter Umständen trotzdem
+    // noch — sonst bekäme ausgerechnet der geplante Zielflughafen
+    // keine.
+    szenerie_anfordern_fuer(app, &icaos);
+
     // Normalize + filter against the per-flight cache. Only ICAOs that
     // are missing trigger an actual HTTP roundtrip.
     let missing: Vec<String> = {
@@ -3764,6 +3847,13 @@ struct FlightStats {
     /// computed; None also when no runway is within ~3 km of the
     /// touchdown coordinate.
     runway_match: Option<runway::RunwayMatch>,
+    /// v1.7.8: Die Szenerie-Auskunft des Simulators für den Zielplatz.
+    ///
+    /// Bei MSFS wird sie beim Anflug angefordert und trifft asynchron
+    /// ein; hier legt der Streamer sie ab, damit die Bahnauflösung sie
+    /// beim Aufsetzen vorfindet. Bei X-Plane bleibt sie leer — dort
+    /// liest der Client die Datei direkt.
+    szenerie_auskunft: Option<sim_core::szenerie::SzenerieFlughafen>,
     /// v1.7.8: Was die Übernahme aus der Simulator-Szenerie bewirkt hat.
     ///
     /// `None` heisst: nicht versucht (anderer Simulator, keine
@@ -24995,6 +25085,19 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     }
                 }
             }
+            // v1.7.8 — die Szenerie-Auskunft von MSFS abholen, sobald sie
+            // vollstaendig ist, und am Flug ablegen.
+            //
+            // Hier, weil dieser Faden beides hat: den App-Griff (und
+            // damit den Adapter) und den Flug. Die Bahnauflösung beim
+            // Aufsetzen liest sie dann aus `stats` — sie kann den
+            // Adapter nicht selbst befragen, und ein globaler Griff
+            // waere ein Umweg um genau diese Trennung.
+            //
+            // Billig: ein Mutex und ein Vergleich je Tick, und nur
+            // solange noch nichts abgelegt ist.
+            szenerie_auskunft_uebernehmen(&app, &flight);
+
             let phase_change = step_flight(&flight, &snap);
 
             // v1.5.1 (F2): METAR-Trigger einmal pro Tick mit der AKTUELLEN
@@ -27566,8 +27669,12 @@ fn correlate_touchdown_runway(
     // als 0,0 oder 360,0 — bei 3.329 davon widerspricht das der eigenen
     // Bahnnummer. Dort messen wir gegen eine Achse, die es im Simulator
     // nicht gibt.
-    let (nav_opt, szenerie_bericht) =
-        szenerie_bahn::ergaenze_aus_szenerie(snap.simulator, &actual_icao, nav_opt);
+    let (nav_opt, szenerie_bericht) = szenerie_bahn::ergaenze_aus_szenerie(
+        snap.simulator,
+        &actual_icao,
+        nav_opt,
+        stats.szenerie_auskunft.clone(),
+    );
     stats.szenerie_uebernahme = szenerie_bericht;
 
     let lookup_result =

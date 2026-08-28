@@ -451,17 +451,33 @@ fn szenerie_flughafen(icao: &str) -> Option<sim_xplane::szenerie::SzenerieFlugha
     halter.as_ref()?.flughafen(icao)
 }
 
-/// Gilt die Szenerie fuer diesen Simulator?
+/// Woher die Szenerie fuer diesen Simulator kommt.
 ///
-/// ⚠ Nur bei X-Plane. Die `apt.dat` beschreibt die X-Plane-Welt; wer
-/// MSFS fliegt, hat eine andere Szenerie, und die hier zu benutzen waere
-/// schlimmer als gar keine Korrektur. Fuer MSFS kommt der eigene Weg
-/// ueber die SimConnect-Facility-Schnittstelle.
+/// ⚠ Die Quellen sind NICHT austauschbar. Die `apt.dat` beschreibt die
+/// X-Plane-Welt; wer MSFS fliegt, hat eine andere Szenerie, und sie
+/// dort zu benutzen waere schlimmer als gar keine Korrektur — sie saehe
+/// plausibel aus und waere falsch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quelle {
+    /// Installierte `apt.dat`, vom Client selbst gelesen.
+    XPlaneDatei,
+    /// SimConnect-Facility-Auskunft, vorher angefordert.
+    MsfsFacility,
+    /// Kein Weg — es bleibt bei den Navdaten.
+    Keine,
+}
+
+pub fn quelle_fuer(simulator: sim_core::Simulator) -> Quelle {
+    match simulator {
+        sim_core::Simulator::XPlane11 | sim_core::Simulator::XPlane12 => Quelle::XPlaneDatei,
+        sim_core::Simulator::Msfs2020 | sim_core::Simulator::Msfs2024 => Quelle::MsfsFacility,
+        _ => Quelle::Keine,
+    }
+}
+
+/// Alt-Name, damit vorhandene Aufrufe weiterlaufen.
 pub fn gilt_fuer(simulator: sim_core::Simulator) -> bool {
-    matches!(
-        simulator,
-        sim_core::Simulator::XPlane11 | sim_core::Simulator::XPlane12
-    )
+    quelle_fuer(simulator) != Quelle::Keine
 }
 
 /// Der Anschluss: Navdaten mit der Szenerie ergaenzen, wenn beides passt.
@@ -473,8 +489,10 @@ pub fn ergaenze_aus_szenerie(
     simulator: sim_core::Simulator,
     icao: &str,
     nav: Option<NavAirport>,
+    msfs_auskunft: Option<sim_core::szenerie::SzenerieFlughafen>,
 ) -> (Option<NavAirport>, Option<UebernahmeBericht>) {
-    if !gilt_fuer(simulator) {
+    let quelle = quelle_fuer(simulator);
+    if quelle == Quelle::Keine {
         return (nav, None);
     }
     let Some(nav) = nav else {
@@ -484,7 +502,17 @@ pub fn ergaenze_aus_szenerie(
         // haette stillschweigend weniger als vorher.
         return (None, None);
     };
-    let Some(sz) = szenerie_flughafen(icao) else {
+    let auskunft = match quelle {
+        Quelle::XPlaneDatei => szenerie_flughafen(icao),
+        // ⚠ Nur nehmen, wenn sie zu DIESEM Platz gehoert. Nach einem
+        // Divert liegt sonst die Auskunft des geplanten Ziels da —
+        // plausible Zahlen, falscher Flughafen.
+        Quelle::MsfsFacility => {
+            msfs_auskunft.filter(|a| a.icao.eq_ignore_ascii_case(icao) && !a.bahnen.is_empty())
+        }
+        Quelle::Keine => None,
+    };
+    let Some(sz) = auskunft else {
         return (Some(nav), None);
     };
     let (ergaenzt, bericht) = uebernimm_szenerie(&nav, &sz);
@@ -520,7 +548,7 @@ mod anschluss_tests {
         // aussieht und falsch ist.
         for sim in [Simulator::Msfs2020, Simulator::Msfs2024, Simulator::Other] {
             let vorher = nav_edhe();
-            let (nachher, bericht) = ergaenze_aus_szenerie(sim, "EDHE", Some(vorher.clone()));
+            let (nachher, bericht) = ergaenze_aus_szenerie(sim, "EDHE", Some(vorher.clone()), None);
             assert!(
                 bericht.is_none(),
                 "{sim:?}: Bericht trotz falschem Simulator"
@@ -539,18 +567,105 @@ mod anschluss_tests {
         // moeglich — dann fehlten aber ILS, Gleitwinkel und
         // Schwellenhoehe, und die Anzeige haette stillschweigend
         // weniger als vorher.
-        let (nachher, bericht) = ergaenze_aus_szenerie(Simulator::XPlane12, "EDHE", None);
+        let (nachher, bericht) = ergaenze_aus_szenerie(Simulator::XPlane12, "EDHE", None, None);
         assert!(nachher.is_none());
         assert!(bericht.is_none());
     }
 
     #[test]
-    fn gilt_fuer_trennt_die_simulatoren() {
-        assert!(gilt_fuer(Simulator::XPlane11));
-        assert!(gilt_fuer(Simulator::XPlane12));
-        assert!(!gilt_fuer(Simulator::Msfs2020));
-        assert!(!gilt_fuer(Simulator::Msfs2024));
-        assert!(!gilt_fuer(Simulator::Other));
+    fn jede_quelle_gehoert_zu_ihrem_simulator() {
+        // ⚠ Die Quellen sind NICHT austauschbar. Die `apt.dat` fuer
+        // einen MSFS-Flug zu lesen waere schlimmer als gar keine
+        // Korrektur — plausible Zahlen aus der falschen Welt.
+        assert_eq!(quelle_fuer(Simulator::XPlane11), Quelle::XPlaneDatei);
+        assert_eq!(quelle_fuer(Simulator::XPlane12), Quelle::XPlaneDatei);
+        assert_eq!(quelle_fuer(Simulator::Msfs2020), Quelle::MsfsFacility);
+        assert_eq!(quelle_fuer(Simulator::Msfs2024), Quelle::MsfsFacility);
+        assert_eq!(quelle_fuer(Simulator::Other), Quelle::Keine);
+    }
+
+    fn msfs_auskunft(icao: &str, kurs: f64) -> sim_core::szenerie::SzenerieFlughafen {
+        sim_core::szenerie::SzenerieFlughafen {
+            icao: icao.to_string(),
+            quelle: "msfs".into(),
+            rollwege: vec![],
+            bahnen: vec![SzenerieBahn {
+                bezeichner: "09".into(),
+                kurs_grad: kurs,
+                breite_m: 55.0,
+                laenge_m: 1100.0,
+                versetzte_schwelle_m: 0.0,
+                schwelle: (53.6459, 9.6942),
+                gegenende: (53.6459, 9.7142),
+                belag_code: 1,
+            }],
+        }
+    }
+
+    #[test]
+    fn msfs_nimmt_die_angeforderte_auskunft() {
+        let vorher = nav_edhe();
+        let (nachher, bericht) = ergaenze_aus_szenerie(
+            Simulator::Msfs2024,
+            "EDHE",
+            Some(vorher),
+            Some(msfs_auskunft("EDHE", 93.72)),
+        );
+        let b = bericht.expect("Bericht");
+        assert_eq!(b.uebernommen, vec!["09"]);
+        assert!((nachher.unwrap().runways[0].true_course - 93.72).abs() < 0.001);
+    }
+
+    #[test]
+    fn msfs_verwirft_die_auskunft_eines_anderen_platzes() {
+        // ⚠ Nach einem Divert liegt sonst die Auskunft des GEPLANTEN
+        // Ziels da — plausible Zahlen, falscher Flughafen.
+        let vorher = nav_edhe();
+        let (nachher, bericht) = ergaenze_aus_szenerie(
+            Simulator::Msfs2024,
+            "EDHE",
+            Some(vorher.clone()),
+            Some(msfs_auskunft("EDDH", 233.0)),
+        );
+        assert!(bericht.is_none(), "fremde Auskunft wurde benutzt");
+        assert_eq!(
+            nachher.unwrap().runways[0].true_course,
+            vorher.runways[0].true_course
+        );
+    }
+
+    #[test]
+    fn msfs_ohne_auskunft_bleibt_bei_den_navdaten() {
+        let vorher = nav_edhe();
+        let (nachher, bericht) =
+            ergaenze_aus_szenerie(Simulator::Msfs2024, "EDHE", Some(vorher.clone()), None);
+        assert!(bericht.is_none());
+        assert_eq!(
+            nachher.unwrap().runways[0].true_course,
+            vorher.runways[0].true_course
+        );
+    }
+
+    #[test]
+    fn xplane_ignoriert_eine_msfs_auskunft() {
+        // Der Adapter koennte eine alte Auskunft halten, wenn der Pilot
+        // den Simulator wechselt. Sie darf dann nicht greifen.
+        if sim_xplane::szenerie::installationen().is_empty() {
+            eprintln!("uebersprungen: keine X-Plane-Installation");
+            return;
+        }
+        let (nachher, _) = ergaenze_aus_szenerie(
+            Simulator::XPlane12,
+            "EDHE",
+            Some(nav_edhe()),
+            Some(msfs_auskunft("EDHE", 200.0)),
+        );
+        // 200 Grad waere die MSFS-Auskunft; die Datei sagt rund 93,7.
+        let k = nachher.unwrap().runways[0].true_course;
+        assert!(
+            (k - 200.0).abs() > 50.0,
+            "MSFS-Auskunft griff bei X-Plane: {k}"
+        );
     }
 
     #[test]
@@ -563,7 +678,7 @@ mod anschluss_tests {
         }
         let vorher = nav_edhe();
         let (nachher, bericht) =
-            ergaenze_aus_szenerie(Simulator::XPlane12, "EDHE", Some(vorher.clone()));
+            ergaenze_aus_szenerie(Simulator::XPlane12, "EDHE", Some(vorher.clone()), None);
         let Some(b) = bericht else {
             panic!("kein Bericht — Szenerie nicht gefunden?");
         };
