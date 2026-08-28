@@ -132,6 +132,18 @@ Ab v0.10.0+ funktioniert das Auto-Update wieder normal (Modal-Hotfix in v0.10.0)
 > zweiter Weg, ist aber nicht mehr der einzige — vorher hing es an KEINEM
 > Release, und wer es suchte, fand es nicht.
 
+> **Seit 28.08.2026 laeuft `qs-flow-kompat.js` im Release-Lauf** (Schritt
+> `Flow compatibility QA`, direkt vor dem Zippen). Davor rief es
+> **niemand** auf — nicht die CI, nicht der Release, nicht diese
+> Checkliste; es stand als Skript da, das laut eigenem Kopf "vor JEDEN
+> Flow-Export" gehoert. Ein Widget mit modernem JS waere still
+> ausgeliefert worden und im Simulator leer geblieben.
+>
+> Bei der Gelegenheit fiel auf, dass **R4 (flex-`gap`) nur Zeilenanfaenge
+> prueft**e: `.x { gap: 4px }` einzeilig rutschte durch und die Regel
+> meldete Erfolg. Berichtigt, mit Gegenprobe fuer beide Schreibweisen.
+> Ein Waechter, den man nicht rot bekommt, ist keiner.
+
 
 Das Flow-Widget wird NICHT über den Updater verteilt, sondern als Zip im
 Nextcloud-Tauschordner (`~/Library/CloudStorage/Nextcloud-cloud.kant.ovh-

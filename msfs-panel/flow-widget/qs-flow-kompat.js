@@ -78,8 +78,16 @@ while ((m = interaktiv.exec(js)) !== null) {
 });
 
 // R4 — CSS gap
+// ⚠ Diese Regel pruefte einmal nur den ZEILENANFANG (/^\s*gap\s*:/).
+// Einzeilig geschrieben — `.x { gap: 4px }` — rutschte der Verstoss
+// glatt durch, und die Regel meldete Erfolg. Aufgefallen erst, als die
+// Gegenprobe zum Skript selbst gemacht wurde (28.08.2026).
+// Jetzt zaehlt jede Stelle, an der die Eigenschaft wirklich beginnt,
+// samt row-gap/column-gap/grid-gap.
 css.split('\n').forEach(function (z, i) {
-  if (/^\s*gap\s*:/.test(z)) fehler.push('R4 code.css Zeile ' + (i + 1) + ': flex-gap wirkt in Flow nicht.');
+  if (/(^|[;{]|\s)(row-|column-|grid-)?gap\s*:/.test(z)) {
+    fehler.push('R4 code.css Zeile ' + (i + 1) + ': flex-gap wirkt in Flow nicht.');
+  }
 });
 
 // R5 — ASCII. EINE bewusste Ausnahme: die ERSATZ-Tabelle in nurAscii()

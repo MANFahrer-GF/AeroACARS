@@ -366,6 +366,16 @@ jobs:
       # Hand ueber einen Tauschordner verteilt — wer es suchte, fand es
       # nicht, und es veraltete lautlos (Thomas, 16.08.2026). Ab hier faellt
       # es bei jedem Tag mit ab, aus demselben Stand wie der Client.
+      # ⚠ `qs-flow-kompat.js` haelt sechs Flow-Eigenheiten fest, jede aus
+      # einem echten Feldbefund (Coherent-GT-Renderer: kein const/let,
+      # keine Arrow-Functions, kein flex-gap, Drag frisst Klicks ...).
+      # Bis 28.08.2026 wurde es von NIEMANDEM aufgerufen — nicht in der
+      # CI, nicht hier, nicht in der Checkliste. Ein Widget mit modernem
+      # JS waere still ausgeliefert worden und im Sim einfach leer
+      # geblieben. Jetzt bricht der Export, bevor das passiert.
+      - name: Flow compatibility QA
+        run: node msfs-panel/flow-widget/qs-flow-kompat.js
+
       - name: Zip MSFS Flow widget
         run: |
           mkdir -p flowpkg/aeroacars-flow-widget
