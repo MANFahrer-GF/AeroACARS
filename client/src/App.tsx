@@ -372,9 +372,14 @@ function App() {
   const [wiederaufnahmeStehtAus, setWiederaufnahmeStehtAus] = useState<
     boolean | undefined
   >(undefined);
+  // ⚠ Abhaengig vom BOOLEAN, nicht vom Objekt. `activeFlight` wird alle
+  // zwei Sekunden frisch gepollt und hat dann jedes Mal eine neue
+  // Identitaet — an das Objekt gebunden liefe diese Abfrage im
+  // Zwei-Sekunden-Takt mit, ohne dass sich etwas geaendert haette.
+  const hatAktivenFlug = activeFlight !== null;
   useEffect(() => {
     if (status.kind !== "loggedIn") return;
-    if (activeFlight) {
+    if (hatAktivenFlug) {
       setWiederaufnahmeStehtAus(true);
       return;
     }
@@ -391,7 +396,7 @@ function App() {
     return () => {
       abgebrochen = true;
     };
-  }, [status.kind, activeFlight]);
+  }, [status.kind, hatAktivenFlug]);
 
   // v0.15.x: Track-Akkumulation ist ins BACKEND gewandert (Rust-Streamer,
   // `record_track_point`). Sie läuft dort bei voller Tick-Rate, fokus-/fenster-
