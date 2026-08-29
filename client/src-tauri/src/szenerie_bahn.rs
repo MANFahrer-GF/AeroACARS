@@ -198,12 +198,26 @@ mod plausibel {
         (v.is_finite() && v > 0.0).then_some(v)
     }
 
-    /// Ein Kurs in Grad. ⚠ Genau 0,0 wird ABGELEHNT: Das ist der
-    /// Platzhalter, den 3.836 Bahnen im Bestand tragen — und der Grund,
-    /// warum es die Szenerie-Übernahme überhaupt gibt. Ihn aus der
-    /// Szenerie zu übernehmen wäre die Falle, gegen die sie gebaut wurde.
+    /// Ein Kurs in Grad: endlich und im Bereich [0, 360).
+    ///
+    /// ⚠ Genau 0,0 ist HIER gültig — anders als in den Navdaten.
+    ///
+    /// Ein erster Entwurf hat es abgelehnt, weil 0,0 der Platzhalter ist,
+    /// den 3.836 Bahnen im Bestand tragen. Das war die Platzhalter-Logik
+    /// der NAVDATEN, auf die Szenerie übertragen, wo sie nicht hingehört:
+    ///
+    ///   * X-Plane **rechnet** den Kurs aus den beiden Schwellen-
+    ///     koordinaten (`kurs_grad(s1, s2)`). Dort ist 0,0 eine echte,
+    ///     nach Norden zeigende Bahn — sie abzulehnen hiesse, sie beim
+    ///     kaputten Navdaten-Wert zu belassen.
+    ///   * MSFS leitet umgekehrt die Schwellen AUS dem Kurs ab. Den Kurs
+    ///     zu verwerfen und die daraus abgeleiteten Koordinaten zu
+    ///     uebernehmen waere in sich widerspruechlich.
+    ///
+    /// 360,0 wird abgelehnt, weil es kein gueltiger Wert im Bereich ist —
+    /// wer ihn liefert, meint 0 und hat nicht normalisiert.
     pub fn kurs_grad(v: f64) -> Option<f64> {
-        (v.is_finite() && v > 0.0 && v < 360.0).then_some(v)
+        (v.is_finite() && (0.0..360.0).contains(&v)).then_some(v)
     }
 
     /// Eine versetzte Schwelle: endlich und nicht negativ. Null ist hier
@@ -286,13 +300,37 @@ pub fn uebernimm_szenerie(
             bahn.far_end.lat = lat;
             bahn.far_end.lon = lon;
         }
-        // ⚠ NUR überschreiben, wenn die Szenerie den Belag wirklich kennt.
-        // Ein transparenter oder unbekannter Schlüssel darf einen guten
-        // Wert aus den Navdaten nicht wegwerfen — sonst kostet die
-        // Übernahme der GEOMETRIE nebenbei den BELAG, und daran hängt die
-        // ganze seitliche Bewertung.
-        if let Some(text) = belag_text(s.belag_code) {
-            bahn.surface = Some(text.to_string());
+        // Der Belag ist der EINE Wert, den die Szenerie nicht bestimmt.
+        //
+        // # Warum hier anders entschieden wird als bei der Geometrie
+        //
+        // Die Geometrie kommt aus der Szenerie, weil der Pilot darauf
+        // rollt. Der Belag ist etwas anderes: In einer Szenerie ist er
+        // oft ein **Darstellungshinweis** — deshalb gibt es den
+        // Schlüssel „transparent" überhaupt, mit dem die Szenerie sagt
+        // „ich male die Oberfläche selbst". In den Navdaten ist er eine
+        // Tatsache über den echten Platz.
+        //
+        // ⚠ Und die Folgen sind unsymmetrisch: Ein falscher Belag löscht
+        // die **gesamte** seitliche Bewertung samt Queransicht, weil eine
+        // unbefestigte Bahn nicht seitlich bewertet wird. Ein Wert, der
+        // so viel kostet, darf nicht aus der schwächeren Quelle kommen.
+        //
+        // Gefunden an DAH411 (HKJK 06, Nairobi, 29.08.2026): Die Navdaten
+        // sagen `ASP`, die Szenerie überschrieb es mit etwas
+        // Unbefestigtem, und die Queransicht verschwand ersatzlos.
+        //
+        // Also: Die Szenerie füllt nur eine LÜCKE. Weiss sie es nicht
+        // (transparent, unbekannter Schlüssel), bleibt es ohnehin beim
+        // bisherigen Wert.
+        let navdaten_kennen_belag = bahn
+            .surface
+            .as_deref()
+            .is_some_and(|t| !t.trim().is_empty());
+        if !navdaten_kennen_belag {
+            if let Some(text) = belag_text(s.belag_code) {
+                bahn.surface = Some(text.to_string());
+            }
         }
         b.uebernommen.push(bahn.designator.clone());
     }
@@ -1067,12 +1105,12 @@ mod belag_uebernahme_tests {
             .collect();
         let nadel = format!(
             "{}{}",
-            "ifletSome(text)=belag_text(s.belag_code){", "bahn.surface=Some(text.to_string());"
+            "if!navdaten_kennen_belag{", "ifletSome(text)=belag_text(s.belag_code){"
         );
         assert!(
             q.contains(&nadel),
-            "der Belag wird bedingungslos ueberschrieben — ein transparenter \
-             Schluessel wirft dann einen guten Navdaten-Wert weg"
+            "die Szenerie ueberschreibt einen bekannten Navdaten-Belag — das \
+             loescht die gesamte seitliche Bewertung, wenn sie sich irrt"
         );
     }
 }
@@ -1125,14 +1163,82 @@ mod plausibel_tests {
         }
     }
 
+
+    fn nav_mit_belag(belag: Option<&str>) -> NavAirport {
+        let mut nav = super::tests::edhe_nav();
+        nav.runways[0].surface = belag.map(|t| t.to_string());
+        nav
+    }
+
+    fn szenerie_mit_belag(code: u8) -> SzenerieFlughafen {
+        // Dieselbe Lage wie EDHE 09, damit die Zuordnung sicher trifft —
+        // geprueft wird hier NUR der Belag.
+        SzenerieFlughafen {
+            icao: "EDHE".to_string(),
+            bahnen: vec![SzenerieBahn {
+                bezeichner: "09".to_string(),
+                kurs_grad: 89.9957383300858,
+                breite_m: 40.0,
+                laenge_m: 1100.0,
+                versetzte_schwelle_m: 0.0,
+                schwelle: (53.6459, 9.6942),
+                gegenende: (53.6459, 9.7142),
+                belag_code: code,
+            }],
+            rollwege: Vec::new(),
+            quelle: "xplane".to_string(),
+        }
+    }
+
     #[test]
-    fn ein_platzhalter_kurs_wird_abgelehnt() {
-        // 0,0° ist der Platzhalter, den 3.836 Bahnen im Bestand tragen —
-        // und der Grund, warum es die Uebernahme ueberhaupt gibt.
-        assert_eq!(plausibel::kurs_grad(0.0), None);
-        assert_eq!(plausibel::kurs_grad(360.0), None);
-        assert_eq!(plausibel::kurs_grad(f64::NAN), None);
+    fn ein_bekannter_navdaten_belag_wird_nicht_ueberschrieben() {
+        // ⚠ DAH411 (HKJK 06): Navdaten sagen `ASP`, die Szenerie
+        // ueberschrieb es mit etwas Unbefestigtem — und die gesamte
+        // seitliche Bewertung samt Queransicht fiel weg. Ein Wert mit
+        // solchen Folgen darf nicht aus der schwaecheren Quelle kommen.
+        let nav = nav_mit_belag(Some("ASP"));
+        // Szenerie meldet Gras (Schluessel 3) — also etwas Unbefestigtes.
+        let sz = szenerie_mit_belag(3);
+        let (aus, _) = uebernimm_szenerie(&nav, &sz);
+        assert_eq!(
+            aus.runways[0].surface.as_deref(),
+            Some("ASP"),
+            "die Szenerie hat den bekannten Navdaten-Belag ueberschrieben"
+        );
+    }
+
+    #[test]
+    fn eine_luecke_in_den_navdaten_fuellt_die_szenerie() {
+        // Der Gegenfall: Kennen die Navdaten den Belag NICHT, ist die
+        // Szenerie besser als nichts. HKJK hat im Bestand drei Zeilen,
+        // zwei davon ohne Belag — genau dieser Fall kommt vor.
+        for leer in [None, Some(""), Some("   ")] {
+            let nav = nav_mit_belag(leer);
+            let sz = szenerie_mit_belag(1); // Asphalt
+            let (aus, _) = uebernimm_szenerie(&nav, &sz);
+            assert_eq!(
+                aus.runways[0].surface.as_deref(),
+                Some("ASPH"),
+                "die Luecke wurde nicht gefuellt (Navdaten: {leer:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn eine_nach_norden_zeigende_bahn_wird_nicht_verworfen() {
+        // ⚠ Erster Entwurf lehnte 0,0 ab — das war die Platzhalter-Logik
+        // der NAVDATEN, auf die Szenerie uebertragen. X-Plane RECHNET den
+        // Kurs aus den Schwellenkoordinaten; 0,0 ist dort eine echte
+        // Nordbahn. Sie abzulehnen hiesse, sie beim kaputten
+        // Navdaten-Wert zu belassen — also genau das Gegenteil dessen,
+        // wofuer die Uebernahme gebaut wurde.
+        assert_eq!(plausibel::kurs_grad(0.0), Some(0.0));
         assert_eq!(plausibel::kurs_grad(232.7), Some(232.7));
+        assert_eq!(plausibel::kurs_grad(359.99), Some(359.99));
+        // Ausserhalb des Bereichs bleibt abgelehnt.
+        assert_eq!(plausibel::kurs_grad(360.0), None);
+        assert_eq!(plausibel::kurs_grad(-1.0), None);
+        assert_eq!(plausibel::kurs_grad(f64::NAN), None);
     }
 
     #[test]
