@@ -134,18 +134,96 @@ fn passende_szenerie_bahn<'a>(
 }
 
 /// Belagsschlüssel der `apt.dat` in die Schreibweise der Navdaten.
-fn belag_text(code: u8) -> &'static str {
+/// Belagsschlüssel der X-Plane-`apt.dat` in unseren Wortschatz.
+///
+/// `None` heißt: **die Szenerie weiß es nicht** — dann bleibt der bisher
+/// bekannte Belag stehen, statt durch Unwissen ersetzt zu werden.
+///
+/// ⚠ Die Schlüssel 12–15 standen hier nach der **MSFS**-Aufzählung, obwohl
+/// `belag_code` X-Plane-Semantik trägt (der MSFS-Adapter rechnet auf
+/// dieselben Schlüssel um). Zwei davon waren um eins verschoben, und der
+/// folgenschwerste war **15**: In X-Plane heißt das **transparent** — die
+/// Bahn wird von der Szenerie selbst gezeichnet, sehr verbreitet in
+/// Zusatzszenerien. Daraus wurde „SNOW", das gilt als unbefestigt, und
+/// damit fiel die gesamte Queransicht weg und die seitliche Bewertung
+/// wurde übersprungen.
+///
+/// Gefunden an DAH411 (HKJK 06, A330, 29.08.2026): eine Asphaltbahn in
+/// Nairobi kam als unbefestigt an, `bahn_geometrie_quelle = szenerie`.
+///
+/// Quelle: X-Plane `apt.dat`-Spezifikation, Zeilentyp 100, Feld 3.
+fn belag_text(code: u8) -> Option<&'static str> {
     match code {
-        1 => "ASPH",
-        2 => "CONC",
-        3 => "TURF",
-        4 => "DIRT",
-        5 => "GRVL",
-        12 => "MATS",
-        13 => "SAND",
-        14 => "WATER",
-        15 => "SNOW",
-        _ => "UNK",
+        1 => Some("ASPH"),
+        2 => Some("CONC"),
+        3 => Some("TURF"),
+        4 => Some("DIRT"),
+        5 => Some("GRVL"),
+        // Trockener Seeboden — fest, aber nicht befestigt.
+        12 => Some("CLAY"),
+        13 => Some("WATER"),
+        14 => Some("SNOW"),
+        // 15 = transparent: KEINE Aussage über den Belag.
+        _ => None,
+    }
+}
+
+/// Prüfungen, die JEDER Wert aus der Szenerie bestehen muss, bevor er
+/// einen Navdaten-Wert ersetzen darf.
+///
+/// # Warum das eine eigene Ebene ist
+///
+/// Bis v1.7.11 schrieb die Übernahme sieben Felder **bedingungslos** über:
+/// Kurs, Länge, Breite, versetzte Schwelle, beide Schwellenkoordinaten und
+/// den Belag. Jedes davon kann in einer Szenerie fehlen, null oder Unsinn
+/// sein — und dann kostete die Übernahme der Geometrie einen guten Wert.
+///
+/// Aufgefallen ist das dreimal hintereinander an je EINEM Feld, und
+/// dreimal habe ich dieses eine Feld repariert:
+///   * v1.7.8  — Kurs-Riegel war zirkulär (entfernt)
+///   * v1.7.11 — Belag: X-Plane-Schlüssel 15 heißt „transparent", nicht
+///               „Schnee"; eine Asphaltbahn kam als unbefestigt an
+///               (DAH411, HKJK 06) und die ganze Queransicht verschwand
+///
+/// Das Muster ist nicht der Belag, sondern die **bedingungslose
+/// Übernahme**. Deshalb gibt es hier für jeden Wertebereich genau eine
+/// Prüfung, und die Übernahme kommt an keinem Feld daran vorbei — der
+/// Test `kein_feld_wird_ungeprueft_uebernommen` hält das fest.
+///
+/// `None` heißt immer dasselbe: **die Szenerie weiß es nicht** → der
+/// bisherige Wert bleibt stehen.
+mod plausibel {
+    /// Eine Strecke in Metern: endlich und größer als null.
+    pub fn strecke_m(v: f64) -> Option<f64> {
+        (v.is_finite() && v > 0.0).then_some(v)
+    }
+
+    /// Ein Kurs in Grad. ⚠ Genau 0,0 wird ABGELEHNT: Das ist der
+    /// Platzhalter, den 3.836 Bahnen im Bestand tragen — und der Grund,
+    /// warum es die Szenerie-Übernahme überhaupt gibt. Ihn aus der
+    /// Szenerie zu übernehmen wäre die Falle, gegen die sie gebaut wurde.
+    pub fn kurs_grad(v: f64) -> Option<f64> {
+        (v.is_finite() && v > 0.0 && v < 360.0).then_some(v)
+    }
+
+    /// Eine versetzte Schwelle: endlich und nicht negativ. Null ist hier
+    /// ein gültiger Wert — die meisten Bahnen haben keine.
+    pub fn versatz_m(v: f64) -> Option<f64> {
+        (v.is_finite() && v >= 0.0).then_some(v)
+    }
+
+    /// Ein Koordinatenpaar (Breite, Länge).
+    ///
+    /// ⚠ (0, 0) wird abgelehnt: Das ist kein Flughafen, sondern ein
+    /// nicht gefülltes Feld. Der Punkt liegt im Atlantik vor Ghana.
+    pub fn koordinate(p: (f64, f64)) -> Option<(f64, f64)> {
+        let (lat, lon) = p;
+        let gueltig = lat.is_finite()
+            && lon.is_finite()
+            && (-90.0..=90.0).contains(&lat)
+            && (-180.0..=180.0).contains(&lon)
+            && !(lat == 0.0 && lon == 0.0);
+        gueltig.then_some(p)
     }
 }
 
@@ -185,15 +263,37 @@ pub fn uebernimm_szenerie(
 
         // ⚠ Nur Geometrie. ILS, Gleitwinkel und Schwellenhöhe bleiben,
         // wo sie sind — die kennt die `apt.dat` nicht.
-        bahn.true_course = s.kurs_grad;
-        bahn.length_ft = (s.laenge_m / 0.3048).round() as i32;
-        bahn.width_ft = Some((s.breite_m / 0.3048).round() as i32);
-        bahn.displaced_threshold_ft = (s.versetzte_schwelle_m / 0.3048).round() as i32;
-        bahn.threshold.lat = s.schwelle.0;
-        bahn.threshold.lon = s.schwelle.1;
-        bahn.far_end.lat = s.gegenende.0;
-        bahn.far_end.lon = s.gegenende.1;
-        bahn.surface = Some(belag_text(s.belag_code).to_string());
+        // ⚠ JEDES Feld geht durch `plausibel::`. Kein Wert aus der
+        // Szenerie ersetzt einen Navdaten-Wert, ohne geprueft zu sein —
+        // siehe die Begruendung am Modul.
+        if let Some(k) = plausibel::kurs_grad(s.kurs_grad) {
+            bahn.true_course = k;
+        }
+        if let Some(l) = plausibel::strecke_m(s.laenge_m) {
+            bahn.length_ft = (l / 0.3048).round() as i32;
+        }
+        if let Some(w) = plausibel::strecke_m(s.breite_m) {
+            bahn.width_ft = Some((w / 0.3048).round() as i32);
+        }
+        if let Some(v) = plausibel::versatz_m(s.versetzte_schwelle_m) {
+            bahn.displaced_threshold_ft = (v / 0.3048).round() as i32;
+        }
+        if let Some((lat, lon)) = plausibel::koordinate(s.schwelle) {
+            bahn.threshold.lat = lat;
+            bahn.threshold.lon = lon;
+        }
+        if let Some((lat, lon)) = plausibel::koordinate(s.gegenende) {
+            bahn.far_end.lat = lat;
+            bahn.far_end.lon = lon;
+        }
+        // ⚠ NUR überschreiben, wenn die Szenerie den Belag wirklich kennt.
+        // Ein transparenter oder unbekannter Schlüssel darf einen guten
+        // Wert aus den Navdaten nicht wegwerfen — sonst kostet die
+        // Übernahme der GEOMETRIE nebenbei den BELAG, und daran hängt die
+        // ganze seitliche Bewertung.
+        if let Some(text) = belag_text(s.belag_code) {
+            bahn.surface = Some(text.to_string());
+        }
         b.uebernommen.push(bahn.designator.clone());
     }
 
@@ -930,5 +1030,133 @@ mod ausfahrt_verdrahtung_tests {
             a.contains(".or(stats.arr_ground_geojson.as_deref())"),
             "ohne Szenerie faellt es nicht auf die Serverkarte zurueck"
         );
+    }
+}
+
+#[cfg(test)]
+mod belag_uebernahme_tests {
+    use super::*;
+
+    #[test]
+    fn eine_transparente_bahn_sagt_nichts_ueber_den_belag() {
+        // ⚠ X-Plane-Schluessel 15 = transparent: Die Szenerie zeichnet den
+        // Belag selbst. Das ist KEINE Aussage ueber ihn. Vorher wurde
+        // daraus "SNOW" — unbefestigt — und die Queransicht verschwand.
+        assert_eq!(belag_text(15), None);
+        // Unbekannte Schluessel ebenso.
+        assert_eq!(belag_text(99), None);
+    }
+
+    #[test]
+    fn die_schluessel_folgen_x_plane_nicht_msfs() {
+        // 13 = Wasser, 14 = Schnee/Eis. Vorher standen hier die
+        // MSFS-Werte, um eins verschoben.
+        assert_eq!(belag_text(13), Some("WATER"));
+        assert_eq!(belag_text(14), Some("SNOW"));
+        assert_eq!(belag_text(1), Some("ASPH"));
+        assert_eq!(belag_text(2), Some("CONC"));
+    }
+
+    #[test]
+    fn ein_unbekannter_belag_ueberschreibt_den_bekannten_nicht() {
+        // Der eigentliche Schaden: Die Uebernahme der GEOMETRIE kostete
+        // nebenbei den BELAG, und daran haengt die seitliche Bewertung.
+        let q: String = include_str!("szenerie_bahn.rs")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let nadel = format!(
+            "{}{}",
+            "ifletSome(text)=belag_text(s.belag_code){", "bahn.surface=Some(text.to_string());"
+        );
+        assert!(
+            q.contains(&nadel),
+            "der Belag wird bedingungslos ueberschrieben — ein transparenter \
+             Schluessel wirft dann einen guten Navdaten-Wert weg"
+        );
+    }
+}
+
+#[cfg(test)]
+mod plausibel_tests {
+    use super::*;
+
+    #[test]
+    fn kein_feld_wird_ungeprueft_uebernommen() {
+        // ⚠ DIE Wache gegen die Wiederholung.
+        //
+        // Dreimal hintereinander hat ein einzelnes Feld aus der Szenerie
+        // einen guten Navdaten-Wert ersetzt, und dreimal habe ich dieses
+        // eine Feld repariert statt die Regel. Das Muster ist nicht der
+        // Kurs und nicht der Belag — es ist die BEDINGUNGSLOSE Uebernahme.
+        //
+        // Diese Pruefung faengt jedes kuenftige `bahn.x = s.y;`. Wer ein
+        // Feld ergaenzt, muss es durch `plausibel::` fuehren.
+        let q: String = include_str!("szenerie_bahn.rs")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let start = q
+            .find("pubfnuebernimm_szenerie")
+            .expect("uebernimm_szenerie nicht gefunden");
+        let ende = start
+            + q[start..]
+                .find("(aus,b)")
+                .expect("Ende der Funktion nicht gefunden");
+        let rumpf = &q[start..ende];
+
+        // Nadel zur Laufzeit — sonst findet der Test sich selbst.
+        let direkt = format!("{}{}", "=", "s.");
+        assert!(
+            !rumpf.contains(&direkt),
+            "ein Wert aus der Szenerie wird direkt zugewiesen, ohne durch \
+             `plausibel::` zu gehen"
+        );
+        for pruefung in [
+            "plausibel::kurs_grad(",
+            "plausibel::strecke_m(",
+            "plausibel::versatz_m(",
+            "plausibel::koordinate(",
+        ] {
+            assert!(
+                rumpf.contains(pruefung),
+                "die Pruefung {pruefung} wird nicht mehr benutzt"
+            );
+        }
+    }
+
+    #[test]
+    fn ein_platzhalter_kurs_wird_abgelehnt() {
+        // 0,0° ist der Platzhalter, den 3.836 Bahnen im Bestand tragen —
+        // und der Grund, warum es die Uebernahme ueberhaupt gibt.
+        assert_eq!(plausibel::kurs_grad(0.0), None);
+        assert_eq!(plausibel::kurs_grad(360.0), None);
+        assert_eq!(plausibel::kurs_grad(f64::NAN), None);
+        assert_eq!(plausibel::kurs_grad(232.7), Some(232.7));
+    }
+
+    #[test]
+    fn eine_bahn_ohne_laenge_oder_breite_wird_abgelehnt() {
+        assert_eq!(plausibel::strecke_m(0.0), None);
+        assert_eq!(plausibel::strecke_m(-5.0), None);
+        assert_eq!(plausibel::strecke_m(f64::INFINITY), None);
+        assert_eq!(plausibel::strecke_m(3500.0), Some(3500.0));
+    }
+
+    #[test]
+    fn null_null_ist_kein_flughafen() {
+        // Der Punkt liegt im Atlantik vor Ghana — ein nicht gefuelltes
+        // Feld, kein Ort.
+        assert_eq!(plausibel::koordinate((0.0, 0.0)), None);
+        assert_eq!(plausibel::koordinate((91.0, 10.0)), None);
+        assert_eq!(plausibel::koordinate((f64::NAN, 10.0)), None);
+        assert_eq!(plausibel::koordinate((36.69, 3.21)), Some((36.69, 3.21)));
+    }
+
+    #[test]
+    fn eine_schwelle_ohne_versatz_ist_gueltig() {
+        // Null ist hier ECHT — die meisten Bahnen haben keinen Versatz.
+        assert_eq!(plausibel::versatz_m(0.0), Some(0.0));
+        assert_eq!(plausibel::versatz_m(-1.0), None);
     }
 }
