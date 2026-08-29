@@ -435,7 +435,22 @@ export function RunwayCrossSection(p: QueransichtProps) {
       farbe: p.tokens.tdWarn,
     });
   }
-  if (p.clearanceM != null) {
+  // ⚠ NUR mit bekannter Seite. Ohne sie wäre die Marke eine Behauptung.
+  //
+  // Sie sitzt bauartbedingt AUF der Kante — das ist die Aussage „hier hat
+  // es die Bahn verlassen". Stand die Seite auf `null`, war
+  // `null === "left"` schlicht falsch, und die Marke landete auf der
+  // RECHTEN Kante. Aus „wir wissen es nicht" wurde „rechts raus".
+  //
+  // Gefunden an EIN3641 (EGAC 04, ATR 72, 29.08.2026): Räumungspunkt bei
+  // 884 m, Seite null, Räumungsgeschwindigkeit 1,16 kt — das Flugzeug war
+  // dort einfach ausgerollt und hat die Bahn gar nicht verlassen. Die
+  // Spur endete korrekt in der Bahnmitte, die Marke behauptete die Kante.
+  // Im Bestand betraf das 6 von 58 Landungen.
+  //
+  // Ohne Seite fällt es an den Endpunkt weiter unten — und der sitzt
+  // dort, wo die Räder wirklich waren.
+  if (p.clearanceM != null && p.clearanceSide != null) {
     marken.push({
       n: 3,
       x: p.projektion.mToX(p.clearanceM),
@@ -452,7 +467,12 @@ export function RunwayCrossSection(p: QueransichtProps) {
   // Kein zusätzlicher Endpunkt, wenn schon ein Überrollen markiert ist:
   // Die Marke ④ sitzt am Bahnende, und dort endet auch die Spur — zwei
   // Marken übereinander, und die Liste nennt denselben Punkt zweimal.
-  if (p.clearanceM == null && (p.overrunM ?? 0) <= 0 && punkte.length >= 2) {
+  // ⚠ Bedingung ist "keine Räumungsmarke gezeichnet", nicht "kein
+  // Räumungspunkt vorhanden": Seit die Marke ③ eine bekannte Seite
+  // verlangt, gibt es Fälle mit Räumungspunkt und ohne Marke. Ohne
+  // diese Unterscheidung bliebe die Spur dort ganz ohne Endpunkt.
+  const raeumungsMarkeGezeichnet = p.clearanceM != null && p.clearanceSide != null;
+  if (!raeumungsMarkeGezeichnet && (p.overrunM ?? 0) <= 0 && punkte.length >= 2) {
     const letzter = punkte[punkte.length - 1]!;
     const x = p.projektion.mToX(letzter.laengs_m);
     const y = querZuY(letzter.quer_m);

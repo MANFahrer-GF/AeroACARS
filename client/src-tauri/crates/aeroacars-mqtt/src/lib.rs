@@ -796,6 +796,17 @@ pub struct TouchdownPayload {
     /// Woher die Bahngeometrie stammt: `"szenerie"` oder `"navdaten"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bahn_geometrie_quelle: Option<String>,
+    /// Was aus der Szenerie-Abfrage wurde — feiner als
+    /// `bahn_geometrie_quelle`, das nur "szenerie" oder "navdaten" kennt.
+    /// Werte: nicht_angefordert | abgelehnt | keine_antwort | ohne_bahnen
+    /// | kein_treffer | geliefert | uebernommen | keine_szenerie
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bahn_szenerie_status: Option<String>,
+    /// Name + Version, mit denen sich der Simulator gemeldet hat.
+    /// Trennt MSFS 2020 von 2024 — die Feldnamen der Facility-Abfrage
+    /// stammen aus der 2024er-SDK-Doku.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sim_kennung: Option<String>,
     /// Um wie viel Grad der Kurs korrigiert wurde. 0 = kein Unterschied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bahn_kurs_korrektur_grad: Option<f64>,
@@ -1291,6 +1302,17 @@ pub struct PirepPayload {
     /// Woher die Bahngeometrie stammt: `"szenerie"` oder `"navdaten"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bahn_geometrie_quelle: Option<String>,
+    /// Was aus der Szenerie-Abfrage wurde — feiner als
+    /// `bahn_geometrie_quelle`, das nur "szenerie" oder "navdaten" kennt.
+    /// Werte: nicht_angefordert | abgelehnt | keine_antwort | ohne_bahnen
+    /// | kein_treffer | geliefert | uebernommen | keine_szenerie
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bahn_szenerie_status: Option<String>,
+    /// Name + Version, mit denen sich der Simulator gemeldet hat.
+    /// Trennt MSFS 2020 von 2024 — die Feldnamen der Facility-Abfrage
+    /// stammen aus der 2024er-SDK-Doku.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sim_kennung: Option<String>,
     /// Um wie viel Grad der Kurs korrigiert wurde.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bahn_kurs_korrektur_grad: Option<f64>,

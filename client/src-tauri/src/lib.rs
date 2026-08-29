@@ -2275,11 +2275,25 @@ fn szenerie_anfordern_fuer(app: &AppHandle, icaos: &[String]) {
 fn szenerie_auskunft_uebernehmen(app: &AppHandle, flight: &Arc<ActiveFlight>) {
     #[cfg(target_os = "windows")]
     {
-        let neu = {
+        let (neu, diagnose, kennung) = {
             let state = app.state::<AppState>();
             let Ok(msfs) = state.msfs.lock() else { return };
-            msfs.szenerie()
+            (
+                msfs.szenerie(),
+                msfs.szenerie_diagnose().kurz().to_string(),
+                msfs.sim_kennung(),
+            )
         };
+        // ⚠ Die Diagnose IMMER mitschreiben, auch wenn keine Auskunft kam.
+        // Genau der Fall ist der interessante: Sie sagt dann, ob nie
+        // gefragt wurde, ob SimConnect abgelehnt hat oder ob die Antwort
+        // ausblieb. Frueher fiel das alles unter "navdaten".
+        if let Ok(mut stats) = flight.stats.lock() {
+            stats.szenerie_diagnose = Some(diagnose);
+            if stats.sim_kennung.is_none() {
+                stats.sim_kennung = kennung;
+            }
+        }
         let Some(neu) = neu else { return };
         let Ok(mut stats) = flight.stats.lock() else {
             return;
@@ -3893,6 +3907,14 @@ struct FlightStats {
     /// damit sich der Wechsel der Quelle **messen** laesst statt ihn zu
     /// glauben — dieselbe Ueberlegung wie beim Korpus-Lauf.
     szenerie_uebernahme: Option<szenerie_bahn::UebernahmeBericht>,
+    /// Wie weit die Szenerie-Abfrage beim Simulator gekommen ist.
+    ///
+    /// ⚠ Ohne das steht am Flug nur "navdaten", und darin stecken drei
+    /// verschiedene Faelle. Am 29.08.2026 war deshalb nicht zu sagen,
+    /// warum die MSFS-Haelfte bei 5 von 5 Landungen nichts lieferte.
+    szenerie_diagnose: Option<String>,
+    /// Womit sich der Simulator gemeldet hat (Name + Version).
+    sim_kennung: Option<String>,
     /// v0.8.0: Quelle der `runway_match`-Daten. `Navigraph` wenn der
     /// per VPS geladene NavAirport eine Match-fähige RWY lieferte;
     /// `OurAirportsFallback` wenn auf die eingebaute CSV gefallen
@@ -11510,6 +11532,42 @@ fn effective_display_phase(v1_phase: FlightPhase, shadow: Option<FlightPhase>) -
     }
 }
 
+/// Was aus der Szenerie-Abfrage geworden ist — in einem Wort, das
+/// ohne Erklaerung lesbar ist.
+///
+/// ⚠ Bis v1.7.9 stand am Flug nur `bahn_geometrie_quelle` mit zwei
+/// moeglichen Werten. "navdaten" bedeutete gleichzeitig: nie gefragt,
+/// abgelehnt, keine Antwort, Antwort ohne Bahnen, oder Antwort ohne
+/// passende Bahn. Am 29.08.2026 war deshalb aus dem Bestand nicht zu
+/// sagen, warum die MSFS-Haelfte bei 5 von 5 Landungen nichts lieferte —
+/// ein Feature ohne Messpunkt.
+fn szenerie_status(stats: &FlightStats) -> String {
+    if stats
+        .szenerie_uebernahme
+        .as_ref()
+        .is_some_and(|b| !b.uebernommen.is_empty())
+    {
+        return "uebernommen".to_string();
+    }
+    // Eine Auskunft lag vor, aber keine ihrer Bahnen lag nah genug an
+    // unserer. Das ist etwas ganz anderes als "keine Auskunft" — es
+    // deutet auf einen Lage-Unterschied, nicht auf einen toten Weg.
+    if stats
+        .szenerie_auskunft
+        .as_ref()
+        .is_some_and(|a| !a.bahnen.is_empty())
+    {
+        return "kein_treffer".to_string();
+    }
+    match stats.szenerie_diagnose.as_deref() {
+        Some(d) => d.to_string(),
+        // Kein MSFS-Adapter im Spiel (X-Plane liest die Datei direkt):
+        // Dann sagt die Anwesenheit eines Berichts, ob gelesen wurde.
+        None if stats.szenerie_uebernahme.is_some() => "kein_treffer".to_string(),
+        None => "keine_szenerie".to_string(),
+    }
+}
+
 fn phase_to_snake(phase: FlightPhase) -> &'static str {
     match phase {
         FlightPhase::Preflight => "preflight",
@@ -15394,6 +15452,8 @@ fn build_pirep_payload(
             }
             .to_string(),
         ),
+        bahn_szenerie_status: Some(szenerie_status(&stats)),
+        sim_kennung: stats.sim_kennung.clone(),
         bahn_kurs_korrektur_grad: stats
             .szenerie_uebernahme
             .as_ref()
@@ -25714,6 +25774,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     }
                                     .to_string(),
                                 ),
+                                bahn_szenerie_status: Some(szenerie_status(&stats)),
+                                sim_kennung: stats.sim_kennung.clone(),
                                 bahn_kurs_korrektur_grad: stats
                                     .szenerie_uebernahme
                                     .as_ref()
@@ -52430,6 +52492,111 @@ mod wiederaufnahme_langstrecke_tests {
         assert!(
             q[start..ende.min(q.len())].contains("flight.zuletzt_geschrieben=Some(Utc::now())"),
             "der Schreiber stempelt den Zeitpunkt nicht selbst"
+        );
+    }
+}
+
+#[cfg(test)]
+mod szenerie_status_tests {
+    use super::*;
+
+    fn bericht(uebernommen: &[&str]) -> szenerie_bahn::UebernahmeBericht {
+        szenerie_bahn::UebernahmeBericht {
+            uebernommen: uebernommen.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    fn auskunft(bahnen: usize) -> sim_core::szenerie::SzenerieFlughafen {
+        sim_core::szenerie::SzenerieFlughafen {
+            icao: "DAAG".to_string(),
+            bahnen: (0..bahnen)
+                .map(|_| sim_core::szenerie::SzenerieBahn {
+                    bezeichner: "23".to_string(),
+                    kurs_grad: 232.7,
+                    breite_m: 60.0,
+                    laenge_m: 3500.0,
+                    versetzte_schwelle_m: 0.0,
+                    schwelle: (36.69, 3.21),
+                    gegenende: (36.71, 3.24),
+                    belag_code: 1,
+                })
+                .collect(),
+            rollwege: Vec::new(),
+            quelle: "msfs".to_string(),
+        }
+    }
+
+    #[test]
+    fn uebernommen_schlaegt_alles() {
+        let mut s = FlightStats::new();
+        s.szenerie_uebernahme = Some(bericht(&["23"]));
+        s.szenerie_diagnose = Some("geliefert".to_string());
+        assert_eq!(szenerie_status(&s), "uebernommen");
+    }
+
+    #[test]
+    fn eine_auskunft_ohne_passende_bahn_heisst_kein_treffer() {
+        // ⚠ Das ist etwas ganz anderes als "keine Auskunft": Der Weg
+        // funktioniert, aber die Lagen passen nicht zusammen. Frueher
+        // stand fuer beides "navdaten".
+        let mut s = FlightStats::new();
+        s.szenerie_auskunft = Some(auskunft(2));
+        s.szenerie_uebernahme = Some(bericht(&[]));
+        s.szenerie_diagnose = Some("geliefert".to_string());
+        assert_eq!(szenerie_status(&s), "kein_treffer");
+    }
+
+    #[test]
+    fn die_drei_stummen_faelle_bleiben_unterscheidbar() {
+        // Genau diese drei fielen bis v1.7.9 alle unter "navdaten" —
+        // deshalb war am 29.08.2026 nicht zu sagen, woran die
+        // MSFS-Haelfte scheiterte.
+        for fall in ["nicht_angefordert", "abgelehnt", "keine_antwort"] {
+            let mut s = FlightStats::new();
+            s.szenerie_diagnose = Some(fall.to_string());
+            assert_eq!(
+                szenerie_status(&s),
+                fall,
+                "der Fall {fall} wird nicht mehr eigenstaendig gemeldet"
+            );
+        }
+    }
+
+    #[test]
+    fn eine_lieferung_ohne_bahnen_ist_ein_eigener_fall() {
+        let mut s = FlightStats::new();
+        s.szenerie_auskunft = Some(auskunft(0));
+        s.szenerie_diagnose = Some("ohne_bahnen".to_string());
+        assert_eq!(szenerie_status(&s), "ohne_bahnen");
+    }
+
+    #[test]
+    fn ohne_msfs_adapter_bleibt_es_verstaendlich() {
+        // X-Plane liest die Datei direkt; dort gibt es keine Diagnose
+        // vom Simulator. Trotzdem darf kein leeres Feld herauskommen.
+        let s = FlightStats::new();
+        assert_eq!(szenerie_status(&s), "keine_szenerie");
+
+        let mut s = FlightStats::new();
+        s.szenerie_uebernahme = Some(bericht(&[]));
+        assert_eq!(szenerie_status(&s), "kein_treffer");
+    }
+
+    #[test]
+    fn der_status_steht_an_beiden_payload_stellen() {
+        // ⚠ Es gibt zwei Bauplaetze fuer den Flug-Payload (Touchdown und
+        // PIREP). Steht das Feld nur an einem, fehlt genau die Haelfte
+        // der Faelle — und das faellt erst auf, wenn man sie sucht.
+        let q: String = include_str!("lib.rs")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let nadel = format!("{}{}", "bahn_szenerie_status:Some(", "szenerie_status(&");
+        assert_eq!(
+            q.matches(&nadel).count(),
+            2,
+            "der Szenerie-Status steht nicht an beiden Payload-Stellen"
         );
     }
 }

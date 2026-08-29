@@ -115,6 +115,42 @@ pub enum ConnectionState {
 
 /// External-facing MSFS adapter. Cheap to clone-state; drives a
 /// background worker thread that talks to SimConnect.
+/// Wie weit die Szenerie-Abfrage gekommen ist.
+///
+/// Bewusst ein eigener Typ statt eines `bool`: Die drei Fehlerfaelle
+/// verlangen verschiedene Antworten. "Abgelehnt" heisst, der Simulator
+/// kennt die Abfrage nicht (falsche Fassung?), "keine Antwort" heisst,
+/// sie kam nicht rechtzeitig, "ohne Bahnen" heisst, der Platz war leer.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SzenerieDiagnose {
+    /// Es wurde nie gefragt — kein Ziel bekannt, oder kein MSFS.
+    #[default]
+    NichtAngefordert,
+    /// Anfrage gestellt, Antwort steht noch aus.
+    Angefordert,
+    /// SimConnect hat die Anfrage zurueckgewiesen (Grund im Text).
+    Abgelehnt(String),
+    /// Vollstaendige Lieferung eingetroffen.
+    Geliefert {
+        icao: String,
+        bahnen: usize,
+        rollwege: usize,
+    },
+}
+
+impl SzenerieDiagnose {
+    /// Kurzwort fuer den Flug — muss ohne Erklaerung lesbar sein.
+    pub fn kurz(&self) -> &'static str {
+        match self {
+            Self::NichtAngefordert => "nicht_angefordert",
+            Self::Angefordert => "keine_antwort",
+            Self::Abgelehnt(_) => "abgelehnt",
+            Self::Geliefert { bahnen: 0, .. } => "ohne_bahnen",
+            Self::Geliefert { .. } => "geliefert",
+        }
+    }
+}
+
 pub struct MsfsAdapter {
     shared: Arc<Shared>,
     worker: Option<JoinHandle<()>>,
@@ -136,6 +172,20 @@ struct Shared {
     szenerie_angefordert: Mutex<Option<String>>,
     /// Steht eine Anfrage aus, die der Verbindungsfaden noch stellen muss?
     szenerie_offen: AtomicBool,
+    /// Wie weit die Szenerie-Abfrage gekommen ist — fuer die Diagnose.
+    ///
+    /// ⚠ Ohne das ist die Sache nicht messbar: Am Flug stand bisher nur
+    /// "navdaten", und darin steckten drei voellig verschiedene Faelle
+    /// (nie gefragt / abgelehnt / geantwortet-aber-unbrauchbar). Genau
+    /// deshalb war am 29.08.2026 nicht zu sagen, warum die MSFS-Haelfte
+    /// von v1.7.8 bei 5 von 5 Landungen nichts geliefert hat.
+    szenerie_diagnose: Mutex<SzenerieDiagnose>,
+    /// Name und Version, mit denen sich der Simulator beim Verbinden
+    /// meldet (aus `SIMCONNECT_RECV_OPEN`). MSFS 2020 und 2024 melden
+    /// sich unterschiedlich — und die Feldnamen der Facility-Abfrage
+    /// stammen aus der 2024er-SDK-Doku. Ohne diese Kennung laesst sich
+    /// nicht sagen, ob eine Ablehnung an der Fassung liegt.
+    sim_kennung: Mutex<Option<String>>,
     /// Spec v0.7.15 F5: SimConnect-`Paused`/`Unpaused`-System-Events
     /// setzen dieses Atomic. Wird beim Bauen jedes `SimSnapshot` in
     /// `telemetry::parse` zurueck nach `snap.paused` kopiert, damit
@@ -614,6 +664,8 @@ impl MsfsAdapter {
                 szenerie: Mutex::new(None),
                 szenerie_angefordert: Mutex::new(None),
                 szenerie_offen: AtomicBool::new(false),
+                szenerie_diagnose: Mutex::new(SzenerieDiagnose::default()),
+                sim_kennung: Mutex::new(None),
                 sim_paused: AtomicBool::new(false),
                 sim_unecht_tiefe: AtomicI32::new(0),
                 sim_crashed: AtomicBool::new(false),
@@ -879,7 +931,18 @@ impl MsfsAdapter {
         // anderen Platz. Sie stehen zu lassen waere schlimmer als
         // nichts zu haben.
         *self.shared.szenerie.lock() = None;
+        *self.shared.szenerie_diagnose.lock() = SzenerieDiagnose::Angefordert;
         self.shared.szenerie_offen.store(true, Ordering::Relaxed);
+    }
+
+    /// Wie weit die Szenerie-Abfrage gekommen ist.
+    pub fn szenerie_diagnose(&self) -> SzenerieDiagnose {
+        self.shared.szenerie_diagnose.lock().clone()
+    }
+
+    /// Womit sich der Simulator gemeldet hat (Name + Version).
+    pub fn sim_kennung(&self) -> Option<String> {
+        self.shared.sim_kennung.lock().clone()
     }
 
     /// Die zuletzt vollstaendig gelieferte Szenerie-Auskunft.
@@ -1083,6 +1146,12 @@ fn run_dispatch(
                         // Simulator nicht kennt, wird beim naechsten
                         // Durchlauf auch nicht bekannt. Die Navdaten
                         // bleiben, und das ist der richtige Rueckfall.
+                        //
+                        // ⚠ Aber festhalten, WARUM. Bis v1.7.9 stand am
+                        // Flug nur "navdaten", und eine Ablehnung sah
+                        // genauso aus wie "nie gefragt".
+                        *shared.szenerie_diagnose.lock() =
+                            SzenerieDiagnose::Abgelehnt(e.to_string());
                         tracing::warn!(%icao, error = %e, "Szenerie-Anfrage abgelehnt");
                     }
                 }
@@ -1108,8 +1177,9 @@ fn run_dispatch(
         loop {
             match conn.get_next_dispatch() {
                 Ok(None) => break, // queue empty
-                Ok(Some(DispatchMsg::Open)) => {
-                    tracing::info!("SimConnect_RECV_OPEN — handshake done");
+                Ok(Some(DispatchMsg::Open { kennung })) => {
+                    tracing::info!(%kennung, "SimConnect_RECV_OPEN — handshake done");
+                    *shared.sim_kennung.lock() = Some(kennung);
                 }
                 Ok(Some(DispatchMsg::Quit)) => {
                     tracing::warn!("SimConnect sent QUIT — dropping connection");
@@ -1208,12 +1278,22 @@ fn run_dispatch(
                             }
                         };
                         tracing::info!(rollwege = rollwege.len(), "Rollwege zusammengesetzt");
-                        *shared.szenerie.lock() = Some(sim_core::szenerie::SzenerieFlughafen {
+                        let auskunft = sim_core::szenerie::SzenerieFlughafen {
                             icao,
                             bahnen: std::mem::take(&mut facility_sammler),
                             rollwege,
                             quelle: "msfs".to_string(),
-                        });
+                        };
+                        // ⚠ Die Diagnose VOR dem Ablegen setzen und aus
+                        // derselben Auskunft speisen — sonst zaehlt sie
+                        // irgendwann etwas anderes als das, was benutzt
+                        // wird.
+                        *shared.szenerie_diagnose.lock() = SzenerieDiagnose::Geliefert {
+                            icao: auskunft.icao.clone(),
+                            bahnen: auskunft.bahnen.len(),
+                            rollwege: auskunft.rollwege.len(),
+                        };
+                        *shared.szenerie.lock() = Some(auskunft);
                         facility_referenz = None;
                         facility_punkte.clear();
                         facility_namen.clear();
@@ -2207,7 +2287,28 @@ impl Connection {
         let recv = unsafe { &*p_data };
         let id = recv.dwID;
         let msg = match id {
-            sys::SIMCONNECT_RECV_ID_OPEN => Some(DispatchMsg::Open),
+            sys::SIMCONNECT_RECV_ID_OPEN => {
+                // ⚠ Bis v1.7.9 wurde der Inhalt weggeworfen. Darin steht,
+                // WOMIT wir reden — MSFS 2020 und 2024 melden sich
+                // verschieden, und die Feldnamen der Facility-Abfrage
+                // stammen aus der 2024er-SDK-Doku. Ohne diese Kennung ist
+                // eine Ablehnung nicht einzuordnen.
+                let o = unsafe { &*(p as *const sys::SIMCONNECT_RECV_OPEN) };
+                let name = o
+                    .szApplicationName
+                    .iter()
+                    .take_while(|c| **c != 0)
+                    .map(|c| *c as u8 as char)
+                    .collect::<String>();
+                Some(DispatchMsg::Open {
+                    kennung: format!(
+                        "{} {}.{}",
+                        name.trim(),
+                        o.dwApplicationVersionMajor,
+                        o.dwApplicationVersionMinor
+                    ),
+                })
+            }
             sys::SIMCONNECT_RECV_ID_QUIT => Some(DispatchMsg::Quit),
             sys::SIMCONNECT_RECV_ID_EXCEPTION => {
                 let exc = unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_EXCEPTION) };
@@ -2356,7 +2457,10 @@ unsafe impl Sync for Connection {}
 
 #[derive(Debug)]
 enum DispatchMsg {
-    Open,
+    Open {
+        /// Name + Version, wie der Simulator sich meldet.
+        kennung: String,
+    },
     Quit,
     Exception {
         exception: u32,
