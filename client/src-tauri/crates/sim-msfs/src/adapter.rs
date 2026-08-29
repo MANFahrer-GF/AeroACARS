@@ -115,41 +115,7 @@ pub enum ConnectionState {
 
 /// External-facing MSFS adapter. Cheap to clone-state; drives a
 /// background worker thread that talks to SimConnect.
-/// Wie weit die Szenerie-Abfrage gekommen ist.
-///
-/// Bewusst ein eigener Typ statt eines `bool`: Die drei Fehlerfaelle
-/// verlangen verschiedene Antworten. "Abgelehnt" heisst, der Simulator
-/// kennt die Abfrage nicht (falsche Fassung?), "keine Antwort" heisst,
-/// sie kam nicht rechtzeitig, "ohne Bahnen" heisst, der Platz war leer.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum SzenerieDiagnose {
-    /// Es wurde nie gefragt — kein Ziel bekannt, oder kein MSFS.
-    #[default]
-    NichtAngefordert,
-    /// Anfrage gestellt, Antwort steht noch aus.
-    Angefordert,
-    /// SimConnect hat die Anfrage zurueckgewiesen (Grund im Text).
-    Abgelehnt(String),
-    /// Vollstaendige Lieferung eingetroffen.
-    Geliefert {
-        icao: String,
-        bahnen: usize,
-        rollwege: usize,
-    },
-}
-
-impl SzenerieDiagnose {
-    /// Kurzwort fuer den Flug — muss ohne Erklaerung lesbar sein.
-    pub fn kurz(&self) -> &'static str {
-        match self {
-            Self::NichtAngefordert => "nicht_angefordert",
-            Self::Angefordert => "keine_antwort",
-            Self::Abgelehnt(_) => "abgelehnt",
-            Self::Geliefert { bahnen: 0, .. } => "ohne_bahnen",
-            Self::Geliefert { .. } => "geliefert",
-        }
-    }
-}
+use crate::facility::SzenerieDiagnose;
 
 pub struct MsfsAdapter {
     shared: Arc<Shared>,

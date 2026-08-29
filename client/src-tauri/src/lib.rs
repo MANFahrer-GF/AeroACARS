@@ -2280,7 +2280,7 @@ fn szenerie_auskunft_uebernehmen(app: &AppHandle, flight: &Arc<ActiveFlight>) {
             let Ok(msfs) = state.msfs.lock() else { return };
             (
                 msfs.szenerie(),
-                msfs.szenerie_diagnose().kurz().to_string(),
+                msfs.szenerie_diagnose().kurz(),
                 msfs.sim_kennung(),
             )
         };
