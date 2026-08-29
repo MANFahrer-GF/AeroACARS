@@ -363,6 +363,36 @@ function App() {
   );
   useEffect(() => { phaseRef.current = activeFlight?.phase ?? null; }, [activeFlight]);
 
+  // Ob noch ein gespeicherter Flug auf Wiederaufnahme wartet — die Antwort
+  // braucht der Pflicht-Update-Riegel, BEVOR er sperrt.
+  //
+  // ⚠ `undefined` bis die Antwort da ist. Der Riegel sperrt nur bei einem
+  // klaren `false`; sonst erwischt er den Piloten im Fenster zwischen App-
+  // Start und fertiger Wiederaufnahme — also mitten im Flug.
+  const [wiederaufnahmeStehtAus, setWiederaufnahmeStehtAus] = useState<
+    boolean | undefined
+  >(undefined);
+  useEffect(() => {
+    if (status.kind !== "loggedIn") return;
+    if (activeFlight) {
+      setWiederaufnahmeStehtAus(true);
+      return;
+    }
+    let abgebrochen = false;
+    void (async () => {
+      try {
+        const offen = await invoke<boolean>("flight_wiederaufnahme_steht_aus");
+        if (!abgebrochen) setWiederaufnahmeStehtAus(offen);
+      } catch {
+        // Keine Antwort heisst NICHT "kein Flug". Im Zweifel nicht sperren.
+        if (!abgebrochen) setWiederaufnahmeStehtAus(true);
+      }
+    })();
+    return () => {
+      abgebrochen = true;
+    };
+  }, [status.kind, activeFlight]);
+
   // v0.15.x: Track-Akkumulation ist ins BACKEND gewandert (Rust-Streamer,
   // `record_track_point`). Sie läuft dort bei voller Tick-Rate, fokus-/fenster-
   // unabhängig — also LÜCKENLOS, auch wenn das AeroACARS-Fenster im Hintergrund
@@ -746,6 +776,7 @@ function App() {
       <UpdateGate
         checker={updateChecker}
         activePhase={activeFlight?.phase ?? null}
+        wiederaufnahmeStehtAus={wiederaufnahmeStehtAus}
       />
       {/* v0.9.0 (#GlitchTip) — First-Run-Consent fuer anonyme Fehler-Telemetrie.
           Selbst-versteckend nach der ersten Entscheidung. Zeigt sich

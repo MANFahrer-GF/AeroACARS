@@ -95,7 +95,7 @@ describe.runIf(AN)("Vorschau", () => {
         ];
         const zellen = zustaende.map((z) => {
           const { container, unmount } = render(
-            <UpdateGate checker={z.props} activePhase={null} />,
+            <UpdateGate checker={z.props} activePhase={null} wiederaufnahmeStehtAus={false} />,
           );
           const html = container.innerHTML;
           unmount();

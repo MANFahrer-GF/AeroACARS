@@ -174,6 +174,13 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         "flight_discover_resumable" => {
             from_uierr(crate::flight_discover_resumable(app.clone(), st!()).await)
         }
+        // Lesende Frage ohne Netz: Liegt ein gespeicherter Flug? Die
+        // Fernbedienung zeigt denselben Pflicht-Update-Riegel und braucht
+        // dieselbe Antwort — sonst sperrte sie im Wettrennen nach einem
+        // Neustart, waehrend der Pilot fliegt.
+        "flight_wiederaufnahme_steht_aus" => Ok(serde_json::json!(
+            crate::flight_wiederaufnahme_steht_aus(app.clone(), st!())
+        )),
 
         "metar_get" => {
             #[derive(Deserialize)]

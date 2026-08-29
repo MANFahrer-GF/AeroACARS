@@ -65,7 +65,7 @@ const riegel = () => document.querySelector(".update-gate");
 
 describe("Pflicht-Riegel: wann er sperrt", () => {
   it("sperrt, wenn beim Start eine neuere Version vorlag", () => {
-    render(<UpdateGate checker={checker()} activePhase={null} />);
+    render(<UpdateGate checker={checker()} activePhase={null} wiederaufnahmeStehtAus={false} />);
     expect(riegel()).not.toBeNull();
     expect(screen.getByText(/Update durchführen/)).toBeTruthy();
     // Die Version gehört in die Ansage — sonst weiss der Pilot nicht,
@@ -75,7 +75,7 @@ describe("Pflicht-Riegel: wann er sperrt", () => {
 
   it("löst die Installation aus", () => {
     installieren.mockClear();
-    render(<UpdateGate checker={checker()} activePhase={null} />);
+    render(<UpdateGate checker={checker()} activePhase={null} wiederaufnahmeStehtAus={false} />);
     fireEvent.click(screen.getByText(/Update durchführen/));
     expect(installieren).toHaveBeenCalledTimes(1);
   });
@@ -84,7 +84,7 @@ describe("Pflicht-Riegel: wann er sperrt", () => {
 describe("Pflicht-Riegel: wann er sich zurückhält", () => {
   it("bleibt aus, wenn gar kein Update vorliegt", () => {
     render(
-      <UpdateGate checker={checker({ update: null })} activePhase={null} />,
+      <UpdateGate checker={checker({ update: null })} activePhase={null} wiederaufnahmeStehtAus={false} />,
     );
     expect(riegel()).toBeNull();
   });
@@ -95,7 +95,7 @@ describe("Pflicht-Riegel: wann er sich zurückhält", () => {
     render(
       <UpdateGate
         checker={checker({ pflichtUpdate: false })}
-        activePhase={null}
+        activePhase={null} wiederaufnahmeStehtAus={false}
       />,
     );
     expect(riegel()).toBeNull();
@@ -119,7 +119,7 @@ describe("Pflicht-Riegel: wann er sich zurückhält", () => {
     ] as FlightPhase[];
     for (const p of phasen) {
       const { unmount } = render(
-        <UpdateGate checker={checker()} activePhase={p} />,
+        <UpdateGate checker={checker()} activePhase={p} wiederaufnahmeStehtAus={false} />,
       );
       expect(riegel(), `Riegel sperrte in Phase ${p}`).toBeNull();
       unmount();
@@ -128,13 +128,13 @@ describe("Pflicht-Riegel: wann er sich zurückhält", () => {
 
   it("bleibt aus, wenn der Betreiber-Notaus gesetzt ist", () => {
     localStorage.setItem("aeroacars.update.gate_off", "1");
-    render(<UpdateGate checker={checker()} activePhase={null} />);
+    render(<UpdateGate checker={checker()} activePhase={null} wiederaufnahmeStehtAus={false} />);
     expect(riegel()).toBeNull();
   });
 
   it("bleibt aus für die Version, an der die Installation scheiterte", () => {
     localStorage.setItem("aeroacars.update.gate_skip_version", "1.7.7");
-    render(<UpdateGate checker={checker()} activePhase={null} />);
+    render(<UpdateGate checker={checker()} activePhase={null} wiederaufnahmeStehtAus={false} />);
     expect(riegel()).toBeNull();
   });
 
@@ -147,7 +147,7 @@ describe("Pflicht-Riegel: wann er sich zurückhält", () => {
         checker={checker({
           update: { version: "1.7.8", body: "" } as UseUpdateCheckerResult["update"],
         })}
-        activePhase={null}
+        activePhase={null} wiederaufnahmeStehtAus={false}
       />,
     );
     expect(riegel()).not.toBeNull();
@@ -156,7 +156,7 @@ describe("Pflicht-Riegel: wann er sich zurückhält", () => {
 
 describe("Pflicht-Riegel: der Ausweg", () => {
   it("zeigt VOR einem Fehlschlag keinen Weg vorbei", () => {
-    render(<UpdateGate checker={checker()} activePhase={null} />);
+    render(<UpdateGate checker={checker()} activePhase={null} wiederaufnahmeStehtAus={false} />);
     expect(document.querySelector(".update-gate__continue")).toBeNull();
     // Und auch kein „Später" aus dem Banner-Wortschatz.
     expect(document.body.textContent).not.toContain("Später");
@@ -166,7 +166,7 @@ describe("Pflicht-Riegel: der Ausweg", () => {
     render(
       <UpdateGate
         checker={checker({ installationGescheitert: true })}
-        activePhase={null}
+        activePhase={null} wiederaufnahmeStehtAus={false}
       />,
     );
     expect(document.querySelector(".update-gate__continue")).not.toBeNull();
@@ -183,7 +183,7 @@ describe("Pflicht-Riegel: der Ausweg", () => {
     render(
       <UpdateGate
         checker={checker({ installationGescheitert: true })}
-        activePhase={null}
+        activePhase={null} wiederaufnahmeStehtAus={false}
       />,
     );
     fireEvent.click(screen.getByText(/Trotzdem fortfahren/));
@@ -215,5 +215,60 @@ describe("Pflicht-Riegel: Verdrahtung", () => {
       return [...block.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]).sort();
     };
     expect(phasen("./UpdateGate.tsx")).toEqual(phasen("./UpdateBanner.tsx"));
+  });
+
+  // ── Das Wettrennen nach einem Neustart ──────────────────────────────
+  //
+  // ⚠ Anlass THY77 (28.08.2026): Ausnahme 3 fragt die PHASE — die ist nach
+  // einem Neustart aber erst bekannt, wenn die Wiederaufnahme durch ist,
+  // und die braucht einen Roundtrip zum Server. Der Riegel ist sofort da.
+  // In diesem Fenster sähe er `null` und sperrte einen Piloten, der in
+  // Reiseflughöhe sitzt. Ein „Später" gibt es nicht.
+  it("sperrt NICHT, solange ungeklaert ist ob ein Flug laeuft", () => {
+    render(
+      <UpdateGate
+        checker={checker()}
+        activePhase={null}
+        wiederaufnahmeStehtAus={undefined}
+      />,
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("sperrt NICHT, wenn ein gespeicherter Flug auf Wiederaufnahme wartet", () => {
+    render(
+      <UpdateGate
+        checker={checker()}
+        activePhase={null}
+        wiederaufnahmeStehtAus={true}
+      />,
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("sperrt, wenn geklaert ist dass KEIN Flug wartet", () => {
+    render(
+      <UpdateGate
+        checker={checker()}
+        activePhase={null}
+        wiederaufnahmeStehtAus={false}
+      />,
+    );
+    expect(screen.queryByRole("alertdialog")).not.toBeNull();
+  });
+
+  it("der App-Rahmen reicht die Antwort auch wirklich durch", () => {
+    // ⚠ Ohne diese Wache faellt es nur auf, weil der Uebersetzer eine
+    // ungenutzte Variable meldet — und das haelt genau so lange, bis
+    // jemand sie anderswo verwendet. Dann sperrt der Riegel wieder im
+    // Wettrennen, und niemand merkt es.
+    const app = readFileSync(resolve(__dirname, "../App.tsx"), "utf-8").replace(
+      /\s+/g,
+      "",
+    );
+    const nadel = ["wiederaufnahmeStehtAus=", "{wiederaufnahmeStehtAus}"].join(
+      "",
+    );
+    expect(app.includes(nadel)).toBe(true);
   });
 });

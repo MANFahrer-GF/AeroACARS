@@ -11888,6 +11888,36 @@ pub struct ResumableFlight {
 /// in-progress PIREP on phpVMS and offer it as a discovered flight,
 /// then `flight_adopt` would crash with "another flight is already
 /// active" the moment Disk-Resume committed.
+/// Liegt ein gespeicherter Flug, der noch aufgenommen werden koennte?
+///
+/// ⚠ Gebaut fuer den Pflicht-Update-Riegel. Der laesst einen laufenden Flug
+/// in Ruhe — aber er fragt dafuer die PHASE, und die ist nach einem
+/// Neustart erst bekannt, wenn die Wiederaufnahme durch ist. Die braucht
+/// einen Roundtrip zum Server; der Riegel ist sofort da. In diesem Fenster
+/// saehe er `null` und wuerde sperren: Der Pilot bekaeme mitten im Flug
+/// einen Zwang zum Update vorgesetzt, den es fuer ihn gar nicht geben darf.
+///
+/// Deshalb diese Frage, die OHNE Netz beantwortbar ist: Die Datei liegt auf
+/// der Platte oder nicht.
+#[tauri::command]
+fn flight_wiederaufnahme_steht_aus(app: AppHandle, state: tauri::State<'_, AppState>) -> bool {
+    // Ein bereits aufgenommener Flug zaehlt auch — dann ist die Frage
+    // ohnehin beantwortet und die Phase da.
+    {
+        let guard = state.active_flight.lock().expect("active_flight lock");
+        if guard.is_some() {
+            return true;
+        }
+    }
+    match read_persisted_flight(&app) {
+        Some(p) => {
+            let stillstand = Utc::now() - p.zuletzt_geschrieben.unwrap_or(p.started_at);
+            stillstand_erlaubt_wiederaufnahme(stillstand)
+        }
+        None => false,
+    }
+}
+
 #[tauri::command]
 async fn flight_discover_resumable(
     app: AppHandle,
@@ -39614,6 +39644,7 @@ pub fn run() {
             flight_cancel_orphan,
             flight_forget_remote,
             flight_discover_resumable,
+            flight_wiederaufnahme_steht_aus,
             flight_adopt,
             flight_resume_confirm,
             inspector_add,

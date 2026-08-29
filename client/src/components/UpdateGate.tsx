@@ -81,6 +81,13 @@ interface Props {
    * erweist — dann braucht es keinen neuen Client, um ihn abzustellen.
    */
   ausgeschaltet?: boolean;
+  /**
+   * Ob noch ein gespeicherter Flug auf seine Wiederaufnahme wartet.
+   *
+   * `undefined` = noch nicht beantwortet. Der Riegel sperrt nur bei einem
+   * klaren `false`.
+   */
+  wiederaufnahmeStehtAus?: boolean;
 }
 
 /** Der dauerhafte Schalter — nur für den Betrieb, von Hand gesetzt. */
@@ -110,7 +117,9 @@ function riegelAbgeschaltet(version: string): boolean {
   }
 }
 
-export function UpdateGate({ checker, activePhase, ausgeschaltet }: Props) {
+export function UpdateGate({ checker, activePhase, ausgeschaltet,
+  wiederaufnahmeStehtAus,
+}: Props) {
   const { t } = useTranslation();
   const knopfRef = useRef<HTMLButtonElement>(null);
 
@@ -144,6 +153,19 @@ export function UpdateGate({ checker, activePhase, ausgeschaltet }: Props) {
   if (ausgeschaltet ?? riegelAbgeschaltet(update.version)) return null;
   // Ausnahme 3.
   if (activePhase != null && AKTIVE_FLUGPHASEN.has(activePhase)) return null;
+  // Ausnahme 5 — das Wettrennen nach einem Neustart.
+  //
+  // ⚠ Ausnahme 3 fragt die PHASE. Die ist nach einem Neustart aber erst
+  // bekannt, wenn die Wiederaufnahme durch ist, und die braucht einen
+  // Roundtrip zum Server. Der Riegel ist sofort da. In diesem Fenster sähe
+  // er `null` und würde sperren — und genau dann sitzt der Pilot mitten im
+  // Flug (Absturz, oder er öffnet die App noch einmal). Ein „Später" gibt
+  // es nicht.
+  //
+  // `undefined` heißt „noch ungeklärt". Solange bleibt der Riegel aus:
+  // Lieber ein Update ein paar Sekunden später als ein Pilot, der in
+  // Reiseflughöhe zum Neustart gezwungen wird.
+  if (wiederaufnahmeStehtAus !== false) return null;
 
   return (
     <div className="update-gate" role="alertdialog" aria-modal="true">
