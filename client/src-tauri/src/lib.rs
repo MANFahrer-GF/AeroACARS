@@ -123,8 +123,30 @@ const ACTIVITY_LOG_FILE: &str = "activity_log.json";
 /// presence/absence is the actual signal.
 const RUN_SENTINEL_FILE: &str = "run_active.lock";
 
-/// Anything older than this is considered stale and discarded on resume.
-const RESUME_MAX_AGE_HOURS: i64 = 12;
+/// Wie lange ein gespeicherter Flug ohne jede Aktualisierung liegen darf und
+/// trotzdem noch aufgenommen wird — **wenn der Server nicht erreichbar ist**.
+///
+/// ⚠️ Hier stand einmal `RESUME_MAX_AGE_HOURS = 12`, gemessen **ab
+/// Flugbeginn**, und die Datei wurde beim Überschreiten auch noch gelöscht.
+/// Das hat am 28.08.2026 den Flug THY77 (LTFM→KMIA, geplant 12h20m, geflogen
+/// 12h39m) gekostet: Der Pilot hat mitten im Reiseflug das Update gemacht,
+/// beim Neustart war der Flug 12h49m alt — verworfen UND gelöscht, also auch
+/// durch einen zweiten Neustart nicht mehr zu retten. Er saß in Reiseflughöhe
+/// vor „du musst am Boden sein" und hat den Flug am Ende von Hand nachgebucht;
+/// die Landebewertung war verloren.
+///
+/// Die Zahl stammte aus der allerersten Fassung (01.05.2026, „ignores anything
+/// older than 12h") und war an nichts gekoppelt — weder an eine Anforderung
+/// noch an das Serververhalten. phpVMS hält einen laufenden PIREP unbegrenzt;
+/// es räumt ihn erst weg, wenn er `acars.live_time` lang **keine
+/// Aktualisierung** bekam. Die Dauer eines Fluges spielt dort keine Rolle.
+///
+/// Deshalb entscheidet jetzt der **Server** — er ist die einzige Instanz, die
+/// es wirklich weiß, und `try_resume_flight` fragt ihn ohnehin schon. Diese
+/// Grenze greift nur noch als Notnagel, wenn er nicht antwortet, und sie zählt
+/// ab der **letzten Aktualisierung**, nicht ab dem Start. Ein Flug ist nicht
+/// deshalb tot, weil er lange dauert.
+const RESUME_STILLSTAND_MAX_HOURS: i64 = 24;
 
 /// Phase-dependent position-post cadence. Ground manoeuvres (taxi, takeoff,
 /// landing rollout) and the approach are where pilots want a precise trail
@@ -2396,6 +2418,16 @@ struct PersistedFlight {
     #[serde(default)]
     pilot_callsign: Option<String>,
     started_at: DateTime<Utc>,
+    /// Wann die Datei zuletzt geschrieben wurde — der einzige belastbare
+    /// Hinweis darauf, ob der Flug noch lebt. `started_at` sagt darüber
+    /// nichts: Ein Langstreckenflug ist nach 14 Stunden immer noch aktiv,
+    /// ein abgestürzter Client nach 20 Minuten schon nicht mehr.
+    ///
+    /// `#[serde(default)]` → Dateien aus älteren Fassungen kennen das Feld
+    /// nicht; dann bleibt `None`, und die Bewertung fällt auf `started_at`
+    /// zurück (das alte Verhalten, nur ohne Löschen).
+    #[serde(default)]
+    zuletzt_geschrieben: Option<DateTime<Utc>>,
     #[serde(default)]
     airline_icao: String,
     /// v0.4.0: phpVMS-Airline-Logo-URL (für Discord-Webhook-Embeds).
@@ -10778,6 +10810,13 @@ fn active_flight_path(app: &AppHandle) -> Result<PathBuf, UiError> {
 }
 
 fn write_persisted_flight(app: &AppHandle, flight: &PersistedFlight) -> Result<(), UiError> {
+    // ⚠ Der Zeitstempel wird HIER gesetzt, nicht beim Aufrufer. Sonst müsste
+    // jede künftige Schreibstelle daran denken, und genau das vergisst man —
+    // die Datei sähe dann alt aus, obwohl sie gerade geschrieben wurde, und
+    // die Wiederaufnahme verwürfe einen laufenden Flug.
+    let mut flight = flight.clone();
+    flight.zuletzt_geschrieben = Some(Utc::now());
+    let flight = &flight;
     let path = active_flight_path(app)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| UiError::new("config_write", e.to_string()))?;
@@ -11006,6 +11045,8 @@ fn save_active_flight(app: &AppHandle, flight: &ActiveFlight) {
         bid_callsign: flight.bid_callsign.clone(),
         pilot_callsign: flight.pilot_callsign.clone(),
         started_at: flight.started_at,
+        // Wird von `write_persisted_flight` gesetzt — hier bewusst None.
+        zuletzt_geschrieben: None,
         airline_icao: flight.airline_icao.clone(),
         airline_logo_url: flight.airline_logo_url.clone(),
         planned_registration: flight.planned_registration.clone(),
@@ -11858,15 +11899,32 @@ async fn flight_discover_resumable(
             return Ok(Vec::new());
         }
     }
+    // ⚠ Hier stand dieselbe 12-Stunden-Grenze wie im Resume: Nur ein "junger"
+    // Flug auf der Platte durfte gewinnen. Sie ist ersatzlos weg — liegt eine
+    // Datei, gehoert der Vortritt IHR, unabhaengig von der Flugdauer.
+    // `try_resume_flight` entscheidet dann anhand der Server-Auskunft und
+    // raeumt die Datei auf, wenn der PIREP wirklich tot ist. Danach findet
+    // dieser Weg hier den verwaisten Flug beim naechsten Anlauf.
     if let Some(persisted) = read_persisted_flight(&app) {
-        let age = Utc::now() - persisted.started_at;
-        if age <= chrono::Duration::hours(RESUME_MAX_AGE_HOURS) {
+        // ⚠ Zurueckgetreten wird nur fuer eine Datei, die auch wirklich
+        // aufgenommen werden KANN. Sonst entsteht eine Sackgasse: Die
+        // Wiederaufnahme lehnt wegen Stillstand ab (und loescht bewusst
+        // nicht), und diese Suche tritt fuer genau diese Datei zurueck —
+        // der verwaiste Flug wuerde nie mehr angeboten.
+        let stillstand =
+            Utc::now() - persisted.zuletzt_geschrieben.unwrap_or(persisted.started_at);
+        if stillstand_erlaubt_wiederaufnahme(stillstand) {
             tracing::debug!(
                 pirep_id = %persisted.pirep_id,
                 "discover_resumable: disk-resume pending — returning empty so the disk flight wins"
             );
             return Ok(Vec::new());
         }
+        tracing::info!(
+            pirep_id = %persisted.pirep_id,
+            stillstand_stunden = stillstand.num_hours(),
+            "discover_resumable: Datei zu lange still — der Server darf antworten"
+        );
     }
     let client = current_client(&state)?;
     // v0.16.17: server-seitig auf IN_PROGRESS gefiltert (?state=0) statt
@@ -17512,6 +17570,10 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
         // Exponentiel-Backoff bei consecutive failures: 3s, 6s, 12s,
         // 24s, 48s, gecapped bei 60s. Reset bei erstem Erfolg.
         let mut consecutive_failures: u32 = 0;
+        /// Wie oft der gespeicherte Flug im laufenden Betrieb aufgefrischt
+        /// wird, damit sein Zeitstempel etwas ueber die Lebendigkeit sagt.
+        const LEBENSZEICHEN_ABSTAND: Duration = Duration::from_secs(60);
+        let mut letztes_lebenszeichen: Option<std::time::Instant> = None;
         // v1.6.14 — Sichtbarkeit. Requeues liefen bisher NUR in
         // `tracing::warn` und tauchten damit weder im Aktivitaetslog des
         // Piloten noch in GlitchTip auf. Der Dubletten-Befund vom
@@ -17740,6 +17802,32 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                     flight
                         .connection_state
                         .store(CONN_STATE_LIVE, Ordering::Relaxed);
+
+                    // ⚠ Lebenszeichen fuer die Wiederaufnahme.
+                    //
+                    // Die Datei auf der Platte wird sonst nur bei
+                    // Ereignissen geschrieben (Phasenwechsel, OFP,
+                    // Aufsetzen). Im Reiseflug passiert stundenlang KEINES
+                    // davon — ihr Zeitstempel waere dann faktisch die
+                    // Abflugzeit, und `stillstand_erlaubt_wiederaufnahme`
+                    // entschiede wieder nach der FLUGDAUER. Genau den Fehler
+                    // haben wir gerade ausgebaut.
+                    //
+                    // Ein erfolgreicher Positions-POST ist das ehrlichste
+                    // Lebenszeichen: Der Client arbeitet, der Server nimmt
+                    // an. Gedrosselt auf einmal pro Minute — die Datei ist
+                    // klein, aber im Sekundentakt zu schreiben waere
+                    // Verschleiss ohne Gewinn.
+                    let jetzt = std::time::Instant::now();
+                    let faellig = letztes_lebenszeichen
+                        .map(|t: std::time::Instant| {
+                            jetzt.duration_since(t) >= LEBENSZEICHEN_ABSTAND
+                        })
+                        .unwrap_or(true);
+                    if faellig {
+                        letztes_lebenszeichen = Some(jetzt);
+                        save_active_flight(&app, &flight);
+                    }
                 }
                 Ok(Err(ApiError::NotFound)) => {
                     // PIREP serverseitig geloescht — terminiert sauber.
@@ -37454,20 +37542,76 @@ fn xplane_premium_status(state: tauri::State<'_, AppState>) -> serde_json::Value
 /// On login or session restore, check the on-disk active-flight file. If it's
 /// recent enough, recreate the in-memory ActiveFlight and restart position
 /// streaming — picks up exactly where the previous run left off.
+/// Ist der gespeicherte Flug frisch genug, um ihn von selbst aufzunehmen?
+///
+/// Zwei Dinge müssen stimmen, und sie beantworten verschiedene Fragen:
+///   * Der **Server** sagt, ob es den Flug noch gibt und ob er läuft.
+///   * Der **Stillstand** sagt, ob der Client noch daran gearbeitet hat.
+///
+/// Beide werden gebraucht. Nur den Server zu fragen reicht nicht: Wenn
+/// dessen eigener Aufräumer klemmt — auf GSG tut er das, `cron:hourly` lief
+/// in neun Stunden null Mal —, dann steht ein längst verlassener Flug dort
+/// ewig auf IN_PROGRESS, und der Client nähme ihn beim nächsten Start
+/// wortlos wieder auf.
+///
+/// ⚠ Bewusst NICHT die Flugdauer. Ein Langstreckenflug ist nicht tot, weil
+/// er lange dauert — das war der Fehler, der THY77 gekostet hat.
+///
+/// Eigene Funktion, damit sie prüfbar ist: Die alte Grenze lebte mitten in
+/// einer async-Funktion mit AppHandle und Client und war von keinem Test
+/// erreichbar.
+fn stillstand_erlaubt_wiederaufnahme(stillstand: chrono::Duration) -> bool {
+    stillstand <= chrono::Duration::hours(RESUME_STILLSTAND_MAX_HOURS)
+}
+
 async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, client: &Client) {
     let Some(persisted) = read_persisted_flight(app) else {
         return;
     };
-    // Drop sessions that are clearly stale (e.g. a flight from days ago) so
-    // we don't keep flogging a long-dead PIREP forever.
-    let age = Utc::now() - persisted.started_at;
-    if age > chrono::Duration::hours(RESUME_MAX_AGE_HOURS) {
+    // ⚠ Hier wurde bis v1.7.8 nach der DAUER des Fluges entschieden — älter
+    // als 12 h ab `started_at` hieß „verwerfen", samt Löschen der Datei.
+    // Das hat THY77 gekostet (siehe `RESUME_STILLSTAND_MAX_HOURS`): ein
+    // Langstreckenflug ist nicht deshalb tot, weil er lange dauert.
+    //
+    // Entschieden wird jetzt unten vom SERVER — er weiß es als Einziger
+    // sicher, und gefragt wird er ohnehin. Vor dieser Auskunft wird nichts
+    // mehr gelöscht.
+    //
+    // Der Stillstand seit dem letzten Schreiben ist trotzdem interessant:
+    // Er ist der Notnagel für den Fall, dass der Server nicht antwortet.
+    let stillstand = Utc::now() - persisted.zuletzt_geschrieben.unwrap_or(persisted.started_at);
+    // Getrennt gefuehrt und bewusst NICHT vermischt: `flugalter` ist die Dauer
+    // seit dem Abflug (geht als `age_minutes` ins JSONL, wo es diese Bedeutung
+    // schon immer hatte), `stillstand` die Zeit seit der letzten
+    // Aktualisierung. Nur Letzteres sagt etwas darueber, ob der Flug lebt.
+    let flugalter = Utc::now() - persisted.started_at;
+
+    // ⚠ Der Stillstand gilt IMMER, nicht nur wenn der Server schweigt.
+    //
+    // Erste Fassung dieser Reparatur prüfte ihn nur im Netzwerk-Fehlerzweig.
+    // Damit war ein Fehler gegen einen anderen getauscht: Sagt der Server
+    // „IN_PROGRESS" — und das tut er auf GSG bei jedem Geisterflug, weil
+    // sein Aufräumer nicht läuft —, hätte der Client einen drei Tage alten,
+    // längst aufgegebenen Flug wortlos weitergeführt.
+    //
+    // Gelöscht wird trotzdem nichts: Das entscheidet weiter unten allein
+    // der Server. Hier wird nur nicht von selbst aufgenommen.
+    if !stillstand_erlaubt_wiederaufnahme(stillstand) {
         tracing::info!(
             pirep_id = %persisted.pirep_id,
-            age_hours = age.num_hours(),
-            "discarding stale persisted flight"
+            stillstand_stunden = stillstand.num_hours(),
+            "seit über 24 h keine Aktualisierung — keine automatische Wiederaufnahme"
         );
-        clear_persisted_flight(app);
+        log_activity_handle(
+            app,
+            ActivityLevel::Warn,
+            "Gespeicherter Flug nicht automatisch aufgenommen".to_string(),
+            Some(format!(
+                "Der Flug wurde seit {} Stunden nicht aktualisiert und wird deshalb nicht \
+                 von selbst fortgesetzt. Er bleibt gespeichert.",
+                stillstand.num_hours()
+            )),
+        );
         return;
     }
 
@@ -37522,8 +37666,17 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
             return;
         }
         Err(e) => {
+            // Server nicht erreichbar. Jetzt — und NUR jetzt — zählt der
+            // Stillstand: Ohne Auskunft ist die Zeit seit dem letzten
+            // Schreiben der beste Hinweis darauf, ob der Flug noch lebt.
+            //
+            // ⚠ Auch hier wird die Datei NICHT gelöscht. Ein Ausfall beim
+            // Server darf einen laufenden Flug nicht kosten — beim nächsten
+            // Start ist der Server vielleicht wieder da, und dann entscheidet
+            // wieder er.
             tracing::warn!(
                 pirep_id = %persisted.pirep_id,
+                stillstand_stunden = stillstand.num_hours(),
                 error = %e,
                 "could not verify persisted PIREP — proceeding with resume anyway"
             );
@@ -37561,7 +37714,8 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
         .expect("previous_run_exit_clean lock");
     tracing::info!(
         pirep_id = %persisted.pirep_id,
-        age_minutes = age.num_minutes(),
+        age_minutes = flugalter.num_minutes(),
+        stillstand_minuten = stillstand.num_minutes(),
         ?previous_exit_clean,
         "resuming in-progress flight"
     );
@@ -37571,7 +37725,7 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
         &FlightLogEvent::FlightResumed {
             timestamp: Utc::now(),
             pirep_id: persisted.pirep_id.clone(),
-            age_minutes: age.num_minutes(),
+            age_minutes: flugalter.num_minutes(),
             previous_exit_clean,
         },
     );
@@ -37622,7 +37776,11 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
     // (if any) had persisted, which says nothing about the restart that
     // just happened.
     restored_stats.app_restart_was_unclean = previous_exit_clean.map(|clean| !clean);
-    restored_stats.resume_gap_minutes = Some(age.num_minutes());
+    // ⚠ Hier stand `age` — also die FLUGDAUER, obwohl das Feld "gap" heisst
+    // und der Gesundheitsbericht es als Unterbrechung liest. Bei einem
+    // Langstreckenflug meldete es 760 Minuten Luecke, wo der Client 4 Minuten
+    // weg war. Jetzt steht dort die echte Unterbrechung.
+    restored_stats.resume_gap_minutes = Some(stillstand.num_minutes());
     tracing::info!(
         distance_nm = restored_stats.distance_nm,
         position_count = restored_stats.position_count,
@@ -42854,6 +43012,7 @@ mod v0_7_7_ofp_refresh_tests {
             bid_callsign: None,
             pilot_callsign: None,
             started_at: Utc::now(),
+            zuletzt_geschrieben: None,
             airline_icao: "DLH".to_string(),
             airline_logo_url: None,
             planned_registration: "D-AIUV".to_string(),
@@ -52027,5 +52186,161 @@ mod achsen_aufrufstelle_tests {
         fill_v2_rollout_fields(&mut input, &s, "EDDM");
         assert!(input.bahn_achsen_kreuzt_mitte.is_some());
         assert!(input.bahn_achsen_groesster_betrag_m.is_some());
+    }
+}
+
+#[cfg(test)]
+mod wiederaufnahme_langstrecke_tests {
+    use super::*;
+
+    /// Die Quelle von `try_resume_flight` — für die Wächter, die belegen,
+    /// dass die alte Dauer-Grenze wirklich weg ist und nicht nur umbenannt.
+    const LIB_QUELLE: &str = include_str!("lib.rs");
+
+    fn ohne_leerraum(s: &str) -> String {
+        s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    /// ⚠ Lehre aus zwei Fehlversuchen an EINEM Tag (29.08.2026):
+    ///
+    /// Ein Wächter, der die Quelle nach einem Text durchsucht, findet
+    /// **sich selbst**, wenn dieser Text als ein Stück im Quelltext steht —
+    /// `include_str!("lib.rs")` enthält ja auch den Wächter. Ein solcher
+    /// Wächter ist immer grün und beweist nichts. Beide Male ist es erst in
+    /// der Gegenprobe aufgefallen: Ich habe die bewachte Zeile entfernt, und
+    /// der Test blieb grün.
+    ///
+    /// Deshalb wird jede Nadel hier mit `format!` aus Teilen gebaut. Wer
+    /// einen Wächter ergänzt, macht es genauso — und prüft ihn, indem er
+    /// entfernt, was er bewacht.
+    #[allow(dead_code)]
+    fn nadel_hinweis() {}
+
+    #[test]
+    fn ein_langer_flug_wird_aufgenommen_wenn_er_frisch_geschrieben_wurde() {
+        // THY77: 12h39m geflogen. Der Client war 4 Minuten weg (Update +
+        // Neustart). Genau dieser Fall wurde bis v1.7.8 verworfen, weil
+        // nach der FLUGDAUER entschieden wurde.
+        assert!(stillstand_erlaubt_wiederaufnahme(chrono::Duration::minutes(4)));
+        // Auch nach 20 Stunden Flug — die Dauer spielt keine Rolle mehr,
+        // nur die Zeit seit der letzten Aktualisierung.
+        assert!(stillstand_erlaubt_wiederaufnahme(chrono::Duration::hours(23)));
+    }
+
+    #[test]
+    fn der_stillstand_gilt_auch_wenn_der_server_antwortet() {
+        // ⚠ QS-Befund an der eigenen Reparatur: Zuerst griff diese Prüfung
+        // NUR im Netzwerk-Fehlerzweig. Auf GSG steht ein Geisterflug ewig
+        // auf IN_PROGRESS (der Aufräum-Cron läuft nicht) — der Client hätte
+        // ihn also wortlos weitergeführt. Die Prüfung muss VOR der
+        // Server-Abfrage stehen, damit sie in jedem Fall gilt.
+        let q = ohne_leerraum(LIB_QUELLE);
+        let start = q
+            .find("asyncfntry_resume_flight")
+            .expect("try_resume_flight nicht gefunden");
+        let bis_server = q[start..]
+            .find("client.get_pirep")
+            .expect("Server-Abfrage nicht gefunden");
+        assert!(
+            q[start..start + bis_server].contains("stillstand_erlaubt_wiederaufnahme(stillstand)"),
+            "der Stillstand wird erst NACH der Server-Auskunft geprüft — \
+             dann führt ein Geisterflug den Client wortlos weiter"
+        );
+    }
+
+    #[test]
+    fn ein_tagealter_stillstand_wird_nicht_automatisch_aufgenommen() {
+        assert!(!stillstand_erlaubt_wiederaufnahme(chrono::Duration::hours(25)));
+        assert!(!stillstand_erlaubt_wiederaufnahme(chrono::Duration::days(3)));
+    }
+
+    #[test]
+    fn die_flugdauer_entscheidet_nicht_mehr_ueber_die_wiederaufnahme() {
+        // ⚠ Gegen die Rückkehr des Fehlers: Ein Vergleich von `started_at`
+        // gegen eine Stundenzahl ist genau das, was THY77 gekostet hat.
+        let q = ohne_leerraum(LIB_QUELLE);
+        // ⚠ Die Nadel wird zur LAUFZEIT zusammengesetzt. Stünde sie als ein
+        // Stück im Quelltext, fände der Wächter sich selbst und wäre immer
+        // rot — er hätte nie etwas bewiesen. (Beim ersten Lauf genau passiert.)
+        let nadel = format!(
+            "{}{}{}",
+            "Utc::now()-persisted.", "started_at>chrono::", "Duration::hours"
+        );
+        assert!(
+            !q.contains(&nadel),
+            "die Wiederaufnahme entscheidet wieder nach der FLUGDAUER — \
+             genau der Fehler, der THY77 gekostet hat"
+        );
+    }
+
+    #[test]
+    fn vor_der_server_auskunft_wird_nichts_geloescht() {
+        // ⚠ Der zweite Teil des Schadens: Die alte Grenze hat die Datei
+        // nicht nur ignoriert, sondern GELÖSCHT. Damit war der Flug auch
+        // durch einen zweiten Neustart nicht mehr zu retten.
+        let q = ohne_leerraum(LIB_QUELLE);
+        let start = q
+            .find("asyncfntry_resume_flight")
+            .expect("try_resume_flight nicht gefunden");
+        let bis_server = q[start..]
+            .find("client.get_pirep")
+            .expect("Server-Abfrage nicht gefunden");
+        assert!(
+            !q[start..start + bis_server].contains("clear_persisted_flight"),
+            "es wird gelöscht, BEVOR der Server gefragt wurde"
+        );
+    }
+
+    #[test]
+    fn im_laufenden_flug_gibt_es_ein_lebenszeichen() {
+        // ⚠ Ohne das ist der Stillstand wertlos: Die Datei wird sonst nur
+        // bei Ereignissen geschrieben, und im Reiseflug passiert stundenlang
+        // keines. Ihr Zeitstempel waere dann die Abflugzeit — und damit
+        // entschiede wieder die FLUGDAUER, nur unter neuem Namen.
+        let q = ohne_leerraum(LIB_QUELLE);
+        // ⚠ Nadel zur LAUFZEIT zusammensetzen — siehe `nadel_hinweis()`.
+        let nadel = format!(
+            "{}{}",
+            "letztes_lebenszeichen=Some(jetzt);", "save_active_flight(&app,&flight);"
+        );
+        assert!(
+            q.contains(&nadel),
+            "der Positions-Worker frischt den gespeicherten Flug nicht auf"
+        );
+    }
+
+    #[test]
+    fn eine_zu_lange_stille_datei_blockiert_die_suche_nicht() {
+        // ⚠ Sackgasse aus der eigenen QS: Die Wiederaufnahme lehnt bei
+        // Stillstand ab und loescht bewusst nicht — trete die Suche dann
+        // trotzdem fuer diese Datei zurueck, wird der verwaiste Flug NIE
+        // mehr angeboten.
+        let q = ohne_leerraum(LIB_QUELLE);
+        let start = q
+            .find("asyncfnflight_discover_resumable")
+            .expect("flight_discover_resumable nicht gefunden");
+        let ende = q[start..]
+            .find("client.get_user_pireps_in_progress")
+            .expect("Server-Weg nicht gefunden");
+        assert!(
+            q[start..start + ende].contains("stillstand_erlaubt_wiederaufnahme(stillstand)"),
+            "die Suche tritt fuer JEDE vorhandene Datei zurueck — auch fuer eine, \
+             die gar nicht mehr aufgenommen wird"
+        );
+    }
+
+    #[test]
+    fn der_zeitstempel_wird_beim_schreiben_gesetzt() {
+        // Wird er nur beim Aufrufer gesetzt, vergisst ihn die nächste
+        // Schreibstelle — und die Datei sieht alt aus, obwohl sie frisch ist.
+        let q = ohne_leerraum(LIB_QUELLE);
+        let start = q
+            .find("fnwrite_persisted_flight")
+            .expect("write_persisted_flight nicht gefunden");
+        let ende = start + 600;
+        assert!(
+            q[start..ende.min(q.len())].contains("flight.zuletzt_geschrieben=Some(Utc::now())"),
+            "der Schreiber stempelt den Zeitpunkt nicht selbst"
+        );
     }
 }

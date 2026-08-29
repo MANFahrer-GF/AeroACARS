@@ -110,7 +110,16 @@ export function ResumeFlightBanner({
     if (activeFlight) return;
     if (mode.kind !== "idle") return;
     let cancelled = false;
-    void (async () => {
+    let timer: number | undefined;
+    // ⚠ Bis v1.7.9 war das EIN Versuch, dessen Fehler stumm verschluckt wurde
+    // (`catch { /* ignore */ }`), und der Effect lief nie erneut — seine
+    // Abhängigkeiten ändern sich beim Anmelden nicht. Lief die Suche eine
+    // Sekunde zu früh, meldete das Backend `not_logged_in`, und der verwaiste
+    // Flug war für die ganze Sitzung unauffindbar. Ohne jede Spur für den
+    // Piloten: Er sah nur seinen Flug als "buchbar".
+    const VERSUCHE = 5;
+    const ABSTAND_MS = 2000;
+    void (async function suchen(versuch = 1): Promise<void> {
       try {
         const list = await invoke<ResumableFlight[]>(
           "flight_discover_resumable",
@@ -125,12 +134,26 @@ export function ResumeFlightBanner({
             busy: false,
           });
         }
-      } catch {
-        // ignore
+      } catch (err) {
+        if (cancelled) return;
+        if (versuch < VERSUCHE) {
+          // Typischer Fall: Die Sitzung steht noch nicht. Nachfassen, statt
+          // aufzugeben — der Flug des Piloten hängt daran.
+          timer = window.setTimeout(() => void suchen(versuch + 1), ABSTAND_MS);
+          return;
+        }
+        // Nach dem letzten Versuch wenigstens eine Spur hinterlassen. Ein
+        // stummer Fehlschlag ist hier das Schlimmste: Der Pilot glaubt, es
+        // gebe keinen Flug zum Aufnehmen.
+        console.warn(
+          "[resume] Suche nach unterbrochenem Flug endgültig fehlgeschlagen:",
+          err,
+        );
       }
     })();
     return () => {
       cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [activeFlight, mode.kind]);
 

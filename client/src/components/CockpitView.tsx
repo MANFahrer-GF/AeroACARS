@@ -7,7 +7,6 @@ import type {
   LoginResult,
   SimSnapshot,
 } from "../types";
-import { ResumeFlightBanner } from "./ResumeFlightBanner";
 import { ActiveFlightPanel } from "./ActiveFlightPanel";
 import { StableApproachBanner } from "./StableApproachBanner";
 
@@ -267,11 +266,12 @@ export function CockpitView({
           into ActiveFlightPanel's own action row. */}
       {activeFlight.was_just_resumed && quickActionRow}
       {activeFlight.was_just_resumed && weatherLoadToast}
-      <ResumeFlightBanner
-        activeFlight={activeFlight}
-        onAdopted={setActiveFlight}
-        onCancelled={() => setActiveFlight(null)}
-      />
+      {/* ⚠ Der Wiederaufnahme-Banner stand bis v1.7.9 HIER — und damit in
+          einem Zweig, den `if (!activeFlight) return …` (weiter oben) gar
+          nicht erreicht. Seine Suche nach verwaisten Flügen läuft aber nur
+          OHNE aktiven Flug. Zwei Bedingungen, die sich ausschließen: Die
+          Suche konnte nie laufen. Dazu lebte er nur, solange der Cockpit-
+          Reiter offen war. Er hängt jetzt im App-Rahmen. */}
 
       {!activeFlight.was_just_resumed && (
         <DivertBanner

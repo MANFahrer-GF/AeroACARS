@@ -8,6 +8,7 @@ import {
 } from "./lib/chatEinstellungen";
 import { LoginPage } from "./components/LoginPage";
 import { CockpitView } from "./components/CockpitView";
+import { ResumeFlightBanner } from "./components/ResumeFlightBanner";
 import { BriefingView } from "./components/BriefingView";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ActivityLogPanel } from "./components/ActivityLogPanel";
@@ -803,6 +804,25 @@ function App() {
           Streamer + listen('pirep_auto_filed')-Event-Subscription in
           CockpitView. Torbens Bug war dort schon gelöst, nur in unserer
           v0.13.0-Branch nicht (wurde von v0.12.4-Basis abgezweigt). */}
+
+      {/* Wiederaufnahme eines unterbrochenen Fluges — REITERUNABHÄNGIG.
+          ⚠ Bis v1.7.9 hing das im CockpitView, und zwar in dessen Zweig MIT
+          aktivem Flug. Zwei Folgen, beide am 28.08.2026 an THY77 sichtbar
+          geworden:
+            1. Die Suche nach einem verwaisten Flug auf phpVMS läuft nur
+               OHNE aktiven Flug — sie konnte dort also nie laufen.
+            2. Selbst der Disk-Resume zeigte sich nur, solange der Pilot den
+               Cockpit-Reiter offen hatte. Michel stand auf "Briefing", dem
+               Reiter nach dem Start, und sah gar nichts.
+          Hier oben gilt beides nicht mehr. Der Banner ist ohnehin eine
+          Überlagerung und braucht keinen Platz im Seiteninhalt. */}
+      {status.kind === "loggedIn" && (
+        <ResumeFlightBanner
+          activeFlight={activeFlight}
+          onAdopted={setActiveFlight}
+          onCancelled={() => setActiveFlight(null)}
+        />
+      )}
 
       {status.kind === "loggedIn" && tab === "cockpit" && (
         <CockpitView
