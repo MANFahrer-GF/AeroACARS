@@ -2272,7 +2272,23 @@ fn szenerie_anfordern_fuer(app: &AppHandle, icaos: &[String]) {
 /// ⚠ Nur uebernehmen, wenn noch nichts da ist ODER ein anderer Platz
 /// geliefert wurde. Sonst wuerde eine spaetere, leere Auskunft eine
 /// gute ueberschreiben.
-fn szenerie_auskunft_uebernehmen(app: &AppHandle, flight: &Arc<ActiveFlight>) {
+fn szenerie_auskunft_uebernehmen(
+    app: &AppHandle,
+    flight: &Arc<ActiveFlight>,
+    simulator: sim_core::Simulator,
+) {
+    // ⚠ NUR wenn wirklich MSFS fliegt.
+    //
+    // Der Block hier haengt an `cfg(target_os = "windows")`, und darunter
+    // faellt auch ein X-Plane-Pilot auf einem Windows-Rechner. Ohne diese
+    // Abfrage bekaeme dessen Flug die Diagnose des UNTAETIGEN
+    // MSFS-Adapters angeheftet — typisch "keine_antwort". Das waere nicht
+    // nur falsch, es wuerde ausgerechnet die Statistik verfaelschen, mit
+    // der das MSFS-Problem eingekreist wird: X-Plane-Fluege zaehlten als
+    // MSFS-Fehlschlaege.
+    if szenerie_bahn::quelle_fuer(simulator) != szenerie_bahn::Quelle::MsfsFacility {
+        return;
+    }
     #[cfg(target_os = "windows")]
     {
         let (neu, diagnose, kennung) = {
@@ -25261,7 +25277,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             //
             // Billig: ein Mutex und ein Vergleich je Tick, und nur
             // solange noch nichts abgelegt ist.
-            szenerie_auskunft_uebernehmen(&app, &flight);
+            szenerie_auskunft_uebernehmen(&app, &flight, snap.simulator);
 
             let phase_change = step_flight(&flight, &snap);
 
@@ -52565,10 +52581,58 @@ mod szenerie_status_tests {
 
     #[test]
     fn eine_lieferung_ohne_bahnen_ist_ein_eigener_fall() {
+        // ⚠ Der Wert kommt aus der ECHTEN Formatierung, nicht von Hand.
+        // Vorher stand hier `"ohne_bahnen"` als Zeichenkette — der Test
+        // waere gruen geblieben, waehrend die Produktion laengst
+        // `ohne_bahnen(rollwege=243)` liefert. Ein Test, der seine
+        // Erwartung selbst erfindet, prueft nur sich selbst.
+        let echt = sim_core::szenerie::SzenerieDiagnose::Geliefert {
+            icao: "LKTB".to_string(),
+            bahnen: 0,
+            rollwege: 243,
+        }
+        .kurz();
         let mut s = FlightStats::new();
         s.szenerie_auskunft = Some(auskunft(0));
-        s.szenerie_diagnose = Some("ohne_bahnen".to_string());
-        assert_eq!(szenerie_status(&s), "ohne_bahnen");
+        s.szenerie_diagnose = Some(echt.clone());
+        assert_eq!(szenerie_status(&s), echt);
+        assert!(echt.contains("243"), "die Rollwegzahl fehlt: {echt}");
+    }
+
+    #[test]
+    fn bei_x_plane_wird_die_msfs_diagnose_nicht_gestempelt() {
+        // ⚠ Der Abholer haengt an `cfg(target_os = "windows")` — darunter
+        // faellt auch ein X-Plane-Pilot auf einem Windows-Rechner. Ohne
+        // den Riegel bekaeme dessen Flug die Diagnose des untaetigen
+        // MSFS-Adapters, und X-Plane-Fluege zaehlten in der Auswertung
+        // als MSFS-Fehlschlaege.
+        let q = ohne_leerraum_lib();
+        let start = q
+            .find("fnszenerie_auskunft_uebernehmen")
+            .expect("Abholer nicht gefunden");
+        // ⚠ Nach dem ATTRIBUT suchen, nicht nach dem blossen Text: Der
+        // Erklaerkommentar darueber nennt `cfg(target_os = "windows")`
+        // ebenfalls, und ohne Leerraum trifft die Suche dann IHN. Das
+        // Fenster endete vor dem Riegel, und der Waechter war rot,
+        // obwohl der Riegel da war. Beim ersten Lauf genau passiert.
+        let bis_cfg = q[start..]
+            .find("#[cfg(target_os=\"windows\")]")
+            .expect("cfg-Attribut nicht gefunden");
+        let nadel = format!(
+            "{}{}",
+            "quelle_fuer(simulator)!=szenerie_bahn::", "Quelle::MsfsFacility"
+        );
+        assert!(
+            q[start..start + bis_cfg].contains(&nadel),
+            "der Abholer prueft den Simulator nicht, BEVOR er stempelt"
+        );
+    }
+
+    fn ohne_leerraum_lib() -> String {
+        include_str!("lib.rs")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
     }
 
     #[test]

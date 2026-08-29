@@ -115,7 +115,7 @@ pub enum ConnectionState {
 
 /// External-facing MSFS adapter. Cheap to clone-state; drives a
 /// background worker thread that talks to SimConnect.
-use crate::facility::SzenerieDiagnose;
+use sim_core::szenerie::SzenerieDiagnose;
 
 pub struct MsfsAdapter {
     shared: Arc<Shared>,
