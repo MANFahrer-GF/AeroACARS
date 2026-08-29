@@ -191,7 +191,22 @@ export interface RunwayDiagramV2Props {
   clearance_speed_kt?: number | null;
   /** Richtung der Ausfahrt. Wird nur gesetzt, wenn ZWEI unabhängige Größen
    *  übereinstimmen (fallender Kurs UND wachsender Querversatz in dieselbe
-   *  Richtung) — sonst null, siehe §8.3. */
+   *  Richtung) — sonst null, siehe §8.3.
+   *
+   *  ⚠ **`null` darf NICHT als Seite gezeichnet werden.** Die Räumungsmarke
+   *  sitzt bauartbedingt AUF einer Bahnkante — das ist ihre Aussage: „hier
+   *  hat das Flugzeug die Bahn verlassen". Ohne bekannte Seite gibt es diese
+   *  Aussage nicht, und die Marke gehört weg; an ihre Stelle tritt der
+   *  normale Endpunkt der Spur, dort wo die Räder wirklich waren.
+   *
+   *  Ein `side === "left" ? linke : rechte` macht aus „unbekannt" ein
+   *  „rechts raus". Genau so gebaut und live gesehen an EIN3641 (EGAC 04,
+   *  29.08.2026): Räumungspunkt bei 884 m, Seite null,
+   *  Räumungsgeschwindigkeit 1,16 kt — das Flugzeug war dort ausgerollt und
+   *  hat die Bahn nie verlassen. Betraf 6 von 58 Landungen im Bestand.
+   *
+   *  Wer diese Marke implementiert, prüft `clearance_side != null`, nicht
+   *  nur `clearance_point_m != null`. */
   clearance_side?: "left" | "right" | null;
 
   /** Spurweite des Hauptfahrwerks in Metern. Ohne sie zeigt die Querachse
@@ -352,6 +367,15 @@ Fehler auftaucht.
 - `pre_displaced_threshold`
 - `rollout_distance_m`
 - **v1.7.0:** `clearance_point_m`, `scoring_cutoff_m`, `clearance_speed_kt`, `clearance_side`, `track_width_m`, `track_width_source`, `wingspan_m`, `runway_width_m`, `min_edge_clearance_m`, `max_lateral_offset_m`, `lateral_samples`, `surface_paved`, `overrun_m`
+- **v1.7.8:** `bahn_geometrie_quelle` (`"szenerie"` | `"navdaten"`), `bahn_kurs_korrektur_grad`, `bahn_breiten_korrektur_m` — woher die Bahngeometrie stammt und wie weit sie von den Navdaten abwich
+- **v1.7.10:** `bahn_szenerie_status`, `sim_kennung`
+- **v1.7.11:** `bahn_szenerie_status` trägt jetzt die Zahlen (`ohne_bahnen(rollwege=243)`)
+
+⚠ **Die Felder ab v1.7.8 sind Diagnose, keine Anzeige.** Sie werden aus der
+Datenbank ausgewertet und stehen bewusst NICHT in `BAHN_FELDER` des Recorders
+(`mqttSubscriber.ts`) — jene Positivliste steuert, was in die **Anzeige**
+gepatcht wird. Wer eines dieser Felder je sichtbar machen will, muss es dort
+ergänzen, sonst kommt es nie an. Reihenfolge dann: Recorder, Webapp, Client-Tag.
 
 **`clearance_point_m` und `scoring_cutoff_m` sind nicht dasselbe.** Ein Flugzeug
 schwenkt hunderte Meter vor der Ausfahrt nach außen. `scoring_cutoff_m` markiert
