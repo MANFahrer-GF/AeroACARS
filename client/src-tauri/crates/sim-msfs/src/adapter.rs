@@ -2294,19 +2294,27 @@ impl Connection {
                 // stammen aus der 2024er-SDK-Doku. Ohne diese Kennung ist
                 // eine Ablehnung nicht einzuordnen.
                 let o = unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_OPEN) };
-                let name = o
-                    .szApplicationName
+                // Auch das Namensfeld erst kopieren. Es ist zwar
+                // byteweise ausgerichtet und `.iter()` daher zulaessig —
+                // aber ein Feld eines gepackten Typs ueberhaupt zu
+                // referenzieren ist die Sorte Zeile, die genau hier schon
+                // einmal die CI gekostet hat. Ein Array aus `char` ist
+                // `Copy`; das Kopieren kostet nichts.
+                let namensfeld = o.szApplicationName;
+                let name = namensfeld
                     .iter()
                     .take_while(|c| **c != 0)
                     .map(|c| *c as u8 as char)
                     .collect::<String>();
+                // ⚠ Erst kopieren, dann formatieren. `SIMCONNECT_RECV_OPEN`
+                // ist ein GEPACKTER Typ, und `format!` nimmt Referenzen auf
+                // seine Argumente — eine Referenz auf ein Feld darin ist
+                // nicht ausgerichtet (E0793). Ein Lesen BY VALUE ist
+                // erlaubt, wie ein paar Zeilen tiefer bei `exc.dwException`.
+                let major = o.dwApplicationVersionMajor;
+                let minor = o.dwApplicationVersionMinor;
                 Some(DispatchMsg::Open {
-                    kennung: format!(
-                        "{} {}.{}",
-                        name.trim(),
-                        o.dwApplicationVersionMajor,
-                        o.dwApplicationVersionMinor
-                    ),
+                    kennung: format!("{} {}.{}", name.trim(), major, minor),
                 })
             }
             sys::SIMCONNECT_RECV_ID_QUIT => Some(DispatchMsg::Quit),
