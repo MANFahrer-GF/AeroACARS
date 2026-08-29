@@ -2293,7 +2293,7 @@ impl Connection {
                 // verschieden, und die Feldnamen der Facility-Abfrage
                 // stammen aus der 2024er-SDK-Doku. Ohne diese Kennung ist
                 // eine Ablehnung nicht einzuordnen.
-                let o = unsafe { &*(p as *const sys::SIMCONNECT_RECV_OPEN) };
+                let o = unsafe { &*(p_data as *const sys::SIMCONNECT_RECV_OPEN) };
                 let name = o
                     .szApplicationName
                     .iter()
