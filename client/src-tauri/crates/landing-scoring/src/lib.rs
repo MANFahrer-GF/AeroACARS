@@ -208,6 +208,14 @@ pub struct LandingScoringInput {
     /// urspruenglichen Verbrauch misst den Umweg, nicht den Piloten.
     /// `None` = unbekannt, dann wird wie bisher verglichen.
     pub diverted: Option<bool>,
+    /// Wurde die Bahngeometrie gegen die SZENERIE des Simulators
+    /// geprueft und uebernommen?
+    ///
+    /// ⚠ Das entscheidet, ob eine schraeg laufende Rollspur unserer
+    /// Achse angelastet wird oder dem Piloten. Ist die Geometrie
+    /// bestaetigt, ist sie nicht mehr verdaechtig — dann ist eine Spur
+    /// am Bahnrand genau das, was bewertet werden soll.
+    pub bahn_geometrie_aus_szenerie: Option<bool>,
     // Phase 3 hook (Flare-Sub-Score kommt in Phase 3/F6).
     pub flare_quality_score: Option<u8>,
     /// v0.7.17 (N-002): ICAO type designator des geflogenen
@@ -395,6 +403,7 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
                     _ => None,
                 },
                 runway_geometry_trusted: input.runway_geometry_trusted,
+                bahn_geometrie_aus_szenerie: input.bahn_geometrie_aus_szenerie,
                 proben: input.bahn_proben,
                 // Der Winkel wird dort gerechnet, wo die Spur liegt
                 // (lib.rs), nicht hier — die Achse bekommt das Ergebnis.
@@ -914,6 +923,7 @@ mod tests {
     fn voll_besetzter_eingang() -> LandingScoringInput {
         LandingScoringInput {
             diverted: None,
+            bahn_geometrie_aus_szenerie: None,
             bahn_achsen_abweichung_grad: None,
             bahn_achsen_kreuzt_mitte: None,
             bahn_achsen_groesster_betrag_m: None,

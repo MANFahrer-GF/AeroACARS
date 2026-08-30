@@ -16493,6 +16493,17 @@ fn scoring_eingang(
         // abgesicherte Erkennung; hier wird sie nur gelesen, nicht ein
         // zweites Mal hergeleitet.
         diverted: Some(stats.divert_hint.is_some()),
+        // ⚠ Entscheidet, ob eine schraege Rollspur unserer Achse oder dem
+        // Piloten angelastet wird. Ist die Geometrie aus der Szenerie
+        // bestaetigt, ist eine Landung am Bahnrand genau das, was
+        // bewertet werden soll — siehe die Begruendung an der
+        // Achsenpruefung in sub_bahndisziplin.
+        bahn_geometrie_aus_szenerie: Some(
+            stats
+                .szenerie_uebernahme
+                .as_ref()
+                .is_some_and(|b| !b.uebernommen.is_empty()),
+        ),
         // v0.7.17 (N-002): Aircraft-ICAO fuer den aircraft-category-
         // sensitiven Bahn-Score. None → Light-Default-Schwellen
         // (konservativ). Das Muster kommt aus `muster_fuer_landung`,
@@ -48894,6 +48905,7 @@ mod v0_16_6_bush_completeness_tests {
                     belag: Some(landing_scoring::belag::Belag::Befestigt),
                     airport_source: Some("runway_match"),
                     runway_geometry_trusted: Some(true),
+                    bahn_geometrie_aus_szenerie: None,
                     proben: Some(30),
                 },
             );

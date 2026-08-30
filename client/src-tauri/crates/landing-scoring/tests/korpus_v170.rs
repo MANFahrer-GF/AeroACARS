@@ -170,6 +170,7 @@ fn korpus_nachrechnung() {
             belag: Some(belag_aus_angabe(Some(&z.belag))),
             airport_source: Some("runway_match"),
             runway_geometry_trusted: Some(true),            achsen_kreuzt_mitte: None,
+            bahn_geometrie_aus_szenerie: None,
             achsen_groesster_betrag_m: None,
             achsen_abweichung_grad: None,
         proben: Some(z.proben),

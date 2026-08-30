@@ -320,6 +320,11 @@ pub struct BahndisziplinInput {
     pub airport_source: Option<&'static str>,
     /// Muss `Some(true)` sein, sonst Skip.
     pub runway_geometry_trusted: Option<bool>,
+    /// Wurde die Bahngeometrie gegen die Szenerie des Simulators
+    /// geprueft? Siehe die Begruendung an der Achsenpruefung weiter
+    /// unten — davon haengt ab, ob eine schraege Spur unserer Achse oder
+    /// dem Piloten angelastet wird.
+    pub bahn_geometrie_aus_szenerie: Option<bool>,
     /// Anzahl der Positionsproben im Messfenster. Unter 3 ist die Aussage
     /// nicht belastbar.
     pub proben: Option<usize>,
@@ -398,23 +403,55 @@ pub fn sub_bahndisziplin(input: &BahndisziplinInput) -> SubScoreEntry {
     // ── Lage des äusseren Rades ──────────────────────────────────────
     let halbe = breite / 2.0;
 
-    // Stimmt die ACHSE? Ein rollendes Flugzeug folgt der Mittellinie —
-    // läuft die Spur schräg dazu, ist unsere Achse falsch, nicht die Spur.
-    // Siehe `ACHSE_FRAGWUERDIG_AB_GRAD` (FACT 19, 24.08.2026).
-    if let Some(winkel) = input.achsen_abweichung_grad {
-        let befund = AchsenBefund {
-            winkel_grad: winkel,
-            // Fehlen die beiden Begleitwerte (alte Datensaetze), bleibt es
-            // beim reinen Winkel — dann ist `kreuzt_mitte` falsch und die
-            // Ausnahme greift nicht. Lieber uebersprungen als zu Unrecht
-            // benotet.
-            kreuzt_mitte: input.achsen_kreuzt_mitte.unwrap_or(false),
-            groesster_betrag_m: input.achsen_groesster_betrag_m.unwrap_or(f64::INFINITY),
-        };
-        if achse_fragwuerdig(befund, Some(breite)) {
-            return SubScoreEntry::skipped(KEY, LABEL, "runway_axis_mismatch");
-        }
-    }
+    // ── Die Achse beschuldigt nicht mehr die Bahn (v1.7.12) ─────────
+    //
+    // # Was hier bis v1.7.11 geschah
+    //
+    // Lief die Rollspur schräg zu unserer Achse, wurde die BEWERTUNG
+    // ÜBERSPRUNGEN — Begründung: „dann ist unsere Achse falsch, nicht
+    // die Spur." Für eine falsch kartierte Bahn stimmt das (FACT 19,
+    // EDHE). Allgemein stimmt es nicht.
+    //
+    // # Warum die Regel nicht zu retten war
+    //
+    // Ein Pilot, der neben der Mitte aufsetzt, an den Rand läuft oder
+    // die Bahn verlässt, erzeugt DIESELBE schräge Spur wie eine falsch
+    // kartierte Bahn. Nachgeprüft an beiden Fällen:
+    //
+    //   FACT 19 (Datenfehler):  −24,6 m → −35,3 m
+    //   ITY81   (so geflogen):  +28,9 m → +38,3 m
+    //
+    // Einseitig, groß, ohne Kreuzung der Mittellinie — in beiden Fällen.
+    // Aus der Spur ALLEIN sind sie nicht zu trennen. Auch `kreuzt_mitte`
+    // hilft nicht; das Feld wurde befüllt und hat nie etwas entschieden.
+    //
+    // # Die Regel jetzt
+    //
+    // Bewertet wird das FLUGVERHALTEN — immer. „Du bist abgedriftet" ist
+    // die Aussage, die diese Achse machen soll, und sie darf nicht daran
+    // scheitern, dass die Bewertung ihre eigenen Daten anzweifelt. Wer
+    // am Rand landet, kommt nicht dadurch davon.
+    //
+    // Der Zweifel an den Daten verschwindet damit nicht — er wird zum
+    // HINWEIS statt zum Verzicht. Und er hat einen richtigen Ort: den
+    // Abgleich gegen die Szenerie des Simulators (v1.7.8/v1.7.12). Ist
+    // die Geometrie von dort bestätigt, gibt es gar keinen Zweifel mehr.
+    //
+    // ⚠ Die Schranke `MESSUNG_FRAGWUERDIG_AB_M` bleibt: Ein Versatz von
+    // 513 m (EDDH 15) ist keine Landung am Rand, sondern eine falsch
+    // zugeordnete Bahn. Dort geht es nicht um Zweifel, sondern um
+    // Unmöglichkeit.
+    let achse_unbestaetigt = !input.bahn_geometrie_aus_szenerie.unwrap_or(false)
+        && input.achsen_abweichung_grad.is_some_and(|winkel| {
+            achse_fragwuerdig(
+                AchsenBefund {
+                    winkel_grad: winkel,
+                    kreuzt_mitte: input.achsen_kreuzt_mitte.unwrap_or(false),
+                    groesster_betrag_m: input.achsen_groesster_betrag_m.unwrap_or(f64::INFINITY),
+                },
+                Some(breite),
+            )
+        });
 
     // Plausibilität vor Bewertung: siehe MESSUNG_FRAGWUERDIG_AB_M.
     if versatz.abs() > halbe + MESSUNG_FRAGWUERDIG_AB_M {
@@ -460,7 +497,15 @@ pub fn sub_bahndisziplin(input: &BahndisziplinInput) -> SubScoreEntry {
         (20, Band::Bad, "off_pavement")
     };
 
-    SubScoreEntry::scored(KEY, LABEL, punkte, wert, grund, band)
+    let mut eintrag = SubScoreEntry::scored(KEY, LABEL, punkte, wert, grund, band);
+    // Der Zweifel als HINWEIS, nicht als Verzicht. Siehe die Begruendung
+    // weiter oben: Die Note gilt dem Flugverhalten; ob die Bahndaten
+    // stimmen, ist eine getrennte Aussage — und sie ist beantwortbar,
+    // sobald die Szenerie des Simulators antwortet.
+    if achse_unbestaetigt {
+        eintrag.warning = Some("runway_axis_unverified".to_string());
+    }
+    eintrag
 }
 
 #[cfg(test)]
@@ -476,7 +521,9 @@ mod tests {
             overrun_m: None,
             belag: Some(Belag::Befestigt),
             airport_source: Some("runway_match"),
-            runway_geometry_trusted: Some(true),            achsen_kreuzt_mitte: None,
+            runway_geometry_trusted: Some(true),
+            bahn_geometrie_aus_szenerie: None,
+            achsen_kreuzt_mitte: None,
             achsen_groesster_betrag_m: None,
             achsen_abweichung_grad: None,
         proben: Some(30),
@@ -840,9 +887,15 @@ mod achse_tests {
     }
 
     #[test]
-    fn alter_datensatz_ohne_begleitwerte_wird_uebersprungen() {
-        // `achsen_kreuzt_mitte` und `achsen_groesster_betrag_m` fehlen —
-        // dann darf die Manoever-Ausnahme NICHT greifen.
+    fn alter_datensatz_ohne_begleitwerte_wird_gewarnt_nicht_uebersprungen() {
+        // ⚠ v1.7.12: Frueher wurde hier UEBERSPRUNGEN. Das war der
+        // Fehler — eine Landung am Bahnrand kam dadurch ohne Note davon.
+        //
+        // Bewertet wird jetzt immer das Flugverhalten; der Zweifel an den
+        // Bahndaten wird zum Hinweis. Fehlen die Begleitwerte (alte
+        // Datensaetze), bleibt der Hinweis erhalten — die Aussage ist
+        // dann „wir haben die Achse nicht bestaetigt", nicht „wir
+        // bewerten nicht".
         let input = BahndisziplinInput {
             max_querversatz_m: Some(9.0),
             bahnbreite_m: Some(60.0),
@@ -857,7 +910,60 @@ mod achse_tests {
             ..Default::default()
         };
         let e = sub_bahndisziplin(&input);
-        assert_eq!(e.reason.as_deref(), Some("runway_axis_mismatch"));
+        assert!(!e.skipped, "es wird wieder uebersprungen statt bewertet");
+        assert_eq!(e.warning.as_deref(), Some("runway_axis_unverified"));
+    }
+
+    #[test]
+    fn wer_am_rand_landet_bekommt_eine_note() {
+        // ⚠ DER Fall: ITY81, LIRF 16L, A220, 30.08.2026. Aufsetzen
+        // 28,9 m neben der Mittellinie einer 60-m-Bahn, groesster
+        // Versatz 37,2 m, Randabstand -10,6 m. Die Bewertung nannte das
+        // einen Datenfehler und uebersprang sie — der Pilot ist aber
+        // wirklich so aufgesetzt, und genau das soll die Achse zeigen.
+        let input = BahndisziplinInput {
+            max_querversatz_m: Some(37.2),
+            bahnbreite_m: Some(60.0),
+            spurweite_m: Some(6.0),
+            belag: Some(Belag::Befestigt),
+            airport_source: Some("runway_match"),
+            runway_geometry_trusted: Some(true),
+            proben: Some(85),
+            achsen_abweichung_grad: Some(3.9),
+            achsen_kreuzt_mitte: Some(false),
+            achsen_groesster_betrag_m: Some(37.2),
+            ..Default::default()
+        };
+        let e = sub_bahndisziplin(&input);
+        assert!(!e.skipped, "eine Landung am Bahnrand wurde nicht bewertet");
+        assert!(
+            e.score < 50,
+            "37 m Versatz auf einer 60-m-Bahn muessen deutlich Punkte kosten, waren aber {}",
+            e.score
+        );
+    }
+
+    #[test]
+    fn eine_bestaetigte_achse_traegt_keinen_hinweis() {
+        // Kommt die Geometrie aus der Szenerie, ist sie geprueft — dann
+        // gibt es am Datenstand nichts zu zweifeln.
+        let input = BahndisziplinInput {
+            max_querversatz_m: Some(37.2),
+            bahnbreite_m: Some(60.0),
+            spurweite_m: Some(6.0),
+            belag: Some(Belag::Befestigt),
+            airport_source: Some("runway_match"),
+            runway_geometry_trusted: Some(true),
+            bahn_geometrie_aus_szenerie: Some(true),
+            proben: Some(85),
+            achsen_abweichung_grad: Some(3.9),
+            achsen_kreuzt_mitte: Some(false),
+            achsen_groesster_betrag_m: Some(37.2),
+            ..Default::default()
+        };
+        let e = sub_bahndisziplin(&input);
+        assert!(!e.skipped);
+        assert!(e.warning.is_none(), "bestaetigte Achse traegt einen Zweifel");
     }
 
     #[test]
