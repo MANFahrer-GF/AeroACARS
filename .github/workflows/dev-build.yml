@@ -22,10 +22,10 @@ jobs:
   dev-build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
 
@@ -49,7 +49,7 @@ jobs:
         run: npx tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Upload installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: AeroACARS-dev-build-windows-${{ github.sha }}
           path: client/src-tauri/target/release/bundle/nsis/*.exe
@@ -58,10 +58,10 @@ jobs:
   dev-build-macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
 
@@ -85,7 +85,7 @@ jobs:
         run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Upload DMG
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: AeroACARS-dev-build-macos-${{ github.sha }}
           path: client/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg

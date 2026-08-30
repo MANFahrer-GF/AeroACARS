@@ -59,7 +59,7 @@ jobs:
     name: ${{ matrix.os_label }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Configure CMake
         working-directory: xplane-plugin
@@ -89,7 +89,7 @@ jobs:
           file build/AeroACARS/64/${{ matrix.xpl_name }}
 
       - name: Upload .xpl artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: aeroacars-${{ matrix.xpl_name }}
           path: xplane-plugin/build/AeroACARS/64/${{ matrix.xpl_name }}

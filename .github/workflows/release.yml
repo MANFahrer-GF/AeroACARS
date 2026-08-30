@@ -30,10 +30,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
 
@@ -160,10 +160,10 @@ jobs:
     name: Build — ${{ matrix.runner-label }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
 
@@ -281,7 +281,7 @@ jobs:
     name: Plugin — ${{ matrix.os_label }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Configure CMake
         working-directory: xplane-plugin
@@ -302,7 +302,7 @@ jobs:
           ls -la build/AeroACARS/64/
 
       - name: Upload .xpl artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: xplane-plugin-${{ matrix.xpl_name }}
           path: xplane-plugin/build/AeroACARS/64/${{ matrix.xpl_name }}
@@ -320,22 +320,22 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Download Windows .xpl
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: xplane-plugin-win.xpl
           path: pkg/AeroACARS/64
 
       - name: Download macOS .xpl
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: xplane-plugin-mac.xpl
           path: pkg/AeroACARS/64
 
       - name: Download Linux .xpl
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: xplane-plugin-lin.xpl
           path: pkg/AeroACARS/64
@@ -424,7 +424,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Promote draft → public
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
