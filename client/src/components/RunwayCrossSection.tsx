@@ -242,7 +242,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
   );
 
   const xy = (s: { laengs_m: number; quer_m: number }) => ({
-    x: p.projektion.mToX(s.laengs_m),
+    x: p.projektion.mAbBahnanfangZuX(s.laengs_m),
     y: querZuY(s.quer_m),
   });
   const achsePunkte = punkte.map((s) => xy(s));
@@ -395,6 +395,10 @@ export function RunwayCrossSection(p: QueransichtProps) {
   const marken: Array<{ n: number; x: number; y: number; farbe: string }> = [
     {
       n: 1,
+      // ⚠ BLEIBT `mToX`: Der Aufsetzpunkt ist als einziger Wert der
+      // Gruppe ab der LANDESCHWELLE gemessen (`td_distance_from_
+      // threshold_m`, negativ wenn davor). Alle Spur-, Ausfahrt- und
+      // Raeumwerte kommen ab BAHNANFANG — siehe `mAbBahnanfangZuX`.
       x: p.projektion.mToX(p.touchdownM),
       y: querZuY(p.touchdownOffsetM),
       farbe: p.tokens.tdPerfect,
@@ -430,7 +434,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
   if (maxProbe) {
     marken.push({
       n: 2,
-      x: p.projektion.mToX(maxProbe.laengs_m),
+      x: p.projektion.mAbBahnanfangZuX(maxProbe.laengs_m),
       y: querZuY(maxProbe.quer_m),
       farbe: p.tokens.tdWarn,
     });
@@ -453,7 +457,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
   if (p.clearanceM != null && p.clearanceSide != null) {
     marken.push({
       n: 3,
-      x: p.projektion.mToX(p.clearanceM),
+      x: p.projektion.mAbBahnanfangZuX(p.clearanceM),
       y: querZuY(p.clearanceSide === "left" ? -halbeBahnM : halbeBahnM),
       farbe: p.tokens.rollout,
     });
@@ -474,7 +478,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
   const raeumungsMarkeGezeichnet = p.clearanceM != null && p.clearanceSide != null;
   if (!raeumungsMarkeGezeichnet && (p.overrunM ?? 0) <= 0 && punkte.length >= 2) {
     const letzter = punkte[punkte.length - 1]!;
-    const x = p.projektion.mToX(letzter.laengs_m);
+    const x = p.projektion.mAbBahnanfangZuX(letzter.laengs_m);
     const y = querZuY(letzter.quer_m);
     // Nur, wenn sie nicht mit einer bestehenden Marke zusammenfällt.
     //
@@ -673,7 +677,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
 
       {/* Ausfahrten: Beschriftung ausserhalb, Stummel am Rand. */}
       {ausfahrten.map((a, i) => {
-        const x = p.projektion.mToX(a.laengs_m);
+        const x = p.projektion.mAbBahnanfangZuX(a.laengs_m);
         const oben = a.seite === "left";
         const an = genutzt(a);
         return (
@@ -834,7 +838,7 @@ export function RunwayCrossSection(p: QueransichtProps) {
         .map((s, i) => (
           <circle
             key={i}
-            cx={p.projektion.mToX(s.laengs_m)}
+            cx={p.projektion.mAbBahnanfangZuX(s.laengs_m)}
             cy={querZuY(s.quer_m)}
             r={1.8}
             fill={bandFarbe}

@@ -83,9 +83,16 @@ describe("§8.4 — eine Projektion für beide Ansichten", () => {
         projektion={p}
         runwayWidthM={46}
         trackWidthM={7.59}
+        // ⚠ EDDH 23 hat 156 m versetzte Schwelle, und die beiden Werte
+        // haben VERSCHIEDENE Bezugspunkte: `laengs_m` ab Bahnanfang,
+        // `touchdownM` ab Landeschwelle. Derselbe Ort ist also 656 bzw.
+        // 500 — vorher standen hier zweimal 500, und der Test prueft
+        // seitdem, dass beide Ansichten denselben Meter treffen.
+        // Siehe docs/spec/runway-diagram-v2.contract.md, Abschnitt
+        // „Zwei Bezugspunkte".
         samples={[
-          { laengs_m: 500, quer_m: -8.7 },
-          { laengs_m: 1000, quer_m: 26.8 },
+          { laengs_m: 656, quer_m: -8.7 },
+          { laengs_m: 1156, quer_m: 26.8 },
         ]}
         touchdownM={500}
         touchdownOffsetM={-8.7}

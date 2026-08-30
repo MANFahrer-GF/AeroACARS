@@ -54,6 +54,30 @@ export interface Projektion {
    * Zeichnen: Ein Wert jenseits der Bahn würde sonst aus dem Bild laufen.
    */
   mToXUnbegrenzt: (m: number) => number;
+  /**
+   * Wie `mToX`, aber für Werte, die **ab BAHNANFANG** gemessen sind.
+   *
+   * # Warum es diese zweite Funktion gibt
+   *
+   * Der Payload führt BEIDE Bezugspunkte nebeneinander, und nirgends stand
+   * geschrieben, welcher wo gilt:
+   *
+   *   ab Landeschwelle:  `td_distance_from_threshold_m`, `aim_point_m`
+   *   ab Bahnanfang:     `lateral_samples[].laengs_m`, `mess_ende_laengs_m`,
+   *                      `scoring_cutoff_m`, `clearance_point_m`
+   *
+   * Auf Bahnen ohne versetzte Schwelle sind beide gleich — deshalb fiel es
+   * nie auf. Auf TJPS 12 (573 m versetzte Schwelle) lagen Aufsetzpunkt und
+   * Rollspur exakt um diese 573 m auseinander: Der Pilot sah eine Marke,
+   * die mit der Spur nicht zusammenhing, und einen Räumpunkt 573 m zu weit
+   * rechts. Gemeldet an Flug LAN273 (30.08.2026).
+   *
+   * ⚠ Der eigentliche Fehler war, dass `mToX` BEIDE Bedeutungen annimmt,
+   * ohne zu fragen. Deshalb steht die Bedeutung jetzt im NAMEN: Wer einen
+   * Wert zeichnet, muss sich entscheiden, und ein Griff zur falschen
+   * Funktion ist beim Lesen sichtbar statt still.
+   */
+  mAbBahnanfangZuX: (m: number) => number;
   /** X der Landeschwelle. Bei versetzter Schwelle rechts vom Bahnanfang. */
   thresholdX: number;
   /** X des physischen Bahnanfangs (= linker Rand der Fläche). */
@@ -116,9 +140,12 @@ export function erzeugeProjektion(e: ProjektionsEingang): Projektion {
   const thresholdX = e.padX + (0 - von) * pxProMeter;
   const mToXUnbegrenzt = (m: number) => thresholdX + m * pxProMeter;
   const mToX = (m: number) => mToXUnbegrenzt(Math.max(von, Math.min(bis, m)));
+  // Ab Bahnanfang gemessen: erst auf die Schwelle beziehen, dann zeichnen.
+  const mAbBahnanfangZuX = (m: number) => mToX(m - ddsM);
 
   return {
     mToX,
+    mAbBahnanfangZuX,
     mToXUnbegrenzt,
     thresholdX,
     // Bahnanfang und -ende liegen ausserhalb des Zeichenbereichs, sobald

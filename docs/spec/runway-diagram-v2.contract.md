@@ -225,6 +225,9 @@ export interface RunwayDiagramV2Props {
    *  Anfang und Ende — eine gerade Linie zwischen zwei Punkten verschweigt
    *  jede Korrektur und jedes Ausbrechen. Bei MPH 9 wurde so ein Ausschlag
    *  von 17 m sichtbar, den alle bisherigen Zahlen nicht zeigten. */
+  /** ⚠ `laengs_m` ist ab **BAHNANFANG** gemessen, nicht ab der
+   *  Landeschwelle. Siehe den Abschnitt „Zwei Bezugspunkte" weiter
+   *  unten — das ist der wichtigste Fallstrick dieses Vertrags. */
   lateral_samples?: Array<{ laengs_m: number; quer_m: number }> | null;
 
   /** Befestigt? Auf Gras- und Naturpisten entfällt die seitliche Bewertung,
@@ -543,3 +546,57 @@ Wartet auf User-Sign-off der QS-Round-1-Fixes oben.
 ## Tracker
 
 Live-Befund 2026-05-13 (Pilot-Client Screenshot, EDDK/24 TDZ-Hit aber Diagram-Größe unzureichend + VPS-Webapp zeigt anderes Layout). Display-only Polish nach v0.8.0-Core. Implementation auf `feat/v0.8.2-runway-diagram-v2`. Pilot-Release wartet auf User-„go" für v0.8.2.
+
+
+## ⚠ Zwei Bezugspunkte — und welcher wo gilt
+
+Der Payload fuehrt Laengsmasse mit **zwei verschiedenen Nullpunkten**
+nebeneinander. Bis v1.7.12 stand das nirgends geschrieben, und die
+Zeichnung hat beide gleich behandelt.
+
+**Ab LANDESCHWELLE** (negativ = davor, in der Zone der versetzten
+Schwelle):
+
+  * `td_distance_from_threshold_m`
+  * `aim_point_m`
+  * `tdz_end_m`
+
+**Ab BAHNANFANG** (immer positiv):
+
+  * `lateral_samples[].laengs_m`
+  * `mess_ende_laengs_m`
+  * `scoring_cutoff_m`
+  * `clearance_point_m`
+  * `runway_exits[].laengs_m`
+
+**Laengen, keine Positionen** (kein Bezugspunkt noetig):
+`runway_length_m` (volle Bahn), `td_tdz_length_m`, `rollout_distance_m`,
+`overrun_m`.
+
+### Warum das ein eigener Abschnitt ist
+
+Auf Bahnen **ohne** versetzte Schwelle sind beide Nullpunkte identisch.
+Deshalb stimmt fast jede Landung, und der Fehler zeigt sich nur dort, wo
+eine versetzte Schwelle existiert.
+
+Gemeldet an Flug **LAN273** (TJPS 12, 30.08.2026): 573 m versetzte
+Schwelle. Aufgesetzt wurde 337 m hinter dem Bahnanfang — die Zeichnung
+setzte die Aufsetzmarke bei −236 m (richtig) und die Rollspur bei +337 m
+(um 573 m zu weit rechts). Der Pilot sah eine Marke, die mit seiner Spur
+nicht zusammenhing, und einen Raeumpunkt 573 m hinter der Wahrheit.
+
+### Wie es abgesichert ist
+
+`runwayProjection` bietet **zwei** Funktionen, und die Bedeutung steht im
+Namen:
+
+  * `mToX(m)`             — Wert ist ab Landeschwelle gemessen
+  * `mAbBahnanfangZuX(m)` — Wert ist ab Bahnanfang gemessen
+
+Ein Griff zur falschen ist damit beim Lesen sichtbar statt still.
+
+Dazu die Invariante in `RunwayCrossSection.bezugspunkt.test.tsx`:
+**Aufsetzmarke und erste gemessene Spurprobe sind derselbe Ort** und
+muessen im Bild an derselben Stelle landen. Der Test liest beide
+Positionen aus der GEZEICHNETEN Grafik — ein erster Entwurf rechnete die
+Spurposition selbst nach und blieb deshalb auch mit dem Fehler gruen.
