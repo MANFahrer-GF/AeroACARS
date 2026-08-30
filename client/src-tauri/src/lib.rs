@@ -15360,10 +15360,10 @@ fn build_pirep_payload(
     let mut scoring_input = scoring_eingang(
         &stats,
         muster_fuer_landung(&stats, &flight.aircraft_icao),
-        Ausweichziel::Bekannt {
+        Some(Ausweichziel {
             eingereicht: effective_arr_icao,
             geplant: planned_arr_icao,
-        },
+        }),
     );
     // v0.10.0 (#runway-utilization-score): LDA-basierter
     // Bahn-Auslastungs-Score. Markiert weiter unten am
@@ -16065,10 +16065,10 @@ fn compute_aggregate_master_score(
     let mut scoring_input = scoring_eingang(
         stats,
         aircraft_icao,
-        Ausweichziel::Bekannt {
+        Some(Ausweichziel {
             eingereicht: arr_airport,
             geplant: geplantes_ziel,
-        },
+        }),
     );
     // v0.10.0: v2-RolloutInput-Felder mit-füllen damit der LDA-basierte
     // Sub-Score gerechnet wird (siehe spec docs/spec/v0.10.0-runway-
@@ -16497,31 +16497,22 @@ const SCORE_ALGORITHMUS_VERSION: u8 = 10;
 /// Werte; `Unbekannt` sagt das ausdruecklich, statt einen leeren String
 /// weiterzureichen, der wie ein Ziel aussieht.
 #[derive(Debug, Clone, Copy)]
-enum Ausweichziel<'a> {
-    /// Eingereichtes und geplantes Ziel sind bekannt.
-    Bekannt {
-        eingereicht: &'a str,
-        geplant: &'a str,
-    },
-    /// Der Aufrufer kennt die Ziele nicht (Vorschau, Diagnose, Test).
-    /// Dann wird die OFP-Treue wie bisher bewertet.
-    Unbekannt,
+struct Ausweichziel<'a> {
+    /// Das Ziel, gegen das der Flug eingereicht wird.
+    eingereicht: &'a str,
+    /// Das urspruenglich geplante Ziel.
+    geplant: &'a str,
 }
 
 impl Ausweichziel<'_> {
-    /// `Some(true)` nur bei einem eingereichten Ausweichflug.
+    /// Wurde ausgewichen?
     ///
-    /// ⚠ `None` heisst „unbekannt", nicht „kein Divert" — die
-    /// Sprit-Achse behandelt beides gleich, aber der Unterschied gehoert
-    /// trotzdem nicht verwischt.
-    fn ist_ausweichflug(self) -> Option<bool> {
-        match self {
-            Ausweichziel::Bekannt {
-                eingereicht,
-                geplant,
-            } => Some(!eingereicht.trim().eq_ignore_ascii_case(geplant.trim())),
-            Ausweichziel::Unbekannt => None,
-        }
+    /// ⚠ Als `Option` gefuehrt, weil nicht jeder Aufrufer beide Ziele
+    /// kennt (Vorschau, Diagnose, Test). `None` heisst „unbekannt",
+    /// nicht „kein Divert" — die Sprit-Achse behandelt beides gleich,
+    /// aber der Unterschied gehoert nicht verwischt.
+    fn ist_ausweichflug(ziel: Option<Self>) -> Option<bool> {
+        ziel.map(|z| !z.eingereicht.trim().eq_ignore_ascii_case(z.geplant.trim()))
     }
 }
 
@@ -16547,7 +16538,7 @@ impl Ausweichziel<'_> {
 fn scoring_eingang(
     stats: &FlightStats,
     muster: Option<&str>,
-    ausweichziel: Ausweichziel<'_>,
+    ausweichziel: Option<Ausweichziel<'_>>,
 ) -> landing_scoring::LandingScoringInput {
     landing_scoring::LandingScoringInput {
         // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang — siehe
@@ -16584,7 +16575,7 @@ fn scoring_eingang(
         //
         // Massgeblich ist dieselbe Regel wie im Nutzlast-Marker:
         // eingereichtes Ziel != geplantes Ziel.
-        diverted: ausweichziel.ist_ausweichflug(),
+        diverted: Ausweichziel::ist_ausweichflug(ausweichziel),
         // ⚠ Entscheidet, ob eine schraege Rollspur unserer Achse oder dem
         // Piloten angelastet wird. Ist die Geometrie aus der Szenerie
         // bestaetigt, ist eine Landung am Bahnrand genau das, was
@@ -17067,10 +17058,10 @@ where
     let mut scoring_input = scoring_eingang(
         stats,
         aircraft_icao,
-        Ausweichziel::Bekannt {
+        Some(Ausweichziel {
             eingereicht: effective_arr_icao,
             geplant: &flight.arr_airport,
-        },
+        }),
     );
     // v0.10.0 (#runway-utilization-score): LDA-basierten Bahn-Auslastungs-
     // Score aktivieren. Wenn alle benötigten Felder vorhanden → neuer
@@ -35141,10 +35132,10 @@ fn build_pirep_notes(
     let mut crate_input = scoring_eingang(
         stats,
         muster_fuer_landung(stats, &flight.aircraft_icao),
-        Ausweichziel::Bekannt {
+        Some(Ausweichziel {
             eingereicht: effective_arr_icao,
             geplant: &flight.arr_airport,
-        },
+        }),
     );
     // v0.10.0 (#runway-utilization-score): Shadow-Validation muss den
     // gleichen Algorithmus rechnen wie der echte PIREP-Pfad — sonst
@@ -45105,35 +45096,32 @@ mod divert_marker_tests {
     fn die_spritachse_folgt_dem_eingereichten_ziel_nicht_dem_verdacht() {
         // Echter Divert, kein Hinweis — muss uebersprungen werden.
         assert_eq!(
-            Ausweichziel::Bekannt {
+            Ausweichziel::ist_ausweichflug(Some(Ausweichziel {
                 eingereicht: "EDDV",
                 geplant: "EDDF"
-            }
-            .ist_ausweichflug(),
+            })),
             Some(true),
             "ein eingereichter Divert ohne Hinweis wurde nicht erkannt"
         );
         // Verdacht abgelehnt, planmaessig angekommen — muss bewertet werden.
         assert_eq!(
-            Ausweichziel::Bekannt {
+            Ausweichziel::ist_ausweichflug(Some(Ausweichziel {
                 eingereicht: "EDDF",
                 geplant: "EDDF"
-            }
-            .ist_ausweichflug(),
+            })),
             Some(false),
             "ein abgelehnter Verdacht darf die Achse nicht aussetzen"
         );
         // Schreibweise und Leerraum duerfen nichts entscheiden.
         assert_eq!(
-            Ausweichziel::Bekannt {
+            Ausweichziel::ist_ausweichflug(Some(Ausweichziel {
                 eingereicht: " eddf ",
                 geplant: "EDDF"
-            }
-            .ist_ausweichflug(),
+            })),
             Some(false)
         );
         // Unbekannt ist NICHT dasselbe wie "kein Divert".
-        assert_eq!(Ausweichziel::Unbekannt.ist_ausweichflug(), None);
+        assert_eq!(Ausweichziel::ist_ausweichflug(None), None);
     }
 
     #[test]
@@ -48630,7 +48618,7 @@ mod v0_16_6_bush_completeness_tests {
 
                             // Weg 2: die Bewertung, über denselben
                             // Eingang, den der Betrieb benutzt.
-                            let mut eingang = scoring_eingang(&stats, m, Ausweichziel::Unbekannt);
+                            let mut eingang = scoring_eingang(&stats, m, None);
                             fill_v2_rollout_fields(&mut eingang, &stats, "XXXX");
 
                             let b_spur = eingang.fahrwerk_spurweite_m.or_else(|| {
