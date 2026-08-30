@@ -98,9 +98,38 @@ describe("Feldkette der Bahndisziplin", () => {
     ).toEqual([]);
   });
 
-  it("trägt jedes Feld auch bis in die Webapp", () => {
+  /**
+   * Der Webapp-Teil — nur lokal, und das ist eine bewusste Grenze.
+   *
+   * ⚠ In der CI dieses Repos liegt das Schwester-Repo NICHT vor. Dieser
+   * Test übersprang seinen Webapp-Teil dann still und endete grün: Er
+   * las sich wie Deckung und war keine. Genau so ist am 30.08.2026
+   * `spur_nullpunkt_versatz_m` am Webapp-Mapper vorbeigelaufen.
+   *
+   * Die Deckung liegt seitdem dort, wo sie hingehört — im
+   * Schwester-Repo:
+   *
+   *   aeroacars-live/webapp/src/__tests__/mapperVollstaendig.test.ts
+   *   aeroacars-live/.github/workflows/ci.yml
+   *
+   * Jener Wächter leitet die Feldliste aus der ANZEIGE ab, die vom
+   * Client hersynchronisiert wird (`scripts/anzeige-sync.mjs`) — ein
+   * neues Feld dort verlangt drüben automatisch einen Mapper-Eintrag,
+   * ohne dass jemand eine zweite Liste pflegen muss.
+   *
+   * Hier bleibt der Test als LOKALE Schnellprüfung: Wer beide Bäume
+   * nebeneinander hat, sieht die Lücke sofort statt erst in der CI des
+   * anderen Repos. Fehlt der Baum, sagt er, dass er nichts geprüft hat,
+   * und wo die echte Prüfung läuft.
+   */
+  it("trägt jedes Feld auch bis in die Webapp (nur lokal)", () => {
     if (!existsSync(WEBAPP)) {
-      console.warn(`[Feldkette] Webapp nicht gefunden (${WEBAPP}) — nicht geprüft.`);
+      console.warn(
+        `[Feldkette] Schwester-Repo nicht da (${WEBAPP}) — der Webapp-Teil ` +
+          `wurde NICHT geprüft. Das ist in der CI dieses Repos der Normalfall; ` +
+          `die Deckung liegt in aeroacars-live (webapp mapperVollstaendig + ` +
+          `dessen eigene CI). Wer das hier für Deckung hält, irrt.`,
+      );
       return;
     }
     const text = readFileSync(
