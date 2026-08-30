@@ -125,6 +125,16 @@ export interface LandingRecord {
    * Wo die Bahn verlassen wurde — die Stelle, an der die Spur die Bahnkante
    * überschreitet und nicht zurückkommt. Das ist „Bahn geräumt".
    */
+  /**
+   * Um wie viele Meter die Längsmasse der Rollspur gegen die
+   * Landeschwelle verschoben sind.
+   *
+   * ⚠ NICHT die versetzte Schwelle — das ist eine andere Zahl. Ob die
+   * beiden Nullpunkte auseinanderfallen, entscheidet die Datenquelle;
+   * nur der Client weiss es. Siehe
+   * `BahnFelder::spur_nullpunkt_versatz_m`.
+   */
+  spur_nullpunkt_versatz_m?: number | null;
   clearance_point_m?: number | null;
   /**
    * Wo die **Bewertung** endet: der Beginn des Ausschwenkens zur Ausfahrt.

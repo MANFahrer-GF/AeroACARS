@@ -40,7 +40,14 @@ pub fn sub_g_force(peak_g: f32) -> SubScoreEntry {
     let value = format!("{:.2} G", peak_g);
 
     if peak_g < T_G_SMOOTH {
-        SubScoreEntry::scored("g_force", "landing.sub.g_force", 100, value, "smooth_g", Band::Good)
+        SubScoreEntry::scored(
+            "g_force",
+            "landing.sub.g_force",
+            100,
+            value,
+            "smooth_g",
+            Band::Good,
+        )
     } else if peak_g < T_G_FIRM {
         SubScoreEntry::scored(
             "g_force",
@@ -60,9 +67,23 @@ pub fn sub_g_force(peak_g: f32) -> SubScoreEntry {
             Band::Ok,
         )
     } else if peak_g < T_G_SEVERE {
-        SubScoreEntry::scored("g_force", "landing.sub.g_force", 20, value, "firm_g", Band::Bad)
+        SubScoreEntry::scored(
+            "g_force",
+            "landing.sub.g_force",
+            20,
+            value,
+            "firm_g",
+            Band::Bad,
+        )
     } else {
-        SubScoreEntry::scored("g_force", "landing.sub.g_force", 0, value, "severe_g", Band::Bad)
+        SubScoreEntry::scored(
+            "g_force",
+            "landing.sub.g_force",
+            0,
+            value,
+            "severe_g",
+            Band::Bad,
+        )
     }
 }
 

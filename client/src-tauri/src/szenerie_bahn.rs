@@ -1177,7 +1177,6 @@ mod plausibel_tests {
         }
     }
 
-
     fn nav_mit_belag(belag: Option<&str>) -> NavAirport {
         let mut nav = super::tests::edhe_nav();
         nav.runways[0].surface = belag.map(|t| t.to_string());

@@ -134,17 +134,17 @@ mod tests {
         // Die Verteilung ueber alle 85.058 Bahnen der eingebetteten Tabelle.
         // Jede Zeile hier steht fuer mindestens 649 echte Bahnen.
         for (angabe, erwartet) in [
-            ("ASP", Belag::Befestigt),      // 11371
-            ("TURF", Belag::Unbefestigt),   //  7489
-            ("CON", Belag::Befestigt),      //  3652
-            ("CONC", Belag::Befestigt),     //  3100
-            ("GRS", Belag::Unbefestigt),    //  2243
-            ("ASPH", Belag::Befestigt),     //  1678
-            ("GRE", Belag::Unbefestigt),    //  1537
-            ("Turf", Belag::Unbefestigt),   //  1312 — Kleinschreibung!
-            ("GVL", Belag::Unbefestigt),    //  1067
-            ("WATER", Belag::Wasser),       //   662
-            ("Earth", Belag::Unbefestigt),  //   649
+            ("ASP", Belag::Befestigt),     // 11371
+            ("TURF", Belag::Unbefestigt),  //  7489
+            ("CON", Belag::Befestigt),     //  3652
+            ("CONC", Belag::Befestigt),    //  3100
+            ("GRS", Belag::Unbefestigt),   //  2243
+            ("ASPH", Belag::Befestigt),    //  1678
+            ("GRE", Belag::Unbefestigt),   //  1537
+            ("Turf", Belag::Unbefestigt),  //  1312 — Kleinschreibung!
+            ("GVL", Belag::Unbefestigt),   //  1067
+            ("WATER", Belag::Wasser),      //   662
+            ("Earth", Belag::Unbefestigt), //   649
         ] {
             assert_eq!(
                 belag_aus_angabe(Some(angabe)),

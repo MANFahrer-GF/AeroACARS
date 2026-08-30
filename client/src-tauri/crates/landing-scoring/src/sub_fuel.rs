@@ -78,7 +78,7 @@ pub fn sub_fuel_v0_7_1(
     // oder nur bei Divert." Genau so — deshalb hier ueberspringen statt
     // eine Zahl zu erfinden.)
     if diverted == Some(true) {
-        return SubScoreEntry::skipped("fuel", "landing.sub.fuel", "diverted");;
+        return SubScoreEntry::skipped("fuel", "landing.sub.fuel", "diverted");
     }
     let Some(planned) = planned_burn_kg else {
         return SubScoreEntry::skipped("fuel", "landing.sub.fuel", "no_planned_burn");
@@ -144,14 +144,7 @@ pub fn sub_fuel_v0_7_1(
                 Band::Good,
             )
         } else if efficiency < 20.0 {
-            SubScoreEntry::scored(
-                "fuel",
-                "landing.sub.fuel",
-                55,
-                value,
-                "off_plan",
-                Band::Ok,
-            )
+            SubScoreEntry::scored("fuel", "landing.sub.fuel", 55, value, "off_plan", Band::Ok)
         } else if efficiency < 35.0 {
             SubScoreEntry::scored(
                 "fuel",
@@ -232,15 +225,43 @@ pub fn sub_fuel_legacy(efficiency_pct: Option<f32>) -> Option<SubScoreEntry> {
     };
 
     let entry = if dev < 2.0 {
-        SubScoreEntry::scored("fuel", "landing.sub.fuel", 100, value, "on_plan", Band::Good)
+        SubScoreEntry::scored(
+            "fuel",
+            "landing.sub.fuel",
+            100,
+            value,
+            "on_plan",
+            Band::Good,
+        )
     } else if dev < 5.0 {
-        SubScoreEntry::scored("fuel", "landing.sub.fuel", 80, value, "near_plan", Band::Good)
+        SubScoreEntry::scored(
+            "fuel",
+            "landing.sub.fuel",
+            80,
+            value,
+            "near_plan",
+            Band::Good,
+        )
     } else if dev < 10.0 {
         SubScoreEntry::scored("fuel", "landing.sub.fuel", 55, value, "off_plan", Band::Ok)
     } else if dev < 20.0 {
-        SubScoreEntry::scored("fuel", "landing.sub.fuel", 25, value, "very_off_plan", Band::Bad)
+        SubScoreEntry::scored(
+            "fuel",
+            "landing.sub.fuel",
+            25,
+            value,
+            "very_off_plan",
+            Band::Bad,
+        )
     } else {
-        SubScoreEntry::scored("fuel", "landing.sub.fuel", 5, value, "way_off_plan", Band::Bad)
+        SubScoreEntry::scored(
+            "fuel",
+            "landing.sub.fuel",
+            5,
+            value,
+            "way_off_plan",
+            Band::Bad,
+        )
     };
     Some(entry)
 }
@@ -351,20 +372,32 @@ mod tests {
     fn v1_6_7_underburn_band_edges() {
         // knapp unter der alten 5-%-Grenze — war schon immer 100
         let s = sub_fuel_v0_7_1(Some(1000.0), Some(950.5), None, None); // -4,95 %
-        assert_eq!((s.score, s.rationale_key.as_deref()), (100, Some("landing.rat.on_plan")));
+        assert_eq!(
+            (s.score, s.rationale_key.as_deref()),
+            (100, Some("landing.rat.on_plan"))
+        );
         // exakt auf der alten Grenze — hier stand vorher die 95
         let s = sub_fuel_v0_7_1(Some(1000.0), Some(950.0), None, None); // -5,0 %
-        assert_eq!((s.score, s.rationale_key.as_deref()), (100, Some("landing.rat.efficient")));
+        assert_eq!(
+            (s.score, s.rationale_key.as_deref()),
+            (100, Some("landing.rat.efficient"))
+        );
         // kurz vor der Warnschwelle — weiterhin volle Punktzahl
         let s = sub_fuel_v0_7_1(Some(1000.0), Some(850.5), None, None); // -14,95 %
-        assert_eq!((s.score, s.rationale_key.as_deref()), (100, Some("landing.rat.efficient")));
+        assert_eq!(
+            (s.score, s.rationale_key.as_deref()),
+            (100, Some("landing.rat.efficient"))
+        );
         assert!(s.warning.is_none());
         // ⚠ v1.7.12: Ab hier zweifelt die Bewertung am Plan, nicht am
         // Piloten — und sagt das jetzt als HINWEIS statt als Abzug.
         // Vorher 85 Punkte; Sparen darf nichts kosten (Thomas,
         // 30.08.2026). Siehe `sparen_kostet_nie_punkte`.
         let s = sub_fuel_v0_7_1(Some(1000.0), Some(850.0), None, None); // -15,0 %
-        assert_eq!((s.score, s.rationale_key.as_deref()), (100, Some("landing.rat.very_efficient")));
+        assert_eq!(
+            (s.score, s.rationale_key.as_deref()),
+            (100, Some("landing.rat.very_efficient"))
+        );
         assert_eq!(s.warning.as_deref(), Some("planned_burn_may_be_off"));
     }
 
@@ -380,14 +413,15 @@ mod tests {
         //
         // TOW hier None, damit NUR die Prozentbaender geprueft werden;
         // der Toleranzboden hat eigene Tests.
-        let f = |geplant: f32, echt: f32| sub_fuel_v0_7_1(Some(geplant), Some(echt), None, None).score;
+        let f =
+            |geplant: f32, echt: f32| sub_fuel_v0_7_1(Some(geplant), Some(echt), None, None).score;
         assert_eq!(f(1000.0, 1019.0), 100); // +1,9 %
         assert_eq!(f(1000.0, 1049.0), 100); // +4,9 % — vorher 80
-        assert_eq!(f(1000.0, 1053.0), 80);  // +5,3 % — vorher 55
-        assert_eq!(f(1000.0, 1070.0), 80);  // +7,0 %
-        assert_eq!(f(1000.0, 1150.0), 55);  // +15,0 % — vorher 25
-        assert_eq!(f(1000.0, 1250.0), 25);  // +25,0 %
-        assert_eq!(f(1000.0, 1400.0), 5);   // +40,0 %
+        assert_eq!(f(1000.0, 1053.0), 80); // +5,3 % — vorher 55
+        assert_eq!(f(1000.0, 1070.0), 80); // +7,0 %
+        assert_eq!(f(1000.0, 1150.0), 55); // +15,0 % — vorher 25
+        assert_eq!(f(1000.0, 1250.0), 25); // +25,0 %
+        assert_eq!(f(1000.0, 1400.0), 5); // +40,0 %
     }
 
     #[test]
@@ -447,7 +481,10 @@ mod tests {
         // nicht (oder es war ein Divert, der eigene Zweig davor).
         let s = sub_fuel_v0_7_1(Some(5000.0), Some(3750.0), None, None);
         assert_eq!(s.score, 100);
-        assert_eq!(s.rationale_key.as_deref(), Some("landing.rat.very_efficient"));
+        assert_eq!(
+            s.rationale_key.as_deref(),
+            Some("landing.rat.very_efficient")
+        );
         assert_eq!(s.warning.as_deref(), Some("planned_burn_may_be_off"));
     }
 

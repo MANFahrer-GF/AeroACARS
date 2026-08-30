@@ -15357,11 +15357,17 @@ fn build_pirep_payload(
     // dann sowohl als sub_scores ins Payload als auch
     // als landing_score (gewichteter Aggregate) nutzen.
     let actual_burn = actual_burn_for_record(&stats);
-    let mut scoring_input =
-        scoring_eingang(&stats, muster_fuer_landung(&stats, &flight.aircraft_icao));
+    let mut scoring_input = scoring_eingang(
+        &stats,
+        muster_fuer_landung(&stats, &flight.aircraft_icao),
+        Ausweichziel::Bekannt {
+            eingereicht: effective_arr_icao,
+            geplant: planned_arr_icao,
+        },
+    );
     // v0.10.0 (#runway-utilization-score): LDA-basierter
     // Bahn-Auslastungs-Score. Markiert weiter unten am
-    // PirepPayload via score_algorithm_version: Some(9)
+    // PirepPayload via score_algorithm_version (siehe SCORE_ALGORITHMUS_VERSION)
     // (v0.12.0: Float-Toleranz-Refinement;
     //  v0.16.21: MSFS touchdown V/S SimVar-lag g-force-gated de-lag;
     //  v0.20.x: Bahnauslastung-QS — Float-Toleranz 15→20 % LDA, Banding
@@ -15574,7 +15580,7 @@ fn build_pirep_payload(
         // gewertet wird die tatsaechlich genutzte Bahnstrecke gegen die LDA
         // (Baender 60/70/80/90 %), keine toleranzbereinigte Zweitgroesse
         // mehr — siehe `sub_rollout_v2`.
-        score_algorithm_version: Some(9),
+        score_algorithm_version: Some(SCORE_ALGORITHMUS_VERSION),
         client_health: build_client_health_report(&stats),
     }
 }
@@ -16052,8 +16058,18 @@ fn compute_aggregate_master_score(
     stats: &FlightStats,
     aircraft_icao: Option<&str>,
     arr_airport: &str,
+    // ⚠ Das GEPLANTE Ziel — nur im Vergleich mit `arr_airport`
+    // (dem eingereichten) entsteht die Aussage „Ausweichflug".
+    geplantes_ziel: &str,
 ) -> Option<u8> {
-    let mut scoring_input = scoring_eingang(stats, aircraft_icao);
+    let mut scoring_input = scoring_eingang(
+        stats,
+        aircraft_icao,
+        Ausweichziel::Bekannt {
+            eingereicht: arr_airport,
+            geplant: geplantes_ziel,
+        },
+    );
     // v0.10.0: v2-RolloutInput-Felder mit-füllen damit der LDA-basierte
     // Sub-Score gerechnet wird (siehe spec docs/spec/v0.10.0-runway-
     // utilization-score.md).
@@ -16124,6 +16140,7 @@ fn canonical_landing_verdict(
         stats,
         muster_fuer_landung(stats, &flight.aircraft_icao),
         effective_arr_icao,
+        &flight.arr_airport,
     );
     let (label, numeric) = match aggregate {
         Some(m) => (aggregate_score_label(m), m as i32),
@@ -16452,6 +16469,62 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 }
 
 /// Die Eingabe der Landungsbewertung — an EINER Stelle gebaut.
+/// Die Fassung der Bewertungslogik, die an jedem Flug mitgeschrieben wird.
+///
+/// # Wann sie steigen MUSS
+///
+/// Immer, wenn sich eine Note fuer denselben Flug aendern wuerde:
+/// verschobene Baender, andere Punkte, eine Achse mehr oder weniger.
+/// Ohne den Sprung sind Fluege zweier Fassungen maschinell nicht mehr
+/// zu trennen — und jede Auswertung ueber den Bestand mischt zwei
+/// verschiedene Massstaebe, ohne es zu merken.
+///
+/// ⚠ Sie stand von v1.7.0 bis v1.7.11 auf 9, obwohl sich in dieser Zeit
+/// mehrfach Noten verschoben haben. v1.7.12 aendert VIER Achsen auf
+/// einmal (OFP-Treue, Ladepapiere, G-Kraefte, Bahndisziplin) — deshalb
+/// 10. Der Waechter `die_algorithmusversion_steht_an_allen_stellen`
+/// haelt fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
+const SCORE_ALGORITHMUS_VERSION: u8 = 10;
+
+/// Die beiden Ziele einer Landung — geplant und eingereicht.
+///
+/// # Warum ein eigener Typ und nicht zwei `&str`
+///
+/// Zwei gleichartige Zeichenketten nebeneinander sind vertauschbar, und
+/// ein vertauschtes Paar faellt nirgends auf: Der Vergleich ist
+/// symmetrisch, das Ergebnis bliebe richtig — bis jemand einen zweiten
+/// Wert daraus ableitet. Ausserdem kennen nicht alle Aufrufer beide
+/// Werte; `Unbekannt` sagt das ausdruecklich, statt einen leeren String
+/// weiterzureichen, der wie ein Ziel aussieht.
+#[derive(Debug, Clone, Copy)]
+enum Ausweichziel<'a> {
+    /// Eingereichtes und geplantes Ziel sind bekannt.
+    Bekannt {
+        eingereicht: &'a str,
+        geplant: &'a str,
+    },
+    /// Der Aufrufer kennt die Ziele nicht (Vorschau, Diagnose, Test).
+    /// Dann wird die OFP-Treue wie bisher bewertet.
+    Unbekannt,
+}
+
+impl Ausweichziel<'_> {
+    /// `Some(true)` nur bei einem eingereichten Ausweichflug.
+    ///
+    /// ⚠ `None` heisst „unbekannt", nicht „kein Divert" — die
+    /// Sprit-Achse behandelt beides gleich, aber der Unterschied gehoert
+    /// trotzdem nicht verwischt.
+    fn ist_ausweichflug(self) -> Option<bool> {
+        match self {
+            Ausweichziel::Bekannt {
+                eingereicht,
+                geplant,
+            } => Some(!eingereicht.trim().eq_ignore_ascii_case(geplant.trim())),
+            Ausweichziel::Unbekannt => None,
+        }
+    }
+}
+
 ///
 /// # Warum das eine Funktion ist
 ///
@@ -16474,6 +16547,7 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 fn scoring_eingang(
     stats: &FlightStats,
     muster: Option<&str>,
+    ausweichziel: Ausweichziel<'_>,
 ) -> landing_scoring::LandingScoringInput {
     landing_scoring::LandingScoringInput {
         // v0.7.17 (B-015a QS-Fix): Edge-Wert hat Vorrang — siehe
@@ -16494,10 +16568,23 @@ fn scoring_eingang(
         // ⚠ Nach einem Ausweichflug ist die OFP-Treue nicht bewertbar —
         // es wurde eine ANDERE Strecke geflogen als die geplante. Ein
         // Vergleich gegen den urspruenglichen Verbrauch misst den Umweg,
-        // nicht den Piloten. `divert_hint` ist die bestehende, bereits
-        // abgesicherte Erkennung; hier wird sie nur gelesen, nicht ein
-        // zweites Mal hergeleitet.
-        diverted: Some(stats.divert_hint.is_some()),
+        // nicht den Piloten.
+        //
+        // ⚠⚠ NICHT `divert_hint`: Das ist der VERDACHT, nicht die
+        // Tatsache. Der Unterschied ist im Haus lange festgehalten
+        // (`divert_payload_markers`, v0.19.3) und geht in BEIDE
+        // Richtungen schief:
+        //
+        //   * Ein echter, vom Piloten eingereichter Divert OHNE Hinweis
+        //     (der Regelfall bei einem geplanten Ausweichen) wuerde
+        //     bewertet — gegen einen Plan, der nie geflogen wurde.
+        //   * Ein Verdacht, den der Pilot abgelehnt hat (er reicht als
+        //     Planflug ein), wuerde uebersprungen — obwohl genau die
+        //     geplante Strecke geflogen wurde.
+        //
+        // Massgeblich ist dieselbe Regel wie im Nutzlast-Marker:
+        // eingereichtes Ziel != geplantes Ziel.
+        diverted: ausweichziel.ist_ausweichflug(),
         // ⚠ Entscheidet, ob eine schraege Rollspur unserer Achse oder dem
         // Piloten angelastet wird. Ist die Geometrie aus der Szenerie
         // bestaetigt, ist eine Landung am Bahnrand genau das, was
@@ -16730,6 +16817,10 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     }
 
     BahnFelder {
+        // Genau der Anteil, den `assess_touchdown` von der Aufsetz-
+        // distanz abzieht — deshalb dieselbe Funktion, nicht eine
+        // zweite Herleitung.
+        spur_nullpunkt_versatz_m: rm.map(|m| displacement_not_in_geometry_ft(m) as f64 * 0.3048),
         // Zwei Punkte, zwei Bedeutungen — siehe `bahn_kante_laengs_m`.
         //
         // `clearance_point_m` ist die Stelle des VERLASSENS (Kante), denn
@@ -16815,6 +16906,7 @@ impl BahnFelder {
     fn wire(&self, final_: bool) -> aeroacars_mqtt::BahnWire {
         aeroacars_mqtt::BahnWire {
             rollout_final: final_,
+            spur_nullpunkt_versatz_m: self.spur_nullpunkt_versatz_m,
             clearance_point_m: self.clearance_point_m,
             scoring_cutoff_m: self.scoring_cutoff_m,
             mess_ende_laengs_m: self.mess_ende_laengs_m,
@@ -16889,6 +16981,32 @@ impl BahnFelder {
 
 /// Traeger der abgeleiteten Bahndisziplin-Werte — siehe `bahn_felder`.
 struct BahnFelder {
+    /// Um wie viele Meter die LAENGSMASSE der Spur gegen die
+    /// Landeschwelle verschoben sind.
+    ///
+    /// # Warum es dieses Feld gibt
+    ///
+    /// Der Payload fuehrt zwei Nullpunkte nebeneinander. Der
+    /// Aufsetzpunkt (`td_distance_from_threshold_m`) ist immer ab der
+    /// LANDESCHWELLE gemessen; die Spurwerte (`lateral_samples`,
+    /// `clearance_point_m`, `runway_exits`, `scoring_cutoff_m`) kommen
+    /// roh aus `projiziere_auf_bahn` und liegen damit ab dem
+    /// Schwellenpunkt DER NAVDATEN.
+    ///
+    /// Ob die beiden zusammenfallen, entscheidet die Datenquelle:
+    /// Steckt der Versatz schon in der Geometrie (so liefert es der
+    /// DFD-Export seit AIRAC 2608), sind sie identisch; steckt er nicht
+    /// drin, liegen sie genau um ihn auseinander. `displacement_not_in_
+    /// geometry_ft` weiss das pro Bahn — und dieser Wert ist es.
+    ///
+    /// ⚠ NICHT die versetzte Schwelle selbst. Das ist eine ANDERE Zahl:
+    /// `effective_displaced_threshold_ft` ist das Maximum aus Feld und
+    /// verstecktem Versatz. Am Bestand gemessen (30.08.2026, 19 Fluege
+    /// mit versetzter Schwelle) fallen die Nullpunkte bei 8 von 19
+    /// zusammen — wer dort pauschal die versetzte Schwelle abzieht,
+    /// verschiebt die ganze Zeichnung um bis zu 300 m. Bei den anderen
+    /// 11 (darunter LAN273, TJPS 12, 573 m) ist der Abzug noetig.
+    spur_nullpunkt_versatz_m: Option<f64>,
     clearance_point_m: Option<f64>,
     scoring_cutoff_m: Option<f64>,
 
@@ -16946,7 +17064,14 @@ where
     // Zahl aus Aggregate) — fuer Pilot verwirrend.
     // Fallback auf Touchdown-Klassifikation wenn keine Sub-Scores
     // berechnet werden konnten (Edge-Case Schutz).
-    let mut scoring_input = scoring_eingang(stats, aircraft_icao);
+    let mut scoring_input = scoring_eingang(
+        stats,
+        aircraft_icao,
+        Ausweichziel::Bekannt {
+            eingereicht: effective_arr_icao,
+            geplant: &flight.arr_airport,
+        },
+    );
     // v0.10.0 (#runway-utilization-score): LDA-basierten Bahn-Auslastungs-
     // Score aktivieren. Wenn alle benötigten Felder vorhanden → neuer
     // Algorithmus, sonst skipped mit konkretem Reason (KEIN Rollback auf
@@ -17359,7 +17484,7 @@ where
         // Banding grosszuegiger) + Sinkraten-Ziel-Korridor.
         // v1.6.7: bump 7→8 — Minderverbrauch bis 15 % voll bepunktet;
         // Bahn-Auslastung auf die echte genutzte Strecke umgestellt.
-        score_algorithm_version: Some(9),
+        score_algorithm_version: Some(SCORE_ALGORITHMUS_VERSION),
     })
 }
 
@@ -17936,7 +18061,6 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                     flight
                         .connection_state
                         .store(CONN_STATE_LIVE, Ordering::Relaxed);
-
                 }
                 Ok(Err(ApiError::NotFound)) => {
                     // PIREP serverseitig geloescht — terminiert sauber.
@@ -19109,6 +19233,7 @@ async fn flight_end(
             &stats,
             muster_fuer_landung(&stats, &flight.aircraft_icao),
             effective_arr,
+            &flight.arr_airport,
         )
         .map(|m| m as i32)
         .or_else(|| stats.landing_score.map(|s| s.numeric()));
@@ -26314,7 +26439,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // v1.6.7: bump 7→8 — Minderverbrauch bis 15 %
                                 // voll bepunktet; Bahn-Auslastung auf die echte
                                 // genutzte Strecke umgestellt.
-                                score_algorithm_version: Some(9),
+                                score_algorithm_version: Some(SCORE_ALGORITHMUS_VERSION),
                                 // ── v1.7.0 Bahndisziplin ─────────────────
                                 //
                                 // Dieselbe Ableitung wie fuer die Anzeige im
@@ -35013,7 +35138,14 @@ fn build_pirep_notes(
     // Der Sprit-Wert stand hier als handgeschriebene Kopie von
     // `actual_burn_for_record` — byteweise dieselbe Rechnung. Er kommt
     // jetzt aus `scoring_eingang`, wie überall.
-    let mut crate_input = scoring_eingang(stats, muster_fuer_landung(stats, &flight.aircraft_icao));
+    let mut crate_input = scoring_eingang(
+        stats,
+        muster_fuer_landung(stats, &flight.aircraft_icao),
+        Ausweichziel::Bekannt {
+            eingereicht: effective_arr_icao,
+            geplant: &flight.arr_airport,
+        },
+    );
     // v0.10.0 (#runway-utilization-score): Shadow-Validation muss den
     // gleichen Algorithmus rechnen wie der echte PIREP-Pfad — sonst
     // hätten wir Drift gegen uns selbst.
@@ -44956,6 +45088,54 @@ mod divert_marker_tests {
         assert_eq!(m.divert_suspected, None);
     }
 
+    /// Die Sprit-Achse muss dieselbe Regel benutzen wie der Marker.
+    ///
+    /// ⚠ v1.7.12 hat die Achse zuerst an `divert_hint` gehaengt — an den
+    /// VERDACHT. Das geht in beide Richtungen schief, und beide Faelle
+    /// stehen als Regressionstest schon eine Zeile weiter oben:
+    ///
+    ///   * `confirmed_divert_is_reported_as_fact` — ein echter,
+    ///     eingereichter Divert OHNE Hinweis. Er waere bewertet worden,
+    ///     gegen einen Plan, der nie geflogen wurde.
+    ///   * `suspicion_the_pilot_declined_is_never_reported_as_a_divert` —
+    ///     ein Verdacht, den der Pilot abgelehnt hat. Er waere
+    ///     uebersprungen worden, obwohl genau die geplante Strecke
+    ///     geflogen wurde.
+    #[test]
+    fn die_spritachse_folgt_dem_eingereichten_ziel_nicht_dem_verdacht() {
+        // Echter Divert, kein Hinweis — muss uebersprungen werden.
+        assert_eq!(
+            Ausweichziel::Bekannt {
+                eingereicht: "EDDV",
+                geplant: "EDDF"
+            }
+            .ist_ausweichflug(),
+            Some(true),
+            "ein eingereichter Divert ohne Hinweis wurde nicht erkannt"
+        );
+        // Verdacht abgelehnt, planmaessig angekommen — muss bewertet werden.
+        assert_eq!(
+            Ausweichziel::Bekannt {
+                eingereicht: "EDDF",
+                geplant: "EDDF"
+            }
+            .ist_ausweichflug(),
+            Some(false),
+            "ein abgelehnter Verdacht darf die Achse nicht aussetzen"
+        );
+        // Schreibweise und Leerraum duerfen nichts entscheiden.
+        assert_eq!(
+            Ausweichziel::Bekannt {
+                eingereicht: " eddf ",
+                geplant: "EDDF"
+            }
+            .ist_ausweichflug(),
+            Some(false)
+        );
+        // Unbekannt ist NICHT dasselbe wie "kein Divert".
+        assert_eq!(Ausweichziel::Unbekannt.ist_ausweichflug(), None);
+    }
+
     #[test]
     fn confirmed_divert_is_reported_as_fact() {
         let m = divert_payload_markers("EDDV", "EDDF", None);
@@ -46995,7 +47175,7 @@ mod touchdown_metadata_stamp_tests {
             Some(runway::RunwaySource::OurAirportsFallback)
         ));
         // The PIREP score the OLD ordering would have filed (provisional).
-        let provisional_score = compute_aggregate_master_score(&stats, Some("A320"), eff);
+        let provisional_score = compute_aggregate_master_score(&stats, Some("A320"), eff, "EDDF");
         let provisional_field = landing_score_field(&flight, &stats, eff);
 
         // The on-demand fetch completes: EDDP navdata (with a displaced
@@ -47026,7 +47206,7 @@ mod touchdown_metadata_stamp_tests {
         // The PIREP score now reflects the Navigraph LDA — strictly different
         // from the provisional OurAirports score (the displaced threshold
         // shortened the LDA → the rollout sub-score dropped a band).
-        let upgraded_score = compute_aggregate_master_score(&stats, Some("A320"), eff);
+        let upgraded_score = compute_aggregate_master_score(&stats, Some("A320"), eff, "EDDF");
         let upgraded_field = landing_score_field(&flight, &stats, eff);
         assert_ne!(
             upgraded_score, provisional_score,
@@ -47042,7 +47222,7 @@ mod touchdown_metadata_stamp_tests {
         // agree.
         let record_score_before = upgraded_score;
         apply_finalized_runway_correlation(&flight, &mut stats); // the no-op
-        let record_score_after = compute_aggregate_master_score(&stats, Some("A320"), eff);
+        let record_score_after = compute_aggregate_master_score(&stats, Some("A320"), eff, "EDDF");
         assert_eq!(
             record_score_before, record_score_after,
             "the second finalize (inside record_landing_for_filed_flight) must be a no-op \
@@ -47098,12 +47278,13 @@ mod touchdown_metadata_stamp_tests {
         // OLD (buggy) behaviour: feeding the PLANNED arr with no divert hint →
         // the trust check sees matched=EDDP != arr=EDDF and no divert match →
         // icao_mismatch → the rollout/LDA sub-score is SKIPPED.
-        let buggy_planned_arr_score = compute_aggregate_master_score(&stats, Some("A320"), "EDDF");
+        let buggy_planned_arr_score =
+            compute_aggregate_master_score(&stats, Some("A320"), "EDDF", "EDDF");
         // FIXED behaviour: feeding the EFFECTIVE arrival (the divert EDDP) →
         // matched=EDDP == effective=EDDP → geometry trusted → the rollout/LDA
         // sub-score COMPUTES. This is what the native score now passes.
         let fixed_effective_arr_score =
-            compute_aggregate_master_score(&stats, Some("A320"), "EDDP");
+            compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF");
 
         // The fix must change the scored value on this divert (the rollout
         // sub-score went from skipped → computed against the Navigraph LDA).
@@ -47129,7 +47310,7 @@ mod touchdown_metadata_stamp_tests {
         // The local record path runs the SAME finalize (idempotent no-op once
         // Navigraph) and the SAME effective arrival → identical score.
         apply_finalized_runway_correlation(&flight, &mut stats);
-        let record_score = compute_aggregate_master_score(&stats, Some("A320"), "EDDP");
+        let record_score = compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF");
         assert_eq!(
             Some(native_score),
             record_score,
@@ -47265,10 +47446,10 @@ mod touchdown_metadata_stamp_tests {
         correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
 
         // v0.16.24 (QS-2 FIX A): effective arrival == EDDP (the divert field).
-        let before = compute_aggregate_master_score(&stats, Some("A320"), "EDDP");
+        let before = compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF");
         // Empty cache → finalize keeps the provisional fallback.
         apply_finalized_runway_correlation(&flight, &mut stats);
-        let after = compute_aggregate_master_score(&stats, Some("A320"), "EDDP");
+        let after = compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF");
         assert!(matches!(
             stats.runway_source,
             Some(runway::RunwaySource::OurAirportsFallback)
@@ -47306,10 +47487,10 @@ mod touchdown_metadata_stamp_tests {
         ));
 
         // On-plan: effective arrival == planned arrival == EDDP.
-        let before = compute_aggregate_master_score(&stats, Some("A320"), "EDDP");
+        let before = compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF");
         let before_field = landing_score_field(&flight, &stats, "EDDP");
         apply_finalized_runway_correlation(&flight, &mut stats); // must be a no-op
-        let after = compute_aggregate_master_score(&stats, Some("A320"), "EDDP");
+        let after = compute_aggregate_master_score(&stats, Some("A320"), "EDDP", "EDDF");
         let after_field = landing_score_field(&flight, &stats, "EDDP");
         assert_eq!(
             before, after,
@@ -48449,7 +48630,7 @@ mod v0_16_6_bush_completeness_tests {
 
                             // Weg 2: die Bewertung, über denselben
                             // Eingang, den der Betrieb benutzt.
-                            let mut eingang = scoring_eingang(&stats, m);
+                            let mut eingang = scoring_eingang(&stats, m, Ausweichziel::Unbekannt);
                             fill_v2_rollout_fields(&mut eingang, &stats, "XXXX");
 
                             let b_spur = eingang.fahrwerk_spurweite_m.or_else(|| {
@@ -52387,6 +52568,53 @@ mod wiederaufnahme_langstrecke_tests {
         s.chars().filter(|c| !c.is_whitespace()).collect()
     }
 
+    /// Alle Nutzlaststellen schreiben dieselbe Algorithmus-Fassung.
+    ///
+    /// ⚠ Eine hart geschriebene Zahl an einer von drei Stellen faellt
+    /// nicht auf: Der Flug wird gespeichert, die Zahl ist plausibel, und
+    /// erst eine Auswertung ueber den Bestand stolpert darueber — Monate
+    /// spaeter. Die Nadel wird mit `format!` gebaut, sonst faende der
+    /// Waechter sich selbst.
+    #[test]
+    fn die_algorithmusversion_steht_an_allen_stellen() {
+        let quelle = ohne_leerraum(LIB_QUELLE);
+        let gute = ohne_leerraum(&format!(
+            "score_algorithm_version{}Some(SCORE_ALGORITHMUS_VERSION)",
+            ':'
+        ));
+        assert_eq!(
+            quelle.matches(&gute).count(),
+            3,
+            "nicht alle drei Nutzlaststellen benutzen die Konstante"
+        );
+        // Und keine davon schreibt eine eigene Zahl.
+        let roh = ohne_leerraum(&format!("score_algorithm_version{}Some({}", ':', '9'));
+        assert!(
+            !quelle.contains(&roh),
+            "eine Nutzlaststelle schreibt die Fassung als feste Zahl"
+        );
+    }
+
+    /// Die Sprit-Achse darf nicht wieder an den Divert-VERDACHT geraten.
+    ///
+    /// ⚠ Massgeblich ist das eingereichte Ziel gegen das geplante
+    /// (`Ausweichziel`), nicht `divert_hint`. Der Unterschied geht in
+    /// beide Richtungen schief — die Begruendung steht bei
+    /// `die_spritachse_folgt_dem_eingereichten_ziel_nicht_dem_verdacht`.
+    ///
+    /// Die Nadel wird mit `format!` gebaut, sonst faende der Waechter
+    /// sich selbst.
+    #[test]
+    fn die_spritachse_liest_nirgends_den_divert_verdacht() {
+        let quelle = ohne_leerraum(LIB_QUELLE);
+        let nadel = ohne_leerraum(&format!("diverted{}Some(stats.divert_hint", ':'));
+        assert!(
+            !quelle.contains(&nadel),
+            "die Sprit-Achse haengt wieder am Verdacht statt am \
+             eingereichten Ziel"
+        );
+    }
+
     /// Jedes Szenerie-Korrekturfeld muss an BEIDEN Nutzlaststellen stehen.
     ///
     /// ⚠ Die Nutzlast wird an zwei Stellen gebaut (normaler Abschluss und
@@ -52437,10 +52665,14 @@ mod wiederaufnahme_langstrecke_tests {
         // THY77: 12h39m geflogen. Der Client war 4 Minuten weg (Update +
         // Neustart). Genau dieser Fall wurde bis v1.7.8 verworfen, weil
         // nach der FLUGDAUER entschieden wurde.
-        assert!(stillstand_erlaubt_wiederaufnahme(chrono::Duration::minutes(4)));
+        assert!(stillstand_erlaubt_wiederaufnahme(
+            chrono::Duration::minutes(4)
+        ));
         // Auch nach 20 Stunden Flug — die Dauer spielt keine Rolle mehr,
         // nur die Zeit seit der letzten Aktualisierung.
-        assert!(stillstand_erlaubt_wiederaufnahme(chrono::Duration::hours(23)));
+        assert!(stillstand_erlaubt_wiederaufnahme(chrono::Duration::hours(
+            23
+        )));
     }
 
     #[test]
@@ -52466,8 +52698,12 @@ mod wiederaufnahme_langstrecke_tests {
 
     #[test]
     fn ein_tagealter_stillstand_wird_nicht_automatisch_aufgenommen() {
-        assert!(!stillstand_erlaubt_wiederaufnahme(chrono::Duration::hours(25)));
-        assert!(!stillstand_erlaubt_wiederaufnahme(chrono::Duration::days(3)));
+        assert!(!stillstand_erlaubt_wiederaufnahme(chrono::Duration::hours(
+            25
+        )));
+        assert!(!stillstand_erlaubt_wiederaufnahme(chrono::Duration::days(
+            3
+        )));
     }
 
     #[test]
@@ -52850,7 +53086,6 @@ mod sprung_thy42_tests {
         assert_eq!(gewertet, 1, "ein echter 20-ft-Sprung wurde verschluckt");
         assert_eq!(forensisch, 1);
     }
-
 
     #[test]
     fn nur_die_bezugshoehe_rettet_hier() {

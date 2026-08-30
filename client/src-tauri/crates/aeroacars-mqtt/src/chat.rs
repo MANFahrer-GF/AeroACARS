@@ -60,7 +60,9 @@ pub struct ChatTeilnehmer {
     pub gelandet: bool,
 }
 
-fn wahr() -> bool { true }
+fn wahr() -> bool {
+    true
+}
 
 #[derive(Debug, Deserialize)]
 struct VerlaufAntwort {

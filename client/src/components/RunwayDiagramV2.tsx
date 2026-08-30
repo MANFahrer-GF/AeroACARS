@@ -69,6 +69,13 @@ export interface RunwayDiagramV2Props {
   source: "navigraph" | "ourairports_fallback" | null;
   nav_cycle?: string | null;
   displaced_threshold_m?: number;
+  /**
+   * Um wie viele Meter die Längsmasse der Rollspur gegen die
+   * Landeschwelle verschoben sind (`spur_nullpunkt_versatz_m` aus dem
+   * Payload). Ohne Angabe wird nichts verschoben — das Verhalten für
+   * ältere Flüge und für Bahnen ohne versetzte Schwelle.
+   */
+  spur_nullpunkt_versatz_m?: number | null;
   td_distance_from_threshold_m: number;
   td_centerline_offset_m: number;
   td_in_tdz?: boolean | null;
@@ -254,6 +261,9 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   const projektion = erzeugeProjektion({
     lengthM: props.length_m,
     ddsM: props.displaced_threshold_m ?? 0,
+    // ⚠ Der Nullpunkt der Spurwerte — NICHT die versetzte Schwelle.
+    // Siehe `ProjektionsEingang.spurVersatzM`.
+    spurVersatzM: props.spur_nullpunkt_versatz_m ?? 0,
     padX,
     innerW,
     sichtVonM: zoom.vonM,
@@ -333,7 +343,11 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
   // dagegen ist eine Messung: Hier hat das Flugzeug die Bahn verlassen,
   // hier endet das Messfenster, ab hier wird nichts mehr gewertet.
   const raeumM = props.clearance_point_m ?? null;
-  const raeumX = raeumM != null ? mToX(raeumM) : null;
+  // ⚠ `mAbBahnanfangZuX`, nicht `mToX`: Der Raeumpunkt gehoert zu den
+  // Spurwerten und traegt deren Nullpunkt. In der Queransicht wurde das
+  // korrigiert, hier stand es noch auf der alten Funktion — dieselbe
+  // Marke haette in beiden Ansichten an verschiedenen Stellen gelegen.
+  const raeumX = raeumM != null ? projektion.mAbBahnanfangZuX(raeumM) : null;
   /**
    * Wo die Ausroll-Linie endet — eine Groesse, nicht zwei.
    *

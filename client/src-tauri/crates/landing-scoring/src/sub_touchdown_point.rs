@@ -167,20 +167,23 @@ mod tests {
         assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.on_aim"));
         let wert = r.value.unwrap_or_default();
         assert!(wert.contains("327 m"), "Anzeige: {wert}");
-        assert!(wert.contains("-73 m"), "Delta muss vorzeichenbehaftet sein: {wert}");
+        assert!(
+            wert.contains("-73 m"),
+            "Delta muss vorzeichenbehaftet sein: {wert}"
+        );
     }
 
     #[test]
     fn baender_der_reihe_nach() {
         // Zielfenster 250..550, Zone bis 900, Bahnmitte bei 1594,5.
         for (td, erwartet, grund) in [
-            (400.0, 100u8, "on_aim"),           // genau auf der Markierung
-            (550.0, 100, "on_aim"),             // Rand des Fensters
-            (551.0, 85, "in_tdz"),              // knapp daneben, aber in der Zone
-            (899.0, 85, "in_tdz"),              // Ende der Zone
-            (901.0, 55, "long_touchdown"),      // dahinter
-            (1594.0, 55, "long_touchdown"),     // knapp vor der Bahnmitte
-            (1600.0, 25, "very_long_touchdown"),// dahinter
+            (400.0, 100u8, "on_aim"),            // genau auf der Markierung
+            (550.0, 100, "on_aim"),              // Rand des Fensters
+            (551.0, 85, "in_tdz"),               // knapp daneben, aber in der Zone
+            (899.0, 85, "in_tdz"),               // Ende der Zone
+            (901.0, 55, "long_touchdown"),       // dahinter
+            (1594.0, 55, "long_touchdown"),      // knapp vor der Bahnmitte
+            (1600.0, 25, "very_long_touchdown"), // dahinter
         ] {
             let r = sub_touchdown_point(&eham06(td));
             assert_eq!(r.points, erwartet, "bei {td} m erwartet {erwartet} PT");
@@ -197,8 +200,14 @@ mod tests {
         // Auch wenn alle anderen Werte perfekt aussehen.
         let r = sub_touchdown_point(&eham06(-12.0));
         assert_eq!(r.points, 0);
-        assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.pre_threshold"));
-        assert!(r.value.unwrap_or_default().contains("12 m vor der Schwelle"));
+        assert_eq!(
+            r.rationale_key.as_deref(),
+            Some("landing.rat.pre_threshold")
+        );
+        assert!(r
+            .value
+            .unwrap_or_default()
+            .contains("12 m vor der Schwelle"));
     }
 
     #[test]
@@ -213,30 +222,48 @@ mod tests {
         // 500 gegen Ziel 300 = 200 m dahinter, ausserhalb des Fensters,
         // keine Zone -> vor der Bahnmitte (550) -> long_touchdown.
         assert_eq!(r.points, 55);
-        assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.long_touchdown"));
+        assert_eq!(
+            r.rationale_key.as_deref(),
+            Some("landing.rat.long_touchdown")
+        );
     }
 
     #[test]
     fn datenmangel_wird_uebersprungen_nie_bestraft() {
         for (bau, grund) in [
             (
-                TouchdownPointInput { airport_source: None, ..eham06(400.0) },
+                TouchdownPointInput {
+                    airport_source: None,
+                    ..eham06(400.0)
+                },
                 "off_airport_landing",
             ),
             (
-                TouchdownPointInput { runway_geometry_trusted: Some(false), ..eham06(400.0) },
+                TouchdownPointInput {
+                    runway_geometry_trusted: Some(false),
+                    ..eham06(400.0)
+                },
                 "untrusted_geometry",
             ),
             (
-                TouchdownPointInput { td_distance_from_threshold_m: None, ..eham06(400.0) },
+                TouchdownPointInput {
+                    td_distance_from_threshold_m: None,
+                    ..eham06(400.0)
+                },
                 "missing_td_distance",
             ),
             (
-                TouchdownPointInput { lda_m: None, ..eham06(400.0) },
+                TouchdownPointInput {
+                    lda_m: None,
+                    ..eham06(400.0)
+                },
                 "invalid_geometry",
             ),
             (
-                TouchdownPointInput { lda_m: Some(50.0), ..eham06(400.0) },
+                TouchdownPointInput {
+                    lda_m: Some(50.0),
+                    ..eham06(400.0)
+                },
                 "invalid_geometry",
             ),
             (
@@ -262,7 +289,10 @@ mod tests {
         let r = sub_touchdown_point(&i);
         assert_eq!(r.points, 85);
         assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.in_tdz"));
-        assert!(r.value.unwrap_or_default().contains("400 m hinter der Schwelle"));
+        assert!(r
+            .value
+            .unwrap_or_default()
+            .contains("400 m hinter der Schwelle"));
     }
 }
 

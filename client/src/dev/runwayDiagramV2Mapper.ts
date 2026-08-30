@@ -53,6 +53,11 @@ export function mapLandingRecordToV2Props(
     source,
     nav_cycle: rw.nav_cycle ?? null,
     displaced_threshold_m: (rw.displaced_threshold_ft ?? 0) * FT_TO_M,
+    // ⚠ Der Nullpunkt der Spurwerte. Kommt fertig aus dem Client
+    // (`BahnFelder::spur_nullpunkt_versatz_m`) — hier NICHT aus der
+    // versetzten Schwelle herleiten: Das ist eine andere Zahl, und die
+    // Herleitung braucht die Navdaten-Geometrie, die hier fehlt.
+    spur_nullpunkt_versatz_m: record.spur_nullpunkt_versatz_m ?? null,
     td_distance_from_threshold_m,
     td_centerline_offset_m: rw.centerline_distance_m,
     td_in_tdz: record.td_in_tdz ?? null,

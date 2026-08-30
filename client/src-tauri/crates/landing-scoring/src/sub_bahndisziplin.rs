@@ -141,10 +141,7 @@ const ACHSE_FRAGWUERDIG_AB_GRAD: f64 = 1.0;
 ///
 /// `None`, wenn zu wenige Punkte da sind oder alle auf derselben
 /// Längsposition liegen (dann hat die Gerade keine Steigung).
-pub fn achsen_abweichung_grad(
-    proben: &[(f64, f64)],
-    bis_laengs_m: f64,
-) -> Option<f64> {
+pub fn achsen_abweichung_grad(proben: &[(f64, f64)], bis_laengs_m: f64) -> Option<f64> {
     achsen_befund(proben, bis_laengs_m).map(|b| b.winkel_grad)
 }
 
@@ -205,7 +202,10 @@ pub fn achsen_befund(proben: &[(f64, f64)], bis_laengs_m: f64) -> Option<AchsenB
         return None;
     }
     let kleinste = auf.iter().map(|(_, y)| *y).fold(f64::INFINITY, f64::min);
-    let groesste = auf.iter().map(|(_, y)| *y).fold(f64::NEG_INFINITY, f64::max);
+    let groesste = auf
+        .iter()
+        .map(|(_, y)| *y)
+        .fold(f64::NEG_INFINITY, f64::max);
     Some(AchsenBefund {
         winkel_grad: steigung.atan().to_degrees(),
         kreuzt_mitte: kleinste < 0.0 && groesste > 0.0,
@@ -526,7 +526,7 @@ mod tests {
             achsen_kreuzt_mitte: None,
             achsen_groesster_betrag_m: None,
             achsen_abweichung_grad: None,
-        proben: Some(30),
+            proben: Some(30),
         }
     }
 
@@ -566,12 +566,12 @@ mod tests {
         // Test in der Bandmitte haette die Verschiebung nicht bemerkt.
         for (versatz, erwartet, grund) in [
             (0.0, 100u8, "centered"),
-            (10.9, 100, "centered"),      // Anteil 0,745
-            (11.2, 85, "outboard"),       // Anteil 0,758
-            (14.2, 85, "outboard"),       // Anteil 0,891
-            (14.6, 55, "edge_reached"),   // Anteil 0,909
-            (18.4, 55, "edge_reached"),   // Rand -1,74 m: in der Toleranz
-            (19.0, 20, "off_pavement"),   // Rand -2,35 m: darueber hinaus
+            (10.9, 100, "centered"),    // Anteil 0,745
+            (11.2, 85, "outboard"),     // Anteil 0,758
+            (14.2, 85, "outboard"),     // Anteil 0,891
+            (14.6, 55, "edge_reached"), // Anteil 0,909
+            (18.4, 55, "edge_reached"), // Rand -1,74 m: in der Toleranz
+            (19.0, 20, "off_pavement"), // Rand -2,35 m: darueber hinaus
         ] {
             let r = sub_bahndisziplin(&eham06(versatz));
             assert_eq!(r.points, erwartet, "bei {versatz} m Versatz");
@@ -600,7 +600,10 @@ mod tests {
         let r = sub_bahndisziplin(&i);
         assert_eq!(r.points, 0);
         assert_eq!(r.rationale_key.as_deref(), Some("landing.rat.overrun"));
-        assert!(r.value.unwrap_or_default().contains("35 m über das Bahnende"));
+        assert!(r
+            .value
+            .unwrap_or_default()
+            .contains("35 m über das Bahnende"));
     }
 
     #[test]
@@ -633,57 +636,79 @@ mod tests {
         // neben der Bahn, das ist ein Bahn-Match-Fehler.
         for versatz in [52.6, 56.9, 513.0, -60.0] {
             let r = sub_bahndisziplin(&eham06(versatz));
-            assert!(r.skipped, "{versatz} m ist keine Landung, sondern ein Messfehler");
+            assert!(
+                r.skipped,
+                "{versatz} m ist keine Landung, sondern ein Messfehler"
+            );
             assert_eq!(r.reason.as_deref(), Some("implausible_lateral_track"));
             assert_eq!(r.points, 0, "Skip erzeugt keine Note");
         }
         // Direkt darunter wird weiter bewertet — die Schranke ist grosszuegig,
         // nicht willkuerlich.
         let grenzfall = sub_bahndisziplin(&eham06(50.0));
-        assert!(!grenzfall.skipped, "50 m liegen noch innerhalb der Schranke");
+        assert!(
+            !grenzfall.skipped,
+            "50 m liegen noch innerhalb der Schranke"
+        );
     }
 
     #[test]
     fn datenmangel_wird_uebersprungen_nie_bestraft() {
         for (bau, grund) in [
             (
-                BahndisziplinInput { airport_source: None, ..eham06(5.0)
-        },
+                BahndisziplinInput {
+                    airport_source: None,
+                    ..eham06(5.0)
+                },
                 "off_airport_landing",
             ),
             (
-                BahndisziplinInput { runway_geometry_trusted: Some(false), ..eham06(5.0)
-        },
+                BahndisziplinInput {
+                    runway_geometry_trusted: Some(false),
+                    ..eham06(5.0)
+                },
                 "untrusted_geometry",
             ),
             (
-                BahndisziplinInput { bahnbreite_m: None, ..eham06(5.0)
-        },
+                BahndisziplinInput {
+                    bahnbreite_m: None,
+                    ..eham06(5.0)
+                },
                 "runway_width_unknown",
             ),
             (
-                BahndisziplinInput { bahnbreite_m: Some(500.0), ..eham06(5.0)
-        },
+                BahndisziplinInput {
+                    bahnbreite_m: Some(500.0),
+                    ..eham06(5.0)
+                },
                 "runway_width_unknown",
             ),
             (
-                BahndisziplinInput { spurweite_m: None, ..eham06(5.0)
-        },
+                BahndisziplinInput {
+                    spurweite_m: None,
+                    ..eham06(5.0)
+                },
                 "track_width_unknown",
             ),
             (
-                BahndisziplinInput { proben: Some(2), ..eham06(5.0)
-        },
+                BahndisziplinInput {
+                    proben: Some(2),
+                    ..eham06(5.0)
+                },
                 "insufficient_samples",
             ),
             (
-                BahndisziplinInput { max_querversatz_m: None, ..eham06(5.0)
-        },
+                BahndisziplinInput {
+                    max_querversatz_m: None,
+                    ..eham06(5.0)
+                },
                 "missing_lateral_track",
             ),
             (
-                BahndisziplinInput { belag: Some(Belag::Unbekannt), ..eham06(5.0)
-        },
+                BahndisziplinInput {
+                    belag: Some(Belag::Unbekannt),
+                    ..eham06(5.0)
+                },
                 "surface_unknown",
             ),
         ] {
@@ -786,8 +811,14 @@ mod kette {
             bewertet.contains(&"touchdown_point"),
             "Aufsetzpunkt fehlt: {bewertet:?}"
         );
-        assert!(bewertet.contains(&"rollout"), "Bahndisziplin fehlt: {bewertet:?}");
-        assert!(bewertet.contains(&"alignment"), "Ausrichtung fehlt: {bewertet:?}");
+        assert!(
+            bewertet.contains(&"rollout"),
+            "Bahndisziplin fehlt: {bewertet:?}"
+        );
+        assert!(
+            bewertet.contains(&"alignment"),
+            "Ausrichtung fehlt: {bewertet:?}"
+        );
     }
 }
 
@@ -963,7 +994,10 @@ mod achse_tests {
         };
         let e = sub_bahndisziplin(&input);
         assert!(!e.skipped);
-        assert!(e.warning.is_none(), "bestaetigte Achse traegt einen Zweifel");
+        assert!(
+            e.warning.is_none(),
+            "bestaetigte Achse traegt einen Zweifel"
+        );
     }
 
     #[test]
@@ -985,7 +1019,6 @@ mod achse_tests {
         assert_ne!(e.reason.as_deref(), Some("runway_axis_mismatch"));
     }
 }
-
 
 #[cfg(test)]
 mod fenster_tests {
@@ -1025,7 +1058,6 @@ mod fenster_tests {
         assert_eq!(achsen_fenster_bis_m(Some(f64::NAN), None, None), None);
     }
 }
-
 
 #[cfg(test)]
 mod ordnung_tests {

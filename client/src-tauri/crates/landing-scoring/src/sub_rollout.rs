@@ -259,7 +259,11 @@ pub fn sub_rollout_v2(input: &RolloutInput) -> SubScoreEntry {
         (0u8, "overrun_risk", Band::Bad)
     } else {
         // Heavy-Allowance VOR Banding (v0.10.0 LE5, unverändert).
-        let allowance_pp: f32 = if is_heavy(input.aircraft_icao) { 5.0 } else { 0.0 };
+        let allowance_pp: f32 = if is_heavy(input.aircraft_icao) {
+            5.0
+        } else {
+            0.0
+        };
         let banding_pct: f32 = raw_ratio_pct - allowance_pp;
 
         match banding_pct {
@@ -369,29 +373,22 @@ pub(crate) enum Category {
 /// 2 km ausrollt, hat tatsaechlich ein Problem; wer als A320 2 km
 /// ausrollt, war gut.
 pub(crate) fn category_for_icao(icao: Option<&str>) -> Category {
-    let Some(icao) = icao else { return Category::Light };
+    let Some(icao) = icao else {
+        return Category::Light;
+    };
     let icao = icao.trim().to_uppercase();
 
     // Heavy / Wide-Bodies.
     const HEAVY: &[&str] = &[
         // Airbus widebodies
-        "A332", "A333", "A338", "A339",
-        "A342", "A343", "A345", "A346",
-        "A359", "A35K",
-        "A388",
+        "A332", "A333", "A338", "A339", "A342", "A343", "A345", "A346", "A359", "A35K", "A388",
         // Boeing 747 family
-        "B741", "B742", "B743", "B744", "B748",
-        // Boeing 767
-        "B762", "B763", "B764",
-        // Boeing 777
-        "B772", "B773", "B77F", "B77L", "B77W",
-        // Boeing 787
-        "B788", "B789", "B78X",
-        // MD-11
-        "MD11", "MD1F",
-        // Antonov
-        "A124", "A225",
-        // IL-96
+        "B741", "B742", "B743", "B744", "B748", // Boeing 767
+        "B762", "B763", "B764", // Boeing 777
+        "B772", "B773", "B77F", "B77L", "B77W", // Boeing 787
+        "B788", "B789", "B78X", // MD-11
+        "MD11", "MD1F", // Antonov
+        "A124", "A225", // IL-96
         "IL96",
     ];
     if HEAVY.contains(&icao.as_str()) {
@@ -401,28 +398,20 @@ pub(crate) fn category_for_icao(icao: Option<&str>) -> Category {
     // Medium / Narrow-Body / Regional.
     const MEDIUM: &[&str] = &[
         // Airbus narrowbodies
-        "A318", "A319", "A320", "A321",
-        "A19N", "A20N", "A21N", // NEO family
+        "A318", "A319", "A320", "A321", "A19N", "A20N", "A21N", // NEO family
         "A220", "BCS1", "BCS3", // A220 / CSeries
         // Boeing 737 family
-        "B731", "B732", "B733", "B734", "B735",
-        "B736", "B737", "B738", "B739",
-        "B37M", "B38M", "B39M", "B3XM", // MAX
+        "B731", "B732", "B733", "B734", "B735", "B736", "B737", "B738", "B739", "B37M", "B38M",
+        "B39M", "B3XM", // MAX
         // Boeing 757
-        "B752", "B753",
-        // Embraer regional
-        "E135", "E145", "E170", "E175", "E190", "E195",
-        "E290", "E295", // E2
+        "B752", "B753", // Embraer regional
+        "E135", "E145", "E170", "E175", "E190", "E195", "E290", "E295", // E2
         // Bombardier CRJ
-        "CRJ1", "CRJ2", "CRJ7", "CRJ9", "CRJX",
-        // ATR
-        "AT42", "AT43", "AT44", "AT45", "AT46",
-        "AT72", "AT73", "AT74", "AT75", "AT76",
+        "CRJ1", "CRJ2", "CRJ7", "CRJ9", "CRJX", // ATR
+        "AT42", "AT43", "AT44", "AT45", "AT46", "AT72", "AT73", "AT74", "AT75", "AT76",
         // Dash 8
-        "DH8A", "DH8B", "DH8C", "DH8D",
-        // Fokker
-        "F70", "F100", "F50",
-        // MD-80/90
+        "DH8A", "DH8B", "DH8C", "DH8D", // Fokker
+        "F70", "F100", "F50", // MD-80/90
         "MD81", "MD82", "MD83", "MD87", "MD88", "MD90",
     ];
     if MEDIUM.contains(&icao.as_str()) {
@@ -518,15 +507,42 @@ mod tests {
     fn light_category_unchanged_from_v0_7_16() {
         // Cessna 172 etc. — Schwellen identisch zur alten Hardcode-
         // Tabelle aus v0.7.16. Keine Regression fuer GA-Piloten.
-        assert_eq!(run(500.0, Some("C172")), (100, "landing.rat.excellent_stop".into()));
-        assert_eq!(run(799.99, Some("C172")), (100, "landing.rat.excellent_stop".into()));
-        assert_eq!(run(800.0, Some("C172")), (80, "landing.rat.good_stop".into()));
-        assert_eq!(run(1199.99, Some("C172")), (80, "landing.rat.good_stop".into()));
-        assert_eq!(run(1200.0, Some("C172")), (55, "landing.rat.long_rollout".into()));
-        assert_eq!(run(1799.99, Some("C172")), (55, "landing.rat.long_rollout".into()));
-        assert_eq!(run(1800.0, Some("C172")), (25, "landing.rat.very_long_rollout".into()));
-        assert_eq!(run(2499.99, Some("C172")), (25, "landing.rat.very_long_rollout".into()));
-        assert_eq!(run(2500.0, Some("C172")), (5, "landing.rat.marginal_runway".into()));
+        assert_eq!(
+            run(500.0, Some("C172")),
+            (100, "landing.rat.excellent_stop".into())
+        );
+        assert_eq!(
+            run(799.99, Some("C172")),
+            (100, "landing.rat.excellent_stop".into())
+        );
+        assert_eq!(
+            run(800.0, Some("C172")),
+            (80, "landing.rat.good_stop".into())
+        );
+        assert_eq!(
+            run(1199.99, Some("C172")),
+            (80, "landing.rat.good_stop".into())
+        );
+        assert_eq!(
+            run(1200.0, Some("C172")),
+            (55, "landing.rat.long_rollout".into())
+        );
+        assert_eq!(
+            run(1799.99, Some("C172")),
+            (55, "landing.rat.long_rollout".into())
+        );
+        assert_eq!(
+            run(1800.0, Some("C172")),
+            (25, "landing.rat.very_long_rollout".into())
+        );
+        assert_eq!(
+            run(2499.99, Some("C172")),
+            (25, "landing.rat.very_long_rollout".into())
+        );
+        assert_eq!(
+            run(2500.0, Some("C172")),
+            (5, "landing.rat.marginal_runway".into())
+        );
     }
 
     #[test]
@@ -534,13 +550,25 @@ mod tests {
         // N-002 Original-Beschwerde: A21N landete in BIKF mit ~2km
         // Rollout auf einer 3km Bahn. Vorher: 25 Pkt (very_long).
         // Jetzt: 80 Pkt (good_stop) bei 2000m — passt zur Realitaet.
-        assert_eq!(run(2000.0, Some("A320")), (55, "landing.rat.long_rollout".into()));
+        assert_eq!(
+            run(2000.0, Some("A320")),
+            (55, "landing.rat.long_rollout".into())
+        );
         // 1500m fuer einen A320 ist sehr gut
-        assert_eq!(run(1500.0, Some("A320")), (80, "landing.rat.good_stop".into()));
+        assert_eq!(
+            run(1500.0, Some("A320")),
+            (80, "landing.rat.good_stop".into())
+        );
         // 1000m ist exzellent (kurze Bahn, perfektes Bremsen)
-        assert_eq!(run(1000.0, Some("A320")), (100, "landing.rat.excellent_stop".into()));
+        assert_eq!(
+            run(1000.0, Some("A320")),
+            (100, "landing.rat.excellent_stop".into())
+        );
         // 2800m ist sehr lang fuer A320
-        assert_eq!(run(2800.0, Some("A320")), (25, "landing.rat.very_long_rollout".into()));
+        assert_eq!(
+            run(2800.0, Some("A320")),
+            (25, "landing.rat.very_long_rollout".into())
+        );
     }
 
     #[test]
@@ -568,7 +596,10 @@ mod tests {
         // bid_icao-Fallback-Reparatur in lib.rs:8482 bekommt der Sub-
         // Score den Bid-Wert „A20N" und nutzt Medium-Schwellen
         // (1200/1800) → 1096 < 1200 → excellent_stop, 100 PTS.
-        assert_eq!(run(1096.0, Some("A20N")), (100, "landing.rat.excellent_stop".into()));
+        assert_eq!(
+            run(1096.0, Some("A20N")),
+            (100, "landing.rat.excellent_stop".into())
+        );
         // Auch wenn snapshot None lieferte: jetzt kommt der Wert via Bid.
         // (Wenn beides None ist, fallen wir auf Light zurueck → 80 PTS.)
         assert_eq!(run(1096.0, None), (80, "landing.rat.good_stop".into()));
@@ -586,10 +617,19 @@ mod tests {
     fn heavy_category_b77w_2500m_still_good() {
         // Heavy braucht naturgemaess mehr Rollout. 2500m bei B777 ist
         // noch im „good"-Band, nicht „bad".
-        assert_eq!(run(2500.0, Some("B77W")), (55, "landing.rat.long_rollout".into()));
-        assert_eq!(run(2000.0, Some("B77W")), (80, "landing.rat.good_stop".into()));
+        assert_eq!(
+            run(2500.0, Some("B77W")),
+            (55, "landing.rat.long_rollout".into())
+        );
+        assert_eq!(
+            run(2000.0, Some("B77W")),
+            (80, "landing.rat.good_stop".into())
+        );
         // 4000m+ ist auch fuer Heavy nicht mehr ok
-        assert_eq!(run(4000.0, Some("B77W")), (5, "landing.rat.marginal_runway".into()));
+        assert_eq!(
+            run(4000.0, Some("B77W")),
+            (5, "landing.rat.marginal_runway".into())
+        );
     }
 
     #[test]

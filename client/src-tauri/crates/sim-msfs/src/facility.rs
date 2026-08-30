@@ -59,10 +59,9 @@ use sim_core::szenerie::{SzenerieBahn, SzenerieFlughafen};
 /// wäre von SimConnect abgelehnt worden, und zwar erst zur Laufzeit auf
 /// einer Windows-Maschine.
 ///
-/// `PRIMARY_THRESHOLD` / `SECONDARY_THRESHOLD` sind die versetzte
-/// Schwelle des jeweiligen Endes. Die Dokumentation nennt sie nicht
-/// ausdrücklich so; der Wert wird deshalb beim ersten echten Lauf gegen
-/// die Navdaten gehalten, bevor er in die Bewertung geht.
+/// ⚠ Hier stehen NUR die Felder des flachen Bahnsatzes. Die versetzte
+/// Schwelle gehoert NICHT dazu — sie kommt als eigener PAVEMENT-Satz,
+/// siehe [`PAVEMENT_FELDER`].
 pub const BAHN_FELDER: &[(&str, FeldTyp)] = &[
     ("LATITUDE", FeldTyp::F64),
     ("LONGITUDE", FeldTyp::F64),
@@ -75,27 +74,30 @@ pub const BAHN_FELDER: &[(&str, FeldTyp)] = &[
     ("PRIMARY_DESIGNATOR", FeldTyp::I32),
     ("SECONDARY_NUMBER", FeldTyp::I32),
     ("SECONDARY_DESIGNATOR", FeldTyp::I32),
-    // ── PAVEMENT-Untersaetze (v1.7.12) ───────────────────────────────
-    //
-    // Die versetzte Schwelle kommt NICHT als Zahl im flachen Satz — sie
-    // ist ein PAVEMENT-Untersatz mit drei Feldern. Genau daran ist der
-    // erste Anlauf gescheitert: `PRIMARY_THRESHOLD` als `F32` deklariert,
-    // Raster 64 statt 56 Bytes, jeder Bahnsatz fiel durch.
-    //
-    // ⚠ PAVEMENT hat KEINEN eigenen Wert in `SIMCONNECT_FACILITY_DATA_TYPE`
-    // (im SDK-Header nachgesehen) — die Felder kommen also EINGEBETTET im
-    // Bahnsatz, in der Reihenfolge der Definition. Deshalb stehen sie hier
-    // im flachen Raster, und die OPEN/CLOSE-Marken stehen getrennt in
-    // `BAHN_DEFINITION`.
-    //
-    // Laut SDK-Doku enthaelt PAVEMENT: LENGTH (FLOAT32), WIDTH (FLOAT32),
-    // ENABLE (INT32).
-    ("PRIMARY_THRESHOLD.LENGTH", FeldTyp::F32),
-    ("PRIMARY_THRESHOLD.WIDTH", FeldTyp::F32),
-    ("PRIMARY_THRESHOLD.ENABLE", FeldTyp::I32),
-    ("SECONDARY_THRESHOLD.LENGTH", FeldTyp::F32),
-    ("SECONDARY_THRESHOLD.WIDTH", FeldTyp::F32),
-    ("SECONDARY_THRESHOLD.ENABLE", FeldTyp::I32),
+];
+
+/// Die drei Felder eines PAVEMENT-Untersatzes.
+///
+/// # Warum das eine EIGENE Liste ist
+///
+/// `PAVEMENT` ist eine eigene Satzart mit eigenem Wert in
+/// `SIMCONNECT_FACILITY_DATA_TYPE` (`SIMCONNECT_FACILITY_DATA_PAVEMENT`,
+/// im SDK-Header Zeile 338). Die Felder kommen also in einer EIGENEN
+/// Nachricht nach ihrem Bahnsatz — nicht eingebettet in ihm.
+///
+/// ⚠ Genau hier lag der zweite Fehlversuch (30.08.2026): Ich hatte den
+/// Enum-Block nur bis Zeile 335 gelesen, das Fehlen von PAVEMENT als
+/// Tatsache gemeldet und die sechs Felder ins flache Bahnraster
+/// gehaengt. Folge waere gewesen: Der Bahnsatz kommt mit 56 Bytes, das
+/// Raster verlangt 80 — jede MSFS-Bahn faellt durch, genau wie bei
+/// v1.7.8. Die Tests bauten ihren 80-Byte-Block selbst und haben die
+/// falsche Annahme nur bestaetigt.
+///
+/// Laut SDK-Doku: LENGTH (FLOAT32), WIDTH (FLOAT32), ENABLE (INT32).
+pub const PAVEMENT_FELDER: &[(&str, FeldTyp)] = &[
+    ("LENGTH", FeldTyp::F32),
+    ("WIDTH", FeldTyp::F32),
+    ("ENABLE", FeldTyp::I32),
 ];
 
 /// Die Anmeldung des Bahnsatzes — Feldnamen UND Gruppenmarken, in der
@@ -128,7 +130,6 @@ pub const BAHN_DEFINITION: &[&str] = &[
     "ENABLE",
     "CLOSE SECONDARY_THRESHOLD",
 ];
-
 
 /// Der Referenzpunkt des Flughafens.
 ///
@@ -360,44 +361,128 @@ pub fn zerlege(felder: &[(&str, FeldTyp)], bytes: &[u8]) -> Option<Vec<Wert>> {
     Some(aus)
 }
 
-
-/// Die versetzte Schwelle aus einem PAVEMENT-Untersatz lesen.
+/// Einen eingetroffenen PAVEMENT-Satz an sein Bahnende haengen.
 ///
-/// `ab` ist der Index von LENGTH; darauf folgen WIDTH und ENABLE.
-/// Rueckgabe in Metern, oder NaN.
+/// `bahnen` ist der laufende Sammler; die letzten ZWEI Eintraege sind
+/// das zuletzt gelesene Bahnenpaar (primaeres Ende zuerst).
+/// `wievielter` zaehlt, der wievielte PAVEMENT-Satz seit diesem
+/// Bahnsatz eingetroffen ist: 0 = PRIMARY_THRESHOLD,
+/// 1 = SECONDARY_THRESHOLD. Weitere werden verworfen.
 ///
-/// ⚠ Hier werden zwei Dinge unterschieden, die beide "0" heissen
-/// koennten:
+/// # Was `ENABLE` bedeutet
 ///
-/// * **Schweigen** — der Untersatz kam gar nicht an (kuerzerer Block,
-///   aeltere Simulator-Fassung). Dann NaN: Wir wissen nichts, und der
-///   Navdaten-Wert bleibt stehen.
-/// * **Aussage** — der Untersatz kam an und `ENABLE` ist 0. Dann 0,0:
-///   Die Szenerie sagt "an diesem Ende gibt es KEINE versetzte
-///   Schwelle", und diese Aussage gilt, wie jede andere Zahl aus der
-///   Szenerie auch (siehe [[aeroacars-bahn-aus-der-szenerie]]: Der
-///   Simulator ist die erste Instanz, weil der Pilot dort landet).
+/// ⚠ `ENABLE = 0` ist eine AUSSAGE ("an diesem Ende gibt es keine
+/// versetzte Schwelle"), kein Schweigen — sie schlaegt darum den
+/// Navdaten-Wert, wie jede andere Zahl aus der Szenerie auch (siehe
+/// [[aeroacars-bahn-aus-der-szenerie]]: Der Simulator ist die erste
+/// Instanz, weil der Pilot dort landet).
 ///
-/// Der Unterschied ist der Fall LAN273 (TJPS 12, 30.08.2026): Die
-/// Navdaten fuehren 573 m versetzte Schwelle, der Pilot sagt, im
-/// Simulator sei dort keine. Wuerden wir `ENABLE = 0` als Schweigen
-/// lesen, blieben die 573 m stehen und der Aufsetzpunkt wuerde gegen
-/// eine Schwelle bewertet, die der Pilot nie gesehen hat.
-fn versatz_aus_pavement(w: &[Wert], ab: usize) -> f64 {
-    // Schweigen: Der Untersatz fehlt.
-    let (Some(laenge), Some(enable)) = (w.get(ab), w.get(ab + 2)) else {
-        return f64::NAN;
-    };
-    // Aussage: kein Schwellenversatz an diesem Ende.
-    if enable.als_i32() == 0 {
-        return 0.0;
+/// Der Unterschied ist nicht theoretisch: Bei LAN273 (TJPS 12,
+/// 30.08.2026) fuehren die Navdaten 573 m versetzte Schwelle, der Pilot
+/// sagt, im Simulator sei dort keine. Genau diese Frage beantwortet
+/// `ENABLE`.
+///
+/// Kommt gar kein PAVEMENT-Satz, bleibt die Schwelle NaN — dann wissen
+/// wir nichts, und der Navdaten-Wert gilt weiter.
+pub fn pavement_anhaengen(bahnen: &mut [SzenerieBahn], wievielter: usize, bytes: &[u8]) -> bool {
+    if wievielter > 1 || bahnen.len() < 2 {
+        return false;
     }
-    let l = laenge.als_f64();
-    // Aktiv, aber die Laenge ist Unsinn — dann lieber nichts sagen.
-    if l.is_finite() && l > 0.0 {
-        l
+    let Some(w) = zerlege(PAVEMENT_FELDER, bytes) else {
+        return false;
+    };
+    // Von hinten: die letzten zwei Eintraege sind das aktuelle Paar.
+    let ziel = bahnen.len() - 2 + wievielter;
+    let laenge = w[0].als_f64();
+    let aktiv = w[2].als_i32() != 0;
+    // ⚠ Nicht nur ENABLE pruefen: Eine "aktive" Schwelle mit Laenge 0
+    // ist dasselbe wie keine, eine negative waere Unsinn. Dann lieber
+    // nichts sagen als etwas Falsches.
+    bahnen[ziel].versetzte_schwelle_m = if !aktiv {
+        0.0
+    } else if laenge.is_finite() && laenge > 0.0 {
+        laenge
     } else {
         f64::NAN
+    };
+    true
+}
+
+/// Der Sammler fuer eine Facility-Lieferung: Bahnsaetze und die
+/// PAVEMENT-Saetze, die zu ihnen gehoeren.
+///
+/// # Warum das hier steht und nicht im Verteiler
+///
+/// Der Verteiler in `adapter.rs` liegt hinter `cfg(target_os =
+/// "windows")` und wird auf dem Mac gar nicht uebersetzt — dort ist
+/// nichts pruefbar. Die REIHENFOLGE ist aber genau das, was schiefgehen
+/// kann: Ein PAVEMENT-Satz gehoert zum zuletzt gelesenen Bahnsatz, und
+/// wer den Zaehler nicht bei jeder neuen Bahn zurueckstellt, haengt die
+/// Schwelle der zweiten Bahn an das falsche Ende der ersten.
+///
+/// Deshalb fuehrt der Sammler den Zustand, und der Verteiler ruft nur
+/// noch. Eine Implementierung, an einem Ort, auf jedem Rechner
+/// pruefbar.
+#[derive(Debug, Default)]
+pub struct Szeneriesammler {
+    bahnen: Vec<SzenerieBahn>,
+    /// Der wievielte PAVEMENT-Satz seit dem letzten Bahnsatz.
+    /// 0 = PRIMARY_THRESHOLD, 1 = SECONDARY_THRESHOLD.
+    pavement_zaehler: usize,
+    /// Ob der zuletzt gelesene Bahnsatz brauchbar war.
+    ///
+    /// ⚠ Ohne dieses Feld landen die PAVEMENT-Saetze eines UNLESBAREN
+    /// Bahnsatzes auf der VORHERIGEN Bahn — sie ist dann ja die letzte
+    /// im Sammler. Der Fehler ist doppelt still: Die kaputte Bahn fehlt
+    /// ohnehin, und die intakte bekommt eine fremde Schwelle
+    /// untergeschoben. Gefunden vom Test
+    /// `ein_unlesbarer_bahnsatz_stellt_den_zaehler_trotzdem_zurueck`.
+    bahn_gueltig: bool,
+}
+
+impl Szeneriesammler {
+    pub fn neu() -> Self {
+        Self::default()
+    }
+
+    /// Ein RUNWAY-Satz. Gibt zurueck, ob er gelesen werden konnte.
+    pub fn bahnsatz(&mut self, bytes: &[u8]) -> bool {
+        // ⚠ ZUERST zuruecksetzen, auch wenn der Satz unlesbar ist: Die
+        // PAVEMENT-Saetze, die jetzt kommen, gehoeren zu IHM. Wer den
+        // Zaehler nur im Erfolgsfall stellt, haengt sie an die
+        // vorherige Bahn.
+        self.pavement_zaehler = 0;
+        self.bahn_gueltig = false;
+        match zerlege(BAHN_FELDER, bytes).and_then(|w| bahn_aus_werten(&w)) {
+            Some(paar) => {
+                self.bahnen.extend(paar);
+                self.bahn_gueltig = true;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Ein PAVEMENT-Satz. Gibt zurueck, ob er zugeordnet werden konnte.
+    pub fn pavementsatz(&mut self, bytes: &[u8]) -> bool {
+        let nummer = self.pavement_zaehler;
+        self.pavement_zaehler += 1;
+        // ⚠ Gehoert der Satz zu einer Bahn, die wir nicht lesen konnten,
+        // wird er VERWORFEN — nicht der vorherigen Bahn angehaengt.
+        if !self.bahn_gueltig {
+            return false;
+        }
+        pavement_anhaengen(&mut self.bahnen, nummer, bytes)
+    }
+
+    pub fn fertig(self) -> Vec<SzenerieBahn> {
+        self.bahnen
+    }
+
+    /// Wie viele Bahnen bisher gelesen wurden (zwei je Bahnsatz — je
+    /// Ende eine).
+    pub fn anzahl(&self) -> usize {
+        self.bahnen.len()
     }
 }
 
@@ -417,19 +502,15 @@ pub fn bahn_aus_werten(w: &[Wert]) -> Option<[SzenerieBahn; 2]> {
         laenge,
         breite,
         belag,
-        // Die versetzte Schwelle aus dem PAVEMENT-Untersatz.
-        //
-        // ⚠ `ENABLE` entscheidet — und ein `ENABLE = 0` ist eine
-        // AUSSAGE ("keine versetzte Schwelle"), keine Luecke. Sie
-        // schlaegt darum den Navdaten-Wert, wie jede andere Zahl aus
-        // der Szenerie auch. Die Begruendung steht bei
-        // `versatz_aus_pavement`.
-        //
-        // Der Unterschied ist nicht theoretisch: Bei LAN273 (TJPS 12,
-        // 30.08.2026) sagen die Navdaten 573 m versetzte Schwelle, der
-        // Pilot sagt, im Simulator gebe es dort keine.
-        (w[7].als_i32(), w[8].als_i32(), versatz_aus_pavement(w, 11)),
-        (w[9].als_i32(), w[10].als_i32(), versatz_aus_pavement(w, 14)),
+        // ⚠ NaN, nicht 0,0: Die versetzte Schwelle steht NICHT im
+        // flachen Bahnsatz — sie kommt als eigener PAVEMENT-Satz
+        // hinterher (siehe `PAVEMENT_FELDER`). Eine 0 waere hier eine
+        // AUSSAGE ("keine versetzte Schwelle") und wuerde den echten
+        // Navdaten-Wert ueberschreiben, bevor der PAVEMENT-Satz
+        // ueberhaupt eingetroffen ist. NaN faellt durch
+        // `plausibel::versatz_m` und laesst ihn stehen.
+        (w[7].als_i32(), w[8].als_i32(), f64::NAN),
+        (w[9].als_i32(), w[10].als_i32(), f64::NAN),
     ))
 }
 
@@ -617,22 +698,30 @@ mod feldnamen_tests {
             .filter(|t| !t.starts_with("OPEN ") && !t.starts_with("CLOSE "))
             .collect();
 
+        // ⚠ Die Anmeldung liefert den flachen Bahnsatz UND die beiden
+        // PAVEMENT-Untersaetze. Die Bytes kommen aber getrennt: der
+        // Bahnsatz als RUNWAY-Nachricht, jeder Untersatz als eigene
+        // PAVEMENT-Nachricht. Deshalb wird hier gegen BEIDE Raster
+        // geprueft, in genau dieser Reihenfolge.
+        let erwartet: Vec<&str> = BAHN_FELDER
+            .iter()
+            .map(|(n, _)| *n)
+            .chain(PAVEMENT_FELDER.iter().map(|(n, _)| *n))
+            .chain(PAVEMENT_FELDER.iter().map(|(n, _)| *n))
+            .collect();
+
         assert_eq!(
             liefernde.len(),
-            BAHN_FELDER.len(),
-            "Anmeldung liefert {} Werte, das Raster erwartet {} — \
-             jeder Bahnsatz waere ab hier verschoben",
+            erwartet.len(),
+            "Anmeldung liefert {} Werte, die Raster erwarten {} — \
+             jeder Satz waere ab hier verschoben",
             liefernde.len(),
-            BAHN_FELDER.len()
+            erwartet.len()
         );
 
-        for (i, (name, _)) in BAHN_FELDER.iter().enumerate() {
-            // Im Raster heisst das Feld `PRIMARY_THRESHOLD.LENGTH`, in
-            // der Anmeldung steht es INNERHALB des Untersatzes und
-            // heisst dort nur `LENGTH`.
-            let kurz = name.rsplit('.').next().unwrap();
+        for (i, name) in erwartet.iter().enumerate() {
             assert_eq!(
-                liefernde[i], kurz,
+                liefernde[i], *name,
                 "Feld {i} heisst in der Anmeldung {:?}, im Raster {name:?}",
                 liefernde[i]
             );
@@ -782,20 +871,12 @@ mod zerleger_tests {
             Wert::I32(0),       // PRIMARY_DESIGNATOR
             Wert::I32(23),      // SECONDARY_NUMBER
             Wert::I32(0),       // SECONDARY_DESIGNATOR
-            // PAVEMENT PRIMARY_THRESHOLD: 120 m lang, aktiv
-            Wert::F32(120.0),
-            Wert::F32(45.0),
-            Wert::I32(1),
-            // PAVEMENT SECONDARY_THRESHOLD: nicht aktiv
-            Wert::F32(0.0),
-            Wert::F32(0.0),
-            Wert::I32(0),
-            // ⚠ Hier standen PRIMARY_/SECONDARY_THRESHOLD als F32 — und
-            // genau das machte diesen Test wertlos: Er baute die Bytes
-            // aus DERSELBEN Feldliste, gegen die er sie dann prueft. Ein
-            // Rundlauf gegen die eigene Annahme kann eine falsche
-            // Annahme nicht finden. Beide Felder sind laut SDK STRUCTs
-            // und kommen im flachen Satz gar nicht vor.
+                                // ⚠ Hier standen PRIMARY_/SECONDARY_THRESHOLD als F32 — und
+                                // genau das machte diesen Test wertlos: Er baute die Bytes
+                                // aus DERSELBEN Feldliste, gegen die er sie dann prueft. Ein
+                                // Rundlauf gegen die eigene Annahme kann eine falsche
+                                // Annahme nicht finden. Beide Felder sind laut SDK STRUCTs
+                                // und kommen im flachen Satz gar nicht vor.
         ]
     }
 
@@ -808,8 +889,9 @@ mod zerleger_tests {
     /// PRIMARY_DESIGNATOR, SECONDARY_NUMBER, SECONDARY_DESIGNATOR).
     /// Wer ein Feld ergaenzt, muss diese Zahl bewusst mit aendern — und
     /// dabei in der Doku nachsehen, ob das Feld ueberhaupt flach kommt.
-    // 3x FLOAT64 + 3x FLOAT32 + 5x INT32 + 2x PAVEMENT (je 2x FLOAT32 + 1x INT32)
-    const BAHNSATZ_BYTES_LAUT_SDK: usize = 3 * 8 + 3 * 4 + 5 * 4 + 2 * (2 * 4 + 4);
+    // 3x FLOAT64 + 3x FLOAT32 + 5x INT32. OHNE die versetzte Schwelle —
+    // die kommt als eigener PAVEMENT-Satz.
+    const BAHNSATZ_BYTES_LAUT_SDK: usize = 3 * 8 + 3 * 4 + 5 * 4;
 
     #[test]
     fn das_bahnraster_passt_zur_sdk_doku() {
@@ -829,6 +911,33 @@ mod zerleger_tests {
              zu wenig, oder hat den falschen Typ (STRUCT-Felder kommen \
              NICHT im flachen Satz)"
         );
+    }
+
+    /// Der PAVEMENT-Satz hat sein eigenes Raster — und ist KEIN Teil des
+    /// Bahnsatzes.
+    ///
+    /// ⚠ Genau diese Verwechslung war der zweite Fehlversuch am
+    /// 30.08.2026: sechs PAVEMENT-Felder ins flache Bahnraster gehaengt,
+    /// weil ich den Enum-Block der SDK nur bis Zeile 335 gelesen und das
+    /// Fehlen von `SIMCONNECT_FACILITY_DATA_PAVEMENT` (Zeile 338) als
+    /// Tatsache gemeldet hatte. Der Bahnsatz kommt mit 56 Bytes, das
+    /// Raster haette 80 verlangt — jede MSFS-Bahn waere durchgefallen,
+    /// genau wie bei v1.7.8.
+    #[test]
+    fn das_pavementraster_ist_getrennt_und_passt_zur_sdk_doku() {
+        // LENGTH (FLOAT32) + WIDTH (FLOAT32) + ENABLE (INT32).
+        const PAVEMENT_BYTES_LAUT_SDK: usize = 2 * 4 + 4;
+        let gebraucht: usize = PAVEMENT_FELDER.iter().map(|(_, t)| t.groesse()).sum();
+        assert_eq!(gebraucht, PAVEMENT_BYTES_LAUT_SDK);
+
+        // Und keines dieser Felder darf im Bahnraster stehen.
+        for (name, _) in BAHN_FELDER {
+            assert!(
+                !name.contains("THRESHOLD"),
+                "{name} gehoert in den PAVEMENT-Satz, nicht ins Bahnraster — \
+                 dort verschiebt es jeden Bahnsatz um seine Bytes"
+            );
+        }
     }
 
     #[test]
@@ -888,55 +997,169 @@ mod zerleger_tests {
         // PAVEMENT-Untersatz. Eine 0 waere eine AUSSAGE ("keine versetzte
         // Schwelle") und wuerde den echten Navdaten-Wert ueberschreiben.
         // NaN faellt durch `plausibel::versatz_m` und laesst ihn stehen.
-        // v1.7.12: Die versetzte Schwelle kommt jetzt aus dem
-        // PAVEMENT-Untersatz. Primaer: 120 m und aktiv → 120 m.
-        assert!((a.versetzte_schwelle_m - 120.0).abs() < 1e-6);
-        // Sekundaer: ENABLE = 0 → 0,0. Das ist die AUSSAGE "keine
-        // versetzte Schwelle" und muss einen Navdaten-Wert schlagen —
-        // nicht NaN, das waere Schweigen.
-        assert_eq!(b.versetzte_schwelle_m, 0.0);
+        // ⚠ Aus dem FLACHEN Bahnsatz kommt keine Schwelle — sie ist
+        // eine eigene PAVEMENT-Nachricht. Bis die eintrifft, darf hier
+        // nichts behauptet werden (siehe `pavement_saetze_kommen_getrennt`).
+        assert!(a.versetzte_schwelle_m.is_nan());
+        assert!(b.versetzte_schwelle_m.is_nan());
         assert_eq!(a.belag_code, 1, "Beton muss befestigt sein");
     }
 
-    /// Schweigen und Aussage duerfen nicht dasselbe bedeuten.
+    /// Der ganze Nachrichtenstrom, so wie der Simulator ihn schickt.
     ///
-    /// ⚠ Genau hier haengt der Fall LAN273: Ein `ENABLE = 0` MUSS die
-    /// versetzte Schwelle der Navdaten schlagen, ein fehlender
-    /// Untersatz darf sie NICHT anfassen.
+    /// ⚠ Das ist der Test, der beim ersten Anlauf gefehlt hat. Zwei
+    /// Bahnen hintereinander, jede mit ihren beiden PAVEMENT-Saetzen —
+    /// wer den Zaehler nicht bei JEDEM Bahnsatz zuruecksetzt, haengt
+    /// die Schwelle der zweiten Bahn an das falsche Ende der ersten.
+    /// Der Fehler faellt sonst erst 573 m spaeter auf.
     #[test]
-    fn fehlender_untersatz_und_abgeschaltete_schwelle_sind_verschieden() {
-        let voll = eddh_werte();
+    fn ein_ganzer_nachrichtenstrom_ordnet_jede_schwelle_ihrem_ende_zu() {
+        let bahn = bytes_aus_werten(&eddh_werte());
+        let mut sammler = Szeneriesammler::neu();
 
-        // Aussage: Der Untersatz ist da, ENABLE = 0.
-        let [_, b] = bahn_aus_werten(&voll).expect("Bahnenpaar");
-        assert_eq!(
-            b.versetzte_schwelle_m, 0.0,
-            "ENABLE = 0 ist eine Aussage und muss als 0 ankommen"
-        );
+        // Erste Bahn: 120 m am primaeren Ende, nichts am sekundaeren.
+        assert!(sammler.bahnsatz(&bahn));
+        assert!(sammler.pavementsatz(&pavement_bytes(120.0, 45.0, 1)));
+        assert!(sammler.pavementsatz(&pavement_bytes(0.0, 0.0, 0)));
 
-        // Schweigen: Der Block endet vor dem sekundaeren Untersatz.
-        //
-        // ⚠ Gemessen, nicht angenommen: Der Laengenriegel in
-        // `bahn_aus_werten` verwirft so einen Block GANZ. Das ist die
-        // schaerfere Antwort als ein NaN — lieber keine Bahn als eine
-        // halbe. Der NaN-Zweig in `versatz_aus_pavement` bleibt
-        // trotzdem stehen; er faengt den Fall eine Ebene tiefer.
-        let kurz = &voll[..voll.len() - 3];
+        // Zweite Bahn: nichts am primaeren, 300 m am sekundaeren.
+        assert!(sammler.bahnsatz(&bahn));
+        assert!(sammler.pavementsatz(&pavement_bytes(0.0, 0.0, 0)));
+        assert!(sammler.pavementsatz(&pavement_bytes(300.0, 45.0, 1)));
+
+        let b = sammler.fertig();
+        assert_eq!(b.len(), 4, "zwei Bahnsaetze ergeben vier Enden");
+        assert!((b[0].versetzte_schwelle_m - 120.0).abs() < 1e-6);
+        assert_eq!(b[1].versetzte_schwelle_m, 0.0);
+        assert_eq!(b[2].versetzte_schwelle_m, 0.0);
+        assert!((b[3].versetzte_schwelle_m - 300.0).abs() < 1e-6);
+    }
+
+    /// Ein unlesbarer Bahnsatz darf die folgenden Schwellen nicht an die
+    /// vorherige Bahn haengen.
+    #[test]
+    fn ein_unlesbarer_bahnsatz_stellt_den_zaehler_trotzdem_zurueck() {
+        let mut sammler = Szeneriesammler::neu();
+        assert!(sammler.bahnsatz(&bytes_aus_werten(&eddh_werte())));
+        assert!(sammler.pavementsatz(&pavement_bytes(120.0, 45.0, 1)));
+
+        // Ein zu kurzer Bahnsatz — er liefert keine Bahn.
+        assert!(!sammler.bahnsatz(&[0u8; 8]));
+        // Der folgende PAVEMENT-Satz gehoert zu IHM, nicht zur ersten
+        // Bahn. Er zaehlt als der erste seit diesem Bahnsatz und
+        // ueberschriebe sonst die schon gesetzten 120 m.
         assert!(
-            bahn_aus_werten(kurz).is_none(),
-            "ein unvollstaendiger Satz darf gar keine Bahn ergeben"
+            !sammler.pavementsatz(&pavement_bytes(999.0, 45.0, 1)),
+            "ein Satz zu einer unlesbaren Bahn muss verworfen werden"
         );
+
+        let b = sammler.fertig();
+        assert!(
+            (b[0].versetzte_schwelle_m - 120.0).abs() < 1e-6,
+            "die Schwelle der ersten Bahn wurde ueberschrieben: {}",
+            b[0].versetzte_schwelle_m
+        );
+    }
+
+    /// Werte in den Byte-Strom giessen, wie der Simulator ihn schickt.
+    fn bytes_aus_werten(w: &[Wert]) -> Vec<u8> {
+        let mut b = Vec::new();
+        for wert in w {
+            match wert {
+                Wert::F64(v) => b.extend_from_slice(&v.to_le_bytes()),
+                Wert::F32(v) => b.extend_from_slice(&v.to_le_bytes()),
+                Wert::I32(v) => b.extend_from_slice(&v.to_le_bytes()),
+            }
+        }
+        b
+    }
+
+    /// Der PAVEMENT-Satz kommt GETRENNT — und wird richtig zugeordnet.
+    ///
+    /// ⚠ Dieser Test bildet den echten Ablauf nach: erst der flache
+    /// Bahnsatz (56 Bytes), dann zwei eigene PAVEMENT-Nachrichten
+    /// (je 12 Bytes). Der erste Anlauf am 30.08.2026 hat die sechs
+    /// Felder in den Bahnsatz gehaengt und seinen 80-Byte-Block im Test
+    /// SELBST gebaut — damit bestaetigte der gruene Test nur die falsche
+    /// Annahme. `PAVEMENT` ist eine eigene Satzart
+    /// (`SIMCONNECT_FACILITY_DATA_PAVEMENT`, SDK-Header Zeile 338).
+    #[test]
+    fn pavement_saetze_kommen_getrennt() {
+        let mut bahnen: Vec<SzenerieBahn> =
+            bahn_aus_werten(&eddh_werte()).expect("Bahnenpaar").into();
+
+        // Ohne PAVEMENT-Satz wird nichts behauptet.
+        assert!(bahnen[0].versetzte_schwelle_m.is_nan());
+
+        // PRIMARY_THRESHOLD: 120 m, aktiv.
+        assert!(pavement_anhaengen(
+            &mut bahnen,
+            0,
+            &pavement_bytes(120.0, 45.0, 1)
+        ));
+        assert!((bahnen[0].versetzte_schwelle_m - 120.0).abs() < 1e-6);
+        assert!(
+            bahnen[1].versetzte_schwelle_m.is_nan(),
+            "das andere Ende wurde mit angefasst"
+        );
+
+        // SECONDARY_THRESHOLD: abgeschaltet → 0,0. Das ist die AUSSAGE
+        // "keine versetzte Schwelle" und muss den Navdaten-Wert
+        // schlagen, nicht NaN (das waere Schweigen).
+        assert!(pavement_anhaengen(
+            &mut bahnen,
+            1,
+            &pavement_bytes(0.0, 0.0, 0)
+        ));
+        assert_eq!(bahnen[1].versetzte_schwelle_m, 0.0);
     }
 
     /// Eine aktive Schwelle mit Unsinns-Laenge sagt lieber nichts.
     #[test]
     fn aktive_schwelle_ohne_brauchbare_laenge_schweigt() {
-        let mut w = eddh_werte();
-        let n = w.len();
-        w[n - 3] = Wert::F32(-1.0); // SECONDARY LENGTH
-        w[n - 1] = Wert::I32(1); // SECONDARY ENABLE
-        let [_, b] = bahn_aus_werten(&w).expect("Bahnenpaar");
-        assert!(b.versetzte_schwelle_m.is_nan());
+        let mut bahnen: Vec<SzenerieBahn> =
+            bahn_aus_werten(&eddh_werte()).expect("Bahnenpaar").into();
+        assert!(pavement_anhaengen(
+            &mut bahnen,
+            0,
+            &pavement_bytes(-1.0, 45.0, 1)
+        ));
+        assert!(bahnen[0].versetzte_schwelle_m.is_nan());
+    }
+
+    /// Ein PAVEMENT-Satz ohne Bahn davor darf nichts anfassen.
+    ///
+    /// ⚠ Sonst haengt die Schwelle der zweiten Bahn am falschen Ende der
+    /// ersten — ein Fehler, der erst 573 m spaeter auffaellt.
+    #[test]
+    fn pavement_ohne_bahn_wird_verworfen() {
+        let mut leer: Vec<SzenerieBahn> = Vec::new();
+        assert!(!pavement_anhaengen(
+            &mut leer,
+            0,
+            &pavement_bytes(120.0, 45.0, 1)
+        ));
+
+        // Und ein dritter Satz zu einem Paar ebenfalls: Es gibt nur
+        // zwei Enden.
+        let mut bahnen: Vec<SzenerieBahn> =
+            bahn_aus_werten(&eddh_werte()).expect("Bahnenpaar").into();
+        assert!(!pavement_anhaengen(
+            &mut bahnen,
+            2,
+            &pavement_bytes(120.0, 45.0, 1)
+        ));
+        assert!(bahnen[0].versetzte_schwelle_m.is_nan());
+        assert!(bahnen[1].versetzte_schwelle_m.is_nan());
+    }
+
+    /// Die Bytes eines PAVEMENT-Satzes, so wie der Simulator sie schickt.
+    fn pavement_bytes(laenge_m: f32, breite_m: f32, enable: i32) -> Vec<u8> {
+        let mut b = Vec::with_capacity(12);
+        b.extend_from_slice(&laenge_m.to_le_bytes());
+        b.extend_from_slice(&breite_m.to_le_bytes());
+        b.extend_from_slice(&enable.to_le_bytes());
+        b
     }
 
     #[test]
@@ -986,8 +1209,31 @@ mod verdrahtung_tests {
         // auseinanderlaufen, ohne dass etwas anschlägt.
         let a = ohne_leerraum(ADAPTER);
         assert!(
-            a.contains("facility::BAHN_FELDER"),
-            "register_facility baut die Definition nicht aus BAHN_FELDER"
+            a.contains("facility::BAHN_DEFINITION"),
+            "register_facility baut die Definition nicht aus BAHN_DEFINITION"
+        );
+        // ⚠ Und NICHT aus dem Byte-Raster: `BAHN_FELDER` kennt die
+        // OPEN/CLOSE-Marken der PAVEMENT-Untersaetze nicht. Wer es hier
+        // einsetzt, fordert die versetzte Schwelle gar nicht erst an.
+        assert!(
+            !a.contains("facility::BAHN_FELDER.iter()"),
+            "die Anmeldung benutzt das Byte-Raster statt der Definition"
+        );
+    }
+
+    /// Der Verteiler muss die eigene Satzart auch wirklich behandeln.
+    ///
+    /// ⚠ Eine angeforderte, aber nie ausgewertete Satzart faellt nicht
+    /// auf: Die Lieferung kommt vollstaendig an, der Zweig fehlt, und
+    /// die versetzte Schwelle bleibt einfach leer.
+    #[test]
+    fn der_verteiler_behandelt_pavement() {
+        let a = ohne_leerraum(ADAPTER);
+        let nadel = ohne_leerraum(&format!("sys::FACILITY_DATA_{}", "PAVEMENT"));
+        assert!(
+            a.contains(&nadel),
+            "der Verteiler kennt die PAVEMENT-Satzart nicht — die \
+             versetzte Schwelle kaeme nie an"
         );
     }
 
@@ -1330,4 +1576,3 @@ mod rollweg_verdrahtung_tests {
         }
     }
 }
-

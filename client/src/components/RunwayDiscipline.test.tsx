@@ -30,8 +30,38 @@ const TOKENS = {
 };
 
 /** EDDH 23, so wie die Gegenprobe sie bestätigt hat. */
+/**
+ * EDDH 23 — 156 m versetzte Schwelle, die NICHT in der Navdaten-Geometrie
+ * steckt. Die Spurwerte laufen deshalb ab Bahnanfang, der Aufsetzpunkt ab
+ * Landeschwelle: zwei Nullpunkte, 156 m auseinander.
+ */
 function eddh23() {
-  return erzeugeProjektion({ lengthM: 3094, ddsM: 156, padX: 70, innerW: 1060 });
+  return erzeugeProjektion({
+    lengthM: 3094,
+    ddsM: 156,
+    spurVersatzM: 156,
+    padX: 70,
+    innerW: 1060,
+  });
+}
+
+/**
+ * Dieselbe Bahn, aber der Versatz steckt schon in der Geometrie — so
+ * liefert es der DFD-Export seit AIRAC 2608. Dann fallen beide Nullpunkte
+ * zusammen und es darf NICHTS verschoben werden.
+ *
+ * ⚠ Am Bestand gemessen (30.08.2026) ist das bei 8 von 19 Flügen mit
+ * versetzter Schwelle der Fall. Eine Zeichnung, die hier pauschal die
+ * versetzte Schwelle abzieht, verschiebt die Spur um 156 m.
+ */
+function eddh23OhneVersatz() {
+  return erzeugeProjektion({
+    lengthM: 3094,
+    ddsM: 156,
+    spurVersatzM: 0,
+    padX: 70,
+    innerW: 1060,
+  });
 }
 
 describe("§8.4 — eine Projektion für beide Ansichten", () => {
@@ -102,6 +132,101 @@ describe("§8.4 — eine Projektion für beide Ansichten", () => {
     );
     const kreis = container.querySelector("circle");
     expect(kreis).not.toBeNull();
+    expect(Number(kreis!.getAttribute("cx"))).toBeCloseTo(p.mToX(500), 1);
+  });
+
+  it("zeichnet Linienzug und Messpunkte im selben Bezugspunkt", () => {
+    // ⚠ Die Spur wird ZWEIMAL gezeichnet: als Linienzug (`path`) und als
+    // Messpunkte (`circle`). Beide holen ihr X getrennt. Eine Gegenprobe
+    // am 30.08.2026 zeigte, dass ein Test, der nur die Kreise liest, den
+    // Linienzug ungedeckt laesst — er blieb gruen, obwohl die Linie auf
+    // die falsche Funktion umgestellt war.
+    const p = eddh23();
+    const { container } = render(
+      <RunwayCrossSection
+        projektion={p}
+        runwayWidthM={46}
+        trackWidthM={7.59}
+        samples={[
+          { laengs_m: 656, quer_m: -8.7 },
+          { laengs_m: 1156, quer_m: 26.8 },
+        ]}
+        touchdownM={500}
+        touchdownOffsetM={-8.7}
+        width={1200}
+        tokens={TOKENS}
+      />,
+    );
+    const erwartet = p.mToX(500);
+
+    const kreis = Number(container.querySelector("circle")!.getAttribute("cx"));
+    expect(kreis, "die Messpunkte liegen falsch").toBeCloseTo(erwartet, 1);
+
+    // Das erste X im gezeichneten Linienzug — aus dem `d`-Attribut
+    // gelesen, nicht nachgerechnet.
+    const pfade = [...container.querySelectorAll("path")]
+      .map((el) => el.getAttribute("d") ?? "")
+      .filter((d) => /^M\s*-?[\d.]+/.test(d));
+    expect(pfade.length, "kein gezeichneter Linienzug gefunden").toBeGreaterThan(0);
+    const trefferX = pfade
+      .map((d) => Number(/^M\s*(-?[\d.]+)/.exec(d)![1]))
+      .filter((x) => Math.abs(x - erwartet) < 0.5);
+    expect(
+      trefferX.length,
+      `kein Linienzug beginnt bei ${erwartet.toFixed(1)} — die Linie liegt ` +
+        `in einem anderen Bezugspunkt als die Messpunkte`,
+    ).toBeGreaterThan(0);
+  });
+
+  it("verwirft keine Ausfahrt im letzten Abschnitt vor dem Bahnende", () => {
+    // ⚠ Die Schranke stand gegen `lengthM` (die nutzbare Bahn AB der
+    // Landeschwelle), die Ausfahrten laufen aber ab Bahnanfang. Wo beide
+    // Nullpunkte auseinanderfallen, fielen genau die letzten 156 m
+    // Ausfahrten heraus — lautlos, denn eine fehlende Ausfahrt sieht aus
+    // wie eine, die es nicht gibt.
+    const p = eddh23();
+    const amEnde = p.lengthM + 150; // innerhalb der Bahn, hinter der alten Schranke
+    const { container } = render(
+      <RunwayCrossSection
+        projektion={p}
+        runwayWidthM={46}
+        trackWidthM={7.59}
+        samples={[{ laengs_m: 656, quer_m: -8.7 }]}
+        ausfahrten={[{ name: "M4", seite: "left", laengs_m: amEnde }]}
+        touchdownM={500}
+        touchdownOffsetM={-8.7}
+        width={1200}
+        tokens={TOKENS}
+      />,
+    );
+    expect(
+      container.textContent,
+      "die Ausfahrt am Bahnende wurde verworfen",
+    ).toContain("M4");
+  });
+
+  it("verschiebt nichts, wenn beide Nullpunkte zusammenfallen", () => {
+    // ⚠ Der Gegenfall — und der häufigere. Steckt der Versatz schon in
+    // der Navdaten-Geometrie, ist `laengs_m` bereits ab der Landeschwelle
+    // gemessen. Dann liegt derselbe Ort bei 500, nicht bei 656, und ein
+    // Abzug der versetzten Schwelle wäre der Fehler.
+    const p = eddh23OhneVersatz();
+    const { container } = render(
+      <RunwayCrossSection
+        projektion={p}
+        runwayWidthM={46}
+        trackWidthM={7.59}
+        samples={[
+          { laengs_m: 500, quer_m: -8.7 },
+          { laengs_m: 1000, quer_m: 26.8 },
+        ]}
+        touchdownM={500}
+        touchdownOffsetM={-8.7}
+        width={1200}
+        tokens={TOKENS}
+      />,
+    );
+    const kreis = container.querySelector("circle");
     expect(Number(kreis!.getAttribute("cx"))).toBeCloseTo(p.mToX(500), 1);
   });
 });

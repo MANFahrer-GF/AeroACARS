@@ -335,11 +335,18 @@
       "alignment_off_airport": "No runway identified — alignment not assessable",
       "alignment_untrusted_geometry": "Runway data unreliable — alignment not scored",
       "not_applicable_for_category": "Not meaningful for this type (no runway axis)",
-      "invalid_geometry": "Runway measurements unusable (no valid number) — runway utilization not scored."
+      "invalid_geometry": "Runway measurements unusable (no valid number) — runway utilization not scored.",
+      "diverted": "Diverted — a different route was flown than planned, so comparing against the OFP measures the detour, not the pilot.",
+      "runway_width_unknown": "No width is on file for this runway — it is the yardstick for the lateral distance.",
+      "track_width_unknown": "The track width of this type is not on file; without it the position of the wheels cannot be determined.",
+      "insufficient_samples": "Too few measuring points on the runway — two or three samples do not make a track.",
+      "missing_lateral_track": "No roll-out track was recorded for this flight. Flights from before v1.7.0 do not have one.",
+      "implausible_lateral_track": "The measured offset cannot be right — most likely a measurement error, so no lateral assessment."
     },
     "warn": {
       "pre_displaced_threshold": "⚠ Touched down before displaced threshold — review approach",
-      "planned_burn_may_be_off": "⚠ Suspected: planned trip-burn may be too high — verify OFP burn"
+      "planned_burn_may_be_off": "⚠ Suspected: planned trip-burn may be too high — verify OFP burn",
+      "runway_axis_unverified": "⚠ Runway axis not confirmed by the scenery — the lateral offset is graded, the runway data is not"
     },
     "confidence": {
       "high": "Confidence: High",

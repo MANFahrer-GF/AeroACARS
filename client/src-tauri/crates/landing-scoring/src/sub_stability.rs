@@ -87,20 +87,29 @@ mod tests {
     #[test]
     fn ts_voting_min_of_axes() {
         // VS=50 → 100, Bank=4° → 80, min=80 → "stable"
-        assert_eq!(run(Some(50.0), Some(4.0)), Some((80, "landing.rat.stable".into())));
+        assert_eq!(
+            run(Some(50.0), Some(4.0)),
+            Some((80, "landing.rat.stable".into()))
+        );
         // VS=300 → 50, Bank=1° → 100, min=50 → "average_stability"
         assert_eq!(
             run(Some(300.0), Some(1.0)),
             Some((50, "landing.rat.average_stability".into()))
         );
         // VS=800 → 0, Bank=1° → 100, min=0 → "very_unstable"
-        assert_eq!(run(Some(800.0), Some(1.0)), Some((0, "landing.rat.very_unstable".into())));
+        assert_eq!(
+            run(Some(800.0), Some(1.0)),
+            Some((0, "landing.rat.very_unstable".into()))
+        );
     }
 
     #[test]
     fn one_axis_none_treated_as_zero() {
         // TS: vs ?? 0 → wenn None=0 → vs_band=100. So bk=4° entscheidet → 80.
-        assert_eq!(run(None, Some(4.0)), Some((80, "landing.rat.stable".into())));
+        assert_eq!(
+            run(None, Some(4.0)),
+            Some((80, "landing.rat.stable".into()))
+        );
     }
 
     #[test]

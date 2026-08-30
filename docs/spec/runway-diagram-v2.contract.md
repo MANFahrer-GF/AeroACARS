@@ -375,17 +375,29 @@ Fehler auftaucht.
 - **v1.7.11:** `bahn_szenerie_status` trägt jetzt die Zahlen (`ohne_bahnen(rollwege=243)`)
 - **v1.7.12:** `bahn_schwellen_korrektur_m` — um wie viele Meter die versetzte
   Schwelle aus der Szenerie von den Navdaten abwich. Ab dieser Fassung liest der
-  MSFS-Adapter die Schwelle aus dem PAVEMENT-Untersatz
-  (`OPEN PRIMARY_THRESHOLD` … `CLOSE PRIMARY_THRESHOLD`) statt sie offen zu
-  lassen.
+  MSFS-Adapter die Schwelle aus dem PAVEMENT-Satz.
 
-  ⚠ **Der folgenreichste der drei Korrekturwerte.** Die versetzte Schwelle ist
-  der Nullpunkt von `td_distance_from_threshold_m`, `aim_delta_m` und
-  `tch_delta_ft`. Sagt die Szenerie „keine Schwelle", wo die Navdaten 573 m
-  führen (TJPS 12, Flug LAN273 am 30.08.2026), verschieben sich diese drei
-  Größen um eine halbe Bahnlänge. Ein großer Wert heißt deshalb nicht „Fehler",
-  sondern „Szenerie und Navdaten sind sich hier uneins" — und dass wir der
-  Szenerie gefolgt sind, weil der Pilot dort landet.
+  ⚠ **PAVEMENT ist eine EIGENE Satzart** (`SIMCONNECT_FACILITY_DATA_PAVEMENT`),
+  keine eingebetteten Felder: Sie kommt in einer eigenen Nachricht NACH ihrem
+  RUNWAY-Satz, in der Reihenfolge der Definition (erst `PRIMARY_THRESHOLD`, dann
+  `SECONDARY_THRESHOLD`). Wer die sechs Felder ins flache Bahnraster hängt,
+  verlangt 80 Bytes, bekommt 56 — und verliert JEDE MSFS-Bahn, genau wie v1.7.8.
+
+- **v1.7.12:** `spur_nullpunkt_versatz_m` — um wie viele Meter die Längsmaße der
+  Spur gegen die Landeschwelle verschoben sind.
+
+  ⚠ **Das ist NICHT die versetzte Schwelle.** Ob die beiden Nullpunkte
+  auseinanderfallen, entscheidet die Datenquelle: Steckt der Versatz schon in der
+  Navdaten-Geometrie (DFD-Export seit AIRAC 2608), sind sie identisch; steckt er
+  nicht drin, liegen sie genau um ihn auseinander. Am Bestand gemessen
+  (30.08.2026, 19 Flüge mit versetzter Schwelle) fallen sie bei **8 von 19**
+  zusammen. Eine Zeichnung, die pauschal die versetzte Schwelle abzieht,
+  verschiebt dort die ganze Spur um bis zu 300 m — derselbe Fehler wie bei
+  LAN273, nur in die andere Richtung.
+
+  Der Client rechnet den Wert aus `displacement_not_in_geometry_ft` — derselben
+  Funktion, mit der auch `td_distance_from_threshold_m` korrigiert wird. Fehlt
+  das Feld (ältere Flüge), wird nichts verschoben.
 
 ⚠ **Die Felder ab v1.7.8 sind Diagnose, keine Anzeige.** Sie werden aus der
 Datenbank ausgewertet und stehen bewusst NICHT in `BAHN_FELDER` des Recorders
@@ -574,7 +586,9 @@ Schwelle):
   * `aim_point_m`
   * `tdz_end_m`
 
-**Ab BAHNANFANG** (immer positiv):
+**Ab dem SCHWELLENPUNKT DER NAVDATEN** (immer positiv) — das ist je nach
+Datenquelle der Bahnanfang ODER die Landeschwelle, und `spur_nullpunkt_versatz_m`
+sagt, welcher von beiden:
 
   * `lateral_samples[].laengs_m`
   * `mess_ende_laengs_m`

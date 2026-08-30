@@ -1129,7 +1129,11 @@ fn run_dispatch(
         // vollstaendig ist. Vorher darf nichts davon benutzt werden —
         // eine halbe Bahnliste saehe aus wie ein Flughafen mit einer
         // Bahn.
-        let mut facility_sammler: Vec<sim_core::szenerie::SzenerieBahn> = Vec::new();
+        // ⚠ Der Sammler fuehrt den Zustand selbst (Reihenfolge der
+        // PAVEMENT-Saetze). Er liegt in `facility.rs`, weil DIESER Block
+        // hinter `cfg(target_os = "windows")` steht und hier nichts
+        // pruefbar ist — siehe `Szeneriesammler`.
+        let mut facility_sammler = facility::Szeneriesammler::neu();
         // Rollwege: drei Listen, die ueber Indizes zusammenhaengen. Sie
         // muessen in der Reihenfolge der Lieferung gesammelt werden —
         // `START`/`END`/`NAME_INDEX` sind Positionen in genau diesen
@@ -1192,20 +1196,27 @@ fn run_dispatch(
                                 facility_kanten.push((a as usize, b as usize, n as usize));
                             }
                         }
+                    } else if typ == sys::FACILITY_DATA_PAVEMENT {
+                        // Die versetzte Schwelle — EIGENE Satzart, keine
+                        // eingebetteten Felder. Sie kommt nach ihrem
+                        // Bahnsatz, in der Reihenfolge der Definition:
+                        // erst PRIMARY_THRESHOLD, dann SECONDARY.
+                        if !facility_sammler.pavementsatz(&bytes) {
+                            tracing::warn!(
+                                laenge = bytes.len(),
+                                "PAVEMENT-Satz ohne passende Bahn — verworfen"
+                            );
+                        }
                     } else if typ == sys::FACILITY_DATA_RUNWAY {
-                        match facility::zerlege(facility::BAHN_FELDER, &bytes)
-                            .and_then(|w| facility::bahn_aus_werten(&w))
-                        {
-                            Some(paar) => facility_sammler.extend(paar),
-                            None => {
-                                // Kein stiller Verlust: Ein Block, der
-                                // nicht zur Definition passt, heisst,
-                                // dass die Feldliste nicht stimmt.
-                                tracing::warn!(
-                                    laenge = bytes.len(),
-                                    "Facility-Bahnblock passt nicht zur Definition —                                      Feldliste pruefen"
-                                );
-                            }
+                        if !facility_sammler.bahnsatz(&bytes) {
+                            // Kein stiller Verlust: Ein Block, der nicht
+                            // zur Definition passt, heisst, dass die
+                            // Feldliste nicht stimmt.
+                            tracing::warn!(
+                                laenge = bytes.len(),
+                                "Facility-Bahnblock passt nicht zur Definition — \
+                                 Feldliste pruefen"
+                            );
                         }
                     }
                 }
@@ -1218,7 +1229,7 @@ fn run_dispatch(
                             .unwrap_or_default();
                         tracing::info!(
                             %icao,
-                            bahnen = facility_sammler.len(),
+                            bahnen = facility_sammler.anzahl(),
                             "Facility-Lieferung vollstaendig"
                         );
                         // Erst JETZT sichtbar machen — vorher waere es
@@ -1246,7 +1257,7 @@ fn run_dispatch(
                         tracing::info!(rollwege = rollwege.len(), "Rollwege zusammengesetzt");
                         let auskunft = sim_core::szenerie::SzenerieFlughafen {
                             icao,
-                            bahnen: std::mem::take(&mut facility_sammler),
+                            bahnen: std::mem::take(&mut facility_sammler).fertig(),
                             rollwege,
                             quelle: "msfs".to_string(),
                         };

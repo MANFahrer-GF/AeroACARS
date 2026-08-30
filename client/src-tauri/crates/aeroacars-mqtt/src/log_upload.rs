@@ -48,7 +48,8 @@ pub async fn upload_flight_log(
     password: &str,
     endpoint: Option<&str>,
 ) -> Result<UploadStats> {
-    let raw = tokio::fs::read(log_path).await
+    let raw = tokio::fs::read(log_path)
+        .await
         .with_context(|| format!("read log file {log_path:?}"))?;
     if raw.is_empty() {
         anyhow::bail!("log file is empty — nothing to upload");
@@ -61,7 +62,9 @@ pub async fn upload_flight_log(
         let mut encoder = GzEncoder::new(Vec::with_capacity(raw.len() / 4), Compression::default());
         encoder.write_all(&raw)?;
         Ok(encoder.finish()?)
-    }).await.context("gzip task panic")??;
+    })
+    .await
+    .context("gzip task panic")??;
 
     let compressed_size = compressed.len();
     tracing::info!(
@@ -72,7 +75,9 @@ pub async fn upload_flight_log(
         "uploading flight log",
     );
 
-    let url = endpoint.map(String::from).unwrap_or_else(default_upload_url);
+    let url = endpoint
+        .map(String::from)
+        .unwrap_or_else(default_upload_url);
     let auth_token = format!("{username}:{password}");
     let auth_b64 = base64::engine::general_purpose::STANDARD.encode(auth_token.as_bytes());
 

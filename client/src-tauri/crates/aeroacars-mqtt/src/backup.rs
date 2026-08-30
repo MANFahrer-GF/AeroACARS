@@ -70,7 +70,10 @@ pub async fn put_landings(
     let client = build_client().map_err(|e| NavdataError::Network(e.to_string()))?;
     let response = client
         .put(url(base, ""))
-        .header(reqwest::header::AUTHORIZATION, format!("Bearer {auth_token}"))
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {auth_token}"),
+        )
         .json(&BackupBody { landings })
         .send()
         .await?;
@@ -98,7 +101,10 @@ pub async fn get_landings(
     let client = build_client().map_err(|e| NavdataError::Network(e.to_string()))?;
     let response = client
         .get(url(base, ""))
-        .header(reqwest::header::AUTHORIZATION, format!("Bearer {auth_token}"))
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {auth_token}"),
+        )
         .send()
         .await?;
 
@@ -191,13 +197,17 @@ mod tests {
     #[test]
     fn strips_the_overwhelming_majority_of_the_payload() {
         let profile: Vec<serde_json::Value> = (0..478)
-            .map(|i| json!({"t_ms": i * 20, "vs_fpm": -240.0, "g_force": 1.1, "agl_ft": 50.0,
+            .map(|i| {
+                json!({"t_ms": i * 20, "vs_fpm": -240.0, "g_force": 1.1, "agl_ft": 50.0,
                             "on_ground": false, "heading_true_deg": 73.0, "groundspeed_kt": 140,
-                            "indicated_airspeed_kt": 135, "pitch_deg": 2.0, "bank_deg": 0.5}))
+                            "indicated_airspeed_kt": 135, "pitch_deg": 2.0, "bank_deg": 0.5})
+            })
             .collect();
         let approach: Vec<serde_json::Value> = (0..120)
-            .map(|i| json!({"t_ms": i * 1000, "vs_fpm": -700.0, "agl_ft": 2000.0,
-                            "ias_kt": 160, "bank_deg": 1.0, "on_glide": true}))
+            .map(|i| {
+                json!({"t_ms": i * 1000, "vs_fpm": -700.0, "agl_ft": 2000.0,
+                            "ias_kt": 160, "bank_deg": 1.0, "on_glide": true})
+            })
             .collect();
         let rec = json!({
             "pirep_id": "ABC", "score_numeric": 88,

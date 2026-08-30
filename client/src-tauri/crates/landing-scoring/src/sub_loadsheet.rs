@@ -21,23 +21,12 @@
 
 use crate::{Band, SubScoreEntry};
 
-pub fn sub_loadsheet(
-    planned_zfw_kg: Option<f32>,
-    planned_tow_kg: Option<f32>,
-) -> SubScoreEntry {
+pub fn sub_loadsheet(planned_zfw_kg: Option<f32>, planned_tow_kg: Option<f32>) -> SubScoreEntry {
     if planned_zfw_kg.is_none() {
-        return SubScoreEntry::skipped(
-            "loadsheet",
-            "landing.sub.loadsheet",
-            "no_planned_zfw",
-        );
+        return SubScoreEntry::skipped("loadsheet", "landing.sub.loadsheet", "no_planned_zfw");
     }
     if planned_tow_kg.is_none() {
-        return SubScoreEntry::skipped(
-            "loadsheet",
-            "landing.sub.loadsheet",
-            "no_planned_tow",
-        );
+        return SubScoreEntry::skipped("loadsheet", "landing.sub.loadsheet", "no_planned_tow");
     }
     let zfw = planned_zfw_kg.unwrap();
     let tow = planned_tow_kg.unwrap();

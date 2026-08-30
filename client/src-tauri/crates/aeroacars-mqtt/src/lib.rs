@@ -29,18 +29,20 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rumqttc::{AsyncClient, Event, LastWill, MqttOptions, Packet, QoS, TlsConfiguration, Transport};
+use rumqttc::{
+    AsyncClient, Event, LastWill, MqttOptions, Packet, QoS, TlsConfiguration, Transport,
+};
 use serde::Serialize;
 use sim_core::{FlightPhase, SimSnapshot, Simulator};
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, warn};
 use url::Url;
 
-pub mod provision;
-pub mod log_upload;
 pub mod backup;
-pub mod navdata;
 pub mod chat;
+pub mod log_upload;
+pub mod navdata;
+pub mod provision;
 
 const STATUS_ONLINE: &str = "online";
 const STATUS_OFFLINE: &str = "offline";
@@ -235,8 +237,8 @@ struct PositionPayload {
     // ---- Position ----
     lat: f64,
     lon: f64,
-    alt_ft: i32,           // MSL altitude
-    agl_ft: i32,           // Above-ground (for approach/landing analysis)
+    alt_ft: i32, // MSL altitude
+    agl_ft: i32, // Above-ground (for approach/landing analysis)
 
     // ---- Attitude ----
     pitch_deg: f32,
@@ -259,8 +261,8 @@ struct PositionPayload {
     overspeed_warning: bool,
 
     // ---- Configuration ----
-    gear_position: f32,    // 0=up, 1=down
-    flaps_position: f32,   // 0..1
+    gear_position: f32,  // 0=up, 1=down
+    flaps_position: f32, // 0..1
     spoilers_position: Option<f32>,
     spoilers_armed: Option<bool>,
     engines_running: u8,
@@ -353,7 +355,11 @@ struct PositionPayload {
 /// to keep payloads clean of "" values that would muddy the server side.
 fn non_empty(s: &str) -> Option<String> {
     let t = s.trim();
-    if t.is_empty() { None } else { Some(t.to_string()) }
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_string())
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -984,6 +990,14 @@ pub struct TouchdownPayload {
 /// Landung sind schlimmer als eine fehlende.
 #[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
 pub struct BahnWire {
+    /// Um wie viele Meter die Laengsmasse der Spur gegen die
+    /// Landeschwelle verschoben sind. Siehe die ausfuehrliche
+    /// Begruendung bei `BahnFelder::spur_nullpunkt_versatz_m` im Client
+    /// — kurz: Der Payload fuehrt zwei Nullpunkte, und NUR dieser Wert
+    /// sagt, wie weit sie auseinanderliegen. Die versetzte Schwelle ist
+    /// eine andere Zahl und taugt dafuer nicht.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spur_nullpunkt_versatz_m: Option<f64>,
     /// Laengsposition beim Verlassen der Bahn (an der Kante).
     pub clearance_point_m: Option<f64>,
     /// Laengsposition, ab der nicht mehr bewertet wird — der Beginn des
@@ -1107,7 +1121,9 @@ pub struct LateralSampleWire {
     pub quer_m: f64,
 }
 
-fn is_false(b: &bool) -> bool { !*b }
+fn is_false(b: &bool) -> bool {
+    !*b
+}
 
 /// v0.7.1: Stability-Gate-Window-Metadaten.
 /// Beschreibt welche Sample-Region in `sub_stability` einging.
@@ -1218,7 +1234,6 @@ pub struct PirepPayload {
     // ─── v0.7.1 Erweiterung (Spec §5.1) ────────────────────────────────
     // Alle Felder MUESSEN #[serde(default)] haben — alte PIREPs ohne
     // diese Felder muessen weiter deserialisieren (P3.4 Test-Anforderung).
-
     /// UX-Cutoff-Marker. 0 = pre-v0.7.1 PIREP (Score nicht-vergleichbar),
     /// 1 = v0.7.1+ (sub_scores aus landing-scoring Crate, Asymmetrie-
     /// Logik aktiv). UI nutzt diesen Marker um zu entscheiden ob der
@@ -1282,7 +1297,6 @@ pub struct PirepPayload {
     // bei `trusted=false` aus (kein Raw-Display, weil Pilot sonst mit
     // kaputter Geometrie konfrontiert wird). Rollout-Sub-Score bleibt
     // valide (kommt aus GPS-Track, nicht aus Runway-DB).
-
     /// Ist die Runway-Geometrie (Match-ICAO + Centerline-Offset +
     /// Float-Distance) plausibel genug um TD-Zone + Float-Distance
     /// im UI zu zeigen?
@@ -1427,7 +1441,9 @@ pub struct ClientHealthReport {
 /// genutzt wenn der PIREP-Payload aus alten JSONL-Backups oder
 /// aeroacars-live-Storage deserialisiert wird.
 #[allow(dead_code)]
-fn default_forensics_version_v1() -> u8 { 1 }
+fn default_forensics_version_v1() -> u8 {
+    1
+}
 
 /// v0.7.19 GAF-707 (QS-R2 Finding 1): Korrektur-Event fuer den Fall
 /// dass ein Touchdown bereits als Accident gepublisht und in der
@@ -1717,9 +1733,7 @@ impl Handle {
             aircraft_registration: if !meta.planned_registration.trim().is_empty() {
                 Some(meta.planned_registration.trim().to_string())
             } else {
-                snap.aircraft_registration
-                    .as_deref()
-                    .and_then(non_empty)
+                snap.aircraft_registration.as_deref().and_then(non_empty)
             },
             // v0.8.3 (#5 follow-up): Sim-Aircraft-Title fuer Recorder-
             // Stats-Recompute. Quelle: SimVar TITLE (MSFS) /
@@ -1809,8 +1823,11 @@ impl Handle {
     pub fn pirep(&self, payload: PirepPayload) {
         let tx = self.tx.clone();
         tokio::spawn(async move {
-            if let Err(e) =
-                tokio::time::timeout(EVENT_ENQUEUE_TIMEOUT, tx.send(Cmd::Pirep(Box::new(payload)))).await
+            if let Err(e) = tokio::time::timeout(
+                EVENT_ENQUEUE_TIMEOUT,
+                tx.send(Cmd::Pirep(Box::new(payload))),
+            )
+            .await
             {
                 warn!("dropping pirep publish: {e}");
             }
@@ -1838,10 +1855,7 @@ impl Handle {
     /// v0.7.19 GAF-707 (QS-R2 Finding 1): Korrektur-Publish nach Pilot-
     /// Override im Flight-End-Dialog. Recorder/VPS aktualisiert den
     /// bereits persistierten Touchdown-Row entsprechend.
-    pub fn touchdown_accident_override(
-        &self,
-        payload: TouchdownAccidentOverridePayload,
-    ) {
+    pub fn touchdown_accident_override(&self, payload: TouchdownAccidentOverridePayload) {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             if let Err(e) = tokio::time::timeout(
@@ -1858,10 +1872,7 @@ impl Handle {
     /// v0.12.4 (Spec LE4): Publish des FINALEN `rollout_distance_m` nach
     /// Rollout-Finalisierung (~40 kt / Heading-Turn-off). Der Recorder patcht
     /// damit nur das Anzeige-/Forensik-Rohfeld der Touchdown-Zeile.
-    pub fn touchdown_rollout_finalized(
-        &self,
-        payload: TouchdownRolloutFinalizedPayload,
-    ) {
+    pub fn touchdown_rollout_finalized(&self, payload: TouchdownRolloutFinalizedPayload) {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             if let Err(e) = tokio::time::timeout(
@@ -1957,7 +1968,10 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
     let (integrity_tx, integrity_rx) = mpsc::unbounded_channel::<IntegrityFlagEvent>();
     // Pilotenchat: zweiter Rueckkanal, gleiche Mechanik.
     let (chat_tx, chat_rx) = mpsc::unbounded_channel::<ChatNachricht>();
-    let integrity_topic = format!("aeroacars/{}/{}/integrity_flag", cfg.va_prefix, cfg.pilot_id);
+    let integrity_topic = format!(
+        "aeroacars/{}/{}/integrity_flag",
+        cfg.va_prefix, cfg.pilot_id
+    );
     let chat_topic = format!("aeroacars/{}/{}/chat_in", cfg.va_prefix, cfg.pilot_id);
     let subscribe_client = client.clone();
     let subscribe_topic = integrity_topic.clone();
@@ -2200,10 +2214,46 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                 }
             };
             match cmd {
-                Cmd::Chat(c) => publish_json(&pub_client, &cfg_for_pub.topic("chat"), &c, QoS::AtLeastOnce, false).await,
-                Cmd::Phase(p) => publish_json(&pub_client, &cfg_for_pub.topic("phase"), &p, QoS::AtLeastOnce, true).await,
-                Cmd::Block(p) => publish_json(&pub_client, &cfg_for_pub.topic("block"), &p, QoS::AtLeastOnce, true).await,
-                Cmd::Takeoff(p) => publish_json(&pub_client, &cfg_for_pub.topic("takeoff"), &p, QoS::AtLeastOnce, true).await,
+                Cmd::Chat(c) => {
+                    publish_json(
+                        &pub_client,
+                        &cfg_for_pub.topic("chat"),
+                        &c,
+                        QoS::AtLeastOnce,
+                        false,
+                    )
+                    .await
+                }
+                Cmd::Phase(p) => {
+                    publish_json(
+                        &pub_client,
+                        &cfg_for_pub.topic("phase"),
+                        &p,
+                        QoS::AtLeastOnce,
+                        true,
+                    )
+                    .await
+                }
+                Cmd::Block(p) => {
+                    publish_json(
+                        &pub_client,
+                        &cfg_for_pub.topic("block"),
+                        &p,
+                        QoS::AtLeastOnce,
+                        true,
+                    )
+                    .await
+                }
+                Cmd::Takeoff(p) => {
+                    publish_json(
+                        &pub_client,
+                        &cfg_for_pub.topic("takeoff"),
+                        &p,
+                        QoS::AtLeastOnce,
+                        true,
+                    )
+                    .await
+                }
                 // retain=true (was false): the end-of-flight touchdown + pirep
                 // are each published exactly once. If the recorder is offline at
                 // that instant (restart, mosquitto reload, network blip) a
@@ -2215,26 +2265,64 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                 // dedups on va/pilot/ts±2s/vs±5fpm with a stable ts), so a
                 // retained replay matches the existing row instead of
                 // duplicating. The next flight on the topic overwrites it.
-                Cmd::Touchdown(p) => publish_json(&pub_client, &cfg_for_pub.topic("touchdown"), &p, QoS::AtLeastOnce, true).await,
-                Cmd::Pirep(p) => publish_json(&pub_client, &cfg_for_pub.topic("pirep"), &p, QoS::AtLeastOnce, true).await,
-                Cmd::PirepJson(p) => publish_json(&pub_client, &cfg_for_pub.topic("pirep"), &p, QoS::AtLeastOnce, true).await,
-                Cmd::TouchdownAccidentOverride(p) => publish_json(
-                    &pub_client,
-                    &cfg_for_pub.topic("touchdown_accident_override"),
-                    &p,
-                    QoS::AtLeastOnce,
-                    false,
-                ).await,
-                Cmd::TouchdownRolloutFinalized(p) => publish_json(
-                    &pub_client,
-                    &cfg_for_pub.topic("touchdown_rollout_finalized"),
-                    &p,
-                    QoS::AtLeastOnce,
-                    false,
-                ).await,
+                Cmd::Touchdown(p) => {
+                    publish_json(
+                        &pub_client,
+                        &cfg_for_pub.topic("touchdown"),
+                        &p,
+                        QoS::AtLeastOnce,
+                        true,
+                    )
+                    .await
+                }
+                Cmd::Pirep(p) => {
+                    publish_json(
+                        &pub_client,
+                        &cfg_for_pub.topic("pirep"),
+                        &p,
+                        QoS::AtLeastOnce,
+                        true,
+                    )
+                    .await
+                }
+                Cmd::PirepJson(p) => {
+                    publish_json(
+                        &pub_client,
+                        &cfg_for_pub.topic("pirep"),
+                        &p,
+                        QoS::AtLeastOnce,
+                        true,
+                    )
+                    .await
+                }
+                Cmd::TouchdownAccidentOverride(p) => {
+                    publish_json(
+                        &pub_client,
+                        &cfg_for_pub.topic("touchdown_accident_override"),
+                        &p,
+                        QoS::AtLeastOnce,
+                        false,
+                    )
+                    .await
+                }
+                Cmd::TouchdownRolloutFinalized(p) => {
+                    publish_json(
+                        &pub_client,
+                        &cfg_for_pub.topic("touchdown_rollout_finalized"),
+                        &p,
+                        QoS::AtLeastOnce,
+                        false,
+                    )
+                    .await
+                }
                 Cmd::Shutdown => {
                     let _ = pub_client
-                        .publish(cfg_for_pub.topic("status"), QoS::AtLeastOnce, true, STATUS_OFFLINE.as_bytes())
+                        .publish(
+                            cfg_for_pub.topic("status"),
+                            QoS::AtLeastOnce,
+                            true,
+                            STATUS_OFFLINE.as_bytes(),
+                        )
                         .await;
                     let _ = pub_client.disconnect().await;
                     break;
@@ -2464,7 +2552,10 @@ mod tests {
         drop(shutdown_tx);
 
         let result = tokio::time::timeout(StdDuration::from_secs(2), handle).await;
-        assert!(result.is_ok(), "a dropped sender must also unblock the drive loop");
+        assert!(
+            result.is_ok(),
+            "a dropped sender must also unblock the drive loop"
+        );
     }
 
     // ---------------------------------------------------------------
@@ -2516,7 +2607,10 @@ mod tests {
     /// gefüllt und die Landung ausgesperrt.
     #[test]
     fn positions_only_go_out_while_the_link_is_up() {
-        assert!(should_publish_position(true), "steht die Leitung, wird gesendet");
+        assert!(
+            should_publish_position(true),
+            "steht die Leitung, wird gesendet"
+        );
         assert!(
             !should_publish_position(false),
             "liegt die Leitung, darf NICHTS in den Auftragskanal — sonst \
@@ -2558,6 +2652,10 @@ mod tests {
     fn bahnfelder_liegen_flach_auf_der_leitung() {
         let w = BahnWire {
             rollout_final: true,
+            // EDDH 23: 156 m versetzte Schwelle, die NICHT in der
+            // Geometrie steckt — die Spurwerte laufen also 156 m vor
+            // der Landeschwelle los.
+            spur_nullpunkt_versatz_m: Some(156.0),
             clearance_point_m: Some(1831.6),
             scoring_cutoff_m: Some(1642.0),
             // Das Messfenster schliesst frueher als der Kurswechsel —
@@ -2572,8 +2670,14 @@ mod tests {
             min_edge_clearance_m: Some(9.2),
             max_lateral_offset_m: Some(-13.4),
             lateral_samples: Some(vec![
-                LateralSampleWire { laengs_m: 523.2, quer_m: -5.7 },
-                LateralSampleWire { laengs_m: 561.0, quer_m: -6.1 },
+                LateralSampleWire {
+                    laengs_m: 523.2,
+                    quer_m: -5.7,
+                },
+                LateralSampleWire {
+                    laengs_m: 561.0,
+                    quer_m: -6.1,
+                },
             ]),
             surface_paved: Some(true),
             overrun_m: None,
@@ -2583,7 +2687,10 @@ mod tests {
         let j: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
 
-        assert!(j.get("bahn").is_none(), "die Gruppe darf nicht verschachtelt sein");
+        assert!(
+            j.get("bahn").is_none(),
+            "die Gruppe darf nicht verschachtelt sein"
+        );
         assert_eq!(j["clearance_point_m"], 1831.6);
         assert_eq!(j["scoring_cutoff_m"], 1642.0);
         // Und das Fensterende daneben. Ohne diese Zeile faellt nur auf,
@@ -2653,7 +2760,10 @@ mod tests {
                         name: format!("S{i}"),
                         laengs_m: 1831.6,
                         seite: "left".to_string(),
-                        verlauf: vec![VerlaufspunktWire { laengs_m: 1820.0, quer_m: 2.0 }],
+                        verlauf: vec![VerlaufspunktWire {
+                            laengs_m: 1820.0,
+                            quer_m: 2.0,
+                        }],
                     })
                     .collect(),
             ),
@@ -2687,10 +2797,8 @@ mod tests {
     /// vorlaeufigen Wert, statt ihn stehen zu lassen.
     #[test]
     fn leere_spur_geht_als_null_auf_die_leitung() {
-        let j: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&BahnWire::default()).unwrap(),
-        )
-        .unwrap();
+        let j: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&BahnWire::default()).unwrap()).unwrap();
         let o = j.as_object().unwrap();
         assert!(!o.is_empty(), "die Gruppe darf nicht leer serialisieren");
         // `rollout_final` ist eine KENNZEICHNUNG, keine Messung: `false`

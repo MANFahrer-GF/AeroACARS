@@ -335,11 +335,18 @@
       "alignment_off_airport": "Nessuna pista identificata — allineamento non valutabile",
       "alignment_untrusted_geometry": "Dati pista non affidabili — allineamento non valutato",
       "not_applicable_for_category": "Non significativo per questo tipo (nessun asse pista)",
-      "invalid_geometry": "Misurazioni pista inutilizzabili (nessun valore valido) — utilizzo pista non valutato."
+      "invalid_geometry": "Misurazioni pista inutilizzabili (nessun valore valido) — utilizzo pista non valutato.",
+      "diverted": "Dirottato — è stata volata una rotta diversa da quella pianificata, quindi il confronto con l'OFP misura la deviazione, non il pilota.",
+      "runway_width_unknown": "Per questa pista non è registrata alcuna larghezza — è il metro per la distanza laterale.",
+      "track_width_unknown": "La carreggiata di questo modello non è registrata; senza di essa non si può determinare la posizione delle ruote.",
+      "insufficient_samples": "Troppi pochi punti di misura sulla pista — due o tre campioni non fanno un tracciato.",
+      "missing_lateral_track": "Per questo volo non è registrato alcun tracciato di rullaggio. I voli precedenti alla v1.7.0 non lo hanno.",
+      "implausible_lateral_track": "Lo scostamento misurato non può essere corretto — probabilmente un errore di misura, quindi nessuna valutazione laterale."
     },
     "warn": {
       "pre_displaced_threshold": "⚠ Touchdown prima del displaced threshold — rivedere approach",
-      "planned_burn_may_be_off": "⚠ Sospetto: trip-burn pianificato potrebbe essere troppo alto — verificare OFP burn"
+      "planned_burn_may_be_off": "⚠ Sospetto: trip-burn pianificato potrebbe essere troppo alto — verificare OFP burn",
+      "runway_axis_unverified": "⚠ Asse pista non confermato dallo scenario — lo scostamento laterale è valutato, i dati della pista no"
     },
     "confidence": {
       "high": "Confidenza: Alta",

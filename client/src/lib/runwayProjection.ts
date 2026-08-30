@@ -28,6 +28,16 @@ export interface ProjektionsEingang {
   lengthM: number;
   /** Länge der Zone vor der Landeschwelle (versetzte Schwelle), in Metern. */
   ddsM: number;
+  /**
+   * Um wie viele Meter der Nullpunkt der SPURWERTE gegen die
+   * Landeschwelle verschoben ist.
+   *
+   * ⚠ Nicht `ddsM`. Die beiden sind auf manchen Bahnen gleich und auf
+   * anderen nicht — was hier gilt, entscheidet die Datenquelle, und nur
+   * der Client weiss es (`spur_nullpunkt_versatz_m` aus dem Payload).
+   * Fehlt der Wert, wird nichts verschoben.
+   */
+  spurVersatzM?: number;
   /** Linker Rand des Zeichenbereichs, in Pixeln. */
   padX: number;
   /** Breite des Zeichenbereichs, in Pixeln. */
@@ -55,7 +65,7 @@ export interface Projektion {
    */
   mToXUnbegrenzt: (m: number) => number;
   /**
-   * Wie `mToX`, aber für Werte, die **ab BAHNANFANG** gemessen sind.
+   * Wie `mToX`, aber für Werte, deren Nullpunkt **verschoben** ist.
    *
    * # Warum es diese zweite Funktion gibt
    *
@@ -72,12 +82,27 @@ export interface Projektion {
    * die mit der Spur nicht zusammenhing, und einen Räumpunkt 573 m zu weit
    * rechts. Gemeldet an Flug LAN273 (30.08.2026).
    *
-   * ⚠ Der eigentliche Fehler war, dass `mToX` BEIDE Bedeutungen annimmt,
-   * ohne zu fragen. Deshalb steht die Bedeutung jetzt im NAMEN: Wer einen
-   * Wert zeichnet, muss sich entscheiden, und ein Griff zur falschen
-   * Funktion ist beim Lesen sichtbar statt still.
+   * ⚠⚠ Um WIE VIEL verschoben, sagt einzig `spurVersatzM` — und der ist
+   * NICHT die versetzte Schwelle. Ob die beiden Nullpunkte
+   * auseinanderfallen, hängt an der Datenquelle: Steckt der Versatz schon
+   * in der Navdaten-Geometrie, sind sie identisch. Am Bestand gemessen
+   * (30.08.2026, 19 Flüge mit versetzter Schwelle) fallen sie bei 8 von 19
+   * zusammen. Wer dort pauschal die versetzte Schwelle abzieht, verschiebt
+   * die ganze Zeichnung um bis zu 300 m — der Fehler, den diese Funktion
+   * beheben soll, nur in die andere Richtung.
+   *
+   * Ist `spurVersatzM` nicht gesetzt (ältere Flüge), verschiebt diese
+   * Funktion nichts. Das ist das Verhalten vor v1.7.12 und für Bahnen
+   * ohne versetzte Schwelle — die grosse Mehrheit — ohnehin richtig.
    */
   mAbBahnanfangZuX: (m: number) => number;
+  /**
+   * Der Versatz, mit dem `mAbBahnanfangZuX` rechnet, in Metern.
+   *
+   * Nach aussen gegeben, weil Schranken gegen `lengthM` im selben
+   * Bezugspunkt stehen müssen wie die Werte, die sie beschränken.
+   */
+  spurVersatzM: number;
   /** X der Landeschwelle. Bei versetzter Schwelle rechts vom Bahnanfang. */
   thresholdX: number;
   /** X des physischen Bahnanfangs (= linker Rand der Fläche). */
@@ -140,12 +165,18 @@ export function erzeugeProjektion(e: ProjektionsEingang): Projektion {
   const thresholdX = e.padX + (0 - von) * pxProMeter;
   const mToXUnbegrenzt = (m: number) => thresholdX + m * pxProMeter;
   const mToX = (m: number) => mToXUnbegrenzt(Math.max(von, Math.min(bis, m)));
-  // Ab Bahnanfang gemessen: erst auf die Schwelle beziehen, dann zeichnen.
-  const mAbBahnanfangZuX = (m: number) => mToX(m - ddsM);
+  // Verschobener Nullpunkt: erst auf die Landeschwelle beziehen, dann
+  // zeichnen. ⚠ `spurVersatzM`, NICHT `ddsM` — die Begründung steht bei
+  // der Schnittstelle oben.
+  const spurVersatzM = Number.isFinite(e.spurVersatzM as number)
+    ? Math.max(0, e.spurVersatzM as number)
+    : 0;
+  const mAbBahnanfangZuX = (m: number) => mToX(m - spurVersatzM);
 
   return {
     mToX,
     mAbBahnanfangZuX,
+    spurVersatzM,
     mToXUnbegrenzt,
     thresholdX,
     // Bahnanfang und -ende liegen ausserhalb des Zeichenbereichs, sobald

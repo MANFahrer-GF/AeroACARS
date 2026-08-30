@@ -60,10 +60,7 @@ pub async fn provision(api_key: &str, endpoint: Option<&str>) -> Result<Provisio
         anyhow::bail!("provision rejected: {} ({})", err, status);
     }
 
-    let body: ProvisionResponse = res
-        .json()
-        .await
-        .context("parsing provision response")?;
+    let body: ProvisionResponse = res.json().await.context("parsing provision response")?;
     Ok(body)
 }
 

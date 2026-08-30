@@ -14,8 +14,8 @@
 
 use serde::{Deserialize, Serialize};
 
-pub mod gate;
 pub mod belag;
+pub mod gate;
 pub mod spurweite;
 pub mod sub_alignment;
 pub mod sub_bahndisziplin;
@@ -417,7 +417,6 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
     // v1.7.0: Der alte meter-only `sub_rollout` bleibt fuer nicht-migrierte
     // Aufrufer (Bin-Tools, alte Fixtures ohne Touchdown-Forensik).
     if !scoring_input_has_v2_fields(input) {
-
         if let Some(ro) =
             sub_rollout::sub_rollout(input.rollout_distance_m, input.aircraft_icao.as_deref())
         {
@@ -431,18 +430,20 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
     // „nicht bewertet"), damit alte Aufrufer und Test-Fixturen
     // unveraendert 7 Achsen sehen.
     if scoring_input_has_v2_fields(input) {
-        out.push(sub_alignment::sub_alignment(&sub_alignment::AlignmentInput {
-            centerline_offset_m: input.runway_match_centerline_offset_m,
-            runway_width_m: input.runway_width_m,
-            heading_true_deg: input.landing_heading_true_deg,
-            runway_true_course_deg: input.runway_true_course_deg,
-            airport_source: input.airport_source.clone(),
-            runway_geometry_trusted: input.runway_geometry_trusted,
-            nicht_konventionell: input.nicht_konventionell,
-            wind_direction_deg: input.landing_wind_direction_deg,
-            wind_speed_kt: input.landing_wind_speed_kt,
-            bezugsgeschwindigkeit_kt: input.landing_groundspeed_kt,
-        }));
+        out.push(sub_alignment::sub_alignment(
+            &sub_alignment::AlignmentInput {
+                centerline_offset_m: input.runway_match_centerline_offset_m,
+                runway_width_m: input.runway_width_m,
+                heading_true_deg: input.landing_heading_true_deg,
+                runway_true_course_deg: input.runway_true_course_deg,
+                airport_source: input.airport_source.clone(),
+                runway_geometry_trusted: input.runway_geometry_trusted,
+                nicht_konventionell: input.nicht_konventionell,
+                wind_direction_deg: input.landing_wind_direction_deg,
+                wind_speed_kt: input.landing_wind_speed_kt,
+                bezugsgeschwindigkeit_kt: input.landing_groundspeed_kt,
+            },
+        ));
     }
 
     // v1.7.0: Aufsetzpunkt — WO laengs aufgesetzt wurde. Wie die Ausrichtung
@@ -536,9 +537,7 @@ pub fn aggregate_master_score(subs: &[SubScoreEntry]) -> Option<u8> {
     // bekommen, gerade WEIL seine Landung nicht messbar war. Eine
     // Landungsbewertung ohne die Sinkrate der Landung ist keine Bewertung —
     // dann lieber gar keine Note als eine geschenkte.
-    let has_landing_rate = subs
-        .iter()
-        .any(|s| s.key == "landing_rate" && !s.skipped);
+    let has_landing_rate = subs.iter().any(|s| s.key == "landing_rate" && !s.skipped);
     if !has_landing_rate {
         return None;
     }
@@ -575,8 +574,8 @@ pub fn aggregate_master_score(subs: &[SubScoreEntry]) -> Option<u8> {
             // Muster wie `flare`: Ein Waechter stellt sicher, dass das
             // ruhende Gewicht nicht still wieder aktiv wird.
             "loadsheet" => 1.0,
-            "flare" => 1.0,     // NEU v0.7.1
-            _ => 1.0,           // unbekannt → default 1
+            "flare" => 1.0, // NEU v0.7.1
+            _ => 1.0,       // unbekannt → default 1
         };
         sum += s.score as f32 * w;
         wsum += w;
@@ -669,11 +668,7 @@ fn classify_by_g(peak_g: f32) -> LandingCategory {
     }
 }
 
-pub fn classify_landing(
-    peak_vs_fpm: f32,
-    peak_g: Option<f32>,
-    bounces: u32,
-) -> LandingCategory {
+pub fn classify_landing(peak_vs_fpm: f32, peak_g: Option<f32>, bounces: u32) -> LandingCategory {
     let by_vs = classify_by_vs(peak_vs_fpm);
     let by_g = peak_g.map(classify_by_g).unwrap_or(LandingCategory::Smooth);
     // v0.7.17 (B-009): V/S-led classification.

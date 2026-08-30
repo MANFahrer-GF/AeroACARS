@@ -219,7 +219,11 @@ fn wind_zugestaendnis_deg(input: &AlignmentInput, kurs_abw_signiert: f32) -> f32
 /// Kleinster Winkel zwischen zwei Kursen, 0–180°.
 fn kursdifferenz(a: f32, b: f32) -> f32 {
     let d = (a - b).rem_euclid(360.0);
-    if d > 180.0 { 360.0 - d } else { d }
+    if d > 180.0 {
+        360.0 - d
+    } else {
+        d
+    }
 }
 
 /// Toleranz beim Stufenvergleich. QS-Befund v1.6.2: 16,9125 m Versatz auf
@@ -253,9 +257,7 @@ fn punkte_aus_stufen(wert: f32, stufen: &[(f32, u8)], darueber: u8) -> u8 {
 ///
 /// Reihenfolge wie beim Bremsweg-Score: erst Voraussetzungen (die
 /// spezifischere Aussage), dann fehlende Daten, dann Plausibilität.
-fn gepruefte_werte(
-    input: &AlignmentInput,
-) -> Result<(f32, f32, f32, f32), &'static str> {
+fn gepruefte_werte(input: &AlignmentInput) -> Result<(f32, f32, f32, f32), &'static str> {
     if input.nicht_konventionell {
         return Err("not_applicable_for_category");
     }
@@ -299,7 +301,11 @@ fn gepruefte_werte(
     // positiv = Nase nach rechts vom Bahnkurs.
     let kurs_signiert = {
         let d = (heading - kurs).rem_euclid(360.0);
-        if d > 180.0 { d - 360.0 } else { d }
+        if d > 180.0 {
+            d - 360.0
+        } else {
+            d
+        }
     };
     // Seitenwind erzwingt einen Vorhaltewinkel — der wird abgezogen, statt
     // die Leiter aufzuweichen (siehe `wind_zugestaendnis_deg`).
@@ -329,9 +335,7 @@ fn gepruefte_werte(
 pub fn sub_alignment(input: &AlignmentInput) -> SubScoreEntry {
     let (anteil, kurs_abw, kurs_roh, zugestanden) = match gepruefte_werte(input) {
         Ok(werte) => werte,
-        Err(grund) => {
-            return SubScoreEntry::skipped("alignment", "landing.sub.alignment", grund)
-        }
+        Err(grund) => return SubScoreEntry::skipped("alignment", "landing.sub.alignment", grund),
     };
     let offset_m = anteil * input.runway_width_m.unwrap_or_default() / 2.0;
 
@@ -412,7 +416,10 @@ mod tests {
         let e = sub_alignment(&basis());
         assert!(!e.skipped);
         assert_eq!(e.points, 100);
-        assert_eq!(e.rationale_key.as_deref(), Some("landing.rat.aligned_on_centerline"));
+        assert_eq!(
+            e.rationale_key.as_deref(),
+            Some("landing.rat.aligned_on_centerline")
+        );
     }
 
     #[test]
@@ -495,20 +502,71 @@ mod tests {
             ..basis()
         });
         assert_eq!(e.points, 40);
-        assert_eq!(e.rationale_key.as_deref(), Some("landing.rat.crooked_touchdown"));
+        assert_eq!(
+            e.rationale_key.as_deref(),
+            Some("landing.rat.crooked_touchdown")
+        );
     }
 
     #[test]
     fn fehlende_daten_werden_nie_zu_punktabzug() {
         let faelle = [
-            (AlignmentInput { airport_source: Some("nearest".into()), ..basis() }, "alignment_off_airport"),
-            (AlignmentInput { runway_geometry_trusted: None, ..basis() }, "alignment_untrusted_geometry"),
-            (AlignmentInput { runway_geometry_trusted: Some(false), ..basis() }, "alignment_untrusted_geometry"),
-            (AlignmentInput { centerline_offset_m: None, ..basis() }, "missing_centerline_offset"),
-            (AlignmentInput { runway_width_m: None, ..basis() }, "missing_runway_width"),
-            (AlignmentInput { runway_width_m: Some(0.0), ..basis() }, "missing_runway_width"),
-            (AlignmentInput { runway_true_course_deg: None, ..basis() }, "missing_runway_course"),
-            (AlignmentInput { heading_true_deg: None, ..basis() }, "missing_heading"),
+            (
+                AlignmentInput {
+                    airport_source: Some("nearest".into()),
+                    ..basis()
+                },
+                "alignment_off_airport",
+            ),
+            (
+                AlignmentInput {
+                    runway_geometry_trusted: None,
+                    ..basis()
+                },
+                "alignment_untrusted_geometry",
+            ),
+            (
+                AlignmentInput {
+                    runway_geometry_trusted: Some(false),
+                    ..basis()
+                },
+                "alignment_untrusted_geometry",
+            ),
+            (
+                AlignmentInput {
+                    centerline_offset_m: None,
+                    ..basis()
+                },
+                "missing_centerline_offset",
+            ),
+            (
+                AlignmentInput {
+                    runway_width_m: None,
+                    ..basis()
+                },
+                "missing_runway_width",
+            ),
+            (
+                AlignmentInput {
+                    runway_width_m: Some(0.0),
+                    ..basis()
+                },
+                "missing_runway_width",
+            ),
+            (
+                AlignmentInput {
+                    runway_true_course_deg: None,
+                    ..basis()
+                },
+                "missing_runway_course",
+            ),
+            (
+                AlignmentInput {
+                    heading_true_deg: None,
+                    ..basis()
+                },
+                "missing_heading",
+            ),
         ];
         for (input, erwartet) in faelle {
             let e = sub_alignment(&input);
@@ -635,11 +693,41 @@ mod tests {
         // jeden Stufenvergleich und landete als HÄRTESTE Note im Score —
         // eine NaN-Bahnbreite brachte den Score-Bau sogar zum Absturz.
         let faelle: [(AlignmentInput, &str); 5] = [
-            (AlignmentInput { runway_width_m: Some(f32::NAN), ..basis() }, "missing_runway_width"),
-            (AlignmentInput { runway_width_m: Some(f32::INFINITY), ..basis() }, "missing_runway_width"),
-            (AlignmentInput { centerline_offset_m: Some(f32::NAN), ..basis() }, "missing_centerline_offset"),
-            (AlignmentInput { heading_true_deg: Some(f32::NAN), ..basis() }, "missing_heading"),
-            (AlignmentInput { runway_true_course_deg: Some(f32::NAN), ..basis() }, "missing_runway_course"),
+            (
+                AlignmentInput {
+                    runway_width_m: Some(f32::NAN),
+                    ..basis()
+                },
+                "missing_runway_width",
+            ),
+            (
+                AlignmentInput {
+                    runway_width_m: Some(f32::INFINITY),
+                    ..basis()
+                },
+                "missing_runway_width",
+            ),
+            (
+                AlignmentInput {
+                    centerline_offset_m: Some(f32::NAN),
+                    ..basis()
+                },
+                "missing_centerline_offset",
+            ),
+            (
+                AlignmentInput {
+                    heading_true_deg: Some(f32::NAN),
+                    ..basis()
+                },
+                "missing_heading",
+            ),
+            (
+                AlignmentInput {
+                    runway_true_course_deg: Some(f32::NAN),
+                    ..basis()
+                },
+                "missing_runway_course",
+            ),
         ];
         for (input, erwartet) in faelle {
             let e = sub_alignment(&input);
@@ -703,9 +791,15 @@ mod tests {
                 ..basis()
             })
         };
-        assert!(bei(2.01, 4.99).skipped, "weit daneben + sauber = Kartenfehler");
+        assert!(
+            bei(2.01, 4.99).skipped,
+            "weit daneben + sauber = Kartenfehler"
+        );
         assert!(!bei(1.99, 4.99).skipped, "knapp darunter wird bewertet");
-        assert!(!bei(2.01, 5.01).skipped, "weit daneben + schief = echter Fehler");
+        assert!(
+            !bei(2.01, 5.01).skipped,
+            "weit daneben + schief = echter Fehler"
+        );
     }
 
     #[test]
@@ -729,7 +823,11 @@ mod tests {
                 assert!(anteil >= GEOMETRIE_FRAGWUERDIG_AB_ANTEIL);
                 continue;
             }
-            assert!(e.points <= vorher, "Anteil {anteil}: {} > {vorher}", e.points);
+            assert!(
+                e.points <= vorher,
+                "Anteil {anteil}: {} > {vorher}",
+                e.points
+            );
             assert!(e.points >= 15);
             vorher = e.points;
         }

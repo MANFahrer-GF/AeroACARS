@@ -586,11 +586,18 @@ export function RunwayCrossSection(p: QueransichtProps) {
   })();
 
   const ausfahrten = gruppiere(
+    // ⚠ Die Schranke muss im SELBEN Bezugspunkt stehen wie `laengs_m`.
+    //
+    // `lengthM` ist die nutzbare Bahn AB DER LANDESCHWELLE (LDA);
+    // `laengs_m` kann ab Bahnanfang gemessen sein. Wo beide Nullpunkte
+    // auseinanderfallen, fielen die Ausfahrten im letzten Abschnitt
+    // heraus — genau so viele Meter, wie der Versatz lang ist. Deshalb
+    // wird die Schranke um den Versatz mitgehoben.
     (p.ausfahrten ?? []).filter(
       (a) =>
         Number.isFinite(a.laengs_m) &&
         a.laengs_m >= 0 &&
-        a.laengs_m <= p.projektion.lengthM,
+        a.laengs_m <= p.projektion.lengthM + p.projektion.spurVersatzM,
     ),
     p.projektion,
     // Dieselbe Groesse, mit der die Namen weiter unten gesetzt werden.

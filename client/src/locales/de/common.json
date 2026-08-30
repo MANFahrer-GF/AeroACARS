@@ -335,11 +335,18 @@
       "alignment_off_airport": "Keine erkannte Bahn — Ausrichtung nicht bewertbar",
       "alignment_untrusted_geometry": "Bahndaten nicht verlässlich — Ausrichtung nicht bewertet",
       "not_applicable_for_category": "Für dieses Muster nicht sinnvoll (keine Bahnachse)",
-      "invalid_geometry": "Bahn-Messwerte unbrauchbar (kein gültiger Zahlenwert) — Bahn-Auslastung nicht bewertet."
+      "invalid_geometry": "Bahn-Messwerte unbrauchbar (kein gültiger Zahlenwert) — Bahn-Auslastung nicht bewertet.",
+      "diverted": "Ausgewichen — es wurde eine andere Strecke geflogen als geplant, ein Vergleich mit dem OFP misst den Umweg statt den Piloten.",
+      "runway_width_unknown": "Für diese Bahn ist keine Breite hinterlegt — sie ist der Maßstab für den seitlichen Abstand.",
+      "track_width_unknown": "Die Spurweite dieses Musters ist nicht hinterlegt; ohne sie lässt sich die Lage der Räder nicht bestimmen.",
+      "insufficient_samples": "Zu wenige Messpunkte auf der Bahn — aus zwei oder drei Proben lässt sich kein Verlauf ablesen.",
+      "missing_lateral_track": "Für diesen Flug ist kein Rollweg erfasst. Flüge von vor v1.7.0 haben ihn nicht.",
+      "implausible_lateral_track": "Der gemessene Versatz kann nicht stimmen — vermutlich ein Messfehler, deshalb keine seitliche Bewertung."
     },
     "warn": {
       "pre_displaced_threshold": "⚠ Vor Displaced-Threshold aufgesetzt — Anflugprofil prüfen",
-      "planned_burn_may_be_off": "⚠ Verdacht: geplanter Trip-Burn könnte zu hoch sein — OFP-Burn prüfen"
+      "planned_burn_may_be_off": "⚠ Verdacht: geplanter Trip-Burn könnte zu hoch sein — OFP-Burn prüfen",
+      "runway_axis_unverified": "⚠ Bahnachse nicht durch die Szenerie bestätigt — der seitliche Versatz ist bewertet, die Bahndaten sind es nicht"
     },
     "confidence": {
       "high": "Confidence: Hoch",

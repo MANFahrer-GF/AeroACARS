@@ -130,10 +130,7 @@ fn radpaket_m(spurweite_m: f64) -> f64 {
 /// Der Tabelleneintrag zu einem Typcode — eine Suche für beide Masse.
 fn eintrag(icao: Option<&str>) -> Option<(&'static str, f64, f64)> {
     let icao = icao?.trim().to_ascii_uppercase();
-    TABELLE
-        .iter()
-        .find(|(code, _, _)| *code == icao)
-        .copied()
+    TABELLE.iter().find(|(code, _, _)| *code == icao).copied()
 }
 
 /// ICAO-Typcode → (Spurweite Hauptfahrwerk, Spannweite), beide in Metern.
@@ -269,33 +266,33 @@ const TABELLE: &[(&str, f64, f64)] = &[
     // ── Nachtrag aus dem Korpus-Lauf 23.08.2026 ───────────────────────
     // Diese Muster tauchten im Bestand auf und fehlten. Ohne sie entfiel die
     // seitliche Bewertung — im ersten Lauf waren das 27,8 % aller Landungen.
-    ("A306", 10.69, 44.84),  // A300-600
+    ("A306", 10.69, 44.84), // A300-600
     ("A310", 10.69, 43.90),
     ("A30B", 10.69, 44.84),
-    ("A400", 8.50, 42.40),   // A400M
-    ("F28", 5.80, 25.07),    // Fokker F28
+    ("A400", 8.50, 42.40), // A400M
+    ("F28", 5.80, 25.07),  // Fokker F28
     ("F70", 5.04, 28.08),
     ("F100", 5.04, 28.08),
-    ("C750", 5.61, 19.38),   // Citation X
-    ("HA4T", 3.00, 12.12),   // HondaJet HA-420
-    ("AC11", 2.90, 9.75),   // Commander 114
-    ("AEST", 3.30, 10.67),   // Aerostar
-    ("PA24", 3.10, 10.97),   // Comanche
-    ("PA34", 3.60, 11.85),   // Seneca
-    ("PA44", 3.20, 11.75),   // Seminole
-    ("BE24", 3.00, 10.00),   // Sierra
-    ("BE36", 3.10, 10.21),   // Bonanza A36
+    ("C750", 5.61, 19.38), // Citation X
+    ("HA4T", 3.00, 12.12), // HondaJet HA-420
+    ("AC11", 2.90, 9.75),  // Commander 114
+    ("AEST", 3.30, 10.67), // Aerostar
+    ("PA24", 3.10, 10.97), // Comanche
+    ("PA34", 3.60, 11.85), // Seneca
+    ("PA44", 3.20, 11.75), // Seminole
+    ("BE24", 3.00, 10.00), // Sierra
+    ("BE36", 3.10, 10.21), // Bonanza A36
     ("BE33", 3.00, 10.21),
-    ("BE9L", 4.30, 15.32),   // King Air 90
-    ("B350", 5.30, 17.65),   // King Air 350
+    ("BE9L", 4.30, 15.32), // King Air 90
+    ("B350", 5.30, 17.65), // King Air 350
     ("C25M", 3.30, 15.90),
-    ("C56X", 5.28, 17.17),   // Citation Excel
+    ("C56X", 5.28, 17.17), // Citation Excel
     ("C525", 3.20, 14.26),
-    ("E50P", 3.20, 12.30),   // Phenom 100
+    ("E50P", 3.20, 12.30), // Phenom 100
     ("LJ35", 2.50, 12.04),
     ("LJ45", 2.60, 14.58),
-    ("H25B", 3.10, 15.66),   // Hawker 800
-    ("EA50", 2.20, 11.43),   // Eclipse
+    ("H25B", 3.10, 15.66), // Hawker 800
+    ("EA50", 2.20, 11.43), // Eclipse
     ("SR20", 2.70, 11.68),
     ("C210", 3.10, 11.20),
     ("C206", 2.80, 10.92),
@@ -303,12 +300,12 @@ const TABELLE: &[(&str, f64, f64)] = &[
     ("PC12", 4.50, 16.28),
     ("PC24", 4.20, 17.00),
     ("TBM8", 3.90, 12.68),
-    ("DHC6", 4.30, 19.81),   // Twin Otter
-    ("DHC2", 3.30, 14.63),   // Beaver
+    ("DHC6", 4.30, 19.81), // Twin Otter
+    ("DHC2", 3.30, 14.63), // Beaver
     ("AN2", 3.36, 18.18),
     ("RV10", 2.70, 9.63),
-    ("M20P", 2.70, 10.67),   // Mooney
-    ("BL8", 1.80, 9.75),    // Bellanca Decathlon
+    ("M20P", 2.70, 10.67), // Mooney
+    ("BL8", 1.80, 9.75),   // Bellanca Decathlon
     // ── Leichtflugzeuge ───────────────────────────────────────────────
     ("C152", 2.30, 10.00),
     ("C172", 2.50, 11.00),
@@ -330,10 +327,10 @@ const TABELLE: &[(&str, f64, f64)] = &[
     // sieht „Spurweite nicht hinterlegt" statt einer Note.
     ("B767", 9.30, 47.57),  // Sammelkennung, Werte der -300
     ("B757", 7.32, 38.05),  // Sammelkennung
-    ("B777", 10.97, 60.93),  // Sammelkennung, Werte der -200
-    ("A20", 7.59, 35.80),  // verkuerzte A320-Kennung aus den Subfleet-Codes
+    ("B777", 10.97, 60.93), // Sammelkennung, Werte der -200
+    ("A20", 7.59, 35.80),   // verkuerzte A320-Kennung aus den Subfleet-Codes
     ("BE35", 2.90, 10.00),  // Bonanza 35
-    ("B36", 3.10, 10.21),  // Bonanza A36, zweite Schreibweise zu BE36
+    ("B36", 3.10, 10.21),   // Bonanza A36, zweite Schreibweise zu BE36
     ("B58T", 3.20, 11.53),  // Baron 58TC, zweite Schreibweise zu BE58
     ("P28R", 3.20, 10.67),  // Piper Arrow
     ("E135", 4.10, 20.04),  // ERJ-135
@@ -342,12 +339,12 @@ const TABELLE: &[(&str, f64, f64)] = &[
     ("E175", 5.30, 26.00),  // zweite Schreibweise zu E75L
     ("RJ85", 4.72, 26.21),  // Avro RJ85
     ("B463", 4.72, 26.21),  // BAe 146-300
-    ("748", 5.79, 30.02),  // HS 748
-    ("CJ4", 3.50, 15.08),  // Citation CJ4
+    ("748", 5.79, 30.02),   // HS 748
+    ("CJ4", 3.50, 15.08),   // Citation CJ4
     ("HDJT", 3.00, 12.12),  // HondaJet, zweite Schreibweise zu HA4T
     ("C414", 3.50, 13.45),  // Cessna 414
-    ("MU2", 2.44, 11.94),  // Mitsubishi MU-2
-    ("VL3", 1.60, 8.43),  // JMB VL-3, Ultraleicht
+    ("MU2", 2.44, 11.94),   // Mitsubishi MU-2
+    ("VL3", 1.60, 8.43),    // JMB VL-3, Ultraleicht
     ("CONC", 7.72, 25.60),  // Concorde
     // Eurofighter: 5,00 m ist die SPURWEITE, 5,80 m waere der Radstand —
     // die beiden zu verwechseln ist bei Deltafluglern leicht, weil das
@@ -355,9 +352,9 @@ const TABELLE: &[(&str, f64, f64)] = &[
     // Plausibilitaetstest (Spannweite ueber dem Doppelten der Spurweite)
     // hat den Fehler gefangen: Mit 5,80 lag das Verhaeltnis bei 1,89.
     ("EUFI", 5.00, 10.95),
-    ("H145", 2.00, 11.00),  // Hubschrauber
-    ("A109", 2.10, 11.00),  // Hubschrauber
-    ("A139", 2.78, 13.80),  // Hubschrauber
+    ("H145", 2.00, 11.00), // Hubschrauber
+    ("A109", 2.10, 11.00), // Hubschrauber
+    ("A139", 2.78, 13.80), // Hubschrauber
 ];
 
 #[cfg(test)]
@@ -388,9 +385,8 @@ mod tests {
         // Muster, die im Bestand tatsächlich vorkommen — jedes ohne Wert
         // bedeutet eine Landung ohne seitliche Bewertung.
         for icao in [
-            "BCS3", "A320", "A21N", "A333", "A343", "B738", "B744", "B748", "B763", "B77W",
-            "B78X", "MD11", "AT76", "E195", "CRJ9", "C172", "C182", "P180", "FA50", "C680",
-            "SF50", "L101",
+            "BCS3", "A320", "A21N", "A333", "A343", "B738", "B744", "B748", "B763", "B77W", "B78X",
+            "MD11", "AT76", "E195", "CRJ9", "C172", "C182", "P180", "FA50", "C680", "SF50", "L101",
         ] {
             assert!(
                 spurweite_m(Some(icao)).is_some(),
@@ -528,7 +524,10 @@ mod tests {
             (aussen - (2.86 + 0.45)).abs() < 0.01,
             "{aussen} m — erwartet 3,31 m"
         );
-        assert!(aussen > spur / 2.0, "die Aussenkante liegt immer weiter draussen");
+        assert!(
+            aussen > spur / 2.0,
+            "die Aussenkante liegt immer weiter draussen"
+        );
     }
 
     #[test]
@@ -536,9 +535,12 @@ mod tests {
         // Ein Kleinflugzeug hat ein Rad je Bein, ein Verkehrsflugzeug zwei,
         // ein Grossraumflugzeug einen Bogie. Der Zuschlag muss dieser
         // Ordnung folgen — sonst bekaeme eine C172 denselben wie eine 747.
-        let c172 = aussenkante_halb_aus_spur(spurweite_m(Some("C172")).unwrap()) - spurweite_m(Some("C172")).unwrap() / 2.0;
-        let b738 = aussenkante_halb_aus_spur(spurweite_m(Some("B738")).unwrap()) - spurweite_m(Some("B738")).unwrap() / 2.0;
-        let b744 = aussenkante_halb_aus_spur(spurweite_m(Some("B744")).unwrap()) - spurweite_m(Some("B744")).unwrap() / 2.0;
+        let c172 = aussenkante_halb_aus_spur(spurweite_m(Some("C172")).unwrap())
+            - spurweite_m(Some("C172")).unwrap() / 2.0;
+        let b738 = aussenkante_halb_aus_spur(spurweite_m(Some("B738")).unwrap())
+            - spurweite_m(Some("B738")).unwrap() / 2.0;
+        let b744 = aussenkante_halb_aus_spur(spurweite_m(Some("B744")).unwrap())
+            - spurweite_m(Some("B744")).unwrap() / 2.0;
         assert!(c172 < b738, "{c172} < {b738}");
         assert!(b738 < b744, "{b738} < {b744}");
         // Und keiner ist so gross, dass er die Bewertung tragen wuerde:
@@ -572,7 +574,10 @@ mod tests {
         // nicht verkleinern — massgeblich sind die aeusseren.
         let a346 = spurweite_m(Some("A346")).unwrap();
         assert!((a346 - 12.60).abs() < 0.01, "{a346}");
-        assert!(a346 > spurweite_m(Some("A343")).unwrap(), "die -600 steht breiter");
+        assert!(
+            a346 > spurweite_m(Some("A343")).unwrap(),
+            "die -600 steht breiter"
+        );
     }
 
     #[test]
