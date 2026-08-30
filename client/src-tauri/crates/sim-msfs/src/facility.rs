@@ -75,8 +75,31 @@ pub const BAHN_FELDER: &[(&str, FeldTyp)] = &[
     ("PRIMARY_DESIGNATOR", FeldTyp::I32),
     ("SECONDARY_NUMBER", FeldTyp::I32),
     ("SECONDARY_DESIGNATOR", FeldTyp::I32),
-    ("PRIMARY_THRESHOLD", FeldTyp::F32),
-    ("SECONDARY_THRESHOLD", FeldTyp::F32),
+    // ⚠ HIER STANDEN `PRIMARY_THRESHOLD` und `SECONDARY_THRESHOLD` als
+    // `F32`. Das war die Ursache dafuer, dass die MSFS-Szenerie seit
+    // v1.7.8 bei JEDEM Flug null Bahnen lieferte.
+    //
+    // Beide sind laut SDK-Doku **STRUCT**-Felder vom Typ `PAVEMENT`,
+    // keine Fliesskommazahlen. Sie kommen als eigene Untersaetze, nicht
+    // im flachen Bahnsatz. Der Name wird von
+    // `AddToFacilityDefinition` trotzdem angenommen — SimConnect prueft
+    // ihn gegen eine globale Liste, nicht je Satzart. Die Anmeldung lief
+    // also durch, und der Fehler zeigte sich erst 56 Bytes spaeter:
+    //
+    //   erwartet  64 Bytes (mit den zwei vermeintlichen F32)
+    //   geliefert 56 Bytes (der flache Satz endet hier)
+    //
+    // `zerlege` stellt fest, dass die Bytes nicht reichen, gibt `None`
+    // zurueck — und der ganze Bahnsatz faellt weg. Lautlos, an jedem
+    // Platz, seit v1.7.8.
+    //
+    // Gefunden am 30.08.2026 durch Nachlesen der SDK-Doku, nachdem die
+    // Diagnose aus v1.7.11 den Fall eingegrenzt hatte: Rollwege kamen an
+    // (62, 264, 402 an verschiedenen Plaetzen), Bahnen nie.
+    //
+    // Die versetzte Schwelle kommt aus MSFS damit vorerst NICHT. Sie
+    // waere ueber die PAVEMENT-Untersaetze zu holen — ein eigener Bau.
+    // Bis dahin bleibt der Navdaten-Wert stehen, und das ist richtig so.
 ];
 
 /// Der Referenzpunkt des Flughafens.
@@ -321,8 +344,13 @@ pub fn bahn_aus_werten(w: &[Wert]) -> Option<[SzenerieBahn; 2]> {
         laenge,
         breite,
         belag,
-        (w[7].als_i32(), w[8].als_i32(), w[11].als_f64()),
-        (w[9].als_i32(), w[10].als_i32(), w[12].als_f64()),
+        // ⚠ NaN, nicht 0,0: Die versetzte Schwelle liefert MSFS im flachen
+        // Satz nicht (sie ist ein PAVEMENT-Untersatz). Eine 0 waere eine
+        // AUSSAGE — "keine versetzte Schwelle" — und wuerde den echten
+        // Navdaten-Wert ueberschreiben. NaN faellt durch
+        // `plausibel::versatz_m` und laesst ihn stehen.
+        (w[7].als_i32(), w[8].als_i32(), f64::NAN),
+        (w[9].als_i32(), w[10].als_i32(), f64::NAN),
     ))
 }
 
@@ -595,9 +623,44 @@ mod zerleger_tests {
             Wert::I32(0),       // PRIMARY_DESIGNATOR
             Wert::I32(23),      // SECONDARY_NUMBER
             Wert::I32(0),       // SECONDARY_DESIGNATOR
-            Wert::F32(120.0),   // PRIMARY_THRESHOLD
-            Wert::F32(0.0),     // SECONDARY_THRESHOLD
+            // ⚠ Hier standen PRIMARY_/SECONDARY_THRESHOLD als F32 — und
+            // genau das machte diesen Test wertlos: Er baute die Bytes
+            // aus DERSELBEN Feldliste, gegen die er sie dann prueft. Ein
+            // Rundlauf gegen die eigene Annahme kann eine falsche
+            // Annahme nicht finden. Beide Felder sind laut SDK STRUCTs
+            // und kommen im flachen Satz gar nicht vor.
         ]
+    }
+
+    /// Die Laenge des flachen Bahnsatzes — aus der SDK-DOKU, nicht aus
+    /// unserer Feldliste.
+    ///
+    /// ⚠ Das ist der Wert, der den Fehler gefunden haette. Er ist bewusst
+    /// von Hand ausgerechnet: 3 x FLOAT64 (LAT/LON/ALT) + 3 x FLOAT32
+    /// (HEADING/LENGTH/WIDTH) + 5 x INT32 (SURFACE, PRIMARY_NUMBER,
+    /// PRIMARY_DESIGNATOR, SECONDARY_NUMBER, SECONDARY_DESIGNATOR).
+    /// Wer ein Feld ergaenzt, muss diese Zahl bewusst mit aendern — und
+    /// dabei in der Doku nachsehen, ob das Feld ueberhaupt flach kommt.
+    const BAHNSATZ_BYTES_LAUT_SDK: usize = 3 * 8 + 3 * 4 + 5 * 4;
+
+    #[test]
+    fn das_bahnraster_passt_zur_sdk_doku() {
+        // ⚠ DIE Wache gegen den Fehler, der die MSFS-Szenerie seit
+        // v1.7.8 wirkungslos machte: Zwei STRUCT-Felder waren als F32
+        // deklariert, das Raster erwartete 64 statt 56 Bytes, und JEDER
+        // Bahnsatz fiel beim Zerlegen durch — lautlos.
+        //
+        // Die erwartete Zahl kommt aus der Doku, nicht aus BAHN_FELDER.
+        // Ein Test, der beides aus derselben Quelle nimmt, kann eine
+        // falsche Quelle nicht finden.
+        let gebraucht: usize = BAHN_FELDER.iter().map(|(_, t)| t.groesse()).sum();
+        assert_eq!(
+            gebraucht, BAHNSATZ_BYTES_LAUT_SDK,
+            "das Bahnraster erwartet {gebraucht} Bytes, die SDK-Doku \
+             beschreibt {BAHNSATZ_BYTES_LAUT_SDK} — ein Feld ist zu viel, \
+             zu wenig, oder hat den falschen Typ (STRUCT-Felder kommen \
+             NICHT im flachen Satz)"
+        );
     }
 
     #[test]
@@ -651,8 +714,17 @@ mod zerleger_tests {
         assert!((a.kurs_grad - 52.5).abs() < 1e-6);
         assert!((b.kurs_grad - 232.5).abs() < 1e-6);
         assert!((a.breite_m - 46.0).abs() < 1e-6);
-        assert!((a.versetzte_schwelle_m - 120.0).abs() < 1e-6);
-        assert!((b.versetzte_schwelle_m - 0.0).abs() < 1e-6);
+        // ⚠ Die versetzte Schwelle ist NaN, nicht 0,0.
+        //
+        // MSFS liefert sie im flachen Bahnsatz nicht — sie ist ein
+        // PAVEMENT-Untersatz. Eine 0 waere eine AUSSAGE ("keine versetzte
+        // Schwelle") und wuerde den echten Navdaten-Wert ueberschreiben.
+        // NaN faellt durch `plausibel::versatz_m` und laesst ihn stehen.
+        assert!(
+            a.versetzte_schwelle_m.is_nan(),
+            "eine nicht gelieferte Schwelle darf keine Zahl behaupten"
+        );
+        assert!(b.versetzte_schwelle_m.is_nan());
         assert_eq!(a.belag_code, 1, "Beton muss befestigt sein");
     }
 
