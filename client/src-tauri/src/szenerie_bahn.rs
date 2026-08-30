@@ -79,6 +79,14 @@ pub struct UebernahmeBericht {
     pub groesste_kursabweichung_grad: f64,
     /// Grösste Breitenabweichung, die übernommen wurde, in Metern.
     pub groesste_breitenabweichung_m: f64,
+    /// Grösste Abweichung der versetzten Schwelle, in Metern.
+    ///
+    /// ⚠ Der folgenreichste der drei Werte: Die versetzte Schwelle ist
+    /// der Nullpunkt der Aufsetzpunkt-Bewertung. Sagt die Szenerie
+    /// "keine Schwelle", wo die Navdaten 573 m führen (TJPS 12,
+    /// LAN273), verschiebt sich die Bewertung um eine halbe
+    /// Bahnlänge — das darf nicht still geschehen.
+    pub groesste_schwellenabweichung_m: f64,
 }
 
 fn winkelabstand(a: f64, b: f64) -> f64 {
@@ -290,6 +298,11 @@ pub fn uebernimm_szenerie(
             bahn.width_ft = Some((w / 0.3048).round() as i32);
         }
         if let Some(v) = plausibel::versatz_m(s.versetzte_schwelle_m) {
+            let vorher_m = bahn.displaced_threshold_ft as f64 * 0.3048;
+            let abweichung = (v - vorher_m).abs();
+            if abweichung > b.groesste_schwellenabweichung_m {
+                b.groesste_schwellenabweichung_m = abweichung;
+            }
             bahn.displaced_threshold_ft = (v / 0.3048).round() as i32;
         }
         if let Some((lat, lon)) = plausibel::koordinate(s.schwelle) {
@@ -672,6 +685,7 @@ pub fn ergaenze_aus_szenerie(
         verworfen = bericht.verworfen.len(),
         kurs_grad = bericht.groesste_kursabweichung_grad,
         breite_m = bericht.groesste_breitenabweichung_m,
+        schwelle_m = bericht.groesste_schwellenabweichung_m,
         quelle = %sz.quelle,
         "Bahngeometrie aus der Szenerie uebernommen"
     );

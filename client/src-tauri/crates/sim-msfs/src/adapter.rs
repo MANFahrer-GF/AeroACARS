@@ -1775,7 +1775,11 @@ impl Connection {
         // Metern (`BIAS_X`/`BIAS_Z`).
         eintraege.extend(facility::FLUGHAFEN_FELDER.iter().map(|(n, _)| *n));
         eintraege.push("OPEN RUNWAY");
-        eintraege.extend(facility::BAHN_FELDER.iter().map(|(n, _)| *n));
+        // ⚠ `BAHN_DEFINITION`, NICHT `BAHN_FELDER`: Die versetzte
+        // Schwelle liegt in einem PAVEMENT-Untersatz, der mit
+        // OPEN/CLOSE PRIMARY_THRESHOLD geoeffnet wird. Diese Marken
+        // liefern keine Bytes und stehen darum nicht im Byte-Raster.
+        eintraege.extend(facility::BAHN_DEFINITION.iter().copied());
         eintraege.push("CLOSE RUNWAY");
         // Rollwege: Punkte, Kanten, Namen — drei Listen, die ueber
         // Indizes zusammenhaengen, genau wie X-Planes 1201/1202.

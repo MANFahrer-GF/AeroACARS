@@ -15493,6 +15493,11 @@ fn build_pirep_payload(
             .as_ref()
             .filter(|b| !b.uebernommen.is_empty())
             .map(|b| b.groesste_breitenabweichung_m),
+        bahn_schwellen_korrektur_m: stats
+            .szenerie_uebernahme
+            .as_ref()
+            .filter(|b| !b.uebernommen.is_empty())
+            .map(|b| b.groesste_schwellenabweichung_m),
         runway_geometry_trusted: {
             let (trusted, _) = runway_geometry_trust_check(
                 stats
@@ -25872,6 +25877,11 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     .as_ref()
                                     .filter(|b| !b.uebernommen.is_empty())
                                     .map(|b| b.groesste_breitenabweichung_m),
+                                bahn_schwellen_korrektur_m: stats
+                                    .szenerie_uebernahme
+                                    .as_ref()
+                                    .filter(|b| !b.uebernommen.is_empty())
+                                    .map(|b| b.groesste_schwellenabweichung_m),
                                 ts: td_ts.timestamp_millis(),
                                 // v0.11.1: Pilot-Client-Version aus dem Cargo-
                                 // Manifest in jeden Touchdown mitsenden, damit
@@ -52375,6 +52385,36 @@ mod wiederaufnahme_langstrecke_tests {
 
     fn ohne_leerraum(s: &str) -> String {
         s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    /// Jedes Szenerie-Korrekturfeld muss an BEIDEN Nutzlaststellen stehen.
+    ///
+    /// ⚠ Die Nutzlast wird an zwei Stellen gebaut (normaler Abschluss und
+    /// der Weg über den Wiederaufnahme-Zweig). Ein neues Feld nur an
+    /// einer der beiden zu setzen übersetzt sauber, ist grün in allen
+    /// Tests — und fehlt dann bei jedem Flug, der über den anderen Weg
+    /// geht. Genau so ist am 29.08.2026 ein Feld an vier Stellen still
+    /// verloren gegangen.
+    ///
+    /// Die Nadeln werden mit `format!` gebaut, sonst fände der Wächter
+    /// sich selbst (siehe die Lehre oben).
+    #[test]
+    fn jedes_szenerie_korrekturfeld_steht_an_beiden_nutzlaststellen() {
+        let quelle = ohne_leerraum(LIB_QUELLE);
+        for feld in [
+            "bahn_kurs_korrektur_grad",
+            "bahn_breiten_korrektur_m",
+            "bahn_schwellen_korrektur_m",
+        ] {
+            let nadel = ohne_leerraum(&format!("{feld}{}stats", ':'));
+            let treffer = quelle.matches(&nadel).count();
+            assert_eq!(
+                treffer, 2,
+                "{feld} wird an {treffer} Stellen in die Nutzlast \
+                 geschrieben, erwartet werden 2 — ein Flug über den \
+                 anderen Weg verlöre das Feld"
+            );
+        }
     }
 
     /// ⚠ Lehre aus zwei Fehlversuchen an EINEM Tag (29.08.2026):

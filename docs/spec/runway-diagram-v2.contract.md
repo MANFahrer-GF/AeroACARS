@@ -373,6 +373,19 @@ Fehler auftaucht.
 - **v1.7.8:** `bahn_geometrie_quelle` (`"szenerie"` | `"navdaten"`), `bahn_kurs_korrektur_grad`, `bahn_breiten_korrektur_m` — woher die Bahngeometrie stammt und wie weit sie von den Navdaten abwich
 - **v1.7.10:** `bahn_szenerie_status`, `sim_kennung`
 - **v1.7.11:** `bahn_szenerie_status` trägt jetzt die Zahlen (`ohne_bahnen(rollwege=243)`)
+- **v1.7.12:** `bahn_schwellen_korrektur_m` — um wie viele Meter die versetzte
+  Schwelle aus der Szenerie von den Navdaten abwich. Ab dieser Fassung liest der
+  MSFS-Adapter die Schwelle aus dem PAVEMENT-Untersatz
+  (`OPEN PRIMARY_THRESHOLD` … `CLOSE PRIMARY_THRESHOLD`) statt sie offen zu
+  lassen.
+
+  ⚠ **Der folgenreichste der drei Korrekturwerte.** Die versetzte Schwelle ist
+  der Nullpunkt von `td_distance_from_threshold_m`, `aim_delta_m` und
+  `tch_delta_ft`. Sagt die Szenerie „keine Schwelle", wo die Navdaten 573 m
+  führen (TJPS 12, Flug LAN273 am 30.08.2026), verschieben sich diese drei
+  Größen um eine halbe Bahnlänge. Ein großer Wert heißt deshalb nicht „Fehler",
+  sondern „Szenerie und Navdaten sind sich hier uneins" — und dass wir der
+  Szenerie gefolgt sind, weil der Pilot dort landet.
 
 ⚠ **Die Felder ab v1.7.8 sind Diagnose, keine Anzeige.** Sie werden aus der
 Datenbank ausgewertet und stehen bewusst NICHT in `BAHN_FELDER` des Recorders

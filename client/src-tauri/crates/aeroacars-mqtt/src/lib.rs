@@ -813,6 +813,14 @@ pub struct TouchdownPayload {
     /// Um wie viel Meter die Breite korrigiert wurde.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bahn_breiten_korrektur_m: Option<f64>,
+    /// Um wie viel Meter die versetzte Schwelle korrigiert wurde.
+    ///
+    /// ⚠ Der Nullpunkt der Aufsetzpunkt-Bewertung. Ein grosser Wert
+    /// heisst nicht "Fehler", sondern "Szenerie und Navdaten sind sich
+    /// hier uneins" — und dass wir der Szenerie gefolgt sind, weil der
+    /// Pilot dort landet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bahn_schwellen_korrektur_m: Option<f64>,
 
     // ─── v0.7.19 GAF-707 Accident-Detection ──────────────────────────
     //
@@ -1319,6 +1327,10 @@ pub struct PirepPayload {
     /// Um wie viel Meter die Breite korrigiert wurde.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bahn_breiten_korrektur_m: Option<f64>,
+    /// Um wie viel Meter die versetzte Schwelle korrigiert wurde.
+    /// Siehe die gleichnamige Erklaerung weiter oben.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bahn_schwellen_korrektur_m: Option<f64>,
 
     // ─── v0.7.19 GAF-707 Accident-Detection ──────────────────────────
     //

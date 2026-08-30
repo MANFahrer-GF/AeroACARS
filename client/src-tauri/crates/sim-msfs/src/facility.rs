@@ -75,32 +75,60 @@ pub const BAHN_FELDER: &[(&str, FeldTyp)] = &[
     ("PRIMARY_DESIGNATOR", FeldTyp::I32),
     ("SECONDARY_NUMBER", FeldTyp::I32),
     ("SECONDARY_DESIGNATOR", FeldTyp::I32),
-    // ⚠ HIER STANDEN `PRIMARY_THRESHOLD` und `SECONDARY_THRESHOLD` als
-    // `F32`. Das war die Ursache dafuer, dass die MSFS-Szenerie seit
-    // v1.7.8 bei JEDEM Flug null Bahnen lieferte.
+    // ── PAVEMENT-Untersaetze (v1.7.12) ───────────────────────────────
     //
-    // Beide sind laut SDK-Doku **STRUCT**-Felder vom Typ `PAVEMENT`,
-    // keine Fliesskommazahlen. Sie kommen als eigene Untersaetze, nicht
-    // im flachen Bahnsatz. Der Name wird von
-    // `AddToFacilityDefinition` trotzdem angenommen — SimConnect prueft
-    // ihn gegen eine globale Liste, nicht je Satzart. Die Anmeldung lief
-    // also durch, und der Fehler zeigte sich erst 56 Bytes spaeter:
+    // Die versetzte Schwelle kommt NICHT als Zahl im flachen Satz — sie
+    // ist ein PAVEMENT-Untersatz mit drei Feldern. Genau daran ist der
+    // erste Anlauf gescheitert: `PRIMARY_THRESHOLD` als `F32` deklariert,
+    // Raster 64 statt 56 Bytes, jeder Bahnsatz fiel durch.
     //
-    //   erwartet  64 Bytes (mit den zwei vermeintlichen F32)
-    //   geliefert 56 Bytes (der flache Satz endet hier)
+    // ⚠ PAVEMENT hat KEINEN eigenen Wert in `SIMCONNECT_FACILITY_DATA_TYPE`
+    // (im SDK-Header nachgesehen) — die Felder kommen also EINGEBETTET im
+    // Bahnsatz, in der Reihenfolge der Definition. Deshalb stehen sie hier
+    // im flachen Raster, und die OPEN/CLOSE-Marken stehen getrennt in
+    // `BAHN_DEFINITION`.
     //
-    // `zerlege` stellt fest, dass die Bytes nicht reichen, gibt `None`
-    // zurueck — und der ganze Bahnsatz faellt weg. Lautlos, an jedem
-    // Platz, seit v1.7.8.
-    //
-    // Gefunden am 30.08.2026 durch Nachlesen der SDK-Doku, nachdem die
-    // Diagnose aus v1.7.11 den Fall eingegrenzt hatte: Rollwege kamen an
-    // (62, 264, 402 an verschiedenen Plaetzen), Bahnen nie.
-    //
-    // Die versetzte Schwelle kommt aus MSFS damit vorerst NICHT. Sie
-    // waere ueber die PAVEMENT-Untersaetze zu holen — ein eigener Bau.
-    // Bis dahin bleibt der Navdaten-Wert stehen, und das ist richtig so.
+    // Laut SDK-Doku enthaelt PAVEMENT: LENGTH (FLOAT32), WIDTH (FLOAT32),
+    // ENABLE (INT32).
+    ("PRIMARY_THRESHOLD.LENGTH", FeldTyp::F32),
+    ("PRIMARY_THRESHOLD.WIDTH", FeldTyp::F32),
+    ("PRIMARY_THRESHOLD.ENABLE", FeldTyp::I32),
+    ("SECONDARY_THRESHOLD.LENGTH", FeldTyp::F32),
+    ("SECONDARY_THRESHOLD.WIDTH", FeldTyp::F32),
+    ("SECONDARY_THRESHOLD.ENABLE", FeldTyp::I32),
 ];
+
+/// Die Anmeldung des Bahnsatzes — Feldnamen UND Gruppenmarken, in der
+/// Reihenfolge, in der sie an `AddToFacilityDefinition` gehen.
+///
+/// ⚠ Getrennt von `BAHN_FELDER`, weil OPEN/CLOSE nur die Definition
+/// betreffen und KEINE Bytes liefern. Wer eines von beiden aendert, muss
+/// das andere mit aendern — der Test
+/// `definition_und_raster_passen_zusammen` haelt das fest.
+pub const BAHN_DEFINITION: &[&str] = &[
+    "LATITUDE",
+    "LONGITUDE",
+    "ALTITUDE",
+    "HEADING",
+    "LENGTH",
+    "WIDTH",
+    "SURFACE",
+    "PRIMARY_NUMBER",
+    "PRIMARY_DESIGNATOR",
+    "SECONDARY_NUMBER",
+    "SECONDARY_DESIGNATOR",
+    "OPEN PRIMARY_THRESHOLD",
+    "LENGTH",
+    "WIDTH",
+    "ENABLE",
+    "CLOSE PRIMARY_THRESHOLD",
+    "OPEN SECONDARY_THRESHOLD",
+    "LENGTH",
+    "WIDTH",
+    "ENABLE",
+    "CLOSE SECONDARY_THRESHOLD",
+];
+
 
 /// Der Referenzpunkt des Flughafens.
 ///
@@ -332,6 +360,47 @@ pub fn zerlege(felder: &[(&str, FeldTyp)], bytes: &[u8]) -> Option<Vec<Wert>> {
     Some(aus)
 }
 
+
+/// Die versetzte Schwelle aus einem PAVEMENT-Untersatz lesen.
+///
+/// `ab` ist der Index von LENGTH; darauf folgen WIDTH und ENABLE.
+/// Rueckgabe in Metern, oder NaN.
+///
+/// ⚠ Hier werden zwei Dinge unterschieden, die beide "0" heissen
+/// koennten:
+///
+/// * **Schweigen** — der Untersatz kam gar nicht an (kuerzerer Block,
+///   aeltere Simulator-Fassung). Dann NaN: Wir wissen nichts, und der
+///   Navdaten-Wert bleibt stehen.
+/// * **Aussage** — der Untersatz kam an und `ENABLE` ist 0. Dann 0,0:
+///   Die Szenerie sagt "an diesem Ende gibt es KEINE versetzte
+///   Schwelle", und diese Aussage gilt, wie jede andere Zahl aus der
+///   Szenerie auch (siehe [[aeroacars-bahn-aus-der-szenerie]]: Der
+///   Simulator ist die erste Instanz, weil der Pilot dort landet).
+///
+/// Der Unterschied ist der Fall LAN273 (TJPS 12, 30.08.2026): Die
+/// Navdaten fuehren 573 m versetzte Schwelle, der Pilot sagt, im
+/// Simulator sei dort keine. Wuerden wir `ENABLE = 0` als Schweigen
+/// lesen, blieben die 573 m stehen und der Aufsetzpunkt wuerde gegen
+/// eine Schwelle bewertet, die der Pilot nie gesehen hat.
+fn versatz_aus_pavement(w: &[Wert], ab: usize) -> f64 {
+    // Schweigen: Der Untersatz fehlt.
+    let (Some(laenge), Some(enable)) = (w.get(ab), w.get(ab + 2)) else {
+        return f64::NAN;
+    };
+    // Aussage: kein Schwellenversatz an diesem Ende.
+    if enable.als_i32() == 0 {
+        return 0.0;
+    }
+    let l = laenge.als_f64();
+    // Aktiv, aber die Laenge ist Unsinn — dann lieber nichts sagen.
+    if l.is_finite() && l > 0.0 {
+        l
+    } else {
+        f64::NAN
+    }
+}
+
 /// Aus einem zerlegten Bahn-Datenblock das Bahnenpaar bauen.
 pub fn bahn_aus_werten(w: &[Wert]) -> Option<[SzenerieBahn; 2]> {
     if w.len() < BAHN_FELDER.len() {
@@ -348,13 +417,19 @@ pub fn bahn_aus_werten(w: &[Wert]) -> Option<[SzenerieBahn; 2]> {
         laenge,
         breite,
         belag,
-        // ⚠ NaN, nicht 0,0: Die versetzte Schwelle liefert MSFS im flachen
-        // Satz nicht (sie ist ein PAVEMENT-Untersatz). Eine 0 waere eine
-        // AUSSAGE — "keine versetzte Schwelle" — und wuerde den echten
-        // Navdaten-Wert ueberschreiben. NaN faellt durch
-        // `plausibel::versatz_m` und laesst ihn stehen.
-        (w[7].als_i32(), w[8].als_i32(), f64::NAN),
-        (w[9].als_i32(), w[10].als_i32(), f64::NAN),
+        // Die versetzte Schwelle aus dem PAVEMENT-Untersatz.
+        //
+        // ⚠ `ENABLE` entscheidet — und ein `ENABLE = 0` ist eine
+        // AUSSAGE ("keine versetzte Schwelle"), keine Luecke. Sie
+        // schlaegt darum den Navdaten-Wert, wie jede andere Zahl aus
+        // der Szenerie auch. Die Begruendung steht bei
+        // `versatz_aus_pavement`.
+        //
+        // Der Unterschied ist nicht theoretisch: Bei LAN273 (TJPS 12,
+        // 30.08.2026) sagen die Navdaten 573 m versetzte Schwelle, der
+        // Pilot sagt, im Simulator gebe es dort keine.
+        (w[7].als_i32(), w[8].als_i32(), versatz_aus_pavement(w, 11)),
+        (w[9].als_i32(), w[10].als_i32(), versatz_aus_pavement(w, 14)),
     ))
 }
 
@@ -525,9 +600,89 @@ mod feldnamen_tests {
     /// Laufzeit auf einer Windows-Maschine, die ich hier nicht habe.
     ///
     /// Diese Prüfung kostet nichts und fängt jede kuenftige Vermutung.
+    /// Anmeldung und Byte-Raster duerfen nicht auseinanderlaufen.
+    ///
+    /// ⚠ Das ist die Naht, an der v1.7.8 gebrochen ist: Damals standen
+    /// zwei Namen in der Anmeldung, die keine eigenen Bytes liefern —
+    /// jeder Bahnsatz war danach um zwei Felder verschoben, und ALLE
+    /// MSFS-Bahndaten waren still unbrauchbar. Seit die Anmeldung eine
+    /// eigene Liste ist, kann dieselbe Klasse nur noch hier auffallen.
+    #[test]
+    fn definition_und_raster_passen_zusammen() {
+        // Aus der Anmeldung die Namen ziehen, die WIRKLICH Bytes
+        // liefern: alles ausser den OPEN/CLOSE-Marken.
+        let liefernde: Vec<&str> = BAHN_DEFINITION
+            .iter()
+            .copied()
+            .filter(|t| !t.starts_with("OPEN ") && !t.starts_with("CLOSE "))
+            .collect();
+
+        assert_eq!(
+            liefernde.len(),
+            BAHN_FELDER.len(),
+            "Anmeldung liefert {} Werte, das Raster erwartet {} — \
+             jeder Bahnsatz waere ab hier verschoben",
+            liefernde.len(),
+            BAHN_FELDER.len()
+        );
+
+        for (i, (name, _)) in BAHN_FELDER.iter().enumerate() {
+            // Im Raster heisst das Feld `PRIMARY_THRESHOLD.LENGTH`, in
+            // der Anmeldung steht es INNERHALB des Untersatzes und
+            // heisst dort nur `LENGTH`.
+            let kurz = name.rsplit('.').next().unwrap();
+            assert_eq!(
+                liefernde[i], kurz,
+                "Feld {i} heisst in der Anmeldung {:?}, im Raster {name:?}",
+                liefernde[i]
+            );
+        }
+    }
+
+    /// Die Untersaetze muessen sauber geklammert sein.
+    ///
+    /// ⚠ Ein fehlendes CLOSE nimmt SimConnect an und schweigt; die
+    /// Folgefelder landen dann im falschen Satz.
+    #[test]
+    fn jeder_untersatz_wird_wieder_geschlossen() {
+        let mut offen: Vec<&str> = Vec::new();
+        for token in BAHN_DEFINITION {
+            if let Some(name) = token.strip_prefix("OPEN ") {
+                offen.push(name);
+            } else if let Some(name) = token.strip_prefix("CLOSE ") {
+                assert_eq!(
+                    offen.pop(),
+                    Some(name),
+                    "CLOSE {name} passt zu keinem offenen Untersatz"
+                );
+            }
+        }
+        assert!(offen.is_empty(), "nicht geschlossen: {offen:?}");
+    }
+
     #[test]
     fn feldnamen_sind_gross_mit_unterstrich() {
-        for liste in [BAHN_FELDER, ROLLWEG_PUNKT_FELDER, ROLLWEG_KANTE_FELDER] {
+        // ⚠ Geprueft werden die Namen, die WIRKLICH an SimConnect gehen.
+        // Fuer die Bahn ist das seit v1.7.12 `BAHN_DEFINITION` (mit den
+        // OPEN/CLOSE-Marken); `BAHN_FELDER` traegt nur noch das
+        // Byte-Raster und darf sprechende Namen wie
+        // `PRIMARY_THRESHOLD.LENGTH` fuehren.
+        for token in BAHN_DEFINITION {
+            let name = token
+                .strip_prefix("OPEN ")
+                .or_else(|| token.strip_prefix("CLOSE "))
+                .unwrap_or(token);
+            assert!(
+                !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                    && name.chars().next().is_some_and(|c| c.is_ascii_uppercase()),
+                "Feldname {name:?} ist nicht GROSS_MIT_UNTERSTRICH — \
+                 SimConnect lehnt ihn ab, und zwar erst zur Laufzeit"
+            );
+        }
+        for liste in [ROLLWEG_PUNKT_FELDER, ROLLWEG_KANTE_FELDER] {
             for (name, _) in liste {
                 assert!(
                     !name.is_empty()
@@ -627,6 +782,14 @@ mod zerleger_tests {
             Wert::I32(0),       // PRIMARY_DESIGNATOR
             Wert::I32(23),      // SECONDARY_NUMBER
             Wert::I32(0),       // SECONDARY_DESIGNATOR
+            // PAVEMENT PRIMARY_THRESHOLD: 120 m lang, aktiv
+            Wert::F32(120.0),
+            Wert::F32(45.0),
+            Wert::I32(1),
+            // PAVEMENT SECONDARY_THRESHOLD: nicht aktiv
+            Wert::F32(0.0),
+            Wert::F32(0.0),
+            Wert::I32(0),
             // ⚠ Hier standen PRIMARY_/SECONDARY_THRESHOLD als F32 — und
             // genau das machte diesen Test wertlos: Er baute die Bytes
             // aus DERSELBEN Feldliste, gegen die er sie dann prueft. Ein
@@ -645,7 +808,8 @@ mod zerleger_tests {
     /// PRIMARY_DESIGNATOR, SECONDARY_NUMBER, SECONDARY_DESIGNATOR).
     /// Wer ein Feld ergaenzt, muss diese Zahl bewusst mit aendern — und
     /// dabei in der Doku nachsehen, ob das Feld ueberhaupt flach kommt.
-    const BAHNSATZ_BYTES_LAUT_SDK: usize = 3 * 8 + 3 * 4 + 5 * 4;
+    // 3x FLOAT64 + 3x FLOAT32 + 5x INT32 + 2x PAVEMENT (je 2x FLOAT32 + 1x INT32)
+    const BAHNSATZ_BYTES_LAUT_SDK: usize = 3 * 8 + 3 * 4 + 5 * 4 + 2 * (2 * 4 + 4);
 
     #[test]
     fn das_bahnraster_passt_zur_sdk_doku() {
@@ -724,12 +888,55 @@ mod zerleger_tests {
         // PAVEMENT-Untersatz. Eine 0 waere eine AUSSAGE ("keine versetzte
         // Schwelle") und wuerde den echten Navdaten-Wert ueberschreiben.
         // NaN faellt durch `plausibel::versatz_m` und laesst ihn stehen.
-        assert!(
-            a.versetzte_schwelle_m.is_nan(),
-            "eine nicht gelieferte Schwelle darf keine Zahl behaupten"
-        );
-        assert!(b.versetzte_schwelle_m.is_nan());
+        // v1.7.12: Die versetzte Schwelle kommt jetzt aus dem
+        // PAVEMENT-Untersatz. Primaer: 120 m und aktiv → 120 m.
+        assert!((a.versetzte_schwelle_m - 120.0).abs() < 1e-6);
+        // Sekundaer: ENABLE = 0 → 0,0. Das ist die AUSSAGE "keine
+        // versetzte Schwelle" und muss einen Navdaten-Wert schlagen —
+        // nicht NaN, das waere Schweigen.
+        assert_eq!(b.versetzte_schwelle_m, 0.0);
         assert_eq!(a.belag_code, 1, "Beton muss befestigt sein");
+    }
+
+    /// Schweigen und Aussage duerfen nicht dasselbe bedeuten.
+    ///
+    /// ⚠ Genau hier haengt der Fall LAN273: Ein `ENABLE = 0` MUSS die
+    /// versetzte Schwelle der Navdaten schlagen, ein fehlender
+    /// Untersatz darf sie NICHT anfassen.
+    #[test]
+    fn fehlender_untersatz_und_abgeschaltete_schwelle_sind_verschieden() {
+        let voll = eddh_werte();
+
+        // Aussage: Der Untersatz ist da, ENABLE = 0.
+        let [_, b] = bahn_aus_werten(&voll).expect("Bahnenpaar");
+        assert_eq!(
+            b.versetzte_schwelle_m, 0.0,
+            "ENABLE = 0 ist eine Aussage und muss als 0 ankommen"
+        );
+
+        // Schweigen: Der Block endet vor dem sekundaeren Untersatz.
+        //
+        // ⚠ Gemessen, nicht angenommen: Der Laengenriegel in
+        // `bahn_aus_werten` verwirft so einen Block GANZ. Das ist die
+        // schaerfere Antwort als ein NaN — lieber keine Bahn als eine
+        // halbe. Der NaN-Zweig in `versatz_aus_pavement` bleibt
+        // trotzdem stehen; er faengt den Fall eine Ebene tiefer.
+        let kurz = &voll[..voll.len() - 3];
+        assert!(
+            bahn_aus_werten(kurz).is_none(),
+            "ein unvollstaendiger Satz darf gar keine Bahn ergeben"
+        );
+    }
+
+    /// Eine aktive Schwelle mit Unsinns-Laenge sagt lieber nichts.
+    #[test]
+    fn aktive_schwelle_ohne_brauchbare_laenge_schweigt() {
+        let mut w = eddh_werte();
+        let n = w.len();
+        w[n - 3] = Wert::F32(-1.0); // SECONDARY LENGTH
+        w[n - 1] = Wert::I32(1); // SECONDARY ENABLE
+        let [_, b] = bahn_aus_werten(&w).expect("Bahnenpaar");
+        assert!(b.versetzte_schwelle_m.is_nan());
     }
 
     #[test]
