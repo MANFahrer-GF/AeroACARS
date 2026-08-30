@@ -399,6 +399,14 @@ Fehler auftaucht.
   Funktion, mit der auch `td_distance_from_threshold_m` korrigiert wird. Fehlt
   das Feld (ältere Flüge), wird nichts verschoben.
 
+  ⚠ **Das Feld muss auf BEIDE Wege.** Die MQTT-Nutzlast speist die Webapp, der
+  lokale `LandingRecord` den Pilot-Client — und beide zeichnen dieselbe Grafik.
+  Beim ersten Anlauf stand es nur in der Nutzlast; der Client las `null` und
+  verschob nichts. Lautlos, denn die Marken sehen plausibel aus, sie liegen nur
+  falsch. Festgehalten von `jedes_bahnfeld_erreicht_nutzlast_und_aufzeichnung`
+  (Rust) und der Feldkette in `src/dev/Feldkette.test.ts` (die auch die Webapp
+  mitprüft).
+
 ⚠ **Die Felder ab v1.7.8 sind Diagnose, keine Anzeige.** Sie werden aus der
 Datenbank ausgewertet und stehen bewusst NICHT in `BAHN_FELDER` des Recorders
 (`mqttSubscriber.ts`) — jene Positivliste steuert, was in die **Anzeige**

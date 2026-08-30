@@ -30,8 +30,18 @@ import { resolve } from "node:path";
 const CLIENT = resolve(__dirname, "..", "..");
 const WEBAPP = resolve(CLIENT, "..", "..", "aeroacars-live", "webapp");
 
-/** Die dreizehn Felder aus Spec §8.1 plus die zwei, die dazugekommen sind. */
+/**
+ * Die dreizehn Felder aus Spec §8.1 plus die, die dazugekommen sind.
+ *
+ * ⚠ Wer ein Feld ergänzt, trägt es HIER ein. Sonst prüft die Kette es
+ * nicht — und genau das ist am 30.08.2026 passiert:
+ * `spur_nullpunkt_versatz_m` ging in die Leitung und in die Anzeige, aber
+ * nicht auf die Platte. Der Pilot-Client las `null`, rechnete mit Versatz
+ * 0 und zeichnete die Rollspur falsch. Kein Test war rot; dieser hier wäre
+ * es gewesen, wenn das Feld in dieser Liste gestanden hätte.
+ */
 const FELDER = [
+  "spur_nullpunkt_versatz_m",
   "clearance_point_m",
   "scoring_cutoff_m",
   "clearance_speed_kt",

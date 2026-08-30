@@ -17200,6 +17200,9 @@ where
     let bahn = bahn_felder(stats, aircraft_icao, bahn_skip_grund(&computed_sub_scores));
 
     Some(LandingRecord {
+        // ⚠ Muss mit — ohne ihn zeichnet der Client die Spur falsch,
+        // sobald eine versetzte Schwelle im Spiel ist.
+        spur_nullpunkt_versatz_m: bahn.spur_nullpunkt_versatz_m,
         clearance_point_m: bahn.clearance_point_m,
         scoring_cutoff_m: bahn.scoring_cutoff_m,
         mess_ende_laengs_m: bahn.mess_ende_laengs_m,
@@ -35140,7 +35143,15 @@ fn build_pirep_notes(
     // v0.10.0 (#runway-utilization-score): Shadow-Validation muss den
     // gleichen Algorithmus rechnen wie der echte PIREP-Pfad — sonst
     // hätten wir Drift gegen uns selbst.
-    fill_v2_rollout_fields(&mut crate_input, stats, &flight.arr_airport);
+    // ⚠ Das EINGEREICHTE Ziel, nicht das geplante.
+    //
+    // Hier stand `flight.arr_airport`. Bei einem Divert loeste die
+    // Bahngeometrie damit gegen den Planflughafen auf — der Kontroll-
+    // score im Protokoll wich vom echten ab, und zwar genau in den
+    // Faellen, in denen man ihn braucht. Die drei anderen Aufrufe
+    // uebergaben schon immer das effektive Ziel; dieser eine ist beim
+    // Herausloesen der Funktion (24.08.2026) uebersehen worden.
+    fill_v2_rollout_fields(&mut crate_input, stats, effective_arr_icao);
     let crate_subs = landing_scoring::compute_sub_scores(&crate_input);
     if let Some(crate_master) = landing_scoring::aggregate_master_score(&crate_subs) {
         // v0.7.1 P2.6-Fix: Drift-Vergleich gegen den ECHTEN
@@ -52580,6 +52591,144 @@ mod wiederaufnahme_langstrecke_tests {
         assert!(
             !quelle.contains(&roh),
             "eine Nutzlaststelle schreibt die Fassung als feste Zahl"
+        );
+    }
+
+    /// Die Bahngeometrie loest IMMER gegen das eingereichte Ziel auf.
+    ///
+    /// ⚠ Bei einem Divert ist das geplante Ziel der falsche Flughafen:
+    /// Die Bahn, auf der gelandet wurde, liegt woanders. Ein Aufruf mit
+    /// `flight.arr_airport` faellt nicht auf — er liefert plausible
+    /// Zahlen von der falschen Bahn. Drei der vier Aufrufe waren immer
+    /// richtig; der vierte (die Schattenbewertung in `build_pirep_notes`)
+    /// wurde beim Herausloesen der Funktion uebersehen und erst von der
+    /// zweiten externen Runde gefunden.
+    ///
+    /// Die Nadel wird mit `format!` gebaut, sonst faende der Waechter
+    /// sich selbst.
+    #[test]
+    fn die_bahngeometrie_loest_nie_gegen_das_geplante_ziel_auf() {
+        let quelle = ohne_leerraum(LIB_QUELLE);
+        let falsch = ohne_leerraum(&format!(
+            "fill_v2_rollout_fields(&mut crate_input, stats, &flight.arr_{})",
+            "airport"
+        ));
+        assert!(
+            !quelle.contains(&falsch),
+            "die Schattenbewertung loest die Bahngeometrie wieder gegen \
+             das GEPLANTE Ziel auf — bei einem Divert ist das die falsche \
+             Bahn"
+        );
+    }
+
+    /// Jedes Feld aus `BahnFelder` muss BEIDE Abnehmer erreichen.
+    ///
+    /// ⚠ `BahnFelder` sagt von sich, es sei die eine Uebersetzung —
+    /// „wer ein Feld ergaenzt, ergaenzt es hier und ist an allen Stellen
+    /// fertig". Das stimmt nur, wenn beide Kopierstellen mitziehen:
+    ///
+    ///   * `BahnFelder::wire()`      → die MQTT-Nutzlast (Webapp)
+    ///   * `build_landing_record()`  → die lokale Aufzeichnung (Client)
+    ///
+    /// Genau hier ist `spur_nullpunkt_versatz_m` in v1.7.12 verloren
+    /// gegangen: Es stand in der Nutzlast, aber nicht im Record. Der
+    /// Client las `null` und zeichnete die Rollspur falsch — lautlos,
+    /// denn die Marken sehen plausibel aus, sie liegen nur falsch. Die
+    /// Frontend-Tests fanden es nicht, weil sie den Versatz direkt in
+    /// die Projektion setzen und den Weg dorthin ueberspringen.
+    ///
+    /// Die Nadeln werden mit `format!` gebaut, sonst faende der
+    /// Waechter sich selbst.
+    #[test]
+    fn jedes_bahnfeld_erreicht_nutzlast_und_aufzeichnung() {
+        let quelle = LIB_QUELLE;
+        // Die Felder der Struktur einlesen — nicht abschreiben.
+        let start = quelle
+            .find(&format!("struct BahnFelder {}", '{'))
+            .expect("struct BahnFelder nicht gefunden");
+        let struktur = &quelle[start..];
+        let ende = struktur
+            .find("\n}")
+            .expect("Ende der Struktur nicht gefunden");
+        let felder: Vec<&str> = struktur[..ende]
+            .lines()
+            .filter_map(|z| {
+                let z = z.trim();
+                if z.starts_with("//") || z.starts_with('/') {
+                    return None;
+                }
+                let (name, _) = z.split_once(':')?;
+                let name = name.trim();
+                name.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                    .then_some(name)
+            })
+            .filter(|n| !n.is_empty())
+            .collect();
+
+        // Riegel gegen einen Waechter, der nichts prueft.
+        assert!(
+            felder.len() > 8,
+            "nur {} Felder erkannt — das Auslesen der Struktur ist kaputt",
+            felder.len()
+        );
+        assert!(felder.contains(&"clearance_point_m"));
+
+        // ⚠ Die RUEMPFE lesen, nicht ein festes Muster suchen: Zwei
+        // Felder gehen ueber eine Bedingung in die Nutzlast
+        // (`if self.x.is_empty() { None } else { … }`), und ein starres
+        // `x: self.x` haette sie faelschlich als fehlend gemeldet.
+        // Klammern zaehlen statt auf Einrueckung hoffen: Ein
+        // Struktur-Literal enthaelt verschachtelte Bloecke, und eine
+        // Suche nach der naechsten schliessenden Zeile schneidet mitten
+        // hinein — der Waechter meldete daraufhin fuenf Felder als
+        // fehlend, die sehr wohl da waren.
+        fn rumpf<'a>(quelle: &'a str, ab: &str) -> &'a str {
+            let start = quelle
+                .find(ab)
+                .unwrap_or_else(|| panic!("{ab} nicht gefunden"));
+            let rest = &quelle[start..];
+            let auf = rest.find('{').expect("keine oeffnende Klammer");
+            let mut tiefe = 0i32;
+            for (i, c) in rest[auf..].char_indices() {
+                match c {
+                    '{' => tiefe += 1,
+                    '}' => {
+                        tiefe -= 1;
+                        if tiefe == 0 {
+                            return &rest[..auf + i + 1];
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            rest
+        }
+        // ⚠ Die Anker mit `format!` bauen, sonst findet der Waechter
+        // SICH SELBST statt der Stelle, die er bewachen soll — der erste
+        // Anlauf tat genau das und meldete daraufhin jedes Feld als
+        // fehlend.
+        let nutzlast = ohne_leerraum(rumpf(
+            quelle,
+            &format!("fn wire(&self, final_{} bool)", ':'),
+        ));
+        let aufzeichnung = ohne_leerraum(rumpf(quelle, &format!("Some(LandingRecord {}", '{')));
+
+        let mut fehlend: Vec<String> = Vec::new();
+        for f in &felder {
+            if !nutzlast.contains(&ohne_leerraum(&format!("self.{f}"))) {
+                fehlend.push(format!("{f} fehlt in BahnFelder::wire() (MQTT-Nutzlast)"));
+            }
+            if !aufzeichnung.contains(&ohne_leerraum(&format!("bahn.{f}"))) {
+                fehlend.push(format!(
+                    "{f} fehlt in build_landing_record() (Aufzeichnung)"
+                ));
+            }
+        }
+        assert!(
+            fehlend.is_empty(),
+            "Felder erreichen nicht beide Abnehmer:\n  {}",
+            fehlend.join("\n  ")
         );
     }
 

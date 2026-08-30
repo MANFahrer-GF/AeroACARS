@@ -224,13 +224,58 @@ pub fn bezeichner(nummer: i32, kennung: i32) -> String {
 /// Beide Adapter liefern dieselbe Aufzählung, damit die Auswertung eine
 /// Sprache spricht. Unbekanntes wird zu 0 — „nicht zuzuordnen" ist eine
 /// Aussage, ein geratener Asphalt wäre keine.
+///
+/// # ⚠ Die beiden Simulatoren zählen VERSCHIEDEN
+///
+/// Bis v1.7.12 stand hier die Aufzählung der `apt.dat` — also
+/// X-Plane-Bedeutungen, angewandt auf MSFS-Zahlen. Das war nicht ein
+/// verschobener Wert, sondern eine andere Tabelle:
+///
+///   Zahl   MSFS            hier gelesen als    Folge
+///   1      GRASS           Asphalt             Gras galt als befestigt
+///   2      WATER FSX       Bitumen             Wasser galt als befestigt
+///   4      ASPHALT         Erde                **Asphalt verlor die
+///                                              seitliche Bewertung**
+///   7      HARD TURF       Wasser              Rasen galt als Wasser
+///
+/// Getroffen hat es nur Bahnen ohne Belag in den Navdaten (seit v1.7.12
+/// füllt die Szenerie dort nur Lücken) — dort aber voll.
+///
+/// # Die maßgebliche Tabelle
+///
+/// Aus der SimConnect-Doku (`SimConnect_AddToFacilityDefinition`, Feld
+/// `SURFACE`). Die Bahn-Liste fehlt dort im Fließtext; die vollständige
+/// Aufzählung steht beim gleichnamigen Feld des HELIPAD-Eintrags:
+///
+///   0 CONCRETE · 1 GRASS · 2 WATER FSX · 3 GRASS BUMPY · 4 ASPHALT
+///   5 SHORT GRASS · 6 LONG GRASS · 7 HARD TURF · 8 SNOW · 9 ICE
+///   10 URBAN · 11 FOREST · 12 DIRT · 13 CORAL · 14 GRAVEL
+///   15 OIL TREATED · 16 STEEL MATS · 17 BITUMINUS · 18 BRICK
+///   19 MACADAM · 20 PLANKS · 21 SAND · 22 SHALE · 23 TARMAC
+///   24 WRIGHT FLYER TRACK · 26 OCEAN · 27 WATER · 28 POND · 29 LAKE
+///   30 RIVER · 31 WASTE WATER · 32 PAINT · 254 UNKNOWN · 255 UNDEFINED
+///
+/// ⚠ 25 fehlt in der Doku. Es wird deshalb wie alles Unbekannte
+/// behandelt und NICHT geraten.
+///
+/// Was hier bewusst zu 0 wird, obwohl es einen Namen hat: URBAN,
+/// FOREST, PLANKS, STEEL MATS, PAINT, WRIGHT FLYER TRACK. Für sie gibt
+/// es in der `apt.dat` keine Entsprechung, und ein hingebogener Wert
+/// wäre schlimmer als keiner — die seitliche Bewertung hängt daran, ob
+/// eine Kante überhaupt eine belastbare Grenze ist.
 pub fn belag_code(msfs: i32) -> u8 {
     match msfs {
-        0 | 1 | 2 => 1, // Beton/Asphalt/Bitumen -> befestigt
-        3 | 4 => 3,     // Gras, Erde
-        5 | 6 => 5,     // Kies, Schotter
-        7 => 14,        // Wasser
-        8 => 15,        // Schnee/Eis
+        // Befestigt.
+        0 => 2,                     // CONCRETE
+        4 | 17 | 18 | 19 | 23 => 1, // ASPHALT, BITUMINUS, BRICK, MACADAM, TARMAC
+        // Gras in allen Abstufungen.
+        1 | 3 | 5 | 6 | 7 => 3, // GRASS, GRASS BUMPY, SHORT/LONG GRASS, HARD TURF
+        // Lose Oberflaechen.
+        12 | 15 | 21 => 4, // DIRT, OIL TREATED, SAND
+        13 | 14 | 22 => 5, // CORAL, GRAVEL, SHALE
+        // Wasser in allen Formen — auch die FSX-Altlast auf der 2.
+        2 | 26 | 27 | 28 | 29 | 30 | 31 => 13,
+        8 | 9 => 14, // SNOW, ICE
         _ => 0,
     }
 }
@@ -578,14 +623,51 @@ mod tests {
 
     #[test]
     fn belag_wird_auf_eine_sprache_gebracht() {
-        assert_eq!(belag_code(0), 1, "Beton -> befestigt");
-        assert_eq!(belag_code(2), 1, "Bitumen -> befestigt");
-        assert_eq!(belag_code(3), 3, "Gras");
-        assert_eq!(belag_code(7), 14, "Wasser");
+        // ⚠ Diese Werte stehen so in der SimConnect-Doku. Bis v1.7.12
+        // stand hier die X-Plane-Aufzählung, angewandt auf MSFS-Zahlen —
+        // und der Test schrieb sie fest, statt sie zu finden.
+        assert_eq!(belag_code(0), 2, "CONCRETE -> Beton");
+        assert_eq!(belag_code(4), 1, "ASPHALT -> Asphalt");
+        assert_eq!(belag_code(23), 1, "TARMAC -> Asphalt");
+        assert_eq!(belag_code(1), 3, "GRASS -> Rasen");
+        assert_eq!(belag_code(7), 3, "HARD TURF -> Rasen");
+        assert_eq!(belag_code(2), 13, "WATER FSX -> Wasser");
+        assert_eq!(belag_code(27), 13, "WATER -> Wasser");
+        assert_eq!(belag_code(14), 5, "GRAVEL -> Kies");
+        assert_eq!(belag_code(12), 4, "DIRT -> Erde");
+        assert_eq!(belag_code(9), 14, "ICE -> Schnee/Eis");
         // ⚠ Unbekanntes wird 0 (= nicht zuzuordnen), NICHT Asphalt.
         // Ein geratener Belag waere eine Aussage, die wir nicht haben —
         // und die seitliche Bewertung haengt daran.
         assert_eq!(belag_code(99), 0);
+        assert_eq!(belag_code(254), 0, "UNKNOWN bleibt unbekannt");
+        assert_eq!(belag_code(255), 0, "UNDEFINED bleibt unbekannt");
+        assert_eq!(belag_code(25), 0, "25 fehlt in der Doku — nicht raten");
+        for ohne_entsprechung in [10, 11, 16, 20, 24, 32] {
+            assert_eq!(
+                belag_code(ohne_entsprechung),
+                0,
+                "{ohne_entsprechung} hat keine apt.dat-Entsprechung und darf \
+                 nicht hingebogen werden"
+            );
+        }
+    }
+
+    /// Die beiden Simulatoren zählen verschieden — das muss so bleiben.
+    ///
+    /// ⚠ Der Fehler war nicht ein verschobener Wert, sondern eine
+    /// ANDERE Tabelle: X-Plane-Bedeutungen auf MSFS-Zahlen. Dieser Test
+    /// hält die vier Stellen fest, an denen sich die beiden am
+    /// deutlichsten widersprechen — wer die X-Plane-Aufzählung wieder
+    /// einsetzt, wird an allen vieren rot.
+    #[test]
+    fn die_msfs_tabelle_ist_nicht_die_der_apt_dat() {
+        // In der apt.dat: 1 = Asphalt, 2 = Beton, 4 = Erde, 5 = Kies.
+        // In MSFS: 1 = Gras, 2 = Wasser, 4 = Asphalt, 5 = kurzes Gras.
+        assert_eq!(belag_code(1), 3, "MSFS 1 ist GRASS, nicht Asphalt");
+        assert_eq!(belag_code(2), 13, "MSFS 2 ist WATER, nicht Beton");
+        assert_eq!(belag_code(4), 1, "MSFS 4 ist ASPHALT, nicht Erde");
+        assert_eq!(belag_code(5), 3, "MSFS 5 ist SHORT GRASS, nicht Kies");
     }
 
     fn abstand_m(a: (f64, f64), b: (f64, f64)) -> f64 {
@@ -1002,7 +1084,9 @@ mod zerleger_tests {
         // nichts behauptet werden (siehe `pavement_saetze_kommen_getrennt`).
         assert!(a.versetzte_schwelle_m.is_nan());
         assert!(b.versetzte_schwelle_m.is_nan());
-        assert_eq!(a.belag_code, 1, "Beton muss befestigt sein");
+        // CONCRETE (MSFS 0) -> apt.dat 2 = CONC. Befestigt, aber Beton,
+        // nicht Asphalt: Die apt.dat unterscheidet beides.
+        assert_eq!(a.belag_code, 2, "Beton muss als Beton ankommen");
     }
 
     /// Der ganze Nachrichtenstrom, so wie der Simulator ihn schickt.

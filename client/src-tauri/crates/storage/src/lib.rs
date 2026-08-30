@@ -370,9 +370,31 @@ pub struct LandingRecord {
     // Die Anzeige zeigt fehlende Werte ehrlich als „fuer diesen Flug nicht
     // erfasst" — sie malt keine leere Querachse, die wie eine Messung
     // aussieht.
-    /// Laengsposition, an der die Bahn geraeumt wurde, in Metern ab der
-    /// Landeschwelle. Leer, wenn das Flugzeug bis zum Stillstand auf der
-    /// Bahn blieb.
+    /// Um wie viele Meter die LAENGSMASSE der Spur gegen die
+    /// Landeschwelle verschoben sind.
+    ///
+    /// ⚠ Ohne diesen Wert zeichnet der Client die Rollspur falsch, sobald
+    /// eine versetzte Schwelle im Spiel ist — und zwar lautlos: Die
+    /// Marken sehen plausibel aus, sie liegen nur an der falschen
+    /// Stelle. Er kam in v1.7.12 zunaechst NUR in die MQTT-Nutzlast; der
+    /// lokale Record hatte ihn nicht, und der Pilot-Client rechnete
+    /// deshalb weiter mit 0.
+    ///
+    /// NICHT die versetzte Schwelle — das ist eine andere Zahl. Siehe
+    /// `BahnFelder::spur_nullpunkt_versatz_m` im Client.
+    ///
+    /// `#[serde(default)]`: Aeltere Aufzeichnungen kennen das Feld nicht
+    /// und laden als `None` — dann wird nichts verschoben, das Verhalten
+    /// vor v1.7.12.
+    #[serde(default)]
+    pub spur_nullpunkt_versatz_m: Option<f64>,
+    /// Laengsposition, an der die Bahn geraeumt wurde, in Metern ab dem
+    /// Schwellenpunkt der Navdaten. Leer, wenn das Flugzeug bis zum
+    /// Stillstand auf der Bahn blieb.
+    ///
+    /// ⚠ „Ab der Landeschwelle" stand hier bis v1.7.12 — das stimmt nur,
+    /// wenn `spur_nullpunkt_versatz_m` 0 ist. Sonst liegt der Nullpunkt
+    /// genau um diesen Wert davor.
     #[serde(default)]
     pub clearance_point_m: Option<f64>,
     /// Laengsposition, ab der nicht mehr bewertet wird — der Beginn des
@@ -591,7 +613,6 @@ pub struct LandingRecord {
     // ─── v0.7.1 Erweiterung (Spec §5.1 + §5.4) ───────────────────────
     // Alle Felder mit #[serde(default)] — alte landing_history.json-
     // Eintraege ohne diese Felder bleiben deserialisierbar.
-
     /// UX-Cutoff-Marker. 0 = pre-v0.7.1, 1 = v0.7.1+ (sub_scores
     /// vorhanden, Asymmetrie-Logik aktiv). UI nutzt den Marker fuer
     /// §3.5 Legacy-Schutz: bei `< 1` wird `LegacyPirepNotice` gezeigt
@@ -679,7 +700,6 @@ pub struct LandingRecord {
     // ist (= VPS-Daten geladen). Bei OurAirports-Fallback bleiben TDZ /
     // Aim / TCH / DDS None (= Pills zeigen "n/a", LandingPanel skippt
     // sie).
-
     /// Signed along-track distance from the landing threshold to the
     /// touchdown point, in meters. Positive = past threshold, negative
     /// = undershoot. Source-agnostic — present for both navigraph and
@@ -874,10 +894,7 @@ impl PendingBidCleanupQueue {
     /// Eintrag anhaengen. Dedupliziert auf pirep_id+bid_id+flight_id —
     /// wenn ein identischer Eintrag schon drinsteht, wird nicht
     /// nochmal erstellt (Idempotenz).
-    pub fn enqueue(
-        &self,
-        item: PendingBidCleanup,
-    ) -> Result<usize, StorageError> {
+    pub fn enqueue(&self, item: PendingBidCleanup) -> Result<usize, StorageError> {
         let mut items = self.read_all()?;
         let already_present = items.iter().any(|existing| {
             existing.pirep_id == item.pirep_id
@@ -933,10 +950,7 @@ impl PendingBidCleanupQueue {
 
     /// Ersetzen aller Eintraege (= nach Retry-Pass). Leere Liste loescht
     /// die Datei.
-    pub fn replace(
-        &self,
-        items: &[PendingBidCleanup],
-    ) -> Result<(), StorageError> {
+    pub fn replace(&self, items: &[PendingBidCleanup]) -> Result<(), StorageError> {
         if items.is_empty() {
             if self.path.exists() {
                 let _ = std::fs::remove_file(&self.path);
@@ -1090,11 +1104,14 @@ mod pending_bid_cleanup_queue_tests {
             .filter_map(|e| e.ok())
             .filter(|e| e.file_name().to_string_lossy().contains("corrupt"))
             .collect();
-        assert_eq!(backups.len(), 1, "exactly one backup of the corrupt file must exist");
+        assert_eq!(
+            backups.len(),
+            1,
+            "exactly one backup of the corrupt file must exist"
+        );
         let backup_bytes = std::fs::read(backups[0].path()).unwrap();
         assert_eq!(
-            backup_bytes,
-            b"{not valid json",
+            backup_bytes, b"{not valid json",
             "the backup must be byte-identical to the original corrupt file"
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -1342,7 +1359,10 @@ mod merge_tests {
         newer.score_numeric = 95;
         let merged = merge_landings(old, vec![newer]);
         assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0].score_numeric, 95, "die spätere Fassung muss gewinnen");
+        assert_eq!(
+            merged[0].score_numeric, 95,
+            "die spätere Fassung muss gewinnen"
+        );
     }
 
     /// Reihenfolge auch bei umgekehrter Übergabe — die Regel darf nicht davon
@@ -1356,7 +1376,10 @@ mod merge_tests {
             merge_landings(vec![newer.clone()], vec![older.clone()])[0].score_numeric,
             95,
         );
-        assert_eq!(merge_landings(vec![older], vec![newer])[0].score_numeric, 95);
+        assert_eq!(
+            merge_landings(vec![older], vec![newer])[0].score_numeric,
+            95
+        );
     }
 
     /// Ein leerer Serverstand darf lokale Landungen nicht löschen — genau der
@@ -1385,12 +1408,15 @@ mod merge_tests {
             .collect();
         // Aufsetzzeiten eindeutig machen, damit die Sortierung definiert ist.
         for (i, r) in many.iter_mut().enumerate() {
-            r.touchdown_at = chrono::DateTime::from_timestamp(1_700_000_000 + i as i64 * 60, 0)
-                .expect("ts");
+            r.touchdown_at =
+                chrono::DateTime::from_timestamp(1_700_000_000 + i as i64 * 60, 0).expect("ts");
         }
         let merged = merge_landings(many, vec![]);
         assert_eq!(merged.len(), LANDINGS_MAX_ROWS);
-        assert_eq!(merged[0].pirep_id, "P10", "die ältesten zehn müssen weg sein");
+        assert_eq!(
+            merged[0].pirep_id, "P10",
+            "die ältesten zehn müssen weg sein"
+        );
     }
 }
 
@@ -1510,8 +1536,12 @@ mod landing_store_tests {
             ))
             .expect("upsert 2/2 triggers cap trim");
 
-        let final_ids: std::collections::HashSet<String> =
-            store.list().unwrap().into_iter().map(|r| r.pirep_id).collect();
+        let final_ids: std::collections::HashSet<String> = store
+            .list()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.pirep_id)
+            .collect();
         assert!(
             !final_ids.contains("R1"),
             "the oldest surviving record (R1, since R0 was already deleted) must be \
@@ -1540,11 +1570,14 @@ mod landing_store_tests {
             .filter_map(|e| e.ok())
             .filter(|e| e.file_name().to_string_lossy().contains("corrupt"))
             .collect();
-        assert_eq!(backups.len(), 1, "exactly one backup of the corrupt file must exist");
+        assert_eq!(
+            backups.len(),
+            1,
+            "exactly one backup of the corrupt file must exist"
+        );
         let backup_bytes = std::fs::read(backups[0].path()).unwrap();
         assert_eq!(
-            backup_bytes,
-            b"{not valid json",
+            backup_bytes, b"{not valid json",
             "the backup must be byte-identical to the original corrupt file"
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -1642,8 +1675,12 @@ mod deleted_landings_tombstone_tests {
         let filtered = filter_tombstoned(server_copy, &tombstoned);
         store.merge_from(filtered).expect("merge");
 
-        let ids: std::collections::HashSet<String> =
-            store.list().unwrap().into_iter().map(|r| r.pirep_id).collect();
+        let ids: std::collections::HashSet<String> = store
+            .list()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.pirep_id)
+            .collect();
         assert!(ids.contains("KEEP"));
         assert!(
             !ids.contains("TO_DELETE"),
@@ -1703,14 +1740,23 @@ mod deleted_landings_tombstone_tests {
         .unwrap();
         r.clearance_point_m = Some(1831.6);
         r.scoring_cutoff_m = Some(1642.0);
-        r.lateral_samples = vec![LateralSample { laengs_m: 523.2, quer_m: -5.7 }];
+        r.lateral_samples = vec![LateralSample {
+            laengs_m: 523.2,
+            quer_m: -5.7,
+        }];
         r.runway_exits = vec![RunwayExit {
             name: "S4".to_string(),
             laengs_m: 1831.6,
             seite: "left".to_string(),
             verlauf: vec![
-                Verlaufspunkt { laengs_m: 1820.0, quer_m: 2.0 },
-                Verlaufspunkt { laengs_m: 1900.0, quer_m: 44.0 },
+                Verlaufspunkt {
+                    laengs_m: 1820.0,
+                    quer_m: 2.0,
+                },
+                Verlaufspunkt {
+                    laengs_m: 1900.0,
+                    quer_m: 44.0,
+                },
             ],
         }];
         let zurueck: LandingRecord =
