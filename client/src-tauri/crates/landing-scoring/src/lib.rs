@@ -201,6 +201,13 @@ pub struct LandingScoringInput {
     pub planned_tow_kg: Option<f32>,
     pub planned_burn_kg: Option<f32>,
     pub actual_trip_burn_kg: Option<f32>,
+    /// Wurde ausgewichen — also woanders gelandet als geplant?
+    ///
+    /// ⚠ Dann ist die OFP-Treue nicht bewertbar: Es wurde eine ANDERE
+    /// Strecke geflogen als die geplante, und ein Vergleich gegen den
+    /// urspruenglichen Verbrauch misst den Umweg, nicht den Piloten.
+    /// `None` = unbekannt, dann wird wie bisher verglichen.
+    pub diverted: Option<bool>,
     // Phase 3 hook (Flare-Sub-Score kommt in Phase 3/F6).
     pub flare_quality_score: Option<u8>,
     /// v0.7.17 (N-002): ICAO type designator des geflogenen
@@ -460,6 +467,8 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
     out.push(sub_fuel::sub_fuel_v0_7_1(
         input.planned_burn_kg,
         input.actual_trip_burn_kg,
+        input.planned_tow_kg,
+        input.diverted,
     ));
 
     // v0.7.1 Phase 2 F1: NEU sub_loadsheet. VFR/Manual-Mode ohne
@@ -859,6 +868,7 @@ mod tests {
     #[test]
     fn compute_sub_scores_never_emits_flare() {
         let rich = LandingScoringInput {
+            diverted: None,
             bahn_achsen_abweichung_grad: None,
             bahn_achsen_kreuzt_mitte: None,
             bahn_achsen_groesster_betrag_m: None,

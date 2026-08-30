@@ -186,10 +186,18 @@ fn dah3181_xplane_firm_with_overburn() {
     assert_eq!(pts(&subs, "bounces"), 100);
     assert_eq!(pts(&subs, "stability"), 80);
     assert_eq!(pts(&subs, "rollout"), 55);
-    // Mehrverbrauch wird bestraft (bit-identisch Legacy)
-    assert_eq!(pts(&subs, "fuel"), 55);
+    // ⚠ v1.7.12: 80 statt 55. Der Flug lag bei +8 % Mehrverbrauch, und
+    // das 100-Punkte-Band reicht jetzt bis +5 % (vorher +2 %). Gemessen
+    // ueber 412 Fluege lagen 45 % aller Grossraum-Landungen ueber der
+    // alten Grenze — eine Schwelle, die die Mehrheit trifft, misst
+    // Rauschen. Der Gesamtscore steigt dadurch von 68 auf 70.
+    //
+    // Das Abfluggewicht steht hier bei 95 t; der Toleranzboden waeren
+    // 190 kg, der Mehrverbrauch betraegt 960 kg — er greift also nicht,
+    // und die Prozentbaender entscheiden. Genau so gewollt.
+    assert_eq!(pts(&subs, "fuel"), 80);
     assert_eq!(pts(&subs, "loadsheet"), 100);
-    assert_eq!(aggregate_master_score(&subs), Some(68));
+    assert_eq!(aggregate_master_score(&subs), Some(70));
 }
 
 // ─── F1/F2 Edge-Cases (VFR/Manual ohne Plan) ───────────────────────
@@ -255,7 +263,12 @@ fn vfr_no_burn_skips_only_fuel() {
 
 #[test]
 fn underburn_minus_25_pct_warns() {
-    // -25% Minderverbrauch → 85 mit Warning planned_burn_may_be_off
+    // ⚠ v1.7.12: -25 % gibt jetzt 100 Punkte PLUS den Hinweis. Sparen
+    // darf nichts kosten — die Datei sagte das seit jeher im Kopf und
+    // zog trotzdem ab. Der Hinweis bleibt wichtig: Ein so starker
+    // Minderverbrauch ist bei einem planmaessigen Flug kaum moeglich,
+    // da stimmt eher der Plan nicht (oder es war ein Divert, den ein
+    // eigener Zweig davor abfaengt).
     let input = LandingScoringInput {
         planned_burn_kg: Some(8000.0),
         actual_trip_burn_kg: Some(6000.0),
@@ -263,7 +276,7 @@ fn underburn_minus_25_pct_warns() {
     };
     let subs = compute_sub_scores(&input);
     let fuel = subs.iter().find(|s| s.key == "fuel").unwrap();
-    assert_eq!(fuel.score, 85);
+    assert_eq!(fuel.score, 100);
     assert_eq!(fuel.warning.as_deref(), Some("planned_burn_may_be_off"));
 }
 

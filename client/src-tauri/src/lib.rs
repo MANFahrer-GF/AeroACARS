@@ -16486,6 +16486,13 @@ fn scoring_eingang(
         actual_trip_burn_kg: actual_burn_for_record(stats),
         planned_zfw_kg: stats.planned_zfw_kg,
         planned_tow_kg: stats.planned_tow_kg,
+        // ⚠ Nach einem Ausweichflug ist die OFP-Treue nicht bewertbar —
+        // es wurde eine ANDERE Strecke geflogen als die geplante. Ein
+        // Vergleich gegen den urspruenglichen Verbrauch misst den Umweg,
+        // nicht den Piloten. `divert_hint` ist die bestehende, bereits
+        // abgesicherte Erkennung; hier wird sie nur gelesen, nicht ein
+        // zweites Mal hergeleitet.
+        diverted: Some(stats.divert_hint.is_some()),
         // v0.7.17 (N-002): Aircraft-ICAO fuer den aircraft-category-
         // sensitiven Bahn-Score. None → Light-Default-Schwellen
         // (konservativ). Das Muster kommt aus `muster_fuer_landung`,
