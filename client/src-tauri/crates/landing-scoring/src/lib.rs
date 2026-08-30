@@ -471,13 +471,33 @@ pub fn compute_sub_scores(input: &LandingScoringInput) -> Vec<SubScoreEntry> {
         input.diverted,
     ));
 
-    // v0.7.1 Phase 2 F1: NEU sub_loadsheet. VFR/Manual-Mode ohne
-    // Dispatch-Daten → skipped (planned_zfw/tow None). Sonst Score 100
-    // als Phase-2-Placeholder; Phase 3 wird actuelle Mass-Schwellen.
-    out.push(sub_loadsheet::sub_loadsheet(
-        input.planned_zfw_kg,
-        input.planned_tow_kg,
-    ));
+    // ⚠ `sub_loadsheet` wird NICHT MEHR bewertet (v1.7.12).
+    //
+    // # Warum die Achse raus ist
+    //
+    // Sie verglich das geplante Abfluggewicht — und darauf hat der Pilot
+    // keinen Einfluss. Das Gewicht steht fest, bevor der Flug beginnt: Es
+    // kommt aus dem OFP, und der Simulator laedt es meist automatisch.
+    // Eine Achse, die etwas bewertet, das man nicht beeinflussen kann,
+    // ist keine Bewertung.
+    //
+    // (Thomas, 30.08.2026: „TOW und Gewichte — gehoert das in eine
+    // Landebewertung? Das kann ich doch nicht beeinflussen.")
+    //
+    // ⚠ Dazu kam, dass sie faktisch nie etwas aussagte: Sie gab seit
+    // Phase 2 KONSTANT 100 zurueck, sobald geplantes ZFW und TOW
+    // vorlagen — ein Platzhalter, der nie zu Ende gebaut wurde. Das war
+    // nicht neutral: Eine Achse mit konstant 100 und Gewicht 1 zieht
+    // JEDEN Score nach oben (bei sonst 80 Punkten auf 81,25) und
+    // verwaessert die Achsen, die wirklich messen.
+    //
+    // Der Sprit bleibt dagegen drin: Wie schnell geflogen wird, auf
+    // welcher Hoehe, ob Umwege genommen werden — das entscheidet der
+    // Pilot sehr wohl.
+    //
+    // Die Zahlen selbst bleiben im Payload und in der Anzeige erhalten;
+    // sie sind interessant, nur eben keine Note. Der Test
+    // `compute_sub_scores_never_emits_loadsheet` haelt das fest.
 
     out
 }
@@ -541,7 +561,11 @@ pub fn aggregate_master_score(subs: &[SubScoreEntry]) -> Option<u8> {
             // mitlaeuft.
             "touchdown_point" => 1.0,
             "fuel" => 1.0,
-            "loadsheet" => 1.0, // NEU v0.7.1
+            // ⚠ Gewicht bleibt stehen, die Achse wird aber nicht mehr
+            // ausgegeben (v1.7.12, siehe `compute_sub_scores`). Gleiches
+            // Muster wie `flare`: Ein Waechter stellt sicher, dass das
+            // ruhende Gewicht nicht still wieder aktiv wird.
+            "loadsheet" => 1.0,
             "flare" => 1.0,     // NEU v0.7.1
             _ => 1.0,           // unbekannt → default 1
         };
@@ -866,8 +890,29 @@ mod tests {
     /// the scored set, so the dormant weight can never silently activate.
     /// Run over a FULLY-populated input so every sub-score branch fires.
     #[test]
-    fn compute_sub_scores_never_emits_flare() {
-        let rich = LandingScoringInput {
+    fn compute_sub_scores_never_emits_loadsheet() {
+        // ⚠ Die Ladepapier-Achse ist seit v1.7.12 stillgelegt: Sie
+        // bewertete das geplante Abfluggewicht, auf das der Pilot keinen
+        // Einfluss hat — und gab dabei konstant 100, was jeden Score
+        // nach oben zog.
+        //
+        // Das Gewicht steht noch in der Tabelle. Dieser Waechter stellt
+        // sicher, dass es nicht still wieder aktiv wird, wenn jemand die
+        // Achse versehentlich wieder ausgibt.
+        let rich = voll_besetzter_eingang();
+        let subs = compute_sub_scores(&rich);
+        assert!(
+            !subs.iter().any(|s| s.key == "loadsheet"),
+            "die Ladepapier-Achse wird wieder ausgegeben — sie bewertet \
+             etwas, das der Pilot nicht beeinflussen kann"
+        );
+    }
+
+    /// Ein voll besetzter Eingang — damit in den Waechtern jeder Zweig
+    /// feuert und eine Achse nicht nur deshalb fehlt, weil ihr die Daten
+    /// fehlten.
+    fn voll_besetzter_eingang() -> LandingScoringInput {
+        LandingScoringInput {
             diverted: None,
             bahn_achsen_abweichung_grad: None,
             bahn_achsen_kreuzt_mitte: None,
@@ -914,7 +959,12 @@ mod tests {
             landing_wind_direction_deg: None,
             landing_wind_speed_kt: None,
             landing_groundspeed_kt: None,
-        };
+        }
+    }
+
+    #[test]
+    fn compute_sub_scores_never_emits_flare() {
+        let rich = voll_besetzter_eingang();
         let subs = compute_sub_scores(&rich);
         assert!(
             !subs.iter().any(|s| s.key == "flare"),

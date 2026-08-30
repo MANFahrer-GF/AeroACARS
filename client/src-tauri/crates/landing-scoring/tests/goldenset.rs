@@ -72,8 +72,11 @@ fn pto105_msfs_smooth_55fpm_with_loadsheet() {
     assert_eq!(pts(&subs, "stability"), 80);
     assert_eq!(pts(&subs, "rollout"), 80);
     assert_eq!(pts(&subs, "fuel"), 100);
-    assert_eq!(pts(&subs, "loadsheet"), 100);
-    assert_eq!(aggregate_master_score(&subs), Some(92));
+    // ⚠ v1.7.12: 91 statt 92. Die Ladepapier-Achse ist stillgelegt — sie
+    // bewertete das geplante Abfluggewicht, auf das der Pilot keinen
+    // Einfluss hat, und gab dabei KONSTANT 100. Diese Gratispunkte
+    // zogen jeden Score um 1-2 Punkte nach oben.
+    assert_eq!(aggregate_master_score(&subs), Some(91));
 }
 
 #[test]
@@ -116,8 +119,11 @@ fn dlh304_msfs_acceptable_with_underburn_no_penalty() {
     assert_eq!(pts(&subs, "rollout"), 55);
     // F3 Asymmetrie: -3.5% Minderverbrauch nicht bestraft
     assert_eq!(pts(&subs, "fuel"), 100);
-    assert_eq!(pts(&subs, "loadsheet"), 100);
-    assert_eq!(aggregate_master_score(&subs), Some(80));
+    // ⚠ v1.7.12: 78 statt 80. Die Ladepapier-Achse ist stillgelegt — sie
+    // bewertete das geplante Abfluggewicht, auf das der Pilot keinen
+    // Einfluss hat, und gab dabei KONSTANT 100. Diese Gratispunkte
+    // zogen jeden Score um 1-2 Punkte nach oben.
+    assert_eq!(aggregate_master_score(&subs), Some(78));
 }
 
 #[test]
@@ -153,7 +159,6 @@ fn cfg785_msfs_smooth_with_overburn_unchanged() {
     assert_eq!(pts(&subs, "stability"), 80);
     assert_eq!(pts(&subs, "rollout"), 100);
     assert_eq!(pts(&subs, "fuel"), 100);
-    assert_eq!(pts(&subs, "loadsheet"), 100);
     assert_eq!(aggregate_master_score(&subs), Some(97));
 }
 
@@ -196,8 +201,11 @@ fn dah3181_xplane_firm_with_overburn() {
     // 190 kg, der Mehrverbrauch betraegt 960 kg — er greift also nicht,
     // und die Prozentbaender entscheiden. Genau so gewollt.
     assert_eq!(pts(&subs, "fuel"), 80);
-    assert_eq!(pts(&subs, "loadsheet"), 100);
-    assert_eq!(aggregate_master_score(&subs), Some(70));
+    // ⚠ v1.7.12: 68 statt 70. Die Ladepapier-Achse ist stillgelegt — sie
+    // bewertete das geplante Abfluggewicht, auf das der Pilot keinen
+    // Einfluss hat, und gab dabei KONSTANT 100. Diese Gratispunkte
+    // zogen jeden Score um 1-2 Punkte nach oben.
+    assert_eq!(aggregate_master_score(&subs), Some(68));
 }
 
 // ─── F1/F2 Edge-Cases (VFR/Manual ohne Plan) ───────────────────────
@@ -233,7 +241,6 @@ fn vfr_no_zfw_no_burn_skips_loadsheet_and_fuel() {
     assert_eq!(pts(&subs, "rollout"), 80); // 800<m<1200 = good_stop
     // F1 + F2: loadsheet + fuel skipped → 0-Penalty vermieden
     assert!(skipped(&subs, "fuel"));
-    assert!(skipped(&subs, "loadsheet"));
     // Master = (100*3+85*3+100*2+80*2+80*1) / (3+3+2+2+1) = (300+255+200+160+80) / 11
     //        = 995/11 = 90.45 → 90
     assert_eq!(aggregate_master_score(&subs), Some(90));
@@ -255,8 +262,6 @@ fn vfr_no_burn_skips_only_fuel() {
     };
     let subs = compute_sub_scores(&input);
     assert!(skipped(&subs, "fuel"));
-    assert!(!skipped(&subs, "loadsheet"));
-    assert_eq!(pts(&subs, "loadsheet"), 100);
 }
 
 // ─── F3 Asymmetrie explizit ───────────────────────────────────────
@@ -310,7 +315,6 @@ fn empty_input_returns_only_bounces_loadsheet_fuel() {
     no_sub(&subs, "rollout");
     assert_eq!(pts(&subs, "bounces"), 100);
     assert!(skipped(&subs, "fuel"));
-    assert!(skipped(&subs, "loadsheet"));
     assert_eq!(
         aggregate_master_score(&subs),
         None,
