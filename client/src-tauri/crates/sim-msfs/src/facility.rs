@@ -142,6 +142,10 @@ pub const ROLLWEG_KANTE_FELDER: &[(&str, FeldTyp)] = &[
     ("WIDTH", FeldTyp::F32),
     ("START", FeldTyp::I32),
     ("END", FeldTyp::I32),
+    // ⚠ Laut SDK-Doku ein **UINT32**. Als `I32` gelesen ist das
+    // unbedenklich — gleiche Groesse, und ein Index in eine Namensliste
+    // wird nie ueber zwei Milliarden gross. Der Zusammenbau prueft
+    // ohnehin auf `>= 0` und verwirft alles andere.
     ("NAME_INDEX", FeldTyp::I32),
 ];
 
