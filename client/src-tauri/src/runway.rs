@@ -2015,6 +2015,51 @@ mod geo_search_tests {
 
 #[cfg(test)]
 mod tests {
+
+    /// Die dritte Quelle darf eine übernommene Szenerie nicht aushebeln.
+    ///
+    /// ⚠ `effective_displaced_threshold_ft` bildet das MAXIMUM aus
+    /// unserem Wert und dieser Tabelle. Sagt die Szenerie „hier gibt es
+    /// keine versetzte Schwelle" (MSFS `PRIMARY_THRESHOLD.ENABLE = 0`,
+    /// v1.7.12), könnte die Tabelle sie durch die Hintertür
+    /// zurückbringen — und der Nullpunkt der Aufsetzpunkt-Bewertung
+    /// läge wieder falsch.
+    ///
+    /// Was das verhindert, ist die Selbstprobe in
+    /// `geometry_hidden_displacement_ft`: Länge minus Versatz muss die
+    /// GEMESSENE Geometrie ergeben. Nach einer Szenerie-Übernahme ist
+    /// die Geometrie die volle Bahnlänge, die Rechnung geht um genau
+    /// den Versatz daneben, und die Tabelle schweigt.
+    ///
+    /// Das gilt aber nur, solange die Toleranz klein bleibt: Ein
+    /// Versatz unterhalb `TOLERANZ_M` rutscht durch. Wer die Toleranz
+    /// erhöht, öffnet das Tor — deshalb steht die Grenze hier als Test
+    /// und nicht als Kommentar.
+    #[test]
+    fn eine_szenerie_ohne_versatz_holt_ihn_nicht_aus_der_tabelle_zurueck() {
+        // TJPS 12 (Flug LAN273, 30.08.2026) — der Fall, an dem es
+        // aufgefallen ist. Drei Quellen, drei Zahlen: Navdaten 573 m,
+        // diese Tabelle 789 ft (240 m), Szenerie laut Pilot keine.
+        let laenge_ft = 6904.0_f32;
+        let volle_laenge_m = laenge_ft as f64 * 0.3048;
+
+        // Nach der Übernahme misst die Geometrie die volle Bahn.
+        assert_eq!(
+            geometry_hidden_displacement_ft("TJPS", "12", laenge_ft, volle_laenge_m),
+            0,
+            "die Tabelle darf einer Bahn ohne Versatz keinen andrehen"
+        );
+
+        // Gegenprobe, damit der Test nicht bloss deshalb gruen ist,
+        // weil TJPS gar nicht in der Tabelle steht: Passt die Geometrie
+        // zum Tabellenwert, wird er sehr wohl geliefert.
+        let mit_versatz_m = (laenge_ft - 789.0) as f64 * 0.3048;
+        assert_eq!(
+            geometry_hidden_displacement_ft("TJPS", "12", laenge_ft, mit_versatz_m),
+            789,
+            "bei passender Geometrie ist der Tabellenwert der richtige"
+        );
+    }
     use super::*;
 
     // v0.19.x FIX: le_/he_displaced_threshold_ft (CSV columns 13/19) exist
