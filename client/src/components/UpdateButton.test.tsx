@@ -526,9 +526,24 @@ describe("Update-Dialog mit den Notizen dieser Version", () => {
     // Ein einzelnes `#` ist erlaubt (etwa in „#13"), ein Zeilenanfang
     // mit `#` nicht.
     for (const marker of ["**", "###", "|---|"]) {
+      // ⚠ Die Fundstelle mitgeben, nicht nur „steht roh".
+      //
+      // Am 30.08.2026 hat dieser Waechter richtig angeschlagen, aber die
+      // Ursache war aus der Meldung nicht zu sehen: Eine Fettung lief
+      // ueber einen ZEILENUMBRUCH („**saving fuel no longer\ncosts
+      // anything**"), und die rendert der Umsetzer nicht. Das musste
+      // erst durch Instrumentieren des Tests gefunden werden — genau
+      // die Arbeit, die eine gute Meldung spart.
+      const stelle = sichtbar.indexOf(marker);
+      const umfeld =
+        stelle < 0
+          ? ""
+          : ` — hier: …${sichtbar.slice(Math.max(0, stelle - 70), stelle + 40)}…`;
       expect(
         sichtbar.includes(marker),
-        `${neueste.datei}: „${marker}" steht roh im Fenster`,
+        `${neueste.datei}: „${marker}" steht roh im Fenster${umfeld}\n` +
+          `Haeufigste Ursache: die Auszeichnung laeuft ueber einen ` +
+          `Zeilenumbruch. Sie muss auf EINER Zeile stehen.`,
       ).toBe(false);
     }
     expect(
