@@ -113,7 +113,12 @@ fn dlh304_msfs_acceptable_with_underburn_no_penalty() {
     };
     let subs = compute_sub_scores(&input);
     assert_eq!(pts(&subs, "landing_rate"), 80);
-    assert_eq!(pts(&subs, "g_force"), 60);
+    // ⚠ v1.7.12: 45 statt 60. Die Punktleiter der G-Achse ist an die
+    // der Sinkrate angeglichen (100/80/45/20/0). Die SCHWELLEN waren
+    // schon immer aufeinander abgebildet, die NOTEN nicht — dieselbe
+    // Landung hiess auf einer Achse "hart, 45" und auf der anderen
+    // "spuerbar, 60".
+    assert_eq!(pts(&subs, "g_force"), 45);
     assert_eq!(pts(&subs, "bounces"), 100);
     assert_eq!(pts(&subs, "stability"), 80);
     assert_eq!(pts(&subs, "rollout"), 55);
@@ -123,7 +128,11 @@ fn dlh304_msfs_acceptable_with_underburn_no_penalty() {
     // bewertete das geplante Abfluggewicht, auf das der Pilot keinen
     // Einfluss hat, und gab dabei KONSTANT 100. Diese Gratispunkte
     // zogen jeden Score um 1-2 Punkte nach oben.
-    assert_eq!(aggregate_master_score(&subs), Some(78));
+    // ⚠ v1.7.12: 74 statt 78 — Folge der angeglichenen G-Punktleiter.
+    // Harte Landungen werden dadurch haerter bewertet, und genau das war
+    // die Absicht: Die mildere Achse zog die haertere systematisch nach
+    // oben, am staerksten dort, wo die Bewertung beissen soll.
+    assert_eq!(aggregate_master_score(&subs), Some(74));
 }
 
 #[test]
@@ -187,7 +196,12 @@ fn dah3181_xplane_firm_with_overburn() {
     };
     let subs = compute_sub_scores(&input);
     assert_eq!(pts(&subs, "landing_rate"), 45);
-    assert_eq!(pts(&subs, "g_force"), 60);
+    // ⚠ v1.7.12: 45 statt 60. Die Punktleiter der G-Achse ist an die
+    // der Sinkrate angeglichen (100/80/45/20/0). Die SCHWELLEN waren
+    // schon immer aufeinander abgebildet, die NOTEN nicht — dieselbe
+    // Landung hiess auf einer Achse "hart, 45" und auf der anderen
+    // "spuerbar, 60".
+    assert_eq!(pts(&subs, "g_force"), 45);
     assert_eq!(pts(&subs, "bounces"), 100);
     assert_eq!(pts(&subs, "stability"), 80);
     assert_eq!(pts(&subs, "rollout"), 55);
@@ -205,7 +219,11 @@ fn dah3181_xplane_firm_with_overburn() {
     // bewertete das geplante Abfluggewicht, auf das der Pilot keinen
     // Einfluss hat, und gab dabei KONSTANT 100. Diese Gratispunkte
     // zogen jeden Score um 1-2 Punkte nach oben.
-    assert_eq!(aggregate_master_score(&subs), Some(68));
+    // ⚠ v1.7.12: 64 statt 68 — Folge der angeglichenen G-Punktleiter.
+    // Harte Landungen werden dadurch haerter bewertet, und genau das war
+    // die Absicht: Die mildere Achse zog die haertere systematisch nach
+    // oben, am staerksten dort, wo die Bewertung beissen soll.
+    assert_eq!(aggregate_master_score(&subs), Some(64));
 }
 
 // ─── F1/F2 Edge-Cases (VFR/Manual ohne Plan) ───────────────────────
@@ -235,7 +253,12 @@ fn vfr_no_zfw_no_burn_skips_loadsheet_and_fuel() {
     // ("firm_positive_touchdown") → 100 statt 70.
     assert_eq!(pts(&subs, "landing_rate"), 100);
     // g_force(1.30): comfortable_g = 85
-    assert_eq!(pts(&subs, "g_force"), 85);
+    // ⚠ v1.7.12: 80 statt 85. Die Punktleiter der G-Achse ist an die
+    // der Sinkrate angeglichen (100/80/45/20/0). Die SCHWELLEN waren
+    // schon immer aufeinander abgebildet, die NOTEN nicht — dieselbe
+    // Landung hiess auf einer Achse "hart, 45" und auf der anderen
+    // "spuerbar, 60".
+    assert_eq!(pts(&subs, "g_force"), 80);
     assert_eq!(pts(&subs, "bounces"), 100);
     assert_eq!(pts(&subs, "stability"), 80);
     assert_eq!(pts(&subs, "rollout"), 80); // 800<m<1200 = good_stop
@@ -243,7 +266,8 @@ fn vfr_no_zfw_no_burn_skips_loadsheet_and_fuel() {
     assert!(skipped(&subs, "fuel"));
     // Master = (100*3+85*3+100*2+80*2+80*1) / (3+3+2+2+1) = (300+255+200+160+80) / 11
     //        = 995/11 = 90.45 → 90
-    assert_eq!(aggregate_master_score(&subs), Some(90));
+    // ⚠ v1.7.12: 89 statt 90 — Folge der angeglichenen G-Punktleiter.
+    assert_eq!(aggregate_master_score(&subs), Some(89));
 }
 
 #[test]
