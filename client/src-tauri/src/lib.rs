@@ -6625,6 +6625,86 @@ fn estimate_xplane_touchdown_vs_from_agl(
 /// oscillation rebound; we never want those as the published
 /// landing rate.
 
+/// Alle Sinkraten-Messungen eines Aufsetzers.
+///
+/// `letztes_tief` ist bereits auf die 15-Sekunden-Grenze gefiltert, und
+/// alle Werte sind bereits durch `negative_only` gegangen, wo die
+/// regulaere Kette das verlangt. Damit ist die Entscheidung darunter
+/// rein — und pruefbar.
+#[derive(Debug, Clone, Copy, Default)]
+struct Sinkratenquellen {
+    gerastet: Option<f32>,
+    schaetzer_xp: Option<(f32, i64)>,
+    schaetzer_msfs: Option<f32>,
+    abtaster: Option<f32>,
+    puffer_min: Option<f32>,
+    tief_agl_min: Option<f32>,
+    letztes_tief: Option<f32>,
+}
+
+/// Die Aufsetz-Sinkrate UND die Angabe, woher sie stammt.
+///
+/// # Warum beides aus EINER Entscheidung faellt
+///
+/// ⚠ Bis v1.7.13 waren es zwei: eine Kette rechnete den Wert, darunter
+/// ein „Spiegel der Priority-Chain oben" die Quellenangabe. Sie sind
+/// auseinandergelaufen — bei SRR318 (LIMJ, 31.08.2026) meldete die
+/// Quelle einen Zweig, der `est.min(last)` rechnet und bei einem
+/// Schaetzwert von −1389 fpm niemals 0 ergeben kann. Gespeichert war
+/// trotzdem 0, phpVMS bekam `landing_rate = NULL`, die Wartung feuerte
+/// nicht.
+///
+/// Als eigene Funktion, weil die Kette im Streamer sonst nur ueber den
+/// Touchdown-Abtaster erreichbar waere — eine eigene Aufgabe, die ein
+/// Test nicht aufstellt. Ein Ablauftest darauf war zweimal WIRKUNGSLOS
+/// (der Flug erreichte nie einen Aufsetzer), bevor das auffiel.
+fn touchdown_vs_bestimmen(
+    q: &Sinkratenquellen,
+    ist_msfs: bool,
+    ist_xplane: bool,
+) -> (f32, &'static str) {
+    if ist_msfs {
+        // MSFS: priority chain (v0.5.12 — validated against 11 real
+        // pilot flights, Pete + Michael):
+        //   1. Latched SimVar (PLANE TOUCHDOWN NORMAL VELOCITY)
+        //   2. Time-tier AGL-Δ (UNCHANGED, GEES-aligned)
+        //   3. Buffered VS-min — last resort
+        //
+        // EXPLICITLY NOT used for MSFS: `abtaster` und `tief_agl_min`
+        // (Rueckstoss-Spitzen beim Fahrwerkskontakt) sowie der
+        // X-Plane-Schaetzer.
+        q.gerastet
+            .map(|v| (v, "msfs_simvar_latched"))
+            .or_else(|| q.schaetzer_msfs.map(|v| (v, "agl_estimate_msfs")))
+            .or_else(|| q.puffer_min.map(|v| (v, "buffer_min")))
+            .unwrap_or((0.0, "fallback_zero"))
+    } else if ist_xplane {
+        // v0.5.35: Fenster > 3000 ms ist unplausibel — es spannt den
+        // ganzen Anflug statt der Flare und glaettet die
+        // Aufsetz-Sinkrate weg. Dann rettet `letztes_tief`.
+        let schaetzer = q.schaetzer_xp.filter(|(_, f)| *f < 3000).map(|(v, _)| v);
+        match (schaetzer, q.letztes_tief) {
+            (Some(est), Some(last)) => (est.min(last), "agl_estimate_xp_or_last_low"),
+            (Some(est), None) => (est, "agl_estimate_xp"),
+            (None, Some(last)) => (last, "last_low_agl_vs"),
+            (None, None) => q
+                .abtaster
+                .map(|v| (v, "sampler_gear_force"))
+                .or_else(|| q.puffer_min.map(|v| (v, "buffer_min")))
+                .or_else(|| q.tief_agl_min.map(|v| (v, "low_agl_vs_min")))
+                .unwrap_or((0.0, "fallback_zero")),
+        }
+    } else {
+        // Unbekannter Simulator — der vorsichtigere MSFS-Schaetzer.
+        q.gerastet
+            .map(|v| (v, "other_latched"))
+            .or_else(|| q.schaetzer_msfs.map(|v| (v, "other_agl_estimate")))
+            .or_else(|| q.abtaster.map(|v| (v, "other_sampler")))
+            .or_else(|| q.puffer_min.map(|v| (v, "other_buffer_min")))
+            .unwrap_or((0.0, "other_fallback"))
+    }
+}
+
 fn negative_only(value: Option<f32>) -> Option<f32> {
     value.filter(|v| v.is_finite() && *v < 0.0)
 }
@@ -30549,108 +30629,28 @@ fn step_flight_at(
                 //
                 // Jetzt liefert jeder Zweig das Paar. Wert und Angabe
                 // koennen nicht mehr verschiedene Wege beschreiben.
-                let (touchdown_vs, vs_source): (f32, &'static str) = if is_msfs {
-                    // MSFS: priority chain (v0.5.12 — validated against
-                    // 11 real pilot flights, Pete + Michael):
-                    //   1. Latched SimVar (PLANE TOUCHDOWN NORMAL VELOCITY)
-                    //   2. Time-tier AGL-Δ (UNCHANGED, GEES-aligned)
-                    //   3. Buffered VS-min — last resort
-                    //
-                    // EXPLICITLY NOT used for MSFS:
-                    //   * sampler_touchdown_vs_fpm — gear-contact
-                    //     rebound spike contamination
-                    //   * low_agl_vs_min_fpm — same risk
-                    //   * Lua-style 30-sample estimator — that's
-                    //     X-Plane only by design
-                    let paar = negative_only(snap.touchdown_vs_fpm)
-                        .map(|v| (v, "msfs_simvar_latched"))
-                        .or_else(|| agl_estimate_msfs.map(|e| (e.fpm, "agl_estimate_msfs")))
-                        .or_else(|| negative_only(buffered_vs_min).map(|v| (v, "buffer_min")));
-                    tracing::info!(
-                        sim = "msfs",
-                        latched = ?snap.touchdown_vs_fpm,
-                        buffer_min = ?buffered_vs_min,
-                        chosen = ?paar,
-                        "touchdown VS captured (MSFS)"
-                    );
-                    paar.unwrap_or((0.0, "fallback_zero"))
-                } else if is_xplane {
-                    // v0.5.35: Sanity-Check + Sparse-Sampling-Fallback.
-                    // Bei sehr niedriger DataRef-Rate spannt das
-                    // 30-Sample-Fenster den ganzen Approach statt der
-                    // Flare → der Schaetzer gibt einen geglaetteten
-                    // Mittelwert statt der echten Aufsetz-Sinkrate.
-                    //   1. Fenster > 3000 ms = unplausibel (verwerfen)
-                    //   2. `last_low_agl_vs_fpm` als robuster Rueckfall
-                    //   3. Wenn beide da: den tieferen nehmen
-                    let xp_est_plausible = agl_estimate_xp
-                        .filter(|e| e.window_ms < 3000)
-                        .map(|e| e.fpm);
-                    let last_low_recent = stats
+                let quellen = Sinkratenquellen {
+                    gerastet: negative_only(snap.touchdown_vs_fpm),
+                    schaetzer_xp: agl_estimate_xp.map(|e| (e.fpm, e.window_ms)),
+                    schaetzer_msfs: agl_estimate_msfs.map(|e| e.fpm),
+                    abtaster: negative_only(stats.sampler_touchdown_vs_fpm),
+                    puffer_min: negative_only(buffered_vs_min),
+                    tief_agl_min: negative_only(stats.low_agl_vs_min_fpm),
+                    letztes_tief: stats
                         .last_low_agl_vs_fpm
-                        .filter(|(_, ts)| (now - *ts).num_seconds() <= 15);
-                    let paar = match (xp_est_plausible, last_low_recent) {
-                        (Some(est), Some((last, _))) => {
-                            Some((est.min(last), "agl_estimate_xp_or_last_low"))
-                        }
-                        (Some(est), None) => Some((est, "agl_estimate_xp")),
-                        (None, Some((last, _))) => Some((last, "last_low_agl_vs")),
-                        (None, None) => negative_only(stats.sampler_touchdown_vs_fpm)
-                            .map(|v| (v, "sampler_gear_force"))
-                            .or_else(|| negative_only(buffered_vs_min).map(|v| (v, "buffer_min")))
-                            .or_else(|| {
-                                negative_only(stats.low_agl_vs_min_fpm)
-                                    .map(|v| (v, "low_agl_vs_min"))
-                            }),
-                    };
-                    tracing::info!(
-                        sim = "xplane",
-                        agl_fpm = ?agl_estimate_xp.map(|e| e.fpm),
-                        window_ms = ?agl_estimate_xp.map(|e| e.window_ms),
-                        sampler_vs = ?stats.sampler_touchdown_vs_fpm,
-                        buffer_min = ?buffered_vs_min,
-                        low_agl_min = ?stats.low_agl_vs_min_fpm,
-                        chosen = ?paar,
-                        "touchdown VS captured (X-Plane)"
-                    );
-                    paar.unwrap_or((0.0, "fallback_zero"))
-                } else {
-                    // Unbekannter Simulator — der vorsichtigere
-                    // MSFS-Schaetzer, wie bisher.
-                    negative_only(snap.touchdown_vs_fpm)
-                        .map(|v| (v, "other_latched"))
-                        .or_else(|| agl_estimate_msfs.map(|e| (e.fpm, "other_agl_estimate")))
-                        .or_else(|| {
-                            negative_only(stats.sampler_touchdown_vs_fpm)
-                                .map(|v| (v, "other_sampler"))
-                        })
-                        .or_else(|| negative_only(buffered_vs_min).map(|v| (v, "other_buffer_min")))
-                        .unwrap_or((0.0, "other_fallback"))
+                        .filter(|(_, ts)| (now - *ts).num_seconds() <= 15)
+                        .map(|(v, _)| v),
                 };
+                let (touchdown_vs, vs_source) =
+                    touchdown_vs_bestimmen(&quellen, is_msfs, is_xplane);
+                tracing::info!(
+                    sim = ?snap.simulator,
+                    quellen = ?quellen,
+                    gewaehlt = touchdown_vs,
+                    quelle = vs_source,
+                    "touchdown VS bestimmt"
+                );
 
-                // ⚠ Eine 0 ist eine AUSSAGE — und bei einem Aufprall
-                // eine falsche.
-                //
-                // Bei SRR318 (LIMJ, 31.08.2026) standen sieben Messungen
-                // zwischen −1389 und −3307 fpm bereit, waehrend 0
-                // gespeichert wurde. phpVMS bekam `landing_rate = NULL`,
-                // der Score wurde 0, die Wartung feuerte nicht.
-                //
-                // ⚠⚠ ZWEI Riegel, beide aus der QS (31.08.2026):
-                //
-                // 1. **Nur bei einem Aufprall.** Der erste Entwurf lief
-                //    bei JEDER Landung mit fehlender Primaermessung —
-                //    eine normale Landung waere so zur Hartlandung
-                //    geworden. Es braucht ein Zeichen echter Wucht.
-                //
-                // 2. **Dieselben Ausschluesse wie die regulaere Kette.**
-                //    Der MSFS-Zweig schliesst `sampler_touchdown_vs_fpm`
-                //    und `low_agl_vs_min_fpm` ausdruecklich aus
-                //    (Rueckstoss-Spitzen beim Fahrwerkskontakt), und
-                //    `last_low_agl_vs_fpm` gilt nur binnen 15 Sekunden.
-                //    Der erste Entwurf nahm alles ohne Ansehen —
-                //    ausgerechnet die Quellen, die die regulaere Kette
-                //    als unzuverlaessig verwirft.
                 // ⚠ Eine gespeicherte 0 ist eine AUSSAGE — und sie muss
                 // erklaerbar sein.
                 //
@@ -30694,7 +30694,16 @@ fn step_flight_at(
                         puffer_min = ?buffered_vs_min,
                         tief_agl_min = ?stats.low_agl_vs_min_fpm,
                         letztes_tief = ?stats.last_low_agl_vs_fpm,
-                        peak_g = ?stats.landing_peak_g_force,
+                        // ⚠ ALLE drei g-Quellen, nicht nur eine.
+                        //
+                        // `landing_peak_g_force` wird im selben Block erst
+                        // WEITER UNTEN gesetzt — hier stuende beim ersten
+                        // Aufsetzer `None`, ausgerechnet bei dem Fall, den
+                        // die Meldung erklaeren soll. Der Abtaster-Wert und
+                        // der Augenblickswert liegen dagegen schon vor.
+                        g_im_augenblick = snap.g_force,
+                        g_abtaster = ?stats.sampler_touchdown_g_force,
+                        g_peak_bisher = ?stats.landing_peak_g_force,
                         "touchdown VS bleibt 0 — alle zulaessigen Quellen leer oder positiv"
                     );
                 }
@@ -52806,85 +52815,137 @@ mod wiederaufnahme_langstrecke_tests {
         );
     }
 
-    /// Eine gespeicherte 0 muss ALLE Quellen nennen.
+    /// Wert und Quellenangabe kommen aus EINER Entscheidung — gemessen.
     ///
-    /// ⚠ Das ist der Ersatz fuer die entfernte Notrettung. Die konnte an
-    /// ihrer Stelle keine Belege haben — die Kraftspitze
-    /// (`landing_analysis.max_gear_force_n`) entsteht erst nach
-    /// `TOUCHDOWN_POST_WINDOW_MS`, also zehn Sekunden spaeter. Vier
-    /// QS-Runden haben daran fuenf Befunde gefunden.
+    /// ⚠ Der Kern von SRR318: Die Quellenangabe nannte einen Zweig, der
+    /// den gespeicherten Wert gar nicht liefern kann. Dieser Test
+    /// durchlaeuft JEDEN Zweig und besteht darauf, dass die Angabe zum
+    /// Wert passt.
     ///
-    /// Statt zu raten, macht die Meldung den Fall erklaerbar: Wenn eine 0
-    /// gespeichert wird, steht im Protokoll, welche Quelle was hatte.
-    /// Bei SRR318 haette das den Nachmittag auf eine Minute verkuerzt.
-    ///
-    /// Die Nadeln werden mit `format!` gebaut, sonst faende der Waechter
-    /// sich selbst.
+    /// ⚠⚠ Drei Anlaeufe davor waren wirkungslos: zwei Quelltext-
+    /// Waechter, die nur Zeichenketten suchten, und ein Ablauftest, bei
+    /// dem der Flug nie einen Aufsetzer erreichte (Phase blieb
+    /// `Boarding`). Aufgefallen erst, als der Test seinen eigenen
+    /// Zustand ausgab. Deshalb steht die Kette jetzt als eigene
+    /// Funktion — erreichbar ohne den Touchdown-Abtaster.
     #[test]
-    fn eine_gespeicherte_null_nennt_alle_quellen() {
-        let quelle = ohne_leerraum(LIB_QUELLE);
-        for feld in [
-            "gerastet",
-            "schaetzer_xp",
-            "schaetzer_msfs",
-            "abtaster",
-            "puffer_min",
-            "tief_agl_min",
-            "letztes_tief",
-        ] {
-            let nadel = ohne_leerraum(&format!("{feld} = ?"));
-            assert!(
-                quelle.contains(&nadel),
-                "die Meldung bei einer gespeicherten 0 nennt {feld} nicht — \
-                 der naechste Fall waere wieder nicht zu klaeren"
-            );
+    fn jeder_zweig_liefert_wert_und_passende_quelle() {
+        let leer = Sinkratenquellen::default();
+
+        // Ohne jede Messung: ehrlich 0 — und die Angabe sagt es.
+        assert_eq!(
+            touchdown_vs_bestimmen(&leer, true, false),
+            (0.0, "fallback_zero")
+        );
+        assert_eq!(
+            touchdown_vs_bestimmen(&leer, false, true),
+            (0.0, "fallback_zero")
+        );
+        assert_eq!(
+            touchdown_vs_bestimmen(&leer, false, false),
+            (0.0, "other_fallback")
+        );
+
+        // MSFS: Reihenfolge und Ausschluesse.
+        let q = Sinkratenquellen {
+            gerastet: Some(-150.0),
+            schaetzer_msfs: Some(-200.0),
+            puffer_min: Some(-300.0),
+            abtaster: Some(-3000.0),
+            tief_agl_min: Some(-2500.0),
+            schaetzer_xp: Some((-900.0, 100)),
+            letztes_tief: Some(-400.0),
+        };
+        assert_eq!(
+            touchdown_vs_bestimmen(&q, true, false),
+            (-150.0, "msfs_simvar_latched")
+        );
+        // ⚠ Ohne gerasteten Wert darf MSFS NICHT auf Abtaster oder
+        // tief_agl_min ausweichen — Rueckstoss-Spitzen.
+        let ohne_raster = Sinkratenquellen {
+            gerastet: None,
+            schaetzer_msfs: None,
+            puffer_min: None,
+            ..q
+        };
+        assert_eq!(
+            touchdown_vs_bestimmen(&ohne_raster, true, false),
+            (0.0, "fallback_zero"),
+            "MSFS griff auf eine ausgeschlossene Quelle zu"
+        );
+
+        // X-Plane: beide da → der tiefere, und die Angabe nennt beide.
+        assert_eq!(
+            touchdown_vs_bestimmen(&q, false, true),
+            (-900.0, "agl_estimate_xp_or_last_low")
+        );
+        // Zu breites Fenster → Schaetzer faellt weg.
+        let breit = Sinkratenquellen {
+            schaetzer_xp: Some((-900.0, 9000)),
+            ..q
+        };
+        assert_eq!(
+            touchdown_vs_bestimmen(&breit, false, true),
+            (-400.0, "last_low_agl_vs")
+        );
+        // ⚠ Nur der Schaetzer, kein letztes Tief. Dieser Zweig fehlte
+        // beim ersten Anlauf — eine vertauschte Quellenangabe blieb
+        // dadurch unbemerkt (Gegenprobe, 31.08.2026).
+        let nur_schaetzer = Sinkratenquellen {
+            letztes_tief: None,
+            ..q
+        };
+        assert_eq!(
+            touchdown_vs_bestimmen(&nur_schaetzer, false, true),
+            (-900.0, "agl_estimate_xp")
+        );
+
+        // Weder Schaetzer noch letztes Tief → Abtaster, und die Angabe
+        // sagt genau das.
+        let nur_abtaster = Sinkratenquellen {
+            schaetzer_xp: None,
+            letztes_tief: None,
+            ..q
+        };
+        assert_eq!(
+            touchdown_vs_bestimmen(&nur_abtaster, false, true),
+            (-3000.0, "sampler_gear_force")
+        );
+    }
+
+    /// Und keine Angabe darf einen Wert behaupten, den sie nicht liefert.
+    ///
+    /// ⚠ Die Umkehrung von SRR318: Dort meldete
+    /// `agl_estimate_xp_or_last_low` eine 0. Dieser Zweig rechnet
+    /// `est.min(last)` — er kann gar keine 0 liefern, solange eine der
+    /// beiden Quellen negativ ist. Genau das wird hier festgehalten.
+    #[test]
+    fn eine_null_kommt_nur_aus_dem_rueckfall() {
+        for (ist_msfs, ist_xplane) in [(true, false), (false, true), (false, false)] {
+            // Ueber alle Kombinationen vorhandener Quellen.
+            for maske in 0u8..0b111_1111 {
+                let bit = |n: u8| maske & (1 << n) != 0;
+                let q = Sinkratenquellen {
+                    gerastet: bit(0).then_some(-100.0),
+                    schaetzer_xp: bit(1).then_some((-900.0, 100)),
+                    schaetzer_msfs: bit(2).then_some(-200.0),
+                    abtaster: bit(3).then_some(-3000.0),
+                    puffer_min: bit(4).then_some(-300.0),
+                    tief_agl_min: bit(5).then_some(-2500.0),
+                    letztes_tief: bit(6).then_some(-400.0),
+                };
+                let (wert, quelle) = touchdown_vs_bestimmen(&q, ist_msfs, ist_xplane);
+                if quelle.ends_with("fallback_zero") || quelle == "other_fallback" {
+                    assert_eq!(wert, 0.0, "Rueckfall {quelle} mit Wert {wert}");
+                } else {
+                    assert!(
+                        wert < 0.0,
+                        "Quelle {quelle} nennt einen Messzweig, liefert aber {wert} — \
+                         genau der Widerspruch von SRR318"
+                    );
+                }
+            }
         }
-    }
-
-    /// Und es darf keine Notrettung zurueckkommen, ohne dass es auffaellt.
-    ///
-    /// ⚠ Sie ist nach vier QS-Runden bewusst entfernt worden: Sie kann an
-    /// dieser Stelle keine Belege haben, und die Quellen, aus denen sie
-    /// schoepfen wollte, verwirft die regulaere Kette mit Grund
-    /// (Rueckstoss-Spitzen beim Fahrwerkskontakt). Wer sie wiederbelebt,
-    /// muss sie ans Ende des Nachlaufs setzen — nicht hierher.
-    #[test]
-    fn keine_stille_notrettung_im_aufsetz_tick() {
-        let quelle = ohne_leerraum(LIB_QUELLE);
-        let nadel = ohne_leerraum(&format!("notrettung_tiefste{}", "_messung"));
-        assert!(
-            !quelle.contains(&nadel),
-            "die Notrettung ist zurueck — sie kann im Aufsetz-Tick keine \
-             Belege haben (Kraftspitze entsteht erst 10 s spaeter)"
-        );
-    }
-
-    /// Wert und Quellenangabe duerfen nicht wieder getrennt gerechnet werden.
-    ///
-    /// ⚠ Genau das war die Ursache bei SRR318: Unter der Wertekette
-    /// stand ein „Spiegel der Priority-Chain oben", der die
-    /// Quellenangabe noch einmal herleitete. Zwei Implementierungen
-    /// derselben Entscheidung — und sie liefen auseinander: Die Quelle
-    /// meldete einen Zweig, der `est.min(last)` rechnet und bei −1389
-    /// niemals 0 ergeben kann, gespeichert war trotzdem 0.
-    ///
-    /// Die Nadel wird mit `format!` gebaut, sonst faende der Waechter
-    /// sich selbst.
-    #[test]
-    fn wert_und_quelle_kommen_aus_einer_entscheidung() {
-        let quelle = ohne_leerraum(LIB_QUELLE);
-        let getrennt = ohne_leerraum(&format!("let vs_source: &'static str = if is_{}", "msfs"));
-        assert!(
-            !quelle.contains(&getrennt),
-            "die Quellenangabe wird wieder getrennt vom Wert gerechnet — \
-             genau die zweite Kette, die SRR318 verursacht hat"
-        );
-        // Und das Paar muss es geben.
-        let paar = ohne_leerraum(&format!(
-            "let (touchdown_vs, vs_source): (f32, &'static {})",
-            "str"
-        ));
-        assert!(quelle.contains(&paar), "die gemeinsame Entscheidung fehlt");
     }
 
     /// Das Szenerie-Verzeichnis wird beim START gebaut, nicht beim Landen.
