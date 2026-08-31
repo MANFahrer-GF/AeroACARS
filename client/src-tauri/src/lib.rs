@@ -6675,10 +6675,37 @@ impl Aufprallbeleg {
     /// `referenz_g` direkt entgegennimmt, diese Verwechslung NICHT
     /// sieht — er prueft die Regel, nicht ihre Speisung. Deshalb steht
     /// die Umrechnung jetzt hier und nicht beim Aufrufer.
-    fn aus_zustand(stats: &FlightStats, fahrwerkskraft_n: Option<f32>) -> Self {
+    fn aus_zustand(stats: &FlightStats, kraft_im_augenblick: Option<f32>) -> Self {
         Self {
-            referenz_g: scored_g_fuer_punkte(stats),
-            fahrwerkskraft_n,
+            // ⚠ Der ROHE Extremwert, auf die Referenzkette gerechnet —
+            // NICHT der geglaettete Punktewert.
+            //
+            // `scored_g_fuer_punkte` liest bevorzugt den EMA-geglaetteten
+            // `scored_g` aus der Landungsanalyse. Fuer die Bewertung ist
+            // das richtig, fuer eine Extremwert-Erkennung nicht: Die
+            // Glaettung kann einen Grenzfall unter die Schwelle druecken.
+            //
+            // Dieselbe Regel steht in der Unfall-Erkennung
+            // (`peak_g_load`, v1.6.2/v1.6.3): „der Extremwert bleibt
+            // (keine Glaettung), wird aber auf die Referenz-Messkette
+            // umgerechnet" und „NIE weichspuelen". Aus der QS
+            // (31.08.2026) — mein Test sah es nicht, weil er
+            // `landing_analysis` leer liess und die Funktion dadurch
+            // zufaellig auf den Rohwert zurueckfiel.
+            referenz_g: stats
+                .landing_peak_g_force
+                .map(|g| g_auf_referenzkette(g, stats.landing_simulator))
+                .or_else(|| scored_g_fuer_punkte(stats)),
+            // ⚠ Die gemessene SPITZE ueber das Sekundenfenster, nicht
+            // der Augenblickswert.
+            //
+            // `compute_landing_analysis` sucht `max_gear_force_n` ueber
+            // die Sekunde nach dem Aufsetzen. Der Wert im Schnappschuss
+            // ist der des gerade laufenden Ticks — der kann laengst
+            // wieder beim Standgewicht liegen, und dann verfehlt der
+            // Riegel einen echten Kraftaufprall. Ebenfalls aus der QS.
+            fahrwerkskraft_n: ana_f32(&stats.landing_analysis, "max_gear_force_n")
+                .or(kraft_im_augenblick),
             landegewicht_kg: stats.landing_weight_kg,
         }
     }
@@ -53177,6 +53204,72 @@ mod wiederaufnahme_langstrecke_tests {
         let g = beleg.referenz_g.expect("g-Last");
         assert!((g - 5.88).abs() < 0.05, "erwartet 5,88, war {g:.2}");
         assert!(beleg.ist_aufprall());
+    }
+
+    /// Die Glaettung darf einen Grenzfall-Aufprall nicht wegdruecken.
+    ///
+    /// ⚠ Aus der QS (31.08.2026): `scored_g_fuer_punkte` liest bevorzugt
+    /// den EMA-geglaetteten `scored_g` aus der Landungsanalyse. Fuer die
+    /// Bewertung ist das richtig, fuer eine Extremwert-Erkennung nicht.
+    ///
+    /// Mein voriger Test sah es NICHT, weil er `landing_analysis` leer
+    /// liess — dadurch fiel die Funktion zufaellig auf den Rohwert
+    /// zurueck. Im echten Ablauf ist die Analyse unmittelbar vorher
+    /// gefuellt. Hier ist sie es auch.
+    #[test]
+    fn der_rohe_extremwert_gewinnt_gegen_die_glaettung() {
+        let mut s = FlightStats::new();
+        s.landing_simulator = Some("xplane");
+        s.landing_peak_g_force = Some(12.224_427); // → 5,88 auf der Referenzkette
+        s.landing_weight_kg = Some(129_802.0);
+        // Die Analyse ist gefuellt — und ihr geglaetteter Wert liegt
+        // deutlich unter der Schwelle.
+        s.landing_analysis = Some(serde_json::json!({ "scored_g": 1.4 }));
+
+        let beleg = Aufprallbeleg::aus_zustand(&s, None);
+        let g = beleg.referenz_g.expect("g-Last");
+        assert!(
+            (g - 5.88).abs() < 0.05,
+            "die Glaettung hat gewonnen: {g:.2} statt 5,88"
+        );
+        assert!(
+            beleg.ist_aufprall(),
+            "ein 12,2-g-Aufprall rutschte unter die Schwelle"
+        );
+    }
+
+    /// Der Kraftweg nimmt die gemessene Spitze, nicht den Augenblickswert.
+    ///
+    /// ⚠ Ebenfalls aus der QS: `compute_landing_analysis` sucht
+    /// `max_gear_force_n` ueber die Sekunde nach dem Aufsetzen. Der Wert
+    /// im Schnappschuss gehoert zum gerade laufenden Tick — der kann
+    /// laengst wieder beim Standgewicht liegen.
+    #[test]
+    fn der_kraftweg_nimmt_die_spitze_nicht_den_augenblick() {
+        let gewicht = 129_802.0_f64;
+        let stand = (gewicht * 9.806_65) as f32;
+
+        let mut s = FlightStats::new();
+        s.landing_simulator = Some("xplane");
+        s.landing_weight_kg = Some(gewicht);
+        // Keine g-Last — es soll allein der Kraftweg entscheiden.
+        s.landing_peak_g_force = None;
+        s.landing_analysis = Some(serde_json::json!({
+            "max_gear_force_n": stand * 3.15
+        }));
+
+        // Der Augenblickswert liegt wieder beim Standgewicht.
+        let beleg = Aufprallbeleg::aus_zustand(&s, Some(stand));
+        assert!(
+            beleg.ist_aufprall(),
+            "die gemessene Spitze wurde ignoriert — der Augenblickswert gewann"
+        );
+
+        // Ohne Spitze in der Analyse bleibt der Augenblickswert der
+        // Rueckfall — und der belegt hier keinen Aufprall.
+        s.landing_analysis = None;
+        let beleg = Aufprallbeleg::aus_zustand(&s, Some(stand));
+        assert!(!beleg.ist_aufprall());
     }
 
     /// Der Beleg wird ueber den Konstruktor gebaut, nicht von Hand.
