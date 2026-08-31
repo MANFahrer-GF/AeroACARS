@@ -6624,210 +6624,6 @@ fn estimate_xplane_touchdown_vs_from_agl(
 /// Plugin / buffer values can briefly read positive due to gear
 /// oscillation rebound; we never want those as the published
 /// landing rate.
-/// Ab welcher g-Last AUF DER REFERENZKETTE eine Landung als Aufprall gilt.
-///
-/// ⚠ Auf der Referenzkette, nicht roh. X-Plane misst die g-Last
-/// ungefiltert, MSFS gedaempft — `g_auf_referenzkette` rechnet beide auf
-/// dieselbe Skala. Ein roher X-Plane-Wert von 3,0 entspricht dort nur
-/// rund 1,87, also einer harten, aber gewoehnlichen Landung. Aus der QS
-/// (31.08.2026).
-///
-/// 3,0 liegt deutlich ueber `T_G_SEVERE` (2,10) — der Riegel soll einen
-/// Aufprall von einer harten Landung trennen, nicht eine harte von einer
-/// weichen. Bei SRR318 waren es 5,88 auf der Referenzkette.
-const AUFPRALL_REFERENZ_G: f32 = 3.0;
-
-/// Ab welchem LASTVIELFACHEN des Standgewichts die Fahrwerkskraft einen
-/// Aufprall belegt.
-///
-/// ⚠ Eine absolute Newton-Grenze taugt nicht. Eine Million Newton ist
-/// bereits das Standgewicht eines 102-Tonners; ein A330 mit 250 t liegt
-/// im Stand bei 2,45 MN, ohne dass irgendetwas passiert waere. Der
-/// erste Entwurf haette bei jedem schweren Flugzeug geoeffnet (QS,
-/// 31.08.2026).
-///
-/// Gemessen wird deshalb gegen das eigene Gewicht: Eine normale Landung
-/// liegt bei rund 1,2 bis 1,5, eine harte bei 2. Bei SRR318 waren es
-/// 4.005.945 N bei 129.802 kg Landegewicht — das 3,15-fache.
-const AUFPRALL_LASTVIELFACHES: f64 = 2.5;
-
-/// Belege fuer einen Aufprall.
-#[derive(Debug, Clone, Copy, Default)]
-struct Aufprallbeleg {
-    /// g-Last auf der Referenzkette (sim-uebergreifend vergleichbar).
-    referenz_g: Option<f32>,
-    /// Fahrwerkskraft in Newton. Nur X-Plane liefert sie.
-    fahrwerkskraft_n: Option<f32>,
-    /// Landegewicht in Kilogramm — ohne das ist die Kraft nicht deutbar.
-    landegewicht_kg: Option<f64>,
-}
-
-impl Aufprallbeleg {
-    /// Die Belege aus dem Flugzustand ziehen.
-    ///
-    /// ⚠ **Der einzige Weg, den Beleg im Betrieb zu bauen.** Die
-    /// Referenzumrechnung der g-Last passiert hier drin, damit sie an
-    /// der Aufrufstelle nicht vergessen werden kann: X-Plane misst roh,
-    /// MSFS gedaempft, und ein roher X-Plane-Wert von 3,0 entspricht auf
-    /// der Referenzkette nur rund 1,87.
-    ///
-    /// Eine Gegenprobe am 31.08.2026 hat gezeigt, dass ein Test, der
-    /// `referenz_g` direkt entgegennimmt, diese Verwechslung NICHT
-    /// sieht — er prueft die Regel, nicht ihre Speisung. Deshalb steht
-    /// die Umrechnung jetzt hier und nicht beim Aufrufer.
-    /// `simulator` wird ausdruecklich uebergeben, NICHT aus `stats`
-    /// gelesen.
-    ///
-    /// ⚠ Aus der QS (31.08.2026): `stats.landing_simulator` wird im
-    /// Streamer erst **43 Zeilen nach** dieser Stelle gesetzt. Zum
-    /// Zeitpunkt der Rettung ist es beim ersten Aufsetzer noch `None` —
-    /// und `g_auf_referenzkette` gibt dann den Wert UNVERAENDERT
-    /// zurueck. Ein roher X-Plane-Wert von 5,0 g wuerde damit als
-    /// Aufprall gelten, obwohl er auf der Referenzkette nur 2,74 ist.
-    ///
-    /// Die Aufrufstelle kennt den Simulator ueber ihre eigenen
-    /// `is_msfs`/`is_xplane`-Flaggen. Die sind zu jedem Zeitpunkt
-    /// richtig; das Feld in `stats` ist es erst spaeter.
-    ///
-    /// Die vorhandenen Tests konnten das nicht sehen, weil sie
-    /// `landing_simulator` vorbelegten — dieselbe Klasse wie zuvor:
-    /// Regel richtig, Speisung falsch.
-    fn aus_zustand(
-        stats: &FlightStats,
-        simulator: Option<&str>,
-        kraft_im_augenblick: Option<f32>,
-    ) -> Self {
-        Self {
-            // ⚠ Der ROHE Extremwert, auf die Referenzkette gerechnet —
-            // NICHT der geglaettete Punktewert.
-            //
-            // `scored_g_fuer_punkte` liest bevorzugt den EMA-geglaetteten
-            // `scored_g` aus der Landungsanalyse. Fuer die Bewertung ist
-            // das richtig, fuer eine Extremwert-Erkennung nicht: Die
-            // Glaettung kann einen Grenzfall unter die Schwelle druecken.
-            //
-            // Dieselbe Regel steht in der Unfall-Erkennung
-            // (`peak_g_load`, v1.6.2/v1.6.3): „der Extremwert bleibt
-            // (keine Glaettung), wird aber auf die Referenz-Messkette
-            // umgerechnet" und „NIE weichspuelen". Aus der QS
-            // (31.08.2026) — mein Test sah es nicht, weil er
-            // `landing_analysis` leer liess und die Funktion dadurch
-            // zufaellig auf den Rohwert zurueckfiel.
-            referenz_g: stats
-                .landing_peak_g_force
-                .map(|g| g_auf_referenzkette(g, simulator))
-                .or_else(|| scored_g_fuer_punkte(stats)),
-            // ⚠ Die gemessene SPITZE ueber das Sekundenfenster, nicht
-            // der Augenblickswert.
-            //
-            // `compute_landing_analysis` sucht `max_gear_force_n` ueber
-            // die Sekunde nach dem Aufsetzen. Der Wert im Schnappschuss
-            // ist der des gerade laufenden Ticks — der kann laengst
-            // wieder beim Standgewicht liegen, und dann verfehlt der
-            // Riegel einen echten Kraftaufprall. Ebenfalls aus der QS.
-            fahrwerkskraft_n: ana_f32(&stats.landing_analysis, "max_gear_force_n")
-                .or(kraft_im_augenblick),
-            landegewicht_kg: stats.landing_weight_kg,
-        }
-    }
-
-    /// Belegt eine der beiden Messungen einen Aufprall?
-    fn ist_aufprall(&self) -> bool {
-        if self
-            .referenz_g
-            .is_some_and(|g| g.is_finite() && g >= AUFPRALL_REFERENZ_G)
-        {
-            return true;
-        }
-        let (Some(n), Some(kg)) = (self.fahrwerkskraft_n, self.landegewicht_kg) else {
-            return false;
-        };
-        if !n.is_finite() || !kg.is_finite() || kg <= 0.0 {
-            return false;
-        }
-        const ERDBESCHLEUNIGUNG: f64 = 9.806_65;
-        let standkraft = kg * ERDBESCHLEUNIGUNG;
-        (n as f64) >= standkraft * AUFPRALL_LASTVIELFACHES
-    }
-}
-
-/// Alle Sinkraten-Messungen eines Aufsetzers, roh.
-#[derive(Debug, Clone, Copy, Default)]
-struct Sinkratenquellen {
-    /// Gerasteter SimVar-Wert (MSFS: PLANE TOUCHDOWN NORMAL VELOCITY).
-    gerastet: Option<f32>,
-    /// Der X-Plane-Schaetzer samt Fensterbreite.
-    schaetzer_xp: Option<(f32, i64)>,
-    /// Der MSFS-Schaetzer.
-    schaetzer_msfs: Option<f32>,
-    /// Fahrwerkskontakt-Abtaster.
-    abtaster: Option<f32>,
-    /// Kleinster Wert im Puffer.
-    puffer_min: Option<f32>,
-    /// Kleinster Wert unter 500 ft.
-    tief_agl_min: Option<f32>,
-    /// Letztes Sample unter 500 ft — SCHON auf 15 Sekunden gefiltert.
-    letztes_tief: Option<f32>,
-}
-
-/// Welche Quellen die Notrettung je Simulator ueberhaupt ansehen darf.
-///
-/// ⚠ Dieselben Ausschluesse wie die regulaere Kette — sonst macht die
-/// Rettung genau die Messung zum veroeffentlichten Wert, die eine Zeile
-/// darueber als unzuverlaessig verworfen wurde. Aus der QS (31.08.2026):
-///
-/// * **MSFS** verwirft `abtaster` und `tief_agl_min` (Rueckstoss-Spitzen
-///   beim Fahrwerkskontakt) und kennt den X-Plane-Schaetzer nicht.
-/// * **X-Plane** nimmt seinen Schaetzer nur mit Fenster unter 3000 ms —
-///   ein breiteres Fenster spannt den ganzen Anflug und glaettet die
-///   Aufsetz-Sinkrate weg. Den MSFS-Schaetzer kennt er nicht.
-fn rettungskandidaten(q: &Sinkratenquellen, ist_msfs: bool, ist_xplane: bool) -> Vec<Option<f32>> {
-    let schaetzer_xp_plausibel = q
-        .schaetzer_xp
-        .filter(|(_, fenster)| *fenster < 3000)
-        .map(|(v, _)| v);
-    if ist_msfs {
-        vec![q.gerastet, q.schaetzer_msfs, q.puffer_min, q.letztes_tief]
-    } else if ist_xplane {
-        vec![
-            schaetzer_xp_plausibel,
-            q.letztes_tief,
-            q.abtaster,
-            q.puffer_min,
-            q.tief_agl_min,
-        ]
-    } else {
-        // Unbekannter Simulator — wie die regulaere Kette dort.
-        vec![q.gerastet, q.schaetzer_msfs, q.abtaster, q.puffer_min]
-    }
-}
-
-/// Die tiefste vorliegende Sinkrate aus mehreren Messungen.
-///
-/// `None`, wenn keine einzige negativ ist — dann gab es wirklich nichts
-/// zu retten.
-///
-/// # Warum es diese Funktion gibt
-///
-/// ⚠ Eine gespeicherte 0 ist eine AUSSAGE („aufgesetzt ohne Sinkrate"),
-/// und bei einem Aufprall ist sie falsch. An ihr haengt alles
-/// Nachgelagerte: phpVMS uebernimmt sie als `landing_rate`, der Score
-/// faellt auf 0, und die Wartung feuert nicht.
-///
-/// Gemeldet an SRR318 (LIMJ, 31.08.2026): 12,2 g Spitze, 4 Meganewton
-/// Fahrwerkskraft, 168 kt — und `vs_fpm = 0`, waehrend SIEBEN andere
-/// Messungen zwischen −1389 und −3307 fpm im selben Datensatz standen.
-///
-/// Der Rueckfall ist bewusst grob. Er soll nicht die beste Zahl finden,
-/// sondern verhindern, dass ein Aufprall als „0 fpm" durchgeht.
-fn tiefste_sinkrate(messungen: &[Option<f32>]) -> Option<f32> {
-    messungen
-        .iter()
-        .flatten()
-        .copied()
-        .filter(|v| v.is_finite() && *v < 0.0)
-        .reduce(f32::min)
-}
 
 fn negative_only(value: Option<f32>) -> Option<f32> {
     value.filter(|v| v.is_finite() && *v < 0.0)
@@ -30855,64 +30651,51 @@ fn step_flight_at(
                 //    Der erste Entwurf nahm alles ohne Ansehen —
                 //    ausgerechnet die Quellen, die die regulaere Kette
                 //    als unzuverlaessig verwirft.
-                // ⚠ Nur bei einem echten Aufprall — und nur mit den
-                // Quellen, die dieser Simulator ueberhaupt zulaesst.
-                // Beides steht bei `Aufprallbeleg` und
-                // `rettungskandidaten`; beides kam aus der QS.
-                // ⚠ Der Simulator kommt aus den lokalen Flaggen, nicht
-                // aus `stats` — dort steht er erst weiter unten (siehe
-                // `Aufprallbeleg::aus_zustand`).
-                let beleg = Aufprallbeleg::aus_zustand(
-                    &stats,
-                    Some(if is_msfs {
-                        "msfs"
-                    } else if is_xplane {
-                        "xplane"
-                    } else {
-                        "other"
-                    }),
-                    snap.gear_normal_force_n,
-                );
-                let (touchdown_vs, vs_source) = if touchdown_vs == 0.0 && beleg.ist_aufprall() {
-                    let quellen = Sinkratenquellen {
-                        gerastet: negative_only(snap.touchdown_vs_fpm),
-                        schaetzer_xp: agl_estimate_xp.map(|e| (e.fpm, e.window_ms)),
-                        schaetzer_msfs: agl_estimate_msfs.map(|e| e.fpm),
-                        abtaster: negative_only(stats.sampler_touchdown_vs_fpm),
-                        puffer_min: negative_only(buffered_vs_min),
-                        tief_agl_min: negative_only(stats.low_agl_vs_min_fpm),
-                        letztes_tief: stats
-                            .last_low_agl_vs_fpm
-                            .filter(|(_, ts)| (now - *ts).num_seconds() <= 15)
-                            .map(|(v, _)| v),
-                    };
-                    let kandidaten = rettungskandidaten(&quellen, is_msfs, is_xplane);
-                    match tiefste_sinkrate(&kandidaten) {
-                        Some(tiefste) => {
-                            tracing::warn!(
-                                gerettet = tiefste,
-                                zuvor = vs_source,
-                                referenz_g = ?beleg.referenz_g,
-                                fahrwerkskraft = ?beleg.fahrwerkskraft_n,
-                                landegewicht = ?beleg.landegewicht_kg,
-                                "touchdown VS war 0 bei einem Aufprall — tiefste zulaessige Messung genommen"
-                            );
-                            (tiefste, "notrettung_tiefste_messung")
-                        }
-                        None => (0.0, vs_source),
-                    }
-                } else {
-                    (touchdown_vs, vs_source)
-                };
-
+                // ⚠ Eine gespeicherte 0 ist eine AUSSAGE — und sie muss
+                // erklaerbar sein.
+                //
+                // Bei SRR318 (LIMJ, 31.08.2026) stand hier 0, waehrend
+                // sieben Messungen zwischen -1389 und -3307 fpm im selben
+                // Datensatz lagen. phpVMS bekam `landing_rate = NULL`,
+                // der Score wurde 0, die Wartung feuerte nicht.
+                //
+                // Die Ursache war NICHT eine fehlende Notrettung, sondern
+                // dass Wert und Quellenangabe aus ZWEI Ketten kamen und
+                // auseinanderliefen — die Quelle meldete einen Zweig, der
+                // bei -1389 niemals 0 ergeben kann. Seit beides aus EINER
+                // Entscheidung faellt, ist der Widerspruch unmoeglich:
+                // Was ein Zweig liefert, wird gespeichert, und die
+                // Quellenangabe beschreibt genau ihn.
+                //
+                // ⚠ Eine Notrettung aus den ausgeschlossenen Quellen gab
+                // es hier zwischenzeitlich; sie ist wieder RAUS. Vier
+                // QS-Runden haben gezeigt, dass sie ihre Belege an dieser
+                // Stelle gar nicht haben kann: Die Kraftspitze
+                // (`landing_analysis.max_gear_force_n`) entsteht erst
+                // nach `TOUCHDOWN_POST_WINDOW_MS` — zehn Sekunden
+                // spaeter. Ein Riegel, der auf Werte wartet, die es noch
+                // nicht gibt, oeffnet entweder nie oder zur falschen
+                // Zeit; und die Quellen, aus denen er schoepfen wollte,
+                // verwirft die regulaere Kette mit Grund
+                // (Rueckstoss-Spitzen beim Fahrwerkskontakt).
+                //
+                // Bleibt es bei 0, heisst das jetzt ehrlich: ALLE
+                // zulaessigen Quellen waren leer oder positiv. Die
+                // Meldung nennt sie einzeln, damit der naechste Fall in
+                // einer Minute statt an einem Nachmittag zu klaeren ist.
                 if touchdown_vs == 0.0 {
                     tracing::warn!(
                         sim = ?snap.simulator,
-                        sampler_vs = ?stats.sampler_touchdown_vs_fpm,
-                        latched = ?snap.touchdown_vs_fpm,
-                        buffer_min = ?buffered_vs_min,
-                        low_agl_min = ?stats.low_agl_vs_min_fpm,
-                        "touchdown VS — alle Quellen leer oder positiv, bleibt 0"
+                        quelle = vs_source,
+                        gerastet = ?snap.touchdown_vs_fpm,
+                        schaetzer_xp = ?agl_estimate_xp.map(|e| (e.fpm, e.window_ms)),
+                        schaetzer_msfs = ?agl_estimate_msfs.map(|e| e.fpm),
+                        abtaster = ?stats.sampler_touchdown_vs_fpm,
+                        puffer_min = ?buffered_vs_min,
+                        tief_agl_min = ?stats.low_agl_vs_min_fpm,
+                        letztes_tief = ?stats.last_low_agl_vs_fpm,
+                        peak_g = ?stats.landing_peak_g_force,
+                        "touchdown VS bleibt 0 — alle zulaessigen Quellen leer oder positiv"
                     );
                 }
                 stats.landing_simulator = Some(if is_msfs {
@@ -53023,415 +52806,56 @@ mod wiederaufnahme_langstrecke_tests {
         );
     }
 
-    /// Eine 0 darf nicht stehenbleiben, wenn Messungen vorliegen.
+    /// Eine gespeicherte 0 muss ALLE Quellen nennen.
     ///
-    /// ⚠ Der Fall SRR318 (LIMJ, 31.08.2026): 12,2 g, 4 Meganewton
-    /// Fahrwerkskraft — und `vs_fpm = 0`, waehrend sieben Messungen
-    /// zwischen −1389 und −3307 fpm im selben Datensatz standen. phpVMS
-    /// bekam `landing_rate = NULL`, der Score wurde 0, und die Wartung
-    /// feuerte nicht.
-    #[test]
-    fn die_tiefste_messung_rettet_einen_aufprall() {
-        // Die echten Werte aus dem Datensatz.
-        let gemessen = [
-            Some(-3007.44_f32), // vs_at_edge (SimVar im Kontaktmoment)
-            Some(-1389.0),      // Schaetzer X-Plane
-            Some(-1381.0),      // Schaetzer MSFS
-            None,
-            Some(-3306.97), // Spitze vor dem Abfangen
-        ];
-        assert_eq!(tiefste_sinkrate(&gemessen), Some(-3306.97));
-    }
-
-    #[test]
-    fn ohne_eine_einzige_messung_wird_nichts_erfunden() {
-        assert_eq!(tiefste_sinkrate(&[]), None);
-        assert_eq!(tiefste_sinkrate(&[None, None]), None);
-        // ⚠ Positive Werte sind KEINE Sinkrate — ein steigendes
-        // Flugzeug ist nicht aufgeschlagen. Sie duerfen die Rettung
-        // nicht ausloesen.
-        assert_eq!(tiefste_sinkrate(&[Some(0.0), Some(120.0)]), None);
-        // Und NaN zaehlt nicht als Messung.
-        assert_eq!(tiefste_sinkrate(&[Some(f32::NAN)]), None);
-        assert_eq!(
-            tiefste_sinkrate(&[Some(f32::NAN), Some(-50.0)]),
-            Some(-50.0)
-        );
-    }
-
-    /// Eine schwere, normale X-Plane-Landung ist KEIN Aufprall.
+    /// ⚠ Das ist der Ersatz fuer die entfernte Notrettung. Die konnte an
+    /// ihrer Stelle keine Belege haben — die Kraftspitze
+    /// (`landing_analysis.max_gear_force_n`) entsteht erst nach
+    /// `TOUCHDOWN_POST_WINDOW_MS`, also zehn Sekunden spaeter. Vier
+    /// QS-Runden haben daran fuenf Befunde gefunden.
     ///
-    /// ⚠ Der Befund aus der QS (31.08.2026): Der erste Entwurf hatte eine
-    /// absolute Kraftgrenze von 1 MN. Das ist bereits das Standgewicht
-    /// eines 102-Tonners — ein A330 mit 250 t liegt im Stand bei 2,45 MN,
-    /// ohne dass etwas passiert waere. Der Riegel haette bei jedem
-    /// schweren Flugzeug geoeffnet.
-    #[test]
-    fn eine_schwere_normale_landung_ist_kein_aufprall() {
-        // A330, 250 t, ganz normal aufgesetzt: Fahrwerk traegt das
-        // 1,4-fache seines Standgewichts, 1,3 g auf der Referenzkette.
-        let stand = 250_000.0 * 9.806_65;
-        let normal = Aufprallbeleg {
-            referenz_g: Some(1.3),
-            fahrwerkskraft_n: Some((stand * 1.4) as f32),
-            landegewicht_kg: Some(250_000.0),
-        };
-        assert!(
-            !normal.ist_aufprall(),
-            "eine normale Landung mit {:.2} MN gilt als Aufprall",
-            stand * 1.4 / 1e6
-        );
-
-        // Auch eine HARTE Landung noch nicht — der Riegel trennt einen
-        // Aufprall von einer harten Landung, nicht eine harte von einer
-        // weichen.
-        let hart = Aufprallbeleg {
-            referenz_g: Some(2.0),
-            fahrwerkskraft_n: Some((stand * 2.0) as f32),
-            landegewicht_kg: Some(250_000.0),
-        };
-        assert!(!hart.ist_aufprall());
-    }
-
-    /// SRR318 dagegen schon — auf beiden Wegen.
-    #[test]
-    fn ein_echter_aufprall_wird_erkannt() {
-        // Die gemessenen Werte: 5,88 g auf der Referenzkette,
-        // 4.005.945 N bei 129.802 kg Landegewicht (das 3,15-fache).
-        let ueber_g = Aufprallbeleg {
-            referenz_g: Some(5.88),
-            fahrwerkskraft_n: None,
-            landegewicht_kg: None,
-        };
-        assert!(
-            ueber_g.ist_aufprall(),
-            "5,88 g wurde nicht als Aufprall erkannt"
-        );
-
-        let ueber_kraft = Aufprallbeleg {
-            referenz_g: None,
-            fahrwerkskraft_n: Some(4_005_944.8),
-            landegewicht_kg: Some(129_802.0),
-        };
-        assert!(
-            ueber_kraft.ist_aufprall(),
-            "das 3,15-fache Standgewicht reichte nicht"
-        );
-
-        // Ohne Gewicht ist die Kraft nicht deutbar — dann kein Aufprall.
-        let ohne_gewicht = Aufprallbeleg {
-            referenz_g: None,
-            fahrwerkskraft_n: Some(4_005_944.8),
-            landegewicht_kg: None,
-        };
-        assert!(!ohne_gewicht.ist_aufprall());
-    }
-
-    /// Die Rettung darf nur die Quellen sehen, die der Simulator zulaesst.
-    ///
-    /// ⚠ Der zweite Befund derselben QS-Runde: Der erste Entwurf gab
-    /// beiden Simulatoren BEIDE Schaetzer und nahm den X-Plane-Schaetzer
-    /// ohne seinen Fensterfilter. Damit haette die Rettung genau die
-    /// Messung veroeffentlicht, die die regulaere Kette eine Zeile
-    /// darueber verwirft.
-    #[test]
-    fn die_rettung_sieht_nur_die_erlaubten_quellen() {
-        let q = Sinkratenquellen {
-            gerastet: Some(-100.0),
-            schaetzer_xp: Some((-900.0, 500)),
-            schaetzer_msfs: Some(-200.0),
-            abtaster: Some(-3000.0),
-            puffer_min: Some(-300.0),
-            tief_agl_min: Some(-2500.0),
-            letztes_tief: Some(-400.0),
-        };
-
-        // MSFS: Abtaster und tief_agl_min sind ausgeschlossen (Rueckstoss),
-        // der X-Plane-Schaetzer ist ihm fremd.
-        let msfs: Vec<f32> = rettungskandidaten(&q, true, false)
-            .into_iter()
-            .flatten()
-            .collect();
-        assert!(!msfs.contains(&-3000.0), "MSFS bekam den Abtaster");
-        assert!(!msfs.contains(&-2500.0), "MSFS bekam tief_agl_min");
-        assert!(!msfs.contains(&-900.0), "MSFS bekam den X-Plane-Schaetzer");
-        assert_eq!(
-            tiefste_sinkrate(&rettungskandidaten(&q, true, false)),
-            Some(-400.0)
-        );
-
-        // X-Plane: der MSFS-Schaetzer ist ihm fremd.
-        let xp: Vec<f32> = rettungskandidaten(&q, false, true)
-            .into_iter()
-            .flatten()
-            .collect();
-        assert!(!xp.contains(&-200.0), "X-Plane bekam den MSFS-Schaetzer");
-        assert!(xp.contains(&-3000.0), "X-Plane darf den Abtaster sehen");
-    }
-
-    /// Und der X-Plane-Schaetzer nur mit plausiblem Fenster.
-    ///
-    /// ⚠ Ein Fenster ueber 3000 ms spannt den ganzen Anflug statt der
-    /// Flare — der Schaetzer gibt dann einen geglaetteten Mittelwert.
-    /// Die regulaere Kette verwirft ihn dafuer; die Rettung muss das auch.
-    #[test]
-    fn ein_zu_breites_schaetzfenster_bleibt_auch_in_der_rettung_draussen() {
-        let breit = Sinkratenquellen {
-            schaetzer_xp: Some((-900.0, 9000)),
-            puffer_min: Some(-120.0),
-            ..Default::default()
-        };
-        let k: Vec<f32> = rettungskandidaten(&breit, false, true)
-            .into_iter()
-            .flatten()
-            .collect();
-        assert!(!k.contains(&-900.0), "ein 9000-ms-Fenster kam durch");
-        assert_eq!(
-            tiefste_sinkrate(&rettungskandidaten(&breit, false, true)),
-            Some(-120.0)
-        );
-
-        // Mit engem Fenster dagegen schon.
-        let eng = Sinkratenquellen {
-            schaetzer_xp: Some((-900.0, 500)),
-            ..Default::default()
-        };
-        assert_eq!(
-            tiefste_sinkrate(&rettungskandidaten(&eng, false, true)),
-            Some(-900.0)
-        );
-    }
-
-    /// Der Konstruktor rechnet die g-Last auf die Referenzkette um.
-    ///
-    /// ⚠ X-Plane misst ungefiltert, MSFS gedaempft. Roh 5,0 g aus
-    /// X-Plane sind auf der Referenzkette nur 2,74 — also **kein**
-    /// Aufprall. Ohne die Umrechnung waeren es 5,0 und der Riegel wuerde
-    /// oeffnen.
-    ///
-    /// Das ist der Test, der bei zwei Gegenproben gefehlt hat: Die
-    /// Verhaltenstests nehmen `referenz_g` direkt entgegen und sehen die
-    /// Speisung nicht, und der Quelltext-Waechter sieht nur den Aufruf.
-    /// Hier laeuft der Konstruktor mit echten Flugdaten.
-    #[test]
-    fn der_konstruktor_rechnet_auf_die_referenzkette_um() {
-        let mut s = FlightStats::new();
-        // ⚠ ABSICHTLICH NICHT gesetzt: Im Streamer steht es zum
-        // Zeitpunkt der Rettung noch nicht. Die Vorbelegung hat den
-        // Befund verdeckt (QS, 31.08.2026) — der Simulator kommt jetzt
-        // als Argument.
-        s.landing_peak_g_force = Some(5.0);
-        s.landing_weight_kg = Some(60_000.0);
-
-        let beleg = Aufprallbeleg::aus_zustand(&s, Some("xplane"), None);
-        let g = beleg.referenz_g.expect("g-Last");
-        assert!(
-            (g - 2.74).abs() < 0.05,
-            "roh 5,0 g aus X-Plane muessten rund 2,74 auf der Referenzkette \
-             sein, sind aber {g:.2} — die Umrechnung fehlt"
-        );
-        assert!(
-            !beleg.ist_aufprall(),
-            "roh 5,0 g aus X-Plane gelten als Aufprall — die Umrechnung fehlt"
-        );
-
-        // Der echte Fall dagegen schon: SRR318 hatte roh 12,22 g.
-        s.landing_peak_g_force = Some(12.224_427);
-        let beleg = Aufprallbeleg::aus_zustand(&s, Some("xplane"), None);
-        let g = beleg.referenz_g.expect("g-Last");
-        assert!((g - 5.88).abs() < 0.05, "erwartet 5,88, war {g:.2}");
-        assert!(beleg.ist_aufprall());
-    }
-
-    /// Die Glaettung darf einen Grenzfall-Aufprall nicht wegdruecken.
-    ///
-    /// ⚠ Aus der QS (31.08.2026): `scored_g_fuer_punkte` liest bevorzugt
-    /// den EMA-geglaetteten `scored_g` aus der Landungsanalyse. Fuer die
-    /// Bewertung ist das richtig, fuer eine Extremwert-Erkennung nicht.
-    ///
-    /// Mein voriger Test sah es NICHT, weil er `landing_analysis` leer
-    /// liess — dadurch fiel die Funktion zufaellig auf den Rohwert
-    /// zurueck. Im echten Ablauf ist die Analyse unmittelbar vorher
-    /// gefuellt. Hier ist sie es auch.
-    #[test]
-    fn der_rohe_extremwert_gewinnt_gegen_die_glaettung() {
-        let mut s = FlightStats::new();
-        // ⚠ ABSICHTLICH NICHT gesetzt: Im Streamer steht es zum
-        // Zeitpunkt der Rettung noch nicht. Die Vorbelegung hat den
-        // Befund verdeckt (QS, 31.08.2026) — der Simulator kommt jetzt
-        // als Argument.
-        s.landing_peak_g_force = Some(12.224_427); // → 5,88 auf der Referenzkette
-        s.landing_weight_kg = Some(129_802.0);
-        // Die Analyse ist gefuellt — und ihr geglaetteter Wert liegt
-        // deutlich unter der Schwelle.
-        s.landing_analysis = Some(serde_json::json!({ "scored_g": 1.4 }));
-
-        let beleg = Aufprallbeleg::aus_zustand(&s, Some("xplane"), None);
-        let g = beleg.referenz_g.expect("g-Last");
-        assert!(
-            (g - 5.88).abs() < 0.05,
-            "die Glaettung hat gewonnen: {g:.2} statt 5,88"
-        );
-        assert!(
-            beleg.ist_aufprall(),
-            "ein 12,2-g-Aufprall rutschte unter die Schwelle"
-        );
-    }
-
-    /// Der Kraftweg nimmt die gemessene Spitze, nicht den Augenblickswert.
-    ///
-    /// ⚠ Ebenfalls aus der QS: `compute_landing_analysis` sucht
-    /// `max_gear_force_n` ueber die Sekunde nach dem Aufsetzen. Der Wert
-    /// im Schnappschuss gehoert zum gerade laufenden Tick — der kann
-    /// laengst wieder beim Standgewicht liegen.
-    #[test]
-    fn der_kraftweg_nimmt_die_spitze_nicht_den_augenblick() {
-        let gewicht = 129_802.0_f64;
-        let stand = (gewicht * 9.806_65) as f32;
-
-        let mut s = FlightStats::new();
-        // ⚠ ABSICHTLICH NICHT gesetzt: Im Streamer steht es zum
-        // Zeitpunkt der Rettung noch nicht. Die Vorbelegung hat den
-        // Befund verdeckt (QS, 31.08.2026) — der Simulator kommt jetzt
-        // als Argument.
-        s.landing_weight_kg = Some(gewicht);
-        // Keine g-Last — es soll allein der Kraftweg entscheiden.
-        s.landing_peak_g_force = None;
-        s.landing_analysis = Some(serde_json::json!({
-            "max_gear_force_n": stand * 3.15
-        }));
-
-        // Der Augenblickswert liegt wieder beim Standgewicht.
-        let beleg = Aufprallbeleg::aus_zustand(&s, Some("xplane"), Some(stand));
-        assert!(
-            beleg.ist_aufprall(),
-            "die gemessene Spitze wurde ignoriert — der Augenblickswert gewann"
-        );
-
-        // Ohne Spitze in der Analyse bleibt der Augenblickswert der
-        // Rueckfall — und der belegt hier keinen Aufprall.
-        s.landing_analysis = None;
-        let beleg = Aufprallbeleg::aus_zustand(&s, Some("xplane"), Some(stand));
-        assert!(!beleg.ist_aufprall());
-    }
-
-    /// Die Umrechnung darf nicht daran haengen, dass `stats` schon
-    /// gefuellt ist.
-    ///
-    /// ⚠ Der Befund der dritten QS-Runde: Im Streamer wird
-    /// `stats.landing_simulator` erst 43 Zeilen NACH der Rettung
-    /// gesetzt. Zum Zeitpunkt der Rettung ist es beim ersten Aufsetzer
-    /// `None`, und `g_auf_referenzkette` gibt dann unveraendert zurueck
-    /// — ein roher X-Plane-Wert von 5,0 g wuerde als Aufprall gelten.
-    ///
-    /// Die vorigen Tests sahen es nicht, weil sie `landing_simulator`
-    /// vorbelegten. Hier steht es ausdruecklich NICHT drin.
-    #[test]
-    fn die_umrechnung_haengt_nicht_an_einem_spaeter_gesetzten_feld() {
-        let mut s = FlightStats::new();
-        assert!(
-            s.landing_simulator.is_none(),
-            "der Test taugt nur mit leerem Feld"
-        );
-        s.landing_peak_g_force = Some(5.0);
-        s.landing_weight_kg = Some(60_000.0);
-        s.landing_analysis = Some(serde_json::json!({ "scored_g": 1.2 }));
-
-        // Der Simulator kommt als Argument — wie im Streamer aus den
-        // lokalen Flaggen.
-        let beleg = Aufprallbeleg::aus_zustand(&s, Some("xplane"), None);
-        let g = beleg.referenz_g.expect("g-Last");
-        assert!(
-            (g - 2.74).abs() < 0.05,
-            "ohne gefuelltes `stats.landing_simulator` blieb die Umrechnung \
-             aus: {g:.2} statt 2,74"
-        );
-        assert!(!beleg.ist_aufprall());
-    }
-
-    /// Und die Aufrufstelle muss den Simulator wirklich uebergeben.
-    ///
-    /// Die Nadel wird mit `format!` gebaut, sonst faende der Waechter
-    /// sich selbst.
-    #[test]
-    fn die_aufrufstelle_speist_den_simulator_aus_den_lokalen_flaggen() {
-        let quelle = ohne_leerraum(LIB_QUELLE);
-        // Sie darf das spaeter gesetzte Feld NICHT benutzen.
-        let feld = ohne_leerraum(&format!(
-            "Aufprallbeleg{}aus_zustand(&stats,stats.landing_simulator",
-            "::"
-        ));
-        assert!(
-            !quelle.contains(&feld),
-            "die Aufrufstelle liest `stats.landing_simulator` — das steht \
-             dort erst spaeter"
-        );
-        // Und sie muss die lokalen Flaggen benutzen.
-        let flaggen = ohne_leerraum(&format!("Some(if is_{} {{", "msfs"));
-        assert!(
-            quelle.contains(&flaggen),
-            "die Aufrufstelle speist den Simulator nicht aus den lokalen Flaggen"
-        );
-    }
-
-    /// Der Beleg wird ueber den Konstruktor gebaut, nicht von Hand.
-    ///
-    /// ⚠ Nur er rechnet die g-Last auf die Referenzkette. Ein von Hand
-    /// gebauter Beleg an der Aufrufstelle koennte das rohe `peak_g`
-    /// einspeisen — und ein rohes X-Plane-3,0 entspricht dort nur 1,87.
-    /// Genau diese Verwechslung blieb bei der ersten Gegenprobe
-    /// unbemerkt, weil die Verhaltenstests `referenz_g` direkt
-    /// entgegennehmen.
+    /// Statt zu raten, macht die Meldung den Fall erklaerbar: Wenn eine 0
+    /// gespeichert wird, steht im Protokoll, welche Quelle was hatte.
+    /// Bei SRR318 haette das den Nachmittag auf eine Minute verkuerzt.
     ///
     /// Die Nadeln werden mit `format!` gebaut, sonst faende der Waechter
     /// sich selbst.
     #[test]
-    fn der_aufprallbeleg_kommt_aus_dem_konstruktor() {
+    fn eine_gespeicherte_null_nennt_alle_quellen() {
         let quelle = ohne_leerraum(LIB_QUELLE);
-        let ruf = ohne_leerraum(&format!("Aufprallbeleg{}aus_zustand(&stats,", "::"));
-        assert!(
-            quelle.contains(&ruf),
-            "der Beleg wird nicht mehr ueber den Konstruktor gebaut"
-        );
-        // Und nirgends von Hand mit einem eigenen g-Wert.
-        let handbau = ohne_leerraum(&format!("Aufprallbeleg {}\n referenz_g", "{"));
-        assert!(
-            !quelle.contains(&ohne_leerraum(&format!(
-                "Aufprallbeleg{}referenz_g:scored",
-                "{"
-            ))),
-            "der Beleg wird an der Aufrufstelle von Hand gebaut"
-        );
-        let _ = handbau;
+        for feld in [
+            "gerastet",
+            "schaetzer_xp",
+            "schaetzer_msfs",
+            "abtaster",
+            "puffer_min",
+            "tief_agl_min",
+            "letztes_tief",
+        ] {
+            let nadel = ohne_leerraum(&format!("{feld} = ?"));
+            assert!(
+                quelle.contains(&nadel),
+                "die Meldung bei einer gespeicherten 0 nennt {feld} nicht — \
+                 der naechste Fall waere wieder nicht zu klaeren"
+            );
+        }
     }
 
-    /// Die Rettung muss auch WIRKLICH aufgerufen werden.
+    /// Und es darf keine Notrettung zurueckkommen, ohne dass es auffaellt.
     ///
-    /// ⚠ Eine Gegenprobe am 31.08.2026 hat gezeigt, dass die Tests der
-    /// Funktion allein nicht reichen: Der Aufruf liess sich auf `false`
-    /// setzen und alles blieb gruen. Geprueft war das Werkzeug, nicht
-    /// sein Einbau — dieselbe Luecke wie beim Nullpunkt-Feld am selben
-    /// Tag.
-    ///
-    /// Die Nadeln werden mit `format!` gebaut, sonst faende der Waechter
-    /// sich selbst.
+    /// ⚠ Sie ist nach vier QS-Runden bewusst entfernt worden: Sie kann an
+    /// dieser Stelle keine Belege haben, und die Quellen, aus denen sie
+    /// schoepfen wollte, verwirft die regulaere Kette mit Grund
+    /// (Rueckstoss-Spitzen beim Fahrwerkskontakt). Wer sie wiederbelebt,
+    /// muss sie ans Ende des Nachlaufs setzen — nicht hierher.
     #[test]
-    fn die_rettung_haengt_an_der_null_und_wird_aufgerufen() {
+    fn keine_stille_notrettung_im_aufsetz_tick() {
         let quelle = ohne_leerraum(LIB_QUELLE);
-        let bedingung = ohne_leerraum(&format!(
-            "let (touchdown_vs, vs_source) = if touchdown_vs == {} && beleg.ist_aufprall()",
-            "0.0"
-        ));
+        let nadel = ohne_leerraum(&format!("notrettung_tiefste{}", "_messung"));
         assert!(
-            quelle.contains(&bedingung),
-            "die Rettung haengt nicht mehr an der 0 UND einem Aufprall — \
-             entweder koennte ein Aufprall wieder als „0 fpm\" durchgehen, \
-             oder eine normale Landung wird zur Hartlandung"
-        );
-        let aufruf = ohne_leerraum(&format!("tiefste_sinkrate(&{}", "["));
-        assert!(
-            quelle.contains(&aufruf),
-            "die Rettung wird nirgends aufgerufen"
+            !quelle.contains(&nadel),
+            "die Notrettung ist zurueck — sie kann im Aufsetz-Tick keine \
+             Belege haben (Kraftspitze entsteht erst 10 s spaeter)"
         );
     }
 
