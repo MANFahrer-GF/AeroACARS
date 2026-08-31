@@ -62,7 +62,11 @@ fn was_die_uebernahme_am_bestand_bewirkt() {
             continue;
         };
         let nav = aeroacars_app_lib::szenerie_bahn::test_navairport(icao, bahnen);
-        let (aus, b) = aeroacars_app_lib::szenerie_bahn::uebernimm_szenerie(&nav, &sz);
+        let (aus, b) = aeroacars_app_lib::szenerie_bahn::uebernimm_szenerie(
+            &nav,
+            &sz,
+            aeroacars_app_lib::szenerie_bahn::Quelle::XPlaneDatei,
+        );
         geprueft += nav.runways.len();
         uebernommen += b.uebernommen.len();
         verworfen += b.verworfen.len();

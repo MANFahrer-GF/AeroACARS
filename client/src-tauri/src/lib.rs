@@ -6624,6 +6624,20 @@ fn estimate_xplane_touchdown_vs_from_agl(
 /// Plugin / buffer values can briefly read positive due to gear
 /// oscillation rebound; we never want those as the published
 /// landing rate.
+/// Ab welcher Spitzen-g-Last eine Landung als Aufprall gilt.
+///
+/// ⚠ Nur fuer die Notrettung der Sinkrate — nicht fuer die Bewertung.
+/// Die Schwelle ist bewusst hoch: Sie soll einen Aufprall von einer
+/// harten Landung trennen, nicht eine harte von einer weichen. Bei
+/// SRR318 waren es 12,2 g.
+const AUFPRALL_G_SCHWELLE: f32 = 3.0;
+
+/// Oder ab welcher Fahrwerkskraft. Nur X-Plane liefert sie.
+///
+/// Eine Million Newton sind rund 100 Tonnen — das erreicht keine
+/// normale Landung. Bei SRR318 waren es 4.005.945 N.
+const AUFPRALL_FAHRWERKSKRAFT_N: f32 = 1_000_000.0;
+
 /// Die tiefste vorliegende Sinkrate aus mehreren Messungen.
 ///
 /// `None`, wenn keine einzige negativ ist — dann gab es wirklich nichts
@@ -11628,14 +11642,22 @@ fn szenerie_status(stats: &FlightStats) -> String {
         .map(|a| a.bahnen.len())
         .filter(|n| *n > 0)
     {
-        let (ohne, verworfen) = stats
-            .szenerie_uebernahme
-            .as_ref()
-            .map(|b| (b.ohne_treffer.len(), b.verworfen.len()))
-            .unwrap_or((0, 0));
-        return format!(
-            "kein_treffer(bahnen={anzahl}, ohne_treffer={ohne}, verworfen={verworfen})"
-        );
+        // ⚠ NUR melden, wenn ein Vergleich wirklich gelaufen ist.
+        //
+        // Ohne Uebernahmebericht gab es keinen — etwa weil die Navdaten
+        // fehlten oder die Auskunft zu einem anderen Platz gehoerte
+        // (nach einem Divert liegt die des geplanten Ziels da). Ein
+        // `ohne_treffer=0, verworfen=0` waere dann eine erfundene
+        // Nullmessung und wuerde ausgerechnet die Ursache verdecken,
+        // die diese Meldung sichtbar machen soll.
+        return match stats.szenerie_uebernahme.as_ref() {
+            Some(b) => format!(
+                "kein_treffer(bahnen={anzahl}, ohne_treffer={}, verworfen={})",
+                b.ohne_treffer.len(),
+                b.verworfen.len()
+            ),
+            None => format!("auskunft_ohne_vergleich(bahnen={anzahl})"),
+        };
     }
     match stats.szenerie_diagnose.as_deref() {
         Some(d) => d.to_string(),
@@ -30649,35 +30671,63 @@ fn step_flight_at(
                 // ⚠ Eine 0 ist eine AUSSAGE — und bei einem Aufprall
                 // eine falsche.
                 //
-                // Kommt die Kette auf 0, obwohl IRGENDEINE Messung eine
-                // Sinkrate hat, wird die tiefste davon genommen. Bei
-                // SRR318 standen sieben Messungen zwischen −1389 und
-                // −3307 fpm bereit, waehrend 0 gespeichert wurde.
+                // Bei SRR318 (LIMJ, 31.08.2026) standen sieben Messungen
+                // zwischen −1389 und −3307 fpm bereit, waehrend 0
+                // gespeichert wurde. phpVMS bekam `landing_rate = NULL`,
+                // der Score wurde 0, die Wartung feuerte nicht.
                 //
-                // Der Rueckfall ist bewusst grob: Er soll nicht die
-                // beste Zahl finden, sondern verhindern, dass ein
-                // Aufprall als „0 fpm" durchgeht und die Wartung
-                // ausbleibt.
-                let (touchdown_vs, vs_source) = if touchdown_vs == 0.0 {
-                    let tiefste = tiefste_sinkrate(&[
+                // ⚠⚠ ZWEI Riegel, beide aus der QS (31.08.2026):
+                //
+                // 1. **Nur bei einem Aufprall.** Der erste Entwurf lief
+                //    bei JEDER Landung mit fehlender Primaermessung —
+                //    eine normale Landung waere so zur Hartlandung
+                //    geworden. Es braucht ein Zeichen echter Wucht.
+                //
+                // 2. **Dieselben Ausschluesse wie die regulaere Kette.**
+                //    Der MSFS-Zweig schliesst `sampler_touchdown_vs_fpm`
+                //    und `low_agl_vs_min_fpm` ausdruecklich aus
+                //    (Rueckstoss-Spitzen beim Fahrwerkskontakt), und
+                //    `last_low_agl_vs_fpm` gilt nur binnen 15 Sekunden.
+                //    Der erste Entwurf nahm alles ohne Ansehen —
+                //    ausgerechnet die Quellen, die die regulaere Kette
+                //    als unzuverlaessig verwirft.
+                let wucht = stats
+                    .landing_peak_g_force
+                    .is_some_and(|g| g >= AUFPRALL_G_SCHWELLE)
+                    || snap
+                        .gear_normal_force_n
+                        .is_some_and(|n| n >= AUFPRALL_FAHRWERKSKRAFT_N);
+                let (touchdown_vs, vs_source) = if touchdown_vs == 0.0 && wucht {
+                    // Die 15-Sekunden-Grenze gilt hier genauso.
+                    let letztes_tief = stats
+                        .last_low_agl_vs_fpm
+                        .filter(|(_, ts)| (now - *ts).num_seconds() <= 15)
+                        .map(|(v, _)| v);
+                    let mut kandidaten = vec![
                         negative_only(snap.touchdown_vs_fpm),
                         agl_estimate_xp.map(|e| e.fpm),
                         agl_estimate_msfs.map(|e| e.fpm),
-                        negative_only(stats.sampler_touchdown_vs_fpm),
                         negative_only(buffered_vs_min),
-                        negative_only(stats.low_agl_vs_min_fpm),
-                        stats.last_low_agl_vs_fpm.map(|(v, _)| v),
-                    ]);
-                    if let Some(tiefste) = tiefste {
-                        tracing::warn!(
-                            gerettet = tiefste,
-                            zuvor = vs_source,
-                            peak_g = ?stats.landing_peak_g_force,
-                            "touchdown VS war 0, obwohl Messungen vorlagen — tiefste genommen"
-                        );
-                        (tiefste, "notrettung_tiefste_messung")
-                    } else {
-                        (0.0, vs_source)
+                        letztes_tief,
+                    ];
+                    // Nur ausserhalb von MSFS: dort verwirft die
+                    // regulaere Kette diese beiden bewusst.
+                    if !is_msfs {
+                        kandidaten.push(negative_only(stats.sampler_touchdown_vs_fpm));
+                        kandidaten.push(negative_only(stats.low_agl_vs_min_fpm));
+                    }
+                    match tiefste_sinkrate(&kandidaten) {
+                        Some(tiefste) => {
+                            tracing::warn!(
+                                gerettet = tiefste,
+                                zuvor = vs_source,
+                                peak_g = ?stats.landing_peak_g_force,
+                                fahrwerkskraft = ?snap.gear_normal_force_n,
+                                "touchdown VS war 0 bei einem Aufprall — tiefste Messung genommen"
+                            );
+                            (tiefste, "notrettung_tiefste_messung")
+                        }
+                        None => (0.0, vs_source),
                     }
                 } else {
                     (touchdown_vs, vs_source)
@@ -52851,13 +52901,14 @@ mod wiederaufnahme_langstrecke_tests {
     fn die_rettung_haengt_an_der_null_und_wird_aufgerufen() {
         let quelle = ohne_leerraum(LIB_QUELLE);
         let bedingung = ohne_leerraum(&format!(
-            "let (touchdown_vs, vs_source) = if touchdown_vs == {}",
-            "0.0 {"
+            "let (touchdown_vs, vs_source) = if touchdown_vs == {} && wucht",
+            "0.0"
         ));
         assert!(
             quelle.contains(&bedingung),
-            "die Rettung haengt nicht mehr an der 0 — ein Aufprall koennte \
-             wieder als „0 fpm\" durchgehen"
+            "die Rettung haengt nicht mehr an der 0 UND einem Aufprall — \
+             entweder koennte ein Aufprall wieder als „0 fpm\" durchgehen, \
+             oder eine normale Landung wird zur Hartlandung"
         );
         let aufruf = ohne_leerraum(&format!("tiefste_sinkrate(&{}", "["));
         assert!(
@@ -53253,6 +53304,23 @@ mod szenerie_status_tests {
             szenerie_status(&s),
             "kein_treffer(bahnen=2, ohne_treffer=0, verworfen=0)"
         );
+    }
+
+    /// Eine Auskunft ohne Vergleich darf keine Nullmessung erfinden.
+    ///
+    /// ⚠ Aus der QS (31.08.2026): Liegt eine nichtleere Auskunft vor,
+    /// aber kein Uebernahmebericht — fehlende Navdaten, oder die
+    /// Auskunft gehoert nach einem Divert zum geplanten statt zum
+    /// tatsaechlichen Platz —, dann hat NIE ein Vergleich
+    /// stattgefunden. Ein `ohne_treffer=0, verworfen=0` waere erfunden
+    /// und wuerde genau die Ursache verdecken, die die Meldung zeigen
+    /// soll.
+    #[test]
+    fn eine_auskunft_ohne_vergleich_erfindet_keine_nullmessung() {
+        let mut s = FlightStats::new();
+        s.szenerie_auskunft = Some(auskunft(40));
+        // kein Uebernahmebericht
+        assert_eq!(szenerie_status(&s), "auskunft_ohne_vergleich(bahnen=40)");
     }
 
     /// Die Meldung muss sagen, WORAN es lag.

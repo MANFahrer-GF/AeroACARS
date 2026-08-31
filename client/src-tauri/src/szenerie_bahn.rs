@@ -347,7 +347,34 @@ mod plausibel {
 pub fn uebernimm_szenerie(
     nav: &NavAirport,
     sz: &SzenerieFlughafen,
+    quelle: Quelle,
 ) -> (NavAirport, UebernahmeBericht) {
+    // ⚠ Was uebernommen werden darf, haengt an der QUELLE.
+    //
+    // X-Plane meldet beide Schwellen als Koordinaten; die `apt.dat`
+    // dokumentiert sie als rechtweisend. Da ist alles belastbar.
+    //
+    // MSFS meldet nur MITTE, KURS und LAENGE — die Schwellen rechnen WIR
+    // daraus. Und die Facility-Doku sagt zu `HEADING` nur „the runway
+    // heading, in degrees"; ob missweisend oder rechtweisend, steht
+    // nirgends. (Die Runway-XML-Doku nennt True North, aber das ist ein
+    // anderes Format und beweist nichts ueber die Facility-API.)
+    //
+    // Seit v1.7.13 verhindert eine Kursabweichung die Zuordnung NICHT
+    // mehr — das war noetig, damit ueberhaupt zugeordnet wird. Genau
+    // dadurch wuerde ein falscher Kurs aber jetzt UEBERNOMMEN, und aus
+    // „keine Bewertung" wuerde eine falsche. Deshalb gilt fuer MSFS:
+    //
+    //   uebernommen  — Laenge, Breite, versetzte Schwelle, Belag
+    //                  (direkt gemeldet, bezugsfrei)
+    //   NICHT        — Kurs und beide Schwellenkoordinaten
+    //                  (aus dem Kurs gerechnet, Bezug unbewiesen)
+    //
+    // Die Abweichung wird trotzdem gemessen und mitgeschrieben. Sobald
+    // der Bestand zeigt, dass sie der oertlichen Missweisung entspricht
+    // (oder eben nicht), ist die Frage entschieden — dann kann der
+    // Riegel fallen.
+    let achse_belastbar = quelle == Quelle::XPlaneDatei;
     let mut aus = nav.clone();
     let mut b = UebernahmeBericht::default();
 
@@ -378,8 +405,10 @@ pub fn uebernimm_szenerie(
         // ⚠ JEDES Feld geht durch `plausibel::`. Kein Wert aus der
         // Szenerie ersetzt einen Navdaten-Wert, ohne geprueft zu sein —
         // siehe die Begruendung am Modul.
-        if let Some(k) = plausibel::kurs_grad(s.kurs_grad) {
-            bahn.true_course = k;
+        if achse_belastbar {
+            if let Some(k) = plausibel::kurs_grad(s.kurs_grad) {
+                bahn.true_course = k;
+            }
         }
         if let Some(l) = plausibel::strecke_m(s.laenge_m) {
             bahn.length_ft = (l / 0.3048).round() as i32;
@@ -395,13 +424,15 @@ pub fn uebernimm_szenerie(
             }
             bahn.displaced_threshold_ft = (v / 0.3048).round() as i32;
         }
-        if let Some((lat, lon)) = plausibel::koordinate(s.schwelle) {
-            bahn.threshold.lat = lat;
-            bahn.threshold.lon = lon;
-        }
-        if let Some((lat, lon)) = plausibel::koordinate(s.gegenende) {
-            bahn.far_end.lat = lat;
-            bahn.far_end.lon = lon;
+        if achse_belastbar {
+            if let Some((lat, lon)) = plausibel::koordinate(s.schwelle) {
+                bahn.threshold.lat = lat;
+                bahn.threshold.lon = lon;
+            }
+            if let Some((lat, lon)) = plausibel::koordinate(s.gegenende) {
+                bahn.far_end.lat = lat;
+                bahn.far_end.lon = lon;
+            }
         }
         // Der Belag ist der EINE Wert, den die Szenerie nicht bestimmt.
         //
@@ -510,7 +541,7 @@ mod tests {
         // 87,0 magnetisch abgeleiteter Platzhalter), die Szenerie 93,72.
         let nav = edhe_nav();
         let sz = szenerie("09", 93.72, 55.0, (53.6459, 9.6942));
-        let (aus, b) = uebernimm_szenerie(&nav, &sz);
+        let (aus, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
         assert_eq!(b.uebernommen, vec!["09"]);
         assert!((aus.runways[0].true_course - 93.72).abs() < 0.001);
         assert_eq!(aus.runways[0].width_ft, Some(180)); // 55 m
@@ -528,7 +559,7 @@ mod tests {
         let mut nav = edhe_nav();
         nav.runways[0].glideslope_angle = 3.2;
         let sz = szenerie("09", 93.72, 55.0, (53.6459, 9.6942));
-        let (aus, _) = uebernimm_szenerie(&nav, &sz);
+        let (aus, _) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
         assert!((aus.runways[0].glideslope_angle - 3.2).abs() < 1e-9);
         assert_eq!(aus.runways[0].magnetic_course, 87.0);
     }
@@ -539,7 +570,7 @@ mod tests {
         // reicht nicht. Fuenf Kilometer entfernt ist es eine andere Bahn.
         let nav = edhe_nav();
         let sz = szenerie("09", 93.72, 55.0, (53.7000, 9.6942));
-        let (aus, b) = uebernimm_szenerie(&nav, &sz);
+        let (aus, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
         assert_eq!(b.verworfen, vec!["09"]);
         assert!(b.uebernommen.is_empty());
         assert!(
@@ -558,7 +589,7 @@ mod tests {
         // damit ausgerechnet den schlimmsten Fall stehen lassen.
         let nav = edhe_nav();
         let sz = szenerie("09", 224.99, 55.0, (53.6459, 9.6942));
-        let (aus, b) = uebernimm_szenerie(&nav, &sz);
+        let (aus, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
         assert_eq!(b.uebernommen, vec!["09"]);
         assert!((aus.runways[0].true_course - 224.99).abs() < 0.001);
     }
@@ -620,7 +651,7 @@ mod tests {
 
         for abweichung in [0.0_f64, 3.0, -3.0, 11.0, -11.0] {
             let sz = szenerie_aus_mitte("09", mitte, echt + abweichung, 1100.0);
-            let (_, b) = uebernimm_szenerie(&nav, &sz);
+            let (_, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
             assert_eq!(
                 b.uebernommen,
                 vec!["09"],
@@ -639,7 +670,7 @@ mod tests {
         let echt = nav.runways[0].true_course;
         for laenge in [1100.0_f64, 800.0, 1600.0] {
             let sz = szenerie_aus_mitte("09", mitte, echt, laenge);
-            let (_, b) = uebernimm_szenerie(&nav, &sz);
+            let (_, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
             assert_eq!(
                 b.uebernommen,
                 vec!["09"],
@@ -661,7 +692,7 @@ mod tests {
         // 300 m quer versetzt — eine Parallelbahn.
         let quer = (53.6459 + 300.0 / 111_320.0, 9.7042);
         let sz = szenerie_aus_mitte("09", quer, echt, 1100.0);
-        let (_, b) = uebernimm_szenerie(&nav, &sz);
+        let (_, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
         assert_eq!(
             b.verworfen,
             vec!["09"],
@@ -674,8 +705,63 @@ mod tests {
             9.7042 + 600.0 / (111_320.0 * 53.6459_f64.to_radians().cos()),
         );
         let sz = szenerie_aus_mitte("09", laengs, echt, 1100.0);
-        let (_, b) = uebernimm_szenerie(&nav, &sz);
+        let (_, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
         assert_eq!(b.verworfen, vec!["09"], "das andere Ende wurde uebernommen");
+    }
+
+    /// Der Kurs wird NUR aus einer belastbaren Quelle uebernommen.
+    ///
+    /// ⚠ Seit v1.7.13 verhindert eine Kursabweichung die Zuordnung nicht
+    /// mehr — das war noetig, damit im MSFS ueberhaupt zugeordnet wird.
+    /// Genau dadurch koennte ein falscher Kurs jetzt UEBERNOMMEN werden,
+    /// und aus „keine Bewertung" wuerde eine falsche.
+    ///
+    /// X-Plane liefert beide Schwellen als Koordinaten und ist als
+    /// rechtweisend dokumentiert. MSFS liefert nur Mitte, Kurs und
+    /// Laenge — und die Facility-Doku sagt zum Kursbezug nichts.
+    #[test]
+    fn der_kurs_kommt_nur_aus_einer_belastbaren_quelle() {
+        let nav = edhe_nav();
+        let alt = nav.runways[0].true_course;
+        let sz = szenerie("09", 93.72, 55.0, (53.6459, 9.6942));
+
+        // X-Plane: uebernehmen — genau dafuer ist die Funktion gebaut.
+        let (aus, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
+        assert_eq!(b.uebernommen, vec!["09"]);
+        assert!((aus.runways[0].true_course - 93.72).abs() < 0.001);
+
+        // MSFS: zuordnen ja, Kurs nein.
+        let (aus, b) = uebernimm_szenerie(&nav, &sz, Quelle::MsfsFacility);
+        assert_eq!(b.uebernommen, vec!["09"], "MSFS wurde nicht zugeordnet");
+        assert!(
+            (aus.runways[0].true_course - alt).abs() < 0.001,
+            "MSFS-Kurs wurde uebernommen, obwohl sein Bezug unbewiesen ist"
+        );
+        // Die Abweichung wird trotzdem gemessen.
+        assert!(b.groesste_kursabweichung_grad > 3.0);
+    }
+
+    /// Auch die SCHWELLEN kommen bei MSFS nicht aus der Szenerie.
+    ///
+    /// ⚠ Sie werden dort aus Mitte, Kurs und Laenge gerechnet — ein
+    /// falscher Kursbezug verschiebt sie mit. Was direkt gemeldet wird
+    /// (Breite, Laenge, versetzte Schwelle, Belag), gilt weiterhin.
+    #[test]
+    fn die_schwellen_kommen_bei_msfs_nicht_aus_der_szenerie() {
+        let nav = edhe_nav();
+        let alt_lat = nav.runways[0].threshold.lat;
+        let alt_lon = nav.runways[0].threshold.lon;
+        // Eine Szenerie-Bahn, deren Schwelle 80 m daneben liegt.
+        let sz = szenerie("09", 93.72, 55.0, (53.6459 + 80.0 / 111_320.0, 9.6942));
+
+        let (aus, _) = uebernimm_szenerie(&nav, &sz, Quelle::MsfsFacility);
+        assert!((aus.runways[0].threshold.lat - alt_lat).abs() < 1e-9);
+        assert!((aus.runways[0].threshold.lon - alt_lon).abs() < 1e-9);
+        // Die Breite dagegen schon.
+        assert_eq!(
+            aus.runways[0].width_ft,
+            Some((55.0_f64 / 0.3048).round() as i32)
+        );
     }
 
     #[test]
@@ -688,7 +774,7 @@ mod tests {
         // Abstand zwischen den beiden Enden derselben Piste.
         let nav = edhe_nav();
         let sz = szenerie("09", 269.99, 55.0, (53.6459, 9.7033));
-        let (aus, b) = uebernimm_szenerie(&nav, &sz);
+        let (aus, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
         assert_eq!(b.verworfen, vec!["09"]);
         assert!((aus.runways[0].true_course - 89.9957).abs() < 0.001);
     }
@@ -698,7 +784,7 @@ mod tests {
         let mut nav = edhe_nav();
         nav.runways[0].designator = "9".into();
         let sz = szenerie("09", 93.72, 55.0, (53.6459, 9.6942));
-        let (_, b) = uebernimm_szenerie(&nav, &sz);
+        let (_, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
         assert_eq!(b.uebernommen, vec!["9"]);
     }
 
@@ -706,7 +792,7 @@ mod tests {
     fn ohne_treffer_bleibt_alles_wie_es_war() {
         let nav = edhe_nav();
         let sz = szenerie("27", 273.72, 55.0, (53.6459, 9.7142));
-        let (aus, b) = uebernimm_szenerie(&nav, &sz);
+        let (aus, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
         assert_eq!(b.ohne_treffer, vec!["09"]);
         assert!((aus.runways[0].true_course - 89.9957).abs() < 0.001);
         assert_eq!(aus.runways[0].width_ft, Some(131));
@@ -719,7 +805,7 @@ mod tests {
             icao: "EDHE".into(),
             ..Default::default()
         };
-        let (aus, b) = uebernimm_szenerie(&nav, &leer);
+        let (aus, b) = uebernimm_szenerie(&nav, &leer, Quelle::XPlaneDatei);
         assert!(b.uebernommen.is_empty());
         assert_eq!(aus.runways[0].true_course, nav.runways[0].true_course);
     }
@@ -939,7 +1025,7 @@ pub fn ergaenze_aus_szenerie(
     let Some(sz) = auskunft else {
         return (Some(nav), None, None);
     };
-    let (ergaenzt, bericht) = uebernimm_szenerie(&nav, &sz);
+    let (ergaenzt, bericht) = uebernimm_szenerie(&nav, &sz, quelle);
     if bericht.uebernommen.is_empty() {
         // ⚠ Die Szenerie wird TROTZDEM zurueckgegeben: Auch wenn keine
         // Bahn uebernommen wurde, koennen ihre Rollwege die Ausfahrten
@@ -1035,6 +1121,7 @@ mod anschluss_tests {
     #[test]
     fn msfs_nimmt_die_angeforderte_auskunft() {
         let vorher = nav_edhe();
+        let alter_kurs = vorher.runways[0].true_course;
         let (nachher, bericht, _) = ergaenze_aus_szenerie(
             Simulator::Msfs2024,
             "EDHE",
@@ -1043,7 +1130,23 @@ mod anschluss_tests {
         );
         let b = bericht.expect("Bericht");
         assert_eq!(b.uebernommen, vec!["09"]);
-        assert!((nachher.unwrap().runways[0].true_course - 93.72).abs() < 0.001);
+        let bahn = &nachher.unwrap().runways[0];
+
+        // ⚠ Der KURS bleibt bei den Navdaten — auch wenn zugeordnet
+        // wurde. Die Facility-Doku sagt nicht, ob `HEADING` missweisend
+        // oder rechtweisend ist; ein uebernommener Kurs koennte die
+        // Bewertungsachse um die oertliche Missweisung verdrehen.
+        assert!(
+            (bahn.true_course - alter_kurs).abs() < 0.001,
+            "MSFS-Kurs wurde uebernommen, obwohl sein Bezug unbewiesen ist"
+        );
+
+        // Die Breite dagegen meldet der Simulator direkt — die gilt.
+        assert_eq!(bahn.width_ft, Some((55.0_f64 / 0.3048).round() as i32));
+
+        // Und die Abweichung wird gemessen, damit der Bestand die Frage
+        // spaeter entscheiden kann.
+        assert!(b.groesste_kursabweichung_grad > 3.0);
     }
 
     #[test]
@@ -1480,7 +1583,7 @@ mod plausibel_tests {
         let nav = nav_mit_belag(Some("ASP"));
         // Szenerie meldet Gras (Schluessel 3) — also etwas Unbefestigtes.
         let sz = szenerie_mit_belag(3);
-        let (aus, _) = uebernimm_szenerie(&nav, &sz);
+        let (aus, _) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
         assert_eq!(
             aus.runways[0].surface.as_deref(),
             Some("ASP"),
@@ -1496,7 +1599,7 @@ mod plausibel_tests {
         for leer in [None, Some(""), Some("   ")] {
             let nav = nav_mit_belag(leer);
             let sz = szenerie_mit_belag(1); // Asphalt
-            let (aus, _) = uebernimm_szenerie(&nav, &sz);
+            let (aus, _) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
             assert_eq!(
                 aus.runways[0].surface.as_deref(),
                 Some("ASPH"),
