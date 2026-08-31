@@ -52815,102 +52815,126 @@ mod wiederaufnahme_langstrecke_tests {
         );
     }
 
-    /// Wert und Quellenangabe kommen aus EINER Entscheidung — gemessen.
+    /// JEDER Zweig, mit exakt erwartetem Wert UND Quellenangabe.
     ///
-    /// ⚠ Der Kern von SRR318: Die Quellenangabe nannte einen Zweig, der
-    /// den gespeicherten Wert gar nicht liefern kann. Dieser Test
-    /// durchlaeuft JEDEN Zweig und besteht darauf, dass die Angabe zum
-    /// Wert passt.
-    ///
-    /// ⚠⚠ Drei Anlaeufe davor waren wirkungslos: zwei Quelltext-
-    /// Waechter, die nur Zeichenketten suchten, und ein Ablauftest, bei
-    /// dem der Flug nie einen Aufsetzer erreichte (Phase blieb
-    /// `Boarding`). Aufgefallen erst, als der Test seinen eigenen
-    /// Zustand ausgab. Deshalb steht die Kette jetzt als eigene
-    /// Funktion — erreichbar ohne den Touchdown-Abtaster.
+    /// ⚠ Eine Tabelle statt Stichproben. Beim ersten Anlauf fehlte der
+    /// Zweig „Schaetzer vorhanden, kein letztes Tief" — eine vertauschte
+    /// Quellenangabe blieb dadurch unbemerkt (Gegenprobe, 31.08.2026).
+    /// Wer einen Zweig aendert, muss hier eine Zeile aendern; wer eine
+    /// Angabe vertauscht, wird an genau dieser Zeile rot.
     #[test]
     fn jeder_zweig_liefert_wert_und_passende_quelle() {
+        // Bausteine, damit die Tabelle lesbar bleibt.
+        let raster = |v: f32| Sinkratenquellen {
+            gerastet: Some(v),
+            ..Default::default()
+        };
+        let msfs_est = |v: f32| Sinkratenquellen {
+            schaetzer_msfs: Some(v),
+            ..Default::default()
+        };
+        let puffer = |v: f32| Sinkratenquellen {
+            puffer_min: Some(v),
+            ..Default::default()
+        };
+        let abtaster = |v: f32| Sinkratenquellen {
+            abtaster: Some(v),
+            ..Default::default()
+        };
+        let tief = |v: f32| Sinkratenquellen {
+            tief_agl_min: Some(v),
+            ..Default::default()
+        };
+        let xp = |v: f32, fenster: i64| Sinkratenquellen {
+            schaetzer_xp: Some((v, fenster)),
+            ..Default::default()
+        };
+        let letztes = |v: f32| Sinkratenquellen {
+            letztes_tief: Some(v),
+            ..Default::default()
+        };
+        let dazu = |a: Sinkratenquellen, b: Sinkratenquellen| Sinkratenquellen {
+            gerastet: a.gerastet.or(b.gerastet),
+            schaetzer_xp: a.schaetzer_xp.or(b.schaetzer_xp),
+            schaetzer_msfs: a.schaetzer_msfs.or(b.schaetzer_msfs),
+            abtaster: a.abtaster.or(b.abtaster),
+            puffer_min: a.puffer_min.or(b.puffer_min),
+            tief_agl_min: a.tief_agl_min.or(b.tief_agl_min),
+            letztes_tief: a.letztes_tief.or(b.letztes_tief),
+        };
         let leer = Sinkratenquellen::default();
 
-        // Ohne jede Messung: ehrlich 0 — und die Angabe sagt es.
-        assert_eq!(
-            touchdown_vs_bestimmen(&leer, true, false),
-            (0.0, "fallback_zero")
-        );
-        assert_eq!(
-            touchdown_vs_bestimmen(&leer, false, true),
-            (0.0, "fallback_zero")
-        );
-        assert_eq!(
-            touchdown_vs_bestimmen(&leer, false, false),
-            (0.0, "other_fallback")
-        );
+        // (Simulator, Quellen, erwarteter Wert, erwartete Angabe)
+        let tabelle: Vec<(&str, Sinkratenquellen, f32, &str)> = vec![
+            // ── MSFS ──────────────────────────────────────────────────
+            ("msfs", raster(-150.0), -150.0, "msfs_simvar_latched"),
+            // Der geraster Wert schlaegt alles andere.
+            (
+                "msfs",
+                dazu(raster(-150.0), dazu(msfs_est(-900.0), puffer(-800.0))),
+                -150.0,
+                "msfs_simvar_latched",
+            ),
+            ("msfs", msfs_est(-200.0), -200.0, "agl_estimate_msfs"),
+            ("msfs", puffer(-300.0), -300.0, "buffer_min"),
+            ("msfs", leer, 0.0, "fallback_zero"),
+            // ⚠ Ausgeschlossen: Abtaster und tief_agl_min. Beide
+            // vorhanden — MSFS darf trotzdem nicht zugreifen.
+            (
+                "msfs",
+                dazu(abtaster(-3000.0), tief(-2500.0)),
+                0.0,
+                "fallback_zero",
+            ),
+            // ⚠ Und der X-Plane-Schaetzer ist ihm fremd.
+            ("msfs", xp(-900.0, 100), 0.0, "fallback_zero"),
+            // ── X-Plane ───────────────────────────────────────────────
+            // Beide da → der TIEFERE, und die Angabe nennt beide.
+            (
+                "xplane",
+                dazu(xp(-900.0, 100), letztes(-400.0)),
+                -900.0,
+                "agl_estimate_xp_or_last_low",
+            ),
+            (
+                "xplane",
+                dazu(xp(-200.0, 100), letztes(-700.0)),
+                -700.0,
+                "agl_estimate_xp_or_last_low",
+            ),
+            ("xplane", xp(-900.0, 100), -900.0, "agl_estimate_xp"),
+            ("xplane", letztes(-400.0), -400.0, "last_low_agl_vs"),
+            // ⚠ Fenster >= 3000 ms: der Schaetzer faellt weg.
+            ("xplane", xp(-900.0, 3000), 0.0, "fallback_zero"),
+            (
+                "xplane",
+                dazu(xp(-900.0, 9000), letztes(-400.0)),
+                -400.0,
+                "last_low_agl_vs",
+            ),
+            ("xplane", abtaster(-3000.0), -3000.0, "sampler_gear_force"),
+            ("xplane", puffer(-300.0), -300.0, "buffer_min"),
+            ("xplane", tief(-2500.0), -2500.0, "low_agl_vs_min"),
+            ("xplane", leer, 0.0, "fallback_zero"),
+            // ⚠ Und der MSFS-Schaetzer ist ihm fremd.
+            ("xplane", msfs_est(-200.0), 0.0, "fallback_zero"),
+            // ── unbekannter Simulator ─────────────────────────────────
+            ("other", raster(-150.0), -150.0, "other_latched"),
+            ("other", msfs_est(-200.0), -200.0, "other_agl_estimate"),
+            ("other", abtaster(-3000.0), -3000.0, "other_sampler"),
+            ("other", puffer(-300.0), -300.0, "other_buffer_min"),
+            ("other", leer, 0.0, "other_fallback"),
+        ];
 
-        // MSFS: Reihenfolge und Ausschluesse.
-        let q = Sinkratenquellen {
-            gerastet: Some(-150.0),
-            schaetzer_msfs: Some(-200.0),
-            puffer_min: Some(-300.0),
-            abtaster: Some(-3000.0),
-            tief_agl_min: Some(-2500.0),
-            schaetzer_xp: Some((-900.0, 100)),
-            letztes_tief: Some(-400.0),
-        };
-        assert_eq!(
-            touchdown_vs_bestimmen(&q, true, false),
-            (-150.0, "msfs_simvar_latched")
-        );
-        // ⚠ Ohne gerasteten Wert darf MSFS NICHT auf Abtaster oder
-        // tief_agl_min ausweichen — Rueckstoss-Spitzen.
-        let ohne_raster = Sinkratenquellen {
-            gerastet: None,
-            schaetzer_msfs: None,
-            puffer_min: None,
-            ..q
-        };
-        assert_eq!(
-            touchdown_vs_bestimmen(&ohne_raster, true, false),
-            (0.0, "fallback_zero"),
-            "MSFS griff auf eine ausgeschlossene Quelle zu"
-        );
-
-        // X-Plane: beide da → der tiefere, und die Angabe nennt beide.
-        assert_eq!(
-            touchdown_vs_bestimmen(&q, false, true),
-            (-900.0, "agl_estimate_xp_or_last_low")
-        );
-        // Zu breites Fenster → Schaetzer faellt weg.
-        let breit = Sinkratenquellen {
-            schaetzer_xp: Some((-900.0, 9000)),
-            ..q
-        };
-        assert_eq!(
-            touchdown_vs_bestimmen(&breit, false, true),
-            (-400.0, "last_low_agl_vs")
-        );
-        // ⚠ Nur der Schaetzer, kein letztes Tief. Dieser Zweig fehlte
-        // beim ersten Anlauf — eine vertauschte Quellenangabe blieb
-        // dadurch unbemerkt (Gegenprobe, 31.08.2026).
-        let nur_schaetzer = Sinkratenquellen {
-            letztes_tief: None,
-            ..q
-        };
-        assert_eq!(
-            touchdown_vs_bestimmen(&nur_schaetzer, false, true),
-            (-900.0, "agl_estimate_xp")
-        );
-
-        // Weder Schaetzer noch letztes Tief → Abtaster, und die Angabe
-        // sagt genau das.
-        let nur_abtaster = Sinkratenquellen {
-            schaetzer_xp: None,
-            letztes_tief: None,
-            ..q
-        };
-        assert_eq!(
-            touchdown_vs_bestimmen(&nur_abtaster, false, true),
-            (-3000.0, "sampler_gear_force")
-        );
+        for (sim, q, wert, quelle) in tabelle {
+            let (ist_msfs, ist_xplane) = (sim == "msfs", sim == "xplane");
+            let ergebnis = touchdown_vs_bestimmen(&q, ist_msfs, ist_xplane);
+            assert_eq!(
+                ergebnis,
+                (wert, quelle),
+                "{sim} mit {q:?} sollte ({wert}, {quelle}) geben"
+            );
+        }
     }
 
     /// Und keine Angabe darf einen Wert behaupten, den sie nicht liefert.
@@ -52923,7 +52947,11 @@ mod wiederaufnahme_langstrecke_tests {
     fn eine_null_kommt_nur_aus_dem_rueckfall() {
         for (ist_msfs, ist_xplane) in [(true, false), (false, true), (false, false)] {
             // Ueber alle Kombinationen vorhandener Quellen.
-            for maske in 0u8..0b111_1111 {
+            // ⚠ EINSCHLIESSLICH der Vollmaske. `0u8..0b111_1111`
+            // laeuft bis 126 — ausgerechnet die Kombination, in der
+            // ALLE Quellen etwas haben, wurde nie geprueft (QS-Befund,
+            // 31.08.2026).
+            for maske in 0u8..=0b111_1111 {
                 let bit = |n: u8| maske & (1 << n) != 0;
                 let q = Sinkratenquellen {
                     gerastet: bit(0).then_some(-100.0),
