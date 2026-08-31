@@ -6675,7 +6675,28 @@ impl Aufprallbeleg {
     /// `referenz_g` direkt entgegennimmt, diese Verwechslung NICHT
     /// sieht — er prueft die Regel, nicht ihre Speisung. Deshalb steht
     /// die Umrechnung jetzt hier und nicht beim Aufrufer.
-    fn aus_zustand(stats: &FlightStats, kraft_im_augenblick: Option<f32>) -> Self {
+    /// `simulator` wird ausdruecklich uebergeben, NICHT aus `stats`
+    /// gelesen.
+    ///
+    /// ⚠ Aus der QS (31.08.2026): `stats.landing_simulator` wird im
+    /// Streamer erst **43 Zeilen nach** dieser Stelle gesetzt. Zum
+    /// Zeitpunkt der Rettung ist es beim ersten Aufsetzer noch `None` —
+    /// und `g_auf_referenzkette` gibt dann den Wert UNVERAENDERT
+    /// zurueck. Ein roher X-Plane-Wert von 5,0 g wuerde damit als
+    /// Aufprall gelten, obwohl er auf der Referenzkette nur 2,74 ist.
+    ///
+    /// Die Aufrufstelle kennt den Simulator ueber ihre eigenen
+    /// `is_msfs`/`is_xplane`-Flaggen. Die sind zu jedem Zeitpunkt
+    /// richtig; das Feld in `stats` ist es erst spaeter.
+    ///
+    /// Die vorhandenen Tests konnten das nicht sehen, weil sie
+    /// `landing_simulator` vorbelegten — dieselbe Klasse wie zuvor:
+    /// Regel richtig, Speisung falsch.
+    fn aus_zustand(
+        stats: &FlightStats,
+        simulator: Option<&str>,
+        kraft_im_augenblick: Option<f32>,
+    ) -> Self {
         Self {
             // ⚠ Der ROHE Extremwert, auf die Referenzkette gerechnet —
             // NICHT der geglaettete Punktewert.
@@ -6694,7 +6715,7 @@ impl Aufprallbeleg {
             // zufaellig auf den Rohwert zurueckfiel.
             referenz_g: stats
                 .landing_peak_g_force
-                .map(|g| g_auf_referenzkette(g, stats.landing_simulator))
+                .map(|g| g_auf_referenzkette(g, simulator))
                 .or_else(|| scored_g_fuer_punkte(stats)),
             // ⚠ Die gemessene SPITZE ueber das Sekundenfenster, nicht
             // der Augenblickswert.
@@ -30838,7 +30859,20 @@ fn step_flight_at(
                 // Quellen, die dieser Simulator ueberhaupt zulaesst.
                 // Beides steht bei `Aufprallbeleg` und
                 // `rettungskandidaten`; beides kam aus der QS.
-                let beleg = Aufprallbeleg::aus_zustand(&stats, snap.gear_normal_force_n);
+                // ⚠ Der Simulator kommt aus den lokalen Flaggen, nicht
+                // aus `stats` — dort steht er erst weiter unten (siehe
+                // `Aufprallbeleg::aus_zustand`).
+                let beleg = Aufprallbeleg::aus_zustand(
+                    &stats,
+                    Some(if is_msfs {
+                        "msfs"
+                    } else if is_xplane {
+                        "xplane"
+                    } else {
+                        "other"
+                    }),
+                    snap.gear_normal_force_n,
+                );
                 let (touchdown_vs, vs_source) = if touchdown_vs == 0.0 && beleg.ist_aufprall() {
                     let quellen = Sinkratenquellen {
                         gerastet: negative_only(snap.touchdown_vs_fpm),
@@ -53182,11 +53216,14 @@ mod wiederaufnahme_langstrecke_tests {
     #[test]
     fn der_konstruktor_rechnet_auf_die_referenzkette_um() {
         let mut s = FlightStats::new();
-        s.landing_simulator = Some("xplane");
+        // ⚠ ABSICHTLICH NICHT gesetzt: Im Streamer steht es zum
+        // Zeitpunkt der Rettung noch nicht. Die Vorbelegung hat den
+        // Befund verdeckt (QS, 31.08.2026) — der Simulator kommt jetzt
+        // als Argument.
         s.landing_peak_g_force = Some(5.0);
         s.landing_weight_kg = Some(60_000.0);
 
-        let beleg = Aufprallbeleg::aus_zustand(&s, None);
+        let beleg = Aufprallbeleg::aus_zustand(&s, Some("xplane"), None);
         let g = beleg.referenz_g.expect("g-Last");
         assert!(
             (g - 2.74).abs() < 0.05,
@@ -53200,7 +53237,7 @@ mod wiederaufnahme_langstrecke_tests {
 
         // Der echte Fall dagegen schon: SRR318 hatte roh 12,22 g.
         s.landing_peak_g_force = Some(12.224_427);
-        let beleg = Aufprallbeleg::aus_zustand(&s, None);
+        let beleg = Aufprallbeleg::aus_zustand(&s, Some("xplane"), None);
         let g = beleg.referenz_g.expect("g-Last");
         assert!((g - 5.88).abs() < 0.05, "erwartet 5,88, war {g:.2}");
         assert!(beleg.ist_aufprall());
@@ -53219,14 +53256,17 @@ mod wiederaufnahme_langstrecke_tests {
     #[test]
     fn der_rohe_extremwert_gewinnt_gegen_die_glaettung() {
         let mut s = FlightStats::new();
-        s.landing_simulator = Some("xplane");
+        // ⚠ ABSICHTLICH NICHT gesetzt: Im Streamer steht es zum
+        // Zeitpunkt der Rettung noch nicht. Die Vorbelegung hat den
+        // Befund verdeckt (QS, 31.08.2026) — der Simulator kommt jetzt
+        // als Argument.
         s.landing_peak_g_force = Some(12.224_427); // → 5,88 auf der Referenzkette
         s.landing_weight_kg = Some(129_802.0);
         // Die Analyse ist gefuellt — und ihr geglaetteter Wert liegt
         // deutlich unter der Schwelle.
         s.landing_analysis = Some(serde_json::json!({ "scored_g": 1.4 }));
 
-        let beleg = Aufprallbeleg::aus_zustand(&s, None);
+        let beleg = Aufprallbeleg::aus_zustand(&s, Some("xplane"), None);
         let g = beleg.referenz_g.expect("g-Last");
         assert!(
             (g - 5.88).abs() < 0.05,
@@ -53250,7 +53290,10 @@ mod wiederaufnahme_langstrecke_tests {
         let stand = (gewicht * 9.806_65) as f32;
 
         let mut s = FlightStats::new();
-        s.landing_simulator = Some("xplane");
+        // ⚠ ABSICHTLICH NICHT gesetzt: Im Streamer steht es zum
+        // Zeitpunkt der Rettung noch nicht. Die Vorbelegung hat den
+        // Befund verdeckt (QS, 31.08.2026) — der Simulator kommt jetzt
+        // als Argument.
         s.landing_weight_kg = Some(gewicht);
         // Keine g-Last — es soll allein der Kraftweg entscheiden.
         s.landing_peak_g_force = None;
@@ -53259,7 +53302,7 @@ mod wiederaufnahme_langstrecke_tests {
         }));
 
         // Der Augenblickswert liegt wieder beim Standgewicht.
-        let beleg = Aufprallbeleg::aus_zustand(&s, Some(stand));
+        let beleg = Aufprallbeleg::aus_zustand(&s, Some("xplane"), Some(stand));
         assert!(
             beleg.ist_aufprall(),
             "die gemessene Spitze wurde ignoriert — der Augenblickswert gewann"
@@ -53268,8 +53311,67 @@ mod wiederaufnahme_langstrecke_tests {
         // Ohne Spitze in der Analyse bleibt der Augenblickswert der
         // Rueckfall — und der belegt hier keinen Aufprall.
         s.landing_analysis = None;
-        let beleg = Aufprallbeleg::aus_zustand(&s, Some(stand));
+        let beleg = Aufprallbeleg::aus_zustand(&s, Some("xplane"), Some(stand));
         assert!(!beleg.ist_aufprall());
+    }
+
+    /// Die Umrechnung darf nicht daran haengen, dass `stats` schon
+    /// gefuellt ist.
+    ///
+    /// ⚠ Der Befund der dritten QS-Runde: Im Streamer wird
+    /// `stats.landing_simulator` erst 43 Zeilen NACH der Rettung
+    /// gesetzt. Zum Zeitpunkt der Rettung ist es beim ersten Aufsetzer
+    /// `None`, und `g_auf_referenzkette` gibt dann unveraendert zurueck
+    /// — ein roher X-Plane-Wert von 5,0 g wuerde als Aufprall gelten.
+    ///
+    /// Die vorigen Tests sahen es nicht, weil sie `landing_simulator`
+    /// vorbelegten. Hier steht es ausdruecklich NICHT drin.
+    #[test]
+    fn die_umrechnung_haengt_nicht_an_einem_spaeter_gesetzten_feld() {
+        let mut s = FlightStats::new();
+        assert!(
+            s.landing_simulator.is_none(),
+            "der Test taugt nur mit leerem Feld"
+        );
+        s.landing_peak_g_force = Some(5.0);
+        s.landing_weight_kg = Some(60_000.0);
+        s.landing_analysis = Some(serde_json::json!({ "scored_g": 1.2 }));
+
+        // Der Simulator kommt als Argument — wie im Streamer aus den
+        // lokalen Flaggen.
+        let beleg = Aufprallbeleg::aus_zustand(&s, Some("xplane"), None);
+        let g = beleg.referenz_g.expect("g-Last");
+        assert!(
+            (g - 2.74).abs() < 0.05,
+            "ohne gefuelltes `stats.landing_simulator` blieb die Umrechnung \
+             aus: {g:.2} statt 2,74"
+        );
+        assert!(!beleg.ist_aufprall());
+    }
+
+    /// Und die Aufrufstelle muss den Simulator wirklich uebergeben.
+    ///
+    /// Die Nadel wird mit `format!` gebaut, sonst faende der Waechter
+    /// sich selbst.
+    #[test]
+    fn die_aufrufstelle_speist_den_simulator_aus_den_lokalen_flaggen() {
+        let quelle = ohne_leerraum(LIB_QUELLE);
+        // Sie darf das spaeter gesetzte Feld NICHT benutzen.
+        let feld = ohne_leerraum(&format!(
+            "Aufprallbeleg{}aus_zustand(&stats,stats.landing_simulator",
+            "::"
+        ));
+        assert!(
+            !quelle.contains(&feld),
+            "die Aufrufstelle liest `stats.landing_simulator` — das steht \
+             dort erst spaeter"
+        );
+        // Und sie muss die lokalen Flaggen benutzen.
+        let flaggen = ohne_leerraum(&format!("Some(if is_{} {{", "msfs"));
+        assert!(
+            quelle.contains(&flaggen),
+            "die Aufrufstelle speist den Simulator nicht aus den lokalen Flaggen"
+        );
     }
 
     /// Der Beleg wird ueber den Konstruktor gebaut, nicht von Hand.
