@@ -52876,6 +52876,13 @@ mod wiederaufnahme_langstrecke_tests {
                 "msfs_simvar_latched",
             ),
             ("msfs", msfs_est(-200.0), -200.0, "agl_estimate_msfs"),
+            // Vorrang innerhalb der Kette: Schaetzer schlaegt Puffer.
+            (
+                "msfs",
+                dazu(msfs_est(-200.0), puffer(-300.0)),
+                -200.0,
+                "agl_estimate_msfs",
+            ),
             ("msfs", puffer(-300.0), -300.0, "buffer_min"),
             ("msfs", leer, 0.0, "fallback_zero"),
             // ⚠ Ausgeschlossen: Abtaster und tief_agl_min. Beide
@@ -52913,6 +52920,28 @@ mod wiederaufnahme_langstrecke_tests {
                 "last_low_agl_vs",
             ),
             ("xplane", abtaster(-3000.0), -3000.0, "sampler_gear_force"),
+            // Vorrang innerhalb der Rueckfallkette:
+            // Abtaster > Puffer > tiefes AGL.
+            (
+                "xplane",
+                dazu(abtaster(-3000.0), dazu(puffer(-300.0), tief(-2500.0))),
+                -3000.0,
+                "sampler_gear_force",
+            ),
+            (
+                "xplane",
+                dazu(puffer(-300.0), tief(-2500.0)),
+                -300.0,
+                "buffer_min",
+            ),
+            // ⚠ Die Rueckfallkette greift auch, wenn der Schaetzer nur am
+            // Fenster scheitert — dann darf der Abtaster ran.
+            (
+                "xplane",
+                dazu(xp(-900.0, 9000), dazu(abtaster(-3000.0), puffer(-300.0))),
+                -3000.0,
+                "sampler_gear_force",
+            ),
             ("xplane", puffer(-300.0), -300.0, "buffer_min"),
             ("xplane", tief(-2500.0), -2500.0, "low_agl_vs_min"),
             ("xplane", leer, 0.0, "fallback_zero"),
@@ -52923,6 +52952,29 @@ mod wiederaufnahme_langstrecke_tests {
             ("other", msfs_est(-200.0), -200.0, "other_agl_estimate"),
             ("other", abtaster(-3000.0), -3000.0, "other_sampler"),
             ("other", puffer(-300.0), -300.0, "other_buffer_min"),
+            // Vorrang der ganzen Kette:
+            // Raster > MSFS-Schaetzer > Abtaster > Puffer.
+            (
+                "other",
+                dazu(
+                    raster(-150.0),
+                    dazu(msfs_est(-200.0), dazu(abtaster(-3000.0), puffer(-300.0))),
+                ),
+                -150.0,
+                "other_latched",
+            ),
+            (
+                "other",
+                dazu(msfs_est(-200.0), dazu(abtaster(-3000.0), puffer(-300.0))),
+                -200.0,
+                "other_agl_estimate",
+            ),
+            (
+                "other",
+                dazu(abtaster(-3000.0), puffer(-300.0)),
+                -3000.0,
+                "other_sampler",
+            ),
             ("other", leer, 0.0, "other_fallback"),
         ];
 
@@ -52947,10 +52999,10 @@ mod wiederaufnahme_langstrecke_tests {
     fn eine_null_kommt_nur_aus_dem_rueckfall() {
         for (ist_msfs, ist_xplane) in [(true, false), (false, true), (false, false)] {
             // Ueber alle Kombinationen vorhandener Quellen.
-            // ⚠ EINSCHLIESSLICH der Vollmaske. `0u8..0b111_1111`
-            // laeuft bis 126 — ausgerechnet die Kombination, in der
-            // ALLE Quellen etwas haben, wurde nie geprueft (QS-Befund,
-            // 31.08.2026).
+            // ⚠ EINSCHLIESSLICH der Vollmaske. Sieben Quellen ergeben
+            // 128 Masken; `0u8..0b111_1111` endet bei Maske 126 und
+            // deckt damit 127 davon ab — ausgerechnet die eine, in der
+            // ALLE Quellen etwas haben, fehlte (QS-Befund, 31.08.2026).
             for maske in 0u8..=0b111_1111 {
                 let bit = |n: u8| maske & (1 << n) != 0;
                 let q = Sinkratenquellen {
