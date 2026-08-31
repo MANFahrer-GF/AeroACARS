@@ -39,13 +39,31 @@
 use aeroacars_mqtt::navdata::{NavAirport, NavRunway};
 use sim_xplane::szenerie::{SzenerieBahn, SzenerieFlughafen};
 
-/// Wie weit die Schwellen auseinanderliegen dürfen, damit es dieselbe
-/// Bahn sein kann.
+/// Wie weit die Szenerie-Bahn QUER zur Navdaten-Achse liegen darf,
+/// damit es dieselbe Bahn sein kann.
 ///
-/// Zweihundert Meter sind grosszügig für Vermessungsunterschiede und zu
-/// eng für eine Nachbarbahn: Parallelbahnen liegen nach ICAO mindestens
+/// Hundert Meter sind grosszügig für Vermessungsunterschiede und zu eng
+/// für eine Nachbarbahn: Parallelbahnen liegen nach ICAO mindestens
 /// 210 m auseinander, in der Praxis meist deutlich mehr.
-const SCHWELLE_HOECHSTABSTAND_M: f64 = 200.0;
+///
+/// ⚠ Bis v1.7.12 stand hier ein Punkt-zu-Punkt-Abstand der Schwellen mit
+/// 200 m. Der ist bei MSFS auf drei Annahmen gebaut (Mitte, Kurs, Laenge
+/// — die Schwellen werden daraus gerechnet) und schlug am 30./31.08.2026
+/// an DREI Plaetzen fehl (EDDF 25L, YBWW 12, YBCG 14), ohne zu sagen,
+/// welche der drei nicht stimmte. Der Querabstand haengt nur an der
+/// Mitte; die Begruendung steht bei `querabstand_m`.
+const QUERABSTAND_HOECHST_M: f64 = 100.0;
+
+/// Wie weit die Mitte der Szenerie-Bahn LÄNGS der Achse von der Mitte
+/// der Navdaten-Bahn abliegen darf.
+///
+/// Vierhundert Meter: Der grösste Versatz, der bei derselben Bahn
+/// entstehen kann, kommt von einer versetzten Schwelle — sie verschiebt
+/// den Navdaten-Mittelpunkt um die HÄLFTE des Versatzes. Der grösste im
+/// Bestand gemessene Versatz sind 573 m (TJPS 12), also 287 m. Eine Bahn
+/// am anderen Ende liegt dagegen mindestens eine halbe Bahnlänge weit
+/// weg — bei der kürzesten Piste im Bestand 550 m.
+const LAENGSVERSATZ_HOECHST_M: f64 = 400.0;
 
 // ⚠ Hier stand einmal ein Riegel auf die Kursabweichung (45°).
 //
@@ -114,6 +132,68 @@ fn normiert(b: &str) -> String {
     }
 }
 
+/// Wie weit ein Punkt vom MITTELPUNKT der Strecke `a`–`b` abliegt,
+/// zerlegt in (längs der Achse, quer zur Achse), in Metern.
+///
+/// # Warum quer und nicht der Abstand zu einem Punkt
+///
+/// Die Zuordnung stand bis v1.7.12 auf einer Kette von drei Annahmen:
+/// Die Szenerie liefert bei MSFS nur MITTE, KURS und LÄNGE — die beiden
+/// Schwellen rechnen wir daraus. Stimmt eine der drei nicht, wandern die
+/// gerechneten Schwellen, und ein Punkt-zu-Punkt-Vergleich findet nichts
+/// mehr. Welche der drei es war, sieht man dabei nicht.
+///
+/// Der Querabstand hängt nur an der MITTE — der einzigen Angabe, die
+/// direkt geliefert wird:
+///
+/// * Ein falscher **Kurs** dreht die gerechneten Enden um die Mitte. Die
+///   Mitte bleibt, wo sie ist.
+/// * Eine falsche **Länge** schiebt die Enden nach aussen. Die Mitte
+///   bleibt, wo sie ist.
+/// * Eine **versetzte Schwelle** verschiebt den Navdaten-Nullpunkt längs
+///   der Bahn. Quer zur Achse ändert das nichts.
+///
+/// Und er trennt trotzdem sauber: Parallelbahnen liegen nach ICAO
+/// mindestens 210 m auseinander.
+///
+/// ⚠ Der LÄNGS-Anteil wird trotzdem gebraucht — sonst passt eine Bahn am
+/// ANDEREN ENDE derselben Achse, die quer ja genau null abliegt. Genau
+/// das hält `andere_bahn_am_anderen_ende_wird_verworfen` fest (FACT 19,
+/// EDHE): Eine gleich benannte Bahn an anderer Stelle darf die
+/// Anflugrichtung nicht stillschweigend umdefinieren.
+///
+/// ⚠ Ebene Näherung. Auf Bahnlänge (Kilometer) ist der Fehler
+/// millimetergross; für Entfernungen jenseits weniger Kilometer taugt
+/// sie nicht.
+fn achsenversatz_m(a: (f64, f64), b: (f64, f64), p: (f64, f64)) -> (f64, f64) {
+    const M_JE_GRAD_BREITE: f64 = 111_320.0;
+    let cos_breite = a.0.to_radians().cos();
+    let punkt = |q: (f64, f64)| {
+        (
+            (q.1 - a.1) * M_JE_GRAD_BREITE * cos_breite,
+            (q.0 - a.0) * M_JE_GRAD_BREITE,
+        )
+    };
+    let (bx, by) = punkt(b);
+    let (px, py) = punkt(p);
+    let laenge = (bx * bx + by * by).sqrt();
+    if !laenge.is_finite() || laenge < 1.0 {
+        // Entartete Achse — dann bleibt nur der Punktabstand, und der
+        // zaehlt als laengs, damit er nicht durch die Quer-Pruefung faellt.
+        return (abstand_m(a, p), 0.0);
+    }
+    // Einheitsvektor der Achse.
+    let (ex, ey) = (bx / laenge, by / laenge);
+    // Vom MITTELPUNKT der Navdaten-Bahn aus messen, nicht von der
+    // Schwelle: Ein Schwellenversatz verschiebt die Schwelle, nicht die
+    // Mitte.
+    let (mx, my) = (bx / 2.0, by / 2.0);
+    let (dx, dy) = (px - mx, py - my);
+    let laengs = dx * ex + dy * ey;
+    let quer = dx * (-ey) + dy * ex;
+    (laengs.abs(), quer.abs())
+}
+
 /// Die passende Bahn der Szenerie zu einer Navdaten-Bahn finden.
 ///
 /// `None` heisst: nichts Passendes — dann bleibt die Navdaten-Geometrie
@@ -129,11 +209,21 @@ fn passende_szenerie_bahn<'a>(
             continue;
         }
         bezeichner_passte = true;
-        let d = abstand_m(
-            (nav.threshold.lat, nav.threshold.lon),
-            (b.schwelle.0, b.schwelle.1),
+        // Die MITTE der Szenerie-Bahn — der Mittelpunkt beider Enden.
+        // Bei MSFS ist das genau die gelieferte Koordinate: `bahn_paar`
+        // rechnet beide Enden symmetrisch um sie herum, ein falscher
+        // Kurs oder eine falsche Laenge drehen bzw. schieben die Enden,
+        // lassen den Mittelpunkt aber unberuehrt.
+        let mitte = (
+            (b.schwelle.0 + b.gegenende.0) / 2.0,
+            (b.schwelle.1 + b.gegenende.1) / 2.0,
         );
-        if d > SCHWELLE_HOECHSTABSTAND_M {
+        let (laengs, quer) = achsenversatz_m(
+            (nav.threshold.lat, nav.threshold.lon),
+            (nav.far_end.lat, nav.far_end.lon),
+            mitte,
+        );
+        if quer > QUERABSTAND_HOECHST_M || laengs > LAENGSVERSATZ_HOECHST_M {
             continue;
         }
         return (Some(b), true);
@@ -473,6 +563,121 @@ mod tests {
         assert!((aus.runways[0].true_course - 224.99).abs() < 0.001);
     }
 
+    /// Eine Szenerie-Bahn so bauen, wie MSFS sie liefert: aus MITTE,
+    /// KURS und LÄNGE werden beide Enden gerechnet.
+    ///
+    /// ⚠ Genau diese Ableitung ist die Schwachstelle, um die es geht.
+    /// Stimmt der Kurs nicht, wandern beide Enden — die Mitte bleibt.
+    fn szenerie_aus_mitte(
+        bezeichner: &str,
+        mitte: (f64, f64),
+        kurs: f64,
+        laenge_m: f64,
+    ) -> SzenerieFlughafen {
+        const M_JE_GRAD: f64 = 111_320.0;
+        let cos_b = mitte.0.to_radians().cos();
+        let halb = laenge_m / 2.0;
+        let (sin_k, cos_k) = kurs.to_radians().sin_cos();
+        let versatz = |vorzeichen: f64| {
+            (
+                mitte.0 + vorzeichen * halb * cos_k / M_JE_GRAD,
+                mitte.1 + vorzeichen * halb * sin_k / (M_JE_GRAD * cos_b),
+            )
+        };
+        SzenerieFlughafen {
+            icao: "EDHE".into(),
+            quelle: "Test".into(),
+            rollwege: vec![],
+            bahnen: vec![SzenerieBahn {
+                bezeichner: bezeichner.into(),
+                kurs_grad: kurs,
+                breite_m: 55.0,
+                laenge_m,
+                versetzte_schwelle_m: 0.0,
+                schwelle: versatz(-1.0),
+                gegenende: versatz(1.0),
+                belag_code: 1,
+            }],
+        }
+    }
+
+    /// Ein falscher KURS darf die Zuordnung nicht mehr verhindern.
+    ///
+    /// ⚠ Der Fall, an dem v1.7.12 im echten MSFS gescheitert ist. Die
+    /// Doku sagt zu `HEADING` nur „the runway heading, in degrees" — ob
+    /// missweisend oder rechtweisend, steht nirgends. In Australien
+    /// sind das über 10 Grad Unterschied.
+    ///
+    /// Frueher wurden daraus die Schwellen gerechnet und Punkt gegen
+    /// Punkt verglichen: Bei YBWW lagen sie 262 m auseinander, die alte
+    /// Grenze war 200 m — kein Treffer, und nicht erkennbar warum.
+    /// Der Mittelpunkt dreht sich nicht mit.
+    #[test]
+    fn ein_falscher_kurs_verhindert_die_zuordnung_nicht() {
+        let nav = edhe_nav();
+        let mitte = (53.6459, 9.7042);
+        let echt = nav.runways[0].true_course;
+
+        for abweichung in [0.0_f64, 3.0, -3.0, 11.0, -11.0] {
+            let sz = szenerie_aus_mitte("09", mitte, echt + abweichung, 1100.0);
+            let (_, b) = uebernimm_szenerie(&nav, &sz);
+            assert_eq!(
+                b.uebernommen,
+                vec!["09"],
+                "bei {abweichung} Grad Kursabweichung wurde nicht zugeordnet"
+            );
+        }
+    }
+
+    /// Eine falsche LÄNGE ebenso wenig.
+    ///
+    /// Die Enden wandern nach aussen, die Mitte bleibt.
+    #[test]
+    fn eine_falsche_laenge_verhindert_die_zuordnung_nicht() {
+        let nav = edhe_nav();
+        let mitte = (53.6459, 9.7042);
+        let echt = nav.runways[0].true_course;
+        for laenge in [1100.0_f64, 800.0, 1600.0] {
+            let sz = szenerie_aus_mitte("09", mitte, echt, laenge);
+            let (_, b) = uebernimm_szenerie(&nav, &sz);
+            assert_eq!(
+                b.uebernommen,
+                vec!["09"],
+                "bei {laenge} m Laenge kein Treffer"
+            );
+        }
+    }
+
+    /// Aber eine Bahn, die WIRKLICH woanders liegt, wird weiter verworfen.
+    ///
+    /// ⚠ Der Gegenpol zu den beiden Tests darueber: Die neue Regel darf
+    /// nicht alles durchlassen. Quer trennt Parallelbahnen, laengs
+    /// trennt das andere Ende.
+    #[test]
+    fn eine_wirklich_andere_lage_wird_weiter_verworfen() {
+        let nav = edhe_nav();
+        let echt = nav.runways[0].true_course;
+
+        // 300 m quer versetzt — eine Parallelbahn.
+        let quer = (53.6459 + 300.0 / 111_320.0, 9.7042);
+        let sz = szenerie_aus_mitte("09", quer, echt, 1100.0);
+        let (_, b) = uebernimm_szenerie(&nav, &sz);
+        assert_eq!(
+            b.verworfen,
+            vec!["09"],
+            "eine Parallelbahn wurde uebernommen"
+        );
+
+        // 600 m laengs versetzt — das andere Ende.
+        let laengs = (
+            53.6459,
+            9.7042 + 600.0 / (111_320.0 * 53.6459_f64.to_radians().cos()),
+        );
+        let sz = szenerie_aus_mitte("09", laengs, echt, 1100.0);
+        let (_, b) = uebernimm_szenerie(&nav, &sz);
+        assert_eq!(b.verworfen, vec!["09"], "das andere Ende wurde uebernommen");
+    }
+
     #[test]
     fn andere_bahn_am_anderen_ende_wird_verworfen() {
         // Umbenennung oder Parallelbahn: gleicher Bezeichner, andere
@@ -581,25 +786,88 @@ use std::sync::{Mutex, OnceLock};
 /// Aenderungszeit der Quelldateien auf, und es wird neu gebaut.
 static VERZEICHNIS: OnceLock<Mutex<Option<sim_xplane::szenerie::SzenerieIndex>>> = OnceLock::new();
 
-/// Den Flughafen aus der Szenerie holen, mit Verzeichnis.
-fn szenerie_flughafen(icao: &str) -> Option<sim_xplane::szenerie::SzenerieFlughafen> {
+/// Das Szenerie-Verzeichnis bereitstellen, falls es fehlt oder veraltet ist.
+///
+/// # Warum das eine eigene Funktion ist
+///
+/// ⚠ Der Bau liest die X-Plane-Installation des Piloten
+/// (`~/Library/Preferences/x-plane_install_12.txt` nennt den Ort, dann
+/// `Earth nav data/apt.dat` und die Custom-Scenery). Liegt X-Plane auf
+/// dem Schreibtisch, in Dokumenten, Downloads, iCloud oder auf einem
+/// externen Laufwerk, fragt **macOS beim ersten Zugriff um Erlaubnis**.
+///
+/// Bis v1.7.12 geschah dieser erste Zugriff faul — und zwar in der
+/// Landungs-Korrelation. Der Dialog kam damit im Aufsetzmoment
+/// (Pilotenmeldung, 31.08.2026). Dasselbe gilt fuer die Bauzeit: Sie
+/// fiel mitten in den Anflug.
+///
+/// Deshalb ist das Bereitstellen jetzt von der Abfrage getrennt und
+/// wird beim Flugbeginn angestossen (`szenerie_vorbereiten`). Am Gate
+/// darf ein Dialog erscheinen; auf 500 Fuss nicht.
+fn verzeichnis_bereitstellen() -> bool {
     let zelle = VERZEICHNIS.get_or_init(|| Mutex::new(None));
-    let mut halter = zelle.lock().ok()?;
+    let Ok(mut halter) = zelle.lock() else {
+        return false;
+    };
     let neu_bauen = match halter.as_ref() {
         Some(idx) => !idx.gueltig(),
         None => true,
     };
-    if neu_bauen {
-        let wurzel = sim_xplane::szenerie::installationen().into_iter().next()?;
-        let t = std::time::Instant::now();
-        let idx = sim_xplane::szenerie::SzenerieIndex::bauen(&wurzel);
-        tracing::info!(
-            flughaefen = idx.anzahl(),
-            dauer_ms = t.elapsed().as_millis(),
-            "Szenerie-Verzeichnis gebaut"
-        );
-        *halter = Some(idx);
+    if !neu_bauen {
+        return true;
     }
+    let Some(wurzel) = sim_xplane::szenerie::installationen().into_iter().next() else {
+        return false;
+    };
+    let t = std::time::Instant::now();
+    let idx = sim_xplane::szenerie::SzenerieIndex::bauen(&wurzel);
+    tracing::info!(
+        flughaefen = idx.anzahl(),
+        dauer_ms = t.elapsed().as_millis(),
+        "Szenerie-Verzeichnis gebaut"
+    );
+    *halter = Some(idx);
+    true
+}
+
+/// Das Verzeichnis im Voraus bauen — beim PROGRAMMSTART.
+///
+/// # Warum beim Start und nicht beim Flugbeginn
+///
+/// ⚠ Auf macOS fragt das System beim ersten Zugriff auf die
+/// X-Plane-Installation um Erlaubnis, wenn diese an einem geschuetzten
+/// Ort liegt (Schreibtisch, Dokumente, Downloads, iCloud, externes
+/// Laufwerk). Die Erlaubnis wird EINMAL erteilt und bleibt — aber der
+/// Zeitpunkt der Frage ist der erste Zugriff.
+///
+/// Bis v1.7.12 war das die Landungs-Korrelation: Der Dialog erschien im
+/// Aufsetzmoment (Pilotenmeldung 31.08.2026). Beim Flugbeginn waere es
+/// besser, beim Programmstart ist es richtig — da sitzt der Pilot noch
+/// am Schreibtisch und kein Flug haengt daran.
+///
+/// Der Simulator spielt dabei keine Rolle: Wer X-Plane installiert hat,
+/// braucht das Verzeichnis frueher oder spaeter. Ist keines da, kostet
+/// der Versuch nichts und die Funktion schweigt.
+///
+/// Laeuft in einem eigenen Faden — der Bau dauert je nach Umfang der
+/// installierten Szenerie mehrere Sekunden.
+pub fn szenerie_vorbereiten() {
+    std::thread::spawn(|| {
+        if !verzeichnis_bereitstellen() {
+            tracing::info!("keine X-Plane-Installation gefunden — Szenerie bleibt aus");
+        }
+    });
+}
+
+/// Den Flughafen aus der Szenerie holen, mit Verzeichnis.
+fn szenerie_flughafen(icao: &str) -> Option<sim_xplane::szenerie::SzenerieFlughafen> {
+    // ⚠ Baut das Verzeichnis notfalls hier — der Vorabbau beim
+    // Flugbeginn ist die Regel, nicht die Garantie: Ein Flug, der aus
+    // einer Wiederaufnahme kommt, oder ein Simulatorwechsel mitten im
+    // Flug haetten ihn sonst nicht gesehen.
+    verzeichnis_bereitstellen();
+    let zelle = VERZEICHNIS.get_or_init(|| Mutex::new(None));
+    let halter = zelle.lock().ok()?;
     halter.as_ref()?.flughafen(icao)
 }
 

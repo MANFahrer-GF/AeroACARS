@@ -6624,6 +6624,33 @@ fn estimate_xplane_touchdown_vs_from_agl(
 /// Plugin / buffer values can briefly read positive due to gear
 /// oscillation rebound; we never want those as the published
 /// landing rate.
+/// Die tiefste vorliegende Sinkrate aus mehreren Messungen.
+///
+/// `None`, wenn keine einzige negativ ist — dann gab es wirklich nichts
+/// zu retten.
+///
+/// # Warum es diese Funktion gibt
+///
+/// ⚠ Eine gespeicherte 0 ist eine AUSSAGE („aufgesetzt ohne Sinkrate"),
+/// und bei einem Aufprall ist sie falsch. An ihr haengt alles
+/// Nachgelagerte: phpVMS uebernimmt sie als `landing_rate`, der Score
+/// faellt auf 0, und die Wartung feuert nicht.
+///
+/// Gemeldet an SRR318 (LIMJ, 31.08.2026): 12,2 g Spitze, 4 Meganewton
+/// Fahrwerkskraft, 168 kt — und `vs_fpm = 0`, waehrend SIEBEN andere
+/// Messungen zwischen −1389 und −3307 fpm im selben Datensatz standen.
+///
+/// Der Rueckfall ist bewusst grob. Er soll nicht die beste Zahl finden,
+/// sondern verhindern, dass ein Aufprall als „0 fpm" durchgeht.
+fn tiefste_sinkrate(messungen: &[Option<f32>]) -> Option<f32> {
+    messungen
+        .iter()
+        .flatten()
+        .copied()
+        .filter(|v| v.is_finite() && *v < 0.0)
+        .reduce(f32::min)
+}
+
 fn negative_only(value: Option<f32>) -> Option<f32> {
     value.filter(|v| v.is_finite() && *v < 0.0)
 }
@@ -11578,15 +11605,37 @@ fn szenerie_status(stats: &FlightStats) -> String {
     {
         return "uebernommen".to_string();
     }
-    // Eine Auskunft lag vor, aber keine ihrer Bahnen lag nah genug an
-    // unserer. Das ist etwas ganz anderes als "keine Auskunft" — es
-    // deutet auf einen Lage-Unterschied, nicht auf einen toten Weg.
-    if stats
+    // Eine Auskunft lag vor, aber keine ihrer Bahnen wurde uebernommen.
+    // Das ist etwas ganz anderes als "keine Auskunft" — es deutet auf
+    // einen Lage-Unterschied, nicht auf einen toten Weg.
+    //
+    // ⚠ Und es zerfaellt in ZWEI Ursachen, die verschiedene Fixes
+    // brauchen. Bis v1.7.12 hiessen beide nur "kein_treffer":
+    //
+    //   `ohne_treffer` — der Bezeichner passte bei keiner Szenerie-Bahn.
+    //                    Dann stimmen die Kennungen nicht (Nummer oder
+    //                    Buchstabe), nicht die Lage.
+    //   `verworfen`    — der Bezeichner passte, die Lage nicht. Dann
+    //                    stimmen die Koordinaten nicht.
+    //
+    // Am 30./31.08.2026 sind drei MSFS-Fluege daran gescheitert (EDDF
+    // 25L, YBWW 12, YBCG 14) und die Meldung sagte bei allen dasselbe.
+    // Die Zahl der gelieferten Bahnen kommt mit dazu: Eine Auskunft mit
+    // einer einzigen Bahn ist ein anderer Fall als eine mit vierzig.
+    if let Some(anzahl) = stats
         .szenerie_auskunft
         .as_ref()
-        .is_some_and(|a| !a.bahnen.is_empty())
+        .map(|a| a.bahnen.len())
+        .filter(|n| *n > 0)
     {
-        return "kein_treffer".to_string();
+        let (ohne, verworfen) = stats
+            .szenerie_uebernahme
+            .as_ref()
+            .map(|b| (b.ohne_treffer.len(), b.verworfen.len()))
+            .unwrap_or((0, 0));
+        return format!(
+            "kein_treffer(bahnen={anzahl}, ohne_treffer={ohne}, verworfen={verworfen})"
+        );
     }
     match stats.szenerie_diagnose.as_deref() {
         Some(d) => d.to_string(),
@@ -30490,7 +30539,26 @@ fn step_flight_at(
                     }
                 }
 
-                let touchdown_vs = if is_msfs {
+                // ⚠ EINE Entscheidung fuer Wert UND Quelle.
+                //
+                // Bis v1.7.12 standen hier ZWEI Ketten: eine, die den
+                // Wert rechnete, und darunter ein "Spiegel der
+                // Priority-Chain oben", der die Quellenangabe rechnete.
+                // Zwei Implementierungen derselben Entscheidung — und
+                // sie sind auseinandergelaufen.
+                //
+                // Aufgefallen an SRR318 (LIMJ, 31.08.2026): Die Quelle
+                // meldete `agl_estimate_xp_or_last_low`, ein Zweig, der
+                // `est.min(last)` rechnet und bei einem Schaetzwert von
+                // −1389 fpm NIEMALS 0 ergeben kann. Gespeichert war
+                // trotzdem 0 — und daran hing alles: phpVMS bekam
+                // `landing_rate = NULL`, der Score wurde 0, die Wartung
+                // feuerte nicht. Waehrend 12,2 g und 4 Meganewton
+                // Fahrwerkskraft danebenstanden.
+                //
+                // Jetzt liefert jeder Zweig das Paar. Wert und Angabe
+                // koennen nicht mehr verschiedene Wege beschreiben.
+                let (touchdown_vs, vs_source): (f32, &'static str) = if is_msfs {
                     // MSFS: priority chain (v0.5.12 — validated against
                     // 11 real pilot flights, Pete + Michael):
                     //   1. Latched SimVar (PLANE TOUCHDOWN NORMAL VELOCITY)
@@ -30503,85 +30571,107 @@ fn step_flight_at(
                     //   * low_agl_vs_min_fpm — same risk
                     //   * Lua-style 30-sample estimator — that's
                     //     X-Plane only by design
-                    let result = negative_only(snap.touchdown_vs_fpm)
-                        .or_else(|| agl_estimate_msfs.map(|e| e.fpm))
-                        .or_else(|| negative_only(buffered_vs_min))
-                        .unwrap_or(0.0);
+                    let paar = negative_only(snap.touchdown_vs_fpm)
+                        .map(|v| (v, "msfs_simvar_latched"))
+                        .or_else(|| agl_estimate_msfs.map(|e| (e.fpm, "agl_estimate_msfs")))
+                        .or_else(|| negative_only(buffered_vs_min).map(|v| (v, "buffer_min")));
                     tracing::info!(
                         sim = "msfs",
                         latched = ?snap.touchdown_vs_fpm,
-                        agl_estimate = ?agl_estimate_msfs.map(|e| e.fpm),
                         buffer_min = ?buffered_vs_min,
-                        chosen = result,
-                        "touchdown VS captured (MSFS path — time-tier estimator + sampler bypassed)"
+                        chosen = ?paar,
+                        "touchdown VS captured (MSFS)"
                     );
-                    result
+                    paar.unwrap_or((0.0, "fallback_zero"))
                 } else if is_xplane {
-                    // X-Plane (v0.5.13): Lua-style 30-sample AGL-Δ is
-                    // PRIMARY (LandingRate-1 algorithm, Volanta-aligned).
-                    // Adapts to sim framerate naturally — high-fps gets
-                    // tight 0.5 s windows, low-fps gets wider 2-3 s
-                    // windows. No fixed time-tier brittleness.
-                    //
                     // v0.5.35: Sanity-Check + Sparse-Sampling-Fallback.
-                    // Bug-Report 2026-05-08 (gsg/2 GA-Flug, Cessna 152):
-                    // bei sehr niedriger DataRef-Rate spannt das 30-Sample-
-                    // Fenster den ganzen Approach (10s+ window) statt der
-                    // Flare → estimator gibt geglätteten Mittelwert (-33 fpm)
-                    // statt echter TD-V/S (-360 fpm). Loesung:
-                    //   1. Estimator-Window > 3000ms = unplausibel (verwerfen)
-                    //   2. last_low_agl_vs_fpm (letztes airborne Sample
-                    //      <500ft AGL) als robuster Fallback — der wird
-                    //      pro Tick upgedated und ueberlebt sparse Sampling
-                    //   3. Wenn beide vorhanden: wähle den deeperen
-                    //      (= numerisch kleineren) — schuetzt vor
-                    //      Window-Spread-Artefakten
+                    // Bei sehr niedriger DataRef-Rate spannt das
+                    // 30-Sample-Fenster den ganzen Approach statt der
+                    // Flare → der Schaetzer gibt einen geglaetteten
+                    // Mittelwert statt der echten Aufsetz-Sinkrate.
+                    //   1. Fenster > 3000 ms = unplausibel (verwerfen)
+                    //   2. `last_low_agl_vs_fpm` als robuster Rueckfall
+                    //   3. Wenn beide da: den tieferen nehmen
                     let xp_est_plausible = agl_estimate_xp
                         .filter(|e| e.window_ms < 3000)
                         .map(|e| e.fpm);
                     let last_low_recent = stats
                         .last_low_agl_vs_fpm
                         .filter(|(_, ts)| (now - *ts).num_seconds() <= 15);
-                    let result = match (xp_est_plausible, last_low_recent) {
-                        (Some(est), Some((last, _))) => est.min(last),
-                        (Some(est), None) => est,
-                        (None, Some((last, _))) => last,
+                    let paar = match (xp_est_plausible, last_low_recent) {
+                        (Some(est), Some((last, _))) => {
+                            Some((est.min(last), "agl_estimate_xp_or_last_low"))
+                        }
+                        (Some(est), None) => Some((est, "agl_estimate_xp")),
+                        (None, Some((last, _))) => Some((last, "last_low_agl_vs")),
                         (None, None) => negative_only(stats.sampler_touchdown_vs_fpm)
-                            .or_else(|| negative_only(buffered_vs_min))
-                            .or_else(|| negative_only(stats.low_agl_vs_min_fpm))
-                            .unwrap_or(0.0),
+                            .map(|v| (v, "sampler_gear_force"))
+                            .or_else(|| negative_only(buffered_vs_min).map(|v| (v, "buffer_min")))
+                            .or_else(|| {
+                                negative_only(stats.low_agl_vs_min_fpm)
+                                    .map(|v| (v, "low_agl_vs_min"))
+                            }),
                     };
-                    if let Some(ref est) = agl_estimate_xp {
-                        tracing::info!(
-                            sim = "xplane",
-                            agl_fpm = est.fpm,
-                            source = est.source,
-                            window_ms = est.window_ms,
-                            sample_count = est.sample_count,
-                            chosen = result,
-                            "touchdown VS captured (X-Plane Lua-style 30-sample primary)"
-                        );
-                    } else {
-                        tracing::info!(
-                            sim = "xplane",
-                            sampler_vs = ?stats.sampler_touchdown_vs_fpm,
-                            buffer_min = ?buffered_vs_min,
-                            low_agl_min = ?stats.low_agl_vs_min_fpm,
-                            chosen = result,
-                            "touchdown VS captured (X-Plane path, AGL-Δ unavailable)"
-                        );
-                    }
-                    result
+                    tracing::info!(
+                        sim = "xplane",
+                        agl_fpm = ?agl_estimate_xp.map(|e| e.fpm),
+                        window_ms = ?agl_estimate_xp.map(|e| e.window_ms),
+                        sampler_vs = ?stats.sampler_touchdown_vs_fpm,
+                        buffer_min = ?buffered_vs_min,
+                        low_agl_min = ?stats.low_agl_vs_min_fpm,
+                        chosen = ?paar,
+                        "touchdown VS captured (X-Plane)"
+                    );
+                    paar.unwrap_or((0.0, "fallback_zero"))
                 } else {
-                    // Unknown sim — generic fallback, preserves prior
-                    // behaviour for edge cases (Other/sim_set_kind=Off).
-                    // Uses time-tier MSFS-side estimator since it's
-                    // the more conservative of the two.
+                    // Unbekannter Simulator — der vorsichtigere
+                    // MSFS-Schaetzer, wie bisher.
                     negative_only(snap.touchdown_vs_fpm)
-                        .or_else(|| agl_estimate_msfs.map(|e| e.fpm))
-                        .or_else(|| negative_only(stats.sampler_touchdown_vs_fpm))
-                        .or_else(|| negative_only(buffered_vs_min))
-                        .unwrap_or(0.0)
+                        .map(|v| (v, "other_latched"))
+                        .or_else(|| agl_estimate_msfs.map(|e| (e.fpm, "other_agl_estimate")))
+                        .or_else(|| {
+                            negative_only(stats.sampler_touchdown_vs_fpm)
+                                .map(|v| (v, "other_sampler"))
+                        })
+                        .or_else(|| negative_only(buffered_vs_min).map(|v| (v, "other_buffer_min")))
+                        .unwrap_or((0.0, "other_fallback"))
+                };
+
+                // ⚠ Eine 0 ist eine AUSSAGE — und bei einem Aufprall
+                // eine falsche.
+                //
+                // Kommt die Kette auf 0, obwohl IRGENDEINE Messung eine
+                // Sinkrate hat, wird die tiefste davon genommen. Bei
+                // SRR318 standen sieben Messungen zwischen −1389 und
+                // −3307 fpm bereit, waehrend 0 gespeichert wurde.
+                //
+                // Der Rueckfall ist bewusst grob: Er soll nicht die
+                // beste Zahl finden, sondern verhindern, dass ein
+                // Aufprall als „0 fpm" durchgeht und die Wartung
+                // ausbleibt.
+                let (touchdown_vs, vs_source) = if touchdown_vs == 0.0 {
+                    let tiefste = tiefste_sinkrate(&[
+                        negative_only(snap.touchdown_vs_fpm),
+                        agl_estimate_xp.map(|e| e.fpm),
+                        agl_estimate_msfs.map(|e| e.fpm),
+                        negative_only(stats.sampler_touchdown_vs_fpm),
+                        negative_only(buffered_vs_min),
+                        negative_only(stats.low_agl_vs_min_fpm),
+                        stats.last_low_agl_vs_fpm.map(|(v, _)| v),
+                    ]);
+                    if let Some(tiefste) = tiefste {
+                        tracing::warn!(
+                            gerettet = tiefste,
+                            zuvor = vs_source,
+                            peak_g = ?stats.landing_peak_g_force,
+                            "touchdown VS war 0, obwohl Messungen vorlagen — tiefste genommen"
+                        );
+                        (tiefste, "notrettung_tiefste_messung")
+                    } else {
+                        (0.0, vs_source)
+                    }
+                } else {
+                    (touchdown_vs, vs_source)
                 };
 
                 if touchdown_vs == 0.0 {
@@ -30591,60 +30681,9 @@ fn step_flight_at(
                         latched = ?snap.touchdown_vs_fpm,
                         buffer_min = ?buffered_vs_min,
                         low_agl_min = ?stats.low_agl_vs_min_fpm,
-                        "touchdown VS — all sources failed or were positive, defaulting to 0"
+                        "touchdown VS — alle Quellen leer oder positiv, bleibt 0"
                     );
                 }
-
-                // ─── v0.5.23 Touchdown-Forensik-Capture ──────────────
-                //
-                // Spiegel der Priority-Chain oben — bestimmt welcher Pfad
-                // den finalen `touchdown_vs` lieferte und merkt sich die
-                // Werte ALLER Pfade zum Vergleich. Der Streamer baut
-                // damit den TouchdownPayload und schickt es an aeroacars-
-                // live damit der VA-Owner Algorithmen-Disagreements
-                // forensisch auswerten kann.
-                let vs_source: &'static str = if is_msfs {
-                    if negative_only(snap.touchdown_vs_fpm).is_some() {
-                        "msfs_simvar_latched"
-                    } else if agl_estimate_msfs.is_some() {
-                        "agl_estimate_msfs"
-                    } else if negative_only(buffered_vs_min).is_some() {
-                        "buffer_min"
-                    } else {
-                        "fallback_zero"
-                    }
-                } else if is_xplane {
-                    // v0.5.35: Mirror der neuen Priority-Chain.
-                    // - "agl_estimate_xp_plausible" = Estimator-Window <3s
-                    // - "last_low_agl_vs" = letztes airborne Sample (sparse-Sampling-Rettung)
-                    // - "agl_estimate_xp_implausible" = Estimator-Window ≥3s, also wahrscheinlich Spread-Artifact (= reported als low confidence)
-                    let est_plausible =
-                        agl_estimate_xp.map(|e| e.window_ms < 3000).unwrap_or(false);
-                    let last_low_recent = stats
-                        .last_low_agl_vs_fpm
-                        .map(|(_, ts)| (now - ts).num_seconds() <= 15)
-                        .unwrap_or(false);
-                    if est_plausible && last_low_recent {
-                        // Beide vorhanden — wir haben den deeperen genommen
-                        "agl_estimate_xp_or_last_low"
-                    } else if est_plausible {
-                        "agl_estimate_xp"
-                    } else if last_low_recent {
-                        "last_low_agl_vs"
-                    } else if agl_estimate_xp.is_some() {
-                        "agl_estimate_xp_implausible_window"
-                    } else if negative_only(stats.sampler_touchdown_vs_fpm).is_some() {
-                        "sampler_gear_force"
-                    } else if negative_only(buffered_vs_min).is_some() {
-                        "buffer_min"
-                    } else if negative_only(stats.low_agl_vs_min_fpm).is_some() {
-                        "low_agl_vs_min"
-                    } else {
-                        "fallback_zero"
-                    }
-                } else {
-                    "other_fallback"
-                };
                 stats.landing_simulator = Some(if is_msfs {
                     "msfs"
                 } else if is_xplane {
@@ -39605,6 +39644,17 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // ⚠ Das Szenerie-Verzeichnis GLEICH BEIM START bauen.
+            //
+            // Auf macOS fragt das System beim ersten Zugriff auf die
+            // X-Plane-Installation um Erlaubnis, wenn sie an einem
+            // geschuetzten Ort liegt. Einmal erteilt bleibt sie — aber
+            // bis v1.7.12 kam die Frage im AUFSETZMOMENT, weil das
+            // Verzeichnis erst dort gebaut wurde (Pilotenmeldung
+            // 31.08.2026). Hier sitzt der Pilot noch am Schreibtisch.
+            //
+            // Laeuft im eigenen Faden und blockiert den Start nicht.
+            szenerie_bahn::szenerie_vorbereiten();
             // v0.5.15: initialize file-based secrets storage BEFORE
             // anything else touches the secrets API. We resolve the
             // app data dir from the Tauri PathResolver. If this fails
@@ -52732,6 +52782,142 @@ mod wiederaufnahme_langstrecke_tests {
         );
     }
 
+    /// Eine 0 darf nicht stehenbleiben, wenn Messungen vorliegen.
+    ///
+    /// ⚠ Der Fall SRR318 (LIMJ, 31.08.2026): 12,2 g, 4 Meganewton
+    /// Fahrwerkskraft — und `vs_fpm = 0`, waehrend sieben Messungen
+    /// zwischen −1389 und −3307 fpm im selben Datensatz standen. phpVMS
+    /// bekam `landing_rate = NULL`, der Score wurde 0, und die Wartung
+    /// feuerte nicht.
+    #[test]
+    fn die_tiefste_messung_rettet_einen_aufprall() {
+        // Die echten Werte aus dem Datensatz.
+        let gemessen = [
+            Some(-3007.44_f32), // vs_at_edge (SimVar im Kontaktmoment)
+            Some(-1389.0),      // Schaetzer X-Plane
+            Some(-1381.0),      // Schaetzer MSFS
+            None,
+            Some(-3306.97), // Spitze vor dem Abfangen
+        ];
+        assert_eq!(tiefste_sinkrate(&gemessen), Some(-3306.97));
+    }
+
+    #[test]
+    fn ohne_eine_einzige_messung_wird_nichts_erfunden() {
+        assert_eq!(tiefste_sinkrate(&[]), None);
+        assert_eq!(tiefste_sinkrate(&[None, None]), None);
+        // ⚠ Positive Werte sind KEINE Sinkrate — ein steigendes
+        // Flugzeug ist nicht aufgeschlagen. Sie duerfen die Rettung
+        // nicht ausloesen.
+        assert_eq!(tiefste_sinkrate(&[Some(0.0), Some(120.0)]), None);
+        // Und NaN zaehlt nicht als Messung.
+        assert_eq!(tiefste_sinkrate(&[Some(f32::NAN)]), None);
+        assert_eq!(
+            tiefste_sinkrate(&[Some(f32::NAN), Some(-50.0)]),
+            Some(-50.0)
+        );
+    }
+
+    /// Die Rettung muss auch WIRKLICH aufgerufen werden.
+    ///
+    /// ⚠ Eine Gegenprobe am 31.08.2026 hat gezeigt, dass die Tests der
+    /// Funktion allein nicht reichen: Der Aufruf liess sich auf `false`
+    /// setzen und alles blieb gruen. Geprueft war das Werkzeug, nicht
+    /// sein Einbau — dieselbe Luecke wie beim Nullpunkt-Feld am selben
+    /// Tag.
+    ///
+    /// Die Nadeln werden mit `format!` gebaut, sonst faende der Waechter
+    /// sich selbst.
+    #[test]
+    fn die_rettung_haengt_an_der_null_und_wird_aufgerufen() {
+        let quelle = ohne_leerraum(LIB_QUELLE);
+        let bedingung = ohne_leerraum(&format!(
+            "let (touchdown_vs, vs_source) = if touchdown_vs == {}",
+            "0.0 {"
+        ));
+        assert!(
+            quelle.contains(&bedingung),
+            "die Rettung haengt nicht mehr an der 0 — ein Aufprall koennte \
+             wieder als „0 fpm\" durchgehen"
+        );
+        let aufruf = ohne_leerraum(&format!("tiefste_sinkrate(&{}", "["));
+        assert!(
+            quelle.contains(&aufruf),
+            "die Rettung wird nirgends aufgerufen"
+        );
+    }
+
+    /// Wert und Quellenangabe duerfen nicht wieder getrennt gerechnet werden.
+    ///
+    /// ⚠ Genau das war die Ursache bei SRR318: Unter der Wertekette
+    /// stand ein „Spiegel der Priority-Chain oben", der die
+    /// Quellenangabe noch einmal herleitete. Zwei Implementierungen
+    /// derselben Entscheidung — und sie liefen auseinander: Die Quelle
+    /// meldete einen Zweig, der `est.min(last)` rechnet und bei −1389
+    /// niemals 0 ergeben kann, gespeichert war trotzdem 0.
+    ///
+    /// Die Nadel wird mit `format!` gebaut, sonst faende der Waechter
+    /// sich selbst.
+    #[test]
+    fn wert_und_quelle_kommen_aus_einer_entscheidung() {
+        let quelle = ohne_leerraum(LIB_QUELLE);
+        let getrennt = ohne_leerraum(&format!("let vs_source: &'static str = if is_{}", "msfs"));
+        assert!(
+            !quelle.contains(&getrennt),
+            "die Quellenangabe wird wieder getrennt vom Wert gerechnet — \
+             genau die zweite Kette, die SRR318 verursacht hat"
+        );
+        // Und das Paar muss es geben.
+        let paar = ohne_leerraum(&format!(
+            "let (touchdown_vs, vs_source): (f32, &'static {})",
+            "str"
+        ));
+        assert!(quelle.contains(&paar), "die gemeinsame Entscheidung fehlt");
+    }
+
+    /// Das Szenerie-Verzeichnis wird beim START gebaut, nicht beim Landen.
+    ///
+    /// ⚠ Auf macOS haengt daran ein Berechtigungsdialog: Der Bau liest
+    /// die X-Plane-Installation, und liegt die an einem geschuetzten Ort
+    /// (Schreibtisch, Dokumente, iCloud, externes Laufwerk), fragt das
+    /// System beim ERSTEN Zugriff. Bis v1.7.12 war das die
+    /// Landungs-Korrelation — der Dialog kam im Aufsetzmoment
+    /// (Pilotenmeldung 31.08.2026).
+    ///
+    /// Die Nadeln werden mit `format!` gebaut, sonst faende der Waechter
+    /// sich selbst.
+    #[test]
+    fn das_szenerie_verzeichnis_wird_beim_start_gebaut() {
+        let quelle = ohne_leerraum(LIB_QUELLE);
+        let ruf = ohne_leerraum(&format!(
+            "szenerie_bahn{}{}szenerie_vorbereiten()",
+            "::", ""
+        ));
+        assert!(
+            quelle.contains(&ruf),
+            "der Vorabbau fehlt — der Berechtigungsdialog kaeme wieder beim Landen"
+        );
+
+        // Und er muss im Start-Haken stehen, nicht irgendwo — sonst
+        // waere die Frage nur verschoben, nicht vorgezogen. In ZEILEN
+        // gemessen; der erklaerende Kommentar dazwischen ist lang, und
+        // ein Zeichenabstand wuerde daran scheitern.
+        let zeilen: Vec<&str> = LIB_QUELLE.lines().collect();
+        let start = zeilen
+            .iter()
+            .position(|z| z.contains(&format!(".setup(|{}|", "app")))
+            .expect(".setup nicht gefunden");
+        let stelle = zeilen
+            .iter()
+            .position(|z| z.contains(&format!("szenerie_vorbereiten{}", "()")))
+            .expect("Aufruf nicht gefunden");
+        assert!(
+            stelle > start && stelle - start <= 20,
+            "der Vorabbau steht {} Zeilen nach `.setup(` — er gehoert direkt hinein",
+            stelle.saturating_sub(start)
+        );
+    }
+
     /// Die Sprit-Achse darf nicht wieder an den Divert-VERDACHT geraten.
     ///
     /// ⚠ Massgeblich ist das eingereichte Ziel gegen das geplante
@@ -53044,7 +53230,42 @@ mod szenerie_status_tests {
         s.szenerie_auskunft = Some(auskunft(2));
         s.szenerie_uebernahme = Some(bericht(&[]));
         s.szenerie_diagnose = Some("geliefert".to_string());
-        assert_eq!(szenerie_status(&s), "kein_treffer");
+        assert_eq!(
+            szenerie_status(&s),
+            "kein_treffer(bahnen=2, ohne_treffer=0, verworfen=0)"
+        );
+    }
+
+    /// Die Meldung muss sagen, WORAN es lag.
+    ///
+    /// ⚠ Bis v1.7.12 hiessen beide Ursachen nur "kein_treffer" — drei
+    /// gescheiterte MSFS-Fluege am 30./31.08.2026 (EDDF 25L, YBWW 12,
+    /// YBCG 14) meldeten alle dasselbe, und man konnte nicht sagen, ob
+    /// die Kennungen oder die Koordinaten nicht stimmten. Das sind
+    /// verschiedene Fehler mit verschiedenen Fixes.
+    #[test]
+    fn kein_treffer_nennt_die_ursache() {
+        // Bezeichner passte nirgends: die Kennungen stimmen nicht.
+        let mut s = FlightStats::new();
+        s.szenerie_auskunft = Some(auskunft(40));
+        let mut b = bericht(&[]);
+        b.ohne_treffer = vec!["25L".into(), "07R".into()];
+        s.szenerie_uebernahme = Some(b);
+        assert_eq!(
+            szenerie_status(&s),
+            "kein_treffer(bahnen=40, ohne_treffer=2, verworfen=0)"
+        );
+
+        // Bezeichner passte, Lage nicht: die Koordinaten stimmen nicht.
+        let mut s = FlightStats::new();
+        s.szenerie_auskunft = Some(auskunft(40));
+        let mut b = bericht(&[]);
+        b.verworfen = vec!["25L".into()];
+        s.szenerie_uebernahme = Some(b);
+        assert_eq!(
+            szenerie_status(&s),
+            "kein_treffer(bahnen=40, ohne_treffer=0, verworfen=1)"
+        );
     }
 
     #[test]

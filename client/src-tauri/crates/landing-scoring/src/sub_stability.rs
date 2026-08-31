@@ -24,14 +24,41 @@ pub fn sub_stability_legacy(
     let vs = sigma_vs_fpm.unwrap_or(0.0);
     let bk = sigma_bank_deg.unwrap_or(0.0);
 
-    let vs_band: u8 = if vs < 100.0 {
+    // ⚠ v1.7.13: Baender geweitet und auf die Leiter 100/80/45/20/0
+    // gebracht. Gemessen ueber 699 Landungen von 90 Tagen lagen **59 %**
+    // ueber der alten 100er-Grenze, der Mittelwert bei 153 fpm.
+    //
+    // Drei Gruende:
+    //
+    // 1. Eine Schwelle, die die Mehrheit trifft, misst kein Koennen mehr.
+    //    Dasselbe Argument wie bei den OFP-Baendern (v1.7.12).
+    //
+    // 2. Der Code widersprach sich selbst: Das 80-Punkte-Band heisst
+    //    unten `stable`. Es zog also 20 Punkte ab fuer etwas, das die
+    //    Bewertung selbst "stabil" nennt (gemeldet an ITY400,
+    //    31.08.2026: σ 108 fpm, Begruendung `stable`, 80 Punkte).
+    //
+    // 3. σ misst zum Teil das WETTER, nicht den Piloten. Ueber dieselben
+    //    699 Landungen, nach Seitenwind:
+    //
+    //      < 5 kt  (475 Fluege): σ 146 fpm, 44 % volle Punkte
+    //      5-12 kt (199 Fluege): σ 163 fpm, 36 %
+    //      12-20 kt (24 Fluege): σ 208 fpm, 29 %
+    //
+    //    Bei gleichem Koennen sinkt die Chance auf die volle Punktzahl
+    //    mit dem Wind. Turbulenz ist kein Pilotenfehler — dieselbe
+    //    Einwendung, die die Ladepapier-Achse gekostet hat.
+    //
+    // Die Achse bleibt, denn ein wirklich unruhiger Anflug SOLL Punkte
+    // kosten. Sie greift jetzt bei rund 20 % statt bei 59 %.
+    let vs_band: u8 = if vs < 200.0 {
         100
-    } else if vs < 200.0 {
-        80
     } else if vs < 400.0 {
-        50
+        80
     } else if vs < 700.0 {
-        25
+        45
+    } else if vs < 1000.0 {
+        20
     } else {
         0
     };
@@ -84,6 +111,36 @@ mod tests {
         assert!(sub_stability_legacy(None, None).is_none());
     }
 
+    /// Was die Bewertung "stabil" NENNT, muss auch volle Punkte geben.
+    ///
+    /// ⚠ Der Widerspruch, den v1.7.13 beseitigt: Bis dahin lag das
+    /// 80-Punkte-Band bei `stable` — die Achse zog also 20 Punkte ab
+    /// fuer etwas, das sie selbst stabil nannte. Gemeldet an ITY400
+    /// (31.08.2026): σ 108 fpm, Begruendung `stable`, 80 Punkte.
+    #[test]
+    fn ein_ruhiger_anflug_bekommt_volle_punkte() {
+        // Der gemeldete Fall: 108 fpm Streuung, 0,3 Grad Querneigung.
+        assert_eq!(
+            run(Some(108.0), Some(0.3)),
+            Some((100, "landing.rat.very_stable".into()))
+        );
+        // Und der Mittelwert des Bestands (153 fpm) ebenfalls.
+        assert_eq!(
+            run(Some(153.0), Some(0.5)),
+            Some((100, "landing.rat.very_stable".into()))
+        );
+    }
+
+    /// Ein wirklich unruhiger Anflug kostet weiterhin.
+    ///
+    /// Der Gegenpol: Die Weitung darf die Achse nicht zahnlos machen.
+    #[test]
+    fn ein_unruhiger_anflug_kostet_weiterhin() {
+        assert_eq!(run(Some(500.0), Some(1.0)).unwrap().0, 45);
+        assert_eq!(run(Some(900.0), Some(1.0)).unwrap().0, 20);
+        assert_eq!(run(Some(1200.0), Some(1.0)).unwrap().0, 0);
+    }
+
     #[test]
     fn ts_voting_min_of_axes() {
         // VS=50 → 100, Bank=4° → 80, min=80 → "stable"
@@ -91,15 +148,18 @@ mod tests {
             run(Some(50.0), Some(4.0)),
             Some((80, "landing.rat.stable".into()))
         );
-        // VS=300 → 50, Bank=1° → 100, min=50 → "average_stability"
+        // ⚠ v1.7.13: VS=300 gibt jetzt 80, nicht mehr 50 — die Baender
+        // sind geweitet (Begruendung oben bei `vs_band`). Bank=1° → 100,
+        // min = 80 → "stable".
         assert_eq!(
             run(Some(300.0), Some(1.0)),
-            Some((50, "landing.rat.average_stability".into()))
+            Some((80, "landing.rat.stable".into()))
         );
-        // VS=800 → 0, Bank=1° → 100, min=0 → "very_unstable"
+        // ⚠ v1.7.13: VS=800 gibt jetzt 20 statt 0 — erst ueber 1000 fpm
+        // Streuung ist der Anflug voellig aus dem Ruder.
         assert_eq!(
             run(Some(800.0), Some(1.0)),
-            Some((0, "landing.rat.very_unstable".into()))
+            Some((20, "landing.rat.unstable_approach".into()))
         );
     }
 
