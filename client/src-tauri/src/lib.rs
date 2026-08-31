@@ -16531,9 +16531,18 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// ⚠ Sie stand von v1.7.0 bis v1.7.11 auf 9, obwohl sich in dieser Zeit
 /// mehrfach Noten verschoben haben. v1.7.12 aendert VIER Achsen auf
 /// einmal (OFP-Treue, Ladepapiere, G-Kraefte, Bahndisziplin) — deshalb
-/// 10. Der Waechter `die_algorithmusversion_steht_an_allen_stellen`
-/// haelt fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
-const SCORE_ALGORITHMUS_VERSION: u8 = 10;
+/// damals 10.
+///
+/// **11 seit v1.7.13**: Die Stabilitaets-Achse hat neue Baender
+/// (200/400/700/1000 statt 100/200/400/700). Gemessen ueber 699
+/// Landungen bekommen damit **39 % der Fluege 100 statt 80 Punkte** —
+/// derselbe Flug wird unter v1.7.12 und v1.7.13 verschieden benotet.
+/// Ohne den Sprung mischt jede Auswertung ueber den Bestand zwei
+/// Massstaebe.
+///
+/// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
+/// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
+const SCORE_ALGORITHMUS_VERSION: u8 = 11;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
@@ -52636,12 +52645,22 @@ mod wiederaufnahme_langstrecke_tests {
             3,
             "nicht alle drei Nutzlaststellen benutzen die Konstante"
         );
-        // Und keine davon schreibt eine eigene Zahl.
-        let roh = ohne_leerraum(&format!("score_algorithm_version{}Some({}", ':', '9'));
-        assert!(
-            !quelle.contains(&roh),
-            "eine Nutzlaststelle schreibt die Fassung als feste Zahl"
-        );
+        // Und keine davon schreibt eine eigene Zahl — egal welche.
+        //
+        // ⚠ Vorher stand hier die feste 9. Ein Waechter, der nur EINEN
+        // falschen Wert kennt, faengt den naechsten nicht: Beim Sprung
+        // auf 10 waere eine hart geschriebene 9 aufgefallen, eine hart
+        // geschriebene 10 nicht.
+        let praefix = ohne_leerraum(&format!("score_algorithm_version{}Some(", ':'));
+        for (i, _) in quelle.match_indices(&praefix) {
+            let rest = &quelle[i + praefix.len()..];
+            let naechstes = rest.chars().next().unwrap_or(' ');
+            assert!(
+                !naechstes.is_ascii_digit(),
+                "eine Nutzlaststelle schreibt die Fassung als feste Zahl ({naechstes}…) \
+                 statt ueber SCORE_ALGORITHMUS_VERSION"
+            );
+        }
     }
 
     /// Die Bahngeometrie loest IMMER gegen das eingereichte Ziel auf.
