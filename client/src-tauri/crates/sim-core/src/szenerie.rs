@@ -424,6 +424,13 @@ impl Auftragsbuch {
     #[must_use]
     pub fn gestellt(&mut self, icao: &str, jetzt_ms: i64) -> u32 {
         let icao = icao.trim().to_ascii_uppercase();
+        // ⚠ Keinen Auftrag erfinden. Gibt es den Platz nicht (mehr),
+        // darf auch keine Kennung und kein `laeuft` entstehen — sonst
+        // traegt eine spaetere Lieferung einen Flughafen ein, den dieses
+        // Buch nie gefragt hat.
+        if !self.auftraege.contains_key(&icao) {
+            return 0;
+        }
         // ⚠ `saturating_add`, nicht `wrapping_add`: Nach einem Umlauf
         // waere jeder Vergleich „neuer als" falsch, und eine uralte
         // Antwort gaelte als die juengste. Bei einem Versuch je Minute
@@ -545,6 +552,54 @@ impl Auftragsbuch {
         self.definition_fehler.clone()
     }
 
+    /// Auswaehlen UND stellen in EINEM Zug.
+    ///
+    /// ⚠ `naechster` und `gestellt` getrennt aufzurufen ist ein Riss:
+    /// Der Aufrufer nimmt die Sperre zweimal, und dazwischen kann ein
+    /// Flugwechsel das Buch leeren. `gestellt` legte dann trotzdem
+    /// Kennung und `laeuft` an — fuer einen Auftrag, den es nicht mehr
+    /// gibt. Eine spaetere Lieferung setzte den Flughafen des ALTEN
+    /// Fluges ueber `geliefert` wieder ins neue Buch (QS-Befund 5,
+    /// fuenfte Runde).
+    pub fn naechsten_stellen(&mut self, jetzt_ms: i64) -> Option<(String, u32)> {
+        let icao = self.naechster(jetzt_ms)?;
+        let id = self.gestellt(&icao, jetzt_ms);
+        Some((icao, id))
+    }
+
+    /// Fenster, Zielmenge und Raenge in EINEM Zug setzen.
+    ///
+    /// ⚠ Vorher waren das drei Buchoperationen mit drei getrennten
+    /// Sperren: Fenster oeffnen, Ziele einzeln anmelden, danach die
+    /// Raenge korrigieren. Dazwischen konnte der Verbindungsfaden noch
+    /// einen veralteten Rang-0-Platz auswaehlen — und der lief dann bis
+    /// zu 60 Sekunden, weil die spaetere Rangkorrektur einen LAUFENDEN
+    /// Auftrag nicht beendet. Im Endanflug ist das der restliche Anflug
+    /// (QS-Befund 2, fuenfte Runde).
+    ///
+    /// Gibt zurueck, fuer wie viele Plaetze ein neuer Vorrat geoeffnet
+    /// wurde.
+    pub fn anflug_ausrichten(&mut self, ziele: &[(String, u8)], fenster: bool) -> usize {
+        for (icao, rang) in ziele {
+            self.wunsch_mit_rang(icao, *rang);
+        }
+        self.raenge_setzen(ziele);
+        // ⚠ Einen laufenden Auftrag, der kein Ziel mehr ist, SOFORT
+        // freigeben. Sonst blockiert er die Reihe, bis die Wartezeit um
+        // ist — und genau die 60 Sekunden fehlen dann dem Ziel.
+        if let Some(laufend) = self.laeuft.clone() {
+            let ist_ziel = ziele.iter().any(|(z, _)| z.eq_ignore_ascii_case(&laufend));
+            if !ist_ziel {
+                self.laeuft = None;
+            }
+        }
+        if fenster {
+            self.neues_versuchsfenster()
+        } else {
+            0
+        }
+    }
+
     /// Nur fuer Tests: der Rang eines Platzes.
     #[doc(hidden)]
     pub fn rang_fuer_test(&self, icao: &str) -> Option<u8> {
@@ -566,6 +621,9 @@ impl Auftragsbuch {
 
     /// Zu welchem Platz eine Kennung gehoert.
     pub fn platz_zu_kennung(&self, id: u32) -> Option<String> {
+        if id == 0 {
+            return None;
+        }
         self.kennungen
             .iter()
             .rev()
@@ -604,6 +662,24 @@ impl Auftragsbuch {
         self.geliefert(&icao, auskunft);
         if let Some(a) = self.auftraege.get_mut(&icao) {
             a.ergebnis_id = id;
+        }
+        Some(icao)
+    }
+
+    /// Einen laufenden Auftrag wieder freigeben, ohne ihn abzulehnen.
+    ///
+    /// ⚠ Fuer voruebergehende Fehler. Der Platz bleibt offen und kommt
+    /// wieder an die Reihe; nur die laufende Anfrage gilt als beendet,
+    /// damit nicht die volle Wartezeit verstreicht.
+    pub fn freigeben_zu_kennung(&mut self, id: u32) -> Option<String> {
+        let icao = self.platz_zu_kennung(id)?;
+        if let Some(a) = self.auftraege.get_mut(&icao) {
+            if matches!(a.zustand, Auftragszustand::Laeuft { .. }) {
+                a.zustand = Auftragszustand::Offen;
+            }
+        }
+        if self.laeuft.as_deref() == Some(icao.as_str()) {
+            self.laeuft = None;
         }
         Some(icao)
     }
@@ -1235,6 +1311,102 @@ mod auftragsbuch_tests {
             None,
             "es werden weiter Kennungen vergeben — zwei Anfragen koennten \
              dieselbe tragen"
+        );
+    }
+
+    /// ⚠ QS-Befund 2, fuenfte Runde: Fenster, Ziele und Raenge in EINEM
+    /// Zug — und ein laufender Auftrag, der kein Ziel mehr ist, wird
+    /// sofort freigegeben.
+    ///
+    /// Vorher waren das drei Buchoperationen. Dazwischen konnte der
+    /// Verbindungsfaden einen veralteten Rang-0-Platz auswaehlen; die
+    /// spaetere Rangkorrektur beendet einen LAUFENDEN Auftrag nicht, und
+    /// er blockierte die Reihe bis zu 60 Sekunden. Im Endanflug ist das
+    /// der restliche Anflug.
+    #[test]
+    fn das_ausrichten_gibt_einen_veralteten_auftrag_sofort_frei() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("EDDF", 0);
+        let (laufend, _) = b.naechsten_stellen(0).expect("erster Auftrag");
+        assert_eq!(laufend, "EDDF");
+        assert_eq!(b.laufender().as_deref(), Some("EDDF"));
+
+        // Das tatsaechliche Ziel ist jetzt LEZL — EDDF ist keins mehr.
+        b.anflug_ausrichten(&[("LEZL".into(), 0)], false);
+
+        assert_eq!(
+            b.laufender(),
+            None,
+            "der veraltete Auftrag laeuft weiter und blockiert die Reihe"
+        );
+        assert_eq!(
+            b.naechsten_stellen(1).map(|(i, _)| i).as_deref(),
+            Some("LEZL"),
+            "das aktuelle Ziel muss ohne Wartezeit drankommen"
+        );
+    }
+
+    /// Ein laufender Auftrag, der WEITER Ziel ist, bleibt stehen.
+    ///
+    /// ⚠ Sonst faengt jede Ausrichtung die laufende Anfrage neu an und
+    /// die Wartezeit liefe nie ab.
+    #[test]
+    fn das_ausrichten_stoert_einen_gueltigen_auftrag_nicht() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("LEZL", 0);
+        let _ = b.naechsten_stellen(0).expect("Auftrag");
+        b.anflug_ausrichten(&[("LEZL".into(), 0)], false);
+        assert_eq!(b.laufender().as_deref(), Some("LEZL"));
+    }
+
+    /// ⚠ QS-Befund 5, fuenfte Runde: Auswaehlen und Stellen sind EIN
+    /// Zug.
+    ///
+    /// Getrennt waren sie ein Riss: Zwischen `naechster` und `gestellt`
+    /// kann ein Flugwechsel das Buch leeren. `gestellt` legte dann
+    /// trotzdem Kennung und `laeuft` an, und eine spaetere Lieferung
+    /// setzte den Flughafen des ALTEN Fluges wieder ins neue Buch.
+    #[test]
+    fn ein_leeres_buch_stellt_keinen_auftrag() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("EDDF");
+        // Flugwechsel genau zwischen Auswahl und Stellen.
+        b.zuruecksetzen();
+        assert_eq!(
+            b.gestellt("EDDF", 0),
+            0,
+            "fuer einen Platz, den es nicht mehr gibt, entstand eine Kennung"
+        );
+        assert_eq!(b.laufender(), None);
+        assert_eq!(b.platz_zu_kennung(0), None, "Kennung 0 gilt als ungueltig");
+        assert_eq!(
+            b.geliefert_zu_kennung(0, auskunft("EDDF", 4)),
+            None,
+            "eine Lieferung des alten Fluges landete im neuen Buch"
+        );
+        assert!(b.auskunft("EDDF").is_none());
+    }
+
+    /// ⚠ QS-Befund 3, fuenfte Runde: Ein voruebergehender Fehler sperrt
+    /// den Platz nicht aus.
+    ///
+    /// Ein abgelehnter Platz bleibt auch bei einem neuen Fenster
+    /// geschlossen — eine Ueberlast haette ihn damit fuer den Rest des
+    /// Fluges ausgesperrt.
+    #[test]
+    fn ein_voruebergehender_fehler_sperrt_den_platz_nicht_aus() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("LEZL");
+        let (_, id) = b.naechsten_stellen(0).expect("Auftrag");
+
+        b.freigeben_zu_kennung(id);
+
+        assert_eq!(b.zustand("LEZL"), Some(Auftragszustand::Offen));
+        assert_eq!(
+            b.naechsten_stellen(1).map(|(i, _)| i).as_deref(),
+            Some("LEZL"),
+            "nach einem voruebergehenden Fehler muss sofort wieder gefragt \
+             werden duerfen — nicht erst nach der vollen Wartezeit"
         );
     }
 

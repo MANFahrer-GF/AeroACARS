@@ -588,6 +588,67 @@ pub fn feld_zu_paket(paare: &[(u32, String)], send_id: u32) -> Option<String> {
         .map(|(_, feld)| feld.clone())
 }
 
+/// Was eine SimConnect-Ausnahme fuer den Facility-Weg bedeutet.
+///
+/// ⚠ Bis v1.7.14 wurde JEDE Ausnahme dem Flughafen angelastet und der
+/// Platz dauerhaft auf „abgelehnt" gesetzt — und ein neues Fenster laesst
+/// abgelehnte Plaetze bewusst geschlossen. Damit sperrte eine
+/// voruebergehende Ueberlast den Platz fuer den Rest des Fluges aus, und
+/// ein Fehler der DEFINITION sah aus wie ein Problem des Platzes
+/// (QS-Befund 3, fuenfte Runde).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ausnahmeart {
+    /// Die Definition taugt nicht — der ganze Weg ist zu.
+    Definition,
+    /// Dieser Platz ist ungueltig (ICAO/Region) — dauerhaft ablehnen.
+    Platz,
+    /// Voruebergehend — erneut versuchen ist richtig.
+    Voruebergehend,
+    /// Nicht zuzuordnen — protokollieren, sonst nichts.
+    Unklar,
+}
+
+// Nummern aus `SIMCONNECT_EXCEPTION` im mitgelieferten SDK-Header
+// (`ffi/include/SimConnect.h`). Die Aufzaehlung ist fortlaufend ab
+// NONE = 0; die Werte hier sind gezaehlt, nicht geraten.
+const EXC_ERROR: u32 = 1;
+const EXC_SIZE_MISMATCH: u32 = 2;
+const EXC_UNRECOGNIZED_ID: u32 = 3;
+const EXC_NAME_UNRECOGNIZED: u32 = 7;
+const EXC_TOO_MANY_REQUESTS: u32 = 12;
+const EXC_INVALID_DATA_TYPE: u32 = 18;
+const EXC_INVALID_DATA_SIZE: u32 = 19;
+const EXC_DATA_ERROR: u32 = 20;
+const EXC_INVALID_ENUM: u32 = 27;
+const EXC_DEFINITION_ERROR: u32 = 28;
+const EXC_DATUM_ID: u32 = 30;
+const EXC_INTERNAL: u32 = 44;
+
+/// Eine Ausnahme einordnen.
+pub fn ausnahme_einordnen(exception: u32) -> Ausnahmeart {
+    match exception {
+        // Die Definition selbst ist unbrauchbar — ein falscher Feldname,
+        // ein falscher Datentyp, eine unbekannte Kennung. Weiterfragen
+        // liefert nur Antworten, die niemand deuten kann.
+        EXC_UNRECOGNIZED_ID
+        | EXC_NAME_UNRECOGNIZED
+        | EXC_SIZE_MISMATCH
+        | EXC_INVALID_DATA_TYPE
+        | EXC_INVALID_DATA_SIZE
+        | EXC_DATA_ERROR
+        | EXC_INVALID_ENUM
+        | EXC_DEFINITION_ERROR
+        | EXC_DATUM_ID => Ausnahmeart::Definition,
+        // Der Platz ist ungueltig — ICAO oder Region kennt der Simulator
+        // nicht. Ihn erneut zu fragen aendert daran nichts.
+        EXC_ERROR => Ausnahmeart::Platz,
+        // ⚠ Voruebergehend. Genau hier lag der Fehler: Eine Ueberlast
+        // sperrte den Platz fuer den ganzen Flug aus.
+        EXC_TOO_MANY_REQUESTS | EXC_INTERNAL => Ausnahmeart::Voruebergehend,
+        _ => Ausnahmeart::Unklar,
+    }
+}
+
 /// Wie viele Paketkennungen zurueckverfolgt werden.
 pub const PAKETE_GEDAECHTNIS: usize = 16;
 
@@ -629,6 +690,81 @@ mod paketzuordnung_tests {
         let paare = [(41u32, "WIDTH".to_string())];
         assert_eq!(feld_zu_paket(&paare, 99), None);
         assert_eq!(feld_zu_paket(&[], 41), None);
+    }
+
+    /// ⚠ QS-Befund 3, fuenfte Runde: Nicht jede Ausnahme gehoert dem
+    /// Platz.
+    #[test]
+    fn ausnahmen_werden_nach_wirkung_eingeordnet() {
+        use Ausnahmeart::*;
+        // Die Definition taugt nicht — der ganze Weg ist zu.
+        for e in [3u32, 7, 2, 18, 19, 20, 27, 28, 30] {
+            assert_eq!(ausnahme_einordnen(e), Definition, "Ausnahme {e}");
+        }
+        // Dieser Platz ist ungueltig.
+        assert_eq!(ausnahme_einordnen(1), Platz);
+        // ⚠ Voruebergehend — genau die, die vorher den Platz fuer den
+        // ganzen Flug aussperrten.
+        assert_eq!(ausnahme_einordnen(12), Voruebergehend, "TOO_MANY_REQUESTS");
+        assert_eq!(ausnahme_einordnen(44), Voruebergehend, "INTERNAL");
+        // Alles andere: protokollieren, sonst nichts.
+        assert_eq!(ausnahme_einordnen(99), Unklar);
+        assert_eq!(ausnahme_einordnen(0), Unklar, "NONE ist keine Ausnahme");
+    }
+
+    /// ⚠ Und die Nummern stimmen mit dem SDK-Header ueberein.
+    ///
+    /// Die Aufzaehlung ist fortlaufend; die Werte sind gezaehlt, nicht
+    /// geraten. Verschiebt eine neue SDK-Fassung die Liste, faellt es
+    /// hier auf und nicht erst an einem falsch eingeordneten Fehler.
+    #[test]
+    fn die_ausnahmenummern_stammen_aus_dem_header() {
+        let header = include_str!("../ffi/include/SimConnect.h");
+        let anfang = header
+            .find("SIMCONNECT_EXCEPTION_NONE")
+            .expect("Aufzaehlung fehlt");
+        let ende = header[anfang..].find('}').expect("Ende fehlt") + anfang;
+        let namen: Vec<&str> = header[anfang..ende]
+            .lines()
+            .filter_map(|z| z.trim().strip_suffix(','))
+            .filter(|z| z.starts_with("SIMCONNECT_EXCEPTION_"))
+            .collect();
+        for (nr, name) in [
+            (EXC_ERROR, "SIMCONNECT_EXCEPTION_ERROR"),
+            (EXC_SIZE_MISMATCH, "SIMCONNECT_EXCEPTION_SIZE_MISMATCH"),
+            (EXC_UNRECOGNIZED_ID, "SIMCONNECT_EXCEPTION_UNRECOGNIZED_ID"),
+            (
+                EXC_NAME_UNRECOGNIZED,
+                "SIMCONNECT_EXCEPTION_NAME_UNRECOGNIZED",
+            ),
+            (
+                EXC_TOO_MANY_REQUESTS,
+                "SIMCONNECT_EXCEPTION_TOO_MANY_REQUESTS",
+            ),
+            (
+                EXC_INVALID_DATA_TYPE,
+                "SIMCONNECT_EXCEPTION_INVALID_DATA_TYPE",
+            ),
+            (
+                EXC_INVALID_DATA_SIZE,
+                "SIMCONNECT_EXCEPTION_INVALID_DATA_SIZE",
+            ),
+            (EXC_DATA_ERROR, "SIMCONNECT_EXCEPTION_DATA_ERROR"),
+            (EXC_INVALID_ENUM, "SIMCONNECT_EXCEPTION_INVALID_ENUM"),
+            (
+                EXC_DEFINITION_ERROR,
+                "SIMCONNECT_EXCEPTION_DEFINITION_ERROR",
+            ),
+            (EXC_DATUM_ID, "SIMCONNECT_EXCEPTION_DATUM_ID"),
+            (EXC_INTERNAL, "SIMCONNECT_EXCEPTION_INTERNAL"),
+        ] {
+            assert_eq!(
+                namen.get(nr as usize).copied(),
+                Some(name),
+                "Nummer {nr} ist im Header nicht {name} — die Aufzaehlung \
+                 hat sich verschoben"
+            );
+        }
     }
 
     /// Bei doppelter Kennung gilt die juengste Zuordnung.
@@ -1801,15 +1937,18 @@ mod anschluss_verdrahtung_tests {
         // eine Wiederholung nach ausgebliebener Antwort haette sie nie
         // ausgeloest, und genau daran ist EDDF-LEZL gescheitert.
         assert!(
-            a.contains("shared.szenerie.lock().naechster(jetzt_ms)"),
+            a.contains("shared.szenerie.lock().naechsten_stellen(jetzt_ms)"),
             "der faellige Auftrag wird nicht aus dem Buch geholt — dann \
              haengt die Anfrage wieder an einer Flagge und wird nie \
              wiederholt"
         );
+        // ⚠ Seit der fuenften Runde in EINEM Zug: `naechsten_stellen`.
+        // Getrennt waere es ein Riss — dazwischen kann ein Flugwechsel
+        // das Buch leeren, und der Auftrag entstuende fuer einen Platz,
+        // den es nicht mehr gibt.
         assert!(
-            a.contains("shared.szenerie.lock().gestellt(&icao,jetzt_ms)"),
-            "die gestellte Anfrage wird nicht im Buch vermerkt — dann \
-             zaehlt niemand die Versuche und die Sperre greift nie"
+            !a.contains("shared.szenerie.lock().gestellt("),
+            "Auswaehlen und Stellen sind wieder getrennt"
         );
     }
 

@@ -2315,13 +2315,42 @@ fn szenerie_anfordern_fuer(app: &AppHandle, icaos: &[String]) {
 ///
 /// ⚠ Und warum nicht bei jedem Durchlauf: Sonst fuellte sich der Vorrat
 /// staendig auf und die Obergrenze waere wirkungslos. Gebunden ist er an
-/// den WECHSEL — `zuletzt` haelt fest, fuer welche Phase zuletzt
-/// geoeffnet wurde.
-fn braucht_neues_versuchsfenster(phase: FlightPhase, zuletzt: Option<FlightPhase>) -> bool {
+/// den WECHSEL.
+///
+/// ⚠⚠ `vorher` ist die Phase des VORIGEN Durchlaufs — irgendeine, nicht
+/// die zuletzt geoeffnete Landephase.
+///
+/// Der Unterschied ist nicht theoretisch: Wer die zuletzt GEOEFFNETE
+/// festhaelt, verliert `Approach → Holding → Approach`. Beim Verlassen
+/// nach `Holding` bliebe `Some(Approach)` stehen, und beim Wiedereintritt
+/// verglichen wir Approach mit Approach — kein Fenster. Ein laengeres
+/// Holding verbraucht die zehn Versuche, und der naechste Vorrat kaeme
+/// erst in `Final`, also unter 700 ft (QS-Befund 1, fuenfte Runde).
+///
+/// Diese Folge gibt es im Bestand als Fixture.
+fn braucht_neues_versuchsfenster(phase: FlightPhase, vorher: Option<FlightPhase>) -> bool {
     matches!(
         phase,
         FlightPhase::Descent | FlightPhase::Approach | FlightPhase::Final
-    ) && zuletzt != Some(phase)
+    ) && vorher != Some(phase)
+}
+
+/// Entscheidung UND neuer Zustand in einem — damit beides pruefbar ist.
+///
+/// ⚠ Warum diese Funktion existiert: Die Fortschreibung lag im
+/// `cfg(target_os = "windows")`-Block. Eine Gegenprobe, die sie kaputt
+/// machte („Phase nur bei faelligem Fenster fortschreiben" — genau der
+/// gemeldete Fehler), blieb auf dem Mac GRUEN, weil der Block hier gar
+/// nicht uebersetzt wird. Die Entscheidung war geprueft, ihre
+/// Verdrahtung nicht.
+///
+/// Der zweite Rueckgabewert ist IMMER `Some(phase)`: Das Feld ist die
+/// vorige Phase, kein Merker fuer geoeffnete Fenster.
+fn versuchsfenster_fortschreiben(
+    phase: FlightPhase,
+    vorher: Option<FlightPhase>,
+) -> (bool, Option<FlightPhase>) {
+    (braucht_neues_versuchsfenster(phase, vorher), Some(phase))
 }
 
 /// Rang einer blossen Vormerkung.
@@ -2452,12 +2481,13 @@ fn szenerie_auskunft_uebernehmen(
                 Ok(s) => s,
                 Err(_) => return,
             };
-            if braucht_neues_versuchsfenster(stats.phase, stats.szenerie_fenster_phase) {
-                stats.szenerie_fenster_phase = Some(stats.phase);
-                true
-            } else {
-                false
-            }
+            // ⚠ Entscheidung und Fortschreibung kommen aus EINER
+            // Funktion — siehe `versuchsfenster_fortschreiben`. Hier
+            // steht nur noch die Zuweisung; alles andere ist geprueft.
+            let (faellig, neue_phase) =
+                versuchsfenster_fortschreiben(stats.phase, stats.szenerie_vorige_phase);
+            stats.szenerie_vorige_phase = neue_phase;
+            faellig
         };
 
         let (neu, diagnose, kennung) = {
@@ -2469,26 +2499,25 @@ fn szenerie_auskunft_uebernehmen(
             // wo die Szenerie des Ziels geladen ist. Bis v1.7.13 gab es
             // den zweiten Versuch nicht, und der Flug EDDF-LEZL am
             // 01.09.2026 landete mit der Szenerie Frankfurts.
-            if fenster_faellig {
-                let betroffen = msfs.szenerie_neues_versuchsfenster();
-                tracing::info!(
-                    betroffen,
-                    "Anflug erreicht — neuer Versuchsvorrat fuer die Szenerie"
-                );
-            }
-            // ⚠ Raenge SETZEN, nicht nur verbessern. Wechselt das
-            // erkannte Ausweichziel, behielte der alte Kandidat sonst
-            // seinen Rang 0 und konkurrierte weiter mit dem aktuellen
-            // Landeplatz (QS-Befund 4, vierte Runde).
-            for (rang, z) in ziele.iter().enumerate() {
-                msfs.szenerie_anfordern_mit_rang(z, rang as u8);
-            }
+            // ⚠ EINE Buchoperation fuer Fenster, Zielmenge und Raenge.
+            //
+            // Vorher waren es drei mit drei getrennten Sperren, und
+            // dazwischen konnte der Verbindungsfaden einen veralteten
+            // Rang-0-Platz auswaehlen — der dann bis zu 60 Sekunden lief,
+            // weil eine spaetere Rangkorrektur einen LAUFENDEN Auftrag
+            // nicht beendet (QS-Befund 2, fuenfte Runde).
             let raenge: Vec<(String, u8)> = ziele
                 .iter()
                 .enumerate()
                 .map(|(rang, z)| (z.clone(), rang as u8))
                 .collect();
-            msfs.szenerie_raenge_setzen(&raenge);
+            let betroffen = msfs.szenerie_anflug_ausrichten(&raenge, fenster_faellig);
+            if fenster_faellig {
+                tracing::info!(
+                    betroffen,
+                    "Landephase gewechselt — neuer Versuchsvorrat fuer die Szenerie"
+                );
+            }
             // ⚠ Geerntet wird GENAU EIN Platz, ohne Rueckfall — siehe
             // `szenerie_ernteziel`. Ein `find_map` ueber die Zielliste
             // nahm das geplante Ziel, sobald dessen Antwort zuerst da
@@ -4197,9 +4226,12 @@ struct FlightStats {
     /// committed approach to a different field warms the cache exactly once
     /// (flicker / overflown-airport guard). Runtime-only.
     divert_prefetch_icao: Option<String>,
-    /// Fuer welche Phase zuletzt ein Szenerie-Versuchsvorrat geoeffnet
-    /// wurde. Siehe `braucht_neues_versuchsfenster`.
-    szenerie_fenster_phase: Option<FlightPhase>,
+    /// Die Phase beim VORIGEN Durchlauf der Szenerie-Ernte.
+    ///
+    /// ⚠ Irgendeine Phase, nicht die zuletzt geoeffnete Landephase —
+    /// sonst geht `Approach → Holding → Approach` verloren. Siehe
+    /// `braucht_neues_versuchsfenster`.
+    szenerie_vorige_phase: Option<FlightPhase>,
     /// v0.16.24: the diverged field currently accruing stability time
     /// during a committed approach (distinct from `divert_prefetch_icao`,
     /// which is the field already fetched). When the nearest field changes
@@ -53705,6 +53737,93 @@ mod szenerie_status_tests {
         );
     }
 
+    /// ⚠ **QS-Befund 1, fuenfte Runde: `Approach → Holding → Approach`.**
+    ///
+    /// Wer die zuletzt GEOEFFNETE Landephase festhaelt, verliert diese
+    /// Folge: Beim Verlassen nach `Holding` bliebe `Some(Approach)`
+    /// stehen, und beim Wiedereintritt verglichen wir Approach mit
+    /// Approach — kein Fenster. Ein laengeres Holding verbraucht die
+    /// zehn Versuche, und der naechste Vorrat kaeme erst in `Final`,
+    /// also unter 700 ft.
+    ///
+    /// Deshalb ist `vorher` die Phase des VORIGEN Durchlaufs, irgendeine.
+    #[test]
+    fn nach_einem_holding_oeffnet_der_anflug_wieder() {
+        assert!(
+            braucht_neues_versuchsfenster(FlightPhase::Approach, Some(FlightPhase::Holding)),
+            "nach einem Holding bekommt der Anflug kein Fenster mehr"
+        );
+        // Und im Holding selbst wird keins geoeffnet.
+        assert!(!braucht_neues_versuchsfenster(
+            FlightPhase::Holding,
+            Some(FlightPhase::Approach)
+        ));
+    }
+
+    /// ⚠ Die Fortschreibung gibt IMMER die aktuelle Phase zurueck.
+    ///
+    /// Schriebe sie nur bei faelligem Fenster fort, waere das Feld ein
+    /// Merker fuer geoeffnete Fenster — und `Approach → Holding →
+    /// Approach` ginge wieder verloren.
+    #[test]
+    fn die_vorige_phase_wird_immer_fortgeschrieben() {
+        for (phase, vorher) in [
+            (FlightPhase::Holding, Some(FlightPhase::Approach)),
+            (FlightPhase::Cruise, None),
+            (FlightPhase::Approach, Some(FlightPhase::Approach)),
+        ] {
+            let (_, neu) = versuchsfenster_fortschreiben(phase, vorher);
+            assert_eq!(
+                neu,
+                Some(phase),
+                "{phase:?} nach {vorher:?} wurde nicht fortgeschrieben"
+            );
+        }
+    }
+
+    /// Und die ganze Folge ueber die Fortschreibung gefahren.
+    #[test]
+    fn die_holding_folge_ueber_die_fortschreibung() {
+        let folge = [
+            (FlightPhase::Approach, true),
+            (FlightPhase::Holding, false),
+            (FlightPhase::Approach, true),
+        ];
+        let mut vorher = None;
+        for (phase, erwartet) in folge {
+            let (faellig, neu) = versuchsfenster_fortschreiben(phase, vorher);
+            assert_eq!(faellig, erwartet, "{phase:?} nach {vorher:?}");
+            vorher = neu;
+        }
+    }
+
+    /// Die ganze Folge am Stueck — so wie die Ernte sie sieht.
+    ///
+    /// ⚠ Die vorige Phase wird bei JEDEM Durchlauf fortgeschrieben, auch
+    /// wenn kein Fenster faellig war. Sonst waere sie ein Merker fuer
+    /// geoeffnete Fenster und der Befund waere zurueck.
+    #[test]
+    fn ein_holding_mitten_im_anflug_kostet_kein_fenster() {
+        let folge = [
+            (FlightPhase::Descent, true),
+            (FlightPhase::Approach, true),
+            (FlightPhase::Approach, false), // laeuft weiter
+            (FlightPhase::Holding, false),  // raus aus dem Anflug
+            (FlightPhase::Holding, false),
+            (FlightPhase::Approach, true), // ⚠ wieder rein: neues Fenster
+            (FlightPhase::Final, true),
+        ];
+        let mut vorher: Option<FlightPhase> = None;
+        for (phase, erwartet) in folge {
+            let faellig = braucht_neues_versuchsfenster(phase, vorher);
+            assert_eq!(
+                faellig, erwartet,
+                "{phase:?} nach {vorher:?}: Fenster {faellig}, erwartet {erwartet}"
+            );
+            vorher = Some(phase);
+        }
+    }
+
     /// ⚠ Und der Doppelanflug, den der Bestand belegt.
     ///
     /// Der PTO705-Test faehrt `Final → Climb → Descent → Approach`. Mit
@@ -53720,16 +53839,16 @@ mod szenerie_status_tests {
             (FlightPhase::Descent, true), // zweiter Anflug
             (FlightPhase::Approach, true),
         ];
-        let mut zuletzt: Option<FlightPhase> = None;
+        // ⚠ Die vorige Phase wird IMMER fortgeschrieben, nicht nur bei
+        // einem faelligen Fenster.
+        let mut vorher: Option<FlightPhase> = None;
         for (phase, erwartet) in folge {
-            let faellig = braucht_neues_versuchsfenster(phase, zuletzt);
+            let faellig = braucht_neues_versuchsfenster(phase, vorher);
             assert_eq!(
                 faellig, erwartet,
-                "{phase:?} nach {zuletzt:?}: Fenster {faellig}, erwartet {erwartet}"
+                "{phase:?} nach {vorher:?}: Fenster {faellig}, erwartet {erwartet}"
             );
-            if faellig {
-                zuletzt = Some(phase);
-            }
+            vorher = Some(phase);
         }
     }
 

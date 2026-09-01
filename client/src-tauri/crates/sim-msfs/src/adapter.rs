@@ -922,9 +922,12 @@ impl MsfsAdapter {
         self.shared.szenerie.lock().neues_versuchsfenster()
     }
 
-    /// Die Raenge der derzeit gueltigen Ziele setzen.
-    pub fn szenerie_raenge_setzen(&self, ziele: &[(String, u8)]) {
-        self.shared.szenerie.lock().raenge_setzen(ziele);
+    /// Fenster, Zielmenge und Raenge in EINEM Zug — eine Sperre.
+    pub fn szenerie_anflug_ausrichten(&self, ziele: &[(String, u8)], fenster: bool) -> usize {
+        self.shared
+            .szenerie
+            .lock()
+            .anflug_ausrichten(ziele, fenster)
     }
 
     /// Das Auftragsbuch leeren — neuer Flug.
@@ -1206,8 +1209,11 @@ fn run_dispatch(
         shared.szenerie_offen.store(false, Ordering::Relaxed);
         {
             let jetzt_ms = chrono::Utc::now().timestamp_millis();
-            let faellig = shared.szenerie.lock().naechster(jetzt_ms);
-            if let Some(icao) = faellig {
+            // ⚠ Auswaehlen und Stellen in EINEM Zug — sonst kann ein
+            // Flugwechsel dazwischen das Buch leeren, und der Auftrag
+            // entstuende fuer einen Platz, den es nicht mehr gibt.
+            let faellig = shared.szenerie.lock().naechsten_stellen(jetzt_ms);
+            if let Some((icao, auftrag_id)) = faellig {
                 // ⚠ EIGENE Kennung je VERSUCH. Mit einer festen Kennung
                 // fuer alle Anfragen liesse sich eine nach der Wartezeit
                 // eintreffende Antwort nicht mehr von der laufenden
@@ -1215,7 +1221,6 @@ fn run_dispatch(
                 // zugeschlagen, und ueberlappende Bloecke koennten sich
                 // sogar vermischen. Das SDK gibt die clientdefinierte
                 // Kennung in JEDER Nachricht zurueck, genau dafuer.
-                let auftrag_id = shared.szenerie.lock().gestellt(&icao, jetzt_ms);
                 let request_id = FACILITY_REQUEST_BASE + auftrag_id;
                 match conn.request_facility(&icao, request_id) {
                     Ok(paket) => {
@@ -1465,18 +1470,63 @@ fn run_dispatch(
                     // den der Simulator nicht kennt, und die Diagnose am
                     // Flug behauptet die ganze Zeit, es sei noch etwas
                     // unterwegs.
+                    // ⚠ Die ART der Ausnahme entscheidet, was folgt.
+                    //
+                    // Vorher wurde JEDE dem Flughafen angelastet und der
+                    // Platz dauerhaft abgelehnt — und ein neues Fenster
+                    // laesst abgelehnte Plaetze bewusst geschlossen.
+                    // Damit sperrte eine voruebergehende Ueberlast
+                    // (`TOO_MANY_REQUESTS`) den Platz fuer den Rest des
+                    // Fluges aus, und ein Fehler der DEFINITION sah aus
+                    // wie ein Problem des Platzes (QS-Befund 3, fuenfte
+                    // Runde).
                     if let Some(auftrag_id) = facility::auftrag_zu_paket(&facility_pakete, send_id)
                     {
-                        let grund = format!("SimConnect-Ausnahme {exception}");
-                        let platz = shared
-                            .szenerie
-                            .lock()
-                            .abgelehnt_zu_kennung(auftrag_id, grund);
-                        tracing::warn!(
-                            ?platz,
-                            exception,
-                            "Szenerie-Anfrage vom Simulator zurueckgewiesen"
-                        );
+                        let art = facility::ausnahme_einordnen(exception);
+                        let platz = shared.szenerie.lock().platz_zu_kennung(auftrag_id);
+                        match art {
+                            facility::Ausnahmeart::Definition => {
+                                tracing::error!(
+                                    ?platz,
+                                    exception,
+                                    "Facility-Definition zurueckgewiesen — der Weg ist \
+                                     fuer diese Verbindung zu"
+                                );
+                                shared.szenerie.lock().definition_abgelehnt(
+                                    "Anfrage".into(),
+                                    format!("Ausnahme {exception}"),
+                                );
+                            }
+                            facility::Ausnahmeart::Platz => {
+                                tracing::warn!(
+                                    ?platz,
+                                    exception,
+                                    "Platz vom Simulator zurueckgewiesen — dauerhaft"
+                                );
+                                shared.szenerie.lock().abgelehnt_zu_kennung(
+                                    auftrag_id,
+                                    format!("Platz ungueltig (Ausnahme {exception})"),
+                                );
+                            }
+                            facility::Ausnahmeart::Voruebergehend => {
+                                // ⚠ NICHT ablehnen. Der naechste Versuch
+                                // ist der richtige Umgang damit.
+                                tracing::warn!(
+                                    ?platz,
+                                    exception,
+                                    "Szenerie-Anfrage voruebergehend abgewiesen — wird \
+                                     erneut versucht"
+                                );
+                                shared.szenerie.lock().freigeben_zu_kennung(auftrag_id);
+                            }
+                            facility::Ausnahmeart::Unklar => {
+                                tracing::warn!(
+                                    ?platz,
+                                    exception,
+                                    "Szenerie-Ausnahme nicht einzuordnen — nur vermerkt"
+                                );
+                            }
+                        }
                     }
                     // Route it to the Inspector tool too, if this
                     // exception's send_id matches one of its watches'
@@ -2027,11 +2077,20 @@ impl Connection {
                 self.facility_feld_send_ids
                     .push((send_id, name.to_string()));
             } else {
-                tracing::warn!(
-                    feld = %name,
-                    "GetLastSentPacketID nach AddToFacilityDefinition fehlgeschlagen — \
-                     eine Zurueckweisung dieses Feldes bleibt unzuordenbar"
-                );
+                // ⚠ HART scheitern, nicht nur warnen.
+                //
+                // Die Paketkennung ist die Voraussetzung der Zusage
+                // „ein abgelehntes Feld schliesst den Weg". Fehlt sie,
+                // erreicht eine spaeter eintreffende Feld-Ausnahme
+                // `definition_abgelehnt` nie — die Sperre haette einen
+                // offenen Eingang, und der Weg liefe mit einer
+                // Definition weiter, deren Ablehnung niemand mehr
+                // zuordnen kann (QS-Befund 4, fuenfte Runde).
+                return Err(format!(
+                    "GetLastSentPacketID nach AddToFacilityDefinition({name}) \
+                     fehlgeschlagen — ohne Paketkennung ist eine Zurueckweisung \
+                     dieses Feldes nicht zuzuordnen"
+                ));
             }
         }
         Ok(())
