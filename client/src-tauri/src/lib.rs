@@ -2299,22 +2299,29 @@ fn szenerie_anfordern_fuer(app: &AppHandle, icaos: &[String]) {
 ///
 /// ⚠ Die Reihenfolge ist die Rangfolge. Das Ausweichziel steht vorn,
 /// weil dort gelandet wird.
-/// Ob beim Eintritt in den Anflug ein neuer Versuchsvorrat faellig ist.
+/// Ob jetzt ein neuer Versuchsvorrat faellig ist.
 ///
-/// ⚠ Genau EINMAL je Flug, und nur ab dem Sinkflug. Der Vorrat des
-/// Auftragsbuchs reicht fuer zehn Versuche; beim Flugbeginn angemeldet,
-/// ist er nach zwanzig Minuten am Gate leer — 1.400 km vom Ziel
-/// entfernt und Stunden vor der Landung (QS-Befund 1, dritte Runde, P0).
+/// Bei JEDEM Wechsel in eine Landephase — nicht einmal je Flug.
 ///
-/// Ab dem Sinkflug, weil dort die Szenerie des Ziels zu laden beginnt.
-/// Nur einmal, weil sonst jeder Durchlauf den Vorrat auffuellt und die
-/// Obergrenze wirkungslos waere.
-fn braucht_neues_versuchsfenster(phase: FlightPhase, schon_geoeffnet: bool) -> bool {
-    !schon_geoeffnet
-        && matches!(
-            phase,
-            FlightPhase::Descent | FlightPhase::Approach | FlightPhase::Final
-        )
+/// ⚠ Warum nicht einmal: Der Vorrat reicht fuer zehn Versuche, also zehn
+/// Minuten. Ein Fenster beim ersten `Descent` ist bei einem langen
+/// Sinkflug, einem Holding oder einem Durchstarten laengst wieder leer,
+/// bevor `Approach` erreicht ist — und dann wird im Anflug wieder kein
+/// einziges Mal gefragt (QS-Befund 1, vierte Runde, P0).
+///
+/// Der Bestand belegt das: Der PTO705-Test faehrt
+/// `Final → Climb → Descent → Approach`, also einen Doppelanflug. Mit
+/// einem einzigen Fenster haette der zweite Anflug nichts mehr.
+///
+/// ⚠ Und warum nicht bei jedem Durchlauf: Sonst fuellte sich der Vorrat
+/// staendig auf und die Obergrenze waere wirkungslos. Gebunden ist er an
+/// den WECHSEL — `zuletzt` haelt fest, fuer welche Phase zuletzt
+/// geoeffnet wurde.
+fn braucht_neues_versuchsfenster(phase: FlightPhase, zuletzt: Option<FlightPhase>) -> bool {
+    matches!(
+        phase,
+        FlightPhase::Descent | FlightPhase::Approach | FlightPhase::Final
+    ) && zuletzt != Some(phase)
 }
 
 /// Rang einer blossen Vormerkung.
@@ -2445,8 +2452,8 @@ fn szenerie_auskunft_uebernehmen(
                 Ok(s) => s,
                 Err(_) => return,
             };
-            if braucht_neues_versuchsfenster(stats.phase, stats.szenerie_anflugfenster_offen) {
-                stats.szenerie_anflugfenster_offen = true;
+            if braucht_neues_versuchsfenster(stats.phase, stats.szenerie_fenster_phase) {
+                stats.szenerie_fenster_phase = Some(stats.phase);
                 true
             } else {
                 false
@@ -2469,9 +2476,19 @@ fn szenerie_auskunft_uebernehmen(
                     "Anflug erreicht — neuer Versuchsvorrat fuer die Szenerie"
                 );
             }
+            // ⚠ Raenge SETZEN, nicht nur verbessern. Wechselt das
+            // erkannte Ausweichziel, behielte der alte Kandidat sonst
+            // seinen Rang 0 und konkurrierte weiter mit dem aktuellen
+            // Landeplatz (QS-Befund 4, vierte Runde).
             for (rang, z) in ziele.iter().enumerate() {
                 msfs.szenerie_anfordern_mit_rang(z, rang as u8);
             }
+            let raenge: Vec<(String, u8)> = ziele
+                .iter()
+                .enumerate()
+                .map(|(rang, z)| (z.clone(), rang as u8))
+                .collect();
+            msfs.szenerie_raenge_setzen(&raenge);
             // ⚠ Geerntet wird GENAU EIN Platz, ohne Rueckfall — siehe
             // `szenerie_ernteziel`. Ein `find_map` ueber die Zielliste
             // nahm das geplante Ziel, sobald dessen Antwort zuerst da
@@ -4180,9 +4197,9 @@ struct FlightStats {
     /// committed approach to a different field warms the cache exactly once
     /// (flicker / overflown-airport guard). Runtime-only.
     divert_prefetch_icao: Option<String>,
-    /// Ob fuer diesen Flug schon ein neuer Szenerie-Versuchsvorrat
-    /// geoeffnet wurde. Siehe `braucht_neues_versuchsfenster`.
-    szenerie_anflugfenster_offen: bool,
+    /// Fuer welche Phase zuletzt ein Szenerie-Versuchsvorrat geoeffnet
+    /// wurde. Siehe `braucht_neues_versuchsfenster`.
+    szenerie_fenster_phase: Option<FlightPhase>,
     /// v0.16.24: the diverged field currently accruing stability time
     /// during a committed approach (distinct from `divert_prefetch_icao`,
     /// which is the field already fetched). When the nearest field changes
@@ -53641,25 +53658,78 @@ mod szenerie_status_tests {
         assert_eq!(szenerie_ernteziel("XX", None, None), None);
     }
 
-    /// ⚠ QS-Befund 1 der dritten Runde (P0): Das Fenster oeffnet im
-    /// Sinkflug, und genau einmal.
+    /// ⚠ QS-Befund 1 der dritten Runde (P0): Das Fenster oeffnet in den
+    /// Landephasen — und je Phase genau einmal.
     #[test]
-    fn das_versuchsfenster_oeffnet_im_sinkflug_und_nur_einmal() {
+    fn das_versuchsfenster_oeffnet_in_jeder_landephase() {
         for phase in [
             FlightPhase::Descent,
             FlightPhase::Approach,
             FlightPhase::Final,
         ] {
             assert!(
-                braucht_neues_versuchsfenster(phase, false),
+                braucht_neues_versuchsfenster(phase, None),
                 "{phase:?} oeffnet kein Fenster — dann ist der Vorrat am \
                  Gate verbraucht und im Anflug wird nie gefragt"
             );
             assert!(
-                !braucht_neues_versuchsfenster(phase, true),
-                "{phase:?} oeffnet ein zweites Fenster — dann ist die \
-                 Obergrenze wirkungslos"
+                !braucht_neues_versuchsfenster(phase, Some(phase)),
+                "{phase:?} oeffnet in derselben Phase ein zweites Fenster — \
+                 dann fuellt sich der Vorrat staendig auf und die \
+                 Obergrenze ist wirkungslos"
             );
+        }
+    }
+
+    /// ⚠ **QS-Befund 1 der VIERTEN Runde (P0): die reale Folge.**
+    ///
+    /// Ein Fenster nur beim ersten `Descent` reicht nicht — zehn
+    /// Versuche sind zehn Minuten, und ein langer Sinkflug, ein Holding
+    /// oder ein Durchstarten dauert laenger. Der vorige Test prueft jede
+    /// Phase ISOLIERT und sah genau das nicht.
+    #[test]
+    fn nach_einem_langen_sinkflug_oeffnet_der_anflug_neu() {
+        // Descent hat sein Fenster bekommen …
+        assert!(!braucht_neues_versuchsfenster(
+            FlightPhase::Descent,
+            Some(FlightPhase::Descent)
+        ));
+        // … und danach kommt Approach: neues Fenster.
+        assert!(
+            braucht_neues_versuchsfenster(FlightPhase::Approach, Some(FlightPhase::Descent)),
+            "nach einem langen Sinkflug bekommt der Anflug nichts mehr"
+        );
+        assert!(
+            braucht_neues_versuchsfenster(FlightPhase::Final, Some(FlightPhase::Approach)),
+            "der Endanflug bekommt nichts mehr"
+        );
+    }
+
+    /// ⚠ Und der Doppelanflug, den der Bestand belegt.
+    ///
+    /// Der PTO705-Test faehrt `Final → Climb → Descent → Approach`. Mit
+    /// einem einzigen Fenster je Flug haette der ZWEITE Anflug keinen
+    /// Versuch mehr.
+    #[test]
+    fn ein_durchstarten_bekommt_wieder_ein_fenster() {
+        let folge = [
+            (FlightPhase::Descent, true),
+            (FlightPhase::Approach, true),
+            (FlightPhase::Final, true),
+            (FlightPhase::Climb, false),  // Durchstarten
+            (FlightPhase::Descent, true), // zweiter Anflug
+            (FlightPhase::Approach, true),
+        ];
+        let mut zuletzt: Option<FlightPhase> = None;
+        for (phase, erwartet) in folge {
+            let faellig = braucht_neues_versuchsfenster(phase, zuletzt);
+            assert_eq!(
+                faellig, erwartet,
+                "{phase:?} nach {zuletzt:?}: Fenster {faellig}, erwartet {erwartet}"
+            );
+            if faellig {
+                zuletzt = Some(phase);
+            }
         }
     }
 
@@ -53681,7 +53751,7 @@ mod szenerie_status_tests {
             FlightPhase::Cruise,
         ] {
             assert!(
-                !braucht_neues_versuchsfenster(phase, false),
+                !braucht_neues_versuchsfenster(phase, None),
                 "{phase:?} oeffnet ein Fenster"
             );
         }

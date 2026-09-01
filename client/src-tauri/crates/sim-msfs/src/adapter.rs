@@ -922,6 +922,11 @@ impl MsfsAdapter {
         self.shared.szenerie.lock().neues_versuchsfenster()
     }
 
+    /// Die Raenge der derzeit gueltigen Ziele setzen.
+    pub fn szenerie_raenge_setzen(&self, ziele: &[(String, u8)]) {
+        self.shared.szenerie.lock().raenge_setzen(ziele);
+    }
+
     /// Das Auftragsbuch leeren — neuer Flug.
     ///
     /// ⚠ Der Anfragezustand gehoert dem Flug und der Verbindung, nicht
@@ -1011,7 +1016,11 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 // angefordert; verbrauchte Versuche und dauerhafte
                 // Ablehnungen ueberdauerten ebenfalls (QS-Befund 2,
                 // dritte Runde).
-                shared.szenerie.lock().zuruecksetzen();
+                // ⚠ `verbindung_zuruecksetzen`, nicht `zuruecksetzen`:
+                // Hier wird die Felddefinition gleich neu registriert,
+                // also darf auch ein alter Definitionsfehler fallen. Bei
+                // einem blossen Flugwechsel waere das falsch.
+                shared.szenerie.lock().verbindung_zuruecksetzen();
                 if let Err(e) = conn.register_telemetry() {
                     set_error(&shared, format!("RegisterDataDefinition failed: {e}"));
                     tracing::error!(error = %e, "register_telemetry failed");
@@ -1039,6 +1048,20 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                         error = %e,
                         "register_facility fehlgeschlagen — Bahndaten kommen weiter aus den Navdaten"
                     );
+                    // ⚠ Und das Buch MUSS es erfahren.
+                    //
+                    // Vorher wurde hier nur gewarnt: Die Definition war
+                    // nachweislich nicht registriert, das Buch wusste
+                    // nichts davon und stellte munter Facility-Anfragen.
+                    // Der harte Riegel griff nur bei den SPAETEREN,
+                    // asynchronen Ausnahmen — der synchrone Fehlschlag,
+                    // der den Weg genauso sicher schliesst, lief durch
+                    // (QS-Befund 3, vierte Runde).
+                    shared
+                        .szenerie
+                        .lock()
+                        .definition_abgelehnt("register_facility".into(), e.clone());
+                    *shared.szenerie_diagnose.lock() = SzenerieDiagnose::Abgelehnt(e);
                 }
                 if let Err(e) = conn.request_data_per_second() {
                     set_error(&shared, format!("RequestDataOnSimObject failed: {e}"));

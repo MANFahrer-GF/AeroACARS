@@ -283,6 +283,27 @@ pub const HOECHSTVERSUCHE: u8 = 10;
 /// (QS-Befund 1, 01.09.2026).
 pub const KENNUNGEN_GEDAECHTNIS: usize = 16;
 
+/// Rang eines Platzes, der gerade kein Ziel ist.
+///
+/// Schlechter als jeder Rang, den die Ernte vergibt — er darf mitlaufen,
+/// aber niemandem den Vortritt nehmen.
+pub const RANG_UNBETEILIGT: u8 = 200;
+
+/// Hoechste Auftragskennung, die noch vergeben wird.
+///
+/// ⚠ Der Abstand nach oben ist Absicht: Der Adapter bildet die
+/// Anfragekennung als `BASIS + Auftragskennung` und die Basis ist 1000.
+/// Ohne Reserve liefe SIE ueber, tausend Schritte bevor die
+/// Auftragskennung es taete — und zwei Anfragen truegen dieselbe
+/// Kennung.
+///
+/// `saturating_add` allein reichte nicht: Bei `u32::MAX` haette es
+/// dieselbe Kennung unbegrenzt weiterverwendet, und `eroeffnen` haette
+/// jedes Mal den Sammler der vorigen Anfrage ersetzt. Die Zusicherung
+/// „die Vergabe steht still" war damit nicht wahr (QS-Befund 5, vierte
+/// Runde).
+pub const KENNUNG_HOECHST: u32 = u32::MAX - 2000;
+
 #[derive(Debug, Clone, Default)]
 pub struct Auftragsbuch {
     auftraege: std::collections::BTreeMap<String, Auftrag>,
@@ -351,6 +372,11 @@ impl Auftragsbuch {
         // Definition nachweislich abgelehnt war (QS-Befund 4, dritte
         // Runde).
         if self.definition_fehler.is_some() {
+            return None;
+        }
+        // ⚠ Kennungen aufgebraucht: lieber nichts fragen als zwei
+        // Anfragen mit derselben Kennung.
+        if self.naechste_id >= KENNUNG_HOECHST {
             return None;
         }
         // Laeuft eine und ist noch Zeit? Dann nichts Neues.
@@ -460,10 +486,49 @@ impl Auftragsbuch {
         self.auftraege.clear();
         self.kennungen.clear();
         self.laeuft = None;
-        self.definition_fehler = None;
+        // ⚠ Der Definitionsfehler bleibt STEHEN.
+        //
+        // Die Felddefinition wird je VERBINDUNG registriert, nicht je
+        // Flug. Loeschte ein Flugwechsel den Fehler, fragte dieselbe
+        // Verbindung mit derselben abgelehnten Definition munter weiter
+        // — ohne sie je neu registriert zu haben (QS-Befund 2, vierte
+        // Runde). Ihn loescht nur `verbindung_zuruecksetzen`.
         // ⚠ `naechste_id` NICHT zuruecksetzen. Antworten des alten
         // Kontextes koennen noch unterwegs sein; wuerden die Kennungen
         // wieder bei 1 beginnen, traefe eine davon einen neuen Auftrag.
+    }
+
+    /// Alles vergessen, einschliesslich des Definitionsfehlers.
+    ///
+    /// ⚠ Nur bei einer NEUEN VERBINDUNG. Dort wird die Felddefinition
+    /// neu registriert, also darf der alte Fehler nicht weiterwirken.
+    /// Bei einem blossen Flugwechsel waere das falsch: Die Definition
+    /// ist dieselbe, ihr Fehler auch.
+    pub fn verbindung_zuruecksetzen(&mut self) {
+        self.zuruecksetzen();
+        self.definition_fehler = None;
+    }
+
+    /// Die Raenge der derzeit gueltigen Ziele SETZEN.
+    ///
+    /// ⚠ Setzen, nicht verbessern. `wunsch_mit_rang` kennt nur das
+    /// Minimum — ein Platz, der einmal Rang 0 hatte, behielt ihn fuer
+    /// immer. Wechselt das erkannte Ausweichziel, konkurrierte der alte
+    /// Kandidat weiter mit dem aktuellen Landeplatz und verzoegerte
+    /// dessen Versuche; `neues_versuchsfenster` weckte ihn zusaetzlich
+    /// wieder auf (QS-Befund 4, vierte Runde).
+    ///
+    /// Plaetze, die nicht in der Liste stehen, fallen auf
+    /// `RANG_UNBETEILIGT` zurueck. Ihre Ergebnisse bleiben unberuehrt —
+    /// nur ihr Vorrang endet.
+    pub fn raenge_setzen(&mut self, ziele: &[(String, u8)]) {
+        for (icao, auftrag) in self.auftraege.iter_mut() {
+            auftrag.rang = ziele
+                .iter()
+                .find(|(z, _)| z.eq_ignore_ascii_case(icao))
+                .map(|(_, r)| *r)
+                .unwrap_or(RANG_UNBETEILIGT);
+        }
     }
 
     /// Der Simulator hat ein Feld der Definition abgelehnt.
@@ -478,6 +543,25 @@ impl Auftragsbuch {
     /// Welches Feld der Definition abgelehnt wurde, falls eines.
     pub fn definitionsfehler(&self) -> Option<(String, String)> {
         self.definition_fehler.clone()
+    }
+
+    /// Nur fuer Tests: der Rang eines Platzes.
+    #[doc(hidden)]
+    pub fn rang_fuer_test(&self, icao: &str) -> Option<u8> {
+        self.auftraege
+            .get(&icao.trim().to_ascii_uppercase())
+            .map(|a| a.rang)
+    }
+
+    /// Nur fuer Tests: den Kennungszaehler ans Ende setzen.
+    ///
+    /// ⚠ Ein Test, der bis dorthin zaehlt, laeuft vier Milliarden
+    /// Schleifen — das war der erste Entwurf, und er blockierte den
+    /// Testlauf. Ein Zugang ist hier ehrlicher als eine Schleife, die
+    /// nie endet.
+    #[doc(hidden)]
+    pub fn kennung_setzen_fuer_test(&mut self, id: u32) {
+        self.naechste_id = id;
     }
 
     /// Zu welchem Platz eine Kennung gehoert.
@@ -1044,14 +1128,114 @@ mod auftragsbuch_tests {
         let id = b.gestellt("EDDF", 0);
         b.geliefert_zu_kennung(id, auskunft("EDDF", 4))
             .expect("Lieferung");
-        b.definition_abgelehnt("WIDTH".into(), "DATA_ERROR".into());
 
         b.zuruecksetzen();
 
         assert!(b.auskunft("EDDF").is_none(), "alte Szenerie ueberlebte");
         assert_eq!(b.zustand("EDDF"), None, "alter Zustand ueberlebte");
         assert_eq!(b.versuche("EDDF"), 0);
+        // ⚠ Der DEFINITIONSfehler gehoert nicht dem Flug, sondern der
+        // Verbindung — siehe `ein_flugwechsel_behaelt_den_definitionsfehler`.
+    }
+
+    /// ⚠ QS-Befund 2 der vierten Runde: Der Definitionsfehler ueberlebt
+    /// einen Flugwechsel — aber nicht eine neue Verbindung.
+    ///
+    /// Die Felddefinition wird je VERBINDUNG registriert. Loeschte ein
+    /// Flugwechsel den Fehler, fragte dieselbe Verbindung mit derselben
+    /// abgelehnten Definition weiter, ohne sie je neu registriert zu
+    /// haben.
+    #[test]
+    fn ein_flugwechsel_behaelt_den_definitionsfehler() {
+        let mut b = Auftragsbuch::neu();
+        b.definition_abgelehnt("WIDTH".into(), "DATA_ERROR".into());
+
+        b.zuruecksetzen(); // neuer Flug
+        assert!(
+            b.definitionsfehler().is_some(),
+            "der Flugwechsel hat den Definitionsfehler geloescht — dieselbe \
+             Verbindung fragt wieder mit derselben abgelehnten Definition"
+        );
+        b.wunsch("LEZL");
+        assert_eq!(b.naechster(0), None, "es wird trotzdem gefragt");
+
+        b.verbindung_zuruecksetzen(); // neue Verbindung, Definition neu
         assert!(b.definitionsfehler().is_none());
+        b.wunsch("LEZL");
+        assert_eq!(b.naechster(0).as_deref(), Some("LEZL"));
+    }
+
+    /// ⚠ QS-Befund 4 der vierten Runde: Raenge werden GESETZT, nicht nur
+    /// verbessert.
+    ///
+    /// `wunsch_mit_rang` kennt nur das Minimum. Wechselt das erkannte
+    /// Ausweichziel, behielte der alte Kandidat seinen Rang 0 und
+    /// konkurrierte weiter mit dem aktuellen Landeplatz — und
+    /// `neues_versuchsfenster` weckte ihn zusaetzlich wieder auf.
+    /// ⚠ Der veraltete Kandidat steht ALPHABETISCH VORN — sonst prueft
+    /// der Test nichts.
+    ///
+    /// Mein erster Entwurf nahm LEMG als Altlast und LEBL als neues
+    /// Ziel. Damit gewinnt LEBL auch dann, wenn die Raenge nur
+    /// verbessert statt gesetzt werden: Bei gleichem Rang entscheidet
+    /// das Alphabet, und LEBL steht vor LEMG. Die Gegenprobe
+    /// („Raenge nur verbessern") blieb prompt gruen.
+    ///
+    /// Mit EDDF als Altlast kann nur die Ruecksetzung auf
+    /// `RANG_UNBETEILIGT` das richtige Ergebnis liefern.
+    #[test]
+    fn ein_alter_kandidat_verliert_seinen_vorrang() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("EDDF", 0); // frueher erkanntes Ziel, alphabetisch vorn
+        b.wunsch_mit_rang("LEZL", 1);
+
+        // Das tatsaechliche Ziel ist jetzt LEZL, EDDF ist unbeteiligt.
+        b.raenge_setzen(&[("LEZL".into(), 0)]);
+
+        assert_eq!(
+            b.naechster(0).as_deref(),
+            Some("LEZL"),
+            "der alte Kandidat hat den aktuellen Landeplatz verdraengt"
+        );
+        assert_eq!(b.rang_fuer_test("EDDF"), Some(RANG_UNBETEILIGT));
+    }
+
+    /// Und ein zurueckgestufter Platz verliert seine Ergebnisse NICHT.
+    ///
+    /// ⚠ Nur sein Vorrang endet. Wer eine gelieferte Szenerie beim
+    /// Umsortieren wegwirft, muss sie neu holen — und hat im
+    /// Zweifelsfall keine Versuche mehr dafuer.
+    #[test]
+    fn ein_zurueckgestufter_platz_behaelt_seine_auskunft() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("LEMG", 0);
+        let id = b.gestellt("LEMG", 0);
+        b.geliefert_zu_kennung(id, auskunft("LEMG", 1))
+            .expect("Lieferung");
+
+        b.raenge_setzen(&[("LEZL".into(), 0)]);
+        assert!(b.auskunft("LEMG").is_some(), "die Auskunft ging verloren");
+    }
+
+    /// ⚠ QS-Befund 5 der vierten Runde: Am Ende des Zahlenraums steht
+    /// die Vergabe WIRKLICH still.
+    ///
+    /// `saturating_add` allein haette dieselbe Kennung unbegrenzt
+    /// weiterverwendet — und `Lieferungen::eroeffnen` haette jedes Mal
+    /// den Sammler der vorigen Anfrage ersetzt.
+    #[test]
+    fn am_ende_des_zahlenraums_wird_nichts_mehr_vergeben() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("LEZL");
+        assert!(b.naechster(0).is_some(), "normal wird vergeben");
+
+        b.kennung_setzen_fuer_test(KENNUNG_HOECHST);
+        assert_eq!(
+            b.naechster(0),
+            None,
+            "es werden weiter Kennungen vergeben — zwei Anfragen koennten \
+             dieselbe tragen"
+        );
     }
 
     /// ⚠ Aber die Kennungen laufen weiter.

@@ -1831,13 +1831,62 @@ mod anschluss_verdrahtung_tests {
             .find("SimConnect_Opensucceeded")
             .expect("Verbindungszweig fehlt");
         let danach = &a[oeffnen..];
+        // ⚠ `verbindung_zuruecksetzen` — der Flug-Schnitt waere hier
+        // falsch, er behaelt den Definitionsfehler.
         let leeren = danach
-            .find("shared.szenerie.lock().zuruecksetzen()")
+            .find("shared.szenerie.lock().verbindung_zuruecksetzen()")
             .expect("das Buch wird im Verbindungszweig nicht geleert");
         assert!(
             leeren < 600,
             "das Leeren steht {leeren} Zeichen hinter dem Verbindungsaufbau — \
              das ist nicht mehr derselbe Zweig"
+        );
+    }
+
+    /// ⚠ Auch der SYNCHRONE Fehlschlag schliesst den Weg.
+    ///
+    /// `register_facility()` kann sofort scheitern. Vorher wurde dann
+    /// nur gewarnt: Die Definition war nachweislich nicht registriert,
+    /// das Buch wusste nichts davon und stellte weiter Anfragen. Der
+    /// harte Riegel griff ausschliesslich bei den spaeteren,
+    /// asynchronen Ausnahmen (QS-Befund 3, vierte Runde).
+    #[test]
+    fn auch_ein_sofortiger_definitionsfehler_schliesst_den_weg() {
+        let a = ohne_leerraum(ADAPTER);
+        let fehlschlag = a
+            .find("Err(e)=conn.register_facility()")
+            .expect("Aufruf von register_facility fehlt");
+        let danach = &a[fehlschlag..];
+        let riegel = danach.find("definition_abgelehnt(").expect(
+            "der sofortige Fehlschlag erreicht das Buch nicht — \
+                     es fragt weiter mit einer Definition, die es nicht gibt",
+        );
+        assert!(
+            riegel < 700,
+            "der Riegel steht {riegel} Zeichen hinter dem Fehlschlag — das \
+             ist nicht mehr derselbe Zweig"
+        );
+    }
+
+    /// ⚠ Und eine neue VERBINDUNG loescht den Definitionsfehler, ein
+    /// blosser Flugwechsel nicht.
+    ///
+    /// Die Felddefinition wird je Verbindung registriert. Loeschte ein
+    /// Flugwechsel den Fehler, fraege dieselbe Verbindung mit derselben
+    /// abgelehnten Definition weiter (QS-Befund 2, vierte Runde).
+    #[test]
+    fn die_verbindung_setzt_anders_zurueck_als_der_flug() {
+        let a = ohne_leerraum(ADAPTER);
+        assert!(
+            a.contains("shared.szenerie.lock().verbindung_zuruecksetzen()"),
+            "die neue Verbindung raeumt den Definitionsfehler nicht weg"
+        );
+        assert!(
+            a.contains(
+                "pubfnszenerie_zuruecksetzen(&self){self.shared.szenerie.lock().zuruecksetzen()"
+            ),
+            "der Flug-Schnitt benutzt nicht den flugweiten Weg — dann \
+             verliert ein Flugwechsel den Definitionsfehler der Verbindung"
         );
     }
 
