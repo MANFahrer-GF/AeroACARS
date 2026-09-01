@@ -485,6 +485,203 @@ pub struct Szeneriesammler {
     bahn_gueltig: bool,
 }
 
+/// Alles, was zu EINER Facility-Anfrage gehoert.
+///
+/// ⚠ Bis v1.7.14 lagen Sammler und Rollweglisten als einzelne Variablen
+/// neben der Schleife — geteilt von allen Anfragen. Zusammen mit einer
+/// festen Anfragekennung hiess das: Kommt eine Antwort nach der
+/// Wartezeit, waehrend schon die naechste laeuft, mischen sich beide
+/// Lieferungen in denselben Listen. Das SDK schickt bis zum Endesatz
+/// mehrere Nachrichten und gibt in jeder die clientdefinierte Kennung
+/// zurueck — die Trennung ist vorgesehen, sie wurde nur nicht benutzt.
+#[derive(Debug, Default)]
+pub struct Lieferung {
+    pub sammler: Szeneriesammler,
+    /// Referenzpunkt des Flughafens — ohne ihn sind die Rollwegpunkte
+    /// nicht umrechenbar.
+    pub referenz: Option<(f64, f64)>,
+    /// ⚠ Die drei Listen haengen ueber INDIZES zusammen. Wer sortiert,
+    /// filtert oder zwei Lieferungen vermischt, verschiebt die Verweise.
+    pub punkte: Vec<(f64, f64)>,
+    pub namen: Vec<String>,
+    pub kanten: Vec<(usize, usize, usize)>,
+}
+
+/// Wie viele Lieferungen gleichzeitig offen bleiben duerfen.
+///
+/// Vier reichen: Start, Ziel, Ausweich und eine verspaetete. Mehr waere
+/// ein Leck, weniger wuerde die verspaetete verwerfen, um die es geht.
+pub const LIEFERUNGEN_MAX: usize = 4;
+
+/// Die offenen Lieferungen, nach Anfragekennung getrennt.
+#[derive(Debug, Default)]
+pub struct Lieferungen {
+    offen: Vec<(u32, Lieferung)>,
+}
+
+impl Lieferungen {
+    pub fn neu() -> Self {
+        Self::default()
+    }
+
+    /// Eine neue Lieferung beginnen. Eine gleiche Kennung wird ersetzt.
+    pub fn eroeffnen(&mut self, id: u32) {
+        self.offen.retain(|(k, _)| *k != id);
+        self.offen.push((id, Lieferung::default()));
+        while self.offen.len() > LIEFERUNGEN_MAX {
+            self.offen.remove(0);
+        }
+    }
+
+    /// Die Lieferung zu dieser Kennung — oder nichts.
+    ///
+    /// ⚠ `None` heisst: verwerfen, nicht raten. Eine Nachricht ohne
+    /// zugehoerige Anfrage gehoert niemandem.
+    pub fn zu(&mut self, id: u32) -> Option<&mut Lieferung> {
+        self.offen
+            .iter_mut()
+            .find(|(k, _)| *k == id)
+            .map(|(_, l)| l)
+    }
+
+    /// Die Lieferung herausnehmen und schliessen.
+    pub fn abschliessen(&mut self, id: u32) -> Option<Lieferung> {
+        let pos = self.offen.iter().position(|(k, _)| *k == id)?;
+        Some(self.offen.remove(pos).1)
+    }
+
+    pub fn anzahl_offen(&self) -> usize {
+        self.offen.len()
+    }
+}
+
+/// Zu welchem Auftrag eine SimConnect-Ausnahme gehoert.
+///
+/// ⚠ MSFS meldet eine zurueckgewiesene Facility-Anfrage NICHT beim
+/// Aufruf, sondern spaeter und asynchron — und verweist dabei auf die
+/// Paketkennung des Aufrufs. Ohne diese Zuordnung wird die Ausnahme nur
+/// protokolliert, der Auftrag bleibt „unterwegs", und das Buch fragt
+/// zehnmal nach einem Platz, den der Simulator gar nicht kennt
+/// (QS-Befund 4, 01.09.2026).
+///
+/// Dasselbe Muster benutzt der Inspektor fuer seine Feldnamen.
+pub fn auftrag_zu_paket(paare: &[(u32, u32)], send_id: u32) -> Option<u32> {
+    paare
+        .iter()
+        .rev()
+        .find(|(paket, _)| *paket == send_id)
+        .map(|(_, auftrag)| *auftrag)
+}
+
+/// Wie viele Paketkennungen zurueckverfolgt werden.
+pub const PAKETE_GEDAECHTNIS: usize = 16;
+
+#[cfg(test)]
+mod paketzuordnung_tests {
+    use super::*;
+
+    #[test]
+    fn die_ausnahme_findet_ihren_auftrag() {
+        let paare = [(77u32, 3u32), (78, 4)];
+        assert_eq!(auftrag_zu_paket(&paare, 77), Some(3));
+        assert_eq!(auftrag_zu_paket(&paare, 78), Some(4));
+    }
+
+    /// ⚠ Eine fremde Paketkennung darf NICHT auf den letzten Auftrag
+    /// fallen — sonst weist eine Telemetrie-Ausnahme den Szenerie-Auftrag
+    /// zurueck.
+    #[test]
+    fn eine_fremde_kennung_trifft_keinen_auftrag() {
+        assert_eq!(auftrag_zu_paket(&[(77, 3)], 99), None);
+        assert_eq!(auftrag_zu_paket(&[], 77), None);
+    }
+
+    /// Bei doppelter Kennung gilt die juengste Zuordnung.
+    #[test]
+    fn die_juengste_zuordnung_gilt() {
+        assert_eq!(auftrag_zu_paket(&[(77, 3), (77, 9)], 77), Some(9));
+    }
+}
+
+#[cfg(test)]
+mod lieferungen_tests {
+    use super::*;
+
+    /// ⚠ Der Kern von QS-Befund 1: Zwei Lieferungen duerfen sich nicht
+    /// mischen.
+    ///
+    /// Bis v1.7.14 lagen Punkte, Namen und Kanten in EINER Liste neben
+    /// der Schleife. Kommt EDDF nach der Wartezeit, waehrend LEZL laeuft,
+    /// landeten beide darin — und weil `START`/`END` POSITIONEN in genau
+    /// diesen Listen sind, zeigt danach jede Kante auf einen fremden
+    /// Punkt.
+    #[test]
+    fn zwei_lieferungen_mischen_sich_nicht() {
+        let mut l = Lieferungen::neu();
+        l.eroeffnen(1001);
+        l.eroeffnen(1002);
+
+        l.zu(1001).expect("1001 offen").punkte.push((50.0, 8.0));
+        l.zu(1002).expect("1002 offen").punkte.push((37.0, -6.0));
+        l.zu(1001).expect("1001 offen").namen.push("A".into());
+
+        let eddf = l.abschliessen(1001).expect("1001 abschliessbar");
+        assert_eq!(eddf.punkte, vec![(50.0, 8.0)]);
+        assert_eq!(eddf.namen, vec!["A".to_string()]);
+
+        let lezl = l.abschliessen(1002).expect("1002 abschliessbar");
+        assert_eq!(lezl.punkte, vec![(37.0, -6.0)]);
+        assert!(lezl.namen.is_empty(), "der Name der anderen Lieferung");
+    }
+
+    /// Eine Nachricht ohne offene Lieferung gehoert niemandem.
+    #[test]
+    fn eine_fremde_kennung_hat_keine_lieferung() {
+        let mut l = Lieferungen::neu();
+        l.eroeffnen(1001);
+        assert!(l.zu(1002).is_none());
+        assert!(l.abschliessen(1002).is_none());
+    }
+
+    /// Abgeschlossen ist abgeschlossen — kein zweites Mal.
+    ///
+    /// ⚠ Sonst koennte ein doppelter Endesatz dieselbe Auskunft zweimal
+    /// ablegen.
+    #[test]
+    fn eine_lieferung_wird_nur_einmal_abgeschlossen() {
+        let mut l = Lieferungen::neu();
+        l.eroeffnen(1001);
+        assert!(l.abschliessen(1001).is_some());
+        assert!(l.abschliessen(1001).is_none());
+    }
+
+    /// Die Ablage waechst nicht unbegrenzt — die aelteste faellt raus.
+    #[test]
+    fn die_ablage_ist_begrenzt() {
+        let mut l = Lieferungen::neu();
+        for id in 0..(LIEFERUNGEN_MAX as u32 + 2) {
+            l.eroeffnen(1000 + id);
+        }
+        assert_eq!(l.anzahl_offen(), LIEFERUNGEN_MAX);
+        assert!(l.zu(1000).is_none(), "die aelteste blieb liegen");
+        assert!(l.zu(1000 + LIEFERUNGEN_MAX as u32 + 1).is_some());
+    }
+
+    /// Dieselbe Kennung noch einmal eroeffnen faengt von vorn an.
+    ///
+    /// ⚠ Sonst truege ein Wiederholungsversuch die halbe Antwort des
+    /// vorigen mit sich.
+    #[test]
+    fn ein_zweiter_versuch_faengt_leer_an() {
+        let mut l = Lieferungen::neu();
+        l.eroeffnen(1001);
+        l.zu(1001).expect("offen").punkte.push((1.0, 2.0));
+        l.eroeffnen(1001);
+        assert!(l.zu(1001).expect("offen").punkte.is_empty());
+        assert_eq!(l.anzahl_offen(), 1);
+    }
+}
+
 impl Szeneriesammler {
     pub fn neu() -> Self {
         Self::default()
@@ -1365,8 +1562,10 @@ mod verdrahtung_tests {
         // maesse gegen die falsche, ohne dass etwas anschlaegt.
         let a = ohne_leerraum(ADAPTER);
         assert!(
-            a.contains("shared.szenerie.lock().geliefert("),
-            "die Szenerie wird nirgends veroeffentlicht"
+            a.contains("shared.szenerie.lock().geliefert_zu_kennung("),
+            "die Szenerie wird nirgends veroeffentlicht — oder nicht ueber \
+             die Kennung, dann traegt eine verspaetete Antwort den Namen \
+             des laufenden Auftrags"
         );
         // Die Veroeffentlichung muss im ENDE-Zweig stehen, nicht im
         // Element-Zweig.
@@ -1374,7 +1573,7 @@ mod verdrahtung_tests {
             .find("DispatchMsg::FacilityDataEnde")
             .expect("Ende-Zweig fehlt");
         let veroeffentlichung = a
-            .find("shared.szenerie.lock().geliefert(")
+            .find("shared.szenerie.lock().geliefert_zu_kennung(")
             .expect("Veroeffentlichung fehlt");
         assert!(
             veroeffentlichung > ende,
@@ -1387,11 +1586,23 @@ mod verdrahtung_tests {
         // Teilte sie sich die Kennung mit der Telemetrie, wuerde ein
         // abgelehnter Feldname deren Layout verschieben.
         assert!(ADAPTER.contains("FACILITY_DEFINITION_ID"));
-        assert!(ADAPTER.contains("FACILITY_REQUEST_ID"));
         let a = ohne_leerraum(ADAPTER);
         assert!(
             a.contains("FACILITY_DEFINITION_ID:sys::SIMCONNECT_DATA_DEFINITION_ID=10"),
             "Facility-Definition benutzt nicht ihre eigene Kennung"
+        );
+        // ⚠ Und je VERSUCH eine eigene Anfragekennung, nicht eine feste
+        // fuer alle. Mit einer festen liess sich eine nach der
+        // Wartezeit eintreffende Antwort nicht mehr von der laufenden
+        // unterscheiden (QS-Befund 1, 01.09.2026).
+        assert!(
+            !ADAPTER.contains("FACILITY_REQUEST_ID"),
+            "die feste Anfragekennung ist zurueck — damit lassen sich \
+             verspaetete Antworten nicht mehr zuordnen"
+        );
+        assert!(
+            a.contains("FACILITY_REQUEST_BASE+auftrag_id"),
+            "die Anfragekennung wird nicht je Versuch gebildet"
         );
     }
 }
@@ -1546,8 +1757,9 @@ mod anschluss_verdrahtung_tests {
         // SimConnect nicht anfassen. Der Griff gehoert dem Faden.
         let a = ohne_leerraum(ADAPTER);
         assert!(
-            a.contains("conn.request_facility(&icao)"),
-            "die Anfrage wird nicht im Verbindungsfaden gestellt"
+            a.contains("conn.request_facility(&icao,request_id)"),
+            "die Anfrage wird nicht im Verbindungsfaden gestellt — oder \
+             ohne eigene Kennung, dann ist sie nicht zuzuordnen"
         );
         // ⚠ Seit v1.7.14 kommt der Auftrag aus dem Buch, nicht aus einer
         // Flagge. Die Flagge sagte nur "jemand hat etwas angemeldet" —
@@ -1591,7 +1803,7 @@ mod anschluss_verdrahtung_tests {
              01.09.2026)"
         );
         assert!(
-            a.contains("self.shared.szenerie.lock().wunsch(&icao)"),
+            a.contains("self.shared.szenerie.lock().wunsch_mit_rang(&icao,rang)"),
             "die Anmeldung geht nicht ins Buch"
         );
     }
@@ -1650,7 +1862,7 @@ mod rollweg_verdrahtung_tests {
         // nur woanders.
         let a = ohne_leerraum(ADAPTER);
         assert!(
-            a.contains("None=>facility_punkte.push((f64::NAN,f64::NAN))"),
+            a.contains("None=>lieferung.punkte.push((f64::NAN,f64::NAN))"),
             "ein unlesbarer Rollwegpunkt wird uebersprungen statt platzhaltend \
              eingefuegt — die Indizes verschieben sich"
         );
@@ -1673,19 +1885,36 @@ mod rollweg_verdrahtung_tests {
         );
     }
 
+    /// ⚠ Dieser Waechter prueft seit v1.7.14 eine ZUSICHERUNG statt
+    /// eines Mittels.
+    ///
+    /// Vorher verlangte er drei `clear()`-Aufrufe am Ende des
+    /// Ende-Zweigs. Das Mittel taugte nur, solange es EINE gemeinsame
+    /// Liste gab — und genau die war der Fehler: Zwei Lieferungen, die
+    /// sich zeitlich ueberlappen, mischten sich darin. Jetzt gehoert
+    /// jede Liste ihrer Lieferung, und die Lieferung wird beim Ende
+    /// herausgenommen. Damit KANN nichts ueberdauern.
+    ///
+    /// Die Zusicherung selbst — Listen einer Lieferung bleiben unter
+    /// sich — liegt als Verhaltenstest in `lieferungen_tests`.
     #[test]
-    fn die_listen_werden_nach_der_lieferung_geleert() {
-        // Sonst truege der naechste Flughafen die Punkte des vorigen —
-        // und die Indizes der neuen Kanten zeigten mitten hinein.
+    fn keine_liste_ueberdauert_eine_lieferung() {
         let a = ohne_leerraum(ADAPTER);
-        for marke in [
-            "facility_punkte.clear();",
-            "facility_namen.clear();",
-            "facility_kanten.clear();",
+        assert!(
+            a.contains("facility_lieferungen.abschliessen(request_id)"),
+            "die Lieferung wird am Ende nicht herausgenommen — ihre Listen \
+             blieben stehen und der naechste Flughafen erbte sie"
+        );
+        for verboten in [
+            "facility_punkte",
+            "facility_namen",
+            "facility_kanten",
+            "facility_referenz",
         ] {
             assert!(
-                a.contains(&ohne_leerraum(marke)),
-                "{marke} fehlt — die Listen wachsen ueber Flughaefen hinweg"
+                !a.contains(verboten),
+                "{verboten} ist wieder eine gemeinsame Liste — zwei sich \
+                 ueberlappende Lieferungen mischen sich darin"
             );
         }
     }

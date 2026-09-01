@@ -44,7 +44,14 @@ const INSPECTOR_REQUEST_ID: sys::SIMCONNECT_DATA_REQUEST_ID = 3;
 /// Telemetrie noch die Aufsetzprobe verschiebt — dieselbe Ueberlegung
 /// wie bei der Trennung von Telemetrie und Touchdown.
 const FACILITY_DEFINITION_ID: sys::SIMCONNECT_DATA_DEFINITION_ID = 10;
-const FACILITY_REQUEST_ID: sys::SIMCONNECT_DATA_REQUEST_ID = 10;
+/// Basis der Facility-Anfragekennungen.
+///
+/// ⚠ Jeder VERSUCH bekommt `BASIS + Auftragskennung`. Eine feste
+/// Kennung fuer alle Anfragen liess eine nach der Wartezeit
+/// eintreffende Antwort nicht mehr von der laufenden unterscheiden
+/// (QS-Befund 1, 01.09.2026). Die 1000 liegt ueber allen anderen
+/// vergebenen Kennungen (1, 2, 3, 100, 101, 200).
+const FACILITY_REQUEST_BASE: sys::SIMCONNECT_DATA_REQUEST_ID = 1000;
 
 // ---- PMDG SDK ClientData IDs (Phase H.4) ----
 //
@@ -891,12 +898,23 @@ impl MsfsAdapter {
     /// das am Gate nicht antwortete, fuer den Rest des Fluges tot. Das
     /// Buch entscheidet jetzt, ob und wann wirklich gefragt wird.
     pub fn szenerie_anfordern(&self, icao: &str) {
+        self.szenerie_anfordern_mit_rang(icao, 0);
+    }
+
+    /// Wie `szenerie_anfordern`, aber mit Rangfolge — kleiner heisst
+    /// frueher dran. Das Ausweichziel gehoert vor das geplante.
+    pub fn szenerie_anfordern_mit_rang(&self, icao: &str, rang: u8) {
         let icao = icao.trim().to_ascii_uppercase();
         if icao.is_empty() {
             return;
         }
-        self.shared.szenerie.lock().wunsch(&icao);
+        self.shared.szenerie.lock().wunsch_mit_rang(&icao, rang);
         self.shared.szenerie_offen.store(true, Ordering::Relaxed);
+    }
+
+    /// Zustand EINES Platzes als Kurzwort.
+    pub fn szenerie_diagnose_fuer(&self, icao: &str) -> String {
+        self.shared.szenerie.lock().diagnose(icao)
     }
 
     /// Wie weit die Szenerie-Abfrage gekommen ist.
@@ -1072,6 +1090,22 @@ fn run_dispatch(
         shared.inspector.lock().dirty = true;
     }
 
+    // v1.7.14 — die offenen Facility-Lieferungen, nach Anfragekennung
+    // getrennt.
+    //
+    // ⚠ AUSSERHALB der Tick-Schleife. Eine Lieferung kommt stueckweise
+    // und kann sich ueber mehrere Durchlaeufe ziehen; wuerde sie je Tick
+    // neu angelegt, ginge der Anfang verloren.
+    //
+    // Getrennt nach Kennung, weil sich sonst eine nach der Wartezeit
+    // eintreffende Antwort mit der laufenden vermischt — die drei
+    // Rollweglisten haengen ueber Indizes zusammen, und zwei Lieferungen
+    // in denselben Listen verschieben jede Kante. Siehe `Lieferungen`.
+    let mut facility_lieferungen = facility::Lieferungen::neu();
+    // Paketkennung → Auftragskennung, damit eine spaetere Ausnahme dem
+    // richtigen Platz zugeordnet werden kann. Siehe `auftrag_zu_paket`.
+    let mut facility_pakete: Vec<(u32, u32)> = Vec::new();
+
     while !stop.load(Ordering::Relaxed) {
         // Re-register the inspector watchlist whenever the UI has
         // mutated it. The dirty flag avoids hot-looping the
@@ -1105,6 +1139,12 @@ fn run_dispatch(
             }
         }
 
+        // v1.7.14 — die offenen Lieferungen, nach Anfragekennung
+        // getrennt. Sie liegen in `facility.rs`, weil DIESER Block hinter
+        // `cfg(target_os = "windows")` steht und hier nichts pruefbar ist.
+        // Getrennt, weil sich sonst eine verspaetete Antwort mit der
+        // laufenden vermischt — siehe `Lieferungen`.
+        //
         // v1.7.8 — eine ausstehende Szenerie-Anfrage stellen.
         //
         // Erst hier, im Faden mit dem Verbindungsgriff: `szenerie_anfordern`
@@ -1121,12 +1161,28 @@ fn run_dispatch(
             let jetzt_ms = chrono::Utc::now().timestamp_millis();
             let faellig = shared.szenerie.lock().naechster(jetzt_ms);
             if let Some(icao) = faellig {
-                shared.szenerie.lock().gestellt(&icao, jetzt_ms);
-                match conn.request_facility(&icao) {
-                    Ok(()) => {
+                // ⚠ EIGENE Kennung je VERSUCH. Mit einer festen Kennung
+                // fuer alle Anfragen liesse sich eine nach der Wartezeit
+                // eintreffende Antwort nicht mehr von der laufenden
+                // unterscheiden — sie wuerde dem falschen Platz
+                // zugeschlagen, und ueberlappende Bloecke koennten sich
+                // sogar vermischen. Das SDK gibt die clientdefinierte
+                // Kennung in JEDER Nachricht zurueck, genau dafuer.
+                let auftrag_id = shared.szenerie.lock().gestellt(&icao, jetzt_ms);
+                let request_id = FACILITY_REQUEST_BASE + auftrag_id;
+                match conn.request_facility(&icao, request_id) {
+                    Ok(paket) => {
                         *shared.szenerie_diagnose.lock() = SzenerieDiagnose::Angefordert;
+                        facility_lieferungen.eroeffnen(request_id);
+                        if let Some(send_id) = paket {
+                            facility_pakete.push((send_id, auftrag_id));
+                            while facility_pakete.len() > facility::PAKETE_GEDAECHTNIS {
+                                facility_pakete.remove(0);
+                            }
+                        }
                         tracing::info!(
                             %icao,
+                            request_id,
                             versuch = shared.szenerie.lock().versuche(&icao),
                             "Szenerie-Auskunft angefordert"
                         );
@@ -1142,31 +1198,15 @@ fn run_dispatch(
                         // genauso aus wie "nie gefragt".
                         *shared.szenerie_diagnose.lock() =
                             SzenerieDiagnose::Abgelehnt(e.to_string());
-                        shared.szenerie.lock().abgelehnt(&icao, e.to_string());
+                        shared
+                            .szenerie
+                            .lock()
+                            .abgelehnt_zu_kennung(auftrag_id, e.to_string());
                         tracing::warn!(%icao, error = %e, "Szenerie-Anfrage abgelehnt");
                     }
                 }
             }
         }
-
-        // v1.7.8 — Sammelplatz fuer die Facility-Lieferung. Sie kommt
-        // stueckweise; erst `FacilityDataEnde` sagt, dass sie
-        // vollstaendig ist. Vorher darf nichts davon benutzt werden —
-        // eine halbe Bahnliste saehe aus wie ein Flughafen mit einer
-        // Bahn.
-        // ⚠ Der Sammler fuehrt den Zustand selbst (Reihenfolge der
-        // PAVEMENT-Saetze). Er liegt in `facility.rs`, weil DIESER Block
-        // hinter `cfg(target_os = "windows")` steht und hier nichts
-        // pruefbar ist — siehe `Szeneriesammler`.
-        let mut facility_sammler = facility::Szeneriesammler::neu();
-        // Rollwege: drei Listen, die ueber Indizes zusammenhaengen. Sie
-        // muessen in der Reihenfolge der Lieferung gesammelt werden —
-        // `START`/`END`/`NAME_INDEX` sind Positionen in genau diesen
-        // Listen. Wer sortiert oder filtert, verschiebt die Verweise.
-        let mut facility_referenz: Option<(f64, f64)> = None;
-        let mut facility_punkte: Vec<(f64, f64)> = Vec::new();
-        let mut facility_namen: Vec<String> = Vec::new();
-        let mut facility_kanten: Vec<(usize, usize, usize)> = Vec::new();
 
         // Drain whatever messages SimConnect has queued for us.
         loop {
@@ -1192,12 +1232,23 @@ fn run_dispatch(
                     bytes,
                     ..
                 })) => {
-                    if request_id != FACILITY_REQUEST_ID {
-                    } else if typ == sys::FACILITY_DATA_AIRPORT {
+                    // ⚠ Nachrichten ohne offene Lieferung werden
+                    // VERWORFEN, nicht geraten. Eine Antwort, deren
+                    // Anfrage abgelaufen ist, gehoert niemandem mehr.
+                    let Some(lieferung) = facility_lieferungen.zu(request_id) else {
+                        if request_id >= FACILITY_REQUEST_BASE {
+                            tracing::debug!(
+                                request_id,
+                                "Facility-Nachricht ohne offene Lieferung — verworfen"
+                            );
+                        }
+                        continue;
+                    };
+                    if typ == sys::FACILITY_DATA_AIRPORT {
                         // Der Referenzpunkt — ohne ihn sind die
                         // Rollwegpunkte nicht umrechenbar.
                         if let Some(w) = facility::zerlege(facility::FLUGHAFEN_FELDER, &bytes) {
-                            facility_referenz = Some((w[0].als_f64(), w[1].als_f64()));
+                            lieferung.referenz = Some((w[0].als_f64(), w[1].als_f64()));
                         }
                     } else if typ == sys::FACILITY_DATA_TAXI_POINT {
                         // ⚠ Auch ein unlesbarer Punkt muss einen Platz
@@ -1208,17 +1259,17 @@ fn run_dispatch(
                         // Zusammenbau verwirft, als eine verschobene
                         // Liste.
                         match facility::zerlege(facility::ROLLWEG_PUNKT_FELDER, &bytes) {
-                            Some(w) => facility_punkte.push((w[1].als_f64(), w[2].als_f64())),
-                            None => facility_punkte.push((f64::NAN, f64::NAN)),
+                            Some(w) => lieferung.punkte.push((w[1].als_f64(), w[2].als_f64())),
+                            None => lieferung.punkte.push((f64::NAN, f64::NAN)),
                         }
                     } else if typ == sys::FACILITY_DATA_TAXI_NAME {
                         // Ebenso: Der Index zaehlt, nicht der Inhalt.
-                        facility_namen.push(facility::name_aus_bytes(&bytes));
+                        lieferung.namen.push(facility::name_aus_bytes(&bytes));
                     } else if typ == sys::FACILITY_DATA_TAXI_PATH {
                         if let Some(w) = facility::zerlege(facility::ROLLWEG_KANTE_FELDER, &bytes) {
                             let (a, b, n) = (w[2].als_i32(), w[3].als_i32(), w[4].als_i32());
                             if a >= 0 && b >= 0 && n >= 0 {
-                                facility_kanten.push((a as usize, b as usize, n as usize));
+                                lieferung.kanten.push((a as usize, b as usize, n as usize));
                             }
                         }
                     } else if typ == sys::FACILITY_DATA_PAVEMENT {
@@ -1226,14 +1277,14 @@ fn run_dispatch(
                         // eingebetteten Felder. Sie kommt nach ihrem
                         // Bahnsatz, in der Reihenfolge der Definition:
                         // erst PRIMARY_THRESHOLD, dann SECONDARY.
-                        if !facility_sammler.pavementsatz(&bytes) {
+                        if !lieferung.sammler.pavementsatz(&bytes) {
                             tracing::warn!(
                                 laenge = bytes.len(),
                                 "PAVEMENT-Satz ohne passende Bahn — verworfen"
                             );
                         }
                     } else if typ == sys::FACILITY_DATA_RUNWAY {
-                        if !facility_sammler.bahnsatz(&bytes) {
+                        if !lieferung.sammler.bahnsatz(&bytes) {
                             // Kein stiller Verlust: Ein Block, der nicht
                             // zur Definition passt, heisst, dass die
                             // Feldliste nicht stimmt.
@@ -1246,20 +1297,27 @@ fn run_dispatch(
                     }
                 }
                 Ok(Some(DispatchMsg::FacilityDataEnde { request_id })) => {
-                    if request_id == FACILITY_REQUEST_ID {
-                        // ⚠ Mit dem Platz, der WIRKLICH gefragt wurde
-                        // — nicht mit dem zuletzt angemeldeten Wunsch.
-                        // Bis v1.7.13 stand hier der Wunsch, und eine
-                        // Antwort, die waehrend einer neuen Anmeldung
-                        // eintraf, bekam den falschen Namen.
-                        let icao = shared
-                            .szenerie
-                            .lock()
-                            .laufender()
-                            .unwrap_or_default();
+                    // ⚠ Nur die Lieferung ZU DIESER Kennung. Ist sie
+                    // nicht mehr offen, gehoert die Antwort niemandem —
+                    // verwerfen, nicht dem laufenden Auftrag zuschlagen.
+                    if let Some(lieferung) = facility_lieferungen.abschliessen(request_id) {
+                        // ⚠ Der Platz kommt aus der KENNUNG, nicht aus
+                        // `laufender()`. Nach der Wartezeit laeuft
+                        // laengst ein anderer Auftrag; eine verspaetete
+                        // Antwort bekaeme sonst dessen Namen — derselbe
+                        // Fehler wie in v1.7.13, nur verschoben.
+                        let auftrag_id = request_id.wrapping_sub(FACILITY_REQUEST_BASE);
+                        let Some(icao) = shared.szenerie.lock().platz_zu_kennung(auftrag_id) else {
+                            tracing::warn!(
+                                request_id,
+                                "Facility-Lieferung ohne bekannten Platz — verworfen"
+                            );
+                            continue;
+                        };
                         tracing::info!(
                             %icao,
-                            bahnen = facility_sammler.anzahl(),
+                            request_id,
+                            bahnen = lieferung.sammler.anzahl(),
                             "Facility-Lieferung vollstaendig"
                         );
                         // Erst JETZT sichtbar machen — vorher waere es
@@ -1268,15 +1326,15 @@ fn run_dispatch(
                         // sind die drei Listen nicht vollstaendig, und
                         // eine Kante koennte auf einen Punkt zeigen, der
                         // noch nicht eingetroffen ist.
-                        let rollwege = match facility_referenz {
+                        let rollwege = match lieferung.referenz {
                             Some(r) => facility::rollwege_zusammensetzen(
                                 r,
-                                &facility_punkte,
-                                &facility_namen,
-                                &facility_kanten,
+                                &lieferung.punkte,
+                                &lieferung.namen,
+                                &lieferung.kanten,
                             ),
                             None => {
-                                if !facility_punkte.is_empty() {
+                                if !lieferung.punkte.is_empty() {
                                     tracing::warn!(
                                         "Rollwegpunkte ohne Referenzpunkt — nicht umrechenbar"
                                     );
@@ -1287,7 +1345,7 @@ fn run_dispatch(
                         tracing::info!(rollwege = rollwege.len(), "Rollwege zusammengesetzt");
                         let auskunft = sim_core::szenerie::SzenerieFlughafen {
                             icao,
-                            bahnen: std::mem::take(&mut facility_sammler).fertig(),
+                            bahnen: lieferung.sammler.fertig(),
                             rollwege,
                             quelle: "msfs".to_string(),
                         };
@@ -1300,11 +1358,10 @@ fn run_dispatch(
                             bahnen: auskunft.bahnen.len(),
                             rollwege: auskunft.rollwege.len(),
                         };
-                        shared.szenerie.lock().geliefert(&auskunft.icao.clone(), auskunft);
-                        facility_referenz = None;
-                        facility_punkte.clear();
-                        facility_namen.clear();
-                        facility_kanten.clear();
+                        shared
+                            .szenerie
+                            .lock()
+                            .geliefert_zu_kennung(auftrag_id, auskunft);
                     }
                 }
                 Ok(Some(DispatchMsg::Exception {
@@ -1322,6 +1379,25 @@ fn run_dispatch(
                         ?field,
                         "SIMCONNECT_RECV_EXCEPTION — SimVar request was rejected"
                     );
+                    // ⚠ Gehoert sie zu einer Szenerie-Anfrage, ist der
+                    // Platz damit ABGELEHNT — nicht weiter „unterwegs".
+                    // Sonst fragt das Buch zehnmal nach einem Flughafen,
+                    // den der Simulator nicht kennt, und die Diagnose am
+                    // Flug behauptet die ganze Zeit, es sei noch etwas
+                    // unterwegs.
+                    if let Some(auftrag_id) = facility::auftrag_zu_paket(&facility_pakete, send_id)
+                    {
+                        let grund = format!("SimConnect-Ausnahme {exception}");
+                        let platz = shared
+                            .szenerie
+                            .lock()
+                            .abgelehnt_zu_kennung(auftrag_id, grund);
+                        tracing::warn!(
+                            ?platz,
+                            exception,
+                            "Szenerie-Anfrage vom Simulator zurueckgewiesen"
+                        );
+                    }
                     // Route it to the Inspector tool too, if this
                     // exception's send_id matches one of its watches'
                     // AddToDataDefinition calls — otherwise the pilot
@@ -1860,14 +1936,18 @@ impl Connection {
     /// Die Antworten kommen asynchron ueber die Empfangsschleife als
     /// `DispatchMsg::FacilityData`, abgeschlossen von
     /// `FacilityDataEnde`. Der Aufruf selbst kehrt sofort zurueck.
-    fn request_facility(&mut self, icao: &str) -> Result<(), String> {
+    fn request_facility(
+        &mut self,
+        icao: &str,
+        request_id: sys::SIMCONNECT_DATA_REQUEST_ID,
+    ) -> Result<Option<u32>, String> {
         let cicao = std::ffi::CString::new(icao).map_err(|_| "ICAO enthielt NUL".to_string())?;
         let leer = std::ffi::CString::new("").expect("leere Zeichenkette");
         let hr = unsafe {
             sys::SimConnect_RequestFacilityData(
                 self.handle,
                 FACILITY_DEFINITION_ID,
-                FACILITY_REQUEST_ID,
+                request_id,
                 cicao.as_ptr(),
                 leer.as_ptr(),
             )
@@ -1877,7 +1957,23 @@ impl Connection {
                 "RequestFacilityData({icao}) gab 0x{hr:08X} zurueck"
             ));
         }
-        Ok(())
+        // ⚠ Ein `hr == 0` heisst NICHT, dass der Simulator den Platz
+        // kennt. Eine Zurueckweisung kommt spaeter und asynchron als
+        // `SIMCONNECT_RECV_EXCEPTION`, und sie verweist auf die
+        // Paketkennung DIESES Aufrufs. Ohne sie bliebe der Auftrag
+        // „unterwegs", und das Buch fragte zehnmal nach einem Platz, den
+        // es nicht gibt.
+        let mut send_id: sys::DWORD = 0;
+        let hr = unsafe { sys::SimConnect_GetLastSentPacketID(self.handle, &mut send_id) };
+        if hr != 0 {
+            tracing::warn!(
+                %icao,
+                "GetLastSentPacketID nach RequestFacilityData fehlgeschlagen — \
+                 eine Zurueckweisung dieses Platzes bleibt unzuordenbar"
+            );
+            return Ok(None);
+        }
+        Ok(Some(send_id))
     }
 
     /// Register the touchdown sample fields under definition #2.

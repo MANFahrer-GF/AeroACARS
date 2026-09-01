@@ -2283,6 +2283,26 @@ fn szenerie_ziele(geplant: &str, ausweich: Option<&str>) -> Vec<String> {
     ziele
 }
 
+/// Von welchem Platz die Auskunft GEERNTET werden darf.
+///
+/// ⚠ Genau einer, ohne Rueckfall: der Ausweichplatz, sonst der geplante.
+///
+/// `szenerie_ziele` liefert beide, weil beide ANGEFORDERT werden sollen —
+/// ein Ausweichentschluss faellt spaet und die Antwort braucht Vorlauf.
+/// Beim ERNTEN waere dieselbe Liste ein Fehler: Ein `find_map` ueber sie
+/// nimmt das geplante Ziel, sobald dessen Antwort zuerst da ist, und legt
+/// sie am Flug ab. Die Bahnuebernahme weist sie spaeter am ICAO-Vergleich
+/// ab — die **Rollwege** nicht, die gehen ohne Platzpruefung in die
+/// Ausfahrten. Dann liegen die Ausfahrten des geplanten Platzes an der
+/// tatsaechlichen Ausweichlandung (QS-Befund 2, 01.09.2026).
+fn szenerie_ernteziel(geplant: &str, ausweich: Option<&str>) -> Option<String> {
+    let sauber = |s: &str| {
+        let k = s.trim().to_ascii_uppercase();
+        (k.len() == 4).then_some(k)
+    };
+    ausweich.and_then(sauber).or_else(|| sauber(geplant))
+}
+
 /// Die MSFS-Szenerie-Auskunft vom Adapter an den Flug reichen.
 ///
 /// Der Adapter fuellt sie asynchron, sobald die Lieferung vollstaendig
@@ -2328,16 +2348,21 @@ fn szenerie_auskunft_uebernehmen(
             // wo die Szenerie des Ziels geladen ist. Bis v1.7.13 gab es
             // den zweiten Versuch nicht, und der Flug EDDF-LEZL am
             // 01.09.2026 landete mit der Szenerie Frankfurts.
-            for z in &ziele {
-                msfs.szenerie_anfordern(z);
+            for (rang, z) in ziele.iter().enumerate() {
+                msfs.szenerie_anfordern_mit_rang(z, rang as u8);
             }
-            // Und NUR eine Auskunft zu einem dieser Plaetze nehmen.
-            let treffer = ziele.iter().find_map(|z| msfs.szenerie_fuer(z));
-            (
-                treffer,
-                msfs.szenerie_diagnose().kurz(),
-                msfs.sim_kennung(),
-            )
+            // ⚠ Geerntet wird GENAU EIN Platz, ohne Rueckfall — siehe
+            // `szenerie_ernteziel`. Ein `find_map` ueber die Zielliste
+            // nahm das geplante Ziel, sobald dessen Antwort zuerst da
+            // war, und dessen Rollwege landeten ungeprueft in den
+            // Ausfahrten der Ausweichlandung.
+            let ernteziel = szenerie_ernteziel(&flight.arr_airport, ausweich.as_deref());
+            let treffer = ernteziel.as_deref().and_then(|z| msfs.szenerie_fuer(z));
+            let diagnose = ernteziel
+                .as_deref()
+                .map(|z| msfs.szenerie_diagnose_fuer(z))
+                .unwrap_or_else(|| "kein_ziel".to_string());
+            (treffer, diagnose, msfs.sim_kennung())
         };
         // ⚠ Die Diagnose IMMER mitschreiben, auch wenn keine Auskunft kam.
         // Genau der Fall ist der interessante: Sie sagt dann, ob nie
@@ -53442,6 +53467,35 @@ mod szenerie_status_tests {
             szenerie_status(&s),
             "kein_treffer(bahnen=2, ohne_treffer=0, verworfen=0)"
         );
+    }
+
+    /// ⚠ QS-Befund 2: Geerntet wird GENAU EINER, ohne Rueckfall.
+    ///
+    /// Die erste Fassung erntete mit `find_map` ueber die Zielliste. Das
+    /// nimmt das geplante Ziel, sobald dessen Antwort zuerst da ist —
+    /// und legt sie am Flug ab. Die Bahnuebernahme weist sie am
+    /// ICAO-Vergleich ab, die ROLLWEGE nicht: Die gehen ohne
+    /// Platzpruefung in die Ausfahrten. Dann liegen die Ausfahrten
+    /// Frankfurts an einer Landung in Malaga.
+    #[test]
+    fn geerntet_wird_das_ausweichziel_ohne_rueckfall() {
+        assert_eq!(
+            szenerie_ernteziel("LEZL", Some("LEMG")),
+            Some("LEMG".to_string()),
+            "bei einem Ausweichflug wurde auf das geplante Ziel zurueckgefallen"
+        );
+    }
+
+    /// Ohne Ausweichziel das geplante — und Unsinn ergibt nichts.
+    #[test]
+    fn das_ernteziel_ist_sonst_das_geplante() {
+        assert_eq!(szenerie_ernteziel("LEZL", None), Some("LEZL".to_string()));
+        assert_eq!(
+            szenerie_ernteziel(" lezl ", Some("  ")),
+            Some("LEZL".to_string()),
+            "ein leeres Ausweichziel darf nicht das geplante verdecken"
+        );
+        assert_eq!(szenerie_ernteziel("XX", None), None);
     }
 
     /// Ohne Ausweichziel ist es einfach der geplante Platz.

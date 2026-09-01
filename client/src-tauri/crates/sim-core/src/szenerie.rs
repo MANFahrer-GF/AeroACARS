@@ -150,7 +150,10 @@ mod szenerie_diagnose_tests {
     #[test]
     fn die_stummen_faelle_bleiben_einzelne_woerter() {
         // Sie tragen keine Zahlen — und duerfen auch keine erfinden.
-        assert_eq!(SzenerieDiagnose::NichtAngefordert.kurz(), "nicht_angefordert");
+        assert_eq!(
+            SzenerieDiagnose::NichtAngefordert.kurz(),
+            "nicht_angefordert"
+        );
         assert_eq!(SzenerieDiagnose::Angefordert.kurz(), "keine_antwort");
         assert_eq!(
             SzenerieDiagnose::Abgelehnt("egal".to_string()).kurz(),
@@ -182,6 +185,16 @@ struct Auftrag {
     versuche: u8,
     auskunft: Option<SzenerieFlughafen>,
     grund: Option<String>,
+    /// Rangfolge: kleiner heisst frueher dran. Das Ausweichziel steht
+    /// vor dem geplanten, weil dort gelandet wird.
+    ///
+    /// ⚠ Ohne das entschied die alphabetische Ordnung der Ablage. Die
+    /// Reihenfolge, die der Aufrufer aufstellt, ging dabei verloren —
+    /// bei EDDF/LEZL kam Frankfurt zuerst dran, obwohl in Sevilla
+    /// gelandet wird (QS-Befund 3, 01.09.2026).
+    rang: u8,
+    /// Kennung des letzten gestellten Auftrags.
+    letzte_id: u32,
 }
 
 /// Wie lange auf eine Antwort gewartet wird, bevor neu gefragt wird.
@@ -219,10 +232,24 @@ pub const HOECHSTVERSUCHE: u8 = 10;
 ///
 /// Das Buch trennt die Plaetze und beschriftet jede Lieferung mit dem
 /// Platz, der wirklich gefragt wurde.
+/// Wie viele vergebene Kennungen zurueckverfolgt werden.
+///
+/// ⚠ Der Grund fuer diese Zahl: Eine Antwort, die nach der Wartezeit
+/// eintrifft, muss noch ihrem Platz zugeordnet werden koennen — sonst
+/// wird sie dem inzwischen laufenden Auftrag zugeschlagen. Genau dieser
+/// Fehler ist in v1.7.14 zunaechst nur verschoben statt behoben worden
+/// (QS-Befund 1, 01.09.2026).
+pub const KENNUNGEN_GEDAECHTNIS: usize = 16;
+
 #[derive(Debug, Clone, Default)]
 pub struct Auftragsbuch {
     auftraege: std::collections::BTreeMap<String, Auftrag>,
     laeuft: Option<String>,
+    /// Fortlaufende Kennung. Jeder VERSUCH bekommt eine eigene — nicht
+    /// jeder Platz.
+    naechste_id: u32,
+    /// Kennung → Platz, aelteste vorn.
+    kennungen: std::collections::VecDeque<(u32, String)>,
 }
 
 impl Auftragsbuch {
@@ -233,16 +260,30 @@ impl Auftragsbuch {
     /// Einen Platz anmelden. Mehrfach aufzurufen ist ausdruecklich
     /// erlaubt — genau darueber laeuft die Wiederholung im Anflug.
     pub fn wunsch(&mut self, icao: &str) {
+        self.wunsch_mit_rang(icao, 0);
+    }
+
+    /// Wie `wunsch`, aber mit Rangfolge — kleiner heisst frueher dran.
+    ///
+    /// Ein bereits eingetragener Platz behaelt den BESSEREN Rang: Wird
+    /// das geplante Ziel spaeter zum Ausweichziel, rueckt es vor; ein
+    /// erneutes Anmelden als geplantes Ziel darf es nicht zurueckstufen.
+    pub fn wunsch_mit_rang(&mut self, icao: &str, rang: u8) {
         let icao = icao.trim().to_ascii_uppercase();
         if icao.len() != 4 {
             return;
         }
-        self.auftraege.entry(icao).or_insert(Auftrag {
-            zustand: Auftragszustand::Offen,
-            versuche: 0,
-            auskunft: None,
-            grund: None,
-        });
+        self.auftraege
+            .entry(icao)
+            .and_modify(|a| a.rang = a.rang.min(rang))
+            .or_insert(Auftrag {
+                zustand: Auftragszustand::Offen,
+                versuche: 0,
+                auskunft: None,
+                grund: None,
+                rang,
+                letzte_id: 0,
+            });
     }
 
     /// Der naechste Platz, den der Verbindungsfaden fragen soll.
@@ -273,19 +314,43 @@ impl Auftragsbuch {
                 )
             })
             // Wer am laengsten nicht dran war, zuerst.
-            .min_by_key(|(icao, a)| (a.versuche, (*icao).clone()))
+            // ⚠ Rang VOR dem Namen. Sonst entscheidet das Alphabet, und
+            // die Rangfolge des Aufrufers ist wirkungslos.
+            .min_by_key(|(icao, a)| (a.versuche, a.rang, (*icao).clone()))
             .map(|(icao, _)| icao.clone())?;
         Some(kandidat)
     }
 
     /// Festhalten, dass die Anfrage wirklich gestellt wurde.
-    pub fn gestellt(&mut self, icao: &str, jetzt_ms: i64) {
+    ///
+    /// Gibt die **Kennung dieses Versuchs** zurueck. Jeder Versuch
+    /// bekommt eine eigene; damit laesst sich eine eintreffende Antwort
+    /// ihrem Platz zuordnen, auch wenn inzwischen ein anderer laeuft.
+    #[must_use]
+    pub fn gestellt(&mut self, icao: &str, jetzt_ms: i64) -> u32 {
         let icao = icao.trim().to_ascii_uppercase();
+        self.naechste_id = self.naechste_id.wrapping_add(1);
+        let id = self.naechste_id;
         if let Some(a) = self.auftraege.get_mut(&icao) {
             a.zustand = Auftragszustand::Laeuft { seit_ms: jetzt_ms };
             a.versuche = a.versuche.saturating_add(1);
+            a.letzte_id = id;
+        }
+        self.kennungen.push_back((id, icao.clone()));
+        while self.kennungen.len() > KENNUNGEN_GEDAECHTNIS {
+            self.kennungen.pop_front();
         }
         self.laeuft = Some(icao);
+        id
+    }
+
+    /// Zu welchem Platz eine Kennung gehoert.
+    pub fn platz_zu_kennung(&self, id: u32) -> Option<String> {
+        self.kennungen
+            .iter()
+            .rev()
+            .find(|(k, _)| *k == id)
+            .map(|(_, icao)| icao.clone())
     }
 
     /// Welcher Platz gerade beantwortet wird.
@@ -296,6 +361,27 @@ impl Auftragsbuch {
         self.laeuft.clone()
     }
 
+    /// Eine Lieferung ueber die **Kennung ihres Versuchs** ablegen.
+    ///
+    /// ⚠ Das ist der einzige Weg, der eine verspaetete Antwort richtig
+    /// zuordnet. Nach der Wartezeit gibt das Buch den naechsten Auftrag
+    /// heraus; kommt die alte Antwort dann noch, gehoert sie IHREM
+    /// Platz — nicht dem, der gerade laeuft. Der Rueckgabewert nennt
+    /// den Platz, unter dem sie abgelegt wurde, oder `None`, wenn die
+    /// Kennung unbekannt ist (dann wird verworfen, nicht geraten).
+    pub fn geliefert_zu_kennung(&mut self, id: u32, auskunft: SzenerieFlughafen) -> Option<String> {
+        let icao = self.platz_zu_kennung(id)?;
+        self.geliefert(&icao, auskunft);
+        Some(icao)
+    }
+
+    /// Eine Zurueckweisung ueber die Kennung festhalten.
+    pub fn abgelehnt_zu_kennung(&mut self, id: u32, grund: String) -> Option<String> {
+        let icao = self.platz_zu_kennung(id)?;
+        self.abgelehnt(&icao, grund);
+        Some(icao)
+    }
+
     /// Eine vollstaendige Lieferung ablegen.
     pub fn geliefert(&mut self, icao: &str, auskunft: SzenerieFlughafen) {
         let icao = icao.trim().to_ascii_uppercase();
@@ -304,6 +390,8 @@ impl Auftragsbuch {
             versuche: 0,
             auskunft: None,
             grund: None,
+            rang: 0,
+            letzte_id: 0,
         });
         eintrag.zustand = Auftragszustand::Geliefert;
         eintrag.auskunft = Some(auskunft);
@@ -350,6 +438,37 @@ impl Auftragsbuch {
             .unwrap_or(0)
     }
 
+    /// Kurzwort zum Zustand EINES Platzes.
+    ///
+    /// ⚠ Die Diagnose des Adapters war global: Jede Anfrage, Ablehnung
+    /// und Lieferung ueberschrieb denselben Wert, und am Flug stand der
+    /// Zustand des zuletzt bearbeiteten Platzes — nicht der des Ziels
+    /// (QS-Befund 4, 01.09.2026).
+    pub fn diagnose(&self, icao: &str) -> String {
+        let icao_gross = icao.trim().to_ascii_uppercase();
+        match self.auftraege.get(&icao_gross) {
+            None => format!("nie_gefragt({icao_gross})"),
+            Some(a) => match &a.zustand {
+                Auftragszustand::Offen => format!("angemeldet({icao_gross})"),
+                Auftragszustand::Laeuft { .. } => {
+                    format!("unterwegs({icao_gross}, versuch={})", a.versuche)
+                }
+                Auftragszustand::Abgelehnt => format!(
+                    "abgelehnt({icao_gross}, {})",
+                    a.grund.as_deref().unwrap_or("ohne Grund")
+                ),
+                Auftragszustand::Geliefert => {
+                    let (bahnen, rollwege) = a
+                        .auskunft
+                        .as_ref()
+                        .map(|x| (x.bahnen.len(), x.rollwege.len()))
+                        .unwrap_or((0, 0));
+                    format!("geliefert({icao_gross}, bahnen={bahnen}, rollwege={rollwege})")
+                }
+            },
+        }
+    }
+
     /// Grund einer Zurueckweisung.
     pub fn ablehnungsgrund(&self, icao: &str) -> Option<String> {
         self.auftraege
@@ -394,12 +513,15 @@ mod auftragsbuch_tests {
         b.wunsch("LEZL");
 
         let erster = b.naechster(0).expect("erster Auftrag");
-        b.gestellt(&erster, 0);
+        let _ = b.gestellt(&erster, 0);
         b.geliefert(&erster, auskunft(&erster, 4));
 
         let zweiter = b.naechster(1_000).expect("zweiter Auftrag");
-        assert_ne!(zweiter, erster, "derselbe Platz zweimal — der andere fiel aus");
-        b.gestellt(&zweiter, 1_000);
+        assert_ne!(
+            zweiter, erster,
+            "derselbe Platz zweimal — der andere fiel aus"
+        );
+        let _ = b.gestellt(&zweiter, 1_000);
         b.geliefert(&zweiter, auskunft(&zweiter, 1));
 
         assert!(b.auskunft("EDDF").is_some());
@@ -418,7 +540,7 @@ mod auftragsbuch_tests {
         let mut b = Auftragsbuch::neu();
         b.wunsch("EDDF");
         let laufend = b.naechster(0).expect("Auftrag");
-        b.gestellt(&laufend, 0);
+        let _ = b.gestellt(&laufend, 0);
 
         // Waehrend die Antwort unterwegs ist, meldet der Flug das Ziel an.
         b.wunsch("LEZL");
@@ -447,14 +569,14 @@ mod auftragsbuch_tests {
         let mut b = Auftragsbuch::neu();
         b.wunsch("LEZL");
         let a = b.naechster(0).expect("erster Versuch");
-        b.gestellt(&a, 0);
+        let _ = b.gestellt(&a, 0);
 
         // Kurz danach: nichts Neues, die Antwort darf noch kommen.
         assert_eq!(b.naechster(WARTEZEIT_MS - 1), None);
 
         // Nach der Wartezeit erneut.
         assert_eq!(b.naechster(WARTEZEIT_MS).as_deref(), Some("LEZL"));
-        b.gestellt("LEZL", WARTEZEIT_MS);
+        let _ = b.gestellt("LEZL", WARTEZEIT_MS);
         assert_eq!(b.versuche("LEZL"), 2);
     }
 
@@ -466,7 +588,7 @@ mod auftragsbuch_tests {
         let mut t = 0;
         for _ in 0..HOECHSTVERSUCHE {
             let a = b.naechster(t).expect("Versuch");
-            b.gestellt(&a, t);
+            let _ = b.gestellt(&a, t);
             t += WARTEZEIT_MS;
         }
         assert_eq!(b.versuche("LEZL"), HOECHSTVERSUCHE);
@@ -478,7 +600,7 @@ mod auftragsbuch_tests {
     fn ein_gelieferter_platz_kommt_nicht_wieder_dran() {
         let mut b = Auftragsbuch::neu();
         b.wunsch("EDDF");
-        b.gestellt("EDDF", 0);
+        let _ = b.gestellt("EDDF", 0);
         b.geliefert("EDDF", auskunft("EDDF", 4));
         assert_eq!(b.naechster(10 * WARTEZEIT_MS), None);
     }
@@ -488,7 +610,7 @@ mod auftragsbuch_tests {
     fn eine_zurueckweisung_wird_nicht_wiederholt() {
         let mut b = Auftragsbuch::neu();
         b.wunsch("XXXX");
-        b.gestellt("XXXX", 0);
+        let _ = b.gestellt("XXXX", 0);
         b.abgelehnt("XXXX", "unbekannter Platz".into());
         assert_eq!(b.naechster(10 * WARTEZEIT_MS), None);
         assert_eq!(b.zustand("XXXX"), Some(Auftragszustand::Abgelehnt));
@@ -507,9 +629,111 @@ mod auftragsbuch_tests {
     fn kein_rueckfall_auf_irgendeinen_platz() {
         let mut b = Auftragsbuch::neu();
         b.wunsch("EDDF");
-        b.gestellt("EDDF", 0);
+        let _ = b.gestellt("EDDF", 0);
         b.geliefert("EDDF", auskunft("EDDF", 4));
         assert!(b.auskunft("LEZL").is_none());
+    }
+
+    /// ⚠ **Die Folge, an der v1.7.14 zuerst gescheitert ist.**
+    ///
+    /// ```text
+    /// EDDF angefordert
+    /// 60-s-Timeout
+    /// LEZL angefordert
+    /// EDDF-Antwort trifft verspaetet ein
+    /// ```
+    ///
+    /// Die verspaetete Antwort gehoert EDDF — nicht dem Auftrag, der
+    /// gerade laeuft. Die erste Fassung des Umbaus beschriftete sie mit
+    /// `laufender()` und haette sie als LEZL abgelegt: derselbe Fehler
+    /// wie vorher, nur um die Wartezeit verschoben.
+    #[test]
+    fn eine_verspaetete_antwort_gehoert_ihrem_eigenen_platz() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("EDDF");
+        b.wunsch("LEZL");
+
+        let erst = b.naechster(0).expect("erster Auftrag");
+        let id_erst = b.gestellt(&erst, 0);
+
+        // Wartezeit um, nichts gekommen — der naechste ist dran.
+        let zweit = b.naechster(WARTEZEIT_MS).expect("zweiter Auftrag");
+        assert_ne!(zweit, erst);
+        let id_zweit = b.gestellt(&zweit, WARTEZEIT_MS);
+        assert_ne!(id_erst, id_zweit, "beide Versuche teilen sich eine Kennung");
+        assert_eq!(b.laufender().as_deref(), Some(zweit.as_str()));
+
+        // JETZT kommt die Antwort des ERSTEN.
+        let abgelegt = b
+            .geliefert_zu_kennung(id_erst, auskunft(&erst, 4))
+            .expect("Kennung unbekannt");
+        assert_eq!(abgelegt, erst, "die alte Antwort wurde umbenannt");
+        assert_eq!(b.auskunft(&erst).map(|a| a.bahnen.len()), Some(4));
+        assert!(
+            b.auskunft(&zweit).is_none(),
+            "die verspaetete Antwort wurde dem laufenden Auftrag zugeschlagen"
+        );
+    }
+
+    /// Eine Kennung, die das Buch nie vergeben hat, wird verworfen.
+    ///
+    /// ⚠ Nicht geraten. Ohne Zuordnung ist die einzig richtige Antwort
+    /// „weg damit" — eine Auskunft unbekannter Herkunft ist schlimmer
+    /// als keine.
+    #[test]
+    fn eine_unbekannte_kennung_wird_verworfen() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("EDDF");
+        let _ = b.gestellt("EDDF", 0);
+        assert_eq!(b.geliefert_zu_kennung(9999, auskunft("EDDF", 4)), None);
+        assert!(b.auskunft("EDDF").is_none());
+    }
+
+    /// Und die Rangfolge des Aufrufers ueberlebt die Ablage.
+    ///
+    /// ⚠ Ohne Rang entschied das Alphabet: EDDF kam vor LEZL, obwohl in
+    /// Sevilla gelandet wird. Der alte Test pruefte nur die LISTE der
+    /// Ziele, nicht die tatsaechliche Anfragefolge (QS-Befund 3).
+    #[test]
+    fn die_rangfolge_bestimmt_die_anfragefolge() {
+        let mut b = Auftragsbuch::neu();
+        // Ausweichziel (Rang 0) alphabetisch HINTER dem geplanten.
+        b.wunsch_mit_rang("LEMG", 0);
+        b.wunsch_mit_rang("EDDF", 1);
+        assert_eq!(
+            b.naechster(0).as_deref(),
+            Some("LEMG"),
+            "das Alphabet hat die Rangfolge ueberstimmt"
+        );
+    }
+
+    /// Ein besserer Rang zieht einen vorhandenen Eintrag nach vorn.
+    #[test]
+    fn ein_ausweichziel_rueckt_vor() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("LEMG", 1); // erst als geplantes Ziel
+        b.wunsch_mit_rang("EDDF", 1);
+        b.wunsch_mit_rang("LEMG", 0); // dann als Ausweichziel
+        assert_eq!(b.naechster(0).as_deref(), Some("LEMG"));
+    }
+
+    /// Die Diagnose gilt je Platz, nicht global.
+    #[test]
+    fn die_diagnose_gilt_je_platz() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("EDDF");
+        b.wunsch("LEZL");
+        let id = b.gestellt("EDDF", 0);
+        b.geliefert_zu_kennung(id, auskunft("EDDF", 4))
+            .expect("Kennung");
+        let _ = b.gestellt("LEZL", 1_000);
+
+        assert_eq!(b.diagnose("EDDF"), "geliefert(EDDF, bahnen=4, rollwege=0)");
+        assert_eq!(b.diagnose("LEZL"), "unterwegs(LEZL, versuch=1)");
+        assert_eq!(b.diagnose("LEMG"), "nie_gefragt(LEMG)");
+
+        b.abgelehnt("LEZL", "unbekannter Platz".into());
+        assert_eq!(b.diagnose("LEZL"), "abgelehnt(LEZL, unbekannter Platz)");
     }
 
     /// Der Reihe nach: Wer weniger Versuche hat, kommt zuerst.
@@ -517,7 +741,7 @@ mod auftragsbuch_tests {
     fn der_seltener_gefragte_kommt_zuerst() {
         let mut b = Auftragsbuch::neu();
         b.wunsch("EDDF");
-        b.gestellt("EDDF", 0);
+        let _ = b.gestellt("EDDF", 0);
         // EDDF hat einen Versuch, LEZL keinen.
         b.wunsch("LEZL");
         assert_eq!(b.naechster(WARTEZEIT_MS).as_deref(), Some("LEZL"));
