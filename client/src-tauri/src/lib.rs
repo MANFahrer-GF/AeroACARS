@@ -2253,7 +2253,7 @@ fn szenerie_anfordern_fuer(app: &AppHandle, icaos: &[String]) {
         for icao in icaos {
             let i = icao.trim().to_ascii_uppercase();
             if i.len() == 4 {
-                msfs.szenerie_anfordern(&i);
+                msfs.szenerie_anfordern_mit_rang(&i, RANG_VORMERKUNG);
             }
         }
     }
@@ -2272,9 +2272,33 @@ fn szenerie_anfordern_fuer(app: &AppHandle, icaos: &[String]) {
 ///
 /// ⚠ Die Reihenfolge ist die Rangfolge. Das Ausweichziel steht vorn,
 /// weil dort gelandet wird.
-fn szenerie_ziele(geplant: &str, ausweich: Option<&str>) -> Vec<String> {
+/// Rang einer blossen Vormerkung.
+///
+/// ⚠ Absichtlich SCHLECHTER als jeder Rang, den die Ernte vergibt.
+///
+/// Diese Funktion meldet beim Flugbeginn Start, Ziel und Ausweichplatz
+/// gemeinsam an — sie kennt die Rollen nicht, sie hat nur eine Liste.
+/// Traegt sie alle mit Rang 0 ein, ist die Rangfolge tot: `wunsch_mit_rang`
+/// nimmt das Minimum, ein Rang kann also nie schlechter werden, und beim
+/// Ausweichflug behielte das geplante Ziel seine 0. Bei gleicher
+/// Versuchszahl entschiede dann wieder das Alphabet (QS-Befund 3,
+/// zweite Runde).
+///
+/// Mit einem schlechten Vormerkungsrang gewinnt immer die Ernte, die
+/// jeden Durchlauf die richtige Rangfolge nachtraegt.
+const RANG_VORMERKUNG: u8 = 200;
+
+fn szenerie_ziele(
+    geplant: &str,
+    ausweich: Option<&str>,
+    tatsaechlich: Option<&str>,
+) -> Vec<String> {
     let mut ziele: Vec<String> = Vec::new();
-    for kandidat in ausweich.into_iter().chain(std::iter::once(geplant)) {
+    for kandidat in tatsaechlich
+        .into_iter()
+        .chain(ausweich)
+        .chain(std::iter::once(geplant))
+    {
         let k = kandidat.trim().to_ascii_uppercase();
         if k.len() == 4 && !ziele.contains(&k) {
             ziele.push(k);
@@ -2285,7 +2309,19 @@ fn szenerie_ziele(geplant: &str, ausweich: Option<&str>) -> Vec<String> {
 
 /// Von welchem Platz die Auskunft GEERNTET werden darf.
 ///
-/// ⚠ Genau einer, ohne Rueckfall: der Ausweichplatz, sonst der geplante.
+/// ⚠ Genau einer, ohne Rueckfall. Rangfolge:
+///
+/// ```text
+/// runway_correlation_icao  →  divert_prefetch_icao  →  geplantes Ziel
+/// ```
+///
+/// Der erste ist der Platz, ueber dem die Raeder wirklich aufgesetzt
+/// haben. Er kommt spaet — aber er kommt auch dann, wenn die
+/// Anflugerkennung den Ausweichflug VERPASST hat. Fehlte er hier, bliebe
+/// das Ernteziel in genau diesem Fall das geplante: Die nachgeforderte
+/// Antwort des tatsaechlichen Platzes laege im Buch, erreichte aber
+/// weder den Flug noch die abschliessende Neuberechnung (QS-Befund 2,
+/// zweite Runde).
 ///
 /// `szenerie_ziele` liefert beide, weil beide ANGEFORDERT werden sollen —
 /// ein Ausweichentschluss faellt spaet und die Antwort braucht Vorlauf.
@@ -2295,12 +2331,19 @@ fn szenerie_ziele(geplant: &str, ausweich: Option<&str>) -> Vec<String> {
 /// ab — die **Rollwege** nicht, die gehen ohne Platzpruefung in die
 /// Ausfahrten. Dann liegen die Ausfahrten des geplanten Platzes an der
 /// tatsaechlichen Ausweichlandung (QS-Befund 2, 01.09.2026).
-fn szenerie_ernteziel(geplant: &str, ausweich: Option<&str>) -> Option<String> {
+fn szenerie_ernteziel(
+    geplant: &str,
+    ausweich: Option<&str>,
+    tatsaechlich: Option<&str>,
+) -> Option<String> {
     let sauber = |s: &str| {
         let k = s.trim().to_ascii_uppercase();
         (k.len() == 4).then_some(k)
     };
-    ausweich.and_then(sauber).or_else(|| sauber(geplant))
+    tatsaechlich
+        .and_then(sauber)
+        .or_else(|| ausweich.and_then(sauber))
+        .or_else(|| sauber(geplant))
 }
 
 /// Die MSFS-Szenerie-Auskunft vom Adapter an den Flug reichen.
@@ -2332,12 +2375,22 @@ fn szenerie_auskunft_uebernehmen(
     #[cfg(target_os = "windows")]
     {
         // Wohin es geht — das Ausweichziel zuerst, falls eins erkannt ist.
-        let ausweich = flight
+        let (ausweich, tatsaechlich) = flight
             .stats
             .lock()
             .ok()
-            .and_then(|s| s.divert_prefetch_icao.clone());
-        let ziele = szenerie_ziele(&flight.arr_airport, ausweich.as_deref());
+            .map(|s| {
+                (
+                    s.divert_prefetch_icao.clone(),
+                    s.runway_correlation_icao.clone(),
+                )
+            })
+            .unwrap_or((None, None));
+        let ziele = szenerie_ziele(
+            &flight.arr_airport,
+            ausweich.as_deref(),
+            tatsaechlich.as_deref(),
+        );
 
         let (neu, diagnose, kennung) = {
             let state = app.state::<AppState>();
@@ -2356,7 +2409,11 @@ fn szenerie_auskunft_uebernehmen(
             // nahm das geplante Ziel, sobald dessen Antwort zuerst da
             // war, und dessen Rollwege landeten ungeprueft in den
             // Ausfahrten der Ausweichlandung.
-            let ernteziel = szenerie_ernteziel(&flight.arr_airport, ausweich.as_deref());
+            let ernteziel = szenerie_ernteziel(
+                &flight.arr_airport,
+                ausweich.as_deref(),
+                tatsaechlich.as_deref(),
+            );
             let treffer = ernteziel.as_deref().and_then(|z| msfs.szenerie_fuer(z));
             let diagnose = ernteziel
                 .as_deref()
@@ -53480,7 +53537,7 @@ mod szenerie_status_tests {
     #[test]
     fn geerntet_wird_das_ausweichziel_ohne_rueckfall() {
         assert_eq!(
-            szenerie_ernteziel("LEZL", Some("LEMG")),
+            szenerie_ernteziel("LEZL", Some("LEMG"), None),
             Some("LEMG".to_string()),
             "bei einem Ausweichflug wurde auf das geplante Ziel zurueckgefallen"
         );
@@ -53489,19 +53546,56 @@ mod szenerie_status_tests {
     /// Ohne Ausweichziel das geplante — und Unsinn ergibt nichts.
     #[test]
     fn das_ernteziel_ist_sonst_das_geplante() {
-        assert_eq!(szenerie_ernteziel("LEZL", None), Some("LEZL".to_string()));
         assert_eq!(
-            szenerie_ernteziel(" lezl ", Some("  ")),
+            szenerie_ernteziel("LEZL", None, None),
+            Some("LEZL".to_string())
+        );
+        assert_eq!(
+            szenerie_ernteziel(" lezl ", Some("  "), None),
             Some("LEZL".to_string()),
             "ein leeres Ausweichziel darf nicht das geplante verdecken"
         );
-        assert_eq!(szenerie_ernteziel("XX", None), None);
+        assert_eq!(szenerie_ernteziel("XX", None, None), None);
     }
 
     /// Ohne Ausweichziel ist es einfach der geplante Platz.
     #[test]
     fn ohne_ausweich_nur_das_geplante_ziel() {
-        assert_eq!(szenerie_ziele("LEZL", None), vec!["LEZL".to_string()]);
+        assert_eq!(szenerie_ziele("LEZL", None, None), vec!["LEZL".to_string()]);
+    }
+
+    /// ⚠ QS-Befund 2 der zweiten Runde: Der Platz, ueber dem die Raeder
+    /// wirklich aufgesetzt haben, steht GANZ vorn.
+    ///
+    /// Er kommt spaet — aber er kommt auch dann, wenn die
+    /// Anflugerkennung den Ausweichflug verpasst hat. Genau dann ist er
+    /// die einzige Quelle, die den tatsaechlichen Platz kennt.
+    #[test]
+    fn der_tatsaechliche_landeplatz_steht_ganz_vorn() {
+        assert_eq!(
+            szenerie_ziele("LEZL", Some("LEMG"), Some("LEBL")),
+            vec!["LEBL".to_string(), "LEMG".to_string(), "LEZL".to_string()]
+        );
+        assert_eq!(
+            szenerie_ernteziel("LEZL", Some("LEMG"), Some("LEBL")).as_deref(),
+            Some("LEBL")
+        );
+    }
+
+    /// Und OHNE erkannten Anflug-Divert trotzdem der tatsaechliche.
+    ///
+    /// ⚠ Das ist der Fall, den der Befund beschreibt: Die
+    /// Anflugerkennung hat nichts gemerkt, `divert_prefetch_icao` ist
+    /// leer — und trotzdem ist beim Aufsetzen bekannt, wo gelandet
+    /// wurde. Bliebe das Ernteziel hier das geplante, laege die
+    /// nachgeforderte Antwort im Buch und erreichte den Flug nie.
+    #[test]
+    fn ein_erst_beim_aufsetzen_erkannter_divert_wird_geerntet() {
+        assert_eq!(
+            szenerie_ernteziel("LEZL", None, Some("LEBL")).as_deref(),
+            Some("LEBL"),
+            "der erst beim Aufsetzen bekannte Platz wurde nicht geerntet"
+        );
     }
 
     /// Mit Ausweichziel stehen BEIDE drin — und das Ausweichziel vorn.
@@ -53512,7 +53606,7 @@ mod szenerie_status_tests {
     #[test]
     fn mit_ausweich_steht_das_ausweichziel_vorn() {
         assert_eq!(
-            szenerie_ziele("LEZL", Some("LEMG")),
+            szenerie_ziele("LEZL", Some("LEMG"), None),
             vec!["LEMG".to_string(), "LEZL".to_string()]
         );
     }
@@ -53521,11 +53615,11 @@ mod szenerie_status_tests {
     #[test]
     fn die_ziele_werden_geglaettet() {
         assert_eq!(
-            szenerie_ziele(" lezl ", Some("LEZL")),
+            szenerie_ziele(" lezl ", Some("LEZL"), Some("lezl")),
             vec!["LEZL".to_string()],
-            "derselbe Platz zweimal gefragt"
+            "derselbe Platz mehrfach gefragt"
         );
-        assert!(szenerie_ziele("XX", Some("")).is_empty());
+        assert!(szenerie_ziele("XX", Some(""), None).is_empty());
     }
 
     /// Eine Auskunft ohne Vergleich darf keine Nullmessung erfinden.

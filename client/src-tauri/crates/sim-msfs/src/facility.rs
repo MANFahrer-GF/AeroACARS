@@ -573,6 +573,21 @@ pub fn auftrag_zu_paket(paare: &[(u32, u32)], send_id: u32) -> Option<u32> {
         .map(|(_, auftrag)| *auftrag)
 }
 
+/// Zu welchem Facility-FELDNAMEN eine Ausnahme gehoert.
+///
+/// ⚠ Das SDK nennt eine asynchrone Ausnahme ausdruecklich als moeglichen
+/// Ausgang von `AddToFacilityDefinition` — ein `hr == 0` beim Aufruf
+/// sagt nichts ueber den Feldnamen. Ohne diese Zuordnung deutet der
+/// Ausnahmezweig ihren `index` ueber die TELEMETRIE-Feldliste und nennt
+/// einen fremden SimVar-Namen (QS-Befund 4, zweite Runde).
+pub fn feld_zu_paket(paare: &[(u32, String)], send_id: u32) -> Option<String> {
+    paare
+        .iter()
+        .rev()
+        .find(|(paket, _)| *paket == send_id)
+        .map(|(_, feld)| feld.clone())
+}
+
 /// Wie viele Paketkennungen zurueckverfolgt werden.
 pub const PAKETE_GEDAECHTNIS: usize = 16;
 
@@ -594,6 +609,26 @@ mod paketzuordnung_tests {
     fn eine_fremde_kennung_trifft_keinen_auftrag() {
         assert_eq!(auftrag_zu_paket(&[(77, 3)], 99), None);
         assert_eq!(auftrag_zu_paket(&[], 77), None);
+    }
+
+    /// Dasselbe fuer die Feldnamen der Definition.
+    #[test]
+    fn die_ausnahme_findet_ihren_feldnamen() {
+        let paare = [
+            (41u32, "PRIMARY_NUMBER".to_string()),
+            (42, "WIDTH".to_string()),
+        ];
+        assert_eq!(feld_zu_paket(&paare, 42).as_deref(), Some("WIDTH"));
+        assert_eq!(feld_zu_paket(&paare, 41).as_deref(), Some("PRIMARY_NUMBER"));
+    }
+
+    /// ⚠ Und eine fremde Kennung trifft KEIN Feld — sonst waere jede
+    /// Telemetrie-Ausnahme plötzlich ein Facility-Feldfehler.
+    #[test]
+    fn eine_fremde_kennung_trifft_kein_feld() {
+        let paare = [(41u32, "WIDTH".to_string())];
+        assert_eq!(feld_zu_paket(&paare, 99), None);
+        assert_eq!(feld_zu_paket(&[], 41), None);
     }
 
     /// Bei doppelter Kennung gilt die juengste Zuordnung.

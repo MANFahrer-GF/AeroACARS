@@ -195,6 +195,23 @@ struct Auftrag {
     rang: u8,
     /// Kennung des letzten gestellten Auftrags.
     letzte_id: u32,
+    /// Kennung des Versuchs, dessen ERGEBNIS gerade gespeichert ist.
+    ///
+    /// ⚠ Ohne diese Zahl kann eine aeltere Antwort desselben Platzes
+    /// eine neuere ueberschreiben:
+    ///
+    /// ```text
+    /// LEZL Versuch 1 am Gate
+    /// LEZL Versuch 2 im Anflug
+    /// Versuch 2 liefert vollstaendige Daten
+    /// Versuch 1 liefert verspaetet leere Daten   <- ueberschreibt
+    /// ```
+    ///
+    /// Beide Kennungen zeigen RICHTIG auf LEZL — die Zuordnung stimmt
+    /// also. Was fehlte, war die REIHENFOLGE (QS-Befund 1, zweite
+    /// Runde). Dasselbe gilt fuer eine alte Ausnahme, die einen neueren
+    /// Erfolg nachtraeglich auf „abgelehnt" zuruecksetzt.
+    ergebnis_id: u32,
 }
 
 /// Wie lange auf eine Antwort gewartet wird, bevor neu gefragt wird.
@@ -283,6 +300,7 @@ impl Auftragsbuch {
                 grund: None,
                 rang,
                 letzte_id: 0,
+                ergebnis_id: 0,
             });
     }
 
@@ -371,14 +389,38 @@ impl Auftragsbuch {
     /// Kennung unbekannt ist (dann wird verworfen, nicht geraten).
     pub fn geliefert_zu_kennung(&mut self, id: u32, auskunft: SzenerieFlughafen) -> Option<String> {
         let icao = self.platz_zu_kennung(id)?;
+        // ⚠ Reihenfolge, nicht Ankunft. Eine verspaetete Antwort ist
+        // richtig zugeordnet und trotzdem veraltet.
+        if self.ist_ueberholt(&icao, id) {
+            return None;
+        }
         self.geliefert(&icao, auskunft);
+        if let Some(a) = self.auftraege.get_mut(&icao) {
+            a.ergebnis_id = id;
+        }
         Some(icao)
+    }
+
+    /// Ob zu diesem Platz schon das Ergebnis eines NEUEREN Versuchs
+    /// vorliegt.
+    fn ist_ueberholt(&self, icao: &str, id: u32) -> bool {
+        self.auftraege.get(icao).is_some_and(|a| a.ergebnis_id > id)
     }
 
     /// Eine Zurueckweisung ueber die Kennung festhalten.
     pub fn abgelehnt_zu_kennung(&mut self, id: u32, grund: String) -> Option<String> {
         let icao = self.platz_zu_kennung(id)?;
+        // ⚠ Eine alte Ausnahme darf einen neueren Erfolg nicht
+        // zurueckstufen. Der Simulator meldet die Zurueckweisung
+        // asynchron; sie kann eintreffen, nachdem der naechste Versuch
+        // laengst geliefert hat.
+        if self.ist_ueberholt(&icao, id) {
+            return None;
+        }
         self.abgelehnt(&icao, grund);
+        if let Some(a) = self.auftraege.get_mut(&icao) {
+            a.ergebnis_id = id;
+        }
         Some(icao)
     }
 
@@ -392,6 +434,7 @@ impl Auftragsbuch {
             grund: None,
             rang: 0,
             letzte_id: 0,
+            ergebnis_id: 0,
         });
         eintrag.zustand = Auftragszustand::Geliefert;
         eintrag.auskunft = Some(auskunft);
@@ -675,6 +718,87 @@ mod auftragsbuch_tests {
         );
     }
 
+    /// ⚠ **Die Folge aus QS-Runde 2, Befund 1.**
+    ///
+    /// ```text
+    /// LEZL Versuch 1 am Gate
+    /// LEZL Versuch 2 im Anflug
+    /// Versuch 2 liefert vollstaendige Daten
+    /// Versuch 1 liefert verspaetet leere Daten
+    /// ```
+    ///
+    /// Beide Kennungen zeigen RICHTIG auf LEZL — die Zuordnung aus
+    /// Runde 1 stimmt also. Was fehlte, war die Reihenfolge: Die alte
+    /// Antwort ueberschrieb die neue mit einem leeren Flughafen.
+    #[test]
+    fn eine_aeltere_antwort_ueberschreibt_keine_neuere() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("LEZL");
+        let id1 = b.gestellt("LEZL", 0);
+        let id2 = b.gestellt("LEZL", WARTEZEIT_MS);
+
+        // Der zweite Versuch liefert vollstaendig.
+        assert_eq!(
+            b.geliefert_zu_kennung(id2, auskunft("LEZL", 2)).as_deref(),
+            Some("LEZL")
+        );
+        // Der erste liefert verspaetet und LEER.
+        assert_eq!(
+            b.geliefert_zu_kennung(id1, auskunft("LEZL", 0)),
+            None,
+            "die alte Lieferung wurde angenommen"
+        );
+        assert_eq!(
+            b.auskunft("LEZL").map(|a| a.bahnen.len()),
+            Some(2),
+            "die alte Lieferung hat die neue ueberschrieben"
+        );
+    }
+
+    /// Und eine alte Ausnahme stuft einen neueren Erfolg nicht zurueck.
+    ///
+    /// ⚠ Der Simulator meldet eine Zurueckweisung asynchron. Sie kann
+    /// eintreffen, nachdem der naechste Versuch laengst geliefert hat.
+    #[test]
+    fn eine_aeltere_ausnahme_stuft_keinen_erfolg_zurueck() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("LEZL");
+        let id1 = b.gestellt("LEZL", 0);
+        let id2 = b.gestellt("LEZL", WARTEZEIT_MS);
+
+        b.geliefert_zu_kennung(id2, auskunft("LEZL", 2))
+            .expect("Lieferung");
+        assert_eq!(
+            b.abgelehnt_zu_kennung(id1, "zu spaet".into()),
+            None,
+            "die alte Ausnahme wurde angenommen"
+        );
+        assert_eq!(
+            b.zustand("LEZL"),
+            Some(Auftragszustand::Geliefert),
+            "der Erfolg wurde nachtraeglich zurueckgestuft"
+        );
+        assert!(b.auskunft("LEZL").is_some());
+    }
+
+    /// Eine Ausnahme zum NEUESTEN Versuch gilt aber sehr wohl.
+    ///
+    /// ⚠ Sonst waere die Reihenfolge-Sperre ein Maulkorb: Ein Platz,
+    /// den der Simulator wirklich nicht kennt, bliebe „unterwegs".
+    #[test]
+    fn eine_ausnahme_zum_neuesten_versuch_gilt() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("XXXX");
+        let _ = b.gestellt("XXXX", 0);
+        let id2 = b.gestellt("XXXX", WARTEZEIT_MS);
+        assert_eq!(
+            b.abgelehnt_zu_kennung(id2, "unbekannter Platz".into())
+                .as_deref(),
+            Some("XXXX")
+        );
+        assert_eq!(b.zustand("XXXX"), Some(Auftragszustand::Abgelehnt));
+    }
+
     /// Eine Kennung, die das Buch nie vergeben hat, wird verworfen.
     ///
     /// ⚠ Nicht geraten. Ohne Zuordnung ist die einzig richtige Antwort
@@ -704,6 +828,54 @@ mod auftragsbuch_tests {
             b.naechster(0).as_deref(),
             Some("LEMG"),
             "das Alphabet hat die Rangfolge ueberstimmt"
+        );
+    }
+
+    /// ⚠ QS-Befund 3 der zweiten Runde: mit der VORBELEGUNG aus dem
+    /// echten Ablauf.
+    ///
+    /// Der fruehere Test begann mit frischen Eintraegen. Im Betrieb
+    /// meldet der Flugbeginn aber Start, Ziel und Ausweichplatz
+    /// GEMEINSAM an — die Stelle kennt die Rollen nicht. Trug sie alle
+    /// mit Rang 0 ein, war die Rangfolge tot: `min` kann einen Rang nie
+    /// verschlechtern, das geplante Ziel behielt seine 0, und bei
+    /// gleicher Versuchszahl entschied wieder das Alphabet.
+    ///
+    /// Deshalb merkt die fruehe Anmeldung mit einem SCHLECHTEN Rang vor.
+    #[test]
+    fn die_vormerkung_neutralisiert_die_rangfolge_nicht() {
+        let mut b = Auftragsbuch::neu();
+        // Flugbeginn: alle drei gemeinsam, ohne Rollen.
+        for platz in ["EDDF", "LEZL", "LEMG"] {
+            b.wunsch_mit_rang(platz, 200);
+        }
+        // Die Ernte traegt jeden Durchlauf die richtige Rangfolge nach.
+        b.wunsch_mit_rang("LEMG", 0); // Ausweichziel
+        b.wunsch_mit_rang("LEZL", 1); // geplantes Ziel
+
+        assert_eq!(
+            b.naechster(0).as_deref(),
+            Some("LEMG"),
+            "die Vormerkung hat die Rangfolge ueberstimmt"
+        );
+    }
+
+    /// ⚠ Und die Gegenprobe dazu: Mit Rang 0 vorgemerkt gewinnt das
+    /// Alphabet — genau der gemeldete Fehler.
+    #[test]
+    fn eine_vormerkung_mit_rang_null_waere_der_fehler() {
+        let mut b = Auftragsbuch::neu();
+        for platz in ["EDDF", "LEZL", "LEMG"] {
+            b.wunsch_mit_rang(platz, 0);
+        }
+        b.wunsch_mit_rang("LEMG", 0);
+        b.wunsch_mit_rang("LEZL", 1);
+        // EDDF steht alphabetisch vorn und hat immer noch Rang 0.
+        assert_eq!(
+            b.naechster(0).as_deref(),
+            Some("EDDF"),
+            "wenn das nicht mehr stimmt, ist die Vorbelegung anders — \
+             dann gehoert dieser Test angepasst, nicht geloescht"
         );
     }
 

@@ -1369,6 +1369,24 @@ fn run_dispatch(
                     send_id,
                     index,
                 })) => {
+                    // ⚠ ZUERST fragen, ob die Ausnahme zu einem
+                    // Facility-FELDNAMEN gehoert. Der `index` waere
+                    // sonst ueber die TELEMETRIE-Feldliste gedeutet, und
+                    // ein falsch geschriebenes Facility-Feld saehe aus
+                    // wie ein fremdes SimVar-Problem.
+                    if let Some(feld) =
+                        facility::feld_zu_paket(&conn.facility_feld_send_ids, send_id)
+                    {
+                        tracing::error!(
+                            exception,
+                            send_id,
+                            %feld,
+                            "Facility-Feldname vom Simulator zurueckgewiesen — \
+                             die Feldliste passt nicht zu dieser Fassung des \
+                             Simulators"
+                        );
+                        continue;
+                    }
                     // This is the diagnostic the legacy crate didn't
                     // give us — log the exact SimVar that failed.
                     let field = TELEMETRY_FIELDS.get(index as usize).map(|f| f.name);
@@ -1808,6 +1826,9 @@ struct Connection {
     /// `register_inspector()` call. See `telemetry::inspector_watch_for_exception`.
     /// Keyed on the watch's stable `id`, not its name — two watches can
     /// legitimately share a name (see `InspectorState::set_error`'s doc).
+    /// Paketkennung → Facility-FELDNAME, fuer asynchrone
+    /// Zurueckweisungen von `AddToFacilityDefinition`.
+    facility_feld_send_ids: Vec<(u32, String)>,
     inspector_send_ids: Vec<(u32, u32)>,
 }
 
@@ -1830,6 +1851,7 @@ impl Connection {
         }
         Ok(Self {
             handle,
+            facility_feld_send_ids: Vec::new(),
             inspector_send_ids: Vec::new(),
         })
     }
@@ -1926,6 +1948,28 @@ impl Connection {
                     "AddToFacilityDefinition fuer \"{name}\" gab 0x{hr:08X} zurueck — \
                      Feldname pruefen (SDK-Doku, GROSS_MIT_UNTERSTRICH)"
                 ));
+            }
+            // ⚠ Ein `hr == 0` heisst NICHT, dass der Feldname stimmt.
+            // Das SDK nennt eine asynchrone Ausnahme ausdruecklich als
+            // moeglichen Ausgang dieses Aufrufs — sie kommt spaeter und
+            // verweist auf die Paketkennung DIESES Aufrufs.
+            //
+            // Ohne diese Zuordnung deutet der Ausnahmezweig ihren
+            // `index` ueber die TELEMETRIE-Feldliste und nennt einen
+            // voellig fremden SimVar-Namen. Ein falsch geschriebenes
+            // Facility-Feld sieht dann aus wie ein Telemetrie-Problem
+            // (QS-Befund 4, zweite Runde).
+            let mut send_id: sys::DWORD = 0;
+            let hr = unsafe { sys::SimConnect_GetLastSentPacketID(self.handle, &mut send_id) };
+            if hr == 0 {
+                self.facility_feld_send_ids
+                    .push((send_id, name.to_string()));
+            } else {
+                tracing::warn!(
+                    feld = %name,
+                    "GetLastSentPacketID nach AddToFacilityDefinition fehlgeschlagen — \
+                     eine Zurueckweisung dieses Feldes bleibt unzuordenbar"
+                );
             }
         }
         Ok(())
