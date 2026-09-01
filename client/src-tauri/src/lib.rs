@@ -2254,10 +2254,17 @@ async fn fetch_aircraft_aliases_into_state(
 fn szenerie_buch_zuruecksetzen(app: &AppHandle) {
     #[cfg(target_os = "windows")]
     {
+        // ⚠ Dieselbe Form wie in `szenerie_anfordern_fuer` — GENAU
+        // deshalb.
+        //
+        // Der erste Entwurf schrieb `if let Ok(msfs) = state.msfs.lock()`.
+        // Das uebersetzt hier nicht: Der Ergebnis-Zwischenwert lebt bis
+        // zum Ende des `if let`, `state` faellt aber vorher. Der Mac hat
+        // es nicht gesehen — der ganze Block steht hinter
+        // `cfg(target_os = "windows")` —, die Windows-CI schon.
         let state = app.state::<AppState>();
-        if let Ok(msfs) = state.msfs.lock() {
-            msfs.szenerie_zuruecksetzen();
-        }
+        let msfs = state.msfs.lock().expect("msfs lock");
+        msfs.szenerie_zuruecksetzen();
     }
     #[cfg(not(target_os = "windows"))]
     {
