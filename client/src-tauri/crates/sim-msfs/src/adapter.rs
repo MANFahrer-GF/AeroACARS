@@ -917,6 +917,21 @@ impl MsfsAdapter {
         self.shared.szenerie.lock().diagnose(icao)
     }
 
+    /// Einen neuen Versuchsvorrat oeffnen (Eintritt in den Anflug).
+    pub fn szenerie_neues_versuchsfenster(&self) -> usize {
+        self.shared.szenerie.lock().neues_versuchsfenster()
+    }
+
+    /// Das Auftragsbuch leeren — neuer Flug.
+    ///
+    /// ⚠ Der Anfragezustand gehoert dem Flug und der Verbindung, nicht
+    /// dem Adapter. Ohne diesen Schnitt ueberdauern verbrauchte
+    /// Versuche, dauerhafte Ablehnungen und die Szenerie des vorigen
+    /// Fluges (QS-Befund 2, dritte Runde).
+    pub fn szenerie_zuruecksetzen(&self) {
+        self.shared.szenerie.lock().zuruecksetzen();
+    }
+
     /// Wie weit die Szenerie-Abfrage gekommen ist.
     pub fn szenerie_diagnose(&self) -> SzenerieDiagnose {
         self.shared.szenerie_diagnose.lock().clone()
@@ -988,6 +1003,15 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
         match Connection::open("AeroACARS") {
             Ok(mut conn) => {
                 tracing::info!("SimConnect_Open succeeded — registering data definition");
+                // ⚠ Neue Verbindung heisst neuer Kontext. Der Simulator
+                // kann neu gestartet, ein anderer sein (MSFS 2020 gegen
+                // 2024) oder eine andere Szenerie geladen haben. Ohne
+                // diesen Schnitt gaelte die Szenerie der vorigen
+                // Verbindung als „geliefert" und wuerde nie erneut
+                // angefordert; verbrauchte Versuche und dauerhafte
+                // Ablehnungen ueberdauerten ebenfalls (QS-Befund 2,
+                // dritte Runde).
+                shared.szenerie.lock().zuruecksetzen();
                 if let Err(e) = conn.register_telemetry() {
                     set_error(&shared, format!("RegisterDataDefinition failed: {e}"));
                     tracing::error!(error = %e, "register_telemetry failed");
@@ -1385,6 +1409,21 @@ fn run_dispatch(
                              die Feldliste passt nicht zu dieser Fassung des \
                              Simulators"
                         );
+                        // ⚠ HART behandeln, nicht nur protokollieren.
+                        // Ist ein Feld der Definition abgelehnt, ist der
+                        // ganze Facility-Weg unbrauchbar: Jede Antwort
+                        // haette ein anderes Raster als erwartet. Vorher
+                        // lief er weiter, und Auftraege meldeten
+                        // „unterwegs" oder „geliefert", obwohl die
+                        // Definition nachweislich zurueckgewiesen war
+                        // (QS-Befund 4, dritte Runde).
+                        shared
+                            .szenerie
+                            .lock()
+                            .definition_abgelehnt(feld, format!("Ausnahme {exception}"));
+                        *shared.szenerie_diagnose.lock() =
+                            SzenerieDiagnose::Abgelehnt(format!("Felddefinition ({exception})"));
+                        facility_lieferungen = facility::Lieferungen::neu();
                         continue;
                     }
                     // This is the diagnostic the legacy crate didn't

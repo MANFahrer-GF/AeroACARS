@@ -195,7 +195,7 @@ struct Auftrag {
     rang: u8,
     /// Kennung des letzten gestellten Auftrags.
     letzte_id: u32,
-    /// Kennung des Versuchs, dessen ERGEBNIS gerade gespeichert ist.
+    /// Kennung des Versuchs, dessen LIEFERUNG gespeichert ist.
     ///
     /// ⚠ Ohne diese Zahl kann eine aeltere Antwort desselben Platzes
     /// eine neuere ueberschreiben:
@@ -212,6 +212,15 @@ struct Auftrag {
     /// Runde). Dasselbe gilt fuer eine alte Ausnahme, die einen neueren
     /// Erfolg nachtraeglich auf „abgelehnt" zuruecksetzt.
     ergebnis_id: u32,
+    /// Kennung des Versuchs, dessen FEHLSCHLAG festgehalten ist.
+    ///
+    /// ⚠ Getrennt von der Lieferung. Mit einer gemeinsamen Zahl
+    /// entwertete ein spaeterer Fehlversuch eine aeltere, brauchbare
+    /// Lieferung: Die Diagnose sagte „abgelehnt", `auskunft()` gab
+    /// trotzdem Daten heraus, und eine danach eintreffende vollstaendige
+    /// Lieferung wurde als „ueberholt" verworfen (QS-Befund 5, dritte
+    /// Runde).
+    fehler_id: u32,
 }
 
 /// Wie lange auf eine Antwort gewartet wird, bevor neu gefragt wird.
@@ -223,11 +232,27 @@ struct Auftrag {
 /// Vergleich fiel aus, und am Flug stand `auskunft_ohne_vergleich`.
 pub const WARTEZEIT_MS: i64 = 60_000;
 
-/// Wie oft ein Platz hoechstens gefragt wird.
+/// Wie oft ein Platz **je Abschnitt** hoechstens gefragt wird.
 ///
-/// Zehn Versuche im Minutentakt decken jeden Anflug ab. Ein Platz, den
-/// der Simulator nach zehn Minuten in Reichweite nicht kennt, kennt er
-/// nicht.
+/// ⚠ **JE ABSCHNITT, nicht je Flug.** Der erste Entwurf zaehlte ueber
+/// den ganzen Flug, und im Pruefstand stand dazu „zehn Versuche im
+/// Minutentakt decken jeden Anflug ab". Das war falsch, und zwar
+/// gefaehrlich falsch:
+///
+/// ```text
+/// 03:50  Flugbeginn, Start/Ziel/Ausweich angemeldet
+/// ~04:10 zehn Versuche fuer LEZL verbraucht — am Gate in Frankfurt
+/// 07:29  Landung in Sevilla, nie wieder gefragt
+/// ```
+///
+/// Der Vorrat war nach zwanzig Minuten am Boden aufgebraucht, 1.400 km
+/// vom Ziel entfernt, und das spaetere Anmelden im Anflug aendert nur
+/// den Rang — nicht die Versuchszahl. Damit waere GENAU der Fehler
+/// zurueckgekommen, den diese Fassung behebt: am Gate zehnmal gefragt,
+/// im Anflug kein einziges Mal (QS-Befund 1, dritte Runde, P0).
+///
+/// `neues_versuchsfenster` oeffnet den Vorrat neu — beim Eintritt in den
+/// Anflug, wo die Szenerie des Ziels geladen ist.
 pub const HOECHSTVERSUCHE: u8 = 10;
 
 /// Wer welchen Platz gefragt hat, und was zurueckkam.
@@ -265,6 +290,14 @@ pub struct Auftragsbuch {
     /// Fortlaufende Kennung. Jeder VERSUCH bekommt eine eigene — nicht
     /// jeder Platz.
     naechste_id: u32,
+    /// Gesetzt, wenn der Simulator ein Feld der Definition abgelehnt
+    /// hat: (Feldname, Grund).
+    ///
+    /// ⚠ Ein harter Zustand. Das SDK meldet eine ungueltige
+    /// Felddefinition als asynchronen `DATA_ERROR`; danach ist der
+    /// gesamte Facility-Weg unbrauchbar, nicht nur ein Feld. Wer hier
+    /// weiterfragt, sammelt Antworten, die niemand deuten kann.
+    definition_fehler: Option<(String, String)>,
     /// Kennung → Platz, aelteste vorn.
     kennungen: std::collections::VecDeque<(u32, String)>,
 }
@@ -301,6 +334,7 @@ impl Auftragsbuch {
                 rang,
                 letzte_id: 0,
                 ergebnis_id: 0,
+                fehler_id: 0,
             });
     }
 
@@ -309,6 +343,16 @@ impl Auftragsbuch {
     /// Gibt nichts zurueck, solange eine Anfrage laeuft und die
     /// Wartezeit nicht um ist — SimConnect beantwortet immer nur eine.
     pub fn naechster(&mut self, jetzt_ms: i64) -> Option<String> {
+        // ⚠ Ist die Felddefinition zurueckgewiesen, hat Fragen keinen
+        // Sinn mehr — der Simulator kennt eines ihrer Felder nicht, und
+        // JEDE Antwort waere unbrauchbar. Frueher wurde der Feldfehler
+        // nur protokolliert und der Weg lief weiter: Auftraege meldeten
+        // weiter „unterwegs" oder sogar „geliefert", obwohl die
+        // Definition nachweislich abgelehnt war (QS-Befund 4, dritte
+        // Runde).
+        if self.definition_fehler.is_some() {
+            return None;
+        }
         // Laeuft eine und ist noch Zeit? Dann nichts Neues.
         if let Some(laufend) = self.laeuft.clone() {
             if let Some(a) = self.auftraege.get(&laufend) {
@@ -331,10 +375,17 @@ impl Auftragsbuch {
                     Auftragszustand::Offen | Auftragszustand::Laeuft { .. }
                 )
             })
-            // Wer am laengsten nicht dran war, zuerst.
-            // ⚠ Rang VOR dem Namen. Sonst entscheidet das Alphabet, und
-            // die Rangfolge des Aufrufers ist wirkungslos.
-            .min_by_key(|(icao, a)| (a.versuche, a.rang, (*icao).clone()))
+            // ⚠ RANG ZUERST, dann die Versuchszahl.
+            //
+            // Vorher stand die Versuchszahl vorn. Dann verliert der
+            // tatsaechliche Landeplatz (Rang 0, ein Versuch) gegen einen
+            // beliebigen vorgemerkten Platz (Rang 200, null Versuche) —
+            // und jeder Wiederholungsversuch fuer das Ziel wartet zwei
+            // weitere Minuten, mit Start und Ausweichplatz noch laenger.
+            // „Der tatsaechliche Platz zuerst" war damit keine
+            // Zusicherung, sondern ein Wunsch (QS-Befund 3, dritte
+            // Runde).
+            .min_by_key(|(icao, a)| (a.rang, a.versuche, (*icao).clone()))
             .map(|(icao, _)| icao.clone())?;
         Some(kandidat)
     }
@@ -347,7 +398,13 @@ impl Auftragsbuch {
     #[must_use]
     pub fn gestellt(&mut self, icao: &str, jetzt_ms: i64) -> u32 {
         let icao = icao.trim().to_ascii_uppercase();
-        self.naechste_id = self.naechste_id.wrapping_add(1);
+        // ⚠ `saturating_add`, nicht `wrapping_add`: Nach einem Umlauf
+        // waere jeder Vergleich „neuer als" falsch, und eine uralte
+        // Antwort gaelte als die juengste. Bei einem Versuch je Minute
+        // wird die Grenze in vier Milliarden Minuten erreicht; laeuft
+        // sie doch voll, steht die Vergabe still, statt falsch zu
+        // ordnen (QS-Befund 5, dritte Runde, P3).
+        self.naechste_id = self.naechste_id.saturating_add(1);
         let id = self.naechste_id;
         if let Some(a) = self.auftraege.get_mut(&icao) {
             a.zustand = Auftragszustand::Laeuft { seit_ms: jetzt_ms };
@@ -360,6 +417,67 @@ impl Auftragsbuch {
         }
         self.laeuft = Some(icao);
         id
+    }
+
+    /// Einen neuen Versuchsvorrat oeffnen — ohne Ergebnisse zu verlieren.
+    ///
+    /// ⚠ Fuer den Eintritt in den Anflug. Was schon geliefert ist,
+    /// bleibt; was abgelehnt wurde, bleibt abgelehnt (ein Platz, den der
+    /// Simulator nicht kennt, wird ihm durch Nachfragen nicht bekannt);
+    /// nur die noch offenen Plaetze bekommen ihre Versuche zurueck.
+    ///
+    /// Gibt zurueck, fuer wie viele Plaetze das galt — damit die
+    /// Aufrufstelle es protokollieren kann, statt es zu behaupten.
+    pub fn neues_versuchsfenster(&mut self) -> usize {
+        let mut betroffen = 0;
+        for a in self.auftraege.values_mut() {
+            if matches!(
+                a.zustand,
+                Auftragszustand::Offen | Auftragszustand::Laeuft { .. }
+            ) {
+                a.versuche = 0;
+                a.zustand = Auftragszustand::Offen;
+                betroffen += 1;
+            }
+        }
+        self.laeuft = None;
+        betroffen
+    }
+
+    /// Alles vergessen — neuer Flug, neue Verbindung, neuer Simulator.
+    ///
+    /// ⚠ Das Buch hatte die Lebensdauer des ADAPTERS: einmal angelegt,
+    /// nie geleert. Damit ueberdauerten verbrauchte Versuche, dauerhafte
+    /// Ablehnungen, gelieferte Szenerie eines frueheren Fluges und
+    /// laengst belanglose Plaetze samt ihren Raengen. Nach einem
+    /// Simulator-Neustart oder einem Wechsel zwischen MSFS 2020 und 2024
+    /// galt alte Szenerie als „geliefert" und wurde nie erneut
+    /// angefordert (QS-Befund 2, dritte Runde).
+    ///
+    /// Der Anfragezustand gehoert dem Flug und der Verbindung. Eine
+    /// Datenablage darf laenger leben — dieses Buch ist keine.
+    pub fn zuruecksetzen(&mut self) {
+        self.auftraege.clear();
+        self.kennungen.clear();
+        self.laeuft = None;
+        self.definition_fehler = None;
+        // ⚠ `naechste_id` NICHT zuruecksetzen. Antworten des alten
+        // Kontextes koennen noch unterwegs sein; wuerden die Kennungen
+        // wieder bei 1 beginnen, traefe eine davon einen neuen Auftrag.
+    }
+
+    /// Der Simulator hat ein Feld der Definition abgelehnt.
+    ///
+    /// Danach ist der ganze Facility-Weg unbrauchbar: `naechster` gibt
+    /// nichts mehr heraus, und die Diagnose sagt, welches Feld es war.
+    pub fn definition_abgelehnt(&mut self, feld: String, grund: String) {
+        self.definition_fehler = Some((feld, grund));
+        self.laeuft = None;
+    }
+
+    /// Welches Feld der Definition abgelehnt wurde, falls eines.
+    pub fn definitionsfehler(&self) -> Option<(String, String)> {
+        self.definition_fehler.clone()
     }
 
     /// Zu welchem Platz eine Kennung gehoert.
@@ -389,9 +507,14 @@ impl Auftragsbuch {
     /// Kennung unbekannt ist (dann wird verworfen, nicht geraten).
     pub fn geliefert_zu_kennung(&mut self, id: u32, auskunft: SzenerieFlughafen) -> Option<String> {
         let icao = self.platz_zu_kennung(id)?;
-        // ⚠ Reihenfolge, nicht Ankunft. Eine verspaetete Antwort ist
-        // richtig zugeordnet und trotzdem veraltet.
-        if self.ist_ueberholt(&icao, id) {
+        // ⚠ Reihenfolge, nicht Ankunft — aber NUR gegen andere
+        // Lieferungen. Ein Fehlversuch darf eine brauchbare Lieferung
+        // nicht abwehren, auch wenn er neuer ist.
+        if self
+            .auftraege
+            .get(&icao)
+            .is_some_and(|a| a.ergebnis_id > id)
+        {
             return None;
         }
         self.geliefert(&icao, auskunft);
@@ -401,25 +524,20 @@ impl Auftragsbuch {
         Some(icao)
     }
 
-    /// Ob zu diesem Platz schon das Ergebnis eines NEUEREN Versuchs
-    /// vorliegt.
-    fn ist_ueberholt(&self, icao: &str, id: u32) -> bool {
-        self.auftraege.get(icao).is_some_and(|a| a.ergebnis_id > id)
-    }
-
     /// Eine Zurueckweisung ueber die Kennung festhalten.
     pub fn abgelehnt_zu_kennung(&mut self, id: u32, grund: String) -> Option<String> {
         let icao = self.platz_zu_kennung(id)?;
-        // ⚠ Eine alte Ausnahme darf einen neueren Erfolg nicht
-        // zurueckstufen. Der Simulator meldet die Zurueckweisung
-        // asynchron; sie kann eintreffen, nachdem der naechste Versuch
-        // laengst geliefert hat.
-        if self.ist_ueberholt(&icao, id) {
+        // ⚠ Eine alte Ausnahme darf keinen neueren Fehlschlag
+        // ueberschreiben — und KEINE Lieferung entwerten, egal wie alt.
+        // Der Simulator meldet Zurueckweisungen asynchron; sie treffen
+        // regelmaessig ein, nachdem ein anderer Versuch laengst geliefert
+        // hat. Eine brauchbare Auskunft bleibt brauchbar.
+        if self.auftraege.get(&icao).is_some_and(|a| a.fehler_id > id) {
             return None;
         }
         self.abgelehnt(&icao, grund);
         if let Some(a) = self.auftraege.get_mut(&icao) {
-            a.ergebnis_id = id;
+            a.fehler_id = id;
         }
         Some(icao)
     }
@@ -435,6 +553,7 @@ impl Auftragsbuch {
             rang: 0,
             letzte_id: 0,
             ergebnis_id: 0,
+            fehler_id: 0,
         });
         eintrag.zustand = Auftragszustand::Geliefert;
         eintrag.auskunft = Some(auskunft);
@@ -447,8 +566,14 @@ impl Auftragsbuch {
     pub fn abgelehnt(&mut self, icao: &str, grund: String) {
         let icao = icao.trim().to_ascii_uppercase();
         if let Some(a) = self.auftraege.get_mut(&icao) {
-            a.zustand = Auftragszustand::Abgelehnt;
             a.grund = Some(grund);
+            // ⚠ Der Zustand faellt NUR, wenn nichts Brauchbares da ist.
+            // Sonst behauptete die Diagnose „abgelehnt", waehrend
+            // `auskunft()` weiter Daten herausgibt — zwei Aussagen ueber
+            // denselben Platz, die sich widersprechen.
+            if a.auskunft.is_none() {
+                a.zustand = Auftragszustand::Abgelehnt;
+            }
         }
         if self.laeuft.as_deref() == Some(icao.as_str()) {
             self.laeuft = None;
@@ -488,6 +613,11 @@ impl Auftragsbuch {
     /// Zustand des zuletzt bearbeiteten Platzes — nicht der des Ziels
     /// (QS-Befund 4, 01.09.2026).
     pub fn diagnose(&self, icao: &str) -> String {
+        // ⚠ Der Definitionsfehler schlaegt alles. Ein Platz kann nicht
+        // „unterwegs" sein, wenn der Weg selbst zu ist.
+        if let Some((feld, grund)) = &self.definition_fehler {
+            return format!("definition_abgelehnt({feld}, {grund})");
+        }
         let icao_gross = icao.trim().to_ascii_uppercase();
         match self.auftraege.get(&icao_gross) {
             None => format!("nie_gefragt({icao_gross})"),
@@ -768,17 +898,52 @@ mod auftragsbuch_tests {
 
         b.geliefert_zu_kennung(id2, auskunft("LEZL", 2))
             .expect("Lieferung");
-        assert_eq!(
-            b.abgelehnt_zu_kennung(id1, "zu spaet".into()),
-            None,
-            "die alte Ausnahme wurde angenommen"
-        );
+
+        // ⚠ Die Ausnahme wird FESTGEHALTEN — ihr Grund ist eine
+        // Tatsache ueber ihren Versuch. Was sie NICHT darf: die
+        // brauchbare Lieferung entwerten.
+        b.abgelehnt_zu_kennung(id1, "zu spaet".into());
         assert_eq!(
             b.zustand("LEZL"),
             Some(Auftragszustand::Geliefert),
             "der Erfolg wurde nachtraeglich zurueckgestuft"
         );
-        assert!(b.auskunft("LEZL").is_some());
+        assert!(
+            b.auskunft("LEZL").is_some(),
+            "die Auskunft ist mit der Ausnahme verschwunden"
+        );
+        assert!(
+            b.diagnose("LEZL").starts_with("geliefert("),
+            "die Diagnose sagt abgelehnt, waehrend auskunft() Daten \
+             herausgibt — zwei Aussagen, die sich widersprechen"
+        );
+    }
+
+    /// ⚠ QS-Befund 5, dritte Runde: Erfolg und Fehler brauchen GETRENNTE
+    /// Ordnung.
+    ///
+    /// Mit einer gemeinsamen Zahl setzte eine neuere Ausnahme sie hoch —
+    /// und eine danach eintreffende, aeltere, aber VOLLSTAENDIGE
+    /// Lieferung wurde als „ueberholt" verworfen. Der Flug haette dann
+    /// gar keine Szenerie, obwohl eine brauchbare eingetroffen war.
+    #[test]
+    fn eine_ausnahme_wehrt_keine_lieferung_ab() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("LEZL");
+        let id1 = b.gestellt("LEZL", 0);
+        let id2 = b.gestellt("LEZL", WARTEZEIT_MS);
+
+        // Der ZWEITE Versuch scheitert …
+        b.abgelehnt_zu_kennung(id2, "abgelehnt".into());
+        // … und der ERSTE liefert danach doch noch vollstaendig.
+        assert_eq!(
+            b.geliefert_zu_kennung(id1, auskunft("LEZL", 2)).as_deref(),
+            Some("LEZL"),
+            "die brauchbare Lieferung wurde von einem fremden Fehlversuch \
+             abgewehrt"
+        );
+        assert_eq!(b.auskunft("LEZL").map(|a| a.bahnen.len()), Some(2));
+        assert_eq!(b.zustand("LEZL"), Some(Auftragszustand::Geliefert));
     }
 
     /// Eine Ausnahme zum NEUESTEN Versuch gilt aber sehr wohl.
@@ -797,6 +962,164 @@ mod auftragsbuch_tests {
             Some("XXXX")
         );
         assert_eq!(b.zustand("XXXX"), Some(Auftragszustand::Abgelehnt));
+    }
+
+    /// ⚠ **QS-Befund 1 der dritten Runde (P0): der Vorrat war am Gate
+    /// verbraucht.**
+    ///
+    /// ```text
+    /// 03:50  Flugbeginn, LEZL angemeldet
+    /// ~04:10 zehn Versuche verbraucht — noch in Frankfurt
+    /// 07:29  Landung in Sevilla
+    /// ```
+    ///
+    /// Das spaetere Anmelden im Anflug aendert nur den RANG, nicht die
+    /// Versuchszahl. Ohne ein neues Fenster waere genau der Fehler
+    /// zurueck, den diese Fassung behebt: am Gate zehnmal gefragt, im
+    /// Anflug kein einziges Mal.
+    #[test]
+    fn im_anflug_gibt_es_einen_neuen_versuchsvorrat() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("LEZL");
+        let mut t = 0;
+        for _ in 0..HOECHSTVERSUCHE {
+            let a = b.naechster(t).expect("Versuch am Gate");
+            let _ = b.gestellt(&a, t);
+            t += WARTEZEIT_MS;
+        }
+        // Vorrat leer — und der Flug ist noch Stunden vom Ziel entfernt.
+        assert_eq!(b.naechster(t), None);
+        // Erneutes Anmelden hilft NICHT. Genau das war der Befund.
+        b.wunsch_mit_rang("LEZL", 0);
+        assert_eq!(
+            b.naechster(t),
+            None,
+            "Anmelden setzt die Versuche zurueck — dann ist die Sperre wirkungslos"
+        );
+
+        // Eintritt in den Anflug: neues Fenster.
+        assert_eq!(b.neues_versuchsfenster(), 1);
+        assert_eq!(
+            b.naechster(t).as_deref(),
+            Some("LEZL"),
+            "im Anflug wurde kein einziges Mal mehr gefragt"
+        );
+    }
+
+    /// Ein neues Fenster verliert keine Ergebnisse.
+    ///
+    /// ⚠ Was geliefert ist, bleibt; was abgelehnt wurde, bleibt
+    /// abgelehnt. Ein Platz, den der Simulator nicht kennt, wird ihm
+    /// durch Nachfragen nicht bekannt.
+    #[test]
+    fn ein_neues_fenster_verliert_keine_ergebnisse() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("EDDF");
+        b.wunsch("XXXX");
+        b.wunsch("LEZL");
+        let id_eddf = b.gestellt("EDDF", 0);
+        b.geliefert_zu_kennung(id_eddf, auskunft("EDDF", 4))
+            .expect("Lieferung");
+        let id_xxxx = b.gestellt("XXXX", 1_000);
+        b.abgelehnt_zu_kennung(id_xxxx, "unbekannt".into())
+            .expect("Ablehnung");
+
+        assert_eq!(b.neues_versuchsfenster(), 1, "nur LEZL war offen");
+        assert!(b.auskunft("EDDF").is_some());
+        assert_eq!(b.zustand("XXXX"), Some(Auftragszustand::Abgelehnt));
+        assert_eq!(b.naechster(2_000).as_deref(), Some("LEZL"));
+    }
+
+    /// ⚠ QS-Befund 2 der dritten Runde: Das Buch gehoert dem Flug und
+    /// der Verbindung, nicht dem Adapter.
+    ///
+    /// Es wurde einmal angelegt und nie geleert. Nach einem
+    /// Simulator-Neustart oder einem Wechsel zwischen MSFS 2020 und 2024
+    /// galt die Szenerie des vorigen Fluges als „geliefert" und wurde
+    /// nie erneut angefordert.
+    #[test]
+    fn ein_kontextwechsel_loescht_den_anfragezustand() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("EDDF");
+        let id = b.gestellt("EDDF", 0);
+        b.geliefert_zu_kennung(id, auskunft("EDDF", 4))
+            .expect("Lieferung");
+        b.definition_abgelehnt("WIDTH".into(), "DATA_ERROR".into());
+
+        b.zuruecksetzen();
+
+        assert!(b.auskunft("EDDF").is_none(), "alte Szenerie ueberlebte");
+        assert_eq!(b.zustand("EDDF"), None, "alter Zustand ueberlebte");
+        assert_eq!(b.versuche("EDDF"), 0);
+        assert!(b.definitionsfehler().is_none());
+    }
+
+    /// ⚠ Aber die Kennungen laufen weiter.
+    ///
+    /// Antworten des alten Kontextes koennen noch unterwegs sein. Fingen
+    /// die Kennungen wieder bei 1 an, traefe eine davon einen neuen
+    /// Auftrag — und legte fremde Szenerie unter dessen Namen ab.
+    #[test]
+    fn nach_dem_ruecksetzen_beginnen_die_kennungen_nicht_neu() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("EDDF");
+        let alt = b.gestellt("EDDF", 0);
+        b.zuruecksetzen();
+        b.wunsch("LEZL");
+        let neu = b.gestellt("LEZL", 1_000);
+        assert!(neu > alt, "die Kennungen haben von vorn begonnen");
+    }
+
+    /// ⚠ QS-Befund 4 der dritten Runde: Ein abgelehntes Feld schliesst
+    /// den ganzen Weg.
+    ///
+    /// Vorher wurde der Feldfehler nur protokolliert, und die
+    /// Zustandsmaschine lief weiter — Auftraege meldeten „unterwegs"
+    /// oder sogar „geliefert", obwohl die Definition nachweislich
+    /// abgelehnt war.
+    #[test]
+    fn ein_abgelehntes_feld_schliesst_den_weg() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("LEZL");
+        assert!(b.naechster(0).is_some());
+
+        b.definition_abgelehnt("WIDTH".into(), "DATA_ERROR".into());
+
+        assert_eq!(
+            b.naechster(WARTEZEIT_MS * 5),
+            None,
+            "es wird weiter gefragt, obwohl die Definition abgelehnt ist"
+        );
+        assert_eq!(
+            b.diagnose("LEZL"),
+            "definition_abgelehnt(WIDTH, DATA_ERROR)",
+            "die Diagnose verschweigt den Definitionsfehler"
+        );
+        assert_eq!(
+            b.definitionsfehler(),
+            Some(("WIDTH".to_string(), "DATA_ERROR".to_string()))
+        );
+    }
+
+    /// ⚠ QS-Befund 3 der dritten Runde: Der Rang steht VOR der
+    /// Versuchszahl.
+    ///
+    /// Die frueheren Rangtests benutzten ueberall dieselbe Versuchszahl
+    /// und sahen die Umkehrung deshalb nicht: Ein tatsaechliches Ziel
+    /// mit Rang 0 und einem Versuch verlor gegen einen belanglosen
+    /// vorgemerkten Platz mit Rang 200 und null Versuchen.
+    #[test]
+    fn der_rang_schlaegt_die_versuchszahl() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("EDDF", 200); // Vormerkung, nie gefragt
+        b.wunsch_mit_rang("LEZL", 0); // tatsaechliches Ziel
+        let _ = b.gestellt("LEZL", 0); // hat damit EINEN Versuch mehr
+
+        assert_eq!(
+            b.naechster(WARTEZEIT_MS).as_deref(),
+            Some("LEZL"),
+            "ein belangloser Platz hat das tatsaechliche Ziel verdraengt"
+        );
     }
 
     /// Eine Kennung, die das Buch nie vergeben hat, wird verworfen.

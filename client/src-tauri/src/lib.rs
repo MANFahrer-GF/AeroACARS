@@ -2245,6 +2245,26 @@ async fn fetch_aircraft_aliases_into_state(
 /// ⚠ Beim Aufsetzen anzufordern wäre zu spät. Deshalb hängt der Aufruf
 /// an `spawn_navdata_fetch`, also an jedem Moment, in dem ein Ziel
 /// bekannt wird.
+/// Das Szenerie-Auftragsbuch fuer einen neuen Flug leeren.
+///
+/// ⚠ Der Anfragezustand gehoert dem FLUG. Ohne diesen Schnitt nimmt der
+/// naechste Flug die verbrauchten Versuche, die dauerhaften Ablehnungen
+/// und die gelieferte Szenerie des vorigen mit — und fragt fuer sein
+/// eigenes Ziel nie wieder (QS-Befund 2, dritte Runde).
+fn szenerie_buch_zuruecksetzen(app: &AppHandle) {
+    #[cfg(target_os = "windows")]
+    {
+        let state = app.state::<AppState>();
+        if let Ok(msfs) = state.msfs.lock() {
+            msfs.szenerie_zuruecksetzen();
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+    }
+}
+
 fn szenerie_anfordern_fuer(app: &AppHandle, icaos: &[String]) {
     #[cfg(target_os = "windows")]
     {
@@ -2272,6 +2292,24 @@ fn szenerie_anfordern_fuer(app: &AppHandle, icaos: &[String]) {
 ///
 /// ⚠ Die Reihenfolge ist die Rangfolge. Das Ausweichziel steht vorn,
 /// weil dort gelandet wird.
+/// Ob beim Eintritt in den Anflug ein neuer Versuchsvorrat faellig ist.
+///
+/// ⚠ Genau EINMAL je Flug, und nur ab dem Sinkflug. Der Vorrat des
+/// Auftragsbuchs reicht fuer zehn Versuche; beim Flugbeginn angemeldet,
+/// ist er nach zwanzig Minuten am Gate leer — 1.400 km vom Ziel
+/// entfernt und Stunden vor der Landung (QS-Befund 1, dritte Runde, P0).
+///
+/// Ab dem Sinkflug, weil dort die Szenerie des Ziels zu laden beginnt.
+/// Nur einmal, weil sonst jeder Durchlauf den Vorrat auffuellt und die
+/// Obergrenze wirkungslos waere.
+fn braucht_neues_versuchsfenster(phase: FlightPhase, schon_geoeffnet: bool) -> bool {
+    !schon_geoeffnet
+        && matches!(
+            phase,
+            FlightPhase::Descent | FlightPhase::Approach | FlightPhase::Final
+        )
+}
+
 /// Rang einer blossen Vormerkung.
 ///
 /// ⚠ Absichtlich SCHLECHTER als jeder Rang, den die Ernte vergibt.
@@ -2392,6 +2430,22 @@ fn szenerie_auskunft_uebernehmen(
             tatsaechlich.as_deref(),
         );
 
+        // ⚠ Beim Eintritt in den Anflug den Versuchsvorrat neu oeffnen.
+        // Ohne das ist er am Gate verbraucht — siehe
+        // `braucht_neues_versuchsfenster`.
+        let fenster_faellig = {
+            let mut stats = match flight.stats.lock() {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            if braucht_neues_versuchsfenster(stats.phase, stats.szenerie_anflugfenster_offen) {
+                stats.szenerie_anflugfenster_offen = true;
+                true
+            } else {
+                false
+            }
+        };
+
         let (neu, diagnose, kennung) = {
             let state = app.state::<AppState>();
             let Ok(msfs) = state.msfs.lock() else { return };
@@ -2401,6 +2455,13 @@ fn szenerie_auskunft_uebernehmen(
             // wo die Szenerie des Ziels geladen ist. Bis v1.7.13 gab es
             // den zweiten Versuch nicht, und der Flug EDDF-LEZL am
             // 01.09.2026 landete mit der Szenerie Frankfurts.
+            if fenster_faellig {
+                let betroffen = msfs.szenerie_neues_versuchsfenster();
+                tracing::info!(
+                    betroffen,
+                    "Anflug erreicht — neuer Versuchsvorrat fuer die Szenerie"
+                );
+            }
             for (rang, z) in ziele.iter().enumerate() {
                 msfs.szenerie_anfordern_mit_rang(z, rang as u8);
             }
@@ -4112,6 +4173,9 @@ struct FlightStats {
     /// committed approach to a different field warms the cache exactly once
     /// (flicker / overflown-airport guard). Runtime-only.
     divert_prefetch_icao: Option<String>,
+    /// Ob fuer diesen Flug schon ein neuer Szenerie-Versuchsvorrat
+    /// geoeffnet wurde. Siehe `braucht_neues_versuchsfenster`.
+    szenerie_anflugfenster_offen: bool,
     /// v0.16.24: the diverged field currently accruing stability time
     /// during a committed approach (distinct from `divert_prefetch_icao`,
     /// which is the field already fetched). When the nearest field changes
@@ -12547,6 +12611,9 @@ async fn flight_adopt(
     // Adopt-Pfad: matching_bid kann weg sein, dann fehlt nur der
     // Alternate — dep+arr kommen immer aus dem ActiveFlight.
     {
+        // ⚠ Vor dem ersten Anmelden: Der neue Flug erbt sonst den
+        // Anfragezustand des vorigen.
+        szenerie_buch_zuruecksetzen(&app);
         let mut icaos = vec![flight.dpt_airport.clone(), flight.arr_airport.clone()];
         if let Some(alt) = matching_bid.and_then(|b| b.flight.alt_airport_id.clone()) {
             if !alt.trim().is_empty() {
@@ -13346,6 +13413,9 @@ async fn flight_start(
     // OFP-Aktualisierungen können einen anderen Alternate setzen —
     // der wird im post-OFP-spawn unten nachgeholt (per-ICAO-guard).
     {
+        // ⚠ Vor dem ersten Anmelden: Der neue Flug erbt sonst den
+        // Anfragezustand des vorigen.
+        szenerie_buch_zuruecksetzen(&app);
         let mut icaos = vec![flight.dpt_airport.clone(), flight.arr_airport.clone()];
         if let Some(alt) = bid.flight.alt_airport_id.clone() {
             if !alt.trim().is_empty() {
@@ -14064,6 +14134,9 @@ async fn flight_start_manual(
     // (Background-Task), Failure → OurAirports-Fallback (transparent).
     // Manual-Pfad: Alternate kommt aus der Plan-Eingabe.
     {
+        // ⚠ Vor dem ersten Anmelden: Der neue Flug erbt sonst den
+        // Anfragezustand des vorigen.
+        szenerie_buch_zuruecksetzen(&app);
         let mut icaos = vec![flight.dpt_airport.clone(), flight.arr_airport.clone()];
         if let Some(alt) = plan.alt_airport_id.clone() {
             if !alt.trim().is_empty() {
@@ -38380,6 +38453,9 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
     // (= via persisted JSON wiederhergestellt). Bei pre-v0.8.0-Resume-
     // Files ohne planned_alternate bleibt es bei dep+arr.
     {
+        // ⚠ Vor dem ersten Anmelden: Der neue Flug erbt sonst den
+        // Anfragezustand des vorigen.
+        szenerie_buch_zuruecksetzen(&app);
         let mut icaos = vec![flight.dpt_airport.clone(), flight.arr_airport.clone()];
         let alt = flight
             .stats
@@ -53556,6 +53632,52 @@ mod szenerie_status_tests {
             "ein leeres Ausweichziel darf nicht das geplante verdecken"
         );
         assert_eq!(szenerie_ernteziel("XX", None, None), None);
+    }
+
+    /// ⚠ QS-Befund 1 der dritten Runde (P0): Das Fenster oeffnet im
+    /// Sinkflug, und genau einmal.
+    #[test]
+    fn das_versuchsfenster_oeffnet_im_sinkflug_und_nur_einmal() {
+        for phase in [
+            FlightPhase::Descent,
+            FlightPhase::Approach,
+            FlightPhase::Final,
+        ] {
+            assert!(
+                braucht_neues_versuchsfenster(phase, false),
+                "{phase:?} oeffnet kein Fenster — dann ist der Vorrat am \
+                 Gate verbraucht und im Anflug wird nie gefragt"
+            );
+            assert!(
+                !braucht_neues_versuchsfenster(phase, true),
+                "{phase:?} oeffnet ein zweites Fenster — dann ist die \
+                 Obergrenze wirkungslos"
+            );
+        }
+    }
+
+    /// Und vorher nicht.
+    ///
+    /// ⚠ Am Boden oder im Reiseflug ist die Szenerie des Ziels nicht
+    /// geladen. Ein Fenster dort waere genau der verbrauchte Vorrat,
+    /// den der Befund beschreibt.
+    #[test]
+    fn vor_dem_sinkflug_gibt_es_kein_fenster() {
+        for phase in [
+            FlightPhase::Preflight,
+            FlightPhase::Boarding,
+            FlightPhase::Pushback,
+            FlightPhase::TaxiOut,
+            FlightPhase::TakeoffRoll,
+            FlightPhase::Takeoff,
+            FlightPhase::Climb,
+            FlightPhase::Cruise,
+        ] {
+            assert!(
+                !braucht_neues_versuchsfenster(phase, false),
+                "{phase:?} oeffnet ein Fenster"
+            );
+        }
     }
 
     /// Ohne Ausweichziel ist es einfach der geplante Platz.

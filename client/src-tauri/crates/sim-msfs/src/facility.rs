@@ -1813,6 +1813,49 @@ mod anschluss_verdrahtung_tests {
         );
     }
 
+    /// ⚠ Eine neue Verbindung schneidet den Anfragezustand ab.
+    ///
+    /// Ohne das gaelte nach einem Simulator-Neustart oder einem Wechsel
+    /// zwischen MSFS 2020 und 2024 die Szenerie der VORIGEN Verbindung
+    /// als „geliefert" und wuerde nie erneut angefordert; verbrauchte
+    /// Versuche und dauerhafte Ablehnungen ueberdauerten ebenfalls
+    /// (QS-Befund 2, dritte Runde).
+    #[test]
+    fn eine_neue_verbindung_leert_das_auftragsbuch() {
+        // ⚠ NICHT einfach die erste Fundstelle nehmen: Der Adapter
+        // hat weiter oben eine Methode gleichen Namens. Gesucht ist die
+        // AUFRUFSTELLE im Verbindungszweig — also eine Fundstelle
+        // DAHINTER, und zwar dicht dahinter.
+        let a = ohne_leerraum(ADAPTER);
+        let oeffnen = a
+            .find("SimConnect_Opensucceeded")
+            .expect("Verbindungszweig fehlt");
+        let danach = &a[oeffnen..];
+        let leeren = danach
+            .find("shared.szenerie.lock().zuruecksetzen()")
+            .expect("das Buch wird im Verbindungszweig nicht geleert");
+        assert!(
+            leeren < 600,
+            "das Leeren steht {leeren} Zeichen hinter dem Verbindungsaufbau — \
+             das ist nicht mehr derselbe Zweig"
+        );
+    }
+
+    /// ⚠ Ein abgelehntes Feld schliesst den Weg — hart, nicht weich.
+    ///
+    /// Vorher stand im Ausnahmezweig nur ein `continue`: Der Feldfehler
+    /// war erkannt und benannt, der Facility-Weg lief weiter, und
+    /// Auftraege meldeten „unterwegs" oder „geliefert" (QS-Befund 4,
+    /// dritte Runde).
+    #[test]
+    fn ein_abgelehntes_feld_stoppt_den_facility_weg() {
+        let a = ohne_leerraum(ADAPTER);
+        assert!(
+            a.contains("shared.szenerie.lock().definition_abgelehnt(feld,"),
+            "der Feldfehler wird nur protokolliert — der Weg laeuft weiter"
+        );
+    }
+
     /// ⚠ Dieser Waechter stand bis v1.7.13 auf dem Kopf.
     ///
     /// Er verlangte, dass eine Anmeldung die vorhandene Auskunft
