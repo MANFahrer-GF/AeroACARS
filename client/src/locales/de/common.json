@@ -253,7 +253,17 @@
       "aligned_on_centerline": "Sauber auf der Mittellinie",
       "off_centerline": "Neben der Mittellinie aufgesetzt",
       "off_runway_surface": "Außerhalb der Bahnbreite aufgesetzt",
-      "crooked_touchdown": "Schräg zur Bahnachse aufgesetzt"
+      "crooked_touchdown": "Schräg zur Bahnachse aufgesetzt",
+      "on_aim": "Auf dem Aufsetzpunkt",
+      "in_tdz": "In der Aufsetzzone",
+      "long_touchdown": "Spät aufgesetzt",
+      "very_long_touchdown": "⚠ Sehr spät aufgesetzt",
+      "pre_threshold": "⚠ Vor der Schwelle aufgesetzt",
+      "centered": "Mittig auf der Bahn",
+      "outboard": "Etwas außermittig",
+      "edge_reached": "⚠ Nah am Bahnrand",
+      "off_pavement": "⚠ Neben die befestigte Fläche",
+      "overrun": "⚠ Über das Bahnende hinaus"
     },
     "tip": {
       "smooth_touchdown": "Genau so — leichter Flare zur richtigen Zeit, sanfte Reduzierung der Sinkrate kurz vor TD.",
@@ -301,7 +311,17 @@
       "aligned_on_centerline": "Mittellinie getroffen und gerade gestanden — genau so.",
       "off_centerline": "Im Endanflug früher auf die Mittellinie korrigieren, statt erst im Flare. Bei Seitenwind den Vorhaltewinkel halten und erst kurz vor dem Aufsetzen mit dem Seitenruder ausrichten.",
       "off_runway_surface": "Der Aufsetzpunkt lag jenseits des Bahnrands. Bei Seitenwind: Vorhaltewinkel fliegen, die Bahn mit dem Seitenruder ausrichten und die Luv-Fläche leicht senken — nicht das Flugzeug seitlich versetzen lassen.",
-      "crooked_touchdown": "Vor dem Aufsetzen mit dem Seitenruder auf die Bahnachse ausrichten. Schräg aufsetzen belastet das Fahrwerk seitlich und zieht dich nach dem Bodenkontakt von der Mittellinie weg. Der windbedingte Vorhaltewinkel ist hier schon abgezogen — was übrig bleibt, ist nicht durch den Wind erklärt."
+      "crooked_touchdown": "Vor dem Aufsetzen mit dem Seitenruder auf die Bahnachse ausrichten. Schräg aufsetzen belastet das Fahrwerk seitlich und zieht dich nach dem Bodenkontakt von der Mittellinie weg. Der windbedingte Vorhaltewinkel ist hier schon abgezogen — was übrig bleibt, ist nicht durch den Wind erklärt.",
+      "on_aim": "Genau auf der Markierung — innerhalb von 150 m um den Aim-Point. So bleibt die volle Bahnlänge zum Bremsen.",
+      "in_tdz": "In der Aufsetzzone, aber nicht auf der Markierung. Der Aim-Point liegt meist rund 400 m hinter der Schwelle — Schwellen-Crossing bei Vref und ein stabiler Gleitweg bringen dich dorthin.",
+      "long_touchdown": "Hinter der Aufsetzzone, aber noch in der ersten Bahnhälfte. Meist zu früher oder zu langer Flare: die Sinkrate erst kurz vor dem Boden abbauen, nicht schon in 30 ft.",
+      "very_long_touchdown": "Erst in der zweiten Bahnhälfte aufgesetzt — die halbe Bahn ist als Bremsweg weg. Bei kurzer Bahn oder Nässe ist das der Weg zum Überrollen. Anflugprofil und Flare prüfen; im Zweifel durchstarten.",
+      "pre_threshold": "Vor der Landeschwelle aufgesetzt. Das ist nicht befestigtes Gelände und regelwidrig — der Gleitweg war zu flach. Gleitwegangabe und Höhe über der Schwelle (50 ft) prüfen.",
+      "centered": "Sauber auf der Mittellinie gehalten — das äußere Rad blieb im mittleren Bereich der Bahn.",
+      "outboard": "Leicht neben der Mitte, aber mit Reserve zum Rand. Bei Seitenwind früh mit dem Seitenruder gegenhalten, statt erst nach dem Aufsetzen zu korrigieren.",
+      "edge_reached": "Das äußere Rad kam bis an den Rand der befestigten Fläche. Auf schmalen Bahnen ist der Puffer klein — die Seitenwindkorrektur schon im Endanflug ausfliegen und die Mittellinie beim Ausrollen halten.",
+      "off_pavement": "Das äußere Rad hat die befestigte Fläche verlassen. Beim Ausrollen die Mittellinie aktiv halten; nach dem Aufsetzen zuerst die Richtung, dann die Bremsen.",
+      "overrun": "Über das Bahnende hinausgerollt. Hier stimmt die Kette aus Aufsetzpunkt, Anfluggeschwindigkeit und Bremseinsatz nicht — die Bahnlänge vor dem Anflug gegen das Landegewicht prüfen und im Zweifel durchstarten."
     },
     "forensics": {
       "label": "Forensik v2",
@@ -341,7 +361,10 @@
       "track_width_unknown": "Die Spurweite dieses Musters ist nicht hinterlegt; ohne sie lässt sich die Lage der Räder nicht bestimmen.",
       "insufficient_samples": "Zu wenige Messpunkte auf der Bahn — aus zwei oder drei Proben lässt sich kein Verlauf ablesen.",
       "missing_lateral_track": "Für diesen Flug ist kein Rollweg erfasst. Flüge von vor v1.7.0 haben ihn nicht.",
-      "implausible_lateral_track": "Der gemessene Versatz kann nicht stimmen — vermutlich ein Messfehler, deshalb keine seitliche Bewertung."
+      "implausible_lateral_track": "Der gemessene Versatz kann nicht stimmen — vermutlich ein Messfehler, deshalb keine seitliche Bewertung.",
+      "unpaved_runway": "Unbefestigte Bahn — die seitliche Bewertung setzt eine befestigte Fläche mit definiertem Rand voraus.",
+      "water_runway": "Wasserlandung — eine Bahnbreite gibt es hier nicht, die seitliche Bewertung entfällt.",
+      "surface_unknown": "Bahnbelag unbekannt — ohne ihn lässt sich nicht sagen, ob es einen befestigten Rand gibt."
     },
     "warn": {
       "pre_displaced_threshold": "⚠ Vor Displaced-Threshold aufgesetzt — Anflugprofil prüfen",

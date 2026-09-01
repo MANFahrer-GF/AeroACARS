@@ -253,7 +253,17 @@
       "aligned_on_centerline": "Perfettamente sull'asse pista",
       "off_centerline": "Atterrato fuori dall'asse pista",
       "off_runway_surface": "Atterrato oltre il bordo pista",
-      "crooked_touchdown": "Atterrato di traverso rispetto all'asse pista"
+      "crooked_touchdown": "Atterrato di traverso rispetto all'asse pista",
+      "on_aim": "Sul punto di mira",
+      "in_tdz": "Nella zona di contatto",
+      "long_touchdown": "Contatto tardivo",
+      "very_long_touchdown": "⚠ Contatto molto tardivo",
+      "pre_threshold": "⚠ Contatto prima della soglia",
+      "centered": "Centrato in pista",
+      "outboard": "Leggermente decentrato",
+      "edge_reached": "⚠ Vicino al bordo pista",
+      "off_pavement": "⚠ Fuori dalla superficie pavimentata",
+      "overrun": "⚠ Oltre il fine pista"
     },
     "tip": {
       "smooth_touchdown": "Esattamente così — flare leggero al momento giusto, riduzione dolce del rateo di discesa appena prima del TD.",
@@ -301,7 +311,17 @@
       "aligned_on_centerline": "Asse pista tenuto e aereo dritto al contatto — esattamente così.",
       "off_centerline": "Correggi sull'asse pista già in finale, non durante la richiamata. Con vento al traverso mantieni il crab e allinea con il timone solo poco prima del contatto.",
       "off_runway_surface": "Il punto di contatto era oltre il bordo pista. Con vento al traverso: vola in crab, allinea con il timone e abbassa leggermente l'ala sopravento — non lasciare derivare l'aereo.",
-      "crooked_touchdown": "Allinea alla pista con il timone prima del contatto. Toccare di traverso carica il carrello lateralmente e ti porta fuori dalla linea centrale dopo il contatto. L'angolo di deriva dovuto al vento è già stato scalato: quel che resta non è spiegato dal vento."
+      "crooked_touchdown": "Allinea alla pista con il timone prima del contatto. Toccare di traverso carica il carrello lateralmente e ti porta fuori dalla linea centrale dopo il contatto. L'angolo di deriva dovuto al vento è già stato scalato: quel che resta non è spiegato dal vento.",
+      "on_aim": "Esattamente sulle marcature — entro 150 m dal punto di mira. Così resta l'intera lunghezza della pista per frenare.",
+      "in_tdz": "Nella zona di contatto, ma non sulle marcature. Il punto di mira si trova di solito circa 400 m dopo la soglia: attraversarla a Vref con un sentiero stabile ti porta lì.",
+      "long_touchdown": "Oltre la zona di contatto, ma ancora nella prima metà della pista. Di solito una richiamata anticipata o troppo lunga: riduci il rateo di discesa poco prima del suolo, non già a 30 ft.",
+      "very_long_touchdown": "Contatto nella seconda metà della pista — metà pista persa come spazio di frenata. Su pista corta o bagnata è così che si finisce lunghi. Verifica il profilo di avvicinamento e la richiamata; in caso di dubbio riattacca.",
+      "pre_threshold": "Contatto prima della soglia di atterraggio. È terreno non pavimentato e non conforme — il sentiero era troppo basso. Verifica la guida di sentiero e l'altezza di attraversamento soglia (50 ft).",
+      "centered": "Asse centrale mantenuto con precisione — la ruota esterna è rimasta nella parte centrale della pista.",
+      "outboard": "Leggermente fuori asse, ma con margine dal bordo. Con vento al traverso agisci sul timone in anticipo, invece di correggere dopo il contatto.",
+      "edge_reached": "La ruota esterna ha raggiunto il bordo della superficie pavimentata. Su piste strette il margine è ridotto: esaurisci la correzione di vento in finale e mantieni l'asse durante la corsa.",
+      "off_pavement": "La ruota esterna ha lasciato la superficie pavimentata. Mantieni attivamente l'asse durante la corsa; dopo il contatto prima la direzione, poi i freni.",
+      "overrun": "Corsa oltre il fine pista. Qui la catena punto di contatto, velocità di avvicinamento e frenata non torna — verifica la lunghezza pista rispetto al peso di atterraggio prima dell'avvicinamento e, nel dubbio, riattacca."
     },
     "forensics": {
       "label": "Forensica v2",
@@ -341,7 +361,10 @@
       "track_width_unknown": "La carreggiata di questo modello non è registrata; senza di essa non si può determinare la posizione delle ruote.",
       "insufficient_samples": "Troppi pochi punti di misura sulla pista — due o tre campioni non fanno un tracciato.",
       "missing_lateral_track": "Per questo volo non è registrato alcun tracciato di rullaggio. I voli precedenti alla v1.7.0 non lo hanno.",
-      "implausible_lateral_track": "Lo scostamento misurato non può essere corretto — probabilmente un errore di misura, quindi nessuna valutazione laterale."
+      "implausible_lateral_track": "Lo scostamento misurato non può essere corretto — probabilmente un errore di misura, quindi nessuna valutazione laterale.",
+      "unpaved_runway": "Pista non pavimentata — la valutazione laterale richiede una superficie pavimentata con bordo definito.",
+      "water_runway": "Ammaraggio — qui non esiste una larghezza pista, la valutazione laterale non si applica.",
+      "surface_unknown": "Superficie pista sconosciuta — senza di essa non si può stabilire se esiste un bordo pavimentato."
     },
     "warn": {
       "pre_displaced_threshold": "⚠ Touchdown prima del displaced threshold — rivedere approach",

@@ -253,7 +253,17 @@
       "aligned_on_centerline": "Right on the centreline",
       "off_centerline": "Touched down off the centreline",
       "off_runway_surface": "Touched down beyond the runway edge",
-      "crooked_touchdown": "Touched down at an angle to the runway"
+      "crooked_touchdown": "Touched down at an angle to the runway",
+      "on_aim": "On the aiming point",
+      "in_tdz": "Inside the touchdown zone",
+      "long_touchdown": "Late touchdown",
+      "very_long_touchdown": "⚠ Very late touchdown",
+      "pre_threshold": "⚠ Touchdown before the threshold",
+      "centered": "Centred on the runway",
+      "outboard": "Slightly off centre",
+      "edge_reached": "⚠ Close to the runway edge",
+      "off_pavement": "⚠ Off the paved surface",
+      "overrun": "⚠ Past the end of the runway"
     },
     "tip": {
       "smooth_touchdown": "Exactly right — flare timing was on point and the descent rate bled off cleanly.",
@@ -301,7 +311,17 @@
       "aligned_on_centerline": "Centreline held and straight on touchdown — exactly right.",
       "off_centerline": "Correct onto the centreline earlier on final rather than during the flare. In a crosswind, hold the crab and align with rudder only just before touchdown.",
       "off_runway_surface": "The touchdown point was beyond the runway edge. In a crosswind: fly the crab, align with rudder and lower the upwind wing slightly — do not let the aircraft drift sideways.",
-      "crooked_touchdown": "Align with the runway axis using rudder before touchdown. Touching down crabbed loads the gear sideways and pulls you off the centreline after contact. The wind-induced crab angle has already been deducted here — what remains is not explained by the wind."
+      "crooked_touchdown": "Align with the runway axis using rudder before touchdown. Touching down crabbed loads the gear sideways and pulls you off the centreline after contact. The wind-induced crab angle has already been deducted here — what remains is not explained by the wind.",
+      "on_aim": "Right on the markings — within 150 m of the aim point. That leaves the full runway length for braking.",
+      "in_tdz": "Inside the touchdown zone, but not on the markings. The aim point usually sits about 400 m past the threshold — crossing at Vref on a stable glide path puts you there.",
+      "long_touchdown": "Past the touchdown zone, but still in the first half of the runway. Usually an early or drawn-out flare: bleed off the descent rate just before the ground, not already at 30 ft.",
+      "very_long_touchdown": "Touched down in the second half of the runway — half the runway is gone as braking distance. On a short or wet runway that is how overruns happen. Check the approach profile and the flare; go around if in doubt.",
+      "pre_threshold": "Touched down before the landing threshold. That is unpaved ground and against the rules — the glide path was too shallow. Check the glide path guidance and the threshold crossing height (50 ft).",
+      "centered": "Held the centreline cleanly — the outboard wheel stayed within the middle part of the runway.",
+      "outboard": "Slightly off the centreline, but with margin to the edge. In a crosswind, apply rudder early rather than correcting after touchdown.",
+      "edge_reached": "The outboard wheel reached the edge of the paved surface. On narrow runways the margin is small — fly out the crosswind correction on final and hold the centreline through the rollout.",
+      "off_pavement": "The outboard wheel left the paved surface. Actively hold the centreline through the rollout; after touchdown, direction first, brakes second.",
+      "overrun": "Rolled out past the end of the runway. The chain of touchdown point, approach speed and braking does not add up here — check runway length against landing weight before the approach, and go around if in doubt."
     },
     "forensics": {
       "label": "Forensics v2",
@@ -341,7 +361,10 @@
       "track_width_unknown": "The track width of this type is not on file; without it the position of the wheels cannot be determined.",
       "insufficient_samples": "Too few measuring points on the runway — two or three samples do not make a track.",
       "missing_lateral_track": "No roll-out track was recorded for this flight. Flights from before v1.7.0 do not have one.",
-      "implausible_lateral_track": "The measured offset cannot be right — most likely a measurement error, so no lateral assessment."
+      "implausible_lateral_track": "The measured offset cannot be right — most likely a measurement error, so no lateral assessment.",
+      "unpaved_runway": "Unpaved runway — the lateral assessment requires a paved surface with a defined edge.",
+      "water_runway": "Water landing — there is no runway width here, so the lateral assessment does not apply.",
+      "surface_unknown": "Runway surface unknown — without it there is no way to tell whether a paved edge exists."
     },
     "warn": {
       "pre_displaced_threshold": "⚠ Touched down before displaced threshold — review approach",
