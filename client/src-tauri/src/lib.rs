@@ -2394,6 +2394,75 @@ fn flugkopie_entwerten(alt_generation: u32, buch_generation: u32) -> bool {
     alt_generation != buch_generation
 }
 
+/// Einen Szenerie-Schnappschuss in den Flugzustand uebernehmen.
+///
+/// ⚠ EINE Funktion fuer die ganze Uebernahme — und sie steht
+/// ausserhalb von `cfg(windows)`, damit ein Test die echte Kette
+/// fahren kann: Buch → Schnappschuss → Flugzustand → Meldung.
+///
+/// Vorher lag die Uebernahme im Windows-Block, und der Test pruefte
+/// Buchformatierung und Durchreichung GETRENNT: Er baute die Diagnose
+/// aus dem Buch (LKTB, 243 Rollwege) und setzte danach eine separat
+/// erzeugte Auskunft (DAAG, 0 Rollwege) daneben. Eine verlorene,
+/// veraltete oder falsch zugeordnete Diagnose waere gruen geblieben
+/// (QS-Befund 2, elfte Runde).
+fn schnappschuss_uebernehmen(
+    stats: &mut FlightStats,
+    schnapp: sim_core::szenerie::Schnappschuss,
+    kennung: Option<String>,
+) {
+    // ⚠ Die Diagnose IMMER mitschreiben, auch wenn keine Auskunft kam.
+    // Genau der Fall ist der interessante: Sie sagt dann, ob nie
+    // gefragt wurde, ob SimConnect abgelehnt hat oder ob die Antwort
+    // ausblieb. Frueher fiel das alles unter "navdaten".
+    stats.szenerie_diagnose = Some(schnapp.diagnose);
+
+    // ⚠ Das ganze `Option` ersetzen — EINSCHLIESSLICH `None`.
+    //
+    // Die Vorfassung schrieb `if kennung.is_some()`. Damit ueberlebte
+    // die Kennung der ALTEN Verbindung jeden Wechsel, bei dem noch
+    // keine neue gemeldet war — und der Flug behauptete eine
+    // Simulatorfassung, die gar nicht mehr verbunden ist (QS-Befund 1,
+    // elfte Runde).
+    stats.sim_kennung = kennung;
+
+    // ⚠ Generationswechsel: Die Kopie der alten Verbindung gilt nicht
+    // mehr — auch wenn KEINE neue Lieferung kommt.
+    if flugkopie_entwerten(stats.szenerie_auskunft_generation, schnapp.generation) {
+        if stats.szenerie_auskunft.is_some() {
+            tracing::info!(
+                alt = stats.szenerie_auskunft_generation,
+                neu = schnapp.generation,
+                "Szenerie-Generation gewechselt — Flugkopie entwertet"
+            );
+        }
+        stats.szenerie_auskunft = None;
+        stats.szenerie_auskunft_stand = 0;
+        stats.szenerie_auskunft_generation = schnapp.generation;
+    }
+
+    let Some((neu, stand)) = schnapp.auskunft else {
+        return;
+    };
+    // ⚠ Nach STAND entscheiden, nicht nach Anwesenheit — siehe
+    // `auskunft_ersetzen`.
+    let alt = stats
+        .szenerie_auskunft
+        .as_ref()
+        .map(|a| (a.icao.as_str(), stats.szenerie_auskunft_stand));
+    if auskunft_ersetzen(alt, &neu.icao, stand) {
+        tracing::info!(
+            icao = %neu.icao,
+            stand,
+            bahnen = neu.bahnen.len(),
+            rollwege = neu.rollwege.len(),
+            "Szenerie-Auskunft am Flug abgelegt"
+        );
+        stats.szenerie_auskunft = Some(neu);
+        stats.szenerie_auskunft_stand = stand;
+    }
+}
+
 /// Rang einer blossen Vormerkung.
 ///
 /// ⚠ Absichtlich SCHLECHTER als jeder Rang, den die Ernte vergibt.
@@ -2531,7 +2600,7 @@ fn szenerie_auskunft_uebernehmen(
             faellig
         };
 
-        let (neu, diagnose, kennung, buch_generation) = {
+        let (schnapp_aussen, kennung_aussen) = {
             let state = app.state::<AppState>();
             let Ok(msfs) = state.msfs.lock() else { return };
             // ⚠ Bei JEDEM Durchlauf nachmelden. Das Buch entscheidet,
@@ -2592,62 +2661,12 @@ fn szenerie_auskunft_uebernehmen(
                         None,
                     )
                 });
-            (
-                schnapp.auskunft,
-                schnapp.diagnose,
-                kennung,
-                schnapp.generation,
-            )
+            (schnapp, kennung)
         };
-        // ⚠ Die Diagnose IMMER mitschreiben, auch wenn keine Auskunft kam.
-        // Genau der Fall ist der interessante: Sie sagt dann, ob nie
-        // gefragt wurde, ob SimConnect abgelehnt hat oder ob die Antwort
-        // ausblieb. Frueher fiel das alles unter "navdaten".
+        // ⚠ EINE Uebernahme, EINE Sperre, und sie steht in einer
+        // pruefbaren Funktion — siehe `schnappschuss_uebernehmen`.
         if let Ok(mut stats) = flight.stats.lock() {
-            stats.szenerie_diagnose = Some(diagnose);
-            // ⚠ ERSETZEN, nicht nur fuellen. Wechselt eine laufende
-            // Aufzeichnung von MSFS 2020 auf 2024 oder verbindet sich
-            // neu, trug der Flug sonst weiter die alte Kennung — und
-            // ausgerechnet die Auswertung der Facility-Unterschiede
-            // haette eine falsche Diagnose (QS-Befund 3, achte Runde).
-            if kennung.is_some() {
-                stats.sim_kennung = kennung;
-            }
-            // ⚠ Generationswechsel: Die Kopie der alten Verbindung gilt
-            // nicht mehr — auch wenn KEINE neue Lieferung kommt.
-            if flugkopie_entwerten(stats.szenerie_auskunft_generation, buch_generation) {
-                if stats.szenerie_auskunft.is_some() {
-                    tracing::info!(
-                        alt = stats.szenerie_auskunft_generation,
-                        neu = buch_generation,
-                        "Szenerie-Generation gewechselt — Flugkopie entwertet"
-                    );
-                }
-                stats.szenerie_auskunft = None;
-                stats.szenerie_auskunft_stand = 0;
-                stats.szenerie_auskunft_generation = buch_generation;
-            }
-        }
-        let Some((neu, stand)) = neu else { return };
-        let Ok(mut stats) = flight.stats.lock() else {
-            return;
-        };
-        // ⚠ Nach STAND entscheiden, nicht nach Anwesenheit — siehe
-        // `auskunft_ersetzen`.
-        let alt = stats
-            .szenerie_auskunft
-            .as_ref()
-            .map(|a| (a.icao.as_str(), stats.szenerie_auskunft_stand));
-        if auskunft_ersetzen(alt, &neu.icao, stand) {
-            tracing::info!(
-                icao = %neu.icao,
-                stand,
-                bahnen = neu.bahnen.len(),
-                rollwege = neu.rollwege.len(),
-                "Szenerie-Auskunft am Flug abgelegt"
-            );
-            stats.szenerie_auskunft = Some(neu);
-            stats.szenerie_auskunft_stand = stand;
+            schnappschuss_uebernehmen(&mut stats, schnapp_aussen, kennung_aussen);
         }
     }
     #[cfg(not(target_os = "windows"))]
@@ -53811,20 +53830,32 @@ mod szenerie_status_tests {
         // wieder — die Verbots-Pruefung schlaegt dann immer an, und die
         // Bestaetigungs-Pruefung ist immer gruen. Beides sagt nichts.
         let a = ohne_leerraum(QUELLE);
-        let verboten = format!(
-            "if{}.is_none(){{{}={};}}",
-            "stats.sim_kennung", "stats.sim_kennung", "kennung"
-        );
-        let noetig = format!(
-            "if{}.is_some(){{{}={};}}",
-            "kennung", "stats.sim_kennung", "kennung"
-        );
+        // ⚠ Dieser Waechter schrieb bis zur elften Runde die FALSCHE
+        // Bedingung fest: Er verlangte `if kennung.is_some()`. Damit
+        // ueberlebte die Kennung der alten Verbindung jeden Wechsel, bei
+        // dem noch keine neue gemeldet war — und der Waechter hielt
+        // genau das fest. Zum zweiten Mal ein Waechter, der ein MITTEL
+        // festschreibt statt einer Zusicherung.
+        for verboten in [
+            format!(
+                "if{}.is_none(){{{}={};}}",
+                "stats.sim_kennung", "stats.sim_kennung", "kennung"
+            ),
+            format!(
+                "if{}.is_some(){{{}={};}}",
+                "kennung", "stats.sim_kennung", "kennung"
+            ),
+        ] {
+            assert!(
+                !a.contains(&verboten),
+                "die Kennung wird bedingt gesetzt — dann ueberlebt die alte \
+                 Verbindung den Wechsel"
+            );
+        }
         assert!(
-            !a.contains(&verboten),
-            "die Kennung wird nur gefuellt, nicht ersetzt — ein \
-             Simulatorwechsel bleibt unsichtbar"
+            a.contains(&format!("{}=kennung;", "stats.sim_kennung")),
+            "die Kennung wird nicht unbedingt ersetzt"
         );
-        assert!(a.contains(&noetig), "die Kennung wird nicht ersetzt");
     }
 
     /// ⚠ Und die Flugkopie wird beim Generationswechsel wirklich
@@ -54276,46 +54307,76 @@ mod szenerie_status_tests {
         }
     }
 
+    /// ⚠ QS-Befund 1, elfte Runde: Die Kennung wird durch `None`
+    /// ersetzt.
+    ///
+    /// Beim Verbindungswechsel leert der Adapter Buch UND Kennung. Kaeme
+    /// am Flug nur ein `Some` an, behauptete er weiter eine
+    /// Simulatorfassung, die gar nicht mehr verbunden ist.
+    #[test]
+    fn ein_verbindungswechsel_loescht_die_kennung_am_flug() {
+        let mut s = FlightStats::new();
+        s.sim_kennung = Some("KittyHawk 11.0".to_string());
+
+        let mut buch = sim_core::szenerie::Auftragsbuch::neu();
+        buch.verbindung_zuruecksetzen();
+        schnappschuss_uebernehmen(&mut s, buch.schnappschuss("LEZL"), None);
+
+        assert_eq!(
+            s.sim_kennung, None,
+            "die Kennung der alten Verbindung ueberlebt den Wechsel"
+        );
+    }
+
+    /// ⚠ QS-Befund 2, elfte Runde: die ECHTE Kette, nicht zwei Haelften.
+    ///
+    /// Buch → Schnappschuss → Flugzustand → Meldung.
+    ///
+    /// Der vorige Test baute die Diagnose aus dem Buch (LKTB, 243
+    /// Rollwege) und setzte danach eine SEPARAT erzeugte Auskunft
+    /// daneben (DAAG, 0 Rollwege). Er prueste damit Buchformatierung und
+    /// Durchreichung getrennt; eine verlorene, veraltete oder falsch
+    /// zugeordnete Diagnose waere gruen geblieben.
     #[test]
     fn eine_lieferung_ohne_bahnen_ist_ein_eigener_fall() {
-        // ⚠ Der Wert kommt aus der ECHTEN Formatierung, nicht von Hand.
-        // Vorher stand hier `"ohne_bahnen"` als Zeichenkette — der Test
-        // waere gruen geblieben, waehrend die Produktion laengst
-        // `ohne_bahnen(rollwege=243)` liefert. Ein Test, der seine
-        // Erwartung selbst erfindet, prueft nur sich selbst.
-        // ⚠ Aus der ECHTEN Quelle — jetzt dem Auftragsbuch.
-        //
-        // Vorher stammte die Erwartung aus `SzenerieDiagnose::kurz()`.
-        // Die Produktion benutzt diesen Typ nicht mehr; der Test war
-        // damit selbst zur zweiten Quelle geworden und haette gruen
-        // bleiben koennen, waehrend die Meldung am Flug laengst anders
-        // lautet.
-        let echt = {
-            let mut buch = sim_core::szenerie::Auftragsbuch::neu();
-            buch.wunsch("LKTB");
-            let (_, id) = buch.naechsten_stellen(0).expect("Auftrag");
-            buch.geliefert_zu_kennung(
-                id,
-                sim_core::szenerie::SzenerieFlughafen {
-                    icao: "LKTB".to_string(),
-                    bahnen: Vec::new(),
-                    rollwege: (0..243)
-                        .map(|_| sim_core::szenerie::SzenerieRollweg {
-                            name: "A".to_string(),
-                            punkte: Vec::new(),
-                        })
-                        .collect(),
-                    quelle: "msfs".to_string(),
-                },
-            )
-            .expect("Lieferung");
-            buch.diagnose("LKTB")
-        };
+        let mut buch = sim_core::szenerie::Auftragsbuch::neu();
+        buch.wunsch("LKTB");
+        let (_, id) = buch.naechsten_stellen(0).expect("Auftrag");
+        buch.geliefert_zu_kennung(
+            id,
+            sim_core::szenerie::SzenerieFlughafen {
+                icao: "LKTB".to_string(),
+                bahnen: Vec::new(),
+                rollwege: (0..243)
+                    .map(|_| sim_core::szenerie::SzenerieRollweg {
+                        name: "A".to_string(),
+                        punkte: Vec::new(),
+                    })
+                    .collect(),
+                quelle: "msfs".to_string(),
+            },
+        )
+        .expect("Lieferung");
+
         let mut s = FlightStats::new();
-        s.szenerie_auskunft = Some(auskunft(0));
-        s.szenerie_diagnose = Some(echt.clone());
-        assert_eq!(szenerie_status(&s), echt);
-        assert!(echt.contains("243"), "die Rollwegzahl fehlt: {echt}");
+        schnappschuss_uebernehmen(&mut s, buch.schnappschuss("LKTB"), None);
+
+        let gemeldet = szenerie_status(&s);
+        assert!(
+            gemeldet.starts_with("ohne_bahnen("),
+            "die Meldung lautet: {gemeldet}"
+        );
+        assert!(gemeldet.contains("LKTB"), "der Platz fehlt: {gemeldet}");
+        assert!(
+            gemeldet.contains("243"),
+            "die Rollwegzahl fehlt: {gemeldet}"
+        );
+        // ⚠ Und die Auskunft ist WIRKLICH am Flug angekommen — nicht nur
+        // die Zeichenkette.
+        assert_eq!(
+            s.szenerie_auskunft.as_ref().map(|a| a.icao.as_str()),
+            Some("LKTB")
+        );
     }
 
     #[test]

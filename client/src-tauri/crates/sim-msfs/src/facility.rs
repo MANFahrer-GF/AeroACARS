@@ -2020,13 +2020,42 @@ mod anschluss_verdrahtung_tests {
         let danach = &a[oeffnen..];
         // ⚠ `verbindung_zuruecksetzen` — der Flug-Schnitt waere hier
         // falsch, er behaelt den Definitionsfehler.
+        //
+        // ⚠⚠ Die Sperre wird seit der elften Runde in einem BLOCK
+        // gehalten, weil die Kennung unter derselben Reihenfolge mit
+        // geleert wird. Deshalb steht hier nicht mehr die verkettete
+        // Form, sondern der Aufruf auf dem Griff.
+        // ⚠ Kein Zeichenabstand als Mass.
+        //
+        // Der erste Entwurf verlangte „weniger als 800 Zeichen hinter
+        // dem Verbindungsaufbau". Damit misst der Waechter die Laenge
+        // der KOMMENTARE, nicht die Struktur — ein erklaerender Absatz
+        // macht ihn rot, eine verschobene Zeile nicht unbedingt.
+        //
+        // Die belastbare Beziehung ist die REIHENFOLGE: Der Schnitt muss
+        // vor der ersten Registrierung stehen, sonst laeuft die neue
+        // Verbindung schon mit dem Zustand der alten.
+        let registrieren = danach
+            .find("conn.register_telemetry()")
+            .expect("die Registrierung fehlt im Verbindungszweig");
         let leeren = danach
-            .find("shared.szenerie.lock().verbindung_zuruecksetzen()")
+            .find("buch.verbindung_zuruecksetzen()")
             .expect("das Buch wird im Verbindungszweig nicht geleert");
         assert!(
-            leeren < 600,
-            "das Leeren steht {leeren} Zeichen hinter dem Verbindungsaufbau — \
-             das ist nicht mehr derselbe Zweig"
+            leeren < registrieren,
+            "das Buch wird erst NACH der Registrierung geleert — dann laeuft \
+             die neue Verbindung mit dem Zustand der alten an"
+        );
+        // ⚠ Und die Simulator-Kennung MIT — sie gehoert der Verbindung.
+        // Bleibt sie stehen, liefert der Schnappschuss bis zum naechsten
+        // `Open` eine neue Generation zusammen mit der Kennung der ALTEN
+        // Verbindung (QS-Befund 1, elfte Runde).
+        let kennung = danach
+            .find("*shared.sim_kennung.lock()=None")
+            .expect("die Simulator-Kennung wird beim Verbindungswechsel nicht geleert");
+        assert!(
+            kennung < registrieren && kennung > leeren,
+            "die Kennung wird nicht zusammen mit dem Buch geleert"
         );
     }
 
@@ -2175,7 +2204,7 @@ mod anschluss_verdrahtung_tests {
     fn die_verbindung_setzt_anders_zurueck_als_der_flug() {
         let a = ohne_leerraum(ADAPTER);
         assert!(
-            a.contains("shared.szenerie.lock().verbindung_zuruecksetzen()"),
+            a.contains("buch.verbindung_zuruecksetzen()"),
             "die neue Verbindung raeumt den Definitionsfehler nicht weg"
         );
         assert!(

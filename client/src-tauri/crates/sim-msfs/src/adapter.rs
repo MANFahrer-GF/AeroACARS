@@ -1015,7 +1015,19 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 // Hier wird die Felddefinition gleich neu registriert,
                 // also darf auch ein alter Definitionsfehler fallen. Bei
                 // einem blossen Flugwechsel waere das falsch.
-                shared.szenerie.lock().verbindung_zuruecksetzen();
+                // ⚠ Und die Simulator-Kennung MIT. Sie gehoert der
+                // Verbindung; bleibt sie stehen, liefert der
+                // Schnappschuss bis zum naechsten `Open` eine neue
+                // Generation zusammen mit der Kennung der ALTEN
+                // Verbindung (QS-Befund 1, elfte Runde).
+                //
+                // Dieselbe Sperrreihenfolge wie im Schnappschuss:
+                // Szenerie → Kennung. Umgekehrt nimmt sie niemand.
+                {
+                    let mut buch = shared.szenerie.lock();
+                    buch.verbindung_zuruecksetzen();
+                    *shared.sim_kennung.lock() = None;
+                }
                 if let Err(e) = conn.register_telemetry() {
                     set_error(&shared, format!("RegisterDataDefinition failed: {e}"));
                     tracing::error!(error = %e, "register_telemetry failed");
