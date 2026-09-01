@@ -2569,16 +2569,35 @@ fn szenerie_auskunft_uebernehmen(
                 ausweich.as_deref(),
                 tatsaechlich.as_deref(),
             );
-            // ⚠ Auskunft und Stand aus EINEM Zugriff.
-            let treffer = ernteziel
+            // ⚠ Generation, Auskunft, Stand, Diagnose und Kennung aus
+            // EINEM Zugriff — siehe `Schnappschuss`.
+            //
+            // Getrennt gelesen konnte dazwischen ein Verbindungswechsel
+            // liegen: Die Flugkopie wurde auf die neue Generation
+            // entwertet und danach mit der ALTEN Auskunft neu gefuellt,
+            // die nun die neue Generation trug. Der naechste Durchlauf
+            // sah keinen Wechsel mehr, und genau die Auskunft, welche
+            // die Generation entwerten sollte, war dauerhaft zurueck
+            // (QS-Befund 1, neunte Runde).
+            let (schnapp, kennung) = ernteziel
                 .as_deref()
-                .and_then(|z| msfs.szenerie_mit_stand(z));
-            let buch_generation = msfs.szenerie_generation();
-            let diagnose = ernteziel
-                .as_deref()
-                .map(|z| msfs.szenerie_diagnose_fuer(z))
-                .unwrap_or_else(|| "kein_ziel".to_string());
-            (treffer, diagnose, msfs.sim_kennung(), buch_generation)
+                .map(|z| msfs.szenerie_schnappschuss(z))
+                .unwrap_or_else(|| {
+                    (
+                        sim_core::szenerie::Schnappschuss {
+                            generation: 0,
+                            auskunft: None,
+                            diagnose: "kein_ziel".to_string(),
+                        },
+                        None,
+                    )
+                });
+            (
+                schnapp.auskunft,
+                schnapp.diagnose,
+                kennung,
+                schnapp.generation,
+            )
         };
         // ⚠ Die Diagnose IMMER mitschreiben, auch wenn keine Auskunft kam.
         // Genau der Fall ist der interessante: Sie sagt dann, ob nie
@@ -53833,17 +53852,26 @@ mod szenerie_status_tests {
     fn auskunft_und_stand_werden_zusammen_geholt() {
         // ⚠ Wieder zusammengebaut — siehe `die_simulator_kennung_wird_ersetzt`.
         let a = ohne_leerraum(QUELLE);
-        let zusammen = format!("msfs.{}_mit_stand(z)", "szenerie");
-        let getrennt = format!("msfs.{}_stand(z)", "szenerie");
+        let zusammen = format!("msfs.{}_schnappschuss(z)", "szenerie");
         assert!(
             a.contains(&zusammen),
-            "Auskunft und Stand werden getrennt geholt — dazwischen kann \
-             eine neue Lieferung eintreffen"
+            "der Abholer nimmt keinen Schnappschuss — dann koennen \
+             Generation, Auskunft und Diagnose aus verschiedenen \
+             Kontexten stammen"
         );
-        assert!(
-            !a.contains(&getrennt),
-            "der getrennte Stand-Zugriff ist zurueck"
-        );
+        // ⚠ Und die getrennten Zugaenge duerfen nicht zurueckkommen.
+        for verboten in [
+            format!("msfs.{}_mit_stand(", "szenerie"),
+            format!("msfs.{}_generation(", "szenerie"),
+            format!("msfs.{}_diagnose_fuer(", "szenerie"),
+            format!("msfs.{}_fuer(", "szenerie"),
+        ] {
+            assert!(
+                !a.contains(&verboten),
+                "ein getrennter Zugang ist zurueck — damit laesst sich der \
+                 Riss neu verdrahten"
+            );
+        }
     }
 
     /// ⚠ QS-Befund 2, achte Runde: Ein Generationswechsel entwertet die

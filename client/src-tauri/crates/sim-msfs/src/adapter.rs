@@ -912,9 +912,25 @@ impl MsfsAdapter {
         self.shared.szenerie_offen.store(true, Ordering::Relaxed);
     }
 
-    /// Zustand EINES Platzes als Kurzwort.
-    pub fn szenerie_diagnose_fuer(&self, icao: &str) -> String {
-        self.shared.szenerie.lock().diagnose(icao)
+    /// Generation, Auskunft, Stand, Diagnose und Simulator-Kennung —
+    /// EIN Zugriff.
+    ///
+    /// ⚠ Der EINZIGE Weg fuer den Abholer. Die frueheren Einzel-Zugaenge
+    /// (`szenerie_fuer`, `szenerie_stand`, `szenerie_mit_stand`,
+    /// `szenerie_generation`, `szenerie_diagnose_fuer`) sind bewusst
+    /// GESTRICHEN: Solange es sie gibt, laesst sich der Riss jederzeit
+    /// neu verdrahten, und genau das ist zweimal passiert.
+    ///
+    /// Die Sperrreihenfolge ist Szenerie → Kennung, und zwar an dieser
+    /// einen Stelle. Umgekehrt nimmt sie niemand.
+    pub fn szenerie_schnappschuss(
+        &self,
+        icao: &str,
+    ) -> (sim_core::szenerie::Schnappschuss, Option<String>) {
+        let buch = self.shared.szenerie.lock();
+        let schnapp = buch.schnappschuss(icao);
+        let kennung = self.shared.sim_kennung.lock().clone();
+        (schnapp, kennung)
     }
 
     /// Einen neuen Versuchsvorrat oeffnen (Eintritt in den Anflug).
@@ -948,37 +964,6 @@ impl MsfsAdapter {
     /// Womit sich der Simulator gemeldet hat (Name + Version).
     pub fn sim_kennung(&self) -> Option<String> {
         self.shared.sim_kennung.lock().clone()
-    }
-
-    /// Die zuletzt vollstaendig gelieferte Szenerie-Auskunft.
-    ///
-    /// `None` heisst: nicht angefordert, noch unterwegs, oder der
-    /// Simulator kennt den Platz nicht. In allen drei Faellen bleibt es
-    /// bei den Navdaten.
-    ///
-    /// ⚠ NUR zu diesem Platz. Kein Rueckfall auf "irgendeine" — am
-    /// 01.09.2026 lag beim Aufsetzen in Sevilla die Szenerie Frankfurts
-    /// vor, und ein bequemer Rueckfall haette sie benutzt.
-    pub fn szenerie_fuer(&self, icao: &str) -> Option<sim_core::szenerie::SzenerieFlughafen> {
-        self.shared.szenerie.lock().auskunft(icao).cloned()
-    }
-
-    /// Auskunft UND Stand unter EINER Sperre.
-    ///
-    /// ⚠ Zwei getrennte Zugriffe waren ein Riss: Dazwischen kann eine
-    /// neue Lieferung eintreffen, und dann traegt die ALTE Auskunft den
-    /// NEUEN Stand (QS-Befund 1, achte Runde).
-    pub fn szenerie_mit_stand(
-        &self,
-        icao: &str,
-    ) -> Option<(sim_core::szenerie::SzenerieFlughafen, u32)> {
-        self.shared.szenerie.lock().auskunft_mit_stand(icao)
-    }
-
-    /// Die laufende Generation — waechst bei neuer Verbindung und bei
-    /// einem Definitionsfehler.
-    pub fn szenerie_generation(&self) -> u32 {
-        self.shared.szenerie.lock().generation()
     }
 
     /// Wie oft dieser Platz schon gefragt wurde — fuer die Diagnose.

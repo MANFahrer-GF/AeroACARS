@@ -185,6 +185,21 @@ pub enum Auftragszustand {
     /// den Zustand, den sie beheben soll — die Ausnahme bedeutet, dass
     /// die Hoechstzahl gleichzeitiger Anfragen erreicht ist.
     Wartet { bis_ms: i64 },
+    /// Der Abschnittsvorrat ist aufgebraucht.
+    ///
+    /// ⚠ Ein ECHTER Zustand, keine zweite Sicht auf `Wartet`.
+    ///
+    /// Der erste Entwurf liess den Eintrag auf `Wartet` stehen und
+    /// liess nur `diagnose()` „erschoepft" behaupten. Damit sagten
+    /// `zustand()` und `diagnose()` wieder Verschiedenes ueber denselben
+    /// Auftrag — genau die Konstruktion, aus der in dieser Serie
+    /// mehrfach ein Befund wurde. Und weil die Sonderregel auch `Laeuft`
+    /// umfasste, galt schon der ZEHNTE, noch laufende Versuch als
+    /// erschoepft, obwohl seine Antwort noch kommen konnte (QS-Befund 2,
+    /// neunte Runde).
+    ///
+    /// Ein neues Anflugfenster setzt ihn wieder auf `Offen`.
+    Erschoepft,
     /// Vollstaendige Lieferung eingetroffen.
     Geliefert,
     /// SimConnect hat die Anfrage zurueckgewiesen.
@@ -266,6 +281,30 @@ pub const WARTEZEIT_MS: i64 = 60_000;
 /// `neues_versuchsfenster` oeffnet den Vorrat neu — beim Eintritt in den
 /// Anflug, wo die Szenerie des Ziels geladen ist.
 pub const HOECHSTVERSUCHE: u8 = 10;
+
+/// Alles, was der Abholer ueber einen Platz wissen muss — aus EINEM
+/// Zugriff.
+///
+/// ⚠ Warum als Bündel und nicht als drei Getter:
+///
+/// 1. Der Abholer liest die alte Auskunft A aus Generation 1.
+/// 2. Der Verbindungsfaden erhoeht auf Generation 2 und leert das Buch.
+/// 3. Der Abholer liest Generation 2.
+/// 4. Die Flugkopie wird auf Generation 2 entwertet.
+/// 5. Und danach wird A wieder eingesetzt — scheinbar als Generation 2.
+/// 6. Der naechste Durchlauf sieht keinen Wechsel mehr.
+///
+/// Genau die Auskunft, welche die Generation entwerten sollte, ersteht
+/// dauerhaft wieder auf (QS-Befund 1, neunte Runde). Dasselbe gilt fuer
+/// die Diagnose: Sie koennte aus einem anderen Kontext stammen als die
+/// Auskunft, die sie beschreibt.
+#[derive(Debug, Clone)]
+pub struct Schnappschuss {
+    pub generation: u32,
+    /// Auskunft und ihr Stand — oder nichts.
+    pub auskunft: Option<(SzenerieFlughafen, u32)>,
+    pub diagnose: String,
+}
 
 /// Wer welchen Platz gefragt hat, und was zurueckkam.
 ///
@@ -435,8 +474,14 @@ impl Auftragsbuch {
             if jetzt_ms - seit_ms < WARTEZEIT_MS {
                 return None;
             }
-            // Wartezeit um: der Platz darf wieder in die Reihe.
-            self.zustand_setzen(&icao, Auftragszustand::Offen);
+            // Wartezeit um: der Platz darf wieder in die Reihe — oder
+            // ist erschoepft, wenn das sein letzter Versuch war.
+            let neu = if self.versuche(&icao) >= HOECHSTVERSUCHE {
+                Auftragszustand::Erschoepft
+            } else {
+                Auftragszustand::Offen
+            };
+            self.zustand_setzen(&icao, neu);
         }
         let kandidat = self
             .auftraege
@@ -519,6 +564,7 @@ impl Auftragsbuch {
                 Auftragszustand::Offen
                     | Auftragszustand::Laeuft { .. }
                     | Auftragszustand::Wartet { .. }
+                    | Auftragszustand::Erschoepft
             ) {
                 a.versuche = 0;
                 a.zustand = Auftragszustand::Offen;
@@ -770,12 +816,17 @@ impl Auftragsbuch {
             self.auftraege.get(&icao).map(|a| &a.zustand),
             Some(Auftragszustand::Laeuft { .. })
         ) {
-            self.zustand_setzen(
-                &icao,
+            // ⚠ War das der letzte Versuch, ist der Vorrat WEG — und der
+            // Zustand sagt das auch. Eine Ruhezeit, nach der nie wieder
+            // gefragt wird, waere eine Luege.
+            let neu = if self.versuche(&icao) >= HOECHSTVERSUCHE {
+                Auftragszustand::Erschoepft
+            } else {
                 Auftragszustand::Wartet {
                     bis_ms: jetzt_ms + RUECKZUG_MS,
-                },
-            );
+                }
+            };
+            self.zustand_setzen(&icao, neu);
         }
         Some(icao)
     }
@@ -852,6 +903,17 @@ impl Auftragsbuch {
             .and_then(|a| a.auskunft.as_ref())
     }
 
+    /// Generation, Auskunft, Stand und Diagnose — EIN Zugriff.
+    ///
+    /// ⚠ Der einzige Weg fuer den Abholer. Siehe `Schnappschuss`.
+    pub fn schnappschuss(&self, icao: &str) -> Schnappschuss {
+        Schnappschuss {
+            generation: self.generation,
+            auskunft: self.auskunft_mit_stand(icao),
+            diagnose: self.diagnose(icao),
+        }
+    }
+
     /// Auskunft UND Stand in einem Zug.
     ///
     /// ⚠ Getrennt gelesen ist das ein Riss — und zwar genau der, den
@@ -920,26 +982,8 @@ impl Auftragsbuch {
         let icao_gross = icao.trim().to_ascii_uppercase();
         match self.auftraege.get(&icao_gross) {
             None => format!("nie_gefragt({icao_gross})"),
-            // ⚠ Erschoepft SCHLAEGT den Zustand.
-            //
-            // Nach dem zehnten Fehler bleibt der Eintrag auf `Wartet`
-            // stehen: `naechster` filtert ihn schon an der Versuchszahl
-            // aus, bevor der Zustand geprueft wird — er wechselt also
-            // nie. Die Diagnose meldete deshalb Stunden spaeter noch
-            // `ruht(LEZL, bis=<laengst vergangen>, versuch=10)`,
-            // waehrend der Abschnittsvorrat in Wahrheit leer ist
-            // (QS-Befund 4, achte Runde).
-            Some(a)
-                if a.versuche >= HOECHSTVERSUCHE
-                    && matches!(
-                        a.zustand,
-                        Auftragszustand::Offen
-                            | Auftragszustand::Laeuft { .. }
-                            | Auftragszustand::Wartet { .. }
-                    ) =>
-            {
-                format!("erschoepft({icao_gross}, versuche={})", a.versuche)
-            }
+            // ⚠ Keine Sonderregel mehr. `Erschoepft` ist ein echter
+            // Zustand; die Diagnose liest ihn, statt ihn abzuleiten.
             Some(a) => match &a.zustand {
                 Auftragszustand::Offen => format!("angemeldet({icao_gross})"),
                 Auftragszustand::Laeuft { .. } => {
@@ -947,6 +991,9 @@ impl Auftragsbuch {
                 }
                 Auftragszustand::Wartet { bis_ms } => {
                     format!("ruht({icao_gross}, bis={bis_ms}, versuch={})", a.versuche)
+                }
+                Auftragszustand::Erschoepft => {
+                    format!("erschoepft({icao_gross}, versuche={})", a.versuche)
                 }
                 Auftragszustand::Abgelehnt => format!(
                     "abgelehnt({icao_gross}, {})",
@@ -1383,6 +1430,98 @@ mod auftragsbuch_tests {
     /// Flugwechsel den Fehler, fragte dieselbe Verbindung mit derselben
     /// abgelehnten Definition weiter, ohne sie je neu registriert zu
     /// haben.
+    /// ⚠ QS-Befund 2, neunte Runde: Der ZEHNTE, noch laufende Versuch
+    /// ist nicht erschoepft.
+    ///
+    /// Die erste Fassung leitete „erschoepft" nur in der Diagnose ab —
+    /// und schloss `Laeuft` mit ein. Direkt nach dem Absenden galt
+    /// deshalb `zustand = Laeuft`, `diagnose = erschoepft`, obwohl die
+    /// Antwort noch kommen konnte.
+    #[test]
+    fn der_letzte_laufende_versuch_ist_noch_unterwegs() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("LEZL");
+        let mut t = 0i64;
+        let mut letzte_id = 0;
+        for _ in 0..HOECHSTVERSUCHE {
+            let (_, id) = b.naechsten_stellen(t).expect("Versuch");
+            letzte_id = id;
+            if b.versuche("LEZL") < HOECHSTVERSUCHE {
+                b.freigeben_zu_kennung(id, t);
+            }
+            t += RUECKZUG_MS;
+        }
+        // Der zehnte laeuft noch.
+        assert_eq!(b.versuche("LEZL"), HOECHSTVERSUCHE);
+        assert!(
+            matches!(b.zustand("LEZL"), Some(Auftragszustand::Laeuft { .. })),
+            "der zehnte Versuch laeuft nicht mehr: {:?}",
+            b.zustand("LEZL")
+        );
+        assert!(
+            b.diagnose("LEZL").starts_with("unterwegs("),
+            "der noch laufende Versuch gilt als erschoepft: {}",
+            b.diagnose("LEZL")
+        );
+
+        // ERST nach seinem Fehlschlag ist der Vorrat weg.
+        b.freigeben_zu_kennung(letzte_id, t);
+        assert_eq!(b.zustand("LEZL"), Some(Auftragszustand::Erschoepft));
+        assert!(b.diagnose("LEZL").starts_with("erschoepft("));
+
+        // Und ein neues Anflugfenster macht ihn wieder frei.
+        assert_eq!(b.neues_versuchsfenster(), 1);
+        assert_eq!(b.zustand("LEZL"), Some(Auftragszustand::Offen));
+        assert_eq!(b.versuche("LEZL"), 0);
+    }
+
+    /// Auch ein AUSGELAUFENER letzter Versuch endet in `Erschoepft`.
+    ///
+    /// ⚠ Nicht nur der Fehlschlag: Kommt gar keine Antwort, laeuft die
+    /// Wartezeit ab — und danach darf der Eintrag nicht auf `Offen`
+    /// stehen, als koennte noch einmal gefragt werden.
+    #[test]
+    fn ein_ausgelaufener_letzter_versuch_ist_erschoepft() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("LEZL");
+        let mut t = 0i64;
+        for _ in 0..HOECHSTVERSUCHE {
+            b.naechsten_stellen(t).expect("Versuch");
+            t += WARTEZEIT_MS;
+        }
+        // Der letzte laeuft ins Leere.
+        assert_eq!(b.naechsten_stellen(t + WARTEZEIT_MS), None);
+        assert_eq!(b.zustand("LEZL"), Some(Auftragszustand::Erschoepft));
+    }
+
+    /// ⚠ QS-Befund 1, neunte Runde: EIN Schnappschuss statt drei Getter.
+    #[test]
+    fn der_schnappschuss_ist_in_sich_stimmig() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("LEZL");
+        let (_, id) = b.naechsten_stellen(0).expect("Versuch");
+        b.geliefert_zu_kennung(id, auskunft("LEZL", 2))
+            .expect("Lieferung");
+
+        let s = b.schnappschuss("LEZL");
+        let (a, stand) = s.auskunft.clone().expect("Auskunft");
+        assert_eq!(a.bahnen.len(), 2);
+        assert_eq!(stand, id);
+        assert_eq!(s.generation, b.generation());
+        assert!(s.diagnose.starts_with("geliefert("));
+
+        // Nach einem Verbindungswechsel: neue Generation, KEINE Auskunft
+        // — und beides aus demselben Zugriff.
+        b.verbindung_zuruecksetzen();
+        let s2 = b.schnappschuss("LEZL");
+        assert!(s2.generation > s.generation);
+        assert!(
+            s2.auskunft.is_none(),
+            "die alte Auskunft haengt an der neuen Generation"
+        );
+        assert!(s2.diagnose.starts_with("nie_gefragt("));
+    }
+
     /// ⚠ QS-Befund 1, achte Runde: Auskunft und Stand aus EINEM Zugriff.
     ///
     /// Getrennt gelesen kann dazwischen eine neue Lieferung eintreffen —
