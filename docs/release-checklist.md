@@ -12,14 +12,33 @@ Hintergrund: v0.9.0/v0.9.1/v0.9.2 hatten einen **release-blocking Update-Modal-B
 - [ ] `git diff origin/main..HEAD --stat` enthält NUR Files die wirklich zu diesem Release gehören
 - [ ] Keine `dev-only`-Artefakte in `git diff --cached` (z. B. ad-hoc Test-Buttons, Sentry-Test-Endpoints)
 
-## 1. Version-Bump synchron an allen drei Stellen
+## 1. Version-Bump synchron an allen VIER Stellen
 
 - [ ] `client/package.json` `version`
 - [ ] `client/src-tauri/Cargo.toml` `[workspace.package] version`
 - [ ] `client/src-tauri/tauri.conf.json` `version`
+- [ ] **`client/package-lock.json`** — ZWEI Stellen: `version` in der Wurzel
+      UND in `packages[""]`
 - [ ] `Cargo.lock` automatisch mit-updated (cargo run / check)
 
-Check: `grep -E '"0\.X\.Y"|version = "0\.X\.Y"' client/package.json client/src-tauri/Cargo.toml client/src-tauri/tauri.conf.json` zeigt **alle drei** mit der neuen Version.
+> ⚠ **Diese Liste stand bis 01.09.2026 auf DREI Stellen** und liess
+> `package-lock.json` aus. Es faellt nicht von selbst auf: Nichts liest die
+> Zahl zur Laufzeit, `npm ci` beschwert sich nicht, und der Wert lag am
+> 30.08.2026 neun Fassungen zurueck (1.6.3 gegen 1.7.12). Beim Bump auf
+> 1.7.14 lief die CI genau deswegen rot — der Waechter
+> `src/lib/versionen.test.ts` prueft alle vier, die Checkliste kannte drei.
+> Wer nur dieser Liste folgt, faellt in dieselbe Grube.
+
+Der Waechter ist die verlaessliche Pruefung, nicht das Auge:
+
+```bash
+cd client && npx vitest run src/lib/versionen.test.ts
+```
+
+- [ ] **Nach dem Bump die GANZE Frontend-Suite laufen lassen**, nicht nur den
+      einen Test. Am 01.09.2026 lief `npx vitest run` VOR dem Bump und danach
+      nur noch der Update-Fenster-Waechter — der Versions-Waechter fiel
+      dadurch erst in der CI auf.
 
 ## 2. Bilinguale Release-Notes
 
