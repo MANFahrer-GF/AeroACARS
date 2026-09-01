@@ -963,9 +963,22 @@ impl MsfsAdapter {
         self.shared.szenerie.lock().auskunft(icao).cloned()
     }
 
-    /// Der Stand der gespeicherten Lieferung — siehe `lieferungsstand`.
-    pub fn szenerie_stand(&self, icao: &str) -> u32 {
-        self.shared.szenerie.lock().lieferungsstand(icao)
+    /// Auskunft UND Stand unter EINER Sperre.
+    ///
+    /// ⚠ Zwei getrennte Zugriffe waren ein Riss: Dazwischen kann eine
+    /// neue Lieferung eintreffen, und dann traegt die ALTE Auskunft den
+    /// NEUEN Stand (QS-Befund 1, achte Runde).
+    pub fn szenerie_mit_stand(
+        &self,
+        icao: &str,
+    ) -> Option<(sim_core::szenerie::SzenerieFlughafen, u32)> {
+        self.shared.szenerie.lock().auskunft_mit_stand(icao)
+    }
+
+    /// Die laufende Generation — waechst bei neuer Verbindung und bei
+    /// einem Definitionsfehler.
+    pub fn szenerie_generation(&self) -> u32 {
+        self.shared.szenerie.lock().generation()
     }
 
     /// Wie oft dieser Platz schon gefragt wurde — fuer die Diagnose.

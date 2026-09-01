@@ -343,6 +343,19 @@ pub struct Auftragsbuch {
     /// Fortlaufende Kennung. Jeder VERSUCH bekommt eine eigene — nicht
     /// jeder Platz.
     naechste_id: u32,
+    /// Zaehlt jede neue Verbindung und jeden Definitionsfehler.
+    ///
+    /// ⚠ Die Standnummer allein reicht nicht: Sie loest nur den Fall,
+    /// dass nach dem Wechsel tatsaechlich eine neue Lieferung eintrifft.
+    /// Kommt keine — andere Simulatorfassung, gescheiterte
+    /// Registrierung, abgelehnte Definition, stummer Zielplatz —, bleibt
+    /// die Kopie der ALTEN Verbindung am Flug und wird beim Aufsetzen
+    /// benutzt. Das Buch gibt in diesem Zustand bewusst `None` heraus;
+    /// die bereits kopierte Auskunft umging den Riegel (QS-Befund 2,
+    /// achte Runde).
+    ///
+    /// Die Generation macht den Wechsel sichtbar, auch ohne Lieferung.
+    generation: u32,
     /// Gesetzt, wenn der Simulator ein Feld der Definition abgelehnt
     /// hat: (Feldname, Grund).
     ///
@@ -551,6 +564,12 @@ impl Auftragsbuch {
     pub fn verbindung_zuruecksetzen(&mut self) {
         self.zuruecksetzen();
         self.definition_fehler = None;
+        self.generation = self.generation.saturating_add(1);
+    }
+
+    /// Die laufende Generation — siehe `generation`.
+    pub fn generation(&self) -> u32 {
+        self.generation
     }
 
     /// Die Raenge der derzeit gueltigen Ziele SETZEN.
@@ -581,6 +600,10 @@ impl Auftragsbuch {
     /// nichts mehr heraus, und die Diagnose sagt, welches Feld es war.
     pub fn definition_abgelehnt(&mut self, feld: String, grund: String) {
         self.definition_fehler = Some((feld, grund));
+        // ⚠ Auch das ist ein Generationswechsel: Was unter dieser
+        // Definition entstanden ist, gilt nicht mehr — auch das, was
+        // schon am Flug liegt.
+        self.generation = self.generation.saturating_add(1);
         // ⚠ Auch den laufenden Auftrag beenden — sonst haelt er die
         // Reihe, obwohl nie wieder gefragt wird.
         if let Some(icao) = self.laufender() {
@@ -829,6 +852,28 @@ impl Auftragsbuch {
             .and_then(|a| a.auskunft.as_ref())
     }
 
+    /// Auskunft UND Stand in einem Zug.
+    ///
+    /// ⚠ Getrennt gelesen ist das ein Riss — und zwar genau der, den
+    /// dieses Blatt als Fehlerklasse fuehrt:
+    ///
+    /// 1. alte Auskunft wird gelesen,
+    /// 2. das Buch speichert eine neue mit Stand 2,
+    /// 3. der Abholer liest Stand 2,
+    /// 4. die ALTE Auskunft liegt am Flug und traegt Stand 2,
+    /// 5. die echte neue wird spaeter wegen gleichen Standes abgewiesen.
+    ///
+    /// Der Flug behaelt die alte Auskunft dauerhaft, und niemand sieht
+    /// es (QS-Befund 1, achte Runde).
+    pub fn auskunft_mit_stand(&self, icao: &str) -> Option<(SzenerieFlughafen, u32)> {
+        let icao = icao.trim().to_ascii_uppercase();
+        if self.definition_fehler.is_some() {
+            return None;
+        }
+        let a = self.auftraege.get(&icao)?;
+        a.auskunft.as_ref().map(|x| (x.clone(), a.ergebnis_id))
+    }
+
     /// Der Stand der gespeicherten Lieferung — die Kennung des Versuchs,
     /// aus dem sie stammt.
     ///
@@ -875,6 +920,26 @@ impl Auftragsbuch {
         let icao_gross = icao.trim().to_ascii_uppercase();
         match self.auftraege.get(&icao_gross) {
             None => format!("nie_gefragt({icao_gross})"),
+            // ⚠ Erschoepft SCHLAEGT den Zustand.
+            //
+            // Nach dem zehnten Fehler bleibt der Eintrag auf `Wartet`
+            // stehen: `naechster` filtert ihn schon an der Versuchszahl
+            // aus, bevor der Zustand geprueft wird — er wechselt also
+            // nie. Die Diagnose meldete deshalb Stunden spaeter noch
+            // `ruht(LEZL, bis=<laengst vergangen>, versuch=10)`,
+            // waehrend der Abschnittsvorrat in Wahrheit leer ist
+            // (QS-Befund 4, achte Runde).
+            Some(a)
+                if a.versuche >= HOECHSTVERSUCHE
+                    && matches!(
+                        a.zustand,
+                        Auftragszustand::Offen
+                            | Auftragszustand::Laeuft { .. }
+                            | Auftragszustand::Wartet { .. }
+                    ) =>
+            {
+                format!("erschoepft({icao_gross}, versuche={})", a.versuche)
+            }
             Some(a) => match &a.zustand {
                 Auftragszustand::Offen => format!("angemeldet({icao_gross})"),
                 Auftragszustand::Laeuft { .. } => {
@@ -1318,6 +1383,66 @@ mod auftragsbuch_tests {
     /// Flugwechsel den Fehler, fragte dieselbe Verbindung mit derselben
     /// abgelehnten Definition weiter, ohne sie je neu registriert zu
     /// haben.
+    /// ⚠ QS-Befund 1, achte Runde: Auskunft und Stand aus EINEM Zugriff.
+    ///
+    /// Getrennt gelesen kann dazwischen eine neue Lieferung eintreffen —
+    /// dann traegt die ALTE Auskunft den NEUEN Stand, und die echte neue
+    /// wird spaeter wegen gleichen Standes abgewiesen.
+    #[test]
+    fn auskunft_und_stand_gehoeren_zusammen() {
+        // ⚠ BEIDE Versuche stellen, BEVOR einer liefert — ein
+        // gelieferter Platz wird nicht erneut gefragt. Genau so
+        // entstehen im Betrieb zwei ausstehende Antworten desselben
+        // Platzes.
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("LEZL");
+        let (_, id1) = b.naechsten_stellen(0).expect("Versuch 1");
+        let (_, id2) = b.naechsten_stellen(WARTEZEIT_MS).expect("Versuch 2");
+
+        b.geliefert_zu_kennung(id1, auskunft("LEZL", 1))
+            .expect("Lieferung 1");
+        let (a1, s1) = b.auskunft_mit_stand("LEZL").expect("Auskunft 1");
+        assert_eq!(a1.bahnen.len(), 1);
+
+        b.geliefert_zu_kennung(id2, auskunft("LEZL", 3))
+            .expect("Lieferung 2");
+        let (a2, s2) = b.auskunft_mit_stand("LEZL").expect("Auskunft 2");
+
+        assert!(s2 > s1, "der Stand waechst nicht");
+        assert_eq!(
+            a2.bahnen.len(),
+            3,
+            "der neue Stand gehoert zur ALTEN Auskunft"
+        );
+    }
+
+    /// ⚠ QS-Befund 2, achte Runde: Der Wechsel ist auch OHNE Lieferung
+    /// sichtbar.
+    #[test]
+    fn ein_verbindungswechsel_erhoeht_die_generation() {
+        let mut b = Auftragsbuch::neu();
+        let g0 = b.generation();
+        b.zuruecksetzen();
+        assert_eq!(
+            b.generation(),
+            g0,
+            "ein Flugwechsel ist keine neue Verbindung"
+        );
+        b.verbindung_zuruecksetzen();
+        assert!(b.generation() > g0, "die Generation blieb stehen");
+    }
+
+    /// Und ein Definitionsfehler ebenso — was unter einer ungueltigen
+    /// Definition entstanden ist, gilt nicht mehr.
+    #[test]
+    fn ein_definitionsfehler_erhoeht_die_generation() {
+        let mut b = Auftragsbuch::neu();
+        let g0 = b.generation();
+        b.definition_abgelehnt("WIDTH".into(), "DATA_ERROR".into());
+        assert!(b.generation() > g0);
+        assert!(b.auskunft_mit_stand("LEZL").is_none());
+    }
+
     #[test]
     fn ein_flugwechsel_behaelt_den_definitionsfehler() {
         let mut b = Auftragsbuch::neu();
@@ -1548,21 +1673,29 @@ mod auftragsbuch_tests {
         );
     }
 
-    /// ⚠ Zehn Versuche dauern jetzt Minuten, nicht eine halbe Sekunde.
+    /// ⚠ Zehn Versuche dauern jetzt 45 Sekunden, nicht eine halbe.
     ///
     /// Das ist die Rechnung, die dem P0 zugrunde lag: Verteiler alle
     /// 50 ms, zehn Versuche — ohne Ruhezeit war der Vorrat nach 500 ms
-    /// weg.
+    /// weg. Mit `RUECKZUG_MS` starten sie bei 0, 5, … 45 Sekunden.
+    ///
+    /// ⚠⚠ Dieser Test hiess `..._dauern_minuten`. Das war schlicht
+    /// falsch gerechnet — 9 × 5 s sind 45 s, keine Minuten. Ein
+    /// Testname, der mehr behauptet als die Sache hergibt, ist eine
+    /// Aussage ueber das Verhalten wie jede andere (QS-Nebenbefund,
+    /// achte Runde).
     #[test]
-    fn zehn_voruebergehende_fehler_dauern_minuten() {
+    fn zehn_voruebergehende_fehler_dauern_fuenfundvierzig_sekunden() {
         let mut b = Auftragsbuch::neu();
         b.wunsch("LEZL");
         let mut t = 0i64;
         let mut versuche = 0;
+        let mut letzter = 0i64;
         // Der Verteiler klopft alle 50 ms an.
         while t < 10 * RUECKZUG_MS {
             if let Some((_, id)) = b.naechsten_stellen(t) {
                 versuche += 1;
+                letzter = t;
                 b.freigeben_zu_kennung(id, t);
             }
             t += 50;
@@ -1572,6 +1705,20 @@ mod auftragsbuch_tests {
             HOECHSTVERSUCHE as usize,
             "in {} ms wurden {versuche} Versuche verbraucht",
             10 * RUECKZUG_MS
+        );
+        // ⚠ Die Zahl im Namen NACHRECHNEN, nicht behaupten: neun
+        // Ruhezeiten zwischen zehn Versuchen.
+        assert_eq!(
+            letzter,
+            (HOECHSTVERSUCHE as i64 - 1) * RUECKZUG_MS,
+            "der zehnte Versuch faellt nicht auf die erwartete Marke"
+        );
+        assert_eq!(letzter, 45_000, "45 Sekunden, wie der Name sagt");
+        // ⚠ Und danach meldet die Diagnose ERSCHOEPFT, nicht „ruht".
+        assert!(
+            b.diagnose("LEZL").starts_with("erschoepft("),
+            "nach dem letzten Versuch meldet die Diagnose weiter: {}",
+            b.diagnose("LEZL")
         );
         // Und die ersten zehn Durchlaeufe (500 ms) duerfen nicht reichen.
         let mut b2 = Auftragsbuch::neu();

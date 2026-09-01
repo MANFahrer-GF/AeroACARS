@@ -2380,6 +2380,20 @@ fn auskunft_ersetzen(alt: Option<(&str, u32)>, neu_icao: &str, neu_stand: u32) -
     }
 }
 
+/// Ob die Flugkopie der Szenerie zu entwerten ist.
+///
+/// ⚠ Die Standnummer allein reicht nicht. Sie loest nur den Fall, dass
+/// nach einem Verbindungswechsel tatsaechlich eine neue Lieferung
+/// eintrifft. Bleibt sie aus — andere Simulatorfassung, gescheiterte
+/// Registrierung, asynchron abgelehnte Definition, stummer Zielplatz —,
+/// blieb die Kopie der ALTEN Verbindung am Flug und wurde beim Aufsetzen
+/// benutzt. Das Buch gibt in diesem Zustand bewusst nichts heraus; die
+/// bereits kopierte Auskunft umging den Riegel (QS-Befund 2, achte
+/// Runde).
+fn flugkopie_entwerten(alt_generation: u32, buch_generation: u32) -> bool {
+    alt_generation != buch_generation
+}
+
 /// Rang einer blossen Vormerkung.
 ///
 /// ⚠ Absichtlich SCHLECHTER als jeder Rang, den die Ernte vergibt.
@@ -2517,7 +2531,7 @@ fn szenerie_auskunft_uebernehmen(
             faellig
         };
 
-        let (neu, diagnose, kennung) = {
+        let (neu, diagnose, kennung, buch_generation) = {
             let state = app.state::<AppState>();
             let Ok(msfs) = state.msfs.lock() else { return };
             // ⚠ Bei JEDEM Durchlauf nachmelden. Das Buch entscheidet,
@@ -2555,14 +2569,16 @@ fn szenerie_auskunft_uebernehmen(
                 ausweich.as_deref(),
                 tatsaechlich.as_deref(),
             );
+            // ⚠ Auskunft und Stand aus EINEM Zugriff.
             let treffer = ernteziel
                 .as_deref()
-                .and_then(|z| msfs.szenerie_fuer(z).map(|a| (a, msfs.szenerie_stand(z))));
+                .and_then(|z| msfs.szenerie_mit_stand(z));
+            let buch_generation = msfs.szenerie_generation();
             let diagnose = ernteziel
                 .as_deref()
                 .map(|z| msfs.szenerie_diagnose_fuer(z))
                 .unwrap_or_else(|| "kein_ziel".to_string());
-            (treffer, diagnose, msfs.sim_kennung())
+            (treffer, diagnose, msfs.sim_kennung(), buch_generation)
         };
         // ⚠ Die Diagnose IMMER mitschreiben, auch wenn keine Auskunft kam.
         // Genau der Fall ist der interessante: Sie sagt dann, ob nie
@@ -2570,8 +2586,27 @@ fn szenerie_auskunft_uebernehmen(
         // ausblieb. Frueher fiel das alles unter "navdaten".
         if let Ok(mut stats) = flight.stats.lock() {
             stats.szenerie_diagnose = Some(diagnose);
-            if stats.sim_kennung.is_none() {
+            // ⚠ ERSETZEN, nicht nur fuellen. Wechselt eine laufende
+            // Aufzeichnung von MSFS 2020 auf 2024 oder verbindet sich
+            // neu, trug der Flug sonst weiter die alte Kennung — und
+            // ausgerechnet die Auswertung der Facility-Unterschiede
+            // haette eine falsche Diagnose (QS-Befund 3, achte Runde).
+            if kennung.is_some() {
                 stats.sim_kennung = kennung;
+            }
+            // ⚠ Generationswechsel: Die Kopie der alten Verbindung gilt
+            // nicht mehr — auch wenn KEINE neue Lieferung kommt.
+            if flugkopie_entwerten(stats.szenerie_auskunft_generation, buch_generation) {
+                if stats.szenerie_auskunft.is_some() {
+                    tracing::info!(
+                        alt = stats.szenerie_auskunft_generation,
+                        neu = buch_generation,
+                        "Szenerie-Generation gewechselt — Flugkopie entwertet"
+                    );
+                }
+                stats.szenerie_auskunft = None;
+                stats.szenerie_auskunft_stand = 0;
+                stats.szenerie_auskunft_generation = buch_generation;
             }
         }
         let Some((neu, stand)) = neu else { return };
@@ -4262,6 +4297,9 @@ struct FlightStats {
     /// Der Stand der am Flug abgelegten Szenerie-Auskunft.
     /// Siehe `auskunft_ersetzen`.
     szenerie_auskunft_stand: u32,
+    /// Die Generation, unter der die Flugkopie entstanden ist.
+    /// Siehe `flugkopie_entwerten`.
+    szenerie_auskunft_generation: u32,
     /// Die Phase beim VORIGEN Durchlauf der Szenerie-Ernte.
     ///
     /// ⚠ Irgendeine Phase, nicht die zuletzt geoeffnete Landephase —
@@ -53724,6 +53762,102 @@ mod szenerie_status_tests {
             "ein leeres Ausweichziel darf nicht das geplante verdecken"
         );
         assert_eq!(szenerie_ernteziel("XX", None, None), None);
+    }
+
+    /// Der eigene Quelltext — fuer die Waechter der Windows-Verdrahtung.
+    ///
+    /// ⚠ Die Ernte steht hinter `cfg(target_os = "windows")` und wird
+    /// auf dem Mac nicht uebersetzt. Eine Gegenprobe, die dort ansetzt,
+    /// bleibt gruen und sagt nichts. Diese Waechter lesen deshalb den
+    /// Text.
+    const QUELLE: &str = include_str!("lib.rs");
+
+    fn ohne_leerraum(s: &str) -> String {
+        s.split_whitespace().collect()
+    }
+
+    /// ⚠ QS-Befund 3, achte Runde: Die Simulator-Kennung wird ERSETZT.
+    ///
+    /// Sie wurde nur gesetzt, solange sie `None` war. Wechselte eine
+    /// laufende Aufzeichnung von MSFS 2020 auf 2024 oder verband sich
+    /// neu, trug der Flug weiter die alte Kennung — und ausgerechnet die
+    /// Auswertung der Facility-Unterschiede haette eine falsche
+    /// Diagnose.
+    #[test]
+    fn die_simulator_kennung_wird_ersetzt() {
+        // ⚠ Die Nadeln ZUSAMMENBAUEN, nicht hinschreiben.
+        //
+        // Der Waechter liest die Datei, in der er selbst steht. Eine
+        // wortwoertliche Nadel findet sich in seiner eigenen Behauptung
+        // wieder — die Verbots-Pruefung schlaegt dann immer an, und die
+        // Bestaetigungs-Pruefung ist immer gruen. Beides sagt nichts.
+        let a = ohne_leerraum(QUELLE);
+        let verboten = format!(
+            "if{}.is_none(){{{}={};}}",
+            "stats.sim_kennung", "stats.sim_kennung", "kennung"
+        );
+        let noetig = format!(
+            "if{}.is_some(){{{}={};}}",
+            "kennung", "stats.sim_kennung", "kennung"
+        );
+        assert!(
+            !a.contains(&verboten),
+            "die Kennung wird nur gefuellt, nicht ersetzt — ein \
+             Simulatorwechsel bleibt unsichtbar"
+        );
+        assert!(a.contains(&noetig), "die Kennung wird nicht ersetzt");
+    }
+
+    /// ⚠ Und die Flugkopie wird beim Generationswechsel wirklich
+    /// entwertet — samt Nachziehen der Generation.
+    #[test]
+    fn die_flugkopie_wird_beim_generationswechsel_entwertet() {
+        let a = ohne_leerraum(QUELLE);
+        let stelle = a
+            .find("flugkopie_entwerten(stats.szenerie_auskunft_generation,buch_generation)")
+            .expect("der Generationswechsel erreicht die Flugkopie nicht");
+        let fenster = &a[stelle..(stelle + 600).min(a.len())];
+        assert!(
+            fenster.contains("stats.szenerie_auskunft=None"),
+            "die Kopie wird nicht geloescht"
+        );
+        assert!(
+            fenster.contains("stats.szenerie_auskunft_generation=buch_generation"),
+            "die Generation wird nicht nachgezogen — dann entwertet jeder \
+             Durchlauf erneut"
+        );
+    }
+
+    /// ⚠ Und Auskunft und Stand kommen aus EINEM Zugriff.
+    #[test]
+    fn auskunft_und_stand_werden_zusammen_geholt() {
+        // ⚠ Wieder zusammengebaut — siehe `die_simulator_kennung_wird_ersetzt`.
+        let a = ohne_leerraum(QUELLE);
+        let zusammen = format!("msfs.{}_mit_stand(z)", "szenerie");
+        let getrennt = format!("msfs.{}_stand(z)", "szenerie");
+        assert!(
+            a.contains(&zusammen),
+            "Auskunft und Stand werden getrennt geholt — dazwischen kann \
+             eine neue Lieferung eintreffen"
+        );
+        assert!(
+            !a.contains(&getrennt),
+            "der getrennte Stand-Zugriff ist zurueck"
+        );
+    }
+
+    /// ⚠ QS-Befund 2, achte Runde: Ein Generationswechsel entwertet die
+    /// Flugkopie — auch ohne Ersatzlieferung.
+    #[test]
+    fn ein_generationswechsel_entwertet_die_flugkopie() {
+        assert!(!flugkopie_entwerten(3, 3), "gleiche Generation");
+        assert!(
+            flugkopie_entwerten(3, 4),
+            "nach einem Verbindungswechsel bleibt die alte Kopie gueltig"
+        );
+        // ⚠ Auch rueckwaerts. Die Generation ist eine Kennung, kein Mass
+        // — ein `>`-Vergleich waere eine Annahme ueber die Richtung.
+        assert!(flugkopie_entwerten(4, 3));
     }
 
     /// ⚠ QS-Befund 2, siebte Runde: Die neueste Lieferung gewinnt auch
