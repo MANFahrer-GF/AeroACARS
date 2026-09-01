@@ -122,7 +122,6 @@ pub enum ConnectionState {
 
 /// External-facing MSFS adapter. Cheap to clone-state; drives a
 /// background worker thread that talks to SimConnect.
-use sim_core::szenerie::SzenerieDiagnose;
 
 pub struct MsfsAdapter {
     shared: Arc<Shared>,
@@ -149,14 +148,10 @@ struct Shared {
     szenerie: Mutex<sim_core::szenerie::Auftragsbuch>,
     /// Steht eine Anfrage aus, die der Verbindungsfaden noch stellen muss?
     szenerie_offen: AtomicBool,
-    /// Wie weit die Szenerie-Abfrage gekommen ist — fuer die Diagnose.
-    ///
-    /// ⚠ Ohne das ist die Sache nicht messbar: Am Flug stand bisher nur
-    /// "navdaten", und darin steckten drei voellig verschiedene Faelle
-    /// (nie gefragt / abgelehnt / geantwortet-aber-unbrauchbar). Genau
-    /// deshalb war am 29.08.2026 nicht zu sagen, warum die MSFS-Haelfte
-    /// von v1.7.8 bei 5 von 5 Landungen nichts geliefert hat.
-    szenerie_diagnose: Mutex<SzenerieDiagnose>,
+    // ⚠ Hier stand `szenerie_diagnose: Mutex<SzenerieDiagnose>` — eine
+    // ZWEITE Zustandsquelle neben dem Auftragsbuch. Ersatzlos
+    // gestrichen; die Diagnose kommt aus dem Schnappschuss
+    // (QS-Befund, zehnte Runde).
     /// Name und Version, mit denen sich der Simulator beim Verbinden
     /// meldet (aus `SIMCONNECT_RECV_OPEN`). MSFS 2020 und 2024 melden
     /// sich unterschiedlich — und die Feldnamen der Facility-Abfrage
@@ -640,7 +635,6 @@ impl MsfsAdapter {
                 last_error: Mutex::new(None),
                 szenerie: Mutex::new(sim_core::szenerie::Auftragsbuch::neu()),
                 szenerie_offen: AtomicBool::new(false),
-                szenerie_diagnose: Mutex::new(SzenerieDiagnose::default()),
                 sim_kennung: Mutex::new(None),
                 sim_paused: AtomicBool::new(false),
                 sim_unecht_tiefe: AtomicI32::new(0),
@@ -956,15 +950,10 @@ impl MsfsAdapter {
         self.shared.szenerie.lock().zuruecksetzen();
     }
 
-    /// Wie weit die Szenerie-Abfrage gekommen ist.
-    pub fn szenerie_diagnose(&self) -> SzenerieDiagnose {
-        self.shared.szenerie_diagnose.lock().clone()
-    }
-
-    /// Womit sich der Simulator gemeldet hat (Name + Version).
-    pub fn sim_kennung(&self) -> Option<String> {
-        self.shared.sim_kennung.lock().clone()
-    }
+    // ⚠ Hier stand `sim_kennung()`. Ersatzlos gestrichen: Die Kennung
+    // kommt aus `szenerie_schnappschuss`, damit sie zum selben Kontext
+    // gehoert wie Generation und Auskunft. Ein eigener Getter waere der
+    // Rueckweg zu genau dem Riss, den der Schnappschuss schliesst.
 
     /// Wie oft dieser Platz schon gefragt wurde — fuer die Diagnose.
     pub fn szenerie_versuche(&self, icao: &str) -> u8 {
@@ -1067,7 +1056,6 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                         .szenerie
                         .lock()
                         .definition_abgelehnt("register_facility".into(), e.clone());
-                    *shared.szenerie_diagnose.lock() = SzenerieDiagnose::Abgelehnt(e);
                     // ⚠ Hier KEINE Sammler zu verwerfen ist richtig, und
                     // zwar nicht aus Nachlaessigkeit: Diese Stelle liegt
                     // in `worker_loop`, VOR `run_dispatch`, und dort
@@ -1234,7 +1222,6 @@ fn run_dispatch(
                 let request_id = FACILITY_REQUEST_BASE + auftrag_id;
                 match conn.request_facility(&icao, request_id) {
                     Ok(paket) => {
-                        *shared.szenerie_diagnose.lock() = SzenerieDiagnose::Angefordert;
                         // ⚠ Der Sammler wird IMMER eroeffnet — die
                         // Anfrage lief, die Lieferung kommt ueber die
                         // Anfragekennung.
@@ -1273,8 +1260,6 @@ fn run_dispatch(
                         //
                         // Also freigeben, nicht ablehnen — der naechste
                         // Versuch ist der richtige Umgang damit.
-                        *shared.szenerie_diagnose.lock() =
-                            SzenerieDiagnose::Abgelehnt(e.to_string());
                         shared
                             .szenerie
                             .lock()
@@ -1431,15 +1416,6 @@ fn run_dispatch(
                             rollwege,
                             quelle: "msfs".to_string(),
                         };
-                        // ⚠ Die Diagnose VOR dem Ablegen setzen und aus
-                        // derselben Auskunft speisen — sonst zaehlt sie
-                        // irgendwann etwas anderes als das, was benutzt
-                        // wird.
-                        *shared.szenerie_diagnose.lock() = SzenerieDiagnose::Geliefert {
-                            icao: auskunft.icao.clone(),
-                            bahnen: auskunft.bahnen.len(),
-                            rollwege: auskunft.rollwege.len(),
-                        };
                         shared
                             .szenerie
                             .lock()
@@ -1479,8 +1455,6 @@ fn run_dispatch(
                             .szenerie
                             .lock()
                             .definition_abgelehnt(feld, format!("Ausnahme {exception}"));
-                        *shared.szenerie_diagnose.lock() =
-                            SzenerieDiagnose::Abgelehnt(format!("Felddefinition ({exception})"));
                         facility_lieferungen = facility::Lieferungen::neu();
                         continue;
                     }

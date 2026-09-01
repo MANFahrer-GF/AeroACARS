@@ -54283,12 +54283,34 @@ mod szenerie_status_tests {
         // waere gruen geblieben, waehrend die Produktion laengst
         // `ohne_bahnen(rollwege=243)` liefert. Ein Test, der seine
         // Erwartung selbst erfindet, prueft nur sich selbst.
-        let echt = sim_core::szenerie::SzenerieDiagnose::Geliefert {
-            icao: "LKTB".to_string(),
-            bahnen: 0,
-            rollwege: 243,
-        }
-        .kurz();
+        // ⚠ Aus der ECHTEN Quelle — jetzt dem Auftragsbuch.
+        //
+        // Vorher stammte die Erwartung aus `SzenerieDiagnose::kurz()`.
+        // Die Produktion benutzt diesen Typ nicht mehr; der Test war
+        // damit selbst zur zweiten Quelle geworden und haette gruen
+        // bleiben koennen, waehrend die Meldung am Flug laengst anders
+        // lautet.
+        let echt = {
+            let mut buch = sim_core::szenerie::Auftragsbuch::neu();
+            buch.wunsch("LKTB");
+            let (_, id) = buch.naechsten_stellen(0).expect("Auftrag");
+            buch.geliefert_zu_kennung(
+                id,
+                sim_core::szenerie::SzenerieFlughafen {
+                    icao: "LKTB".to_string(),
+                    bahnen: Vec::new(),
+                    rollwege: (0..243)
+                        .map(|_| sim_core::szenerie::SzenerieRollweg {
+                            name: "A".to_string(),
+                            punkte: Vec::new(),
+                        })
+                        .collect(),
+                    quelle: "msfs".to_string(),
+                },
+            )
+            .expect("Lieferung");
+            buch.diagnose("LKTB")
+        };
         let mut s = FlightStats::new();
         s.szenerie_auskunft = Some(auskunft(0));
         s.szenerie_diagnose = Some(echt.clone());

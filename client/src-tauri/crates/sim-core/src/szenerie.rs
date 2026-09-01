@@ -62,105 +62,23 @@ pub struct SzenerieFlughafen {
     pub quelle: String,
 }
 
-/// Wie weit die Szenerie-Abfrage gekommen ist.
-///
-/// Bewusst ein eigener Typ statt eines `bool`: Die drei Fehlerfaelle
-/// verlangen verschiedene Antworten. "Abgelehnt" heisst, der Simulator
-/// kennt die Abfrage nicht (falsche Fassung?), "keine Antwort" heisst,
-/// sie kam nicht rechtzeitig, "ohne Bahnen" heisst, der Platz war leer.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum SzenerieDiagnose {
-    /// Es wurde nie gefragt — kein Ziel bekannt, oder kein MSFS.
-    #[default]
-    NichtAngefordert,
-    /// Anfrage gestellt, Antwort steht noch aus.
-    Angefordert,
-    /// SimConnect hat die Anfrage zurueckgewiesen (Grund im Text).
-    Abgelehnt(String),
-    /// Vollstaendige Lieferung eingetroffen.
-    Geliefert {
-        icao: String,
-        bahnen: usize,
-        rollwege: usize,
-    },
-}
-
-impl SzenerieDiagnose {
-    /// Kurzwort fuer den Flug — muss ohne Erklaerung lesbar sein.
-    ///
-    /// ⚠ Bei einer Lieferung stehen die ZAHLEN dabei. Der erste Entwurf
-    /// hat sie weggekuerzt, und genau daran blieb die Untersuchung am
-    /// 29.08.2026 haengen: Zwei Fluege mit MSFS 2024 meldeten
-    /// `ohne_bahnen` — die Antwort kam also an, aber ohne eine einzige
-    /// Bahn. Ob dabei ROLLWEGE ankamen, haette entschieden, wo der
-    /// Fehler sitzt: Kommen sie, funktionieren Untersaetze grundsaetzlich
-    /// und nur das Bahn-Raster ist falsch. Kommen sie nicht, scheitert
-    /// jeder Untersatz. Die Zahl fehlte, also war es nicht zu sagen.
-    ///
-    /// Eine Diagnose, die eine Stufe zu grob ist, beantwortet die Frage
-    /// bis kurz vor dem Ziel.
-    pub fn kurz(&self) -> String {
-        match self {
-            Self::NichtAngefordert => "nicht_angefordert".to_string(),
-            Self::Angefordert => "keine_antwort".to_string(),
-            Self::Abgelehnt(_) => "abgelehnt".to_string(),
-            Self::Geliefert {
-                bahnen: 0,
-                rollwege,
-                ..
-            } => format!("ohne_bahnen(rollwege={rollwege})"),
-            Self::Geliefert {
-                bahnen, rollwege, ..
-            } => format!("geliefert(bahnen={bahnen},rollwege={rollwege})"),
-        }
-    }
-}
-
-#[cfg(test)]
-mod szenerie_diagnose_tests {
-    use super::SzenerieDiagnose;
-
-    #[test]
-    fn eine_lieferung_nennt_ihre_zahlen() {
-        // ⚠ Ohne die Rollwegzahl bleibt offen, ob nur das Bahn-Raster
-        // falsch ist oder jeder Untersatz scheitert. Genau daran blieb
-        // die Untersuchung am 29.08.2026 haengen.
-        let d = SzenerieDiagnose::Geliefert {
-            icao: "LKTB".to_string(),
-            bahnen: 0,
-            rollwege: 243,
-        };
-        let s = d.kurz();
-        assert!(s.starts_with("ohne_bahnen"), "{s}");
-        assert!(s.contains("243"), "die Rollwegzahl fehlt: {s}");
-    }
-
-    #[test]
-    fn eine_vollstaendige_lieferung_nennt_beide_zahlen() {
-        let d = SzenerieDiagnose::Geliefert {
-            icao: "EDDH".to_string(),
-            bahnen: 4,
-            rollwege: 118,
-        };
-        let s = d.kurz();
-        assert!(s.contains("bahnen=4"), "{s}");
-        assert!(s.contains("rollwege=118"), "{s}");
-    }
-
-    #[test]
-    fn die_stummen_faelle_bleiben_einzelne_woerter() {
-        // Sie tragen keine Zahlen — und duerfen auch keine erfinden.
-        assert_eq!(
-            SzenerieDiagnose::NichtAngefordert.kurz(),
-            "nicht_angefordert"
-        );
-        assert_eq!(SzenerieDiagnose::Angefordert.kurz(), "keine_antwort");
-        assert_eq!(
-            SzenerieDiagnose::Abgelehnt("egal".to_string()).kurz(),
-            "abgelehnt"
-        );
-    }
-}
+// ⚠ Hier stand `SzenerieDiagnose` — eine ZWEITE Zustandsquelle neben
+// dem Auftragsbuch. Sie ist ersatzlos gestrichen.
+//
+// Sie wurde an fuenf Stellen im Adapter getrennt fortgeschrieben und
+// hatte einen oeffentlichen Getter. Beide Quellen widersprachen sich
+// schon: Bei einem synchronen Fehler stand global „abgelehnt", im Buch
+// `Wartet`; bei einer voruebergehenden Ausnahme blieb global
+// „angefordert"; und bei mehreren Flughaefen beschrieb sie den ZULETZT
+// bearbeiteten Platz, waehrend der Schnappschuss das Ernteziel meint.
+//
+// Der Flug las bereits den Schnappschuss, es entstand also kein
+// falscher Bericht — aber die Aussage „der Riss kann nicht neu
+// verdrahtet werden" stimmte nicht, solange der Getter den Rueckweg
+// anbot (QS-Befund, zehnte Runde).
+//
+// Das Wort `ohne_bahnen` ist in `Auftragsbuch::diagnose` uebernommen,
+// weil der Bestand danach durchsuchbar ist.
 
 // ---------------------------------------------------------------------
 // Auftragsbuch
@@ -1005,7 +923,20 @@ impl Auftragsbuch {
                         .as_ref()
                         .map(|x| (x.bahnen.len(), x.rollwege.len()))
                         .unwrap_or((0, 0));
-                    format!("geliefert({icao_gross}, bahnen={bahnen}, rollwege={rollwege})")
+                    // ⚠ „ohne_bahnen" bleibt ein EIGENES Wort.
+                    //
+                    // Es traegt Bedeutung aus der Untersuchung vom
+                    // 29.08.2026: Zwei MSFS-2024-Fluege meldeten es, die
+                    // Antwort kam also an — nur ohne eine einzige Bahn.
+                    // Ob dabei ROLLWEGE ankamen, entschied, wo der
+                    // Fehler sitzt. Der Bestand ist danach durchsuchbar;
+                    // das Wort einfach in „geliefert" aufgehen zu lassen
+                    // wuerde diese Suche brechen.
+                    if bahnen == 0 {
+                        format!("ohne_bahnen({icao_gross}, rollwege={rollwege})")
+                    } else {
+                        format!("geliefert({icao_gross}, bahnen={bahnen}, rollwege={rollwege})")
+                    }
                 }
             },
         }
@@ -1492,6 +1423,65 @@ mod auftragsbuch_tests {
         // Der letzte laeuft ins Leere.
         assert_eq!(b.naechsten_stellen(t + WARTEZEIT_MS), None);
         assert_eq!(b.zustand("LEZL"), Some(Auftragszustand::Erschoepft));
+    }
+
+    /// ⚠ QS-Befund, zehnte Runde: Es gibt nur EINE Diagnosequelle.
+    ///
+    /// Neben dem Buch lief eine globale `SzenerieDiagnose` mit, an fuenf
+    /// Stellen getrennt fortgeschrieben und mit oeffentlichem Getter.
+    /// Beide widersprachen sich schon: synchroner Fehler → global
+    /// „abgelehnt", im Buch `Wartet`; voruebergehende Ausnahme → global
+    /// blieb „angefordert"; bei mehreren Plaetzen beschrieb sie den
+    /// ZULETZT bearbeiteten, der Schnappschuss aber das Ernteziel.
+    ///
+    /// Sie ist gestrichen. Was bleibt, ist dieser Test: Die Diagnose
+    /// nennt IMMER den gefragten Platz.
+    #[test]
+    fn die_diagnose_nennt_immer_den_gefragten_platz() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("EDDF");
+        b.wunsch("LEZL");
+        let (erst, id) = b.naechsten_stellen(0).expect("Auftrag");
+        b.geliefert_zu_kennung(id, auskunft(&erst, 4))
+            .expect("Lieferung");
+
+        // ⚠ Der ANDERE Platz darf nicht die Diagnose des ersten erben.
+        let anderer = if erst == "EDDF" { "LEZL" } else { "EDDF" };
+        assert!(
+            b.diagnose(anderer).contains(anderer),
+            "die Diagnose von {anderer} nennt einen fremden Platz: {}",
+            b.diagnose(anderer)
+        );
+        assert!(
+            !b.diagnose(anderer).starts_with("geliefert("),
+            "der ungefragte Platz gilt als geliefert"
+        );
+    }
+
+    /// ⚠ Und `ohne_bahnen` bleibt ein eigenes Wort.
+    ///
+    /// Es traegt Bedeutung aus der Untersuchung vom 29.08.2026: Die
+    /// Antwort KAM an, nur ohne eine einzige Bahn — und ob dabei
+    /// Rollwege ankamen, entschied, wo der Fehler sitzt. Der Bestand ist
+    /// nach diesem Wort durchsuchbar.
+    #[test]
+    fn eine_lieferung_ohne_bahnen_heisst_weiter_ohne_bahnen() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("LKTB");
+        let (_, id) = b.naechsten_stellen(0).expect("Auftrag");
+        let mut leer = auskunft("LKTB", 0);
+        leer.rollwege = (0..243)
+            .map(|_| SzenerieRollweg {
+                name: "A".to_string(),
+                punkte: Vec::new(),
+            })
+            .collect();
+        b.geliefert_zu_kennung(id, leer).expect("Lieferung");
+
+        let d = b.diagnose("LKTB");
+        assert!(d.starts_with("ohne_bahnen("), "die Meldung lautet: {d}");
+        assert!(d.contains("LKTB"), "der Platz fehlt: {d}");
+        assert!(d.contains("243"), "die Rollwegzahl fehlt: {d}");
     }
 
     /// ⚠ QS-Befund 1, neunte Runde: EIN Schnappschuss statt drei Getter.
