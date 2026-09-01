@@ -590,6 +590,15 @@ impl Auftragsbuch {
         if let Some(laufend) = self.laeuft.clone() {
             let ist_ziel = ziele.iter().any(|(z, _)| z.eq_ignore_ascii_case(&laufend));
             if !ist_ziel {
+                // ⚠ BEIDE Haelften. Nur `laeuft` zu loeschen ergab zwei
+                // Aussagen, die sich widersprechen: `laufender()` sagte
+                // „niemand", `diagnose(ICAO)` weiter „unterwegs"
+                // (QS-Befund 5, sechste Runde).
+                if let Some(a) = self.auftraege.get_mut(&laufend) {
+                    if matches!(a.zustand, Auftragszustand::Laeuft { .. }) {
+                        a.zustand = Auftragszustand::Offen;
+                    }
+                }
                 self.laeuft = None;
             }
         }
@@ -673,6 +682,15 @@ impl Auftragsbuch {
     /// damit nicht die volle Wartezeit verstreicht.
     pub fn freigeben_zu_kennung(&mut self, id: u32) -> Option<String> {
         let icao = self.platz_zu_kennung(id)?;
+        // ⚠ NUR die neueste Kennung darf freigeben.
+        //
+        // Kommt die Ausnahme zu Versuch 1 erst an, waehrend Versuch 2
+        // laeuft, setzte sie dessen Zustand auf `Offen` und loeschte den
+        // laufenden Auftrag — Versuch 3 begaenne sofort, waehrend
+        // Versuch 2 noch unterwegs ist (QS-Befund 3, sechste Runde).
+        if self.auftraege.get(&icao).is_some_and(|a| a.letzte_id != id) {
+            return None;
+        }
         if let Some(a) = self.auftraege.get_mut(&icao) {
             if matches!(a.zustand, Auftragszustand::Laeuft { .. }) {
                 a.zustand = Auftragszustand::Offen;
@@ -746,6 +764,17 @@ impl Auftragsbuch {
     /// Startflughafens fuer das Ziel auszugeben war der Fehler, der
     /// diese Klasse ausgeloest hat.
     pub fn auskunft(&self, icao: &str) -> Option<&SzenerieFlughafen> {
+        // ⚠ Ist die Definition abgelehnt, wird NICHTS mehr herausgegeben
+        // — auch nichts, was vorher eintraf.
+        //
+        // Die Sperre schloss bisher nur die Anfragen. Eine Auskunft, die
+        // unter einer nachweislich ungueltigen Definition entstanden ist,
+        // hat ein anderes Raster als erwartet; sie ist nicht „etwas
+        // besser als nichts", sondern falsch (QS-Befund 2, sechste
+        // Runde).
+        if self.definition_fehler.is_some() {
+            return None;
+        }
         self.auftraege
             .get(&icao.trim().to_ascii_uppercase())
             .and_then(|a| a.auskunft.as_ref())
@@ -1408,6 +1437,99 @@ mod auftragsbuch_tests {
             "nach einem voruebergehenden Fehler muss sofort wieder gefragt \
              werden duerfen — nicht erst nach der vollen Wartezeit"
         );
+    }
+
+    /// ⚠ QS-Befund 3, sechste Runde: Nur die NEUESTE Kennung darf
+    /// freigeben.
+    ///
+    /// Kommt die transiente Ausnahme zu Versuch 1 erst an, waehrend
+    /// Versuch 2 laeuft, setzte sie dessen Zustand auf `Offen` und
+    /// loeschte den laufenden Auftrag — Versuch 3 begaenne sofort,
+    /// waehrend Versuch 2 noch unterwegs ist.
+    #[test]
+    fn eine_alte_ausnahme_beendet_den_neueren_versuch_nicht() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("LEZL");
+        let (_, id1) = b.naechsten_stellen(0).expect("Versuch 1");
+        let (_, id2) = b.naechsten_stellen(WARTEZEIT_MS).expect("Versuch 2");
+        assert_ne!(id1, id2);
+
+        // Die alte Ausnahme trifft ein — sie darf nichts tun.
+        assert_eq!(
+            b.freigeben_zu_kennung(id1),
+            None,
+            "die alte Ausnahme hat den laufenden Versuch beendet"
+        );
+        assert_eq!(
+            b.laufender().as_deref(),
+            Some("LEZL"),
+            "der laufende Auftrag wurde geloescht"
+        );
+        assert_eq!(
+            b.naechsten_stellen(WARTEZEIT_MS + 1),
+            None,
+            "ein dritter Versuch startet, waehrend der zweite laeuft"
+        );
+
+        // Die Ausnahme zum NEUESTEN Versuch wirkt sehr wohl.
+        assert_eq!(b.freigeben_zu_kennung(id2).as_deref(), Some("LEZL"));
+        assert_eq!(b.zustand("LEZL"), Some(Auftragszustand::Offen));
+    }
+
+    /// ⚠ QS-Befund 5, sechste Runde: Freigeben heisst BEIDE Haelften.
+    ///
+    /// `anflug_ausrichten` loeschte nur `laeuft`. Der Eintrag blieb auf
+    /// `Laeuft` stehen — `laufender()` sagte „niemand", `diagnose(ICAO)`
+    /// weiter „unterwegs". Zwei Aussagen ueber denselben Platz, die sich
+    /// widersprechen.
+    #[test]
+    fn ein_freigegebener_auftrag_meldet_nicht_mehr_unterwegs() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("EDDF", 0);
+        let _ = b.naechsten_stellen(0).expect("Auftrag");
+
+        b.anflug_ausrichten(&[("LEZL".into(), 0)], false);
+
+        assert_eq!(b.laufender(), None);
+        assert_eq!(
+            b.zustand("EDDF"),
+            Some(Auftragszustand::Offen),
+            "der Eintrag steht weiter auf Laeuft"
+        );
+        assert!(
+            b.diagnose("EDDF").starts_with("angemeldet("),
+            "die Diagnose meldet weiter unterwegs: {}",
+            b.diagnose("EDDF")
+        );
+    }
+
+    /// ⚠ QS-Befund 2, sechste Runde: Ein Definitionsfehler schliesst
+    /// auch die DATENSEITE.
+    ///
+    /// Die Sperre hielt bisher nur die Anfragen an. Eine Auskunft, die
+    /// unter einer nachweislich ungueltigen Definition entstanden ist,
+    /// hat ein anderes Raster als erwartet — sie ist nicht „etwas besser
+    /// als nichts", sondern falsch.
+    #[test]
+    fn ein_definitionsfehler_gibt_keine_auskunft_mehr_heraus() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("EDDF");
+        let (_, id) = b.naechsten_stellen(0).expect("Auftrag");
+        b.geliefert_zu_kennung(id, auskunft("EDDF", 4))
+            .expect("Lieferung");
+        assert!(b.auskunft("EDDF").is_some(), "vorher da");
+
+        b.definition_abgelehnt("WIDTH".into(), "DATA_ERROR".into());
+
+        assert!(
+            b.auskunft("EDDF").is_none(),
+            "eine unter ungueltiger Definition entstandene Auskunft wird \
+             weiter herausgegeben"
+        );
+        // Und nach einer neuen Verbindung — Definition neu registriert —
+        // ist die Sperre weg.
+        b.verbindung_zuruecksetzen();
+        assert!(b.definitionsfehler().is_none());
     }
 
     /// ⚠ Aber die Kennungen laufen weiter.

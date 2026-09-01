@@ -1065,6 +1065,13 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                         .lock()
                         .definition_abgelehnt("register_facility".into(), e.clone());
                     *shared.szenerie_diagnose.lock() = SzenerieDiagnose::Abgelehnt(e);
+                    // ⚠ Hier KEINE Sammler zu verwerfen ist richtig, und
+                    // zwar nicht aus Nachlaessigkeit: Diese Stelle liegt
+                    // in `worker_loop`, VOR `run_dispatch`, und dort
+                    // entsteht die Ablage `facility_lieferungen` je
+                    // Verbindung neu. Es gibt an dieser Stelle also
+                    // keine offenen Sammler — und die Variable
+                    // existiert hier gar nicht.
                 }
                 if let Err(e) = conn.request_data_per_second() {
                     set_error(&shared, format!("RequestDataOnSimObject failed: {e}"));
@@ -1223,14 +1230,12 @@ fn run_dispatch(
                 // Kennung in JEDER Nachricht zurueck, genau dafuer.
                 let request_id = FACILITY_REQUEST_BASE + auftrag_id;
                 match conn.request_facility(&icao, request_id) {
-                    Ok(paket) => {
+                    Ok(send_id) => {
                         *shared.szenerie_diagnose.lock() = SzenerieDiagnose::Angefordert;
                         facility_lieferungen.eroeffnen(request_id);
-                        if let Some(send_id) = paket {
-                            facility_pakete.push((send_id, auftrag_id));
-                            while facility_pakete.len() > facility::PAKETE_GEDAECHTNIS {
-                                facility_pakete.remove(0);
-                            }
+                        facility_pakete.push((send_id, auftrag_id));
+                        while facility_pakete.len() > facility::PAKETE_GEDAECHTNIS {
+                            facility_pakete.remove(0);
                         }
                         tracing::info!(
                             %icao,
@@ -1248,13 +1253,27 @@ fn run_dispatch(
                         // ⚠ Aber festhalten, WARUM. Bis v1.7.9 stand am
                         // Flug nur "navdaten", und eine Ablehnung sah
                         // genauso aus wie "nie gefragt".
+                        // ⚠ Ein sofortiger Fehler sagt NICHTS ueber den
+                        // Platz.
+                        //
+                        // Ein unmittelbarer HRESULT-Fehler ist
+                        // clientseitig; erst `SIMCONNECT_RECV_EXCEPTION`
+                        // beschreibt den serverseitigen Grund. Aus einem
+                        // synchronen `E_FAIL` einen ungueltigen Flughafen
+                        // abzuleiten sperrte ihn fuer den restlichen Flug
+                        // aus (QS-Befund 1, sechste Runde).
+                        //
+                        // Also freigeben, nicht ablehnen — der naechste
+                        // Versuch ist der richtige Umgang damit.
                         *shared.szenerie_diagnose.lock() =
                             SzenerieDiagnose::Abgelehnt(e.to_string());
-                        shared
-                            .szenerie
-                            .lock()
-                            .abgelehnt_zu_kennung(auftrag_id, e.to_string());
-                        tracing::warn!(%icao, error = %e, "Szenerie-Anfrage abgelehnt");
+                        shared.szenerie.lock().freigeben_zu_kennung(auftrag_id);
+                        facility_lieferungen.abschliessen(request_id);
+                        tracing::warn!(
+                            %icao,
+                            error = %e,
+                            "Szenerie-Anfrage scheiterte sofort — wird erneut versucht"
+                        );
                     }
                 }
             }
@@ -1496,6 +1515,12 @@ fn run_dispatch(
                                     "Anfrage".into(),
                                     format!("Ausnahme {exception}"),
                                 );
+                                // ⚠ Und die offenen Sammler verwerfen.
+                                // Sonst koennte ein spaeteres
+                                // `FACILITY_DATA_END` trotz nachgewiesen
+                                // ungueltiger Definition noch eine
+                                // Auskunft ablegen.
+                                facility_lieferungen = facility::Lieferungen::neu();
                             }
                             facility::Ausnahmeart::Platz => {
                                 tracing::warn!(
@@ -2105,7 +2130,7 @@ impl Connection {
         &mut self,
         icao: &str,
         request_id: sys::SIMCONNECT_DATA_REQUEST_ID,
-    ) -> Result<Option<u32>, String> {
+    ) -> Result<u32, String> {
         let cicao = std::ffi::CString::new(icao).map_err(|_| "ICAO enthielt NUL".to_string())?;
         let leer = std::ffi::CString::new("").expect("leere Zeichenkette");
         let hr = unsafe {
@@ -2128,17 +2153,22 @@ impl Connection {
         // Paketkennung DIESES Aufrufs. Ohne sie bliebe der Auftrag
         // „unterwegs", und das Buch fragte zehnmal nach einem Platz, den
         // es nicht gibt.
+        // ⚠ Auch hier PFLICHT, nicht optional.
+        //
+        // Ohne Paketkennung laesst sich eine spaeter eintreffende
+        // Ausnahme nicht einordnen: Der Auftrag laeuft bis zum Timeout
+        // und verbraucht am Ende alle zehn Versuche, ohne dass jemand
+        // sagen kann, warum. Fuer die Definitionseintraege galt die
+        // Pflicht schon; hier fehlte sie (QS-Befund 4, sechste Runde).
         let mut send_id: sys::DWORD = 0;
         let hr = unsafe { sys::SimConnect_GetLastSentPacketID(self.handle, &mut send_id) };
         if hr != 0 {
-            tracing::warn!(
-                %icao,
-                "GetLastSentPacketID nach RequestFacilityData fehlgeschlagen — \
-                 eine Zurueckweisung dieses Platzes bleibt unzuordenbar"
-            );
-            return Ok(None);
+            return Err(format!(
+                "GetLastSentPacketID nach RequestFacilityData({icao}) fehlgeschlagen \
+                 — ohne Paketkennung ist eine Zurueckweisung nicht einzuordnen"
+            ));
         }
-        Ok(Some(send_id))
+        Ok(send_id)
     }
 
     /// Register the touchdown sample fields under definition #2.

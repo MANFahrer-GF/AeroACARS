@@ -1982,6 +1982,70 @@ mod anschluss_verdrahtung_tests {
         );
     }
 
+    /// ⚠ QS-Befund 1, sechste Runde: Ein sofortiger Anfragefehler lehnt
+    /// den PLATZ nicht ab.
+    ///
+    /// Ein unmittelbarer HRESULT-Fehler ist clientseitig; erst
+    /// `SIMCONNECT_RECV_EXCEPTION` beschreibt den serverseitigen Grund.
+    /// Aus einem synchronen `E_FAIL` einen ungueltigen Flughafen
+    /// abzuleiten sperrte ihn fuer den restlichen Flug aus.
+    #[test]
+    fn ein_sofortiger_anfragefehler_lehnt_den_platz_nicht_ab() {
+        let a = ohne_leerraum(ADAPTER);
+        let anfrage = a
+            .find("conn.request_facility(&icao,request_id)")
+            .expect("Anfrage fehlt");
+        // Im Fehlerzweig danach: freigeben, NICHT ablehnen.
+        let fenster = &a[anfrage..anfrage + 2400.min(a.len() - anfrage)];
+        assert!(
+            fenster.contains("freigeben_zu_kennung(auftrag_id)"),
+            "der sofortige Fehler gibt den Auftrag nicht frei"
+        );
+        assert!(
+            !fenster.contains("abgelehnt_zu_kennung(auftrag_id,e.to_string())"),
+            "der sofortige Fehler lehnt den Platz dauerhaft ab — er sagt \
+             aber nichts ueber den Platz"
+        );
+    }
+
+    /// ⚠ QS-Befund 2, sechste Runde: Der Definitionszweig verwirft auch
+    /// die offenen Sammler.
+    ///
+    /// Sonst koennte ein spaeteres `FACILITY_DATA_END` trotz nachgewiesen
+    /// ungueltiger Definition noch eine Auskunft ablegen.
+    #[test]
+    fn ein_definitionsfehler_verwirft_die_offenen_sammler() {
+        // ⚠ Geprueft werden die Stellen IM Verteiler (`run_dispatch`).
+        //
+        // Die dritte Stelle — der Fehlschlag von `register_facility` —
+        // liegt in `worker_loop`, VOR dem Verteiler. Dort entsteht die
+        // Ablage je Verbindung ohnehin neu; es gibt keine offenen
+        // Sammler, und die Variable existiert dort nicht einmal. Diese
+        // Ausnahme steht hier ausdruecklich, damit sie niemand fuer eine
+        // Luecke haelt — und damit auffaellt, wenn sich die Aufteilung
+        // aendert.
+        let a = ohne_leerraum(ADAPTER);
+        let verteiler = a.find("fnrun_dispatch(").expect("run_dispatch fehlt");
+        let mut stellen = 0;
+        let mut rest = &a[verteiler..];
+        while let Some(i) = rest.find("definition_abgelehnt(") {
+            let fenster = &rest[i..(i + 500).min(rest.len())];
+            assert!(
+                fenster.contains("facility_lieferungen=facility::Lieferungen::neu()"),
+                "eine Stelle im Verteiler setzt den Definitionsfehler, ohne \
+                 die offenen Sammler zu verwerfen"
+            );
+            stellen += 1;
+            rest = &rest[i + 20..];
+        }
+        assert_eq!(
+            stellen, 2,
+            "erwartet werden GENAU zwei Stellen im Verteiler (Feld-Ausnahme \
+             und Anfrage-Ausnahme) — bei einer anderen Zahl hat sich die \
+             Aufteilung geaendert und diese Pruefung gehoert nachgezogen"
+        );
+    }
+
     /// ⚠ Auch der SYNCHRONE Fehlschlag schliesst den Weg.
     ///
     /// `register_facility()` kann sofort scheitern. Vorher wurde dann
