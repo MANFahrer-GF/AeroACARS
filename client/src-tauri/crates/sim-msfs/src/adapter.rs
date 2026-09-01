@@ -157,7 +157,12 @@ struct Shared {
     /// sich unterschiedlich — und die Feldnamen der Facility-Abfrage
     /// stammen aus der 2024er-SDK-Doku. Ohne diese Kennung laesst sich
     /// nicht sagen, ob eine Ablehnung an der Fassung liegt.
-    sim_kennung: Mutex<Option<String>>,
+    // ⚠ Hier stand `sim_kennung: Mutex<Option<String>>`. Ersatzlos
+    // gestrichen: Die Kennung liegt jetzt IM Auftragsbuch, damit der
+    // Schnappschuss sie unter derselben Sperre bekommt. Ein zweiter
+    // Mutex daneben braucht eine Reihenfolge, die man bewachen muss —
+    // und ein Waechter belegte nur die Reihenfolge, nicht die
+    // Atomarität (QS-Befund 3, zwoelfte Runde).
     /// Spec v0.7.15 F5: SimConnect-`Paused`/`Unpaused`-System-Events
     /// setzen dieses Atomic. Wird beim Bauen jedes `SimSnapshot` in
     /// `telemetry::parse` zurueck nach `snap.paused` kopiert, damit
@@ -635,7 +640,6 @@ impl MsfsAdapter {
                 last_error: Mutex::new(None),
                 szenerie: Mutex::new(sim_core::szenerie::Auftragsbuch::neu()),
                 szenerie_offen: AtomicBool::new(false),
-                sim_kennung: Mutex::new(None),
                 sim_paused: AtomicBool::new(false),
                 sim_unecht_tiefe: AtomicI32::new(0),
                 sim_crashed: AtomicBool::new(false),
@@ -917,14 +921,8 @@ impl MsfsAdapter {
     ///
     /// Die Sperrreihenfolge ist Szenerie → Kennung, und zwar an dieser
     /// einen Stelle. Umgekehrt nimmt sie niemand.
-    pub fn szenerie_schnappschuss(
-        &self,
-        icao: &str,
-    ) -> (sim_core::szenerie::Schnappschuss, Option<String>) {
-        let buch = self.shared.szenerie.lock();
-        let schnapp = buch.schnappschuss(icao);
-        let kennung = self.shared.sim_kennung.lock().clone();
-        (schnapp, kennung)
+    pub fn szenerie_schnappschuss(&self, icao: &str) -> sim_core::szenerie::Schnappschuss {
+        self.shared.szenerie.lock().schnappschuss(icao)
     }
 
     /// Einen neuen Versuchsvorrat oeffnen (Eintritt in den Anflug).
@@ -1023,11 +1021,10 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 //
                 // Dieselbe Sperrreihenfolge wie im Schnappschuss:
                 // Szenerie → Kennung. Umgekehrt nimmt sie niemand.
-                {
-                    let mut buch = shared.szenerie.lock();
-                    buch.verbindung_zuruecksetzen();
-                    *shared.sim_kennung.lock() = None;
-                }
+                // ⚠ EINE Sperre. `verbindung_zuruecksetzen` leert Buch
+                // UND Kennung, weil die Kennung im Buch liegt — es gibt
+                // keine Reihenfolge mehr, die schiefgehen koennte.
+                shared.szenerie.lock().verbindung_zuruecksetzen();
                 if let Err(e) = conn.register_telemetry() {
                     set_error(&shared, format!("RegisterDataDefinition failed: {e}"));
                     tracing::error!(error = %e, "register_telemetry failed");
@@ -1293,7 +1290,7 @@ fn run_dispatch(
                 Ok(None) => break, // queue empty
                 Ok(Some(DispatchMsg::Open { kennung })) => {
                     tracing::info!(%kennung, "SimConnect_RECV_OPEN — handshake done");
-                    *shared.sim_kennung.lock() = Some(kennung);
+                    shared.szenerie.lock().kennung_setzen(Some(kennung));
                 }
                 Ok(Some(DispatchMsg::Quit)) => {
                     tracing::warn!("SimConnect sent QUIT — dropping connection");

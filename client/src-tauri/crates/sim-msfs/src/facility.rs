@@ -1702,6 +1702,25 @@ mod verdrahtung_tests {
         s.chars().filter(|c| !c.is_whitespace()).collect()
     }
 
+    /// Wie `ohne_leerraum`, aber OHNE Zeilenkommentare.
+    ///
+    /// ⚠ Ein Quelltext-Waechter, der Kommentare mitliest, findet sich
+    /// selbst — und zwar auch dann, wenn die Nadel zusammengebaut ist:
+    /// Ein Kommentar der Form „hier stand FRUEHER X" enthaelt X
+    /// woertlich. Genau daran ist der Waechter
+    /// `die_kennung_hat_keinen_eigenen_mutex` zuerst gescheitert
+    /// (zwoelfte Runde).
+    ///
+    /// Wer eine ABWESENHEIT prueft, muss diese Sicht benutzen.
+    fn nur_code(s: &str) -> String {
+        ohne_leerraum(
+            &s.lines()
+                .filter(|z| !z.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+
     #[test]
     fn die_definition_benutzt_die_feldliste() {
         // Eine von Hand abgeschriebene Liste im Adapter waere eine
@@ -1956,6 +1975,25 @@ mod anschluss_verdrahtung_tests {
         s.chars().filter(|c| !c.is_whitespace()).collect()
     }
 
+    /// Wie `ohne_leerraum`, aber OHNE Zeilenkommentare.
+    ///
+    /// ⚠ Ein Quelltext-Waechter, der Kommentare mitliest, findet sich
+    /// selbst — und zwar auch dann, wenn die Nadel zusammengebaut ist:
+    /// Ein Kommentar der Form „hier stand FRUEHER X" enthaelt X
+    /// woertlich. Genau daran ist der Waechter
+    /// `die_kennung_hat_keinen_eigenen_mutex` zuerst gescheitert
+    /// (zwoelfte Runde).
+    ///
+    /// Wer eine ABWESENHEIT prueft, muss diese Sicht benutzen.
+    fn nur_code(s: &str) -> String {
+        ohne_leerraum(
+            &s.lines()
+                .filter(|z| !z.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+
     #[test]
     fn die_definition_wird_auch_registriert() {
         // ⚠ Genau die Luecke, die ich gebaut hatte: `register_facility`
@@ -2029,8 +2067,7 @@ mod anschluss_verdrahtung_tests {
         //
         // Der erste Entwurf verlangte „weniger als 800 Zeichen hinter
         // dem Verbindungsaufbau". Damit misst der Waechter die Laenge
-        // der KOMMENTARE, nicht die Struktur — ein erklaerender Absatz
-        // macht ihn rot, eine verschobene Zeile nicht unbedingt.
+        // der KOMMENTARE, nicht die Struktur.
         //
         // Die belastbare Beziehung ist die REIHENFOLGE: Der Schnitt muss
         // vor der ersten Registrierung stehen, sonst laeuft die neue
@@ -2039,23 +2076,44 @@ mod anschluss_verdrahtung_tests {
             .find("conn.register_telemetry()")
             .expect("die Registrierung fehlt im Verbindungszweig");
         let leeren = danach
-            .find("buch.verbindung_zuruecksetzen()")
+            .find("shared.szenerie.lock().verbindung_zuruecksetzen()")
             .expect("das Buch wird im Verbindungszweig nicht geleert");
         assert!(
             leeren < registrieren,
             "das Buch wird erst NACH der Registrierung geleert — dann laeuft \
              die neue Verbindung mit dem Zustand der alten an"
         );
-        // ⚠ Und die Simulator-Kennung MIT — sie gehoert der Verbindung.
-        // Bleibt sie stehen, liefert der Schnappschuss bis zum naechsten
-        // `Open` eine neue Generation zusammen mit der Kennung der ALTEN
-        // Verbindung (QS-Befund 1, elfte Runde).
-        let kennung = danach
-            .find("*shared.sim_kennung.lock()=None")
-            .expect("die Simulator-Kennung wird beim Verbindungswechsel nicht geleert");
+    }
+
+    /// ⚠ QS-Befund 3, zwoelfte Runde: Die Kennung liegt IM Buch — es
+    /// gibt keine Reihenfolge mehr zu bewachen.
+    ///
+    /// Vorher hielt der Adapter sie in einem eigenen Mutex, und ein
+    /// Waechter belegte nur „Buch leeren vor Kennung leeren vor
+    /// Registrierung". Das ist REIHENFOLGE, nicht Atomarität: Wer den
+    /// Buch-Griff dazwischen fallen laesst, bekommt wieder neue
+    /// Generation mit alter Kennung — und der Waechter bliebe gruen.
+    ///
+    /// Strukturell belastbar ist nur, dass es den zweiten Mutex NICHT
+    /// gibt.
+    #[test]
+    fn die_kennung_hat_keinen_eigenen_mutex() {
+        // ⚠ `nur_code`, nicht `ohne_leerraum`: Der Kommentar, der den
+        // entfernten Mutex ERWAEHNT, enthaelt die Nadel woertlich.
+        let a = nur_code(ADAPTER);
+        let verboten = format!("{}:Mutex<Option<String>>", "sim_kennung");
         assert!(
-            kennung < registrieren && kennung > leeren,
-            "die Kennung wird nicht zusammen mit dem Buch geleert"
+            !a.contains(&verboten),
+            "die Kennung hat wieder einen eigenen Mutex — dann braucht der \
+             Schnappschuss zwei Sperren und eine Reihenfolge, die man \
+             bewachen muss"
+        );
+        assert!(
+            a.contains(&format!(
+                "shared.szenerie.lock().{}(Some(kennung))",
+                "kennung_setzen"
+            )),
+            "die Kennung wird nicht ins Buch geschrieben"
         );
     }
 
@@ -2204,7 +2262,7 @@ mod anschluss_verdrahtung_tests {
     fn die_verbindung_setzt_anders_zurueck_als_der_flug() {
         let a = ohne_leerraum(ADAPTER);
         assert!(
-            a.contains("buch.verbindung_zuruecksetzen()"),
+            a.contains("shared.szenerie.lock().verbindung_zuruecksetzen()"),
             "die neue Verbindung raeumt den Definitionsfehler nicht weg"
         );
         assert!(
@@ -2289,6 +2347,25 @@ mod rollweg_verdrahtung_tests {
 
     fn ohne_leerraum(s: &str) -> String {
         s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    /// Wie `ohne_leerraum`, aber OHNE Zeilenkommentare.
+    ///
+    /// ⚠ Ein Quelltext-Waechter, der Kommentare mitliest, findet sich
+    /// selbst — und zwar auch dann, wenn die Nadel zusammengebaut ist:
+    /// Ein Kommentar der Form „hier stand FRUEHER X" enthaelt X
+    /// woertlich. Genau daran ist der Waechter
+    /// `die_kennung_hat_keinen_eigenen_mutex` zuerst gescheitert
+    /// (zwoelfte Runde).
+    ///
+    /// Wer eine ABWESENHEIT prueft, muss diese Sicht benutzen.
+    fn nur_code(s: &str) -> String {
+        ohne_leerraum(
+            &s.lines()
+                .filter(|z| !z.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
     }
 
     #[test]

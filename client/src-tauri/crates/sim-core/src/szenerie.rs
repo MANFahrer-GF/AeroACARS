@@ -222,6 +222,20 @@ pub struct Schnappschuss {
     /// Auskunft und ihr Stand — oder nichts.
     pub auskunft: Option<(SzenerieFlughafen, u32)>,
     pub diagnose: String,
+    /// Womit sich der Simulator gemeldet hat.
+    ///
+    /// ⚠ Sie liegt IM BUCH, nicht in einem zweiten Mutex daneben.
+    ///
+    /// Vorher hielt der Adapter sie getrennt, und der Schnappschuss nahm
+    /// zwei Sperren nacheinander. Ein Waechter belegte dann nur die
+    /// REIHENFOLGE (Buch leeren vor Kennung leeren vor Registrierung) —
+    /// nicht die Atomarität. Wer den Buch-Griff dazwischen fallen
+    /// laesst, bekommt wieder neue Generation mit alter Kennung, und der
+    /// Waechter bliebe gruen (QS-Befund 3, zwoelfte Runde).
+    ///
+    /// Ein Feld im Buch braucht keine Reihenfolge, die man bewachen
+    /// muss.
+    pub kennung: Option<String>,
 }
 
 /// Wer welchen Platz gefragt hat, und was zurueckkam.
@@ -300,6 +314,8 @@ pub struct Auftragsbuch {
     /// Fortlaufende Kennung. Jeder VERSUCH bekommt eine eigene — nicht
     /// jeder Platz.
     naechste_id: u32,
+    /// Womit sich der Simulator gemeldet hat — siehe `Schnappschuss`.
+    kennung: Option<String>,
     /// Zaehlt jede neue Verbindung und jeden Definitionsfehler.
     ///
     /// ⚠ Die Standnummer allein reicht nicht: Sie loest nur den Fall,
@@ -528,6 +544,9 @@ impl Auftragsbuch {
     pub fn verbindung_zuruecksetzen(&mut self) {
         self.zuruecksetzen();
         self.definition_fehler = None;
+        // ⚠ Die Kennung gehoert der Verbindung — sie faellt MIT, und
+        // zwar unter derselben Sperre. Genau darum liegt sie hier.
+        self.kennung = None;
         self.generation = self.generation.saturating_add(1);
     }
 
@@ -829,7 +848,13 @@ impl Auftragsbuch {
             generation: self.generation,
             auskunft: self.auskunft_mit_stand(icao),
             diagnose: self.diagnose(icao),
+            kennung: self.kennung.clone(),
         }
+    }
+
+    /// Womit sich der Simulator gemeldet hat.
+    pub fn kennung_setzen(&mut self, kennung: Option<String>) {
+        self.kennung = kennung;
     }
 
     /// Auskunft UND Stand in einem Zug.

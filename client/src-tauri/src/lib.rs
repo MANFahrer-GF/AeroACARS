@@ -2408,8 +2408,8 @@ fn flugkopie_entwerten(alt_generation: u32, buch_generation: u32) -> bool {
 /// (QS-Befund 2, elfte Runde).
 fn schnappschuss_uebernehmen(
     stats: &mut FlightStats,
+    ziel: Option<&str>,
     schnapp: sim_core::szenerie::Schnappschuss,
-    kennung: Option<String>,
 ) {
     // ⚠ Die Diagnose IMMER mitschreiben, auch wenn keine Auskunft kam.
     // Genau der Fall ist der interessante: Sie sagt dann, ob nie
@@ -2424,7 +2424,33 @@ fn schnappschuss_uebernehmen(
     // keine neue gemeldet war — und der Flug behauptete eine
     // Simulatorfassung, die gar nicht mehr verbunden ist (QS-Befund 1,
     // elfte Runde).
-    stats.sim_kennung = kennung;
+    stats.sim_kennung = schnapp.kennung;
+
+    // ⚠ Die Flugkopie darf NUR den aktuellen Erntplatz halten.
+    //
+    // Wechselt das Ernteziel von LEZL auf LEMG und hat LEMG noch keine
+    // Lieferung, ist `schnapp.auskunft` richtig `None` — und die alte
+    // LEZL-Kopie blieb liegen. Ihre ROLLWEGE gehen ohne ICAO-Pruefung in
+    // die Ausfahrten. Damit entsteht ueber den Cache genau der Rueckfall
+    // auf das geplante Ziel, den `szenerie_ernteziel` verbietet
+    // (QS-Befund 1, zwoelfte Runde).
+    //
+    // Der Generationsvergleich unten faengt das NICHT: Beim Ausweichflug
+    // wechselt das Ziel, nicht die Verbindung.
+    let fremd = match (stats.szenerie_auskunft.as_ref(), ziel) {
+        (Some(a), Some(z)) => !a.icao.eq_ignore_ascii_case(z),
+        (Some(_), None) => true,
+        _ => false,
+    };
+    if fremd {
+        tracing::info!(
+            alt = stats.szenerie_auskunft.as_ref().map(|a| a.icao.as_str()),
+            ziel,
+            "Ernteziel gewechselt — fremde Flugkopie verworfen"
+        );
+        stats.szenerie_auskunft = None;
+        stats.szenerie_auskunft_stand = 0;
+    }
 
     // ⚠ Generationswechsel: Die Kopie der alten Verbindung gilt nicht
     // mehr — auch wenn KEINE neue Lieferung kommt.
@@ -2600,7 +2626,7 @@ fn szenerie_auskunft_uebernehmen(
             faellig
         };
 
-        let (schnapp_aussen, kennung_aussen) = {
+        let schnapp_aussen = {
             let state = app.state::<AppState>();
             let Ok(msfs) = state.msfs.lock() else { return };
             // ⚠ Bei JEDEM Durchlauf nachmelden. Das Buch entscheidet,
@@ -2648,25 +2674,20 @@ fn szenerie_auskunft_uebernehmen(
             // sah keinen Wechsel mehr, und genau die Auskunft, welche
             // die Generation entwerten sollte, war dauerhaft zurueck
             // (QS-Befund 1, neunte Runde).
-            let (schnapp, kennung) = ernteziel
+            ernteziel
                 .as_deref()
                 .map(|z| msfs.szenerie_schnappschuss(z))
-                .unwrap_or_else(|| {
-                    (
-                        sim_core::szenerie::Schnappschuss {
-                            generation: 0,
-                            auskunft: None,
-                            diagnose: "kein_ziel".to_string(),
-                        },
-                        None,
-                    )
-                });
-            (schnapp, kennung)
+                .unwrap_or_else(|| sim_core::szenerie::Schnappschuss {
+                    generation: 0,
+                    auskunft: None,
+                    diagnose: "kein_ziel".to_string(),
+                    kennung: None,
+                })
         };
         // ⚠ EINE Uebernahme, EINE Sperre, und sie steht in einer
         // pruefbaren Funktion — siehe `schnappschuss_uebernehmen`.
         if let Ok(mut stats) = flight.stats.lock() {
-            schnappschuss_uebernehmen(&mut stats, schnapp_aussen, kennung_aussen);
+            schnappschuss_uebernehmen(&mut stats, ernteziel.as_deref(), schnapp_aussen);
         }
     }
     #[cfg(not(target_os = "windows"))]
@@ -53853,28 +53874,8 @@ mod szenerie_status_tests {
             );
         }
         assert!(
-            a.contains(&format!("{}=kennung;", "stats.sim_kennung")),
-            "die Kennung wird nicht unbedingt ersetzt"
-        );
-    }
-
-    /// ⚠ Und die Flugkopie wird beim Generationswechsel wirklich
-    /// entwertet — samt Nachziehen der Generation.
-    #[test]
-    fn die_flugkopie_wird_beim_generationswechsel_entwertet() {
-        let a = ohne_leerraum(QUELLE);
-        let stelle = a
-            .find("flugkopie_entwerten(stats.szenerie_auskunft_generation,buch_generation)")
-            .expect("der Generationswechsel erreicht die Flugkopie nicht");
-        let fenster = &a[stelle..(stelle + 600).min(a.len())];
-        assert!(
-            fenster.contains("stats.szenerie_auskunft=None"),
-            "die Kopie wird nicht geloescht"
-        );
-        assert!(
-            fenster.contains("stats.szenerie_auskunft_generation=buch_generation"),
-            "die Generation wird nicht nachgezogen — dann entwertet jeder \
-             Durchlauf erneut"
+            a.contains(&format!("{}=schnapp.kennung;", "stats.sim_kennung")),
+            "die Kennung kommt nicht unbedingt aus dem Schnappschuss"
         );
     }
 
@@ -54307,6 +54308,109 @@ mod szenerie_status_tests {
         }
     }
 
+    /// ⚠ QS-Befund 1, zwoelfte Runde: Wechselt das Ernteziel und hat
+    /// der neue Platz NOCH KEINE Lieferung, muss die alte Kopie weg.
+    ///
+    /// Sonst gehen ihre Rollwege ohne ICAO-Pruefung in die Ausfahrten —
+    /// und ueber den Cache entsteht genau der Rueckfall auf das geplante
+    /// Ziel, den `szenerie_ernteziel` verbietet.
+    ///
+    /// ⚠ Der Test `ein_anderer_platz_ersetzt_die_flugkopie_immer` hielt
+    /// die entscheidende Achse konstant: Er prueft nur den Fall, dass
+    /// der neue Platz BEREITS geliefert hat.
+    #[test]
+    fn ein_divert_ohne_lieferung_wirft_die_alte_kopie_weg() {
+        let mut buch = sim_core::szenerie::Auftragsbuch::neu();
+        buch.wunsch("LEZL");
+        let (_, id) = buch.naechsten_stellen(0).expect("Auftrag");
+        buch.geliefert_zu_kennung(
+            id,
+            sim_core::szenerie::SzenerieFlughafen {
+                icao: "LEZL".to_string(),
+                bahnen: Vec::new(),
+                rollwege: vec![sim_core::szenerie::SzenerieRollweg {
+                    name: "A".to_string(),
+                    punkte: Vec::new(),
+                }],
+                quelle: "msfs".to_string(),
+            },
+        )
+        .expect("Lieferung");
+
+        let mut s = FlightStats::new();
+        schnappschuss_uebernehmen(&mut s, Some("LEZL"), buch.schnappschuss("LEZL"));
+        assert_eq!(
+            s.szenerie_auskunft.as_ref().map(|a| a.icao.as_str()),
+            Some("LEZL"),
+            "die Kopie ist gar nicht erst angekommen"
+        );
+
+        // ⚠ Ausweichflug: Ziel ist jetzt LEMG — und LEMG hat NICHTS
+        // geliefert. Die Generation ist unveraendert.
+        buch.wunsch("LEMG");
+        schnappschuss_uebernehmen(&mut s, Some("LEMG"), buch.schnappschuss("LEMG"));
+
+        assert!(
+            s.szenerie_auskunft.is_none(),
+            "die Szenerie von {:?} liegt weiter am Flug — ihre Rollwege \
+             landen in den Ausfahrten von LEMG",
+            s.szenerie_auskunft.as_ref().map(|a| a.icao.clone())
+        );
+        assert_eq!(s.szenerie_auskunft_stand, 0);
+    }
+
+    /// Und ohne Ernteziel bleibt erst recht nichts liegen.
+    #[test]
+    fn ohne_ernteziel_bleibt_keine_kopie_liegen() {
+        let mut s = FlightStats::new();
+        s.szenerie_auskunft = Some(auskunft(2));
+        s.szenerie_auskunft_stand = 7;
+        let buch = sim_core::szenerie::Auftragsbuch::neu();
+        schnappschuss_uebernehmen(&mut s, None, buch.schnappschuss("LEZL"));
+        assert!(s.szenerie_auskunft.is_none());
+    }
+
+    /// ⚠ QS-Befund 2, zwoelfte Runde: Der Generations-Waechter fand nur
+    /// SICH SELBST.
+    ///
+    /// Er suchte `flugkopie_entwerten(stats.szenerie_auskunft_generation,
+    /// buch_generation)` — eine Zeichenkette, die es nach dem Umbau nur
+    /// noch in seinen eigenen Ausdruecken gab. Ein Rueckbau der
+    /// Entwertung waere nicht aufgefallen.
+    ///
+    /// Jetzt ein Verhaltenstest an der reinen Funktion.
+    #[test]
+    fn ein_generationswechsel_ohne_lieferung_leert_die_kopie() {
+        let mut s = FlightStats::new();
+        s.szenerie_auskunft = Some(auskunft(2));
+        s.szenerie_auskunft_stand = 7;
+        // ⚠ Die Flugkopie stammt aus Generation 0 — die des Buches ist
+        // nach dem Wechsel groesser. Mein erster Entwurf setzte hier 1
+        // und das Buch stand ebenfalls auf 1: Der Test prueste dann
+        // gar keinen Wechsel und scheiterte zu Recht.
+        s.szenerie_auskunft_generation = 0;
+
+        // Neue Verbindung: naechste Generation, KEINE Lieferung.
+        let mut buch = sim_core::szenerie::Auftragsbuch::neu();
+        buch.verbindung_zuruecksetzen();
+        let schnapp = buch.schnappschuss("DAAG");
+        assert!(schnapp.generation > 0);
+        assert!(schnapp.auskunft.is_none());
+
+        schnappschuss_uebernehmen(&mut s, Some("DAAG"), schnapp.clone());
+
+        assert!(
+            s.szenerie_auskunft.is_none(),
+            "die Kopie der alten Verbindung ueberlebt"
+        );
+        assert_eq!(s.szenerie_auskunft_stand, 0);
+        assert_eq!(
+            s.szenerie_auskunft_generation, schnapp.generation,
+            "die Generation wird nicht nachgezogen — dann entwertet jeder \
+             Durchlauf erneut"
+        );
+    }
+
     /// ⚠ QS-Befund 1, elfte Runde: Die Kennung wird durch `None`
     /// ersetzt.
     ///
@@ -54319,9 +54423,26 @@ mod szenerie_status_tests {
         s.sim_kennung = Some("KittyHawk 11.0".to_string());
 
         let mut buch = sim_core::szenerie::Auftragsbuch::neu();
-        buch.verbindung_zuruecksetzen();
-        schnappschuss_uebernehmen(&mut s, buch.schnappschuss("LEZL"), None);
+        // ⚠ Die Kennung MUSS erst im Buch stehen, sonst prueft der Test
+        // nichts: Ein frisches Buch hat ohnehin keine, und der Schnitt
+        // koennte ersatzlos entfallen, ohne dass es auffaellt. Genau so
+        // stand er bis zur zwoelften Runde da — die Gegenprobe
+        // „Kennung ueberlebt den Verbindungsschnitt" blieb gruen.
+        buch.kennung_setzen(Some("KittyHawk 11.0".to_string()));
+        assert_eq!(
+            buch.schnappschuss("LEZL").kennung.as_deref(),
+            Some("KittyHawk 11.0"),
+            "die Kennung kommt gar nicht erst im Schnappschuss an"
+        );
 
+        buch.verbindung_zuruecksetzen();
+        assert_eq!(
+            buch.schnappschuss("LEZL").kennung,
+            None,
+            "der Verbindungsschnitt laesst die Kennung im Buch stehen"
+        );
+
+        schnappschuss_uebernehmen(&mut s, Some("LEZL"), buch.schnappschuss("LEZL"));
         assert_eq!(
             s.sim_kennung, None,
             "die Kennung der alten Verbindung ueberlebt den Wechsel"
@@ -54359,7 +54480,7 @@ mod szenerie_status_tests {
         .expect("Lieferung");
 
         let mut s = FlightStats::new();
-        schnappschuss_uebernehmen(&mut s, buch.schnappschuss("LKTB"), None);
+        schnappschuss_uebernehmen(&mut s, Some("LKTB"), buch.schnappschuss("LKTB"));
 
         let gemeldet = szenerie_status(&s);
         assert!(
