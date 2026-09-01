@@ -133,9 +133,13 @@ struct Shared {
     /// stueckweise; eine halbe Bahnliste saehe aus wie ein Flughafen mit
     /// einer Bahn — und die Bewertung wuerde gegen die falsche messen,
     /// ohne dass etwas anschlaegt.
-    szenerie: Mutex<Option<sim_core::szenerie::SzenerieFlughafen>>,
-    /// Der Platz, dessen Auskunft gerade angefordert ist.
-    szenerie_angefordert: Mutex<Option<String>>,
+    ///
+    /// ⚠ Seit v1.7.14 ein Buch nach Platz statt eines einzelnen Fachs.
+    /// Der Grund steht bei `Auftragsbuch`: Start und Ziel haben sich
+    /// gegenseitig verdraengt, eine Lieferung wurde mit dem falschen
+    /// Platz beschriftet, und ein stummer Platz wurde nie wieder
+    /// gefragt.
+    szenerie: Mutex<sim_core::szenerie::Auftragsbuch>,
     /// Steht eine Anfrage aus, die der Verbindungsfaden noch stellen muss?
     szenerie_offen: AtomicBool,
     /// Wie weit die Szenerie-Abfrage gekommen ist — fuer die Diagnose.
@@ -627,8 +631,7 @@ impl MsfsAdapter {
                 state: Mutex::new(ConnectionState::Disconnected),
                 snapshot: Mutex::new(None),
                 last_error: Mutex::new(None),
-                szenerie: Mutex::new(None),
-                szenerie_angefordert: Mutex::new(None),
+                szenerie: Mutex::new(sim_core::szenerie::Auftragsbuch::neu()),
                 szenerie_offen: AtomicBool::new(false),
                 szenerie_diagnose: Mutex::new(SzenerieDiagnose::default()),
                 sim_kennung: Mutex::new(None),
@@ -883,21 +886,16 @@ impl MsfsAdapter {
     /// im Ueberfluss, und beim Aufsetzen liegt die Auskunft bereit.
     /// Beim Aufsetzen anzufordern waere zu spaet — die Antwort kommt
     /// stueckweise ueber mehrere Durchlaeufe.
+    /// ⚠ Mehrfach aufzurufen ist ausdruecklich richtig. Bis v1.7.13
+    /// stand hier `if wunsch == icao { return }` — damit war ein Ziel,
+    /// das am Gate nicht antwortete, fuer den Rest des Fluges tot. Das
+    /// Buch entscheidet jetzt, ob und wann wirklich gefragt wird.
     pub fn szenerie_anfordern(&self, icao: &str) {
         let icao = icao.trim().to_ascii_uppercase();
         if icao.is_empty() {
             return;
         }
-        let mut wunsch = self.shared.szenerie_angefordert.lock();
-        if wunsch.as_deref() == Some(icao.as_str()) {
-            return; // schon unterwegs oder erledigt
-        }
-        *wunsch = Some(icao);
-        // Die alte Auskunft gilt nicht mehr — sie gehoert zu einem
-        // anderen Platz. Sie stehen zu lassen waere schlimmer als
-        // nichts zu haben.
-        *self.shared.szenerie.lock() = None;
-        *self.shared.szenerie_diagnose.lock() = SzenerieDiagnose::Angefordert;
+        self.shared.szenerie.lock().wunsch(&icao);
         self.shared.szenerie_offen.store(true, Ordering::Relaxed);
     }
 
@@ -916,8 +914,17 @@ impl MsfsAdapter {
     /// `None` heisst: nicht angefordert, noch unterwegs, oder der
     /// Simulator kennt den Platz nicht. In allen drei Faellen bleibt es
     /// bei den Navdaten.
-    pub fn szenerie(&self) -> Option<sim_core::szenerie::SzenerieFlughafen> {
-        self.shared.szenerie.lock().clone()
+    ///
+    /// ⚠ NUR zu diesem Platz. Kein Rueckfall auf "irgendeine" — am
+    /// 01.09.2026 lag beim Aufsetzen in Sevilla die Szenerie Frankfurts
+    /// vor, und ein bequemer Rueckfall haette sie benutzt.
+    pub fn szenerie_fuer(&self, icao: &str) -> Option<sim_core::szenerie::SzenerieFlughafen> {
+        self.shared.szenerie.lock().auskunft(icao).cloned()
+    }
+
+    /// Wie oft dieser Platz schon gefragt wurde — fuer die Diagnose.
+    pub fn szenerie_versuche(&self, icao: &str) -> u8 {
+        self.shared.szenerie.lock().versuche(icao)
     }
 
     pub fn last_error(&self) -> Option<String> {
@@ -1102,11 +1109,28 @@ fn run_dispatch(
         //
         // Erst hier, im Faden mit dem Verbindungsgriff: `szenerie_anfordern`
         // laeuft im Aufrufer-Faden und darf SimConnect nicht anfassen.
-        if shared.szenerie_offen.swap(false, Ordering::Relaxed) {
-            let icao = shared.szenerie_angefordert.lock().clone();
-            if let Some(icao) = icao {
+        //
+        // ⚠ Seit v1.7.14 bei JEDEM Durchlauf, nicht nur wenn das Flag
+        // gesetzt ist. Das Flag sagte "jemand hat etwas angemeldet";
+        // eine Wiederholung nach ausgebliebener Antwort haette es nie
+        // ausgeloest. Das Buch gibt von sich aus nur dann einen Auftrag
+        // heraus, wenn wirklich einer faellig ist — es ist ein Vergleich
+        // je Durchlauf.
+        shared.szenerie_offen.store(false, Ordering::Relaxed);
+        {
+            let jetzt_ms = chrono::Utc::now().timestamp_millis();
+            let faellig = shared.szenerie.lock().naechster(jetzt_ms);
+            if let Some(icao) = faellig {
+                shared.szenerie.lock().gestellt(&icao, jetzt_ms);
                 match conn.request_facility(&icao) {
-                    Ok(()) => tracing::info!(%icao, "Szenerie-Auskunft angefordert"),
+                    Ok(()) => {
+                        *shared.szenerie_diagnose.lock() = SzenerieDiagnose::Angefordert;
+                        tracing::info!(
+                            %icao,
+                            versuch = shared.szenerie.lock().versuche(&icao),
+                            "Szenerie-Auskunft angefordert"
+                        );
+                    }
                     Err(e) => {
                         // Nicht erneut versuchen: Ein Platz, den der
                         // Simulator nicht kennt, wird beim naechsten
@@ -1118,6 +1142,7 @@ fn run_dispatch(
                         // genauso aus wie "nie gefragt".
                         *shared.szenerie_diagnose.lock() =
                             SzenerieDiagnose::Abgelehnt(e.to_string());
+                        shared.szenerie.lock().abgelehnt(&icao, e.to_string());
                         tracing::warn!(%icao, error = %e, "Szenerie-Anfrage abgelehnt");
                     }
                 }
@@ -1222,10 +1247,15 @@ fn run_dispatch(
                 }
                 Ok(Some(DispatchMsg::FacilityDataEnde { request_id })) => {
                     if request_id == FACILITY_REQUEST_ID {
+                        // ⚠ Mit dem Platz, der WIRKLICH gefragt wurde
+                        // — nicht mit dem zuletzt angemeldeten Wunsch.
+                        // Bis v1.7.13 stand hier der Wunsch, und eine
+                        // Antwort, die waehrend einer neuen Anmeldung
+                        // eintraf, bekam den falschen Namen.
                         let icao = shared
-                            .szenerie_angefordert
+                            .szenerie
                             .lock()
-                            .clone()
+                            .laufender()
                             .unwrap_or_default();
                         tracing::info!(
                             %icao,
@@ -1270,7 +1300,7 @@ fn run_dispatch(
                             bahnen: auskunft.bahnen.len(),
                             rollwege: auskunft.rollwege.len(),
                         };
-                        *shared.szenerie.lock() = Some(auskunft);
+                        shared.szenerie.lock().geliefert(&auskunft.icao.clone(), auskunft);
                         facility_referenz = None;
                         facility_punkte.clear();
                         facility_namen.clear();

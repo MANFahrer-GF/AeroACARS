@@ -2263,6 +2263,26 @@ fn szenerie_anfordern_fuer(app: &AppHandle, icaos: &[String]) {
     }
 }
 
+/// Welchen Platz die Szenerie-Auskunft betreffen muss.
+///
+/// Der geplante Zielflughafen — es sei denn, ein Ausweichanflug ist
+/// erkannt, dann der tatsaechliche. Beides zusammen, damit im Anflug
+/// beide gefragt werden: Ein Ausweichentschluss faellt spaet, und die
+/// Antwort braucht Vorlauf.
+///
+/// ⚠ Die Reihenfolge ist die Rangfolge. Das Ausweichziel steht vorn,
+/// weil dort gelandet wird.
+fn szenerie_ziele(geplant: &str, ausweich: Option<&str>) -> Vec<String> {
+    let mut ziele: Vec<String> = Vec::new();
+    for kandidat in ausweich.into_iter().chain(std::iter::once(geplant)) {
+        let k = kandidat.trim().to_ascii_uppercase();
+        if k.len() == 4 && !ziele.contains(&k) {
+            ziele.push(k);
+        }
+    }
+    ziele
+}
+
 /// Die MSFS-Szenerie-Auskunft vom Adapter an den Flug reichen.
 ///
 /// Der Adapter fuellt sie asynchron, sobald die Lieferung vollstaendig
@@ -2291,11 +2311,30 @@ fn szenerie_auskunft_uebernehmen(
     }
     #[cfg(target_os = "windows")]
     {
+        // Wohin es geht — das Ausweichziel zuerst, falls eins erkannt ist.
+        let ausweich = flight
+            .stats
+            .lock()
+            .ok()
+            .and_then(|s| s.divert_prefetch_icao.clone());
+        let ziele = szenerie_ziele(&flight.arr_airport, ausweich.as_deref());
+
         let (neu, diagnose, kennung) = {
             let state = app.state::<AppState>();
             let Ok(msfs) = state.msfs.lock() else { return };
+            // ⚠ Bei JEDEM Durchlauf nachmelden. Das Buch entscheidet,
+            // ob daraus wirklich eine Anfrage wird — genau so wird aus
+            // dem einen Versuch am Gate eine Wiederholung im Anflug,
+            // wo die Szenerie des Ziels geladen ist. Bis v1.7.13 gab es
+            // den zweiten Versuch nicht, und der Flug EDDF-LEZL am
+            // 01.09.2026 landete mit der Szenerie Frankfurts.
+            for z in &ziele {
+                msfs.szenerie_anfordern(z);
+            }
+            // Und NUR eine Auskunft zu einem dieser Plaetze nehmen.
+            let treffer = ziele.iter().find_map(|z| msfs.szenerie_fuer(z));
             (
-                msfs.szenerie(),
+                treffer,
                 msfs.szenerie_diagnose().kurz(),
                 msfs.sim_kennung(),
             )
@@ -11696,7 +11735,23 @@ fn szenerie_status(stats: &FlightStats) -> String {
                 b.ohne_treffer.len(),
                 b.verworfen.len()
             ),
-            None => format!("auskunft_ohne_vergleich(bahnen={anzahl})"),
+            // ⚠ MIT dem Platz und der Diagnose.
+            //
+            // Am 01.09.2026 stand hier `auskunft_ohne_vergleich(bahnen=4)`
+            // und sonst nichts. Dass die vier Bahnen der START flughafen
+            // waren und nicht das Ziel, liess sich erst ueber die
+            // Bahnzahl der beiden Plaetze erschliessen — LEZL hat eine,
+            // EDDF hat vier. Der Platz gehoert in die Zeile, sonst
+            // kostet dieselbe Frage wieder eine halbe Untersuchung.
+            None => format!(
+                "auskunft_ohne_vergleich(platz={}, bahnen={anzahl}, diagnose={})",
+                stats
+                    .szenerie_auskunft
+                    .as_ref()
+                    .map(|a| a.icao.as_str())
+                    .unwrap_or("?"),
+                stats.szenerie_diagnose.as_deref().unwrap_or("?")
+            ),
         };
     }
     match stats.szenerie_diagnose.as_deref() {
@@ -53389,6 +53444,36 @@ mod szenerie_status_tests {
         );
     }
 
+    /// Ohne Ausweichziel ist es einfach der geplante Platz.
+    #[test]
+    fn ohne_ausweich_nur_das_geplante_ziel() {
+        assert_eq!(szenerie_ziele("LEZL", None), vec!["LEZL".to_string()]);
+    }
+
+    /// Mit Ausweichziel stehen BEIDE drin — und das Ausweichziel vorn.
+    ///
+    /// ⚠ Beide, weil ein Ausweichentschluss spaet faellt und die
+    /// Antwort Vorlauf braucht; das Ausweichziel vorn, weil dort
+    /// gelandet wird.
+    #[test]
+    fn mit_ausweich_steht_das_ausweichziel_vorn() {
+        assert_eq!(
+            szenerie_ziele("LEZL", Some("LEMG")),
+            vec!["LEMG".to_string(), "LEZL".to_string()]
+        );
+    }
+
+    /// Gross/klein und Leerzeichen fallen weg, Doppelte auch.
+    #[test]
+    fn die_ziele_werden_geglaettet() {
+        assert_eq!(
+            szenerie_ziele(" lezl ", Some("LEZL")),
+            vec!["LEZL".to_string()],
+            "derselbe Platz zweimal gefragt"
+        );
+        assert!(szenerie_ziele("XX", Some("")).is_empty());
+    }
+
     /// Eine Auskunft ohne Vergleich darf keine Nullmessung erfinden.
     ///
     /// ⚠ Aus der QS (31.08.2026): Liegt eine nichtleere Auskunft vor,
@@ -53403,7 +53488,31 @@ mod szenerie_status_tests {
         let mut s = FlightStats::new();
         s.szenerie_auskunft = Some(auskunft(40));
         // kein Uebernahmebericht
-        assert_eq!(szenerie_status(&s), "auskunft_ohne_vergleich(bahnen=40)");
+        assert_eq!(
+            szenerie_status(&s),
+            "auskunft_ohne_vergleich(platz=DAAG, bahnen=40, diagnose=?)"
+        );
+    }
+
+    /// Der Fall vom 01.09.2026, als Zeile.
+    ///
+    /// ⚠ Ohne den Platz in der Meldung kostete die Frage "welcher
+    /// Flughafen war das eigentlich?" eine halbe Untersuchung: Es liess
+    /// sich nur ueber die Bahnzahl erschliessen (LEZL hat eine, EDDF
+    /// vier). Mit Platz und Diagnose beantwortet die Zeile sich selbst.
+    #[test]
+    fn die_meldung_nennt_den_platz_der_auskunft() {
+        let mut s = FlightStats::new();
+        let mut a = auskunft(4);
+        a.icao = "EDDF".to_string();
+        s.szenerie_auskunft = Some(a);
+        s.szenerie_diagnose = Some("geliefert(EDDF, bahnen=4, rollwege=61)".to_string());
+        // kein Uebernahmebericht — in Sevilla gelandet, Frankfurt im Fach
+        assert_eq!(
+            szenerie_status(&s),
+            "auskunft_ohne_vergleich(platz=EDDF, bahnen=4, \
+             diagnose=geliefert(EDDF, bahnen=4, rollwege=61))"
+        );
     }
 
     /// Die Meldung muss sagen, WORAN es lag.

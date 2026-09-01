@@ -1365,7 +1365,7 @@ mod verdrahtung_tests {
         // maesse gegen die falsche, ohne dass etwas anschlaegt.
         let a = ohne_leerraum(ADAPTER);
         assert!(
-            a.contains("*shared.szenerie.lock()=Some("),
+            a.contains("shared.szenerie.lock().geliefert("),
             "die Szenerie wird nirgends veroeffentlicht"
         );
         // Die Veroeffentlichung muss im ENDE-Zweig stehen, nicht im
@@ -1374,7 +1374,7 @@ mod verdrahtung_tests {
             .find("DispatchMsg::FacilityDataEnde")
             .expect("Ende-Zweig fehlt");
         let veroeffentlichung = a
-            .find("*shared.szenerie.lock()=Some(")
+            .find("shared.szenerie.lock().geliefert(")
             .expect("Veroeffentlichung fehlt");
         assert!(
             veroeffentlichung > ende,
@@ -1549,20 +1549,50 @@ mod anschluss_verdrahtung_tests {
             a.contains("conn.request_facility(&icao)"),
             "die Anfrage wird nicht im Verbindungsfaden gestellt"
         );
+        // ⚠ Seit v1.7.14 kommt der Auftrag aus dem Buch, nicht aus einer
+        // Flagge. Die Flagge sagte nur "jemand hat etwas angemeldet" —
+        // eine Wiederholung nach ausgebliebener Antwort haette sie nie
+        // ausgeloest, und genau daran ist EDDF-LEZL gescheitert.
         assert!(
-            a.contains("szenerie_offen.swap(false,Ordering::Relaxed)"),
-            "die ausstehende Anfrage wird nicht abgeholt"
+            a.contains("shared.szenerie.lock().naechster(jetzt_ms)"),
+            "der faellige Auftrag wird nicht aus dem Buch geholt — dann \
+             haengt die Anfrage wieder an einer Flagge und wird nie \
+             wiederholt"
+        );
+        assert!(
+            a.contains("shared.szenerie.lock().gestellt(&icao,jetzt_ms)"),
+            "die gestellte Anfrage wird nicht im Buch vermerkt — dann \
+             zaehlt niemand die Versuche und die Sperre greift nie"
         );
     }
 
+    /// ⚠ Dieser Waechter stand bis v1.7.13 auf dem Kopf.
+    ///
+    /// Er verlangte, dass eine Anmeldung die vorhandene Auskunft
+    /// LOESCHT — mit der Begruendung, sonst wuerde nach einem Divert die
+    /// Bahn des geplanten Ziels benutzt. Die Sorge war richtig, das
+    /// Mittel falsch: Weil Start und Ziel beim Flugbeginn nacheinander
+    /// angemeldet werden, loeschte die zweite Anmeldung die Antwort der
+    /// ersten. Am 01.09.2026 (EDDF→LEZL) lag beim Aufsetzen in Sevilla
+    /// die Szenerie Frankfurts vor.
+    ///
+    /// Richtig ist die Trennung nach Platz: Jeder behaelt seine eigene
+    /// Antwort, und herausgegeben wird nur die des gefragten Platzes.
+    /// Das leistet `Auftragsbuch::auskunft` — dort steht auch der
+    /// Verhaltenstest dazu (`kein_rueckfall_auf_irgendeinen_platz`).
+    /// Hier bleibt nur, dass das alte Mittel nicht zurueckkommt.
     #[test]
-    fn ein_neuer_platz_verwirft_die_alte_auskunft() {
-        // Sonst wuerde nach einem Divert die Bahn des GEPLANTEN Ziels
-        // benutzt — plausible Zahlen, falscher Flughafen.
+    fn eine_anmeldung_loescht_keine_fremde_auskunft() {
         let a = ohne_leerraum(ADAPTER);
         assert!(
-            a.contains("*self.shared.szenerie.lock()=None;"),
-            "beim Anfordern eines anderen Platzes bleibt die alte Auskunft stehen"
+            !a.contains("*self.shared.szenerie.lock()=None;"),
+            "die Anmeldung loescht wieder das ganze Fach — damit \
+             verdraengen sich Start und Ziel gegenseitig (EDDF-LEZL, \
+             01.09.2026)"
+        );
+        assert!(
+            a.contains("self.shared.szenerie.lock().wunsch(&icao)"),
+            "die Anmeldung geht nicht ins Buch"
         );
     }
 
