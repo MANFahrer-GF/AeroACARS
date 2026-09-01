@@ -2353,6 +2353,33 @@ fn versuchsfenster_fortschreiben(
     (braucht_neues_versuchsfenster(phase, vorher), Some(phase))
 }
 
+/// Ob die Auskunft am Flug durch eine neuere ersetzt werden muss.
+///
+/// ⚠ Die alte Regel war „nur wenn noch nichts mit diesem Platz da ist".
+/// Damit gewann die neueste Lieferung nur IM BUCH, nicht am Flug:
+///
+/// * Versuch 1 liefert verspaetet und wird kopiert; Versuch 2 liefert
+///   danach aktueller und gewinnt im Buch — der Flug behaelt Versuch 1.
+/// * Nach einer neuen Verbindung wird das Buch geleert und neu gefragt;
+///   die alte Flugkopie bleibt, und die frische Lieferung desselben
+///   Flughafens kommt nie an.
+///
+/// Beim Aufsetzen wird genau diese Kopie fuer Bahngeometrie und
+/// Rollwege benutzt (QS-Befund 2, siebte Runde).
+///
+/// Der **Stand** ist die Kennung des Versuchs, aus dem die Lieferung
+/// stammt. Sie waechst streng — auch ueber einen Verbindungswechsel
+/// hinweg, weil `zuruecksetzen` die Kennungen absichtlich nicht
+/// zuruecksetzt.
+fn auskunft_ersetzen(alt: Option<(&str, u32)>, neu_icao: &str, neu_stand: u32) -> bool {
+    match alt {
+        None => true,
+        Some((alt_icao, alt_stand)) => {
+            !alt_icao.eq_ignore_ascii_case(neu_icao) || neu_stand > alt_stand
+        }
+    }
+}
+
 /// Rang einer blossen Vormerkung.
 ///
 /// ⚠ Absichtlich SCHLECHTER als jeder Rang, den die Ernte vergibt.
@@ -2528,7 +2555,9 @@ fn szenerie_auskunft_uebernehmen(
                 ausweich.as_deref(),
                 tatsaechlich.as_deref(),
             );
-            let treffer = ernteziel.as_deref().and_then(|z| msfs.szenerie_fuer(z));
+            let treffer = ernteziel
+                .as_deref()
+                .and_then(|z| msfs.szenerie_fuer(z).map(|a| (a, msfs.szenerie_stand(z))));
             let diagnose = ernteziel
                 .as_deref()
                 .map(|z| msfs.szenerie_diagnose_fuer(z))
@@ -2545,22 +2574,26 @@ fn szenerie_auskunft_uebernehmen(
                 stats.sim_kennung = kennung;
             }
         }
-        let Some(neu) = neu else { return };
+        let Some((neu, stand)) = neu else { return };
         let Ok(mut stats) = flight.stats.lock() else {
             return;
         };
-        let schon_da = stats
+        // ⚠ Nach STAND entscheiden, nicht nach Anwesenheit — siehe
+        // `auskunft_ersetzen`.
+        let alt = stats
             .szenerie_auskunft
             .as_ref()
-            .is_some_and(|a| a.icao.eq_ignore_ascii_case(&neu.icao));
-        if !schon_da {
+            .map(|a| (a.icao.as_str(), stats.szenerie_auskunft_stand));
+        if auskunft_ersetzen(alt, &neu.icao, stand) {
             tracing::info!(
                 icao = %neu.icao,
+                stand,
                 bahnen = neu.bahnen.len(),
                 rollwege = neu.rollwege.len(),
                 "Szenerie-Auskunft am Flug abgelegt"
             );
             stats.szenerie_auskunft = Some(neu);
+            stats.szenerie_auskunft_stand = stand;
         }
     }
     #[cfg(not(target_os = "windows"))]
@@ -4226,6 +4259,9 @@ struct FlightStats {
     /// committed approach to a different field warms the cache exactly once
     /// (flicker / overflown-airport guard). Runtime-only.
     divert_prefetch_icao: Option<String>,
+    /// Der Stand der am Flug abgelegten Szenerie-Auskunft.
+    /// Siehe `auskunft_ersetzen`.
+    szenerie_auskunft_stand: u32,
     /// Die Phase beim VORIGEN Durchlauf der Szenerie-Ernte.
     ///
     /// ⚠ Irgendeine Phase, nicht die zuletzt geoeffnete Landephase —
@@ -53688,6 +53724,55 @@ mod szenerie_status_tests {
             "ein leeres Ausweichziel darf nicht das geplante verdecken"
         );
         assert_eq!(szenerie_ernteziel("XX", None, None), None);
+    }
+
+    /// ⚠ QS-Befund 2, siebte Runde: Die neueste Lieferung gewinnt auch
+    /// AM FLUG, nicht nur im Buch.
+    ///
+    /// Die alte Regel war „nur wenn noch nichts mit diesem Platz da
+    /// ist". Damit behielt der Flug die Auskunft aus Versuch 1, obwohl
+    /// Versuch 2 im Buch laengst gewonnen hatte — und beim Aufsetzen
+    /// wird genau diese Kopie fuer Bahngeometrie und Rollwege benutzt.
+    #[test]
+    fn eine_neuere_lieferung_ersetzt_die_flugkopie() {
+        // Nichts da: nehmen.
+        assert!(auskunft_ersetzen(None, "LEZL", 1));
+        // Neuerer Stand desselben Platzes: ersetzen.
+        assert!(
+            auskunft_ersetzen(Some(("LEZL", 1)), "LEZL", 2),
+            "die neuere Lieferung erreicht den Flug nicht"
+        );
+        // Gleicher Stand: nichts tun.
+        assert!(!auskunft_ersetzen(Some(("LEZL", 2)), "LEZL", 2));
+        // Aelterer Stand: nichts tun.
+        assert!(
+            !auskunft_ersetzen(Some(("LEZL", 5)), "LEZL", 3),
+            "eine aeltere Lieferung hat die neuere ueberschrieben"
+        );
+    }
+
+    /// Ein anderer Platz ersetzt immer — auch mit kleinerem Stand.
+    ///
+    /// ⚠ Beim Ausweichflug wechselt das Ernteziel. Die Kopie des alten
+    /// Ziels muss weichen, unabhaengig von der Kennung.
+    #[test]
+    fn ein_anderer_platz_ersetzt_die_flugkopie_immer() {
+        assert!(auskunft_ersetzen(Some(("LEZL", 9)), "LEMG", 1));
+        // Und Gross/Kleinschreibung ist kein Unterschied.
+        assert!(!auskunft_ersetzen(Some(("LEZL", 9)), "lezl", 9));
+    }
+
+    /// ⚠ Und der Verbindungswechsel: Buch geleert, frisch gefragt.
+    ///
+    /// Die Kennungen laufen ueber `zuruecksetzen` hinweg weiter — genau
+    /// deshalb traegt die frische Lieferung einen hoeheren Stand und
+    /// erreicht den Flug. Bliebe die alte Kopie stehen, waere die
+    /// Begruendung fuer `verbindung_zuruecksetzen` hinfaellig.
+    #[test]
+    fn nach_einem_verbindungswechsel_kommt_die_frische_lieferung_an() {
+        // Vor dem Wechsel: Stand 3. Danach vergibt das Buch weiter —
+        // die naechste Lieferung traegt einen groesseren Stand.
+        assert!(auskunft_ersetzen(Some(("EDDF", 3)), "EDDF", 4));
     }
 
     /// ⚠ QS-Befund 1 der dritten Runde (P0): Das Fenster oeffnet in den

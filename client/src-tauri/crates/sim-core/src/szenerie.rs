@@ -173,6 +173,18 @@ pub enum Auftragszustand {
     Offen,
     /// Gestellt, Antwort steht aus (Zeitpunkt in Millisekunden).
     Laeuft { seit_ms: i64 },
+    /// Voruebergehend gescheitert — gesperrt bis `bis_ms`.
+    ///
+    /// ⚠ Ohne diesen Zustand verbrannte ein voruebergehender Fehler den
+    /// ganzen Abschnittsvorrat in einer halben Sekunde: `freigeben`
+    /// setzte den Auftrag sofort auf `Offen`, der Verteiler laeuft alle
+    /// 50 ms, und nach zehn Durchlaeufen waren alle zehn Versuche weg
+    /// (QS-Befund 1, siebte Runde, P0).
+    ///
+    /// Bei `TOO_MANY_REQUESTS` verschaerfte die Wiederholung sogar genau
+    /// den Zustand, den sie beheben soll — die Ausnahme bedeutet, dass
+    /// die Hoechstzahl gleichzeitiger Anfragen erreicht ist.
+    Wartet { bis_ms: i64 },
     /// Vollstaendige Lieferung eingetroffen.
     Geliefert,
     /// SimConnect hat die Anfrage zurueckgewiesen.
@@ -304,10 +316,30 @@ pub const RANG_UNBETEILIGT: u8 = 200;
 /// Runde).
 pub const KENNUNG_HOECHST: u32 = u32::MAX - 2000;
 
+/// Wie lange ein Platz nach einem voruebergehenden Fehler ruht.
+///
+/// ⚠ Kuerzer als `WARTEZEIT_MS`, weil die Anfrage gar nicht erst
+/// hinausging oder sofort abgewiesen wurde — aber lang genug, dass zehn
+/// Versuche ueber **fuenfundvierzig Sekunden** laufen statt ueber eine
+/// halbe. Das ist der ganze Zweck: Der Verteiler laeuft alle 50 ms.
+pub const RUECKZUG_MS: i64 = 5_000;
+
 #[derive(Debug, Clone, Default)]
 pub struct Auftragsbuch {
     auftraege: std::collections::BTreeMap<String, Auftrag>,
-    laeuft: Option<String>,
+    // ⚠ Hier stand `laeuft: Option<String>` — der Platz, dessen Anfrage
+    // laeuft. Er ist ERSATZLOS gestrichen.
+    //
+    // Er hielt dieselbe Tatsache ein zweites Mal: Der Zustand steht im
+    // Eintrag (`Laeuft`), und er stand nochmal global. Aus dem Riss
+    // zwischen beiden sind in sechs QS-Runden ZWEI Befunde entstanden —
+    // „laufender() sagt niemand, diagnose() sagt unterwegs" und die nur
+    // halb ausgefuehrte Freigabe. Jede Freigabestelle musste an zwei
+    // Stellen denken, und jede neue vergass eine.
+    //
+    // `laufender()` liest den laufenden Auftrag jetzt aus den
+    // Eintraegen. Es kann keinen Widerspruch mehr geben, weil es nur
+    // noch eine Quelle gibt.
     /// Fortlaufende Kennung. Jeder VERSUCH bekommt eine eigene — nicht
     /// jeder Platz.
     naechste_id: u32,
@@ -380,26 +412,29 @@ impl Auftragsbuch {
             return None;
         }
         // Laeuft eine und ist noch Zeit? Dann nichts Neues.
-        if let Some(laufend) = self.laeuft.clone() {
-            if let Some(a) = self.auftraege.get(&laufend) {
-                if let Auftragszustand::Laeuft { seit_ms } = a.zustand {
-                    if jetzt_ms - seit_ms < WARTEZEIT_MS {
-                        return None;
-                    }
-                }
+        //
+        // ⚠ Aus den EINTRAEGEN gelesen, nicht aus einem zweiten Zeiger.
+        let laufend = self.auftraege.iter().find_map(|(icao, a)| match a.zustand {
+            Auftragszustand::Laeuft { seit_ms } => Some((icao.clone(), seit_ms)),
+            _ => None,
+        });
+        if let Some((icao, seit_ms)) = laufend {
+            if jetzt_ms - seit_ms < WARTEZEIT_MS {
+                return None;
             }
             // Wartezeit um: der Platz darf wieder in die Reihe.
-            self.laeuft = None;
+            self.zustand_setzen(&icao, Auftragszustand::Offen);
         }
         let kandidat = self
             .auftraege
             .iter()
             .filter(|(_, a)| a.versuche < HOECHSTVERSUCHE)
-            .filter(|(_, a)| {
-                matches!(
-                    a.zustand,
-                    Auftragszustand::Offen | Auftragszustand::Laeuft { .. }
-                )
+            .filter(|(_, a)| match a.zustand {
+                Auftragszustand::Offen | Auftragszustand::Laeuft { .. } => true,
+                // ⚠ Ruhend: erst nach Ablauf wieder Kandidat. Und NUR
+                // dieser Platz ruht — andere duerfen weiter.
+                Auftragszustand::Wartet { bis_ms } => jetzt_ms >= bis_ms,
+                _ => false,
             })
             // ⚠ RANG ZUERST, dann die Versuchszahl.
             //
@@ -448,7 +483,6 @@ impl Auftragsbuch {
         while self.kennungen.len() > KENNUNGEN_GEDAECHTNIS {
             self.kennungen.pop_front();
         }
-        self.laeuft = Some(icao);
         id
     }
 
@@ -464,16 +498,20 @@ impl Auftragsbuch {
     pub fn neues_versuchsfenster(&mut self) -> usize {
         let mut betroffen = 0;
         for a in self.auftraege.values_mut() {
+            // ⚠ Auch RUHENDE Plaetze. Ein Phasenwechsel ist ein echtes
+            // Ereignis, kein Tick — die Ruhezeit aus einem
+            // voruebergehenden Fehler darf ihn nicht ueberdauern.
             if matches!(
                 a.zustand,
-                Auftragszustand::Offen | Auftragszustand::Laeuft { .. }
+                Auftragszustand::Offen
+                    | Auftragszustand::Laeuft { .. }
+                    | Auftragszustand::Wartet { .. }
             ) {
                 a.versuche = 0;
                 a.zustand = Auftragszustand::Offen;
                 betroffen += 1;
             }
         }
-        self.laeuft = None;
         betroffen
     }
 
@@ -492,7 +530,6 @@ impl Auftragsbuch {
     pub fn zuruecksetzen(&mut self) {
         self.auftraege.clear();
         self.kennungen.clear();
-        self.laeuft = None;
         // ⚠ Der Definitionsfehler bleibt STEHEN.
         //
         // Die Felddefinition wird je VERBINDUNG registriert, nicht je
@@ -544,7 +581,11 @@ impl Auftragsbuch {
     /// nichts mehr heraus, und die Diagnose sagt, welches Feld es war.
     pub fn definition_abgelehnt(&mut self, feld: String, grund: String) {
         self.definition_fehler = Some((feld, grund));
-        self.laeuft = None;
+        // ⚠ Auch den laufenden Auftrag beenden — sonst haelt er die
+        // Reihe, obwohl nie wieder gefragt wird.
+        if let Some(icao) = self.laufender() {
+            self.zustand_setzen(&icao, Auftragszustand::Offen);
+        }
     }
 
     /// Welches Feld der Definition abgelehnt wurde, falls eines.
@@ -587,19 +628,11 @@ impl Auftragsbuch {
         // ⚠ Einen laufenden Auftrag, der kein Ziel mehr ist, SOFORT
         // freigeben. Sonst blockiert er die Reihe, bis die Wartezeit um
         // ist — und genau die 60 Sekunden fehlen dann dem Ziel.
-        if let Some(laufend) = self.laeuft.clone() {
+        // ⚠ Nur noch EINE Haelfte, weil es nur noch eine gibt.
+        if let Some(laufend) = self.laufender() {
             let ist_ziel = ziele.iter().any(|(z, _)| z.eq_ignore_ascii_case(&laufend));
             if !ist_ziel {
-                // ⚠ BEIDE Haelften. Nur `laeuft` zu loeschen ergab zwei
-                // Aussagen, die sich widersprechen: `laufender()` sagte
-                // „niemand", `diagnose(ICAO)` weiter „unterwegs"
-                // (QS-Befund 5, sechste Runde).
-                if let Some(a) = self.auftraege.get_mut(&laufend) {
-                    if matches!(a.zustand, Auftragszustand::Laeuft { .. }) {
-                        a.zustand = Auftragszustand::Offen;
-                    }
-                }
-                self.laeuft = None;
+                self.zustand_setzen(&laufend, Auftragszustand::Offen);
             }
         }
         if fenster {
@@ -645,7 +678,22 @@ impl Auftragsbuch {
     /// ⚠ Damit wird die Lieferung beschriftet — NICHT mit dem zuletzt
     /// angemeldeten Wunsch. Das war Fehler 2 oben.
     pub fn laufender(&self) -> Option<String> {
-        self.laeuft.clone()
+        self.auftraege
+            .iter()
+            .find(|(_, a)| matches!(a.zustand, Auftragszustand::Laeuft { .. }))
+            .map(|(icao, _)| icao.clone())
+    }
+
+    /// Einen Auftrag beenden und in einen neuen Zustand ueberfuehren.
+    ///
+    /// ⚠ ALLE Freigabewege gehen hier durch — voruebergehender Fehler,
+    /// veraltetes Ziel, neues Versuchsfenster, Lieferung, Ablehnung.
+    /// Vorher hatte jeder seine eigene Fassung, und jede musste an den
+    /// Eintrag UND an den globalen Zeiger denken.
+    fn zustand_setzen(&mut self, icao: &str, neu: Auftragszustand) {
+        if let Some(a) = self.auftraege.get_mut(icao) {
+            a.zustand = neu;
+        }
     }
 
     /// Eine Lieferung ueber die **Kennung ihres Versuchs** ablegen.
@@ -680,7 +728,7 @@ impl Auftragsbuch {
     /// ⚠ Fuer voruebergehende Fehler. Der Platz bleibt offen und kommt
     /// wieder an die Reihe; nur die laufende Anfrage gilt als beendet,
     /// damit nicht die volle Wartezeit verstreicht.
-    pub fn freigeben_zu_kennung(&mut self, id: u32) -> Option<String> {
+    pub fn freigeben_zu_kennung(&mut self, id: u32, jetzt_ms: i64) -> Option<String> {
         let icao = self.platz_zu_kennung(id)?;
         // ⚠ NUR die neueste Kennung darf freigeben.
         //
@@ -691,13 +739,20 @@ impl Auftragsbuch {
         if self.auftraege.get(&icao).is_some_and(|a| a.letzte_id != id) {
             return None;
         }
-        if let Some(a) = self.auftraege.get_mut(&icao) {
-            if matches!(a.zustand, Auftragszustand::Laeuft { .. }) {
-                a.zustand = Auftragszustand::Offen;
-            }
-        }
-        if self.laeuft.as_deref() == Some(icao.as_str()) {
-            self.laeuft = None;
+        // ⚠ NICHT `Offen`. Sonst kommt der Platz beim naechsten
+        // Verteilerdurchlauf sofort wieder dran — 50 ms spaeter. Ein
+        // ruhender Platz haelt dabei KEINEN anderen auf: `naechster`
+        // sucht den laufenden Auftrag, und ruhend ist nicht laufend.
+        if matches!(
+            self.auftraege.get(&icao).map(|a| &a.zustand),
+            Some(Auftragszustand::Laeuft { .. })
+        ) {
+            self.zustand_setzen(
+                &icao,
+                Auftragszustand::Wartet {
+                    bis_ms: jetzt_ms + RUECKZUG_MS,
+                },
+            );
         }
         Some(icao)
     }
@@ -735,9 +790,6 @@ impl Auftragsbuch {
         });
         eintrag.zustand = Auftragszustand::Geliefert;
         eintrag.auskunft = Some(auskunft);
-        if self.laeuft.as_deref() == Some(icao.as_str()) {
-            self.laeuft = None;
-        }
     }
 
     /// Eine Zurueckweisung festhalten.
@@ -752,9 +804,6 @@ impl Auftragsbuch {
             if a.auskunft.is_none() {
                 a.zustand = Auftragszustand::Abgelehnt;
             }
-        }
-        if self.laeuft.as_deref() == Some(icao.as_str()) {
-            self.laeuft = None;
         }
     }
 
@@ -778,6 +827,22 @@ impl Auftragsbuch {
         self.auftraege
             .get(&icao.trim().to_ascii_uppercase())
             .and_then(|a| a.auskunft.as_ref())
+    }
+
+    /// Der Stand der gespeicherten Lieferung — die Kennung des Versuchs,
+    /// aus dem sie stammt.
+    ///
+    /// ⚠ Damit kann der Abnehmer entscheiden, ob seine Kopie veraltet
+    /// ist. Vorher kopierte er nur, wenn noch GAR NICHTS mit diesem
+    /// ICAO am Flug lag — eine neuere Lieferung desselben Platzes kam
+    /// nie an, und nach einem Verbindungswechsel blieb die alte Kopie
+    /// stehen, obwohl das Buch frisch abgefragt hatte (QS-Befund 2,
+    /// siebte Runde).
+    pub fn lieferungsstand(&self, icao: &str) -> u32 {
+        self.auftraege
+            .get(&icao.trim().to_ascii_uppercase())
+            .map(|a| a.ergebnis_id)
+            .unwrap_or(0)
     }
 
     /// Zustand eines Platzes — fuer die Diagnose am Flug.
@@ -814,6 +879,9 @@ impl Auftragsbuch {
                 Auftragszustand::Offen => format!("angemeldet({icao_gross})"),
                 Auftragszustand::Laeuft { .. } => {
                     format!("unterwegs({icao_gross}, versuch={})", a.versuche)
+                }
+                Auftragszustand::Wartet { bis_ms } => {
+                    format!("ruht({icao_gross}, bis={bis_ms}, versuch={})", a.versuche)
                 }
                 Auftragszustand::Abgelehnt => format!(
                     "abgelehnt({icao_gross}, {})",
@@ -1428,14 +1496,98 @@ mod auftragsbuch_tests {
         b.wunsch("LEZL");
         let (_, id) = b.naechsten_stellen(0).expect("Auftrag");
 
-        b.freigeben_zu_kennung(id);
+        b.freigeben_zu_kennung(id, 0);
 
-        assert_eq!(b.zustand("LEZL"), Some(Auftragszustand::Offen));
+        // ⚠ Dieser Test verlangte bis zur siebten Runde das GEGENTEIL:
+        // „nach einem voruebergehenden Fehler muss SOFORT wieder gefragt
+        // werden duerfen". Das war der P0 — der Verteiler laeuft alle
+        // 50 ms, und nach zehn Durchlaeufen war der ganze
+        // Abschnittsvorrat in einer halben Sekunde verbrannt. Bei
+        // `TOO_MANY_REQUESTS` verschaerfte die Wiederholung sogar genau
+        // den Zustand, den sie beheben soll.
+        assert!(
+            matches!(b.zustand("LEZL"), Some(Auftragszustand::Wartet { .. })),
+            "der Platz ruht nicht: {:?}",
+            b.zustand("LEZL")
+        );
+        assert_eq!(
+            b.naechsten_stellen(1),
+            None,
+            "1 ms nach dem Fehler wird schon wieder gefragt"
+        );
+        assert_eq!(
+            b.naechsten_stellen(RUECKZUG_MS - 1),
+            None,
+            "kurz vor Ablauf der Ruhezeit wird schon wieder gefragt"
+        );
+        assert_eq!(
+            b.naechsten_stellen(RUECKZUG_MS).map(|(i, _)| i).as_deref(),
+            Some("LEZL"),
+            "nach der Ruhezeit wird nicht wieder gefragt"
+        );
+    }
+
+    /// ⚠ Und ein ruhender Platz haelt KEINEN anderen auf.
+    ///
+    /// Sonst waere die Ruhezeit eine Vollsperre: Das eigentliche Ziel
+    /// muesste warten, weil der Startflughafen sich verschluckt hat.
+    #[test]
+    fn ein_ruhender_platz_blockiert_die_anderen_nicht() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("EDDF", 0);
+        b.wunsch_mit_rang("LEZL", 1);
+        let (erst, id) = b.naechsten_stellen(0).expect("erster Auftrag");
+        assert_eq!(erst, "EDDF");
+
+        b.freigeben_zu_kennung(id, 0);
+
         assert_eq!(
             b.naechsten_stellen(1).map(|(i, _)| i).as_deref(),
             Some("LEZL"),
-            "nach einem voruebergehenden Fehler muss sofort wieder gefragt \
-             werden duerfen — nicht erst nach der vollen Wartezeit"
+            "der ruhende Platz sperrt die ganze Reihe"
+        );
+    }
+
+    /// ⚠ Zehn Versuche dauern jetzt Minuten, nicht eine halbe Sekunde.
+    ///
+    /// Das ist die Rechnung, die dem P0 zugrunde lag: Verteiler alle
+    /// 50 ms, zehn Versuche — ohne Ruhezeit war der Vorrat nach 500 ms
+    /// weg.
+    #[test]
+    fn zehn_voruebergehende_fehler_dauern_minuten() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("LEZL");
+        let mut t = 0i64;
+        let mut versuche = 0;
+        // Der Verteiler klopft alle 50 ms an.
+        while t < 10 * RUECKZUG_MS {
+            if let Some((_, id)) = b.naechsten_stellen(t) {
+                versuche += 1;
+                b.freigeben_zu_kennung(id, t);
+            }
+            t += 50;
+        }
+        assert_eq!(
+            versuche,
+            HOECHSTVERSUCHE as usize,
+            "in {} ms wurden {versuche} Versuche verbraucht",
+            10 * RUECKZUG_MS
+        );
+        // Und die ersten zehn Durchlaeufe (500 ms) duerfen nicht reichen.
+        let mut b2 = Auftragsbuch::neu();
+        b2.wunsch("LEZL");
+        let mut t2 = 0i64;
+        let mut v2 = 0;
+        while t2 < 500 {
+            if let Some((_, id)) = b2.naechsten_stellen(t2) {
+                v2 += 1;
+                b2.freigeben_zu_kennung(id, t2);
+            }
+            t2 += 50;
+        }
+        assert_eq!(
+            v2, 1,
+            "in einer halben Sekunde wurden {v2} Versuche verbrannt"
         );
     }
 
@@ -1456,7 +1608,7 @@ mod auftragsbuch_tests {
 
         // Die alte Ausnahme trifft ein — sie darf nichts tun.
         assert_eq!(
-            b.freigeben_zu_kennung(id1),
+            b.freigeben_zu_kennung(id1, 0),
             None,
             "die alte Ausnahme hat den laufenden Versuch beendet"
         );
@@ -1471,9 +1623,18 @@ mod auftragsbuch_tests {
             "ein dritter Versuch startet, waehrend der zweite laeuft"
         );
 
-        // Die Ausnahme zum NEUESTEN Versuch wirkt sehr wohl.
-        assert_eq!(b.freigeben_zu_kennung(id2).as_deref(), Some("LEZL"));
-        assert_eq!(b.zustand("LEZL"), Some(Auftragszustand::Offen));
+        // Die Ausnahme zum NEUESTEN Versuch wirkt sehr wohl — der Platz
+        // ruht danach, statt sofort wieder dranzukommen.
+        assert_eq!(
+            b.freigeben_zu_kennung(id2, WARTEZEIT_MS).as_deref(),
+            Some("LEZL")
+        );
+        assert_eq!(
+            b.zustand("LEZL"),
+            Some(Auftragszustand::Wartet {
+                bis_ms: WARTEZEIT_MS + RUECKZUG_MS
+            })
+        );
     }
 
     /// ⚠ QS-Befund 5, sechste Runde: Freigeben heisst BEIDE Haelften.

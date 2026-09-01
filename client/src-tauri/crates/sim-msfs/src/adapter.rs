@@ -963,6 +963,11 @@ impl MsfsAdapter {
         self.shared.szenerie.lock().auskunft(icao).cloned()
     }
 
+    /// Der Stand der gespeicherten Lieferung — siehe `lieferungsstand`.
+    pub fn szenerie_stand(&self, icao: &str) -> u32 {
+        self.shared.szenerie.lock().lieferungsstand(icao)
+    }
+
     /// Wie oft dieser Platz schon gefragt wurde — fuer die Diagnose.
     pub fn szenerie_versuche(&self, icao: &str) -> u8 {
         self.shared.szenerie.lock().versuche(icao)
@@ -1230,12 +1235,17 @@ fn run_dispatch(
                 // Kennung in JEDER Nachricht zurueck, genau dafuer.
                 let request_id = FACILITY_REQUEST_BASE + auftrag_id;
                 match conn.request_facility(&icao, request_id) {
-                    Ok(send_id) => {
+                    Ok(paket) => {
                         *shared.szenerie_diagnose.lock() = SzenerieDiagnose::Angefordert;
+                        // ⚠ Der Sammler wird IMMER eroeffnet — die
+                        // Anfrage lief, die Lieferung kommt ueber die
+                        // Anfragekennung.
                         facility_lieferungen.eroeffnen(request_id);
-                        facility_pakete.push((send_id, auftrag_id));
-                        while facility_pakete.len() > facility::PAKETE_GEDAECHTNIS {
-                            facility_pakete.remove(0);
+                        if let Some(send_id) = paket {
+                            facility_pakete.push((send_id, auftrag_id));
+                            while facility_pakete.len() > facility::PAKETE_GEDAECHTNIS {
+                                facility_pakete.remove(0);
+                            }
                         }
                         tracing::info!(
                             %icao,
@@ -1267,7 +1277,10 @@ fn run_dispatch(
                         // Versuch ist der richtige Umgang damit.
                         *shared.szenerie_diagnose.lock() =
                             SzenerieDiagnose::Abgelehnt(e.to_string());
-                        shared.szenerie.lock().freigeben_zu_kennung(auftrag_id);
+                        shared
+                            .szenerie
+                            .lock()
+                            .freigeben_zu_kennung(auftrag_id, jetzt_ms);
                         facility_lieferungen.abschliessen(request_id);
                         tracing::warn!(
                             %icao,
@@ -1542,7 +1555,10 @@ fn run_dispatch(
                                     "Szenerie-Anfrage voruebergehend abgewiesen — wird \
                                      erneut versucht"
                                 );
-                                shared.szenerie.lock().freigeben_zu_kennung(auftrag_id);
+                                shared.szenerie.lock().freigeben_zu_kennung(
+                                    auftrag_id,
+                                    chrono::Utc::now().timestamp_millis(),
+                                );
                             }
                             facility::Ausnahmeart::Unklar => {
                                 tracing::warn!(
@@ -2130,7 +2146,7 @@ impl Connection {
         &mut self,
         icao: &str,
         request_id: sys::SIMCONNECT_DATA_REQUEST_ID,
-    ) -> Result<u32, String> {
+    ) -> Result<Option<u32>, String> {
         let cicao = std::ffi::CString::new(icao).map_err(|_| "ICAO enthielt NUL".to_string())?;
         let leer = std::ffi::CString::new("").expect("leere Zeichenkette");
         let hr = unsafe {
@@ -2153,22 +2169,38 @@ impl Connection {
         // Paketkennung DIESES Aufrufs. Ohne sie bliebe der Auftrag
         // „unterwegs", und das Buch fragte zehnmal nach einem Platz, den
         // es nicht gibt.
-        // ⚠ Auch hier PFLICHT, nicht optional.
+        // ⚠ `Err` heisst NICHT GESENDET. Hier ist schon gesendet.
         //
-        // Ohne Paketkennung laesst sich eine spaeter eintreffende
-        // Ausnahme nicht einordnen: Der Auftrag laeuft bis zum Timeout
-        // und verbraucht am Ende alle zehn Versuche, ohne dass jemand
-        // sagen kann, warum. Fuer die Definitionseintraege galt die
-        // Pflicht schon; hier fehlte sie (QS-Befund 4, sechste Runde).
+        // Die vorige Fassung gab `Err` zurueck, wenn nur
+        // `GetLastSentPacketID` scheiterte — obwohl
+        // `RequestFacilityData` bereits `S_OK` gemeldet hatte. Der
+        // Aufrufer eroeffnete daraufhin keinen Sammler, gab den Auftrag
+        // frei und sendete erneut; die Daten der bereits erfolgreich
+        // gesendeten Anfrage fielen mangels Sammler weg (QS-Befund 3,
+        // siebte Runde).
+        //
+        // `Ok(None)` heisst also: gesendet, aber eine spaetere Ausnahme
+        // waere nicht zuzuordnen. Die Lieferung kommt trotzdem an — sie
+        // laeuft ueber die Anfragekennung, nicht ueber die Paketkennung.
+        //
+        // ⚠ Bei den DEFINITIONSeintraegen ist das anders und bleibt
+        // hart: Dort haengt die Zusage „ein abgelehntes Feld schliesst
+        // den Weg" an der Zuordnung. Ohne sie liefe der Weg mit einer
+        // ungueltigen Definition weiter und lieferte Daten, die niemand
+        // deuten kann. Hier ist der schlimmste Fall eine einzelne
+        // unzuordenbare Ausnahme.
         let mut send_id: sys::DWORD = 0;
         let hr = unsafe { sys::SimConnect_GetLastSentPacketID(self.handle, &mut send_id) };
         if hr != 0 {
-            return Err(format!(
-                "GetLastSentPacketID nach RequestFacilityData({icao}) fehlgeschlagen \
-                 — ohne Paketkennung ist eine Zurueckweisung nicht einzuordnen"
-            ));
+            tracing::warn!(
+                %icao,
+                "GetLastSentPacketID nach RequestFacilityData fehlgeschlagen — \
+                 die Anfrage LIEF, nur eine spaetere Ausnahme waere nicht \
+                 zuzuordnen"
+            );
+            return Ok(None);
         }
-        Ok(send_id)
+        Ok(Some(send_id))
     }
 
     /// Register the touchdown sample fields under definition #2.

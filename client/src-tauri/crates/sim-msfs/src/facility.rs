@@ -509,9 +509,23 @@ pub struct Lieferung {
 
 /// Wie viele Lieferungen gleichzeitig offen bleiben duerfen.
 ///
-/// Vier reichen: Start, Ziel, Ausweich und eine verspaetete. Mehr waere
-/// ein Leck, weniger wuerde die verspaetete verwerfen, um die es geht.
-pub const LIEFERUNGEN_MAX: usize = 4;
+/// ⚠ **An `KENNUNGEN_GEDAECHTNIS` gekoppelt, nicht frei gewaehlt.**
+///
+/// Die alte Begruendung lautete „Start, Ziel, Ausweich und eine
+/// verspaetete" — und war falsch: Ein Sammler gehoert nicht zu einem
+/// FLUGHAFEN, sondern zu einem VERSUCH. Ein einziger Platz kann zehn
+/// offene, zeitversetzte Versuche haben; beim fuenften flog der Sammler
+/// des ersten heraus. Kam dessen Antwort spaeter, kannte das
+/// Auftragsbuch die Kennung noch — es merkt sich sechzehn —, aber der
+/// Inhalt war weg.
+///
+/// Die Grenzen widersprachen sich: zehn Versuche je Platz, sechzehn
+/// bekannte Kennungen, vier sammelbare Lieferungen (QS-Befund 4, siebte
+/// Runde).
+///
+/// Gekoppelt heisst: Was das Buch noch zuordnen kann, kann der Verteiler
+/// auch noch sammeln.
+pub const LIEFERUNGEN_MAX: usize = sim_core::szenerie::KENNUNGEN_GEDAECHTNIS;
 
 /// Die offenen Lieferungen, nach Anfragekennung getrennt.
 #[derive(Debug, Default)]
@@ -824,6 +838,40 @@ mod lieferungen_tests {
         l.eroeffnen(1001);
         assert!(l.abschliessen(1001).is_some());
         assert!(l.abschliessen(1001).is_none());
+    }
+
+    /// ⚠ Die Ablage fasst so viel, wie das Buch zuordnen kann.
+    ///
+    /// Waeren es weniger, verschwaende eine verspaetete Lieferung ihren
+    /// Inhalt, obwohl ihre Kennung noch bekannt ist.
+    #[test]
+    fn die_ablage_passt_zum_kennungsgedaechtnis() {
+        assert_eq!(
+            LIEFERUNGEN_MAX,
+            sim_core::szenerie::KENNUNGEN_GEDAECHTNIS,
+            "Sammler und Kennungen sind entkoppelt — eine verspaetete \
+             Lieferung verliert ihren Inhalt, obwohl das Buch sie noch \
+             zuordnen koennte"
+        );
+    }
+
+    /// ⚠ Und fuenf Versuche DESSELBEN Platzes verlieren keinen Sammler.
+    ///
+    /// Sammler gehoeren zu Versuchen, nicht zu Flughaefen — mit vier
+    /// Plaetzen gerechnet war die alte Grenze beim fuenften Versuch
+    /// erschoepft.
+    #[test]
+    fn fuenf_versuche_desselben_platzes_behalten_ihre_sammler() {
+        let mut l = Lieferungen::neu();
+        for id in 1..=5u32 {
+            l.eroeffnen(1000 + id);
+            l.zu(1000 + id)
+                .expect("offen")
+                .punkte
+                .push((id as f64, 0.0));
+        }
+        let erste = l.abschliessen(1001).expect("die erste ist noch da");
+        assert_eq!(erste.punkte, vec![(1.0, 0.0)]);
     }
 
     /// Die Ablage waechst nicht unbegrenzt — die aelteste faellt raus.
@@ -1982,6 +2030,51 @@ mod anschluss_verdrahtung_tests {
         );
     }
 
+    /// ⚠ QS-Befund 3, siebte Runde: Eine GESENDETE Anfrage gilt nicht
+    /// als „nicht gesendet".
+    ///
+    /// `RequestFacilityData` kann `S_OK` gemeldet haben und erst
+    /// `GetLastSentPacketID` scheitern. Gab `request_facility` dann
+    /// `Err` zurueck, eroeffnete der Aufrufer keinen Sammler, gab den
+    /// Auftrag frei und sendete erneut — die Daten der bereits
+    /// erfolgreich gesendeten Anfrage fielen mangels Sammler weg.
+    ///
+    /// `Err` heisst „nicht gesendet". `Ok(None)` heisst „gesendet, aber
+    /// eine spaetere Ausnahme waere nicht zuzuordnen".
+    ///
+    /// ⚠ Dieser Waechter liest den Quelltext, weil der ganze Block
+    /// hinter `cfg(target_os = "windows")` steht: Eine Gegenprobe, die
+    /// dort ansetzt, bleibt auf dem Mac gruen und sagt nichts.
+    #[test]
+    fn eine_gesendete_anfrage_gilt_nicht_als_nicht_gesendet() {
+        let a = ohne_leerraum(ADAPTER);
+        let stelle = a
+            .find("GetLastSentPacketIDnachRequestFacilityData")
+            .expect("die Warnung nach RequestFacilityData fehlt");
+        // Im Fenster danach: `Ok(None)`, KEIN `return Err`.
+        let fenster = &a[stelle..(stelle + 400).min(a.len())];
+        assert!(
+            fenster.contains("returnOk(None)"),
+            "eine gesendete Anfrage wird nicht als gesendet behandelt"
+        );
+        assert!(
+            !fenster.contains("returnErr"),
+            "eine bereits gesendete Anfrage wird als Fehler gemeldet — der \
+             Aufrufer sendet dann erneut und verwirft die Lieferung"
+        );
+        // Und der Sammler wird unabhaengig von der Paketkennung eroeffnet.
+        let ok_zweig = a.find("Ok(paket)=>{").expect("Ok-Zweig der Anfrage fehlt");
+        let sammler = a[ok_zweig..]
+            .find("facility_lieferungen.eroeffnen(request_id)")
+            .expect("kein Sammler im Ok-Zweig");
+        let bedingung = a[ok_zweig..].find("ifletSome(send_id)=paket");
+        assert!(
+            bedingung.is_none_or(|b| sammler < b),
+            "der Sammler wird erst INNERHALB der Paketkennungs-Bedingung \
+             eroeffnet — ohne Kennung ginge die Lieferung verloren"
+        );
+    }
+
     /// ⚠ QS-Befund 1, sechste Runde: Ein sofortiger Anfragefehler lehnt
     /// den PLATZ nicht ab.
     ///
@@ -1996,10 +2089,11 @@ mod anschluss_verdrahtung_tests {
             .find("conn.request_facility(&icao,request_id)")
             .expect("Anfrage fehlt");
         // Im Fehlerzweig danach: freigeben, NICHT ablehnen.
-        let fenster = &a[anfrage..anfrage + 2400.min(a.len() - anfrage)];
+        let fenster = &a[anfrage..anfrage + 3000.min(a.len() - anfrage)];
         assert!(
-            fenster.contains("freigeben_zu_kennung(auftrag_id)"),
-            "der sofortige Fehler gibt den Auftrag nicht frei"
+            fenster.contains("freigeben_zu_kennung(auftrag_id,jetzt_ms)"),
+            "der sofortige Fehler gibt den Auftrag nicht frei — oder ohne \
+             Zeitpunkt, dann kommt der Platz 50 ms spaeter wieder dran"
         );
         assert!(
             !fenster.contains("abgelehnt_zu_kennung(auftrag_id,e.to_string())"),
