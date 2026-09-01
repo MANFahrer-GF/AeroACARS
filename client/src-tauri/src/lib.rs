@@ -2626,6 +2626,17 @@ fn szenerie_auskunft_uebernehmen(
             faellig
         };
 
+        // ⚠ VOR dem Block. `ernteziel` wird auch bei der Uebernahme
+        // gebraucht; stand es im Block, war es dort nicht mehr sichtbar
+        // — und das sieht auf dem Mac niemand, weil der ganze Abschnitt
+        // hinter `cfg(target_os = "windows")` steht. Vierter
+        // Windows-Uebersetzungsfehler dieser Fassung.
+        let ernteziel = szenerie_ernteziel(
+            &flight.arr_airport,
+            ausweich.as_deref(),
+            tatsaechlich.as_deref(),
+        );
+
         let schnapp_aussen = {
             let state = app.state::<AppState>();
             let Ok(msfs) = state.msfs.lock() else { return };
@@ -2659,11 +2670,7 @@ fn szenerie_auskunft_uebernehmen(
             // nahm das geplante Ziel, sobald dessen Antwort zuerst da
             // war, und dessen Rollwege landeten ungeprueft in den
             // Ausfahrten der Ausweichlandung.
-            let ernteziel = szenerie_ernteziel(
-                &flight.arr_airport,
-                ausweich.as_deref(),
-                tatsaechlich.as_deref(),
-            );
+            //
             // ⚠ Generation, Auskunft, Stand, Diagnose und Kennung aus
             // EINEM Zugriff — siehe `Schnappschuss`.
             //
