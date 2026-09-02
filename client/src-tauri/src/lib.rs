@@ -2489,6 +2489,33 @@ fn schnappschuss_uebernehmen(
     }
 }
 
+/// Ob die Bahnaufloesung nachgeholt werden muss.
+///
+/// ⚠ Der Befund vom 01.09.2026 (YSBK, erster MSFS-Flug unter v1.7.14):
+/// Die Abfrage lieferte endlich den RICHTIGEN Platz — YSBK, sechs Bahnen,
+/// 444 Rollwege — aber die Antwort traf **nach** dem Aufsetzen ein. Der
+/// Vergleich lief nur im Aufsetz-Tick, an zwei Stellen, und wurde nie
+/// nachgeholt. Am Flug stand deshalb
+/// `auskunft_ohne_vergleich(platz=YSBK, bahnen=6, diagnose=geliefert(...))`
+/// — die Diagnose sagte „geliefert", der Vergleich fehlte trotzdem.
+///
+/// Bei 444 Rollwegen kommt die Lieferung stueckweise; ein kurzer Anflug
+/// auf einen kleinen Platz reicht dafuer nicht.
+///
+/// Die drei Bedingungen:
+///
+/// * **Aufsetzpunkt vorhanden** — ohne ihn gibt es nichts zuzuordnen, und
+///   ein Nachholen wuerde mit der Rollposition rechnen. (Ein Durchstarten
+///   setzt `landing_lat`/`landing_lon` zurueck, damit greift es dort
+///   richtig NICHT.)
+/// * **Auskunft vorhanden** — sonst aendert ein zweiter Lauf nichts.
+/// * **noch kein Uebernahmebericht** — sobald einer da ist, hat der
+///   Vergleich stattgefunden, auch wenn er keine Bahn uebernommen hat.
+///   Das begrenzt das Nachholen auf hoechstens einen erfolgreichen Lauf.
+fn bahnaufloesung_nachholen(hat_aufsetzpunkt: bool, hat_auskunft: bool, hat_bericht: bool) -> bool {
+    hat_aufsetzpunkt && hat_auskunft && !hat_bericht
+}
+
 /// Rang einer blossen Vormerkung.
 ///
 /// ⚠ Absichtlich SCHLECHTER als jeder Rang, den die Ernte vergibt.
@@ -25999,6 +26026,46 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // solange noch nichts abgelegt ist.
             szenerie_auskunft_uebernehmen(&app, &flight, snap.simulator);
 
+            // ⚠ Und die Bahnaufloesung NACHHOLEN, wenn die Szenerie erst
+            // nach dem Aufsetzen eintraf — siehe
+            // `bahnaufloesung_nachholen`.
+            //
+            // Hier, direkt nach der Ernte: Das ist die einzige Stelle, an
+            // der eine neue Auskunft am Flug ankommt. Ein eigener Ausloeser
+            // waere eine zweite Stelle, die man vergessen kann.
+            //
+            // Billig: drei `is_some()` je Durchlauf, und sobald ein Bericht
+            // existiert, laeuft es nie wieder. Die Bewertung wird ohnehin
+            // erst in `build_landing_record` gerechnet — eine hier
+            // korrigierte Bahn wirkt also auf Achsen, Ausfahrten UND
+            // Meldung.
+            {
+                let faellig = flight
+                    .stats
+                    .lock()
+                    .ok()
+                    .map(|st| {
+                        bahnaufloesung_nachholen(
+                            st.landing_lat.is_some() && st.landing_lon.is_some(),
+                            st.szenerie_auskunft.is_some(),
+                            st.szenerie_uebernahme.is_some(),
+                        )
+                    })
+                    .unwrap_or(false);
+                if faellig {
+                    if let Ok(mut st) = flight.stats.lock() {
+                        let vorher = st.szenerie_uebernahme.is_some();
+                        correlate_touchdown_runway(&mut st, &snap, &flight, None);
+                        if !vorher && st.szenerie_uebernahme.is_some() {
+                            tracing::info!(
+                                icao = ?st.runway_correlation_icao,
+                                "Szenerie kam nach dem Aufsetzen — Bahnaufloesung nachgeholt"
+                            );
+                        }
+                    }
+                }
+            }
+
             let phase_change = step_flight(&flight, &snap);
 
             // v1.5.1 (F2): METAR-Trigger einmal pro Tick mit der AKTUELLEN
@@ -28541,9 +28608,29 @@ fn correlate_touchdown_runway(
     flight: &ActiveFlight,
     td_buf_sample: Option<&TelemetrySample>,
 ) {
-    let (rw_lat, rw_lon, rw_hdg_true) = td_buf_sample
-        .map(|s| (s.lat, s.lon, s.heading_true_deg))
-        .unwrap_or((snap.lat, snap.lon, snap.heading_deg_true));
+    // ⚠ Der AUFSETZPUNKT, nicht die aktuelle Lage.
+    //
+    // Diese Funktion lief bis v1.7.14 ausschliesslich im Aufsetz-Tick, und
+    // dort sind `td_buf_sample`/`snap` der Aufsetzmoment. Seit v1.7.15 wird
+    // sie NACHGEHOLT, sobald die Szenerie eintrifft — dann rollt das
+    // Flugzeug laengst, und `snap` waere die Position irgendwo auf der
+    // Bahn oder am Rollweg.
+    //
+    // Die gespeicherten Werte sind dieselben, mit denen sie heute rechnet:
+    // `stamp_touchdown_metadata` laeuft an BEIDEN Aufrufstellen unmittelbar
+    // davor und setzt sie mit derselben Formel
+    // (`td_buf_sample.map(..).unwrap_or(snap..)`). Im Aufsetzmoment aendert
+    // sich also nichts; danach macht es die Funktion erst wiederholbar.
+    let (rw_lat, rw_lon, rw_hdg_true) = match (
+        stats.landing_lat,
+        stats.landing_lon,
+        stats.landing_heading_true_deg,
+    ) {
+        (Some(la), Some(lo), Some(hd)) => (la, lo, hd),
+        _ => td_buf_sample
+            .map(|s| (s.lat, s.lon, s.heading_true_deg))
+            .unwrap_or((snap.lat, snap.lon, snap.heading_deg_true)),
+    };
 
     // v0.16.24: Navdata-Cache gegen den ECHTEN Landeflughafen befragen,
     // nicht gegen den geplanten `arr_airport`. Bei einem On-Plan-Landing
@@ -46441,6 +46528,61 @@ mod touchdown_metadata_stamp_tests {
         assert!(stats.runway_tch_actual_ft.is_none());
     }
 
+    /// ⚠ **Der Befund vom 01.09.2026 (YSBK), als Test.**
+    ///
+    /// Die Szenerie traf NACH dem Aufsetzen ein. Der Vergleich muss dann
+    /// nachgeholt werden koennen — und dabei mit dem AUFSETZPUNKT rechnen,
+    /// nicht mit der Rollposition.
+    ///
+    /// Der zweite Aufruf bekommt genau das, was das Nachholen im Tick
+    /// liefert: einen Rollout-Snapshot (hier rund 50 km neben der Bahn)
+    /// und `None` als Aufsetzprobe. Ohne die gespeicherten Aufsetzwerte
+    /// findet er keine Bahn mehr.
+    #[test]
+    fn die_bahnaufloesung_ist_nachholbar_und_rechnet_mit_dem_aufsetzpunkt() {
+        let flight = flight_fixture("EDDP");
+        let mut stats = FlightStats::default();
+        let mut td = buf_sample(td_at(), true);
+        td.lat = EDDP_26R_THR_LAT;
+        td.lon = EDDP_26R_THR_LON;
+        td.heading_true_deg = EDDP_26R_HEADING;
+        stats.snapshot_buffer.push_back(td);
+        let snap = rollout_snap();
+
+        // Aufsetzen: erst stempeln, dann zuordnen — wie an beiden
+        // Aufrufstellen.
+        let td_buf = touchdown_buffer_sample(&stats);
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+        let erste = stats
+            .runway_match
+            .as_ref()
+            .expect("Bahn beim Aufsetzen")
+            .clone();
+        assert_eq!(erste.runway_ident, "26R");
+
+        // ⚠ Die Rollposition liegt WEIT weg — sonst prueft der Test nichts.
+        assert!(
+            (snap.lat - EDDP_26R_THR_LAT).abs() > 0.4,
+            "Rollposition und Aufsetzpunkt liegen zu dicht beieinander — \
+             dann haelt dieser Test die entscheidende Achse konstant"
+        );
+
+        // Nachholen: derselbe Aufruf wie im Tick — Rollout-Snapshot, KEINE
+        // Aufsetzprobe.
+        correlate_touchdown_runway(&mut stats, &snap, &flight, None);
+
+        let zweite = stats.runway_match.as_ref().expect(
+            "nach dem Nachholen ist die Bahn verschwunden — die Funktion \
+             rechnet mit der Rollposition statt mit dem Aufsetzpunkt",
+        );
+        assert_eq!(
+            zweite.runway_ident, erste.runway_ident,
+            "das Nachholen findet eine ANDERE Bahn"
+        );
+        assert_eq!(zweite.airport_ident, erste.airport_ident);
+    }
+
     #[test]
     fn correlate_clears_match_fields_when_no_runway_nearby() {
         let flight = flight_fixture("EDDP");
@@ -54313,6 +54455,38 @@ mod szenerie_status_tests {
                 "der Fall {fall} wird nicht mehr eigenstaendig gemeldet"
             );
         }
+    }
+
+    /// ⚠ Der Befund vom 01.09.2026 (YSBK): Die Szenerie kam NACH dem
+    /// Aufsetzen — der Vergleich muss nachgeholt werden.
+    #[test]
+    fn die_bahnaufloesung_wird_nachgeholt_wenn_die_szenerie_spaet_kommt() {
+        // Aufsetzpunkt da, Auskunft da, kein Bericht → nachholen.
+        assert!(
+            bahnaufloesung_nachholen(true, true, false),
+            "die spaet eingetroffene Szenerie erreicht die Bahnaufloesung nie"
+        );
+    }
+
+    /// ⚠ Und die drei Faelle, in denen NICHT nachgeholt wird.
+    #[test]
+    fn ohne_aufsetzpunkt_auskunft_oder_mit_bericht_wird_nicht_nachgeholt() {
+        // Kein Aufsetzpunkt: Es gibt nichts zuzuordnen — und ein Nachholen
+        // wuerde mit der Rollposition rechnen.
+        assert!(
+            !bahnaufloesung_nachholen(false, true, false),
+            "ohne Aufsetzpunkt wird nachgeholt — das rechnet mit der \
+             aktuellen Lage statt mit dem Aufsetzpunkt"
+        );
+        // Keine Auskunft: Ein zweiter Lauf aendert nichts.
+        assert!(!bahnaufloesung_nachholen(true, false, false));
+        // Bericht da: Der Vergleich HAT stattgefunden, auch wenn er keine
+        // Bahn uebernommen hat. Sonst liefe es bei jedem Durchlauf.
+        assert!(
+            !bahnaufloesung_nachholen(true, true, true),
+            "es wird nachgeholt, obwohl der Vergleich schon lief — das \
+             laeuft dann bei JEDEM Durchlauf"
+        );
     }
 
     /// ⚠ QS-Befund 1, zwoelfte Runde: Wechselt das Ernteziel und hat
