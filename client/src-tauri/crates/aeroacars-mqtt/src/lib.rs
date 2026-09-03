@@ -1715,7 +1715,12 @@ enum Cmd {
     /// beim Verbinden nachgeliefert bekommen.
     Chat(Box<ChatSenden>),
     TouchdownAccidentOverride(Box<TouchdownAccidentOverridePayload>),
-    TouchdownRolloutFinalized(Box<TouchdownRolloutFinalizedPayload>),
+    /// Mit Zustellmeldung: `true` erst, wenn die Leitung stand UND der
+    /// Publish angenommen wurde. Ein Handle allein ist kein Nachweis.
+    TouchdownRolloutFinalized(
+        Box<TouchdownRolloutFinalizedPayload>,
+        tokio::sync::oneshot::Sender<bool>,
+    ),
     Shutdown,
 }
 
@@ -1773,9 +1778,77 @@ pub struct Handle {
     /// leaking one task+connection per login/logout cycle. This watch
     /// channel lets `shutdown()` signal the drive loop directly.
     shutdown_tx: watch::Sender<bool>,
+    /// Die Identitaet dieser Verbindung — fuer die Nachtrags-Ablage, die
+    /// je Mandant getrennt liegt (Codex, 03.09.2026, Runde 12).
+    va_prefix: String,
+    pilot_id: String,
+}
+
+/// Der Sendeweg fuer Bahn-Nachtraege — klonbar, damit ihn niemand unter
+/// gehaltenem `state.mqtt`-Schloss benutzen muss.
+///
+/// # Warum kein `touchdown_rollout_finalized(&self)` mehr
+///
+/// Die alte Methode war fire-and-forget: Sie startete eine Aufgabe und
+/// meldete nichts zurueck. Der Aufrufer nahm „Handle vorhanden" als
+/// „zugestellt", loeschte seine Fahne und die Ablage-Datei — bei liegender
+/// Leitung (Handle bleibt fuer den Reconnect bestehen) war der Nachtrag
+/// weg (Codex, 03.09.2026, P1). Jetzt liefert `senden` eine Zustellmeldung:
+/// `true` nur, wenn die Leitung stand und der Publish angenommen wurde.
+/// Alles andere — Kanal voll, Leitung liegt, Frist abgelaufen — ist
+/// `false`, und der Aufrufer laesst seine Ablage-Datei liegen.
+#[derive(Clone)]
+pub struct NachtragSender {
+    tx: mpsc::Sender<Cmd>,
+    pub va_prefix: String,
+    pub pilot_id: String,
+}
+
+impl NachtragSender {
+    pub fn senden(
+        &self,
+        payload: TouchdownRolloutFinalizedPayload,
+    ) -> tokio::sync::oneshot::Receiver<bool> {
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let (weiter_tx, weiter_rx) = tokio::sync::oneshot::channel();
+            let eingereiht = tokio::time::timeout(
+                EVENT_ENQUEUE_TIMEOUT,
+                tx.send(Cmd::TouchdownRolloutFinalized(Box::new(payload), weiter_tx)),
+            )
+            .await;
+            match eingereiht {
+                Ok(Ok(())) => {
+                    // Der Publisher meldet ueber `weiter_rx`; ist er weg,
+                    // kommt Err → false.
+                    let ok = weiter_rx.await.unwrap_or(false);
+                    let _ = ack_tx.send(ok);
+                }
+                Ok(Err(e)) => {
+                    warn!("touchdown_rollout_finalized: Auftragskanal geschlossen: {e}");
+                    let _ = ack_tx.send(false);
+                }
+                Err(_) => {
+                    warn!("touchdown_rollout_finalized: Auftragskanal voll — nicht eingereiht");
+                    let _ = ack_tx.send(false);
+                }
+            }
+        });
+        ack_rx
+    }
 }
 
 impl Handle {
+    /// Der bestaetigte Sendeweg fuer Bahn-Nachtraege — siehe `NachtragSender`.
+    pub fn nachtrag_sender(&self) -> NachtragSender {
+        NachtragSender {
+            tx: self.tx.clone(),
+            va_prefix: self.va_prefix.clone(),
+            pilot_id: self.pilot_id.clone(),
+        }
+    }
+
     /// v0.13.0 Slice 6: Konsumiert den einmaligen Receiver für
     /// Integrity-Flag-Events vom Recorder. Caller (Tauri-Main) ruft
     /// das genau einmal nach `connect()` und forwarded die Events
@@ -2015,20 +2088,6 @@ impl Handle {
     /// v0.12.4 (Spec LE4): Publish des FINALEN `rollout_distance_m` nach
     /// Rollout-Finalisierung (~40 kt / Heading-Turn-off). Der Recorder patcht
     /// damit nur das Anzeige-/Forensik-Rohfeld der Touchdown-Zeile.
-    pub fn touchdown_rollout_finalized(&self, payload: TouchdownRolloutFinalizedPayload) {
-        let tx = self.tx.clone();
-        tokio::spawn(async move {
-            if let Err(e) = tokio::time::timeout(
-                EVENT_ENQUEUE_TIMEOUT,
-                tx.send(Cmd::TouchdownRolloutFinalized(Box::new(payload))),
-            )
-            .await
-            {
-                warn!("dropping touchdown_rollout_finalized publish: {e}");
-            }
-        });
-    }
-
     pub fn shutdown(&self) {
         let _ = self.tx.try_send(Cmd::Shutdown);
         // v0.19.x FIX: also stop the reconnect-loop drive task — see the
@@ -2039,6 +2098,7 @@ impl Handle {
 
 pub fn start(cfg: MqttConfig) -> Result<Handle> {
     cfg.validate()?;
+    let identitaet = (cfg.va_prefix.clone(), cfg.pilot_id.clone());
 
     let (tx, mut rx) = mpsc::channel::<Cmd>(CMD_BUFFER);
     // v1.5.7 (#mqtt-outage): eigener Weg für Positionen — siehe `Cmd`.
@@ -2448,15 +2508,26 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                     )
                     .await
                 }
-                Cmd::TouchdownRolloutFinalized(p) => {
-                    publish_json(
-                        &pub_client,
-                        &cfg_for_pub.topic("touchdown_rollout_finalized"),
-                        &p,
-                        QoS::AtLeastOnce,
-                        false,
-                    )
-                    .await
+                Cmd::TouchdownRolloutFinalized(p, ack) => {
+                    // ⚠ Zustellmeldung: Bei liegender Leitung wird NICHT
+                    // versucht — der Auftrag wuerde im rumqttc-Vorrat
+                    // haengen und nach 20 s verworfen, und der Aufrufer
+                    // haette „gesendet" gehoert. `false` heisst: Datei
+                    // bleibt in der Ablage, der Worker versucht es wieder.
+                    let ok = if !*link_rx.borrow() {
+                        warn!("touchdown_rollout_finalized: Leitung liegt — nicht gesendet");
+                        false
+                    } else {
+                        publish_json_bestaetigt(
+                            &pub_client,
+                            &cfg_for_pub.topic("touchdown_rollout_finalized"),
+                            &p,
+                            QoS::AtLeastOnce,
+                            false,
+                        )
+                        .await
+                    };
+                    let _ = ack.send(ok);
                 }
                 Cmd::Shutdown => {
                     let _ = pub_client
@@ -2481,6 +2552,8 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
         integrity_rx: Arc::new(tokio::sync::Mutex::new(Some(integrity_rx))),
         chat_rx: Arc::new(tokio::sync::Mutex::new(Some(chat_rx))),
         shutdown_tx,
+        va_prefix: identitaet.0,
+        pilot_id: identitaet.1,
     })
 }
 
@@ -2514,11 +2587,28 @@ async fn publish_json<T: Serialize>(
     qos: QoS,
     retain: bool,
 ) {
+    let _ = publish_json_bestaetigt(client, topic, payload, qos, retain).await;
+}
+
+/// Wie `publish_json`, meldet aber, ob der Publish angenommen wurde.
+///
+/// „Angenommen" heisst: rumqttc hat ihn in seinen Vorrat uebernommen und
+/// sendet ihn bei stehender Leitung (QoS 1, Wiederholung nach Reconnect
+/// durch rumqttc). Ein Broker-PUBACK ist das nicht — dafuer muesste der
+/// Drive-Loop Paketkennungen zuordnen. Der Aufrufer schliesst die Luecke
+/// ueber seine Ablage: Was er nicht als `true` hoert, bleibt liegen.
+async fn publish_json_bestaetigt<T: Serialize>(
+    client: &AsyncClient,
+    topic: &str,
+    payload: &T,
+    qos: QoS,
+    retain: bool,
+) -> bool {
     let body = match serde_json::to_vec(payload) {
         Ok(b) => b,
         Err(e) => {
             error!("serialize {topic} failed: {e}");
-            return;
+            return false;
         }
     };
     // v1.5.7 (#mqtt-outage): `publish()` wartet, bis im internen Vorrat
@@ -2532,12 +2622,18 @@ async fn publish_json<T: Serialize>(
     // richtig (die nächste kommt in Sekunden); die einmaligen Ereignisse
     // liegen als `retain` auf dem Broker, sobald sie einmal durch sind.
     match tokio::time::timeout(PUBLISH_TIMEOUT, client.publish(topic, qos, retain, body)).await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => warn!("publish {topic} failed: {e}"),
-        Err(_) => warn!(
-            "publish {topic} nach {} s abgebrochen — Leitung blockiert",
-            PUBLISH_TIMEOUT.as_secs()
-        ),
+        Ok(Ok(())) => true,
+        Ok(Err(e)) => {
+            warn!("publish {topic} failed: {e}");
+            false
+        }
+        Err(_) => {
+            warn!(
+                "publish {topic} nach {} s abgebrochen — Leitung blockiert",
+                PUBLISH_TIMEOUT.as_secs()
+            );
+            false
+        }
     }
 }
 
@@ -2815,11 +2911,17 @@ mod herkunft_auf_der_leitung {
         let zurueck = TouchdownRolloutFinalizedPayload::aus_json(json.clone())
             .expect("zurueck — der Nachtrag ist nicht lesbar");
         let json2 = serde_json::to_value(&zurueck).expect("erneut");
-        assert_eq!(json, json2, "der Nachtrag veraendert sich auf dem Weg durch die Warteschlange");
+        assert_eq!(
+            json, json2,
+            "der Nachtrag veraendert sich auf dem Weg durch die Warteschlange"
+        );
         assert_eq!(zurueck.herkunft.bahn_revision, Some(7));
         assert_eq!(zurueck.landing_touchdown_zone, Some(2));
         assert_eq!(
-            zurueck.bahn.and_then(|b| b.lateral_samples).map(|v| v.len()),
+            zurueck
+                .bahn
+                .and_then(|b| b.lateral_samples)
+                .map(|v| v.len()),
             Some(1)
         );
     }
@@ -2848,7 +2950,12 @@ mod herkunft_auf_der_leitung {
         };
         let json = serde_json::to_value(&n).expect("json");
         let obj = json.as_object().expect("Objekt");
-        for k in ["rollout_final", "lateral_samples", "clearance_point_m", "overrun_m"] {
+        for k in [
+            "rollout_final",
+            "lateral_samples",
+            "clearance_point_m",
+            "overrun_m",
+        ] {
             assert!(
                 !obj.contains_key(k),
                 "`{k}` steht auf der Leitung, obwohl der Spur-Block fehlt — der \
@@ -2901,6 +3008,63 @@ mod herkunft_auf_der_leitung {
             Some(3666.0)
         );
         assert_eq!(obj.get("bahn_revision").and_then(|v| v.as_u64()), Some(7));
+    }
+}
+
+#[cfg(test)]
+mod nachtrag_sender_tests {
+    use super::*;
+
+    /// ⚠ Ohne Publisher (Kanal geschlossen) meldet `senden` `false` —
+    /// nicht „nichts". Der Aufrufer wartet sonst bis zur Frist und haelt
+    /// die Datei trotzdem; aber die Meldung muss kommen, damit der Worker
+    /// den naechsten Versuch planen kann.
+    #[tokio::test]
+    async fn ohne_publisher_kommt_false() {
+        let (tx, rx) = mpsc::channel::<Cmd>(4);
+        drop(rx);
+        let s = NachtragSender {
+            tx,
+            va_prefix: "GSG".into(),
+            pilot_id: "42".into(),
+        };
+        let n = TouchdownRolloutFinalizedPayload::aus_json(serde_json::json!({
+            "ts": 1, "pirep_id": "p", "touchdown_at": 1, "rollout_distance_m": 1500.0, "finalize_reason": "test"
+        }))
+        .expect("Testnachtrag");
+        let ok = tokio::time::timeout(std::time::Duration::from_secs(5), s.senden(n))
+            .await
+            .expect("Meldung bleibt aus — der Aufrufer wuerde bis zur Frist warten")
+            .unwrap_or(false);
+        assert!(
+            !ok,
+            "ein geschlossener Kanal darf nie als Zustellung gelten"
+        );
+    }
+
+    /// ⚠ Der Publisher meldet `false`, wenn er den Auftrag faellen laesst
+    /// — der Sender reicht das durch, statt es als Zustellung zu lesen.
+    #[tokio::test]
+    async fn der_publisher_entscheidet() {
+        let (tx, mut rx) = mpsc::channel::<Cmd>(4);
+        let s = NachtragSender {
+            tx,
+            va_prefix: "GSG".into(),
+            pilot_id: "42".into(),
+        };
+        let n = TouchdownRolloutFinalizedPayload::aus_json(serde_json::json!({
+            "ts": 1, "pirep_id": "p", "touchdown_at": 1, "rollout_distance_m": 1500.0, "finalize_reason": "test"
+        }))
+        .expect("Testnachtrag");
+        let ack = s.senden(n);
+        let cmd = rx.recv().await.expect("Auftrag");
+        match cmd {
+            Cmd::TouchdownRolloutFinalized(_, weiter) => {
+                let _ = weiter.send(false);
+            }
+            _ => panic!("falscher Auftrag"),
+        }
+        assert_eq!(ack.await.unwrap_or(true), false);
     }
 }
 

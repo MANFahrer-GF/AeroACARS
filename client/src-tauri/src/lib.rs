@@ -14961,77 +14961,158 @@ fn is_transient_pirep_error(e: &ApiError) -> bool {
 /// Skipt PIREPs mit > 50 Attempts (= circular failure, Pilot muss
 /// manuell). Loggt Success/Failure als Activity-Events damit der Pilot
 /// im Cockpit-Activity-Panel sehen kann was passiert.
-/// Nachtraege, die keinen Handle fanden — bis MQTT wieder da ist.
+/// Die Ablage fuer Bahn-Nachtraege — Ablage ZUERST, Datei faellt erst mit
+/// der Zustellung, je Mandant getrennt.
 ///
-/// # Warum eine eigene Ablage
+/// # Warum (Codex, 03.09.2026, Runde 11 + 12)
 ///
-/// Beim Einreichen ohne MQTT war der offene Bahn-Nachtrag verloren: Der
-/// Flug ist danach geloescht, die PIREP-Warteschlange entfernt ihre Datei
-/// vor dem Senden. Es gab nichts mehr, das ihn spaeter haette schicken
-/// koennen (Codex, 03.09.2026, P1). Hier liegt er als JSON, adressiert
-/// ueber `pirep_id` + `touchdown_at`, und der Warteschlangen-Worker
-/// schickt ihn, sobald ein Handle da ist. Idempotent: Der Recorder
-/// riegelt ueber `bahn_revision`.
+/// Runde 11: Beim Einreichen ohne MQTT war der Nachtrag verloren (Flug
+/// geloescht, Warteschlangen-Datei weg). Erste Abhilfe: eine Ablage NUR fuer
+/// den Fall ohne Handle. Runde 12 zeigte zwei Loecher darin:
+///
+/// 1. Ein Handle ist kein Zustellnachweis. Bei liegender Leitung bleibt er
+///    fuer den Reconnect bestehen; der alte Sendeweg war fire-and-forget,
+///    und der Aufrufer loeschte Fahne und Datei sofort. Jetzt: JEDER
+///    Nachtrag geht zuerst in die Ablage, dann ueber `NachtragSender::senden`,
+///    und die Datei faellt erst, wenn die Zustellmeldung `true` kam — und
+///    nur, wenn sie noch dieselbe Revision traegt (ein neuerer Nachtrag hat
+///    sie sonst inzwischen ueberschrieben). Der Worker versucht alles
+///    Liegengebliebene bei jedem Tick erneut; der Recorder riegelt ueber
+///    `bahn_revision`, doppelt schadet nicht.
+/// 2. Die Ablage lag fuer alle Konten in einem Ordner. Meldete sich ein
+///    anderer Pilot an, ging der fremde Nachtrag auf sein Topic. Jetzt:
+///    `bahn_nachtraege/<va>/<pilot>/`, die Identitaet steht zusaetzlich IN
+///    der Datei, und `list_in` liefert nur, was zu Pfad UND Inhalt passt.
+///    Fremde Eintraege bleiben liegen.
 mod nachtrag_queue {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     const DIR_NAME: &str = "bahn_nachtraege";
+    /// Einreihen 30 s + Publish 20 s + Luft.
+    const ZUSTELL_FRIST: std::time::Duration = std::time::Duration::from_secs(75);
 
-    fn dir(app: &AppHandle) -> Option<PathBuf> {
-        let base = app.path().app_data_dir().ok()?;
-        let d = base.join(DIR_NAME);
-        std::fs::create_dir_all(&d).ok()?;
-        Some(d)
+    #[derive(Serialize, Deserialize)]
+    struct Ablage {
+        va_prefix: String,
+        pilot_id: String,
+        nachtrag: serde_json::Value,
+    }
+
+    fn sicher(s: &str) -> String {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+            .collect()
+    }
+
+    fn wurzel(app: &AppHandle) -> Option<PathBuf> {
+        app.path().app_data_dir().ok().map(|b| b.join(DIR_NAME))
+    }
+
+    fn dir_in(base: &Path, va: &str, pilot: &str) -> Option<PathBuf> {
+        let (va, pilot) = (sicher(va), sicher(pilot));
+        if va.is_empty() || pilot.is_empty() {
+            return None;
+        }
+        Some(base.join(va).join(pilot))
     }
 
     /// Dateiname aus `pirep_id` + Aufsetzzeit — reine Funktion, testbar.
     pub fn dateiname(pirep_id: &str, touchdown_at: i64) -> Option<String> {
-        let safe: String = pirep_id
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-            .collect();
+        let safe = sicher(pirep_id);
         if safe.is_empty() {
             return None;
         }
         Some(format!("{safe}-{touchdown_at}.json"))
     }
 
-    fn file_path(app: &AppHandle, pirep_id: &str, touchdown_at: i64) -> Option<PathBuf> {
-        Some(dir(app)?.join(dateiname(pirep_id, touchdown_at)?))
+    fn io_err(msg: impl Into<String>) -> std::io::Error {
+        std::io::Error::new(std::io::ErrorKind::Other, msg.into())
+    }
+
+    pub fn serialisieren(
+        va: &str,
+        pilot: &str,
+        nachtrag: &aeroacars_mqtt::TouchdownRolloutFinalizedPayload,
+    ) -> Result<String, std::io::Error> {
+        let ablage = Ablage {
+            va_prefix: va.to_string(),
+            pilot_id: pilot.to_string(),
+            nachtrag: serde_json::to_value(nachtrag).map_err(|e| io_err(e.to_string()))?,
+        };
+        serde_json::to_string_pretty(&ablage).map_err(|e| io_err(e.to_string()))
+    }
+
+    /// Liest eine Ablage-Datei — ueber `aus_json`, nie ueber `from_value`
+    /// (flatten liest einen fehlenden Block sonst als Some(default)) — und
+    /// nur, wenn die Identitaet IN der Datei zur erwarteten passt.
+    pub fn lesen(
+        text: &str,
+        va: &str,
+        pilot: &str,
+    ) -> Result<aeroacars_mqtt::TouchdownRolloutFinalizedPayload, String> {
+        let ablage: Ablage = serde_json::from_str(text).map_err(|e| e.to_string())?;
+        if ablage.va_prefix != va || ablage.pilot_id != pilot {
+            return Err(format!(
+                "Nachtrag gehoert {}/{}, nicht {va}/{pilot}",
+                ablage.va_prefix, ablage.pilot_id
+            ));
+        }
+        aeroacars_mqtt::TouchdownRolloutFinalizedPayload::aus_json(ablage.nachtrag)
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn enqueue_in(
+        base: &Path,
+        va: &str,
+        pilot: &str,
+        nachtrag: &aeroacars_mqtt::TouchdownRolloutFinalizedPayload,
+    ) -> Result<PathBuf, std::io::Error> {
+        let d = dir_in(base, va, pilot).ok_or_else(|| io_err("Identitaet leer"))?;
+        std::fs::create_dir_all(&d)?;
+        let name = dateiname(&nachtrag.pirep_id, nachtrag.touchdown_at)
+            .ok_or_else(|| io_err("pirep_id unbrauchbar"))?;
+        let path = d.join(name);
+        std::fs::write(&path, serialisieren(va, pilot, nachtrag)?)?;
+        Ok(path)
     }
 
     pub fn enqueue(
         app: &AppHandle,
+        va: &str,
+        pilot: &str,
         nachtrag: &aeroacars_mqtt::TouchdownRolloutFinalizedPayload,
-    ) -> Result<(), std::io::Error> {
-        let path = file_path(app, &nachtrag.pirep_id, nachtrag.touchdown_at).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "no app_data_dir or invalid pirep_id",
-            )
-        })?;
-        std::fs::write(path, serialisieren(nachtrag)?)
+    ) -> Result<PathBuf, std::io::Error> {
+        let base = wurzel(app).ok_or_else(|| io_err("kein app_data_dir"))?;
+        enqueue_in(&base, va, pilot, nachtrag)
     }
 
-    pub fn serialisieren(
-        nachtrag: &aeroacars_mqtt::TouchdownRolloutFinalizedPayload,
-    ) -> Result<String, std::io::Error> {
-        serde_json::to_string_pretty(nachtrag)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
-    }
-
-    /// Liest eine Ablage-Datei — ueber `aus_json`, nie ueber `from_value`
-    /// (flatten liest einen fehlenden Block sonst als Some(default)).
-    pub fn lesen(text: &str) -> Result<aeroacars_mqtt::TouchdownRolloutFinalizedPayload, String> {
-        let json = serde_json::from_str::<serde_json::Value>(text).map_err(|e| e.to_string())?;
-        aeroacars_mqtt::TouchdownRolloutFinalizedPayload::aus_json(json).map_err(|e| e.to_string())
-    }
-
-    pub fn list_all(
+    /// Ohne Handle: die Identitaet kommt aus dem Schluesselbund — dieselbe,
+    /// mit der die naechste Verbindung aufgebaut wird. Fehlt sie, gibt es
+    /// keinen Mandanten, dem der Nachtrag gehoeren koennte: Fehler, nicht
+    /// „irgendwo ablegen".
+    pub fn enqueue_offline(
         app: &AppHandle,
+        nachtrag: &aeroacars_mqtt::TouchdownRolloutFinalizedPayload,
+    ) -> Result<PathBuf, std::io::Error> {
+        let va = secrets::load_api_key(MQTT_KEYRING_VA)
+            .ok()
+            .flatten()
+            .ok_or_else(|| io_err("keine MQTT-Identitaet im Schluesselbund (VA)"))?;
+        let pilot = secrets::load_api_key(MQTT_KEYRING_PILOT_ID)
+            .ok()
+            .flatten()
+            .ok_or_else(|| io_err("keine MQTT-Identitaet im Schluesselbund (Pilot)"))?;
+        enqueue(app, &va, &pilot, nachtrag)
+    }
+
+    /// Alles Wartende EINES Mandanten — Pfad und Inhalt muessen passen.
+    pub fn list_in(
+        base: &Path,
+        va: &str,
+        pilot: &str,
     ) -> Vec<(PathBuf, aeroacars_mqtt::TouchdownRolloutFinalizedPayload)> {
-        let Some(d) = dir(app) else {
+        let Some(d) = dir_in(base, va, pilot) else {
             return vec![];
         };
         let Ok(rd) = std::fs::read_dir(&d) else {
@@ -15046,28 +15127,117 @@ mod nachtrag_queue {
             let Ok(text) = std::fs::read_to_string(&p) else {
                 continue;
             };
-            match lesen(&text) {
+            match lesen(&text, va, pilot) {
                 Ok(n) => out.push((p, n)),
                 Err(e) => {
-                    tracing::warn!(pfad = %p.display(), error = %e, "Bahn-Nachtrag in der Ablage nicht lesbar")
+                    tracing::warn!(pfad = %p.display(), error = %e, "Bahn-Nachtrag in der Ablage bleibt liegen")
                 }
             }
         }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
         out
     }
 
-    /// Schickt alles Wartende ueber den Handle und raeumt weg, was ging.
-    pub fn drain(app: &AppHandle, handle: &aeroacars_mqtt::Handle) -> usize {
-        let mut gesendet = 0;
-        for (pfad, nachtrag) in list_all(app) {
-            tracing::info!(
-                pirep_id = %nachtrag.pirep_id,
-                revision = ?nachtrag.herkunft.bahn_revision,
-                "Bahnkorrektur aus der Ablage nachgeschickt"
+    /// Die Revision, die eine Ablage-Datei gerade traegt — `None`, wenn sie
+    /// nicht (mehr) lesbar ist.
+    fn revision_in_datei(path: &Path) -> Option<Option<u32>> {
+        let text = std::fs::read_to_string(path).ok()?;
+        let ablage: Ablage = serde_json::from_str(&text).ok()?;
+        let n = aeroacars_mqtt::TouchdownRolloutFinalizedPayload::aus_json(ablage.nachtrag).ok()?;
+        Some(n.herkunft.bahn_revision)
+    }
+
+    /// Entfernt die Datei nur, wenn sie noch die zugestellte Revision
+    /// traegt. Hat der Streamer inzwischen einen neueren Nachtrag
+    /// hineingeschrieben, bleibt sie — sonst ginge der neuere verloren.
+    /// Das ist die EINZIGE Stelle, die eine Ablage-Datei loescht.
+    pub fn entfernen_wenn_revision(path: &Path, zugestellt: Option<u32>) -> bool {
+        match revision_in_datei(path) {
+            Some(rev) if rev != zugestellt => {
+                tracing::info!(
+                    pfad = %path.display(),
+                    zugestellt = ?zugestellt,
+                    liegt = ?rev,
+                    "Ablage traegt inzwischen eine neuere Revision — bleibt"
+                );
+                false
+            }
+            _ => {
+                let _ = std::fs::remove_file(path);
+                true
+            }
+        }
+    }
+
+    /// DER Sendeweg: Ablage zuerst, dann senden, Datei faellt mit der
+    /// Zustellmeldung. Alle vier Aufrufer (Streamer, Einreichen, gequeuter
+    /// Nachtrag, Worker-Altbestand) gehen hier durch.
+    pub fn senden(
+        app: &AppHandle,
+        sender: &aeroacars_mqtt::NachtragSender,
+        nachtrag: aeroacars_mqtt::TouchdownRolloutFinalizedPayload,
+    ) {
+        let pirep_id = nachtrag.pirep_id.clone();
+        let revision = nachtrag.herkunft.bahn_revision;
+        let pfad = match enqueue(app, &sender.va_prefix, &sender.pilot_id, &nachtrag) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                tracing::error!(
+                    pirep_id,
+                    error = %e,
+                    "Bahn-Nachtrag nicht in die Ablage geschrieben — wird ohne Netz verloren gehen"
+                );
+                None
+            }
+        };
+        let empfang = sender.senden(nachtrag);
+        tauri::async_runtime::spawn(async move {
+            let zugestellt = matches!(
+                tokio::time::timeout(ZUSTELL_FRIST, empfang).await,
+                Ok(Ok(true))
             );
-            handle.touchdown_rollout_finalized(nachtrag);
-            let _ = std::fs::remove_file(pfad);
-            gesendet += 1;
+            if zugestellt {
+                tracing::info!(pirep_id, revision = ?revision, "Bahnkorrektur zugestellt");
+                if let Some(p) = pfad {
+                    entfernen_wenn_revision(&p, revision);
+                }
+            } else {
+                tracing::warn!(
+                    pirep_id,
+                    revision = ?revision,
+                    "Bahnkorrektur nicht zugestellt — bleibt in der Ablage, der Worker versucht es wieder"
+                );
+            }
+        });
+    }
+
+    /// Schickt alles Wartende dieses Mandanten, eins nach dem anderen, und
+    /// raeumt weg, was bestaetigt wurde.
+    pub async fn drain(app: &AppHandle, sender: &aeroacars_mqtt::NachtragSender) -> usize {
+        let Some(base) = wurzel(app) else {
+            return 0;
+        };
+        let mut gesendet = 0;
+        for (pfad, nachtrag) in list_in(&base, &sender.va_prefix, &sender.pilot_id) {
+            let revision = nachtrag.herkunft.bahn_revision;
+            let pirep_id = nachtrag.pirep_id.clone();
+            let zugestellt = matches!(
+                tokio::time::timeout(ZUSTELL_FRIST, sender.senden(nachtrag)).await,
+                Ok(Ok(true))
+            );
+            if zugestellt {
+                tracing::info!(pirep_id, revision = ?revision, "Bahnkorrektur aus der Ablage nachgeschickt");
+                entfernen_wenn_revision(&pfad, revision);
+                gesendet += 1;
+            } else {
+                tracing::warn!(
+                    pirep_id,
+                    "Bahnkorrektur aus der Ablage nicht zugestellt — bleibt liegen"
+                );
+                // Liegt die Leitung, liegt sie fuer alle: nicht weiter
+                // probieren, naechster Tick.
+                break;
+            }
         }
         gesendet
     }
@@ -15092,9 +15262,14 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
             // Wartende Bahn-Nachtraege ZUERST — sie brauchen nur MQTT, nicht
             // den phpVMS-Client, darum vor dem Client-Riegel.
             {
-                let mqtt = state.mqtt.lock().await;
-                if let Some(handle) = mqtt.as_ref() {
-                    let n = nachtrag_queue::drain(&app, handle);
+                let sender = state
+                    .mqtt
+                    .lock()
+                    .await
+                    .as_ref()
+                    .map(|h| h.nachtrag_sender());
+                if let Some(sender) = sender {
+                    let n = nachtrag_queue::drain(&app, &sender).await;
                     if n > 0 {
                         tracing::info!(anzahl = n, "Bahn-Nachtraege aus der Ablage geschickt");
                     }
@@ -15185,11 +15360,14 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                                 mqtt.as_ref(),
                                 aeroacars_mqtt::TouchdownRolloutFinalizedPayload::aus_json(json),
                             ) {
-                                (Some(handle), Ok(nachtrag)) => {
-                                    handle.touchdown_rollout_finalized(nachtrag)
-                                }
+                                (Some(handle), Ok(nachtrag)) => nachtrag_queue::senden(
+                                    &app,
+                                    &handle.nachtrag_sender(),
+                                    nachtrag,
+                                ),
                                 (None, Ok(nachtrag)) => {
-                                    if let Err(e) = nachtrag_queue::enqueue(&app, &nachtrag) {
+                                    if let Err(e) = nachtrag_queue::enqueue_offline(&app, &nachtrag)
+                                    {
                                         tracing::error!(pirep_id = %q.pirep_id, error = %e, "Ablage nicht beschreibbar");
                                     }
                                 }
@@ -16774,8 +16952,8 @@ fn finalize_filed_pirep(
                     // faellt nur, wenn der Nachtrag DAUERHAFT liegt (Codex,
                     // 03.09.2026, P1).
                     match bahn_nachtrag_bauen(flight, &stats) {
-                        Some(n) => match nachtrag_queue::enqueue(app, &n) {
-                            Ok(()) => {
+                        Some(n) => match nachtrag_queue::enqueue_offline(app, &n) {
+                            Ok(_) => {
                                 stats.bahn_nachtrag_offen = false;
                                 tracing::warn!(
                                     pirep_id,
@@ -16807,7 +16985,7 @@ fn finalize_filed_pirep(
                 revision = ?nachtrag.herkunft.bahn_revision,
                 "Bahnkorrektur beim Einreichen nachgeschickt"
             );
-            handle.touchdown_rollout_finalized(nachtrag);
+            nachtrag_queue::senden(app, &handle.nachtrag_sender(), nachtrag);
         }
     }
     if let Some(json) = gequeuter_nachtrag {
@@ -16821,10 +16999,10 @@ fn finalize_filed_pirep(
                     revision = ?nachtrag.herkunft.bahn_revision,
                     "Bahnkorrektur aus der Warteschlange nachgeschickt"
                 );
-                handle.touchdown_rollout_finalized(nachtrag);
+                nachtrag_queue::senden(app, &handle.nachtrag_sender(), nachtrag);
             }
-            (None, Ok(nachtrag)) => match nachtrag_queue::enqueue(app, &nachtrag) {
-                Ok(()) => tracing::warn!(
+            (None, Ok(nachtrag)) => match nachtrag_queue::enqueue_offline(app, &nachtrag) {
+                Ok(_) => tracing::warn!(
                     pirep_id,
                     "Bahnkorrektur aus der Warteschlange: keine MQTT-Verbindung — in der Ablage"
                 ),
@@ -27085,7 +27263,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // naechster Tick.
                                 None => {}
                                 Some(handle) => {
-                                    handle.touchdown_rollout_finalized(
+                                    nachtrag_queue::senden(
+                                        &app,
+                                        &handle.nachtrag_sender(),
                                         aeroacars_mqtt::TouchdownRolloutFinalizedPayload {
                                             ts: Utc::now().timestamp_millis(),
                                             pirep_id: flight.pirep_id.clone(),
@@ -48644,8 +48824,12 @@ mod touchdown_metadata_stamp_tests {
         stats.bahn_revision = 3;
         let n = bahn_nachtrag_bauen(&flight, &stats).expect("Nachtrag");
         assert!(n.bahn.is_none(), "Fixture ohne Spur muss ohne Block gehen");
-        let text = nachtrag_queue::serialisieren(&n).expect("JSON");
-        let zurueck = nachtrag_queue::lesen(&text).expect("lesbar");
+        let text = nachtrag_queue::serialisieren("GSG", "42", &n).expect("JSON");
+        let zurueck = nachtrag_queue::lesen(&text, "GSG", "42").expect("lesbar");
+        assert!(
+            nachtrag_queue::lesen(&text, "GSG", "43").is_err(),
+            "die Datei gehoert Pilot 42 — Pilot 43 darf sie nicht lesen"
+        );
         assert_eq!(zurueck.pirep_id, n.pirep_id);
         assert_eq!(zurueck.touchdown_at, n.touchdown_at);
         assert_eq!(zurueck.herkunft.bahn_revision, Some(3));
@@ -48658,6 +48842,85 @@ mod touchdown_metadata_stamp_tests {
             Some("42x-1755000100000.json")
         );
         assert_eq!(nachtrag_queue::dateiname("/../", 1), None);
+    }
+
+    fn temp_ablage(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "aeroacars-ablage-{name}-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    /// ⚠ Die Ablage trennt die Mandanten (Codex, 03.09.2026, Runde 12).
+    ///
+    /// Zwei Piloten auf demselben Rechner: `list_in` fuer den einen liefert
+    /// nie den Nachtrag des anderen — weder ueber den Pfad noch ueber eine
+    /// Datei, deren Inhalt einem anderen gehoert.
+    #[test]
+    fn die_ablage_trennt_die_mandanten() {
+        let base = temp_ablage("mandanten");
+        let flight = flight_fixture("EDDP");
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(eddp_26r_match_with_raw_td(0.0));
+        stats.landing_at =
+            Some(chrono::DateTime::<Utc>::from_timestamp(1_755_000_100, 0).expect("Zeit"));
+        let n = bahn_nachtrag_bauen(&flight, &stats).expect("Nachtrag");
+        nachtrag_queue::enqueue_in(&base, "GSG", "42", &n).expect("Ablage 42");
+        nachtrag_queue::enqueue_in(&base, "GSG", "43", &n).expect("Ablage 43");
+        // Eine Datei im Ordner von 42, deren Inhalt 43 gehoert — Pfad luegt.
+        let fremd = nachtrag_queue::serialisieren("GSG", "43", &n).expect("JSON");
+        std::fs::write(base.join("GSG").join("42").join("fremd-1.json"), fremd).expect("schreiben");
+        let fuer_42 = nachtrag_queue::list_in(&base, "GSG", "42");
+        assert_eq!(
+            fuer_42.len(),
+            1,
+            "Pilot 42 sieht etwas, das ihm nicht gehoert"
+        );
+        assert_eq!(nachtrag_queue::list_in(&base, "GSG", "43").len(), 1);
+        assert_eq!(
+            nachtrag_queue::list_in(&base, "XYZ", "42").len(),
+            0,
+            "andere VA, gleiche Pilotennummer"
+        );
+        assert_eq!(
+            nachtrag_queue::list_in(&base, "", "42").len(),
+            0,
+            "leere Identitaet liefert nichts"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// ⚠ Die Datei faellt nur mit der zugestellten Revision.
+    ///
+    /// Der Streamer kann waehrend des Sendens einen neueren Nachtrag in
+    /// dieselbe Datei schreiben (gleicher Name: PIREP + Aufsetzzeit). Die
+    /// Zustellmeldung fuer den aelteren darf die neuere nicht loeschen.
+    #[test]
+    fn die_ablage_bleibt_bei_neuerer_revision_liegen() {
+        let base = temp_ablage("revision");
+        let flight = flight_fixture("EDDP");
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(eddp_26r_match_with_raw_td(0.0));
+        stats.landing_at =
+            Some(chrono::DateTime::<Utc>::from_timestamp(1_755_000_100, 0).expect("Zeit"));
+        stats.bahn_revision = 2;
+        let alt = bahn_nachtrag_bauen(&flight, &stats).expect("Nachtrag");
+        let pfad = nachtrag_queue::enqueue_in(&base, "GSG", "42", &alt).expect("Ablage");
+        stats.bahn_revision = 3;
+        let neu = bahn_nachtrag_bauen(&flight, &stats).expect("Nachtrag");
+        let pfad2 = nachtrag_queue::enqueue_in(&base, "GSG", "42", &neu).expect("Ablage");
+        assert_eq!(pfad, pfad2, "gleiche Landung, gleiche Datei");
+        assert!(
+            !nachtrag_queue::entfernen_wenn_revision(&pfad, Some(2)),
+            "die Zustellung von Revision 2 hat Revision 3 geloescht"
+        );
+        assert!(pfad.exists());
+        assert!(nachtrag_queue::entfernen_wenn_revision(&pfad, Some(3)));
+        assert!(!pfad.exists());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// ⚠ Der Nachtrag traegt das Drittel — vertrauens-geriegelt wie der

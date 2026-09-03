@@ -538,7 +538,10 @@ fn die_revision_liegt_vor_dem_versand_auf_der_platte() {
     // das den offenen Nachtrag beim Einreichen schickt. Dort endet der
     // Flug ohnehin, eine Sicherung waere folgenlos. `find` haette diese
     // getroffen und den Waechter auf die falsche Stelle gerichtet.
-    let versand = format!("{}.{}(", "handle", "touchdown_rollout_finalized");
+    // Seit Runde 12 heisst der Sendeweg `nachtrag_queue::senden` (Ablage
+    // zuerst, Datei faellt mit der Zustellmeldung); der Streamer ist
+    // weiterhin die LETZTE Aufrufstelle in der Datei.
+    let versand = format!("{}::{}(", "nachtrag_queue", "senden");
     let stelle = quelle
         .rfind(&versand)
         .expect("der Streamer schickt den Nachtrag nicht mehr");
@@ -623,7 +626,7 @@ fn das_navdaten_upgrade_geht_denselben_weg() {
     let trichter = rumpf(&quelle, "fn finalize_filed_pirep(");
     assert!(
         trichter.contains("bahn_nachtrag_bauen(flight, &stats)")
-            && trichter.contains("touchdown_rollout_finalized("),
+            && trichter.contains("nachtrag_queue::senden("),
         "`finalize_filed_pirep` schickt den offenen Bahn-Nachtrag nicht \
          — er ist die einzige Stelle, an der beim Einreichen noch eine \
          MQTT-Verbindung liegt."
@@ -738,7 +741,7 @@ fn das_drittel_wird_nur_an_einer_stelle_gesetzt() {
 #[test]
 fn die_sperre_faellt_erst_nach_dem_versand() {
     let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
-    let versand = format!("{}.{}(", "handle", "touchdown_rollout_finalized");
+    let versand = format!("{}::{}(", "nachtrag_queue", "senden");
     let stelle = quelle.rfind(&versand).expect("Streamer-Versand");
 
     // Der Arm, in dem der Versand steht.
@@ -887,8 +890,8 @@ fn der_gequeute_nachtrag_kommt_ueber_aus_json() {
     let typ = "TouchdownRolloutFinalizedPayload";
     assert_eq!(
         produktion.matches(&format!("{typ}::aus_json(")).count(),
-        3,
-        "nicht alle Lesestellen (Einreich-Trichter, Worker-Altbestand, Ablage) nehmen `aus_json`"
+        4,
+        "nicht alle Lesestellen (Einreich-Trichter, Worker-Altbestand, Ablage lesen, Ablage-Revision) nehmen `aus_json`"
     );
     // ⚠ Beide Schreibweisen: der Turbofish UND die Typannotation
     // (`let n: …Payload = serde_json::from_value(json)`) — genau die stand
@@ -934,7 +937,7 @@ fn ohne_handle_geht_der_nachtrag_in_die_ablage() {
     let zu = blockende(trichter, auf);
     let block = &trichter[auf..zu];
     let ablage = block
-        .find("nachtrag_queue::enqueue(")
+        .find("nachtrag_queue::enqueue_offline(")
         .expect("ohne Handle landet der Nachtrag nicht in der Ablage — er geht verloren");
     let fahne = block
         .find("stats.bahn_nachtrag_offen = false;")
@@ -947,7 +950,7 @@ fn ohne_handle_geht_der_nachtrag_in_die_ablage() {
     let rest = &trichter[..auf];
     let _ = rest;
     assert!(
-        trichter.matches("nachtrag_queue::enqueue(").count() >= 2,
+        trichter.matches("nachtrag_queue::enqueue_offline(").count() >= 2,
         "der gequeute Nachtrag ohne Handle geht nicht in die Ablage"
     );
 }
@@ -996,5 +999,96 @@ fn der_worker_leert_die_ablage_vor_dem_client_riegel() {
     assert!(
         drain < riegel,
         "die Ablage wird erst NACH dem Client-Riegel geleert — ohne phpVMS-Login bleibt sie liegen"
+    );
+}
+
+/// ⚠ JEDER Nachtrag geht ueber `nachtrag_queue::senden` — Ablage zuerst,
+/// Datei faellt erst mit der Zustellmeldung.
+///
+/// Codex (03.09.2026, Runde 12, P1): Die Runde-11-Ablage griff nur ohne
+/// Handle. Mit Handle ging der Nachtrag fire-and-forget raus, und der
+/// Aufrufer las „Handle vorhanden" als „zugestellt". Jetzt gibt es keinen
+/// Sendeweg mehr, der an der Ablage vorbeifuehrt: Der einzige Aufruf von
+/// `.senden(` auf dem Sender liegt im Modul selbst, und dort steht die
+/// Ablage VOR dem Senden und das Loeschen NACH dem `.await` der Meldung.
+#[test]
+fn jeder_nachtrag_geht_ueber_die_ablage() {
+    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let produktion = produktionsteil(&quelle);
+    assert_eq!(
+        produktion.matches(".touchdown_rollout_finalized(").count(),
+        0,
+        "ein fire-and-forget-Sendeweg am Handle — er umgeht die Ablage"
+    );
+    let modul = rumpf(&produktion, "mod nachtrag_queue {");
+    let im_modul = modul.matches(".senden(").count();
+    let gesamt = produktion.matches(".senden(").count();
+    assert!(im_modul >= 2, "das Modul sendet nicht (senden + drain)");
+    assert_eq!(
+        gesamt, im_modul,
+        "ein `.senden(` ausserhalb von `nachtrag_queue` — dort gibt es keine Ablage davor"
+    );
+    assert!(
+        produktion.matches("nachtrag_queue::senden(").count() >= 4,
+        "nicht alle vier Aufrufer (Streamer, Einreichen, gequeut, Altbestand) gehen ueber `senden`"
+    );
+    // Ablage VOR dem Senden, Loeschen NACH der Meldung.
+    let senden = rumpf(modul, "pub fn senden(");
+    let ablage = senden.find("enqueue(").expect("`senden` legt nicht ab");
+    let schicken = senden.find(".senden(").expect("`senden` schickt nicht");
+    assert!(
+        ablage < schicken,
+        "erst senden, dann ablegen — bei totem Kanal ist nichts auf der Platte"
+    );
+    let warten = senden
+        .find(".await")
+        .expect("`senden` wartet nicht auf die Meldung");
+    let loeschen = senden
+        .find("entfernen_wenn_revision(")
+        .expect("`senden` raeumt nie auf");
+    assert!(loeschen > warten, "die Datei faellt vor der Zustellmeldung");
+    // Nur EINE Stelle loescht.
+    assert_eq!(
+        modul.matches("remove_file(").count(),
+        1,
+        "mehr als eine Loeschstelle — eine davon prueft die Revision nicht"
+    );
+    let entfernen = rumpf(modul, "pub fn entfernen_wenn_revision(");
+    assert!(
+        entfernen.contains("remove_file("),
+        "die Loeschstelle liegt nicht hinter der Revisionspruefung"
+    );
+}
+
+/// ⚠ Der Publisher meldet die Zustellung erst nach Leitungspruefung und
+/// Publish — und es gibt keinen unbestaetigten Weg mehr.
+#[test]
+fn der_publisher_meldet_nur_bei_stehender_leitung() {
+    let quelle =
+        nur_code(&fs::read_to_string("crates/aeroacars-mqtt/src/lib.rs").expect("mqtt lib.rs"));
+    let produktion = produktionsteil(&quelle);
+    assert_eq!(
+        produktion
+            .matches("pub fn touchdown_rollout_finalized(")
+            .count(),
+        0,
+        "der fire-and-forget-Weg am Handle existiert wieder"
+    );
+    let arm = produktion
+        .find("Cmd::TouchdownRolloutFinalized(p, ack) =>")
+        .expect("der Publisher-Zweig traegt keine Zustellmeldung");
+    let auf = arm + produktion[arm..].find('{').expect("Zweig ohne Block");
+    let zu = blockende(&produktion, auf);
+    let block = &produktion[auf..zu];
+    let leitung = block
+        .find("link_rx.borrow()")
+        .expect("der Zweig prueft die Leitung nicht");
+    let publish = block
+        .find("publish_json_bestaetigt(")
+        .expect("der Zweig nimmt den unbestaetigten Publish");
+    let meldung = block.find("ack.send(").expect("der Zweig meldet nicht");
+    assert!(
+        leitung < publish && publish < meldung,
+        "Reihenfolge Leitung → Publish → Meldung verletzt"
     );
 }
