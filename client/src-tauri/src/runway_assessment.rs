@@ -74,6 +74,34 @@ pub struct TdzResult {
     pub tdz_length_m: f64,
 }
 
+/// In welchem Drittel der Bahn das Aufsetzen liegt — 1, 2 oder 3.
+///
+/// # Warum das nicht in `classify_tdz` bleibt
+///
+/// Die Aufsetzzonen-MARKIERUNG gibt es laut ICAO Annex 14 erst ab
+/// 1200 m; darunter meldet `classify_tdz` deshalb `None`. Das Drittel
+/// ist aber keine Markierung, sondern eine Division — es gilt auf einem
+/// 700-m-Buschplatz genauso wie auf 4000 m.
+///
+/// Bis v1.7.15 stand diese Rechnung zweimal im Haus, einmal hier und
+/// einmal roh in `lib.rs`. Beim Zusammenlegen fiel das alte Feld
+/// `landing_touchdown_zone` auf kurzen Plaetzen lautlos weg, weil es an
+/// die 1200-m-Grenze der Markierung gekoppelt wurde (externe QS,
+/// 02.09.2026). Jetzt gibt es EINE Rechnung ohne die Grenze; die
+/// Markierung nutzt sie mit.
+///
+/// Undershoots (negative Distanz) landen in 1 — sie liegen vor der
+/// Schwelle, also am Anfang.
+pub fn drittel(td_distance_m: f64, runway_length_m: f64) -> u8 {
+    if td_distance_m <= runway_length_m / 3.0 {
+        1
+    } else if td_distance_m <= (2.0 * runway_length_m) / 3.0 {
+        2
+    } else {
+        3
+    }
+}
+
 /// Classify a touchdown distance against the runway's TDZ markings.
 ///
 /// `td_distance_m` is signed along-track from the landing threshold —
@@ -85,13 +113,7 @@ pub fn classify_tdz(td_distance_m: f64, runway_length_m: f64) -> Option<TdzResul
     }
     let tdz_length_m = (runway_length_m / 3.0).min(TDZ_MAX_LENGTH_M);
     let in_tdz = td_distance_m > 0.0 && td_distance_m <= tdz_length_m;
-    let third = if td_distance_m <= runway_length_m / 3.0 {
-        1
-    } else if td_distance_m <= (2.0 * runway_length_m) / 3.0 {
-        2
-    } else {
-        3
-    };
+    let third = drittel(td_distance_m, runway_length_m);
     Some(TdzResult {
         in_tdz,
         third,

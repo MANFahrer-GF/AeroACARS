@@ -84,7 +84,12 @@ const LAENGSVERSATZ_HOECHST_M: f64 = 400.0;
 // andere, und dann wird nichts übernommen.
 
 /// Was bei der Übernahme geschah — für den Bericht und die Messung.
-#[derive(Debug, Clone, Default, PartialEq)]
+///
+/// Serialisierbar seit v1.7.15 (Runde 4): Der Bericht ist Eingabe der
+/// Bahn-Herkunft auf der Leitung. Ohne Persistenz kippte
+/// `bahn_geometrie_quelle` nach einem Neustart von „szenerie" auf
+/// „navdaten", und die Korrekturbeträge wurden als `null` gelöscht.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct UebernahmeBericht {
     /// Bahnen, deren Geometrie aus der Szenerie kommt.
     pub uebernommen: Vec<String>,

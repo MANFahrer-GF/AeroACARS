@@ -406,7 +406,185 @@ pub struct TakeoffPayload {
     pub dep_runway: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+/// Alles, was eine **spaet eingetroffene Szenerie** noch veraendern kann.
+///
+/// # Warum diese Gruppe eigen ist
+///
+/// Trifft die Bahndefinition des Simulators erst nach dem Aufsetzen ein
+/// (YSBK, 01.09.2026: 444 Rollwege, die Lieferung lief noch), holt der
+/// Client die Zuordnung nach. Damit aendern sich nicht nur die
+/// Bahnmasse, sondern alles, was aus der Bahn folgt: die Herkunft, die
+/// Korrekturbetraege, die Aufsetzpunkt-Einordnung und die
+/// Schwellen-Ueberquerung.
+///
+/// Der Recorder uebernimmt vom spaeteren PIREP nur Punktzahl und Noten.
+/// Die Rohwerte dieser Zeile kommen ausschliesslich aus den beiden
+/// Touchdown-Ereignissen — trug der Nachtrag sie nicht mit, blieben sie
+/// fuer immer auf dem Stand vor der Szenerie.
+///
+/// # Warum EIN Typ und nicht achtundzwanzig Zeilen
+///
+/// Dieselbe Begruendung wie bei [`BahnWire`]: Zwei Ereignisse, die
+/// dieselben Felder je einzeln aufzaehlen, laufen auseinander — beim
+/// ersten Nachtrag trugen sie genau vier gemeinsame Felder von
+/// achtundzwanzig. `flatten` legt sie auf der Leitung flach ab; der
+/// Server sieht keinen Unterschied zu vorher.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
+pub struct BahnHerkunftWire {
+    // ⚠ KEIN `skip_serializing_if` in dieser Gruppe.
+    //
+    // Die Felder muessen auch `null` SAGEN koennen. Der Recorder
+    // aktualisiert nur Schluessel, die im Ereignis vorkommen — ein
+    // fehlender Schluessel laesst den alten Wert stehen. Wird ein Wert
+    // durch die spaetere Zuordnung ungueltig (etwa ein Korrekturbetrag,
+    // weil jetzt gar nichts mehr uebernommen wurde, oder eine
+    // Navdaten-Bewertung, die ohne Bahntreffer entfaellt), dann ist
+    // "weglassen" genau die falsche Auskunft: Der Recorder behielte den
+    // Wert von vor der Korrektur.
+    //
+    // `json_patch` (RFC 7396) loescht bei `null` den Schluessel; der
+    // Recorder faengt das ab und setzt ihn ausdruecklich auf JSON-Null.
+    // "Gemessen, aber unbekannt" bleibt damit von "nie gemessen"
+    // unterscheidbar.
+    /// Die wievielte Zuordnung der Bahn diese Werte sind.
+    ///
+    /// # Wozu eine Zahl noetig ist
+    ///
+    /// Der Client kann denselben Touchdown MEHRFACH nachtragen: einmal
+    /// zum Aufsetzen und noch einmal, wenn eine neuere Lieferung
+    /// desselben Platzes eintrifft. Beide Ereignisse adressieren
+    /// dieselbe Zeile ueber `pirep_id` + `touchdown_at`.
+    ///
+    /// MQTT garantiert die Reihenfolge nur je Verbindung; ein
+    /// Wiederverbinden mitten im Nachtrag kann ein aelteres Ereignis
+    /// hinter ein neueres schieben. Ohne diese Zahl hat der Empfaenger
+    /// kein Mittel, das zu erkennen — er wuerde die gute Zuordnung mit
+    /// der alten ueberschreiben und es saehe aus wie ein Rueckschritt
+    /// ohne Ursache.
+    ///
+    /// ⚠ Es ist ausdruecklich NICHT die SimConnect-Anfragenummer der
+    /// Szenerie-Abfrage. Die ist prozesslokal und faengt nach einem
+    /// App-Neustart wieder bei null an: Der Recorder haette Revision 7
+    /// gespeichert, bekaeme die tatsaechlich neuere Lieferung als 1 und
+    /// wiese sie ab. Es ist eine mit dem Flug PERSISTIERTE Revision, die
+    /// ueber Neustarts hinweg monoton waechst.
+    ///
+    /// Eine Zeile darf nur von einem Ereignis mit **groesserer oder
+    /// gleicher** Revision ueberschrieben werden. Fehlt sie (Client vor
+    /// v1.7.15), zaehlt sie als 0 — ein Altclient-Nachtrag kann damit
+    /// keine neuere Zuordnung mehr ueberschreiben.
+    #[serde(default)]
+    pub bahn_revision: Option<u32>,
+    /// Die beim Recorder liegende Spur ist gegen eine FRUEHERE Bahn
+    /// projiziert: Nach dem Ausrollen hat die Bahn die Achse gewechselt,
+    /// der Client sendet die Spur seitdem nicht mehr, die alte bleibt in
+    /// der Zeile stehen — neben Herkunftswerten der neuen Bahn. Die
+    /// Anzeige kann sie damit ausgrauen statt sie als Messung der neuen
+    /// Bahn zu zeigen (Client-QS Runde 6, Befund 3). `false` = die Spur
+    /// gehoert zu dieser Bahn.
+    #[serde(default)]
+    pub bahn_spur_veraltet: Option<bool>,
+    /// True if a runway was correlated from the touchdown coord (OurAirports CSV).
+    pub runway_match_icao: Option<String>,
+    pub runway_match_ident: Option<String>,
+    pub runway_match_distance_m: Option<f32>,
+    pub runway_match_centerline_offset_m: Option<f32>,
+    /// v0.5.22: total length of the matched runway in metres (from the
+    /// OurAirports CSV row). Required server-side for the "Bahn-Auslastung"
+    /// sub-score (rollout / length × 100) so the live monitor can show
+    /// the same breakdown the AeroACARS app shows pilots in-flight.
+    pub runway_length_m: Option<f32>,
+
+    // ─── v1.7.8 Bahngeometrie aus der Simulator-Szenerie ─────────────
+    //
+    // Die Bahn, gegen die gemessen wurde, kommt bei X-Plane aus der
+    // installierten Szenerie des Piloten statt aus den Navdaten. Diese
+    // drei Felder halten fest, OB und WIE STARK das gewirkt hat —
+    // damit sich der Quellenwechsel im Bestand messen laesst statt ihn
+    // zu glauben.
+    //
+    // Grund: 3.836 Bahnen des neuesten AIRAC-Zyklus fuehren
+    // `true_course` als 0,0 oder 360,0; bei 3.329 davon widerspricht das
+    // der eigenen Bahnnummer.
+    /// Woher die Bahngeometrie stammt: `"szenerie"` oder `"navdaten"`.
+    #[serde(default)]
+    pub bahn_geometrie_quelle: Option<String>,
+    /// Was aus der Szenerie-Abfrage wurde — feiner als
+    /// `bahn_geometrie_quelle`, das nur "szenerie" oder "navdaten" kennt.
+    /// Werte: nicht_angefordert | abgelehnt | keine_antwort | ohne_bahnen
+    /// | kein_treffer | geliefert | uebernommen | keine_szenerie
+    pub bahn_szenerie_status: Option<String>,
+    /// Name + Version, mit denen sich der Simulator gemeldet hat.
+    /// Trennt MSFS 2020 von 2024 — die Feldnamen der Facility-Abfrage
+    /// stammen aus der 2024er-SDK-Doku.
+    pub sim_kennung: Option<String>,
+    /// Um wie viel Grad der Kurs korrigiert wurde. 0 = kein Unterschied.
+    #[serde(default)]
+    pub bahn_kurs_korrektur_grad: Option<f64>,
+    /// Um wie viel Meter die Breite korrigiert wurde.
+    #[serde(default)]
+    pub bahn_breiten_korrektur_m: Option<f64>,
+    /// Um wie viel Meter die versetzte Schwelle korrigiert wurde.
+    ///
+    /// ⚠ Der Nullpunkt der Aufsetzpunkt-Bewertung. Ein grosser Wert
+    /// heisst nicht "Fehler", sondern "Szenerie und Navdaten sind sich
+    /// hier uneins" — und dass wir der Szenerie gefolgt sind, weil der
+    /// Pilot dort landet.
+    #[serde(default)]
+    pub bahn_schwellen_korrektur_m: Option<f64>,
+
+    // ─── v0.8.0 VPS-Navdata + Runway-Awareness ────────────────────────
+    //
+    // Identische Felder wie in `storage::LandingRecord`. Alle
+    // skip_if_none damit Recorder + Webapp die Felder nur sehen wenn
+    // tatsächlich gegen VPS-Navdata bewertet wurde — pre-v0.8.0
+    // Touchdowns kommen ohne diese Felder durch und der MQTT-Consumer
+    // muss nichts ändern.
+    /// "navigraph" | "ourairports_fallback". Welche Quelle die
+    /// Runway-Match-Daten geliefert hat.
+    pub navdata_source: Option<String>,
+    /// AIRAC-Cycle der genutzten Navigraph-Daten (e.g. "2604"). None
+    /// wenn navdata_source = "ourairports_fallback".
+    pub navdata_cycle: Option<String>,
+    /// True-course der Landerichtung in deg. Webapp braucht das fuer
+    /// die RunwayDiagram-Achse.
+    pub runway_true_course_deg: Option<f64>,
+    /// Displaced-Threshold in ft (0 = keine).
+    pub runway_displaced_threshold_ft: Option<i32>,
+    /// Erwartete Threshold-Crossing-Height in ft (typisch 49-55).
+    pub runway_tch_expected_ft: Option<i32>,
+    /// Veröffentlichter Glideslope-Winkel in Grad (typisch 3.0).
+    pub runway_glideslope_angle_deg: Option<f64>,
+    /// Signed along-track-Distanz vom Landing-Threshold zum Touchdown,
+    /// in Metern. Positiv = past, negativ = undershoot.
+    pub td_distance_from_threshold_m: Option<f64>,
+    /// F3 TDZ-Result: true wenn Touchdown im TDZ-Marker. None bei
+    /// runways < 1200 m.
+    pub td_in_tdz: Option<bool>,
+    /// 1-indexed third of the runway the touchdown lies in (1/2/3).
+    /// Stable wire-key gegen storage::LandingRecord — Webapp + Pilot-
+    /// Client teilen die Frontend-Logik.
+    pub td_third: Option<u8>,
+    /// F3 TDZ-Marker-Laenge in Metern (≤ 900, ≤ length/3).
+    pub td_tdz_length_m: Option<f64>,
+    /// F4 Aim-Point delta in Metern (positiv = past, negativ = short).
+    pub aim_delta_m: Option<f64>,
+    /// F4 Aim-Point classification: "perfect" | "short_of_aim" |
+    /// "past_aim" | "long_landing" | "severe".
+    pub aim_class: Option<String>,
+    /// F4 Aim-Point distance from threshold in Metern (300 oder 400).
+    pub aim_point_m: Option<f64>,
+    /// F5 actual TCH (AGL ft beim Threshold-Crossing).
+    pub tch_actual_ft: Option<f64>,
+    /// F5 TCH delta = actual - expected (ft). Positiv = ueber Profil.
+    pub tch_delta_ft: Option<f64>,
+    /// F5 TCH classification.
+    pub tch_class: Option<String>,
+    /// F6 Displaced-Threshold-Warning: Touchdown im Pre-Threshold-Paint.
+    pub pre_displaced_threshold: Option<bool>,
+}
+
+#[derive(Default, Clone, Debug, Serialize)]
 pub struct TouchdownPayload {
     pub ts: i64,
     /// v0.7.19 (QS-R2 Finding 1): PIREP-ID damit Korrektur-Events
@@ -522,16 +700,6 @@ pub struct TouchdownPayload {
     pub approach_bank_stddev_deg: Option<f32>,
     pub go_around_count: Option<u32>,
     pub arr_metar: Option<String>,
-    /// True if a runway was correlated from the touchdown coord (OurAirports CSV).
-    pub runway_match_icao: Option<String>,
-    pub runway_match_ident: Option<String>,
-    pub runway_match_distance_m: Option<f32>,
-    pub runway_match_centerline_offset_m: Option<f32>,
-    /// v0.5.22: total length of the matched runway in metres (from the
-    /// OurAirports CSV row). Required server-side for the "Bahn-Auslastung"
-    /// sub-score (rollout / length × 100) so the live monitor can show
-    /// the same breakdown the AeroACARS app shows pilots in-flight.
-    pub runway_length_m: Option<f32>,
     /// Prozentuale Abweichung des **tatsächlichen Trip-Burn**
     /// (`takeoff_fuel − landing_fuel`) vom geplanten OFP-Trip-Burn
     /// (`planned_burn_kg`). Positiv = Mehrverbrauch, negativ =
@@ -788,46 +956,6 @@ pub struct TouchdownPayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runway_geometry_reason: Option<String>,
 
-    // ─── v1.7.8 Bahngeometrie aus der Simulator-Szenerie ─────────────
-    //
-    // Die Bahn, gegen die gemessen wurde, kommt bei X-Plane aus der
-    // installierten Szenerie des Piloten statt aus den Navdaten. Diese
-    // drei Felder halten fest, OB und WIE STARK das gewirkt hat —
-    // damit sich der Quellenwechsel im Bestand messen laesst statt ihn
-    // zu glauben.
-    //
-    // Grund: 3.836 Bahnen des neuesten AIRAC-Zyklus fuehren
-    // `true_course` als 0,0 oder 360,0; bei 3.329 davon widerspricht das
-    // der eigenen Bahnnummer.
-    /// Woher die Bahngeometrie stammt: `"szenerie"` oder `"navdaten"`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bahn_geometrie_quelle: Option<String>,
-    /// Was aus der Szenerie-Abfrage wurde — feiner als
-    /// `bahn_geometrie_quelle`, das nur "szenerie" oder "navdaten" kennt.
-    /// Werte: nicht_angefordert | abgelehnt | keine_antwort | ohne_bahnen
-    /// | kein_treffer | geliefert | uebernommen | keine_szenerie
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bahn_szenerie_status: Option<String>,
-    /// Name + Version, mit denen sich der Simulator gemeldet hat.
-    /// Trennt MSFS 2020 von 2024 — die Feldnamen der Facility-Abfrage
-    /// stammen aus der 2024er-SDK-Doku.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sim_kennung: Option<String>,
-    /// Um wie viel Grad der Kurs korrigiert wurde. 0 = kein Unterschied.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bahn_kurs_korrektur_grad: Option<f64>,
-    /// Um wie viel Meter die Breite korrigiert wurde.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bahn_breiten_korrektur_m: Option<f64>,
-    /// Um wie viel Meter die versetzte Schwelle korrigiert wurde.
-    ///
-    /// ⚠ Der Nullpunkt der Aufsetzpunkt-Bewertung. Ein grosser Wert
-    /// heisst nicht "Fehler", sondern "Szenerie und Navdaten sind sich
-    /// hier uneins" — und dass wir der Szenerie gefolgt sind, weil der
-    /// Pilot dort landet.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bahn_schwellen_korrektur_m: Option<f64>,
-
     // ─── v0.7.19 GAF-707 Accident-Detection ──────────────────────────
     //
     // Spec docs/spec/v0.7.19-gaf707-crash-accident-detection.md.
@@ -859,73 +987,6 @@ pub struct TouchdownPayload {
     /// Pfad: gleich `ts`. None wenn kein Accident.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accident_at: Option<i64>,
-
-    // ─── v0.8.0 VPS-Navdata + Runway-Awareness ────────────────────────
-    //
-    // Identische Felder wie in `storage::LandingRecord`. Alle
-    // skip_if_none damit Recorder + Webapp die Felder nur sehen wenn
-    // tatsächlich gegen VPS-Navdata bewertet wurde — pre-v0.8.0
-    // Touchdowns kommen ohne diese Felder durch und der MQTT-Consumer
-    // muss nichts ändern.
-    /// "navigraph" | "ourairports_fallback". Welche Quelle die
-    /// Runway-Match-Daten geliefert hat.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub navdata_source: Option<String>,
-    /// AIRAC-Cycle der genutzten Navigraph-Daten (e.g. "2604"). None
-    /// wenn navdata_source = "ourairports_fallback".
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub navdata_cycle: Option<String>,
-    /// True-course der Landerichtung in deg. Webapp braucht das fuer
-    /// die RunwayDiagram-Achse.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub runway_true_course_deg: Option<f64>,
-    /// Displaced-Threshold in ft (0 = keine).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub runway_displaced_threshold_ft: Option<i32>,
-    /// Erwartete Threshold-Crossing-Height in ft (typisch 49-55).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub runway_tch_expected_ft: Option<i32>,
-    /// Veröffentlichter Glideslope-Winkel in Grad (typisch 3.0).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub runway_glideslope_angle_deg: Option<f64>,
-    /// Signed along-track-Distanz vom Landing-Threshold zum Touchdown,
-    /// in Metern. Positiv = past, negativ = undershoot.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub td_distance_from_threshold_m: Option<f64>,
-    /// F3 TDZ-Result: true wenn Touchdown im TDZ-Marker. None bei
-    /// runways < 1200 m.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub td_in_tdz: Option<bool>,
-    /// 1-indexed third of the runway the touchdown lies in (1/2/3).
-    /// Stable wire-key gegen storage::LandingRecord — Webapp + Pilot-
-    /// Client teilen die Frontend-Logik.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub td_third: Option<u8>,
-    /// F3 TDZ-Marker-Laenge in Metern (≤ 900, ≤ length/3).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub td_tdz_length_m: Option<f64>,
-    /// F4 Aim-Point delta in Metern (positiv = past, negativ = short).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub aim_delta_m: Option<f64>,
-    /// F4 Aim-Point classification: "perfect" | "short_of_aim" |
-    /// "past_aim" | "long_landing" | "severe".
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub aim_class: Option<String>,
-    /// F4 Aim-Point distance from threshold in Metern (300 oder 400).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub aim_point_m: Option<f64>,
-    /// F5 actual TCH (AGL ft beim Threshold-Crossing).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tch_actual_ft: Option<f64>,
-    /// F5 TCH delta = actual - expected (ft). Positiv = ueber Profil.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tch_delta_ft: Option<f64>,
-    /// F5 TCH classification.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tch_class: Option<String>,
-    /// F6 Displaced-Threshold-Warning: Touchdown im Pre-Threshold-Paint.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pre_displaced_threshold: Option<bool>,
 
     /// v0.10.0 (#runway-utilization-score) — Algorithmus-Version des im
     /// PIREP gespeicherten `sub_scores`-Arrays. None/Some(1) = pre-v0.10
@@ -963,6 +1024,15 @@ pub struct TouchdownPayload {
     // wie der Vertrag sie beschreibt. Der Server sieht keinen Unterschied.
     #[serde(flatten)]
     pub bahn: BahnWire,
+
+    // ── v1.7.15: die Bahn-Herkunft, nachtragsfaehig ──────────────────
+    //
+    // Siehe [`BahnHerkunftWire`]. Dieselbe Gruppe haengt am
+    // `touchdown_rollout_finalized`, damit eine spaet eingetroffene
+    // Szenerie nicht nur den Flugzustand, sondern auch die Zeile im
+    // Recorder korrigiert.
+    #[serde(flatten)]
+    pub herkunft: BahnHerkunftWire,
 }
 
 /// Die Bahndisziplin-Werte auf der Leitung.
@@ -1058,6 +1128,13 @@ pub struct BahnWire {
     /// Anflug ohnehin geladen und rechnet einmal.
     ///
     /// Klein genug dafür: typisch vier bis zwölf Einträge je Bahn.
+    /// ⚠ Das EINE Spur-Feld mit `skip_serializing_if`: Die Ausfahrten
+    /// sind keine Messung, sondern eine Ableitung aus der Bodenkarte
+    /// (Szenerie-Rollwege oder OSM). Fehlt die Karte — nach einem
+    /// Neustart wird sie nicht persistiert —, ist `None` „Eingabe fehlt",
+    /// nicht „keine Ausfahrten". Ein `null` haette die beim Recorder
+    /// gespeicherten Ausfahrten geloescht (Runde 4, N14).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runway_exits: Option<Vec<RunwayExitWire>>,
     /// Steht das Ausrollen fest — oder ist das ein Zwischenstand?
     ///
@@ -1485,7 +1562,30 @@ pub struct TouchdownAccidentOverridePayload {
 /// der Client dieses Event mit dem FINALEN Wert nach; der Recorder patcht
 /// damit nur das Rohfeld der Touchdown-Zeile — KEIN Score-Recompute, KEINE
 /// Verzögerung von `touchdown_complete`/Live-Pushes.
-#[derive(Clone, Debug, Serialize)]
+impl TouchdownRolloutFinalizedPayload {
+    /// Liest den Nachtrag aus JSON — und stellt den fehlenden Spur-Block
+    /// als `None` wieder her.
+    ///
+    /// ⚠ `#[serde(flatten)]` auf `Option<BahnWire>` liefert bei FEHLENDEN
+    /// Schluesseln `Some(BahnWire::default())`, nicht `None` — mit
+    /// `rollout_final: false` und lauter `None`-Feldern, die auf der
+    /// Leitung zu `null` werden. Auf dem Warteschlangen-Weg (Offline-
+    /// Einreichen) holte das N13 zurueck: Der Worker sendete einen
+    /// „leeren" Block und drehte eine endgueltige Zeile auf vorlaeufig
+    /// (Client-QS, Runde 5, N23). Das Erkennungsmerkmal ist
+    /// `rollout_final`: Es steht in JEDEM echten Block (kein
+    /// `skip_serializing_if`) und in keinem fehlenden.
+    pub fn aus_json(json: serde_json::Value) -> Result<Self, serde_json::Error> {
+        let block_da = json.get("rollout_final").is_some();
+        let mut nachtrag: Self = serde_json::from_value(json)?;
+        if !block_da {
+            nachtrag.bahn = None;
+        }
+        Ok(nachtrag)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
 pub struct TouchdownRolloutFinalizedPayload {
     /// Event-Zeitstempel (Finalisierungs-Moment), ms seit Epoch.
     pub ts: i64,
@@ -1524,8 +1624,51 @@ pub struct TouchdownRolloutFinalizedPayload {
     // Die Gruppe ist dieselbe wie im `TouchdownPayload` — ein Typ, eine
     // Umrechnung (`BahnFelder::wire()`), damit der Nachtrag nicht
     // auseinanderlaufen kann.
+    //
+    // ⚠ OPTIONAL seit Runde 4 (N13): Der Block geht nur mit, wenn die
+    // Spur vollstaendig ist. Sonst FEHLT er — er wird nicht als `null`
+    // gesendet. `null` loescht beim Recorder, und `rollout_final: false`
+    // draengte eine laengst endgueltige Zeile auf „vorlaeufig" zurueck.
+    // Fehlt der Block, bleibt beim Recorder der letzte vollstaendige
+    // Stand stehen; Herkunft, Drittel und Riegel kommen trotzdem.
     #[serde(flatten)]
-    pub bahn: BahnWire,
+    pub bahn: Option<BahnWire>,
+
+    // ── v1.7.15: das Drittel, nachgetragen ───────────────────────────
+    //
+    // `landing_touchdown_zone` ist beim Recorder eine SPALTE, die nur
+    // der INSERT aus `touchdown_complete` schreibt. Trifft die Szenerie
+    // danach ein, korrigierte der Nachtrag `td_third` im JSON, die
+    // Spalte blieb stehen — zwei Karten und ein Diagramm zeigten
+    // verschiedene Drittel derselben Landung (externe QS, 02.09.2026,
+    // N3). Nicht Teil von `BahnHerkunftWire`: Der Wert haengt am
+    // Vertrauens-Riegel der Bahngeometrie, der den Flug braucht.
+    // `None` geht als `null` hinaus und LOESCHT die Spalte — ein
+    // Drittel gegen eine nicht vertrauenswuerdige Bahn ist keins.
+    #[serde(default)]
+    pub landing_touchdown_zone: Option<u8>,
+    /// Der Vertrauens-Riegel der Bahngeometrie — dieselbe Ableitung wie
+    /// am `touchdown_complete`. Ohne ihn blieben `runway_geometry_trusted`
+    /// und `_reason` beim Recorder auf dem Stand des Aufsetzens, waehrend
+    /// die Bahn darunter wechselte (externe QS, Runde 3).
+    #[serde(default)]
+    pub runway_geometry_trusted: Option<bool>,
+    #[serde(default)]
+    pub runway_geometry_reason: Option<String>,
+
+    // ── v1.7.15: die Bahn-Herkunft, nachgetragen ─────────────────────
+    //
+    // Bis v1.7.14 trug dieses Ereignis von der Bahn nur die Spur und die
+    // Ausrollstrecke. Kam die Szenerie erst nach dem Aufsetzen, holte der
+    // Client die Zuordnung zwar nach — beim Recorder blieben Bahnlaenge,
+    // versetzte Schwelle, Herkunft, Szenerie-Stand und die
+    // Aufsetzpunkt-Einordnung aber auf dem Stand VOR der Szenerie
+    // stehen. Vier gemeinsame Felder von achtundzwanzig.
+    //
+    // Siehe [`BahnHerkunftWire`]: ein Typ, eine Ableitung, beide
+    // Ereignisse.
+    #[serde(flatten)]
+    pub herkunft: BahnHerkunftWire,
 }
 
 /// Was der Client sendet, wenn jemand etwas zuruft.
@@ -2483,6 +2626,284 @@ fn phase_label(p: FlightPhase) -> &'static str {
 // signaled" and "a long-pending branch" (standing in for poll() with no
 // events) exit promptly on shutdown, and does it NOT exit spuriously
 // when nothing has been signaled?
+#[cfg(test)]
+mod herkunft_auf_der_leitung {
+    use super::*;
+
+    /// ⚠ `#[serde(flatten)]` ist die einzige Zusicherung, dass die
+    /// Feldgruppe auf der Leitung genauso aussieht wie vorher.
+    ///
+    /// Ohne sie waeren die Felder in ein Unterobjekt `herkunft` gerutscht
+    /// — der Recorder liest sie flach und haette sie schlicht nicht mehr
+    /// gefunden. Nicht mit einem Fehler, sondern als „der Client schickt
+    /// sie halt nicht": genau die Stille, aus der der Befund kam.
+    ///
+    /// Der Test prueft es am ECHTEN JSON, nicht am Attribut im Quelltext.
+    #[test]
+    fn die_herkunft_liegt_flach_im_json() {
+        let herkunft = BahnHerkunftWire {
+            bahn_revision: Some(7),
+            runway_length_m: Some(3666.0),
+            bahn_geometrie_quelle: Some("szenerie".to_string()),
+            runway_displaced_threshold_ft: Some(1150),
+            aim_class: Some("on_aim".to_string()),
+            ..Default::default()
+        };
+        let nachtrag = TouchdownRolloutFinalizedPayload {
+            ts: 1,
+            pirep_id: "p1".to_string(),
+            touchdown_at: 2,
+            rollout_distance_m: 1831.6,
+            finalize_reason: None,
+            bahn: Some(BahnWire::default()),
+            landing_touchdown_zone: None,
+            runway_geometry_trusted: None,
+            runway_geometry_reason: None,
+            herkunft,
+        };
+        let json = serde_json::to_value(&nachtrag).expect("serialisiert");
+        let obj = json.as_object().expect("Objekt");
+        assert!(
+            obj.get("herkunft").is_none(),
+            "die Gruppe steht als Unterobjekt auf der Leitung — der \
+             Recorder liest sie flach und findet sie nicht"
+        );
+        assert_eq!(obj.get("bahn_revision").and_then(|v| v.as_u64()), Some(7));
+        assert_eq!(
+            obj.get("runway_length_m").and_then(|v| v.as_f64()),
+            Some(3666.0)
+        );
+        assert_eq!(
+            obj.get("bahn_geometrie_quelle").and_then(|v| v.as_str()),
+            Some("szenerie")
+        );
+        assert_eq!(
+            obj.get("runway_displaced_threshold_ft")
+                .and_then(|v| v.as_i64()),
+            Some(1150)
+        );
+        assert_eq!(
+            obj.get("aim_class").and_then(|v| v.as_str()),
+            Some("on_aim")
+        );
+        // Und das Drittel geht auch als `null` hinaus — es muss die
+        // Spalte loeschen koennen.
+        assert!(
+            obj.contains_key("landing_touchdown_zone"),
+            "`landing_touchdown_zone` fehlt bei None — dann bleibt die Spalte \
+             beim Recorder stehen"
+        );
+        assert!(obj["landing_touchdown_zone"].is_null());
+    }
+
+    /// ⚠ Ein leeres Feld der Gruppe muss als `null` auf die Leitung —
+    /// nicht fehlen.
+    ///
+    /// Der Recorder aktualisiert nur Schluessel, die im Ereignis
+    /// vorkommen. Wird ein Wert durch die spaetere Zuordnung ungueltig
+    /// (ein Korrekturbetrag, weil jetzt nichts mehr uebernommen wurde;
+    /// eine Navdaten-Bewertung, die ohne Bahntreffer entfaellt), waere
+    /// Weglassen die falsche Auskunft: Der alte Wert bliebe stehen, und
+    /// die Zeile zeigte eine Korrektur an, die es nicht mehr gibt.
+    ///
+    /// Ein einzelnes `skip_serializing_if` an einem dieser Felder
+    /// genuegt, um genau dieses eine Feld unkorrigierbar zu machen —
+    /// lautlos. Deshalb zaehlt der Test die Schluessel, statt Stichproben
+    /// zu nehmen.
+    #[test]
+    fn ein_leeres_feld_der_gruppe_geht_als_null_hinaus() {
+        let json = serde_json::to_value(BahnHerkunftWire::default()).expect("serialisiert");
+        let obj = json.as_object().expect("Objekt");
+        const NAMEN: [&str; 30] = [
+            "bahn_revision",
+            "bahn_spur_veraltet",
+            "runway_match_icao",
+            "runway_match_ident",
+            "runway_match_distance_m",
+            "runway_match_centerline_offset_m",
+            "runway_length_m",
+            "bahn_geometrie_quelle",
+            "bahn_szenerie_status",
+            "sim_kennung",
+            "bahn_kurs_korrektur_grad",
+            "bahn_breiten_korrektur_m",
+            "bahn_schwellen_korrektur_m",
+            "navdata_source",
+            "navdata_cycle",
+            "runway_true_course_deg",
+            "runway_displaced_threshold_ft",
+            "runway_tch_expected_ft",
+            "runway_glideslope_angle_deg",
+            "td_distance_from_threshold_m",
+            "td_in_tdz",
+            "td_third",
+            "td_tdz_length_m",
+            "aim_delta_m",
+            "aim_class",
+            "aim_point_m",
+            "tch_actual_ft",
+            "tch_delta_ft",
+            "tch_class",
+            "pre_displaced_threshold",
+        ];
+        // ⚠ ZUERST die Anzahl. Ein NEUES Feld mit `skip_serializing_if`
+        // steht nicht in dieser Liste — die Namensprobe unten faende es
+        // nie. Die Anzahl faengt es: Sie muss mit der Liste wachsen, und
+        // wer ein Feld anlegt, muss es hier eintragen (externe QS,
+        // 02.09.2026, P2-F).
+        assert_eq!(
+            obj.len(),
+            NAMEN.len(),
+            "die Gruppe hat {} Schluessel auf der Leitung, die Liste kennt {} — \
+             entweder fehlt ein neues Feld in der Liste, oder eines faellt bei \
+             `None` weg",
+            obj.len(),
+            NAMEN.len()
+        );
+        let fehlend: Vec<&str> = NAMEN
+            .into_iter()
+            .filter(|k| !obj.contains_key(*k))
+            .collect();
+        assert!(
+            fehlend.is_empty(),
+            "diese Felder fallen bei `None` von der Leitung und lassen \
+             damit den alten Wert beim Recorder stehen: {fehlend:?}"
+        );
+        // Und sie stehen wirklich als JSON-Null da, nicht als "".
+        assert!(
+            obj.values().all(|v| v.is_null()),
+            "ein leeres Feld traegt einen Ersatzwert statt null"
+        );
+    }
+
+    /// ⚠ Der Nachtrag ueberlebt den Weg durch die PIREP-Warteschlange.
+    ///
+    /// Beim Offline-Einreichen wird er als JSON aufgehoben und vom Worker
+    /// wieder aufgebaut — der einzige neue Deserialisierungspfad dieses
+    /// Releases, mit ZWEI `#[serde(flatten)]` nebeneinander. Scheitert
+    /// er, geht die Korrektur mit einer Warnzeile verloren (externe QS,
+    /// Runde 3).
+    #[test]
+    fn der_nachtrag_ueberlebt_die_warteschlange() {
+        let hin = TouchdownRolloutFinalizedPayload {
+            ts: 1,
+            pirep_id: "p1".to_string(),
+            touchdown_at: 2,
+            rollout_distance_m: 1831.6,
+            finalize_reason: Some("exit_speed".to_string()),
+            bahn: Some(BahnWire {
+                rollout_final: true,
+                clearance_point_m: Some(1889.4),
+                lateral_samples: Some(vec![LateralSampleWire {
+                    laengs_m: 720.0,
+                    quer_m: -2.1,
+                }]),
+                ..Default::default()
+            }),
+            landing_touchdown_zone: Some(2),
+            runway_geometry_trusted: Some(true),
+            runway_geometry_reason: None,
+            herkunft: BahnHerkunftWire {
+                bahn_revision: Some(7),
+                runway_length_m: Some(3666.0),
+                runway_displaced_threshold_ft: Some(1150),
+                aim_class: Some("on_aim".to_string()),
+                ..Default::default()
+            },
+        };
+        let json = serde_json::to_value(&hin).expect("hin");
+        let zurueck = TouchdownRolloutFinalizedPayload::aus_json(json.clone())
+            .expect("zurueck — der Nachtrag ist nicht lesbar");
+        let json2 = serde_json::to_value(&zurueck).expect("erneut");
+        assert_eq!(json, json2, "der Nachtrag veraendert sich auf dem Weg durch die Warteschlange");
+        assert_eq!(zurueck.herkunft.bahn_revision, Some(7));
+        assert_eq!(zurueck.landing_touchdown_zone, Some(2));
+        assert_eq!(
+            zurueck.bahn.and_then(|b| b.lateral_samples).map(|v| v.len()),
+            Some(1)
+        );
+    }
+
+    /// ⚠ Ohne Spur-Block stehen KEINE Spur-Felder auf der Leitung.
+    ///
+    /// `rollout_final` und `lateral_samples` duerfen nicht als `false`
+    /// bzw. `null` erscheinen — der Recorder liest beides als Aussage
+    /// und ueberschreibt eine endgueltige Zeile (Runde 4, N13).
+    #[test]
+    fn ohne_spur_block_fehlen_die_spur_felder() {
+        let n = TouchdownRolloutFinalizedPayload {
+            ts: 1,
+            pirep_id: "p1".to_string(),
+            touchdown_at: 2,
+            rollout_distance_m: 1831.6,
+            finalize_reason: None,
+            bahn: None,
+            landing_touchdown_zone: Some(1),
+            runway_geometry_trusted: Some(true),
+            runway_geometry_reason: None,
+            herkunft: BahnHerkunftWire {
+                bahn_revision: Some(2),
+                ..Default::default()
+            },
+        };
+        let json = serde_json::to_value(&n).expect("json");
+        let obj = json.as_object().expect("Objekt");
+        for k in ["rollout_final", "lateral_samples", "clearance_point_m", "overrun_m"] {
+            assert!(
+                !obj.contains_key(k),
+                "`{k}` steht auf der Leitung, obwohl der Spur-Block fehlt — der \
+                 Recorder liest das als Aussage"
+            );
+        }
+        assert_eq!(obj["bahn_revision"], 2);
+        assert_eq!(obj["landing_touchdown_zone"], 1);
+        // Und zurueck ueber den Warteschlangen-Weg: der fehlende Block
+        // liest sich als `None` — NICHT als Block voller Nullen mit
+        // `rollout_final: false`, was `from_value` allein liefert (Runde 5,
+        // N23). Die erste Fassung dieser Zusicherung war `is_none() ||
+        // !rollout_final` — bei `Some(default)` immer wahr, also nichts.
+        let roh: TouchdownRolloutFinalizedPayload =
+            serde_json::from_value(json.clone()).expect("roh");
+        assert!(
+            roh.bahn.is_some(),
+            "die Vorrichtung zeigt das serde-Verhalten nicht mehr — dann prueft \
+             dieser Test nichts"
+        );
+        let zurueck = TouchdownRolloutFinalizedPayload::aus_json(json).expect("aus_json");
+        assert!(
+            zurueck.bahn.is_none(),
+            "der fehlende Spur-Block wird als leerer Block gelesen — der Worker \
+             sendet dann `rollout_final: false` und lauter null"
+        );
+        let json2 = serde_json::to_value(&zurueck).expect("erneut");
+        assert!(
+            json2.get("rollout_final").is_none(),
+            "nach dem Rundlauf steht `rollout_final` wieder auf der Leitung"
+        );
+    }
+
+    /// Und dieselbe Gruppe liegt genauso flach am `touchdown_complete`.
+    ///
+    /// ⚠ Die Gegenprobe zur Gegenprobe: Der Nachtrag koennte flach sein
+    /// und das erste Ereignis verschachtelt — dann waere die Zeile beim
+    /// Recorder nach dem Nachtrag richtig und vorher leer. Beide Wege
+    /// muessen dieselbe Form haben.
+    #[test]
+    fn dieselbe_gruppe_liegt_am_touchdown_ebenso_flach() {
+        let mut td = TouchdownPayload::default();
+        td.herkunft.runway_length_m = Some(3666.0);
+        td.herkunft.bahn_revision = Some(7);
+        let json = serde_json::to_value(&td).expect("serialisiert");
+        let obj = json.as_object().expect("Objekt");
+        assert!(obj.get("herkunft").is_none(), "verschachtelt statt flach");
+        assert_eq!(
+            obj.get("runway_length_m").and_then(|v| v.as_f64()),
+            Some(3666.0)
+        );
+        assert_eq!(obj.get("bahn_revision").and_then(|v| v.as_u64()), Some(7));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2448,6 +2448,14 @@ fn schnappschuss_uebernehmen(
             ziel,
             "Ernteziel gewechselt — fremde Flugkopie verworfen"
         );
+        // Der festgehaltene Status beschreibt DIESE Auskunft — er faellt
+        // mit ihr, sonst traegt der naechste Platz den Status des vorigen
+        // (Runde 6, Befund 5). Nur wenn wirklich eine da war: Nach einem
+        // Neustart ist sie ohnehin weg, und dann ist der feste Status
+        // genau das, was N26 retten soll.
+        if stats.szenerie_auskunft.is_some() {
+            stats.szenerie_status_fest = None;
+        }
         stats.szenerie_auskunft = None;
         stats.szenerie_auskunft_stand = 0;
     }
@@ -2461,6 +2469,9 @@ fn schnappschuss_uebernehmen(
                 neu = schnapp.generation,
                 "Szenerie-Generation gewechselt — Flugkopie entwertet"
             );
+        }
+        if stats.szenerie_auskunft.is_some() {
+            stats.szenerie_status_fest = None;
         }
         stats.szenerie_auskunft = None;
         stats.szenerie_auskunft_stand = 0;
@@ -2509,11 +2520,23 @@ fn schnappschuss_uebernehmen(
 ///   setzt `landing_lat`/`landing_lon` zurueck, damit greift es dort
 ///   richtig NICHT.)
 /// * **Auskunft vorhanden** — sonst aendert ein zweiter Lauf nichts.
-/// * **noch kein Uebernahmebericht** — sobald einer da ist, hat der
-///   Vergleich stattgefunden, auch wenn er keine Bahn uebernommen hat.
-///   Das begrenzt das Nachholen auf hoechstens einen erfolgreichen Lauf.
-fn bahnaufloesung_nachholen(hat_aufsetzpunkt: bool, hat_auskunft: bool, hat_bericht: bool) -> bool {
-    hat_aufsetzpunkt && hat_auskunft && !hat_bericht
+/// * **die Auskunft ist NEUER als die zuletzt zugeordnete** — nicht
+///   „es gibt noch keinen Bericht". Der erste Entwurf sperrte auf
+///   `szenerie_uebernahme.is_some()`; damit blieb ein Bericht aus
+///   Lieferung A stehen, obwohl die Ernte laengst Lieferung B
+///   angenommen hatte (QS-Befund 2, erste Runde v1.7.15).
+///
+/// Damit laeuft es genau einmal je LIEFERUNG statt genau einmal je Flug.
+fn bahnaufloesung_nachholen(
+    hat_auskunft: bool,
+    auskunft_stand: u32,
+    korrelierter_stand: u32,
+) -> bool {
+    // ⚠ Kein `hat_aufsetzpunkt` mehr: Die einzige Aufrufstelle prueft ihn
+    // selbst und uebergab hart `true` — die Testfaelle mit `false`
+    // deckten einen Zweig, den die Produktion nie erreichen konnte
+    // (externe QS, 02.09.2026, N11).
+    hat_auskunft && auskunft_stand > korrelierter_stand
 }
 
 /// Rang einer blossen Vormerkung.
@@ -2964,6 +2987,18 @@ struct PersistedFlightStats {
     /// derselbe Landestoss bekommt zwei verschiedene Noten (QS-Befund
     /// v1.6.2). Als String, weil `&'static str` nicht serialisierbar ist.
     landing_simulator: Option<String>,
+    /// Der Simulator, mit dem beim Aufsetzen zugeordnet wurde.
+    ///
+    /// Persistiert aus demselben Grund wie `landing_simulator`: Ohne ihn
+    /// steht `aufsetz_simulator` nach einem Neustart auf `None`, und das
+    /// Nachholen kehrt sofort zurueck — die spaet eingetroffene Szenerie
+    /// erreicht den Flug dann nie mehr. Als String, wie der Nachbar.
+    #[serde(default)]
+    aufsetz_simulator: Option<String>,
+    /// Wie oft die Bahn schon zugeordnet wurde. Persistiert, damit der
+    /// Riegel im Recorder ueber einen Neustart hinweg monoton bleibt.
+    #[serde(default)]
+    bahn_revision: u32,
     landing_source: Option<String>,
     /// Rechtweisender Wind beim Aufsetzen — Basis der Seitenwind-
     /// Kompensation der Ausrichtungs-Achse. Persistiert aus demselben
@@ -3086,6 +3121,85 @@ struct PersistedFlightStats {
     approach_bank_stddev_filtered_deg: Option<f32>,
     #[serde(default)]
     rollout_distance_m: Option<f64>,
+    /// v1.7.15 (N7): Ausrollen und Spur ueberleben den Neustart. Ohne sie
+    /// baute der Einreich-Nachtrag mit leerer Spur `rollout_final:
+    /// false` und drehte eine schon endgueltige Zeile zurueck; und der
+    /// Streamer konnte nach dem Neustart nie mehr `spur_fertig` sehen.
+    #[serde(default)]
+    rollout_finalized: bool,
+    #[serde(default)]
+    bahn_spur: Vec<(f32, f32)>,
+    #[serde(default)]
+    bahn_spur_laeuft: bool,
+    #[serde(default)]
+    bahn_spur_bis: Option<DateTime<Utc>>,
+    /// v1.7.15 (N6): Eine offene Korrektur ueberlebt den Neustart.
+    #[serde(default)]
+    bahn_nachtrag_offen: bool,
+    /// v1.7.15 (Runde 3, P1): ALLES, was aus der Spur abgeleitet ist —
+    /// nicht nur die Spur. Nach einem Neustart sendete der Streamer den
+    /// Nachtrag erneut (Sperre war `None`), mit persistierter Spur, aber
+    /// ohne Marken: Die gingen als `null` hinaus und LOESCHTEN beim
+    /// Recorder gute Werte. Der Einreich-Weg konnte es nicht heilen, weil
+    /// die Aenderungserkennung das Drittel nicht sah.
+    #[serde(default)]
+    bahn_max_querversatz_m: Option<f64>,
+    #[serde(default)]
+    bahn_overrun_m: Option<f64>,
+    #[serde(default)]
+    bahn_proben: u32,
+    #[serde(default)]
+    bahn_fenster_zu: bool,
+    #[serde(default)]
+    bahn_fenster_zu_laengs_m: Option<f64>,
+    #[serde(default)]
+    bahn_raeum_laengs_m: Option<f64>,
+    #[serde(default)]
+    bahn_raeum_gs_kt: Option<f64>,
+    #[serde(default)]
+    bahn_raeum_seite: Option<String>,
+    #[serde(default)]
+    bahn_kante_laengs_m: Option<f64>,
+    #[serde(default)]
+    bahn_kante_gs_kt: Option<f64>,
+    #[serde(default)]
+    bahn_raeum_kurs_diff: Option<f64>,
+    #[serde(default)]
+    rollout_finalize_reason: Option<String>,
+    #[serde(default)]
+    landing_touchdown_zone: Option<u8>,
+    #[serde(default)]
+    landing_float_distance_m: Option<f32>,
+    /// Der zuletzt GESENDETE Nachtrag (Aufsetzzeit, Revision). Seeded die
+    /// Sperre des Streamers nach einem Neustart — sonst sendet er blind
+    /// erneut, auch wenn sich nichts geaendert hat.
+    #[serde(default)]
+    letzter_nachtrag: Option<(i64, u32)>,
+    /// v1.7.15 (Runde 4, N14): die uebrigen EINGABEN von `bahn_herkunft`
+    /// und `bahn_felder`. Ohne sie kippte nach einem Neustart
+    /// `bahn_geometrie_quelle` auf „navdaten", die Korrekturbetraege und
+    /// `sim_kennung` wurden als `null` geloescht. Bewusst NICHT
+    /// persistiert: `szenerie_auskunft` (hunderte Rollwege) und
+    /// `arr_ground_geojson` — ihre Ableitung, die Ausfahrten, wird bei
+    /// fehlender Eingabe AUSGELASSEN statt genullt (siehe `BahnWire`).
+    #[serde(default)]
+    szenerie_uebernahme: Option<szenerie_bahn::UebernahmeBericht>,
+    #[serde(default)]
+    szenerie_diagnose: Option<String>,
+    #[serde(default)]
+    sim_kennung: Option<String>,
+    #[serde(default)]
+    runway_tch_actual_ft: Option<f32>,
+    #[serde(default)]
+    fahrwerk_spurweite_m: Option<f64>,
+    #[serde(default)]
+    bahn_spur_bezug_veraltet: bool,
+    #[serde(default)]
+    szenerie_status_fest: Option<String>,
+    /// v1.7.15 (Runde 5, N27): das aufgeloeste Muster — sonst faellt
+    /// `wingspan_m` nach einem Neustart auf das GEBUCHTE Muster.
+    #[serde(default)]
+    aufgeloestes_muster: Option<String>,
     // ---- Landing Analyzer (Stage 2): SimBrief OFP plan ----
     #[serde(default)]
     planned_block_fuel_kg: Option<f32>,
@@ -3267,6 +3381,10 @@ impl PersistedFlightStats {
             landing_wind_direction_deg: stats.landing_wind_direction_deg,
             landing_wind_speed_kt: stats.landing_wind_speed_kt,
             landing_simulator: stats.landing_simulator.map(|s| s.to_string()),
+            aufsetz_simulator: stats
+                .aufsetz_simulator
+                .map(|s| serde_json::to_string(&s).unwrap_or_default()),
+            bahn_revision: stats.bahn_revision,
             bounce_count: stats.bounce_count,
             landing_score: stats.landing_score,
             landing_score_announced: stats.landing_score_announced,
@@ -3302,6 +3420,34 @@ impl PersistedFlightStats {
             approach_vs_stddev_filtered_fpm: stats.approach_vs_stddev_filtered_fpm,
             approach_bank_stddev_filtered_deg: stats.approach_bank_stddev_filtered_deg,
             rollout_distance_m: stats.rollout_distance_m,
+            rollout_finalized: stats.rollout_finalized,
+            bahn_spur: stats.bahn_spur.clone(),
+            bahn_spur_laeuft: stats.bahn_spur_laeuft,
+            bahn_spur_bis: stats.bahn_spur_bis,
+            bahn_nachtrag_offen: stats.bahn_nachtrag_offen,
+            bahn_max_querversatz_m: stats.bahn_max_querversatz_m,
+            bahn_overrun_m: stats.bahn_overrun_m,
+            bahn_proben: stats.bahn_proben,
+            bahn_fenster_zu: stats.bahn_fenster_zu,
+            bahn_fenster_zu_laengs_m: stats.bahn_fenster_zu_laengs_m,
+            bahn_raeum_laengs_m: stats.bahn_raeum_laengs_m,
+            bahn_raeum_gs_kt: stats.bahn_raeum_gs_kt,
+            bahn_raeum_seite: stats.bahn_raeum_seite.clone(),
+            bahn_kante_laengs_m: stats.bahn_kante_laengs_m,
+            bahn_kante_gs_kt: stats.bahn_kante_gs_kt,
+            bahn_raeum_kurs_diff: stats.bahn_raeum_kurs_diff,
+            rollout_finalize_reason: stats.rollout_finalize_reason.clone(),
+            landing_touchdown_zone: stats.landing_touchdown_zone,
+            landing_float_distance_m: stats.landing_float_distance_m,
+            letzter_nachtrag: stats.letzter_nachtrag,
+            szenerie_uebernahme: stats.szenerie_uebernahme.clone(),
+            szenerie_diagnose: stats.szenerie_diagnose.clone(),
+            sim_kennung: stats.sim_kennung.clone(),
+            runway_tch_actual_ft: stats.runway_tch_actual_ft,
+            fahrwerk_spurweite_m: stats.fahrwerk_spurweite_m,
+            bahn_spur_bezug_veraltet: stats.bahn_spur_bezug_veraltet,
+            szenerie_status_fest: stats.szenerie_status_fest.clone(),
+            aufgeloestes_muster: stats.aufgeloestes_muster.clone(),
             planned_block_fuel_kg: stats.planned_block_fuel_kg,
             planned_burn_kg: stats.planned_burn_kg,
             planned_reserve_kg: stats.planned_reserve_kg,
@@ -3397,6 +3543,29 @@ impl PersistedFlightStats {
             Some("other") => Some("other"),
             _ => None,
         };
+        // ⚠ Der Rueckfall ist NICHT Bequemlichkeit.
+        //
+        // Eine Flugdatei aus v1.7.14 kennt `aufsetz_simulator` nicht,
+        // fuehrt aber `landing_simulator`. Ohne diesen Zweig kehrt
+        // `bahn_am_aufsetzpunkt_nachholen` bei genau den Fluegen sofort
+        // zurueck, die auf v1.7.15 fortgesetzt werden — also bei den
+        // ersten, die die neue Mechanik ueberhaupt sehen wuerden.
+        //
+        // Fuer die Szenerie zaehlt nur die FAMILIE (`quelle_fuer`
+        // unterscheidet X-Plane, MSFS und sonst nichts), und genau die
+        // steht in `landing_simulator`. Die Fassung innerhalb der
+        // Familie ist dort verloren; sie spielt an dieser Stelle keine
+        // Rolle.
+        stats.aufsetz_simulator = self
+            .aufsetz_simulator
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .or_else(|| match self.landing_simulator.as_deref() {
+                Some("msfs") => Some(sim_core::Simulator::Msfs2024),
+                Some("xplane") => Some(sim_core::Simulator::XPlane12),
+                _ => None,
+            });
+        stats.bahn_revision = self.bahn_revision;
         stats.bounce_count = self.bounce_count;
         stats.landing_score = self.landing_score;
         stats.landing_score_announced = self.landing_score_announced;
@@ -3440,6 +3609,34 @@ impl PersistedFlightStats {
         stats.approach_vs_stddev_filtered_fpm = self.approach_vs_stddev_filtered_fpm;
         stats.approach_bank_stddev_filtered_deg = self.approach_bank_stddev_filtered_deg;
         stats.rollout_distance_m = self.rollout_distance_m;
+        stats.rollout_finalized = self.rollout_finalized;
+        stats.bahn_spur = self.bahn_spur;
+        stats.bahn_spur_laeuft = self.bahn_spur_laeuft;
+        stats.bahn_spur_bis = self.bahn_spur_bis;
+        stats.bahn_nachtrag_offen = self.bahn_nachtrag_offen;
+        stats.bahn_max_querversatz_m = self.bahn_max_querversatz_m;
+        stats.bahn_overrun_m = self.bahn_overrun_m;
+        stats.bahn_proben = self.bahn_proben;
+        stats.bahn_fenster_zu = self.bahn_fenster_zu;
+        stats.bahn_fenster_zu_laengs_m = self.bahn_fenster_zu_laengs_m;
+        stats.bahn_raeum_laengs_m = self.bahn_raeum_laengs_m;
+        stats.bahn_raeum_gs_kt = self.bahn_raeum_gs_kt;
+        stats.bahn_raeum_seite = self.bahn_raeum_seite;
+        stats.bahn_kante_laengs_m = self.bahn_kante_laengs_m;
+        stats.bahn_kante_gs_kt = self.bahn_kante_gs_kt;
+        stats.bahn_raeum_kurs_diff = self.bahn_raeum_kurs_diff;
+        stats.rollout_finalize_reason = self.rollout_finalize_reason;
+        stats.landing_touchdown_zone = self.landing_touchdown_zone;
+        stats.landing_float_distance_m = self.landing_float_distance_m;
+        stats.letzter_nachtrag = self.letzter_nachtrag;
+        stats.szenerie_uebernahme = self.szenerie_uebernahme;
+        stats.szenerie_diagnose = self.szenerie_diagnose;
+        stats.sim_kennung = self.sim_kennung;
+        stats.runway_tch_actual_ft = self.runway_tch_actual_ft;
+        stats.fahrwerk_spurweite_m = self.fahrwerk_spurweite_m;
+        stats.bahn_spur_bezug_veraltet = self.bahn_spur_bezug_veraltet;
+        stats.szenerie_status_fest = self.szenerie_status_fest;
+        stats.aufgeloestes_muster = self.aufgeloestes_muster;
         stats.planned_block_fuel_kg = self.planned_block_fuel_kg;
         stats.planned_burn_kg = self.planned_burn_kg;
         stats.planned_reserve_kg = self.planned_reserve_kg;
@@ -4390,6 +4587,66 @@ struct FlightStats {
     /// Der Stand der am Flug abgelegten Szenerie-Auskunft.
     /// Siehe `auskunft_ersetzen`.
     szenerie_auskunft_stand: u32,
+    /// Der Stand der Auskunft, mit der zuletzt ZUGEORDNET wurde.
+    ///
+    /// ⚠ Ein `bool` reichte nicht. Die Ernte nimmt ausdruecklich eine
+    /// NEUERE Lieferung desselben Platzes an (`auskunft_ersetzen`) —
+    /// sobald aber irgendein frueherer Vergleich einen Bericht erzeugt
+    /// hatte, sperrte `szenerie_uebernahme.is_some()` jede
+    /// Neuberechnung. Danach lagen Auskunft B und Bericht A nebeneinander
+    /// (QS-Befund 2, erste Runde v1.7.15).
+    korrelierter_szenerie_stand: u32,
+    /// Der Simulator, mit dem beim AUFSETZEN zugeordnet wurde.
+    ///
+    /// ⚠ Das Nachholen bekommt keinen Schnappschuss und darf sich
+    /// deshalb auch keinen besorgen. Fruehere Fassungen reichten den
+    /// aktuellen `snap.simulator` durch, mit der Begruendung, der
+    /// Simulator wechsele waehrend eines Fluges nicht — das stimmt fuer
+    /// den Simulator, aber nicht fuer die VERBINDUNG. Ein Wechsel
+    /// zwischen X-Plane und MSFS am selben Rechner erneuert sie, und das
+    /// Buch wird dabei ausdruecklich zurueckgesetzt.
+    ///
+    /// Hier steht, womit die Zuordnung tatsaechlich gerechnet HAT. Ist
+    /// das Feld leer, hat es nie eine Zuordnung gegeben — dann gibt es
+    /// auch nichts nachzuholen.
+    aufsetz_simulator: Option<sim_core::Simulator>,
+    /// Wie oft die Bahn fuer DIESEN Flug zugeordnet wurde.
+    ///
+    /// ⚠ Das ist die Zahl, die auf die Leitung geht — NICHT
+    /// `korrelierter_szenerie_stand`. Der stammt aus der
+    /// SimConnect-Anfragenummer des `Auftragsbuch`, und die faengt nach
+    /// einem App-Neustart wieder bei null an. Der Recorder haette dann
+    /// eine tatsaechlich neuere Lieferung als veraltet abgewiesen: Stand 7
+    /// gespeichert, Stand 1 kommt an, Riegel zu — und die Korrektur waere
+    /// fuer immer verloren, ohne dass irgendwo etwas rot wird.
+    ///
+    /// Diese Zahl wird persistiert und waechst monoton ueber Neustarts
+    /// hinweg. Sie wird zwischen zwei Aufsetzern NICHT zurueckgesetzt;
+    /// der Riegel im Recorder haengt ohnehin an der einzelnen Zeile.
+    bahn_revision: u32,
+    /// Eine Bahnkorrektur wartet auf ihren Nachtrag.
+    ///
+    /// ⚠ Die Regel: Wer die Bahn aendert, setzt die Fahne; wer sendet,
+    /// loescht sie. Ohne sie muesste jede Stelle, die eine Zuordnung
+    /// anstoesst, selbst ans Senden denken — und das
+    /// Navdaten-Upgrade beim Einreichen hat genau das nicht getan.
+    ///
+    /// Persistiert (N6/N7): Nach einem Neustart schickt der Streamer den
+    /// Nachtrag nur, wenn er `spur_fertig` sieht — und das kann er erst,
+    /// seit die Spur mit persistiert wird. Die Fahne haelt die Korrektur
+    /// zusaetzlich fuer das Einreichen fest.
+    bahn_nachtrag_offen: bool,
+    /// Der zuletzt gesendete Nachtrag (Aufsetzzeit, Revision) — seeded
+    /// die Streamer-Sperre nach einem Neustart. Persistiert.
+    letzter_nachtrag: Option<(i64, u32)>,
+    /// Die fertige Spur ist gegen eine Bahn projiziert, die nicht mehr
+    /// gilt (Achswechsel nach dem Ausrollen). Sie bleibt lokal, geht aber
+    /// nicht mehr auf die Leitung — siehe `spur_block`. Persistiert.
+    bahn_spur_bezug_veraltet: bool,
+    /// Der Szenerie-Status, wie er bei der letzten Zuordnung stand — die
+    /// Auskunft selbst wird nicht persistiert (hunderte Rollwege), der
+    /// Status daraus schon (Runde 5, N26). Persistiert.
+    szenerie_status_fest: Option<String>,
     /// Die Generation, unter der die Flugkopie entstanden ist.
     /// Siehe `flugkopie_entwerten`.
     szenerie_auskunft_generation: u32,
@@ -11571,7 +11828,7 @@ fn clear_persisted_flight(app: &AppHandle) {
     *g = None;
 }
 
-fn save_active_flight(app: &AppHandle, flight: &ActiveFlight) {
+fn save_active_flight(app: &AppHandle, flight: &ActiveFlight) -> bool {
     // Snapshot stats inside a short-lived guard so we don't hold the
     // mutex while doing I/O.
     let stats_snapshot = {
@@ -11598,7 +11855,9 @@ fn save_active_flight(app: &AppHandle, flight: &ActiveFlight) {
     };
     if let Err(e) = write_persisted_flight(app, &persisted) {
         tracing::warn!(error = ?e, "could not persist active flight");
+        return false;
     }
+    true
 }
 
 // ---- Airport cache ----
@@ -12060,6 +12319,15 @@ fn effective_display_phase(v1_phase: FlightPhase, shadow: Option<FlightPhase>) -
 /// sagen, warum die MSFS-Haelfte bei 5 von 5 Landungen nichts lieferte —
 /// ein Feature ohne Messpunkt.
 fn szenerie_status(stats: &FlightStats) -> String {
+    // ⚠ Nach einem Neustart fehlt `szenerie_auskunft` (nicht persistiert)
+    // — der Status wuerde auf eine vagere Aussage kippen und die
+    // genauere beim Recorder ueberschreiben (Runde 5, N26). Dann gilt der
+    // Status, der bei der letzten Zuordnung festgehalten wurde.
+    if stats.szenerie_auskunft.is_none() {
+        if let Some(fest) = stats.szenerie_status_fest.as_ref() {
+            return fest.clone();
+        }
+    }
     if stats
         .szenerie_uebernahme
         .as_ref()
@@ -14526,6 +14794,11 @@ mod pirep_queue {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct QueuedPirep {
         pub pirep_id: String,
+        /// v1.7.15 (N6): der offene Bahn-Nachtrag, beim Einreihen gebaut.
+        /// Der Flug ist beim Nachreichen laengst verworfen; ohne dieses
+        /// Feld erreichte die bessere Geometrie den Recorder nie.
+        #[serde(default)]
+        pub bahn_nachtrag: Option<serde_json::Value>,
         pub bid_id: i64,
         pub airline_icao: String,
         pub flight_number: String,
@@ -14688,6 +14961,118 @@ fn is_transient_pirep_error(e: &ApiError) -> bool {
 /// Skipt PIREPs mit > 50 Attempts (= circular failure, Pilot muss
 /// manuell). Loggt Success/Failure als Activity-Events damit der Pilot
 /// im Cockpit-Activity-Panel sehen kann was passiert.
+/// Nachtraege, die keinen Handle fanden — bis MQTT wieder da ist.
+///
+/// # Warum eine eigene Ablage
+///
+/// Beim Einreichen ohne MQTT war der offene Bahn-Nachtrag verloren: Der
+/// Flug ist danach geloescht, die PIREP-Warteschlange entfernt ihre Datei
+/// vor dem Senden. Es gab nichts mehr, das ihn spaeter haette schicken
+/// koennen (Codex, 03.09.2026, P1). Hier liegt er als JSON, adressiert
+/// ueber `pirep_id` + `touchdown_at`, und der Warteschlangen-Worker
+/// schickt ihn, sobald ein Handle da ist. Idempotent: Der Recorder
+/// riegelt ueber `bahn_revision`.
+mod nachtrag_queue {
+    use super::*;
+    use std::path::PathBuf;
+
+    const DIR_NAME: &str = "bahn_nachtraege";
+
+    fn dir(app: &AppHandle) -> Option<PathBuf> {
+        let base = app.path().app_data_dir().ok()?;
+        let d = base.join(DIR_NAME);
+        std::fs::create_dir_all(&d).ok()?;
+        Some(d)
+    }
+
+    /// Dateiname aus `pirep_id` + Aufsetzzeit — reine Funktion, testbar.
+    pub fn dateiname(pirep_id: &str, touchdown_at: i64) -> Option<String> {
+        let safe: String = pirep_id
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+            .collect();
+        if safe.is_empty() {
+            return None;
+        }
+        Some(format!("{safe}-{touchdown_at}.json"))
+    }
+
+    fn file_path(app: &AppHandle, pirep_id: &str, touchdown_at: i64) -> Option<PathBuf> {
+        Some(dir(app)?.join(dateiname(pirep_id, touchdown_at)?))
+    }
+
+    pub fn enqueue(
+        app: &AppHandle,
+        nachtrag: &aeroacars_mqtt::TouchdownRolloutFinalizedPayload,
+    ) -> Result<(), std::io::Error> {
+        let path = file_path(app, &nachtrag.pirep_id, nachtrag.touchdown_at).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "no app_data_dir or invalid pirep_id",
+            )
+        })?;
+        std::fs::write(path, serialisieren(nachtrag)?)
+    }
+
+    pub fn serialisieren(
+        nachtrag: &aeroacars_mqtt::TouchdownRolloutFinalizedPayload,
+    ) -> Result<String, std::io::Error> {
+        serde_json::to_string_pretty(nachtrag)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+    }
+
+    /// Liest eine Ablage-Datei — ueber `aus_json`, nie ueber `from_value`
+    /// (flatten liest einen fehlenden Block sonst als Some(default)).
+    pub fn lesen(text: &str) -> Result<aeroacars_mqtt::TouchdownRolloutFinalizedPayload, String> {
+        let json = serde_json::from_str::<serde_json::Value>(text).map_err(|e| e.to_string())?;
+        aeroacars_mqtt::TouchdownRolloutFinalizedPayload::aus_json(json).map_err(|e| e.to_string())
+    }
+
+    pub fn list_all(
+        app: &AppHandle,
+    ) -> Vec<(PathBuf, aeroacars_mqtt::TouchdownRolloutFinalizedPayload)> {
+        let Some(d) = dir(app) else {
+            return vec![];
+        };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            return vec![];
+        };
+        let mut out = Vec::new();
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&p) else {
+                continue;
+            };
+            match lesen(&text) {
+                Ok(n) => out.push((p, n)),
+                Err(e) => {
+                    tracing::warn!(pfad = %p.display(), error = %e, "Bahn-Nachtrag in der Ablage nicht lesbar")
+                }
+            }
+        }
+        out
+    }
+
+    /// Schickt alles Wartende ueber den Handle und raeumt weg, was ging.
+    pub fn drain(app: &AppHandle, handle: &aeroacars_mqtt::Handle) -> usize {
+        let mut gesendet = 0;
+        for (pfad, nachtrag) in list_all(app) {
+            tracing::info!(
+                pirep_id = %nachtrag.pirep_id,
+                revision = ?nachtrag.herkunft.bahn_revision,
+                "Bahnkorrektur aus der Ablage nachgeschickt"
+            );
+            handle.touchdown_rollout_finalized(nachtrag);
+            let _ = std::fs::remove_file(pfad);
+            gesendet += 1;
+        }
+        gesendet
+    }
+}
+
 fn spawn_pirep_queue_worker(app: AppHandle) {
     // v0.5.50 — `tauri::async_runtime::spawn` statt `tokio::spawn`.
     // Diese Funktion wird aus dem synchronen `.setup()`-Closure
@@ -14703,9 +15088,20 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
         loop {
             tokio::time::sleep(TICK).await;
             let queued = pirep_queue::list_all(&app);
+            let state = app.state::<AppState>();
+            // Wartende Bahn-Nachtraege ZUERST — sie brauchen nur MQTT, nicht
+            // den phpVMS-Client, darum vor dem Client-Riegel.
+            {
+                let mqtt = state.mqtt.lock().await;
+                if let Some(handle) = mqtt.as_ref() {
+                    let n = nachtrag_queue::drain(&app, handle);
+                    if n > 0 {
+                        tracing::info!(anzahl = n, "Bahn-Nachtraege aus der Ablage geschickt");
+                    }
+                }
+            }
             // Client aus dem AppState holen — könnte fehlen wenn Pilot
             // nicht eingeloggt ist (= keine Connection). Dann skippen.
-            let state = app.state::<AppState>();
             let client_opt = state.client.lock().expect("client lock").clone();
             let Some(client) = client_opt else {
                 continue;
@@ -14777,7 +15173,32 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                                 mqtt.as_ref(),
                                 &q.pirep_id,
                                 q.pirep_payload_json.clone(),
+                                None,
+                                q.bahn_nachtrag.clone(),
                             );
+                        } else if let Some(json) = q.bahn_nachtrag.clone() {
+                            // Altbestand ohne PIREP-JSON, aber mit Nachtrag:
+                            // den Nachtrag trotzdem schicken — und beide
+                            // Fehlerfaelle MELDEN (Runde 4, N19).
+                            let mqtt = state.mqtt.lock().await;
+                            match (
+                                mqtt.as_ref(),
+                                aeroacars_mqtt::TouchdownRolloutFinalizedPayload::aus_json(json),
+                            ) {
+                                (Some(handle), Ok(nachtrag)) => {
+                                    handle.touchdown_rollout_finalized(nachtrag)
+                                }
+                                (None, Ok(nachtrag)) => {
+                                    if let Err(e) = nachtrag_queue::enqueue(&app, &nachtrag) {
+                                        tracing::error!(pirep_id = %q.pirep_id, error = %e, "Ablage nicht beschreibbar");
+                                    }
+                                }
+                                (_, Err(e)) => tracing::warn!(
+                                    pirep_id = %q.pirep_id,
+                                    error = %e,
+                                    "Bahnkorrektur aus der Warteschlange (ohne PIREP-JSON) ist nicht lesbar"
+                                ),
+                            }
                         }
                         // Best-effort: JSONL-Upload (wenn das Recorder-File noch da ist)
                         spawn_flight_log_upload(&app, q.pirep_id.clone());
@@ -15477,49 +15898,119 @@ struct AssessedTouchdown {
     dds: Option<runway_assessment::DisplacedResult>,
 }
 
+/// Die Bahn-Herkunft fuer die Leitung — aus EINER Ableitung.
+///
+/// # Warum das eine Funktion ist
+///
+/// Zwei Ereignisse tragen diese Gruppe: `touchdown_complete` neun
+/// Sekunden nach dem Aufsetzen und `touchdown_rollout_finalized`, sobald
+/// das Ausrollen steht. Trifft die Szenerie des Simulators erst nach dem
+/// Aufsetzen ein, holt der Client die Bahnzuordnung nach — dann sind die
+/// Werte des ersten Ereignisses ueberholt, und nur das zweite kann sie
+/// beim Recorder richtigstellen.
+///
+/// Bis v1.7.14 zaehlten beide Stellen ihre Felder je einzeln auf. Das
+/// Ergebnis: vier gemeinsame Felder von achtundzwanzig. Bahnlaenge,
+/// versetzte Schwelle, Herkunft und die ganze Aufsetzpunkt-Einordnung
+/// blieben auf dem Stand vor der Szenerie stehen.
+///
+/// ⚠ Die Funktion nimmt NUR `stats`. Alles, was sie braucht, steht dort —
+/// insbesondere `assess_touchdown`, das seinerseits eine reine Funktion
+/// von `stats` ist. Ein zweiter Parameter waere die Tuer, durch die eine
+/// der beiden Aufrufstellen wieder etwas anderes einsetzt.
+fn bahn_herkunft(stats: &FlightStats) -> aeroacars_mqtt::BahnHerkunftWire {
+    let rwy_match = stats.runway_match.as_ref();
+    let payload_assessed = assess_touchdown(stats);
+    aeroacars_mqtt::BahnHerkunftWire {
+        // ⚠ Die persistierte Revision, NICHT
+        // `korrelierter_szenerie_stand`. Siehe `bahn_revision`.
+        bahn_revision: Some(stats.bahn_revision),
+        // Runde 6, Befund 3: Sagt dem Recorder, dass die dort liegende
+        // Spur gegen eine fruehere Bahn projiziert ist.
+        bahn_spur_veraltet: Some(stats.bahn_spur_bezug_veraltet),
+        // v1.7.8: Woher die Bahngeometrie kam.
+        // Steht auch am PirepPayload — der
+        // Recorder propagiert die Teilnoten aus
+        // dem PIREP auf diese Zeile, und dann
+        // muss die Herkunft an beiden haengen.
+        bahn_geometrie_quelle: Some(
+            match stats.szenerie_uebernahme.as_ref() {
+                Some(b) if !b.uebernommen.is_empty() => "szenerie",
+                _ => "navdaten",
+            }
+            .to_string(),
+        ),
+        bahn_szenerie_status: Some(szenerie_status(stats)),
+        sim_kennung: stats.sim_kennung.clone(),
+        bahn_kurs_korrektur_grad: stats
+            .szenerie_uebernahme
+            .as_ref()
+            .filter(|b| !b.uebernommen.is_empty())
+            .map(|b| b.groesste_kursabweichung_grad),
+        bahn_breiten_korrektur_m: stats
+            .szenerie_uebernahme
+            .as_ref()
+            .filter(|b| !b.uebernommen.is_empty())
+            .map(|b| b.groesste_breitenabweichung_m),
+        bahn_schwellen_korrektur_m: stats
+            .szenerie_uebernahme
+            .as_ref()
+            .filter(|b| !b.uebernommen.is_empty())
+            .map(|b| b.groesste_schwellenabweichung_m),
+        runway_match_icao: rwy_match.map(|m| m.airport_ident.clone()),
+        runway_match_ident: rwy_match.map(|m| m.runway_ident.clone()),
+        runway_match_distance_m: rwy_match
+            .map(|m| (m.touchdown_distance_from_threshold_ft as f32) * 0.3048),
+        runway_match_centerline_offset_m: rwy_match.map(|m| m.centerline_distance_m as f32),
+        // v0.5.22: feeds the live-monitor's "Bahn-
+        // Auslastung"-sub-score so it matches the
+        // in-app PIREP value 1:1.
+        runway_length_m: rwy_match.map(|m| m.length_ft * 0.3048),
+        // v0.8.0: Pure-Function-Assessment in den
+        // Live-MQTT-Payload. Identische Werte wie
+        // im LandingRecord (record_landing_for_filed_
+        // flight) — Spec verlangt Field-Symmetrie.
+        navdata_source: stats
+            .runway_source
+            .map(|s| runway_source_wire(s).to_string()),
+        navdata_cycle: stats.runway_nav_cycle.clone(),
+        runway_true_course_deg: stats.runway_nav_geometry.as_ref().map(|g| g.true_course),
+        runway_displaced_threshold_ft: wire_displaced_threshold_ft(stats.runway_match.as_ref()),
+        runway_tch_expected_ft: stats.runway_nav_geometry.as_ref().map(|g| g.tch_ft),
+        runway_glideslope_angle_deg: stats
+            .runway_nav_geometry
+            .as_ref()
+            .map(|g| g.glideslope_angle),
+        td_distance_from_threshold_m: payload_assessed.td_distance_from_threshold_m,
+        td_in_tdz: payload_assessed.tdz.map(|t| t.in_tdz),
+        td_third: payload_assessed.tdz.map(|t| t.third),
+        td_tdz_length_m: payload_assessed.tdz.map(|t| t.tdz_length_m),
+        aim_delta_m: payload_assessed.aim.as_ref().map(|a| a.delta_m),
+        aim_class: payload_assessed
+            .aim
+            .as_ref()
+            .map(|a| aim_class_wire(a.class).to_string()),
+        aim_point_m: payload_assessed.aim.as_ref().map(|a| a.aim_point_m),
+        tch_actual_ft: payload_assessed.tch.as_ref().map(|t| t.actual_ft),
+        tch_delta_ft: payload_assessed.tch.as_ref().map(|t| t.delta_ft),
+        tch_class: payload_assessed
+            .tch
+            .as_ref()
+            .map(|t| tch_class_wire(t.class).to_string()),
+        pre_displaced_threshold: payload_assessed.dds.map(|d| d.in_pre_threshold_zone),
+    }
+}
+
 fn assess_touchdown(stats: &FlightStats) -> AssessedTouchdown {
     let Some(rm) = stats.runway_match.as_ref() else {
         return AssessedTouchdown::default();
     };
-    const FT_PER_M: f64 = 3.280_839_895;
-    // `touchdown_distance_from_threshold_ft` (from `runway::lookup_runway`/
-    // `lookup_runway_in_nav`) is measured from the *physical* runway-
-    // pavement start, not the landing threshold — see `NavRunway::
-    // threshold`'s doc comment and `runway_assessment::classify_displaced`'s.
-    // Whenever the runway has a displaced threshold, the legal landing
-    // threshold sits `displaced_threshold_m` further down the runway
-    // from that point. This is the ONE place that correction is applied;
-    // every classifier below gets the corrected distance except
-    // `classify_displaced`, which needs the raw pavement-relative value.
-    let td_raw_m = rm.touchdown_distance_from_threshold_ft / FT_PER_M;
-    // v0.19.x FIX: sourced from `runway_nav_geometry` (Navigraph-only)
-    // before — the OurAirports CSV carries this same displaced-threshold
-    // data (`le_/he_displaced_threshold_ft` columns), just wasn't parsed.
-    // `RunwayMatch::displaced_threshold_ft` is now populated from EITHER
-    // source, so this correction (and DDS classification below) applies
-    // uniformly instead of being silently skipped for every OurAirports-
-    // fallback landing.
-    // v1.6.8-QS4: nur der Anteil, der nicht schon in der Geometrie steckt
-    // (siehe `displacement_not_in_geometry_ft`). Im aktuellen Zyklus ist
-    // das dasselbe wie das rohe Feld (dort steht 0); der Unterschied
-    // greift erst, wenn eine Datenquelle beides gleichzeitig liefert.
-    let abzuziehen_ft = displacement_not_in_geometry_ft(rm);
-    let displaced_threshold_m = abzuziehen_ft as f64 / FT_PER_M;
-    let td_m = td_raw_m - displaced_threshold_m;
-    // v1.6.8: NUTZBARE Laenge, nicht die volle Bahn. Beide Funktionen
-    // messen ausdruecklich „ab der Lande-Schwelle" (siehe ihre Doku) —
-    // die Aufsetzzone sind die ersten 900 m bzw. das erste Drittel DER
-    // LANDEBAHN, und der Aim-Point liegt 300/400 m hinter der Schwelle.
-    // Mit der vollen Bahn als Bezug wurde die Zone auf versetzten Bahnen
-    // zu lang angesetzt (LOWS 15: 900 statt 851 m) und der Aim-Point
-    // kippte an der 2400-m-Grenze zu frueh auf 400 m.
-    //
-    // `effective_displaced_threshold_ft` statt des rohen Feldes, weil der
-    // Versatz seit AIRAC 2608 in der Geometrie steckt. Fuer die
-    // Aufsetzdistanz oben bleibt es beim ROHEN Feld — dort ist die 0 der
-    // Neu-Konvention richtig, weil schon ab der Schwelle gemessen wird.
-    let length_m = (rm.length_ft as f64) / FT_PER_M;
-    let nutzbare_laenge_m = length_m - (effective_displaced_threshold_ft(rm) as f64) / FT_PER_M;
+    let Bahnmasse {
+        td_raw_m,
+        abzuziehen_ft,
+        td_m,
+        nutzbare_laenge_m,
+    } = bahnmasse(rm);
     let tdz = runway_assessment::classify_tdz(td_m, nutzbare_laenge_m);
     let aim = Some(runway_assessment::classify_aim(td_m, nutzbare_laenge_m));
     // Dieselbe Groesse wie oben: was in der Geometrie steckt, ist kein
@@ -16247,7 +16738,110 @@ fn finalize_filed_pirep(
     handle: Option<&aeroacars_mqtt::Handle>,
     pirep_id: &str,
     pirep_payload_json: serde_json::Value,
+    // ⚠ Der Flug, falls es ihn noch gibt — fuer den offenen
+    // Bahn-Nachtrag. `None` beim Nachreichen aus der Warteschlange: Dort
+    // gibt es keinen laufenden Flug mehr; sein Nachtrag kommt dann ueber
+    // `gequeuter_nachtrag`.
+    flight: Option<&ActiveFlight>,
+    // ⚠ Der Nachtrag aus der PIREP-Warteschlange (N6): Beim Offline-
+    // Einreichen wird der Flug verworfen, bevor der Worker sendet. Der
+    // Nachtrag wird deshalb beim Einreihen gebaut und hier mitgegeben.
+    gequeuter_nachtrag: Option<serde_json::Value>,
 ) {
+    // ⚠ ZUERST der Bahn-Nachtrag, dann das PIREP.
+    //
+    // Das Navdaten-Upgrade beim Einreichen ersetzt dieselben Bahnfelder
+    // wie das Nachholen: Ist die Abfrage eines Ausweichplatzes inzwischen
+    // zurueckgekommen, steht hier die bessere Geometrie. Der Streamer ist
+    // an dieser Stelle schon beendet — ohne diese Zeilen bliebe die
+    // Touchdown-Zeile beim Recorder auf der vorlaeufigen
+    // OurAirports-Geometrie, denn vom PIREP uebernimmt er nur Punkte und
+    // Noten.
+    if let Some(flight) = flight {
+        // ⚠ Die Fahne faellt erst, wenn es einen Handle gibt — dieselbe
+        // Regel wie im Streamer. Vorher fiel sie beim Bauen, und ohne
+        // MQTT ging die Korrektur ohne jede Logzeile verloren (externe
+        // QS, 02.09.2026, N4).
+        let nachtrag = {
+            let mut stats = flight.stats.lock().expect("flight stats");
+            match (stats.bahn_nachtrag_offen, handle.is_some()) {
+                (true, true) => {
+                    stats.bahn_nachtrag_offen = false;
+                    bahn_nachtrag_bauen(flight, &stats)
+                }
+                (true, false) => {
+                    // Kein Handle — in die Ablage, nicht verlieren. Die Fahne
+                    // faellt nur, wenn der Nachtrag DAUERHAFT liegt (Codex,
+                    // 03.09.2026, P1).
+                    match bahn_nachtrag_bauen(flight, &stats) {
+                        Some(n) => match nachtrag_queue::enqueue(app, &n) {
+                            Ok(()) => {
+                                stats.bahn_nachtrag_offen = false;
+                                tracing::warn!(
+                                    pirep_id,
+                                    revision = stats.bahn_revision,
+                                    "Bahnkorrektur beim Einreichen: keine MQTT-Verbindung — \
+                                     in der Ablage, wird nachgeschickt"
+                                );
+                            }
+                            Err(e) => tracing::error!(
+                                pirep_id,
+                                error = %e,
+                                "Bahnkorrektur beim Einreichen: keine MQTT-Verbindung UND \
+                                 Ablage nicht beschreibbar — die Korrektur geht verloren"
+                            ),
+                        },
+                        None => tracing::warn!(
+                            pirep_id,
+                            "Bahnkorrektur ohne Aufsetzzeit — nichts zu schicken"
+                        ),
+                    }
+                    None
+                }
+                (false, _) => None,
+            }
+        };
+        if let (Some(handle), Some(nachtrag)) = (handle, nachtrag) {
+            tracing::info!(
+                pirep_id,
+                revision = ?nachtrag.herkunft.bahn_revision,
+                "Bahnkorrektur beim Einreichen nachgeschickt"
+            );
+            handle.touchdown_rollout_finalized(nachtrag);
+        }
+    }
+    if let Some(json) = gequeuter_nachtrag {
+        match (
+            handle,
+            aeroacars_mqtt::TouchdownRolloutFinalizedPayload::aus_json(json),
+        ) {
+            (Some(handle), Ok(nachtrag)) => {
+                tracing::info!(
+                    pirep_id,
+                    revision = ?nachtrag.herkunft.bahn_revision,
+                    "Bahnkorrektur aus der Warteschlange nachgeschickt"
+                );
+                handle.touchdown_rollout_finalized(nachtrag);
+            }
+            (None, Ok(nachtrag)) => match nachtrag_queue::enqueue(app, &nachtrag) {
+                Ok(()) => tracing::warn!(
+                    pirep_id,
+                    "Bahnkorrektur aus der Warteschlange: keine MQTT-Verbindung — in der Ablage"
+                ),
+                Err(e) => tracing::error!(
+                    pirep_id,
+                    error = %e,
+                    "Bahnkorrektur aus der Warteschlange: keine MQTT-Verbindung UND Ablage \
+                     nicht beschreibbar"
+                ),
+            },
+            (_, Err(e)) => tracing::warn!(
+                pirep_id,
+                error = %e,
+                "Bahnkorrektur aus der Warteschlange ist nicht lesbar"
+            ),
+        }
+    }
     // v0.5.34: PIREP-Forensik ins JSONL — damit das Recovery-Tool
     // Pireps + abhaengige Stats rekonstruieren kann. IMMER, unabhängig
     // vom MQTT-Status (QS-P1: JSONL-Gap-Fill-Durabilität).
@@ -19974,7 +20568,14 @@ async fn flight_end(
                 let pirep_payload_json =
                     serde_json::to_value(&pirep_payload).unwrap_or(serde_json::Value::Null);
                 let mqtt = state.mqtt.lock().await;
-                finalize_filed_pirep(&app, mqtt.as_ref(), &flight.pirep_id, pirep_payload_json);
+                finalize_filed_pirep(
+                    &app,
+                    mqtt.as_ref(),
+                    &flight.pirep_id,
+                    pirep_payload_json,
+                    Some(&flight),
+                    None,
+                );
             }
             // v0.7.0 — emit landing_finalized mit dem finalen Score
             // (Spec docs/spec/touchdown-forensics-v2.md Sektion 7.2).
@@ -20037,8 +20638,27 @@ async fn flight_end(
                     queued_payload
                 })
                 .unwrap_or(serde_json::Value::Null);
+                // N6: Das Navdaten-Upgrade JETZT anwenden und den Nachtrag
+                // mit in die Warteschlange legen. `record_landing_for_filed_
+                // flight` weiter unten setzt die Fahne sonst erst, wenn
+                // der Flug schon verworfen ist. Keine `stats`-Sperre
+                // liegt hier an (nur eine temporaere weiter oben).
+                // ⚠ Die Fahne faellt erst, wenn der Nachtrag DAUERHAFT ist —
+                // nach `pirep_queue::enqueue`. Vorher fiel sie beim Bauen;
+                // schlug das Einreihen fehl, wurde der Flug wiederhergestellt,
+                // aber ohne offene Korrektur (Codex, 03.09.2026, P2).
+                let bahn_nachtrag = {
+                    let mut st = flight.stats.lock().expect("flight stats");
+                    let _ = bahn_upgrade_anwenden(&flight, &mut st);
+                    if st.bahn_nachtrag_offen {
+                        bahn_nachtrag_bauen(&flight, &st).and_then(|p| serde_json::to_value(p).ok())
+                    } else {
+                        None
+                    }
+                };
                 let queued = pirep_queue::QueuedPirep {
                     pirep_id: flight.pirep_id.clone(),
+                    bahn_nachtrag,
                     bid_id: flight.bid_id,
                     airline_icao: flight.airline_icao.clone(),
                     flight_number: flight.flight_number.clone(),
@@ -20070,6 +20690,13 @@ async fn flight_end(
                     );
                     restore_flight_for_retry(&app, state.inner(), &client, flight);
                     return Err(e.into());
+                }
+                // Erfolgreich gequeued: JETZT ist der Nachtrag dauerhaft, die
+                // Fahne darf fallen.
+                if queued.bahn_nachtrag.is_some() {
+                    if let Ok(mut st) = flight.stats.lock() {
+                        st.bahn_nachtrag_offen = false;
+                    }
                 }
                 // Erfolgreich gequeued → Landing-Snapshot, clear, Activity-Log
                 {
@@ -20713,7 +21340,14 @@ async fn flight_end_manual(
                     serde_json::to_value(&pirep_payload).unwrap_or(serde_json::Value::Null);
                 // QS-P1: JSONL-PirepFiled IMMER, MQTT nur bei Handle.
                 let mqtt = state.mqtt.lock().await;
-                finalize_filed_pirep(&app, mqtt.as_ref(), &flight.pirep_id, pirep_payload_json);
+                finalize_filed_pirep(
+                    &app,
+                    mqtt.as_ref(),
+                    &flight.pirep_id,
+                    pirep_payload_json,
+                    Some(&flight),
+                    None,
+                );
             }
             // v0.12.5 (LE7-QS): LandingFinalized-JSONL-Event auch beim
             // manuellen File — vor dem Upload.
@@ -25225,7 +25859,18 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
         // übersteht keinen App-Neustart, was OK ist: nach einem Neustart
         // re-published der erste Tick einmal idempotent (Recorder-Patch ist
         // idempotent + touchdown-scharf), siehe LE7 Punkt 5.
-        let mut last_published_rollout_ts: Option<i64> = None;
+        // ⚠ (Aufsetzzeitpunkt, Stand der Bahnwerte). Der Stand gehoert
+        // dazu, damit eine spaet eingetroffene Szenerie den Nachtrag
+        // ERNEUT ausloest — sonst behaelt der Recorder die alten Achsen-
+        // und Ausfahrtsdaten (QS-Befund 1, erste Runde v1.7.15).
+        // ⚠ Aus dem Flug geseedet, nicht `None`: Nach einem Neustart
+        // sendete der Streamer sonst blind erneut — mit dem, was gerade im
+        // Speicher stand (externe QS, Runde 3, P1).
+        let mut last_published_rollout: Option<(i64, u32)> =
+            flight.stats.lock().ok().and_then(|s| s.letzter_nachtrag);
+        // Damit die Warnung „keine MQTT-Verbindung" nicht bei jedem Tick
+        // kommt, solange die Sperre nicht faellt.
+        let mut mqtt_fehlt_gemeldet = false;
         // v0.13.18: FOB-abgeleiteter Fuel-Flow-Fallback. Manche Addons
         // (iniBuilds/Aerosoft A340-600, ToLiss-Engine-Modell) treiben die
         // Standard-SimVar `ENG FUEL FLOW PPH` NICHT → `fuel_flow_kg_per_h`
@@ -26028,42 +26673,47 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
 
             // ⚠ Und die Bahnaufloesung NACHHOLEN, wenn die Szenerie erst
             // nach dem Aufsetzen eintraf — siehe
-            // `bahnaufloesung_nachholen`.
+            // `bahn_am_aufsetzpunkt_nachholen`.
             //
-            // Hier, direkt nach der Ernte: Das ist die einzige Stelle, an
-            // der eine neue Auskunft am Flug ankommt. Ein eigener Ausloeser
-            // waere eine zweite Stelle, die man vergessen kann.
+            // ⚠⚠ EIN Lock fuer Pruefung UND Ausfuehrung.
             //
-            // Billig: drei `is_some()` je Durchlauf, und sobald ein Bericht
-            // existiert, laeuft es nie wieder. Die Bewertung wird ohnehin
-            // erst in `build_landing_record` gerechnet — eine hier
-            // korrigierte Bahn wirkt also auf Achsen, Ausfahrten UND
-            // Meldung.
-            {
-                let faellig = flight
-                    .stats
-                    .lock()
-                    .ok()
-                    .map(|st| {
-                        bahnaufloesung_nachholen(
-                            st.landing_lat.is_some() && st.landing_lon.is_some(),
-                            st.szenerie_auskunft.is_some(),
-                            st.szenerie_uebernahme.is_some(),
-                        )
-                    })
-                    .unwrap_or(false);
-                if faellig {
-                    if let Ok(mut st) = flight.stats.lock() {
-                        let vorher = st.szenerie_uebernahme.is_some();
-                        correlate_touchdown_runway(&mut st, &snap, &flight, None);
-                        if !vorher && st.szenerie_uebernahme.is_some() {
-                            tracing::info!(
-                                icao = ?st.runway_correlation_icao,
-                                "Szenerie kam nach dem Aufsetzen — Bahnaufloesung nachgeholt"
-                            );
-                        }
-                    }
+            // Der erste Entwurf pruefte in einem Lock und rief in einem
+            // zweiten. Dazwischen laeuft der Touchdown-Sampler, der beim
+            // Durchstarten `landing_lat`/`landing_lon` loescht — der
+            // Aufruf fiel dann auf die aktuelle Lage zurueck (Roll- oder
+            // Steigposition, genau das, was diese Fassung ausschliessen
+            // soll) und konnte einen Bericht setzen, der weitere
+            // Versuche sperrt (QS-Befund 3, erste Runde v1.7.15).
+            //
+            // Hier, direkt nach der Ernte: die einzige Stelle, an der
+            // eine neue Auskunft am Flug ankommt. Billig — die Funktion
+            // steigt ohne den vollstaendigen Aufsetzpunkt sofort aus.
+            let mut nachgeholt = false;
+            if let Ok(mut st) = flight.stats.lock() {
+                if bahn_am_aufsetzpunkt_nachholen(&mut st, &flight) {
+                    tracing::info!(
+                        icao = ?st.runway_correlation_icao,
+                        stand = st.korrelierter_szenerie_stand,
+                        revision = st.bahn_revision,
+                        "Szenerie kam nach dem Aufsetzen — Bahnaufloesung nachgeholt"
+                    );
+                    nachgeholt = true;
                 }
+            }
+            // ⚠ Sichern, sobald die Revision WAECHST — nicht erst vor dem
+            // Versand.
+            //
+            // Der Nachtrag geht erst raus, wenn die Rollspur steht. Bis
+            // dahin kann die Revision mehrfach wachsen, ohne dass ein
+            // Ereignis sie mitnimmt. Ein Absturz in diesem Fenster liesse
+            // die Platte weit hinter der Leitung zurueck, und der
+            // fortgesetzte Flug kaeme nie wieder an dem Riegel vorbei,
+            // den der Recorder aus einem frueheren Ereignis kennt.
+            //
+            // Ausserhalb der Sperre: `save_active_flight` nimmt sie
+            // selbst.
+            if nachgeholt {
+                revision_vor_versand_sichern(&app, &flight);
             }
 
             let phase_change = step_flight(&flight, &snap);
@@ -26318,9 +26968,38 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     if stats.rollout_finalized && spur_fertig {
                         // `landing_at` None (z.B. direkt nach einem T&G) →
                         // kein Publish; der nächste Touchdown setzt es neu.
-                        stats.landing_at.map(|td| {
+                        aufsetzzeit(&stats).map(|td| {
                             (
                                 td.timestamp_millis(),
+                                // ⚠ Die REVISION der Zuordnung — dieselbe
+                                // Zahl, die auf die Leitung geht.
+                                //
+                                // Frueher stand hier
+                                // `korrelierter_szenerie_stand`. Der aendert
+                                // sich nur, wenn eine neue SZENERIE-Lieferung
+                                // eintrifft. Eine Zuordnung, die aus einem
+                                // anderen Grund neue Bahnwerte ergibt — das
+                                // Navdaten-Upgrade beim Einreichen —, haette
+                                // damit keinen Nachtrag ausgeloest: neue
+                                // Revision auf der Leitung, aber die Sperre
+                                // sah keine Kante.
+                                //
+                                // Trifft die Szenerie NACH der
+                                // Finalisierung ein (YSBK, 01.09.2026),
+                                // korrigiert das Nachholen zwar den
+                                // Flugzustand — der Recorder hatte den
+                                // Nachtrag aber laengst bekommen und
+                                // uebernimmt vom spaeteren PIREP nur
+                                // Punktzahl und Noten, nicht die
+                                // Bahnwerte. Ohne diesen Stand in der
+                                // Sperre blieben dort die alten Achsen-
+                                // und Ausfahrtsdaten stehen (QS-Befund 1,
+                                // erste Runde v1.7.15).
+                                //
+                                // Das Ereignis ist ohnehin idempotent:
+                                // Es adressiert ueber `pirep_id` +
+                                // `touchdown_at`.
+                                stats.bahn_revision,
                                 stats.rollout_distance_m.unwrap_or(0.0),
                                 stats.rollout_finalize_reason.clone(),
                                 // Die Bahnwerte in ihrem FINALEN Stand.
@@ -26336,45 +27015,109 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // Kein Skip-Grund: Die Bewertung laeuft erst
                                 // beim Einreichen des PIREP. Die Webapp
                                 // liest ihn aus den `sub_scores`.
-                                bahn_felder(
-                                    &stats,
-                                    stats
-                                        .aufgeloestes_muster
-                                        .as_deref()
-                                        .or(Some(flight.aircraft_icao.as_str()))
-                                        .filter(|s| !s.is_empty()),
-                                    None,
-                                )
-                                .wire(true),
+                                // EINE Entscheidung mit dem Einreich-Nachtrag
+                                // — siehe `spur_block`. Hier ist die Spur
+                                // fertig (Riegel), aber sie kann VERALTET
+                                // sein.
+                                spur_block(&flight, &stats),
+                                // Die Bahn-Herkunft im FINALEN Stand.
+                                //
+                                // Genau derselbe Aufruf wie am
+                                // `touchdown_complete` — kam die Szenerie
+                                // erst danach, steht hier die
+                                // nachgeholte Zuordnung.
+                                bahn_herkunft(&stats),
+                                // Das Drittel als Spalte — siehe
+                                // `zone_fuer_leitung`.
+                                zone_fuer_leitung(&flight, &stats),
+                                // Und der Vertrauens-Riegel selbst — er steht
+                                // am Touchdown und muss am Nachtrag mitkommen,
+                                // sonst bleibt er stehen, wenn die Bahn wechselt.
+                                bahnvertrauen(&flight, &stats),
                             )
                         })
                     } else {
                         None
                     }
                 };
-                if let Some((touchdown_at, rollout_m, reason, bahn)) = finalized {
-                    if last_published_rollout_ts != Some(touchdown_at) {
+                if let Some((
+                    touchdown_at,
+                    revision,
+                    rollout_m,
+                    reason,
+                    bahn,
+                    herkunft,
+                    zone,
+                    vertrauen,
+                )) = finalized
+                {
+                    // ⚠ Erneut senden, wenn die Bahnwerte sich SEITHER
+                    // geaendert haben — nicht nur einmal je Aufsetzen.
+                    if last_published_rollout != Some((touchdown_at, revision)) {
                         let app_state = app.state::<AppState>();
-                        let mqtt = app_state.mqtt.lock().await;
-                        if let Some(handle) = mqtt.as_ref() {
-                            handle.touchdown_rollout_finalized(
-                                aeroacars_mqtt::TouchdownRolloutFinalizedPayload {
-                                    ts: Utc::now().timestamp_millis(),
-                                    pirep_id: flight.pirep_id.clone(),
-                                    touchdown_at,
-                                    rollout_distance_m: rollout_m,
-                                    finalize_reason: reason,
-                                    bahn,
-                                },
-                            );
+                        // ⚠ Erst PRUEFEN, ob es einen Handle gibt — und die
+                        // Sperre sofort wieder freigeben. Die Flugdatei
+                        // wird danach OHNE gehaltene MQTT-Sperre geschrieben
+                        // (blockierende E/A unter einer geteilten async-
+                        // Sperre, externe QS Runde 3). Ohne Handle wird
+                        // weder geschrieben noch gesendet; Sperre und Fahne
+                        // bleiben stehen, der naechste Tick versucht es
+                        // erneut. Der restliche Tick laeuft in JEDEM Fall
+                        // weiter — kein `continue` (N1, P0).
+                        let mqtt_vorhanden = app_state.mqtt.lock().await.is_some();
+                        if !mqtt_vorhanden {
+                            if !mqtt_fehlt_gemeldet {
+                                tracing::warn!(
+                                    revision,
+                                    "touchdown_rollout_finalized: keine MQTT-Verbindung — \
+                                     der Nachtrag wartet"
+                                );
+                                mqtt_fehlt_gemeldet = true;
+                            }
+                        } else {
+                            mqtt_fehlt_gemeldet = false;
+                            // ⚠ ZUERST auf die Platte, DANN auf die Leitung.
+                            // Siehe `revision_vor_versand_sichern`.
+                            revision_vor_versand_sichern(&app, &flight);
+                            let mqtt = app_state.mqtt.lock().await;
+                            match mqtt.as_ref() {
+                                // Zwischen Pruefung und Sperre verschwunden —
+                                // naechster Tick.
+                                None => {}
+                                Some(handle) => {
+                                    handle.touchdown_rollout_finalized(
+                                        aeroacars_mqtt::TouchdownRolloutFinalizedPayload {
+                                            ts: Utc::now().timestamp_millis(),
+                                            pirep_id: flight.pirep_id.clone(),
+                                            touchdown_at,
+                                            rollout_distance_m: rollout_m,
+                                            finalize_reason: reason,
+                                            bahn,
+                                            landing_touchdown_zone: zone,
+                                            runway_geometry_trusted: Some(vertrauen.0),
+                                            runway_geometry_reason: vertrauen
+                                                .1
+                                                .map(|r| r.to_string()),
+                                            herkunft,
+                                        },
+                                    );
+                                    let nachtrag = last_published_rollout.is_some();
+                                    last_published_rollout = Some((touchdown_at, revision));
+                                    if let Ok(mut st) = flight.stats.lock() {
+                                        st.bahn_nachtrag_offen = false;
+                                        st.letzter_nachtrag = Some((touchdown_at, revision));
+                                    }
+                                    tracing::info!(
+                                        pirep_id = %flight.pirep_id,
+                                        touchdown_at,
+                                        rollout_m,
+                                        revision,
+                                        nachtrag,
+                                        "touchdown_rollout_finalized published"
+                                    );
+                                }
+                            }
                         }
-                        last_published_rollout_ts = Some(touchdown_at);
-                        tracing::info!(
-                            pirep_id = %flight.pirep_id,
-                            touchdown_at,
-                            rollout_m,
-                            "touchdown_rollout_finalized published"
-                        );
                     }
                 }
             }
@@ -26554,9 +27297,6 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     },
                                     _ => None,
                                 };
-                            // v0.8.0: identische Assessment-Werte wie
-                            // im LandingRecord (single source: assess_touchdown).
-                            let payload_assessed = assess_touchdown(&stats);
                             // v0.20.0: EIN Verdict — Punkte, Klasse und Note stammen
                             // aus demselben Aufruf. Die Webapp leitet nichts mehr ab.
                             let payload_verdict = canonical_landing_verdict(
@@ -26565,35 +27305,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 td_actual_icao.as_deref().unwrap_or(&flight.arr_airport),
                             );
                             aeroacars_mqtt::TouchdownPayload {
-                                // v1.7.8: Woher die Bahngeometrie kam.
-                                // Steht auch am PirepPayload — der
-                                // Recorder propagiert die Teilnoten aus
-                                // dem PIREP auf diese Zeile, und dann
-                                // muss die Herkunft an beiden haengen.
-                                bahn_geometrie_quelle: Some(
-                                    match stats.szenerie_uebernahme.as_ref() {
-                                        Some(b) if !b.uebernommen.is_empty() => "szenerie",
-                                        _ => "navdaten",
-                                    }
-                                    .to_string(),
-                                ),
-                                bahn_szenerie_status: Some(szenerie_status(&stats)),
-                                sim_kennung: stats.sim_kennung.clone(),
-                                bahn_kurs_korrektur_grad: stats
-                                    .szenerie_uebernahme
-                                    .as_ref()
-                                    .filter(|b| !b.uebernommen.is_empty())
-                                    .map(|b| b.groesste_kursabweichung_grad),
-                                bahn_breiten_korrektur_m: stats
-                                    .szenerie_uebernahme
-                                    .as_ref()
-                                    .filter(|b| !b.uebernommen.is_empty())
-                                    .map(|b| b.groesste_breitenabweichung_m),
-                                bahn_schwellen_korrektur_m: stats
-                                    .szenerie_uebernahme
-                                    .as_ref()
-                                    .filter(|b| !b.uebernommen.is_empty())
-                                    .map(|b| b.groesste_schwellenabweichung_m),
+                                // v1.7.15: die Bahn-Herkunft — EINE
+                                // Ableitung, dieselbe wie am
+                                // `touchdown_rollout_finalized`.
+                                herkunft: bahn_herkunft(&stats),
                                 ts: td_ts.timestamp_millis(),
                                 // v0.11.1: Pilot-Client-Version aus dem Cargo-
                                 // Manifest in jeden Touchdown mitsenden, damit
@@ -26701,13 +27416,6 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 approach_bank_stddev_deg: stats.canonical_bank_stddev_deg(),
                                 go_around_count: Some(stats.go_around_count),
                                 arr_metar: stats.arr_metar_raw.clone(),
-                                runway_match_icao: rwy_match.map(|m| m.airport_ident.clone()),
-                                runway_match_ident: rwy_match.map(|m| m.runway_ident.clone()),
-                                runway_match_distance_m: rwy_match.map(|m| {
-                                    (m.touchdown_distance_from_threshold_ft as f32) * 0.3048
-                                }),
-                                runway_match_centerline_offset_m: rwy_match
-                                    .map(|m| m.centerline_distance_m as f32),
                                 // v0.5.23: Touchdown-Forensik — alle Schaetzer-
                                 // Zwischenergebnisse fuer Server-seitige
                                 // Algorithmus-Vergleiche (siehe stats Felder
@@ -26748,20 +27456,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // v0.7.5: K5S9 statt OR66, 3.5 km Centerline-
                                 // Offset). Spec docs/spec/v0.7.6-landing-
                                 // payload-consistency.md §3 P1-3.
-                                landing_touchdown_zone: {
-                                    let (trusted, _) = runway_geometry_trust_check(
-                                        rwy_match.map(|m| m.airport_ident.as_str()),
-                                        &flight.arr_airport,
-                                        td_actual_icao.as_deref(),
-                                        rwy_match.map(|m| m.centerline_distance_m as f32),
-                                        stats.landing_float_distance_m,
-                                    );
-                                    if trusted {
-                                        stats.landing_touchdown_zone
-                                    } else {
-                                        None
-                                    }
-                                },
+                                landing_touchdown_zone: zone_fuer_leitung(flight.as_ref(), &stats),
                                 landing_vref_deviation_kt: stats.landing_vref_deviation_kt,
                                 landing_vref_source: stats
                                     .landing_vref_source
@@ -26772,10 +27467,6 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 ),
                                 landing_yaw_rate_deg_per_sec: stats.landing_yaw_rate_deg_per_sec,
                                 landing_brake_energy_proxy: stats.landing_brake_energy_proxy,
-                                // v0.5.22: feeds the live-monitor's "Bahn-
-                                // Auslastung"-sub-score so it matches the
-                                // in-app PIREP value 1:1.
-                                runway_length_m: rwy_match.map(|m| m.length_ft * 0.3048),
                                 // v0.12.4 (Spec docs/spec/v0.12.4-score-
                                 // consistency.md, LE5): prozentuale Abweichung
                                 // des **tatsächlichen Trip-Burn** (takeoff_fuel −
@@ -26924,30 +27615,14 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // Replay-View den Hinweis-Pill rendern koennen.
                                 // Pure-function Check, gleiche Inputs wie bei
                                 // landing_touchdown_zone (siehe oben).
-                                runway_geometry_trusted: {
-                                    let (trusted, _) = runway_geometry_trust_check(
-                                        rwy_match.map(|m| m.airport_ident.as_str()),
-                                        &flight.arr_airport,
-                                        td_actual_icao.as_deref(),
-                                        rwy_match.map(|m| m.centerline_distance_m as f32),
-                                        stats.landing_float_distance_m,
-                                    );
-                                    Some(trusted)
-                                },
-                                runway_geometry_reason: {
-                                    // Dieselben Eingaben wie `runway_geometry_trusted`
-                                    // direkt darüber — sonst liefert derselbe Check
-                                    // zwei Antworten über EINE Landung
-                                    // (trusted=true + reason="icao_mismatch").
-                                    let (_, reason) = runway_geometry_trust_check(
-                                        rwy_match.map(|m| m.airport_ident.as_str()),
-                                        &flight.arr_airport,
-                                        td_actual_icao.as_deref(),
-                                        rwy_match.map(|m| m.centerline_distance_m as f32),
-                                        stats.landing_float_distance_m,
-                                    );
-                                    reason.map(String::from)
-                                },
+                                // v1.7.15 (Runde 3): EINE Ableitung mit dem
+                                // Nachtrag — `bahnvertrauen`.
+                                runway_geometry_trusted: Some(
+                                    bahnvertrauen(flight.as_ref(), &stats).0,
+                                ),
+                                runway_geometry_reason: bahnvertrauen(flight.as_ref(), &stats)
+                                    .1
+                                    .map(|r| r.to_string()),
                                 // v0.7.19 GAF-707 Accident-Detection.
                                 // `accident_classifier_version` ist der
                                 // Sentinel — v0.7.19+ setzt ihn IMMER, auch
@@ -26971,49 +27646,6 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     Some(stats.accident_reasons.clone())
                                 },
                                 accident_at: stats.accident_at.map(|t| t.timestamp_millis()),
-                                // v0.8.0: Pure-Function-Assessment in den
-                                // Live-MQTT-Payload. Identische Werte wie
-                                // im LandingRecord (record_landing_for_filed_
-                                // flight) — Spec verlangt Field-Symmetrie.
-                                navdata_source: stats
-                                    .runway_source
-                                    .map(|s| runway_source_wire(s).to_string()),
-                                navdata_cycle: stats.runway_nav_cycle.clone(),
-                                runway_true_course_deg: stats
-                                    .runway_nav_geometry
-                                    .as_ref()
-                                    .map(|g| g.true_course),
-                                runway_displaced_threshold_ft: wire_displaced_threshold_ft(
-                                    stats.runway_match.as_ref(),
-                                ),
-                                runway_tch_expected_ft: stats
-                                    .runway_nav_geometry
-                                    .as_ref()
-                                    .map(|g| g.tch_ft),
-                                runway_glideslope_angle_deg: stats
-                                    .runway_nav_geometry
-                                    .as_ref()
-                                    .map(|g| g.glideslope_angle),
-                                td_distance_from_threshold_m: payload_assessed
-                                    .td_distance_from_threshold_m,
-                                td_in_tdz: payload_assessed.tdz.map(|t| t.in_tdz),
-                                td_third: payload_assessed.tdz.map(|t| t.third),
-                                td_tdz_length_m: payload_assessed.tdz.map(|t| t.tdz_length_m),
-                                aim_delta_m: payload_assessed.aim.as_ref().map(|a| a.delta_m),
-                                aim_class: payload_assessed
-                                    .aim
-                                    .as_ref()
-                                    .map(|a| aim_class_wire(a.class).to_string()),
-                                aim_point_m: payload_assessed.aim.as_ref().map(|a| a.aim_point_m),
-                                tch_actual_ft: payload_assessed.tch.as_ref().map(|t| t.actual_ft),
-                                tch_delta_ft: payload_assessed.tch.as_ref().map(|t| t.delta_ft),
-                                tch_class: payload_assessed
-                                    .tch
-                                    .as_ref()
-                                    .map(|t| tch_class_wire(t.class).to_string()),
-                                pre_displaced_threshold: payload_assessed
-                                    .dds
-                                    .map(|d| d.in_pre_threshold_zone),
                                 // v0.10.0 (#runway-utilization-score): Marker
                                 // dass das nachgelagert berechnete sub_scores-
                                 // Array via sub_rollout_v2 (LDA-basiert)
@@ -28602,6 +29234,57 @@ fn divert_prefetch_decision(
 /// Lock order: caller holds the `flight.stats` lock; this takes
 /// `flight.navdata` nested inside it — same order as the pre-extraction FSM
 /// arm (stats → navdata), never the reverse anywhere in the codebase.
+/// Der Aufsetzpunkt, wie er gespeichert ist — vollstaendig oder gar nicht.
+///
+/// ⚠ Der Dreier muss KOMPLETT sein. `landing_heading_true_deg` allein
+/// nuetzt nichts, und lat/lon ohne Kurs auch nicht: Die Zuordnung
+/// braucht alle drei. Ein Teil-Dreier hiesse, mit einem geratenen Wert
+/// zu rechnen (QS-Befund 3, erste Runde v1.7.15).
+fn gespeicherter_aufsetzpunkt(stats: &FlightStats) -> Option<(f64, f64, f32)> {
+    match (
+        stats.landing_lat,
+        stats.landing_lon,
+        stats.landing_heading_true_deg,
+    ) {
+        (Some(la), Some(lo), Some(hd)) => Some((la, lo, hd)),
+        _ => None,
+    }
+}
+
+/// Die Zuordnung NACHHOLEN — ausschliesslich am gespeicherten
+/// Aufsetzpunkt.
+///
+/// ⚠ Diese Funktion sieht `snap` nicht einmal. Sie KANN nicht auf die
+/// aktuelle Lage zurueckfallen, und genau das ist ihr Zweck: Der
+/// Nachholpfad laeuft, waehrend das Flugzeug rollt — oder nach einem
+/// Durchstarten sogar steigt.
+///
+/// Der frueheste Entwurf pruefte die Bedingungen in einem Lock und rief
+/// dann in einem ZWEITEN. Dazwischen kann der Touchdown-Sampler beim
+/// Durchstarten `landing_lat`/`landing_lon` loeschen — der Aufruf fiel
+/// dann auf `snap` zurueck und setzte womoeglich noch einen Bericht, der
+/// jeden weiteren Versuch sperrt (QS-Befund 3, erste Runde v1.7.15).
+///
+/// Gibt zurueck, ob wirklich zugeordnet wurde.
+fn bahn_am_aufsetzpunkt_nachholen(stats: &mut FlightStats, flight: &ActiveFlight) -> bool {
+    let Some((la, lo, hd)) = gespeicherter_aufsetzpunkt(stats) else {
+        return false;
+    };
+    // ⚠ KEIN Simulator von aussen. Siehe `aufsetz_simulator`.
+    let Some(simulator) = stats.aufsetz_simulator else {
+        return false;
+    };
+    if !bahnaufloesung_nachholen(
+        stats.szenerie_auskunft.is_some(),
+        stats.szenerie_auskunft_stand,
+        stats.korrelierter_szenerie_stand,
+    ) {
+        return false;
+    }
+    korreliere_bahn(stats, flight, simulator, la, lo, hd);
+    true
+}
+
 fn correlate_touchdown_runway(
     stats: &mut FlightStats,
     snap: &SimSnapshot,
@@ -28610,28 +29293,451 @@ fn correlate_touchdown_runway(
 ) {
     // ⚠ Der AUFSETZPUNKT, nicht die aktuelle Lage.
     //
-    // Diese Funktion lief bis v1.7.14 ausschliesslich im Aufsetz-Tick, und
-    // dort sind `td_buf_sample`/`snap` der Aufsetzmoment. Seit v1.7.15 wird
-    // sie NACHGEHOLT, sobald die Szenerie eintrifft — dann rollt das
-    // Flugzeug laengst, und `snap` waere die Position irgendwo auf der
-    // Bahn oder am Rollweg.
+    // Im Aufsetz-Tick sind `td_buf_sample`/`snap` der Aufsetzmoment;
+    // `stamp_touchdown_metadata` laeuft unmittelbar davor und speichert
+    // dieselben Werte mit derselben Formel. Der Vorrang fuer die
+    // gespeicherten Werte aendert hier also nichts — er macht die
+    // Funktion nur wiederholbar.
     //
-    // Die gespeicherten Werte sind dieselben, mit denen sie heute rechnet:
-    // `stamp_touchdown_metadata` laeuft an BEIDEN Aufrufstellen unmittelbar
-    // davor und setzt sie mit derselben Formel
-    // (`td_buf_sample.map(..).unwrap_or(snap..)`). Im Aufsetzmoment aendert
-    // sich also nichts; danach macht es die Funktion erst wiederholbar.
-    let (rw_lat, rw_lon, rw_hdg_true) = match (
-        stats.landing_lat,
-        stats.landing_lon,
-        stats.landing_heading_true_deg,
-    ) {
-        (Some(la), Some(lo), Some(hd)) => (la, lo, hd),
-        _ => td_buf_sample
+    // ⚠ Fuer das NACHHOLEN gibt es `bahn_am_aufsetzpunkt_nachholen`, das
+    // `snap` gar nicht erst bekommt.
+    let (rw_lat, rw_lon, rw_hdg_true) = gespeicherter_aufsetzpunkt(stats).unwrap_or_else(|| {
+        td_buf_sample
             .map(|s| (s.lat, s.lon, s.heading_true_deg))
-            .unwrap_or((snap.lat, snap.lon, snap.heading_deg_true)),
-    };
+            .unwrap_or((snap.lat, snap.lon, snap.heading_deg_true))
+    });
+    // Womit gerechnet wurde — das Nachholen rechnet mit demselben.
+    stats.aufsetz_simulator = Some(snap.simulator);
+    korreliere_bahn(stats, flight, snap.simulator, rw_lat, rw_lon, rw_hdg_true);
+}
 
+/// Fuehrt das alte `landing_touchdown_zone` dem neuen `td_third` nach.
+///
+/// # Warum es das gibt
+///
+/// Dasselbe Drittel wurde an zwei Stellen gerechnet: roh aus Bahnlaenge
+/// und Aufsetzdistanz, und in `assess_touchdown` mit Beruecksichtigung
+/// der versetzten Schwelle. Zwei Webapp-Karten lesen weiter die alte
+/// Zahl.
+///
+/// Aendert eine spaet eingetroffene Szenerie die Bahnlaenge, korrigierte
+/// das Nachholen nur die neue — und die beiden Karten widersprachen
+/// einander, ohne dass eine davon nach einem Fehler aussah.
+///
+/// ⚠ Ohne Bahntreffer wird das Feld GELEERT, nicht stehengelassen. Ein
+/// Drittel ohne Bahn ist eine Behauptung ueber nichts.
+fn drittel_nachfuehren(stats: &mut FlightStats) {
+    // ⚠ NICHT ueber `classify_tdz`: Das meldet unter 1200 m nutzbarer
+    // Laenge `None`, weil es dort keine Aufsetzzonen-MARKIERUNG gibt.
+    // Das Drittel ist keine Markierung. Die erste Fassung dieser
+    // Funktion haengte das Feld daran und loeschte es damit auf jedem
+    // Buschplatz — lautlos, und beide Drittel-Tests hielten die
+    // Bahnlaenge konstant (externe QS, 02.09.2026).
+    // Die Aufsetzdistanz hinter der Schwelle haengt an derselben Bahn —
+    // bis Runde 3 wurde sie nur im Aufsetz-Tick gesetzt und blieb nach
+    // einer spaeten Zuordnung stehen (und fuetterte den Vertrauens-Riegel
+    // mit einer alten Zahl).
+    // ⚠ ROH ab Bahnanfang — absichtlich NICHT schwellenkorrigiert wie das
+    // Drittel. `runway_geometry_trust_check` liest dieses Feld an sechs
+    // Stellen und ist auf den rohen Wert geeicht (K5S9: −613 m vor der
+    // Schwelle → nicht vertrauenswuerdig). Mit dem korrigierten Wert
+    // kippte der Riegel bei 4000 ft Versatz ins Negative, und der
+    // Divert-Score aenderte sich nach dem Navdaten-Upgrade nicht mehr.
+    // Dass die Karte diesen rohen Wert neben dem korrigierten Drittel
+    // zeigt (Runde 4, N16), ist dort zu loesen: `td_distance_from_
+    // threshold_m` ist der passende Nachbar.
+    stats.landing_float_distance_m = stats
+        .runway_match
+        .as_ref()
+        .map(|rw| rw.touchdown_distance_from_threshold_ft as f32 * 0.3048);
+    stats.landing_touchdown_zone = stats.runway_match.as_ref().and_then(|rm| {
+        let m = bahnmasse(rm);
+        // ⚠ Ohne Laenge kein Drittel. OurAirports-Zeilen ohne Laenge
+        // ergeben `length_ft == 0` und kommen durch den Trefferfilter;
+        // `drittel()` liefert dann 3 — eine Behauptung ueber nichts
+        // (externe QS, 02.09.2026, N5).
+        (m.nutzbare_laenge_m > 0.0).then(|| runway_assessment::drittel(m.td_m, m.nutzbare_laenge_m))
+    });
+}
+
+/// Die Masse der Bahn, wie die Bewertung sie sieht.
+struct Bahnmasse {
+    /// Aufsetzdistanz ab dem physischen Bahnanfang, in Metern.
+    td_raw_m: f64,
+    /// Der Anteil der versetzten Schwelle, der NICHT schon in der
+    /// Geometrie steckt, in Fuss.
+    abzuziehen_ft: i32,
+    /// Aufsetzdistanz ab der LANDE-Schwelle, in Metern.
+    td_m: f64,
+    /// Nutzbare Laenge ab der Lande-Schwelle, in Metern.
+    nutzbare_laenge_m: f64,
+}
+
+/// Eine Rechnung fuer Aufsetzdistanz und nutzbare Laenge.
+///
+/// `touchdown_distance_from_threshold_ft` (aus `runway::lookup_runway`/
+/// `lookup_runway_in_nav`) misst ab dem *physischen* Bahnanfang, nicht ab
+/// der Lande-Schwelle — siehe `NavRunway::threshold` und
+/// `runway_assessment::classify_displaced`. Bei versetzter Schwelle liegt
+/// die legale Schwelle `displaced_threshold_m` weiter hinten. Das ist
+/// die EINE Stelle, an der das abgezogen wird; jeder Klassifizierer
+/// bekommt die korrigierte Distanz, ausser `classify_displaced`, das den
+/// rohen Wert braucht.
+///
+/// v0.19.x: `RunwayMatch::displaced_threshold_ft` kommt aus BEIDEN
+/// Quellen (Navigraph und OurAirports), die Korrektur greift also
+/// einheitlich. v1.6.8-QS4: nur der Anteil, der nicht schon in der
+/// Geometrie steckt (`displacement_not_in_geometry_ft`).
+///
+/// v1.6.8: NUTZBARE Laenge, nicht die volle Bahn. Aufsetzzone und
+/// Aim-Point messen ausdruecklich ab der Lande-Schwelle; mit der vollen
+/// Bahn war die Zone auf versetzten Bahnen zu lang (LOWS 15: 900 statt
+/// 851 m) und der Aim-Point kippte an der 2400-m-Grenze zu frueh.
+/// `effective_displaced_threshold_ft` statt des rohen Feldes, weil der
+/// Versatz seit AIRAC 2608 in der Geometrie steckt.
+fn bahnmasse(rm: &runway::RunwayMatch) -> Bahnmasse {
+    const FT_PER_M: f64 = 3.280_839_895;
+    let td_raw_m = rm.touchdown_distance_from_threshold_ft / FT_PER_M;
+    let abzuziehen_ft = displacement_not_in_geometry_ft(rm);
+    let td_m = td_raw_m - abzuziehen_ft as f64 / FT_PER_M;
+    let length_m = (rm.length_ft as f64) / FT_PER_M;
+    let nutzbare_laenge_m = length_m - (effective_displaced_threshold_ft(rm) as f64) / FT_PER_M;
+    Bahnmasse {
+        td_raw_m,
+        abzuziehen_ft,
+        td_m,
+        nutzbare_laenge_m,
+    }
+}
+
+/// Schreibt den Flug auf die Platte, BEVOR eine Revision hinausgeht.
+///
+/// # Warum das nicht der normale Speichertakt erledigt
+///
+/// `save_active_flight` laeuft alle fuenf Positionstakte — je nach
+/// Takt zwischen einer halben und zweieinhalb Minuten. Das Ereignis geht
+/// sofort raus.
+///
+/// Damit kann der Recorder Revision 3 fuehren, waehrend auf der Platte
+/// noch 1 steht. Stuerzt die App dazwischen ab, faengt der fortgesetzte
+/// Flug bei 1 an, die naechste Korrektur wird 2 — und der Riegel im
+/// Recorder weist sie ab, weil er 3 kennt. Die Korrektur waere
+/// verloren, und der Riegel haette genau das getan, was in ihm steht.
+///
+/// Die Regel lautet deshalb: auf der Platte steht mindestens die
+/// Revision, die schon auf der Leitung war — SOWEIT die Platte sich
+/// beschreiben laesst. Schlaegt das Schreiben fehl, geht das Ereignis
+/// trotzdem hinaus: Es zurueckzuhalten hiesse, die Korrektur sicher zu
+/// verlieren, um einen moeglichen Verlust nach einem Absturz zu
+/// vermeiden. Der Riegel im Recorder (`<=`) verzeiht genau einen
+/// Rueckstand. Der Fehlschlag wird als Fehler geloggt, nicht als
+/// Warnung — er ist die einzige Luecke in dieser Zusicherung.
+fn revision_vor_versand_sichern(app: &AppHandle, flight: &ActiveFlight) -> bool {
+    let ok = save_active_flight(app, flight);
+    if !ok {
+        let revision = flight.stats.lock().map(|s| s.bahn_revision).unwrap_or(0);
+        tracing::error!(
+            revision,
+            "Revision konnte VOR dem Versand nicht gesichert werden — nach einem \
+             Absturz kann der Recorder die naechste Korrektur abweisen"
+        );
+    }
+    ok
+}
+
+/// Das Drittel fuer die Leitung — vertrauens-geriegelt, EINE Ableitung.
+///
+/// `landing_touchdown_zone` wird an `touchdown_complete` nur
+/// mitgeschickt, wenn die Bahngeometrie vertrauenswuerdig ist
+/// (`runway_geometry_trust_check`: kein 3,5-km-Achsversatz wie GSG303,
+/// K5S9 statt OR66). Der Nachtrag muss dieselbe Regel anwenden — sonst
+/// setzt er die Spalte, die das erste Ereignis bewusst leer liess.
+/// Deshalb steht die Regel hier einmal, und beide Ereignisse rufen sie
+/// (externe QS, 02.09.2026, N3).
+///
+/// Der tatsaechliche Landeplatz wird wie im Touchdown-Payload ueber
+/// `arrival::locate` bestimmt, nicht ueber die Bahnzuordnung — die zwei
+/// koennen sich bei einem knappen Ausweichplatz unterscheiden, und der
+/// Riegel ist auf `locate` geeicht.
+fn zone_fuer_leitung(flight: &ActiveFlight, stats: &FlightStats) -> Option<u8> {
+    if bahnvertrauen(flight, stats).0 {
+        stats.landing_touchdown_zone
+    } else {
+        None
+    }
+}
+
+/// Der Vertrauens-Riegel der Bahngeometrie — EINE Ableitung fuer
+/// Touchdown-Payload, Nachtrag und das Drittel.
+///
+/// ⚠ `landing_float_distance_m` geht hier hinein. Es wurde bis Runde 3
+/// nur im Aufsetz-Tick gesetzt — auf dem Nachtrags-Weg lief der Riegel
+/// damit auf einer alten Eingabe. Seit `drittel_nachfuehren` es mit der
+/// Bahn nachfuehrt, ist es an beiden Wegen frisch.
+fn bahnvertrauen(flight: &ActiveFlight, stats: &FlightStats) -> (bool, Option<&'static str>) {
+    let rwy = stats.runway_match.as_ref();
+    let td_actual_icao: Option<String> = match (stats.landing_lat, stats.landing_lon) {
+        (Some(la), Some(lo)) => {
+            match arrival::locate(&flight.arr_airport, la, lo, stats.planned_arr_ref_pos) {
+                arrival::ArrivalSite::AtOtherAirport { icao, .. } => Some(icao),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    runway_geometry_trust_check(
+        rwy.map(|m| m.airport_ident.as_str()),
+        &flight.arr_airport,
+        td_actual_icao.as_deref(),
+        rwy.map(|m| m.centerline_distance_m as f32),
+        stats.landing_float_distance_m,
+    )
+}
+
+/// Die Bahnachse, gegen die die Rollspur bis eben projiziert war.
+struct AlteAchse {
+    t_lat: f64,
+    t_lon: f64,
+    e_lat: f64,
+    e_lon: f64,
+    nutzbare_laenge_m: f64,
+}
+
+/// Die aktuelle Bahnachse, festgehalten BEVOR sie ersetzt wird.
+///
+/// Zwei Aufrufer: `korreliere_bahn` und `bahn_upgrade_anwenden`. Der
+/// zweite fehlte zuerst — das Navdaten-Upgrade beim Einreichen tauschte
+/// die Bahn und liess die Spur gegen die alte Achse stehen, und der
+/// Nachtrag schickte genau die Mischung nach, gegen die
+/// `spur_auf_neue_achse` gebaut ist (externe QS, 02.09.2026, N2).
+fn alte_achse_von(stats: &FlightStats) -> Option<AlteAchse> {
+    stats.runway_match.as_ref().map(|m| AlteAchse {
+        t_lat: m.threshold_lat,
+        t_lon: m.threshold_lon,
+        e_lat: m.end_lat,
+        e_lon: m.end_lon,
+        nutzbare_laenge_m: bahnmasse(m).nutzbare_laenge_m,
+    })
+}
+
+/// Wie weit zwei Bahnachsen seitlich auseinanderliegen duerfen, um noch
+/// als dieselbe zu gelten. Bahnen sind mindestens 30 m breit; eine
+/// Schwelle, die 5 m neben der alten Achse liegt, ist dieselbe Bahn.
+const ACHSE_TOLERANZ_M: f64 = 5.0;
+
+/// Bringt die Rollspur in das Bezugssystem einer NEU zugeordneten Bahn.
+///
+/// # Warum
+///
+/// `bahn_spur` speichert keine Koordinaten, sondern Projektionen
+/// (laengs, quer) gegen die Bahnachse, die zum Zeitpunkt des Punktes
+/// galt. Wird die Bahn spaeter neu zugeordnet — die Szenerie kommt nach
+/// dem Aufsetzen, die Schwelle liegt 350 m weiter —, tragen die Punkte
+/// davor den alten Nullpunkt und die danach den neuen. Auf die Leitung
+/// geht EIN `spur_nullpunkt_versatz_m`. Das Ergebnis saehe plausibel aus
+/// und waere falsch: ein Knick mitten in der Spur, Raeum- und Kantenpunkt
+/// aus zwei Bezugssystemen (externe QS, 02.09.2026, P1-C).
+///
+/// Neu projizieren geht nicht: Der Positionspuffer haelt fuenf Sekunden.
+/// Was geht:
+///
+/// * **Dieselbe Achse, verschobener Nullpunkt** — der haeufige Fall
+///   (versetzte Schwelle aus der Szenerie): Alle Laengswerte um den
+///   Versatz verschieben. Das ist exakt, kein Naeherungswert.
+/// * **Andere Achse** (andere Bahn, anderer Kurs): Die Spur ist gegen
+///   etwas projiziert, das es nicht mehr gibt. Sie wird VERWORFEN — weg
+///   und sichtbar, statt weg und falsch. Die letzten fuenf Sekunden
+///   kommen aus dem Puffer im neuen System nach.
+fn spur_auf_neue_achse(stats: &mut FlightStats, alt: Option<&AlteAchse>) {
+    if stats.bahn_spur.is_empty() {
+        return;
+    }
+    // ⚠ Eine FERTIGE Spur wird nie verworfen — nur eine, die noch
+    // aufzeichnet, weil nur dann der Puffer nachfuellen kann.
+    //
+    // Runde 4 (N13): Das Einreich-Upgrade wechselte auf einem
+    // Ausweichflug von OurAirports auf Navigraph, die Achsen lagen mehr
+    // als 5 m auseinander, die fertige Spur wurde verworfen — und der
+    // Nachtrag meldete `rollout_final: false` an eine Zeile, die laengst
+    // endgueltig war. Die Spur misst, wo der Pilot WIRKLICH gerollt ist,
+    // gegen die Bahn, die er dabei sah.
+    //
+    // Runde 5 (N24): Bleibt sie bei Achswechsel stehen, ist sie gegen
+    // eine Bahn projiziert, die nicht mehr gilt — neben Marken aus der
+    // neuen. Dann wird sie als VERALTET markiert und nicht mehr gesendet
+    // (`spur_block`); beim Recorder bleibt der letzte in sich stimmige
+    // Stand.
+    let fertig = stats.rollout_finalized && !stats.bahn_spur_laeuft;
+    let Some(alt) = alt else {
+        if fertig {
+            stats.bahn_spur_bezug_veraltet = true;
+            tracing::warn!("Bahn ohne Vorgaenger, Spur fertig — Spur bleibt, gilt als veraltet");
+            return;
+        }
+        spur_verwerfen(stats);
+        return;
+    };
+    let Some(neu) = stats.runway_match.as_ref() else {
+        if fertig {
+            stats.bahn_spur_bezug_veraltet = true;
+            return;
+        }
+        spur_verwerfen(stats);
+        return;
+    };
+    let (dt_l, dt_q) = runway::projiziere_auf_bahn(
+        alt.t_lat,
+        alt.t_lon,
+        alt.e_lat,
+        alt.e_lon,
+        neu.threshold_lat,
+        neu.threshold_lon,
+    );
+    let (de_l, de_q) = runway::projiziere_auf_bahn(
+        alt.t_lat,
+        alt.t_lon,
+        alt.e_lat,
+        alt.e_lon,
+        neu.end_lat,
+        neu.end_lon,
+    );
+    let gleiche_achse =
+        dt_q.abs() <= ACHSE_TOLERANZ_M && de_q.abs() <= ACHSE_TOLERANZ_M && de_l > dt_l;
+    if !gleiche_achse {
+        if fertig {
+            stats.bahn_spur_bezug_veraltet = true;
+            tracing::warn!(
+                quer_schwelle_m = dt_q,
+                quer_ende_m = de_q,
+                "Bahnachse hat gewechselt, Spur ist fertig — Spur bleibt lokal, wird nicht mehr gesendet"
+            );
+            return;
+        }
+        tracing::info!(
+            quer_schwelle_m = dt_q,
+            quer_ende_m = de_q,
+            "Bahnachse hat gewechselt — Rollspur verworfen, Puffer fuellt nach"
+        );
+        spur_verwerfen(stats);
+        return;
+    }
+    let neue_laenge_m = bahnmasse(neu).nutzbare_laenge_m;
+    let alte_laenge_m = alt.nutzbare_laenge_m;
+    if dt_l.abs() < 0.5
+        && dt_q.abs() < 0.05
+        && de_q.abs() < 0.05
+        && (neue_laenge_m - alte_laenge_m).abs() < 0.5
+    {
+        return;
+    }
+    // Laengs: der neue Nullpunkt liegt `dt_l` hinter dem alten.
+    // Quer: die neue Achse liegt bei der Schwelle `dt_q` und am Ende
+    // `de_q` neben der alten — dazwischen linear. Das ist fuer die
+    // zugelassenen 5 m exakt genug (Runde 4, N18).
+    let alte_spanne = (de_l - dt_l).max(1.0);
+    let quer_bei = |laengs_alt: f64| dt_q + (de_q - dt_q) * ((laengs_alt - dt_l) / alte_spanne);
+
+    // ⚠ Der groesste Querversatz wird NICHT aus der ganzen Spur neu
+    // bestimmt. Die Spur laeuft ausdruecklich ueber das Messfenster hinaus
+    // — durch die Ausfahrt, bis 80 m neben die Kante. Das Live-Maximum
+    // waechst nur bei offenem Fenster. Aus der ganzen Spur gerechnet
+    // wurde aus einer sauberen Landung „Rad neben der befestigten
+    // Flaeche" (Runde 5, N22, P0). Stattdessen: den Fensterpunkt mit dem
+    // groessten Betrag suchen und den GESPEICHERTEN Wert um den
+    // Querversatz an dieser Stelle korrigieren.
+    if let Some(max_quer) = stats.bahn_max_querversatz_m {
+        // ⚠ Runde 6 (Befund 1): Den ALTEN Argmax zu verschieben reicht
+        // nicht — nach einer seitlichen Korrektur kann ein Punkt mit
+        // umgekehrtem Vorzeichen der groessere werden. Die eigene
+        // Vorrichtung zeigte es: gemeldet 0,01 m, Spur bei −4,99 m. Also:
+        // ueber die FENSTERPUNKTE im neuen Bezug neu bestimmen (die
+        // Ausfahrt bleibt draussen, N22), und den verschobenen Altwert
+        // als Untergrenze behalten — die Spur ist auf 10 m ausgeduennt
+        // und hat nicht jeden Punkt gesehen, den das Live-Maximum sah.
+        let fenster_ende = stats.bahn_fenster_zu_laengs_m.unwrap_or(f64::INFINITY);
+        let (stelle, neu_max) = stats
+            .bahn_spur
+            .iter()
+            .filter(|p| (p.0 as f64) <= fenster_ende)
+            .map(|p| (p.0 as f64, p.1 as f64 - quer_bei(p.0 as f64)))
+            .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+            .unwrap_or((0.0, 0.0));
+        let alt_verschoben = max_quer - quer_bei(stelle);
+        stats.bahn_max_querversatz_m = Some(if neu_max.abs() > alt_verschoben.abs() {
+            neu_max
+        } else {
+            alt_verschoben
+        });
+    }
+    for p in &mut stats.bahn_spur {
+        let laengs_alt = p.0 as f64;
+        p.0 = (laengs_alt - dt_l) as f32;
+        p.1 = (p.1 as f64 - quer_bei(laengs_alt)) as f32;
+    }
+    for feld in [
+        &mut stats.bahn_raeum_laengs_m,
+        &mut stats.bahn_kante_laengs_m,
+        &mut stats.bahn_fenster_zu_laengs_m,
+    ] {
+        if let Some(v) = feld {
+            *v -= dt_l;
+        }
+    }
+    if let Some(ueber) = stats.bahn_overrun_m {
+        let neu_ueber = ueber - dt_l + (alte_laenge_m - neue_laenge_m);
+        stats.bahn_overrun_m = (neu_ueber > 0.0).then_some(neu_ueber);
+    }
+    tracing::info!(
+        versatz_laengs_m = dt_l,
+        versatz_quer_m = dt_q,
+        punkte = stats.bahn_spur.len(),
+        "Rollspur auf die neue Bahnachse verschoben"
+    );
+}
+
+/// Verwirft die Rollspur samt allem, was aus ihr abgeleitet ist.
+///
+/// Zwei Aufrufer: das erneute Aufsetzen nach einem Durchstarten (dort
+/// gehoert die Spur zur vorigen Landung) und der Achswechsel beim
+/// Nachholen (dort ist sie gegen eine Bahn projiziert, die nicht mehr
+/// gilt). `bahn_spur_bis` faellt mit — die Ernte beginnt danach wieder
+/// ab `landing_at`, findet im Puffer aber nur die letzten fuenf Sekunden
+/// (`TOUCHDOWN_BUFFER_SECS`). Deshalb wird eine FERTIGE Spur nie
+/// verworfen (siehe `spur_auf_neue_achse`).
+fn spur_verwerfen(stats: &mut FlightStats) {
+    stats.bahn_max_querversatz_m = None;
+    stats.bahn_overrun_m = None;
+    stats.bahn_proben = 0;
+    stats.bahn_fenster_zu = false;
+    // Auch das Fensterende — `get_or_insert` weiter unten schreibt nur,
+    // wenn hier None steht. Bliebe der alte Wert stehen, bekaeme die
+    // zweite Landung die Messgrenze der ersten, und die Anzeige zeichnete
+    // sie an einer Stelle, an der dieses Flugzeug nie gemessen hat.
+    stats.bahn_fenster_zu_laengs_m = None;
+    stats.bahn_spur.clear();
+    stats.bahn_spur_bis = None;
+    stats.bahn_spur_laeuft = false;
+    stats.bahn_spur_bezug_veraltet = false;
+    stats.bahn_raeum_laengs_m = None;
+    stats.bahn_raeum_gs_kt = None;
+    stats.bahn_raeum_seite = None;
+    stats.bahn_kante_laengs_m = None;
+    stats.bahn_kante_gs_kt = None;
+    stats.bahn_raeum_kurs_diff = None;
+}
+
+/// Der Kern: ordnet die Bahn an einer GEGEBENEN Position zu.
+fn korreliere_bahn(
+    stats: &mut FlightStats,
+    flight: &ActiveFlight,
+    simulator: sim_core::Simulator,
+    rw_lat: f64,
+    rw_lon: f64,
+    rw_hdg_true: f32,
+) {
+    // ⚠ Die BISHERIGE Bahnachse, bevor sie ersetzt wird — die Rollspur
+    // ist gegen sie projiziert. Siehe `spur_auf_neue_achse`.
+    let alte_achse = alte_achse_von(stats);
     // v0.16.24: Navdata-Cache gegen den ECHTEN Landeflughafen befragen,
     // nicht gegen den geplanten `arr_airport`. Bei einem On-Plan-Landing
     // ist der nächste Airport zum Touchdown == `arr_airport`, also bleibt
@@ -28665,12 +29771,27 @@ fn correlate_touchdown_runway(
     // Bahnnummer. Dort messen wir gegen eine Achse, die es im Simulator
     // nicht gibt.
     let (nav_opt, szenerie_bericht, benutzte_szenerie) = szenerie_bahn::ergaenze_aus_szenerie(
-        snap.simulator,
+        simulator,
         &actual_icao,
         nav_opt,
         stats.szenerie_auskunft.clone(),
     );
     stats.szenerie_uebernahme = szenerie_bericht;
+    // ⚠ Festhalten, MIT WELCHEM Stand zugeordnet wurde.
+    //
+    // Ohne diese Zeile liefe das Nachholen bei jedem Durchlauf erneut —
+    // und mit einem blossen `bool` bliebe ein Bericht aus Lieferung A
+    // stehen, obwohl die Ernte laengst Lieferung B angenommen hat.
+    stats.korrelierter_szenerie_stand = stats.szenerie_auskunft_stand;
+    // Jede Zuordnung ist eine neue Fassung der Bahnwerte. Die Zahl geht
+    // auf die Leitung und entscheidet dort, welcher Nachtrag gewinnt.
+    stats.bahn_revision = stats.bahn_revision.saturating_add(1);
+    // Wer die Bahn aendert, setzt die Fahne — auch die Hauptstelle.
+    // Ohne diese Zeile blieb eine nachgeholte Zuordnung ohne Nachtrag,
+    // sobald der Streamer nie sendet (leere Spur, weil beim Aufsetzen
+    // kein Treffer war) und das Einreich-Upgrade ein Nichts ist
+    // (externe QS, 02.09.2026, P1-B).
+    stats.bahn_nachtrag_offen = true;
     // Bei X-Plane wird die Szenerie hier erst gelesen; ohne diese Zeile
     // kaemen ihre Rollwege nie bei den Ausfahrten an — die Bahn waere
     // korrigiert, die Ausfahrten kaemen weiter aus OpenStreetMap.
@@ -28746,6 +29867,10 @@ fn correlate_touchdown_runway(
         );
         stats.runway_match = Some(rw);
         stats.runway_source = Some(source);
+        // ⚠ VOR dem Nachtragen: Die vorhandene Spur in das Bezugssystem
+        // der neuen Bahn bringen — sonst tragen die Punkte davor den
+        // alten Nullpunkt und die danach den neuen.
+        spur_auf_neue_achse(stats, alte_achse.as_ref());
         // Die Sekunden zwischen Aufsetzen und Bestaetigung nachtragen —
         // sonst fehlt der Spur genau die Aufsetzzone. Siehe
         // `spur_aus_puffer_nachtragen`.
@@ -28769,6 +29894,8 @@ fn correlate_touchdown_runway(
         stats.runway_source = None;
         stats.runway_nav_cycle = None;
         stats.runway_nav_geometry = None;
+        // Eine Spur ohne Bahn ist gegen nichts projiziert.
+        spur_auf_neue_achse(stats, alte_achse.as_ref());
     }
 
     // v0.8.0 F5 — TCH (Threshold-Crossing-Height) Actual: siehe
@@ -28777,6 +29904,15 @@ fn correlate_touchdown_runway(
         .runway_nav_geometry
         .as_ref()
         .and_then(|geom| tch_actual_from_buffer(geom, &stats.snapshot_buffer));
+
+    // ⚠ GANZ zum Schluss. `drittel_nachfuehren` liest den Bahntreffer,
+    // der weiter oben erst entsteht — davor gerufen setzt es das Feld
+    // aus der VORIGEN Bahn oder loescht es.
+    drittel_nachfuehren(stats);
+    // Den Status festhalten, solange die Auskunft noch da ist (N26).
+    if stats.szenerie_auskunft.is_some() {
+        stats.szenerie_status_fest = Some(szenerie_status(stats));
+    }
 }
 
 /// v0.8.0 F5 (Threshold-Crossing-Height Actual): scan the buffer
@@ -28972,12 +30108,138 @@ fn finalize_runway_correlation(
 /// upgraded and returns them verbatim. Caller must hold the `stats` mutex
 /// mutably.
 fn apply_finalized_runway_correlation(flight: &ActiveFlight, stats: &mut FlightStats) {
+    bahn_upgrade_anwenden(flight, stats);
+}
+
+/// Dasselbe — und sagt, OB sich dabei etwas an der Bahn geaendert hat.
+///
+/// # Warum das noetig wurde
+///
+/// Diese Funktion ersetzt beim Einreichen dieselben Bahnfelder wie das
+/// Nachholen: Ist die Navdaten-Abfrage eines Ausweichplatzes inzwischen
+/// zurueckgekommen, wird die vorlaeufige OurAirports-Geometrie durch die
+/// von Navigraph ersetzt.
+///
+/// Bis dahin lief das an allem vorbei, was diese Version aufgebaut hat:
+/// keine neue Revision, kein nachgefuehrtes Drittel, kein Nachtrag zum
+/// Recorder. Der Recorder uebernimmt vom PIREP laut Vertrag nur Punkte
+/// und Noten — die Touchdown-Zeile waere auf der alten Geometrie
+/// stehengeblieben, obwohl der Client die bessere schon hatte.
+///
+/// ⚠ Die Erkennung vergleicht die WIRE-GRUPPE, nicht einzelne Felder.
+/// Genau sie geht an den Recorder; aendert sie sich nicht, gibt es
+/// nichts zu melden. Das haelt auch den bestehenden Vertrag ein, dass
+/// ein Aufruf ohne neue Navdaten ein bitgleiches Nichts ist — ohne ihn
+/// wuerde jede Einreichung die Revision hochzaehlen und einen leeren
+/// Nachtrag ausloesen.
+fn bahn_upgrade_anwenden(flight: &ActiveFlight, stats: &mut FlightStats) -> bool {
+    // `Debug` statt `serde_json`. Der QS-Befund N8 (02.09.2026)
+    // vermutete, JSON scheitere an NaN und verdecke damit Aenderungen —
+    // nachgemessen: `to_value(NaN)` liefert `null`, kein Fehler, die
+    // Erkennung war nie betroffen. `Debug` bleibt trotzdem: Es braucht
+    // keine Serialisierung fuer einen Vergleich, und NaN bleibt als
+    // Wert sichtbar statt zu `null` zu werden.
+    // ⚠ Drittel und Aufsetzdistanz gehoeren zum Vergleich — sie stehen
+    // nicht in der Herkunftsgruppe (Spalten, kein JSON), aendern sich
+    // aber mit der Bahn. Ohne sie blieb ein wiederhergestelltes Drittel
+    // unerkannt: kein Nachtrag, Spalte fuer immer leer (Runde 3, P1).
+    // Der ganze Bahntreffer gehoert zum Vergleich: `bahn_felder()` liest
+    // Breite und Belag daraus, die in der Herkunftsgruppe nicht stehen.
+    // Ein Upgrade, das nur die Breite aendert, blieb sonst ohne Nachtrag
+    // (Runde 4, N17).
+    let vorher = format!(
+        "{:?}|{:?}|{:?}|{:?}",
+        bahn_herkunft(stats),
+        stats.landing_touchdown_zone,
+        stats.landing_float_distance_m,
+        stats.runway_match
+    );
+    let alte_achse = alte_achse_von(stats);
     let finalized = finalize_runway_correlation(flight, stats);
     stats.runway_match = finalized.runway_match;
     stats.runway_source = finalized.runway_source;
     stats.runway_nav_cycle = finalized.runway_nav_cycle;
     stats.runway_nav_geometry = finalized.runway_nav_geometry;
     stats.runway_tch_actual_ft = finalized.runway_tch_actual_ft;
+    // Die Spur folgt der Bahn — hier genauso wie beim Nachholen.
+    spur_auf_neue_achse(stats, alte_achse.as_ref());
+    // Das Drittel haengt an der Bahn — hier genauso wie beim Nachholen.
+    drittel_nachfuehren(stats);
+    let nachher = format!(
+        "{:?}|{:?}|{:?}|{:?}",
+        bahn_herkunft(stats),
+        stats.landing_touchdown_zone,
+        stats.landing_float_distance_m,
+        stats.runway_match
+    );
+    if vorher == nachher {
+        return false;
+    }
+    stats.bahn_revision = stats.bahn_revision.saturating_add(1);
+    stats.bahn_nachtrag_offen = true;
+    true
+}
+
+/// Baut den Nachtrag aus dem AKTUELLEN Stand — oder nichts.
+///
+/// Dieselbe Zusammenstellung wie im Streamer; ohne Aufsetzzeitpunkt gibt
+/// es keine Zeile, die er adressieren koennte.
+/// Die Aufsetzzeit, die JEDES Ereignis dieser Landung adressiert.
+///
+/// `touchdown_complete` nimmt `sampler_touchdown_at.or(landing_at)` — der
+/// Abtaster setzt seine Zeit im selben Tick, in dem das Aufsetzen
+/// bestaetigt wird, `landing_at` kommt bei Busch-/VFR-Landungen erst mit
+/// dem `Arrived`-Rueckfall Minuten spaeter oder beim manuellen Einreichen
+/// gar nicht. Ein Nachtrag, der nur `landing_at` nimmt, adressiert dann
+/// eine Zeile, die es nicht gibt, oder unterbleibt (Codex, 03.09.2026).
+fn aufsetzzeit(stats: &FlightStats) -> Option<DateTime<Utc>> {
+    stats.sampler_touchdown_at.or(stats.landing_at)
+}
+
+/// Der Spur-Block fuer die Leitung — oder nichts.
+///
+/// EINE Entscheidung fuer Streamer und Einreich-Nachtrag: Der Block geht
+/// nur mit, wenn die Spur vollstaendig ist UND noch gegen die aktuelle
+/// Bahn projiziert. Sonst fehlt er ganz — nicht `null`, das loescht beim
+/// Recorder, und `rollout_final: false` draengt eine endgueltige Zeile
+/// zurueck (Runde 4, N13; Runde 5, N24).
+fn spur_block(flight: &ActiveFlight, stats: &FlightStats) -> Option<aeroacars_mqtt::BahnWire> {
+    let spur_fertig =
+        stats.rollout_finalized && !stats.bahn_spur_laeuft && !stats.bahn_spur.is_empty();
+    if !spur_fertig || stats.bahn_spur_bezug_veraltet {
+        return None;
+    }
+    Some(
+        bahn_felder(
+            stats,
+            stats
+                .aufgeloestes_muster
+                .as_deref()
+                .or(Some(flight.aircraft_icao.as_str()))
+                .filter(|s| !s.is_empty()),
+            None,
+        )
+        .wire(true),
+    )
+}
+
+fn bahn_nachtrag_bauen(
+    flight: &ActiveFlight,
+    stats: &FlightStats,
+) -> Option<aeroacars_mqtt::TouchdownRolloutFinalizedPayload> {
+    let touchdown_at = aufsetzzeit(stats)?.timestamp_millis();
+    Some(aeroacars_mqtt::TouchdownRolloutFinalizedPayload {
+        ts: Utc::now().timestamp_millis(),
+        pirep_id: flight.pirep_id.clone(),
+        touchdown_at,
+        rollout_distance_m: stats.rollout_distance_m.unwrap_or(0.0),
+        finalize_reason: stats.rollout_finalize_reason.clone(),
+        bahn: spur_block(flight, stats),
+        landing_touchdown_zone: zone_fuer_leitung(flight, stats),
+        runway_geometry_trusted: Some(bahnvertrauen(flight, stats).0),
+        runway_geometry_reason: bahnvertrauen(flight, stats).1.map(|r| r.to_string()),
+        herkunft: bahn_herkunft(stats),
+    })
 }
 
 /// v0.15.24: Landing-weight stamp — extracted verbatim from the tail of the
@@ -29668,23 +30930,7 @@ fn clear_approach_stability_and_rollout(stats: &mut FlightStats) {
     //
     // In der Anzeige wäre das nicht als Fehler erkennbar gewesen, sondern
     // als eine Landung, bei der das Flugzeug zweimal über die Bahn lief.
-    stats.bahn_max_querversatz_m = None;
-    stats.bahn_overrun_m = None;
-    stats.bahn_proben = 0;
-    stats.bahn_fenster_zu = false;
-    // Auch das Fensterende — `get_or_insert` weiter unten schreibt nur,
-    // wenn hier None steht. Bliebe der alte Wert stehen, bekaeme die
-    // zweite Landung die Messgrenze der ersten, und die Anzeige zeichnete
-    // sie an einer Stelle, an der dieses Flugzeug nie gemessen hat.
-    stats.bahn_fenster_zu_laengs_m = None;
-    stats.bahn_spur.clear();
-    stats.bahn_spur_laeuft = false;
-    stats.bahn_raeum_laengs_m = None;
-    stats.bahn_raeum_gs_kt = None;
-    stats.bahn_raeum_seite = None;
-    stats.bahn_kante_laengs_m = None;
-    stats.bahn_kante_gs_kt = None;
-    stats.bahn_raeum_kurs_diff = None;
+    spur_verwerfen(stats);
     // `arr_ground_geojson` bleibt: Die Bodenkarte gehört zum Flughafen,
     // nicht zur Landung. Sie erneut zu holen wäre eine Netzanfrage im
     // ungünstigsten Moment — kurz nach einem Durchstarten.
@@ -31399,28 +32645,26 @@ fn step_flight_at(
                 // "Float" interpretieren (= Distanz die der Pilot nach
                 // Threshold floated bevor er aufgesetzt hat). Pre-
                 // Threshold-Approach-Pfad ist hier nicht relevant.
-                if let Some((past_threshold_m, total_m)) = stats.runway_match.as_ref().map(|rw| {
-                    let past = rw.touchdown_distance_from_threshold_ft as f32 * 0.3048;
-                    let total = rw.length_ft * 0.3048;
-                    (past, total)
-                }) {
-                    stats.landing_float_distance_m = Some(past_threshold_m);
-
-                    // Touchdown-Zone-Klassifikation (FAA-Standard:
-                    // Zone 1 = erstes Drittel, Zone 2 = zweites,
-                    // Zone 3 = drittes Drittel der Bahn)
-                    if total_m > 0.0 {
-                        let third = total_m / 3.0;
-                        let zone = if past_threshold_m <= third {
-                            1
-                        } else if past_threshold_m <= 2.0 * third {
-                            2
-                        } else {
-                            3
-                        };
-                        stats.landing_touchdown_zone = Some(zone);
-                    }
-                }
+                // `landing_float_distance_m` setzt seit Runde 3
+                // `drittel_nachfuehren` — an jeder Zuordnung, nicht nur hier.
+                // ⚠ Das Drittel wird hier NICHT mehr gerechnet.
+                //
+                // Bis v1.7.14 stand es zweimal im Haus: einmal roh aus
+                // Bahnlaenge und Aufsetzdistanz (hier), einmal als
+                // `td_third` aus `assess_touchdown`, das die versetzte
+                // Schwelle beruecksichtigt. Zwei Zahlen fuer dieselbe
+                // Aussage — und zwei Webapp-Karten, die die aeltere
+                // lesen.
+                //
+                // Sobald eine spaet eingetroffene Szenerie die Bahnlaenge
+                // aendert, korrigierte die Nachholung nur `td_third`.
+                // Dann zeigten beide Karten verschiedene Drittel
+                // derselben Landung an, ohne dass eine davon falsch
+                // aussah.
+                //
+                // Jetzt folgt das alte Feld dem neuen: `korreliere_bahn`
+                // setzt beide aus derselben Rechnung. Siehe
+                // `drittel_nachfuehren`.
 
                 // Vref-Deviation: PMDG-FMC-Vref → ICAO-Default-Fallback
                 let vref_kt = stats.pmdg_vref_at_landing.map(|v| v as f32);
@@ -44397,6 +45641,304 @@ mod sim_pause_tests {
         assert_eq!(decoded.pause_segments[0].reason, PauseReason::ManualResume);
     }
 
+    /// ⚠ Der Neustart darf die Kette nicht unterbrechen.
+    ///
+    /// Zwei Felder haengen daran, und beide fehlten zuerst:
+    ///
+    /// * `bahn_revision` — geht auf die Leitung und entscheidet beim
+    ///   Recorder, welcher Nachtrag gewinnt. Ohne Persistenz faengt sie
+    ///   nach dem Neustart wieder bei null an: Der Recorder hat Revision
+    ///   7 gespeichert, bekommt die tatsaechlich neuere Zuordnung als 1
+    ///   und weist sie ab. Die Korrektur ist dann fuer immer verloren,
+    ///   und nirgends wird etwas rot.
+    /// * `aufsetz_simulator` — ohne ihn kehrt
+    ///   `bahn_am_aufsetzpunkt_nachholen` nach dem Resume sofort zurueck,
+    ///   und die spaet eingetroffene Szenerie erreicht den Flug nie.
+    #[test]
+    fn revision_und_aufsetz_simulator_ueberleben_den_neustart() {
+        let mut stats = FlightStats::default();
+        stats.bahn_revision = 7;
+        stats.aufsetz_simulator = Some(sim_core::Simulator::Msfs2024);
+
+        let json =
+            serde_json::to_string(&PersistedFlightStats::snapshot_from(&stats)).expect("serialize");
+        let decoded: PersistedFlightStats = serde_json::from_str(&json).expect("deserialize");
+        let mut nachher = FlightStats::default();
+        decoded.apply_to(&mut nachher);
+
+        assert_eq!(
+            nachher.bahn_revision, 7,
+            "die Revision faellt beim Neustart auf null zurueck — der \
+             Recorder weist die naechste Korrektur dann als veraltet ab"
+        );
+        assert_eq!(
+            nachher.aufsetz_simulator,
+            Some(sim_core::Simulator::Msfs2024),
+            "der Aufsetz-Simulator ueberlebt den Neustart nicht — das \
+             Nachholen faellt danach vollstaendig aus"
+        );
+    }
+
+    /// Und ein Stand von VOR dieser Version laedt weiterhin.
+    #[test]
+    fn ein_alter_stand_ohne_die_beiden_felder_laedt_weiter() {
+        let alt = r#"{"distance_nm": 3.0}"#;
+        let decoded: PersistedFlightStats = serde_json::from_str(alt).expect("legacy json");
+        assert_eq!(decoded.bahn_revision, 0);
+        assert!(decoded.aufsetz_simulator.is_none());
+    }
+
+    /// ⚠ Eine v1.7.14-Flugdatei behaelt ihren Simulator.
+    ///
+    /// Sie kennt `aufsetz_simulator` nicht, fuehrt aber
+    /// `landing_simulator`. Ohne den Rueckfall faellt das Nachholen bei
+    /// genau den Fluegen aus, die auf v1.7.15 fortgesetzt werden — also
+    /// bei den ersten, die die neue Mechanik ueberhaupt sehen.
+    #[test]
+    fn eine_alte_flugdatei_leitet_den_aufsetz_simulator_ab() {
+        for (gespeichert, erwartet) in [
+            ("msfs", Some(sim_core::Simulator::Msfs2024)),
+            ("xplane", Some(sim_core::Simulator::XPlane12)),
+            ("other", None),
+        ] {
+            let alt = format!(r#"{{"landing_simulator": "{gespeichert}"}}"#);
+            let decoded: PersistedFlightStats = serde_json::from_str(&alt).expect("legacy json");
+            let mut stats = FlightStats::default();
+            decoded.apply_to(&mut stats);
+            assert_eq!(
+                stats.aufsetz_simulator, erwartet,
+                "`{gespeichert}` wird nicht abgeleitet — der fortgesetzte \
+                 Flug kann dann nicht mehr nachholen"
+            );
+        }
+    }
+
+    /// ⚠ Ausrollen, Spur und Fahne ueberleben den Neustart (N6/N7).
+    ///
+    /// Ohne sie baute der Einreich-Nachtrag nach einem Neustart mit
+    /// leerer Spur `rollout_final: false` und drehte eine endgueltige
+    /// Zeile zurueck; die Fahne einer offenen Korrektur war weg.
+    #[test]
+    fn ausrollen_spur_und_fahne_ueberleben_den_neustart() {
+        let mut stats = FlightStats::default();
+        stats.rollout_finalized = true;
+        stats.bahn_spur = vec![(0.0, 1.0), (500.0, -2.0)];
+        stats.bahn_spur_laeuft = false;
+        let bis = chrono::DateTime::<Utc>::from_timestamp(1_755_000_000, 0).expect("Zeit");
+        stats.bahn_spur_bis = Some(bis);
+        stats.bahn_nachtrag_offen = true;
+        let json =
+            serde_json::to_string(&PersistedFlightStats::snapshot_from(&stats)).expect("serialize");
+        let decoded: PersistedFlightStats = serde_json::from_str(&json).expect("deserialize");
+        let mut nachher = FlightStats::default();
+        decoded.apply_to(&mut nachher);
+        assert!(nachher.rollout_finalized, "Ausrollen vergessen");
+        assert_eq!(
+            nachher.bahn_spur,
+            vec![(0.0, 1.0), (500.0, -2.0)],
+            "Spur vergessen"
+        );
+        assert!(!nachher.bahn_spur_laeuft);
+        assert_eq!(nachher.bahn_spur_bis, Some(bis));
+        assert!(nachher.bahn_nachtrag_offen, "Fahne vergessen");
+    }
+
+    /// ⚠ Der Szenerie-Status kippt nach dem Neustart nicht auf eine vagere
+    /// Aussage (Runde 5, N26).
+    #[test]
+    fn der_szenerie_status_ueberlebt_den_verlust_der_auskunft() {
+        let mut stats = FlightStats::default();
+        stats.szenerie_uebernahme = Some(szenerie_bahn::UebernahmeBericht {
+            ohne_treffer: vec!["26R".to_string()],
+            ..Default::default()
+        });
+        let bahn = sim_core::szenerie::SzenerieBahn {
+            bezeichner: "26R".to_string(),
+            kurs_grad: 265.7,
+            breite_m: 45.0,
+            laenge_m: 3600.0,
+            versetzte_schwelle_m: 0.0,
+            schwelle: (51.4336, 12.2674),
+            gegenende: (51.4312, 12.2158),
+            belag_code: 1,
+        };
+        stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+            icao: "EDDP".to_string(),
+            bahnen: vec![bahn.clone(), bahn],
+            ..Default::default()
+        });
+        let genau = szenerie_status(&stats);
+        assert!(genau.starts_with("kein_treffer(bahnen=2"), "{genau}");
+        stats.szenerie_status_fest = Some(genau.clone());
+        // Neustart: die Auskunft ist weg.
+        stats.szenerie_auskunft = None;
+        assert_eq!(
+            szenerie_status(&stats),
+            genau,
+            "ohne Auskunft kippt der Status auf eine vagere Aussage und \
+             ueberschreibt die genauere beim Recorder"
+        );
+    }
+
+    /// ⚠ Der feste Status faellt mit der Auskunft, die er beschreibt
+    /// (Runde 6, Befund 5) — aber NICHT nach einem Neustart.
+    #[test]
+    fn der_feste_status_faellt_mit_der_auskunft_nicht_mit_dem_neustart() {
+        let mut stats = FlightStats::default();
+        stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+            icao: "EDDP".to_string(),
+            ..Default::default()
+        });
+        stats.szenerie_status_fest =
+            Some("kein_treffer(bahnen=2, ohne_treffer=1, verworfen=1)".to_string());
+        let leer = || sim_core::szenerie::Schnappschuss {
+            generation: 0,
+            auskunft: None,
+            diagnose: "keine_antwort".to_string(),
+            kennung: None,
+        };
+        // Ausweichen: das Ernteziel ist jetzt EDDC, die Auskunft ist fremd.
+        schnappschuss_uebernehmen(&mut stats, Some("EDDC"), leer());
+        assert!(
+            stats.szenerie_auskunft.is_none(),
+            "Vorrichtung: Auskunft verworfen"
+        );
+        assert!(
+            stats.szenerie_status_fest.is_none(),
+            "der Status des vorigen Platzes klebt am neuen — auf der Leitung \
+             stuende eine erfundene Auskunft"
+        );
+        // Neustart: keine Auskunft, aber ein fester Status — der bleibt.
+        //
+        // ⚠ Runde 7 (N1): Mit `generation: 0` lief hier KEIN Zweig —
+        // `flugkopie_entwerten(0, 0)` ist false, `fremd` bei `(None, _)`
+        // auch. Der Riegel `if szenerie_auskunft.is_some()` war damit
+        // ungedeckt. Nach einem echten Neustart steht die Generation im
+        // Buch ueber 0, die persistierte bei 0 — genau das hier.
+        stats.szenerie_status_fest = Some("uebernommen".to_string());
+        assert_eq!(
+            stats.szenerie_auskunft_generation, 0,
+            "Vorrichtung: frisch geladen"
+        );
+        let mut neustart = leer();
+        neustart.generation = 1;
+        schnappschuss_uebernehmen(&mut stats, Some("EDDC"), neustart);
+        assert_eq!(
+            stats.szenerie_auskunft_generation, 1,
+            "der Generationszweig lief nicht"
+        );
+        assert_eq!(
+            stats.szenerie_status_fest.as_deref(),
+            Some("uebernommen"),
+            "der Generationswechsel nach dem Neustart wischt den festen Status weg — \
+             dann ist N26 wieder offen"
+        );
+    }
+
+    /// ⚠ Auch die MARKEN ueberleben den Neustart — nicht nur die Spur.
+    ///
+    /// Nach dem Neustart sendete der Streamer den Nachtrag erneut, mit
+    /// Spur, aber ohne Marken: Die gingen als `null` hinaus und loeschten
+    /// beim Recorder gute Werte (externe QS, Runde 3, P1). Und die Sperre
+    /// wird aus dem Flug geseedet, damit er ueberhaupt nicht blind sendet.
+    #[test]
+    fn die_marken_und_der_letzte_nachtrag_ueberleben_den_neustart() {
+        let mut stats = FlightStats::default();
+        stats.bahn_max_querversatz_m = Some(4.5);
+        stats.bahn_overrun_m = Some(12.0);
+        stats.bahn_proben = 77;
+        stats.bahn_fenster_zu = true;
+        stats.bahn_fenster_zu_laengs_m = Some(1400.0);
+        stats.bahn_raeum_laengs_m = Some(1500.0);
+        stats.bahn_raeum_gs_kt = Some(38.0);
+        stats.bahn_raeum_seite = Some("right".to_string());
+        stats.bahn_kante_laengs_m = Some(1550.0);
+        stats.bahn_kante_gs_kt = Some(30.0);
+        stats.bahn_raeum_kurs_diff = Some(12.5);
+        stats.rollout_finalize_reason = Some("exit_speed".to_string());
+        stats.landing_touchdown_zone = Some(2);
+        stats.landing_float_distance_m = Some(310.0);
+        stats.letzter_nachtrag = Some((1_755_000_000_000, 3));
+        stats.szenerie_uebernahme = Some(szenerie_bahn::UebernahmeBericht {
+            uebernommen: vec!["26R".to_string()],
+            groesste_schwellenabweichung_m: 350.5,
+            ..Default::default()
+        });
+        stats.sim_kennung = Some("MSFS 2024".to_string());
+        stats.runway_tch_actual_ft = Some(48.2);
+        stats.fahrwerk_spurweite_m = Some(7.59);
+        stats.bahn_spur_bezug_veraltet = true;
+        stats.szenerie_status_fest =
+            Some("kein_treffer(bahnen=40, ohne_treffer=1, verworfen=39)".to_string());
+        stats.aufgeloestes_muster = Some("A20N".to_string());
+        let json =
+            serde_json::to_string(&PersistedFlightStats::snapshot_from(&stats)).expect("serialize");
+        let decoded: PersistedFlightStats = serde_json::from_str(&json).expect("deserialize");
+        let mut n = FlightStats::default();
+        decoded.apply_to(&mut n);
+        assert_eq!(n.bahn_max_querversatz_m, Some(4.5));
+        assert_eq!(n.bahn_overrun_m, Some(12.0));
+        assert_eq!(n.bahn_proben, 77);
+        assert!(n.bahn_fenster_zu);
+        assert_eq!(n.bahn_fenster_zu_laengs_m, Some(1400.0));
+        assert_eq!(n.bahn_raeum_laengs_m, Some(1500.0));
+        assert_eq!(n.bahn_raeum_gs_kt, Some(38.0));
+        assert_eq!(n.bahn_raeum_seite.as_deref(), Some("right"));
+        assert_eq!(n.bahn_kante_laengs_m, Some(1550.0));
+        assert_eq!(n.bahn_kante_gs_kt, Some(30.0));
+        assert_eq!(n.bahn_raeum_kurs_diff, Some(12.5));
+        assert_eq!(n.rollout_finalize_reason.as_deref(), Some("exit_speed"));
+        assert_eq!(
+            n.landing_touchdown_zone,
+            Some(2),
+            "das Drittel vergessen — die Spalte wird geleert"
+        );
+        assert_eq!(n.landing_float_distance_m, Some(310.0));
+        assert_eq!(
+            n.letzter_nachtrag,
+            Some((1_755_000_000_000, 3)),
+            "die Sperre startet bei None — blindes Senden"
+        );
+        assert_eq!(
+            n.szenerie_uebernahme.as_ref().map(|b| b.uebernommen.len()),
+            Some(1),
+            "der Szenerie-Bericht vergessen — die Herkunft kippt auf „navdaten\""
+        );
+        assert_eq!(n.sim_kennung.as_deref(), Some("MSFS 2024"));
+        assert_eq!(n.runway_tch_actual_ft, Some(48.2));
+        assert_eq!(n.fahrwerk_spurweite_m, Some(7.59));
+        assert!(
+            n.bahn_spur_bezug_veraltet,
+            "veraltete Spur wird nach Neustart wieder gesendet"
+        );
+        assert_eq!(
+            n.szenerie_status_fest.as_deref(),
+            Some("kein_treffer(bahnen=40, ohne_treffer=1, verworfen=39)")
+        );
+        assert_eq!(
+            n.aufgeloestes_muster.as_deref(),
+            Some("A20N"),
+            "wingspan faellt aufs gebuchte Muster"
+        );
+    }
+
+    /// Und der gespeicherte Wert schlaegt die Ableitung.
+    #[test]
+    fn der_gespeicherte_aufsetz_simulator_schlaegt_die_ableitung() {
+        let mut stats = FlightStats::default();
+        stats.landing_simulator = Some("xplane");
+        stats.aufsetz_simulator = Some(sim_core::Simulator::Msfs2020);
+        let json =
+            serde_json::to_string(&PersistedFlightStats::snapshot_from(&stats)).expect("ser");
+        let decoded: PersistedFlightStats = serde_json::from_str(&json).expect("de");
+        let mut nachher = FlightStats::default();
+        decoded.apply_to(&mut nachher);
+        assert_eq!(
+            nachher.aufsetz_simulator,
+            Some(sim_core::Simulator::Msfs2020)
+        );
+    }
+
     // ─── v0.7.15 F5/F6: SimPause-Reason serde + State-Persistenz ───
 
     #[test]
@@ -46500,6 +48042,11 @@ mod touchdown_metadata_stamp_tests {
     const EDDP_26R_THR_LAT: f64 = 51.433_601_379_392_15;
     const EDDP_26R_THR_LON: f64 = 12.267_399_787_902_832;
     const EDDP_26R_HEADING: f32 = 265.7;
+    // 08L end from the bundled CSV (le="08L" 51.43119812, 12.21580028) —
+    // das Gegenende der 26R. Auf Modulebene, weil Nav-Vorrichtung UND
+    // Szenerie-Vorrichtung dieselbe Achse brauchen (`eddp_szenerie`).
+    const EDDP_08L_THR_LAT: f64 = 51.431_198_120_117_19;
+    const EDDP_08L_THR_LON: f64 = 12.215_800_285_339_355;
 
     #[test]
     fn correlate_resolves_runway_via_ourairports_fallback() {
@@ -46528,59 +48075,1099 @@ mod touchdown_metadata_stamp_tests {
         assert!(stats.runway_tch_actual_ft.is_none());
     }
 
-    /// ⚠ **Der Befund vom 01.09.2026 (YSBK), als Test.**
+    /// ⚠ **Der Befund vom 01.09.2026 (YSBK), als Test — ueber die ECHTE
+    /// Kette.**
     ///
-    /// Die Szenerie traf NACH dem Aufsetzen ein. Der Vergleich muss dann
-    /// nachgeholt werden koennen — und dabei mit dem AUFSETZPUNKT rechnen,
-    /// nicht mit der Rollposition.
+    /// Der erste Entwurf dieses Tests rief nur zweimal
+    /// `correlate_touchdown_runway` auf: keine Szenerieauskunft, kein
+    /// Aufruf von `bahn_am_aufsetzpunkt_nachholen`, kein geprueftfer
+    /// Uebernahmebericht. Der ganze Produktionsblock haette entfernt
+    /// werden koennen, ohne dass er rot wird (QS-Befund 4, erste Runde
+    /// v1.7.15).
     ///
-    /// Der zweite Aufruf bekommt genau das, was das Nachholen im Tick
-    /// liefert: einen Rollout-Snapshot (hier rund 50 km neben der Bahn)
-    /// und `None` als Aufsetzprobe. Ohne die gespeicherten Aufsetzwerte
-    /// findet er keine Bahn mehr.
+    /// Jetzt faehrt er die Funktion, die auch die Produktion ruft:
+    /// Aufsetzen ohne Szenerie → Auskunft trifft ein → nachholen →
+    /// Bericht.
     #[test]
-    fn die_bahnaufloesung_ist_nachholbar_und_rechnet_mit_dem_aufsetzpunkt() {
+    fn die_spaete_szenerie_erzeugt_beim_nachholen_einen_bericht() {
         let flight = flight_fixture("EDDP");
-        let mut stats = FlightStats::default();
-        let mut td = buf_sample(td_at(), true);
-        td.lat = EDDP_26R_THR_LAT;
-        td.lon = EDDP_26R_THR_LON;
-        td.heading_true_deg = EDDP_26R_HEADING;
-        stats.snapshot_buffer.push_back(td);
-        let snap = rollout_snap();
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture());
+        flight.navdata.lock().unwrap().cycle = Some("2604".to_string());
 
-        // Aufsetzen: erst stempeln, dann zuordnen — wie an beiden
-        // Aufrufstellen.
+        let (mut stats, mut snap) = eddp_26r_touchdown_stats();
+        // ⚠ Der Schnappschuss der Vorrichtung meldet `Other`. Solange der
+        // Simulator als Parameter hereinkam, liess sich das ueberdecken —
+        // der Test reichte `Msfs2024` durch, waehrend das Aufsetzen mit
+        // `Other` rechnete. Jetzt stammt beides aus derselben Quelle, und
+        // die Vorrichtung muss sagen, was sie meint.
+        snap.simulator = sim_core::Simulator::Msfs2024;
         let td_buf = touchdown_buffer_sample(&stats);
         stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
         correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
-        let erste = stats
-            .runway_match
-            .as_ref()
-            .expect("Bahn beim Aufsetzen")
-            .clone();
-        assert_eq!(erste.runway_ident, "26R");
 
-        // ⚠ Die Rollposition liegt WEIT weg — sonst prueft der Test nichts.
+        // Aufsetzen ohne Szenerie: Bahn da, aber KEIN Uebernahmebericht.
+        assert!(stats.runway_match.is_some(), "Bahn beim Aufsetzen");
         assert!(
-            (snap.lat - EDDP_26R_THR_LAT).abs() > 0.4,
-            "Rollposition und Aufsetzpunkt liegen zu dicht beieinander — \
-             dann haelt dieser Test die entscheidende Achse konstant"
+            stats.szenerie_uebernahme.is_none(),
+            "ohne Auskunft darf es keinen Bericht geben"
+        );
+        assert_eq!(stats.korrelierter_szenerie_stand, 0);
+
+        // ⚠ Jetzt trifft die Szenerie ein — so wie bei YSBK, nach dem
+        // Aufsetzen.
+        //
+        // ⚠ Sie muss sich von den Navdaten UNTERSCHEIDEN. Die erste
+        // Fassung dieses Tests nahm dieselben Werte — dann wird nichts
+        // uebernommen, der Bericht ist leer, und `is_some()` war trotzdem
+        // gruen: Der Test bewies nur, dass verglichen wurde, nicht dass
+        // die Szenerie zaehlt (externe QS, 02.09.2026, P2-J).
+        stats.szenerie_auskunft = Some(eddp_szenerie(350.0));
+        stats.szenerie_auskunft_stand = 5;
+
+        // ⚠ MSFS — sonst greift der X-Plane-Zweig und liest von der
+        // Platte statt aus der Auskunft. Der Simulator kommt NICHT mehr
+        // als Parameter herein: er stammt aus dem Aufsetz-Moment, den
+        // `correlate_touchdown_runway` oben festgehalten hat.
+        assert_eq!(
+            stats.aufsetz_simulator,
+            Some(sim_core::Simulator::Msfs2024),
+            "der Aufsetz-Simulator wurde beim Aufsetzen nicht festgehalten \
+             — dann rechnet das Nachholen im falschen Zweig"
         );
 
-        // Nachholen: derselbe Aufruf wie im Tick — Rollout-Snapshot, KEINE
-        // Aufsetzprobe.
-        correlate_touchdown_runway(&mut stats, &snap, &flight, None);
+        // Nachholen — genau der Aufruf, den der Tick macht.
+        let gelaufen = bahn_am_aufsetzpunkt_nachholen(&mut stats, &flight);
 
-        let zweite = stats.runway_match.as_ref().expect(
-            "nach dem Nachholen ist die Bahn verschwunden — die Funktion \
-             rechnet mit der Rollposition statt mit dem Aufsetzpunkt",
+        assert!(gelaufen, "die spaete Szenerie wird nicht nachgeholt");
+        // ⚠ Nicht `is_some()`: Ein LEERER Bericht ist auch `Some` — und
+        // genau der Zustand, in dem die Herkunft weiter „navdaten" sagt.
+        assert_eq!(
+            bahn_herkunft(&stats).bahn_geometrie_quelle.as_deref(),
+            Some("szenerie"),
+            "nach dem Nachholen ist die Szenerie nicht uebernommen — genau das \
+             stand bei YSBK am Flug"
         );
         assert_eq!(
-            zweite.runway_ident, erste.runway_ident,
-            "das Nachholen findet eine ANDERE Bahn"
+            stats.korrelierter_szenerie_stand, 5,
+            "der Stand wird nicht mitgeschrieben — dann laeuft es bei \
+             JEDEM Durchlauf erneut"
         );
-        assert_eq!(zweite.airport_ident, erste.airport_ident);
+        // Runde 6, Befund 2: Die Schreibstelle von `szenerie_status_fest`
+        // war von keinem Test gedeckt — wer sie loescht, blieb gruen.
+        assert_eq!(
+            stats.szenerie_status_fest.as_deref(),
+            Some("uebernommen"),
+            "der Szenerie-Status wird bei der Zuordnung nicht festgehalten — nach \
+             einem Neustart kippt er dann auf eine vagere Aussage"
+        );
+        // Und die Bahn ist dieselbe geblieben.
+        assert_eq!(
+            stats.runway_match.as_ref().map(|m| m.runway_ident.clone()),
+            Some("26R".to_string())
+        );
+
+        // Zweiter Aufruf ohne neue Lieferung: nichts zu tun.
+        assert!(
+            !bahn_am_aufsetzpunkt_nachholen(&mut stats, &flight),
+            "es wird erneut zugeordnet, obwohl die Lieferung dieselbe ist"
+        );
+
+        // ⚠ Eine NEUERE Lieferung wird sehr wohl wieder zugeordnet.
+        stats.szenerie_auskunft_stand = 9;
+        assert!(
+            bahn_am_aufsetzpunkt_nachholen(&mut stats, &flight),
+            "eine neuere Lieferung erreicht die Zuordnung nicht"
+        );
+        assert_eq!(stats.korrelierter_szenerie_stand, 9);
+    }
+
+    /// ⚠ Das alte Drittel folgt der KORRIGIERTEN Rechnung, nicht der rohen.
+    ///
+    /// `landing_touchdown_zone` wurde bis v1.7.14 roh aus Bahnlaenge und
+    /// Aufsetzdistanz gerechnet, `td_third` dagegen in
+    /// `assess_touchdown` — mit Abzug der versetzten Schwelle. Zwei
+    /// Zahlen fuer dieselbe Aussage, und zwei Webapp-Karten, die die
+    /// aeltere lesen.
+    ///
+    /// ⚠ Die Vorrichtung ist so gewaehlt, dass die beiden Rechnungen
+    /// AUSEINANDERGEHEN — sonst zeigte der Test nichts:
+    ///
+    /// * roh: 4984 ft = 1519 m auf 3600 m Bahn, Drittel bei 1200 m → **2**
+    /// * korrigiert: 4984 − 4000 = 984 ft = 300 m auf 2381 m nutzbarer
+    ///   Laenge, Drittel bei 794 m → **1**
+    #[test]
+    fn das_alte_drittel_folgt_der_korrigierten_rechnung() {
+        const FT_PER_M: f64 = 3.280_839_895;
+        let raw_ft = 4000.0 + 300.0 * FT_PER_M;
+
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(eddp_26r_match_with_raw_td_and_displacement(raw_ft, 4000));
+
+        // Die rohe Rechnung von frueher, zum Vergleich nachgestellt.
+        let roh = {
+            let past_m = raw_ft * 0.3048;
+            let total_m = 11_811.0 * 0.3048;
+            let third = total_m / 3.0;
+            if past_m <= third {
+                1u8
+            } else if past_m <= 2.0 * third {
+                2
+            } else {
+                3
+            }
+        };
+        assert_eq!(roh, 2, "die Vorrichtung trennt die beiden Rechnungen nicht");
+
+        drittel_nachfuehren(&mut stats);
+        assert_eq!(
+            stats.landing_touchdown_zone,
+            Some(1),
+            "`landing_touchdown_zone` traegt weiter die rohe Zahl — dann \
+             zeigen zwei Webapp-Karten verschiedene Drittel derselben \
+             Landung"
+        );
+        assert_eq!(
+            stats.landing_touchdown_zone,
+            bahn_herkunft(&stats).td_third,
+            "die beiden Drittel stammen nicht aus derselben Rechnung"
+        );
+    }
+
+    /// Und ohne Bahntreffer wird das Feld GELEERT, nicht stehengelassen.
+    ///
+    /// Ein Drittel ohne Bahn ist eine Behauptung ueber nichts — und beim
+    /// Ausweichen auf einen Platz ohne Bahndaten stuende sonst das
+    /// Drittel des vorigen Anflugs da.
+    #[test]
+    fn ohne_bahntreffer_verschwindet_das_drittel() {
+        let mut stats = FlightStats::default();
+        stats.landing_touchdown_zone = Some(3);
+        drittel_nachfuehren(&mut stats);
+        assert_eq!(stats.landing_touchdown_zone, None);
+    }
+
+    /// ⚠ Auf einem kurzen Platz gibt es weiter ein Drittel.
+    ///
+    /// Die erste Fassung von `drittel_nachfuehren` haengte das Feld an
+    /// `classify_tdz`, und das meldet unter 1200 m `None` — weil es dort
+    /// keine Aufsetzzonen-MARKIERUNG gibt. Das Drittel ist keine
+    /// Markierung. Buschplaetze verloren die Anzeige lautlos, und beide
+    /// Drittel-Tests hielten die Bahnlaenge konstant (externe QS,
+    /// 02.09.2026, P1-A).
+    #[test]
+    fn auf_einem_kurzen_platz_bleibt_das_drittel() {
+        const FT_PER_M: f64 = 3.280_839_895;
+        let mut stats = FlightStats::default();
+        // 900 m Bahn, Aufsetzen 100 m hinter der Schwelle.
+        let mut rm = eddp_26r_match_with_raw_td(100.0 * FT_PER_M);
+        rm.length_ft = (900.0 * FT_PER_M) as f32;
+        stats.runway_match = Some(rm);
+
+        // Die Markierung gibt es hier zu Recht nicht …
+        assert!(
+            assess_touchdown(&stats).tdz.is_none(),
+            "die Vorrichtung liegt nicht unter der 1200-m-Grenze — dann \
+             prueft dieser Test nichts"
+        );
+        // … das Drittel aber schon.
+        drittel_nachfuehren(&mut stats);
+        assert_eq!(
+            stats.landing_touchdown_zone,
+            Some(1),
+            "auf dem kurzen Platz verschwindet das Drittel — die \
+             Aufsetzzonen-Anzeige faellt dann auf jedem Buschplatz weg"
+        );
+        // Zweites Drittel, damit die Rechnung selbst geprueft ist.
+        let mut rm = eddp_26r_match_with_raw_td(400.0 * FT_PER_M);
+        rm.length_ft = (900.0 * FT_PER_M) as f32;
+        stats.runway_match = Some(rm);
+        drittel_nachfuehren(&mut stats);
+        assert_eq!(stats.landing_touchdown_zone, Some(2));
+    }
+
+    /// Eine Spur, die schon Punkte hat, gegen eine bekannte Achse.
+    fn stats_mit_spur(rm: runway::RunwayMatch) -> FlightStats {
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(rm);
+        stats.bahn_spur = vec![(0.0, 1.0), (500.0, -2.0), (1200.0, 3.0)];
+        stats.bahn_raeum_laengs_m = Some(1500.0);
+        stats.bahn_kante_laengs_m = Some(1550.0);
+        stats.bahn_fenster_zu_laengs_m = Some(1400.0);
+        stats.bahn_max_querversatz_m = Some(3.0);
+        stats.bahn_spur_bis = Some(td_at());
+        stats
+    }
+
+    /// Dieselbe Bahn, Schwelle um `meter` in Landerichtung verschoben.
+    fn schwelle_verschoben(rm: &runway::RunwayMatch, meter: f64) -> runway::RunwayMatch {
+        let laenge_m = rm.length_ft as f64 / 3.280_839_895;
+        let f = meter / laenge_m;
+        let mut neu = rm.clone();
+        neu.threshold_lat = rm.threshold_lat + (rm.end_lat - rm.threshold_lat) * f;
+        neu.threshold_lon = rm.threshold_lon + (rm.end_lon - rm.threshold_lon) * f;
+        neu
+    }
+
+    /// ⚠ Nach dem Nachholen liegt die ganze Spur in EINEM Bezugssystem.
+    ///
+    /// Die Spur speichert Projektionen gegen die Bahnachse, nicht
+    /// Koordinaten. Kommt die Szenerie nach dem Aufsetzen mit einer
+    /// versetzten Schwelle, trugen die Punkte davor den alten Nullpunkt
+    /// und die danach den neuen — auf der Leitung stand EIN Versatz. Ein
+    /// Knick mitten in der Spur, der plausibel aussah (externe QS,
+    /// 02.09.2026, P1-C).
+    #[test]
+    fn die_spur_rueckt_mit_der_verschobenen_schwelle() {
+        let alt = eddp_26r_match_with_raw_td(0.0);
+        let mut stats = stats_mit_spur(alt.clone());
+        let neu = schwelle_verschoben(&alt, 350.0);
+        let alte_achse = AlteAchse {
+            t_lat: alt.threshold_lat,
+            t_lon: alt.threshold_lon,
+            e_lat: alt.end_lat,
+            e_lon: alt.end_lon,
+            nutzbare_laenge_m: bahnmasse(&alt).nutzbare_laenge_m,
+        };
+        // Der Versatz, wie die Produktion ihn misst — die lineare
+        // Interpolation der Vorrichtung trifft die 350 m nur ungefaehr
+        // (348,7 m); geprueft wird die EXAKTHEIT der Verschiebung, nicht
+        // die Meterzahl der Vorrichtung.
+        let (versatz, dt_q_rest) = runway::projiziere_auf_bahn(
+            alt.threshold_lat,
+            alt.threshold_lon,
+            alt.end_lat,
+            alt.end_lon,
+            neu.threshold_lat,
+            neu.threshold_lon,
+        );
+        let dt_q_rest = dt_q_rest.abs() as f32;
+        // ⚠ Der Rest muss KLEIN sein — sonst wuerde die Toleranz unten
+        // einen echten Fehler verdecken (Runde 5: „von der Toleranz
+        // erzwungen").
+        assert!(dt_q_rest < 0.3, "Fixture-Rest zu gross: {dt_q_rest} m");
+        assert!(
+            (versatz - 350.0).abs() < 5.0,
+            "die Vorrichtung verschiebt nicht um ~350 m: {versatz}"
+        );
+        stats.runway_match = Some(neu);
+
+        spur_auf_neue_achse(&mut stats, Some(&alte_achse));
+
+        assert_eq!(
+            stats.bahn_spur.len(),
+            3,
+            "die Spur wurde verworfen statt verschoben"
+        );
+        for ((lg, qr), (lg_alt, qr_alt)) in
+            stats
+                .bahn_spur
+                .iter()
+                .zip([(0.0f32, 1.0f32), (500.0, -2.0), (1200.0, 3.0)])
+        {
+            assert!(
+                (*lg as f64 - (lg_alt as f64 - versatz)).abs() < 0.01,
+                "Laengswert nicht exakt verschoben: {lg} statt {}",
+                lg_alt as f64 - versatz
+            );
+            // Die lineare Interpolation der Vorrichtung erzeugt einen
+            // kleinen Querrest gegen die Grosskreis-Projektion; der
+            // affine Ausgleich zieht ihn mit. Fuer die ECHTE Quer-Zusicherung
+            // gibt es `die_spur_rueckt_quer_mit_der_parallel_versetzten_achse`.
+            // Der Rest wird fuer Punkte VOR der neuen Schwelle extrapoliert
+            // (Faktor 1 + dt_l/Spanne, hier ~1,1) — deshalb das Doppelte.
+            assert!(
+                (qr - qr_alt).abs() <= 2.0 * dt_q_rest + 0.01,
+                "Querwert um mehr als den Fixture-Rest veraendert: {qr} statt {qr_alt} \
+                 (Rest {dt_q_rest})"
+            );
+        }
+        assert!((stats.bahn_raeum_laengs_m.unwrap() - (1500.0 - versatz)).abs() < 0.01);
+        assert!((stats.bahn_kante_laengs_m.unwrap() - (1550.0 - versatz)).abs() < 0.01);
+        assert!((stats.bahn_fenster_zu_laengs_m.unwrap() - (1400.0 - versatz)).abs() < 0.01);
+        // Neu aus der verschobenen Spur bestimmt — bis auf den Fixture-Rest.
+        let m = stats.bahn_max_querversatz_m.expect("max quer");
+        assert!(
+            (m - 3.0).abs() <= 2.0 * dt_q_rest as f64 + 0.01,
+            "groesster Querversatz veraendert: {m}"
+        );
+        assert!(
+            stats.bahn_spur_bis.is_some(),
+            "die Ernte darf nicht von vorn beginnen"
+        );
+    }
+
+    /// Und gegen eine ANDERE Achse wird sie verworfen — nicht gemischt.
+    #[test]
+    fn gegen_eine_andere_achse_wird_die_spur_verworfen() {
+        let alt = eddp_26r_match_with_raw_td(0.0);
+        let mut stats = stats_mit_spur(alt.clone());
+        // Die Gegenrichtung: Schwelle und Ende vertauscht.
+        let mut neu = alt.clone();
+        neu.threshold_lat = alt.end_lat;
+        neu.threshold_lon = alt.end_lon;
+        neu.end_lat = alt.threshold_lat;
+        neu.end_lon = alt.threshold_lon;
+        let alte_achse = AlteAchse {
+            t_lat: alt.threshold_lat,
+            t_lon: alt.threshold_lon,
+            e_lat: alt.end_lat,
+            e_lon: alt.end_lon,
+            nutzbare_laenge_m: bahnmasse(&alt).nutzbare_laenge_m,
+        };
+        stats.runway_match = Some(neu);
+
+        spur_auf_neue_achse(&mut stats, Some(&alte_achse));
+
+        assert!(
+            stats.bahn_spur.is_empty(),
+            "die Spur steht noch — gegen eine Achse, die es nicht mehr gibt"
+        );
+        assert_eq!(stats.bahn_raeum_laengs_m, None);
+        assert_eq!(stats.bahn_kante_laengs_m, None);
+        assert_eq!(stats.bahn_max_querversatz_m, None);
+        assert_eq!(
+            stats.bahn_spur_bis, None,
+            "die Ernte muss von vorn beginnen"
+        );
+    }
+
+    /// ⚠ Die Parallelbahn: gleiche Richtung, seitlich versetzt (26R → 26L).
+    ///
+    /// Das ist der Fall, fuer den `ACHSE_TOLERANZ_M` ueberhaupt da ist —
+    /// und der einzige, der die beiden Quer-Pruefungen braucht. Der
+    /// Gegenrichtungs-Test oben kommt ohne sie aus (externe QS,
+    /// 02.09.2026: „ein Wegfall der Quer-Pruefungen macht keinen Test rot").
+    #[test]
+    fn gegen_eine_parallelbahn_wird_die_spur_verworfen() {
+        let alt = eddp_26r_match_with_raw_td(0.0);
+        let mut stats = stats_mit_spur(alt.clone());
+        // ~100 m nach Norden — die 26R laeuft nach Westen, das ist quer.
+        let mut neu = alt.clone();
+        neu.threshold_lat += 0.0009;
+        neu.end_lat += 0.0009;
+        let alte_achse = alte_achse_von(&stats).expect("alte Achse");
+        stats.runway_match = Some(neu);
+        spur_auf_neue_achse(&mut stats, Some(&alte_achse));
+        assert!(
+            stats.bahn_spur.is_empty(),
+            "die Spur der 26R haengt jetzt an der 26L — 100 m daneben"
+        );
+    }
+
+    /// ⚠ Die Aufsetzdistanz folgt der Bahn — an JEDER Zuordnung.
+    ///
+    /// Sie wurde nur im Aufsetz-Tick gesetzt; nach einer spaeten
+    /// Zuordnung stand sie von der alten Bahn neben dem korrigierten
+    /// Drittel — und fuetterte den Vertrauens-Riegel (externe QS,
+    /// Runde 3, P2).
+    #[test]
+    fn die_aufsetzdistanz_folgt_der_bahn() {
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(eddp_26r_match_with_raw_td(1000.0));
+        drittel_nachfuehren(&mut stats);
+        let vorher = stats.landing_float_distance_m.expect("Distanz");
+        assert!(
+            (vorher - 304.8).abs() < 0.5,
+            "1000 ft sind 304,8 m: {vorher}"
+        );
+        // Die Bahn wird neu zugeordnet, das Aufsetzen liegt jetzt 2000 ft
+        // hinter der Schwelle.
+        stats.runway_match = Some(eddp_26r_match_with_raw_td(2000.0));
+        drittel_nachfuehren(&mut stats);
+        let nachher = stats.landing_float_distance_m.expect("Distanz");
+        assert!(
+            (nachher - 609.6).abs() < 0.5,
+            "die Aufsetzdistanz folgt der neuen Bahn nicht: {nachher}"
+        );
+        stats.runway_match = None;
+        drittel_nachfuehren(&mut stats);
+        assert_eq!(stats.landing_float_distance_m, None);
+    }
+
+    /// ⚠ Ohne Laenge kein Drittel — auch nicht „3".
+    #[test]
+    fn ohne_bahnlaenge_gibt_es_kein_drittel() {
+        let mut stats = FlightStats::default();
+        let mut rm = eddp_26r_match_with_raw_td(100.0);
+        rm.length_ft = 0.0;
+        stats.runway_match = Some(rm);
+        drittel_nachfuehren(&mut stats);
+        assert_eq!(
+            stats.landing_touchdown_zone, None,
+            "eine Bahn ohne Laenge bekommt ein Drittel — eine Behauptung \
+             ueber nichts"
+        );
+    }
+
+    /// ⚠ Das Einreich-Upgrade rebasiert die Spur wie das Nachholen.
+    ///
+    /// Sonst schickt `bahn_nachtrag_bauen` die Spur gegen die alte Achse
+    /// zusammen mit `runway_length_m` aus der neuen — genau die Mischung,
+    /// gegen die P1-C gebaut wurde (externe QS, 02.09.2026, N2).
+    #[test]
+    fn das_navdaten_upgrade_rebasiert_die_spur() {
+        let flight = flight_fixture("EDDF");
+        let (mut stats, snap) = divert_score_stats();
+        let td_buf = touchdown_buffer_sample(&stats);
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+        assert!(matches!(
+            stats.runway_source,
+            Some(runway::RunwaySource::OurAirportsFallback)
+        ));
+        // Eine Spur mit Ueberrollen gegen die vorlaeufige Bahn.
+        stats.bahn_spur = vec![(0.0, 1.0), (500.0, -2.0), (1200.0, 3.0)];
+        stats.bahn_overrun_m = Some(100.0);
+        let alte = alte_achse_von(&stats).expect("Bahn");
+
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture_displaced());
+        flight.navdata.lock().unwrap().cycle = Some("2604".to_string());
+        assert!(bahn_upgrade_anwenden(&flight, &mut stats));
+
+        // Entweder verschoben (gleiche Achse) oder verworfen (andere) —
+        // aber NIE unveraendert gegen eine Bahn, die es nicht mehr gibt.
+        let neu = stats.runway_match.as_ref().expect("Navigraph-Bahn");
+        let (_, dt_q) = runway::projiziere_auf_bahn(
+            alte.t_lat,
+            alte.t_lon,
+            alte.e_lat,
+            alte.e_lon,
+            neu.threshold_lat,
+            neu.threshold_lon,
+        );
+        // ⚠ Die Vorrichtung wird FESTGENAGELT, nicht abgefragt: Ein
+        // `if/else` liesse den Test lautlos in den Verwerfen-Zweig
+        // wandern, sobald jemand die Vorrichtung aendert — und die
+        // Ueberroll-Zusicherung verschwaende (externe QS, Runde 3,
+        // Klasse 8).
+        assert!(
+            dt_q.abs() <= ACHSE_TOLERANZ_M,
+            "die Vorrichtung liegt nicht mehr auf derselben Achse ({dt_q} m quer) — \
+             dieser Test prueft das VERSCHIEBEN; fuer das Verwerfen gibt es eigene"
+        );
+        assert_eq!(stats.bahn_spur.len(), 3, "gleiche Achse, Spur verworfen");
+        // 4000 ft versetzte Schwelle: die nutzbare Laenge schrumpft um
+        // 1219 m, das Ueberrollen waechst um denselben Betrag.
+        let ueber = stats.bahn_overrun_m.expect("Ueberrollen");
+        assert!(
+            (ueber - (100.0 + 4000.0 * 0.3048)).abs() < 2.0,
+            "Ueberrollen nicht gegen die neue Laenge gerechnet: {ueber}"
+        );
+    }
+
+    /// ⚠ Ein wiederhergestelltes Drittel ist eine Aenderung.
+    ///
+    /// Der Fall aus Runde 3: Nach dem Neustart fehlte das Drittel, das
+    /// Upgrade beim Einreichen stellte es ueber `drittel_nachfuehren`
+    /// wieder her — aber die Aenderungserkennung sah nur die
+    /// Herkunftsgruppe, in der es nicht steht. Kein Nachtrag, Spalte fuer
+    /// immer leer.
+    #[test]
+    fn ein_wiederhergestelltes_drittel_ist_eine_aenderung() {
+        let flight = flight_fixture("EDDP");
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture());
+        flight.navdata.lock().unwrap().cycle = Some("2604".to_string());
+        let (mut stats, snap) = eddp_26r_touchdown_stats();
+        let td_buf = touchdown_buffer_sample(&stats);
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+        assert!(stats.landing_touchdown_zone.is_some());
+        stats.bahn_nachtrag_offen = false;
+        let revision = stats.bahn_revision;
+
+        // Wie nach einem Neustart ohne persistiertes Drittel: weg.
+        stats.landing_touchdown_zone = None;
+        assert!(
+            bahn_upgrade_anwenden(&flight, &mut stats),
+            "das wiederhergestellte Drittel gilt nicht als Aenderung — dann \
+             bleibt die Spalte beim Recorder fuer immer leer"
+        );
+        assert!(stats.landing_touchdown_zone.is_some());
+        assert_eq!(stats.bahn_revision, revision + 1);
+        assert!(stats.bahn_nachtrag_offen);
+    }
+
+    /// ⚠ Der Nachtrag adressiert dieselbe Aufsetzzeit wie `touchdown_complete`.
+    ///
+    /// Busch-/VFR-Landung: Der Abtaster setzt `sampler_touchdown_at` sofort,
+    /// `landing_at` kommt erst mit dem `Arrived`-Rueckfall — oder beim
+    /// manuellen Einreichen gar nicht. Ein Nachtrag nur ueber `landing_at`
+    /// traf dann keine Zeile oder unterblieb (Codex, 03.09.2026).
+    #[test]
+    fn der_nachtrag_nimmt_die_abtaster_aufsetzzeit() {
+        let flight = flight_fixture("EDDP");
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(eddp_26r_match_with_raw_td(0.0));
+        let abtaster = chrono::DateTime::<Utc>::from_timestamp(1_755_000_100, 0).expect("Zeit");
+        stats.sampler_touchdown_at = Some(abtaster);
+        stats.landing_at = None;
+        let n = bahn_nachtrag_bauen(&flight, &stats).expect(
+            "ohne `landing_at` unterbleibt der Nachtrag — die Busch-Landung bleibt unkorrigiert",
+        );
+        assert_eq!(n.touchdown_at, abtaster.timestamp_millis());
+        let spaeter = chrono::DateTime::<Utc>::from_timestamp(1_755_000_300, 0).expect("Zeit");
+        stats.landing_at = Some(spaeter);
+        let n = bahn_nachtrag_bauen(&flight, &stats).expect("Nachtrag");
+        assert_eq!(
+            n.touchdown_at,
+            abtaster.timestamp_millis(),
+            "der Nachtrag adressiert eine andere Zeile als das Aufsetz-Ereignis"
+        );
+    }
+
+    /// ⚠ Die Ablage liest ueber `aus_json`: Ein Nachtrag OHNE Spur-Block
+    /// kommt ohne Spur-Block zurueck (nicht als `Some(default)`), und der
+    /// Dateiname traegt Kennung + Aufsetzzeit, damit zwei Landungen
+    /// derselben PIREP sich nicht ueberschreiben.
+    #[test]
+    fn die_ablage_liest_zurueck_was_sie_schrieb() {
+        let flight = flight_fixture("EDDP");
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(eddp_26r_match_with_raw_td(0.0));
+        stats.landing_at =
+            Some(chrono::DateTime::<Utc>::from_timestamp(1_755_000_100, 0).expect("Zeit"));
+        stats.bahn_revision = 3;
+        let n = bahn_nachtrag_bauen(&flight, &stats).expect("Nachtrag");
+        assert!(n.bahn.is_none(), "Fixture ohne Spur muss ohne Block gehen");
+        let text = nachtrag_queue::serialisieren(&n).expect("JSON");
+        let zurueck = nachtrag_queue::lesen(&text).expect("lesbar");
+        assert_eq!(zurueck.pirep_id, n.pirep_id);
+        assert_eq!(zurueck.touchdown_at, n.touchdown_at);
+        assert_eq!(zurueck.herkunft.bahn_revision, Some(3));
+        assert!(
+            zurueck.bahn.is_none(),
+            "flatten+Option liest den fehlenden Block als Some(default) — die Ablage muss ueber aus_json gehen"
+        );
+        assert_eq!(
+            nachtrag_queue::dateiname("42/../x", 1_755_000_100_000).as_deref(),
+            Some("42x-1755000100000.json")
+        );
+        assert_eq!(nachtrag_queue::dateiname("/../", 1), None);
+    }
+
+    /// ⚠ Der Nachtrag traegt das Drittel — vertrauens-geriegelt wie der
+    /// Touchdown.
+    #[test]
+    fn der_nachtrag_traegt_das_drittel() {
+        let flight = flight_fixture("EDDP");
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture());
+        let (mut stats, snap) = eddp_26r_touchdown_stats();
+        let td_buf = touchdown_buffer_sample(&stats);
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+        assert!(
+            stats.landing_touchdown_zone.is_some(),
+            "Vorrichtung ohne Drittel"
+        );
+        // Der Nachtrag adressiert ueber den Aufsetzzeitpunkt — ohne ihn
+        // gibt es keine Zeile, die er treffen koennte.
+        stats.landing_at = Some(td_at());
+
+        let nachtrag = bahn_nachtrag_bauen(&flight, &stats).expect("Nachtrag");
+        // Der Riegel selbst faehrt mit — sonst bleibt er beim Recorder auf
+        // dem Stand des Aufsetzens, waehrend die Bahn wechselt.
+        // Konkret, nicht gegen dieselbe Ableitung: Auf dem geplanten Platz,
+        // mittig aufgesetzt, IST die Bahn vertrauenswuerdig.
+        assert_eq!(
+            nachtrag.runway_geometry_trusted,
+            Some(true),
+            "der Vertrauens-Riegel erreicht den Nachtrag nicht oder ist falsch"
+        );
+        assert_eq!(nachtrag.runway_geometry_reason, None);
+        assert_eq!(
+            nachtrag.landing_touchdown_zone,
+            Some(1),
+            "die Vorrichtung setzt an der Schwelle auf"
+        );
+        assert_eq!(
+            nachtrag.landing_touchdown_zone, stats.landing_touchdown_zone,
+            "das Drittel erreicht den Nachtrag nicht — die Spalte beim \
+             Recorder bleibt dann auf dem Stand des Aufsetzens"
+        );
+        // Und derselbe Riegel wie am Touchdown: Ein Treffer 3,5 km neben
+        // der Achse traegt kein Drittel.
+        if let Some(rm) = stats.runway_match.as_mut() {
+            rm.centerline_distance_m = 3500.0;
+        }
+        assert_eq!(
+            zone_fuer_leitung(&flight, &stats),
+            None,
+            "eine nicht vertrauenswuerdige Bahn bekommt ein Drittel"
+        );
+    }
+
+    /// ⚠ Ein Querversatz innerhalb der Toleranz wird MITGEZOGEN.
+    ///
+    /// Runde 4 (N18): Bis 5 m quer gilt die Achse als dieselbe — dieser
+    /// Versatz wanderte aber unkorrigiert in `max_lateral_offset_m` und
+    /// `min_edge_clearance_m`, auf einer 45-m-Bahn 22 % der Halbbreite,
+    /// beides scorewirksam. Die Achse liegt jetzt 3 m rechts (Norden bei
+    /// der westlaufenden 26R): Jeder Punkt muss 3 m weiter LINKS stehen.
+    #[test]
+    fn die_spur_rueckt_quer_mit_der_parallel_versetzten_achse() {
+        let alt = eddp_26r_match_with_raw_td(0.0);
+        let mut stats = stats_mit_spur(alt.clone());
+        let mut neu = alt.clone();
+        // ~3 m nach Norden, an beiden Enden — parallel, innerhalb der 5 m.
+        let d = 3.0 / 111_320.0;
+        neu.threshold_lat += d;
+        neu.end_lat += d;
+        let alte_achse = alte_achse_von(&stats).expect("alte Achse");
+        let (_, dq) = runway::projiziere_auf_bahn(
+            alt.threshold_lat,
+            alt.threshold_lon,
+            alt.end_lat,
+            alt.end_lon,
+            neu.threshold_lat,
+            neu.threshold_lon,
+        );
+        assert!(
+            (dq.abs() - 3.0).abs() < 0.2 && dq.abs() <= ACHSE_TOLERANZ_M,
+            "die Vorrichtung versetzt nicht um ~3 m quer: {dq}"
+        );
+        stats.runway_match = Some(neu);
+        spur_auf_neue_achse(&mut stats, Some(&alte_achse));
+        assert_eq!(stats.bahn_spur.len(), 3, "verworfen statt verschoben");
+        for ((_, qr), (_, qr_alt)) in
+            stats
+                .bahn_spur
+                .iter()
+                .zip([(0.0f32, 1.0f32), (500.0, -2.0), (1200.0, 3.0)])
+        {
+            assert!(
+                ((qr - qr_alt) as f64 + dq).abs() < 0.05,
+                "Querwert nicht um den Achsversatz korrigiert: {qr} statt {}",
+                qr_alt as f64 - dq
+            );
+        }
+        // ⚠ Runde 6, Befund 1: Nach der Verschiebung ist NICHT mehr der
+        // Punkt bei 1200 m (3,0 → 0,01) der groesste, sondern der bei
+        // 500 m (−2,0 → −4,99). Meine erste Fassung schob den alten
+        // Argmax und meldete 0,01 m neben einer Spur bei −4,99 — ein Rad
+        // neben der Bahn, verschwiegen. Genau diese Vorrichtung ist die
+        // Gegenprobe.
+        let m = stats.bahn_max_querversatz_m.expect("max quer");
+        assert!(
+            (m - (-2.0 - dq)).abs() < 0.05,
+            "max quer: {m}, erwartet {} — der Argmax ist gekippt und wurde nicht \
+             neu bestimmt",
+            -2.0 - dq
+        );
+    }
+
+    /// ⚠ Eine GEDREHTE Achse — der Interpolationsterm von `quer_bei`.
+    ///
+    /// Runde 7 (N2): In allen acht Vorrichtungen war `dt_q ≈ de_q`, die
+    /// Korrektur also konstant — der lineare Term zwischen Schwelle und
+    /// Ende war von keinem Test beruehrt. Ersetzt man `quer_bei` durch die
+    /// Konstante `dt_q`, blieb alles gruen. Hier: Schwelle +4 m, Ende −4 m
+    /// (beides in der Toleranz, ~0,15° auf 3,6 km — die Szenerie liefert
+    /// solche Kurskorrekturen). Bei 500 m muss die Korrektur ~2,9 m sein,
+    /// nicht 4.
+    #[test]
+    fn eine_gedrehte_achse_korrigiert_quer_entlang_der_bahn() {
+        let alt = eddp_26r_match_with_raw_td(0.0);
+        let mut stats = stats_mit_spur(alt.clone());
+        stats.bahn_fenster_zu_laengs_m = Some(1400.0);
+        let d = 4.0 / 111_320.0;
+        let mut neu = alt.clone();
+        neu.threshold_lat += d;
+        neu.end_lat -= d;
+        let alte_achse = alte_achse_von(&stats).expect("alte Achse");
+        let (dt_l, dt_q) = runway::projiziere_auf_bahn(
+            alt.threshold_lat,
+            alt.threshold_lon,
+            alt.end_lat,
+            alt.end_lon,
+            neu.threshold_lat,
+            neu.threshold_lon,
+        );
+        let (de_l, de_q) = runway::projiziere_auf_bahn(
+            alt.threshold_lat,
+            alt.threshold_lon,
+            alt.end_lat,
+            alt.end_lon,
+            neu.end_lat,
+            neu.end_lon,
+        );
+        assert!(
+            dt_q > 3.5
+                && de_q < -3.5
+                && dt_q.abs() <= ACHSE_TOLERANZ_M
+                && de_q.abs() <= ACHSE_TOLERANZ_M,
+            "die Vorrichtung dreht nicht ({dt_q} / {de_q}) — dann prueft dieser Test die Konstante"
+        );
+        // Die Definition der Korrektur, aus den GEMESSENEN Achsen:
+        let erwartet_bei = |l: f64| dt_q + (de_q - dt_q) * ((l - dt_l) / (de_l - dt_l));
+        stats.runway_match = Some(neu);
+        spur_auf_neue_achse(&mut stats, Some(&alte_achse));
+        assert_eq!(stats.bahn_spur.len(), 3, "verworfen statt verschoben");
+        for ((lg, qr), (lg_alt, qr_alt)) in
+            stats
+                .bahn_spur
+                .iter()
+                .zip([(0.0f64, 1.0f64), (500.0, -2.0), (1200.0, 3.0)])
+        {
+            let soll = qr_alt - erwartet_bei(lg_alt);
+            assert!(
+                (*qr as f64 - soll).abs() < 0.05,
+                "bei {lg} m: {qr} statt {soll} — die Korrektur ist konstant statt entlang der Bahn"
+            );
+        }
+        // Der groesste Querversatz: bei 500 m, −2,0 − 2,9 ≈ −4,9 — und NICHT
+        // −6,0, was die konstante Korrektur ergaebe.
+        let m = stats.bahn_max_querversatz_m.expect("max quer");
+        let soll = -2.0 - erwartet_bei(500.0);
+        assert!((m - soll).abs() < 0.05, "max quer: {m}, erwartet {soll}");
+        assert!(
+            (m - (-2.0 - dt_q)).abs() > 0.5,
+            "das ist die KONSTANTE Korrektur: {m}"
+        );
+    }
+
+    /// ⚠ Die Ausfahrt gehoert NICHT zum groessten Querversatz.
+    ///
+    /// Die Spur laeuft ueber das Messfenster hinaus, bis 80 m neben die
+    /// Kante. Das Live-Maximum waechst nur bei offenem Fenster. Aus der
+    /// ganzen Spur neu bestimmt, wurde aus einer sauberen Landung „Rad
+    /// neben der befestigten Flaeche" — im Score und in
+    /// `min_edge_clearance_m` (Runde 5, N22, P0).
+    #[test]
+    fn die_ausfahrt_zaehlt_nicht_zum_groessten_querversatz() {
+        let alt = eddp_26r_match_with_raw_td(0.0);
+        let mut stats = stats_mit_spur(alt.clone());
+        // Fenster zu bei 1400 m; danach die Ausfahrt: 60 m neben der Bahn.
+        stats.bahn_spur.push((1900.0, -60.0));
+        stats.bahn_fenster_zu_laengs_m = Some(1400.0);
+        stats.bahn_max_querversatz_m = Some(3.0);
+        let neu = schwelle_verschoben(&alt, 350.0);
+        let alte_achse = alte_achse_von(&stats).expect("alte Achse");
+        stats.runway_match = Some(neu);
+        spur_auf_neue_achse(&mut stats, Some(&alte_achse));
+        let m = stats.bahn_max_querversatz_m.expect("max quer");
+        assert!(
+            (m - 3.0).abs() < 0.5,
+            "der groesste Querversatz ist {m} — die Ausfahrt (−60 m) ist in den \
+             Score gerutscht"
+        );
+    }
+
+    /// ⚠ Eine fertige Spur gegen eine andere Achse wird nicht mehr GESENDET.
+    ///
+    /// Sie bleibt lokal (Runde 4, N13), aber sie ist gegen eine Bahn
+    /// projiziert, die nicht mehr gilt — neben Marken aus der neuen. Also
+    /// „veraltet": kein Spur-Block mehr, beim Recorder bleibt der letzte
+    /// in sich stimmige Stand (Runde 5, N24).
+    #[test]
+    fn eine_veraltete_spur_wird_nicht_mehr_gesendet() {
+        let flight = flight_fixture("EDDP");
+        let alt = eddp_26r_match_with_raw_td(0.0);
+        let mut stats = stats_mit_spur(alt.clone());
+        stats.rollout_finalized = true;
+        stats.bahn_spur_laeuft = false;
+        assert!(
+            spur_block(&flight, &stats).is_some(),
+            "Vorrichtung: fertig und gueltig"
+        );
+        let mut neu = alt.clone();
+        neu.threshold_lat += 0.0009;
+        neu.end_lat += 0.0009;
+        let alte_achse = alte_achse_von(&stats).expect("alte Achse");
+        stats.runway_match = Some(neu);
+        spur_auf_neue_achse(&mut stats, Some(&alte_achse));
+        assert_eq!(stats.bahn_spur.len(), 3, "lokal bleibt sie");
+        assert!(
+            stats.bahn_spur_bezug_veraltet,
+            "nicht als veraltet markiert"
+        );
+        assert!(
+            spur_block(&flight, &stats).is_none(),
+            "eine Spur im alten Bezug geht auf die Leitung — neben Marken aus der neuen Bahn"
+        );
+    }
+
+    /// ⚠ Eine FERTIGE Spur wird nie verworfen — auch nicht bei Achswechsel.
+    ///
+    /// Runde 4 (N13): Das Einreich-Upgrade verwarf auf einem Ausweichflug
+    /// die fertige Spur und meldete danach `rollout_final: false` an eine
+    /// laengst endgueltige Zeile.
+    #[test]
+    fn eine_fertige_spur_ueberlebt_den_achswechsel() {
+        let alt = eddp_26r_match_with_raw_td(0.0);
+        let mut stats = stats_mit_spur(alt.clone());
+        stats.rollout_finalized = true;
+        stats.bahn_spur_laeuft = false;
+        let mut neu = alt.clone();
+        neu.threshold_lat += 0.0009;
+        neu.end_lat += 0.0009;
+        let alte_achse = alte_achse_von(&stats).expect("alte Achse");
+        stats.runway_match = Some(neu);
+        spur_auf_neue_achse(&mut stats, Some(&alte_achse));
+        assert_eq!(
+            stats.bahn_spur.len(),
+            3,
+            "die fertige Spur wurde verworfen — danach meldet der Nachtrag \
+             `rollout_final: false` an eine endgueltige Zeile"
+        );
+        assert_eq!(stats.bahn_raeum_laengs_m, Some(1500.0));
+        assert!(stats.rollout_finalized);
+        assert!(stats.bahn_spur_bezug_veraltet, "sie gilt aber als veraltet");
+    }
+
+    /// ⚠ Der Nachtrag laesst den Spur-Block WEG, wenn die Spur nicht fertig ist.
+    ///
+    /// Nicht `null` — `null` loescht beim Recorder, und `rollout_final:
+    /// false` dreht eine endgueltige Zeile zurueck.
+    #[test]
+    fn der_nachtrag_laesst_eine_unfertige_spur_weg() {
+        let flight = flight_fixture("EDDP");
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture());
+        let (mut stats, snap) = eddp_26r_touchdown_stats();
+        let td_buf = touchdown_buffer_sample(&stats);
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+        stats.landing_at = Some(td_at());
+
+        // Unfertig: nichts finalisiert, Spur leer.
+        let n = bahn_nachtrag_bauen(&flight, &stats).expect("Nachtrag");
+        assert!(
+            n.bahn.is_none(),
+            "unfertige Spur wird als Block gesendet — als null"
+        );
+        let json = serde_json::to_value(&n).expect("json");
+        assert!(
+            json.get("rollout_final").is_none() && json.get("lateral_samples").is_none(),
+            "Spur-Felder stehen auf der Leitung, obwohl der Block fehlen soll"
+        );
+        assert!(
+            json.get("bahn_revision").is_some(),
+            "die Herkunft muss trotzdem mit"
+        );
+
+        // Fertig: Block dabei, endgueltig.
+        stats.rollout_finalized = true;
+        stats.bahn_spur_laeuft = false;
+        stats.bahn_spur = vec![(0.0, 1.0), (500.0, -2.0)];
+        let n = bahn_nachtrag_bauen(&flight, &stats).expect("Nachtrag");
+        assert!(n.bahn.as_ref().is_some_and(|b| b.rollout_final));
+    }
+
+    /// Gleiche Achse, gleicher Nullpunkt: nichts passiert.
+    #[test]
+    fn dieselbe_achse_laesst_die_spur_in_ruhe() {
+        let alt = eddp_26r_match_with_raw_td(0.0);
+        let mut stats = stats_mit_spur(alt.clone());
+        let alte_achse = AlteAchse {
+            t_lat: alt.threshold_lat,
+            t_lon: alt.threshold_lon,
+            e_lat: alt.end_lat,
+            e_lon: alt.end_lon,
+            nutzbare_laenge_m: bahnmasse(&alt).nutzbare_laenge_m,
+        };
+        spur_auf_neue_achse(&mut stats, Some(&alte_achse));
+        assert_eq!(
+            stats.bahn_spur,
+            vec![(0.0, 1.0), (500.0, -2.0), (1200.0, 3.0)]
+        );
+        assert_eq!(stats.bahn_raeum_laengs_m, Some(1500.0));
+    }
+
+    /// ⚠ Jede Zuordnung erhoeht die Revision — die Zahl, die beim
+    /// Recorder entscheidet, welcher Nachtrag gewinnt.
+    #[test]
+    fn jede_zuordnung_erhoeht_die_revision() {
+        let flight = flight_fixture("EDDP");
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture());
+
+        let (mut stats, mut snap) = eddp_26r_touchdown_stats();
+        snap.simulator = sim_core::Simulator::Msfs2024;
+        assert_eq!(stats.bahn_revision, 0, "vor dem Aufsetzen keine Fassung");
+
+        let td_buf = touchdown_buffer_sample(&stats);
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+        assert_eq!(stats.bahn_revision, 1);
+        assert_eq!(bahn_herkunft(&stats).bahn_revision, Some(1));
+        // ⚠ Wer die Bahn aendert, setzt die Fahne — auch beim Aufsetzen.
+        // Ohne sie bleibt eine Zuordnung ohne Nachtrag, wenn der Streamer
+        // nie sendet (externe QS, 02.09.2026, P1-B).
+        assert!(
+            stats.bahn_nachtrag_offen,
+            "das Aufsetzen meldet keinen Nachtrag an"
+        );
+        stats.bahn_nachtrag_offen = false;
+
+        stats.szenerie_auskunft = Some(eddp_szenerie(0.0));
+        stats.szenerie_auskunft_stand = 5;
+        assert!(bahn_am_aufsetzpunkt_nachholen(&mut stats, &flight));
+        assert_eq!(
+            stats.bahn_revision, 2,
+            "die Revision waechst beim Nachholen nicht — dann kann der \
+             Recorder die neuere Zuordnung nicht von der alten trennen"
+        );
+        assert!(
+            stats.bahn_nachtrag_offen,
+            "das Nachholen meldet keinen Nachtrag an — wo der Streamer nie \
+             sendet, erreicht die nachgeholte Bahn den Recorder dann nie"
+        );
+
+        // ⚠ Und sie ist NICHT die Anfragenummer der Szenerie. Die stand
+        // hier auf 5.
+        assert_ne!(
+            bahn_herkunft(&stats).bahn_revision,
+            Some(stats.korrelierter_szenerie_stand),
+            "auf der Leitung steht die prozesslokale Anfragenummer — die \
+             faengt nach einem App-Neustart wieder bei null an"
+        );
+    }
+
+    /// ⚠ Auch das Navdaten-Upgrade beim Einreichen zaehlt als Zuordnung.
+    ///
+    /// Es ersetzt dieselben Bahnfelder wie das Nachholen. Bis zur dritten
+    /// QS-Runde lief es an allem vorbei: keine neue Revision, kein
+    /// nachgefuehrtes Drittel, kein Nachtrag zum Recorder — und der
+    /// uebernimmt vom PIREP nur Punkte und Noten. Die Touchdown-Zeile
+    /// waere auf der vorlaeufigen OurAirports-Geometrie stehengeblieben.
+    #[test]
+    fn das_navdaten_upgrade_erhoeht_die_revision_und_meldet_sich() {
+        let flight = flight_fixture("EDDF"); // Divert nach EDDP
+        let (mut stats, snap) = divert_score_stats();
+        let td_buf = touchdown_buffer_sample(&stats);
+        stamp_touchdown_metadata(&mut stats, &snap, td_at(), td_buf.as_ref());
+        correlate_touchdown_runway(&mut stats, &snap, &flight, td_buf.as_ref());
+
+        // Vorlaeufig: OurAirports, weil die Abfrage noch laeuft.
+        assert!(matches!(
+            stats.runway_source,
+            Some(runway::RunwaySource::OurAirportsFallback)
+        ));
+        let revision_vorher = stats.bahn_revision;
+        stats.bahn_nachtrag_offen = false;
+
+        // Die Abfrage kommt zurueck — mit versetzter Schwelle.
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture_displaced());
+        flight.navdata.lock().unwrap().cycle = Some("2604".to_string());
+
+        assert!(
+            bahn_upgrade_anwenden(&flight, &mut stats),
+            "das Upgrade meldet keine Aenderung, obwohl es die Quelle wechselt"
+        );
+        assert!(matches!(
+            stats.runway_source,
+            Some(runway::RunwaySource::Navigraph)
+        ));
+        assert_eq!(
+            stats.bahn_revision,
+            revision_vorher + 1,
+            "die Revision waechst nicht — dann sieht der Recorder keine \
+             Kante und behaelt die alte Geometrie"
+        );
+        assert!(
+            stats.bahn_nachtrag_offen,
+            "der Nachtrag wird nicht angemeldet — dann geht die bessere \
+             Geometrie nie hinaus"
+        );
+        assert_eq!(
+            stats.landing_touchdown_zone,
+            bahn_herkunft(&stats).td_third,
+            "das Drittel folgt dem Upgrade nicht"
+        );
+
+        // Und ein zweiter Lauf ohne neue Navdaten ist ein Nichts.
+        stats.bahn_nachtrag_offen = false;
+        let revision_nach_upgrade = stats.bahn_revision;
+        assert!(
+            !bahn_upgrade_anwenden(&flight, &mut stats),
+            "ein Aufruf ohne neue Navdaten meldet eine Aenderung"
+        );
+        assert_eq!(stats.bahn_revision, revision_nach_upgrade);
+        assert!(
+            !stats.bahn_nachtrag_offen,
+            "ein Nichts loest einen leeren Nachtrag aus"
+        );
+    }
+
+    /// ⚠ Das Nachholen rechnet mit dem AUFSETZPUNKT — und faellt niemals
+    /// auf die aktuelle Lage zurueck.
+    ///
+    /// Fehlt der Aufsetzpunkt (Durchstarten loescht ihn), passiert GAR
+    /// NICHTS: kein Bericht, keine Zuordnung. Der erste Entwurf pruefte
+    /// in einem Lock und rief in einem zweiten — dazwischen konnte der
+    /// Sampler loeschen, und der Aufruf fiel auf die Steigposition
+    /// zurueck (QS-Befund 3, erste Runde v1.7.15).
+    #[test]
+    fn ohne_aufsetzpunkt_holt_das_nachholen_nichts_nach() {
+        let flight = flight_fixture("EDDP");
+        flight
+            .navdata
+            .lock()
+            .unwrap()
+            .airports
+            .insert("EDDP".to_string(), eddp_nav_fixture());
+
+        let (mut stats, _snap) = eddp_26r_touchdown_stats();
+        stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+            icao: "EDDP".to_string(),
+            bahnen: Vec::new(),
+            rollwege: Vec::new(),
+            quelle: "msfs".to_string(),
+        });
+        stats.szenerie_auskunft_stand = 5;
+
+        // Der Aufsetz-Simulator ist gesetzt — sonst prueft dieser Test
+        // nur, dass er fehlt, und der Aufsetzpunkt bliebe unbeteiligt.
+        stats.aufsetz_simulator = Some(sim_core::Simulator::Msfs2024);
+
+        // Durchstarten: der Aufsetzpunkt ist weg.
+        stats.landing_lat = None;
+        stats.landing_lon = None;
+
+        assert!(
+            !bahn_am_aufsetzpunkt_nachholen(&mut stats, &flight),
+            "ohne Aufsetzpunkt wird nachgeholt — das rechnet mit der \
+             aktuellen Lage"
+        );
+        assert!(
+            stats.runway_match.is_none(),
+            "es wurde eine Bahn gesetzt, obwohl es keinen Aufsetzpunkt gibt"
+        );
+        assert!(stats.szenerie_uebernahme.is_none());
+        assert_eq!(stats.korrelierter_szenerie_stand, 0);
     }
 
     #[test]
@@ -46619,11 +49206,34 @@ mod touchdown_metadata_stamp_tests {
     /// (EDDP_26R_THR_LAT, EDDP_26R_THR_LON) matches by both sources. Lets us
     /// prove the on-plan path is unchanged AND that a divert reaches the
     /// cached navdata. (08L is the opposite end; same geometry as the CSV.)
+    /// Die MSFS-Szenerie zu `eddp_nav_fixture` — GEOMETRISCH PASSEND.
+    ///
+    /// ⚠ Die erste Fassung schrieb `gegenende` als Schwelle + 0,05° Ost.
+    /// Die 26R laeuft aber nach Westen: Die Bahnmitte lag damit ~3,5 km
+    /// neben der Nav-Achse, `passende_szenerie_bahn` verwarf die Bahn,
+    /// und der Uebernahmebericht war leer — was ein `is_some()`-Test
+    /// nicht sah (externe QS, 02.09.2026, P2-J). Das Gegenende ist jetzt
+    /// die 08L-Schwelle, wie in den Navdaten.
+    fn eddp_szenerie(versetzte_schwelle_m: f64) -> sim_core::szenerie::SzenerieFlughafen {
+        sim_core::szenerie::SzenerieFlughafen {
+            icao: "EDDP".to_string(),
+            bahnen: vec![sim_core::szenerie::SzenerieBahn {
+                bezeichner: "26R".to_string(),
+                kurs_grad: 265.7,
+                breite_m: 45.0,
+                laenge_m: 3600.0,
+                versetzte_schwelle_m,
+                schwelle: (EDDP_26R_THR_LAT, EDDP_26R_THR_LON),
+                gegenende: (EDDP_08L_THR_LAT, EDDP_08L_THR_LON),
+                belag_code: 1,
+            }],
+            rollwege: Vec::new(),
+            quelle: "msfs".to_string(),
+        }
+    }
+
     fn eddp_nav_fixture() -> aeroacars_mqtt::navdata::NavAirport {
         use aeroacars_mqtt::navdata::{NavAirport, NavPoint, NavRunway};
-        // 08L end from the bundled CSV (le="08L" 51.43119812, 12.21580028).
-        const EDDP_08L_THR_LAT: f64 = 51.431_198_120_117_19;
-        const EDDP_08L_THR_LON: f64 = 12.215_800_285_339_355;
         NavAirport {
             cycle: "2604".to_string(),
             valid_to: "2026-05-14".to_string(),
@@ -53984,6 +56594,63 @@ mod szenerie_status_tests {
         s.split_whitespace().collect()
     }
 
+    /// Wie `ohne_leerraum`, aber OHNE Zeilenkommentare.
+    ///
+    /// ⚠ Wer eine ABWESENHEIT prueft, muss diese Sicht benutzen: Ein
+    /// Kommentar der Form „hier stand frueher X" enthaelt X woertlich,
+    /// und dann findet der Waechter sich selbst.
+    fn nur_code(s: &str) -> String {
+        ohne_leerraum(
+            &s.lines()
+                .filter(|z| !z.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+
+    /// ⚠ QS-Befund 4, erste Runde v1.7.15: Der Produktionsblock haette
+    /// entfernt werden koennen, ohne dass ein Test rot wird.
+    ///
+    /// Der Tick laesst sich nicht im Test fahren. Also wird die
+    /// AUFRUFSTELLE bewacht — und zwar auf beides: dass sie
+    /// `bahn_am_aufsetzpunkt_nachholen` ruft, und dass Pruefung und
+    /// Aufruf NICHT auf zwei Sperren verteilt sind.
+    #[test]
+    fn der_tick_holt_die_bahnaufloesung_nach() {
+        let a = nur_code(QUELLE);
+        // ⚠ OHNE Simulator-Parameter. Seit der zweiten QS-Runde nimmt das
+        // Nachholen keinen entgegen — es rechnet mit dem Simulator des
+        // Aufsetz-Moments (`stats.aufsetz_simulator`). Stuende hier noch
+        // die alte Form, waere der Waechter gruen zu machen, indem man
+        // den Fehler wieder einbaut.
+        let aufruf = format!("{}(&mutst,&flight)", "bahn_am_aufsetzpunkt_nachholen");
+        assert!(
+            a.contains(&aufruf),
+            "der Tick holt die Bahnaufloesung nicht nach — dann erreicht \
+             eine spaet eingetroffene Szenerie den Flug nie"
+        );
+        // ⚠ EIN Lock: Der Aufruf steht INNERHALB des `if let Ok(mut st)`,
+        // nicht in einem zweiten Block dahinter. Zwischen zwei Sperren
+        // kann der Sampler den Aufsetzpunkt loeschen.
+        let stelle = a.find(&aufruf).expect("Aufruf fehlt");
+        let davor = &a[..stelle];
+        let lock = davor
+            .rfind("ifletOk(mutst)=flight.stats.lock()")
+            .expect("der Aufruf steht nicht unter einem stats-Lock");
+        // ⚠ STRUKTUR statt Abstand: Der Aufruf liegt innerhalb des Blocks,
+        // den die Sperre oeffnet — also mehr `{` als `}` dazwischen. Eine
+        // Zeichenzahl war ein Mittel, keine Zusicherung (externe QS,
+        // 02.09.2026, N11).
+        let dazwischen = &a[lock..stelle];
+        let auf = dazwischen.matches('{').count();
+        let zu = dazwischen.matches('}').count();
+        assert!(
+            auf > zu,
+            "der Aufruf liegt NICHT im Block der Sperre — dazwischen kann der \
+             Sampler den Aufsetzpunkt loeschen"
+        );
+    }
+
     /// ⚠ QS-Befund 3, achte Runde: Die Simulator-Kennung wird ERSETZT.
     ///
     /// Sie wurde nur gesetzt, solange sie `None` war. Wechselte eine
@@ -54458,35 +57125,56 @@ mod szenerie_status_tests {
     }
 
     /// ⚠ Der Befund vom 01.09.2026 (YSBK): Die Szenerie kam NACH dem
-    /// Aufsetzen — der Vergleich muss nachgeholt werden.
+    /// Aufsetzen — nachgeholt wird je LIEFERUNG, nicht je Flug.
     #[test]
-    fn die_bahnaufloesung_wird_nachgeholt_wenn_die_szenerie_spaet_kommt() {
-        // Aufsetzpunkt da, Auskunft da, kein Bericht → nachholen.
+    fn nachgeholt_wird_bei_einer_neueren_lieferung() {
+        // Aufsetzpunkt da, Auskunft da, noch nie zugeordnet (Stand 0).
         assert!(
-            bahnaufloesung_nachholen(true, true, false),
+            bahnaufloesung_nachholen(true, 7, 0),
             "die spaet eingetroffene Szenerie erreicht die Bahnaufloesung nie"
+        );
+        // ⚠ Und auch dann, wenn schon EINMAL zugeordnet wurde — solange
+        // die Lieferung neuer ist. Der erste Entwurf sperrte hier auf
+        // „es gibt schon einen Bericht" und liess Auskunft B mit Bericht
+        // A nebeneinanderliegen.
+        assert!(
+            bahnaufloesung_nachholen(true, 9, 7),
+            "eine NEUERE Lieferung wird nicht mehr zugeordnet"
         );
     }
 
-    /// ⚠ Und die drei Faelle, in denen NICHT nachgeholt wird.
+    /// Und die Faelle, in denen NICHT nachgeholt wird.
     #[test]
-    fn ohne_aufsetzpunkt_auskunft_oder_mit_bericht_wird_nicht_nachgeholt() {
-        // Kein Aufsetzpunkt: Es gibt nichts zuzuordnen — und ein Nachholen
-        // wuerde mit der Rollposition rechnen.
-        assert!(
-            !bahnaufloesung_nachholen(false, true, false),
-            "ohne Aufsetzpunkt wird nachgeholt — das rechnet mit der \
-             aktuellen Lage statt mit dem Aufsetzpunkt"
-        );
+    fn ohne_aufsetzpunkt_auskunft_oder_neueren_stand_wird_nicht_nachgeholt() {
         // Keine Auskunft: Ein zweiter Lauf aendert nichts.
-        assert!(!bahnaufloesung_nachholen(true, false, false));
-        // Bericht da: Der Vergleich HAT stattgefunden, auch wenn er keine
-        // Bahn uebernommen hat. Sonst liefe es bei jedem Durchlauf.
+        assert!(!bahnaufloesung_nachholen(false, 7, 0));
+        // Derselbe Stand: schon zugeordnet.
         assert!(
-            !bahnaufloesung_nachholen(true, true, true),
-            "es wird nachgeholt, obwohl der Vergleich schon lief — das \
-             laeuft dann bei JEDEM Durchlauf"
+            !bahnaufloesung_nachholen(true, 7, 7),
+            "es wird erneut zugeordnet, obwohl die Lieferung dieselbe ist — \
+             das laeuft dann bei JEDEM Durchlauf"
         );
+        // Aelterer Stand: darf nicht zurueckfallen.
+        assert!(!bahnaufloesung_nachholen(true, 5, 7));
+    }
+
+    /// ⚠ Der Dreier muss VOLLSTAENDIG sein.
+    ///
+    /// Ein Teil-Dreier hiesse, mit einem geratenen Wert zu rechnen.
+    #[test]
+    fn ein_unvollstaendiger_aufsetzpunkt_zaehlt_nicht() {
+        let mut s = FlightStats::new();
+        assert_eq!(gespeicherter_aufsetzpunkt(&s), None);
+        s.landing_lat = Some(51.0);
+        s.landing_lon = Some(12.0);
+        assert_eq!(
+            gespeicherter_aufsetzpunkt(&s),
+            None,
+            "ohne Kurs gilt der Aufsetzpunkt als vollstaendig — dann wird \
+             mit einem geratenen Kurs zugeordnet"
+        );
+        s.landing_heading_true_deg = Some(265.7);
+        assert_eq!(gespeicherter_aufsetzpunkt(&s), Some((51.0, 12.0, 265.7)));
     }
 
     /// ⚠ QS-Befund 1, zwoelfte Runde: Wechselt das Ernteziel und hat
@@ -54731,14 +57419,20 @@ mod szenerie_status_tests {
 
     #[test]
     fn der_status_steht_an_beiden_payload_stellen() {
-        // ⚠ Es gibt zwei Bauplaetze fuer den Flug-Payload (Touchdown und
-        // PIREP). Steht das Feld nur an einem, fehlt genau die Haelfte
-        // der Faelle — und das faellt erst auf, wenn man sie sucht.
+        // ⚠ Es gibt zwei ABLEITUNGEN des Flug-Payloads: die gemeinsame
+        // Bahn-Herkunft (die beide Touchdown-Ereignisse tragen) und den
+        // PIREP. Steht das Feld nur an einer, fehlt genau die Haelfte der
+        // Faelle — und das faellt erst auf, wenn man sie sucht.
+        //
+        // ⚠ Die Nadel endet vor dem `&`: `bahn_herkunft` nimmt `stats`,
+        // die PIREP-Stelle `&stats`. Ein Waechter, der auf `&` besteht,
+        // haette nach dem Zusammenlegen genau eine Stelle gefunden und
+        // waere rot geworden, ohne dass etwas fehlt.
         let q: String = include_str!("lib.rs")
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();
-        let nadel = format!("{}{}", "bahn_szenerie_status:Some(", "szenerie_status(&");
+        let nadel = format!("{}{}", "bahn_szenerie_status:Some(", "szenerie_status(");
         assert_eq!(
             q.matches(&nadel).count(),
             2,
