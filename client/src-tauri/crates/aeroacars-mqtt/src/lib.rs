@@ -24,13 +24,15 @@
 //! is idempotent (pireps UNIQUE(pirep_id); touchdown ts-window dedup); the next
 //! flight on the pilot topic overwrites the retained value.
 
-use std::sync::Arc;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rumqttc::{
-    AsyncClient, Event, LastWill, MqttOptions, Packet, QoS, TlsConfiguration, Transport,
+    AsyncClient, Event, LastWill, MqttOptions, Outgoing, Packet, QoS, Request, TlsConfiguration,
+    Transport,
 };
 use serde::Serialize;
 use sim_core::{FlightPhase, SimSnapshot, Simulator};
@@ -1784,6 +1786,185 @@ pub struct Handle {
     pilot_id: String,
 }
 
+/// Das Zustellbuch: ordnet jedem Publish sein PUBACK zu.
+///
+/// # Warum (Codex, 03.09.2026, Runde 13, High 1)
+///
+/// `AsyncClient::publish` meldet nur die Uebernahme in rumqttcs Auftragskanal.
+/// Ein `true` daraus war keine Zustellung — die Ablage-Datei fiel, bevor der
+/// Broker das Paket je gesehen hatte. rumqttc 0.25 gibt dem Aufrufer keine
+/// Paketkennung; sie entsteht erst im Eventloop (`state.outgoing_publish`).
+/// Was der Eventloop aber sichtbar macht: `Outgoing::Publish(pkid)` in GENAU
+/// der Reihenfolge, in der die Auftraege in den Kanal kamen, und
+/// `Incoming::PubAck(pkid)`.
+///
+/// # Wie
+///
+/// 1. JEDER Publish geht durch `publish_registriert`: unter einem Schloss
+///    `try_publish` und, wenn angenommen, ein Eintrag hinten ins Buch —
+///    `Some(meldung)` fuer einen Nachtrag, `None` fuer alles andere. Kein
+///    `.await` im Schloss (darum `try_publish`, mit eigener Warteschleife
+///    statt `publish().await`), damit zwei Aufgaben sich nicht ueberholen.
+/// 2. Der Drive-Loop nimmt bei `Outgoing::Publish(pkid)` den VORDERSTEN
+///    Eintrag: pkid 0 (QoS 0) → weg; sonst → wartet unter dieser pkid.
+/// 3. `Incoming::PubAck(pkid)` → der Eintrag unter der pkid meldet `true`.
+/// 4. Faellt die Leitung, laufen wir mit `clean_session`: rumqttc leert beim
+///    naechsten CONNACK alles Anstehende (unbestaetigte Publishes UND die
+///    Auftraege, die beim Abriss im Kanal lagen). `verbindung_weg` meldet
+///    ihnen allen `false` — und nimmt genau so viele frische Eintraege vom
+///    Buchanfang, wie `eventloop.pending` Publishes mit pkid 0 traegt.
+///    Sonst stuende das Buch ab dem naechsten Publish um eins versetzt.
+///
+/// # Was es nicht abdeckt
+///
+/// Eine Kollision (`Outgoing::AwaitAck`) haelt den Eventloop an, bis das
+/// alte Paket bestaetigt ist; das kollidierte geht danach als naechstes
+/// raus — Reihenfolge bleibt. Kommt sein `Outgoing::Publish` VOR dem
+/// `PubAck` des alten durch die Ereignisschlange, stehen unter der pkid
+/// zwei Eintraege; sie werden in Reihenfolge bestaetigt.
+#[derive(Default)]
+struct Zustellbuch {
+    /// Angenommene Publishes, noch ohne `Outgoing::Publish`.
+    frisch: VecDeque<Option<tokio::sync::oneshot::Sender<bool>>>,
+    /// Rausgegangen, wartet auf PUBACK — je pkid in Reihenfolge.
+    unterwegs: HashMap<u16, VecDeque<Option<tokio::sync::oneshot::Sender<bool>>>>,
+}
+
+impl Zustellbuch {
+    fn registrieren(&mut self, meldung: Option<tokio::sync::oneshot::Sender<bool>>) {
+        self.frisch.push_back(meldung);
+    }
+
+    /// `Outgoing::Publish(pkid)` gesehen.
+    fn ausgegangen(&mut self, pkid: u16) {
+        let Some(eintrag) = self.frisch.pop_front() else {
+            // Ein Publish, den niemand registriert hat — das Buch ist
+            // versetzt. Laut sagen; die Ablage faengt den Nachtrag ueber
+            // die Frist.
+            warn!("Zustellbuch: Outgoing::Publish({pkid}) ohne Eintrag — Buch versetzt?");
+            return;
+        };
+        if pkid == 0 {
+            if let Some(m) = eintrag {
+                let _ = m.send(false);
+            }
+            return;
+        }
+        self.unterwegs.entry(pkid).or_default().push_back(eintrag);
+    }
+
+    /// `Incoming::PubAck(pkid)` gesehen.
+    fn bestaetigt(&mut self, pkid: u16) {
+        let Some(schlange) = self.unterwegs.get_mut(&pkid) else {
+            return;
+        };
+        if let Some(Some(m)) = schlange.pop_front() {
+            let _ = m.send(true);
+        }
+        if schlange.is_empty() {
+            self.unterwegs.remove(&pkid);
+        }
+    }
+
+    /// Leitung weg: alles Unterwegs ist verloren (clean_session), und die
+    /// `verschluckte` frischen Auftraege aus dem Kanal ebenfalls.
+    fn verbindung_weg(&mut self, verschluckte: usize) {
+        for (_, schlange) in self.unterwegs.drain() {
+            for m in schlange.into_iter().flatten() {
+                let _ = m.send(false);
+            }
+        }
+        for _ in 0..verschluckte {
+            if let Some(Some(m)) = self.frisch.pop_front() {
+                let _ = m.send(false);
+            }
+        }
+    }
+
+    fn offen(&self) -> (usize, usize) {
+        (
+            self.frisch.len(),
+            self.unterwegs.values().map(|q| q.len()).sum(),
+        )
+    }
+}
+
+type Buch = Arc<Mutex<Zustellbuch>>;
+
+/// DER Publish. Unter dem Schloss `try_publish` + Eintrag ins Buch; die
+/// `meldung` (wenn eine da ist) bekommt ihr `true` erst mit dem PUBACK.
+/// Wird der Auftrag nicht angenommen, meldet sie sofort `false`.
+fn publish_registriert(
+    client: &AsyncClient,
+    buch: &Buch,
+    topic: &str,
+    qos: QoS,
+    retain: bool,
+    body: Vec<u8>,
+    meldung: Option<tokio::sync::oneshot::Sender<bool>>,
+) -> Result<(), rumqttc::ClientError> {
+    let mut b = buch.lock().unwrap_or_else(|e| e.into_inner());
+    match client.try_publish(topic, qos, retain, body) {
+        Ok(()) => {
+            b.registrieren(meldung);
+            Ok(())
+        }
+        Err(e) => {
+            if let Some(m) = meldung {
+                let _ = m.send(false);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Wie `publish_registriert`, wartet aber bei vollem Kanal bis zur Frist —
+/// das ist, was `publish().await` vorher tat, nur ohne `.await` im Schloss.
+async fn publish_registriert_wartend(
+    client: &AsyncClient,
+    buch: &Buch,
+    topic: &str,
+    qos: QoS,
+    retain: bool,
+    body: Vec<u8>,
+    mut meldung: Option<tokio::sync::oneshot::Sender<bool>>,
+) -> bool {
+    let bis = tokio::time::Instant::now() + PUBLISH_TIMEOUT;
+    loop {
+        // Die Meldung wandert nur bei Annahme ins Buch; bei „voll" behalten
+        // wir sie fuer den naechsten Versuch.
+        let versuch = {
+            let mut b = buch.lock().unwrap_or_else(|e| e.into_inner());
+            match client.try_publish(topic, qos, retain, body.clone()) {
+                Ok(()) => {
+                    b.registrieren(meldung.take());
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        };
+        // `ClientError::TryRequest` heisst „voll ODER geschlossen" — rumqttc
+        // unterscheidet das nicht. Beides: warten bis zur Frist; ein
+        // geschlossener Kanal laeuft dann in die Frist (nur beim Abbau).
+        match versuch {
+            Ok(()) => return true,
+            Err(_) => {
+                if tokio::time::Instant::now() >= bis {
+                    warn!(
+                        "publish {topic} nach {} s abgebrochen — Leitung blockiert",
+                        PUBLISH_TIMEOUT.as_secs()
+                    );
+                    if let Some(m) = meldung.take() {
+                        let _ = m.send(false);
+                    }
+                    return false;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+    }
+}
+
 /// Der Sendeweg fuer Bahn-Nachtraege — klonbar, damit ihn niemand unter
 /// gehaltenem `state.mqtt`-Schloss benutzen muss.
 ///
@@ -1797,6 +1978,9 @@ pub struct Handle {
 /// `true` nur, wenn die Leitung stand und der Publish angenommen wurde.
 /// Alles andere — Kanal voll, Leitung liegt, Frist abgelaufen — ist
 /// `false`, und der Aufrufer laesst seine Ablage-Datei liegen.
+///
+/// Seit Runde 13 heisst `true`: **PUBACK des Brokers** fuer genau dieses
+/// Paket (siehe `Zustellbuch`), nicht mehr nur „im Kanal angenommen".
 #[derive(Clone)]
 pub struct NachtragSender {
     tx: mpsc::Sender<Cmd>,
@@ -2099,6 +2283,9 @@ impl Handle {
 pub fn start(cfg: MqttConfig) -> Result<Handle> {
     cfg.validate()?;
     let identitaet = (cfg.va_prefix.clone(), cfg.pilot_id.clone());
+    let buch: Buch = Arc::new(Mutex::new(Zustellbuch::default()));
+    let buch_drive = buch.clone();
+    let buch_pub = buch.clone();
 
     let (tx, mut rx) = mpsc::channel::<Cmd>(CMD_BUFFER);
     // v1.5.7 (#mqtt-outage): eigener Weg für Positionen — siehe `Cmd`.
@@ -2228,6 +2415,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                             // Flugbericht liegen als `retain` beim Broker,
                             // sobald sie einmal durch sind.
                             eventloop.clean();
+                            zustellbuch_leitung_weg(&buch_drive, &mut eventloop);
                             subscribed = false;
                             chat_subscribed = false;
                             if let Some(auf) = link_state_for(LinkEvent::WatchdogTimeout) {
@@ -2297,6 +2485,24 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                                 }
                             }
                         }
+                        Ok(Event::Outgoing(Outgoing::Publish(pkid))) => {
+                            buch_drive
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .ausgegangen(pkid);
+                            if let Some(auf) = link_state_for(LinkEvent::Other) {
+                                let _ = link_tx.send(auf);
+                            }
+                        }
+                        Ok(Event::Incoming(Packet::PubAck(ack))) => {
+                            buch_drive
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .bestaetigt(ack.pkid);
+                            if let Some(auf) = link_state_for(LinkEvent::Other) {
+                                let _ = link_tx.send(auf);
+                            }
+                        }
                         Ok(_) => {
                             // Ausgehende Bestätigungen, PINGRESP, sonstiges
                             // Eingehendes: kein Zustandswechsel. Läuft
@@ -2309,6 +2515,10 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                         }
                         Err(e) => {
                             warn!("MQTT poll error: {e} — backing off 5 s");
+                            // rumqttc hat `clean()` schon gefahren: Unbestaetigtes
+                            // und die Auftraege aus dem Kanal liegen in `pending`
+                            // und fallen beim naechsten CONNACK (clean_session).
+                            zustellbuch_leitung_weg(&buch_drive, &mut eventloop);
                             subscribed = false;  // re-subscribe on reconnect
                             chat_subscribed = false;
                             // Leitung weg → keine Positionen mehr in den
@@ -2346,16 +2556,18 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
     let cfg_for_pub = cfg.clone();
     let pub_client = client.clone();
     let _publisher = tokio::spawn(async move {
-        if let Err(e) = pub_client
-            .publish(
-                cfg_for_pub.topic("status"),
-                QoS::AtLeastOnce,
-                true,
-                STATUS_ONLINE.as_bytes(),
-            )
-            .await
+        if !publish_registriert_wartend(
+            &pub_client,
+            &buch_pub,
+            &cfg_for_pub.topic("status"),
+            QoS::AtLeastOnce,
+            true,
+            STATUS_ONLINE.as_bytes().to_vec(),
+            None,
+        )
+        .await
         {
-            warn!("initial status publish failed: {e}");
+            warn!("initial status publish failed");
         }
 
         // v0.6.2 — Initial Phase-Publish ENTFERNT. Vorher wurde hier
@@ -2409,6 +2621,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                         // Auftragskanal nicht belegen (siehe dort).
                         publish_position_lossy(
                             &pub_client,
+                            &buch_pub,
                             &cfg_for_pub.topic("position"),
                             &p,
                         );
@@ -2420,6 +2633,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                 Cmd::Chat(c) => {
                     publish_json(
                         &pub_client,
+                        &buch_pub,
                         &cfg_for_pub.topic("chat"),
                         &c,
                         QoS::AtLeastOnce,
@@ -2430,6 +2644,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                 Cmd::Phase(p) => {
                     publish_json(
                         &pub_client,
+                        &buch_pub,
                         &cfg_for_pub.topic("phase"),
                         &p,
                         QoS::AtLeastOnce,
@@ -2440,6 +2655,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                 Cmd::Block(p) => {
                     publish_json(
                         &pub_client,
+                        &buch_pub,
                         &cfg_for_pub.topic("block"),
                         &p,
                         QoS::AtLeastOnce,
@@ -2450,6 +2666,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                 Cmd::Takeoff(p) => {
                     publish_json(
                         &pub_client,
+                        &buch_pub,
                         &cfg_for_pub.topic("takeoff"),
                         &p,
                         QoS::AtLeastOnce,
@@ -2471,6 +2688,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                 Cmd::Touchdown(p) => {
                     publish_json(
                         &pub_client,
+                        &buch_pub,
                         &cfg_for_pub.topic("touchdown"),
                         &p,
                         QoS::AtLeastOnce,
@@ -2481,6 +2699,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                 Cmd::Pirep(p) => {
                     publish_json(
                         &pub_client,
+                        &buch_pub,
                         &cfg_for_pub.topic("pirep"),
                         &p,
                         QoS::AtLeastOnce,
@@ -2491,6 +2710,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                 Cmd::PirepJson(p) => {
                     publish_json(
                         &pub_client,
+                        &buch_pub,
                         &cfg_for_pub.topic("pirep"),
                         &p,
                         QoS::AtLeastOnce,
@@ -2501,6 +2721,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                 Cmd::TouchdownAccidentOverride(p) => {
                     publish_json(
                         &pub_client,
+                        &buch_pub,
                         &cfg_for_pub.topic("touchdown_accident_override"),
                         &p,
                         QoS::AtLeastOnce,
@@ -2514,30 +2735,36 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                     // haengen und nach 20 s verworfen, und der Aufrufer
                     // haette „gesendet" gehoert. `false` heisst: Datei
                     // bleibt in der Ablage, der Worker versucht es wieder.
-                    let ok = if !*link_rx.borrow() {
+                    // `ack` wandert ins Zustellbuch und meldet erst mit dem
+                    // PUBACK `true` (Runde 13). Bei liegender Leitung oder
+                    // abgelehntem Auftrag meldet der Weg selbst `false`.
+                    if !*link_rx.borrow() {
                         warn!("touchdown_rollout_finalized: Leitung liegt — nicht gesendet");
-                        false
+                        let _ = ack.send(false);
                     } else {
                         publish_json_bestaetigt(
                             &pub_client,
+                            &buch_pub,
                             &cfg_for_pub.topic("touchdown_rollout_finalized"),
                             &p,
                             QoS::AtLeastOnce,
                             false,
-                        )
-                        .await
-                    };
-                    let _ = ack.send(ok);
-                }
-                Cmd::Shutdown => {
-                    let _ = pub_client
-                        .publish(
-                            cfg_for_pub.topic("status"),
-                            QoS::AtLeastOnce,
-                            true,
-                            STATUS_OFFLINE.as_bytes(),
+                            Some(ack),
                         )
                         .await;
+                    }
+                }
+                Cmd::Shutdown => {
+                    let _ = publish_registriert_wartend(
+                        &pub_client,
+                        &buch_pub,
+                        &cfg_for_pub.topic("status"),
+                        QoS::AtLeastOnce,
+                        true,
+                        STATUS_OFFLINE.as_bytes().to_vec(),
+                        None,
+                    )
+                    .await;
                     let _ = pub_client.disconnect().await;
                     break;
                 }
@@ -2582,59 +2809,60 @@ fn try_subscribe_once(client: &AsyncClient, topic: &str, subscribed: &mut bool) 
 
 async fn publish_json<T: Serialize>(
     client: &AsyncClient,
+    buch: &Buch,
     topic: &str,
     payload: &T,
     qos: QoS,
     retain: bool,
 ) {
-    let _ = publish_json_bestaetigt(client, topic, payload, qos, retain).await;
+    let _ = publish_json_bestaetigt(client, buch, topic, payload, qos, retain, None).await;
 }
 
-/// Wie `publish_json`, meldet aber, ob der Publish angenommen wurde.
-///
-/// „Angenommen" heisst: rumqttc hat ihn in seinen Vorrat uebernommen und
-/// sendet ihn bei stehender Leitung (QoS 1, Wiederholung nach Reconnect
-/// durch rumqttc). Ein Broker-PUBACK ist das nicht — dafuer muesste der
-/// Drive-Loop Paketkennungen zuordnen. Der Aufrufer schliesst die Luecke
-/// ueber seine Ablage: Was er nicht als `true` hoert, bleibt liegen.
+/// Wie `publish_json`, mit Zustellmeldung: `meldung` bekommt `true` mit dem
+/// PUBACK (ueber das Zustellbuch), `false` wenn der Auftrag nicht angenommen
+/// wurde oder die Leitung vorher faellt. Rueckgabe: angenommen ja/nein.
 async fn publish_json_bestaetigt<T: Serialize>(
     client: &AsyncClient,
+    buch: &Buch,
     topic: &str,
     payload: &T,
     qos: QoS,
     retain: bool,
+    meldung: Option<tokio::sync::oneshot::Sender<bool>>,
 ) -> bool {
     let body = match serde_json::to_vec(payload) {
         Ok(b) => b,
         Err(e) => {
             error!("serialize {topic} failed: {e}");
+            if let Some(m) = meldung {
+                let _ = m.send(false);
+            }
             return false;
         }
     };
-    // v1.5.7 (#mqtt-outage): `publish()` wartet, bis im internen Vorrat
-    // von rumqttc Platz ist. Bei toter Leitung ist der voll und bleibt es
-    // — der Aufruf hängt dann unbegrenzt und legt die GANZE Sende-Schleife
-    // still (der dritte Weg, auf dem Michels Flug Daten verlor). Mit
-    // Frist: Der Versuch wird aufgegeben, die Schleife läuft weiter, der
-    // Wächter räumt die tote Verbindung ab.
-    //
-    // Verloren geht dabei nur diese eine Nachricht. Für Positionen ist das
-    // richtig (die nächste kommt in Sekunden); die einmaligen Ereignisse
-    // liegen als `retain` auf dem Broker, sobald sie einmal durch sind.
-    match tokio::time::timeout(PUBLISH_TIMEOUT, client.publish(topic, qos, retain, body)).await {
-        Ok(Ok(())) => true,
-        Ok(Err(e)) => {
-            warn!("publish {topic} failed: {e}");
-            false
-        }
-        Err(_) => {
-            warn!(
-                "publish {topic} nach {} s abgebrochen — Leitung blockiert",
-                PUBLISH_TIMEOUT.as_secs()
-            );
-            false
-        }
+    publish_registriert_wartend(client, buch, topic, qos, retain, body, meldung).await
+}
+
+/// Leitung weg: alles Unterwegs verloren, und so viele frische Auftraege,
+/// wie in `pending` als Publish mit pkid 0 liegen (die kamen nie raus und
+/// fallen beim naechsten CONNACK). Danach `pending` leeren — rumqttc taete
+/// es beim CONNACK ohnehin (clean_session), und ein zweiter Abriss vor dem
+/// CONNACK darf dieselben Auftraege nicht nochmal zaehlen.
+fn zustellbuch_leitung_weg(buch: &Buch, eventloop: &mut rumqttc::EventLoop) {
+    let verschluckte = eventloop
+        .pending
+        .iter()
+        .filter(|r| matches!(r, Request::Publish(p) if p.pkid == 0))
+        .count();
+    let mut b = buch.lock().unwrap_or_else(|e| e.into_inner());
+    let (frisch, unterwegs) = b.offen();
+    if frisch + unterwegs > 0 {
+        info!(
+            "Zustellbuch: Leitung weg — {unterwegs} unbestaetigt, {verschluckte} von {frisch} frischen verschluckt"
+        );
     }
+    b.verbindung_weg(verschluckte);
+    eventloop.pending.clear();
 }
 
 /// v1.5.7 (#mqtt-outage, QS-Befund): Positionen NICHT-blockierend senden.
@@ -2650,7 +2878,12 @@ async fn publish_json_bestaetigt<T: Serialize>(
 /// verworfen — sofort und ohne zu warten. Das ist genau richtig, denn
 /// drei Sekunden spaeter kommt die naechste, und der Kanal bleibt fuer
 /// das frei, was zaehlt: Landung, Flugbericht, Phasenwechsel.
-fn publish_position_lossy<T: Serialize>(client: &AsyncClient, topic: &str, payload: &T) {
+fn publish_position_lossy<T: Serialize>(
+    client: &AsyncClient,
+    buch: &Buch,
+    topic: &str,
+    payload: &T,
+) {
     let body = match serde_json::to_vec(payload) {
         Ok(b) => b,
         Err(e) => {
@@ -2659,7 +2892,8 @@ fn publish_position_lossy<T: Serialize>(client: &AsyncClient, topic: &str, paylo
         }
     };
     // QoS 0 + retain: der Recorder braucht nur den jeweils neuesten Stand.
-    if let Err(e) = client.try_publish(topic, QoS::AtMostOnce, true, body) {
+    // Auch QoS 0 geht durchs Buch: rumqttc meldet `Outgoing::Publish(0)`.
+    if let Err(e) = publish_registriert(client, buch, topic, QoS::AtMostOnce, true, body, None) {
         debug!("position publish skipped (Auftragskanal voll): {e}");
     }
 }
@@ -3008,6 +3242,114 @@ mod herkunft_auf_der_leitung {
             Some(3666.0)
         );
         assert_eq!(obj.get("bahn_revision").and_then(|v| v.as_u64()), Some(7));
+    }
+}
+
+#[cfg(test)]
+mod zustellbuch_tests {
+    use super::*;
+
+    fn meldung() -> (
+        tokio::sync::oneshot::Sender<bool>,
+        tokio::sync::oneshot::Receiver<bool>,
+    ) {
+        tokio::sync::oneshot::channel()
+    }
+    fn stand(rx: &mut tokio::sync::oneshot::Receiver<bool>) -> Option<bool> {
+        rx.try_recv().ok()
+    }
+
+    /// Reihenfolge: QoS-0-Positionen nehmen ihren Eintrag mit, der Nachtrag
+    /// wartet unter seiner pkid und meldet erst mit dem PUBACK.
+    #[test]
+    fn der_nachtrag_meldet_erst_mit_dem_puback() {
+        let mut b = Zustellbuch::default();
+        let (tx, mut rx) = meldung();
+        b.registrieren(None); // Position (QoS 0)
+        b.registrieren(Some(tx)); // Nachtrag
+        b.registrieren(None); // Phase
+        b.ausgegangen(0);
+        assert_eq!(
+            stand(&mut rx),
+            None,
+            "die Position hat die Nachtragsmeldung genommen"
+        );
+        b.ausgegangen(7);
+        assert_eq!(stand(&mut rx), None, "Outgoing ist kein PUBACK");
+        b.ausgegangen(8);
+        b.bestaetigt(8);
+        assert_eq!(
+            stand(&mut rx),
+            None,
+            "ein fremdes PUBACK hat den Nachtrag bestaetigt"
+        );
+        b.bestaetigt(7);
+        assert_eq!(stand(&mut rx), Some(true));
+        assert_eq!(b.offen(), (0, 0));
+    }
+
+    /// Leitung weg: Unterwegs → false; und genau die verschluckten frischen
+    /// Eintraege fallen vorn weg, damit das Buch nicht versetzt weiterlaeuft.
+    #[test]
+    fn leitung_weg_meldet_false_und_haelt_das_buch_in_reihe() {
+        let mut b = Zustellbuch::default();
+        let (t1, mut r1) = meldung();
+        let (t2, mut r2) = meldung();
+        let (t3, mut r3) = meldung();
+        b.registrieren(Some(t1));
+        b.ausgegangen(3); // unterwegs, unbestaetigt
+        b.registrieren(Some(t2)); // lag beim Abriss im Kanal → verschluckt
+        b.registrieren(Some(t3)); // kam nach clean() in den Kanal → ueberlebt
+        b.verbindung_weg(1);
+        assert_eq!(
+            stand(&mut r1),
+            Some(false),
+            "unbestaetigt ist verloren (clean_session)"
+        );
+        assert_eq!(
+            stand(&mut r2),
+            Some(false),
+            "der verschluckte Auftrag meldet nicht"
+        );
+        assert_eq!(
+            stand(&mut r3),
+            None,
+            "der ueberlebende Auftrag wurde faelschlich abgeschrieben"
+        );
+        b.ausgegangen(1);
+        b.bestaetigt(1);
+        assert_eq!(
+            stand(&mut r3),
+            Some(true),
+            "das Buch ist versetzt — der Ueberlebende bekam sein PUBACK nicht"
+        );
+    }
+
+    /// Kollision: dieselbe pkid zweimal unterwegs, PUBACKs in Reihenfolge.
+    #[test]
+    fn kollision_bestaetigt_in_reihenfolge() {
+        let mut b = Zustellbuch::default();
+        let (ta, mut ra) = meldung();
+        let (tb, mut rb) = meldung();
+        b.registrieren(Some(ta));
+        b.registrieren(Some(tb));
+        b.ausgegangen(2);
+        b.ausgegangen(2);
+        b.bestaetigt(2);
+        assert_eq!(stand(&mut ra), Some(true));
+        assert_eq!(stand(&mut rb), None);
+        b.bestaetigt(2);
+        assert_eq!(stand(&mut rb), Some(true));
+    }
+
+    /// Ein Outgoing ohne Eintrag bringt das Buch nicht zum Absturz und nimmt
+    /// niemandem die Meldung.
+    #[test]
+    fn outgoing_ohne_eintrag_ist_laut_aber_harmlos() {
+        let mut b = Zustellbuch::default();
+        b.ausgegangen(5);
+        b.bestaetigt(5);
+        assert_eq!(b.offen(), (0, 0));
     }
 }
 

@@ -1086,9 +1086,122 @@ fn der_publisher_meldet_nur_bei_stehender_leitung() {
     let publish = block
         .find("publish_json_bestaetigt(")
         .expect("der Zweig nimmt den unbestaetigten Publish");
-    let meldung = block.find("ack.send(").expect("der Zweig meldet nicht");
+    assert!(leitung < publish, "Publish vor der Leitungspruefung");
+    // Seit Runde 13 wandert `ack` INS Zustellbuch (`Some(ack)`) und meldet
+    // erst mit dem PUBACK; der Zweig selbst meldet nur noch das `false`
+    // bei liegender Leitung.
     assert!(
-        leitung < publish && publish < meldung,
-        "Reihenfolge Leitung → Publish → Meldung verletzt"
+        block.contains("Some(ack)"),
+        "die Meldung geht nicht ins Zustellbuch — `true` kaeme ohne PUBACK"
+    );
+    assert_eq!(
+        block.matches("ack.send(true)").count(),
+        0,
+        "der Publisher meldet `true` selbst — das ist Kanalannahme, kein PUBACK"
+    );
+}
+
+/// ⚠ Zustellung heisst PUBACK (Runde 13, High 1).
+///
+/// Jeder Publish geht durch `publish_registriert` (Schloss + Eintrag ins
+/// Zustellbuch), der Drive-Loop traegt `Outgoing::Publish` und `PubAck`
+/// ein, und bei jedem Leitungsabriss wird das Buch bereinigt. Fehlt eine
+/// der vier Stellen, ist das Buch versetzt und bestaetigt fremde Pakete.
+#[test]
+fn die_zustellung_ist_das_puback() {
+    let quelle =
+        nur_code(&fs::read_to_string("crates/aeroacars-mqtt/src/lib.rs").expect("mqtt lib.rs"));
+    let produktion = produktionsteil(&quelle);
+    assert_eq!(
+        produktion.matches(".publish(").count(),
+        0,
+        "ein `publish().await` am Client — der geht am Zustellbuch vorbei"
+    );
+    let registriert = rumpf(&produktion, "fn publish_registriert(");
+    let wartend = rumpf(&produktion, "async fn publish_registriert_wartend(");
+    let im_weg =
+        registriert.matches(".try_publish(").count() + wartend.matches(".try_publish(").count();
+    assert_eq!(
+        produktion.matches(".try_publish(").count(),
+        im_weg,
+        "ein `try_publish` ausserhalb von `publish_registriert*` — ohne Eintrag ins Buch"
+    );
+    assert_eq!(im_weg, 2, "die beiden registrierten Wege fehlen");
+    let ok_arm = registriert.find("Ok(()) =>").expect("kein Ok-Arm");
+    let eintrag = registriert
+        .find("registrieren(")
+        .expect("`publish_registriert` traegt nicht ein");
+    assert!(
+        eintrag > ok_arm,
+        "Eintrag vor der Annahme — ein abgelehnter Publish steht im Buch"
+    );
+    assert_eq!(
+        registriert.matches("registrieren(").count(),
+        1,
+        "mehr als ein Eintrag je Publish"
+    );
+    assert!(
+        produktion.contains("Outgoing::Publish(pkid)))")
+            && produktion.contains(".ausgegangen(pkid)"),
+        "der Drive-Loop traegt `Outgoing::Publish` nicht ein"
+    );
+    assert!(
+        produktion.contains("Packet::PubAck(ack)))")
+            && produktion.contains(".bestaetigt(ack.pkid)"),
+        "der Drive-Loop traegt das PUBACK nicht ein"
+    );
+    assert!(
+        produktion.matches("zustellbuch_leitung_weg(").count() >= 3,
+        "nicht beide Abriss-Stellen (Watchdog, Poll-Fehler) bereinigen das Buch"
+    );
+}
+
+/// ⚠ Ohne Ablage kein Senden; Sperre und Fahne fallen nur bei Erfolg
+/// (Runde 13, High 2). Loeschen nur bei gelesener UND gleicher Revision
+/// (High 3).
+#[test]
+fn ohne_ablage_wird_nicht_gesendet_und_die_sperre_bleibt() {
+    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let produktion = produktionsteil(&quelle);
+    let senden = rumpf(&produktion, "pub fn senden(");
+    let ablage = senden.find("enqueue(").expect("`senden` legt nicht ab");
+    let schicken = senden.find(".senden(").expect("`senden` schickt nicht");
+    let abbruch = senden
+        .find("return Err(")
+        .expect("`senden` bricht bei fehlgeschlagener Ablage nicht ab");
+    assert!(
+        ablage < abbruch && abbruch < schicken,
+        "der Abbruch liegt nicht zwischen Ablage und Senden"
+    );
+    let versand = produktion
+        .rfind("nachtrag_queue::senden(")
+        .expect("Streamer-Versand");
+    let arm = produktion[..versand].rfind("Some(handle) =>").expect("Arm");
+    let auf = arm + produktion[arm..].find('{').expect("Block");
+    let zu = blockende(&produktion, auf);
+    let block = &produktion[auf..zu];
+    let sperre = "last_published_rollout = Some((touchdown_at, revision));";
+    assert_eq!(
+        block.matches(sperre).count(),
+        1,
+        "die Sperre steht mehrfach — eine davon ohne Erfolg"
+    );
+    let ok_arm = block
+        .find("Ok(()) =>")
+        .expect("der Streamer wertet das Ergebnis von `senden` nicht aus");
+    assert!(
+        block.find(sperre).expect("Sperre") > ok_arm,
+        "die Sperre faellt vor dem Ok-Arm"
+    );
+    let entfernen = rumpf(&produktion, "pub fn entfernen_wenn_revision(");
+    let none_arm = entfernen.find("None =>").expect("kein None-Arm");
+    let loeschen = entfernen.find("remove_file(").expect("keine Loeschstelle");
+    assert!(
+        loeschen < none_arm,
+        "der None-Arm (unlesbar) loescht — eine halb geschriebene Datei ist weg"
+    );
+    assert!(
+        entfernen.contains("if rev == zugestellt"),
+        "Loeschen nicht an die gleiche Revision gebunden"
     );
 }

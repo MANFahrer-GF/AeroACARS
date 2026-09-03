@@ -15073,7 +15073,18 @@ mod nachtrag_queue {
         let name = dateiname(&nachtrag.pirep_id, nachtrag.touchdown_at)
             .ok_or_else(|| io_err("pirep_id unbrauchbar"))?;
         let path = d.join(name);
-        std::fs::write(&path, serialisieren(va, pilot, nachtrag)?)?;
+        // Atomar: erst die Temp-Datei, dann `rename` (ersetzt auf allen
+        // drei Plattformen). Ein `fs::write` auf die Zieldatei liess einen
+        // Leser zwischendurch eine halbe Datei sehen — und `None` aus
+        // `revision_in_datei` war frueher ein Loeschgrund (Runde 13, High 3).
+        let tmp = d.join(format!(
+            ".{}.tmp",
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("nachtrag")
+        ));
+        std::fs::write(&tmp, serialisieren(va, pilot, nachtrag)?)?;
+        std::fs::rename(&tmp, &path)?;
         Ok(path)
     }
 
@@ -15153,7 +15164,11 @@ mod nachtrag_queue {
     /// Das ist die EINZIGE Stelle, die eine Ablage-Datei loescht.
     pub fn entfernen_wenn_revision(path: &Path, zugestellt: Option<u32>) -> bool {
         match revision_in_datei(path) {
-            Some(rev) if rev != zugestellt => {
+            Some(rev) if rev == zugestellt => {
+                let _ = std::fs::remove_file(path);
+                true
+            }
+            Some(rev) => {
                 tracing::info!(
                     pfad = %path.display(),
                     zugestellt = ?zugestellt,
@@ -15162,9 +15177,12 @@ mod nachtrag_queue {
                 );
                 false
             }
-            _ => {
-                let _ = std::fs::remove_file(path);
-                true
+            None => {
+                // Nicht lesbar heisst NICHT loeschbar: Die Datei kann gerade
+                // neu geschrieben werden, oder der Fehler ist voruebergehend.
+                // Der Worker liest sie beim naechsten Tick wieder.
+                tracing::warn!(pfad = %path.display(), "Ablage-Datei nicht lesbar — bleibt liegen");
+                false
             }
         }
     }
@@ -15176,18 +15194,24 @@ mod nachtrag_queue {
         app: &AppHandle,
         sender: &aeroacars_mqtt::NachtragSender,
         nachtrag: aeroacars_mqtt::TouchdownRolloutFinalizedPayload,
-    ) {
+    ) -> Result<(), std::io::Error> {
         let pirep_id = nachtrag.pirep_id.clone();
         let revision = nachtrag.herkunft.bahn_revision;
+        // ⚠ Ohne Ablage KEIN Senden (Runde 13, High 2): Vorher ging der
+        // Nachtrag bei voller Platte trotzdem raus, der Aufrufer setzte
+        // Sperre und Fahne — und wenn der Transport dann scheiterte, gab es
+        // weder Datei noch neuen Versuch. Jetzt bleibt der Fehler beim
+        // Aufrufer, und Sperre/Fahne bleiben stehen: naechster Tick, naechster
+        // Versuch.
         let pfad = match enqueue(app, &sender.va_prefix, &sender.pilot_id, &nachtrag) {
-            Ok(p) => Some(p),
+            Ok(p) => p,
             Err(e) => {
                 tracing::error!(
                     pirep_id,
                     error = %e,
-                    "Bahn-Nachtrag nicht in die Ablage geschrieben — wird ohne Netz verloren gehen"
+                    "Bahn-Nachtrag nicht in die Ablage geschrieben — nicht gesendet, Sperre bleibt"
                 );
-                None
+                return Err(e);
             }
         };
         let empfang = sender.senden(nachtrag);
@@ -15197,10 +15221,8 @@ mod nachtrag_queue {
                 Ok(Ok(true))
             );
             if zugestellt {
-                tracing::info!(pirep_id, revision = ?revision, "Bahnkorrektur zugestellt");
-                if let Some(p) = pfad {
-                    entfernen_wenn_revision(&p, revision);
-                }
+                tracing::info!(pirep_id, revision = ?revision, "Bahnkorrektur zugestellt (PUBACK)");
+                entfernen_wenn_revision(&pfad, revision);
             } else {
                 tracing::warn!(
                     pirep_id,
@@ -15209,6 +15231,7 @@ mod nachtrag_queue {
                 );
             }
         });
+        Ok(())
     }
 
     /// Schickt alles Wartende dieses Mandanten, eins nach dem anderen, und
@@ -15360,11 +15383,15 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                                 mqtt.as_ref(),
                                 aeroacars_mqtt::TouchdownRolloutFinalizedPayload::aus_json(json),
                             ) {
-                                (Some(handle), Ok(nachtrag)) => nachtrag_queue::senden(
-                                    &app,
-                                    &handle.nachtrag_sender(),
-                                    nachtrag,
-                                ),
+                                (Some(handle), Ok(nachtrag)) => {
+                                    if let Err(e) = nachtrag_queue::senden(
+                                        &app,
+                                        &handle.nachtrag_sender(),
+                                        nachtrag,
+                                    ) {
+                                        tracing::error!(pirep_id = %q.pirep_id, error = %e, "Bahn-Nachtrag aus der Warteschlange nicht abgelegt — verloren (PIREP ist eingereicht)");
+                                    }
+                                }
                                 (None, Ok(nachtrag)) => {
                                     if let Err(e) = nachtrag_queue::enqueue_offline(&app, &nachtrag)
                                     {
@@ -16985,7 +17012,11 @@ fn finalize_filed_pirep(
                 revision = ?nachtrag.herkunft.bahn_revision,
                 "Bahnkorrektur beim Einreichen nachgeschickt"
             );
-            nachtrag_queue::senden(app, &handle.nachtrag_sender(), nachtrag);
+            // Ohne Ablage kein Senden; der Flug ist eingereicht, ein zweites
+            // Fahrzeug fuer den Nachtrag gibt es nicht — laut sagen.
+            if let Err(e) = nachtrag_queue::senden(app, &handle.nachtrag_sender(), nachtrag) {
+                tracing::error!(pirep_id, error = %e, "Bahn-Nachtrag beim Einreichen nicht abgelegt — verloren");
+            }
         }
     }
     if let Some(json) = gequeuter_nachtrag {
@@ -16999,7 +17030,11 @@ fn finalize_filed_pirep(
                     revision = ?nachtrag.herkunft.bahn_revision,
                     "Bahnkorrektur aus der Warteschlange nachgeschickt"
                 );
-                nachtrag_queue::senden(app, &handle.nachtrag_sender(), nachtrag);
+                // Ohne Ablage kein Senden; der Flug ist eingereicht, ein zweites
+                // Fahrzeug fuer den Nachtrag gibt es nicht — laut sagen.
+                if let Err(e) = nachtrag_queue::senden(app, &handle.nachtrag_sender(), nachtrag) {
+                    tracing::error!(pirep_id, error = %e, "Bahn-Nachtrag beim Einreichen nicht abgelegt — verloren");
+                }
             }
             (None, Ok(nachtrag)) => match nachtrag_queue::enqueue_offline(app, &nachtrag) {
                 Ok(_) => tracing::warn!(
@@ -27263,7 +27298,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // naechster Tick.
                                 None => {}
                                 Some(handle) => {
-                                    nachtrag_queue::senden(
+                                    let gesendet = nachtrag_queue::senden(
                                         &app,
                                         &handle.nachtrag_sender(),
                                         aeroacars_mqtt::TouchdownRolloutFinalizedPayload {
@@ -27281,20 +27316,33 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                             herkunft,
                                         },
                                     );
-                                    let nachtrag = last_published_rollout.is_some();
-                                    last_published_rollout = Some((touchdown_at, revision));
-                                    if let Ok(mut st) = flight.stats.lock() {
-                                        st.bahn_nachtrag_offen = false;
-                                        st.letzter_nachtrag = Some((touchdown_at, revision));
+                                    // Sperre und Fahne fallen NUR, wenn der
+                                    // Nachtrag auf der Platte liegt (Runde 13,
+                                    // High 2). Sonst naechster Tick.
+                                    match gesendet {
+                                        Ok(()) => {
+                                            let nachtrag = last_published_rollout.is_some();
+                                            last_published_rollout = Some((touchdown_at, revision));
+                                            if let Ok(mut st) = flight.stats.lock() {
+                                                st.bahn_nachtrag_offen = false;
+                                                st.letzter_nachtrag =
+                                                    Some((touchdown_at, revision));
+                                            }
+                                            tracing::info!(
+                                                pirep_id = %flight.pirep_id,
+                                                touchdown_at,
+                                                rollout_m,
+                                                revision,
+                                                nachtrag,
+                                                "touchdown_rollout_finalized published"
+                                            );
+                                        }
+                                        Err(e) => tracing::error!(
+                                            pirep_id = %flight.pirep_id,
+                                            error = %e,
+                                            "Bahn-Nachtrag nicht abgelegt — Sperre bleibt, naechster Tick"
+                                        ),
                                     }
-                                    tracing::info!(
-                                        pirep_id = %flight.pirep_id,
-                                        touchdown_at,
-                                        rollout_m,
-                                        revision,
-                                        nachtrag,
-                                        "touchdown_rollout_finalized published"
-                                    );
                                 }
                             }
                         }
@@ -48918,8 +48966,21 @@ mod touchdown_metadata_stamp_tests {
             "die Zustellung von Revision 2 hat Revision 3 geloescht"
         );
         assert!(pfad.exists());
+        // Atomar geschrieben: keine Temp-Datei bleibt liegen.
+        let eintraege = std::fs::read_dir(pfad.parent().expect("Ordner"))
+            .expect("lesen")
+            .count();
+        assert_eq!(eintraege, 1, "eine Temp-Datei liegt neben der Ablage");
         assert!(nachtrag_queue::entfernen_wenn_revision(&pfad, Some(3)));
         assert!(!pfad.exists());
+        // Unlesbar ist NICHT loeschbar (Runde 13, High 3): Die Datei kann
+        // gerade neu geschrieben werden.
+        std::fs::write(&pfad, "{ halb geschrie").expect("schreiben");
+        assert!(
+            !nachtrag_queue::entfernen_wenn_revision(&pfad, Some(3)),
+            "eine unlesbare Ablage-Datei wurde als loeschbar behandelt"
+        );
+        assert!(pfad.exists(), "die unlesbare Datei ist weg");
         let _ = std::fs::remove_dir_all(&base);
     }
 
