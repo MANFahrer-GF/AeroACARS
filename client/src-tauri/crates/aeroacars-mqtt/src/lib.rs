@@ -2857,7 +2857,15 @@ fn zustellbuch_leitung_weg(buch: &Buch, eventloop: &mut rumqttc::EventLoop) {
     // das Buch einen frischen Eintrag als unterwegs, obwohl das Paket nie
     // wieder gesendet wird, und ein spaeteres PUBACK derselben pkid traefe
     // den Falschen. Also: jetzt eintragen, dann als verloren melden.
+    //
+    // ⚠ NUR die zwei buchrelevanten Sorten werden entnommen. Alles andere —
+    // allen voran ein bereits empfangenes `Incoming::Publish`, also eine
+    // Integritaets- oder Chat-Nachricht — wandert zurueck in die Schlange und
+    // wird vom Drive-Loop normal verarbeitet. Die erste Fassung leerte die
+    // Schlange ganz und verwarf sie damit lautlos (Codex, 03.09.2026,
+    // Runde 15): Bei QoS 0 oder schon gesendetem ACK kommt sie nie wieder.
     let mut gepuffert = 0usize;
+    let mut behalten = VecDeque::new();
     for ev in eventloop.state.events.drain(..) {
         match ev {
             Event::Outgoing(Outgoing::Publish(pkid)) => {
@@ -2866,9 +2874,10 @@ fn zustellbuch_leitung_weg(buch: &Buch, eventloop: &mut rumqttc::EventLoop) {
             }
             // Ein PUBACK, das schon da war: das ist eine echte Zustellung.
             Event::Incoming(Packet::PubAck(ack)) => b.bestaetigt(ack.pkid),
-            _ => {}
+            andere => behalten.push_back(andere),
         }
     }
+    eventloop.state.events.extend(behalten);
     let verschluckte = eventloop
         .pending
         .iter()
@@ -3382,6 +3391,15 @@ mod zustellbuch_tests {
         el.state
             .events
             .push_back(Event::Outgoing(Outgoing::Publish(3)));
+        // Eine bereits EMPFANGENE Nachricht (Chat/Integritaet) liegt daneben —
+        // sie muss die Bereinigung ueberleben (Runde 15).
+        el.state
+            .events
+            .push_back(Event::Incoming(Packet::Publish(rumqttc::Publish::new(
+                "chat",
+                QoS::AtMostOnce,
+                "hallo",
+            ))));
         el.pending.push_back(Request::Publish(rumqttc::Publish::new(
             "t",
             QoS::AtLeastOnce,
@@ -3399,9 +3417,14 @@ mod zustellbuch_tests {
             "der verschluckte Auftrag meldet nicht"
         );
         assert_eq!(stand(&mut rc), None, "der Ueberlebende wurde abgeschrieben");
+        assert_eq!(
+            el.state.events.len(),
+            1,
+            "die empfangene Nachricht wurde mit dem Geist-Ereignis weggeworfen"
+        );
         assert!(
-            el.state.events.is_empty(),
-            "das Geist-Ereignis liegt noch — kommt nach dem Reconnect zurueck"
+            matches!(el.state.events.front(), Some(Event::Incoming(Packet::Publish(p))) if p.topic == "chat"),
+            "das Geist-Ereignis liegt noch — es kaeme nach dem Reconnect zurueck"
         );
         assert!(el.pending.is_empty());
         // Nach dem Reconnect: pkid 3 wird neu vergeben — und trifft den Richtigen.

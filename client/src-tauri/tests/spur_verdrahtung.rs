@@ -1243,13 +1243,43 @@ fn beim_einreichen_liegt_die_ablage_vor_fahne_und_einreichen() {
         ablage < fahne,
         "die Fahne faellt vor der Ablage — bei voller Platte ist die Korrektur weg"
     );
-    let ende = rumpf(&quelle, "async fn flight_end(");
-    let einreichen = ende
-        .find("file_pirep_with_retry(")
-        .expect("`flight_end` reicht nicht mehr ueber `file_pirep_with_retry` ein");
+    // ⚠ JEDER Einreichweg sichert vorher (Runde 15): Runde 14 hatte nur
+    // `flight_end`; der manuelle Weg (auch der manuelle Divert) behielt das
+    // Fenster zwischen erfolgreichem `/file` und dem Loeschen des Flugs.
+    // Ein Helfer, und jede Stelle, die einreicht, ruft ihn davor.
+    let produktion = produktionsteil(&quelle);
+    let helfer = "nachtrag_vor_dem_einreichen_sichern(";
     assert!(
-        ende[..einreichen].contains("nachtrag_queue::enqueue_offline("),
-        "`flight_end` legt den offenen Nachtrag nicht VOR dem Einreichen ab"
+        rumpf(&produktion, "fn nachtrag_vor_dem_einreichen_sichern(")
+            .contains("nachtrag_queue::enqueue_offline("),
+        "der Helfer legt nichts ab"
+    );
+    for (weg, nadel) in [
+        (
+            "automatische",
+            "file_pirep_with_retry(&client, &flight.pirep_id, &body)",
+        ),
+        ("manuelle", "client.file_pirep(&flight.pirep_id, &body)"),
+    ] {
+        let stelle = produktion.find(nadel).unwrap_or_else(|| {
+            panic!("der {weg} Einreichweg wurde umgebaut — Nadel `{nadel}` fehlt")
+        });
+        let davor = &produktion[..stelle];
+        let sicherung = davor
+            .rfind(helfer)
+            .unwrap_or_else(|| panic!("der {weg} Einreichweg sichert den Nachtrag nicht vorher"));
+        // Im selben Funktionsrumpf: zwischen Sicherung und Einreichen darf
+        // keine weitere Funktion beginnen.
+        assert!(
+            !davor[sicherung..].contains("\nasync fn ") && !davor[sicherung..].contains("\nfn "),
+            "die Sicherung des {weg}n Wegs steht in einer anderen Funktion"
+        );
+    }
+    // Genau ein Helfer, genau zwei Aufrufer — kein zweiter, eigener Weg.
+    assert_eq!(
+        produktion.matches(helfer).count(),
+        3,
+        "nicht genau ein Helfer mit zwei Aufrufern (Definition + automatisch + manuell)"
     );
 }
 
@@ -1283,5 +1313,19 @@ fn die_bereinigung_leert_die_ereignisschlange() {
     assert!(
         f.contains("pending.clear()"),
         "`pending` bleibt stehen — ein zweiter Abriss zaehlt dieselben Auftraege nochmal"
+    );
+    // ⚠ Nur die buchrelevanten Sorten werden entnommen (Runde 15): Ein
+    // bereits empfangenes `Incoming::Publish` — Chat, Integritaet — muss
+    // zurueck in die Schlange, sonst ist es lautlos weg.
+    assert!(
+        f.contains("andere => behalten.push_back(andere)"),
+        "die Bereinigung wirft alles weg, was sie nicht kennt — empfangene Nachrichten inklusive"
+    );
+    let zurueck = f
+        .find("state.events.extend(")
+        .expect("die Bereinigung legt nichts zurueck");
+    assert!(
+        drain < zurueck,
+        "zurueckgelegt wird vor dem Leeren — das kann nicht stimmen"
     );
 }

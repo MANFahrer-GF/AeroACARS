@@ -16928,6 +16928,56 @@ mod client_health_report_tests {
 /// Recorder-Importer den PIREP nicht aus dem hochgeladenen JSONL nachlegen
 /// (`importer.ts` legt `pireps` nur bei `pirep_filed` an). MQTT-Publish ist
 /// best-effort und entfällt sauber, wenn kein Handle da ist.
+/// Legt den offenen Bahn-Nachtrag ab, BEVOR ein Flugbericht eingereicht
+/// wird — auf JEDEM Einreichweg.
+///
+/// # Warum vor dem Einreichen
+///
+/// Nach einem erfolgreichen `/file` loescht der Client den gespeicherten
+/// Flug. Stirbt er zwischen beidem, gibt es ohne diese Ablage nichts mehr,
+/// das die Korrektur je schicken koennte: Der Flug ist weg, der Trichter
+/// lief nie (Codex, 03.09.2026, Runde 14 und 15). Runde 14 hatte das nur
+/// in `flight_end` eingebaut; der manuelle Weg (auch der manuelle Divert)
+/// behielt das Fenster.
+///
+/// # Warum ein Fehler das Einreichen NICHT aufhaelt
+///
+/// Thomas' Entscheidung (03.09.2026): Der Flugbericht des Piloten ist
+/// wichtiger als die Bahnkorrektur. Ist die Platte voll oder die Ablage
+/// nicht beschreibbar, wird trotzdem eingereicht und der Verlust laut
+/// gemeldet — statt einen Piloten mit vollem Datentraeger seinen Flug
+/// nicht einreichen zu lassen.
+///
+/// Doppelt abgelegt schadet nicht: `senden` schreibt dieselbe Datei
+/// (Kennung + Aufsetzzeit + Revision) noch einmal, atomar und mit
+/// gleichem Inhalt, und der Recorder riegelt ueber die Revision.
+fn nachtrag_vor_dem_einreichen_sichern(app: &AppHandle, flight: &ActiveFlight) {
+    let offener = {
+        let st = flight.stats.lock().expect("flight stats");
+        if st.bahn_nachtrag_offen {
+            bahn_nachtrag_bauen(flight, &st)
+        } else {
+            None
+        }
+    };
+    let Some(n) = offener else {
+        return;
+    };
+    match nachtrag_queue::enqueue_offline(app, &n) {
+        Ok(p) => tracing::info!(
+            pirep_id = %flight.pirep_id,
+            pfad = %p.display(),
+            "Bahn-Nachtrag vor dem Einreichen abgelegt"
+        ),
+        Err(e) => tracing::error!(
+            pirep_id = %flight.pirep_id,
+            error = %e,
+            "Bahn-Nachtrag vor dem Einreichen NICHT abgelegt — Einreichen laeuft trotzdem \
+             (der Flugbericht geht vor), die Korrektur geht verloren"
+        ),
+    }
+}
+
 fn finalize_filed_pirep(
     app: &AppHandle,
     handle: Option<&aeroacars_mqtt::Handle>,
@@ -20725,36 +20775,7 @@ async fn flight_end(
     // pirep_queue/ — Background-Worker reicht ihn ein sobald die
     // Verbindung wieder steht. Pilot sieht „PIREP queued" statt
     // „PIREP filed", kann aber sofort den nächsten Flug starten.
-    // Runde 14 (Codex, High 1): Der offene Bahn-Nachtrag liegt VOR dem
-    // Einreichen auf der Platte. Geht das Einreichen durch und der Client
-    // stirbt vor dem Trichter, ist die Korrektur schon in der Ablage; der
-    // Worker schickt sie beim naechsten Start. Schlaegt die Ablage fehl,
-    // wird trotzdem eingereicht — der Flugbericht ist wichtiger als die
-    // Korrektur —, aber laut.
-    {
-        let offener = {
-            let st = flight.stats.lock().expect("flight stats");
-            if st.bahn_nachtrag_offen {
-                bahn_nachtrag_bauen(&flight, &st)
-            } else {
-                None
-            }
-        };
-        if let Some(n) = offener {
-            match nachtrag_queue::enqueue_offline(&app, &n) {
-                Ok(p) => tracing::info!(
-                    pirep_id = %flight.pirep_id,
-                    pfad = %p.display(),
-                    "Bahn-Nachtrag vor dem Einreichen abgelegt"
-                ),
-                Err(e) => tracing::error!(
-                    pirep_id = %flight.pirep_id,
-                    error = %e,
-                    "Bahn-Nachtrag vor dem Einreichen NICHT abgelegt — Einreichen laeuft trotzdem"
-                ),
-            }
-        }
-    }
+    nachtrag_vor_dem_einreichen_sichern(&app, &flight);
     match file_pirep_with_retry(&client, &flight.pirep_id, &body).await {
         Ok(()) => {
             // Snapshot the landing into the local history file BEFORE
@@ -21529,6 +21550,7 @@ async fn flight_end_manual(
         tracing::info!(pirep_id = %flight.pirep_id, "PIREP source flipped to MANUAL");
     }
     tracing::info!(pirep_id = %flight.pirep_id, "filing PIREP (manual)");
+    nachtrag_vor_dem_einreichen_sichern(&app, &flight);
     match client.file_pirep(&flight.pirep_id, &body).await {
         Ok(()) => {
             // Same landing-history snapshot as the regular file path.
