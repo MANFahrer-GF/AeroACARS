@@ -2415,7 +2415,15 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                             // Flugbericht liegen als `retain` beim Broker,
                             // sobald sie einmal durch sind.
                             eventloop.clean();
-                            zustellbuch_leitung_weg(&buch_drive, &mut eventloop);
+                            for p in zustellbuch_leitung_weg(&buch_drive, &mut eventloop) {
+                                eingehendes_publish_zustellen(
+                                    &p,
+                                    &subscribe_topic,
+                                    &subscribe_chat_topic,
+                                    &integrity_tx,
+                                    &chat_tx,
+                                );
+                            }
                             subscribed = false;
                             chat_subscribed = false;
                             if let Some(auf) = link_state_for(LinkEvent::WatchdogTimeout) {
@@ -2463,27 +2471,13 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                             }
                         }
                         Ok(Event::Incoming(Packet::Publish(publish))) => {
-                            if publish.topic == subscribe_topic {
-                                match serde_json::from_slice::<IntegrityFlagEvent>(&publish.payload) {
-                                    Ok(evt) => {
-                                        if integrity_tx.send(evt).is_err() {
-                                            debug!("integrity_flag receiver dropped — discarding");
-                                        }
-                                    }
-                                    Err(e) => {
-                                        warn!("integrity_flag JSON decode failed: {e}");
-                                    }
-                                }
-                            } else if publish.topic == subscribe_chat_topic {
-                                match serde_json::from_slice::<ChatNachricht>(&publish.payload) {
-                                    Ok(n) => {
-                                        if chat_tx.send(n).is_err() {
-                                            debug!("Chat-Empfaenger weg — Zuruf verworfen");
-                                        }
-                                    }
-                                    Err(e) => warn!("Chat-Nachricht nicht lesbar: {e}"),
-                                }
-                            }
+                            eingehendes_publish_zustellen(
+                                &publish,
+                                &subscribe_topic,
+                                &subscribe_chat_topic,
+                                &integrity_tx,
+                                &chat_tx,
+                            );
                         }
                         Ok(Event::Outgoing(Outgoing::Publish(pkid))) => {
                             buch_drive
@@ -2518,7 +2512,15 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                             // rumqttc hat `clean()` schon gefahren: Unbestaetigtes
                             // und die Auftraege aus dem Kanal liegen in `pending`
                             // und fallen beim naechsten CONNACK (clean_session).
-                            zustellbuch_leitung_weg(&buch_drive, &mut eventloop);
+                            for p in zustellbuch_leitung_weg(&buch_drive, &mut eventloop) {
+                                eingehendes_publish_zustellen(
+                                    &p,
+                                    &subscribe_topic,
+                                    &subscribe_chat_topic,
+                                    &integrity_tx,
+                                    &chat_tx,
+                                );
+                            }
                             subscribed = false;  // re-subscribe on reconnect
                             chat_subscribed = false;
                             // Leitung weg → keine Positionen mehr in den
@@ -2848,7 +2850,47 @@ async fn publish_json_bestaetigt<T: Serialize>(
 /// fallen beim naechsten CONNACK). Danach `pending` leeren — rumqttc taete
 /// es beim CONNACK ohnehin (clean_session), und ein zweiter Abriss vor dem
 /// CONNACK darf dieselben Auftraege nicht nochmal zaehlen.
-fn zustellbuch_leitung_weg(buch: &Buch, eventloop: &mut rumqttc::EventLoop) {
+/// Stellt ein empfangenes Publish an Integritaets- oder Chat-Empfaenger zu.
+///
+/// EINE Stelle fuer beide Wege: den normalen `poll()`-Arm und die
+/// Ereignisse, die bei einem Leitungsabriss gepuffert in `state.events`
+/// liegen. Die zweite Quelle fehlte bis Runde 16 ganz — die Nachricht war
+/// weg (Runde 15 legte sie nur zurueck in eine Schlange, die rumqttc erst
+/// nach einem geglueckten Reconnect ausliefert; bei anhaltendem Ausfall
+/// also nie).
+fn eingehendes_publish_zustellen(
+    publish: &rumqttc::Publish,
+    integrity_topic: &str,
+    chat_topic: &str,
+    integrity_tx: &mpsc::UnboundedSender<IntegrityFlagEvent>,
+    chat_tx: &mpsc::UnboundedSender<ChatNachricht>,
+) {
+    if publish.topic == integrity_topic {
+        match serde_json::from_slice::<IntegrityFlagEvent>(&publish.payload) {
+            Ok(evt) => {
+                if integrity_tx.send(evt).is_err() {
+                    debug!("integrity_flag receiver dropped — discarding");
+                }
+            }
+            Err(e) => warn!("integrity_flag JSON decode failed: {e}"),
+        }
+    } else if publish.topic == chat_topic {
+        match serde_json::from_slice::<ChatNachricht>(&publish.payload) {
+            Ok(n) => {
+                if chat_tx.send(n).is_err() {
+                    debug!("Chat-Empfaenger weg — Zuruf verworfen");
+                }
+            }
+            Err(e) => warn!("Chat-Nachricht nicht lesbar: {e}"),
+        }
+    }
+}
+
+#[must_use = "die geretteten Nachrichten muessen zugestellt werden"]
+fn zustellbuch_leitung_weg(
+    buch: &Buch,
+    eventloop: &mut rumqttc::EventLoop,
+) -> Vec<rumqttc::Publish> {
     let mut b = buch.lock().unwrap_or_else(|e| e.into_inner());
     // ⚠ Zuerst die GEPUFFERTEN Ereignisse (Runde 14, High 3): rumqttc legt
     // `Outgoing::Publish(pkid)` in `state.events`, BEVOR es schreibt.
@@ -2866,6 +2908,7 @@ fn zustellbuch_leitung_weg(buch: &Buch, eventloop: &mut rumqttc::EventLoop) {
     // Runde 15): Bei QoS 0 oder schon gesendetem ACK kommt sie nie wieder.
     let mut gepuffert = 0usize;
     let mut behalten = VecDeque::new();
+    let mut gerettet = Vec::new();
     for ev in eventloop.state.events.drain(..) {
         match ev {
             Event::Outgoing(Outgoing::Publish(pkid)) => {
@@ -2874,6 +2917,12 @@ fn zustellbuch_leitung_weg(buch: &Buch, eventloop: &mut rumqttc::EventLoop) {
             }
             // Ein PUBACK, das schon da war: das ist eine echte Zustellung.
             Event::Incoming(Packet::PubAck(ack)) => b.bestaetigt(ack.pkid),
+            // ⚠ Eine bereits EMPFANGENE Nachricht wird SOFORT zugestellt,
+            // nicht zurueckgelegt (Runde 16): `poll()` liefert die Schlange
+            // erst nach einem geglueckten Reconnect aus — bei anhaltendem
+            // Ausfall also nie, und beim Beenden der App gar nicht mehr.
+            // Runde 15 hatte sie nur vor dem Wegwerfen bewahrt.
+            Event::Incoming(Packet::Publish(p)) => gerettet.push(p),
             andere => behalten.push_back(andere),
         }
     }
@@ -2892,6 +2941,7 @@ fn zustellbuch_leitung_weg(buch: &Buch, eventloop: &mut rumqttc::EventLoop) {
     }
     b.verbindung_weg(verschluckte);
     eventloop.pending.clear();
+    gerettet
 }
 
 /// v1.5.7 (#mqtt-outage, QS-Befund): Positionen NICHT-blockierend senden.
@@ -3405,7 +3455,7 @@ mod zustellbuch_tests {
             QoS::AtLeastOnce,
             "x",
         )));
-        zustellbuch_leitung_weg(&buch, &mut el);
+        let gerettet = zustellbuch_leitung_weg(&buch, &mut el);
         assert_eq!(
             stand(&mut ra),
             Some(false),
@@ -3417,13 +3467,17 @@ mod zustellbuch_tests {
             "der verschluckte Auftrag meldet nicht"
         );
         assert_eq!(stand(&mut rc), None, "der Ueberlebende wurde abgeschrieben");
+        // Die empfangene Nachricht wird HERAUSGEREICHT — nicht in der
+        // Schlange geparkt, die `poll()` erst nach einem geglueckten
+        // Reconnect ausliefert (Runde 16).
         assert_eq!(
-            el.state.events.len(),
+            gerettet.len(),
             1,
-            "die empfangene Nachricht wurde mit dem Geist-Ereignis weggeworfen"
+            "die empfangene Nachricht wurde nicht herausgereicht"
         );
+        assert_eq!(gerettet[0].topic, "chat");
         assert!(
-            matches!(el.state.events.front(), Some(Event::Incoming(Packet::Publish(p))) if p.topic == "chat"),
+            el.state.events.is_empty(),
             "das Geist-Ereignis liegt noch — es kaeme nach dem Reconnect zurueck"
         );
         assert!(el.pending.is_empty());
@@ -3437,6 +3491,54 @@ mod zustellbuch_tests {
             "das Buch ist versetzt — der Geist hat das PUBACK genommen"
         );
         assert_eq!(b.offen(), (0, 0));
+    }
+
+    /// ⚠ Die gerettete Nachricht erreicht ihren Empfaenger OHNE Reconnect
+    /// (Runde 16). Zurueckgelegt in `state.events` haette sie bei
+    /// anhaltendem Ausfall nie jemand gesehen.
+    #[tokio::test]
+    async fn die_gerettete_nachricht_erreicht_den_empfaenger_ohne_verbindung() {
+        let buch: Buch = Arc::new(Mutex::new(Zustellbuch::default()));
+        let mut el = rumqttc::EventLoop::new(MqttOptions::new("t", "localhost", 1883), 10);
+        assert!(el.network.is_none(), "Ausgangslage: keine Verbindung");
+        let (integrity_tx, mut integrity_rx) = mpsc::unbounded_channel::<IntegrityFlagEvent>();
+        let (chat_tx, mut chat_rx) = mpsc::unbounded_channel::<ChatNachricht>();
+        let chat_json = serde_json::to_vec(&serde_json::json!({
+            "id": 1,
+            "va_prefix": "GSG",
+            "von_pilot_id": "42",
+            "ts": 1_755_000_000_000i64,
+            "text": "moin",
+        }))
+        .expect("JSON");
+        el.state
+            .events
+            .push_back(Event::Incoming(Packet::Publish(rumqttc::Publish::new(
+                "aeroacars/GSG/42/chat_in",
+                QoS::AtMostOnce,
+                chat_json,
+            ))));
+        for p in zustellbuch_leitung_weg(&buch, &mut el) {
+            eingehendes_publish_zustellen(
+                &p,
+                "aeroacars/GSG/42/integrity_flag",
+                "aeroacars/GSG/42/chat_in",
+                &integrity_tx,
+                &chat_tx,
+            );
+        }
+        assert!(
+            el.network.is_none(),
+            "der Test darf keine Verbindung aufbauen — genau darum geht es"
+        );
+        let n = chat_rx
+            .try_recv()
+            .expect("der Zuruf erreichte den Empfaenger nicht — er wartet auf einen Reconnect, der ausbleiben kann");
+        assert_eq!(n.text, "moin");
+        assert!(
+            integrity_rx.try_recv().is_err(),
+            "der Zuruf ging an den falschen Kanal"
+        );
     }
 
     /// Ein Outgoing ohne Eintrag bringt das Buch nicht zum Absturz und nimmt

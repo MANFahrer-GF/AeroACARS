@@ -1321,6 +1321,28 @@ fn die_bereinigung_leert_die_ereignisschlange() {
         f.contains("andere => behalten.push_back(andere)"),
         "die Bereinigung wirft alles weg, was sie nicht kennt — empfangene Nachrichten inklusive"
     );
+    // ⚠ Eine empfangene Nachricht wird HERAUSGEREICHT und sofort zugestellt
+    // (Runde 16). Zurueckgelegt in `state.events` liefert `poll()` sie erst
+    // nach einem geglueckten Reconnect aus — bei anhaltendem Ausfall nie.
+    assert!(
+        f.contains("gerettet.push(p)"),
+        "empfangene Nachrichten werden nicht herausgereicht — sie warten auf einen Reconnect"
+    );
+    let zustellen = "eingehendes_publish_zustellen(";
+    assert_eq!(
+        produktion.matches(zustellen).count(),
+        4,
+        "nicht genau ein Zustellweg mit drei Aufrufern (Definition + Publish-Arm + beide Abriss-Stellen)"
+    );
+    // Beide Abriss-Stellen reichen die Geretteten weiter: der Aufruf steht
+    // in der `for`-Schleife ueber `zustellbuch_leitung_weg`.
+    assert_eq!(
+        produktion
+            .matches("for p in zustellbuch_leitung_weg(")
+            .count(),
+        2,
+        "nicht beide Abriss-Stellen stellen die geretteten Nachrichten zu"
+    );
     let zurueck = f
         .find("state.events.extend(")
         .expect("die Bereinigung legt nichts zurueck");
