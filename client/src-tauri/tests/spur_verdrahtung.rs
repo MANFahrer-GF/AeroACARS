@@ -890,8 +890,8 @@ fn der_gequeute_nachtrag_kommt_ueber_aus_json() {
     let typ = "TouchdownRolloutFinalizedPayload";
     assert_eq!(
         produktion.matches(&format!("{typ}::aus_json(")).count(),
-        4,
-        "nicht alle Lesestellen (Einreich-Trichter, Worker-Altbestand, Ablage lesen, Ablage-Revision) nehmen `aus_json`"
+        3,
+        "nicht alle Lesestellen (Einreich-Trichter, Worker-Altbestand, Ablage) nehmen `aus_json`"
     );
     // ⚠ Beide Schreibweisen: der Turbofish UND die Typannotation
     // (`let n: …Payload = serde_json::from_value(json)`) — genau die stand
@@ -1043,20 +1043,18 @@ fn jeder_nachtrag_geht_ueber_die_ablage() {
     let warten = senden
         .find(".await")
         .expect("`senden` wartet nicht auf die Meldung");
-    let loeschen = senden
-        .find("entfernen_wenn_revision(")
-        .expect("`senden` raeumt nie auf");
+    let loeschen = senden.find("entfernen(").expect("`senden` raeumt nie auf");
     assert!(loeschen > warten, "die Datei faellt vor der Zustellmeldung");
     // Nur EINE Stelle loescht.
     assert_eq!(
         modul.matches("remove_file(").count(),
         1,
-        "mehr als eine Loeschstelle — eine davon prueft die Revision nicht"
+        "mehr als eine Loeschstelle — eine davon geht an `entfernen` vorbei"
     );
-    let entfernen = rumpf(modul, "pub fn entfernen_wenn_revision(");
+    let entfernen = rumpf(modul, "pub fn entfernen(");
     assert!(
         entfernen.contains("remove_file("),
-        "die Loeschstelle liegt nicht hinter der Revisionspruefung"
+        "die Loeschstelle liegt nicht in `entfernen`"
     );
 }
 
@@ -1193,15 +1191,97 @@ fn ohne_ablage_wird_nicht_gesendet_und_die_sperre_bleibt() {
         block.find(sperre).expect("Sperre") > ok_arm,
         "die Sperre faellt vor dem Ok-Arm"
     );
-    let entfernen = rumpf(&produktion, "pub fn entfernen_wenn_revision(");
-    let none_arm = entfernen.find("None =>").expect("kein None-Arm");
-    let loeschen = entfernen.find("remove_file(").expect("keine Loeschstelle");
+    // High 2 (Runde 14): Die Revision steht im NAMEN — das PUBACK loescht
+    // genau die gesendete Datei. Kein Lesen-dann-Loeschen mehr, also auch
+    // kein Fenster, in dem der Streamer eine neuere Datei unterschiebt.
+    // ⚠ Die Nadel ist das FORMAT, nicht das Wort „revision": Ein
+    // `let _ = revision;` haette den alten Test gruen gelassen (bei der
+    // Gegenprobe zu Runde 14 aufgefallen). Weil `nur_code` Zeichenketten
+    // leert, wird die Rohquelle gelesen — nur fuer diese eine Nadel.
+    let roh = fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let name_roh = rumpf(&roh, "pub fn dateiname(");
     assert!(
-        loeschen < none_arm,
-        "der None-Arm (unlesbar) loescht — eine halb geschriebene Datei ist weg"
+        name_roh.contains("-r{"),
+        "der Dateiname traegt die Revision nicht — das Lese-dann-Loesche-Fenster ist zurueck"
+    );
+    let name = rumpf(&produktion, "pub fn dateiname(");
+    assert!(
+        name.contains("revision"),
+        "`dateiname` nimmt die Revision nicht mehr entgegen"
+    );
+    let entfernen = rumpf(&produktion, "pub fn entfernen(");
+    assert!(
+        !entfernen.contains("read_to_string("),
+        "`entfernen` liest vor dem Loeschen — genau das Fenster, das die Revision im Namen schliesst"
+    );
+}
+
+/// ⚠ Einreichen: die Ablage liegt VOR der Fahne und VOR dem Einreichen
+/// (Runde 14, High 1).
+///
+/// Der Flug ist nach dem Einreichen weg; einen naechsten Tick gibt es
+/// nicht. Also faellt die Fahne im `(true, true)`-Arm erst nach `enqueue`,
+/// und `flight_end` legt den offenen Nachtrag ab, bevor es den Flugbericht
+/// einreicht.
+#[test]
+fn beim_einreichen_liegt_die_ablage_vor_fahne_und_einreichen() {
+    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let trichter = rumpf(&quelle, "fn finalize_filed_pirep(");
+    let arm = trichter
+        .find("(true, true) =>")
+        .expect("kein `(true, true)`-Arm");
+    let auf = arm + trichter[arm..].find('{').expect("Arm ohne Block");
+    let zu = blockende(trichter, auf);
+    let block = &trichter[auf..zu];
+    let ablage = block
+        .find("nachtrag_queue::enqueue(")
+        .expect("der Arm legt nicht ab, bevor die Fahne faellt");
+    let fahne = block
+        .find("stats.bahn_nachtrag_offen = false;")
+        .expect("die Fahne faellt im Arm nicht");
+    assert!(
+        ablage < fahne,
+        "die Fahne faellt vor der Ablage — bei voller Platte ist die Korrektur weg"
+    );
+    let ende = rumpf(&quelle, "async fn flight_end(");
+    let einreichen = ende
+        .find("file_pirep_with_retry(")
+        .expect("`flight_end` reicht nicht mehr ueber `file_pirep_with_retry` ein");
+    assert!(
+        ende[..einreichen].contains("nachtrag_queue::enqueue_offline("),
+        "`flight_end` legt den offenen Nachtrag nicht VOR dem Einreichen ab"
+    );
+}
+
+/// ⚠ Die Bereinigung traegt gepufferte Ereignisse EIN, bevor sie
+/// abschreibt (Runde 14, High 3).
+///
+/// rumqttc legt `Outgoing::Publish(pkid)` in `state.events`, bevor es
+/// schreibt. Ein Schreibfehler laesst es dort liegen; kaeme es nach dem
+/// Reconnect zurueck, saehe das Buch einen frischen Eintrag als unterwegs,
+/// und ein spaeteres PUBACK derselben pkid traefe den Falschen.
+#[test]
+fn die_bereinigung_leert_die_ereignisschlange() {
+    let quelle =
+        nur_code(&fs::read_to_string("crates/aeroacars-mqtt/src/lib.rs").expect("mqtt lib.rs"));
+    let produktion = produktionsteil(&quelle);
+    let f = rumpf(&produktion, "fn zustellbuch_leitung_weg(");
+    let drain = f
+        .find("state.events.drain(")
+        .expect("die Bereinigung leert `state.events` nicht — das Geist-Ereignis bleibt");
+    let abschreiben = f
+        .find("verbindung_weg(")
+        .expect("die Bereinigung schreibt nichts ab");
+    assert!(
+        drain < abschreiben,
+        "erst abschreiben, dann die Ereignisse eintragen — der Geist bleibt im Buch"
     );
     assert!(
-        entfernen.contains("if rev == zugestellt"),
-        "Loeschen nicht an die gleiche Revision gebunden"
+        f.contains(".ausgegangen(pkid)"),
+        "das gepufferte `Outgoing::Publish` wird nicht eingetragen"
+    );
+    assert!(
+        f.contains("pending.clear()"),
+        "`pending` bleibt stehen — ein zweiter Abriss zaehlt dieselben Auftraege nochmal"
     );
 }

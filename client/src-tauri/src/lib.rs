@@ -15017,13 +15017,23 @@ mod nachtrag_queue {
         Some(base.join(va).join(pilot))
     }
 
-    /// Dateiname aus `pirep_id` + Aufsetzzeit — reine Funktion, testbar.
-    pub fn dateiname(pirep_id: &str, touchdown_at: i64) -> Option<String> {
+    /// Dateiname aus `pirep_id` + Aufsetzzeit + REVISION — reine Funktion.
+    ///
+    /// Die Revision im Namen (Runde 14, High 2): Ein PUBACK loescht genau
+    /// die Datei, die gesendet wurde. Eine neuere Revision ist eine andere
+    /// Datei — der Streamer kann sie nicht mehr unter dem Leser des
+    /// ACK-Tasks wegtauschen. Nullgefuellt, damit die Reihenfolge im Ordner
+    /// die Revisionsreihenfolge ist (der Worker schickt aelteste zuerst; der
+    /// Recorder weist Ueberholtes ueber den Riegel ab).
+    pub fn dateiname(pirep_id: &str, touchdown_at: i64, revision: Option<u32>) -> Option<String> {
         let safe = sicher(pirep_id);
         if safe.is_empty() {
             return None;
         }
-        Some(format!("{safe}-{touchdown_at}.json"))
+        Some(format!(
+            "{safe}-{touchdown_at}-r{:06}.json",
+            revision.unwrap_or(0)
+        ))
     }
 
     fn io_err(msg: impl Into<String>) -> std::io::Error {
@@ -15070,8 +15080,12 @@ mod nachtrag_queue {
     ) -> Result<PathBuf, std::io::Error> {
         let d = dir_in(base, va, pilot).ok_or_else(|| io_err("Identitaet leer"))?;
         std::fs::create_dir_all(&d)?;
-        let name = dateiname(&nachtrag.pirep_id, nachtrag.touchdown_at)
-            .ok_or_else(|| io_err("pirep_id unbrauchbar"))?;
+        let name = dateiname(
+            &nachtrag.pirep_id,
+            nachtrag.touchdown_at,
+            nachtrag.herkunft.bahn_revision,
+        )
+        .ok_or_else(|| io_err("pirep_id unbrauchbar"))?;
         let path = d.join(name);
         // Atomar: erst die Temp-Datei, dann `rename` (ersetzt auf allen
         // drei Plattformen). Ein `fs::write` auf die Zieldatei liess einen
@@ -15149,39 +15163,15 @@ mod nachtrag_queue {
         out
     }
 
-    /// Die Revision, die eine Ablage-Datei gerade traegt — `None`, wenn sie
-    /// nicht (mehr) lesbar ist.
-    fn revision_in_datei(path: &Path) -> Option<Option<u32>> {
-        let text = std::fs::read_to_string(path).ok()?;
-        let ablage: Ablage = serde_json::from_str(&text).ok()?;
-        let n = aeroacars_mqtt::TouchdownRolloutFinalizedPayload::aus_json(ablage.nachtrag).ok()?;
-        Some(n.herkunft.bahn_revision)
-    }
-
-    /// Entfernt die Datei nur, wenn sie noch die zugestellte Revision
-    /// traegt. Hat der Streamer inzwischen einen neueren Nachtrag
-    /// hineingeschrieben, bleibt sie — sonst ginge der neuere verloren.
-    /// Das ist die EINZIGE Stelle, die eine Ablage-Datei loescht.
-    pub fn entfernen_wenn_revision(path: &Path, zugestellt: Option<u32>) -> bool {
-        match revision_in_datei(path) {
-            Some(rev) if rev == zugestellt => {
-                let _ = std::fs::remove_file(path);
-                true
-            }
-            Some(rev) => {
-                tracing::info!(
-                    pfad = %path.display(),
-                    zugestellt = ?zugestellt,
-                    liegt = ?rev,
-                    "Ablage traegt inzwischen eine neuere Revision — bleibt"
-                );
-                false
-            }
-            None => {
-                // Nicht lesbar heisst NICHT loeschbar: Die Datei kann gerade
-                // neu geschrieben werden, oder der Fehler ist voruebergehend.
-                // Der Worker liest sie beim naechsten Tick wieder.
-                tracing::warn!(pfad = %path.display(), "Ablage-Datei nicht lesbar — bleibt liegen");
+    /// Entfernt die zugestellte Datei — und NUR die. Seit die Revision im
+    /// Namen steht, ist das die gesendete Datei und keine andere; kein
+    /// Lesen-dann-Loeschen mehr, kein Fenster (Runde 14, High 2). Das ist
+    /// die EINZIGE Stelle, die eine Ablage-Datei loescht.
+    pub fn entfernen(path: &Path) -> bool {
+        match std::fs::remove_file(path) {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!(pfad = %path.display(), error = %e, "zugestellte Ablage-Datei nicht entfernt");
                 false
             }
         }
@@ -15222,7 +15212,7 @@ mod nachtrag_queue {
             );
             if zugestellt {
                 tracing::info!(pirep_id, revision = ?revision, "Bahnkorrektur zugestellt (PUBACK)");
-                entfernen_wenn_revision(&pfad, revision);
+                entfernen(&pfad);
             } else {
                 tracing::warn!(
                     pirep_id,
@@ -15250,7 +15240,7 @@ mod nachtrag_queue {
             );
             if zugestellt {
                 tracing::info!(pirep_id, revision = ?revision, "Bahnkorrektur aus der Ablage nachgeschickt");
-                entfernen_wenn_revision(&pfad, revision);
+                entfernen(&pfad);
                 gesendet += 1;
             } else {
                 tracing::warn!(
@@ -16971,8 +16961,32 @@ fn finalize_filed_pirep(
             let mut stats = flight.stats.lock().expect("flight stats");
             match (stats.bahn_nachtrag_offen, handle.is_some()) {
                 (true, true) => {
-                    stats.bahn_nachtrag_offen = false;
-                    bahn_nachtrag_bauen(flight, &stats)
+                    // Ablage VOR der Fahne (Runde 14, High 1): Der Flug ist
+                    // eingereicht, einen naechsten Tick gibt es nicht — was
+                    // hier nicht auf der Platte liegt, ist weg. Die Fahne
+                    // faellt nur, wenn die Datei liegt; `senden` schreibt
+                    // dieselbe Datei danach nochmal (atomar, gleicher Inhalt).
+                    match bahn_nachtrag_bauen(flight, &stats) {
+                        Some(n) => {
+                            let s = handle.as_ref().expect("Handle geprueft").nachtrag_sender();
+                            match nachtrag_queue::enqueue(app, &s.va_prefix, &s.pilot_id, &n) {
+                                Ok(_) => {
+                                    stats.bahn_nachtrag_offen = false;
+                                    Some(n)
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        pirep_id,
+                                        error = %e,
+                                        "Bahnkorrektur beim Einreichen: Ablage nicht beschreibbar — \
+                                         die Korrektur geht verloren (Flug ist eingereicht)"
+                                    );
+                                    None
+                                }
+                            }
+                        }
+                        None => None,
+                    }
                 }
                 (true, false) => {
                     // Kein Handle — in die Ablage, nicht verlieren. Die Fahne
@@ -20711,6 +20725,36 @@ async fn flight_end(
     // pirep_queue/ — Background-Worker reicht ihn ein sobald die
     // Verbindung wieder steht. Pilot sieht „PIREP queued" statt
     // „PIREP filed", kann aber sofort den nächsten Flug starten.
+    // Runde 14 (Codex, High 1): Der offene Bahn-Nachtrag liegt VOR dem
+    // Einreichen auf der Platte. Geht das Einreichen durch und der Client
+    // stirbt vor dem Trichter, ist die Korrektur schon in der Ablage; der
+    // Worker schickt sie beim naechsten Start. Schlaegt die Ablage fehl,
+    // wird trotzdem eingereicht — der Flugbericht ist wichtiger als die
+    // Korrektur —, aber laut.
+    {
+        let offener = {
+            let st = flight.stats.lock().expect("flight stats");
+            if st.bahn_nachtrag_offen {
+                bahn_nachtrag_bauen(&flight, &st)
+            } else {
+                None
+            }
+        };
+        if let Some(n) = offener {
+            match nachtrag_queue::enqueue_offline(&app, &n) {
+                Ok(p) => tracing::info!(
+                    pirep_id = %flight.pirep_id,
+                    pfad = %p.display(),
+                    "Bahn-Nachtrag vor dem Einreichen abgelegt"
+                ),
+                Err(e) => tracing::error!(
+                    pirep_id = %flight.pirep_id,
+                    error = %e,
+                    "Bahn-Nachtrag vor dem Einreichen NICHT abgelegt — Einreichen laeuft trotzdem"
+                ),
+            }
+        }
+    }
     match file_pirep_with_retry(&client, &flight.pirep_id, &body).await {
         Ok(()) => {
             // Snapshot the landing into the local history file BEFORE
@@ -48886,10 +48930,15 @@ mod touchdown_metadata_stamp_tests {
             "flatten+Option liest den fehlenden Block als Some(default) — die Ablage muss ueber aus_json gehen"
         );
         assert_eq!(
-            nachtrag_queue::dateiname("42/../x", 1_755_000_100_000).as_deref(),
-            Some("42x-1755000100000.json")
+            nachtrag_queue::dateiname("42/../x", 1_755_000_100_000, Some(3)).as_deref(),
+            Some("42x-1755000100000-r000003.json")
         );
-        assert_eq!(nachtrag_queue::dateiname("/../", 1), None);
+        assert_eq!(
+            nachtrag_queue::dateiname("a", 1, None).as_deref(),
+            Some("a-1-r000000.json"),
+            "ohne Revision: r000000, damit ein Altstand vor jeder echten Revision sortiert"
+        );
+        assert_eq!(nachtrag_queue::dateiname("/../", 1, Some(1)), None);
     }
 
     fn temp_ablage(name: &str) -> std::path::PathBuf {
@@ -48941,13 +48990,16 @@ mod touchdown_metadata_stamp_tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// ⚠ Die Datei faellt nur mit der zugestellten Revision.
+    /// ⚠ Jede Revision ist ihre eigene Datei (Runde 14, High 2).
     ///
-    /// Der Streamer kann waehrend des Sendens einen neueren Nachtrag in
-    /// dieselbe Datei schreiben (gleicher Name: PIREP + Aufsetzzeit). Die
-    /// Zustellmeldung fuer den aelteren darf die neuere nicht loeschen.
+    /// Der Streamer kann waehrend des Sendens einen neueren Nachtrag
+    /// schreiben. Frueher landete er in derselben Datei, und der ACK-Task
+    /// las erst die Revision und loeschte dann — ein Fenster, in dem die
+    /// neuere Datei unter ihm weggetauscht werden konnte. Jetzt loescht das
+    /// PUBACK genau die gesendete Datei; die neuere bleibt, und der Ordner
+    /// sortiert nach Revision.
     #[test]
-    fn die_ablage_bleibt_bei_neuerer_revision_liegen() {
+    fn jede_revision_ist_ihre_eigene_datei() {
         let base = temp_ablage("revision");
         let flight = flight_fixture("EDDP");
         let mut stats = FlightStats::default();
@@ -48956,31 +49008,45 @@ mod touchdown_metadata_stamp_tests {
             Some(chrono::DateTime::<Utc>::from_timestamp(1_755_000_100, 0).expect("Zeit"));
         stats.bahn_revision = 2;
         let alt = bahn_nachtrag_bauen(&flight, &stats).expect("Nachtrag");
-        let pfad = nachtrag_queue::enqueue_in(&base, "GSG", "42", &alt).expect("Ablage");
+        let pfad2 = nachtrag_queue::enqueue_in(&base, "GSG", "42", &alt).expect("Ablage");
         stats.bahn_revision = 3;
         let neu = bahn_nachtrag_bauen(&flight, &stats).expect("Nachtrag");
-        let pfad2 = nachtrag_queue::enqueue_in(&base, "GSG", "42", &neu).expect("Ablage");
-        assert_eq!(pfad, pfad2, "gleiche Landung, gleiche Datei");
+        let pfad3 = nachtrag_queue::enqueue_in(&base, "GSG", "42", &neu).expect("Ablage");
+        assert_ne!(
+            pfad2, pfad3,
+            "zwei Revisionen in derselben Datei — das Lese-dann-Loesche-Fenster ist zurueck"
+        );
+        // Atomar geschrieben: keine Temp-Datei bleibt liegen.
+        let ordner = pfad2.parent().expect("Ordner");
+        assert_eq!(
+            std::fs::read_dir(ordner).expect("lesen").count(),
+            2,
+            "eine Temp-Datei liegt neben der Ablage"
+        );
+        let liste = nachtrag_queue::list_in(&base, "GSG", "42");
+        assert_eq!(liste.len(), 2);
+        assert_eq!(
+            liste[0].1.herkunft.bahn_revision,
+            Some(2),
+            "aelteste Revision muss zuerst gehen"
+        );
+        assert_eq!(liste[1].1.herkunft.bahn_revision, Some(3));
+        // Das PUBACK von Revision 2 nimmt NUR Revision 2.
+        assert!(nachtrag_queue::entfernen(&pfad2));
+        assert!(!pfad2.exists());
         assert!(
-            !nachtrag_queue::entfernen_wenn_revision(&pfad, Some(2)),
+            pfad3.exists(),
             "die Zustellung von Revision 2 hat Revision 3 geloescht"
         );
-        assert!(pfad.exists());
-        // Atomar geschrieben: keine Temp-Datei bleibt liegen.
-        let eintraege = std::fs::read_dir(pfad.parent().expect("Ordner"))
-            .expect("lesen")
-            .count();
-        assert_eq!(eintraege, 1, "eine Temp-Datei liegt neben der Ablage");
-        assert!(nachtrag_queue::entfernen_wenn_revision(&pfad, Some(3)));
-        assert!(!pfad.exists());
-        // Unlesbar ist NICHT loeschbar (Runde 13, High 3): Die Datei kann
-        // gerade neu geschrieben werden.
-        std::fs::write(&pfad, "{ halb geschrie").expect("schreiben");
-        assert!(
-            !nachtrag_queue::entfernen_wenn_revision(&pfad, Some(3)),
-            "eine unlesbare Ablage-Datei wurde als loeschbar behandelt"
+        // Unlesbares bleibt liegen: `list_in` liefert es nicht, also wird es
+        // nie gesendet und nie entfernt.
+        std::fs::write(ordner.join("x-1-r000009.json"), "{ halb geschrie").expect("schreiben");
+        assert_eq!(
+            nachtrag_queue::list_in(&base, "GSG", "42").len(),
+            1,
+            "unlesbare Datei wurde geliefert"
         );
-        assert!(pfad.exists(), "die unlesbare Datei ist weg");
+        assert!(ordner.join("x-1-r000009.json").exists());
         let _ = std::fs::remove_dir_all(&base);
     }
 

@@ -2849,16 +2849,36 @@ async fn publish_json_bestaetigt<T: Serialize>(
 /// es beim CONNACK ohnehin (clean_session), und ein zweiter Abriss vor dem
 /// CONNACK darf dieselben Auftraege nicht nochmal zaehlen.
 fn zustellbuch_leitung_weg(buch: &Buch, eventloop: &mut rumqttc::EventLoop) {
+    let mut b = buch.lock().unwrap_or_else(|e| e.into_inner());
+    // ⚠ Zuerst die GEPUFFERTEN Ereignisse (Runde 14, High 3): rumqttc legt
+    // `Outgoing::Publish(pkid)` in `state.events`, BEVOR es schreibt.
+    // Scheitert das Schreiben, laeuft `clean()`, aber das Ereignis bleibt
+    // liegen und kaeme nach dem Reconnect als Erstes zurueck — dann saehe
+    // das Buch einen frischen Eintrag als unterwegs, obwohl das Paket nie
+    // wieder gesendet wird, und ein spaeteres PUBACK derselben pkid traefe
+    // den Falschen. Also: jetzt eintragen, dann als verloren melden.
+    let mut gepuffert = 0usize;
+    for ev in eventloop.state.events.drain(..) {
+        match ev {
+            Event::Outgoing(Outgoing::Publish(pkid)) => {
+                b.ausgegangen(pkid);
+                gepuffert += 1;
+            }
+            // Ein PUBACK, das schon da war: das ist eine echte Zustellung.
+            Event::Incoming(Packet::PubAck(ack)) => b.bestaetigt(ack.pkid),
+            _ => {}
+        }
+    }
     let verschluckte = eventloop
         .pending
         .iter()
         .filter(|r| matches!(r, Request::Publish(p) if p.pkid == 0))
         .count();
-    let mut b = buch.lock().unwrap_or_else(|e| e.into_inner());
     let (frisch, unterwegs) = b.offen();
-    if frisch + unterwegs > 0 {
+    if frisch + unterwegs + gepuffert > 0 {
         info!(
-            "Zustellbuch: Leitung weg — {unterwegs} unbestaetigt, {verschluckte} von {frisch} frischen verschluckt"
+            "Zustellbuch: Leitung weg — {unterwegs} unbestaetigt ({gepuffert} davon nur gepuffert), \
+             {verschluckte} von {frisch} frischen verschluckt"
         );
     }
     b.verbindung_weg(verschluckte);
@@ -3340,6 +3360,60 @@ mod zustellbuch_tests {
         assert_eq!(stand(&mut rb), None);
         b.bestaetigt(2);
         assert_eq!(stand(&mut rb), Some(true));
+    }
+
+    /// ⚠ Ein Schreibfehler laesst `Outgoing::Publish` in `state.events`
+    /// liegen (Runde 14, High 3). Die Bereinigung muss es EINTRAGEN, bevor
+    /// sie alles Unterwegs abschreibt — sonst bleibt ein Geist im Buch, und
+    /// das naechste Paket mit derselben pkid bekommt ein falsches PUBACK.
+    #[tokio::test]
+    async fn gepufferte_ereignisse_landen_vor_der_bereinigung_im_buch() {
+        let buch: Buch = Arc::new(Mutex::new(Zustellbuch::default()));
+        let mut el = rumqttc::EventLoop::new(MqttOptions::new("t", "localhost", 1883), 10);
+        let (ta, mut ra) = meldung();
+        let (tb, mut rb) = meldung();
+        let (tc, mut rc) = meldung();
+        {
+            let mut b = buch.lock().unwrap();
+            b.registrieren(Some(ta)); // pkid 3 vergeben, Outgoing nur gepuffert
+            b.registrieren(Some(tb)); // lag im Kanal → pending, pkid 0
+            b.registrieren(Some(tc)); // kam nach clean() → ueberlebt
+        }
+        el.state
+            .events
+            .push_back(Event::Outgoing(Outgoing::Publish(3)));
+        el.pending.push_back(Request::Publish(rumqttc::Publish::new(
+            "t",
+            QoS::AtLeastOnce,
+            "x",
+        )));
+        zustellbuch_leitung_weg(&buch, &mut el);
+        assert_eq!(
+            stand(&mut ra),
+            Some(false),
+            "das nur gepufferte Paket gilt nicht als verloren"
+        );
+        assert_eq!(
+            stand(&mut rb),
+            Some(false),
+            "der verschluckte Auftrag meldet nicht"
+        );
+        assert_eq!(stand(&mut rc), None, "der Ueberlebende wurde abgeschrieben");
+        assert!(
+            el.state.events.is_empty(),
+            "das Geist-Ereignis liegt noch — kommt nach dem Reconnect zurueck"
+        );
+        assert!(el.pending.is_empty());
+        // Nach dem Reconnect: pkid 3 wird neu vergeben — und trifft den Richtigen.
+        let mut b = buch.lock().unwrap();
+        b.ausgegangen(3);
+        b.bestaetigt(3);
+        assert_eq!(
+            stand(&mut rc),
+            Some(true),
+            "das Buch ist versetzt — der Geist hat das PUBACK genommen"
+        );
+        assert_eq!(b.offen(), (0, 0));
     }
 
     /// Ein Outgoing ohne Eintrag bringt das Buch nicht zum Absturz und nimmt
