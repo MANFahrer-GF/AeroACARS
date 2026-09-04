@@ -2806,24 +2806,38 @@ fn dep_gate_bei_szenerie_wechsel_zuruecksetzen(phase: FlightPhase) -> bool {
     phase == FlightPhase::Boarding
 }
 
-/// Die VOLLE Entscheidung, ob der Nachzieh-Tick einen bereits abgelegten
-/// `dep_gate` verwirft: Boarding-Bedingung UND ueberhaupt ein Wert
-/// vorhanden UND die Generation, aus der er stammt, weicht von der
-/// AKTUELLEN Szenerie-Generation ab.
+/// Ob der Nachzieh-Tick versuchen soll, `dep_gate` (neu) abzuleiten:
+/// entweder fehlt er noch, oder es steht ein Generationswechsel waehrend
+/// des Boardings aus.
 ///
 /// ⚠ v1.7.17 Runde 3: als EIGENE, pure Funktion — nicht nur die
 /// Boarding-Teilbedingung wie in Runde 2 — damit die Zusicherung, die
 /// eine Gegenprobe treffen muss, den GANZEN Riegel abdeckt, nicht nur ein
 /// Drittel davon.
-fn dep_gate_muss_verworfen_werden(
+///
+/// ⚠ v1.7.17 Runde 4 (externe Gegenpruefung, Codex, adversarial,
+/// 04.09.2026): Runde 3 loeschte `dep_gate` HIER schon, sobald diese
+/// Funktion (damals `dep_gate_muss_verworfen_werden`) wahr war — noch
+/// BEVOR ein Ersatzkandidat feststand. War in genau diesem Tick weder aus
+/// der neuen Szenerie noch aus OSM ein Kandidat zu gewinnen (Positions-
+/// oder Datenlage noch nicht bereit), blieb `dep_gate` `None` — und wenn
+/// der Flieger VOR dem naechsten erfolgreichen Boarding-Tick zurueckrollt
+/// (Pushback), war der Stand ERSATZLOS verloren, obwohl der ALTE Wert
+/// (aus der vorigen Generation) oft noch richtig gewesen waere. Diese
+/// Funktion loescht deshalb nichts mehr — sie sagt nur noch, ob ein
+/// VERSUCH lohnt. Die Aufrufstelle ersetzt `dep_gate` erst ATOMAR
+/// zusammen mit einem echten Kandidaten; ohne Kandidaten bleibt der alte
+/// Wert (moeglicherweise leicht veraltet, aber nie leer) stehen, bis ein
+/// spaeterer Tick einen findet oder das Boarding endet.
+fn dep_gate_braucht_neuableitung(
     phase: FlightPhase,
     dep_gate_vorhanden: bool,
     dep_gate_generation: u32,
     aktuelle_generation: u32,
 ) -> bool {
-    dep_gate_bei_szenerie_wechsel_zuruecksetzen(phase)
-        && dep_gate_vorhanden
-        && dep_gate_generation != aktuelle_generation
+    !dep_gate_vorhanden
+        || (dep_gate_bei_szenerie_wechsel_zuruecksetzen(phase)
+            && dep_gate_generation != aktuelle_generation)
 }
 
 fn dep_szenerie_auskunft_uebernehmen(
@@ -27348,24 +27362,25 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     let mut stats = flight.stats.lock().expect("flight stats");
                     // v1.7.17 Runde 3 (externe Gegenpruefung, Codex,
                     // adversarial, 04.09.2026): HIER, mit der FRISCHEN
-                    // (nach-`step_flight`-)Phase, entscheiden, ob ein
-                    // bereits abgeleiteter `dep_gate` wegen eines
-                    // Verbindungswechsels verworfen wird — nicht in der
-                    // Abflug-Ernte weiter oben, die noch die Phase des
-                    // VORHERIGEN Ticks sieht. `dep_gate_bei_szenerie_wechsel_
-                    // zuruecksetzen` haelt an der Boarding-Bedingung fest,
-                    // die die bestehende "dep_gate wird nie korrigiert"-Regel
-                    // begruendet (Pushback: 30-80 m neben fremden Staenden).
-                    if dep_gate_muss_verworfen_werden(
+                    // (nach-`step_flight`-)Phase, entscheiden, ob wegen
+                    // eines Verbindungswechsels ein Ableitungsversuch
+                    // lohnt — nicht in der Abflug-Ernte weiter oben, die
+                    // noch die Phase des VORHERIGEN Ticks sieht.
+                    //
+                    // v1.7.17 Runde 4 (externe Gegenpruefung, Codex,
+                    // adversarial, 04.09.2026): `dep_gate` wird NICHT MEHR
+                    // vorab geloescht — nur noch ATOMAR ersetzt, wenn ein
+                    // echter Kandidat gefunden wird. Stand faehig die neue
+                    // Szenerie/OSM in diesem Tick noch keinen Kandidaten,
+                    // bleibt der alte (moeglicherweise leicht veraltete)
+                    // Wert stehen, statt ersatzlos zu verschwinden, falls
+                    // der Flieger vor einem erfolgreichen Tick zurueckrollt.
+                    if dep_gate_braucht_neuableitung(
                         tick_phase,
                         stats.dep_gate.is_some(),
                         stats.dep_gate_generation,
                         stats.dep_szenerie_auskunft_generation,
                     ) {
-                        stats.dep_gate = None;
-                        stats.dep_gate_field_posted = false;
-                    }
-                    if stats.dep_gate.is_none() {
                         let combined = standliste_fuer(
                             &stats,
                             &flight.dpt_airport,
@@ -27380,6 +27395,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 tracing::info!(stand = %name, "departure stand captured on retry tick");
                                 stats.dep_gate = Some(name);
                                 stats.dep_gate_generation = stats.dep_szenerie_auskunft_generation;
+                                stats.dep_gate_field_posted = false;
                             }
                         }
                     }
@@ -38307,11 +38323,14 @@ mod standliste_fuer_tests {
     }
 
     /// v1.7.17 Runde 3 (externe Gegenpruefung, Codex, adversarial,
-    /// 04.09.2026): die VOLLE Verwerfungsbedingung, nicht nur ihre
-    /// Boarding-Teilbedingung. Alle drei Teile muessen zutreffen.
+    /// 04.09.2026): die VOLLE Ableitungsbedingung bei vorhandenem
+    /// `dep_gate`, nicht nur ihre Boarding-Teilbedingung. Runde 4:
+    /// umbenannt von `dep_gate_muss_verworfen_werden`, weil die Funktion
+    /// seit Runde 4 nichts mehr loescht — sie sagt nur noch, ob ein
+    /// Ableitungsversuch lohnt (siehe Funktionsdoku).
     #[test]
-    fn dep_gate_wird_bei_generationswechsel_waehrend_boarding_verworfen() {
-        assert!(dep_gate_muss_verworfen_werden(
+    fn dep_gate_braucht_neuableitung_bei_generationswechsel_waehrend_boarding() {
+        assert!(dep_gate_braucht_neuableitung(
             FlightPhase::Boarding,
             true,
             1,
@@ -38320,8 +38339,8 @@ mod standliste_fuer_tests {
     }
 
     #[test]
-    fn dep_gate_bleibt_ohne_generationswechsel_stehen() {
-        assert!(!dep_gate_muss_verworfen_werden(
+    fn dep_gate_braucht_keine_neuableitung_ohne_generationswechsel() {
+        assert!(!dep_gate_braucht_neuableitung(
             FlightPhase::Boarding,
             true,
             2,
@@ -38330,8 +38349,8 @@ mod standliste_fuer_tests {
     }
 
     #[test]
-    fn dep_gate_bleibt_ausserhalb_boarding_auch_bei_generationswechsel() {
-        assert!(!dep_gate_muss_verworfen_werden(
+    fn dep_gate_braucht_ausserhalb_boarding_keine_neuableitung_trotz_generationswechsel() {
+        assert!(!dep_gate_braucht_neuableitung(
             FlightPhase::Pushback,
             true,
             1,
@@ -38339,10 +38358,21 @@ mod standliste_fuer_tests {
         ));
     }
 
+    /// v1.7.17 Runde 4: ohne vorhandenen `dep_gate` lohnt der Versuch
+    /// IMMER (die alte Funktion sagte hier faelschlich "nichts zu tun" —
+    /// das war vor Runde 4 richtig, weil die Aufrufstelle den Erstversuch
+    /// noch selbst per `is_none()` auffing; seit Runde 4 traegt DIESE
+    /// Funktion die ganze Entscheidung).
     #[test]
-    fn ohne_vorhandenen_dep_gate_gibt_es_nichts_zu_verwerfen() {
-        assert!(!dep_gate_muss_verworfen_werden(
+    fn ohne_vorhandenen_dep_gate_lohnt_immer_ein_versuch() {
+        assert!(dep_gate_braucht_neuableitung(
             FlightPhase::Boarding,
+            false,
+            1,
+            2
+        ));
+        assert!(dep_gate_braucht_neuableitung(
+            FlightPhase::Pushback,
             false,
             1,
             2

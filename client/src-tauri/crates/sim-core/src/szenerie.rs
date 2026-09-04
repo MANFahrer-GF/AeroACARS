@@ -543,6 +543,17 @@ impl Auftragsbuch {
     /// Freigabestelle in `anflug_ausrichten_mit_schutz` fuer ihre eigenen
     /// Mechanismen schon richtig machen (Ziel schlaegt Schutz). Dieselbe
     /// Rangordnung fehlte hier.
+    ///
+    /// ⚠ v1.7.17 Runde 4 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): Der Runde-3-Zielvorrang war zu grob — er setzte auch
+    /// einen GERADE ECHT LAUFENDEN Auftrag (`Laeuft`) zurueck, sobald der
+    /// Platz zugleich Ziel war. Genau das ist der Fehler, den Runde 1 fuer
+    /// den reinen Schutzfall schon verhindert hat: eine echte, unterwegs
+    /// befindliche SimConnect-Anfrage darf nicht doppelt gestellt werden,
+    /// bevor ihre Antwort da ist. Der Zielvorrang gilt deshalb nur fuer
+    /// die RUHENDEN Zustaende (Offen/Wartet/Erschoepft) — ein Platz, der
+    /// zugleich geschuetzt, Ziel UND `Laeuft` ist, bleibt bis zu seiner
+    /// eigenen Antwort oder seinem eigenen Timeout unberuehrt.
     pub fn neues_versuchsfenster_mit_schutz(
         &mut self,
         ziele: &[(String, u8)],
@@ -550,10 +561,13 @@ impl Auftragsbuch {
     ) -> usize {
         let mut betroffen = 0;
         for (icao, a) in self.auftraege.iter_mut() {
-            let ist_ziel = ziele.iter().any(|(z, _)| z.eq_ignore_ascii_case(icao));
             let ist_geschuetzt = geschuetzt.iter().any(|g| g.eq_ignore_ascii_case(icao));
-            if ist_geschuetzt && !ist_ziel {
-                continue;
+            if ist_geschuetzt {
+                let ist_ziel = ziele.iter().any(|(z, _)| z.eq_ignore_ascii_case(icao));
+                let echt_aktiv = matches!(a.zustand, Auftragszustand::Laeuft { .. });
+                if !ist_ziel || echt_aktiv {
+                    continue;
+                }
             }
             // ⚠ Auch RUHENDE Plaetze. Ein Phasenwechsel ist ein echtes
             // Ereignis, kein Tick — die Ruhezeit aus einem
@@ -2458,5 +2472,38 @@ mod auftragsbuch_tests {
         let betroffen = b.neues_versuchsfenster_mit_schutz(&[], &geschuetzt);
         assert_eq!(betroffen, 0, "reiner Schutz ohne Ziel oeffnet kein Fenster");
         assert_eq!(b.zustand("EDDS"), Some(Auftragszustand::Erschoepft));
+    }
+
+    /// v1.7.17 Runde 4 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): Steht derselbe ICAO in `ziele` UND `geschuetzt` UND ist
+    /// er GERADE ECHT AKTIV (`Laeuft`), darf der Zielvorrang (Runde 3) ihn
+    /// TROTZDEM nicht zuruecksetzen — sonst koennte eine zweite,
+    /// ueberlappende Anfrage fuer denselben Platz losgeschickt werden,
+    /// bevor die erste Antwort da ist (derselbe Fehler, den Runde 1 fuer
+    /// den reinen Schutzfall schon verhindert hat). Zielvorrang gilt nur
+    /// fuer die RUHENDEN Zustaende — siehe den Erschoepft-Fall oben.
+    #[test]
+    fn ziel_das_zugleich_abflugplatz_ist_bleibt_geschuetzt_solange_es_echt_laeuft() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("EDDS", 0);
+        let _ = b.gestellt("EDDS", 0);
+        assert!(matches!(
+            b.zustand("EDDS"),
+            Some(Auftragszustand::Laeuft { .. })
+        ));
+
+        let ziele = vec![("EDDS".to_string(), 0)];
+        let geschuetzt = vec!["EDDS".to_string()];
+        let betroffen = b.anflug_ausrichten_mit_schutz(&ziele, &geschuetzt, true);
+
+        assert_eq!(
+            betroffen, 0,
+            "ein echt laufender Auftrag darf nicht als 'betroffen' zaehlen"
+        );
+        assert!(
+            matches!(b.zustand("EDDS"), Some(Auftragszustand::Laeuft { .. })),
+            "eine echt laufende Anfrage fuer denselben Platz darf nicht doppelt gestellt \
+             werden, auch wenn er zugleich Ziel und geschuetzt ist"
+        );
     }
 }
