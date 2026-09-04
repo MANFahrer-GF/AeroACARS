@@ -18216,9 +18216,26 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     // Nur wenn die Szenerie welche hat; sonst bleibt es bei der
     // Serverkarte. Eine leere Szenerie-Karte waere schlechter als eine
     // gute OSM-Karte.
+    //
+    // ⚠ Auch `szenerie_auskunft` braucht die ICAO-Pruefung gegen
+    // `runway_correlation_icao`, NICHT nur `arr_ground_geojson`
+    // (Runde 5) — sonst haette eine veraltete Szenerie-Auskunft (ein
+    // frueherer Divert-Kandidat, dessen Ernte noch nicht durch die des
+    // tatsaechlichen Landeplatzes ersetzt wurde) Vorrang vor einer
+    // bereits korrekt geprueften Serverkarte gehabt (externe
+    // Gegenpruefung, Codex, adversarial, 04.09.2026, Runde 6).
+    //
+    // `None` bei `runway_correlation_icao` (vor dem Touchdown — bei allen
+    // Produktions-Aufrufstellen von `bahn_felder` nicht der Fall, siehe
+    // dort) laesst die Szenerie unveraendert durch, statt sie grundlos zu
+    // blockieren.
     let szenerie_karte = stats
         .szenerie_auskunft
         .as_ref()
+        .filter(|a| match stats.runway_correlation_icao.as_deref() {
+            Some(landeplatz) => a.icao.eq_ignore_ascii_case(landeplatz),
+            None => true,
+        })
         .filter(|a| !a.rollwege.is_empty())
         .map(|a| szenerie_bahn::rollwege_als_bodenkarte(&a.rollwege));
     // ⚠ `arr_ground_geojson` nur verwenden, wenn sie zum TATSAECHLICHEN
@@ -53732,6 +53749,71 @@ mod v0_16_6_bush_completeness_tests {
         assert!(
             felder.runway_exits.is_empty(),
             "eine Bodenkarte mit veralteter ICAO-Markierung darf keine Ausfahrten liefern"
+        );
+    }
+
+    /// Runde 6 (externe Gegenpruefung, Codex, adversarial, 04.09.2026):
+    /// `szenerie_karte` hatte VOR dieser Runde gar keine ICAO-Pruefung —
+    /// eine veraltete `szenerie_auskunft` (z. B. ein frueherer Divert-
+    /// Kandidat, dessen Ernte noch nicht durch die des tatsaechlichen
+    /// Landeplatzes ersetzt wurde) haette Vorrang vor einer bereits
+    /// korrekt geprueften Serverkarte gehabt UND deren Ausfahrten
+    /// unterdrueckt, obwohl sie selbst nichts Brauchbares fuer DIESEN
+    /// Landeplatz beitraegt. Die Serverkarte (dieselbe gueltige
+    /// EDDH-D4-Geometrie wie oben) muss trotzdem durchkommen.
+    #[test]
+    fn veraltete_szenerie_unterdrueckt_die_gueltige_serverkarte_nicht() {
+        let mut stats = FlightStats::default();
+        stats.runway_correlation_icao = Some("EDDH".to_string());
+        // Szenerie-Auskunft eines ANDEREN, frueheren Ziels — nicht leer,
+        // haette also ohne ICAO-Pruefung Vorrang gehabt.
+        stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+            icao: "EDDY".to_string(),
+            bahnen: Vec::new(),
+            rollwege: vec![sim_core::szenerie::SzenerieRollweg {
+                name: "STALE".to_string(),
+                punkte: vec![(52.13, 11.63), (52.14, 11.64)],
+            }],
+            staende: Vec::new(),
+            quelle: "test".to_string(),
+        });
+        // Korrekt zugeordnete Serverkarte fuer den echten Landeplatz.
+        stats.arr_ground_geojson_icao = Some("EDDH".to_string());
+        stats.runway_match = Some(runway::RunwayMatch {
+            airport_ident: "EDDH".to_string(),
+            runway_ident: "23".to_string(),
+            heading_true_deg: 230.21,
+            length_ft: 10663.0,
+            width_ft: 151.0,
+            surface: "ASP".to_string(),
+            threshold_lat: 53.636011,
+            threshold_lon: 9.999656,
+            end_lat: 53.619958,
+            end_lon: 9.967167,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            touchdown_distance_from_threshold_ft: 720.0,
+            side: "left".to_string(),
+            displaced_threshold_ft: 0,
+        });
+        stats.arr_ground_geojson = Some(
+            r#"{"features":[
+              {"properties":{"k":"taxiway","r":"D4"},
+               "geometry":{"type":"LineString",
+                 "coordinates":[[9.976905,53.624765],[9.976979,53.624791],
+                   [9.977071,53.624815],[9.977195,53.624835],
+                   [9.977291,53.624842],[9.977414,53.62484],
+                   [9.97753,53.624826],[9.977643,53.624802],
+                   [9.977733,53.624771],[9.97781,53.62474],
+                   [9.977883,53.624694],[9.978041,53.62458]]}}
+            ]}"#
+            .to_string(),
+        );
+        let felder = bahn_felder(&stats, Some("A320"), None);
+        assert!(
+            !felder.runway_exits.is_empty(),
+            "die veraltete Szenerie-Auskunft eines anderen Flughafens darf \
+             die gueltige Serverkarte nicht verdraengen"
         );
     }
 
