@@ -186,14 +186,20 @@ pub const ROLLWEG_KANTE_FELDER: &[(&str, FeldTyp)] = &[
 /// hier belegt. `NUMBER` steht dort als **UINT32**; wie bei `NAME_INDEX`
 /// oben als `I32` gelesen (gleiche Groesse, nie negativ).
 ///
-/// ⚠ `TYPE` und `NAME` sind KEINE Zeichenketten, sondern Aufzaehlungen
-/// (z. B. `NAME` unterscheidet „Gate" von „Parking" von den acht
-/// Himmelsrichtungen). Die genaue Ordnungszahl jedes Wertes steht nicht
-/// im SDK-Header — nur die Wortliste in der Editor-Dokumentation. Ein
-/// geratener Index waere ein FALSCHER Name, nicht einfach keiner, und
-/// ist deshalb absichtlich NICHT decodiert (siehe `stand_name`
-/// unten — dieselbe Regel wie bei `belag_code`: „unbekannt bleibt
-/// unbekannt, nicht geraten").
+/// ⚠ `TYPE` und `NAME` sind KEINE Zeichenketten, sondern Aufzaehlungen.
+/// `TYPE` bleibt aussen vor — seine Ordnungszahlen sind eine ANDERE
+/// Aufzaehlung (`SIMCONNECT_TAXIWAY_PARKING_TYPE`) als die von `NAME`, und
+/// dafuer liegt (Stand 04.09.2026) keine verifizierte Werteliste vor.
+///
+/// `NAME` dagegen teilt sich laut SDK-Referenz (docs.flightsimulator.com,
+/// `SimConnect_AddToFacilityDefinition`, Abschnitt TAXI_PARKING) WORTWOERTLICH
+/// dieselbe Aufzaehlung wie `SUFFIX` (siehe `stand_name` fuer die volle
+/// Tabelle) — beide Felder listen 0=NONE, 1..=11 Kategorie-/Richtungscodes,
+/// 12..=37=GATE_A..GATE_Z. Ordnungszahlen sind damit verifiziert; ungeklaert
+/// bleibt nur, was gilt, wenn `NAME` UND `SUFFIX` gleichzeitig
+/// widersprechende Buchstaben tragen wuerden — dafuer liegt keine
+/// dokumentierte Vorrangregel vor. `stand_name` decodiert deshalb BEIDE,
+/// mit `SUFFIX` als Vorrang (siehe dort).
 pub const STAND_FELDER: &[(&str, FeldTyp)] = &[
     ("TYPE", FeldTyp::I32),
     ("NAME", FeldTyp::I32),
@@ -232,17 +238,18 @@ pub fn stand_aus_werten(w: &[Wert]) -> Option<StandRoh> {
     })
 }
 
-/// Ein Anzeigename aus `NUMBER` + `SUFFIX` — **nicht** aus `NAME` und
+/// Ein Anzeigename aus `NUMBER` + (`SUFFIX` oder `NAME`) — **nicht** aus
 /// `TYPE`.
 ///
-/// # Warum nur diese beiden
+/// # Die Aufzaehlung
 ///
 /// `NUMBER` ist eindeutig ein Zaehler, keine Aufzaehlung — er kann ohne
 /// Risiko als Text uebernommen werden.
 ///
-/// `SUFFIX` ist KEINE zweiwertige Aufzaehlung — gegen die offizielle
-/// SDK-Dokumentation verifiziert (docs.flightsimulator.com,
-/// `SimConnect_AddToFacilityDefinition`, Abschnitt TAXI_PARKING):
+/// `SUFFIX` **und** `NAME` sind KEINE zweiwertige Aufzaehlung — gegen die
+/// offizielle SDK-Dokumentation verifiziert (docs.flightsimulator.com,
+/// `SimConnect_AddToFacilityDefinition`, Abschnitt TAXI_PARKING). Beide
+/// Felder tragen WORTWOERTLICH dieselbe Tabelle:
 ///
 /// ```text
 /// 0: NONE          6: S_PARKING     11: DOCK
@@ -253,29 +260,42 @@ pub fn stand_aus_werten(w: &[Wert]) -> Option<StandRoh> {
 /// 5: SE_PARKING
 /// ```
 ///
-/// Nur der Bereich 12..=37 ist ein Buchstabe (A..Z, `12 -> A`). Die
-/// Werte 1..=11 sind Richtungs-/Kategorie-Codes, KEIN Buchstabe — ein
-/// fruehere Fassung dieser Funktion nahm 1..=26 direkt als A..Z an
-/// („NONE oder ein Buchstabe", aus der knapperen Editor-Doku
-/// abgeleitet, nicht der SDK-Referenz) und erfand damit z. B. aus
-/// Suffix 1 (PARKING) den Buchstaben „A" — externe Gegenpruefung
-/// (Codex, adversarial) fing das vor dem ersten Flug ab.
+/// Nur der Bereich 12..=37 ist ein Buchstabe (A..Z, `12 -> A`). Die Werte
+/// 1..=11 sind Richtungs-/Kategorie-Codes, KEIN Buchstabe — eine fruehere
+/// Fassung dieser Funktion nahm `SUFFIX` 1..=26 direkt als A..Z an
+/// („NONE oder ein Buchstabe", aus der knapperen Editor-Doku abgeleitet,
+/// nicht der SDK-Referenz) und erfand damit z. B. aus Suffix 1 (PARKING)
+/// den Buchstaben „A" — externe Gegenpruefung (Codex, adversarial,
+/// 04.09.2026, Runde 1) fing das vor dem ersten Flug ab.
 ///
-/// `NAME` bleibt weiterhin aussen vor (siehe `STAND_FELDER`-Doku) — die
-/// Werte 1..=11 dort tragen dieselbe Kategorie-Information, aber ohne
-/// Buchstaben ist „Stand 23" fuer den Piloten immer noch wiedererkennbar,
-/// genau die Zahl aus dem Sim-eigenen Auswahlbildschirm.
+/// # Warum jetzt beide Felder
+///
+/// `SUFFIX` gewinnt, wenn es einen Buchstaben traegt (12..=37) — die
+/// bereits getestete Fassung aus Runde 1. Traegt NUR `NAME` einen
+/// Buchstaben (z. B. `NAME = GATE_A(12)`, `SUFFIX = NONE(0)` — ein in der
+/// Praxis plausibler Fall, in dem der Buchstabe direkt am „Namen" haengt,
+/// nicht an einem Zusatz), waere ein reines `SUFFIX`-Auslesen blind dafuer
+/// gewesen: externe Gegenpruefung (Codex, adversarial, 04.09.2026,
+/// Runde 2) zeigte genau dieses Beispiel. `stand_name` faellt deshalb auf
+/// `NAME` zurueck, wenn `SUFFIX` keinen Buchstaben liefert.
+///
+/// Tragen `SUFFIX` UND `NAME` gleichzeitig VERSCHIEDENE Buchstaben, gibt es
+/// dafuer keine dokumentierte Vorrangregel — dieser Fall bleibt ungeklaert
+/// bis echte Aufzeichnungen vorliegen; `SUFFIX` gewinnt dann als
+/// (willkuerliche, aber konsistente) Festlegung.
 pub fn stand_name(s: &StandRoh) -> Option<String> {
     if s.nummer <= 0 {
         return None;
     }
-    match s.suffix {
-        0 => Some(s.nummer.to_string()),
-        12..=37 => {
-            let buchstabe = (b'A' + (s.suffix - 12) as u8) as char;
-            Some(format!("{}{}", s.nummer, buchstabe))
+    let buchstabe = |wert: i32| -> Option<char> {
+        match wert {
+            12..=37 => Some((b'A' + (wert - 12) as u8) as char),
+            _ => None,
         }
-        _ => Some(s.nummer.to_string()),
+    };
+    match buchstabe(s.suffix).or_else(|| buchstabe(s.name)) {
+        Some(b) => Some(format!("{}{}", s.nummer, b)),
+        None => Some(s.nummer.to_string()),
     }
 }
 
@@ -1280,6 +1300,49 @@ mod tests {
             stand_name(&stand_roh(11, 11, 23, 0.0, 0.0)).as_deref(),
             Some("23"),
             "Suffix 11 = DOCK, kein Buchstabe"
+        );
+    }
+
+    /// Der Runde-2-Fall (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): der Buchstabe steckt in `NAME`, nicht in `SUFFIX` —
+    /// `SUFFIX = NONE(0)`, `NAME = GATE_A(12)`. Ohne NAME-Rueckfall waere
+    /// das vorher stumm auf "23" gefallen, obwohl der Sim "Gate A23"
+    /// meint.
+    #[test]
+    fn stand_name_faellt_auf_name_zurueck_wenn_suffix_keinen_buchstaben_traegt() {
+        assert_eq!(
+            stand_name(&stand_roh(12, 0, 23, 0.0, 0.0)).as_deref(),
+            Some("23A"),
+            "NAME = GATE_A(12), SUFFIX = NONE — der Buchstabe muss aus NAME kommen"
+        );
+        assert_eq!(
+            stand_name(&stand_roh(37, 0, 5, 0.0, 0.0)).as_deref(),
+            Some("5Z"),
+            "NAME = GATE_Z(37)"
+        );
+    }
+
+    /// Traegt SUFFIX bereits einen Buchstaben, gewinnt es gegen NAME — auch
+    /// wenn NAME einen ANDEREN Buchstaben traegt (dokumentiert nicht
+    /// geklaerter Konfliktfall, siehe `stand_name`-Doku; SUFFIX ist die
+    /// Festlegung).
+    #[test]
+    fn stand_name_suffix_gewinnt_gegen_widersprechenden_namen() {
+        assert_eq!(
+            stand_name(&stand_roh(37, 12, 23, 0.0, 0.0)).as_deref(),
+            Some("23A"),
+            "SUFFIX = GATE_A(12) gewinnt gegen NAME = GATE_Z(37)"
+        );
+    }
+
+    /// NAME traegt ebenfalls nur eine Kategorie (kein Buchstabe) — derselbe
+    /// Fall wie bei SUFFIX, jetzt fuer den Rueckfall-Pfad.
+    #[test]
+    fn stand_name_kategorie_name_ist_auch_kein_buchstabe() {
+        assert_eq!(
+            stand_name(&stand_roh(10, 0, 23, 0.0, 0.0)).as_deref(),
+            Some("23"),
+            "NAME 10 = GATE (generisch), SUFFIX 0 = NONE — kein Buchstabe in beiden"
         );
     }
 

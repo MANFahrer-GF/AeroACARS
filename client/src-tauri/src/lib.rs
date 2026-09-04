@@ -5038,6 +5038,23 @@ struct FlightStats {
     /// vorher blieb bei einer Ausweichlandung für immer die Liste des
     /// GEPLANTEN Ziels liegen und der Stand konnte nie erfasst werden.
     arr_stands_requested_icao: Option<String>,
+    /// Der Flughafen, auf dem der Flieger laut `arrival::locate`
+    /// TATSÄCHLICH steht — von `settle_at_arrival_stand` bei JEDEM Aufruf
+    /// gesetzt, unabhängig davon, ob dabei ein Stand gefunden wurde.
+    ///
+    /// ⚠ NICHT dasselbe wie `arr_stands_requested_icao`: Letzteres kommt
+    /// aus `maybe_spawn_stand_fetch` und hängt am `divert_hint`, das laut
+    /// Kommentar dort „erst beim Arrived-Fallback gemintet" wird — bei
+    /// einem Divert, der die FSM normal ueber TaxiIn→BlocksOn erreicht
+    /// (kein Fallback noetig), bleibt `divert_hint` mitunter fuer immer
+    /// `None`, und `arr_stands_requested_icao` zeigt dann dauerhaft auf
+    /// den GEPLANTEN statt den echten Platz. `settle_at_arrival_stand`
+    /// berechnet `at_icao` dagegen bei JEDEM Aufruf frisch aus der
+    /// aktuellen Position — dieses Feld haelt genau diesen Wert fest,
+    /// damit der Nachzieh-Tick (`arrival_retry_ziel`) ihn spaeter wieder
+    /// hat, auch wenn der erste Versuch mangels Daten leer ausging
+    /// (externe Gegenpruefung, Codex, adversarial, 04.09.2026, Runde 2).
+    arr_actual_icao: Option<String>,
     /// Parkpositionen des ZIELflughafens, geladen ab Descent. `None` =
     /// (noch) nicht verfügbar → die BlocksOn-Erkennung fällt auf das
     /// alte Kriterium zurück statt zu blockieren.
@@ -7057,8 +7074,13 @@ fn settle_at_arrival_stand(
     // BlocksOn-Gate: ohne ihn verlor jeder Flug, der ueber den Arrived-
     // Fallback ankam (ohne Parkbremse abgestellt, Helikopter, kalt-und-
     // dunkel), seinen Ankunfts-Stand.
+    let at_norm = at_icao.trim().to_uppercase();
+    // ⚠ IMMER festhalten, auch wenn unten kein Stand gefunden wird — der
+    // Nachzieh-Tick (`arrival_retry_ziel`) braucht dieses Feld fuer einen
+    // spaeteren Versuch, unabhaengig davon, ob DIESER Aufruf schon einen
+    // Treffer hatte. Siehe die Doku an `arr_actual_icao`.
+    stats.arr_actual_icao = Some(at_norm.clone());
     if stats.arr_gate.is_none() {
-        let at_norm = at_icao.trim().to_uppercase();
         let osm = stats
             .arr_stands
             .as_deref()
@@ -37481,28 +37503,45 @@ fn standliste_fuer(
 /// Fuer den BlocksOn/Arrived-Nachzieh-Tick: welches ICAO und welche
 /// (ggf. gar keine) OSM-Liste an `standliste_fuer` gehen.
 ///
-/// `None`, solange noch kein Ankunfts-Abruf lief (`arr_stands_requested_icao`
-/// leer).
+/// `None`, solange weder `settle_at_arrival_stand` noch ein Ankunfts-Abruf
+/// je liefen.
 ///
-/// ⚠ Zwei Fragen, zwei Felder — bewusst getrennt gehalten:
+/// ⚠ DREI Felder, DREI verschiedene Fragen:
 ///
-/// * **Wessen Platz fragen wir?** `arr_stands_requested_icao` — gesetzt,
-///   SOBALD ein Abruf losgeschickt wird, unabhaengig vom Ausgang.
+/// * **Wo stehen wir WIRKLICH?** `arr_actual_icao` — von
+///   `settle_at_arrival_stand` bei JEDEM Aufruf frisch aus der Position
+///   berechnet (`arrival::locate`), unabhaengig von OSM, Szenerie oder
+///   einem etwaigen `divert_hint`. Das ist die massgebliche Quelle.
+/// * **Wessen Platz haben wir zuletzt bei OSM angefragt?**
+///   `arr_stands_requested_icao` — nur als Rueckfall, falls
+///   `settle_at_arrival_stand` aus irgendeinem Grund noch nie lief (sollte
+///   praktisch nie vorkommen, da die Phasen BlocksOn/Arrived selbst nur ueber
+///   einen Aufruf von `settle_at_arrival_stand` erreicht werden — reine
+///   Verteidigung).
 /// * **Hat OSM fuer GENAU DIESEN Platz geliefert?** `arr_stands_icao` —
-///   gesetzt nur bei Erfolg, und nach einem Divert-Wechsel kann es noch den
-///   ALTEN Platz nennen, waehrend `arr_stands_requested_icao` schon den
-///   neuen fordert.
+///   gesetzt nur bei Erfolg; die OSM-Liste bleibt an dieses Feld gebunden,
+///   unabhaengig davon, welches der beiden ICAO-Felder oben den Namen
+///   liefert.
 ///
-/// Vor v1.7.16 R1 hing der Nachzieh-Tick ausschliesslich am zweiten Feld —
-/// scheiterte OSM (Netzfehler, 404, leere Bodendaten) oder war schlicht noch
-/// unterwegs, blieb es fuer immer `None`, und der Tick griff nie, obwohl die
-/// Szenerie (`stats.szenerie_auskunft`) laengst den richtigen Platz hielt
-/// (externe Gegenpruefung, Codex, adversarial, 04.09.2026). Die OSM-Liste
-/// selbst bleibt trotzdem an das ERSTE Feld gebunden — `standliste_fuer`
-/// prueft nur die Szenerie-ICAO nach, nicht die OSM-ICAO; ohne den Filter
-/// hier wuerde eine veraltete OSM-Liste eines fremden Platzes durchgereicht.
+/// Vor v1.7.16 R1 hing der Nachzieh-Tick ausschliesslich an
+/// `arr_stands_icao` — scheiterte OSM, blieb es fuer immer `None`
+/// (externe Gegenpruefung, Codex, adversarial, 04.09.2026, Runde 1).
+///
+/// R1 loeste das ueber `arr_stands_requested_icao`, das aber seinerseits an
+/// `divert_hint` haengt (`maybe_spawn_stand_fetch`) — und `divert_hint` wird
+/// laut eigenem Kommentar dort „erst beim Arrived-Fallback gemintet". Ein
+/// Divert, der die FSM normal ueber TaxiIn→BlocksOn erreicht (kein
+/// Fallback noetig), mintet u. U. NIE einen `divert_hint`, und
+/// `arr_stands_requested_icao` zeigte dann dauerhaft auf den GEPLANTEN
+/// statt den echten Platz (externe Gegenpruefung, Codex, adversarial,
+/// 04.09.2026, Runde 2). `arr_actual_icao` umgeht das: es kommt aus
+/// derselben `arrival::locate`-Berechnung, die auch `at_icao` fuer
+/// `settle_at_arrival_stand` liefert, nie aus `divert_hint`.
 fn arrival_retry_ziel(stats: &FlightStats) -> Option<(String, Option<&[stands::ParkingStand]>)> {
-    let list_icao = stats.arr_stands_requested_icao.clone()?;
+    let list_icao = stats
+        .arr_actual_icao
+        .clone()
+        .or_else(|| stats.arr_stands_requested_icao.clone())?;
     let osm = stats
         .arr_stands
         .as_deref()
@@ -37663,6 +37702,36 @@ mod standliste_fuer_tests {
             osm.is_none(),
             "die EDNY-Liste ist fuer das angefragte EDDF nicht zustaendig"
         );
+    }
+
+    /// Der Runde-2-Fall (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): ein Divert, der NIE einen `divert_hint` mintet (normale
+    /// TaxiIn→BlocksOn-Kante, kein Arrived-Fallback noetig). Dann bleibt
+    /// `arr_stands_requested_icao` dauerhaft beim GEPLANTEN Platz (EDNY),
+    /// waehrend `arr_actual_icao` — von `settle_at_arrival_stand` aus der
+    /// echten Position berechnet — bereits den WIRKLICHEN Platz (EDDF)
+    /// kennt. `arr_actual_icao` MUSS gewinnen.
+    #[test]
+    fn retry_ziel_bevorzugt_arr_actual_icao_vor_dem_angefragten_icao() {
+        let mut stats = FlightStats::default();
+        stats.arr_stands_requested_icao = Some("EDNY".to_string()); // geplant, nie korrigiert
+        stats.arr_actual_icao = Some("EDDF".to_string()); // wirklich dort gelandet
+        let (icao, _osm) = arrival_retry_ziel(&stats).expect("ICAO da");
+        assert_eq!(
+            icao, "EDDF",
+            "arr_actual_icao muss arr_stands_requested_icao schlagen"
+        );
+    }
+
+    #[test]
+    fn retry_ziel_faellt_auf_angefragtes_icao_zurueck_ohne_arr_actual_icao() {
+        // settle_at_arrival_stand lief noch nie (arr_actual_icao leer) —
+        // reine Verteidigung, sollte praktisch nicht vorkommen, siehe Doku
+        // an arrival_retry_ziel.
+        let mut stats = FlightStats::default();
+        stats.arr_stands_requested_icao = Some("EDDF".to_string());
+        let (icao, _osm) = arrival_retry_ziel(&stats).expect("ICAO da");
+        assert_eq!(icao, "EDDF");
     }
 }
 
