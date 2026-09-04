@@ -15348,10 +15348,21 @@ const PIREP_FELD_RETRY_BACKOFFS_SEC: [u64; 2] = [2, 8];
 /// `tokio::time::sleep` ueberlaufen lassen (`Instant + Duration` kann
 /// bei absurd grossen Werten paniken) oder den Task praktisch fuer immer
 /// schlafen legen — in beiden Faellen bliebe die Rueckzugs-Meldung, der
-/// einzige Korrekturweg, fuer den Rest des Fluges aus. Fuenf Minuten sind
-/// grosszuegig genug fuer jede realistische Rate-Limit-Sperre und weit
-/// von jedem Ueberlaufrisiko entfernt.
-const RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC: u64 = 300;
+/// einzige Korrekturweg, fuer den Rest des Fluges aus.
+///
+/// ⚠ v1.7.17 Runde 10 (externe Gegenpruefung, Codex, adversarial,
+/// 04.09.2026): die Runde-9-Grenze (5 Minuten) war viel enger als das
+/// tatsaechliche Ueberlaufrisiko — `Instant + Duration` ueberlaeuft erst
+/// bei astronomischen Werten (der volle `u64`-Sekundenbereich entspricht
+/// hunderten Milliarden Jahren), nicht bei irgendetwas, das eine echte
+/// API je als Wartezeit meint. Mit nur 5 Minuten haette ein LEGITIMER,
+/// laengerer Retry-After (z. B. 15-60 Minuten) die drei Versuche VOR
+/// Ablauf der echten Sperre verbraucht — genau der Fehler, den Runde 8
+/// beheben sollte, kam ueber eine zu enge statt eine fehlende Grenze
+/// zurueck. Eine Stunde ist grosszuegig genug fuer praktisch jede reale
+/// Rate-Limit-Sperre und immer noch viele Groessenordnungen vom
+/// Ueberlaufrisiko entfernt.
+const RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC: u64 = 3600;
 
 /// Wie lange VOR dem naechsten Versuch gewartet werden soll, nachdem
 /// dieser Versuch mit `fehler` gescheitert ist — `None` heisst „kein
@@ -15465,6 +15476,24 @@ mod pirep_feld_retry_tests {
         assert_eq!(
             naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 0),
             Some(30)
+        );
+    }
+
+    /// v1.7.17 Runde 10 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): der eigentliche Befund — eine LEGITIME, laengere
+    /// Server-Sperre (z. B. 30 Minuten) darf nicht schon von der
+    /// Ueberlauf-Obergrenze abgeschnitten werden. Nur astronomische Werte
+    /// (nahe `u64::MAX`) sollen gedeckelt werden, nicht alles ueber ein
+    /// paar Minuten.
+    #[test]
+    fn eine_realistisch_lange_rate_limit_sperre_wird_nicht_verkuerzt() {
+        let fehler = ApiError::RateLimited {
+            retry_after_seconds: 1800, // 30 Minuten — realistisch, nicht absurd
+        };
+        assert_eq!(
+            naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 0),
+            Some(1800),
+            "eine legitime 30-Minuten-Sperre darf nicht auf eine zu enge Grenze verkuerzt werden"
         );
     }
 
