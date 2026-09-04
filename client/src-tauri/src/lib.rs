@@ -18217,37 +18217,37 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     // Serverkarte. Eine leere Szenerie-Karte waere schlechter als eine
     // gute OSM-Karte.
     //
-    // ⚠ Auch `szenerie_auskunft` braucht die ICAO-Pruefung gegen
-    // `runway_correlation_icao`, NICHT nur `arr_ground_geojson`
-    // (Runde 5) — sonst haette eine veraltete Szenerie-Auskunft (ein
-    // frueherer Divert-Kandidat, dessen Ernte noch nicht durch die des
-    // tatsaechlichen Landeplatzes ersetzt wurde) Vorrang vor einer
-    // bereits korrekt geprueften Serverkarte gehabt (externe
-    // Gegenpruefung, Codex, adversarial, 04.09.2026, Runde 6).
+    // ⚠ Beide Karten (Szenerie UND Serverkarte) muessen gegen den
+    // Flughafen der GEMATCHTEN BAHN (`rm.airport_ident`) geprueft werden —
+    // NICHT gegen `runway_correlation_icao`. Beides beschreibt normalerweise
+    // denselben Platz, ist aber NICHT garantiert identisch:
+    // `correlate_airport_icao` bevorzugt bei mehrdeutigen Nachbarflughaefen
+    // bewusst den GEPLANTEN Platz, waehrend `lookup_runway_with_fallback`
+    // (davon unabhaengig) eine OurAirports-Bahn eines ANDEREN, tatsaechlich
+    // naeheren Nachbarflughafens zurueckgeben kann. Eine gegen
+    // `runway_correlation_icao` gepruefte Karte waere dann auf die Bahn
+    // des NACHBARN projiziert worden — plausibel aussehende, aber falsche
+    // oder fehlende Ausfahrten. `rm.airport_ident` ist der einzige Wert,
+    // der zur tatsaechlich verwendeten GEOMETRIE gehoert (externe
+    // Gegenpruefung, Codex, adversarial, 04.09.2026, Runde 7).
     //
-    // `None` bei `runway_correlation_icao` (vor dem Touchdown — bei allen
-    // Produktions-Aufrufstellen von `bahn_felder` nicht der Fall, siehe
-    // dort) laesst die Szenerie unveraendert durch, statt sie grundlos zu
-    // blockieren.
+    // FAIL CLOSED ohne gematchte Bahn (`rm = None`): das kostet nichts —
+    // ohne `rm` berechnet der `match` unten ohnehin keine Ausfahrten —,
+    // schliesst aber eine Fail-open-Luecke bei einem aus einer ALTEN
+    // Fassung wiederhergestellten Flug, dessen `runway_correlation_icao`
+    // per `#[serde(default)]` auf `None` steht, obwohl `runway_match`
+    // durchaus vorliegt.
+    let landeplatz_der_bahn = rm.map(|m| m.airport_ident.as_str());
     let szenerie_karte = stats
         .szenerie_auskunft
         .as_ref()
-        .filter(|a| match stats.runway_correlation_icao.as_deref() {
+        .filter(|a| match landeplatz_der_bahn {
             Some(landeplatz) => a.icao.eq_ignore_ascii_case(landeplatz),
-            None => true,
+            None => false,
         })
         .filter(|a| !a.rollwege.is_empty())
         .map(|a| szenerie_bahn::rollwege_als_bodenkarte(&a.rollwege));
-    // ⚠ `arr_ground_geojson` nur verwenden, wenn sie zum TATSAECHLICHEN
-    // Landeplatz gehoert (`runway_correlation_icao`, am Touchdown gesetzt
-    // — siehe dort). Ohne diese Pruefung koennte eine Karte durchrutschen,
-    // die zwar beim SCHREIBEN zum damals angefragten Ziel passte, aber
-    // seither ueberholt ist (z. B. ein zweiter Divert-Wechsel NACH dem
-    // Schreiben) — der Schreib-Riegel (`passt_zum_angefragten_ankunftsziel`,
-    // Runde 4) beweist nur den Moment der Ablage, nicht die Gueltigkeit
-    // bei diesem Lesezugriff (externe Gegenpruefung, Codex, adversarial,
-    // 04.09.2026, Runde 5).
-    let arr_karte = match (&stats.arr_ground_geojson, &stats.runway_correlation_icao) {
+    let arr_karte = match (&stats.arr_ground_geojson, landeplatz_der_bahn) {
         (Some(karte), Some(landeplatz)) => stats
             .arr_ground_geojson_icao
             .as_deref()
@@ -53814,6 +53814,61 @@ mod v0_16_6_bush_completeness_tests {
             !felder.runway_exits.is_empty(),
             "die veraltete Szenerie-Auskunft eines anderen Flughafens darf \
              die gueltige Serverkarte nicht verdraengen"
+        );
+    }
+
+    /// Runde 7 (externe Gegenpruefung, Codex, adversarial, 04.09.2026):
+    /// `runway_correlation_icao` und `runway_match.airport_ident` sind
+    /// NICHT garantiert derselbe Platz — `correlate_airport_icao` bevorzugt
+    /// bei mehrdeutigen Nachbarflughaefen den GEPLANTEN Platz, waehrend die
+    /// tatsaechlich gematchte Bahn (`lookup_runway_with_fallback`) von
+    /// einem naheliegenden NACHBARN stammen kann. Eine gegen
+    /// `runway_correlation_icao` allein geprueften Karte waere hier auf die
+    /// Bahn des Nachbarn projiziert worden. Die Pruefung muss gegen
+    /// `runway_match.airport_ident` laufen.
+    #[test]
+    fn karte_fuer_einen_abweichenden_korrelations_platz_wird_verworfen() {
+        let mut stats = FlightStats::default();
+        // Korrelation sagt EDDF (das GEPLANTE Ziel bei einer mehrdeutigen
+        // Nachbarschaft) — die tatsaechlich gematchte Bahn gehoert aber zu
+        // EDDH.
+        stats.runway_correlation_icao = Some("EDDF".to_string());
+        stats.arr_ground_geojson_icao = Some("EDDF".to_string());
+        stats.arr_ground_geojson = Some(
+            r#"{"features":[
+              {"properties":{"k":"taxiway","r":"D4"},
+               "geometry":{"type":"LineString",
+                 "coordinates":[[9.976905,53.624765],[9.976979,53.624791],
+                   [9.977071,53.624815],[9.977195,53.624835],
+                   [9.977291,53.624842],[9.977414,53.62484],
+                   [9.97753,53.624826],[9.977643,53.624802],
+                   [9.977733,53.624771],[9.97781,53.62474],
+                   [9.977883,53.624694],[9.978041,53.62458]]}}
+            ]}"#
+            .to_string(),
+        );
+        stats.runway_match = Some(runway::RunwayMatch {
+            airport_ident: "EDDH".to_string(),
+            runway_ident: "23".to_string(),
+            heading_true_deg: 230.21,
+            length_ft: 10663.0,
+            width_ft: 151.0,
+            surface: "ASP".to_string(),
+            threshold_lat: 53.636011,
+            threshold_lon: 9.999656,
+            end_lat: 53.619958,
+            end_lon: 9.967167,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            touchdown_distance_from_threshold_ft: 720.0,
+            side: "left".to_string(),
+            displaced_threshold_ft: 0,
+        });
+        let felder = bahn_felder(&stats, Some("A320"), None);
+        assert!(
+            felder.runway_exits.is_empty(),
+            "eine fuer EDDF markierte Karte darf nicht auf die EDDH-Bahn projiziert werden, \
+             nur weil runway_correlation_icao EDDF sagt"
         );
     }
 
