@@ -27926,6 +27926,11 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         // Client/Pirep-Id — der Callback muss nach Erfolg in
                         // die Statistik zurueckschreiben koennen.
                         let flight_fuer_bestaetigung = flight.clone();
+                        // v1.7.17 Runde 15: der App-Griff, um nach einer
+                        // NACHGEHOLTEN Rueckzugsentscheidung (siehe unten)
+                        // sofort zu checkpointen — dieselbe Vorsicht wie an
+                        // der eigentlichen Boarding-Ende-Stelle.
+                        let app_fuer_bestaetigung = app.clone();
                         tauri::async_runtime::spawn(async move {
                             match client.post_pirep_fields(&pirep_id, &posts).await {
                                 Ok(()) => {
@@ -27942,11 +27947,72 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     // finale Einreichung spaeter NICHT
                                     // leeren, weil AeroACARS nachweislich
                                     // nie erfolgreich etwas gepostet hat.
-                                    if dep_gate_wird_gepostet {
-                                        if let Ok(mut stats) = flight_fuer_bestaetigung.stats.lock()
+                                    if !dep_gate_wird_gepostet {
+                                        return;
+                                    }
+                                    // v1.7.17 Runde 15 (externe
+                                    // Gegenpruefung, Codex, adversarial,
+                                    // 04.09.2026): NACHGEHOLTE
+                                    // Rueckzugsentscheidung fuer das
+                                    // Wettrennen "Boarding endet, WAEHREND
+                                    // diese Anfrage noch unterwegs ist". Der
+                                    // Boarding-Ende-Riegel lief da schon —
+                                    // mit `confirmed=false`, weil dieser
+                                    // Post noch nicht zurueck war — und
+                                    // entschied faelschlich "nichts zu
+                                    // verwerfen". Es gibt keinen zweiten
+                                    // Boarding-Ende-Tick mehr; hier, im
+                                    // Erfolgs-Callback selbst, ist die letzte
+                                    // Gelegenheit, das nachzuholen. Sofort
+                                    // checkpointen (Runde 15, zweiter
+                                    // Befund): dieselbe Ueberlegung wie an
+                                    // der Boarding-Ende-Stelle — der naechste
+                                    // periodische Checkpoint koennte noch
+                                    // mehrere Ticks entfernt sein.
+                                    let nachtraeglicher_rueckzug = {
+                                        let Ok(mut stats) = flight_fuer_bestaetigung.stats.lock()
+                                        else {
+                                            return;
+                                        };
+                                        stats.dep_gate_field_post_confirmed = true;
+                                        if !stats.dep_gate_withdrawal_pending
+                                            && dep_gate_muss_beim_boarding_ende_verworfen_werden(
+                                                stats.phase != FlightPhase::Boarding,
+                                                stats.dep_gate.is_some(),
+                                                stats.dep_gate_generation,
+                                                stats.dep_szenerie_auskunft_generation,
+                                            )
                                         {
-                                            stats.dep_gate_field_post_confirmed = true;
+                                            stats.dep_gate = None;
+                                            stats.dep_gate_withdrawal_pending = true;
+                                            true
+                                        } else {
+                                            false
                                         }
+                                    };
+                                    // v1.7.17 Runde 15 (externe
+                                    // Gegenpruefung, Codex, adversarial,
+                                    // 04.09.2026, zweiter Befund): die
+                                    // Bestaetigung selbst SOFORT checkpointen
+                                    // — sonst wartet ihre Haltbarkeit auf den
+                                    // naechsten periodischen Checkpoint
+                                    // (mehrere Ticks entfernt), und ein
+                                    // Absturz genau in diesem Fenster liesse
+                                    // einen Resume wieder "nie gepostet"
+                                    // glauben. Unbedingt, auch wenn KEIN
+                                    // nachtraeglicher Rueckzug noetig war.
+                                    save_active_flight(
+                                        &app_fuer_bestaetigung,
+                                        &flight_fuer_bestaetigung,
+                                    );
+                                    if nachtraeglicher_rueckzug {
+                                        let mut rueckzug = HashMap::new();
+                                        rueckzug
+                                            .insert("Departure Gate".to_string(), String::new());
+                                        post_pirep_fields_mit_kurzem_retry(
+                                            &client, &pirep_id, &rueckzug,
+                                        )
+                                        .await;
                                     }
                                 }
                                 Err(e) => {
