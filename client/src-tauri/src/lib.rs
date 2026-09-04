@@ -3259,6 +3259,10 @@ struct PersistedFlightStats {
     /// Schreibstelle in `PersistedFlightStats::from`.
     #[serde(default)]
     dep_gate_withdrawal_pending: bool,
+    /// v1.7.17 Runde 16 — siehe die ausfuehrliche Begruendung am Feld in
+    /// `FlightStats`.
+    #[serde(default)]
+    dep_gate_withdrawal_awaiting_confirmation: bool,
     #[serde(default)]
     arr_gate: Option<String>,
     /// v0.19.3: did this flight actually pass through the `BlocksOn` phase?
@@ -3659,6 +3663,14 @@ impl PersistedFlightStats {
             // worden (`build_pirep_fields` liesse ihn weg statt zu
             // leeren), obwohl `dep_gate` selbst schon korrekt `None` war.
             dep_gate_withdrawal_pending: stats.dep_gate_withdrawal_pending,
+            // v1.7.17 Runde 16 (externe Gegenpruefung, Codex, adversarial,
+            // 04.09.2026): OHNE Persistierung wuerde ein App-Neustart
+            // zwischen dem Boarding-Ende-Riegel (setzt dieses Flag, wenn
+            // die Bestaetigung noch aussteht) und der Bestaetigung selbst
+            // die eingefrorene Entscheidung verlieren — ein spaeter doch
+            // noch erfolgreicher Post bliebe dann folgenlos.
+            dep_gate_withdrawal_awaiting_confirmation: stats
+                .dep_gate_withdrawal_awaiting_confirmation,
             arr_gate: stats.arr_gate.clone(),
             blocks_on_reached: stats.blocks_on_reached,
             arr_gate_icao: stats.arr_gate_icao.clone(),
@@ -3843,6 +3855,8 @@ impl PersistedFlightStats {
         stats.dep_gate = self.dep_gate;
         stats.dep_gate_field_post_confirmed = self.dep_gate_field_post_confirmed;
         stats.dep_gate_withdrawal_pending = self.dep_gate_withdrawal_pending;
+        stats.dep_gate_withdrawal_awaiting_confirmation =
+            self.dep_gate_withdrawal_awaiting_confirmation;
         stats.arr_gate = self.arr_gate;
         // A snapshot written before v0.19.3 has no `blocks_on_reached` (serde
         // default = false). Derive it from the persisted phase so a flight
@@ -5458,6 +5472,29 @@ struct FlightStats {
     /// jetzt auf `dep_gate_field_post_confirmed`, nicht mehr auf das
     /// optimistische `dep_gate_field_posted` (siehe dessen Doku).
     dep_gate_withdrawal_pending: bool,
+    /// v1.7.17 Runde 16 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): der Boarding-Ende-Riegel hat EINMALIG entschieden,
+    /// dass ein Rueckzug noetig IST — konnte es aber noch nicht ausfuehren,
+    /// weil der Live-Post zu diesem Zeitpunkt weder bestaetigt noch
+    /// definitiv fehlgeschlagen war (noch unterwegs). Diese Entscheidung
+    /// wird HIER eingefroren, mit der zu diesem Zeitpunkt gueltigen Lage —
+    /// NICHT spaeter neu bewertet.
+    ///
+    /// ⚠ Der Runde-15-Versuch, dasselbe Problem im Erfolgs-Callback zu
+    /// loesen, indem die Bedingung DORT (mit der DANN aktuellen Phase und
+    /// dem DANN aktuellen `dep_gate`) neu ausgewertet wurde, hatte zwei
+    /// eigene Fehler: (1) `dep_gate` war zu diesem Zeitpunkt schon immer
+    /// `None` (der Riegel loescht es sofort, unabhaengig von der
+    /// Bestaetigung) — die Neubewertung fand darum NIE etwas zum
+    /// Zurueckziehen, exakt in dem Fall, den sie loesen sollte; (2) ein
+    /// voellig unrelated, SPAETERER Reconnect nach dem Boarding-Ende
+    /// haette eine eigene Generationsabweichung erzeugt, die die
+    /// Neubewertung faelschlich als "der verpasste Uebergang" gelesen
+    /// haette — und einen laengst historischen, korrekten Stand geloescht.
+    /// Ein eingefrorenes Flag statt einer Neubewertung vermeidet beide
+    /// Fehlerklassen: der Erfolgs-Callback fuehrt nur noch eine BEREITS
+    /// GETROFFENE Entscheidung aus, trifft keine neue.
+    dep_gate_withdrawal_awaiting_confirmation: bool,
 
     // ---- Fuel tracking ----
     block_fuel_kg: Option<f32>,
@@ -27834,7 +27871,17 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             // ein Absturz/Neustart in diesem Fenster haette
                             // das gerade gesetzte Flag sonst verloren.
                             drop(stats);
-                            save_active_flight(&app, &flight);
+                            // v1.7.17 Runde 16 (externe Gegenpruefung, Codex,
+                            // adversarial, 04.09.2026): `flight.stop` erneut
+                            // pruefen, UNMITTELBAR vor dem Schreiben — sonst
+                            // koennte ein zwischenzeitliches Filing/Cancel/
+                            // Forget die Ablage schon geloescht haben, und
+                            // dieser Schreibzugriff wuerde sie unbeabsichtigt
+                            // wiederbeleben (derselbe Schutz wie im
+                            // periodischen Checkpoint weiter unten).
+                            if !flight.stop.load(std::sync::atomic::Ordering::Relaxed) {
+                                save_active_flight(&app, &flight);
+                            }
                             let mut posts = HashMap::new();
                             posts.insert("Departure Gate".to_string(), String::new());
                             let client = client.clone();
@@ -27846,6 +27893,25 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 post_pirep_fields_mit_kurzem_retry(&client, &pirep_id, &posts)
                                     .await;
                             });
+                        } else {
+                            // v1.7.17 Runde 16 (externe Gegenpruefung, Codex,
+                            // adversarial, 04.09.2026): die Bestaetigung
+                            // steht noch aus (Post noch unterwegs ODER nie
+                            // gepostet) — die Entscheidung "hier war eine
+                            // Rueckzugs-Pflicht" trotzdem EINFRIEREN, statt
+                            // sie zu verwerfen. Der Erfolgs-Callback des
+                            // Live-Posts fuehrt sie spaeter aus, OHNE die
+                            // Bedingung neu zu bewerten (siehe Funktionsdoku
+                            // am Feld) — das vermeidet sowohl das
+                            // Runde-15-Problem (dep_gate ist hier bereits
+                            // `None`, eine Neubewertung faende nie etwas)
+                            // als auch eine Fehlklassifizierung durch einen
+                            // spaeteren, unrelated Reconnect.
+                            stats.dep_gate_withdrawal_awaiting_confirmation = true;
+                            drop(stats);
+                            if !flight.stop.load(std::sync::atomic::Ordering::Relaxed) {
+                                save_active_flight(&app, &flight);
+                            }
                         }
                     }
                 }
@@ -27926,11 +27992,18 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         // Client/Pirep-Id — der Callback muss nach Erfolg in
                         // die Statistik zurueckschreiben koennen.
                         let flight_fuer_bestaetigung = flight.clone();
-                        // v1.7.17 Runde 15: der App-Griff, um nach einer
-                        // NACHGEHOLTEN Rueckzugsentscheidung (siehe unten)
-                        // sofort zu checkpointen — dieselbe Vorsicht wie an
-                        // der eigentlichen Boarding-Ende-Stelle.
+                        // v1.7.17 Runde 15/16: der App-Griff, um eine
+                        // bereits EINGEFRORENE Rueckzugsentscheidung
+                        // (`dep_gate_withdrawal_awaiting_confirmation`)
+                        // sofort zu checkpointen, sobald sie ausgefuehrt
+                        // wird — dieselbe Vorsicht wie an der Boarding-
+                        // Ende-Stelle selbst.
                         let app_fuer_bestaetigung = app.clone();
+                        // v1.7.17 Runde 16 (externe Gegenpruefung, Codex,
+                        // adversarial, 04.09.2026): der Flug-Handle selbst,
+                        // um `flight.stop` im Callback erneut zu pruefen —
+                        // siehe die Begruendung an den Schreibstellen unten.
+                        let flight_fuer_stop_check = flight.clone();
                         tauri::async_runtime::spawn(async move {
                             match client.post_pirep_fields(&pirep_id, &posts).await {
                                 Ok(()) => {
@@ -27950,62 +28023,68 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     if !dep_gate_wird_gepostet {
                                         return;
                                     }
-                                    // v1.7.17 Runde 15 (externe
+                                    // v1.7.17 Runde 16 (externe
                                     // Gegenpruefung, Codex, adversarial,
-                                    // 04.09.2026): NACHGEHOLTE
-                                    // Rueckzugsentscheidung fuer das
-                                    // Wettrennen "Boarding endet, WAEHREND
-                                    // diese Anfrage noch unterwegs ist". Der
-                                    // Boarding-Ende-Riegel lief da schon —
-                                    // mit `confirmed=false`, weil dieser
-                                    // Post noch nicht zurueck war — und
-                                    // entschied faelschlich "nichts zu
-                                    // verwerfen". Es gibt keinen zweiten
-                                    // Boarding-Ende-Tick mehr; hier, im
-                                    // Erfolgs-Callback selbst, ist die letzte
-                                    // Gelegenheit, das nachzuholen. Sofort
-                                    // checkpointen (Runde 15, zweiter
-                                    // Befund): dieselbe Ueberlegung wie an
-                                    // der Boarding-Ende-Stelle — der naechste
-                                    // periodische Checkpoint koennte noch
-                                    // mehrere Ticks entfernt sein.
-                                    let nachtraeglicher_rueckzug = {
+                                    // 04.09.2026): NUR eine BEREITS am
+                                    // Boarding-Ende getroffene, eingefrorene
+                                    // Entscheidung ausfuehren — NICHT die
+                                    // Bedingung hier neu bewerten. Der
+                                    // Runde-15-Versuch bewertete
+                                    // `dep_gate_muss_beim_boarding_ende_
+                                    // verworfen_werden` HIER neu und scheiterte
+                                    // doppelt: `dep_gate` war zu diesem
+                                    // Zeitpunkt immer schon `None` (der Riegel
+                                    // loescht es sofort, unabhaengig von der
+                                    // Bestaetigung) — die Neubewertung fand
+                                    // darum NIE etwas; und ein spaeterer,
+                                    // voellig unrelated Reconnect haette als
+                                    // "der verpasste Uebergang" fehlklassifiziert
+                                    // werden koennen. Siehe die Funktionsdoku
+                                    // an `dep_gate_withdrawal_awaiting_
+                                    // confirmation` fuer die volle Herleitung.
+                                    let muss_nachgeholt_werden = {
                                         let Ok(mut stats) = flight_fuer_bestaetigung.stats.lock()
                                         else {
                                             return;
                                         };
                                         stats.dep_gate_field_post_confirmed = true;
-                                        if !stats.dep_gate_withdrawal_pending
-                                            && dep_gate_muss_beim_boarding_ende_verworfen_werden(
-                                                stats.phase != FlightPhase::Boarding,
-                                                stats.dep_gate.is_some(),
-                                                stats.dep_gate_generation,
-                                                stats.dep_szenerie_auskunft_generation,
-                                            )
-                                        {
-                                            stats.dep_gate = None;
+                                        if stats.dep_gate_withdrawal_awaiting_confirmation {
+                                            stats.dep_gate_withdrawal_awaiting_confirmation = false;
                                             stats.dep_gate_withdrawal_pending = true;
                                             true
                                         } else {
                                             false
                                         }
                                     };
-                                    // v1.7.17 Runde 15 (externe
-                                    // Gegenpruefung, Codex, adversarial,
-                                    // 04.09.2026, zweiter Befund): die
+                                    // v1.7.17 Runde 15 (zweiter Befund): die
                                     // Bestaetigung selbst SOFORT checkpointen
                                     // — sonst wartet ihre Haltbarkeit auf den
                                     // naechsten periodischen Checkpoint
                                     // (mehrere Ticks entfernt), und ein
                                     // Absturz genau in diesem Fenster liesse
                                     // einen Resume wieder "nie gepostet"
-                                    // glauben. Unbedingt, auch wenn KEIN
-                                    // nachtraeglicher Rueckzug noetig war.
-                                    save_active_flight(
-                                        &app_fuer_bestaetigung,
-                                        &flight_fuer_bestaetigung,
-                                    );
-                                    if nachtraeglicher_rueckzug {
+                                    // glauben. Unbedingt, auch wenn KEINE
+                                    // nachgeholte Entscheidung noetig war.
+                                    //
+                                    // v1.7.17 Runde 16: `flight.stop` erneut
+                                    // pruefen — dieser Task ist DETACHED und
+                                    // kann noch laufen, nachdem der Flug
+                                    // laengst gefiled/abgebrochen/vergessen
+                                    // wurde und seine Ablage geloescht ist;
+                                    // ohne diese Pruefung wuerde dieser
+                                    // Schreibzugriff die geloeschte Ablage
+                                    // wiederbeleben (derselbe Schutz wie beim
+                                    // periodischen Checkpoint).
+                                    if !flight_fuer_stop_check
+                                        .stop
+                                        .load(std::sync::atomic::Ordering::Relaxed)
+                                    {
+                                        save_active_flight(
+                                            &app_fuer_bestaetigung,
+                                            &flight_fuer_bestaetigung,
+                                        );
+                                    }
+                                    if muss_nachgeholt_werden {
                                         let mut rueckzug = HashMap::new();
                                         rueckzug
                                             .insert("Departure Gate".to_string(), String::new());
@@ -35617,6 +35696,30 @@ mod arrived_fallback_geometry_tests {
         assert!(
             fresh.dep_gate_field_post_confirmed,
             "eine bestaetigte Live-Post-Zustellung muss einen Resume ueberleben"
+        );
+    }
+
+    /// v1.7.17 Runde 16 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): die am Boarding-Ende EINGEFRORENE, noch unbestaetigte
+    /// Rueckzugsentscheidung muss einen Resume ueberleben — sonst wuerde
+    /// eine spaeter doch noch eintreffende Bestaetigung nach einem
+    /// Neustart folgenlos bleiben.
+    #[test]
+    fn dep_gate_withdrawal_awaiting_confirmation_ueberlebt_einen_resume() {
+        let (flight, _snap) = flight_planned_to("EDDF", EDDF_TERMINAL_2);
+        {
+            let mut stats = flight.stats.lock().unwrap();
+            stats.dep_gate_withdrawal_awaiting_confirmation = true;
+        }
+        let snapshot = PersistedFlightStats::snapshot_from(&flight.stats.lock().unwrap());
+        let json = serde_json::to_string(&snapshot).expect("snapshot serializes");
+        let restored: PersistedFlightStats = serde_json::from_str(&json).expect("snapshot parses");
+        let mut fresh = FlightStats::new();
+        restored.apply_to(&mut fresh);
+        assert!(
+            fresh.dep_gate_withdrawal_awaiting_confirmation,
+            "eine eingefrorene, noch unbestaetigte Rueckzugsentscheidung muss einen \
+             Resume ueberleben"
         );
     }
 
