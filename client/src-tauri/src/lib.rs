@@ -2796,6 +2796,16 @@ fn szenerie_auskunft_uebernehmen(
 /// schon im Auftragsbuch, sobald der Flug beginnt; hier wird sein Rang
 /// nur noch verbessert (er soll nicht bis zum Sankt-Nimmerleins-Tag hinter
 /// jedem neuen Zielkandidaten zurückstehen) und die Lieferung abgeholt.
+///
+/// Ob ein bereits abgeleiteter `dep_gate` (samt Post-Riegel) geloescht
+/// werden muss, wenn die Abflug-Szenerie durch einen Verbindungswechsel
+/// entwertet wurde (Runde 2, Codex adversarial, 04.09.2026). Nur waehrend
+/// des Boardings — siehe die ausfuehrliche Begruendung an der Aufrufstelle
+/// in `dep_szenerie_auskunft_uebernehmen`.
+fn dep_gate_bei_szenerie_wechsel_zuruecksetzen(phase: FlightPhase) -> bool {
+    phase == FlightPhase::Boarding
+}
+
 fn dep_szenerie_auskunft_uebernehmen(
     app: &AppHandle,
     flight: &Arc<ActiveFlight>,
@@ -2850,6 +2860,24 @@ fn dep_szenerie_auskunft_uebernehmen(
                 if flugkopie_entwerten(stats.dep_szenerie_auskunft_generation, schnapp.generation) {
                     stats.dep_szenerie_auskunft = None;
                     stats.dep_szenerie_auskunft_generation = schnapp.generation;
+                    // ⚠ Runde 2 (externe Gegenpruefung, Codex, adversarial,
+                    // 04.09.2026): Eine entwertete Szenerie-Kopie allein
+                    // reicht nicht — ein bereits daraus abgeleiteter
+                    // `dep_gate` (und sein Post-Riegel) blieb sonst auf dem
+                    // ALTEN, jetzt fuer falsch erklaerten Stand stehen. NUR
+                    // waehrend des Boardings mitloeschen: Die bestehende
+                    // Regel "ein einmal gestempelter dep_gate wird nie
+                    // korrigiert" (siehe der Nachzieh-Tick weiter unten) hat
+                    // einen guten Grund — waehrend des Pushbacks steht der
+                    // Flieger neben fremden Staenden, ein Nachtrag DORT waere
+                    // schlechter als der alte, richtige Wert. Ein
+                    // Verbindungswechsel waehrend des Boardings aendert aber
+                    // nicht die Position, nur die Datenquelle — hier ist eine
+                    // Korrektur sicher.
+                    if dep_gate_bei_szenerie_wechsel_zuruecksetzen(stats.phase) {
+                        stats.dep_gate = None;
+                        stats.dep_gate_field_posted = false;
+                    }
                 }
                 if stats.dep_szenerie_auskunft.is_some() {
                     return;
@@ -38202,6 +38230,29 @@ mod standliste_fuer_tests {
              Vorkommen, erwartet mindestens 2: dieser Kommentar + echter Aufruf) — der \
              Abflugplatz waere wieder ungeschuetzt gegen Rang-Reset und vorzeitige Freigabe"
         );
+    }
+
+    /// v1.7.17 Runde 2: nur waehrend des Boardings darf ein Verbindungswechsel
+    /// einen bereits abgeleiteten `dep_gate` mitsamt Post-Riegel loeschen —
+    /// siehe Begruendung an `dep_gate_bei_szenerie_wechsel_zuruecksetzen`.
+    #[test]
+    fn dep_gate_wird_nur_waehrend_boarding_zurueckgesetzt() {
+        assert!(dep_gate_bei_szenerie_wechsel_zuruecksetzen(
+            FlightPhase::Boarding
+        ));
+    }
+
+    #[test]
+    fn dep_gate_bleibt_ausserhalb_boarding_stehen() {
+        assert!(!dep_gate_bei_szenerie_wechsel_zuruecksetzen(
+            FlightPhase::Pushback
+        ));
+        assert!(!dep_gate_bei_szenerie_wechsel_zuruecksetzen(
+            FlightPhase::TaxiOut
+        ));
+        assert!(!dep_gate_bei_szenerie_wechsel_zuruecksetzen(
+            FlightPhase::Cruise
+        ));
     }
 }
 

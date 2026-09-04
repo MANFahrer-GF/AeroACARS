@@ -513,8 +513,29 @@ impl Auftragsbuch {
     /// Gibt zurueck, fuer wie viele Plaetze das galt — damit die
     /// Aufrufstelle es protokollieren kann, statt es zu behaupten.
     pub fn neues_versuchsfenster(&mut self) -> usize {
+        self.neues_versuchsfenster_mit_schutz(&[])
+    }
+
+    /// Wie `neues_versuchsfenster`, aber `geschuetzt` bleibt komplett
+    /// unberuehrt — auch ein LAUFENDER Auftrag fuer einen geschuetzten
+    /// Platz wird NICHT zurueckgesetzt.
+    ///
+    /// ⚠ v1.7.17 Runde 2 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): `anflug_ausrichten_mit_schutz` (Runde 1) schuetzte nur
+    /// die EINE Freigabestelle innerhalb dieser Funktion selbst — aber sie
+    /// ruft am Ende, wenn `fenster` gesetzt ist, DIESE Funktion auf, die
+    /// UNABHAENGIG davon JEDEN `Laeuft`-Auftrag zuruecksetzt, geschuetzt
+    /// oder nicht. Bei jedem Eintritt in Sinkflug/Anflug/Endanflug haette
+    /// ein gerade laufender Abflug-Auftrag also doch zurueckgesetzt werden
+    /// koennen — derselbe Fehler wie in Runde 1, nur ueber den ZWEITEN
+    /// Reset-Pfad statt den ersten. Zwei Reset-Mechanismen in derselben
+    /// Funktion brauchen denselben Schutz, nicht nur einer davon.
+    pub fn neues_versuchsfenster_mit_schutz(&mut self, geschuetzt: &[String]) -> usize {
         let mut betroffen = 0;
-        for a in self.auftraege.values_mut() {
+        for (icao, a) in self.auftraege.iter_mut() {
+            if geschuetzt.iter().any(|g| g.eq_ignore_ascii_case(icao)) {
+                continue;
+            }
             // ⚠ Auch RUHENDE Plaetze. Ein Phasenwechsel ist ein echtes
             // Ereignis, kein Tick — die Ruhezeit aus einem
             // voruebergehenden Fehler darf ihn nicht ueberdauern.
@@ -711,7 +732,10 @@ impl Auftragsbuch {
             }
         }
         if fenster {
-            self.neues_versuchsfenster()
+            // ⚠ Runde 2: die geschuetzte Variante — siehe deren Doku, warum
+            // die ungeschuetzte hier derselbe Fehler waere, nur ueber den
+            // zweiten Reset-Pfad.
+            self.neues_versuchsfenster_mit_schutz(geschuetzt)
         } else {
             0
         }
@@ -2322,5 +2346,43 @@ mod auftragsbuch_tests {
             None,
             "ohne Schutz muss der laufende Auftrag freigegeben werden (bestehendes Verhalten)"
         );
+    }
+
+    /// v1.7.17 Runde 2 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): Runde 1 pruefte nur `fenster=false`. Mit `fenster=true`
+    /// — der Fall bei jedem Phasenwechsel in Sinkflug/Anflug/Endanflug —
+    /// griff ein ZWEITER, unabhaengiger Reset-Pfad (`neues_versuchsfenster`),
+    /// der JEDEN `Laeuft`-Auftrag zuruecksetzt, auch geschuetzte. Der
+    /// Runde-1-Schutz in `anflug_ausrichten_mit_schutz` selbst reichte
+    /// nicht, weil er nur die ERSTE Freigabestelle abdeckte.
+    #[test]
+    fn laufender_geschuetzter_auftrag_uebersteht_auch_ein_neues_fenster() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("EDDS", 0);
+        let _ = b.gestellt("EDDS", 0);
+        assert_eq!(b.laufender().as_deref(), Some("EDDS"));
+
+        let ziele = vec![("LEPA".to_string(), 0)];
+        // fenster=true — das war die Luecke, die Runde 1 nicht deckte.
+        b.anflug_ausrichten_mit_schutz(&ziele, &["EDDS".to_string()], true);
+
+        assert_eq!(
+            b.laufender().as_deref(),
+            Some("EDDS"),
+            "ein geschuetzter laufender Auftrag muss auch ein neues Versuchsfenster ueberstehen"
+        );
+    }
+
+    /// Gegenprobe: OHNE Schutz reisst ein neues Fenster den laufenden
+    /// Auftrag heraus — bestehendes, gewolltes Verhalten fuer echte
+    /// Anflug-Kandidaten.
+    #[test]
+    fn laufender_ungeschuetzter_auftrag_wird_von_neuem_fenster_zurueckgesetzt() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("EDDS", 0);
+        let _ = b.gestellt("EDDS", 0);
+        let ziele = vec![("LEPA".to_string(), 0)];
+        b.anflug_ausrichten_mit_schutz(&ziele, &[], true);
+        assert_eq!(b.laufender(), None);
     }
 }
