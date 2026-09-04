@@ -37610,6 +37610,26 @@ fn arrival_fetch_ziel_icao(stats: &FlightStats, geplant: &str) -> String {
         .to_uppercase()
 }
 
+/// Ob `icao` (bereits normalisiert) noch das Ankunfts-Ziel ist, fuer das
+/// zuletzt eine OSM-Anfrage gestartet wurde — die EINE Stale-Spawn-Pruefung
+/// fuer alle drei Stellen, die vom Zielwechsel betroffen sind:
+///
+/// * `maybe_spawn_stand_fetch`s Zaehler-Reset (negiert: hat sich das Ziel
+///   GEAENDERT) — Runde 4.
+/// * die Uebernahme von `arr_ground_geojson` — Runde 4.
+/// * die Uebernahme von `arr_stands`/`arr_stands_icao` — schon seit dem
+///   Erstbau vorhanden, hier nur dieselbe Funktion statt eines eigenen
+///   Vergleichs.
+///
+/// Alle drei benutzten VOR Runde 4 denselben Vergleich an drei getrennten
+/// Stellen — zwei davon fehlerhaft oder fehlend (siehe Runde-4-Befunde):
+/// der Zaehler-Reset hing zusaetzlich an einem Flag, das ein Fehlversuch
+/// vorher zuruecksetzt, und `arr_ground_geojson` hatte GAR KEINEN Riegel
+/// (externe Gegenpruefung, Codex, adversarial, 04.09.2026, Runde 4).
+fn passt_zum_angefragten_ankunftsziel(stats: &FlightStats, icao: &str) -> bool {
+    stats.arr_stands_requested_icao.as_deref() == Some(icao)
+}
+
 #[cfg(test)]
 mod standliste_fuer_tests {
     use super::*;
@@ -37831,6 +37851,34 @@ mod standliste_fuer_tests {
         let stats = FlightStats::default();
         assert_eq!(arrival_fetch_ziel_icao(&stats, "EDDF"), "EDDF");
     }
+
+    #[test]
+    fn passt_zum_ziel_wenn_icao_uebereinstimmt() {
+        let mut stats = FlightStats::default();
+        stats.arr_stands_requested_icao = Some("EDDF".to_string());
+        assert!(passt_zum_angefragten_ankunftsziel(&stats, "EDDF"));
+    }
+
+    /// Der eigentliche Runde-4-Fall (extern Gegenpruefung, Codex,
+    /// adversarial, 04.09.2026): eine Antwort/ein Zaehler fuer den ALTEN
+    /// (geplanten) Platz darf nach einem Zielwechsel nicht mehr als
+    /// „passend" gelten — weder fuer die Standliste noch fuer die
+    /// Bodenkarte noch fuer den Zaehler-Reset.
+    #[test]
+    fn passt_nicht_zum_ziel_nach_einem_wechsel() {
+        let mut stats = FlightStats::default();
+        stats.arr_stands_requested_icao = Some("EDNY".to_string()); // alt, geplant
+        assert!(
+            !passt_zum_angefragten_ankunftsziel(&stats, "EDDF"), // neu, tatsaechlich
+            "eine Antwort fuer EDNY darf nicht als Antwort fuer EDDF durchgehen"
+        );
+    }
+
+    #[test]
+    fn passt_nicht_zum_ziel_ohne_je_eine_anfrage() {
+        let stats = FlightStats::default();
+        assert!(!passt_zum_angefragten_ankunftsziel(&stats, "EDDF"));
+    }
 }
 
 fn maybe_spawn_stand_fetch(
@@ -37904,10 +37952,21 @@ fn maybe_spawn_stand_fetch(
         let mut stats = flight.stats.lock().expect("flight stats");
         // Divert-Wechsel: angefragt wurde ein anderer Platz als der, auf
         // dem wir landen → Anfrage-Latch und Zähler zurücksetzen.
-        if dir == Dir::Arrival
-            && stats.arr_stands_requested
-            && stats.arr_stands_requested_icao.as_deref() != Some(icao.as_str())
-        {
+        //
+        // ⚠ OHNE `stats.arr_stands_requested`-Bedingung, absichtlich: ein
+        // Fehlversuch setzt `arr_stands_requested` bereits VOR diesem
+        // Vergleich auf `false` zurück (siehe `fetch_failed` unten), damit
+        // der naechste Tick es erneut probiert. Stand die Bedingung noch
+        // hier, griff dieser Reset NICHT, wenn genau in dem Tick, in dem
+        // sich das Ziel aendert, kein Abruf mehr "in Flug" war — der neue
+        // (tatsaechliche) Flughafen erbte dann das Zaehler-Budget des
+        // ALTEN (geplanten): nach vier Fehlversuchen fuer den geplanten
+        // Platz blieb dem echten Platz nur noch EIN Versuch, und ein
+        // einziger Netzwackler haette seinen OSM-Rueckfall dauerhaft
+        // stillgelegt — exakt der Fall, den `arr_actual_icao` eigentlich
+        // reparieren sollte (externe Gegenpruefung, Codex, adversarial,
+        // 04.09.2026, Runde 4).
+        if dir == Dir::Arrival && !passt_zum_angefragten_ankunftsziel(&stats, &icao) {
             stats.arr_stands_requested = false;
             stats.arr_stand_fetch_attempts = 0;
         }
@@ -37950,9 +38009,7 @@ fn maybe_spawn_stand_fetch(
             // Spawn ueberholt haben — dann gehoert der Fehlversuch einem
             // ICAO, das niemand mehr angefragt hat. Zaehler/Latch des
             // NEUEN Ziels nicht anfassen.
-            if dir == Dir::Arrival
-                && stats.arr_stands_requested_icao.as_deref() != Some(icao.as_str())
-            {
+            if dir == Dir::Arrival && !passt_zum_angefragten_ankunftsziel(&stats, &icao) {
                 return;
             }
             let attempts = match dir {
@@ -37991,9 +38048,26 @@ fn maybe_spawn_stand_fetch(
         // Dieselbe Karte trägt die Rollwege — und damit die Ausfahrten der
         // Bahn. Sie wird für die Ankunft aufgehoben, weil die gematchte Bahn
         // erst beim Aufsetzen feststeht (siehe `arr_ground_geojson`).
+        //
+        // ⚠ Denselben Stale-Spawn-Riegel wie unten fuer `arr_stands`
+        // ANWENDEN, nicht nur dort: diese Zuweisung lief vorher
+        // BEDINGUNGSLOS, bevor der Riegel geprueft wird. Aendert sich das
+        // Ziel waehrend eine Anfrage fuer den ALTEN (geplanten) Platz noch
+        // unterwegs ist — genau der Fall, den `arr_actual_icao`
+        // ueberhaupt erst ermoeglicht — konnte deren VERSPAETETE Antwort
+        // die inzwischen fuer den ECHTEN Platz geladene Bodenkarte
+        // ueberschreiben. `bahn_felder` liest diese Karte fuer die
+        // Rollweg-Ausfahrten ohne eigene ICAO-Pruefung; eine falsch
+        // zugeordnete Karte haette falsche oder fehlende Ausfahrten
+        // erzeugt, ohne dass irgendwo ein Fehler sichtbar wuerde (externe
+        // Gegenpruefung, Codex, adversarial, 04.09.2026, Runde 4).
         if matches!(dir, Dir::Arrival) {
             let mut stats = flight.stats.lock().expect("flight stats");
-            stats.arr_ground_geojson = Some(ground.geojson.clone());
+            if passt_zum_angefragten_ankunftsziel(&stats, &icao) {
+                stats.arr_ground_geojson = Some(ground.geojson.clone());
+            } else {
+                tracing::info!(%icao, "stale ground map dropped (target changed mid-fetch)");
+            }
         }
 
         let list = stands::parse_stands(&ground.geojson);
@@ -38027,7 +38101,7 @@ fn maybe_spawn_stand_fetch(
                 // Stale-Spawn-Guard (QS-Befund): nach einem Divert-Reset
                 // darf die VERSPAETETE Antwort des alten Ziels die schon
                 // geladene Liste des echten Ziels nicht ueberschreiben.
-                if stats.arr_stands_requested_icao.as_deref() == Some(icao.as_str()) {
+                if passt_zum_angefragten_ankunftsziel(&stats, &icao) {
                     stats.arr_stands = Some(list);
                     stats.arr_stands_icao = Some(icao);
                 } else {
