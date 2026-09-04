@@ -27057,13 +27057,14 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 {
                     let mut stats = flight.stats.lock().expect("flight stats");
                     if stats.arr_gate.is_none() {
-                        let fund = match stats.arr_stands_icao.clone() {
-                            Some(list_icao) => {
-                                let combined = standliste_fuer(
-                                    &stats,
-                                    &list_icao,
-                                    stats.arr_stands.as_deref(),
-                                );
+                        // Siehe `arrival_retry_ziel`: ICAO-Eigentuemerschaft
+                        // und OSM-Erfolg sind zwei verschiedene Fragen, ohne
+                        // diese Trennung griff der Tick nie, wenn OSM
+                        // scheiterte (externe Gegenpruefung, Codex,
+                        // adversarial, 04.09.2026).
+                        let fund = match arrival_retry_ziel(&stats) {
+                            Some((list_icao, osm)) => {
+                                let combined = standliste_fuer(&stats, &list_icao, osm);
                                 combined
                                     .as_deref()
                                     .and_then(|list| {
@@ -37477,6 +37478,38 @@ fn standliste_fuer(
     szenerie.or_else(|| osm.map(|l| l.to_vec()))
 }
 
+/// Fuer den BlocksOn/Arrived-Nachzieh-Tick: welches ICAO und welche
+/// (ggf. gar keine) OSM-Liste an `standliste_fuer` gehen.
+///
+/// `None`, solange noch kein Ankunfts-Abruf lief (`arr_stands_requested_icao`
+/// leer).
+///
+/// ⚠ Zwei Fragen, zwei Felder — bewusst getrennt gehalten:
+///
+/// * **Wessen Platz fragen wir?** `arr_stands_requested_icao` — gesetzt,
+///   SOBALD ein Abruf losgeschickt wird, unabhaengig vom Ausgang.
+/// * **Hat OSM fuer GENAU DIESEN Platz geliefert?** `arr_stands_icao` —
+///   gesetzt nur bei Erfolg, und nach einem Divert-Wechsel kann es noch den
+///   ALTEN Platz nennen, waehrend `arr_stands_requested_icao` schon den
+///   neuen fordert.
+///
+/// Vor v1.7.16 R1 hing der Nachzieh-Tick ausschliesslich am zweiten Feld —
+/// scheiterte OSM (Netzfehler, 404, leere Bodendaten) oder war schlicht noch
+/// unterwegs, blieb es fuer immer `None`, und der Tick griff nie, obwohl die
+/// Szenerie (`stats.szenerie_auskunft`) laengst den richtigen Platz hielt
+/// (externe Gegenpruefung, Codex, adversarial, 04.09.2026). Die OSM-Liste
+/// selbst bleibt trotzdem an das ERSTE Feld gebunden — `standliste_fuer`
+/// prueft nur die Szenerie-ICAO nach, nicht die OSM-ICAO; ohne den Filter
+/// hier wuerde eine veraltete OSM-Liste eines fremden Platzes durchgereicht.
+fn arrival_retry_ziel(stats: &FlightStats) -> Option<(String, Option<&[stands::ParkingStand]>)> {
+    let list_icao = stats.arr_stands_requested_icao.clone()?;
+    let osm = stats
+        .arr_stands
+        .as_deref()
+        .filter(|_| stats.arr_stands_icao.as_deref() == Some(list_icao.as_str()));
+    Some((list_icao, osm))
+}
+
 #[cfg(test)]
 mod standliste_fuer_tests {
     use super::*;
@@ -37579,6 +37612,57 @@ mod standliste_fuer_tests {
         let osm = vec![osm_stand("OSM-STAND")];
         let liste = standliste_fuer(&stats, "EDDF", Some(&osm)).expect("OSM als Rueckfall");
         assert_eq!(liste[0].name.as_deref(), Some("OSM-STAND"));
+    }
+
+    #[test]
+    fn retry_ziel_nichts_ohne_angefragtes_icao() {
+        let stats = FlightStats::default();
+        assert!(arrival_retry_ziel(&stats).is_none());
+    }
+
+    /// Der eigentliche Gegenprobe-Fall: OSM ist NIE erfolgreich gewesen
+    /// (`arr_stands_icao` leer, `arr_stands` leer) — trotzdem muss die
+    /// Funktion das angefragte ICAO liefern, damit `standliste_fuer` die
+    /// Szenerie noch pruefen kann.
+    #[test]
+    fn retry_ziel_liefert_icao_auch_wenn_osm_nie_geliefert_hat() {
+        let mut stats = FlightStats::default();
+        stats.arr_stands_requested_icao = Some("EDDF".to_string());
+        let (icao, osm) = arrival_retry_ziel(&stats).expect("ICAO trotz fehlendem OSM");
+        assert_eq!(icao, "EDDF");
+        assert!(
+            osm.is_none(),
+            "keine OSM-Liste vorhanden — muss None bleiben"
+        );
+    }
+
+    #[test]
+    fn retry_ziel_reicht_osm_durch_wenn_es_zum_selben_icao_gehoert() {
+        let mut stats = FlightStats::default();
+        stats.arr_stands_requested_icao = Some("EDDF".to_string());
+        stats.arr_stands_icao = Some("EDDF".to_string());
+        stats.arr_stands = Some(vec![osm_stand("OSM-STAND")]);
+        let (icao, osm) = arrival_retry_ziel(&stats).expect("ICAO da");
+        assert_eq!(icao, "EDDF");
+        assert_eq!(osm.expect("OSM da")[0].name.as_deref(), Some("OSM-STAND"));
+    }
+
+    /// Divert-Fall: `arr_stands` traegt noch die Liste des ALTEN Ziels
+    /// (EDNY), waehrend `arr_stands_requested_icao` schon das neue (EDDF)
+    /// fordert — die veraltete OSM-Liste darf NICHT als EDDF-Liste
+    /// durchgereicht werden.
+    #[test]
+    fn retry_ziel_verwirft_osm_eines_anderen_angefragten_flughafens() {
+        let mut stats = FlightStats::default();
+        stats.arr_stands_requested_icao = Some("EDDF".to_string());
+        stats.arr_stands_icao = Some("EDNY".to_string());
+        stats.arr_stands = Some(vec![osm_stand("EDNY-STAND")]);
+        let (icao, osm) = arrival_retry_ziel(&stats).expect("ICAO da");
+        assert_eq!(icao, "EDDF");
+        assert!(
+            osm.is_none(),
+            "die EDNY-Liste ist fuer das angefragte EDDF nicht zustaendig"
+        );
     }
 }
 

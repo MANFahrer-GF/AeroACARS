@@ -238,24 +238,41 @@ pub fn stand_aus_werten(w: &[Wert]) -> Option<StandRoh> {
 /// # Warum nur diese beiden
 ///
 /// `NUMBER` ist eindeutig ein Zaehler, keine Aufzaehlung — er kann ohne
-/// Risiko als Text uebernommen werden. `SUFFIX` ist laut Editor-Doku
-/// „NONE oder ein Buchstabe" — bei einer derart einfachen, zweiwertigen
-/// Aufzaehlung ist eine fortlaufende Kodierung (0 = ohne, 1..26 = A..Z)
-/// die mit Abstand wahrscheinlichste, darum wird sie angewandt, aber mit
-/// Grenzpruefung: Alles ausserhalb bleibt ohne Suffix, statt einen
-/// falschen Buchstaben zu erfinden.
+/// Risiko als Text uebernommen werden.
 ///
-/// `NAME` bleibt aussen vor (siehe `STAND_FELDER`-Doku) — ein Pilot
-/// erkennt „Stand 23" oder „Stand 23A" trotzdem wieder; das ist genau
-/// die Zahl, die auch im Sim-eigenen Auswahlbildschirm steht.
+/// `SUFFIX` ist KEINE zweiwertige Aufzaehlung — gegen die offizielle
+/// SDK-Dokumentation verifiziert (docs.flightsimulator.com,
+/// `SimConnect_AddToFacilityDefinition`, Abschnitt TAXI_PARKING):
+///
+/// ```text
+/// 0: NONE          6: S_PARKING     11: DOCK
+/// 1: PARKING       7: SW_PARKING    12..37: GATE_A .. GATE_Z
+/// 2: N_PARKING      8: W_PARKING
+/// 3: NE_PARKING    9: NW_PARKING
+/// 4: E_PARKING     10: GATE
+/// 5: SE_PARKING
+/// ```
+///
+/// Nur der Bereich 12..=37 ist ein Buchstabe (A..Z, `12 -> A`). Die
+/// Werte 1..=11 sind Richtungs-/Kategorie-Codes, KEIN Buchstabe — ein
+/// fruehere Fassung dieser Funktion nahm 1..=26 direkt als A..Z an
+/// („NONE oder ein Buchstabe", aus der knapperen Editor-Doku
+/// abgeleitet, nicht der SDK-Referenz) und erfand damit z. B. aus
+/// Suffix 1 (PARKING) den Buchstaben „A" — externe Gegenpruefung
+/// (Codex, adversarial) fing das vor dem ersten Flug ab.
+///
+/// `NAME` bleibt weiterhin aussen vor (siehe `STAND_FELDER`-Doku) — die
+/// Werte 1..=11 dort tragen dieselbe Kategorie-Information, aber ohne
+/// Buchstaben ist „Stand 23" fuer den Piloten immer noch wiedererkennbar,
+/// genau die Zahl aus dem Sim-eigenen Auswahlbildschirm.
 pub fn stand_name(s: &StandRoh) -> Option<String> {
     if s.nummer <= 0 {
         return None;
     }
     match s.suffix {
         0 => Some(s.nummer.to_string()),
-        1..=26 => {
-            let buchstabe = (b'A' + (s.suffix - 1) as u8) as char;
+        12..=37 => {
+            let buchstabe = (b'A' + (s.suffix - 12) as u8) as char;
             Some(format!("{}{}", s.nummer, buchstabe))
         }
         _ => Some(s.nummer.to_string()),
@@ -1200,7 +1217,7 @@ mod tests {
         let w = vec![
             Wert::I32(4),      // TYPE (nicht ausgewertet)
             Wert::I32(11),     // NAME (nicht ausgewertet, s. Doku)
-            Wert::I32(1),      // SUFFIX = A
+            Wert::I32(12),     // SUFFIX = A (12..=37, siehe stand_name)
             Wert::I32(23),     // NUMBER
             Wert::F32(88.5),   // HEADING
             Wert::F32(12.0),   // RADIUS
@@ -1208,7 +1225,7 @@ mod tests {
             Wert::F32(-80.25), // BIAS_Z
         ];
         let s = stand_aus_werten(&w).expect("passt zur Feldliste");
-        assert_eq!(s.suffix, 1);
+        assert_eq!(s.suffix, 12);
         assert_eq!(s.nummer, 23);
         assert!((s.bias_x - 150.0).abs() < 1e-6);
         assert!((s.bias_z - (-80.25)).abs() < 1e-6);
@@ -1220,9 +1237,9 @@ mod tests {
     }
 
     /// ⚠ `NAME` und `TYPE` gehen NICHT in die Anzeige ein — nur `NUMBER`
-    /// (immer sicher) und `SUFFIX` als Buchstabe (dokumentiert als
-    /// „NONE oder ein Buchstabe", darum die vorsichtige 1..26-Annahme).
-    /// Siehe die Begruendung an `stand_name`.
+    /// (immer sicher) und `SUFFIX` als Buchstabe im Bereich 12..=37.
+    /// Siehe die Begruendung (mit der vollstaendigen SDK-Tabelle) an
+    /// `stand_name`.
     #[test]
     fn stand_name_nummer_und_suffix() {
         assert_eq!(
@@ -1230,14 +1247,39 @@ mod tests {
             Some("23")
         );
         assert_eq!(
-            stand_name(&stand_roh(11, 1, 23, 0.0, 0.0)).as_deref(),
+            stand_name(&stand_roh(11, 12, 23, 0.0, 0.0)).as_deref(),
             Some("23A"),
-            "Suffix 1 = A"
+            "Suffix 12 = A"
         );
         assert_eq!(
-            stand_name(&stand_roh(11, 26, 1, 0.0, 0.0)).as_deref(),
+            stand_name(&stand_roh(11, 37, 1, 0.0, 0.0)).as_deref(),
             Some("1Z"),
-            "Suffix 26 = Z"
+            "Suffix 37 = Z"
+        );
+    }
+
+    /// Suffix 1..=11 sind Richtungs-/Kategorie-Codes (PARKING,
+    /// N_PARKING..NW_PARKING, GATE, DOCK) — KEIN Buchstabe. Eine
+    /// fruehere Fassung nahm 1..=26 direkt als A..Z an und haette aus
+    /// Suffix 1 (PARKING) den erfundenen Buchstaben „A" gemacht;
+    /// externe Gegenpruefung (Codex, adversarial) fing das vor dem
+    /// ersten Flug ab. Siehe `stand_name`.
+    #[test]
+    fn stand_name_kategorie_suffix_ist_kein_buchstabe() {
+        assert_eq!(
+            stand_name(&stand_roh(11, 1, 23, 0.0, 0.0)).as_deref(),
+            Some("23"),
+            "Suffix 1 = PARKING, kein Buchstabe"
+        );
+        assert_eq!(
+            stand_name(&stand_roh(11, 10, 23, 0.0, 0.0)).as_deref(),
+            Some("23"),
+            "Suffix 10 = GATE (generisch), kein Buchstabe"
+        );
+        assert_eq!(
+            stand_name(&stand_roh(11, 11, 23, 0.0, 0.0)).as_deref(),
+            Some("23"),
+            "Suffix 11 = DOCK, kein Buchstabe"
         );
     }
 
@@ -1251,7 +1293,7 @@ mod tests {
 
     #[test]
     fn stand_name_unbekanntes_suffix_faellt_auf_die_nummer_zurueck() {
-        // Ein Suffix ausserhalb 1..26 waere ein geratener Buchstabe —
+        // Ein Suffix ausserhalb 0..=37 waere ein geratener Buchstabe —
         // die Nummer allein ist besser als eine erfundene Kennung.
         assert_eq!(
             stand_name(&stand_roh(0, 99, 5, 0.0, 0.0)).as_deref(),
