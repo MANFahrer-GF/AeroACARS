@@ -593,12 +593,31 @@ impl Auftragsbuch {
     /// `RANG_UNBETEILIGT` zurueck. Ihre Ergebnisse bleiben unberuehrt —
     /// nur ihr Vorrang endet.
     pub fn raenge_setzen(&mut self, ziele: &[(String, u8)]) {
+        self.raenge_setzen_mit_schutz(ziele, &[]);
+    }
+
+    /// Wie `raenge_setzen`, aber `geschuetzt` behaelt seinen Rang statt auf
+    /// `RANG_UNBETEILIGT` zu fallen.
+    ///
+    /// ⚠ v1.7.17: Das Buch traegt seit der Abflug-Ernte AUCH Auftraege,
+    /// die gar keine Anflug-Kandidaten sind (der Abflugplatz). Ohne diesen
+    /// Schutz setzte JEDER Anflug-Tick — und der laeuft ab dem ERSTEN
+    /// Tick des Fluges, nicht erst ab dem Sinkflug — den Abflug-Rang
+    /// zurueck auf 200, noch bevor die Abflug-Ernte ihn auf 0 verbessern
+    /// konnte: eine Verbesserung, die im selben Tick-Durchlauf schon
+    /// wieder rueckgaengig gemacht wurde (externe Gegenpruefung, Codex,
+    /// adversarial, 04.09.2026).
+    pub fn raenge_setzen_mit_schutz(&mut self, ziele: &[(String, u8)], geschuetzt: &[String]) {
         for (icao, auftrag) in self.auftraege.iter_mut() {
-            auftrag.rang = ziele
-                .iter()
-                .find(|(z, _)| z.eq_ignore_ascii_case(icao))
-                .map(|(_, r)| *r)
-                .unwrap_or(RANG_UNBETEILIGT);
+            if let Some((_, r)) = ziele.iter().find(|(z, _)| z.eq_ignore_ascii_case(icao)) {
+                auftrag.rang = *r;
+            } else if geschuetzt.iter().any(|g| g.eq_ignore_ascii_case(icao)) {
+                // Rang unveraendert — dieser Platz gehoert nicht zu DIESER
+                // Zielliste, ist aber anderswo aktiv verwaltet (siehe Doku
+                // oben).
+            } else {
+                auftrag.rang = RANG_UNBETEILIGT;
+            }
         }
     }
 
@@ -652,17 +671,42 @@ impl Auftragsbuch {
     /// Gibt zurueck, fuer wie viele Plaetze ein neuer Vorrat geoeffnet
     /// wurde.
     pub fn anflug_ausrichten(&mut self, ziele: &[(String, u8)], fenster: bool) -> usize {
+        self.anflug_ausrichten_mit_schutz(ziele, &[], fenster)
+    }
+
+    /// Wie `anflug_ausrichten`, aber `geschuetzt` wird von BEIDEN
+    /// Aufraeumschritten ausgenommen: der Rang faellt nicht auf
+    /// `RANG_UNBETEILIGT` zurueck (siehe `raenge_setzen_mit_schutz`), und
+    /// ein laufender Auftrag fuer einen geschuetzten Platz wird NICHT
+    /// vorzeitig auf `Offen` zurueckgesetzt, nur weil er kein
+    /// Anflug-Ziel ist.
+    ///
+    /// ⚠ v1.7.17: Ohne die zweite Haelfte haette der Abflug-Auftrag zwar
+    /// seinen Rang behalten, waere aber trotzdem JEDEN Anflug-Tick
+    /// vorzeitig aus `Laeuft` gerissen worden, sobald er — wie jeder
+    /// andere Platz auch — kein Anflug-Ziel ist. Das haette dieselbe
+    /// Wirkung wie die Rangzuruecksetzung gehabt: eine echte, laufende
+    /// SimConnect-Anfrage koennte doppelt gestellt werden, bevor ihre
+    /// Antwort da ist (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026).
+    pub fn anflug_ausrichten_mit_schutz(
+        &mut self,
+        ziele: &[(String, u8)],
+        geschuetzt: &[String],
+        fenster: bool,
+    ) -> usize {
         for (icao, rang) in ziele {
             self.wunsch_mit_rang(icao, *rang);
         }
-        self.raenge_setzen(ziele);
-        // ⚠ Einen laufenden Auftrag, der kein Ziel mehr ist, SOFORT
-        // freigeben. Sonst blockiert er die Reihe, bis die Wartezeit um
-        // ist — und genau die 60 Sekunden fehlen dann dem Ziel.
-        // ⚠ Nur noch EINE Haelfte, weil es nur noch eine gibt.
+        self.raenge_setzen_mit_schutz(ziele, geschuetzt);
+        // ⚠ Einen laufenden Auftrag, der kein Ziel mehr ist UND nicht
+        // geschuetzt, SOFORT freigeben. Sonst blockiert er die Reihe, bis
+        // die Wartezeit um ist — und genau die 60 Sekunden fehlen dann
+        // dem Ziel.
         if let Some(laufend) = self.laufender() {
             let ist_ziel = ziele.iter().any(|(z, _)| z.eq_ignore_ascii_case(&laufend));
-            if !ist_ziel {
+            let ist_geschuetzt = geschuetzt.iter().any(|g| g.eq_ignore_ascii_case(&laufend));
+            if !ist_ziel && !ist_geschuetzt {
                 self.zustand_setzen(&laufend, Auftragszustand::Offen);
             }
         }
@@ -2206,5 +2250,77 @@ mod auftragsbuch_tests {
         // EDDF hat einen Versuch, LEZL keinen.
         b.wunsch("LEZL");
         assert_eq!(b.naechster(WARTEZEIT_MS).as_deref(), Some("LEZL"));
+    }
+
+    /// v1.7.17 (externe Gegenpruefung, Codex, adversarial, 04.09.2026):
+    /// `raenge_setzen` faellt fuer JEDEN Platz ausserhalb der Zielliste
+    /// auf `RANG_UNBETEILIGT` zurueck — auch fuer einen Platz, der aus
+    /// einem GANZ ANDEREN Grund im selben Buch steht (der Abflugplatz,
+    /// der nie Anflug-Ziel ist). `geschuetzt` muss das verhindern.
+    #[test]
+    fn geschuetzter_platz_behaelt_seinen_rang() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("EDDS", 0); // Abflugplatz, wie am Flugbeginn
+        let ziele = vec![("LEPA".to_string(), 0)];
+        b.raenge_setzen_mit_schutz(&ziele, &["EDDS".to_string()]);
+        assert_eq!(
+            b.rang_fuer_test("EDDS"),
+            Some(0),
+            "geschuetzter Platz darf nicht auf RANG_UNBETEILIGT fallen"
+        );
+    }
+
+    /// Ohne Schutz faellt derselbe Platz zurueck — Gegenprobe zur
+    /// Zusicherung oben, direkt als Test statt nur als Mutation.
+    #[test]
+    fn ungeschuetzter_platz_faellt_auf_rang_unbeteiligt() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("EDDS", 0);
+        let ziele = vec![("LEPA".to_string(), 0)];
+        b.raenge_setzen_mit_schutz(&ziele, &[]);
+        assert_eq!(b.rang_fuer_test("EDDS"), Some(RANG_UNBETEILIGT));
+    }
+
+    /// Der eigentliche Runde-1-Fall: ein LAUFENDER Auftrag fuer einen
+    /// geschuetzten, aber nicht im Ziel stehenden Platz darf NICHT
+    /// vorzeitig auf `Offen` zurueckgesetzt werden — sonst kann der
+    /// Verbindungsfaden eine zweite Anfrage stellen, bevor die erste
+    /// beantwortet ist.
+    #[test]
+    fn laufender_geschuetzter_auftrag_wird_nicht_vorzeitig_freigegeben() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("EDDS", 0);
+        let _ = b.gestellt("EDDS", 0); // EDDS ist jetzt "Laeuft"
+        assert_eq!(b.laufender().as_deref(), Some("EDDS"));
+
+        let ziele = vec![("LEPA".to_string(), 0)];
+        b.anflug_ausrichten_mit_schutz(&ziele, &["EDDS".to_string()], false);
+
+        assert_eq!(
+            b.laufender().as_deref(),
+            Some("EDDS"),
+            "ein geschuetzter laufender Auftrag darf nicht vorzeitig freigegeben werden"
+        );
+    }
+
+    /// Gegenprobe zur Zusicherung oben: OHNE Schutz wird derselbe
+    /// laufende Auftrag sofort freigegeben — das bestehende, gewollte
+    /// Verhalten fuer echte Anflug-Kandidaten, die aus der Zielliste
+    /// gefallen sind.
+    #[test]
+    fn laufender_ungeschuetzter_auftrag_wird_freigegeben() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("EDDS", 0);
+        let _ = b.gestellt("EDDS", 0);
+        assert_eq!(b.laufender().as_deref(), Some("EDDS"));
+
+        let ziele = vec![("LEPA".to_string(), 0)];
+        b.anflug_ausrichten_mit_schutz(&ziele, &[], false);
+
+        assert_eq!(
+            b.laufender(),
+            None,
+            "ohne Schutz muss der laufende Auftrag freigegeben werden (bestehendes Verhalten)"
+        );
     }
 }

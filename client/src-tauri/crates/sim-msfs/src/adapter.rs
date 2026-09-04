@@ -938,6 +938,23 @@ impl MsfsAdapter {
             .anflug_ausrichten(ziele, fenster)
     }
 
+    /// Wie `szenerie_anflug_ausrichten`, aber `geschuetzt` bleibt von der
+    /// Anflug-Aufraeumung unberuehrt (Rang UND laufender Auftrag) — siehe
+    /// `Auftragsbuch::anflug_ausrichten_mit_schutz`. v1.7.17: fuer den
+    /// Abflugplatz, der im selben Buch steht, aber kein Anflug-Kandidat
+    /// ist.
+    pub fn szenerie_anflug_ausrichten_mit_schutz(
+        &self,
+        ziele: &[(String, u8)],
+        geschuetzt: &[String],
+        fenster: bool,
+    ) -> usize {
+        self.shared
+            .szenerie
+            .lock()
+            .anflug_ausrichten_mit_schutz(ziele, geschuetzt, fenster)
+    }
+
     /// Das Auftragsbuch leeren — neuer Flug.
     ///
     /// ⚠ Der Anfragezustand gehoert dem Flug und der Verbindung, nicht

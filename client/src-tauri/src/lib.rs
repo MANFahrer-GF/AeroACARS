@@ -2708,7 +2708,19 @@ fn szenerie_auskunft_uebernehmen(
                 .enumerate()
                 .map(|(rang, z)| (z.clone(), rang as u8))
                 .collect();
-            let betroffen = msfs.szenerie_anflug_ausrichten(&raenge, fenster_faellig);
+            // ⚠ v1.7.17: den Abflugplatz VOR dieser Aufraeumung schuetzen.
+            // Ohne den Schutz setzte diese Stelle — sie laeuft ab dem
+            // ERSTEN Tick des Fluges, nicht erst ab dem Sinkflug — seinen
+            // Rang bei JEDEM Durchlauf auf `RANG_UNBETEILIGT` zurueck
+            // (`raenge_setzen` kennt nur die Anflug-Ziele) und riss einen
+            // laufenden Abflug-Auftrag sofort wieder aus `Laeuft`, weil er
+            // kein Anflug-Ziel ist — beides noch bevor die Abflug-Ernte
+            // (`dep_szenerie_auskunft_uebernehmen`) im selben Tick ueberhaupt
+            // zum Zug kam (externe Gegenpruefung, Codex, adversarial,
+            // 04.09.2026).
+            let geschuetzt = vec![flight.dpt_airport.trim().to_ascii_uppercase()];
+            let betroffen =
+                msfs.szenerie_anflug_ausrichten_mit_schutz(&raenge, &geschuetzt, fenster_faellig);
             if fenster_faellig {
                 tracing::info!(
                     betroffen,
@@ -2759,12 +2771,21 @@ fn szenerie_auskunft_uebernehmen(
 ///
 /// Der Abflugplatz ändert sich nie über einen Flug hinweg (anders als
 /// das Ziel, das durch einen Divert wechseln kann) — er braucht deshalb
-/// keine Rangfolge zwischen mehreren Kandidaten, keine Stand-/
-/// Generationszählung, kein Versuchsfenster, das bei einem Phasenwechsel
-/// neu geöffnet wird. „Schon da? Dann nichts tun. Sonst: anfragen und
-/// nachsehen" reicht vollständig — siehe die Doku an `dep_szenerie_auskunft`
-/// für den Grund, warum das ein eigenes Feld statt desselben Slots wie
-/// `szenerie_auskunft` ist.
+/// keine RANGFOLGE zwischen mehreren Kandidaten, keine STAND-Zählung
+/// („wessen Lieferung ist neuer"), kein Versuchsfenster, das bei einem
+/// Phasenwechsel neu geöffnet wird. Eine GENERATIONS-Prüfung braucht sie
+/// trotzdem — siehe `dep_szenerie_auskunft_generation` für den Grund
+/// (Verbindungswechsel, nicht Zielwechsel) und die Doku an
+/// `dep_szenerie_auskunft` dafür, warum das ein eigenes Feld statt
+/// desselben Slots wie `szenerie_auskunft` ist.
+///
+/// ⚠ Runde 1 (externe Gegenprüfung, Codex, adversarial, 04.09.2026): Der
+/// Aufruf hier ist NICHT die einzige Stelle, die dieses Buch berührt —
+/// die ZIEL-Ernte (`szenerie_auskunft_uebernehmen`) räumt das Buch bei
+/// JEDEM Tick auf und muss den Abflugplatz dabei aktiv schützen (siehe
+/// dort, `szenerie_anflug_ausrichten_mit_schutz`), sonst setzt sie
+/// dessen Rang UND einen laufenden Auftrag zurück, bevor diese Funktion
+/// überhaupt zum Zug kommt.
 ///
 /// # MSFS braucht hier KEINE neue Registrierung
 ///
@@ -2784,16 +2805,19 @@ fn dep_szenerie_auskunft_uebernehmen(
     if icao.len() != 4 {
         return;
     }
-    let schon_da = flight
-        .stats
-        .lock()
-        .map(|s| s.dep_szenerie_auskunft.is_some())
-        .unwrap_or(true);
-    if schon_da {
-        return;
-    }
     match szenerie_bahn::quelle_fuer(simulator) {
         szenerie_bahn::Quelle::XPlaneDatei => {
+            // ⚠ X-Plane hat kein Verbindungs-/Generationskonzept wie das
+            // MSFS-Auftragsbuch — der Dateilesezugriff ist immer aktuell,
+            // "schon da" reicht als einzige Bedingung.
+            let schon_da = flight
+                .stats
+                .lock()
+                .map(|s| s.dep_szenerie_auskunft.is_some())
+                .unwrap_or(true);
+            if schon_da {
+                return;
+            }
             // ⚠ Synchron und billig (Index-Nachschlag, siehe
             // `szenerie_bahn::szenerie_flughafen`) — kein Anfrage-
             // Antwort-Zyklus wie bei MSFS nötig.
@@ -2815,6 +2839,21 @@ fn dep_szenerie_auskunft_uebernehmen(
                 msfs.szenerie_anfordern_mit_rang(&icao, 0);
                 let schnapp = msfs.szenerie_schnappschuss(&icao);
                 drop(msfs);
+                let Ok(mut stats) = flight.stats.lock() else {
+                    return;
+                };
+                // ⚠ GENERATIONS-Pruefung VOR dem "schon da"-Kurzschluss —
+                // siehe `dep_szenerie_auskunft_generation`. Eine neue
+                // Verbindung (Neustart, 2020↔2024-Wechsel) entwertet eine
+                // laengst abgelegte Abflug-Kopie, auch wenn der Abflugplatz
+                // selbst derselbe bleibt.
+                if flugkopie_entwerten(stats.dep_szenerie_auskunft_generation, schnapp.generation) {
+                    stats.dep_szenerie_auskunft = None;
+                    stats.dep_szenerie_auskunft_generation = schnapp.generation;
+                }
+                if stats.dep_szenerie_auskunft.is_some() {
+                    return;
+                }
                 let Some((auskunft, _stand)) = schnapp.auskunft else {
                     return;
                 };
@@ -2825,11 +2864,7 @@ fn dep_szenerie_auskunft_uebernehmen(
                 if !auskunft.icao.eq_ignore_ascii_case(&icao) {
                     return;
                 }
-                if let Ok(mut stats) = flight.stats.lock() {
-                    if stats.dep_szenerie_auskunft.is_none() {
-                        stats.dep_szenerie_auskunft = Some(auskunft);
-                    }
-                }
+                stats.dep_szenerie_auskunft = Some(auskunft);
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -4647,13 +4682,27 @@ struct FlightStats {
     /// mitübernehmen müssen — für einen Fall, der nie einen Zielwechsel
     /// kennt (der Abflugplatz eines Fluges ändert sich nie).
     ///
-    /// Getrennt gehalten braucht die Abflug-Ernte keine Stand-/
-    /// Generationszählung: Es gibt genau ein mögliches Ziel
-    /// (`flight.dpt_airport`), es wechselt nie, und „schon da" reicht als
-    /// einzige Bedingung. `standliste_fuer` prüft dieses Feld als
-    /// zusätzliche Quelle, zusätzlich zu `szenerie_auskunft` — siehe
-    /// dort.
+    /// Getrennt gehalten braucht die Abflug-Ernte keine STAND-Zählung wie
+    /// beim Ziel (es gibt genau ein mögliches Ziel, `flight.dpt_airport`,
+    /// und es wechselt nie) — aber eine GENERATIONS-Prüfung braucht sie
+    /// doch: siehe `dep_szenerie_auskunft_generation` direkt darunter.
+    /// (Runde-1-Korrektur: „schon da reicht als einzige Bedingung" war zu
+    /// kurz gegriffen — externe Gegenprüfung, Codex, adversarial,
+    /// 04.09.2026.) `standliste_fuer` prüft dieses Feld als zusätzliche
+    /// Quelle, zusätzlich zu `szenerie_auskunft` — siehe dort.
     dep_szenerie_auskunft: Option<sim_core::szenerie::SzenerieFlughafen>,
+    /// Die Buch-Generation, unter der `dep_szenerie_auskunft` abgelegt
+    /// wurde — vergleichbar mit `szenerie_auskunft_generation`, aber aus
+    /// einem ANDEREN Grund noetig: der Abflugplatz selbst wechselt nie,
+    /// aber die MSFS-VERBINDUNG kann es waehrend desselben Fluges
+    /// (Neustart, Wechsel zwischen 2020/2024) — und eine neue Verbindung
+    /// kann eine andere Szenerie mitbringen. Ohne diese Pruefung haette
+    /// `dep_szenerie_auskunft` eine Lieferung der ALTEN Verbindung auf
+    /// unbestimmte Zeit festgehalten, waehrend `szenerie_auskunft`
+    /// (Ziel) dank ihrer eigenen Generations-Pruefung laengst neu
+    /// angefragt haette (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026).
+    dep_szenerie_auskunft_generation: u32,
     /// v1.7.8: Was die Übernahme aus der Simulator-Szenerie bewirkt hat.
     ///
     /// `None` heisst: nicht versucht (anderer Simulator, keine
@@ -38132,6 +38181,26 @@ mod standliste_fuer_tests {
             vorkommen >= 2,
             "die Abflug-Ernte haengt an keinem Tick mehr (nur {vorkommen} Vorkommen, \
              erwartet mindestens 2: Funktionsdoku/Kommentar + echter Aufruf)"
+        );
+    }
+
+    /// v1.7.17 Runde 1: Text-Waechter — die ZIEL-Ernte muss die
+    /// GESCHUETZTE Variante von `szenerie_anflug_ausrichten` aufrufen,
+    /// nicht die ungeschuetzte. Dieselbe Selbsttreffer-Falle wie oben:
+    /// dieser Kommentar nennt den Funktionsnamen, also zaehlt
+    /// `include_str!` ihn mit — Vorkommen zaehlen (`>= 2`), nicht nur
+    /// Existenz prüfen.
+    #[test]
+    fn ziel_ernte_ruft_die_geschuetzte_ausrichtung_auf() {
+        let quelle = include_str!("lib.rs");
+        let vorkommen = quelle
+            .matches("szenerie_anflug_ausrichten_mit_schutz(&raenge, &geschuetzt, fenster_faellig)")
+            .count();
+        assert!(
+            vorkommen >= 2,
+            "die Ziel-Ernte ruft nicht mehr die geschuetzte Ausrichtung auf (nur {vorkommen} \
+             Vorkommen, erwartet mindestens 2: dieser Kommentar + echter Aufruf) — der \
+             Abflugplatz waere wieder ungeschuetzt gegen Rang-Reset und vorzeitige Freigabe"
         );
     }
 }
