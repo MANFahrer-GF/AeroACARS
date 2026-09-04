@@ -3251,6 +3251,10 @@ struct PersistedFlightStats {
     landing_score_announced: bool,
     #[serde(default)]
     dep_gate: Option<String>,
+    /// v1.7.17 Runde 13 — siehe die ausfuehrliche Begruendung an der
+    /// Schreibstelle in `PersistedFlightStats::from`.
+    #[serde(default)]
+    dep_gate_withdrawal_pending: bool,
     #[serde(default)]
     arr_gate: Option<String>,
     /// v0.19.3: did this flight actually pass through the `BlocksOn` phase?
@@ -3634,6 +3638,15 @@ impl PersistedFlightStats {
             landing_score: stats.landing_score,
             landing_score_announced: stats.landing_score_announced,
             dep_gate: stats.dep_gate.clone(),
+            // v1.7.17 Runde 13 (externe Gegenpruefung, Codex, adversarial,
+            // 04.09.2026): OHNE Persistierung wuerde ein App-Neustart
+            // zwischen Boarding-Ende (Riegel setzt das Flag) und der
+            // finalen Einreichung das Flag stillschweigend auf `false`
+            // zuruecksetzen — der bekanntlich veraltete, live gepostete
+            // Wert waere bei der Einreichung dann NICHT mehr geleert
+            // worden (`build_pirep_fields` liesse ihn weg statt zu
+            // leeren), obwohl `dep_gate` selbst schon korrekt `None` war.
+            dep_gate_withdrawal_pending: stats.dep_gate_withdrawal_pending,
             arr_gate: stats.arr_gate.clone(),
             blocks_on_reached: stats.blocks_on_reached,
             arr_gate_icao: stats.arr_gate_icao.clone(),
@@ -3816,6 +3829,7 @@ impl PersistedFlightStats {
         stats.landing_score = self.landing_score;
         stats.landing_score_announced = self.landing_score_announced;
         stats.dep_gate = self.dep_gate;
+        stats.dep_gate_withdrawal_pending = self.dep_gate_withdrawal_pending;
         stats.arr_gate = self.arr_gate;
         // A snapshot written before v0.19.3 has no `blocks_on_reached` (serde
         // default = false). Derive it from the persisted phase so a flight
@@ -5403,6 +5417,16 @@ struct FlightStats {
     /// arr-Latch zurück, damit ein korrigierter Stand nachgepostet wird.
     dep_gate_field_posted: bool,
     arr_gate_field_posted: bool,
+    /// v1.7.17 Runde 13 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): AeroACARS hat selbst einen jetzt veralteten
+    /// "Departure Gate"-Wert live gepostet, der noch zurueckgezogen werden
+    /// muss. NUR in diesem Fall darf die finale Einreichung ("Departure
+    /// Gate" explizit leeren, siehe `build_pirep_fields`) einen leeren
+    /// String senden — sonst wuerde JEDER Flug ohne lokal erkannten Stand
+    /// (der weit ueberwiegende Normalfall) einen moeglicherweise von
+    /// woanders (Dispatcher, anderes Tool) gesetzten Wert zerstoeren, ohne
+    /// dass AeroACARS je etwas Falsches gepostet hat.
+    dep_gate_withdrawal_pending: bool,
 
     // ---- Fuel tracking ----
     block_fuel_kg: Option<f32>,
@@ -27756,6 +27780,14 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         let muss_zurueckgezogen_werden = stats.dep_gate_field_posted;
                         stats.dep_gate = None;
                         if muss_zurueckgezogen_werden {
+                            // v1.7.17 Runde 13 (externe Gegenpruefung,
+                            // Codex, adversarial, 04.09.2026): festhalten,
+                            // dass AeroACARS selbst einen jetzt veralteten
+                            // Wert gepostet hat — NUR dann darf die finale
+                            // Einreichung spaeter das Feld explizit leeren
+                            // (siehe `build_pirep_fields` und die Doku am
+                            // Feld selbst).
+                            stats.dep_gate_withdrawal_pending = true;
                             let mut posts = HashMap::new();
                             posts.insert("Departure Gate".to_string(), String::new());
                             let client = client.clone();
@@ -35387,6 +35419,33 @@ mod arrived_fallback_geometry_tests {
         );
     }
 
+    /// v1.7.17 Runde 13 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): `dep_gate_withdrawal_pending` muss einen Resume
+    /// ueberleben — sonst wuerde ein App-Neustart zwischen Boarding-Ende
+    /// (Riegel setzt das Flag) und der finalen Einreichung das Flag
+    /// stillschweigend zuruecksetzen, und ein bekanntlich veralteter,
+    /// bereits live geposteter Wert bliebe in der finalen PIREP-
+    /// Einreichung unkorrigiert stehen.
+    #[test]
+    fn dep_gate_withdrawal_pending_ueberlebt_einen_resume() {
+        let (flight, _snap) = flight_planned_to("EDDF", EDDF_TERMINAL_2);
+        {
+            let mut stats = flight.stats.lock().unwrap();
+            stats.dep_gate = None;
+            stats.dep_gate_withdrawal_pending = true;
+        }
+        let snapshot = PersistedFlightStats::snapshot_from(&flight.stats.lock().unwrap());
+        let json = serde_json::to_string(&snapshot).expect("snapshot serializes");
+        let restored: PersistedFlightStats = serde_json::from_str(&json).expect("snapshot parses");
+        let mut fresh = FlightStats::new();
+        restored.apply_to(&mut fresh);
+        assert!(
+            fresh.dep_gate_withdrawal_pending,
+            "ein anhaengiger Rueckzug muss einen Resume ueberleben, sonst bleibt \
+             ein bekanntlich veralteter Wert in der finalen Einreichung unkorrigiert"
+        );
+    }
+
     /// A pre-v0.19.3 snapshot has no `blocks_on_reached` field at all. It must
     /// be derived from the persisted phase, not silently default to "never
     /// blocked on".
@@ -37185,28 +37244,39 @@ fn build_pirep_fields(
     // schlimmer als keiner.
     //
     // ⚠ v1.7.17 Runde 12 (externe Gegenpruefung, Codex, adversarial,
-    // 04.09.2026): IMMER einfuegen — auch als LEERER String, wenn kein
-    // Wert (mehr) vorliegt — statt das Feld wegzulassen. `/file` traegt
-    // diese Felder wie `post_pirep_fields` als Upsert ein: ein
-    // weggelassener Schluessel loescht einen fruehen LIVE-Post (z. B.
-    // durch eine spaeter erkannte veraltete Szenerie-Generation
-    // verworfen, siehe `dep_gate_muss_beim_boarding_ende_verworfen_werden`)
-    // NICHT. Die Einreichung laeuft ueber `file_pirep_with_retry` +
-    // persistenten `pirep_queue`-Fallback — der EINZIGE in dieser Datei
-    // bereits dauerhafte, neustart-feste Zustellweg. Die Live-
-    // Rueckzugs-Meldung (Runden 6-11) bleibt als schneller, best-effort
-    // Korrekturpfad WAEHREND des Fluges bestehen; hier, bei der
-    // ENDGUELTIGEN Einreichung, darf ein bekanntlich veralteter Wert aber
-    // nicht mehr durchrutschen, selbst wenn jene fehlgeschlagen ist.
-    f.insert(
-        "Departure Gate".into(),
-        stats
-            .dep_gate
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("")
-            .to_string(),
-    );
+    // 04.09.2026): bei einem bekanntlich veralteten, von AeroACARS selbst
+    // geposteten Wert explizit LEEREN statt das Feld wegzulassen. `/file`
+    // traegt diese Felder wie `post_pirep_fields` als Upsert ein: ein
+    // weggelassener Schluessel loescht einen fruehen LIVE-Post NICHT. Die
+    // Einreichung laeuft ueber `file_pirep_with_retry` + `pirep_queue` —
+    // in dieser Datei der dauerhafteste Zustellweg (siehe aber die
+    // Ehrlichkeits-Notiz im Pruefstand-Dokument zur ~50-Versuche-Grenze
+    // der Warteschlange). Die Live-Rueckzugs-Meldung (Runden 6-11) bleibt
+    // als schneller Best-Effort-Pfad WAEHREND des Fluges bestehen.
+    //
+    // ⚠ v1.7.17 Runde 13 (externe Gegenpruefung, Codex, adversarial,
+    // 04.09.2026): NUR leeren, wenn `dep_gate_withdrawal_pending` gesetzt
+    // ist — also AeroACARS SELBST einen jetzt veralteten Wert live
+    // gepostet hat. Die Runde-12-Fassung leerte UNBEDINGT, sobald lokal
+    // kein Stand vorlag — das trifft aber auch den weit ueberwiegenden
+    // Normalfall (kein Stand je erkannt, kein Fehler) und haette dabei
+    // einen moeglicherweise von ANDERSWO gesetzten Wert (Dispatcher,
+    // anderes Tool) zerstoert, ohne dass AeroACARS je etwas Falsches
+    // gepostet hatte. Ohne anhaengigen Rueckzug bleibt das Feld wie vor
+    // Runde 12 einfach weg — kein Eingriff in fremde Daten.
+    if stats.dep_gate_withdrawal_pending {
+        f.insert(
+            "Departure Gate".into(),
+            stats
+                .dep_gate
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("")
+                .to_string(),
+        );
+    } else if let Some(g) = stats.dep_gate.as_deref().filter(|s| !s.is_empty()) {
+        f.insert("Departure Gate".into(), g.to_string());
+    }
     if let Some(g) = arr_gate_for(stats, effective_arr_icao) {
         f.insert("Arrival Gate".into(), g);
     }
@@ -52629,11 +52699,12 @@ mod touchdown_metadata_stamp_tests {
         let flight = flight_fixture("EDDP");
         let mut stats = FlightStats::default();
         stats.dep_gate = None;
+        stats.dep_gate_withdrawal_pending = true;
         let fields = build_pirep_fields(&flight, &stats, "EDDP");
         assert_eq!(
             fields.get("Departure Gate").map(String::as_str),
             Some(""),
-            "ohne dep_gate muss das Feld als leerer String vorhanden sein, nicht fehlen"
+            "bei anhaengigem Rueckzug muss das Feld als leerer String vorhanden sein, nicht fehlen"
         );
     }
 
@@ -52646,6 +52717,26 @@ mod touchdown_metadata_stamp_tests {
         assert_eq!(
             fields.get("Departure Gate").map(String::as_str),
             Some("A12")
+        );
+    }
+
+    /// v1.7.17 Runde 13 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): der eigentliche Befund — der weit ueberwiegende
+    /// Normalfall (kein Stand je erkannt, KEIN anhaengiger Rueckzug) darf
+    /// das Feld NICHT leeren, sonst wuerde ein moeglicherweise von
+    /// ANDERSWO gesetzter Wert zerstoert, ohne dass AeroACARS je etwas
+    /// Falsches gepostet hat.
+    #[test]
+    fn departure_gate_feld_bleibt_ohne_anhaengigen_rueckzug_unangetastet() {
+        let flight = flight_fixture("EDDP");
+        let mut stats = FlightStats::default();
+        stats.dep_gate = None;
+        stats.dep_gate_withdrawal_pending = false;
+        let fields = build_pirep_fields(&flight, &stats, "EDDP");
+        assert_eq!(
+            fields.get("Departure Gate"),
+            None,
+            "ohne anhaengigen Rueckzug darf ein fremder Wert nicht ueberschrieben werden"
         );
     }
 
