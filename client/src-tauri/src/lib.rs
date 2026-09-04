@@ -15339,7 +15339,8 @@ fn is_transient_pirep_error(e: &ApiError) -> bool {
 /// jetzt aus dem Fehler selbst, wenn er einer ist.
 const PIREP_FELD_RETRY_BACKOFFS_SEC: [u64; 2] = [2, 8];
 
-/// Obergrenze fuer eine vom Server diktierte `Retry-After`-Wartezeit.
+/// Obergrenze fuer eine vom Server diktierte `Retry-After`-Wartezeit, bis
+/// zu der noch gewartet wird — darueber wird AUFGEGEBEN statt gewartet.
 ///
 /// ⚠ v1.7.17 Runde 9 (externe Gegenpruefung, Codex, adversarial,
 /// 04.09.2026): `retry_after_seconds` kommt ungeprueft aus einem
@@ -15347,22 +15348,37 @@ const PIREP_FELD_RETRY_BACKOFFS_SEC: [u64; 2] = [2, 8];
 /// (Server-Bug, kaputte Zwischenstation) die Deadline-Berechnung in
 /// `tokio::time::sleep` ueberlaufen lassen (`Instant + Duration` kann
 /// bei absurd grossen Werten paniken) oder den Task praktisch fuer immer
-/// schlafen legen — in beiden Faellen bliebe die Rueckzugs-Meldung, der
-/// einzige Korrekturweg, fuer den Rest des Fluges aus.
+/// schlafen legen.
 ///
 /// ⚠ v1.7.17 Runde 10 (externe Gegenpruefung, Codex, adversarial,
 /// 04.09.2026): die Runde-9-Grenze (5 Minuten) war viel enger als das
-/// tatsaechliche Ueberlaufrisiko — `Instant + Duration` ueberlaeuft erst
-/// bei astronomischen Werten (der volle `u64`-Sekundenbereich entspricht
-/// hunderten Milliarden Jahren), nicht bei irgendetwas, das eine echte
-/// API je als Wartezeit meint. Mit nur 5 Minuten haette ein LEGITIMER,
-/// laengerer Retry-After (z. B. 15-60 Minuten) die drei Versuche VOR
-/// Ablauf der echten Sperre verbraucht — genau der Fehler, den Runde 8
-/// beheben sollte, kam ueber eine zu enge statt eine fehlende Grenze
-/// zurueck. Eine Stunde ist grosszuegig genug fuer praktisch jede reale
-/// Rate-Limit-Sperre und immer noch viele Groessenordnungen vom
-/// Ueberlaufrisiko entfernt.
-const RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC: u64 = 3600;
+/// tatsaechliche Ueberlaufrisiko und haette einen LEGITIMEN, laengeren
+/// Retry-After (z. B. 15-60 Minuten) verkuerzt — auf eine Stunde
+/// angehoben, um das zu vermeiden.
+///
+/// ⚠ v1.7.17 Runde 11 (externe Gegenpruefung, Codex, adversarial,
+/// 04.09.2026): Runde 10 war ihrerseits zu grosszuegig — mit bis zu drei
+/// Versuchen UND jeweils bis zu einer Stunde Wartezeit haette die
+/// Rueckzugs-Meldung bis zu ZWEI Stunden in einem einzelnen, NICHT
+/// persistenten, abgetrennten Task schlafen koennen. Endet der Flug oder
+/// die App in diesem Fenster (durchaus realistisch bei zwei Stunden,
+/// anders als bei Sekunden), ist die Korrektur ersatzlos weg — genau der
+/// Fall, den diese ganze Rueckzugs-Meldung eigentlich verhindern soll.
+/// Die Loesung ist NICHT nochmal eine andere Zahl, sondern ein anderes
+/// Prinzip: ab hier wird nicht mehr GEDECKELT (was bei einer echten
+/// langen Sperre sofort wieder scheitern wuerde, Runde-8-Fehler), sondern
+/// AUFGEGEBEN — ehrliches Eingestehen "diese Korrektur lohnt den
+/// Prozess-Ueberlebens-Zeitraum nicht mehr", statt eine Zahl zu raten,
+/// die gleichzeitig kurz genug fuer die Prozesslebensdauer und lang genug
+/// fuer jede legitime Sperre sein muesste — ein Widerspruch, den keine
+/// einzelne Konstante aufloesen kann, solange der Task nicht persistiert.
+/// Eine Minute deckt jede realistische, kurzlebige Drosselung eines
+/// internen Custom-Field-Endpunkts ab; eine Sperre, die laenger dauert,
+/// ist ohnehin ein Fall fuer eine dauerhafte Warteschlange, nicht fuer
+/// einen abgetrennten In-Memory-Task — deren Bau bleibt aus der
+/// Runde-7/9-Abwaegung heraus bewusst ausserhalb dieses Umfangs (reines
+/// Live-Anzeigefeld, kein kritischer Datenpfad).
+const RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC: u64 = 60;
 
 /// Wie lange VOR dem naechsten Versuch gewartet werden soll, nachdem
 /// dieser Versuch mit `fehler` gescheitert ist — `None` heisst „kein
@@ -15376,17 +15392,24 @@ const RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC: u64 = 3600;
 /// laesst.
 ///
 /// ⚠ v1.7.17 Runde 9 (externe Gegenpruefung, Codex, adversarial,
-/// 04.09.2026): die Servervorgabe wird jetzt auf
-/// `RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC` gedeckelt, statt ihr ungeprueft
-/// zu vertrauen — siehe deren Doku. Bewusst NICHT die von Codex
-/// zusaetzlich vorgeschlagene dauerhafte, neustart-feste Warteschlange
-/// gebaut: dieselbe Abwaegung wie in Runde 7 (Live-Anzeigefeld, kein
-/// kritischer Datenpfad) gilt hier genauso.
+/// 04.09.2026): die Servervorgabe wird jetzt gegen
+/// `RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC` geprueft, statt ihr ungeprueft
+/// zu vertrauen — siehe deren Doku.
+///
+/// ⚠ v1.7.17 Runde 11 (externe Gegenpruefung, Codex, adversarial,
+/// 04.09.2026): NICHT mehr deckeln (Runde 9/10), sondern AUFGEBEN, wenn
+/// die Servervorgabe die Obergrenze uebersteigt — siehe die ausfuehrliche
+/// Begruendung an `RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC`. Ein Deckel haette
+/// bei einer echten langen Sperre sofort wieder denselben Fehlschlag
+/// provoziert (Runde 8); Aufgeben ist ehrlicher als eine Zahl vorzutaeuschen.
 fn naechste_wartezeit_fuer_pirep_feld_retry(fehler: &ApiError, attempt: usize) -> Option<u64> {
     match fehler {
         ApiError::RateLimited {
             retry_after_seconds,
-        } => Some((*retry_after_seconds).min(RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC)),
+        } if *retry_after_seconds <= RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC => {
+            Some(*retry_after_seconds)
+        }
+        ApiError::RateLimited { .. } => None,
         e if !is_transient_pirep_error(e) => None,
         _ => Some(
             PIREP_FELD_RETRY_BACKOFFS_SEC[attempt.min(PIREP_FELD_RETRY_BACKOFFS_SEC.len() - 1)],
@@ -15415,7 +15438,13 @@ async fn post_pirep_fields_mit_kurzem_retry(
             Ok(()) => return,
             Err(e) => match naechste_wartezeit_fuer_pirep_feld_retry(&e, attempt as usize) {
                 None => {
-                    tracing::warn!(pirep_id, error = %e, "pirep field post failed (non-transient, giving up)");
+                    // ⚠ Zwei ganz verschiedene Gruende landen hier: ein
+                    // harter, nicht-transienter Fehler ODER eine
+                    // Rate-Limit-Sperre, die laenger dauert, als dieser
+                    // abgetrennte, nicht persistente Task warten darf
+                    // (Runde 11) — beide enden gleich: aufgeben, nicht
+                    // raten.
+                    tracing::warn!(pirep_id, error = %e, "pirep field post failed (non-transient or rate-limit too long, giving up)");
                     return;
                 }
                 Some(secs) => {
@@ -15435,41 +15464,10 @@ mod pirep_feld_retry_tests {
     /// v1.7.17 Runde 8 (externe Gegenpruefung, Codex, adversarial,
     /// 04.09.2026): der eigentliche Befund — ein `RateLimited`-Fehler muss
     /// die VOM SERVER diktierte Wartezeit liefern, nicht das feste
-    /// 2s/8s-Schema.
+    /// 2s/8s-Schema. `30` liegt sicher innerhalb der Runde-11-Obergrenze
+    /// (60s).
     #[test]
     fn rate_limited_liefert_die_servervorgegebene_wartezeit() {
-        let fehler = ApiError::RateLimited {
-            retry_after_seconds: 60,
-        };
-        assert_eq!(
-            naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 0),
-            Some(60)
-        );
-        assert_eq!(
-            naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 1),
-            Some(60),
-            "die Servervorgabe gilt unabhaengig vom Versuchsindex, nicht das feste Schema"
-        );
-    }
-
-    /// v1.7.17 Runde 9 (externe Gegenpruefung, Codex, adversarial,
-    /// 04.09.2026): ein extremer, ungeprueft aus einem HTTP-Header
-    /// geparster Wert darf weder ueberlaufen (`tokio::time::sleep` mit
-    /// `u64::MAX` Sekunden) noch den Task praktisch fuer immer schlafen
-    /// legen — die Servervorgabe muss gedeckelt werden.
-    #[test]
-    fn extreme_rate_limit_wartezeit_wird_gedeckelt() {
-        let fehler = ApiError::RateLimited {
-            retry_after_seconds: u64::MAX,
-        };
-        assert_eq!(
-            naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 0),
-            Some(RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC)
-        );
-    }
-
-    #[test]
-    fn rate_limit_wartezeit_unter_der_obergrenze_bleibt_unveraendert() {
         let fehler = ApiError::RateLimited {
             retry_after_seconds: 30,
         };
@@ -15477,23 +15475,67 @@ mod pirep_feld_retry_tests {
             naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 0),
             Some(30)
         );
+        assert_eq!(
+            naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 1),
+            Some(30),
+            "die Servervorgabe gilt unabhaengig vom Versuchsindex, nicht das feste Schema"
+        );
     }
 
-    /// v1.7.17 Runde 10 (externe Gegenpruefung, Codex, adversarial,
-    /// 04.09.2026): der eigentliche Befund — eine LEGITIME, laengere
-    /// Server-Sperre (z. B. 30 Minuten) darf nicht schon von der
-    /// Ueberlauf-Obergrenze abgeschnitten werden. Nur astronomische Werte
-    /// (nahe `u64::MAX`) sollen gedeckelt werden, nicht alles ueber ein
-    /// paar Minuten.
     #[test]
-    fn eine_realistisch_lange_rate_limit_sperre_wird_nicht_verkuerzt() {
+    fn genau_die_obergrenze_wird_noch_voll_honoriert() {
         let fehler = ApiError::RateLimited {
-            retry_after_seconds: 1800, // 30 Minuten — realistisch, nicht absurd
+            retry_after_seconds: RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC,
         };
         assert_eq!(
             naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 0),
-            Some(1800),
-            "eine legitime 30-Minuten-Sperre darf nicht auf eine zu enge Grenze verkuerzt werden"
+            Some(RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC)
+        );
+    }
+
+    /// v1.7.17 Runde 9 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): ein extremer, ungeprueft aus einem HTTP-Header
+    /// geparster Wert darf weder ueberlaufen (`tokio::time::sleep` mit
+    /// `u64::MAX` Sekunden) noch den Task praktisch fuer immer schlafen
+    /// legen.
+    ///
+    /// ⚠ Runde 11: das Ergebnis ist jetzt `None` (aufgeben), nicht mehr
+    /// `Some(Obergrenze)` (deckeln) — siehe die ausfuehrliche Begruendung
+    /// an `RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC`. Ein Deckel haette bei
+    /// einem echten Extremwert nur eine falsche, viel zu kurze Wartezeit
+    /// vorgetaeuscht.
+    #[test]
+    fn extreme_rate_limit_wartezeit_fuehrt_zum_aufgeben() {
+        let fehler = ApiError::RateLimited {
+            retry_after_seconds: u64::MAX,
+        };
+        assert_eq!(naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 0), None);
+    }
+
+    /// v1.7.17 Runde 10 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): urspruenglich sollte eine LEGITIME, laengere
+    /// Server-Sperre (z. B. 30 Minuten) nicht auf eine zu enge Grenze
+    /// verkuerzt werden.
+    ///
+    /// ⚠ Runde 11 hat diese Annahme UEBERHOLT: Runde 11 zeigte, dass das
+    /// blosse Verlaengern der Grenze (Runde 10: eine Stunde) einen
+    /// nicht-persistenten, abgetrennten Task bis zu zwei Stunden schlafen
+    /// legen konnte — ein Restart/Flugende in diesem Fenster verliert die
+    /// Korrektur ersatzlos. Die korrekte Antwort auf eine derart lange
+    /// Sperre ist deshalb NICHT MEHR "voll durchreichen" (Runde 10),
+    /// sondern "aufgeben" (Runde 11) — dieser Test dokumentiert die
+    /// Korrektur der Korrektur, statt die ueberholte Zusicherung
+    /// stillschweigend zu loeschen.
+    #[test]
+    fn eine_lange_rate_limit_sperre_fuehrt_jetzt_zum_aufgeben_statt_zum_vollen_warten() {
+        let fehler = ApiError::RateLimited {
+            retry_after_seconds: 1800, // 30 Minuten
+        };
+        assert_eq!(
+            naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 0),
+            None,
+            "eine Sperre ueber der Obergrenze muss zum Aufgeben fuehren, nicht zum \
+             stundenlangen Schlafen eines nicht persistenten Tasks (Runde 11)"
         );
     }
 
