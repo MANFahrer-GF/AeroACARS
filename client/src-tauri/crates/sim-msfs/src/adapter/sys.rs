@@ -43,6 +43,12 @@ pub const FACILITY_DATA_TAXI_PATH: DWORD =
     SIMCONNECT_FACILITY_DATA_TYPE_SIMCONNECT_FACILITY_DATA_TAXI_PATH as DWORD;
 pub const FACILITY_DATA_TAXI_NAME: DWORD =
     SIMCONNECT_FACILITY_DATA_TYPE_SIMCONNECT_FACILITY_DATA_TAXI_NAME as DWORD;
+/// v1.7.16 — Parkpositionen (Gates/Rampen). Existiert im vendorten SDK-
+/// Header (`ffi/include/SimConnect.h`, `SIMCONNECT_FACILITY_DATA_TYPE`)
+/// als eigener Wert zwischen `TAXI_POINT` und `TAXI_PATH` — von bindgen
+/// erzeugt, nicht erraten.
+pub const FACILITY_DATA_TAXI_PARKING: DWORD =
+    SIMCONNECT_FACILITY_DATA_TYPE_SIMCONNECT_FACILITY_DATA_TAXI_PARKING as DWORD;
 /// v1.7.12 — die versetzte Schwelle. EIGENE Satzart, kein eingebettetes
 /// Feld: Sie kommt in einer eigenen Nachricht nach ihrem Bahnsatz.
 pub const FACILITY_DATA_PAVEMENT: DWORD =

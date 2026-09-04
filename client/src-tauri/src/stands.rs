@@ -251,6 +251,25 @@ fn lonlat(v: &serde_json::Value) -> Option<(f64, f64)> {
     }
 }
 
+/// Parkpositionen aus der Szenerie des Simulators — X-Plane `apt.dat`
+/// (Zeilencode `1300`) oder MSFS' `TAXI_PARKING`-Facility-Daten.
+///
+/// Beide sind die ERSTE Instanz (der Szenerie-Entwickler selbst), nicht
+/// OpenStreetMap. Direkte Abbildung, kein GeoJSON-Umweg — Szenerie-Stände
+/// sind immer Punkte, nie Linien oder Flächen wie manche OSM-Positionen.
+pub fn aus_szenerie(staende: &[sim_core::szenerie::SzenerieStand]) -> Vec<ParkingStand> {
+    staende
+        .iter()
+        .map(|s| ParkingStand {
+            name: s.name.clone(),
+            lat: s.lat,
+            lon: s.lon,
+            linie: None,
+            flaeche: false,
+        })
+        .collect()
+}
+
 /// Nächste Parkposition zur gegebenen Flugzeugposition, mit Distanz in
 /// Metern. `None` bei leerer Standliste.
 pub fn nearest(stands: &[ParkingStand], lat: f64, lon: f64) -> Option<(&ParkingStand, f64)> {
@@ -500,5 +519,30 @@ mod tests {
         assert!(parse_stands("not json").is_empty());
         assert!(parse_stands("{}").is_empty());
         assert!(parse_stands(r#"{"features":[{"geometry":null}]}"#).is_empty());
+    }
+
+    #[test]
+    fn aus_szenerie_bildet_direkt_ohne_geometrie_ab() {
+        let sz = vec![
+            sim_core::szenerie::SzenerieStand {
+                name: Some("A1".into()),
+                lat: 50.0,
+                lon: 8.0,
+            },
+            sim_core::szenerie::SzenerieStand {
+                name: None,
+                lat: 50.001,
+                lon: 8.001,
+            },
+        ];
+        let stands = aus_szenerie(&sz);
+        assert_eq!(stands.len(), 2);
+        assert_eq!(stands[0].name.as_deref(), Some("A1"));
+        assert_eq!(stands[0].linie, None);
+        assert!(!stands[0].flaeche);
+        assert_eq!(stands[1].name, None);
+        // Die Naehe-Frage funktioniert wie bei OSM-Staenden ohne Weiteres.
+        let s = stand_at(&stands, 50.0, 8.0).expect("am Szenerie-Stand");
+        assert_eq!(s.name.as_deref(), Some("A1"));
     }
 }

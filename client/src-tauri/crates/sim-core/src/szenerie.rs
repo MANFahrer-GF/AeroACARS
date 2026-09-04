@@ -50,12 +50,37 @@ pub struct SzenerieRollweg {
     pub punkte: Vec<(f64, f64)>,
 }
 
+/// Eine Parkposition (Gate/Rampe/Stand), so wie die Szenerie sie kennt —
+/// vom Szenerie-Entwickler gepflegt, nicht aus OpenStreetMap.
+///
+/// # Warum das eine eigene, sim-agnostische Quelle ist
+///
+/// X-Plane traegt jede Rampenstart-Position in derselben `apt.dat`, aus
+/// der auch die Bahnen kommen (Zeilencode `1300`). MSFS liefert sie ueber
+/// dieselbe SimConnect-Facility-Schnittstelle wie Bahnen und Rollwege,
+/// nur eine weitere Gruppe (`TAXI_PARKING`). Beide sind damit die ERSTE
+/// Instanz — die tatsaechliche Szenerie, die der Pilot gerade sieht —,
+/// nicht eine dritte, unabhaengige Karte wie OpenStreetMap.
+///
+/// Ein fehlender Name ist kein Fehler: eine Position ohne Namen zaehlt
+/// bei der Naehe-Frage trotzdem als „an einem Stand", nur ohne
+/// Beschriftung — dieselbe Regel wie bei OSM-Parkpositionen
+/// (`stands::ParkingStand`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SzenerieStand {
+    pub name: Option<String>,
+    /// **(Breite, Länge)**.
+    pub lat: f64,
+    pub lon: f64,
+}
+
 /// Was ein Flughafen in der Szenerie hergibt.
 #[derive(Debug, Clone, Default)]
 pub struct SzenerieFlughafen {
     pub icao: String,
     pub bahnen: Vec<SzenerieBahn>,
     pub rollwege: Vec<SzenerieRollweg>,
+    pub staende: Vec<SzenerieStand>,
     /// Woher die Angaben stammen — Dateipfad bei X-Plane, `"msfs"` bei
     /// MSFS. Steht im Bericht und in der Fehlersuche: Ein Add-on-Platz
     /// sieht anders aus als der globale.
@@ -995,6 +1020,7 @@ mod auftragsbuch_tests {
                 })
                 .collect(),
             rollwege: Vec::new(),
+            staende: Vec::new(),
             quelle: "msfs".into(),
         }
     }

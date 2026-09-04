@@ -178,6 +178,90 @@ pub const ROLLWEG_KANTE_FELDER: &[(&str, FeldTyp)] = &[
     ("NAME_INDEX", FeldTyp::I32),
 ];
 
+/// Die Felder einer Parkposition (`TAXI_PARKING`).
+///
+/// Quelle: die offizielle SDK-Dokumentation
+/// (`docs.flightsimulator.com`, `SimConnect_AddToFacilityDefinition`) —
+/// dieselbe Stelle, die schon `BAHN_DEFINITION` und die Rollweg-Listen
+/// hier belegt. `NUMBER` steht dort als **UINT32**; wie bei `NAME_INDEX`
+/// oben als `I32` gelesen (gleiche Groesse, nie negativ).
+///
+/// ⚠ `TYPE` und `NAME` sind KEINE Zeichenketten, sondern Aufzaehlungen
+/// (z. B. `NAME` unterscheidet „Gate" von „Parking" von den acht
+/// Himmelsrichtungen). Die genaue Ordnungszahl jedes Wertes steht nicht
+/// im SDK-Header — nur die Wortliste in der Editor-Dokumentation. Ein
+/// geratener Index waere ein FALSCHER Name, nicht einfach keiner, und
+/// ist deshalb absichtlich NICHT decodiert (siehe `stand_name`
+/// unten — dieselbe Regel wie bei `belag_code`: „unbekannt bleibt
+/// unbekannt, nicht geraten").
+pub const STAND_FELDER: &[(&str, FeldTyp)] = &[
+    ("TYPE", FeldTyp::I32),
+    ("NAME", FeldTyp::I32),
+    ("SUFFIX", FeldTyp::I32),
+    ("NUMBER", FeldTyp::I32),
+    ("HEADING", FeldTyp::F32),
+    ("RADIUS", FeldTyp::F32),
+    ("BIAS_X", FeldTyp::F32),
+    ("BIAS_Z", FeldTyp::F32),
+];
+
+/// Ein `TAXI_PARKING`-Rohsatz, noch im Versatz zum Flughafen-
+/// Referenzpunkt (Meter), noch nicht in Koordinaten umgerechnet.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StandRoh {
+    pub name: i32,
+    pub suffix: i32,
+    pub nummer: i32,
+    pub bias_x: f32,
+    pub bias_z: f32,
+}
+
+/// Einen `STAND_FELDER`-Block auswerten. `None`, wenn er nicht passt —
+/// derselbe Fehlerpfad wie bei `bahn_aus_werten`: lieber ein verworfener
+/// Satz als eine verschobene Feldliste.
+pub fn stand_aus_werten(w: &[Wert]) -> Option<StandRoh> {
+    if w.len() < STAND_FELDER.len() {
+        return None;
+    }
+    Some(StandRoh {
+        name: w[1].als_i32(),
+        suffix: w[2].als_i32(),
+        nummer: w[3].als_i32(),
+        bias_x: w[6].als_f64() as f32,
+        bias_z: w[7].als_f64() as f32,
+    })
+}
+
+/// Ein Anzeigename aus `NUMBER` + `SUFFIX` — **nicht** aus `NAME` und
+/// `TYPE`.
+///
+/// # Warum nur diese beiden
+///
+/// `NUMBER` ist eindeutig ein Zaehler, keine Aufzaehlung — er kann ohne
+/// Risiko als Text uebernommen werden. `SUFFIX` ist laut Editor-Doku
+/// „NONE oder ein Buchstabe" — bei einer derart einfachen, zweiwertigen
+/// Aufzaehlung ist eine fortlaufende Kodierung (0 = ohne, 1..26 = A..Z)
+/// die mit Abstand wahrscheinlichste, darum wird sie angewandt, aber mit
+/// Grenzpruefung: Alles ausserhalb bleibt ohne Suffix, statt einen
+/// falschen Buchstaben zu erfinden.
+///
+/// `NAME` bleibt aussen vor (siehe `STAND_FELDER`-Doku) — ein Pilot
+/// erkennt „Stand 23" oder „Stand 23A" trotzdem wieder; das ist genau
+/// die Zahl, die auch im Sim-eigenen Auswahlbildschirm steht.
+pub fn stand_name(s: &StandRoh) -> Option<String> {
+    if s.nummer <= 0 {
+        return None;
+    }
+    match s.suffix {
+        0 => Some(s.nummer.to_string()),
+        1..=26 => {
+            let buchstabe = (b'A' + (s.suffix - 1) as u8) as char;
+            Some(format!("{}{}", s.nummer, buchstabe))
+        }
+        _ => Some(s.nummer.to_string()),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeldTyp {
     F64,
@@ -505,6 +589,9 @@ pub struct Lieferung {
     pub punkte: Vec<(f64, f64)>,
     pub namen: Vec<String>,
     pub kanten: Vec<(usize, usize, usize)>,
+    /// v1.7.16 — Parkpositionen. Anders als Rollwege ohne Index-Verweise:
+    /// jeder Satz steht fuer sich, die Reihenfolge spielt keine Rolle.
+    pub staende_roh: Vec<StandRoh>,
 }
 
 /// Wie viele Lieferungen gleichzeitig offen bleiben duerfen.
@@ -1017,6 +1104,7 @@ impl Sammler {
             icao: self.icao,
             bahnen: self.bahnen,
             rollwege: Vec::new(),
+            staende: Vec::new(),
             quelle: "msfs".to_string(),
         }
     }
@@ -1093,6 +1181,97 @@ mod tests {
         let dl = (b.1 - a.1).to_radians();
         let h = (dp / 2.0).sin().powi(2) + p1.cos() * p2.cos() * (dl / 2.0).sin().powi(2);
         2.0 * R * h.sqrt().asin()
+    }
+
+    // ─── Parkpositionen (TAXI_PARKING) ────────────────────────────────
+
+    fn stand_roh(name: i32, suffix: i32, nummer: i32, bias_x: f32, bias_z: f32) -> StandRoh {
+        StandRoh {
+            name,
+            suffix,
+            nummer,
+            bias_x,
+            bias_z,
+        }
+    }
+
+    #[test]
+    fn stand_aus_werten_liest_die_richtigen_indizes() {
+        let w = vec![
+            Wert::I32(4),      // TYPE (nicht ausgewertet)
+            Wert::I32(11),     // NAME (nicht ausgewertet, s. Doku)
+            Wert::I32(1),      // SUFFIX = A
+            Wert::I32(23),     // NUMBER
+            Wert::F32(88.5),   // HEADING
+            Wert::F32(12.0),   // RADIUS
+            Wert::F32(150.0),  // BIAS_X
+            Wert::F32(-80.25), // BIAS_Z
+        ];
+        let s = stand_aus_werten(&w).expect("passt zur Feldliste");
+        assert_eq!(s.suffix, 1);
+        assert_eq!(s.nummer, 23);
+        assert!((s.bias_x - 150.0).abs() < 1e-6);
+        assert!((s.bias_z - (-80.25)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn stand_aus_werten_verwirft_zu_kurze_bloecke() {
+        assert!(stand_aus_werten(&[Wert::I32(0), Wert::I32(0)]).is_none());
+    }
+
+    /// ⚠ `NAME` und `TYPE` gehen NICHT in die Anzeige ein — nur `NUMBER`
+    /// (immer sicher) und `SUFFIX` als Buchstabe (dokumentiert als
+    /// „NONE oder ein Buchstabe", darum die vorsichtige 1..26-Annahme).
+    /// Siehe die Begruendung an `stand_name`.
+    #[test]
+    fn stand_name_nummer_und_suffix() {
+        assert_eq!(
+            stand_name(&stand_roh(11, 0, 23, 0.0, 0.0)).as_deref(),
+            Some("23")
+        );
+        assert_eq!(
+            stand_name(&stand_roh(11, 1, 23, 0.0, 0.0)).as_deref(),
+            Some("23A"),
+            "Suffix 1 = A"
+        );
+        assert_eq!(
+            stand_name(&stand_roh(11, 26, 1, 0.0, 0.0)).as_deref(),
+            Some("1Z"),
+            "Suffix 26 = Z"
+        );
+    }
+
+    #[test]
+    fn stand_name_ohne_nummer_bleibt_leer() {
+        // NUMBER 0 (oder negativ) ist keine echte Parkposition-Nummer —
+        // ein leerer Name ist hier richtiger als „Stand 0".
+        assert_eq!(stand_name(&stand_roh(0, 0, 0, 0.0, 0.0)), None);
+        assert_eq!(stand_name(&stand_roh(0, 0, -1, 0.0, 0.0)), None);
+    }
+
+    #[test]
+    fn stand_name_unbekanntes_suffix_faellt_auf_die_nummer_zurueck() {
+        // Ein Suffix ausserhalb 1..26 waere ein geratener Buchstabe —
+        // die Nummer allein ist besser als eine erfundene Kennung.
+        assert_eq!(
+            stand_name(&stand_roh(0, 99, 5, 0.0, 0.0)).as_deref(),
+            Some("5"),
+            "unbekanntes Suffix darf die Nummer nicht verschlucken"
+        );
+    }
+
+    #[test]
+    fn staende_zusammensetzen_rechnet_den_versatz_um() {
+        // Referenzpunkt Hamburg; 100 m nach Osten und Norden.
+        let referenz = (53.6304, 9.9882);
+        let roh = vec![stand_roh(11, 0, 42, 100.0, 100.0)];
+        let staende = staende_zusammensetzen(referenz, &roh);
+        assert_eq!(staende.len(), 1);
+        assert_eq!(staende[0].name.as_deref(), Some("42"));
+        // 100 m sind rund 0,0009° Breite — der Punkt muss sich vom
+        // Referenzpunkt spuerbar, aber nicht wild entfernt haben.
+        assert!((staende[0].lat - referenz.0).abs() > 0.0005);
+        assert!((staende[0].lat - referenz.0).abs() < 0.002);
     }
 
     #[test]
@@ -1765,6 +1944,8 @@ mod verdrahtung_tests {
             "\"OPEN AIRPORT\"",
             "\"OPEN RUNWAY\"",
             "\"CLOSE RUNWAY\"",
+            "\"OPEN TAXI_PARKING\"",
+            "\"CLOSE TAXI_PARKING\"",
             "\"CLOSE AIRPORT\"",
         ] {
             assert!(
@@ -1772,6 +1953,54 @@ mod verdrahtung_tests {
                 "{marke} fehlt in der Facility-Definition"
             );
         }
+    }
+
+    /// Derselbe Riegel wie `die_definition_benutzt_die_feldliste`, fuer
+    /// Parkpositionen: `STAND_FELDER` muss die Quelle sein, keine von
+    /// Hand abgeschriebene zweite Liste.
+    #[test]
+    fn taxi_parking_benutzt_stand_felder() {
+        let a = ohne_leerraum(ADAPTER);
+        assert!(
+            a.contains("facility::STAND_FELDER.iter()"),
+            "register_facility baut die TAXI_PARKING-Definition nicht aus STAND_FELDER"
+        );
+    }
+
+    /// Wie `der_verteiler_behandelt_pavement`, fuer Parkpositionen.
+    #[test]
+    fn der_verteiler_behandelt_taxi_parking() {
+        let a = ohne_leerraum(ADAPTER);
+        let nadel = ohne_leerraum(&format!("sys::FACILITY_DATA_{}", "TAXI_PARKING"));
+        assert!(
+            a.contains(&nadel),
+            "der Verteiler kennt die TAXI_PARKING-Satzart nicht — Parkpositionen \
+             kaemen nie an"
+        );
+    }
+
+    /// Parkpositionen brauchen denselben Referenzpunkt wie Rollwege
+    /// (`BIAS_X`/`BIAS_Z` sind Versatz, keine Koordinaten) — derselbe
+    /// Riegel wie fuer Rollwege muss auch hier stehen, sonst legt eine
+    /// fehlende `AIRPORT`-Antwort jede Parkposition irgendwo hin, statt
+    /// leer zu bleiben.
+    #[test]
+    fn parkpositionen_ohne_referenzpunkt_werden_nicht_erfunden() {
+        let a = ohne_leerraum(ADAPTER);
+        assert!(
+            a.contains("facility::staende_zusammensetzen(r,&lieferung.staende_roh)"),
+            "die Umrechnung ruft staende_zusammensetzen nicht mit dem Referenzpunkt `r` auf"
+        );
+        // `r` existiert nur innerhalb eines `Some(r) =>`-Arms — der Aufruf
+        // oben belegt also bereits, dass er hinter einer Pruefung auf
+        // `lieferung.referenz` steht. Zusaetzlich: derselbe Riegel wie bei
+        // Rollwegen muss ZWEIMAL vorkommen (einmal je Zusammenbau), nicht
+        // nur einmal wiederverwendet.
+        assert_eq!(
+            a.matches("matchlieferung.referenz{").count(),
+            2,
+            "nicht beide Zusammenbauten (Rollwege, Parkpositionen) pruefen den Referenzpunkt"
+        );
     }
 
     #[test]
@@ -1891,6 +2120,25 @@ pub fn rollwege_zusammensetzen(
         });
     }
     aus
+}
+
+/// Rohe Parkpositionen (Meter-Versatz) gegen den Referenzpunkt in
+/// Koordinaten umrechnen — derselbe Schritt wie bei Rollwegen, nur ohne
+/// Kanten/Index-Verweise: jede Parkposition steht fuer sich.
+pub fn staende_zusammensetzen(
+    referenz: (f64, f64),
+    roh: &[StandRoh],
+) -> Vec<sim_core::szenerie::SzenerieStand> {
+    roh.iter()
+        .map(|s| {
+            let (lat, lon) = punkt_aus_versatz(referenz, s.bias_x as f64, s.bias_z as f64);
+            sim_core::szenerie::SzenerieStand {
+                name: stand_name(s),
+                lat,
+                lon,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

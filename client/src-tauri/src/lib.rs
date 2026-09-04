@@ -7059,14 +7059,17 @@ fn settle_at_arrival_stand(
     // dunkel), seinen Ankunfts-Stand.
     if stats.arr_gate.is_none() {
         let at_norm = at_icao.trim().to_uppercase();
-        let fund = stats
+        let osm = stats
             .arr_stands
             .as_deref()
-            .filter(|_| stats.arr_stands_icao.as_deref() == Some(at_norm.as_str()))
+            .filter(|_| stats.arr_stands_icao.as_deref() == Some(at_norm.as_str()));
+        let combined = standliste_fuer(&*stats, &at_norm, osm);
+        let fund = combined
+            .as_deref()
             .and_then(|list| stands::benannter_stand_bei(list, snap.lat, snap.lon))
             .and_then(|(st, _)| st.name.clone());
         if let Some(name) = fund {
-            tracing::info!(stand = %name, at = %at_norm, "arrival stand captured from OSM ground data (settle)");
+            tracing::info!(stand = %name, at = %at_norm, "arrival stand captured (settle)");
             stats.arr_gate = Some(name);
             stats.arr_gate_icao = Some(at_norm);
         }
@@ -27024,10 +27027,14 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 if tick_phase == FlightPhase::Boarding && snap.groundspeed_kt <= 2.5 {
                     let mut stats = flight.stats.lock().expect("flight stats");
                     if stats.dep_gate.is_none() {
-                        if let (Some(list), Some((lat, lon))) = (
+                        let combined = standliste_fuer(
+                            &stats,
+                            &flight.dpt_airport,
                             stats.dep_stands.as_deref(),
-                            aircraft_position_for_gates(&stats),
-                        ) {
+                        );
+                        if let (Some(list), Some((lat, lon))) =
+                            (combined.as_deref(), aircraft_position_for_gates(&stats))
+                        {
                             if let Some(name) = stands::benannter_stand_bei(list, lat, lon)
                                 .and_then(|(s, _)| s.name.clone())
                             {
@@ -27050,15 +27057,23 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 {
                     let mut stats = flight.stats.lock().expect("flight stats");
                     if stats.arr_gate.is_none() {
-                        let fund =
-                            match (stats.arr_stands.as_deref(), stats.arr_stands_icao.clone()) {
-                                (Some(list), Some(list_icao)) => {
-                                    stands::benannter_stand_bei(list, snap.lat, snap.lon)
-                                        .and_then(|(st, _)| st.name.clone())
-                                        .map(|n| (n, list_icao))
-                                }
-                                _ => None,
-                            };
+                        let fund = match stats.arr_stands_icao.clone() {
+                            Some(list_icao) => {
+                                let combined = standliste_fuer(
+                                    &stats,
+                                    &list_icao,
+                                    stats.arr_stands.as_deref(),
+                                );
+                                combined
+                                    .as_deref()
+                                    .and_then(|list| {
+                                        stands::benannter_stand_bei(list, snap.lat, snap.lon)
+                                    })
+                                    .and_then(|(st, _)| st.name.clone())
+                                    .map(|n| (n, list_icao))
+                            }
+                            None => None,
+                        };
                         if let Some((name, list_icao)) = fund {
                             tracing::info!(stand = %name, at = %list_icao, "arrival stand captured on retry tick");
                             stats.arr_gate = Some(name);
@@ -33389,12 +33404,14 @@ fn step_flight_at(
                 // ist beim Fetch upper-getrimmt, at_icao kommt roh aus dem Bid.
                 // Ein lowercase-Bid deaktivierte das Gate sonst lautlos.
                 let at_icao_norm = at_icao.trim().to_uppercase();
-                let stand_data = stats
+                let osm_stand_data = stats
                     .arr_stands
                     .as_ref()
                     .filter(|l| !l.is_empty())
-                    .filter(|_| stats.arr_stands_icao.as_deref() == Some(at_icao_norm.as_str()));
-                let (is_block_on, osm_stand, rejected_nearest) = match stand_data {
+                    .filter(|_| stats.arr_stands_icao.as_deref() == Some(at_icao_norm.as_str()))
+                    .map(|l| l.as_slice());
+                let stand_data = standliste_fuer(&stats, &at_icao_norm, osm_stand_data);
+                let (is_block_on, osm_stand, rejected_nearest) = match stand_data.as_deref() {
                     Some(list) => match stands::stand_at(list, snap.lat, snap.lon) {
                         // Naehe entscheidet ueber Block-On (auch ein namen-
                         // loser Stand zaehlt); der NAME kommt vom naechsten
@@ -37429,6 +37446,142 @@ fn maybe_spawn_metar_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, new_phas
 ///
 /// `airport_ground_get` cached lokal pro ICAO (ETag) — im Normalfall ist
 /// das ein Plattenzugriff, kein Netz-Roundtrip.
+
+/// Parkpositionen für EINEN Flughafen — die Szenerie zuerst, OSM als Netz.
+///
+/// v1.7.16: dasselbe Prinzip wie bei den Rollwegen (`boden_karte` weiter
+/// unten in dieser Datei) — die Szenerie ist die erste Instanz (X-Plane
+/// `apt.dat`, MSFS' `TAXI_PARKING`), OpenStreetMap füllt nur, wo die
+/// Szenerie selbst nichts kennt. Anders als OSM braucht die Szenerie
+/// weder Netz noch einen Server, der erreichbar sein muss.
+///
+/// ⚠ `icao` MUSS geprüft werden: `stats.szenerie_auskunft` gehört immer
+/// zum gerade relevanten Platz (Start ODER Ziel, je nach Flugphase — sie
+/// wird beim Wechsel verworfen, siehe `korreliere_bahn`), aber ohne die
+/// Prüfung hier könnte ein Aufrufer sie für den FALSCHEN Flughafen lesen
+/// (Abflug-Stände waehrend die Auskunft schon das Ziel beschreibt) —
+/// derselbe Fehler, den die Bahnzuordnung mit dem Divert-Hint schon einmal
+/// hatte.
+fn standliste_fuer(
+    stats: &FlightStats,
+    icao: &str,
+    osm: Option<&[stands::ParkingStand]>,
+) -> Option<Vec<stands::ParkingStand>> {
+    let icao_norm = icao.trim().to_uppercase();
+    let szenerie = stats
+        .szenerie_auskunft
+        .as_ref()
+        .filter(|a| a.icao.trim().eq_ignore_ascii_case(&icao_norm))
+        .filter(|a| !a.staende.is_empty())
+        .map(|a| stands::aus_szenerie(&a.staende));
+    szenerie.or_else(|| osm.map(|l| l.to_vec()))
+}
+
+#[cfg(test)]
+mod standliste_fuer_tests {
+    use super::*;
+
+    fn szenerie_stand(
+        icao: &str,
+        name: &str,
+        lat: f64,
+        lon: f64,
+    ) -> sim_core::szenerie::SzenerieFlughafen {
+        sim_core::szenerie::SzenerieFlughafen {
+            icao: icao.to_string(),
+            bahnen: Vec::new(),
+            rollwege: Vec::new(),
+            staende: vec![sim_core::szenerie::SzenerieStand {
+                name: Some(name.to_string()),
+                lat,
+                lon,
+            }],
+            quelle: "test".to_string(),
+        }
+    }
+
+    fn osm_stand(name: &str) -> stands::ParkingStand {
+        stands::ParkingStand {
+            name: Some(name.to_string()),
+            lat: 1.0,
+            lon: 1.0,
+            linie: None,
+            flaeche: false,
+        }
+    }
+
+    #[test]
+    fn szenerie_gewinnt_gegen_osm_bei_gleichem_flughafen() {
+        let mut stats = FlightStats::default();
+        stats.szenerie_auskunft = Some(szenerie_stand("EDDF", "V168", 50.0, 8.0));
+        let osm = vec![osm_stand("OSM-STAND")];
+        let liste = standliste_fuer(&stats, "EDDF", Some(&osm)).expect("Liste da");
+        assert_eq!(liste.len(), 1);
+        assert_eq!(
+            liste[0].name.as_deref(),
+            Some("V168"),
+            "Szenerie muss OSM schlagen"
+        );
+    }
+
+    #[test]
+    fn osm_bleibt_das_netz_ohne_szenerie() {
+        let stats = FlightStats::default();
+        let osm = vec![osm_stand("OSM-STAND")];
+        let liste = standliste_fuer(&stats, "EDDF", Some(&osm)).expect("OSM als Rueckfall");
+        assert_eq!(liste[0].name.as_deref(), Some("OSM-STAND"));
+    }
+
+    #[test]
+    fn nichts_wenn_keine_der_beiden_quellen_etwas_hat() {
+        let stats = FlightStats::default();
+        assert!(standliste_fuer(&stats, "EDDF", None).is_none());
+    }
+
+    /// ⚠ Der eigentliche Zweck dieses Tests: eine Szenerie-Auskunft für
+    /// einen ANDEREN Flughafen darf nie einspringen — sonst bekäme ein
+    /// Abflug-Stand die Rampen des Ziels (oder umgekehrt), sobald die
+    /// Bahnzuordnung längst zum nächsten Platz weitergezogen ist.
+    #[test]
+    fn veraltete_szenerie_auskunft_eines_anderen_flughafens_wird_ignoriert() {
+        let mut stats = FlightStats::default();
+        stats.szenerie_auskunft = Some(szenerie_stand("EDNY", "203", 47.0, 9.0));
+        let osm = vec![osm_stand("OSM-EDDF-STAND")];
+        let liste = standliste_fuer(&stats, "EDDF", Some(&osm)).expect("OSM als Rueckfall");
+        assert_eq!(
+            liste[0].name.as_deref(),
+            Some("OSM-EDDF-STAND"),
+            "die EDNY-Auskunft ist fuer EDDF nicht zustaendig"
+        );
+    }
+
+    #[test]
+    fn icao_vergleich_ignoriert_gross_klein_und_leerzeichen() {
+        let mut stats = FlightStats::default();
+        stats.szenerie_auskunft = Some(szenerie_stand(" eddf ", "V168", 50.0, 8.0));
+        let liste = standliste_fuer(&stats, "eddf", None).expect("Liste da");
+        assert_eq!(liste[0].name.as_deref(), Some("V168"));
+    }
+
+    #[test]
+    fn leere_szenerie_staendeliste_faellt_auf_osm_zurueck() {
+        // Die Bahnzuordnung kann fuer EDDF stehen, ohne dass die Szenerie
+        // ueberhaupt Staende kennt (z. B. eine sehr alte apt.dat ohne
+        // 1300-Zeilen) — dann zaehlt OSM, nicht eine leere Liste.
+        let mut stats = FlightStats::default();
+        stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+            icao: "EDDF".to_string(),
+            bahnen: Vec::new(),
+            rollwege: Vec::new(),
+            staende: Vec::new(),
+            quelle: "test".to_string(),
+        });
+        let osm = vec![osm_stand("OSM-STAND")];
+        let liste = standliste_fuer(&stats, "EDDF", Some(&osm)).expect("OSM als Rueckfall");
+        assert_eq!(liste[0].name.as_deref(), Some("OSM-STAND"));
+    }
+}
+
 fn maybe_spawn_stand_fetch(
     app: &AppHandle,
     flight: &Arc<ActiveFlight>,
@@ -49554,6 +49707,7 @@ mod touchdown_metadata_stamp_tests {
 
         let (mut stats, _snap) = eddp_26r_touchdown_stats();
         stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+            staende: Vec::new(),
             icao: "EDDP".to_string(),
             bahnen: Vec::new(),
             rollwege: Vec::new(),
@@ -49628,6 +49782,7 @@ mod touchdown_metadata_stamp_tests {
     /// die 08L-Schwelle, wie in den Navdaten.
     fn eddp_szenerie(versetzte_schwelle_m: f64) -> sim_core::szenerie::SzenerieFlughafen {
         sim_core::szenerie::SzenerieFlughafen {
+            staende: Vec::new(),
             icao: "EDDP".to_string(),
             bahnen: vec![sim_core::szenerie::SzenerieBahn {
                 bezeichner: "26R".to_string(),
@@ -56921,6 +57076,7 @@ mod szenerie_status_tests {
 
     fn auskunft(bahnen: usize) -> sim_core::szenerie::SzenerieFlughafen {
         sim_core::szenerie::SzenerieFlughafen {
+            staende: Vec::new(),
             icao: "DAAG".to_string(),
             bahnen: (0..bahnen)
                 .map(|_| sim_core::szenerie::SzenerieBahn {
@@ -57607,6 +57763,7 @@ mod szenerie_status_tests {
         buch.geliefert_zu_kennung(
             id,
             sim_core::szenerie::SzenerieFlughafen {
+                staende: Vec::new(),
                 icao: "LEZL".to_string(),
                 bahnen: Vec::new(),
                 rollwege: vec![sim_core::szenerie::SzenerieRollweg {
@@ -57747,6 +57904,7 @@ mod szenerie_status_tests {
         buch.geliefert_zu_kennung(
             id,
             sim_core::szenerie::SzenerieFlughafen {
+                staende: Vec::new(),
                 icao: "LKTB".to_string(),
                 bahnen: Vec::new(),
                 rollwege: (0..243)

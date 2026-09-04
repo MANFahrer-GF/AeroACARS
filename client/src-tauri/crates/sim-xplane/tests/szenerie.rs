@@ -15,7 +15,8 @@
 use sim_xplane::szenerie::{apt_dateien_in_rangfolge, flughafen, installationen, lies_flughafen};
 use std::io::Write;
 
-/// Ein Ausschnitt im Format der echten Datei — zwei Bahnen, ein Rollweg.
+/// Ein Ausschnitt im Format der echten Datei — zwei Bahnen, ein Rollweg,
+/// zwei Rampenstarts (einer mit mehrteiligem Namen).
 const AUSSCHNITT: &str = "\
 I
 1100 Version
@@ -26,8 +27,11 @@ I
 1202 0 1 twoway taxiway_C B3
 1202 0 1 twoway taxiway_C
 1202 0 1 twoway runway 09
+1300 53.60500 9.95500 88.5 gate jets|turboprops A1
+1300 53.60600 9.95600 270.0 tie-down all Ramp GA 12
 1     14 0 0 ZZZZ Danach
 100 30.00 1 0 0.25 1 0 0 18  50.0000  8.0000 0 0 2 0 0 1 36  50.1000  8.0000 0 0 2 0 0 1
+1300 50.00500 8.00500 0.0 gate jets B99
 ";
 
 /// ⚠ Jeder Aufruf bekommt eine EIGENE Datei.
@@ -100,6 +104,47 @@ fn nur_benannte_rollwege_und_nur_taxiways() {
 fn unbekannter_platz_gibt_nichts() {
     let p = schreibe_ausschnitt("unbekannter_platz_gibt_nichts");
     assert!(lies_flughafen(&p, "XXXX").is_none());
+}
+
+// ─── Rampenstarts (1300) ──────────────────────────────────────────────
+
+#[test]
+fn liest_rampenstarts_mit_position_und_namen() {
+    let p = schreibe_ausschnitt("liest_rampenstarts");
+    let a = lies_flughafen(&p, "TEST").unwrap();
+    assert_eq!(a.staende.len(), 2, "beide Rampenstarts von TEST");
+    let a1 = a
+        .staende
+        .iter()
+        .find(|s| s.name.as_deref() == Some("A1"))
+        .expect("A1");
+    assert!((a1.lat - 53.60500).abs() < 1e-6);
+    assert!((a1.lon - 9.95500).abs() < 1e-6);
+}
+
+#[test]
+fn rampenstart_name_kann_leerzeichen_enthalten() {
+    // "Ramp GA 12" — der Name ist der Rest der Zeile, kein einzelnes Wort.
+    let p = schreibe_ausschnitt("rampenstart_mehrteiliger_name");
+    let a = lies_flughafen(&p, "TEST").unwrap();
+    assert!(
+        a.staende
+            .iter()
+            .any(|s| s.name.as_deref() == Some("Ramp GA 12")),
+        "Staende: {:?}",
+        a.staende.iter().map(|s| &s.name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn rampenstart_des_naechsten_flughafens_bleibt_draussen() {
+    // Derselbe Guard wie bei Bahnen und Rollwegen: B99 gehoert zu ZZZZ.
+    let p = schreibe_ausschnitt("rampenstart_naechster_platz");
+    let a = lies_flughafen(&p, "TEST").unwrap();
+    assert!(
+        a.staende.iter().all(|s| s.name.as_deref() != Some("B99")),
+        "Rampenstart des naechsten Platzes eingesammelt"
+    );
 }
 
 // ─── Gegen die echte Installation ────────────────────────────────────

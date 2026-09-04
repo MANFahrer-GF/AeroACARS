@@ -524,6 +524,7 @@ mod tests {
         schwelle: (f64, f64),
     ) -> SzenerieFlughafen {
         SzenerieFlughafen {
+            staende: Vec::new(),
             icao: "EDHE".into(),
             quelle: "Test".into(),
             rollwege: vec![],
@@ -621,6 +622,7 @@ mod tests {
             )
         };
         SzenerieFlughafen {
+            staende: Vec::new(),
             icao: "EDHE".into(),
             quelle: "Test".into(),
             rollwege: vec![],
@@ -1107,6 +1109,7 @@ mod anschluss_tests {
 
     fn msfs_auskunft(icao: &str, kurs: f64) -> sim_core::szenerie::SzenerieFlughafen {
         sim_core::szenerie::SzenerieFlughafen {
+            staende: Vec::new(),
             icao: icao.to_string(),
             quelle: "msfs".into(),
             rollwege: vec![],
@@ -1209,6 +1212,7 @@ mod anschluss_tests {
             "EDHE",
             Some(nav),
             Some(sim_core::szenerie::SzenerieFlughafen {
+                staende: Vec::new(),
                 icao: "EDHE".into(),
                 quelle: "msfs".into(),
                 bahnen: vec![SzenerieBahn {
@@ -1563,6 +1567,7 @@ mod plausibel_tests {
         // Dieselbe Lage wie EDHE 09, damit die Zuordnung sicher trifft —
         // geprueft wird hier NUR der Belag.
         SzenerieFlughafen {
+            staende: Vec::new(),
             icao: "EDHE".to_string(),
             bahnen: vec![SzenerieBahn {
                 bezeichner: "09".to_string(),

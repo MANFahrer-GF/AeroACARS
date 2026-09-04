@@ -1348,6 +1348,20 @@ fn run_dispatch(
                                 lieferung.kanten.push((a as usize, b as usize, n as usize));
                             }
                         }
+                    } else if typ == sys::FACILITY_DATA_TAXI_PARKING {
+                        // ⚠ Ein unlesbarer Satz wird verworfen, nicht als
+                        // Platzhalter belegt: Parkpositionen haengen — anders
+                        // als Rollwegkanten — an KEINEM Index, ein
+                        // uebersprungener Satz verschiebt also nichts.
+                        match facility::zerlege(facility::STAND_FELDER, &bytes)
+                            .and_then(|w| facility::stand_aus_werten(&w))
+                        {
+                            Some(s) => lieferung.staende_roh.push(s),
+                            None => tracing::warn!(
+                                laenge = bytes.len(),
+                                "TAXI_PARKING-Block passt nicht zur Definition — verworfen"
+                            ),
+                        }
                     } else if typ == sys::FACILITY_DATA_PAVEMENT {
                         // Die versetzte Schwelle — EIGENE Satzart, keine
                         // eingebetteten Felder. Sie kommt nach ihrem
@@ -1419,10 +1433,26 @@ fn run_dispatch(
                             }
                         };
                         tracing::info!(rollwege = rollwege.len(), "Rollwege zusammengesetzt");
+                        // Parkpositionen brauchen denselben Referenzpunkt wie
+                        // Rollwege — ohne ihn sind BIAS_X/BIAS_Z nicht
+                        // umrechenbar (derselbe Grund wie oben).
+                        let staende = match lieferung.referenz {
+                            Some(r) => facility::staende_zusammensetzen(r, &lieferung.staende_roh),
+                            None => {
+                                if !lieferung.staende_roh.is_empty() {
+                                    tracing::warn!(
+                                        "Parkpositionen ohne Referenzpunkt — nicht umrechenbar"
+                                    );
+                                }
+                                Vec::new()
+                            }
+                        };
+                        tracing::info!(staende = staende.len(), "Parkpositionen zusammengesetzt");
                         let auskunft = sim_core::szenerie::SzenerieFlughafen {
                             icao,
                             bahnen: lieferung.sammler.fertig(),
                             rollwege,
+                            staende,
                             quelle: "msfs".to_string(),
                         };
                         shared
@@ -2065,6 +2095,10 @@ impl Connection {
         eintraege.push("OPEN TAXI_PATH");
         eintraege.extend(facility::ROLLWEG_KANTE_FELDER.iter().map(|(n, _)| *n));
         eintraege.push("CLOSE TAXI_PATH");
+        // v1.7.16 — Parkpositionen (Gates/Rampen), unabhaengig von OSM.
+        eintraege.push("OPEN TAXI_PARKING");
+        eintraege.extend(facility::STAND_FELDER.iter().map(|(n, _)| *n));
+        eintraege.push("CLOSE TAXI_PARKING");
         eintraege.push("CLOSE AIRPORT");
 
         for name in eintraege {

@@ -62,7 +62,7 @@ use std::path::{Path, PathBuf};
 
 // Die Typen stehen in `sim-core`, weil MSFS dieselben liefert — siehe
 // dort. Hier nur der Leser fuer die installierte `apt.dat`.
-pub use sim_core::szenerie::{SzenerieBahn, SzenerieFlughafen, SzenerieRollweg};
+pub use sim_core::szenerie::{SzenerieBahn, SzenerieFlughafen, SzenerieRollweg, SzenerieStand};
 
 /// Wo X-Plane installiert ist.
 ///
@@ -265,11 +265,30 @@ fn lies_aus_strom<R: BufRead>(leser: R, datei: &Path, icao: &str) -> Option<Szen
                     });
                 }
             }
+            // v1.7.16 — Rampenstart-Positionen (Gates/Stände), dieselbe
+            // Datei wie die Bahnen. Format laut offizieller Spezifikation
+            // (developer.x-plane.com, APT1100/1130):
+            //   1300 <lat> <lon> <heading> <type> <airplane_types> <name...>
+            // Der Name ist der Rest der Zeile — er kann Leerzeichen
+            // enthalten ("Gate A1", "Ramp GA 1"). `heading`/`type`/
+            // `airplane_types` gehen hier nicht in die Auswertung ein;
+            // fuer die Naehe-Frage zaehlt nur die Position.
+            "1300" if t.len() >= 7 => {
+                let (Ok(lat), Ok(lon)) = (t[1].parse::<f64>(), t[2].parse::<f64>()) else {
+                    continue;
+                };
+                let name = t[6..].join(" ").trim().to_string();
+                aus.staende.push(SzenerieStand {
+                    name: (!name.is_empty()).then_some(name),
+                    lat,
+                    lon,
+                });
+            }
             _ => {}
         }
     }
 
-    if aus.bahnen.is_empty() && aus.rollwege.is_empty() {
+    if aus.bahnen.is_empty() && aus.rollwege.is_empty() && aus.staende.is_empty() {
         None
     } else {
         Some(aus)
