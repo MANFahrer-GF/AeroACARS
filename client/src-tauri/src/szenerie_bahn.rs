@@ -1458,9 +1458,18 @@ mod ausfahrt_verdrahtung_tests {
             a.contains(".filter(|a|!a.rollwege.is_empty())"),
             "eine leere Rollwegliste wuerde die Serverkarte verdraengen"
         );
+        // v1.7.16 R5: der direkte Rueckfall `.or(stats.arr_ground_geojson
+        // .as_deref())` bekam eine ICAO-Zugehoerigkeitspruefung
+        // (`arr_karte`) vorgeschaltet — die Wache prueft seither BEIDE
+        // Haelften: dass die Serverkarte weiterhin die Grundlage ist UND
+        // dass sie weiterhin der letzte Rueckfall bleibt.
         assert!(
-            a.contains(".or(stats.arr_ground_geojson.as_deref())"),
-            "ohne Szenerie faellt es nicht auf die Serverkarte zurueck"
+            a.contains("letarr_karte=match(&stats.arr_ground_geojson"),
+            "arr_ground_geojson ist nicht mehr die Grundlage der Ankunfts-Bodenkarte"
+        );
+        assert!(
+            a.contains(".or(arr_karte)"),
+            "ohne Szenerie faellt es nicht auf die (ICAO-geprüfte) Serverkarte zurueck"
         );
     }
 }

@@ -4844,6 +4844,16 @@ struct FlightStats {
     /// (ZSPD). Für die Dauer eines Fluges vertretbar; sie wird beim
     /// Zurücksetzen mit allem anderen frei.
     arr_ground_geojson: Option<String>,
+    /// v1.7.16 R5: fuer WELCHEN Flughafen `arr_ground_geojson` gilt — ohne
+    /// dieses Feld hatte die Karte KEINE Zugehoerigkeit, anders als
+    /// `arr_stands`/`arr_stands_icao` direkt daneben. Der Schreib-Riegel
+    /// aus Runde 4 (`passt_zum_angefragten_ankunftsziel`) beweist nur den
+    /// Moment der Ablage — aendert sich das angefragte Ziel DANACH erneut
+    /// (z. B. ein zweiter Divert-Wechsel), blieb die Karte des ALTEN
+    /// Ziels unmarkiert liegen und `bahn_felder` las sie ohne eigene
+    /// ICAO-Pruefung fuer die Rollweg-Ausfahrten (externe Gegenpruefung,
+    /// Codex, adversarial, 04.09.2026, Runde 5).
+    arr_ground_geojson_icao: Option<String>,
     /// v1.7.0 — wo die Bahn geraeumt wurde: Laengsposition in Metern.
     /// `None`, solange das Fenster nicht wegen einer Ausfahrt zuging.
     bahn_raeum_laengs_m: Option<f64>,
@@ -18211,9 +18221,24 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
         .as_ref()
         .filter(|a| !a.rollwege.is_empty())
         .map(|a| szenerie_bahn::rollwege_als_bodenkarte(&a.rollwege));
-    let boden_karte = szenerie_karte
-        .as_deref()
-        .or(stats.arr_ground_geojson.as_deref());
+    // ⚠ `arr_ground_geojson` nur verwenden, wenn sie zum TATSAECHLICHEN
+    // Landeplatz gehoert (`runway_correlation_icao`, am Touchdown gesetzt
+    // — siehe dort). Ohne diese Pruefung koennte eine Karte durchrutschen,
+    // die zwar beim SCHREIBEN zum damals angefragten Ziel passte, aber
+    // seither ueberholt ist (z. B. ein zweiter Divert-Wechsel NACH dem
+    // Schreiben) — der Schreib-Riegel (`passt_zum_angefragten_ankunftsziel`,
+    // Runde 4) beweist nur den Moment der Ablage, nicht die Gueltigkeit
+    // bei diesem Lesezugriff (externe Gegenpruefung, Codex, adversarial,
+    // 04.09.2026, Runde 5).
+    let arr_karte = match (&stats.arr_ground_geojson, &stats.runway_correlation_icao) {
+        (Some(karte), Some(landeplatz)) => stats
+            .arr_ground_geojson_icao
+            .as_deref()
+            .filter(|gi| gi.eq_ignore_ascii_case(landeplatz))
+            .map(|_| karte.as_str()),
+        _ => None,
+    };
+    let boden_karte = szenerie_karte.as_deref().or(arr_karte);
 
     let ausfahrten: Vec<storage::RunwayExit> = match (rm, boden_karte) {
         (Some(m), Some(karte)) if m.width_ft > 0.0 => ausfahrten::ausfahrten_fuer_bahn(
@@ -38064,7 +38089,12 @@ fn maybe_spawn_stand_fetch(
         if matches!(dir, Dir::Arrival) {
             let mut stats = flight.stats.lock().expect("flight stats");
             if passt_zum_angefragten_ankunftsziel(&stats, &icao) {
+                // ⚠ Karte UND ihre Zugehoerigkeit in DERSELBEN
+                // Lock-Haltung setzen — sonst koennte ein Zielwechsel
+                // zwischen beiden Zeilen eine Karte ohne (oder mit
+                // falscher) Kennzeichnung hinterlassen.
                 stats.arr_ground_geojson = Some(ground.geojson.clone());
+                stats.arr_ground_geojson_icao = Some(icao.clone());
             } else {
                 tracing::info!(%icao, "stale ground map dropped (target changed mid-fetch)");
             }
@@ -53359,7 +53389,13 @@ mod v0_16_6_bush_completeness_tests {
         // dass er wirkt, statt sich darauf zu verlassen.
         {
             let mut stats = FlightStats::default();
-            // Bahn in EDDF, Karte aus EDDH — 400 km entfernt.
+            // Bahn in EDDF, Karte aus EDDH — 400 km entfernt. Als „fuer
+            // EDDF zustaendig" markiert (Runde-5-Feld), damit dieser Test
+            // weiterhin die INHALTLICHE Pruefung in `ausfahrten_fuer_bahn`
+            // trifft, statt schon an der (davon unabhaengigen) ICAO-
+            // Zugehoerigkeitspruefung abgewiesen zu werden.
+            stats.runway_correlation_icao = Some("EDDF".to_string());
+            stats.arr_ground_geojson_icao = Some("EDDF".to_string());
             stats.runway_match = Some(runway::RunwayMatch {
                 airport_ident: "EDDF".to_string(),
                 runway_ident: "07C".to_string(),
@@ -53464,6 +53500,12 @@ mod v0_16_6_bush_completeness_tests {
         // waere waehrend des ganzen Fehlers gruen geblieben.
         {
             let mut stats = FlightStats::default();
+            // Runde-5-Felder: die Karte gehoert zu EDDH, und EDDH ist der
+            // tatsaechliche Landeplatz — ohne beides wuerde die neue
+            // ICAO-Zugehoerigkeitspruefung die Karte gar nicht erst
+            // durchlassen (siehe `bahn_felder`).
+            stats.runway_correlation_icao = Some("EDDH".to_string());
+            stats.arr_ground_geojson_icao = Some("EDDH".to_string());
             // EDDH 23 — echte Schwelle und echtes Bahnende, damit die
             // Projektion der Testkarte etwas Sinnvolles ergibt.
             stats.runway_match = Some(runway::RunwayMatch {
@@ -53636,6 +53678,60 @@ mod v0_16_6_bush_completeness_tests {
         assert!(
             nur_laengs.len() < echte_punkte.len(),
             "die Gegenprobe muss Punkte verlieren, sonst prueft der Test nichts"
+        );
+    }
+
+    /// Runde 5 (externe Gegenpruefung, Codex, adversarial, 04.09.2026):
+    /// `arr_ground_geojson` traegt seit Runde 5 eine eigene ICAO-Markierung
+    /// (`arr_ground_geojson_icao`). Stimmt sie NICHT mit dem tatsaechlichen
+    /// Landeplatz (`runway_correlation_icao`) ueberein — z. B. weil die
+    /// Karte urspruenglich fuer einen ANDEREN, inzwischen ueberholten
+    /// Zielwechsel abgelegt wurde — darf `bahn_felder` sie NICHT
+    /// verwenden, selbst wenn ihr Inhalt (wie hier: die echte EDDH-D4-
+    /// Geometrie) fuer sich genommen gueltige Ausfahrten ergeben wuerde.
+    #[test]
+    fn bodenkarte_mit_veralteter_icao_markierung_wird_verworfen() {
+        let mut stats = FlightStats::default();
+        // Landeplatz laut Touchdown-Korrelation: EDDH.
+        stats.runway_correlation_icao = Some("EDDH".to_string());
+        // Karte traegt aber noch die Markierung eines FRUEHEREN Ziels.
+        stats.arr_ground_geojson_icao = Some("EDDY".to_string());
+        stats.runway_match = Some(runway::RunwayMatch {
+            airport_ident: "EDDH".to_string(),
+            runway_ident: "23".to_string(),
+            heading_true_deg: 230.21,
+            length_ft: 10663.0,
+            width_ft: 151.0,
+            surface: "ASP".to_string(),
+            threshold_lat: 53.636011,
+            threshold_lon: 9.999656,
+            end_lat: 53.619958,
+            end_lon: 9.967167,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            touchdown_distance_from_threshold_ft: 720.0,
+            side: "left".to_string(),
+            displaced_threshold_ft: 0,
+        });
+        // Dieselbe (an sich gueltige) EDDH-D4-Geometrie wie im Test
+        // darueber.
+        stats.arr_ground_geojson = Some(
+            r#"{"features":[
+              {"properties":{"k":"taxiway","r":"D4"},
+               "geometry":{"type":"LineString",
+                 "coordinates":[[9.976905,53.624765],[9.976979,53.624791],
+                   [9.977071,53.624815],[9.977195,53.624835],
+                   [9.977291,53.624842],[9.977414,53.62484],
+                   [9.97753,53.624826],[9.977643,53.624802],
+                   [9.977733,53.624771],[9.97781,53.62474],
+                   [9.977883,53.624694],[9.978041,53.62458]]}}
+            ]}"#
+            .to_string(),
+        );
+        let felder = bahn_felder(&stats, Some("A320"), None);
+        assert!(
+            felder.runway_exits.is_empty(),
+            "eine Bodenkarte mit veralteter ICAO-Markierung darf keine Ausfahrten liefern"
         );
     }
 
