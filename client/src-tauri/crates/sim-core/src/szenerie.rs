@@ -513,12 +513,14 @@ impl Auftragsbuch {
     /// Gibt zurueck, fuer wie viele Plaetze das galt — damit die
     /// Aufrufstelle es protokollieren kann, statt es zu behaupten.
     pub fn neues_versuchsfenster(&mut self) -> usize {
-        self.neues_versuchsfenster_mit_schutz(&[])
+        self.neues_versuchsfenster_mit_schutz(&[], &[])
     }
 
-    /// Wie `neues_versuchsfenster`, aber `geschuetzt` bleibt komplett
+    /// Wie `neues_versuchsfenster`, aber ein Platz aus `geschuetzt` bleibt
     /// unberuehrt — auch ein LAUFENDER Auftrag fuer einen geschuetzten
-    /// Platz wird NICHT zurueckgesetzt.
+    /// Platz wird NICHT zurueckgesetzt. AUSNAHME: steht derselbe Platz
+    /// AUCH in `ziele`, gewinnt das Ziel — er bekommt sein Fenster wie
+    /// jeder andere Anflug-Kandidat.
     ///
     /// ⚠ v1.7.17 Runde 2 (externe Gegenpruefung, Codex, adversarial,
     /// 04.09.2026): `anflug_ausrichten_mit_schutz` (Runde 1) schuetzte nur
@@ -530,10 +532,27 @@ impl Auftragsbuch {
     /// koennen — derselbe Fehler wie in Runde 1, nur ueber den ZWEITEN
     /// Reset-Pfad statt den ersten. Zwei Reset-Mechanismen in derselben
     /// Funktion brauchen denselben Schutz, nicht nur einer davon.
-    pub fn neues_versuchsfenster_mit_schutz(&mut self, geschuetzt: &[String]) -> usize {
+    ///
+    /// ⚠ v1.7.17 Runde 3 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): Der Runde-2-Schutz nahm `geschuetzt` allein — bei
+    /// einem Rueckflug zum Startflughafen (oder jedem Flug, bei dem der
+    /// Abflugplatz ZUGLEICH ein Anflug-Ziel ist, z. B. ein Ausweichziel)
+    /// steht derselbe ICAO in BEIDEN Listen. Ohne Vorrang fuer `ziele`
+    /// haette der Schutz einen echten Anflug-Kandidaten sein Fenster
+    /// gekostet — genau das, was `raenge_setzen_mit_schutz` und die
+    /// Freigabestelle in `anflug_ausrichten_mit_schutz` fuer ihre eigenen
+    /// Mechanismen schon richtig machen (Ziel schlaegt Schutz). Dieselbe
+    /// Rangordnung fehlte hier.
+    pub fn neues_versuchsfenster_mit_schutz(
+        &mut self,
+        ziele: &[(String, u8)],
+        geschuetzt: &[String],
+    ) -> usize {
         let mut betroffen = 0;
         for (icao, a) in self.auftraege.iter_mut() {
-            if geschuetzt.iter().any(|g| g.eq_ignore_ascii_case(icao)) {
+            let ist_ziel = ziele.iter().any(|(z, _)| z.eq_ignore_ascii_case(icao));
+            let ist_geschuetzt = geschuetzt.iter().any(|g| g.eq_ignore_ascii_case(icao));
+            if ist_geschuetzt && !ist_ziel {
                 continue;
             }
             // ⚠ Auch RUHENDE Plaetze. Ein Phasenwechsel ist ein echtes
@@ -734,8 +753,10 @@ impl Auftragsbuch {
         if fenster {
             // ⚠ Runde 2: die geschuetzte Variante — siehe deren Doku, warum
             // die ungeschuetzte hier derselbe Fehler waere, nur ueber den
-            // zweiten Reset-Pfad.
-            self.neues_versuchsfenster_mit_schutz(geschuetzt)
+            // zweiten Reset-Pfad. Runde 3: `ziele` MIT uebergeben, sonst
+            // verliert ein Abflugplatz, der zugleich Anflug-Ziel ist
+            // (Rueckflug/Ausweichziel), sein Fenster an den Schutz.
+            self.neues_versuchsfenster_mit_schutz(ziele, geschuetzt)
         } else {
             0
         }
@@ -2384,5 +2405,58 @@ mod auftragsbuch_tests {
         let ziele = vec![("LEPA".to_string(), 0)];
         b.anflug_ausrichten_mit_schutz(&ziele, &[], true);
         assert_eq!(b.laufender(), None);
+    }
+
+    /// v1.7.17 Runde 3 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): Rueckflug zum Startflughafen (oder jeder Flug mit dem
+    /// Abflugplatz als Ausweichziel) — derselbe ICAO steht in `ziele` UND
+    /// `geschuetzt`. Ein erschoepfter Auftrag fuer diesen Platz muss sein
+    /// neues Fenster bekommen wie jeder andere echte Anflug-Kandidat; der
+    /// Schutz darf ihn nicht ausklammern, nur weil er zufaellig auch der
+    /// Abflugplatz ist.
+    #[test]
+    fn ziel_das_zugleich_abflugplatz_ist_bekommt_sein_fenster() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("EDDS");
+        let mut t = 0i64;
+        for _ in 0..HOECHSTVERSUCHE {
+            let (_, id) = b.naechsten_stellen(t).expect("Versuch");
+            b.freigeben_zu_kennung(id, t);
+            t += RUECKZUG_MS;
+        }
+        assert_eq!(b.zustand("EDDS"), Some(Auftragszustand::Erschoepft));
+
+        let ziele = vec![("EDDS".to_string(), 0)];
+        let geschuetzt = vec!["EDDS".to_string()];
+        let betroffen = b.anflug_ausrichten_mit_schutz(&ziele, &geschuetzt, true);
+
+        assert_eq!(
+            betroffen, 1,
+            "EDDS ist zugleich Ziel und geschuetzt — das Ziel muss gewinnen"
+        );
+        assert_eq!(
+            b.zustand("EDDS"),
+            Some(Auftragszustand::Offen),
+            "ein Abflugplatz, der auch Anflug-Ziel ist, darf sein Fenster nicht verlieren"
+        );
+    }
+
+    /// Gegenprobe zur vorigen: OHNE die Ziel-Praeferenz (alter Runde-2-
+    /// Stand) bliebe der Platz faelschlich erschoepft.
+    #[test]
+    fn schutz_allein_ohne_zielvorrang_wuerde_das_fenster_verweigern() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch("EDDS");
+        let mut t = 0i64;
+        for _ in 0..HOECHSTVERSUCHE {
+            let (_, id) = b.naechsten_stellen(t).expect("Versuch");
+            b.freigeben_zu_kennung(id, t);
+            t += RUECKZUG_MS;
+        }
+        let geschuetzt = vec!["EDDS".to_string()];
+        // Ohne Ziel-Praeferenz zu pruefen: leere Zielliste, nur Schutz.
+        let betroffen = b.neues_versuchsfenster_mit_schutz(&[], &geschuetzt);
+        assert_eq!(betroffen, 0, "reiner Schutz ohne Ziel oeffnet kein Fenster");
+        assert_eq!(b.zustand("EDDS"), Some(Auftragszustand::Erschoepft));
     }
 }

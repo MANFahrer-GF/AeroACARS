@@ -2801,9 +2801,29 @@ fn szenerie_auskunft_uebernehmen(
 /// werden muss, wenn die Abflug-Szenerie durch einen Verbindungswechsel
 /// entwertet wurde (Runde 2, Codex adversarial, 04.09.2026). Nur waehrend
 /// des Boardings — siehe die ausfuehrliche Begruendung an der Aufrufstelle
-/// in `dep_szenerie_auskunft_uebernehmen`.
+/// im Nachzieh-Tick.
 fn dep_gate_bei_szenerie_wechsel_zuruecksetzen(phase: FlightPhase) -> bool {
     phase == FlightPhase::Boarding
+}
+
+/// Die VOLLE Entscheidung, ob der Nachzieh-Tick einen bereits abgelegten
+/// `dep_gate` verwirft: Boarding-Bedingung UND ueberhaupt ein Wert
+/// vorhanden UND die Generation, aus der er stammt, weicht von der
+/// AKTUELLEN Szenerie-Generation ab.
+///
+/// ⚠ v1.7.17 Runde 3: als EIGENE, pure Funktion — nicht nur die
+/// Boarding-Teilbedingung wie in Runde 2 — damit die Zusicherung, die
+/// eine Gegenprobe treffen muss, den GANZEN Riegel abdeckt, nicht nur ein
+/// Drittel davon.
+fn dep_gate_muss_verworfen_werden(
+    phase: FlightPhase,
+    dep_gate_vorhanden: bool,
+    dep_gate_generation: u32,
+    aktuelle_generation: u32,
+) -> bool {
+    dep_gate_bei_szenerie_wechsel_zuruecksetzen(phase)
+        && dep_gate_vorhanden
+        && dep_gate_generation != aktuelle_generation
 }
 
 fn dep_szenerie_auskunft_uebernehmen(
@@ -2860,24 +2880,22 @@ fn dep_szenerie_auskunft_uebernehmen(
                 if flugkopie_entwerten(stats.dep_szenerie_auskunft_generation, schnapp.generation) {
                     stats.dep_szenerie_auskunft = None;
                     stats.dep_szenerie_auskunft_generation = schnapp.generation;
-                    // ⚠ Runde 2 (externe Gegenpruefung, Codex, adversarial,
-                    // 04.09.2026): Eine entwertete Szenerie-Kopie allein
-                    // reicht nicht — ein bereits daraus abgeleiteter
-                    // `dep_gate` (und sein Post-Riegel) blieb sonst auf dem
-                    // ALTEN, jetzt fuer falsch erklaerten Stand stehen. NUR
-                    // waehrend des Boardings mitloeschen: Die bestehende
-                    // Regel "ein einmal gestempelter dep_gate wird nie
-                    // korrigiert" (siehe der Nachzieh-Tick weiter unten) hat
-                    // einen guten Grund — waehrend des Pushbacks steht der
-                    // Flieger neben fremden Staenden, ein Nachtrag DORT waere
-                    // schlechter als der alte, richtige Wert. Ein
-                    // Verbindungswechsel waehrend des Boardings aendert aber
-                    // nicht die Position, nur die Datenquelle — hier ist eine
-                    // Korrektur sicher.
-                    if dep_gate_bei_szenerie_wechsel_zuruecksetzen(stats.phase) {
-                        stats.dep_gate = None;
-                        stats.dep_gate_field_posted = false;
-                    }
+                    // ⚠ Runde 2→3 (externe Gegenpruefung, Codex, adversarial,
+                    // 04.09.2026): Ein bereits aus der ALTEN Generation
+                    // abgeleiteter `dep_gate` wird HIER NICHT mehr geloescht.
+                    // Runde 2 tat das noch an dieser Stelle, gegen
+                    // `stats.phase` — aber diese Funktion laeuft VOR
+                    // `step_flight` im selben Tick, liest also die Phase des
+                    // VORHERIGEN Ticks. Genau im Tick des Boarding→Pushback-
+                    // Uebergangs haette sie den Riegel geloescht, kurz bevor
+                    // keine Neuableitung mehr moeglich war (der Nachzieh-Tick
+                    // prueft die FRISCHE, nach-`step_flight`-Phase und haette
+                    // dann schon Pushback gesehen). Die Entscheidung, ob
+                    // `dep_gate` verworfen wird, liegt jetzt einzig beim
+                    // Nachzieh-Tick — der vergleicht `dep_gate_generation`
+                    // gegen `dep_szenerie_auskunft_generation` mit der
+                    // frischen Phase. Hier wird nur noch die Generation
+                    // selbst fortgeschrieben (oben).
                 }
                 if stats.dep_szenerie_auskunft.is_some() {
                     return;
@@ -4731,6 +4749,19 @@ struct FlightStats {
     /// angefragt haette (externe Gegenpruefung, Codex, adversarial,
     /// 04.09.2026).
     dep_szenerie_auskunft_generation: u32,
+    /// v1.7.17 Runde 3 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): die Szenerie-Generation, aus der `dep_gate` abgeleitet
+    /// wurde (0, solange nie abgeleitet). Der Nachzieh-Tick vergleicht sie
+    /// gegen `dep_szenerie_auskunft_generation` — nur bei einem
+    /// tatsaechlichen Unterschied UND weiterhin laufendem Boarding wird
+    /// `dep_gate` verworfen und neu abgeleitet. Ohne diesen Vergleich
+    /// haette (Runde 2) die Loeschung direkt in der VOR `step_flight`
+    /// laufenden Abflug-Ernte gesessen und dabei die PHASE DES VORHERIGEN
+    /// Ticks gelesen — genau im Tick des Boarding→Pushback-Uebergangs
+    /// haette sie den Riegel geloescht, kurz bevor keine Neuableitung mehr
+    /// moeglich war (der Nachzieh-Tick lief mit der FRISCHEN Phase schon
+    /// nicht mehr).
+    dep_gate_generation: u32,
     /// v1.7.8: Was die Übernahme aus der Simulator-Szenerie bewirkt hat.
     ///
     /// `None` heisst: nicht versucht (anderer Simulator, keine
@@ -27315,6 +27346,25 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // dep_gate wird nie korrigiert (QS-Befund).
                 if tick_phase == FlightPhase::Boarding && snap.groundspeed_kt <= 2.5 {
                     let mut stats = flight.stats.lock().expect("flight stats");
+                    // v1.7.17 Runde 3 (externe Gegenpruefung, Codex,
+                    // adversarial, 04.09.2026): HIER, mit der FRISCHEN
+                    // (nach-`step_flight`-)Phase, entscheiden, ob ein
+                    // bereits abgeleiteter `dep_gate` wegen eines
+                    // Verbindungswechsels verworfen wird — nicht in der
+                    // Abflug-Ernte weiter oben, die noch die Phase des
+                    // VORHERIGEN Ticks sieht. `dep_gate_bei_szenerie_wechsel_
+                    // zuruecksetzen` haelt an der Boarding-Bedingung fest,
+                    // die die bestehende "dep_gate wird nie korrigiert"-Regel
+                    // begruendet (Pushback: 30-80 m neben fremden Staenden).
+                    if dep_gate_muss_verworfen_werden(
+                        tick_phase,
+                        stats.dep_gate.is_some(),
+                        stats.dep_gate_generation,
+                        stats.dep_szenerie_auskunft_generation,
+                    ) {
+                        stats.dep_gate = None;
+                        stats.dep_gate_field_posted = false;
+                    }
                     if stats.dep_gate.is_none() {
                         let combined = standliste_fuer(
                             &stats,
@@ -27329,6 +27379,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             {
                                 tracing::info!(stand = %name, "departure stand captured on retry tick");
                                 stats.dep_gate = Some(name);
+                                stats.dep_gate_generation = stats.dep_szenerie_auskunft_generation;
                             }
                         }
                     }
@@ -38252,6 +38303,49 @@ mod standliste_fuer_tests {
         ));
         assert!(!dep_gate_bei_szenerie_wechsel_zuruecksetzen(
             FlightPhase::Cruise
+        ));
+    }
+
+    /// v1.7.17 Runde 3 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): die VOLLE Verwerfungsbedingung, nicht nur ihre
+    /// Boarding-Teilbedingung. Alle drei Teile muessen zutreffen.
+    #[test]
+    fn dep_gate_wird_bei_generationswechsel_waehrend_boarding_verworfen() {
+        assert!(dep_gate_muss_verworfen_werden(
+            FlightPhase::Boarding,
+            true,
+            1,
+            2
+        ));
+    }
+
+    #[test]
+    fn dep_gate_bleibt_ohne_generationswechsel_stehen() {
+        assert!(!dep_gate_muss_verworfen_werden(
+            FlightPhase::Boarding,
+            true,
+            2,
+            2
+        ));
+    }
+
+    #[test]
+    fn dep_gate_bleibt_ausserhalb_boarding_auch_bei_generationswechsel() {
+        assert!(!dep_gate_muss_verworfen_werden(
+            FlightPhase::Pushback,
+            true,
+            1,
+            2
+        ));
+    }
+
+    #[test]
+    fn ohne_vorhandenen_dep_gate_gibt_es_nichts_zu_verwerfen() {
+        assert!(!dep_gate_muss_verworfen_werden(
+            FlightPhase::Boarding,
+            false,
+            1,
+            2
         ));
     }
 }
