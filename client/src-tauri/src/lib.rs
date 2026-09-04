@@ -3026,6 +3026,16 @@ struct PersistedFlightStats {
     /// v0.19.3: the airport the arrival stand was captured at.
     #[serde(default)]
     arr_gate_icao: Option<String>,
+    /// v1.7.16 R3: der Flughafen, auf dem der Flieger laut
+    /// `settle_at_arrival_stand` TATSAECHLICH steht — persistiert aus
+    /// demselben Grund wie `divert_hint`: ein Neustart mitten in BlocksOn/
+    /// Arrived kann `settle_at_arrival_stand` nicht erneut aufrufen (die
+    /// Phase ist schon erreicht), und ohne diesen Wert griffe
+    /// `arrival_retry_ziel` nach einem Neustart auf das GEPLANTE statt das
+    /// tatsaechliche Ziel zurueck (externe Gegenpruefung, Codex,
+    /// adversarial, 04.09.2026, Runde 3).
+    #[serde(default)]
+    arr_actual_icao: Option<String>,
     /// v0.19.3: last position the aircraft was seen at (survives a resume, unlike
     /// the distance baseline `last_lat/lon`).
     #[serde(default)]
@@ -3392,6 +3402,7 @@ impl PersistedFlightStats {
             arr_gate: stats.arr_gate.clone(),
             blocks_on_reached: stats.blocks_on_reached,
             arr_gate_icao: stats.arr_gate_icao.clone(),
+            arr_actual_icao: stats.arr_actual_icao.clone(),
             last_known_lat: stats.last_known_lat,
             last_known_lon: stats.last_known_lon,
             divert_hint: stats.divert_hint.clone(),
@@ -3580,6 +3591,7 @@ impl PersistedFlightStats {
                 FlightPhase::BlocksOn | FlightPhase::Arrived | FlightPhase::PirepSubmitted
             );
         stats.arr_gate_icao = self.arr_gate_icao;
+        stats.arr_actual_icao = self.arr_actual_icao;
         stats.last_known_lat = self.last_known_lat;
         stats.last_known_lon = self.last_known_lon;
         stats.divert_hint = self.divert_hint;
@@ -3686,6 +3698,27 @@ impl PersistedFlightStats {
         // Resume in ≤ 2 Fenstern wieder auf — dokumentiert).
         stats.planned_cruise_alt_ft = self.planned_cruise_alt_ft;
         stats.shadow_divergence_secs = self.shadow_divergence_secs;
+    }
+}
+
+#[cfg(test)]
+mod arr_actual_icao_resume_tests {
+    use super::*;
+
+    /// Runde 3 (externe Gegenpruefung, Codex, adversarial, 04.09.2026):
+    /// `arr_actual_icao` muss den Save→Restore-Rundlauf ueberleben — sonst
+    /// verliert ein Divert ohne `divert_hint` sein bekanntes Ist-ICAO bei
+    /// jedem App-Neustart in BlocksOn/Arrived, weil
+    /// `settle_at_arrival_stand` (die einzige Setzstelle) dann nicht mehr
+    /// erneut aufgerufen wird.
+    #[test]
+    fn arr_actual_icao_ueberlebt_snapshot_rundlauf() {
+        let mut stats = FlightStats::default();
+        stats.arr_actual_icao = Some("LEMG".to_string());
+        let snapshot = PersistedFlightStats::snapshot_from(&stats);
+        let mut restored = FlightStats::default();
+        snapshot.apply_to(&mut restored);
+        assert_eq!(restored.arr_actual_icao.as_deref(), Some("LEMG"));
     }
 }
 
@@ -37549,6 +37582,34 @@ fn arrival_retry_ziel(stats: &FlightStats) -> Option<(String, Option<&[stands::P
     Some((list_icao, osm))
 }
 
+/// Fuer welchen Flughafen `maybe_spawn_stand_fetch` die Ankunfts-
+/// Standliste bei OSM anfragt.
+///
+/// ⚠ Dieselbe Prioritaet wie `arrival_retry_ziel`, aus demselben Grund:
+/// `arr_actual_icao` (frisch aus der Position, unabhaengig von
+/// `divert_hint`) VOR `divert_hint.actual_icao` VOR dem geplanten
+/// `arr_airport`. Vor v1.7.16 R3 fragte diese Stelle AUSSCHLIESSLICH
+/// `divert_hint` — bei einem Divert, der die FSM normal ueber
+/// TaxiIn→BlocksOn erreicht (`divert_hint` mintet u. U. NIE), waere der
+/// OSM-Abruf fuer immer auf den GEPLANTEN Platz gerichtet geblieben, selbst
+/// wenn die Szenerie fuer den echten Platz nichts kennt und OSM die
+/// einzige Quelle waere (externe Gegenpruefung, Codex, adversarial,
+/// 04.09.2026, Runde 3).
+fn arrival_fetch_ziel_icao(stats: &FlightStats, geplant: &str) -> String {
+    stats
+        .arr_actual_icao
+        .as_deref()
+        .or_else(|| {
+            stats
+                .divert_hint
+                .as_ref()
+                .and_then(|h| h.actual_icao.as_deref())
+        })
+        .unwrap_or(geplant)
+        .trim()
+        .to_uppercase()
+}
+
 #[cfg(test)]
 mod standliste_fuer_tests {
     use super::*;
@@ -37733,6 +37794,43 @@ mod standliste_fuer_tests {
         let (icao, _osm) = arrival_retry_ziel(&stats).expect("ICAO da");
         assert_eq!(icao, "EDDF");
     }
+
+    fn hint_fuer(actual: &str) -> crate::arrival::DivertHint {
+        crate::arrival::DivertHint::from_site(
+            &crate::arrival::ArrivalSite::AtOtherAirport {
+                icao: actual.to_string(),
+                distance_from_planned_nm: 120.0,
+            },
+            "EDDF",
+            None,
+        )
+        .expect("non-planned site yields a hint")
+    }
+
+    #[test]
+    fn fetch_ziel_bevorzugt_arr_actual_icao_vor_divert_hint_und_geplant() {
+        let mut stats = FlightStats::default();
+        stats.arr_actual_icao = Some("LEMG".to_string());
+        stats.divert_hint = Some(hint_fuer("EDNY"));
+        assert_eq!(arrival_fetch_ziel_icao(&stats, "EDDF"), "LEMG");
+    }
+
+    /// Der Runde-3-Fall: `arr_actual_icao` fehlt noch (kein Aufruf von
+    /// `settle_at_arrival_stand` bisher), aber `divert_hint` ist schon
+    /// gemintet — dann gilt weiterhin `divert_hint`, nicht der geplante
+    /// Flughafen.
+    #[test]
+    fn fetch_ziel_faellt_auf_divert_hint_zurueck_ohne_arr_actual_icao() {
+        let mut stats = FlightStats::default();
+        stats.divert_hint = Some(hint_fuer("EDNY"));
+        assert_eq!(arrival_fetch_ziel_icao(&stats, "EDDF"), "EDNY");
+    }
+
+    #[test]
+    fn fetch_ziel_faellt_auf_geplanten_flughafen_zurueck_ohne_beides() {
+        let stats = FlightStats::default();
+        assert_eq!(arrival_fetch_ziel_icao(&stats, "EDDF"), "EDDF");
+    }
 }
 
 fn maybe_spawn_stand_fetch(
@@ -37773,15 +37871,21 @@ fn maybe_spawn_stand_fetch(
         // landet. Ohne das lädt eine Ausweichlandung für immer die Liste
         // des geplanten Ziels — und das BlocksOn-Stand-Gate filtert sie
         // (zu Recht) weg, der Stand bleibt leer.
+        //
+        // ⚠ `arr_actual_icao` VOR `divert_hint`: Letzteres wird laut
+        // eigenem Kommentar an seiner Setzstelle „erst beim
+        // Arrived-Fallback gemintet" — ein Divert, der die FSM normal
+        // ueber TaxiIn→BlocksOn erreicht, mintet u. U. NIE einen
+        // `divert_hint`, und dieser OSM-Abruf haette dann fuer immer den
+        // GEPLANTEN statt den echten Platz angefragt, selbst wenn die
+        // Szenerie fuer den echten Platz keine Staende kennt und OSM die
+        // einzige Quelle waere (externe Gegenpruefung, Codex, adversarial,
+        // 04.09.2026, Runde 3). `arr_actual_icao` kommt aus derselben
+        // `arrival::locate`-Berechnung wie `at_icao` in
+        // `settle_at_arrival_stand` — unabhaengig von `divert_hint`.
         Dir::Arrival => {
             let stats = flight.stats.lock().expect("flight stats");
-            stats
-                .divert_hint
-                .as_ref()
-                .and_then(|h| h.actual_icao.as_deref())
-                .unwrap_or(&flight.arr_airport)
-                .trim()
-                .to_uppercase()
+            arrival_fetch_ziel_icao(&stats, &flight.arr_airport)
         }
     };
     if icao.len() < 3 {

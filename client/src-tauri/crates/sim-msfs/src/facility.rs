@@ -238,15 +238,14 @@ pub fn stand_aus_werten(w: &[Wert]) -> Option<StandRoh> {
     })
 }
 
-/// Ein Anzeigename aus `NUMBER` + (`SUFFIX` oder `NAME`) — **nicht** aus
-/// `TYPE`.
+/// Ein Anzeigename aus `NAME` + `NUMBER` + `SUFFIX` — **nicht** aus `TYPE`.
 ///
 /// # Die Aufzaehlung
 ///
 /// `NUMBER` ist eindeutig ein Zaehler, keine Aufzaehlung — er kann ohne
 /// Risiko als Text uebernommen werden.
 ///
-/// `SUFFIX` **und** `NAME` sind KEINE zweiwertige Aufzaehlung — gegen die
+/// `NAME` **und** `SUFFIX` sind KEINE zweiwertige Aufzaehlung — gegen die
 /// offizielle SDK-Dokumentation verifiziert (docs.flightsimulator.com,
 /// `SimConnect_AddToFacilityDefinition`, Abschnitt TAXI_PARKING). Beide
 /// Felder tragen WORTWOERTLICH dieselbe Tabelle:
@@ -268,21 +267,29 @@ pub fn stand_aus_werten(w: &[Wert]) -> Option<StandRoh> {
 /// den Buchstaben „A" — externe Gegenpruefung (Codex, adversarial,
 /// 04.09.2026, Runde 1) fing das vor dem ersten Flug ab.
 ///
-/// # Warum jetzt beide Felder
+/// # Position: NAME VOR der Nummer, SUFFIX DANACH
 ///
-/// `SUFFIX` gewinnt, wenn es einen Buchstaben traegt (12..=37) — die
-/// bereits getestete Fassung aus Runde 1. Traegt NUR `NAME` einen
-/// Buchstaben (z. B. `NAME = GATE_A(12)`, `SUFFIX = NONE(0)` — ein in der
-/// Praxis plausibler Fall, in dem der Buchstabe direkt am „Namen" haengt,
-/// nicht an einem Zusatz), waere ein reines `SUFFIX`-Auslesen blind dafuer
-/// gewesen: externe Gegenpruefung (Codex, adversarial, 04.09.2026,
-/// Runde 2) zeigte genau dieses Beispiel. `stand_name` faellt deshalb auf
-/// `NAME` zurueck, wenn `SUFFIX` keinen Buchstaben liefert.
+/// Runde 2 fuegte `NAME` als Buchstaben-Quelle hinzu, setzte ihn aber an
+/// dieselbe Stelle wie `SUFFIX` (immer NACH der Nummer, z. B. „23A" fuer
+/// `NAME = GATE_A`). Das ist falsch: die Scenery-Editor-Dokumentation
+/// (docs.flightsimulator.com, Developer_Mode/Scenery_Editor/Objects/
+/// TaxiwayParking_Objects.htm) beschreibt `NUMBER` als „goes with the
+/// given name" (haengt sich an `NAME` an) und `SUFFIX` als „to be added
+/// to the taxiway parking name and number" (haengt sich ans Ende von
+/// `NAME` + `NUMBER` an) — zwei VERSCHIEDENE Positionen, keine austauschbare
+/// eine. `NAME = GATE_A`, `NUMBER = 23`, `SUFFIX = NONE` ist demnach
+/// „A23", nicht „23A"; die Runde-2-Fassung haette das falsche Ergebnis
+/// sowohl an die Anzeige als auch an PIREP-Custom-Fields weitergereicht
+/// (externe Gegenpruefung, Codex, adversarial, 04.09.2026, Runde 3).
 ///
-/// Tragen `SUFFIX` UND `NAME` gleichzeitig VERSCHIEDENE Buchstaben, gibt es
-/// dafuer keine dokumentierte Vorrangregel — dieser Fall bleibt ungeklaert
-/// bis echte Aufzeichnungen vorliegen; `SUFFIX` gewinnt dann als
-/// (willkuerliche, aber konsistente) Festlegung.
+/// Damit entfaellt auch die in Runde 2 offene Frage nach einer
+/// Vorrangregel bei einem Widerspruch: `NAME` und `SUFFIX` belegen jetzt
+/// unterschiedliche Positionen und koennen beide gleichzeitig einen
+/// Buchstaben beitragen (`NAME = GATE_A`, `SUFFIX = GATE_B` → „A23B") —
+/// kein Fall geht mehr verloren, keiner muss den anderen schlagen. Fuer
+/// diesen doppelten Fall liegt kein dokumentiertes Beispiel vor; die
+/// Umsetzung folgt schlicht der beschriebenen Anhaengeregel fuer jedes
+/// Feld einzeln.
 pub fn stand_name(s: &StandRoh) -> Option<String> {
     if s.nummer <= 0 {
         return None;
@@ -293,10 +300,9 @@ pub fn stand_name(s: &StandRoh) -> Option<String> {
             _ => None,
         }
     };
-    match buchstabe(s.suffix).or_else(|| buchstabe(s.name)) {
-        Some(b) => Some(format!("{}{}", s.nummer, b)),
-        None => Some(s.nummer.to_string()),
-    }
+    let praefix = buchstabe(s.name).map(String::from).unwrap_or_default();
+    let anhang = buchstabe(s.suffix).map(String::from).unwrap_or_default();
+    Some(format!("{praefix}{}{anhang}", s.nummer))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1305,33 +1311,37 @@ mod tests {
 
     /// Der Runde-2-Fall (externe Gegenpruefung, Codex, adversarial,
     /// 04.09.2026): der Buchstabe steckt in `NAME`, nicht in `SUFFIX` —
-    /// `SUFFIX = NONE(0)`, `NAME = GATE_A(12)`. Ohne NAME-Rueckfall waere
-    /// das vorher stumm auf "23" gefallen, obwohl der Sim "Gate A23"
-    /// meint.
+    /// `SUFFIX = NONE(0)`, `NAME = GATE_A(12)`.
+    ///
+    /// ⚠ Runde-3-Korrektur: der Buchstabe aus `NAME` steht VOR der Nummer
+    /// („A23"), NICHT dahinter („23A") — die Runde-2-Fassung hatte die
+    /// Position falsch (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026, Runde 3; siehe `stand_name`-Doku fuer die Quelle).
     #[test]
     fn stand_name_faellt_auf_name_zurueck_wenn_suffix_keinen_buchstaben_traegt() {
         assert_eq!(
             stand_name(&stand_roh(12, 0, 23, 0.0, 0.0)).as_deref(),
-            Some("23A"),
-            "NAME = GATE_A(12), SUFFIX = NONE — der Buchstabe muss aus NAME kommen"
+            Some("A23"),
+            "NAME = GATE_A(12), SUFFIX = NONE — der Buchstabe muss VOR der Nummer stehen"
         );
         assert_eq!(
             stand_name(&stand_roh(37, 0, 5, 0.0, 0.0)).as_deref(),
-            Some("5Z"),
+            Some("Z5"),
             "NAME = GATE_Z(37)"
         );
     }
 
-    /// Traegt SUFFIX bereits einen Buchstaben, gewinnt es gegen NAME — auch
-    /// wenn NAME einen ANDEREN Buchstaben traegt (dokumentiert nicht
-    /// geklaerter Konfliktfall, siehe `stand_name`-Doku; SUFFIX ist die
-    /// Festlegung).
+    /// Runde 3: `NAME` (vor der Nummer) und `SUFFIX` (nach der Nummer)
+    /// belegen unterschiedliche Positionen und koennen deshalb GLEICHZEITIG
+    /// je einen Buchstaben beitragen — kein Widerspruch, keine Vorrangregel
+    /// noetig (die Runde-2-Fassung hatte hier faelschlich SUFFIX gegen NAME
+    /// „gewinnen" lassen, weil beide an derselben Stelle standen).
     #[test]
-    fn stand_name_suffix_gewinnt_gegen_widersprechenden_namen() {
+    fn stand_name_name_und_suffix_koennen_beide_gleichzeitig_beitragen() {
         assert_eq!(
             stand_name(&stand_roh(37, 12, 23, 0.0, 0.0)).as_deref(),
-            Some("23A"),
-            "SUFFIX = GATE_A(12) gewinnt gegen NAME = GATE_Z(37)"
+            Some("Z23A"),
+            "NAME = GATE_Z(37) vor, SUFFIX = GATE_A(12) nach der Nummer"
         );
     }
 
