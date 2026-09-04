@@ -15306,6 +15306,58 @@ fn is_transient_pirep_error(e: &ApiError) -> bool {
     }
 }
 
+/// Best-effort PIREP-Feld-Post mit KURZEM Retry bei transienten Fehlern
+/// (Netz, Timeout, 5xx) — kein dauerhaftes Nachfassen ueber Ticks/Neustarts
+/// hinweg wie `file_pirep_with_retry` (das waere fuer ein Live-Anzeigefeld
+/// unverhaeltnismaessig), aber auch nicht der erste Versuch als einzige
+/// Chance. Harte Fehler (4xx, PIREP gecancelt) brechen sofort ab.
+///
+/// ⚠ v1.7.17 Runde 7 (externe Gegenpruefung, Codex, adversarial,
+/// 04.09.2026): die Rueckzugs-Meldung fuer einen erkannten veralteten
+/// `dep_gate` war ein einzelner Fire-and-Forget-Versuch (`post_void` ohne
+/// Wiederholung) — ein einziger transienter Netzfehler liess den
+/// bekanntlich falschen Server-Wert dann fuer den Rest des Fluges
+/// unkorrigiert stehen, ohne jede zweite Chance. Bewusst NICHT die volle,
+/// von Codex vorgeschlagene dauerhafte/geordnete Warteschlange gebaut:
+/// das reine Umsortierungs-Risiko (die URSPRUENGLICHE Live-Meldung trifft
+/// NACH der Rueckzugs-Meldung ein) braeuchte eine Serverseitige
+/// Versionierung, die es nicht gibt, und wuerde einen mehrminuetigen
+/// Netz-Stau ausgerechnet auf DER EINEN, laengst abgeschlossenen Anfrage
+/// voraussetzen — unverhaeltnismaessiger Aufwand fuer ein derart schmales
+/// Restrisiko, das obendrein exakt dem bestehenden, ueberall in dieser
+/// Datei akzeptierten Fire-and-Forget-Modell fuer Live-Felder entspricht.
+async fn post_pirep_fields_mit_kurzem_retry(
+    client: &Client,
+    pirep_id: &str,
+    fields: &std::collections::HashMap<String, String>,
+) {
+    const ATTEMPTS: u32 = 3;
+    const BACKOFFS_SEC: [u64; 2] = [2, 8];
+    for attempt in 0..ATTEMPTS {
+        if attempt > 0 {
+            let secs = BACKOFFS_SEC[(attempt as usize - 1).min(BACKOFFS_SEC.len() - 1)];
+            tracing::info!(
+                pirep_id,
+                attempt,
+                backoff_sec = secs,
+                "PIREP field post retry"
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+        }
+        match client.post_pirep_fields(pirep_id, fields).await {
+            Ok(()) => return,
+            Err(e) if !is_transient_pirep_error(&e) => {
+                tracing::warn!(pirep_id, error = %e, "pirep field post failed (non-transient, giving up)");
+                return;
+            }
+            Err(e) => {
+                tracing::warn!(pirep_id, attempt, error = %e, "pirep field post attempt failed (transient)");
+            }
+        }
+    }
+    tracing::warn!(pirep_id, "pirep field post exhausted retries (non-fatal)");
+}
+
 /// v0.5.49 — Background-Worker für den persistenten PIREP-Queue.
 ///
 /// Spawnt beim App-Start einmal, läuft bis App-Exit. Tickt alle 60 s,
@@ -27507,13 +27559,12 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             posts.insert("Departure Gate".to_string(), String::new());
                             let client = client.clone();
                             let pirep_id = flight.pirep_id.clone();
+                            // v1.7.17 Runde 7: mit kurzem Retry statt eines
+                            // einzelnen Fire-and-Forget-Versuchs — siehe
+                            // `post_pirep_fields_mit_kurzem_retry`.
                             tauri::async_runtime::spawn(async move {
-                                if let Err(e) = client.post_pirep_fields(&pirep_id, &posts).await {
-                                    tracing::warn!(
-                                        error = %e,
-                                        "departure gate retraction post failed (non-fatal)"
-                                    );
-                                }
+                                post_pirep_fields_mit_kurzem_retry(&client, &pirep_id, &posts)
+                                    .await;
                             });
                         }
                     }
