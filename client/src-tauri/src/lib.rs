@@ -37183,9 +37183,30 @@ fn build_pirep_fields(
     // vmsACARS-Konvention, daher GATE, nicht Stand). arr NUR ueber
     // arr_gate_for(): ein Stand vom falschen Flughafen (Divert) waere
     // schlimmer als keiner.
-    if let Some(g) = stats.dep_gate.as_deref().filter(|s| !s.is_empty()) {
-        f.insert("Departure Gate".into(), g.to_string());
-    }
+    //
+    // ⚠ v1.7.17 Runde 12 (externe Gegenpruefung, Codex, adversarial,
+    // 04.09.2026): IMMER einfuegen — auch als LEERER String, wenn kein
+    // Wert (mehr) vorliegt — statt das Feld wegzulassen. `/file` traegt
+    // diese Felder wie `post_pirep_fields` als Upsert ein: ein
+    // weggelassener Schluessel loescht einen fruehen LIVE-Post (z. B.
+    // durch eine spaeter erkannte veraltete Szenerie-Generation
+    // verworfen, siehe `dep_gate_muss_beim_boarding_ende_verworfen_werden`)
+    // NICHT. Die Einreichung laeuft ueber `file_pirep_with_retry` +
+    // persistenten `pirep_queue`-Fallback — der EINZIGE in dieser Datei
+    // bereits dauerhafte, neustart-feste Zustellweg. Die Live-
+    // Rueckzugs-Meldung (Runden 6-11) bleibt als schneller, best-effort
+    // Korrekturpfad WAEHREND des Fluges bestehen; hier, bei der
+    // ENDGUELTIGEN Einreichung, darf ein bekanntlich veralteter Wert aber
+    // nicht mehr durchrutschen, selbst wenn jene fehlgeschlagen ist.
+    f.insert(
+        "Departure Gate".into(),
+        stats
+            .dep_gate
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("")
+            .to_string(),
+    );
     if let Some(g) = arr_gate_for(stats, effective_arr_icao) {
         f.insert("Arrival Gate".into(), g);
     }
@@ -52593,6 +52614,39 @@ mod touchdown_metadata_stamp_tests {
         build_pirep_fields(flight, stats, effective_arr)
             .get("Landing Score")
             .cloned()
+    }
+
+    /// v1.7.17 Runde 12 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): ohne `dep_gate` muss die finale Einreichung "Departure
+    /// Gate" trotzdem ALS SCHLUESSEL fuehren (leerer String), nicht
+    /// weglassen — sonst ueberlebt ein fruehes, spaeter als veraltet
+    /// erkanntes Live-Post im Upsert unkorrigiert bis in den fertigen
+    /// PIREP. Die Einreichung laeuft ueber den bereits dauerhaften
+    /// `file_pirep_with_retry`/`pirep_queue`-Weg — hier, nicht in der
+    /// Live-Rueckzugs-Meldung, muss die Korrektur garantiert ankommen.
+    #[test]
+    fn departure_gate_feld_wird_bei_fehlendem_stand_explizit_geleert() {
+        let flight = flight_fixture("EDDP");
+        let mut stats = FlightStats::default();
+        stats.dep_gate = None;
+        let fields = build_pirep_fields(&flight, &stats, "EDDP");
+        assert_eq!(
+            fields.get("Departure Gate").map(String::as_str),
+            Some(""),
+            "ohne dep_gate muss das Feld als leerer String vorhanden sein, nicht fehlen"
+        );
+    }
+
+    #[test]
+    fn departure_gate_feld_traegt_den_echten_stand_wenn_vorhanden() {
+        let flight = flight_fixture("EDDP");
+        let mut stats = FlightStats::default();
+        stats.dep_gate = Some("A12".to_string());
+        let fields = build_pirep_fields(&flight, &stats, "EDDP");
+        assert_eq!(
+            fields.get("Departure Gate").map(String::as_str),
+            Some("A12")
+        );
     }
 
     // ---- v0.16.24: approach-phase divert pre-fetch decision ----
