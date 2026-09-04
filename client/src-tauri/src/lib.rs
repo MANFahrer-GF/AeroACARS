@@ -2857,13 +2857,40 @@ fn dep_gate_braucht_neuableitung(
 /// bestehende Boarding-Bedingung verboten) — nur das ehrliche Eingestehen
 /// "kein verlaesslicher Stand bekannt", ein letztes Mal geprueft in der
 /// Sekunde, in der das Boarding endet.
+///
+/// ⚠ v1.7.17 Runde 6 (externe Gegenpruefung, Codex, adversarial,
+/// 04.09.2026): Runde 5s Parameter (`boarding_phase: bool`, aus der
+/// AKTUELLEN Phase allein) erkannte keinen UEBERGANG, sondern jeden Tick,
+/// in dem die Phase zufaellig nicht Boarding ist — also auch Stunden
+/// spaeter waehrend Cruise oder Approach, wenn ein voellig unrelated
+/// MSFS-Reconnect die Generation weiterzaehlt. Der Abflug-Stand ist zu
+/// diesem Zeitpunkt laengst historische Tatsache (der Flieger hat das Gate
+/// verlassen) und darf NIE wieder geloescht werden. Der Parameter heisst
+/// deshalb jetzt `boarding_wird_verlassen` und muss vom Aufrufer aus ZWEI
+/// Phasen gebildet werden (VOR und NACH `step_flight`) — wahr nur in der
+/// EINEN Tick-Ausfuehrung, in der Boarding tatsaechlich endet.
 fn dep_gate_muss_beim_boarding_ende_verworfen_werden(
-    boarding_phase: bool,
+    boarding_wird_verlassen: bool,
     dep_gate_vorhanden: bool,
     dep_gate_generation: u32,
     aktuelle_generation: u32,
 ) -> bool {
-    !boarding_phase && dep_gate_vorhanden && dep_gate_generation != aktuelle_generation
+    boarding_wird_verlassen && dep_gate_vorhanden && dep_gate_generation != aktuelle_generation
+}
+
+/// Ob DIESER Tick der EXAKTE Uebergang aus dem Boarding ist — nicht nur
+/// "die aktuelle Phase ist gerade nicht Boarding".
+///
+/// ⚠ v1.7.17 Runde 6 (externe Gegenpruefung, Codex, adversarial,
+/// 04.09.2026): als EIGENE Funktion ausgelagert, weil genau diese
+/// Unterscheidung der Kern des Runde-6-Befundes war — die Aufrufstelle
+/// bildete den Uebergang vorher inline und ungetestet aus der aktuellen
+/// Phase allein.
+fn boarding_wird_in_diesem_tick_verlassen(
+    phase_vor_step_flight: FlightPhase,
+    tick_phase: FlightPhase,
+) -> bool {
+    phase_vor_step_flight == FlightPhase::Boarding && tick_phase != FlightPhase::Boarding
 }
 
 fn dep_szenerie_auskunft_uebernehmen(
@@ -27309,6 +27336,17 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // Billig: ein Mutex und ein Vergleich je Tick, und nur
             // solange noch nichts abgelegt ist.
             szenerie_auskunft_uebernehmen(&app, &flight, snap.simulator);
+            // v1.7.17 Runde 6 (externe Gegenpruefung, Codex, adversarial,
+            // 04.09.2026): die Phase VOR `step_flight` festhalten — damit
+            // der Boarding-Ende-Riegel weiter unten den ECHTEN Uebergang
+            // erkennt (alte Phase war Boarding, neue ist es nicht mehr),
+            // statt bei JEDEM spaeteren Tick auszuloesen, in dem die Phase
+            // zufaellig nicht Boarding ist (siehe dortige Funktionsdoku).
+            let phase_vor_step_flight = flight
+                .stats
+                .lock()
+                .map(|s| s.phase)
+                .unwrap_or(FlightPhase::Boarding);
             // v1.7.17 — dasselbe fuer den ABFLUGplatz, eigenstaendig und
             // unabhaengig (siehe `dep_szenerie_auskunft_uebernehmen`).
             dep_szenerie_auskunft_uebernehmen(&app, &flight, snap.simulator);
@@ -27435,14 +27473,49 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // unkorrigiert an Live-Post/PIREP/Debrief weitergegeben zu
                 // werden. Kein Neuversuch (der bliebe verboten) — nur
                 // Ehrlichkeit statt eines bekannt falschen Werts.
+                //
+                // v1.7.17 Runde 6 (externe Gegenpruefung, Codex, adversarial,
+                // 04.09.2026): NUR im exakten Uebergangs-Tick (alte Phase
+                // war Boarding, neue ist es nicht mehr) — nicht bei jedem
+                // spaeteren Tick, in dem die Phase zufaellig nicht Boarding
+                // ist. Sonst haette ein voellig unrelated Reconnect Stunden
+                // spaeter (Cruise, Approach) einen laengst historischen,
+                // korrekten Abflug-Stand geloescht.
                 else if let Ok(mut stats) = flight.stats.lock() {
+                    let boarding_wird_verlassen =
+                        boarding_wird_in_diesem_tick_verlassen(phase_vor_step_flight, tick_phase);
                     if dep_gate_muss_beim_boarding_ende_verworfen_werden(
-                        tick_phase == FlightPhase::Boarding,
+                        boarding_wird_verlassen,
                         stats.dep_gate.is_some(),
                         stats.dep_gate_generation,
                         stats.dep_szenerie_auskunft_generation,
                     ) {
+                        // v1.7.17 Runde 6 (externe Gegenpruefung, Codex,
+                        // adversarial, 04.09.2026): war der jetzt verworfene
+                        // Wert schon LIVE an phpVMS gepostet, reicht das
+                        // lokale Loeschen nicht — `post_pirep_fields` ist ein
+                        // Upsert, und ein WEGGELASSENES Feld ueberschreibt
+                        // nichts. Ohne ausdruecklichen Rueckzug bliebe der
+                        // bekanntlich veraltete Stand auf dem Server stehen,
+                        // durch die gesamte spaetere PIREP-Einreichung
+                        // hindurch — genau das, was dieser ganze Riegel
+                        // verhindern soll.
+                        let muss_zurueckgezogen_werden = stats.dep_gate_field_posted;
                         stats.dep_gate = None;
+                        if muss_zurueckgezogen_werden {
+                            let mut posts = HashMap::new();
+                            posts.insert("Departure Gate".to_string(), String::new());
+                            let client = client.clone();
+                            let pirep_id = flight.pirep_id.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Err(e) = client.post_pirep_fields(&pirep_id, &posts).await {
+                                    tracing::warn!(
+                                        error = %e,
+                                        "departure gate retraction post failed (non-fatal)"
+                                    );
+                                }
+                            });
+                        }
                     }
                 }
                 // Ankunfts-Gegenstueck (QS-Befund B5): kommt die Standliste
@@ -38428,17 +38501,21 @@ mod standliste_fuer_tests {
     /// 04.09.2026): verlaesst das Boarding einen bekanntlich veralteten
     /// `dep_gate` unkorrigiert, muss die letzte-Chance-Pruefung das
     /// erkennen — sonst gaelte er in Live-Post/PIREP/Debrief als aktuell.
+    ///
+    /// Runde 6: der erste Parameter heisst jetzt `boarding_wird_verlassen`
+    /// und wird DIREKT verwendet (kein `!` mehr) — er muss vom Aufrufer aus
+    /// dem ECHTEN Uebergang gebildet werden (siehe Funktionsdoku).
     #[test]
     fn dep_gate_wird_beim_verlassen_des_boardings_mit_veralteter_generation_verworfen() {
         assert!(dep_gate_muss_beim_boarding_ende_verworfen_werden(
-            false, true, 1, 2
+            true, true, 1, 2
         ));
     }
 
     #[test]
     fn dep_gate_bleibt_beim_verlassen_des_boardings_ohne_generationswechsel_stehen() {
         assert!(!dep_gate_muss_beim_boarding_ende_verworfen_werden(
-            false, true, 2, 2
+            true, true, 2, 2
         ));
     }
 
@@ -38446,15 +38523,50 @@ mod standliste_fuer_tests {
     fn dep_gate_wird_waehrend_des_boardings_selbst_nicht_ueber_diesen_riegel_verworfen() {
         // Waehrend des Boardings entscheidet `dep_gate_braucht_neuableitung`
         // (atomarer Ersatz) — dieser Riegel greift erst BEIM Verlassen.
+        // "Waehrend" heisst jetzt: kein Uebergang (`boarding_wird_verlassen
+        // = false`), nicht mehr "aktuelle Phase ist Boarding".
         assert!(!dep_gate_muss_beim_boarding_ende_verworfen_werden(
-            true, true, 1, 2
+            false, true, 1, 2
+        ));
+    }
+
+    /// v1.7.17 Runde 6 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): der eigentliche Befund — `boarding_wird_verlassen`
+    /// darf NICHT aus der aktuellen Phase allein kommen, sonst feuert der
+    /// Riegel bei JEDEM spaeteren Tick, in dem die Phase zufaellig nicht
+    /// Boarding ist (z. B. Stunden spaeter waehrend Cruise, ausgeloest von
+    /// einem voellig unrelated Reconnect). Nur der ECHTE Uebergang zaehlt.
+    #[test]
+    fn boarding_wird_nur_beim_echten_uebergang_als_verlassen_erkannt() {
+        assert!(boarding_wird_in_diesem_tick_verlassen(
+            FlightPhase::Boarding,
+            FlightPhase::Pushback
+        ));
+    }
+
+    #[test]
+    fn boarding_gilt_stunden_spaeter_nicht_mehr_als_gerade_verlassen() {
+        // Alte Phase war schon LAENGST nicht mehr Boarding (z. B. Cruise)
+        // — ein Reconnect in diesem Tick darf den laengst historischen
+        // dep_gate nicht anfassen.
+        assert!(!boarding_wird_in_diesem_tick_verlassen(
+            FlightPhase::Cruise,
+            FlightPhase::Cruise
+        ));
+    }
+
+    #[test]
+    fn boarding_gilt_waehrend_des_boardings_selbst_nicht_als_verlassen() {
+        assert!(!boarding_wird_in_diesem_tick_verlassen(
+            FlightPhase::Boarding,
+            FlightPhase::Boarding
         ));
     }
 
     #[test]
     fn ohne_vorhandenen_dep_gate_gibt_es_beim_boarding_ende_nichts_zu_verwerfen() {
         assert!(!dep_gate_muss_beim_boarding_ende_verworfen_werden(
-            false, false, 1, 2
+            true, false, 1, 2
         ));
     }
 }
