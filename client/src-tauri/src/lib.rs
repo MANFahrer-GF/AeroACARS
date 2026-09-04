@@ -3251,6 +3251,10 @@ struct PersistedFlightStats {
     landing_score_announced: bool,
     #[serde(default)]
     dep_gate: Option<String>,
+    /// v1.7.17 Runde 14 — siehe die ausfuehrliche Begruendung am Feld in
+    /// `FlightStats`.
+    #[serde(default)]
+    dep_gate_field_post_confirmed: bool,
     /// v1.7.17 Runde 13 — siehe die ausfuehrliche Begruendung an der
     /// Schreibstelle in `PersistedFlightStats::from`.
     #[serde(default)]
@@ -3638,6 +3642,14 @@ impl PersistedFlightStats {
             landing_score: stats.landing_score,
             landing_score_announced: stats.landing_score_announced,
             dep_gate: stats.dep_gate.clone(),
+            // v1.7.17 Runde 14 (externe Gegenpruefung, Codex, adversarial,
+            // 04.09.2026): OHNE Persistierung wuerde ein App-Neustart
+            // NACH einem bestaetigten Live-Post, aber VOR dem Boarding-
+            // Ende, die Bestaetigung verlieren — der Riegel saehe dann
+            // faelschlich "nie gepostet" und wuerde `dep_gate_withdrawal_
+            // pending` nie setzen, obwohl der Server-Wert tatsaechlich von
+            // AeroACARS stammt und jetzt veraltet ist.
+            dep_gate_field_post_confirmed: stats.dep_gate_field_post_confirmed,
             // v1.7.17 Runde 13 (externe Gegenpruefung, Codex, adversarial,
             // 04.09.2026): OHNE Persistierung wuerde ein App-Neustart
             // zwischen Boarding-Ende (Riegel setzt das Flag) und der
@@ -3829,6 +3841,7 @@ impl PersistedFlightStats {
         stats.landing_score = self.landing_score;
         stats.landing_score_announced = self.landing_score_announced;
         stats.dep_gate = self.dep_gate;
+        stats.dep_gate_field_post_confirmed = self.dep_gate_field_post_confirmed;
         stats.dep_gate_withdrawal_pending = self.dep_gate_withdrawal_pending;
         stats.arr_gate = self.arr_gate;
         // A snapshot written before v0.19.3 has no `blocks_on_reached` (serde
@@ -5417,6 +5430,20 @@ struct FlightStats {
     /// arr-Latch zurück, damit ein korrigierter Stand nachgepostet wird.
     dep_gate_field_posted: bool,
     arr_gate_field_posted: bool,
+    /// v1.7.17 Runde 14 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): `dep_gate_field_posted` wird OPTIMISTISCH gesetzt,
+    /// BEVOR die asynchrone Anfrage ueberhaupt lief — ein Fehlschlag
+    /// setzt es nie zurueck. Fuer die reine "nicht doppelt posten"-
+    /// Idempotenz war das immer harmlos; als Grundlage fuer eine
+    /// DESTRUKTIVE Entscheidung (das Feld spaeter explizit leeren) ist ein
+    /// bloss VERSUCHTER Post aber keine ausreichende Zusicherung — ein
+    /// fehlgeschlagener Versuch haette einen fremden, nie beruehrten
+    /// Server-Wert autorisiert geloescht bekommen. Dieses Feld wird
+    /// deshalb NUR innerhalb des Callbacks nach `Ok(())` gesetzt und
+    /// persistiert (siehe `dep_gate_withdrawal_pending`, das darauf
+    /// aufbaut), damit auch ein Resume zwischen erfolgreichem Post und
+    /// Boarding-Ende die Bestaetigung nicht verliert.
+    dep_gate_field_post_confirmed: bool,
     /// v1.7.17 Runde 13 (externe Gegenpruefung, Codex, adversarial,
     /// 04.09.2026): AeroACARS hat selbst einen jetzt veralteten
     /// "Departure Gate"-Wert live gepostet, der noch zurueckgezogen werden
@@ -5426,6 +5453,10 @@ struct FlightStats {
     /// (der weit ueberwiegende Normalfall) einen moeglicherweise von
     /// woanders (Dispatcher, anderes Tool) gesetzten Wert zerstoeren, ohne
     /// dass AeroACARS je etwas Falsches gepostet hat.
+    ///
+    /// ⚠ Runde 14: die Entscheidung, dieses Flag zu setzen, stuetzt sich
+    /// jetzt auf `dep_gate_field_post_confirmed`, nicht mehr auf das
+    /// optimistische `dep_gate_field_posted` (siehe dessen Doku).
     dep_gate_withdrawal_pending: bool,
 
     // ---- Fuel tracking ----
@@ -27777,7 +27808,15 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         // durch die gesamte spaetere PIREP-Einreichung
                         // hindurch — genau das, was dieser ganze Riegel
                         // verhindern soll.
-                        let muss_zurueckgezogen_werden = stats.dep_gate_field_posted;
+                        // v1.7.17 Runde 14 (externe Gegenpruefung, Codex,
+                        // adversarial, 04.09.2026): `dep_gate_field_post_
+                        // confirmed` statt `dep_gate_field_posted` — Letzteres
+                        // wird schon VOR der Antwort gesetzt und nie
+                        // zurueckgesetzt; ein fehlgeschlagener Versuch haette
+                        // sonst faelschlich als Beleg gegolten, dass AeroACARS
+                        // wirklich etwas gepostet hat, und einen moeglichen
+                        // fremden Server-Wert autorisiert geloescht.
+                        let muss_zurueckgezogen_werden = stats.dep_gate_field_post_confirmed;
                         stats.dep_gate = None;
                         if muss_zurueckgezogen_werden {
                             // v1.7.17 Runde 13 (externe Gegenpruefung,
@@ -27788,6 +27827,14 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             // (siehe `build_pirep_fields` und die Doku am
                             // Feld selbst).
                             stats.dep_gate_withdrawal_pending = true;
+                            // v1.7.17 Runde 14: SOFORT checkpointen, bevor
+                            // die Anfrage ueberhaupt losgeschickt wird — der
+                            // naechste periodische Schreibzugriff koennte
+                            // noch Sekunden bis Minuten entfernt sein, und
+                            // ein Absturz/Neustart in diesem Fenster haette
+                            // das gerade gesetzte Flag sonst verloren.
+                            drop(stats);
+                            save_active_flight(&app, &flight);
                             let mut posts = HashMap::new();
                             posts.insert("Departure Gate".to_string(), String::new());
                             let client = client.clone();
@@ -27847,14 +27894,24 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // Rueckweg re-armiert den arr-Latch fuer Korrekturen.
                 {
                     let mut posts: HashMap<String, String> = HashMap::new();
+                    // v1.7.17 Runde 14 (externe Gegenpruefung, Codex,
+                    // adversarial, 04.09.2026): merken, OB dieser Durchlauf
+                    // "Departure Gate" mit einsendet — der Erfolg wird erst
+                    // NACH der Antwort im Callback bestaetigt, siehe unten.
+                    let dep_gate_wird_gepostet;
                     {
                         let mut stats = flight.stats.lock().expect("flight stats");
-                        if !stats.dep_gate_field_posted {
+                        dep_gate_wird_gepostet = if !stats.dep_gate_field_posted {
                             if let Some(g) = stats.dep_gate.clone().filter(|s| !s.is_empty()) {
                                 stats.dep_gate_field_posted = true;
                                 posts.insert("Departure Gate".into(), g);
+                                true
+                            } else {
+                                false
                             }
-                        }
+                        } else {
+                            false
+                        };
                         if !stats.arr_gate_field_posted && stats.phase == FlightPhase::BlocksOn {
                             if let Some(g) = stats.arr_gate.clone().filter(|s| !s.is_empty()) {
                                 stats.arr_gate_field_posted = true;
@@ -27865,12 +27922,39 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     if !posts.is_empty() {
                         let client = client.clone();
                         let pirep_id = flight.pirep_id.clone();
+                        // v1.7.17 Runde 14: der Flug-Griff selbst, NICHT nur
+                        // Client/Pirep-Id — der Callback muss nach Erfolg in
+                        // die Statistik zurueckschreiben koennen.
+                        let flight_fuer_bestaetigung = flight.clone();
                         tauri::async_runtime::spawn(async move {
-                            if let Err(e) = client.post_pirep_fields(&pirep_id, &posts).await {
-                                tracing::warn!(
-                                    error = %e,
-                                    "live stand field post failed (non-fatal)"
-                                );
+                            match client.post_pirep_fields(&pirep_id, &posts).await {
+                                Ok(()) => {
+                                    // ⚠ v1.7.17 Runde 14 (externe
+                                    // Gegenpruefung, Codex, adversarial,
+                                    // 04.09.2026): NUR nach bestaetigtem
+                                    // Erfolg — ein bloss VERSUCHTER Post
+                                    // (das alte `dep_gate_field_posted`)
+                                    // reicht nicht als Grundlage fuer die
+                                    // spaetere DESTRUKTIVE Rueckzugs-
+                                    // Entscheidung. Ein Fehlschlag hier
+                                    // laesst `dep_gate_field_post_confirmed`
+                                    // bewusst `false` — dann darf die
+                                    // finale Einreichung spaeter NICHT
+                                    // leeren, weil AeroACARS nachweislich
+                                    // nie erfolgreich etwas gepostet hat.
+                                    if dep_gate_wird_gepostet {
+                                        if let Ok(mut stats) = flight_fuer_bestaetigung.stats.lock()
+                                        {
+                                            stats.dep_gate_field_post_confirmed = true;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        error = %e,
+                                        "live stand field post failed (non-fatal)"
+                                    );
+                                }
                             }
                         });
                     }
@@ -35443,6 +35527,30 @@ mod arrived_fallback_geometry_tests {
             fresh.dep_gate_withdrawal_pending,
             "ein anhaengiger Rueckzug muss einen Resume ueberleben, sonst bleibt \
              ein bekanntlich veralteter Wert in der finalen Einreichung unkorrigiert"
+        );
+    }
+
+    /// v1.7.17 Runde 14 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): die BESTAETIGUNG eines erfolgreichen Live-Posts muss
+    /// einen Resume ueberleben — sonst saehe ein Restart zwischen
+    /// bestaetigtem Post und Boarding-Ende den Wert faelschlich als "nie
+    /// gepostet" und wuerde `dep_gate_withdrawal_pending` nie setzen,
+    /// obwohl der Server-Wert tatsaechlich von AeroACARS stammt.
+    #[test]
+    fn dep_gate_field_post_confirmed_ueberlebt_einen_resume() {
+        let (flight, _snap) = flight_planned_to("EDDF", EDDF_TERMINAL_2);
+        {
+            let mut stats = flight.stats.lock().unwrap();
+            stats.dep_gate_field_post_confirmed = true;
+        }
+        let snapshot = PersistedFlightStats::snapshot_from(&flight.stats.lock().unwrap());
+        let json = serde_json::to_string(&snapshot).expect("snapshot serializes");
+        let restored: PersistedFlightStats = serde_json::from_str(&json).expect("snapshot parses");
+        let mut fresh = FlightStats::new();
+        restored.apply_to(&mut fresh);
+        assert!(
+            fresh.dep_gate_field_post_confirmed,
+            "eine bestaetigte Live-Post-Zustellung muss einen Resume ueberleben"
         );
     }
 
