@@ -15326,16 +15326,50 @@ fn is_transient_pirep_error(e: &ApiError) -> bool {
 /// voraussetzen — unverhaeltnismaessiger Aufwand fuer ein derart schmales
 /// Restrisiko, das obendrein exakt dem bestehenden, ueberall in dieser
 /// Datei akzeptierten Fire-and-Forget-Modell fuer Live-Felder entspricht.
+///
+/// ⚠ v1.7.17 Runde 8 (externe Gegenpruefung, Codex, adversarial,
+/// 04.09.2026): `ApiError::RateLimited` traegt eine vom Server diktierte
+/// `retry_after_seconds` — die erste Fassung klassifizierte sie zwar als
+/// transient, ignorierte den Wert selbst aber und wartete trotzdem nur die
+/// festen 2s/8s. Bei jeder vom Server verlangten Wartezeit ueber 10s
+/// (der API-Client faellt sogar auf 60s zurueck, wenn der Header fehlt)
+/// waren alle drei Versuche VOR Ablauf der Sperre verbraucht — die
+/// Rueckzugs-Meldung gab dann exakt in dem Fall auf, fuer den `RateLimited`
+/// ueberhaupt existiert. Die Wartezeit vor dem naechsten Versuch kommt
+/// jetzt aus dem Fehler selbst, wenn er einer ist.
+const PIREP_FELD_RETRY_BACKOFFS_SEC: [u64; 2] = [2, 8];
+
+/// Wie lange VOR dem naechsten Versuch gewartet werden soll, nachdem
+/// dieser Versuch mit `fehler` gescheitert ist — `None` heisst „kein
+/// weiterer Versuch" (harter, nicht-transienter Fehler).
+///
+/// ⚠ v1.7.17 Runde 8 (externe Gegenpruefung, Codex, adversarial,
+/// 04.09.2026): als EIGENE, reine Funktion ausgelagert, weil genau diese
+/// Entscheidung (insbesondere: `RateLimited` mit der VOM SERVER
+/// diktierten Wartezeit, nicht dem festen Schema) der Kern des
+/// Runde-8-Befundes war und sich unabhaengig vom Netzwerk-Code pruefen
+/// laesst.
+fn naechste_wartezeit_fuer_pirep_feld_retry(fehler: &ApiError, attempt: usize) -> Option<u64> {
+    match fehler {
+        ApiError::RateLimited {
+            retry_after_seconds,
+        } => Some(*retry_after_seconds),
+        e if !is_transient_pirep_error(e) => None,
+        _ => Some(
+            PIREP_FELD_RETRY_BACKOFFS_SEC[attempt.min(PIREP_FELD_RETRY_BACKOFFS_SEC.len() - 1)],
+        ),
+    }
+}
+
 async fn post_pirep_fields_mit_kurzem_retry(
     client: &Client,
     pirep_id: &str,
     fields: &std::collections::HashMap<String, String>,
 ) {
     const ATTEMPTS: u32 = 3;
-    const BACKOFFS_SEC: [u64; 2] = [2, 8];
+    let mut naechste_wartezeit_sec: Option<u64> = None;
     for attempt in 0..ATTEMPTS {
-        if attempt > 0 {
-            let secs = BACKOFFS_SEC[(attempt as usize - 1).min(BACKOFFS_SEC.len() - 1)];
+        if let Some(secs) = naechste_wartezeit_sec.take() {
             tracing::info!(
                 pirep_id,
                 attempt,
@@ -15346,16 +15380,63 @@ async fn post_pirep_fields_mit_kurzem_retry(
         }
         match client.post_pirep_fields(pirep_id, fields).await {
             Ok(()) => return,
-            Err(e) if !is_transient_pirep_error(&e) => {
-                tracing::warn!(pirep_id, error = %e, "pirep field post failed (non-transient, giving up)");
-                return;
-            }
-            Err(e) => {
-                tracing::warn!(pirep_id, attempt, error = %e, "pirep field post attempt failed (transient)");
-            }
+            Err(e) => match naechste_wartezeit_fuer_pirep_feld_retry(&e, attempt as usize) {
+                None => {
+                    tracing::warn!(pirep_id, error = %e, "pirep field post failed (non-transient, giving up)");
+                    return;
+                }
+                Some(secs) => {
+                    tracing::warn!(pirep_id, attempt, error = %e, wartezeit_sec = secs, "pirep field post attempt failed (transient)");
+                    naechste_wartezeit_sec = Some(secs);
+                }
+            },
         }
     }
     tracing::warn!(pirep_id, "pirep field post exhausted retries (non-fatal)");
+}
+
+#[cfg(test)]
+mod pirep_feld_retry_tests {
+    use super::*;
+
+    /// v1.7.17 Runde 8 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): der eigentliche Befund — ein `RateLimited`-Fehler muss
+    /// die VOM SERVER diktierte Wartezeit liefern, nicht das feste
+    /// 2s/8s-Schema.
+    #[test]
+    fn rate_limited_liefert_die_servervorgegebene_wartezeit() {
+        let fehler = ApiError::RateLimited {
+            retry_after_seconds: 60,
+        };
+        assert_eq!(
+            naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 0),
+            Some(60)
+        );
+        assert_eq!(
+            naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 1),
+            Some(60),
+            "die Servervorgabe gilt unabhaengig vom Versuchsindex, nicht das feste Schema"
+        );
+    }
+
+    #[test]
+    fn transiente_netzfehler_nutzen_das_feste_schema() {
+        let fehler = ApiError::Network("timeout".into());
+        assert_eq!(
+            naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 0),
+            Some(2)
+        );
+        assert_eq!(
+            naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 1),
+            Some(8)
+        );
+    }
+
+    #[test]
+    fn harte_fehler_bekommen_keine_wartezeit() {
+        let fehler = ApiError::NotFound;
+        assert_eq!(naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 0), None);
+    }
 }
 
 /// v0.5.49 — Background-Worker für den persistenten PIREP-Queue.
