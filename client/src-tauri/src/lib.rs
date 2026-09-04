@@ -2840,6 +2840,32 @@ fn dep_gate_braucht_neuableitung(
             && dep_gate_generation != aktuelle_generation)
 }
 
+/// Ob ein noch aus einer VERALTETEN Generation stammender `dep_gate` beim
+/// VERLASSEN des Boardings endgueltig verworfen werden muss, statt
+/// unkorrigiert in Pushback und jede Ausgabe (Live-Post, PIREP-Felder,
+/// Debrief) mitgenommen zu werden.
+///
+/// ⚠ v1.7.17 Runde 5 (externe Gegenpruefung, Codex, adversarial,
+/// 04.09.2026): Runde 4s atomarer Ersatz liess einen unkorrigierten,
+/// bekannt veralteten Wert stehen, wenn waehrend des GESAMTEN restlichen
+/// Boardings nie ein Kandidat aus der neuen Generation gefunden wurde
+/// (z. B. Szenerie- oder Positionsdaten kamen einfach nicht rechtzeitig).
+/// Alle nachgelagerten Verbraucher lesen `dep_gate` OHNE die Generation zu
+/// pruefen — ein bekannt falscher Wert waere als aktuell durchgegangen,
+/// gerade nach einem 2020↔2024-Wechsel mit anderem Standlayout. Das ist
+/// KEINE neue Korrektur waehrend/nach Pushback (die bleibt durch die
+/// bestehende Boarding-Bedingung verboten) — nur das ehrliche Eingestehen
+/// "kein verlaesslicher Stand bekannt", ein letztes Mal geprueft in der
+/// Sekunde, in der das Boarding endet.
+fn dep_gate_muss_beim_boarding_ende_verworfen_werden(
+    boarding_phase: bool,
+    dep_gate_vorhanden: bool,
+    dep_gate_generation: u32,
+    aktuelle_generation: u32,
+) -> bool {
+    !boarding_phase && dep_gate_vorhanden && dep_gate_generation != aktuelle_generation
+}
+
 fn dep_szenerie_auskunft_uebernehmen(
     app: &AppHandle,
     flight: &Arc<ActiveFlight>,
@@ -27400,6 +27426,25 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         }
                     }
                 }
+                // v1.7.17 Runde 5 (externe Gegenpruefung, Codex, adversarial,
+                // 04.09.2026): letzte Chance BEIM VERLASSEN des Boardings —
+                // siehe `dep_gate_muss_beim_boarding_ende_verworfen_werden`.
+                // Lief das Boarding zu Ende, ohne dass ein aus der neuen
+                // Generation abgeleiteter Kandidat je gefunden wurde, wird
+                // der bekanntlich veraltete Wert hier verworfen statt
+                // unkorrigiert an Live-Post/PIREP/Debrief weitergegeben zu
+                // werden. Kein Neuversuch (der bliebe verboten) — nur
+                // Ehrlichkeit statt eines bekannt falschen Werts.
+                else if let Ok(mut stats) = flight.stats.lock() {
+                    if dep_gate_muss_beim_boarding_ende_verworfen_werden(
+                        tick_phase == FlightPhase::Boarding,
+                        stats.dep_gate.is_some(),
+                        stats.dep_gate_generation,
+                        stats.dep_szenerie_auskunft_generation,
+                    ) {
+                        stats.dep_gate = None;
+                    }
+                }
                 // Ankunfts-Gegenstueck (QS-Befund B5): kommt die Standliste
                 // erst NACH der TaxiIn→BlocksOn-Kante an (Fetch-Latenz,
                 // spaeter Retry), war die einzige Zuordnungsstelle schon
@@ -38376,6 +38421,40 @@ mod standliste_fuer_tests {
             false,
             1,
             2
+        ));
+    }
+
+    /// v1.7.17 Runde 5 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): verlaesst das Boarding einen bekanntlich veralteten
+    /// `dep_gate` unkorrigiert, muss die letzte-Chance-Pruefung das
+    /// erkennen — sonst gaelte er in Live-Post/PIREP/Debrief als aktuell.
+    #[test]
+    fn dep_gate_wird_beim_verlassen_des_boardings_mit_veralteter_generation_verworfen() {
+        assert!(dep_gate_muss_beim_boarding_ende_verworfen_werden(
+            false, true, 1, 2
+        ));
+    }
+
+    #[test]
+    fn dep_gate_bleibt_beim_verlassen_des_boardings_ohne_generationswechsel_stehen() {
+        assert!(!dep_gate_muss_beim_boarding_ende_verworfen_werden(
+            false, true, 2, 2
+        ));
+    }
+
+    #[test]
+    fn dep_gate_wird_waehrend_des_boardings_selbst_nicht_ueber_diesen_riegel_verworfen() {
+        // Waehrend des Boardings entscheidet `dep_gate_braucht_neuableitung`
+        // (atomarer Ersatz) — dieser Riegel greift erst BEIM Verlassen.
+        assert!(!dep_gate_muss_beim_boarding_ende_verworfen_werden(
+            true, true, 1, 2
+        ));
+    }
+
+    #[test]
+    fn ohne_vorhandenen_dep_gate_gibt_es_beim_boarding_ende_nichts_zu_verwerfen() {
+        assert!(!dep_gate_muss_beim_boarding_ende_verworfen_werden(
+            false, false, 1, 2
         ));
     }
 }

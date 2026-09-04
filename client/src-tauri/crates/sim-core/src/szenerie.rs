@@ -550,10 +550,20 @@ impl Auftragsbuch {
     /// Platz zugleich Ziel war. Genau das ist der Fehler, den Runde 1 fuer
     /// den reinen Schutzfall schon verhindert hat: eine echte, unterwegs
     /// befindliche SimConnect-Anfrage darf nicht doppelt gestellt werden,
-    /// bevor ihre Antwort da ist. Der Zielvorrang gilt deshalb nur fuer
-    /// die RUHENDEN Zustaende (Offen/Wartet/Erschoepft) — ein Platz, der
-    /// zugleich geschuetzt, Ziel UND `Laeuft` ist, bleibt bis zu seiner
-    /// eigenen Antwort oder seinem eigenen Timeout unberuehrt.
+    /// bevor ihre Antwort da ist.
+    ///
+    /// ⚠ v1.7.17 Runde 5 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): Runde 4 liess einen solchen Platz KOMPLETT unberuehrt
+    /// — aber damit verlor er auch die Fenster-GUTSCHRIFT selbst. War die
+    /// laufende Anfrage zufaellig schon der LETZTE erlaubte Versuch, galt
+    /// sie bei einem spaeteren Fehlschlag sofort als erschoepft, ohne dass
+    /// je ein neues Fenster fuer sie gewirkt haette — der eigentliche
+    /// Landeplatz haette dann fuer den Rest des Anflugs ohne Szenerie
+    /// dastehen koennen. Die Loesung trennt beide Anliegen: der ZUSTAND
+    /// bleibt `Laeuft` (keine doppelte Anfrage), aber der VERSUCHSZAEHLER
+    /// wird zurueckgesetzt — scheitert dieser Versuch danach, hat der
+    /// Platz wieder ein volles Kontingent, statt sofort erschoepft zu
+    /// gelten.
     pub fn neues_versuchsfenster_mit_schutz(
         &mut self,
         ziele: &[(String, u8)],
@@ -564,8 +574,14 @@ impl Auftragsbuch {
             let ist_geschuetzt = geschuetzt.iter().any(|g| g.eq_ignore_ascii_case(icao));
             if ist_geschuetzt {
                 let ist_ziel = ziele.iter().any(|(z, _)| z.eq_ignore_ascii_case(icao));
-                let echt_aktiv = matches!(a.zustand, Auftragszustand::Laeuft { .. });
-                if !ist_ziel || echt_aktiv {
+                if !ist_ziel {
+                    continue;
+                }
+                if matches!(a.zustand, Auftragszustand::Laeuft { .. }) {
+                    // Fenster-Gutschrift OHNE doppelte Anfrage — siehe
+                    // Funktionsdoku (Runde 5).
+                    a.versuche = 0;
+                    betroffen += 1;
                     continue;
                 }
             }
@@ -2494,16 +2510,68 @@ mod auftragsbuch_tests {
 
         let ziele = vec![("EDDS".to_string(), 0)];
         let geschuetzt = vec!["EDDS".to_string()];
-        let betroffen = b.anflug_ausrichten_mit_schutz(&ziele, &geschuetzt, true);
+        b.anflug_ausrichten_mit_schutz(&ziele, &geschuetzt, true);
 
-        assert_eq!(
-            betroffen, 0,
-            "ein echt laufender Auftrag darf nicht als 'betroffen' zaehlen"
-        );
         assert!(
             matches!(b.zustand("EDDS"), Some(Auftragszustand::Laeuft { .. })),
             "eine echt laufende Anfrage fuer denselben Platz darf nicht doppelt gestellt \
              werden, auch wenn er zugleich Ziel und geschuetzt ist"
+        );
+        assert_eq!(
+            b.versuche("EDDS"),
+            0,
+            "die Fenster-Gutschrift (Runde 5) muss trotzdem wirken — sonst verliert ein \
+             laufender letzter Versuch sein Kontingent fuer immer"
+        );
+    }
+
+    /// v1.7.17 Runde 5 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): War die laufende Anfrage bereits der LETZTE erlaubte
+    /// Versuch, darf ein spaeterer Fehlschlag NICHT sofort in Erschoepft
+    /// muenden — die Fenster-Gutschrift (Versuchszaehler auf 0) muss
+    /// wirken, obwohl der Zustand waehrend des Fensters `Laeuft` blieb.
+    #[test]
+    fn ein_echt_laufender_letzter_versuch_bekommt_die_fenster_gutschrift_trotzdem() {
+        let mut b = Auftragsbuch::neu();
+        b.wunsch_mit_rang("EDDS", 0);
+        let mut t = 0i64;
+        let mut letzte_id = 0;
+        for _ in 0..HOECHSTVERSUCHE {
+            let (_, id) = b.naechsten_stellen(t).expect("Versuch");
+            letzte_id = id;
+            if b.versuche("EDDS") < HOECHSTVERSUCHE {
+                b.freigeben_zu_kennung(id, t);
+            }
+            t += RUECKZUG_MS;
+        }
+        assert_eq!(b.versuche("EDDS"), HOECHSTVERSUCHE);
+        assert!(matches!(
+            b.zustand("EDDS"),
+            Some(Auftragszustand::Laeuft { .. })
+        ));
+
+        let ziele = vec![("EDDS".to_string(), 0)];
+        let geschuetzt = vec!["EDDS".to_string()];
+        b.anflug_ausrichten_mit_schutz(&ziele, &geschuetzt, true);
+
+        assert!(
+            matches!(b.zustand("EDDS"), Some(Auftragszustand::Laeuft { .. })),
+            "die echt laufende Anfrage darf nicht doppelt gestellt werden"
+        );
+        assert!(
+            b.versuche("EDDS") < HOECHSTVERSUCHE,
+            "der Versuchszaehler muss zurueckgesetzt sein, sonst verliert der letzte \
+             Versuch seine Fenster-Gutschrift fuer immer"
+        );
+
+        // Scheitert dieser (jetzt gutgeschriebene) Versuch danach, muss
+        // noch ein weiterer moeglich sein statt sofortiger Erschoepfung.
+        b.freigeben_zu_kennung(letzte_id, t);
+        assert!(
+            matches!(b.zustand("EDDS"), Some(Auftragszustand::Wartet { .. })),
+            "nach der Fenster-Gutschrift muss ein Fehlschlag noch einen weiteren Versuch \
+             erlauben, nicht sofortige Erschoepfung: {:?}",
+            b.zustand("EDDS")
         );
     }
 }
