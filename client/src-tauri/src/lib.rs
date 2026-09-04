@@ -15339,6 +15339,20 @@ fn is_transient_pirep_error(e: &ApiError) -> bool {
 /// jetzt aus dem Fehler selbst, wenn er einer ist.
 const PIREP_FELD_RETRY_BACKOFFS_SEC: [u64; 2] = [2, 8];
 
+/// Obergrenze fuer eine vom Server diktierte `Retry-After`-Wartezeit.
+///
+/// ⚠ v1.7.17 Runde 9 (externe Gegenpruefung, Codex, adversarial,
+/// 04.09.2026): `retry_after_seconds` kommt ungeprueft aus einem
+/// geparsten HTTP-Header. Ohne Obergrenze koennte ein extremer Wert
+/// (Server-Bug, kaputte Zwischenstation) die Deadline-Berechnung in
+/// `tokio::time::sleep` ueberlaufen lassen (`Instant + Duration` kann
+/// bei absurd grossen Werten paniken) oder den Task praktisch fuer immer
+/// schlafen legen — in beiden Faellen bliebe die Rueckzugs-Meldung, der
+/// einzige Korrekturweg, fuer den Rest des Fluges aus. Fuenf Minuten sind
+/// grosszuegig genug fuer jede realistische Rate-Limit-Sperre und weit
+/// von jedem Ueberlaufrisiko entfernt.
+const RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC: u64 = 300;
+
 /// Wie lange VOR dem naechsten Versuch gewartet werden soll, nachdem
 /// dieser Versuch mit `fehler` gescheitert ist — `None` heisst „kein
 /// weiterer Versuch" (harter, nicht-transienter Fehler).
@@ -15349,11 +15363,19 @@ const PIREP_FELD_RETRY_BACKOFFS_SEC: [u64; 2] = [2, 8];
 /// diktierten Wartezeit, nicht dem festen Schema) der Kern des
 /// Runde-8-Befundes war und sich unabhaengig vom Netzwerk-Code pruefen
 /// laesst.
+///
+/// ⚠ v1.7.17 Runde 9 (externe Gegenpruefung, Codex, adversarial,
+/// 04.09.2026): die Servervorgabe wird jetzt auf
+/// `RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC` gedeckelt, statt ihr ungeprueft
+/// zu vertrauen — siehe deren Doku. Bewusst NICHT die von Codex
+/// zusaetzlich vorgeschlagene dauerhafte, neustart-feste Warteschlange
+/// gebaut: dieselbe Abwaegung wie in Runde 7 (Live-Anzeigefeld, kein
+/// kritischer Datenpfad) gilt hier genauso.
 fn naechste_wartezeit_fuer_pirep_feld_retry(fehler: &ApiError, attempt: usize) -> Option<u64> {
     match fehler {
         ApiError::RateLimited {
             retry_after_seconds,
-        } => Some(*retry_after_seconds),
+        } => Some((*retry_after_seconds).min(RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC)),
         e if !is_transient_pirep_error(e) => None,
         _ => Some(
             PIREP_FELD_RETRY_BACKOFFS_SEC[attempt.min(PIREP_FELD_RETRY_BACKOFFS_SEC.len() - 1)],
@@ -15416,6 +15438,33 @@ mod pirep_feld_retry_tests {
             naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 1),
             Some(60),
             "die Servervorgabe gilt unabhaengig vom Versuchsindex, nicht das feste Schema"
+        );
+    }
+
+    /// v1.7.17 Runde 9 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): ein extremer, ungeprueft aus einem HTTP-Header
+    /// geparster Wert darf weder ueberlaufen (`tokio::time::sleep` mit
+    /// `u64::MAX` Sekunden) noch den Task praktisch fuer immer schlafen
+    /// legen — die Servervorgabe muss gedeckelt werden.
+    #[test]
+    fn extreme_rate_limit_wartezeit_wird_gedeckelt() {
+        let fehler = ApiError::RateLimited {
+            retry_after_seconds: u64::MAX,
+        };
+        assert_eq!(
+            naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 0),
+            Some(RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC)
+        );
+    }
+
+    #[test]
+    fn rate_limit_wartezeit_unter_der_obergrenze_bleibt_unveraendert() {
+        let fehler = ApiError::RateLimited {
+            retry_after_seconds: 30,
+        };
+        assert_eq!(
+            naechste_wartezeit_fuer_pirep_feld_retry(&fehler, 0),
+            Some(30)
         );
     }
 
