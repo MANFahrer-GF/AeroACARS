@@ -2753,6 +2753,93 @@ fn szenerie_auskunft_uebernehmen(
     }
 }
 
+/// Die Szenerie-Auskunft für den ABFLUGplatz übernehmen — v1.7.17.
+///
+/// # Warum das eigenständig neben `szenerie_auskunft_uebernehmen` steht
+///
+/// Der Abflugplatz ändert sich nie über einen Flug hinweg (anders als
+/// das Ziel, das durch einen Divert wechseln kann) — er braucht deshalb
+/// keine Rangfolge zwischen mehreren Kandidaten, keine Stand-/
+/// Generationszählung, kein Versuchsfenster, das bei einem Phasenwechsel
+/// neu geöffnet wird. „Schon da? Dann nichts tun. Sonst: anfragen und
+/// nachsehen" reicht vollständig — siehe die Doku an `dep_szenerie_auskunft`
+/// für den Grund, warum das ein eigenes Feld statt desselben Slots wie
+/// `szenerie_auskunft` ist.
+///
+/// # MSFS braucht hier KEINE neue Registrierung
+///
+/// `spawn_navdata_fetch` (beim Flugbeginn) meldet über
+/// `szenerie_anfordern_fuer` bereits ALLE bekannten Plätze an — Abflug,
+/// Ziel, Alternate — mit `RANG_VORMERKUNG` (niedrigste Prioritaet, „darf
+/// mitlaufen, nimmt niemandem den Vortritt"). Der Abflugplatz steht also
+/// schon im Auftragsbuch, sobald der Flug beginnt; hier wird sein Rang
+/// nur noch verbessert (er soll nicht bis zum Sankt-Nimmerleins-Tag hinter
+/// jedem neuen Zielkandidaten zurückstehen) und die Lieferung abgeholt.
+fn dep_szenerie_auskunft_uebernehmen(
+    app: &AppHandle,
+    flight: &Arc<ActiveFlight>,
+    simulator: sim_core::Simulator,
+) {
+    let icao = flight.dpt_airport.trim().to_ascii_uppercase();
+    if icao.len() != 4 {
+        return;
+    }
+    let schon_da = flight
+        .stats
+        .lock()
+        .map(|s| s.dep_szenerie_auskunft.is_some())
+        .unwrap_or(true);
+    if schon_da {
+        return;
+    }
+    match szenerie_bahn::quelle_fuer(simulator) {
+        szenerie_bahn::Quelle::XPlaneDatei => {
+            // ⚠ Synchron und billig (Index-Nachschlag, siehe
+            // `szenerie_bahn::szenerie_flughafen`) — kein Anfrage-
+            // Antwort-Zyklus wie bei MSFS nötig.
+            if let Some(sz) = szenerie_bahn::szenerie_flughafen(&icao) {
+                if let Ok(mut stats) = flight.stats.lock() {
+                    if stats.dep_szenerie_auskunft.is_none() {
+                        stats.dep_szenerie_auskunft = Some(sz);
+                    }
+                }
+            }
+        }
+        szenerie_bahn::Quelle::MsfsFacility => {
+            #[cfg(target_os = "windows")]
+            {
+                let state = app.state::<AppState>();
+                let Ok(msfs) = state.msfs.lock() else { return };
+                // Rang verbessern (siehe Funktionsdoku) — bereits
+                // vorregistriert, dieser Aufruf hebt nur die Prioritaet.
+                msfs.szenerie_anfordern_mit_rang(&icao, 0);
+                let schnapp = msfs.szenerie_schnappschuss(&icao);
+                drop(msfs);
+                let Some((auskunft, _stand)) = schnapp.auskunft else {
+                    return;
+                };
+                // ⚠ Dieselbe ICAO-Pruefung wie bei der Zielauskunft — eine
+                // Lieferung traegt IMMER den Platz, der sie beschreibt
+                // (Buch-Zusicherung), aber die Pruefung hier kostet nichts
+                // und macht die Annahme explizit statt implizit.
+                if !auskunft.icao.eq_ignore_ascii_case(&icao) {
+                    return;
+                }
+                if let Ok(mut stats) = flight.stats.lock() {
+                    if stats.dep_szenerie_auskunft.is_none() {
+                        stats.dep_szenerie_auskunft = Some(auskunft);
+                    }
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = app;
+            }
+        }
+        szenerie_bahn::Quelle::Keine => {}
+    }
+}
+
 fn spawn_navdata_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, icaos: Vec<String>) {
     // v1.7.8 — die Szenerie-Auskunft am selben Auslöser anfordern.
     //
@@ -4542,6 +4629,31 @@ struct FlightStats {
     /// beim Aufsetzen vorfindet. Bei X-Plane bleibt sie leer — dort
     /// liest der Client die Datei direkt.
     szenerie_auskunft: Option<sim_core::szenerie::SzenerieFlughafen>,
+    /// v1.7.17: Die Szenerie-Auskunft des Simulators für den
+    /// ABFLUGplatz — ein eigenes, unabhängiges Feld, NICHT dasselbe wie
+    /// `szenerie_auskunft` oben.
+    ///
+    /// ⚠ Warum kein gemeinsamer Slot: `szenerie_auskunft` wird schon ab
+    /// dem ERSTEN Tick des Fluges für das (dann noch geplante) Ziel
+    /// angefragt — nicht erst ab dem Sinkflug, wie ein Kommentar an
+    /// `versuchsfenster_fortschreiben` nahelegen könnte; dieser regelt
+    /// nur den WIEDERHOLUNGS-Vorrat, nicht den ersten Versuch. Eine
+    /// frühe Zustellung für den Zielplatz könnte also potenziell parallel
+    /// mit dieser Ernte hier eintreffen. Ein gemeinsames Feld hätte
+    /// bedeutet: entweder ein Wettlauf zweier Schreiber auf denselben
+    /// Slot (genau die Fehlerklasse, die die Stand/Generation-Buchführung
+    /// an `szenerie_auskunft` seit Runde 9 des v1.7.15-Zyklus verhindern
+    /// soll), oder die Abflug-Ernte hätte diese Buchführung komplett
+    /// mitübernehmen müssen — für einen Fall, der nie einen Zielwechsel
+    /// kennt (der Abflugplatz eines Fluges ändert sich nie).
+    ///
+    /// Getrennt gehalten braucht die Abflug-Ernte keine Stand-/
+    /// Generationszählung: Es gibt genau ein mögliches Ziel
+    /// (`flight.dpt_airport`), es wechselt nie, und „schon da" reicht als
+    /// einzige Bedingung. `standliste_fuer` prüft dieses Feld als
+    /// zusätzliche Quelle, zusätzlich zu `szenerie_auskunft` — siehe
+    /// dort.
+    dep_szenerie_auskunft: Option<sim_core::szenerie::SzenerieFlughafen>,
     /// v1.7.8: Was die Übernahme aus der Simulator-Szenerie bewirkt hat.
     ///
     /// `None` heisst: nicht versucht (anderer Simulator, keine
@@ -27049,6 +27161,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // Billig: ein Mutex und ein Vergleich je Tick, und nur
             // solange noch nichts abgelegt ist.
             szenerie_auskunft_uebernehmen(&app, &flight, snap.simulator);
+            // v1.7.17 — dasselbe fuer den ABFLUGplatz, eigenstaendig und
+            // unabhaengig (siehe `dep_szenerie_auskunft_uebernehmen`).
+            dep_szenerie_auskunft_uebernehmen(&app, &flight, snap.simulator);
 
             // ⚠ Und die Bahnaufloesung NACHHOLEN, wenn die Szenerie erst
             // nach dem Aufsetzen eintraf — siehe
@@ -37553,24 +37668,33 @@ fn maybe_spawn_metar_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, new_phas
 /// Szenerie selbst nichts kennt. Anders als OSM braucht die Szenerie
 /// weder Netz noch einen Server, der erreichbar sein muss.
 ///
-/// ⚠ `icao` MUSS geprüft werden: `stats.szenerie_auskunft` gehört immer
-/// zum gerade relevanten Platz (Start ODER Ziel, je nach Flugphase — sie
-/// wird beim Wechsel verworfen, siehe `korreliere_bahn`), aber ohne die
-/// Prüfung hier könnte ein Aufrufer sie für den FALSCHEN Flughafen lesen
-/// (Abflug-Stände waehrend die Auskunft schon das Ziel beschreibt) —
-/// derselbe Fehler, den die Bahnzuordnung mit dem Divert-Hint schon einmal
-/// hatte.
+/// ⚠ `icao` MUSS geprüft werden: eine Szenerie-Auskunft gehört immer zu
+/// EINEM bestimmten Platz, aber ohne die Prüfung hier könnte ein Aufrufer
+/// sie für den FALSCHEN Flughafen lesen — derselbe Fehler, den die
+/// Bahnzuordnung mit dem Divert-Hint schon einmal hatte.
+///
+/// v1.7.17: zwei getrennte Quellen, beide gegen `icao` geprüft.
+/// `stats.szenerie_auskunft` (ZIEL — Ankunft, Divert, oder der tatsächliche
+/// Landeplatz) und `stats.dep_szenerie_auskunft` (ABFLUG, unabhängig
+/// geerntet — siehe die Doku an diesem Feld für den Grund der Trennung).
+/// Ein Aufrufer muss NICHT wissen, welche der beiden zuständig ist — für
+/// den Abflugplatz trifft nur die zweite, für den Zielplatz nur die erste
+/// (beide tragen ihr eigenes `icao`, ein Treffer in der falschen waere
+/// strukturell ausgeschlossen, nicht nur unwahrscheinlich).
 fn standliste_fuer(
     stats: &FlightStats,
     icao: &str,
     osm: Option<&[stands::ParkingStand]>,
 ) -> Option<Vec<stands::ParkingStand>> {
     let icao_norm = icao.trim().to_uppercase();
+    let treffer = |a: &&sim_core::szenerie::SzenerieFlughafen| {
+        a.icao.trim().eq_ignore_ascii_case(&icao_norm) && !a.staende.is_empty()
+    };
     let szenerie = stats
         .szenerie_auskunft
         .as_ref()
-        .filter(|a| a.icao.trim().eq_ignore_ascii_case(&icao_norm))
-        .filter(|a| !a.staende.is_empty())
+        .filter(treffer)
+        .or_else(|| stats.dep_szenerie_auskunft.as_ref().filter(treffer))
         .map(|a| stands::aus_szenerie(&a.staende));
     szenerie.or_else(|| osm.map(|l| l.to_vec()))
 }
@@ -37776,6 +37900,67 @@ mod standliste_fuer_tests {
         assert_eq!(liste[0].name.as_deref(), Some("OSM-STAND"));
     }
 
+    /// v1.7.17: `dep_szenerie_auskunft` ist eine zusaetzliche Quelle,
+    /// unabhaengig von `szenerie_auskunft` — der eigentliche Zweck der
+    /// Abflug-Ernte ueberhaupt.
+    #[test]
+    fn dep_szenerie_auskunft_wird_als_quelle_erkannt() {
+        let mut stats = FlightStats::default();
+        stats.dep_szenerie_auskunft = Some(szenerie_stand("EDDS", "V42", 48.0, 9.0));
+        let liste = standliste_fuer(&stats, "EDDS", None).expect("Abflug-Szenerie greift");
+        assert_eq!(liste[0].name.as_deref(), Some("V42"));
+    }
+
+    /// Beide Felder gleichzeitig, fuer VERSCHIEDENE Flughaefen — jede
+    /// Anfrage muss NUR die zu ihr passende treffen, nie die andere.
+    #[test]
+    fn dep_und_ziel_szenerie_bleiben_getrennt() {
+        let mut stats = FlightStats::default();
+        stats.szenerie_auskunft = Some(szenerie_stand("LEPA", "42", 39.5, 2.7));
+        stats.dep_szenerie_auskunft = Some(szenerie_stand("EDDS", "V42", 48.0, 9.0));
+
+        let abflug = standliste_fuer(&stats, "EDDS", None).expect("Abflug-Treffer");
+        assert_eq!(abflug[0].name.as_deref(), Some("V42"));
+
+        let ziel = standliste_fuer(&stats, "LEPA", None).expect("Ziel-Treffer");
+        assert_eq!(ziel[0].name.as_deref(), Some("42"));
+    }
+
+    /// `dep_szenerie_auskunft` fuer den FALSCHEN Platz darf so wenig
+    /// einspringen wie `szenerie_auskunft` fuer den falschen Platz —
+    /// dieselbe Zusicherung wie
+    /// `veraltete_szenerie_auskunft_eines_anderen_flughafens_wird_ignoriert`,
+    /// jetzt fuer das neue Feld.
+    #[test]
+    fn dep_szenerie_auskunft_eines_anderen_flughafens_wird_ignoriert() {
+        let mut stats = FlightStats::default();
+        stats.dep_szenerie_auskunft = Some(szenerie_stand("EDDS", "V42", 48.0, 9.0));
+        let osm = vec![osm_stand("OSM-EDDM-STAND")];
+        let liste = standliste_fuer(&stats, "EDDM", Some(&osm)).expect("OSM als Rueckfall");
+        assert_eq!(
+            liste[0].name.as_deref(),
+            Some("OSM-EDDM-STAND"),
+            "die EDDS-Abflug-Auskunft ist fuer EDDM nicht zustaendig"
+        );
+    }
+
+    /// Eine leere Staende-Liste in `dep_szenerie_auskunft` faellt auf OSM
+    /// zurueck — dieselbe Regel wie bei `szenerie_auskunft`.
+    #[test]
+    fn leere_dep_szenerie_staendeliste_faellt_auf_osm_zurueck() {
+        let mut stats = FlightStats::default();
+        stats.dep_szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
+            icao: "EDDS".to_string(),
+            bahnen: Vec::new(),
+            rollwege: Vec::new(),
+            staende: Vec::new(),
+            quelle: "test".to_string(),
+        });
+        let osm = vec![osm_stand("OSM-STAND")];
+        let liste = standliste_fuer(&stats, "EDDS", Some(&osm)).expect("OSM als Rueckfall");
+        assert_eq!(liste[0].name.as_deref(), Some("OSM-STAND"));
+    }
+
     #[test]
     fn retry_ziel_nichts_ohne_angefragtes_icao() {
         let stats = FlightStats::default();
@@ -37920,6 +38105,34 @@ mod standliste_fuer_tests {
     fn passt_nicht_zum_ziel_ohne_je_eine_anfrage() {
         let stats = FlightStats::default();
         assert!(!passt_zum_angefragten_ankunftsziel(&stats, "EDDF"));
+    }
+
+    /// v1.7.17: Text-Waechter — `dep_szenerie_auskunft_uebernehmen` muss
+    /// tatsaechlich aus dem Haupt-Tick heraus aufgerufen werden. Die Logik
+    /// selbst (`standliste_fuer`) ist oben verhaltensgeprueft; hier geht
+    /// es nur um die VERDRAHTUNG, die eine Verhaltensprobe nicht sehen
+    /// kann, weil der Aufrufer (`step_flight`) tief in async/Tauri-Code
+    /// haengt und nicht isoliert ausfuehrbar ist — derselbe Grund, aus dem
+    /// `maybe_spawn_stand_fetch` schon ohne eigene Aufrufstellen-Probe
+    /// auskommen musste.
+    #[test]
+    fn dep_szenerie_auskunft_uebernehmen_wird_im_tick_aufgerufen() {
+        // ⚠ NICHT den vollen Aufruf als EIN Literal suchen — dieser Test
+        // selbst nennt ihn (in dieser Zeilendoku), und `include_str!`
+        // liest auch die eigene Datei. Ein Literal, das den Aufruf exakt
+        // nachbildet, faende sich selbst und bliebe gruen, auch wenn der
+        // echte Aufruf im Tick verschwaende. Deshalb: Vorkommen ZAEHLEN —
+        // eines ist immer dieser Kommentar/die Doku an der Funktion,
+        // mindestens ein zweites muss der echte Aufruf sein.
+        let quelle = include_str!("lib.rs");
+        let vorkommen = quelle
+            .matches("dep_szenerie_auskunft_uebernehmen(&app, &flight, snap.simulator)")
+            .count();
+        assert!(
+            vorkommen >= 2,
+            "die Abflug-Ernte haengt an keinem Tick mehr (nur {vorkommen} Vorkommen, \
+             erwartet mindestens 2: Funktionsdoku/Kommentar + echter Aufruf)"
+        );
     }
 }
 

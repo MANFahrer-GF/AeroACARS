@@ -953,7 +953,12 @@ pub fn szenerie_vorbereiten() {
 }
 
 /// Den Flughafen aus der Szenerie holen, mit Verzeichnis.
-fn szenerie_flughafen(icao: &str) -> Option<sim_xplane::szenerie::SzenerieFlughafen> {
+///
+/// `pub(crate)`, nicht `pub`: v1.7.17 ruft diese Funktion auch fuer den
+/// Abflugplatz auf (Stand-Ernte, siehe `dep_szenerie_auskunft` in
+/// `lib.rs`) — unabhaengig von `ergaenze_aus_szenerie`, das Navdaten
+/// voraussetzt und nur fuer die Bahnkorrektur gedacht ist.
+pub(crate) fn szenerie_flughafen(icao: &str) -> Option<sim_xplane::szenerie::SzenerieFlughafen> {
     // ⚠ Baut das Verzeichnis notfalls hier — der Vorabbau beim
     // Flugbeginn ist die Regel, nicht die Garantie: Ein Flug, der aus
     // einer Wiederaufnahme kommt, oder ein Simulatorwechsel mitten im
