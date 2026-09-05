@@ -10143,19 +10143,29 @@ async fn phpvms_login(
         },
     )?;
 
+    let base_url = client.connection().base_url().to_string();
+    setze_session_atomar(&state, client.clone(), profile.pilot_id);
+    cache_pilot(&state, &profile);
     // v0.5.11: kick off live-tracking provisioning in the background.
     // Non-blocking — login completes regardless of whether the
     // provision call succeeds. Pure background feature, no UI.
+    //
+    // Codex-Folgefund (adversarial, 05.09.2026, zwoelfte Runde): dieser
+    // Spawn stand bisher VOR `setze_session_atomar` — der Hintergrund-Task
+    // konnte also schon lostraben und `authenticated_pilot_id` lesen,
+    // BEVOR die neue Session ueberhaupt committed war (Tauris Runtime
+    // garantiert keine Ausfuehrungsreihenfolge zwischen einem gespawnten
+    // Task und dem restlichen synchronen Code hier). Bei einem
+    // Kontowechsel ohne Logout haette der Task dann noch den ALTEN
+    // Piloten gesehen und dessen laufenden Publisher faelschlich als
+    // "passt schon" durchgehen lassen. Jetzt erst spawnen, NACHDEM die
+    // neue Session bereits steht.
     {
         let app_for_mqtt = app.clone();
         tauri::async_runtime::spawn(async move {
             init_mqtt_publisher_via_provisioning(app_for_mqtt).await;
         });
     }
-
-    let base_url = client.connection().base_url().to_string();
-    setze_session_atomar(&state, client.clone(), profile.pilot_id);
-    cache_pilot(&state, &profile);
     // Lifecycle-Lock JETZT freigeben, nicht erst am Funktionsende: `state.
     // client` ist bereits committed (ein gleichzeitiger `flight_start` sieht
     // ab jetzt den richtigen Client), und `try_resume_flight` weiter unten
@@ -10541,20 +10551,30 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
         });
     }
 
-    // Codex-Folgefund (adversarial, 05.09.2026, elfte Runde): die Pruefung
-    // weiter oben (vor den beiden Empfaenger-Weiterleitungen) schliesst die
-    // Luecke nicht vollstaendig — `take_integrity_rx`/`take_chat_rx` sind
-    // selbst echte Awaits. Direkt hier, unmittelbar vor der Installation,
-    // noch einmal nachpruefen.
-    if secrets::load_api_key(KEYRING_ACCOUNT).ok().flatten() != api_key_bei_provisionierungs_start {
-        tracing::warn!(
-            "live-tracking: Account wechselte waehrend der Provisionierung — \
-             frisch gebauter MQTT-Handle wird verworfen, nicht installiert"
-        );
-        handle.shutdown();
-        return;
+    // Codex-Folgefund (adversarial, 05.09.2026, zwoelfte Runde): die
+    // Pruefung aus Runde 11 lag zwar unmittelbar VOR dieser Zeile im
+    // Quelltext, aber `state.mqtt.lock().await` ist selbst ein echter
+    // Await — zwischen dem Bestehen der Pruefung und dem tatsaechlichen
+    // Erwerb des Locks konnte ein paralleler Logout (der denselben Lock
+    // ueber `stoppe_mqtt_publisher` nimmt) dazwischenfunken. Die Pruefung
+    // muss deshalb INNERHALB der gehaltenen Sperre stattfinden, nicht
+    // davor — nur so kann kein Logout mehr zwischen „geprueft" und
+    // „installiert" hindurchschluepfen.
+    {
+        let mut mqtt_guard = state.mqtt.lock().await;
+        if secrets::load_api_key(KEYRING_ACCOUNT).ok().flatten()
+            != api_key_bei_provisionierungs_start
+        {
+            tracing::warn!(
+                "live-tracking: Account wechselte waehrend der Provisionierung — \
+                 frisch gebauter MQTT-Handle wird verworfen, nicht installiert"
+            );
+            drop(mqtt_guard);
+            handle.shutdown();
+            return;
+        }
+        *mqtt_guard = Some(handle);
     }
-    *state.mqtt.lock().await = Some(handle);
     *state
         .mqtt_owner_pilot_id
         .lock()
@@ -11211,12 +11231,32 @@ fn divert_nearest_airports(
 async fn phpvms_refresh_profile(
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<Profile>, UiError> {
-    let client = match current_client(&state) {
-        Ok(c) => c,
-        Err(_) => return Ok(None),
+    // Codex-Folgefund (adversarial, 05.09.2026, zwoelfte Runde): `client`
+    // wurde bisher isoliert per `current_client` erfasst, OHNE die dazu
+    // gehoerende Piloten-ID — nach dem echten Server-Roundtrip
+    // (`get_profile().await`) schrieb `cache_pilot` das Ergebnis
+    // ungeprueft zurueck. Meldet sich waehrend dieses Roundtrips ein
+    // ANDERER Pilot an (ausdruecklich erlaubt ohne vorheriges Logout),
+    // haette die verspaetete Antwort fuer Pilot A dessen `cached_pilot`/
+    // `cached_pilot_callsign`/SimBrief-Auto-Source ueber Pilot Bs frisch
+    // angemeldete Sitzung geschrieben. Jetzt wird VOR dem Zurueckschreiben
+    // erneut geprueft, ob dieselbe Piloten-ID noch aktiv ist.
+    let Some((client, angefragte_pilot_id)) = aktuelle_session_atomar(&state) else {
+        return Ok(None);
     };
     match client.get_profile().await {
         Ok(p) => {
+            let aktuelle_pilot_id = *state
+                .authenticated_pilot_id
+                .lock()
+                .expect("authenticated_pilot_id lock");
+            if aktuelle_pilot_id != Some(angefragte_pilot_id) {
+                tracing::warn!(
+                    "profile refresh: Account wechselte waehrend des Roundtrips — \
+                     verspaetetes Profil wird verworfen, nicht zurueckgeschrieben"
+                );
+                return Ok(None);
+            }
             cache_pilot(&state, &p);
             Ok(Some(p))
         }
@@ -17335,14 +17375,13 @@ mod konten_isolierung_runde_zehn_wiring_tests {
     fn mqtt_provisionierung_prueft_api_key_vor_der_installation() {
         const SRC: &str = include_str!("lib.rs");
         let koerper = funktionskoerper(SRC, "async fn init_mqtt_publisher_via_provisioning(");
-        // Die Installation braucht das abschliessende Semikolon in der
-        // Suche — sonst matcht sie den erklaerenden Kommentar weiter oben
-        // in derselben Funktion, der denselben Ausdruck zur Erklaerung in
-        // Backticks zitiert, aber ohne Semikolon (dieselbe Falle wie ein
-        // Selbst-Treffer, nur durch einen eigenen Kommentar statt eine
-        // eigene Testzeile).
+        // Seit Runde 12 liegt die Installation in `*mqtt_guard = ...`
+        // (innerhalb der gehaltenen Sperre) statt direkt in
+        // `*state.mqtt.lock().await = ...` — siehe
+        // `mqtt_installations_pruefung_liegt_innerhalb_der_sperre` fuer
+        // die Reihenfolge INNERHALB der Sperre.
         let start_erfassung_pos = koerper.find("let api_key_bei_provisionierungs_start =");
-        let install_pos = koerper.find("*state.mqtt.lock().await = Some(handle);");
+        let install_pos = koerper.find("*mqtt_guard = Some(handle);");
         match (start_erfassung_pos, install_pos) {
             (Some(s), Some(i)) => assert!(
                 s < i,
@@ -17583,6 +17622,112 @@ mod konten_isolierung_runde_elf_wiring_tests {
              die eine gespeicherte Sitzung verwerfen (Status-Gate UND Auth-Fehler) — \
              sonst bleibt im jeweils anderen Zweig ein fremder Publisher aktiv"
         );
+    }
+}
+
+/// Codex-Folgefund (adversarial, 05.09.2026, zwoelfte Runde): der MQTT-
+/// Lebenszyklus blieb der Rest-Herd — zwei weitere Luecken dort plus ein
+/// verspaeteter Profil-Refresh, der eine neue Sitzung ueberschreiben
+/// konnte.
+#[cfg(test)]
+mod konten_isolierung_runde_zwoelf_wiring_tests {
+    /// Dieselbe Technik wie in den vorigen Runden-Testmodulen.
+    fn funktionskoerper(quelle: &str, start_marker: &str) -> String {
+        let start = quelle
+            .find(start_marker)
+            .unwrap_or_else(|| panic!("{start_marker} nicht mehr gefunden — Test anpassen"));
+        let rest = &quelle[start..];
+        let naechstes_fn = rest[1..].find("\nfn ").map(|i| i + 1);
+        let naechstes_async_fn = rest[1..].find("\nasync fn ").map(|i| i + 1);
+        let ende = [naechstes_fn, naechstes_async_fn]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(rest.len());
+        rest[..ende].to_string()
+    }
+
+    /// Befund 1a: der MQTT-Provisionierungs-Task wurde bisher VOR
+    /// `setze_session_atomar` gespawnt — er konnte also lostraben und
+    /// `authenticated_pilot_id` lesen, bevor die neue Session ueberhaupt
+    /// committed war.
+    #[test]
+    fn mqtt_wird_erst_nach_dem_session_commit_gespawnt() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "async fn phpvms_login(");
+        let commit_pos =
+            koerper.find("setze_session_atomar(&state, client.clone(), profile.pilot_id)");
+        let spawn_pos = koerper.find("init_mqtt_publisher_via_provisioning(app_for_mqtt).await");
+        match (commit_pos, spawn_pos) {
+            (Some(c), Some(s)) => assert!(
+                c < s,
+                "phpvms_login spawnt die MQTT-Provisionierung wieder VOR dem \
+                 Session-Commit — der Hintergrund-Task koennte dann den ALTEN \
+                 Piloten lesen, obwohl der Login schon fuer den neuen lief"
+            ),
+            _ => panic!(
+                "setze_session_atomar-Aufruf oder MQTT-Spawn in phpvms_login \
+                 nicht mehr gefunden — Test anpassen, nicht loeschen"
+            ),
+        }
+    }
+
+    /// Befund 1b: die abschliessende Identitaets-Pruefung vor der Handle-
+    /// Installation muss INNERHALB der gehaltenen `state.mqtt`-Sperre
+    /// stattfinden — `state.mqtt.lock().await` ist selbst ein Await, und
+    /// eine Pruefung DAVOR laesst ein Fenster, in dem ein paralleler
+    /// Logout (derselbe Lock, ueber `stoppe_mqtt_publisher`) dazwischen-
+    /// funken kann.
+    #[test]
+    fn mqtt_installations_pruefung_liegt_innerhalb_der_sperre() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "async fn init_mqtt_publisher_via_provisioning(");
+        let lock_pos = koerper.find("let mut mqtt_guard = state.mqtt.lock().await;");
+        // rfind, nicht find: es gibt zwei Identitaets-Pruefungen in dieser
+        // Funktion (die erste aus Runde 11, vor den Empfaenger-
+        // Weiterleitungen) — hier zaehlt die SPAETERE, die innerhalb der
+        // Sperre liegen muss.
+        let pruefung_pos = koerper.rfind("!= api_key_bei_provisionierungs_start");
+        let install_pos = koerper.find("*mqtt_guard = Some(handle);");
+        match (lock_pos, pruefung_pos, install_pos) {
+            (Some(l), Some(p), Some(i)) => assert!(
+                l < p && p < i,
+                "die Identitaets-Pruefung vor der MQTT-Installation muss zwischen \
+                 dem Lock-Erwerb und der Installation liegen (also INNERHALB der \
+                 gehaltenen Sperre) — sonst kann ein paralleler Logout in der \
+                 Luecke zwischen Pruefung und Lock-Erwerb hindurchschluepfen"
+            ),
+            _ => panic!(
+                "Lock-Erwerb, Identitaets-Pruefung oder Installation in \
+                 init_mqtt_publisher_via_provisioning nicht mehr gefunden"
+            ),
+        }
+    }
+
+    /// Befund 3: `phpvms_refresh_profile` schrieb ein verspaetetes
+    /// Server-Ergebnis bisher ungeprueft zurueck — waehrend des
+    /// `get_profile`-Roundtrips konnte sich ein anderer Pilot anmelden.
+    #[test]
+    fn refresh_profile_prueft_identitaet_nach_dem_roundtrip() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "async fn phpvms_refresh_profile(");
+        let erfassung_pos = koerper.find("aktuelle_session_atomar(&state)");
+        let roundtrip_pos = koerper.find("client.get_profile().await");
+        let pruefung_pos = koerper.find("aktuelle_pilot_id != Some(angefragte_pilot_id)");
+        let schreiben_pos = koerper.find("cache_pilot(&state, &p);");
+        match (erfassung_pos, roundtrip_pos, pruefung_pos, schreiben_pos) {
+            (Some(e), Some(r), Some(p), Some(s)) => assert!(
+                e < r && r < p && p < s,
+                "phpvms_refresh_profile muss die Identitaet NACH dem Roundtrip \
+                 erneut pruefen, BEVOR das Ergebnis zurueckgeschrieben wird — \
+                 sonst kann ein verspaetetes Profil eine inzwischen neu \
+                 angemeldete Sitzung ueberschreiben"
+            ),
+            _ => panic!(
+                "Identitaets-Erfassung, Roundtrip, Pruefung oder cache_pilot-Aufruf \
+                 in phpvms_refresh_profile nicht mehr gefunden — Test anpassen"
+            ),
+        }
     }
 }
 

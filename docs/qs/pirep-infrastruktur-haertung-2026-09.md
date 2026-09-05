@@ -807,6 +807,69 @@ Erst durch den vollen Testlauf bemerkt (isolierter Lauf des neuen Tests
 allein waere gruen gewesen) — bestaetigt erneut die Runde-10-Lehre, neue
 Waechter immer gegen die volle Suite laufen zu lassen.
 
+## Nachtrag #11 (05.09.2026): zwoelfte Codex-Runde — MQTT-Lebenszyklus, Reihenfolge geschaerft, Profil-Refresh gehaertet
+
+Adversarial-Review gegen alle elf bisherigen Commits fand drei weitere
+Befunde (einer kritisch, zwei mittel) — wieder rund um den MQTT-
+Lebenszyklus, jetzt mit hoeherer Einstufung als in Runde 11.
+
+**Befund 1 (kritisch) — zwei Rest-Luecken im MQTT-Lebenszyklus.**
+(a) Der Provisionierungs-Task wurde in `phpvms_login` VOR `setze_session_
+atomar` gespawnt — er konnte lostraben und `authenticated_pilot_id` lesen,
+BEVOR die neue Session ueberhaupt committed war (Tauris Runtime garantiert
+keine Reihenfolge zwischen einem gespawnten Task und dem restlichen
+synchronen Code). (b) Die abschliessende Identitaets-Pruefung vor der
+Handle-Installation (Runde 11) lag zwar unmittelbar VOR `state.mqtt.
+lock().await` im Quelltext — aber genau dieser Lock-Erwerb ist selbst ein
+Await. Ein paralleler Logout (derselbe Lock ueber `stoppe_mqtt_publisher`)
+konnte zwischen bestandener Pruefung und tatsaechlichem Lock-Erwerb
+hindurchschluepfen.
+
+**Befund 2 (mittel) — der Frontend-Effekt hob den SimBrief-Logout-Reset
+wieder auf.** Das Backend setzt `simbrief_settings` beim Logout auf
+Default zurueck (Runde 10), aber `App.tsx` liess `localStorage`-Werte
+(`simbrief_username`/`simbrief_user_id`) unangetastet — der Sync-Effekt
+bei jedem `loggedIn` schrieb sie beim naechsten Login (auch eines anderen
+Piloten) sofort wieder ins Backend.
+
+**Befund 3 (mittel) — ein verspaeteter Profil-Refresh konnte eine neue
+Sitzung ueberschreiben.** `phpvms_refresh_profile` schrieb das Ergebnis
+seines `get_profile`-Roundtrips ungeprueft zurueck — meldet sich waehrend
+dieses Roundtrips ein anderer Pilot an (ausdruecklich erlaubt), haette die
+verspaetete Antwort dessen `cached_pilot`/Callsign/SimBrief-Auto-Source
+ueberschrieben.
+
+**Gefixt:**
+
+1a. Der MQTT-Spawn in `phpvms_login` steht jetzt NACH `setze_session_
+    atomar`.
+1b. Die Identitaets-Pruefung in `init_mqtt_publisher_via_provisioning`
+    liegt jetzt INNERHALB der gehaltenen `state.mqtt`-Sperre (Lock zuerst
+    erwerben, dann pruefen, dann erst installieren) — kein Logout kann
+    mehr zwischen „geprueft" und „installiert" hindurch.
+2. `handleLogout` entfernt jetzt auch die `localStorage`-Schluessel
+   `simbrief_username`/`simbrief_user_id`.
+3. `phpvms_refresh_profile` erfasst Client+Identitaet ueber `aktuelle_
+   session_atomar`, prueft nach dem Roundtrip erneut gegen die aktuelle
+   `authenticated_pilot_id` und verwirft ein verspaetetes Ergebnis bei
+   Mismatch.
+
+**Tests:** drei neue Quelltext-Waechter
+(`konten_isolierung_runde_zwoelf_wiring_tests`), Gegenprobe fuer beide
+MQTT-/Resume-relevanten durchgefuehrt (Profil-Refresh-Pruefung,
+Sperr-Reihenfolge) — beide korrekt fehlgeschlagen, dann wiederhergestellt.
+Ein bestehender Runde-10-Test musste an die neue Installations-Stelle
+(`*mqtt_guard = ...` statt `*state.mqtt.lock().await = ...`) angepasst
+werden.
+
+**Einordnung:** dies ist die DRITTE Runde in Folge (10, 11, 12), die eine
+neue Facette desselben MQTT-Lebenszyklus-Bereichs findet, mit steigender
+Schweregrad-Einstufung. Sollte Runde 13 erneut in genau dieser Ecke etwas
+finden, ist das ein Signal fuer eine tiefere Architekturentscheidung (z. B.
+ein monoton steigender Session-Epochen-Zaehler, den jeder Hintergrund-Task
+vor jeder Mutation gegenprueft) statt weiterer Einzel-Patches — diese
+Entscheidung liegt bei Thomas, nicht bei diesem Kreislauf.
+
 ## Nicht behoben (bewusst außerhalb des Umfangs)
 
 * **`pirep_queue`s 50-Versuche-Grenze selbst** bleibt als Konzept

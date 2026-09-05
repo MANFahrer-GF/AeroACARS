@@ -625,6 +625,20 @@ function App() {
     // Logout nicht überleben — sonst haengt die Warnung auf der Login-Seite
     // und ggf. noch in der naechsten Sitzung.
     setLogoutBlockedMessage(null);
+    // Codex-Folgefund (Runde 12, Befund 2): das Backend setzt
+    // simbrief_settings beim Logout auf Default zurueck — der Effekt
+    // weiter oben (synct localStorage → set_simbrief_settings bei jedem
+    // "loggedIn") hebt das aber sofort wieder auf, wenn hier dieselben
+    // localStorage-Werte des VORIGEN Piloten stehen bleiben. Der naechste
+    // Pilot auf derselben Maschine haette sonst dessen SimBrief-Identitaet
+    // (und damit potenziell dessen OFP bei gleicher Route) uebernommen.
+    try {
+      localStorage.removeItem("simbrief_username");
+      localStorage.removeItem("simbrief_user_id");
+    } catch {
+      // localStorage kann in seltenen Umgebungen (privater Modus o.ä.)
+      // geblockt sein — dann ist ohnehin nichts zu leeren.
+    }
     setStatus({ kind: "loggedOut" });
     setTab("briefing");
   }
