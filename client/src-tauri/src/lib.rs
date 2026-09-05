@@ -15581,6 +15581,30 @@ mod pirep_queue {
         /// versuchen (der normale, schnelle Anfangszustand).
         #[serde(default)]
         pub retry_not_before: Option<DateTime<Utc>>,
+        /// Codex-Folgefund (adversarial, 05.09.2026, gegen den Fix eine
+        /// Zeile ueber diesem hier): `pending_pireps/` ist ein einziges,
+        /// GLOBALES Verzeichnis, ungebunden an einen Piloten. `phpvms_logout`
+        /// erlaubt ausdruecklich, dass "ein anderer Pilot sich auf derselben
+        /// Maschine anmeldet" (siehe dortiger Kommentar) — der Worker laeuft
+        /// als Hintergrund-Task ueber die gesamte Prozesslaufzeit und
+        /// benutzt bei jedem Tick den GERADE aktuellen `state.client`. Vor
+        /// diesem Fix, mit der 50-Versuche-Grenze, war das Zeitfenster fuer
+        /// „ein anderer Pilot ist schon eingeloggt, wenn der Eintrag drankommt"
+        /// auf ~47 Minuten begrenzt; die Aenderung eine Zeile ueber diesem
+        /// hier (unbegrenzte Slow-Phase) macht dasselbe Fenster potenziell
+        /// beliebig lang. Ohne Eigentuemer-Pruefung haette der Worker Pilot
+        /// As PIREP mit Pilot Bs Credentials eingereicht — im Erfolgsfall
+        /// fehlzugeordnet, im 403/404-Fall (als "nicht transient"
+        /// klassifiziert) sogar geloescht und damit Pilot As geflogener Flug
+        /// dauerhaft verloren. Fingerprint statt Klartext-Identitaet
+        /// (`Client::identity_fingerprint`, nicht der API-Key selbst) —
+        /// reicht fuer einen Gleichheits-Check, muss aber kein Geheimnis
+        /// transportieren. `None` bei Alt-Eintraegen (vor diesem Feld
+        /// geschrieben) UND wenn beim Einreihen kein Client verfuegbar war —
+        /// beide Faelle werden vom Worker als "Eigentuemer unbekannt"
+        /// behandelt (Quarantaene: weder einreichen noch loeschen).
+        #[serde(default)]
+        pub owner_identity: Option<String>,
     }
 
     fn dir(app: &AppHandle) -> Option<PathBuf> {
@@ -16329,6 +16353,19 @@ fn pirep_queue_slow_phase_wartezeit_sec(attempt_count_nach_diesem_versuch: u32) 
     }
 }
 
+/// Codex-Folgefund (adversarial, 05.09.2026): darf der Worker DIESEN Eintrag
+/// mit dem GERADE eingeloggten Client bearbeiten? `None` als Eintrags-
+/// Eigentuemer (Alt-Eintraege von vor diesem Feld, oder kein Client beim
+/// Einreihen verfuegbar) zaehlt bewusst als "unbekannt", NICHT als
+/// "niemandes, also freigegeben" — sonst wuerde ausgerechnet der Fall, in
+/// dem wir am wenigsten wissen, am grosszuegigsten behandelt.
+fn pirep_queue_eintrag_gehoert_aktuellem_piloten(
+    eintrag_eigentuemer: Option<&str>,
+    aktuelle_identitaet: &str,
+) -> bool {
+    eintrag_eigentuemer == Some(aktuelle_identitaet)
+}
+
 #[cfg(test)]
 mod pirep_queue_dead_letter_tests {
     use super::*;
@@ -16396,6 +16433,46 @@ mod pirep_queue_dead_letter_tests {
     }
 }
 
+#[cfg(test)]
+/// Codex-Folgefund (adversarial, 05.09.2026): die unbegrenzte Slow-Phase
+/// von oben macht das Zeitfenster, in dem ein ANDERER Pilot inzwischen auf
+/// derselben Maschine eingeloggt sein kann, potenziell beliebig lang — ohne
+/// Eigentuemer-Pruefung haette der Worker Pilot As PIREP mit Pilot Bs
+/// Credentials eingereicht (oder geloescht, wenn der Server 403/404 sagt).
+mod pirep_queue_eigentuemer_tests {
+    use super::*;
+
+    #[test]
+    fn gehoert_dem_aktuellen_piloten() {
+        assert!(pirep_queue_eintrag_gehoert_aktuellem_piloten(
+            Some("fingerprint-a"),
+            "fingerprint-a"
+        ));
+    }
+
+    /// Der eigentliche Befund: ein Eintrag, der jemand anderem gehoert,
+    /// darf NICHT mit den Credentials des aktuell eingeloggten Piloten
+    /// bearbeitet werden.
+    #[test]
+    fn gehoert_nicht_einem_anderen_piloten() {
+        assert!(!pirep_queue_eintrag_gehoert_aktuellem_piloten(
+            Some("fingerprint-a"),
+            "fingerprint-b"
+        ));
+    }
+
+    /// Alt-Eintraege (vor diesem Feld geschrieben) oder ein fehlender Client
+    /// beim Einreihen ergeben `None` — das MUSS als "unbekannt" gelten, nie
+    /// als "niemandes, also frei fuer jeden".
+    #[test]
+    fn unbekannter_eigentuemer_gilt_nicht_als_frei() {
+        assert!(!pirep_queue_eintrag_gehoert_aktuellem_piloten(
+            None,
+            "irgendein-fingerprint"
+        ));
+    }
+}
+
 fn spawn_pirep_queue_worker(app: AppHandle) {
     // v0.5.50 — `tauri::async_runtime::spawn` statt `tokio::spawn`.
     // Diese Funktion wird aus dem synchronen `.setup()`-Closure
@@ -16445,7 +16522,35 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                 continue;
             }
             tracing::info!(queued_count = queued.len(), "PIREP-queue worker tick");
+            let aktuelle_identitaet = client.identity_fingerprint();
             for mut q in queued {
+                // Codex-Folgefund (adversarial, 05.09.2026): `pending_pireps/`
+                // ist global, nicht pro Pilot. Seit die Slow-Phase oben nicht
+                // mehr aufgibt, kann ein Eintrag lange genug liegen, dass ein
+                // ANDERER Pilot inzwischen auf derselben Maschine eingeloggt
+                // ist (`phpvms_logout` erlaubt das ausdruecklich). Ohne diese
+                // Pruefung wuerde der Worker Pilot As PIREP mit Pilot Bs
+                // Credentials einreichen — Erfolg: falsch zugeordnet;
+                // 403/404 (nicht-transient): geloescht, Pilot As Flug
+                // dauerhaft verloren. Quarantaene statt Einreichen ODER
+                // Loeschen: weder Versuchszaehler noch Retry-Zeit werden
+                // angefasst, der Eintrag liegt einfach weiter, bis der
+                // richtige Pilot wieder eingeloggt ist (oder das VA-Team
+                // manuell eingreift). `owner_identity: None` (Alt-Eintraege
+                // von vor diesem Feld) zaehlt ebenfalls als "Eigentuemer
+                // unbekannt" — NICHT als "niemandes, also freigegeben".
+                if !pirep_queue_eintrag_gehoert_aktuellem_piloten(
+                    q.owner_identity.as_deref(),
+                    &aktuelle_identitaet,
+                ) {
+                    tracing::warn!(
+                        pirep_id = %q.pirep_id,
+                        eigentuemer_bekannt = q.owner_identity.is_some(),
+                        "pirep_queue: Eintrag gehoert nicht dem aktuell eingeloggten Piloten — \
+                         Quarantaene, weder eingereicht noch geloescht"
+                    );
+                    continue;
+                }
                 // Nachgereicht (externe Gegenpruefung Codex, adversarial):
                 // eine Wartezeit (Retry-After oder der langsame Takt nach
                 // der Dead-Letter-Warnung) ist noch nicht abgelaufen —
@@ -22177,6 +22282,13 @@ async fn flight_end(
                     pirep_payload_json,
                     dead_letter_notified: false,
                     retry_not_before: None,
+                    // Wer hat DIESEN Flug geflogen — nicht wer zufaellig
+                    // eingeloggt ist, wenn der Worker es Stunden/Tage
+                    // spaeter aus der Slow-Phase heraus versucht. `client`
+                    // ist hier derselbe, mit dem `file_pirep_with_retry`
+                    // gerade eben scheiterte (current_client weiter oben in
+                    // dieser Funktion) — noch derselbe eingeloggte Pilot.
+                    owner_identity: Some(client.identity_fingerprint()),
                 };
                 if let Err(qe) = pirep_queue::enqueue(&app, &queued) {
                     // Queue selber kaputt — fallback auf altes Verhalten
@@ -23231,6 +23343,17 @@ async fn flight_cancel(
 
     // SCHRITT 2: Cancel-Pfad. Erst JETZT den Flight aus state.active_flight
     // herausnehmen (guard.take()) bevor wir destruktiv werden.
+    //
+    // Codex-Folgefund (adversarial, 05.09.2026): zwischen diesem take() und
+    // dem `client.cancel_pirep(...).await` weiter unten ist der State-Slot
+    // leer. Ohne diesen Guard koennte `flight_start`/`flight_adopt` in genau
+    // dieser Luecke bereits einen NEUEN Flug anlegen — derselbe Schutz, den
+    // `flight_end` fuer sein eigenes take→file-Fenster schon seit v0.20.x
+    // haelt (siehe `FlightSetupGuard`-Doc-Kommentar). Kein `disarm()` noetig:
+    // dieser Pfad schreibt nie wieder einen Flug in `active_flight` zurueck,
+    // der Guard faellt bei JEDEM Rueckgabepfad (inkl. `result?` weiter
+    // unten) per `Drop` automatisch.
+    let _lifecycle_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
     let flight = {
         let mut guard = state.active_flight.lock().expect("active_flight lock");
         guard.take().ok_or_else(|| {
@@ -23412,6 +23535,15 @@ fn spawn_resume_sim_gate(app: AppHandle, flight: Arc<ActiveFlight>, client: Clie
 /// clean slate.
 #[tauri::command]
 async fn flight_forget(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), UiError> {
+    // Codex-Folgefund (adversarial, 05.09.2026): "kein await zwischen take()
+    // und clear_persisted_flight, also keine Race" war falsch — Tauri-
+    // Kommandos laufen auf einem MEHR-Thread-Runtime, ein `flight_start` auf
+    // einem ANDEREN Thread kann diese ganze Funktion in echter Parallelitaet
+    // ueberlappen, unabhaengig von Awaits. Derselbe Schutz wie in
+    // `flight_cancel`/`flight_end`: den Guard fuer die GESAMTE Teardown-
+    // Dauer halten, damit ein gleichzeitiger `flight_start`/`flight_adopt`
+    // entweder klar VOR oder klar NACH dieser Funktion laeuft, nie waehrend.
+    let _lifecycle_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
     let forgotten_pirep_id = if let Some(flight) = state
         .active_flight
         .lock()
@@ -23440,11 +23572,11 @@ async fn flight_forget(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
     } else {
         None
     };
-    // No await happened between the take() above and here, so there is no
-    // gap for a concurrently started flight to have claimed the persistence
-    // path — but pass the owner along anyway for defense in depth (see
-    // `sollte_persistierten_flug_loeschen`). `None` (no flight was active)
-    // keeps the previous unconditional-clear behavior for orphaned files.
+    // `_lifecycle_guard` above already rules out a concurrent flight_start/
+    // adopt/end during this whole function — the ownership check here is
+    // defense in depth (see `sollte_persistierten_flug_loeschen`). `None`
+    // (no flight was active) keeps the previous unconditional-clear
+    // behavior for genuinely orphaned files with no known owner.
     clear_persisted_flight(&app, forgotten_pirep_id.as_deref());
     Ok(())
 }
@@ -27191,7 +27323,25 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     // metadata, not keep TD#1's (the FSM Landing arm never
                     // runs on bush flights to overwrite it). Clearing the
                     // anchor re-arms the guard; the next stamp overwrites
-                    // every other landing_* field anyway.
+                    // MOST other landing_* fields anyway — but NOT
+                    // `landing_peak_g_force` (Codex-Folgefund, 05.09.2026,
+                    // gegen den GAF-707-Fruehdump-Fix): das Feld ist ein
+                    // reiner RUNNING-MAX ueber die gesamte Session
+                    // (`if g > cur { s.landing_peak_g_force = Some(g) }`,
+                    // s. u.), kein bedingungsloses Ueberschreiben wie Lat/Lon.
+                    // Ohne den expliziten Reset hier ueberlebt TD#1s G-Kraft
+                    // in TD#2s `apply_accident_heuristic`-Aufruf — ein
+                    // harter erster Touchdown (hohes G, aber V/S unter der
+                    // Schwelle) haette dann zusammen mit einem zweiten,
+                    // eigentlich unauffaelligen Touchdown (normales G, aber
+                    // V/S ueber der Schwelle) faelschlich Confirmed(Impact)
+                    // ausgeloest — zwei physisch getrennte Ereignisse
+                    // vermischt zu einem Falsch-Alarm. Die „haerterer Wert
+                    // gewinnt"-Doktrin (v1.6.3) gilt INNERHALB eines
+                    // Touchdowns fuer mehrere Messquellen desselben
+                    // Ereignisses — nicht ueber zwei verschiedene Touchdowns
+                    // hinweg.
+                    s.landing_peak_g_force = None;
                     s.landing_lat = None;
                     s.landing_lon = None;
                     // v1.6.3: der Landewind muss hier ausdruecklich mit weg.
@@ -58507,6 +58657,81 @@ mod gaf707_bounce_in_aufprall_tests {
             Some(accident::AccidentKind::Impact.as_wire_str()),
             "Extreme-Impact-Pfad (|V/S|>=1500 UND G>=3.0) muss unabhängig \
              vom Bahn-Match als Impact klassifiziert werden"
+        );
+    }
+
+    /// Codex-Folgefund (adversarial, 05.09.2026, gegen den Fruehdump-Fix
+    /// oben): `landing_peak_g_force` ist ein RUNNING-MAX ueber die gesamte
+    /// Session (`if g > cur { s.landing_peak_g_force = Some(g) }`, im
+    /// Sampler-Dump-Handler), kein bedingungsloses Ueberschreiben wie
+    /// Lat/Lon. Der Test daneben (`tg_dann_...`) beweist NUR, dass
+    /// `apply_accident_heuristic` bei korrekt zurueckgesetzten Werten
+    /// richtig klassifiziert — er ersetzt `landing_peak_g_force` manuell vor
+    /// dem zweiten Aufruf und uebt damit NICHT den echten Reset-Pfad im
+    /// Sampler aus. Dieser Test haelt stattdessen fest, WAS bei fehlendem
+    /// Reset schiefgehen wuerde: ein harter, aber V/S-technisch harmloser
+    /// erster Touchdown (hohes G, V/S unter der Schwelle) darf einen
+    /// zweiten, eigentlich unauffaelligen Touchdown (normales G, aber V/S
+    /// ueber der Schwelle) NICHT faelschlich als Confirmed(Impact)
+    /// erscheinen lassen, nur weil das hohe G von TD#1 noch in
+    /// `stats.landing_peak_g_force` steht. Ob der Sampler das G tatsaechlich
+    /// zurueksetzt, prueft der Wiring-Test direkt danach.
+    #[test]
+    fn hohes_g_vom_ersten_touchdown_darf_den_zweiten_nicht_verfaelschen() {
+        let mut stats = FlightStats {
+            landing_simulator: Some("Msfs2024"),
+            ..Default::default()
+        };
+
+        // TD #1 — harter Bump, hohes G, aber V/S klar unter der
+        // Extreme-Impact-Schwelle. Legitim unauffaellig.
+        stats.landing_peak_g_force = Some(3.4);
+        let td1_analysis = serde_json::json!({ "vs_at_edge_fpm": -900.0 });
+        apply_accident_heuristic(&mut stats, &td1_analysis);
+        assert!(!stats.accident_detected);
+
+        // Zwischen den Touchdowns: der Sampler-Klettern-Reset MUSS
+        // `landing_peak_g_force` auf None setzen (das ist die Zeile, die
+        // der Wiring-Test unten im Quelltext verlangt).
+        stats.landing_peak_g_force = None;
+
+        // TD #2 — normale Landung mit unauffaelligem EIGENEN G, aber einer
+        // V/S ueber der Extreme-Impact-Schwelle. Ohne den Reset waere hier
+        // G=3.4 von TD#1 stehengeblieben und haette faelschlich
+        // Confirmed(Impact) ausgeloest.
+        stats.landing_peak_g_force = Some(1.2);
+        let td2_analysis = serde_json::json!({ "vs_at_edge_fpm": -1600.0 });
+        apply_accident_heuristic(&mut stats, &td2_analysis);
+
+        assert!(
+            !stats.accident_detected,
+            "TD#2 mit eigenem, unauffaelligem G (1.2) darf nicht als Unfall \
+             gelten, nur weil TD#1 zufaellig ein hohes G hatte"
+        );
+    }
+
+    /// Wiring-Guard fuer den Fund oben: der Sampler-Klettern-Reset-Block
+    /// (`spawn_touchdown_sampler`, Marker "Multi-TD via Climb-out-Reset")
+    /// muss `landing_peak_g_force` zuruecksetzen. Ein Ablauf-Test kann diesen
+    /// Block nicht direkt ausueben (Tauri/AppHandle-gebunden, siehe die
+    /// uebrige Sampler-Infrastruktur) — ein Quelltext-Wächter faengt
+    /// trotzdem das ersatzlose Streichen der Zeile.
+    #[test]
+    fn multi_td_klettern_reset_setzt_auch_landing_peak_g_force_zurueck() {
+        const SRC: &str = include_str!("lib.rs");
+        let start = SRC
+            .find("Multi-TD via Climb-out-Reset")
+            .expect("Multi-TD-Reset-Block nicht mehr gefunden — Test anpassen, nicht loeschen");
+        let ende = SRC[start..]
+            .find("touchdown sampler stopped")
+            .map(|i| i + start)
+            .unwrap_or(SRC.len());
+        assert!(
+            SRC[start..ende].contains("s.landing_peak_g_force = None"),
+            "der Klettern-Reset-Block setzt landing_peak_g_force nicht mehr \
+             zurueck — ein hohes G vom ersten Touchdown wuerde dann in die \
+             Unfall-Klassifikation des zweiten ueberleben (Codex-Folgefund \
+             05.09.2026)"
         );
     }
 }

@@ -152,6 +152,60 @@ durchgefuehrt: mit der Entscheidung fest auf `true` gesetzt schlaegt
 `loescht_nicht_wenn_die_ablage_inzwischen_einem_neueren_flug_gehoert`
 zuverlaessig fehl.
 
+## Nachtrag #2 (05.09.2026): dritte Codex-Runde — zwei weitere Befunde
+
+Dieselbe adversarial-Review, die Befund 1 im Nachtrag oben fand, ging danach
+noch einmal ueber den ANGEWACHSENEN Diff (alle Fixes dieser Sitzung
+zusammen, inkl. Nachtrag #1) und fand zwei weitere, unabhaengige Luecken.
+
+### Befund 3 — `flight_cancel`/`flight_forget` hatten die Eigentuemer-Pruefung, aber nicht den State-Lock
+
+Der Ownership-Check aus Nachtrag #1 verhindert nur, dass eine Loeschung eine
+fremde DATEI trifft. Er sagt nichts darueber, dass `flight_cancel` (Await
+vor der Loeschung) und `flight_forget` (kein Await, aber Tauri-Kommandos
+laufen auf einem Mehr-Thread-Runtime — echte Parallelitaet, kein Await
+noetig) einen NEUEN `flight_start`/`flight_adopt` ueberlappen koennten,
+waehrend `state.active_flight` schon leer ist. `flight_end` haelt fuer
+genau dieses Fenster schon seit v0.20.x `FlightSetupGuard` — `flight_cancel`
+und `flight_forget` taten das nicht.
+
+**Gefixt:** beide nehmen jetzt denselben `FlightSetupGuard` fuer ihre
+gesamte Teardown-Dauer (kein `disarm()` noetig, da beide Pfade nie wieder
+einen Flug in `active_flight` zurueckschreiben). Ein gleichzeitiger
+`flight_start`/`flight_adopt` bekommt in dem Fall den bestehenden
+"another flight start or adopt is already in progress"-Fehler und der
+Pilot versucht es einfach nochmal — ein akzeptabler Trade-off gegen
+Datenverlust.
+
+### Befund 4 — `pending_pireps/` kennt keinen Piloten
+
+Die unbegrenzte Slow-Phase aus Befund 1 macht das Zeitfenster, in dem ein
+ANDERER Pilot auf derselben Maschine eingeloggt sein kann
+(`phpvms_logout` erlaubt das ausdruecklich), potenziell beliebig lang statt
+auf ~47 Minuten begrenzt. Ohne Eigentuemer-Pruefung haette der Worker Pilot
+As PIREP mit Pilot Bs Credentials eingereicht — Erfolg: falsch zugeordnet;
+403/404 (als "nicht transient" eingestuft): geloescht, Pilot As Flug
+dauerhaft verloren.
+
+**Gefixt:** neue `Client::identity_fingerprint()` (api-client-Crate) — ein
+nicht-kryptographischer, aber fuer Gleichheitspruefungen ausreichender Hash
+aus Basis-URL + API-Key, NIE der Rohschluessel selbst. `QueuedPirep` traegt
+jetzt `owner_identity: Option<String>` (beim Einreihen gesetzt). Reine
+Entscheidungsfunktion `pirep_queue_eintrag_gehoert_aktuellem_piloten`: ein
+Eintrag wird nur bearbeitet, wenn sein Eigentuemer exakt dem GERADE
+eingeloggten Client entspricht. Alt-Eintraege ohne das Feld (`None`) zaehlen
+als "Eigentuemer unbekannt" — NICHT als "niemandes, also frei" — und werden
+wie ein Fremd-Eigentuemer in Quarantaene belassen (weder eingereicht noch
+geloescht, kein Versuchszaehler/Retry-Zeit angefasst).
+
+**Tests:** `pirep_queue_eigentuemer_tests` (3 Tests) + 4 neue Tests fuer
+`Client::identity_fingerprint` im api-client-Crate (gleiche Verbindung →
+gleicher Fingerabdruck, anderer Key/andere VA → anderer Fingerabdruck,
+Fingerabdruck enthaelt den Rohschluessel nicht). Gegenprobe fuer die
+Eigentuemer-Entscheidung durchgefuehrt: mit `None` absichtlich als "frei"
+behandelt schlaegt `unbekannter_eigentuemer_gilt_nicht_als_frei` zuverlaessig
+fehl.
+
 ## Nicht behoben (bewusst außerhalb des Umfangs)
 
 * **`pirep_queue`s 50-Versuche-Grenze selbst** bleibt als Konzept

@@ -114,6 +114,36 @@ beide die volle Kette: Verdrahtung UND Klassifikations-Ergebnis.
   weiterhin falsch aussieht, obwohl die Unfall-Erkennung jetzt korrekt
   greift.
 
+## Nachtrag (05.09.2026): Codex-Folgefund — stehengebliebenes G vom ersten Touchdown
+
+Adversarial-Review gegen den obigen Fix (Frueh-Dump beim Klettern) fand:
+`landing_peak_g_force` — genau das Feld, das `apply_accident_heuristic` als
+`peak_g_load` liest — ist ein RUNNING-MAX ueber die gesamte Session
+(`if g > cur { s.landing_peak_g_force = Some(g) }` im Sampler-Dump-Handler),
+kein bedingungsloses Ueberschreiben wie Lat/Lon. Der Sampler-Klettern-Reset
+setzte es NICHT zurueck. Ergebnis: ein harter, aber V/S-technisch harmloser
+erster Touchdown (hohes G, V/S unter der Schwelle) haette zusammen mit
+einem zweiten, eigentlich unauffaelligen Touchdown (normales G, aber V/S
+ueber der Schwelle) faelschlich Confirmed(Impact) ausgeloest — zwei
+physisch getrennte Ereignisse zu einem Falsch-Alarm vermischt. Die
+"haerterer Wert gewinnt"-Doktrin (v1.6.3) gilt INNERHALB eines Touchdowns
+fuer mehrere Messquellen desselben Ereignisses, nicht ueber zwei
+verschiedene Touchdowns hinweg.
+
+**Gefixt:** `s.landing_peak_g_force = None;` ergaenzt im Sampler-Klettern-
+Reset-Block, direkt neben den bereits dort zurueckgesetzten `landing_lat`/
+`landing_lon`.
+
+**Tests:** ein Verhaltens-Test zeigt, dass `apply_accident_heuristic` bei
+korrekt zurueckgesetztem G richtig klassifiziert — er ersetzt
+`landing_peak_g_force` aber manuell und uebt damit NICHT den echten
+Reset-Pfad im Sampler aus (Tauri-gebunden, nicht isoliert testbar, wie der
+Rest der Sampler-Infrastruktur). Ein Quelltext-Wächter
+(`multi_td_klettern_reset_setzt_auch_landing_peak_g_force_zurueck`) deckt
+genau diese Luecke: er verlangt die Reset-Zeile im Klettern-Block selbst.
+Gegenprobe durchgefuehrt: mit der Zeile entfernt schlaegt der Wächter
+zuverlaessig fehl.
+
 ## Release
 
 Dieser Fix braucht einen regulären Client-Release
