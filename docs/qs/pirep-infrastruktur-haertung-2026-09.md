@@ -945,6 +945,107 @@ dieser Runde.
 Dokumentiert in docs/qs/pirep-infrastruktur-haertung-2026-09.md,
 Nachtrag #12.
 
+## Nachtrag #13 (06.09.2026): vierzehnte Codex-Runde — gezielte Pruefung des Architektur-Umbaus, zwei Regressionen behoben, Rest als Restrisiko dokumentiert
+
+Codex pruefte gezielt, ob der Runde-13-Umbau (Session-Epochen-Zaehler) die
+MQTT-/Session-Lebenszyklus-Klasse tatsaechlich schliesst. Antwort: **Nein**
+— neun Befunde, davon zwei echte Regressionen aus dem Umbau selbst,
+der Rest reale, aber zunehmend enge Randfaelle. Kernaussage: „Holding
+`state.mqtt` does not prevent either session helper from locking and
+incrementing `session_epoch`" — Epoche und MQTT-Handle haengen an
+UNTERSCHIEDLICHEN Mutexen, echte Atomaritaet zwischen beiden wuerde einen
+gemeinsamen Lock verlangen.
+
+**Ruecksprache mit Thomas:** angesichts einer bereits substanziellen
+Architektur-Aenderung, die den Kernfehler zwar drastisch entschaerft
+(die Fenster sind jetzt Mikrosekunden statt Sekunden bis Minuten), aber
+laut Codex nicht vollstaendig schliesst, wurde entschieden: NUR die
+beiden echten Regressionen aus dem eigenen Umbau fixen, den Rest als
+dokumentiertes Restrisiko stehen lassen, keinen weiteren
+Konsolidierungs-Pass in dieser Sitzung.
+
+**Behoben (echte Regressionen aus Runde 13):**
+
+1. `phpvms_get_bids` las `client` (`current_client`) und die Epoche
+   (`aktuelle_epoche`) GETRENNT — ein Kontowechsel genau dazwischen haette
+   Pilot As Client mit Pilot Bs (bereits aktueller) Epoche gepaart und den
+   Vergleich wertlos gemacht. Fix: beides gemeinsam ueber
+   `aktuelle_session_atomar`.
+2. Beide Restore-Ablehnungs-Zweige in `phpvms_load_session` (Status-Gate,
+   Auth-Fehler) erhoehten `session_epoch` nicht — ein Setup-Hook-
+   Provisionierungs-Task mit der ALTEN Epoche haette trotzdem noch
+   installieren koennen, NACHDEM der Restore bereits abgelehnt wurde.
+   Fix: `leere_session_atomar` in beiden Zweigen.
+
+**Bewusst NICHT behoben (dokumentiertes Restrisiko, Stand 06.09.2026):**
+
+* **Epoche und MQTT-Handle sind nicht unter einem gemeinsamen Lock.** Ein
+  Hintergrund-Provisionierungs-Task kann die Epoche pruefen und den
+  Handle installieren, WAEHREND ein Login/Logout gleichzeitig committet —
+  das Fenster ist durch den synchronen Stopp in `phpvms_login`/
+  `phpvms_load_session` auf die Zeit bis zum naechsten Scheduler-Tick
+  verkleinert, aber nicht auf Null. Eine vollstaendige Schliessung
+  braeuchte einen gemeinsamen Zustand (`Option<{pilot_id, epoch, handle}>`
+  unter EINEM Mutex) statt der aktuellen drei getrennten Mutexe
+  (`client`, `authenticated_pilot_id`+`session_epoch`, `mqtt`+
+  `mqtt_owner_epoch`).
+* **`mqtt_owner_epoch` wird erst NACH Freigabe von `state.mqtt` gesetzt**
+  (zwei getrennte Lock-Erwerbe) — ein knappes Fenster, in dem Handle und
+  Eigentuemer-Tag auseinanderlaufen koennen.
+* **`spawn_pirep_queue_worker` ignoriert die von `aktuelle_session_atomar`
+  zurueckgegebene Epoche** (`_epoche`) und prueft vor dem MQTT-Publish nur
+  noch `authenticated_pilot_id` — dieselbe Fehlerklasse wie die schon
+  gefixte Runde-9-Luecke, nur nicht auf den neuen Mechanismus uebertragen.
+  Die unbedingte Bahn-Nachtrag-Ablage (`nachtrag_queue::drain`) hat
+  ueberhaupt keine Konto-Pruefung.
+* **`init_mqtt_publisher_via_provisioning` schreibt die MQTT-Credentials
+  in den Keyring, BEVOR die erste Epochen-Pruefung nach dem
+  Server-Roundtrip stattfindet** — eine verspaetete Antwort von Pilot A
+  kann Pilot Bs frisch gecachte Credentials ueberschreiben, auch wenn As
+  Handle danach verworfen wird.
+* **`phpvms_refresh_profile`s Epochen-Pruefung ist selbst nicht atomar
+  mit `cache_pilot`** — zwischen Pruefung und Schreiben liegt kein
+  gemeinsamer Lock; ein Kontowechsel in dieser schmalen Luecke kann
+  weiterhin ein fremdes Profil zurueckschreiben.
+* **MQTT-Empfaenger-Weiterleitungen (Integritaet, Chat) sind nicht an die
+  Epoche gebunden** — ihre Endlos-Schleifen pruefen nie, ob die Sitzung
+  sich geaendert hat; `stoppe_mqtt_publisher` haelt/joint sie nicht.
+* **`phpvms_logout` gibt den Lifecycle-Guard frei, bevor MQTT-Stopp,
+  Credential-Cache-Leerung, Keyring-Loeschung und Site-Config-Leerung
+  abgeschlossen sind** — ein gleichzeitiger Login kann in dieser Luecke
+  committen, und der noch laufende Logout kann DANACH den neuen Publisher
+  stoppen bzw. den neuen Key/Config loeschen.
+* **Epochen-Ueberlauf bei `u64::MAX`** (theoretisch, 2^64 Sitzungswechsel
+  noetig — praktisch nicht erreichbar, aber die Monotonie-Garantie ist
+  strenggenommen nicht absolut).
+
+**Warum hier gestoppt statt weiter gepatcht:** die Rueckmeldungen aus den
+Runden 10-14 zeigen ein Muster abnehmenden Grenznutzens — jede weitere
+Runde findet etwas, aber die Fenster werden immer schmaler (Sekunden →
+Mikrosekunden → theoretisch) und die Funde zunehmend spekulativ (Runde
+14s Befund 8 ist ausdruecklich als Hypothese markiert, Befund 9 braucht
+2^64 Operationen). Eine vollstaendige Schliessung wuerde einen groesseren,
+eigenstaendigen Architektur-Auftrag rechtfertigen (gemeinsamer Session-
+Zustand statt drei/vier getrennter Mutexe) — das ist eine bewusste,
+separate Entscheidung fuer Thomas, nicht etwas, das dieser QS-Kreislauf
+in einer weiteren Runde nebenbei erledigen sollte.
+
+**Tests:** zwei neue Quelltext-Waechter
+(`konten_isolierung_runde_vierzehn_wiring_tests`), Gegenprobe fuer beide
+durchgefuehrt. Beim Schreiben des zweiten Tests einen SYSTEMISCHEN Fehler
+im etablierten `funktionskoerper`-Testmuster entdeckt: `\nfn `/`\nasync
+fn ` allein reicht nicht als Endgrenze, wenn direkt nach der Zielfunktion
+ein `#[cfg(test)] mod { }`-Block folgt — die Suche lief dann ueber 14000
+Zeichen ins NAECHSTE Testmodul hinein und fand dort zufaellig denselben
+String. Nur im lokalen Helfer dieser Runde um `\nmod ` als zusaetzliche
+Grenze erweitert (aeltere Testmodule liefen bisher zufaellig nicht in
+diesen Fall, wurden aber nicht rueckwirkend angepasst — bei einem
+kuenftigen Fund in einem aelteren Test gilt dieselbe Korrektur).
+
+cargo test --workspace gruen (echter Exit-Code geprueft), rustfmt --check
+sauber, alle Integrationstests gruen. Keine Codex-Runde 15 — Kreislauf auf
+Thomas' Entscheidung hin hier beendet.
+
 ## Nicht behoben (bewusst außerhalb des Umfangs)
 
 * **`pirep_queue`s 50-Versuche-Grenze selbst** bleibt als Konzept

@@ -10840,6 +10840,14 @@ async fn phpvms_load_session(
                 let _ = secrets::delete_api_key(KEYRING_ACCOUNT);
                 let _ = clear_site_config(&app);
                 clear_mqtt_credentials_cache();
+                // Codex-Folgefund (adversarial, 05.09.2026, vierzehnte
+                // Runde): dieser Zweig leerte `state.client` nie explizit
+                // und erhoehte `session_epoch` nicht — ein Setup-Hook-
+                // Provisionierungs-Task, der noch die ALTE Epoche haelt
+                // (von VOR diesem abgelehnten Restore), haette danach
+                // trotzdem noch erfolgreich pruefen und installieren
+                // koennen. `leere_session_atomar` deckt beides ab.
+                leere_session_atomar(&state);
                 // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde):
                 // der Setup-Hook feuert seine EIGENE, parallele MQTT-
                 // Provisionierung schon vor diesem Restore-Roundtrip — ist
@@ -10942,6 +10950,11 @@ async fn phpvms_load_session(
             let _ = secrets::delete_api_key(KEYRING_ACCOUNT);
             let _ = clear_site_config(&app);
             clear_mqtt_credentials_cache();
+            // Codex-Folgefund (adversarial, 05.09.2026, vierzehnte Runde):
+            // dieselbe Luecke wie im Status-Gate-Zweig — ohne Epochen-
+            // Bump haette ein Setup-Hook-Provisionierungs-Task mit der
+            // ALTEN Epoche trotzdem noch erfolgreich installieren koennen.
+            leere_session_atomar(&state);
             // Codex-Folgefund (adversarial, 05.09.2026, elfte Runde):
             // derselbe Wettlauf wie beim Status-Gate-Zweig oben — der
             // Setup-Hook provisioniert parallel, unabhaengig davon ob
@@ -11554,15 +11567,22 @@ fn entwerte_bids_fehler(log: &mut VecDeque<ActivityEntry>) {
 /// nichts aus.
 #[tauri::command]
 async fn phpvms_get_bids(state: tauri::State<'_, AppState>) -> Result<Vec<Bid>, UiError> {
-    let client = current_client(&state)?;
     // Codex-Folgefund (adversarial, 05.09.2026, dreizehnte Runde): dieser
     // Retry-Loop kann sich ueber mehrere Sekunden ziehen — ein Kontowechsel
     // WAEHREND eines verzoegerten, am Ende erfolgreichen Versuchs von A
     // haette `resolve_bids_activity_error` einen inzwischen von Pilot B
     // frisch erzeugten Fehler-Eintrag faelschlich als "wieder erreichbar"
-    // markiert. Keine falsche PIREP-/Bid-Zuordnung, aber ein verfaelschter
-    // Diagnose-Zustand fuer den neuen Account.
-    let epoche_bei_start = aktuelle_epoche(&state);
+    // markiert.
+    //
+    // Codex-Folgefund (adversarial, 05.09.2026, vierzehnte Runde): `client`
+    // und die Epoche wurden hier zunaechst GETRENNT gelesen
+    // (`current_client` dann `aktuelle_epoche`) — ein Kontowechsel GENAU
+    // dazwischen haette Pilot As Client mit Pilot Bs (bereits aktueller)
+    // Epoche gepaart, wodurch der spaetere Vergleich faelschlich "unveraendert"
+    // gemeldet haette. Jetzt beides gemeinsam ueber `aktuelle_session_atomar`.
+    let Some((client, _pilot_id, epoche_bei_start)) = aktuelle_session_atomar(&state) else {
+        return Err(UiError::new("not_logged_in", "no active session"));
+    };
 
     let letzter: ApiError;
     let mut versuch = 0usize;
@@ -17980,6 +18000,86 @@ mod konten_isolierung_runde_dreizehn_wiring_tests {
                  nicht mehr gefunden — Test anpassen, nicht loeschen"
             ),
         }
+    }
+}
+
+/// Codex-Folgefund (adversarial, 05.09.2026, vierzehnte Runde): eine
+/// gezielte Pruefung des Runde-13-Umbaus selbst fand zwei echte
+/// Regressionen (Session-Snapshot in `phpvms_get_bids`, fehlender
+/// Epochen-Bump in beiden Restore-Ablehnungs-Zweigen von `phpvms_load_
+/// session`) — beide hier gefixt. Der Rest der Runde-14-Befunde
+/// (Atomaritaets-Grenzen des Epochen-Modells selbst, weitere Konsumenten
+/// ohne Epochen-Bindung) ist als bekanntes Restrisiko dokumentiert, siehe
+/// `docs/qs/pirep-infrastruktur-haertung-2026-09.md`.
+#[cfg(test)]
+mod konten_isolierung_runde_vierzehn_wiring_tests {
+    /// Dieselbe Technik wie in den vorigen Runden-Testmodulen — hier
+    /// zusaetzlich um `\nmod ` als Grenze erweitert.
+    ///
+    /// Codex-Folgefund (adversarial, dieselbe Runde, aber selbst
+    /// entdeckt beim Schreiben dieses Tests): `\nfn `/`\nasync fn `
+    /// allein reicht nicht als Endgrenze, wenn direkt NACH der Zielfunktion
+    /// ein `#[cfg(test)] mod ... { }`-Block folgt (wie bei `phpvms_load_
+    /// session`, gefolgt vom Runde-6/7-Testmodul) — die Suche laeuft dann
+    /// mitten HINEIN in dieses Testmodul und findet dort eine eigene
+    /// Test-Zeile, die zufaellig denselben String zitiert. Ergebnis: ein
+    /// massives Ueberschiessen (hier ueber 14000 Zeichen statt der
+    /// erwarteten ~700). `\nmod ` stoppt die Suche VOR einem solchen
+    /// Block.
+    fn funktionskoerper(quelle: &str, start_marker: &str) -> String {
+        let start = quelle
+            .find(start_marker)
+            .unwrap_or_else(|| panic!("{start_marker} nicht mehr gefunden — Test anpassen"));
+        let rest = &quelle[start..];
+        let naechstes_fn = rest[1..].find("\nfn ").map(|i| i + 1);
+        let naechstes_async_fn = rest[1..].find("\nasync fn ").map(|i| i + 1);
+        let naechstes_mod = rest[1..].find("\nmod ").map(|i| i + 1);
+        let ende = [naechstes_fn, naechstes_async_fn, naechstes_mod]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(rest.len());
+        rest[..ende].to_string()
+    }
+
+    /// `phpvms_get_bids` las Client und Epoche bisher GETRENNT
+    /// (`current_client` dann `aktuelle_epoche`) — ein Kontowechsel genau
+    /// dazwischen haette Pilot As Client mit Pilot Bs (schon aktueller)
+    /// Epoche gepaart und den spaeteren Vergleich damit wertlos gemacht.
+    #[test]
+    fn get_bids_liest_client_und_epoche_gemeinsam() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "async fn phpvms_get_bids(");
+        assert!(
+            koerper.contains("aktuelle_session_atomar(&state)"),
+            "phpvms_get_bids liest client/epoche nicht mehr gemeinsam ueber \
+             aktuelle_session_atomar — ein Kontowechsel zwischen zwei getrennten \
+             Lesungen koennte den Epochen-Vergleich wieder wertlos machen"
+        );
+        assert!(
+            !koerper.contains("current_client(&state)"),
+            "phpvms_get_bids ruft wieder current_client isoliert auf — das war \
+             genau die Luecke aus Runde 14"
+        );
+    }
+
+    /// Befund 1: beide Restore-Ablehnungs-Zweige in `phpvms_load_session`
+    /// (Status-Gate, Auth-Fehler) muessen die Sitzungs-Epoche erhoehen —
+    /// sonst kann ein Setup-Hook-Provisionierungs-Task mit der ALTEN
+    /// Epoche trotzdem noch erfolgreich installieren, NACHDEM diese
+    /// Funktion den Restore bereits abgelehnt hat.
+    #[test]
+    fn load_session_erhoeht_epoche_in_beiden_ablehnungs_zweigen() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "async fn phpvms_load_session(");
+        assert_eq!(
+            koerper.matches("leere_session_atomar(&state)").count(),
+            2,
+            "phpvms_load_session muss in BEIDEN Ablehnungs-Zweigen (Status-Gate \
+             UND Auth-Fehler) leere_session_atomar aufrufen — sonst bleibt die \
+             Sitzungs-Epoche fuer einen wartenden Provisionierungs-Task \
+             unveraendert, obwohl der Restore gerade abgelehnt wurde"
+        );
     }
 }
 
