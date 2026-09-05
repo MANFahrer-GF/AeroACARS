@@ -10000,6 +10000,33 @@ async fn phpvms_login(
     let locked_url = format!("https://{ALLOWED_PHPVMS_HOST}");
     let conn = Connection::new(&locked_url, api_key.trim())?;
     let client = Client::new(conn)?;
+    // Codex-Folgefund (adversarial, 05.09.2026, sechste Runde): der
+    // Logout-Riegel (`phpvms_logout`) verhindert nur DEN Weg ueber Logout —
+    // dieser Aufruf ueberschreibt `state.client` unbedingt, auch OHNE
+    // vorheriges Logout (z. B. ein abgelaufener Key wird hier einfach neu
+    // eingegeben). Waere die neue Identitaet eine ANDERE als die des
+    // laufenden Fluges, haette derselbe Cross-Account-Ausfall (alle
+    // nachfolgenden API-Aufrufe liefen unter der neuen Identitaet, aber
+    // fuer den alten Flug) den Logout-Riegel einfach umgangen. Ein Re-Login
+    // DERSELBEN Identitaet (Token-Refresh waehrend der eigene Flug noch
+    // laeuft) bleibt ausdruecklich erlaubt.
+    {
+        let laufender_flug_eigentuemer = state
+            .active_flight_owner_identity
+            .lock()
+            .expect("active_flight_owner_identity lock")
+            .clone();
+        if let Some(eigentuemer) = laufender_flug_eigentuemer {
+            if eigentuemer != client.identity_fingerprint() {
+                return Err(UiError::new(
+                    "flight_active",
+                    "Ein Flug eines anderen Accounts ist noch aktiv — bitte zuerst \
+                     beenden oder abbrechen, bevor du dich mit einem anderen Account \
+                     anmeldest.",
+                ));
+            }
+        }
+    }
     let profile = client.get_profile().await?;
 
     // v0.12.1 (Stream B LE6): pilot-status gate. Only ACTIVE GSG pilots
@@ -10325,6 +10352,34 @@ fn clear_mqtt_credentials_cache() {
 /// clears the in-memory client.
 #[tauri::command]
 async fn phpvms_logout(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), UiError> {
+    // Codex-Folgefund (adversarial, 05.09.2026, sechste Runde): der
+    // Eigentuemer-Schutz aus den vorigen Runden (pirep_queue, Resume-Ablage)
+    // deckt nur, WAS AUF DER PLATTE liegt — nicht die LEBENDEN API-Aufrufe
+    // waehrend eines laufenden Fluges (Positions-Updates, PIREP-Filing,
+    // Cancel, MQTT). Alle diese lesen `current_client(&state)` frisch bei
+    // jedem Aufruf; ein Logout mitten im Flug wuerde JEDEN nachfolgenden
+    // Aufruf mit den Credentials des NAECHSTEN eingeloggten Piloten
+    // ausfuehren, unabhaengig davon wem der Flug gehoert. Statt jede
+    // einzelne Aufrufstelle im gesamten Flug-Lebenszyklus einzeln
+    // abzusichern (Positions-Worker, normales/manuelles Filing, Cancel,
+    // MQTT-Finalisierung — eine sehr breite Flaeche mit hohem Streu-Risiko),
+    // wird die Ursache verriegelt: ein Logout waehrend ein Flug aktiv ist,
+    // ist schlicht nicht erlaubt. Der urspruengliche Kommentar unten ("ein
+    // anderer Pilot kann sich auf derselben Maschine anmelden") gilt
+    // weiterhin — nur eben erst NACHDEM der laufende Flug beendet/
+    // abgebrochen wurde, nicht waehrenddessen.
+    if state
+        .active_flight
+        .lock()
+        .expect("active_flight lock")
+        .is_some()
+    {
+        return Err(UiError::new(
+            "flight_active",
+            "Ein Flug ist noch aktiv — bitte zuerst beenden oder abbrechen, \
+             bevor du dich abmeldest.",
+        ));
+    }
     *state.client.lock().expect("client mutex") = None;
     secrets::delete_api_key(KEYRING_ACCOUNT).map_err(|e| UiError::new("keyring", e.to_string()))?;
     // v0.5.11: stop the MQTT publisher and forget cached credentials
@@ -10453,6 +10508,86 @@ async fn phpvms_load_session(
             Ok(None)
         }
         Err(other) => Err(other.into()),
+    }
+}
+
+#[cfg(test)]
+/// Codex-Folgefund (adversarial, 05.09.2026, sechste Runde): die
+/// Eigentuemer-Bindung aus den vorigen Runden schuetzt nur, was AUF DER
+/// PLATTE liegt (Resume-Ablage, PIREP-Queue) — nicht die LEBENDEN
+/// API-Aufrufe waehrend eines laufenden Fluges. `phpvms_logout`/
+/// `phpvms_login` bleiben Tauri-gebundene async-Kommandos, nicht isoliert
+/// testbar (wie der Rest dieser Infrastruktur) — Quelltext-Wächter direkt
+/// auf die Aufrufreihenfolge.
+mod flug_aktiv_verhindert_konto_wechsel_wiring_tests {
+    /// rustfmt darf die mehrteilige Bedingung im Flug-aktiv-Riegel jederzeit
+    /// auf mehrere Zeilen umbrechen (ist bei diesem genauen Fund schon
+    /// einmal passiert) — Whitespace (inkl. Zeilenumbrueche) rausfiltern,
+    /// BEVOR gesucht wird, macht die Suche robust dagegen. Dieselbe Technik
+    /// wie die ohne_leerraum-Helfer in den anderen Testmodulen dieser Datei.
+    fn ohne_leerraum(s: &str) -> String {
+        s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    /// Funktionskoerper-Grenzen werden auf dem ROHEN Text bestimmt (der
+    /// `\nasync fn `-Zeilenumbruch-Anker braucht echte Zeilenumbrueche) —
+    /// erst danach wird der ausgeschnittene Abschnitt von Whitespace befreit.
+    fn funktionskoerper_ohne_leerraum(quelle: &str, start_marker: &str) -> String {
+        let start = quelle.find(start_marker).unwrap_or_else(|| {
+            panic!("{start_marker} nicht mehr gefunden — Test anpassen, nicht loeschen")
+        });
+        let rest = &quelle[start..];
+        let ende = rest[1..]
+            .find("\nasync fn ")
+            .map(|i| i + 1)
+            .unwrap_or(rest.len());
+        ohne_leerraum(&rest[..ende])
+    }
+
+    #[test]
+    fn logout_prueft_aktiven_flug_vor_dem_leeren_von_state_client() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper_ohne_leerraum(SRC, "async fn phpvms_logout(");
+        let pruefung_pos = koerper.find(&ohne_leerraum("state.active_flight.lock()"));
+        let leeren_pos = koerper.find(&ohne_leerraum(
+            "*state.client.lock().expect(\"client mutex\") = None;",
+        ));
+        match (pruefung_pos, leeren_pos) {
+            (Some(p), Some(l)) => assert!(
+                p < l,
+                "phpvms_logout muss auf einen aktiven Flug pruefen, BEVOR \
+                 state.client geleert wird — sonst kann sich waehrend eines \
+                 laufenden Fluges ein anderer Pilot anmelden, dessen \
+                 Credentials dann fuer den fremden Flug benutzt werden"
+            ),
+            _ => panic!(
+                "Flug-aktiv-Pruefung oder state.client-Leerung in phpvms_logout \
+                 nicht mehr gefunden — Test anpassen, nicht loeschen"
+            ),
+        }
+    }
+
+    #[test]
+    fn login_prueft_den_flug_eigentuemer_vor_dem_ueberschreiben_von_state_client() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper_ohne_leerraum(SRC, "async fn phpvms_login(");
+        let pruefung_pos = koerper.find(&ohne_leerraum("active_flight_owner_identity"));
+        let ueberschreiben_pos = koerper.find(&ohne_leerraum(
+            "*state.client.lock().expect(\"client mutex\") = Some(client.clone());",
+        ));
+        match (pruefung_pos, ueberschreiben_pos) {
+            (Some(p), Some(u)) => assert!(
+                p < u,
+                "phpvms_login muss den Eigentuemer des aktiven Fluges pruefen, \
+                 BEVOR state.client ueberschrieben wird — sonst kann ein Re-Login \
+                 (auch ohne vorheriges Logout, z. B. ein neu eingegebener Key) \
+                 den Logout-Riegel umgehen"
+            ),
+            _ => panic!(
+                "Eigentuemer-Pruefung oder state.client-Ueberschreiben in \
+                 phpvms_login nicht mehr gefunden — Test anpassen, nicht loeschen"
+            ),
+        }
     }
 }
 
@@ -13860,6 +13995,20 @@ async fn flight_adopt(
         navdata: Mutex::new(NavdataCache::default()),
     });
 
+    // Codex-Folgefund (adversarial, 05.09.2026, sechste Runde): VOR dem
+    // ERSTEN Speichern setzen, nicht erst wenn der Flug weiter unten in
+    // `state.active_flight` installiert wird — sonst traegt GENAU dieser
+    // erste Checkpoint noch den Eigentuemer des VORHERIGEN Fluges (oder gar
+    // keinen), weil `active_flight_owner_identity` beim Beenden eines
+    // Fluges nicht geleert wird. Ein Absturz vor dem naechsten periodischen
+    // Speichern haette diesen falschen Eigentuemer auf der Platte
+    // eingefroren — beim naechsten Start haette `try_resume_flight` ihn als
+    // massgeblich behandelt und die serverseitige Reklamier-Pruefung
+    // uebersprungen.
+    *state
+        .active_flight_owner_identity
+        .lock()
+        .expect("active_flight_owner_identity lock") = Some(client.identity_fingerprint());
     save_active_flight(&app, &flight);
     // v0.8.0: parallel-fetch dep/arr/alt-Navdata vom VPS. Non-blocking
     // (Background-Task), Failure → OurAirports-Fallback (transparent).
@@ -13881,13 +14030,6 @@ async fn flight_adopt(
         let mut guard = state.active_flight.lock().expect("active_flight lock");
         *guard = Some(Arc::clone(&flight));
     }
-    // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): Eigentuemer
-    // EINMAL hier festhalten, nicht spaeter bei jedem Speichern/Einreihen
-    // neu aus dem dann gerade eingeloggten Client ableiten.
-    *state
-        .active_flight_owner_identity
-        .lock()
-        .expect("active_flight_owner_identity lock") = Some(client.identity_fingerprint());
     // ActiveFlight is now committed — release the in-progress flag so the
     // active_flight mutex alone guards subsequent adopts.
     setup_guard.disarm();
@@ -14624,6 +14766,20 @@ async fn flight_start(
         navdata: Mutex::new(NavdataCache::default()),
     });
 
+    // Codex-Folgefund (adversarial, 05.09.2026, sechste Runde): VOR dem
+    // ERSTEN Speichern setzen, nicht erst wenn der Flug weiter unten in
+    // `state.active_flight` installiert wird — sonst traegt GENAU dieser
+    // erste Checkpoint noch den Eigentuemer des VORHERIGEN Fluges (oder gar
+    // keinen), weil `active_flight_owner_identity` beim Beenden eines
+    // Fluges nicht geleert wird. Ein Absturz vor dem naechsten periodischen
+    // Speichern haette diesen falschen Eigentuemer auf der Platte
+    // eingefroren — beim naechsten Start haette `try_resume_flight` ihn als
+    // massgeblich behandelt und die serverseitige Reklamier-Pruefung
+    // uebersprungen.
+    *state
+        .active_flight_owner_identity
+        .lock()
+        .expect("active_flight_owner_identity lock") = Some(client.identity_fingerprint());
     save_active_flight(&app, &flight);
 
     // v1.7.0 Schritt 11 — Spurweite aus der Flugzeugdatei (Spec §5.3 B).
@@ -14691,13 +14847,6 @@ async fn flight_start(
         let mut guard = state.active_flight.lock().expect("active_flight lock");
         *guard = Some(Arc::clone(&flight));
     }
-    // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): Eigentuemer
-    // EINMAL hier festhalten, nicht spaeter bei jedem Speichern/Einreihen
-    // neu aus dem dann gerade eingeloggten Client ableiten.
-    *state
-        .active_flight_owner_identity
-        .lock()
-        .expect("active_flight_owner_identity lock") = Some(client.identity_fingerprint());
     // ActiveFlight is committed; release the setup-in-progress flag.
     setup_guard.disarm();
 
@@ -15398,6 +15547,20 @@ async fn flight_start_manual(
         navdata: Mutex::new(NavdataCache::default()),
     });
 
+    // Codex-Folgefund (adversarial, 05.09.2026, sechste Runde): VOR dem
+    // ERSTEN Speichern setzen, nicht erst wenn der Flug weiter unten in
+    // `state.active_flight` installiert wird — sonst traegt GENAU dieser
+    // erste Checkpoint noch den Eigentuemer des VORHERIGEN Fluges (oder gar
+    // keinen), weil `active_flight_owner_identity` beim Beenden eines
+    // Fluges nicht geleert wird. Ein Absturz vor dem naechsten periodischen
+    // Speichern haette diesen falschen Eigentuemer auf der Platte
+    // eingefroren — beim naechsten Start haette `try_resume_flight` ihn als
+    // massgeblich behandelt und die serverseitige Reklamier-Pruefung
+    // uebersprungen.
+    *state
+        .active_flight_owner_identity
+        .lock()
+        .expect("active_flight_owner_identity lock") = Some(client.identity_fingerprint());
     save_active_flight(&app, &flight);
     // v0.8.0: parallel-fetch dep/arr/alt-Navdata vom VPS. Non-blocking
     // (Background-Task), Failure → OurAirports-Fallback (transparent).
@@ -15418,13 +15581,6 @@ async fn flight_start_manual(
         let mut guard = state.active_flight.lock().expect("active_flight lock");
         *guard = Some(Arc::clone(&flight));
     }
-    // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): Eigentuemer
-    // EINMAL hier festhalten, nicht spaeter bei jedem Speichern/Einreihen
-    // neu aus dem dann gerade eingeloggten Client ableiten.
-    *state
-        .active_flight_owner_identity
-        .lock()
-        .expect("active_flight_owner_identity lock") = Some(client.identity_fingerprint());
     setup_guard.disarm();
 
     // Manual-Plan in FlightStats schreiben (analog zu SB-OFP-Path)

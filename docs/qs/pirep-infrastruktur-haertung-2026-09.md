@@ -333,6 +333,64 @@ Hilfsfunktion `peak_g_force_verschmelzen` (aus den zwei bisherigen
 Kopien der Merge-Logik zusammengezogen), jetzt zusaetzlich VOR dem
 Klassifikator-Aufruf angewendet.
 
+## Nachtrag #5 (05.09.2026): sechste Codex-Runde — der erste Checkpoint und die lebenden API-Aufrufe
+
+Adversarial-Review gegen den weiter angewachsenen Diff fand zwei letzte
+Luecken in derselben Eigentuemer-Kette.
+
+**Befund A — der ERSTE Checkpoint eines neuen Fluges trug noch den
+Eigentuemer des vorigen.** Alle drei Flug-Erzeugungspfade (`flight_start`,
+`flight_adopt`, manueller Plan) rufen `save_active_flight` UNMITTELBAR nach
+dem Bauen des `ActiveFlight`-Objekts auf — die Eigentuemer-Zuweisung aus
+Nachtrag #4 sass aber erst SPAETER, wenn der Flug in `state.active_flight`
+installiert wird. Da `active_flight_owner_identity` beim Beenden eines
+Fluges nicht geleert wird, haette dieser allererste Checkpoint den
+Fingerabdruck des VORHERIGEN Piloten getragen (oder gar keinen, beim
+allerersten Flug ueberhaupt). Ein Absturz genau in diesem schmalen Fenster
+haette den falschen Eigentuemer auf der Platte eingefroren.
+
+**Gefixt:** die Eigentuemer-Zuweisung wandert an alle drei Erzeugungspfaden
+VOR den jeweils ersten `save_active_flight`-Aufruf, direkt nachdem
+`client` (der gerade authentifizierte Account) feststeht.
+
+**Befund B — die Eigentuemer-Bindung schuetzte nur, was auf der Platte
+liegt, nicht die laufenden API-Aufrufe.** Alle bisherigen Fixes (Resume-
+Ablage, PIREP-Queue) greifen nur an den Stellen, die den `owner_identity`-
+Wert tatsaechlich lesen. Positions-Updates, normales/manuelles PIREP-
+Filing, Cancel und MQTT-Finalisierung lesen dagegen bei JEDEM Aufruf frisch
+`current_client(&state)` — waere waehrend eines laufenden Fluges bereits
+ein anderer Pilot eingeloggt, haetten ALLE diese Aufrufe klaglos mit dessen
+Credentials gearbeitet, unabhaengig vom Eigentuemer-Feld. Jede einzelne
+dieser Aufrufstellen im gesamten Flug-Lebenszyklus abzusichern waere eine
+sehr breite Aenderung mit hohem Streu-Risiko gewesen.
+
+**Gefixt an der Wurzel statt an jeder Aufrufstelle:** `phpvms_logout` lehnt
+jetzt ab, solange ein Flug aktiv ist ("bitte zuerst beenden oder
+abbrechen"). `phpvms_login` prueft zusaetzlich, ob ein bereits laufender
+Flug einem ANDEREN Account gehoert als dem neu eingegebenen Schluessel —
+ein Re-Login DESSELBEN Piloten (z. B. nach einem abgelaufenen Key) bleibt
+ausdruecklich erlaubt, ein Kontowechsel waehrend eines fremden laufenden
+Fluges wird verweigert. Damit kann `state.client` waehrend eines Fluges
+gar nicht mehr auf einen anderen Account wechseln — die Wurzel des
+gesamten Befundklasse ist verriegelt, ohne dass jede einzelne der vielen
+API-Aufrufstellen einzeln geprueft werden musste.
+
+**Tests:** Quelltext-Wächter fuer beide Riegel (`logout_prueft_
+aktiven_flug_vor_dem_leeren_von_state_client`,
+`login_prueft_den_flug_eigentuemer_vor_dem_ueberschreiben_von_state_
+client`), beide gegen Whitespace/Zeilenumbrueche gehaertet (`ohne_
+leerraum`) — ein rustfmt-Lauf brach die erste, naive Fassung sofort, weil
+er die mehrteilige Bedingung im Logout-Riegel auf mehrere Zeilen umbrach.
+Gegenprobe fuer beide Riegel durchgefuehrt: Reihenfolge vertauscht, beide
+Wächter schlagen zuverlaessig fehl.
+
+**Eigene Lehre aus dieser Runde:** gleich zwei Mal in Folge brach ein
+eigener Doc-Kommentar (nicht der Code selbst) den Klammer-Zaehler von
+`tests/angeschlossen.rs`, weil er ein einzelnes Klammerzeichen in
+Backticks zitierte, um Code zu erklaeren. Ab jetzt: Code-Fragmente in
+Kommentaren innerhalb dieser Datei nie mit einer einzelnen, unausgeglichenen
+`{` oder `}` zitieren — lieber umschreiben.
+
 ## Nicht behoben (bewusst außerhalb des Umfangs)
 
 * **`pirep_queue`s 50-Versuche-Grenze selbst** bleibt als Konzept
