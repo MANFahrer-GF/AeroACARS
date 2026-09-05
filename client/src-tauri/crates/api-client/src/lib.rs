@@ -1420,13 +1420,32 @@ impl Client {
     /// that's authenticated now" matches "the client that queued this work
     /// earlier". A non-cryptographic hash is sufficient for that — this is
     /// an ownership tag, not a security boundary.
+    ///
+    /// Codex-Folgefund (adversarial, 05.09.2026, dritte Runde): die erste
+    /// Fassung nahm `std::collections::hash_map::DefaultHasher` — dessen
+    /// Ausgabe ist laut eigener std-Doku AUSDRUECKLICH nicht stabil ueber
+    /// Rust-/Compiler-Versionen hinweg. Dieser Wert wird aber auf die
+    /// Platte geschrieben (`pirep_queue::QueuedPirep::owner_identity`) und
+    /// nach einem App-Update erneut verglichen — mit `DefaultHasher` haette
+    /// JEDES Client-Update jeden wartenden PIREP unwiederbringlich verwaisen
+    /// lassen, selbst fuer denselben Piloten mit demselben Key. FNV-1a von
+    /// Hand: deterministisch fuer immer, weil es UNSER Code ist, nicht
+    /// std-internes, ausdruecklich unspezifiziertes Verhalten.
     pub fn identity_fingerprint(&self) -> String {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        self.conn.api_key.hash(&mut hasher);
-        self.conn.base_url.as_str().hash(&mut hasher);
-        format!("{:016x}", hasher.finish())
+        const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+        const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+        let mut hash = FNV_OFFSET_BASIS;
+        for byte in self
+            .conn
+            .api_key
+            .as_bytes()
+            .iter()
+            .chain(self.conn.base_url.as_str().as_bytes())
+        {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+        format!("{hash:016x}")
     }
 
     fn endpoint(&self, path: &str) -> Result<Url, ApiError> {
@@ -2769,6 +2788,22 @@ mod tests {
         assert!(!client
             .identity_fingerprint()
             .contains("sehr-geheimer-schluessel"));
+    }
+
+    /// Codex-Folgefund (adversarial, 05.09.2026, dritte Runde): dieser Wert
+    /// wird persistiert (`pirep_queue::QueuedPirep::owner_identity`) und
+    /// nach einem App-Update erneut verglichen — er muss also fuer IMMER
+    /// deterministisch bleiben, nicht nur innerhalb eines Prozesslaufs. Ein
+    /// fest verdrahteter Erwartungswert faengt es, wenn hier je wieder ein
+    /// std-Hasher (z.B. `DefaultHasher`, dessen Ausgabe laut eigener Doku
+    /// NICHT versionsstabil ist) landet — der wuerde diesen Test trotzdem
+    /// bestehen wenn er nur "gleiche Eingabe → gleiche Ausgabe INNERHALB
+    /// dieses Testlaufs" prueft, aber niemals denselben Wert wie hier
+    /// fest eingetragen produzieren.
+    #[test]
+    fn fingerabdruck_ist_ein_fest_verdrahteter_wert_kein_prozesslokaler_hash() {
+        let client = client_fuer("https://fnv.example.com/api", "fnv-test-key");
+        assert_eq!(client.identity_fingerprint(), "0157c172528bd329");
     }
 
     // ---- same_host_redirect_decision (v0.19.x/v0.20.x FIX: X-API-Key redirect leak) ----

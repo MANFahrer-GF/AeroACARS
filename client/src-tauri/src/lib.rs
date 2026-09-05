@@ -16473,6 +16473,54 @@ mod pirep_queue_eigentuemer_tests {
     }
 }
 
+#[cfg(test)]
+/// Codex-Folgefund (adversarial, 05.09.2026, zweite Runde): eine reine
+/// Fingerabdruck-Pruefung ohne Reklamier-Pfad wuerde JEDEN Alt-Eintrag
+/// (`owner_identity: None`, von vor diesem Feld) und jeden Eintrag nach
+/// einer API-Key-Rotation DESSELBEN Piloten dauerhaft verwaisen lassen —
+/// "no-ship", weil es beim Update selbst jeden wartenden PIREP verliert.
+/// Der Worker-Loop bleibt Tauri-/async-gebunden und nicht isoliert testbar
+/// (wie der Rest dieser Infrastruktur) — ein Quelltext-Wächter faengt
+/// trotzdem, wenn der Server-Reklamier-Pfad ersatzlos verschwindet.
+mod pirep_queue_reklamieren_wiring_tests {
+    #[test]
+    fn worker_reklamiert_unbekannte_eintraege_serverseitig_statt_sie_endgueltig_aufzugeben() {
+        const SRC: &str = include_str!("lib.rs");
+        // Nadel aus zwei Teilen zusammengesetzt, NICHT als ein Literal: der
+        // Test liegt VOR der echten Funktion im Quelltext, und
+        // `include_str!` liest die GESAMTE Datei einschliesslich dieser
+        // Zeile selbst — ein einzelnes Literal-Suchmuster faende sich
+        // sonst selbst zuerst statt der echten Funktionsdefinition weiter
+        // unten (derselbe Fehler, der hier beinahe reingerutscht waere).
+        // Bewusst OHNE die oeffnende geschweifte Funktions-Klammer am Ende:
+        // ein einzelnes, in einem String-Literal unausgeglichenes
+        // Klammerzeichen wuerde die naive Klammer-Zaehlung in
+        // tests/angeschlossen.rs's Test-Ueberspring-Logik aus dem Takt
+        // bringen und den Rest der Datei faelschlich als "noch im
+        // Testmodul" behandeln (real passiert, siehe Nachtrag in der
+        // Doku).
+        let nadel = format!("{}{}", "fn spawn_pirep_queue_worker", "(app: AppHandle)");
+        let start = SRC
+            .find(&nadel)
+            .expect("spawn_pirep_queue_worker nicht mehr gefunden — Test anpassen, nicht loeschen");
+        let rest = &SRC[start..];
+        let ende = rest[1..].find("\nfn ").map(|i| i + 1).unwrap_or(rest.len());
+        let funktionskoerper = &rest[..ende];
+        assert!(
+            funktionskoerper.contains("get_user_pireps_in_progress"),
+            "der Worker fragt vor der Quarantaene nicht mehr serverseitig nach — \
+             Alt-Eintraege (owner_identity: None) und Eintraege nach einer \
+             API-Key-Rotation blieben dann fuer immer liegen"
+        );
+        assert!(
+            funktionskoerper.contains("owner_identity = Some(aktuelle_identitaet"),
+            "der Worker schreibt den Fingerabdruck nach serverseitiger \
+             Bestaetigung nicht mehr um — der Eintrag wuerde beim naechsten \
+             Tick wieder als fremd gelten"
+        );
+    }
+}
+
 fn spawn_pirep_queue_worker(app: AppHandle) {
     // v0.5.50 — `tauri::async_runtime::spawn` statt `tokio::spawn`.
     // Diese Funktion wird aus dem synchronen `.setup()`-Closure
@@ -16523,33 +16571,71 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
             }
             tracing::info!(queued_count = queued.len(), "PIREP-queue worker tick");
             let aktuelle_identitaet = client.identity_fingerprint();
+            // Codex-Folgefund (adversarial, 05.09.2026, zweite Runde): eine
+            // reine Fingerabdruck-Pruefung wuerde JEDEN Alt-Eintrag (von vor
+            // diesem Feld, `owner_identity: None`) fuer immer in Quarantaene
+            // lassen — auch wenn derselbe Pilot, der ihn eingereiht hat,
+            // laengst wieder eingeloggt ist. Derselbe Ausfall bei einer
+            // API-Key-Rotation DESSELBEN Piloten (neuer Fingerabdruck, alter
+            // Eintrag). Vor der endgueltigen Quarantaene EINMAL pro Tick
+            // serverseitig nachfragen (`GET /api/user/pireps?state=0`,
+            // serverseitig auf den eingeloggten Piloten gefiltert): steht
+            // der Eintrag dort noch als IN_PROGRESS, gehoert er unabhaengig
+            // vom lokalen Fingerabdruck demselben Account — reklamieren
+            // (Fingerabdruck neu schreiben) statt verwaisen lassen.
+            let mut server_pireps_in_progress: Option<Vec<String>> = None;
             for mut q in queued {
-                // Codex-Folgefund (adversarial, 05.09.2026): `pending_pireps/`
-                // ist global, nicht pro Pilot. Seit die Slow-Phase oben nicht
-                // mehr aufgibt, kann ein Eintrag lange genug liegen, dass ein
-                // ANDERER Pilot inzwischen auf derselben Maschine eingeloggt
-                // ist (`phpvms_logout` erlaubt das ausdruecklich). Ohne diese
-                // Pruefung wuerde der Worker Pilot As PIREP mit Pilot Bs
-                // Credentials einreichen — Erfolg: falsch zugeordnet;
-                // 403/404 (nicht-transient): geloescht, Pilot As Flug
-                // dauerhaft verloren. Quarantaene statt Einreichen ODER
-                // Loeschen: weder Versuchszaehler noch Retry-Zeit werden
-                // angefasst, der Eintrag liegt einfach weiter, bis der
-                // richtige Pilot wieder eingeloggt ist (oder das VA-Team
-                // manuell eingreift). `owner_identity: None` (Alt-Eintraege
-                // von vor diesem Feld) zaehlt ebenfalls als "Eigentuemer
-                // unbekannt" — NICHT als "niemandes, also freigegeben".
+                // `pending_pireps/` ist global, nicht pro Pilot. Seit die
+                // Slow-Phase oben nicht mehr aufgibt, kann ein Eintrag lange
+                // genug liegen, dass ein ANDERER Pilot inzwischen auf
+                // derselben Maschine eingeloggt ist (`phpvms_logout` erlaubt
+                // das ausdruecklich). Ohne diese Pruefung wuerde der Worker
+                // Pilot As PIREP mit Pilot Bs Credentials einreichen —
+                // Erfolg: falsch zugeordnet; 403/404 (nicht-transient):
+                // geloescht, Pilot As Flug dauerhaft verloren.
                 if !pirep_queue_eintrag_gehoert_aktuellem_piloten(
                     q.owner_identity.as_deref(),
                     &aktuelle_identitaet,
                 ) {
-                    tracing::warn!(
-                        pirep_id = %q.pirep_id,
-                        eigentuemer_bekannt = q.owner_identity.is_some(),
-                        "pirep_queue: Eintrag gehoert nicht dem aktuell eingeloggten Piloten — \
-                         Quarantaene, weder eingereicht noch geloescht"
-                    );
-                    continue;
+                    if server_pireps_in_progress.is_none() {
+                        server_pireps_in_progress = Some(
+                            client
+                                .get_user_pireps_in_progress()
+                                .await
+                                .map(|liste| liste.into_iter().map(|p| p.id).collect())
+                                .unwrap_or_default(),
+                        );
+                    }
+                    let serverseitig_bestaetigt = server_pireps_in_progress
+                        .as_ref()
+                        .is_some_and(|ids| ids.iter().any(|id| id == &q.pirep_id));
+                    if serverseitig_bestaetigt {
+                        tracing::info!(
+                            pirep_id = %q.pirep_id,
+                            eigentuemer_bekannt = q.owner_identity.is_some(),
+                            "pirep_queue: Eintrag serverseitig als IN_PROGRESS des aktuellen \
+                             Accounts bestaetigt — reklamiert (Alt-Eintrag oder API-Key-Rotation)"
+                        );
+                        q.owner_identity = Some(aktuelle_identitaet.clone());
+                        if let Err(e) = pirep_queue::enqueue(&app, &q) {
+                            tracing::warn!(pirep_id = %q.pirep_id, error = %e, "pirep_queue: Reklamieren fehlgeschlagen (Persistieren)");
+                        }
+                        // Faellt durch zur normalen Verarbeitung unten — der
+                        // Eintrag ist jetzt wie jeder andere eigene.
+                    } else {
+                        // Quarantaene statt Einreichen ODER Loeschen: weder
+                        // Versuchszaehler noch Retry-Zeit werden angefasst,
+                        // der Eintrag liegt einfach weiter, bis der richtige
+                        // Pilot wieder eingeloggt ist (oder das VA-Team
+                        // manuell eingreift).
+                        tracing::warn!(
+                            pirep_id = %q.pirep_id,
+                            eigentuemer_bekannt = q.owner_identity.is_some(),
+                            "pirep_queue: Eintrag gehoert nicht dem aktuell eingeloggten Piloten — \
+                             Quarantaene, weder eingereicht noch geloescht"
+                        );
+                        continue;
+                    }
                 }
                 // Nachgereicht (externe Gegenpruefung Codex, adversarial):
                 // eine Wartezeit (Retry-After oder der langsame Takt nach

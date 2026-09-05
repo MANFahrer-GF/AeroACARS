@@ -206,6 +206,65 @@ Eigentuemer-Entscheidung durchgefuehrt: mit `None` absichtlich als "frei"
 behandelt schlaegt `unbekannter_eigentuemer_gilt_nicht_als_frei` zuverlaessig
 fehl.
 
+## Nachtrag #3 (05.09.2026): vierte Codex-Runde — die Eigentuemer-Pruefung selbst hatte zwei Ausfaelle
+
+Adversarial-Review gegen den ANGEWACHSENEN Diff (alle bisherigen Nachtraege
+zusammen) fand zwei "no-ship"-Probleme GENAU in der Eigentuemer-Pruefung
+aus Befund 4 — beide haetten fuer sich genommen wartende PIREPs dauerhaft
+verwaisen lassen, also exakt das Gegenteil dessen bewirkt, was der Fix
+verhindern sollte.
+
+**Ausfall A — der Upgrade-Moment selbst.** Jeder VOR diesem Fix bereits
+gequeuete PIREP deserialisiert mit `owner_identity: None` (der
+`#[serde(default)]`). Die reine Fingerabdruck-Pruefung aus Befund 4 laesst
+`None` nie durch — ein bereits wartender, fertig geflogener PIREP waere
+beim ersten Tick nach dem Update fuer immer in Quarantaene gelandet, auch
+wenn derselbe Pilot, der ihn eingereiht hat, noch eingeloggt ist.
+
+**Ausfall B — API-Key-Rotation.** Der Fingerabdruck haengt am Rohschluessel;
+rotiert ein Pilot seinen eigenen API-Key (phpVMS-Einstellungen), aendert
+sich der Fingerabdruck, obwohl es derselbe Account bleibt — jeder zuvor
+gequeuete Eintrag faellt danach dauerhaft durch dieselbe Pruefung.
+Verschaerft durch einen dritten, unabhaengigen Fund: die erste Fassung von
+`identity_fingerprint` nahm `std::collections::hash_map::DefaultHasher`,
+dessen Ausgabe laut eigener std-Doku NICHT ueber Rust-/Compiler-Versionen
+stabil ist — waere also bei JEDEM Client-Update ohnehin fuer ALLE
+Eintraege, nicht nur nach einer Key-Rotation, neu ausgefallen.
+
+**Gefixt (zwei Teile):**
+
+1. `identity_fingerprint` nimmt jetzt FNV-1a von Hand statt `DefaultHasher`
+   — deterministisch fuer immer, weil es eigener Code ist, nicht
+   std-internes, ausdruecklich unspezifiziertes Verhalten.
+2. Vor der endgueltigen Quarantaene fragt der Worker EINMAL pro Tick
+   serverseitig nach (`GET /api/user/pireps?state=0` via
+   `get_user_pireps_in_progress()`, bereits serverseitig auf den
+   eingeloggten Piloten gefiltert): steht der Eintrag dort noch als
+   IN_PROGRESS, gehoert er unabhaengig vom lokalen Fingerabdruck demselben
+   Account — der Worker schreibt den aktuellen Fingerabdruck auf den
+   Eintrag (reklamiert ihn) statt ihn verwaisen zu lassen. Ein echter
+   Fremd-Eigentuemer (Pilot A eingeloggt als Pilot B) taucht in Pilot Bs
+   eigener, serverseitig gefilterter Liste nie auf und bleibt korrekt in
+   Quarantaene.
+
+**Tests:** golden-value-Test fuer `identity_fingerprint` (fest verdrahteter
+Erwartungswert, faengt einen kuenftigen Ruecktausch auf einen std-Hasher —
+ein reiner "gleiche Eingabe -> gleiche Ausgabe"-Test haette das NICHT
+gefangen, weil er auch mit `DefaultHasher` innerhalb eines Testlaufs
+bestanden haette). Quelltext-Wächter fuer den Reklamier-Pfad im
+Worker-Loop (Tauri-/async-gebunden, nicht isoliert testbar) — verlangt
+sowohl den Server-Aufruf als auch das Umschreiben von `owner_identity`.
+**Eigene Lehre aus dieser Runde:** die erste Fassung dieses Wächters
+suchte per `.find("fn spawn_pirep_queue_worker")` nach der Zielfunktion —
+genau dieses Literal stand aber bereits VORHER im eigenen Testcode (als
+Teil der Fehlermeldung), `include_str!` liest die gesamte Datei
+einschliesslich dieser Zeile, also fand sich der Test beinahe selbst statt
+der echten Funktion. Behoben nach demselben Muster wie
+`vor_der_server_auskunft_wird_nichts_geloescht` weiter oben in dieser
+Datei: die Suchnadel wird aus zwei Teilen zur Laufzeit zusammengesetzt,
+damit sie als zusammenhaengendes Literal nirgends im eigenen Testcode
+steht. Gegenprobe fuer beide Haelften des Wächters durchgefuehrt.
+
 ## Nicht behoben (bewusst außerhalb des Umfangs)
 
 * **`pirep_queue`s 50-Versuche-Grenze selbst** bleibt als Konzept
