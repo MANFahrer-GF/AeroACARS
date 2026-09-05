@@ -1494,6 +1494,22 @@ struct AppState {
     /// the persisted `SimKind`.
     xplane: Mutex<sim_xplane::XPlaneAdapter>,
     active_flight: Mutex<Option<Arc<ActiveFlight>>>,
+    /// Nachgereicht (externe Gegenpruefung Codex, adversarial, waehrend
+    /// der v1.7.17-QS-Runde entdeckt): ein reines Lifecycle-Schloss fuer
+    /// die EINZIGE Aktiv-Flug-Ablage (`active_flight_path` — ein fester
+    /// Pfad, kein Datei-pro-PIREP). Ohne dieses Schloss ist jedes
+    /// `if !flight.stop.load(...) { save_active_flight(...) }` ein
+    /// Time-of-Check-to-Time-of-Use-Rennen: zwischen dem Lesen von `stop`
+    /// und dem tatsaechlichen Schreiben kann `flight_end`/`flight_cancel`/
+    /// `flight_forget` dazwischenfunken, die Ablage loeschen — und der
+    /// zuvor schon "erlaubte" Schreibzugriff wuerde sie wiederbeleben,
+    /// oder schlimmer: die Ablage eines INZWISCHEN gestarteten neuen
+    /// Fluges ueberschreiben (derselbe feste Pfad). `save_active_flight`
+    /// und `teardown_active_flight_persistence` sind die EINZIGEN beiden
+    /// Stellen, die dieses Schloss nehmen — Pruefen und Schreiben (bzw.
+    /// Setzen-und-Loeschen) passiert in JEWEILS EINEM kritischen
+    /// Abschnitt, nie ueber zwei getrennte Sperren hinweg.
+    persistence_lock: Mutex<()>,
     /// Ring buffer of pilot-visible activity events. Surfaced via the
     /// `activity_log_get` Tauri command; the dashboard renders them in
     /// the new "ACARS-Log" tab — same idea as the smartcars activity
@@ -12277,8 +12293,28 @@ fn clear_persisted_flight(app: &AppHandle) {
     let Ok(path) = active_flight_path(app) else {
         return;
     };
-    if path.exists() {
-        let _ = std::fs::remove_file(&path);
+    let state = app.state::<AppState>();
+    {
+        // Nachgereicht (externe Gegenpruefung Codex, adversarial, waehrend
+        // der v1.7.17-QS-Runde entdeckt): denselben kritischen Abschnitt
+        // nehmen wie `save_active_flight` (`AppState::persistence_lock`),
+        // BEVOR die Ablage geloescht wird. An JEDER Aufrufstelle dieser
+        // Funktion ist `flight.stop` zu diesem Zeitpunkt bereits `true`
+        // (entweder direkt davor gesetzt oder frueher in derselben
+        // Funktion) — ein Schreibversuch, der seinen eigenen `stop`-Check
+        // schon VOR dieser Loeschung bestanden hatte und noch mitten im
+        // Schreiben ist, haelt denselben Lock; diese Loeschung wartet
+        // darauf und gewinnt danach garantiert (die naechste Pruefung
+        // sieht `stop == true` und schreibt nicht mehr) — ohne das Schloss
+        // haette eine solche verspaetete Schreibung die Loeschung
+        // rueckgaengig machen koennen.
+        let _guard = state
+            .persistence_lock
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if path.exists() {
+            let _ = std::fs::remove_file(&path);
+        }
     }
     // v0.8.3 (#2): Auto-Start-Lock zuruecksetzen. Vorher: `auto_start_last_bid_id`
     // wurde nur bei FEHLGESCHLAGENEM flight_start gecleart ([:20616]), bei
@@ -12291,7 +12327,6 @@ fn clear_persisted_flight(app: &AppHandle) {
     //
     // Beim Aufraeumen des aktiven Flugs ist die Session aus Auto-Start-Sicht
     // abgeschlossen — der naechste Tick darf wieder matchen, egal welcher Bid.
-    let state = app.state::<AppState>();
     let mut g = state
         .auto_start_last_bid_id
         .lock()
@@ -12299,36 +12334,160 @@ fn clear_persisted_flight(app: &AppHandle) {
     *g = None;
 }
 
-fn save_active_flight(app: &AppHandle, flight: &ActiveFlight) -> bool {
-    // Snapshot stats inside a short-lived guard so we don't hold the
-    // mutex while doing I/O.
-    let stats_snapshot = {
-        let guard = flight.stats.lock().expect("flight stats");
-        PersistedFlightStats::snapshot_from(&guard)
-    };
-    let persisted = PersistedFlight {
-        pirep_id: flight.pirep_id.clone(),
-        bid_id: flight.bid_id,
-        flight_id: flight.flight_id.clone(),
-        bid_callsign: flight.bid_callsign.clone(),
-        pilot_callsign: flight.pilot_callsign.clone(),
-        started_at: flight.started_at,
-        // Wird von `write_persisted_flight` gesetzt — hier bewusst None.
-        zuletzt_geschrieben: None,
-        airline_icao: flight.airline_icao.clone(),
-        airline_logo_url: flight.airline_logo_url.clone(),
-        planned_registration: flight.planned_registration.clone(),
-        flight_number: flight.flight_number.clone(),
-        dpt_airport: flight.dpt_airport.clone(),
-        arr_airport: flight.arr_airport.clone(),
-        fares: flight.fares.clone(),
-        stats: stats_snapshot,
-    };
-    if let Err(e) = write_persisted_flight(app, &persisted) {
-        tracing::warn!(error = ?e, "could not persist active flight");
-        return false;
+/// Fuehrt `schreiben` nur aus, wenn `stop` noch nicht gesetzt ist —
+/// PRUEFUNG und AUSFUEHRUNG in EINEM kritischen Abschnitt unter `lock`.
+/// `None` heisst: `stop` war zum Pruef-Zeitpunkt bereits `true`, es wurde
+/// gar nichts ausgefuehrt.
+///
+/// ⚠ Nachgereicht (externe Gegenpruefung Codex, adversarial, waehrend der
+/// v1.7.17-QS-Runde entdeckt): losgeloest von `AppHandle`/Tauri, damit die
+/// eigentliche Synchronisations-Eigenschaft unabhaengig von Mock-
+/// Infrastruktur getestet werden kann — siehe `persistence_lock_tests`.
+/// Der Fehler, den diese Funktion behebt: vorher lagen die Pruefung
+/// (`!flight.stop.load(...)`, beim Aufrufer) und das Schreiben
+/// (`write_persisted_flight`, hier) unsynchronisiert auseinander. Ein
+/// `clear_persisted_flight`-Aufruf DAZWISCHEN konnte die Ablage loeschen,
+/// und der laengst "erlaubte" Schreibzugriff hatte sie hinterher
+/// wiederbelebt — oder schlimmer, die Ablage eines inzwischen
+/// gestarteten NEUEN Fluges ueberschrieben (derselbe feste Dateipfad).
+fn schreiben_falls_aktiv<R>(
+    lock: &Mutex<()>,
+    stop: &AtomicBool,
+    schreiben: impl FnOnce() -> R,
+) -> Option<R> {
+    let _guard = lock.lock().unwrap_or_else(|poison| poison.into_inner());
+    if stop.load(Ordering::Relaxed) {
+        return None;
     }
-    true
+    Some(schreiben())
+}
+
+fn save_active_flight(app: &AppHandle, flight: &ActiveFlight) -> bool {
+    let state = app.state::<AppState>();
+    schreiben_falls_aktiv(&state.persistence_lock, &flight.stop, || {
+        // Snapshot stats inside a short-lived guard so we don't hold the
+        // mutex while doing I/O.
+        let stats_snapshot = {
+            let guard = flight.stats.lock().expect("flight stats");
+            PersistedFlightStats::snapshot_from(&guard)
+        };
+        let persisted = PersistedFlight {
+            pirep_id: flight.pirep_id.clone(),
+            bid_id: flight.bid_id,
+            flight_id: flight.flight_id.clone(),
+            bid_callsign: flight.bid_callsign.clone(),
+            pilot_callsign: flight.pilot_callsign.clone(),
+            started_at: flight.started_at,
+            // Wird von `write_persisted_flight` gesetzt — hier bewusst None.
+            zuletzt_geschrieben: None,
+            airline_icao: flight.airline_icao.clone(),
+            airline_logo_url: flight.airline_logo_url.clone(),
+            planned_registration: flight.planned_registration.clone(),
+            flight_number: flight.flight_number.clone(),
+            dpt_airport: flight.dpt_airport.clone(),
+            arr_airport: flight.arr_airport.clone(),
+            fares: flight.fares.clone(),
+            stats: stats_snapshot,
+        };
+        if let Err(e) = write_persisted_flight(app, &persisted) {
+            tracing::warn!(error = ?e, "could not persist active flight");
+            return false;
+        }
+        true
+    })
+    .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod persistence_lock_tests {
+    use super::*;
+    use std::sync::Barrier;
+    use std::thread;
+
+    #[test]
+    fn schreibt_wenn_nicht_gestoppt() {
+        let lock = Mutex::new(());
+        let stop = AtomicBool::new(false);
+        let ergebnis = schreiben_falls_aktiv(&lock, &stop, || 42);
+        assert_eq!(ergebnis, Some(42));
+    }
+
+    #[test]
+    fn schreibt_nicht_wenn_bereits_gestoppt() {
+        let lock = Mutex::new(());
+        let stop = AtomicBool::new(true);
+        let mut ausgefuehrt = false;
+        let ergebnis = schreiben_falls_aktiv(&lock, &stop, || {
+            ausgefuehrt = true;
+        });
+        assert_eq!(ergebnis, None);
+        assert!(
+            !ausgefuehrt,
+            "die Schreib-Funktion darf gar nicht erst laufen"
+        );
+    }
+
+    /// Der eigentliche Befund (Codex, externe Gegenpruefung, Runde 17):
+    /// ein Schreibzugriff, der seinen `stop`-Check schon bestanden hat und
+    /// noch mitten im (hier absichtlich verzoegerten) Schreiben ist, darf
+    /// eine GLEICHZEITIGE Loeschung nicht ueberholen — beide kritischen
+    /// Abschnitte (Schreiben, Loeschen) duerfen sich NIE zeitlich
+    /// ueberlappen. Mit `sleep` im Kern beider Abschnitte kuenstlich
+    /// vergroessertes Rennfenster, ueber viele Durchlaeufe wiederholt —
+    /// ein fehlendes/kaputtes Schloss wuerde hier zuverlaessig eine
+    /// Ueberlappung zeigen.
+    #[test]
+    fn schreiben_und_loeschen_ueberlappen_sich_nie() {
+        for _ in 0..200 {
+            let lock = Arc::new(Mutex::new(()));
+            let stop = Arc::new(AtomicBool::new(false));
+            let gleichzeitig_drin = Arc::new(AtomicBool::new(false));
+            let ueberlappung_gesehen = Arc::new(AtomicBool::new(false));
+            let barrier = Arc::new(Barrier::new(2));
+
+            let betrete_und_pruefe = {
+                let gleichzeitig_drin = Arc::clone(&gleichzeitig_drin);
+                let ueberlappung_gesehen = Arc::clone(&ueberlappung_gesehen);
+                move || {
+                    if gleichzeitig_drin.swap(true, Ordering::SeqCst) {
+                        ueberlappung_gesehen.store(true, Ordering::SeqCst);
+                    }
+                    thread::sleep(std::time::Duration::from_micros(200));
+                    gleichzeitig_drin.store(false, Ordering::SeqCst);
+                }
+            };
+
+            let schreiber = {
+                let lock = Arc::clone(&lock);
+                let stop = Arc::clone(&stop);
+                let betrete_und_pruefe = betrete_und_pruefe.clone();
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    schreiben_falls_aktiv(&lock, &stop, betrete_und_pruefe);
+                })
+            };
+            let loescher = {
+                let lock = Arc::clone(&lock);
+                let stop = Arc::clone(&stop);
+                let betrete_und_pruefe = betrete_und_pruefe.clone();
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
+                    stop.store(true, Ordering::Relaxed);
+                    betrete_und_pruefe();
+                })
+            };
+            schreiber.join().unwrap();
+            loescher.join().unwrap();
+
+            assert!(
+                !ueberlappung_gesehen.load(Ordering::SeqCst),
+                "Schreiben und Loeschen liefen gleichzeitig — das Schloss schuetzt nicht"
+            );
+        }
+    }
 }
 
 // ---- Airport cache ----
@@ -15297,6 +15456,29 @@ mod pirep_queue {
         /// „kein MQTT-Publish" statt zu crashen.
         #[serde(default)]
         pub pirep_payload_json: serde_json::Value,
+        /// v1.7.17 (Nachgereicht, externe Gegenpruefung Codex, adversarial):
+        /// vorher gab der Worker nach `MAX_FAST_ATTEMPTS` (50, ~50 Minuten
+        /// bei festem 60s-Takt) fuer immer und STILL auf — nur eine
+        /// `tracing::warn!`-Zeile, nichts, was der Pilot je zu sehen bekam.
+        /// Ein laengerer phpVMS-Ausfall verlor damit einen bereits
+        /// geflogenen, fertigen PIREP dauerhaft und lautlos. Dieses Flag
+        /// haelt fest, dass die EINMALIGE, sichtbare Warnung im Activity-
+        /// Log schon geschrieben wurde — der Worker gibt seitdem nicht mehr
+        /// auf, sondern versucht es nur noch in groesseren Abstaenden
+        /// weiter (`SLOW_RETRY_INTERVAL_SECS`), siehe `retry_not_before`.
+        #[serde(default)]
+        pub dead_letter_notified: bool,
+        /// v1.7.17 (Nachgereicht): fruehester Zeitpunkt fuer den naechsten
+        /// Versuch — gesetzt entweder aus einem serverseitigen `Retry-After`
+        /// (`ApiError::RateLimited`, gedeckelt auf `QUEUE_RATE_LIMIT_CAP_SECS`,
+        /// um denselben Klasse von Fehler zu vermeiden, die die
+        /// Departure-Gate-Rueckzugs-Meldung durchlaufen hat, siehe
+        /// `RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC`) oder, nach dem
+        /// Ueberschreiten von `MAX_FAST_ATTEMPTS`, aus dem langsameren
+        /// Takt. `None` heisst: beim naechsten Tick sofort erneut
+        /// versuchen (der normale, schnelle Anfangszustand).
+        #[serde(default)]
+        pub retry_not_before: Option<DateTime<Utc>>,
     }
 
     fn dir(app: &AppHandle) -> Option<PathBuf> {
@@ -15980,6 +16162,138 @@ mod nachtrag_queue {
     }
 }
 
+/// Nach wie vielen Versuchen im festen 60s-Takt (~50 Minuten) der Worker
+/// die einmalige, sichtbare Dead-Letter-Warnung ausloest und in die
+/// LANGSAME Phase wechselt — siehe `pirep_queue_dead_letter_warnung_faellig`
+/// und `pirep_queue_slow_phase_wartezeit_sec`.
+///
+/// ⚠ Nachgereicht (externe Gegenpruefung Codex, adversarial, waehrend der
+/// v1.7.17-QS-Runde entdeckt, aber eine vorbestehende, fuer JEDE PIREP-
+/// Einreichung geltende Luecke seit v0.5.49): vorher gab der Worker hier
+/// fuer immer und STILL auf — nur eine `tracing::warn!`-Zeile, die kein
+/// Pilot je zu sehen bekam. Ein Ausfall/eine Sperre laenger als ~50
+/// Minuten verlor damit einen bereits geflogenen, fertigen PIREP
+/// dauerhaft und lautlos.
+const PIREP_QUEUE_MAX_FAST_ATTEMPTS: u32 = 50;
+
+/// Wartezeit zwischen Versuchen, NACHDEM `PIREP_QUEUE_MAX_FAST_ATTEMPTS`
+/// ueberschritten ist. Der Worker gibt seitdem nicht mehr auf, sondern
+/// versucht es nur noch seltener — genug, um bei einem laengeren Ausfall
+/// nicht weiter im 60s-Takt gegen denselben Fehler zu rennen, kurz genug,
+/// um eine Erholung des Servers innerhalb von Stunden, nicht Tagen, zu
+/// bemerken.
+const PIREP_QUEUE_SLOW_RETRY_INTERVAL_SECS: i64 = 1800;
+
+/// Obergrenze fuer ein vom Server diktiertes `Retry-After` in DIESER
+/// Warteschlange. Bewusst GROSSZUEGIGER als
+/// `RATE_LIMIT_WARTEZEIT_OBERGRENZE_SEC` (eine Stunde statt eine Minute):
+/// jene Grenze schuetzt einen ABGETRENNTEN, nicht persistenten Tokio-Task
+/// vor stundenlangem Schlaf (siehe dessen Dokumentation, v1.7.17 Runde
+/// 11) — diese Warteschlange dagegen ist ein DAUERHAFTER, plattenbasierter
+/// Hintergrund-Worker, der ohnehin jede Minute erneut prueft; ein
+/// laengeres Warten kostet hier nur einen uebersprungenen Tick, kein
+/// verlorenes Ergebnis.
+const PIREP_QUEUE_RATE_LIMIT_CAP_SECS: u64 = 3600;
+
+/// Ob dieser Queue-Eintrag in DIESEM Tick ueberhaupt versucht werden soll
+/// — `false` heisst: eine Wartezeit (Retry-After oder der langsame Takt)
+/// ist noch nicht abgelaufen, einfach zum naechsten Eintrag weitergehen.
+fn pirep_queue_eintrag_ist_faellig(
+    retry_not_before: Option<DateTime<Utc>>,
+    jetzt: DateTime<Utc>,
+) -> bool {
+    match retry_not_before {
+        Some(not_before) => jetzt >= not_before,
+        None => true,
+    }
+}
+
+/// Ob VOR diesem Versuch die einmalige, sichtbare Dead-Letter-Warnung
+/// ausgeloest werden soll — nur beim ERSTEN Ueberschreiten der Schnell-
+/// Phase, nie danach erneut (sonst Log-Spam bei jedem weiteren Versuch).
+fn pirep_queue_dead_letter_warnung_faellig(attempt_count: u32, dead_letter_notified: bool) -> bool {
+    attempt_count >= PIREP_QUEUE_MAX_FAST_ATTEMPTS && !dead_letter_notified
+}
+
+/// Wartezeit (Sekunden) vor dem naechsten Versuch, NACHDEM dieser
+/// Versuch (mit dem hier uebergebenen, bereits erhoehten Zaehler)
+/// fehlgeschlagen ist — `None` in der schnellen Phase (naechster Tick
+/// versucht sofort erneut, unveraendertes Verhalten seit v0.5.49).
+fn pirep_queue_slow_phase_wartezeit_sec(attempt_count_nach_diesem_versuch: u32) -> Option<i64> {
+    if attempt_count_nach_diesem_versuch >= PIREP_QUEUE_MAX_FAST_ATTEMPTS {
+        Some(PIREP_QUEUE_SLOW_RETRY_INTERVAL_SECS)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod pirep_queue_dead_letter_tests {
+    use super::*;
+
+    #[test]
+    fn ohne_wartezeit_ist_der_eintrag_sofort_faellig() {
+        assert!(pirep_queue_eintrag_ist_faellig(None, Utc::now()));
+    }
+
+    #[test]
+    fn vor_ablauf_der_wartezeit_ist_der_eintrag_nicht_faellig() {
+        let jetzt = Utc::now();
+        let not_before = jetzt + chrono::Duration::seconds(60);
+        assert!(!pirep_queue_eintrag_ist_faellig(Some(not_before), jetzt));
+    }
+
+    #[test]
+    fn nach_ablauf_der_wartezeit_ist_der_eintrag_wieder_faellig() {
+        let jetzt = Utc::now();
+        let not_before = jetzt - chrono::Duration::seconds(1);
+        assert!(pirep_queue_eintrag_ist_faellig(Some(not_before), jetzt));
+    }
+
+    /// Der eigentliche Befund (Codex, externe Gegenpruefung): vorher gab
+    /// der Worker hier fuer immer und still auf. Die Warnung muss GENAU
+    /// beim Ueberschreiten der Schnellphase feuern.
+    #[test]
+    fn dead_letter_warnung_feuert_beim_ueberschreiten_der_schnellphase() {
+        assert!(pirep_queue_dead_letter_warnung_faellig(
+            PIREP_QUEUE_MAX_FAST_ATTEMPTS,
+            false
+        ));
+    }
+
+    #[test]
+    fn dead_letter_warnung_feuert_nicht_vor_der_schnellphase() {
+        assert!(!pirep_queue_dead_letter_warnung_faellig(
+            PIREP_QUEUE_MAX_FAST_ATTEMPTS - 1,
+            false
+        ));
+    }
+
+    #[test]
+    fn dead_letter_warnung_feuert_kein_zweites_mal() {
+        assert!(!pirep_queue_dead_letter_warnung_faellig(
+            PIREP_QUEUE_MAX_FAST_ATTEMPTS + 5,
+            true
+        ));
+    }
+
+    #[test]
+    fn schnellphase_hat_keine_wartezeit() {
+        assert_eq!(
+            pirep_queue_slow_phase_wartezeit_sec(PIREP_QUEUE_MAX_FAST_ATTEMPTS - 1),
+            None
+        );
+    }
+
+    #[test]
+    fn langsame_phase_wartet_den_festgelegten_takt() {
+        assert_eq!(
+            pirep_queue_slow_phase_wartezeit_sec(PIREP_QUEUE_MAX_FAST_ATTEMPTS),
+            Some(PIREP_QUEUE_SLOW_RETRY_INTERVAL_SECS)
+        );
+    }
+}
+
 fn spawn_pirep_queue_worker(app: AppHandle) {
     // v0.5.50 — `tauri::async_runtime::spawn` statt `tokio::spawn`.
     // Diese Funktion wird aus dem synchronen `.setup()`-Closure
@@ -15991,7 +16305,6 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
     // und funktioniert auch im Setup-Context auf allen Plattformen.
     tauri::async_runtime::spawn(async move {
         const TICK: std::time::Duration = std::time::Duration::from_secs(60);
-        const MAX_ATTEMPTS: u32 = 50;
         loop {
             tokio::time::sleep(TICK).await;
             let queued = pirep_queue::list_all(&app);
@@ -16031,9 +16344,41 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
             }
             tracing::info!(queued_count = queued.len(), "PIREP-queue worker tick");
             for mut q in queued {
-                if q.attempt_count >= MAX_ATTEMPTS {
-                    tracing::warn!(pirep_id = %q.pirep_id, attempts = q.attempt_count, "skipping queued PIREP (max attempts)");
+                // Nachgereicht (externe Gegenpruefung Codex, adversarial):
+                // eine Wartezeit (Retry-After oder der langsame Takt nach
+                // der Dead-Letter-Warnung) ist noch nicht abgelaufen —
+                // einfach zum naechsten Eintrag weitergehen, ohne den
+                // Versuchszaehler anzufassen.
+                if !pirep_queue_eintrag_ist_faellig(q.retry_not_before, Utc::now()) {
                     continue;
+                }
+                // Nachgereicht: EINMALIG sichtbar warnen, statt fuer immer
+                // still aufzugeben — siehe `PIREP_QUEUE_MAX_FAST_ATTEMPTS`.
+                if pirep_queue_dead_letter_warnung_faellig(q.attempt_count, q.dead_letter_notified)
+                {
+                    q.dead_letter_notified = true;
+                    if let Err(e) = pirep_queue::enqueue(&app, &q) {
+                        tracing::warn!(pirep_id = %q.pirep_id, error = %e, "pirep_queue: persisting dead-letter flag failed");
+                    }
+                    tracing::error!(pirep_id = %q.pirep_id, attempts = q.attempt_count, "queued PIREP still not filed after many attempts — notifying pilot, will keep retrying more slowly");
+                    log_activity_handle(
+                        &app,
+                        ActivityLevel::Warn,
+                        format!(
+                            "PIREP konnte nach {} Versuchen noch nicht eingereicht werden: {} {} → {}",
+                            q.attempt_count,
+                            format_callsign(&q.airline_icao, &q.flight_number),
+                            q.dpt_airport,
+                            q.arr_airport,
+                        ),
+                        Some(format!(
+                            "Letzter Fehler: {}. Der Flug bleibt in der Warteschlange und wird \
+                             weiter versucht (jetzt in groesseren Abstaenden) — bei anhaltenden \
+                             Problemen bitte beim VA-Team melden (PIREP-ID {}).",
+                            q.last_error.clone().unwrap_or_else(|| "unbekannt".to_string()),
+                            q.pirep_id,
+                        )),
+                    );
                 }
                 q.attempt_count += 1;
                 q.last_attempt_at = Some(Utc::now());
@@ -16164,6 +16509,25 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                             spawn_flight_log_upload(&app, q.pirep_id.clone());
                             continue;
                         }
+                        // Nachgereicht (externe Gegenpruefung Codex,
+                        // adversarial): eine vom Server diktierte
+                        // `Retry-After`-Wartezeit gilt unabhaengig von der
+                        // schnellen/langsamen Phase — sie IMMER zu
+                        // ignorieren und trotzdem jede Minute erneut zu
+                        // versuchen waere kein guter API-Umgang.
+                        let retry_after_secs = if let ApiError::RateLimited {
+                            retry_after_seconds,
+                        } = &e
+                        {
+                            let capped =
+                                (*retry_after_seconds).min(PIREP_QUEUE_RATE_LIMIT_CAP_SECS) as i64;
+                            tracing::warn!(pirep_id = %q.pirep_id, retry_after_seconds, capped, "queued PIREP rate-limited — honoring server Retry-After");
+                            Some(capped)
+                        } else {
+                            pirep_queue_slow_phase_wartezeit_sec(q.attempt_count)
+                        };
+                        q.retry_not_before = retry_after_secs
+                            .map(|secs| Utc::now() + chrono::Duration::seconds(secs));
                         q.last_error = Some(friendly_net_error(&e));
                         // Update das File mit dem neuen attempt-count + Error
                         if let Err(e) = pirep_queue::enqueue(&app, &q) {
@@ -21709,6 +22073,8 @@ async fn flight_end(
                     // hat. Empty-String fuer pre-v0.7.7-Bids ist okay.
                     flight_id: flight.flight_id.clone(),
                     pirep_payload_json,
+                    dead_letter_notified: false,
+                    retry_not_before: None,
                 };
                 if let Err(qe) = pirep_queue::enqueue(&app, &queued) {
                     // Queue selber kaputt — fallback auf altes Verhalten
@@ -25489,6 +25855,33 @@ fn landung_episode_zuruecksetzen(stats: &mut FlightStats) {
     stats.landing_true_airspeed_kt = None;
 }
 
+/// GAF-707-Folgefund (Bugreport 05.09.2026): reine, testbare Entscheidung,
+/// ob der Touchdown-Fenster-Dump JETZT abgeschlossen werden muss — entweder
+/// weil die vollen `TOUCHDOWN_POST_WINDOW_MS` verstrichen sind (Normalfall),
+/// oder weil das Flugzeug INNERHALB dieses Fensters wieder ueber die
+/// T&G-AGL-Schwelle geklettert ist. Der zweite Fall fehlte bis hierher: ein
+/// Touchdown blieb per `sampler_touchdown_at` gelatcht, bis der Dump
+/// abgeschlossen UND danach ein Klettern > 100 ft beobachtet wurde (siehe
+/// Reset-Block in `spawn_touchdown_sampler`, gated auf
+/// `touchdown_window_dumped_at.is_some()`). Klettert das Flugzeug aber
+/// SCHON WAEHREND des laufenden 10-s-Dump-Fensters wieder hoch — ein Bounce,
+/// der Sekunden spaeter in einen Aufprall zurueckfaellt, statt erst nach 10 s
+/// zu landen — blieb der Sampler auf dem ERSTEN Touchdown haengen: der
+/// `sampler_touchdown_at.is_none()`-Guard am Edge-Detector liess den echten,
+/// zweiten (und hier schlimmeren) Aufsetzer nie durch. Da
+/// `apply_accident_heuristic` ausschliesslich am Dump haengt, sah die
+/// Unfall-Erkennung diesen zweiten Touchdown nie — real reproduziert an
+/// PIREP JGXrGwlwa4aOGZpn (31.08.2026): T&G bei -1499 fpm/4,67 G, wenige
+/// Sekunden spaeter Aufprall bei -3007 fpm/5,88 G, beide innerhalb der
+/// ersten 10 s. Frueh dumpen (mit dem bis dahin gesammelten Puffer) behebt
+/// das: der Dump gilt sofort als abgeschlossen, der Reset-Block re-armt den
+/// Sampler auf demselben Tick, und der zweite Aufsetzer bekommt seinen
+/// eigenen Dump + seine eigene `apply_accident_heuristic`-Auswertung.
+fn touchdown_dump_faellig(elapsed_seit_touchdown_ms: i64, agl_jetzt_ft: f32) -> bool {
+    elapsed_seit_touchdown_ms >= TOUCHDOWN_POST_WINDOW_MS
+        || agl_jetzt_ft > TOUCH_AND_GO_AGL_THRESHOLD_FT
+}
+
 fn open_touchdown_capture_window(stats: &mut FlightStats, now: DateTime<Utc>) {
     stats.landing_critical_until =
         Some(now + chrono::Duration::milliseconds(TOUCHDOWN_POST_WINDOW_MS));
@@ -26299,7 +26692,19 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         }
                     }
                     let elapsed_ms = (now - td_at).num_milliseconds();
-                    if elapsed_ms >= TOUCHDOWN_POST_WINDOW_MS {
+                    // Frueh-Dump bei Bounce-in-Aufprall — siehe Doc-Kommentar
+                    // an `touchdown_dump_faellig`.
+                    let agl_jetzt_ft = snap.altitude_agl_ft as f32;
+                    let climbed_out_early = agl_jetzt_ft > TOUCH_AND_GO_AGL_THRESHOLD_FT;
+                    if touchdown_dump_faellig(elapsed_ms, agl_jetzt_ft) {
+                        if climbed_out_early && elapsed_ms < TOUCHDOWN_POST_WINDOW_MS {
+                            tracing::info!(
+                                pirep_id = %flight.pirep_id,
+                                elapsed_ms,
+                                agl_ft = snap.altitude_agl_ft,
+                                "early touchdown dump — climbed back above T&G threshold before the 10s window closed; re-arming sampler for the next touchdown so a fast bounce-into-impact isn't lost"
+                            );
+                        }
                         // v0.13.15 (Pilot-Befund ViolonC 2026-05-31): NICHT
                         // mehr `drain(..)` — der Buffer muss erhalten bleiben,
                         // damit der spaeter beim PIREP-Filing gebaute
@@ -39222,6 +39627,34 @@ mod standliste_fuer_tests {
             true, false, 1, 2
         ));
     }
+
+    /// Nachgereicht (externe Gegenpruefung Codex, adversarial — 15 Runden
+    /// Vorgeschichte, docs/qs/v1.7.17-pruefstand.md Runden 17-19): die
+    /// eigentliche Reconciliation (Server-Read-Back) ist bewusst nicht
+    /// gebaut, aber eine unklare Zustellung nach einem Resume darf nicht
+    /// laenger unsichtbar bleiben. Text-Waechter statt Verhaltensprobe,
+    /// weil `try_resume_flight` (der einzige Aufrufer) ein grosser,
+    /// nicht isoliert testbarer async-Pfad ist — derselbe Grund, aus dem
+    /// `maybe_spawn_stand_fetch` und `dep_szenerie_auskunft_uebernehmen`
+    /// schon ohne eigene Verhaltensprobe auskommen mussten.
+    ///
+    /// ⚠ NICHT den vollen Text als EIN Literal suchen — dieser Kommentar
+    /// nennt ihn bereits, und `include_str!` liest auch die eigene Datei.
+    /// Vorkommen ZAEHLEN (`>= 2`): eines ist diese Doku, mindestens ein
+    /// zweites muss der echte Aufruf sein.
+    #[test]
+    fn resume_meldet_unklare_dep_gate_zustellung_sichtbar() {
+        let quelle = include_str!("lib.rs");
+        let vorkommen = quelle
+            .matches("Abflug-Stand: Zustellung nach Neustart unklar")
+            .count();
+        assert!(
+            vorkommen >= 2,
+            "die sichtbare Warnung bei unklarer dep_gate-Zustellung nach Resume fehlt \
+             oder wurde entfernt (nur {vorkommen} Vorkommen, erwartet mindestens 2: \
+             dieser Kommentar + echter Aufruf)"
+        );
+    }
 }
 
 fn maybe_spawn_stand_fetch(
@@ -41993,7 +42426,32 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
     // Without this, every resume produces a "0 distance / 0 fuel" PIREP
     // because we'd start the stats from zero again.
     let mut restored_stats = FlightStats::new();
+    // Nachgereicht (externe Gegenpruefung Codex, adversarial, 15 Runden
+    // Vorgeschichte in docs/qs/v1.7.17-pruefstand.md, Runden 17-19): VOR
+    // `apply_to` pruefen — die Funktion selbst loggt nur eine
+    // `tracing::warn!`-Zeile (nie sichtbar fuer den Piloten) und setzt das
+    // Flag danach zurueck. Eine formale Reconciliation (Server-Read-Back)
+    // ist bewusst nicht gebaut (siehe Pruefstand-Dokument fuer die
+    // Begruendung: kein bestehender phpVMS-Endpoint liefert Custom-Field-
+    // Werte, `get_pirep`/`PirepFull` lassen sie bewusst aus) — aber die
+    // Ungewissheit darf nicht laenger UNSICHTBAR bleiben, nur weil sie
+    // technisch nicht automatisch aufloesbar ist.
+    let dep_gate_zustellung_unklar = persisted.stats.dep_gate_withdrawal_awaiting_confirmation;
     persisted.stats.clone().apply_to(&mut restored_stats);
+    if dep_gate_zustellung_unklar {
+        log_activity_handle(
+            app,
+            ActivityLevel::Warn,
+            "Abflug-Stand: Zustellung nach Neustart unklar".to_string(),
+            Some(format!(
+                "Vor dem Neustart wurde ein veralteter \"Departure Gate\"-Wert eventuell schon \
+                 an phpVMS gemeldet — ob die Meldung ankam, laesst sich nach dem Neustart nicht \
+                 mehr feststellen. Falls der Abflug-Stand im PIREP {} nicht (mehr) stimmt, bitte \
+                 manuell pruefen oder beim VA-Team melden.",
+                persisted.pirep_id,
+            )),
+        );
+    }
     // v0.20 (Process-Integrity): overwrite with THIS resume's freshly-
     // determined value — `apply_to` just restored whatever an OLDER resume
     // (if any) had persisted, which says nothing about the restart that
@@ -57819,6 +58277,125 @@ mod v163_mutationsluecken {
         let leer = SimSnapshot::default();
         stamp_touchdown_metadata(&mut stats, &leer, Utc::now(), None);
         assert_eq!(stats.landing_wind_direction_deg, Some(250.0));
+    }
+}
+
+#[cfg(test)]
+/// GAF-707-Folgefund (Bugreport 05.09.2026): `touchdown_dump_faellig` ist
+/// die reine, aus dem Sampler-Loop extrahierte Entscheidung, die den
+/// Frueh-Dump-Fix traegt. Der Loop selbst bleibt Tauri-gebunden und nicht
+/// isoliert testbar — hier wird nur die Bedingung selbst geprueft.
+mod touchdown_dump_faellig_tests {
+    use super::*;
+
+    #[test]
+    fn kein_dump_vor_dem_fenster_ohne_klettern() {
+        assert!(!touchdown_dump_faellig(0, 0.0));
+        assert!(!touchdown_dump_faellig(TOUCHDOWN_POST_WINDOW_MS - 1, 5.0));
+    }
+
+    #[test]
+    fn dump_nach_dem_vollen_fenster_auch_ohne_klettern() {
+        assert!(touchdown_dump_faellig(TOUCHDOWN_POST_WINDOW_MS, 0.0));
+    }
+
+    /// Der eigentliche Fix: ein Bounce, der WEIT VOR den vollen 10 s wieder
+    /// ueber die T&G-AGL-Schwelle klettert, muss den Dump sofort faellig
+    /// machen. Sonst bleibt der Sampler-Edge-Detector auf dem ersten
+    /// Touchdown haengen (`sampler_touchdown_at.is_none()`-Guard) und ein
+    /// schnellerer, schlimmerer zweiter Aufsetzer — real: T&G bei
+    /// -1499 fpm, Aufprall Sekunden spaeter bei -3007 fpm — faellt nie durch
+    /// den Edge-Detector, `apply_accident_heuristic` sieht ihn nie.
+    #[test]
+    fn fruehes_klettern_ueber_die_tg_schwelle_macht_den_dump_sofort_faellig() {
+        assert!(touchdown_dump_faellig(
+            1_500,
+            TOUCH_AND_GO_AGL_THRESHOLD_FT + 1.0
+        ));
+    }
+
+    #[test]
+    fn genau_auf_der_schwelle_loest_noch_nicht_aus() {
+        // Gegenprobe zur `>`-Grenze: exakt auf der Schwelle ist noch KEIN
+        // Klettern darueber.
+        assert!(!touchdown_dump_faellig(
+            1_500,
+            TOUCH_AND_GO_AGL_THRESHOLD_FT
+        ));
+    }
+}
+
+#[cfg(test)]
+/// GAF-707-Folgefund (Bugreport 05.09.2026): Reproduktion des realen
+/// Befunds (PIREP JGXrGwlwa4aOGZpn, 31.08.2026, OY-SYA B763, AeroACARS
+/// 1.7.12, LIMJ/28). Der Touch-and-Go bei -1499 fpm/4,67 G blieb zu Recht
+/// unklassifiziert — knapp unter der 1500-fpm-Extreme-Impact-Schwelle. Der
+/// darauffolgende Aufprall bei -3007 fpm/5,88 G MIT Bahn-Match haette als
+/// Confirmed(Impact) gemeldet werden muessen (Extreme-Impact-Pfad ist vom
+/// Bahn-Match unabhaengig) — wurde es nicht, weil `apply_accident_heuristic`
+/// fuer den zweiten Touchdown nie lief (siehe `touchdown_dump_faellig`).
+/// Dieser Test bildet genau die Abfolge zweier Touchdown-Analysen auf
+/// demselben `FlightStats` nach, wie sie nach dem Fix (Frueh-Dump beim
+/// T&G-Klettern re-armt den Sampler noch innerhalb des 10-s-Fensters) beide
+/// tatsaechlich bei `apply_accident_heuristic` ankommen.
+mod gaf707_bounce_in_aufprall_tests {
+    use super::*;
+
+    #[test]
+    fn tg_dann_aufprall_wird_als_confirmed_impact_klassifiziert() {
+        let mut stats = FlightStats {
+            landing_simulator: Some("Msfs2024"),
+            runway_match: Some(runway::RunwayMatch {
+                airport_ident: "LIMJ".to_string(),
+                runway_ident: "28".to_string(),
+                heading_true_deg: 279.0,
+                length_ft: 9075.0,
+                width_ft: 197.0,
+                surface: "ASP".to_string(),
+                threshold_lat: 44.409_959,
+                threshold_lon: 8.837_243,
+                end_lat: 44.411_919,
+                end_lon: 8.808_367,
+                centerline_distance_m: 0.0,
+                centerline_distance_abs_ft: 0.0,
+                touchdown_distance_from_threshold_ft: 600.0,
+                side: "left".to_string(),
+                displaced_threshold_ft: 0,
+            }),
+            ..Default::default()
+        };
+
+        // TD #1 — der Touch-and-Go. -1499 fpm liegt knapp UNTER der
+        // Extreme-Impact-Schwelle (>=1500 fpm) — bewusst so, real gemessen.
+        // Darf keinen Unfall ausloesen.
+        stats.landing_peak_g_force = Some(4.67);
+        let tg_analysis = serde_json::json!({ "vs_at_edge_fpm": -1499.0 });
+        apply_accident_heuristic(&mut stats, &tg_analysis);
+        assert!(
+            !stats.accident_detected,
+            "der Touch-and-Go allein (-1499 fpm/4,67 G) liegt unter der \
+             Extreme-Impact-Schwelle und darf keinen Unfall auslösen"
+        );
+
+        // TD #2 — der echte, finale Aufprall. Nach dem Fix aktualisiert die
+        // FSM den `landing_peak_g_force` auf den zweiten (echten) Touchdown,
+        // BEVOR `apply_accident_heuristic` fuer ihn erneut laeuft — genau
+        // das leistet der Frueh-Dump aus `touchdown_dump_faellig`.
+        stats.landing_peak_g_force = Some(5.88);
+        let final_analysis = serde_json::json!({ "vs_at_edge_fpm": -3007.0 });
+        apply_accident_heuristic(&mut stats, &final_analysis);
+
+        assert!(
+            stats.accident_detected,
+            "-3007 fpm/5,88 G mit Bahn-Match muss als Unfall erkannt werden, \
+             auch wenn ihm ein (harmloser) Touch-and-Go vorausging"
+        );
+        assert_eq!(
+            stats.accident_kind.as_deref(),
+            Some(accident::AccidentKind::Impact.as_wire_str()),
+            "Extreme-Impact-Pfad (|V/S|>=1500 UND G>=3.0) muss unabhängig \
+             vom Bahn-Match als Impact klassifiziert werden"
+        );
     }
 }
 
