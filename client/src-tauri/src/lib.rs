@@ -1528,10 +1528,43 @@ struct AppState {
     /// (`phpvms_login`, `phpvms_load_session`), damit `flight_start`/
     /// `flight_adopt`/der manuelle Plan-Pfad und `try_resume_flight` die
     /// aktuelle Identitaet lesen koennen OHNE jeweils selbst einen weiteren
-    /// `get_profile()`-Server-Roundtrip zu brauchen. Wie
-    /// `active_flight_owner_identity` NICHT beim Logout geleert (harmlos:
-    /// nur relevant, waehrend `state.client` gleichzeitig `Some` ist).
+    /// `get_profile()`-Server-Roundtrip zu brauchen. NICHT beim Logout
+    /// geleert.
+    ///
+    /// ⚠ Codex-Folgefund (adversarial, 05.09.2026, dreizehnte Runde): die
+    /// urspruengliche Behauptung hier ("harmlos: nur relevant waehrend
+    /// state.client gleichzeitig Some ist") stimmte NICHT mehr, sobald
+    /// Runde 12s `phpvms_refresh_profile` dieses Feld ALLEIN als Beweis
+    /// benutzte, dass eine verspaetete Server-Antwort noch zur aktiven
+    /// Sitzung gehoert — nach einem Logout blieb es stehen, waehrend
+    /// `state.client` schon `None` war, und der Check bestand trotzdem.
+    /// **Neue Regel: fuer "gehoert diese verspaetete Antwort noch zur
+    /// aktiven Sitzung"-Pruefungen NIE dieses Feld allein verwenden —
+    /// IMMER `session_epoch` vergleichen (siehe dort), die bei JEDER
+    /// Sitzungsaenderung inklusive Logout steigt.**
     authenticated_pilot_id: Mutex<Option<i64>>,
+    /// Monoton steigender Zaehler: JEDE Sitzungsaenderung (Login, Logout,
+    /// Load-Session — unabhaengig davon ob derselbe oder ein anderer
+    /// Pilot betroffen ist) erhoeht ihn EINMAL, synchron, als fester
+    /// Bestandteil derselben atomaren Schreiboperation wie `client`/
+    /// `authenticated_pilot_id` (siehe `setze_session_atomar`/
+    /// `leere_session_atomar`).
+    ///
+    /// Codex-Folgefund (adversarial, 05.09.2026, dreizehnte Runde): nach
+    /// DREI Runden (10-12) mit Einzel-Patches gegen denselben MQTT-
+    /// Lebenszyklus-Bereich, darunter zwei echte WIDERSPRUECHE zwischen
+    /// fruheren Fixes (Runde 11s "MQTT vor fehlschlagfaehigen Schritten
+    /// stoppen" widersprach Runde 10/12s Annahme, ein API-Key-Wechsel sei
+    /// als Abbruch-Signal verlaesslich), war ein Vergleich einzelner
+    /// Felder (API-Key, Piloten-ID) gegen sich selbst nicht mehr
+    /// tragfaehig. `session_epoch` ist das EINZIGE Signal, das
+    /// Hintergrund-Tasks (MQTT-Provisionierung, Profil-Refresh, o.ae.)
+    /// noch pruefen muessen: haben sie ihre eigene Start-Epoche notiert
+    /// und weicht die AKTUELLE Epoche unmittelbar vor jeder Mutation
+    /// davon ab, ist die Sitzung nicht mehr dieselbe — unabhaengig davon,
+    /// WAS sich geaendert hat oder ob eine fehlschlagfaehige
+    /// Nebenoperation (Keyring, Datei) schon durchgelaufen ist.
+    session_epoch: Mutex<u64>,
     /// Nachgereicht (externe Gegenpruefung Codex, adversarial, waehrend
     /// der v1.7.17-QS-Runde entdeckt): ein reines Lifecycle-Schloss fuer
     /// die EINZIGE Aktiv-Flug-Ablage (`active_flight_path` — ein fester
@@ -1654,17 +1687,30 @@ struct AppState {
     /// only ever accessed from async contexts (hook points run
     /// inside the streamer's async tasks).
     mqtt: tokio::sync::Mutex<Option<aeroacars_mqtt::Handle>>,
-    /// `pilot_id` des Accounts, dessen Credentials gerade in `mqtt`
-    /// installiert sind (`None` = kein Handle oder Herkunft unbekannt).
-    /// Codex-Folgefund (adversarial, 05.09.2026, elfte Runde): `mqtt` allein
-    /// beantwortet nur „laeuft ueberhaupt einer", nicht „gehoert er dem
-    /// GERADE eingeloggten Account". Ohne dieses Feld haette ein Re-Login
-    /// DESSELBEN Geraets mit einem ANDEREN Piloten (Runde 6 erlaubt das
-    /// ausdruecklich ohne vorherigen Logout, solange kein Flug aktiv ist)
-    /// den Idempotenz-Guard in `init_mqtt_publisher_via_provisioning` als
-    /// "laeuft schon, nichts zu tun" gelesen und den vorigen Piloten
-    /// still weiterlaufen lassen.
-    mqtt_owner_pilot_id: Mutex<Option<i64>>,
+    /// `session_epoch`-Wert, zu dem der aktuell in `mqtt` installierte
+    /// Handle provisioniert wurde (`None` = kein Handle).
+    ///
+    /// Codex-Folgefund (adversarial, 05.09.2026, elfte Runde): `mqtt`
+    /// allein beantwortet nur „laeuft ueberhaupt einer", nicht „gehoert er
+    /// der GERADE aktiven Sitzung".
+    ///
+    /// Codex-Folgefund (adversarial, 05.09.2026, dreizehnte Runde): ein
+    /// Vergleich gegen `authenticated_pilot_id` (wie urspruenglich hier)
+    /// oder gegen den phpVMS-API-Key (wie zwischenzeitlich in der
+    /// Provisionierung) ist KEIN verlaessliches Signal fuer "die Sitzung
+    /// hat sich geaendert" — beide Werte werden bei Logout NICHT
+    /// (`authenticated_pilot_id`, bewusst, siehe dortige Doku) oder erst
+    /// SPAETER, nach fehlschlagfaehigen Schritten (API-Key, siehe Runde
+    /// 11 vs. 10/12-Widerspruch) veraendert. Codex fand daraus zwei echte
+    /// Widersprueche zwischen den Runden 10-12: ein Task, der noch den
+    /// alten Wert sieht, haelt sich faelschlich fuer weiterhin gueltig.
+    /// `session_epoch` loest das: sie steigt SYNCHRON und ALS ERSTES bei
+    /// JEDER Sitzungsaenderung (Login, Logout, Load-Session) — ein
+    /// Hintergrund-Task, der seine Start-Epoche mit der aktuellen
+    /// vergleicht, erkennt JEDE Sitzungsaenderung sofort, unabhaengig
+    /// davon, WAS sich geaendert hat oder ob eine fehlschlagfaehige
+    /// Nebenoperation schon durchgelaufen ist.
+    mqtt_owner_epoch: Mutex<Option<u64>>,
     /// v0.7.8: SimBrief-Identifier (Username + User-ID) fuer den
     /// SimBrief-direct OFP-Refresh-Pfad. Wenn mindestens eines gesetzt
     /// ist, kann `flight_refresh_simbrief` den neuen OFP direkt von
@@ -10146,6 +10192,28 @@ async fn phpvms_login(
     let base_url = client.connection().base_url().to_string();
     setze_session_atomar(&state, client.clone(), profile.pilot_id);
     cache_pilot(&state, &profile);
+    // Codex-Folgefund (adversarial, 05.09.2026, dreizehnte Runde): der
+    // Runde-12-Fix ("Spawn NACH dem Session-Commit") stellte nur sicher,
+    // dass der Hintergrund-Task den NEUEN Piloten liest — er garantierte
+    // NICHT, dass ein eventuell noch installierter Handle des VORIGEN
+    // Piloten schon weg ist, BEVOR der neue Login als "fertig" gilt.
+    // Zwischen diesem Commit und dem tatsaechlichen Anlaufen des
+    // gespawnten Tasks (der den Fremd-Handle erst in SEINEM eigenen
+    // Idempotenz-Check stoppen wuerde) klafft ein Fenster, in dem ein
+    // Flugstart/Auto-Start des neuen Piloten den ALTEN Handle noch
+    // benutzen wuerde (z. B. der Positions-Streamer). Deshalb jetzt SYNCHRON,
+    // noch bevor der Login als abgeschlossen gilt: einen zur neuen Epoche
+    // nicht mehr passenden Handle sofort stoppen.
+    {
+        let handle_gehoert_nicht_mehr_dieser_epoche = *state
+            .mqtt_owner_epoch
+            .lock()
+            .expect("mqtt_owner_epoch lock")
+            != Some(aktuelle_epoche(&state));
+        if handle_gehoert_nicht_mehr_dieser_epoche {
+            stoppe_mqtt_publisher(&state).await;
+        }
+    }
     // v0.5.11: kick off live-tracking provisioning in the background.
     // Non-blocking — login completes regardless of whether the
     // provision call succeeds. Pure background feature, no UI.
@@ -10244,28 +10312,62 @@ fn cache_pilot(state: &tauri::State<'_, AppState>, profile: &api_client::Profile
 /// umgekehrt sehen koennen. Jetzt schreiben UND lesen alle sicherheits-
 /// relevanten Stellen ueber diese beiden Helfer, mit fester Sperr-
 /// Reihenfolge, sodass kein Leser mehr eine zerrissene Paarung sehen kann.
-fn setze_session_atomar(state: &tauri::State<'_, AppState>, client: Client, pilot_id: i64) {
+///
+/// Codex-Folgefund (adversarial, 05.09.2026, dreizehnte Runde): schreibt
+/// jetzt zusaetzlich `state.session_epoch` — als DRITTES Feld in
+/// DERSELBEN atomaren Operation, feste Reihenfolge Client → Piloten-ID →
+/// Epoche (`aktuelle_session_atomar`/`leere_session_atomar` lesen bzw.
+/// schreiben in derselben Reihenfolge). Gibt die neue Epoche zurueck,
+/// damit Aufrufer (z. B. `phpvms_login` fuer die MQTT-Provisionierung)
+/// sie sich fuer spaetere Vergleiche merken koennen.
+fn setze_session_atomar(state: &tauri::State<'_, AppState>, client: Client, pilot_id: i64) -> u64 {
     let mut client_guard = state.client.lock().expect("client mutex");
     let mut pilot_guard = state
         .authenticated_pilot_id
         .lock()
         .expect("authenticated_pilot_id lock");
+    let mut epoch_guard = state.session_epoch.lock().expect("session_epoch lock");
     *client_guard = Some(client);
     *pilot_guard = Some(pilot_id);
+    *epoch_guard += 1;
+    *epoch_guard
 }
 
-/// Liest `state.client` + `state.authenticated_pilot_id` als denselben
-/// atomaren Schnappschuss, den `setze_session_atomar` schreibt — siehe
-/// dort fuer die Begruendung der festen Sperr-Reihenfolge.
-fn aktuelle_session_atomar(state: &tauri::State<'_, AppState>) -> Option<(Client, i64)> {
+/// Gegenstueck zu `setze_session_atomar` fuer den Logout: leert `state.
+/// client`, laesst `authenticated_pilot_id` bewusst unangetastet (siehe
+/// dessen Doku), erhoeht aber `session_epoch` — DAS ist seit Runde 13 das
+/// autoritative Signal fuer "die Sitzung hat sich geaendert", nicht mehr
+/// der Vergleich einzelner Felder. Gibt die neue Epoche zurueck.
+fn leere_session_atomar(state: &tauri::State<'_, AppState>) -> u64 {
+    let mut client_guard = state.client.lock().expect("client mutex");
+    let mut epoch_guard = state.session_epoch.lock().expect("session_epoch lock");
+    *client_guard = None;
+    *epoch_guard += 1;
+    *epoch_guard
+}
+
+/// Liest `state.client` + `state.authenticated_pilot_id` + `state.
+/// session_epoch` als denselben atomaren Schnappschuss, den
+/// `setze_session_atomar` schreibt — siehe dort fuer die Begruendung der
+/// festen Sperr-Reihenfolge.
+fn aktuelle_session_atomar(state: &tauri::State<'_, AppState>) -> Option<(Client, i64, u64)> {
     let client_guard = state.client.lock().expect("client mutex");
     let pilot_guard = state
         .authenticated_pilot_id
         .lock()
         .expect("authenticated_pilot_id lock");
+    let epoch_guard = state.session_epoch.lock().expect("session_epoch lock");
     let client = client_guard.clone()?;
     let pilot_id = (*pilot_guard)?;
-    Some((client, pilot_id))
+    Some((client, pilot_id, *epoch_guard))
+}
+
+/// Liest nur die aktuelle Epoche — fuer Hintergrund-Tasks (MQTT-
+/// Provisionierung, Profil-Refresh), die ihre eigene Start-Epoche
+/// unmittelbar vor jeder Mutation gegen den JETZT gueltigen Wert
+/// gegenpruefen, ohne dafuer Client/Piloten-ID zu brauchen.
+fn aktuelle_epoche(state: &tauri::State<'_, AppState>) -> u64 {
+    *state.session_epoch.lock().expect("session_epoch lock")
 }
 
 /// v0.16.23: Auto-source-Logik fuer den SimBrief-Username (aus
@@ -10354,25 +10456,34 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
     // fremden, noch laufenden Publisher als "schon da" durchgehen lassen —
     // Pilot Bs Positionen/Events waeren ueber Pilot As MQTT-Verbindung
     // gelaufen.
-    let aktuelle_pilot_id = *state
-        .authenticated_pilot_id
-        .lock()
-        .expect("authenticated_pilot_id lock");
+    //
+    // Codex-Folgefund (adversarial, 05.09.2026, dreizehnte Runde): nach
+    // DREI Runden Einzel-Patches gegen genau diesen Lebenszyklus — darunter
+    // zwei echte WIDERSPRUECHE zwischen fruheren Fixes (Runde 11s "MQTT vor
+    // fehlschlagfaehigen Schritten stoppen" widersprach Runde 10/12s
+    // Annahme, ein API-Key-/Piloten-ID-Wechsel sei als Abbruch-Signal
+    // verlaesslich, weil beide Werte bei Logout NICHT oder erst SPAETER
+    // veraendert werden) — ist `state.session_epoch` jetzt das EINZIGE
+    // Signal, das dieser gesamte Ablauf noch prueft. Sie steigt SYNCHRON
+    // bei JEDER Sitzungsaenderung (Login, Logout, Load-Session), lange
+    // bevor irgendeine fehlschlagfaehige Nebenoperation (Keyring, Datei)
+    // beginnt.
+    let epoche_bei_start = aktuelle_epoche(&state);
     {
         let mut guard = state.mqtt.lock().await;
         if guard.is_some() {
-            let eigentuemer = *state
-                .mqtt_owner_pilot_id
+            let eigentuemer_epoche = *state
+                .mqtt_owner_epoch
                 .lock()
-                .expect("mqtt_owner_pilot_id lock");
-            if eigentuemer.is_some() && eigentuemer == aktuelle_pilot_id {
+                .expect("mqtt_owner_epoch lock");
+            if eigentuemer_epoche == Some(epoche_bei_start) {
                 tracing::debug!(
-                    "live-tracking: publisher already running for this account, skipping re-init"
+                    "live-tracking: publisher already running for this session, skipping re-init"
                 );
                 return;
             }
             tracing::info!(
-                "live-tracking: laufender Publisher gehoert nicht (mehr) dem aktuellen Account \
+                "live-tracking: laufender Publisher gehoert einer anderen Sitzung \
                  — wird gestoppt, bevor neu provisioniert wird"
             );
             if let Some(handle) = guard.take() {
@@ -10380,20 +10491,14 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
             }
         }
     }
-
-    // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): der
-    // Idempotenz-Guard oben prueft NUR "laeuft schon einer" und gibt den
-    // Lock danach sofort wieder frei — zwischen dieser Pruefung und der
-    // eigentlichen Installation (`*state.mqtt.lock().await = Some(handle)`
-    // weiter unten) liegen mehrere echte Netzwerk-Awaits (`provision`,
-    // `start`). Ein `phpvms_logout` GENAU in dieser Luecke haette diesen
-    // Task nicht gestoppt — er haette Pilot As MQTT-Handle installiert,
-    // NACHDEM Pilot A sich schon abgemeldet hat (oder, schlimmer, nachdem
-    // Pilot B sich bereits angemeldet hat). Der phpVMS-API-Key ist die
-    // Identitaet, an der dieser Task haengt — wird er bis zur Installation
-    // NICHT veraendert, ist die Installation sicher; sonst wird der frisch
-    // gebaute Handle verworfen statt installiert.
-    let api_key_bei_provisionierungs_start = secrets::load_api_key(KEYRING_ACCOUNT).ok().flatten();
+    // Fuer den Cache-Filter unten (gecachte Credentials koennen von einem
+    // ANDEREN Piloten stammen) — unabhaengig von der Epochen-Pruefung oben,
+    // die nur ueber Sitzungs-WECHSEL entscheidet, nicht darueber, WELCHER
+    // Pilot gerade aktiv ist.
+    let aktuelle_pilot_id = *state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock");
 
     // Check cache first.
     let cached = (|| -> Option<MqttConfig> {
@@ -10481,7 +10586,6 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
         resp.into()
     };
 
-    let installierter_pilot_id: Option<i64> = cfg.pilot_id.parse().ok();
     let handle = match start(cfg) {
         Ok(h) => h,
         Err(e) => {
@@ -10490,15 +10594,14 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
         }
     };
 
-    // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): siehe
-    // Kommentar bei `api_key_bei_provisionierungs_start` — hier ist der
-    // erste Punkt, an dem sich das ueberhaupt pruefen laesst (der Handle
-    // existiert jetzt). Hat sich der Account seither geaendert
-    // (Logout = jetzt `None`, anderer Pilot = anderer Schluessel), wird
-    // der frisch gebaute Handle verworfen statt installiert.
-    if secrets::load_api_key(KEYRING_ACCOUNT).ok().flatten() != api_key_bei_provisionierungs_start {
+    // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): hier ist der
+    // erste Punkt, an dem sich ueberhaupt etwas pruefen laesst (der Handle
+    // existiert jetzt). Hat sich die Sitzung seither geaendert, wird der
+    // frisch gebaute Handle verworfen statt installiert. Seit Runde 13:
+    // Epoche statt API-Key (siehe Doku bei `session_epoch`).
+    if aktuelle_epoche(&state) != epoche_bei_start {
         tracing::warn!(
-            "live-tracking: Account wechselte waehrend der Provisionierung — \
+            "live-tracking: Sitzung aenderte sich waehrend der Provisionierung — \
              frisch gebauter MQTT-Handle wird verworfen, nicht installiert"
         );
         handle.shutdown();
@@ -10560,13 +10663,20 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
     // muss deshalb INNERHALB der gehaltenen Sperre stattfinden, nicht
     // davor — nur so kann kein Logout mehr zwischen „geprueft" und
     // „installiert" hindurchschluepfen.
+    // Codex-Folgefund (adversarial, 05.09.2026, dreizehnte Runde): die
+    // Epoche wird HIER, INNERHALB der gehaltenen Sperre, erneut gelesen —
+    // nicht (wie zwischenzeitlich der API-Key) VOR dem Lock-Erwerb. Ein
+    // paralleler Logout erhoeht die Epoche synchron als Teil SEINES
+    // Session-Umbaus, lange bevor er ueberhaupt versucht, `state.mqtt` zu
+    // sperren (`stoppe_mqtt_publisher`) — durch die feste Mutex-Reihenfolge
+    // ist entweder der Logout ODER diese Installation zuerst vollstaendig
+    // fertig, nie beides gleichzeitig ueberlappend. Ein Wechsel der Epoche
+    // ist dadurch garantiert sichtbar, sobald dieser Code den Lock haelt.
     {
         let mut mqtt_guard = state.mqtt.lock().await;
-        if secrets::load_api_key(KEYRING_ACCOUNT).ok().flatten()
-            != api_key_bei_provisionierungs_start
-        {
+        if aktuelle_epoche(&state) != epoche_bei_start {
             tracing::warn!(
-                "live-tracking: Account wechselte waehrend der Provisionierung — \
+                "live-tracking: Sitzung aenderte sich waehrend der Provisionierung — \
                  frisch gebauter MQTT-Handle wird verworfen, nicht installiert"
             );
             drop(mqtt_guard);
@@ -10576,25 +10686,25 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
         *mqtt_guard = Some(handle);
     }
     *state
-        .mqtt_owner_pilot_id
+        .mqtt_owner_epoch
         .lock()
-        .expect("mqtt_owner_pilot_id lock") = installierter_pilot_id;
+        .expect("mqtt_owner_epoch lock") = Some(epoche_bei_start);
     tracing::info!("live-tracking publisher running");
 }
 
-/// Stoppt einen eventuell laufenden MQTT-Publisher UND vergisst, wem er
-/// gehoerte — die beiden gehoeren immer zusammen (siehe `mqtt_owner_
-/// pilot_id`s Doku), deshalb ein gemeinsamer Helfer statt drei Kopien
-/// (`phpvms_logout`, Status-Gate in `phpvms_load_session`, Auth-Fehler in
-/// `phpvms_load_session`).
+/// Stoppt einen eventuell laufenden MQTT-Publisher UND vergisst, welcher
+/// Epoche er gehoerte — die beiden gehoeren immer zusammen (siehe
+/// `mqtt_owner_epoch`s Doku), deshalb ein gemeinsamer Helfer statt drei
+/// Kopien (`phpvms_logout`, Status-Gate in `phpvms_load_session`,
+/// Auth-Fehler in `phpvms_load_session`).
 async fn stoppe_mqtt_publisher(state: &tauri::State<'_, AppState>) {
     if let Some(handle) = state.mqtt.lock().await.take() {
         handle.shutdown();
     }
     *state
-        .mqtt_owner_pilot_id
+        .mqtt_owner_epoch
         .lock()
-        .expect("mqtt_owner_pilot_id lock") = None;
+        .expect("mqtt_owner_epoch lock") = None;
 }
 
 /// Forget cached MQTT credentials. Called from logout — next session
@@ -10647,7 +10757,16 @@ async fn phpvms_logout(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
              bevor du dich abmeldest.",
         ));
     }
-    *state.client.lock().expect("client mutex") = None;
+    // Codex-Folgefund (adversarial, 05.09.2026, dreizehnte Runde): jetzt
+    // ueber `leere_session_atomar` statt `state.client` isoliert zu leeren
+    // — das erhoeht `session_epoch` als FESTEN Teil derselben Operation,
+    // synchron und lange bevor irgendeine fehlschlagfaehige Nebenoperation
+    // (Keyring, Datei) beginnt. Ein Hintergrund-Task (MQTT-Provisionierung,
+    // Profil-Refresh), der seine Start-Epoche mit der aktuellen vergleicht,
+    // erkennt diesen Logout garantiert, sobald er selbst wieder zum Zug
+    // kommt — unabhaengig davon, ob `delete_api_key` weiter unten
+    // gelingt oder fehlschlaegt.
+    leere_session_atomar(&state);
     drop(setup_guard);
     // Codex-Folgefund (adversarial, 05.09.2026, elfte Runde): diese
     // In-Memory-Aufraeumung MUSS VOR den beiden fehlschlagfaehigen
@@ -10752,6 +10871,23 @@ async fn phpvms_load_session(
             let base_url = client.connection().base_url().to_string();
             setze_session_atomar(&state, client.clone(), profile.pilot_id);
             cache_pilot(&state, &profile);
+            // Codex-Folgefund (adversarial, 05.09.2026, dreizehnte Runde):
+            // derselbe synchrone Stopp wie in `phpvms_login` — der
+            // Setup-Hook provisioniert spekulativ VOR diesem Restore-
+            // Roundtrip (auf Basis eines eventuell veralteten Caches); hat
+            // `get_profile` gerade einen ANDEREN Piloten bestaetigt als den
+            // gecachten, darf dessen Handle nicht bis zum naechsten
+            // Provisionierungs-Tick weiterlaufen.
+            {
+                let handle_gehoert_nicht_mehr_dieser_epoche = *state
+                    .mqtt_owner_epoch
+                    .lock()
+                    .expect("mqtt_owner_epoch lock")
+                    != Some(aktuelle_epoche(&state));
+                if handle_gehoert_nicht_mehr_dieser_epoche {
+                    stoppe_mqtt_publisher(&state).await;
+                }
+            }
             // Lifecycle-Lock freigeben BEVOR try_resume_flight ihn selbst
             // nimmt — dasselbe Muster wie in `phpvms_login` (Kommentar
             // dort): haette diese Funktion ihn noch gehalten, waere jeder
@@ -10866,9 +11002,10 @@ mod flug_aktiv_verhindert_konto_wechsel_wiring_tests {
         const SRC: &str = include_str!("lib.rs");
         let koerper = funktionskoerper_ohne_leerraum(SRC, "async fn phpvms_logout(");
         let pruefung_pos = koerper.find(&ohne_leerraum("state.active_flight.lock()"));
-        let leeren_pos = koerper.find(&ohne_leerraum(
-            "*state.client.lock().expect(\"client mutex\") = None;",
-        ));
+        // Seit Runde 13: `leere_session_atomar` statt der direkten
+        // Zuweisung — leert state.client UND erhoeht session_epoch in
+        // einer atomaren Operation.
+        let leeren_pos = koerper.find(&ohne_leerraum("leere_session_atomar(&state);"));
         match (pruefung_pos, leeren_pos) {
             (Some(p), Some(l)) => assert!(
                 p < l,
@@ -11239,20 +11376,25 @@ async fn phpvms_refresh_profile(
     // ANDERER Pilot an (ausdruecklich erlaubt ohne vorheriges Logout),
     // haette die verspaetete Antwort fuer Pilot A dessen `cached_pilot`/
     // `cached_pilot_callsign`/SimBrief-Auto-Source ueber Pilot Bs frisch
-    // angemeldete Sitzung geschrieben. Jetzt wird VOR dem Zurueckschreiben
-    // erneut geprueft, ob dieselbe Piloten-ID noch aktiv ist.
-    let Some((client, angefragte_pilot_id)) = aktuelle_session_atomar(&state) else {
+    // angemeldete Sitzung geschrieben.
+    //
+    // Codex-Folgefund (adversarial, 05.09.2026, dreizehnte Runde): ein
+    // Vergleich der Piloten-ID allein reicht nicht — `authenticated_
+    // pilot_id` wird bei Logout bewusst NICHT geleert, ein Logout
+    // WAEHREND dieses Roundtrips haette den Vergleich also trotzdem
+    // bestehen lassen, obwohl `state.client` schon `None` war. Jetzt wird
+    // die EPOCHE verglichen, die bei JEDER Sitzungsaenderung (auch
+    // Logout) steigt — das autoritative Signal, nicht mehr ein einzelnes
+    // Feld.
+    let Some((client, _angefragte_pilot_id, epoche_bei_start)) = aktuelle_session_atomar(&state)
+    else {
         return Ok(None);
     };
     match client.get_profile().await {
         Ok(p) => {
-            let aktuelle_pilot_id = *state
-                .authenticated_pilot_id
-                .lock()
-                .expect("authenticated_pilot_id lock");
-            if aktuelle_pilot_id != Some(angefragte_pilot_id) {
+            if aktuelle_epoche(&state) != epoche_bei_start {
                 tracing::warn!(
-                    "profile refresh: Account wechselte waehrend des Roundtrips — \
+                    "profile refresh: Sitzung aenderte sich waehrend des Roundtrips — \
                      verspaetetes Profil wird verworfen, nicht zurueckgeschrieben"
                 );
                 return Ok(None);
@@ -11413,6 +11555,14 @@ fn entwerte_bids_fehler(log: &mut VecDeque<ActivityEntry>) {
 #[tauri::command]
 async fn phpvms_get_bids(state: tauri::State<'_, AppState>) -> Result<Vec<Bid>, UiError> {
     let client = current_client(&state)?;
+    // Codex-Folgefund (adversarial, 05.09.2026, dreizehnte Runde): dieser
+    // Retry-Loop kann sich ueber mehrere Sekunden ziehen — ein Kontowechsel
+    // WAEHREND eines verzoegerten, am Ende erfolgreichen Versuchs von A
+    // haette `resolve_bids_activity_error` einen inzwischen von Pilot B
+    // frisch erzeugten Fehler-Eintrag faelschlich als "wieder erreichbar"
+    // markiert. Keine falsche PIREP-/Bid-Zuordnung, aber ein verfaelschter
+    // Diagnose-Zustand fuer den neuen Account.
+    let epoche_bei_start = aktuelle_epoche(&state);
 
     let letzter: ApiError;
     let mut versuch = 0usize;
@@ -11420,7 +11570,9 @@ async fn phpvms_get_bids(state: tauri::State<'_, AppState>) -> Result<Vec<Bid>, 
     loop {
         match client.get_bids().await {
             Ok(bids) => {
-                resolve_bids_activity_error(&state);
+                if aktuelle_epoche(&state) == epoche_bei_start {
+                    resolve_bids_activity_error(&state);
+                }
                 return Ok(bids);
             }
             Err(e) => {
@@ -17372,25 +17524,27 @@ mod konten_isolierung_runde_zehn_wiring_tests {
     /// `phpvms_logout`/erneuter Login waehrend der Netzwerk-Awaits haette
     /// das nicht gestoppt.
     #[test]
-    fn mqtt_provisionierung_prueft_api_key_vor_der_installation() {
+    fn mqtt_provisionierung_prueft_epoche_vor_der_installation() {
         const SRC: &str = include_str!("lib.rs");
         let koerper = funktionskoerper(SRC, "async fn init_mqtt_publisher_via_provisioning(");
-        // Seit Runde 12 liegt die Installation in `*mqtt_guard = ...`
+        // Seit Runde 13: `epoche_bei_start` (Sitzungs-Epoche) statt
+        // API-Key — siehe `mqtt_installations_pruefung_liegt_innerhalb_
+        // der_sperre` fuer die Reihenfolge INNERHALB der Sperre. Seit
+        // Runde 12 liegt die Installation in `*mqtt_guard = ...`
         // (innerhalb der gehaltenen Sperre) statt direkt in
-        // `*state.mqtt.lock().await = ...` — siehe
-        // `mqtt_installations_pruefung_liegt_innerhalb_der_sperre` fuer
-        // die Reihenfolge INNERHALB der Sperre.
-        let start_erfassung_pos = koerper.find("let api_key_bei_provisionierungs_start =");
+        // `*state.mqtt.lock().await = ...`.
+        let start_erfassung_pos = koerper.find("let epoche_bei_start = aktuelle_epoche(&state);");
         let install_pos = koerper.find("*mqtt_guard = Some(handle);");
         match (start_erfassung_pos, install_pos) {
             (Some(s), Some(i)) => assert!(
                 s < i,
-                "die Provisionierung muss den API-Key VOR der Netzwerk-Provisionierung \
-                 erfassen UND vor der Installation erneut pruefen — sonst installiert ein \
-                 verspaeteter Task einen Handle fuer einen laengst abgemeldeten Account"
+                "die Provisionierung muss die Sitzungs-Epoche VOR der Netzwerk-\
+                 Provisionierung erfassen UND vor der Installation erneut pruefen — \
+                 sonst installiert ein verspaeteter Task einen Handle fuer eine \
+                 laengst geaenderte Sitzung"
             ),
             _ => panic!(
-                "api_key_bei_provisionierungs_start-Erfassung oder Handle-Installation \
+                "epoche_bei_start-Erfassung oder Handle-Installation \
                  in init_mqtt_publisher_via_provisioning nicht mehr gefunden"
             ),
         }
@@ -17504,10 +17658,11 @@ mod konten_isolierung_runde_elf_wiring_tests {
         const SRC: &str = include_str!("lib.rs");
         let koerper = funktionskoerper(SRC, "async fn init_mqtt_publisher_via_provisioning(");
         assert!(
-            koerper.contains("mqtt_owner_pilot_id"),
+            koerper.contains("mqtt_owner_epoch"),
             "init_mqtt_publisher_via_provisioning prueft den Eigentuemer des laufenden \
-             Publishers nicht mehr — ein Re-Login eines anderen Piloten liesse den \
-             vorigen Publisher unbemerkt weiterlaufen"
+             Publishers nicht mehr (seit Runde 13 ueber die Sitzungs-Epoche) — ein \
+             Re-Login eines anderen Piloten liesse den vorigen Publisher unbemerkt \
+             weiterlaufen"
         );
     }
 
@@ -17613,14 +17768,19 @@ mod konten_isolierung_runde_elf_wiring_tests {
     fn load_session_stoppt_mqtt_auch_im_auth_fehler_zweig() {
         const SRC: &str = include_str!("lib.rs");
         let koerper = funktionskoerper(SRC, "async fn phpvms_load_session(");
+        // Seit Runde 13 DREI Stellen: Status-Gate, Auth-Fehler (beide
+        // Runde 10/11) UND der neue synchrone Stopp direkt nach
+        // `setze_session_atomar` (Runde 13, schliesst die Luecke bevor
+        // der Restore ueberhaupt als abgeschlossen gilt).
         assert_eq!(
             koerper
-                .matches("stoppe_mqtt_publisher(&state).await;")
+                .matches("stoppe_mqtt_publisher(&state).await")
                 .count(),
-            2,
-            "phpvms_load_session muss den MQTT-Publisher an BEIDEN Stellen stoppen, \
-             die eine gespeicherte Sitzung verwerfen (Status-Gate UND Auth-Fehler) — \
-             sonst bleibt im jeweils anderen Zweig ein fremder Publisher aktiv"
+            3,
+            "phpvms_load_session muss den MQTT-Publisher an ALLEN DREI Stellen stoppen, \
+             die eine Sitzung beenden oder wechseln (Status-Gate, Auth-Fehler, \
+             synchron nach dem Session-Commit) — sonst bleibt an einer Stelle ein \
+             fremder Publisher aktiv"
         );
     }
 }
@@ -17687,7 +17847,7 @@ mod konten_isolierung_runde_zwoelf_wiring_tests {
         // Funktion (die erste aus Runde 11, vor den Empfaenger-
         // Weiterleitungen) — hier zaehlt die SPAETERE, die innerhalb der
         // Sperre liegen muss.
-        let pruefung_pos = koerper.rfind("!= api_key_bei_provisionierungs_start");
+        let pruefung_pos = koerper.rfind("aktuelle_epoche(&state) != epoche_bei_start");
         let install_pos = koerper.find("*mqtt_guard = Some(handle);");
         match (lock_pos, pruefung_pos, install_pos) {
             (Some(l), Some(p), Some(i)) => assert!(
@@ -17713,19 +17873,111 @@ mod konten_isolierung_runde_zwoelf_wiring_tests {
         let koerper = funktionskoerper(SRC, "async fn phpvms_refresh_profile(");
         let erfassung_pos = koerper.find("aktuelle_session_atomar(&state)");
         let roundtrip_pos = koerper.find("client.get_profile().await");
-        let pruefung_pos = koerper.find("aktuelle_pilot_id != Some(angefragte_pilot_id)");
+        // Seit Runde 13: Epoche statt Piloten-ID — letztere wird bei
+        // Logout NICHT geleert (siehe deren Doku) und war deshalb kein
+        // verlaessliches Signal fuer "die Sitzung hat sich geaendert".
+        let pruefung_pos = koerper.find("aktuelle_epoche(&state) != epoche_bei_start");
         let schreiben_pos = koerper.find("cache_pilot(&state, &p);");
         match (erfassung_pos, roundtrip_pos, pruefung_pos, schreiben_pos) {
             (Some(e), Some(r), Some(p), Some(s)) => assert!(
                 e < r && r < p && p < s,
-                "phpvms_refresh_profile muss die Identitaet NACH dem Roundtrip \
+                "phpvms_refresh_profile muss die Sitzungs-Epoche NACH dem Roundtrip \
                  erneut pruefen, BEVOR das Ergebnis zurueckgeschrieben wird — \
                  sonst kann ein verspaetetes Profil eine inzwischen neu \
-                 angemeldete Sitzung ueberschreiben"
+                 angemeldete ODER abgemeldete Sitzung ueberschreiben"
             ),
             _ => panic!(
                 "Identitaets-Erfassung, Roundtrip, Pruefung oder cache_pilot-Aufruf \
                  in phpvms_refresh_profile nicht mehr gefunden — Test anpassen"
+            ),
+        }
+    }
+}
+
+/// Codex-Folgefund (adversarial, 05.09.2026, dreizehnte Runde): nach drei
+/// Runden Einzel-Patches gegen denselben MQTT-Lebenszyklus (10, 11, 12),
+/// darunter zwei echte Widersprueche zwischen fruheren Fixes, wurde der
+/// Session-Epochen-Zaehler eingefuehrt (`session_epoch`) — ein einziges,
+/// autoritatives Signal statt verstreuter Feld-Vergleiche.
+#[cfg(test)]
+mod konten_isolierung_runde_dreizehn_wiring_tests {
+    /// Dieselbe Technik wie in den vorigen Runden-Testmodulen.
+    fn funktionskoerper(quelle: &str, start_marker: &str) -> String {
+        let start = quelle
+            .find(start_marker)
+            .unwrap_or_else(|| panic!("{start_marker} nicht mehr gefunden — Test anpassen"));
+        let rest = &quelle[start..];
+        let naechstes_fn = rest[1..].find("\nfn ").map(|i| i + 1);
+        let naechstes_async_fn = rest[1..].find("\nasync fn ").map(|i| i + 1);
+        let ende = [naechstes_fn, naechstes_async_fn]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(rest.len());
+        rest[..ende].to_string()
+    }
+
+    /// `setze_session_atomar` muss die Epoche als Teil DERSELBEN
+    /// kritischen Sektion erhoehen wie Client/Piloten-ID — sonst waere sie
+    /// kein verlaessliches Signal mehr fuer "diese Sitzung ist neu".
+    #[test]
+    fn setze_session_atomar_erhoeht_die_epoche() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "fn setze_session_atomar(");
+        assert!(
+            koerper.contains("epoch_guard += 1"),
+            "setze_session_atomar erhoeht session_epoch nicht mehr — Hintergrund-\
+             Tasks koennten einen abgeschlossenen Login nicht mehr von der \
+             vorigen Sitzung unterscheiden"
+        );
+    }
+
+    /// `leere_session_atomar` (Logout) muss die Epoche GENAUSO erhoehen —
+    /// das ist seit Runde 13 das einzige verlaessliche Signal fuer einen
+    /// Logout, nicht mehr ein Vergleich von API-Key oder Piloten-ID.
+    #[test]
+    fn leere_session_atomar_erhoeht_die_epoche() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "fn leere_session_atomar(");
+        assert!(
+            koerper.contains("epoch_guard += 1"),
+            "leere_session_atomar erhoeht session_epoch nicht mehr — ein Logout \
+             waere fuer wartende Hintergrund-Tasks nicht mehr erkennbar"
+        );
+        let nadel = format!("{}{}", "fn phpvms_logout", "(app: AppHandle");
+        let logout_koerper = funktionskoerper(SRC, &nadel);
+        assert!(
+            logout_koerper.contains("leere_session_atomar(&state)"),
+            "phpvms_logout ruft leere_session_atomar nicht mehr auf — state.client \
+             wuerde wieder isoliert geleert, ohne die Epoche zu erhoehen"
+        );
+    }
+
+    /// Befund 1: ein direkter Re-Login (ohne vorheriges Logout) liess den
+    /// MQTT-Handle des VORIGEN Piloten bis zum naechsten Provisionierungs-
+    /// Tick weiterlaufen — Fluege/Positionen des neuen Piloten haetten in
+    /// dieser Luecke ueber den alten Handle laufen koennen. Der Stopp
+    /// muss SYNCHRON passieren, nicht erst im gespawnten Task.
+    #[test]
+    fn login_stoppt_fremden_mqtt_handle_synchron_vor_dem_spawn() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "async fn phpvms_login(");
+        let stopp_pos = koerper.find("stoppe_mqtt_publisher(&state).await");
+        // Ohne die abschliessende Klammer suchen — ein einzelnes,
+        // unausgeglichenes Klammerzeichen in einem String-Literal bringt
+        // den Klammer-Zaehler von tests/angeschlossen.rs durcheinander.
+        let spawn_pos = koerper.find("tauri::async_runtime::spawn(async move");
+        match (stopp_pos, spawn_pos) {
+            (Some(st), Some(sp)) => assert!(
+                st < sp,
+                "phpvms_login muss einen zur neuen Epoche nicht mehr passenden MQTT-\
+                 Handle SYNCHRON stoppen, BEVOR die Provisionierung nur gespawnt wird \
+                 — sonst kann ein Flugstart des neuen Piloten in der Luecke noch den \
+                 alten Handle benutzen"
+            ),
+            _ => panic!(
+                "synchroner MQTT-Stopp oder Provisionierungs-Spawn in phpvms_login \
+                 nicht mehr gefunden — Test anpassen, nicht loeschen"
             ),
         }
     }
@@ -17785,7 +18037,7 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
             // Multi-Thread-Runtime erlaubt genau das). `aktuelle_session_
             // atomar` haelt BEIDE Locks gleichzeitig und schliesst diese
             // Luecke wirklich.
-            let Some((client, pilot_id)) = aktuelle_session_atomar(&state) else {
+            let Some((client, pilot_id, _epoche)) = aktuelle_session_atomar(&state) else {
                 continue;
             };
             let aktuelle_identitaet = pilot_id.to_string();
@@ -44131,7 +44383,7 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
     // die `aktuelle_session_atomar` eigentlich gibt. Jetzt werden Client
     // UND Identitaet gemeinsam, atomar und JETZT (nicht vom Aufrufer
     // ueberreicht) gelesen.
-    let Some((client, aktuelle_pilot_id)) = aktuelle_session_atomar(state) else {
+    let Some((client, aktuelle_pilot_id, _epoche)) = aktuelle_session_atomar(state) else {
         tracing::warn!(
             pirep_id = %persisted.pirep_id,
             "try_resume_flight: keine authentifizierte Sitzung bekannt — Resume uebersprungen"

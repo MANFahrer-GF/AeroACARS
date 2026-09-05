@@ -996,9 +996,10 @@ fn der_worker_leert_die_ablage_vor_dem_client_riegel() {
     // Runde 10 (05.09.2026): der Client-Riegel liest Client + Piloten-ID
     // jetzt gemeinsam ueber `aktuelle_session_atomar` (echte Atomaritaet
     // gegenueber Thread-Nebenlaeufigkeit, nicht nur gegenueber Awaits) —
-    // das ist derselbe Riegel, nur andere Formulierung.
+    // das ist derselbe Riegel, nur andere Formulierung. Seit Runde 13
+    // liefert `aktuelle_session_atomar` zusaetzlich die Sitzungs-Epoche.
     let riegel = worker
-        .find("let Some((client, pilot_id)) = aktuelle_session_atomar(&state) else")
+        .find("let Some((client, pilot_id, _epoche)) = aktuelle_session_atomar(&state) else")
         .expect("Client-Riegel nicht gefunden — wurde er umgebaut?");
     assert!(
         drain < riegel,

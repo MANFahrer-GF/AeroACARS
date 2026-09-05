@@ -870,6 +870,81 @@ ein monoton steigender Session-Epochen-Zaehler, den jeder Hintergrund-Task
 vor jeder Mutation gegenprueft) statt weiterer Einzel-Patches — diese
 Entscheidung liegt bei Thomas, nicht bei diesem Kreislauf.
 
+## Nachtrag #12 (05.09.2026): dreizehnte Codex-Runde — Architektur-Umbau (Session-Epochen-Zähler)
+
+Adversarial-Review gegen alle zwoelf bisherigen Commits war die VIERTE
+Runde in Folge (10-13) mit neuen Funden im MQTT-Lebenszyklus, mit
+steigender Schweregrad-Einstufung (mittel → hoch → kritisch → kritisch).
+Codex fand zusaetzlich ZWEI echte Widersprueche zwischen fruheren Fixes:
+
+- **Runde 11 vs. 10/12:** die MQTT-Abschlusspruefung verliess sich darauf,
+  dass ein Logout den gespeicherten API-Key veraendert — Runde 11 zwang
+  aber, MQTT VOR allen fehlschlagfaehigen Keyring-Operationen zu stoppen.
+  Der Stopp lag damit VOR der Key-Loeschung — ein Task nach dem Stopp
+  konnte trotzdem noch erfolgreich validieren und installieren.
+- **Runde 10 vs. 12:** `client`+`authenticated_pilot_id` wurden als
+  atomarer Sitzungszustand behandelt, aber `authenticated_pilot_id` wird
+  bei Logout NICHT geleert (dokumentierte, bis dahin als harmlos geltende
+  Entscheidung). Runde 12s `phpvms_refresh_profile` benutzte dieses Feld
+  ALLEIN als Beweis, dass eine verspaetete Antwort noch zur aktiven
+  Sitzung gehoert — nach einem Logout bestand die Pruefung trotzdem.
+
+**Auf Thomas' ausdrueckliche Entscheidung hin (Ruecksprache nach Codex'
+Antwort "Nein, der MQTT-Lebenszyklus ist noch nicht geschlossen") wurde
+diese Runde als Architektur-Umbau statt als weiterer Einzel-Patch
+umgesetzt:**
+
+**Neuer Session-Epochen-Zaehler (`AppState::session_epoch: Mutex<u64>`).**
+JEDE Sitzungsaenderung (Login, Logout, Load-Session) erhoeht ihn EINMAL,
+synchron, als fester Bestandteil derselben atomaren Operation wie
+`client`/`authenticated_pilot_id`. Das ist jetzt das EINZIGE Signal, das
+Hintergrund-Tasks noch pruefen — nicht mehr API-Key, nicht mehr
+Piloten-ID, nicht mehr `mqtt_owner_pilot_id`.
+
+**Konkrete Aenderungen:**
+
+1. `setze_session_atomar`/`leere_session_atomar` (neu, Gegenstueck fuer
+   Logout) schreiben Client/Piloten-ID/Epoche als EINE atomare Operation,
+   feste Sperr-Reihenfolge, und geben die neue Epoche zurueck.
+   `aktuelle_session_atomar` liest alle drei zusammen; `aktuelle_epoche`
+   liest nur die Epoche fuer Stellen, die keinen Client brauchen.
+2. `mqtt_owner_pilot_id` → `mqtt_owner_epoch`: der Idempotenz-Guard in
+   `init_mqtt_publisher_via_provisioning` vergleicht jetzt Epochen, nicht
+   Piloten-IDs. BEIDE Abschlusspruefungen (vor den Empfaenger-
+   Weiterleitungen und unmittelbar vor der Installation) vergleichen
+   ebenfalls die Epoche — die zweite jetzt INNERHALB der gehaltenen
+   `state.mqtt`-Sperre (nicht mehr davor), sodass ein paralleler Logout
+   garantiert sichtbar ist, sobald dieser Code den Lock haelt.
+3. `phpvms_login`/`phpvms_load_session` stoppen einen zur neuen Epoche
+   nicht mehr passenden MQTT-Handle jetzt SYNCHRON, direkt nach dem
+   Session-Commit — nicht erst im gespawnten Provisionierungs-Task. Der
+   Login/Restore gilt erst als abgeschlossen, wenn kein fremder Handle
+   mehr aktiv sein kann.
+4. `phpvms_refresh_profile` vergleicht die Epoche statt der Piloten-ID —
+   schliesst automatisch auch den Fall, dass ein Logout (nicht nur ein
+   Kontowechsel) waehrend des Roundtrips stattfand.
+5. `phpvms_get_bids` (neuer, niedrig eingestufter Befund): vergleicht die
+   Epoche, bevor ein verspaeteter Erfolg einen inzwischen fuer einen
+   ANDEREN Account frisch erzeugten Aktivitaets-Log-Fehler faelschlich
+   als "wieder erreichbar" markiert.
+
+**Tests:** drei neue Quelltext-Waechter
+(`konten_isolierung_runde_dreizehn_wiring_tests`), Gegenprobe fuer die
+beiden zentralen (Epochen-Erhoehung, synchroner Login-Stopp)
+durchgefuehrt. Vier bestehende Waechter (Runde 10-12) mussten an die neue
+Epochen-Terminologie angepasst werden; ein Test in
+`tests/spur_verdrahtung.rs` ebenfalls (das 3-Tupel von
+`aktuelle_session_atomar`). Erneut ein String-Literal mit unausgeglichener
+Klammer im Klammer-Zaehler von `tests/angeschlossen.rs` gefunden und
+behoben (`.find("...async move {")` → ohne die abschliessende Klammer).
+
+cargo test --workspace gruen (echter Exit-Code geprueft), rustfmt --check
+sauber, alle Integrationstests gruen. Keine Frontend-Aenderungen in
+dieser Runde.
+
+Dokumentiert in docs/qs/pirep-infrastruktur-haertung-2026-09.md,
+Nachtrag #12.
+
 ## Nicht behoben (bewusst außerhalb des Umfangs)
 
 * **`pirep_queue`s 50-Versuche-Grenze selbst** bleibt als Konzept
