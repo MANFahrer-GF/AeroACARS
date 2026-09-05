@@ -1494,6 +1494,20 @@ struct AppState {
     /// the persisted `SimKind`.
     xplane: Mutex<sim_xplane::XPlaneAdapter>,
     active_flight: Mutex<Option<Arc<ActiveFlight>>>,
+    /// Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): der
+    /// Fingerabdruck (`Client::identity_fingerprint`) des Accounts, der
+    /// den AKTUELL aktiven Flug gestartet/uebernommen hat — EINMAL gesetzt
+    /// (in `flight_start`/`flight_adopt`), NICHT bei jedem Speichern/
+    /// Einreihen neu aus `current_client` abgeleitet. Grund: `phpvms_logout`
+    /// leert `state.client`, aber ausdruecklich NICHT `state.active_flight`
+    /// ("ein anderer Pilot kann sich auf derselben Maschine anmelden") —
+    /// ohne dieses Feld haette jede spaetere Speicherung/Einreihung
+    /// waehrend eines noch laufenden Fluges den Fingerabdruck des GERADE
+    /// eingeloggten Piloten getragen, nicht den des Piloten, dem der Flug
+    /// tatsaechlich gehoert. `PersistedFlight::owner_identity` und
+    /// `pirep_queue::QueuedPirep::owner_identity` werden BEIDE aus diesem
+    /// Feld befuellt, nicht aus `current_client(&state)`.
+    active_flight_owner_identity: Mutex<Option<String>>,
     /// Nachgereicht (externe Gegenpruefung Codex, adversarial, waehrend
     /// der v1.7.17-QS-Runde entdeckt): ein reines Lifecycle-Schloss fuer
     /// die EINZIGE Aktiv-Flug-Ablage (`active_flight_path` — ein fester
@@ -3149,6 +3163,19 @@ struct PersistedFlight {
     /// "0 distance / 0 fuel" PIREPs we saw before Phase H.4.
     #[serde(default)]
     stats: PersistedFlightStats,
+    /// Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): Fingerabdruck
+    /// (`Client::identity_fingerprint`) des Accounts, der DIESEN Flug
+    /// gestartet/uebernommen hat — aus `AppState::active_flight_owner_identity`
+    /// bei jedem Speichern uebernommen, nicht aus `current_client(&state)`
+    /// zum Speicherzeitpunkt (der koennte, waehrend derselbe Flug noch laeuft,
+    /// bereits einem anderen, spaeter eingeloggten Piloten gehoeren —
+    /// `phpvms_logout` leert `state.client`, aber NICHT `state.active_flight`).
+    /// `#[serde(default)]` = `None` fuer Alt-Dateien (vor diesem Feld) — der
+    /// Resume-Pfad behandelt das wie einen Fremd-Eigentuemer: serverseitig
+    /// ueber die IN_PROGRESS-Liste des aktuellen Accounts verifizieren, statt
+    /// den PIREP direkt per ID abzufragen (siehe `try_resume_flight`).
+    #[serde(default)]
+    owner_identity: Option<String>,
 }
 
 /// Persistable subset of `FlightStats`. The activity-log edge-detector
@@ -12442,6 +12469,11 @@ fn save_active_flight(app: &AppHandle, flight: &ActiveFlight) -> bool {
             arr_airport: flight.arr_airport.clone(),
             fares: flight.fares.clone(),
             stats: stats_snapshot,
+            owner_identity: state
+                .active_flight_owner_identity
+                .lock()
+                .expect("active_flight_owner_identity lock")
+                .clone(),
         };
         if let Err(e) = write_persisted_flight(app, &persisted) {
             tracing::warn!(error = ?e, "could not persist active flight");
@@ -13849,6 +13881,13 @@ async fn flight_adopt(
         let mut guard = state.active_flight.lock().expect("active_flight lock");
         *guard = Some(Arc::clone(&flight));
     }
+    // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): Eigentuemer
+    // EINMAL hier festhalten, nicht spaeter bei jedem Speichern/Einreihen
+    // neu aus dem dann gerade eingeloggten Client ableiten.
+    *state
+        .active_flight_owner_identity
+        .lock()
+        .expect("active_flight_owner_identity lock") = Some(client.identity_fingerprint());
     // ActiveFlight is now committed — release the in-progress flag so the
     // active_flight mutex alone guards subsequent adopts.
     setup_guard.disarm();
@@ -14652,6 +14691,13 @@ async fn flight_start(
         let mut guard = state.active_flight.lock().expect("active_flight lock");
         *guard = Some(Arc::clone(&flight));
     }
+    // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): Eigentuemer
+    // EINMAL hier festhalten, nicht spaeter bei jedem Speichern/Einreihen
+    // neu aus dem dann gerade eingeloggten Client ableiten.
+    *state
+        .active_flight_owner_identity
+        .lock()
+        .expect("active_flight_owner_identity lock") = Some(client.identity_fingerprint());
     // ActiveFlight is committed; release the setup-in-progress flag.
     setup_guard.disarm();
 
@@ -15372,6 +15418,13 @@ async fn flight_start_manual(
         let mut guard = state.active_flight.lock().expect("active_flight lock");
         *guard = Some(Arc::clone(&flight));
     }
+    // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): Eigentuemer
+    // EINMAL hier festhalten, nicht spaeter bei jedem Speichern/Einreihen
+    // neu aus dem dann gerade eingeloggten Client ableiten.
+    *state
+        .active_flight_owner_identity
+        .lock()
+        .expect("active_flight_owner_identity lock") = Some(client.identity_fingerprint());
     setup_guard.disarm();
 
     // Manual-Plan in FlightStats schreiben (analog zu SB-OFP-Path)
@@ -22368,13 +22421,21 @@ async fn flight_end(
                     pirep_payload_json,
                     dead_letter_notified: false,
                     retry_not_before: None,
-                    // Wer hat DIESEN Flug geflogen — nicht wer zufaellig
-                    // eingeloggt ist, wenn der Worker es Stunden/Tage
-                    // spaeter aus der Slow-Phase heraus versucht. `client`
-                    // ist hier derselbe, mit dem `file_pirep_with_retry`
-                    // gerade eben scheiterte (current_client weiter oben in
-                    // dieser Funktion) — noch derselbe eingeloggte Pilot.
-                    owner_identity: Some(client.identity_fingerprint()),
+                    // Codex-Folgefund (adversarial, 05.09.2026, fuenfte
+                    // Runde): NICHT `client.identity_fingerprint()` (= wer
+                    // GERADE eingeloggt ist, wenn dieser Code hier laeuft) —
+                    // `phpvms_logout` leert `state.client`, aber nicht
+                    // `state.active_flight`. Zwischen Flugstart und diesem
+                    // Filing-Versuch koennte sich also bereits ein ANDERER
+                    // Pilot angemeldet haben. `active_flight_owner_identity`
+                    // wurde EINMAL bei Flugstart/-uebernahme gesetzt und
+                    // bleibt der richtige Eigentuemer, unabhaengig davon wer
+                    // gerade eingeloggt ist.
+                    owner_identity: state
+                        .active_flight_owner_identity
+                        .lock()
+                        .expect("active_flight_owner_identity lock")
+                        .clone(),
                 };
                 if let Err(qe) = pirep_queue::enqueue(&app, &queued) {
                     // Queue selber kaputt — fallback auf altes Verhalten
@@ -27096,6 +27157,25 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // konstruktiv nur nach unten korrigieren — den häufigeren
                 // Fall „zu weich gemeldet" hätte sie nie erfasst.
                 stats.landing_analysis = Some(analysis.clone());
+                // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde):
+                // `peak_g_post_500ms` steht in `analysis` HIER schon fertig
+                // berechnet — aber der Merge nach `stats.landing_peak_g_force`
+                // lief bisher nur SPAETER (nach `drop(stats)` + Re-Lock,
+                // ~180 Zeilen weiter unten). Fuer den Klassifikator gleich
+                // darunter war das zu spaet: nach dem Klettern-Reset zwischen
+                // zwei Touchdowns (siehe `touchdown_dump_faellig`-Fix) stand
+                // `landing_peak_g_force` hier noch auf `None` — der
+                // Klassifikator liefe dann mit `peak_g_load=None` fuer GENAU
+                // den Touchdown, dessen G-Wert er eigentlich pruefen soll.
+                // Deshalb hier zusaetzlich, VOR dem Klassifikator-Aufruf,
+                // derselbe Merge — der spaetere bleibt unveraendert bestehen
+                // (fuer die uebrigen Konsumenten von `landing_peak_g_force`,
+                // die nicht von diesem einen Aufruf abhaengen).
+                let pg_500_frueh = analysis
+                    .get("peak_g_post_500ms")
+                    .and_then(|v| v.as_f64())
+                    .map(|x| x as f32);
+                peak_g_force_verschmelzen(&mut stats, pg_500_frueh);
                 // v0.7.19 GAF-707: Heuristik-Klassifikator EINMAL pro
                 // Touchdown am TD-Edge ausfuehren — direkt nachdem die
                 // landing_analysis (mit vs_at_edge_fpm etc) materialisiert
@@ -27296,14 +27376,13 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                             "touchdown-forensics-v2 + edge beide nicht verfuegbar — keeping primary-chain value"
                         );
                     }
-                    if let Some(g) = pg_500 {
-                        // Nur ueberschreiben wenn der Buffer-Peak hoeher ist als
-                        // der bisher gemessene (= echter Gear-Compression-Spike).
-                        let cur = s.landing_peak_g_force.unwrap_or(0.0);
-                        if g > cur {
-                            s.landing_peak_g_force = Some(g);
-                        }
-                    }
+                    // Nur ueberschreiben wenn der Buffer-Peak hoeher ist als der
+                    // bisher gemessene (= echter Gear-Compression-Spike) —
+                    // dieselbe Regel wie der Fruehe-Merge oben vor dem
+                    // Klassifikator-Aufruf (`peak_g_force_verschmelzen`), hier
+                    // erneut fuer die uebrigen Konsumenten von
+                    // `landing_peak_g_force` nach dem Re-Lock.
+                    peak_g_force_verschmelzen(&mut s, pg_500);
                     // Re-Klassifizierung mit den neuen Werten
                     // BUG #6 fix: bounce_count from analysis (50Hz Sampler-Wahrheit),
                     // nicht vom Streamer-side s.bounce_count counter.
@@ -30509,6 +30588,27 @@ fn extract_icao_code(raw: &str) -> Option<String> {
 /// - Confirmed-vs-Confirmed bei Multi-TD (Touch-and-Go): Reasons werden
 ///   nur ersetzt wenn die neue |vs_at_edge_fpm| HOEHER ist (Worst-Case-
 ///   Aggregation per Spec §Leitentscheidung 7).
+/// Merged einen frisch gemessenen Peak-G-Wert (z. B. `peak_g_post_500ms`
+/// aus der Touchdown-Analyse) in `landing_peak_g_force` — NUR nach oben,
+/// nie nach unten: ein echter Gear-Compression-Spike darf nie durch einen
+/// schwaecheren Nachfolgewert verdraengt werden (dieselbe „haerterer Wert
+/// gewinnt"-Doktrin wie in `apply_accident_heuristic`). `None` (keine
+/// Messung verfuegbar) aendert nichts.
+///
+/// Aus zwei Aufrufstellen zusammengezogen (Codex-Folgefund, adversarial,
+/// 05.09.2026, fuenfte Runde), damit sie nicht wieder auseinanderlaufen:
+/// einmal VOR `apply_accident_heuristic` (damit der Klassifikator den
+/// frischen Wert sieht, nicht den Stand von vor diesem Touchdown), einmal
+/// danach fuer die uebrigen Konsumenten von `landing_peak_g_force`.
+fn peak_g_force_verschmelzen(stats: &mut FlightStats, gemessen: Option<f32>) {
+    if let Some(g) = gemessen {
+        let bisher = stats.landing_peak_g_force.unwrap_or(0.0);
+        if g > bisher {
+            stats.landing_peak_g_force = Some(g);
+        }
+    }
+}
+
 fn apply_accident_heuristic(stats: &mut FlightStats, analysis: &serde_json::Value) {
     // v1.6.3: **Die Unfall-Erkennung spuelt nie weich.** Der Score nimmt die
     // Hoehenkurve, weil sie die Wahrheit besser trifft — hier zaehlt der
@@ -42569,7 +42669,7 @@ fn stillstand_erlaubt_wiederaufnahme(stillstand: chrono::Duration) -> bool {
 }
 
 async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, client: &Client) {
-    let Some(persisted) = read_persisted_flight(app) else {
+    let Some(mut persisted) = read_persisted_flight(app) else {
         return;
     };
     // ⚠ Hier wurde bis v1.7.8 nach der DAUER des Fluges entschieden — älter
@@ -42617,6 +42717,49 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
             )),
         );
         return;
+    }
+
+    // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): BEVOR der
+    // PIREP unten direkt per ID abgefragt wird — das allein sagt nichts
+    // darueber, WEM er gehoert — pruefen, ob die Ablage ueberhaupt zum
+    // GERADE eingeloggten Account gehoert. `phpvms_logout` erlaubt
+    // ausdruecklich, dass sich waehrend eines noch laufenden Fluges ein
+    // ANDERER Pilot auf derselben Maschine anmeldet. Ohne diese Pruefung
+    // haette ein 404 (falls das ID-Nachschlagen fuer den falschen Account
+    // fehlschlaegt) Pilot As Ablage geloescht; ein Erfolg haette Pilot As
+    // Flug unter Pilot Bs Session wiederaufgenommen.
+    let aktuelle_identitaet = client.identity_fingerprint();
+    if !pirep_queue_eintrag_gehoert_aktuellem_piloten(
+        persisted.owner_identity.as_deref(),
+        &aktuelle_identitaet,
+    ) {
+        // Alt-Ablage (kein Eigentuemer gespeichert, vor diesem Feld) oder
+        // inzwischen ein anderer eingeloggter Pilot — vor der Aufgabe
+        // serverseitig pruefen, ob der PIREP TROTZDEM zum aktuellen Account
+        // gehoert (`GET /api/user/pireps?state=0`, serverseitig auf den
+        // eingeloggten Piloten gefiltert — derselbe Reklamier-Weg wie bei
+        // `pirep_queue`, NICHT die direkte Nachfrage per ID weiter unten).
+        let serverseitig_bestaetigt = client
+            .get_user_pireps_in_progress()
+            .await
+            .map(|liste| liste.iter().any(|p| p.id == persisted.pirep_id))
+            .unwrap_or(false);
+        if serverseitig_bestaetigt {
+            tracing::info!(
+                pirep_id = %persisted.pirep_id,
+                "persisted flight serverseitig als IN_PROGRESS des aktuellen Accounts \
+                 bestaetigt — reklamiert (Alt-Ablage oder API-Key-Rotation)"
+            );
+            persisted.owner_identity = Some(aktuelle_identitaet.clone());
+        } else {
+            tracing::warn!(
+                pirep_id = %persisted.pirep_id,
+                eigentuemer_bekannt = persisted.owner_identity.is_some(),
+                "persisted flight gehoert nicht dem aktuell eingeloggten Piloten — \
+                 Resume uebersprungen, Ablage bleibt unangetastet"
+            );
+            return;
+        }
     }
 
     // Verify the PIREP still exists server-side BEFORE rebuilding the
@@ -42933,6 +43076,15 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
         let mut guard = state.active_flight.lock().expect("active_flight lock");
         *guard = Some(flight);
     }
+    // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): dieselbe
+    // Eigentuemer-Erfassung wie in `flight_start`/`flight_adopt` — an
+    // dieser Stelle ist bereits sichergestellt (Eigentuemer-Pruefung weiter
+    // oben in dieser Funktion), dass die Ablage dem GERADE eingeloggten
+    // Account gehoert.
+    *state
+        .active_flight_owner_identity
+        .lock()
+        .expect("active_flight_owner_identity lock") = Some(aktuelle_identitaet);
     // NOTE: do not spawn the streamer here. The frontend-driven
     // `flight_resume_confirm` does it after the resume banner is dismissed.
 }
@@ -48065,6 +48217,7 @@ mod v0_7_7_ofp_refresh_tests {
             arr_airport: "LFPG".to_string(),
             fares: vec![],
             stats: PersistedFlightStats::default(),
+            owner_identity: Some("fingerprint-abc".to_string()),
         };
         let json = serde_json::to_string(&original).expect("serialise");
         let restored: PersistedFlight = serde_json::from_str(&json).expect("deserialise");
@@ -58715,9 +58868,23 @@ mod gaf707_bounce_in_aufprall_tests {
 
         // TD #1 — der Touch-and-Go. -1499 fpm liegt knapp UNTER der
         // Extreme-Impact-Schwelle (>=1500 fpm) — bewusst so, real gemessen.
-        // Darf keinen Unfall ausloesen.
-        stats.landing_peak_g_force = Some(4.67);
-        let tg_analysis = serde_json::json!({ "vs_at_edge_fpm": -1499.0 });
+        // Darf keinen Unfall ausloesen. Ablauf wie im echten Sampler-Code:
+        // erst der Merge aus `peak_g_post_500ms` (VOR dem Klassifikator-
+        // Aufruf, Codex-Folgefund fuenfte Runde), dann `apply_accident_
+        // heuristic` — NICHT `landing_peak_g_force` manuell setzen, sonst
+        // beweist der Test nur die Klassifikator-Logik, nicht die
+        // tatsaechliche Verdrahtung im Sampler.
+        let tg_analysis = serde_json::json!({
+            "vs_at_edge_fpm": -1499.0,
+            "peak_g_post_500ms": 4.67,
+        });
+        peak_g_force_verschmelzen(
+            &mut stats,
+            tg_analysis
+                .get("peak_g_post_500ms")
+                .and_then(|v| v.as_f64())
+                .map(|x| x as f32),
+        );
         apply_accident_heuristic(&mut stats, &tg_analysis);
         assert!(
             !stats.accident_detected,
@@ -58725,12 +58892,29 @@ mod gaf707_bounce_in_aufprall_tests {
              Extreme-Impact-Schwelle und darf keinen Unfall auslösen"
         );
 
-        // TD #2 — der echte, finale Aufprall. Nach dem Fix aktualisiert die
-        // FSM den `landing_peak_g_force` auf den zweiten (echten) Touchdown,
-        // BEVOR `apply_accident_heuristic` fuer ihn erneut laeuft — genau
-        // das leistet der Frueh-Dump aus `touchdown_dump_faellig`.
-        stats.landing_peak_g_force = Some(5.88);
-        let final_analysis = serde_json::json!({ "vs_at_edge_fpm": -3007.0 });
+        // Zwischen den Touchdowns: der Sampler-Klettern-Reset setzt
+        // `landing_peak_g_force` auf `None` zurueck (siehe
+        // `multi_td_klettern_reset_setzt_auch_landing_peak_g_force_zurueck`
+        // weiter unten) — das MUSS hier ebenfalls passieren, sonst
+        // reproduziert der Test nicht den echten Ausgangszustand fuer TD#2.
+        stats.landing_peak_g_force = None;
+
+        // TD #2 — der echte, finale Aufprall. `peak_g_post_500ms` steht in
+        // der frisch berechneten Analyse fuer DIESEN Touchdown zur
+        // Verfuegung — der fruehe Merge (Codex-Folgefund) sorgt dafuer,
+        // dass der Klassifikator ihn sieht, statt mit dem `None` vom Reset
+        // zu laufen.
+        let final_analysis = serde_json::json!({
+            "vs_at_edge_fpm": -3007.0,
+            "peak_g_post_500ms": 5.88,
+        });
+        peak_g_force_verschmelzen(
+            &mut stats,
+            final_analysis
+                .get("peak_g_post_500ms")
+                .and_then(|v| v.as_f64())
+                .map(|x| x as f32),
+        );
         apply_accident_heuristic(&mut stats, &final_analysis);
 
         assert!(
@@ -58770,9 +58954,20 @@ mod gaf707_bounce_in_aufprall_tests {
         };
 
         // TD #1 — harter Bump, hohes G, aber V/S klar unter der
-        // Extreme-Impact-Schwelle. Legitim unauffaellig.
-        stats.landing_peak_g_force = Some(3.4);
-        let td1_analysis = serde_json::json!({ "vs_at_edge_fpm": -900.0 });
+        // Extreme-Impact-Schwelle. Legitim unauffaellig. Merge ueber
+        // `peak_g_force_verschmelzen` wie im echten Sampler-Code, nicht
+        // manuell gesetzt.
+        let td1_analysis = serde_json::json!({
+            "vs_at_edge_fpm": -900.0,
+            "peak_g_post_500ms": 3.4,
+        });
+        peak_g_force_verschmelzen(
+            &mut stats,
+            td1_analysis
+                .get("peak_g_post_500ms")
+                .and_then(|v| v.as_f64())
+                .map(|x| x as f32),
+        );
         apply_accident_heuristic(&mut stats, &td1_analysis);
         assert!(!stats.accident_detected);
 
@@ -58785,8 +58980,17 @@ mod gaf707_bounce_in_aufprall_tests {
         // V/S ueber der Extreme-Impact-Schwelle. Ohne den Reset waere hier
         // G=3.4 von TD#1 stehengeblieben und haette faelschlich
         // Confirmed(Impact) ausgeloest.
-        stats.landing_peak_g_force = Some(1.2);
-        let td2_analysis = serde_json::json!({ "vs_at_edge_fpm": -1600.0 });
+        let td2_analysis = serde_json::json!({
+            "vs_at_edge_fpm": -1600.0,
+            "peak_g_post_500ms": 1.2,
+        });
+        peak_g_force_verschmelzen(
+            &mut stats,
+            td2_analysis
+                .get("peak_g_post_500ms")
+                .and_then(|v| v.as_f64())
+                .map(|x| x as f32),
+        );
         apply_accident_heuristic(&mut stats, &td2_analysis);
 
         assert!(
@@ -58819,6 +59023,40 @@ mod gaf707_bounce_in_aufprall_tests {
              Unfall-Klassifikation des zweiten ueberleben (Codex-Folgefund \
              05.09.2026)"
         );
+    }
+
+    /// Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): der Merge
+    /// von `peak_g_post_500ms` nach `landing_peak_g_force` lief bisher NUR
+    /// nach dem `apply_accident_heuristic`-Aufruf (nach `drop(stats)` +
+    /// Re-Lock, ~180 Zeilen weiter unten) — der Klassifikator sah damit fuer
+    /// GENAU DEN Touchdown, den er bewerten soll, entweder `None` (nach dem
+    /// Klettern-Reset) oder einen veralteten Wert. Die Tests oben rufen
+    /// `peak_g_force_verschmelzen` selbst auf und wuerden diese Verdrahtung
+    /// NICHT fangen, wenn sie in der Produktion fehlte — deshalb hier ein
+    /// Quelltext-Waechter direkt auf die Aufrufreihenfolge im Sampler.
+    #[test]
+    fn peak_g_merge_laeuft_im_sampler_vor_dem_klassifikator_nicht_danach() {
+        const SRC: &str = include_str!("lib.rs");
+        let start = SRC
+            .find("stats.landing_analysis = Some(analysis.clone());")
+            .expect("Ankerstelle im Sampler nicht mehr gefunden — Test anpassen, nicht loeschen");
+        let rest = &SRC[start..];
+        let merge_pos = rest.find("peak_g_force_verschmelzen(&mut stats,");
+        let klassifikator_pos = rest.find("apply_accident_heuristic(&mut stats, &analysis);");
+        match (merge_pos, klassifikator_pos) {
+            (Some(m), Some(k)) => assert!(
+                m < k,
+                "peak_g_force_verschmelzen muss im Sampler VOR \
+                 apply_accident_heuristic laufen — sonst klassifiziert der \
+                 Aufruf mit dem G-Stand von VOR diesem Touchdown, nicht mit \
+                 dem gerade gemessenen (Codex-Folgefund 05.09.2026, fuenfte \
+                 Runde)"
+            ),
+            _ => panic!(
+                "peak_g_force_verschmelzen- oder apply_accident_heuristic-Aufruf \
+                 im Sampler nicht mehr gefunden — Test anpassen, nicht loeschen"
+            ),
+        }
     }
 }
 
@@ -59280,6 +59518,7 @@ mod wiederaufnahme_langstrecke_tests {
             arr_airport: "KMIA".to_string(),
             fares: vec![],
             stats: PersistedFlightStats::default(),
+            owner_identity: Some("fingerprint-thy77-pilot".to_string()),
         }
     }
 
@@ -59864,6 +60103,37 @@ mod wiederaufnahme_langstrecke_tests {
             !q[start..start + bis_server].contains("clear_persisted_flight"),
             "es wird gelöscht, BEVOR der Server gefragt wurde"
         );
+    }
+
+    /// Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): der PIREP
+    /// per ID abzufragen sagt nichts darueber, WEM er gehoert — `phpvms_
+    /// logout` erlaubt ausdruecklich, dass sich waehrend eines laufenden
+    /// Fluges ein ANDERER Pilot auf derselben Maschine anmeldet. Die
+    /// Eigentuemer-Pruefung muss deshalb VOR `client.get_pirep` laufen,
+    /// nicht danach — sonst haette ein 404 fuer den falschen Account Pilot
+    /// As Ablage geloescht, ein Erfolg haette ihren Flug unter Pilot Bs
+    /// Session wiederaufgenommen.
+    #[test]
+    fn die_eigentuemer_pruefung_laeuft_vor_der_server_abfrage_per_id() {
+        let q = ohne_leerraum(LIB_QUELLE);
+        let start = q
+            .find("asyncfntry_resume_flight")
+            .expect("try_resume_flight nicht gefunden");
+        let rest = &q[start..];
+        let pruefung_pos = rest.find("pirep_queue_eintrag_gehoert_aktuellem_piloten(");
+        let server_pos = rest.find("client.get_pirep(&persisted.pirep_id)");
+        match (pruefung_pos, server_pos) {
+            (Some(p), Some(s)) => assert!(
+                p < s,
+                "die Eigentuemer-Pruefung muss vor der direkten PIREP-ID-Abfrage \
+                 laufen — sonst kann ein anderer eingeloggter Pilot Pilot As \
+                 Ablage loeschen oder ihren Flug uebernehmen"
+            ),
+            _ => panic!(
+                "Eigentuemer-Pruefung oder PIREP-ID-Abfrage in try_resume_flight \
+                 nicht mehr gefunden — Test anpassen, nicht loeschen"
+            ),
+        }
     }
 
     #[test]

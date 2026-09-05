@@ -265,6 +265,74 @@ Datei: die Suchnadel wird aus zwei Teilen zur Laufzeit zusammengesetzt,
 damit sie als zusammenhaengendes Literal nirgends im eigenen Testcode
 steht. Gegenprobe fuer beide Haelften des Wächters durchgefuehrt.
 
+## Nachtrag #4 (05.09.2026): fuenfte Codex-Runde — Eigentuemer-Identitaet war nicht am Flug festgemacht
+
+Adversarial-Review gegen den weiter angewachsenen Diff fand: die
+Eigentuemer-Fixes aus Nachtrag #3 leiteten den Fingerabdruck bei JEDER
+Speicherung/Einreihung frisch aus `current_client(&state)` ab — also aus
+WER GERADE eingeloggt ist, nicht aus wem der Flug tatsaechlich gehoert.
+`phpvms_logout` leert `state.client`, aber ausdruecklich NICHT
+`state.active_flight` ("ein anderer Pilot kann sich auf derselben Maschine
+anmelden"). Zwei konkrete Ausfaelle daraus:
+
+* **`try_resume_flight`** fragte den PIREP direkt per ID ab
+  (`client.get_pirep`), bevor irgendeine Eigentuemer-Pruefung lief. Meldet
+  phpVMS dabei `NotFound` fuer den falschen (inzwischen eingeloggten)
+  Account, loeschte der Code Pilot As Ablage dauerhaft. Antwortet phpVMS
+  stattdessen `Ok` (falls die Abfrage nicht pro Account beschraenkt ist),
+  haette der Code Pilot As Flug unter Pilot Bs Session wiederaufgenommen.
+* **`pirep_queue`s Einreihung** (Nachtrag #3) stempelte den Fingerabdruck
+  des Piloten, der GERADE eingeloggt ist, wenn `flight_end` laeuft — nicht
+  den des Piloten, der den Flug gestartet hat. Loggt sich Pilot A aus
+  (ohne den Flug zu beenden) und Pilot B ein, bevor ein transienter
+  Filing-Fehler den PIREP in die Queue schiebt, traegt der Eintrag Pilot Bs
+  Fingerabdruck — der Worker haette ihn spaeter fuer B, nicht fuer A,
+  behandelt.
+
+**Gefixt:** neues `AppState::active_flight_owner_identity` (`Mutex<Option
+<String>>`, Default-abgeleitet — keine Aenderung an der einzigen
+`AppState`-Konstruktionsstelle noetig, im Unterschied zu `ActiveFlight` mit
+seinen 22 Konstruktionsstellen). Wird EINMAL gesetzt, in `flight_start`,
+`flight_adopt` und beim erfolgreichen Resume — direkt wenn der Flug in
+`state.active_flight` installiert wird — aus dem GERADE eingeloggten
+Client. `PersistedFlight` traegt jetzt `owner_identity: Option<String>`
+(bei jedem Speichern aus `active_flight_owner_identity` uebernommen, nicht
+aus `current_client`), `pirep_queue::QueuedPirep::owner_identity` liest
+beim Einreihen ebenfalls aus `active_flight_owner_identity` statt aus
+`current_client(&state)`.
+
+`try_resume_flight` prueft die Eigentuemerschaft jetzt VOR der direkten
+PIREP-ID-Abfrage: stimmt der Fingerabdruck ueberein, laeuft die bestehende
+Logik unveraendert. Stimmt er nicht ueberein ODER fehlt er (Alt-Ablage von
+vor diesem Feld) — derselbe Reklamier-Weg wie bei `pirep_queue`: einmalig
+serverseitig nachfragen (`get_user_pireps_in_progress`, bereits
+serverseitig auf den eingeloggten Piloten gefiltert), ob der PIREP
+TROTZDEM zum aktuellen Account gehoert. Wenn ja: reklamieren (Fingerabdruck
+neu schreiben), normal fortfahren. Wenn nein: Resume ueberspringen, Ablage
+unangetastet lassen (weder Loeschen noch Uebernehmen) — dieselbe
+Quarantaene-Philosophie wie bei der Warteschlange.
+
+**Tests:** ein Quelltext-Wächter (`die_eigentuemer_pruefung_laeuft_vor_der_
+server_abfrage_per_id`) verlangt, dass die Eigentuemer-Pruefung textuell VOR
+der direkten `client.get_pirep`-Abfrage in `try_resume_flight` steht.
+Gegenprobe durchgefuehrt: Pruefung entfernt (Zeilen geloescht, ein einzelner
+Ersatz fuer die dadurch fehlende Variable eingefuegt, damit es weiter
+kompiliert) — der Wächter schlaegt zuverlaessig fehl.
+
+### Ein zweiter, unabhaengiger Fund derselben Runde: G-Kraft-Merge kam zu spaet fuer den Klassifikator
+
+Dieselbe Codex-Runde fand ausserdem, dass der Fruehdump-Fix aus
+`docs/qs/accident-klassifikator-bounce-aufprall-2026-09.md` selbst noch
+eine Ordnungs-Luecke hatte — Details dort im Nachtrag. Kurzfassung: der
+Merge von `peak_g_post_500ms` nach `landing_peak_g_force` lief bisher NUR
+NACH dem `apply_accident_heuristic`-Aufruf (Zeile ~180 weiter unten, nach
+`drop(stats)` + Re-Lock) — der Klassifikator sah damit fuer GENAU den
+Touchdown, den er bewerten soll, entweder `None` (nach dem Klettern-Reset
+aus dem urspruenglichen Fruehdump-Fix) oder einen veralteten Wert. Neue
+Hilfsfunktion `peak_g_force_verschmelzen` (aus den zwei bisherigen
+Kopien der Merge-Logik zusammengezogen), jetzt zusaetzlich VOR dem
+Klassifikator-Aufruf angewendet.
+
 ## Nicht behoben (bewusst außerhalb des Umfangs)
 
 * **`pirep_queue`s 50-Versuche-Grenze selbst** bleibt als Konzept

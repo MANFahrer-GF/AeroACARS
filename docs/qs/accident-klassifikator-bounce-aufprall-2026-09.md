@@ -144,6 +144,44 @@ genau diese Luecke: er verlangt die Reset-Zeile im Klettern-Block selbst.
 Gegenprobe durchgefuehrt: mit der Zeile entfernt schlaegt der Wächter
 zuverlaessig fehl.
 
+## Nachtrag #2 (05.09.2026): Codex-Folgefund — der Fruehdump-Fix reparierte den Rueckschritt, aber nicht das eigentliche Timing
+
+Adversarial-Review (fuenfte Runde, gegen den angewachsenen Diff) fand: der
+Reset aus Nachtrag #1 verhindert zwar, dass ein STEHENGEBLIEBENES G vom
+ersten Touchdown den zweiten faelschlich verfaelscht — aber er deckte eine
+tiefer liegende, unabhaengige Ordnungs-Luecke auf. `apply_accident_
+heuristic` liest `stats.landing_peak_g_force` — und dieser Wert wird aus
+`peak_g_post_500ms` (dem eigentlichen, verfeinerten G-Peak-Messwert fuer
+GENAU DIESEN Touchdown) erst ~180 Zeilen SPAETER gemerged, NACH `drop(
+stats)` + Re-Lock, also NACH dem Klassifikator-Aufruf. Der Klassifikator
+lief damit fuer jeden Touchdown NACH einem Klettern-Reset (nicht nur den
+zweiten in einem Bounce-Szenario) mit `peak_g_load=None` — der
+Extreme-Impact-Pfad (|V/S|>=1500 UND G>=3.0) konnte dadurch NIE auslösen,
+unabhaengig vom tatsaechlichen Aufprall-G. Der urspruengliche Test
+(`tg_dann_aufprall_wird_als_confirmed_impact_klassifiziert`) hat das nicht
+gefangen, weil er `landing_peak_g_force` manuell VOR dem Klassifikator-
+Aufruf setzte — er pruefte die Klassifikator-Logik, nicht die tatsaechliche
+Verdrahtung im Sampler.
+
+**Gefixt:** neue Hilfsfunktion `peak_g_force_verschmelzen` (dieselbe
+Max-Merge-Regel wie zuvor, aus den zwei Kopien zusammengezogen, damit sie
+nicht wieder auseinanderlaufen). Wird jetzt ZWEIMAL aufgerufen: einmal VOR
+`apply_accident_heuristic` (mit `peak_g_post_500ms` direkt aus der frisch
+berechneten `analysis`, die zu diesem Zeitpunkt schon vollstaendig ist),
+einmal an der urspruenglichen Stelle danach (fuer die uebrigen Konsumenten
+von `landing_peak_g_force`, die nicht vom Klassifikator abhaengen).
+
+**Tests:** die drei bestehenden Tests umgebaut, damit sie den ECHTEN Ablauf
+nachbilden (`peak_g_force_verschmelzen` aufrufen, dann klassifizieren —
+NICHT `landing_peak_g_force` manuell setzen). Neuer Quelltext-Wächter
+(`peak_g_merge_laeuft_im_sampler_vor_dem_klassifikator_nicht_danach`)
+verlangt, dass der Merge-Aufruf im Sampler-Quelltext VOR dem Klassifikator-
+Aufruf steht. Gegenprobe durchgefuehrt: fruehen Merge-Aufruf aus der
+Produktion entfernt — der Wächter schlaegt zuverlaessig fehl (die
+umgebauten Verhaltens-Tests dagegen NICHT, weil sie den Merge selbst
+aufrufen — genau das war die Luecke im urspruenglichen Test, die diese
+Runde fand; der Wächter deckt sie ab).
+
 ## Release
 
 Dieser Fix braucht einen regulären Client-Release
