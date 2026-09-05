@@ -1494,20 +1494,44 @@ struct AppState {
     /// the persisted `SimKind`.
     xplane: Mutex<sim_xplane::XPlaneAdapter>,
     active_flight: Mutex<Option<Arc<ActiveFlight>>>,
-    /// Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): der
-    /// Fingerabdruck (`Client::identity_fingerprint`) des Accounts, der
-    /// den AKTUELL aktiven Flug gestartet/uebernommen hat — EINMAL gesetzt
-    /// (in `flight_start`/`flight_adopt`), NICHT bei jedem Speichern/
-    /// Einreihen neu aus `current_client` abgeleitet. Grund: `phpvms_logout`
-    /// leert `state.client`, aber ausdruecklich NICHT `state.active_flight`
-    /// ("ein anderer Pilot kann sich auf derselben Maschine anmelden") —
-    /// ohne dieses Feld haette jede spaetere Speicherung/Einreihung
-    /// waehrend eines noch laufenden Fluges den Fingerabdruck des GERADE
-    /// eingeloggten Piloten getragen, nicht den des Piloten, dem der Flug
-    /// tatsaechlich gehoert. `PersistedFlight::owner_identity` und
+    /// Codex-Folgefund (adversarial, 05.09.2026, siebte Runde): server-
+    /// verifizierte GSG-Piloten-ID (`Profile.pilot_id`) des Accounts, der
+    /// den AKTUELL aktiven Flug gestartet/uebernommen hat — als String
+    /// (`pilot_id.to_string()`), EINMAL gesetzt (in `flight_start`/
+    /// `flight_adopt`/erfolgreichem Resume), NICHT bei jedem Speichern/
+    /// Einreihen neu abgeleitet. Grund: `phpvms_logout` leert `state.client`,
+    /// aber ausdruecklich NICHT `state.active_flight` ("ein anderer Pilot
+    /// kann sich auf derselben Maschine anmelden") — ohne dieses Feld haette
+    /// jede spaetere Speicherung/Einreihung waehrend eines noch laufenden
+    /// Fluges die Identitaet des GERADE eingeloggten Piloten getragen, nicht
+    /// die des Piloten, dem der Flug tatsaechlich gehoert.
+    /// `PersistedFlight::owner_identity` und
     /// `pirep_queue::QueuedPirep::owner_identity` werden BEIDE aus diesem
-    /// Feld befuellt, nicht aus `current_client(&state)`.
+    /// Feld befuellt.
+    ///
+    /// URSPRUENGLICH aus `Client::identity_fingerprint()` (ein Hash aus
+    /// Basis-URL + API-Key) — von Codex zu Recht verworfen: eine legitime
+    /// API-Key-Rotation DESSELBEN Piloten aendert den Hash, obwohl der
+    /// Account derselbe bleibt. `Profile.pilot_id` ist server-verifiziert
+    /// und ueberlebt eine Rotation.
+    ///
+    /// WICHTIG (Codex-Folgefund, dieselbe Runde): dieses Feld allein beweist
+    /// NICHT, dass ein Flug aktiv ist — es wird beim Beenden/Abbrechen eines
+    /// Fluges NICHT geleert. JEDER Konsument muss `state.active_flight.
+    /// is_some()` (oder das serverseitige Reklamier-Ergebnis bei Resume/
+    /// Queue) als GLEICHZEITIGE Bedingung pruefen, niemals dieses Feld
+    /// isoliert als "ein Flug ist aktiv" lesen.
     active_flight_owner_identity: Mutex<Option<String>>,
+    /// Codex-Folgefund (adversarial, 05.09.2026, siebte Runde): die
+    /// server-verifizierte Piloten-ID (`Profile.pilot_id`) des GERADE
+    /// authentifizierten Accounts — gesetzt bei jedem erfolgreichen Login
+    /// (`phpvms_login`, `phpvms_load_session`), damit `flight_start`/
+    /// `flight_adopt`/der manuelle Plan-Pfad und `try_resume_flight` die
+    /// aktuelle Identitaet lesen koennen OHNE jeweils selbst einen weiteren
+    /// `get_profile()`-Server-Roundtrip zu brauchen. Wie
+    /// `active_flight_owner_identity` NICHT beim Logout geleert (harmlos:
+    /// nur relevant, waehrend `state.client` gleichzeitig `Some` ist).
+    authenticated_pilot_id: Mutex<Option<i64>>,
     /// Nachgereicht (externe Gegenpruefung Codex, adversarial, waehrend
     /// der v1.7.17-QS-Runde entdeckt): ein reines Lifecycle-Schloss fuer
     /// die EINZIGE Aktiv-Flug-Ablage (`active_flight_path` — ein fester
@@ -3163,13 +3187,14 @@ struct PersistedFlight {
     /// "0 distance / 0 fuel" PIREPs we saw before Phase H.4.
     #[serde(default)]
     stats: PersistedFlightStats,
-    /// Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): Fingerabdruck
-    /// (`Client::identity_fingerprint`) des Accounts, der DIESEN Flug
-    /// gestartet/uebernommen hat — aus `AppState::active_flight_owner_identity`
-    /// bei jedem Speichern uebernommen, nicht aus `current_client(&state)`
-    /// zum Speicherzeitpunkt (der koennte, waehrend derselbe Flug noch laeuft,
-    /// bereits einem anderen, spaeter eingeloggten Piloten gehoeren —
-    /// `phpvms_logout` leert `state.client`, aber NICHT `state.active_flight`).
+    /// Codex-Folgefund (adversarial, 05.09.2026, fuenfte/siebte Runde):
+    /// server-verifizierte Piloten-ID (`Profile.pilot_id`, als String) des
+    /// Accounts, der DIESEN Flug gestartet/uebernommen hat — aus
+    /// `AppState::active_flight_owner_identity` bei jedem Speichern
+    /// uebernommen, nicht aus `current_client(&state)` zum Speicherzeitpunkt
+    /// (der koennte, waehrend derselbe Flug noch laeuft, bereits einem
+    /// anderen, spaeter eingeloggten Piloten gehoeren — `phpvms_logout`
+    /// leert `state.client`, aber NICHT `state.active_flight`).
     /// `#[serde(default)]` = `None` fuer Alt-Dateien (vor diesem Feld) — der
     /// Resume-Pfad behandelt das wie einen Fremd-Eigentuemer: serverseitig
     /// ueber die IN_PROGRESS-Liste des aktuellen Accounts verifizieren, statt
@@ -10000,16 +10025,40 @@ async fn phpvms_login(
     let locked_url = format!("https://{ALLOWED_PHPVMS_HOST}");
     let conn = Connection::new(&locked_url, api_key.trim())?;
     let client = Client::new(conn)?;
-    // Codex-Folgefund (adversarial, 05.09.2026, sechste Runde): der
-    // Logout-Riegel (`phpvms_logout`) verhindert nur DEN Weg ueber Logout —
-    // dieser Aufruf ueberschreibt `state.client` unbedingt, auch OHNE
-    // vorheriges Logout (z. B. ein abgelaufener Key wird hier einfach neu
-    // eingegeben). Waere die neue Identitaet eine ANDERE als die des
-    // laufenden Fluges, haette derselbe Cross-Account-Ausfall (alle
-    // nachfolgenden API-Aufrufe liefen unter der neuen Identitaet, aber
-    // fuer den alten Flug) den Logout-Riegel einfach umgangen. Ein Re-Login
-    // DERSELBEN Identitaet (Token-Refresh waehrend der eigene Flug noch
-    // laeuft) bleibt ausdruecklich erlaubt.
+    // Codex-Folgefund (adversarial, 05.09.2026, siebte Runde): DENSELBEN
+    // Lifecycle-Lock nehmen wie `flight_start`/`flight_adopt`/Resume — ohne
+    // ihn koennte ein Login (kein Flug aktiv, Pruefung besteht) waehrend
+    // seines eigenen `get_profile()`-Roundtrips pausieren, in dieser Zeit
+    // startet ein ANDERER Account einen Flug, und das Login ueberschreibt
+    // `state.client` DANACH trotzdem — der Flug liefe dann unter falschen
+    // Credentials weiter. Mit dem Lock kann `flight_start` waehrend dieses
+    // gesamten Logins nicht gleichzeitig laufen.
+    let setup_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
+    let profile = client.get_profile().await?;
+    // Codex-Folgefund (dieselbe Runde): der Logout-Riegel verhindert nur
+    // DEN Weg ueber Logout — dieser Aufruf ueberschreibt `state.client`
+    // unbedingt, auch OHNE vorheriges Logout (z. B. ein abgelaufener Key
+    // wird hier einfach neu eingegeben). Waere die neue Identitaet eine
+    // ANDERE als die des laufenden Fluges, haette derselbe Cross-Account-
+    // Ausfall (alle nachfolgenden API-Aufrufe liefen unter der neuen
+    // Identitaet, aber fuer den alten Flug) den Logout-Riegel einfach
+    // umgangen. Ein Re-Login DESSELBEN Piloten (Token-Refresh/Key-Rotation
+    // waehrend der eigene Flug noch laeuft) bleibt ausdruecklich erlaubt —
+    // deshalb `profile.pilot_id` (server-verifiziert, ueberlebt eine
+    // Key-Rotation), NICHT `client.identity_fingerprint()` (haengt am
+    // Rohschluessel, den genau dieser Login gerade AUSTAUSCHEN will).
+    //
+    // Die `state.active_flight.is_some()`-Bedingung ist entscheidend
+    // (weiterer Codex-Folgefund derselben Runde): `active_flight_owner_
+    // identity` allein bleibt nach einem beendeten Flug stehen — ohne diese
+    // Bedingung haette JEDER Login nach dem allerersten abgeschlossenen
+    // Flug fuer immer den naechsten Piloten ausgesperrt, obwohl gar kein
+    // Flug mehr aktiv ist.
+    if state
+        .active_flight
+        .lock()
+        .expect("active_flight lock")
+        .is_some()
     {
         let laufender_flug_eigentuemer = state
             .active_flight_owner_identity
@@ -10017,7 +10066,7 @@ async fn phpvms_login(
             .expect("active_flight_owner_identity lock")
             .clone();
         if let Some(eigentuemer) = laufender_flug_eigentuemer {
-            if eigentuemer != client.identity_fingerprint() {
+            if eigentuemer != profile.pilot_id.to_string() {
                 return Err(UiError::new(
                     "flight_active",
                     "Ein Flug eines anderen Accounts ist noch aktiv — bitte zuerst \
@@ -10027,7 +10076,6 @@ async fn phpvms_login(
             }
         }
     }
-    let profile = client.get_profile().await?;
 
     // v0.12.1 (Stream B LE6): pilot-status gate. Only ACTIVE GSG pilots
     // may use AeroACARS — a pending / rejected / on-leave / suspended
@@ -10060,7 +10108,18 @@ async fn phpvms_login(
 
     let base_url = client.connection().base_url().to_string();
     *state.client.lock().expect("client mutex") = Some(client.clone());
+    *state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock") = Some(profile.pilot_id);
     cache_pilot(&state, &profile);
+    // Lifecycle-Lock JETZT freigeben, nicht erst am Funktionsende: `state.
+    // client` ist bereits committed (ein gleichzeitiger `flight_start` sieht
+    // ab jetzt den richtigen Client), und `try_resume_flight` weiter unten
+    // versucht selbst denselben Lock zu nehmen — haette `phpvms_login` ihn
+    // noch gehalten, waere jeder Resume-Versuch nach einem Login lautlos
+    // uebersprungen worden ("resume already in progress").
+    drop(setup_guard);
 
     // Auto-start the simulator adapter using the persisted selection.
     let saved_kind = read_sim_config(&app).kind;
@@ -10368,6 +10427,13 @@ async fn phpvms_logout(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
     // anderer Pilot kann sich auf derselben Maschine anmelden") gilt
     // weiterhin — nur eben erst NACHDEM der laufende Flug beendet/
     // abgebrochen wurde, nicht waehrenddessen.
+    //
+    // Codex-Folgefund (adversarial, 05.09.2026, siebte Runde): denselben
+    // Lifecycle-Lock wie `flight_start`/`phpvms_login` nehmen — sonst
+    // koennte ein GLEICHZEITIGER `flight_start` (echte Parallelitaet auf
+    // einem Mehr-Thread-Runtime, kein Await noetig) den Flug GENAU zwischen
+    // dieser Pruefung und dem Leeren von `state.client` installieren.
+    let setup_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
     if state
         .active_flight
         .lock()
@@ -10381,6 +10447,7 @@ async fn phpvms_logout(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
         ));
     }
     *state.client.lock().expect("client mutex") = None;
+    drop(setup_guard);
     secrets::delete_api_key(KEYRING_ACCOUNT).map_err(|e| UiError::new("keyring", e.to_string()))?;
     // v0.5.11: stop the MQTT publisher and forget cached credentials
     // so the next login provisions fresh (handles the case where
@@ -10449,6 +10516,10 @@ async fn phpvms_load_session(
             }
             let base_url = client.connection().base_url().to_string();
             *state.client.lock().expect("client mutex") = Some(client.clone());
+            *state
+                .authenticated_pilot_id
+                .lock()
+                .expect("authenticated_pilot_id lock") = Some(profile.pilot_id);
             cache_pilot(&state, &profile);
             // Auto-start the simulator adapter when we restore an existing session.
             let saved_kind = read_sim_config(&app).kind;
@@ -10588,6 +10659,25 @@ mod flug_aktiv_verhindert_konto_wechsel_wiring_tests {
                  phpvms_login nicht mehr gefunden — Test anpassen, nicht loeschen"
             ),
         }
+    }
+
+    /// Codex-Folgefund (adversarial, 05.09.2026, siebte Runde): der
+    /// Eigentuemer-Riegel darf NICHT allein auf `active_flight_owner_
+    /// identity` pruefen — dieses Feld bleibt nach einem abgeschlossenen
+    /// Flug stehen (wird beim Beenden/Abbrechen/Logout nicht geleert). Ohne
+    /// eine GLEICHZEITIGE `state.active_flight.is_some()`-Bedingung haette
+    /// JEDER Login nach dem allerersten abgeschlossenen Flug fuer immer den
+    /// naechsten Piloten ausgesperrt, obwohl gar kein Flug mehr aktiv ist.
+    #[test]
+    fn login_prueft_zusaetzlich_ob_ueberhaupt_ein_flug_aktiv_ist() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper_ohne_leerraum(SRC, "async fn phpvms_login(");
+        assert!(
+            koerper.contains(&ohne_leerraum("state.active_flight.lock()")),
+            "phpvms_login prueft nicht mehr, ob ueberhaupt ein Flug aktiv ist, \
+             bevor es den Eigentuemer vergleicht — ein abgeschlossener Flug \
+             wuerde dann jeden folgenden Login-Versuch fuer immer blockieren"
+        );
     }
 }
 
@@ -14008,7 +14098,11 @@ async fn flight_adopt(
     *state
         .active_flight_owner_identity
         .lock()
-        .expect("active_flight_owner_identity lock") = Some(client.identity_fingerprint());
+        .expect("active_flight_owner_identity lock") = state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock")
+        .map(|id| id.to_string());
     save_active_flight(&app, &flight);
     // v0.8.0: parallel-fetch dep/arr/alt-Navdata vom VPS. Non-blocking
     // (Background-Task), Failure → OurAirports-Fallback (transparent).
@@ -14779,7 +14873,11 @@ async fn flight_start(
     *state
         .active_flight_owner_identity
         .lock()
-        .expect("active_flight_owner_identity lock") = Some(client.identity_fingerprint());
+        .expect("active_flight_owner_identity lock") = state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock")
+        .map(|id| id.to_string());
     save_active_flight(&app, &flight);
 
     // v1.7.0 Schritt 11 — Spurweite aus der Flugzeugdatei (Spec §5.3 B).
@@ -15560,7 +15658,11 @@ async fn flight_start_manual(
     *state
         .active_flight_owner_identity
         .lock()
-        .expect("active_flight_owner_identity lock") = Some(client.identity_fingerprint());
+        .expect("active_flight_owner_identity lock") = state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock")
+        .map(|id| id.to_string());
     save_active_flight(&app, &flight);
     // v0.8.0: parallel-fetch dep/arr/alt-Navdata vom VPS. Non-blocking
     // (Background-Task), Failure → OurAirports-Fallback (transparent).
@@ -15805,11 +15907,13 @@ mod pirep_queue {
         /// As PIREP mit Pilot Bs Credentials eingereicht — im Erfolgsfall
         /// fehlzugeordnet, im 403/404-Fall (als "nicht transient"
         /// klassifiziert) sogar geloescht und damit Pilot As geflogener Flug
-        /// dauerhaft verloren. Fingerprint statt Klartext-Identitaet
-        /// (`Client::identity_fingerprint`, nicht der API-Key selbst) —
-        /// reicht fuer einen Gleichheits-Check, muss aber kein Geheimnis
-        /// transportieren. `None` bei Alt-Eintraegen (vor diesem Feld
-        /// geschrieben) UND wenn beim Einreihen kein Client verfuegbar war —
+        /// dauerhaft verloren. Server-verifizierte Piloten-ID
+        /// (`Profile.pilot_id`, siebte Runde — urspruenglich ein aus dem
+        /// API-Key abgeleiteter Fingerabdruck, von Codex verworfen: eine
+        /// legitime Key-Rotation DESSELBEN Piloten haette dessen eigene
+        /// Eintraege dauerhaft in Quarantaene geschickt). `None` bei
+        /// Alt-Eintraegen (vor diesem Feld geschrieben) UND wenn beim
+        /// Einreihen keine authentifizierte Piloten-ID verfuegbar war —
         /// beide Faelle werden vom Worker als "Eigentuemer unbekannt"
         /// behandelt (Quarantaene: weder einreichen noch loeschen).
         #[serde(default)]
@@ -16779,7 +16883,19 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                 continue;
             }
             tracing::info!(queued_count = queued.len(), "PIREP-queue worker tick");
-            let aktuelle_identitaet = client.identity_fingerprint();
+            // Codex-Folgefund (adversarial, 05.09.2026, siebte Runde): die
+            // server-verifizierte Piloten-ID statt eines aus dem API-Key
+            // abgeleiteten Fingerabdrucks — sonst haette eine legitime
+            // Key-Rotation DESSELBEN Piloten jeden seiner eigenen wartenden
+            // Eintraege dauerhaft in Quarantaene geschickt.
+            let Some(aktuelle_identitaet) = state
+                .authenticated_pilot_id
+                .lock()
+                .expect("authenticated_pilot_id lock")
+                .map(|id| id.to_string())
+            else {
+                continue;
+            };
             // Codex-Folgefund (adversarial, 05.09.2026, zweite Runde): eine
             // reine Fingerabdruck-Pruefung wuerde JEDEN Alt-Eintrag (von vor
             // diesem Feld, `owner_identity: None`) fuer immer in Quarantaene
@@ -22578,8 +22694,8 @@ async fn flight_end(
                     dead_letter_notified: false,
                     retry_not_before: None,
                     // Codex-Folgefund (adversarial, 05.09.2026, fuenfte
-                    // Runde): NICHT `client.identity_fingerprint()` (= wer
-                    // GERADE eingeloggt ist, wenn dieser Code hier laeuft) —
+                    // Runde): NICHT die Piloten-ID des GERADE eingeloggten
+                    // Accounts frisch ableiten, wenn dieser Code hier laeuft —
                     // `phpvms_logout` leert `state.client`, aber nicht
                     // `state.active_flight`. Zwischen Flugstart und diesem
                     // Filing-Versuch koennte sich also bereits ein ANDERER
@@ -42884,7 +43000,24 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
     // haette ein 404 (falls das ID-Nachschlagen fuer den falschen Account
     // fehlschlaegt) Pilot As Ablage geloescht; ein Erfolg haette Pilot As
     // Flug unter Pilot Bs Session wiederaufgenommen.
-    let aktuelle_identitaet = client.identity_fingerprint();
+    //
+    // Codex-Folgefund (adversarial, 05.09.2026, siebte Runde): server-
+    // verifizierte Piloten-ID statt eines aus dem API-Key abgeleiteten
+    // Fingerabdrucks — `state.authenticated_pilot_id` ist zu diesem
+    // Zeitpunkt bereits gesetzt (`phpvms_login`/`phpvms_load_session` tun
+    // das VOR diesem Aufruf).
+    let Some(aktuelle_identitaet) = state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock")
+        .map(|id| id.to_string())
+    else {
+        tracing::warn!(
+            pirep_id = %persisted.pirep_id,
+            "try_resume_flight: keine authentifizierte Piloten-ID bekannt — Resume uebersprungen"
+        );
+        return;
+    };
     if !pirep_queue_eintrag_gehoert_aktuellem_piloten(
         persisted.owner_identity.as_deref(),
         &aktuelle_identitaet,

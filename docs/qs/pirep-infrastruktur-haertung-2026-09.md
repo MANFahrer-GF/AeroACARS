@@ -391,6 +391,61 @@ Backticks zitierte, um Code zu erklaeren. Ab jetzt: Code-Fragmente in
 Kommentaren innerhalb dieser Datei nie mit einer einzelnen, unausgeglichenen
 `{` oder `}` zitieren — lieber umschreiben.
 
+## Nachtrag #6 (05.09.2026): siebte Codex-Runde — der Fingerabdruck selbst war die falsche Grundlage
+
+Adversarial-Review gegen den weiter angewachsenen Diff verwarf die
+Identitaets-QUELLE aus allen bisherigen Nachtraegen — nicht nur einzelne
+Aufrufstellen. Drei zusammenhaengende Befunde:
+
+**Befund A (medium) — API-Key-Rotation sperrte den eigenen Piloten aus.**
+`Client::identity_fingerprint()` hashte Basis-URL + API-Key. Eine legitime
+Rotation DESSELBEN Piloten (z. B. nach einem abgelaufenen Key neu erzeugt)
+aendert den Hash, obwohl der Account derselbe bleibt — kombiniert mit dem
+Logout-Riegel aus Nachtrag #5 (kein Logout waehrend ein Flug aktiv ist)
+und dem Login-Riegel (lehnt eine "andere" Identitaet ab) waere der Pilot
+eingesperrt gewesen: weder aus- noch mit dem neuen Key wieder einloggen,
+ohne die App neu zu starten oder den Flug aufzugeben.
+
+**Befund B (medium) — ein abgeschlossener Flug sperrte JEDEN naechsten
+Login dauerhaft.** Der Login-Riegel aus Nachtrag #5 prüfte
+`active_flight_owner_identity` OHNE zu pruefen, ob ueberhaupt noch ein Flug
+aktiv ist — dieses Feld wird beim Beenden/Abbrechen eines Fluges nicht
+geleert. Nach dem ALLERERSTEN abgeschlossenen Flug haette jeder folgende
+Login (auch desselben Piloten nach normalem Logout) mit "ein anderer
+Account ist aktiv" abgelehnt, obwohl `active_flight` laengst leer war.
+
+**Befund C (high) — Login/Flugstart konnten trotzdem interleaven.** Der
+Login-Riegel prieft und gibt seinen Lock frei, BEVOR `get_profile()`
+(ein echter Server-Roundtrip) laeuft; `state.client` wird erst DANACH
+committed. Ohne denselben Lifecycle-Lock wie `flight_start` haette ein
+zweiter Account waehrend genau dieses Roundtrips (kein aktiver Flug zum
+Pruefzeitpunkt) unbemerkt einen Flug starten koennen — das Login committet
+danach trotzdem, der neue Flug liefe unter falschen Credentials weiter.
+
+**Gefixt (Grundlagenwechsel, nicht nur Reihenfolge):**
+
+1. `Client::identity_fingerprint()` komplett entfernt (samt seiner 5
+   Tests) — ersetzt durch `Profile.pilot_id` (server-verifiziert,
+   ueberlebt eine Key-Rotation). Neues `AppState::authenticated_pilot_id`
+   (`Mutex<Option<i64>>`), gesetzt bei jedem erfolgreichen Login
+   (`phpvms_login`, `phpvms_load_session`) — `flight_start`/`flight_adopt`/
+   der manuelle Plan-Pfad und `try_resume_flight` lesen daraus statt einen
+   weiteren `get_profile()`-Roundtrip zu brauchen.
+2. `phpvms_login` prueft die Eigentuemerschaft jetzt ERST NACH
+   `get_profile()` (braucht `profile.pilot_id`) UND nur, wenn
+   `state.active_flight.is_some()` TATSAECHLICH zutrifft (Befund B).
+3. `phpvms_login` UND `phpvms_logout` nehmen jetzt denselben
+   `FlightSetupGuard`/`flight_setup_in_progress`-Lock wie `flight_start`/
+   `flight_adopt`/Resume — `phpvms_login` gibt ihn frei, BEVOR es selbst
+   `try_resume_flight` aufruft (sonst haette Resume sich staendig selbst
+   blockiert: "resume already in progress").
+
+**Tests:** die beiden Quelltext-Wächter aus Nachtrag #5 blieben gueltig
+(neu gegengeprueft nach dem Umbau — Reihenfolge weiterhin korrekt), plus
+ein neuer, gezielter Wächter fuer Befund B
+(`login_prueft_zusaetzlich_ob_ueberhaupt_ein_flug_aktiv_ist`). Gegenprobe
+fuer alle drei durchgefuehrt.
+
 ## Nicht behoben (bewusst außerhalb des Umfangs)
 
 * **`pirep_queue`s 50-Versuche-Grenze selbst** bleibt als Konzept
