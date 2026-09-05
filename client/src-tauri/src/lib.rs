@@ -3855,8 +3855,32 @@ impl PersistedFlightStats {
         stats.dep_gate = self.dep_gate;
         stats.dep_gate_field_post_confirmed = self.dep_gate_field_post_confirmed;
         stats.dep_gate_withdrawal_pending = self.dep_gate_withdrawal_pending;
-        stats.dep_gate_withdrawal_awaiting_confirmation =
-            self.dep_gate_withdrawal_awaiting_confirmation;
+        // v1.7.17 Runde 17 (externe Gegenpruefung, Codex, adversarial,
+        // 04.09.2026): eine ueber einen Neustart hinweg eingefrorene, noch
+        // unbestaetigte Rueckzugsentscheidung kann nach dem Resume NIE MEHR
+        // aufgeloest werden — der Task, der die Bestaetigung geliefert
+        // haette, ist mit dem alten Prozess gestorben. Bewusst NICHT als
+        // "wahrscheinlich erfolgreich" behandeln und automatisch
+        // zurueckziehen: das koennte einen fremden, nie von AeroACARS
+        // beruehrten Server-Wert zerstoeren (Runde 14). Bewusst NICHT als
+        // "wahrscheinlich fehlgeschlagen" behandeln und schweigend
+        // ignorieren: das liesse einen tatsaechlich geposteten, jetzt
+        // veralteten Wert dauerhaft unkorrigiert stehen. Es gibt keine
+        // dritte, sichere Option ohne serverseitige Versionierung/
+        // Read-Back, die es nicht gibt (siehe Pruefstand-Dokument, Runde
+        // 17) — das Flag wird deshalb zurueckgesetzt, statt als ewig
+        // haengender "erledige mich"-Zustand liegen zu bleiben, den nichts
+        // je erledigen wird, und die Unsicherheit wird protokolliert.
+        if self.dep_gate_withdrawal_awaiting_confirmation {
+            tracing::warn!(
+                "dep_gate_withdrawal_awaiting_confirmation ueberlebte einen Neustart \
+                 unaufgeloest — die urspruengliche Bestaetigung ist mit dem alten \
+                 Prozess verloren; kein automatischer Rueckzug (koennte fremde Daten \
+                 zerstoeren), aber ein moeglicherweise geposteter, jetzt veralteter \
+                 Departure-Gate-Wert kann auf dem Server stehen bleiben"
+            );
+        }
+        stats.dep_gate_withdrawal_awaiting_confirmation = false;
         stats.arr_gate = self.arr_gate;
         // A snapshot written before v0.19.3 has no `blocks_on_reached` (serde
         // default = false). Derive it from the persisted phase so a flight
@@ -35699,13 +35723,22 @@ mod arrived_fallback_geometry_tests {
         );
     }
 
-    /// v1.7.17 Runde 16 (externe Gegenpruefung, Codex, adversarial,
-    /// 04.09.2026): die am Boarding-Ende EINGEFRORENE, noch unbestaetigte
-    /// Rueckzugsentscheidung muss einen Resume ueberleben — sonst wuerde
-    /// eine spaeter doch noch eintreffende Bestaetigung nach einem
-    /// Neustart folgenlos bleiben.
+    /// v1.7.17 Runde 17 (externe Gegenpruefung, Codex, adversarial,
+    /// 04.09.2026): urspruenglich (Runde 16) sollte die am Boarding-Ende
+    /// eingefrorene, noch unbestaetigte Rueckzugsentscheidung einen Resume
+    /// UNVERAENDERT ueberleben.
+    ///
+    /// ⚠ Runde 17 hat diese Annahme UEBERHOLT: die einzige Stelle, die
+    /// dieses Flag je in eine echte Rueckzugs-Meldung umsetzt, ist der
+    /// Erfolgs-Callback der urspruenglichen Anfrage — und der stirbt mit
+    /// dem alten Prozess. Ein blosses Ueberleben des Flags allein loest
+    /// also nichts ein; es bliebe ein ewig haengender, nie erledigter
+    /// Zustand. Seit Runde 17 wird das Flag beim Resume deshalb bewusst
+    /// zurueckgesetzt (mit Protokollzeile) statt weitergetragen — dieser
+    /// Test dokumentiert die Korrektur der Korrektur, statt die ueberholte
+    /// Zusicherung stillschweigend zu loeschen.
     #[test]
-    fn dep_gate_withdrawal_awaiting_confirmation_ueberlebt_einen_resume() {
+    fn dep_gate_withdrawal_awaiting_confirmation_wird_beim_resume_bewusst_zurueckgesetzt() {
         let (flight, _snap) = flight_planned_to("EDDF", EDDF_TERMINAL_2);
         {
             let mut stats = flight.stats.lock().unwrap();
@@ -35717,9 +35750,9 @@ mod arrived_fallback_geometry_tests {
         let mut fresh = FlightStats::new();
         restored.apply_to(&mut fresh);
         assert!(
-            fresh.dep_gate_withdrawal_awaiting_confirmation,
-            "eine eingefrorene, noch unbestaetigte Rueckzugsentscheidung muss einen \
-             Resume ueberleben"
+            !fresh.dep_gate_withdrawal_awaiting_confirmation,
+            "eine ueber einen Neustart hinweg nie aufloesbare Entscheidung muss beim \
+             Resume zurueckgesetzt werden, nicht ewig haengen bleiben (Runde 17)"
         );
     }
 
