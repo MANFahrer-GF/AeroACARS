@@ -12289,7 +12289,44 @@ fn discard_queued_positions_for(app: &AppHandle, pirep_id: &str) {
     let _ = q.replace(&kept);
 }
 
-fn clear_persisted_flight(app: &AppHandle) {
+/// Reine Eigentuemer-Entscheidung fuer `clear_persisted_flight`: darf die
+/// Ablage geloescht werden?
+///
+/// Codex-Folgefund (adversarial, 05.09.2026, gegen den Commit dieser
+/// Sitzung): der `persistence_lock` aus [[schreiben_falls_aktiv]] serialisiert
+/// Schreiben/Loeschen NUR gegeneinander — er sagt nichts darueber, WESSEN
+/// Flug gerade an dem einen festen Pfad (`active_flight_path`) liegt.
+/// `flight_cancel` nimmt den alten Flug per `guard.take()` aus
+/// `state.active_flight`, setzt `stop`, und haengt DANACH an einem echten
+/// Await (`client.cancel_pirep(...).await`, ein Server-Roundtrip). In
+/// dieser Luecke ist der Slot leer — `flight_start` kann in dieser Zeit
+/// bereits einen NEUEN Flug anlegen und dessen ersten Checkpoint an
+/// denselben Pfad schreiben. Wenn der alte Cancel danach fortsetzt und
+/// diese Funktion aufruft, loeschte sie bisher blind — und riss damit den
+/// gerade erst gestarteten neuen Flug weg. Derselbe Spalt existiert bei
+/// jedem anderen Aufrufer mit einem Await zwischen "alten Flug aus dem
+/// State nehmen" und "Ablage loeschen" (z. B. `try_resume_flight`s
+/// Verwerfen-Pfade nach `client.get_pirep(...).await`).
+///
+/// Nur loeschen, wenn entweder gar kein Eigentuemer erwartet wird
+/// (`erwartete_pirep_id: None`, fuer die seltenen Faelle ohne bekannten
+/// Flug), die Ablage denselben PIREP traegt, oder die Ablage gar nicht
+/// (mehr) lesbar ist (dann laesst sich kein fremder Eigentuemer feststellen
+/// — dasselbe „unlesbar = wie nicht vorhanden"-Prinzip wie beim Resume-Pfad).
+fn sollte_persistierten_flug_loeschen(
+    erwartete_pirep_id: Option<&str>,
+    tatsaechliche_pirep_id_auf_platte: Option<&str>,
+) -> bool {
+    match erwartete_pirep_id {
+        None => true,
+        Some(erwartet) => match tatsaechliche_pirep_id_auf_platte {
+            Some(tatsaechlich) => tatsaechlich == erwartet,
+            None => true,
+        },
+    }
+}
+
+fn clear_persisted_flight(app: &AppHandle, erwartete_pirep_id: Option<&str>) {
     let Ok(path) = active_flight_path(app) else {
         return;
     };
@@ -12308,12 +12345,29 @@ fn clear_persisted_flight(app: &AppHandle) {
         // sieht `stop == true` und schreibt nicht mehr) — ohne das Schloss
         // haette eine solche verspaetete Schreibung die Loeschung
         // rueckgaengig machen koennen.
+        //
+        // Nachgereicht #2 (Codex-Folgefund, 05.09.2026): der Lock allein
+        // reicht nicht — siehe `sollte_persistierten_flug_loeschen`. Die
+        // Eigentuemer-Pruefung MUSS innerhalb desselben kritischen
+        // Abschnitts liegen, sonst koennte zwischen Lesen und Loeschen
+        // wieder ein neuer Schreiber dazwischenkommen.
         let _guard = state
             .persistence_lock
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        if path.exists() {
+        let tatsaechliche_pirep_id = read_persisted_flight(app).map(|p| p.pirep_id);
+        let soll_loeschen = sollte_persistierten_flug_loeschen(
+            erwartete_pirep_id,
+            tatsaechliche_pirep_id.as_deref(),
+        );
+        if soll_loeschen && path.exists() {
             let _ = std::fs::remove_file(&path);
+        } else if !soll_loeschen {
+            tracing::warn!(
+                erwartet = ?erwartete_pirep_id,
+                gefunden = ?tatsaechliche_pirep_id,
+                "clear_persisted_flight: Ablage gehoert einem anderen (neueren) Flug — NICHT geloescht"
+            );
         }
     }
     // v0.8.3 (#2): Auto-Start-Lock zuruecksetzen. Vorher: `auto_start_last_bid_id`
@@ -12487,6 +12541,54 @@ mod persistence_lock_tests {
                 "Schreiben und Loeschen liefen gleichzeitig — das Schloss schuetzt nicht"
             );
         }
+    }
+}
+
+#[cfg(test)]
+/// Codex-Folgefund (adversarial, 05.09.2026): der `persistence_lock` allein
+/// verhindert nur, dass Schreiben und Loeschen sich zeitlich ueberlappen —
+/// er sagt nichts darueber, WESSEN Flug an dem einen festen Pfad liegt.
+/// `sollte_persistierten_flug_loeschen` ist die daraus extrahierte, reine
+/// Eigentuemer-Entscheidung.
+mod persistierten_flug_loeschen_eigentuemer_tests {
+    use super::*;
+
+    #[test]
+    fn loescht_wenn_die_ablage_dem_erwarteten_flug_gehoert() {
+        assert!(sollte_persistierten_flug_loeschen(
+            Some("PIREP-A"),
+            Some("PIREP-A")
+        ));
+    }
+
+    /// Der eigentliche Befund: ein alter Flug (A) nimmt sich per
+    /// `guard.take()` aus dem State, haengt an einem Await (Server-
+    /// Roundtrip), und in dieser Luecke legt `flight_start` bereits einen
+    /// NEUEN Flug (B) an, der seinen ersten Checkpoint an denselben festen
+    /// Pfad schreibt. Wenn A's Teardown danach fortsetzt, MUSS die Loeschung
+    /// B's frischen Checkpoint verschonen.
+    #[test]
+    fn loescht_nicht_wenn_die_ablage_inzwischen_einem_neueren_flug_gehoert() {
+        assert!(!sollte_persistierten_flug_loeschen(
+            Some("PIREP-A-alt"),
+            Some("PIREP-B-neu")
+        ));
+    }
+
+    #[test]
+    fn loescht_wenn_kein_eigentuemer_erwartet_wird() {
+        // z.B. flight_forget ohne zuvor aktiven Flug — reines
+        // Aufraeumen einer verwaisten Datei ohne bekannten Besitzer.
+        assert!(sollte_persistierten_flug_loeschen(None, Some("PIREP-X")));
+        assert!(sollte_persistierten_flug_loeschen(None, None));
+    }
+
+    #[test]
+    fn loescht_wenn_die_ablage_nicht_lesbar_oder_nicht_vorhanden_ist() {
+        // Unlesbar/fehlend = kein feststellbarer fremder Eigentuemer —
+        // dasselbe Prinzip wie beim Resume-Pfad (`read_persisted_flight`
+        // gibt bei Parse-Fehlern ebenfalls `None` zurueck, nicht Err).
+        assert!(sollte_persistierten_flug_loeschen(Some("PIREP-A"), None));
     }
 }
 
@@ -21908,7 +22010,7 @@ async fn flight_end(
                 // Divert das bestätigte Ausweichfeld, sonst das geplante Ziel.
                 record_landing_for_filed_flight(&app, &flight, &mut stats, &effective_arr_icao);
             }
-            clear_persisted_flight(&app);
+            clear_persisted_flight(&app, Some(&flight.pirep_id));
             log_activity(
                 &state,
                 ActivityLevel::Info,
@@ -22105,7 +22207,7 @@ async fn flight_end(
                     // Divert das bestätigte Ausweichfeld, sonst das geplante Ziel.
                     record_landing_for_filed_flight(&app, &flight, &mut stats, &effective_arr_icao);
                 }
-                clear_persisted_flight(&app);
+                clear_persisted_flight(&app, Some(&flight.pirep_id));
                 log_activity(
                     &state,
                     ActivityLevel::Warn,
@@ -22686,7 +22788,7 @@ async fn flight_end_manual(
                     divert_to.as_deref().unwrap_or(&flight.arr_airport),
                 );
             }
-            clear_persisted_flight(&app);
+            clear_persisted_flight(&app, Some(&flight.pirep_id));
             log_activity(
                 &state,
                 ActivityLevel::Warn,
@@ -23151,8 +23253,10 @@ async fn flight_cancel(
     flight.stop.store(true, Ordering::Relaxed);
     let client = current_client(&state)?;
     let result = client.cancel_pirep(&flight.pirep_id).await;
-    // Clear local persistence regardless — the user wants this gone.
-    clear_persisted_flight(&app);
+    // Clear local persistence — but only THIS flight's: the await above is
+    // exactly the gap where a newly started flight could already own the
+    // (single, fixed) persistence path. See `sollte_persistierten_flug_loeschen`.
+    clear_persisted_flight(&app, Some(&flight.pirep_id));
     discard_queued_positions_for(&app, &flight.pirep_id);
     pirep_queue::remove(&app, &flight.pirep_id);
     result?;
@@ -23308,7 +23412,7 @@ fn spawn_resume_sim_gate(app: AppHandle, flight: Arc<ActiveFlight>, client: Clie
 /// clean slate.
 #[tauri::command]
 async fn flight_forget(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), UiError> {
-    if let Some(flight) = state
+    let forgotten_pirep_id = if let Some(flight) = state
         .active_flight
         .lock()
         .expect("active_flight lock")
@@ -23332,8 +23436,16 @@ async fn flight_forget(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
                 outcome: FlightOutcome::Forgotten,
             },
         );
-    }
-    clear_persisted_flight(&app);
+        Some(flight.pirep_id.clone())
+    } else {
+        None
+    };
+    // No await happened between the take() above and here, so there is no
+    // gap for a concurrently started flight to have claimed the persistence
+    // path — but pass the owner along anyway for defense in depth (see
+    // `sollte_persistierten_flug_loeschen`). `None` (no flight was active)
+    // keeps the previous unconditional-clear behavior for orphaned files.
+    clear_persisted_flight(&app, forgotten_pirep_id.as_deref());
     Ok(())
 }
 
@@ -42290,7 +42402,7 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
                     status = ?p.status,
                     "persisted PIREP no longer in progress, discarding resume"
                 );
-                clear_persisted_flight(app);
+                clear_persisted_flight(app, Some(&persisted.pirep_id));
                 log_activity_handle(
                     app,
                     ActivityLevel::Warn,
@@ -42308,7 +42420,7 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
                 pirep_id = %persisted.pirep_id,
                 "persisted PIREP no longer on server (likely soft-deleted by cron), discarding resume"
             );
-            clear_persisted_flight(app);
+            clear_persisted_flight(app, Some(&persisted.pirep_id));
             log_activity_handle(
                 app,
                 ActivityLevel::Warn,

@@ -84,11 +84,16 @@ Aufruf gesetzt (direkt davor oder frueher in derselben Funktion) — es war
 KEINE Aenderung an den `stop.store(true, ...)`-Aufrufen selbst noetig,
 nur an den beiden Stellen, die tatsaechlich lesen/schreiben/loeschen.
 
-**Zwei resume-Discard-Aufrufstellen (`try_resume_flight`, ~Zeile 42101/
-42119) bewusst NICHT angefasst:** dort existiert noch gar kein
-`ActiveFlight`/`flight.stop` — der Flug wird erst DANACH ins
-`Arc<ActiveFlight>` geladen. Ohne gleichzeitigen Schreiber kann dort
-keine Race auftreten.
+**Zwei resume-Discard-Aufrufstellen (`try_resume_flight`) urspruenglich
+bewusst nicht angefasst — diese Einschaetzung war UNVOLLSTAENDIG, siehe
+Nachtrag unten.** Die urspruengliche Begruendung ("dort existiert noch gar
+kein `ActiveFlight`/`flight.stop`, der Flug wird erst DANACH ins
+`Arc<ActiveFlight>` geladen, ohne gleichzeitigen Schreiber kann dort keine
+Race auftreten") stimmt fuer `state.active_flight` selbst — uebersah aber,
+dass die Ablage-DATEI (ein fester Pfad fuer "den" aktiven Flug, unabhaengig
+davon ob er schon im State liegt) waehrend des Awaits vor dem Loeschen
+sehr wohl von einem PARALLEL gestarteten neuen Flug beschrieben werden
+kann. Der Fix dafuer ist Teil des Nachtrags.
 
 **Tests:** `persistence_lock_tests` (3 Tests) — die reine Synchronisations-
 Grundlage (`schreiben_falls_aktiv`) ist unabhaengig von `AppHandle`/Tauri
@@ -98,6 +103,54 @@ Abschnitten (Threads + `Barrier`) eine echte Wettlaufsituation und prueft,
 dass sich Schreiben und Loeschen NIE zeitlich ueberlappen — eine
 Gegenprobe (Lock aus der Pruef-Funktion entfernt) bestaetigte, dass der
 Test eine echte Regression zuverlaessig faengt.
+
+## Nachtrag (05.09.2026): Codex-Folgefund — Loeschung kannte keinen Eigentuemer
+
+**Gefunden:** Codex, adversarial-Review GEGEN den Commit dieser Sitzung
+(alle vier hier dokumentierten Fixes plus den Accident-Klassifikator-Fix
+zusammen), unmittelbar nach dem Push. Verdict: `needs-attention`.
+
+Der `persistence_lock` aus Befund 2 serialisiert Schreiben und Loeschen nur
+GEGENEINANDER — er sagt nichts darueber, WESSEN Flug gerade an dem einen
+festen Pfad (`active_flight_path`) liegt. `flight_cancel` nimmt den alten
+Flug per `guard.take()` aus `state.active_flight`, setzt `stop`, und haengt
+DANACH an einem echten Await (`client.cancel_pirep(...).await`, ein
+Server-Roundtrip). In dieser Luecke ist der State-Slot leer —
+`flight_start` kann in dieser Zeit bereits einen NEUEN Flug anlegen und
+dessen ersten Checkpoint an denselben Pfad schreiben. Setzt der alte Cancel
+danach fort und ruft `clear_persisted_flight`, loeschte diese Funktion
+bisher blind — und riss damit den gerade erst gestarteten neuen Flug weg.
+Ein Absturz vor dessen naechstem Checkpoint haette dessen Recovery-Zustand
+dauerhaft verloren.
+
+Derselbe Spalt betrifft — entgegen der urspruenglichen Einschaetzung oben —
+auch die beiden resume-Discard-Stellen in `try_resume_flight`: zwischen
+`client.get_pirep(...).await` und der Loeschung kann ein Pilot am
+Programmstart bereits manuell einen neuen Flug gestartet haben.
+
+**Gefixt:** neue reine Funktion `sollte_persistierten_flug_loeschen(
+erwartete_pirep_id: Option<&str>, tatsaechliche_pirep_id_auf_platte:
+Option<&str>) -> bool`. `clear_persisted_flight` bekommt jetzt an JEDER
+Aufrufstelle den PIREP der eigenen Flug-Teardown mit (`Some(&pirep_id)`)
+und liest — noch INNERHALB desselben `persistence_lock`-Abschnitts, damit
+zwischen Lesen und Loeschen kein neuer Schreiber dazwischenkommt — die
+tatsaechlich auf der Platte liegende `pirep_id` per `read_persisted_flight`.
+Geloescht wird nur, wenn beide uebereinstimmen (oder kein Eigentuemer
+erwartet wird, oder die Ablage nicht lesbar/vorhanden ist — dann gibt es
+nichts fremdes zu schuetzen).
+
+`flight_forget` musste dafuer leicht umgebaut werden: die `pirep_id` wird
+jetzt aus dem `if let Some(flight) = ...`-Block herausgetragen (statt mit
+dem Block-Ende zu verschwinden), damit sie beim Aufruf noch verfuegbar ist.
+
+**Tests:** `persistierten_flug_loeschen_eigentuemer_tests` (4 Tests) — die
+reine Entscheidung deckt: gleicher Eigentuemer loescht, ANDERER (neuerer)
+Eigentuemer loescht NICHT (der eigentliche Befund), kein erwarteter
+Eigentuemer loescht (verwaiste Datei ohne State-Gegenstueck), unlesbare/
+fehlende Ablage loescht (kein fremder Eigentuemer feststellbar). Gegenprobe
+durchgefuehrt: mit der Entscheidung fest auf `true` gesetzt schlaegt
+`loescht_nicht_wenn_die_ablage_inzwischen_einem_neueren_flug_gehoert`
+zuverlaessig fehl.
 
 ## Nicht behoben (bewusst außerhalb des Umfangs)
 
