@@ -1654,6 +1654,17 @@ struct AppState {
     /// only ever accessed from async contexts (hook points run
     /// inside the streamer's async tasks).
     mqtt: tokio::sync::Mutex<Option<aeroacars_mqtt::Handle>>,
+    /// `pilot_id` des Accounts, dessen Credentials gerade in `mqtt`
+    /// installiert sind (`None` = kein Handle oder Herkunft unbekannt).
+    /// Codex-Folgefund (adversarial, 05.09.2026, elfte Runde): `mqtt` allein
+    /// beantwortet nur „laeuft ueberhaupt einer", nicht „gehoert er dem
+    /// GERADE eingeloggten Account". Ohne dieses Feld haette ein Re-Login
+    /// DESSELBEN Geraets mit einem ANDEREN Piloten (Runde 6 erlaubt das
+    /// ausdruecklich ohne vorherigen Logout, solange kein Flug aktiv ist)
+    /// den Idempotenz-Guard in `init_mqtt_publisher_via_provisioning` als
+    /// "laeuft schon, nichts zu tun" gelesen und den vorigen Piloten
+    /// still weiterlaufen lassen.
+    mqtt_owner_pilot_id: Mutex<Option<i64>>,
     /// v0.7.8: SimBrief-Identifier (Username + User-ID) fuer den
     /// SimBrief-direct OFP-Refresh-Pfad. Wenn mindestens eines gesetzt
     /// ist, kann `flight_refresh_simbrief` den neuen OFP direkt von
@@ -10158,7 +10169,7 @@ async fn phpvms_login(
     apply_sim_kind(&state, saved_kind);
 
     // Try to resume an in-progress flight (e.g. after a client crash).
-    try_resume_flight(&app, &state, &client).await;
+    try_resume_flight(&app, &state).await;
 
     log_activity(
         &state,
@@ -10325,11 +10336,38 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
     // Mit Guard: nur der erste Call macht `start()`, alle weiteren
     // Aufrufe sind no-op. `phpvms_logout` setzt `state.mqtt = None`
     // sauber zurück, sodass der nächste Login wieder startet.
+    //
+    // Codex-Folgefund (adversarial, 05.09.2026, elfte Runde): "laeuft schon
+    // einer" allein reicht nicht — `phpvms_login` erlaubt ausdruecklich
+    // einen Re-Login OHNE vorheriges Logout (solange kein Flug aktiv ist).
+    // Ohne den Eigentuemer-Vergleich haette der Idempotenz-Guard einen
+    // fremden, noch laufenden Publisher als "schon da" durchgehen lassen —
+    // Pilot Bs Positionen/Events waeren ueber Pilot As MQTT-Verbindung
+    // gelaufen.
+    let aktuelle_pilot_id = *state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock");
     {
-        let guard = state.mqtt.lock().await;
+        let mut guard = state.mqtt.lock().await;
         if guard.is_some() {
-            tracing::debug!("live-tracking: publisher already running, skipping re-init");
-            return;
+            let eigentuemer = *state
+                .mqtt_owner_pilot_id
+                .lock()
+                .expect("mqtt_owner_pilot_id lock");
+            if eigentuemer.is_some() && eigentuemer == aktuelle_pilot_id {
+                tracing::debug!(
+                    "live-tracking: publisher already running for this account, skipping re-init"
+                );
+                return;
+            }
+            tracing::info!(
+                "live-tracking: laufender Publisher gehoert nicht (mehr) dem aktuellen Account \
+                 — wird gestoppt, bevor neu provisioniert wird"
+            );
+            if let Some(handle) = guard.take() {
+                handle.shutdown();
+            }
         }
     }
 
@@ -10368,6 +10406,14 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
             pilot_id,
         })
     })();
+
+    // Codex-Folgefund (adversarial, 05.09.2026, elfte Runde): gecachte
+    // MQTT-Credentials tragen die `pilot_id` VON DAMALS — stammen sie von
+    // einem anderen Piloten als dem GERADE eingeloggten (Re-Login ohne
+    // Logout), waere Pilot As alte MQTT-Identitaet fuer Pilot Bs Flug
+    // uebernommen worden. Nur verwenden, wenn sie zum aktuellen Account
+    // passen oder (Setup-Hook-Fall) noch gar keine Piloten-ID bekannt ist.
+    let cached = cached.filter(|c| aktuelle_pilot_id.is_none_or(|id| c.pilot_id == id.to_string()));
 
     let cfg = if let Some(c) = cached {
         tracing::info!("live-tracking: using cached MQTT credentials");
@@ -10425,6 +10471,7 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
         resp.into()
     };
 
+    let installierter_pilot_id: Option<i64> = cfg.pilot_id.parse().ok();
     let handle = match start(cfg) {
         Ok(h) => h,
         Err(e) => {
@@ -10494,8 +10541,40 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
         });
     }
 
+    // Codex-Folgefund (adversarial, 05.09.2026, elfte Runde): die Pruefung
+    // weiter oben (vor den beiden Empfaenger-Weiterleitungen) schliesst die
+    // Luecke nicht vollstaendig — `take_integrity_rx`/`take_chat_rx` sind
+    // selbst echte Awaits. Direkt hier, unmittelbar vor der Installation,
+    // noch einmal nachpruefen.
+    if secrets::load_api_key(KEYRING_ACCOUNT).ok().flatten() != api_key_bei_provisionierungs_start {
+        tracing::warn!(
+            "live-tracking: Account wechselte waehrend der Provisionierung — \
+             frisch gebauter MQTT-Handle wird verworfen, nicht installiert"
+        );
+        handle.shutdown();
+        return;
+    }
     *state.mqtt.lock().await = Some(handle);
+    *state
+        .mqtt_owner_pilot_id
+        .lock()
+        .expect("mqtt_owner_pilot_id lock") = installierter_pilot_id;
     tracing::info!("live-tracking publisher running");
+}
+
+/// Stoppt einen eventuell laufenden MQTT-Publisher UND vergisst, wem er
+/// gehoerte — die beiden gehoeren immer zusammen (siehe `mqtt_owner_
+/// pilot_id`s Doku), deshalb ein gemeinsamer Helfer statt drei Kopien
+/// (`phpvms_logout`, Status-Gate in `phpvms_load_session`, Auth-Fehler in
+/// `phpvms_load_session`).
+async fn stoppe_mqtt_publisher(state: &tauri::State<'_, AppState>) {
+    if let Some(handle) = state.mqtt.lock().await.take() {
+        handle.shutdown();
+    }
+    *state
+        .mqtt_owner_pilot_id
+        .lock()
+        .expect("mqtt_owner_pilot_id lock") = None;
 }
 
 /// Forget cached MQTT credentials. Called from logout — next session
@@ -10550,15 +10629,18 @@ async fn phpvms_logout(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
     }
     *state.client.lock().expect("client mutex") = None;
     drop(setup_guard);
-    secrets::delete_api_key(KEYRING_ACCOUNT).map_err(|e| UiError::new("keyring", e.to_string()))?;
-    // v0.5.11: stop the MQTT publisher and forget cached credentials
-    // so the next login provisions fresh (handles the case where
-    // a different pilot logs in on the same machine).
-    if let Some(handle) = state.mqtt.lock().await.take() {
-        handle.shutdown();
-    }
+    // Codex-Folgefund (adversarial, 05.09.2026, elfte Runde): diese
+    // In-Memory-Aufraeumung MUSS VOR den beiden fehlschlagfaehigen
+    // Keyring-/Datei-Operationen weiter unten passieren, nicht danach.
+    // Vorher konnte ein `?` bei `delete_api_key`/`clear_site_config`
+    // vorzeitig zurueckkehren, WAEHREND der MQTT-Publisher und die
+    // SimBrief-Identitaet des abgemeldeten Piloten noch standen — das
+    // Frontend zeigt trotzdem den Login-Screen (siehe `handleLogout`,
+    // das nur `flight_active`/`flight_setup_in_progress` blockiert, jeden
+    // anderen Fehlercode aber als "ausgeloggt genug" behandelt). Jetzt
+    // laeuft diese Aufraeumung IMMER, bevor irgendetwas fehlschlagen kann.
+    stoppe_mqtt_publisher(&state).await;
     clear_mqtt_credentials_cache();
-    clear_site_config(&app)?;
     // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): `simbrief_
     // settings` (auto-gesourct in `cache_pilot` ODER manuell per Settings
     // gesetzt) blieb nach Logout stehen — `maybe_autosource_simbrief_
@@ -10571,6 +10653,8 @@ async fn phpvms_logout(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
         .simbrief_settings
         .lock()
         .expect("simbrief_settings lock") = SimBriefSettings::default();
+    secrets::delete_api_key(KEYRING_ACCOUNT).map_err(|e| UiError::new("keyring", e.to_string()))?;
+    clear_site_config(&app)?;
     tracing::info!("logged out");
     Ok(())
 }
@@ -10625,9 +10709,7 @@ async fn phpvms_load_session(
                 // fuer einen Account zurueck, den diese Funktion gerade als
                 // nicht aktiv erklaert. Symmetrisch zu `phpvms_logout`
                 // stoppen und leeren.
-                if let Some(handle) = state.mqtt.lock().await.take() {
-                    handle.shutdown();
-                }
+                stoppe_mqtt_publisher(&state).await;
                 log_activity_handle(
                     &app,
                     ActivityLevel::Warn,
@@ -10659,7 +10741,7 @@ async fn phpvms_load_session(
             // Auto-start the simulator adapter when we restore an existing session.
             let saved_kind = read_sim_config(&app).kind;
             apply_sim_kind(&state, saved_kind);
-            try_resume_flight(&app, &state, &client).await;
+            try_resume_flight(&app, &state).await;
             // Throttle "Session restored" entries: at most once per
             // 60 s. A session-restore is benign noise on rapid Tauri
             // restarts (debug cycles, dev HMR rebuilds) and the
@@ -10703,6 +10785,15 @@ async fn phpvms_load_session(
             // er tun muss (VA-Admin kontaktieren).
             let _ = secrets::delete_api_key(KEYRING_ACCOUNT);
             let _ = clear_site_config(&app);
+            clear_mqtt_credentials_cache();
+            // Codex-Folgefund (adversarial, 05.09.2026, elfte Runde):
+            // derselbe Wettlauf wie beim Status-Gate-Zweig oben — der
+            // Setup-Hook provisioniert parallel, unabhaengig davon ob
+            // dieser Restore-Roundtrip am Ende mit einem Auth-Fehler
+            // endet. Ohne diesen Stopp bliebe ein zwischenzeitlich
+            // installierter Publisher fuer einen Account zurueck, den
+            // diese Funktion hier gerade als nicht mehr gueltig erklaert.
+            stoppe_mqtt_publisher(&state).await;
             log_activity_handle(
                 &app,
                 ActivityLevel::Warn,
@@ -17340,6 +17431,157 @@ mod konten_isolierung_runde_zehn_wiring_tests {
                 && koerper.contains("SimBriefSettings::default()"),
             "phpvms_logout setzt simbrief_settings nicht mehr auf Default zurueck — \
              der naechste Pilot ohne eigenen Identifier saehe den vorigen SimBrief-OFP"
+        );
+    }
+}
+
+/// Codex-Folgefund (adversarial, 05.09.2026, elfte Runde): fuenf weitere
+/// Luecken rund um den MQTT-Lebenszyklus und den Resume-Pfad.
+#[cfg(test)]
+mod konten_isolierung_runde_elf_wiring_tests {
+    /// Dieselbe Technik wie in den Runde-9/10-Testmodulen.
+    fn funktionskoerper(quelle: &str, start_marker: &str) -> String {
+        let start = quelle
+            .find(start_marker)
+            .unwrap_or_else(|| panic!("{start_marker} nicht mehr gefunden — Test anpassen"));
+        let rest = &quelle[start..];
+        let naechstes_fn = rest[1..].find("\nfn ").map(|i| i + 1);
+        let naechstes_async_fn = rest[1..].find("\nasync fn ").map(|i| i + 1);
+        let ende = [naechstes_fn, naechstes_async_fn]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(rest.len());
+        rest[..ende].to_string()
+    }
+
+    /// Befund 2: der Idempotenz-Guard pruefte bisher nur "laeuft schon
+    /// einer", nicht "gehoert er dem GERADE eingeloggten Account" — ein
+    /// Re-Login OHNE vorheriges Logout (ausdruecklich erlaubt, solange
+    /// kein Flug aktiv ist) haette einen fremden, noch laufenden Publisher
+    /// als "schon da, nichts zu tun" durchgehen lassen.
+    #[test]
+    fn mqtt_idempotenz_guard_prueft_eigentuemer_nicht_nur_existenz() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "async fn init_mqtt_publisher_via_provisioning(");
+        assert!(
+            koerper.contains("mqtt_owner_pilot_id"),
+            "init_mqtt_publisher_via_provisioning prueft den Eigentuemer des laufenden \
+             Publishers nicht mehr — ein Re-Login eines anderen Piloten liesse den \
+             vorigen Publisher unbemerkt weiterlaufen"
+        );
+    }
+
+    /// Befund 2b: gecachte MQTT-Credentials tragen die pilot_id von
+    /// damals — ohne Filter gegen den aktuellen Account waeren sie bei
+    /// einem Re-Login blind uebernommen worden.
+    #[test]
+    fn mqtt_cache_wird_gegen_aktuellen_piloten_gefiltert() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "async fn init_mqtt_publisher_via_provisioning(");
+        let filter_pos = koerper.find("cached.filter(");
+        // Ohne die abschliessende Klammer suchen — ein einzelnes,
+        // unausgeglichenes Klammerzeichen in einem String-Literal bringt
+        // den Klammer-Zaehler von tests/angeschlossen.rs durcheinander.
+        let cfg_pos = koerper.find("let cfg = if let Some(c) = cached");
+        match (filter_pos, cfg_pos) {
+            (Some(f), Some(c)) => assert!(
+                f < c,
+                "der Cache-Filter gegen den aktuellen Piloten muss VOR der \
+                 cfg-Entscheidung stehen, sonst wirkt er nicht"
+            ),
+            _ => panic!(
+                "cached.filter(...)-Aufruf oder cfg-Entscheidung in \
+                 init_mqtt_publisher_via_provisioning nicht mehr gefunden"
+            ),
+        }
+    }
+
+    /// Befund 3: `phpvms_logout` konnte vorzeitig mit `?` zurueckkehren,
+    /// WAEHREND der MQTT-Publisher und die SimBrief-Identitaet des
+    /// abgemeldeten Piloten noch standen — das Frontend zeigt trotzdem den
+    /// Login-Screen. Die In-Memory-Aufraeumung muss deshalb VOR jeder
+    /// fehlschlagfaehigen Operation (`delete_api_key`, `clear_site_config`)
+    /// laufen, nicht danach.
+    #[test]
+    fn logout_raeumt_vor_den_fehlschlagfaehigen_schritten_auf() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "async fn phpvms_logout(");
+        let mqtt_stop_pos = koerper.find("stoppe_mqtt_publisher(&state).await;");
+        let simbrief_pos = koerper.find("SimBriefSettings::default();");
+        let fehlschlag_pos = koerper
+            .find("secrets::delete_api_key(KEYRING_ACCOUNT).map_err(|e| UiError::new(\"keyring\"");
+        match (mqtt_stop_pos, simbrief_pos, fehlschlag_pos) {
+            (Some(m), Some(s), Some(f)) => assert!(
+                m < f && s < f,
+                "phpvms_logout muss den MQTT-Publisher stoppen und simbrief_settings \
+                 leeren, BEVOR delete_api_key mit `?` fehlschlagen kann — sonst bleibt \
+                 bei einem Keyring-Fehler sicherheitsrelevanter Altzustand stehen, \
+                 waehrend das Frontend trotzdem den Login-Screen zeigt"
+            ),
+            _ => panic!(
+                "MQTT-Stopp, SimBrief-Reset oder delete_api_key-Aufruf in phpvms_logout \
+                 nicht mehr gefunden — Test anpassen, nicht loeschen"
+            ),
+        }
+    }
+
+    /// Befund 4: `try_resume_flight` kombinierte einen vom Aufrufer
+    /// UEBERGEBENEN (potenziell veralteten) Client mit einer separat aus
+    /// `state` gelesenen Identitaet — zwischen dem Freigeben des
+    /// Lifecycle-Locks beim Aufrufer und dem Wiedererwerb hier kann ein
+    /// vollstaendiger Login eines anderen Piloten stattfinden. Beide
+    /// muessen jetzt gemeinsam ueber `aktuelle_session_atomar` gelesen
+    /// werden, nicht mehr getrennt.
+    #[test]
+    fn try_resume_flight_liest_client_und_identitaet_gemeinsam() {
+        const SRC: &str = include_str!("lib.rs");
+        let nadel = format!("{}{}", "async fn try_resume_fl", "ight(app: &AppHandle");
+        let signatur_start = SRC
+            .find(&nadel)
+            .expect("try_resume_flight-Signatur nicht mehr gefunden");
+        // Bewusst OHNE das Zeilenende der Signatur (dessen erste geschweifte
+        // Klammer) zu suchen: ein einzelnes, unausgeglichenes Klammerzeichen
+        // in einem String-Literal bringt den naiven Klammer-Zaehler von
+        // tests/angeschlossen.rs durcheinander (dieselbe Fehlerklasse wie
+        // ein unausgeglichenes Zeichen in einem Kommentar — nur hier in
+        // einem String statt einem Kommentar). Der klammerfreie Anker
+        // "AppState>)" markiert das Signatur-Ende eindeutig genug.
+        let signatur_ende = SRC[signatur_start..]
+            .find("AppState>)")
+            .map(|i| signatur_start + i + "AppState>)".len())
+            .expect("Signatur-Ende nicht gefunden");
+        let signatur = &SRC[signatur_start..signatur_ende];
+        assert!(
+            !signatur.contains("client: &Client"),
+            "try_resume_flight nimmt wieder einen eigenen client-Parameter entgegen — \
+             der koennte vom Aufrufer stammen und beim tatsaechlichen Ausfuehren \
+             bereits veraltet sein"
+        );
+        let koerper = funktionskoerper(SRC, &nadel);
+        assert!(
+            koerper.contains("aktuelle_session_atomar(state)"),
+            "try_resume_flight liest Client und Identitaet nicht mehr gemeinsam \
+             ueber aktuelle_session_atomar"
+        );
+    }
+
+    /// Befund 5: der Auth-Fehler-Zweig (`Unauthenticated`/`Forbidden`) in
+    /// `phpvms_load_session` stoppte bisher KEINEN eventuell vom
+    /// Setup-Hook parallel gestarteten Publisher — anders als der
+    /// benachbarte Status-Gate-Zweig, der das schon tut.
+    #[test]
+    fn load_session_stoppt_mqtt_auch_im_auth_fehler_zweig() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "async fn phpvms_load_session(");
+        assert_eq!(
+            koerper
+                .matches("stoppe_mqtt_publisher(&state).await;")
+                .count(),
+            2,
+            "phpvms_load_session muss den MQTT-Publisher an BEIDEN Stellen stoppen, \
+             die eine gespeicherte Sitzung verwerfen (Status-Gate UND Auth-Fehler) — \
+             sonst bleibt im jeweils anderen Zweig ein fremder Publisher aktiv"
         );
     }
 }
@@ -43647,7 +43889,7 @@ fn stillstand_erlaubt_wiederaufnahme(stillstand: chrono::Duration) -> bool {
     stillstand <= chrono::Duration::hours(RESUME_STILLSTAND_MAX_HOURS)
 }
 
-async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, client: &Client) {
+async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) {
     let Some(mut persisted) = read_persisted_flight(app) else {
         return;
     };
@@ -43731,18 +43973,27 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
     // Fingerabdrucks — `state.authenticated_pilot_id` ist zu diesem
     // Zeitpunkt bereits gesetzt (`phpvms_login`/`phpvms_load_session` tun
     // das VOR diesem Aufruf).
-    let Some(aktuelle_identitaet) = state
-        .authenticated_pilot_id
-        .lock()
-        .expect("authenticated_pilot_id lock")
-        .map(|id| id.to_string())
-    else {
+    //
+    // Codex-Folgefund (adversarial, 05.09.2026, elfte Runde): `client` kam
+    // bisher als Parameter vom AUFRUFER (`phpvms_login`/`phpvms_load_
+    // session`), der ihn VOR dem Freigeben seines eigenen Lifecycle-Locks
+    // erfasst hatte — die Identitaet hier wurde aber ERNEUT und GETRENNT
+    // aus `state` gelesen. Zwischen dem `drop(setup_guard)` des Aufrufers
+    // und dem Wiedererwerb hier (siehe oben) kann ein VOLLSTAENDIGER
+    // Login eines anderen Piloten stattfinden — dann haette dieser Code
+    // Pilot Bs frisch gelesene Identitaet mit Pilot As veraltetem,
+    // uebergebenem `client` kombiniert und genau die Garantie umgangen,
+    // die `aktuelle_session_atomar` eigentlich gibt. Jetzt werden Client
+    // UND Identitaet gemeinsam, atomar und JETZT (nicht vom Aufrufer
+    // ueberreicht) gelesen.
+    let Some((client, aktuelle_pilot_id)) = aktuelle_session_atomar(state) else {
         tracing::warn!(
             pirep_id = %persisted.pirep_id,
-            "try_resume_flight: keine authentifizierte Piloten-ID bekannt — Resume uebersprungen"
+            "try_resume_flight: keine authentifizierte Sitzung bekannt — Resume uebersprungen"
         );
         return;
     };
+    let aktuelle_identitaet = aktuelle_pilot_id.to_string();
     if !pirep_queue_eintrag_gehoert_aktuellem_piloten(
         persisted.owner_identity.as_deref(),
         &aktuelle_identitaet,

@@ -729,6 +729,84 @@ echo $?`), oder `grep -c "^test result: FAILED"` auf der vollen Ausgabe
 gegenpruefen.** Nach der Korrektur: `cargo test --workspace` mit derselben
 Methode neu verifiziert, echter Exit-Code 0, `grep -c "FAILED"` liefert 0.
 
+## Nachtrag #10 (05.09.2026): elfte Codex-Runde — der MQTT-Lebenszyklus war der eigentliche Rest-Herd
+
+Adversarial-Review gegen alle zehn bisherigen Commits fand fuenf weitere
+Befunde (vier hoch, einer mittel) — vier davon rund um denselben MQTT-
+Publisher-Lebenszyklus, den Runde 10 schon einmal angefasst hatte, plus
+einen Client/Identitaets-Mix im Resume-Pfad.
+
+**Befund 1 (hoch) — die Runde-10-Pruefung war nicht wirklich unmittelbar
+vor der Installation.** Zwischen der letzten Account-Pruefung und
+`*state.mqtt.lock().await = Some(handle)` lagen noch zwei echte Awaits
+(`take_integrity_rx`, `take_chat_rx`). Ein Kontowechsel in dieser
+Rest-Luecke haette trotzdem installiert.
+
+**Befund 2 (hoch) — ein Re-Login OHNE vorheriges Logout uebernahm den
+laufenden ODER gecachten MQTT-Account ungeprueft.** Der Idempotenz-Guard
+fragte nur „laeuft schon einer", nicht „gehoert er dem GERADE
+eingeloggten Piloten". Auch der Credential-Cache (`MQTT_KEYRING_PILOT_ID`)
+wurde ohne Abgleich gegen den aktuellen Account uebernommen.
+
+**Befund 3 (hoch) — ein teilweise fehlgeschlagener Logout liess
+sicherheitsrelevanten Altzustand stehen, waehrend das Frontend erfolgreich
+auslogt.** `phpvms_logout` konnte mit `?` vorzeitig zurueckkehren, BEVOR
+MQTT-Stopp und SimBrief-Reset erreicht wurden — das Frontend blockiert
+aber nur bei `flight_active`/`flight_setup_in_progress`, jeden anderen
+Fehlercode behandelt es als „ausgeloggt genug".
+
+**Befund 4 (hoch) — `try_resume_flight` kombinierte einen vom Aufrufer
+UEBERGEBENEN, potenziell veralteten Client mit einer separat aus `state`
+gelesenen Identitaet.** Zwischen dem Freigeben des Lifecycle-Locks beim
+Aufrufer (`phpvms_login`/`phpvms_load_session`) und dem Wiedererwerb hier
+kann ein vollstaendiger Login eines anderen Piloten stattfinden — genau
+die Garantie, die `aktuelle_session_atomar` eigentlich gibt, wurde hier
+umgangen.
+
+**Befund 5 (mittel) — der Auth-Fehler-Zweig in `phpvms_load_session`
+stoppte keinen parallel gestarteten Publisher.** Der benachbarte
+Status-Gate-Zweig tut das schon (Runde 10); der `Unauthenticated`/
+`Forbidden`-Zweig hatte dieselbe Behandlung noch nicht.
+
+**Gefixt:**
+
+1. Neuer zweiter Identitaets-Check unmittelbar VOR der Installation,
+   nach den beiden Empfaenger-Weiterleitungen.
+2. Neues `AppState::mqtt_owner_pilot_id` — verfolgt, wem der installierte
+   Publisher gehoert. Der Idempotenz-Guard vergleicht jetzt Eigentuemer
+   statt nur Existenz; ein fremder laufender Publisher wird gestoppt statt
+   ignoriert. Gecachte Credentials werden gegen den aktuellen Piloten
+   gefiltert, bevor sie verwendet werden.
+3. `phpvms_logout` raeumt MQTT + SimBrief jetzt VOR den beiden
+   fehlschlagfaehigen Schritten (`delete_api_key`, `clear_site_config`)
+   auf — diese Aufraeumung laeuft jetzt immer, unabhaengig vom Ausgang.
+   Neuer gemeinsamer Helfer `stoppe_mqtt_publisher` (Handle stoppen +
+   Eigentuemer vergessen) fuer alle drei Stellen, die einen Publisher
+   stoppen muessen (Logout, Status-Gate, Auth-Fehler).
+4. `try_resume_flight` nimmt keinen `client`-Parameter mehr entgegen —
+   Client UND Identitaet werden gemeinsam ueber `aktuelle_session_atomar`
+   gelesen, im Moment der tatsaechlichen Ausfuehrung.
+5. Der Auth-Fehler-Zweig in `phpvms_load_session` ruft jetzt ebenfalls
+   `stoppe_mqtt_publisher`.
+
+**Tests:** fuenf neue Quelltext-Waechter
+(`konten_isolierung_runde_elf_wiring_tests`), Gegenprobe fuer die beiden
+riskantesten (Client/Identitaets-Kopplung, Logout-Reihenfolge)
+durchgefuehrt — beide korrekt fehlgeschlagen, dann wiederhergestellt.
+
+**Eigene Lehre aus dieser Runde:** zwei der neuen Tests brachen erneut den
+Klammer-Zaehler von `tests/angeschlossen.rs` — diesmal nicht durch einen
+Kommentar, sondern durch STRING-LITERALE mit einer einzelnen,
+unausgeglichenen Klammer (`.find(") {")`, `.find("...cached {")`), um nach
+dem Ende einer Funktionssignatur zu suchen. Gleiche Fehlerklasse wie die
+schon dokumentierte Kommentar-Falle, nur in Anfuehrungszeichen statt
+Backticks. Behoben durch klammerfreie Anker (`"AppState>)"` statt `") {"`).
+**Erweiterte Regel: nie ein einzelnes, unausgeglichenes Klammerzeichen in
+lib.rs quotieren — weder in einem Kommentar noch in einem String-Literal.**
+Erst durch den vollen Testlauf bemerkt (isolierter Lauf des neuen Tests
+allein waere gruen gewesen) — bestaetigt erneut die Runde-10-Lehre, neue
+Waechter immer gegen die volle Suite laufen zu lassen.
+
 ## Nicht behoben (bewusst außerhalb des Umfangs)
 
 * **`pirep_queue`s 50-Versuche-Grenze selbst** bleibt als Konzept
