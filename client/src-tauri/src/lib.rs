@@ -1548,6 +1548,17 @@ struct AppState {
     /// Setzen-und-Loeschen) passiert in JEWEILS EINEM kritischen
     /// Abschnitt, nie ueber zwei getrennte Sperren hinweg.
     persistence_lock: Mutex<()>,
+    /// Serialisiert Lese-Aendere-Schreibe-Zyklen auf die
+    /// `pending_bid_cleanup.json`-Datei (`enqueue_pending_bid_cleanup` und
+    /// `drain_pending_bid_cleanup`). Codex-Folgefund (adversarial,
+    /// 05.09.2026, zehnte Runde): beide griffen bisher UNSYNCHRONISIERT
+    /// auf dieselbe Datei zu — enqueued ein `flight_end`/`flight_end_
+    /// manual` waehrend der Background-Worker gerade zwischen seinem
+    /// `read_all()` und seinem `replace(&survivors)` steckt, ueberschreibt
+    /// der Worker die frisch hinzugekommene Zeile wieder, ohne sie je
+    /// verarbeitet zu haben — der Bid bliebe unbemerkt fuer immer
+    /// reserviert.
+    pending_bid_cleanup_lock: tokio::sync::Mutex<()>,
     /// Ring buffer of pilot-visible activity events. Surfaced via the
     /// `activity_log_get` Tauri command; the dashboard renders them in
     /// the new "ACARS-Log" tab — same idea as the smartcars activity
@@ -10132,11 +10143,7 @@ async fn phpvms_login(
     }
 
     let base_url = client.connection().base_url().to_string();
-    *state.client.lock().expect("client mutex") = Some(client.clone());
-    *state
-        .authenticated_pilot_id
-        .lock()
-        .expect("authenticated_pilot_id lock") = Some(profile.pilot_id);
+    setze_session_atomar(&state, client.clone(), profile.pilot_id);
     cache_pilot(&state, &profile);
     // Lifecycle-Lock JETZT freigeben, nicht erst am Funktionsende: `state.
     // client` ist bereits committed (ein gleichzeitiger `flight_start` sieht
@@ -10197,6 +10204,47 @@ fn cache_pilot(state: &tauri::State<'_, AppState>, profile: &api_client::Profile
             .expect("simbrief_settings lock"),
         profile.simbrief_username.as_deref(),
     );
+}
+
+/// Schreibt `state.client` und `state.authenticated_pilot_id` als EINEN
+/// atomaren Schritt — haelt BEIDE Mutexe gleichzeitig (Reihenfolge: erst
+/// `client`, dann Piloten-ID; `aktuelle_session_atomar` liest in
+/// DERSELBEN Reihenfolge, sonst Deadlock-Gefahr).
+///
+/// Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): der "atomare
+/// Schnappschuss" aus Runde 8 (`spawn_pirep_queue_worker`) war nur
+/// GEGENUEBER Awaits atomar, nicht gegenueber echter Thread-
+/// Nebenlaeufigkeit auf Tauris Multi-Thread-Runtime — zwei UNABHAENGIGE
+/// Mutexe geben keine gemeinsame Atomaritaets-Garantie, selbst ohne Await
+/// dazwischen, wenn Leser und Schreiber auf verschiedenen OS-Threads
+/// laufen koennen. `phpvms_login`/`phpvms_load_session` schrieben diese
+/// zwei Felder bisher nacheinander mit ZWEI getrennten Lock/Unlock-Paaren
+/// — ein Leser haette dazwischen (neuer) Client + (alte) Identitaet oder
+/// umgekehrt sehen koennen. Jetzt schreiben UND lesen alle sicherheits-
+/// relevanten Stellen ueber diese beiden Helfer, mit fester Sperr-
+/// Reihenfolge, sodass kein Leser mehr eine zerrissene Paarung sehen kann.
+fn setze_session_atomar(state: &tauri::State<'_, AppState>, client: Client, pilot_id: i64) {
+    let mut client_guard = state.client.lock().expect("client mutex");
+    let mut pilot_guard = state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock");
+    *client_guard = Some(client);
+    *pilot_guard = Some(pilot_id);
+}
+
+/// Liest `state.client` + `state.authenticated_pilot_id` als denselben
+/// atomaren Schnappschuss, den `setze_session_atomar` schreibt — siehe
+/// dort fuer die Begruendung der festen Sperr-Reihenfolge.
+fn aktuelle_session_atomar(state: &tauri::State<'_, AppState>) -> Option<(Client, i64)> {
+    let client_guard = state.client.lock().expect("client mutex");
+    let pilot_guard = state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock");
+    let client = client_guard.clone()?;
+    let pilot_id = (*pilot_guard)?;
+    Some((client, pilot_id))
 }
 
 /// v0.16.23: Auto-source-Logik fuer den SimBrief-Username (aus
@@ -10285,6 +10333,20 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
         }
     }
 
+    // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): der
+    // Idempotenz-Guard oben prueft NUR "laeuft schon einer" und gibt den
+    // Lock danach sofort wieder frei — zwischen dieser Pruefung und der
+    // eigentlichen Installation (`*state.mqtt.lock().await = Some(handle)`
+    // weiter unten) liegen mehrere echte Netzwerk-Awaits (`provision`,
+    // `start`). Ein `phpvms_logout` GENAU in dieser Luecke haette diesen
+    // Task nicht gestoppt — er haette Pilot As MQTT-Handle installiert,
+    // NACHDEM Pilot A sich schon abgemeldet hat (oder, schlimmer, nachdem
+    // Pilot B sich bereits angemeldet hat). Der phpVMS-API-Key ist die
+    // Identitaet, an der dieser Task haengt — wird er bis zur Installation
+    // NICHT veraendert, ist die Installation sicher; sonst wird der frisch
+    // gebaute Handle verworfen statt installiert.
+    let api_key_bei_provisionierungs_start = secrets::load_api_key(KEYRING_ACCOUNT).ok().flatten();
+
     // Check cache first.
     let cached = (|| -> Option<MqttConfig> {
         let user = secrets::load_api_key(MQTT_KEYRING_USERNAME)
@@ -10370,6 +10432,21 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
             return;
         }
     };
+
+    // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): siehe
+    // Kommentar bei `api_key_bei_provisionierungs_start` — hier ist der
+    // erste Punkt, an dem sich das ueberhaupt pruefen laesst (der Handle
+    // existiert jetzt). Hat sich der Account seither geaendert
+    // (Logout = jetzt `None`, anderer Pilot = anderer Schluessel), wird
+    // der frisch gebaute Handle verworfen statt installiert.
+    if secrets::load_api_key(KEYRING_ACCOUNT).ok().flatten() != api_key_bei_provisionierungs_start {
+        tracing::warn!(
+            "live-tracking: Account wechselte waehrend der Provisionierung — \
+             frisch gebauter MQTT-Handle wird verworfen, nicht installiert"
+        );
+        handle.shutdown();
+        return;
+    }
 
     // v0.13.0 Slice 6: Take the integrity-flag receiver and forward
     // each event as a Tauri event "integrity-flag" to the React UI.
@@ -10482,6 +10559,18 @@ async fn phpvms_logout(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
     }
     clear_mqtt_credentials_cache();
     clear_site_config(&app)?;
+    // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): `simbrief_
+    // settings` (auto-gesourct in `cache_pilot` ODER manuell per Settings
+    // gesetzt) blieb nach Logout stehen — `maybe_autosource_simbrief_
+    // username` fuellt NIE einen bereits gesetzten Wert nach. Ohne diese
+    // Leerung haette der naechste Pilot auf derselben Maschine (der KEINEN
+    // eigenen Identifier in seinem localStorage hat — App.tsx synct dann
+    // gar nichts) stillschweigend den vorigen Piloten weiterbenutzt: dessen
+    // aktuellster SimBrief-OFP waere ihm als eigener angeboten worden.
+    *state
+        .simbrief_settings
+        .lock()
+        .expect("simbrief_settings lock") = SimBriefSettings::default();
     tracing::info!("logged out");
     Ok(())
 }
@@ -10502,6 +10591,14 @@ async fn phpvms_load_session(
         return Ok(None);
     };
 
+    // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): diese
+    // Funktion nahm bisher NICHT denselben Lifecycle-Lock wie `phpvms_
+    // login`/`phpvms_logout`/`flight_start`/`flight_adopt` — ein
+    // gleichzeitiger Login/Flugstart waehrend dieser Restore-Roundtrip
+    // (`get_profile`) noch laeuft, haette einen fremden Flug installieren
+    // koennen, BEVOR diese Funktion `state.client` unten ueberschreibt.
+    let setup_guard = FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)?;
+
     // Force the locked host even if the persisted config has an old
     // URL from a development build that allowed arbitrary phpVMS
     // instances. See `ALLOWED_PHPVMS_HOST` for the rationale.
@@ -10520,6 +10617,17 @@ async fn phpvms_load_session(
                 let _ = secrets::delete_api_key(KEYRING_ACCOUNT);
                 let _ = clear_site_config(&app);
                 clear_mqtt_credentials_cache();
+                // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde):
+                // der Setup-Hook feuert seine EIGENE, parallele MQTT-
+                // Provisionierung schon vor diesem Restore-Roundtrip — ist
+                // sie bereits fertig UND installiert, BEVOR wir hier den
+                // Status-Gate-Fehler sehen, bliebe ein laufender Publisher
+                // fuer einen Account zurueck, den diese Funktion gerade als
+                // nicht aktiv erklaert. Symmetrisch zu `phpvms_logout`
+                // stoppen und leeren.
+                if let Some(handle) = state.mqtt.lock().await.take() {
+                    handle.shutdown();
+                }
                 log_activity_handle(
                     &app,
                     ActivityLevel::Warn,
@@ -10540,12 +10648,14 @@ async fn phpvms_load_session(
                 ));
             }
             let base_url = client.connection().base_url().to_string();
-            *state.client.lock().expect("client mutex") = Some(client.clone());
-            *state
-                .authenticated_pilot_id
-                .lock()
-                .expect("authenticated_pilot_id lock") = Some(profile.pilot_id);
+            setze_session_atomar(&state, client.clone(), profile.pilot_id);
             cache_pilot(&state, &profile);
+            // Lifecycle-Lock freigeben BEVOR try_resume_flight ihn selbst
+            // nimmt — dasselbe Muster wie in `phpvms_login` (Kommentar
+            // dort): haette diese Funktion ihn noch gehalten, waere jeder
+            // Resume-Versuch lautlos als "already in progress" uebersprungen
+            // worden.
+            drop(setup_guard);
             // Auto-start the simulator adapter when we restore an existing session.
             let saved_kind = read_sim_config(&app).kind;
             apply_sim_kind(&state, saved_kind);
@@ -10669,7 +10779,7 @@ mod flug_aktiv_verhindert_konto_wechsel_wiring_tests {
         let koerper = funktionskoerper_ohne_leerraum(SRC, "async fn phpvms_login(");
         let pruefung_pos = koerper.find(&ohne_leerraum("active_flight_owner_identity"));
         let ueberschreiben_pos = koerper.find(&ohne_leerraum(
-            "*state.client.lock().expect(\"client mutex\") = Some(client.clone());",
+            "setze_session_atomar(&state, client.clone(), profile.pilot_id);",
         ));
         match (pruefung_pos, ueberschreiben_pos) {
             (Some(p), Some(u)) => assert!(
@@ -16866,6 +16976,12 @@ mod pirep_queue_reklamieren_wiring_tests {
     /// Identitaet paaren. Ergebnis: ein Warteschlangen-Eintrag, der
     /// tatsaechlich Pilot B gehoert, besteht die Eigentuemer-Pruefung, wird
     /// aber mit Pilot As Credentials eingereicht.
+    ///
+    /// Seit der zehnten Runde geschieht diese Erfassung ueber
+    /// `aktuelle_session_atomar` (haelt beide Mutexe gleichzeitig — zwei
+    /// getrennte Lesungen waren KEINE echte Garantie gegen Thread-
+    /// Nebenlaeufigkeit, nur gegen Awaits dazwischen). Der Test prueft
+    /// jetzt diesen Aufruf statt der frueheren Einzel-Feld-Lesung.
     #[test]
     fn client_und_piloten_id_werden_vor_dem_ersten_await_gemeinsam_erfasst() {
         const SRC: &str = include_str!("lib.rs");
@@ -16876,19 +16992,19 @@ mod pirep_queue_reklamieren_wiring_tests {
         let rest = &SRC[start..];
         let ende = rest[1..].find("\nfn ").map(|i| i + 1).unwrap_or(rest.len());
         let funktionskoerper = &rest[..ende];
-        let erfassung_pos = funktionskoerper.find("authenticated_pilot_id");
+        let erfassung_pos = funktionskoerper.find("aktuelle_session_atomar(&state)");
         let await_pos = funktionskoerper
             .find("drain_pending_bid_cleanup(&app, &client, &aktuelle_identitaet).await");
         match (erfassung_pos, await_pos) {
             (Some(e), Some(a)) => assert!(
                 e < a,
-                "authenticated_pilot_id wird nicht mehr VOR dem ersten Await \
+                "aktuelle_session_atomar wird nicht mehr VOR dem ersten Await \
                  (drain_pending_bid_cleanup) gelesen — ein Kontowechsel \
                  dazwischen koennte Client und Identitaet wieder \
                  auseinanderlaufen lassen"
             ),
             _ => panic!(
-                "authenticated_pilot_id-Lesung oder drain_pending_bid_cleanup-Await \
+                "aktuelle_session_atomar-Aufruf oder drain_pending_bid_cleanup-Await \
                  im Worker nicht mehr gefunden — Test anpassen, nicht loeschen"
             ),
         }
@@ -16964,7 +17080,7 @@ mod konten_isolierung_runde_neun_wiring_tests {
         let nadel = format!("{}{}", "fn spawn_pirep_queue_worker", "(app: AppHandle)");
         let koerper = funktionskoerper(SRC, &nadel);
         let pruefung_pos = koerper.find("identitaet_noch_aktuell");
-        let upload_pos = koerper.find("spawn_flight_log_upload(&app, q.pirep_id.clone());");
+        let upload_pos = koerper.find("spawn_flight_log_upload(");
         match (pruefung_pos, upload_pos) {
             (Some(p), Some(u)) => assert!(
                 p < u,
@@ -17019,6 +17135,215 @@ mod konten_isolierung_runde_neun_wiring_tests {
     }
 }
 
+/// Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): sieben weitere,
+/// voneinander unabhaengige Luecken in derselben Serie.
+#[cfg(test)]
+mod konten_isolierung_runde_zehn_wiring_tests {
+    /// Dieselbe Technik wie in `konten_isolierung_runde_neun_wiring_tests`
+    /// — Minimum aus `\nfn ` und `\nasync fn ` als Endboundary, siehe
+    /// dortiger Kommentar fuer die Begruendung.
+    fn funktionskoerper(quelle: &str, start_marker: &str) -> String {
+        let start = quelle
+            .find(start_marker)
+            .unwrap_or_else(|| panic!("{start_marker} nicht mehr gefunden — Test anpassen"));
+        let rest = &quelle[start..];
+        let naechstes_fn = rest[1..].find("\nfn ").map(|i| i + 1);
+        let naechstes_async_fn = rest[1..].find("\nasync fn ").map(|i| i + 1);
+        let ende = [naechstes_fn, naechstes_async_fn]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(rest.len());
+        rest[..ende].to_string()
+    }
+
+    /// Befund 1: `phpvms_load_session` nahm bisher KEINEN Lifecycle-Lock —
+    /// ein gleichzeitiger Login/Flugstart waehrend des Restore-Roundtrips
+    /// (`get_profile`) haette einen fremden Flug installieren koennen,
+    /// bevor diese Funktion `state.client` ueberschreibt. `phpvms_login`/
+    /// `phpvms_logout`/`try_resume_flight` liegen VOR dieser Funktion im
+    /// Quelltext — direkte Literale sind hier sicher (kein Selbst-Treffer).
+    #[test]
+    fn phpvms_load_session_haelt_lifecycle_lock_vor_get_profile() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "async fn phpvms_load_session(");
+        let lock_pos =
+            koerper.find("FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)");
+        let roundtrip_pos = koerper.find("client.get_profile().await");
+        match (lock_pos, roundtrip_pos) {
+            (Some(l), Some(r)) => assert!(
+                l < r,
+                "phpvms_load_session muss den FlightSetupGuard VOR dem \
+                 get_profile-Roundtrip erwerben — sonst kann ein zeitgleicher \
+                 Login/Flugstart in der Luecke einen fremden Flug installieren"
+            ),
+            _ => panic!(
+                "FlightSetupGuard-Erwerb oder get_profile-Aufruf in \
+                 phpvms_load_session nicht mehr gefunden — Test anpassen, nicht loeschen"
+            ),
+        }
+    }
+
+    /// Befund 2: `phpvms_login`/`phpvms_load_session` schrieben `state.
+    /// client` und `state.authenticated_pilot_id` bisher mit ZWEI
+    /// getrennten Lock/Unlock-Paaren — keine gemeinsame Atomaritaets-
+    /// Garantie gegenueber echter Thread-Nebenlaeufigkeit. Beide muessen
+    /// jetzt ueber `setze_session_atomar` schreiben.
+    #[test]
+    fn login_und_load_session_schreiben_ueber_setze_session_atomar() {
+        const SRC: &str = include_str!("lib.rs");
+        let login_koerper = funktionskoerper(SRC, "async fn phpvms_login(");
+        assert!(
+            login_koerper
+                .contains("setze_session_atomar(&state, client.clone(), profile.pilot_id)"),
+            "phpvms_login schreibt state.client/authenticated_pilot_id nicht mehr ueber \
+             setze_session_atomar — zwei getrennte Schreibvorgaenge waeren keine echte \
+             Atomaritaets-Garantie mehr"
+        );
+        let load_session_koerper = funktionskoerper(SRC, "async fn phpvms_load_session(");
+        assert!(
+            load_session_koerper
+                .contains("setze_session_atomar(&state, client.clone(), profile.pilot_id)"),
+            "phpvms_load_session schreibt state.client/authenticated_pilot_id nicht mehr ueber \
+             setze_session_atomar"
+        );
+    }
+
+    /// Befund 3: die Bid-Reklamierung akzeptierte bisher auch einen
+    /// Treffer ueber `flight_id` als Eigentumsnachweis — `flight_id`
+    /// bezeichnet aber den GEPLANTEN Flug, nicht den Bid, und mehrere
+    /// Piloten koennen legitim je einen eigenen Bid auf denselben Flug
+    /// haben. Nur `bid_id` beweist Eigentum.
+    #[test]
+    fn bid_reklamierung_beweist_eigentum_nur_ueber_bid_id() {
+        const SRC: &str = include_str!("lib.rs");
+        let nadel = format!(
+            "{}{}",
+            "async fn drain_pending_bid_cleanup", "(app: &AppHandle"
+        );
+        let koerper = funktionskoerper(SRC, &nadel);
+        assert!(
+            koerper.contains("e.bid_id.is_some_and(|bid_id|"),
+            "die Reklamierung prueft nicht mehr ausschliesslich per bid_id — \
+             Test anpassen falls die Struktur sich geaendert hat"
+        );
+        assert!(
+            !koerper.contains("fid == b.flight_id"),
+            "die Reklamierung akzeptiert wieder einen flight_id-Treffer als \
+             Eigentumsnachweis — mehrere Piloten koennen denselben Flug bieten, \
+             das ist KEIN Beweis dass der Cleanup-Eintrag dem aktuellen Account gehoert"
+        );
+    }
+
+    /// Befund 4: `init_mqtt_publisher_via_provisioning` installierte den
+    /// frisch provisionierten Handle bisher OHNE erneute Pruefung, ob der
+    /// Account seit Provisionierungs-Start noch derselbe ist — ein
+    /// `phpvms_logout`/erneuter Login waehrend der Netzwerk-Awaits haette
+    /// das nicht gestoppt.
+    #[test]
+    fn mqtt_provisionierung_prueft_api_key_vor_der_installation() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "async fn init_mqtt_publisher_via_provisioning(");
+        // Die Installation braucht das abschliessende Semikolon in der
+        // Suche — sonst matcht sie den erklaerenden Kommentar weiter oben
+        // in derselben Funktion, der denselben Ausdruck zur Erklaerung in
+        // Backticks zitiert, aber ohne Semikolon (dieselbe Falle wie ein
+        // Selbst-Treffer, nur durch einen eigenen Kommentar statt eine
+        // eigene Testzeile).
+        let start_erfassung_pos = koerper.find("let api_key_bei_provisionierungs_start =");
+        let install_pos = koerper.find("*state.mqtt.lock().await = Some(handle);");
+        match (start_erfassung_pos, install_pos) {
+            (Some(s), Some(i)) => assert!(
+                s < i,
+                "die Provisionierung muss den API-Key VOR der Netzwerk-Provisionierung \
+                 erfassen UND vor der Installation erneut pruefen — sonst installiert ein \
+                 verspaeteter Task einen Handle fuer einen laengst abgemeldeten Account"
+            ),
+            _ => panic!(
+                "api_key_bei_provisionierungs_start-Erfassung oder Handle-Installation \
+                 in init_mqtt_publisher_via_provisioning nicht mehr gefunden"
+            ),
+        }
+    }
+
+    /// Befund 5: `spawn_flight_log_upload` las die MQTT-Keyring-Credentials
+    /// bisher ohne jede Identitaets-Pruefung zum Ausfuehrungszeitpunkt — der
+    /// Task laeuft asynchron, oft Sekunden nach dem Spawn; eine Pruefung
+    /// AM AUFRUFORT sagt nichts darueber, wer noch angemeldet ist, WENN
+    /// der Task tatsaechlich laeuft.
+    #[test]
+    fn flight_log_upload_prueft_identitaet_vor_dem_keyring_lesen() {
+        const SRC: &str = include_str!("lib.rs");
+        let nadel = format!("{}{}", "fn spawn_flight_log_upload", "(app: &AppHandle");
+        let koerper = funktionskoerper(SRC, &nadel);
+        let pruefung_pos = koerper.find("owner_identity.as_deref()");
+        let keyring_pos = koerper.find("secrets::load_api_key(MQTT_KEYRING_USERNAME)");
+        match (pruefung_pos, keyring_pos) {
+            (Some(p), Some(k)) => assert!(
+                p < k,
+                "spawn_flight_log_upload muss die Identitaet VOR dem Keyring-Lesen \
+                 pruefen — sonst laedt ein spaeter angemeldeter anderer Pilot \
+                 versehentlich das Flugprotokoll eines fremden Accounts hoch"
+            ),
+            _ => panic!(
+                "Identitaets-Pruefung oder Keyring-Lesen in spawn_flight_log_upload \
+                 nicht mehr gefunden — Test anpassen, nicht loeschen"
+            ),
+        }
+    }
+
+    /// Befund 6: `enqueue_pending_bid_cleanup` und `drain_pending_bid_
+    /// cleanup` machten bisher UNSYNCHRONISIERTE Lese-Aendere-Schreibe-
+    /// Zyklen auf dieselbe JSON-Datei — ein `enqueue` genau zwischen dem
+    /// `read_all()` und dem `replace()` des Workers haette den frisch
+    /// hinzugekommenen Eintrag wieder verloren.
+    #[test]
+    fn pending_bid_cleanup_datei_ist_gegen_verlorene_updates_gesperrt() {
+        const SRC: &str = include_str!("lib.rs");
+        let enqueue_nadel = format!("{}{}", "fn enqueue_pending_bid_cleanup", "(\n    app");
+        let enqueue_koerper = funktionskoerper(SRC, &enqueue_nadel);
+        assert!(
+            enqueue_koerper.contains("pending_bid_cleanup_lock"),
+            "enqueue_pending_bid_cleanup nimmt das Datei-Schloss nicht mehr — \
+             ein gleichzeitiger Drain-Tick koennte den neuen Eintrag verlieren"
+        );
+        let drain_nadel = format!(
+            "{}{}",
+            "async fn drain_pending_bid_cleanup", "(app: &AppHandle"
+        );
+        let drain_koerper = funktionskoerper(SRC, &drain_nadel);
+        let lock_pos = drain_koerper.find("pending_bid_cleanup_lock");
+        let read_pos = drain_koerper.find("queue.read_all()");
+        match (lock_pos, read_pos) {
+            (Some(l), Some(r)) => assert!(
+                l < r,
+                "drain_pending_bid_cleanup muss das Datei-Schloss VOR read_all() \
+                 nehmen und bis nach replace() halten"
+            ),
+            _ => panic!(
+                "pending_bid_cleanup_lock-Erwerb oder read_all-Aufruf in \
+                 drain_pending_bid_cleanup nicht mehr gefunden"
+            ),
+        }
+    }
+
+    /// Befund 7: `simbrief_settings` (auto-gesourct oder manuell gesetzt)
+    /// ueberlebte einen Logout — der naechste Pilot ohne eigenen
+    /// localStorage-Identifier haette stillschweigend den SimBrief-OFP
+    /// des vorigen Piloten angeboten bekommen.
+    #[test]
+    fn logout_leert_simbrief_settings() {
+        const SRC: &str = include_str!("lib.rs");
+        let koerper = funktionskoerper(SRC, "async fn phpvms_logout(");
+        assert!(
+            koerper.contains("simbrief_settings")
+                && koerper.contains("SimBriefSettings::default()"),
+            "phpvms_logout setzt simbrief_settings nicht mehr auf Default zurueck — \
+             der naechste Pilot ohne eigenen Identifier saehe den vorigen SimBrief-OFP"
+        );
+    }
+}
+
 fn spawn_pirep_queue_worker(app: AppHandle) {
     // v0.5.50 — `tauri::async_runtime::spawn` statt `tokio::spawn`.
     // Diese Funktion wird aus dem synchronen `.setup()`-Closure
@@ -17064,20 +17389,19 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
             // besteht die Eigentuemer-Pruefung, wird aber mit Pilot As
             // Credentials eingereicht (und bei einem 403/404 faelschlich
             // geloescht statt in Quarantaene zu bleiben).
-            let (client, aktuelle_identitaet) = {
-                let client_opt = state.client.lock().expect("client lock").clone();
-                let Some(client) = client_opt else {
-                    continue;
-                };
-                let Some(pilot_id) = *state
-                    .authenticated_pilot_id
-                    .lock()
-                    .expect("authenticated_pilot_id lock")
-                else {
-                    continue;
-                };
-                (client, pilot_id.to_string())
+            //
+            // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): das
+            // allein reichte NICHT — zwei UNABHAENGIGE Mutexe geben keine
+            // gemeinsame Atomaritaets-Garantie, auch ohne Await dazwischen,
+            // wenn Leser (hier) und Schreiber (`phpvms_login`/`phpvms_load_
+            // session`) auf verschiedenen OS-Threads laufen koennen (Tauris
+            // Multi-Thread-Runtime erlaubt genau das). `aktuelle_session_
+            // atomar` haelt BEIDE Locks gleichzeitig und schliesst diese
+            // Luecke wirklich.
+            let Some((client, pilot_id)) = aktuelle_session_atomar(&state) else {
+                continue;
             };
+            let aktuelle_identitaet = pilot_id.to_string();
 
             // v0.7.19 GAF-707 (QS-R1 Finding 1): Pending-Bid-Cleanup-Queue
             // bei jedem Tick mit drainen — unabhaengig davon ob auch
@@ -17309,7 +17633,11 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                                 }
                             }
                             // Best-effort: JSONL-Upload (wenn das Recorder-File noch da ist)
-                            spawn_flight_log_upload(&app, q.pirep_id.clone());
+                            spawn_flight_log_upload(
+                                &app,
+                                q.pirep_id.clone(),
+                                Some(aktuelle_identitaet.clone()),
+                            );
                         }
                     }
                     Err(e) => {
@@ -17351,7 +17679,17 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                             // — Forensik-Log ist auch dann wertvoll wenn
                             // der PIREP nicht (mehr) angenommen wurde.
                             // (Fix #6 — siehe Worker-Success-Pfad oben.)
-                            spawn_flight_log_upload(&app, q.pirep_id.clone());
+                            // Codex-Folgefund (adversarial, 05.09.2026,
+                            // zehnte Runde): dieser Zweig rief bisher OHNE
+                            // jede Identitaets-Bindung auf — die Pruefung
+                            // sitzt jetzt in `spawn_flight_log_upload`
+                            // selbst (zum Zeitpunkt der tatsaechlichen
+                            // Ausfuehrung, nicht hier beim Spawn).
+                            spawn_flight_log_upload(
+                                &app,
+                                q.pirep_id.clone(),
+                                Some(aktuelle_identitaet.clone()),
+                            );
                             continue;
                         }
                         // Nachgereicht (externe Gegenpruefung Codex,
@@ -22825,13 +23163,30 @@ async fn flight_end(
             // v0.12.5 (LE7-QS): in `emit_landing_finalized` ausgelagert —
             // Divert- und Manual-Pfad rufen denselben Helper.
             emit_landing_finalized(&app, &flight);
+            // Guard hier binden (nicht erst weiter unten) — dieselbe
+            // Identitaet geht sowohl in den JSONL-Upload als auch in den
+            // Bid-Cleanup-Eintrag.
+            let aktuelle_identitaet_fuer_bid_cleanup = state
+                .authenticated_pilot_id
+                .lock()
+                .expect("authenticated_pilot_id lock")
+                .map(|id| id.to_string());
             // v0.5.23 Forensik-Upload: gzip + POST des kompletten JSONL-
             // Logfiles an aeroacars-live damit der VA-Owner ohne den
             // Piloten zu kontaktieren das vollstaendige SimSnapshot-Log
             // (80 Felder) + Activity-Log + PhaseChanged-Stream pro
             // Session abrufen kann. Fire-and-forget, blockt PIREP-File
             // nicht — Failure landet nur im Log.
-            spawn_flight_log_upload(&app, flight.pirep_id.clone());
+            //
+            // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): die
+            // Identitaet geht jetzt mit — `spawn_flight_log_upload` prueft
+            // sie zum Zeitpunkt der tatsaechlichen Ausfuehrung erneut
+            // (der Task laeuft asynchron, nicht sofort).
+            spawn_flight_log_upload(
+                &app,
+                flight.pirep_id.clone(),
+                aktuelle_identitaet_fuer_bid_cleanup.clone(),
+            );
             // v0.7.19 (QS-R1 Finding 1): Bei delete_bid-fail wird der Bid
             // in pending_bid_cleanup eingereiht und vom Background-Worker
             // retried — keine haengenden Aircraft/Bid mehr nach Accident-
@@ -22843,15 +23198,6 @@ async fn flight_end(
             } else {
                 "normal_filed"
             };
-            // Guard VOR dem Await binden und droppen (nicht inline im
-            // Funktionsaufruf) — sonst haelt der `MutexGuard` (nicht `Send`)
-            // ueber das nachfolgende `.await` hinweg, was `flight_end` als
-            // Tauri-Command nicht mehr kompilieren laesst.
-            let aktuelle_identitaet_fuer_bid_cleanup = state
-                .authenticated_pilot_id
-                .lock()
-                .expect("authenticated_pilot_id lock")
-                .map(|id| id.to_string());
             consume_bid_best_effort(
                 &app,
                 &client,
@@ -23094,7 +23440,8 @@ async fn consume_bid_best_effort(
                 flight_id_owned.clone(),
                 reason,
                 owner_identity,
-            );
+            )
+            .await;
         }
     }
 }
@@ -23104,7 +23451,7 @@ async fn consume_bid_best_effort(
 /// alle I/O-Fehler (warn-log) — diese Queue ist ein Best-Effort-Backup
 /// fuer den primaeren delete_bid-Pfad und darf NIE den File-Flow
 /// brechen.
-fn enqueue_pending_bid_cleanup(
+async fn enqueue_pending_bid_cleanup(
     app: &AppHandle,
     pirep_id: &str,
     bid_id: Option<i64>,
@@ -23140,6 +23487,13 @@ fn enqueue_pending_bid_cleanup(
         attempts: 0,
         owner_identity,
     };
+    // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): dasselbe
+    // Schloss wie `drain_pending_bid_cleanup` — beide machen ein Lese-
+    // Aendere-Schreibe auf dieselbe Datei, ohne dieses Schloss haette der
+    // Worker mitten zwischen seinem eigenen `read_all()` und `replace()`
+    // genau diesen neuen Eintrag wieder verlieren koennen.
+    let state = app.state::<AppState>();
+    let _lock = state.pending_bid_cleanup_lock.lock().await;
     if let Err(e) = queue.enqueue(entry) {
         tracing::warn!(
             pirep_id,
@@ -23168,6 +23522,15 @@ async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client, aktuelle_id
     let Ok(queue) = storage::PendingBidCleanupQueue::open(dir) else {
         return;
     };
+    // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): ueber den
+    // ganzen read_all() -> verarbeiten -> replace()-Zyklus gehalten
+    // (dasselbe Schloss wie `enqueue_pending_bid_cleanup`) — sonst haette
+    // ein `enqueue` GENAU in dieser Luecke den frisch hinzugekommenen
+    // Eintrag beim `replace(&survivors)` wieder verloren. `tokio::sync::
+    // Mutex` statt `std::sync::Mutex`, weil der Guard hier ueber mehrere
+    // echte Awaits (`get_bids`, `delete_bid`) hinweg gehalten wird.
+    let state = app.state::<AppState>();
+    let _lock = state.pending_bid_cleanup_lock.lock().await;
     let entries = match queue.read_all() {
         Ok(v) => v,
         Err(e) => {
@@ -23211,11 +23574,22 @@ async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client, aktuelle_id
             if eigene_bids.is_none() {
                 eigene_bids = Some(client.get_bids().await.unwrap_or_default());
             }
-            let gehoert_doch_dem_aktuellen_account = eigene_bids.as_ref().is_some_and(|bids| {
-                bids.iter().any(|b| {
-                    (e.bid_id.is_some() && e.bid_id == Some(b.id))
-                        || e.flight_id.as_deref().is_some_and(|fid| fid == b.flight_id)
-                })
+            // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): NUR
+            // `bid_id` beweist Eigentum — `flight_id` bezeichnet den
+            // GEPLANTEN Flug, nicht den Bid, und mehrere Piloten koennen
+            // legitim je einen eigenen Bid auf DENSELBEN Flug haben. Ein
+            // `flight_id`-Treffer in `eigene_bids` haette Pilot As
+            // Cleanup-Eintrag faelschlich Pilot B zuschreiben koennen, nur
+            // weil B zufaellig ebenfalls einen Bid fuer dieselbe Flugnummer
+            // haelt — mit anschliessendem `delete_bid` waere DANN Bs
+            // eigener, unbeteiligter Bid geloescht worden. `flight_id`
+            // bleibt weiterhin ein gueltiger FALLBACK fuer den eigentlichen
+            // `delete_bid`-Aufruf selbst (dort serverseitig ohnehin auf den
+            // aufrufenden Account beschraenkt) — nur nicht als Beweis HIER.
+            let gehoert_doch_dem_aktuellen_account = e.bid_id.is_some_and(|bid_id| {
+                eigene_bids
+                    .as_ref()
+                    .is_some_and(|bids| bids.iter().any(|b| b.id == bid_id))
             });
             if gehoert_doch_dem_aktuellen_account {
                 tracing::info!(
@@ -23676,18 +24050,27 @@ async fn flight_end_manual(
             // v0.12.5 (LE7-QS): LandingFinalized-JSONL-Event auch beim
             // manuellen File — vor dem Upload.
             emit_landing_finalized(&app, &flight);
-            // v0.12.5 (Bug B): Forensik-Upload auch beim manuellen File.
-            spawn_flight_log_upload(&app, flight.pirep_id.clone());
-            // v0.7.19 (QS-R1 Finding 1) + QS-R2 Finding 2 (flight_id fallback).
             // Guard VOR dem Await binden und droppen (nicht inline im
             // Funktionsaufruf) — sonst haelt der `MutexGuard` (nicht `Send`)
             // ueber das nachfolgende `.await` hinweg, was diesen
-            // Tauri-Command nicht mehr kompilieren laesst.
+            // Tauri-Command nicht mehr kompilieren laesst. Dieselbe
+            // Identitaet geht sowohl in den JSONL-Upload als auch in den
+            // Bid-Cleanup-Eintrag.
             let aktuelle_identitaet_fuer_bid_cleanup = state
                 .authenticated_pilot_id
                 .lock()
                 .expect("authenticated_pilot_id lock")
                 .map(|id| id.to_string());
+            // v0.12.5 (Bug B): Forensik-Upload auch beim manuellen File.
+            // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): die
+            // Identitaet geht jetzt mit — `spawn_flight_log_upload` prueft
+            // sie zum Zeitpunkt der tatsaechlichen Ausfuehrung erneut.
+            spawn_flight_log_upload(
+                &app,
+                flight.pirep_id.clone(),
+                aktuelle_identitaet_fuer_bid_cleanup.clone(),
+            );
+            // v0.7.19 (QS-R1 Finding 1) + QS-R2 Finding 2 (flight_id fallback).
             consume_bid_best_effort(
                 &app,
                 &client,
@@ -25174,7 +25557,7 @@ async fn flight_resume_after_disconnect(
 ///     naechsten App-Start neu provisionieren.
 ///   * Server gibt non-2xx zurueck (401 / 403 / 5xx) — gelogged, keine
 ///     Retry-Queue heute (kann spaeter mit Pending-Folder kommen).
-fn spawn_flight_log_upload(app: &AppHandle, pirep_id: String) {
+fn spawn_flight_log_upload(app: &AppHandle, pirep_id: String, owner_identity: Option<String>) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         // 1. Pfad zur JSONL-Datei zusammensetzen — gleiche Logik wie der
@@ -25202,6 +25585,30 @@ fn spawn_flight_log_upload(app: &AppHandle, pirep_id: String) {
         if !log_path.exists() {
             tracing::debug!(path = ?log_path, "log-upload: file missing — skipping");
             return;
+        }
+
+        // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): dieser
+        // Task laeuft ERST NACH `tauri::async_runtime::spawn` irgendwann
+        // spaeter — jede Identitaets-Pruefung am AUFRUFORT (spawn-Zeit)
+        // sagt nichts darueber, wer noch angemeldet ist, WENN dieser Task
+        // tatsaechlich die Keyring-Credentials unten liest. Erst hier, im
+        // Moment des eigentlichen Lesens, nachpruefen — sonst haette ein
+        // Kontowechsel zwischen Spawn und Ausfuehrung Pilot As Flugprotokoll
+        // mit Pilot Bs MQTT-Credentials hochladen koennen.
+        if let Some(erwartet) = owner_identity.as_deref() {
+            let aktuell = app
+                .state::<AppState>()
+                .authenticated_pilot_id
+                .lock()
+                .expect("authenticated_pilot_id lock")
+                .map(|id| id.to_string());
+            if aktuell.as_deref() != Some(erwartet) {
+                tracing::warn!(
+                    pirep_id = %pirep_id,
+                    "log-upload: Konto wechselte seit dem Filing — Upload uebersprungen"
+                );
+                return;
+            }
         }
 
         // 2. MQTT-Credentials aus Keyring (= identisch zu HTTP-Basic).

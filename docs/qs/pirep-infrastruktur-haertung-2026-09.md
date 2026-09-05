@@ -617,6 +617,99 @@ durch den isolierten Testlauf des neuen Tests allein — **neue
 Quelltext-Waechter deshalb ab jetzt immer gegen die VOLLE Testsuite laufen
 lassen, nicht nur isoliert.**
 
+## Nachtrag #9 (05.09.2026): zehnte Codex-Runde — die Session selbst war nicht atomar, plus fünf weitere Lücken
+
+Adversarial-Review gegen alle neun bisherigen Commits fand sieben neue,
+voneinander unabhängige Befunde (fünf hoch, zwei mittel) — der wichtigste
+davon wertete eine tragende Annahme aus Runde 8 selbst ab.
+
+**Befund 1 (hoch) — `phpvms_load_session` nahm keinen Lifecycle-Lock.**
+Anders als `phpvms_login`/`phpvms_logout`/`try_resume_flight` prüfte diese
+Funktion nicht gegen den `FlightSetupGuard`, bevor sie `state.client`
+überschreibt — ein gleichzeitiger Login/Flugstart während ihres eigenen
+`get_profile`-Roundtrips hätte in der Lücke einen fremden Flug installieren
+können.
+
+**Befund 2 (hoch) — der „atomare Schnappschuss" aus Runde 8 war es nicht
+wirklich.** `client` und `authenticated_pilot_id` wurden über ZWEI
+unabhängige Mutexe gelesen bzw. geschrieben. Kein Await dazwischen schützt
+davor — auf Tauris Multi-Thread-Runtime können Leser und Schreiber
+gleichzeitig auf verschiedenen OS-Threads laufen, und zwei getrennte
+Lock/Unlock-Paare geben keine gemeinsame Atomaritäts-Garantie. Ein Leser
+hätte (neuer Client, alte Identität) oder umgekehrt sehen können.
+
+**Befund 3 (hoch) — die Bid-Reklamierung akzeptierte eine geteilte
+`flight_id` als Eigentumsnachweis.** `flight_id` bezeichnet den GEPLANTEN
+Flug, nicht den Bid — mehrere Piloten können legitim je einen eigenen Bid
+auf denselben Flug haben. Ein Treffer allein über `flight_id` hätte Pilot
+As Cleanup-Eintrag fälschlich Pilot B zugeschrieben und dessen `delete_bid`
+hätte Bs eigenen, unbeteiligten Bid gelöscht.
+
+**Befund 4 (hoch) — MQTT-Publisher-Provisionierung war nicht kontenatomar.**
+Der Idempotenz-Guard prüfte nur „läuft schon einer" und gab den Lock sofort
+wieder frei — zwischen dieser Prüfung und der tatsächlichen Installation
+liegen mehrere echte Netzwerk-Awaits. Ein Logout in dieser Lücke hätte
+einen verspäteten Handle trotzdem installiert. Zusätzlich stoppte der
+Status-Gate-Pfad in `phpvms_load_session` einen bereits laufenden Publisher
+nicht.
+
+**Befund 5 (mittel) — der JSONL-Upload band die tatsächlichen Credentials
+nicht.** Die Identitätsprüfung vor dem Spawn sagt nichts darüber, wer noch
+angemeldet ist, WENN der asynchron laufende Task Sekunden später die
+Keyring-Credentials liest. Ein Zweig (nicht-transiente Ablehnung) rief den
+Uploader zudem ganz ohne Prüfung auf.
+
+**Befund 6 (mittel) — die Bid-Cleanup-Warteschlange hatte einen
+Lost-Update-Race.** `enqueue` und der Worker-Zyklus (`read_all` →
+verarbeiten → `replace`) griffen unsynchronisiert auf dieselbe JSON-Datei
+zu — ein `enqueue` genau zwischen Lesen und Schreiben des Workers hätte den
+frisch hinzugekommenen Eintrag wieder verloren.
+
+**Befund 7 (mittel) — SimBrief-Identität überlebte einen Kontowechsel.**
+`simbrief_settings` (auto-gesourct oder manuell gesetzt) wurde bei Logout
+nie geleert; die Auto-Source-Logik füllt nie einen bereits gesetzten Wert
+nach. Der nächste Pilot ohne eigenen localStorage-Identifier hätte
+stillschweigend den SimBrief-OFP des Vorgängers übernommen.
+
+**Gefixt:**
+
+1. `phpvms_load_session` erwirbt jetzt denselben `FlightSetupGuard` vor dem
+   `get_profile`-Roundtrip, gibt ihn wie `phpvms_login` vor `try_resume_
+   flight` wieder frei.
+2. Neue Helfer `setze_session_atomar`/`aktuelle_session_atomar` — halten
+   BEIDE Mutexe gleichzeitig (feste Reihenfolge: Client zuerst), sowohl
+   beim Schreiben (`phpvms_login`, `phpvms_load_session`) als auch beim
+   Lesen (`spawn_pirep_queue_worker`s Tick-Schnappschuss).
+3. Die Reklamierung beweist Eigentum jetzt AUSSCHLIESSLICH über `bid_id` —
+   `flight_id` bleibt ein gültiger Fallback nur für den eigentlichen
+   `delete_bid`-Aufruf selbst (dort serverseitig auf den Account
+   beschränkt), nicht als Eigentumsnachweis.
+4. `init_mqtt_publisher_via_provisioning` erfasst den phpVMS-API-Key vor
+   der Provisionierung und prüft ihn erneut unmittelbar vor der
+   Installation — bei Änderung wird der frisch gebaute Handle verworfen.
+   Der Status-Gate-Pfad in `phpvms_load_session` stoppt jetzt symmetrisch
+   zu `phpvms_logout` einen eventuell schon laufenden Publisher.
+5. `spawn_flight_log_upload` bekommt die Identität als Parameter und prüft
+   sie im Moment des tatsächlichen Keyring-Lesens erneut — nicht nur beim
+   Spawn. Gilt jetzt an allen vier Aufrufstellen (beide Queue-Pfade,
+   `flight_end`, `flight_end_manual`).
+6. Neues `AppState::pending_bid_cleanup_lock` (`tokio::sync::Mutex`, ueber
+   Awaits haltbar) serialisiert `enqueue_pending_bid_cleanup` und
+   `drain_pending_bid_cleanup`s kompletten Lese-Verarbeiten-Schreiben-
+   Zyklus.
+7. `phpvms_logout` setzt `simbrief_settings` jetzt auf `Default` zurück.
+
+**Tests:** sieben neue Quelltext-Wächter
+(`konten_isolierung_runde_zehn_wiring_tests`), Gegenprobe für die beiden
+riskantesten (Bid-Reklamierung, Datei-Sperre) durchgeführt — beide korrekt
+fehlgeschlagen, dann wiederhergestellt. Drei bestehende Wächter aus Runde
+8/9 mussten wegen der Refaktorierung (`setze_session_atomar`/
+`aktuelle_session_atomar`, geänderte `spawn_flight_log_upload`-Signatur)
+angepasst werden — dabei erneut ein Selbst-Treffer entdeckt: ein eigener
+erklärender Kommentar zitierte denselben Ausdruck, den der Test suchte,
+noch VOR der echten Fundstelle. Behoben durch eine praezisere Suche
+(abschließendes Semikolon, das nur im echten Code steht).
+
 ## Nicht behoben (bewusst außerhalb des Umfangs)
 
 * **`pirep_queue`s 50-Versuche-Grenze selbst** bleibt als Konzept
