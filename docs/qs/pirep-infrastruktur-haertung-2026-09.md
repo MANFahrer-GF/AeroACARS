@@ -517,6 +517,106 @@ Befund 1 ist durch `npx tsc -b` und den bestehenden Vitest-Lauf (731 grün)
 nur indirekt abgedeckt, Befund 3 ist eine reine Transparenz-Ergaenzung
 ohne eigenen Kontrollfluss, der sich sinnvoll gegenpruefen liesse.
 
+## Nachtrag #8 (05.09.2026): neunte Codex-Runde — Bid-Cleanup-Queue, Best-Effort-Nachbearbeitung, Resume-Lock-Reihenfolge
+
+Adversarial-Review gegen alle acht bisherigen Commits dieser Serie fand
+sechs weitere, voneinander unabhaengige Befunde (vier mittel, zwei gering)
+— keiner davon eine bereits gefixte Fehlerklasse.
+
+**Befund 1 (mittel) — die separate Bid-Cleanup-Warteschlange hatte GAR
+KEINE Kontobindung.** `PendingBidCleanup` (eigene, kleine Warteschlange
+neben dem Haupt-PIREP-Queue, fuer `delete_bid`-Retries nach transientem
+Scheitern) besass kein `owner_identity`-Feld — jeder Eintrag wurde mit dem
+gerade angemeldeten Client verarbeitet, unabhaengig davon wer ihn
+eingereiht hatte. Ein Kontowechsel waehrend ein Eintrag noch offen war,
+haette `delete_bid` mit dem FALSCHEN Account ausgefuehrt.
+
+**Befund 2 (mittel) — Best-Effort-Nachbearbeitung im Queue-Worker las
+nach dem Filing erneut den aktuellen Zustand.** Das phpVMS-Filing selbst
+nutzt korrekt den am Tick-Anfang erfassten Client. Die MQTT-Publish- und
+JSONL-Upload-Schritte DANACH lasen aber erneut `state.mqtt` bzw. frisch
+aus dem Keyring — nach mehreren Awaits seit dem Schnappschuss. Ein
+Kontowechsel in dieser Luecke haette Pilot As bereits korrekt
+eingereichten PIREP ueber Pilot Bs MQTT-Verbindung/Zugangsdaten
+weitergesendet.
+
+**Befund 3 (mittel) — das Frontend behandelte `flight_setup_in_progress`
+wie einen erfolgreichen Logout.** Der Fix aus Nachtrag #7 unterschied nur
+`flight_active` von anderen Fehlern. `phpvms_logout` kann aber auch mit
+`flight_setup_in_progress` ablehnen (der `FlightSetupGuard` wird gerade
+von einem Flugstart/einer Uebernahme gehalten) — ebenfalls VOR jeder
+Zustandsaenderung. Dieser Fall fiel weiterhin durch zum „trotzdem
+ausloggen"-Pfad.
+
+**Befund 4 (mittel) — `try_resume_flight` nahm seinen Lifecycle-Lock erst
+NACH zwei Server-Roundtrips.** Der `FlightSetupGuard` wurde erst nach der
+Eigentuemer-Reklamierung (`get_user_pireps_in_progress`) und `get_pirep`
+erworben, nicht davor. Ein zeitgleicher `flight_start`/`flight_adopt`
+(z. B. der Auto-Start-Watcher) haette in dieser Luecke einen neuen Flug
+anlegen und den Ablage-Platz ueberschreiben koennen — der zu
+wiederaufnehmende PIREP waere danach lokal verwaist und serverseitig fuer
+immer IN_PROGRESS steckengeblieben.
+
+**Befund 5 (gering) — der neue Logout-Banner (Nachtrag #7) war hart
+Deutsch,** ohne i18n-Anbindung, obwohl das Projekt DE/EN/IT unterstuetzt.
+
+**Befund 6 (gering) — die Logout-Sperr-Meldung ueberlebte einen spaeter
+erfolgreichen Logout/Login.** `logoutBlockedMessage` wurde nur ueber den
+Schliessen-Button zurueckgesetzt.
+
+**Gefixt:**
+
+1. `PendingBidCleanup` bekam ein `owner_identity`-Feld (`#[serde(default)]`
+   fuer Altbestand). `drain_pending_bid_cleanup` prueft es jetzt vor
+   `delete_bid` — bei Unbekannt/Fremd EINMAL serverseitig nachfragen
+   (`GET /api/user/bids`, serverseitig auf den eingeloggten Piloten
+   gefiltert): steht der Bid dort, wird reklamiert; sonst Quarantaene
+   (weder geloescht noch versucht), analog zum bestehenden Reklamier-Weg
+   der Haupt-Queue.
+2. Der Queue-Worker prueft direkt vor dem MQTT-Publish/JSONL-Upload eines
+   Eintrags erneut, ob `authenticated_pilot_id` noch mit dem
+   Tick-Schnappschuss uebereinstimmt — bei Kontowechsel werden beide
+   Best-Effort-Kanaele fuer diesen Eintrag uebersprungen (das Filing selbst
+   bleibt unangetastet, es ist bereits korrekt erfolgt).
+3. `handleLogout` unterscheidet jetzt `flight_active` UND
+   `flight_setup_in_progress` als „nichts veraendert" von jedem anderen
+   Code (der immer erst NACH dem Leeren von `state.client` auftritt).
+4. Der `FlightSetupGuard` in `try_resume_flight` wird jetzt vor der
+   Eigentuemer-Reklamierung erworben, nicht danach; die dadurch redundante
+   zweite Lock-Anforderung weiter unten (StrictMode-Doppelmount-Schutz) ist
+   entfernt, da der Lock ab jetzt schon die ganze Funktion ueber gehalten
+   wird.
+5. Neue i18n-Schluessel (`flight.error.flight_active`,
+   `flight.error.flight_setup_in_progress`, `logout.blocked_title`,
+   `logout.dismiss`) in DE/EN/IT — Parity-Test bleibt gruen.
+6. `logoutBlockedMessage` wird jetzt sowohl bei einem spaeter erfolgreichen
+   Logout als auch bei einem neuen Login zurueckgesetzt.
+
+**Tests:** drei neue Quelltext-Waechter
+(`pending_bid_cleanup_prueft_eigentuemer_vor_delete_bid`,
+`queue_worker_prueft_identitaet_erneut_vor_mqtt_und_log_upload`,
+`try_resume_flight_haelt_lifecycle_lock_vor_den_server_roundtrips`), alle
+drei per Gegenprobe verifiziert. Fuer Befund 5/6 (Frontend) keine
+dedizierten neuen Tests, dafuer die bestehende i18n-Parity-Suite plus
+`npx tsc -b`/Vitest weiterhin gruen — konsistent mit dem in Nachtrag #7
+etablierten Massstab.
+
+**Eigene Lehre aus dieser Runde:** zwei der drei neuen Quelltext-Waechter
+hatten anfangs den klassischen Selbst-Treffer-Fehler (Runde 3, siehe oben)
+— die Namens-Endboundary `\nfn ` allein reicht nicht, wenn die naechste
+Funktion selbst eine `async fn` ist (das Suchfenster ueberschiesst dann in
+spaetere, unverwandte Funktionen). Zusaetzlich hat der Test fuer
+`try_resume_flight` einen VOLLSTAENDIG ANDEREN, laengst bestehenden
+Waechter (`vor_der_server_auskunft_wird_nichts_geloescht` u. a., alle in
+`wiederaufnahme_langstrecke_tests`) mit rot gemacht — dessen
+whitespace-stripping-Suche fand versehentlich mein eigenes Test-Literal
+zuerst, weil eine der beiden zur Laufzeit zusammengesetzten Haelften
+("async fn try_resume_flight") exakt dem Suchbegriff jenes Waechters
+entsprach. Beide Male erst durch den vollen Testlauf aufgefallen, nicht
+durch den isolierten Testlauf des neuen Tests allein — **neue
+Quelltext-Waechter deshalb ab jetzt immer gegen die VOLLE Testsuite laufen
+lassen, nicht nur isoliert.**
+
 ## Nicht behoben (bewusst außerhalb des Umfangs)
 
 * **`pirep_queue`s 50-Versuche-Grenze selbst** bleibt als Konzept

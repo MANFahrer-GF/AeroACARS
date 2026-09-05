@@ -573,6 +573,21 @@ function App() {
   // Render. Bei null/null wird die Activity sauber gecleart.
   useDiscordRpcPush({ activeFlight, simStatus });
 
+  // Codex-Folgefund (adversarial, 05.09.2026, neunte Runde): `phpvms_logout`
+  // kann VOR jeder Zustandsaenderung mit zwei verschiedenen Codes ablehnen —
+  // `flight_active` (Flug laeuft) UND `flight_setup_in_progress` (der
+  // FlightSetupGuard wird gerade von einem Flugstart/einer Uebernahme
+  // gehalten). Beide bedeuten: das Backend hat NICHTS veraendert, `state.
+  // client` ist weiterhin gesetzt. Jeder andere Code (z. B. `keyring`,
+  // `config_remove`) tritt in `phpvms_logout` dagegen ERST NACH dem Leeren
+  // von `state.client` auf — dort ist ein Weiterfahren mit der Ausloggen-UI
+  // weiterhin richtig (Session ist serverseitig schon weg, nur ein
+  // Aufraeumschritt danach ist gescheitert).
+  const LOGOUT_BLOCKIERT_VOR_MUTATION = new Set([
+    "flight_active",
+    "flight_setup_in_progress",
+  ]);
+
   async function handleLogout() {
     try {
       await invoke("phpvms_logout");
@@ -581,15 +596,18 @@ function App() {
         e && typeof e === "object" && "code" in e
           ? String((e as { code: unknown }).code)
           : "";
-      if (code === "flight_active") {
+      if (LOGOUT_BLOCKIERT_VOR_MUTATION.has(code)) {
         // Backend hat abgelehnt UND nichts geaendert — hier NICHT
         // fortfahren. Der Pilot bleibt eingeloggt, sieht seinen Flug
         // weiterhin und bekommt eine sichtbare Erklaerung statt eines
         // verschwundenen Cockpits.
         setLogoutBlockedMessage(
-          e && typeof e === "object" && "message" in e
-            ? String((e as { message: unknown }).message)
-            : "Ein Flug ist noch aktiv — bitte zuerst beenden oder abbrechen.",
+          t(
+            `flight.error.${code}`,
+            e && typeof e === "object" && "message" in e
+              ? String((e as { message: unknown }).message)
+              : t("logout.blocked_title"),
+          ),
         );
         return;
       }
@@ -602,6 +620,11 @@ function App() {
     // Leerfunktion existierte und war getestet, wurde aber nirgends
     // aufgerufen.
     clearIpcCache();
+    // Codex-Folgefund (Runde 9, Befund 6): eine vorher gezeigte Sperr-
+    // Meldung ("Abmelden nicht möglich") darf einen SPÄTER erfolgreichen
+    // Logout nicht überleben — sonst haengt die Warnung auf der Login-Seite
+    // und ggf. noch in der naechsten Sitzung.
+    setLogoutBlockedMessage(null);
     setStatus({ kind: "loggedOut" });
     setTab("briefing");
   }
@@ -846,16 +869,16 @@ function App() {
           role="alert"
           aria-live="assertive"
           tone="warn"
-          level="Abmelden nicht möglich"
+          level={t("logout.blocked_title")}
           detail={logoutBlockedMessage}
           actions={
             <Button
               variant="quiet"
               size="sm"
               onClick={() => setLogoutBlockedMessage(null)}
-              aria-label="Schließen"
+              aria-label={t("logout.dismiss")}
             >
-              Schließen
+              {t("logout.dismiss")}
             </Button>
           }
         />
@@ -881,7 +904,12 @@ function App() {
       {status.kind === "loggedOut" && (
         <LoginPage
           initialError={status.restoreError}
-          onSuccess={(s) => setStatus({ kind: "loggedIn", session: s })}
+          onSuccess={(s) => {
+            // Runde 9, Befund 6: eine noch angezeigte Logout-Sperr-Meldung
+            // darf nicht in die naechste Sitzung hinueberhaengen.
+            setLogoutBlockedMessage(null);
+            setStatus({ kind: "loggedIn", session: s });
+          }}
         />
       )}
 

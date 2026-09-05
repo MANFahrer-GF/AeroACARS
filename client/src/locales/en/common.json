@@ -1780,7 +1780,9 @@
       "invalid_flight_time": "Expected flight time must be a positive number in minutes.",
       "invalid_zfw": "ZFW (Zero Fuel Weight) is required — please enter the planned dry weight (aircraft + pilot + pax + cargo, no fuel) in kg.",
       "invalid_zfw_value": "ZFW must be > 0 when specified. Leave the field empty for VFR/manual flights without loadsheet scoring.",
-      "phpvms_error": "phpVMS rejected the flight — see details."
+      "phpvms_error": "phpVMS rejected the flight — see details.",
+      "flight_active": "A flight is still active — please end or cancel it first before logging out.",
+      "flight_setup_in_progress": "A flight start or takeover is currently in progress — please wait a moment and try again."
     },
     "ofp_callsign_warning": "Heads up: OFP callsign is {{sb_callsign}}, your active flight uses {{active_callsigns}}. DEP/ARR match — the OFP was loaded. If this is wrong, regenerate on simbrief.com with a matching ATC callsign."
   },
@@ -1788,6 +1790,10 @@
     "default_title": "Are you sure?",
     "confirm": "Confirm",
     "cancel": "Cancel"
+  },
+  "logout": {
+    "blocked_title": "Cannot log out",
+    "dismiss": "Dismiss"
   },
   "orphan": {
     "title": "Flight Cleanup / Server Reset",

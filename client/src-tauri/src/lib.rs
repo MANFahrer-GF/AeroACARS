@@ -16877,7 +16877,8 @@ mod pirep_queue_reklamieren_wiring_tests {
         let ende = rest[1..].find("\nfn ").map(|i| i + 1).unwrap_or(rest.len());
         let funktionskoerper = &rest[..ende];
         let erfassung_pos = funktionskoerper.find("authenticated_pilot_id");
-        let await_pos = funktionskoerper.find("drain_pending_bid_cleanup(&app, &client).await");
+        let await_pos = funktionskoerper
+            .find("drain_pending_bid_cleanup(&app, &client, &aktuelle_identitaet).await");
         match (erfassung_pos, await_pos) {
             (Some(e), Some(a)) => assert!(
                 e < a,
@@ -16889,6 +16890,130 @@ mod pirep_queue_reklamieren_wiring_tests {
             _ => panic!(
                 "authenticated_pilot_id-Lesung oder drain_pending_bid_cleanup-Await \
                  im Worker nicht mehr gefunden — Test anpassen, nicht loeschen"
+            ),
+        }
+    }
+}
+
+/// Codex-Folgefund (adversarial, 05.09.2026, neunte Runde): drei getrennte
+/// Luecken in derselben Konten-Isolations-Serie — keine davon betrifft eine
+/// bereits gefixte Fehlerklasse aus den Runden 1-8.
+#[cfg(test)]
+mod konten_isolierung_runde_neun_wiring_tests {
+    /// Ausschnitt der Funktion ab `start_marker` bis zum naechsten
+    /// Top-Level-`fn ` ODER `async fn ` — je nachdem was zuerst kommt.
+    /// ⚠ Nur nach `\nfn ` zu suchen reicht NICHT: die naechste Funktion
+    /// nach einer `async fn` ist in dieser Datei oft selbst wieder eine
+    /// `async fn`, und `\nfn ` matcht das nicht — das Fenster wuerde dann
+    /// weit ueber das Funktionsende hinaus in spaetere, unverwandte
+    /// Funktionen hineinreichen (die z. B. dieselbe Hilfsfunktion nochmal
+    /// aufrufen) und einen entfernten Aufruf faelschlich als „noch da"
+    /// durchgehen lassen. Bei der ersten Fassung dieses Tests genau
+    /// passiert — deshalb jetzt das Minimum beider Anker.
+    fn funktionskoerper(quelle: &str, start_marker: &str) -> String {
+        let start = quelle
+            .find(start_marker)
+            .unwrap_or_else(|| panic!("{start_marker} nicht mehr gefunden — Test anpassen"));
+        let rest = &quelle[start..];
+        let naechstes_fn = rest[1..].find("\nfn ").map(|i| i + 1);
+        let naechstes_async_fn = rest[1..].find("\nasync fn ").map(|i| i + 1);
+        let ende = [naechstes_fn, naechstes_async_fn]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(rest.len());
+        rest[..ende].to_string()
+    }
+
+    /// Befund 1: `drain_pending_bid_cleanup` hatte GAR KEINE Kontobindung —
+    /// jeder Eintrag wurde mit dem gerade angemeldeten Client verarbeitet,
+    /// unabhaengig davon wer ihn eingereiht hatte.
+    #[test]
+    fn pending_bid_cleanup_prueft_eigentuemer_vor_delete_bid() {
+        const SRC: &str = include_str!("lib.rs");
+        let nadel = format!(
+            "{}{}",
+            "async fn drain_pending_bid_cleanup", "(app: &AppHandle"
+        );
+        let koerper = funktionskoerper(SRC, &nadel);
+        let pruefung_pos = koerper.find("pirep_queue_eintrag_gehoert_aktuellem_piloten(");
+        let delete_pos = koerper.find("client.delete_bid(e.bid_id, e.flight_id.as_deref())");
+        match (pruefung_pos, delete_pos) {
+            (Some(p), Some(d)) => assert!(
+                p < d,
+                "drain_pending_bid_cleanup muss die Eigentuemerschaft eines Eintrags \
+                 pruefen, BEVOR delete_bid mit dem aktuellen Client ausgefuehrt wird — \
+                 sonst kann ein Kontowechsel delete_bid mit dem FALSCHEN Account \
+                 fuer einen fremden Eintrag ausloesen"
+            ),
+            _ => panic!(
+                "Eigentuemer-Pruefung oder delete_bid-Aufruf in drain_pending_bid_cleanup \
+                 nicht mehr gefunden — Test anpassen, nicht loeschen"
+            ),
+        }
+    }
+
+    /// Befund 2: die phpVMS-Einreichung im Queue-Worker nutzt den am
+    /// Tick-Anfang erfassten Client korrekt, die MQTT-Publish- und
+    /// JSONL-Upload-Schritte DANACH lesen aber erneut den aktuellen Zustand
+    /// — ein Kontowechsel in der Luecke dazwischen darf diese Best-Effort-
+    /// Kanaele nicht mit dem FALSCHEN Account weiterlaufen lassen.
+    #[test]
+    fn queue_worker_prueft_identitaet_erneut_vor_mqtt_und_log_upload() {
+        const SRC: &str = include_str!("lib.rs");
+        let nadel = format!("{}{}", "fn spawn_pirep_queue_worker", "(app: AppHandle)");
+        let koerper = funktionskoerper(SRC, &nadel);
+        let pruefung_pos = koerper.find("identitaet_noch_aktuell");
+        let upload_pos = koerper.find("spawn_flight_log_upload(&app, q.pirep_id.clone());");
+        match (pruefung_pos, upload_pos) {
+            (Some(p), Some(u)) => assert!(
+                p < u,
+                "der Queue-Worker muss VOR dem MQTT-Publish/JSONL-Upload eines \
+                 gequeueten Eintrags erneut pruefen, ob die Identitaet seit dem \
+                 Tick-Anfang noch dieselbe ist — sonst koennte ein zwischenzeitlicher \
+                 Kontowechsel Pilot As Daten ueber Pilot Bs Kanal weitersenden"
+            ),
+            _ => panic!(
+                "identitaet_noch_aktuell-Pruefung oder spawn_flight_log_upload-Aufruf \
+                 im Queue-Worker nicht mehr gefunden — Test anpassen, nicht loeschen"
+            ),
+        }
+    }
+
+    /// Befund 4: `try_resume_flight` nahm seinen Lifecycle-Lock erst NACH
+    /// der Eigentuemer-Reklamierung (`get_user_pireps_in_progress`) — ein
+    /// zeitgleicher `flight_start`/`flight_adopt` (z. B. der Auto-Start-
+    /// Watcher) haette in dieser Luecke einen neuen Flug anlegen und den
+    /// Ablage-Platz ueberschreiben koennen, bevor der Resume-Pfad selbst
+    /// zum Zug kam.
+    #[test]
+    fn try_resume_flight_haelt_lifecycle_lock_vor_den_server_roundtrips() {
+        const SRC: &str = include_str!("lib.rs");
+        // Der Trennpunkt liegt bewusst MITTEN im Funktionsnamen (nicht an
+        // der Wortgrenze wie sonst in dieser Datei ueblich): ein anderer,
+        // bereits bestehender Waechter weiter unten sucht (nach Entfernen
+        // allen Whitespace) nach dem exakten Stueck "asyncfntry_resume_
+        // flight" — waere DAS hier als ein zusammenhaengendes Stueck
+        // vorhanden, faende sich jener Waechter selbst HIER statt bei der
+        // echten Funktion (Codex-Klasse: Selbst-Treffer, siehe andere
+        // Module in dieser Datei).
+        let nadel = format!("{}{}", "async fn try_resume_fl", "ight(app: &AppHandle");
+        let koerper = funktionskoerper(SRC, &nadel);
+        let lock_pos =
+            koerper.find("FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)");
+        let reklamier_pos = koerper.find("get_user_pireps_in_progress()");
+        match (lock_pos, reklamier_pos) {
+            (Some(l), Some(r)) => assert!(
+                l < r,
+                "try_resume_flight muss den FlightSetupGuard VOR der \
+                 Eigentuemer-Reklamierung (get_user_pireps_in_progress) erwerben — \
+                 sonst kann ein zeitgleicher flight_start/flight_adopt in der Luecke \
+                 einen neuen Flug anlegen und die Ablage des zu wiederaufnehmenden \
+                 PIREPs ueberschreiben"
+            ),
+            _ => panic!(
+                "FlightSetupGuard-Erwerb oder get_user_pireps_in_progress-Aufruf in \
+                 try_resume_flight nicht mehr gefunden — Test anpassen, nicht loeschen"
             ),
         }
     }
@@ -16959,7 +17084,7 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
             // pireps queued sind. Sonst bleibt der Bid nach einem
             // erfolgreichen FILED + transientem delete_bid-Fail haengen
             // bis zufaellig ein anderer PIREP queued wird.
-            drain_pending_bid_cleanup(&app, &client).await;
+            drain_pending_bid_cleanup(&app, &client, &aktuelle_identitaet).await;
 
             if queued.is_empty() {
                 continue;
@@ -17099,60 +17224,93 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                             // aus dem persistierten QueuedPirep mitgeben.
                             Some(q.flight_id.as_str()),
                             "queued_filed",
+                            Some(aktuelle_identitaet.clone()),
                         )
                         .await;
                         // Selber Tick: Pending-Bid-Cleanup-Queue drainen
-                        drain_pending_bid_cleanup(&app, &client).await;
-                        // v0.12.5 (LE1b): JSONL-PirepFiled-Event schreiben
-                        // + MQTT-PIREP nachträglich publishen — sonst fehlt
-                        // der gequeuete Flug dauerhaft in den VPS-Reports.
-                        // QS-P1: `finalize_filed_pirep` schreibt das JSONL-
-                        // Event IMMER (auch ohne MQTT-Handle) — Voraussetzung
-                        // für den Recorder-seitigen JSONL-Gap-Fill.
-                        // Null = altes queued-File ohne das Feld → skip.
-                        if !q.pirep_payload_json.is_null() {
-                            let mqtt = state.mqtt.lock().await;
-                            finalize_filed_pirep(
-                                &app,
-                                mqtt.as_ref(),
-                                &q.pirep_id,
-                                q.pirep_payload_json.clone(),
-                                None,
-                                q.bahn_nachtrag.clone(),
+                        drain_pending_bid_cleanup(&app, &client, &aktuelle_identitaet).await;
+                        // Codex-Folgefund (adversarial, 05.09.2026, neunte
+                        // Runde): das phpVMS-Filing oben nutzt den am
+                        // Tick-Anfang erfassten, zu `aktuelle_identitaet`
+                        // passenden `client` — sicher. Die MQTT-Publish- und
+                        // JSONL-Upload-Schritte darunter lesen aber ERNEUT
+                        // `state.mqtt` bzw. frisch aus dem Keyring, NACH
+                        // mehreren Awaits seit dem Schnappschuss. Ein
+                        // Kontowechsel in genau dieser Luecke wuerde Pilot
+                        // As bereits erfolgreich eingereichten PIREP mit
+                        // Pilot Bs MQTT-Verbindung/Zugangsdaten weitersenden
+                        // — beide Kanaele sind ausdruecklich als Best-Effort
+                        // markiert, werden hier deshalb bewusst nur
+                        // uebersprungen (nicht nachgeholt) statt das Filing
+                        // selbst zu gefaehrden.
+                        let identitaet_noch_aktuell = state
+                            .authenticated_pilot_id
+                            .lock()
+                            .expect("authenticated_pilot_id lock")
+                            .map(|id| id.to_string())
+                            == Some(aktuelle_identitaet.clone());
+                        if !identitaet_noch_aktuell {
+                            tracing::warn!(
+                                pirep_id = %q.pirep_id,
+                                "pirep_queue: Konto wechselte waehrend der Verarbeitung — \
+                                 MQTT-Publish und JSONL-Upload fuer diesen Eintrag uebersprungen \
+                                 (PIREP wurde bereits korrekt eingereicht)"
                             );
-                        } else if let Some(json) = q.bahn_nachtrag.clone() {
-                            // Altbestand ohne PIREP-JSON, aber mit Nachtrag:
-                            // den Nachtrag trotzdem schicken — und beide
-                            // Fehlerfaelle MELDEN (Runde 4, N19).
-                            let mqtt = state.mqtt.lock().await;
-                            match (
-                                mqtt.as_ref(),
-                                aeroacars_mqtt::TouchdownRolloutFinalizedPayload::aus_json(json),
-                            ) {
-                                (Some(handle), Ok(nachtrag)) => {
-                                    if let Err(e) = nachtrag_queue::senden(
-                                        &app,
-                                        &handle.nachtrag_sender(),
-                                        nachtrag,
-                                    ) {
-                                        tracing::error!(pirep_id = %q.pirep_id, error = %e, "Bahn-Nachtrag aus der Warteschlange nicht abgelegt — verloren (PIREP ist eingereicht)");
+                        } else {
+                            // v0.12.5 (LE1b): JSONL-PirepFiled-Event schreiben
+                            // + MQTT-PIREP nachträglich publishen — sonst fehlt
+                            // der gequeuete Flug dauerhaft in den VPS-Reports.
+                            // QS-P1: `finalize_filed_pirep` schreibt das JSONL-
+                            // Event IMMER (auch ohne MQTT-Handle) — Voraussetzung
+                            // für den Recorder-seitigen JSONL-Gap-Fill.
+                            // Null = altes queued-File ohne das Feld → skip.
+                            if !q.pirep_payload_json.is_null() {
+                                let mqtt = state.mqtt.lock().await;
+                                finalize_filed_pirep(
+                                    &app,
+                                    mqtt.as_ref(),
+                                    &q.pirep_id,
+                                    q.pirep_payload_json.clone(),
+                                    None,
+                                    q.bahn_nachtrag.clone(),
+                                );
+                            } else if let Some(json) = q.bahn_nachtrag.clone() {
+                                // Altbestand ohne PIREP-JSON, aber mit Nachtrag:
+                                // den Nachtrag trotzdem schicken — und beide
+                                // Fehlerfaelle MELDEN (Runde 4, N19).
+                                let mqtt = state.mqtt.lock().await;
+                                match (
+                                    mqtt.as_ref(),
+                                    aeroacars_mqtt::TouchdownRolloutFinalizedPayload::aus_json(
+                                        json,
+                                    ),
+                                ) {
+                                    (Some(handle), Ok(nachtrag)) => {
+                                        if let Err(e) = nachtrag_queue::senden(
+                                            &app,
+                                            &handle.nachtrag_sender(),
+                                            nachtrag,
+                                        ) {
+                                            tracing::error!(pirep_id = %q.pirep_id, error = %e, "Bahn-Nachtrag aus der Warteschlange nicht abgelegt — verloren (PIREP ist eingereicht)");
+                                        }
                                     }
-                                }
-                                (None, Ok(nachtrag)) => {
-                                    if let Err(e) = nachtrag_queue::enqueue_offline(&app, &nachtrag)
-                                    {
-                                        tracing::error!(pirep_id = %q.pirep_id, error = %e, "Ablage nicht beschreibbar");
+                                    (None, Ok(nachtrag)) => {
+                                        if let Err(e) =
+                                            nachtrag_queue::enqueue_offline(&app, &nachtrag)
+                                        {
+                                            tracing::error!(pirep_id = %q.pirep_id, error = %e, "Ablage nicht beschreibbar");
+                                        }
                                     }
+                                    (_, Err(e)) => tracing::warn!(
+                                        pirep_id = %q.pirep_id,
+                                        error = %e,
+                                        "Bahnkorrektur aus der Warteschlange (ohne PIREP-JSON) ist nicht lesbar"
+                                    ),
                                 }
-                                (_, Err(e)) => tracing::warn!(
-                                    pirep_id = %q.pirep_id,
-                                    error = %e,
-                                    "Bahnkorrektur aus der Warteschlange (ohne PIREP-JSON) ist nicht lesbar"
-                                ),
                             }
+                            // Best-effort: JSONL-Upload (wenn das Recorder-File noch da ist)
+                            spawn_flight_log_upload(&app, q.pirep_id.clone());
                         }
-                        // Best-effort: JSONL-Upload (wenn das Recorder-File noch da ist)
-                        spawn_flight_log_upload(&app, q.pirep_id.clone());
                     }
                     Err(e) => {
                         // v0.8.3 (#1): Hard-Errors NICHT mehr endlos
@@ -22685,6 +22843,15 @@ async fn flight_end(
             } else {
                 "normal_filed"
             };
+            // Guard VOR dem Await binden und droppen (nicht inline im
+            // Funktionsaufruf) — sonst haelt der `MutexGuard` (nicht `Send`)
+            // ueber das nachfolgende `.await` hinweg, was `flight_end` als
+            // Tauri-Command nicht mehr kompilieren laesst.
+            let aktuelle_identitaet_fuer_bid_cleanup = state
+                .authenticated_pilot_id
+                .lock()
+                .expect("authenticated_pilot_id lock")
+                .map(|id| id.to_string());
             consume_bid_best_effort(
                 &app,
                 &client,
@@ -22692,6 +22859,7 @@ async fn flight_end(
                 flight.bid_id,
                 Some(flight.flight_id.as_str()),
                 bid_reason,
+                aktuelle_identitaet_fuer_bid_cleanup,
             )
             .await;
             Ok(())
@@ -22894,6 +23062,7 @@ async fn consume_bid_best_effort(
     bid_id: i64,
     flight_id: Option<&str>,
     reason: &str,
+    owner_identity: Option<String>,
 ) {
     // v0.7.19 (QS-R3 Finding 1): nur skippen wenn BEIDE IDs fehlen.
     // Frueher: `if bid_id <= 0 { return; }` — hat den flight_id-only-
@@ -22918,7 +23087,14 @@ async fn consume_bid_best_effort(
                 error = %e,
                 "delete_bid failed — enqueueing for pending_bid_cleanup retry"
             );
-            enqueue_pending_bid_cleanup(app, pirep_id, bid_id_opt, flight_id_owned.clone(), reason);
+            enqueue_pending_bid_cleanup(
+                app,
+                pirep_id,
+                bid_id_opt,
+                flight_id_owned.clone(),
+                reason,
+                owner_identity,
+            );
         }
     }
 }
@@ -22934,6 +23110,7 @@ fn enqueue_pending_bid_cleanup(
     bid_id: Option<i64>,
     flight_id: Option<String>,
     reason: &str,
+    owner_identity: Option<String>,
 ) {
     let Ok(dir) = app.path().app_data_dir() else {
         tracing::warn!(
@@ -22961,6 +23138,7 @@ fn enqueue_pending_bid_cleanup(
         created_at: Utc::now(),
         last_attempt_at: None,
         attempts: 0,
+        owner_identity,
     };
     if let Err(e) = queue.enqueue(entry) {
         tracing::warn!(
@@ -22982,7 +23160,7 @@ fn enqueue_pending_bid_cleanup(
 /// spawn_pirep_queue_worker-Tick mit aufgerufen (selbe 60s-Frequenz).
 /// Cap auf 8 Versuche pro Eintrag, danach bleibt der Eintrag liegen
 /// und wird ueber den B-011 Orphan-Cleanup-Flow sichtbar.
-async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client) {
+async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client, aktuelle_identitaet: &str) {
     const MAX_ATTEMPTS: u32 = 8;
     let Ok(dir) = app.path().app_data_dir() else {
         return;
@@ -23003,6 +23181,9 @@ async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client) {
     tracing::info!(count = entries.len(), "pending_bid_cleanup drain tick");
 
     let mut survivors: Vec<storage::PendingBidCleanup> = Vec::new();
+    // Lazily geholt (hoechstens einmal pro Tick) und nur wenn ueberhaupt ein
+    // Eintrag ohne passenden Eigentuemer auftaucht.
+    let mut eigene_bids: Option<Vec<api_client::Bid>> = None;
     for mut e in entries {
         if e.attempts >= MAX_ATTEMPTS {
             tracing::warn!(
@@ -23012,6 +23193,46 @@ async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client) {
             );
             survivors.push(e);
             continue;
+        }
+        // Codex-Folgefund (adversarial, 05.09.2026, neunte Runde): diese
+        // Warteschlange hatte GAR KEINE Kontobindung — jeder Eintrag wurde
+        // mit dem gerade angemeldeten `client` verarbeitet, unabhaengig
+        // davon wer ihn eingereiht hatte. Gleiches Muster wie beim
+        // Haupt-PIREP-Queue (siehe `pirep_queue_eintrag_gehoert_aktuellem_
+        // piloten`): `None` heisst „unbekannt", nicht „frei" — vor der
+        // endgueltigen Quarantaene EINMAL serverseitig nachfragen
+        // (`GET /api/user/bids`, serverseitig auf den eingeloggten Piloten
+        // gefiltert), ob der Bid TROTZDEM dem aktuellen Account gehoert
+        // (Alt-Eintrag von vor diesem Feld, oder API-Key-Rotation).
+        if !pirep_queue_eintrag_gehoert_aktuellem_piloten(
+            e.owner_identity.as_deref(),
+            aktuelle_identitaet,
+        ) {
+            if eigene_bids.is_none() {
+                eigene_bids = Some(client.get_bids().await.unwrap_or_default());
+            }
+            let gehoert_doch_dem_aktuellen_account = eigene_bids.as_ref().is_some_and(|bids| {
+                bids.iter().any(|b| {
+                    (e.bid_id.is_some() && e.bid_id == Some(b.id))
+                        || e.flight_id.as_deref().is_some_and(|fid| fid == b.flight_id)
+                })
+            });
+            if gehoert_doch_dem_aktuellen_account {
+                tracing::info!(
+                    pirep_id = %e.pirep_id,
+                    "pending_bid_cleanup: serverseitig als eigener Bid bestaetigt — reklamiert"
+                );
+                e.owner_identity = Some(aktuelle_identitaet.to_string());
+            } else {
+                tracing::warn!(
+                    pirep_id = %e.pirep_id,
+                    eigentuemer_bekannt = e.owner_identity.is_some(),
+                    "pending_bid_cleanup: gehoert nicht dem aktuell eingeloggten Account — \
+                     bleibt unangetastet in Quarantaene"
+                );
+                survivors.push(e);
+                continue;
+            }
         }
         e.attempts += 1;
         e.last_attempt_at = Some(Utc::now());
@@ -23458,6 +23679,15 @@ async fn flight_end_manual(
             // v0.12.5 (Bug B): Forensik-Upload auch beim manuellen File.
             spawn_flight_log_upload(&app, flight.pirep_id.clone());
             // v0.7.19 (QS-R1 Finding 1) + QS-R2 Finding 2 (flight_id fallback).
+            // Guard VOR dem Await binden und droppen (nicht inline im
+            // Funktionsaufruf) — sonst haelt der `MutexGuard` (nicht `Send`)
+            // ueber das nachfolgende `.await` hinweg, was diesen
+            // Tauri-Command nicht mehr kompilieren laesst.
+            let aktuelle_identitaet_fuer_bid_cleanup = state
+                .authenticated_pilot_id
+                .lock()
+                .expect("authenticated_pilot_id lock")
+                .map(|id| id.to_string());
             consume_bid_best_effort(
                 &app,
                 &client,
@@ -23465,6 +23695,7 @@ async fn flight_end_manual(
                 flight.bid_id,
                 Some(flight.flight_id.as_str()),
                 "manual_filed",
+                aktuelle_identitaet_fuer_bid_cleanup,
             )
             .await;
             Ok(())
@@ -43060,6 +43291,24 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
         return;
     }
 
+    // Codex-Folgefund (adversarial, 05.09.2026, neunte Runde): der
+    // Lifecycle-Lock (weiter unten frueher an dieser Stelle erworben) muss
+    // VOR den beiden folgenden Server-Roundtrips (Eigentuemer-Reklamierung,
+    // `get_pirep`) stehen, nicht erst danach. Sonst haette ein GENAU in
+    // dieser Luecke gleichzeitig laufender `flight_start`/`flight_adopt`
+    // (z. B. der Auto-Start-Watcher) den Lock zwischendurch bekommen, einen
+    // neuen Flug angelegt und dessen `save_active_flight` den einzigen
+    // Ablage-Platz ueberschrieben — der hier gerade geprüfte PIREP waere
+    // danach lokal verwaist und serverseitig fuer immer IN_PROGRESS
+    // steckengeblieben, ohne dass irgendein Client ihn je wieder aufgreift.
+    let _setup_guard = match FlightSetupGuard::try_acquire(&state.flight_setup_in_progress) {
+        Ok(g) => g,
+        Err(_) => {
+            tracing::debug!("resume already in progress, skipping duplicate call");
+            return;
+        }
+    };
+
     // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde): BEVOR der
     // PIREP unten direkt per ID abgefragt wird — das allein sagt nichts
     // darueber, WEM er gehoert — pruefen, ob die Ablage ueberhaupt zum
@@ -43188,19 +43437,12 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>, 
         }
     }
 
-    // Same guard as flight_start / flight_adopt: if another resume is
-    // already running (StrictMode double-mount in dev fires
-    // phpvms_load_session twice in close succession), bail silently.
-    // Without this, the second resume would do a duplicate get_bids /
-    // get_aircraft round-trip even though the first had already won.
-    let _setup_guard = match FlightSetupGuard::try_acquire(&state.flight_setup_in_progress) {
-        Ok(g) => g,
-        Err(_) => {
-            tracing::debug!("resume already in progress, skipping duplicate call");
-            return;
-        }
-    };
-
+    // Der Lifecycle-Lock wird seit Runde 9 bereits weiter oben gehalten
+    // (vor der Eigentuemer-Reklamierung + `get_pirep`) — das deckt auch
+    // den StrictMode-Doppelmount-Fall (zweiter `phpvms_load_session`-Aufruf
+    // in schneller Folge) ab, ohne ihn hier ein zweites Mal erwerben zu
+    // muessen (ein zweiter `try_acquire` waere hier immer fehlgeschlagen,
+    // da der erste Aufruf den Lock ja noch haelt).
     {
         let guard = state.active_flight.lock().expect("active_flight lock");
         if guard.is_some() {

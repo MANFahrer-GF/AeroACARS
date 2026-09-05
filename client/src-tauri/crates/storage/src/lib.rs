@@ -873,6 +873,16 @@ pub struct PendingBidCleanup {
     /// Anzahl bisheriger Retries.
     #[serde(default)]
     pub attempts: u32,
+    /// `pilot_id` (als String) des Accounts, dem diese Bid-Aufraeumung
+    /// gehoert — server-verifiziert zum Zeitpunkt der Einreihung, analog
+    /// zu `QueuedPirep::owner_identity`. `None` heisst „unbekannt" (Alt-
+    /// Eintrag von vor diesem Feld), NICHT „frei fuer jeden Account" —
+    /// Codex-Folgefund (adversarial, 05.09.2026, neunte Runde): diese
+    /// zweite, separate Warteschlange hatte gar keine Kontobindung, ein
+    /// Kontowechsel waehrend sie noch Eintraege hielt haette `delete_bid`
+    /// mit dem FALSCHEN Account ausgefuehrt.
+    #[serde(default)]
+    pub owner_identity: Option<String>,
 }
 
 /// File-backed Cleanup-Queue. Klein (in der Praxis selten >1 Eintrag),

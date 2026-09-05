@@ -1773,7 +1773,9 @@
       "invalid_flight_time": "Il tempo di volo previsto deve essere un numero positivo in minuti.",
       "invalid_zfw": "Lo ZFW (Zero Fuel Weight) è obbligatorio — inserisci il peso a vuoto pianificato (velivolo + pilota + pax + carico, senza carburante) in kg.",
       "invalid_zfw_value": "Lo ZFW deve essere > 0 se specificato. Lascia il campo vuoto per voli VFR/manuali senza valutazione del loadsheet.",
-      "phpvms_error": "phpVMS ha rifiutato il volo — vedi dettagli."
+      "phpvms_error": "phpVMS ha rifiutato il volo — vedi dettagli.",
+      "flight_active": "Un volo è ancora attivo — terminalo o annullalo prima di disconnetterti.",
+      "flight_setup_in_progress": "È in corso un avvio o una ripresa del volo — attendi un momento e riprova."
     },
     "ofp_callsign_warning": "Attenzione: il callsign dell'OFP è {{sb_callsign}}, il tuo volo attivo usa {{active_callsigns}}. DEP/ARR coincidono — l'OFP è stato caricato. Se non è corretto, rigenera su simbrief.com con un ATC callsign corrispondente."
   },
@@ -1781,6 +1783,10 @@
     "default_title": "Sei sicuro?",
     "confirm": "Conferma",
     "cancel": "Annulla"
+  },
+  "logout": {
+    "blocked_title": "Impossibile disconnettersi",
+    "dismiss": "Chiudi"
   },
   "orphan": {
     "title": "Pulizia voli / Reset server",
