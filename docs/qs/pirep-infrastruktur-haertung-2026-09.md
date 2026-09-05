@@ -710,6 +710,25 @@ erklärender Kommentar zitierte denselben Ausdruck, den der Test suchte,
 noch VOR der echten Fundstelle. Behoben durch eine praezisere Suche
 (abschließendes Semikolon, das nur im echten Code steht).
 
+**Nachtrag zu Runde 10 (CI-Fund, direkt danach):** der Windows-CI-Job
+(`cargo test workspace, inkl. sim-msfs`) schlug nach dem Push fehl — ein
+bestehender Integrationstest (`tests/spur_verdrahtung.rs::der_worker_
+leert_die_ablage_vor_dem_client_riegel`) suchte textuell nach dem ALTEN
+Client-Riegel (`let Some(client) = client_opt else`), den der Umbau auf
+`aktuelle_session_atomar` entfernt hatte. Needle auf `let Some((client,
+pilot_id)) = aktuelle_session_atomar(&state) else` aktualisiert.
+
+**Eigener Prozessfehler, der das lokal verdeckt hat:** die lokale
+Verifikation lief als `cargo test --workspace 2>&1 | tail -N` — die Pipe
+gibt IMMER `tail`s Exit-Code zurück (0), nie den von `cargo test`. Der
+eigentliche Fehlschlag stand zwar im (abgeschnittenen) Text, wurde aber nie
+als roter Exit-Code bemerkt. **Neue Regel: nie mit `| tail` auf einen
+Pass/Fail-Exit-Code verlassen — entweder in eine Datei umleiten und den
+Exit-Code der eigentlichen Pruefung separat pruefen (`cmd > out.txt 2>&1;
+echo $?`), oder `grep -c "^test result: FAILED"` auf der vollen Ausgabe
+gegenpruefen.** Nach der Korrektur: `cargo test --workspace` mit derselben
+Methode neu verifiziert, echter Exit-Code 0, `grep -c "FAILED"` liefert 0.
+
 ## Nicht behoben (bewusst außerhalb des Umfangs)
 
 * **`pirep_queue`s 50-Versuche-Grenze selbst** bleibt als Konzept

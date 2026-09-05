@@ -993,8 +993,12 @@ fn der_worker_leert_die_ablage_vor_dem_client_riegel() {
     let drain = worker
         .find("nachtrag_queue::drain(")
         .expect("der Worker leert die Ablage nicht — Nachtraege ohne Handle bleiben liegen");
+    // Runde 10 (05.09.2026): der Client-Riegel liest Client + Piloten-ID
+    // jetzt gemeinsam ueber `aktuelle_session_atomar` (echte Atomaritaet
+    // gegenueber Thread-Nebenlaeufigkeit, nicht nur gegenueber Awaits) —
+    // das ist derselbe Riegel, nur andere Formulierung.
     let riegel = worker
-        .find("let Some(client) = client_opt else")
+        .find("let Some((client, pilot_id)) = aktuelle_session_atomar(&state) else")
         .expect("Client-Riegel nicht gefunden — wurde er umgebaut?");
     assert!(
         drain < riegel,
