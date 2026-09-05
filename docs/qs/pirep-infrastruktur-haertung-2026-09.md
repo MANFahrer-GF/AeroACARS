@@ -446,6 +446,77 @@ ein neuer, gezielter Wächter fuer Befund B
 (`login_prueft_zusaetzlich_ob_ueberhaupt_ein_flug_aktiv_ist`). Gegenprobe
 fuer alle drei durchgefuehrt.
 
+## Nachtrag #7 (05.09.2026): achte Codex-Runde — Frontend-Riegel, Race im Queue-Worker, ehrliche Grenze bei Key-Rotation
+
+Adversarial-Review gegen den weiter gewachsenen Diff (jetzt HEAD~7) fand
+drei neue, voneinander unabhaengige Befunde — zwei davon werteten die
+Riegel aus den Nachtraegen #5/#6 ab, ohne sie selbst zu betreffen.
+
+**Befund 1 (high) — das Frontend ignorierte die Ablehnung des Backends.**
+`App.tsx::handleLogout` fing JEDEN Fehler aus `invoke("phpvms_logout")`
+pauschal ab (urspruenglich fuer einen ganz anderen Fehlerfall gedacht:
+ein nicht erreichbarer Schluesselbund) und loggte die Oberflaeche
+IMMER aus — auch wenn das Backend den Logout wegen eines aktiven Fluges
+(Nachtrag #5) korrekt mit `flight_active` verweigert hatte. Der Riegel im
+Backend war also fachlich vorhanden, wurde dem Piloten aber nie sichtbar
+gemacht: die App zeigte den Logout als erfolgreich an, obwohl serverseitig
+gar nichts passiert war.
+
+**Befund 2 (high) — Client und Piloten-ID konnten im Queue-Worker
+auseinanderlaufen.** `spawn_pirep_queue_worker` las `state.client` und
+`state.authenticated_pilot_id` bislang an zwei getrennten Stellen im
+selben Tick, getrennt durch einen echten Await-Punkt
+(`drain_pending_bid_cleanup(...).await`). Ein Logout/Login-Kontowechsel
+genau in dieser Luecke haette Pilot As Client mit Pilot Bs Identitaet
+gepaart — ein Warteschlangen-Eintrag, der tatsaechlich Pilot B gehoert,
+haette die Eigentuemer-Pruefung bestanden, waere aber mit Pilot As
+Credentials eingereicht worden (und bei einem 403/404 faelschlich
+geloescht statt in Quarantaene zu bleiben).
+
+**Befund 3 (high) — die seit Nachtrag #6 erlaubte Key-Rotation
+DESSELBEN Piloten hilft laufenden Hintergrund-Aufgaben nichts.**
+`spawn_position_streamer` nimmt seinen `Client` per Wert entgegen und
+haelt ihn fuer die gesamte Laufzeit des Fluges in einer `async move`-
+Task — er loest `current_client(&state)` nie erneut auf. Ein Re-Login
+DESSELBEN Piloten mit neuem Schluessel (seit Nachtrag #6 ausdruecklich
+erlaubt) aendert an dieser laufenden Positions-Uebertragung nichts: sie
+meldet mit dem ALTEN Schluessel weiter, bis der Flug endet. Gegengeprueft:
+`flight_end`/`flight_cancel` loesen `current_client(&state)` dagegen bei
+JEDEM Aufruf frisch auf — ein geordnetes Beenden/Abbrechen profitiert vom
+Re-Login also durchaus, nur die Positions-Uebertragung selbst nicht.
+
+**Gefixt:**
+
+1. `handleLogout` unterscheidet jetzt `code === "flight_active"` von
+   jedem anderen Fehler und bricht in diesem Fall VOR dem Aufraeumen des
+   Session-Zustands ab, statt die Oberflaeche trotzdem auszuloggen. Ein
+   `Notice`/`Button`-Banner (Hausmuster aus `IntegrityBanner.tsx`, bewusst
+   KEIN `window.alert()` — das wird unter macOS WKWebView lautlos
+   verschluckt, siehe bestehender Kommentar in `SettingsPanel.tsx`) zeigt
+   dem Piloten den Grund an.
+2. `spawn_pirep_queue_worker` erfasst `client` UND `authenticated_pilot_id`
+   jetzt als EINEN atomaren Schnappschuss, bevor irgendein Await in diesem
+   Tick laeuft — `drain_pending_bid_cleanup(...).await` folgt erst danach.
+3. Fuer Befund 3 KEINE Architekturaenderung (jeder Langlaeufer muesste
+   sonst pro Tick neu `current_client(&state)` aufloesen — eine sehr
+   breite, streuende Aenderung fuer eine seltene Situation). Stattdessen
+   eine ehrliche, sichtbare Warnung: `phpvms_login` protokolliert per
+   `log_activity_handle`, dass Positions-Updates bei einem erkannten
+   Kontowechsel waehrend eines laufenden Fluges mit dem ALTEN Zugang
+   weiterlaufen, bis der Flug endet — mit dem Hinweis, den Flug bei
+   anhaltenden Problemen zu beenden/abzubrechen und neu zu starten.
+
+**Tests:** neuer Quelltext-Waechter
+`client_und_piloten_id_werden_vor_dem_ersten_await_gemeinsam_erfasst`
+fuer Befund 2 (prueft, dass `authenticated_pilot_id` textuell VOR
+`drain_pending_bid_cleanup(&app, &client).await` im Funktionskoerper
+steht) — Gegenprobe durchgefuehrt (Reihenfolge vertauscht, Waechter
+schlaegt fehl; wiederhergestellt, Waechter besteht wieder). Fuer Befund 1
+(Frontend) und Befund 3 (Log-Warnung) keine dedizierten neuen Tests —
+Befund 1 ist durch `npx tsc -b` und den bestehenden Vitest-Lauf (731 grün)
+nur indirekt abgedeckt, Befund 3 ist eine reine Transparenz-Ergaenzung
+ohne eigenen Kontrollfluss, der sich sinnvoll gegenpruefen liesse.
+
 ## Nicht behoben (bewusst außerhalb des Umfangs)
 
 * **`pirep_queue`s 50-Versuche-Grenze selbst** bleibt als Konzept

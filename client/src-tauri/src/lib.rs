@@ -10074,6 +10074,31 @@ async fn phpvms_login(
                      anmeldest.",
                 ));
             }
+            // Codex-Folgefund (adversarial, 05.09.2026, achte Runde): dieser
+            // Re-Login ist erlaubt (derselbe Pilot), aber er behebt NICHT
+            // alles. `spawn_position_streamer` bekam beim Flugstart einen
+            // GEKLONTEN `Client` per Wert uebergeben und fragt seither nie
+            // wieder `current_client(&state)` ab — Positions-Updates laufen
+            // fuer den Rest DIESES Fluges mit den ALTEN Zugangsdaten weiter,
+            // selbst nach diesem erfolgreichen Re-Login. `flight_end`/
+            // `flight_cancel` loesen ihren Client dagegen JEDESMAL frisch
+            // auf (`current_client(&state)`) — der Flug laesst sich also
+            // trotzdem sauber beenden/abbrechen, auch wenn die
+            // Positions-Uebertragung bis dahin mit dem alten Schluessel
+            // weiterlaeuft. Ehrlich sichtbar machen statt so tun als sei
+            // alles wieder normal (siehe feedback-no-unverified-claims).
+            log_activity_handle(
+                &app,
+                ActivityLevel::Warn,
+                "Erneut angemeldet — Positions-Updates laufen mit dem alten Zugang weiter"
+                    .to_string(),
+                Some(
+                    "Der laufende Flug wird weiterhin mit den Zugangsdaten von vor diesem \
+                     Login an phpVMS gemeldet, bis er endet. Bei anhaltenden Problemen den \
+                     Flug beenden oder abbrechen und danach neu starten."
+                        .to_string(),
+                ),
+            );
         }
     }
 
@@ -16832,6 +16857,41 @@ mod pirep_queue_reklamieren_wiring_tests {
              Tick wieder als fremd gelten"
         );
     }
+
+    /// Codex-Folgefund (adversarial, 05.09.2026, achte Runde): `client` und
+    /// `authenticated_pilot_id` muessen als EIN atomarer Schnappschuss
+    /// erfasst werden, VOR jedem Await im Tick — sonst kann ein Logout/
+    /// Login-Kontowechsel zwischen den beiden Lesungen (z. B. waehrend
+    /// `drain_pending_bid_cleanup(...).await`) Pilot As Client mit Pilot Bs
+    /// Identitaet paaren. Ergebnis: ein Warteschlangen-Eintrag, der
+    /// tatsaechlich Pilot B gehoert, besteht die Eigentuemer-Pruefung, wird
+    /// aber mit Pilot As Credentials eingereicht.
+    #[test]
+    fn client_und_piloten_id_werden_vor_dem_ersten_await_gemeinsam_erfasst() {
+        const SRC: &str = include_str!("lib.rs");
+        let nadel = format!("{}{}", "fn spawn_pirep_queue_worker", "(app: AppHandle)");
+        let start = SRC
+            .find(&nadel)
+            .expect("spawn_pirep_queue_worker nicht mehr gefunden — Test anpassen, nicht loeschen");
+        let rest = &SRC[start..];
+        let ende = rest[1..].find("\nfn ").map(|i| i + 1).unwrap_or(rest.len());
+        let funktionskoerper = &rest[..ende];
+        let erfassung_pos = funktionskoerper.find("authenticated_pilot_id");
+        let await_pos = funktionskoerper.find("drain_pending_bid_cleanup(&app, &client).await");
+        match (erfassung_pos, await_pos) {
+            (Some(e), Some(a)) => assert!(
+                e < a,
+                "authenticated_pilot_id wird nicht mehr VOR dem ersten Await \
+                 (drain_pending_bid_cleanup) gelesen — ein Kontowechsel \
+                 dazwischen koennte Client und Identitaet wieder \
+                 auseinanderlaufen lassen"
+            ),
+            _ => panic!(
+                "authenticated_pilot_id-Lesung oder drain_pending_bid_cleanup-Await \
+                 im Worker nicht mehr gefunden — Test anpassen, nicht loeschen"
+            ),
+        }
+    }
 }
 
 fn spawn_pirep_queue_worker(app: AppHandle) {
@@ -16867,9 +16927,31 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
             }
             // Client aus dem AppState holen — könnte fehlen wenn Pilot
             // nicht eingeloggt ist (= keine Connection). Dann skippen.
-            let client_opt = state.client.lock().expect("client lock").clone();
-            let Some(client) = client_opt else {
-                continue;
+            //
+            // Codex-Folgefund (adversarial, 05.09.2026, achte Runde): Client
+            // UND Piloten-ID werden hier bewusst als EIN atomarer Schnappschuss
+            // erfasst, VOR jedem Await in diesem Tick — nicht der Client
+            // hier, die Identitaet erst spaeter (wie zuvor). Dazwischen liegt
+            // `drain_pending_bid_cleanup(...).await`, ein echter Await-Punkt;
+            // ein Logout/Login-Kontowechsel in genau dieser Luecke haette
+            // Pilot As Client mit Pilot Bs Identitaet gepaart — Ergebnis: ein
+            // Warteschlangen-Eintrag, der Pilot B tatsaechlich gehoert,
+            // besteht die Eigentuemer-Pruefung, wird aber mit Pilot As
+            // Credentials eingereicht (und bei einem 403/404 faelschlich
+            // geloescht statt in Quarantaene zu bleiben).
+            let (client, aktuelle_identitaet) = {
+                let client_opt = state.client.lock().expect("client lock").clone();
+                let Some(client) = client_opt else {
+                    continue;
+                };
+                let Some(pilot_id) = *state
+                    .authenticated_pilot_id
+                    .lock()
+                    .expect("authenticated_pilot_id lock")
+                else {
+                    continue;
+                };
+                (client, pilot_id.to_string())
             };
 
             // v0.7.19 GAF-707 (QS-R1 Finding 1): Pending-Bid-Cleanup-Queue
@@ -16883,19 +16965,6 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                 continue;
             }
             tracing::info!(queued_count = queued.len(), "PIREP-queue worker tick");
-            // Codex-Folgefund (adversarial, 05.09.2026, siebte Runde): die
-            // server-verifizierte Piloten-ID statt eines aus dem API-Key
-            // abgeleiteten Fingerabdrucks — sonst haette eine legitime
-            // Key-Rotation DESSELBEN Piloten jeden seiner eigenen wartenden
-            // Eintraege dauerhaft in Quarantaene geschickt.
-            let Some(aktuelle_identitaet) = state
-                .authenticated_pilot_id
-                .lock()
-                .expect("authenticated_pilot_id lock")
-                .map(|id| id.to_string())
-            else {
-                continue;
-            };
             // Codex-Folgefund (adversarial, 05.09.2026, zweite Runde): eine
             // reine Fingerabdruck-Pruefung wuerde JEDEN Alt-Eintrag (von vor
             // diesem Feld, `owner_identity: None`) fuer immer in Quarantaene

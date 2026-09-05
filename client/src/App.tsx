@@ -93,6 +93,7 @@ import { UpdateGate } from "./components/UpdateGate";
 import { ErrorReportingFirstRunBanner } from "./components/ErrorReportingFirstRunBanner";
 import { IntegrityBanner } from "./components/IntegrityBanner";
 import { CpdlcMessageBanner } from "./components/CpdlcMessageBanner";
+import { Notice, Button } from "./components/ui";
 import { useHoppieAttention } from "./hooks/useHoppieAttention";
 import { useDiscordRpcPush } from "./hooks/useDiscordRpcPush";
 import { LiveRecordingIndicator } from "./components/LiveRecordingIndicator";
@@ -225,6 +226,18 @@ function App() {
   // Refs statt Abhaengigkeiten: der Empfaenger soll EINMAL registriert
   // werden und trotzdem den aktuellen Reiter und die aktuelle Phase sehen.
   const [status, setStatus] = useState<SessionStatus>({ kind: "loading" });
+  // Codex-Folgefund (adversarial, 05.09.2026, achte Runde): `phpvms_logout`
+  // lehnt jetzt ab, solange ein Flug aktiv ist — vorher hat `handleLogout`
+  // JEDEN Fehler geschluckt und trotzdem `loggedOut` gesetzt (gedacht fuer
+  // einen kaputten Keyring-Zugriff, wo "trotzdem abmelden" sinnvoll war).
+  // Fuer DIESEN Fehler waere das Cockpit verschwunden, obwohl Flug und
+  // Hintergrund-Worker im Backend weiterlaufen — der Pilot haette weder
+  // seinen Flug gesehen noch sich anders anmelden koennen. Bewusst KEIN
+  // `window.alert()`: der wird auf macOS WKWebView lautlos verschluckt
+  // (siehe SettingsPanel.tsx) — ein eigener, sichtbarer Banner-Zustand.
+  const [logoutBlockedMessage, setLogoutBlockedMessage] = useState<
+    string | null
+  >(null);
   const [tab, setTab] = useState<Tab>("briefing");
   const tabRef = useRef<Tab>(tab);
   const phaseRef = useRef<string | null>(null);
@@ -563,8 +576,25 @@ function App() {
   async function handleLogout() {
     try {
       await invoke("phpvms_logout");
-    } catch {
-      // Drop in-memory session even if the keyring call fails.
+    } catch (e) {
+      const code =
+        e && typeof e === "object" && "code" in e
+          ? String((e as { code: unknown }).code)
+          : "";
+      if (code === "flight_active") {
+        // Backend hat abgelehnt UND nichts geaendert — hier NICHT
+        // fortfahren. Der Pilot bleibt eingeloggt, sieht seinen Flug
+        // weiterhin und bekommt eine sichtbare Erklaerung statt eines
+        // verschwundenen Cockpits.
+        setLogoutBlockedMessage(
+          e && typeof e === "object" && "message" in e
+            ? String((e as { message: unknown }).message)
+            : "Ein Flug ist noch aktiv — bitte zuerst beenden oder abbrechen.",
+        );
+        return;
+      }
+      // Andere Fehler (z. B. kaputter Keyring-Zugriff): in-memory
+      // Session trotzdem fallen lassen — das war schon immer so gedacht.
     }
     // QS-Befund v1.5.7: Der Antwort-Zwischenspeicher MUSS hier geleert
     // werden. Ohne das sah der nächste angemeldete Pilot beim ersten
@@ -810,6 +840,26 @@ function App() {
         }}
         onDismiss={markCpdlcSeen}
       />
+      {logoutBlockedMessage && (
+        <Notice
+          floating
+          role="alert"
+          aria-live="assertive"
+          tone="warn"
+          level="Abmelden nicht möglich"
+          detail={logoutBlockedMessage}
+          actions={
+            <Button
+              variant="quiet"
+              size="sm"
+              onClick={() => setLogoutBlockedMessage(null)}
+              aria-label="Schließen"
+            >
+              Schließen
+            </Button>
+          }
+        />
+      )}
       {/* Kopfzeile und Tab-Leiste sind in die Seitenleiste gewandert
           (Redesign Stufe D). App-Name, Untertitel, die beiden Status-Pillen
           und die Aufzeichnungs-Anzeige stehen dort im Fuß; die Navigation
