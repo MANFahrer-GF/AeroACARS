@@ -567,156 +567,180 @@ fn winkelabstand_grad(a: f64, b: f64) -> f64 {
 /// Anlage, nicht umgekehrt) faelschlich zuzuschlagen.
 const KURS_BESTAETIGUNG_TOLERANZ_GRAD: f64 = 8.0;
 
-/// Ob ein `START`-Datensatz eine Bahnschwelle meint (nicht Wasser/
-/// Helipad/Track) UND zu genau dieser Bahnrichtung gehoert.
-fn start_passt_zur_bahn(s: &StartRoh, nummer: i32, designator: i32) -> bool {
-    s.typ == START_TYPE_RUNWAY && s.nummer == nummer && s.designator == designator
+/// Grosskreis-Distanz zwischen zwei Punkten, in Metern. Fuer die
+/// START-Plausibilitaetsprobe (siehe `start_paar_ist_plausibel`) — nicht
+/// mit dem gleichnamigen Test-Helfer in `mod tests` zu verwechseln,
+/// der unabhaengig davon existiert.
+fn distanz_m(a: (f64, f64), b: (f64, f64)) -> f64 {
+    const R: f64 = 6_371_000.0;
+    let (p1, p2) = (a.0.to_radians(), b.0.to_radians());
+    let dp = p2 - p1;
+    let dl = (b.1 - a.1).to_radians();
+    let h = (dp / 2.0).sin().powi(2) + p1.cos() * p2.cos() * (dl / 2.0).sin().powi(2);
+    2.0 * R * h.sqrt().asin()
+}
+
+/// Wie weit die gemessene START-zu-START-Distanz von der gemeldeten
+/// Bahnlaenge abweichen darf.
+///
+/// # Warum ueberhaupt eine Toleranz noetig ist
+///
+/// `START` ist laut SDK-Doku eine Spawn-Position, keine vermessene
+/// Schwelle — Szenerie-Autoren koennen sie im Scenery Editor frei
+/// verschieben (`docs.flightsimulator.com`, Abschnitt Runway Objects,
+/// "Runway Start"). Eine Bahnschwelle, die den Piloten dort absetzt,
+/// wo er wirklich losrollt, muss nicht exakt auf der Malerei stehen.
+/// 25 % der Laenge (mit 200 m Bodensatz fuer kurze Bahnen) laesst
+/// realistische Autoren-Verschiebungen zu, verwirft aber einen
+/// START, der zu einer VOELLIG anderen Bahn/Achse gehoert.
+fn start_paar_ist_plausibel(distanz_m: f64, laenge_m: f64) -> bool {
+    if !distanz_m.is_finite() || !laenge_m.is_finite() || laenge_m <= 0.0 {
+        return false;
+    }
+    (distanz_m - laenge_m).abs() <= (laenge_m * 0.25).max(200.0)
+}
+
+/// Genau EINEN `START`-Datensatz fuer `(nummer, designator)` mit
+/// `TYPE=RUNWAY` und einer plausiblen (nicht `(0,0)`, nicht NaN)
+/// Koordinate finden. `None` bei keinem ODER bei mehreren
+/// widerspruechlichen Treffern — dieselbe Regel wie beim Navigraph-
+/// Gegenschwellen-Abgleich im Hauptprogramm (`runway.rs`, „bei
+/// widerspruechlichen Angaben gibt es hier gar nichts").
+fn eindeutiges_start(starts: &[StartRoh], nummer: i32, designator: i32) -> Option<&StartRoh> {
+    let mut treffer = starts.iter().filter(|s| {
+        s.typ == START_TYPE_RUNWAY
+            && s.nummer == nummer
+            && s.designator == designator
+            && s.lat.is_finite()
+            && s.lon.is_finite()
+            && (s.lat, s.lon) != (0.0, 0.0)
+    });
+    let erster = treffer.next()?;
+    if treffer.any(|s| (s.lat, s.lon) != (erster.lat, erster.lon)) {
+        return None;
+    }
+    Some(erster)
 }
 
 /// Versucht, den wahren Kurs EINES Bahnendes unabhaengig von `HEADING`
-/// zu bestaetigen — zuerst geometrisch aus zwei echten `START`-
-/// Koordinaten, sonst per MAGVAR-Kreuzprobe gegen die gemalte
+/// zu bestaetigen — zuerst geometrisch aus zwei echten, plausiblen
+/// `START`-Koordinaten, sonst per MAGVAR-Kreuzprobe gegen die gemalte
 /// Bahnnummer. Liefert `None`, wenn keins von beidem eindeutig war.
 ///
 /// # Warum START vor MAGVAR
 ///
 /// Zwei echte Koordinaten sind eine MESSUNG — unabhaengig davon, ob
-/// `HEADING` wahr oder missweisend ist, und unabhaengig vom
-/// (unsicheren) Vorzeichen von `MAGVAR`. Die MAGVAR-Kreuzprobe bleibt
-/// der Rueckfall fuer Bahnen ohne (oder ohne passende) `START`-Saetze.
+/// `HEADING` wahr oder missweisend ist. Die MAGVAR-Kreuzprobe bleibt
+/// der Rueckfall fuer Bahnen ohne (oder ohne plausible) `START`-Saetze.
 ///
-/// # Warum die MAGVAR-Kreuzprobe OHNE bekanntes Vorzeichen auskommt
+/// # Das MAGVAR-Vorzeichen
 ///
-/// Wir muessen nicht wissen, ob SimConnect `MAGVAR` in der
-/// Standardkonvention (Ost positiv) oder umgekehrt liefert, um zu
-/// PRUEFEN, ob `HEADING` wahr oder missweisend ist:
+/// SimConnect/MSFS fuehrt `MAGVAR` NICHT in der ueblichen Luftfahrt-
+/// Konvention (Ost positiv), sondern umgekehrt: **West positiv, Ost
+/// negativ** (unabhaengig verifiziert an MYNN/Nassau — reale
+/// Missweisung 8° WEST, MSFS-eigenes Beispiel in der SDK-Doku zeigt
+/// dafuer `magvar="6.000000"`, also einen POSITIVEN Wert; ebenso die
+/// FSDeveloper-„Magdec BGL"-Referenz). Damit gilt, in MSFS-eigenem
+/// Vorzeichen: **wahrer Kurs = missweisender Kurs − MAGVAR.**
 ///
-/// * Ist `HEADING` bereits MISSWEISEND, muss es OHNE jede Korrektur
-///   nahe an der gemalten (missweisenden) Nummer liegen — diese Probe
-///   braucht `MAGVAR` gar nicht.
-/// * Ist `HEADING` bereits WAHR, muss `HEADING` minus ODER plus
-///   `MAGVAR` (je nach Vorzeichenkonvention) nahe an der Nummer liegen
-///   — hier wird EINFACH BEIDES probiert und die naehere Variante
-///   genommen, wenn sie eindeutig genug ist.
-///
-/// Nur wenn keine der drei Varianten eindeutig auf die Nummer trifft,
-/// bleibt der Kurs unbestaetigt — das ist der sichere Normalfall.
+/// Ohne `MAGVAR` gibt es KEINE Bestaetigung ueber diesen Weg — ein
+/// `HEADING`, das zufaellig nahe der gemalten Nummer liegt, beweist
+/// nicht, dass es missweisend UND vollstaendig ist; ohne `MAGVAR`
+/// laesst sich daraus kein wahrer Kurs herleiten (fruehere Fassung
+/// hatte das faelschlich als "bestaetigt" gemeldet — externe QS,
+/// 06.09.2026).
 fn bestaetige_kurs_eines_endes(
     kurs_grad: f64,
     magvar: Option<f32>,
-    nummer: i32,
-    designator: i32,
-    gegen_nummer: i32,
-    gegen_designator: i32,
+    (nummer, designator): (i32, i32),
+    (gegen_nummer, gegen_designator): (i32, i32),
+    laenge_m: f64,
     starts: &[StartRoh],
 ) -> (Option<f64>, sim_core::szenerie::KursQuelle) {
     use sim_core::szenerie::KursQuelle;
 
-    // Weg 1: zwei echte START-Koordinaten (diese Bahnrichtung UND die
-    // Gegenrichtung) — eine Messung, kein Kurs-Vorzeichen-Raten noetig.
-    if let Some(eigener) = starts
-        .iter()
-        .find(|s| start_passt_zur_bahn(s, nummer, designator))
-    {
-        if let Some(gegen) = starts
-            .iter()
-            .find(|s| start_passt_zur_bahn(s, gegen_nummer, gegen_designator))
-        {
+    // Weg 1: zwei echte, eindeutige START-Koordinaten (diese
+    // Bahnrichtung UND die Gegenrichtung), deren Abstand plausibel zur
+    // gemeldeten Bahnlaenge passt.
+    if let (Some(eigener), Some(gegen)) = (
+        eindeutiges_start(starts, nummer, designator),
+        eindeutiges_start(starts, gegen_nummer, gegen_designator),
+    ) {
+        let d = distanz_m((eigener.lat, eigener.lon), (gegen.lat, gegen.lon));
+        if start_paar_ist_plausibel(d, laenge_m) {
             let kurs = peilung_grad((eigener.lat, eigener.lon), (gegen.lat, gegen.lon));
             return (Some(kurs), KursQuelle::MsfsStartBestaetigt);
         }
     }
 
-    // Weg 2: MAGVAR-Kreuzprobe gegen die gemalte Nummer (Vorzeichen-
-    // unabhaengig, siehe Doku oben).
+    // Weg 2: MAGVAR-Kreuzprobe gegen die gemalte Nummer. Ohne MAGVAR
+    // keine Bestaetigung (siehe Doku oben).
+    let Some(magvar) = magvar else {
+        return (None, KursQuelle::Unbestaetigt);
+    };
+    let magvar = magvar as f64;
     let bahn_nummer_grad = (nummer as f64) * 10.0;
-    let direkt = winkelabstand_grad(kurs_grad, bahn_nummer_grad);
-    if let Some(magvar) = magvar {
-        let magvar = magvar as f64;
-        let ueber_minus = winkelabstand_grad(kurs_grad - magvar, bahn_nummer_grad);
-        let ueber_plus = winkelabstand_grad(kurs_grad + magvar, bahn_nummer_grad);
-        // `direkt` klein => HEADING ist schon missweisend, keine
-        // Korrektur noetig, der wahre Kurs ist `kurs_grad + magvar` ODER
-        // `kurs_grad - magvar` — welches davon stimmt, sagt und braucht
-        // diese Probe NICHT: der schon gemessene `kurs_grad` (missweisend)
-        // ist fuer die Bahnzeichnung ohnehin falsch, `achse_belastbar`
-        // bleibt unberuehrt (Schattenmodus) — hier geht es nur um EINE
-        // klare Bestaetigung, die spaeter ausgewertet werden kann. Da wir
-        // aber tatsaechlich einen KANDIDATEN fuer den wahren Kurs liefern
-        // wollen, brauchen wir hier doch das richtige Vorzeichen — siehe
-        // unten.
-        if direkt <= KURS_BESTAETIGUNG_TOLERANZ_GRAD
-            && direkt < ueber_minus
-            && direkt < ueber_plus
-        {
-            // HEADING ist bereits missweisend. Der wahre Kurs ist
-            // `kurs_grad` PLUS die Missweisung in der Konvention, in der
-            // `direkt` (ohne jede Korrektur) am naechsten an der Nummer
-            // lag — das ist per Definition `kurs_grad` selbst nur dann
-            // korrekt, wenn `MAGVAR` bei DIESEM Platz nahe 0 liegt. Fuer
-            // den allgemeinen Fall bleibt der Kandidat deshalb bewusst
-            // unentschieden zwischen beiden Vorzeichen: wir melden das
-            // GEMESSENE `kurs_grad` nicht als "wahr", sondern nehmen die
-            // Variante, die von den beiden Korrekturkandidaten die
-            // gemalte Nummer trifft.
-            if ueber_minus <= ueber_plus {
-                return (Some(kurs_grad - magvar), KursQuelle::MsfsMagvarBestaetigt);
-            }
-            return (Some(kurs_grad + magvar), KursQuelle::MsfsMagvarBestaetigt);
-        }
-        // `direkt` NICHT klein: pruefen, ob HEADING schon wahr ist —
-        // dann muss GENAU EINE der beiden Korrekturrichtungen nahe an
-        // der Nummer liegen, und zwar eindeutig naeher als die andere.
-        let eindeutig_minus = ueber_minus <= KURS_BESTAETIGUNG_TOLERANZ_GRAD
-            && ueber_minus + 2.0 < ueber_plus;
-        let eindeutig_plus =
-            ueber_plus <= KURS_BESTAETIGUNG_TOLERANZ_GRAD && ueber_plus + 2.0 < ueber_minus;
-        if eindeutig_minus || eindeutig_plus {
-            // HEADING war schon wahr — direkt uebernehmbar, keine
-            // Korrektur noetig.
-            return (Some(kurs_grad), KursQuelle::MsfsMagvarBestaetigt);
-        }
-    } else if direkt <= KURS_BESTAETIGUNG_TOLERANZ_GRAD {
-        // Keine MAGVAR bekannt, aber HEADING trifft die Nummer direkt —
-        // an Plaetzen mit MAGVAR nahe 0 reicht das allein.
+    // Hypothese A: `kurs_grad` ist schon missweisend — muss direkt an
+    // der Nummer liegen, wahrer Kurs = kurs_grad − MAGVAR.
+    let a_direkt = winkelabstand_grad(kurs_grad, bahn_nummer_grad);
+    // Hypothese B: `kurs_grad` ist schon wahr — die daraus folgende
+    // missweisende Zahl (kurs_grad + MAGVAR) muss an der Nummer liegen.
+    let b_missweisend = winkelabstand_grad(kurs_grad + magvar, bahn_nummer_grad);
+    let a_trifft = a_direkt <= KURS_BESTAETIGUNG_TOLERANZ_GRAD;
+    let b_trifft = b_missweisend <= KURS_BESTAETIGUNG_TOLERANZ_GRAD;
+    // Bei kleinem MAGVAR liegen oft BEIDE Hypothesen innerhalb der
+    // Toleranz (z.B. EDDF-Groessenordnung: 0,2° gegen 1,8°) — das ist
+    // KEIN Widerspruch, sondern erwartbar. Entscheidend ist nicht, ob
+    // eine Hypothese die Toleranz einhaelt, sondern ob sie der anderen
+    // klar (mit Marge) ueberlegen ist.
+    const EINDEUTIGKEITS_MARGE_GRAD: f64 = 1.0;
+    if a_trifft && (!b_trifft || a_direkt + EINDEUTIGKEITS_MARGE_GRAD <= b_missweisend) {
+        return (Some(kurs_grad - magvar), KursQuelle::MsfsMagvarBestaetigt);
+    }
+    if b_trifft && (!a_trifft || b_missweisend + EINDEUTIGKEITS_MARGE_GRAD <= a_direkt) {
         return (Some(kurs_grad), KursQuelle::MsfsMagvarBestaetigt);
     }
-
+    // Weder eindeutig noch ueberhaupt eine Hypothese trifft: keine
+    // Bestaetigung.
     (None, KursQuelle::Unbestaetigt)
 }
 
-/// Bestaetigt den Kurs beider Enden eines Bahnpaars — Schattenmodus,
+/// Bestaetigt den Kurs beider Enden JEDES Bahnpaars — Schattenmodus,
 /// veraendert `kurs_grad` NICHT, nur `kurs_bestaetigt_grad`/`kurs_quelle`.
 ///
 /// Aufgerufen NACH `Szeneriesammler::fertig()`, nicht aus `bahn_paar`
 /// heraus: `bahn_paar` bleibt dadurch unveraendert und weiter fuer sich
 /// pruefbar; die Bestaetigung braucht ohnehin Daten (`starts`, `magvar`),
 /// die erst auf Ebene der ganzen Lieferung vorliegen, nicht pro Bahn.
+///
+/// ⚠ `bahnen` enthaelt ALLE Bahnpaare eines Flughafens hintereinander
+/// (`Szeneriesammler::bahnsatz` haengt bei jedem lesbaren Bahnsatz genau
+/// zwei Elemente an) — ein Flughafen mit mehreren Bahnen wie EDDF hat
+/// hier mehr als zwei Eintraege. Verarbeitet wird deshalb in Zweier-
+/// Bloecken, nicht als Ganzes (externe QS, 06.09.2026: ein `bahnen.len()
+/// != 2`-Riegel hatte jeden Mehrbahn-Flughafen komplett uebersprungen).
 pub fn bestaetige_kurse(bahnen: &mut [SzenerieBahn], starts: &[StartRoh], magvar: Option<f32>) {
-    // `bahn_paar` liefert immer genau zwei Enden, jedes die Gegenrichtung
-    // des anderen — kein Suchen noetig, nur die Indizes tauschen.
-    if bahnen.len() != 2 {
-        return;
-    }
-    for (i, gegen_i) in [(0usize, 1usize), (1, 0)] {
-        let Some((nummer, designator)) = zerlege_bezeichner(&bahnen[i].bezeichner) else {
-            continue;
-        };
-        let Some((gegen_nummer, gegen_designator)) = zerlege_bezeichner(&bahnen[gegen_i].bezeichner)
-        else {
-            continue;
-        };
-        let (bestaetigt, quelle) = bestaetige_kurs_eines_endes(
-            bahnen[i].kurs_grad,
-            magvar,
-            nummer,
-            designator,
-            gegen_nummer,
-            gegen_designator,
-            starts,
-        );
-        bahnen[i].kurs_bestaetigt_grad = bestaetigt;
-        bahnen[i].kurs_quelle = quelle;
+    for paar in bahnen.chunks_mut(2) {
+        let [a, b] = paar else { continue };
+        for i in [0usize, 1] {
+            let (this, gegen) = if i == 0 { (&mut *a, &*b) } else { (&mut *b, &*a) };
+            let Some(eigen) = zerlege_bezeichner(&this.bezeichner) else {
+                continue;
+            };
+            let Some(gegen_kennung) = zerlege_bezeichner(&gegen.bezeichner) else {
+                continue;
+            };
+            let (bestaetigt, quelle) = bestaetige_kurs_eines_endes(
+                this.kurs_grad,
+                magvar,
+                eigen,
+                gegen_kennung,
+                this.laenge_m,
+                starts,
+            );
+            this.kurs_bestaetigt_grad = bestaetigt;
+            this.kurs_quelle = quelle;
+        }
     }
 }
 
@@ -1492,7 +1516,9 @@ mod tests {
         // Zwei echte Bahnschwellen (LEMD 32L/14R) als STARTs — der
         // Kurs wird geometrisch bestaetigt, ganz gleich was `HEADING`
         // im Bahnsatz sagt (hier absichtlich ein falscher Platzhalter,
-        // 360.0 — siehe die Navigraph-Platzhalter-Falle).
+        // 360.0 — siehe die Navigraph-Platzhalter-Falle). Gemessene
+        // Distanz ~3060 m, gemeldete Bahnlaenge 3988 m — im Rahmen der
+        // START-Verschiebungstoleranz (siehe `start_paar_ist_plausibel`).
         let starts = vec![
             StartRoh {
                 lat: 40.463_083_33,
@@ -1512,7 +1538,7 @@ mod tests {
             },
         ];
         let (kurs, quelle) =
-            bestaetige_kurs_eines_endes(360.0, None, 32, 1, 14, 2, &starts);
+            bestaetige_kurs_eines_endes(360.0, None, (32, 1), (14, 2), 3988.0, &starts);
         assert_eq!(quelle, sim_core::szenerie::KursQuelle::MsfsStartBestaetigt);
         assert!((kurs.expect("bestaetigt") - 322.32).abs() < 0.1);
     }
@@ -1540,7 +1566,55 @@ mod tests {
                 typ: 3, // HELIPAD
             },
         ];
-        let (kurs, quelle) = bestaetige_kurs_eines_endes(360.0, None, 32, 1, 14, 2, &starts);
+        let (kurs, quelle) =
+            bestaetige_kurs_eines_endes(360.0, None, (32, 1), (14, 2), 3988.0, &starts);
+        assert_eq!(kurs, None);
+        assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
+    }
+
+    #[test]
+    fn start_paar_mit_unplausibler_distanz_bestaetigt_nicht() {
+        // Dieselbe Bahnnummer, aber ein START, der viel zu weit von der
+        // Gegenrichtung entfernt liegt (z.B. Zahlendreher/andere Bahn
+        // aus derselben Szenerie) — die gemeldete Laenge (3988 m) und die
+        // gemessene Distanz (~50 km) passen nicht zusammen, keine
+        // Bestaetigung ueber diesen Weg.
+        let starts = vec![
+            StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
+            StartRoh { lat: 40.9, lon: -3.576_011_11, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
+        ];
+        let (kurs, quelle) =
+            bestaetige_kurs_eines_endes(360.0, None, (32, 1), (14, 2), 3988.0, &starts);
+        assert_eq!(kurs, None);
+        assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
+    }
+
+    #[test]
+    fn start_mit_platzhalter_koordinate_bestaetigt_nicht() {
+        // `(0, 0)` ist der klassische "Feld nicht gesetzt"-Platzhalter,
+        // kein echter Punkt vor der westafrikanischen Kueste — ein
+        // START darauf darf nie eine Bahnachse bestaetigen.
+        let starts = vec![
+            StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
+            StartRoh { lat: 0.0, lon: 0.0, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
+        ];
+        let (kurs, quelle) =
+            bestaetige_kurs_eines_endes(360.0, None, (32, 1), (14, 2), 3988.0, &starts);
+        assert_eq!(kurs, None);
+        assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
+    }
+
+    #[test]
+    fn widerspruechliche_start_treffer_bestaetigen_nicht() {
+        // Zwei STARTs mit derselben Nummer/Kennung, aber an
+        // unterschiedlichen Koordinaten — mehrdeutig, keine Bestaetigung.
+        let starts = vec![
+            StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
+            StartRoh { lat: 40.463_5, lon: -3.554_0, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
+            StartRoh { lat: 40.484_861_11, lon: -3.576_011_11, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
+        ];
+        let (kurs, quelle) =
+            bestaetige_kurs_eines_endes(360.0, None, (32, 1), (14, 2), 3988.0, &starts);
         assert_eq!(kurs, None);
         assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
     }
@@ -1556,8 +1630,10 @@ mod tests {
             StartRoh { lat: 50.0000, lon: 8.0, heading_grad: 0.0, nummer: 7, designator: 2, typ: START_TYPE_RUNWAY }, // 07R
             StartRoh { lat: 50.0000, lon: 8.02, heading_grad: 0.0, nummer: 25, designator: 2, typ: START_TYPE_RUNWAY }, // 25R
         ];
-        let (kurs_l, quelle_l) = bestaetige_kurs_eines_endes(90.0, None, 7, 1, 25, 1, &starts);
-        let (kurs_r, quelle_r) = bestaetige_kurs_eines_endes(90.0, None, 7, 2, 25, 2, &starts);
+        let (kurs_l, quelle_l) =
+            bestaetige_kurs_eines_endes(90.0, None, (7, 1), (25, 1), 1429.0, &starts);
+        let (kurs_r, quelle_r) =
+            bestaetige_kurs_eines_endes(90.0, None, (7, 2), (25, 2), 1429.0, &starts);
         assert_eq!(quelle_l, sim_core::szenerie::KursQuelle::MsfsStartBestaetigt);
         assert_eq!(quelle_r, sim_core::szenerie::KursQuelle::MsfsStartBestaetigt);
         // Beide Achsen sind (fast) Ost-West, aber aus VERSCHIEDENEN
@@ -1568,31 +1644,35 @@ mod tests {
 
     #[test]
     fn kleine_missweisung_heading_schon_missweisend_eddf_groessenordnung() {
-        // Groessenordnung wie Frankfurt/EDDF (~+2° Ost) — nicht als
+        // Groessenordnung wie Frankfurt/EDDF (~2° OST) — nicht als
         // exakter tagesaktueller Wert behauptet, nur als realistische
-        // Groessenordnung fuer eine KLEINE Missweisung. Bahn 07: gemalte
-        // Nummer 70°. HEADING liefert bereits die missweisende Zahl
-        // (70,2°, nahe an 70) — die direkte Probe (Weg 2, `direkt` klein)
-        // muss zuschlagen, ohne dass das Vorzeichen von MAGVAR eine
-        // Rolle spielt.
+        // Groessenordnung fuer eine KLEINE Missweisung. In MSFS-eigenem
+        // Vorzeichen (West positiv, Ost negativ) ist das MAGVAR = -2.0.
+        // Bahn 07: gemalte Nummer 70°. HEADING liefert bereits die
+        // missweisende Zahl (70,2°, nahe an 70) — Hypothese A (schon
+        // missweisend) muss eindeutig gewinnen.
         let (kurs, quelle) =
-            bestaetige_kurs_eines_endes(70.2, Some(2.0), 7, 0, 25, 0, &[]);
+            bestaetige_kurs_eines_endes(70.2, Some(-2.0), (7, 0), (25, 0), 0.0, &[]);
         assert_eq!(quelle, sim_core::szenerie::KursQuelle::MsfsMagvarBestaetigt);
-        assert!(kurs.is_some());
+        assert!(
+            (kurs.expect("bestaetigt") - (70.2 - (-2.0f64))).abs() < 1e-9,
+            "wahr = missweisend - MAGVAR, war {kurs:?}"
+        );
     }
 
     #[test]
     fn grosse_missweisung_heading_schon_wahr_queensland_groessenordnung() {
-        // Groessenordnung wie im australischen Queensland (~+11° Ost) —
+        // Groessenordnung wie im australischen Queensland (~11° OST) —
         // wieder keine behauptete exakte Tageszahl, nur eine realistische
-        // GROSSE Missweisung, um den Gegenfall zu EDDF zu pruefen. Bahn
-        // 05: gemalte (magnetische) Nummer 50°. HEADING liefert hier
-        // BEREITS den WAHREN Kurs (61° = 50° + 11°) — die direkte Probe
+        // GROSSE Missweisung, um den Gegenfall zu EDDF zu pruefen. In
+        // MSFS-eigenem Vorzeichen ist das MAGVAR = -11.0. Bahn 05:
+        // gemalte (magnetische) Nummer 50°. HEADING liefert hier BEREITS
+        // den WAHREN Kurs (61° = 50° + 11° Ost-Missweisung) — Hypothese A
         // (`direkt` = 11°) darf NICHT zuschlagen (ueber der Toleranz),
-        // aber `kurs_grad - magvar` (61 - 11 = 50) muss eindeutig auf die
-        // Nummer treffen.
+        // aber Hypothese B (kurs_grad + magvar = 61 − 11 = 50) muss
+        // eindeutig auf die Nummer treffen.
         let (kurs, quelle) =
-            bestaetige_kurs_eines_endes(61.0, Some(11.0), 5, 0, 23, 0, &[]);
+            bestaetige_kurs_eines_endes(61.0, Some(-11.0), (5, 0), (23, 0), 0.0, &[]);
         assert_eq!(quelle, sim_core::szenerie::KursQuelle::MsfsMagvarBestaetigt);
         assert!(
             (kurs.expect("bestaetigt") - 61.0).abs() < 1e-9,
@@ -1602,29 +1682,31 @@ mod tests {
 
     #[test]
     fn widerspruechliche_heading_ohne_start_bleibt_unbestaetigt() {
-        // Weder die direkte Probe noch eine der beiden MAGVAR-Richtungen
-        // trifft die Nummer — HEADING ist vermutlich Muell (z.B. der
-        // Navigraph-360°-Platzhalter faelschlich uebernommen). Ohne
-        // STARTs bleibt der Kurs unbestaetigt, `kurs_grad` unangetastet.
+        // Weder Hypothese A noch B trifft die Nummer — HEADING ist
+        // vermutlich Muell (z.B. der Navigraph-360°-Platzhalter
+        // faelschlich uebernommen). Ohne STARTs bleibt der Kurs
+        // unbestaetigt, `kurs_grad` unangetastet.
         let (kurs, quelle) =
-            bestaetige_kurs_eines_endes(180.0, Some(2.0), 7, 0, 25, 0, &[]);
+            bestaetige_kurs_eines_endes(180.0, Some(-2.0), (7, 0), (25, 0), 0.0, &[]);
         assert_eq!(kurs, None);
         assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
     }
 
     #[test]
-    fn keine_magvar_aber_heading_trifft_direkt() {
-        // MAGVAR fehlt (z.B. Feld nicht lesbar), aber HEADING liegt
-        // schon nah an der Nummer — an Plaetzen mit Missweisung nahe 0
-        // reicht das.
-        let (kurs, quelle) = bestaetige_kurs_eines_endes(90.5, None, 9, 0, 27, 0, &[]);
-        assert_eq!(quelle, sim_core::szenerie::KursQuelle::MsfsMagvarBestaetigt);
-        assert!(kurs.is_some());
+    fn ohne_magvar_bleibt_selbst_ein_direkter_treffer_unbestaetigt() {
+        // Externe QS 06.09.2026 (P1): ohne MAGVAR laesst sich aus
+        // `HEADING` allein NICHT herleiten, ob es schon missweisend
+        // UND vollstaendig ist — ein zufaellig naher Treffer beweist das
+        // nicht. Der fruehere Fallback, der das als "bestaetigt (wahr)"
+        // gemeldet hat, war schlicht falsch und ist entfernt.
+        let (kurs, quelle) = bestaetige_kurs_eines_endes(90.5, None, (9, 0), (27, 0), 0.0, &[]);
+        assert_eq!(kurs, None);
+        assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
     }
 
     #[test]
     fn ohne_magvar_und_ohne_direkten_treffer_bleibt_unbestaetigt() {
-        let (kurs, quelle) = bestaetige_kurs_eines_endes(200.0, None, 9, 0, 27, 0, &[]);
+        let (kurs, quelle) = bestaetige_kurs_eines_endes(200.0, None, (9, 0), (27, 0), 0.0, &[]);
         assert_eq!(kurs, None);
         assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
     }
@@ -1696,6 +1778,69 @@ mod tests {
             assert_eq!(b.kurs_bestaetigt_grad, None);
             assert_eq!(b.kurs_quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
         }
+    }
+
+    #[test]
+    fn bestaetige_kurse_verarbeitet_mehrere_bahnpaare_eines_flughafens() {
+        // Externe QS 06.09.2026 (P1 #1): EDDF hat mehrere Bahnpaare in
+        // EINER Lieferung (`bahnen` ist die Verkettung ALLER Paare, siehe
+        // `Szeneriesammler::bahnsatz`/`fertig`) — ein frueherer
+        // `bahnen.len() != 2`-Riegel hatte solche Flughaefen komplett
+        // uebersprungen. Zwei unabhaengige Paare, nur das erste bekommt
+        // passende STARTs — das zweite darf dadurch nicht mitbestaetigt
+        // werden (falsche Zuordnung), muss aber auch nicht wegen der
+        // Laenge des Gesamt-Vecs ignoriert werden.
+        let bahn_a = bahn_paar(
+            (40.474, -3.565),
+            322.32,
+            3988.0,
+            60.0,
+            1,
+            (32, 1, 928.0),
+            (14, 2, 0.0),
+        );
+        let bahn_b = bahn_paar((40.5, -3.6), 70.0, 3000.0, 45.0, 1, (7, 0, 0.0), (25, 0, 0.0));
+        let mut bahnen = Vec::new();
+        bahnen.extend(bahn_a);
+        bahnen.extend(bahn_b);
+        let starts = vec![
+            StartRoh {
+                lat: 40.463_083_33,
+                lon: -3.553_894_44,
+                heading_grad: 0.0,
+                nummer: 32,
+                designator: 1,
+                typ: START_TYPE_RUNWAY,
+            },
+            StartRoh {
+                lat: 40.484_861_11,
+                lon: -3.576_011_11,
+                heading_grad: 0.0,
+                nummer: 14,
+                designator: 2,
+                typ: START_TYPE_RUNWAY,
+            },
+        ];
+        assert_eq!(bahnen.len(), 4);
+        bestaetige_kurse(&mut bahnen, &starts, None);
+        assert_eq!(
+            bahnen[0].kurs_quelle,
+            sim_core::szenerie::KursQuelle::MsfsStartBestaetigt,
+            "erstes Paar hat passende STARTs, muss bestaetigt werden"
+        );
+        assert_eq!(
+            bahnen[1].kurs_quelle,
+            sim_core::szenerie::KursQuelle::MsfsStartBestaetigt
+        );
+        assert_eq!(
+            bahnen[2].kurs_quelle,
+            sim_core::szenerie::KursQuelle::Unbestaetigt,
+            "zweites Paar hat weder STARTs noch MAGVAR, muss unbestaetigt bleiben"
+        );
+        assert_eq!(
+            bahnen[3].kurs_quelle,
+            sim_core::szenerie::KursQuelle::Unbestaetigt
+        );
     }
 
     #[test]
