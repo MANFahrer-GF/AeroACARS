@@ -20758,18 +20758,22 @@ fn resolve_flight_ident(flight_number: &str, callsign: Option<&str>) -> String {
 }
 
 /// v1.6.8 — der Versatz der Lande-Schwelle, wie ihn Anzeige UND Bewertung
-/// brauchen: der echte, egal ob er im Zahlenfeld oder in der Geometrie steht.
+/// brauchen: der gemeldete Wert aus Navigraph/OurAirports.
 ///
-/// v1.7.18: `RunwayMatch::geometry_implied_displaced_threshold_ft` ersetzt
-/// den fruehren OurAirports-Rateversuch (`geometry_hidden_displacement_ft`)
-/// durch eine reine Navigraph-Selbstprobe (siehe deren Doku in
-/// `runway.rs` fuer die Vorgeschichte und Fehlerquote). Das Maximum aus
-/// beiden Quellen ist weiterhin der richtige Wert: befuellt das Feld ihn
-/// nicht, aber die Geometrie zeigt ihn, gilt die Geometrie — und
-/// umgekehrt.
+/// v1.7.18-QS1: NICHT mehr das Maximum aus Feld und Geometrie. Ein erster
+/// Entwurf hat `m.displaced_threshold_ft.max(m.geometry_implied_displaced_
+/// threshold_ft)` gerechnet, um einen Versatz zurueckzuholen, den nur die
+/// Geometrie zeigt (Feld = 0). Eine QS-Runde hat das an 33.390 Bahnen OHNE
+/// gemeldeten Versatz nachgerechnet: bei 1.187 (3,6 %) erfindet reines
+/// Koordinatenrauschen einen Versatz, den es nicht gibt — teils über
+/// 500 m (LETO 22, OYSH 36), an echten Flughaefen wie OLBA oder LROP
+/// zwischen 20 und 30 m. Das MAX haette diesen Rateversatz ungeprueft in
+/// die nutzbare Laenge und die Anzeige uebernommen. Der Ertrag (ein
+/// theoretischer "Feld=0, aber schon versetzt"-Fall, siehe `runway.rs`)
+/// ist in keiner realen Bahn nachgewiesen — das Risiko war real, der
+/// Nutzen nicht. Deshalb zaehlt nur noch das gemeldete Feld.
 fn effective_displaced_threshold_ft(m: &runway::RunwayMatch) -> i32 {
     m.displaced_threshold_ft
-        .max(m.geometry_implied_displaced_threshold_ft)
 }
 
 /// v1.6.8-QS4 — der Anteil des Versatzes, der NOCH NICHT im
@@ -20781,16 +20785,45 @@ fn effective_displaced_threshold_ft(m: &runway::RunwayMatch) -> i32 {
 /// die Distanz bereits ab der Lande-Schwelle — ein Abzug waere ein
 /// zweiter.
 ///
-/// v1.7.18: `RunwayMatch::geometry_implied_displaced_threshold_ft` sagt
-/// direkt, wie viel Versatz die Geometrie selbst schon zeigt (reine
-/// Navigraph-Selbstprobe, siehe deren Doku in `runway.rs` fuer die
-/// Vorgeschichte: der Vorgaenger hier hat dieselbe Frage ueber die
-/// eingebettete OurAirports-Tabelle geraten und lag bei 66 % der Bahnen
-/// mit echtem Versatz falsch, weil OurAirports fuer dieses Feld meist
-/// keinen brauchbaren Wert hat). Nur der Anteil des Feldes, den die
-/// Geometrie NICHT schon erklaert, darf noch abgezogen werden.
+/// v1.7.18: `RunwayMatch::geometry_implied_displaced_threshold_ft` sagt,
+/// wie viel Versatz die Geometrie selbst zeigt (reine Navigraph-
+/// Selbstprobe, siehe deren Doku in `runway.rs` fuer die Vorgeschichte:
+/// der Vorgaenger hier hat dieselbe Frage ueber die eingebettete
+/// OurAirports-Tabelle geraten und lag bei 66 % der Bahnen mit echtem
+/// Versatz falsch, weil OurAirports fuer dieses Feld meist keinen
+/// brauchbaren Wert hat).
+///
+/// v1.7.18-QS1: KEIN blosses `(Feld − Geometrie).max(0)` mehr. Der erste
+/// Entwurf hatte genau das gerechnet — und damit einen GEFAEHRLICHEREN
+/// Fehler eingebaut als den, den er beheben sollte: Ueberschaetzt die
+/// Geometrie den gemeldeten Versatz (reines Koordinatenrauschen bei
+/// kleinen/schlecht vermessenen Plaetzen — an 43 von 5.369 Bahnen mit
+/// echtem Versatz um mehr als das Doppelte, Extremfall 4,3-fach), wird
+/// die Differenz negativ, `.max(0)` macht daraus 0 — die Sperrzonen-
+/// Pruefung (`classify_displaced`) waere fuer diese Bahn KOMPLETT UND
+/// STILL abgeschaltet gewesen, obwohl der Versatz nie geometrisch
+/// bestaetigt wurde. Jetzt gilt: nur wenn die Geometrie den gemeldeten
+/// Wert INNERHALB der Toleranz BESTAETIGT (nicht bloss uebertrifft),
+/// gilt er als schon in der Geometrie — sonst wird der volle gemeldete
+/// Wert abgezogen (der sichere Standardfall von vor diesem Umbau).
 fn displacement_not_in_geometry_ft(m: &runway::RunwayMatch) -> i32 {
-    (m.displaced_threshold_ft - m.geometry_implied_displaced_threshold_ft).max(0)
+    /// Dieselbe Toleranz wie `runway::geometry_implied_displacement_ft`
+    /// (dort begruendet: 40-Bahnen-Stichprobe trennt sauber bei
+    /// hoechstens 13,7 m Rauschen gegen mindestens 30,8 m bei echtem,
+    /// aber physischem Versatz).
+    const BESTAETIGUNGS_TOLERANZ_M: f64 = 20.0;
+    const FT_TO_M: f64 = 0.3048;
+
+    if m.displaced_threshold_ft <= 0 {
+        return 0;
+    }
+    let diff_m =
+        (m.geometry_implied_displaced_threshold_ft - m.displaced_threshold_ft) as f64 * FT_TO_M;
+    if diff_m.abs() <= BESTAETIGUNGS_TOLERANZ_M {
+        0
+    } else {
+        m.displaced_threshold_ft
+    }
 }
 
 /// Wire-format displaced-threshold value for a persisted `LandingRunwayMatch`
@@ -55033,15 +55066,24 @@ mod touchdown_metadata_stamp_tests {
         );
     }
 
-    /// v1.6.8-QS4: liefert eine kuenftige Navdaten-Ausgabe BEIDES —
-    /// versetzte Geometrie UND einen Wert im Zahlenfeld — darf der Versatz
-    /// nicht zweimal wirken. Ohne diesen Riegel meldete ein Aufsetzen
-    /// 600 m hinter der Schwelle nur 154 m, die Einstufung des
-    /// Aufsetzpunkts sprang auf „Severe", und alles unterhalb des
-    /// Versatzes galt als Landung vor der Schwelle. Allein durch neue
-    /// Daten, ohne eine Zeile Code-Aenderung.
+    /// v1.6.8-QS4, ueberarbeitet v1.7.18-QS1: bestaetigt die Geometrie den
+    /// gemeldeten Versatz (innerhalb der Toleranz), darf er nicht zweimal
+    /// wirken — ein Aufsetzen 650 m hinter der Schwelle bleibt 650 m,
+    /// unabhaengig davon, ob der Schwellenpunkt selbst schon versetzt ist
+    /// (Feld=0, weil der Versatz in der Geometrie steckt) oder das Feld
+    /// zusaetzlich denselben Wert traegt.
+    ///
+    /// v1.7.18-QS1 hat den ersten Entwurf dieses Tests korrigiert: der
+    /// nahm an, dass `feld_ft=0` weiterhin ~650 m ergeben MUSS, weil die
+    /// Geometrie den Versatz "sowieso zeigt" — das war der Kern eines
+    /// echten Sicherheitsfehlers (siehe `displacement_not_in_geometry_ft`):
+    /// ohne gemeldeten Versatz gibt es nichts zu bestaetigen, und ein
+    /// Feld=0 zieht seither IMMER 0 ab, ganz gleich was die Geometrie
+    /// zeigt. Das ist hier weiterhin richtig (0 gemeldet → 0 abgezogen →
+    /// 650 m bleiben 650 m), nur aus einem anderen Grund als vorher
+    /// angenommen.
     #[test]
-    fn versatz_wirkt_nie_zweimal_egal_was_die_navdaten_liefern() {
+    fn versatz_wirkt_nie_zweimal_wenn_die_geometrie_ihn_bestaetigt() {
         // Schwellenpunkt und Bahnende wie im aktiven Zyklus (echte EDDH-
         // 33/15-Koordinaten): der Versatz steckt in der Geometrie
         // (gemessen 3214,7 m gegen erwartete 3219,9 m bei 1464 ft Feld).
@@ -55050,13 +55092,6 @@ mod touchdown_metadata_stamp_tests {
         const END_LAT: f64 = 53.654411;
         const END_LON: f64 = 9.975211;
         const LENGTH_FT: f32 = 12028.0;
-        // v1.7.18: dieselbe Selbstprobe wie `lookup_runway_in_nav` — sie
-        // liest NUR die Geometrie (Schwelle, Gegenschwelle, Laenge), nie
-        // das Zahlenfeld. Deshalb liefert sie fuer feld=0 UND feld=1464
-        // denselben Wert — genau das ist der Kern dieses Tests: die
-        // Erkennung haengt nicht am Feld, sonst waere sie bei
-        // `feld_ft=0` blind fuer den Versatz, den die Geometrie laengst
-        // zeigt (das im Doc-Kommentar oben beschriebene Zukunftsrisiko).
         let geometrie_versatz_ft = runway::geometry_implied_displacement_ft(
             THRESHOLD_LAT,
             THRESHOLD_LON,
@@ -55090,6 +55125,10 @@ mod touchdown_metadata_stamp_tests {
             displaced_threshold_ft: feld_ft,
             geometry_implied_displaced_threshold_ft: geometrie_versatz_ft,
         };
+        // feld=0: nichts gemeldet, nichts abzuziehen (unabhaengig von der
+        // Geometrie). feld=1464: gemeldet UND von der Geometrie bestaetigt
+        // (Differenz 17 ft = 5,2 m, weit innerhalb der 20-m-Toleranz) —
+        // beide Faelle duerfen die Aufsetzdistanz nicht verschieben.
         for feld in [0, 1464] {
             let mut stats = FlightStats::default();
             stats.runway_match = Some(bahn(feld));
@@ -55109,16 +55148,76 @@ mod touchdown_metadata_stamp_tests {
                 "Feld={feld}: 650 m gegen 400 m Markierung = 250 m zu lang"
             );
         }
-        // Und fuer Anzeige und nutzbare Laenge steht der Versatz trotzdem
-        // zur Verfuegung — auch wenn das Feld schweigt (feld=0 stuetzt
-        // sich hier allein auf die Geometrie).
-        assert_eq!(
-            effective_displaced_threshold_ft(&bahn(0)),
-            geometrie_versatz_ft
+        // Fuer Anzeige/nutzbare Laenge zaehlt nur der gemeldete Wert (siehe
+        // `effective_displaced_threshold_ft`-Doku) — Feld=0 zeigt hier
+        // absichtlich 0, nicht den geometrisch vermuteten Wert.
+        assert_eq!(effective_displaced_threshold_ft(&bahn(0)), 0);
+        assert_eq!(effective_displaced_threshold_ft(&bahn(1464)), 1464);
+    }
+
+    /// v1.7.18-QS1 — der Sicherheitsfehler, den die vorige Fassung dieses
+    /// Tests fast uebersehen haette: Koordinatenrauschen an kleinen/
+    /// schlecht vermessenen Bahnen kann `geometry_implied_displacement_ft`
+    /// weit UEBER den gemeldeten Versatz treiben (nicht nur knapp daneben).
+    /// Ein `(Feld − Geometrie).max(0)`-Ansatz haette daraus 0 gemacht — die
+    /// Sperrzonen-Pruefung waere fuer diese Bahn KOMPLETT UND STILL
+    /// abgeschaltet gewesen, obwohl der Versatz nie bestaetigt wurde.
+    ///
+    /// Reale Bahn aus dem QS-Befund: 25TS Piste 17 (Texas), gemeldeter
+    /// Versatz 685 ft, Geometrie legt (durch Rauschen) 2927 ft nahe — mehr
+    /// als das Vierfache. Die Bestaetigung darf hier NICHT zuschlagen: die
+    /// Differenz (2242 ft = 683 m) liegt weit ausserhalb der 20-m-Toleranz,
+    /// also muss der volle gemeldete Wert (685 ft) abgezogen werden.
+    #[test]
+    fn eine_geometrie_die_den_versatz_weit_uebertrifft_bestaetigt_ihn_nicht() {
+        const THRESHOLD_LAT: f64 = 36.101_111_11;
+        const THRESHOLD_LON: f64 = -102.417_266_67;
+        const END_LAT: f64 = 36.091_316_67;
+        const END_LON: f64 = -102.417_222_22;
+        const LENGTH_FT: f32 = 6500.0;
+        const FELD_FT: i32 = 685;
+        let geometrie_versatz_ft = runway::geometry_implied_displacement_ft(
+            THRESHOLD_LAT,
+            THRESHOLD_LON,
+            END_LAT,
+            END_LON,
+            LENGTH_FT,
+            0,
         );
-        assert_eq!(
-            effective_displaced_threshold_ft(&bahn(1464)),
-            geometrie_versatz_ft.max(1464)
+        assert!(
+            geometrie_versatz_ft > FELD_FT * 2,
+            "dieser Test braucht eine Bahn, deren Geometrie den Versatz \
+             deutlich UEBERSCHAETZT, war {geometrie_versatz_ft} gegen {FELD_FT}"
+        );
+        let m = runway::RunwayMatch {
+            airport_ident: "25TS".to_string(),
+            runway_ident: "17".to_string(),
+            heading_true_deg: 170.0,
+            length_ft: LENGTH_FT,
+            width_ft: 60.0,
+            surface: "ASP".to_string(),
+            threshold_lat: THRESHOLD_LAT,
+            threshold_lon: THRESHOLD_LON,
+            end_lat: END_LAT,
+            end_lon: END_LON,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            // 100 m hinter dem PHYSISCHEN Bahnanfang, also klar VOR der
+            // echten (versetzten) Lande-Schwelle bei 685 ft = 208,8 m.
+            touchdown_distance_from_threshold_ft: 100.0 / 0.3048,
+            side: "CENTER".to_string(),
+            displaced_threshold_ft: FELD_FT,
+            geometry_implied_displaced_threshold_ft: geometrie_versatz_ft,
+        };
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(m);
+        let a = assess_touchdown(&stats);
+        assert!(
+            a.dds.expect("dds").in_pre_threshold_zone,
+            "100 m hinter dem physischen Bahnanfang, aber vor der bei \
+             685 ft versetzten Lande-Schwelle, muss als Sperrzonen-\
+             Verstoss erkannt werden — eine ueberschaetzende Geometrie \
+             darf diese Pruefung nicht stillschweigend abschalten"
         );
     }
 
@@ -55265,16 +55364,23 @@ mod touchdown_metadata_stamp_tests {
         );
     }
 
-    /// v1.6.8: steckt der Versatz in der Geometrie statt im Zahlenfeld
-    /// (DFD-Konvention ab Zyklus 2608), muss der Wire-Wert ihn trotzdem
-    /// melden — sonst zeigt die Kachel die volle Bahn, waehrend die
-    /// Punkte gegen die verkuerzte rechnen.
+    /// v1.7.18-QS1: ein Feld=0 meldet KEINEN Versatz im Wire-Wert, auch
+    /// wenn die Geometrie (durch Koordinatenrauschen) einen nahelegt.
+    ///
+    /// Ersetzt den frueheren Test `..._findet_den_versatz_auch_in_der_
+    /// geometrie`, der das genaue Gegenteil verlangte (Feld=0 → Wire-Wert
+    /// = geometrisch vermuteter Versatz). Eine QS-Runde hat nachgerechnet:
+    /// an 33.390 Bahnen OHNE gemeldeten Versatz erfindet
+    /// `geometry_implied_displacement_ft` bei 3,6 % einen Versatz, den es
+    /// nicht gibt (Rauschen bis ueber 500 m an OYSH/LETO, 20-30 m schon an
+    /// echten Flughaefen wie OLBA/LROP). Die alte Erwartung haette diesen
+    /// Rateversatz ungeprueft in die Kachel ("1818 m von X m") und die
+    /// nutzbare Laenge uebernommen — echte Bahnen ohne jeden Versatz
+    /// haetten plötzlich eine verkuerzte Landebahn gezeigt.
     #[test]
-    fn wire_displaced_threshold_ft_findet_den_versatz_auch_in_der_geometrie() {
-        // EDDH 33 aus den aktiven Navdaten: Bahn 12028 ft, Schwellenpunkt
-        // schon versetzt, Zahlenfeld 0. Die Selbstprobe liest den Versatz
-        // direkt aus der Geometrie (Schwelle→far_end), unabhaengig vom
-        // Feld — siehe `geometry_implied_displacement_ft`.
+    fn wire_displaced_threshold_ft_ignoriert_geometrie_ohne_gemeldeten_versatz() {
+        // Dieselbe EDDH-33-Geometrie wie oben — die Geometrie legt hier
+        // durchaus ~1464 ft nahe, aber das Feld schweigt (0).
         const THRESHOLD_LAT: f64 = 53.628681;
         const THRESHOLD_LON: f64 = 9.997447;
         const END_LAT: f64 = 53.654411;
@@ -55287,6 +55393,11 @@ mod touchdown_metadata_stamp_tests {
             END_LON,
             LENGTH_FT,
             0,
+        );
+        assert!(
+            geometrie_versatz_ft > 0,
+            "dieser Test braucht eine Bahn, deren Geometrie einen Versatz \
+             nahelegt, sonst prueft er nichts"
         );
         let m = runway::RunwayMatch {
             airport_ident: "EDDH".to_string(),
@@ -55308,16 +55419,12 @@ mod touchdown_metadata_stamp_tests {
         };
         assert_eq!(
             wire_displaced_threshold_ft(Some(&m)),
-            Some(geometrie_versatz_ft),
-            "Versatz steckt in der Geometrie und muss trotzdem im Wire-Wert stehen"
-        );
-        assert!(
-            (geometrie_versatz_ft - 1464).abs() <= 20,
-            "erwartet ~1464 ft, war {geometrie_versatz_ft}"
+            Some(0),
+            "Feld=0 muss 0 im Wire-Wert bleiben, auch wenn die Geometrie \
+             (moeglicherweise nur durch Rauschen) einen Versatz nahelegt"
         );
         // Und die Aufsetzdistanz bleibt unangetastet: `assess_touchdown`
-        // zieht weiter das ROHE Feld ab (0), nicht diesen Wert. Sonst
-        // waeren 1000 ft hinter der Schwelle ploetzlich falsch verschoben.
+        // zieht bei Feld=0 nie etwas ab.
         assert_eq!(m.displaced_threshold_ft, 0);
     }
 
