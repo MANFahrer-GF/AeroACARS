@@ -279,11 +279,18 @@ pub struct RunwayMatch {
     /// rechnet aus der GEMESSENEN Distanz Schwelle→Gegenschwelle zurueck,
     /// wie viel Versatz "Laenge minus Gegenschwellen-Versatz minus
     /// gemessene Distanz" ergibt — beide Versaetze aus Navigraph selbst,
-    /// keine dritte Quelle noetig. `displaced_threshold_ft.max(dieses
-    /// Feld)` ist der volle, informative Versatz (fuer die nutzbare
-    /// Laenge); `(displaced_threshold_ft - dieses Feld).max(0)` ist der
-    /// Anteil, der von der Aufsetzdistanz NOCH abgezogen werden muss —
-    /// steckt der volle Versatz schon in der Geometrie, bleibt davon 0.
+    /// keine dritte Quelle noetig.
+    ///
+    /// v1.7.18-QS1/QS2 (`lib.rs`): NICHT als `max`/`(Feld − dieses Feld)
+    /// .max(0)` verwenden — eine QS-Runde hat beide Muster als
+    /// sicherheitsrelevant verworfen (Koordinatenrauschen erfindet sonst
+    /// Versaetze bzw. loescht echte Sperrzonen-Pruefungen). Massgeblich
+    /// sind `effective_displaced_threshold_ft` (nutzbare Laenge: NUR der
+    /// gemeldete Wert, dieses Feld zaehlt dort nicht mit) und
+    /// `displacement_not_in_geometry_ft` (Abzug: nur wenn dieses Feld
+    /// GROESSER 0 ist UND den gemeldeten Wert innerhalb der Toleranz
+    /// bestaetigt — ein Wert von 0 heisst hier IMMER "nichts erkannt",
+    /// nie "Versatz bestaetigt null").
     pub geometry_implied_displaced_threshold_ft: i32,
 }
 

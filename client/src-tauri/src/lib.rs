@@ -20806,6 +20806,16 @@ fn effective_displaced_threshold_ft(m: &runway::RunwayMatch) -> i32 {
 /// Wert INNERHALB der Toleranz BESTAETIGT (nicht bloss uebertrifft),
 /// gilt er als schon in der Geometrie — sonst wird der volle gemeldete
 /// Wert abgezogen (der sichere Standardfall von vor diesem Umbau).
+///
+/// v1.7.18-QS2: `geometry_implied_displaced_threshold_ft == 0` heisst bei
+/// `geometry_implied_displacement_ft` NIE "bestaetigt kein Versatz" —
+/// jeder Ruecksprung dort (ungueltige Eingaben, keine plausible
+/// Gegenschwelle, unplausibel grosser Wert, siehe deren Doku) liefert
+/// ebenfalls 0. Ohne den `> 0`-Riegel unten haette ein KLEINER gemeldeter
+/// Versatz (≤ 65 ft ≈ 20 m) diesen "nichts erkannt"-Nullwert als
+/// Bestaetigung durchgehen lassen — die Distanz zur Toleranz waere
+/// zufaellig klein genug, obwohl die Geometrie ueberhaupt nichts gemessen
+/// hat. Gefangen in einer externen QS-Runde.
 fn displacement_not_in_geometry_ft(m: &runway::RunwayMatch) -> i32 {
     /// Dieselbe Toleranz wie `runway::geometry_implied_displacement_ft`
     /// (dort begruendet: 40-Bahnen-Stichprobe trennt sauber bei
@@ -20814,8 +20824,8 @@ fn displacement_not_in_geometry_ft(m: &runway::RunwayMatch) -> i32 {
     const BESTAETIGUNGS_TOLERANZ_M: f64 = 20.0;
     const FT_TO_M: f64 = 0.3048;
 
-    if m.displaced_threshold_ft <= 0 {
-        return 0;
+    if m.displaced_threshold_ft <= 0 || m.geometry_implied_displaced_threshold_ft <= 0 {
+        return m.displaced_threshold_ft.max(0);
     }
     let diff_m =
         (m.geometry_implied_displaced_threshold_ft - m.displaced_threshold_ft) as f64 * FT_TO_M;
@@ -21456,16 +21466,18 @@ struct BahnFelder {
     /// Schwellenpunkt DER NAVDATEN.
     ///
     /// Ob die beiden zusammenfallen, entscheidet die Datenquelle: Steckt
-    /// der Versatz schon im Schwellenpunkt selbst
-    /// (`RunwayMatch::geometry_implied_displaced_threshold_ft` deckt den
-    /// vollen Versatz ab), sind sie identisch; steckt er nicht drin,
-    /// liegen sie genau um ihn auseinander. `displacement_not_in_
-    /// geometry_ft` weiss das pro Bahn — und dieser Wert ist es.
+    /// der Versatz schon im Schwellenpunkt selbst (bestaetigt die
+    /// Geometrie den gemeldeten Wert innerhalb der Toleranz — siehe
+    /// `displacement_not_in_geometry_ft`), sind sie identisch; steckt er
+    /// nicht drin (oder ist die Geometrie unklar), liegen sie genau um
+    /// den gemeldeten Wert auseinander. `displacement_not_in_geometry_ft`
+    /// weiss das pro Bahn — und dieser Wert ist es.
     ///
     /// ⚠ NICHT die versetzte Schwelle selbst. Das ist eine ANDERE Zahl:
-    /// `effective_displaced_threshold_ft` ist immer der volle, informative
-    /// Versatz aus Feld ODER Geometrie, unabhaengig davon ob er schon im
-    /// Schwellenpunkt steckt.
+    /// `effective_displaced_threshold_ft` ist immer der volle, gemeldete
+    /// Versatz aus dem Feld, unabhaengig davon ob er schon im
+    /// Schwellenpunkt steckt (die Geometrie fliesst dort NICHT mehr ein —
+    /// siehe deren Doku).
     ///
     /// v1.7.18: die alte, pauschale Erkennung ueber die eingebettete
     /// OurAirports-Tabelle lag bei 66 % der Bahnen mit echtem Versatz
@@ -55218,6 +55230,66 @@ mod touchdown_metadata_stamp_tests {
              685 ft versetzten Lande-Schwelle, muss als Sperrzonen-\
              Verstoss erkannt werden — eine ueberschaetzende Geometrie \
              darf diese Pruefung nicht stillschweigend abschalten"
+        );
+    }
+
+    /// v1.7.18-QS2 (externe Pruefung): `geometry_implied_displaced_
+    /// threshold_ft == 0` heisst bei `geometry_implied_displacement_ft`
+    /// IMMER "nichts erkannt" (ungueltige Eingaben, keine plausible
+    /// Gegenschwelle, unplausibler Wert — siehe deren Doku), NIE
+    /// "bestaetigt kein Versatz". Ohne den `> 0`-Riegel in
+    /// `displacement_not_in_geometry_ft` haette ein KLEINER gemeldeter
+    /// Versatz (hier 50 ft = 15,2 m, unter der 20-m-Toleranz) diesen
+    /// Nullwert als Bestaetigung durchgehen lassen — obwohl die Geometrie
+    /// dieser Bahn ueberhaupt nichts gemessen hat (synthetische, nicht
+    /// plausible Koordinaten).
+    #[test]
+    fn ein_nicht_erkannter_wert_bestaetigt_keinen_kleinen_versatz() {
+        let m = runway::RunwayMatch {
+            airport_ident: "XXXX".to_string(),
+            runway_ident: "09".to_string(),
+            heading_true_deg: 90.0,
+            length_ft: 5000.0,
+            width_ft: 100.0,
+            surface: "ASP".to_string(),
+            threshold_lat: 0.0,
+            threshold_lon: 0.0,
+            // Schwelle == Gegenschwelle: `geometry_implied_displacement_ft`
+            // liefert hier immer 0 (siehe deren eigenen Test
+            // `ein_geometrisch_unplausibler_versatz_ueber_halber_bahn_
+            // wird_verworfen` in `runway.rs`) — ein Stand-in fuer JEDEN
+            // Fall, in dem die Geometrie nichts Verwertbares liefert.
+            end_lat: 0.0,
+            end_lon: 0.0,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            // 10 m hinter dem physischen Bahnanfang — klar VOR der bei
+            // 50 ft (15,2 m) versetzten Lande-Schwelle, also im
+            // Sperrbereich.
+            touchdown_distance_from_threshold_ft: 10.0 / 0.3048,
+            side: "CENTER".to_string(),
+            displaced_threshold_ft: 50,
+            geometry_implied_displaced_threshold_ft: 0,
+        };
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(m);
+        let a = assess_touchdown(&stats);
+        let td = a
+            .td_distance_from_threshold_m
+            .expect("Bahn gematcht");
+        assert!(
+            (td - (10.0 - 50.0 * 0.3048)).abs() < 0.1,
+            "ohne Bestaetigung durch die Geometrie muss der volle \
+             gemeldete Versatz (50 ft = 15,2 m) abgezogen werden, \
+             also 10 m − 15,2 m = −5,2 m, war {td:.1} m"
+        );
+        assert!(
+            a.dds.expect("dds").in_pre_threshold_zone,
+            "10 m hinter dem physischen Bahnanfang, aber vor der \
+             (unbestaetigt physischen) Lande-Schwelle bei 50 ft, ist \
+             ein Sperrzonen-Verstoss — ein nicht-erkannter \
+             Geometriewert darf einen kleinen Versatz nicht als \
+             \"bestaetigt schon versetzt\" durchgehen lassen"
         );
     }
 
