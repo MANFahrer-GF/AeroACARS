@@ -281,11 +281,18 @@ pub const START_TYPE_RUNWAY: i32 = 1;
 /// `belag_code`) — der zugehoerige START traegt trotzdem `TYPE = WATER`,
 /// weil das die Art des Aufsetzens beschreibt (Schwimmer/Rumpf statt
 /// Raeder), nicht ein anderes Bahnsystem. `NUMBER`/`DESIGNATOR` sind
-/// dieselben wie beim zugehoerigen Bahnsatz. Externe QS 06.09.2026 (P2):
-/// ohne diesen Typ blieb genau die Klasse Platz unbestaetigt, die den
-/// groessten Teil der degenerierten Navigraph-Geometrie ausmacht
-/// (Wasserflugplaetze/Buschpisten, siehe
-/// `2026-09-06-bericht-degenerierte-bahngeometrie.md`).
+/// dieselben wie beim zugehoerigen Bahnsatz — ihn auszuschliessen waere
+/// technisch falsch (ein gueltiger, dokumentierter Bahnschwellen-Typ).
+///
+/// ⚠ Externe QS 07.09.2026 (P2): eine fruehere Fassung dieses Kommentars
+/// behauptete, WATER decke den groessten Teil der ~6,1 % degenerierten
+/// Navigraph-Geometrie ab. Das ist durch Nachrechnen GEGEN den echten
+/// Navigraph-Bestand widerlegt: von 346 in `navdb.s3db` reproduzierten
+/// degenerierten Bahnen hat KEINE (0/346) den Belagcode fuer Wasser.
+/// Diese Aenderung ist trotzdem korrekt (siehe oben), traegt aber NICHT
+/// nachweislich zur Schliessung der 6,1-%-Luecke bei — dafuer braucht es
+/// echte MSFS-Schattenmessungen an genau den betroffenen Bahnen, nicht
+/// eine Vermutung ueber ihre Art.
 pub const START_TYPE_WATER: i32 = 2;
 
 /// `START.TYPE`-Werte, die eine Bahnschwelle meinen (RUNWAY oder WATER);
@@ -636,18 +643,25 @@ fn start_gehoert_zum_flughafen(s: &StartRoh, referenz: (f64, f64)) -> bool {
 
 /// Genau EINEN `START`-Datensatz fuer `(nummer, designator)` mit
 /// `TYPE` RUNWAY oder WATER (siehe `ist_bahnschwellen_start_typ`), einer
-/// geographisch gueltigen, nicht platzhalterhaften Koordinate und
-/// Naehe zum Flughafen-Referenzpunkt (falls bekannt) finden. `None` bei
-/// keinem ODER bei mehreren widerspruechlichen Treffern — dieselbe
-/// Regel wie beim Navigraph-Gegenschwellen-Abgleich im Hauptprogramm
-/// (`runway.rs`, „bei widerspruechlichen Angaben gibt es hier gar
-/// nichts").
+/// geographisch gueltigen, nicht platzhalterhaften Koordinate UND Naehe
+/// zum Flughafen-Referenzpunkt finden. `None` bei keinem ODER bei
+/// mehreren widerspruechlichen Treffern — dieselbe Regel wie beim
+/// Navigraph-Gegenschwellen-Abgleich im Hauptprogramm (`runway.rs`,
+/// „bei widerspruechlichen Angaben gibt es hier gar nichts").
+///
+/// ⚠ Externe QS 07.09.2026 (P1): eine fruehere Fassung liess die
+/// START-Probe OHNE `flughafen_referenz` (z.B. AIRPORT-Satz noch nicht
+/// eingetroffen) trotzdem zu — genau der urspruenglich beanstandete
+/// Zustand, in dem nur Nummer/Kennung/Abstand pruefen. Jetzt gilt: KEIN
+/// Referenzpunkt, KEINE START-Bestaetigung ueber diesen Weg — der
+/// Rueckfall auf die MAGVAR-Kreuzprobe (Weg 2) bleibt unberuehrt.
 fn eindeutiges_start(
     starts: &[StartRoh],
     nummer: i32,
     designator: i32,
     flughafen_referenz: Option<(f64, f64)>,
 ) -> Option<&StartRoh> {
+    let referenz = flughafen_referenz?;
     let mut treffer = starts.iter().filter(|s| {
         ist_bahnschwellen_start_typ(s.typ)
             && s.nummer == nummer
@@ -657,7 +671,7 @@ fn eindeutiges_start(
             && (-90.0..=90.0).contains(&s.lat)
             && (-180.0..=180.0).contains(&s.lon)
             && (s.lat, s.lon) != (0.0, 0.0)
-            && flughafen_referenz.is_none_or(|r| start_gehoert_zum_flughafen(s, r))
+            && start_gehoert_zum_flughafen(s, referenz)
     });
     let erster = treffer.next()?;
     if treffer.any(|s| (s.lat, s.lon) != (erster.lat, erster.lon)) {
@@ -665,6 +679,22 @@ fn eindeutiges_start(
     }
     Some(erster)
 }
+
+/// Wie weit der aus einem START-Paar gemessene Kurs vom `HEADING` dieses
+/// Bahnendes abweichen darf, um noch als plausibel zu gelten.
+///
+/// Externe QS 07.09.2026 (P1): der 20-km-Radius schuetzt nur vor einem
+/// STARTS von einem ANDEREN Flughafen — zwei falsch zugeordnete, aber
+/// INNERHALB desselben Flughafens liegende STARTs (z.B. von einer um
+/// 90° gedrehten Bahn mit zufaellig gleicher Laenge) bestehen die
+/// Laengen- und Radiusprobe trotzdem. `HEADING` ist laut MSFS-Doku
+/// bereits wahr (siehe Dokumentation an `bestaetige_kurs_eines_endes`)
+/// und damit ein zweiter, von der START-Geometrie unabhaengiger Anker:
+/// eine Bahn kann nicht gleichzeitig 070° UND 160° sein. 45° laesst
+/// echte Abweichungen zwischen der gemalten (auf 10° gerundeten)
+/// Achse und der gemessenen START-Peilung zu, verwirft aber jede
+/// Verwechslung um eine Quadrantenbreite oder mehr.
+const START_KURS_PLAUSIBEL_GRAD: f64 = 45.0;
 
 /// Versucht, den wahren Kurs EINES Bahnendes unabhaengig von `HEADING`
 /// zu bestaetigen — zuerst geometrisch aus zwei echten, plausiblen
@@ -737,7 +767,9 @@ fn bestaetige_kurs_eines_endes(
         let d = distanz_m((eigener.lat, eigener.lon), (gegen.lat, gegen.lon));
         if start_paar_ist_plausibel(d, laenge_m) {
             let kurs = peilung_grad((eigener.lat, eigener.lon), (gegen.lat, gegen.lon));
-            return (Some(kurs), KursQuelle::MsfsStartBestaetigt);
+            if winkelabstand_grad(kurs, kurs_grad) <= START_KURS_PLAUSIBEL_GRAD {
+                return (Some(kurs), KursQuelle::MsfsStartBestaetigt);
+            }
         }
     }
 
@@ -1632,8 +1664,15 @@ mod tests {
                 typ: 3, // HELIPAD
             },
         ];
-        let (kurs, quelle) =
-            bestaetige_kurs_eines_endes(360.0, None, (32, 1), (14, 2), 3988.0, &starts, None);
+        let (kurs, quelle) = bestaetige_kurs_eines_endes(
+            360.0,
+            None,
+            (32, 1),
+            (14, 2),
+            3988.0,
+            &starts,
+            Some((40.47, -3.56)),
+        );
         assert_eq!(kurs, None);
         assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
     }
@@ -1643,32 +1682,47 @@ mod tests {
         // Externe QS 06.09.2026 (P2): ein Wasserlandeplatz ist selbst
         // ein RUNWAY-Datensatz mit SURFACE=WATER — der zugehoerige START
         // traegt trotzdem TYPE=WATER (beschreibt nur das Aufsetzen per
-        // Schwimmer/Rumpf). Ausschliesslich RUNWAY zu akzeptieren hatte
-        // genau die Wasserflugplaetze unbestaetigt gelassen, die den
-        // groessten Teil der degenerierten Navigraph-Geometrie ausmachen.
+        // Schwimmer/Rumpf). Dieser Test prueft nur die technische
+        // Typ-Behandlung, OHNE eine Aussage ueber den Anteil an der
+        // degenerierten Geometrie zu machen (siehe Korrektur an
+        // `START_TYPE_WATER`, externe QS 07.09.2026).
         let starts = vec![
             StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_WATER },
             StartRoh { lat: 40.484_861_11, lon: -3.576_011_11, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_WATER },
         ];
-        let (kurs, quelle) =
-            bestaetige_kurs_eines_endes(360.0, None, (32, 1), (14, 2), 3988.0, &starts, None);
+        let (kurs, quelle) = bestaetige_kurs_eines_endes(
+            360.0,
+            None,
+            (32, 1),
+            (14, 2),
+            3988.0,
+            &starts,
+            Some((40.47, -3.56)),
+        );
         assert_eq!(quelle, sim_core::szenerie::KursQuelle::MsfsStartBestaetigt);
         assert!((kurs.expect("bestaetigt") - 322.32).abs() < 0.1);
     }
 
     #[test]
     fn start_paar_mit_unplausibler_distanz_bestaetigt_nicht() {
-        // Dieselbe Bahnnummer, aber ein START, der viel zu weit von der
-        // Gegenrichtung entfernt liegt (z.B. Zahlendreher/andere Bahn
-        // aus derselben Szenerie) — die gemeldete Laenge (3988 m) und die
-        // gemessene Distanz (~50 km) passen nicht zusammen, keine
-        // Bestaetigung ueber diesen Weg.
+        // Zwei STARTs, beide innerhalb desselben Flughafen-Radius (der
+        // Referenzpunkt allein wuerde hier NICHT ablehnen), aber mit
+        // einer gemessenen Distanz (~15 km), die zur gemeldeten Laenge
+        // (500 m, z.B. ein kurzer Feldflugplatz) nicht passt — Zahlen-
+        // dreher/falsche Bahn aus derselben Szenerie.
         let starts = vec![
-            StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
-            StartRoh { lat: 40.9, lon: -3.576_011_11, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
+            StartRoh { lat: 40.500, lon: -3.560, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
+            StartRoh { lat: 40.635, lon: -3.560, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
         ];
-        let (kurs, quelle) =
-            bestaetige_kurs_eines_endes(360.0, None, (32, 1), (14, 2), 3988.0, &starts, None);
+        let (kurs, quelle) = bestaetige_kurs_eines_endes(
+            360.0,
+            None,
+            (32, 1),
+            (14, 2),
+            500.0,
+            &starts,
+            Some((40.5675, -3.560)), // Mittelpunkt, beide STARTs ~7,5 km entfernt
+        );
         assert_eq!(kurs, None);
         assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
     }
@@ -1682,8 +1736,15 @@ mod tests {
             StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
             StartRoh { lat: 0.0, lon: 0.0, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
         ];
-        let (kurs, quelle) =
-            bestaetige_kurs_eines_endes(360.0, None, (32, 1), (14, 2), 3988.0, &starts, None);
+        let (kurs, quelle) = bestaetige_kurs_eines_endes(
+            360.0,
+            None,
+            (32, 1),
+            (14, 2),
+            3988.0,
+            &starts,
+            Some((40.47, -3.56)),
+        );
         assert_eq!(kurs, None);
         assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
     }
@@ -1696,8 +1757,15 @@ mod tests {
             StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
             StartRoh { lat: 200.0, lon: -3.576_011_11, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
         ];
-        let (kurs, quelle) =
-            bestaetige_kurs_eines_endes(360.0, None, (32, 1), (14, 2), 3988.0, &starts, None);
+        let (kurs, quelle) = bestaetige_kurs_eines_endes(
+            360.0,
+            None,
+            (32, 1),
+            (14, 2),
+            3988.0,
+            &starts,
+            Some((40.47, -3.56)),
+        );
         assert_eq!(kurs, None);
         assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
     }
@@ -1711,8 +1779,44 @@ mod tests {
             StartRoh { lat: 40.463_5, lon: -3.554_0, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
             StartRoh { lat: 40.484_861_11, lon: -3.576_011_11, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
         ];
-        let (kurs, quelle) =
-            bestaetige_kurs_eines_endes(360.0, None, (32, 1), (14, 2), 3988.0, &starts, None);
+        let (kurs, quelle) = bestaetige_kurs_eines_endes(
+            360.0,
+            None,
+            (32, 1),
+            (14, 2),
+            3988.0,
+            &starts,
+            Some((40.47, -3.56)),
+        );
+        assert_eq!(kurs, None);
+        assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
+    }
+
+    #[test]
+    fn start_paar_90_grad_verdreht_innerhalb_des_radius_bestaetigt_nicht() {
+        // Externe QS 07.09.2026 (P1): der Flughafen-Radius allein
+        // schuetzt nur vor STARTs eines ANDEREN Flughafens — zwei
+        // STARTs INNERHALB desselben Radius, mit zufaellig zur Laenge
+        // passendem Abstand, aber um 90° verdreht (z.B. von der
+        // falschen Bahn/Achse desselben Platzes), bestehen Laengen- und
+        // Radiusprobe trotzdem. `HEADING` (070°, laut MSFS-Doku wahr)
+        // widerspricht der aus den STARTs gemessenen Peilung (160°) um
+        // 90° — weit ueber der 45°-Plausibilitaetsgrenze.
+        let a = (50.0, 8.0);
+        let b = (49.983_097_889_060_08, 8.009_567_017_514_918); // 2000 m bei Peilung 160° ab a
+        let starts = vec![
+            StartRoh { lat: a.0, lon: a.1, heading_grad: 0.0, nummer: 7, designator: 0, typ: START_TYPE_RUNWAY },
+            StartRoh { lat: b.0, lon: b.1, heading_grad: 0.0, nummer: 25, designator: 0, typ: START_TYPE_RUNWAY },
+        ];
+        let (kurs, quelle) = bestaetige_kurs_eines_endes(
+            70.0, // HEADING, laut Doku wahr — Bahn 07
+            None,
+            (7, 0),
+            (25, 0),
+            2000.0, // passt exakt zur gemessenen Distanz — Laengenprobe allein wuerde bestaetigen
+            &starts,
+            Some(a), // beide STARTs liegen im Radius um a
+        );
         assert_eq!(kurs, None);
         assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
     }
@@ -1744,19 +1848,21 @@ mod tests {
     }
 
     #[test]
-    fn ohne_bekannten_referenzpunkt_bleibt_die_start_probe_moeglich() {
-        // Der AIRPORT-Satz (liefert den Referenzpunkt) kann noch fehlen,
-        // wenn der RUNWAY/START-Satz schon da ist — `None` darf die
-        // sonst gueltige START-Probe nicht blockieren, nur zusaetzliche
-        // Sicherheit bieten, wenn der Referenzpunkt bekannt ist.
+    fn ohne_bekannten_referenzpunkt_bleibt_die_start_probe_unbestaetigt() {
+        // Externe QS 07.09.2026 (P1): eine fruehere Fassung liess die
+        // START-Probe OHNE `flughafen_referenz` trotzdem zu (nur
+        // Nummer/Kennung/Abstand) — genau der urspruenglich beanstandete
+        // Zustand. Fehlt der Referenzpunkt (z.B. AIRPORT-Satz noch nicht
+        // eingetroffen), bleibt der Kurs jetzt unbestaetigt, auch wenn
+        // die STARTs selbst echt und plausibel waeren.
         let starts = vec![
             StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
             StartRoh { lat: 40.484_861_11, lon: -3.576_011_11, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
         ];
         let (kurs, quelle) =
             bestaetige_kurs_eines_endes(360.0, None, (32, 1), (14, 2), 3988.0, &starts, None);
-        assert_eq!(quelle, sim_core::szenerie::KursQuelle::MsfsStartBestaetigt);
-        assert!(kurs.is_some());
+        assert_eq!(kurs, None);
+        assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
     }
 
     #[test]
@@ -1774,23 +1880,28 @@ mod tests {
             StartRoh { lat: 50.0000, lon: 8.0, heading_grad: 0.0, nummer: 7, designator: 2, typ: START_TYPE_RUNWAY }, // 07R (Suedstreifen, Westende)
             StartRoh { lat: 50.0000, lon: 8.02, heading_grad: 0.0, nummer: 25, designator: 1, typ: START_TYPE_RUNWAY }, // 25L (Suedstreifen, Ostende)
         ];
+        let referenz = Some((50.015, 8.01)); // Mittelpunkt beider Streifen
         let (kurs_l, quelle_l) =
-            bestaetige_kurs_eines_endes(90.0, None, (7, 1), (25, 2), 1429.0, &starts, None);
+            bestaetige_kurs_eines_endes(90.0, None, (7, 1), (25, 2), 1429.0, &starts, referenz);
         let (kurs_r, quelle_r) =
-            bestaetige_kurs_eines_endes(90.0, None, (7, 2), (25, 1), 1429.0, &starts, None);
+            bestaetige_kurs_eines_endes(90.0, None, (7, 2), (25, 1), 1429.0, &starts, referenz);
         assert_eq!(quelle_l, sim_core::szenerie::KursQuelle::MsfsStartBestaetigt);
         assert_eq!(quelle_r, sim_core::szenerie::KursQuelle::MsfsStartBestaetigt);
         // Beide Achsen sind (fast) Ost-West, aber aus VERSCHIEDENEN
         // Koordinatenpaaren gerechnet — ein Vertauschen von L/R wuerde
         // eine der beiden Bahnen auf die Koordinaten der anderen legen.
         assert!(kurs_l.is_some() && kurs_r.is_some());
-        // 07L faende bei falscher (nicht-reziproker) Paarung mit 25L
-        // gar keinen eindeutigen START-Treffer fuer die Gegenrichtung —
-        // dieser Test bestaetigt deshalb zugleich, dass `bestaetige_kurs_eines_endes`
-        // wirklich NUR die uebergebene Gegenkennung sucht, nicht irgendeine
-        // Bahn mit passendem STARTs-Eintrag.
+        // 07L mit der falschen (nicht-reziproken) Gegenkennung 25L
+        // gepaart: `eindeutiges_start` findet den Eintrag zwar (er
+        // existiert ja, nur fuer den Suedstreifen), aber die daraus
+        // gemessene Distanz (~3629 m statt der gemeldeten 1429 m — die
+        // beiden Streifen liegen diagonal zueinander) verfehlt die
+        // Laengenprobe deutlich. Zusaetzlich weicht die Peilung (~157°)
+        // um mehr als `START_KURS_PLAUSIBEL_GRAD` von den erwarteten 90°
+        // ab — zwei unabhaengige Riegel, die dieselbe Verwechslung
+        // fangen.
         let (kurs_falsch, quelle_falsch) =
-            bestaetige_kurs_eines_endes(90.0, None, (7, 1), (25, 1), 1429.0, &starts, None);
+            bestaetige_kurs_eines_endes(90.0, None, (7, 1), (25, 1), 1429.0, &starts, referenz);
         assert_eq!(quelle_falsch, sim_core::szenerie::KursQuelle::Unbestaetigt);
         assert_eq!(kurs_falsch, None);
     }
