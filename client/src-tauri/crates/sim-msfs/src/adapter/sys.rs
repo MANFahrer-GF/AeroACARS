@@ -53,6 +53,13 @@ pub const FACILITY_DATA_TAXI_PARKING: DWORD =
 /// Feld: Sie kommt in einer eigenen Nachricht nach ihrem Bahnsatz.
 pub const FACILITY_DATA_PAVEMENT: DWORD =
     SIMCONNECT_FACILITY_DATA_TYPE_SIMCONNECT_FACILITY_DATA_PAVEMENT as DWORD;
+/// v1.7.19 — Startpositionen. Kind von `AIRPORT`, nicht von `RUNWAY`
+/// (siehe `facility::START_FELDER`). Existiert im vendorten SDK-Header
+/// (`ffi/include/SimConnect.h`, `SIMCONNECT_FACILITY_DATA_TYPE`) als
+/// dritter Wert nach `AIRPORT`/`RUNWAY` — von bindgen erzeugt, nicht
+/// erraten.
+pub const FACILITY_DATA_START: DWORD =
+    SIMCONNECT_FACILITY_DATA_TYPE_SIMCONNECT_FACILITY_DATA_START as DWORD;
 
 pub const SIMCONNECT_DATATYPE_FLOAT64: SIMCONNECT_DATATYPE =
     SIMCONNECT_DATATYPE_SIMCONNECT_DATATYPE_FLOAT64;

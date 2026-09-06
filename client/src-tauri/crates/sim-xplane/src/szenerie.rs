@@ -220,6 +220,9 @@ fn lies_aus_strom<R: BufRead>(leser: R, datei: &Path, icao: &str) -> Option<Szen
                 };
                 let k = kurs_grad(s1, s2);
                 let l = abstand_m(s1, s2);
+                // X-Plane's Achse ist immer `achse_belastbar` (echte
+                // `apt.dat`) — die MSFS-Schattenmodus-Felder gibt es hier
+                // nichts zu bestaetigen.
                 aus.bahnen.push(SzenerieBahn {
                     bezeichner: n1,
                     kurs_grad: k,
@@ -229,6 +232,8 @@ fn lies_aus_strom<R: BufRead>(leser: R, datei: &Path, icao: &str) -> Option<Szen
                     schwelle: s1,
                     gegenende: s2,
                     belag_code: belag,
+                    kurs_bestaetigt_grad: None,
+                    kurs_quelle: sim_core::szenerie::KursQuelle::Unbestaetigt,
                 });
                 aus.bahnen.push(SzenerieBahn {
                     bezeichner: n2,
@@ -239,6 +244,8 @@ fn lies_aus_strom<R: BufRead>(leser: R, datei: &Path, icao: &str) -> Option<Szen
                     schwelle: s2,
                     gegenende: s1,
                     belag_code: belag,
+                    kurs_bestaetigt_grad: None,
+                    kurs_quelle: sim_core::szenerie::KursQuelle::Unbestaetigt,
                 });
             }
             "1201" if t.len() >= 5 => {

@@ -537,6 +537,8 @@ mod tests {
                 schwelle,
                 gegenende: (schwelle.0, schwelle.1 + 0.02),
                 belag_code: 1,
+                kurs_bestaetigt_grad: None,
+                kurs_quelle: sim_core::szenerie::KursQuelle::Unbestaetigt,
             }],
         }
     }
@@ -635,6 +637,8 @@ mod tests {
                 schwelle: versatz(-1.0),
                 gegenende: versatz(1.0),
                 belag_code: 1,
+                kurs_bestaetigt_grad: None,
+                kurs_quelle: sim_core::szenerie::KursQuelle::Unbestaetigt,
             }],
         }
     }
@@ -1127,6 +1131,8 @@ mod anschluss_tests {
                 schwelle: (53.6459, 9.6942),
                 gegenende: (53.6459, 9.7142),
                 belag_code: 1,
+                kurs_bestaetigt_grad: None,
+                kurs_quelle: sim_core::szenerie::KursQuelle::Unbestaetigt,
             }],
         }
     }
@@ -1229,6 +1235,8 @@ mod anschluss_tests {
                     schwelle: (53.6459, 9.7142),
                     gegenende: (53.6459, 9.6942),
                     belag_code: 1,
+                    kurs_bestaetigt_grad: None,
+                    kurs_quelle: sim_core::szenerie::KursQuelle::Unbestaetigt,
                 }],
                 rollwege: vec![sim_core::szenerie::SzenerieRollweg {
                     name: "B3".into(),
@@ -1592,6 +1600,8 @@ mod plausibel_tests {
                 schwelle: (53.6459, 9.6942),
                 gegenende: (53.6459, 9.7142),
                 belag_code: code,
+                kurs_bestaetigt_grad: None,
+                kurs_quelle: sim_core::szenerie::KursQuelle::Unbestaetigt,
             }],
             rollwege: Vec::new(),
             quelle: "xplane".to_string(),

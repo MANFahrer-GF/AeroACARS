@@ -50627,6 +50627,8 @@ mod sim_pause_tests {
             schwelle: (51.4336, 12.2674),
             gegenende: (51.4312, 12.2158),
             belag_code: 1,
+            kurs_bestaetigt_grad: None,
+            kurs_quelle: sim_core::szenerie::KursQuelle::Unbestaetigt,
         };
         stats.szenerie_auskunft = Some(sim_core::szenerie::SzenerieFlughafen {
             icao: "EDDP".to_string(),
@@ -54216,6 +54218,8 @@ mod touchdown_metadata_stamp_tests {
                 schwelle: (EDDP_26R_THR_LAT, EDDP_26R_THR_LON),
                 gegenende: (EDDP_08L_THR_LAT, EDDP_08L_THR_LON),
                 belag_code: 1,
+                kurs_bestaetigt_grad: None,
+                kurs_quelle: sim_core::szenerie::KursQuelle::Unbestaetigt,
             }],
             rollwege: Vec::new(),
             quelle: "msfs".to_string(),
@@ -62274,6 +62278,8 @@ mod szenerie_status_tests {
                     schwelle: (36.69, 3.21),
                     gegenende: (36.71, 3.24),
                     belag_code: 1,
+                    kurs_bestaetigt_grad: None,
+                    kurs_quelle: sim_core::szenerie::KursQuelle::Unbestaetigt,
                 })
                 .collect(),
             rollwege: Vec::new(),

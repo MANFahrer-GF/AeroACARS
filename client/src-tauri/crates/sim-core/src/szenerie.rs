@@ -40,6 +40,48 @@ pub struct SzenerieBahn {
     /// MSFS liefert eine eigene Aufzählung; ihr Adapter rechnet sie auf
     /// diese Schlüssel um, damit die Auswertung eine Sprache spricht.
     pub belag_code: u8,
+    /// v1.7.19-Schattenmodus — der wahre Kurs, WENN eine unabhängige
+    /// Facility-Quelle ihn bestätigen konnte (siehe [`KursQuelle`]).
+    /// `None`, solange nichts bestätigt ist.
+    ///
+    /// ⚠ Dieses Feld verändert `kurs_grad` NICHT und wird (Stand
+    /// 06.09.2026) NIRGENDS für `achse_belastbar` oder eine andere
+    /// Übernahme-Entscheidung gelesen — nur zum Loggen/Vergleichen im
+    /// Schattenmodus, bis genug echte Flüge mit vollständiger, klarer
+    /// Facility-Lieferung das rechtfertigen (EDDF/normale Missweisung,
+    /// große Missweisung, beidseitig versetzte Schwellen, `ENABLE=0`,
+    /// fehlender PAVEMENT-Satz, Parallelbahnen, uneindeutige Kennungen).
+    pub kurs_bestaetigt_grad: Option<f64>,
+    /// Woher `kurs_bestaetigt_grad` stammt (oder warum es fehlt).
+    pub kurs_quelle: KursQuelle,
+}
+
+/// Woher ein bestätigter wahrer Kurs stammt — bzw. warum keiner
+/// bestätigt werden konnte.
+///
+/// # Warum eine eigene Aufzählung statt eines Bools
+///
+/// "Bestätigt: ja/nein" verschweigt, WIE zuverlässig die Bestätigung
+/// ist. Zwei echte Schwellenkoordinaten (`MsfsStartBestaetigt`) sind
+/// eine Messung; die MAGVAR-Kreuzprobe (`MsfsMagvarBestaetigt`) ist ein
+/// Indiz, das an der gemalten Bahnnummer (auf die nächsten 10° gerundet)
+/// hängt. Wer beide gleich behandelt, verliert genau die Information,
+/// die eine externe Prüfung gegen echte Flüge braucht.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KursQuelle {
+    /// Weder zwei passende START-Koordinaten noch eine MAGVAR-Kreuzprobe
+    /// konnten den Kurs bestätigen. Der Normalfall heute.
+    #[default]
+    Unbestaetigt,
+    /// Zwei echte `START`-Datensätze (SimConnect-Facility, `TYPE=RUNWAY`)
+    /// für beide Bahnenden gefunden — der Kurs ist die gemessene
+    /// Grosskreis-Peilung zwischen ihnen, unabhängig von `HEADING`/
+    /// `MAGVAR`.
+    MsfsStartBestaetigt,
+    /// Keine START-Koordinaten, aber `HEADING` stimmt (innerhalb der
+    /// Toleranz) mit der aus `MAGVAR` und der gemalten Bahnnummer
+    /// hergeleiteten Achse überein.
+    MsfsMagvarBestaetigt,
 }
 
 /// Ein benanntes Rollwegstück.
@@ -1136,6 +1178,8 @@ mod auftragsbuch_tests {
                     schwelle: (0.0, 0.0),
                     gegenende: (0.0, 0.0),
                     belag_code: 1,
+                    kurs_bestaetigt_grad: None,
+                    kurs_quelle: KursQuelle::Unbestaetigt,
                 })
                 .collect(),
             rollwege: Vec::new(),

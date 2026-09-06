@@ -1339,9 +1339,25 @@ fn run_dispatch(
                     };
                     if typ == sys::FACILITY_DATA_AIRPORT {
                         // Der Referenzpunkt — ohne ihn sind die
-                        // Rollwegpunkte nicht umrechenbar.
+                        // Rollwegpunkte nicht umrechenbar. Die
+                        // Missweisung (v1.7.19) haengt an keinem Index,
+                        // ist also unkritisch, wenn sie fehlt.
                         if let Some(w) = facility::zerlege(facility::FLUGHAFEN_FELDER, &bytes) {
                             lieferung.referenz = Some((w[0].als_f64(), w[1].als_f64()));
+                            lieferung.magvar = Some(w[3].als_f64() as f32);
+                        }
+                    } else if typ == sys::FACILITY_DATA_START {
+                        // v1.7.19 — wie `staende_roh`: kein Index-Verweis,
+                        // ein unlesbarer Satz wird verworfen statt
+                        // erfunden.
+                        match facility::zerlege(facility::START_FELDER, &bytes)
+                            .and_then(|w| facility::start_aus_werten(&w))
+                        {
+                            Some(s) => lieferung.starts_roh.push(s),
+                            None => tracing::warn!(
+                                laenge = bytes.len(),
+                                "START-Block passt nicht zur Definition — verworfen"
+                            ),
                         }
                     } else if typ == sys::FACILITY_DATA_TAXI_POINT {
                         // ⚠ Auch ein unlesbarer Punkt muss einen Platz
@@ -1465,9 +1481,28 @@ fn run_dispatch(
                             }
                         };
                         tracing::info!(staende = staende.len(), "Parkpositionen zusammengesetzt");
+                        // v1.7.19 — Schattenmodus: den Kurs beider Enden
+                        // gegen START-Koordinaten/MAGVAR pruefen, OHNE
+                        // `kurs_grad` selbst zu veraendern. `bahnen`
+                        // bleibt fuer `achse_belastbar` (szenerie_bahn.rs)
+                        // unveraendert — siehe dessen Doku.
+                        let mut bahnen = lieferung.sammler.fertig();
+                        facility::bestaetige_kurse(&mut bahnen, &lieferung.starts_roh, lieferung.magvar);
+                        for b in &bahnen {
+                            if b.kurs_bestaetigt_grad.is_some() {
+                                tracing::info!(
+                                    %icao,
+                                    bezeichner = %b.bezeichner,
+                                    heading_facility = b.kurs_grad,
+                                    kurs_bestaetigt = ?b.kurs_bestaetigt_grad,
+                                    quelle = ?b.kurs_quelle,
+                                    "MSFS-Kurs bestaetigt (Schattenmodus, wirkungslos fuer achse_belastbar)"
+                                );
+                            }
+                        }
                         let auskunft = sim_core::szenerie::SzenerieFlughafen {
                             icao,
-                            bahnen: lieferung.sammler.fertig(),
+                            bahnen,
                             rollwege,
                             staende,
                             quelle: "msfs".to_string(),
@@ -2101,6 +2136,13 @@ impl Connection {
         // liefern keine Bytes und stehen darum nicht im Byte-Raster.
         eintraege.extend(facility::BAHN_DEFINITION.iter().copied());
         eintraege.push("CLOSE RUNWAY");
+        // v1.7.19 — Startpositionen. Kind von AIRPORT, nicht von RUNWAY
+        // (siehe `facility::START_FELDER`) — deshalb ein eigener
+        // Klammerblock auf derselben Ebene wie TAXI_POINT etc., nicht
+        // innerhalb OPEN/CLOSE RUNWAY.
+        eintraege.push("OPEN START");
+        eintraege.extend(facility::START_FELDER.iter().map(|(n, _)| *n));
+        eintraege.push("CLOSE START");
         // Rollwege: Punkte, Kanten, Namen — drei Listen, die ueber
         // Indizes zusammenhaengen, genau wie X-Planes 1201/1202.
         eintraege.push("OPEN TAXI_POINT");
