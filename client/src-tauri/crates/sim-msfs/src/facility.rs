@@ -683,29 +683,49 @@ fn eindeutiges_start(
 /// Wie weit der aus einem START-Paar gemessene Kurs vom `HEADING` dieses
 /// Bahnendes abweichen darf, um noch als plausibel zu gelten.
 ///
-/// Externe QS 07.09.2026 (P1): der 20-km-Radius schuetzt nur vor einem
-/// STARTS von einem ANDEREN Flughafen — zwei falsch zugeordnete, aber
-/// INNERHALB desselben Flughafens liegende STARTs (z.B. von einer um
-/// 90° gedrehten Bahn mit zufaellig gleicher Laenge) bestehen die
-/// Laengen- und Radiusprobe trotzdem. `HEADING` ist laut MSFS-Doku
-/// bereits wahr (siehe Dokumentation an `bestaetige_kurs_eines_endes`)
-/// und damit ein zweiter, von der START-Geometrie unabhaengiger Anker:
-/// eine Bahn kann nicht gleichzeitig 070° UND 160° sein. 45° laesst
-/// echte Abweichungen zwischen der gemalten (auf 10° gerundeten)
-/// Achse und der gemessenen START-Peilung zu, verwirft aber jede
-/// Verwechslung um eine Quadrantenbreite oder mehr.
-const START_KURS_PLAUSIBEL_GRAD: f64 = 45.0;
+/// Externe QS 07.09.2026 (P1, erste Fassung): der 20-km-Radius schuetzt
+/// nur vor einem START von einem ANDEREN Flughafen — zwei falsch
+/// zugeordnete, aber INNERHALB desselben Flughafens liegende STARTs
+/// (z.B. von einer um 90° gedrehten Bahn mit zufaellig gleicher Laenge)
+/// bestehen die Laengen- und Radiusprobe trotzdem. `HEADING` ist laut
+/// MSFS-Doku bereits wahr (siehe Dokumentation an
+/// `bestaetige_kurs_eines_endes`) und damit ein zweiter, von der
+/// START-Geometrie unabhaengiger Anker: eine Bahn kann nicht
+/// gleichzeitig 070° UND 160° sein.
+///
+/// ⚠ Externe QS 07.09.2026 (P1, zweite Fassung): die erste Fassung
+/// setzte hier 45° an, mit der (falschen) Begruendung "die gemalte
+/// Nummer ist auf 10° gerundet". Das gilt fuer `KURS_BESTAETIGUNG_-
+/// TOLERANZ_GRAD` (dort wird tatsaechlich gegen die GERUNDETE Nummer
+/// geprueft) — hier aber werden ZWEI WAHRE Kurse verglichen (die
+/// START-Peilung und `HEADING`), keiner davon gerundet. 45° liess eine
+/// um 40° falsch zugeordnete Achse noch als "bestaetigt" durch (bei
+/// einer 4000-m-Bahn > 2,5 km seitlicher Fehler am Bahnende). Jetzt
+/// derselbe Wert wie `KURS_BESTAETIGUNG_TOLERANZ_GRAD` — plausibel fuer
+/// echtes Rauschen (Autoren-Verschiebung, Rundung in den Rohdaten),
+/// nicht mehr fuer einen echten Quellenwiderspruch.
+const START_KURS_PLAUSIBEL_GRAD: f64 = KURS_BESTAETIGUNG_TOLERANZ_GRAD;
 
-/// Versucht, den wahren Kurs EINES Bahnendes unabhaengig von `HEADING`
-/// zu bestaetigen — zuerst geometrisch aus zwei echten, plausiblen
-/// `START`-Koordinaten, sonst per MAGVAR-Kreuzprobe gegen die gemalte
-/// Bahnnummer. Liefert `None`, wenn keins von beidem eindeutig war.
+/// Versucht, den Kurs EINES Bahnendes zu bestaetigen — zuerst
+/// geometrisch aus zwei echten, plausiblen `START`-Koordinaten, sonst
+/// per MAGVAR-Kreuzprobe gegen die gemalte Bahnnummer. Liefert `None`,
+/// wenn keins von beidem eindeutig war ODER wenn beide Quellen sich
+/// widersprechen.
 ///
-/// # Warum START vor MAGVAR
+/// # Warum START vor MAGVAR — aber nicht UNABHAENGIG von `HEADING`
 ///
-/// Zwei echte Koordinaten sind eine MESSUNG — unabhaengig davon, ob
-/// `HEADING` wahr oder missweisend ist. Die MAGVAR-Kreuzprobe bleibt
-/// der Rueckfall fuer Bahnen ohne (oder ohne plausible) `START`-Saetze.
+/// Zwei echte Koordinaten sind eine MESSUNG, die (anders als die
+/// MAGVAR-Kreuzprobe) keine gemalte, auf 10° gerundete Bahnnummer
+/// braucht. Das macht sie aber nicht unabhaengig von `HEADING`: beide
+/// sind Aussagen DESSELBEN Simulators ueber DIESELBE Bahn, und muessen
+/// deshalb zueinander passen (siehe `START_KURS_PLAUSIBEL_GRAD`).
+/// Widerspricht ein vollstaendiges, laengenplausibles START-Paar dem
+/// `HEADING`, ist das ein echter Quellenkonflikt — Antwort `None`,
+/// KEIN Rueckfall auf die MAGVAR-Kreuzprobe (externe QS 07.09.2026,
+/// P1: ein Rueckfall haette den bestrittenen `kurs_grad` einfach
+/// "bestaetigt" und den Widerspruch verschwiegen). Die MAGVAR-Kreuzprobe
+/// bleibt der Rueckfall ausschliesslich fuer Bahnen OHNE (oder ohne
+/// brauchbares) `START`-Paar.
 ///
 /// # HEADING ist bereits WAHR — keine Hypothese, sondern Dokumentation
 ///
@@ -760,6 +780,16 @@ fn bestaetige_kurs_eines_endes(
     // Weg 1: zwei echte, eindeutige START-Koordinaten (diese
     // Bahnrichtung UND die Gegenrichtung), deren Abstand plausibel zur
     // gemeldeten Bahnlaenge passt.
+    //
+    // ⚠ Externe QS 07.09.2026 (P1): trifft ein VOLLSTAENDIGES, laengen-
+    // plausibles START-Paar auf ein `HEADING`, das seiner eigenen
+    // Messung widerspricht, ist das ein echter Widerspruch zwischen
+    // zwei MSFS-eigenen Quellen — kein Fall fuer den MAGVAR-Rueckfall
+    // (Weg 2 wuerde sonst einfach den bestrittenen `kurs_grad`
+    // "bestaetigen" und den Widerspruch verschweigen). Der Rueckfall
+    // bleibt nur fuer STARTs, die schon VOR dem Kursvergleich als
+    // unbrauchbar erkannt wurden (fehlend, mehrdeutig, falscher Typ,
+    // ungueltige Koordinate, falscher Flughafen, unplausible Laenge).
     if let (Some(eigener), Some(gegen)) = (
         eindeutiges_start(starts, nummer, designator, flughafen_referenz),
         eindeutiges_start(starts, gegen_nummer, gegen_designator, flughafen_referenz),
@@ -770,6 +800,7 @@ fn bestaetige_kurs_eines_endes(
             if winkelabstand_grad(kurs, kurs_grad) <= START_KURS_PLAUSIBEL_GRAD {
                 return (Some(kurs), KursQuelle::MsfsStartBestaetigt);
             }
+            return (None, KursQuelle::Unbestaetigt);
         }
     }
 
@@ -1603,12 +1634,16 @@ mod tests {
     }
 
     #[test]
-    fn zwei_echte_start_koordinaten_bestaetigen_unabhaengig_von_heading() {
-        // Zwei echte Bahnschwellen (LEMD 32L/14R) als STARTs — der
-        // Kurs wird geometrisch bestaetigt, ganz gleich was `HEADING`
-        // im Bahnsatz sagt (hier absichtlich ein falscher Platzhalter,
-        // 360.0 — siehe die Navigraph-Platzhalter-Falle). Gemessene
-        // Distanz ~3060 m, gemeldete Bahnlaenge 3988 m — im Rahmen der
+    fn zwei_echte_start_koordinaten_bestaetigen_ein_passendes_heading() {
+        // Externe QS 07.09.2026 (P2): der Name und der Testwert haben
+        // vorher behauptet, die Bestaetigung sei "unabhaengig von
+        // HEADING" — das stimmt seit dem START/HEADING-Kursvergleich
+        // nicht mehr, und der eingesetzte Wert (360.0) war der
+        // Navigraph-Platzhalter aus einem GANZ ANDEREN Kontext, nicht
+        // das MSFS-eigene `HEADING`, das im Produktionspfad tatsaechlich
+        // hier ankommt. `HEADING` steht deshalb jetzt konsistent zur
+        // echten LEMD-32L-Peilung (322,32°). Gemessene Distanz ~3060 m,
+        // gemeldete Bahnlaenge 3988 m — im Rahmen der
         // START-Verschiebungstoleranz (siehe `start_paar_ist_plausibel`).
         let starts = vec![
             StartRoh {
@@ -1629,7 +1664,7 @@ mod tests {
             },
         ];
         let (kurs, quelle) = bestaetige_kurs_eines_endes(
-            360.0,
+            322.32,
             None,
             (32, 1),
             (14, 2),
@@ -1639,6 +1674,66 @@ mod tests {
         );
         assert_eq!(quelle, sim_core::szenerie::KursQuelle::MsfsStartBestaetigt);
         assert!((kurs.expect("bestaetigt") - 322.32).abs() < 0.1);
+    }
+
+    #[test]
+    fn start_paar_widerspricht_heading_um_zwanzig_bis_vierzig_grad() {
+        // Externe QS 07.09.2026 (P1): die erste Fassung der Toleranz
+        // (45°) haette eine um 37,68° falsch zugeordnete Achse noch
+        // durchgelassen. Dieselben echten LEMD-Koordinaten, aber ein
+        // `HEADING`, das um genau diesen Betrag danebenliegt (360°
+        // statt 322,32°) — muss jetzt klar ueber der verschaerften
+        // Toleranz liegen und als Quellenwiderspruch unbestaetigt
+        // bleiben, nicht bloss "unwahrscheinlich, aber durchgelassen".
+        let starts = vec![
+            StartRoh { lat: 40.463_083_33, lon: -3.553_894_44, heading_grad: 0.0, nummer: 32, designator: 1, typ: START_TYPE_RUNWAY },
+            StartRoh { lat: 40.484_861_11, lon: -3.576_011_11, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_RUNWAY },
+        ];
+        let (kurs, quelle) = bestaetige_kurs_eines_endes(
+            360.0, // 37,68° neben der echten Peilung 322,32°
+            None,
+            (32, 1),
+            (14, 2),
+            3988.0,
+            &starts,
+            Some((40.47, -3.56)),
+        );
+        assert_eq!(kurs, None);
+        assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
+    }
+
+    #[test]
+    fn vollstaendiges_start_paar_widerspricht_heading_kein_magvar_rueckfall() {
+        // Externe QS 07.09.2026 (P1): ein VOLLSTAENDIGES, laengen-
+        // plausibles START-Paar, das dem `HEADING` widerspricht, ist ein
+        // echter Widerspruch zwischen zwei MSFS-eigenen Quellen — die
+        // Funktion darf NICHT auf die MAGVAR-Kreuzprobe (Weg 2)
+        // zurueckfallen und den bestrittenen `kurs_grad` doch noch
+        // bestaetigen. Bahn 07: HEADING=70°, MAGVAR=0° (bestaetigt
+        // 70° via Weg 2 ohne den Widerspruch), STARTs liegen aber auf
+        // einer um 90° gedrehten Achse (160°) mit exakt passender
+        // Laenge — Weg 1 lehnt wegen des Kurskonflikts ab, und diese
+        // Ablehnung muss ENDGUELTIG sein.
+        let a = (50.0, 8.0);
+        let b = (49.983_097_889_060_08, 8.009_567_017_514_918); // 2000 m bei Peilung 160° ab a
+        let starts = vec![
+            StartRoh { lat: a.0, lon: a.1, heading_grad: 0.0, nummer: 7, designator: 0, typ: START_TYPE_RUNWAY },
+            StartRoh { lat: b.0, lon: b.1, heading_grad: 0.0, nummer: 25, designator: 0, typ: START_TYPE_RUNWAY },
+        ];
+        let (kurs, quelle) = bestaetige_kurs_eines_endes(
+            70.0,
+            Some(0.0), // wuerde Weg 2 allein anstandslos bestaetigen
+            (7, 0),
+            (25, 0),
+            2000.0,
+            &starts,
+            Some(a),
+        );
+        assert_eq!(
+            kurs, None,
+            "ein widerspruechliches, aber vollstaendiges START-Paar darf nicht durch MAGVAR uebertrumpft werden"
+        );
+        assert_eq!(quelle, sim_core::szenerie::KursQuelle::Unbestaetigt);
     }
 
     #[test]
@@ -1691,7 +1786,7 @@ mod tests {
             StartRoh { lat: 40.484_861_11, lon: -3.576_011_11, heading_grad: 0.0, nummer: 14, designator: 2, typ: START_TYPE_WATER },
         ];
         let (kurs, quelle) = bestaetige_kurs_eines_endes(
-            360.0,
+            322.32,
             None,
             (32, 1),
             (14, 2),
@@ -1896,10 +1991,8 @@ mod tests {
         // existiert ja, nur fuer den Suedstreifen), aber die daraus
         // gemessene Distanz (~3629 m statt der gemeldeten 1429 m — die
         // beiden Streifen liegen diagonal zueinander) verfehlt die
-        // Laengenprobe deutlich. Zusaetzlich weicht die Peilung (~157°)
-        // um mehr als `START_KURS_PLAUSIBEL_GRAD` von den erwarteten 90°
-        // ab — zwei unabhaengige Riegel, die dieselbe Verwechslung
-        // fangen.
+        // Laengenprobe deutlich (der Kursvergleich wird dadurch gar
+        // nicht erst erreicht — die Laengenprobe allein reicht hier).
         let (kurs_falsch, quelle_falsch) =
             bestaetige_kurs_eines_endes(90.0, None, (7, 1), (25, 1), 1429.0, &starts, referenz);
         assert_eq!(quelle_falsch, sim_core::szenerie::KursQuelle::Unbestaetigt);
