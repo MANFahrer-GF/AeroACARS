@@ -1487,7 +1487,12 @@ fn run_dispatch(
                         // bleibt fuer `achse_belastbar` (szenerie_bahn.rs)
                         // unveraendert — siehe dessen Doku.
                         let mut bahnen = lieferung.sammler.fertig();
-                        facility::bestaetige_kurse(&mut bahnen, &lieferung.starts_roh, lieferung.magvar);
+                        facility::bestaetige_kurse(
+                            &mut bahnen,
+                            &lieferung.starts_roh,
+                            lieferung.magvar,
+                            lieferung.referenz,
+                        );
                         for b in &bahnen {
                             if b.kurs_bestaetigt_grad.is_some() {
                                 tracing::info!(
