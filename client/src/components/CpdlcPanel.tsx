@@ -21,7 +21,7 @@
 // separate real layout bugs in a single afternoon; see the comment at
 // the logon block's new home in DatalinkComposer.tsx for the full list.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke, formatIpcError, isTauri, openExternal } from "../lib/ipc";
 import { useCpdlcMessages } from "../hooks/useCpdlcMessages";
@@ -105,9 +105,17 @@ export type DatalinkMode = "pdc" | "cpdlc";
 
 interface Props {
   onOpenSettings: () => void;
+  /** v1.7.20 (#pdc-cpdlc-mode-routing): lifted to `App.tsx` instead of a
+   *  local `useState` default of `"pdc"`. This panel is conditionally
+   *  rendered (unmounted whenever another tab is active, not hidden), so
+   *  a local default meant BOTH the attention banner's "open the CPDLC
+   *  message" click AND simply navigating away and back always landed
+   *  back on PDC — the panel had no memory of its own. */
+  mode: DatalinkMode;
+  onModeChange: (mode: DatalinkMode) => void;
 }
 
-export function CpdlcPanel({ onOpenSettings }: Props) {
+export function CpdlcPanel({ onOpenSettings, mode, onModeChange: setMode }: Props) {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<HoppieSettings | null>(null);
   const [status, setStatus] = useState<HoppieStatus | null>(null);
@@ -118,7 +126,6 @@ export function CpdlcPanel({ onOpenSettings }: Props) {
   const [callsignEditing, setCallsignEditing] = useState(false);
   const [callsignReconnecting, setCallsignReconnecting] = useState(false);
 
-  const [mode, setMode] = useState<DatalinkMode>("pdc");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -166,6 +173,26 @@ export function CpdlcPanel({ onOpenSettings }: Props) {
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings?.enabled]);
+
+  // QS round 2 (06.09.2026, #pdc-cpdlc-session-end): a session can now end
+  // with no automatic follow-up logon — a manual "Abmelden", or a GOLD
+  // `END SERVICE` with no `NEXT DATA AUTHORITY` named. Either way, the
+  // field keeps showing the STATION THAT JUST ENDED — nothing update it,
+  // since `stationInput` is a plain manual-entry field, not derived from
+  // `to_station`. Left alone, the pilot could hit "Anmelden" again on a
+  // facility that has already told the network it's done with us. Clear
+  // it whenever a logged-on session ends; harmless if this instead
+  // catches the brief false-then-true blip of an automatic handover —
+  // `stationInput` plays no role in that path anyway.
+  const wasLoggedOn = useRef(false);
+  useEffect(() => {
+    const loggedOn = Boolean(status?.logged_on);
+    if (wasLoggedOn.current && !loggedOn) {
+      setStationInput("");
+    }
+    wasLoggedOn.current = loggedOn;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status?.logged_on]);
 
   /** Oeffnet die CDM-Seite in einem eigenen Fenster der App. Im
    *  LAN-Browser gibt es keine App-Fenster — dort der normale Weg. */

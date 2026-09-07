@@ -32,6 +32,12 @@ interface HoppieStatus {
 
 interface ThreadEntry {
   direction: "sent" | "received";
+  /// v1.7.20 (#pdc-cpdlc-mode-routing): "telex" is PDC traffic, "cpdlc"
+  /// is datalink — same distinction as `useCpdlcMessages.ts`'s
+  /// `ThreadEntry`. Needed so the attention banner can tell CPDLC-in
+  /// mode-open callers apart from PDC ones instead of always sending
+  /// them to whichever sub-tab `CpdlcPanel` happens to default to.
+  kind: "telex" | "cpdlc";
 }
 
 const POLL_MS = 5000;
@@ -44,14 +50,28 @@ export function useHoppieAttention(active: boolean): {
   enabled: boolean;
   pendingCount: number;
   unseenCount: number;
+  /** Of `unseenCount`, how many are actual CPDLC datalink traffic rather
+   *  than PDC telex — v1.7.20 (#pdc-cpdlc-mode-routing). Lets a caller
+   *  (the attention banner) decide which of `CpdlcPanel`'s two sub-tabs
+   *  to open instead of always landing on whichever one it defaults to. */
+  unseenCpdlcCount: number;
   markSeen: () => void;
 } {
   const [enabled, setEnabled] = useState(false);
   const [notifySound, setNotifySound] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
   const [unseenCount, setUnseenCount] = useState(0);
-  const receivedSeen = useRef<number | null>(null);
+  const [unseenCpdlcCount, setUnseenCpdlcCount] = useState(0);
+  const receivedSeen = useRef<{ pdc: number; cpdlc: number } | null>(null);
   const chime = useRef<HTMLAudioElement | null>(null);
+  /** QS round 06.09.2026: `poll()` fires every 5s and is fire-and-forget
+   *  — a slow `hoppie_get_thread` round trip can still be in flight when
+   *  the NEXT poll's already resolved and updated `receivedSeen`. Without
+   *  this, the stale response would then read as "new" all over again
+   *  relative to whatever baseline it captured, double-counting and
+   *  re-chiming for messages already accounted for. Same pattern as
+   *  `useStationOnline.ts`'s own generation guard. */
+  const pollGeneration = useRef(0);
 
   useEffect(() => {
     if (!active) return;
@@ -76,18 +96,32 @@ export function useHoppieAttention(active: boolean): {
     return () => window.clearInterval(id);
   }, [active]);
 
-  const markSeen = useCallback(() => setUnseenCount(0), []);
+  const markSeen = useCallback(() => {
+    setUnseenCount(0);
+    setUnseenCpdlcCount(0);
+  }, []);
 
   useEffect(() => {
     if (!active || !enabled) {
+      // QS round 3 (07.09.2026): a poll dispatched just before this
+      // effect tore down (feature disabled, or the app logged out) can
+      // still be in flight. Its `generation` check alone wouldn't catch
+      // it — nothing else bumps `pollGeneration` here — so its response
+      // would land AFTER this reset and silently re-apply a stale delta
+      // on top of the freshly-zeroed counts. Bumping it here invalidates
+      // any such response before it can arrive.
+      pollGeneration.current += 1;
       setPendingCount(0);
       setUnseenCount(0);
+      setUnseenCpdlcCount(0);
       receivedSeen.current = null;
       return;
     }
     const poll = () => {
+      const generation = ++pollGeneration.current;
       void invoke<HoppieStatus>("hoppie_status")
         .then((s) => {
+          if (generation !== pollGeneration.current) return;
           setPendingCount(s.pending_uplink_count);
           // Reception dropped: the thread is gone with it, so the
           // baseline has to go too. Keeping the old count meant the
@@ -99,27 +133,37 @@ export function useHoppieAttention(active: boolean): {
         .catch(() => undefined);
       void invoke<ThreadEntry[]>("hoppie_get_thread")
         .then((entries) => {
-          const received = entries.filter((e) => e.direction === "received").length;
+          // A slower, now-superseded poll's response landing after a
+          // later one already updated `receivedSeen` — discard it rather
+          // than recompute a delta against a baseline that has moved on.
+          if (generation !== pollGeneration.current) return;
+          const received = entries.filter((e) => e.direction === "received");
+          const receivedTotal = received.length;
+          const receivedCpdlc = received.filter((e) => e.kind === "cpdlc").length;
           // First poll of a session establishes the baseline instead of
           // alerting for the entire backlog at once.
           if (receivedSeen.current === null) {
-            receivedSeen.current = received;
+            receivedSeen.current = { pdc: receivedTotal - receivedCpdlc, cpdlc: receivedCpdlc };
             return;
           }
+          const seenCpdlc = receivedSeen.current.cpdlc;
+          const seenTotal = receivedSeen.current.pdc + seenCpdlc;
           // Defensive: a shorter thread than the baseline can only mean
           // it was reset underneath us. Re-baseline instead of going
           // negative and swallowing the next N alerts.
-          if (received < receivedSeen.current) {
-            receivedSeen.current = received;
+          if (receivedTotal < seenTotal || receivedCpdlc < seenCpdlc) {
+            receivedSeen.current = { pdc: receivedTotal - receivedCpdlc, cpdlc: receivedCpdlc };
             return;
           }
           // EVERY inbound message alerts — including a logon accept. The
           // pilot is entitled to be told about anything that arrives, and
           // silently filtering "unimportant" traffic is not our call.
-          const fresh = received - receivedSeen.current;
+          const fresh = receivedTotal - seenTotal;
+          const freshCpdlc = receivedCpdlc - seenCpdlc;
           if (fresh > 0) {
-            receivedSeen.current = received;
+            receivedSeen.current = { pdc: receivedTotal - receivedCpdlc, cpdlc: receivedCpdlc };
             setUnseenCount((n) => n + fresh);
+            if (freshCpdlc > 0) setUnseenCpdlcCount((n) => n + freshCpdlc);
             // One chime per poll, however many messages arrived, and
             // reusing a single element so a burst can't stack several
             // overlapping playbacks on top of each other.
@@ -137,5 +181,5 @@ export function useHoppieAttention(active: boolean): {
     return () => window.clearInterval(id);
   }, [active, enabled, notifySound]);
 
-  return { enabled, pendingCount, unseenCount, markSeen };
+  return { enabled, pendingCount, unseenCount, unseenCpdlcCount, markSeen };
 }

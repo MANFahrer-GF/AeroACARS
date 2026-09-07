@@ -93,6 +93,7 @@ import { UpdateGate } from "./components/UpdateGate";
 import { ErrorReportingFirstRunBanner } from "./components/ErrorReportingFirstRunBanner";
 import { IntegrityBanner } from "./components/IntegrityBanner";
 import { CpdlcMessageBanner } from "./components/CpdlcMessageBanner";
+import type { DatalinkMode } from "./components/CpdlcPanel";
 import { Notice, Button } from "./components/ui";
 import { useHoppieAttention } from "./hooks/useHoppieAttention";
 import { useDiscordRpcPush } from "./hooks/useDiscordRpcPush";
@@ -104,7 +105,7 @@ import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import { listen } from "./lib/ipc";
 import { spieleChatTon } from "./lib/chatTon";
 import { ChatView } from "./components/ChatView";
-import type { ActiveFlightInfo, LoginResult, Profile, UiError } from "./types";
+import type { ActiveFlightInfo, FlightPhase, LoginResult, Profile, UiError } from "./types";
 
 type SessionStatus =
   | { kind: "loading" }
@@ -209,6 +210,24 @@ function loadAutoDeleteFlightLogs(): boolean {
 
 function saveAutoDeleteFlightLogs(value: boolean) {
   localStorage.setItem(AUTO_DELETE_LOGS_STORAGE_KEY, value ? "1" : "0");
+}
+
+/** PDC (Pre-Departure Clearance) ist per Definition ein Boden-Vorgang —
+ *  vor dem Start abgeholt, danach ohne Bedeutung. Sobald das Flugzeug
+ *  rollt oder fliegt, ist CPDLC das Werkzeug. Dieselbe Boden-Phasenliste
+ *  wie `ActiveFlightPanel.tsx`s Vorflug-Block (`preflight`/`boarding`/
+ *  `pushback`/`taxi_out`), plus "kein aktiver Flug" — vor dem Start gibt
+ *  es noch keine CPDLC-Sitzung, für die es sich lohnen würde, dorthin zu
+ *  springen. Alles danach (ab `takeoff_roll`, inklusive Rollen/Stand nach
+ *  der Landung) zeigt CPDLC. */
+function pdcMakesSenseFor(phase: FlightPhase | null): boolean {
+  return (
+    phase === null ||
+    phase === "preflight" ||
+    phase === "boarding" ||
+    phase === "pushback" ||
+    phase === "taxi_out"
+  );
 }
 
 function App() {
@@ -759,8 +778,14 @@ function App() {
     enabled: cpdlcEnabled,
     pendingCount: cpdlcPendingCount,
     unseenCount: cpdlcUnseenCount,
+    unseenCpdlcCount,
     markSeen: markCpdlcSeen,
   } = useHoppieAttention(status.kind === "loggedIn");
+  // v1.7.20 (#pdc-cpdlc-mode-routing): lifted out of `CpdlcPanel` (which
+  // unmounts on every tab switch, see that component's `mode` prop doc)
+  // so the attention banner and the sidebar's CPDLC badge can each open
+  // the sub-tab that actually has something to show.
+  const [cpdlcMode, setCpdlcMode] = useState<DatalinkMode>("pdc");
 
   // Opt-in should look like the feature isn't there — not like a dead tab
   // that only points back at settings. If it gets switched off while the
@@ -796,6 +821,20 @@ function App() {
           cpdlcPendingCount={cpdlcPendingCount}
           onCpdlcOpen={() => {
             markCpdlcSeen();
+            // `pendingCount` (unlike `unseenCount`) only ever counts
+            // open CPDLC uplinks — see `HoppieStatus.pending_uplink_count`
+            // — so this badge is unambiguously about CPDLC traffic and
+            // outranks the phase-based default below.
+            if (cpdlcPendingCount > 0) {
+              setCpdlcMode("cpdlc");
+            } else {
+              // v1.7.20: plain nav click, nothing specific waiting — land
+              // on whichever sub-tab actually applies right now instead
+              // of always defaulting to PDC (Thomas, 07.09.2026: "die
+              // Landung auf PDC macht ja nur Sinn, wenn mein Flugzeug am
+              // Boden ist, sonst nutze ich immer CPDLC").
+              setCpdlcMode(pdcMakesSenseFor(activeFlight?.phase ?? null) ? "pdc" : "cpdlc");
+            }
             setTab("cpdlc");
           }}
           chatAn={chatAn}
@@ -871,8 +910,13 @@ function App() {
           a pilot on Cockpit still sees an uplink is waiting for a reply. */}
       <CpdlcMessageBanner
         count={cpdlcEnabled ? cpdlcUnseenCount : 0}
-        onOpenTab={() => {
+        // v1.7.20 (#pdc-cpdlc-mode-routing): if any of the unseen traffic
+        // is actual CPDLC, that's what the pilot needs to act on — a
+        // clearance/instruction outranks a PDC reply for urgency.
+        mode={unseenCpdlcCount > 0 ? "cpdlc" : "pdc"}
+        onOpenTab={(mode) => {
           markCpdlcSeen();
+          setCpdlcMode(mode);
           setTab("cpdlc");
         }}
         onDismiss={markCpdlcSeen}
@@ -1038,7 +1082,11 @@ function App() {
 
       {status.kind === "loggedIn" && tab === "cpdlc" && (
         <Suspense fallback={<div className="lazy-fallback">…</div>}>
-          <CpdlcPanel onOpenSettings={() => setTab("settings")} />
+          <CpdlcPanel
+            onOpenSettings={() => setTab("settings")}
+            mode={cpdlcMode}
+            onModeChange={setCpdlcMode}
+          />
         </Suspense>
       )}
 

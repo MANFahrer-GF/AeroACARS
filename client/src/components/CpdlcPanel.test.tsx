@@ -20,7 +20,21 @@ vi.mock("../lib/ipc", () => ({
   formatIpcError: (e: unknown) => (e as { message?: string })?.message ?? String(e),
 }));
 
-import { CpdlcPanel } from "./CpdlcPanel";
+import { useState } from "react";
+import { CpdlcPanel, type DatalinkMode } from "./CpdlcPanel";
+
+/** v1.7.20 (#pdc-cpdlc-mode-routing): `mode` moved from the panel's own
+ *  `useState` to a controlled prop (App.tsx now owns it, so a
+ *  notification click can route to the right sub-tab). Tests that click
+ *  the PDC/CPDLC toggle need a real state owner for that prop to work at
+ *  all — a fixed literal would never change no matter what's clicked. */
+function renderPanel(onOpenSettings: () => void = () => {}) {
+  function Harness() {
+    const [mode, setMode] = useState<DatalinkMode>("pdc");
+    return <CpdlcPanel onOpenSettings={onOpenSettings} mode={mode} onModeChange={setMode} />;
+  }
+  return render(<Harness />);
+}
 
 beforeAll(async () => {
   if (!i18next.isInitialized) {
@@ -96,7 +110,7 @@ async function openCallsignEditor() {
 
 describe("CpdlcPanel connection flow", () => {
   it("persists a freshly typed callsign before connecting", async () => {
-    render(<CpdlcPanel onOpenSettings={() => {}} />);
+    renderPanel();
 
     const field = await openCallsignEditor();
     await userEvent.type(field, "gsg123");
@@ -127,7 +141,7 @@ describe("CpdlcPanel connection flow", () => {
   });
 
   it("surfaces a connect refusal instead of silently staying offline", async () => {
-    render(<CpdlcPanel onOpenSettings={() => {}} />);
+    renderPanel();
     await screen.findByText(t("cpdlc.acars_offline"));
 
     // No callsign typed at all — the backend refuses.
@@ -138,7 +152,7 @@ describe("CpdlcPanel connection flow", () => {
   });
 
   it("uppercases the callsign in the field itself, not just visually", async () => {
-    render(<CpdlcPanel onOpenSettings={() => {}} />);
+    renderPanel();
     const field = (await openCallsignEditor()) as HTMLInputElement;
     await userEvent.type(field, "gsg123");
     await userEvent.tab();
@@ -147,7 +161,7 @@ describe("CpdlcPanel connection flow", () => {
   });
 
   it("renders the PDC/CPDLC mode toggle as tabs in the composer", async () => {
-    render(<CpdlcPanel onOpenSettings={() => {}} />);
+    renderPanel();
     await screen.findByText(t("cpdlc.acars_offline"));
     expect(screen.getByRole("tab", { name: t("cpdlc.mode_pdc") })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: t("cpdlc.mode_cpdlc") })).toBeInTheDocument();
@@ -162,7 +176,7 @@ describe("CpdlcPanel connection flow", () => {
   // "CPDLC-LOGON" wrapping the label). It now lives in the composer,
   // rendered only in CPDLC mode — simply absent in PDC mode, not dimmed.
   it("shows CPDLC-logon only in CPDLC mode, not dimmed in PDC mode", async () => {
-    render(<CpdlcPanel onOpenSettings={() => {}} />);
+    renderPanel();
     await screen.findByText(t("cpdlc.acars_offline"));
     expect(screen.queryByText(t("cpdlc.logon_label"))).not.toBeInTheDocument();
 
@@ -178,7 +192,7 @@ describe("CpdlcPanel connection flow", () => {
   // anything saw a bare, un-editable "—" and no way to type a centre at
   // all. The field must be directly reachable with nothing sent yet.
   it("lets a pilot type a centre and log on with no prior session — no Wechseln detour", async () => {
-    render(<CpdlcPanel onOpenSettings={() => {}} />);
+    renderPanel();
 
     // Connect first — logging on to a centre needs ACARS up regardless
     // of the field-reachability bug this test is really about. The logon
@@ -220,7 +234,7 @@ describe("CpdlcPanel connection flow", () => {
     localStorage.setItem(STATION_DRAFT_KEY, "EDDF"); // the old bug's kind of leftover
 
     try {
-      render(<CpdlcPanel onOpenSettings={() => {}} />);
+      renderPanel();
       const field = await openCallsignEditor();
       await userEvent.type(field, "gsg123");
       await userEvent.click(screen.getByRole("button", { name: t("cpdlc.acars_start") }));
@@ -247,5 +261,72 @@ describe("CpdlcPanel connection flow", () => {
       localStorage.removeItem(STATION_DRAFT_KEY);
       sessionStorage.removeItem(STATION_DRAFT_KEY);
     }
+  });
+
+  // QS round 2 (06.09.2026, #pdc-cpdlc-session-end): a session can now end
+  // with no automatic follow-up logon (manual "Abmelden", or a GOLD `END
+  // SERVICE` with no next facility named) — `stationInput` used to keep
+  // showing the station that just ended, so the field a pilot sees right
+  // after was a stale, already-dead facility rather than a blank one
+  // ready for the next centre.
+  it("clears the station field once a session ends, instead of leaving the dead station behind", async () => {
+    let connected = false;
+    let loggedOn = false;
+    const impl = (cmd: string, args?: Record<string, unknown>) => {
+      switch (cmd) {
+        case "hoppie_get_settings":
+          return Promise.resolve({ enabled: true, callsign_override: "GSG123", notify_sound: false });
+        case "hoppie_get_flight_context":
+          return Promise.resolve({ callsign: null, aircraft_type: null, dep_icao: null, dest_icao: null });
+        case "hoppie_connect":
+          connected = true;
+          return Promise.resolve({ ...OFFLINE, connected: true, station_id: "SERVER" });
+        case "hoppie_status":
+          return Promise.resolve(
+            !connected
+              ? OFFLINE
+              : loggedOn
+                ? { ...OFFLINE, connected: true, logged_on: true, station_id: "LBSR" }
+                : { ...OFFLINE, connected: true },
+          );
+        case "hoppie_send_logon_request":
+          loggedOn = true;
+          return Promise.resolve({ ...OFFLINE, connected: true, logged_on: true, station_id: "LBSR" });
+        case "hoppie_send_logoff":
+          loggedOn = false;
+          return Promise.resolve({ ...OFFLINE, connected: true, logged_on: false });
+        case "hoppie_get_thread":
+          return Promise.resolve([]);
+        case "hoppie_list_elements":
+          return Promise.resolve([]);
+        default:
+          return Promise.resolve(undefined);
+      }
+    };
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => impl(cmd, args));
+
+    renderPanel();
+    await screen.findByText(t("cpdlc.acars_offline"));
+    await userEvent.click(screen.getByRole("button", { name: t("cpdlc.acars_start") }));
+    await screen.findByText(t("cpdlc.acars_online"));
+    await userEvent.click(screen.getByRole("tab", { name: t("cpdlc.mode_cpdlc") }));
+    await screen.findByText(t("cpdlc.logon_none"));
+
+    const stationInput = screen.getByPlaceholderText(t("cpdlc.center_placeholder")) as HTMLInputElement;
+    await userEvent.type(stationInput, "lbsr");
+    await userEvent.click(screen.getByRole("button", { name: t("cpdlc.logon_send") }));
+    await screen.findByText(t("cpdlc.logon_ok"));
+    expect(screen.getByText("LBSR")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: t("cpdlc.logoff") }));
+    await screen.findByText(t("cpdlc.logon_none"));
+
+    const stationInputAfter = await screen.findByPlaceholderText(
+      t("cpdlc.center_placeholder"),
+    ) as HTMLInputElement;
+    expect(
+      stationInputAfter.value,
+      "the field must not still show LBSR — that facility has already ended the session",
+    ).toBe("");
   });
 });
