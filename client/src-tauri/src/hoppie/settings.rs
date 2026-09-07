@@ -184,30 +184,84 @@ fn session_path(app: &AppHandle) -> Option<PathBuf> {
         .map(|p| p.join(SESSION_FILE))
 }
 
-/// The facility we last logged on to and have not logged off from, if
-/// any. `None` means there is nothing to clean up — and in that case a
-/// connect must NOT send a stray LOGOFF: on the controller's side an
-/// unsolicited LOGOFF matches no filter and shows up as an unread
-/// message from an aircraft they have never spoken to.
-pub fn open_session(app: &AppHandle) -> Option<String> {
-    let path = session_path(app)?;
-    let text = std::fs::read_to_string(path).ok()?;
-    let station = serde_json::from_str::<String>(&text).ok()?;
-    let trimmed = station.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
+/// A CPDLC session left open by a run that ended without logging off
+/// (crash, kill, power loss) — the facility that still holds us AND the
+/// callsign it holds us under, so a crash-recovery LOGOFF names the same
+/// participant Hoppie's server actually has registered.
+///
+/// QS round 8 (07.09.2026, #pdc-session-model, external QS Finding 3):
+/// this used to be a bare station-name `String` — the crash-recovery
+/// cleanup in `hoppie_connect` sent its stale LOGOFF under THIS run's
+/// freshly-resolved callsign, not the crashed run's. A pilot who changed
+/// a callsign override, or switched to a different active flight,
+/// between the crash and the next connect had the stale LOGOFF silently
+/// address the WRONG participant — Hoppie's server would not recognize
+/// it as belonging to the actually-open session, so the real stale
+/// session stayed open server-side (still queueing messages, still
+/// showing the aircraft connected) while our own marker was cleared
+/// regardless, losing all further track of it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenSession {
+    pub station: String,
+    pub callsign: String,
 }
 
-/// Remember that a CPDLC session is open with `station`.
-pub fn set_open_session(app: &AppHandle, station: &str) {
+/// The facility we last logged on to and have not logged off from, if
+/// any — with the callsign that logon was made under. `None` means there
+/// is nothing to clean up — and in that case a connect must NOT send a
+/// stray LOGOFF: on the controller's side an unsolicited LOGOFF matches
+/// no filter and shows up as an unread message from an aircraft they
+/// have never spoken to.
+///
+/// A marker left over from BEFORE round 8 (a bare JSON string, no
+/// callsign) fails to parse as [`OpenSession`] and is simply ignored —
+/// the same "nothing to clean up" behavior as a missing/corrupt file.
+/// The one-time cost is skipping a single stale-LOGOFF attempt across
+/// the exact version boundary; the alternative (guessing a callsign for
+/// an old marker) would be exactly the bug this closes.
+pub fn open_session(app: &AppHandle) -> Option<OpenSession> {
+    let path = session_path(app)?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let session = serde_json::from_str::<OpenSession>(&text).ok()?;
+    let station = session.station.trim();
+    let callsign = session.callsign.trim();
+    (!station.is_empty() && !callsign.is_empty()).then(|| OpenSession {
+        station: station.to_string(),
+        callsign: callsign.to_string(),
+    })
+}
+
+/// Remember that a CPDLC session is open with `station`, under `callsign`.
+///
+/// QS round 9 (07.09.2026, #pdc-session-model, following external QS
+/// round 8): writes atomically — temp file in the same directory, then
+/// `rename` — matching the established pattern this project already
+/// uses for exactly this kind of durability-sensitive marker
+/// (`crates/secrets`, `crates/storage`, `navdata_cache.rs`). A plain
+/// `fs::write` truncates the target file in place; a crash (power loss,
+/// kill -9) landing mid-write — the EXACT scenario this marker exists to
+/// recover from — could leave it half-written. `open_session`'s
+/// `serde_json::from_str(..).ok()?` already turns a corrupt file into
+/// "nothing to clean up" rather than a crash of its own, but that's a
+/// silent loss of the one thing this file is for, precisely when a
+/// crash makes it matter most. `rename` within one directory is atomic
+/// on every platform this app ships for — the reader never observes a
+/// partially-written file.
+pub fn set_open_session(app: &AppHandle, callsign: &str, station: &str) {
     let Some(path) = session_path(app) else {
         return;
     };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    match serde_json::to_vec(station) {
+    let session = OpenSession {
+        station: station.to_string(),
+        callsign: callsign.to_string(),
+    };
+    match serde_json::to_vec(&session) {
         Ok(json) => {
-            if let Err(e) = std::fs::write(&path, json) {
+            let tmp = path.with_extension("json.tmp");
+            if let Err(e) = std::fs::write(&tmp, json).and_then(|()| std::fs::rename(&tmp, &path)) {
                 tracing::warn!(error = %e, "hoppie: could not record open session");
             }
         }
@@ -230,20 +284,51 @@ pub fn clear_open_session(app: &AppHandle) {
 
 #[cfg(test)]
 mod session_tests {
-    /// The marker is a plain JSON string; these guard the shape the
-    /// reader expects, without needing a Tauri AppHandle.
+    use super::OpenSession;
+
+    /// The marker is `{station, callsign}`; these guard the shape the
+    /// reader expects, without needing a Tauri AppHandle (the full
+    /// `open_session`/`set_open_session` functions need one and aren't
+    /// unit-tested here — same limitation the pre-round-8 tests had).
     #[test]
-    fn round_trips_as_a_plain_json_string() {
-        let encoded = serde_json::to_string("EDGG").unwrap();
-        assert_eq!(encoded, "\"EDGG\"");
-        assert_eq!(serde_json::from_str::<String>(&encoded).unwrap(), "EDGG");
+    fn round_trips_with_both_station_and_callsign() {
+        let session = OpenSession {
+            station: "EDGG".to_string(),
+            callsign: "DLH123".to_string(),
+        };
+        let encoded = serde_json::to_string(&session).unwrap();
+        let decoded: OpenSession = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded.station, "EDGG");
+        assert_eq!(decoded.callsign, "DLH123");
     }
 
     #[test]
-    fn blank_station_is_not_a_session() {
-        for blank in ["\"\"", "\"   \""] {
-            let s: String = serde_json::from_str(blank).unwrap();
-            assert!(s.trim().is_empty(), "must not count as an open session");
+    fn blank_station_or_callsign_reads_as_blank_through_the_round_trip() {
+        // The actual "not a valid session" gate lives in `open_session`
+        // itself (needs an AppHandle) — this only guards that a blank
+        // value survives the JSON round trip as blank, not silently
+        // dropped or defaulted to something non-empty.
+        for (station, callsign) in [("", "DLH123"), ("EDGG", ""), ("   ", "DLH123")] {
+            let session = OpenSession {
+                station: station.to_string(),
+                callsign: callsign.to_string(),
+            };
+            let encoded = serde_json::to_string(&session).unwrap();
+            let decoded: OpenSession = serde_json::from_str(&encoded).unwrap();
+            assert!(decoded.station.trim().is_empty() || decoded.callsign.trim().is_empty());
         }
+    }
+
+    #[test]
+    fn a_pre_round_8_plain_string_marker_fails_to_parse_rather_than_being_misread() {
+        // QS round 8 (07.09.2026, #pdc-session-model, external QS
+        // Finding 3): the marker used to be a bare JSON string with no
+        // callsign at all. A leftover file from before this change must
+        // be ignored outright (`open_session` treats a parse failure the
+        // same as a missing file — nothing to clean up), never
+        // misinterpreted as a session with a guessed or empty callsign,
+        // which would silently reintroduce the exact bug this closed.
+        let old_format = serde_json::to_string("EDGG").unwrap();
+        assert!(serde_json::from_str::<OpenSession>(&old_format).is_err());
     }
 }

@@ -13,10 +13,9 @@ use tokio::sync::watch;
 
 use hoppie_protocol::cpdlc;
 use hoppie_protocol::elements::Direction;
-use hoppie_protocol::thread::CpdlcThread;
 use hoppie_protocol::wire::{self, HoppieRequest, HoppieResponseLine, PacketKind};
 
-use super::{HoppieHttp, MinMeta, TelexEntry};
+use super::{HistoryMeta, HoppieHttp, HoppieSession, MinMeta, TelexEntry};
 use crate::{log_activity_handle, ActivityLevel};
 
 /// The official docs' recommended idle band
@@ -123,17 +122,24 @@ fn requires_reply_for_batch_order(env: &wire::InboundEnvelope) -> bool {
 ///   original position is not part of the key at all). We have no
 ///   response-requirement code to judge telex or an undecodable packet
 ///   by, so rather than guess, leave the whole batch alone.
-/// - **A handover directive anywhere in the batch.** Unlike every other
-///   uplink here, handling a `HANDOVER <station>` message has real side
-///   effects beyond the message log — see `poll_once`'s handover arm:
-///   it flips `to_station`, marks the thread logged off, and fires a
-///   new `REQUEST LOGON`, all synchronously, before the loop moves on to
-///   the next envelope. `HANDOVER` itself typically carries a no-reply
-///   code, so without this guard it would be a candidate for being
-///   pulled EARLIER in the batch by the very sort this function does —
-///   changing not just what the pilot sees but the actual order those
-///   side effects run in relative to whatever else was in the batch.
-///   That risk costs nothing to close (batches mixing a handover with
+/// - **A handover or session-end directive anywhere in the batch.**
+///   Unlike every other uplink here, a `HANDOVER <station>`, GOLD
+///   `NEXT DATA AUTHORITY`/`END SERVICE`, or bare `LOGOFF` has real side
+///   effects beyond the message log — see `poll_once`'s handling arms:
+///   they end the current session (superseding whatever is still open)
+///   and can fire a new `REQUEST LOGON` for the named successor, all
+///   synchronously, before the loop moves on to the next envelope. Every
+///   one of these typically carries a no-reply code, so without this
+///   guard any of them would be a candidate for being pulled EARLIER in
+///   the batch by the very sort this function does — changing not just
+///   what the pilot sees but the actual order those side effects run in
+///   relative to a reply-owed instruction in the SAME batch. QS round
+///   06.09.2026: this guard originally only checked `parse_handover`,
+///   which missed the three session-ending forms added alongside it —
+///   an `END SERVICE` sorted ahead of a same-batch clearance would
+///   supersede the thread before that clearance was even recorded,
+///   letting it settle into `open` unsuperseded on the new session. That
+///   risk costs nothing to close (batches mixing a session-end with
 ///   another uplink are already rare), so it's excluded outright rather
 ///   than reasoned to be "probably fine".
 fn reorder_same_batch_envelopes(
@@ -144,7 +150,11 @@ fn reorder_same_batch_envelopes(
             return false;
         }
         match cpdlc::decode(&env.packet, Direction::Uplink) {
-            Ok(msg) => parse_handover(&msg.element_text).is_none(),
+            Ok(msg) => {
+                parse_handover(&msg.element_text).is_none()
+                    && parse_next_data_authority(&msg).is_none()
+                    && !is_end_service(&msg)
+            }
             Err(_) => false,
         }
     });
@@ -173,13 +183,13 @@ pub fn poll_interval(pending_response_count: usize) -> Duration {
 pub fn spawn(
     app: AppHandle,
     http: Arc<HoppieHttp>,
-    thread: Arc<StdMutex<CpdlcThread>>,
+    session: Arc<StdMutex<HoppieSession>>,
     telex_log: Arc<StdMutex<Vec<TelexEntry>>>,
     min_meta: Arc<StdMutex<MinMeta>>,
+    history_meta: Arc<StdMutex<HistoryMeta>>,
     last_error: Arc<StdMutex<Option<String>>>,
     from_callsign: String,
     logon: String,
-    to_station: Arc<StdMutex<String>>,
     notify_os: bool,
     mut stop_rx: watch::Receiver<bool>,
 ) {
@@ -192,8 +202,8 @@ pub fn spawn(
         let mut first_poll = true;
         loop {
             let interval = {
-                let t = thread.lock().expect("hoppie thread mutex");
-                poll_interval(t.pending_response_count())
+                let s = session.lock().expect("hoppie session mutex");
+                poll_interval(s.thread.pending_response_count())
             };
             tokio::select! {
                 res = stop_rx.changed() => {
@@ -202,7 +212,7 @@ pub fn spawn(
                     }
                 }
                 _ = tokio::time::sleep(interval) => {
-                    poll_once(&app, &http, &thread, &telex_log, &min_meta, &last_error, &from_callsign, &logon, &to_station, notify_os && !first_poll).await;
+                    poll_once(&app, &http, &session, &telex_log, &min_meta, &history_meta, &last_error, &from_callsign, &logon, notify_os && !first_poll).await;
                     first_poll = false;
                 }
             }
@@ -224,6 +234,36 @@ fn notify_new_message(app: &AppHandle, from: &str) {
         .title("AeroACARS — CPDLC")
         .body(format!("Neue Nachricht von {from}"))
         .show();
+}
+
+/// Clears the persisted open-session marker ONLY if `generation` still
+/// matches the session's CURRENT one — see
+/// `HoppieSession::persist_generation`'s doc comment for the full
+/// reasoning. An unconditional clear right after `end_current` isn't
+/// safe on this app's multi-threaded runtime: a concurrent event (a
+/// fresh accept processed by a DIFFERENT poll cycle, or a manual command
+/// on another OS thread) landing between `end_current` and this call
+/// could already have written a newer, genuinely-valid marker that an
+/// unconditional clear would wipe.
+///
+/// QS round 10 (07.09.2026, #pdc-session-model, external QS Finding 3):
+/// the check and the file write happen under the SAME lock hold — the
+/// FIRST version of this function re-locked, read the generation, and
+/// let the guard drop BEFORE calling `clear_open_session`, which
+/// reopened exactly the race the generation counter was meant to close:
+/// the check and the write were two separate, unsynchronized moments
+/// again, with the actual file I/O happening fully unlocked. Holding the
+/// guard through the (tiny, local, synchronous — no network, no
+/// `.await`) file write is what makes the compare-and-write atomic
+/// against any other thread that also needs this same lock before
+/// touching the marker file.
+fn clear_marker_if_current(app: &AppHandle, session: &StdMutex<HoppieSession>, generation: u64) {
+    let s = session.lock().expect("hoppie session mutex");
+    if s.persist_generation() == generation {
+        crate::hoppie::settings::clear_open_session(app);
+    } else {
+        tracing::debug!("hoppie: skipped clearing an already-superseded open-session marker");
+    }
 }
 
 /// Extract the next facility from a `HANDOVER <ICAO>` uplink, which is
@@ -252,6 +292,89 @@ fn parse_handover(text: &str) -> Option<String> {
     Some(station.to_uppercase())
 }
 
+/// Extract the next facility from a GOLD `UM160 NEXT DATA AUTHORITY
+/// <ICAO>` uplink — the standards-compliant counterpart to the
+/// Hoppie-specific `HANDOVER <ICAO>` free-text convention above. Real
+/// ATC units use this one; `HANDOVER` only ever appears from a Hoppie-
+/// side client that made the convention up.
+///
+/// v1.7.20 (#pdc-cpdlc-session-end): unlike `HANDOVER`, this is
+/// deliberately NOT treated as "switch now" — GOLD sends `NEXT DATA
+/// AUTHORITY` as a heads-up well before the actual transfer, often while
+/// the CURRENT facility is still very much in charge. Acting on it
+/// immediately would log the aircraft off a session that hasn't ended
+/// yet. The caller only remembers the name; `END SERVICE` (`UM161`,
+/// below) is the actual transfer point.
+fn parse_next_data_authority(msg: &cpdlc::CpdlcMessage) -> Option<String> {
+    match &msg.parsed {
+        hoppie_protocol::elements::ParsedElement::Recognized(r) if r.spec_id == "UM160" => {
+            let raw = r.values.first()?;
+            // QS round 06.09.2026: the generic placeholder resolver hands
+            // back whatever text filled `@1` verbatim — it does not itself
+            // check that a "single ICAO" placeholder actually IS a single
+            // token. "NEXT DATA AUTHORITY LRBB EXTRA" must not be logged
+            // on to as station "LRBB EXTRA" — same discipline `parse_handover`
+            // already applies to its own free-text station token.
+            let mut parts = raw.split_whitespace();
+            let station = parts.next()?;
+            if parts.next().is_some() || station.is_empty() {
+                return None;
+            }
+            Some(station.to_uppercase())
+        }
+        _ => None,
+    }
+}
+
+/// Whether this uplink is a session-end signal: the current facility
+/// unilaterally ending the CPDLC session. End the session now, and if a
+/// `NEXT DATA AUTHORITY` was named earlier, hand over to it exactly like
+/// `HANDOVER` does; otherwise the pilot has no known next facility and
+/// must log on manually.
+///
+/// Two forms recognized, both field-observed:
+/// - GOLD `UM161 END SERVICE`, decoded and `Recognized`.
+/// - A bare `LOGOFF` uplink — Hoppie has no uplink element for this in
+///   the GOLD table at all (`DM_LOGOFF` is downlink-only, aircraft-to-
+///   ground), so a ground system that mirrors the aircraft's own
+///   convention back sends undecodable free text that falls through to
+///   `Raw`. QS round 06.09.2026: this is documented as a real,
+///   previously-seen case (`feedback` from the 25.07.2026 vSMR audit —
+///   "ein unaufgeforderter LOGOFF matcht keinen Filter") that the UM161
+///   check alone does not cover; missing it reproduces the exact
+///   38-minute-open-uplink field incident this whole fix addresses.
+fn is_end_service(msg: &cpdlc::CpdlcMessage) -> bool {
+    match &msg.parsed {
+        hoppie_protocol::elements::ParsedElement::Recognized(r) => r.spec_id == "UM161",
+        hoppie_protocol::elements::ParsedElement::Raw(text) => {
+            text.trim().eq_ignore_ascii_case("LOGOFF")
+        }
+    }
+}
+
+/// Whether `text` is one of vSMR's two documented, LEGITIMATE raw-text
+/// conventions that are NOT a logon refusal — `STANDBY` and "UNABLE CALL
+/// ON FREQ" (SMRPlugin.cpp, same citation as the undecodable-packet
+/// handling this feeds). Either can arrive as an interim ack to a
+/// just-sent `REQUEST_LOGON`, entirely unrelated to accepting or refusing
+/// it — a controller pressing "standby" before actually looking at the
+/// request is completely normal.
+///
+/// QS round 10 (07.09.2026, #pdc-session-model, external QS Finding 2):
+/// exists because the alternative — treating EVERY undecodable text from
+/// the pending station as a presumed refusal — wrongly aborted a
+/// still-live logon attempt on exactly these two named, real, previously
+/// field-observed message shapes. vSMR's actual refusal wording is not
+/// documented anywhere this codebase can cite, so this is deliberately
+/// an EXCLUSION list (positively known non-refusals), not a positive
+/// identification of the refusal itself — whatever undecodable text
+/// remains after excluding these two is presumed to be it, which is the
+/// best available signal given the undocumented exact wording.
+fn is_a_known_non_refusal_raw_text(text: &str) -> bool {
+    let t = text.trim();
+    t.eq_ignore_ascii_case("STANDBY") || t.eq_ignore_ascii_case("UNABLE CALL ON FREQ")
+}
+
 /// v0.19.x FIX: whether an inbound `HANDOVER <station>` directive should
 /// actually be honored. Hoppie has no cryptographic sender verification —
 /// any account can address a packet to any callsign — and this client
@@ -263,17 +386,89 @@ fn parse_handover(text: &str) -> Option<String> {
 /// network-level lack of authentication, but it does close the class of
 /// stray/misrouted/spoofed packets that don't even bother pretending to
 /// be the current controller — which is the entire realistic threat
-/// surface a client-side check can actually reduce. Pure, so it's
-/// testable without a live connection.
-fn handover_sender_is_authorized(from: &str, current_station: &str) -> bool {
-    !current_station.trim().is_empty() && from.trim().eq_ignore_ascii_case(current_station.trim())
+/// surface a client-side check can actually reduce.
+///
+/// v1.7.21 (#pdc-session-model): this used to be its own pure function
+/// comparing against the bare `to_station` name — QS round 5's Finding 4
+/// caught that a late HANDOVER/NEXT DATA AUTHORITY/END SERVICE from an
+/// ABANDONED station whose name still happened to match got authorized
+/// anyway, the same gap the abandoned-uplink check had. Both are now the
+/// SAME check — `HoppieSession::is_authorized_to_control`, which requires
+/// an actually live (pending or accepted) session with that name, not
+/// just a name match — called directly at each of the three sites below
+/// (and, for the sharper version of the same class of bug, before
+/// trusting a claimed logon accept/refuse — see `process_poll_payload`).
+///
+/// What to do about a same-MIN uplink collision across two different
+/// stations — see [`resolve_min_collision`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MinCollisionResolution {
+    /// No live collision (no prior entry for this MIN, same station as
+    /// before, or the prior entry is already closed) — proceed normally.
+    NoCollision,
+    /// The prior, still-open entry belongs to the CURRENT station; the
+    /// incoming message is the stale one and must be superseded instead.
+    SupersedeIncoming,
+    /// The incoming message belongs to the CURRENT station; the prior,
+    /// still-open entry is the stale one and must be superseded so the
+    /// incoming message can take the slot normally.
+    SupersedeExisting,
+}
+
+/// Decide which side of a same-MIN, cross-station uplink collision is
+/// stale, using `current_station` (`HoppieSession::addressee`) as the
+/// tie-breaker.
+///
+/// QS round 06.09.2026: Hoppie's poll model gives no cross-station
+/// delivery-order guarantee — only per-station MIN numbering. A message
+/// station A queued for us can still be sitting unpolled when we move on
+/// to station B; if B independently reuses the same MIN number (common,
+/// since most facilities start counting near 1) before A's message
+/// finally arrives, blindly treating "most recently processed" as
+/// authoritative — the previous behavior — let the STALE message
+/// overwrite `min_meta`'s recorded station for a still-open entry the
+/// pilot might be about to answer. The reply would then go out addressed
+/// to whichever station was processed last, not the one actually asking.
+///
+/// Pure and side-effect-free so it's testable without a live
+/// thread/HTTP/AppHandle, matching every other decision function in this
+/// file (`parse_handover`, `is_end_service`, ...) — the call site in
+/// `process_poll_payload` only executes what this returns.
+fn resolve_min_collision(
+    existing_station: Option<&str>,
+    existing_is_open: bool,
+    incoming_station: &str,
+    current_station: &str,
+) -> MinCollisionResolution {
+    let Some(existing_station) = existing_station else {
+        return MinCollisionResolution::NoCollision;
+    };
+    // Defensive trim, same discipline as `normalize_station` — every
+    // production caller already passes normalized (trimmed+uppercased)
+    // station strings, but comparing case/whitespace-tolerantly here too
+    // costs nothing and matches this file's established discipline.
+    let existing_station = existing_station.trim();
+    let incoming_station = incoming_station.trim();
+    let current_station = current_station.trim();
+    if !existing_is_open || existing_station.eq_ignore_ascii_case(incoming_station) {
+        return MinCollisionResolution::NoCollision;
+    }
+    let existing_is_current = existing_station.eq_ignore_ascii_case(current_station);
+    let incoming_is_current = incoming_station.eq_ignore_ascii_case(current_station);
+    match (existing_is_current, incoming_is_current) {
+        (true, false) => MinCollisionResolution::SupersedeIncoming,
+        (false, true) => MinCollisionResolution::SupersedeExisting,
+        // Neither matches (two unrelated delivery desks) or, in theory,
+        // both do (impossible — they'd be equal and never reach here) —
+        // no authority signal to prefer one over the other either way.
+        _ => MinCollisionResolution::NoCollision,
+    }
 }
 
 /// Station ids on the wire are compared case-insensitively everywhere
-/// else in this module (see `handover_sender_is_authorized`), but a
-/// RECORDED station is also used as a send address later. Normalizing
-/// once, where it enters the app, keeps "ldzo " and "LDZO" from becoming
-/// two different addressees.
+/// else in this module, but a RECORDED station is also used as a send
+/// address later. Normalizing once, where it enters the app, keeps "ldzo "
+/// and "LDZO" from becoming two different addressees.
 fn normalize_station(raw: &str) -> String {
     raw.trim().to_uppercase()
 }
@@ -283,7 +478,7 @@ fn normalize_station(raw: &str) -> String {
 /// a visible "not logged on" state rather than silently pretending.
 async fn send_logon(
     http: &HoppieHttp,
-    thread: &StdMutex<CpdlcThread>,
+    session: &StdMutex<HoppieSession>,
     min_meta: &StdMutex<MinMeta>,
     from_callsign: &str,
     logon: &str,
@@ -296,14 +491,19 @@ async fn send_logon(
         return;
     };
     let (message, min) = {
-        let mut t = thread.lock().expect("hoppie thread mutex");
-        let (message, _) = t.record_sent(
+        let mut s = session.lock().expect("hoppie session mutex");
+        let (message, _) = s.thread.record_sent(
             spec.response,
             None,
             resolved.filled_text.clone(),
             hoppie_protocol::elements::ParsedElement::Recognized(resolved),
         );
         let min = message.min;
+        // v1.7.21 (#pdc-session-model): started tracking the new pending
+        // attempt HERE, atomically with the MIN allocation — same
+        // discipline as `send_cpdlc_element` in mod.rs (see its doc
+        // comment for why this used to be a separate, non-atomic step).
+        s.begin_logon(station, min);
         (message, min)
     };
     min_meta.lock().expect("hoppie min_meta mutex").insert(
@@ -337,10 +537,16 @@ async fn send_logon(
     };
     match failure {
         Some(reason) => {
-            thread
-                .lock()
-                .expect("hoppie thread mutex")
-                .rollback_sent(min);
+            let mut s = session.lock().expect("hoppie session mutex");
+            s.thread.rollback_sent(min);
+            // Mirrors `CpdlcThread::rollback_sent` undoing its own
+            // `logon_request_min` — a request that never sent was never
+            // a real attempt, so it's not a "session that ended" either.
+            // MIN-correlated (QS round 6) — a newer, still-live attempt
+            // that superseded this one while the HTTP send was in
+            // flight must not be cancelled by this failure.
+            s.cancel_pending(min);
+            drop(s);
             min_meta
                 .lock()
                 .expect("hoppie min_meta mutex")
@@ -368,12 +574,12 @@ async fn process_poll_payload(
     app: &AppHandle,
     http: &HoppieHttp,
     content: &str,
-    thread: &StdMutex<CpdlcThread>,
+    session: &StdMutex<HoppieSession>,
     telex_log: &StdMutex<Vec<TelexEntry>>,
     min_meta: &StdMutex<MinMeta>,
+    history_meta: &StdMutex<HistoryMeta>,
     from_callsign: &str,
     logon: &str,
-    to_station: &StdMutex<String>,
     // False on the first poll of a session — see `spawn`'s `first_poll`.
     notify_os: bool,
 ) {
@@ -431,6 +637,7 @@ async fn process_poll_payload(
                     at: chrono::Utc::now(),
                     station: normalize_station(&from),
                     from_cpdlc_channel: false,
+                    superseded: false,
                 });
             if notify_os {
                 notify_new_message(app, &from);
@@ -444,12 +651,15 @@ async fn process_poll_payload(
                 // never acts on this — it's protocol bookkeeping, not
                 // an instruction, so it stays out of the message log.
                 if let Some(next) = parse_handover(&msg.element_text) {
-                    let current_station =
-                        to_station.lock().expect("hoppie to_station mutex").clone();
-                    if !handover_sender_is_authorized(&env.from, &current_station) {
+                    let (authorized, current_station) = {
+                        let s = session.lock().expect("hoppie session mutex");
+                        (s.is_authorized_to_control(&env.from), s.addressee())
+                    };
+                    if !authorized {
                         // v0.19.x FIX: don't act on a HANDOVER from anyone
-                        // other than the facility we're currently connected
-                        // to — see `handover_sender_is_authorized`'s doc
+                        // other than the facility we're currently
+                        // pending/connected to — see
+                        // `HoppieSession::is_authorized_to_control`'s doc
                         // comment. Fall through to normal message handling
                         // below instead of `continue`ing, so the pilot
                         // still sees the odd uplink rather than it vanishing.
@@ -480,44 +690,485 @@ async fn process_poll_payload(
                             None,
                         );
                         // The old centre has let go; the new one has
-                        // not accepted yet. Leaving `logged_on` set
-                        // made the header claim "connected <new
-                        // centre>" from this instant on, even if that
-                        // centre never answers — the pilot would
-                        // believe they have a datalink they don't.
-                        thread
-                            .lock()
-                            .expect("hoppie thread mutex")
-                            .mark_logged_off();
-                        crate::hoppie::settings::clear_open_session(app);
-                        *to_station.lock().expect("hoppie to_station mutex") = next.clone();
-                        send_logon(http, thread, min_meta, from_callsign, logon, &next).await;
+                        // not accepted yet. Leaving the session `Accepted`
+                        // made the header claim "connected <new centre>"
+                        // from this instant on, even if that centre never
+                        // answers — the pilot would believe they have a
+                        // datalink they don't. `end_current` quarantines
+                        // `current_station` and clears any leftover NEXT
+                        // DATA AUTHORITY atomically with the thread
+                        // mutation — a mixed-convention sequence (UM160
+                        // from one facility, a Hoppie free-text HANDOVER
+                        // from another) must not carry a stale name
+                        // forward.
+                        let generation =
+                            session.lock().expect("hoppie session mutex").end_current();
+                        clear_marker_if_current(app, session, generation);
+                        send_logon(http, session, min_meta, from_callsign, logon, &next).await;
                         continue;
                     }
                 }
+                // v1.7.20 (#pdc-cpdlc-session-end): the GOLD-compliant
+                // counterpart to the Hoppie-specific HANDOVER convention
+                // above. `NEXT DATA AUTHORITY` only announces who's next —
+                // remembered for later, not acted on now (see
+                // `parse_next_data_authority`'s doc comment for why acting
+                // immediately would be premature). Same sender check as
+                // HANDOVER: only the facility we're currently connected to
+                // may name our next one.
+                if let Some(next) = parse_next_data_authority(&msg) {
+                    let mut s = session.lock().expect("hoppie session mutex");
+                    if s.is_authorized_to_control(&env.from) {
+                        s.set_next_data_authority(next.clone());
+                        tracing::info!(
+                            next = %next,
+                            from = %env.from,
+                            "hoppie: NEXT DATA AUTHORITY noted, awaiting END SERVICE"
+                        );
+                        continue;
+                    }
+                    let current_station = s.addressee();
+                    drop(s);
+                    tracing::warn!(
+                        claimed_next = %next,
+                        from = %env.from,
+                        expected = %current_station,
+                        "hoppie: ignoring NEXT DATA AUTHORITY from unexpected sender"
+                    );
+                    // Fall through — the pilot still sees the raw uplink.
+                }
+                // v1.7.20 (#pdc-cpdlc-session-end): GOLD's real transfer
+                // point — unlike NEXT DATA AUTHORITY, this ends the
+                // session NOW. If a next facility was named earlier, hand
+                // over to it exactly like HANDOVER does; otherwise there
+                // is nowhere automatic to go, so end the session and tell
+                // the pilot to log on by hand — silently doing nothing
+                // here is what left LBSR's last instruction open for 38
+                // minutes on 06.09.2026 (LOT4TK, LBSR→LRBB).
+                if is_end_service(&msg) {
+                    let (authorized, current_station) = {
+                        let s = session.lock().expect("hoppie session mutex");
+                        (s.is_authorized_to_control(&env.from), s.addressee())
+                    };
+                    if authorized {
+                        let (next, generation) = {
+                            let mut s = session.lock().expect("hoppie session mutex");
+                            let next = s.take_next_data_authority();
+                            let generation = s.end_current();
+                            (next, generation)
+                        };
+                        clear_marker_if_current(app, session, generation);
+                        match next {
+                            Some(next) => {
+                                log_activity_handle(
+                                    app,
+                                    ActivityLevel::Info,
+                                    format!(
+                                        "CPDLC: {current_station} hat den Dienst beendet — \
+                                         Übergabe an {next}"
+                                    ),
+                                    None,
+                                );
+                                send_logon(http, session, min_meta, from_callsign, logon, &next)
+                                    .await;
+                                continue;
+                            }
+                            None => {
+                                log_activity_handle(
+                                    app,
+                                    ActivityLevel::Warn,
+                                    format!(
+                                        "CPDLC: {current_station} hat den Dienst beendet (END SERVICE)"
+                                    ),
+                                    Some(
+                                        "Keine Nachfolgestation genannt — bitte manuell bei der \
+                                         nächsten zuständigen Stelle anmelden."
+                                            .to_string(),
+                                    ),
+                                );
+                                // No known next facility — fall through so
+                                // the raw END SERVICE still reaches the
+                                // pilot's message log, unlike HANDOVER's
+                                // silent bookkeeping above.
+                            }
+                        }
+                    } else {
+                        tracing::warn!(
+                            from = %env.from,
+                            expected = %current_station,
+                            "hoppie: ignoring END SERVICE from unexpected sender"
+                        );
+                    }
+                }
                 let min = msg.min;
-                let mut t = thread.lock().expect("hoppie thread mutex");
-                let was_logged_on = t.is_logged_on();
-                t.record_received(msg);
-                let now_logged_on = t.is_logged_on();
-                drop(t);
+                let this_station = normalize_station(&env.from);
+                // QS round 4 (07.09.2026): `s` locked HERE, once, and kept
+                // for the abandoned-station check below too — that check
+                // needs `is_logged_on()`/pending-logon state, and reading
+                // those through a SEPARATE, since-released lock would
+                // reopen exactly the kind of race this whole file's
+                // locking discipline exists to close. `session` now covers
+                // the thread automaton too, so this is ALSO what makes the
+                // session-identity bookkeeping further down (accept/
+                // cancel/quarantine) atomic with the thread mutation
+                // itself — see QS round 5 (07.09.2026, #pdc-session-model)
+                // Finding 3.
+                let mut s = session.lock().expect("hoppie session mutex");
+                let current_station = s.addressee();
+                // QS round 5 Finding 1: `logon_outcome` (thread.rs) is
+                // deliberately station-free — it accepts a
+                // `LOGON ACCEPTED` from ANY sender the instant SOME logon
+                // is outstanding, and accepts a `UM0` refusal whenever its
+                // MRN merely matches. Neither check is sender-aware; that
+                // is by design (`hoppie-protocol` stays pure/station-
+                // free), so the wiring layer — which DOES know which
+                // station we actually asked — has to gate it. A claimed
+                // accept/refuse whose sender does NOT match our pending
+                // station never reaches `record_received` at all: same
+                // "recorded as a superseded/untrusted entry, never as a
+                // fresh instruction" treatment as an abandoned-station
+                // uplink, since it's exactly as untrustworthy.
+                let claims_our_logon_outcome = matches!(
+                    &msg.parsed,
+                    hoppie_protocol::elements::ParsedElement::Recognized(r)
+                        if r.spec_id == "UM_LOGON_ACCEPTED" || r.spec_id == "UM0"
+                );
+                if claims_our_logon_outcome
+                    && s.thread.pending_logon_min().is_some()
+                    && !s.is_authorized_to_answer_pending_logon(&env.from)
+                {
+                    tracing::warn!(
+                        min,
+                        claimed_from = %this_station,
+                        expected = %current_station,
+                        "hoppie: ignoring a claimed logon accept/refuse from an unexpected sender"
+                    );
+                    drop(s);
+                    telex_log
+                        .lock()
+                        .expect("hoppie telex_log mutex")
+                        .push(TelexEntry {
+                            direction: "received",
+                            text: msg.element_text.clone(),
+                            at: chrono::Utc::now(),
+                            station: this_station,
+                            from_cpdlc_channel: true,
+                            superseded: true,
+                        });
+                    if notify_os {
+                        notify_new_message(app, &env.from);
+                    }
+                    continue;
+                }
+                // QS round 8 (07.09.2026, #pdc-session-model, external QS
+                // Finding 1): this used to be a BLOCKLIST — reject only
+                // stations we specifically remember having abandoned
+                // (`is_abandoned`). That structurally can't catch a
+                // station we have NEVER interacted with at all: it was
+                // never `Pending`, never `Accepted`, never quarantined,
+                // so it isn't in `ended_stations` either — and sailed
+                // straight through as an ordinary, fresh, reply-required
+                // instruction, with active reply buttons the pilot could
+                // press. GOLD CPDLC never sends an operational element
+                // before `LOGON ACCEPTED` — a real controller only ever
+                // talks to us once we're actually logged on — so the
+                // correct test is an ALLOWLIST: the sender must either be
+                // answering our own outstanding logon, or be the station
+                // we are ACTUALLY, ACCEPTED-ly logged on to right now.
+                // This allowlist subsumes the old blocklist: a
+                // previously-abandoned station is by definition no longer
+                // `Accepted`, so it already fails
+                // `is_authorized_to_control` on its own — `is_abandoned`
+                // itself is kept (see its own tests) as a documented,
+                // narrower primitive, just no longer the ONLY gate here.
+                //
+                // QS round 5 Finding 2: `HoppieSession::is_our_pending_logon_reply`
+                // covers the MRN-less-accept case — a real controller
+                // client routinely omits the MRN on a `LOGON ACCEPTED`
+                // (vSMR does; see `logon_outcome`'s doc comment in
+                // thread.rs), and an MRN-less accept from the RIGHT
+                // station must not be mistaken for untrusted traffic just
+                // because it carries no correlating reference.
+                //
+                // QS round 10 (07.09.2026, #pdc-session-model, external QS
+                // Finding 1): the MRN branch must NOT be handed to an
+                // ORDINARY instruction — only to a message that actually
+                // CLAIMS to be our logon's outcome. MIN/MRN numbers are
+                // small, sequential, and Hoppie has no sender
+                // authentication at all: any account, e.g. `XXXX`, could
+                // address us with an ordinary WU instruction carrying
+                // `MRN=<our pending logon's MIN>` and, before this fix,
+                // walk straight through this allowlist — never having
+                // proven anything about who it actually is. GOLD never
+                // sends an operational element as a reply to
+                // `REQUEST_LOGON` in the first place — only
+                // `LOGON ACCEPTED`/`UM0` legitimately correlate to it by
+                // MRN — so for anything else, only the (already
+                // authorization-gated, station-name-based) sender check
+                // may exempt a message; MRN correlation is passed as
+                // `None` to force that.
+                let is_our_pending_logon_reply = s.is_our_pending_logon_reply(
+                    &env.from,
+                    if claims_our_logon_outcome {
+                        msg.mrn
+                    } else {
+                        None
+                    },
+                );
+                let is_untrusted_sender =
+                    !is_our_pending_logon_reply && !s.is_authorized_to_control(&this_station);
+                if is_untrusted_sender {
+                    // `is_abandoned` doesn't change the decision (the
+                    // allowlist above already covers it) — kept, and used
+                    // here, purely to make the log distinguish two very
+                    // different threat profiles for later incident
+                    // analysis: a station we've genuinely never spoken to
+                    // at all, versus one we specifically remember having
+                    // left.
+                    let previously_abandoned = s.is_abandoned(&this_station);
+                    tracing::warn!(
+                        min,
+                        stale_from = %this_station,
+                        previously_abandoned,
+                        "hoppie: uplink from a station we have no accepted session with — recording it as untrusted, never as a fresh instruction"
+                    );
+                    drop(s);
+                    telex_log
+                        .lock()
+                        .expect("hoppie telex_log mutex")
+                        .push(TelexEntry {
+                            direction: "received",
+                            text: msg.element_text.clone(),
+                            at: chrono::Utc::now(),
+                            station: this_station,
+                            from_cpdlc_channel: true,
+                            superseded: true,
+                        });
+                    if notify_os {
+                        notify_new_message(app, &env.from);
+                    }
+                    continue;
+                }
+                let existing_meta_station = min_meta
+                    .lock()
+                    .expect("hoppie min_meta mutex")
+                    .get(&(true, min))
+                    .map(|m| m.station.clone());
+                match resolve_min_collision(
+                    existing_meta_station.as_deref(),
+                    s.thread.is_uplink_open(min),
+                    &this_station,
+                    &current_station,
+                ) {
+                    MinCollisionResolution::NoCollision => {}
+                    MinCollisionResolution::SupersedeIncoming => {
+                        tracing::warn!(
+                            min,
+                            stale_from = %this_station,
+                            current = %current_station,
+                            "hoppie: late uplink from a station we've left reused an open MIN — superseding it, not the current one"
+                        );
+                        drop(s);
+                        // QS round 2 (06.09.2026): this used to call
+                        // `t.record_received(msg)` then `supersede_uplink`
+                        // — but `record_received` APPENDS to `history` and
+                        // OVERWRITES `open`'s `(Uplink, min)` slot before
+                        // superseding runs. Since every "which entry is
+                        // current" lookup for a MIN
+                        // (`is_superseded_uplink`, `find_current_entry_mut`)
+                        // searches history from the END, appending this
+                        // STALE message made IT look like the current one
+                        // — `is_superseded_uplink(min)` then read ITS
+                        // `superseded=true` flag and wrongly told the pilot
+                        // their genuinely still-open, unrelated clearance
+                        // from the CURRENT station "is no longer valid",
+                        // while `pending_uplink_count` silently dropped it
+                        // from the must-reply badge. The one invariant that
+                        // makes "most recent wins" safe elsewhere in this
+                        // codebase — the old station's traffic is fully
+                        // superseded BEFORE the new station's can arrive —
+                        // is exactly what does NOT hold for a message that
+                        // is chronologically older but PROCESSED later due
+                        // to network/poll delay. So this message never
+                        // enters the MIN/MRN thread at all: recorded like
+                        // an undecodable CPDLC packet instead (own line
+                        // below), visible to the pilot with its own true
+                        // station, never touching `open`/`history` for a
+                        // MIN a DIFFERENT, live entry already owns.
+                        telex_log
+                            .lock()
+                            .expect("hoppie telex_log mutex")
+                            .push(TelexEntry {
+                                direction: "received",
+                                text: msg.element_text.clone(),
+                                at: chrono::Utc::now(),
+                                station: this_station,
+                                from_cpdlc_channel: true,
+                                // QS round 3: without this, a discarded
+                                // stale clearance displays with no marking
+                                // at all — indistinguishable from a live,
+                                // currently-actionable instruction.
+                                superseded: true,
+                            });
+                        if notify_os {
+                            notify_new_message(app, &env.from);
+                        }
+                        continue;
+                    }
+                    MinCollisionResolution::SupersedeExisting => {
+                        tracing::warn!(
+                            min,
+                            stale_from = existing_meta_station.as_deref().unwrap_or(""),
+                            current = %current_station,
+                            "hoppie: open MIN belonged to a station we've left — superseding it for the current station's message"
+                        );
+                        s.thread.supersede_uplink(min);
+                    }
+                }
+                // Thread's OWN `logged_on`/pending-logon fields (NOT
+                // `HoppieSession::is_logged_on`/`is_logon_pending`, which
+                // reflect the SESSION-level `Accepted`/`Pending` enum —
+                // that enum is only ever changed BY `accept_logon`/
+                // `cancel_pending` below, so reading it here would always
+                // observe the value from BEFORE this message is even
+                // processed, on both sides of `record_received`. Only
+                // `logon_outcome`'s accept/refuse branch (thread.rs) ever
+                // changes the THREAD's own fields via `record_received`,
+                // so a before/after difference in THOSE is exactly (and
+                // only) the signal that this message WAS a resolved
+                // accept or refuse — never a side effect of anything else
+                // `record_received` does. QS round 6 (07.09.2026,
+                // #pdc-session-model): the first version of this read
+                // `s.is_logged_on()` (the session-level mirror) for both
+                // snapshots — since nothing between them ever touches
+                // `s.session`, `was_logged_on == now_logged_on` was true
+                // by construction, `accept_logon` below was unreachable
+                // dead code, and a real `LOGON ACCEPTED` never flipped the
+                // session's own state (nor fired `set_open_session` further
+                // down) even though `CpdlcThread` had correctly accepted
+                // it internally.
+                let was_logged_on = s.thread.is_logged_on();
+                let thread_pending_before = s.thread.pending_logon_min();
+                // The index this entry is about to occupy — stable for
+                // its lifetime (`history` is append-only, existing
+                // entries are only ever mutated in place). See
+                // `HistoryMeta`'s doc comment for why display needs this
+                // instead of the MIN-keyed `min_meta` below.
+                let history_idx = s.thread.history().len();
+                s.thread.record_received(msg);
+                let now_logged_on = s.thread.is_logged_on();
+                let thread_pending_after = s.thread.pending_logon_min();
+                // v1.7.21 (#pdc-session-model): keep the session-identity
+                // bookkeeping in lockstep with whatever `record_received`
+                // (thread.rs) just decided — still holding `s`, so this is
+                // atomic with the thread mutation itself, never a separate
+                // step that could observe (or leave) a torn state. The
+                // sender was already verified above (Finding 1), so
+                // `accept_logon` here always succeeds.
+                if !was_logged_on && now_logged_on {
+                    s.accept_logon(&this_station);
+                } else if let Some(pending_min) = thread_pending_before {
+                    if thread_pending_after.is_none() && !now_logged_on {
+                        // A refusal (`UM0`) closed our pending request
+                        // without accepting it — never happened, not a
+                        // session that ended, so no quarantine (see
+                        // `cancel_pending`'s doc comment). MIN-correlated
+                        // like every other call site, even though this one
+                        // runs in the same lock hold as `thread_pending_before`
+                        // was captured in, so it can never actually be stale
+                        // here — kept for the same defense-in-depth/
+                        // consistency reason `resolve_min_collision` trims
+                        // already-normalized strings.
+                        s.cancel_pending(pending_min);
+                    }
+                }
+                // QS round 3 (07.09.2026): `min_meta`/`history_meta` are
+                // inserted HERE, still holding `s` (`session`'s lock) —
+                // not after dropping it. `hoppie_get_thread` locks
+                // `session` FIRST and `min_meta`/`history_meta` after (see
+                // its body), so as long as `s` stays held, no concurrent
+                // read of this poll's freshly-appended history entry can
+                // observe it before its metadata exists — it simply
+                // blocks on `session.lock()` until this whole block is
+                // done. Previously these three locks were acquired and
+                // released one at a time in sequence, leaving a real
+                // (if extremely narrow) window where a concurrent
+                // `hoppie_get_thread` call could read the new entry with
+                // no metadata yet — `station: None`, `at: now()` — before
+                // self-correcting on its own next poll.
+                let now = chrono::Utc::now();
+                min_meta.lock().expect("hoppie min_meta mutex").insert(
+                    (true, min),
+                    crate::hoppie::MsgMeta {
+                        at: now,
+                        // The sender off the wire — this is what a reply
+                        // to this uplink must be addressed to.
+                        station: this_station.clone(),
+                    },
+                );
+                history_meta
+                    .lock()
+                    .expect("hoppie history_meta mutex")
+                    .insert(
+                        history_idx,
+                        crate::hoppie::MsgMeta {
+                            at: now,
+                            station: this_station,
+                        },
+                    );
+                // QS round 8 (07.09.2026, #pdc-session-model, external QS
+                // Finding 5): the accepted station is captured HERE,
+                // still holding `s` — reading it via a fresh
+                // `session.lock()` AFTER `drop(s)` (the previous version)
+                // left a real window for a concurrent manual logoff/
+                // handover to change the session in between, persisting
+                // either an already-ended or a not-yet-accepted station
+                // as if it were the one truly open. Decision pulled into
+                // `HoppieSession::station_to_persist_on_accept` (round 9)
+                // so it's unit-tested without an `AppHandle`.
+                let accepted = s.station_to_persist_on_accept(was_logged_on);
+                drop(s);
                 // Record the open session the moment a facility
                 // accepts us, so a run that dies without logging
                 // off can be cleaned up on the next connect —
                 // and ONLY then (see hoppie_connect).
-                if !was_logged_on && now_logged_on {
-                    let station = to_station.lock().expect("hoppie to_station mutex").clone();
-                    crate::hoppie::settings::set_open_session(app, &station);
+                //
+                // QS round 9 (external QS follow-up — Finding 5 was NOT
+                // fully closed by the atomic read above): the poller (this
+                // task) and a Tauri disconnect command are genuinely
+                // parallel OS threads. Between `drop(s)` above and the
+                // actual file write below, a concurrent disconnect could
+                // run its ENTIRE logoff — including the network round trip
+                // — and its own `clear_open_session`. "No `.await` in
+                // between" does NOT prevent that on a multi-threaded
+                // runtime; it only means Tokio's own cooperative scheduler
+                // won't preempt here, which says nothing about true OS
+                // thread parallelism.
+                //
+                // QS round 10 (external QS Finding 3): re-locking, reading
+                // the generation, and letting THAT guard drop before
+                // calling `set_open_session` (the first version of this
+                // fix) reopened the exact race the generation counter was
+                // meant to close — the check and the write were still two
+                // separate, unsynchronized moments, with the file I/O
+                // itself fully unlocked in between. The guard below is
+                // held THROUGH the write: if a newer event (a disconnect,
+                // or a fresh logon) has run since `accepted` was decided,
+                // this write is stale and must be skipped — that newer
+                // event's own persistence call is authoritative instead —
+                // and nothing else touching this lock can interleave its
+                // own check-and-write while this one is still in progress.
+                if let Some((station, generation)) = accepted {
+                    let s = session.lock().expect("hoppie session mutex");
+                    if s.persist_generation() == generation {
+                        crate::hoppie::settings::set_open_session(app, from_callsign, &station);
+                    } else {
+                        tracing::debug!(
+                            station = %station,
+                            "hoppie: skipped a now-stale open-session marker write — a newer session event already superseded it"
+                        );
+                    }
                 }
-                min_meta.lock().expect("hoppie min_meta mutex").insert(
-                    (true, min),
-                    crate::hoppie::MsgMeta {
-                        at: chrono::Utc::now(),
-                        // The sender off the wire — this is what a reply
-                        // to this uplink must be addressed to.
-                        station: normalize_station(&env.from),
-                    },
-                );
                 if notify_os {
                     notify_new_message(app, &env.from);
                 }
@@ -539,6 +1190,36 @@ async fn process_poll_payload(
                     "hoppie: CPDLC packet without a /data2/ header — showing as plain text"
                 );
                 let from = env.from.clone();
+                let this_station = normalize_station(&env.from);
+                // QS round 8 (07.09.2026, #pdc-session-model, external QS
+                // Finding 6): this raw/undecodable path used to bypass the
+                // whole session model entirely — always `superseded:
+                // false`, regardless of whether the sender was even
+                // authorized, and a raw logon refusal never cleared
+                // `Pending`. Decision logic lives in
+                // `HoppieSession::handle_undecodable_uplink` (round 9) —
+                // pulled out specifically so it's unit-tested without
+                // needing an `AppHandle` here.
+                //
+                // QS round 10 (external QS Finding 2): `looks_like_a_refusal`
+                // is computed HERE, from the actual text, rather than
+                // `handle_undecodable_uplink` presuming EVERY raw text
+                // from the pending station is a refusal — that used to
+                // also catch vSMR's two documented, legitimate NON-refusal
+                // conventions (a plain interim `STANDBY` or "UNABLE CALL
+                // ON FREQ" ack), aborting a still-live logon attempt over
+                // an unrelated message.
+                let looks_like_a_refusal = !is_a_known_non_refusal_raw_text(&env.packet);
+                let (superseded, cancelled_pending) = session
+                    .lock()
+                    .expect("hoppie session mutex")
+                    .handle_undecodable_uplink(&this_station, looks_like_a_refusal);
+                if cancelled_pending {
+                    tracing::warn!(
+                        from = %this_station,
+                        "hoppie: undecodable uplink from our pending station treated as a likely logon refusal (vSMR-style) — no longer waiting on it"
+                    );
+                }
                 telex_log
                     .lock()
                     .expect("hoppie telex_log mutex")
@@ -546,10 +1227,11 @@ async fn process_poll_payload(
                         direction: "received",
                         text: env.packet,
                         at: chrono::Utc::now(),
-                        station: normalize_station(&env.from),
+                        station: this_station,
                         // Arrived on the CPDLC channel — belongs
                         // in the CPDLC log, not the PDC tab.
                         from_cpdlc_channel: true,
+                        superseded,
                     });
                 if notify_os {
                     notify_new_message(app, &from);
@@ -570,20 +1252,20 @@ async fn process_poll_payload(
 async fn poll_once(
     app: &AppHandle,
     http: &HoppieHttp,
-    thread: &StdMutex<CpdlcThread>,
+    session: &StdMutex<HoppieSession>,
     telex_log: &StdMutex<Vec<TelexEntry>>,
     min_meta: &StdMutex<MinMeta>,
+    history_meta: &StdMutex<HistoryMeta>,
     last_error: &StdMutex<Option<String>>,
     from_callsign: &str,
     logon: &str,
-    to_station: &StdMutex<String>,
     // False on the first poll of a session — see `spawn`'s `first_poll`.
     notify_os: bool,
 ) {
     let req = HoppieRequest {
         logon: logon.to_string(),
         from: from_callsign.to_string(),
-        to: to_station.lock().expect("hoppie to_station mutex").clone(),
+        to: session.lock().expect("hoppie session mutex").addressee(),
         kind: PacketKind::Poll,
         packet: None,
     };
@@ -597,12 +1279,12 @@ async fn poll_once(
                 app,
                 http,
                 &content,
-                thread,
+                session,
                 telex_log,
                 min_meta,
+                history_meta,
                 from_callsign,
                 logon,
-                to_station,
                 notify_os,
             )
             .await;
@@ -702,32 +1384,188 @@ mod tests {
         assert_eq!(parse_handover("HANDOVER EDUU"), Some("EDUU".to_string()));
     }
 
-    // --- handover_sender_is_authorized ---
+    // --- parse_next_data_authority / is_end_service (UM160/UM161) ---
 
-    #[test]
-    fn handover_from_the_currently_connected_facility_is_authorized() {
-        assert!(handover_sender_is_authorized("EDGG", "EDGG"));
-        // Case-insensitive, whitespace-tolerant — matches how callsigns
-        // are compared elsewhere in this codebase.
-        assert!(handover_sender_is_authorized("edgg", " EDGG "));
+    fn recognized_uplink(min: u32, text: &str) -> cpdlc::CpdlcMessage {
+        cpdlc::decode(&format!("/data2/{min}//NE/{text}"), Direction::Uplink)
+            .expect("well-formed test packet")
     }
 
     #[test]
-    fn handover_from_any_other_sender_is_rejected() {
-        // The exact bug this closes: any Hoppie account could address a
-        // HANDOVER packet claiming to be from anyone at all.
-        assert!(!handover_sender_is_authorized("LBSR", "EDGG"));
-        assert!(!handover_sender_is_authorized("EDGG_2", "EDGG"));
+    fn next_data_authority_extracts_the_named_station() {
+        let msg = recognized_uplink(5, "NEXT DATA AUTHORITY LRBB");
+        assert_eq!(parse_next_data_authority(&msg), Some("LRBB".to_string()));
     }
 
     #[test]
-    fn handover_is_never_authorized_before_any_station_is_connected() {
-        // An empty current_station means "not connected to anyone yet" —
-        // nothing should ever be authorized to redirect a session that
-        // doesn't exist.
-        assert!(!handover_sender_is_authorized("EDGG", ""));
-        assert!(!handover_sender_is_authorized("", ""));
+    fn next_data_authority_is_none_for_unrelated_traffic() {
+        let msg = recognized_uplink(5, "CLIMB TO AND MAINTAIN FL240");
+        assert_eq!(parse_next_data_authority(&msg), None);
+        let logoff_lookalike = recognized_uplink(5, "END SERVICE");
+        assert_eq!(parse_next_data_authority(&logoff_lookalike), None);
     }
+
+    // QS round 06.09.2026: the generic placeholder resolver does not
+    // itself validate that a "single ICAO" placeholder is actually one
+    // token — without this guard "NEXT DATA AUTHORITY LRBB EXTRA" would
+    // have been logged on to as station "LRBB EXTRA".
+    #[test]
+    fn next_data_authority_rejects_a_multi_token_value() {
+        let msg = recognized_uplink(5, "NEXT DATA AUTHORITY LRBB EXTRA");
+        assert_eq!(parse_next_data_authority(&msg), None);
+    }
+
+    #[test]
+    fn end_service_is_recognized() {
+        let msg = recognized_uplink(6, "END SERVICE");
+        assert!(is_end_service(&msg));
+    }
+
+    #[test]
+    fn end_service_is_false_for_unrelated_traffic() {
+        assert!(!is_end_service(&recognized_uplink(6, "LOGON ACCEPTED")));
+        assert!(!is_end_service(&recognized_uplink(
+            6,
+            "NEXT DATA AUTHORITY LRBB"
+        )));
+    }
+
+    // QS round 06.09.2026: Hoppie's GOLD table has NO uplink LOGOFF
+    // element at all (`DM_LOGOFF` is downlink-only, aircraft-to-ground),
+    // so a ground system that mirrors the aircraft's own convention back
+    // sends undecodable free text that falls through to `Raw`. Already
+    // documented as a real, previously-seen case in the 25.07.2026 vSMR
+    // audit ("ein unaufgeforderter LOGOFF matcht keinen Filter") — missing
+    // it here reproduces the exact 38-minute-open-uplink field incident
+    // this whole fix addresses.
+    #[test]
+    fn end_service_recognizes_a_bare_logoff_uplink() {
+        assert!(is_end_service(&recognized_uplink(6, "LOGOFF")));
+        // Case/whitespace-tolerant, same discipline as `normalize_station`.
+        assert!(is_end_service(&recognized_uplink(6, "  logoff ")));
+    }
+
+    #[test]
+    fn end_service_is_false_for_raw_text_that_merely_mentions_logoff() {
+        // Guards the OTHER direction: a controller remark that happens to
+        // contain the word must not be mistaken for a session end.
+        assert!(!is_end_service(&recognized_uplink(
+            6,
+            "LOGOFF EXPECTED SHORTLY, STANDBY"
+        )));
+    }
+
+    // --- is_a_known_non_refusal_raw_text (round 10, external QS Finding 2) ---
+
+    #[test]
+    fn recognizes_standby_as_a_known_non_refusal() {
+        assert!(is_a_known_non_refusal_raw_text("STANDBY"));
+        assert!(is_a_known_non_refusal_raw_text("  standby "));
+    }
+
+    #[test]
+    fn recognizes_unable_call_on_freq_as_a_known_non_refusal() {
+        assert!(is_a_known_non_refusal_raw_text("UNABLE CALL ON FREQ"));
+        assert!(is_a_known_non_refusal_raw_text(" unable call on freq"));
+    }
+
+    #[test]
+    fn anything_else_is_not_a_known_non_refusal() {
+        // Field regression this guards: treating this as a KNOWN
+        // non-refusal would be just as wrong as treating STANDBY as a
+        // refusal — an unrecognized text stays presumed-refusal, the
+        // best available signal given vSMR's undocumented exact wording.
+        assert!(!is_a_known_non_refusal_raw_text("SOME OTHER TEXT"));
+        assert!(!is_a_known_non_refusal_raw_text(""));
+        assert!(!is_a_known_non_refusal_raw_text("STANDBY, WILL CALL BACK"));
+    }
+
+    // `handover_sender_is_authorized`'s own tests moved to session.rs —
+    // the check itself is now `HoppieSession::is_authorized_to_control`
+    // (see that module's `control_authorization_*` tests).
+
+    // --- resolve_min_collision ---
+    //
+    // QS round 06.09.2026: field-observed shape — LBSR queues an uplink
+    // we haven't polled yet, we move on to LRBB, LRBB independently
+    // reuses the same MIN before LBSR's message finally arrives. Which
+    // side is "stale" is decided by the current facility
+    // (`HoppieSession::addressee`), not by which one this poll happened
+    // to process last.
+
+    #[test]
+    fn no_prior_entry_is_not_a_collision() {
+        assert_eq!(
+            resolve_min_collision(None, false, "LRBB", "LRBB"),
+            MinCollisionResolution::NoCollision
+        );
+    }
+
+    #[test]
+    fn same_station_reusing_its_own_min_is_not_a_collision() {
+        assert_eq!(
+            resolve_min_collision(Some("LBSR"), true, "LBSR", "LBSR"),
+            MinCollisionResolution::NoCollision
+        );
+    }
+
+    #[test]
+    fn a_closed_prior_entry_is_not_a_collision() {
+        // Ordinary MIN reuse after the earlier one was legitimately
+        // answered — `find_current_entry_mut`'s "most recent wins" already
+        // handles this correctly, nothing to resolve here.
+        assert_eq!(
+            resolve_min_collision(Some("LBSR"), false, "LRBB", "LRBB"),
+            MinCollisionResolution::NoCollision
+        );
+    }
+
+    #[test]
+    fn a_late_message_from_the_station_we_left_is_superseded() {
+        // The open entry belongs to LRBB (current); LBSR's late arrival
+        // must not evict it.
+        assert_eq!(
+            resolve_min_collision(Some("LRBB"), true, "LBSR", "LRBB"),
+            MinCollisionResolution::SupersedeIncoming
+        );
+    }
+
+    #[test]
+    fn a_stale_open_entry_from_the_old_station_yields_to_the_current_one() {
+        // The open entry is a leftover from LBSR (no longer current);
+        // LRBB's fresh message is what the pilot is actually engaged with.
+        assert_eq!(
+            resolve_min_collision(Some("LBSR"), true, "LRBB", "LRBB"),
+            MinCollisionResolution::SupersedeExisting
+        );
+    }
+
+    #[test]
+    fn two_unrelated_stations_with_neither_current_has_no_authority_signal() {
+        // Two delivery desks answering independently, neither of which is
+        // the logged-on facility — no basis to prefer one over the other,
+        // so today's arrival-order behavior stands.
+        assert_eq!(
+            resolve_min_collision(Some("EDDF_DEL"), true, "EDDM_DEL", "LRBB"),
+            MinCollisionResolution::NoCollision
+        );
+    }
+
+    #[test]
+    fn station_comparison_is_case_and_whitespace_tolerant() {
+        assert_eq!(
+            resolve_min_collision(Some(" lrbb "), true, "lbsr", "LRBB"),
+            MinCollisionResolution::SupersedeIncoming
+        );
+    }
+
+    // `is_uplink_from_an_ended_session`'s own tests moved to session.rs.
+    // The gate itself is now `HoppieSession::is_authorized_to_control`
+    // (an allowlist — round 8, external QS Finding 1), with
+    // `is_abandoned` kept as a narrower, still-tested primitive for
+    // diagnostics only (see session.rs's abandoned-station and
+    // re-acceptance tests, including the field-confirmed LOGOFF-then-WU
+    // regression and the A -> B -> A re-acceptance case).
 
     // --- reorder_same_batch_envelopes / requires_reply_for_batch_order ---
     //
@@ -892,8 +1730,8 @@ mod tests {
 
     #[test]
     fn a_handover_directive_disables_reordering_for_the_whole_batch() {
-        // HANDOVER has real side effects beyond the message log (flips
-        // to_station, logs off, fires a new REQUEST LOGON) that run in
+        // HANDOVER has real side effects beyond the message log (ends the
+        // current session, fires a new REQUEST LOGON) that run in
         // whatever order the loop processes envelopes in — that order must
         // stay exactly what the ground station sent, not something this
         // sort decides. NE is the realistic code for a bookkeeping message
@@ -908,6 +1746,53 @@ mod tests {
             reordered, batch,
             "a handover anywhere in the batch must disable reordering entirely, \
              not just exempt itself from being moved"
+        );
+    }
+
+    // QS round 06.09.2026: the guard above originally only checked
+    // `parse_handover`, which the two GOLD session-end forms (and the
+    // bare-LOGOFF fallback) added alongside it don't go through — an
+    // `END SERVICE` sorted ahead of a same-batch clearance would have run
+    // its session-end side effects before that clearance was even
+    // recorded, letting it settle into `open` unsuperseded on the new
+    // session. Same shape as `a_handover_directive_disables_reordering_
+    // for_the_whole_batch` above, one case per new form.
+    #[test]
+    fn an_end_service_directive_disables_reordering_for_the_whole_batch() {
+        let batch = vec![
+            cpdlc_env("EDGG", 11, "WU", "CLIMB TO FL240"),
+            cpdlc_env("EDGG", 12, "NE", "END SERVICE"),
+        ];
+        let reordered = reorder_same_batch_envelopes(batch.clone());
+        assert_eq!(
+            reordered, batch,
+            "END SERVICE anywhere in the batch must disable reordering entirely"
+        );
+    }
+
+    #[test]
+    fn a_next_data_authority_directive_disables_reordering_for_the_whole_batch() {
+        let batch = vec![
+            cpdlc_env("EDGG", 11, "WU", "CLIMB TO FL240"),
+            cpdlc_env("EDGG", 12, "NE", "NEXT DATA AUTHORITY EDUU"),
+        ];
+        let reordered = reorder_same_batch_envelopes(batch.clone());
+        assert_eq!(
+            reordered, batch,
+            "NEXT DATA AUTHORITY anywhere in the batch must disable reordering entirely"
+        );
+    }
+
+    #[test]
+    fn a_bare_logoff_disables_reordering_for_the_whole_batch() {
+        let batch = vec![
+            cpdlc_env("EDGG", 11, "WU", "CLIMB TO FL240"),
+            cpdlc_env("EDGG", 12, "NE", "LOGOFF"),
+        ];
+        let reordered = reorder_same_batch_envelopes(batch.clone());
+        assert_eq!(
+            reordered, batch,
+            "a bare LOGOFF anywhere in the batch must disable reordering entirely"
         );
     }
 

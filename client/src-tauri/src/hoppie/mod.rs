@@ -40,7 +40,10 @@
 //! fires the stop signal.
 
 pub mod poller;
+mod session;
 pub mod settings;
+
+use session::HoppieSession;
 
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -180,12 +183,28 @@ pub(crate) struct MsgMeta {
     /// facilities each numbering their uplinks from 1 therefore share a
     /// slot, and the newer message wins — the same "newest entry for this
     /// MIN is the live one" rule `CpdlcThread::find_current_entry_mut`
-    /// applies. Address resolution and thread bookkeeping thus always
-    /// agree with each other, which is what matters; keying both by
-    /// station is a protocol-crate change and is deliberately not done
-    /// here. In practice a second facility only enters the picture via a
-    /// handover, and a handover supersedes the old station's open
-    /// uplinks before its traffic can arrive.
+    /// applies. That's exactly right for what THIS table is for —
+    /// resolving where a REPLY must go (`resolve_reply_station`), which
+    /// only ever cares about the current, live entry for a MIN, never a
+    /// superseded one. Keying by station too is a protocol-crate change
+    /// (`ThreadEntry` carries no station field — `thread.rs` is
+    /// deliberately wall-clock- and station-free) and still isn't done.
+    ///
+    /// v1.7.20 (#pdc-cpdlc-session-end) QS round 2: this table used to
+    /// ALSO back `hoppie_get_thread`'s displayed station/timestamp for
+    /// every history row, including already-superseded ones — which
+    /// broke the instant `resolve_min_collision`'s `SupersedeExisting`
+    /// case started being reachable (a manual switch or an `END SERVICE`
+    /// with no named successor, then the OLD station's already-queued
+    /// traffic finally arriving and colliding with a live MIN from the
+    /// facility we're now on): the superseded row's card showed the NEW
+    /// station/time, not its own — a `HashMap`, not a `Vec`, so the
+    /// same key can only ever hold one occupant. Display now reads
+    /// [`HistoryMeta`] instead, keyed by each entry's stable position in
+    /// `history()` rather than by MIN — never mixed up across a
+    /// collision, because every occurrence gets its own slot. This table
+    /// keeps its old, MIN-keyed shape unchanged for reply routing, which
+    /// needs "the current one" semantics, not "this exact one".
     pub station: String,
 }
 
@@ -196,6 +215,21 @@ pub(crate) struct MsgMeta {
 /// typically start near 1. Sharing one key let an inbound message
 /// overwrite the timestamp of our own.
 pub(crate) type MinMeta = std::collections::HashMap<(bool, u32), MsgMeta>;
+
+/// Per-message metadata keyed by an uplink's stable position in
+/// `CpdlcThread::history()` (its index at the moment it was pushed —
+/// never reused, since `history` is append-only and existing entries are
+/// only ever mutated in place, never removed or reordered).
+///
+/// v1.7.20 (#pdc-cpdlc-session-end) QS round 2: exists specifically so
+/// `hoppie_get_thread` can show the CORRECT station/timestamp for EVERY
+/// row, including ones `MinMeta`'s shared `(direction, MIN)` key can no
+/// longer disambiguate once two different stations' uplinks share a MIN
+/// (see [`MsgMeta::station`]'s doc comment). Uplinks only, for now — no
+/// downlink display bug was found, and every downlink already has its
+/// own unique MIN (we allocate them ourselves), so no collision is
+/// possible on that side to begin with.
+pub(crate) type HistoryMeta = std::collections::HashMap<usize, MsgMeta>;
 
 /// One sent or received telex/PDC-request-reply line. CPDLC messages
 /// (MIN/MRN-threaded) live in `HoppieHandle::thread` instead — this is
@@ -217,6 +251,17 @@ pub(crate) struct TelexEntry {
     /// CPDLC log rather than the PDC tab, which is a different
     /// conversation entirely.
     from_cpdlc_channel: bool,
+    /// QS round 3 (07.09.2026, #pdc-cpdlc-session-end): true only for the
+    /// stale-uplink-from-an-abandoned-station entries `poller.rs` routes
+    /// here instead of into the MIN/MRN thread (see
+    /// `MinCollisionResolution::SupersedeIncoming` and the abandoned-
+    /// station check next to it). `false` for every ordinary telex/
+    /// undecodable-packet entry. Threaded straight through to
+    /// `ThreadEntryDto::superseded` so the UI greys these out exactly
+    /// like a superseded CPDLC entry — without it, a discarded stale
+    /// clearance ("CLIMB TO...") displayed with no marking at all reads
+    /// as a normal, currently-actionable instruction.
+    superseded: bool,
 }
 
 /// Lives in `AppState::hoppie` while the poller is running, `None`
@@ -229,7 +274,15 @@ pub struct HoppieHandle {
     /// building a fresh one, per the "build once" principle in
     /// [`HoppieHttp`]'s docs.
     http: Arc<HoppieHttp>,
-    thread: Arc<StdMutex<hoppie_protocol::thread::CpdlcThread>>,
+    /// Station identity, its lifecycle (pending/accepted/ended), and the
+    /// pure MIN/MRN automaton (`session.thread`) — ONE struct behind ONE
+    /// lock, replacing four independently-updated fields
+    /// (`thread`/`to_station`/`ended_sessions`/`next_data_authority`)
+    /// that QS rounds 3-5 (07.09.2026, #pdc-session-model) each found a
+    /// real P1 in, all traceable to the same root cause: no single lock
+    /// made an update to all four atomic. See `session.rs`'s module doc
+    /// comment for the specific findings this closes.
+    session: Arc<StdMutex<HoppieSession>>,
     telex_log: Arc<StdMutex<Vec<TelexEntry>>>,
     /// (direction, MIN) -> when we sent/received it. The pure
     /// `CpdlcThread` is deliberately wall-clock-free (keeps it a pure,
@@ -242,16 +295,15 @@ pub struct HoppieHandle {
     /// an inbound message overwrite the timestamp of our own — which
     /// reordered the log and could mask or fabricate a logon timeout.
     min_meta: Arc<StdMutex<MinMeta>>,
+    /// Per-occurrence display metadata for received uplinks — see
+    /// [`HistoryMeta`]'s doc comment for why `min_meta` alone can't
+    /// correctly label a superseded row once two stations' MINs collide.
+    history_meta: Arc<StdMutex<HistoryMeta>>,
     last_error: Arc<StdMutex<Option<String>>>,
     last_verify: Option<VerifyOutcome>,
     /// Resolved at connect time — reused by every send command so they
     /// don't need to re-resolve settings/active-flight state.
     from_callsign: String,
-    /// The ATC facility CPDLC messages are addressed to. Mutable because
-    /// a CPDLC logon always names a specific facility and a pilot
-    /// re-logs-on to the next one mid-flight (EDGG -> EDUU -> LOVV)
-    /// without dropping the Hoppie connection.
-    to_station: Arc<StdMutex<String>>,
 }
 
 impl Drop for HoppieHandle {
@@ -298,9 +350,9 @@ const LOGON_TIMEOUT_SECS: i64 = 180;
 fn build_status(handle: &Option<HoppieHandle>) -> HoppieStatus {
     match handle {
         Some(h) => {
-            let thread = h.thread.lock().expect("hoppie thread mutex");
-            let logon_pending = thread.pending_logon_min().is_some();
-            let logon_timed_out = thread
+            let session = h.session.lock().expect("hoppie session mutex");
+            let logon_pending = session.is_logon_pending();
+            let logon_timed_out = session
                 .pending_logon_min()
                 .and_then(|min| {
                     h.min_meta
@@ -312,21 +364,16 @@ fn build_status(handle: &Option<HoppieHandle>) -> HoppieStatus {
                 .is_some_and(|sent| (chrono::Utc::now() - sent).num_seconds() > LOGON_TIMEOUT_SECS);
             HoppieStatus {
                 connected: true,
-                logged_on: thread.is_logged_on(),
-                pending_response_count: thread.pending_response_count(),
-                pending_uplink_count: thread.pending_uplink_count(),
+                logged_on: session.is_logged_on(),
+                pending_response_count: session.thread.pending_response_count(),
+                pending_uplink_count: session.thread.pending_uplink_count(),
                 last_error: h
                     .last_error
                     .lock()
                     .expect("hoppie last_error mutex")
                     .clone(),
                 logon_verified: h.last_verify.clone(),
-                station_id: Some(
-                    h.to_station
-                        .lock()
-                        .expect("hoppie to_station mutex")
-                        .clone(),
-                ),
+                station_id: Some(session.addressee()),
                 logon_pending,
                 logon_timed_out,
             }
@@ -551,11 +598,25 @@ pub async fn hoppie_connect(
     // we had never spoken to blink (SMRPlugin.cpp:162/:176 fall through
     // to :182). On a fresh install it would even go to the "SERVER"
     // placeholder.
+    // QS round 4 (07.09.2026): captured so it can seed the new session's
+    // quarantine below — a fresh session otherwise loses track of
+    // whatever station this run crashed/was killed/lost power under, and
+    // its already-queued late traffic would arrive to a session that's
+    // never heard of it.
+    let mut initial_ended_session: Option<String> = None;
+    // QS round 8 (07.09.2026, #pdc-session-model, external QS Finding 3):
+    // `stale.callsign` — the crashed run's ACTUAL callsign, not this
+    // run's freshly-resolved `from` — is what makes the LOGOFF address
+    // the same participant Hoppie's server has registered as holding the
+    // session. A pilot who changed a callsign override, or switched to a
+    // different active flight, between the crash and now would otherwise
+    // have this LOGOFF silently address the wrong aircraft, leaving the
+    // real stale session open server-side while we lost all track of it.
     if let Some(stale) = settings::open_session(&app) {
         let stale_logoff = hoppie_protocol::wire::HoppieRequest {
             logon: logon.clone(),
-            from: from.clone(),
-            to: stale.clone(),
+            from: stale.callsign.clone(),
+            to: stale.station.clone(),
             // The previous session's MIN sequence died with it and this
             // expects no reply, so the number carries no meaning. Kept
             // clear of the new session's range (which starts at 1) so a
@@ -563,36 +624,67 @@ pub async fn hoppie_connect(
             packet: Some("/data2/9999//N/LOGOFF".to_string()),
             kind: hoppie_protocol::wire::PacketKind::Cpdlc,
         };
-        match http.send(&stale_logoff).await {
-            Ok(_) => {
-                tracing::info!(station = %stale, "hoppie: closed session left open by the previous run")
+        // QS round 8 (external QS Finding 4): a protocol-level rejection
+        // (`Ok(Error(..))` — e.g. the logon code Hoppie itself just
+        // rejected `stale_logoff` under) used to log as if it were a
+        // success, AND the marker was cleared unconditionally regardless
+        // of whether the send actually reached Hoppie at all. On a
+        // genuine transport failure (no network at this exact instant),
+        // that discarded the ONE piece of state that would have let the
+        // NEXT connect retry — the stale session then stayed open at
+        // Hoppie indefinitely with nothing left to ever clean it up.
+        // Only a confirmed-successful send now clears the marker; any
+        // other outcome leaves it in place to retry.
+        let failure = match http.send(&stale_logoff).await {
+            Err(e) => Some(e.message),
+            Ok(hoppie_protocol::wire::HoppieResponseLine::Error(reason)) => Some(reason),
+            Ok(_) => None,
+        };
+        match &failure {
+            None => {
+                tracing::info!(
+                    station = %stale.station,
+                    callsign = %stale.callsign,
+                    "hoppie: closed session left open by the previous run"
+                );
+                settings::clear_open_session(&app);
             }
-            Err(e) => {
-                tracing::debug!(error = %e.message, "hoppie: stale-session LOGOFF failed (harmless)")
+            Some(reason) => {
+                tracing::warn!(
+                    error = %reason,
+                    station = %stale.station,
+                    callsign = %stale.callsign,
+                    "hoppie: stale-session LOGOFF failed — leaving the marker in place to retry on the next connect"
+                );
             }
         }
-        settings::clear_open_session(&app);
+        // Quarantine the station locally either way — WE are not
+        // continuing that session regardless of whether the network
+        // send itself succeeded.
+        initial_ended_session = Some(stale.station);
     }
 
-    let thread = Arc::new(StdMutex::new(hoppie_protocol::thread::CpdlcThread::new()));
+    let mut new_session = HoppieSession::new(settings.station_id.clone());
+    if let Some(stale) = &initial_ended_session {
+        new_session.seed_ended(stale);
+    }
+    let session = Arc::new(StdMutex::new(new_session));
     let telex_log = Arc::new(StdMutex::new(Vec::new()));
     let min_meta = Arc::new(StdMutex::new(std::collections::HashMap::new()));
+    let history_meta = Arc::new(StdMutex::new(std::collections::HashMap::new()));
     let last_error = Arc::new(StdMutex::new(None));
-    // Shared with the poller so an automatic sector handover re-points
-    // both the poll loop and every send command at the new facility.
-    let to_station = Arc::new(StdMutex::new(settings.station_id.clone()));
     let from_for_log = from.clone();
     let (stop_tx, stop_rx) = watch::channel(false);
     poller::spawn(
         app.clone(),
         Arc::clone(&http),
-        Arc::clone(&thread),
+        Arc::clone(&session),
         Arc::clone(&telex_log),
         Arc::clone(&min_meta),
+        Arc::clone(&history_meta),
         Arc::clone(&last_error),
         from.clone(),
         logon,
-        Arc::clone(&to_station),
         settings.notify_os,
         stop_rx,
     );
@@ -600,13 +692,13 @@ pub async fn hoppie_connect(
     *guard = Some(HoppieHandle {
         stop_tx,
         http,
-        thread,
+        session,
         telex_log,
         min_meta,
+        history_meta,
         last_error,
         last_verify: Some(verify),
         from_callsign: from.clone(),
-        to_station: Arc::clone(&to_station),
     });
     log_activity_handle(
         &app,
@@ -620,13 +712,26 @@ pub async fn hoppie_connect(
 /// Send `LOGOFF` if a CPDLC session is open, so the facility stops
 /// showing us as connected and stops queueing messages for us.
 /// Best-effort: a failure must never block disconnecting.
+///
+/// QS round 9 (07.09.2026, #pdc-session-model, external QS follow-up):
+/// no longer reports back whether it's "safe to forget the marker" —
+/// `send_cpdlc_element` itself now clears it, gated on a confirmed
+/// network success AND a generation re-check immediately before the
+/// write (see that function's and `HoppieSession::persist_generation`'s
+/// doc comments). Doing it there, in the ONE function every downlink
+/// funnels through, closes it for every caller uniformly (including, in
+/// principle, the generic composer command if it were ever pointed at
+/// `DM_LOGOFF`) — duplicating the same gated-clear logic at each of this
+/// function's own 3 call sites was exactly the shape of bug (a fix
+/// applied at one call site, missed at another) this investigation kept
+/// finding.
 async fn logoff_if_logged_on(app: &AppHandle, handle: &HoppieHandle) {
     {
-        let t = handle.thread.lock().expect("hoppie thread mutex");
+        let session = handle.session.lock().expect("hoppie session mutex");
         // Nothing to end AND nothing outstanding — stay quiet rather than
         // send an unsolicited LOGOFF a controller would see as an unread
         // message from an aircraft they never spoke to.
-        if !t.is_logged_on() && t.pending_logon_min().is_none() {
+        if !session.is_logged_on() && !session.is_logon_pending() {
             return;
         }
     }
@@ -636,18 +741,19 @@ async fn logoff_if_logged_on(app: &AppHandle, handle: &HoppieHandle) {
     let Some(spec) = hoppie_protocol::elements::find("DM_LOGOFF") else {
         return;
     };
-    if let Err(e) = send_cpdlc_element(&app, handle, logon, spec, Vec::new(), None).await {
+    if let Err(e) = send_cpdlc_element(&app, handle, logon, spec, Vec::new(), None, None).await {
         tracing::warn!(error = %e.message, "hoppie: LOGOFF failed");
     } else {
         tracing::info!("hoppie: LOGOFF sent");
     }
 }
 
-/// Same as [`logoff_if_logged_on`] but also forgets the persisted
-/// open-session marker, so the next connect has nothing to clean up.
+/// Thin wrapper kept for its name's sake at call sites (disconnect,
+/// shutdown, station switch) — the persisted open-session marker is
+/// "forgotten" as a side effect of [`logoff_if_logged_on`] itself now
+/// (see that function's doc comment), not as a separate step here.
 async fn logoff_and_forget(app: &AppHandle, handle: &HoppieHandle) {
     logoff_if_logged_on(app, handle).await;
-    settings::clear_open_session(app);
 }
 
 /// Stop the poller (no-op if not running). Ends the CPDLC session first
@@ -790,7 +896,19 @@ async fn send_cpdlc_element(
     spec: &'static hoppie_protocol::elements::ElementSpec,
     values: Vec<String>,
     mrn: Option<u32>,
+    // `Some(station)` ONLY for an explicitly-targeted `DM_REQUEST_LOGON`
+    // (see `hoppie_send_logon_request`) — every other send resolves its
+    // recipient the normal way (reply-to-sender via MRN, else the live
+    // session's station). A logon request has no MRN to resolve from and
+    // must go to the NAMED station even before any session exists for it.
+    explicit_to: Option<String>,
 ) -> Result<u32, UiError> {
+    // `Some(generation)` only for a successfully-sent `DM_LOGOFF` — the
+    // `HoppieSession::persist_generation` at the moment `end_current` ran,
+    // captured for the caller to re-validate immediately before clearing
+    // the persisted open-session marker (see that field's doc comment and
+    // QS round 9's follow-up to external QS Finding 5).
+    let mut logoff_generation: Option<u64> = None;
     let resolved = hoppie_protocol::elements::resolve(spec, &values)
         .map_err(|e| UiError::new("hoppie_element_resolve", e.to_string()))?;
     let filled_text = resolved.filled_text.clone();
@@ -798,49 +916,71 @@ async fn send_cpdlc_element(
     // message being answered, not to whatever station the connection is
     // currently pointed at. Those are usually the same — but not when a
     // clearance arrives from a facility we never logged on to (a
-    // delivery desk answering a PDC is exactly that case). `to_station`
-    // then still holds the last logon target, or its "SERVER" default,
-    // and the WILCO went there: ATC waits, times the ACK out, and
-    // cancels the clearance. The MRN is what makes this decidable — it
-    // names the uplink, and the uplink's sender is recorded per message.
-    // Two locks, never nested — one guard at a time, so no ordering
-    // rule has to be remembered here at all.
-    let fallback = handle
-        .to_station
-        .lock()
-        .expect("hoppie to_station mutex")
-        .clone();
-    let to = {
-        let meta = handle.min_meta.lock().expect("hoppie min_meta mutex");
-        resolve_reply_station(&meta, mrn, &fallback)
-    };
-    let (message, min) = {
-        let mut t = handle.thread.lock().expect("hoppie thread mutex");
+    // delivery desk answering a PDC is exactly that case). The MRN is
+    // what makes this decidable — it names the uplink, and the uplink's
+    // sender is recorded per message.
+    //
+    // QS round 4 (07.09.2026): `to` and the actual thread mutation used
+    // to be resolved under TWO SEPARATE, sequentially acquired locks —
+    // `min_meta` released before `thread` was even taken, and the
+    // station-name fallback read from a THIRD lock before either. A
+    // concurrent poller-task update landing in one of those gaps (a
+    // handover repointing the session, or station B reusing this exact
+    // MIN) could resolve `to` from state that was already stale by the
+    // time `record_sent` ran. QS round 5 (07.09.2026, #pdc-session-model)
+    // Finding 5: even after round 4's fix, the station-name fallback
+    // itself was STILL read outside the lock. `session` is now locked
+    // ONCE and held for the fallback read, the `min_meta` read, AND the
+    // `record_sent` call — nothing can interleave a mutation into any of
+    // that. Same lock ORDER (`session` before `min_meta`) the receive-side
+    // poller.rs code holds (see `process_poll_payload`'s doc comment
+    // there for why that matters for deadlock-freedom too).
+    let (to, message, min) = {
+        let mut session = handle.session.lock().expect("hoppie session mutex");
         // v0.19.x FIX: a handover supersedes any uplink the pilot hadn't
-        // answered yet (see `CpdlcThread::mark_logged_off`). Without this
+        // answered yet (see `HoppieSession::end_current`). Without this
         // check a late WILCO/UNABLE would still go out — addressed to
-        // `to_station`, which by send time is already the NEW centre —
-        // silently misdirecting a reply the old controller will never
-        // see and the new one can't make sense of (its MRN references a
-        // MIN from a numbering space that isn't theirs). Block it here,
-        // in the one function every downlink funnels through, rather
-        // than relying solely on the UI disabling the button.
+        // whatever station is current by send time — silently misdirecting
+        // a reply the old controller will never see and the new one can't
+        // make sense of (its MRN references a MIN from a numbering space
+        // that isn't theirs). Block it here, in the one function every
+        // downlink funnels through, rather than relying solely on the UI
+        // disabling the button.
         if let Some(m) = mrn {
-            if t.is_superseded_uplink(m) {
+            if session.thread.is_superseded_uplink(m) {
                 return Err(UiError::new(
                     "hoppie_superseded_uplink",
                     "Diese Anweisung ist nicht mehr gültig — die Stelle hat vor deiner Antwort übergeben.",
                 ));
             }
         }
-        let (message, _event) = t.record_sent(
+        let to = match &explicit_to {
+            Some(t) => t.clone(),
+            None => {
+                let meta = handle.min_meta.lock().expect("hoppie min_meta mutex");
+                resolve_reply_station(&meta, mrn, &session.addressee())
+            }
+        };
+        let (message, _event) = session.thread.record_sent(
             spec.response,
             mrn,
             filled_text,
             hoppie_protocol::elements::ParsedElement::Recognized(resolved),
         );
         let min = message.min;
-        (message, min)
+        // v1.7.21 (#pdc-session-model) — closes QS round 5's Finding 3:
+        // the session-level bookkeeping (quarantine the old station /
+        // start tracking the new pending one) now happens HERE, in the
+        // exact same lock hold as the thread mutation that just ran —
+        // not after a network round trip that might fail, leave, or
+        // never return. See `session.rs`'s `end_current`/`begin_logon`
+        // doc comments.
+        if spec.id == "DM_REQUEST_LOGON" {
+            session.begin_logon(&to, min);
+        } else if spec.id == "DM_LOGOFF" {
+            logoff_generation = Some(session.end_current());
+        }
+        (to, message, min)
     };
     handle
         .min_meta
@@ -882,11 +1022,26 @@ async fn send_cpdlc_element(
         _ => None,
     };
     if outcome.is_err() || rejected.is_some() {
-        handle
-            .thread
-            .lock()
-            .expect("hoppie thread mutex")
-            .rollback_sent(min);
+        {
+            let mut session = handle.session.lock().expect("hoppie session mutex");
+            session.thread.rollback_sent(min);
+            // A REQUEST LOGON that never sent was never a real attempt —
+            // mirrors `CpdlcThread::rollback_sent` undoing its own
+            // `logon_request_min` for the identical reason, keeping the
+            // two in lockstep. `DM_LOGOFF` is the deliberate opposite:
+            // matching `rollback_sent`'s own "logged_on after a LOGOFF is
+            // NOT undone" choice, the quarantine from `end_current` above
+            // stands even if the packet never left — claiming a session
+            // we may not have is the worse error either way.
+            if spec.id == "DM_REQUEST_LOGON" {
+                // MIN-correlated (QS round 6, #pdc-session-model) — a
+                // newer, still-live attempt (from a concurrent manual
+                // logon request or automatic handover on the poller
+                // task) that superseded this one while this HTTP send
+                // was in flight must not be cancelled by this failure.
+                session.cancel_pending(min);
+            }
+        }
         handle
             .min_meta
             .lock()
@@ -929,6 +1084,41 @@ async fn send_cpdlc_element(
         Some(spec.response.code().to_string()),
         message.element_text.clone(),
     );
+    // QS round 9 (07.09.2026, #pdc-session-model, external QS follow-up
+    // to Findings 4/5): clearing the persisted open-session marker for a
+    // confirmed-successful LOGOFF happens HERE — the ONE function every
+    // downlink funnels through, regardless of which command sent it (the
+    // dedicated `hoppie_send_logoff`, `logoff_and_forget`'s automatic
+    // paths, or, in principle, the generic composer command
+    // `hoppie_send_cpdlc_element` if it were ever pointed at
+    // `DM_LOGOFF` — it accepts any downlink element id, and nothing
+    // stops it from being this one) — rather than duplicated per caller,
+    // which is exactly the shape of bug (a fix applied at one call site,
+    // missed at another) that kept recurring across this investigation.
+    // Gated on the generation captured when `end_current` ran, re-checked
+    // NOW, immediately before the write: a concurrent event on another
+    // thread since then (a fresh logon, a different logoff) makes this
+    // clear stale, and that newer event's own persistence call is
+    // authoritative instead — see `HoppieSession::persist_generation`'s
+    // doc comment for the full reasoning ("no `.await` in between" does
+    // NOT establish mutual exclusion on this app's multi-threaded
+    // runtime).
+    //
+    // QS round 10 (07.09.2026, #pdc-session-model, external QS Finding
+    // 3): the lock guard is held THROUGH the write — reading the
+    // generation via a temporary guard that dropped BEFORE
+    // `clear_open_session` (the first version) reopened the exact race
+    // this check exists to close, since the file write itself then ran
+    // fully unlocked again. Nothing else touching `handle.session` can
+    // interleave its own check-and-write while this one is in progress.
+    if let Some(generation) = logoff_generation {
+        let session_guard = handle.session.lock().expect("hoppie session mutex");
+        if session_guard.persist_generation() == generation {
+            settings::clear_open_session(app);
+        } else {
+            tracing::debug!("hoppie: skipped clearing an already-superseded open-session marker");
+        }
+    }
     Ok(min)
 }
 
@@ -956,7 +1146,7 @@ pub async fn hoppie_send_logon_request(
         )
     })?;
 
-    if let Some(raw) = station {
+    let explicit_to = if let Some(raw) = station {
         let trimmed = raw.trim().to_uppercase();
         if trimmed.is_empty() {
             return Err(UiError::new(
@@ -965,28 +1155,42 @@ pub async fn hoppie_send_logon_request(
             ));
         }
         // Manually switching facilities is a handover the network didn't
-        // announce. Log off the old one FIRST, otherwise it keeps the
-        // aircraft on its list and keeps queueing messages for us while
-        // the new centre also thinks it's responsible. (An automatic
-        // HANDOVER is different — there the old centre initiated it and
-        // has already let go; see poller.rs.)
+        // announce. Log off the old one FIRST if this is actually a
+        // switch (not a re-request to a station we're already
+        // pending/logged on to), otherwise it keeps the aircraft on its
+        // list and keeps queueing messages for us while the new centre
+        // also thinks it's responsible. (An automatic HANDOVER is
+        // different — there the old centre initiated it and has already
+        // let go; see poller.rs.)
+        //
+        // v1.7.21 (#pdc-session-model): the old, separate
+        // `ended_sessions.insert(previous)` call here is gone —
+        // `logoff_and_forget` -> `send_cpdlc_element`'s `DM_LOGOFF`
+        // branch now quarantines whatever station was actually
+        // live/pending, atomically with ending it (see that function's
+        // doc comment). This is MORE correct than the old unconditional
+        // insert, not just simpler: a `previous` that was never actually
+        // attempted (just the pilot's configured default, untouched this
+        // connection) no longer gets wrongly quarantined either.
         let previous = handle
-            .to_station
+            .session
             .lock()
-            .expect("hoppie to_station mutex")
-            .clone();
-        if previous != trimmed {
+            .expect("hoppie session mutex")
+            .live_station();
+        if previous.as_deref() != Some(trimmed.as_str()) {
             logoff_and_forget(&app, handle).await;
         }
-        *handle.to_station.lock().expect("hoppie to_station mutex") = trimmed.clone();
         let mut settings = settings::read_settings(&app);
-        settings.station_id = trimmed;
+        settings.station_id = trimmed.clone();
         settings::write_settings(&app, &settings);
-    }
+        Some(trimmed)
+    } else {
+        None
+    };
 
     let logon = resolve_logon_code()?;
     let spec = hoppie_protocol::elements::find("DM_REQUEST_LOGON").expect("built-in element");
-    send_cpdlc_element(&app, handle, logon, spec, Vec::new(), None).await?;
+    send_cpdlc_element(&app, handle, logon, spec, Vec::new(), None, explicit_to).await?;
     Ok(build_status(&guard))
 }
 
@@ -1049,8 +1253,8 @@ pub async fn hoppie_send_logoff(
     // gated on `logged_on`, so the only way out was dropping the whole
     // ACARS link.
     {
-        let t = handle.thread.lock().expect("hoppie thread mutex");
-        if !t.is_logged_on() && t.pending_logon_min().is_none() {
+        let session = handle.session.lock().expect("hoppie session mutex");
+        if !session.is_logged_on() && !session.is_logon_pending() {
             return Err(UiError::new(
                 "hoppie_not_logged_on",
                 "Bei keiner Station angemeldet.",
@@ -1059,7 +1263,31 @@ pub async fn hoppie_send_logoff(
     }
     let logon = resolve_logon_code()?;
     let spec = hoppie_protocol::elements::find("DM_LOGOFF").expect("built-in element");
-    send_cpdlc_element(&app, handle, logon, spec, Vec::new(), None).await?;
+    send_cpdlc_element(&app, handle, logon, spec, Vec::new(), None, None).await?;
+    // v1.7.20 (#pdc-cpdlc-session-end): this command used to stop here
+    // without clearing the persisted open-session marker at all, so the
+    // NEXT connect fired a redundant synthetic LOGOFF at a station the
+    // pilot had already cleanly left. Field-confirmed 06.09.2026:
+    // `hoppie_session.json` still named LRBB after a clean manual logoff
+    // and a normal app shutdown.
+    //
+    // v1.7.21 (#pdc-session-model): the manual `next_data_authority`
+    // clear and `ended_sessions` insert that used to live here are gone —
+    // `send_cpdlc_element`'s `DM_LOGOFF` branch already did both,
+    // atomically, in the same lock hold as the thread mutation itself
+    // (closes QS round 5's Finding 3, the unprotected I/O window between
+    // the two).
+    //
+    // QS round 9 (external QS follow-up): the marker-clearing call that
+    // used to live here too is gone as well — `send_cpdlc_element` now
+    // clears it itself, gated on confirmed network success AND a
+    // generation re-check immediately before the write. Doing it there
+    // instead of duplicating it at every caller (this command,
+    // `logoff_and_forget`'s three call sites, and in principle the
+    // generic composer command) is what actually closes the marker/
+    // session race, not just moves it — an UNGATED clear call here,
+    // right after `send_cpdlc_element` already succeeded, could itself
+    // race a concurrent event that ran in the meantime.
     Ok(build_status(&guard))
 }
 
@@ -1087,10 +1315,10 @@ pub async fn hoppie_send_telex(
     let to = match recipient {
         Some(r) if !r.trim().is_empty() => r.trim().to_uppercase(),
         _ => handle
-            .to_station
+            .session
             .lock()
-            .expect("hoppie to_station mutex")
-            .clone(),
+            .expect("hoppie session mutex")
+            .addressee(),
     };
     let wire_req = hoppie_protocol::wire::HoppieRequest {
         logon,
@@ -1126,6 +1354,7 @@ pub async fn hoppie_send_telex(
             at: chrono::Utc::now(),
             station: wire_req.to.clone(),
             from_cpdlc_channel: false,
+            superseded: false,
         });
     Ok(())
 }
@@ -1172,7 +1401,7 @@ pub async fn hoppie_send_free_text(
     })?;
     let logon = resolve_logon_code()?;
     let spec = hoppie_protocol::elements::find("DM67").expect("GOLD free-text element");
-    send_cpdlc_element(&app, handle, logon, spec, vec![trimmed], mrn).await
+    send_cpdlc_element(&app, handle, logon, spec, vec![trimmed], mrn, None).await
 }
 
 /// Send a structured downlink element by GOLD id (e.g. `"UM74"`
@@ -1220,7 +1449,7 @@ pub async fn hoppie_send_cpdlc_element(
         .iter()
         .map(|v| normalize_outbound(v))
         .collect::<Result<Vec<_>, _>>()?;
-    send_cpdlc_element(&app, handle, logon, spec, values, mrn).await
+    send_cpdlc_element(&app, handle, logon, spec, values, mrn, None).await
 }
 
 /// One row of the GOLD downlink catalog, for the composer's element
@@ -1347,6 +1576,7 @@ pub async fn hoppie_send_pdc_request(
             at: now,
             station: pdc_request.recipient.clone(),
             from_cpdlc_channel: false,
+            superseded: false,
         });
 
     Ok(PdcSendResult {
@@ -1419,24 +1649,47 @@ pub async fn hoppie_get_thread(
             element_id: None,
             closed: None,
             deferred: None,
-            superseded: None,
+            // QS round 3 (07.09.2026, #pdc-cpdlc-session-end): was
+            // hardcoded `None` — `TelexEntry` only just grew a real
+            // `superseded` flag, used exclusively by the stale-uplink-
+            // from-an-abandoned-station entries `poller.rs` routes here
+            // (see `TelexEntry::superseded`'s doc comment). Every other
+            // telex/undecodable-packet entry still reports `false`.
+            superseded: Some(e.superseded),
             station: Some(e.station.clone()),
         }));
     }
     {
-        let thread = handle.thread.lock().expect("hoppie thread mutex");
+        let session = handle.session.lock().expect("hoppie session mutex");
+        let thread = &session.thread;
         let meta_by_min = handle.min_meta.lock().expect("hoppie min_meta mutex");
-        entries.extend(thread.history().iter().map(|e| {
+        let history_meta = handle
+            .history_meta
+            .lock()
+            .expect("hoppie history_meta mutex");
+        entries.extend(thread.history().iter().enumerate().map(|(idx, e)| {
             let (element_id, text) = match &e.message.parsed {
                 hoppie_protocol::elements::ParsedElement::Recognized(r) => {
                     (Some(r.spec_id.to_string()), e.message.element_text.clone())
                 }
                 hoppie_protocol::elements::ParsedElement::Raw(t) => (None, t.clone()),
             };
-            let meta = meta_by_min.get(&(
-                e.direction == hoppie_protocol::elements::Direction::Uplink,
-                e.min,
-            ));
+            let is_uplink = e.direction == hoppie_protocol::elements::Direction::Uplink;
+            // v1.7.20 (#pdc-cpdlc-session-end) QS round 2: an uplink's
+            // display metadata comes from `history_meta` (keyed by THIS
+            // entry's own position, never shared) rather than the MIN-
+            // keyed `meta_by_min` — see `HistoryMeta`'s doc comment for
+            // why a superseded row could otherwise show a DIFFERENT
+            // station/time than its own once two stations' uplinks
+            // collide on the same MIN. Downlinks keep the old lookup —
+            // we allocate our own MINs, so no collision is possible
+            // there, and `history_meta` is only ever populated for
+            // uplinks (see the call site in poller.rs).
+            let meta = if is_uplink {
+                history_meta.get(&idx)
+            } else {
+                meta_by_min.get(&(is_uplink, e.min))
+            };
             let at = meta
                 .map(|m| m.at)
                 .unwrap_or_else(chrono::Utc::now)
