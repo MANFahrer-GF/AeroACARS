@@ -7667,7 +7667,7 @@ fn settle_at_arrival_stand(
             .arr_stands
             .as_deref()
             .filter(|_| stats.arr_stands_icao.as_deref() == Some(at_norm.as_str()));
-        let combined = standliste_fuer(&*stats, &at_norm, osm);
+        let combined = standliste_fuer(&*stats, &at_norm, osm, Some((snap.lat, snap.lon)));
         let fund = combined
             .as_deref()
             .and_then(|list| stands::benannter_stand_bei(list, snap.lat, snap.lon))
@@ -23659,11 +23659,21 @@ async fn flight_end(
         // Spec sim-disconnect-auto-resume F3 (Block-Time-Korrektur):
         // Pause-Akkumulator wird in Minuten umgerechnet und abgezogen,
         // damit Sim-Crash-/Esc-Pause-Pausen nicht als Flugzeit landen.
-        let raw_flight_time_min = match (stats.takeoff_at, stats.landing_at) {
-            (Some(t), Some(l)) if l > t => (l - t).num_minutes() as i32,
-            _ => ((Utc::now() - flight.started_at).num_minutes() as i32).max(0),
+        let now_for_flight_time = Utc::now();
+        let (raw_flight_time_min, pause_window) = match (stats.takeoff_at, stats.landing_at) {
+            (Some(t), Some(l)) if l > t => ((l - t).num_minutes() as i32, (t, l)),
+            _ => (
+                ((now_for_flight_time - flight.started_at).num_minutes() as i32).max(0),
+                (flight.started_at, now_for_flight_time),
+            ),
         };
-        let pause_min = (stats.pause_total_duration_secs / 60).clamp(0, i32::MAX as i64) as i32;
+        let pause_secs = pause_secs_within(
+            &stats.pause_segments,
+            stats.pause_total_duration_secs,
+            pause_window.0,
+            pause_window.1,
+        );
+        let pause_min = (pause_secs / 60).clamp(0, i32::MAX as i64) as i32;
         let flight_time = Some(raw_flight_time_min.saturating_sub(pause_min).max(0));
 
         let fares = if flight.fares.is_empty() {
@@ -24556,12 +24566,21 @@ async fn flight_end_manual(
         let flight_time = match flight_time_minutes.filter(|m| *m >= 0) {
             Some(m) => Some(m),
             None => {
-                let raw_min = match (stats.takeoff_at, stats.landing_at) {
-                    (Some(t), Some(l)) if l > t => (l - t).num_minutes() as i32,
-                    _ => ((Utc::now() - flight.started_at).num_minutes() as i32).max(0),
+                let now_for_flight_time = Utc::now();
+                let (raw_min, pause_window) = match (stats.takeoff_at, stats.landing_at) {
+                    (Some(t), Some(l)) if l > t => ((l - t).num_minutes() as i32, (t, l)),
+                    _ => (
+                        ((now_for_flight_time - flight.started_at).num_minutes() as i32).max(0),
+                        (flight.started_at, now_for_flight_time),
+                    ),
                 };
-                let pause_min =
-                    (stats.pause_total_duration_secs / 60).clamp(0, i32::MAX as i64) as i32;
+                let pause_secs = pause_secs_within(
+                    &stats.pause_segments,
+                    stats.pause_total_duration_secs,
+                    pause_window.0,
+                    pause_window.1,
+                );
+                let pause_min = (pause_secs / 60).clamp(0, i32::MAX as i64) as i32;
                 Some(raw_min.saturating_sub(pause_min).max(0))
             }
         };
@@ -30411,14 +30430,14 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         stats.dep_gate_generation,
                         stats.dep_szenerie_auskunft_generation,
                     ) {
+                        let position = aircraft_position_for_gates(&stats);
                         let combined = standliste_fuer(
                             &stats,
                             &flight.dpt_airport,
                             stats.dep_stands.as_deref(),
+                            position,
                         );
-                        if let (Some(list), Some((lat, lon))) =
-                            (combined.as_deref(), aircraft_position_for_gates(&stats))
-                        {
+                        if let (Some(list), Some((lat, lon))) = (combined.as_deref(), position) {
                             if let Some(name) = stands::benannter_stand_bei(list, lat, lon)
                                 .and_then(|(s, _)| s.name.clone())
                             {
@@ -30556,7 +30575,12 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         // adversarial, 04.09.2026).
                         let fund = match arrival_retry_ziel(&stats) {
                             Some((list_icao, osm)) => {
-                                let combined = standliste_fuer(&stats, &list_icao, osm);
+                                let combined = standliste_fuer(
+                                    &stats,
+                                    &list_icao,
+                                    osm,
+                                    Some((snap.lat, snap.lon)),
+                                );
                                 combined
                                     .as_deref()
                                     .and_then(|list| {
@@ -37040,7 +37064,12 @@ fn step_flight_at(
                     .filter(|l| !l.is_empty())
                     .filter(|_| stats.arr_stands_icao.as_deref() == Some(at_icao_norm.as_str()))
                     .map(|l| l.as_slice());
-                let stand_data = standliste_fuer(&stats, &at_icao_norm, osm_stand_data);
+                let stand_data = standliste_fuer(
+                    &stats,
+                    &at_icao_norm,
+                    osm_stand_data,
+                    Some((snap.lat, snap.lon)),
+                );
                 let (is_block_on, osm_stand, rejected_nearest) = match stand_data.as_deref() {
                     Some(list) => match stands::stand_at(list, snap.lat, snap.lon) {
                         // Naehe entscheidet ueber Block-On (auch ein namen-
@@ -39944,6 +39973,46 @@ mod enroute_reconcile_replay_tests {
 /// - `pause_total_secs > i32::MAX`       → clamp auf i32::MAX
 /// - `pause_total_secs >= raw_secs`      → 0 (Underflow-Schutz)
 /// - sonst                               → `raw_secs - pause_total_secs`
+/// Wie viele der aufgezeichneten Pause-Sekunden tatsaechlich INNERHALB
+/// von `[from, to]` lagen — statt blind die gesamte Session-Pausensumme
+/// zu nehmen.
+///
+/// Root Cause (ITY 1358, 07.09.2026): `pause_total_duration_secs` zaehlt
+/// JEDE Pause der Session, auch eine, die komplett VOR dem Start lag (ein
+/// 36-Minuten-Verbindungsabbruch waehrend des Boardings). Wurde die
+/// trotzdem von der Start→Landung-Flugzeit abgezogen, kam eine viel zu
+/// kurze `flight_time` heraus (44 min echte Luftzeit − 36 min
+/// vorstartige Pause ≈ 8 min) — genug, um GSGs Zeitraffer-Integritäts-
+/// pruefung (`DistancePlausibility`) faelschlich anschlagen zu lassen.
+///
+/// Segmente, die das Fenster nur teilweise ueberlappen, zaehlen nur mit
+/// ihrem ueberlappenden Anteil — nicht alles-oder-nichts.
+///
+/// Fallback: ist `segments` leer (Session von vor v1.7.20 wiederaufgenommen,
+/// oder aus einem anderen Grund ohne Segment-Detail), bleibt das alte
+/// Verhalten (die volle Summe abziehen) erhalten — ohne Segmente laesst
+/// sich nicht sagen, auf welcher Seite von `from`/`to` die Pause lag, und
+/// stillschweigend auf 0 zu fallen wuerde eine echte Sim-Crash-Pause
+/// WAEHREND des Fluges wieder als Flugzeit zaehlen.
+fn pause_secs_within(
+    segments: &[PauseSegment],
+    total_secs: i64,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> i64 {
+    if segments.is_empty() {
+        return total_secs.max(0);
+    }
+    segments
+        .iter()
+        .map(|s| {
+            let start = s.started_at.max(from);
+            let end = s.ended_at.min(to);
+            (end - start).num_seconds().max(0)
+        })
+        .sum()
+}
+
 fn flight_time_with_pause_secs(raw_secs: i32, pause_total_secs: i64) -> i32 {
     let pause_secs_i32 = pause_total_secs.clamp(0, i32::MAX as i64) as i32;
     raw_secs.saturating_sub(pause_secs_i32).max(0)
@@ -39955,11 +40024,17 @@ fn build_heartbeat_body(
     current_phase: FlightPhase,
 ) -> UpdateBody {
     let now = Utc::now();
+    let pause_window: Option<(DateTime<Utc>, DateTime<Utc>)> =
+        match (stats.takeoff_at, stats.landing_at) {
+            (Some(t), Some(l)) if l > t => Some((t, l)),
+            (Some(t), None) => Some((t, now)),
+            // Pre-takeoff: fall back to block-off so cancellation cron sees
+            // movement during the boarding/taxi period too.
+            _ => stats.block_off_at.map(|b| (b, now)),
+        };
     let raw_flight_time_secs = match (stats.takeoff_at, stats.landing_at) {
         (Some(t), Some(l)) if l > t => (l - t).num_seconds().max(0) as i32,
         (Some(t), None) => (now - t).num_seconds().max(0) as i32,
-        // Pre-takeoff: fall back to block-off so cancellation cron sees
-        // movement during the boarding/taxi period too.
         _ => stats
             .block_off_at
             .map(|b| (now - b).num_seconds().max(0) as i32)
@@ -39969,9 +40044,20 @@ fn build_heartbeat_body(
     // Pause-Akkumulator von der Wall-Clock-Flugzeit abziehen damit
     // 23 min Sim-Crash oder 30 min MSFS-Esc-Pause nicht als 23/30
     // zusaetzliche Flugminuten im PIREP-Heartbeat landen. Saturating-
-    // Arithmetik via Helper.
+    // Arithmetik via Helper. Nur der mit `pause_window` ueberlappende
+    // Anteil zaehlt — siehe `pause_secs_within` (ITY 1358, 07.09.2026).
+    let pause_secs_for_heartbeat = pause_window
+        .map(|(from, to)| {
+            pause_secs_within(
+                &stats.pause_segments,
+                stats.pause_total_duration_secs,
+                from,
+                to,
+            )
+        })
+        .unwrap_or(0);
     let flight_time_secs =
-        flight_time_with_pause_secs(raw_flight_time_secs, stats.pause_total_duration_secs);
+        flight_time_with_pause_secs(raw_flight_time_secs, pause_secs_for_heartbeat);
     // Same fuel arithmetic as the file body: block - remaining, in pounds.
     // Round to whole kg before lb conversion so the live-map / dashboard
     // shows clean integer kg values (no `5890.29 kg` artefacts from the
@@ -41214,10 +41300,25 @@ fn maybe_spawn_metar_fetch(app: &AppHandle, flight: &Arc<ActiveFlight>, new_phas
 /// den Abflugplatz trifft nur die zweite, für den Zielplatz nur die erste
 /// (beide tragen ihr eigenes `icao`, ein Treffer in der falschen waere
 /// strukturell ausgeschlossen, nicht nur unwahrscheinlich).
+///
+/// v1.7.20: `position`, wenn bekannt — die Szenerie gewinnt nur
+/// bedingungslos ohne Positionskontext (reine Anzeige-Abfragen). Mit
+/// Position muss die Szenerie tatsaechlich einen BENANNTEN Stand in der
+/// Naehe haben (`benannter_stand_bei`, derselbe Radius/dieselbe Namens-
+/// Vorrangregel wie am eigentlichen Verbrauchsort); liefert sie nur
+/// IRGENDEINEN Stand fuer den ICAO, egal wo auf dem Flughafen, fiel OSM
+/// bisher komplett aus — obwohl OSM oft naeher am tatsaechlichen
+/// Parkplatz war (ELY 382, LIMC→LLBG, 07.09.2026: die Szenerie-Ernte
+/// hatte einen Rampenstart fuer LLBG, aber keinen nah genug; OSMs
+/// naechster benannter Stand lag nur 16 m entfernt und wurde nie
+/// angefragt). Kein Rollback der v1.7.16-Entscheidung "Sim vor OSM" —
+/// die Szenerie gewinnt weiterhin, sobald sie tatsaechlich etwas in der
+/// Naehe hat.
 fn standliste_fuer(
     stats: &FlightStats,
     icao: &str,
     osm: Option<&[stands::ParkingStand]>,
+    position: Option<(f64, f64)>,
 ) -> Option<Vec<stands::ParkingStand>> {
     let icao_norm = icao.trim().to_uppercase();
     let treffer = |a: &&sim_core::szenerie::SzenerieFlughafen| {
@@ -41229,7 +41330,15 @@ fn standliste_fuer(
         .filter(treffer)
         .or_else(|| stats.dep_szenerie_auskunft.as_ref().filter(treffer))
         .map(|a| stands::aus_szenerie(&a.staende));
-    szenerie.or_else(|| osm.map(|l| l.to_vec()))
+    match (szenerie, position) {
+        (Some(liste), Some((lat, lon)))
+            if stands::benannter_stand_bei(&liste, lat, lon).is_none() =>
+        {
+            osm.map(|l| l.to_vec()).or(Some(liste))
+        }
+        (Some(liste), _) => Some(liste),
+        (None, _) => osm.map(|l| l.to_vec()),
+    }
 }
 
 /// Fuer den BlocksOn/Arrived-Nachzieh-Tick: welches ICAO und welche
@@ -41367,7 +41476,7 @@ mod standliste_fuer_tests {
         let mut stats = FlightStats::default();
         stats.szenerie_auskunft = Some(szenerie_stand("EDDF", "V168", 50.0, 8.0));
         let osm = vec![osm_stand("OSM-STAND")];
-        let liste = standliste_fuer(&stats, "EDDF", Some(&osm)).expect("Liste da");
+        let liste = standliste_fuer(&stats, "EDDF", Some(&osm), None).expect("Liste da");
         assert_eq!(liste.len(), 1);
         assert_eq!(
             liste[0].name.as_deref(),
@@ -41376,18 +41485,67 @@ mod standliste_fuer_tests {
         );
     }
 
+    /// ELY 382, LIMC→LLBG, 07.09.2026: die Szenerie-Ernte hatte einen
+    /// Rampenstart fuer LLBG (also nicht-leer, `treffer` griff), aber weit
+    /// weg vom tatsaechlichen Parkplatz. OSMs naechster benannter Stand
+    /// lag nur wenige Meter entfernt — wurde aber nie angefragt, weil die
+    /// Szenerie schon "irgendetwas" fuer den ICAO hatte. Mit Position
+    /// muss jetzt OSM gewinnen.
+    #[test]
+    fn szenerie_weit_weg_faellt_mit_position_auf_naeheres_osm_zurueck() {
+        let mut stats = FlightStats::default();
+        stats.szenerie_auskunft = Some(szenerie_stand("LLBG", "WEIT-WEG", 0.01, 0.0));
+        let osm = vec![stands::ParkingStand {
+            name: Some("C6".to_string()),
+            lat: 0.0,
+            lon: 0.0,
+            linie: None,
+            flaeche: false,
+        }];
+        let liste = standliste_fuer(&stats, "LLBG", Some(&osm), Some((0.0, 0.0)))
+            .expect("OSM als naeheres Netz");
+        assert_eq!(
+            liste[0].name.as_deref(),
+            Some("C6"),
+            "die weit entfernte Szenerie-Auskunft darf das nahe OSM nicht blockieren"
+        );
+    }
+
+    /// Gegenprobe: hat die Szenerie tatsaechlich etwas IN DER NAEHE,
+    /// gewinnt sie weiterhin — keine Abkehr von der v1.7.16-Entscheidung
+    /// "Sim vor OSM".
+    #[test]
+    fn szenerie_in_der_naehe_gewinnt_weiterhin_mit_position() {
+        let mut stats = FlightStats::default();
+        stats.szenerie_auskunft = Some(szenerie_stand("LLBG", "C6-SIM", 0.0, 0.0));
+        let osm = vec![stands::ParkingStand {
+            name: Some("C6-OSM".to_string()),
+            lat: 0.0,
+            lon: 0.0,
+            linie: None,
+            flaeche: false,
+        }];
+        let liste =
+            standliste_fuer(&stats, "LLBG", Some(&osm), Some((0.0, 0.0))).expect("Liste da");
+        assert_eq!(
+            liste[0].name.as_deref(),
+            Some("C6-SIM"),
+            "eine Szenerie mit echtem Nahtreffer muss weiterhin OSM schlagen"
+        );
+    }
+
     #[test]
     fn osm_bleibt_das_netz_ohne_szenerie() {
         let stats = FlightStats::default();
         let osm = vec![osm_stand("OSM-STAND")];
-        let liste = standliste_fuer(&stats, "EDDF", Some(&osm)).expect("OSM als Rueckfall");
+        let liste = standliste_fuer(&stats, "EDDF", Some(&osm), None).expect("OSM als Rueckfall");
         assert_eq!(liste[0].name.as_deref(), Some("OSM-STAND"));
     }
 
     #[test]
     fn nichts_wenn_keine_der_beiden_quellen_etwas_hat() {
         let stats = FlightStats::default();
-        assert!(standliste_fuer(&stats, "EDDF", None).is_none());
+        assert!(standliste_fuer(&stats, "EDDF", None, None).is_none());
     }
 
     /// ⚠ Der eigentliche Zweck dieses Tests: eine Szenerie-Auskunft für
@@ -41399,7 +41557,7 @@ mod standliste_fuer_tests {
         let mut stats = FlightStats::default();
         stats.szenerie_auskunft = Some(szenerie_stand("EDNY", "203", 47.0, 9.0));
         let osm = vec![osm_stand("OSM-EDDF-STAND")];
-        let liste = standliste_fuer(&stats, "EDDF", Some(&osm)).expect("OSM als Rueckfall");
+        let liste = standliste_fuer(&stats, "EDDF", Some(&osm), None).expect("OSM als Rueckfall");
         assert_eq!(
             liste[0].name.as_deref(),
             Some("OSM-EDDF-STAND"),
@@ -41411,7 +41569,7 @@ mod standliste_fuer_tests {
     fn icao_vergleich_ignoriert_gross_klein_und_leerzeichen() {
         let mut stats = FlightStats::default();
         stats.szenerie_auskunft = Some(szenerie_stand(" eddf ", "V168", 50.0, 8.0));
-        let liste = standliste_fuer(&stats, "eddf", None).expect("Liste da");
+        let liste = standliste_fuer(&stats, "eddf", None, None).expect("Liste da");
         assert_eq!(liste[0].name.as_deref(), Some("V168"));
     }
 
@@ -41429,7 +41587,7 @@ mod standliste_fuer_tests {
             quelle: "test".to_string(),
         });
         let osm = vec![osm_stand("OSM-STAND")];
-        let liste = standliste_fuer(&stats, "EDDF", Some(&osm)).expect("OSM als Rueckfall");
+        let liste = standliste_fuer(&stats, "EDDF", Some(&osm), None).expect("OSM als Rueckfall");
         assert_eq!(liste[0].name.as_deref(), Some("OSM-STAND"));
     }
 
@@ -41440,7 +41598,7 @@ mod standliste_fuer_tests {
     fn dep_szenerie_auskunft_wird_als_quelle_erkannt() {
         let mut stats = FlightStats::default();
         stats.dep_szenerie_auskunft = Some(szenerie_stand("EDDS", "V42", 48.0, 9.0));
-        let liste = standliste_fuer(&stats, "EDDS", None).expect("Abflug-Szenerie greift");
+        let liste = standliste_fuer(&stats, "EDDS", None, None).expect("Abflug-Szenerie greift");
         assert_eq!(liste[0].name.as_deref(), Some("V42"));
     }
 
@@ -41452,10 +41610,10 @@ mod standliste_fuer_tests {
         stats.szenerie_auskunft = Some(szenerie_stand("LEPA", "42", 39.5, 2.7));
         stats.dep_szenerie_auskunft = Some(szenerie_stand("EDDS", "V42", 48.0, 9.0));
 
-        let abflug = standliste_fuer(&stats, "EDDS", None).expect("Abflug-Treffer");
+        let abflug = standliste_fuer(&stats, "EDDS", None, None).expect("Abflug-Treffer");
         assert_eq!(abflug[0].name.as_deref(), Some("V42"));
 
-        let ziel = standliste_fuer(&stats, "LEPA", None).expect("Ziel-Treffer");
+        let ziel = standliste_fuer(&stats, "LEPA", None, None).expect("Ziel-Treffer");
         assert_eq!(ziel[0].name.as_deref(), Some("42"));
     }
 
@@ -41469,7 +41627,7 @@ mod standliste_fuer_tests {
         let mut stats = FlightStats::default();
         stats.dep_szenerie_auskunft = Some(szenerie_stand("EDDS", "V42", 48.0, 9.0));
         let osm = vec![osm_stand("OSM-EDDM-STAND")];
-        let liste = standliste_fuer(&stats, "EDDM", Some(&osm)).expect("OSM als Rueckfall");
+        let liste = standliste_fuer(&stats, "EDDM", Some(&osm), None).expect("OSM als Rueckfall");
         assert_eq!(
             liste[0].name.as_deref(),
             Some("OSM-EDDM-STAND"),
@@ -41490,7 +41648,7 @@ mod standliste_fuer_tests {
             quelle: "test".to_string(),
         });
         let osm = vec![osm_stand("OSM-STAND")];
-        let liste = standliste_fuer(&stats, "EDDS", Some(&osm)).expect("OSM als Rueckfall");
+        let liste = standliste_fuer(&stats, "EDDS", Some(&osm), None).expect("OSM als Rueckfall");
         assert_eq!(liste[0].name.as_deref(), Some("OSM-STAND"));
     }
 
@@ -50432,6 +50590,134 @@ mod sim_pause_tests {
         assert_eq!(flight_time_with_pause_secs(0, 600), 0);
     }
 
+    // ─── pause_secs_within: nur Pausen innerhalb des Fensters zaehlen ───
+    // (ITY 1358, 07.09.2026 — siehe Doc-Kommentar an der Funktion)
+
+    fn segment(started_at: DateTime<Utc>, ended_at: DateTime<Utc>) -> PauseSegment {
+        PauseSegment {
+            started_at,
+            ended_at,
+            duration_secs: (ended_at - started_at).num_seconds(),
+            reason: PauseReason::SimPause,
+            drift_nm: None,
+            altitude_delta_ft: None,
+            fuel_delta_kg: None,
+        }
+    }
+
+    #[test]
+    fn ity1358_boarding_pause_entirely_before_takeoff_does_not_count() {
+        // Der reale Vorfall: ein 36-Minuten-Verbindungsabbruch waehrend
+        // des Boardings, komplett vor dem Start. Vorher wurde die
+        // gesamte Session-Pausensumme abgezogen (44 min echte Luftzeit
+        // minus 36 min Boarding-Pause ergab faelschlich ~8 min) — jetzt
+        // zaehlt nur, was tatsaechlich im Start→Landung-Fenster lag: 0.
+        let takeoff = Utc::now();
+        let landing = takeoff + chrono::Duration::minutes(44);
+        let boarding_pause = segment(
+            takeoff - chrono::Duration::minutes(50),
+            takeoff - chrono::Duration::minutes(14),
+        );
+        let segments = vec![boarding_pause];
+        assert_eq!(
+            pause_secs_within(&segments, 36 * 60, takeoff, landing),
+            0,
+            "eine Pause komplett vor dem Start darf die Flugzeit nicht kuerzen"
+        );
+    }
+
+    #[test]
+    fn a_pause_fully_inside_the_window_counts_in_full() {
+        // Ein echter Sim-Crash waehrend des Reisefluges — unveraendertes
+        // Verhalten gegenueber vorher.
+        let takeoff = Utc::now();
+        let landing = takeoff + chrono::Duration::hours(2);
+        let inflight_pause = segment(
+            takeoff + chrono::Duration::minutes(30),
+            takeoff + chrono::Duration::minutes(53),
+        );
+        let segments = vec![inflight_pause];
+        assert_eq!(
+            pause_secs_within(&segments, 23 * 60, takeoff, landing),
+            23 * 60
+        );
+    }
+
+    #[test]
+    fn a_pause_straddling_takeoff_counts_only_its_overlap() {
+        // Verbindung bricht kurz vor dem Start ab, kommt kurz danach
+        // zurueck — nur der Teil NACH dem Start zaehlt als verlorene
+        // Flugzeit.
+        let takeoff = Utc::now();
+        let landing = takeoff + chrono::Duration::hours(1);
+        let straddling = segment(
+            takeoff - chrono::Duration::minutes(5),
+            takeoff + chrono::Duration::minutes(10),
+        );
+        let segments = vec![straddling];
+        assert_eq!(
+            pause_secs_within(&segments, 15 * 60, takeoff, landing),
+            10 * 60
+        );
+    }
+
+    #[test]
+    fn a_pause_entirely_after_landing_does_not_count() {
+        let takeoff = Utc::now();
+        let landing = takeoff + chrono::Duration::hours(1);
+        let post_landing = segment(
+            landing + chrono::Duration::minutes(5),
+            landing + chrono::Duration::minutes(20),
+        );
+        let segments = vec![post_landing];
+        assert_eq!(pause_secs_within(&segments, 15 * 60, takeoff, landing), 0);
+    }
+
+    #[test]
+    fn multiple_segments_each_contribute_only_their_own_overlap() {
+        let takeoff = Utc::now();
+        let landing = takeoff + chrono::Duration::hours(3);
+        let segments = vec![
+            // Vor dem Start — zaehlt nicht.
+            segment(
+                takeoff - chrono::Duration::minutes(40),
+                takeoff - chrono::Duration::minutes(5),
+            ),
+            // Mitten im Flug — zaehlt voll.
+            segment(
+                takeoff + chrono::Duration::minutes(60),
+                takeoff + chrono::Duration::minutes(75),
+            ),
+            // Nach der Landung — zaehlt nicht.
+            segment(
+                landing + chrono::Duration::minutes(2),
+                landing + chrono::Duration::minutes(6),
+            ),
+        ];
+        assert_eq!(
+            pause_secs_within(&segments, 40 * 60, takeoff, landing),
+            15 * 60
+        );
+    }
+
+    #[test]
+    fn empty_segments_falls_back_to_the_old_total_based_behaviour() {
+        // Vor v1.7.20 wiederaufgenommene Session (oder aus einem anderen
+        // Grund ohne Segment-Detail): ohne Segmente laesst sich nicht
+        // sagen, auf welcher Seite die Pause lag — die alte, konservative
+        // Voll-Summe bleibt erhalten statt stillschweigend auf 0 zu fallen.
+        let takeoff = Utc::now();
+        let landing = takeoff + chrono::Duration::hours(1);
+        assert_eq!(pause_secs_within(&[], 900, takeoff, landing), 900);
+    }
+
+    #[test]
+    fn empty_segments_with_negative_total_clamps_to_zero() {
+        let takeoff = Utc::now();
+        let landing = takeoff + chrono::Duration::hours(1);
+        assert_eq!(pause_secs_within(&[], -100, takeoff, landing), 0);
+    }
+
     // ─── Drift-Schwellen-Konstanten: F2 UI-Stufen-Mapping ───
 
     #[test]
@@ -55299,9 +55585,7 @@ mod touchdown_metadata_stamp_tests {
         let mut stats = FlightStats::default();
         stats.runway_match = Some(m);
         let a = assess_touchdown(&stats);
-        let td = a
-            .td_distance_from_threshold_m
-            .expect("Bahn gematcht");
+        let td = a.td_distance_from_threshold_m.expect("Bahn gematcht");
         assert!(
             (td - (10.0 - 50.0 * 0.3048)).abs() < 0.1,
             "ohne Bestaetigung durch die Geometrie muss der volle \
