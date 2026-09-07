@@ -259,6 +259,25 @@ pub enum FlightLogEvent {
         final_vs_fpm: Option<f32>,
         final_score: Option<String>,
     },
+    /// Die Ausroll-Feinwerte in ihrem FINALEN Stand (gleiche Daten wie
+    /// der MQTT-`touchdown_rollout_finalized`-Nachtrag:
+    /// `clearance_point_m`, `scoring_cutoff_m`, `mess_ende_laengs_m`,
+    /// `clearance_speed_kt`, `clearance_side`, die volle Rollspur, etc.).
+    ///
+    /// Bis hierher wurde dieser Nachtrag nur ueber die durable MQTT-
+    /// Retry-Queue verschickt, nie lokal aufgezeichnet — ein Flug, der
+    /// nie live ankam (Gap-Fill-Import), hatte die Feinwerte deshalb
+    /// STRUKTURELL nie im JSONL, unabhaengig davon wie lang die
+    /// Verbindungsluecke war (ITY 1358, 07.09.2026). `TouchdownComplete`
+    /// bekommt schon neun Sekunden nach dem Aufsetzen einen vorlaeufigen
+    /// `bahn`-Block mit — dieses Event traegt den ENDGUELTIGEN Stand
+    /// nach, analog zum MQTT-Nachtrag. Format = `serde_json::Value` aus
+    /// demselben Grund wie bei `TouchdownComplete`/`PirepFiled`: das
+    /// Schema darf mitwachsen, ohne alte Logs unparsbar zu machen.
+    RolloutFinalized {
+        timestamp: DateTime<Utc>,
+        payload: serde_json::Value,
+    },
 }
 
 /// Eine einzelne 50-Hz-Probe aus dem Touchdown-Window-Buffer. Felder
@@ -898,5 +917,62 @@ mod scored_g_tests {
             }
             _ => panic!("wrong variant"),
         }
+    }
+
+    /// `RolloutFinalized` muss dieselbe Rundreise schaffen wie
+    /// `TouchdownComplete`: als `"rollout_finalized"` getaggt, der
+    /// Bahn-Payload unangetastet erhalten. Das ist der Teil der
+    /// Gap-Fill-Durabilitaets-Luecke (ITY 1358, 07.09.2026), der sich
+    /// ohne `AppHandle` testen laesst — `FlightRecorder::open` nimmt
+    /// einen reinen Pfad, die Tauri-Aufloesung passiert erst eine Ebene
+    /// hoeher in `record_event`.
+    #[test]
+    fn rollout_finalized_round_trips_through_the_jsonl_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "aeroacars-recorder-rollout-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let rec = FlightRecorder::open(&dir, "A94ZAqA0B6rydOpx").expect("recorder");
+        let payload = serde_json::json!({
+            "ts": 1_788_782_039_000i64,
+            "pirep_id": "A94ZAqA0B6rydOpx",
+            "touchdown_at": 1_788_781_927_000i64,
+            "rollout_distance_m": 1056.0,
+            "clearance_point_m": 3856.5,
+            "scoring_cutoff_m": 3813.1,
+            "mess_ende_laengs_m": 2800.6,
+            "clearance_speed_kt": 35.0,
+            "clearance_side": "right",
+            "rollout_final": true,
+            "bahn_revision": 2,
+        });
+        rec.append(&FlightLogEvent::RolloutFinalized {
+            timestamp: Utc::now(),
+            payload: payload.clone(),
+        })
+        .expect("append");
+
+        let text = std::fs::read_to_string(dir.join("flight_logs/A94ZAqA0B6rydOpx.jsonl"))
+            .expect("jsonl datei");
+        let line = text.lines().next().expect("eine Zeile");
+        let parsed: serde_json::Value = serde_json::from_str(line).expect("valides JSON");
+        assert_eq!(parsed["type"], "rollout_finalized");
+        assert_eq!(parsed["payload"]["clearance_point_m"], 3856.5);
+        assert_eq!(parsed["payload"]["bahn_revision"], 2);
+        assert_eq!(parsed["payload"]["rollout_final"], true);
+
+        // Und die getypte Rundreise: dieselbe Zeile muss als
+        // `FlightLogEvent` zurueckdecodieren, nicht nur als loses JSON.
+        let ev: FlightLogEvent = serde_json::from_str(line).expect("typed round-trip");
+        match ev {
+            FlightLogEvent::RolloutFinalized { payload: p, .. } => {
+                assert_eq!(p["scoring_cutoff_m"], 3813.1);
+            }
+            _ => panic!("wrong variant"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

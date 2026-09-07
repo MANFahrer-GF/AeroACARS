@@ -16885,6 +16885,18 @@ mod nachtrag_queue {
         Ok(path)
     }
 
+    /// Legt den Nachtrag ab UND schreibt ihn ins lokale JSONL-Flight-Log.
+    ///
+    /// Laut Doku bei `senden` unten laufen ALLE VIER Aufrufer (Streamer,
+    /// Einreichen mit/ohne Handle, gequeuter Nachtrag) durch diese
+    /// Funktion — der eine Punkt, an dem der Nachtrag lokal aufgezeichnet
+    /// werden kann, ohne dass MQTT dafuer erreichbar sein muss. Vorher
+    /// ging dieses Event NUR ueber die durable MQTT-Retry-Queue raus —
+    /// ein Flug, der nie live ankam (Gap-Fill-Import), hatte die
+    /// Ausroll-Feinwerte deshalb STRUKTURELL nie im JSONL (ITY 1358,
+    /// 07.09.2026). `record_event` ist best-effort/fehlerschluckend wie
+    /// an jeder anderen Aufrufstelle — ein Logging-Fehler darf die Ablage
+    /// selbst nicht verhindern.
     pub fn enqueue(
         app: &AppHandle,
         va: &str,
@@ -16892,7 +16904,16 @@ mod nachtrag_queue {
         nachtrag: &aeroacars_mqtt::TouchdownRolloutFinalizedPayload,
     ) -> Result<PathBuf, std::io::Error> {
         let base = wurzel(app).ok_or_else(|| io_err("kein app_data_dir"))?;
-        enqueue_in(&base, va, pilot, nachtrag)
+        let path = enqueue_in(&base, va, pilot, nachtrag)?;
+        record_event(
+            app,
+            &nachtrag.pirep_id,
+            &FlightLogEvent::RolloutFinalized {
+                timestamp: Utc::now(),
+                payload: serde_json::to_value(nachtrag).unwrap_or(serde_json::Value::Null),
+            },
+        );
+        Ok(path)
     }
 
     /// Ohne Handle: die Identitaet kommt aus dem Schluesselbund — dieselbe,
