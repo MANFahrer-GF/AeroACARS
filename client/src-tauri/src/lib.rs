@@ -31120,33 +31120,45 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     }
                 };
                 if block_payload_opt.is_some() || takeoff_payload_opt.is_some() {
+                    // v0.5.34: Forensik-Mitschnitt ins JSONL. Root Cause
+                    // (07.09.2026, gleiche Fehlerklasse wie der Rollout-
+                    // Nachtrag bei ITY 1358): vorher stand der Mitschnitt
+                    // INNERHALB von `if let Some(handle) = mqtt.as_ref()` —
+                    // fiel die Verbindung genau im Block-Off-/Takeoff-
+                    // Moment aus, wurde der Snapshot weder gesendet noch
+                    // lokal aufgezeichnet und war damit auch ueber
+                    // Gap-Fill-Import nie nachholbar. Jetzt zuerst
+                    // unconditional geloggt, MQTT-Publish bleibt
+                    // best-effort.
+                    if let Some(p) = &block_payload_opt {
+                        record_event(
+                            &app,
+                            &flight.pirep_id,
+                            &FlightLogEvent::BlockSnapshot {
+                                timestamp: Utc::now(),
+                                payload: serde_json::to_value(p)
+                                    .unwrap_or(serde_json::Value::Null),
+                            },
+                        );
+                    }
+                    if let Some(p) = &takeoff_payload_opt {
+                        record_event(
+                            &app,
+                            &flight.pirep_id,
+                            &FlightLogEvent::TakeoffSnapshot {
+                                timestamp: Utc::now(),
+                                payload: serde_json::to_value(p)
+                                    .unwrap_or(serde_json::Value::Null),
+                            },
+                        );
+                    }
                     let app_state = app.state::<AppState>();
                     let mqtt = app_state.mqtt.lock().await;
                     if let Some(handle) = mqtt.as_ref() {
                         if let Some(p) = block_payload_opt {
-                            // v0.5.34: Forensik-Mitschnitt ins JSONL
-                            record_event(
-                                &app,
-                                &flight.pirep_id,
-                                &FlightLogEvent::BlockSnapshot {
-                                    timestamp: Utc::now(),
-                                    payload: serde_json::to_value(&p)
-                                        .unwrap_or(serde_json::Value::Null),
-                                },
-                            );
                             handle.block(p);
                         }
                         if let Some(p) = takeoff_payload_opt {
-                            // v0.5.34: Forensik-Mitschnitt ins JSONL
-                            record_event(
-                                &app,
-                                &flight.pirep_id,
-                                &FlightLogEvent::TakeoffSnapshot {
-                                    timestamp: Utc::now(),
-                                    payload: serde_json::to_value(&p)
-                                        .unwrap_or(serde_json::Value::Null),
-                                },
-                            );
                             handle.takeoff(p);
                         }
                     }
