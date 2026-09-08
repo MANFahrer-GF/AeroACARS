@@ -1,9 +1,9 @@
 {
   "name": "aeroacars-client",
   "private": true,
-  "version": "1.7.21",
+  "version": "1.7.22",
   "type": "module",
-  "description": "AeroACARS desktop client — Tauri 2 + React + TypeScript",
+  "description": "AeroACARS desktop client \u2014 Tauri 2 + React + TypeScript",
   "scripts": {
     "dev": "vite",
     "bericht": "node ../scripts/bericht-bauen.mjs",
