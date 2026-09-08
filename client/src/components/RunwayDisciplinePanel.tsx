@@ -43,6 +43,35 @@ export function RunwayDisciplinePanel({
   const samples = props.lateral_samples ?? [];
   const breite = props.runway_width_m ?? null;
 
+  // Gründe, bei denen wirklich keine nutzbare Geometrie/Spur vorliegt — die
+  // blockieren die Grafik weiterhin sofort und vollständig.
+  //
+  // `insufficient_samples` und `implausible_lateral_track` gehören
+  // ABSICHTLICH NICHT dazu: Dort hat nur die BEWERTUNG (das Subscore-Urteil)
+  // mangels Proben im Messfenster nicht gewertet — die rohen Trackdaten
+  // liegen trotzdem oft vor (15-25 Punkte pro Landung, am Live-Korpus
+  // verifiziert). „Kein Urteil" ist nicht dasselbe wie „keine Grafik".
+  const BLOCKIERENDE_SKIP_GRUENDE = new Set([
+    "missing_lateral_track",
+    "runway_width_unknown",
+    "track_width_unknown",
+    "off_airport_landing",
+    "untrusted_geometry",
+    "unpaved_runway",
+    "water_runway",
+    "surface_unknown",
+    // Die Bahnachse selbst ist falsch — die Spur läuft schräg zu ihr. Eine
+    // Grafik gegen die falsche Achse wäre schlimmer als keine (QS-Fund,
+    // Codex 08.09.2026): das Band läge sichtbar daneben und würde als
+    // Messung gelesen.
+    "runway_axis_mismatch",
+  ]);
+
+  // Gesetzt, wenn die Bewertung einen Grund nannte, der die Grafik NICHT
+  // blockiert (s.o.) — dann rendert die Grafik ganz normal, bekommt aber
+  // einen kleinen Zusatzhinweis, dass kein Bewertungsurteil existiert.
+  let keinUrteilGrund: string | null = null;
+
   // ── Warum hier nichts geraten wird ───────────────────────────────────
   //
   // Fehlt die Bahnbreite oder die Spur, entfällt die Queransicht **sichtbar**
@@ -50,18 +79,24 @@ export function RunwayDisciplinePanel({
   // schlimmer als gar keine: Sie sähe aus wie eine Messung, die „nichts
   // Auffälliges" ergeben hat, und genau das steht dann nicht fest.
   const grund = ((): string | null => {
-    // ZUERST der Grund, den die BEWERTUNG gefällt hat.
+    // ZUERST der Grund, den die BEWERTUNG gefällt hat — aber nur, wenn er
+    // zu den Gründen gehört, bei denen wirklich keine nutzbare Geometrie
+    // vorliegt. Sonst fällt die Prüfung zur Rohdatenlage durch (unten).
     //
     // Sie kennt sieben Gründe, die Anzeige kannte fünf. Bei
-    // `untrusted_geometry` und `implausible_lateral_track` wertete die
-    // Achse nicht — und die Grafik daneben zeichnete seelenruhig ein Band
-    // mit Randabstand, auf einer Geometrie, der die Bewertung nicht traut,
-    // oder aus einem Versatz, den sie als Messfehler verworfen hat.
+    // `untrusted_geometry` wertete die Achse nicht — und die Grafik daneben
+    // zeichnete seelenruhig ein Band mit Randabstand, auf einer Geometrie,
+    // der die Bewertung nicht traut.
     //
     // Ausgelesen, nicht hergeleitet: Die Achse hat schon entschieden. Eine
     // zweite Herleitung hier wäre eine Zweitimplementierung des Urteils,
     // und die driftet, sobald jemand eine Schwelle anfasst.
-    if (props.lateral_skip_reason) return props.lateral_skip_reason;
+    if (props.lateral_skip_reason) {
+      if (BLOCKIERENDE_SKIP_GRUENDE.has(props.lateral_skip_reason)) {
+        return props.lateral_skip_reason;
+      }
+      keinUrteilGrund = props.lateral_skip_reason;
+    }
 
     // ZUERST: Trägt dieser Flug überhaupt v1.7.0-Daten?
     //
@@ -116,28 +151,41 @@ export function RunwayDisciplinePanel({
       {grund ? (
         <Hinweis text={t(`runway_v2.discipline_skip.${grund}`, skipText(grund))} />
       ) : (
-        <RunwayCrossSection
-          // Der Maßstab reist mit `props` — eine Quelle, kein zweiter Weg.
-          schriftMindest={props.schriftMindest}
-          projektion={projektion}
-          runwayWidthM={breite!}
-          trackWidthM={props.track_width_m ?? null}
-          samples={samples}
-          touchdownM={props.td_distance_from_threshold_m}
-          touchdownOffsetM={props.td_centerline_offset_m}
-          clearanceM={props.clearance_point_m}
-          scoringCutoffM={props.scoring_cutoff_m}
-          messEndeM={props.mess_ende_laengs_m}
-          clearanceSide={props.clearance_side}
-          minEdgeClearanceM={props.min_edge_clearance_m}
-          maxLateralOffsetM={props.max_lateral_offset_m}
-          overrunM={props.overrun_m}
-          ausfahrten={props.runway_exits}
-          aircraftIcao={props.aircraft_icao}
-          width={width}
-          zoom={zoom}
-          tokens={tokens}
-        />
+        <>
+          <RunwayCrossSection
+            // Der Maßstab reist mit `props` — eine Quelle, kein zweiter Weg.
+            schriftMindest={props.schriftMindest}
+            projektion={projektion}
+            runwayWidthM={breite!}
+            trackWidthM={props.track_width_m ?? null}
+            samples={samples}
+            touchdownM={props.td_distance_from_threshold_m}
+            touchdownOffsetM={props.td_centerline_offset_m}
+            clearanceM={props.clearance_point_m}
+            scoringCutoffM={props.scoring_cutoff_m}
+            messEndeM={props.mess_ende_laengs_m}
+            clearanceSide={props.clearance_side}
+            minEdgeClearanceM={props.min_edge_clearance_m}
+            maxLateralOffsetM={props.max_lateral_offset_m}
+            overrunM={props.overrun_m}
+            ausfahrten={props.runway_exits}
+            aircraftIcao={props.aircraft_icao}
+            width={width}
+            zoom={zoom}
+            tokens={tokens}
+          />
+          {/* Die Grafik zeigt die rohe Spur — es gibt trotzdem kein
+              Bewertungsurteil zur Bahndisziplin (Messfenster o.Ä.). Klein
+              und unaufdringlich, damit es die Grafik nicht ersetzt. */}
+          {keinUrteilGrund && (
+            <KeinUrteilNotiz
+              text={t(
+                `runway_v2.discipline_skip.${keinUrteilGrund}`,
+                skipText(keinUrteilGrund),
+              )}
+            />
+          )}
+        </>
       )}
 
       <Ereignisliste props={props} />
@@ -163,7 +211,7 @@ function skipText(grund: string): string {
     case "track_width_unknown":
       return "Die Spurweite dieses Musters ist nicht hinterlegt; ohne sie lässt sich die Lage der Räder nicht bestimmen.";
     case "insufficient_samples":
-      return "Zu wenige Messpunkte auf der Bahn — aus zwei oder drei Proben lässt sich kein Verlauf ablesen.";
+      return "Die Geschwindigkeit lag beim Aufsetzen bereits nahe der Bewertungsschwelle — für ein Bahndisziplin-Urteil reicht das Messfenster nicht, die Spur ist unten trotzdem zu sehen.";
     case "runway_axis_mismatch":
       return "Die Bahnachse in den Navdaten passt nicht zur Bahn im Simulator — die Rollspur läuft schräg dazu. Ein Querversatz gegen diese Achse wäre kein Pilotenfehler, sondern ein Szenerie-Versatz.";
     case "untrusted_geometry":
@@ -190,6 +238,24 @@ function Hinweis({ text }: { text: string }) {
         fontSize: "0.82rem",
         color: "#94a3b8",
         lineHeight: 1.5,
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
+/** Kleine, unaufdringliche Notiz NEBEN der Grafik — kein Ersatz für sie.
+ *  Zeigt an, dass die Bewertung kein Urteil gefällt hat, obwohl die Spur
+ *  zu sehen ist (siehe `keinUrteilGrund` oben). */
+function KeinUrteilNotiz({ text }: { text: string }) {
+  return (
+    <div
+      style={{
+        fontSize: "0.72rem",
+        color: "#64748b",
+        lineHeight: 1.4,
+        fontStyle: "italic",
       }}
     >
       {text}
@@ -236,6 +302,10 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
     "off_airport_landing",
     // Aus zwei, drei Proben lässt sich kein Grösstwert ablesen.
     "insufficient_samples",
+    // Falsche Achse, schräg dazu gemessen (QS-Fund, Codex 08.09.2026) —
+    // dieselbe Ereignisliste wird unabhängig von der Grafik oben gerendert,
+    // sie muss den Grund selbst kennen statt sich auf `grund` zu verlassen.
+    "runway_axis_mismatch",
   ].includes(props.lateral_skip_reason ?? "");
   // Die Kante trägt zusätzlich dann nicht, wenn sie keine feste Grenze ist.
   const kanteEntwertet =
@@ -279,12 +349,17 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
             m: wo.laengs_m.toFixed(0),
           })} · `
         : "";
-    // ⚠ „bis auf 60 kt" gehört in den Text, nicht in eine Fußnote.
+    // ⚠ „bis zur Messschwelle" gehört in den Text, nicht in eine Fußnote.
     //
-    // Die seitliche Messung endet unter sechzig Knoten
-    // (`BAHN_MESS_MIN_GS_KT`): Wer langsamer rollt, biegt ab, und ein
-    // Abbiegen ist kein Abkommen. Die Schwelle ist richtig — ohne sie
-    // meldeten 25 % der Landungen „Rad neben der Bahn".
+    // Die seitliche Messung endet, sobald die Grundgeschwindigkeit unter
+    // die Messschwelle fällt (`bahn_mess_schwelle_kt`): Wer langsamer
+    // rollt, biegt ab, und ein Abbiegen ist kein Abkommen. Die Schwelle ist
+    // richtig — ohne sie meldeten 25 % der Landungen „Rad neben der Bahn".
+    //
+    // Seit v1.7.21 ist die Schwelle NICHT mehr fest bei 60 kt, sondern
+    // relativ zur Aufsetz-Grundgeschwindigkeit (25-60 kt, siehe
+    // `bahn_mess_schwelle_kt` in lib.rs) — ein fester „60 kt" im Text wäre
+    // für langsame GA-Muster schlicht falsch. Deshalb keine Zahl mehr hier.
     //
     // Ohne den Zusatz liest sich die Marke aber als größter Versatz der
     // GANZEN Landung, und das ist sie nicht. Bei DLH369 (EDDM 26L) stand
@@ -294,7 +369,7 @@ function Ereignisliste({ props }: { props: RunwayDiagramV2Props }) {
     eintraege.push({
       n: 2,
       text: `${t("runway_v2.mark.max_offset", {
-        defaultValue: "Grösster Versatz bis auf 60 kt",
+        defaultValue: "Grösster Versatz bis zur Messschwelle",
       })} · ${beiM}${seite(max, t)}${zusatz}`,
     });
   }

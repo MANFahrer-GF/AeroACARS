@@ -359,7 +359,7 @@
       "diverted": "Dirottato — è stata volata una rotta diversa da quella pianificata, quindi il confronto con l'OFP misura la deviazione, non il pilota.",
       "runway_width_unknown": "Per questa pista non è registrata alcuna larghezza — è il metro per la distanza laterale.",
       "track_width_unknown": "La carreggiata di questo modello non è registrata; senza di essa non si può determinare la posizione delle ruote.",
-      "insufficient_samples": "Troppi pochi punti di misura sulla pista — due o tre campioni non fanno un tracciato.",
+      "insufficient_samples": "La velocità al tocco era già vicina alla soglia di valutazione — la finestra di misura è troppo breve per un verdetto sulla disciplina di pista.",
       "missing_lateral_track": "Per questo volo non è registrato alcun tracciato di rullaggio. I voli precedenti alla v1.7.0 non lo hanno.",
       "implausible_lateral_track": "Lo scostamento misurato non può essere corretto — probabilmente un errore di misura, quindi nessuna valutazione laterale.",
       "unpaved_runway": "Pista non pavimentata — la valutazione laterale richiede una superficie pavimentata con bordo definito.",
@@ -1989,7 +1989,7 @@
     "mark": {
       "touchdown": "Contatto",
       "past_threshold": "oltre la soglia",
-      "max_offset": "Scostamento massimo fino a 60 kt",
+      "max_offset": "Scostamento massimo fino alla soglia di misura",
       "cleared": "Pista liberata",
       "off_pavement": "ruota esterna {{m}} m fuori dalla superficie pavimentata",
       "edge_distance": "ruota esterna {{m}} m dal bordo",
@@ -2011,7 +2011,7 @@
       "implausible_lateral_track": "Lo scostamento misurato non può essere corretto — probabilmente un errore di misura, quindi nessuna valutazione laterale.",
       "off_airport_landing": "Nessuna pista riconosciuta — senza di essa non c'è un bordo da cui misurare una distanza.",
       "missing_lateral_track": "Per questo volo non è registrata alcuna traccia di rullaggio. I voli precedenti alla v1.7.0 non ce l'hanno.",
-      "insufficient_samples": "Troppo pochi campioni sulla pista — due o tre punti non mostrano un andamento.",
+      "insufficient_samples": "La velocità al tocco era già vicina alla soglia di valutazione — la finestra di misura è troppo breve per un verdetto sulla disciplina di pista, ma la traccia è comunque mostrata qui sotto.",
       "water_runway": "Ammaraggio — non c'è un bordo pavimentato da cui misurare una distanza."
     },
     "edge_left": "Bordo",

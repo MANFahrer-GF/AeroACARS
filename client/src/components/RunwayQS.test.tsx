@@ -666,25 +666,80 @@ describe("QS — Vollständigkeit", () => {
    * Geometrie, der die Bewertung nicht traut, oder aus einem Versatz, den
    * sie als Messfehler verworfen hat.
    */
+  it.each([["untrusted_geometry", "nicht verlässlich"]])(
+    "verzichtet sichtbar bei %s",
+    (grund, textstueck) => {
+      const r = MOCK_LANDING_OPTIONS.map((o) => o.build()).find(
+        (x) => (x.lateral_samples?.length ?? 0) > 2 && x.runway_width_m != null,
+      );
+      expect(r, "keine Variante mit Spur und Bahnbreite").toBeDefined();
+      r!.lateral_skip_reason = grund;
+      const props = mapLandingRecordToV2Props(r!);
+      const markup = renderToStaticMarkup(<RunwayDiagramV2 {...props!} />);
+
+      expect(markup, `der Grund „${grund}" wird nicht ausgeschrieben`).toContain(
+        textstueck,
+      );
+      expect(
+        markup,
+        "die Queransicht wird trotz verworfener Bewertung gezeichnet",
+      ).not.toContain("QUER —");
+    },
+  );
+  /**
+   * `insufficient_samples` und `implausible_lateral_track` sind KEIN Grund
+   * mehr, die Grafik zu verstecken — sie sagen nur, dass die BEWERTUNG kein
+   * Urteil gefällt hat. Liegen roher Rollweg, Bahnbreite und Spurweite vor,
+   * zeichnet die Queransicht wie gewohnt, plus einen kleinen Zusatzhinweis.
+   *
+   * Vorher (Runde <=27) verwechselte die Anzeige „kein Urteil" mit „keine
+   * Grafik" und blendete beides zusammen aus, obwohl teils 15-25 rohe
+   * Messpunkte pro Landung vorlagen (Live-Korpus, verifiziert).
+   */
   it.each([
-    ["untrusted_geometry", "nicht verlässlich"],
+    ["insufficient_samples", "Bewertungsschwelle"],
     ["implausible_lateral_track", "kann nicht stimmen"],
-    ["insufficient_samples", "Zu wenige Messpunkte"],
-  ])("verzichtet sichtbar bei %s", (grund, textstueck) => {
+  ])(
+    "zeichnet die Queransicht trotzdem bei %s, wenn die Rohdaten reichen",
+    (grund, textstueck) => {
+      const r = MOCK_LANDING_OPTIONS.map((o) => o.build()).find(
+        (x) =>
+          (x.lateral_samples?.length ?? 0) > 2 &&
+          x.runway_width_m != null &&
+          x.track_width_m != null,
+      );
+      expect(r, "keine Variante mit Spur, Bahnbreite und Spurweite").toBeDefined();
+      r!.lateral_skip_reason = grund;
+      const props = mapLandingRecordToV2Props(r!);
+      const markup = renderToStaticMarkup(<RunwayDiagramV2 {...props!} />);
+
+      expect(
+        markup,
+        "die Queransicht fehlt, obwohl die Rohdaten reichen",
+      ).toContain("QUER —");
+      expect(
+        markup,
+        `der Grund „${grund}" fehlt als Zusatzhinweis`,
+      ).toContain(textstueck);
+    },
+  );
+  /**
+   * Reichen die Rohdaten selbst nicht (z.B. keine Proben), bleibt es beim
+   * reinen Hinweistext — das ist dann korrekt, weil wirklich nichts da ist.
+   */
+  it("zeigt keine Queransicht bei insufficient_samples ohne Rohdaten", () => {
     const r = MOCK_LANDING_OPTIONS.map((o) => o.build()).find(
-      (x) => (x.lateral_samples?.length ?? 0) > 2 && x.runway_width_m != null,
+      (x) => x.runway_width_m != null,
     );
-    expect(r, "keine Variante mit Spur und Bahnbreite").toBeDefined();
-    r!.lateral_skip_reason = grund;
+    expect(r, "keine Variante mit Bahnbreite").toBeDefined();
+    r!.lateral_skip_reason = "insufficient_samples";
+    (r as Record<string, unknown>).lateral_samples = [];
     const props = mapLandingRecordToV2Props(r!);
     const markup = renderToStaticMarkup(<RunwayDiagramV2 {...props!} />);
 
-    expect(markup, `der Grund „${grund}" wird nicht ausgeschrieben`).toContain(
-      textstueck,
-    );
     expect(
       markup,
-      "die Queransicht wird trotz verworfener Bewertung gezeichnet",
+      "die Queransicht wird trotz fehlender Rohdaten gezeichnet",
     ).not.toContain("QUER —");
   });
   /**

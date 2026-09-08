@@ -20952,9 +20952,17 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// Ohne den Sprung mischt jede Auswertung ueber den Bestand zwei
 /// Massstaebe.
 ///
+/// **12 seit v1.7.21**: Die Bahndisziplin-Fensterschwelle
+/// (`BAHN_MESS_MIN_GS_KT` / `bahn_mess_schwelle_kt`) ist nicht mehr fest bei
+/// 60 kt, sondern relativ zur Aufsetz-Grundgeschwindigkeit
+/// (`clamp(0.6 * aufsetz_gs, 25, 60)`). Fuer leichte GA-Muster (44-56 kt
+/// Aufsetz-GS) bleibt das Messfenster jetzt laenger offen und liefert dort
+/// Bahndisziplin-Proben, wo vorher `insufficient_samples` stand — derselbe
+/// Flug wird unter v1.7.20 und v1.7.21 verschieden bewertet.
+///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
-const SCORE_ALGORITHMUS_VERSION: u8 = 11;
+const SCORE_ALGORITHMUS_VERSION: u8 = 12;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
@@ -34255,12 +34263,60 @@ fn stamp_landing_weight(stats: &mut FlightStats, snap: &SimSnapshot) {
 /// jedes normale Ausfahren die Messung ein.
 const BAHN_KURS_AUSFAHRT_GRAD: f32 = 10.0;
 
-/// Untergrenze der seitlichen Messung.
+/// Untergrenze der seitlichen Messung — Deckel fuer schnelle/normale Muster.
 ///
 /// Niemand biegt mit 60 kt ab, und genau dort ist seitliches Abkommen
 /// gefaehrlich. Unterhalb wird nicht mehr gemessen — das ist der zweite
 /// Riegel gegen die Verwechslung von Abbiegen und Abkommen.
+///
+/// **Fester Deckel seit v1.7.21, keine feste Schwelle mehr.** Fuenf
+/// Landungen im Korpus (1096 Landungen, alle je gespeicherten Logs)
+/// scheiterten an `insufficient_samples` — ausnahmslos leichte einmotorige
+/// GA-Muster (PA24, C152, AC11, BE24) mit 44-56 kt Aufsetz-Grundgeschwindigkeit.
+/// Bei denen liegt die GESAMTE Ausrollstrecke unter 60 kt: das Messfenster
+/// hatte strukturell nie eine Chance, offen zu bleiben.
+///
+/// `bahn_mess_schwelle_kt` (unten) macht die Schwelle relativ zur
+/// tatsaechlichen Aufsetz-Grundgeschwindigkeit: `clamp(0.6 * aufsetz_gs, 25,
+/// 60)`. Bei >=100 kt Aufsetz-GS bleibt die Schwelle bei diesem Deckel —
+/// unveraendertes Verhalten fuer Jets/Airliner (1022 von 1027 normal
+/// bewerteten Landungen im Korpus). Der unabhaengige Kurswechsel-Detektor
+/// (`BAHN_KURS_AUSFAHRT_GRAD`) schliesst das Fenster weiterhin zusaetzlich
+/// bei jedem echten Abbiegen, unabhaengig von der Fahrt — das Absenken der
+/// Geschwindigkeitsschwelle fuer langsame Muster reisst diese zweite
+/// Sicherung nicht ein.
 const BAHN_MESS_MIN_GS_KT: f32 = 60.0;
+
+/// Boden der relativen Messfenster-Schwelle — echtes Rollen/Rangieren soll
+/// auch bei sehr langsamen Mustern nicht mehr "gewertet" werden.
+const BAHN_MESS_MIN_GS_KT_BODEN: f32 = 25.0;
+
+/// Faktor der Aufsetz-Grundgeschwindigkeit, mit dem die Fenster-Schwelle
+/// bei langsamen Mustern skaliert (s. `BAHN_MESS_MIN_GS_KT` oben).
+const BAHN_MESS_SCHWELLE_FAKTOR: f32 = 0.6;
+
+/// Effektive Fensterschluss-Schwelle fuer DIESE Landung: relativ zur
+/// Aufsetz-Grundgeschwindigkeit, gedeckelt nach oben (60 kt, unveraendertes
+/// Verhalten fuer normale/schnelle Muster) und mit einem harten Boden nach
+/// unten (25 kt, gegen Schrittgeschwindigkeit).
+///
+/// Faellt `landing_groundspeed_kt` aus (sollte im Landing-Pfad nicht
+/// vorkommen), faellt dies auf den alten festen Wert zurueck — NICHT auf 0
+/// oder einen Fehler.
+fn bahn_mess_schwelle_kt(stats: &FlightStats) -> f32 {
+    match stats.landing_groundspeed_kt {
+        // `> 0.0` schliesst NaN (jeder Vergleich mit NaN ist `false`) UND
+        // negative Werte aus einem GS-Glitch mit ein — beide sollen auf den
+        // sicheren festen Fallback fallen, nicht auf den 25-kt-Boden geklemmt
+        // werden (QS-Fund, Codex 08.09.2026: eine negative endliche GS wurde
+        // bisher stillschweigend wie eine echte langsame Landung behandelt).
+        Some(aufsetz_gs) if aufsetz_gs.is_finite() && aufsetz_gs > 0.0 => {
+            (BAHN_MESS_SCHWELLE_FAKTOR * aufsetz_gs)
+                .clamp(BAHN_MESS_MIN_GS_KT_BODEN, BAHN_MESS_MIN_GS_KT)
+        }
+        _ => BAHN_MESS_MIN_GS_KT,
+    }
+}
 
 /// Schreibt die seitliche Lage und einen etwaigen Overrun fort.
 ///
@@ -34626,6 +34682,12 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
         (rm.length_ft as f64 - effective_displaced_threshold_ft(rm) as f64) / 3.280_839_895;
     let halbe_breite_m = (rm.width_ft as f64 * 0.3048 / 2.0).max(15.0);
 
+    // Relativ zur Aufsetz-Grundgeschwindigkeit, gedeckelt bei 60 kt (s.
+    // `bahn_mess_schwelle_kt` oben) — fuer leichte GA-Muster mit niedriger
+    // Aufsetzfahrt bleibt das Messfenster damit laenger offen, ohne die
+    // Sicherung fuer normale/schnelle Muster zu veraendern.
+    let mess_schwelle_kt = bahn_mess_schwelle_kt(stats);
+
     // ── 1. Ueberrollen ───────────────────────────────────────────────
     //
     // Overrun heisst: beim AUSROLLEN geradeaus ueber das Ende geschossen —
@@ -34678,7 +34740,13 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     // Abweichung ein Ausbrechen — und das ist genau das, was die Achse
     // bewerten SOLL, nicht ihr Ende. High-Speed-Exits werden mit bis zu
     // sechzig Knoten genommen und liegen damit im Bereich.
-    if stats.bahn_raeum_laengs_m.is_none() && snap.groundspeed_kt < BAHN_MESS_MIN_GS_KT {
+    //
+    // Seit v1.7.21 dieselbe RELATIVE Schwelle wie Schritt 3 (`mess_schwelle_kt`)
+    // — nicht mehr fest 60 kt: Fuer normale/schnelle Muster aendert sich
+    // nichts (Deckel bei 60 kt), fuer leichte GA-Muster mit niedriger
+    // Aufsetzfahrt bleibt es dieselbe Schwelle wie die des Messfensters,
+    // dessen Schliessen dieser Schritt beschreibt.
+    if stats.bahn_raeum_laengs_m.is_none() && snap.groundspeed_kt < mess_schwelle_kt {
         if let Some(td_heading) = stats.landing_heading_true_deg {
             let mut diff = snap.heading_deg_true - td_heading;
             while diff > 180.0 {
@@ -34710,7 +34778,7 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     // ausserhalb der Bahn laengs. In beiden Faellen ist nichts mehr zu
     // BEWERTEN — die Spur laeuft weiter (Schritt 5).
     if !stats.bahn_fenster_zu
-        && (snap.groundspeed_kt < BAHN_MESS_MIN_GS_KT
+        && (snap.groundspeed_kt < mess_schwelle_kt
             || laengs_m < 0.0
             || (nutzbare_laenge_m > 300.0 && laengs_m > nutzbare_laenge_m))
     {
@@ -58322,6 +58390,201 @@ mod v0_16_6_bush_completeness_tests {
         assert!(
             nur_laengs.len() < echte_punkte.len(),
             "die Gegenprobe muss Punkte verlieren, sonst prueft der Test nichts"
+        );
+    }
+
+    /// v1.7.21: `bahn_mess_schwelle_kt` — die relative Fensterschwelle
+    /// selbst, ohne den Umweg ueber einen ganzen Tick.
+    ///
+    /// Befund (Live-Korpus, 1096 Landungen): 5 Landungen scheiterten an
+    /// `insufficient_samples`, ausnahmslos leichte einmotorige GA-Muster
+    /// (PA24, C152, AC11, BE24) mit 44-56 kt Aufsetz-Grundgeschwindigkeit —
+    /// dort lag die GESAMTE Ausrollstrecke unter der alten festen 60-kt-
+    /// Schwelle.
+    #[test]
+    fn bahn_mess_schwelle_ist_relativ_zur_aufsetz_gs() {
+        let mut stats = FlightStats::default();
+        // Kein Aufsetz-GS bekannt (sollte im Landing-Pfad nicht vorkommen)
+        // — Rueckfall auf den alten festen Wert, NICHT auf 0 oder Fehler.
+        assert_eq!(bahn_mess_schwelle_kt(&stats), BAHN_MESS_MIN_GS_KT);
+
+        // Deckel: ab 100 kt Aufsetz-GS bleibt es beim alten Wert (0.6*100
+        // = 60) — unveraendertes Verhalten fuer Jets/Airliner.
+        stats.landing_groundspeed_kt = Some(140.0);
+        assert_eq!(bahn_mess_schwelle_kt(&stats), 60.0);
+        stats.landing_groundspeed_kt = Some(100.0);
+        assert_eq!(bahn_mess_schwelle_kt(&stats), 60.0);
+
+        // Zwischenbereich: 0.6 * Aufsetz-GS — genau das Beispiel aus der
+        // Spezifikation (55 kt Aufsetz-GS -> 33 kt Schwelle).
+        stats.landing_groundspeed_kt = Some(55.0);
+        assert!(
+            (bahn_mess_schwelle_kt(&stats) - 33.0).abs() < 0.001,
+            "erwartet 33 kt (0.6 * 55), war {}",
+            bahn_mess_schwelle_kt(&stats)
+        );
+
+        // Boden: 0.6 * 30 = 18, das waere Schrittgeschwindigkeit — der
+        // harte Boden haelt bei 25 kt.
+        stats.landing_groundspeed_kt = Some(30.0);
+        assert_eq!(bahn_mess_schwelle_kt(&stats), 25.0);
+
+        // Ein nicht-endlicher Wert (sollte praktisch nie vorkommen) faellt
+        // ebenfalls auf den festen Wert zurueck, NICHT auf 0.
+        stats.landing_groundspeed_kt = Some(f32::NAN);
+        assert_eq!(bahn_mess_schwelle_kt(&stats), BAHN_MESS_MIN_GS_KT);
+
+        // +/- unendlich: `is_finite()` verwirft beides, Ruecckfall auf den
+        // festen Wert (QS-Fund, Codex 08.09.2026: nicht nur NaN testen).
+        stats.landing_groundspeed_kt = Some(f32::INFINITY);
+        assert_eq!(bahn_mess_schwelle_kt(&stats), BAHN_MESS_MIN_GS_KT);
+        stats.landing_groundspeed_kt = Some(f32::NEG_INFINITY);
+        assert_eq!(bahn_mess_schwelle_kt(&stats), BAHN_MESS_MIN_GS_KT);
+
+        // Eine negative, aber ENDLICHE GS (Sensor-Glitch, physikalisch
+        // unmoeglich) darf NICHT wie eine echte langsame Landung auf den
+        // 25-kt-Boden geklemmt werden, sondern faellt auf den festen Wert
+        // zurueck — genau wie NaN (QS-Fund, Codex 08.09.2026).
+        stats.landing_groundspeed_kt = Some(-5.0);
+        assert_eq!(bahn_mess_schwelle_kt(&stats), BAHN_MESS_MIN_GS_KT);
+    }
+
+    /// v1.7.21: Ein leichtes GA-Muster mit niedriger Aufsetzfahrt bekommt
+    /// jetzt Bahndisziplin-Proben, wo die alte feste 60-kt-Schwelle das
+    /// Messfenster nie geoeffnet haette (55 kt Aufsetz-GS < 60 kt fest —
+    /// das Fenster waere ab dem ERSTEN Tick zu gewesen, `bahn_proben`
+    /// waere bei 0 geblieben).
+    #[test]
+    fn ga_landung_mit_niedriger_aufsetz_gs_bekommt_proben() {
+        const GRAD_M: f64 = 111_320.0;
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(runway::RunwayMatch {
+            airport_ident: "EDDM".to_string(),
+            runway_ident: "26L".to_string(),
+            heading_true_deg: 90.0,
+            length_ft: (4000.0 * 3.280_839_895) as f32,
+            width_ft: 197.0,
+            surface: "ASP".to_string(),
+            threshold_lat: 0.0,
+            threshold_lon: 0.0,
+            end_lat: 0.0,
+            end_lon: 4000.0 / GRAD_M,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            touchdown_distance_from_threshold_ft: 500.0,
+            side: "left".to_string(),
+            displaced_threshold_ft: 0,
+            geometry_implied_displaced_threshold_ft: 0,
+        });
+        stats.landing_heading_true_deg = Some(90.0);
+        // Aufsetz-Grundgeschwindigkeit einer leichten GA-Maschine — genau
+        // die Gruppe aus dem Korpus-Befund (PA24 u.ae., 44-56 kt).
+        stats.landing_groundspeed_kt = Some(55.0);
+
+        let tick = |stats: &mut FlightStats, laengs: f64, gs: f32| {
+            let mut snap = SimSnapshot::default();
+            snap.lat = 0.0;
+            snap.lon = laengs / GRAD_M;
+            snap.groundspeed_kt = gs;
+            // Geradeaus, kein Kurswechsel — sonst schliesst der
+            // unabhaengige Ausfahrt-Detektor das Fenster VOR der
+            // Geschwindigkeitspruefung.
+            snap.heading_deg_true = 90.0;
+            bahndisziplin_tick(stats, &snap);
+        };
+
+        // 5 Hz-Takt (ROLLOUT_TICK_MS), langsam von 55 auf 25 kt fallend,
+        // ueber eine kurze, plausible Rollstrecke.
+        for (laengs, gs) in [
+            (1000.0, 55.0),
+            (1020.0, 50.0),
+            (1040.0, 45.0),
+            (1060.0, 40.0),
+            (1080.0, 35.0),
+            (1100.0, 30.0),
+            (1120.0, 25.0),
+        ] {
+            tick(&mut stats, laengs, gs);
+        }
+
+        // Effektive Schwelle bei 55 kt Aufsetz-GS: 0.6*55 = 33 kt. Die
+        // Ticks bei 55/50/45/40/35 kt liegen darueber und werden gezaehlt;
+        // die Ticks bei 30/25 kt liegen darunter und schliessen das
+        // Fenster. Vorher (feste 60-kt-Schwelle) waere das Fenster schon
+        // beim allerersten Tick (55 < 60) zu gewesen -- 0 Proben.
+        assert!(
+            stats.bahn_proben >= 3,
+            "erwartet mindestens 3 Proben bei einer relativen Schwelle \
+             von 33 kt, gezaehlt wurden {}",
+            stats.bahn_proben
+        );
+    }
+
+    /// v1.7.21: Ein Airliner/Jet mit normaler Aufsetzfahrt (>=100 kt) darf
+    /// sich NICHT aendern — die relative Schwelle ist dort vom 60-kt-Deckel
+    /// begrenzt, exakt wie die alte feste Schwelle.
+    #[test]
+    fn jet_landung_mit_hoher_aufsetz_gs_bleibt_unveraendert() {
+        const GRAD_M: f64 = 111_320.0;
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(runway::RunwayMatch {
+            airport_ident: "EDDM".to_string(),
+            runway_ident: "26L".to_string(),
+            heading_true_deg: 90.0,
+            length_ft: (4000.0 * 3.280_839_895) as f32,
+            width_ft: 197.0,
+            surface: "ASP".to_string(),
+            threshold_lat: 0.0,
+            threshold_lon: 0.0,
+            end_lat: 0.0,
+            end_lon: 4000.0 / GRAD_M,
+            centerline_distance_m: 0.0,
+            centerline_distance_abs_ft: 0.0,
+            touchdown_distance_from_threshold_ft: 500.0,
+            side: "left".to_string(),
+            displaced_threshold_ft: 0,
+            geometry_implied_displaced_threshold_ft: 0,
+        });
+        stats.landing_heading_true_deg = Some(90.0);
+        // Aufsetz-Grundgeschwindigkeit eines Airliners — weit ueber dem
+        // 60-kt-Deckel (0.6*140 = 84, gedeckelt auf 60).
+        stats.landing_groundspeed_kt = Some(140.0);
+
+        let tick = |stats: &mut FlightStats, laengs: f64, gs: f32| {
+            let mut snap = SimSnapshot::default();
+            snap.lat = 0.0;
+            snap.lon = laengs / GRAD_M;
+            snap.groundspeed_kt = gs;
+            snap.heading_deg_true = 90.0;
+            bahndisziplin_tick(stats, &snap);
+        };
+
+        for (laengs, gs) in [
+            (1000.0, 140.0),
+            (1200.0, 100.0),
+            (1400.0, 80.0),
+            (1600.0, 65.0),
+            (1700.0, 58.0), // unter dem 60-kt-Deckel: Fenster schliesst hier
+            (1750.0, 55.0),
+        ] {
+            tick(&mut stats, laengs, gs);
+        }
+
+        // Genau wie unter der alten festen 60-kt-Schwelle: gezaehlt werden
+        // die vier Ticks bei/ueber 60 kt (140/100/80/65), das Fenster
+        // schliesst beim ersten Tick darunter (58 kt).
+        assert_eq!(
+            stats.bahn_proben, 4,
+            "die Anzahl der Proben darf sich fuer einen Aufsetz-GS >= 100 kt \
+             nicht aendern (60-kt-Deckel)",
+        );
+        let fenster = stats
+            .bahn_fenster_zu_laengs_m
+            .expect("Fensterende muss beim Unterschreiten der 60 kt stehen");
+        assert!(
+            (fenster - 1700.0).abs() < 5.0,
+            "Fenster schloss bei {fenster:.0} m, erwartet rund 1.700 m \
+             (derselbe Punkt wie unter der alten festen 60-kt-Schwelle)",
         );
     }
 

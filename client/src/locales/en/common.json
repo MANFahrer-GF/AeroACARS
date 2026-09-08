@@ -359,7 +359,7 @@
       "diverted": "Diverted — a different route was flown than planned, so comparing against the OFP measures the detour, not the pilot.",
       "runway_width_unknown": "No width is on file for this runway — it is the yardstick for the lateral distance.",
       "track_width_unknown": "The track width of this type is not on file; without it the position of the wheels cannot be determined.",
-      "insufficient_samples": "Too few measuring points on the runway — two or three samples do not make a track.",
+      "insufficient_samples": "Groundspeed at touchdown was already close to the scoring threshold — the measuring window is too short for a runway-discipline verdict.",
       "missing_lateral_track": "No roll-out track was recorded for this flight. Flights from before v1.7.0 do not have one.",
       "implausible_lateral_track": "The measured offset cannot be right — most likely a measurement error, so no lateral assessment.",
       "unpaved_runway": "Unpaved runway — the lateral assessment requires a paved surface with a defined edge.",
@@ -1996,7 +1996,7 @@
     "mark": {
       "touchdown": "Touchdown",
       "past_threshold": "past the threshold",
-      "max_offset": "Largest offset down to 60 kt",
+      "max_offset": "Largest offset down to the scoring threshold",
       "cleared": "Runway vacated",
       "off_pavement": "outer wheel {{m}} m off the paved surface",
       "edge_distance": "outer wheel {{m}} m from the edge",
@@ -2018,7 +2018,7 @@
       "implausible_lateral_track": "The measured offset cannot be right — most likely a measurement error, so no lateral assessment.",
       "off_airport_landing": "No runway identified — without one there is no edge to measure a distance to.",
       "missing_lateral_track": "No roll-out track recorded for this flight. Flights from before v1.7.0 do not have one.",
-      "insufficient_samples": "Too few samples on the runway — two or three points do not show a track.",
+      "insufficient_samples": "Groundspeed at touchdown was already close to the scoring threshold — the measuring window is too short for a runway-discipline verdict, but the track is still shown below.",
       "water_runway": "Water landing — there is no paved edge to measure a distance to."
     },
     "edge_left": "Edge",
