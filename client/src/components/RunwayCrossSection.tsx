@@ -317,13 +317,19 @@ export function RunwayCrossSection(p: QueransichtProps) {
   const linksPunkte = versetzt(-1);
   const rechtsPunkte = versetzt(1);
 
+  // Beide Bandränder werden geglättet, nicht nur der linke — sonst ist der
+  // rechte Rand ein reiner Geradenzug durch dieselben Messpunkte, die links
+  // eine Kurve bilden. Bei einer engen Kurve (nahe 90°, z. B. eine schnelle
+  // Ausfahrt) driften beide Seiten dann sichtbar auseinander: die glatte
+  // Seite biegt, die gerade Seite knickt — das Band wirkt an genau der
+  // Stelle "abgeknickt" statt rund. Die zwei "L"-Übergänge, die bleiben,
+  // sind echt: sie queren die Bandbreite an den beiden Enden der Spur, wo
+  // keine Kurve zu glätten ist.
+  const rechtsUmgekehrt = rechtsPunkte.slice().reverse();
+  const bandEndeRechts = rechtsUmgekehrt[0];
   const bandPfad =
-    spurSichtbar.length >= 2 && halbeSpurM > 0
-      ? `${weicherPfad(linksPunkte)} L ${rechtsPunkte
-          .slice()
-          .reverse()
-          .map((q) => `${q.x.toFixed(1)} ${q.y.toFixed(1)}`)
-          .join(" L ")} Z`
+    spurSichtbar.length >= 2 && halbeSpurM > 0 && bandEndeRechts
+      ? `${weicherPfad(linksPunkte)} L ${bandEndeRechts.x.toFixed(1)} ${bandEndeRechts.y.toFixed(1)} ${weicherPfad(rechtsUmgekehrt, 0.5, true)} Z`
       : null;
 
   // ── Gewerteter und ungewerteter Teil der Spur ────────────────────────
@@ -578,11 +584,13 @@ export function RunwayCrossSection(p: QueransichtProps) {
     const halbRollwegPx = (23 / 2) * pxProQuerM;
     const oben = bandRand(achse, halbRollwegPx, -1);
     const unten = bandRand(achse, halbRollwegPx, 1);
-    return `${weicherPfad(oben)} L ${unten
-      .slice()
-      .reverse()
-      .map((q) => `${q.x.toFixed(1)} ${q.y.toFixed(1)}`)
-      .join(" L ")} Z`;
+    // Gleiche Glättung wie beim Radspur-Band oben (bewusst geteilte Logik,
+    // siehe Kommentar bei `bandRand`) — sonst knickt der Rollweg an derselben
+    // Art enger Kurve sichtbar ab.
+    const untenUmgekehrt = unten.slice().reverse();
+    const rollwegEnde = untenUmgekehrt[0];
+    if (!rollwegEnde) return null;
+    return `${weicherPfad(oben)} L ${rollwegEnde.x.toFixed(1)} ${rollwegEnde.y.toFixed(1)} ${weicherPfad(untenUmgekehrt, 0.5, true)} Z`;
   })();
 
   const ausfahrten = gruppiere(
@@ -980,13 +988,20 @@ export function RunwayCrossSection(p: QueransichtProps) {
 export function weicherPfad(
   punkte: Array<{ x: number; y: number }>,
   spannung = 0.5,
+  // Ohne führendes "M": für den Anschluss an einen bereits offenen Pfad
+  // (siehe `bandRand`-Nutzung unten) — sonst würde ein zweites "M" den
+  // Pfad in zwei getrennte Teilstücke zerreissen.
+  ohneAnfangM = false,
 ): string {
   if (punkte.length === 0) return "";
-  if (punkte.length === 1) return `M ${punkte[0]!.x} ${punkte[0]!.y}`;
-  if (punkte.length === 2) {
-    return `M ${punkte[0]!.x} ${punkte[0]!.y} L ${punkte[1]!.x} ${punkte[1]!.y}`;
+  if (punkte.length === 1) {
+    return ohneAnfangM ? "" : `M ${r(punkte[0]!.x)} ${r(punkte[0]!.y)}`;
   }
-  const teile: string[] = [`M ${r(punkte[0]!.x)} ${r(punkte[0]!.y)}`];
+  if (punkte.length === 2) {
+    const anfang = ohneAnfangM ? "L" : `M ${r(punkte[0]!.x)} ${r(punkte[0]!.y)} L`;
+    return `${anfang} ${r(punkte[1]!.x)} ${r(punkte[1]!.y)}`;
+  }
+  const teile: string[] = ohneAnfangM ? [] : [`M ${r(punkte[0]!.x)} ${r(punkte[0]!.y)}`];
   for (let i = 0; i < punkte.length - 1; i++) {
     const p0 = punkte[Math.max(0, i - 1)]!;
     const p1 = punkte[i]!;
