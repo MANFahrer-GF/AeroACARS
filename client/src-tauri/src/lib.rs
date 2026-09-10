@@ -3669,10 +3669,29 @@ struct PersistedFlightStats {
     // nochmal gefeuert weil Guard-State nach Resume None war).
     #[serde(default)]
     sampler_touchdown_at: Option<DateTime<Utc>>,
+    /// Bug B (Codex, Vereinheitlichung 09/2026): eine aktive `FalseEdge`-
+    /// Ablehnung des Samplers persistieren, damit `finalize_landing_score_if_due`
+    /// sie nach App-Resume weiterhin respektiert. `#[serde(default)]` →
+    /// None bei pre-Feld Resume-Files (harmlos: gleiches Verhalten wie vorher).
+    #[serde(default)]
+    sampler_touchdown_rejected_reason: Option<touchdown_v2::FalseEdgeReason>,
     #[serde(default)]
     sampler_takeoff_at: Option<DateTime<Utc>>,
     #[serde(default)]
     touchdown_window_dumped_at: Option<DateTime<Utc>>,
+    /// GAF-707-Race, strukturell geloest (Vereinheitlichung 09/2026):
+    /// `touchdown_window_dumped_at` wird sehr frueh gesetzt (verhindert
+    /// Doppel-Dump im 50Hz-Sampler-Loop + Resume-Sicherheit, siehe dessen
+    /// Setzstelle) — aber die score-relevanten Rohdaten (verfeinerte VS-
+    /// Kaskade, `bounce_count`) werden danach noch unter einem ZWEITEN,
+    /// spaeteren Lock geschrieben. Ohne dieses zweite Signal konnte
+    /// `finalize_landing_score_if_due` dazwischenfunken und mit der
+    /// groeberen, noch unverfeinerten Kanonik scoren — und das dann NIE
+    /// mehr korrigieren (`landing_score.is_some()`-Guard). `#[serde(default)]`
+    /// → None bei pre-Feld Resume-Files (Finalizer faellt dann auf seinen
+    /// bestehenden Timeout-Fallback zurueck, harmlos).
+    #[serde(default)]
+    touchdown_window_score_data_ready_at: Option<DateTime<Utc>>,
     #[serde(default)]
     landing_score_finalized: bool,
     /// v0.7.7: aktuelle SimBrief-OFP-ID — siehe FlightStats. `#[serde(default)]`
@@ -3892,8 +3911,10 @@ impl PersistedFlightStats {
             previous_phase_before_holding: stats.previous_phase_before_holding,
             // v0.5.45: Sampler-State persistieren gegen Resume-Re-Capture
             sampler_touchdown_at: stats.sampler_touchdown_at,
+            sampler_touchdown_rejected_reason: stats.sampler_touchdown_rejected_reason,
             sampler_takeoff_at: stats.sampler_takeoff_at,
             touchdown_window_dumped_at: stats.touchdown_window_dumped_at,
+            touchdown_window_score_data_ready_at: stats.touchdown_window_score_data_ready_at,
             landing_score_finalized: stats.landing_score_finalized,
             // v0.7.7 OFP-Refresh-Foundation
             simbrief_ofp_id: stats.simbrief_ofp_id.clone(),
@@ -4111,8 +4132,10 @@ impl PersistedFlightStats {
         // v0.5.45: Sampler-State restoren — verhindert Re-Capture nach Resume
         // wenn der Touchdown vor dem Quit/Restart bereits gefeuert hat.
         stats.sampler_touchdown_at = self.sampler_touchdown_at;
+        stats.sampler_touchdown_rejected_reason = self.sampler_touchdown_rejected_reason;
         stats.sampler_takeoff_at = self.sampler_takeoff_at;
         stats.touchdown_window_dumped_at = self.touchdown_window_dumped_at;
+        stats.touchdown_window_score_data_ready_at = self.touchdown_window_score_data_ready_at;
         stats.landing_score_finalized = self.landing_score_finalized;
         // v0.7.7 OFP-Refresh-Foundation
         stats.simbrief_ofp_id = self.simbrief_ofp_id;
@@ -4227,6 +4250,17 @@ const TOUCHDOWN_BUFFER_SECS: i64 = 5;
 /// Phase + erste Reverse/Brake-Action ab. Pre-TD-Buffer (5 s) + dies
 /// ergibt einen TouchdownWindow von ~15 s, gedumpt als ein Event.
 const TOUCHDOWN_POST_WINDOW_MS: i64 = 10_000;
+
+/// v1.7.24 (GAF-707-Race, strukturell geloest — Vereinheitlichung 09/2026):
+/// Ab wann `finalize_landing_score_if_due` (und, mit demselben Wert,
+/// `announce_landing_score`) aufgibt auf die score-relevanten Sampler-
+/// Rohdaten (`touchdown_window_score_data_ready_at`) zu warten und
+/// stattdessen mit der vorhandenen Kanonik scort/ankuendigt. Gemessen ab
+/// `sampler_touchdown_at`, nicht ab `landing_at` — deckt `TOUCHDOWN_POST_
+/// WINDOW_MS` (10s) plus grosszuegige Marge fuer einen verspaeteten
+/// Streamer-Tick ab. Ein gemeinsamer Name statt zwei getrennter lokaler
+/// Konstanten, damit beide Funktionen nie auseinanderlaufen koennen.
+const SAMPLER_DUMP_WAIT_TIMEOUT_MS: i64 = 12_000;
 
 /// Wieviele Telemetrieproben die Replay-Erkennung vorhaelt. Bei der
 /// langsamsten Kadenz (3 s im Reiseflug) sind das rund drei Minuten — weit
@@ -4743,6 +4777,16 @@ struct FlightStats {
     /// weil Streamer 5s nach Touchdown wachte und Buffer dann nur
     /// noch Rollout-Samples mit VS≈0 enthielt.
     sampler_touchdown_at: Option<DateTime<Utc>>,
+    /// Bug B (Codex, Vereinheitlichung 09/2026): eine explizite `FalseEdge`-
+    /// Ablehnung des Samplers ist am Zustand `sampler_touchdown_at == None`
+    /// allein nicht von "Sampler hat noch keinen Kandidaten gesehen"
+    /// unterscheidbar — beide sind None. Ohne dieses Feld ueberstimmt
+    /// `finalize_landing_score_if_due`s FSM-Fallback (`canonical_landing_rate_fpm`)
+    /// eine aktive, evidenzbasierte Ablehnung stillschweigend. Nur fuer
+    /// Gruende ausser `InsufficientTelemetry` gesetzt (siehe Setzstelle) —
+    /// "zu wenig Telemetrie" ist eine legitime "Sampler weiss es nicht,
+    /// FSM darf entscheiden"-Situation, keine aktive Ablehnung.
+    sampler_touchdown_rejected_reason: Option<touchdown_v2::FalseEdgeReason>,
     sampler_touchdown_vs_fpm: Option<f32>,
     sampler_touchdown_g_force: Option<f32>,
     /// v0.7.0 (Forensik v2 P0 fix): wenn der Sampler ein TD-Edge detected,
@@ -5728,6 +5772,15 @@ struct FlightStats {
     /// Bleibt bis Flight-Ende bzw. zweiter TD im Touch-and-Go-Pattern (dann
     /// reset durch sampler_touchdown_at).
     touchdown_window_dumped_at: Option<DateTime<Utc>>,
+
+    /// GAF-707-Race, strukturell geloest (Vereinheitlichung 09/2026): siehe
+    /// Kommentar am gleichnamigen Feld in `PersistedFlightStats`. Getrennt
+    /// von `touchdown_window_dumped_at`, weil letzteres frueh gesetzt wird
+    /// (Doppel-Dump-Schutz im Sampler-Loop + Resume-Sicherheit) — DIESES
+    /// Feld erst, nachdem wirklich alle score-relevanten Rohdaten (VS-
+    /// Kaskade, bounce_count) geschrieben sind. `finalize_landing_score_
+    /// if_due` wartet auf DIESES Feld, nicht auf `touchdown_window_dumped_at`.
+    touchdown_window_score_data_ready_at: Option<DateTime<Utc>>,
 
     /// v0.5.40: Anti-Flicker für `engines_running`. Aerosoft A340-600 Pro
     /// (und andere Add-ons) zappeln den `GENERAL ENG COMBUSTION` SimVar
@@ -8325,6 +8378,46 @@ fn aircraft_limits_for(icao: &str) -> AircraftLimits {
         }
     }
     direkt
+}
+
+/// Dieselbe Kaskade wie `aircraft_limits_for` (Rohwert → `normalize_icao_type`
+/// → `muster_kandidaten`), aber generisch fuer jede andere Typtabellen-Abfrage
+/// nutzbar, die `Option<&str>` nimmt und bei einem unbekannten Muster `None`
+/// liefert.
+///
+/// # Warum es das braucht (BCS3317/A306, Vereinheitlichung 09/2026)
+///
+/// `aircraft_limits_for` bricht die Sim-Schreibweise seit v0.8.x bereits auf
+/// echte Tabellen-Treffer herunter — u.a. "A300" (Baureihe ohne Variante,
+/// die z.B. das Payware-A300F meldet) auf "A306" ueber `muster_kandidaten`
+/// (Zeile ~8339). `bahn_felder()`s Spurweite-/Spannweite-Abfrage
+/// (`landing_scoring::spurweite::spurweite_m`/`spannweite_m`) hatte diese
+/// Kaskade NICHT — sie schlug den rohen `icao`-Wert direkt in der Typtabelle
+/// nach, ohne die bereits vorhandene, korpus-getestete Aufloesung zu nutzen.
+/// Ergebnis: BCS3317 (A306, MSFS meldet "A300") bekam "track_width_unknown"
+/// obwohl "A306" in der Tabelle steht UND `muster_kandidaten` den Kandidaten
+/// schon kennt — nur eben nicht hier befragt wurde. Diese Funktion macht die
+/// Kaskade wiederverwendbar statt sie ein zweites Mal zu duplizieren.
+fn muster_fuer_typtabelle<T>(
+    icao: Option<&str>,
+    mut nachschlagen: impl FnMut(Option<&str>) -> Option<T>,
+) -> Option<T> {
+    let roh = icao?;
+    if let Some(v) = nachschlagen(Some(roh)) {
+        return Some(v);
+    }
+    let upper = roh.to_uppercase();
+    if let Some(n) = normalize_icao_type(&upper) {
+        if let Some(v) = nachschlagen(Some(&n)) {
+            return Some(v);
+        }
+    }
+    for kandidat in muster_kandidaten(upper.as_str()) {
+        if let Some(v) = nachschlagen(Some(&kandidat)) {
+            return Some(v);
+        }
+    }
+    None
 }
 
 fn aircraft_limits_exakt(upper_str: &str) -> AircraftLimits {
@@ -20362,7 +20455,19 @@ fn fill_v2_rollout_fields(
     // Zeile zeigt die Grafik einen anderen Wert, als die Note benutzt:
     // Bei einem Add-on mit 2 m breiterem Fahrwerk gemessen 8,8 gegen
     // 7,7 m Randabstand.
-    input.fahrwerk_spurweite_m = stats.fahrwerk_spurweite_m;
+    //
+    // Codex-QS-Fund (Vereinheitlichung 09/2026, BCS3317/A306): diese Zeile
+    // stand als bedingungsloses Ueberschreiben da, aus einer Zeit, in der
+    // `scoring_eingang` `fahrwerk_spurweite_m` noch nie selbst setzte (immer
+    // None). Seit `scoring_eingang` dort die Sim-Schreibweisen-Kaskade
+    // (`muster_fuer_typtabelle`) vorbelegt, hat das blinde Ueberschreiben
+    // genau diese Vorbelegung wieder auf None zurueckgesetzt, sobald
+    // `stats.fahrwerk_spurweite_m` (X-Plane-Datei-Wert) fehlte — der
+    // Normalfall auf MSFS. Die Bewertung fiel dadurch auf den Crate-eigenen,
+    // kaskadenlosen Fallback zurueck und sah "A300" statt der aufgeloesten
+    // "A306". Jetzt: Datei-Wert hat weiterhin Vorrang, aber nur wenn er
+    // wirklich vorliegt — sonst bleibt die schon aufgeloeste Kaskade stehen.
+    input.fahrwerk_spurweite_m = stats.fahrwerk_spurweite_m.or(input.fahrwerk_spurweite_m);
     input.runway_surface = stats.runway_match.as_ref().map(|rm| rm.surface.clone());
 
     let rm = stats.runway_match.as_ref();
@@ -20960,9 +21065,21 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// Bahndisziplin-Proben, wo vorher `insufficient_samples` stand — derselbe
 /// Flug wird unter v1.7.20 und v1.7.21 verschieden bewertet.
 ///
+/// **13 seit v1.7.23**: GSG1249-Vereinheitlichung. Drei unabhaengige
+/// Aenderungen koennen dieselbe Landung anders bewerten als zuvor:
+/// (1) der Settle-Pfad in `touchdown_v2::validate_candidate` bestaetigt
+/// sanfte, aber echte Touchdowns, die vorher an der starren 3-von-4-
+/// Abstimmung scheiterten (kein Score statt Score); (2) die Sim-
+/// Schreibweisen-Kaskade (`muster_fuer_typtabelle`) loest Baureihen ohne
+/// Variante wie "A300" jetzt auf "A306" auf — Spurweite/Spannweite/
+/// Bahndisziplin-Randabstand stehen jetzt, wo vorher `track_width_unknown`
+/// stand; (3) `finalize_landing_score_if_due` ist nicht mehr an die
+/// Flugphase gebunden, kann also einen Score noch finalisieren, wo die
+/// alte, phasengebundene Pruefung nie mehr lief.
+///
 /// Der Waechter `die_algorithmusversion_steht_an_allen_stellen` haelt
 /// fest, dass alle Nutzlaststellen dieselbe Zahl schreiben.
-const SCORE_ALGORITHMUS_VERSION: u8 = 12;
+const SCORE_ALGORITHMUS_VERSION: u8 = 13;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
@@ -21070,6 +21187,22 @@ fn scoring_eingang(
         // (konservativ). Das Muster kommt aus `muster_fuer_landung`,
         // nicht aus der Buchung allein — siehe dort.
         aircraft_icao: muster.map(str::to_string),
+        // BCS3317/A306-Folgefund (Vereinheitlichung 09/2026): die Crate
+        // selbst faellt bei fehlendem `fahrwerk_spurweite_m` intern auf
+        // `spurweite::spurweite_m(aircraft_icao)` zurueck (siehe deren
+        // Feld-Doc, QS-Runde 20) — ein DIREKTER Tabellenschlag ohne die
+        // Sim-Schreibweisen-Kaskade (`normalize_icao_type`/
+        // `muster_kandidaten`), die `aircraft_limits_for` und `bahn_felder`
+        // schon nutzen. Baureihen ohne Variante ("A300" statt "A306", z.B.
+        // Payware-A300F) fielen dadurch in der BEWERTUNG auf
+        // `track_width_unknown`, obwohl die Kaskade "A306" laengst kennt
+        // und die ANZEIGE (`bahn_felder`) korrekt war — zwei Antworten auf
+        // dieselbe Frage. Hier vorab mit derselben Kaskade aufloesen, damit
+        // die Crate ihn als "aus der Datei" vorfindet und ihren eigenen,
+        // kaskadenlosen Fallback nie mehr braucht.
+        fahrwerk_spurweite_m: stats
+            .fahrwerk_spurweite_m
+            .or_else(|| muster_fuer_typtabelle(muster, |m| landing_scoring::spurweite::spurweite_m(m))),
         ..Default::default()
     }
 }
@@ -21085,7 +21218,13 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     // dann etwas, wenn die Zuordnung eindeutig und der Wert plausibel war.
     // Alles andere faellt auf die Tabelle zurueck.
     let aus_datei = stats.fahrwerk_spurweite_m;
-    let spur_m = aus_datei.or_else(|| landing_scoring::spurweite::spurweite_m(icao));
+    // GSG1249-Folgefund BCS3317/A306 (Vereinheitlichung 09/2026): dieselbe
+    // Sim-Schreibweisen-Kaskade wie `aircraft_limits_for` — vorher nur ein
+    // direkter Tabellenschlag auf den rohen `icao`-Wert, der Baureihen ohne
+    // Variante ("A300" statt "A306") verlor, obwohl `muster_kandidaten` sie
+    // schon kennt. Siehe `muster_fuer_typtabelle`-Dokumentation.
+    let spur_m =
+        aus_datei.or_else(|| muster_fuer_typtabelle(icao, |m| landing_scoring::spurweite::spurweite_m(m)));
     let breite_m = rm.map(|m| m.width_ft as f64 * 0.3048).filter(|w| *w > 0.0);
     let versatz_m = stats.bahn_max_querversatz_m;
 
@@ -21358,7 +21497,7 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
                 "type_table".to_string()
             }
         }),
-        wingspan_m: landing_scoring::spurweite::spannweite_m(icao),
+        wingspan_m: muster_fuer_typtabelle(icao, |m| landing_scoring::spurweite::spannweite_m(m)),
         runway_width_m: breite_m,
         min_edge_clearance_m: rand_m,
         max_lateral_offset_m: versatz_m,
@@ -28036,6 +28175,13 @@ fn landung_episode_zuruecksetzen(stats: &mut FlightStats) {
     stats.landing_wind_direction_deg = None;
     stats.landing_wind_speed_kt = None;
     stats.landing_true_airspeed_kt = None;
+    // Bug-B-QS-Fund (Codex, Vereinheitlichung 09/2026): genau dasselbe
+    // Latch-Problem wie oben, nur fuer den neuen Sampler-Ablehnungsgrund.
+    // Ohne diesen Reset koennte die Ablehnung von TD-Kandidat #1 (z.B.
+    // InsufficientVoteScore bei einem Bounce) auf die naechste, echte
+    // Landung derselben Episode durchschlagen und `finalize_landing_score_
+    // if_due` fuer sie blockieren.
+    stats.sampler_touchdown_rejected_reason = None;
 }
 
 /// GAF-707-Folgefund (Bugreport 05.09.2026): reine, testbare Entscheidung,
@@ -28076,6 +28222,9 @@ fn open_touchdown_capture_window(stats: &mut FlightStats, now: DateTime<Utc>) {
     // bleibt einmalig per sampler_touchdown_at-Guard), aber wenn diese
     // Funktion aus irgendeinem Grund doch zweimal liefe → Reset clean.
     stats.touchdown_window_dumped_at = None;
+    // GAF-707-Race: neue Episode, neuer Dump — die alten score-relevanten
+    // Rohdaten gelten nicht mehr fuer DIESEN Touchdown.
+    stats.touchdown_window_score_data_ready_at = None;
 }
 
 fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
@@ -28547,6 +28696,10 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                     "v0.7.0 TD candidate VALIDATED — promoting to sampler_touchdown"
                                 );
                                 stats.sampler_touchdown_at = Some(pending_at);
+                                // Bug B (Codex, Vereinheitlichung 09/2026): eine
+                                // ggf. von einem frueheren Edge-Versuch stehen-
+                                // gebliebene Ablehnung ist jetzt ueberholt.
+                                stats.sampler_touchdown_rejected_reason = None;
                                 // Round-3 P2 fix: Premium-VS aus pending-state
                                 // (wurde beim Premium-Edge gespeichert weil
                                 // take_premium_touchdown() drain ist).
@@ -28770,6 +28923,24 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                     reason = ?reason,
                                     "v0.7.0 TD candidate FALSE_EDGE — ignoring, continue watching"
                                 );
+                                // Bug B (Codex, Vereinheitlichung 09/2026): eine
+                                // aktive Ablehnung persistieren, damit der FSM-
+                                // Fallback in `finalize_landing_score_if_due`
+                                // sie respektiert statt sie stillschweigend zu
+                                // ueberstimmen. `InsufficientTelemetry` ist KEINE
+                                // aktive Ablehnung ("Sampler weiss es nicht", FSM
+                                // darf entscheiden) — und muss deshalb das Feld
+                                // auch aktiv LEEREN, nicht nur ungesetzt lassen:
+                                // sonst wuerde eine Ablehnung eines FRUEHEREN
+                                // Kandidaten (z.B. InsufficientVoteScore bei
+                                // einem Bounce) stehen bleiben und faelschlich
+                                // auf DIESEN, neuen Kandidaten durchschlagen,
+                                // obwohl der neue Kandidat nur "zu wenig Daten"
+                                // ist, nicht aktiv abgelehnt wurde (Codex-QS-Fund).
+                                stats.sampler_touchdown_rejected_reason = match reason {
+                                    touchdown_v2::FalseEdgeReason::InsufficientTelemetry => None,
+                                    other => Some(other),
+                                };
                                 stats.pending_td_at = None;
                                 stats.pending_td_premium_vs = None;
                                 stats.pending_td_premium_g = None;
@@ -28856,7 +29027,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // TouchdownWindow-Event in die JSONL geflusht — das schließt
             // das ~15-s-Loch (5 s pre + 10 s post @ 50 Hz ≈ 750 Samples)
             // das im Streamer-Tick wegen phpVMS-Latenz entstand.
-            let dump_payload: Option<(DateTime<Utc>, Vec<TouchdownWindowSample>)> = {
+            let dump_payload: Option<(DateTime<Utc>, Vec<TouchdownWindowSample>, bool)> = {
                 let td_at = stats.sampler_touchdown_at;
                 let already_dumped = stats.touchdown_window_dumped_at.is_some();
                 if let (Some(td_at), false) = (td_at, already_dumped) {
@@ -28910,7 +29081,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         // Streamer konsumiert (Streamer ist vom phpVMS-IO
                         // entkoppelt). Buffer-Dump läuft hier unabhängig
                         // vom Critical-Window-Marker.
-                        Some((td_at, samples))
+                        Some((td_at, samples, climbed_out_early))
                     } else {
                         None
                     }
@@ -28927,7 +29098,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // Forensik-Analyse VOR Lock-Drop berechnen + im stats persistieren
             // damit der Touchdown-Payload-Builder im Streamer-Tick die Felder
             // direkt zur Verfuegung hat (anstatt aus der JSONL re-zu-parsen).
-            let prepared_dump = if let Some((edge_at, samples)) = dump_payload {
+            let prepared_dump = if let Some((edge_at, samples, climbed_out_early)) = dump_payload {
                 let analysis = compute_landing_analysis(
                     &samples,
                     edge_at,
@@ -28975,7 +29146,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // 50-Hz-Loop. Worst-Case-Aggregation fuer Multi-TD
                 // (Touch-and-Go) ist im Helper.
                 apply_accident_heuristic(&mut stats, &analysis);
-                Some((edge_at, samples, analysis))
+                Some((edge_at, samples, analysis, climbed_out_early))
             } else {
                 None
             };
@@ -28989,7 +29160,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // on-demand navdata fetch for the actual landing airport — same
             // finalize-with-best wiring as the FSM path. Idempotent.
             maybe_fetch_actual_landing_navdata(&app, &flight);
-            if let Some((edge_at, samples, analysis)) = prepared_dump {
+            if let Some((edge_at, samples, analysis, climbed_out_early)) = prepared_dump {
                 // v0.5.49 — IMMEDIATE persist nach dem Setzen von
                 // touchdown_window_dumped_at. Vorher wurde der Flag in
                 // stats gesetzt, aber save_active_flight wartete auf den
@@ -29082,6 +29253,25 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     .get("peak_g_post_500ms")
                     .and_then(|v| v.as_f64())
                     .map(|x| x as f32);
+                // Codex-QS-Fund (Vereinheitlichung 09/2026, Runde 4 — Restrisiko
+                // nach dem Zwei-Lock-Fix): `touchdown_window_dumped_at` wird
+                // weiter oben SOFORT persistiert (Resume-Sicherheit gegen
+                // Doppel-Dump, siehe dessen Setzstelle), aber der Commit HIER
+                // (verfeinerte VS-Kaskade + Bereitschaftssignal) bisher nur
+                // periodisch. Stuerzt der Prozess in der Luecke dazwischen ab,
+                // findet Resume `dumped_at=Some` aber `score_data_ready_at=
+                // None` und die alten, groeberen Werte — der Finalizer wartet
+                // dann bis zum SAMPLER_DUMP_WAIT_TIMEOUT_MS-Fallback statt die
+                // hier laengst berechneten, praeziseren Daten zu sehen. Dieses
+                // Flag haelt fest, ob das Bereitschaftssignal in DIESEM Tick
+                // gesetzt wurde, damit direkt danach (ausserhalb des Locks,
+                // wie bei allen anderen Dump-IO-Aufrufen hier) sofort
+                // gespeichert wird — dasselbe Muster wie beim fruehen
+                // `touchdown_window_dumped_at`-Save, nur fuer den zweiten
+                // Commit. Verkuerzt das Absturz-Fenster von "bis zum naechsten
+                // periodischen Save (Sekunden bis Minuten)" auf die paar
+                // Millisekunden zwischen den beiden Locks selbst.
+                let mut score_data_wurde_bereit = false;
                 {
                     let mut s = flight.stats.lock().expect("flight stats");
                     // v0.20.0 (PIA3452): Edge gewinnt vor v2 — dieselbe
@@ -29205,23 +29395,75 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                         })
                         .unwrap_or(s.bounce_count);
                     s.bounce_count = scored_bounce;
-                    // v0.20.0: ueber die Kanonik lesen, nicht das Rohfeld — die
-                    // Einstufung (SMOOTH/FIRM/HARD) muss auf DERSELBEN Zahl
-                    // klassifizieren, die Score, Karte, Log und PIREP zeigen.
-                    // (Vor dem Fix: Klasse aus v2s Fenster-Minimum, Punkte aus
-                    // dem Edge-Wert → "SMOOTH · 92/100" aus zwei Metriken.)
-                    let peak_vs = s.canonical_landing_rate_fpm().unwrap_or(0.0);
-                    // v0.12.3 (LE8/QS-P1): classify on the EMA-scored G, not
-                    // the raw 50 Hz peak — a single raw spike must not push
-                    // the landing to Hard/Severe on its own.
-                    let scored_g = score_g_for_stats(&s).map(|sg| sg.scored_g).unwrap_or(0.0);
-                    let new_score = LandingScore::classify(peak_vs, scored_g, scored_bounce);
-                    s.landing_score = Some(new_score);
-                    s.landing_score_finalized = true;
-                    // Reset announcement-flag damit announce_landing_score den
-                    // Block jetzt durchstellt — vorher hat es wegen
-                    // landing_score_finalized=false zurueckgehalten.
-                    s.landing_score_announced = false;
+                    // GAF-707-Race, strukturell geloest (Vereinheitlichung
+                    // 09/2026): ERST jetzt, nachdem wirklich ALLE score-
+                    // relevanten Rohdaten geschrieben sind (VS-Kaskade oben
+                    // via finalize_landing_rate, bounce_count gerade eben),
+                    // signalisieren wir "Dump-Daten bereit" — bewusst
+                    // GETRENNT von `touchdown_window_dumped_at` (das wurde
+                    // schon viel frueher gesetzt, in einem ERSTEN Lock-Hold,
+                    // rein zum Schutz vor einem Doppel-Dump im 50Hz-Sampler-
+                    // Loop). Ohne diese Trennung konnte `finalize_landing_
+                    // score_if_due` (laeuft unabhaengig auf dem FSM-Tick)
+                    // genau in der Luecke zwischen den beiden Lock-Holds
+                    // zugreifen: `touchdown_window_dumped_at` schon Some,
+                    // aber die verfeinerte Kaskade noch nicht geschrieben —
+                    // und haette dann mit der groeberen Schaetzung gescort,
+                    // OHNE das je zu korrigieren (`landing_score.is_some()`-
+                    // Guard laesst keine zweite Chance).
+                    //
+                    // Codex-QS-Fund (Vereinheitlichung 09/2026, Runde 4): bei
+                    // einem FRUEHEN Dump (`climbed_out_early` — das Flugzeug
+                    // ist ueber die T&G-Schwelle geklettert, BEVOR die vollen
+                    // 10s um waren) folgt WEITER UNTEN im selben Sampler-Tick
+                    // noch der Multi-TD-Climb-out-Reset, der `sampler_
+                    // touchdown_at` (und damit den Fallback-Anker in
+                    // `finalize_landing_score_if_due`) unter einem DRITTEN,
+                    // separaten Lock wieder raeumt. Zwischen diesem Lock hier
+                    // und jenem dritten Lock waeren beide Felder (`sampler_
+                    // touchdown_at` UND dieses Bereitschaftssignal) kurzzeitig
+                    // gleichzeitig gesetzt — theoretisch ein drittes, sehr
+                    // enges Zeitfenster fuer denselben Wettlauf. Der Live-AGL-
+                    // Check in `finalize_landing_score_if_due` faengt das zwar
+                    // ohnehin ab (das Flugzeug ist ja gerade physisch ueber der
+                    // Schwelle), aber sauberer ist, das Fenster erst gar nicht
+                    // zu oeffnen: bei einem fruehen, klettern-ausgeloesten Dump
+                    // signalisieren wir "bereit" grundsaetzlich NICHT — die
+                    // Episode ist per Definition vorlaeufig, es gibt keinen
+                    // Grund, sie je als score-bereit zu markieren. Faellt es
+                    // NICHT als Touch-and-Go zusammen, greift stattdessen
+                    // der bestehende SAMPLER_DUMP_WAIT_TIMEOUT_MS-Fallback.
+                    if !climbed_out_early {
+                        s.touchdown_window_score_data_ready_at = Some(now);
+                        score_data_wurde_bereit = true;
+                    }
+                    // GAF-707-Race, strukturell geloest (Vereinheitlichung
+                    // 09/2026): dieser Dump setzt `landing_score` NICHT mehr
+                    // selbst (frueher stand hier `LandingScore::classify(...)`
+                    // + direktes `s.landing_score = Some(...)`). Vorher haben
+                    // zwei unabhaengig laufende Ticker (dieser Sampler-Task
+                    // ~50Hz und der FSM/Streamer-Tick alle 750ms-1s) um
+                    // dieselbe Frage konkurriert — "ist die Landung final?" —
+                    // je nachdem, wer zuerst lief. Der Dump liefert jetzt nur
+                    // noch die ROHDATEN (VS-Kaskade oben, `bounce_count`,
+                    // `peak_g_force_verschmelzen`, `apply_accident_heuristic`)
+                    // plus das Bereitschaftssignal direkt darueber — die
+                    // Score-VERGABE (inkl. desselben B-005-Guards, der hier
+                    // vorher lokal dupliziert war) liegt jetzt ausschliesslich
+                    // bei `finalize_landing_score_if_due()`, die bei JEDEM
+                    // FSM-Tick laeuft und deshalb LIVE auf eine laufende T&G-
+                    // Erkennung und auf genau dieses Bereitschaftssignal warten
+                    // kann, statt an einem einzelnen Zeitpunkt zu raten.
+                }
+
+                // Codex-QS-Fund (s.o.): sofort persistieren, sobald das
+                // Bereitschaftssignal wirklich gesetzt wurde — ausserhalb des
+                // Locks, wie jede andere Dump-I/O hier. Bei `climbed_out_early`
+                // (Signal bewusst nicht gesetzt) entfaellt dieser Save: es gibt
+                // nichts Neues zu sichern, und der Multi-TD-Reset raeumt
+                // `sampler_touchdown_at` gleich ohnehin wieder ab.
+                if score_data_wurde_bereit {
+                    save_active_flight(&app, &flight);
                 }
 
                 let flare_score = analysis
@@ -29272,6 +29514,9 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     s.sampler_touchdown_vs_fpm = None;
                     s.sampler_touchdown_g_force = None;
                     s.touchdown_window_dumped_at = None;
+                    // GAF-707-Race: siehe Feldkommentar — neue Episode,
+                    // alte Rohdaten sind nicht mehr gueltig.
+                    s.touchdown_window_score_data_ready_at = None;
                     s.post_touchdown_buffer.clear();
                     s.landing_score_finalized = false;
                     // v0.16.5: re-arm the sampler-path metadata stamp. Its
@@ -35224,6 +35469,198 @@ fn classify_segment(
     }
 }
 
+/// Finalisiert `stats.landing_score` einmalig, sobald `BOUNCE_WINDOW_SECS`
+/// seit `stats.landing_at` verstrichen ist — UNABHAENGIG von `stats.phase`.
+///
+/// # Warum das eine eigene, phasenunabhaengige Funktion ist (v1.7.24)
+///
+/// Vorher stand diese Pruefung ausschliesslich im `FlightPhase::Landing`-
+/// Match-Arm von `step_flight_at` (`if !in_bounce_window &&
+/// stats.landing_score.is_none() { ... }`). Ein Match-Arm laeuft nur,
+/// SOLANGE `stats.phase` noch den passenden Wert hat — wechselt die Phase
+/// vorher, feuert der Code nie wieder.
+///
+/// Real aufgetreten bei GSG1249 (EDDW→EDHE, 2026-09-09, PA24, sehr kurze
+/// Ausrollstrecke): `Final`→`Landing` um 11:26:24.04Z, `Landing`→`TaxiIn`
+/// bereits um 11:26:31.46Z — 7,4 Sekunden spaeter. `BOUNCE_WINDOW_SECS`
+/// ist 8 (durch die Ganzzahl-Division `elapsed_ms / 1_000` in der alten
+/// `elapsed_secs`-Berechnung faktisch erst ab ~9s erfuellt) — der
+/// Landing-Arm hat also nie ein `!in_bounce_window` erlebt, bevor die
+/// Phase schon TaxiIn war. `stats.landing_score` blieb fuer den Rest des
+/// Fluges `None`. `announce_landing_score()` (`let score =
+/// stats.landing_score?;`) gab deshalb IMMER `None` zurueck — die einzige
+/// Quelle fuer das `TouchdownComplete`-Ereignis (MQTT + JSONL) feuerte nie,
+/// obwohl der PIREP am Ende trotzdem einen vollen, unabhaengig berechneten
+/// Score bekam (`build_pirep_payload` liest `landing_scoring::
+/// compute_sub_scores` frisch, nicht `stats.landing_score`). Der Server
+/// markierte den PIREP deshalb als `no_touchdown_recorded`.
+///
+/// Dieselbe Fehlerklasse (Phasenwechsel raeumt einen an `Landing`
+/// gebundenen Zustand vorzeitig ab) war an genau dieser Stelle schon
+/// einmal gefunden und behoben worden (v0.7.20, GSG219 — der
+/// `TouchdownEvent`-Push weiter unten im selben Match-Arm wurde damals
+/// bewusst von `landing_score.is_some()` entkoppelt, mit derselben
+/// Begruendung). Diese Funktion zieht dieselbe Lehre konsequent auf die
+/// Score-Finalisierung selbst durch: sie haengt an nichts als
+/// `stats.landing_at` (ein Zeit-/Episode-Anker, keine Flugphase) und wird
+/// von `step_flight_at` bei JEDEM Tick aufgerufen, unabhaengig davon, in
+/// welcher Phase sich der Flug gerade befindet.
+///
+/// Verhaelt sich fuer alle bestehenden Faelle byte-identisch: dieselbe
+/// Bedingung (`elapsed_secs > BOUNCE_WINDOW_SECS`, `landing_score.is_none()`),
+/// derselbe `canonical_landing_rate_fpm()`-Aufruf, derselbe B-005-Guard
+/// (kein erfundener Score aus einem fehlenden Wert). Der einzige
+/// Unterschied ist, WANN sie ueberhaupt eine Chance bekommt zu laufen.
+///
+/// # GAF-707-Race, strukturell geloest (Vereinheitlichung 09/2026)
+///
+/// Bis hierher setzte NICHT NUR diese Funktion `landing_score`, sondern
+/// AUCH der Touchdown-Sampler selbst (sein eigener Dump, `spawn_touchdown_
+/// sampler`) — zwei unabhaengig laufende Ticker (Sampler ~50Hz, FSM/
+/// Streamer alle 750ms-1s), die beide um dieselbe Frage konkurrierten:
+/// "ist diese Landung schon final?" Zwei Codex-Reviews haben zwei
+/// unzureichende Zwischenstaende gefunden:
+///
+///   - Runde 1: ein einzelner AGL-Schnappschuss beim Dump-Zeitpunkt
+///     (`climbed_out_early`) — kein Dwell, kein `!on_ground`-Check, und ein
+///     Fenster-Mismatch (Sampler-Dump-Timeout 10s vs. FSM-T&G-Fenster
+///     `TOUCH_AND_GO_WATCH_SECS`=30s). Ein AGL-Sensor-Spike konnte bei
+///     Sampler-only-Fluegen den Score dauerhaft verhindern.
+///   - Runde 2: diese Funktion als alleiniger Scorer, aber nur gegen
+///     `touch_and_go_pending_since` (ein NACHLAUFENDES Signal — erst gesetzt
+///     NACHDEM die FSM den Schwellenuebertritt schon bemerkt hat) und gegen
+///     `touchdown_window_dumped_at` (zu FRUEH gesetzt — noch VOR den
+///     eigentlichen score-relevanten Rohdaten, siehe unten) gewartet.
+///
+/// Diese Fassung schliesst alle drei konkret benannten Luecken:
+///
+///   1. **Live-Pruefung statt Nachlauf-Signal.** `agl_ft`/`on_ground` kommen
+///      DIREKT vom aktuellen `SimSnapshot` (Parameter dieser Funktion, vom
+///      selben Tick wie die FSM-eigene T&G-Pruefung) — nicht ueber
+///      `touch_and_go_pending_since`, das erst NACH dem ersten
+///      Schwellenuebertritt existiert. Steht das Flugzeug GERADE ueber der
+///      T&G-Schwelle in der Luft, wird schon in DIESEM Tick nicht
+///      finalisiert, nicht erst im naechsten. `touch_and_go_pending_since`
+///      bleibt zusaetzlich als zweite Sicherung fuer die Dwell-Dauer selbst.
+///   2. **Doppelter Episoden-Anker.** `stats.landing_at.or(stats.sampler_
+///      touchdown_at)` statt nur `stats.landing_at` — Sampler-only-Fluege
+///      (Busch-Landungen, FSM bleibt in Takeoff/Climb haengen, erreicht nie
+///      `FlightPhase::Landing`) haben nie ein `landing_at`, hatten aber VOR
+///      diesem Umbau trotzdem sofort einen Score vom Sampler-Dump bekommen.
+///      Mit nur `landing_at` als Anker haette diese Funktion sie dauerhaft
+///      uebersehen — derselbe Fallback wie an anderer Stelle im Code bereits
+///      etabliert (`touchdown_complete` liest `sampler_touchdown_at.or(
+///      landing_at)`).
+///   3. **Zweiphasiges Dump-Signal.** `touchdown_window_dumped_at` wird vom
+///      Sampler SEHR frueh gesetzt (Schutz vor Doppel-Dump im eigenen 50Hz-
+///      Loop + Resume-Sicherheit) — LANGE bevor die score-relevanten
+///      Rohdaten (VS-Kaskade, `bounce_count`) tatsaechlich geschrieben sind.
+///      Diese Funktion wartet stattdessen auf das eigene, spaeter gesetzte
+///      `touchdown_window_score_data_ready_at` — es wird ERST gesetzt,
+///      nachdem wirklich alle score-relevanten Felder geschrieben sind
+///      (siehe dessen Setzstelle im Sampler).
+///
+/// Kein Fall verliert dadurch dauerhaft einen Score — es wird nur
+/// (wiederholt, live, jeden Tick neu geprueft) gewartet, nie geraten und nie
+/// stillschweigend aufgegeben; nach `SAMPLER_DUMP_WAIT_TIMEOUT_MS` ohne
+/// fertigen Dump wird trotzdem mit der vorhandenen Kanonik gescort.
+fn finalize_landing_score_if_due(
+    stats: &mut FlightStats,
+    pirep_id: &str,
+    now: DateTime<Utc>,
+    agl_ft: f32,
+    on_ground: bool,
+) {
+    let Some(touchdown) = stats.landing_at.or(stats.sampler_touchdown_at) else {
+        return;
+    };
+    if stats.landing_score.is_some() {
+        return;
+    }
+    let elapsed_secs = (now - touchdown).num_milliseconds() / 1_000;
+    if elapsed_secs <= BOUNCE_WINDOW_SECS {
+        return; // Fenster noch offen — absichtlich noch nicht finalisieren.
+    }
+    // GAF-707-Race (1/3): Live-Check ohne Lag — das Flugzeug ist GERADE
+    // ueber die T&G-Schwelle geklettert, noch bevor die FSM das ueberhaupt
+    // in `touch_and_go_pending_since` festgehalten hat (das passiert im
+    // selben Tick, aber im `FlightPhase::Landing`-Match-Arm VOR diesem
+    // Aufruf — dieser Live-Check faengt trotzdem den allerersten Tick ab,
+    // an dem noch kein Pending-Latch existiert).
+    if !on_ground && agl_ft > TOUCH_AND_GO_AGL_THRESHOLD_FT {
+        return;
+    }
+    // GAF-707-Race (1/3, Fortsetzung): eine T&G-Dwell-Bestaetigung laeuft
+    // bereits — die Episode koennte in Kuerze als Touch-and-Go
+    // zurueckgesetzt werden.
+    if stats.touch_and_go_pending_since.is_some() {
+        return;
+    }
+    // GAF-707-Race (3/3): der Sampler hat einen Touchdown validiert, aber
+    // die score-relevanten Rohdaten (verfeinerte VS-Kaskade, bounce_count)
+    // sind noch nicht vollstaendig geschrieben. Auf das spaete, praezise
+    // Signal warten statt mit der groeberen FSM-Landing-Arm-Schaetzung
+    // vorzupreschen — bis zur gemeinsamen Fallback-Grenze.
+    if let Some(sampler_td_at) = stats.sampler_touchdown_at {
+        if stats.touchdown_window_score_data_ready_at.is_none() {
+            let elapsed_since_sampler_td_ms = (now - sampler_td_at).num_milliseconds();
+            if elapsed_since_sampler_td_ms < SAMPLER_DUMP_WAIT_TIMEOUT_MS {
+                return; // weiter auf die Rohdaten warten.
+            }
+            tracing::warn!(
+                pirep_id = %pirep_id,
+                elapsed_since_sampler_td_ms,
+                "finalize_landing_score_if_due: Sampler-Dump-Timeout — scoring mit vorhandener Kanonik ohne verfeinerte 50Hz-Kaskade (Buffer-Dump evtl. fehlgeschlagen)"
+            );
+        }
+    }
+    // Bug B (Codex, Vereinheitlichung 09/2026): der Sampler hat diesen
+    // Kandidaten AKTIV abgelehnt (`FalseEdge`, z.B. zu wenig Stimmen oder
+    // Gear-Force unter Schwelle) — das ist eine evidenzbasierte
+    // Entscheidung, keine fehlende Information. Ohne diesen Guard wuerde
+    // der FSM-Fallback (`canonical_landing_rate_fpm()`) diese Ablehnung
+    // stillschweigend ueberstimmen, weil `sampler_touchdown_at` in beiden
+    // Faellen (aktive Ablehnung ODER Sampler nie gelaufen) gleichermassen
+    // `None` ist. `InsufficientTelemetry` landet nie in diesem Feld (siehe
+    // Setzstelle) — dort bleibt der FSM-Fallback bewusst die einzige
+    // Quelle.
+    if let Some(reason) = stats.sampler_touchdown_rejected_reason {
+        tracing::warn!(
+            pirep_id = %pirep_id,
+            reason = ?reason,
+            "Sampler hat diesen Touchdown-Kandidaten aktiv abgelehnt — landing_score bleibt None (Bug B guard, keine FSM-Ueberstimmung)."
+        );
+        return;
+    }
+    // v0.7.17 (B-005): Wenn `landing_peak_vs_fpm` None ist (= Sampler hat
+    // den Touchdown-VS gar nicht erfasst, typisch bei Phantom-Touchdowns
+    // durch on_ground-Flicker oder Sim-Bug), waere `unwrap_or(0.0)` = 0.0
+    // fpm gefallen → Smooth-Score 100 trotz nie wirklich gemessenen Werts.
+    // Fix: nur klassifizieren wenn `canonical_landing_rate_fpm()`
+    // tatsaechlich Some ist. Sonst bleibt `landing_score` None.
+    if let Some(peak_vs) = stats.canonical_landing_rate_fpm() {
+        // v0.12.3 (LE8/QS-P1): classify on the scored G (raw_fallback
+        // here — no forensics window).
+        let scored_g = score_g_for_stats(stats)
+            .map(|sg| sg.scored_g)
+            .unwrap_or(0.0);
+        let score = LandingScore::classify(peak_vs, scored_g, stats.bounce_count);
+        stats.landing_score = Some(score);
+        // GAF-707-Race: an dieser Stelle wurde entweder auf die Rohdaten
+        // gewartet (oder es gab gar keinen Sampler-Touchdown zum Warten) —
+        // der Score ist damit final. `announce_landing_score` braucht
+        // deshalb NICHT mehr zusaetzlich auf `sampler_touchdown_at`+Timeout
+        // zu warten (sonst wartete es effektiv zweimal hintereinander).
+        stats.landing_score_finalized = true;
+        stats.landing_score_announced = false;
+    } else {
+        tracing::warn!(
+            pirep_id = %pirep_id,
+            "landing_peak_vs_fpm = None at score-finalise — keeping landing_score=None (B-005). Sampler likely missed the touchdown edge."
+        );
+    }
+}
+
 fn step_flight_at(
     flight: &ActiveFlight,
     snap: &SimSnapshot,
@@ -36883,41 +37320,25 @@ fn step_flight_at(
                     }
                 }
 
-                if !in_bounce_window && stats.landing_score.is_none() {
-                    // All windows have closed — finalise the score once.
-                    //
-                    // v0.7.17 (B-005): Wenn `landing_peak_vs_fpm` None ist
-                    // (= Sampler hat den Touchdown-VS gar nicht erfasst,
-                    // typisch bei Phantom-Touchdowns durch on_ground-
-                    // Flicker oder Sim-Bug), waere `unwrap_or(0.0)` =
-                    // 0.0 fpm gefallen → Smooth-Score 100 trotz nie
-                    // wirklich gemessenen Werts. Pilot sieht „Butter
-                    // Landing 100/100" obwohl gar kein Touchdown war.
-                    //
-                    // Fix: nur klassifizieren wenn `landing_peak_vs_fpm`
-                    // tatsaechlich Some ist (also der Sampler einen Wert
-                    // hatte). Sonst landing_score bleibt None, das
-                    // Touchdown-Event wird im PIREP als „score not
-                    // captured" markiert.
-                    // v0.20 (QS-Fix, fallback_zero-Score-Bug): dieselbe B-005-
-                    // Lehre gilt auch hier — `landing_peak_vs_fpm` allein auf
-                    // `Some` zu pruefen reicht nicht, wenn die 0.0 selbst ein
-                    // Platzhalter ist (fallback_zero). Kanonik statt Rohfeld.
-                    if let Some(peak_vs) = stats.canonical_landing_rate_fpm() {
-                        // v0.12.3 (LE8/QS-P1): classify on the scored G
-                        // (raw_fallback here — no forensics window).
-                        let scored_g = score_g_for_stats(&stats)
-                            .map(|sg| sg.scored_g)
-                            .unwrap_or(0.0);
-                        let score = LandingScore::classify(peak_vs, scored_g, stats.bounce_count);
-                        stats.landing_score = Some(score);
-                    } else {
-                        tracing::warn!(
-                            pirep_id = %flight.pirep_id,
-                            "landing_peak_vs_fpm = None at score-finalise — keeping landing_score=None (B-005). Sampler likely missed the touchdown edge."
-                        );
-                    }
-                }
+                // v1.7.24 (GSG1249, Codex-bestaetigter Fund): die Score-
+                // Finalisierung, die hier bis dahin stand (`!in_bounce_window
+                // && stats.landing_score.is_none() { ... }`), ist nach
+                // `finalize_landing_score_if_due()` gewandert und wird jetzt
+                // JEDEN Tick UNCONDITIONAL aufgerufen (siehe Aufrufstelle kurz
+                // nach dem `match stats.phase` unten) — nicht mehr nur,
+                // solange `stats.phase == Landing` ist. Grund: bei einem
+                // schnell ausrollenden, leichten Flugzeug kann die Phase
+                // innerhalb von `BOUNCE_WINDOW_SECS` (praktisch ~9s durch
+                // Ganzzahl-Rundung) zu `TaxiIn` wechseln — dieser Match-Arm
+                // hier haette dann nie wieder gefeuert, `landing_score` waere
+                // fuer immer `None` geblieben, `announce_landing_score()`
+                // (die einzige Quelle fuer `TouchdownComplete`) haette nie
+                // etwas zurueckgegeben. Exakt derselbe Fehlerklasse war
+                // schon einmal in diesem Match-Arm gefunden und gefixt
+                // worden (v0.7.20, GSG219, `TouchdownEvent`-Push weiter unten
+                // von `landing_score.is_some()` entkoppelt) — diese
+                // Ent-Kopplung zieht dieselbe Lehre konsequent auf die
+                // Score-Finalisierung selbst durch.
 
                 // Touch-and-Go classifier — runs in parallel with the
                 // bounce/score windows. Looks for a sustained climb
@@ -37584,6 +38005,19 @@ fn step_flight_at(
         // oder Reload-Glitch-Tick: Divergenz-Uhr neu starten.
         stats.enroute_divergence_since = None;
     }
+
+    // v1.7.24: JEDEN Tick, unabhaengig von `prev_phase`/`next_phase` — siehe
+    // `finalize_landing_score_if_due`s Dokumentation (GSG1249). Muss NACH
+    // dem `match prev_phase`-Block oben stehen (nicht davor), damit
+    // Aenderungen an `stats.landing_at`/`stats.bounce_count` aus DIESEM Tick
+    // (z.B. der `FlightPhase::Landing`-Arm) schon eingeflossen sind.
+    finalize_landing_score_if_due(
+        &mut stats,
+        &flight.pirep_id,
+        now,
+        snap.altitude_agl_ft as f32,
+        snap.on_ground,
+    );
 
     if next_phase != prev_phase {
         // v0.7.5 Phase-Safety Hotfix (Spec §13.9): siehe should_reset_holding_pending.
@@ -42383,8 +42817,7 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     if !stats.landing_score_finalized {
         if let Some(td_at) = stats.sampler_touchdown_at {
             let elapsed_ms = (Utc::now() - td_at).num_milliseconds();
-            const FINALIZATION_TIMEOUT_MS: i64 = 12_000;
-            if elapsed_ms < FINALIZATION_TIMEOUT_MS {
+            if elapsed_ms < SAMPLER_DUMP_WAIT_TIMEOUT_MS {
                 return None; // weiter warten
             }
             // Timeout — trotzdem freigeben, mit Hinweis im Trace
@@ -47220,6 +47653,299 @@ mod final_landing_push_condition_tests {
         // Wenn der gleiche Touchdown schon mal gepusht wurde, kein
         // zweiter Push im selben Tick oder Folge-Tick.
         assert!(!should_push(false, t(100), Some(t(100)), Some(t(100))));
+    }
+}
+
+// ----------------------------------------------------------------------
+// v1.7.24: `finalize_landing_score_if_due` phasenunabhaengig (GSG1249).
+//
+// Anchor-Case: GSG1249 (EDDW→EDHE, PA24, 2026-09-09). `Final`→`Landing`
+// 11:26:24.04Z, `Landing`→`TaxiIn` 11:26:31.46Z — 7,4s spaeter, unter der
+// alten `BOUNCE_WINDOW_SECS`-Schranke (8, faktisch ~9 durch
+// Ganzzahl-Division). Die Score-Finalisierung stand vorher NUR im
+// `FlightPhase::Landing`-Match-Arm und lief deshalb nie — `landing_score`
+// blieb fuer immer `None`, `announce_landing_score()` (die einzige Quelle
+// fuer `TouchdownComplete`) gab immer `None` zurueck.
+//
+// Diese Tests rufen die extrahierte Funktion DIREKT auf, ohne jede
+// Erwaehnung einer Flugphase — genau das ist der Beweis, dass die
+// Finalisierung jetzt an nichts als `landing_at`/verstrichener Zeit haengt.
+// ----------------------------------------------------------------------
+#[cfg(test)]
+mod finalize_landing_score_if_due_tests {
+    use super::*;
+
+    fn t(secs: i64) -> DateTime<Utc> {
+        DateTime::<Utc>::from_timestamp(secs, 0).expect("valid ts")
+    }
+
+    #[test]
+    fn finalizes_after_window_with_no_mention_of_flight_phase_gsg1249() {
+        // Das ist der eigentliche Regressionsschutz: landing_at, dann ein
+        // "Tick" 9s spaeter (> BOUNCE_WINDOW_SECS) — bei GSG1249 waere die
+        // Flugphase zu diesem Zeitpunkt schon TaxiIn gewesen. Die Funktion
+        // bekommt gar keine Phase als Parameter, kann sie also strukturell
+        // nicht mehr voraussetzen.
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        stats.landing_peak_vs_fpm = Some(-13.0); // GSG1249-Groessenordnung
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
+        assert!(
+            stats.landing_score.is_some(),
+            "Score muss finalisiert sein, auch wenn die Flugphase laengst gewechselt hat"
+        );
+    }
+
+    #[test]
+    fn does_not_finalize_before_window_closes() {
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        stats.landing_peak_vs_fpm = Some(-13.0);
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(5), 0.0, true);
+        assert!(
+            stats.landing_score.is_none(),
+            "vor Ablauf von BOUNCE_WINDOW_SECS darf noch nicht finalisiert werden"
+        );
+    }
+
+    #[test]
+    fn does_not_re_finalize_once_already_set() {
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        stats.landing_peak_vs_fpm = Some(-13.0);
+        stats.landing_score = Some(LandingScore::Hard);
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
+        assert_eq!(
+            stats.landing_score,
+            Some(LandingScore::Hard),
+            "ein bereits gesetzter Score darf nicht ueberschrieben werden"
+        );
+    }
+
+    #[test]
+    fn stays_none_without_landing_at() {
+        let mut stats = FlightStats::default();
+        stats.landing_peak_vs_fpm = Some(-13.0);
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(100), 0.0, true);
+        assert!(stats.landing_score.is_none());
+    }
+
+    #[test]
+    fn b005_guard_survives_the_extraction_no_plausible_vs_stays_none() {
+        // B-005: fehlt jede plausible Kanonik-Quelle, bleibt landing_score
+        // None statt einen erfundenen 0.0-Score zu setzen — derselbe Guard
+        // wie vor der Extraktion, jetzt bloss ausserhalb des Match-Arms.
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        // Bewusst KEIN landing_peak_vs_fpm/landing_analysis/landing_rate_fpm.
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
+        assert!(stats.landing_score.is_none());
+    }
+
+    #[test]
+    fn bug_b_active_sampler_rejection_blocks_fsm_fallback_score() {
+        // Bug B (Codex): der Sampler hat den Kandidaten AKTIV per FalseEdge
+        // abgelehnt (z.B. InsufficientVoteScore). `landing_at`/`landing_peak_vs_fpm`
+        // sind trotzdem plausibel gesetzt (die FSM haette also OHNE diesen
+        // Guard einen Score erfunden, obwohl der Sampler den Touchdown mit
+        // Evidenz verworfen hat) — landing_score MUSS None bleiben.
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        stats.landing_peak_vs_fpm = Some(-250.0); // plausibler FSM-Fallback-Wert
+        stats.sampler_touchdown_rejected_reason =
+            Some(touchdown_v2::FalseEdgeReason::InsufficientVoteScore);
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
+        assert!(
+            stats.landing_score.is_none(),
+            "eine aktive Sampler-Ablehnung darf vom FSM-Fallback nicht ueberstimmt werden"
+        );
+    }
+
+    #[test]
+    fn bug_b_insufficient_telemetry_still_allows_fsm_fallback_score() {
+        // Gegenprobe: `InsufficientTelemetry` ist KEINE aktive Ablehnung
+        // ("Sampler weiss es nicht"), sondern legitimiert genau den
+        // FSM-Fallback, den dieser Guard sonst blockiert. Dieses Feld
+        // wird fuer diesen reason nie gesetzt (siehe Setzstelle) — dieser
+        // Test haelt genau das fest, damit niemand die Unterscheidung
+        // spaeter versehentlich aufhebt.
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        stats.landing_peak_vs_fpm = Some(-250.0);
+        stats.sampler_touchdown_rejected_reason = None; // s.o.: InsufficientTelemetry setzt nichts
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
+        assert!(
+            stats.landing_score.is_some(),
+            "ohne aktive Ablehnung muss der FSM-Fallback weiter scoren duerfen"
+        );
+    }
+
+    // ── GAF-707-Race, strukturell geloest (Vereinheitlichung 09/2026) ──────
+    // Der Sampler-Dump setzt `landing_score` nicht mehr selbst — diese
+    // Funktion ist die EINZIGE Quelle. Drei von Codex in zwei frueheren
+    // Runden gefundene Luecken werden hier je einzeln nachgestellt.
+
+    #[test]
+    fn live_agl_check_blocks_finalisation_before_the_fsm_pending_latch_exists() {
+        // Luecke 1 (Codex-Runde 2): `touch_and_go_pending_since` ist ein
+        // NACHLAUFENDES Signal, existiert also im allerersten Tick eines
+        // Schwellenuebertritts noch nicht. Der Live-Check auf agl_ft/
+        // on_ground direkt aus dem SimSnapshot muss diesen Tick trotzdem
+        // schon abfangen.
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        stats.landing_peak_vs_fpm = Some(-13.0);
+        stats.touch_and_go_pending_since = None; // absichtlich: FSM hat es noch nicht gesetzt
+        let agl_over_threshold = TOUCH_AND_GO_AGL_THRESHOLD_FT + 1.0;
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(9), agl_over_threshold, false);
+        assert!(
+            stats.landing_score.is_none(),
+            "ueber der T&G-Schwelle in der Luft darf nicht finalisiert werden, \
+             auch wenn touch_and_go_pending_since noch nicht gesetzt ist"
+        );
+    }
+
+    #[test]
+    fn on_ground_below_threshold_still_finalizes_normally() {
+        // Gegenprobe: der Live-Check darf normale Landungen nicht bremsen.
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        stats.landing_peak_vs_fpm = Some(-13.0);
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
+        assert!(stats.landing_score.is_some());
+    }
+
+    #[test]
+    fn waits_while_a_touch_and_go_dwell_confirmation_is_in_progress() {
+        // Zweite Sicherung fuer die Dwell-Dauer selbst (nachdem der Live-
+        // Check schon durchgelaufen waere, z.B. AGL zwischenzeitlich wieder
+        // knapp unter der Schwelle, aber die FSM prueft noch).
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        stats.landing_peak_vs_fpm = Some(-13.0);
+        stats.touch_and_go_pending_since = Some(t(9));
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
+        assert!(
+            stats.landing_score.is_none(),
+            "waehrend einer laufenden T&G-Dwell-Bestaetigung darf nicht gescort werden"
+        );
+    }
+
+    #[test]
+    fn sampler_only_bush_flight_without_landing_at_still_scores_via_sampler_touchdown_at() {
+        // Luecke 2 (Codex-Runde 2): Busch-Landungen, bei denen die FSM nie
+        // FlightPhase::Landing erreicht, haben KEIN `landing_at`. Vor diesem
+        // Umbau bekamen sie ihren Score trotzdem sofort vom Sampler-Dump —
+        // der doppelte Anker (`landing_at.or(sampler_touchdown_at)`) muss das
+        // wiederherstellen.
+        let mut stats = FlightStats::default();
+        stats.landing_at = None; // FSM nie in Landing angekommen
+        stats.sampler_touchdown_at = Some(t(0));
+        stats.landing_peak_vs_fpm = Some(-13.0);
+        stats.touchdown_window_score_data_ready_at = Some(t(1)); // Dump bereits fertig
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
+        assert!(
+            stats.landing_score.is_some(),
+            "ein reiner Sampler-Touchdown ohne landing_at darf nicht dauerhaft ohne Score bleiben"
+        );
+    }
+
+    #[test]
+    fn waits_for_score_data_ready_before_scoring_with_refined_data() {
+        // Luecke 3 (Codex-Runde 2): `touchdown_window_dumped_at` wird vom
+        // Sampler frueh gesetzt (Doppel-Dump-Schutz), lange bevor die
+        // verfeinerten Rohdaten geschrieben sind. Diese Funktion darf nur
+        // auf `touchdown_window_score_data_ready_at` warten, nicht auf
+        // `touchdown_window_dumped_at`.
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        stats.landing_peak_vs_fpm = Some(-13.0); // grobe FSM-Schaetzung vorhanden
+        stats.sampler_touchdown_at = Some(t(0));
+        stats.touchdown_window_dumped_at = Some(t(0)); // frueh gesetzt (Doppel-Dump-Schutz)
+        stats.touchdown_window_score_data_ready_at = None; // Rohdaten NOCH NICHT fertig
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
+        assert!(
+            stats.landing_score.is_none(),
+            "vor touchdown_window_score_data_ready_at darf nicht mit der groeberen \
+             Schaetzung gescort werden, auch wenn touchdown_window_dumped_at schon gesetzt ist"
+        );
+    }
+
+    #[test]
+    fn scores_immediately_once_score_data_is_ready() {
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        stats.landing_peak_vs_fpm = Some(-13.0);
+        stats.sampler_touchdown_at = Some(t(0));
+        stats.touchdown_window_dumped_at = Some(t(0));
+        stats.touchdown_window_score_data_ready_at = Some(t(1));
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
+        assert!(
+            stats.landing_score.is_some(),
+            "sobald die Rohdaten bereit sind, darf ganz normal finalisiert werden"
+        );
+        assert!(stats.landing_score_finalized);
+        assert!(!stats.landing_score_announced);
+    }
+
+    #[test]
+    fn falls_back_after_sampler_dump_wait_timeout_instead_of_waiting_forever() {
+        // Der Dump ist aus irgendeinem Grund nie fertig geworden (Buffer-
+        // Dump fehlgeschlagen) — nach SAMPLER_DUMP_WAIT_TIMEOUT_MS muss
+        // trotzdem mit der vorhandenen Kanonik gescort werden, sonst bleibt
+        // der Pilot fuer immer ohne Score/Ankuendigung.
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        stats.landing_peak_vs_fpm = Some(-13.0);
+        stats.sampler_touchdown_at = Some(t(0));
+        stats.touchdown_window_score_data_ready_at = None;
+        let timeout_secs = SAMPLER_DUMP_WAIT_TIMEOUT_MS / 1000;
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(timeout_secs), 0.0, true);
+        assert!(
+            stats.landing_score.is_some(),
+            "nach Ablauf des Dump-Wait-Timeouts muss trotzdem gescort werden"
+        );
+    }
+
+    #[test]
+    fn no_sampler_touchdown_at_all_scores_immediately_via_fsm_fallback() {
+        // Reiner FSM-Pfad (Sampler hat nie einen Kandidaten validiert) —
+        // kein Dump zum Warten, sofort ueber die Kanonik scoren.
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        stats.landing_peak_vs_fpm = Some(-13.0);
+        stats.sampler_touchdown_at = None;
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
+        assert!(stats.landing_score.is_some());
+    }
+
+    /// Codex-QS-Fund (Vereinheitlichung 09/2026, Runde 4): der Multi-TD-
+    /// Climb-out-Reset im Sampler-Task raeumt `sampler_touchdown_at` unter
+    /// einem DRITTEN, spaeteren Lock aus — nach der Stelle, an der
+    /// `touchdown_window_score_data_ready_at` gesetzt wird. Bei einem
+    /// FRUEHEN Dump (`climbed_out_early`) waeren beide Felder kurzzeitig
+    /// gleichzeitig gesetzt gewesen, ein drittes, enges Zeitfenster fuer
+    /// denselben Wettlauf. Der Live-AGL-Check in `finalize_landing_score_
+    /// if_due` faengt das zwar ab, aber sauberer: bei einem fruehen Dump
+    /// wird "bereit" erst gar nicht signalisiert. Quelltext-Wächter statt
+    /// Ablauf-Test, weil die Logik tief im 50Hz-Sampler-Task sitzt (analog
+    /// zu `beide_episoden_enden_raeumen_die_landung_ab`).
+    #[test]
+    fn early_climbout_dump_never_signals_score_data_ready() {
+        const SRC: &str = include_str!("lib.rs");
+        let start = SRC
+            .find("s.bounce_count = scored_bounce;")
+            .unwrap_or_else(|| panic!("Setzstelle nicht mehr gefunden — Test anpassen, nicht loeschen"));
+        const FENSTER: usize = 3_500;
+        let ende = (start + FENSTER).min(SRC.len());
+        let ausschnitt = &SRC[start..ende];
+        assert!(
+            ausschnitt.contains("if !climbed_out_early {")
+                && ausschnitt.contains("s.touchdown_window_score_data_ready_at = Some(now);"),
+            "das Bereitschaftssignal darf bei einem fruehen (climbed_out_early) Dump \
+             nicht mehr gesetzt werden — sonst oeffnet sich wieder das Zeitfenster \
+             zwischen dem Setzen und dem spaeteren Multi-TD-Reset"
+        );
     }
 }
 
@@ -57459,7 +58185,20 @@ mod v0_16_6_bush_completeness_tests {
         {
             let belaege = ["ASP", "CON", "GRS", "WATER", "", "TURF-G"];
             let breiten_ft = [0.0f32, 20.0, 98.0, 148.0, 197.0, 500.0];
-            let muster = [Some("A320"), Some("BCS3"), Some("ZZZZ"), None];
+            // "A300" (Codex-QS-Fund, BCS3317-Folgefund Vereinheitlichung
+            // 09/2026): einzig ueber die `muster_kandidaten`-Kaskade
+            // aufloesbar ("A300" -> "A306"), nicht ueber einen direkten
+            // Tabellentreffer wie A320/BCS3 oder das Fallback-Verhalten von
+            // ZZZZ/None. Deckt genau die Luecke ab, die vorher gruen blieb,
+            // weil kein Kandidat hier ausschliesslich auf die Kaskade
+            // angewiesen war.
+            let muster = [
+                Some("A320"),
+                Some("BCS3"),
+                Some("A300"),
+                Some("ZZZZ"),
+                None,
+            ];
             let aus_datei = [None, Some(9.9f64)];
 
             let mut geprueft = 0;

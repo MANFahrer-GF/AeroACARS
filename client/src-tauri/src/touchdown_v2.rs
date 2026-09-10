@@ -182,6 +182,12 @@ pub enum FalseEdgeReason {
     GearForceBelowThreshold,
     /// MSFS: weniger als 3 von 4 Tests passed
     InsufficientVoteScore,
+    /// MSFS: das Post-Edge-Fenster hatte zu wenige Samples, um low_agl_persistence
+    /// ODER sustained_ground_contact ueberhaupt zu beurteilen — "keine Daten" ist
+    /// keine Aussage ueber "kein Kontakt". Getrennt von `InsufficientVoteScore`
+    /// (das heisst: es GAB genug Daten, und die Stimmen reichten trotzdem nicht).
+    /// Siehe `validate_candidate`s MSFS-Zweig fuer die Herleitung.
+    InsufficientTelemetry,
 }
 
 /// Mass-aware gear-force threshold:
@@ -200,6 +206,54 @@ pub fn gear_force_threshold_n(total_weight_kg: Option<f32>) -> f32 {
         .map(|w| w * G * MASS_RATIO)
         .unwrap_or(ABS_FLOOR);
     dynamic.max(ABS_FLOOR)
+}
+
+/// Prueft, ob `samples` das Fenster `[fenster_start, fenster_ende]` LUECKENLOS
+/// abdeckt — kein Abstand groesser als `max_gap_ms`, weder am Rand noch
+/// dazwischen.
+///
+/// # Warum das mehr ist als "gibt es ein Sample nah am Ende"
+///
+/// Codex-QS-Fund (Vereinheitlichung 09/2026, Abschlusspruefung vor dem
+/// Settle-Pfad-Release): eine fruehere Fassung dieser Pruefung mass nur den
+/// Abstand des LETZTEN Samples zum Fensterende. Samples bei 0/400/900ms in
+/// einem 1000ms-Fenster haetten sie bestanden (900ms liegt nur 100ms vom
+/// Ende entfernt) — obwohl zwischen 400ms und 900ms 500ms lang GAR NICHTS
+/// beobachtet wurde. Fuer den Settle-Pfad, der die physikalische Abstimmung
+/// komplett ersetzt, ist das nicht "durchgehende Abdeckung", sondern zwei
+/// duenne Inseln mit einer Luecke dazwischen. Diese Funktion sortiert die
+/// Samples im Fenster nach Zeit und verlangt, dass JEDER Abstand — vom
+/// Fensteranfang zum ersten Sample, zwischen je zwei aufeinanderfolgenden
+/// Samples, und vom letzten Sample zum Fensterende — innerhalb von
+/// `max_gap_ms` bleibt.
+fn deckt_fenster_durchgehend_ab(
+    samples: &[TouchdownWindowSample],
+    fenster_start: DateTime<Utc>,
+    fenster_ende: DateTime<Utc>,
+    max_gap_ms: i64,
+) -> bool {
+    let mut zeitpunkte: Vec<DateTime<Utc>> = samples
+        .iter()
+        .filter(|s| s.at >= fenster_start && s.at <= fenster_ende)
+        .map(|s| s.at)
+        .collect();
+    if zeitpunkte.is_empty() {
+        return false;
+    }
+    zeitpunkte.sort();
+
+    let anfangsluecke = (zeitpunkte[0] - fenster_start).num_milliseconds();
+    if anfangsluecke > max_gap_ms {
+        return false;
+    }
+    for paar in zeitpunkte.windows(2) {
+        let luecke = (paar[1] - paar[0]).num_milliseconds();
+        if luecke > max_gap_ms {
+            return false;
+        }
+    }
+    let endluecke = (fenster_ende - *zeitpunkte.last().expect("nicht leer")).num_milliseconds();
+    endluecke <= max_gap_ms
 }
 
 /// Validate eine TdCandidate gegen die sim-spezifischen Tests.
@@ -350,7 +404,130 @@ pub fn validate_candidate(
             }
         }
     } else {
-        // MSFS / Off: 4 Tests, mind. 3 PASS = VALIDATED.
+        // MSFS / Off.
+        //
+        // v1.7.23 (echter Flug GSG1249, EDDW→EDHE, 2026-09-09): eine sehr
+        // sanfte, echte Landung (gemeldete Sinkrate -12/-13 fpm, G-Kraft-
+        // Spitze exakt an der 1.05-Kippgrenze) hatte dadurch NUR 2 von 4
+        // Stimmen (g_force UND vs_negative fielen knapp durch) — obwohl
+        // `low_agl_persistence` und `sustained_ground_contact`, die beiden
+        // Boden-WAHRHEITS-Signale, beide klar bestanden haetten. Die Landung
+        // wurde nie als Touchdown-Ereignis erkannt, obwohl ein voller Score
+        // dafuer berechnet wurde — der PIREP hing im Integrity Gate fest
+        // (`no_touchdown_recorded`).
+        //
+        // Ein einfaches Hochsetzen der g_force-/vs_negative-Schwellen waere
+        // ein Pflaster: es verschiebt nur, WELCHE sanfte Landung als naechstes
+        // knapp durchfaellt. Stattdessen bekommt die Boden-Wahrheit einen
+        // EIGENEN, vorrangigen Bestaetigungsweg — kein gleichgewichtiges
+        // Zaehlen mehr, sondern ein benannter Beweisweg:
+        //
+        //   1. "Settle": haelt `low_agl_persistence` (< 5ft fuer >= 1000ms)
+        //      UND `sustained_ground_contact` (>= 500ms) BEIDE — ein langer,
+        //      eindeutiger Bodenkontakt braucht keine physikalische
+        //      Bestaetigung mehr durch g_force/vs, egal wie schwach die
+        //      ausfielen. Ein Bounce/Streifschuss/Taxi-Ruckler kann diese
+        //      Kombination aus 1000ms+500ms KONTINUIERLICHEM Bodenkontakt
+        //      praktisch nicht vortaeuschen (dieselbe Garantie, die die
+        //      Kategorie-Sonderbehandlung fuer Helikopter/Wasserflugzeuge
+        //      oben schon nutzt — hier auf Festflaechenflugzeuge uebertragen).
+        //   2. Faellt "Settle" nicht (z.B. PTO 705: echter erster Bodenkontakt
+        //      nur 307ms, unter der 500ms-sustained-Schwelle — ein Touch-and-
+        //      Go-Muster, kein Fehler), bleibt die BISHERIGE 3-von-4-Abstimmung
+        //      als Auffangnetz erhalten — byte-identische Entscheidungsgrenze
+        //      zu vorher. PTO 705 bleibt dadurch weiterhin als echter
+        //      Touchdown erkannt (g_force/low_agl/vs_negative bestehen dort).
+        //
+        // Vorher: "zu wenig Daten" (leeres Post-Edge-Fenster) und "Boden-
+        // Wahrheit hat wirklich nicht bestanden" wurden beide zu genau
+        // derselben Stimme "false" — nicht mehr unterscheidbar von einem
+        // Test, der die Frage gar nicht beantworten konnte. Ein eigener
+        // Dichte-Wächter (analog zum bestehenden
+        // MIN_GEAR_FORCE_SAMPLES_IN_WINDOW-Muster bei X-Plane oben) faengt
+        // das jetzt VOR jeder Settle-/Vote-Entscheidung ab: zu duenne
+        // Telemetrie in BEIDEN Boden-Wahrheits-Fenstern fuehrt zu einem
+        // eigenen, ehrlich benannten Grund (`InsufficientTelemetry`) statt
+        // stillschweigend als gescheiterte Abstimmung durchzulaufen.
+        const MIN_GROUND_TRUTH_SAMPLES: usize = 2;
+        let low_agl_window_end = edge_at + Duration::milliseconds(1000);
+        let low_agl_sample_count = samples
+            .iter()
+            .filter(|s| s.at >= edge_at && s.at <= low_agl_window_end)
+            .count();
+        let sustained_ground_sample_count = samples.iter().filter(|s| s.at >= edge_at).count();
+        if low_agl_sample_count < MIN_GROUND_TRUTH_SAMPLES
+            && sustained_ground_sample_count < MIN_GROUND_TRUTH_SAMPLES
+        {
+            return ValidationResult::FalseEdge {
+                reason: FalseEdgeReason::InsufficientTelemetry,
+                result: detail,
+            };
+        }
+
+        // Settle-Pfad braucht zusaetzlich EIN minimales Anzeichen eines
+        // echten Aufsetzens — sonst wuerde er einen bestehenden Schutz
+        // durchbrechen: `heli_soft_setdown_rejected_as_fixed_wing_but_
+        // validated_as_heli` (unten in den Tests) haelt bewusst fest, dass
+        // ein Festfluegler mit einem VOELLIG kraftlosen (g_force==1.0,
+        // also gar keine messbare Kraftaenderung) und nicht wirklich
+        // sinkenden (vs=-3.0, weit ueber der -10-Schwelle) langen Boden-
+        // kontakt WEITERHIN abgelehnt werden muss — das Muster ist exakt
+        // das eines Hubschrauber-/Wasserflugzeug-Aufsetzers (dafuer gibt
+        // es die eigene Kategorie-Behandlung oben), nicht das eines
+        // Festfluegler-Touchdowns. GSG1249 hatte dagegen eine echte, wenn
+        // auch schwache Kraft-Spitze (gemeldet 1.05 G — keine Null-Aenderung,
+        // sondern ein echter, nur knapp unter der strikten Schwelle
+        // liegender Aufprall). Der Dead-Band (>1.02, statt exakt >1.0)
+        // laesst echtes Sensor-Rauschen um 1.0G nicht durchrutschen, faengt
+        // aber jeden Aufprall auf, der ueberhaupt eine spuerbare
+        // Gewichtsuebertragung zeigt.
+        const MIN_SETTLE_G_FORCE_PEAK: f32 = 1.02;
+        //
+        // Codex-QS-Fund (Vereinheitlichung 09/2026): `evaluate_low_agl_persistence`
+        // und `evaluate_sustained_ground` melden PASS schon, wenn im (ggf.
+        // duennen) Fenster KEINE Verletzung/kein Abbruch beobachtet wurde —
+        // das gilt absichtlich auch bei nur 2-3 fruehen Samples, die den
+        // Rest des Fensters gar nicht abdecken (siehe deren eigene Tests
+        // `low_agl_persistence_still_passes_with_real_no_violation_data`,
+        // die genau das als GEWOLLTES Verhalten festhalten — dort korrekt,
+        // weil dieses Signal nur EINE von vier Stimmen in der alten
+        // Abstimmung war). Der Settle-Pfad ERSETZT die Abstimmung komplett
+        // und braucht deshalb ECHTE, durchgehende Abdeckung nahe der vollen
+        // Fensterlaenge, sonst koennte ein kurzer Streifschuss (DAH3181-
+        // Muster) gefolgt von einer Telemetrie-Luecke faelschlich bestaetigt
+        // werden. Eigene, strengere Abdeckungs-Pruefung hier — die beiden
+        // `evaluate_*`-Funktionen bleiben fuer das Auffangnetz unveraendert.
+        //
+        // Codex-QS-Fund (Vereinheitlichung 09/2026, Abschlusspruefung): die
+        // erste Fassung dieser Pruefung mass nur den Abstand des LETZTEN
+        // Samples zum Fensterende — eine Luecke MITTEN im Fenster (z.B.
+        // Samples bei 0/400/900ms: 400-900ms unbeobachtet, aber 900ms liegt
+        // nah genug am 1000ms-Fensterende) waere durchgerutscht, obwohl die
+        // "durchgehende Abdeckung", die dieser Pfad verlangt, genau das
+        // ausschliessen soll. `deckt_fenster_durchgehend_ab` prueft deshalb
+        // JEDEN Abstand — vom Rand-Zeitpunkt zum ersten Sample, zwischen
+        // allen aufeinanderfolgenden Samples, und vom letzten Sample zum
+        // Fensterende.
+        const MAX_COVERAGE_GAP_MS: i64 = 200;
+        let low_agl_covers_window =
+            deckt_fenster_durchgehend_ab(samples, edge_at, low_agl_window_end, MAX_COVERAGE_GAP_MS);
+        let sustained_window_end = edge_at + Duration::milliseconds(500);
+        let sustained_covers_window = deckt_fenster_durchgehend_ab(
+            samples,
+            edge_at,
+            sustained_window_end,
+            MAX_COVERAGE_GAP_MS,
+        );
+        if low_agl_pass
+            && sustained_pass
+            && g_force_peak > MIN_SETTLE_G_FORCE_PEAK
+            && low_agl_covers_window
+            && sustained_covers_window
+        {
+            return ValidationResult::Validated { result: detail };
+        }
+
+        // Auffangnetz: bisherige 3-von-4-Abstimmung, unveraendert.
         let passes = [g_force_pass, sustained_pass, low_agl_pass, vs_negative_pass]
             .iter()
             .filter(|p| **p)
@@ -1002,9 +1179,24 @@ mod tests {
 
     #[test]
     fn heli_soft_setdown_rejected_as_fixed_wing_but_validated_as_heli() {
+        // Diese Fixture ist bewusst extremer als GSG1249: g_force bleibt
+        // die GESAMTEN 1200ms exakt bei 1.0 — also NULL messbare
+        // Kraftaenderung, nicht bloss eine schwache. Fuer ein Festfluegel-
+        // Flugzeug ist das kein Touchdown-Muster, sondern "schon am Boden,
+        // keine neue Bodenberuehrung" (z.B. Rollen). Der v1.7.23-Settle-Pfad
+        // (siehe validate_candidate, MSFS-Zweig) verlangt deshalb bewusst
+        // ZUSAETZLICH g_force_peak > MIN_SETTLE_G_FORCE_PEAK (1.02) — eine
+        // spuerbare, wenn auch schwache Gewichtsuebertragung wie bei
+        // GSG1249 (1.05G). Bei exakt 1.0G bleibt es bei der alten
+        // 3-von-4-Abstimmung, die hier durchfaellt (kein G-Spike, V/S milder
+        // als -10fpm -> nur 2/4) — FixedWing bleibt also FalseEdge, exakt
+        // wie vor dem Fix. Fuer Helikopter/Wasserflugzeuge gilt weiterhin
+        // die eigene Kategorie-Praesenz-Regel (kein g_force-Erfordernis),
+        // weil ein echter Heli-Aufsetzer laut FAA-Handbuch genau SO aussieht.
         let edge = Utc::now();
         let (samples, cand) = soft_setdown(edge, true);
-        // Fixed-wing: no G-spike, V/S > -10 → only 2/4 votes → FalseEdge.
+        // Fixed-wing: no G-spike, V/S > -10 → only 2/4 votes AND der neue
+        // Settle-Pfad greift nicht (g_force bleibt bei 1.0) → FalseEdge.
         assert!(matches!(
             validate_candidate(
                 &cand,
@@ -1480,4 +1672,319 @@ mod tests {
         assert!(pass, "500ms of real on_ground samples must pass");
         assert!(ms >= 500);
     }
+
+    // ── v1.7.23 "Settle path" fix — Referenzfaelle ─────────────────────────
+    //
+    // GSG1249 (EDDW→EDHE, 2026-09-09): der reale Flug, der den Fehler
+    // aufgedeckt hat. PTO 705 und DAH 3181 sind die historischen
+    // Referenzfaelle aus docs/spec/historical/touchdown-forensics-v2.md,
+    // die durch diesen Fix NICHT regressieren duerfen.
+
+    /// MSFS-Sample fuer die Settle-Path-Tests: kein gear_normal_force_n
+    /// (MSFS liefert das nicht), sonst frei parametrisierbar.
+    fn msfs_sample(at_ms: i64, agl_ft: f32, on_ground: bool, vs_fpm: f32, g_force: f32) -> TouchdownWindowSample {
+        TouchdownWindowSample {
+            at: DateTime::<Utc>::from_timestamp_millis(at_ms).unwrap(),
+            vs_fpm,
+            g_force,
+            on_ground,
+            agl_ft,
+            msl_ft: Some(agl_ft + 500.0),
+            heading_true_deg: 0.0,
+            groundspeed_kt: 60.0,
+            indicated_airspeed_kt: 55.0,
+            true_airspeed_kt: 55.0,
+            lat: 0.0,
+            lon: 0.0,
+            pitch_deg: 3.0,
+            bank_deg: 0.0,
+            gear_normal_force_n: None,
+            total_weight_kg: Some(1250.0), // GSG1249-Groessenordnung (leichtes GA-Muster)
+        }
+    }
+
+    fn msfs_candidate(edge_at_ms: i64, edge_agl_ft: f32, edge_vs_fpm: f32, edge_g_force: f32) -> TdCandidate {
+        TdCandidate {
+            edge_sample_index: 0,
+            edge_at: DateTime::<Utc>::from_timestamp_millis(edge_at_ms).unwrap(),
+            edge_agl_ft,
+            edge_vs_fpm,
+            edge_gear_force_n: None,
+            edge_g_force,
+            edge_total_weight_kg: Some(1250.0),
+        }
+    }
+
+    #[test]
+    fn gsg1249_soft_real_landing_now_confirmed_via_settle_path() {
+        // Aufsetz-G-Kraft an der Kippgrenze (nicht > 1.05 -> g_force_pass
+        // FAELLT, aber > 1.02 -> spuerbare, echte Kraftaenderung, kein
+        // Null-Rauschen), Aufsetz-Sinkrate milder als die -10fpm-
+        // Testschwelle (vs_negative_pass FAELLT) — nur 2 von 4 Stimmen.
+        // Vorher: FalseEdge. Boden-Wahrheit (durchgehend on_ground=true,
+        // agl<5ft, 1200ms lang) ist aber eindeutig -> muss jetzt ueber den
+        // Settle-Pfad bestaetigt werden.
+        let edge = 0_i64;
+        let mut samples = Vec::new();
+        let mut t = edge;
+        while t <= 1200 {
+            samples.push(msfs_sample(t, 1.5, true, -8.0, 1.04));
+            t += 20;
+        }
+        let cand = msfs_candidate(edge, 1.5, -8.0, 1.04);
+        let result = validate_candidate(
+            &cand,
+            &samples,
+            SimKind::Msfs2024,
+            -8.0, // impact_frame_vs: milder als -10 -> vs_negative_pass FALSE
+            AircraftCategory::FixedWing,
+        );
+        match result {
+            ValidationResult::Validated { result } => {
+                assert!(!result.g_force_pass.unwrap(), "g_force sollte hier knapp durchfallen");
+                assert!(!result.vs_negative_pass, "vs_negative sollte hier knapp durchfallen");
+                assert!(result.low_agl_persistence_pass);
+                assert!(result.sustained_ground_pass.unwrap());
+            }
+            ValidationResult::FalseEdge { reason, .. } => panic!(
+                "eine echte, sanfte Landung mit eindeutiger Boden-Wahrheit darf nicht \
+                 verworfen werden — got FalseEdge({reason:?})"
+            ),
+        }
+    }
+
+    #[test]
+    fn pto705_short_real_contact_still_confirmed_via_vote_fallback() {
+        // PTO 705 (Spec §6.3): erster echter Bodenkontakt nur ~300ms, dann
+        // bricht on_ground kurz ab (Touch-and-Go-Muster) — sustained_ground
+        // FAELLT (< 500ms). low_agl bleibt aber die vollen 1000ms unten,
+        // g_force-Spitze UND vs_negative bestehen deutlich (harter Touch).
+        // Settle-Pfad greift NICHT (sustained fehlt) — muss weiterhin ueber
+        // die alte 3-von-4-Abstimmung bestaetigt werden. Keine Regression.
+        let edge = 0_i64;
+        let mut samples = Vec::new();
+        let mut t = edge;
+        while t <= 1200 {
+            let on_ground = t <= 300; // Kontakt bricht nach 300ms ab
+            samples.push(msfs_sample(t, 1.5, on_ground, -20.0, 1.25));
+            t += 20;
+        }
+        let cand = msfs_candidate(edge, 1.5, -182.0, 1.25);
+        let result = validate_candidate(
+            &cand,
+            &samples,
+            SimKind::Msfs2024,
+            -182.0, // klarer harter Sink, weit unter -10fpm
+            AircraftCategory::FixedWing,
+        );
+        match result {
+            ValidationResult::Validated { result } => {
+                assert!(!result.sustained_ground_pass.unwrap(), "sustained sollte hier durchfallen (307ms-Muster)");
+                assert!(result.g_force_pass.unwrap());
+                assert!(result.vs_negative_pass);
+                assert!(result.low_agl_persistence_pass);
+            }
+            ValidationResult::FalseEdge { reason, .. } => panic!(
+                "PTO 705 (kurzer aber echter Bodenkontakt) darf durch diesen Fix nicht \
+                 regressieren — got FalseEdge({reason:?})"
+            ),
+        }
+    }
+
+    #[test]
+    fn dah3181_float_skim_stays_rejected() {
+        // DAH 3181 (Spec §6.4): 44ms-Float-Streifschuss, danach wieder
+        // abgehoben (steigt), keine G-Kraft-Spitze, positive Sinkrate
+        // (steigt statt sinkt). Weder Settle- noch Vote-Pfad duerfen das
+        // als Touchdown durchlassen.
+        let edge = 0_i64;
+        let mut samples = Vec::new();
+        // Kurzer Bodenkontakt (44ms), dann steigt es weg.
+        samples.push(msfs_sample(0, 1.0, true, -1.0, 1.0));
+        samples.push(msfs_sample(20, 1.0, true, -1.0, 1.0));
+        samples.push(msfs_sample(44, 1.0, true, -1.0, 1.0));
+        let mut t = 60_i64;
+        while t <= 1200 {
+            samples.push(msfs_sample(t, 30.0, false, 104.0, 1.0)); // steigt weg
+            t += 20;
+        }
+        let cand = msfs_candidate(edge, 1.0, -1.0, 1.0);
+        let result = validate_candidate(
+            &cand,
+            &samples,
+            SimKind::Msfs2024,
+            104.0, // positiv = steigt, kein Sinken
+            AircraftCategory::FixedWing,
+        );
+        assert!(
+            matches!(result, ValidationResult::FalseEdge { .. }),
+            "ein Float-Streifschuss mit positiver Sinkrate darf NIE als Touchdown gelten"
+        );
+    }
+
+    #[test]
+    fn telemetry_gap_at_candidate_instant_is_labelled_insufficient_not_voted_down() {
+        // Eine Telemetrie-Luecke genau am Kandidaten-Zeitpunkt (z.B. FPS-
+        // Stall/Reconnect) darf nicht als "Boden-Wahrheit hat wirklich nicht
+        // bestanden" durchlaufen, sondern muss als eigener, ehrlicher Grund
+        // erkennbar sein.
+        let edge = 0_i64;
+        let samples = vec![msfs_sample(edge, 1.0, true, -20.0, 1.2)]; // nur 1 Sample
+        let cand = msfs_candidate(edge, 1.0, -20.0, 1.2);
+        let result = validate_candidate(
+            &cand,
+            &samples,
+            SimKind::Msfs2024,
+            -20.0,
+            AircraftCategory::FixedWing,
+        );
+        match result {
+            ValidationResult::FalseEdge { reason, .. } => {
+                assert!(
+                    matches!(reason, FalseEdgeReason::InsufficientTelemetry),
+                    "ein duennes Fenster muss als InsufficientTelemetry erkennbar sein, nicht als InsufficientVoteScore, got {reason:?}"
+                );
+            }
+            ValidationResult::Validated { .. } => {
+                panic!("ein einzelnes Sample darf keine Boden-Wahrheit bestaetigen")
+            }
+        }
+    }
+
+    #[test]
+    fn sparse_early_samples_with_gap_do_not_confirm_via_settle_path() {
+        // Codex-QS-Fund (Vereinheitlichung 09/2026): 2 fruehe Samples
+        // (0ms/20ms, beide on_ground/low-AGL) erfuellen technisch
+        // MIN_GROUND_TRUTH_SAMPLES UND `evaluate_low_agl_persistence`/
+        // `evaluate_sustained_ground`s "keine Verletzung gesehen"-PASS —
+        // obwohl der Rest der behaupteten 1000ms/500ms-Fenster gar nicht
+        // beobachtet wurde (z.B. ein DAH3181-artiger Streifschuss, gefolgt
+        // von einer Telemetrie-Luecke, in der das Flugzeug tatsaechlich
+        // wieder abgehoben haben koennte). Der Settle-Pfad ersetzt die
+        // physikalische Abstimmung komplett und darf sich deshalb NICHT
+        // auf so duenne Abdeckung verlassen.
+        //
+        // g_force/vs bewusst wie im GSG1249-Fall knapp UNTER den strikten
+        // Schwellen (1.04 statt >1.05, -8.0 statt <-10.0) gewaehlt, damit
+        // NUR der Settle-Pfad ueberhaupt in Frage kommt (g_force_pass und
+        // vs_negative_pass bleiben false -> die alte 3-von-4-Abstimmung
+        // kommt mangels dritter Stimme gar nicht erst auf 3 und ist hier
+        // NICHT die Fehlerquelle, die dieser Test prueft).
+        let edge = 0_i64;
+        let samples = vec![
+            msfs_sample(0, 1.0, true, -8.0, 1.04),
+            msfs_sample(20, 1.0, true, -8.0, 1.04),
+            // Danach: Telemetrie-Luecke bis 1200ms — absichtlich KEINE
+            // weiteren Samples, um die duenne Abdeckung zu simulieren.
+        ];
+        let cand = msfs_candidate(edge, 1.0, -8.0, 1.04);
+        let result = validate_candidate(
+            &cand,
+            &samples,
+            SimKind::Msfs2024,
+            -8.0,
+            AircraftCategory::FixedWing,
+        );
+        assert!(
+            matches!(result, ValidationResult::FalseEdge { .. }),
+            "2 fruehe Samples mit Luecke danach duerfen den Settle-Pfad nicht ausloesen, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn internal_gap_between_samples_does_not_confirm_via_settle_path() {
+        // Codex-QS-Fund (Vereinheitlichung 09/2026, Abschlusspruefung): die
+        // vorige Fassung der Abdeckungs-Pruefung mass nur den Abstand des
+        // LETZTEN Samples zum Fensterende. Samples bei 0/400/900ms in einem
+        // 1000ms-Fenster haetten das bestanden (900ms liegt nur 100ms vom
+        // Ende entfernt, unter MAX_COVERAGE_GAP_MS=200) — obwohl zwischen
+        // 400ms und 900ms 500ms lang GAR NICHTS beobachtet wurde. Anders als
+        // der Test oben (Luecke NACH den Samples) ist das hier eine Luecke
+        // MITTEN im Fenster, mit Wiederaufnahme danach — genau der Fall, den
+        // `deckt_fenster_durchgehend_ab` jetzt zusaetzlich abfaengt.
+        let edge = 0_i64;
+        let samples = vec![
+            msfs_sample(0, 1.0, true, -8.0, 1.04),
+            msfs_sample(400, 1.0, true, -8.0, 1.04),
+            // Luecke 400ms -> 900ms: 500ms lang keine Telemetrie.
+            msfs_sample(900, 1.0, true, -8.0, 1.04),
+        ];
+        let cand = msfs_candidate(edge, 1.0, -8.0, 1.04);
+        let result = validate_candidate(
+            &cand,
+            &samples,
+            SimKind::Msfs2024,
+            -8.0,
+            AircraftCategory::FixedWing,
+        );
+        assert!(
+            matches!(result, ValidationResult::FalseEdge { .. }),
+            "eine 500ms-Luecke mitten im Fenster darf den Settle-Pfad nicht \
+             ausloesen, auch wenn das letzte Sample nah am Fensterende liegt, \
+             got {result:?}"
+        );
+    }
+
+    #[test]
+    fn threshold_boundary_g_force_exactly_1_05_fails_strict_test_but_settle_path_still_confirms() {
+        // g_force_peak == 1.05 (nicht > 1.05) faellt bewusst durch den
+        // strikten Test — das ist unveraendert. Bei eindeutiger Boden-
+        // Wahrheit rettet der Settle-Pfad die Landung trotzdem.
+        let edge = 0_i64;
+        let mut samples = Vec::new();
+        let mut t = edge;
+        while t <= 1200 {
+            samples.push(msfs_sample(t, 1.0, true, -30.0, 1.05));
+            t += 20;
+        }
+        let cand = msfs_candidate(edge, 1.0, -30.0, 1.05);
+        let result = validate_candidate(
+            &cand,
+            &samples,
+            SimKind::Msfs2024,
+            -30.0,
+            AircraftCategory::FixedWing,
+        );
+        match result {
+            ValidationResult::Validated { result } => {
+                assert!(
+                    !result.g_force_pass.unwrap(),
+                    "1.05 ist die Grenze, nicht darueber -> g_force_pass muss false bleiben"
+                );
+            }
+            ValidationResult::FalseEdge { reason, .. } => {
+                panic!("Boden-Wahrheit haette das retten muessen, got FalseEdge({reason:?})")
+            }
+        }
+    }
+
+    #[test]
+    fn threshold_boundary_vs_exactly_minus_10_fails_strict_test() {
+        // -10.0 fpm ist NICHT < -10.0 -> vs_negative_pass bleibt false.
+        // Unveraenderte Grenze, nur hier explizit dokumentiert.
+        let edge = 0_i64;
+        let samples: Vec<TouchdownWindowSample> = (0..60)
+            .map(|i| msfs_sample(edge + i * 20, 1.0, true, -10.0, 1.2))
+            .collect();
+        let cand = msfs_candidate(edge, 1.0, -10.0, 1.2);
+        let result = validate_candidate(
+            &cand,
+            &samples,
+            SimKind::Msfs2024,
+            -10.0,
+            AircraftCategory::FixedWing,
+        );
+        // Settle-Pfad greift hier ohnehin (low_agl+sustained bestehen ueber
+        // die volle Laenge) -> Validated, aber vs_negative_pass selbst muss
+        // false bleiben (die Grenze wurde nicht aufgeweicht).
+        match result {
+            ValidationResult::Validated { result } => {
+                assert!(!result.vs_negative_pass, "-10.0 ist die Grenze, nicht darunter");
+            }
+            ValidationResult::FalseEdge { reason, .. } => {
+                panic!("Boden-Wahrheit haette das retten muessen, got FalseEdge({reason:?})")
+            }
+        }
+    }
+
 }
