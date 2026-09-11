@@ -1,24 +1,50 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
-
-interface MetarSnapshot {
-  icao: string;
-  raw: string;
-  time: string;
-  wind_direction_deg: number | null;
-  wind_speed_kt: number | null;
-  gust_kt: number | null;
-  visibility_m: number | null;
-  temperature_c: number | null;
-  dewpoint_c: number | null;
-  qnh_hpa: number | null;
-}
+import type { MetarSnapshotDto } from "../types";
 
 interface MetarFetchState {
   kind: "loading" | "ready" | "error";
-  data?: MetarSnapshot;
+  data?: MetarSnapshotDto;
   error?: string;
+}
+
+/**
+ * Entscheidet, ob ein neu eingetroffener METAR-Wert den aktuell gezeigten
+ * ersetzen darf — die einzige Stelle, an der das entschieden wird
+ * (Prefetch-Effekte UND eigener Fetch rufen dieselbe Funktion).
+ *
+ * Fünfte Codex-Runde: frühere Fassungen entschieden das über die
+ * REIHENFOLGE des Eintreffens (Generation-Zähler) statt über die
+ * tatsächliche Aktualität der Daten — ein spät auflösender, aber neuerer
+ * eigener Fetch konnte von einem früher eingetroffenen, aber älteren
+ * Prefetch verworfen werden. Hier zählt ausschliesslich die METAR-
+ * Beobachtungszeit selbst (`time`), nicht wer zuerst da war:
+ *
+ *   - anderer Flughafen (Flugwechsel) → immer übernehmen, kein Vergleich
+ *     sinnvoll.
+ *   - echt älter (`data.time < prev.data.time`) → verwerfen.
+ *   - identisch (`time` UND `raw` gleich) → verwerfen (kein Update, kein
+ *     unnötiger Re-Render).
+ *   - alles andere (neuer, oder gleicher `time` mit anderem `raw` — siehe
+ *     Kommentar an den Aufrufstellen) → übernehmen.
+ */
+function wendeAn(prev: MetarFetchState, data: MetarSnapshotDto): MetarFetchState {
+  if (prev.kind === "ready" && prev.data && prev.data.icao === data.icao) {
+    // `time_is_estimated` (Rust-Fallback auf die Abrufzeit, wenn NOAAs
+    // obsTime fehlt/unparsbar war — vorgemerkte Datenqualitäts-Aufgabe
+    // vom 2026-09-11) macht `time` unzuverlässig für den Aktualitäts-
+    // vergleich: ein geschätzter Wert ist praktisch immer "jetzt" und
+    // würde einen ECHTEN, aber älter datierten Beobachtungswert sonst
+    // fälschlich verdrängen — obwohl beide dieselbe (oder eine ältere)
+    // Meldung beschreiben könnten. Ein geschätzter Wert gewinnt deshalb
+    // nie gegen einen bereits gezeigten echten.
+    if (data.time_is_estimated && !prev.data.time_is_estimated) return prev;
+    if (data.time < prev.data.time) return prev;
+    if (data.time === prev.data.time && data.raw === prev.data.raw) return prev;
+  }
+  return { kind: "ready", data };
 }
 
 interface Props {
@@ -26,6 +52,22 @@ interface Props {
   dptIcao: string;
   /** Arrival airport ICAO. */
   arrIcao: string;
+  /**
+   * Schon vom Backend geholtes Wetter — `maybe_spawn_metar_fetch` (Rust)
+   * fragt es selbstständig bei Boarding/Takeoff (Abflug) und bei Descent/
+   * Final (Ziel) ab, unabhängig davon, ob diese Karte gerade offen ist.
+   * Michael, Discord 2026-09-11: „kann mit Beginn des Descent das Wetter
+   * am Zielflughafen nochmal selbständig aktualisiert werden […] ohne
+   * dass ich […] den Button drücken muss." — genau das lief serverseitig
+   * schon, nur zeigte diese Karte es nie: Sie holte beim Mount immer ihr
+   * eigenes, unabhängiges METAR statt den längst vorhandenen Wert zu
+   * lesen. `activeFlight` wird App-weit alle 2 s gepollt (App.tsx), auch
+   * wenn das Cockpit-Tab gar nicht offen ist — die Werte landen also
+   * automatisch hier, sobald die Karte das nächste Mal gerendert wird,
+   * und aktualisieren sich live weiter, solange sie offen bleibt.
+   */
+  prefetchedDpt?: MetarSnapshotDto | null;
+  prefetchedArr?: MetarSnapshotDto | null;
 }
 
 /** Auto-refresh window for the briefing panel. NOAA observations are
@@ -246,50 +288,178 @@ function WxCard({
   );
 }
 
-export function WeatherBriefing({ dptIcao, arrIcao }: Props) {
+export function WeatherBriefing({
+  dptIcao,
+  arrIcao,
+  prefetchedDpt,
+  prefetchedArr,
+}: Props) {
   const { t } = useTranslation();
   const [dpt, setDpt] = useState<MetarFetchState>({ kind: "loading" });
   const [arr, setArr] = useState<MetarFetchState>({ kind: "loading" });
-  const [refreshing, setRefreshing] = useState(false);
+
+  // Unmount-Wächter (Codex-Befund, zweite Runde): ein Fetch kann noch
+  // laufen, wenn der Pilot die Karte wegnavigiert (Tab-Wechsel). Ohne
+  // diese Prüfung würde `fetchOne` trotzdem noch `set(...)` auf eine
+  // verschwundene Komponente aufrufen — React 19 warnt dafür nicht mehr,
+  // aber unnötig ist es trotzdem.
+  const gemountet = useRef(true);
+  useEffect(() => {
+    gemountet.current = true;
+    return () => {
+      gemountet.current = false;
+    };
+  }, []);
+
+  // ── Reiner Ladeindikator, ohne Einfluss auf welche Daten gezeigt werden ──
+  //
+  // Fünfte Codex-Runde: Die vorherigen Fassungen (erst ein Zähler, der
+  // `refreshing` direkt trug, dann Generation-Zähler, die entschieden,
+  // welcher von zwei parallelen `metar_get`-Aufrufen "gewinnt") hatten
+  // beide dieselbe Wurzelursache — sie regelten Ladezustand UND
+  // Datenkorrektheit über denselben Mechanismus. Ein spät auflösender,
+  // aber inhaltlich NEUERER eigener Fetch konnte von einem älteren, aber
+  // zuerst eingetroffenen Prefetch verworfen werden, weil "zuerst da"
+  // nicht "aktueller" bedeutet.
+  //
+  // Jetzt getrennt: `refreshLaeuft` ist NUR ein Zähler laufender Netz-
+  // Aufrufe fürs Icon/den Button — er entscheidet nichts über Daten.
+  // Welcher Wert angezeigt wird, entscheidet ausschliesslich `wendeAn`
+  // unten, anhand der METAR-Beobachtungszeit selbst.
+  const [refreshLaeuft, setRefreshLaeuft] = useState(0);
+  const refreshing = refreshLaeuft > 0;
+
+  // Aktuelle Route, immer frisch.
+  //
+  // Sechste Codex-Runde: `fetchOne` prüfte bisher nur die METAR-Zeit
+  // (`wendeAn`), nicht mehr, ob die ICAO, für die der Request gestartet
+  // wurde, überhaupt noch die aktuelle Route ist. Wechselt der Pilot
+  // während ein Fetch für EDDM noch offen ist auf einen neuen Flug nach
+  // EDLN, würde `wendeAn` das späte EDDM-Ergebnis anstandslos übernehmen
+  // — andere ICAO, also kein Zeitvergleich, direkte Übernahme (siehe
+  // `wendeAn` oben: „anderer Flughafen → immer übernehmen"). Das war
+  // richtig gedacht für „neuer Flug, neues Wetter", aber falsch für
+  // „alter Flug antwortet spät nach". Der Unterschied: nur ein Ergebnis,
+  // dessen ICAO noch mit der AKTUELLEN Route übereinstimmt, darf
+  // überhaupt geschrieben werden.
+  //
+  // `useLayoutEffect` statt Zuweisung im Render-Körper (siebte Codex-
+  // Runde): React untersagt das Mutieren eines Refs während des Renderns
+  // ausdrücklich, ausser zur reinen Initialisierung — bei Concurrent
+  // Rendering kann ein begonnener, dann verworfener Render-Versuch mit
+  // einer NEUEN Route trotzdem den Ref überschreiben, während weiterhin
+  // die ALTE Route committed bleibt. Ein `useLayoutEffect` läuft nur nach
+  // einem tatsächlich COMMITTETEN Render, genau synchron mit dem, was der
+  // Nutzer sieht.
+  const aktuelleDptIcao = useRef(dptIcao);
+  const aktuelleArrIcao = useRef(arrIcao);
+  useLayoutEffect(() => {
+    aktuelleDptIcao.current = dptIcao;
+  }, [dptIcao]);
+  useLayoutEffect(() => {
+    aktuelleArrIcao.current = arrIcao;
+  }, [arrIcao]);
 
   const fetchOne = useCallback(
-    async (icao: string, set: (s: MetarFetchState) => void) => {
-      set({ kind: "loading" });
+    async (
+      icao: string,
+      set: Dispatch<SetStateAction<MetarFetchState>>,
+      aktuelleIcao: MutableRefObject<string>,
+    ) => {
+      setRefreshLaeuft((n) => n + 1);
       try {
-        const data = await invoke<MetarSnapshot>("metar_get", { icao });
-        set({ kind: "ready", data });
+        // Regression vermeiden: Ist schon ein Wert für DIESELBE ICAO da,
+        // bleibt er stehen, solange der Hintergrund-Refresh läuft — kein
+        // Zurückfallen auf einen Lade-Spinner über bereits gezeigten guten
+        // Daten. Aber: gehört der gezeigte Wert zu einer ANDEREN ICAO (z.
+        // B. Routenwechsel ohne sofortigen Prefetch), ist er hier fehl am
+        // Platz — sonst zeigt die Karte des NEUEN Ziels das Wetter des
+        // ALTEN weiter, bis der neue Fetch durch ist (oder für immer,
+        // schlägt er fehl). Siebte Codex-Runde.
+        set((prev) =>
+          prev.kind === "ready" && prev.data?.icao === icao ? prev : { kind: "loading" },
+        );
+        const data = await invoke<MetarSnapshotDto>("metar_get", { icao });
+        // Komponente weg, ODER die Route hat sich geändert, während der
+        // Request lief — das Ergebnis gehört nicht mehr zur aktuellen Seite.
+        // `data.icao !== icao` zusätzlich geprüft (siebte Codex-Runde):
+        // die Antwort selbst könnte — falsch konfiguriert, NOAA-Eigenart —
+        // eine andere ICAO tragen als angefragt; garantiert war das nie.
+        if (!gemountet.current || icao !== aktuelleIcao.current || data.icao !== icao) return;
+        set((prev) => wendeAn(prev, data));
       } catch (err: unknown) {
+        if (!gemountet.current || icao !== aktuelleIcao.current) return;
         const msg =
           typeof err === "object" && err !== null && "message" in err
             ? String((err as { message: string }).message)
             : String(err);
-        set({ kind: "error", error: msg });
+        set((prev) =>
+          prev.kind === "ready" && prev.data?.icao === icao
+            ? prev
+            : { kind: "error", error: msg },
+        );
+      } finally {
+        setRefreshLaeuft((n) => n - 1);
       }
     },
     [],
   );
 
-  // Initial load + reload whenever the route changes.
+  // Leere ICAO nie dauerhaft im Ladezustand belassen (Codex-Befund,
+  // fünfte Runde): Ohne ICAO wird nie ein Fetch ausgelöst — der initiale
+  // `{ kind: "loading" }`-State würde sonst für immer stehen bleiben,
+  // Button dauerhaft deaktiviert, Karte dauerhaft "lädt".
+  useEffect(() => {
+    if (!dptIcao) setDpt({ kind: "error", error: "no ICAO" });
+  }, [dptIcao]);
+  useEffect(() => {
+    if (!arrIcao) setArr({ kind: "error", error: "no ICAO" });
+  }, [arrIcao]);
+
+  // Vom Backend vorgeholtes Wetter übernehmen, sobald es da ist — und
+  // weiter, solange die Karte offen bleibt: `prefetchedDpt`/`prefetchedArr`
+  // kommen aus `activeFlight` (App-weiter 2-s-Poll, siehe Props-Doku oben),
+  // aktualisieren sich also von selbst, wenn `maybe_spawn_metar_fetch`
+  // (Rust) bei Descent/Final einen frischeren Wert holt. `icao`-Check
+  // verhindert, dass beim Wechsel auf einen neuen Flug für einen Tick noch
+  // das METAR des alten Ziels durchrutscht, bevor der Poll nachzieht.
+  // Das eigentliche "ist das neu genug"-Urteil faellt in `wendeAn`.
+  useEffect(() => {
+    if (prefetchedDpt && prefetchedDpt.icao === dptIcao) {
+      setDpt((prev) => wendeAn(prev, prefetchedDpt));
+    }
+  }, [prefetchedDpt, dptIcao]);
+  useEffect(() => {
+    if (prefetchedArr && prefetchedArr.icao === arrIcao) {
+      setArr((prev) => wendeAn(prev, prefetchedArr));
+    }
+  }, [prefetchedArr, arrIcao]);
+
+  // Initial load + reload whenever the route changes — nur für die Seite,
+  // die das Backend beim Mount noch NICHT vorgeholt hat (z. B. ganz am
+  // Anfang, bevor Boarding/Takeoff den Abflug-Fetch ausgelöst hat). Sonst
+  // wäre das ein zweiter, überflüssiger Netz-Trip für denselben Wert.
   useEffect(() => {
     if (!dptIcao && !arrIcao) return;
-    void (async () => {
-      setRefreshing(true);
-      await Promise.all([
-        dptIcao ? fetchOne(dptIcao, setDpt) : Promise.resolve(),
-        arrIcao ? fetchOne(arrIcao, setArr) : Promise.resolve(),
-      ]);
-      setRefreshing(false);
-    })();
+    const brauchtDpt = !!dptIcao && !(prefetchedDpt?.icao === dptIcao);
+    const brauchtArr = !!arrIcao && !(prefetchedArr?.icao === arrIcao);
+    if (!brauchtDpt && !brauchtArr) return;
+    if (brauchtDpt) void fetchOne(dptIcao, setDpt, aktuelleDptIcao);
+    if (brauchtArr) void fetchOne(arrIcao, setArr, aktuelleArrIcao);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- prefetchedDpt/
+    // prefetchedArr bewusst nicht in den Deps: ihr Eintreffen behandelt
+    // der Effekt oben, dieser hier soll nur beim Routenwechsel laufen.
+    // `wendeAn` entscheidet beim Schreiben ohnehin anhand der METAR-Zeit,
+    // welcher der beiden Werte tatsächlich aktueller ist — unabhängig
+    // davon, welcher zuerst eintrifft.
   }, [dptIcao, arrIcao, fetchOne]);
 
   async function handleRefresh() {
     if (refreshing) return;
-    setRefreshing(true);
     await Promise.all([
-      dptIcao ? fetchOne(dptIcao, setDpt) : Promise.resolve(),
-      arrIcao ? fetchOne(arrIcao, setArr) : Promise.resolve(),
+      dptIcao ? fetchOne(dptIcao, setDpt, aktuelleDptIcao) : Promise.resolve(),
+      arrIcao ? fetchOne(arrIcao, setArr, aktuelleArrIcao) : Promise.resolve(),
     ]);
-    setRefreshing(false);
   }
 
   return (

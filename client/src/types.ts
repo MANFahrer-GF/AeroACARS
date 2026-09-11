@@ -429,6 +429,15 @@ export interface ActiveFlightInfo {
    *  banner scale its V/S thresholds (gs_factor = tan(g)/tan(3°)) like the
    *  post-flight scorer. null → unknown/implausible → banner uses 3° default. */
   approach_glideslope_angle: number | null;
+  /** v1.5.1 (F2): decoded departure METAR, fetched automatically at
+   *  Boarding/Takeoff by the backend (`maybe_spawn_metar_fetch`) — already
+   *  cached here before `WeatherBriefing` ever mounts. `null` until the
+   *  first successful fetch. */
+  dep_metar_decoded?: MetarSnapshotDto | null;
+  /** v1.5.1 (F2): decoded arrival METAR, refreshed automatically by the
+   *  backend at Descent ("early") and again at Final — independent of
+   *  whether the Cockpit tab is open. See [[dep_metar_decoded]]. */
+  arr_metar_decoded?: MetarSnapshotDto | null;
   /** ISO-8601 UTC timestamp of the most recent successful
    *  position-post, or null if none has succeeded yet. */
   last_position_at: string | null;
@@ -607,6 +616,37 @@ export interface PausedSnapshot {
   altitude_ft: number;
   fuel_total_kg: number;
   zfw_kg: number | null;
+}
+
+/** Decoded METAR, mirrors Rust's `metar::MetarSnapshot`. Shared shape for
+ *  both the backend-prefetched value on `ActiveFlightInfo`
+ *  (`dep_metar_decoded`/`arr_metar_decoded`) and a manual `metar_get` call —
+ *  `WeatherBriefing` reads from either source into the same state. */
+export interface MetarSnapshotDto {
+  icao: string;
+  raw: string;
+  time: string;
+  /** `true`, wenn `time` NICHT die von der Station gemeldete
+   *  Beobachtungszeit ist, sondern der Zeitpunkt unseres Abrufs (Rust-
+   *  Fallback bei fehlender/unparsbarer `obsTime`, siehe `metar`-Crate).
+   *  `WeatherBriefing`s `wendeAn` behandelt einen geschätzten Wert
+   *  entsprechend vorsichtig — er überschreibt nie einen bereits
+   *  gezeigten ECHTEN Beobachtungswert. */
+  time_is_estimated: boolean;
+  wind_direction_deg: number | null;
+  wind_speed_kt: number | null;
+  gust_kt: number | null;
+  visibility_m: number | null;
+  temperature_c: number | null;
+  dewpoint_c: number | null;
+  qnh_hpa: number | null;
+  /** v1.5.2 (#hud-metar): NOAAs dekodiertes Wetterphänomen ("-SHRA" etc.).
+   *  `#[serde(skip_serializing_if)]` auf der Rust-Seite lässt das Feld bei
+   *  `None` ganz weg — deshalb optional, nicht `| null`. */
+  weather?: string;
+  /** v1.5.2 (#hud-metar): Wolkenschichten in Meldungsreihenfolge. Aus
+   *  demselben Grund optional statt eines leeren Arrays bei „keine". */
+  cloud_layers?: Array<{ cover: string; base_ft?: number }>;
 }
 
 export interface AirportInfo {

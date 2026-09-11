@@ -101,6 +101,17 @@ pub struct MetarSnapshot {
     pub icao: String,
     pub raw: String,
     pub time: DateTime<Utc>,
+    /// `true`, wenn `time` NICHT die von der Station gemeldete
+    /// Beobachtungszeit ist, sondern der Zeitpunkt unseres Abrufs — der
+    /// Fallback, wenn NOAAs `obsTime` fehlt oder nicht parsebar war (siehe
+    /// `fetch_metar_once`). Ununterscheidbar wären beide sonst dasselbe
+    /// Feld mit unterschiedlicher Bedeutung: „die Station hat gerade
+    /// gemeldet" vs. „wir haben gerade gefragt". Codex-Befund 2026-09-11
+    /// (sechste QS-Runde zu `WeatherBriefing.tsx`s `wendeAn`-Vergleich):
+    /// ein Abruf-Zeitstempel könnte einen echten, aber älter datierten
+    /// Bericht einer anderen Station fälschlich als "neuer" erscheinen
+    /// lassen, wenn beide blind über `time` verglichen werden.
+    pub time_is_estimated: bool,
     pub wind_direction_deg: Option<f32>,
     pub wind_speed_kt: Option<f32>,
     pub gust_kt: Option<f32>,
@@ -221,10 +232,9 @@ async fn fetch_metar_once(icao: &str) -> Result<MetarSnapshot, MetarError> {
         .map_err(|e| MetarError::Parse(e.to_string()))?;
     let raw = pick_latest(list).ok_or_else(|| MetarError::NotFound(icao.clone()))?;
 
-    let time = raw
-        .obs_time
-        .and_then(|s| Utc.timestamp_opt(s, 0).single())
-        .unwrap_or_else(Utc::now);
+    let echte_beobachtungszeit = raw.obs_time.and_then(|s| Utc.timestamp_opt(s, 0).single());
+    let time_is_estimated = echte_beobachtungszeit.is_none();
+    let time = echte_beobachtungszeit.unwrap_or_else(Utc::now);
 
     let wind_direction_deg = match raw.wdir {
         Some(WindDir::Numeric(n)) => Some(n),
@@ -236,6 +246,7 @@ async fn fetch_metar_once(icao: &str) -> Result<MetarSnapshot, MetarError> {
         icao: raw.icao_id.unwrap_or(icao),
         raw: raw.raw_ob.unwrap_or_default(),
         time,
+        time_is_estimated,
         wind_direction_deg,
         wind_speed_kt: raw.wspd,
         gust_kt: raw.wgst,
@@ -315,6 +326,7 @@ mod decoded_wx_tests {
     fn snapshot_serialises_new_fields_for_the_panel() {
         let snap = MetarSnapshot {
             icao: "EDDB".into(), raw: "x".into(), time: Utc::now(),
+            time_is_estimated: false,
             wind_direction_deg: Some(260.0), wind_speed_kt: Some(12.0), gust_kt: None,
             visibility_m: Some(9999), temperature_c: Some(30.0), dewpoint_c: Some(13.0),
             qnh_hpa: Some(1011.0),
@@ -325,6 +337,32 @@ mod decoded_wx_tests {
         assert!(js.contains("\"weather\":\"-SHRA\""), "{js}");
         assert!(js.contains("\"cloud_layers\""), "{js}");
         assert!(js.contains("\"base_ft\":1200"), "{js}");
+    }
+
+    /// `time_is_estimated` muss unterscheiden, ob `time` von der Station
+    /// stammt oder ein Abruf-Fallback ist — dieselbe Logik wie in
+    /// `fetch_metar_once`, hier isoliert getestet (kein Netzaufruf nötig).
+    #[test]
+    fn time_is_estimated_reflects_whether_obs_time_was_present() {
+        fn zeit_und_geschaetzt(obs_time: Option<i64>) -> (DateTime<Utc>, bool) {
+            let echte_beobachtungszeit = obs_time.and_then(|s| Utc.timestamp_opt(s, 0).single());
+            let time_is_estimated = echte_beobachtungszeit.is_none();
+            (echte_beobachtungszeit.unwrap_or_else(Utc::now), time_is_estimated)
+        }
+
+        // Echte, parsebare obs_time → keine Schätzung.
+        let (t, geschaetzt) = zeit_und_geschaetzt(Some(1_770_000_000));
+        assert!(!geschaetzt);
+        assert_eq!(t.timestamp(), 1_770_000_000);
+
+        // Fehlende obs_time → Fallback auf jetzt, als Schätzung markiert.
+        let (_, geschaetzt) = zeit_und_geschaetzt(None);
+        assert!(geschaetzt);
+
+        // Unparsebare (aus dem Wertebereich fallende) obs_time → ebenso
+        // eine Schätzung, nicht stillschweigend als echt behandelt.
+        let (_, geschaetzt) = zeit_und_geschaetzt(Some(i64::MAX));
+        assert!(geschaetzt);
     }
 }
 

@@ -672,7 +672,12 @@ export function ActiveFlightPanel({
         <LoadsheetMonitor info={info} />
       </div>
 
-      <WeatherBriefing dptIcao={info.dpt_airport} arrIcao={info.arr_airport} />
+      <WeatherBriefing
+        dptIcao={info.dpt_airport}
+        arrIcao={info.arr_airport}
+        prefetchedDpt={info.dep_metar_decoded}
+        prefetchedArr={info.arr_metar_decoded}
+      />
 
       {refreshMsg && (
         <div className="active-flight__refresh-msg" role="status">
