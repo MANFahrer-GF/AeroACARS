@@ -332,6 +332,38 @@ const TABELLE: &[(&str, f64, f64)] = &[
     ("BE35", 2.90, 10.00),  // Bonanza 35
     ("B36", 3.10, 10.21),   // Bonanza A36, zweite Schreibweise zu BE36
     ("B58T", 3.20, 11.53),  // Baron 58TC, zweite Schreibweise zu BE58
+    // GSG1152 (Sven M., 2026-09-11): Duke fehlte, „Spurweite nicht
+    // hinterlegt". Beide Werte aus dem Original — Beechcraft Duke 60
+    // Series Maintenance Manual, Kapitel 6 „Dimensions and Areas",
+    // Figure 1 „Aircraft Dimensions" (Nov 2/73), Frontansicht: Spurweite
+    // 11'2.4" = 3,414 m, Spannweite 39'3.25" = 11,97 m (deckt sich mit
+    // Wikipedia/flugzeuginfo.net). Keine geschaetzte Ableitung von der
+    // Baron (BE58) — der Grundsatz dieser Datei gilt: im Zweifel `None`.
+    ("BE60", 3.41, 11.97), // Duke 60/A60/B60
+    //
+    // Nachtrag beim GSG1152-Fix (2026-09-11): Diff des LIVE-Bestands gegen
+    // den 23.08.-Schnappschuss (`tests/daten/gsg-flotte.txt`, siehe dort
+    // fuer das Neu-Erzeugen-Rezept) fand 13 neue Subfleet-Muster seit
+    // damals. Zehn davon waren Namensschema-Artefakte (z.B. "B739ER" als
+    // Subfleet-Code, aber echtes `Aircraft.icao` = "B739", laengst
+    // hinterlegt) — die eigentliche Landequelle ist NIE der Subfleet-Code,
+    // sondern `Aircraft.icao` (derselbe Fehlschluss wie beim A306-Fall).
+    // Drei echte Luecken blieben:
+    ("GA8", 2.79, 12.41), // GippsAero Airvan — GA8 Owners/Pilots Info
+    // Manual (GA-FM-04), Figure 1-1 "Three View of the GA8": Spurweite
+    // 110,0 in [2794 mm], Spannweite 488,68 in [12412 mm]. Zweite,
+    // unabhaengige Quelle (GA8-TC-320-Datenblatt) bestaetigt 9'2" = 2,8 m.
+    ("YK18", 3.12, 11.16), // Jakowlew Jak-18T (NICHT die alte
+    // Spornrad-Jak-18/18A — andere Bauform, andere Spurweite). GSGs
+    // HA-YAJ ist real als Jak-18T dokumentiert (airhistory.net). Werte
+    // vom Hersteller selbst, Smolensker Flugzeugwerk (smaz.ru): Spurweite
+    // 3,12 m, Spannweite 11,16 m.
+    //
+    // DA50 (Diamond DA50 RG) bewusst NICHT eingetragen: Spannweite
+    // gesichert (13,41 m, EASA-Musterzulassung EASA.A.639), aber die
+    // Spurweite steht in keiner oeffentlich zugaenglichen Quelle — bei
+    // CS-23-Mustern ist sie typischerweise kein Pflichtfeld der
+    // Musterzulassung. Grundsatz dieser Datei: im Zweifel `None`.
     ("P28R", 3.20, 10.67),  // Piper Arrow
     ("E135", 4.10, 20.04),  // ERJ-135
     ("E145", 4.10, 20.04),  // ERJ-145
@@ -370,6 +402,30 @@ mod tests {
     }
 
     #[test]
+    fn gsg1152_die_duke() {
+        // Der Auslöser: Sven M., BE60 (Beechcraft Duke), 2026-09-11 —
+        // "Spurweite dieses Musters ist nicht hinterlegt". Werte aus dem
+        // Original: Beechcraft Duke 60 Series Maintenance Manual, Kapitel
+        // 6, Figure 1 (11'2.4" Spurweite, 39'3.25" Spannweite).
+        assert_eq!(spurweite_m(Some("BE60")), Some(3.41));
+        assert_eq!(spurweite_m(Some("be60")), Some(3.41), "Kleinschreibung");
+    }
+
+    #[test]
+    fn gsg1152_nachtrag_drei_weitere_echte_luecken() {
+        // Beim GSG1152-Fix aufgedeckt: Diff des LIVE-phpVMS-Bestands gegen
+        // den 23.08.-Schnappschuss fand 13 neue Subfleet-Muster, davon 3
+        // echte Luecken (10 waren Subfleet-Namensschema-Artefakte, siehe
+        // Kommentar an der Tabelle). GA8: Owners/Pilots Info Manual
+        // Figure 1-1. YK18 (Jak-18T, nicht die alte Jak-18/18A):
+        // Hersteller-Datenblatt smaz.ru.
+        assert_eq!(spurweite_m(Some("GA8")), Some(2.79));
+        assert_eq!(spurweite_m(Some("YK18")), Some(3.12));
+        // DA50 bewusst NICHT eingetragen — siehe Kommentar an der Tabelle.
+        assert_eq!(spurweite_m(Some("DA50")), None, "Spurweite unbelegt, bleibt None");
+    }
+
+    #[test]
     fn stimmt_mit_den_flugzeugdateien_ueberein() {
         // Gegengeprüft an echten X-Plane-.acf-Dateien (23.08.2026):
         // Zibo 737-800  = 18,90 ft = 5,76 m   (Tabelle 5,72 — real)
@@ -387,6 +443,7 @@ mod tests {
         for icao in [
             "BCS3", "A320", "A21N", "A333", "A343", "B738", "B744", "B748", "B763", "B77W", "B78X",
             "MD11", "AT76", "E195", "CRJ9", "C172", "C182", "P180", "FA50", "C680", "SF50", "L101",
+            "BE60", "GA8", "YK18",
         ] {
             assert!(
                 spurweite_m(Some(icao)).is_some(),
@@ -476,7 +533,27 @@ mod tests {
         // Note.
         //
         // Geprueft gegen die echte Flotte aus phpVMS, nicht gegen eine
-        // Auswahl. Beim Abgleich am 23.08.2026 fehlten 25 von 93 Mustern.
+        // Auswahl. Beim Abgleich am 23.08.2026 fehlten 25 von 93 Mustern,
+        // beim Nachtrag zu GSG1152 (11.09.2026) drei weitere (siehe Kommentar
+        // an der Liste selbst: die alte Liste war ausserdem aus dem falschen
+        // Feld erzeugt, `phpvmssubfleets.type` statt `Aircraft.icao`).
+        //
+        // `BEKANNTE_LUECKEN`: bewusst dokumentierte, noch ungeloeste Faelle
+        // — NICHT stillschweigend uebersprungen, sondern explizit benannt,
+        // damit diese Prüfung weiter jedes NEUE fehlende Muster faengt, ohne
+        // wegen eines bereits bekannten, recherchierten Falls dauerhaft rot
+        // zu bleiben. Ein Muster hier zu listen ist keine Bequemlichkeit —
+        // jeder Eintrag braucht denselben Rechercheaufwand wie ein echter
+        // Tabelleneintrag, nur dass das Ergebnis "nicht auffindbar" war.
+        const BEKANNTE_LUECKEN: &[&str] = &[
+            // Diamond DA50 RG: Spannweite gesichert (EASA-Musterzulassung
+            // EASA.A.639, 13,41 m), aber die Spurweite steht in keiner
+            // oeffentlich zugaenglichen Quelle (Hersteller-Datenblaetter,
+            // AFM/POH-Auszuege, AOPA-Guide — keine zeigt eine Frontansicht
+            // mit Spurweiten-Bemassung). CS-23-Musterzulassungen fuehren das
+            // Mass typischerweise gar nicht. Recherchiert 2026-09-11.
+            "DA50",
+        ];
         let liste = include_str!("../tests/daten/gsg-flotte.txt");
         let mut fehlend: Vec<(&str, u32)> = Vec::new();
         for zeile in liste.lines() {
@@ -488,6 +565,9 @@ mod tests {
             let (Some(muster), anzahl) = (teile.next(), teile.next()) else {
                 continue;
             };
+            if BEKANNTE_LUECKEN.contains(&muster) {
+                continue;
+            }
             if spurweite_m(Some(muster)).is_none() {
                 fehlend.push((muster, anzahl.and_then(|a| a.parse().ok()).unwrap_or(0)));
             }
