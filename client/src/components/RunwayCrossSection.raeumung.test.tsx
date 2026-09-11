@@ -11,19 +11,41 @@ import { render } from "@testing-library/react";
 import { erzeugeProjektion } from "../lib/runwayProjection";
 import { RunwayCrossSection } from "./RunwayCrossSection";
 
-const TOKENS = {
-  tdOk: "#22c55e",
-  tdWarn: "#f59e0b",
-  tdBad: "#ef4444",
+// Echte Feldnamen aus `RunwayCrossSection`s `tokens`-Prop (vorher `tdOk`/
+// `tdBad`/`grid`/`text`/`bahn` — keines davon existiert dort; per
+// `as unknown`-Zwang unbemerkt geblieben, Codex-Befund dritte Runde).
+// Werte wie in `RunwayDiscipline.test.tsx` (TOKENS dort), um `rollweg`/
+// `rollwegRand` ergänzt.
+const TOKENS: Parameters<typeof RunwayCrossSection>[0]["tokens"] = {
+  tarmac: "#1e293b",
+  tarmacBorder: "#475569",
+  centerline: "#e2e8f0",
   rollout: "#38bdf8",
-  grid: "#334155",
-  text: "#94a3b8",
-  bahn: "#1e293b",
-} as unknown as Parameters<typeof RunwayCrossSection>[0]["tokens"];
+  tdPerfect: "#22c55e",
+  tdWarn: "#f59e0b",
+  tdSevere: "#ef4444",
+  rollweg: "#38bdf8",
+  rollwegRand: "#0ea5e9",
+};
 
-/** EGAC 04 wie im Bestand: 1829 m lang, 45,1 m breit. */
+/** EGAC 04 wie im Bestand: 1829 m lang, 45,1 m breit, keine versetzte
+ *  Schwelle. `padX`/`innerW` wie in `RunwayDiscipline.test.tsx` (eddh23).
+ *
+ *  ⚠ Vorher `laengeM`/`breiteM`/`width` — keines davon ist ein Feld von
+ *  `ProjektionsEingang` (das sind `lengthM`/`ddsM`/`padX`/`innerW`). Die
+ *  Projektion (`p.projektion.mAbBahnanfangZuX`, bestimmt `cx`) wurde
+ *  dadurch intern `NaN` — `cy` NICHT, die kommt aus `querZuY`, das nur
+ *  `runwayWidthM` braucht (separates Prop, unabhängig von der kaputten
+ *  Projektion). Die Tests unten prüfen ausschliesslich `cy` und blieben
+ *  deshalb zufällig grün, obwohl `cx` längst `NaN` war — unbemerkt auch
+ *  deshalb, weil Testdateien nicht von der vollen `tsc`-Prüfung erfasst
+ *  werden (Codex-Befund 2026-09-11, beim Kopieren desselben Musters in
+ *  eine neue Testdatei gefunden — vorherige Fassung dieses Kommentars
+ *  hatte `cy` fälschlich mit betroffen). Deshalb unten ein eigener
+ *  Finite-Check auf `cx`, der unter der alten, kaputten Projektion
+ *  fehlgeschlagen wäre. */
 function egac04() {
-  return erzeugeProjektion({ laengeM: 1829, breiteM: 45.1, width: 1200 });
+  return erzeugeProjektion({ lengthM: 1829, ddsM: 0, padX: 70, innerW: 1060 });
 }
 
 const SPUR = [
@@ -86,5 +108,21 @@ describe("Räumungsmarke", () => {
     // unkommentiert auf und der Leser sucht das Flugzeug.
     const ohne = marken(zeichne(null).container).length;
     expect(ohne).toBeGreaterThanOrEqual(2);
+  });
+
+  it("projiziert cx auf echte, im Zeichenbereich liegende Werte", () => {
+    // Gegenprobe zu `cy` oben: `cx` kommt aus der Projektion
+    // (`erzeugeProjektion`), nicht aus `runwayWidthM` — bei kaputten
+    // Projektions-Parametern (der Fehler von 2026-09-11) wäre `cx`
+    // ausschliesslich `NaN` gewesen, ohne dass irgendeine Assertion in
+    // dieser Datei das bemerkt hätte.
+    const xs = marken(zeichne("right").container).map((m) => m.x);
+    expect(xs.length).toBeGreaterThan(0);
+    for (const x of xs) {
+      expect(Number.isFinite(x)).toBe(true);
+      // padX=70, innerW=1060 → Zeichenbereich [70, 1130].
+      expect(x).toBeGreaterThanOrEqual(70);
+      expect(x).toBeLessThanOrEqual(1130);
+    }
   });
 });

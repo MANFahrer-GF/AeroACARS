@@ -348,10 +348,17 @@ export function RunwayCrossSection(p: QueransichtProps) {
   // sichtbar, unabhängig davon, ob der Abschnitt in die Note eingeht. Erst
   // jenseits der Kante wird sie abgesetzt: Dort ist das Flugzeug nicht mehr
   // auf der Bahn, und die Ansicht zeigt nur noch, wohin es gerollt ist.
-  const trennIdx =
+  // Codex-Befund 2026-09-11: `findIndex` liefert -1, wenn der Räumpunkt
+  // hinter allen Samples liegt (die Aufzeichnung endete davor). Vorher
+  // wurde -1 durch `Math.max(1, ...)` zu 1 — fast die GESAMTE Spur wäre
+  // dann fälschlich "danach" (ungewertet, gestrichelt) gewesen, obwohl der
+  // Räumpunkt in den Daten nie erreicht wird. Ohne Treffer bleibt es beim
+  // bisherigen Verhalten für "kein Räumpunkt bekannt": alles gewertet.
+  const ersterDanachIdx =
     p.clearanceM != null
-      ? Math.max(1, punkte.findIndex((s) => s.laengs_m >= p.clearanceM!))
-      : punkte.length;
+      ? punkte.findIndex((s) => s.laengs_m >= p.clearanceM!)
+      : -1;
+  const trennIdx = ersterDanachIdx >= 0 ? Math.max(1, ersterDanachIdx) : punkte.length;
   const gewertet = trennIdx >= punkte.length ? achsePunkte : achsePunkte.slice(0, trennIdx + 1);
   const mittelPfad = gewertet.length >= 2 ? weicherPfad(gewertet) : null;
   // Die Spur endet am Bildrand — sie legt sich nicht an ihn.
@@ -375,6 +382,44 @@ export function RunwayCrossSection(p: QueransichtProps) {
   const danachSichtbar = amRandAbschneiden(danachRoh, sichtbarM).map((s) => xy(s));
   const nachPfad =
     danachSichtbar.length >= 2 ? weicherPfad(danachSichtbar) : null;
+
+  // ── Realer Ausschlag jenseits des Bildrands ──────────────────────────
+  //
+  // Fund 2026-09-11 (UAE420, A388, YPPH RWY03): Die Spur bog nach dem
+  // Räumen real und plausibel bis 100,3 m aus (27 saubere, aufeinander
+  // aufbauende Proben, kein Sprung) — auf einer Bahn mit ≈23 m sichtbarem
+  // Streifen bricht `amRandAbschneiden` davon fast alles ab. Übrig bleibt
+  // ein kurzer Knick statt einer erkennbaren Kurve.
+  //
+  // Zwei naheliegende "Reparaturen" scheiden aus eigener Vorgeschichte
+  // aus: geklemmt weiterzeichnen ist der DLH369-Fund von oben (liest sich
+  // als Fahrt entlang der Kante — falsche Aussage), und die Achse für
+  // diese eine Landung aufziehen bricht den bewusst FESTEN, zwischen
+  // Landungen vergleichbaren Maßstab (siehe `pxProQuerM` oben).
+  //
+  // Bleibt: nichts an der Zeichnung ändern, aber die Lücke benennen. Die
+  // Zahl steht ohnehin schon in den Rohdaten — sie muss nur sichtbar
+  // werden, statt dass die Linie kommentarlos aufhört.
+  //
+  // ⚠ NICHT aus `danachRoh` (dritte Codex-Runde): `trennIdx` erzwingt via
+  // `Math.max(1, ...)` mindestens einen Punkt im gewerteten Teil, damit
+  // die durchgezogene Linie nie unter zwei Stützpunkte fällt — eine reine
+  // Zeichen-Regel. Liegt der Räumpunkt schon beim ALLERERSTEN Sample
+  // (`ersterDanachIdx === 0`), rutscht dieses eine Sample dadurch mit in
+  // den gewerteten Teil und fehlt in `danachRoh` — der reale Höchstwert
+  // würde unterschlagen, wenn ausgerechnet dieses erste Sample der
+  // größte Ausschlag wäre. Der echte Trennpunkt für die MESSUNG ist
+  // `ersterDanachIdx`, nicht die um die Zeichen-Regel bereinigte Fassung.
+  const danachRohFuerMax = ersterDanachIdx >= 0 ? punkte.slice(ersterDanachIdx) : [];
+  const danachMaxAbsM = danachRohFuerMax.length
+    ? Math.max(...danachRohFuerMax.map((s) => Math.abs(s.quer_m)))
+    : 0;
+  // Dieselbe Schwelle wie `amRandAbschneiden` (`> sichtbarM`, kein Epsilon)
+  // — sonst gäbe es eine stille Fünf-Zentimeter-Zone, in der die Linie
+  // schon abgeschnitten ist, aber der Hinweis noch nicht erscheint
+  // (Codex-Befund 2026-09-11).
+  const danachAbgebrochen = danachMaxAbsM > sichtbarM;
+  const abbruchPunkt = danachSichtbar[danachSichtbar.length - 1] ?? gewertet[gewertet.length - 1];
 
   // ── Farbe des Bandes — dieselbe Rangfolge wie die Bewertung ──────────
   //
@@ -842,6 +887,53 @@ export function RunwayCrossSection(p: QueransichtProps) {
           strokeLinecap="round"
         />
       )}
+      {/* Realer Ausschlag jenseits des Bildrands — siehe `danachAbgebrochen`
+          oben. Die Linie hört am Rand auf (bewusst, DLH369-Fund), aber ohne
+          diesen Hinweis liest sich das Ende wie das Ende der Bewegung statt
+          wie das Ende der Zeichnung. */}
+      {danachAbgebrochen && abbruchPunkt && (() => {
+        const hinweisText = t("runway_v2.spur_ausser_bild", {
+          defaultValue: "Spur läuft weiter — real bis {{m}} m",
+          m: danachMaxAbsM.toFixed(0),
+        });
+        // Aus der TATSÄCHLICHEN Textlänge berechnet statt fester Zahl
+        // (Codex-Befund 2026-09-11 zu einer festen 120-px-Fassung: reichte
+        // bei der italienischen Übersetzung, ~52 Zeichen, rechnerisch
+        // nicht). Derselbe Faktor `ZEICHENBREITE` (0,62), mit dem diese
+        // Datei sonst Textbreiten schätzt (`mindestAbstandPx` weiter
+        // unten, gegen `RunwayLesbarkeit.test.tsx` verifiziert) — zwei
+        // verschiedene Annahmen über dieselbe Schrift wären sonst
+        // Zufall, kein Beleg. `LUFT_PX` als Reserve, kein eigener Wert.
+        const halbeTextbreitePx = (hinweisText.length * sf(9) * ZEICHENBREITE) / 2 + LUFT_PX;
+        // Zweite Codex-Runde: Bei sehr schmalem `p.width` (oder sehr
+        // langem Text) kann `SKALA_X + halbeTextbreitePx` über
+        // `p.width - halbeTextbreitePx` hinauswachsen — dann würden sich
+        // die beiden Grenzen von `Math.min(Math.max(...))` vertauschen
+        // und ein unsinniger Wert herauskommen. Reicht der Platz nicht,
+        // wird stattdessen auf der Bildmitte zentriert — besser als eine
+        // vertauschte, unsinnige Position.
+        const minX = SKALA_X + halbeTextbreitePx;
+        const maxX = p.width - halbeTextbreitePx;
+        const textX = minX <= maxX ? Math.min(Math.max(abbruchPunkt.x, minX), maxX) : p.width / 2;
+        return (
+          <text
+            x={textX}
+            y={Math.min(Math.max(abbruchPunkt.y + (abbruchPunkt.y >= mitteY ? 14 : -8), 16), H - 6)}
+            textAnchor="middle"
+            fontSize={sf(9)}
+            fill={bandFarbe}
+            opacity={0.85}
+            // Eigenes Attribut statt einer abweichenden fontSize (Codex-
+            // Befund): `RunwayQS.test.tsx` zaehlt Ausfahrts-Beschriftungen
+            // ueber `font-size="9"` — dieser Hinweis ist keine und markiert
+            // sich stattdessen selbst, damit der Zaehler ihn ausschliessen
+            // kann statt dass wir die Schriftgroesse verstellen.
+            data-annotation="spur-ausser-bild"
+          >
+            {hinweisText}
+          </text>
+        );
+      })()}
       {/* Die Messpunkte selbst — sonst ist nicht zu sehen, worauf die Kurve
           beruht. Ein geglätteter Verlauf ohne sichtbare Stützstellen sieht
           aus wie ein Modell; er ist aber eine Messung. */}

@@ -1993,6 +1993,7 @@
     "cross_exaggeration": "{{f}}× überhöht · in sich maßstäblich",
     "cross_section_aria": "Queransicht der Bahn mit dem gefahrenen Streifen",
     "cross_title": "QUER — WO DIE RÄDER LIEFEN",
+    "spur_ausser_bild": "Spur läuft weiter — real bis {{m}} m",
     "mark": {
       "touchdown": "Aufsetzen",
       "past_threshold": "hinter der Schwelle",

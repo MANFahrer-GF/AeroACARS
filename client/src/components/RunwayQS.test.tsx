@@ -1147,9 +1147,16 @@ describe("Marke des grössten Versatzes", () => {
  * Seither wird intern gezählt und der Name erst am Schluss gesetzt.
  */
 describe("Ausfahrten: die Zahl im Bild", () => {
-  /** Nur die Ausfahrtsbeschriftungen — die Skala trägt dieselben Ziffern. */
+  /** Nur die Ausfahrtsbeschriftungen — die Skala trägt dieselben Ziffern.
+   *  `data-annotation`-Texte (z. B. der "Spur läuft weiter"-Hinweis) tragen
+   *  dieselbe Schriftgröße, sind aber keine Ausfahrt — ausgeschlossen. */
   const ausfahrtsTexte = (mk: string) =>
     [...mk.matchAll(/<text[^>]*font-size="9"[^>]*>([\s\S]*?)<\/text>/g)]
+      // Auf den konkreten Wert geprüft, nicht nur die Anwesenheit des
+      // Attributs (Codex-Befund, fünfte Runde): sonst würde ein künftiger,
+      // ANDERER `data-annotation`-Hinweis (der eigentlich eine Ausfahrt
+      // sein könnte) hier versehentlich mit ausgeschlossen.
+      .filter((m) => !/data-annotation="spur-ausser-bild"/.test(m[0]))
       .map((m) => m[1]!.replace(/<[^>]+>/g, "").trim())
       .filter(Boolean);
 

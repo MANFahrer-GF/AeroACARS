@@ -1993,6 +1993,7 @@
     "cross_exaggeration": "{{f}}× exaggerated · internally to scale",
     "cross_section_aria": "Cross section of the runway with the track driven",
     "cross_title": "CROSS SECTION — WHERE THE WHEELS RAN",
+    "spur_ausser_bild": "Track continues — real offset up to {{m}} m",
     "mark": {
       "touchdown": "Touchdown",
       "past_threshold": "past the threshold",
