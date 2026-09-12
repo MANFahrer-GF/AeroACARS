@@ -3548,23 +3548,41 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // is currently playing"). Fuer uns zaehlt nur, DASS einer laeuft.
     // Bewusst ohne Ursachen-Aufschluesselung: `takeoff_config_warning`
     // ist ein Bool, und eine erfundene Rangfolge waere nicht belegbar.
-    let takeoff_config_warning = if is_synaptic_a220 {
-        Some(
-            t.syn_aural_cfg_flaps != 0.0
-                || t.syn_aural_cfg_spoilers != 0.0
-                || t.syn_aural_cfg_trim != 0.0
-                || t.syn_aural_cfg_brakes != 0.0
-                || t.syn_aural_cfg_thrust_lever != 0.0,
-        )
+    //
+    // WARUM `Some(true)` ODER `None` — und NIE `Some(false)` (QS-Befund
+    // des unabhaengigen Reviews): ein Aural-LVar ist nur im Moment des
+    // Rufs 1. Liest er 0, heisst das ENTWEDER "kein Alarm" ODER
+    // "SimConnect hat den Kanal abgelehnt" (aeltere Paketversion) — der
+    // Parser laesst ein fehlendes Feld auf seinem Default 0.0 stehen,
+    // beide Faelle sehen identisch aus. `Some(false)` waere damit eine
+    // belegte Entwarnung fuer einen Zustand, den wir nicht kennen; bei
+    // einem Warnfeld ist das die falsche Richtung zu irren. `None`
+    // heisst ehrlich "wir wissen es nicht".
+    //
+    // Das kostet nachweislich nichts: der Client loggt nur den Wechsel
+    // NACH true ("TAKEOFF CONFIG warning"); das Zuruecknehmen ist dort
+    // ausdruecklich kein Logeintrag ("pilot fixed it" doesn't warrant a
+    // log line). Zeigt der erste echte A220-Flug, dass die Kanaele
+    // ankommen, kann man auf `Some(bool)` hochstufen — dann ist das
+    // belegt statt angenommen.
+    let takeoff_config_warning = if is_synaptic_a220
+        && (t.syn_aural_cfg_flaps != 0.0
+            || t.syn_aural_cfg_spoilers != 0.0
+            || t.syn_aural_cfg_trim != 0.0
+            || t.syn_aural_cfg_brakes != 0.0
+            || t.syn_aural_cfg_thrust_lever != 0.0)
+    {
+        Some(true)
     } else {
         None
     };
 
     // v1.7.x: TAWS-Gleitwegabweichung. Der A220 meldet sie als
     // laufenden "GLIDESLOPE"-Ruf — semantisch dasselbe, was PMDG als
-    // `below_gs_alert` liefert.
-    let below_gs_alert = if is_synaptic_a220 {
-        Some(t.syn_aural_glideslope != 0.0)
+    // `below_gs_alert` liefert. Gleiche Some(true)/None-Regel wie beim
+    // Startkonfigurations-Alarm darueber, aus demselben Grund.
+    let below_gs_alert = if is_synaptic_a220 && t.syn_aural_glideslope != 0.0 {
+        Some(true)
     } else {
         None
     };
@@ -6900,11 +6918,11 @@ mod tests {
             assert_eq!(snap.takeoff_config_warning, Some(true));
         }
 
-        // Stille = kein Alarm, aber ein BELEGTES false (nicht None) —
-        // der Unterschied zaehlt: None heisst "wir wissen es nicht".
+        // Stille heisst None, NICHT Some(false): ein abgelehnter Kanal
+        // liest ebenfalls 0 und darf keine Entwarnung vortaeuschen.
         let t = synaptic_a220_telemetry();
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.takeoff_config_warning, Some(false));
+        assert_eq!(snap.takeoff_config_warning, None);
     }
 
     #[test]
@@ -6921,7 +6939,7 @@ mod tests {
         // Alles in Ruhelage.
         let t = synaptic_a220_telemetry();
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.below_gs_alert, Some(false));
+        assert_eq!(snap.below_gs_alert, None, "Stille ist keine Entwarnung");
         assert_eq!(snap.apu_switch, Some(false));
         assert_eq!(snap.wing_anti_ice, Some(false));
     }
