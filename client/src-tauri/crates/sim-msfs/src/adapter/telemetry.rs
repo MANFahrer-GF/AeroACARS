@@ -797,8 +797,14 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:A22X Engine 2 Reverser", "Number"),
     // Spoiler-/Speedbrake-Hebel 0..1 (Doku: "written for animation").
     F::f64("L:A22X Spoiler Lever", "Number"),
-    // Parkbremse als kommandierter Hebelzustand (Doku: Bool).
-    F::f64("L:A22X Parking Brake", "Bool"),
+    // BEWUSST NICHT AUFGENOMMEN: `L:A22X Parking Brake`. Der Kanal
+    // existiert und ist dokumentiert, aber der v1.3.5-Feldbefund
+    // (31.07.2026, Gruppe I oben) hat am echten Flug festgestellt, dass
+    // die generischen SimVars beim A220 genau fuer Fahrwerk UND
+    // Parkbremse KORREKT lesen. Ein Override haette also keinen
+    // belegten Fehler behoben, aber ein neues Risiko geschaffen: lehnt
+    // SimConnect den LVar ab, liest er 0 — und die Bremse meldete sich
+    // dauerhaft als geloest. Kein Beleg, kein Override.
     // Systemschalter mit dokumentierten Enums.
     F::f64("L:A22X APU Switch", "Enum"),
     F::f64("L:A22X Wing Anti Ice", "Enum"),
@@ -1250,7 +1256,6 @@ pub struct Telemetry {
     pub syn_eng1_reverser: f64,
     pub syn_eng2_reverser: f64,
     pub syn_spoiler_lever: f64,
-    pub syn_park_brake: f64,
     pub syn_apu_switch: f64,
     pub syn_wing_anti_ice: f64,
     pub syn_aural_cfg_flaps: f64,
@@ -1913,7 +1918,6 @@ impl Telemetry {
         pull_f64!(t.syn_eng1_reverser);
         pull_f64!(t.syn_eng2_reverser);
         pull_f64!(t.syn_spoiler_lever);
-        pull_f64!(t.syn_park_brake);
         pull_f64!(t.syn_apu_switch);
         pull_f64!(t.syn_wing_anti_ice);
         pull_f64!(t.syn_aural_cfg_flaps);
@@ -2764,14 +2768,9 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // Log: parking_brake=False bei real gesetzter Bremse). Skript
         // `(L:VC_PED_PARK_BRAKE_Switch) 0 == if{ released }` → !=0 = SET.
         t.fsl_park_brake_switch != 0.0
-    } else if is_synaptic_a220 {
-        // v1.7.x (#a220-vollausbau): eigener Hebel-LVar (Doku: Bool,
-        // "whether the parking brake is commanded on"). Gleiche
-        // Schwellen-Logik wie beim iFly, damit sowohl 0/1- als auch
-        // 0/100-Semantik richtig lesen — welche der A220 fuehrt, ist
-        // nicht dokumentiert und wird am ersten Flug gegengeprueft.
-        t.syn_park_brake >= 0.5
     } else {
+        // A220: bewusst KEIN Override — siehe Begruendung an
+        // `L:A22X Parking Brake` in TELEMETRY_FIELDS.
         t.parking_brake
     };
 
@@ -2781,10 +2780,17 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // override only takes over when Fenix is actually feeding values.
     let apu_switch = if is_fenix {
         t.fnx_apu_master as i32 != 0
-    } else if is_synaptic_a220 {
+    } else if is_synaptic_a220 && t.syn_apu_switch != 0.0 {
         // Doku-Enum: 0 = Off, 1 = Run, 2 = Start. Alles ueber Off zaehlt
         // als "Schalter an" — Run und Start sind beide nicht Off.
-        t.syn_apu_switch >= 1.0
+        //
+        // Die `!= 0.0`-Klammer im Gate (nicht im Rumpf) ist Absicht und
+        // folgt dem Fenix-Muster darueber: liest der LVar exakt 0, kann
+        // das "Off" ODER "SimConnect hat den LVar abgelehnt" heissen —
+        // beides faellt dann auf den Standard-SimVar zurueck, der bei
+        // echtem Off ohnehin dasselbe sagt. So kann ein fehlender Kanal
+        // niemals eine Regression gegenueber dem Stand ohne Profil sein.
+        true
     } else {
         t.apu_switch
     };
@@ -2851,11 +2857,13 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         t.fnx_wing_anti_ice as i32 != 0
     } else if is_a346 {
         t.a346_antiice_wing as i32 != 0
-    } else if is_synaptic_a220 {
+    } else if is_synaptic_a220 && t.syn_wing_anti_ice != 0.0 {
         // Doku-Enum: 0 = Off, 1 = Auto, 2 = On. AUTO zaehlt hier als
         // aktiv, weil der Enteiser dann selbsttaetig zuschaltet — das
         // ist dieselbe Lesart wie beim Pitot-Heat-Fix in v0.19.x.
-        t.syn_wing_anti_ice >= 1.0
+        // Gate-Klammer wie beim APU-Schalter oben: 0 faellt auf den
+        // Standard-SimVar zurueck statt ihn zu ueberschreiben.
+        true
     } else {
         t.structural_deice
     };
@@ -4490,9 +4498,9 @@ mod tests {
             }
         }
         // v1.5.3: +8 (ifly_park_brake_sw) +16 (flap raster); v1.6.12:
-        // +8 (SIMULATION RATE) +4 (IS SLEW ACTIVE); v1.7.x: +120
-        // (15 A220-Kanaele der Gruppe J).
-        assert_eq!(buf.len(), 3136, "total block size");
+        // +8 (SIMULATION RATE) +4 (IS SLEW ACTIVE); v1.7.x: +112
+        // (14 A220-Kanaele der Gruppe J).
+        assert_eq!(buf.len(), 3128, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -4728,7 +4736,7 @@ mod tests {
         assert_eq!(t.simulation_rate, 1299.0); // idx 299
         assert!(t.slew_active); // idx 300 (Int32, 300 != 0)
 
-        // ---- Synaptic A220 Vollausbau (idx 301..315, v1.7.x) ----
+        // ---- Synaptic A220 Vollausbau (idx 301..314, v1.7.x) ----
         // Steht HINTER dem Int32 — beweist zugleich, dass die 4-Byte-
         // Luecke die nachfolgenden f64-Offsets korrekt verschiebt.
         assert_eq!(t.syn_vapp, 1301.0); // idx 301
@@ -4737,15 +4745,14 @@ mod tests {
         assert_eq!(t.syn_eng1_reverser, 1304.0); // idx 304
         assert_eq!(t.syn_eng2_reverser, 1305.0); // idx 305
         assert_eq!(t.syn_spoiler_lever, 1306.0); // idx 306
-        assert_eq!(t.syn_park_brake, 1307.0); // idx 307
-        assert_eq!(t.syn_apu_switch, 1308.0); // idx 308
-        assert_eq!(t.syn_wing_anti_ice, 1309.0); // idx 309
-        assert_eq!(t.syn_aural_cfg_flaps, 1310.0); // idx 310
-        assert_eq!(t.syn_aural_cfg_spoilers, 1311.0); // idx 311
-        assert_eq!(t.syn_aural_cfg_trim, 1312.0); // idx 312
-        assert_eq!(t.syn_aural_cfg_brakes, 1313.0); // idx 313
-        assert_eq!(t.syn_aural_cfg_thrust_lever, 1314.0); // idx 314
-        assert_eq!(t.syn_aural_glideslope, 1315.0); // idx 315
+        assert_eq!(t.syn_apu_switch, 1307.0); // idx 307
+        assert_eq!(t.syn_wing_anti_ice, 1308.0); // idx 308
+        assert_eq!(t.syn_aural_cfg_flaps, 1309.0); // idx 309
+        assert_eq!(t.syn_aural_cfg_spoilers, 1310.0); // idx 310
+        assert_eq!(t.syn_aural_cfg_trim, 1311.0); // idx 311
+        assert_eq!(t.syn_aural_cfg_brakes, 1312.0); // idx 312
+        assert_eq!(t.syn_aural_cfg_thrust_lever, 1313.0); // idx 313
+        assert_eq!(t.syn_aural_glideslope, 1314.0); // idx 314
     }
 
     #[test]
@@ -4798,6 +4805,19 @@ mod tests {
         // Windows-CI nach dem Anhaengen gescheitert (19.08.2026) — der
         // pattern_buffer-Test allein haette es NICHT gefangen, der prueft nur
         // die Gesamtgroesse und einzelne Stichproben.
+        // v1.7.x: die 14 A220-Kanaele der Gruppe J sind jetzt der
+        // Schwanz — erst die weg (14 * 8 = 112). Ohne diesen Schritt
+        // schnitte der naechste `- 12` mitten hinein und die ganze Kette
+        // darunter pruefte etwas anderes. Genau dieselbe Falle wie am
+        // 19.08.2026 (siehe Kommentar unten) — und sie hat auch diesmal
+        // wieder ZUERST hier zugeschlagen, nicht im pattern_buffer-Test.
+        buf.truncate(buf.len() - 112);
+        let t = Telemetry::from_block(&buf);
+        assert_eq!(t.simulation_rate, 1299.0, "Echtheits-Feld intakt");
+        assert!(t.slew_active, "Echtheits-Feld intakt");
+        assert_eq!(t.syn_vapp, 0.0, "Gruppe J = sicherer Default");
+        assert_eq!(t.syn_aural_glideslope, 0.0, "Gruppe J = sicherer Default");
+
         buf.truncate(buf.len() - 12);
         let t = Telemetry::from_block(&buf);
         assert_eq!(t.flap_num_positions, 1298.0, "letztes Klappenfeld intakt");
@@ -6776,7 +6796,6 @@ mod tests {
         t.syn_eng1_reverser = 1.0;
         t.syn_eng2_reverser = 1.0;
         t.syn_spoiler_lever = 1.0;
-        t.syn_park_brake = 1.0;
         t.syn_apu_switch = 2.0;
         t.syn_wing_anti_ice = 2.0;
         t.syn_aural_cfg_flaps = 1.0;
@@ -6802,10 +6821,9 @@ mod tests {
         assert_eq!(snap.ground_spoilers_active, None);
         assert_eq!(snap.takeoff_config_warning, None);
         assert_eq!(snap.below_gs_alert, None);
-        // Parkbremse/APU/Enteisung fallen auf die Standard-SimVars
-        // zurueck (in `Telemetry::default()` alle aus) — der A22X-Hebel
-        // darf sie NICHT auf true ziehen.
-        assert!(!snap.parking_brake);
+        // APU/Enteisung fallen auf die Standard-SimVars zurueck (in
+        // `Telemetry::default()` alle aus) — die A22X-Enums duerfen sie
+        // bei einem fremden Muster NICHT auf true ziehen.
         assert_eq!(snap.apu_switch, Some(false));
         assert_eq!(snap.wing_anti_ice, Some(false));
     }
@@ -6890,15 +6908,13 @@ mod tests {
     }
 
     #[test]
-    fn synaptic_a220_gleitweg_parkbremse_apu_enteisung() {
+    fn synaptic_a220_gleitweg_apu_enteisung() {
         let mut t = synaptic_a220_telemetry();
         t.syn_aural_glideslope = 1.0;
-        t.syn_park_brake = 1.0;
         t.syn_apu_switch = 1.0; // Run
         t.syn_wing_anti_ice = 1.0; // Auto
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.below_gs_alert, Some(true));
-        assert!(snap.parking_brake);
         assert_eq!(snap.apu_switch, Some(true));
         assert_eq!(snap.wing_anti_ice, Some(true));
 
@@ -6906,14 +6922,37 @@ mod tests {
         let t = synaptic_a220_telemetry();
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.below_gs_alert, Some(false));
-        assert!(!snap.parking_brake);
         assert_eq!(snap.apu_switch, Some(false));
         assert_eq!(snap.wing_anti_ice, Some(false));
+    }
 
-        // 0/100-Semantik der Parkbremse (undokumentiert, deshalb
-        // Schwelle statt != 0) — 100 muss ebenfalls SET heissen.
+    #[test]
+    fn synaptic_a220_fehlender_lvar_faellt_auf_standard_zurueck() {
+        // Kernfrage der QS: lehnt SimConnect einen Gruppe-J-LVar ab,
+        // liest er 0 — das darf NIE schlechter sein als ganz ohne
+        // Profil. APU und Enteisung sind die beiden Kanaele, die einen
+        // bestehenden Standard-SimVar anfassen.
         let mut t = synaptic_a220_telemetry();
-        t.syn_park_brake = 100.0;
+        t.syn_apu_switch = 0.0; // abgelehnt ODER echtes Off
+        t.syn_wing_anti_ice = 0.0;
+        t.apu_switch = true; // Standard-SimVar sagt: laeuft
+        t.structural_deice = true; // Standard-SimVar sagt: an
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(
+            snap.apu_switch,
+            Some(true),
+            "0 darf den Standard-SimVar nicht ueberschreiben"
+        );
+        assert_eq!(
+            snap.wing_anti_ice,
+            Some(true),
+            "0 darf den Standard-SimVar nicht ueberschreiben"
+        );
+
+        // Und die Parkbremse bleibt unberuehrt am Standard-SimVar —
+        // der beim A220 laut v1.3.5-Feldbefund korrekt liest.
+        let mut t = synaptic_a220_telemetry();
+        t.parking_brake = true;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert!(snap.parking_brake);
     }
