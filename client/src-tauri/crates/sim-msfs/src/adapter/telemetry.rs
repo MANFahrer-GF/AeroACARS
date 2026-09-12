@@ -795,8 +795,18 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // also ein 0..1-Stellungswert. Gleiches Muster wie beim iFly.
     F::f64("L:A22X Engine 1 Reverser", "Number"),
     F::f64("L:A22X Engine 2 Reverser", "Number"),
-    // Spoiler-/Speedbrake-Hebel 0..1 (Doku: "written for animation").
-    F::f64("L:A22X Spoiler Lever", "Number"),
+    // BEWUSST NICHT AUFGENOMMEN: `L:A22X Spoiler Lever`. Der Hebel ist
+    // laut Doku ausschliesslich die 0..1-STELLUNG ("written for
+    // animation") — er belegt NICHT, dass die Bodenstoerklappen
+    // tatsaechlich ausgefahren sind, und genau das verlangt der Vertrag
+    // von `ground_spoilers_active`. Ein eigener Zustandskanal existiert
+    // im Paket nicht (einzige Spoiler-LVars: dieser Hebel und
+    // `Aural Config Spoilers`). Aus dem Hebel abzuleiten hiesse raten,
+    // in BEIDE Richtungen: ein manuell gezogener Hebel am Boden ergaebe
+    // ein falsches Ja, eine Automatik ohne Hebelweg ein falsches Nein.
+    // Fuehrt der erste echte Flug den Hebel bei automatischer
+    // Ausfahrung mit, kann man es BELEGT nachruesten. Bis dahin bleibt
+    // das Feld `None` wie vor diesem Profil. (Codex-Befund 12.09.2026.)
     // BEWUSST NICHT AUFGENOMMEN: `L:A22X Parking Brake`. Der Kanal
     // existiert und ist dokumentiert, aber der v1.3.5-Feldbefund
     // (31.07.2026, Gruppe I oben) hat am echten Flug festgestellt, dass
@@ -817,6 +827,13 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:A22X Aural Config Trim", "Bool"),
     F::f64("L:A22X Aural Config Brakes", "Bool"),
     F::f64("L:A22X Aural Config Thrust Lever", "Bool"),
+    // Codex-Befund 12.09.2026: die Ursachenliste war unvollstaendig.
+    // Das Paket fuehrt ACHT `Aural Config *`-Kanaele, registriert waren
+    // nur fuenf — Sidestick, Autopilot und Autothrottle fehlten, ihre
+    // Fehlkonfiguration haette den Alarm also nie ausgeloest.
+    F::f64("L:A22X Aural Config Sidestick", "Bool"),
+    F::f64("L:A22X Aural Config Autopilot", "Bool"),
+    F::f64("L:A22X Aural Config Autothrottle", "Bool"),
     // TAWS-Gleitwegabweichung ("GLIDESLOPE"-Ruf) → below_gs_alert.
     F::f64("L:A22X Aural Glideslope", "Bool"),
 ];
@@ -1255,7 +1272,6 @@ pub struct Telemetry {
     pub syn_flex_temp: f64,
     pub syn_eng1_reverser: f64,
     pub syn_eng2_reverser: f64,
-    pub syn_spoiler_lever: f64,
     pub syn_apu_switch: f64,
     pub syn_wing_anti_ice: f64,
     pub syn_aural_cfg_flaps: f64,
@@ -1263,6 +1279,9 @@ pub struct Telemetry {
     pub syn_aural_cfg_trim: f64,
     pub syn_aural_cfg_brakes: f64,
     pub syn_aural_cfg_thrust_lever: f64,
+    pub syn_aural_cfg_sidestick: f64,
+    pub syn_aural_cfg_autopilot: f64,
+    pub syn_aural_cfg_autothrottle: f64,
     pub syn_aural_glideslope: f64,
 }
 
@@ -1917,7 +1936,6 @@ impl Telemetry {
         pull_f64!(t.syn_flex_temp);
         pull_f64!(t.syn_eng1_reverser);
         pull_f64!(t.syn_eng2_reverser);
-        pull_f64!(t.syn_spoiler_lever);
         pull_f64!(t.syn_apu_switch);
         pull_f64!(t.syn_wing_anti_ice);
         pull_f64!(t.syn_aural_cfg_flaps);
@@ -1925,6 +1943,9 @@ impl Telemetry {
         pull_f64!(t.syn_aural_cfg_trim);
         pull_f64!(t.syn_aural_cfg_brakes);
         pull_f64!(t.syn_aural_cfg_thrust_lever);
+        pull_f64!(t.syn_aural_cfg_sidestick);
+        pull_f64!(t.syn_aural_cfg_autopilot);
+        pull_f64!(t.syn_aural_cfg_autothrottle);
         pull_f64!(t.syn_aural_glideslope);
 
         // Silence the unused-assignment warning the last `pull_*!`
@@ -3570,7 +3591,10 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
             || t.syn_aural_cfg_spoilers != 0.0
             || t.syn_aural_cfg_trim != 0.0
             || t.syn_aural_cfg_brakes != 0.0
-            || t.syn_aural_cfg_thrust_lever != 0.0)
+            || t.syn_aural_cfg_thrust_lever != 0.0
+            || t.syn_aural_cfg_sidestick != 0.0
+            || t.syn_aural_cfg_autopilot != 0.0
+            || t.syn_aural_cfg_autothrottle != 0.0)
     {
         Some(true)
     } else {
@@ -3600,14 +3624,9 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // Spoiler). Deshalb NUR am Boden als "Ground-Spoiler aktiv"
         // werten; in der Luft bleibt das Feld ehrlich false.
         Some(t.on_ground && t.ifly_speedbrakes_extended_light != 0.0)
-    } else if is_synaptic_a220 {
-        // v1.7.x: der A220 hat KEIN eigenes "ground spoilers active"-
-        // Flag, nur den Hebel (0..1). Ausgefahren am Boden = Ground-
-        // Spoiler; in der Luft waere dasselbe Flight-Spoiler, deshalb
-        // dieselbe on_ground-Klammer wie beim iFly. Schwelle 0.1 gegen
-        // Ruhelagen-Jitter.
-        Some(t.on_ground && t.syn_spoiler_lever > 0.1)
     } else {
+        // A220: bewusst KEINE Ableitung aus dem Hebel — siehe
+        // Begruendung an `L:A22X Spoiler Lever` in TELEMETRY_FIELDS.
         None
     };
 
@@ -4516,9 +4535,9 @@ mod tests {
             }
         }
         // v1.5.3: +8 (ifly_park_brake_sw) +16 (flap raster); v1.6.12:
-        // +8 (SIMULATION RATE) +4 (IS SLEW ACTIVE); v1.7.x: +112
-        // (14 A220-Kanaele der Gruppe J).
-        assert_eq!(buf.len(), 3128, "total block size");
+        // +8 (SIMULATION RATE) +4 (IS SLEW ACTIVE); v1.7.x: +128
+        // (16 A220-Kanaele der Gruppe J).
+        assert_eq!(buf.len(), 3144, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -4754,7 +4773,7 @@ mod tests {
         assert_eq!(t.simulation_rate, 1299.0); // idx 299
         assert!(t.slew_active); // idx 300 (Int32, 300 != 0)
 
-        // ---- Synaptic A220 Vollausbau (idx 301..314, v1.7.x) ----
+        // ---- Synaptic A220 Vollausbau (idx 301..316, v1.7.x) ----
         // Steht HINTER dem Int32 — beweist zugleich, dass die 4-Byte-
         // Luecke die nachfolgenden f64-Offsets korrekt verschiebt.
         assert_eq!(t.syn_vapp, 1301.0); // idx 301
@@ -4762,15 +4781,17 @@ mod tests {
         assert_eq!(t.syn_flex_temp, 1303.0); // idx 303
         assert_eq!(t.syn_eng1_reverser, 1304.0); // idx 304
         assert_eq!(t.syn_eng2_reverser, 1305.0); // idx 305
-        assert_eq!(t.syn_spoiler_lever, 1306.0); // idx 306
-        assert_eq!(t.syn_apu_switch, 1307.0); // idx 307
-        assert_eq!(t.syn_wing_anti_ice, 1308.0); // idx 308
-        assert_eq!(t.syn_aural_cfg_flaps, 1309.0); // idx 309
-        assert_eq!(t.syn_aural_cfg_spoilers, 1310.0); // idx 310
-        assert_eq!(t.syn_aural_cfg_trim, 1311.0); // idx 311
-        assert_eq!(t.syn_aural_cfg_brakes, 1312.0); // idx 312
-        assert_eq!(t.syn_aural_cfg_thrust_lever, 1313.0); // idx 313
-        assert_eq!(t.syn_aural_glideslope, 1314.0); // idx 314
+        assert_eq!(t.syn_apu_switch, 1306.0); // idx 306
+        assert_eq!(t.syn_wing_anti_ice, 1307.0); // idx 307
+        assert_eq!(t.syn_aural_cfg_flaps, 1308.0); // idx 308
+        assert_eq!(t.syn_aural_cfg_spoilers, 1309.0); // idx 309
+        assert_eq!(t.syn_aural_cfg_trim, 1310.0); // idx 310
+        assert_eq!(t.syn_aural_cfg_brakes, 1311.0); // idx 311
+        assert_eq!(t.syn_aural_cfg_thrust_lever, 1312.0); // idx 312
+        assert_eq!(t.syn_aural_cfg_sidestick, 1313.0); // idx 313
+        assert_eq!(t.syn_aural_cfg_autopilot, 1314.0); // idx 314
+        assert_eq!(t.syn_aural_cfg_autothrottle, 1315.0); // idx 315
+        assert_eq!(t.syn_aural_glideslope, 1316.0); // idx 316
     }
 
     #[test]
@@ -4823,13 +4844,13 @@ mod tests {
         // Windows-CI nach dem Anhaengen gescheitert (19.08.2026) — der
         // pattern_buffer-Test allein haette es NICHT gefangen, der prueft nur
         // die Gesamtgroesse und einzelne Stichproben.
-        // v1.7.x: die 14 A220-Kanaele der Gruppe J sind jetzt der
-        // Schwanz — erst die weg (14 * 8 = 112). Ohne diesen Schritt
+        // v1.7.x: die 16 A220-Kanaele der Gruppe J sind jetzt der
+        // Schwanz — erst die weg (16 * 8 = 128). Ohne diesen Schritt
         // schnitte der naechste `- 12` mitten hinein und die ganze Kette
         // darunter pruefte etwas anderes. Genau dieselbe Falle wie am
         // 19.08.2026 (siehe Kommentar unten) — und sie hat auch diesmal
         // wieder ZUERST hier zugeschlagen, nicht im pattern_buffer-Test.
-        buf.truncate(buf.len() - 112);
+        buf.truncate(buf.len() - 128);
         let t = Telemetry::from_block(&buf);
         assert_eq!(t.simulation_rate, 1299.0, "Echtheits-Feld intakt");
         assert!(t.slew_active, "Echtheits-Feld intakt");
@@ -6813,10 +6834,10 @@ mod tests {
         t.syn_flex_temp = 52.0;
         t.syn_eng1_reverser = 1.0;
         t.syn_eng2_reverser = 1.0;
-        t.syn_spoiler_lever = 1.0;
         t.syn_apu_switch = 2.0;
         t.syn_wing_anti_ice = 2.0;
         t.syn_aural_cfg_flaps = 1.0;
+        t.syn_aural_cfg_autothrottle = 1.0;
         t.syn_aural_glideslope = 1.0;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.master_caution, None);
@@ -6880,37 +6901,40 @@ mod tests {
     }
 
     #[test]
-    fn synaptic_a220_ground_spoiler_nur_am_boden() {
-        // Hebel draussen, aber in der Luft → Flight-Spoiler, kein
-        // Ground-Spoiler. Gleiche Klammer wie beim iFly.
+    fn synaptic_a220_behauptet_keine_bodenstoerklappen() {
+        // Codex-Befund: der A220 hat keinen Zustandskanal fuer die
+        // Bodenstoerklappen, nur den Hebel — und der belegt die
+        // tatsaechliche Ausfahrung nicht. Das Feld bleibt deshalb
+        // `None`, am Boden wie in der Luft. Dieser Test haelt die
+        // Ruecknahme fest, damit niemand die Hebel-Ableitung aus
+        // Versehen wieder einbaut.
         let mut t = synaptic_a220_telemetry();
-        t.syn_spoiler_lever = 1.0;
+        t.on_ground = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.ground_spoilers_active, None);
+
+        let mut t = synaptic_a220_telemetry();
         t.on_ground = false;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.ground_spoilers_active, Some(false));
-
-        let mut t = synaptic_a220_telemetry();
-        t.syn_spoiler_lever = 1.0;
-        t.on_ground = true;
-        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.ground_spoilers_active, Some(true));
-
-        // Am Boden, Hebel eingefahren → aus.
-        let mut t = synaptic_a220_telemetry();
-        t.on_ground = true;
-        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
-        assert_eq!(snap.ground_spoilers_active, Some(false));
+        assert_eq!(snap.ground_spoilers_active, None);
     }
 
     #[test]
     fn synaptic_a220_startkonfig_alarm_aus_jedem_aural() {
-        // Jede der fuenf Ursachen allein muss den Alarm setzen.
+        // Jede der ACHT dokumentierten Ursachen allein muss den Alarm
+        // setzen. Die Liste war zuerst auf fuenf verkuerzt (Codex-Befund
+        // 12.09.2026) — Sidestick/Autopilot/Autothrottle fehlten, und
+        // weil der Test dieselbe Fuenferliste pruefte, verdeckte er die
+        // Luecke. Wer hier einen Kanal ergaenzt, ergaenzt ihn AUCH oben.
         for setzen in [
             |t: &mut Telemetry| t.syn_aural_cfg_flaps = 1.0,
             |t: &mut Telemetry| t.syn_aural_cfg_spoilers = 1.0,
             |t: &mut Telemetry| t.syn_aural_cfg_trim = 1.0,
             |t: &mut Telemetry| t.syn_aural_cfg_brakes = 1.0,
             |t: &mut Telemetry| t.syn_aural_cfg_thrust_lever = 1.0,
+            |t: &mut Telemetry| t.syn_aural_cfg_sidestick = 1.0,
+            |t: &mut Telemetry| t.syn_aural_cfg_autopilot = 1.0,
+            |t: &mut Telemetry| t.syn_aural_cfg_autothrottle = 1.0,
         ] {
             let mut t = synaptic_a220_telemetry();
             setzen(&mut t);
