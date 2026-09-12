@@ -760,6 +760,59 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // Feld und faellt bei jeder Verschiebung um.
     F::f64("SIMULATION RATE", "Number"),
     F::bool("IS SLEW ACTIVE"),
+    // ---- Gruppe J: Synaptic A220 Vollausbau (v1.7.x, Aircraft-Scan
+    //      vom 12.09.2026, Paket 1.0.8 "Synaptic / iniBuilds") ----
+    //
+    // Quelle ist der Piloten-Scan des ausgelieferten Pakets, nicht die
+    // Doku allein: jeder Name unten ist ENTWEDER in
+    // docs.synapticsim.com/pilots/simvars belegt ODER im Modell-XML des
+    // Pakets als Animations-/Sichtbarkeits-Code nachweisbar (beim
+    // Reverser der Fall). Wo beides fehlte, ist der Kanal bewusst NICHT
+    // aufgenommen — undokumentierte Skalen zu raten hat uns beim
+    // `Flap Lever` schon einen Fehlbefund gekostet (v1.6.1).
+    //
+    // WICHTIG: iniBuilds ist hier nur der Vertrieb, Entwickler bleibt
+    // Synaptic. Die `INI_*`-Schicht der echten iniBuilds-Muster
+    // (A350/A340) trifft deshalb NICHT zu — von den 28 `INI_*`-LVars,
+    // die `is_ini` liest, existiert im A220-Paket genau EINER
+    // (`INI_VAPP_SPEED`, aus der gemeinsamen EFB-Codebasis). Der A220
+    // bleibt darum ein eigenes Profil und wird NICHT in `is_ini`
+    // aufgenommen.
+    //
+    // ANHAENGEN, nicht einfuegen (siehe SIMULATION RATE oben).
+    //
+    // Geschwindigkeiten aus dem EFB/FMS. `INI_VAPP_SPEED` ist dieselbe
+    // Variable, die die A350/A340 fuettern. `FMS_*_PERF` schreibt das
+    // EFB beim "Send to PERF" — sie bleiben legitim 0, wenn der Pilot
+    // die Uebergabe nicht nutzt; 0 heisst hier "nicht gesetzt", nie
+    // "Pilotenfehler".
+    F::f64("L:INI_VAPP_SPEED", "Number"),
+    F::f64("L:FMS_VR_PERF", "Number"),
+    F::f64("L:FMS_FLEX_PERF", "Number"),
+    // Reverser-Stellung je Triebwerk. NICHT in der Vendor-Doku, aber im
+    // Paket eindeutig belegt: Engines.xml animiert `ENG_#SIDE#_REV` mit
+    // `(L:A22X Engine #INDEX# Reverser) 100 *` bei ANIM_LENGTH 100 —
+    // also ein 0..1-Stellungswert. Gleiches Muster wie beim iFly.
+    F::f64("L:A22X Engine 1 Reverser", "Number"),
+    F::f64("L:A22X Engine 2 Reverser", "Number"),
+    // Spoiler-/Speedbrake-Hebel 0..1 (Doku: "written for animation").
+    F::f64("L:A22X Spoiler Lever", "Number"),
+    // Parkbremse als kommandierter Hebelzustand (Doku: Bool).
+    F::f64("L:A22X Parking Brake", "Bool"),
+    // Systemschalter mit dokumentierten Enums.
+    F::f64("L:A22X APU Switch", "Enum"),
+    F::f64("L:A22X Wing Anti Ice", "Enum"),
+    // Startkonfigurations-Aurals (Doku: Bool, "aural is currently
+    // playing"). Zusammen sind sie das, was bei anderen Mustern der
+    // SimVar-Konfigurationsalarm waere — den fuellt fuer den A220 sonst
+    // niemand.
+    F::f64("L:A22X Aural Config Flaps", "Bool"),
+    F::f64("L:A22X Aural Config Spoilers", "Bool"),
+    F::f64("L:A22X Aural Config Trim", "Bool"),
+    F::f64("L:A22X Aural Config Brakes", "Bool"),
+    F::f64("L:A22X Aural Config Thrust Lever", "Bool"),
+    // TAWS-Gleitwegabweichung ("GLIDESLOPE"-Ruf) → below_gs_alert.
+    F::f64("L:A22X Aural Glideslope", "Bool"),
 ];
 
 // Helper builders so the table above stays compact.
@@ -1188,6 +1241,24 @@ pub struct Telemetry {
     pub simulation_rate: f64,
     /// v1.6.12 — Slew-Modus: das Flugzeug wird bewegt, nicht geflogen.
     pub slew_active: bool,
+
+    // Gruppe J: Synaptic A220 Vollausbau (siehe TELEMETRY_FIELDS) —
+    // nur bei AircraftProfile::SynapticA220 konsultiert.
+    pub syn_vapp: f64,
+    pub syn_vr: f64,
+    pub syn_flex_temp: f64,
+    pub syn_eng1_reverser: f64,
+    pub syn_eng2_reverser: f64,
+    pub syn_spoiler_lever: f64,
+    pub syn_park_brake: f64,
+    pub syn_apu_switch: f64,
+    pub syn_wing_anti_ice: f64,
+    pub syn_aural_cfg_flaps: f64,
+    pub syn_aural_cfg_spoilers: f64,
+    pub syn_aural_cfg_trim: f64,
+    pub syn_aural_cfg_brakes: f64,
+    pub syn_aural_cfg_thrust_lever: f64,
+    pub syn_aural_glideslope: f64,
 }
 
 // ---- Touchdown sample (separate data definition #2) ----
@@ -1834,6 +1905,23 @@ impl Telemetry {
 
         pull_f64!(t.simulation_rate);
         pull_i32!(t.slew_active);
+
+        // ---- Gruppe J: Synaptic A220 Vollausbau ----
+        pull_f64!(t.syn_vapp);
+        pull_f64!(t.syn_vr);
+        pull_f64!(t.syn_flex_temp);
+        pull_f64!(t.syn_eng1_reverser);
+        pull_f64!(t.syn_eng2_reverser);
+        pull_f64!(t.syn_spoiler_lever);
+        pull_f64!(t.syn_park_brake);
+        pull_f64!(t.syn_apu_switch);
+        pull_f64!(t.syn_wing_anti_ice);
+        pull_f64!(t.syn_aural_cfg_flaps);
+        pull_f64!(t.syn_aural_cfg_spoilers);
+        pull_f64!(t.syn_aural_cfg_trim);
+        pull_f64!(t.syn_aural_cfg_brakes);
+        pull_f64!(t.syn_aural_cfg_thrust_lever);
+        pull_f64!(t.syn_aural_glideslope);
 
         // Silence the unused-assignment warning the last `pull_*!`
         // emits (the macro always advances `off`, but the very last
@@ -2676,6 +2764,13 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // Log: parking_brake=False bei real gesetzter Bremse). Skript
         // `(L:VC_PED_PARK_BRAKE_Switch) 0 == if{ released }` → !=0 = SET.
         t.fsl_park_brake_switch != 0.0
+    } else if is_synaptic_a220 {
+        // v1.7.x (#a220-vollausbau): eigener Hebel-LVar (Doku: Bool,
+        // "whether the parking brake is commanded on"). Gleiche
+        // Schwellen-Logik wie beim iFly, damit sowohl 0/1- als auch
+        // 0/100-Semantik richtig lesen — welche der A220 fuehrt, ist
+        // nicht dokumentiert und wird am ersten Flug gegengeprueft.
+        t.syn_park_brake >= 0.5
     } else {
         t.parking_brake
     };
@@ -2686,6 +2781,10 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
     // override only takes over when Fenix is actually feeding values.
     let apu_switch = if is_fenix {
         t.fnx_apu_master as i32 != 0
+    } else if is_synaptic_a220 {
+        // Doku-Enum: 0 = Off, 1 = Run, 2 = Start. Alles ueber Off zaehlt
+        // als "Schalter an" — Run und Start sind beide nicht Off.
+        t.syn_apu_switch >= 1.0
     } else {
         t.apu_switch
     };
@@ -2752,6 +2851,11 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         t.fnx_wing_anti_ice as i32 != 0
     } else if is_a346 {
         t.a346_antiice_wing as i32 != 0
+    } else if is_synaptic_a220 {
+        // Doku-Enum: 0 = Off, 1 = Auto, 2 = On. AUTO zaehlt hier als
+        // aktiv, weil der Enteiser dann selbsttaetig zuschaltet — das
+        // ist dieselbe Lesart wie beim Pitot-Heat-Fix in v0.19.x.
+        t.syn_wing_anti_ice >= 1.0
     } else {
         t.structural_deice
     };
@@ -3222,6 +3326,11 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         positive_f64_or_none(t.ini_vr)
     } else if is_md11 {
         positive_f64_or_none(t.md11_vr)
+    } else if is_synaptic_a220 {
+        // v1.7.x: `L:FMS_VR_PERF` fuellt das EFB beim "Send to PERF".
+        // Nutzt der Pilot die Uebergabe nicht, bleibt der Wert 0 und
+        // `positive_f64_or_none` macht daraus ehrlich None.
+        positive_f64_or_none(t.syn_vr)
     } else {
         None
     };
@@ -3240,6 +3349,13 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         positive_f64_or_none(t.fbw_vspeeds_vapp)
     } else if is_ini {
         positive_f64_or_none(t.ini_vapp)
+    } else if is_synaptic_a220 {
+        // v1.7.x (#a220-vollausbau): der A220 teilt mit den echten
+        // iniBuilds-Mustern nur die EFB-Codebasis — und aus der genau
+        // diese eine Variable. Sie schliesst die Luecke, wegen der
+        // `landing_vref_deviation_kt` bei ALLEN BCS3-Fluegen leer blieb
+        // (Flottenauswertung 16.08.2026, 38 Fluege).
+        positive_f64_or_none(t.syn_vapp)
     } else {
         None
     };
@@ -3263,6 +3379,8 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         positive_f64_or_none(t.fnx_perf_flex)
     } else if is_ini {
         positive_f64_or_none(t.ini_flex_temp)
+    } else if is_synaptic_a220 {
+        positive_f64_or_none(t.syn_flex_temp)
     } else {
         None
     };
@@ -3407,6 +3525,38 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // analoge 0..1-Reverser-Stellung (Animations-LVar). > 0.1
         // filtert Stowed-Jitter und zaehlt erst echtes Ausfahren.
         Some(t.ifly_eng1_reverser > 0.1 || t.ifly_eng2_reverser > 0.1)
+    } else if is_synaptic_a220 {
+        // v1.7.x: `L:A22X Engine {1,2} Reverser` — 0..1-Stellung, im
+        // Paket ueber die Animation `ENG_#SIDE#_REV` (ANIM_LENGTH 100)
+        // belegt. Gleiche Jitter-Schwelle wie beim iFly.
+        Some(t.syn_eng1_reverser > 0.1 || t.syn_eng2_reverser > 0.1)
+    } else {
+        None
+    };
+
+    // v1.7.x (#a220-vollausbau): Startkonfigurations-Alarm des A220.
+    // Das Muster hat keinen Sammel-SimVar dafuer — der Warnrechner ruft
+    // stattdessen je Ursache ein eigenes Aural aus (Doku: Bool, "aural
+    // is currently playing"). Fuer uns zaehlt nur, DASS einer laeuft.
+    // Bewusst ohne Ursachen-Aufschluesselung: `takeoff_config_warning`
+    // ist ein Bool, und eine erfundene Rangfolge waere nicht belegbar.
+    let takeoff_config_warning = if is_synaptic_a220 {
+        Some(
+            t.syn_aural_cfg_flaps != 0.0
+                || t.syn_aural_cfg_spoilers != 0.0
+                || t.syn_aural_cfg_trim != 0.0
+                || t.syn_aural_cfg_brakes != 0.0
+                || t.syn_aural_cfg_thrust_lever != 0.0,
+        )
+    } else {
+        None
+    };
+
+    // v1.7.x: TAWS-Gleitwegabweichung. Der A220 meldet sie als
+    // laufenden "GLIDESLOPE"-Ruf — semantisch dasselbe, was PMDG als
+    // `below_gs_alert` liefert.
+    let below_gs_alert = if is_synaptic_a220 {
+        Some(t.syn_aural_glideslope != 0.0)
     } else {
         None
     };
@@ -3424,6 +3574,13 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // Spoiler). Deshalb NUR am Boden als "Ground-Spoiler aktiv"
         // werten; in der Luft bleibt das Feld ehrlich false.
         Some(t.on_ground && t.ifly_speedbrakes_extended_light != 0.0)
+    } else if is_synaptic_a220 {
+        // v1.7.x: der A220 hat KEIN eigenes "ground spoilers active"-
+        // Flag, nur den Hebel (0..1). Ausgefahren am Boden = Ground-
+        // Spoiler; in der Luft waere dasselbe Flight-Spoiler, deshalb
+        // dieselbe on_ground-Klammer wie beim iFly. Schwelle 0.1 gegen
+        // Ruhelagen-Jitter.
+        Some(t.on_ground && t.syn_spoiler_lever > 0.1)
     } else {
         None
     };
@@ -3732,7 +3889,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // v0.16.20: FSL liefert den XPDR-Modus ueber den MODE-Switch
         // (STBY/TA/TA-RA); sonst None.
         xpdr_mode_label,
-        takeoff_config_warning: None,
+        takeoff_config_warning,
         seatbelts_sign,
         no_smoking_sign,
         fcu_selected_altitude_ft: fcu_alt,
@@ -3798,7 +3955,7 @@ fn telemetry_to_snapshot(t: Telemetry, simulator: Simulator) -> SimSnapshot {
         // Die folgenden drei liefert nur der PMDG-SDK-Pfad (Merge);
         // cabin_altitude_warning zusaetzlich nativ vom iFly-Profil
         // (v0.16.11, siehe Mapping oben).
-        below_gs_alert: None,
+        below_gs_alert,
         cabin_altitude_warning,
         stab_out_of_trim: None,
         minimums_baro_ft: None,
@@ -4332,7 +4489,10 @@ mod tests {
                 }
             }
         }
-        assert_eq!(buf.len(), 3016, "total block size"); // v1.5.3: +8 (ifly_park_brake_sw) +16 (flap raster); v1.6.12: +8 (SIMULATION RATE) +4 (IS SLEW ACTIVE)
+        // v1.5.3: +8 (ifly_park_brake_sw) +16 (flap raster); v1.6.12:
+        // +8 (SIMULATION RATE) +4 (IS SLEW ACTIVE); v1.7.x: +120
+        // (15 A220-Kanaele der Gruppe J).
+        assert_eq!(buf.len(), 3136, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -4563,6 +4723,29 @@ mod tests {
         assert_eq!(t.ifly_park_brake_sw, 1296.0); // idx 296
         assert_eq!(t.flap_handle_index, 1297.0); // idx 297
         assert_eq!(t.flap_num_positions, 1298.0); // idx 298
+
+        // ---- Schwanz vor Gruppe J (idx 299..300) ----
+        assert_eq!(t.simulation_rate, 1299.0); // idx 299
+        assert!(t.slew_active); // idx 300 (Int32, 300 != 0)
+
+        // ---- Synaptic A220 Vollausbau (idx 301..315, v1.7.x) ----
+        // Steht HINTER dem Int32 — beweist zugleich, dass die 4-Byte-
+        // Luecke die nachfolgenden f64-Offsets korrekt verschiebt.
+        assert_eq!(t.syn_vapp, 1301.0); // idx 301
+        assert_eq!(t.syn_vr, 1302.0); // idx 302
+        assert_eq!(t.syn_flex_temp, 1303.0); // idx 303
+        assert_eq!(t.syn_eng1_reverser, 1304.0); // idx 304
+        assert_eq!(t.syn_eng2_reverser, 1305.0); // idx 305
+        assert_eq!(t.syn_spoiler_lever, 1306.0); // idx 306
+        assert_eq!(t.syn_park_brake, 1307.0); // idx 307
+        assert_eq!(t.syn_apu_switch, 1308.0); // idx 308
+        assert_eq!(t.syn_wing_anti_ice, 1309.0); // idx 309
+        assert_eq!(t.syn_aural_cfg_flaps, 1310.0); // idx 310
+        assert_eq!(t.syn_aural_cfg_spoilers, 1311.0); // idx 311
+        assert_eq!(t.syn_aural_cfg_trim, 1312.0); // idx 312
+        assert_eq!(t.syn_aural_cfg_brakes, 1313.0); // idx 313
+        assert_eq!(t.syn_aural_cfg_thrust_lever, 1314.0); // idx 314
+        assert_eq!(t.syn_aural_glideslope, 1315.0); // idx 315
     }
 
     #[test]
@@ -6586,6 +6769,18 @@ mod tests {
         t.syn_at_master = 1.0;
         t.syn_seatbelt_sign = 2.0;
         t.syn_no_smoking_sign = 2.0;
+        // v1.7.x Gruppe J, gleiche Isolationsgarantie.
+        t.syn_vapp = 138.0;
+        t.syn_vr = 132.0;
+        t.syn_flex_temp = 52.0;
+        t.syn_eng1_reverser = 1.0;
+        t.syn_eng2_reverser = 1.0;
+        t.syn_spoiler_lever = 1.0;
+        t.syn_park_brake = 1.0;
+        t.syn_apu_switch = 2.0;
+        t.syn_wing_anti_ice = 2.0;
+        t.syn_aural_cfg_flaps = 1.0;
+        t.syn_aural_glideslope = 1.0;
         let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
         assert_eq!(snap.master_caution, None);
         assert_eq!(snap.fma_lateral_mode, None);
@@ -6599,6 +6794,128 @@ mod tests {
         assert_eq!(snap.autothrottle_on, None);
         assert_eq!(snap.seatbelts_sign, None);
         assert_eq!(snap.no_smoking_sign, None);
+        // Gruppe J darf bei keinem anderen Muster durchschlagen.
+        assert_eq!(snap.vapp_kt, None);
+        assert_eq!(snap.vr_kt, None);
+        assert_eq!(snap.flex_temp_c, None);
+        assert_eq!(snap.reverser_deployed, None);
+        assert_eq!(snap.ground_spoilers_active, None);
+        assert_eq!(snap.takeoff_config_warning, None);
+        assert_eq!(snap.below_gs_alert, None);
+        // Parkbremse/APU/Enteisung fallen auf die Standard-SimVars
+        // zurueck (in `Telemetry::default()` alle aus) — der A22X-Hebel
+        // darf sie NICHT auf true ziehen.
+        assert!(!snap.parking_brake);
+        assert_eq!(snap.apu_switch, Some(false));
+        assert_eq!(snap.wing_anti_ice, Some(false));
+    }
+
+    #[test]
+    fn synaptic_a220_vollausbau_geschwindigkeiten_und_rollout() {
+        // Vapp/VR/FLEX: gesetzt = Wert, 0 = ehrlich None (der Pilot hat
+        // die EFB-Uebergabe schlicht nicht benutzt).
+        let mut t = synaptic_a220_telemetry();
+        t.syn_vapp = 138.0;
+        t.syn_vr = 132.0;
+        t.syn_flex_temp = 52.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.vapp_kt, Some(138.0));
+        assert_eq!(snap.vr_kt, Some(132.0));
+        assert_eq!(snap.flex_temp_c, Some(52.0));
+
+        let t = synaptic_a220_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.vapp_kt, None, "0 heisst nicht gesetzt");
+        assert_eq!(snap.vr_kt, None);
+        assert_eq!(snap.flex_temp_c, None);
+
+        // Reverser: Jitter unter der Schwelle zaehlt nicht, ein
+        // einzelnes ausgefahrenes Triebwerk schon.
+        let mut t = synaptic_a220_telemetry();
+        t.syn_eng1_reverser = 0.05;
+        t.syn_eng2_reverser = 0.05;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.reverser_deployed, Some(false));
+
+        let mut t = synaptic_a220_telemetry();
+        t.syn_eng2_reverser = 0.9;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.reverser_deployed, Some(true));
+    }
+
+    #[test]
+    fn synaptic_a220_ground_spoiler_nur_am_boden() {
+        // Hebel draussen, aber in der Luft → Flight-Spoiler, kein
+        // Ground-Spoiler. Gleiche Klammer wie beim iFly.
+        let mut t = synaptic_a220_telemetry();
+        t.syn_spoiler_lever = 1.0;
+        t.on_ground = false;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.ground_spoilers_active, Some(false));
+
+        let mut t = synaptic_a220_telemetry();
+        t.syn_spoiler_lever = 1.0;
+        t.on_ground = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.ground_spoilers_active, Some(true));
+
+        // Am Boden, Hebel eingefahren → aus.
+        let mut t = synaptic_a220_telemetry();
+        t.on_ground = true;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.ground_spoilers_active, Some(false));
+    }
+
+    #[test]
+    fn synaptic_a220_startkonfig_alarm_aus_jedem_aural() {
+        // Jede der fuenf Ursachen allein muss den Alarm setzen.
+        for setzen in [
+            |t: &mut Telemetry| t.syn_aural_cfg_flaps = 1.0,
+            |t: &mut Telemetry| t.syn_aural_cfg_spoilers = 1.0,
+            |t: &mut Telemetry| t.syn_aural_cfg_trim = 1.0,
+            |t: &mut Telemetry| t.syn_aural_cfg_brakes = 1.0,
+            |t: &mut Telemetry| t.syn_aural_cfg_thrust_lever = 1.0,
+        ] {
+            let mut t = synaptic_a220_telemetry();
+            setzen(&mut t);
+            let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+            assert_eq!(snap.takeoff_config_warning, Some(true));
+        }
+
+        // Stille = kein Alarm, aber ein BELEGTES false (nicht None) —
+        // der Unterschied zaehlt: None heisst "wir wissen es nicht".
+        let t = synaptic_a220_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.takeoff_config_warning, Some(false));
+    }
+
+    #[test]
+    fn synaptic_a220_gleitweg_parkbremse_apu_enteisung() {
+        let mut t = synaptic_a220_telemetry();
+        t.syn_aural_glideslope = 1.0;
+        t.syn_park_brake = 1.0;
+        t.syn_apu_switch = 1.0; // Run
+        t.syn_wing_anti_ice = 1.0; // Auto
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.below_gs_alert, Some(true));
+        assert!(snap.parking_brake);
+        assert_eq!(snap.apu_switch, Some(true));
+        assert_eq!(snap.wing_anti_ice, Some(true));
+
+        // Alles in Ruhelage.
+        let t = synaptic_a220_telemetry();
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert_eq!(snap.below_gs_alert, Some(false));
+        assert!(!snap.parking_brake);
+        assert_eq!(snap.apu_switch, Some(false));
+        assert_eq!(snap.wing_anti_ice, Some(false));
+
+        // 0/100-Semantik der Parkbremse (undokumentiert, deshalb
+        // Schwelle statt != 0) — 100 muss ebenfalls SET heissen.
+        let mut t = synaptic_a220_telemetry();
+        t.syn_park_brake = 100.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        assert!(snap.parking_brake);
     }
 
     #[test]
