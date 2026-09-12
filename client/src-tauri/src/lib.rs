@@ -2450,6 +2450,14 @@ fn szenerie_anfordern_fuer(app: &AppHandle, icaos: &[String]) {
 /// erst in `Final`, also unter 700 ft (QS-Befund 1, fuenfte Runde).
 ///
 /// Diese Folge gibt es im Bestand als Fixture.
+// Nur auf Windows produktiv aufgerufen (Szenerie-Ernte im
+// `cfg(target_os = "windows")`-Block). Die Funktion steht hier
+// ABSICHTLICH ausserhalb davon, damit die Tests sie auf JEDER
+// Plattform fahren koennen — siehe Doc-Kommentar. Auf Nicht-Windows
+// fehlt dadurch der einzige Nicht-Test-Aufrufer, und `cargo check`
+// (nur lib-Target, ohne Tests) meldet sie als ungenutzt. Auf Windows
+// bleibt die Warnung scharf und wuerde echten toten Code zeigen.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn braucht_neues_versuchsfenster(phase: FlightPhase, vorher: Option<FlightPhase>) -> bool {
     matches!(
         phase,
@@ -2468,6 +2476,14 @@ fn braucht_neues_versuchsfenster(phase: FlightPhase, vorher: Option<FlightPhase>
 ///
 /// Der zweite Rueckgabewert ist IMMER `Some(phase)`: Das Feld ist die
 /// vorige Phase, kein Merker fuer geoeffnete Fenster.
+// Nur auf Windows produktiv aufgerufen (Szenerie-Ernte im
+// `cfg(target_os = "windows")`-Block). Die Funktion steht hier
+// ABSICHTLICH ausserhalb davon, damit die Tests sie auf JEDER
+// Plattform fahren koennen — siehe Doc-Kommentar. Auf Nicht-Windows
+// fehlt dadurch der einzige Nicht-Test-Aufrufer, und `cargo check`
+// (nur lib-Target, ohne Tests) meldet sie als ungenutzt. Auf Windows
+// bleibt die Warnung scharf und wuerde echten toten Code zeigen.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn versuchsfenster_fortschreiben(
     phase: FlightPhase,
     vorher: Option<FlightPhase>,
@@ -2493,6 +2509,14 @@ fn versuchsfenster_fortschreiben(
 /// stammt. Sie waechst streng — auch ueber einen Verbindungswechsel
 /// hinweg, weil `zuruecksetzen` die Kennungen absichtlich nicht
 /// zuruecksetzt.
+// Nur auf Windows produktiv aufgerufen (Szenerie-Ernte im
+// `cfg(target_os = "windows")`-Block). Die Funktion steht hier
+// ABSICHTLICH ausserhalb davon, damit die Tests sie auf JEDER
+// Plattform fahren koennen — siehe Doc-Kommentar. Auf Nicht-Windows
+// fehlt dadurch der einzige Nicht-Test-Aufrufer, und `cargo check`
+// (nur lib-Target, ohne Tests) meldet sie als ungenutzt. Auf Windows
+// bleibt die Warnung scharf und wuerde echten toten Code zeigen.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn auskunft_ersetzen(alt: Option<(&str, u32)>, neu_icao: &str, neu_stand: u32) -> bool {
     match alt {
         None => true,
@@ -2512,6 +2536,14 @@ fn auskunft_ersetzen(alt: Option<(&str, u32)>, neu_icao: &str, neu_stand: u32) -
 /// benutzt. Das Buch gibt in diesem Zustand bewusst nichts heraus; die
 /// bereits kopierte Auskunft umging den Riegel (QS-Befund 2, achte
 /// Runde).
+// Nur auf Windows produktiv aufgerufen (Szenerie-Ernte im
+// `cfg(target_os = "windows")`-Block). Die Funktion steht hier
+// ABSICHTLICH ausserhalb davon, damit die Tests sie auf JEDER
+// Plattform fahren koennen — siehe Doc-Kommentar. Auf Nicht-Windows
+// fehlt dadurch der einzige Nicht-Test-Aufrufer, und `cargo check`
+// (nur lib-Target, ohne Tests) meldet sie als ungenutzt. Auf Windows
+// bleibt die Warnung scharf und wuerde echten toten Code zeigen.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn flugkopie_entwerten(alt_generation: u32, buch_generation: u32) -> bool {
     alt_generation != buch_generation
 }
@@ -2528,6 +2560,14 @@ fn flugkopie_entwerten(alt_generation: u32, buch_generation: u32) -> bool {
 /// erzeugte Auskunft (DAAG, 0 Rollwege) daneben. Eine verlorene,
 /// veraltete oder falsch zugeordnete Diagnose waere gruen geblieben
 /// (QS-Befund 2, elfte Runde).
+// Nur auf Windows produktiv aufgerufen (Szenerie-Ernte im
+// `cfg(target_os = "windows")`-Block). Die Funktion steht hier
+// ABSICHTLICH ausserhalb davon, damit die Tests sie auf JEDER
+// Plattform fahren koennen — siehe Doc-Kommentar. Auf Nicht-Windows
+// fehlt dadurch der einzige Nicht-Test-Aufrufer, und `cargo check`
+// (nur lib-Target, ohne Tests) meldet sie als ungenutzt. Auf Windows
+// bleibt die Warnung scharf und wuerde echten toten Code zeigen.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn schnappschuss_uebernehmen(
     stats: &mut FlightStats,
     ziel: Option<&str>,
@@ -2675,8 +2715,20 @@ fn bahnaufloesung_nachholen(
 ///
 /// Mit einem schlechten Vormerkungsrang gewinnt immer die Ernte, die
 /// jeden Durchlauf die richtige Rangfolge nachtraegt.
+// Nur im `cfg(target_os = "windows")`-Block verwendet
+// (`szenerie_anfordern_mit_rang`). Kein Test braucht sie, deshalb faellt
+// sie auf Nicht-Windows als ungenutzt auf, obwohl sie produktiv wirkt.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const RANG_VORMERKUNG: u8 = 200;
 
+// Nur auf Windows produktiv aufgerufen (Szenerie-Ernte im
+// `cfg(target_os = "windows")`-Block). Die Funktion steht hier
+// ABSICHTLICH ausserhalb davon, damit die Tests sie auf JEDER
+// Plattform fahren koennen — siehe Doc-Kommentar. Auf Nicht-Windows
+// fehlt dadurch der einzige Nicht-Test-Aufrufer, und `cargo check`
+// (nur lib-Target, ohne Tests) meldet sie als ungenutzt. Auf Windows
+// bleibt die Warnung scharf und wuerde echten toten Code zeigen.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn szenerie_ziele(
     geplant: &str,
     ausweich: Option<&str>,
@@ -2720,6 +2772,14 @@ fn szenerie_ziele(
 /// ab — die **Rollwege** nicht, die gehen ohne Platzpruefung in die
 /// Ausfahrten. Dann liegen die Ausfahrten des geplanten Platzes an der
 /// tatsaechlichen Ausweichlandung (QS-Befund 2, 01.09.2026).
+// Nur auf Windows produktiv aufgerufen (Szenerie-Ernte im
+// `cfg(target_os = "windows")`-Block). Die Funktion steht hier
+// ABSICHTLICH ausserhalb davon, damit die Tests sie auf JEDER
+// Plattform fahren koennen — siehe Doc-Kommentar. Auf Nicht-Windows
+// fehlt dadurch der einzige Nicht-Test-Aufrufer, und `cargo check`
+// (nur lib-Target, ohne Tests) meldet sie als ungenutzt. Auf Windows
+// bleibt die Warnung scharf und wuerde echten toten Code zeigen.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn szenerie_ernteziel(
     geplant: &str,
     ausweich: Option<&str>,
@@ -5214,12 +5274,20 @@ struct FlightStats {
     szenerie_status_fest: Option<String>,
     /// Die Generation, unter der die Flugkopie entstanden ist.
     /// Siehe `flugkopie_entwerten`.
+    // Nur im `cfg(target_os = "windows")`-Block der Szenerie-Ernte
+    // geschrieben und gelesen; auf Nicht-Windows existiert dieser
+    // Zugriff nicht, weshalb das Feld dort als nie gelesen gilt.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     szenerie_auskunft_generation: u32,
     /// Die Phase beim VORIGEN Durchlauf der Szenerie-Ernte.
     ///
     /// ⚠ Irgendeine Phase, nicht die zuletzt geoeffnete Landephase —
     /// sonst geht `Approach → Holding → Approach` verloren. Siehe
     /// `braucht_neues_versuchsfenster`.
+    // Nur im `cfg(target_os = "windows")`-Block der Szenerie-Ernte
+    // geschrieben und gelesen; auf Nicht-Windows existiert dieser
+    // Zugriff nicht, weshalb das Feld dort als nie gelesen gilt.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     szenerie_vorige_phase: Option<FlightPhase>,
     /// v0.16.24: the diverged field currently accruing stability time
     /// during a committed approach (distinct from `divert_prefetch_icao`,
