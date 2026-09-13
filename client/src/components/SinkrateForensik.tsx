@@ -218,9 +218,27 @@ export function vsTone(vs: number | null | undefined): Tone | null {
 /// Negative-Check gegen Float-Noise / Pre-Touchdown-Bumps: nur Werte
 /// < 0 zaehlen als gueltiger Edge (im Sim positives V/S beim TD =
 /// Ballooning oder Sample-Glitch, nicht der echte Aufsetz-Moment).
+/// Ist diese Landung überhaupt bewertbar?
+///
+/// Landungen ohne ausreichende Aufzeichnung haben keine Sinkrate. Sie
+/// dürfen deshalb in keine Statistik einfliessen — ein Mittelwert über
+/// "keine Zahl" ist keine Zahl, und als weichste Landung dürfte eine
+/// gelten, die niemand gemessen hat.
+export function istBewertbar(record: { landung_nicht_bewertbar?: unknown }): boolean {
+  return record.landung_nicht_bewertbar == null;
+}
+
 export function scoreBasisVs(record: Pick<LandingRecord,
   "vs_at_edge_fpm" | "landing_peak_vs_fpm" | "landing_rate_fpm"
->): number {
+> & { landung_nicht_bewertbar?: unknown }): number | null {
+  // ⚠ Zuerst: Wurde die Landung überhaupt gemessen?
+  //
+  // Der Client rechnet für Altdatensätze selbst (Legacy-Pfad weiter unten
+  // in LandingPanel), und diese Funktion ist dort die Quelle der Sinkrate.
+  // Ohne diese Sperre zeigte der Client eine Zahl, während Rust, PIREP und
+  // Webapp „nicht bewertbar" sagen — genau die Art Riss, die den
+  // PIA3452-Split ausgelöst hat (Log -233 gegen Karte -206).
+  if (record.landung_nicht_bewertbar != null) return null;
   if (record.vs_at_edge_fpm != null && record.vs_at_edge_fpm < 0) {
     return record.vs_at_edge_fpm;
   }
@@ -415,7 +433,7 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
           {t("landing.sinkrate_forensik.score_section_subtitle")}
         </div>
         <ScoreBasisTile
-          vs={scoreVs}
+          vs={scoreVs ?? null}
           quelle={record.vs_at_edge_quelle ?? null}
           landingSource={record.landing_source ?? null}
         />
@@ -507,13 +525,28 @@ function ScoreBasisTile({
   quelle,
   landingSource,
 }: {
-  vs: number;
+  /** `null`, wenn die Landung nicht gemessen werden konnte. */
+  vs: number | null;
   /** v1.6.3: das MESSVERFAHREN (`hoehenkurve` / `simvar_fallback`). */
   quelle: string | null;
   /** Ältere Aufzeichnungen: nur die Buffer-Stelle, kein Verfahren. */
   landingSource: string | null;
 }) {
   const { t } = useTranslation();
+  // Ohne Messung bleibt die Kachel leer statt eine Zahl zu erfinden. Der
+  // Grund steht darüber im Panel, mit den gemessenen Werten.
+  if (vs == null) {
+    return (
+      <div className="sinkrate-score-tile">
+        <div className="sinkrate-score-tile__heading">
+          {t("landing.sinkrate_forensik.score_basis_label")}
+        </div>
+        <div className="sinkrate-score-tile__value sinkrate-score-tile__value--leer">
+          {t("landing.nicht_bewertbar.kein_wert", { defaultValue: "nicht gemessen" })}
+        </div>
+      </div>
+    );
+  }
   const tone = vsTone(vs);
   return (
     <div className={`sinkrate-score-tile ${tone ? `sinkrate-score-tile--${tone}` : ""}`}>

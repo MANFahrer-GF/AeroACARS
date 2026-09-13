@@ -256,6 +256,128 @@ fn deckt_fenster_durchgehend_ab(
     endluecke <= max_gap_ms
 }
 
+/// Grösste zulässige Lücke zwischen zwei Proben im Bewertungsfenster.
+///
+/// # Wie die Zahl zustande kommt (Untersuchung 12.09.2026)
+///
+/// Die Landerate wird in Stufen bewertet; die schmalste ist 90 fpm breit
+/// (`sub_landing_rate.rs`: unter 90 → 85 Punkte, 90–250 → 100, 250–400 → 80,
+/// 400–600 → 45, 600–1000 → 20, darüber 0). Eine Lücke ist dann zu gross,
+/// wenn sich die Sinkrate darin um mehr als eine solche Stufe ändern kann —
+/// denn dann ist unbekannt, in welcher Stufe die Landung wirklich lag.
+///
+/// Über 1119 Landungen des Bestands gemessen (stärkste Änderung je Landung
+/// in der letzten Sekunde vor dem Aufsetzen, nur aus Probenpaaren mit
+/// 20–200 ms Abstand): Median 188 fpm/s, bei den dynamischsten zehn Prozent
+/// 663 fpm/s. Eine Stufe ist damit im Mittel nach 479 ms durchlaufen, bei
+/// den dynamischen Landungen aber schon nach 136 ms.
+///
+/// 200 ms ist eine **empirische Ausschlussgrenze** deutlich oberhalb der
+/// beobachteten normalen Probenabstände (Median 33 ms, 99. Perzentil 112 ms)
+/// und deutlich unterhalb der gefundenen Ausfälle (229 ms bis 921 ms).
+///
+/// Sie garantiert KEINE unveränderte Score-Stufe — bei 663 fpm/s sind
+/// innerhalb von 200 ms schon 133 fpm Änderung möglich, und nahe einer
+/// Stufengrenze genügt weniger (Codex-Abnahme 12.09.2026: die erste Fassung
+/// dieses Kommentars behauptete das Gegenteil). Die Grenze trennt
+/// „aufgezeichnet" von „nicht aufgezeichnet", nicht „genau" von „ungenau".
+///
+/// Dass `MAX_COVERAGE_GAP_MS` in der Kontaktvalidierung denselben Wert nutzt,
+/// ist ein Hinweis auf dieselbe Grössenordnung, kein unabhängiger Nachweis.
+pub const MAX_BEWERTUNGS_LUECKE_MS: i64 = 200;
+
+/// Mindestzahl verwertbarer Proben im Bewertungsfenster.
+///
+/// Fängt den Fall, den eine reine Lückenprüfung übersieht: gleichmässig,
+/// aber viel zu grob abgetastet. Bei Soll-Takt (50 Hz) liegen im Fenster
+/// rund 55 Proben, im Bestand sind es im Mittel 35. Unter 12 ist die
+/// Aufzeichnung in keinem Fall mehr belastbar — die beiden schlechtesten
+/// Landungen des Bestands hatten 5 und 8.
+pub const MIN_BEWERTUNGS_PROBEN: usize = 12;
+
+/// Das Fenster, in dem die Aufzeichnung sitzen muss: eine Sekunde vor dem
+/// Bodenkontakt bis kurz danach.
+///
+/// Fest am Kontakt, NICHT am gewählten Impact-Frame: Sonst schwankte die
+/// Fensterlänge zwischen 850 und 1200 ms, und `MIN_BEWERTUNGS_PROBEN`
+/// bedeutete bei jeder Landung etwas anderes. Die Sekunde davor deckt die
+/// Flare ab, in der sich die Sinkrate entscheidet; die 100 ms danach
+/// enthalten das gesamte Auswahlfenster des Impact-Frames.
+pub const BEWERTUNGS_FENSTER_VOR_MS: i64 = 1000;
+pub const BEWERTUNGS_FENSTER_NACH_MS: i64 = 100;
+
+/// Warum eine Landung nicht bewertet werden kann.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FehlendeAbdeckung {
+    /// Grösste Lücke zwischen zwei Proben im Fenster, in Millisekunden.
+    pub groesste_luecke_ms: i64,
+    /// Verwertbare Proben im Fenster.
+    pub proben: usize,
+}
+
+/// Reicht die Aufzeichnung, um diese Landung zu bewerten?
+///
+/// # Der Anlass (CFG 2090, EDDF→KPDX, 12.09.2026)
+///
+/// Eine Landung bekam 97 Punkte und die Note A+, obwohl der Aufsetzmoment
+/// nicht aufgezeichnet wurde: Zwischen der letzten Probe in der Luft und dem
+/// ersten Bodenkontakt lagen 0,92 s ohne jede Messung. Die Bewertung nahm
+/// den ersten Frame NACH dem Aufsetzen — dort stand −10,39 fpm, und weil
+/// die Kaskade nur prüft, ob der Wert unter −10,0 liegt, galt er als
+/// bestmöglich belegt.
+///
+/// Die Prüfung hier trennt "Landung erkannt" von "Landung messbar". Beides
+/// darf auseinanderfallen: Das Flugzeug ist gelandet, wir wissen nur nicht
+/// wie. Aus einer solchen Landung darf keine Zahl und keine Note entstehen —
+/// weder eine gute noch eine schlechte.
+///
+/// Gibt `Ok(())` zurück, wenn bewertet werden darf, sonst die Messwerte,
+/// die dagegen sprechen.
+pub fn pruefe_bewertbarkeit(
+    samples: &[TouchdownWindowSample],
+    contact_at: DateTime<Utc>,
+) -> Result<(), FehlendeAbdeckung> {
+    let start = contact_at - chrono::Duration::milliseconds(BEWERTUNGS_FENSTER_VOR_MS);
+    let ende = contact_at + chrono::Duration::milliseconds(BEWERTUNGS_FENSTER_NACH_MS);
+
+    // Verwertbar heisst: im Fenster, mit endlichen Werten. Eine Probe mit
+    // NaN-Sinkrate zählt nicht mit — sie trägt nichts zur Messung bei, und
+    // mitgezählt würde sie eine Abdeckung vortäuschen.
+    let mut zeitpunkte: Vec<DateTime<Utc>> = samples
+        .iter()
+        .filter(|s| s.at >= start && s.at <= ende)
+        .filter(|s| s.vs_fpm.is_finite() && s.agl_ft.is_finite())
+        .map(|s| s.at)
+        .collect();
+    zeitpunkte.sort();
+    zeitpunkte.dedup();
+
+    let proben = zeitpunkte.len();
+    if proben == 0 {
+        return Err(FehlendeAbdeckung {
+            groesste_luecke_ms: (ende - start).num_milliseconds(),
+            proben: 0,
+        });
+    }
+
+    // Randlücken zählen mit: Liegt die erste Probe erst 600 ms nach
+    // Fensterbeginn, fehlt die halbe Flare — auch wenn die restlichen
+    // Proben dicht liegen.
+    let mut groesste = (zeitpunkte[0] - start).num_milliseconds();
+    for paar in zeitpunkte.windows(2) {
+        groesste = groesste.max((paar[1] - paar[0]).num_milliseconds());
+    }
+    groesste = groesste.max((ende - *zeitpunkte.last().expect("nicht leer")).num_milliseconds());
+
+    if groesste > MAX_BEWERTUNGS_LUECKE_MS || proben < MIN_BEWERTUNGS_PROBEN {
+        return Err(FehlendeAbdeckung {
+            groesste_luecke_ms: groesste,
+            proben,
+        });
+    }
+    Ok(())
+}
+
 /// Validate eine TdCandidate gegen die sim-spezifischen Tests.
 ///
 /// X-Plane: gear_force ist MUST-PASS (Anchor). A1 FAIL → Validation FAIL.
@@ -1987,4 +2109,221 @@ mod tests {
         }
     }
 
+    // ─── Bewertbarkeit: reicht die Aufzeichnung? ─────────────────────────
+    //
+    // Anlass CFG 2090 (EDDF→KPDX, A339, X-Plane 12, 12.09.2026): 97 Punkte
+    // und Note A+ für eine Landung, deren Aufsetzmoment nicht aufgezeichnet
+    // wurde. Zwischen der letzten Probe in der Luft (6,4 ft) und dem ersten
+    // Bodenkontakt lagen 0,92 s ohne jede Messung; im ganzen Fenster von
+    // fünf Sekunden standen zehn Proben statt der üblichen 127.
+
+    fn bp(at_ms: i64, agl_ft: f32, on_ground: bool, vs_fpm: f32) -> TouchdownWindowSample {
+        use chrono::TimeZone;
+        cat_sample(
+            Utc.timestamp_opt(1_700_000_000, 0).unwrap() + chrono::Duration::milliseconds(at_ms),
+            agl_ft,
+            on_ground,
+            vs_fpm,
+            1.0,
+        )
+    }
+
+    fn kontakt() -> DateTime<Utc> {
+        use chrono::TimeZone;
+        Utc.timestamp_opt(1_700_000_000, 0).unwrap()
+    }
+
+    /// Sauber abgetastete Landung: alle 33 ms eine Probe, wie im Bestand üblich.
+    fn dichte_proben() -> Vec<TouchdownWindowSample> {
+        (-1200..=200)
+            .step_by(33)
+            .map(|ms| bp(ms, if ms < 0 { 5.0 } else { 0.5 }, ms >= 0, -150.0))
+            .collect()
+    }
+
+    #[test]
+    fn dichte_aufzeichnung_ist_bewertbar() {
+        assert_eq!(pruefe_bewertbarkeit(&dichte_proben(), kontakt()), Ok(()));
+    }
+
+    #[test]
+    fn die_luecke_im_aufsetzmoment_sperrt_die_bewertung() {
+        // Die echte Probenfolge von CFG 2090, auf das Fenster bezogen:
+        // −4,7 s / −3,5 s / −2,6 s / −1,6 s ... dann 0,92 s nichts, dann Boden.
+        let proben = vec![
+            bp(-2650, 11.2, false, -520.0),
+            bp(-1480, 6.9, false, -458.0),
+            bp(-920, 6.4, false, 26.0),
+            bp(0, 0.7, true, -82.0),
+            bp(83, 0.98, true, -10.4),
+            bp(113, 0.98, true, -10.4),
+        ];
+        let fehlt = pruefe_bewertbarkeit(&proben, kontakt()).unwrap_err();
+        assert!(
+            fehlt.groesste_luecke_ms >= 900,
+            "die 0,92-s-Lücke muss gefunden werden, gemessen: {} ms",
+            fehlt.groesste_luecke_ms
+        );
+        assert!(fehlt.proben < MIN_BEWERTUNGS_PROBEN);
+    }
+
+    #[test]
+    fn die_beiden_bedingungen_greifen_je_fuer_sich() {
+        // Codex-Abnahme 12.09.2026: Der erste Grenztest prüfte 200 gegen
+        // 201 ms — aber beide Reihen hatten weniger als zwölf Proben, also
+        // entschied in Wahrheit die Probenzahl. Hier steht jede Bedingung
+        // für sich, mit der jeweils anderen sicher erfüllt.
+
+        // Dicht genug (20 Proben), eine einzelne Lücke von 201 ms.
+        let mut mit_luecke: Vec<TouchdownWindowSample> = (-1000..=-600)
+            .step_by(20)
+            .map(|ms| bp(ms, 5.0, false, -200.0))
+            .collect();
+        mit_luecke.extend(
+            (-399..=100)
+                .step_by(20)
+                .map(|ms| bp(ms, 2.0, ms >= 0, -140.0)),
+        );
+        assert!(
+            mit_luecke.len() > MIN_BEWERTUNGS_PROBEN,
+            "Probenzahl ist erfüllt"
+        );
+        let fehlt = pruefe_bewertbarkeit(&mit_luecke, kontakt()).unwrap_err();
+        assert_eq!(
+            fehlt.groesste_luecke_ms, 201,
+            "nur die Lücke entscheidet hier"
+        );
+
+        // Umgekehrt: keine Lücke über 200 ms, aber zu wenige Proben.
+        let zu_wenige: Vec<_> = (-1000..=100)
+            .step_by(200)
+            .map(|ms| bp(ms, 4.0, ms >= 0, -180.0))
+            .collect();
+        assert!(zu_wenige.len() < MIN_BEWERTUNGS_PROBEN);
+        let fehlt = pruefe_bewertbarkeit(&zu_wenige, kontakt()).unwrap_err();
+        assert!(
+            fehlt.groesste_luecke_ms <= MAX_BEWERTUNGS_LUECKE_MS,
+            "die Lücke allein wäre in Ordnung: {} ms",
+            fehlt.groesste_luecke_ms
+        );
+        assert_eq!(
+            fehlt.proben,
+            zu_wenige.len(),
+            "hier entscheidet die Probenzahl"
+        );
+    }
+
+    #[test]
+    fn genau_an_der_grenze_bleibt_die_bewertung_erhalten() {
+        // 200 ms Abstand ist erlaubt, 201 ms nicht — beide Zweige getrennt
+        // geprüft, damit eine Verschiebung der Konstante auffällt.
+        let gerade_noch: Vec<_> = (-1000..=100)
+            .step_by(MAX_BEWERTUNGS_LUECKE_MS as usize)
+            .map(|ms| bp(ms, 3.0, ms >= 0, -140.0))
+            .collect();
+        assert_eq!(
+            pruefe_bewertbarkeit(&gerade_noch, kontakt()).is_ok(),
+            gerade_noch.len() >= MIN_BEWERTUNGS_PROBEN,
+            "bei 200 ms darf nur noch die Probenzahl den Ausschlag geben"
+        );
+
+        let zu_grob: Vec<_> = (-1000..=100)
+            .step_by(MAX_BEWERTUNGS_LUECKE_MS as usize + 1)
+            .map(|ms| bp(ms, 3.0, ms >= 0, -140.0))
+            .collect();
+        assert!(pruefe_bewertbarkeit(&zu_grob, kontakt()).is_err());
+    }
+
+    #[test]
+    fn zu_wenige_proben_sperren_auch_ohne_grosse_luecke() {
+        // Gleichmässig verteilt, keine einzelne Lücke über 200 ms — aber
+        // insgesamt zu grob. Genau der Fall, den eine reine Lückenprüfung
+        // übersieht.
+        let proben: Vec<_> = (-1000..=100)
+            .step_by(150)
+            .map(|ms| bp(ms, 4.0, ms >= 0, -200.0))
+            .collect();
+        assert!(proben.len() < MIN_BEWERTUNGS_PROBEN);
+        let fehlt = pruefe_bewertbarkeit(&proben, kontakt()).unwrap_err();
+        assert!(fehlt.groesste_luecke_ms <= MAX_BEWERTUNGS_LUECKE_MS);
+        assert_eq!(fehlt.proben, proben.len());
+    }
+
+    #[test]
+    fn eine_luecke_am_fensterrand_zaehlt_mit() {
+        // Alle Proben dicht — aber die erste kommt erst 600 ms nach
+        // Fensterbeginn. Dann fehlt die halbe Flare, und genau dort
+        // entscheidet sich die Sinkrate.
+        let proben: Vec<_> = (-400..=100)
+            .step_by(20)
+            .map(|ms| bp(ms, 4.0, ms >= 0, -200.0))
+            .collect();
+        let fehlt = pruefe_bewertbarkeit(&proben, kontakt()).unwrap_err();
+        assert!(
+            fehlt.groesste_luecke_ms >= 600,
+            "die Randlücke muss zählen, gemessen: {} ms",
+            fehlt.groesste_luecke_ms
+        );
+    }
+
+    #[test]
+    fn proben_ausserhalb_des_fensters_helfen_nicht() {
+        // Dichte Aufzeichnung, aber erst ab 300 ms nach dem Kontakt — das
+        // Ausrollen. Über die Landung sagt sie nichts.
+        let proben: Vec<_> = (300..=2000)
+            .step_by(20)
+            .map(|ms| bp(ms, 0.4, true, -20.0))
+            .collect();
+        assert!(pruefe_bewertbarkeit(&proben, kontakt()).is_err());
+    }
+
+    #[test]
+    fn unbrauchbare_werte_taeuschen_keine_abdeckung_vor() {
+        // Proben mit NaN tragen nichts zur Messung bei. Mitgezählt würden
+        // sie eine dichte Reihe vortäuschen, aus der nichts zu lesen ist.
+        // Gegenprobe zuerst: dieselbe Reihe mit gültigen Werten ist bewertbar.
+        assert_eq!(pruefe_bewertbarkeit(&dichte_proben(), kontakt()), Ok(()));
+
+        // Alle unbrauchbar machen, dann drei in der Fenstermitte wieder
+        // gültig — die ersten Proben der Reihe liegen noch vor dem Fenster
+        // und würden ohnehin nicht zählen.
+        let mut proben = dichte_proben();
+        for p in proben.iter_mut() {
+            p.vs_fpm = f32::NAN;
+        }
+        let behalten = 3;
+        let mitte = proben.len() / 2;
+        for p in proben.iter_mut().skip(mitte).take(behalten) {
+            p.vs_fpm = -150.0;
+        }
+        let fehlt = pruefe_bewertbarkeit(&proben, kontakt()).unwrap_err();
+        assert_eq!(
+            fehlt.proben, behalten,
+            "nur die Proben mit gültigen Werten dürfen zählen"
+        );
+    }
+
+    #[test]
+    fn doppelte_zeitstempel_zaehlen_einmal() {
+        // Ein hängender Simulator liefert denselben Zustand mehrfach. Der
+        // Sampler schreibt jede Runde eine Probe — die Zeitstempel wiederholen
+        // sich dabei nicht, wohl aber in Aufzeichnungen aus Fremdquellen.
+        let mut proben = vec![bp(-500, 5.0, false, -300.0); 40];
+        proben.push(bp(0, 0.5, true, -120.0));
+        let fehlt = pruefe_bewertbarkeit(&proben, kontakt()).unwrap_err();
+        assert_eq!(
+            fehlt.proben, 2,
+            "vierzig gleiche Zeitstempel sind eine Probe"
+        );
+    }
+
+    #[test]
+    fn ein_leeres_fenster_ist_nie_bewertbar() {
+        let fehlt = pruefe_bewertbarkeit(&[], kontakt()).unwrap_err();
+        assert_eq!(fehlt.proben, 0);
+        assert_eq!(
+            fehlt.groesste_luecke_ms,
+            BEWERTUNGS_FENSTER_VOR_MS + BEWERTUNGS_FENSTER_NACH_MS
+        );
+    }
 }

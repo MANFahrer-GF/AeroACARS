@@ -320,12 +320,27 @@ pub struct LandingRecord {
     pub sim_kind: Option<String>,
 
     // Score
-    pub score_numeric: i32,
-    pub score_label: String,
-    pub grade_letter: String,
+    //
+    // Seit dem 12.09.2026 optional: Eine Landung kann erkannt, aber nicht
+    // messbar sein (zu dünne Aufzeichnung im Aufsetzfenster, siehe
+    // `landung_nicht_bewertbar`). Vorher war der Datensatz gezwungen, eine
+    // Zahl zu tragen — und der Erbauer gab bei fehlender Rate gar keinen
+    // Datensatz zurück. Der Pilot sah dann überhaupt nichts, statt der
+    // Erklärung (Codex-Abnahme zum ersten Entwurf: "Der gebaute Vertrag kann
+    // 'Landung vorhanden, Bewertung fehlt' noch nicht ausdrücken").
+    //
+    // Ältere Datensätze lesen sich unverändert ein: Aus `"score_numeric": 80`
+    // wird `Some(80)`.
+    #[serde(default)]
+    pub score_numeric: Option<i32>,
+    #[serde(default)]
+    pub score_label: Option<String>,
+    #[serde(default)]
+    pub grade_letter: Option<String>,
 
     // Touchdown vitals
-    pub landing_rate_fpm: f32,
+    #[serde(default)]
+    pub landing_rate_fpm: Option<f32>,
     pub landing_peak_vs_fpm: Option<f32>,
     pub landing_g_force: Option<f32>,
     pub landing_peak_g_force: Option<f32>,
@@ -630,6 +645,26 @@ pub struct LandingRecord {
     // F4: Forensik-Sichtbarkeit
     #[serde(default)]
     pub landing_confidence: Option<String>,
+    /// Gesetzt, wenn die Aufzeichnung im Aufsetzfenster nicht ausreichte:
+    /// `{ "groesste_luecke_ms": …, "proben": … }`.
+    ///
+    /// Dann gibt es keine Sinkrate und keine Note. Die Anzeige sagt das
+    /// mit diesen Zahlen — "Landung erkannt, aber nicht gemessen" ist eine
+    /// Aussage über unsere Aufzeichnung, nicht über den Piloten
+    /// (Untersuchung 12.09.2026, CFG 2090).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landung_nicht_bewertbar: Option<serde_json::Value>,
+    /// Das Aufsetzfenster reichte nicht — auch wenn die Sinkrate trotzdem gilt.
+    ///
+    /// Hat MSFS die Aufsetzrate selbst gemeldet, gibt es eine Note, aber G-Werte
+    /// und Hopser stammen aus unserem dünnen Fenster und werden nicht gezeigt.
+    /// `landung_nicht_bewertbar` ist in diesem Fall leer, dieses Feld `true`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fenster_unzureichend: bool,
+    /// Wie zuverlässig der 50-Hz-Sampler lief — erklärt eine dünne
+    /// Aufzeichnung, statt sie nur festzustellen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampler_diagnose: Option<serde_json::Value>,
     #[serde(default)]
     pub landing_source: Option<String>,
 
@@ -1366,11 +1401,12 @@ mod merge_tests {
     fn later_write_wins_on_conflict() {
         let old = vec![rec("A", "2026-07-01T10:00:00Z", "2026-07-01T10:05:00Z")];
         let mut newer = rec("A", "2026-07-01T10:00:00Z", "2026-07-01T18:00:00Z");
-        newer.score_numeric = 95;
+        newer.score_numeric = Some(95);
         let merged = merge_landings(old, vec![newer]);
         assert_eq!(merged.len(), 1);
         assert_eq!(
-            merged[0].score_numeric, 95,
+            merged[0].score_numeric,
+            Some(95),
             "die spätere Fassung muss gewinnen"
         );
     }
@@ -1381,14 +1417,14 @@ mod merge_tests {
     fn conflict_rule_is_symmetric() {
         let older = rec("A", "2026-07-01T10:00:00Z", "2026-07-01T10:05:00Z");
         let mut newer = rec("A", "2026-07-01T10:00:00Z", "2026-07-01T18:00:00Z");
-        newer.score_numeric = 95;
+        newer.score_numeric = Some(95);
         assert_eq!(
             merge_landings(vec![newer.clone()], vec![older.clone()])[0].score_numeric,
-            95,
+            Some(95),
         );
         assert_eq!(
             merge_landings(vec![older], vec![newer])[0].score_numeric,
-            95
+            Some(95)
         );
     }
 

@@ -133,8 +133,19 @@ pub enum FlightLogEvent {
         peak_vs_fpm: f32,
         /// Raw 50 Hz single-frame G peak. **Stays raw** (v0.12.3 LE7) —
         /// backward-compatible, never re-purposed to the EMA value.
-        peak_g_force: f32,
-        bounce_count: u8,
+        ///
+        /// Seit 13.09.2026 optional: Reichte das Aufsetzfenster nicht, gibt es
+        /// keinen G-Wert — vorher stand hier eine erfundene 0.0, und "keine
+        /// Messung" war von "gemessen 0" nicht zu unterscheiden (Codex, vierte
+        /// Abnahme). Ältere Protokolle mit einer Zahl lesen sich als `Some`;
+        /// der Server-Importer liest das Feld über `numOrNull` und verträgt
+        /// `null` ohne Anpassung.
+        #[serde(default)]
+        peak_g_force: Option<f32>,
+        /// Ebenso: `None` heisst "nicht messbar", `Some(0)` heisst "gemessen,
+        /// keine Hopser". Beides war vorher dieselbe Null.
+        #[serde(default)]
+        bounce_count: Option<u8>,
         /// v0.12.3 (LE7): EMA-smoothed window-peak G — the value the
         /// landing is actually scored on. Additive + `serde(default)` so
         /// pre-v0.12.3 JSONL logs without it still deserialize (→ `None`).
@@ -787,11 +798,67 @@ mod scored_g_tests {
                 scored_g_method,
                 ..
             } => {
-                assert_eq!(peak_g_force, 1.95);
+                assert_eq!(peak_g_force, Some(1.95), "alte Zahl liest sich als Some");
                 assert_eq!(scored_g_force, None);
                 assert_eq!(scored_g_method, None);
             }
             _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn landing_scored_unterscheidet_nicht_messbar_von_null() {
+        // Codex, vierte Abnahme 13.09.2026: Im dauerhaften Protokoll wurden
+        // fehlende Messungen zu `peak_g_force: 0.0, bounce_count: 0` — ohne
+        // jede Kennzeichnung. Jetzt steht dort `null`, und eine echte Null
+        // bleibt eine Null.
+        let ohne = FlightLogEvent::LandingScored {
+            timestamp: "2026-09-13T00:00:00Z".parse().unwrap(),
+            score: "smooth".to_string(),
+            peak_vs_fpm: -168.0,
+            peak_g_force: None,
+            bounce_count: None,
+            scored_g_force: None,
+            scored_g_method: None,
+        };
+        let json = serde_json::to_value(&ohne).unwrap();
+        assert!(
+            json["peak_g_force"].is_null(),
+            "nicht messbar ist null, nicht 0.0"
+        );
+        assert!(
+            json["bounce_count"].is_null(),
+            "nicht messbar ist null, nicht 0"
+        );
+
+        let gemessen = FlightLogEvent::LandingScored {
+            timestamp: "2026-09-13T00:00:00Z".parse().unwrap(),
+            score: "smooth".to_string(),
+            peak_vs_fpm: -168.0,
+            peak_g_force: Some(1.21),
+            bounce_count: Some(0),
+            scored_g_force: None,
+            scored_g_method: None,
+        };
+        let json = serde_json::to_value(&gemessen).unwrap();
+        assert_eq!(
+            json["bounce_count"], 0,
+            "eine gemessene Null bleibt eine Null"
+        );
+
+        // Und rückwärts: Ein neues Ereignis mit null liest sich wieder ein.
+        let zurueck: FlightLogEvent =
+            serde_json::from_value(serde_json::to_value(&ohne).unwrap()).unwrap();
+        match zurueck {
+            FlightLogEvent::LandingScored {
+                peak_g_force,
+                bounce_count,
+                ..
+            } => {
+                assert_eq!(peak_g_force, None);
+                assert_eq!(bounce_count, None);
+            }
+            _ => panic!("falsche Variante"),
         }
     }
 
@@ -806,8 +873,7 @@ mod scored_g_tests {
         match ev {
             FlightLogEvent::FlightResumed {
                 age_minutes,
-                previous_exit_clean,
-                ..
+                previous_exit_clean, ..
             } => {
                 assert_eq!(age_minutes, 98);
                 assert_eq!(previous_exit_clean, None);
@@ -829,7 +895,8 @@ mod scored_g_tests {
         let back: FlightLogEvent = serde_json::from_str(&json).expect("deserialize");
         match back {
             FlightLogEvent::FlightResumed {
-                previous_exit_clean, ..
+                previous_exit_clean,
+                ..
             } => assert_eq!(previous_exit_clean, Some(false)),
             _ => panic!("wrong variant"),
         }

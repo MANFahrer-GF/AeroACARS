@@ -11,7 +11,7 @@ import {
 import { Sentry } from "../lib/sentry";
 import { useConfirm } from "./ConfirmDialog";
 import { ForensicsBadge } from "./ForensicsBadge";
-import { SinkrateForensik, scoreBasisVs } from "./SinkrateForensik";
+import { SinkrateForensik, scoreBasisVs, istBewertbar } from "./SinkrateForensik";
 import { GForceForensik } from "./GForceForensik";
 import { RunwayDiagramV2 } from "./RunwayDiagramV2";
 import { RunwayUtilizationHelpModal } from "./RunwayUtilizationHelpModal";
@@ -96,11 +96,16 @@ export interface LandingRecord {
   aircraft_title: string | null;
   sim_kind: string | null;
 
-  score_numeric: number;
-  score_label: string;
-  grade_letter: string;
+  /// `null`, wenn die Landung nicht bewertet werden konnte (siehe
+  /// `landung_nicht_bewertbar`). Alte Datensätze haben immer eine Zahl.
+  score_numeric: number | null;
+  /// `null` bei nicht bewertbarer Landung.
+  score_label: string | null;
+  /// `null` bei nicht bewertbarer Landung.
+  grade_letter: string | null;
 
-  landing_rate_fpm: number;
+  /// `null`, wenn der Aufsetzmoment nicht gemessen wurde.
+  landing_rate_fpm: number | null;
   landing_peak_vs_fpm: number | null;
   landing_g_force: number | null;
   landing_peak_g_force: number | null;
@@ -264,6 +269,23 @@ export interface LandingRecord {
   landing_confidence?: string | null;
   /// "vs_at_impact" | "smoothed_500ms" | "smoothed_1000ms" | "pre_flare_peak"
   landing_source?: string | null;
+  /// Gesetzt, wenn die Aufzeichnung im Aufsetzfenster nicht ausreichte.
+  ///
+  /// Dann gibt es keine Sinkrate und keine Note — die Landung wurde erkannt,
+  /// aber nicht gemessen (Untersuchung 12.09.2026, CFG 2090: 0,92 s ohne
+  /// Messung genau im Aufsetzmoment, daraus 97 Punkte und Note A+).
+  landung_nicht_bewertbar?: { groesste_luecke_ms: number; proben: number } | null;
+  /// Das Aufsetzfenster reichte nicht, die Sinkrate kam aber vom Simulator
+  /// selbst: Note ja, G-Werte und Hopser nein.
+  fenster_unzureichend?: boolean;
+  /// Wie zuverlässig der 50-Hz-Sampler lief. Erklärt eine dünne Aufzeichnung.
+  sampler_diagnose?: {
+    laeufe?: number;
+    proben?: number;
+    takt_mittel_ms?: number;
+    takt_max_ms?: number;
+    proben_je_sekunde?: number;
+  } | null;
   /// F7: Stability-v2-Felder (P2.1-A — bestehende Backend-Felder
   /// exponiert, keine neue Berechnung).
   /// `approach_vs_jerk_fpm` ist mean |ΔVS| (NICHT max).
@@ -529,6 +551,9 @@ function getSubScores(r: LandingRecord): SubScore[] {
   // v0.20.0: ueber scoreBasisVs() statt handkopierter Kaskade — dieselbe
   // Regel dreimal ausgeschrieben ist genau die Drift, aus der der
   // PIA3452-Split entstanden ist (Log -233 vs Karte -206).
+  // Ohne Messung keine Teilwerte: Sie stammen alle aus demselben Fenster
+  // (Codex-Abnahme 12.09.2026 — `getSubScores` reichte sie ungeprüft durch).
+  if (!istBewertbar(r)) return [];
   const peakVs = scoreBasisVs(r);
   const subs: LibSubScore[] = libComputeSubScores({
     vs_fpm: peakVs,
@@ -694,7 +719,18 @@ function coachTipKey(rationale: string): string {
 
 // ---- Helpers ------------------------------------------------------------
 
-function gradeColor(grade: string): string {
+/// Stammen die Fensterwerte (G-Kraft, Hopser, Flare) aus einer ausreichenden
+/// Aufzeichnung? Das ist nicht dasselbe wie "bewertbar": Hat MSFS die
+/// Sinkrate selbst gemeldet, gibt es eine Note, aber die Werte aus unserem
+/// dünnen Fenster bleiben ausgeblendet (Codex, zweite Abnahme 13.09.2026).
+function fensterWerteGueltig(r: LandingRecord): boolean {
+  return istBewertbar(r) && !r.fenster_unzureichend;
+}
+
+function gradeColor(grade: string | null | undefined): string {
+  // Ohne Note keine Farbe der Skala: Grau heisst "nicht bewertet", nicht
+  // "schlecht". Vorher fiel `null` durch bis zum roten F (12.09.2026).
+  if (grade == null || grade === "") return "var(--text-muted, #8D99AD)";
   if (grade === "A+" || grade === "A") return "#22c55e"; // green
   if (grade === "B+" || grade === "B") return "#84cc16"; // lime
   if (grade === "C") return "#eab308"; // amber
@@ -830,7 +866,13 @@ function fmtDeDe(v: number, digits = 0): string {
  *  The `default` arm is a pure safety net for a label the backend might add
  *  later — it must never be reached with today's five values, and it
  *  deliberately does NOT reintroduce a second threshold ladder. */
-export function recordCategory(r: LandingRecord): LandingCategory {
+export function recordCategory(r: LandingRecord): LandingCategory | null {
+  // Ohne Bewertung gibt es keine Kategorie.
+  //
+  // Prüfbefund 13.09.2026: `null` fiel in den `default`-Zweig und wurde zu
+  // "firm" — im Druckbericht stand dann "FEST" über einer Landung, die gar
+  // nicht gemessen wurde, und der Statistikfuss zählte sie in diesen Topf.
+  if (r.score_label == null) return null;
   switch (r.score_label) {
     case "smooth":
     case "acceptable":
@@ -1929,10 +1971,12 @@ function QuickFlags({ record }: { record: LandingRecord }) {
   // v0.12.3 (LE9): G-Flag auf dem gescorten (EMA) Wert, nicht dem Roh-Peak.
   const peakVs = scoreBasisVs(record);
   const gForFlag = scoreG(record) ?? 0;
-  const isHardVs = Math.abs(peakVs) >= 600;
+  // Ohne gemessene Sinkrate gibt es auch kein "hart" — die Landung war
+  // vielleicht hart, wir wissen es nur nicht.
+  const isHardVs = peakVs != null && Math.abs(peakVs) >= 600;
   const isHardG = gForFlag >= 1.7;
   if (isHardVs || isHardG) {
-    const severe = Math.abs(peakVs) >= 1000 || gForFlag >= 2.1;
+    const severe = (peakVs != null && Math.abs(peakVs) >= 1000) || gForFlag >= 2.1;
     flags.push({
       label: severe ? t("landing.flag.severe") : t("landing.flag.hard"),
       tone: "err",
@@ -1948,12 +1992,16 @@ function QuickFlags({ record }: { record: LandingRecord }) {
   //   bounce_count > 0                            → wie bisher, voller Flag
   //   bounce_count = 0, forensic_bounce_count > 0 → Light-bounce-Hinweis
   //   alle 0                                       → kein Flag
-  if (record.bounce_count > 0) {
+  // Ohne gemessenes Aufsetzfenster kein Hopser-Flag: Ein Hopser zwischen
+  // zwei fehlenden Proben bleibt unsichtbar, und "0 Hopser" läse sich dann
+  // als saubere Landung (Prüfbefund 13.09.2026).
+  const hopserGemessen = fensterWerteGueltig(record);
+  if (hopserGemessen && record.bounce_count > 0) {
     flags.push({
       label: `${t("landing.flag.bounce")} × ${record.bounce_count}`,
       tone: record.bounce_count >= 2 ? "err" : "warn",
     });
-  } else if ((record.forensic_bounce_count ?? 0) > 0) {
+  } else if (hopserGemessen && (record.forensic_bounce_count ?? 0) > 0) {
     const heightFt = record.bounce_max_agl_ft != null
       ? Math.round(record.bounce_max_agl_ft)
       : null;
@@ -2006,14 +2054,24 @@ function LandingRateChart({ records }: { records: LandingRecord[] }) {
   const { t, i18n } = useTranslation();
   if (records.length < 2) return null;
   // Newest-first list; chart wants oldest→newest left→right.
-  const latest = records.slice(0, KURVE_LAENGE).reverse();
-  const rates = latest.map((r) => Math.abs(scoreBasisVs(r)));
+  // Nicht bewertbare Landungen erscheinen in keiner Statistik: Ein
+  // Mittelwert über "nicht gemessen" ist keine Zahl (Untersuchung
+  // 12.09.2026). Sie verschwinden damit aus dem Verlauf — richtig, denn
+  // eine Aussage über ihre Härte gibt es nicht.
+  const bewertbare = records.filter(istBewertbar);
+  // ⚠ Die Prüfung auf "genug Einträge" muss NACH dem Filtern stehen.
+  // Codex-Abnahme 12.09.2026: Bei zwei nicht bewertbaren Einträgen blieb
+  // die Liste leer, und `newest.touchdown_at` lief auf `undefined`.
+  if (bewertbare.length < 2) return null;
+  const latest = bewertbare.slice(0, KURVE_LAENGE).reverse();
+  const rates = latest.map((r) => Math.abs(scoreBasisVs(r) ?? 0));
   const oldest = latest[0];
   const newest = latest[latest.length - 1];
   // Same figure as the header's "Ø SINKRATE" (average over ALL loaded
   // records, not just these 12 bars) — a second, differently-scoped
   // average confused more than it helped when both were on screen at once.
-  const avgRateSigned = records.reduce((s, r) => s + scoreBasisVs(r), 0) / records.length;
+  const avgRateSigned =
+    bewertbare.reduce((s, r) => s + (scoreBasisVs(r) ?? 0), 0) / (bewertbare.length || 1);
   const avgRateAbs = Math.abs(avgRateSigned);
   const legendCats: LandingCategory[] = ["smooth", "acceptable", "firm", "hard", "severe"];
 
@@ -2085,7 +2143,7 @@ function LandingRateChart({ records }: { records: LandingRecord[] }) {
         <span>
           {t("landing.ov_chart_last", {
             date: fmtChartDateUtc(newest.touchdown_at, i18n.language),
-            rate: fmtDeDe(Math.round(scoreBasisVs(newest))),
+            rate: fmtDeDe(Math.round(scoreBasisVs(newest) ?? 0)),
           })}
         </span>
       </div>
@@ -2393,10 +2451,13 @@ export function LandingReport({ record }: { record: LandingRecord }) {
   // statt direkt `record.score_label` — eine Anzeigequelle fuer Uebersicht
   // UND Bericht, damit beide nicht wieder auseinanderlaufen koennen. Die
   // Frische des Feldes stellt inzwischen `landing_list` (Rust) sicher.
+  const kategorie = recordCategory(record);
   const heroLabel =
     record.accident === true
       ? t("landing.report.accident_label")
-      : rateCategoryWord(recordCategory(record));
+      : kategorie == null
+      ? t("landing.nicht_bewertbar.kurz")
+      : rateCategoryWord(kategorie);
 
   // Sub-Score-Balken: Farbe nach Punkten (grün / amber / rot).
   const barColor = (pts: number) =>
@@ -2487,15 +2548,23 @@ export function LandingReport({ record }: { record: LandingRecord }) {
           className="report-hero__badge"
           style={{ background: gradeColor(record.grade_letter) }}
         >
-          {record.grade_letter}
+          {record.grade_letter ?? "—"}
         </div>
         <div className="report-hero__text">
           <div className="report-hero__score">
-            {record.score_numeric}
-            <span className="report-hero__of">
-              {" "}
-              {t("landing.report.hero_of")}
-            </span>
+            {record.score_numeric != null ? (
+              <>
+                {record.score_numeric}
+                <span className="report-hero__of">
+                  {" "}
+                  {t("landing.report.hero_of")}
+                </span>
+              </>
+            ) : (
+              <span className="report-hero__of">
+                {t("landing.nicht_bewertbar.kein_wert")}
+              </span>
+            )}
           </div>
           <div className="report-hero__label">{heroLabel}</div>
         </div>
@@ -2577,7 +2646,11 @@ export function LandingReport({ record }: { record: LandingRecord }) {
             />
             <ReportTile
               label={t("landing.bounces")}
-              value={String(record.bounce_count)}
+              value={
+                fensterWerteGueltig(record)
+                  ? String(record.bounce_count)
+                  : t("landing.nicht_bewertbar.kein_wert")
+              }
             />
             <ReportTile
               label={t("landing.heading")}
@@ -2993,17 +3066,21 @@ export function LandingDetail({
   // stellt eine Zahl in die Kopfzeile, die neben der Kachel nicht aufgeht.
   const personalBest = useMemo(() => {
     const others = allRecords.filter((r) => r.pirep_id !== record.pirep_id);
-    if (others.length === 0) return null;
-    return others.reduce(
+    // Nur gemessene Landungen können eine Bestleistung sein.
+    const messbar = others.filter(istBewertbar);
+    if (messbar.length === 0) return null;
+    return messbar.reduce(
       (best, r) =>
-        Math.abs(scoreBasisVs(r)) < Math.abs(scoreBasisVs(best)) ? r : best,
-      others[0],
+        Math.abs(scoreBasisVs(r) ?? 0) < Math.abs(scoreBasisVs(best) ?? 0) ? r : best,
+      messbar[0],
     );
   }, [allRecords, record.pirep_id]);
 
+  // Eine nicht gemessene Landung kann keine Bestleistung schlagen.
   const isNewBest =
     personalBest != null &&
-    Math.abs(scoreBasisVs(record)) < Math.abs(scoreBasisVs(personalBest));
+    istBewertbar(record) &&
+    Math.abs(scoreBasisVs(record) ?? 0) < Math.abs(scoreBasisVs(personalBest) ?? 0);
 
   // v0.12.8-dev: PDF-Export-State. Sobald `printing` true wird, rendert
   // der Effect den <LandingReport> ins DOM, ruft `window.print()` und
@@ -3110,12 +3187,57 @@ export function LandingDetail({
           document.body,
         )}
 
+      {/* ── Landung erkannt, aber nicht gemessen ─────────────────────────
+          Untersuchung 12.09.2026 (CFG 2090): Eine Landung erhielt 97 Punkte
+          und die Note A+, obwohl im Aufsetzmoment 0,92 s lang keine Probe
+          ankam. Seitdem gibt es dafür keine Note mehr — und diese Zeile
+          sagt dem Piloten, warum. Sie steht ÜBER der Kopfzeile, damit
+          niemand erst nach der fehlenden Zahl sucht. */}
+      {record.landung_nicht_bewertbar != null && (
+        <div className="landing-nicht-bewertbar" role="status">
+          <div className="landing-nicht-bewertbar__titel">
+            {t("landing.nicht_bewertbar.titel", {
+              defaultValue: "Landung erkannt — Aufzeichnung unvollständig",
+            })}
+          </div>
+          <div className="landing-nicht-bewertbar__text">
+            {t("landing.nicht_bewertbar.text", {
+              defaultValue:
+                "Im Aufsetzmoment fehlen Messwerte, deshalb gibt es für diese Landung keine Bewertung. Das sagt nichts über die Landung selbst — sie wurde nur nicht vollständig aufgezeichnet.",
+            })}
+          </div>
+          <div className="landing-nicht-bewertbar__zahlen">
+            {t("landing.nicht_bewertbar.messwerte", {
+              defaultValue:
+                "Grösste Lücke {{luecke}} ms · {{proben}} Messpunkte im Aufsetzfenster",
+              luecke: record.landung_nicht_bewertbar.groesste_luecke_ms,
+              proben: record.landung_nicht_bewertbar.proben,
+            })}
+            {record.sampler_diagnose?.proben_je_sekunde != null && (
+              <>
+                {" · "}
+                {t("landing.nicht_bewertbar.takt", {
+                  defaultValue: "{{rate}} statt 50 Messungen je Sekunde",
+                  rate: record.sampler_diagnose.proben_je_sekunde.toFixed(1),
+                })}
+              </>
+            )}
+          </div>
+          <div className="landing-nicht-bewertbar__rat">
+            {t("landing.nicht_bewertbar.rat", {
+              defaultValue:
+                "Häufigste Ursache ist ein ausgelasteter Simulator. Weniger Grafiklast und Zusatzprogramme im Endanflug helfen; den Client währenddessen nicht neu starten.",
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="landing-headline">
         <div
           className="landing-grade-big"
           style={{ background: gradeColor(record.grade_letter) }}
         >
-          {record.grade_letter}
+          {record.grade_letter ?? "—"}
         </div>
         <div className="landing-headline__text">
           <h2>
@@ -3129,8 +3251,10 @@ export function LandingDetail({
                 Client Tab "Landung". */}
             {record.accident === true
               ? t("landing.accident.primary_label")
-              : rateCategoryWord(recordCategory(record))}
-            {" "}· {record.score_numeric}/100 ·{" "}
+              : record.score_numeric == null
+              ? t("landing.nicht_bewertbar.kurz", { defaultValue: "nicht bewertbar" })
+              : rateCategoryWord(recordCategory(record) ?? "firm")}
+            {record.score_numeric != null ? <>{" "}· {record.score_numeric}/100</> : null} ·{" "}
             {fmtDateTime(record.touchdown_at)}
             {isPreview && (
               <span className="landing-preview-badge">{t("landing.preview")}</span>
@@ -3147,10 +3271,10 @@ export function LandingDetail({
               {record.sim_kind ? ` · ${record.sim_kind}` : ""}
             </div>
           )}
-          {personalBest && !isNewBest && (
+          {personalBest && !isNewBest && istBewertbar(record) && (
             <div className="landing-headline__pb">
-              {t("landing.this_landing")}: {scoreBasisVs(record).toFixed(0)} fpm ·{" "}
-              {t("landing.personal_best")}: {scoreBasisVs(personalBest).toFixed(0)}{" "}
+              {t("landing.this_landing")}: {(scoreBasisVs(record) ?? 0).toFixed(0)} fpm ·{" "}
+              {t("landing.personal_best")}: {(scoreBasisVs(personalBest) ?? 0).toFixed(0)}{" "}
               fpm ({personalBest.dpt_airport} → {personalBest.arr_airport})
             </div>
           )}
@@ -3314,7 +3438,11 @@ export function LandingDetail({
             </div>
             <div>
               <dt>{t("landing.bounces")}</dt>
-              <dd>{record.bounce_count}</dd>
+              <dd>
+                {fensterWerteGueltig(record)
+                  ? record.bounce_count
+                  : t("landing.nicht_bewertbar.kein_wert")}
+              </dd>
             </div>
             <div>
               <dt>{t("landing.heading")}</dt>
@@ -3387,7 +3515,10 @@ export function LandingDetail({
           Erklaert warum AeroACARS bei butterweichen Landungen manchmal hohe
           G-Werte misst (Sim-Strut-Compression statt echtem Pilot-Impact)
           und der Master-Score trotzdem als „Smooth" klassifiziert wird. */}
-      <GForceForensik record={record} />
+      {/* Die G-Forensik stammt komplett aus dem Aufsetzfenster. Reichte es
+          nicht, entfällt die Sektion — auch bei gültiger MSFS-Sinkrate
+          (Prüfbefund 13.09.2026: sonst volle G-Kacheln für ungemessene Daten). */}
+      {fensterWerteGueltig(record) && <GForceForensik record={record} />}
 
       {/* v0.5.43: Flare-Quality — als eigene Section im gleichen Stil wie
           Approach-Stability. Nur sichtbar wenn die 50-Hz-Forensik-Felder
@@ -4094,8 +4225,22 @@ function useOverviewStats(records: LandingRecord[]) {
   return useMemo(() => {
     if (records.length === 0) return null;
     const total = records.length;
-    const avgRate = records.reduce((s, r) => s + scoreBasisVs(r), 0) / total;
-    const avgScore = records.reduce((s, r) => s + r.score_numeric, 0) / total;
+    // Siehe oben: nicht gemessene Landungen tragen zu keiner Kennzahl bei.
+    const messbar = records.filter(istBewertbar);
+    // Codex, zweite Abnahme 13.09.2026: Bei ausschliesslich ungemessenen
+    // Landungen stand hier "Ø Sinkrate 0 fpm", "Ø Score 0,0" und eine
+    // ungemessene Landung als weichste und härteste. Ohne Messung gibt es
+    // diese Kennzahlen nicht — `null`, und die Anzeige zeigt einen Strich.
+    const avgRate: number | null = messbar.length
+      ? messbar.reduce((s, r) => s + (scoreBasisVs(r) ?? 0), 0) / messbar.length
+      : null;
+    // Auch die Durchschnittsnote zählt nur bewertete Landungen — sonst
+    // zöge eine nicht gemessene Landung den Schnitt (Codex-Abnahme
+    // 12.09.2026: gesperrt mit 97 und gültig mit 80 ergaben 88,5).
+    const bewertete = records.filter((r) => r.score_numeric != null);
+    const avgScore: number | null = bewertete.length
+      ? bewertete.reduce((s, r) => s + (r.score_numeric ?? 0), 0) / bewertete.length
+      : null;
     const byCategory: Record<LandingCategory, number> = {
       smooth: 0,
       acceptable: 0,
@@ -4103,14 +4248,22 @@ function useOverviewStats(records: LandingRecord[]) {
       hard: 0,
       severe: 0,
     };
-    let softest = records[0];
-    let hardest = records[0];
+    let softest: LandingRecord | null = messbar[0] ?? null;
+    let hardest: LandingRecord | null = messbar[0] ?? null;
     for (const r of records) {
-      byCategory[recordCategory(r)]++;
-      if (Math.abs(scoreBasisVs(r)) < Math.abs(scoreBasisVs(softest))) softest = r;
-      if (Math.abs(scoreBasisVs(r)) > Math.abs(scoreBasisVs(hardest))) hardest = r;
+      // Nicht bewertete Landungen zählen in keinen Kategorie-Topf — sonst
+      // stünden sie unter "fest" (Prüfbefund 13.09.2026).
+      const kat = recordCategory(r);
+      if (kat != null) byCategory[kat]++;
+      if (!istBewertbar(r)) continue;
+      if (softest == null || Math.abs(scoreBasisVs(r) ?? 0) < Math.abs(scoreBasisVs(softest) ?? 0)) softest = r;
+      if (hardest == null || Math.abs(scoreBasisVs(r) ?? 0) > Math.abs(scoreBasisVs(hardest) ?? 0)) hardest = r;
     }
-    const totalBounces = records.reduce((s, r) => s + r.bounce_count, 0);
+    // Hopser nur aus gemessenen Landungen: Bei ungemessenen ist die Zahl
+    // nicht belastbar (ein Hopser zwischen zwei fehlenden Proben fehlt).
+    const totalBounces = records
+      .filter(fensterWerteGueltig)
+      .reduce((s, r) => s + r.bounce_count, 0);
     return { total, avgRate, avgScore, byCategory, softest, hardest, totalBounces };
   }, [records]);
 }
@@ -4301,7 +4454,7 @@ export function LandingPanel() {
             <div className="landing-ov-stat">
               <span className="landing-ov-stat__label">{t("landing.ov_avg_rate")}</span>
               <span className="landing-ov-stat__value">
-                {stats ? (
+                {stats?.avgRate != null ? (
                   <>
                     {fmtDeDe(Math.round(stats.avgRate))}
                     <span className="landing-ov-stat__unit"> fpm</span>
@@ -4314,7 +4467,7 @@ export function LandingPanel() {
             <div className="landing-ov-stat">
               <span className="landing-ov-stat__label">{t("landing.ov_avg_score")}</span>
               <span className="landing-ov-stat__value">
-                {stats ? fmtDeDe(stats.avgScore, 1) : "—"}
+                {stats?.avgScore != null ? fmtDeDe(stats.avgScore, 1) : "—"}
               </span>
             </div>
             <div className="landing-ov-stat">
@@ -4408,8 +4561,11 @@ export function LandingPanel() {
                 </tr>
               )}
               {visibleRecords.map((r) => {
-                const rate = scoreBasisVs(r);
-                const cat = recordCategory(r);
+                // `null` heisst: nicht gemessen. Die Zeile bleibt in der
+                // Liste — der Flug fand ja statt —, nur die Sinkrate fehlt.
+                const gemessen = scoreBasisVs(r);
+                const rate = gemessen ?? 0;
+                const cat = recordCategory(r) ?? "unbewertet";
                 const pattern = r.aircraft_icao || r.aircraft_title || "—";
                 const reg = r.aircraft_registration || "—";
                 const dep = r.dpt_airport;
@@ -4458,13 +4614,23 @@ export function LandingPanel() {
                           />
                         </span>
                         <span className={`landing-ov-rate-value landing-ov-rate-value--${cat}`}>
-                          {fmtDeDe(Math.round(rate))}
+                          {gemessen != null
+                            ? fmtDeDe(Math.round(gemessen))
+                            : t("landing.nicht_bewertbar.kein_wert")}
                         </span>
                       </span>
                     </td>
                     <td className="landing-ov-table__num landing-ov-score">
-                      {fmtDeDe(r.score_numeric)}
-                      <span className="landing-ov-score__suffix">/100</span>
+                      {r.score_numeric != null ? (
+                        <>
+                          {fmtDeDe(r.score_numeric)}
+                          <span className="landing-ov-score__suffix">/100</span>
+                        </>
+                      ) : (
+                        <span className="landing-ov-score__suffix">
+                          {t("landing.nicht_bewertbar.kein_wert")}
+                        </span>
+                      )}
                     </td>
                     {/* Just the letter, colour-coded by the same category as
                         the sinkrate cell — no word: after seeing SANFT/FEST/
@@ -4510,18 +4676,22 @@ export function LandingPanel() {
                 {t("landing.ov_footer_bounces_label")}{" "}
                 <strong>{fmtDeDe(stats.totalBounces)}</strong>
               </span>
-              <span>
-                {t("landing.ov_footer_softest_label")}{" "}
-                <strong>{fmtDeDe(Math.round(scoreBasisVs(stats.softest)))} fpm</strong> ·{" "}
-                {fmtDateShortUtc(stats.softest.touchdown_at)}{" "}
-                {stats.softest.touchdown_airport ?? stats.softest.arr_airport}
-              </span>
-              <span>
-                {t("landing.ov_footer_hardest_label")}{" "}
-                <strong>{fmtDeDe(Math.round(scoreBasisVs(stats.hardest)))} fpm</strong> ·{" "}
-                {fmtDateShortUtc(stats.hardest.touchdown_at)}{" "}
-                {stats.hardest.touchdown_airport ?? stats.hardest.arr_airport}
-              </span>
+              {stats.softest && (
+                <span>
+                  {t("landing.ov_footer_softest_label")}{" "}
+                  <strong>{fmtDeDe(Math.round(scoreBasisVs(stats.softest) ?? 0))} fpm</strong> ·{" "}
+                  {fmtDateShortUtc(stats.softest.touchdown_at)}{" "}
+                  {stats.softest.touchdown_airport ?? stats.softest.arr_airport}
+                </span>
+              )}
+              {stats.hardest && (
+                <span>
+                  {t("landing.ov_footer_hardest_label")}{" "}
+                  <strong>{fmtDeDe(Math.round(scoreBasisVs(stats.hardest) ?? 0))} fpm</strong> ·{" "}
+                  {fmtDateShortUtc(stats.hardest.touchdown_at)}{" "}
+                  {stats.hardest.touchdown_airport ?? stats.hardest.arr_airport}
+                </span>
+              )}
             </div>
           )}
         </footer>

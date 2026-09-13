@@ -836,7 +836,16 @@
       "yes": "yes",
       "no": "no"
     },
-    "ov_mixed_versions": "The chart below shows landings from before and after the sink-rate measurement changed (v1.6.3) side by side — a step in it is expected and not an error."
+    "ov_mixed_versions": "The chart below shows landings from before and after the sink-rate measurement changed (v1.6.3) side by side — a step in it is expected and not an error.",
+    "nicht_bewertbar": {
+      "titel": "Landing detected — recording incomplete",
+      "text": "Measurements are missing at the moment of touchdown, so this landing is not scored. That says nothing about the landing itself — it simply was not fully recorded.",
+      "messwerte": "Largest gap {{luecke}} ms · {{proben}} samples in the touchdown window",
+      "takt": "{{rate}} instead of 50 samples per second",
+      "rat": "The usual cause is a simulator under heavy load. Reducing graphics load and add-ons during final approach helps; do not restart the client while landing.",
+      "kein_wert": "not measured",
+      "kurz": "not scorable"
+    }
   },
   "about": {
     "tagline": "Modern ACARS for phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",

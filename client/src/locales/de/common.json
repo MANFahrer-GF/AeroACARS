@@ -836,7 +836,16 @@
       "yes": "ja",
       "no": "nein"
     },
-    "ov_mixed_versions": "Die Kurve unten zeigt Landungen von vor und nach der Umstellung der Sinkraten-Messung (v1.6.3) nebeneinander — ein Sprung darin ist zu erwarten und kein Fehler."
+    "ov_mixed_versions": "Die Kurve unten zeigt Landungen von vor und nach der Umstellung der Sinkraten-Messung (v1.6.3) nebeneinander — ein Sprung darin ist zu erwarten und kein Fehler.",
+    "nicht_bewertbar": {
+      "titel": "Landung erkannt — Aufzeichnung unvollständig",
+      "text": "Im Aufsetzmoment fehlen Messwerte, deshalb gibt es für diese Landung keine Bewertung. Das sagt nichts über die Landung selbst — sie wurde nur nicht vollständig aufgezeichnet.",
+      "messwerte": "Grösste Lücke {{luecke}} ms · {{proben}} Messpunkte im Aufsetzfenster",
+      "takt": "{{rate}} statt 50 Messungen je Sekunde",
+      "rat": "Häufigste Ursache ist ein ausgelasteter Simulator. Weniger Grafiklast und Zusatzprogramme im Endanflug helfen; den Client währenddessen nicht neu starten.",
+      "kein_wert": "nicht gemessen",
+      "kurz": "nicht bewertbar"
+    }
   },
   "about": {
     "tagline": "Modernes ACARS für phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",

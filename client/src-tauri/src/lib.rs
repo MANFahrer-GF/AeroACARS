@@ -3410,6 +3410,18 @@ struct PersistedFlightStats {
     /// "High" | "Medium" | "Low" | "VeryLow"
     #[serde(default)]
     landing_confidence: Option<String>,
+    /// Reichte die Aufzeichnung im Aufsetzfenster? Persistiert aus demselben
+    /// Grund wie `landing_simulator` eine Zeile tiefer: Startet der Client
+    /// zwischen Aufsetzen und Einreichen neu, fiele die Sperre sonst weg —
+    /// und über den in `landing_analysis` gespeicherten Edge-Wert entstünde
+    /// wieder eine Note für eine Landung, die niemand gemessen hat (QS-Befund
+    /// 12.09.2026 zum eigenen Umbau).
+    #[serde(default)]
+    landung_abdeckung_fehlt: Option<touchdown_v2::FehlendeAbdeckung>,
+    /// Die Sampler-Diagnose gehört zur Begründung und überlebt deshalb
+    /// denselben Neustart.
+    #[serde(default)]
+    sampler_diagnose: Option<serde_json::Value>,
     /// "vs_at_impact" | "smoothed_500ms" | "smoothed_1000ms" | "pre_flare_peak"
     #[serde(default)]
     /// Welcher Simulator die Landung geliefert hat. Persistiert, weil die
@@ -3849,6 +3861,8 @@ impl PersistedFlightStats {
             // v0.7.1 (Spec F4 + P2.2-D): Confidence + Source persistieren
             // damit ein Re-Open des PIREP nach App-Restart konsistent bleibt.
             landing_confidence: stats.landing_confidence.clone(),
+            landung_abdeckung_fehlt: stats.landung_abdeckung_fehlt.clone(),
+            sampler_diagnose: stats.sampler_diagnose.clone(),
             landing_source: stats.landing_source.clone(),
             landing_wind_direction_deg: stats.landing_wind_direction_deg,
             landing_wind_speed_kt: stats.landing_wind_speed_kt,
@@ -4032,6 +4046,8 @@ impl PersistedFlightStats {
         stats.landing_peak_vs_fpm = self.landing_peak_vs_fpm;
         stats.landing_peak_g_force = self.landing_peak_g_force;
         stats.landing_confidence = self.landing_confidence;
+        stats.landung_abdeckung_fehlt = self.landung_abdeckung_fehlt;
+        stats.sampler_diagnose = self.sampler_diagnose;
         stats.landing_source = self.landing_source;
         stats.landing_wind_direction_deg = self.landing_wind_direction_deg;
         stats.landing_wind_speed_kt = self.landing_wind_speed_kt;
@@ -4795,6 +4811,24 @@ struct FlightStats {
     landing_confidence: Option<String>,
     /// "vs_at_impact" | "smoothed_500ms" | "smoothed_1000ms" | "pre_flare_peak"
     landing_source: Option<String>,
+    /// Gesetzt, wenn die Aufzeichnung im Aufsetzfenster nicht ausreicht.
+    ///
+    /// Untersuchung 12.09.2026 (CFG 2090): Eine Landung erhielt 97 Punkte
+    /// und die Note A+, obwohl zwischen letzter Luftprobe und Bodenkontakt
+    /// 0,92 s ohne jede Messung lagen — die Bewertung nahm den ersten Frame
+    /// danach. Ist dieses Feld gesetzt, gibt es KEINE Landerate und damit
+    /// keine Note: `canonical_landing_rate_fpm` liefert `None`, und die
+    /// Bewertung kennt "lieber gar keine Note als eine geschenkte" bereits.
+    ///
+    /// Das Feld sagt nichts über den Piloten. Es sagt: Wir haben es nicht
+    /// gemessen. Siehe `touchdown_v2::pruefe_bewertbarkeit`.
+    landung_abdeckung_fehlt: Option<touchdown_v2::FehlendeAbdeckung>,
+    /// Wie zuverlässig der Sampler lief (`SamplerDiagnose::als_json`).
+    /// Steht neben dem Aufsetzfenster im Protokoll und im PIREP — damit
+    /// eine dünne Aufzeichnung nicht nur auffällt, sondern auch erklärbar
+    /// wird (kam der Client nicht zum Messen, oder lagen die Proben nur
+    /// ungünstig?).
+    sampler_diagnose: Option<serde_json::Value>,
     /// How many bounces (on_ground → !on_ground → on_ground) we counted
     /// within the touchdown window. >0 implies the pilot didn't put it
     /// down clean.
@@ -10012,9 +10046,16 @@ fn activity_log_clear(state: tauri::State<'_, AppState>) {
 /// — und der Nachbau im Frontend kann entfallen. Der Speicher bleibt
 /// unangetastet (keine Migration, keine Schreibzugriffe).
 fn normalize_derived_scores(mut r: LandingRecord) -> LandingRecord {
-    let n = r.score_numeric.clamp(0, 100);
-    r.score_label = aggregate_score_label(n as u8).to_string();
-    r.grade_letter = letter_grade(n).to_string();
+    // Ohne Note gibt es auch nichts abzuleiten. Ein Datensatz ohne
+    // Bewertung (zu dünne Aufzeichnung, siehe `landung_nicht_bewertbar`)
+    // behält leere Felder statt eines aus `None` gerechneten "F".
+    let Some(n) = r.score_numeric.map(|v| v.clamp(0, 100)) else {
+        r.score_label = None;
+        r.grade_letter = None;
+        return r;
+    };
+    r.score_label = Some(aggregate_score_label(n as u8).to_string());
+    r.grade_letter = Some(letter_grade(n).to_string());
     r
 }
 
@@ -18896,6 +18937,13 @@ pub fn runway_geometry_trust_check(
 ///
 /// Spec docs/spec/v0.7.6-landing-payload-consistency.md §3 P1-2,
 /// Refinement nach Thomas-Review (P2-B fragility).
+/// Aufsetzer für die Bewertung — 0, wenn nicht gemessen werden konnte.
+///
+/// Eine Zahl aus einem löchrigen Fenster wäre hier besonders heikel: Ein
+/// Hopser zwischen zwei fehlenden Proben bleibt unsichtbar, und "0 Aufsetzer"
+/// läse sich als saubere Landung. Ohne ausreichende Aufzeichnung fliesst der
+/// Wert deshalb gar nicht erst in die Bewertung ein (der Gesamtscore
+/// entfällt ohnehin, siehe `canonical_landing_rate_fpm`).
 fn scored_bounce_count_for_score(stats: &FlightStats) -> u32 {
     // stats.bounce_count wurde von der Override-Logik (lib.rs ~9869-9891)
     // mit scored_bounce_count aus dem analysis-JSON ueberschrieben falls
@@ -19122,6 +19170,38 @@ impl FlightStats {
     /// `stats.landing_peak_vs_fpm` ist in Anzeige-/Filing-Pfaden ein
     /// Bug — siehe MS713-QS-Befund 2026-05-13.
     pub fn canonical_landing_rate_fpm(&self) -> Option<f32> {
+        // ⚠ ZUERST: Wurde die Landung überhaupt gemessen?
+        //
+        // Diese Funktion ist die eine Stelle, die Anzeige, PIREP, MQTT und
+        // phpVMS befragen. Deshalb sitzt die Sperre hier und nicht in einer
+        // der Quellen: Codex hat am 12.09.2026 fünf Wege gefunden, über die
+        // sonst doch wieder eine Zahl durchkommt (Höhenregression am
+        // Aufsetzpunkt, Interpolation zwischen Luft- und Bodenprobe ohne
+        // zeitliche Obergrenze, die Bevorzugung des Edge-Werts hier, ein
+        // erhaltener Altwert, und der Timeout-Fallback nach zwölf Sekunden).
+        // Ein Riegel in `compute_landing_rate` allein hätte keinen davon
+        // erwischt.
+        if self.landung_abdeckung_fehlt.is_some() {
+            // Die Ausnahme gilt dem WERT, nicht dem Quellennamen.
+            //
+            // Codex-Befund 12.09.2026 zum ersten Entwurf: Die Prüfung stand
+            // nur auf dem Quellenstring und liess danach die ganze Kaskade
+            // laufen — in der gewinnt `landing_analysis.vs_at_edge_fpm`.
+            // Bei `landing_source = "msfs_simvar_latched"` und einem Edge-Wert
+            // von −10,4 fpm aus dem kaputten Fenster kam also genau die Zahl
+            // heraus, gegen die diese Sperre gebaut wurde. Die Ausnahme
+            // legitimierte den Wert, den sie ausschliessen sollte.
+            //
+            // Deshalb hier: Nur der vom Simulator selbst gemessene Wert wird
+            // durchgereicht, nichts aus unserem Fenster.
+            if !quelle_misst_der_simulator_selbst(self.landing_source.as_deref()) {
+                return None;
+            }
+            return self
+                .landing_peak_vs_fpm
+                .or(self.landing_rate_fpm)
+                .filter(|v| v.is_finite() && *v < 0.0);
+        }
         // v0.20.2: JEDER Kandidat der Kaskade muss plausibel sein — nicht nur
         // der erste. Vorher war der Edge-Wert gegen "positiv" geprueft und die
         // beiden Fallbacks gegen gar nichts. Ein Glitch-Sample konnte also
@@ -19170,6 +19250,19 @@ impl FlightStats {
     /// Impuls) — genauso wenig eine echte Messung. `None` statt einer
     /// erfundenen Zahl, wenn keine echte Quelle je einen Wert lieferte.
     pub fn canonical_peak_g_force(&self) -> Option<f32> {
+        // Aus demselben Fenster wie die Sinkrate. Reicht die Aufzeichnung
+        // dort nicht, ist auch der Spitzenwert der G-Kraft nur der höchste
+        // der wenigen Proben, die zufällig ankamen — kein Messwert.
+        // Vorgabe Thomas, 12.09.2026: "Wenn wir keine detaillierten Werte
+        // haben, können wir die auch nicht berechnen."
+        //
+        // ⚠ Hier gilt die MSFS-Ausnahme NICHT: Der Simulator meldet die
+        // Aufsetz-SINKRATE selbst, die G-Spitze aber kommt aus unserem
+        // Fenster (Codex-Befund 12.09.2026). Eine gültige Sinkrate
+        // legitimiert keinen G-Wert.
+        if self.landung_abdeckung_fehlt.is_some() {
+            return None;
+        }
         if matches!(
             self.landing_source.as_deref(),
             Some("fallback_zero") | Some("other_fallback")
@@ -19864,6 +19957,8 @@ fn build_pirep_payload(
         ux_version: 1,
         landing_confidence: stats.landing_confidence.clone(),
         landing_source: stats.landing_source.clone(),
+        landung_nicht_bewertbar: landung_nicht_bewertbar_json(&stats),
+        sampler_diagnose: stats.sampler_diagnose.clone(),
         // F6: Flare-Felder aus dem 50-Hz-Sampler-Buffer
         // (landing_analysis ist Option<Value>)
         flare_detected: stats
@@ -20867,12 +20962,55 @@ fn build_mqtt_gate_window_from_stats(stats: &FlightStats) -> Option<aeroacars_mq
 ///
 /// Loesung: alle 3 Sites rufen diesen Helper. Confidence/Source
 /// IMMER konsistent zum finalen `landing_rate_fpm`.
+/// Stammt die Sinkrate aus einer Meldung des Simulators selbst?
+///
+/// # Warum das die Sperre begrenzt (Messung 12.09.2026)
+///
+/// MSFS meldet die Aufsetz-Sinkrate über `PLANE TOUCHDOWN NORMAL VELOCITY`
+/// selbst — der Simulator misst sie in seinem eigenen Physikschritt, im
+/// richtigen Moment, ganz ohne unsere Abtastung. Von 1170 Landungen des
+/// Bestands haben 29 gar kein Aufsetzfenster (der Sampler kam nicht dazu)
+/// und trotzdem einen belastbaren Wert — genau über diese Quelle.
+///
+/// Eine pauschale Sperre "keine Abdeckung, keine Note" hätte diese
+/// Landungen zu Unrecht entwertet. Die Abdeckung unserer eigenen Proben
+/// sagt nichts über einen Wert aus, den der Simulator gemessen hat.
+///
+/// Alle übrigen Quellen (`vs_at_impact_frame`, `vs_smoothed_*`,
+/// `pre_flare_peak`, `vs_at_edge_50hz`, `buffer_min`, `agl_estimate_msfs`,
+/// `sampler_gear_force`) hängen an unserem 50-Hz-Fenster und fallen mit ihm.
+fn quelle_misst_der_simulator_selbst(source: Option<&str>) -> bool {
+    matches!(source, Some("msfs_simvar_latched"))
+}
+
 fn finalize_landing_rate(
     stats: &mut FlightStats,
     vs_fpm: f32,
     confidence: Option<&str>,
     source: Option<&str>,
 ) {
+    // Reicht die Aufzeichnung nicht, wird die Zahl gar nicht erst
+    // festgehalten — auch nicht im Protokoll. Sonst stünde dort ein Wert,
+    // den die Anzeige zu Recht verschweigt, und die nächste Auswertung
+    // fände ihn und hielte ihn für gültig (derselbe Riss, den die Kanonik
+    // oben ausräumt). Quelle und Vertrauensstufe bleiben als Begründung.
+    if stats.landung_abdeckung_fehlt.is_some() && !quelle_misst_der_simulator_selbst(source) {
+        // Steht schon eine vom Simulator gemeldete Rate da, bleibt sie
+        // unangetastet — samt Quellenkennung.
+        //
+        // Codex, zweite Abnahme 13.09.2026: Die erste Fassung überschrieb in
+        // diesem Fall die Quelle mit "aufzeichnung_unzureichend". Ablauf: MSFS
+        // meldet −168 fpm, danach kommt der Sampler mit −10,4 aus dem kaputten
+        // Fenster. Der neue Wert wurde zu Recht verworfen, aber mit der
+        // Kennung ging auch die Ausnahme verloren — die Kanonik lieferte
+        // danach `None` statt −168. Verworfen wird nur der NEUE Wert.
+        if quelle_misst_der_simulator_selbst(stats.landing_source.as_deref()) {
+            return;
+        }
+        stats.landing_confidence = Some("NichtBewertbar".to_string());
+        stats.landing_source = Some("aufzeichnung_unzureichend".to_string());
+        return;
+    }
     stats.landing_rate_fpm = Some(vs_fpm);
     stats.landing_peak_vs_fpm = Some(vs_fpm);
     stats.landing_confidence = confidence.map(|s| s.to_string());
@@ -21211,7 +21349,11 @@ fn scoring_eingang(
         peak_g_load: stats.canonical_peak_g_force(),
         scored_g_load: scored_g_fuer_punkte(stats),
         // v0.7.6 P2-B: zentraler Helper statt direkten Read.
-        bounce_count: Some(scored_bounce_count_for_score(stats)),
+        bounce_count: if stats.landung_abdeckung_fehlt.is_some() {
+            None
+        } else {
+            Some(scored_bounce_count_for_score(stats))
+        },
         approach_vs_stddev_fpm: stats.canonical_vs_stddev_fpm(),
         approach_bank_stddev_deg: stats.canonical_bank_stddev_deg(),
         rollout_distance_m: stats.rollout_distance_m.map(|m| m as f32),
@@ -21268,9 +21410,9 @@ fn scoring_eingang(
         // dieselbe Frage. Hier vorab mit derselben Kaskade aufloesen, damit
         // die Crate ihn als "aus der Datei" vorfindet und ihren eigenen,
         // kaskadenlosen Fallback nie mehr braucht.
-        fahrwerk_spurweite_m: stats
-            .fahrwerk_spurweite_m
-            .or_else(|| muster_fuer_typtabelle(muster, |m| landing_scoring::spurweite::spurweite_m(m))),
+        fahrwerk_spurweite_m: stats.fahrwerk_spurweite_m.or_else(|| {
+            muster_fuer_typtabelle(muster, |m| landing_scoring::spurweite::spurweite_m(m))
+        }),
         ..Default::default()
     }
 }
@@ -21291,8 +21433,8 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     // direkter Tabellenschlag auf den rohen `icao`-Wert, der Baureihen ohne
     // Variante ("A300" statt "A306") verlor, obwohl `muster_kandidaten` sie
     // schon kennt. Siehe `muster_fuer_typtabelle`-Dokumentation.
-    let spur_m =
-        aus_datei.or_else(|| muster_fuer_typtabelle(icao, |m| landing_scoring::spurweite::spurweite_m(m)));
+    let spur_m = aus_datei
+        .or_else(|| muster_fuer_typtabelle(icao, |m| landing_scoring::spurweite::spurweite_m(m)));
     let breite_m = rm.map(|m| m.width_ft as f64 * 0.3048).filter(|w| *w > 0.0);
     let versatz_m = stats.bahn_max_querversatz_m;
 
@@ -21775,8 +21917,28 @@ where
     // Damit der LandingRecord (= was im Pilot-Client Tab Landung
     // angezeigt wird) UND der Webapp-Live-Map den IDENTISCHEN Edge-Wert
     // sehen — nicht den Streamer-Tick-Snapshot.
-    let landing_rate_fpm = stats.canonical_landing_rate_fpm()?;
-    let touchdown_class = stats.landing_score?;
+    // ⚠ Kein früher Abbruch mehr, wenn die Landung nur nicht MESSBAR war.
+    //
+    // Codex-Abnahme 12.09.2026: Beide Zeilen brachen den Bau ab, sobald Rate
+    // oder Note fehlten — bei einer gesperrten Landung entstand also gar kein
+    // Datensatz. Der Pilot sah dann nichts (und beim Speichern kam die
+    // irreführende Diagnose "no touchdown captured"), statt der Erklärung,
+    // warum es keine Note gibt. Die Landung hat stattgefunden; sie gehört in
+    // die Historie, nur eben ohne Zahlen.
+    //
+    // Ohne Aufsetzzeitpunkt gibt es weiterhin keinen Datensatz — dann fehlt
+    // das Ereignis selbst, nicht nur seine Messung.
+    let nicht_bewertbar = stats.landung_abdeckung_fehlt.clone();
+    let landing_rate_fpm = match stats.canonical_landing_rate_fpm() {
+        Some(v) => Some(v),
+        None if nicht_bewertbar.is_some() => None,
+        None => return None,
+    };
+    let touchdown_class = match stats.landing_score {
+        Some(k) => Some(k),
+        None if nicht_bewertbar.is_some() => None,
+        None => return None,
+    };
     // v0.7.1 P1.3-Fix + Round-2 P2-Fix: score_numeric UND score_label
     // beide aus dem Aggregate-Score, damit sie semantisch zueinander
     // passen. Vorher: "SMOOTH · 77/100" (Label aus Touchdown-Klasse,
@@ -21799,13 +21961,16 @@ where
     fill_v2_rollout_fields(&mut scoring_input, stats, effective_arr_icao);
     let computed_sub_scores = landing_scoring::compute_sub_scores(&scoring_input);
     let aggregate_master = landing_scoring::aggregate_master_score(&computed_sub_scores);
+    // Ohne Touchdown-Klasse gibt es keinen Rückfall — und ohne Rate liefert
+    // `aggregate_master_score` ohnehin `None` ("lieber gar keine Note als
+    // eine geschenkte"). Beides zusammen heisst: keine Bewertung.
     let score_numeric = aggregate_master
         .map(|m| m as i32)
-        .unwrap_or_else(|| touchdown_class.numeric());
+        .or_else(|| touchdown_class.map(|k| k.numeric()));
     let score_label = aggregate_master
-        .map(|m| aggregate_score_label(m))
-        .unwrap_or_else(|| touchdown_class.label());
-    let grade = letter_grade(score_numeric);
+        .map(aggregate_score_label)
+        .or_else(|| touchdown_class.map(|k| k.label()));
+    let grade = score_numeric.map(letter_grade);
 
     // Compute fuel-efficiency once so the Landing tab doesn't have to
     // redo the formula. Same shape as build_pirep_fields.
@@ -21974,13 +22139,16 @@ where
         sim_kind: sim_kind_label.map(|s| s.to_string()),
 
         score_numeric,
-        score_label: score_label.to_string(),
-        grade_letter: grade.to_string(),
+        score_label: score_label.map(|s| s.to_string()),
+        grade_letter: grade.map(|g| g.to_string()),
 
         landing_rate_fpm,
         landing_peak_vs_fpm: stats.landing_peak_vs_fpm,
-        landing_g_force: stats.landing_g_force,
-        landing_peak_g_force: stats.landing_peak_g_force,
+        // Auch die rohen G-Werte stammen aus dem Aufsetzfenster. Ohne sie
+        // fällt im Client zusätzlich der `scoreG()`-Rückfall weg, der sonst
+        // ein "Hard G"-Flag für eine ungemessene Landung erzeugte.
+        landing_g_force: aus_dem_fenster(stats, stats.landing_g_force),
+        landing_peak_g_force: aus_dem_fenster(stats, stats.landing_peak_g_force),
         landing_pitch_deg: stats.landing_pitch_deg,
         // Bank at touchdown isn't a top-level FlightStats field; pull
         // the sample closest to t=0 from the touchdown profile.
@@ -22030,14 +22198,24 @@ where
         // gezeigt, waehrend die Kachel daneben -38 sagt. Zwei Zahlen fuer
         // denselben Touchdown — genau der Riss, den wir ausraeumen. Ist der
         // Wert kein Flugzustand, gibt es ihn nicht.
+        // Auch dieser Wert stammt aus dem Aufsetzfenster. Reicht dessen
+        // Abdeckung nicht, gibt es ihn nicht — sonst zeigte die Forensik-
+        // Kachel eine Zahl, während die Bewertung daneben "nicht bewertbar"
+        // sagt. Dieselbe Regel wie bei einem unplausiblen Wert eine Zeile
+        // tiefer: Ist er keine Messung, gibt es ihn nicht.
+        landung_nicht_bewertbar: landung_nicht_bewertbar_json(stats),
+        fenster_unzureichend: stats.landung_abdeckung_fehlt.is_some(),
+        sampler_diagnose: stats.sampler_diagnose.clone(),
         vs_at_edge_fpm: ana_f32(&stats.landing_analysis, "vs_at_edge_fpm")
-            .filter(|&v| landing_rate_is_plausible(v)),
+            .filter(|&v| landing_rate_is_plausible(v))
+            .filter(|_| stats.landung_abdeckung_fehlt.is_none()),
         // Die Quelle faellt mit dem Wert. Wird `vs_at_edge_fpm` als
         // unplausibel verworfen, kommt die angezeigte Zahl aus der
         // Rueckfallkaskade — dann darf die Kachel kein Messverfahren
         // nennen, das zu dieser Zahl gar nicht gehoert (QS-Befund v1.6.3).
         vs_at_edge_quelle: ana_f32(&stats.landing_analysis, "vs_at_edge_fpm")
             .filter(|&v| landing_rate_is_plausible(v))
+            .filter(|_| stats.landung_abdeckung_fehlt.is_none())
             .and_then(|_| {
                 stats
                     .landing_analysis
@@ -22055,18 +22233,36 @@ where
         vs_smoothed_500ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_500ms_fpm"),
         vs_smoothed_1000ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_1000ms_fpm"),
         vs_smoothed_1500ms_fpm: ana_f32(&stats.landing_analysis, "vs_smoothed_1500ms_fpm"),
-        peak_g_post_500ms: ana_f32(&stats.landing_analysis, "peak_g_post_500ms"),
-        peak_g_post_1000ms: ana_f32(&stats.landing_analysis, "peak_g_post_1000ms"),
+        peak_g_post_500ms: aus_dem_fenster(
+            stats,
+            ana_f32(&stats.landing_analysis, "peak_g_post_500ms"),
+        ),
+        peak_g_post_1000ms: aus_dem_fenster(
+            stats,
+            ana_f32(&stats.landing_analysis, "peak_g_post_1000ms"),
+        ),
         // v0.12.3 (LE4/LE7): gescorter G (EMA, sonst raw_fallback) + Methode
         // — die G-Force-Card headlinet diesen Wert.
         landing_scored_g_force: score_g_for_stats(stats).map(|s| s.scored_g),
         scored_g_method: score_g_for_stats(stats).map(|s| s.method.as_str().to_string()),
         // v0.7.17 (B-009): G-Force-Forensik
-        g_at_edge: ana_f32(&stats.landing_analysis, "g_at_edge"),
-        g_smoothed_250ms_post: ana_f32(&stats.landing_analysis, "g_smoothed_250ms_post"),
-        g_median_post_500ms: ana_f32(&stats.landing_analysis, "g_median_post_500ms"),
-        g_p95_post_500ms: ana_f32(&stats.landing_analysis, "g_p95_post_500ms"),
-        max_gear_force_n: ana_f32(&stats.landing_analysis, "max_gear_force_n"),
+        g_at_edge: aus_dem_fenster(stats, ana_f32(&stats.landing_analysis, "g_at_edge")),
+        g_smoothed_250ms_post: aus_dem_fenster(
+            stats,
+            ana_f32(&stats.landing_analysis, "g_smoothed_250ms_post"),
+        ),
+        g_median_post_500ms: aus_dem_fenster(
+            stats,
+            ana_f32(&stats.landing_analysis, "g_median_post_500ms"),
+        ),
+        g_p95_post_500ms: aus_dem_fenster(
+            stats,
+            ana_f32(&stats.landing_analysis, "g_p95_post_500ms"),
+        ),
+        max_gear_force_n: aus_dem_fenster(
+            stats,
+            ana_f32(&stats.landing_analysis, "max_gear_force_n"),
+        ),
         peak_vs_pre_flare_fpm: ana_f32(&stats.landing_analysis, "peak_vs_pre_flare_fpm"),
         vs_at_flare_end_fpm: ana_f32(&stats.landing_analysis, "vs_at_flare_end_fpm"),
         flare_reduction_fpm: ana_f32(&stats.landing_analysis, "flare_reduction_fpm"),
@@ -26785,7 +26981,62 @@ fn g_auf_referenzkette(g: f32, simulator: Option<&str>) -> f32 {
     1.0 + (g - 1.0) * faktor
 }
 
+/// Die Sinkrate ist gesperrt — die Landung bekommt keine Note.
+///
+/// Nicht dasselbe wie "das Fenster reichte nicht" (`landung_abdeckung_fehlt`):
+/// Hat MSFS die Aufsetzrate selbst gemeldet, gilt sie, obwohl unser Fenster
+/// dünn war. Dann gibt es eine Note, aber keine G-Werte und keine Hopser.
+/// Diese Unterscheidung fehlte beiden ersten Fassungen (Codex, zweite
+/// Abnahme 13.09.2026): Das Frontend behandelte die Fenster-Markierung als
+/// Totalsperre und warf auch gültige MSFS-Landungen aus Verlauf und Teilwerten,
+/// während Note und Banner "keine Bewertung" gleichzeitig sichtbar blieben.
+fn landung_nicht_bewertbar_json(stats: &FlightStats) -> Option<serde_json::Value> {
+    let fehlt = stats.landung_abdeckung_fehlt.as_ref()?;
+    if stats.canonical_landing_rate_fpm().is_some() {
+        return None;
+    }
+    serde_json::to_value(fehlt).ok()
+}
+
+/// Werte aus dem Aufsetzfenster — oder nichts, wenn es nicht ausreichte.
+///
+/// Prüfbefund 13.09.2026: Die Sinkrate und der Score waren gesperrt, die
+/// G-Forensik daneben (`g_at_edge`, `g_median_post_500ms`, …) lief weiter aus
+/// demselben Analyse-JSON in Datensatz, MQTT-Payload und Anzeige. Der Client
+/// zeigte dann vollständige G-Kacheln für eine Landung, die laut Note gar
+/// nicht gemessen wurde — dieselbe Fehlerklasse, nur eine Anzeige weiter.
+fn aus_dem_fenster(stats: &FlightStats, wert: Option<f32>) -> Option<f32> {
+    wert.filter(|_| stats.landung_abdeckung_fehlt.is_none())
+}
+
+/// Hopser aus dem Aufsetzfenster — oder keine, wenn es nicht ausreichte.
+///
+/// Codex, dritte Abnahme 13.09.2026: Nach Sinkrate, Note und G-Werten liefen
+/// die Hopser noch über drei Wege weiter — in die diskrete Touchdown-Klasse
+/// (`LandingScore::classify`), in den MQTT-Payload und ins ACARS-Log. Bei
+/// gültiger MSFS-Sinkrate wird dieser Payload tatsächlich versendet; die
+/// Empfänger sahen dann scheinbar gültige Hopser ohne jede Kennzeichnung.
+/// Ein Hopser zwischen zwei fehlenden Proben bleibt unsichtbar, und "0"
+/// läse sich als saubere Landung.
+fn hopser_aus_dem_fenster(stats: &FlightStats) -> Option<u32> {
+    if stats.landung_abdeckung_fehlt.is_some() {
+        return None;
+    }
+    Some(stats.bounce_count as u32)
+}
+
 fn score_g_for_stats(stats: &FlightStats) -> Option<recorder::ScoredG> {
+    // ⚠ Zuerst die Sperre, dann erst die Analyse.
+    //
+    // Codex-Befund 12.09.2026: Diese Funktion griff VOR der kanonischen
+    // G-Sperre direkt auf `landing_analysis.scored_g` zu — und `unwrap_or`
+    // setzte den dort verworfenen Rohwert gleich wieder ein. Über diesen Weg
+    // entstanden G-Teilscore und das phpVMS-Feld "Landing G-Force" auch für
+    // Landungen, deren Aufsetzfenster gar nicht ausreichend aufgezeichnet
+    // wurde. Der geglättete Wert stammt aus denselben Proben wie der rohe.
+    if stats.landung_abdeckung_fehlt.is_some() {
+        return None;
+    }
     if let Some(scored) = ana_f32(&stats.landing_analysis, "scored_g") {
         let method = match ana_str(&stats.landing_analysis, "scored_g_method").as_deref() {
             Some("raw_fallback") => recorder::ScoredGMethod::RawFallback,
@@ -28295,6 +28546,79 @@ fn open_touchdown_capture_window(stats: &mut FlightStats, now: DateTime<Utc>) {
     stats.touchdown_window_score_data_ready_at = None;
 }
 
+/// Wie zuverlässig der Aufsetz-Sampler tatsächlich gelaufen ist.
+///
+/// # Warum diese Messung nötig ist (Befund 12.09.2026)
+///
+/// Der Sampler soll fünfzigmal je Sekunde eine Probe nehmen. Ob er das
+/// geschafft hat, stand bisher nirgends — man konnte es nur im Nachhinein
+/// aus den Abständen der gespeicherten Proben erahnen. Das ist zweideutig:
+/// Eine dünne Probenreihe kann heissen „die Schleife lief nicht", aber auch
+/// „sie lief und bekam nichts" oder „die Proben wurden später verworfen".
+///
+/// Deshalb misst die Schleife sich hier selbst, und zwar VOR dem ersten
+/// Zugriff auf Simulator und Flugdaten — jeder Durchlauf zählt, auch der,
+/// der gleich wieder abbricht. Die Uhr ist `Instant` (monoton): eine
+/// verstellte Systemzeit soll die Diagnose nicht verfälschen.
+///
+/// Gemessen wird an der Landung, die diese Untersuchung ausgelöst hat
+/// (CFG 2090, X-Plane 12 nach 10:44 h): rund zwei statt fünfzig
+/// erfolgreiche Erfassungen je Sekunde.
+#[derive(Debug, Clone, Default)]
+struct SamplerDiagnose {
+    /// Durchläufe insgesamt — gezählt, bevor irgendetwas schiefgehen kann.
+    laeufe: u64,
+    /// Davon mit gespeicherter Probe.
+    proben: u64,
+    /// Davon ohne Zustand vom Simulator (`current_snapshot` gab nichts).
+    ohne_snapshot: u64,
+    /// Davon wegen Sprung-/Reset-Erkennung verworfen.
+    verworfen_sprung: u64,
+    /// Summe der tatsächlichen Taktabstände, in Millisekunden.
+    takt_summe_ms: f64,
+    /// Längster einzelner Taktabstand, in Millisekunden.
+    takt_max_ms: f64,
+    /// Wie viele Takte länger als das Doppelte des Solls (40 ms) brauchten.
+    takte_ueber_soll: u64,
+    /// Längste Dauer eines einzelnen `current_snapshot`-Aufrufs.
+    eingang_max_ms: f64,
+}
+
+impl SamplerDiagnose {
+    /// Mittlerer Takt in Millisekunden — Soll ist 20.
+    fn takt_mittel_ms(&self) -> f64 {
+        if self.laeufe < 2 {
+            return 0.0;
+        }
+        self.takt_summe_ms / (self.laeufe - 1) as f64
+    }
+
+    /// Tatsächliche Erfassungen je Sekunde. Soll ist 50.
+    fn proben_je_sekunde(&self) -> f64 {
+        let mittel = self.takt_mittel_ms();
+        if mittel <= 0.0 || self.laeufe == 0 {
+            return 0.0;
+        }
+        let anteil = self.proben as f64 / self.laeufe as f64;
+        1000.0 / mittel * anteil
+    }
+
+    /// Für Protokoll und PIREP. Bewusst wenige, gut lesbare Zahlen.
+    fn als_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "laeufe": self.laeufe,
+            "proben": self.proben,
+            "ohne_snapshot": self.ohne_snapshot,
+            "verworfen_sprung": self.verworfen_sprung,
+            "takt_mittel_ms": (self.takt_mittel_ms() * 10.0).round() / 10.0,
+            "takt_max_ms": (self.takt_max_ms * 10.0).round() / 10.0,
+            "takte_ueber_soll": self.takte_ueber_soll,
+            "eingang_max_ms": (self.eingang_max_ms * 10.0).round() / 10.0,
+            "proben_je_sekunde": (self.proben_je_sekunde() * 10.0).round() / 10.0,
+        })
+    }
+}
+
 fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
     // Guard gegen Doppel-Spawn (mehrere flight_resume etc.) — analog zu
     // streamer_spawned/phpvms_worker_spawned. Ohne dies koennen zwei
@@ -28351,6 +28675,12 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
         // Strecke und Abstand stehen jetzt in `RESET_LIMITS` bei
         // `classify_segment` — hier bleiben nur die Werte, die diese
         // Schleife selbst auswertet.
+        // Selbstmessung der Schleife — siehe `SamplerDiagnose`. Sie läuft
+        // ausserhalb von `FlightStats`, damit sie nicht selbst auf den Lock
+        // wartet, den sie vermessen soll.
+        let mut diagnose = SamplerDiagnose::default();
+        let mut letzter_takt: Option<std::time::Instant> = None;
+
         loop {
             // 20 ms = 50 Hz target — matches GEES (`SAMPLE_RATE = 20`),
             // the only open-source reference impl that publishes its
@@ -28362,7 +28692,31 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             if flight.stop.load(Ordering::Relaxed) {
                 break;
             }
-            let Some(snap) = current_snapshot(&app) else {
+            // ⚠ Die Zählung steht VOR jedem Zugriff — sonst fehlen genau die
+            // Durchläufe, die weiter unten abbrechen, und die Diagnose
+            // beschönigt sich selbst.
+            let takt_jetzt = std::time::Instant::now();
+            if let Some(vorher) = letzter_takt {
+                let abstand_ms = takt_jetzt.duration_since(vorher).as_secs_f64() * 1000.0;
+                diagnose.takt_summe_ms += abstand_ms;
+                if abstand_ms > diagnose.takt_max_ms {
+                    diagnose.takt_max_ms = abstand_ms;
+                }
+                if abstand_ms > 40.0 {
+                    diagnose.takte_ueber_soll += 1;
+                }
+            }
+            letzter_takt = Some(takt_jetzt);
+            diagnose.laeufe += 1;
+
+            let eingang_start = std::time::Instant::now();
+            let snapshot = current_snapshot(&app);
+            let eingang_ms = eingang_start.elapsed().as_secs_f64() * 1000.0;
+            if eingang_ms > diagnose.eingang_max_ms {
+                diagnose.eingang_max_ms = eingang_ms;
+            }
+            let Some(snap) = snapshot else {
+                diagnose.ohne_snapshot += 1;
                 continue;
             };
             let now = Utc::now();
@@ -28420,6 +28774,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // NICHT updaten, sonst gewoehnt sich der Detector an
                 // den Reset und der naechste echte Sample springt
                 // wieder >10 nmi von 0/0 weg.
+                diagnose.verworfen_sprung += 1;
                 continue;
             }
 
@@ -28440,6 +28795,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     }
                 }
             }
+            diagnose.proben += 1;
             stats.snapshot_buffer.push_back(TelemetrySample {
                 at: now,
                 // The snapshot_buffer is the touchdown-window source (feeds the
@@ -29167,6 +29523,45 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
             // damit der Touchdown-Payload-Builder im Streamer-Tick die Felder
             // direkt zur Verfuegung hat (anstatt aus der JSONL re-zu-parsen).
             let prepared_dump = if let Some((edge_at, samples, climbed_out_early)) = dump_payload {
+                // ── Reicht die Aufzeichnung für eine Bewertung? ──────────
+                //
+                // Hier, und nur hier: Das Fenster ist fertig gesammelt, der
+                // Bodenkontakt steht fest. Alles Spätere (Kaskade, Kanonik,
+                // Score, PIREP, Anzeige) fragt nur noch das Ergebnis ab.
+                //
+                // Der Kontakt gilt unabhängig davon als erkannt — "gelandet,
+                // aber nicht messbar" ist ein gültiger Ausgang.
+                stats.landung_abdeckung_fehlt =
+                    match touchdown_v2::pruefe_bewertbarkeit(&samples, edge_at) {
+                        Ok(()) => None,
+                        Err(fehlt) => {
+                            tracing::warn!(
+                                pirep_id = %flight.pirep_id,
+                                groesste_luecke_ms = fehlt.groesste_luecke_ms,
+                                proben = fehlt.proben,
+                                takt_mittel_ms = diagnose.takt_mittel_ms(),
+                                proben_je_sekunde = diagnose.proben_je_sekunde(),
+                                vorher_gesetzte_note = ?stats.landing_score,
+                                "Aufzeichnung im Aufsetzfenster unzureichend — keine Landebewertung"
+                            );
+                            // Eine bereits vergebene Note muss weg.
+                            //
+                            // Codex-Befund 12.09.2026 zum ersten Entwurf:
+                            // Kommt der Dump spät (Timeout-Pfad hat schon
+                            // finalisiert), fiel zwar die Rate weg, `stats.
+                            // landing_score` blieb aber stehen — und mehrere
+                            // Ausgänge übernehmen genau diesen Altwert
+                            // (MQTT-PIREP und phpVMS über
+                            // `aggregate_master.or_else(landing_score)`,
+                            // `canonical_landing_verdict`, `LandingFinalized`).
+                            // Der Finalisierer selbst kommt nicht noch einmal
+                            // vorbei, er beendet sich bei vorhandenem Score.
+                            stats.landing_score = None;
+                            Some(fehlt)
+                        }
+                    };
+                stats.sampler_diagnose = Some(diagnose.als_json());
+
                 let analysis = compute_landing_analysis(
                     &samples,
                     edge_at,
@@ -31457,8 +31852,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             &flight.pirep_id,
                             &FlightLogEvent::BlockSnapshot {
                                 timestamp: Utc::now(),
-                                payload: serde_json::to_value(p)
-                                    .unwrap_or(serde_json::Value::Null),
+                                payload: serde_json::to_value(p).unwrap_or(serde_json::Value::Null),
                             },
                         );
                     }
@@ -31468,8 +31862,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             &flight.pirep_id,
                             &FlightLogEvent::TakeoffSnapshot {
                                 timestamp: Utc::now(),
-                                payload: serde_json::to_value(p)
-                                    .unwrap_or(serde_json::Value::Null),
+                                payload: serde_json::to_value(p).unwrap_or(serde_json::Value::Null),
                             },
                         );
                     }
@@ -31580,6 +31973,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 td_actual_icao.as_deref().unwrap_or(&flight.arr_airport),
                             );
                             aeroacars_mqtt::TouchdownPayload {
+                                landung_nicht_bewertbar: landung_nicht_bewertbar_json(&stats),
                                 // v1.7.15: die Bahn-Herkunft — EINE
                                 // Ableitung, dieselbe wie am
                                 // `touchdown_rollout_finalized`.
@@ -31622,8 +32016,11 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 bank_deg: stats.landing_bank_deg,
                                 // g_load/peak_g_load bleiben roh (Forensik-Display,
                                 // nicht Teil von compute_sub_scores) — unveraendert.
-                                g_load: stats.landing_g_force,
-                                peak_g_load: stats.landing_peak_g_force,
+                                // Codex, zweite Abnahme: hier heissen die Felder
+                                // `g_load`/`peak_g_load` — die erste Filterung
+                                // suchte die Record-Namen und ging vorbei.
+                                g_load: aus_dem_fenster(&stats, stats.landing_g_force),
+                                peak_g_load: aus_dem_fenster(&stats, stats.landing_peak_g_force),
                                 // v0.20 (QS-Fix, fallback_zero-Score-Bug): der
                                 // "faire" EMA-Score wird None statt einer erfundenen
                                 // Zahl, wenn keine echte Quelle je einen Wert lieferte.
@@ -31648,8 +32045,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // klassifiziert der Client, die Webapp zeigt an.
                                 score_label: payload_verdict.as_ref().map(|v| v.label.to_string()),
                                 score_grade: payload_verdict.as_ref().map(|v| v.grade.to_string()),
-                                bounce: Some(stats.bounce_count > 0),
-                                bounce_count: Some(stats.bounce_count),
+                                bounce: hopser_aus_dem_fenster(&stats).map(|n| n > 0),
+                                bounce_count: hopser_aus_dem_fenster(&stats).map(|n| n as _),
                                 // v0.16.6 (Daten-Audit 2026-06-11): `approach_runway`
                                 // ist praktisch nie gesetzt → das Top-Level-Feld war
                                 // bei 407/407 VPS-Flügen None, und die Webapp-Anzeigen
@@ -31766,13 +32163,23 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // geschrieben wird. Wenn None (Sampler hat noch
                                 // nicht 10s post-TD gesehen, oder Touchdown vor
                                 // Buffer-Init), bleiben alle Felder None.
-                                vs_at_edge_fpm: ana_f32(&stats.landing_analysis, "vs_at_edge_fpm"),
+                                // Auch hier gilt die Sperre: Reicht die
+                                // Aufzeichnung nicht, gibt es die Zahl nicht.
+                                // Sonst zeigte die Webapp einen Wert, während
+                                // der Client daneben "nicht bewertbar" sagt —
+                                // zwei Wirklichkeiten für denselben Touchdown
+                                // (QS-Befund 12.09.2026 zum eigenen Umbau; die
+                                // gleiche Stelle im LandingRecord war schon
+                                // gefiltert, diese hier nicht).
+                                vs_at_edge_fpm: ana_f32(&stats.landing_analysis, "vs_at_edge_fpm")
+                                    .filter(|_| stats.landung_abdeckung_fehlt.is_none()),
                                 // Herkunft der bewerteten Sinkrate plus beide
                                 // Rohwerte — damit im Feld nachrechenbar ist,
                                 // welche Quelle gegriffen hat.
                                 vs_at_edge_quelle: stats
                                     .landing_analysis
                                     .as_ref()
+                                    .filter(|_| stats.landung_abdeckung_fehlt.is_none())
                                     .and_then(|a| a.get("vs_at_edge_quelle"))
                                     .and_then(|v| v.as_str())
                                     .map(str::to_owned),
@@ -31813,31 +32220,34 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     &stats.landing_analysis,
                                     "vs_smoothed_1500ms_fpm",
                                 ),
-                                peak_g_post_500ms: ana_f32(
-                                    &stats.landing_analysis,
-                                    "peak_g_post_500ms",
+                                peak_g_post_500ms: aus_dem_fenster(
+                                    &stats,
+                                    ana_f32(&stats.landing_analysis, "peak_g_post_500ms"),
                                 ),
-                                peak_g_post_1000ms: ana_f32(
-                                    &stats.landing_analysis,
-                                    "peak_g_post_1000ms",
+                                peak_g_post_1000ms: aus_dem_fenster(
+                                    &stats,
+                                    ana_f32(&stats.landing_analysis, "peak_g_post_1000ms"),
                                 ),
                                 // v0.7.17 (B-009): G-Force-Forensik
-                                g_at_edge: ana_f32(&stats.landing_analysis, "g_at_edge"),
-                                g_smoothed_250ms_post: ana_f32(
-                                    &stats.landing_analysis,
-                                    "g_smoothed_250ms_post",
+                                g_at_edge: aus_dem_fenster(
+                                    &stats,
+                                    ana_f32(&stats.landing_analysis, "g_at_edge"),
                                 ),
-                                g_median_post_500ms: ana_f32(
-                                    &stats.landing_analysis,
-                                    "g_median_post_500ms",
+                                g_smoothed_250ms_post: aus_dem_fenster(
+                                    &stats,
+                                    ana_f32(&stats.landing_analysis, "g_smoothed_250ms_post"),
                                 ),
-                                g_p95_post_500ms: ana_f32(
-                                    &stats.landing_analysis,
-                                    "g_p95_post_500ms",
+                                g_median_post_500ms: aus_dem_fenster(
+                                    &stats,
+                                    ana_f32(&stats.landing_analysis, "g_median_post_500ms"),
                                 ),
-                                max_gear_force_n: ana_f32(
-                                    &stats.landing_analysis,
-                                    "max_gear_force_n",
+                                g_p95_post_500ms: aus_dem_fenster(
+                                    &stats,
+                                    ana_f32(&stats.landing_analysis, "g_p95_post_500ms"),
+                                ),
+                                max_gear_force_n: aus_dem_fenster(
+                                    &stats,
+                                    ana_f32(&stats.landing_analysis, "max_gear_force_n"),
                                 ),
                                 peak_vs_pre_flare_fpm: ana_f32(
                                     &stats.landing_analysis,
@@ -31860,9 +32270,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     "flare_quality_score",
                                 ),
                                 flare_detected: ana_bool(&stats.landing_analysis, "flare_detected"),
-                                bounce_max_agl_ft: ana_f32(
-                                    &stats.landing_analysis,
-                                    "bounce_max_agl_ft",
+                                bounce_max_agl_ft: aus_dem_fenster(
+                                    &stats,
+                                    ana_f32(&stats.landing_analysis, "bounce_max_agl_ft"),
                                 ),
                                 forensic_sample_count: ana_u32(
                                     &stats.landing_analysis,
@@ -31878,11 +32288,13 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                     &stats.landing_analysis,
                                     "forensic_bounce_count",
                                 )
+                                .filter(|_| stats.landung_abdeckung_fehlt.is_none())
                                 .map(|n| n.min(u8::MAX as u32) as u8),
                                 scored_bounce_count: ana_u32(
                                     &stats.landing_analysis,
                                     "scored_bounce_count",
                                 )
+                                .filter(|_| stats.landung_abdeckung_fehlt.is_none())
                                 .map(|n| n.min(u8::MAX as u32) as u8),
                                 // v0.7.6 P1-3: Trust-Status auch in den
                                 // touchdown_complete-Payload damit aeroacars-
@@ -35700,6 +36112,41 @@ fn finalize_landing_score_if_due(
         );
         return;
     }
+    // ── Wurde das Aufsetzen überhaupt gemessen? ──────────────────────────
+    //
+    // Hier, gemeinsam für ALLE Wege in die Bewertung: nach dem Dump-Timeout
+    // ebenso wie im reinen FSM-Pfad, der ohne Sampler-Kandidaten gar nicht
+    // erst wartet (Codex-Abnahme 12.09.2026 — die erste Fassung sperrte nur
+    // den Timeout-Zweig und liess diesen zweiten Weg offen).
+    //
+    // Liegt kein ausgewertetes Aufsetzfenster vor, ist nichts gemessen. Dann
+    // entsteht keine Note aus der gröberen FSM-Schätzung — das war der Weg,
+    // über den CFG 2090 zu 97 Punkten kam.
+    //
+    // Ausgenommen bleibt die vom Simulator selbst gemeldete Rate: Sie hängt
+    // nicht an unserer Abtastung (29 von 1170 Landungen des Bestands haben
+    // kein Fenster und trotzdem einen belastbaren Wert).
+    // Codex, zweite Abnahme 13.09.2026: Die erste Fassung setzte die Markierung
+    // bei `msfs_simvar_latched` gar nicht — und liess damit G-Spitze und
+    // Hopser aus dem FSM-Puffer in die Bewertung. Die Markierung beschreibt
+    // aber eine Tatsache über UNSER Fenster, nicht über die Sinkrate. Ob die
+    // vom Simulator gemeldete Rate trotzdem gilt, entscheidet erst
+    // `canonical_landing_rate_fpm`; G und Hopser fallen in jedem Fall weg.
+    if stats.landung_abdeckung_fehlt.is_none()
+        && stats.touchdown_window_score_data_ready_at.is_none()
+    {
+        tracing::warn!(
+            pirep_id = %pirep_id,
+            landing_source = ?stats.landing_source,
+            "kein ausgewertetes Aufsetzfenster — Landung gilt als nicht messbar"
+        );
+        stats.landung_abdeckung_fehlt = Some(touchdown_v2::FehlendeAbdeckung {
+            groesste_luecke_ms: touchdown_v2::BEWERTUNGS_FENSTER_VOR_MS
+                + touchdown_v2::BEWERTUNGS_FENSTER_NACH_MS,
+            proben: 0,
+        });
+    }
+
     // v0.7.17 (B-005): Wenn `landing_peak_vs_fpm` None ist (= Sampler hat
     // den Touchdown-VS gar nicht erfasst, typisch bei Phantom-Touchdowns
     // durch on_ground-Flicker oder Sim-Bug), waere `unwrap_or(0.0)` = 0.0
@@ -35712,7 +36159,11 @@ fn finalize_landing_score_if_due(
         let scored_g = score_g_for_stats(stats)
             .map(|sg| sg.scored_g)
             .unwrap_or(0.0);
-        let score = LandingScore::classify(peak_vs, scored_g, stats.bounce_count);
+        // Ohne gemessenes Fenster zählen die Hopser nicht — sonst verschlechterte
+        // ein ungemessener Wert die Klasse (Codex, dritte Abnahme: MSFS −168 fpm
+        // mit zwei Hopsern ergab "Acceptable" statt "Smooth").
+        let hopser = hopser_aus_dem_fenster(stats).unwrap_or(0) as _;
+        let score = LandingScore::classify(peak_vs, scored_g, hopser);
         stats.landing_score = Some(score);
         // GAF-707-Race: an dieser Stelle wurde entweder auf die Rohdaten
         // gewartet (oder es gab gar keinen Sampler-Touchdown zum Warten) —
@@ -42868,6 +43319,16 @@ enum MetarKind {
 /// the touchdown analyzer locked in a score) so the streamer can mirror
 /// the touchdown summary into `POST /pireps/{id}/acars/logs` for the
 /// PIREP detail page. Subsequent ticks return None.
+/// Der G-Teil einer Protokollzeile. Ohne gemessenes Fenster steht dort
+/// "G nicht gemessen" — nie eine erfundene Null (Codex, dritte Abnahme).
+fn g_protokolltext(scored_g: Option<f32>, fenster_gemessen: bool) -> String {
+    match scored_g {
+        Some(g) => format!("G {g:.2}"),
+        None if !fenster_gemessen => "G nicht gemessen".to_string(),
+        None => "G 0.00".to_string(),
+    }
+}
+
 fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<String> {
     let mut stats = flight.stats.lock().expect("flight stats");
     if stats.landing_score_announced {
@@ -42904,8 +43365,17 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     // PIREP ueber die Kanonik den 50-Hz-Edge zeigten → Pilot sah "-233 fpm" im
     // ACARS-Log und "-206 fpm" auf der Landing-Karte fuer denselben Touchdown.
     let peak_vs = stats.canonical_landing_rate_fpm().unwrap_or(0.0);
-    let peak_g = stats.landing_peak_g_force.unwrap_or(0.0);
-    let bounces = stats.bounce_count;
+    // Codex, dritte Abnahme 13.09.2026: Bei gültiger MSFS-Sinkrate und dünnem
+    // Fenster läuft diese Ankündigung weiter. Die G-Werte waren schon gesperrt,
+    // wurden hier aber zu "G 0.00" — eine Nullmessung, wo gar nicht gemessen
+    // wurde — und die ungemessenen Hopser wurden angehängt. Beides kommt jetzt
+    // aus denselben Helfern wie überall sonst.
+    let fenster_gemessen = stats.landung_abdeckung_fehlt.is_none();
+    // Für Protokoll und Payload bleiben es Optionen — `None` heisst "nicht
+    // messbar". Nur die Textzeile und die Einstufung brauchen eine Zahl.
+    let peak_g_opt = aus_dem_fenster(&stats, stats.landing_peak_g_force);
+    let bounces_opt = hopser_aus_dem_fenster(&stats);
+    let bounces = bounces_opt.unwrap_or(0) as u8;
     // v0.12.3 (LE7/LE8): der gescorte G-Wert (EMA, sonst raw_fallback) —
     // für den Activity-/ACARS-Text UND das persistierte LandingScored-
     // Event. `peak_g` (oben) bleibt der rohe Wert für `peak_g_force`.
@@ -42982,12 +43452,12 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
         level,
         // nur Messdaten — keine Note/Einstufung (siehe Kommentar oben)
         format!(
-            "Touchdown: V/S {:.0} fpm, G {:.2}{}",
+            "Touchdown: V/S {:.0} fpm, {}{}",
             peak_vs, // signed: negative = descent, matches the PIREP
-            // v0.12.3 (LE7): scored (EMA) G, not the raw peak. v0.20
-            // (QS-Fix): 0.0 fallback ONLY for this transient log line —
-            // the durable JSONL/PIREP fields below stay properly None.
-            sg.as_ref().map(|s| s.scored_g).unwrap_or(0.0),
+            // v0.12.3 (LE7): scored (EMA) G, not the raw peak. Ohne gemessenes
+            // Fenster steht hier ausdrücklich "G nicht gemessen" statt einer
+            // erfundenen 0.00 (13.09.2026).
+            g_protokolltext(sg.as_ref().map(|s| s.scored_g), fenster_gemessen),
             bounce_part,
         ),
         None,
@@ -43008,8 +43478,11 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
             timestamp: Utc::now(),
             score: score.label().to_string(),
             peak_vs_fpm: peak_vs,
-            peak_g_force: peak_g,
-            bounce_count: bounces,
+            // Im dauerhaften Protokoll kein roher G-Wert und keine Hopser aus
+            // einem ungemessenen Fenster — und keine erfundene Null an ihrer
+            // Stelle (Codex, dritte und vierte Abnahme).
+            peak_g_force: peak_g_opt,
+            bounce_count: bounces_opt.map(|n| n.min(u8::MAX as u32) as u8),
             // v0.12.3 (LE7): EMA-Scored-G additiv; peak_g_force bleibt roh.
             // v0.20 (QS-Fix, fallback_zero-Score-Bug): echtes None statt
             // einer erfundenen Zahl im dauerhaften JSONL-Datensatz.
@@ -43023,11 +43496,11 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     // acars/logs-Spiegelung (phpVMS-Serverlog): ebenfalls nur Messdaten, keine
     // Einstufung — der bewertete Score steht im phpVMS-Feld „Landing Score".
     Some(format!(
-        "Touchdown — V/S {:.0} fpm, G {:.2}{}",
+        "Touchdown — V/S {:.0} fpm, {}{}",
         peak_vs,
-        // v0.12.3 (LE7): scored (EMA) G, not the raw peak. v0.20 (QS-Fix):
-        // 0.0 fallback only for this transient mirror line, same as above.
-        sg.as_ref().map(|s| s.scored_g).unwrap_or(0.0),
+        // v0.12.3 (LE7): scored (EMA) G, not the raw peak — und ohne
+        // gemessenes Fenster keine erfundene 0.00 (siehe oben).
+        g_protokolltext(sg.as_ref().map(|s| s.scored_g), fenster_gemessen),
         bounce_part,
     ))
 }
@@ -44683,11 +45156,35 @@ fn build_position_log(_snap: &SimSnapshot) -> Option<String> {
 
 // ---- Simulator selection + status ----
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 struct SimConfig {
     #[serde(default)]
     kind: SimKind,
 }
+
+/// Zwischenspeicher der Simulator-Auswahl — im RAM, nicht auf der Platte.
+///
+/// # Warum es ihn gibt (Befund 12.09.2026, CFG 2090)
+///
+/// `read_sim_config` las bei JEDEM Aufruf die Konfigurationsdatei: Existenz
+/// prüfen, lesen, JSON parsen. Aufgerufen wird sie unter anderem von
+/// `current_snapshot` und `current_premium_touchdown` — und die stehen beide
+/// im 20-ms-Takt des Aufsetz-Samplers, der zweite sogar unter gehaltenem
+/// `FlightStats`-Lock. Das sind bis zu hundert Dateizugriffe je Sekunde,
+/// genau während der Simulator die Maschine auslastet.
+///
+/// Gemessen an der Landung, die diese Untersuchung ausgelöst hat: Der
+/// Sampler schaffte statt fünfzig nur noch etwa zwei erfolgreiche
+/// Erfassungen je Sekunde; im Aufsetzfenster blieben zehn Proben statt
+/// rund zweihundertfünfzig übrig, und die Bewertung erhielt eine
+/// Sinkrate aus einem Frame, der eine ganze Sekunde nach dem Aufsetzen lag.
+///
+/// Die Auswahl ändert sich nur, wenn der Pilot sie in den Einstellungen
+/// umstellt — dort wird der Zwischenspeicher mitgeschrieben
+/// (`write_sim_config`). Eine Änderung der Datei von aussen, am laufenden
+/// Programm vorbei, wirkt erst beim nächsten Start; das ist der Preis und
+/// er ist vertretbar.
+static SIM_CONFIG_CACHE: std::sync::RwLock<Option<SimConfig>> = std::sync::RwLock::new(None);
 
 fn sim_config_path(app: &AppHandle) -> Result<PathBuf, UiError> {
     app.path()
@@ -44697,6 +45194,25 @@ fn sim_config_path(app: &AppHandle) -> Result<PathBuf, UiError> {
 }
 
 fn read_sim_config(app: &AppHandle) -> SimConfig {
+    if let Some(cfg) = SIM_CONFIG_CACHE.read().ok().and_then(|g| *g) {
+        return cfg;
+    }
+    // Beim Füllen die Schreibsperre halten und NOCHMAL prüfen: Zwischen der
+    // Lese- und der Schreibsperre kann ein `write_sim_config` die Auswahl
+    // bereits gesetzt haben (Codex-Befund 12.09.2026). Ohne die zweite
+    // Prüfung überschriebe der hier gelesene alte Dateiinhalt sie wieder.
+    let mut g = SIM_CONFIG_CACHE.write().unwrap_or_else(|e| e.into_inner());
+    if let Some(cfg) = *g {
+        return cfg;
+    }
+    let cfg = read_sim_config_von_platte(app);
+    *g = Some(cfg);
+    cfg
+}
+
+/// Die Auswahl wirklich von der Platte lesen — nur beim ersten Mal und nach
+/// einer Änderung. Siehe `SIM_CONFIG_CACHE`.
+fn read_sim_config_von_platte(app: &AppHandle) -> SimConfig {
     let Ok(path) = sim_config_path(app) else {
         return SimConfig::default();
     };
@@ -44710,13 +45226,29 @@ fn read_sim_config(app: &AppHandle) -> SimConfig {
 }
 
 fn write_sim_config(app: &AppHandle, cfg: &SimConfig) -> Result<(), UiError> {
+    // Der Zwischenspeicher wird ERST NACH erfolgreichem Schreiben gesetzt,
+    // und die Sperre wird über den ganzen Vorgang gehalten.
+    //
+    // Codex-Befund 12.09.2026 zum ersten Entwurf: Dort stand er davor, mit
+    // der Begründung "der Pilot hat die Auswahl ja getroffen". Der Aufrufer
+    // bricht bei einem Schreibfehler aber ab (`write_sim_config(...)?`), und
+    // `apply_sim_kind` läuft dann gar nicht — der Zwischenspeicher zeigte auf
+    // den neuen Simulator, während der alte Adapter weiterlief. Ab da fragte
+    // `current_snapshot` den falschen Adapter.
+    //
+    // Die gehaltene Schreibsperre schliesst zugleich den Wettlauf beim ersten
+    // Lesen: Ohne sie konnte ein gleichzeitig laufendes `read_sim_config`
+    // seinen alten Dateiinhalt über die gerade geschriebene Auswahl legen.
+    let mut cache = SIM_CONFIG_CACHE.write().unwrap_or_else(|e| e.into_inner());
     let path = sim_config_path(app)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| UiError::new("config_write", e.to_string()))?;
     }
     let json = serde_json::to_vec_pretty(cfg)
         .map_err(|e| UiError::new("config_serialize", e.to_string()))?;
-    std::fs::write(&path, json).map_err(|e| UiError::new("config_write", e.to_string()))
+    std::fs::write(&path, json).map_err(|e| UiError::new("config_write", e.to_string()))?;
+    *cache = Some(*cfg);
+    Ok(())
 }
 
 /// Apply the selected kind to whichever adapter handles it. Always
@@ -47757,6 +48289,10 @@ mod finalize_landing_score_if_due_tests {
         let mut stats = FlightStats::default();
         stats.landing_at = Some(t(0));
         stats.landing_peak_vs_fpm = Some(-13.0); // GSG1249-Groessenordnung
+                                                 // Das Aufsetzfenster lag vor und war ausreichend — hier geht es um
+                                                 // die Flugphase, nicht um die Datenlage (Ergänzung 12.09.2026, seit
+                                                 // eine Landung ohne Fenster keine Note mehr bekommt).
+        stats.touchdown_window_score_data_ready_at = Some(t(1));
         finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
         assert!(
             stats.landing_score.is_some(),
@@ -47841,11 +48377,26 @@ mod finalize_landing_score_if_due_tests {
         stats.landing_at = Some(t(0));
         stats.landing_peak_vs_fpm = Some(-250.0);
         stats.sampler_touchdown_rejected_reason = None; // s.o.: InsufficientTelemetry setzt nichts
+                                                        // Das Fenster lag vor und war ausreichend: Hier geht es um den
+                                                        // Bug-B-Guard (aktive Ablehnung des Samplers), nicht um die Frage,
+                                                        // ob überhaupt gemessen wurde.
+        stats.touchdown_window_score_data_ready_at = Some(t(1));
         finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
         assert!(
             stats.landing_score.is_some(),
             "ohne aktive Ablehnung muss der FSM-Fallback weiter scoren duerfen"
         );
+
+        // Ergänzung 12.09.2026: OHNE ausgewertetes Fenster ist derselbe Weg
+        // dicht — "der Sampler weiss es nicht" heisst jetzt "wir wissen es
+        // nicht", nicht "dann schätzen wir". Das war der Weg, über den
+        // CFG 2090 zu 97 Punkten kam.
+        let mut ohne_fenster = FlightStats::default();
+        ohne_fenster.landing_at = Some(t(0));
+        ohne_fenster.landing_peak_vs_fpm = Some(-250.0);
+        finalize_landing_score_if_due(&mut ohne_fenster, "TEST123", t(9), 0.0, true);
+        assert!(ohne_fenster.landing_score.is_none());
+        assert!(ohne_fenster.landung_abdeckung_fehlt.is_some());
     }
 
     // ── GAF-707-Race, strukturell geloest (Vereinheitlichung 09/2026) ──────
@@ -47879,6 +48430,7 @@ mod finalize_landing_score_if_due_tests {
         let mut stats = FlightStats::default();
         stats.landing_at = Some(t(0));
         stats.landing_peak_vs_fpm = Some(-13.0);
+        stats.touchdown_window_score_data_ready_at = Some(t(1));
         finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
         assert!(stats.landing_score.is_some());
     }
@@ -47958,10 +48510,14 @@ mod finalize_landing_score_if_due_tests {
 
     #[test]
     fn falls_back_after_sampler_dump_wait_timeout_instead_of_waiting_forever() {
-        // Der Dump ist aus irgendeinem Grund nie fertig geworden (Buffer-
-        // Dump fehlgeschlagen) — nach SAMPLER_DUMP_WAIT_TIMEOUT_MS muss
-        // trotzdem mit der vorhandenen Kanonik gescort werden, sonst bleibt
-        // der Pilot fuer immer ohne Score/Ankuendigung.
+        // Der Dump ist nie fertig geworden. Das Warten endet trotzdem nach
+        // SAMPLER_DUMP_WAIT_TIMEOUT_MS — sonst hinge der Flug für immer.
+        //
+        // GEÄNDERT am 12.09.2026 (Codex-Abnahme): Früher entstand hier eine
+        // Note aus der gröberen FSM-Schätzung. Genau darüber bekam CFG 2090
+        // seine 97 Punkte für einen Aufsetzmoment, den niemand aufgezeichnet
+        // hat. Ohne Fenster ist nichts gemessen — der Vorgang wird
+        // abgeschlossen, aber als "nicht bewertbar", nicht mit einer Note.
         let mut stats = FlightStats::default();
         stats.landing_at = Some(t(0));
         stats.landing_peak_vs_fpm = Some(-13.0);
@@ -47970,18 +48526,51 @@ mod finalize_landing_score_if_due_tests {
         let timeout_secs = SAMPLER_DUMP_WAIT_TIMEOUT_MS / 1000;
         finalize_landing_score_if_due(&mut stats, "TEST123", t(timeout_secs), 0.0, true);
         assert!(
-            stats.landing_score.is_some(),
-            "nach Ablauf des Dump-Wait-Timeouts muss trotzdem gescort werden"
+            stats.landung_abdeckung_fehlt.is_some(),
+            "ohne Aufsetzfenster muss der Vorgang als nicht messbar enden"
         );
+        assert!(
+            stats.landing_score.is_none(),
+            "und ohne Messung darf keine Note entstehen"
+        );
+        assert_eq!(
+            stats.canonical_landing_rate_fpm(),
+            None,
+            "auch die Ersatzrate ist damit gesperrt"
+        );
+    }
+
+    #[test]
+    fn nach_dem_timeout_bleibt_die_vom_simulator_gemessene_rate_gueltig() {
+        // Die Gegenprobe zum Test darüber: Hat MSFS die Aufsetzrate selbst
+        // gemeldet, hängt sie nicht an unserem Fenster. 29 von 1170
+        // Landungen des Bestands haben gar keinen Dump und trotzdem einen
+        // belastbaren Wert — die dürfen ihre Note behalten.
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t(0));
+        stats.landing_peak_vs_fpm = Some(-168.0);
+        stats.landing_rate_fpm = Some(-168.0);
+        stats.landing_source = Some("msfs_simvar_latched".to_string());
+        stats.sampler_touchdown_at = Some(t(0));
+        stats.touchdown_window_score_data_ready_at = None;
+        let timeout_secs = SAMPLER_DUMP_WAIT_TIMEOUT_MS / 1000;
+        finalize_landing_score_if_due(&mut stats, "TEST123", t(timeout_secs), 0.0, true);
+        assert_eq!(stats.canonical_landing_rate_fpm(), Some(-168.0));
+        assert!(stats.landing_score.is_some(), "diese Landung ist bewertbar");
     }
 
     #[test]
     fn no_sampler_touchdown_at_all_scores_immediately_via_fsm_fallback() {
         // Reiner FSM-Pfad (Sampler hat nie einen Kandidaten validiert) —
-        // kein Dump zum Warten, sofort ueber die Kanonik scoren.
+        // kein Dump zum Warten, sofort entscheiden.
+        //
+        // Der Pfad bleibt, aber sein Ergebnis hängt an der Quelle: Eine vom
+        // Simulator selbst gemeldete Rate trägt eine Note, eine eigene
+        // Schätzung ohne Aufsetzfenster nicht (12.09.2026).
         let mut stats = FlightStats::default();
         stats.landing_at = Some(t(0));
         stats.landing_peak_vs_fpm = Some(-13.0);
+        stats.landing_source = Some("msfs_simvar_latched".to_string());
         stats.sampler_touchdown_at = None;
         finalize_landing_score_if_due(&mut stats, "TEST123", t(9), 0.0, true);
         assert!(stats.landing_score.is_some());
@@ -48003,7 +48592,9 @@ mod finalize_landing_score_if_due_tests {
         const SRC: &str = include_str!("lib.rs");
         let start = SRC
             .find("s.bounce_count = scored_bounce;")
-            .unwrap_or_else(|| panic!("Setzstelle nicht mehr gefunden — Test anpassen, nicht loeschen"));
+            .unwrap_or_else(|| {
+                panic!("Setzstelle nicht mehr gefunden — Test anpassen, nicht loeschen")
+            });
         const FENSTER: usize = 3_500;
         let ende = (start + FENSTER).min(SRC.len());
         let ausschnitt = &SRC[start..ende];
@@ -48205,17 +48796,19 @@ mod canonical_landing_rate_fpm_tests {
     #[test]
     fn normalize_derived_scores_recomputes_a_stale_stored_label() {
         let mut r = landing_record_fixture();
-        r.score_numeric = 88;
-        r.score_label = "acceptable".to_string(); // Ergebnis der ALTEN Regel
-        r.grade_letter = "A".to_string();
+        r.score_numeric = Some(88);
+        r.score_label = Some("acceptable".to_string()); // Ergebnis der ALTEN Regel
+        r.grade_letter = Some("A".to_string());
         let n = normalize_derived_scores(r);
         assert_eq!(
-            n.score_label, "smooth",
+            n.score_label.as_deref(),
+            Some("smooth"),
             "Label muss der AKTUELLEN Regel folgen"
         );
-        assert_eq!(n.grade_letter, "A");
+        assert_eq!(n.grade_letter.as_deref(), Some("A"));
         assert_eq!(
-            n.score_numeric, 88,
+            n.score_numeric,
+            Some(88),
             "die Punktzahl selbst bleibt unangetastet"
         );
     }
@@ -48238,14 +48831,22 @@ mod canonical_landing_rate_fpm_tests {
             (0, "severe", "F"),
         ] {
             let mut r = landing_record_fixture();
-            r.score_numeric = score;
+            r.score_numeric = Some(score);
             let n = normalize_derived_scores(r);
-            assert_eq!(n.score_label, label, "Label bei {score} Punkten");
-            assert_eq!(n.grade_letter, grade, "Note bei {score} Punkten");
+            assert_eq!(
+                n.score_label.as_deref(),
+                Some(label),
+                "Label bei {score} Punkten"
+            );
+            assert_eq!(
+                n.grade_letter.as_deref(),
+                Some(grade),
+                "Note bei {score} Punkten"
+            );
             // idempotent: nochmal drueber aendert nichts mehr
             let again = normalize_derived_scores(n);
-            assert_eq!(again.score_label, label);
-            assert_eq!(again.grade_letter, grade);
+            assert_eq!(again.score_label.as_deref(), Some(label));
+            assert_eq!(again.grade_letter.as_deref(), Some(grade));
         }
     }
 
@@ -48253,11 +48854,17 @@ mod canonical_landing_rate_fpm_tests {
     #[test]
     fn normalize_derived_scores_clamps_out_of_range_scores() {
         let mut low = landing_record_fixture();
-        low.score_numeric = -5;
-        assert_eq!(normalize_derived_scores(low).score_label, "severe");
+        low.score_numeric = Some(-5);
+        assert_eq!(
+            normalize_derived_scores(low).score_label.as_deref(),
+            Some("severe")
+        );
         let mut high = landing_record_fixture();
-        high.score_numeric = 250;
-        assert_eq!(normalize_derived_scores(high).score_label, "smooth");
+        high.score_numeric = Some(250);
+        assert_eq!(
+            normalize_derived_scores(high).score_label.as_deref(),
+            Some("smooth")
+        );
     }
 
     #[test]
@@ -48266,6 +48873,263 @@ mod canonical_landing_rate_fpm_tests {
         stats.landing_peak_g_force = Some(0.15);
         stats.landing_source = Some("fallback_zero".to_string());
         assert_eq!(stats.canonical_peak_g_force(), None);
+    }
+
+    // ─── Landung erkannt, aber nicht gemessen ────────────────────────────
+    //
+    // CFG 2090 (EDDF→KPDX, 12.09.2026): 0,92 s ohne Messung genau im
+    // Aufsetzmoment, daraus 97 Punkte und Note A+. Seitdem gilt: Reicht die
+    // Aufzeichnung nicht, gibt es keine Zahl — und zwar an JEDER Stelle,
+    // die eine ausgeben könnte. Ein Riegel in der Kaskade allein genügte
+    // nicht; Codex fand am selben Tag fünf weitere Wege ins Ergebnis.
+
+    fn fehlende_abdeckung() -> touchdown_v2::FehlendeAbdeckung {
+        touchdown_v2::FehlendeAbdeckung {
+            groesste_luecke_ms: 920,
+            proben: 5,
+        }
+    }
+
+    #[test]
+    fn ohne_ausreichende_aufzeichnung_gibt_es_keine_landerate() {
+        let mut stats = FlightStats::default();
+        stats.landing_rate_fpm = Some(-10.4);
+        stats.landing_peak_vs_fpm = Some(-10.4);
+        stats.landing_source = Some("vs_at_impact_frame".to_string());
+        assert_eq!(stats.canonical_landing_rate_fpm(), Some(-10.4));
+
+        stats.landung_abdeckung_fehlt = Some(fehlende_abdeckung());
+        assert_eq!(
+            stats.canonical_landing_rate_fpm(),
+            None,
+            "die Kanonik ist die Stelle, die Anzeige, PIREP und MQTT fragen"
+        );
+        assert_eq!(stats.canonical_peak_g_force(), None);
+    }
+
+    #[test]
+    fn der_vom_simulator_gemessene_wert_bleibt_gueltig() {
+        // MSFS meldet die Aufsetzrate selbst (`PLANE TOUCHDOWN NORMAL
+        // VELOCITY`) — unabhängig von unserer Abtastung. Im Bestand haben
+        // 29 von 1170 Landungen gar kein Aufsetzfenster und trotzdem einen
+        // belastbaren Wert, genau über diese Quelle. Eine pauschale Sperre
+        // hätte sie zu Unrecht entwertet.
+        let mut stats = FlightStats::default();
+        stats.landing_rate_fpm = Some(-168.0);
+        stats.landing_peak_vs_fpm = Some(-168.0);
+        stats.landing_source = Some("msfs_simvar_latched".to_string());
+        stats.landung_abdeckung_fehlt = Some(fehlende_abdeckung());
+        assert_eq!(stats.canonical_landing_rate_fpm(), Some(-168.0));
+    }
+
+    #[test]
+    fn die_zahl_wird_erst_gar_nicht_festgehalten() {
+        // Nicht nur verschweigen, sondern nicht speichern: Sonst fände die
+        // nächste Auswertung den Wert im Protokoll und hielte ihn für gültig.
+        let mut stats = FlightStats::default();
+        stats.landung_abdeckung_fehlt = Some(fehlende_abdeckung());
+        finalize_landing_rate(&mut stats, -10.4, Some("High"), Some("vs_at_impact_frame"));
+        assert_eq!(stats.landing_rate_fpm, None);
+        assert_eq!(stats.landing_peak_vs_fpm, None);
+        assert_eq!(
+            stats.landing_source.as_deref(),
+            Some("aufzeichnung_unzureichend"),
+            "die Begründung bleibt, damit die Anzeige sie nennen kann"
+        );
+    }
+
+    #[test]
+    fn ohne_messung_gibt_es_auch_keine_gesamtnote() {
+        // Die Bewertung kennt "lieber gar keine Note als eine geschenkte"
+        // bereits: Ohne Sinkrate wird der Teilwert übersprungen, und ohne
+        // ihn entsteht kein Gesamtscore. Diese Kette muss halten.
+        let ohne = landing_scoring::compute_sub_scores(&landing_scoring::LandingScoringInput {
+            vs_fpm: None,
+            ..Default::default()
+        });
+        assert!(
+            ohne.iter().any(|s| s.key == "landing_rate" && s.skipped),
+            "die Landerate muss als übersprungen erscheinen"
+        );
+        assert_eq!(landing_scoring::aggregate_master_score(&ohne), None);
+    }
+
+    // ─── Selbstmessung des Samplers ──────────────────────────────────────
+
+    #[test]
+    fn die_diagnose_rechnet_auch_ohne_laeufe_ohne_absturz() {
+        // Ein Flug, der vor der ersten Landung endet: keine Läufe, keine
+        // Division durch Null, keine erfundene Rate.
+        let leer = SamplerDiagnose::default();
+        assert_eq!(leer.takt_mittel_ms(), 0.0);
+        assert_eq!(leer.proben_je_sekunde(), 0.0);
+
+        // Ein einzelner Lauf hat noch keinen Abstand zum Vorgänger.
+        let einer = SamplerDiagnose {
+            laeufe: 1,
+            proben: 1,
+            ..Default::default()
+        };
+        assert_eq!(einer.takt_mittel_ms(), 0.0);
+        assert_eq!(einer.proben_je_sekunde(), 0.0);
+    }
+
+    #[test]
+    fn die_diagnose_gibt_den_echten_takt_wieder() {
+        // Soll: 50 Läufe je Sekunde. Hier 100 Läufe mit je 20 ms Abstand
+        // (99 Abstände) und lückenloser Probenausbeute.
+        let gut = SamplerDiagnose {
+            laeufe: 100,
+            proben: 100,
+            takt_summe_ms: 20.0 * 99.0,
+            ..Default::default()
+        };
+        assert!((gut.takt_mittel_ms() - 20.0).abs() < 0.001);
+        assert!((gut.proben_je_sekunde() - 50.0).abs() < 0.1);
+
+        // Der Fall CFG 2090: der Takt bricht auf ein Fünfundzwanzigstel ein.
+        let schlecht = SamplerDiagnose {
+            laeufe: 100,
+            proben: 100,
+            takt_summe_ms: 500.0 * 99.0,
+            ..Default::default()
+        };
+        assert!(
+            (schlecht.proben_je_sekunde() - 2.0).abs() < 0.1,
+            "zwei statt fünfzig Messungen je Sekunde: {}",
+            schlecht.proben_je_sekunde()
+        );
+    }
+
+    #[test]
+    fn ausgefallene_proben_senken_die_gemeldete_rate() {
+        // Der Takt stimmt, aber nur jede zweite Runde liefert eine Probe —
+        // die gemeldete Rate muss das zeigen, sonst sieht die Diagnose
+        // gesund aus, während im Fenster die Hälfte fehlt.
+        let halb = SamplerDiagnose {
+            laeufe: 100,
+            proben: 50,
+            ohne_snapshot: 50,
+            takt_summe_ms: 20.0 * 99.0,
+            ..Default::default()
+        };
+        assert!((halb.proben_je_sekunde() - 25.0).abs() < 0.2);
+        let json = halb.als_json();
+        assert_eq!(json["ohne_snapshot"], 50);
+        assert_eq!(json["proben"], 50);
+    }
+
+    #[test]
+    fn die_sperre_ueberlebt_einen_neustart() {
+        // QS-Befund 12.09.2026 zum eigenen Umbau: Startet der Client
+        // zwischen Aufsetzen und Einreichen neu, wurde der Zustand vorher
+        // nicht mitgespeichert — die Sperre fiel weg, und über den in
+        // `landing_analysis` gespeicherten Edge-Wert entstand wieder eine
+        // Note für eine Landung, die niemand gemessen hat.
+        let mut stats = FlightStats::default();
+        stats.landung_abdeckung_fehlt = Some(touchdown_v2::FehlendeAbdeckung {
+            groesste_luecke_ms: 920,
+            proben: 5,
+        });
+        stats.sampler_diagnose = Some(serde_json::json!({ "proben_je_sekunde": 2.0 }));
+        stats.landing_analysis = Some(serde_json::json!({ "vs_at_edge_fpm": -10.4 }));
+
+        let gespeichert = PersistedFlightStats::snapshot_from(&stats);
+        let json = serde_json::to_string(&gespeichert).expect("speicherbar");
+        let geladen: PersistedFlightStats = serde_json::from_str(&json).expect("lesbar");
+        let mut nach_neustart = FlightStats::default();
+        geladen.apply_to(&mut nach_neustart);
+        // Der Edge-Wert überlebt den Neustart in der Analyse — genau deshalb
+        // muss der Zustand mit ihm zusammen zurückkommen.
+        nach_neustart.landing_analysis = stats.landing_analysis.clone();
+
+        assert!(
+            nach_neustart.landung_abdeckung_fehlt.is_some(),
+            "ohne den Zustand käme nach dem Neustart wieder eine Note heraus"
+        );
+        assert_eq!(nach_neustart.canonical_landing_rate_fpm(), None);
+    }
+
+    // ─── Codex, zweite Abnahme 13.09.2026 ───────────────────────────────
+
+    #[test]
+    fn eine_spaete_fensterverfeinerung_entwertet_die_simulatorrate_nicht() {
+        // Ablauf aus der Abnahme: MSFS meldet −168 fpm, die Sperre ist
+        // gesetzt, danach liefert der Sampler −10,4 aus dem dünnen Fenster.
+        // Die neue Zahl muss verworfen werden — die alte samt Kennung bleiben.
+        let mut stats = FlightStats::default();
+        stats.landung_abdeckung_fehlt = Some(fehlende_abdeckung());
+        finalize_landing_rate(
+            &mut stats,
+            -168.0,
+            Some("High"),
+            Some("msfs_simvar_latched"),
+        );
+        assert_eq!(stats.canonical_landing_rate_fpm(), Some(-168.0));
+
+        finalize_landing_rate(&mut stats, -10.4, Some("High"), Some("vs_at_edge_50hz"));
+        assert_eq!(
+            stats.landing_source.as_deref(),
+            Some("msfs_simvar_latched"),
+            "die Kennung der gültigen Rate darf nicht überschrieben werden"
+        );
+        assert_eq!(stats.canonical_landing_rate_fpm(), Some(-168.0));
+    }
+
+    #[test]
+    fn ohne_fenster_gelten_g_und_hopser_auch_bei_simulatorrate_nicht() {
+        // Befund 1 der zweiten Abnahme: Bei `msfs_simvar_latched` wurde die
+        // Fenster-Markierung gar nicht gesetzt, und G-Spitze und Hopser aus
+        // dem FSM-Puffer liefen in die Bewertung. Die Sinkrate gilt, die
+        // Werte aus unserem Fenster nicht.
+        let mut stats = FlightStats::default();
+        stats.landing_at = Some(t_fenster(0));
+        stats.landing_peak_vs_fpm = Some(-168.0);
+        stats.landing_rate_fpm = Some(-168.0);
+        stats.landing_peak_g_force = Some(1.9);
+        stats.bounce_count = 2;
+        stats.landing_source = Some("msfs_simvar_latched".to_string());
+        finalize_landing_score_if_due(&mut stats, "TEST123", t_fenster(9), 0.0, true);
+
+        assert!(
+            stats.landung_abdeckung_fehlt.is_some(),
+            "die Tatsache wird festgehalten"
+        );
+        assert_eq!(
+            stats.canonical_landing_rate_fpm(),
+            Some(-168.0),
+            "die Sinkrate gilt"
+        );
+        assert_eq!(stats.canonical_peak_g_force(), None, "die G-Spitze nicht");
+        assert!(score_g_for_stats(&stats).is_none());
+        assert!(
+            landung_nicht_bewertbar_json(&stats).is_none(),
+            "mit gültiger Sinkrate ist die Landung bewertbar — kein Banner"
+        );
+        // Codex, dritte Abnahme: Die diskrete Klasse bekam die ungemessenen
+        // Hopser trotzdem und wurde dadurch "Acceptable" statt "Smooth".
+        assert_eq!(hopser_aus_dem_fenster(&stats), None);
+        assert_eq!(
+            stats.landing_score,
+            Some(LandingScore::classify(-168.0, 0.0, 0)),
+            "die Klasse darf nicht an ungemessenen Hopsern hängen"
+        );
+    }
+
+    #[test]
+    fn das_protokoll_erfindet_keine_null_fuer_ungemessenes_g() {
+        // Codex, dritte Abnahme: Aus gesperrtem G wurde im Aktivitäts- und
+        // ACARS-Protokoll "G 0.00" — eine Nullmessung, wo gar nicht gemessen
+        // wurde.
+        assert_eq!(g_protokolltext(None, false), "G nicht gemessen");
+        assert_eq!(g_protokolltext(Some(1.23), true), "G 1.23");
+        // Mit gemessenem Fenster, aber ohne Wert bleibt das bisherige Verhalten.
+        assert_eq!(g_protokolltext(None, true), "G 0.00");
+    }
+
+    fn t_fenster(sek: i64) -> DateTime<Utc> {
+        use chrono::TimeZone;
+        Utc.timestamp_opt(1_700_000_000 + sek, 0).unwrap()
     }
 
     #[test]
@@ -58260,13 +59124,7 @@ mod v0_16_6_bush_completeness_tests {
             // ZZZZ/None. Deckt genau die Luecke ab, die vorher gruen blieb,
             // weil kein Kandidat hier ausschliesslich auf die Kaskade
             // angewiesen war.
-            let muster = [
-                Some("A320"),
-                Some("BCS3"),
-                Some("A300"),
-                Some("ZZZZ"),
-                None,
-            ];
+            let muster = [Some("A320"), Some("BCS3"), Some("A300"), Some("ZZZZ"), None];
             let aus_datei = [None, Some(9.9f64)];
 
             let mut geprueft = 0;

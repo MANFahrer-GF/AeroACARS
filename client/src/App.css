@@ -6628,6 +6628,51 @@ input:disabled {
   align-self: start;
 }
 
+/* ---- Landung erkannt, aber nicht gemessen ----
+   Untersuchung 12.09.2026 (CFG 2090): Eine Landung ohne aufgezeichneten
+   Aufsetzmoment bekam 97 Punkte. Seitdem gibt es dafür keine Note, und
+   dieser Kasten erklärt warum. Bewusst in Warn-Gelb, nicht in Rot: Es ist
+   kein Fehler des Piloten, sondern eine Lücke in unserer Messung. */
+
+.landing-nicht-bewertbar {
+  margin-bottom: 0.9rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--sem-warn);
+  border-radius: 10px;
+  background: var(--sem-warn-bg);
+}
+
+.landing-nicht-bewertbar__titel {
+  font-weight: 700;
+  color: var(--sem-warn);
+  margin-bottom: 0.3rem;
+}
+
+.landing-nicht-bewertbar__text {
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.landing-nicht-bewertbar__zahlen {
+  margin-top: 0.45rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.landing-nicht-bewertbar__rat {
+  margin-top: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* Die Sinkraten-Kachel ohne Messwert — kein Zahlenplatz, nur die Aussage. */
+.sinkrate-score-tile__value--leer {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 /* ---- Personal-best line in the headline ---- */
 
 .landing-headline__pb {

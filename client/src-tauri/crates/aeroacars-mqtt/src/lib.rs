@@ -589,6 +589,12 @@ pub struct BahnHerkunftWire {
 #[derive(Default, Clone, Debug, Serialize)]
 pub struct TouchdownPayload {
     pub ts: i64,
+    /// Gesetzt, wenn die Aufzeichnung im Aufsetzfenster nicht ausreichte —
+    /// dann gibt es in diesem Payload keine Sinkrate und keine Note.
+    /// Inhalt: grösste Lücke in Millisekunden und Zahl der Messpunkte
+    /// (Untersuchung 12.09.2026, CFG 2090).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landung_nicht_bewertbar: Option<serde_json::Value>,
     /// v0.7.19 (QS-R2 Finding 1): PIREP-ID damit Korrektur-Events
     /// (TouchdownAccidentOverride) den exakten Touchdown-Row in der
     /// Webapp-DB targeten koennen. `skip_serializing_if=None` damit
@@ -1331,6 +1337,20 @@ pub struct PirepPayload {
     /// "vs_at_impact" | "smoothed_500ms" | "smoothed_1000ms" | "pre_flare_peak"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub landing_source: Option<String>,
+    /// Gesetzt, wenn die Aufzeichnung im Aufsetzfenster nicht ausreichte.
+    ///
+    /// Dann gibt es keine Landerate und keine Note — nicht weil die Landung
+    /// schlecht war, sondern weil sie nicht gemessen wurde (Untersuchung
+    /// 12.09.2026, CFG 2090: 0,92 s ohne Messung genau im Aufsetzmoment,
+    /// Bewertung daraus 97 Punkte / A+). Inhalt: grösste Lücke in
+    /// Millisekunden und Zahl der verwertbaren Proben im Fenster.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landung_nicht_bewertbar: Option<serde_json::Value>,
+    /// Wie zuverlässig der 50-Hz-Sampler tatsächlich lief (Takt, Ausreisser,
+    /// Gründe für ausgefallene Proben). Erklärt eine dünne Aufzeichnung,
+    /// statt sie nur festzustellen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampler_diagnose: Option<serde_json::Value>,
 
     // ─── F6: Flare als eigene Zone (in PIREP exponiert, war nur in landing_history.json) ─
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -836,7 +836,16 @@
       "yes": "sì",
       "no": "no"
     },
-    "ov_mixed_versions": "Il grafico qui sotto mostra affiancati atterraggi precedenti e successivi al cambio di misura della velocità di discesa (v1.6.3): un salto è previsto e non è un errore."
+    "ov_mixed_versions": "Il grafico qui sotto mostra affiancati atterraggi precedenti e successivi al cambio di misura della velocità di discesa (v1.6.3): un salto è previsto e non è un errore.",
+    "nicht_bewertbar": {
+      "titel": "Atterraggio rilevato — registrazione incompleta",
+      "text": "Mancano misurazioni nel momento del contatto, quindi questo atterraggio non viene valutato. Questo non dice nulla sull'atterraggio stesso: semplicemente non è stato registrato per intero.",
+      "messwerte": "Intervallo massimo {{luecke}} ms · {{proben}} campioni nella finestra di contatto",
+      "takt": "{{rate}} invece di 50 misurazioni al secondo",
+      "rat": "La causa più comune è un simulatore sovraccarico. Ridurre carico grafico e componenti aggiuntivi in finale aiuta; non riavviare il client durante l'atterraggio.",
+      "kein_wert": "non misurato",
+      "kurz": "non valutabile"
+    }
   },
   "about": {
     "tagline": "ACARS moderno per phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",
